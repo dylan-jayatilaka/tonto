@@ -1,0 +1,2704 @@
+!---------------------------------------------------------------------------
+!
+! VEC{INTRINSIC}: Generic vector operations ...
+!
+! Copyright (C) Dylan Jayatilaka, 1997
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: vec{intrinsic}.foo 4402 2014-06-02 13:41:45Z dylan_ $
+!---------------------------------------------------------------------------
+
+virtual module VEC{INTRINSIC}
+
+   implicit none
+
+contains
+
+!  =================
+!  Memory allocation
+!  =================
+
+   create(dim) ::: leaky, PURE
+   ! Create space for object
+      self :: PTR
+      dim :: INT, IN
+
+   ENSURE(dim>=0, "dimension of array not 1 or greater")
+
+      status :: INT
+
+      nullify(self)
+
+      allocate(self(dim),STAT=status)
+
+      ENSURE(status==0,"error in allocating memory")
+      status = status
+      status = 0
+
+      ADD_MEMORY(dim*ELEMENT_TYPE_SIZE)
+
+   end
+
+   create(lb,ub) ::: leaky, PURE
+   ! Create the vector with lower bound "lb", upper bound "ub"
+      self :: PTR
+      lb,ub :: INT, IN
+
+      status :: INT
+
+      nullify(self)
+
+      allocate(self(lb:ub),STAT=status)
+
+      ENSURE(status==0,"error in allocating memory")
+      status = status
+      status = 0
+
+      ADD_MEMORY((ub-lb+1)*ELEMENT_TYPE_SIZE)
+
+   end
+
+   create(bounds) ::: leaky, PURE
+   ! Create the vector with "bounds"
+      self :: PTR
+      bounds :: VEC{INT}(2), IN
+
+      .create(bounds(1),bounds(2))
+   
+   end
+
+   destroy ::: leaky
+   ! Destroy space for object
+      self :: PTR
+
+      status :: INT
+
+      if (.destroyed) return
+
+      DELETE_MEMORY(.dim*ELEMENT_TYPE_SIZE)
+
+      deallocate(self,stat=status)
+
+      ENSURE(status==0,"error in allocating memory")
+      status = status
+      status = 0
+
+   end
+
+   create_copy(v) ::: leaky, PURE
+   ! Create a copy of vector "v".
+      self :: PTR
+      v :: VEC{INTRINSIC}, IN
+
+      .create(v.dim)
+      self = v
+
+   end
+
+   copy(v) ::: pure
+   ! Copy vector "v".
+      self :: OUT
+      v :: VEC{INTRINSIC}, IN
+
+      self = v
+
+   end
+
+   created result (res) ::: inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+      result = associated(self)
+   end
+
+   destroyed result (res) ::: inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+      result = NOT associated(self)
+   end
+
+!  ==================
+!  Size-of operations 
+!  ==================
+
+   size result (res) ::: inlined_by_foo
+   ! Return the size of the array
+      res :: INT
+      res = .dim
+   end
+
+   dim result (res) ::: inlined_by_foo
+   ! Return the size of the 1st dimension
+      res :: INT
+      res = size(self,1)
+   end
+
+   shape result (res) ::: pure
+   ! Return the shape of "self"
+      self :: IN
+      res :: VEC{INT}(1)
+
+      res = [.dim]
+
+   end
+
+!  =======================
+!  Shrinking and expansion
+!  =======================
+
+   shrink(dim) ::: leaky, PURE
+   ! Shrink self to dimension dim.  Contents are retained.
+      self :: PTR
+      dim :: INT, IN
+
+   ENSURE(.created,"no self array")
+   ENSURE(dim<=.dim,"dim too large")
+
+      old :: VEC{INTRINSIC}(len=len(self(1)))*
+      n :: INT
+
+      if (dim==.dim) return
+
+      old => self
+
+      self.create(dim)
+
+      ! Copy
+      do n = 1,dim
+          self(n) = old(n)
+      end
+
+      ! Clean
+      old.destroy
+
+   end
+
+   expand(dim,init) ::: leaky, PURE
+   ! Expand self to dimension dim. New slots are left undefined
+   ! unless "init" is supplied.
+      self :: PTR
+      dim :: INT, IN
+      init :: INTRINSIC, optional, IN
+
+      old :: VEC{INTRINSIC}(len=len(self(1)))*
+      n :: INT
+
+      if (.destroyed) then
+
+         .create(dim)
+         if (present(init)) self = init
+
+      else
+
+         ENSURE(dim>=.dim, "dim not large enough")
+
+         ! Old version
+         old => self
+         n    = old.dim
+
+         ! Create
+         self.create(dim)
+
+         ! Copy 
+         self(1:n) = old
+
+         ! Initialize 
+         if (present(init)) self(n+1:) = init
+
+         ! Clean
+         old.destroy
+
+      end
+
+   end
+
+   resize(dim,init) ::: leaky, PURE
+   ! Resize self to dimension dim. New slots are left undefined
+   ! unless "init" is supplied.
+      self :: PTR
+      dim  :: INT, IN
+      init :: INTRINSIC, optional, IN
+
+      if    (.destroyed) then; .expand(dim,init)
+      else if (dim>.dim) then; .expand(dim,init)
+      else if (dim<.dim) then; .shrink(dim)
+      end
+
+   end
+
+   shrink(dim,chop_start) ::: leaky, PURE
+   ! Shrink "self" from the last element, to dimension "dim". Contents are
+   ! retained.  If "chop_start" is present and TRUE, then "self" is shrunk or
+   ! chopped from the start, and the contents from the end are retained.
+      self :: PTR
+      dim :: INT, IN
+      chop_start :: BIN, optional, IN
+
+   ENSURE(.created,"no self array")
+   ENSURE(dim<=.dim,"dim too large")
+   ENSURE(dim>=0, "dim is negative")
+
+      old :: VEC{INTRINSIC}(len=len(self(1)))*
+      lb,ub :: INT
+      chop_end :: BIN
+
+      ! Dimension unchanged?
+      if (dim==.dim) return
+
+      ! Chop from start or end?
+      chop_end = TRUE
+      if (present(chop_start)) chop_end = NOT chop_start
+
+      ! Bounds
+      lb = lbound(self,1)
+      ub = ubound(self,1)
+
+      ! Save old
+      old => self
+
+      ! Create new
+      self.create(lb,lb+dim-1)
+
+      if (chop_end) then
+
+         ! Chop end
+         self = old(lb:lb+dim-1)
+
+      else 
+
+         ! Chop start, retain lb
+         self = old(ub-dim+1:ub)
+
+      end
+
+      ! Clean
+      old.destroy
+
+   end
+
+   expand(dim,grow_start) ::: leaky, PURE
+   ! Expand "self" to dimension "dim" from the end. New slots are left undefined.
+   ! If "grow_start" is present and TRUE, then "self" is expanded from the
+   ! start. Again, the starting slots are undefined.
+      self :: PTR
+      dim :: INT, IN
+      grow_start :: BIN, optional, IN
+
+      old :: VEC{INTRINSIC}(len=len(self(1)))*
+      lb,ub :: INT
+      grow_end :: BIN
+
+      if (.destroyed) then
+
+         .create(dim)
+
+      else
+
+        ENSURE(dim>=.dim, "dim not large enough")
+        ENSURE(dim>=0, "dim is negative")
+
+         ! Dimension unchanged?
+         if (dim==.dim) return
+        
+         ! Chop from start or end?
+         grow_end = TRUE
+         if (present(grow_start)) grow_end = NOT grow_start 
+        
+         ! Bounds
+         lb = lbound(self,1)
+         ub = ubound(self,1)
+        
+         ! Save old
+         old => self
+
+         ! Create new
+         self.create(lb,lb+dim-1)
+        
+         if (grow_end) then
+        
+            ! Copy
+            self(lb:ub) = old
+        
+         else 
+        
+            ! Copy
+            self(lb+dim:ub+dim) = old
+        
+         end
+        
+         ! Clean
+         old.destroy
+
+      end
+
+   end
+
+   append(v) ::: leaky, PURE
+   ! Expands self and appends the contents of vector "v".
+      self :: PTR
+      v :: VEC{INTRINSIC}, IN
+
+      dim :: INT
+
+      if (.destroyed) then; dim = 0
+      else;                 dim = .dim
+      end
+
+      .expand(dim+v.dim)
+
+      self(dim+1:) = v
+
+   end
+
+   append(v1,v2) ::: leaky, PURE
+   ! Expands self and appends the contents of vectors "v1" and "v2".
+      self :: PTR
+      v1,v2 :: VEC{INTRINSIC}, IN
+
+      dim,dim1,dim2 :: INT
+
+      if (.destroyed) then; dim = 0
+      else;                 dim = .dim
+      end
+
+      dim1 = v1.dim
+      dim2 = v2.dim
+
+      .expand(dim+dim1+dim2)
+
+      ! Copy
+      self(dim+1:dim+dim1) = v1
+      dim = dim + dim1
+      self(dim+1:dim+dim2) = v2
+
+   end
+
+   append(value) ::: leaky, PURE
+   ! Expands self by 1, and appends the single scalar "value" onto the end.
+      self :: PTR
+      value :: INTRINSIC, IN
+
+      dim :: INT
+
+      if (.destroyed) then; dim = 0
+      else;                 dim = .dim
+      end
+
+      .expand(dim+1)
+
+      self(dim+1) = value
+
+   end
+
+   append_only_if_unique(value) ::: leaky, PURE
+   ! Expands self by 1, and appends the single scalar "value" onto the end, but
+   ! only if the "value" is unique
+      self :: PTR
+      value :: INTRINSIC, IN
+
+      if (any(self==value)) return
+
+      .append(value)
+
+   end
+
+   prepend(v) ::: leaky, PURE
+   ! Prepend the vector "v" to "self". "self" is expanded.
+      self :: PTR
+      v :: VEC{INTRINSIC}, IN
+
+      dim,dimv :: INT
+
+      dim  = .dim
+      dimv = v.dim
+
+      .expand(dim+dimv)
+
+      ! Copy
+      self(     1:dimv) = v
+      self(dimv+1:    ) = self(1:dim)
+
+   end
+
+   prepend(value) ::: leaky, PURE
+   ! Prepend an single "value" to "self". "self" is expanded.
+      self :: PTR
+      value :: INTRINSIC, IN
+
+      dim :: INT
+
+      dim = .dim
+
+      .expand(dim+1)
+
+      ! Prepend
+      self(1 ) = value
+      self(2:) = self(1:dim)
+
+   end
+
+   prune(values) ::: leaky, PURE
+   ! Removes the scalar "values" from the vector, if they are there.
+   ! The order of the elementsis otherwise unchanged.
+      self :: PTR
+      values :: VEC{INTRINSIC}, IN
+
+      copy :: VEC{INTRINSIC}*
+      i,n :: INT
+
+      copy.create(.dim)
+
+      n = 0
+      do i = 1,.dim
+
+         if (any(values==self(i))) cycle
+
+         n = n + 1
+         copy(n) = self(i)
+
+      end
+
+      copy.shrink(n)
+
+      self.destroy
+      self => copy
+
+   end
+
+   prune(value) ::: leaky, PURE
+   ! Removes the single scalar "value" from the vector, if it is there.
+   ! The order of the elementsis otherwise unchanged.
+      self :: PTR
+      value :: INTRINSIC, IN
+
+      copy :: VEC{INTRINSIC}*
+      i,n :: INT
+
+      copy.create(.dim)
+
+      n = 0
+      do i = 1,.dim
+
+         if (self(i)==value) cycle
+
+         n = n + 1
+         copy(n) = self(i)
+
+      end
+
+      copy.shrink(n)
+
+      self.destroy
+      self => copy
+
+   end
+
+   prune_element(k) ::: leaky, PURE
+   ! Removes the single element at position "k" from the vector.
+   ! The order of the elements is unchanged.
+      self :: PTR
+      k :: INT, IN
+
+      copy :: VEC{INTRINSIC}*
+
+      if (k<1 OR k>.dim) return
+
+      copy.create(.dim-1)
+
+      copy(1:k-1) = self(1:k-1)
+      copy(k:)    = self(k+1:)
+
+      self.destroy
+      self => copy
+
+   end
+
+!  ================
+!  Sorting routines
+!  ================
+
+   reverse_order ::: pure
+   ! Reverse the order of the elements of self
+      self :: INOUT
+
+      n,dim :: INT
+
+      dim = .dim
+
+      do n = 1,dim/2
+         .swap_elements(n,dim-n+1)
+      end
+
+   end
+
+   swap_elements(e1,e2) ::: pure
+   ! Swap elements "e1" and "e2" in "self".
+      self :: INOUT
+      e1,e2 :: INT, IN
+
+   ENSURE(e1<=.dim AND e2<=.dim,"element exceeds dimesion")
+   ENSURE(e1>0 AND e2>0,"indices must be positive")
+
+      val :: INTRINSIC
+
+      val      = self(e1)
+      self(e1) = self(e2)
+      self(e2) = val
+
+   end
+
+   set_to_flattened_reverse_of(b) ::: PURE
+   ! Set "self" to the flattened reverse of vector "b" i.e. the standard order
+   ! is of "b" reversed and placed as a vector.
+      self :: OUT
+      b :: MAT3{INTRINSIC}, IN
+
+   ENSURE(.dim==b.dim,"incompatible sizes")
+
+      n,i,j,k :: INT
+
+      n = 0
+      do k = 1,b.dim1
+      do j = 1,b.dim2
+      do i = 1,b.dim3
+         n = n + 1
+         self(n) = b(k,j,i)
+      end
+      end
+      end
+
+   end
+
+!  ====================
+!  Comparison functions
+!  ====================
+
+   equals(v) result (res) ::: pure
+   ! Return true if "self" is the same as "v".
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: BIN
+      res = .same_as(v)
+   end
+
+   equals(v,eps) result (res) ::: pure
+   ! Return true if "self" is the same as "v", within range "eps" if supplied
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      eps :: REAL, optional, IN
+      res :: BIN
+      res = .same_as(v,eps)
+   end
+
+   same_as(v) result (res) ::: pure
+   ! Return true if "self" is the same as "v".
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: BIN
+      if (.dim/=v.dim) then; res = FALSE
+      else;                  res = all(self==v)
+      end
+   end
+
+   same_as(v,eps) result (res) ::: pure
+   ! Return true if "self" is the same as "v", within range "eps" if supplied
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      eps :: REAL, optional, IN
+      res :: BIN
+
+      tol :: REAL
+
+      if (.dim/=v.dim) then
+
+         res = FALSE
+
+      else
+
+         tol = REAL_EPSILON
+         if (present(eps)) tol = eps
+
+         res = .distance_to(v)<tol
+
+      end
+
+   end
+
+   has_all_equal(eps) result (res) ::: pure
+   ! Return TRUE if "self" contains all the same elements, to within precision
+   ! "eps", if supplied.
+      self :: IN
+      eps :: REAL, optional, IN
+      res :: BIN
+
+      i :: INT
+
+      res = TRUE
+
+      do i = 2,.dim
+         if (self(1).equals(self(i),eps)) cycle
+         res = FALSE
+         exit
+      end
+
+   end
+
+   has_all_equal_to(val,eps) result (res) ::: pure
+   ! Return TRUE if "self" contains all the same values "val", to within
+   ! precision "eps", if supplied.
+      self :: IN
+      val :: REAL, IN
+      eps :: REAL, optional, IN
+      res :: BIN
+
+      i :: INT
+
+      res = TRUE
+
+      do i = 1,.dim
+         if (val.equals(self(i),eps)) cycle
+         res = FALSE
+         exit
+      end
+
+   end
+
+   has_any_equal_to(val,eps) result (res) ::: pure
+   ! Return TRUE if "self" has any values the same as "val", to within
+   ! precision "eps", if supplied.
+      self :: IN
+      val :: REAL, IN
+      eps :: REAL, optional, IN
+      res :: BIN
+
+      i :: INT
+
+      res = FALSE
+
+      do i = 1,.dim
+         if (val.equals(self(i),eps)) then
+            res = TRUE
+            exit
+         end
+      end
+
+   end
+
+   is_zero(eps) result (res) ::: pure
+   ! Return true if the vector is zero (within "eps", if supplied)
+      self :: IN
+      eps :: REAL, IN, optional
+      res :: BIN
+      tmp :: REAL
+      tmp = .norm
+      res = tmp.is_zero(eps)
+   end
+
+   is_monotone result (res) ::: pure
+   ! Return true if the vector is monotone increasing or decreasing
+      self :: IN
+      res :: BIN
+      res = .is_monotonically_increasing OR .is_monotonically_decreasing
+   end
+
+   is_monotonically_increasing result (res) ::: pure
+   ! Return true if the vector is monotonically increasing
+      self :: IN
+      res :: BIN
+      i :: INT
+      res = TRUE
+      do i = 1,.dim-1
+         if (self(i+1)>self(i)) cycle
+         res = FALSE
+         exit
+      end
+   end
+
+   is_monotonically_decreasing result (res) ::: pure
+   ! Return true if the vector is monotonically decreasing
+      self :: IN
+      res :: BIN
+      i :: INT
+      res = TRUE
+      do i = 1,.dim-1
+         if (self(i+1)<self(i)) cycle
+         res = FALSE
+         exit
+      end
+   end
+
+   has_elements_common_with(v) result (res) ::: pure
+   ! Return true if "self" has elements common with "v"
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: BIN
+      res = any(spread(self,2,v.dim)==spread(v,1,.dim))
+   end
+
+   has_no_elements_common_with(v) result (res) ::: pure
+   ! Return true if "self" has no elements common with "v"
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: BIN
+      res = all(spread(self,2,v.dim)/=spread(v,1,.dim))
+   end
+
+   has_all_elements_common_with(v) result (res) ::: pure
+   ! Return true if ALL elements of "self" are common with any in "v"
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: BIN
+      i :: INT
+      res = TRUE
+      do i = 1,.dim
+         if (any(v==self(i))) cycle
+         res = FALSE
+         exit
+      end
+   end
+
+   n_elements_common_with(v) result (res) ::: pure
+   ! Return the number of elements of "self" which are common with "v"
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: INT
+
+      i :: INT
+
+      res = 0
+      do i = 1,.dim
+         if (any(v==self(i))) then
+            res = res + 1
+         end
+      end
+
+   end
+
+   n_elements_uncommon_with(v) result (res) ::: pure
+   ! Return the number of elements of "self" which are uncommon with "v"
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: INT
+      res = .dim - .n_elements_common_with(v)
+   end
+
+   elements_common_with(v) result (res) ::: leaky, PURE
+   ! Return the elements of "self" which are common with "v",
+   ! e.g. if self = [1,1,2,1] and v = [1], res = [1,1,1].
+   ! See also routine below.
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: VEC{INTRINSIC}*
+
+      i,n :: INT
+      val :: INTRINSIC
+
+      n = .n_elements_common_with(v) 
+      res.create(n)
+
+      n = 0
+
+      ! Loop over self elements ...
+      do i = 1,.dim
+         
+         val = self(i)
+
+         ! Is any v equal to *this* self(i)?
+         ! If so, record it and move on ...
+         if (any(v==val)) then
+            n = n + 1
+            res(n) = val
+         end
+
+      end
+
+   end
+
+   elements_uncommon_with(v) result (res) ::: leaky, PURE
+   ! Return the elements of "self" which are uncommon with "v"
+   ! e.g. if self = [1,1,2,1] and v = [1], res = [2].
+   ! See also routine above.
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: VEC{INTRINSIC}*
+
+      i,n :: INT
+      val :: INTRINSIC
+
+      n = .n_elements_uncommon_with(v) 
+      res.create(n)
+
+      n = 0
+
+      ! Loop over self elements ...
+      do i = 1,.dim
+         
+         val = self(i)
+
+         ! Are *all* v unequal to *this* self(i)?
+         ! If so, record it and move on ...
+         if (all(v/=val)) then
+            n = n + 1
+            res(n) = val
+         end
+
+      end
+
+   end
+
+   indices_of_elements_matching(item) result (res) ::: leaky, PURE
+   ! Return the indices of the elements in "self" which match "item"
+   ! NOTE: this routine returns a pointer!
+      self :: IN
+      item :: INTRINSIC, IN
+      res :: VEC{INT}*
+
+      dim,i,n :: INT
+
+      dim = count(self==item)
+      res.create(dim) 
+
+      n = 0
+
+      do i = 1,.dim
+         if (self(i)/=item) cycle
+         n = n + 1
+         res(n) = i
+      end
+
+   end
+
+!  =============================
+!  Repetition related operations
+!  =============================
+
+   remove_repetitions ::: leaky, PURE
+   ! Remove repeated elements which come later in the list. 
+   ! NOTE: the vector may shrink. 
+   ! NOTE: this version for bin, str, int
+      self :: PTR
+
+   ENSURE(.created,"no vector")
+
+      unique :: VEC{INTRINSIC}(len=len(self(1)))*
+      i,j,n :: INT
+      found :: BIN
+
+      if (.dim==1) return
+
+      unique.create(.dim)
+      n = 1
+      unique(1) = self(1)
+
+      do i = 2,.dim
+
+         found = FALSE
+         do j = 1,n
+            if (self(i)/=unique(j)) cycle
+            found = TRUE
+         end
+         if (found) cycle
+
+         n = n + 1
+         unique(n) = self(i)
+
+      end
+
+      .destroy
+      .create(n)
+      self = unique(1:n)
+
+      unique.destroy
+
+   end
+
+   remove_repetitions ::: leaky, PURE
+   ! Remove repeated elements which come later in the list. 
+   ! NOTE: the vector may shrink. 
+   ! NOTE: this version for reals & complex
+      self :: PTR
+
+   ENSURE(.created,"no vector")
+
+      unique :: VEC{INTRINSIC}*
+      i,j,n :: INT
+      found :: BIN
+
+      if (.dim==1) return
+
+      unique.create(.dim)
+
+      n = 1
+      unique(1) = self(1)
+
+      do i = 2,.dim
+
+         found = FALSE
+         do j = 1,n
+            if (NOT self(i).same_as(unique(j))) cycle
+            found = TRUE
+         end
+         if (found) cycle
+
+         n = n + 1
+         unique(n) = self(i)
+
+      end
+
+      .destroy
+      .create(n)
+      self = unique(1:n)
+
+      unique.destroy
+
+   end
+
+   has_repetitions result (res) ::: pure
+   ! Return TRUE if self has at least one repeated element.
+   ! NOTE: this version for bin, str, int
+      self :: IN
+      res :: BIN
+
+      i,j :: INT
+
+      res = FALSE
+
+      if (.dim==1) return
+
+      do i = 2,.dim
+      do j = 1,i-1
+         if (self(i)/=self(j)) cycle
+         res = TRUE
+         return
+      end
+      end
+
+   end
+
+   no_of_unique_elements result (res) ::: pure
+   ! Return the number of unique elements in the vector.
+   ! NOTE: this version for bin, str, int
+      self :: IN
+      res :: INT
+
+      n,i :: INT
+      same :: BIN
+
+      res = 1
+
+      do n = 2,.dim
+
+         same = FALSE
+         do i = 1,n-1
+            if (self(n)/=self(i)) cycle
+            same = TRUE
+            exit
+         end
+
+         if (NOT same) res = res + 1
+
+      end
+
+   end
+
+   unique_elements result(unique) ::: leaky, PURE
+   ! Sort through the vector and return the unique elements
+   ! NOTE: this version for bin, str, int
+      self :: IN
+      unique :: VEC{INTRINSIC}(len=len(self(1)))*
+
+   ENSURE(.created,"no vector")
+   ENSURE(.dim>0,"no zero-size vector")
+
+      i,j,n :: INT
+      found :: BIN
+
+      unique.create(.dim)
+      unique(1) = self(1)
+
+      if (.dim==1) return
+
+      n = 1
+      do i = 2,.dim
+
+         found = FALSE
+         do j = 1,n
+            if (self(i)/=unique(j)) cycle
+            found = TRUE
+         end
+
+         if (found) cycle
+
+         n = n + 1
+         unique(n) = self(i)
+
+      end
+
+      unique.shrink(n)
+
+   end
+
+   make_repetition_count(cnt,n_kind) ::: leaky, PURE
+   ! Create "cnt" where each element cnt(i) is a count of the number
+   ! times that self(i) is repeated in self(:). Later elements of
+   ! "cnt" which are repetitions of earlier ones are assigned a count
+   ! of zero. The number of different kinds is returned in "n_kind".
+   ! NOTE: this version for bin, str, int
+      self :: IN
+      cnt :: VEC{INT}*
+      n_kind :: INT, OUT
+
+      n,l :: INT
+
+      cnt.create(.dim)
+
+      cnt = 1
+
+      do n = 1,.dim
+
+         if (cnt(n)==0) cycle
+
+         do l = n+1,.dim
+
+            if (cnt(l)==0) cycle
+            if (self(l)/=self(n)) cycle
+
+            cnt(n) = cnt(n)+1
+            cnt(l) = 0
+
+         end
+
+      end
+
+      n_kind = .dim - count(cnt==0)
+
+   end
+
+   indices_of_unique_elements result(unique) ::: leaky, PURE
+   ! Sort through the vector and return the indices of the unique elements
+   ! NOTE: this version for bin, str, int
+      self :: PTR
+      unique :: VEC{INT}*
+
+   ENSURE(.created,"no vector")
+   ENSURE(.dim>0,"no zero-size vector")
+
+      i,j,n :: INT
+      found :: BIN
+
+      unique.create(.dim)
+
+      unique(1) = 1
+
+      if (.dim==1) return
+
+      n = 1
+
+      do i = 2,.dim
+
+         found = FALSE
+         do j = 1,n
+            if (self(i)/=self(unique(j))) cycle
+            found = TRUE
+         end
+
+         if (found) cycle
+
+         n = n + 1
+         unique(n) = i
+
+      end
+
+      unique.shrink(n)
+
+   end
+
+   make_unique_element_maps(unique_element,unique_element_for) ::: leaky, PURE
+   ! Make a map of unique_element's, and the inverse map
+   ! unique_element_for a given non-unique element in the list.
+      self :: IN
+      unique_element,unique_element_for :: VEC{INT}*
+
+      n,k,i :: INT
+
+      unique_element_for.create(.dim)
+      unique_element.create(.dim)
+      if (.dim==0) return
+
+      unique_element_for(1) = 1
+      unique_element(1) = 1
+      if (.dim==1) return
+
+      k = 1
+      do n = 2,.dim
+
+         i = self(1:n).index_of_value(self(n))
+
+         if (i==n) then 
+
+            ! It's unique
+            k = k + 1
+            unique_element(k) = n
+            unique_element_for(n) = k
+         else           
+
+            ! Bah. It's not unique
+            unique_element_for(n) = unique_element_for(i)
+
+         end
+
+      end
+
+      unique_element.shrink(k)
+
+   end
+
+!  =============
+!  String widths
+!  =============
+   
+   str_lengths result (res) ::: pure
+   ! Returns the minimal string lengths.
+      self :: IN
+      res :: VEC{INT}(.dim)
+
+      i :: INT
+
+      do i = 1,.dim
+         res(i) = self(i).str_length
+      end
+
+   end 
+   
+   str_lengths(dp) result (res) ::: pure
+   ! Returns the minimal string lengths.
+      self :: IN
+      dp :: INT, IN
+      res :: VEC{INT}(.dim)
+
+      i :: INT
+
+      do i = 1,.dim
+         res(i) = self(i).str_length(dp)
+      end
+
+   end 
+   
+   str_lengths(error,dp,spaces) result (res) ::: pure
+   ! Returns the minimal string lengths for "self" assuming it has
+   ! an associated "error", with certain precision "dp" and optional
+   ! extra "spaces"
+      self :: IN
+      error :: VEC{REAL}, IN
+      dp :: INT, IN
+      spaces :: INT, IN, optional
+      res :: VEC{INT}(.dim)
+
+      i :: INT
+
+      do i = 1,.dim
+         res(i) = self(i).str_length(error(i),dp,spaces)
+      end
+
+   end 
+
+
+   get_max_str_length(msl,spaces) ::: pure
+   ! Returns "msl", the maximum of the string lengths for "self",
+   ! and with optional extra "spaces". 
+      self :: IN
+      msl :: INT, OUT
+      spaces :: INT, IN
+
+      i,sl :: INT
+
+      msl = 0
+
+      do i = 1,.dim
+         self(i).get_str_length(sl,spaces)
+         msl = max(msl,sl)
+      end
+
+   end
+
+   get_max_str_length(msl,max_dp,spaces) ::: pure
+   ! Returns "msl", the maximum of the string lengths for "self", with
+   ! certain precision "max_dp", and with optional extra "spaces". 
+      self :: IN
+      msl :: INT, OUT
+      max_dp :: INT, IN
+      spaces :: INT, IN
+
+      i,sl :: INT
+
+      msl = 0
+
+      do i = 1,.dim
+         self(i).get_str_length(sl,max_dp,spaces)
+         msl = max(msl,sl)
+      end
+
+   end
+
+   get_max_str_length(msl,error,max_dp,spaces) ::: PURE
+   ! Returns "msl", the maximum of the string lengths for "self",
+   ! assuming it has an associated "error", with certain precision
+   ! "max_dp", and with optional extra "spaces". 
+      self :: IN
+      msl :: INT, OUT
+      error :: VEC{INTRINSIC}, IN
+      max_dp :: INT, IN
+      spaces :: INT, IN
+
+      i,sl :: INT
+
+      msl = 0
+
+      do i = 1,.dim
+         self(i).get_str_length(sl,error(i),max_dp,spaces)
+         msl = max(msl,sl)
+      end
+
+   end
+
+   get_max_str_length(msl,mpr,error,max_dp,spaces) ::: PURE
+   ! Returns "msl", the maximum of the string lengths for "self",
+   ! and the maximum precision "mpr" assuming "self" has an associated
+   ! "error"s, with certain precision "dp", and with optional extra
+   ! "spaces". Optionally return the maximum precision "mpr".
+      self :: IN
+      msl :: INT, OUT
+      mpr :: INT, OUT
+      error :: VEC{INTRINSIC}, IN
+      max_dp :: INT, IN
+      spaces :: INT, IN
+
+      i,sl,dp :: INT
+
+      msl = 0
+      mpr = 0
+
+      do i = 1,.dim
+         self(i).get_str_length(sl,dp,error(i),max_dp,spaces)
+         msl = max(msl,sl)
+         mpr = max(mpr,dp)
+      end
+
+   end
+
+!  =====================
+!  Conversion to strings
+!  =====================
+
+   to_str result (res) ::: pure
+   ! Change self to a string of minimal length
+      self :: IN
+      res :: VEC{STR}(.dim)
+
+      i :: INT
+
+      do i = 1,.dim
+         res(i) = self(i).to_str
+      end
+
+   end 
+
+   to_str(fmt,left_justify) result (res) ::: pure
+   ! Change self to a "string" using the specified fortran "fmt".
+      self :: IN
+      fmt :: STR, IN
+      left_justify :: BIN, IN, optional
+      res :: VEC{STR}(.dim)
+
+      i :: INT
+
+      do i = 1,.dim
+         res(i) = self(i).to_str(fmt,left_justify)
+      end
+
+   end
+
+   to_str(width,left_justify) result (res) ::: pure
+   ! Change self to a string with specified "width".
+      self :: IN
+      width :: INT, IN
+      left_justify :: BIN, IN, optional
+      res :: VEC{STR}(.dim)
+      i :: INT
+      do i = 1,.dim
+         res(i) = self(i).to_str(width,left_justify)
+      end
+   end
+
+   to_str(style,width,precision,left_justify) result (res) ::: pure
+   ! Change self to a string with specified "style", "width" and
+   ! "precision" as defined in the fortran standard 
+      self :: IN
+      style :: STR, IN
+      width,precision :: INT, IN
+      left_justify :: BIN, IN, optional
+      res :: VEC{STR}(.dim)
+      i :: INT
+      do i = 1,.dim
+         res(i) = self(i).to_str(style,width,precision,left_justify)
+      end
+   end
+
+   to_concatenated_str(fmt,separator) result (res) ::: pure
+   ! Change self to a string using "fmt" if specified, and with
+   ! "separator" between each item, if specified.
+      self :: IN
+      fmt,separator :: STR, IN, optional
+      res :: STR
+
+      str :: STR
+      n :: INT
+
+      res = " "
+
+      do n = 1,.dim
+
+         if (present(fmt)) then; str = self(n).to_str(fmt)
+         else;                   str = self(n).to_str
+         end
+
+         ENSURE(len_trim(res) + len_trim(str) < len(res), "result is too long")
+
+         if (present(separator)) then; res = trim(res) // separator // trim(str)
+         else;                         res = trim(res) //    " "    // trim(str)
+         end
+
+      end
+
+   end
+
+!  ========================
+!  Unit conversion routines
+!  ========================
+
+   convert_to(units) ::: PURE
+   ! Convert the "self" in atomic units or generic units to a new
+   ! number in "units".
+      self :: INOUT
+      units :: STR, IN
+
+   ENSURE(units.is_known_unit,"unknown units, " // units)
+
+      self = nint(self*units.conversion_factor)
+   
+   end
+
+   convert_from(units) ::: PURE
+   ! Convert the number "self" from "units" system to a new number
+   ! in atomic units or generic units.
+      self :: INOUT
+      units :: STR, IN
+
+   ENSURE(units.is_known_unit,"unknown units, " // units)
+      
+      self = nint(self/units.conversion_factor)
+
+   end
+
+!  ====================
+!  Numerical operations
+!  ====================
+
+   set_to(v) ::: pure
+   ! Set the vector to "v". See also the "copy" routine.
+      self :: INOUT
+      v :: VEC{V?}, IN
+
+      self = v
+
+   end
+
+   plus(v,mask) ::: pure
+   ! Add vector "v" to "self"
+      self :: INOUT
+      mask :: VEC{BIN}, IN, optional
+      v :: VEC{V?}, IN
+
+      i :: INT
+
+      if (NOT present(mask)) then
+         self = self + v
+      else
+         do i = 1,.dim
+            if (mask(i)) self(i) = self(i) + v(i)
+         end
+      end
+
+   end
+
+   minus(v,mask) ::: pure
+   ! Subtract vector "v" from "self"
+      self :: INOUT
+      v :: VEC{V?}, IN
+      mask :: VEC{BIN}, IN, optional
+
+      i :: INT
+
+      if (NOT present(mask)) then
+         self = self - v
+      else
+         do i = 1,.dim
+            if (mask(i)) self(i) = self(i) - v(i)
+         end
+      end
+
+   end
+
+   to_scaled(v,fac) ::: pure
+   ! Set the vector to "v" scaled by "fac"
+      self :: INOUT
+      v :: VEC{V?}, IN
+      fac :: FAC?, IN
+
+      self = fac*v
+
+   end
+
+   plus_scaled(v,fac) ::: pure
+   ! Add a vector "v" scaled by "fac" to "self"
+      self :: INOUT
+      v :: VEC{V?}, IN
+      fac :: FAC?, IN
+
+      self = self + fac*v
+
+   end
+
+
+   sum result (res) ::: pure
+   ! Return the sum of the elements in "self"
+      self :: IN
+      res :: INTRINSIC
+
+      i :: INT
+
+      res = 0
+      do i = 1,.dim
+         res = res + self(i)
+      end
+
+   end
+
+   dot(v) result (res) ::: pure
+   ! Return the dot product with "v"
+      self :: IN
+      v :: VEC{V?}, IN
+      res :: RES?
+
+      i :: INT
+
+      res = 0
+      do i = 1,.dim
+         res = res + CONJG( self(i) ) *v(i)
+      end
+
+   end
+
+
+   cross(v) result (res) ::: pure
+   ! Return the cross product of "self" and "v".
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: VEC{INTRINSIC}(3)
+
+   ENSURE(.dim==3,"self must have dimension 3")
+
+      res(1) = self(2)*v(3) - v(2)*self(3)
+      res(2) = self(3)*v(1) - v(3)*self(1)
+      res(3) = self(1)*v(2) - v(1)*self(2)
+
+   end
+
+   to_cross_product_of(u,v) ::: pure
+   ! Set the vector to the cross product of "u" and "v".
+      self :: INOUT
+      u,v :: VEC{INTRINSIC}, IN
+
+   ENSURE(.dim==3,"self must have dimension 3")
+
+      self(1) = u(2)*v(3) - v(2)*u(3)
+      self(2) = u(3)*v(1) - v(3)*u(1)
+      self(3) = u(1)*v(2) - v(1)*u(2)
+
+   end
+
+
+   to_product_of(a,v,transpose_a) ::: PURE
+   ! Set "self" to the product of the matrix "a" and vector "v". If present,
+   ! "transpose_a" can be set to TRUE if the matrix needs to be transposed.
+      self :: OUT
+      a :: MAT{A?}, IN
+      v :: VEC{V?}, IN
+      transpose_a :: BIN, IN, optional
+
+      trans_a :: BIN
+      val :: VAL?
+      i,k :: INT
+
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+
+      if (trans_a) then
+
+         ENSURE(a.dim2<= .dim,"incompatible arrays")
+         ENSURE(a.dim1==v.dim,"incompatible arrays")
+         do i = 1,a.dim2
+            val = 0
+            do k = 1,a.dim1
+               val = val + a(k,i)*v(k)
+            end
+            self(i) = val
+          end
+
+      else
+
+         ENSURE(a.dim1<= .dim,"incompatible arrays")
+         ENSURE(a.dim2==v.dim,"incompatible arrays")
+         do i = 1,a.dim1
+            val = 0
+            do k = 1,a.dim2
+               val = val + a(i,k)*v(k)
+            end
+            self(i) = val
+         end
+
+      end
+
+   end
+
+   to_product_of(a,v,dagger_a,transpose_a) ::: PURE
+   ! Set "self" to the product of the matrix "a" and vector "v". If present,
+   ! "transpose_a" can be set to TRUE if the matrix needs to be transposed.
+      self :: OUT
+      a :: MAT{CPX}, IN
+      v :: VEC{V?}, IN
+      dagger_a,transpose_a :: BIN, IN, optional
+
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+
+      dagg_a,trans_a :: BIN
+      opt,i,k :: INT
+      val :: CPX
+
+      dagg_a = FALSE
+      trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+
+      select case (opt)
+
+         case (0)
+            ENSURE(a.dim1<= .dim,"incompatible arrays")
+            ENSURE(a.dim2==v.dim,"incompatible arrays")
+            do i = 1,a.dim1
+               val = (ZERO,ZERO)
+               do k = 1,a.dim2
+                  val = val + a(i,k)*v(k)
+               end
+               self(i) = val
+            end
+
+         case (1)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + conjg(a(k,i))*v(k)
+               end
+               self(i) = val
+            end
+
+         case (2)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + a(k,i)*v(k)
+               end
+               self(i) = val
+            end
+
+      end
+
+   end
+
+
+   plus_product_of(a,v,transpose_a) ::: PURE
+   ! Add to "self" the product of the matrix "a" and vector "v". If present,
+   ! "transpose_a" can be set to TRUE if the marix needs to be transposed.
+      self :: INOUT
+      a :: MAT{A?}, IN
+      v :: VEC{V?}, IN
+      transpose_a :: BIN, IN, optional
+
+      trans_a :: BIN
+      val :: VAL? 
+      i,k :: INT
+
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+
+      if (trans_a) then
+
+         ENSURE(a.dim2<= .dim,"incompatible arrays")
+         ENSURE(a.dim1==v.dim,"incompatible arrays")
+         do i = 1,a.dim2
+            val = 0
+            do k = 1,a.dim1
+               val = val + a(k,i)*v(k)
+            end
+            self(i) = self(i) + val
+          end
+
+      else
+
+         ENSURE(a.dim1<= .dim,"incompatible arrays")
+         ENSURE(a.dim2==v.dim,"incompatible arrays")
+         do i = 1,a.dim1
+            val = 0
+            do k = 1,a.dim2
+               val = val + a(i,k)*v(k)
+            end
+            self(i) = self(i) + val
+         end
+
+      end
+
+   end
+
+   plus_product_of(a,v,dagger_a,transpose_a) ::: PURE
+   ! Add to "self" the product of the matrix "a" and vector "v". If present,
+   ! "transpose_a" can be set to TRUE if the matrix needs to be transposed.
+      self :: INOUT
+      a :: MAT{CPX}, IN
+      v :: VEC{V?}, IN
+      dagger_a,transpose_a :: BIN, IN, optional
+
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+
+      dagg_a,trans_a :: BIN
+      opt,i,k :: INT
+      val :: CPX
+
+      dagg_a = FALSE
+      trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+
+      select case (opt)
+
+         case (0)
+            ENSURE(a.dim1<= .dim,"incompatible arrays")
+            ENSURE(a.dim2==v.dim,"incompatible arrays")
+            do i = 1,a.dim1
+               val = (ZERO,ZERO)
+               do k = 1,a.dim2
+                  val = val + a(i,k)*v(k)
+               end
+               self(i) = self(i) + val
+            end
+
+         case (1)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + conjg(a(k,i))*v(k)
+               end
+               self(i) = self(i) + val
+            end
+
+         case (2)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + a(k,i)*v(k)
+               end
+               self(i) = self(i) + val
+            end
+
+      end
+
+   end
+
+
+   minus_product_of(a,v,transpose_a) ::: PURE
+   ! Subtract from "self" the product of the matrix "a" and vector "v". If
+   ! present, "transpose_a" can be set to TRUE if the marix needs to be
+   ! transposed.
+      self :: INOUT
+      a :: MAT{A?}, IN
+      v :: VEC{V?}, IN
+      transpose_a :: BIN, IN, optional
+
+      trans_a :: BIN
+      val :: VAL? 
+      i,k :: INT
+
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+
+      if (trans_a) then
+
+         ENSURE(a.dim2<= .dim,"incompatible arrays")
+         ENSURE(a.dim1==v.dim,"incompatible arrays")
+         do i = 1,a.dim2
+            val = 0
+            do k = 1,a.dim1
+               val = val + a(k,i)*v(k)
+            end
+            self(i) = self(i) - val
+          end
+
+      else
+
+         ENSURE(a.dim1<= .dim,"incompatible arrays")
+         ENSURE(a.dim2==v.dim,"incompatible arrays")
+         do i = 1,a.dim1
+            val = 0
+            do k = 1,a.dim2
+               val = val + a(i,k)*v(k)
+            end
+            self(i) = self(i) - val
+         end
+
+      end
+
+   end
+
+   minus_product_of(a,v,dagger_a,transpose_a) ::: PURE
+   ! Subtract from "self" the product of the matrix "a" and vector "v". If
+   ! present, "transpose_a" can be set to TRUE if the matrix needs to be
+   ! transposed.
+      self :: INOUT
+      a :: MAT{CPX}, IN
+      v :: VEC{V?}, IN
+      dagger_a,transpose_a :: BIN, IN, optional
+
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+
+      dagg_a,trans_a :: BIN
+      opt,i,k :: INT
+      val :: CPX
+
+      dagg_a = FALSE
+      trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+
+      select case (opt)
+
+         case (0)
+            ENSURE(a.dim1<= .dim,"incompatible arrays")
+            ENSURE(a.dim2==v.dim,"incompatible arrays")
+            do i = 1,a.dim1
+               val = (ZERO,ZERO)
+               do k = 1,a.dim2
+                  val = val + a(i,k)*v(k)
+               end
+               self(i) = self(i) - val
+            end
+
+         case (1)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + conjg(a(k,i))*v(k)
+               end
+               self(i) = self(i) - val
+            end
+
+         case (2)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + a(k,i)*v(k)
+               end
+               self(i) = self(i) - val
+            end
+
+      end
+
+   end
+
+
+   to_scaled_product_of(a,v,fac,transpose_a) ::: PURE
+   ! Set "self" to the product of the matrix "a" and vector "v" scaled by "fac".
+   ! If present, "transpose_a" can be set to TRUE if the matrix needs to be
+   ! transposed.
+      self :: OUT
+      a :: MAT{A?}, IN
+      v :: VEC{V?}, IN
+      fac :: FAC?, IN
+      transpose_a :: BIN, IN, optional
+
+      trans_a :: BIN
+      val :: VAL? 
+      i,k :: INT
+
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+
+      if (trans_a) then
+
+         ENSURE(a.dim2<= .dim,"incompatible arrays")
+         ENSURE(a.dim1==v.dim,"incompatible arrays")
+         do i = 1,a.dim2
+            val = 0
+            do k = 1,a.dim1
+               val = val + a(k,i)*v(k)
+            end
+            self(i) = fac*val
+          end
+
+      else
+
+         ENSURE(a.dim1<= .dim,"incompatible arrays")
+         ENSURE(a.dim2==v.dim,"incompatible arrays")
+         do i = 1,a.dim1
+            val = 0
+            do k = 1,a.dim2
+               val = val + a(i,k)*v(k)
+            end
+            self(i) = fac*val
+         end
+
+      end
+
+   end
+
+   to_scaled_product_of(a,v,fac,dagger_a,transpose_a) ::: PURE
+   ! Set "self" to the product of the matrix "a" and vector "v" scaled by "fac".
+   ! If present, "transpose_a" can be set to TRUE if the matrix needs to be
+   ! transposed.
+      self :: OUT
+      a :: MAT{CPX}, IN
+      v :: VEC{V?}, IN
+      fac :: FAC?, IN
+      dagger_a,transpose_a :: BIN, IN, optional
+
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+
+      dagg_a,trans_a :: BIN
+      opt,i,k :: INT
+      val :: CPX
+
+      dagg_a = FALSE
+      trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+
+      select case (opt)
+
+         case (0)
+            ENSURE(a.dim1<= .dim,"incompatible arrays")
+            ENSURE(a.dim2==v.dim,"incompatible arrays")
+            do i = 1,a.dim1
+               val = (ZERO,ZERO)
+               do k = 1,a.dim2
+                  val = val + a(i,k)*v(k)
+               end
+               self(i) = fac*val
+            end
+
+         case (1)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + conjg(a(k,i))*v(k)
+               end
+               self(i) = fac*val
+            end
+
+         case (2)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + a(k,i)*v(k)
+               end
+               self(i) = fac*val
+            end
+
+      end
+
+   end
+
+
+   plus_scaled_product_of(a,v,fac,transpose_a) ::: PURE
+   ! Add to self "self" the product of the matrix "a" and vector "v" scaled by
+   ! "fac".  If present, "transpose_a" can be set to TRUE if the matrix needs to
+   ! be transposed.
+      self :: INOUT
+      a :: MAT{A?}, IN
+      v :: VEC{V?}, IN
+      fac :: FAC?, IN
+      transpose_a :: BIN, IN, optional
+
+      trans_a :: BIN
+      val :: VAL?
+      i,k :: INT
+
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+
+      if (trans_a) then
+
+         ENSURE(a.dim2<= .dim,"incompatible arrays")
+         ENSURE(a.dim1==v.dim,"incompatible arrays")
+         do i = 1,a.dim2
+            val = 0
+            do k = 1,a.dim1
+               val = val + a(k,i)*v(k)
+            end
+            self(i) = self(i) + fac*val
+          end
+
+      else
+
+         ENSURE(a.dim1<= .dim,"incompatible arrays")
+         ENSURE(a.dim2==v.dim,"incompatible arrays")
+         do i = 1,a.dim1
+            val = 0
+            do k = 1,a.dim2
+               val = val + a(i,k)*v(k)
+            end
+            self(i) = self(i) + fac*val
+         end
+
+      end
+
+   end
+
+   plus_scaled_product_of(a,v,fac,dagger_a,transpose_a) ::: PURE
+   ! Add to "self" the product of the matrix "a" and vector "v" scaled by "fac".
+   ! If present, "transpose_a" can be set to TRUE if the matrix needs to be
+   ! transposed.
+      self :: INOUT
+      a :: MAT{CPX}, IN
+      v :: VEC{V?}, IN
+      fac :: FAC?, IN
+      dagger_a,transpose_a :: BIN, IN, optional
+
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+
+      dagg_a,trans_a :: BIN
+      opt,i,k :: INT
+      val :: CPX
+
+      dagg_a = FALSE
+      trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+
+      select case (opt)
+
+         case (0)
+            ENSURE(a.dim1<= .dim,"incompatible arrays")
+            ENSURE(a.dim2==v.dim,"incompatible arrays")
+            do i = 1,a.dim1
+               val = (ZERO,ZERO)
+               do k = 1,a.dim2
+                  val = val + a(i,k)*v(k)
+               end
+               self(i) = self(i) + fac*val
+            end
+
+         case (1)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + conjg(a(k,i))*v(k)
+               end
+               self(i) = self(i) + fac*val
+            end
+
+         case (2)
+            ENSURE(a.dim2<= .dim,"incompatible arrays")
+            ENSURE(a.dim1==v.dim,"incompatible arrays")
+            do i = 1,a.dim2
+               val = (ZERO,ZERO)
+               do k = 1,a.dim1
+                  val = val + a(k,i)*v(k)
+               end
+               self(i) = self(i) + fac*val
+            end
+
+      end
+
+   end
+
+
+   rotate_by(a) ::: PURE
+   ! Rotate self by matrix "a", treating self as a column vector
+      self :: INOUT
+      a :: MAT{INTRINSIC}, IN
+
+   ENSURE(size(a,1)==size(a,2),"matrix must be square")
+   ENSURE(size(a,2)==.dim,"matrix and vector dimensions inconsistent")
+
+      v :: VEC{INTRINSIC}*
+
+      v.create_copy(self)
+      self.to_product_of(a,v)
+      v.destroy
+   
+   end
+
+   translate_by(v) ::: PURE
+   ! Translate self by vector "v".
+      self :: INOUT
+      v :: VEC{INTRINSIC}, IN
+
+   ENSURE(.dim==v.dim,"vectors not of same dimension")
+
+      self = self + v
+
+   end
+
+
+   outer_product_with(v) result (res) ::: pure
+   ! Returns the outer product of "self" with vector "v".
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: MAT{INTRINSIC}(.dim,v.dim)
+
+      i,j :: INT
+
+      do i = 1,.dim
+      do j = 1,v.dim
+         res(i,j) = self(i)*v(j)
+      end
+      end
+
+   end
+
+
+   norm result (res) ::: pure
+   ! Return the norm of the vector
+      self :: IN
+      res :: REAL
+
+      res = sqrt(real(dot_product(self,self),kind=REAL_KIND))
+
+   end
+
+   normalise ::: pure
+   ! Normalise the vector
+      self :: INOUT
+
+      self = self/.norm
+
+   end
+
+   distance_to(a) result (res) ::: pure
+   ! Return the distance to "a" if supplied
+      self :: IN
+      a :: VEC{INTRINSIC}, IN
+      res :: REAL
+
+      temp :: VEC{INTRINSIC}(.dim)
+
+      temp = self - a
+      res = temp.norm
+
+   end
+
+
+   mean result (res) ::: pure
+   ! Return the mean of the vector
+      self :: IN
+      res :: INTRINSIC
+      res = VEC{INTRINSIC}:sum(self)/REALIFY(.dim)
+   end
+
+!  ==================
+!  Min/max operations
+!  ==================
+
+   chop_small_values(val) ::: pure
+   ! Set all values in the self whose value is smaller than "val" to "val".
+      self :: INOUT
+      val :: INTRINSIC, IN
+      i :: INT
+      do i = 1,.dim
+         if (self(i)<val) self(i) = val
+      end
+   end
+
+   chop_large_values(val) ::: pure
+   ! Set all values in the self whose value is larger than "val" to "val".
+      self :: INOUT
+      val :: INTRINSIC, IN
+      i :: INT
+      do i = 1,.dim
+         if (self(i)>val) self(i) = val
+      end
+   end
+
+   chop_small_absolute_values(val) ::: pure
+   ! Set all values in the self whose absolute value is smaller than "val" to
+   ! "val" times the sign of the original value.
+      self :: INOUT
+      val :: INTRINSIC, IN
+      i :: INT
+      bb,ba :: INTRINSIC
+      do i = 1,.dim
+         bb = self(i)
+         ba = abs(bb)
+         if (ba>=val) cycle
+         self(i) = sign(ONE,bb)*val
+      end
+   end
+
+   chop_large_absolute_values(val) ::: pure
+   ! Set all values in the self whose absolute value is larger than "val" to
+   ! "val" times the sign of the original value.
+      self :: INOUT
+      val :: INTRINSIC, IN
+      dim,i :: INT
+      bb,ba,sign :: INTRINSIC
+      dim = .dim
+      do i = 1,dim
+         bb = self(i)
+         if (bb==ZERO) cycle
+         ba = abs(bb)
+         sign = bb/ba
+         self(i) = sign*min(val,ba)
+      end
+   end
+
+   zero_small_values(eps) ::: pure
+   ! Zero elements of the vector which are less than "tol" in magnitude
+      self :: INOUT
+      eps :: REAL, optional, IN
+      tol :: REAL
+      tol = REAL_EPSILON
+      if (present(eps)) tol = eps
+      where (abs(self)<tol)
+        self = ZERO
+      end
+   end
+
+   largest_value result (res) ::: pure
+   ! Return the maximum absolute value in the vector
+      self :: IN
+      res :: REAL
+      val :: REAL
+      i :: INT
+      res = abs(self(1))
+      do i = 2,.dim
+        val = abs(self(i))
+        if (val > res) res = val
+      end
+   end
+
+   smallest_value result (res) ::: pure
+   ! Return minimum absolute value in the vector
+      self :: IN
+      res :: REAL
+      val :: REAL
+      i :: INT
+      res = abs(self(1))
+      do i = 2,.dim
+        val = abs(self(i))
+        if (val < res) res = val
+      end
+   end
+
+   no_of_elements_larger_than(tol) result (res) ::: pure
+   ! Return the number of elements larger than "tol".
+      self :: IN
+      tol :: INTRINSIC, IN
+      res :: INT
+      res = count(self>tol)
+   end
+
+!  ================
+!  Range operations
+!  ================
+
+   all_in_range(range) result (res) ::: pure
+   ! Return TRUE if all values of self are within the specified "range".
+      self :: IN
+      range :: VEC{INTRINSIC}(2), IN
+      res :: BIN
+      res = all(range(1) <= self AND self <= range(2))
+   end
+
+   in_range(range) result (res) ::: pure
+   ! Return element i as TRUE if self(i) is within the specified "range".
+      self :: IN
+      range :: VEC{INTRINSIC}(2), IN
+      res :: VEC{BIN}(.dim)
+      res = (range(1) <= self AND self <= range(2))
+   end
+
+   is_in_range(low,high) result (res) ::: pure
+   ! Return TRUE if the "self" vector is in the box bounded by lower corner
+   ! "low", and upper corner "high".
+      self :: IN
+      low,high :: VEC{INTRINSIC}(.dim), IN
+      res :: BIN
+   ENSURE(all(low<=high),"box limits are not increasing")
+      res = (all(low<=self) AND all(self<=high))
+   end
+
+   range result (res) ::: pure
+   ! Return the range (smallest and largest value) of self.
+      self :: IN
+      res :: VEC{INTRINSIC}(2)
+      res(1) = minval(self)
+      res(2) = maxval(self)
+   end
+
+   number_in_range(range) result (res) ::: pure
+   ! Return the number of element self(i,j) within the specified "range".
+      self :: IN
+      range :: VEC{INTRINSIC}(2), IN
+      res :: INT
+      res = count(range(1) <= self AND self <= range(2))
+   end
+
+!  ==========================
+!  Index returning operations
+!  ==========================
+
+   get_indices_in_range(range,row,val) ::: pure
+   ! Get the "row" and "col" indices, and values "val", of the
+   ! elements of "self" which are within the specified "range".
+      self :: IN
+      range :: VEC{INTRINSIC}(2), IN
+      row :: VEC{INT}(.number_in_range(range)), OUT
+      val :: VEC{INTRINSIC}(.number_in_range(range)), OUT
+
+      i,r :: INT
+   
+      i = 0
+
+      do r = 1,.dim
+      
+         if (self(r)<range(1) OR self(r)> range(2)) cycle
+
+         i = i + 1
+         row(i) = r
+         val(i) = self(r)
+
+      end
+
+   end
+
+   indices_in_range(range) result (row) ::: leaky, pure
+   ! Get the "row" and "col" indices, and values "val", of the
+   ! elements of "self" which are within the specified "range".
+      self :: IN
+      range :: VEC{INTRINSIC}(2), IN
+      row :: VEC{INT}*
+      
+      i,r,n :: INT
+
+      n = .number_in_range(range) 
+      row.create(n)
+
+      i = 0
+
+      do r = 1,.dim
+      
+         if (self(r)<range(1) OR self(r)>range(2)) cycle
+
+         i = i + 1
+         row(i) = r
+
+      end
+
+   end
+
+   index_of_maximum result (ind) ::: pure
+   ! Return the index of the maximum in the vector
+      self :: IN
+      ind :: INT
+      ind = maxval(maxloc(self))
+   end
+
+   index_of_minimum result (ind) ::: pure
+   ! Return the index of the minimum in the vector
+      self :: IN
+      ind :: INT
+      ind = minval(minloc(self))
+   end
+
+   index_of_largest_value result (ind) ::: pure
+   ! Return the index "ind" of the largest absolute value in the vector
+      self :: IN
+      ind :: INT
+
+      i :: INT
+      maxv,val :: REAL
+
+      maxv = abs(self(1))
+
+      ind = 1
+      do i = 2,.dim
+        val = abs(self(i))
+        if (val > maxv) then
+          maxv = val
+          ind = i
+        end
+      end
+
+   end
+
+   index_of_smallest_value result (ind) ::: pure
+   ! Return the index "ind" of the smallest value in the vector
+      self :: IN
+      ind :: INT
+
+      i :: INT
+      minv,val :: REAL
+
+      minv = abs(self(1))
+
+      ind = 1
+
+      do i = 2,.dim
+        val = abs(self(i))
+        if (val < minv) then
+          minv = val
+          ind = i
+        end
+      end
+
+   end
+
+   index_of_first_nonzero_value result (res) ::: pure
+   ! Returns the index of the first nonzero component of self.
+      self :: IN
+      res :: INT
+
+      i :: INT
+
+      res = 0
+
+      do i = 1,.dim
+        if (self(i).same_as(ZERO)) cycle
+        res = i
+        exit
+      end
+
+   end
+
+   index_of_first_nonzero_value(eps) result (res) ::: pure
+   ! Returns the index of the first nonzero component of self within
+   ! a tolerance "eps".
+      self :: IN
+      eps :: REAL, optional, IN
+      res :: INT
+
+      i :: INT
+
+      res = 0
+
+      do i = 1,.dim
+        if (self(i).same_as(ZERO,eps)) cycle
+        res = i
+        exit
+      end
+
+   end
+
+   index_of_first_nonzero_value result (res) ::: pure
+   ! Returns the index of the first nonzero component of self.
+   ! This version uses the == test for strict equality to zero.
+      self :: IN
+      res :: INT
+
+      i :: INT
+
+      res = 0
+
+      do i = 1,.dim
+        if (self(i)==0) cycle
+        res = i
+        exit
+      end
+
+   end
+
+   index_of_first_zero_value result (res) ::: pure
+   ! Returns the index of the first zero component of self.
+      self :: IN
+      res :: INT
+
+      i :: INT
+
+      res = 0
+
+      do i = 1,.dim
+        if (NOT self(i).same_as(ZERO)) cycle
+        res = i
+        exit
+      end
+
+   end
+
+   index_of_first_zero_value result (res) ::: pure
+   ! Returns the index of the first zero component of self.
+   ! This version uses the == test for strict equality to zero.
+      self :: IN
+      res :: INT
+
+      i :: INT
+
+      res = 0
+
+      do i = 1,.dim
+        if (self(i)/=0) cycle
+        res = i
+        exit
+      end
+
+   end
+
+   index_of_first_greater_than(val) result (res) ::: pure
+   ! Returns the index of the first element of self greater than "val".
+   ! Returns 0 if no index is greater.
+      self :: IN
+      val :: VAL?, IN
+      res :: INT
+
+      i :: INT
+
+      res = 0
+
+      do i = 1,.dim
+        if (self(i)<=val) cycle
+        res = i
+        exit
+      end
+
+   end
+
+   index_of_value(val,last) result (res) ::: pure
+   ! Returns the first index in "self" which has the value "val", or 0
+   ! if "val" is not present in the array. If "last" is present and
+   ! TRUE then the last value matching is returned
+      self :: IN
+      val :: INT, IN
+      last :: BIN, optional, IN
+      res :: INT
+
+      i :: INT
+      reverse :: BIN
+
+      reverse = FALSE
+      if (present(last)) reverse = last
+
+      res = 0
+
+      if (NOT reverse) then
+
+         do i = 1,.dim
+           if (self(i).same_as(val)) then
+              res = i
+              exit
+           end
+         end
+
+      else
+
+         do i = .dim,1,-1
+           if (self(i).same_as(val)) then
+              res = i
+              exit
+           end
+         end
+
+      end
+
+   end
+
+   index_of_value(val) result (res) ::: pure
+   ! Returns the first index in "self" which has the value "val", or 0 if "val"
+   ! is not present in the array. This version uses the == test for strict
+   ! equality.
+      self :: IN
+      val :: INT, IN
+      res :: INT
+
+      i :: INT
+
+      res = 0
+      do i = 1,.dim
+        if (self(i)/=val) cycle
+        res = i
+        exit
+      end
+
+   end
+
+   index_of_value_ne_to(val) result (res) ::: pure
+   ! Returns the first index in "self" which does not have the value
+   ! "val", or 0 if all the values are equal to "val". This version
+   ! uses the == test for strict equality.
+      self :: IN
+      val :: INT, IN
+      res :: INT
+
+      i :: INT
+
+      res = 0
+      do i = 1,.dim
+        if (self(i)==val) cycle
+        res = i
+        exit
+      end
+
+   end
+
+!  =======================
+!  Spin-orbital operations
+!  =======================
+
+   alpha result (res) ::: PURE
+   ! return the alpha sector of the vector
+      self :: IN
+      res :: VEC{INTRINSIC}(.dim/2)
+
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+
+      n :: INT
+
+      n   = .dim/2
+      res = self(1:n)
+
+   end
+
+   beta result (res) ::: PURE
+   ! return the beta sector of the vector
+      self :: IN
+      res :: VEC{INTRINSIC}(.dim/2)
+
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+
+      n :: INT
+
+      n   = .dim/2
+      res = self(n+1:2*n)
+
+   end
+
+   alpha_set_to(X) ::: PURE
+   ! Set the alpha sector of the vector
+      self :: INOUT
+      X :: VEC{INTRINSIC}, IN
+
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+   ENSURE(X.dim==.dim/2,"wrong size, X")
+
+      n :: INT
+
+      n = .dim/2
+      self(1:n) = X
+
+   end
+
+   beta_set_to(X) ::: PURE
+   ! Set the beta sector of the vector
+      self :: INOUT
+      X :: VEC{INTRINSIC}, IN
+
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+   ENSURE(X.dim==.dim/2,"wrong size, X")
+
+      n :: INT
+
+      n = .dim/2
+      self(n+1:2*n) = X
+
+   end
+
+   alpha_put_to(X) ::: PURE
+   ! Put the alpha sector to the vector "X"
+      self :: IN
+      X :: VEC{INTRINSIC}, OUT
+
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+   ENSURE(X.dim==.dim/2,"wrong size, X")
+
+      n :: INT
+
+      n = .dim/2
+      X = self(1:n)
+
+   end
+
+   beta_put_to(X) ::: PURE
+   ! Put the beta sector to the vector "X"
+      self :: IN
+      X :: VEC{INTRINSIC}, OUT
+
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+   ENSURE(X.dim==.dim/2,"wrong size, X")
+
+      n :: INT
+
+      n = .dim/2
+      X = self(n+1:2*n)
+
+   end
+
+end

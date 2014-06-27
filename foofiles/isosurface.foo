@@ -1,0 +1,3988 @@
+!
+! ISOSURFACE: 
+!
+! For generating triangulated iso-surfaces for display. An isosurface
+! is just a list of point, and a list of integer triples describing
+! each triangular face of the object.
+!
+! You can use the "recursive_marching_cube" or noremal "marching_cube"
+! method to get the surface. The former is faster for single
+! non-reentrant surfaces.
+!
+! Copyright (C) Dylan Jayatilaka, 2002
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+! 
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+! 
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: isosurface.foo 4398 2014-06-01 06:55:30Z dylan_ $
+!
+!---------------------------------------------------------------------
+
+module ISOSURFACE
+
+   implicit none         
+
+   !iter :: INT = 0
+
+contains
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   create(atom) ::: leaky
+   ! Create a grid object
+      self :: PTR
+      atom :: VEC{ATOM}*
+      .create
+      .set_atom_defaults(atom)
+   end
+
+   create_copy(s) ::: leaky
+   ! Create self as a duplicate of "s".
+      self :: PTR
+      s :: ISOSURFACE, IN
+      .create
+      .copy(s)
+   end
+
+   copy(s) ::: leaky
+   ! Copy self.
+      s :: ISOSURFACE, IN
+      self = s
+      .nullify_ptr_part
+      if (s.iso_values.created) .iso_values.create_copy(s.iso_values)
+      if (s.point.created) .point.create_copy(s.point)
+      if (s.face.created) .face.create_copy(s.face)
+      if (s.cap.created) .cap.create_copy(s.cap)
+      if (s.point_gradient.created) .point_gradient.create_copy(s.point_gradient)
+      if (s.point_mean_curvature.created) .point_mean_curvature.create_copy(s.point_mean_curvature)
+      if (s.point_gaussian_curvature.created) .point_gaussian_curvature.create_copy(s.point_gaussian_curvature)
+      if (s.map.created) .map.create_copy(s.map)
+      if (s.surface_property_values.created) .surface_property_values.create_copy(s.surface_property_values)
+      if (s.surface_iso_values.created) .surface_iso_values.create_copy(s.surface_iso_values)
+      if (s.colour.created) .colour.create_copy(s.colour)
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts 
+
+      nullify(.iso_values)
+      nullify(.point)
+      nullify(.face)
+      nullify(.cap)
+      nullify(.point_gradient)
+      nullify(.point_mean_curvature)
+      nullify(.point_gaussian_curvature)
+      nullify(.map)
+      nullify(.surface_property_values)
+      nullify(.surface_iso_values)
+      nullify(.colour)
+      nullify(.atom)
+
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts 
+
+      .iso_values.destroy
+      .point.destroy
+      .face.destroy
+      .cap.destroy
+      .point_gradient.destroy
+      .point_mean_curvature.destroy
+      .point_gaussian_curvature.destroy
+      .map.destroy
+      .surface_property_values.destroy
+      .surface_iso_values.destroy
+      .colour.destroy
+
+      nullify(.atom) 
+
+   end
+
+   destroy_info_arrays ::: leaky
+   ! Destroy the isosurface information arrays
+
+      .n_pt   = 0
+      .n_face = 0
+      .n_cap = 0
+
+      .point.destroy
+      .point_gradient.destroy
+      .point_mean_curvature.destroy
+      .point_gaussian_curvature.destroy
+      .face.destroy
+      .cap.destroy
+      .surface_property_values.destroy
+      .surface_iso_values.destroy
+
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   set_defaults(atom) ::: leaky
+   ! Set up defaults 
+      atom :: VEC{ATOM}*, optional
+
+      .property             = " "
+      .triangulation_method = " "
+
+      .iso_value            = ZERO
+
+      .n_pt                 = 0
+      .n_face               = 0
+      .n_cap                = 0
+ 
+      .area                 = ZERO
+      .volume               = ZERO
+      .an_volume            = ZERO
+      .volume_min           = ZERO
+      .volume_max           = ZERO
+
+      .n_skip               = 0
+      .level                = 0
+      .final_level          = 0
+      .scan_level           = 0
+      .minimum_scan_level   = ISOSURFACE_MINIMUM_SCAN_LEVEL
+      .minimum_scan_division = ZERO
+      .voxel_proximity_factor =  ISOSURFACE_VOXEL_PROXIMITY_FACTOR
+ 
+      .del_x                  = ONE
+      .del_y                  = ONE
+      .del_z                  = ONE
+      .x                      = 0
+      .y                      = 0
+      .z                      = 0
+ 
+      .small_map              = FALSE
+      .big_interior           = FALSE
+      .cap_ends               = 0
+      .suppress_caps          = FALSE
+
+      .surface_property       = " "
+      .surface_point          = ZERO
+      .chop_surface_property  = FALSE
+      .surface_property_lb    = ISOSURFACE_PROPERTY_LB
+      .surface_property_ub    = ISOSURFACE_PROPERTY_UB
+      .surface_prop_lb_abs    = ISOSURFACE_PROPERTY_LB_ABS
+      .surface_prop_ub_abs    = ISOSURFACE_PROPERTY_UB_ABS
+ 
+      .CX_output_fingerprint         = FALSE
+      .CX_fingerprint_grid           = 2
+      .CX_output_distance_properties =  FALSE
+      .CX_output_shape_properties    =  FALSE
+
+      .hirshfeld_power_factor = 1
+
+      ! Special
+      .colour.create
+      .colour.set_reverse_defaults
+      .set_atom_defaults(atom)
+
+   end
+
+   set_atom_defaults(atom)
+   ! Set up atom defaults
+      atom :: VEC{ATOM}*, optional
+
+      if (present(atom)) then
+      if (associated(atom)) then
+         .atom => atom
+         .plot_grid.set_defaults(atom)
+      end
+      end
+
+   end
+
+!   default_big_interior result (res)
+!   ! Return TRUE if the interior of the isosurface is bigger than the exterior,
+!   ! i.e. gradients for the isosurface plot are to be reversed by default, so that
+!   ! they point outside the isosurface. NOTE: gradients should be reversed if the
+!   ! function has bigger values *inside* the isosurface.
+!     res :: BIN
+!     def :: BIN
+!     def = TRUE
+!     if (.iso_value<ZERO) def = FALSE
+!     res = def
+!!     select case (.property)
+!!        case("delta_density      "); res = def ! only for +ve densities ...
+!!        case("electric_potential "); res = def
+!!        case("electron_density   "); res = def
+!!        case("elf                "); res = def
+!!        case("fermi_mobility     "); res = def
+!!        case("grad_rho_on_rho    "); res = def ! a guess
+!!        case("hirshfeld_density  "); res = def 
+!!        case("laplacian_density  "); res = def
+!!        case("orbital            "); res = def
+!!        case("orbital_density    "); res = def
+!!        case("promolecule_density"); res = def
+!!        case("spin_density       "); res = def ! only for +ve densities
+!!        case("stockholder_density"); res = def 
+!!        case("true_fermi_mobility"); res = def
+!!        case("tsirelson_elf      "); res = def
+!!        case default;      ! don't know what it should be ... 
+!!     end
+!   end
+
+   property_bounds_set result (res)
+   ! Return TRUE if the property bounds have been set
+      res :: BIN
+      res = NOT .surface_property_lb.same_as(.surface_property_ub)
+   end
+
+   surface_property_lb_set result (res)
+   ! Return TRUE if the surface property lower bound has been set.
+      res :: BIN
+      res = .surface_property_lb/=ISOSURFACE_PROPERTY_LB 
+   end
+
+   surface_property_ub_set result (res)
+   ! Return TRUE if the surface property lower bound has been set.
+      res :: BIN
+      res = .surface_property_ub/=ISOSURFACE_PROPERTY_UB
+   end
+
+   surface_property_ub_abs_set result (res)
+   ! Return TRUE if the surface property upper bound for absolute values has
+   ! been set.
+      res :: BIN
+      res = .surface_prop_ub_abs/=ISOSURFACE_PROPERTY_UB_ABS
+   end
+
+   surface_point_set result (res)
+   ! Return TRUE if the surface point has been set
+      res :: BIN
+      res = any(.surface_point/=ISOSURFACE_SURFACE_POINT)
+   end
+
+!  =============
+!  Input methods
+!  =============
+
+   read_keywords ::: get_from(OBJECT), leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process a comand "keyword". Data is inputted from "stdin", unless
+   ! "word" is a sequence of blank separated strings. In this case, 
+   ! the sequence is processed as if it were a separate file.
+      keyword :: STR
+      select case (keyword)
+         case ("}                             ")  ! exit case
+         case ("big_interior=                 "); .read_big_interior
+         case ("cap_ends=                     "); .read_cap_ends
+         case ("chop_surface_propertye=       "); stdin.read(.chop_surface_property)
+         case ("colour_function=              "); .read_colour_function
+         case ("cx_fingerprint_grid=          "); .read_CX_fingerprint_grid
+         case ("cx_output_fingerprint=        "); .read_CX_output_fingerprint
+         case ("cx_output_distance_properties="); .read_CX_output_distance_properties
+         case ("cx_output_shape_properties=   "); .read_CX_output_shape_properties
+         case ("hirshfeld_power_factor=   "); .read_hirshfeld_power_factor
+         case ("iso_value=                    "); .read_iso_value
+         case ("iso_values=                   "); .read_iso_values
+         case ("kind=                         "); .read_property ! deprecated
+         case ("minimum_scan_division=        "); .read_minimum_scan_division
+         case ("minimum_scan_level=           "); .read_minimum_scan_level
+         case ("plot_grid=                    "); .read_plot_grid
+         case ("property=                     "); .read_property
+         case ("put                           "); .put
+         case ("put_colour_function           "); .colour.put
+         case ("put_connected_area            "); .put_connected_area
+         case ("put_faces                     "); .put_faces
+         case ("put_face_normals              "); .put_face_normals
+         case ("put_points                    "); .put_points
+         case ("put_vertex_gradients          "); .put_vertex_gradients
+         case ("put_vertex_normals            "); .put_vertex_normals  
+         case ("small_map=                    "); .read_small_map
+         case ("suppress_caps=                "); .read_suppress_caps
+         case ("surface_point=                "); .read_surface_point
+         case ("surface_property=             "); .read_surface_property
+         case ("surface_property_lower_bound= "); .read_surface_property_lb
+         case ("surface_property_upper_bound= "); .read_surface_property_ub
+         case ("surface_prop_lower_bound_abs= "); .read_surface_property_lb_abs
+         case ("surface_prop_upper_bound_abs= "); .read_surface_property_ub_abs
+         case ("test_cubify                   "); .test_cubify
+         case ("triangulation_method=         "); .read_triangulation_method
+         case ("units=                        "); .read_units
+         case ("voxel_proximity_factor=       "); .read_voxel_proximity_factor
+         case default;           UNKNOWN(keyword)
+      end
+   end
+
+   read_hirshfeld_power_factor
+   ! Read the hirshfeld power factor.
+   ! Densities are raise to this factor when generating
+   ! Hirshfeld surfaces
+   ! The number of points is adjusted to be no more than this.
+      stdin.read(.hirshfeld_power_factor)
+   end
+
+   read_CX_output_distance_properties
+   ! Read whether to output di, de and dnorm in put_CX routine
+      stdin.read(.CX_output_distance_properties)
+   end
+
+   read_CX_output_shape_properties
+   ! Read whether to output shape index and curvedness in put_CX routine
+      stdin.read(.CX_output_shape_properties)
+   end
+
+   read_CX_output_fingerprint
+   ! Read whether the fingerprint data should be output in put_CX routine
+      stdin.read(.CX_output_fingerprint)
+   end
+
+   read_CX_fingerprint_grid
+   ! Read the resolution of the fingerprint grid; affects resolution of the outputted fingerprint data
+      stdin.read(.CX_fingerprint_grid)
+   end
+
+   read_small_map
+   ! Read a switch which tells whether to delete dead elements from
+   ! the map table.
+      stdin.read(.small_map)
+   end
+
+   read_big_interior
+   ! Read a switch which tells if the interior of the isosurface is
+   ! bigger than the exterior i.e. whether to reverse the surface
+   ! gradients or not.
+      stdin.read(.big_interior)
+   end
+
+   read_cap_ends
+   ! Set non-zero if you want the ends of the isosurface on the
+   ! bounding cube to be capped. Set less than one if you want values
+   ! less than the isosurface capped, or greater than one if you want
+   ! values greater than the iso value capped.
+      stdin.read(.cap_ends)
+   end
+
+   read_suppress_caps
+   ! Only applies if .cap_ends is /= 0
+   ! If suppress_caps = TRUE then caps are generated but no put out
+   ! when put_faces is reached
+      stdin.read(.suppress_caps)
+   end
+
+   read_colour_function
+   ! Read the details of the colourfunction to be used
+    ! .colour.read_data_and_colour
+      .colour.read_data_and_RGB
+   end
+
+   read_iso_value
+   ! Read the defining iso_value for the isosurface
+      stdin.read_quantity(.iso_value)
+   end
+
+   read_iso_values
+   ! Read the defining iso_values for the isosurface
+      stdin.read_ptr_quantity(.iso_values)
+   end
+
+   read_property
+   ! Read the kind of isosurface to plot.
+      stdin.read(.property)
+
+      .property.to_lower_case
+
+   end
+
+   read_triangulation_method
+   ! Read the triangulation method a number whose smallness correlates with how
+   ! small each face of the generated isosurface is.
+      stdin.read(.triangulation_method)
+      .triangulation_method.to_lower_case
+      select case (.triangulation_method)
+         case("marching_cube          ")
+         case("recursive_marching_cube")
+         case default; UNKNOWN(.triangulation_method)
+      end
+   end
+
+   read_plot_grid
+   ! Read in the plot grid data
+      .plot_grid.reset_defaults ! don't reset bounding box or axes
+      .plot_grid.read_keywords
+   end
+
+   read_surface_point
+   ! Read a surface point which lies on, or near the surface.
+      stdin.read_quantity(.surface_point)
+   end
+
+   read_surface_property
+   ! Read surface properties to calculate
+      stdin.read(.surface_property)
+      .surface_property.to_lower_case
+   end
+
+   read_surface_property_lb
+   ! Read the value of a property lower bound.
+      stdin.read_quantity(.surface_property_lb)
+   end
+
+   read_surface_property_ub
+   ! Read the value of a property upper bound.
+      stdin.read_quantity(.surface_property_ub)
+   end
+
+   read_surface_property_lb_abs
+   ! Read the value of the lower bound for absolute values of the property.
+      stdin.read_quantity(.surface_prop_lb_abs)
+   end
+
+   read_surface_property_ub_abs
+   ! Read the value of the upper bound for absolute values of the property.
+      stdin.read_quantity(.surface_prop_ub_abs)
+   end
+
+   read_units ::: get_from(OBJECT), private
+   ! Read a string which describes the units to be used
+   end
+
+   read_minimum_scan_division
+   ! Read the minimum acceptable size for the marching cube, in order to resolve
+   ! all important isosurface features, when using the recursive marching cubes
+   ! method.
+      stdin.read_quantity(.minimum_scan_division)
+      ENSURE(.minimum_scan_division>ZERO,"value must be positive")
+   end
+
+   read_minimum_scan_level
+   ! Read the minimum number of scan divisions when using the recursive marching
+   ! cubes method. It must be large enough to resolve all isosurface features.
+   ! It is probably better to set the minimum_scan_division above, which is a
+   ! length. However, the number entered here is used as a sanity check to
+   ! override the number of divisions obtained from the minimum_scan_division if
+   ! it is smaller than this number.
+      stdin.read(.minimum_scan_level)
+      ENSURE(.minimum_scan_level>0,"value must be positive")
+   end
+
+   read_voxel_proximity_factor
+   ! Read the voxel proximity factor, which determies whn a voxel or marching
+   ! cube is close to the isosurface. It works by checking if the .iso_value is
+   ! within the entered factor times the difference between the maximum and
+   ! minimum function values on the voxel eges.
+      stdin.read(.voxel_proximity_factor)
+      ENSURE(.voxel_proximity_factor>ONE,"value must be greater than one")
+   end
+
+!   read_accuracy
+!   ! Read a number which tells to what accuracy each generated isosurface
+!   ! is determined
+!      unit :: STR
+!      stdin.read(.accuracy)
+!   end
+!
+!   read_flatness
+!   ! Read a number whose smallness correlates with the flatness of the 
+!   ! generated isosurface
+!      unit :: STR
+!      stdin.read(.flatness)
+!   end
+!
+!   read_smallness
+!   ! Read a number whose smallness correlates with how small each face of the 
+!   ! generated isosurface is.
+!      unit :: STR
+!      stdin.read(.smallness)
+!   end
+
+   is_hirshfeld_surface result (res)
+   ! Return TRUE if the isosurface settings are for a Hirshfeld surface.
+      res :: BIN
+      res = (.property=="stockholder_density" &
+          OR .property=="stockholder_weight") &
+         AND .iso_value.equals(HALF)
+   end
+
+   surface_label result (res)
+   ! Return a string which describes the isosurface, including the isovalue.
+      res :: STR
+
+      prop :: STR
+
+      if      (.is_hirshfeld_surface) then
+
+         res = "Hirshfeld_surface"
+
+      else if (.property=="orbital") then
+
+         prop = .orbital_label
+         res = prop.trim // ",isovalue=" // .iso_value.to_str("f10.5")
+
+      else
+
+         prop = .property
+         prop(1:1).to_upper_case
+         res = prop.trim // ",isovalue=" // .iso_value.to_str("f10.5")
+
+      end
+
+      if (.surface_property=="orbital") then
+
+         prop = .orbital_label
+         res = prop.trim // "-on-" // res.trim
+
+      else if (.surface_property/=" " AND .surface_property/="none") then
+
+         prop = .surface_property
+         prop(1:1).to_upper_case
+         res = prop.trim // "-on-" // res.trim
+
+      end
+
+   end
+
+   orbital_label result (res)
+   ! Return a string which describes the orbital being plotted
+   ! This uses the fact that a non-negative value of .plot_grid.LUMO_orbital means
+   ! that this value was set.
+      res :: STR
+      homo,lumo :: INT
+      homo = .plot_grid.HOMO_orbital
+      lumo = .plot_grid.LUMO_orbital
+      if (lumo/=-1) then      ! the LUMO value was set
+         if (lumo==0) then
+            res = "LUMO"
+         else
+            res = "LUMO-plus-" // lumo.to_str.trim
+         end
+      else                    ! the HOMO was set or is default
+         if (homo==0) then
+            res = "HOMO"
+         else if (homo>0) then
+            res = "HOMO-plus-" // homo.to_str.trim 
+         else if (homo<0) then
+            homo = -homo
+            res = "HOMO-minus-"// homo.to_str.trim 
+         end
+      end
+   end
+
+!  =====================
+!  Marching cube methods
+!  =====================
+
+   cubify(func) ::: leaky
+   ! Generate the isosurface using the marching cube algorithm
+   ! for a cubic region with an equally spaced grid. 
+   ! NOTE: Recently, only the recursive marching cube routine
+   ! has been exhaustively tested.
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      .prepare_grid
+    ! .put
+
+      select case (.triangulation_method)
+         case("marching_cube          "); .cubify_normally(func) !  Warning: see note
+         case("recursive_marching_cube"); .cubify_recursively(func)
+         case default;        UNKNOWN(.triangulation_method)
+      end
+ 
+      DIE_IF(.n_pt==0,"No isosurface points found.")
+
+      ! Report
+      .put
+
+   end 
+
+   prepare_grid 
+   ! Prepare the rhomboid grid for the different kinds of isosurface alogorithms.
+   ! Particularly, for the recursive method, set the .final_level and the
+   ! .scan_level. Then output the grid information before doing anything, so
+   ! the user can check everything is OK.
+      n_div,n_pt :: INT
+      scale :: REAL
+      oblique :: BIN
+
+      ! Set the plot kind
+      .plot_grid.set_plot_kind(.property)
+
+      oblique = .plot_grid.use_unit_cell_as_bbox
+      if (NOT oblique) then
+      ENSURE(.plot_grid.width.has_all_equal,"grid widths must be all equal")
+      end
+
+      select case (.triangulation_method)
+
+         case("marching_cube          ")
+
+            .plot_grid.set_for_marching_cubes
+            .del_x = .plot_grid.del_x
+            .del_y = .plot_grid.del_y
+            .del_z = .plot_grid.del_x
+            .set_default_cube(.cube)
+            .cap_square.set_defaults
+
+         case("recursive_marching_cube")
+
+            if (.minimum_scan_division.equals(ZERO)) then
+               if (.property=="stockholder_density") then
+                  .minimum_scan_division = TWO*ISOSURFACE_MINIMUM_SCAN_DIVISION
+               else 
+                  .minimum_scan_division = ISOSURFACE_MINIMUM_SCAN_DIVISION
+               end
+            end
+
+            ! First find the number of divisions required
+            n_div = .no_of_divisions(.minimum_scan_division)
+            n_div = max(n_div,.minimum_scan_level) 
+            n_pt = 2**n_div
+
+            ! The user might have requested too small a number of points ...
+            ! We must have at least the minimum number of divisions
+            if (n_pt>(max(.plot_grid.n_x,.plot_grid.n_y,.plot_grid.n_z)-1)) then
+               WARN("No. of points not sufficient, adjusting to be larger")
+               .plot_grid.n_x = n_pt + 1
+            end
+
+            ! Find out what the final level is that we really need.
+            .final_level = ceiling(log(real(.plot_grid.n_x-2))/log(TWO))
+            ENSURE(.final_level<=32,"too many grid points: # of divisions = "//.final_level.to_str.trim)
+            ENSURE(.final_level>=.minimum_scan_level,"too few grid points: # of divisions = "//.final_level.to_str.trim)
+            .scan_level  = -int(log(.minimum_scan_division/maxval(.plot_grid.width))/log(TWO))
+            .scan_level  = min(.final_level,.scan_level)
+            .scan_level  = max(.scan_level,.minimum_scan_level)
+
+            ! We have the right level, now adjust the # of points to be a power
+            ! of two (plus one to be odd), in order to apply the telescoping
+            ! cubes algorithm.  Any points outside the grid required for
+            ! gradients or hessians are calculated explicitly; this grid is
+            ! really the true bounding region of the isosurface plot.
+            WARN("Adjusting grid points higher to the nearest power of 2")
+            .plot_grid.n_x = 2**.final_level + 1     
+            if (NOT oblique) then
+               .plot_grid.set_points_widths_origin
+               ! If requested, adjust the bounding box width to be larger so that
+               ! we get *exactly* the desired separation. Otherwise, the grid
+               ! separation will be the smallest that can be used with the current
+               ! bounding box to achieve *at least* the number of user requested points.
+               if (.plot_grid.desired_separation>ZERO) then
+                  scale = .plot_grid.desired_separation/.plot_grid.del_x
+                  .plot_grid.width = .plot_grid.width*scale
+                  .plot_grid.set_points_widths_origin
+               end
+            else
+               ! Do not change widths -- they are taken from unit cell
+               .plot_grid.set_cube_from_widths
+            end
+
+            .del_x = .plot_grid.del_x
+            .del_y = .plot_grid.del_y
+            .del_z = .plot_grid.del_z
+            .set_default_cube(.cube)
+            .del_x = .plot_grid.width(1)
+            .del_y = .plot_grid.width(2)
+            .del_z = .plot_grid.width(3)
+
+         case default;        UNKNOWN(.triangulation_method)
+
+      end
+
+   end 
+
+   capping_number(x,y,z) result (res)
+   ! Identify which faces of a given cube denoted by x,y and z are on the boundary of the plot grid
+      x, y, z :: INT, IN
+      res :: INT
+      res = 0
+      if (z == 2)                res = ibset(res,0)
+      if (z == .plot_grid.n_z-2) res = ibset(res,1)
+      if (x == 2)                res = ibset(res,2)
+      if (x == .plot_grid.n_x-2) res = ibset(res,3)
+      if (y == 2)                res = ibset(res,4)
+      if (y == .plot_grid.n_y-2) res = ibset(res,5)
+   end
+
+   on_boundary(x,y,z) result (res)
+   ! Return True if x,y,z refers to a cube on the boundary of the plot grid
+      x, y, z :: INT, IN
+      res :: BIN
+      res = (NOT (.capping_number(x,y,z) == 0))
+   end
+
+   cubify_normally(func) ::: leaky, private
+   ! Generate the isosurface using the standard marching cube algorithm
+   ! *without* any recursion.
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      x,y,z, capping_number, face_number, b :: INT
+      cube :: MARCHINGCUBE
+      cap_square :: CAPPING_SQUARE
+      func_slab :: MAT3{REAL}*
+      info :: MAT3{VEC_{INT}}*
+      x_cap_info, y_cap_info, z_cap_info :: MAT3{VEC_{INT}}*
+      point_slab :: MAT4{REAL}*
+      oblique, do_capping :: BIN
+
+      ! Set isosurface info defaults
+      .set_isosurface_info_arrays
+
+      ! .cube contains the isovalue and size/axes of grid
+      cube = .cube
+      cap_square = .cap_square
+
+      oblique = .plot_grid.use_unit_cell_as_bbox
+      if (oblique) cube.set_axes(.plot_grid.box_axes)
+
+      ! Make the 4-slab of data
+      point_slab.create(3,.plot_grid.n_x,.plot_grid.n_y,4)         ! slab of points
+      func_slab.create(.plot_grid.n_x,.plot_grid.n_y,4)           ! function values
+
+      info.create(.plot_grid.n_x,.plot_grid.n_y,2,[0,11]) ! Saved vertex index info
+      info.zero
+
+      x_cap_info.create(.plot_grid.n_y,.plot_grid.n_z,2,[0,7])
+      x_cap_info.zero
+      y_cap_info.create(.plot_grid.n_x,.plot_grid.n_z,2,[0,7])
+      y_cap_info.zero
+      z_cap_info.create(.plot_grid.n_x,.plot_grid.n_y,2,[0,7])
+      z_cap_info.zero
+
+      ! Find all the marching cubes. Loop bottom to top.
+      ! Do two layers at a time. End points are not looped, 
+      ! they are only to get the normals and curvatures.
+      do z = 2,.plot_grid.n_z-2                      
+
+         ! Get a new z-slab of function values
+         .update_4_slab(point_slab, func_slab, z, func)             
+
+         ! Save previous edge info; zero current
+         info(:,:,1:1).set_to(info(:,:,2:2))
+         info(:,:,2:2).zero
+
+         ! Loop over the slab; 
+         ! x = left,  right
+         ! y = front, back
+         do y = 2,.plot_grid.n_y-2                   
+         do x = 2,.plot_grid.n_x-2                   
+
+            ! Set cube points and function values
+            cube.set_vertex_info( point_slab(:,x:x+1,y:y+1,2:3), func_slab(x:x+1,y:y+1,2:3) )
+
+            ! Set cube edge intersections
+            cube.set_case_info
+
+            ! If not on surface, do next cube except if we are on the boundary and doing caps
+            do_capping = (.cap_ends /= 0) AND .on_boundary(x,y,z) 
+            if (NOT (cube.is_on_surface OR do_capping)) cycle
+
+            ! Set up cube edge triangulation
+            cube.set_triangulation_info
+
+            ! Use previous edge info, if available. 
+            ! left = previous cube in x-direction
+            ! front = previous cube in y-direction
+            ! bottom - previous cube in z-direction
+            if (x>2) cube.set_left_info(left  =info(x-1,y  ,2).element)
+            if (y>2) cube.set_front_info(front=info(x  ,y-1,2).element)
+            if (z>2) cube.set_below_info(below=info(x  ,y  ,1).element)
+
+            ! Get curvatures
+            cube.set_hessian_info( func_slab(x-1:x+2,y-1:y+2,1:4) )
+
+            ! Now do the interpolation
+            if (oblique) then; cube.interpolate_oblique_faces
+            else;              cube.interpolate_faces
+            end
+
+            ! Store surface info
+            .append_new_face_info(cube)
+
+            ! Determine which caps to add
+            if (do_capping) then
+
+               capping_number = .capping_number(x,y,z)
+
+               ! Six possible faces to test
+               do b = 0,5 
+                  if (NOT BIT_SET_AT_POS_IN(capping_number,b)) cycle ! Find which faces to do (up to three)
+                  face_number = b + 1 ! face_number starts at 1 not 0
+
+                  ! initialise the capping square from the corresponding marching cube
+                  cube.set_capping_square(face_number,cap_square)
+                  .set_edge_vertices(cap_square) ! Get vertices created for the cube
+                  cap_square.set_n_pt(.n_pt)
+
+                  ! Depending on the face we are on, we initialize the cap to use vertices
+                  ! already generated for other surface caps. We do this by using the capping
+                  ! square to the "left" and the capping square "below" the capping square
+                  ! we are currently working on.
+                  ! The tricky part is the final argument to set_left_info or set_bottom_info - this 
+                  ! boolean determines whether we need to flip the capping square. 
+                  ! set_left_info(...,TRUE) flips the left and right edges
+                  ! set_bottom_info(...,TRUE) flips the top and bottom edges
+                  ! The capping square of 3 of the plotgrids faces always need flipping
+                  ! Because of the (complicated) interplay between the cubes coordinate system and that
+                  ! of the capping square, it turns out we need to flip...
+                  ! (i) bottom-top mapping for z=0 faces (b==0)
+                  ! (ii) left-right mapping for x=0 faces (b==2)
+                  ! (iii) left-right mapping for +y faces (b==5)
+                  if (b == 0 OR b ==1) then ! 0,+z faces
+                     if (x>2) cap_square.set_left_info(z_cap_info(x-1,y,b+1).element, FALSE)
+                     if (y>2) cap_square.set_bottom_info(z_cap_info(x,y-1,b+1).element, b==0) 
+                  else if (b == 2 OR b == 3) then ! 0,+x faces
+                     if (y>2) cap_square.set_left_info(x_cap_info(y-1,z,b-1).element, b==2) 
+                     if (z>2) cap_square.set_bottom_info(x_cap_info(y,z-1,b-1).element, FALSE)
+                  else if (b == 4 OR b == 5) then ! 0,+y faces
+                     if (x>2) cap_square.set_left_info(y_cap_info(x-1,z,b-3).element, b==5)
+                     if (z>2) cap_square.set_bottom_info(y_cap_info(x,z-1,b-3).element, FALSE)
+                  end
+
+                  cap_square.triangulate
+                  .append_new_cap_info(cap_square)
+
+                  if (b == 0 OR b == 1) then ! 0,+z faces
+                     z_cap_info(x,y,b+1)[4:7] = cap_square.edge_vertex_index(4:7)
+                  else if (b == 2 OR b == 3) then ! 0,+x faces
+                     x_cap_info(y,z,b-1)[4:7] = cap_square.edge_vertex_index(4:7)
+                  else ! 0 (b=4), +y (b=5) faces
+                     y_cap_info(x,z,b-3)[4:7] = cap_square.edge_vertex_index(4:7)
+                  end
+                  
+                  cap_square.reset
+               end
+
+            end
+
+            ! Keep interpolated vertex indices
+            info(x,y,2)[:] = cube.edge_vertex_index
+
+            ! Reset cube, reset # of points
+            cube.reset
+            cube.set_n_pt(.n_pt)
+
+         end
+         end
+
+      end
+
+      info.destroy
+      point_slab.destroy
+      func_slab.destroy
+      x_cap_info.destroy
+      y_cap_info.destroy
+      z_cap_info.destroy
+
+      .point.shrink_columns(.n_pt)
+      .point_gradient.shrink_columns(.n_pt)
+      .point_mean_curvature.shrink(.n_pt)
+      .point_gaussian_curvature.shrink(.n_pt)
+      .face.shrink_columns(.n_face)
+      .cap.shrink_columns(.n_cap)
+
+      .rotate_gradients
+
+   end 
+
+   set_edge_vertices(cap_square)
+   ! copy the edge vertex positions for the marching cube into the capping square
+     cap_square :: CAPPING_SQUARE, INOUT
+     i :: INT
+     j :: INT
+
+     do i=0,3
+       j = cap_square.edge_vertex_index(i)
+       if (j == 0) cycle
+       cap_square.edge_positions(:,i) = .point(:,j)
+     end
+
+   end
+
+   cubify_recursively(func) ::: leaky, private
+   ! Generate the isosurface using the recursive marching cube algorithm.
+   ! Multiple isosurface values are merged into one isosurface.
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      i :: INT
+      isosurface :: ISOSURFACE*
+
+      ! Multiple iso values
+      if (.iso_values.created) then 
+
+         ! Set self isovalue, and copy self
+         .iso_value = .iso_values(1) 
+         .cube.iso_value = .iso_values(1) 
+         isosurface.create_copy(self)
+
+         ! Loop over isovalues and merge surfaces
+         do i = 1,.iso_values.dim
+            isosurface.iso_value = isosurface.iso_values(i)
+            isosurface.cube.iso_value = isosurface.iso_values(i) 
+            isosurface.cubify_recursively_this(func)
+            isosurface.surface_iso_values.create(isosurface.n_pt)
+            isosurface.surface_iso_values = isosurface.iso_value
+            self.merge_with(isosurface)
+            isosurface.destroy_info_arrays
+         end
+         isosurface.destroy
+
+      ! Single iso value ...
+      else 
+         .cubify_recursively_this(func)         
+      end
+
+   end 
+
+   cubify_recursively_this(func) ::: leaky, private
+   ! Generate the isosurface using the recursive marching cube algorithm.
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+
+      end
+
+   ENSURE(.plot_grid.width.has_all_equal,"grid widths must be all equal")
+
+      p2 :: MAT{REAL}(3,8)
+      f2 :: VEC{REAL}(8)
+
+      .set_isosurface_info_arrays 
+
+      .volume_min = ZERO
+      .volume_max = ZERO
+      .n_skip = (.plot_grid.n_x+2)**3 ! including edges
+      .level = 0
+      .x = 0; .y = 0; .z = 0
+
+      .map.create(256,3,13)
+      .map.set_reverse_search(TRUE)
+
+      PLOT_GRID::make_cube_of_points(.plot_grid,p2,0,1,.del_x,.del_y,.del_z,0,0,0) 
+      ISOSURFACE::make_2_cube_of_values(self,f2,func,p2)
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.small_map) then; .divide_cubes_small_map(func,f2)
+      else;                 .divide_cubes(func,f2) 
+      end
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      .point.shrink_columns(.n_pt)
+      .point_gradient.shrink_columns(.n_pt)
+      .point_mean_curvature.shrink(.n_pt)
+      .point_gaussian_curvature.shrink(.n_pt)
+      .face.shrink_columns(.n_face)
+      .rotate_gradients
+
+    ! stdout.flush
+    ! stdout.show("Final no. of map keys =",.map.n_keys)
+      .map.destroy
+
+      .set_area
+      .set_volume
+
+   end 
+
+   divide_cubes(func,corner_values) ::: recursive, private, leaky
+   ! Generate the isosurface for "func" using a recursive marching cube
+   ! algorithm. "parent_cube" is the enclosing parent marching cube from which
+   ! the current cube was generated by a bisection method. We keep the
+   ! "parent_cube" to save on function evaluations on the corners.
+      interface
+         func(values,pt)                       ! The function whose isosurface we make
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      corner_values :: VEC{REAL}(8), IN        ! Parent cube corner values
+
+      cube :: MARCHINGCUBE                     ! One of the 8 child cube; becomes next parent
+      kube :: VEC{MARCHINGCUBE}(8)             ! The group of final 8 child "cubes"
+      p3 :: MAT{REAL}(3,27)                    ! The points of all child "cubes"
+      p5 :: MAT{REAL}(3,125)                   ! The points surrounding the final 8-"kube"
+      f3 :: VEC{REAL}(27)                      ! The function values used to make all child "cubes"
+      f5 :: VEC{REAL}(125)                     ! The function values for surrounds of the final 8-"kube"
+      skip :: VEC{BIN}(8)                      ! Tells if we can skip any of the final 8-"kubes"
+      eval :: VEC{BIN}(125)                    ! Tells which of the "p5" points need to be 
+                                               ! evaluated using "func".
+      left  :: VEC{INT}(8) = [0,1,0,3,0,5,0,7] ! The lexical index of the left-cube
+      front :: VEC{INT}(8) = [0,0,1,2,0,0,5,6] ! The lexical index of the front-cube
+      below :: VEC{INT}(8) = [0,0,0,0,1,2,3,4] ! The lexical index of the bottom cube
+      ix,iy,iz :: VEC{INT}(8)
+      bit,x,y,z,k :: INT
+      vol :: REAL
+      do_divide,oblique :: BIN
+
+      ! Which cube division level we are at
+      .level = .level + 1
+
+      ! Which bit to be set which describes the cube axis positions
+      bit = .final_level - .level
+
+      ! Oblique axis systems require special interpolation
+      oblique = .plot_grid.use_unit_cell_as_bbox
+
+      ! Oblique axes have different spacings on each axis
+      .del_x = .del_x/TWO
+      if (oblique) then; .del_y = .del_y/TWO; .del_z = .del_z/TWO
+      else;              .del_y = .del_x;     .del_z = .del_x
+      end
+      vol = .del_x*.del_y*.del_z
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! Divide into 8 cubes and do again
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.level<.final_level) then 
+
+         ! Evaluate the parent  points and function values to pass down
+         PLOT_GRID::make_cube_of_points(.plot_grid,p3,0,2,.del_x,.del_y,.del_z,.x,.y,.z) 
+         ISOSURFACE::make_3_cube_of_values(self,f3,func,p3,corner_values)
+
+         ! Set the default cube
+         cube = .cube
+       ! .set_default_cube(cube)
+
+         ! Loop over the 8 subcubes
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            ! Set "cube" to be one of the child cubes
+          ! cube.set_vertex_info(p3(:,x:x+1,y:y+1,z:z+1), &
+          !                        f3(x:x+1,y:y+1,z:z+1))
+            MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Which vertices are inside or outside isosurface?
+            cube.set_case_info
+
+            ! Determine of we must divide this child further
+            do_divide = (.level<.scan_level) OR cube.is_nearly_on_surface(.voxel_proximity_factor)
+
+            ! If dividing, set the child cube coordinates and do it
+            if (do_divide) then 
+               .x = ibclr(.x,bit); if (x==1) .x = ibset(.x,bit) ! Set cube coords
+               .y = ibclr(.y,bit); if (y==1) .y = ibset(.y,bit)
+               .z = ibclr(.z,bit); if (z==1) .z = ibset(.z,bit)
+               .divide_cubes(func,cube.value_at_vertex)         ! <<<<<< recursive here
+               .x = ibclr(.x,bit)                               ! Clear the cube coords
+               .y = ibclr(.y,bit)
+               .z = ibclr(.z,bit)
+            ! If not dividing get a rough estimate of the volume
+            else
+               if (cube.is_inside_surface) then
+                  .volume_min = .volume_min + vol
+                  .volume_max = .volume_max + vol
+               end
+            end
+
+         end
+         end
+         end
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! Divide by 8 the last time, and triangulate
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      else                
+
+         ! A 5-cube of points needed for gradients and hessians
+         ! Start with a 3-cube of values for now
+         PLOT_GRID::make_cube_of_points(.plot_grid,p3,0,2,.del_x,.del_y,.del_z,.x,.y,.z) 
+         ISOSURFACE::make_3_cube_of_values(self,f3,func,p3,corner_values)
+
+         ! Set the default cube, for interpolations
+         cube = .cube
+       ! .set_default_cube(cube)
+
+         ! Tells which of the points in the 5-cube must be evaluated
+         eval = FALSE          
+
+         ! List of cubes which are not triangulated.
+         skip = TRUE
+
+         ! Indices of previous cubes in the map table which have been
+         ! triangulated; no need to re-triangulate shared faces.
+         ix = 0; iy = 0; iz = 0
+
+         ! The child cube index, in range 1 ... 8
+         k = 0
+
+         ! Loop over the child cubes the first time; triangulate later
+         ! when we know which cubes to do, which helps avoid function
+         ! evaluations on the 5 x 5 x 5 cube
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            k = k + 1
+
+            ! Set child cube info; store only needed parts in kube(k)
+            MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Which cube vertices are inside or outside isosurface?
+            cube.set_case_info
+            if (cube.is_inside_surface)      .volume_min = .volume_min + vol
+            if (NOT cube.is_outside_surface) .volume_max = .volume_max + vol
+
+            ! Is the cube on the surface?
+            if (NOT cube.is_on_surface) cycle 
+
+            ! We are on the surface: set the cube coords
+            .x = .x + x
+            .y = .y + y
+            .z = .z + z
+ 
+            ! Don't skip this cube
+            skip(k) = FALSE
+
+            ! Which cube edges cut the surface? Hence, which cube vertices are
+            ! needed? Hence, what triangles are to be made?
+            cube.skip_bit_string = 0
+            cube.set_triangulation_info
+
+            ! Find out which faces of the cube should have been triangulated 
+            ! already, and store in ix, iy, iz arrays, and store in the 
+            ! skip_bit_string for hessian evaluation
+            if (cube.has_left_face_on_surface) then
+               if (x>0) then
+                  ix(k) = -1
+                  cube.set_left_skip_bit_string  ! Left child cube exists
+               else if (.x>0 AND .map.has_key([.x-1,.y,.z],index=ix(k))) then
+                  cube.set_left_skip_bit_string  ! Left map cube exists
+               end
+            end
+            if (cube.has_front_face_on_surface) then
+               if (y>0) then
+                  iy(k) = -1
+                  cube.set_front_skip_bit_string ! Front child cube exists
+               else if (.y>0 AND .map.has_key([.x,.y-1,.z],index=iy(k))) then
+                  cube.set_front_skip_bit_string ! Front map cube exists
+               end
+            end
+            if (cube.has_lower_face_on_surface) then
+               if (z>0) then
+                  iz(k) = -1
+                  cube.set_below_skip_bit_string ! Lower child cube exists
+               else if (.z>0 AND .map.has_key([.x,.y,.z-1],index=iz(k))) then
+                  cube.set_below_skip_bit_string ! Lower map cube exists
+               end
+            end
+
+            ! Set which edges to interpolate, accounting for those
+            ! already done above in skip_bit_string
+            cube.set_cube_bit_string 
+
+            ! Set which of the 5 x 5 x 5 points are needed for hessian
+            ! and gradient.
+            if (NOT oblique) then;
+               MARCHINGCUBE::set_hessian_eval_array(cube,eval,x,y,z)
+            else
+               MARCHINGCUBE::set_gradient_eval_array(cube,eval,x,y,z)
+            end
+
+            ! Store the needed parts of cube for later interpolation
+            kube(k) = cube
+          ! kube(k).cube_bit_string = cube.cube_bit_string
+          ! kube(k).edge_bit_string = cube.edge_bit_string
+          ! kube(k).skip_bit_string = cube.skip_bit_string
+
+
+            ! Clear the cube coords
+            .x = .x - x                                      
+            .y = .y - y
+            .z = .z - z
+         end
+         end
+         end
+
+         ! Don't evaluate the 3 x 3 x 3 points/values -- already done
+       ! eval(2:4,2:4,2:4) = FALSE 
+       ! f5(1:3,1:3,1:3) = f3
+         ISOSURFACE::initialize_eval_f5(eval,f5,f3)
+       
+         ! Now evaluate the function only at the needed points. The
+         ! previous loops over the 8 kubes was all for this.
+         PLOT_GRID::make_cube_of_points(.plot_grid,p5,-1,3,.del_x,.del_y,.del_z,.x,.y,.z,eval) 
+         ISOSURFACE::make_5_cube_of_values(self,f5,func,p5,eval)
+
+         ! Loop over the child cubes the second time, and do the
+         ! triangulation.
+         k = 0                
+         do z = 0,1 
+         do y = 0,1
+         do x = 0,1
+
+            k = k + 1
+            if (skip(k)) cycle
+
+            ! Get stored cobe
+            cube = kube(k)
+
+            ! Evaluate the gradient and hessian; skips in cube_bit_string
+          ! cube.set_hessian_info(f5(x:x+3,y:y+3,z:z+3))
+            MARCHINGCUBE::set_hessian_info5(cube,f5,x,y,z)
+
+            ! Set the cube coordinates; for storing in map table
+            .x = .x + x 
+            .y = .y + y
+            .z = .z + z
+
+            ! Use previously triangulated cubes if possible, avoid
+            ! looking in the map table
+            if (ix(k)/=0) then
+               if (ix(k)<0) then; cube.set_left_info(kube(left(k)).edge_vertex_index)
+               else;              cube.set_left_info(.map.values(:,ix(k)))
+               end
+            end
+            if (iy(k)/=0) then
+               if (iy(k)<0) then; cube.set_front_info(kube(front(k)).edge_vertex_index)
+               else;              cube.set_front_info(.map.values(:,iy(k)))
+               end
+            end
+            if (iz(k)/=0) then
+               if (iz(k)<0) then; cube.set_below_info(kube(below(k)).edge_vertex_index)
+               else;              cube.set_below_info(.map.values(:,iz(k)))
+               end
+            end
+
+            ! Set the cube vertex index to the last vertex
+            cube.set_n_pt(.n_pt)                         
+
+            ! Finally, do the interpolation
+            if (oblique) then; cube.interpolate_oblique_faces                 
+            else;              cube.interpolate_faces                 
+            end
+           
+            ! Copy the cube interpolation info to the isosurface
+            .append_new_face_info(cube)
+
+            ! Append the cube vertex info to the map only if needed
+            if (cube.has_reusable_edge_vertices) &
+               .map.append_pair([.x,.y,.z],cube.edge_vertex_index)
+            
+
+            ! Might need to keep this, it may share a face
+            if (x==0 OR y==0 OR z==0) &
+               kube(k).edge_vertex_index = cube.edge_vertex_index 
+
+            ! Clear the cube coords
+            .x = .x - x 
+            .y = .y - y
+            .z = .z - z
+         end
+         end
+         end
+
+      end
+
+      ! Go up to the next level: double side lengths, decrease level
+      .del_x = TWO*.del_x
+      if (oblique) then; .del_y = TWO*.del_y; .del_z = TWO*.del_z
+      else;              .del_y = .del_x;     .del_z = .del_x
+      end
+
+      .level = .level - 1
+
+   end
+
+   divide_cubes_small_map(func,corner_values) ::: recursive, private, leaky
+   ! Generate the isosurface for "func" using a recursive marching cube
+   ! algorithm. "parent_cube" is the enclosing parent marching cube from which
+   ! the current cube was generated by a bisection method. We keep the
+   ! "parent_cube" to save on function evaluations on the corners.
+   ! NOTE: this version keeps a small map table but it makes no
+   ! difference to timings on linux
+      interface
+         func(values,pt)                       ! The function whose isosurface we make
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      corner_values :: VEC{REAL}(8), IN        ! Parent cube corner values
+      cube :: MARCHINGCUBE                     ! One of the 8 child cube; becomes next parent
+      kube :: VEC{MARCHINGCUBE}(8)             ! The group of final 8 child "cubes"
+      p3 :: MAT{REAL}(3,27)                    ! The points of all child "cubes"
+      p5 :: MAT{REAL}(3,125)                   ! The interior and surrounds of the final 8-"kube"
+      f3 :: MAT3{REAL}(0:2,0:2,0:2)            ! The interior values used to make all child "cubes"
+      f5 :: MAT3{REAL}(0:4,0:4,0:4)            ! The interior and surrounding values of the final 8-"kube"
+      skip :: VEC{BIN}(8)                      ! Tells if we can skip any of the final 8-"kubes"
+      eval :: MAT3{BIN}(5,5,5)                 ! Tells which of the "p5" points need to be 
+                                               ! evaluated using "func".
+      left  :: VEC{INT}(8) = [0,1,0,3,0,5,0,7] ! The lexical index of the left-cube
+      front :: VEC{INT}(8) = [0,0,1,2,0,0,5,6] ! The lexical index of the front-cube
+      below :: VEC{INT}(8) = [0,0,0,0,1,2,3,4] ! The lexical index of the bottom cube
+      ix,iy,iz,ik :: VEC{INT}(8)
+      dead_list :: VEC{INT}(24)
+      bit,x,y,z,k,kk,c,n :: INT
+      vol :: REAL
+      do_divide,oblique :: BIN
+
+      ! Which cube division level we are at
+      .level = .level + 1
+
+      ! Which bit to be set which describes the cube axis positions
+      bit = .final_level - .level
+
+      ! Oblique axis systems require special interpolation
+      oblique = .plot_grid.use_unit_cell_as_bbox
+
+      ! Oblique axes have different spacings on each axis
+      .del_x = .del_x/TWO
+      if (oblique) then; .del_y = .del_y/TWO; .del_z = .del_z/TWO
+      else;              .del_y = .del_x;     .del_z = .del_x
+      end
+      vol = .del_x*.del_y*.del_z
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! Divide into 8 cubes and do again
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.level<.final_level) then 
+
+         ! Evaluate the parent  points and function values to pass down
+         PLOT_GRID::make_cube_of_points(.plot_grid,p3,0,2,.del_x,.del_y,.del_z,.x,.y,.z) 
+         ISOSURFACE::make_3_cube_of_values(self,f3,func,p3,corner_values)
+
+         ! Set the default cube
+         cube = .cube
+       ! .set_default_cube(cube)
+
+         ! Loop over the 8 subcubes
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            ! Set "cube" to be one of the child cubes
+          ! cube.set_vertex_info(p3(:,x:x+1,y:y+1,z:z+1), &
+          !                        f3(x:x+1,y:y+1,z:z+1))
+            MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Which vertices are inside or outside isosurface?
+            cube.set_case_info
+
+            ! Determine of we must divide this child further
+            do_divide = (.level<.scan_level) OR cube.is_nearly_on_surface(.voxel_proximity_factor)
+
+            ! If dividing, set the child cube coordinates and do it
+            if (do_divide) then 
+               .x = ibclr(.x,bit); if (x==1) .x = ibset(.x,bit) ! Set cube coords
+               .y = ibclr(.y,bit); if (y==1) .y = ibset(.y,bit)
+               .z = ibclr(.z,bit); if (z==1) .z = ibset(.z,bit)
+               .divide_cubes_small_map(func,cube.value_at_vertex) ! <<<<<< recursive here
+               .x = ibclr(.x,bit)                                 ! Clear the cube coords
+               .y = ibclr(.y,bit)
+               .z = ibclr(.z,bit)
+            ! If not dividing get a rough estimate of the volume
+            else
+               if (cube.is_inside_surface) then
+                  .volume_min = .volume_min + vol
+                  .volume_max = .volume_max + vol
+               end
+            end
+
+         end
+         end
+         end
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! Divide by 8 the last time, and triangulate
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      else                
+
+         ! A 5-cube of points needed for gradients and hessians
+         ! Start with a 3-cube of values for now
+         PLOT_GRID::make_cube_of_points(.plot_grid,p3,0,2,.del_x,.del_y,.del_z,.x,.y,.z) 
+         ISOSURFACE::make_3_cube_of_values(self,f3,func,p3,corner_values)
+
+         ! Set the default cube, for interpolations
+         cube = .cube
+       ! .set_default_cube(cube)
+
+         ! Tells which of the points in the 5-cube must be evaluated
+         eval = FALSE          
+
+         ! List of cubes which are not triangulated.
+         skip = TRUE
+
+         ! Indices of previous cubes in the map table which have been
+         ! triangulated; no need to re-triangulate shared faces.
+         ix = 0; iy = 0; iz = 0; ik = 0
+
+         ! The child cube index, in range 1 ... 8
+         k = 0
+
+
+         ! Loop over the child cubes the first time; triangulate later
+         ! when we know which cubes to do, which helps avoid function
+         ! evaluations on the 5 x 5 x 5 cube
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            k = k + 1
+
+            ! Set child cube info; store only needed parts in kube(k)
+          ! cube.set_vertex_info(p5(:,x+1:x+2,y+1:y+2,z+1:z+2), &
+          !                        f5(x+1:x+2,y+1:y+2,z+1:z+2))
+            MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Which cube vertices are inside or outside isosurface?
+            cube.set_case_info
+            if (cube.is_inside_surface)      .volume_min = .volume_min + vol
+            if (NOT cube.is_outside_surface) .volume_max = .volume_max + vol
+
+            ! Is the cube on the surface?
+            if (NOT cube.is_on_surface) cycle 
+
+            ! We are on the surface: set the cube coords
+            .x = .x + x
+            .y = .y + y
+            .z = .z + z
+ 
+            ! Don't skip this cube
+            skip(k) = FALSE
+
+            ! Which cube edges cut the surface? Hence, which cube
+            ! vertices are needed? Hence, what triangles are to be
+            ! made?
+            cube.skip_bit_string = 0
+            cube.set_triangulation_info
+
+            ! The number of times that the cube will be re-used in
+            ! the map table
+            c = 0
+            if (cube.has_right_face_on_surface) then
+               if (x>0) then; c = c + 1
+               else;          ik(k) = 1
+               end
+            end
+            if (cube.has_back_face_on_surface) then
+               if (y>0) then; c = c + 1
+               else;          ik(k) = 1
+               end
+            end
+            if (cube.has_upper_face_on_surface) then
+               if (z>0) then; c = c + 1
+               else;          ik(k) = 1
+               end
+            end
+            cube.edge_vertex_index(12) = c
+
+            ! Find out which faces of the cube should have been triangulated 
+            ! already, and store in ix, iy, iz arrays, and store in the 
+            ! skip_bit_string for hessian evaluation
+            if (cube.has_left_face_on_surface) then
+               if (x>0) then
+                  ix(k) = -1
+                  cube.set_left_skip_bit_string  ! Left child cube exists
+               else if (.x>0 AND .map.has_key([.x-1,.y,.z],index=ix(k))) then
+                  cube.set_left_skip_bit_string  ! Left map cube exists
+               end
+               ENSURE(ix(k)/=0,"no left face indices found")
+            end
+            if (cube.has_front_face_on_surface) then
+               if (y>0) then
+                  iy(k) = -1
+                  cube.set_front_skip_bit_string ! Front child cube exists
+               else if (.y>0 AND .map.has_key([.x,.y-1,.z],index=iy(k))) then
+                  cube.set_front_skip_bit_string ! Front map cube exists
+               end
+               ENSURE(iy(k)/=0,"no front face indices found")
+            end
+            if (cube.has_lower_face_on_surface) then
+               if (z>0) then
+                  iz(k) = -1
+                  cube.set_below_skip_bit_string ! Lower child cube exists
+               else if (.z>0 AND .map.has_key([.x,.y,.z-1],index=iz(k))) then
+                  cube.set_below_skip_bit_string ! Lower map cube exists
+               end
+               ENSURE(iz(k)/=0,"no lower face indices found")
+            end
+
+            ! Set which edges to interpolate, accounting for those
+            ! already done above in skip_bit_string
+            cube.set_cube_bit_string 
+
+            ! Set which of the 5 x 5 x 5 points are needed for hessian
+            ! and gradient.
+            MARCHINGCUBE::set_hessian_eval_array(cube,eval,x,y,z)
+
+            ! Store the needed parts of cube for later interpolation
+            kube(k) = cube
+
+            ! Clear the cube coords
+            .x = .x - x                                      
+            .y = .y - y
+            .z = .z - z
+         end
+         end
+         end
+
+         ! Don't evaluate the 3 x 3 x 3 points/values -- already done
+         eval(2:4,2:4,2:4) = FALSE 
+         f5(1:3,1:3,1:3) = f3
+       
+         ! Now evaluate the function only at the needed points. The
+         ! previous loops over the 8 kubes was all for this.
+         PLOT_GRID::make_cube_of_points(.plot_grid,p5,-1,3,.del_x,.del_y,.del_z,.x,.y,.z,eval) 
+         ISOSURFACE::make_5_cube_of_values(self,f5,func,p5,eval)
+
+         ! Loop over the child cubes the second time, and do the
+         ! triangulation.
+         k = 0                
+         do z = 0,1 
+         do y = 0,1
+         do x = 0,1
+
+            k = k + 1
+            if (skip(k)) cycle
+
+            ! Get stored cobe
+            cube = kube(k)
+
+            ! Evaluate the gradient and hessian
+            cube.set_hessian_info(f5(x:x+3,y:y+3,z:z+3))
+
+            ! Set the cube coordinates; for storing in map table
+            .x = .x + x 
+            .y = .y + y
+            .z = .z + z
+
+            ! Use previously triangulated cubes if possible, avoid
+            ! looking in the map table
+            kk = ix(k)
+            if (kk/=0) then
+               if (kk<0) then
+                  kk = left(k)
+                  cube.set_left_info(kube(kk).edge_vertex_index)
+               else
+                  cube.set_left_info(.map.values(:,kk))
+                  .map.values(13,kk) = .map.values(13,kk) - 1
+               end
+            end
+            kk = iy(k)
+            if (kk/=0) then
+               if (kk<0) then
+                  kk = front(k)
+                  cube.set_front_info(kube(kk).edge_vertex_index)
+               else
+                  cube.set_front_info(.map.values(:,kk))
+                  .map.values(13,kk) = .map.values(13,kk) - 1
+               end
+            end
+            kk = iz(k)
+            if (kk/=0) then
+               if (kk<0) then
+                  kk = below(k)
+                  cube.set_below_info(kube(kk).edge_vertex_index)
+               else 
+                  cube.set_below_info(.map.values(:,kk))
+                  .map.values(13,kk) = .map.values(13,kk) - 1
+               end
+            end
+
+            ! Set the cube vertex index to the last vertex
+            cube.set_n_pt(.n_pt)                         
+
+            ! Finally, do the interpolation
+            if (oblique) then; cube.interpolate_oblique_faces                 
+            else;              cube.interpolate_faces                 
+            end
+           
+            ! Copy the cube interpolation info to the isosurface
+            .append_new_face_info(cube)
+
+            ! Append the cube vertex info to the map only if needed
+            if (cube.edge_vertex_index(12)>0) &
+               .map.append_pair([.x,.y,.z],cube.edge_vertex_index)
+          
+            ! Might need to keep this from interpolation, it may share a face
+            if (ik(k)>0) &
+               kube(k).edge_vertex_index = cube.edge_vertex_index 
+
+            ! Clear the cube coords
+            .x = .x - x 
+            .y = .y - y
+            .z = .z - z
+         end
+         end
+         end
+
+         ! Remove dead edge_vertex_indices from map table
+         n = 0
+         do k = 1,8
+            kk = ix(k)
+            if (kk>0 AND .map.values(13,kk)==0) then
+               n = n + 1
+               dead_list(n) = kk
+            end
+            kk = iy(k)
+            if (kk>0 AND .map.values(13,kk)==0) then
+               n = n + 1
+               dead_list(n) = kk
+            end
+            kk = iz(k)
+            if (kk>0 AND .map.values(13,kk)==0) then
+               n = n + 1
+               dead_list(n) = kk
+            end
+         end
+         if (n>0) .map.delete_items(dead_list(1:n))
+
+      end
+
+      ! Go up to the next level: double side lengths, decrease level
+      .del_x = TWO*.del_x
+      if (oblique) then; .del_y = TWO*.del_y; .del_z = TWO*.del_z
+      else;              .del_y = .del_x;     .del_z = .del_x
+      end
+      .level = .level - 1
+   end
+
+
+   set_isosurface_info_arrays ::: leaky, private
+   ! Destroy the isosurface information and set the informations arrays to nice
+   ! big sizes to begin with.
+      .destroy_info_arrays
+      .point.create(3,ISOSURFACE_N_POINT)
+      .point_gradient.create(3,ISOSURFACE_N_POINT)
+      .point_mean_curvature.create(ISOSURFACE_N_POINT)
+      .point_gaussian_curvature.create(ISOSURFACE_N_POINT)
+      .face.create(3,ISOSURFACE_N_FACE)
+      .cap.create(3,ISOSURFACE_N_CAP)
+   end
+
+   set_default_cube(cube) ::: private
+   ! Initialise marching "cube" to the settings required for the isosurface.
+   ! NOTE: .iso_value, .del, .big_interior must all be set.
+      cube :: MARCHINGCUBE
+      cube.set_defaults
+      cube.set_iso_value(.iso_value)
+      cube.set_side_length(.del_x,.del_y,.del_z)
+      cube.set_axes(.plot_grid.box_axes)
+   !  cube.set_accuracy(.accuracy)
+   !  cube.set_big_interior(.big_interior)
+      cube.set_big_interior(TRUE)
+   end 
+
+   update_4_slab(p,f,slice,func) ::: private
+   ! Make or update a "slice" of an array "f", a 4-slab of "func" function
+   ! values which are evaluated at the slab points "p".  The slab involves .plot_grid
+   ! points whose z values are in the range slice-1:slice+2.  The "p" points and
+   ! the function values f(:,:,2:3) correspond to the bottom and top of the
+   ! slice.  The other slabs f(:,:,1) and f(:,:,4) are used for finite
+   ! differences to get vertex gradients. 
+      p :: MAT4{REAL}, INOUT
+      f :: MAT3{REAL}, INOUT
+      slice :: INT
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+   ENSURE(slice>=2 AND slice<=.plot_grid.n_z-2,"slice out f range")
+   ENSURE(p.dim1==3,"p must have dim1=3")
+   ENSURE(p.dim2==.plot_grid.n_x,"wrong size, p")
+   ENSURE(p.dim3==.plot_grid.n_y,"wrong size, p")
+   ENSURE(p.dim4==4,"p must have 4 slabs")
+   ENSURE(f.dim1==.plot_grid.n_x,"wrong size, f")
+   ENSURE(f.dim2==.plot_grid.n_y,"wrong size, f")
+   ENSURE(f.dim3==4,"f must have 4 slabs")
+
+      fz,lz,n_pt, i,x,y,z :: INT
+      values :: VEC{REAL}*
+      pt :: MAT{REAL}*
+
+      ! Get slab ranges
+      if (slice == 2) then 
+         ! These are the first 4 slices
+         fz = 1; lz = 4
+      else                 
+         ! In between: only calculate one slice
+         p(:,:,:,1:3) = p(:,:,:,2:4)
+         f(:,:,1:3) = f(:,:,2:4)
+         fz = 4; lz = 4
+      end
+
+      ! Now calculate the slab between the right limits
+      n_pt = .plot_grid.n_x*.plot_grid.n_y*(lz-fz+1)
+      values.create(n_pt)
+      pt.create(n_pt,3)
+
+      ! Set the slab
+      .plot_grid.make_points(pt,1,.plot_grid.n_x,1,.plot_grid.n_y,slice-2+fz,slice-2+lz)
+      call func(values,pt)
+      f(:,:,fz:lz).set_to(values)
+
+      ! Copy the points
+      i = 0
+      do z = fz,lz
+      do y = 1,.plot_grid.n_y
+      do x = 1,.plot_grid.n_x
+         i = i + 1
+         p(:,x,y,z) = pt(i,:)
+      end
+      end
+      end
+
+      pt.destroy
+      values.destroy
+
+   end
+
+   append_new_face_info(cube) ::: leaky, private
+   ! Generate the isosurface using the marching cube algorithm.
+      cube :: MARCHINGCUBE
+      n_pt,n_face,n_col :: INT
+      n_pt   = cube.no_of_active_edges
+      n_face = cube.n_triangle
+      ! Expand info arrays if required
+      n_col  = .point.dim2
+      if ((.n_pt+n_pt)>n_col) then
+         .point.expand_columns(2*n_col)
+         .point_gradient.expand_columns(2*n_col)
+         .point_mean_curvature.expand(2*n_col)
+         .point_gaussian_curvature.expand(2*n_col)
+      end
+      n_col  = .face.dim2
+      if ((.n_face+n_face)>n_col) then
+         .face.expand_columns(2*n_col)
+      end
+      ! Store isosurface info.
+      cube.get_edge_vertex_positions(.point(:,.n_pt+1:.n_pt+n_pt))
+      cube.get_edge_vertex_gradients(.point_gradient(:,.n_pt+1:.n_pt+n_pt))
+      cube.get_edge_mean_curvatures(.point_mean_curvature(.n_pt+1:.n_pt+n_pt))
+      cube.get_edge_gaussian_curvatures(.point_gaussian_curvature(.n_pt+1:.n_pt+n_pt))
+      cube.get_triangle_vertex_indices(.face(:,.n_face+1:.n_face+n_face))
+      .n_pt   = .n_pt + n_pt
+      .n_face = .n_face + n_face
+   end
+
+   append_new_cap_info(cap_square) ::: leaky, private
+   ! Add the caps to the isosurface from the cap_square
+      cap_square :: CAPPING_SQUARE
+      
+      n_pt, n_cap, n_col :: INT
+
+      n_pt = cap_square.no_of_new_vertices
+      n_cap = cap_square.n_triangle
+
+      ! Expand info arrays if required
+      n_col  = .point.dim2
+      if ((.n_pt+n_pt)>n_col) then
+         .point.expand_columns(2*n_col)
+         .point_gradient.expand_columns(2*n_col)
+         .point_mean_curvature.expand(2*n_col)
+         .point_gaussian_curvature.expand(2*n_col)
+      end
+      n_col  = .cap.dim2
+      if ((.n_cap+n_cap)>n_col) then
+         .cap.expand_columns(2*n_col)
+      end
+
+      ! Store cap info.
+      cap_square.get_new_vertex_positions(.point(:,.n_pt+1:.n_pt+n_pt))
+      cap_square.get_new_vertex_gradients(.point_gradient(:,.n_pt+1:.n_pt+n_pt))
+      cap_square.get_new_mean_curvatures(.point_mean_curvature(.n_pt+1:.n_pt+n_pt))
+      cap_square.get_new_gaussian_curvatures(.point_gaussian_curvature(.n_pt+1:.n_pt+n_pt))
+      cap_square.get_triangle_vertex_indices(.cap(:,.n_cap+1:.n_cap+n_cap))
+      .n_pt   = .n_pt + n_pt
+      .n_cap  = .n_cap + n_cap
+      !stdout.show("Number of new points for cap= ",n_pt)
+      !stdout.show("Number of new caps= ",n_cap)
+
+   end
+
+   rotate_gradients ::: private
+   ! Rotate the gradients by the box axes. This needs to be done because the box
+   ! axes may not be the same as the natural x-y-z axes.
+      axes :: MAT{REAL}(3,3)
+      old :: MAT{REAL}*
+      axes = .plot_grid.plot_axes
+      old.create(3,.n_pt)
+      old = .point_gradient
+      .point_gradient = matmul(axes,old)
+      old.destroy
+   end
+
+   no_of_divisions(side_length) result (res) ::: private
+   ! Return the number of binary divisions before the .plot_grid side length
+   ! becomes less than a given "side_length".
+      side_length :: REAL, IN
+      res :: INT
+
+      width :: REAL
+      i :: INT
+
+      width = maxval(.plot_grid.width)
+
+      i = 0
+      do 
+         i = i + 1
+         width = width/TWO
+         if (width>side_length) cycle
+         res = i
+         exit
+      end
+
+   end 
+
+   initialize_eval_f5(eval,f5,f3) ::: selfless, private
+   ! Initialize the 2:4^3 block of "eval" and the "f5" array, 
+   ! the latter from "f3".
+      eval :: MAT3{BIN}(5,5,5)
+      f5 :: MAT3{REAL}(5,5,5)
+      f3 :: VEC{REAL}(27), IN
+
+      i,j,k,n :: INT
+
+      n = 0
+      do k = 2,4
+      do j = 2,4
+      do i = 2,4
+         n = n + 1
+         eval(i,j,k) = FALSE
+         f5(i,j,k) = f3(n)
+      end
+      end
+      end
+   end
+
+   make_2_cube_of_values(f,func,p) ::: private
+   ! Evaluate a cube of values "f", with two points per side (starting at point
+   ! 0). The values in "f" are those of the "func" function evaluated at
+   ! positions "p" which are supposed to be the cube corners.
+      f :: VEC{REAL}(8)
+      p :: MAT{REAL}(3,8)
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      i :: INT
+      fac,s :: REAL
+
+      p(:,3:4) = p(:,4:3:-1)    ! Swap these around to match marchingcube
+      p(:,7:8) = p(:,8:7:-1)
+
+      call func(f,transpose(p)) ! Evaluate the function at pt
+      .n_skip = .n_skip - 8     ! Remove 8 evaluations for this
+
+      if (.cap_ends==0) return  ! Cap ends after here
+
+      if (.cap_ends>ZERO) then; fac = ONE - TOL(3); s =  ONE
+      else;                     fac = ONE + TOL(3); s = -ONE
+      end
+
+      do i = 1,8
+         if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+      end
+   end
+
+   make_3_cube_of_values(f,func,p,corner_value) ::: private
+   ! Evaluate a cube of values "f", with three points per side (starting at
+   ! point 0). The values in "f" are those of the "func" function evaluated at
+   ! cube point positions "p". The cube points are assumed to be ordered along
+   ! firstly the x-grid axis, then y-axis, then z-axis. The corner positions are
+   ! not evaluated but taken from the "parent_cube" corner vertex values.
+      f :: VEC{REAL}(27), OUT
+      p :: MAT{REAL}(3,27), IN
+      corner_value :: VEC{REAL}(8), IN
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      vals :: VEC{REAL}(19)
+      pt :: MAT{REAL}(19,3)
+      edge :: VEC{INT}(19) = [2,4,5,6,8,10,11,12,13,14,15,16,17,18,20,22,23,24,26]
+      i,last :: INT
+      fac,s :: REAL
+
+      vals = ZERO
+      pt = transpose(p(:,edge))       ! Skip edge points
+      call func(vals,pt)              ! Evaluate the function at pt
+      .n_skip = .n_skip - 19          ! Remove 19=27-8 evaluations for this
+      f(edge) = vals                  ! Store values in full 3^3 array
+
+      f(1)  = corner_value(1)         ! Get the parent cube values
+      f(3)  = corner_value(2)
+      f(9)  = corner_value(3)
+      f(7)  = corner_value(4)
+      f(19) = corner_value(5)
+      f(21) = corner_value(6)
+      f(27) = corner_value(7)
+      f(25) = corner_value(8)
+
+      if (.cap_ends==0) return        ! Cap ends after here
+
+      if (.cap_ends>ZERO) then; fac = ONE - TOL(3); s =  ONE
+      else;                     fac = ONE + TOL(3); s = -ONE
+      end
+
+      last = 2**.final_level - 2
+
+      if (.x==0) then
+         do i = 1,25,3
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      else if (.x==last) then
+         do i = 3,27,3
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      end
+
+      if (.y==0) then
+         do i = 1,19,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+         do i = 2,20,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+         do i = 3,21,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      else if (.y==last) then
+         do i = 7,25,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+         do i = 8,26,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+         do i = 9,27,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      end
+
+      if (.z==0) then
+         do i = 1,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      else if (.z==last) then
+         do i = 19,27
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      end
+   end
+
+   make_5_cube_of_values(f,func,p,eval) ::: private
+   ! Evaluate a 5 cube of values "f", with five points per side (starting at
+   ! point 0). The values in "f" are those of the "func" function evaluated at
+   ! cube point positions "p", except that only the points corresponding to the
+   ! mask "eval" being TRUE are evaluated.
+      f :: VEC{REAL}(125)
+      p :: MAT{REAL}(3,125)
+      eval :: VEC{BIN}(125)
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      values :: VEC{REAL}*
+      pt :: MAT{REAL}*
+      n_pt,n,i :: INT
+
+      n_pt = count(eval)
+      values.create(n_pt)
+      pt.create(n_pt,3)
+      n = 0
+      do i = 1,125 ! Pack the points "p" into "pt"
+         if (NOT eval(i)) cycle
+         n = n + 1
+         pt(n,1) = p(1,i)
+         pt(n,2) = p(2,i)
+         pt(n,3) = p(3,i)
+      end
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      call func(values,pt)
+      .n_skip = .n_skip - n_pt                      
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      f = unpack(values,eval,f)
+      pt.destroy
+      values.destroy
+   end
+
+!  ================
+!  Plotting Methods
+!  ================
+
+   plot_function(func) ::: leaky
+   ! Evaluate the function "func" on the surface of the isosurface points ".point".
+   ! The answers are stored in surface_property_values.
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+   ENSURE(.point.created,"no isosurface points!")
+      .surface_property_values.create(.point.dim2)
+      call func(.surface_property_values,transpose(.point))
+   end 
+
+!  ===============
+!  Connected Areas
+!  ===============
+
+   put_connected_area
+   ! Put the connected area for a given ".surface_property" out.
+
+   ENSURE(.property_bounds_set,"unacceptable property bounds")
+   ENSURE(.surface_property_lb<.surface_property_ub,"unacceptable property bounds")
+   ENSURE(.surface_point_set,"surface_point not set")
+
+      area :: REAL
+      lb_set,ub_set :: BIN
+
+      lb_set = .surface_property_ub_set
+      ub_set = .surface_property_ub_set
+
+      if      (lb_set AND ub_set) then
+         area = .connected_property_area(.surface_property,.surface_property_lb,.surface_property_ub)
+      else if (lb_set) then
+         area = .connected_property_area(.surface_property,lower=.surface_property_lb)
+      else if (ub_set) then
+         area = .connected_property_area(.surface_property,upper=.surface_property_lb)
+      end
+
+      stdout.flush
+      stdout.text("ISOSURFACE Property area")
+      stdout.flush
+      stdout.show("Surface property               =",.surface_property)
+      stdout.show("Surface point                  =",.surface_point)
+      stdout.show("Index of nearest surface point =",.index_of_nearest_point)
+      if (lb_set) &
+      stdout.show("Property lower bound           =",.surface_property_lb)
+      if (ub_set) &
+      stdout.show("Property upper bound           =",.surface_property_ub)
+      stdout.show("Connected area                 =",area)
+
+   end
+
+   index_of_nearest_point result (res) 
+   ! Returns the index of the nearest isosurface point to .surface_point.
+      res :: INT
+
+   ENSURE(.n_pt>0,"there are no isosurface points")
+
+      .point.minus_column(.surface_point)
+      res = .point.index_of_minimum_column_norm
+      .point.plus_column(.surface_point)
+
+   end
+
+   connected_property_area(property,lower,upper) result (res) 
+   ! Returns the *connected* area of isosurface triangles where the "property"
+   ! values of all vertices of a triangles connected to a "point" which lies on
+   ! or near the surface is between "lower" and "upper", if present.
+      property :: STR
+      lower,upper :: REAL, optional
+      res :: REAL
+
+   ENSURE(.n_pt>0,"there are no isosurface points")
+   ENSURE(present(lower) OR present(upper),"no bounds specified")
+
+      W :: VEC{REAL}*
+
+      res = ZERO
+
+      select case (property)
+
+         case ("mean_curvature")
+            res = .connected_property_area(.point_mean_curvature,lower,upper)
+
+         case ("gaussian_curvature")
+            res = .connected_property_area(.point_gaussian_curvature,lower,upper)
+
+         case ("rms_curvature")
+            W.create(.n_pt)
+            .make_vertex_RMS_curvature(W)
+            res = .connected_property_area(W,lower,upper)
+            W.destroy
+
+         case ("curvedness")
+            W.create(.n_pt)
+            .make_vertex_curvedness(W)
+            res = .connected_property_area(W,lower,upper)
+            W.destroy
+
+         case ("shape_index")
+            W.create(.n_pt)
+            .make_vertex_shape_index(W)
+            res = .connected_property_area(W,lower,upper)
+            W.destroy
+      end
+
+   end
+
+   connected_property_area(property,lower,upper) result (res) 
+   ! Returns the *connected* area of isosurface triangles where the "property"
+   ! values of all vertices of a triangles connected to a "point" which lies on
+   ! or near the surface is between "lower" and "upper", if present.
+      property :: VEC{REAL}
+      lower,upper :: REAL, optional
+      res :: REAL
+
+   ENSURE(.n_pt>0,"there are no isosurface points")
+   ENSURE(property.dim==.n_pt,"wrong size, property array")
+   ENSURE(present(lower) OR present(upper),"no bounds specified")
+
+      ind :: INT
+      loc :: VEC{INT}(2)
+
+      ind = .index_of_nearest_point
+      loc = minloc(.face - ind)
+      res = .connected_property_area(property,loc(2),lower,upper)
+
+   end
+
+   connected_property_area(property,ind,lower,upper) result (res) 
+   ! Returns the *connected* area of isosurface triangles where the "property"
+   ! values of all vertices of triangles connected to a face with index "ind" on
+   ! the surface is between "lower" and "upper", if present.
+      property :: VEC{REAL}
+      ind :: INT
+      lower,upper :: REAL, optional
+      res :: REAL
+
+   ENSURE(.n_pt>0,"there are no isosurface points")
+   ENSURE(property.dim==.n_pt,"wrong size, property array")
+   ENSURE(present(lower) OR present(upper),"no bounds specified")
+
+      n_vertex,i,v,p :: INT
+      add_vertex :: VEC{BIN}(3)
+      face,vertex :: VEC{INT}*
+
+      nullify(face)
+      nullify(vertex)
+
+      face.append(ind)   
+      vertex.append(.face(:,ind)) 
+
+      do          
+      ! Loop over new vertices, get all triangle faces
+
+         n_vertex = vertex.dim
+
+         do i = 1,.n_face
+
+            ! Ignore all faces already in "face" list
+            if (any(i==face)) cycle     
+            if (all(vertex/=.face(1,i)) AND all(vertex/=.face(1,i)) AND all(vertex/=.face(1,i))) cycle
+
+            ! At least one vertex is connected to face "i"
+            add_vertex = FALSE          
+
+            ! Are all the vertices of this face between property limits?
+            do v = 1,3 
+               p = .face(v,i)
+               if (present(lower)) then
+               if (property(p)<lower) cycle
+               end
+               if (present(upper)) then
+               if (property(p)>upper) cycle
+               end
+               add_vertex(v) = TRUE
+            end
+
+            ! All vertices pass limits
+            if (all(add_vertex)) then   
+               face.append(i)           ! Add the face and any new vertices
+               vertex.append_only_if_unique(.face(1,i)) 
+               vertex.append_only_if_unique(.face(2,i)) 
+               vertex.append_only_if_unique(.face(3,i)) 
+            end
+
+         end
+
+         if (vertex.dim==n_vertex) exit 
+         ! Exit if no more new vertices added
+
+      end 
+
+      res = .total_area(face)
+
+      vertex.destroy
+      face.destroy
+
+   end
+
+!  ===============
+!  Area and volume
+!  ===============
+
+   total_area(faces) result (res) 
+   ! Returns the *total* area of the list of "faces".
+      faces :: VEC{INT}
+      res :: REAL
+
+   ENSURE(faces.dim>0,"faces array, zero size")
+   ENSURE(maxval(faces)<=.n_face,"faces array, value too large")
+   ENSURE(minval(faces)>0,"faces array, nonpositive value")
+   ENSURE(.n_face>0,"there are no isosurface points")
+
+      i :: INT
+
+      res = ZERO
+
+      do i = 1,faces.dim
+         res = res + .face_area(faces(i))
+      end
+
+   end
+
+   face_area(face) result (res) 
+   ! Returns the face area for the face with index "face".
+      face :: INT
+      res :: REAL
+   ENSURE(face>0,"face, nonpositive value")
+   ENSURE(face<=.n_face,"face, value too large")
+   ENSURE(.n_face>0,"there are no isosurface points")
+      a,b,c :: VEC{REAL}(3)
+      a = .point(:,.face(2,face)) - .point(:,.face(1,face))
+      b = .point(:,.face(3,face)) - .point(:,.face(1,face))
+      c = a.cross(b)
+      res = HALF*c.norm
+   end
+
+   face_normal(face) result (res) 
+   ! Returns the face normal for the "face". This is not determined within a
+   ! sign (I think) since we don't know what is the inside or outside. (However,
+   ! the algorithm may generate the face points in the clockwise order so that
+   ! the normal calculated below *is* pointing outwards -- I should check that).
+      face :: INT
+      res :: VEC{REAL}(3)
+   ENSURE(face>0,"face, nonpositive value")
+   ENSURE(face<=.n_face,"face, value too large")
+   ENSURE(.n_face>0,"there are no isosurface points")
+      a,b :: VEC{REAL}(3)
+      a = .point(:,.face(2,face)) - .point(:,.face(1,face))
+      b = .point(:,.face(3,face)) - .point(:,.face(1,face))
+      res = a.cross(b)
+      res.normalise
+   end
+
+   face_midpoint(face) result (res) 
+   ! Returns the face midpoint for the "face". 
+      face :: INT
+      res :: VEC{REAL}(3)
+   ENSURE(face>0,"face, nonpositive value")
+   ENSURE(face<=.n_face,"face, value too large")
+   ENSURE(.n_face>0,"there are no isosurface points")
+      a,b,c :: VEC{REAL}(3)
+      a = .point(:,.face(1,face))
+      b = .point(:,.face(2,face))
+      c = .point(:,.face(3,face))
+      res = THIRD*(a+b+c)
+   end
+
+   average_face_normal(n) result (res) ::: PURE
+   ! Returns the average normal for face "n", calculated as the
+   ! average of the gradient normals at each vertex.
+      self :: IN
+      n :: INT, IN
+      res :: VEC{REAL}(3)
+
+   ENSURE(.point_gradient.created,"no point_gradient array")
+   ENSURE(.face.created,"no face array")
+   ENSURE(n<=.face.dim2,"n too large")
+
+      a,b,c :: VEC{REAL}(3)
+
+      a = .point_gradient(:,.face(1,n)); a.normalise
+      b = .point_gradient(:,.face(2,n)); b.normalise
+      c = .point_gradient(:,.face(3,n)); c.normalise
+
+      res = (a+b+c)/THREE
+      res.normalise
+
+   end
+
+   average_face_gradient(n) result (res) 
+   ! Returns the average gradient for face "n"
+      n :: INT
+      res :: VEC{REAL}(3)
+   ENSURE(.point_gradient.created,"no point_gradient array")
+   ENSURE(.face.created,"no face array")
+   ENSURE(n<=.face.dim2,"n too large")
+      a,b,c :: VEC{REAL}(3)
+      a = .point_gradient(:,.face(1,n))
+      b = .point_gradient(:,.face(2,n))
+      c = .point_gradient(:,.face(3,n))
+      res = (a+b+c)/THREE
+   end
+
+   point_normal(n) result (res) 
+   ! Returns the point normal for point "n", calculated as the norm of the
+   ! point_gradient for than point
+      n :: INT
+      res :: VEC{REAL}(3)
+   ENSURE(.point_gradient.created,"no point_gradient array")
+   ENSURE(n<=.n_pt,"n too large")
+   ENSURE(n>0,"n must be positive")
+      res = .point_gradient(:,n)
+      res.normalise
+   end
+
+   set_area 
+   ! Set the *total* area of the isosurface
+   ENSURE(.face.created,"no isosurface faces created")
+   ENSURE(.n_face>0,"no isosurface faces")
+      i :: INT
+      .area = ZERO
+      do i = 1,.n_face
+         .area = .area + .face_area(i)
+      end
+   end
+
+   set_volume 
+   ! Set the *total* volume of the isosurface. This is set in two ways: from the
+   ! face normals, and from the average of the vertex normals, calculated from
+   ! the .point_gradients.
+   ENSURE(.point.created,"no isosurface points created")
+   ENSURE(.n_pt>0,"no isosurface points")
+   ENSURE(.face.created,"no isosurface faces created")
+   ENSURE(.n_face>0,"no isosurface faces")
+      f,i1,i2,i3 :: INT
+      base,height,h1,h2,h3 :: REAL
+      .volume = ZERO
+      .an_volume = ZERO
+      do f = 1,.n_face
+         i1 = .face(1,f)
+         i2 = .face(2,f)
+         i3 = .face(3,f)
+         base = .face_area(f)
+         height = dot_product(.face_normal(f),.point(:,i1))
+         .volume = .volume + base*height
+         h1 = dot_product(.point_normal(i1),.point(:,i1))
+         h2 = dot_product(.point_normal(i2),.point(:,i2))
+         h3 = dot_product(.point_normal(i3),.point(:,i3))
+         .an_volume = .an_volume + base*(h1+h2+h3)
+      end
+      .volume = THIRD*.volume
+      .an_volume = NINTH*.an_volume
+   end
+
+!  ==================
+!  Surface properties
+!  ==================
+
+   make_vertex_RMS_curvature(RMS) ::: PURE
+   ! Get the "RMS" curvature values for each canonical point
+      self :: IN
+      RMS :: VEC{REAL}, OUT
+
+   ENSURE(.n_pt>0,"no isosurface points")
+   ENSURE(RMS.dim==.n_pt,"wrong size, RMS")
+
+      k1,k2 :: VEC{REAL}*
+
+      k1.create(.n_pt)
+      k2.create(.n_pt)
+      .make_principal_curvatures(k1,k2)
+
+      RMS = sqrt((k1*k1+k2*k2)/TWO)
+
+      k2.destroy
+      k1.destroy
+
+   end
+
+   make_principal_curvatures(k1,k2) ::: PURE
+   ! Get the principal curvatures "k1" and "k2" for each canonical point.
+      self :: IN
+      k1,k2 :: VEC{REAL}, OUT
+
+   ENSURE(.point_mean_curvature.created,"no mean curvatures")
+   ENSURE(.point_gaussian_curvature.created,"no gaussian curvatures")
+   ENSURE(.n_pt>0,"no isosurface points")
+   ENSURE(k1.dim==.n_pt,"wrong size, k1")
+   ENSURE(k2.dim==.n_pt,"wrong size, k1")
+
+      m,g,val :: REAL
+      i :: INT
+
+
+      do i = 1,k1.dim 
+
+         m   = .point_mean_curvature(i)
+         g   = .point_gaussian_curvature(i)
+         val = m*m - g
+
+         if (val<ZERO) then
+            k1(i) = m
+            k2(i) = m
+         else
+            val   = sqrt(val)
+            k1(i) = m + val
+            k2(i) = m - val
+         end 
+
+      end
+
+   end
+
+   make_vertex_curvedness(c) ::: PURE
+   ! Get the list of Koenderinks curvedness values "c" for each point
+      self :: IN
+      c :: VEC{REAL}, OUT
+
+   ENSURE(.n_pt>0,"no isosurface points")
+   ENSURE(c.dim==.n_pt,"wrong size, c")
+
+      k1,k2 :: VEC{REAL}*
+
+      ! Get curvatures
+      k1.create(.n_pt)
+      k2.create(.n_pt)
+      .make_principal_curvatures(k1,k2)
+
+      ! Do it
+      .make_vertex_curvedness(c,k1,k2)
+
+      ! Clean
+      k2.destroy
+      k1.destroy
+
+   end
+
+   make_vertex_curvedness(c,k1,k2) ::: PURE
+   ! Get the list of Koenderinks curvedness values "c" for each
+   ! vertex point from the principal curvatures "k1" and "k2"
+      self :: IN
+      c :: VEC{REAL}, OUT
+      k1,k2 :: VEC{REAL}, IN
+
+   ENSURE(.n_pt>0,"no isosurface points")
+   ENSURE(C.dim==.n_pt,"wrong size, C")
+   ENSURE(k1.dim==.n_pt,"wrong size, k1")
+   ENSURE(k2.dim==.n_pt,"wrong size, k2")
+
+      fac,small :: REAL
+      i :: INT
+
+      C = sqrt((k1*k1+k2*k2)/TWO)
+
+      ! First we need to set zero values to something small
+      ! I choose to set them to the smallest non-zero value
+      small = huge(ONE)
+      do i = 1,.n_pt
+         if (C(i)==ZERO) cycle
+         if (C(i)<small) small = C(i)
+      end
+
+      do i = 1,.n_pt
+         if (C(i)/=ZERO) cycle
+         C(i) = small
+      end
+
+      fac = TWO/PI
+      C = fac*log(C)
+
+   end
+
+   make_vertex_shape_index(si) ::: PURE
+   ! Make the list of Koenderinks shape index values "si" 
+      self :: IN
+      si :: VEC{REAL}, OUT
+
+   ENSURE(.n_pt>0,"no isosurface points")
+   ENSURE(si.dim==.n_pt,"wrong size, SI")
+
+      k1,k2 :: VEC{REAL}*
+
+      ! Get curvatures
+      k1.create(.n_pt)
+      k2.create(.n_pt)
+      .make_principal_curvatures(k1,k2)
+
+      ! Do it
+      .make_vertex_shape_index(si,k1,k2)
+
+      ! Clean
+      k2.destroy
+      k1.destroy
+
+   end
+
+   make_vertex_shape_index(SI,k1,k2) ::: PURE
+   ! Make the list of Koenderinks shape index values "si" from the
+   ! principal curvatures "k1" and "k2" at each point.
+      self :: IN
+      SI :: VEC{REAL}, OUT
+      k1,k2 :: VEC{REAL}, IN
+
+   ENSURE(.n_pt>0,"no isosurface points")
+   ENSURE(SI.dim==.n_pt,"wrong size, SI")
+   ENSURE(k1.dim==.n_pt,"wrong size, k1")
+   ENSURE(k2.dim==.n_pt,"wrong size, k2")
+
+      c1,c2,fac,mx,mn,sm :: REAL
+      i :: INT
+
+      fac = -TWO/PI
+
+      do i = 1,.n_pt
+
+         c1 = k1(i)
+         c2 = k2(i)
+
+         if (c1/=c2) then
+            mx = max(c1,c2)
+            mn = min(c1,c2)
+            sm = c1 + c2
+            SI(i) = fac*atan(sm/(mx-mn))
+         else
+            SI(i) = -sign(ONE,c1)
+         end
+
+      end
+
+   end
+
+   make_vertex_SI_and_curvedness(si,cn) ::: PURE
+   ! Make the list of Koenderinks shape index values "SI" and the
+   ! curvedness C from the principal curvatures.
+      self :: IN
+      si,cn :: VEC{REAL}, OUT
+
+   ENSURE(.n_pt>0,"no isosurface points")
+   ENSURE(si.dim==.n_pt,"wrong size, si")
+   ENSURE(cn.dim==.n_pt,"wrong size, cn")
+
+      k1,k2 :: VEC{REAL}*
+
+      ! Make the curvatures
+      k1.create(.n_pt)
+      k2.create(.n_pt)
+      .make_principal_curvatures(k1,k2)
+
+      ! Do it
+      .make_vertex_shape_index(si,k1,k2)
+      .make_vertex_curvedness(cn,k1,k2)
+
+      ! Clean
+      k2.destroy
+      k1.destroy
+
+   end
+
+   make_vertex_normals(normal) ::: pure
+   ! Make the list of normals for each canonical point
+      self :: IN
+      normal :: MAT{REAL}, OUT
+
+      n :: VEC{REAL}(3)
+      i :: INT
+
+      do i = 1,.n_pt
+         n = .point_gradient(:,i)
+         n.normalise
+         normal(:,i) = n
+      end
+
+   end
+
+   make_average_face_normals(normal) ::: PURE
+   ! Put the list of average face normals
+      self :: IN
+      normal :: MAT{REAL}, OUT
+
+      v :: VEC{REAL}(3)
+      i :: INT
+
+      do i = 1,.n_face
+         v = .average_face_normal(i)
+         if (v.is_zero) v = [ONE,ZERO,ZERO]
+         v.normalise
+         normal(:,i) = v
+      end
+
+   end
+
+   d_min_to(list) result (res) ::: leaky, PURE
+   ! Put out the minimum distances from each point on the
+   ! isosurface to the nearest .atom in the "list"
+      self :: IN
+      list :: VEC{INT}, IN
+      res  :: VEC{REAL}*
+
+   ENSURE(.point.created,"no points")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(list.all_in_range([1,.atom.dim]),"in list out of bounds")
+
+      dist :: VEC{REAL}(3)
+      dmin,norm :: REAL
+      n_atom,i,a :: INT
+
+      n_atom = list.dim
+
+      res.create(.n_pt)
+
+      do i = 1,.n_pt
+
+         dmin = HUGE(ONE)
+
+         do a = 1,n_atom
+
+            dist = .atom(list(a)).position - .point(:,i) 
+            norm = dist.norm
+
+            if (norm>=dmin) cycle
+
+            dmin = norm
+
+         end
+
+         res(i) = dmin
+
+      end
+
+   end
+
+   d_e_d_i_areas(listin, listout, res_in, res_out, areas) ::: leaky
+   !Calculates the minimum distance for each point on the isosurface to the
+   !nearest atom in the "list", grouped in the three points relevant to
+   !each face of the isosurface polygon, and then averages this over the
+   !area of that face.
+      self :: IN
+      listin, listout :: VEC{INT}, IN
+      areas, res_in, res_out :: VEC{REAL}(.n_face), OUT
+
+   ENSURE(.point.created, "no points")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.face.created,"no faces list")
+   ENSURE(listin.all_in_range([1,.atom.dim]),"in list out of bounds")
+   ENSURE(listout.all_in_range([1,.atom.dim]),"in list out of bounds")
+
+      vec_of_ones :: VEC{REAL}*
+      dist, distances_in, distances_out :: VEC{REAL}(3)
+      dmin, norm, area :: REAL
+      n_atom_internal, n_atom_external, i,j,a :: INT
+      tripoint ::  MAT{REAL}(3,3)
+      v_1, v_2, v_3 :: VEC{REAL}(3)
+     
+      n_atom_external = listout.dim
+      n_atom_internal = listin.dim
+     
+      vec_of_ones.create(3)
+      vec_of_ones = ONE
+     
+     
+      stdout.text("triangle areas:")
+
+      do i = 1,.n_face
+
+         do j = 1,3
+
+           ! Store the three coordinates for each point of the triangle
+           tripoint(:,j) = .point(:,.face(j,i)) 
+
+           dmin = HUGE(ONE)
+           do a = 1, n_atom_external
+              dist = .atom(listout(a)).position - tripoint(:,j)
+              norm = dist.norm
+              if (norm<=dmin) then
+                  dmin=norm
+              end if
+           end
+
+           distances_out(j) = dmin
+
+           dmin = HUGE(ONE)
+           do a = 1, n_atom_internal
+              dist = .atom(listin(a)).position - tripoint(:,j)
+              norm = dist.norm
+              if (norm<=dmin) then
+                  dmin=norm
+              end if
+           end
+
+           distances_in(j) = dmin
+
+         end
+
+         v_1 = tripoint(:,2) - tripoint(:,1)
+         v_2 = tripoint(:,3) - tripoint(:,1)
+         v_3.to_cross_product_of(v_1, v_2)
+
+         area = HALF*v_3.norm
+
+         stdout.text(" ")
+         stdout.show("area =", area)
+         res_in(i)  = THIRD*VEC{REAL}:sum(distances_in)
+         res_out(i) = THIRD*VEC{REAL}:sum(distances_out)
+         stdout.show("res_in", res_in(i))
+         stdout.show("res_out", res_out(i))
+         areas(i) = area
+
+      end
+
+      stdout.text("end triangle areas")
+
+   end
+
+   d_norm_to(list) result (res) ::: leaky, PURE
+   ! Put out the normalised distances from each point on the
+   ! isosurface to the nearest .atom in the "list".
+      self :: IN
+      list :: VEC{INT}, IN
+      res  :: VEC{REAL}*
+
+   ENSURE(.point.created,"no points")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(list.dim>=0,"no list")
+   ENSURE(list.all_in_range([1,.atom.dim]),"in list out of bounds")
+
+      dist :: VEC{REAL}(3)
+      dmin,norm,rvdw :: REAL
+      n_atom,i,a,amin :: INT
+
+      n_atom = list.dim
+      res.create(.n_pt)
+
+      do i = 1,.n_pt
+
+         dmin = HUGE(ONE)
+         amin = 0
+
+         do a = 1,n_atom
+
+            dist = .atom(list(a)).position - .point(:,i) 
+            norm = dist.norm
+
+            if (norm>=dmin) cycle
+
+            dmin = norm
+            amin = list(a)
+
+         end
+
+         rvdw = .atom(amin).vdw_radius_ccdc
+         res(i) = (dmin - rvdw)/rvdw
+
+      end
+
+   end
+
+   make_d_min_d_norm_to(list,atom,d_min,d_norm) ::: PURE
+   ! Put out the normalised distances from each point on the
+   ! isosurface to the nearest .atom's given in the "list".
+      self :: IN
+      list :: VEC{INT}, IN
+      atom :: VEC{ATOM}, IN
+      d_min,d_norm :: VEC{REAL}(.n_pt), OUT
+
+   ENSURE(.point.created,"no points")
+   ENSURE(list.all_in_range([1,atom.dim]),"in list out of bounds")
+
+      pos :: MAT{REAL}*
+      rvdw :: VEC{REAL}*
+      dist,pt :: VEC{REAL}(3)
+      dmin,dnorm,d,dn :: REAL
+      n_atom,i,a :: INT
+
+      ! No of atoms in the list
+      n_atom = list.dim
+
+      ! The vdw radii
+      rvdw.create(n_atom)
+      atom(list).get_vdw_radii_ccdc(rvdw)
+
+      ! The atom positions
+      pos.create(3,n_atom)
+      atom(list).put_coordinates_to(pos,positions_as_rows=FALSE)
+
+      ! Get d_min and d_norm
+      do i = 1,.n_pt
+
+         pt = .point(:,i) 
+         dmin  = HUGE(ONE)
+         dnorm = HUGE(ONE)
+
+         do a = 1,n_atom
+
+            dist = pos(:,a) - pt
+            d    = dist.norm
+            if (d<dmin) dmin = d
+
+            dn = (d - rvdw(a))/rvdw(a)
+            if (dn<dnorm) dnorm = dn
+
+         end
+
+         d_min(i)  = dmin
+         d_norm(i) = dnorm
+
+      end
+
+      ! Clean
+      rvdw.destroy
+      pos.destroy
+
+   end
+
+   make_fingerprint_distances(d_e,d_i,d_norm_e,d_norm_i,d_norm,in,out,atom,angstrom) ::: PURE
+   ! Put out lists of vertex surface curvature properties.
+      self :: IN
+      d_e,d_i,d_norm_e,d_norm_i,d_norm :: VEC{REAL}(.n_pt), OUT
+      in,out :: VEC{INT}, IN
+      atom :: VEC{ATOM}, IN
+      angstrom :: BIN, optional, IN
+
+   ENSURE(in.all_in_range([1,atom.dim]),"in list out of bounds")
+   ENSURE(out.all_in_range([1,atom.dim]),"in list out of bounds")
+   ENSURE(in.has_no_elements_common_with(out),"in and out lists overlap!")
+
+      angst :: BIN
+
+      ! Use angstroms?
+      angst = FALSE
+      if (present(angstrom)) angst = angstrom
+
+      ! d_i, d_norm_i, d_e, d_norm_e and d_norm
+      .make_d_min_d_norm_to(in, atom,d_i,d_norm_i)
+      .make_d_min_d_norm_to(out,atom,d_e,d_norm_e)
+      d_norm = d_norm_i + d_norm_e
+
+      ! Convert if requested ...
+      if (angst) then
+         d_i = d_i*ANGSTROM_PER_BOHR
+         d_e = d_e*ANGSTROM_PER_BOHR
+      end
+
+   end
+
+   make_d_min_atoms_to(list,d_min_list) ::: PURE
+   ! Make the atom indices corresponding to the minimum distances
+   ! from each point on the isosurface to the nearest .atom in the "list"
+      self :: IN
+      list :: VEC{INT}, IN
+      d_min_list  :: VEC{INT}(list.dim), OUT
+
+   ENSURE(.point.created,"no points")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(list.dim>=0,"no list")
+   ENSURE(list.all_in_range([1,.atom.dim]),"in list out of bounds")
+
+      dist :: VEC{REAL}(3)
+      dmin,norm :: REAL
+      n_atom,i,a,amin :: INT
+
+      n_atom = list.dim
+
+      do i = 1,.n_pt
+
+         dmin = HUGE(ONE)
+         amin = 0
+
+         do a = 1,n_atom
+
+            dist = .atom(list(a)).position - .point(:,i) 
+            norm = dist.norm
+
+            if (norm>=dmin) cycle
+
+            dmin = norm
+            amin = list(a)
+
+         end
+
+         d_min_list(i) = amin
+
+      end
+
+   end
+
+   make_d_min_atoms_to_face(list,d_min_list) ::: PURE
+   ! Make the atom indices corresponding to the minimum distances
+   ! from each face of the isosurface to the nearest .atom in the "list"
+      self :: IN
+      list :: VEC{INT}, IN
+      d_min_list  :: VEC{INT}(.n_face), OUT
+
+   ENSURE(.point.created,"no points")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(list.dim>=0,"no list")
+   ENSURE(list.all_in_range([1,.atom.dim]),"in list out of bounds")
+
+      dist,pt :: VEC{REAL}(3)
+      d2min,d2 :: REAL
+      n_atom,f,f1,f2,f3,a,amin :: INT
+
+      n_atom = list.dim
+
+      do f = 1,.n_face
+
+         f1 = .face(1,f)
+         f2 = .face(2,f)
+         f3 = .face(3,f)
+
+         pt = THIRD*(.point(:,f1) + .point(:,f2) + .point(:,f3))
+
+         d2min = HUGE(ONE)
+         amin = 0
+
+         do a = 1,n_atom
+
+            dist = .atom(list(a)).position - pt 
+            d2   = dist(1)*dist(1) + dist(2)*dist(2) + dist(3)*dist(3)
+
+            if (d2>=d2min) cycle
+
+            d2min = d2
+            amin = list(a)
+
+         end
+
+         d_min_list(f) = amin
+
+      end
+
+   end
+
+   make_fingerprint_atoms(d_e_atoms,d_i_atoms,in,out) ::: PURE
+   ! Put out lists of atoms in "atom" which are closest to a given
+   ! vertex of the surface.
+      self :: IN
+      d_e_atoms,d_i_atoms :: VEC{INT}(.n_pt), OUT
+      in,out :: VEC{INT}, IN
+
+      .make_d_min_atoms_to(in, d_i_atoms)
+      .make_d_min_atoms_to(out,d_e_atoms)
+
+   end
+
+   make_fingerprint_face_atoms(d_e_atoms,d_i_atoms,in,out) ::: PURE
+   ! Put out lists of atoms in "atom" which are closest to a given
+   ! face of the surface.
+      self :: IN
+      d_e_atoms,d_i_atoms :: VEC{INT}(.n_face), OUT
+      in,out :: VEC{INT}, IN
+
+      .make_d_min_atoms_to_face(in, d_i_atoms)
+      .make_d_min_atoms_to_face(out,d_e_atoms)
+
+      ! Subtract off the # of d_i_atoms since the
+      ! "out" array points into the whole "atom" list
+      ! and the first few are the "inside" atoms
+      d_e_atoms = d_e_atoms - in.dim
+
+   end
+
+   surface_group_atom_indices(atom) result (res) ::: leaky
+   ! Return a list of atom indices which represent a molecule-group
+   ! which touches the isosurface.
+      self :: IN
+      atom :: VEC{ATOM}, IN
+      res :: VEC{INT}*
+
+   ENSURE(.point.created,"no points")
+
+      pos,apos,d :: VEC{REAL}(3)
+      group_for_pt :: VEC{REAL}*
+      d2min,d2 :: REAL
+      p,a,agrp,g,ga :: INT
+
+      ! Create the index list
+      res.create(0)
+
+      ! Assign each pt to a group
+      group_for_pt.create(.n_pt)
+      group_for_pt = 0
+
+      do p = 1,.n_pt
+
+         pos = .point(:,p)
+         d2min = HUGE(ONE)
+         g = 0
+
+         do a = 1,atom.dim
+
+            agrp = atom(a).group
+            apos = atom(a).position
+
+            d  = apos - pos
+            d2 = d(1)*d(1) + d(2)*d(2) + d(3)*d(3)
+
+            if (d2>=d2min) cycle
+
+            ! New minimal-distance atom
+            d2min = d2
+            g     = agrp
+            ga    = a ! Atom for this group
+
+         end
+
+         group_for_pt(p) = g
+
+         ! New group? Then store atom.
+         if (p==1) then
+            res.append(ga)
+         else if (all(group_for_pt(1:p-1)/=g)) then
+            res.append(ga)
+         end
+
+      end
+
+      ! Clean
+      group_for_pt.destroy
+
+   end
+
+   make_pts_list_for_group(pts_for_group) ::: leaky
+   ! Return a "list" of indices for .point's which are closest to any
+   ! atoms belonging to group "g" (not group 1, which assumed to be
+   ! the central molecule).
+      self :: IN
+      pts_for_group :: VEC{VEC_{INT}}*
+
+   ENSURE(.point.created,"no points")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(maxval(.atom.group)>1,"not enough groups")
+
+      pos,apos,d :: VEC{REAL}(3)
+      d2min,d2 :: REAL
+      p,a,agrp,g,gg,n_group,n,i :: INT
+      group_for_pt,group :: VEC{INT}*
+
+      ! Assign each pt to a group
+      group_for_pt.create(.n_pt)
+      group_for_pt = 0
+
+      do p = 1,.n_pt
+
+         pos = .point(:,p)
+         d2min = HUGE(ONE)
+         g = 0
+
+         do a = 1,.atom.dim
+
+            agrp = .atom(a).group
+            apos = .atom(a).position
+
+            if (agrp<=1) cycle
+
+            d  = apos - pos
+            d2 = d(1)*d(1) + d(2)*d(2) + d(3)*d(3)
+
+            if (d2>=d2min) cycle
+
+            d2min = d2
+            g     = agrp
+
+         end
+
+         group_for_pt(p) = g
+
+      end
+
+      ENSURE(all(group_for_pt>0),"not all points have a group")
+
+      ! Now make the list. Group 1 not there.
+      group  => VEC{INT}:unique_elements(.atom.group)
+      n_group = group.dim
+      pts_for_group.create(n_group)
+      do g = 2,n_group
+         gg = group(g)
+         n  = count(group_for_pt==gg)
+         pts_for_group(g).element.create(n)
+         i = 0
+         do p = 1,.n_pt
+            if (group_for_pt(p)/=gg) cycle
+            i = i + 1
+            pts_for_group(g)[i] = p
+         end
+      end
+
+      ! Clean
+      group.destroy
+      group_for_pt.destroy
+
+   end
+
+!  ===================
+!  Merge an isosurface
+!  ===================
+
+   merge_with(other) ::: leaky, PURE
+   ! This routine takes the "other" isosurface and merges it into the
+   ! current isosurface. Of course, the settings may differ between
+   ! the two surfaces: the settings for self are retained. It is
+   ! intended that the surfaces to be merged will be of the same kind,
+   ! only different for the defining iso_values.
+      self :: INOUT
+      other :: ISOSURFACE, IN
+
+      if (other.point.created)                    .point.append_columns(other.point)
+      if (other.point_gradient.created)           .point_gradient.append_columns(other.point_gradient)
+      if (other.point_mean_curvature.created)     .point_mean_curvature.append(other.point_mean_curvature)
+      if (other.point_gaussian_curvature.created) .point_gaussian_curvature.append(other.point_gaussian_curvature)
+      if (other.face.created)                     .face.append_columns(other.face+.n_pt)
+      if (other.surface_property_values.created)  .surface_property_values.append(other.surface_property_values)
+      if (other.surface_iso_values.created)       .surface_iso_values.append(other.surface_iso_values)
+
+      .n_pt      = .n_pt      + other.n_pt
+      .n_face    = .n_face    + other.n_face
+      .area      = .area      + other.area
+      .volume    = .volume    + other.volume
+      .an_volume = .an_volume + other.an_volume
+
+   end
+
+!  ==============
+!  Output methods
+!  ==============
+
+   put
+   ! Put the isosurface data
+      self :: IN
+
+      mean_vol :: REAL
+      n :: INT
+
+      stdout.flush
+      stdout.text("===============")
+      stdout.text("Isosurface data")
+      stdout.text("===============")
+
+      stdout.flush
+      stdout.show("Kind of surface          =",.property) 
+      stdout.show("Triangulation method     =",.triangulation_method)
+      stdout.show("Iso value                =",.iso_value) 
+      if (.iso_values.created) &
+      stdout.show("Iso values               =",.iso_values) 
+      stdout.show("No. of isosurface points =",.n_pt) 
+      stdout.show("No. of isosurface faces  =",.n_face) 
+      if (.cap_ends /= 0) then
+      stdout.show("Cap ends?                =",.cap_ends)
+      stdout.show("Suppress caps?           =",.suppress_caps)
+      stdout.show("No. of caps              =",.n_cap)
+      end
+    ! stdout.show("Big interior?            =",.big_interior) 
+    ! stdout.show("Reverse surface normals? =",.big_interior) 
+
+      ! These statistics include the points used for gradient
+      ! and hessian evaluation just outside the grid perimeter.
+      if (.triangulation_method=="recursive_marching_cube") then
+      n = (.plot_grid.n_x+2)**3 
+      stdout.flush
+      stdout.show("Minimum scan division    =",.minimum_scan_division)
+      stdout.show("Minimum scan level       =",.minimum_scan_level) 
+      stdout.show("Voxel proximity factor   =",.voxel_proximity_factor)
+      stdout.show("# of divisions           =",.final_level) 
+      stdout.show("# of scan divisions      =",.scan_level) 
+      stdout.show("# of func. evals         =",n-.n_skip) 
+      stdout.show("# of func. evals skipped =",.n_skip) 
+      stdout.show("% skipped                =",(1.0d2*.n_skip)/n)
+      end
+
+      if (.n_pt>0) then
+
+      mean_vol = HALF*(.volume_min+.volume_max)
+
+      stdout.flush
+      stdout.text("Volumes and areas ...")
+      stdout.flush
+      stdout.show("Surface area             =",.area) 
+      stdout.show("Interior volume          =",.volume) 
+      stdout.show("Average normal volume    =",.an_volume) 
+      stdout.show("Volume lower bound       =",.volume_min) 
+      stdout.show("Volume upper bound       =",.volume_max) 
+      stdout.show("Average of volume bounds =",mean_vol)
+
+      stdout.flush
+      stdout.text("Volumes and areas in Angstrom units ...")
+
+      stdout.flush
+      stdout.show("Surface area             =",.area.to_units("angstrom^2")) 
+      stdout.show("Interior volume          =",.volume.to_units("angstrom^3")) 
+      stdout.show("Average normal volume    =",.an_volume.to_units("angstrom^3")) 
+      stdout.show("Volume lower bound       =",.volume_min.to_units("angstrom^3")) 
+      stdout.show("Volume upper bound       =",.volume_max.to_units("angstrom^3")) 
+      stdout.show("Average of volume bounds =",mean_vol.to_units("angstrom^3"))
+
+      end
+
+      .plot_grid.put("Isosurface plot grid data")
+
+   end
+
+! CX related output
+
+   put_CX(in,out,atom,angstrom)
+   ! Put the isosurface data in a form that the Crystal Explorer
+   ! program can read it.  "in" and "out" are the indices of the atoms
+   ! inside and outside the surface.
+      in,out :: VEC{INT}, IN
+      atom :: VEC{ATOM}, IN
+      angstrom :: BIN, optional
+
+      has_curvatures :: BIN
+
+      ! Basic surface data
+      .put_points(angstrom)
+      .put_faces
+      .put_vertex_normals
+
+      stdout.flush
+      stdout.text("begin vertex_properties ")
+
+      ! Put standard CX fingerprint properties 
+      ! (de, di, dnorme, dnormi, dnorm)
+      if (.CX_output_distance_properties) .put_fingerprint_properties(in,out,atom,angstrom)
+
+      ! Shape index and curvedness
+      has_curvatures = .point_mean_curvature.created &
+                  AND  .point_gaussian_curvature.created
+      if (.CX_output_shape_properties AND has_curvatures) .put_vertex_SI_and_curvedness
+
+      ! User-requested property?
+      if (.surface_property_values.created) .put_surface_property_values ! up to 2
+      if (.surface_iso_values.created)      .put_surface_iso_values ! up to 2
+
+      ! Binned fingerprints
+      if (.CX_output_fingerprint) .put_binned_d_i_d_e(in,out)
+    ! .put_nearest_internal_atom_RGBs(in)
+    ! .put_nearest_external_atom_RGBs(out)
+    ! .put_binned_d_i_d_e_RGBs(in,out)
+    ! .put_d_i_d_e_RGBs(in,out)
+
+      stdout.text("end vertex_properties ")
+
+   end
+
+   put_points(angstrom)
+   ! Put the canonically indexed list of vertices for the object
+      angstrom :: BIN, optional
+
+      angst :: BIN
+      point :: MAT{REAL}*
+
+      angst = FALSE
+      if (present(angstrom)) angst = angstrom
+
+      if (angst) then 
+         point.create_copy(.point)
+         point = point*ANGSTROM_PER_BOHR
+      else
+         point => .point
+      end
+
+      .put_vertex_property(point,"vertices",.n_pt)
+
+      if (angst) point.destroy
+
+   end
+
+   put_faces
+   ! Put the list of canonical indices for each triangular face
+      n_cap :: INT
+      face, cap :: MAT{INT}*
+
+      n_cap = .n_cap
+      if (.suppress_caps) n_cap = 0
+
+      ! Put faces with caps, or not ...
+      ! Subtract one from all indices
+      if (.suppress_caps OR .n_cap==0) then
+         face.create(3,.n_face)
+         face = .face - 1
+         .put_vertex_property(face,"indices",.n_face)
+         face.destroy
+      else
+         face.create(3,.n_face)
+         cap.create(3,n_cap)
+         face = .face - 1
+         cap  = .cap  - 1
+         .put_2_vertex_properties(face,cap,"indices",.n_face,n_cap)
+         cap.destroy
+         face.destroy
+      end
+
+   end
+
+   put_vertex_gradients
+   ! Put the list of gradients for each canonical point
+      .put_vertex_property(.point_gradient,"vertex_gradients",.n_pt)
+   end
+
+   put_vertex_normals
+   ! Put the list of normals for each canonical point
+      normal :: MAT{REAL}*
+      normal.create(3,.n_pt)
+      .make_vertex_normals(normal)
+      .put_vertex_property(normal,"vertex_normals",.n_pt)
+      normal.destroy
+   end
+
+   put_face_normals
+   ! Put the list of average face normals
+      n :: MAT{REAL}*
+      n.create(3,.n_face)
+      .make_average_face_normals(n)
+      .put_vertex_property(n,"average_face_normal",.n_face)
+      n.destroy
+   end
+
+   put_fingerprint_properties(in,out,atom,angstrom)
+   ! Put out the fingerprint properties.
+      in,out :: VEC{INT}, IN
+      atom :: VEC{ATOM}, IN
+      angstrom :: BIN, optional
+
+   ENSURE(maxval(in) <=size(atom),"in atoms out of range")
+   ENSURE(maxval(out)<=size(atom),"out atoms out of range")
+   ENSURE(minval(in) >0,"in atoms out of range")
+   ENSURE(minval(out)>0,"out atoms out of range")
+
+      d_e,d_i,d_norm_e,d_norm_i,d_norm :: VEC{REAL}*
+
+      ! d_i, d_norm_i, d_e, d_norm_e and d_norm
+      d_i.create(.n_pt)
+      d_e.create(.n_pt)
+      d_norm_i.create(.n_pt)
+      d_norm_e.create(.n_pt)
+      d_norm.create(.n_pt)
+      .make_fingerprint_distances(d_e,d_i,d_norm_e,d_norm_i,d_norm,in,out,atom,angstrom)
+
+      ! Print it out
+      .put_vertex_property(d_i,"d_i",.n_pt)
+      .put_vertex_property(d_e,"d_e",.n_pt)
+      .put_vertex_property(d_norm_i,"d_norm_i",.n_pt)
+      .put_vertex_property(d_norm_e,"d_norm_e",.n_pt)
+      .put_vertex_property(d_norm,"d_norm",.n_pt)
+
+      ! Clean
+      d_norm.destroy
+      d_norm_e.destroy
+      d_norm_i.destroy
+      d_e.destroy
+      d_i.destroy
+
+   end
+
+   put_fingerprint_atoms(in,out)
+   ! Put out the fingerprint properties.
+      in,out :: VEC{INT}, IN
+
+      d_e_atoms,d_i_atoms :: VEC{INT}*
+
+      ! d_i, d_norm_i, d_e, d_norm_e and d_norm
+      d_i_atoms.create(.n_pt)
+      d_e_atoms.create(.n_pt)
+      .make_fingerprint_atoms(d_e_atoms,d_i_atoms,in,out)
+
+      ! Print it out
+      .put_vertex_property(d_i_atoms,"d_i_atoms",.n_pt)
+      .put_vertex_property(d_e_atoms,"d_e_atoms",.n_pt)
+
+      ! Clean
+      d_e_atoms.destroy
+      d_i_atoms.destroy
+
+   end
+
+   put_fingerprint_face_atoms(in,out)
+   ! Put out the fingerprint properties.
+      in,out :: VEC{INT}, IN
+
+      d_e_atoms,d_i_atoms :: VEC{INT}*
+
+      ! d_i, d_norm_i, d_e, d_norm_e and d_norm
+      d_i_atoms.create(.n_face)
+      d_e_atoms.create(.n_face)
+      .make_fingerprint_face_atoms(d_e_atoms,d_i_atoms,in,out)
+
+      ! Print it out
+      .put_vertex_property(d_i_atoms,"d_i_face_atoms",.n_face)
+      .put_vertex_property(d_e_atoms,"d_e_face_atoms",.n_face)
+
+      ! Clean
+      d_e_atoms.destroy
+      d_i_atoms.destroy
+
+   end
+
+   put_vertex_SI_and_curvedness
+   ! Put out the shape index.
+      si,cn :: VEC{REAL}*
+      si.create(.n_pt)
+      cn.create(.n_pt)
+      .make_vertex_SI_and_curvedness(si,cn)
+      .put_vertex_property(si,"shape_index",.n_pt)
+      .put_vertex_property(cn,"curvedness",.n_pt)
+      cn.destroy
+      si.destroy
+   end
+
+   put_surface_property_values
+   ! Put out the surface_property_values
+   ENSURE(.surface_property/=" ","no surface property set")
+   ENSURE(.surface_property_values.created,"no surface property values")
+
+      values :: VEC{REAL}*
+
+      ! Create a copy of property
+      values.create_copy(.surface_property_values)
+
+      ! Chop it if requested
+      if (.surface_property_lb_set) values.chop_small_values(.surface_property_lb)
+      if (.surface_property_ub_set) values.chop_large_values(.surface_property_ub)
+
+      ! Put out the surface property values
+      .put_vertex_property(values,.surface_property,.n_pt)
+
+      ! Clean
+      values.destroy
+
+   end
+
+   put_surface_iso_values
+   ! Put out the surface_iso_values array
+   ENSURE(.surface_iso_values.created,"no surfacevalues")
+
+      ! Orbital is a special case because normally orbitals
+      ! are plotted with two iso_values, one +ve and the other -ve
+      select case (.property)
+         case ("orbital            "); .put_surface_iso_values("orbital")
+         case ("deformation_density"); .put_surface_iso_values("deformation_density")
+         case ("electric_potential "); .put_surface_iso_values("electric_potential")
+         case default;                 .put_surface_iso_values("iso_values")
+      end
+
+   end
+
+   put_surface_iso_values(label)
+   ! Put out the .surface_iso_values for surfaces with multiple
+   ! iso values ...
+      label :: STR
+
+   ENSURE(.surface_iso_values.created,"no surface iso values")
+
+      stdout.save
+      stdout.set_real_style("e")
+      .put_vertex_property(.surface_iso_values,label,.surface_iso_values.dim)
+      stdout.unsave
+
+   end
+
+! These are not used by CX
+
+   put_vertex_mean_curvatures
+   ! Put the list of mean curvatures for each canonical point
+      .put_vertex_property(.point_mean_curvature,"mean_curvature",.n_pt)
+   end
+
+   put_vertex_gaussian_curvatures
+   ! Put the list of gaussian curvatures for each canonical point
+      .put_vertex_property(.point_gaussian_curvature,"gaussian_curvature",.n_pt)
+   end
+
+   put_vertex_RMS_curvature
+   ! Put the list of RMS curvature values for each canonical point
+   ENSURE(.n_pt>0,"no isosurface points")
+      RMS :: VEC{REAL}*
+      RMS.create(.n_pt)
+      .make_vertex_RMS_curvature(RMS)
+      .put_vertex_property(RMS,"RMS_curvature",.n_pt)
+      RMS.destroy
+   end
+
+! Put vertex property routines
+
+   put_vertex_property(prop,prop_name,n_size) ::: template
+   ! Put a generic property out
+      prop :: PROP?
+      prop_name :: STR
+      n_size :: INT
+
+      if (FALSE) self = self
+
+      ! We don't want to use labels on vectors
+      ! We don't want blocking arrays
+      stdout.save
+      stdout.set_using_array_labels(FALSE)
+      stdout.set_using_fields(FALSE)
+
+      ! Print out
+      stdout.flush
+      stdout.text("begin "//prop_name.trim//" "//n_size.to_str.trim)
+      stdout.put(PUT?)
+      stdout.text("end "//prop_name.trim)
+
+      ! Restore
+      stdout.unsave
+
+   end
+
+   put_vertex_property(prop,prop_name,n_size) ::: get_from(ISOSURFACE, PROP?=>VEC{INT}, PUT?=>prop)
+   ! Put a generic property out
+   end
+
+   put_vertex_property(prop,prop_name,n_size) ::: get_from(ISOSURFACE, PROP?=>VEC{REAL}, PUT?=>prop)
+   ! Put a generic property out
+   end
+
+   put_vertex_property(prop,prop_name,n_size) ::: get_from(ISOSURFACE, PROP?=>MAT{INT}, PUT?=>prop,transpose=TRUE)
+   ! Put a generic property out
+   end
+
+   put_vertex_property(prop,prop_name,n_size) ::: get_from(ISOSURFACE, PROP?=>MAT{REAL}, PUT?=>prop,transpose=TRUE)
+   ! Put a generic property out
+   end
+
+   put_2_vertex_properties(prop1,prop2,prop_name,n_size1,n_size2)
+   ! Put a generic property out
+      prop1,prop2 :: MAT{INT} 
+      prop_name :: STR
+      n_size1,n_size2 :: INT
+
+      if (FALSE) self = self
+
+      ! We don't want to use labels on vectors
+      stdout.save
+      stdout.set_using_array_labels(FALSE)
+      stdout.set_using_fields(FALSE)
+
+      ! Print out
+      stdout.flush
+      stdout.text("begin "//prop_name.trim//" "//n_size1.to_str.trim//" "//n_size2.to_str.trim)
+      stdout.put(prop1,transpose=TRUE)
+      stdout.put(prop2,transpose=TRUE)
+      stdout.text("end "//prop_name.trim)
+
+      ! Restore
+      stdout.unsave
+
+   end
+
+! Fingerprints and colours
+
+   put_d_e_colors(out)
+   ! Put the nearest external atom isosurface distances, as RGB
+   ! colours. "out" are the indices of the atoms outside the surface.
+      out :: VEC{INT}
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.colour.created,"no colour function")
+
+      dist :: VEC{REAL}*
+      RGB :: MAT{REAL}*
+
+      RGB.create(3,.n_pt)
+      dist => .d_min_to(out)
+
+      .colour.rescale_data(dist.range)
+      .colour.get_RGB_for(dist,RGB)
+
+      .put_vertex_property(RGB,"d_e_colors",.n_pt)
+
+      dist.destroy
+      RGB.destroy
+
+   end
+
+   put_d_i_colors(in)
+   ! Put the nearest internal atom isosurface distances, as RGB colours. "in"
+   ! are the indices of the atoms inside the surface.
+      in :: VEC{INT}
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.colour.created,"no colour function")
+
+      dist :: VEC{REAL}*
+      RGB :: MAT{REAL}*
+
+      RGB.create(3,.n_pt)
+      dist => .d_min_to(in)
+
+      .colour.rescale_data(dist.range)
+      .colour.get_RGB_for(dist,RGB)
+
+      .put_vertex_property(RGB,"d_i_colors",.n_pt)
+
+      dist.destroy
+      RGB.destroy
+
+   end
+
+   put_binned_d_i_d_e(in,out)
+   ! Put a binned representation of the surface, d_e vs. d_i, as RGBs.
+   ! "in" and "out" are (respectively) the indices of the atoms inside
+   ! and outside the surface. This version does not convert the binned
+   ! vale to a colour.
+      in,out :: VEC{INT}
+
+   ENSURE(.atom.created,"no atom data")
+
+      binned_areas :: MAT{REAL}*
+      areas, d_i_res, d_e_res :: VEC{REAL}(.n_face)
+
+      binned_areas.create(.n_face, .n_face)
+
+      .d_e_d_i_areas(in, out, d_i_res, d_e_res, areas)
+
+      .bin_areas(TOL(2),d_i_res, d_e_res, areas, binned_areas) 
+
+      stdout.put(d_i_res) 
+      stdout.text("begin binned d_i and d_e data")
+      stdout.show("bin size: ", TOL(2))
+      stdout.show("d_i range:", d_i_res.range)
+      stdout.show("d_e range:", d_e_res.range)
+      stdout.text("begin binned areas")
+      stdout.put(binned_areas)
+      stdout.flush
+      stdout.text("end binned areas")
+      stdout.text("end binned d_i and d_e data")
+      binned_areas.destroy
+     
+   end
+
+   bin_areas(bin_size, d_i_res, d_e_res, areas, area_matrix) ::: leaky
+   ! No comment? Bah! --dylan 
+      d_i_res, d_e_res, areas :: VEC{REAL}(.n_face), IN
+      bin_size :: REAL, IN
+      area_matrix :: MAT{REAL}*
+
+      d_e_range, d_i_range, fac :: REAL
+      d_e_range_vec, d_i_range_vec, inspect_row_range, inspect_col_range :: VEC{REAL}(2)
+      area_indices, d_i_indices, d_e_indices :: VEC{INT}*
+      area_matrix_cols, area_matrix_rows :: INT
+      i, j :: INT
+
+      d_e_range_vec = d_e_res.range
+      d_i_range_vec = d_i_res.range
+      d_e_range     = d_e_range_vec(2) - d_e_range_vec(1)
+      d_i_range     = d_i_range_vec(2) - d_i_range_vec(1)
+
+      area_matrix_cols = ceiling(d_i_range/bin_size)
+      area_matrix_rows = ceiling(d_e_range/bin_size)
+      area_matrix.create(area_matrix_cols, area_matrix_rows)
+    
+      do i = 1,area_matrix_cols
+
+         inspect_col_range(1) = d_i_range_vec(1) + ((i-1)*bin_size)
+         inspect_col_range(2) = inspect_col_range(1) + bin_size
+
+         d_i_indices => d_i_res.indices_in_range(inspect_col_range)
+
+         do j = 1,area_matrix_rows
+
+            inspect_row_range(1) = d_e_range_vec(1) + ((i-1)*bin_size)
+            inspect_row_range(2) = inspect_row_range(1) + bin_size
+
+            d_e_indices  => d_e_res.indices_in_range(inspect_row_range)
+            area_indices => d_e_indices.elements_common_with(d_i_indices)
+            stdout.show("d_i_indices", d_i_indices)
+            stdout.show("d_e_indices", d_e_indices)
+            area_matrix(i,j) = VEC{REAL}:sum(areas(area_indices))
+
+            area_indices.destroy
+            d_e_indices.destroy
+
+         end
+
+         d_i_indices.destroy
+
+      end
+
+      fac = MAT{REAL}:sum(area_matrix)
+      fac = ONE/fac
+      area_matrix = fac * area_matrix
+
+   end
+
+   put_binned_d_i_d_e_RGBs(in,out)
+   ! Put a binned representation of the surface, d_e vs. d_i, as RGBs.
+   ! "in" and "out" are (respectively) the indices of the atoms inside
+   ! and outside the
+   ! surface.
+      in,out :: VEC{INT}
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.colour.created,"no colour function")
+
+      d_e,d_i :: VEC{REAL}*
+      bin_count :: MAT{INT}*
+      RGB255 :: VEC{INT}(3)
+      n_e,n_i,e,i :: INT
+      val :: STR
+
+      d_i => .d_min_to(in)
+      d_e => .d_min_to(out)
+
+      ! Bin the counts 
+      bin_count.bin_XY_data(d_i,d_e,0.2d0)
+
+      ! Make the color function from rangs
+      .colour.rescale_data(real(bin_count.range,kind=REAL_KIND))
+
+      ! Clean
+      d_e.destroy
+      d_i.destroy
+
+      ! Print the bins
+      stdout.flush
+
+      ! Banner
+      n_i = bin_count.dim1
+      n_e = bin_count.dim2
+      val = n_i.to_str.trim // " " // n_e.to_str.trim
+      stdout.show("begin binned_d_i_d_e_colors ",trim(val),dots=FALSE)
+
+      ! Print the bins
+      do i = 1,n_i
+      do e = 1,n_e 
+         stdout.put(i)
+         stdout.put(e)
+         RGB255 = .colour.RGB255_for(real(bin_count(i,e),kind=REAL_KIND))
+         stdout.put(RGB255(1))
+         stdout.put(RGB255(2))
+         stdout.put(RGB255(3))
+         stdout.flush
+      end
+      end
+      stdout.text("end binned_d_i_d_e_colors")
+
+      ! Clean
+      bin_count.destroy
+
+   end
+
+!   put_d_i_d_e_RGBs(in,out)
+!   ! Put a binned representation of the surface, d_e vs. d_i, as RGBs.  "in" and
+!   ! "out" are (respectively) the indices of the atoms inside and outside the
+!   ! surface.  This differs from the put_binned_d_i_d_e_RGBs routine above in
+!   ! that the actual data values are outputted with the count next to them
+!   ! (converted to a RGB colour).
+!      in,out :: VEC{INT}
+!   ENSURE(.atom.created,"no atom data")
+!   ENSURE(.colour.created,"no colour function")
+!
+!      d_e,d_i :: VEC{REAL}*
+!      bin_count :: VEC{INT}*
+!      RGB255 :: VEC{INT}(3)
+!      range :: VEC{REAL}(2)
+!      k :: INT
+!
+!      d_i => .d_min_to(in)
+!      d_e => .d_min_to(out)
+!
+!      ! Make the bins
+!      bin_count.create(.n_pt)
+!      bin_count.bin_XY_data(d_i,d_e,0.2d0)
+!
+!      ! Make the color function from rangs
+!      range = bin_count.range
+!      .colour.rescale_data(range)
+!
+!      ! Print the d_e and d_i
+!      stdout.flush
+!      stdout.show("begin d_i_d_e_colors ",.n_pt.to_str.trim,dots=FALSE)
+!      do k = 1,.n_pt
+!         stdout.put(d_i(k))
+!         stdout.put(d_e(k))
+!         RGB255 = .colour.RGB255_for(real(bin_count(k),kind=REAL_KIND))
+!         stdout.put(RGB255(1))
+!         stdout.put(RGB255(2))
+!         stdout.put(RGB255(3))
+!         stdout.flush
+!      end
+!      stdout.text("end d_i_d_e_colors")
+!      bin_count.destroy
+!
+!      ! Clean
+!      d_e.destroy
+!      d_i.destroy
+!
+!   end
+
+   put_vrml(out)
+   ! Put the isosurface data into VRML format to the file "out".
+      out :: TEXTFILE
+
+   ENSURE(.n_pt>0,"no isosurface points")
+
+      n :: VEC{REAL}(3)
+      RGB :: MAT{REAL}*
+      i :: INT
+      lb,ub :: REAL
+
+      stdout.text("Generating VRML isosurface")
+      out.text("Shape {")
+      out.text("  appearance Appearance {")
+      out.text("    material Material {")
+      out.text("      diffuseColor 0.5 0.5 0.5")
+      out.text("      ambientIntensity 0.5")
+      out.text("      emissiveColor 0.1 0.1 0.1")
+      out.text("    }")
+      out.text("  }")
+ 
+      out.text("  geometry IndexedFaceSet {")
+ 
+      ! Output the list of vertices.
+      out.text("    coord Coordinate {")
+      out.text("      point "//achar(91))
+      do i = 1,.n_pt
+         out.put("      ")
+         out.put(.point(1,i))
+         out.put(.point(2,i))
+         out.put(.point(3,i))
+         if (i==.n_pt) then
+            out.put(" "//achar(93))
+            out.flush
+         else
+            out.put(",")
+            out.flush
+         end
+      end
+      out.text("    }")
+ 
+      ! Output the list of vertices for each face.  Each face is ended with index
+      ! -1, since in VRML we are not restricted to triangles.
+      out.text("    coordIndex "//achar(91))
+      do i = 1,.n_face
+         out.put("      ")
+         out.put(.face(1,i)-1)
+         out.put(.face(2,i)-1)
+         out.put(.face(3,i)-1)
+         out.put(-1)
+         out.flush
+      end
+      out.text("    "//achar(93))
+      out.text("    solid FALSE")
+      out.text("    creaseAngle 2")
+ 
+      ! Output the list of normals corresponding to the vertices.
+      out.text("    normal Normal {")
+      out.text("      vector "//achar(91))
+      do i = 1,.n_pt
+         n = .point_gradient(:,i)
+         n.normalise
+         out.put(n(1))
+         out.put(n(2))
+         out.put(n(3))
+         if (i==.n_pt) then
+            out.put(" "//achar(93))
+            out.flush
+         else
+            out.put(",")
+            out.flush
+         end
+      end
+      out.text("    }")
+ 
+      if (.surface_property_values.created) then
+
+         ! Output the colour of each vertex, if applicable.
+         RGB.create(3,.n_pt)
+         stdout.text("Scaling isosurface property values for colouring...")
+
+         if (.chop_surface_property) then
+            lb = .surface_property_lb
+            ub = .surface_property_ub
+            stdout.show("Min value used is ",lb)
+            stdout.show("Max value used is ",ub)
+            .colour.rescale_data([lb,ub])
+         else
+            stdout.show("Min value used is ",minval(.surface_property_values))
+            stdout.show("Max value used is ",maxval(.surface_property_values))
+            .colour.rescale_data(.surface_property_values.range)
+         end
+         .colour.get_RGB_for(.surface_property_values,RGB)
+
+         ! We should not rescale colours for many properties!!!
+         out.text("    colorPerVertex TRUE")
+         out.text("    color Color {")
+         out.text("      color "//achar(91))
+         do i = 1,.n_pt
+           out.put(RGB(1,i))
+           out.put(RGB(2,i))
+           out.put(RGB(3,i))
+           if (i==.n_pt) then
+              out.put(" "//achar(93))
+              out.flush
+           else
+              out.put(",")
+              out.flush
+           end
+         end
+         out.text("    }")
+         RGB.destroy
+
+      end
+ 
+      out.text("  }")
+      out.text("}")
+      stdout.text("done VRML isosurface")
+
+   end
+
+!  ==============
+!  Test functions
+!  ==============
+
+   test_cubify
+   ! Test the cubification
+      .cubify(ISOSURFACE::test_func)
+   end
+
+   test_func(res,pt) ::: selfless
+   ! this is a test isosurface
+      pt :: MAT{REAL}, IN
+!      res :: VEC{REAL}(pt.dim1) ! you can't mix assumed size with assumed shape
+!                                in interface statements
+      res :: VEC{REAL}, OUT
+      r :: VEC{REAL}(3)
+      n,i :: INT
+      n = pt.dim1
+      do i = 1,n
+         r = pt(i,:)
+         res(i) = r(1)**2 + r(2)**2 + r(3)**2
+         res(i) = ONE/(max(res(i),TOL(4)))
+      end
+   end
+
+end

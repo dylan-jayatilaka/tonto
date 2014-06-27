@@ -1,0 +1,586 @@
+!---------------------------------------------------------------------
+!
+! CAPPING_SQUARE: 
+!
+! For generating triangulated caps (on boundary of plot grid).
+!
+! (C) Mike Turner, Dylan Jayatilaka, 2009
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+! 
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+! 
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!---------------------------------------------------------------------
+
+module CAPPING_SQUARE
+
+   implicit none         
+
+!  ===============
+!  Data Statements
+!  ===============
+
+! This is a capping square
+!        V3      e2       V2
+!          +-------------+
+!          |             |
+!          |             |
+!        e3|             |e1
+!          |             |
+!          |             |
+!          +-------------+
+!        V0      e0       V1
+!
+!   +Y
+!   ^
+!   |
+!   +--> +X
+!
+! Every square has 4 vertices. "square" lists the four vertices of a
+! square in terms of x and y. The vertices indices are in the range 0:3
+
+   square :: MAT{INT}(1:2,0:3), private
+!                        V0   V1   V2   V3
+   data square(1:2,0:3)/0,0, 1,0, 1,1, 0,1/
+
+! There are 4 square edges which can be defined in a standard order.
+! "vertex_1_of_edge(e)" gives the 1st vertex index of the e-th square edge.
+! "vertex_2_of_edge(e)" gives the 2nd vertex index of the e-th square edge.
+! The edge indices are in the range 0:3
+
+   vertex_1_of_edge :: VEC{INT}(0:3), private
+   vertex_2_of_edge :: VEC{INT}(0:3), private
+!                                  e0  e1  e2  e3
+   data vertex_1_of_edge(0:3)/      0,  1,  2,  3/
+   data vertex_2_of_edge(0:3)/      1,  2,  3,  0/
+
+! The "xy_axis_of_edge(e)" array defines which axis (1-2 or x-y) is changing
+! for every edge "e" for the 4 standard square edges.
+   xy_axis_of_edge :: VEC{INT}(0:3), private
+!                                 e0  e1  e2  e3
+   data xy_axis_of_edge(0:3)/      1,  2,  1,  2/
+
+! No edge table included at present
+
+!  The "triangle_table(n)" lists the edges used to form each triangle,
+!  for the n-th possible case number. They come in groups of three,
+!  and -1 is the null value indicating no edge, e.g. the fourth data 
+!  item below is:
+!  4, 3, 1, 4, 1, 5,-1,-1,-1,-1,-1,-1, &
+!  This contains two triangles.  The first is formed from points on 
+!  edges 4, 3, 1, while the second is formed from points on edges 4, 1, 5.
+!
+!  Unlike Marching Cubes, the capping square requires not only the edges
+!  (of the capping square or marching cube) but also the vertices as well
+!  when triangulating. To do this the vertices are mapped to "edges":
+!  V0 -> e4, V1 -> e5, V2 -> e6, V3 -> e7.
+   triangle_table :: MAT{INT}(0:11,0:15), private
+   
+! Maximum of 4 triangles with 3 indices = 12 values (0:11)
+! 16 possible cases for triangulation (0:15)
+   data triangle_table(0:11, 0:15)/          &
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1, &
+         4, 3, 0,-1,-1,-1,-1,-1,-1,-1,-1,-1, &
+         0, 1, 5,-1,-1,-1,-1,-1,-1,-1,-1,-1, &
+         4, 3, 1, 4, 1, 5,-1,-1,-1,-1,-1,-1, &
+         1, 2, 6,-1,-1,-1,-1,-1,-1,-1,-1,-1, &
+         5, 0, 1, 0, 2, 1, 0, 3, 2, 3, 7, 2, &
+         0, 2, 6, 0, 6, 5,-1,-1,-1,-1,-1,-1, &
+         5, 4, 3, 5, 3, 2, 5, 2, 6,-1,-1,-1, &
+         2, 3, 7,-1,-1,-1,-1,-1,-1,-1,-1,-1, &
+         2, 0, 4, 2, 4, 7,-1,-1,-1,-1,-1,-1, &
+         4, 3, 0, 3, 1, 0, 3, 2, 1, 2, 6, 1, &
+         4, 7, 2, 4, 2, 1, 4, 1, 5,-1,-1,-1, &
+         1, 3, 7, 1, 7, 6,-1,-1,-1,-1,-1,-1, &
+         7, 6, 1, 7, 1, 0, 7, 0, 4,-1,-1,-1, &
+         6, 5, 0, 6, 0, 3, 6, 3, 7,-1,-1,-1, &
+         4, 7, 6, 4, 6, 5,-1,-1,-1,-1,-1,-1 /
+
+! Normals for each of the 6 possible faces (i.e 6 orientations of the capping square)
+   face_normal_table :: MAT{REAL}(1:3,1:6)
+!                                        f1 (z=0)          f2(+z)         f3(x=0)         f4(+x)
+   data face_normal_table(1:3,1:6) /ZERO,ZERO,ONE, ZERO,ZERO,-ONE, ONE,ZERO,ZERO, -ONE,ZERO,ZERO, &
+                                    ZERO,ONE,ZERO, ZERO,-ONE,ZERO /
+!                                         f5(y=0)          f6(+y)
+
+contains
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object. This version does not nullify point parts.
+   end
+
+   create_copy(s) ::: leaky
+   ! Create self as a duplicate of "s".
+      self :: PTR
+      s :: CAPPING_SQUARE, IN
+      .create
+      .copy(s)
+   end
+
+   copy(s) ::: leaky
+   ! Copy the contents of "s" to self.
+      s :: CAPPING_SQUARE, IN
+      self = s
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object. This version does not destroy pointer parts.
+   end
+
+!   nullify_ptr_part
+!   ! Nullify the pointer parts 
+!   end
+
+!   destroy_ptr_part
+!   ! Destroy the pointer parts 
+!   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   set_defaults ::: leaky
+   ! Set up default information.
+      .face_number            = 0
+      .iso_value              = ONE
+      .skip_bit_string        = 0
+      .vertex_positions       = ZERO
+      .value_at_vertex        = ZERO
+      .cap_vertex_flag        = FALSE
+      .case                   = -1  ! This is not a real case
+      .n_triangle             = 0
+      .n_pt                   = 0
+      .triangle_edge_index    = 0
+      .triangle_vertex_index  = 0
+      .edge_vertex_index      = 0
+      .edge_vertex_positions  = ZERO
+      .edge_vertex_gradient   = ZERO
+      .edge_mean_curvature    = ZERO
+      .edge_gaussian_curvature= ZERO
+      .new_vertex_index       = 0
+      .no_new_vertex          = 0
+   end
+
+   reset ::: leaky
+   ! Reset defaults. 
+   ! Compared to set_defaults, somethings can remain unchanged e.g. iso_value
+   ! But at present everything is reset
+      .face_number            = 0
+      .iso_value              = ONE
+      .skip_bit_string        = 0
+      .vertex_positions       = ZERO
+      .value_at_vertex        = ZERO
+      .cap_vertex_flag        = FALSE
+      .case                   = -1  ! This is not a real case
+      .n_triangle             = 0
+      .n_pt                   = 0
+      .triangle_edge_index    = 0
+      .triangle_vertex_index  = 0
+      .edge_vertex_index      = 0
+      .edge_vertex_positions  = ZERO
+      .edge_vertex_gradient   = ZERO
+      .edge_mean_curvature    = ZERO
+      .edge_gaussian_curvature= ZERO
+      .new_vertex_index       = 0
+      .no_new_vertex          = 0
+   end
+
+!  =============
+!  Input methods
+!  =============
+
+!  ===============
+!  Set/get methods
+!  ===============
+
+   set_iso_value(iso_value)
+   ! Set the iso_value for the capping square
+      iso_value :: REAL, IN
+
+      .iso_value = iso_value
+   end
+
+   set_n_pt(n_pt)
+   ! Sets the current number of points using the triangulation of the surface
+      n_pt :: INT, IN
+      .n_pt = n_pt
+   end
+
+   set_face(face_number)
+   ! Set the face_number for the capping square (i.e. it's orientation)
+      face_number :: INT, IN
+
+      .face_number = face_number
+   end
+
+   set_vertex_positions(pos)
+   ! Set the vertex positions of each vertex of the capping square
+      pos :: MAT{REAL}(1:3,1:4), IN
+      .vertex_positions = pos
+   end
+
+   set_vertex_values(values)
+   ! Set the values at the vertices of the capping square
+      values :: VEC{REAL}(1:4), IN
+
+      .value_at_vertex = values
+   end
+
+   set_edge_vertex_index(edge_index)
+   ! Set the vertex indices that appear on the edges of the capping square.
+   ! These come from the previously done triangulation of the corresponding marching cube.
+      edge_index :: VEC{INT}(1:4), IN
+
+      .edge_vertex_index(0:3) = edge_index(1:4)
+   end
+
+   set_edge_vertex_positions(edge_pos)
+   ! Set the interpolated edge positions from the marching cube for use by the capping square
+      edge_pos :: MAT{REAL}(1:3,1:4), IN
+      .edge_positions = edge_pos
+   end
+
+   set_cap_vertex_flags
+   ! Using the vertex values and the iso_value to determine which
+   ! vertices of the square are capping vertices.  This information is
+   ! used to determine the "case" of the capping square.
+
+      .cap_vertex_flag(0) = .value_at_vertex(0) < .iso_value
+      .cap_vertex_flag(1) = .value_at_vertex(1) < .iso_value
+      .cap_vertex_flag(2) = .value_at_vertex(2) < .iso_value
+      .cap_vertex_flag(3) = .value_at_vertex(3) < .iso_value
+
+   end
+
+   set_case_info 
+   ! Set the capping square case information.
+      .case = .case_number
+   end
+
+   no_of_triangles(case) result (res)
+   ! Return the number of triangles for a capping square with a
+   ! particular "case" number.
+      case :: INT, optional
+
+      res :: INT
+      e,c :: INT
+      triangle_edge_index :: VEC{INT}(0:11)
+
+      c = .case
+      if (present(case)) c = case
+
+      if (c<0 OR c>15) then ! check if case is outside acceptable range
+         res = 0
+      else
+         triangle_edge_index = triangle_table(:,c)
+         res = 0
+         do e = 0, 11, 3 ! loop over triangle edge triples
+           if (triangle_edge_index(e) == -1) exit
+           res = res + 1
+         end
+      end
+   end
+
+   set_triangulation_info ::: leaky
+   ! Set the capping square triangulation information i.e. which edges of
+   ! the square are involved in triangulation (remember the vertices of the capping
+   ! square are also encoded as "edges" - see comments at triangulation table).
+   ! Also sets how many triangles are needed.
+   ! NOTE: the case number is assumed to be correctly set by a call to
+   ! .set_case_info
+      i,e :: INT
+
+      !.set_edge_bit_string      ! Set which edges cut the surface
+      !.set_cube_bit_string      ! Set which vertices are needed;
+                                 !! WARNING: this routine notices .skip_bit_string
+      .n_triangle = .no_of_triangles(.case)
+      .triangle_edge_index = reshape(triangle_table(0:11,.case), [3,4])
+      if (.iso_value<ZERO) then ! Reverse triangle order
+         do i = 1,.n_triangle
+            e = .triangle_edge_index(1,i)
+            .triangle_edge_index(1,i) = .triangle_edge_index(3,i)
+            .triangle_edge_index(3,i) = e
+         end
+      end
+      .triangle_vertex_index  = 0
+   end
+
+   no_of_new_vertices result (res)
+   ! Returns the number of new vertices that capping has introduced.
+   ! These only occur at the vertices of the square and don't include
+   ! the edge vertices acquired from the marching cube and which we "stitch" to.
+      res :: INT
+      
+      res = .no_new_vertex
+   end
+
+   get_new_vertex_positions(pos)
+   ! Get the positions found on this capping square for the new vertices (see above).
+      pos :: MAT{REAL}
+   ENSURE(pos.dim1==3,"wrong 1st dimension, pos")
+   ENSURE(pos.dim2>=.no_of_new_vertices,"pos too small")
+      i :: INT
+      do i=1,.no_of_new_vertices
+         pos(:,i) = .edge_vertex_positions(:,.new_vertex_index(i))
+      end
+   end
+
+   get_new_vertex_gradients(g)
+   ! Get the gradient vectors "g" on this capping square for the new vertices.
+      g :: MAT{REAL}
+   ENSURE(g.dim1==3,"wrong 1st dimension, g")
+   ENSURE(g.dim2>=.no_of_new_vertices,"g array too small")
+      i :: INT
+      do i=1,.no_of_new_vertices
+         g(:,i) = .edge_vertex_gradient(:,.new_vertex_index(i))
+      end
+   end
+
+   get_new_mean_curvatures(c)
+   ! Get the mean curvatures "c" on this capping square for the new vertices.
+      c :: VEC{REAL}
+   ENSURE(c.dim>=.no_of_new_vertices,"c array too small")
+      i :: INT
+      do i=1,.no_of_new_vertices
+         c(i) = .edge_mean_curvature(.new_vertex_index(i))
+      end
+   end
+
+   get_new_gaussian_curvatures(c)
+   ! Get the gaussian curvatures "c" on this capping square for the new vertices.
+      c :: VEC{REAL}
+   ENSURE(c.dim>=.no_of_new_vertices,"c array too small")
+      i :: INT
+      do i=1,.no_of_new_vertices
+         c(i) = .edge_gaussian_curvature(.new_vertex_index(i))
+      end
+   end
+
+   get_triangle_vertex_indices(ind)
+   ! Set the vertex positions found on this capping square for the new vertices.
+      ind :: MAT{INT}
+   ENSURE(ind.dim1==3,"wrong 1st dimension, ind")
+   ENSURE(ind.dim2==.n_triangle,"wrong 2nd dimension, ind")
+      ind = .triangle_vertex_index(:,1:.n_triangle)
+   end
+
+!  =====================================
+!  Triangulation: this is the main thing
+!  =====================================
+
+   triangulate
+   ! Do all the steps required to determine all the triangles for a given
+   ! capping square.
+
+      .set_cap_vertex_flags
+      .set_case_info
+      .set_triangulation_info
+      .set_triangle_vertex_info
+   end
+
+   set_triangle_vertex_info ::: private
+   ! Generates all the information required for each triangle (vertex indices, positions, gradients and curvatures)
+   ! There are two cases to handle depending on the triangles edge index, e:
+   ! Case 1: if 0<=e<=3 then the corresponding edge vertex has already been created by the marching cubes routine.
+   ! Case 2: if 4<=e<=7 then we need to use the corresponding capping square vertex (see comments in triangle table)
+   !         to generate a new edge vertex (index, position, gradient and curvature).
+   !         The gradient comes from the face_normal_table and since there is no curvature for the capping faces
+   !         the curvatures are both zero.
+
+      n, v, e, i, done_edge, cube_done_edge :: INT
+
+      done_edge = 0
+      cube_done_edge = 0
+      i = 0
+
+      do n=1,.n_triangle
+      do v=1,3
+
+         e = .triangle_edge_index(v,n)
+
+         if (BIT_SET_AT_POS_IN(.skip_bit_string,e)) then
+            ! Edge vertex info exists, so use it
+            .triangle_vertex_index(v,n) = .edge_vertex_index(e)
+            DIE_IF(.edge_vertex_index(e)==0,"zero edge vertex index, edge:"//e.to_str.trim)
+            cycle
+         end
+
+         ! This is a real edge i.e. a vertex already determined from the marching cube
+         ! Previously we shared the edge but this results in having to share the normals
+         ! which in turn introduces a graphics artifacts when OpenGL color blending is used.
+         ! To solve this, the vertex is duplicated but the face normal comes from the
+         ! capping squares face_normal_table.
+         if (e < 4) then
+
+            if (BIT_SET_AT_POS_IN(cube_done_edge,e)) then
+               .triangle_vertex_index(v,n) = .edge_vertex_index(e)
+               cycle
+            end
+
+            i = i + 1
+            .n_pt = .n_pt + 1
+            .triangle_vertex_index(v,n) = .n_pt
+            .edge_vertex_index(e) = .n_pt 
+            .new_vertex_index(i) = e
+            .edge_vertex_positions(:,e) = .edge_positions(:,e) 
+            .edge_vertex_gradient(:,e) = face_normal_table(:,.face_number)
+            .edge_mean_curvature(e) = ZERO
+            .edge_gaussian_curvature(e) = ZERO
+            cube_done_edge = SET_BIT_AT_POS_IN(cube_done_edge,e)
+
+         else ! convert pretend edge to corresponding vertex of square
+
+            if (BIT_SET_AT_POS_IN(done_edge,e)) then
+               .triangle_vertex_index(v,n) = .edge_vertex_index(e)
+               cycle
+            end
+
+            i = i + 1
+            .n_pt = .n_pt + 1
+            .triangle_vertex_index(v,n) = .n_pt
+            .edge_vertex_index(e) = .n_pt 
+            .new_vertex_index(i) = e
+            .edge_vertex_positions(:,e) = .vertex_positions(:,e-4)
+            .edge_vertex_gradient(:,e) = face_normal_table(:,.face_number)
+            .edge_mean_curvature(e) = ZERO
+            .edge_gaussian_curvature(e) = ZERO
+            done_edge = SET_BIT_AT_POS_IN(done_edge,e)
+         end
+
+      end
+      end
+
+      .no_new_vertex = i
+
+   end
+
+   set_bottom_info(info, flip)
+   ! Set the .skip_bit_string based on when there is information from the
+   ! adjoining capping square.
+      info :: VEC{INT}(0:7)
+      flip :: BIN
+      ind :: INT
+
+      if (flip) then
+
+         ! set top of square to bottom of info
+         ind = info(4)
+         if (ind > 0) then
+            .edge_vertex_index(7) = ind
+            .skip_bit_string = SET_BIT_AT_POS_IN(.skip_bit_string,7)
+         end
+
+         ind = info(5)
+         if (ind > 0) then
+            .edge_vertex_index(6) = ind
+            .skip_bit_string = SET_BIT_AT_POS_IN(.skip_bit_string,6)
+         end
+
+      else
+
+         ! set bottom of square to top of info
+         ind = info(7)
+         if (ind > 0) then
+            .edge_vertex_index(4) = ind
+            .skip_bit_string = SET_BIT_AT_POS_IN(.skip_bit_string,4)
+         end
+
+         ind = info(6)
+         if (ind > 0) then
+            .edge_vertex_index(5) = ind
+            .skip_bit_string = SET_BIT_AT_POS_IN(.skip_bit_string,5)
+         end
+
+      end
+
+   end
+
+   set_left_info(info, flip)
+   ! Set the .skip_bit_string based on when there is information from the
+   ! adjoining capping square.
+      info :: VEC{INT}(0:7)
+      flip :: BIN
+      ind :: INT
+
+
+      if (flip) then
+
+         ! set right side of square to left of info
+         ind = info(4)
+         if (ind > 0) then
+            .edge_vertex_index(5) = ind
+            .skip_bit_string = SET_BIT_AT_POS_IN(.skip_bit_string,5)
+         end
+
+         ind = info(7)
+         if (ind > 0) then
+            .edge_vertex_index(6) = ind
+            .skip_bit_string = SET_BIT_AT_POS_IN(.skip_bit_string,6)
+         end
+
+      else
+
+         ! set left side of square to right of info
+         ind = info(5)
+         if (ind > 0) then
+            .edge_vertex_index(4) = ind
+            .skip_bit_string = SET_BIT_AT_POS_IN(.skip_bit_string,4)
+         end
+
+         ind = info(6)
+         if (ind > 0) then
+            .edge_vertex_index(7) = ind
+            .skip_bit_string = SET_BIT_AT_POS_IN(.skip_bit_string,7)
+         end
+
+      end
+
+   end
+
+!  ================
+!  Inquiry routines
+!  ================
+
+   case_number result (res)
+   ! From the vertex cap flags on the capping square evaluate and return the case number
+   ! (this tells us which vertices are larger than the .iso_value).
+      res :: INT
+
+      res = 0
+
+      if (.cap_vertex_flag(0)) res = SET_BIT_AT_POS_IN(res,0)
+      if (.cap_vertex_flag(1)) res = SET_BIT_AT_POS_IN(res,1)
+      if (.cap_vertex_flag(2)) res = SET_BIT_AT_POS_IN(res,2)
+      if (.cap_vertex_flag(3)) res = SET_BIT_AT_POS_IN(res,3)
+
+   end
+
+!  ==============
+!  Output methods
+!  ==============
+
+   put_case_info
+   ! Prints out the case number for the capping square
+      stdout.show("Capping case number =",.case)
+   end
+
+end

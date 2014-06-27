@@ -1,0 +1,1086 @@
+!-------------------------------------------------------------------------------
+!
+! DFT_FUNCTIONAL: Functionals for density functional calculations.
+!
+! This module collects together functionals and their derivatives
+! neccesary for DFT calculations. A uniform notation is used for the
+! routines and their arguments to make things easy to debug and check.
+!
+! Restricted and unrestricted functional forms:
+!
+! There are two types of routines: those for restricted (closed
+! shell), and those for unrestricted (open shell) functionals. The
+! restricted functionals are prefixed with "r_". The unrestricted
+! functionals are prefixed with "u_".
+!
+! Contributions are *added*:
+!
+! Since functionals are usually separated into exchange and
+! correlation parts, these routines always *add* their contributions.
+! You must ensure that the output arrays they add to are zero
+! beforehand.
+!
+! Copyright (C) Dylan Jayatilaka, University of Western Australia, 2005
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: dft_functional.foo 4354 2014-05-06 18:22:09Z bucinsky $
+!
+!-------------------------------------------------------------------------------
+
+module DFT_FUNCTIONAL
+
+   implicit none
+
+contains
+
+
+!  ==========================
+!  Create and destroy methods
+!  ==========================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object. This version does not nullify point parts.
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object. This version does not destroy pointer parts.
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+   end
+
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
+   end
+
+   copy(d) ::: leaky
+   ! Copy a dftgrid "d"
+      d :: DFT_FUNCTIONAL
+      self = d
+   end
+
+   set_defaults
+   ! Set up a defaults
+      .name = "none"
+      .Xalpha = DFT_FUNCTIONAL_XALPHA
+      .rho_cutoff = DFT_FUNCTIONAL_RHO_CUTOFF
+   end
+
+   set_rho_cutoff(cutoff)
+   ! If the density goes below ".rho_cutoff" then the functional, its energy
+   ! density, and its potential are all set to zero.
+      cutoff :: REAL
+      .rho_cutoff = cutoff
+   end
+
+!  =============
+!  Input methods
+!  =============
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR
+      word :: STR
+      word = keyword
+      word.to_lower_case
+      select case (word)
+         case ("}            ")  ! exit case
+         case ("name=        "); .read_name
+         case ("xalpha=      "); .read_Xalpha
+         case ("rho_cutoff=  "); .read_rho_cutoff
+         case default;     UNKNOWN(word)
+      end
+   end
+
+   read_name
+   ! Read the ".name" of the DFT functional
+      stdin.read(.name)
+   end
+
+   read_Xalpha
+   ! Read ".Xalpha", the alpha value to use for the Xalpha functional.
+      stdin.read(.Xalpha)
+   end
+
+   read_rho_cutoff
+   ! If the density goes below ".rho_cutoff" then the functional, its energy
+   ! density, and its potential are all set to zero.
+      stdin.read_quantity(.rho_cutoff)
+   end
+
+! ===============
+! Enquiry methods
+! ===============
+
+   is_GGA_functional(name) result (res)
+   ! Return TRUE if the functional uses the GGA approximation.
+      name :: STR, IN, optional
+      res :: BIN
+
+      kind :: STR
+
+      kind = .name
+      if (present(name)) kind = name
+
+      res = FALSE
+      select case (kind)
+         case("           "); res = FALSE
+         case("none       "); res = FALSE
+         case("slater     "); res = FALSE
+         case("xalpha     "); res = FALSE
+         case("becke88    "); res = TRUE
+         case("gill96     "); res = TRUE
+         case("lyp        "); res = TRUE
+         case default;        UNKNOWN(kind)
+      end
+
+   end
+
+   is_LDA_functional(name) result (res)
+   ! Return TRUE if the functional uses the GGA approximation.
+      name :: STR, IN, optional
+      res :: BIN
+
+      kind :: STR
+
+      kind = .name
+      if (present(name)) kind = name
+
+      res = FALSE
+      select case (kind)
+         case("           "); res = TRUE 
+         case("none       "); res = TRUE 
+         case("slater     "); res = TRUE 
+         case("xalpha     "); res = TRUE 
+         case("becke88    "); res = FALSE
+         case("gill96     "); res = FALSE
+         case("lyp        "); res = FALSE
+         case default;        UNKNOWN(kind)
+      end
+
+   end
+
+! =========================================
+! Functionals, energy densities, potentials
+! =========================================
+
+! ==========
+! Restricted
+! ==========
+
+   new_r_functional(name,E,N0,Nx,Ny,Nz)
+   ! For a DFT functional named "name", ADD the *restricted* functional energy
+   ! density "E" (i.e. the functional divided by the density) as a function
+   ! of the (total) density "rho0" and its gradient "rho1".
+      name :: STR, IN
+      E  :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      Nx,Ny,Nz :: VEC{REAL}, IN, optional
+
+   ENSURE(present(Nx) OR .is_LDA_functional(name),"Nn must be present for GGA functionals")
+
+      .name = name
+      select case (name)
+         case ("none   ")  ! Don't add anything.
+         case ("becke88");                   .new_r_Becke88_x_functional(E,N0,Nx,Ny,Nz)
+         case ("lyp    ");                   .new_r_LYP_c_functional(E,N0,Nx,Ny,Nz)
+         case ("slater ");    DFT_FUNCTIONAL::new_r_LDA_x_functional(E,N0)
+         case ("xalpha ");                   .new_r_Xalpha_x_functional(E,N0)
+         case default;     UNKNOWN(name)
+      end
+
+   end
+
+   new_r_energy_density(name,E,N0,Nx,Ny,Nz)
+   ! For a DFT functional named "name", ADD the *restricted* functional energy
+   ! density "E" (i.e. the functional divided by the density) as a function
+   ! of the (total) density "rho0" and its gradient "rho1".
+      name :: STR, IN
+      E  :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      Nx,Ny,Nz :: VEC{REAL}, IN, optional
+
+   ENSURE(present(Nx) OR .is_LDA_functional(name),"Nn must be present for GGA functionals")
+
+      .name = name
+      select case (name)
+         case ("none   ")  ! Don't add anything.
+         case ("becke88");                   .new_r_Becke88_x_energy_density(E,N0,Nx,Ny,Nz)
+         case ("lyp    ");                   .new_r_LYP_c_energy_density(E,N0,Nx,Ny,Nz)
+         case ("slater ");    DFT_FUNCTIONAL::new_r_LDA_x_energy_density(E,N0)
+         case ("xalpha ");                   .new_r_Xalpha_x_energy_density(E,N0)
+         case default;     UNKNOWN(name)
+      end
+
+   end
+
+   new_r_potential(name,V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
+   ! For a DFT functional named "name", ADD the *restricted* potentials 
+   ! "V0" and "Vn" as a function of the (total) density "N0" and its 
+   ! gradient "Nn". "V0" and "Vn" are defined by
+   !       V0 = d F/d rho_a
+   !       Vn = 2*(d F/d gamma_aa) + (d F/d gamma_ab) * \nabla rho_n
+   ! where 
+   !       gamma_xy = nabla rho_x . nabla rho_y, 
+   ! and 
+   !       x,y = alpha or beta. 
+   ! NOTE: the derivatives are w.r.t. rho_a, or gamma_aa, which involve the
+   ! alpha and beta densities, but the inputs are the *restricted* density
+   ! "N0" and its gradient "Nn". In practical calculations, "Vn" is
+   ! integrated with nabla of the basis function pair to get the matrix 
+   ! element of the exchange correlation potential.
+      name :: STR, IN
+      V0 :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      Vx,Vy,Vz :: VEC{REAL}, INOUT, optional
+      Nx,Ny,Nz :: VEC{REAL}, IN, optional
+
+   ENSURE(present(Nx) EQV present(Vx),"Nx and Vx must be both present, or both absent")
+   ENSURE(present(Nx) OR .is_LDA_functional(name),"Nx and Vx must be present for GGA functionals")
+
+      .name = name
+      select case (name)
+         case ("none   ")  ! Don't add anything.
+         case ("becke88");                   .new_r_Becke88_x_potential(V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
+         case ("lyp    ");                   .new_r_LYP_c_potential(V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
+         case ("slater ");    DFT_FUNCTIONAL::new_r_LDA_x_potential(V0,N0)
+         case ("xalpha ");                   .new_r_Xalpha_x_potential(V0,N0)
+         case default;     UNKNOWN(name)
+      end
+
+   end
+
+! ============
+! Unrestricted
+! ============
+
+   new_u_functional(name,E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+   ! For a DFT functional named "name", ADD the *unrestricted* functional energy
+   ! density "E" (i.e. the functional divided by the total density) as a function
+   ! of the (total) density "rho0" and its gradient "rho1".
+      name :: STR, IN
+      E    :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN, optional
+
+   ENSURE(present(Nxa) OR .is_LDA_functional(name),"Nxa must be present for GGA functionals")
+   ENSURE(present(Nxb) OR .is_LDA_functional(name),"Nxb must be present for GGA functionals")
+
+      .name = name
+      select case (name)
+         case ("none   ")  ! Don't add anything.
+         case ("becke88");                   .new_u_Becke88_x_functional(E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+         case ("lyp    ");                   .new_u_LYP_c_functional(E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+         case ("slater ");                   .new_u_LDA_x_functional(E,N0a,N0b)
+         case ("xalpha ");                   .new_u_Xalpha_x_functional(E,N0a,N0b)
+         case default;     UNKNOWN(name)
+      end
+
+   end
+
+   new_u_energy_density(name,E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+   ! For a DFT functional named "name", ADD the *unrestricted* functional energy
+   ! density "E" (i.e. the functional divided by the total density) as a function
+   ! of the (total) density "rho0" and its gradient "rho1".
+      name :: STR, IN
+      E    :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN, optional
+
+   ENSURE(present(Nxa) OR .is_LDA_functional(name),"Nxa must be present for GGA functionals")
+   ENSURE(present(Nxb) OR .is_LDA_functional(name),"Nxb must be present for GGA functionals")
+
+      .name = name
+      select case (name)
+         case ("none   ")  ! Don't add anything.
+         case ("becke88");                   .new_u_Becke88_x_energy_density(E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+         case ("lyp    ");                   .new_u_LYP_c_energy_density(E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+         case ("slater ");                   .new_u_LDA_x_energy_density(E,N0a,N0b)
+         case ("xalpha ");                   .new_u_Xalpha_x_energy_density(E,N0a,N0b)
+         case default;     UNKNOWN(name)
+      end
+
+   end
+
+   new_u_potential(name,V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+   ! For a DFT functional named "name", ADD the *unrestricted* alpha and beta
+   ! potentials "V0a", "V0b", "V1a", "V1b" as a function of the alpha and beta
+   ! densities "rho0a", "rho0b" and their gradients "rho1a", "rho1b". The
+   ! potentials are defined by
+   !       V0a = d F/d rho_a
+   !       V0b = d F/d rho_b
+   !       Vna = 2*(d F/d gamma_aa) + (d F/d gamma_ab)
+   !       Vnb = 2*(d F/d gamma_bb) + (d F/d gamma_ba)
+   ! where 
+   !       gamma_xy = nabla rho_x . nabla rho_y, 
+   ! and 
+   !       x,y = alpha or beta. 
+   ! In practical calculations, "V1" is integrated with nabla of the basis
+   ! function pair to get the matrix element of the exchange correlation
+   ! potential.
+      name :: STR, IN
+      V0a,V0b :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Vxa,Vya,Vza,Vxb,Vyb,Vzb :: VEC{REAL}, INOUT, optional
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN, optional
+
+   ENSURE(present(Nxa) EQV present(Vxa),"Nxa and Vxa must be both present, or both absent")
+   ENSURE(present(Nxb) EQV present(Vxb),"Nxb and Vxb must be both present, or both absent")
+   ENSURE(present(Nxa) OR .is_LDA_functional(name),"Nxa and Vxa must be present for GGA functionals")
+   ENSURE(present(Nxb) OR .is_LDA_functional(name),"Nxb and Vxb must be present for GGA functionals")
+
+      .name = name
+      select case (name)
+         case ("none   ")  ! Don't add anything.
+         case ("becke88");                    .new_u_Becke88_x_potential(V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+         case ("lyp    ");                    .new_u_LYP_c_potential(V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+         case ("slater ");     DFT_FUNCTIONAL::new_u_LDA_x_potential(V0a,V0b,N0a,N0b)
+         case ("xalpha ");                    .new_u_Xalpha_x_potential(V0a,V0b,N0a,N0b)
+         case default;     UNKNOWN(name)
+      end
+
+   end
+
+! ==========================================
+! Functionals, potentials & energy densities
+! ==========================================
+
+! =================================
+! LDA (Local density approximation)
+! =================================
+
+   new_r_LDA_x_functional(E,N0) ::: selfless, private
+   ! The restricted LDA exchange energy functional
+      E    :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      const :: REAL
+      const = THREE/FOUR * (THREE/PI)**THIRD
+      E = E - const*N0**(FOUR*THIRD)
+   end
+
+   new_r_LDA_x_energy_density(E,N0) ::: selfless, private
+   ! The restricted LDA exchange energy density
+   ! LDA = -c \sum_s (\rho_s)^{1/3}, c = (3/2) (3/4\pi)^{1/3}
+      E    :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      const :: REAL
+      const = THREE/FOUR * (THREE/PI)**THIRD
+      E = E - const*N0**(THIRD)
+   end
+
+   new_r_LDA_x_potential(V0,N0) ::: selfless, private
+   ! The restricted LDA exchange potential.
+      V0 :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      const :: REAL
+      const = (THREE/PI)**THIRD
+      V0 = V0 - const*N0**THIRD
+   end
+
+   new_u_LDA_x_functional(E,N0a,N0b) ::: private
+   ! Return the values of the local density exchange functional "E".
+      self :: INOUT
+      E :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      const,rhoa,rhob,r_ba,f_ba,f_ab :: REAL
+      i :: INT
+      const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+      do i = 1,N0a.dim
+         rhoa = N0a(i)
+         rhob = N0b(i)
+         if (rhoa<.rho_cutoff) cycle
+         if (rhob<.rho_cutoff) cycle
+         r_ba = rhob/rhoa
+         f_ba = ONE/(ONE+r_ba)
+         f_ab = ONE - f_ba
+         E(i) = E(i) - const*(f_ba*rhoa**(FOUR*THIRD) + f_ab*rhob**(FOUR*THIRD))
+      end
+   end
+
+   new_u_LDA_x_energy_density(E,N0a,N0b) ::: private
+   ! Return the values of the local density exchange functional "E".
+      self :: INOUT
+      E :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      const,rhoa,rhob,r_ba,f_ba,f_ab :: REAL
+      i :: INT
+      const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+      do i = 1,N0a.dim
+         rhoa = N0a(i)
+         rhob = N0b(i)
+         if (rhoa<.rho_cutoff) cycle
+         if (rhob<.rho_cutoff) cycle
+         r_ba = rhob/rhoa
+         f_ba = ONE/(ONE+r_ba)
+         f_ab = ONE - f_ba
+         E(i) = E(i) - const*(f_ba*rhoa**THIRD + f_ab*rhob**THIRD)
+      end
+   end
+
+   new_u_LDA_x_potential(V0a,V0b,N0a,N0b) ::: selfless, private
+   ! Return the derivatives of the local density exchange functional.
+      V0a,V0b :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      const :: REAL
+      const = TWO * (THREE/(FOUR*PI))**THIRD
+      V0a = V0a - const*N0a**THIRD
+      V0b = V0b - const*N0b**THIRD
+   end
+
+! =======
+! X-alpha
+! =======
+
+   new_r_Xalpha_x_functional(E,N0) ::: private
+   ! The restricted X alpha exchange functional
+      self :: IN
+      E    :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      const :: REAL
+      const = NINE/EIGHT * .Xalpha * (THREE/PI)**THIRD
+      E = E - const*N0**(FOUR*THIRD)
+   end
+
+   new_r_Xalpha_x_energy_density(E,N0) ::: private
+   ! The restricted X alpha exchange energy density. 
+   ! Untested.
+      self :: IN
+      E    :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      const :: REAL
+      const = NINE/EIGHT * .Xalpha * (THREE/PI)**THIRD
+      E = E - const*N0**(THIRD)
+   end
+
+   new_r_Xalpha_x_potential(V0,N0) ::: private
+   ! The restricted X alpha exchange potential.
+   ! Untested.
+      self :: IN
+      V0   :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      const :: REAL
+      const = THREE/TWO * .Xalpha * (THREE/PI)**THIRD
+      V0 = V0 - const*N0**THIRD
+   end
+
+   new_u_Xalpha_x_functional(E,N0a,N0b) ::: private
+   ! Return the values of the local density functional
+      self :: IN
+      E :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      const,rhoa,rhob,r_ba,f_ba,f_ab :: REAL
+      i :: INT
+      const = NINE/FOUR * .Xalpha * (THREE/(FOUR*PI))**THIRD
+      do i = 1,N0a.dim
+         rhoa = N0a(i)
+         rhob = N0b(i)
+         if (rhoa<.rho_cutoff) cycle
+         if (rhob<.rho_cutoff) cycle
+         r_ba = rhob/rhoa
+         f_ba = ONE/(ONE+r_ba)
+         f_ab = ONE - f_ba
+         E(i) = E(i) - const*(f_ba*rhoa**(FOUR*THIRD) + f_ab*rhob*(FOUR**THIRD))
+      end
+   end
+
+   new_u_Xalpha_x_energy_density(E,N0a,N0b) ::: private
+   ! Return the values of the local density exchange functional "E".
+   ! Untested
+      self :: IN
+      E :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      const,rhoa,rhob,r_ba,f_ba,f_ab :: REAL
+      i :: INT
+      const = NINE/FOUR * .Xalpha * (THREE/(FOUR*PI))**THIRD
+      do i = 1,N0a.dim
+         rhoa = N0a(i)
+         rhob = N0b(i)
+         if (rhoa<.rho_cutoff) cycle
+         if (rhob<.rho_cutoff) cycle
+         r_ba = rhob/rhoa
+         f_ba = ONE/(ONE+r_ba)
+         f_ab = ONE - f_ba
+         E(i) = E(i) - const*(f_ba*rhoa**THIRD + f_ab*rhob**THIRD)
+      end
+   end
+
+   new_u_Xalpha_x_potential(V0a,V0b,N0a,N0b) ::: private
+   ! Return the derivatives of the local density exchange functional.
+   ! Untested
+      self :: IN
+      V0a,V0b :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      const :: REAL
+      const = THREE * .Xalpha * (THREE/(FOUR*PI))**THIRD
+      V0a = V0a - const*N0a**THIRD
+      V0b = V0b - const*N0b**THIRD
+   end
+
+! =======
+! Becke88
+! =======
+
+   new_r_Becke88_x_functional(E,N0,Nx,Ny,Nz) ::: private
+   ! The restricted Becke 88 exchange energy density.
+      self :: IN
+      E  :: VEC{REAL}, INOUT
+      N0,Nx,Ny,Nz :: VEC{REAL}, IN
+
+      beta,beta6,const,two_m43,two_m13,rho,rho_13,rho_43,gx,gy,gz,gg,x,x2 :: REAL
+      i :: INT
+
+      beta = 0.0042d0  ! beta parameter
+      beta6 = SIX*beta
+      const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+      two_m13 = TWO**(-THIRD)
+      two_m43 = HALF*two_m13
+
+      do i = 1,N0.dim
+         rho = N0(i)
+         if (rho<.rho_cutoff) cycle
+         rho_13 = rho**(THIRD)
+         rho_43 = two_m43 * rho * rho_13
+         gx = Nx(i)
+         gy = Ny(i)
+         gz = Nz(i)
+         gg = HALF*sqrt(gx*gx+gy*gy+gz*gz)
+       ! x  = min(gg/rho_43,.rho_cutoff)
+         x  = gg/rho_43
+         x2 = x*x
+         E(i) = E(i) - two_m13*rho*rho_13*(const+beta*x2/(ONE+beta6*x*log(x+sqrt(ONE+x2))))
+      end
+
+   end
+
+   new_r_Becke88_x_energy_density(E,N0,Nx,Ny,Nz) ::: private
+   ! The restricted Becke 88 exchange energy density.
+      self :: IN
+      E  :: VEC{REAL}, INOUT
+      N0,Nx,Ny,Nz :: VEC{REAL}, IN
+
+      beta,beta6,const,two_m43,two_m13,rho,rho_13,rho_43,gx,gy,gz,gg,x,x2 :: REAL
+      i :: INT
+
+      beta = 0.0042d0  ! beta parameter
+      beta6 = SIX*beta
+      const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+      two_m13 = TWO**(-THIRD)
+      two_m43 = HALF*two_m13
+
+      do i = 1,N0.dim
+         rho = N0(i)
+         if (rho<.rho_cutoff) cycle
+         rho_13 = rho**(THIRD)
+         rho_43 = two_m43 * rho * rho_13
+         gx = Nx(i)
+         gy = Ny(i)
+         gz = Nz(i)
+         gg = HALF*sqrt(gx*gx+gy*gy+gz*gz)
+       ! x  = min(gg/rho_43,.rho_cutoff)
+         x  = gg/rho_43
+         x2 = x*x
+         E(i) = E(i) - two_m13*rho_13*(const+beta*x2/(ONE+beta6*x*log(x+sqrt(ONE+x2))))
+      end
+
+   end
+
+   new_r_Becke88_x_potential(V0,N0,Vx,Vy,Vz,Nx,Ny,Nz) ::: private
+   ! The restricted Becke 88 exchange potential.  These equations are
+   ! essentially the same as in the appendix of JCP 98(7) 5612-5626.
+   ! Note that (A5) is in error because the \gamma variables should be square
+   ! rooted. Note that (A6) is in error because the power of \rho_\alpha should
+   ! be 1/3 not 4/3.
+      self :: IN
+      V0,Vx,Vy,Vz :: VEC{REAL}, INOUT
+      N0,Nx,Ny,Nz :: VEC{REAL}, IN
+
+      beta,beta2,beta6,bbta6,const,rho,rho_13,rho_43 :: REAL
+      gx,gy,gz,gg,x,x2,sq,as,d,d2,g0,g1 :: REAL
+      i :: INT
+
+      beta  = 0.0042d0  ! beta parameter
+      beta2 = TWO*beta
+      beta6 = SIX*beta
+      bbta6 = SIX*beta*beta
+      const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+
+      do i = 1,N0.dim
+         rho = N0(i)
+         if (rho<.rho_cutoff) cycle
+         rho = HALF*rho
+         rho_13 = rho**(THIRD)
+         rho_43 = rho*rho_13
+         gx = Nx(i) ! should have a 1/2 here
+         gy = Ny(i)
+         gz = Nz(i) ! but it is put below
+         gg = HALF*sqrt(gx*gx+gy*gy+gz*gz)
+         x  = gg/rho_43
+         x2 = x*x
+         sq = sqrt(ONE+x2)
+         as = log(x+sq)
+         d  = ONE/(ONE+beta6*x*as)
+         d2 = d*d
+         g0 = const + beta*x2*d
+         g1 = (beta2*x+bbta6*x2*(as-x/sq))*d2
+         gg = HALF*g1/gg ! a factor 1/2 x 2 which cancel, here
+         V0(i) = V0(i) - FOURTHIRD*rho_13*(g0 - x*g1)
+         Vx(i) = Vx(i) - gg*gx
+         Vy(i) = Vy(i) - gg*gy
+         Vz(i) = Vz(i) - gg*gz
+      end
+
+   end
+
+   new_u_Becke88_x_functional(E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb) ::: private
+   ! Return the values of the Becke 88 exchange energy density functional.
+      self :: IN
+      E :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN
+
+      beta,beta6,const,rhoa,rhob,rhoa_13,rhob_13,rhoa_43,rhob_43 :: REAL
+      ax,ay,az,xa,xa2,bx,by,bz,xb,xb2, r_ba,f_ba,f_ab :: REAL
+      i :: INT
+
+      beta = 0.0042d0  ! beta parameter
+      beta6 = SIX*beta
+      const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+      do i = 1,N0a.dim
+         rhoa = N0a(i)
+         rhob = N0b(i)
+         if (rhoa<.rho_cutoff) cycle
+         if (rhob<.rho_cutoff) cycle
+         rhoa_13 = rhoa**THIRD
+         rhob_13 = rhob**THIRD
+         rhoa_43 = rhoa_13*rhoa
+         rhob_43 = rhob_13*rhob
+         r_ba = rhob/rhoa
+         f_ba = ONE/(ONE+r_ba)
+         f_ab = ONE - f_ba
+         ax = Nxa(i); ay = Nya(i); az = Nza(i)
+         bx = Nxb(i); by = Nyb(i); bz = Nzb(i)
+         xa = sqrt(ax*ax+ay*ay+az*az)/rhoa_43; xa2 = xa*xa
+         xb = sqrt(bx*bx+by*by+bz*bz)/rhob_43; xb2 = xb*xb
+         E(i) = E(i) &
+              - f_ba*rhoa_43 * (const + beta*xa2/(ONE+beta6*xa*log(xa+sqrt(ONE+xa2)))) &
+              - f_ab*rhob_43 * (const + beta*xb2/(ONE+beta6*xb*log(xb+sqrt(ONE+xb2))))
+      end
+
+   end
+
+   new_u_Becke88_x_energy_density(E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb) ::: private
+   ! Return the values of the Becke 88 exchange energy density functional.
+      self :: IN
+      E :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN
+
+      beta,beta6,const,rhoa,rhob,rhoa_13,rhob_13,rhoa_43,rhob_43 :: REAL
+      ax,ay,az,xa,xa2,bx,by,bz,xb,xb2, r_ba,f_ba,f_ab :: REAL
+      i :: INT
+
+      beta = 0.0042d0  ! beta parameter
+      beta6 = SIX*beta
+      const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+      do i = 1,N0a.dim
+         rhoa = N0a(i)
+         rhob = N0b(i)
+         if (rhoa<.rho_cutoff) cycle
+         if (rhob<.rho_cutoff) cycle
+         rhoa_13 = rhoa**THIRD
+         rhob_13 = rhob**THIRD
+         rhoa_43 = rhoa_13*rhoa
+         rhob_43 = rhob_13*rhob
+         r_ba = rhob/rhoa
+         f_ba = ONE/(ONE+r_ba)
+         f_ab = ONE - f_ba
+         ax = Nxa(i); ay = Nya(i); az = Nza(i)
+         bx = Nxb(i); by = Nyb(i); bz = Nzb(i)
+         xa = sqrt(ax*ax+ay*ay+az*az)/rhoa_43; xa2 = xa*xa
+         xb = sqrt(bx*bx+by*by+bz*bz)/rhob_43; xb2 = xb*xb
+         E(i) = E(i) &
+              - f_ba*rhoa_13 * (const + beta*xa2/(ONE+beta6*xa*log(xa+sqrt(ONE+xa2)))) &
+              - f_ab*rhob_13 * (const + beta*xb2/(ONE+beta6*xb*log(xb+sqrt(ONE+xb2))))
+      end
+
+   end
+
+   new_u_Becke88_x_potential(V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb) ::: private
+   ! Return the derivatives of the Becke 88 exchange functional.
+   ! These equations are essentially the same as in the appendix of JCP 98(7)
+   ! 5612-5626.
+      self :: IN
+      V0a,V0b :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Vxa,Vya,Vza,Vxb,Vyb,Vzb :: VEC{REAL}, INOUT
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN
+
+      ax,ay,az,xa,xa2,bx,by,bz,xb,xb2,ka,kb,ka2,kb2,sa,sb,za,zb,nla,nlb :: REAL
+      beta,beta6,d,e,rhoa,rhob,rhoa_13,rhob_13,rhoa_43,rhob_43 :: REAL
+      i :: INT
+
+      beta = 0.0042d0  ! beta parameter
+      beta6 = SIX*beta
+      d = -(SIX/PI)**THIRD
+      e = FOURTHIRD*beta
+      do i = 1,N0a.dim
+         rhoa = N0a(i)
+         rhob = N0b(i)
+         if (rhoa<.rho_cutoff) cycle
+         if (rhob<.rho_cutoff) cycle
+         rhoa_13 = rhoa**THIRD
+         rhob_13 = rhob**THIRD
+         rhoa_43 = rhoa*rhoa_13
+         rhob_43 = rhob*rhob_13
+         ax = Nxa(i); ay = Nya(i); az = Nza(i)
+         bx = Nxb(i); by = Nyb(i); bz = Nzb(i)
+         xa = sqrt(ax*ax+ay*ay+az*az)/rhoa_43; xa2 = xa*xa
+         xb = sqrt(bx*bx+by*by+bz*bz)/rhob_43; xb2 = xb*xb
+         sa = sqrt(ONE+xa2)
+         sb = sqrt(ONE+xb2)
+         ka = ONE + beta6*xa*log(xa+sa)
+         kb = ONE + beta6*xb*log(xb+sb)
+         ka2 = ONE/(ka*ka)
+         kb2 = ONE/(kb*kb)
+         za = beta6*xa2/sa
+         zb = beta6*xb2/sb
+         V0a(i) = V0a(i) + rhoa_13*(d + e*xa2*(ONE-za)*ka2)
+         V0b(i) = V0b(i) + rhob_13*(d + e*xb2*(ONE-zb)*kb2)
+         nla = beta*(za-ONE-ka)*ka2/rhoa_43
+         nlb = beta*(zb-ONE-kb)*ka2/rhob_43
+         Vxa(i) = Vxa(i) + nla*ax
+         Vya(i) = Vya(i) + nla*ay
+         Vza(i) = Vza(i) + nla*az
+         Vxb(i) = Vxb(i) + nlb*bx
+         Vyb(i) = Vyb(i) + nlb*by
+         Vzb(i) = Vzb(i) + nlb*bz
+      end
+
+   end
+
+! ===================
+! LYP (Lee-Yang-Parr)
+! ===================
+
+   new_r_LYP_c_functional(E,N0,Nx,Ny,Nz) ::: private
+   ! Return the values of the Lee-Yang-Parr energy density.
+      self :: IN
+      E :: VEC{REAL}, INOUT
+      N0,Nx,Ny,Nz :: VEC{REAL}, IN
+
+      const,a,b,c,d,fac,rho,rho_m13,gx,gy,gz,gg :: REAL
+      gamma_inv,a_b_omega,delta :: REAL
+      i :: INT
+
+      a = 0.04918d0
+      b = 0.132d0
+      c = 0.2533d0
+      d = 0.349d0
+      const = (THREE/TEN)*(3*PI*PI)**(TWOTHIRD)
+      fac = TWO**(11*THIRD)*const
+
+      do i = 1,N0.dim
+         rho = N0(i)
+         if (rho<.rho_cutoff) cycle
+         rho_m13 = ONE/rho**THIRD
+         rho  = HALF*rho
+         gx = Nx(i)
+         gy = Ny(i)
+         gz = Nz(i)
+         gg = QUARTER*(gx*gx+gy*gy+gz*gz)
+         gamma_inv = ONE/(ONE+d*rho_m13)
+         a_b_omega = a*b*exp(-c*rho_m13)*gamma_inv*rho_m13**11
+         delta = (c+d*gamma_inv)*rho_m13
+         E(i) = E(i) + TWO*rho * ( &
+              - a*gamma_inv &
+              + HALF*a_b_omega*rho*gg*(6+14*delta)*NINTH &
+              - a_b_omega*fac*rho**(11*THIRD) )
+      end
+
+   end
+
+   new_r_LYP_c_energy_density(E,N0,Nx,Ny,Nz) ::: private
+   ! Return the values of the Lee-Yang-Parr energy density.
+      self :: IN
+      E :: VEC{REAL}, INOUT
+      N0,Nx,Ny,Nz :: VEC{REAL}, IN
+
+      const,a,b,c,d,fac,rho,rho_m13,gx,gy,gz,gg :: REAL
+      gamma_inv,a_b_omega,delta :: REAL
+      i :: INT
+
+      a = 0.04918d0
+      b = 0.132d0
+      c = 0.2533d0
+      d = 0.349d0
+      const = (THREE/TEN)*(3*PI*PI)**(TWOTHIRD)
+      fac = TWO**(11*THIRD)*const
+
+      do i = 1,N0.dim
+         rho = N0(i)
+         if (rho<.rho_cutoff) cycle
+         rho_m13 = ONE/rho**THIRD
+         rho  = HALF*rho
+         gx = Nx(i)
+         gy = Ny(i)
+         gz = Nz(i)
+         gg = QUARTER*(gx*gx+gy*gy+gz*gz)
+         gamma_inv = ONE/(ONE+d*rho_m13)
+         a_b_omega = a*b*exp(-c*rho_m13)*gamma_inv*rho_m13**11
+         delta = (c+d*gamma_inv)*rho_m13
+         E(i) = E(i) &
+              - a*gamma_inv &
+              + HALF*a_b_omega*rho*gg*(6+14*delta)*NINTH &
+              - a_b_omega*fac*rho**(11*THIRD)
+      end
+
+   end
+
+   new_r_LYP_c_potential(V0,N0,Vx,Vy,Vz,Nx,Ny,Nz) ::: private
+   ! Return the derivatives of the LYP correlation functional.
+   ! These equations are essentially the same as in the appendix of JCP 98(7)
+   ! 5612-5626.
+      self :: IN
+      V0 :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      Vx,Vy,Vz :: VEC{REAL}, INOUT
+      Nx,Ny,Nz :: VEC{REAL}, IN
+
+      const,two_13,two_m13,two_113,two_m113,a,b,c,d,e,ab9 :: REAL
+      rho,rho_13,rho_m13,rho_83,rho_m83,p_third,ax,ay,az,aa,fac :: REAL
+      gamma_inv,mu,abw9_pa,delta :: REAL
+      i :: INT
+
+      const = (THREE/TEN)*(3*PI*PI)**(TWOTHIRD)
+      two_13   = TWO**THIRD
+      two_m13  = ONE/two_13
+      two_113  = 16*two_m13
+      two_m113 = ONE/two_113
+      a = 0.04918d0
+      b = 0.132d0
+      c = 0.2533d0
+      d = 0.349d0
+      e = two_113 * const
+      ab9 = a*b*NINTH
+
+      do i = 1,N0.dim
+         rho = N0(i)
+         if (rho<.rho_cutoff) cycle
+         rho = HALF*rho
+         ax  = HALF*Nx(i)
+         ay  = HALF*Ny(i)
+         az  = HALF*Nz(i)
+         aa  = ax*ax+ay*ay+az*az
+         rho_13  = rho**(THIRD)
+         rho_m13 = ONE/rho_13
+         rho_83  = rho*rho*rho*rho_m13
+         rho_m83 = ONE/rho_83
+         p_third = two_m13*rho_m13
+         gamma_inv = ONE/(ONE+d*p_third)
+         mu = d*gamma_inv*p_third
+         abw9_pa = two_m113 * ab9*exp(-c*p_third) * rho_m83 * gamma_inv
+         delta = c*p_third + mu
+         V0(i) = V0(i) -a*gamma_inv*(ONE+THIRD*mu) &
+           + abw9_pa*aa*(SEVEN*THIRD*(mu*mu+delta*delta)-13*delta-5) &
+           - abw9_pa*e*(3*delta+9)*rho_83
+         fac = abw9_pa*rho*(6+14*delta)
+         Vx(i) = Vx(i) + fac*ax
+         Vy(i) = Vy(i) + fac*ay
+         Vz(i) = Vz(i) + fac*az
+      end
+   end
+
+   new_u_LYP_c_functional(f,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb) ::: private
+   ! Return the values of the Lee-Yang-Parr functional.
+      self :: IN
+      f :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN
+
+      c_f,a,b,c,d,fac,pa,pb,pxa,pya,pza,pxb,pyb,pzb,p,npanpa,npbnpb,npanpb,p_third :: REAL
+      gamma,a_b_omega,delta,pa_pb_n,fi :: REAL
+      i :: INT
+
+      c_f = (THREE/TEN)*(3*PI*PI)**(THIRD+THIRD)
+      a = 0.04918
+      b = 0.132
+      c = 0.2533
+      d = 0.349
+      fac = TWO**(11*THIRD)*c_f
+      do i = 1,N0a.dim
+         pa = N0a(i)
+         pb = N0b(i)
+         if (pa<.rho_cutoff) cycle
+         if (pb<.rho_cutoff) cycle
+         pxa = Nxa(i); pya = Nya(i); pza = Nza(i)
+         pxb = Nxb(i); pyb = Nyb(i); pzb = Nzb(i)
+         npanpa = pxa*pxa+pya*pya+pza*pza
+         npbnpb = pxb*pxb+pyb*pyb+pzb*pzb
+         npanpb = pxa*pxb+pya*pyb+pza*pzb
+         p = pa + pb
+         p_third = p**THIRD
+         gamma = ONE + d/p_third
+         a_b_omega = a*b*exp(-c/p_third)/(gamma*p_third**11)
+         delta = (c+d/gamma)/p_third
+         pa_pb_n=pa*pb/NINE
+         fi = -a * FOUR*pa*pb/(p*gamma)
+         fi = fi - a_b_omega*fac*pa*pb*(pa**(EIGHT*THIRD)+pb**(EIGHT*THIRD))
+         fi = fi + a_b_omega*(pa_pb_n*(FOUR*delta-ONE-(11*pa+pb*delta)/p) + pb*pb)*npanpa
+         fi = fi + a_b_omega*(pa_pb_n*(FOUR*delta-ONE-(11*pb+pa*delta)/p) + pa*pa)*npbnpb
+         fi = fi + a_b_omega*(12/NINE*p*p - pa_pb_n*(47-SEVEN*delta))*npanpb
+         f(i) = f(i) + fi
+      end
+
+   end
+
+   new_u_LYP_c_energy_density(f,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb) ::: private
+   ! Return the values of the Lee-Yang-Parr functional.
+      self :: IN
+      f :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN
+
+      c_f,a,b,c,d,fac,pa,pb,pxa,pya,pza,pxb,pyb,pzb,p,npanpa,npbnpb,npanpb,p_third :: REAL
+      gamma,a_b_omega,delta,pa_pb_n,fi :: REAL
+      i :: INT
+
+      c_f = (THREE/TEN)*(3*PI*PI)**(THIRD+THIRD)
+      a = 0.04918
+      b = 0.132
+      c = 0.2533
+      d = 0.349
+      fac = TWO**(11*THIRD)*c_f
+      do i = 1,N0a.dim
+         pa = N0a(i)
+         pb = N0b(i)
+         if (pa<.rho_cutoff) cycle
+         if (pb<.rho_cutoff) cycle
+         pxa = Nxa(i); pya = Nya(i); pza = Nza(i)
+         pxb = Nxb(i); pyb = Nyb(i); pzb = Nzb(i)
+         npanpa = pxa*pxa+pya*pya+pza*pza
+         npbnpb = pxb*pxb+pyb*pyb+pzb*pzb
+         npanpb = pxa*pxb+pya*pyb+pza*pzb
+         p = pa + pb
+         p_third = p**THIRD
+         gamma = ONE + d/p_third
+         a_b_omega = a*b*exp(-c/p_third)/(gamma*p*p_third**11)
+         delta = (c+d/gamma)/p_third
+         pa_pb_n=pa*pb/NINE
+         fi = -a * FOUR*pa*pb/(p*p*gamma)
+         fi = fi - a_b_omega*fac*pa*pb*(pa**(EIGHT*THIRD)+pb**(EIGHT*THIRD))
+         fi = fi + a_b_omega*(pa_pb_n*(FOUR*delta-ONE-(11*pa+pb*delta)/p) + pb*pb)*npanpa
+         fi = fi + a_b_omega*(pa_pb_n*(FOUR*delta-ONE-(11*pb+pa*delta)/p) + pa*pa)*npbnpb
+         fi = fi + a_b_omega*(12/NINE*p*p - pa_pb_n*(47-SEVEN*delta))*npanpb
+         f(i) = f(i) + fi
+      end
+
+   end
+
+   new_u_LYP_c_potential(V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb) ::: private
+   ! Return the derivatives of the LYP correlation functional.
+   ! These equations are essentially the same as in the appendix of JCP 98(7)
+   ! 5612-5626.
+      self :: IN
+      V0a,V0b :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Vxa,Vya,Vza,Vxb,Vyb,Vzb :: VEC{REAL}, INOUT
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN
+
+      a,b,c,d,e,c_f,ab9 :: REAL
+      pa,pb,pxa,pya,pza,pxb,pyb,pzb,p,p2,pa2,pb2,papb,p_third,npanpa,npbnpb,npanpb :: REAL
+      gamma_inv,mu,abw9,abw27,delta,pa83,pb83,tmp1,tmp2 :: REAL
+      dfdnpanpb,dfdnpanpa,dfdnpbnpb :: REAL
+      i :: INT
+ 
+      c_f = (THREE/TEN)*(3*PI*PI)**(THIRD+THIRD)
+      a = 0.04918
+      b = 0.132
+      c = 0.2533
+      d = 0.349
+      e = TWO**(11*THIRD) * NINE * c_f
+      ab9 = a*b/NINE
+ 
+      do i = 1,N0a.dim
+         pa = N0a(i)
+         pb = N0b(i)
+         if (pa<.rho_cutoff) cycle
+         if (pb<.rho_cutoff) cycle
+         pxa = Nxa(i); pya = Nya(i); pza = Nza(i)
+         pxb = Nxb(i); pyb = Nyb(i); pzb = Nzb(i)
+         npanpa = pxa*pxa+pya*pya+pza*pza
+         npbnpb = pxb*pxb+pyb*pyb+pzb*pzb
+         npanpb = pxa*pxb+pya*pyb+pza*pzb
+         p = pa + pb
+         p_third = p**(THIRD)
+         gamma_inv = ONE/(ONE + d / p_third)
+         mu=d*gamma_inv/p_third
+         p2=p*p
+         abw9 = ab9*exp(-c/p_third) * p_third/(p2*p2) * gamma_inv
+         abw27 = abw9*THIRD
+         delta = c/p_third + mu
+         pa2=pa*pa
+         pb2=pb*pb
+         pa83=pa2*pa/pa**THIRD
+         pb83=pb2*pb/pb**THIRD
+         tmp1 = pa*pb/p*(7*mu*mu+delta*(7*delta-131)+517)
+         tmp2 = (delta-11)/p*(pb83+pa83)
+         papb=pa*pb
+  
+         V0a(i) = V0a(i) -4*a*pb*gamma_inv/p2*(pb+THIRD*mu*pa) &
+           +abw27*npanpb*(pa*(12*delta-60)+pb*(33*delta-201) + tmp1) &
+           +abw27*npanpa*pb/p2*(96*pa2-160*papb-102*pb2 &
+            +(-48*pa2-4*papb+18*pb2)*delta+pa*(4*p-pb)*(delta*delta+mu*mu)) &
+           +abw27*npbnpb/p2*(-45*pa2*pa+17*pa2*pb+180*pa*pb2-36*pb2*pb &
+            +(9*pa2*pa-19*pa2*pb-42*pa*pb2+12*pb2*pb)*delta &
+            +papb*(4*p-pa)*(delta*delta+mu*mu)) &
+           -abw27*pb*e*(pa*tmp2+11*pa83+3*pb83)
+         V0b(i) = V0b(i) -4*a*pa*gamma_inv/p2*(pa+THIRD*mu*pb) &
+           +abw27*npanpb*(pb*(12*delta-60)+pa*(33*delta-201) + tmp1) &
+           +abw27*npbnpb*pa/p2*(96*pb2-160*papb-102*pa2 &
+            +(-48*pb2-4*papb+18*pa2)*delta+pb*(4*p-pa)*(delta*delta+mu*mu)) &
+           +abw27*npanpa/p2*(-45*pb2*pb+17*pb2*pa+180*pb*pa2-36*pa2*pa &
+            +(9*pb2*pb-19*pb2*pa-42*pb*pa2+12*pa2*pa)*delta &
+            +papb*(4*p-pb)*(delta*delta+mu*mu)) &
+           -abw27*pa*e*(pb*tmp2+11*pb83+3*pa83)
+  
+         dfdnpanpb = abw9*(12*p2-papb*(47-7*delta))
+         dfdnpanpa = abw9*(NINE*pb2+papb*(FOUR*delta-ONE-(11*pa+pb*delta)/p))
+         dfdnpbnpb = abw9*(NINE*pa2+papb*(FOUR*delta-ONE-(11*pb+pa*delta)/p))
+
+         Vxa(i) = Vxa(i) + TWO*dfdnpanpa*pxa+dfdnpanpb*pxb
+         Vya(i) = Vya(i) + TWO*dfdnpanpa*pya+dfdnpanpb*pyb
+         Vza(i) = Vza(i) + TWO*dfdnpanpa*pza+dfdnpanpb*pzb
+
+         Vxb(i) = Vxb(i) + TWO*dfdnpbnpb*pxb+dfdnpanpb*pxa
+         Vyb(i) = Vyb(i) + TWO*dfdnpbnpb*pyb+dfdnpanpb*pya
+         Vzb(i) = Vzb(i) + TWO*dfdnpbnpb*pzb+dfdnpanpb*pza
+
+      end
+
+   end
+
+end

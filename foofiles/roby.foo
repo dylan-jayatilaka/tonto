@@ -1,0 +1,1913 @@
+!---------------------------------------------------------------------------
+!
+!  ROBY:
+!
+!  Read and evaluate Roby atom data for population and bond analysis.
+!  This module has been completely rewritten from Chris Taylor's version,
+!  based on Steve Wolff's checked version.
+!
+! Copyright (C) Chris Taylor, UWA, 1999.
+! Copyright (C) Stephen Wolff, UWA, 2000-2001.
+! Copyright (C) Dylan Jayatilaka, 2001
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: roby.foo 4065 2013-06-17 15:38:05Z dylan_ $
+!---------------------------------------------------------------------------
+
+module ROBY
+
+   implicit none
+
+contains
+
+!  ===================
+!  Allocation routines
+!  ===================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   create(mol) ::: leaky
+   ! Create space for the object
+      self :: PTR
+      mol :: MOLECULE
+
+      .create
+      .set_defaults(mol)
+
+   end
+
+   destroy ::: leaky
+   ! Destroy space for an SCF type
+      self :: PTR
+
+      if (.destroyed) return
+
+      .nullify_ptr_data
+
+      .destroy_ptr_part
+
+      DELETE_MEMORY(SELF_TYPE_SIZE)
+
+      deallocate(self)
+
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of self
+
+      nullify(.n1)
+      nullify(.n2)
+      nullify(.bond_index)
+      nullify(.percent_covalency)
+      nullify(.gould_charge)
+      nullify(.cruickshank_charge)
+      nullify(.summed_n2)
+      nullify(.summed_n3)
+      nullify(.subgroup_pop)
+      nullify(.atom_list)
+      nullify(.atom_group)
+      nullify(.atom_a)
+      nullify(.atom_b)
+      nullify(.atom_ab)
+      nullify(.theta_C)
+      nullify(.eval_C)
+      nullify(.theta_I)
+      nullify(.eval_I)
+      nullify(.pop_C)
+      nullify(.pop_I)
+      nullify(.pop_A)
+      nullify(.pop_B)
+      nullify(.covalent_index)
+      nullify(.ionic_index)
+      nullify(.proportion_a)
+      nullify(.pair)
+
+      nullify(.rho)
+      nullify(.overlap_matrix)
+      nullify(.atom)
+
+   end
+
+   nullify_ptr_data
+   ! Nullify the pointer data that is supposed to come from outside
+   ! this module, so that this data is *not* accidentally destroyed
+
+      nullify(.rho)
+      nullify(.atom)
+      nullify(.overlap_matrix)
+
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts of self
+
+      .n1.destroy
+      .n2.destroy
+      .bond_index.destroy
+      .percent_covalency.destroy
+      .gould_charge.destroy
+      .cruickshank_charge.destroy
+      .summed_n2.destroy
+      .summed_n3.destroy
+      .subgroup_pop.destroy
+      .atom_list.destroy
+      .atom_group.destroy
+      .atom_a.destroy
+      .atom_b.destroy
+      .atom_ab.destroy
+      .theta_C.destroy
+      .eval_C.destroy
+      .theta_I.destroy
+      .eval_I.destroy
+      .pop_C.destroy
+      .pop_I.destroy
+      .pop_A.destroy
+      .pop_B.destroy
+      .covalent_index.destroy
+      .ionic_index.destroy
+      .proportion_a.destroy
+      .pair.destroy
+
+      ! Never destroy these.
+      nullify(.rho)
+      nullify(.atom)
+      nullify(.overlap_matrix)
+
+   end
+
+   set_defaults
+   ! Set default SCF data values
+      val :: REAL
+      .roby_kind = "bond_and_charge_analysis"
+      val = ROBY_COVALENT_CUTOFF; .covalent_cutoff = val.from_units("degree")
+      val = ROBY_IONIC_CUTOFF;    .ionic_cutoff    = val.from_units("degree")
+      val = ROBY_ZERO_CUTOFF;     .zero_cutoff     = val.from_units("degree")
+      val = ROBY_PI_ON_2_CUTOFF;  .pi_on_2_cutoff  = val.from_units("degree")
+      .occupied_ANO_cutoff = ROBY_OCCUPIED_ANO_CUTOFF
+      .output_theta_info   = ROBY_OUTPUT_THETA_INFO
+      .analyze_all_atom_pairs = ROBY_ANALYZE_ALL_ATOM_PAIRS
+      .bond_scale_factor = ROBY_BOND_SCALE_FACTOR
+   end
+
+   set_defaults(mol)
+   ! Set default SCF data values
+      mol :: MOLECULE
+
+   ENSURE(mol.atom.created,"no atom list") 
+   ENSURE(mol.density_matrix.created,"no density matrix") 
+   ENSURE(mol.overlap_matrix.created,"no overlap matrix") 
+
+      .set_defaults
+
+      .charge            =  mol.charge
+      .spin_multiplicity =  mol.spin_multiplicity
+
+      .atom              => mol.atom
+      .rho               => mol.density_matrix
+      .overlap_matrix    => mol.overlap_matrix
+
+   end
+
+!  =============
+!  Input methods
+!  =============
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR
+      word :: STR
+      word = keyword
+      word.to_lower_case
+      select case (word)
+         case ("}                      ")  ! exit case
+         case ("analyze_all_atom_pairs="); .read_analyze_all_atom_pairs
+         case ("atom_groups=           "); .read_atom_groups
+         case ("atom_list=             "); .read_atom_list
+         case ("bond_scale_factors=    "); .read_bond_scale_factor
+         case ("covalent_cutoff=       "); .read_covalent_cutoff
+         case ("ionic_cutoff=          "); .read_ionic_cutoff
+         case ("kind=                  "); .read_kind
+         case ("output_theta_info=     "); .read_output_theta_info
+         case ("pi_on_2_cutoff=        "); .read_pi_on_2_cutoff
+         case ("zero_cutoff=           "); .read_zero_cutoff
+         case default;           UNKNOWN(word)
+      end
+   end
+
+   finalize ::: leaky
+   ! Make sure the input satisfies sanity checks and generate any other
+   ! missing data
+   ENSURE(.roby_kind/=" ","no calculation kind specified")
+   ENSURE(.atom.created,"no atom data supplied")
+   ENSURE(.atom_list.created NEQV .atom_group.created,"only one of atom_list, atom_group must be used")
+      if (FALSE) self = self
+   end
+
+   read_kind
+   ! Read the SCF type
+      stdin.read(.roby_kind)
+      select case (.roby_kind)
+         case("atom_bond_analysis     ")
+         case("atom_shared_population ")
+         case("atom_pair_populations  ")
+         case("atom_populations       ")
+         case("group_bond_analysis    ")
+         case("group_shared_population")
+         case("group_pair_populations ")
+         case("group_populations      ")
+         case default;    UNKNOWN(.roby_kind)
+      end
+   end
+
+   read_atom_list ::: leaky
+   ! Read the list of atoms indices defining a Roby group
+      stdin.read_ptr(.atom_list)
+   end
+
+   read_atom_groups ::: leaky
+   ! Read the list of atoms indices defining a Roby group
+      stdin.read_ptr(.atom_group)
+   end
+
+   read_covalent_cutoff
+   ! Angles (in radians) greater than this one inputted are ignored when
+   ! calculating the covalent bond index
+      stdin.read(.covalent_cutoff)
+   end
+
+   read_ionic_cutoff
+   ! Angles (in radians) greater than this one inputted are ignored when
+   ! calculating the ionic bond index
+      stdin.read(.ionic_cutoff)
+   end
+
+   read_pi_on_2_cutoff
+   ! Angles (in radians) greater than this one inputted are not used to
+   ! calculate the bond index
+      stdin.read(.pi_on_2_cutoff)
+      .ionic_cutoff    = .pi_on_2_cutoff
+      .covalent_cutoff = .pi_on_2_cutoff
+   end
+
+   read_zero_cutoff
+   ! Angles (in radians) *less* than this one inputted are regareded as zero
+      stdin.read(.zero_cutoff)
+   end
+
+   read_output_theta_info
+   ! Read in a switch which tells whether to output detailed theta-subspace
+   ! bond information
+      stdin.read(.output_theta_info)
+   end
+
+   read_analyze_all_atom_pairs
+   ! Read in a switch which tells whether to bond-analyze all atoms
+   ! pairs or not
+      stdin.read(.analyze_all_atom_pairs)
+   end
+
+   read_bond_scale_factor
+   ! Read in a bond scale factor used to multiply the sum of the
+   ! Bragg-Slater radii for two atoms, to determine a distance cutoff
+   ! within which atoms are regarded to be bonded
+      stdin.read(.bond_scale_factor)
+   end
+
+!  ===================
+!  Information methods
+!  ===================
+
+   is_homoleptic result (res)
+   ! Returns TRUE if the calculation data is "homoleptic" or not
+   ! i.e. involving groups of atoms
+      res :: BIN
+      res = .atom_list.destroyed
+   end
+
+   skip_pair(a,b) result (res) ::: private
+   ! Returns TRUE if the bond index calculation should skip the pair of groups
+   ! (a,b). For calculations which are homoleptic, this always returns FALSE, but
+   ! for calculations which are defined by an atom_list, this returns TRUE only if
+   ! .analyze_all_atom_pairs is set to FALSE and the atoms are regarded as bonded
+   ! according to the .bond_scale_factor distance cutoff.
+      a,b :: INT
+      res :: BIN
+      if      (.is_homoleptic) then;          res = FALSE
+      else if (.analyze_all_atom_pairs) then; res = FALSE
+      else
+         res = NOT .atom.bonded(a,b,.bond_scale_factor)
+      end
+   end
+
+   n_bf(group) result (res) ::: private
+   ! Return the number of basis functions in the atom group
+   ! whose indices are given in "group"; but if "group" is
+   ! not present return the dimension of the full overlap matrix.
+      self :: IN
+      group :: VEC{INT}, optional
+      res :: INT
+   ENSURE(.atom.created,"No atom information")
+   ENSURE(.overlap_matrix.created,"No overlap matrix")
+      if (present(group)) then; res = .atom(group).n_bf
+      else;                     res = .overlap_matrix.dim1
+      end
+   end
+
+   n_bf_a result (res) ::: private
+   ! Return the number of basis functions in the .atom_a group
+      self :: IN
+      res :: INT
+   ENSURE(.atom.created,"No atom infpormation")
+   ENSURE(.atom_a.created,"No atom A group")
+      res = .n_bf(.atom_a)
+   end
+
+   n_bf_b result (res) ::: private
+   ! Return the number of basis functions in the .atom_b group
+      self :: IN
+      res :: INT
+   ENSURE(.atom.created,"No atom infpormation")
+   ENSURE(.atom_b.created,"No atom B group")
+      res = .n_bf(.atom_b)
+   end
+
+   n_bf_ab result (res) ::: private
+   ! Return the number of basis functions in the .atom_b group
+      self :: IN
+      res :: INT
+   ENSURE(.atom.created,"No atom infpormation")
+   ENSURE(.atom_ab.created,"No atom AB group")
+      res = .n_bf(.atom_ab)
+   end
+
+   n_group result (res) ::: private
+   ! Return the number of roby atom groups
+      res :: INT
+   ENSURE(.atom_group.created,"no atom groups!")
+      res = size(.atom_group)
+   end
+
+   no_of_occupied_ANOs(group,tol) result (res) ::: private
+   ! Return the number of occupied atomic natural orbitals for
+   ! the group of atoms whose indices are in "group"
+      group :: VEC{INT}
+      tol :: REAL, optional
+      res :: INT
+   ENSURE(.atom.created,"no atom information")
+      eps :: REAL
+      eps = .occupied_ANO_cutoff
+      if (present(tol)) eps = tol
+      res = .atom(group).no_of_occupied_ANOs(tol=eps)
+   end
+
+   unique_tags(group) result (res) ::: leaky
+   ! Return a list of unique tags for a "group" of atoms
+   ! .atom(group)
+      group :: VEC{INT}
+      res :: VEC{STR}*
+      res => .atom(group(:)).unique_tags
+   end
+
+! ============
+! Main methods
+! ============
+
+   atom_populations ::: leaky
+   ! EValuate and print out atom populations
+   ENSURE(.atom_list.created,"no atom list")
+   ENSURE(.atom_group.destroyed,"do not use atom_group=")
+      .make_single_atom_groups
+      .group_populations
+   end
+
+   group_populations ::: leaky
+   ! EValuate and print out atom-group populations
+      .make_populations
+      .put
+      .put_populations
+   end
+
+   atom_pair_populations ::: leaky
+   ! Evaluate and print out atom pair populations
+   ENSURE(.atom_list.created,"no atom list")
+   ENSURE(.atom_group.destroyed,"do not use atom_group=")
+      .make_single_atom_groups
+      .group_pair_populations
+   end
+
+   group_pair_populations ::: leaky
+   ! Evaluate and print out atom-group pair populations
+      .make_pair_populations
+      .put
+      .put_pair_populations
+   end
+
+   atom_bond_analysis ::: leaky
+   ! Do a Roby bond and Gould charge analysis.
+   ENSURE(.atom_list.created,"no atom list")
+   ENSURE(.atom_group.destroyed,"do not use atom_group=")
+      .make_single_atom_groups
+      .group_bond_analysis
+   end
+
+   group_bond_analysis ::: leaky
+   ! Do a Roby bond and Gould charge analysis.
+      .bond_analysis
+      .charge_analysis
+      .put_all_info
+   end
+
+   atom_shared_population ::: leaky
+   ! Do a Roby bond and Gould charge analysis.
+   ENSURE(.atom_list.created,"no atom list")
+   ENSURE(.atom_group.destroyed,"do not use atom_group=")
+      .make_single_atom_groups
+      .group_shared_population
+   end
+
+   group_shared_population ::: leaky
+   ! Do a Roby bond and Gould charge analysis.
+   ENSURE(.atom_list.created,"no atom list")
+      .make_shared_population
+      .put
+      .put_shared_population
+   end
+
+! =================================
+! Roby population analysis routines
+! =================================
+
+   make_single_atom_groups ::: leaky, private
+   ! Make each Roby atom to be equal to a single atom formed from
+   ! each element in the ".atom_list".
+   ENSURE(.atom_list.created,"no atom list")
+   ENSURE(.atom_group.destroyed,"do not use atom_groups=")
+      n_atom,a :: INT
+      n_atom = size(.atom_list)
+      .atom_group.create(n_atom)
+      do a = 1,n_atom
+        .atom_group(a).element.create(1)
+        .atom_group(a).element(1) = .atom_list(a)
+      end
+   end
+
+   make_populations ::: leaky, private
+   ! Make the Roby populations for the defined atom groups, for a
+   ! given density matrix "rho"
+   ENSURE(.atom_group.created,"no atom groups")
+   ENSURE(.rho.created,"no rho matrix")
+      n_group,a :: INT
+      n_group = .n_group
+      .n1.destroy
+      .n1.create(n_group)
+      do a = 1,n_group
+       .atom_a => .atom_group(a).element
+       .n1(a) = .population(.atom_a)
+       nullify(.atom_a)
+      end
+   end
+
+   make_pair_populations ::: leaky, private
+   ! Make the pair Roby populations
+      n_group,a,b :: INT
+      pop :: REAL
+
+      n_group = .n_group
+
+      .n2.destroy
+      .n2.create(n_group,n_group)
+
+      .n2 = ZERO
+
+      do a = 1,n_group
+      do b = a+1,n_group
+
+        if (.skip_pair(a,b)) cycle
+
+        .atom_a => .atom_group(a).element
+        .atom_b => .atom_group(b).element
+
+        .atom_ab.append(.atom_a,.atom_b)
+
+        pop = .population(.atom_ab)
+
+        .n2(a,b) = pop
+        .n2(b,a) = pop
+
+        nullify(.atom_a)
+        nullify(.atom_b)
+        .atom_ab.destroy
+
+      end
+      end
+
+   end
+
+   population(group,ANO) result (res) ::: private
+   ! Return the total Roby population for the group of atoms whose indices are
+   ! given in "group", i.e Tr (P_{group;ANO} rho), where "rho" is the density
+   ! matrix for a molecule. If present, the columns of the "ANO" matrix are used
+   ! to define the Roby projector instead of the atomic natural orbitals.
+      group :: VEC{INT}
+      ANO :: MAT{REAL}, optional
+      res :: REAL
+   ENSURE(.rho.created,"no rho matrix")
+   ENSURE(.overlap_matrix.created,"no overlap matrix")
+       X :: MAT{REAL}*
+      n_gr :: INT
+      n_gr = .n_bf(group)
+      X.create(n_gr,n_gr)
+      .make_projection_matrix(X,group,ANO)
+      res = .expectation(X,group)
+      X.destroy
+   end
+
+   subpopulation(subgroup,group,ANO) result (res) ::: private
+   ! Return the Roby subpopulation for the subgroup of atoms whose indices are
+   ! given in "subgroup", in the whole group of atoms whose indices are
+   ! are given in "group", i.e
+   !    Tr ( P_{subgroup} P_{group;ANO} P_{subgroup} rho )
+   ! If present, the columns of the "ANO" matrix are used to define the middle
+   ! Roby projector instead of the atomic natural orbitals. Note that the
+   ! real atomic natural orbitals are always used for the P_{subgroup}
+   ! projector.  This routine is useful for getting theta orbital populations.
+      subgroup,group :: VEC{INT}
+      ANO :: MAT{REAL}, optional
+      res :: REAL
+   ENSURE(.rho.created,"no rho matrix")
+   ENSURE(.overlap_matrix.created,"no overlap matrix")
+      P,X,P_sub :: MAT{REAL}*
+      n_gr,n_sub :: INT
+      n_gr  = .n_bf(group)
+      n_sub = .n_bf(subgroup)
+      X.create(n_sub,n_sub)
+      P.create(n_gr,n_gr)
+      P_sub.create(n_sub,n_sub)
+      .make_projection_matrix(P,group,ANO)
+      .make_projection_matrix(P_sub,subgroup)
+      .project(P,P_sub,X,group,subgroup)
+      P_sub.destroy
+      P.destroy
+      res = .expectation(X,subgroup)
+      X.destroy
+   end
+
+! ================================
+! Roby multiple shared populations
+! ================================
+
+   make_shared_population ::: leaky, private
+   ! Evaluate the Roby shared population
+   ENSURE(.atom_group.created,"no atom group supplied")
+      n_group,i :: INT
+      n_group = .n_group
+      .subgroup_pop.destroy
+      .subgroup_pop.create(n_group)
+      i = 0
+      .n_shared = .shared_population([(i,i=1,n_group)], .subgroup_pop)
+   end
+
+   shared_population(group_list,pop_groups) result (res) ::: private
+   ! Returns the Roby shared population of the group of .atom_groups whose
+   ! indices are in "group". If "pop_groups" is present, the total
+   ! sub-group populations of every size from 1 to size(group) is returned
+      group_list :: VEC{INT}
+      pop_groups :: VEC{REAL}, optional
+      res :: REAL
+
+   ENSURE(.atom_group.created,"no atom groups")
+
+      pop_k :: REAL
+      m, k, n_k, n :: INT
+      comb_mat :: MAT{INT}*
+      pop_group :: VEC{REAL}*
+
+      n = size(group_list)
+
+      pop_group.create(n)
+
+      res = ZERO
+      do k = 1,n
+
+         n_k = int(n.choose(k))
+
+         ! Make "comb_mat", the matrix of all combinations of the groups
+         ! of size k, where the groups are taken from .atom_group
+         comb_mat.create(k,n_k)
+         group_list.make_combinations_of_length(k,comb_mat)
+
+         pop_k = 0
+         do m = 1,n_k
+            .atom_group.append_listed_to(.atom_ab,list=comb_mat(:,m))
+            pop_k = pop_k + .population(.atom_ab)
+            .atom_ab.destroy
+         end
+         pop_group(k) = pop_k
+
+         comb_mat.destroy
+
+         res = res - ((-1)**k)*pop_k
+
+      end
+
+      if (present(pop_groups)) pop_groups = pop_group
+
+      pop_group.destroy
+
+   end
+
+   make_summed_pair_pops ::: leaky, private
+   ! Evaluate the SUMMED Roby shared populations for groups of 2 atoms.
+   ! On return, .summed_n2(a) = \sum_{b} s_{ab}, where s_{ab} is the pairwise
+   ! shared population for atoms a, b.
+   ENSURE(.n1.created,"no group populations")
+   ENSURE(.n2.created,"no group pair populations")
+      shared_population :: REAL
+      n_group,a,b :: INT
+      n_group = .n_group
+      .summed_n2.create(n_group)
+      .summed_n2 = ZERO
+      do a = 1,n_group
+      do b = a+1,n_group
+        shared_population = .n1(a) + .n1(b) - .n2(a,b)
+        .summed_n2(a) = .summed_n2(a) + shared_population
+        .summed_n2(b) = .summed_n2(b) + shared_population
+      end
+      end
+   end
+
+   make_summed_triple_pops ::: leaky, private
+   ! Evaluate the SUMMED Roby shared populations for groups of 3 atoms.
+   ! On return, .summed_n3(a) = \sum_{bc} s_{abc}, where s_{abc} is the triple
+   ! shared population for atoms a, b, and c.
+      shared_population :: REAL
+      n_group,a,b,c :: INT
+      n_group = .n_group
+      .summed_n3.create(n_group)
+      .summed_n3 = ZERO
+      do a = 1,n_group
+      do b = a+1,n_group
+      do c = b+1,n_group
+        shared_population = .shared_population([a,b,c])
+        .summed_n3(a) = .summed_n3(a) + shared_population
+        .summed_n3(b) = .summed_n3(b) + shared_population
+        .summed_n3(c) = .summed_n3(c) + shared_population
+      end
+      end
+      end
+   end
+
+! ==============================
+! Roby-Gould bond index routines
+! ==============================
+
+   bond_analysis ::: leaky, private
+   ! Do a Roby-Gould bond and charge analysis for the atom groups
+   ! given in .atom_groups
+
+   ENSURE(.atom_group.created,"no atom group defined")
+
+      n_group,a,b :: INT
+      pcc :: REAL
+
+      n_group = .n_group
+
+      .make_populations
+
+      .make_pair_populations
+
+      .bond_index.create(n_group,n_group)
+
+      .percent_covalency.create(n_group,n_group)
+      do a = 1,n_group
+      do b = 1,a-1
+
+        if (.skip_pair(a,b)) cycle
+
+        .atom_a => .atom_group(a).element
+        .atom_b => .atom_group(b).element
+        .atom_ab.append(.atom_a,.atom_b)
+
+        .destroy_theta_info
+        .make_theta_info
+        .bond_index(a,b) = .gould_bond_index(pcc)
+        .percent_covalency(a,b) = pcc
+
+        if (.output_theta_info) then
+           .put_theta_info
+           .put_theta_bond_info
+        end
+        .destroy_theta_info
+
+        nullify(.atom_a)
+        nullify(.atom_b)
+        .atom_ab.destroy
+
+      end
+      end
+
+   end
+
+   gould_bond_index(pcc) result (bond_index) ::: leaky, private
+   ! Calculates the Roby-Gould "bond_index", percentage covalent character
+   ! "pcc", for atom groups ".atom_a" and ".atom_b".
+      pcc, bond_index :: REAL
+   ENSURE(.theta_angle.created,"no theta angles")
+   ENSURE(.pop_C.created,"no covalent theta populations")
+   ENSURE(.pop_I.created,"no ionic theta populations")
+   ENSURE(.pair.created,"no pair array")
+      n_ab,i :: INT
+      ionic_cutoff,covalent_cutoff,zero_cutoff,angle,c_ab,i_ab :: REAL
+      n_ab = .n_bf_ab
+      ionic_cutoff    = .ionic_cutoff.to_units("degree")
+      covalent_cutoff = .covalent_cutoff.to_units("degree")
+      zero_cutoff     = .zero_cutoff.to_units("degree")
+      .covalent_index.create(n_ab)
+      .ionic_index.create(n_ab)
+      .covalent_index = ZERO
+      .ionic_index    = ZERO
+      pcc = ZERO
+      c_ab = ZERO
+      i_ab = ZERO
+      bond_index = ZERO
+      do i = 1,n_ab
+        if (.pair(i)<1 OR i<.pair(i)) cycle
+        angle = .theta_angle(i)
+        .covalent_index(i) = (.pop_C(i) - .pop_C(.pair(i)))/TWO
+        .ionic_index(i)    = (.pop_I(i) - .pop_I(.pair(i)))/TWO
+        if (angle <= covalent_cutoff AND angle >= zero_cutoff) c_ab = c_ab + .covalent_index(i)
+        if (angle <= ionic_cutoff    AND angle >= zero_cutoff) i_ab = i_ab + .ionic_index(i)
+      end
+      bond_index = c_ab**2 + i_ab**2
+      pcc = 100 * (c_ab**2/bond_index)
+      bond_index = sqrt(bond_index)
+   end
+
+   make_theta_info ::: leaky, private
+   ! Calculates the Roby-Gould theta subspace information for atom groups
+   ! ".atom_a" and ".atom_b", including theta subspace populations
+   ENSURE(.atom_a.created,"no atom A group")
+   ENSURE(.atom_b.created,"no atom B group")
+   ENSURE(.atom_ab.created,"no atom AB group")
+      C :: MAT{REAL}*
+      n_a,n_b,n_ab :: INT
+      n_a  = .n_bf_a
+      n_b  = .n_bf_b
+      n_ab = n_a + n_b
+      C.create(n_ab,n_ab)                      ! Make the Roby operator
+      .make_shared_operator(C)
+      .theta_C.create(n_ab,n_ab)
+      .eval_C.create(n_ab)
+      .diagonalise_V_AB_operator(C,.theta_C,.eval_C)
+      .theta_angle.create(n_ab)
+      .pair.create(n_ab)                       ! Find +/- pairs covalent pairs
+      .eval_C.find_pairs(.pair,ROBY::match_pair)
+      .make_theta_angles                       ! Make |cov-> from |cov+>
+      .make_gould_covalent_orbitals            ! Make |cov-> from |cov+>
+      .theta_I.create(n_ab,n_ab)
+      .eval_I.create(n_ab)
+      .make_gould_ionic_orbitals               ! Make |ion> pairs from |cov> pairs
+      .pop_C.create(n_ab)
+      .pop_I.create(n_ab)
+      .make_theta_populations(.pop_C,.theta_C) ! Make covalent theta populations
+      .make_theta_populations(.pop_I,.theta_I) ! Make ionic theta populations
+      C.destroy
+   end
+
+   destroy_theta_info ::: leaky, private
+   ! Delete all the temporary theta subspace information created by various bond
+   ! index routines
+      .ionic_index.destroy
+      .covalent_index.destroy
+      .pop_B.destroy
+      .pop_A.destroy
+      .pop_I.destroy
+      .pop_C.destroy
+      .eval_I.destroy
+      .theta_I.destroy
+      .pair.destroy
+      .theta_angle.destroy
+      .eval_C.destroy
+      .theta_C.destroy
+   end
+
+   match_pair(arg1,arg2) result (res) ::: selfless, private
+   ! Function which returns zero if "arg1" and "arg2" are opposite.
+   ! Used for matching purposes.
+      arg1,arg2,res :: REAL
+      res = abs(arg1 + arg2)
+   end
+
+   make_theta_populations(pop,theta) ::: private
+   ! Make "pop", an array of "theta" populations for a pair of Roby atoms
+   ! defined by indices in ".atom_a" and ".atom_b". "theta" itself is a matrix
+   ! whose columns are coefficients on V_AB.
+      pop :: VEC{REAL}
+      theta :: MAT{REAL}
+   ENSURE(.atom_ab.created,"No roby atom group AB")
+   ENSURE(pop.dim==.n_bf_ab,"wrong size, pop")
+       i :: INT
+      do i = 1,.n_bf_ab
+         pop(i) = .population(.atom_ab,ANO=theta(:,i:i))
+      end
+   end
+
+   make_theta_atom_populations(pop_a,pop_b,theta) ::: private
+   ! Make "pop_a" and "pop_b", the "theta" populations of the Roby atoms
+   ! ".atom_a" and ".atom_b". "theta" itself is a matrix whose columns are
+   ! coefficients on V_AB.
+      pop_a,pop_b :: VEC{REAL}
+      theta :: MAT{REAL}
+   ENSURE(pop_a.dim==.n_bf_ab,"wrong size, theta_a_population")
+   ENSURE(pop_b.dim==.n_bf_ab,"wrong size, theta_b_population")
+   ENSURE(.atom_a.created, "No roby atom group A")
+   ENSURE(.atom_b.created, "No roby atom group B")
+   ENSURE(.atom_ab.created,"No roby atom group AB")
+       i :: INT
+      do i = 1,.n_bf_ab
+         pop_a(i) = .subpopulation(.atom_a,.atom_ab,ANO=theta(:,i:i))
+         pop_b(i) = .subpopulation(.atom_b,.atom_ab,ANO=theta(:,i:i))
+      end
+   end
+
+   make_theta_angles ::: private
+   ! Make the ".theta_angle" array from the Roby eigenvalues ".eval_C"
+   ENSURE(.eval_C.created,"No roby eigenvalues")
+   ENSURE(.theta_angle.created,"No theta_angle array")
+       i :: INT
+      value :: REAL
+      do i = 1,.n_bf_ab
+        value = abs(.eval_C(i))
+        value = value.arccos
+        value = value.to_units("degree")
+        .theta_angle(i) = value
+      end
+   end
+
+   make_gould_covalent_orbitals ::: private
+   ! Generate the gould covalent orbitals ".theta_C" in such a way that the
+   ! negative eigenvector of each pair is generated explicitly from the positive
+   ! eigenvector by constructing the |a> and |b> parts using projectors P_A and
+   ! P_B. ".eval_C" are the eigenvalues corresponding to ".theta_C". ".pair" is
+   ! defined so that the i-th eigenvector .theta_C(:,i) is paired with
+   ! theta_C(:,pair(i)). The spaces V_A , V_B and V_AB are defined by
+   ! ".atom_a", ".atom_b", and ".atom_ab". This routine is necessary in the case
+   ! where there are degeneracies.
+   ENSURE(.atom_a.created,"No roby atom A")
+   ENSURE(.atom_b.created,"No roby atom B")
+   ENSURE(.atom_ab.created,"No roby atom AB")
+   ENSURE(.atom.created,"No atom information")
+   ENSURE(.theta_C.created,"No theta_C array")
+   ENSURE(.theta_C.dim1==.n_bf_ab,"wrong shape, theta_C")
+   ENSURE(.theta_C.is_square,"wrong shape, theta_C")
+   ENSURE(.eval_C.created,"No eval_C array")
+   ENSURE(.eval_C.dim==.n_bf_ab,"wrong shape, eval_I")
+   ENSURE(.pair.created,"No pair array")
+   ENSURE(.pair.dim==.n_bf_ab,"wrong shape, pair")
+      P_A,PA,P_B,PB :: MAT{REAL}*
+      A,B :: VEC{REAL}*
+      n_a,n_b,n_ab,i :: INT
+      fac,costheta :: REAL
+      n_a  = .n_bf_a
+      n_b  = .n_bf_b
+      n_ab = .n_bf_ab
+      P_A.create(n_a,n_a); PA.create(n_a,n_ab)
+      P_B.create(n_b,n_b); PB.create(n_b,n_ab)
+      A.create(n_a)
+      B.create(n_b)
+      .make_projection_matrix(P_A,.atom_a)
+      .make_projection_matrix(P_B,.atom_b)
+      .right_overlap_transform(P_A,PA,.atom_a,.atom_ab)
+      .right_overlap_transform(P_B,PB,.atom_b,.atom_ab)
+      do i = 1,n_ab
+         if (.pair(i)<1) cycle
+         if (.eval_C(i)<.eval_C(.pair(i))) cycle
+         costheta = .eval_C(i)
+         fac = sqrt(TWO+TWO*costheta)/(ONE+costheta)
+         A.to_product_of(PA,.theta_C(:,i)); A = fac*A
+         B.to_product_of(PB,.theta_C(:,i)); B = fac*B
+         fac = ONE/sqrt(TWO-TWO*costheta)
+         .theta_C(    1:n_a ,.pair(i)) =  fac*A
+         .theta_C(n_a+1:n_ab,.pair(i)) = -fac*B
+      end
+      B.destroy
+      A.destroy
+      PB.destroy; P_B.destroy
+      PA.destroy; P_A.destroy
+   end
+
+   make_gould_ionic_orbitals ::: private
+   ! Make the gould ionic orbitals ".theta_I" and eigenvalues ".eval_I"
+   ! from the covalent orbitals ".theta_C" and covalent eigenvalues
+   ! ".eval_C" which have been explicitly paired up as described by
+   ! the ".pair" array. ALSO: the ".pair" array is modified to remove all
+   ! those pairs which have zero sine and cosine eigenvalues.
+   ENSURE(.theta_C.created,"no theta_C array")
+   ENSURE(.theta_C.dim1==.n_bf_ab,"wrong shape, theta_C")
+   ENSURE(.theta_C.is_square,"wrong shape, theta_C")
+   ENSURE(.theta_I.created,"no theta_I array")
+   ENSURE(.theta_I.dim1==.n_bf_ab,"wrong shape, theta_I")
+   ENSURE(.theta_I.is_square,"wrong shape, theta_I")
+   ENSURE(.eval_I.created,"no eval_I array")
+   ENSURE(.eval_I.dim==.n_bf_ab,"wrong shape, eval_I")
+   ENSURE(.eval_C.created,"no eval_C array")
+   ENSURE(.eval_C.dim==.n_bf_ab,"wrong shape, eval_I")
+   ENSURE(.pair.created,"no pair array")
+   ENSURE(.pair.dim==.n_bf_ab,"wrong shape, pair")
+      fac,eps :: REAL
+      n_ab,i,j :: INT
+      eval :: MAT{REAL}(1,1)
+      ZZ,II :: MAT{REAL}*
+      n_ab = .pair.dim
+      eps = .zero_cutoff
+      ZZ.create(n_ab,n_ab)
+      II.create(n_ab,n_ab)
+      .make_ionic_operator(II)
+      .overlap_transform(II,ZZ,.atom_ab,.atom_ab)
+      II.destroy
+      .theta_I = ZERO
+      .eval_I = ZERO
+      do i = 1,n_ab
+         if (.pair(i)<1) cycle
+         if (.eval_C(i)<.eval_C(.pair(i))) cycle
+         j = .pair(i)
+         fac = ONE/sqrt(TWO)
+         .theta_I(:,i) = fac*(.theta_C(:,i)+.theta_C(:,j)) ! I+
+         .theta_I(:,j) = fac*(.theta_C(:,i)-.theta_C(:,j)) ! I-
+         ZZ.change_basis_to(eval,.theta_I(:,i:i)); .eval_I(i) = eval(1,1)
+         ZZ.change_basis_to(eval,.theta_I(:,j:j)); .eval_I(j) = eval(1,1)
+         if (.eval_C(i).is_zero(eps) AND .eval_I(i).is_zero(eps)) then
+            .pair(i) = 0
+            .pair(j) = 0
+         end
+      end
+      ZZ.destroy
+   end
+
+   charge_analysis ::: leaky, private
+   ! Do a Roby-Cruickshank-Avramedes and Roby-Gould charge analysis.
+   ! NOTE: This can only be called after a bond analysis because the atom
+   ! proportions are required.
+   ENSURE(.atom_group.created,"no atom groups")
+   ENSURE(.n1.created,"no atom populations")
+
+      n_group,a,b :: INT
+      rsa,rsb,charge_deficit,fac :: REAL
+
+      n_group = .n_group
+      .proportion_a.create(n_group,n_group)
+
+      .proportion_a = ZERO
+
+      do a = 1,n_group
+      do b = 1,a-1
+
+        if (.skip_pair(a,b)) cycle
+
+        .atom_a => .atom_group(a).element
+        .atom_b => .atom_group(b).element
+        .atom_ab.append(.atom_a,.atom_b)
+
+        .destroy_theta_info
+        .make_theta_info
+
+        ! Store for later charge analysis
+        .make_atom_proportions(rsa,rsb) 
+        .proportion_a(a,b) = rsa
+        .proportion_a(b,a) = rsb
+        if (.output_theta_info) .put_theta_atom_pops
+        .destroy_theta_info
+
+        nullify(.atom_a)
+        nullify(.atom_b)
+        .atom_ab.destroy
+
+      end
+      end
+
+      .make_populations
+
+      .make_pair_populations
+
+      .make_summed_pair_pops
+
+      .make_summed_triple_pops
+
+      ! Roby-Gould atomic charges
+      .gould_charge.create(n_group)       
+      do a = 1,n_group
+        .gould_charge(a) = .atom(.atom_group(a).element).sum_of_nuclear_charges &
+                         - .n1(a) + VEC{REAL}:sum(.proportion_a(:,a)) - THIRD*.summed_n3(a)
+      end
+      fac = ONE/REALIFY(n_group)
+      charge_deficit = .charge - VEC{REAL}:sum(.gould_charge)
+      charge_deficit = fac*charge_deficit
+      .gould_charge = .gould_charge + charge_deficit
+
+      ! Cruickshank atomic charges
+      .cruickshank_charge.create(n_group) 
+      do a = 1,n_group
+        .cruickshank_charge(a) = .atom(.atom_group(a).element).sum_of_nuclear_charges &
+                               - .n1(a) + HALF*.summed_n2(a) - THIRD*.summed_n3(a)
+      end
+      fac = ONE/REALIFY(n_group)
+      charge_deficit = .charge - VEC{REAL}:sum(.cruickshank_charge)
+      charge_deficit = fac*charge_deficit
+      .cruickshank_charge = .cruickshank_charge + charge_deficit
+
+   end
+
+   make_atom_proportions(rsa,rsb) ::: leaky, private
+   ! Make Gould's probabilistic proportionalities between atoms,
+   ! ".proportion_a" and ".proportion_b" used to approtion charge
+   ! between atoms, i.e. calculate
+   ! rsa = \sum_{\theta} r^{\theta}_{A,AB} s^{\theta}_{AB}
+   ! rsb = \sum_{\theta} r^{\theta}_{B,AB} s^{\theta}_{AB}
+      rsa, rsb :: REAL
+   ENSURE(.theta_C.created,"no theta_C covalent orbitals")
+   ENSURE(.eval_C.created,"no eval_C covalent eigenvalues")
+   ENSURE(.theta_C.dim1==.n_bf_ab,"wrong shape, theta_C")
+      n_ab,i :: INT
+      pop_a, pop_b, pop_ab, s_ab, ratio_a, ratio_b :: REAL
+      n_ab = .n_bf_ab
+      .pop_A.create(n_ab)
+      .pop_B.create(n_ab)   ! Make A & B theta popualtions
+      .make_theta_atom_populations(.pop_A,.pop_B,.theta_C)
+      rsa = ZERO
+      rsb = ZERO
+      do i = 1,n_ab
+        if (.pair(i)<1 OR i<.pair(i)) cycle
+        pop_a   = .pop_A(i) + .pop_A(.pair(i))
+        pop_b   = .pop_B(i) + .pop_B(.pair(i))
+        pop_ab  = .pop_C(i) + .pop_C(.pair(i))
+        ratio_a = pop_a/(pop_a + pop_b)
+        ratio_b = pop_b/(pop_a + pop_b)
+        s_ab    = pop_a + pop_b - pop_ab
+        rsa     = rsa + ratio_a*s_ab
+        rsb     = rsb + ratio_b*s_ab
+      end
+   end
+
+! ===================================
+! Make and diagonalise Roby operators
+! ===================================
+
+   make_projection_matrix(P,group,ANO) ::: private
+   ! Make the Roby projection matrix "P" in the AO basis made from the
+   ! concatenated basis sets for each atom in "group". If present, use
+   ! the columns of "ANO" as atomic orbital coefficients to form the
+   ! projection operator instead of the actual atomic natural orbitals
+      P :: MAT{REAL}
+      group :: VEC{INT}
+      ANO :: MAT{REAL}, optional
+   ENSURE(P.dim1==.n_bf(group),"wrong dimension, P ")
+   ENSURE(P.is_square,"P is incorrectly dimensioned")
+      W,X,Y :: MAT{REAL}*
+      n_occ,n_bf :: INT
+      if (present(ANO)) then
+      ENSURE(ANO.dim1==.n_bf(group),"wrong dimension, ANO")
+      end
+      n_bf = .n_bf(group)
+      if (present(ANO)) then
+         n_occ = size(ANO,2)
+         W.create(n_bf,n_occ)               ! W = columns of ANO's
+         W = ANO
+      else
+         n_occ = .no_of_occupied_ANOs(group)
+         W.create(n_bf,n_occ)               ! W = columns of ANO's
+         .make_ANO_matrix(W,group)
+      end
+      Y.create(n_bf,n_bf)                   ! Y = overlap matrix for group(:) basis
+      .make_overlap_matrix(Y,group,group)
+      X.create(n_occ,n_occ)
+      Y.change_basis_to(X,W)                ! X = S in the ANO basis
+      Y.destroy
+      Y.create(n_occ,n_occ)
+      Y.to_pseudo_inverse_of(X)             ! Y = (ANO overlap matrix)^{-1}
+      X.destroy
+      Y.back_transform_to(P,W)              ! P = Y in the group(:) AO basis
+      Y.destroy
+      W.destroy
+   end
+
+   make_ANO_matrix(ANO,group,tol) ::: private
+   ! Make the "ANO" matrix, comprised of columns of the occupied atomic
+   ! natural orbitals, for each atom whose index appears in "group".
+   ! If "tol" is present, use this cutoff to determine what is an occupied
+   ! natural orbital.
+      ANO :: MAT{REAL}
+      group :: VEC{INT}
+      tol :: REAL, optional
+   ENSURE(ANO.dim1==.n_bf(group),"wrong shape, ANO")
+   ENSURE(ANO.dim2==.no_of_occupied_ANOs(group,tol),"wrong shape, ANO")
+      eps :: REAL
+      n_gr,a,ra,b,n,n_bf,n_occ :: INT
+      eps = .occupied_ANO_cutoff
+      if (present(tol)) eps = tol
+      n_gr = group.dim
+      ANO = ZERO
+      b = 0; n = 0
+      do a = 1,n_gr
+         ra    = group(a)
+         n_bf  = .atom(ra).n_bf
+         n_occ = .atom(ra).no_of_occupied_NOs(tol=eps)
+         ANO(b+1:b+n_bf,n+1:n+n_occ) = .atom(ra).natural_orbitals.restricted(:,1:n_occ)
+         b = b + n_bf
+         n = n + n_occ
+      end
+   end
+
+   make_shared_operator(R) ::: private
+   ! constructs the roby_shared_operator R_AB = P_A + P_B - P_AB
+   ! if spin_case is supplied then either the alpha or beta
+   ! operator is constructed, depending on the value of spin_case
+      R :: MAT{REAL}
+   ENSURE(.atom_a.created,"No roby atom A")
+   ENSURE(.atom_b.created,"No roby atom B")
+   ENSURE(.atom_ab.created,"No roby atom AB")
+      P_A,P_B,P_AB :: MAT{REAL}*
+      n_a, n_b, n_ab :: INT
+      n_a  = .n_bf_a
+      n_b  = .n_bf_b
+      n_ab = .n_bf_ab
+      P_A.create(n_a,n_a)
+      P_B.create(n_b,n_b)
+      P_AB.create(n_ab,n_ab)
+      .make_projection_matrix(P_A ,.atom_a)
+      .make_projection_matrix(P_B ,.atom_b)
+      .make_projection_matrix(P_AB,.atom_ab)
+      R = ZERO
+      R(    1:n_a ,     1:n_a ) =  P_A
+      R(n_a+1:n_ab, n_a+1:n_ab) =  P_B
+      R = R - P_AB
+      P_AB.destroy
+      P_B.destroy
+      P_A.destroy
+   end
+
+   make_ionic_operator(I) ::: private
+   ! constructs the roby/gould ionic operator I_AB = P_A - P_B
+       I :: MAT{REAL}
+   ENSURE(.atom_a.created,"No roby atom A")
+   ENSURE(.atom_b.created,"No roby atom B")
+   ENSURE(.atom_ab.created,"No roby atom AB")
+      P_B,P_A :: MAT{REAL}*
+      n_a, n_b, n_ab :: INT
+      n_a  = .n_bf_a
+      n_b  = .n_bf_b
+      n_ab = .n_bf_ab
+      P_A.create(n_a,n_a)
+      P_B.create(n_b,n_b)
+      .make_projection_matrix(P_A,.atom_a)
+      .make_projection_matrix(P_B,.atom_b)
+      I = ZERO
+      I(    1:n_a ,     1:n_a ) =  P_A
+      I(n_a+1:n_ab, n_a+1:n_ab) = -P_B
+      P_B.destroy; P_A.destroy
+   end
+
+   diagonalise_V_AB_operator(X,eigenvectors,eigenvalues) ::: private
+   ! For a given operator "X" (for example, C = cos theta or S= sin theta)
+   ! in the concatenated AO basis of the atoms in .roby.atom_group,
+   !    X = \sum_{i,j} |i> X_{ij} <j|, |i>,|j> in V_{AB},
+   ! diagonalise and return the "eigenvectors" and "eigenvalues".
+      X,eigenvectors :: MAT{REAL}
+      eigenvalues :: VEC{REAL}
+   ENSURE(.atom_a.created,"No roby atom A")
+   ENSURE(.atom_b.created,"No roby atom B")
+   ENSURE(.atom_ab.created,"No roby atom AB")
+      XX,XV, SS,SI,SH :: MAT{REAL}*
+      n_ab :: INT
+      n_ab = .n_bf_ab
+      XX.create(n_ab,n_ab); XV.create(n_ab,n_ab)
+      SS.create(n_ab,n_ab); SI.create(n_ab,n_ab); SH.create(n_ab,n_ab)
+      .make_overlap_matrix(SS,.atom_ab,.atom_ab)
+      SH.to_sqrt_of(SS)
+      SI.to_inverse_of(SH)
+      X.back_transform_to(XX,SH)
+      XX.solve_eigenproblem(eigenvalues,XV)
+      eigenvectors.to_product_of(SI,XV)
+      SH.destroy; SI.destroy; SS.destroy
+      XV.destroy; XX.destroy
+   end
+
+! ===========================
+! Make roby projected density
+! ===========================
+
+   make_projected_density(rho,density,ANO) ::: private
+   ! Make the Roby-projected density matrix in the concatenated basis
+   ! of AO functions of the atoms in .atom_ab and copy it into "rho",
+   ! a .n_bf x .n_bf matrix where all other matrix elements not corresponding
+   ! to basis functions in .atom_ab are made zero. If present, "density" is
+   ! used instead of the restricted density matrix. If present, "ANO" are used
+   ! for the Roby projection.
+      rho,density :: MAT{REAL}
+      ANO :: MAT{REAL}, optional
+   ENSURE(rho.dim1==.n_bf,"rho has wrong shape")
+   ENSURE(rho.is_square,"rho has wrong shape")
+   ENSURE(density.dim1==.n_bf,"wrong shape, density")
+   ENSURE(density.is_square,"wrong shape, density")
+   ENSURE(.atom_ab.created,"No atom AB group")
+      D,P,rho_P :: MAT{REAL}*
+      n_bf :: INT
+      n_bf = .n_bf_ab
+      D.create(n_bf,n_bf)
+      .overlap_transform(density,D,col_atom=.atom_ab)
+      P.create(n_bf,n_bf)
+      .make_projection_matrix(P,.atom_ab,ANO)
+      rho_P.create(n_bf,n_bf)
+      D.change_basis_to(rho_P,P) ! rho_P(small) = P_W(small) D(small) P_W(small)
+      .AO_subspace_set(rho,rho_P,A_row_atom=.atom_ab,A_col_atom=.atom_ab)
+      rho_P.destroy
+      P.destroy
+      D.destroy
+   end
+
+! ===============================================
+! Low level Roby routines used all over the place
+! ===============================================
+
+   expectation(X,group,rho) result (res) ::: private
+   ! Get the expectation value of the operator matrix "X" over a certain
+   ! "group" of atoms, i.e:
+   !    res = Trace ( S(:,group) X S(group,:) rho )
+   ! Note that "group" are the indices of the atoms whose basis functions
+   ! are used to define the matrix "X".
+       X :: MAT{REAL}
+      group :: VEC{INT}
+      rho :: OPMATRIX*, optional
+      res :: REAL
+   ENSURE(X.dim1==.n_bf(group),"wrong X dimension")
+   ENSURE(X.is_square,"X is not square")
+      density :: OPMATRIX*
+       W :: MAT{REAL}*
+      n_bf :: INT
+      density => .rho
+      if (present(rho)) density => rho
+      n_bf = .n_bf
+      W.create(n_bf,n_bf)
+      .overlap_transform(X,W,group)
+      if (.spin_multiplicity/=1) then
+        res = density.alpha.trace_product_with(W) &
+            + density.beta.trace_product_with(W)
+      else
+        res = density.restricted.trace_product_with(W)
+      end
+      W.destroy
+   end
+
+   project(X,P,Y,row_atom,col_atom) ::: private
+   ! Do: Y = P^T S(col_atom,row_atom) X S(row_atom,col_atom) P
+   ! where S(col_atom,row_atom) is the AO subspace section of the full
+   ! overlap matrix specified by the basis functions on the atom indices
+   ! in "row_atom" and "col_atom", and "P" is a matrix
+      X,P,Y :: MAT{REAL}
+      row_atom,col_atom :: VEC{INT}
+   ENSURE(X.dim1==.n_bf(row_atom),"wrong X dimension")
+   ENSURE(Y.dim1==.n_bf(col_atom),"wrong Y dimension")
+   ENSURE(Y.dim1==P.dim1,"wrong P dimension")
+   ENSURE(X.is_square,"X is not square")
+   ENSURE(Y.is_square,"Y is not square")
+   ENSURE(P.is_square,"P is not square")
+       W :: MAT{REAL}*
+      W.create(Y.dim1,Y.dim2)
+      .overlap_transform(X,W,row_atom,col_atom)
+      W.change_basis_to(Y,P)
+      W.destroy
+   end
+
+   overlap_transform(X,Y,row_atom,col_atom) ::: private
+   ! Do: Y = S(col_atom,row_atom) X S(row_atom,col_atom)
+   ! where S(col_atom,row_atom) is the AO subspace section of the full
+   ! overlap matrix specified by the basis functions on the atom indices
+   ! in "row_atom" and "col_atom".
+      X,Y :: MAT{REAL}
+      row_atom, col_atom :: VEC{INT}, optional
+      SS :: MAT{REAL}*
+      n_row,n_col :: INT
+      n_row = .n_bf(row_atom)
+      n_col = .n_bf(col_atom)
+      SS.create(n_row,n_col)
+      .make_overlap_matrix(SS,row_atom,col_atom)
+      X.change_basis_to(Y,SS)
+      SS.destroy
+   end
+
+   right_overlap_transform(X,Y,row_atom,col_atom) ::: private
+   ! Do: Y = X S(row_atom,col_atom), where S(row_atom,col_atom) is the
+   ! AO subspace section of the full overlap matrix specified by the
+   ! basis functions on the atom indices in "row_atom" and "col_atom".
+      X,Y :: MAT{REAL}
+      row_atom, col_atom :: VEC{INT}, optional
+      SS :: MAT{REAL}*
+      n_row,n_col :: INT
+      n_row = .n_bf(row_atom)
+      n_col = .n_bf(col_atom)
+      SS.create(n_row,n_col)
+      .make_overlap_matrix(SS,row_atom,col_atom)
+      Y.to_product_of(X,SS)
+      SS.destroy
+   end
+
+   make_overlap_matrix(SS,row_atom,col_atom) ::: private
+   ! Make an overlap section "SS" from the basis functions of the atoms
+   ! specified in "row_atom" and "col_atom".
+      SS :: MAT{REAL}
+      row_atom,col_atom :: VEC{INT}, optional
+   ENSURE(.overlap_matrix.created,"no overlap matrix")
+   ENSURE(SS.dim1==.n_bf(row_atom),"wrong shape, SS")
+   ENSURE(SS.dim2==.n_bf(col_atom),"wrong shape, SS")
+      .AO_subspace_set(SS,.overlap_matrix,B_row_atom=row_atom,B_col_atom=col_atom)
+   end
+
+   AO_subspace_set(A,B,A_row_atom,A_col_atom,B_row_atom,B_col_atom) ::: private
+   ! If either "B_row_atom" or "B_col_atom" is present, then set "A" equal to
+   ! the AO subspace blocks of "B" specified by the atom indices in "B_row_atom"
+   ! and "B_col_atom". If either is missing, then copy the entire row or col, i.e.
+   !    A(small) = B(B_row_atom,B_col_atom)
+   ! If either "A_row_atom" or "A_col_atom" is present, then set the AO
+   ! subspace blocks of "A" specified by the atom indices in "A_row_atom" and
+   ! "A_col_atom" equal to "B". If either is missing then copy the entire row or
+   ! column. Uncopied blocks are set to zero, i.e.
+   !    A(A_row_atom,A_col_atom) = B(small)
+      A,B :: MAT{REAL}
+      A_row_atom,A_col_atom :: VEC{INT}, optional
+      B_row_atom,B_col_atom :: VEC{INT}, optional
+
+      n_row_atoms,n_col_atoms :: INT
+      i,b_i,f_i,l_i,n_i, j,b_j,f_j,l_j,n_j :: INT
+      first_basis_fn_for,last_basis_fn_for :: VEC{INT}*
+
+      .atom.make_atom_basis_fn_limits(first_basis_fn_for,last_basis_fn_for)
+
+      if (present(B_row_atom) OR present(B_col_atom)) then
+         ENSURE(B.dim1==.n_bf,"B has wrong shape")
+         ENSURE(B.dim2==.n_bf,"B has wrong shape")
+         if (present(B_row_atom) AND present(B_col_atom)) then
+            n_row_atoms = size(B_row_atom)
+            n_col_atoms = size(B_col_atom)
+            ENSURE(A.dim1==.atom(B_row_atom).n_bf,"A has wrong shape")
+            ENSURE(A.dim2==.atom(B_col_atom).n_bf,"A has wrong shape")
+            b_i = 0
+            do i = 1,n_row_atoms
+               f_i = first_basis_fn_for(B_row_atom(i))
+               l_i = last_basis_fn_for( B_row_atom(i))
+               n_i = .atom(B_row_atom(i)).n_bf
+               b_j = 0
+               do j = 1,n_col_atoms
+                  f_j = first_basis_fn_for(B_col_atom(j))
+                  l_j = last_basis_fn_for( B_col_atom(j))
+                  n_j = .atom(B_col_atom(j)).n_bf
+                  A(b_i+1:b_i+n_i,b_j+1:b_j+n_j) = B(f_i:l_i,f_j:l_j)
+                  b_j = b_j + n_j
+               end
+               b_i = b_i + n_i
+            end
+         else if (present(B_row_atom)) then
+            n_row_atoms = size(B_row_atom)
+            ENSURE(A.dim1==.atom(B_row_atom).n_bf,"A has wrong shape")
+            ENSURE(A.dim2==.n_bf,"A has wrong shape")
+            b_i = 0
+            do i = 1,n_row_atoms
+               f_i = first_basis_fn_for(B_row_atom(i));
+               l_i = last_basis_fn_for( B_row_atom(i))
+               n_i = .atom(B_row_atom(i)).n_bf
+               A(b_i+1:b_i+n_i,:) = B(f_i:l_i,:)
+               b_i = b_i + n_i
+            end
+         else if (present(B_col_atom)) then
+            n_col_atoms = size(B_col_atom)
+            ENSURE(A.dim1==.n_bf,"A has wrong shape")
+            ENSURE(A.dim2==.atom(B_col_atom).n_bf,"A has wrong shape")
+            b_j = 0
+            do j = 1,n_col_atoms
+               f_j = first_basis_fn_for(B_col_atom(j));
+               l_j = last_basis_fn_for( B_col_atom(j))
+               n_j = .atom(B_col_atom(j)).n_bf
+               A(:,b_j+1:b_j+n_j) = B(:,f_j:l_j)
+               b_j = b_j + n_j
+            end
+         end
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      else if (present(A_row_atom) OR present(A_col_atom)) then
+         ENSURE(A.dim1==.n_bf,"A has wrong shape")
+         ENSURE(A.dim2==.n_bf,"A has wrong shape")
+         A = ZERO
+         if (present(A_row_atom) AND present(A_col_atom)) then
+            n_row_atoms = size(A_row_atom)
+            n_col_atoms = size(A_col_atom)
+            ENSURE(B.dim1==.atom(A_row_atom).n_bf,"B has wrong shape")
+            ENSURE(B.dim2==.atom(A_col_atom).n_bf,"B has wrong shape")
+            b_i = 0
+            do i = 1,n_row_atoms
+               f_i = first_basis_fn_for(A_row_atom(i))
+               l_i = last_basis_fn_for( A_row_atom(i))
+               n_i = .atom(A_row_atom(i)).n_bf
+               b_j = 0
+               do j = 1,n_col_atoms
+                  f_j = first_basis_fn_for(A_col_atom(j))
+                  l_j = last_basis_fn_for( A_col_atom(j))
+                  n_j = .atom(A_col_atom(j)).n_bf
+                  A(f_i:l_i,f_j:l_j) = B(b_i+1:b_i+n_i,b_j+1:b_j+n_j)
+                  b_j = b_j + n_j
+               end
+               b_i = b_i + n_i
+            end
+         else if (present(A_row_atom)) then
+            n_row_atoms = size(A_row_atom)
+            ENSURE(B.dim1==.atom(A_row_atom).n_bf,"B has wrong shape")
+            ENSURE(B.dim2==.n_bf,"B has wrong shape")
+            b_i = 0
+            do i = 1,n_row_atoms
+               f_i = first_basis_fn_for(A_row_atom(i));
+               l_i = last_basis_fn_for( A_row_atom(i))
+               n_i = .atom(A_row_atom(i)).n_bf
+               A(f_i:l_i,:) = B(b_i+1:b_i+n_i,:)
+               b_i = b_i + n_i
+            end
+         else if (present(A_col_atom)) then
+            n_col_atoms = size(A_col_atom)
+            ENSURE(B.dim1==.atom(A_col_atom).n_bf,"B has wrong shape")
+            ENSURE(B.dim2==.n_bf,"B has wrong shape")
+            b_j = 0
+            do j = 1,n_col_atoms
+               f_j = first_basis_fn_for(A_col_atom(j));
+               l_j = last_basis_fn_for( A_col_atom(j))
+               n_j = .atom(A_col_atom(j)).n_bf
+               A(:,f_j:l_j) = B(:,b_j+1:b_j+n_j)
+               b_j = b_j + n_j
+            end
+         end
+      else
+         DIE("must specify A or B row atoms")
+      end
+      last_basis_fn_for.destroy
+      first_basis_fn_for.destroy
+   end
+
+! ==============
+! Output methods
+! ==============
+
+   put
+   ! Put to stdout the Roby atom data
+   ENSURE(.atom.created,"no atom data")
+      i :: INT
+      symbol :: VEC{STR}*
+      stdout.flush
+      stdout.text("Roby population analysis information:")
+      stdout.flush
+      stdout.show("Kind of calculation     =",.roby_kind)
+      stdout.show("Homoleptic calculation? =",.is_homoleptic)
+      if (.is_homoleptic) then
+         do i = 1,.n_group
+            symbol => .unique_tags(.atom_group(i).element)
+            stdout.show("Atom group "//i.to_str.trim//"            =",symbol)
+            symbol.destroy
+         end
+      end
+      if (.atom_list.created) then
+         symbol => .unique_tags(.atom_list)
+         stdout.show("Atom list               =",symbol)
+         stdout.show("No. of atoms            =",symbol.dim)
+         symbol.destroy
+      end
+      stdout.text("Cutoff's in degrees:")
+      stdout.show("Covalent index cutoff   =",.covalent_cutoff.to_units("degree"))
+      stdout.show("Ionic bond index cutoff =",.ionic_cutoff.to_units("degree"))
+      stdout.show("Zero angle cutoff       =",.zero_cutoff.to_units("degree"))
+      stdout.show("Pi/2 cutoff             =",.pi_on_2_cutoff.to_units("degree"))
+      stdout.show("Occupied ANO cutoff     =",.occupied_ANO_cutoff)
+      stdout.show("Analyze all atom pairs? =",.analyze_all_atom_pairs)
+      stdout.show("Bond scale factor       =",.bond_scale_factor)
+      stdout.show("Output theta info?      =",.output_theta_info)
+      stdout.show("Molecule charge         =",.charge)
+      stdout.show("Molecule multiplicity   =",.spin_multiplicity)
+   end
+
+   put_all_info
+   ! Put to stdout the results of a complete bond analysis
+      .put
+      .put_populations
+      .put_pair_populations
+      .put_bond_indices
+      .put_charges
+      .put_dipole_moments
+   end
+
+   put_populations
+   ! Put to stdout the only Roby atom populations
+   ENSURE(.n1.created,"no atom populations exist")
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.atom_group.created,"no atom group data")
+      a,n_group :: INT
+      homoleptic :: BIN
+      symb :: STR
+      symbol :: VEC{STR}*
+      n_group = .n_group
+      homoleptic = .is_homoleptic
+      if (NOT homoleptic) symbol => .unique_tags(.atom_list)
+      stdout.flush
+      stdout.text("Roby atom populations:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.put("Atom",int_width=TRUE)
+      stdout.put("Population")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      do a = 1,n_group
+        if (homoleptic) then; symb = a.to_str
+        else                ; symb = symbol(a)
+        end
+        stdout.put(symb,int_width=TRUE)
+        stdout.put(.n1(a))
+        stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=1)
+      if (NOT homoleptic) symbol.destroy
+   end
+
+   put_pair_populations
+   ! Put to stdout the Roby atom pair populations, including the shared
+   ! population
+   ENSURE(.n1.created,"no populations exist")
+   ENSURE(.n2.created,"no pair populations exist")
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.atom_group.created,"no atom group data")
+      a,b,n_group :: INT
+      homoleptic :: BIN
+      symb_a,symb_b :: STR
+      shared :: REAL
+      symbol :: VEC{STR}*
+      n_group = .n_group
+      homoleptic = .is_homoleptic
+      if (NOT homoleptic) symbol => .unique_tags(.atom_list)
+      stdout.flush
+      stdout.text("Roby pair populations:")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=4)
+      stdout.put("Atom_a",int_width=TRUE)
+      stdout.put("Atom_b",int_width=TRUE)
+      stdout.put("n_a")
+      stdout.put("n_b")
+      stdout.put("n_ab")
+      stdout.put("s_ab")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=4)
+      do a = 1,n_group
+      do b = 1,a-1
+        if (homoleptic) then; symb_a = a.to_str
+        else                ; symb_a = symbol(a)
+        end
+        if (homoleptic) then; symb_b = b.to_str
+        else                ; symb_b = symbol(b)
+        end
+        stdout.put(symb_a,int_width=TRUE)
+        stdout.put(symb_b,int_width=TRUE)
+        stdout.put(.n1(a))
+        stdout.put(.n1(b))
+        stdout.put(.n2(a,b))
+        shared = .n1(a) + .n1(b) - .n2(a,b)
+        stdout.put(shared)
+        stdout.flush
+      end
+      end
+      stdout.dash(int_fields=2,real_fields=4)
+      if (NOT homoleptic) symbol.destroy
+   end
+
+   put_bond_indices
+   ! Put to stdout the Roby bond indices, including the shared populations
+   ENSURE(.n1.created,"no populations exist")
+   ENSURE(.n2.created,"no pair populations exist")
+   ENSURE(.bond_index.created,"no bond indices exist")
+   ENSURE(.percent_covalency.created,"no covalencies")
+   ENSURE(.atom_group.created,"no atom group data")
+      a,b,n_group :: INT
+      homoleptic :: BIN
+      symb_a,symb_b :: STR
+      shared :: REAL
+      symbol :: VEC{STR}*
+      n_group = .n_group
+      homoleptic = .is_homoleptic
+      if (NOT homoleptic) symbol => .unique_tags(.atom_list)
+      stdout.flush
+      stdout.text("Roby bond indices and populations:")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=6)
+      stdout.put("Atom_a",int_width=TRUE)
+      stdout.put("Atom_b",int_width=TRUE)
+      stdout.put("n_a")
+      stdout.put("n_b")
+      stdout.put("n_ab")
+      stdout.put("s_ab")
+      stdout.put("Bond Index")
+      stdout.put("% Covalency")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=6)
+      do a = 1,n_group
+      do b = 1,a-1
+        if (homoleptic) then; symb_a = a.to_str
+        else                ; symb_a = symbol(a)
+        end
+        if (homoleptic) then; symb_b = b.to_str
+        else                ; symb_b = symbol(b)
+        end
+        stdout.put(symb_a,int_width=TRUE)
+        stdout.put(symb_b,int_width=TRUE)
+        stdout.put(.n1(a))
+        stdout.put(.n1(b))
+        stdout.put(.n2(a,b))
+        shared = .n1(a) + .n1(b) - .n2(a,b)
+        stdout.put(shared)
+        stdout.put(.bond_index(a,b))
+        stdout.put(.percent_covalency(a,b))
+        stdout.flush
+      end
+      end
+      stdout.dash(int_fields=2,real_fields=6)
+      if (NOT homoleptic) symbol.destroy
+   end
+
+   put_charges
+   ! Put to stdout the group charges.
+   ENSURE(.gould_charge.created,"no Roby-Gould charges")
+   ENSURE(.cruickshank_charge.created,"no Cruickshank charges")
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.atom_group.created,"no atom group data")
+      a,n_group :: INT
+      homoleptic :: BIN
+      symb :: STR
+      symbol :: VEC{STR}*
+      n_group = .n_group
+      homoleptic = .is_homoleptic
+      if (NOT homoleptic) symbol => .unique_tags(.atom_list)
+      stdout.flush
+      stdout.text("Group charges:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=4)
+      stdout.put("Atom",int_width=TRUE)
+      stdout.put("Roby-Gould")
+      stdout.put("Cruickshank")
+      stdout.put("Sum_b  Sab/2")
+      stdout.put("Sum_bc Sabc/3")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=4)
+      do a = 1,n_group
+        if (homoleptic) then; symb = a.to_str
+        else                ; symb = symbol(a)
+        end
+        stdout.put(symb,int_width=TRUE)
+        stdout.put(.gould_charge(a))
+        stdout.put(.cruickshank_charge(a))
+        stdout.put(.summed_n2(a)/TWO)
+        stdout.put(.summed_n3(a)/THREE)
+        stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=4)
+      if (NOT homoleptic) symbol.destroy
+   end
+
+   put_dipole_moments
+   ! Dipole moments are calculated from the charges
+   ENSURE(.gould_charge.created,"no Roby-Gould charges")
+   ENSURE(.cruickshank_charge.created,"no Cruickshank charges")
+   ENSURE(.atom.created,"no atom data")
+      a,n_group :: INT
+      gd,cd :: VEC{REAL}(3)
+      n_group = .n_group
+      gd = ZERO
+      cd = ZERO
+      do a = 1,n_group
+         gd(:) = gd(:) + .gould_charge(a)*.atom(a).position(:)
+         cd(:) = cd(:) + .cruickshank_charge(a)*.atom(a).position(:)
+      end
+      ! convert from AU to Debyes
+      gd = gd * ("debye").conversion_factor
+      cd = cd * ("debye").conversion_factor
+      stdout.flush
+      stdout.text("Dipole moments (in DEBYE):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.put("Charge type")
+      stdout.put("X")
+      stdout.put("Y")
+      stdout.put("Z")
+      stdout.put("Magnitude")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.put("Roby-Gould")
+      stdout.put(gd(1))
+      stdout.put(gd(2))
+      stdout.put(gd(3))
+      stdout.put(sqrt(gd(1)**2 + gd(2)**2 + gd(3)**2))
+      stdout.flush
+      stdout.put("Cruickshank")
+      stdout.put(cd(1))
+      stdout.put(cd(2))
+      stdout.put(cd(3))
+      stdout.put(sqrt(cd(1)**2 + cd(2)**2 + cd(3)**2))
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+   end
+
+   put_unique_tags(group,name)
+   ! Output atom labels for the atom indices given in "group"
+      group :: VEC{INT}
+      name :: STR, optional
+      symbol :: VEC{STR}*
+       a :: INT
+      label :: STR
+      label = " "
+      if (present(name)) label = name
+      symbol => .unique_tags(group)
+      stdout.put("ATOM "//trim(label)//" =")
+      do a = 1,size(symbol)
+         stdout.put(symbol(a),int_width=TRUE)
+      end
+      stdout.flush
+      symbol.destroy
+   end
+
+   put_theta_info
+   ! Output Theta-space information
+   ENSURE(.atom_a.created, "No Roby atom A data")
+   ENSURE(.atom_b.created, "No Roby atom B data")
+   ENSURE(.atom_ab.created,"No Roby atom AB data")
+      i,n_ab,angle :: INT
+      n_ab = .n_bf_ab
+      stdout.flush
+      stdout.text("=== ALL ROBY EIGENVALUES:")
+      stdout.flush
+      stdout.text("Here the eigenvalues are output in the order they")
+      stdout.text("come out of the diagonalization routine. Next to the ")
+      stdout.text("eigenvalues are the theta subspace angles. The pair  ")
+      stdout.text("index shows which eigenvalues have been paired       ")
+      stdout.text("90 degree angle spaces are not show.")
+      stdout.flush
+      .put_unique_tags(.atom_a,"(A)")
+      .put_unique_tags(.atom_b,"(B)")
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=2)
+      stdout.put("Eigvec",int_width=TRUE)
+      stdout.put("cos theta")
+      stdout.put("sin theta")
+      stdout.put("theta/dg",int_width=TRUE)
+      stdout.put("pair",int_width=TRUE)
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=2)
+      do i = 1,n_ab
+        if (.eval_C(i).equals(ZERO,eps=TOL(3))) cycle
+        stdout.put(i)
+        stdout.put(.eval_C(i))
+        stdout.put(.eval_I(i))
+        angle = nint(.theta_angle(i))
+        stdout.put(angle)
+        stdout.put(.pair(i))
+        stdout.flush
+      end
+      stdout.dash(int_fields=3,real_fields=2)
+      stdout.flush
+   end
+
+   put_theta_bond_info
+   ! Output Theta-space bond information
+      i,n_ab,angle :: INT
+      n_ab = .n_bf_ab
+      stdout.flush
+      stdout.text("=== ROBY BOND INDEX INFORMATION:")
+      stdout.flush
+      .put_unique_tags(.atom_a,"(A)")
+      .put_unique_tags(.atom_b,"(B)")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=6)
+      stdout.put("Spaces",int_width=TRUE)
+      stdout.put("THETA/dg",int_width=TRUE)
+      stdout.put("C+ pop")
+      stdout.put("C- pop")
+      stdout.put("C index")
+      stdout.put("I+ pop")
+      stdout.put("I- pop")
+      stdout.put("I index")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=6)
+      do i = 1,n_ab
+        if (.pair(i)<1 OR i<.pair(i)) cycle
+        angle = nint(.theta_angle(i))
+        if (angle==90) cycle
+        stdout.put("("//i.to_str.trim//","//.pair(i).to_str.trim//")",int_width=TRUE)
+        stdout.put(angle)
+        stdout.put(.pop_C(i))
+        stdout.put(.pop_C(.pair(i)))
+        stdout.put(.covalent_index(i))
+        stdout.put(.pop_I(i))
+        stdout.put(.pop_I(.pair(i)))
+        stdout.put(.ionic_index(i))
+        stdout.flush
+      end
+      stdout.dash(int_fields=2,real_fields=6)
+      stdout.flush
+   end
+
+   put_theta_atom_pops
+   ! Output Roby angles and populations
+   ENSURE(.atom_a.created, "No Roby atom A data")
+   ENSURE(.atom_b.created, "No Roby atom B data")
+   ENSURE(.atom_ab.created,"No Roby atom AB data")
+      n_ab,i,angle :: INT
+      n_ab = .n_bf_ab
+      stdout.flush
+      stdout.text("=== ROBY ANGLES AND POPULATAIONS:")
+      stdout.flush
+      stdout.text("Here are the populations for the orbitals in the previous table.")
+      stdout.text("The +/- indicates the sign of the eigenvalue.")
+      stdout.text("90 degree angle spaces are not show.")
+      stdout.flush
+      .put_unique_tags(.atom_a,"(A)")
+      .put_unique_tags(.atom_b,"(B)")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=3)
+      stdout.put("EIGVEC",int_width=TRUE)
+      stdout.put("THETA/dg",int_width=TRUE)
+      stdout.put("POP (A)")
+      stdout.put("POP (B)")
+      stdout.put("TOTAL")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=3)
+      stdout.flush
+      do i = 1, n_ab
+        angle = nint(.theta_angle(i))
+        if (angle==90) cycle
+        stdout.put(i)
+        stdout.put(angle)
+        stdout.put(.pop_A(i))
+        stdout.put(.pop_B(i))
+        stdout.put(.pop_A(i)+.pop_B(i))
+        stdout.flush
+      end
+      stdout.dash(int_fields=2,real_fields=3)
+   end
+
+   put_shared_population
+   ! Put to stdout the multiple shared Roby atom populations
+   ENSURE(.subgroup_pop.created,"no subgroup population totals exist")
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.atom_group.created,"no atom group data")
+      a,n_group :: INT
+      symbol :: VEC{STR}*
+      n_group = .n_group
+      stdout.flush
+      stdout.text("Roby multiple shared population:")
+      stdout.flush
+      stdout.show("Multiple shared population =",.n_shared)
+      stdout.text("Contributions by subgroup size:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.put("Subgrp size",int_width=TRUE)
+      stdout.put("Subgrp Pop.")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      do a = 1,n_group
+        stdout.put(symbol(a),int_width=TRUE)
+        stdout.put(.subgroup_pop(a))
+        stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=1)
+      symbol.destroy
+   end
+
+end

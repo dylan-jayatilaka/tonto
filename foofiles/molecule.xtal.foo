@@ -1,0 +1,3990 @@
+!===============================================================================
+!
+! MOLECULE.XTAL: An object representation of a molecule.
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id:? molecule.xtal.foo $
+!===============================================================================
+
+module MOLECULE.XTAL
+
+   implicit none
+
+contains
+
+!  ====
+!  Read
+!  ====
+
+   read_crystal ::: leaky
+   ! Read in the crystal data. If the ".atom" list data is available,
+   ! its coordinates will be resolved into cartesians at this point.
+   ! IMPORTANT NOTE: normally the crystal information will be inputted
+   ! from a CIF file.  However, if the crystal information is inputted
+   ! explicitly, and the asymmetric unit is not specified, then the
+   ! symmetry unique atoms in the ".atom" list are used to define the
+   ! crystal asymmetric unit. Once defined, the asymmetric unit in the
+   ! crystal is never destroyed. Thus, in this case, you must ensure
+   ! that your atom list has enough atoms to generate the entire
+   ! crystal; for co-crystals this may be a problem. Use the CIF file
+   ! method for input in this case, or be careful.
+
+      WARN_IF(.crystal.created,"crystal data already defined!")
+
+      ! Destroy
+      if (.crystal.destroyed) .crystal.create
+
+      ! Read
+      .crystal.read_keywords
+
+      ! Finalize
+      if (.crystal.finalize) then
+         .crystal.update
+         if (.atom.created) then
+            .BASE:resolve_axis_system
+            .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+         end
+
+      end
+
+      ! Reset to finalize next time
+      .crystal.finalize = TRUE 
+
+   end
+
+   read_cluster ::: leaky
+   ! Read in the crystal cluster data. NOTE: the .atom list must correspond to
+   ! the (unpruned or pruned) asymmetric unit cell geometry of the .crystal.
+
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.crystal.created,"no crystal data")
+
+      .crystal.make_fragment_data(.atom,assign_atom=TRUE) 
+      DIE_IF(.crystal.asymmetric_unit_atom.destroyed,"atom list does not span asymmetric unit")
+
+      .cluster.destroy
+      .cluster.create(.crystal)
+
+      .cluster.read_keywords
+
+   end
+
+!  ========
+!  Read CIF
+!  ========
+
+   read_CIF ::: leaky
+   ! Read in CIF information, reset name of Job to cif file name
+      self :: PTR
+
+      head :: STR
+
+      ! Destroy
+      if (.cif.destroyed) .cif.create
+
+      ! Read
+      .cif.read_keywords
+
+      ! Finalize
+      if (.cif.file_name/=" " AND .cif.data_block_name/=" ") then
+
+         ! Reset name to the crystal data name
+         head  = .cif.file_name.filename_head
+         .name = head.trim // "_" // .cif.data_block_name
+
+         WARN("Job name has now been set to: "//.name.trim)
+
+      end
+
+   end
+
+   read_CIF_atoms_raw(cif) ::: leaky
+   ! Read atom info from a "cif". Do not reset bond lengths.
+      cif :: CIF
+
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      ! Open the CIF
+      if (NOT cif.file.is_open) cif.open
+
+      ! Read the atoms from the CIF
+      if (.atom.created) then
+         .atom.nullify_basis_part
+         .atom.destroy
+      end
+      .atom.read_CIF(cif)
+
+      ! Set defaults and bases
+      .spin_multiplicity = .BASE:default_spin_multiplicity
+      
+      ! Finalize
+      .BASE:set_atom_info
+      .BASE:resolve_basis_info
+
+   end
+
+   read_CIF_atoms(cif) ::: leaky
+   ! Read atom info from a "cif" and make crystal cell info
+   ! if the crystal info is there.
+      cif :: CIF
+
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      ! Read in the atoms raw
+      .::read_CIF_atoms_raw(cif)
+
+      ! Set atom and crystal info. Including bond length reset
+      .::make_CIF_atoms_and_crystal(cif) 
+
+   end
+
+   read_CIF_crystal_raw(cif) ::: leaky
+   ! Read crystal unit cell and spacegroup information (but NOT atom
+   ! positions) from a CIF file called "cif", but do not change axis
+   ! system or produce any information arrays.  
+      cif :: CIF
+
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      ! Open the CIF if needed
+      if (NOT cif.file.is_open) cif.open
+
+      ! Create the crystal; it shouldn't really exist beforehand
+      WARN_IF(.crystal.created,"crystal data already defined!")
+      if (.crystal.destroyed) .crystal.create
+
+      ! Read in the crystal from the CIF
+      .crystal.read_CIF(cif,skip_atoms=TRUE)
+
+   end
+
+   read_CIF_crystal(cif) ::: leaky
+   ! Read crystal unit cell and spacegroup information (but NOT atom
+   ! positions) from a CIF file called "cif", and then produce the
+   ! atom and crystal informational arrays.  
+   ! NOTE: only to be called after reading .atom's from the CIF, 
+   !       see the routine below.
+      cif :: CIF
+
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      ! Read in the raw crystal information
+      .::read_CIF_crystal_raw(cif)
+
+      ! Only continue if there are some atoms ...
+      if (NOT associated(.atom)) return
+
+      ! Set atom and crystal info. Including bond length reset
+      .::make_CIF_atoms_and_crystal(cif) 
+
+      ! Read covariances
+      if (NOT cif.apply_bond_length) then
+         .::read_CIF_crystal_esds(cif)
+      end
+
+   end
+
+   read_CIF_crystal_esds(cif) ::: private, leaky
+   ! Read the CIF covariances and set pADP esds.
+      cif :: CIF
+
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      n_pADPs :: INT
+      label :: STR
+      fcov_there,acov_there :: BIN
+
+      ! Open the CIF if needed
+      if (NOT cif.file.is_open) cif.open
+
+      ! Below needs to be modified to remove duplicate looped
+      ! item search when blank-labelled covariance is not needed
+
+      ! Asymmetric covariance there?
+!      label = "_asym_unit"
+!      cif.find_item(trim(label)//"_covariance_matrix",acov_there)
+!
+!      if (NOT acov_there) then ! old ... blank label ... see above
+!         label = " "
+!         cif.find_item("_covariance_matrix",acov_there)
+!      end
+!
+!      if (acov_there) then
+!      if (.crystal.asymmetric_unit_atom.created) then
+!
+!         if (.crystal.data.destroyed) .crystal.data.create
+!
+!         n_pADPs = .crystal.asymmetric_unit_atom.no_of_pADPs
+!
+!         .crystal.data.covariance_matrix.destroy
+!         .crystal.data.covariance_matrix.create(n_pADPs,n_pADPs)
+!         .crystal.data.read_CIF_covariance(cif,trim(label),.crystal.data.covariance_matrix)
+!
+!      end
+!      end
+
+      ! Fragment covariance there?
+      label = "_fragment"
+      cif.find_looped_item(trim(label)//"_covariance_matrix",fcov_there)
+
+      ! WRONG - for gly ala only
+      ! Delete this later
+      if (NOT fcov_there) then ! old ... blank label ... see above
+         label = " "
+         cif.find_item("_covariance_matrix",fcov_there)
+      end
+
+      if (fcov_there) then
+      if (.crystal.fragment_atom.created) then
+
+         if (.crystal.data.destroyed) .crystal.data.create
+
+         n_pADPs = .crystal.fragment_atom.no_of_pADPs
+
+         ! WRONG - for gly ala only
+         ! Delete this later
+         n_pADPs = .atom.no_of_pADPs
+
+         .crystal.data.fragment_covariance_matrix.destroy
+         .crystal.data.fragment_covariance_matrix.create(n_pADPs,n_pADPs)
+         .crystal.data.read_CIF_covariance(cif,trim(label),.crystal.data.fragment_covariance_matrix)
+
+      end
+      end
+
+   end
+
+   make_CIF_atoms_and_crystal(cif) ::: private, leaky
+   ! Set the atom and crystal fragment information when processing the
+   ! CIF. If requested in cif, reset H atom bond lengths.
+      cif :: CIF
+
+   ENSURE(.atom.created,"no atoms")
+ 
+      H_bond_length :: VEC{REAL}*
+      has_Hs,reset :: BIN
+
+      ! Is crystal there?
+      if (.crystal.destroyed) return
+      if (NOT .crystal.spacegroup.analyzed) return
+
+      ! Must be cartesian
+      .BASE:resolve_axis_system
+
+      if (.atom.has_all_Hs_single_bonded(has_Hs)) then
+
+         ! Reset H bond lengths the simple way.
+         ! If disordered, the disordered atoms must
+         ! be proximate to their bonded neighbours.
+         if (has_Hs) then
+            if (cif.apply_BH_bond_length) .atom.set_bond_lengths(5,1,cif.BH_bond_length) 
+            if (cif.apply_CH_bond_length) .atom.set_bond_lengths(6,1,cif.CH_bond_length) 
+            if (cif.apply_NH_bond_length) .atom.set_bond_lengths(7,1,cif.NH_bond_length) 
+            if (cif.apply_OH_bond_length) .atom.set_bond_lengths(8,1,cif.OH_bond_length) 
+         end
+
+         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+
+      else 
+
+         ! There are floating hydrogens or multiple bonded H's ...
+
+         ! Uses the crystal to reset the hydrogen bond lengths.
+         ! Uses UC conn. table to skip multiple-bonded H atoms.
+         H_bond_length.create(5,8)
+         H_bond_length(5) =  cif.BH_bond_length
+         H_bond_length(6) =  cif.CH_bond_length
+         H_bond_length(7) =  cif.NH_bond_length
+         H_bond_length(8) =  cif.OH_bond_length
+
+         ! Remake fragment data?
+         .crystal.reset_H_bond_lengths_in(.atom,H_bond_length,reset)
+
+         H_bond_length.destroy
+
+         ! Return if nothing was done
+         if (NOT reset) return
+
+         if (.atom.has_disorder) then
+            WARN("DISORDERED ASYMMETRIC CELL MAY BE PRUNED")
+            WARN("SOME ATOM INFORMATION MAY BE LOST")
+         end
+
+         ! Re-analyze the fragment symmetry information
+         ! Maybe not all things in here need doing again ...
+         .crystal.destroy_asymmetric_unit
+         .crystal.make_fragment_data(.atom,assign_atom=TRUE,warnings=FALSE)
+
+      end
+
+   end
+
+!  ===========================
+!  Cluster generation routines
+!  ===========================
+
+   destroy_cluster ::: leaky
+   ! Destroy a molecule created by the "create_cluster" routine, and
+   ! recover the original molecule from .saved
+      self :: PTR
+
+   ENSURE(.saved.created,"no crystal data")
+
+      .BASE:unsave
+
+   end
+
+   create_cluster ::: leaky
+   ! Create a new "self" by generating a cluster from information
+   ! stored in .cluster.  The original molecule replaced by the
+   ! *cluster-fragent* and stored in .saved. The new molecule is
+   ! created from the cluster geometry.
+      self :: PTR
+
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.cluster.created,"no cluster data")
+   ENSURE(.cluster.info_made,"no cluster data")
+
+      stdout.flush
+      stdout.text("Resetting molecule to cluster fragment")
+
+      ! Reset .atom list to the *cluster-fragment*
+      .atom.destroy
+      .cluster.create_fragment_atom_list(.atom) 
+
+      ! Finalize basis on new .atom list
+      .BASE:set_atom_info
+      .BASE:resolve_basis_info
+      .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+
+      ! Message
+      stdout.flush
+      stdout.text("Saving old molecule; making new cluster")
+      stdout.flush
+
+      ! Save this molecule & get a clean new molecule
+      .BASE:save 
+
+      ! The name for the new cluster
+      .name = trim(.saved.name) // "_cluster"
+
+      ! If a CIF exists, copy that
+      if (.saved.cif.created) .cif.create_copy(.saved.cif)
+
+      ! Saved crystal is the same
+      .crystal.create_copy(.saved.crystal) 
+
+      ! Set .atom list from (saved) cluster
+      ! Don't make a new cluster, let the user do it.
+      .saved.cluster.create_atom_list(.atom)  
+
+      ! Finalize atom info
+      .BASE:set_atom_info
+
+      ! Create basis sets
+      if (.saved.basis.created)               .basis.create_copy(.saved.basis)
+      if (.saved.slaterbasis.created)   .slaterbasis.create_copy(.saved.slaterbasis)
+      if (.saved.coppensbasis.created) .coppensbasis.create_copy(.saved.coppensbasis)
+      .basis_name        = .saved.basis_name
+      .slaterbasis_name  = .saved.slaterbasis_name
+      .coppensbasis_name = .saved.coppensbasis_name
+
+      ! Finalize basis sets
+      if (.atom.created) .atom.nullify_bases
+      .BASE:resolve_basis_info
+
+      ! Set basis info
+      .BASE:set_basis_info
+
+   end
+
+   create_HS_cluster ::: leaky
+   ! Create a cluster from the molecules which touch the Hirshfeld
+   ! surface in isosurface. It is assumed there is a .saved.cluster
+   ! and that the current .atom's correspond to it (i.e. this is
+   ! called after a standard HS job).
+      self :: PTR
+
+   ENSURE(.saved.crystal.created,"no crystal data")
+   ENSURE(.saved.cluster.created,"no cluster data")
+   ENSURE(.saved.cluster.info_made,"no cluster data")
+   ENSURE(.saved.atom.created,"no atoms")
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.isosurface.created,"no isosurface")
+
+      surface_atoms :: VEC{INT}*
+      atom :: VEC{ATOM}*
+      n :: INT
+
+      ! Get surface atoms
+      n = .saved.atom.dim
+      surface_atoms => .isosurface.surface_group_atom_indices(.atom(n+1:))
+      surface_atoms = surface_atoms + n
+
+      ! Append them to the fragment
+      .atom.nullify_bases
+      atom.create_copy(.atom(1:n))
+      atom.append(.atom(surface_atoms))
+
+      surface_atoms.destroy
+
+      ! Base crystal on this fragment
+      .atom.destroy
+      .atom => atom
+      .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+      .crystal.set_destroy_fragment_atom(TRUE)
+
+      ! Make the new HS-contact-group-cluster
+      .cluster.destroy
+      .cluster.create(.crystal)
+      .cluster.set_generation_method("fragment")
+      .cluster.set_defragment(TRUE)
+      .cluster.make_info
+      .cluster.create_atom_list(atom) 
+      .cluster.destroy
+
+      ! Set the completed-group atom list 
+    ! .atom.destroy ! will destroy as part of crystal
+      .atom => atom
+
+      ! Base crystal on this cluster
+      .crystal.destroy_asymmetric_unit
+      .crystal.destroy_fragment_data
+      .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+
+      ! Change name to reflect atom-list change
+      .name = trim(.saved.name) // "_HS_cluster"
+
+      ! Finalize atom info
+      .atom.nullify_bases
+      .BASE:set_atom_info
+      .BASE:resolve_basis_info
+
+      ! Set basis info
+      .BASE:set_basis_info
+
+   end
+
+!  =====================
+!  Dispersion correction
+!  =====================
+
+   add_dispersion_correction(ft,k_pts)
+   ! Adds the dispersion correction to "ft".
+   ! WARNING: does not add thermal smearing !!!!
+
+      k_pts :: MAT{REAL}, target
+      ft :: VEC{CPX}
+
+   ENSURE(.crystal.created,"no crystal")
+
+      dc :: CPX
+      k1,k2,k3 :: VEC{REAL}*
+      pos :: VEC{REAL}(3)
+      x,y,z :: REAL
+      a,n :: INT
+
+      if (NOT .crystal.correct_dispersion) return
+
+      k1 => k_pts(:,1)
+      k2 => k_pts(:,2)
+      k3 => k_pts(:,3)
+
+      do n = 1,.crystal.n_unit_cell_atoms
+
+        a = .crystal.frag_atom_for_unit_cell_atom(n)
+        if (a==0) cycle
+
+        dc = .atom(a).dispersion_correction(.crystal.wavelength)
+
+        pos = .crystal.unit_cell_geometry(:,n)
+        .crystal.unit_cell.change_from_fractional(pos)
+        x = pos(1); y = pos(2); z = pos(3)
+
+        ft = ft + dc * exp(COMPLEXIFY(ZERO,k1*x+k2*y+k3*z))
+
+      end
+
+   end
+
+!   add_dispersion_correction(ft,k_pts)
+!   ! Adds the dispersion correction to "ft".
+!
+!      k_pts :: MAT{REAL}
+!      ft :: VEC{CPX}
+!
+!   ENSURE(.crystal.created,"no crystal")
+!
+!      disp,phase :: CPX
+!      pos :: VEC{REAL}(3)
+!      U,seitz :: MAT{REAL}(3,3)
+!      Bh,UBh :: VEC{REAL}(3)
+!      phases :: VEC{CPX}*
+!      x,y,z,T :: REAL
+!      a,symop,n,k,k_max :: INT
+!
+!      if (NOT .crystal.correct_dispersion) then
+!         return
+!      end
+!
+!      select case (.crystal.thermal_smearing_model)
+!
+!       case (" ","none")
+!
+!         phases.create(ft.dim)
+!
+!         do n = 1,.crystal.n_unit_cell_atoms
+!
+!           a = .crystal.frag_atom_for_unit_cell_atom(n)
+!           if (a==0) cycle
+!
+!           disp = .atom(a).dispersion_correction(.crystal.wavelength)
+!
+!           pos = .crystal.unit_cell_geometry(:,n)
+!           .crystal.unit_cell.change_from_fractional(pos)
+!           x = pos(1); y = pos(2); z = pos(3)
+!
+!           phases = disp * exp(COMPLEXIFY(ZERO,k_pts(:,1)*x + k_pts(:,2)*y + k_pts(:,3)*z))
+!           ft(:) = ft(:) + phases
+!
+!         end
+!
+!         phases.destroy
+!
+!       ! What is this? Why bring thermal smearing into it?
+!       ! ==dylan 29/1/07
+!       case default ! thermal smearing methods collapse to be the same
+!                    ! when dealing with one atom.
+!
+!         k_max = k_pts.dim1
+!
+!         do n = 1,.crystal.n_unit_cell_atoms
+!
+!           a = .crystal.frag_atom_for_unit_cell_atom(n)
+!           if (a==0) cycle
+!
+!           symop = .crystal.asym_symop_for_unit_cell_atom(n)
+!           seitz = .crystal.spacegroup.seitz(1:3,1:3,symop)
+!
+!           U = .atom(a).ADP_tensor
+!           ! to crystal coordinates
+!           U.change_basis_using(.crystal.unit_cell.reciprocal_U_matrix)
+!           ! apply seitz operation
+!           U.change_basis_using(transpose(seitz))
+!           ! to cartesian coordinates
+!           U.change_basis_using(.crystal.unit_cell.direct_U_matrix)
+!
+!           U = -HALF * U
+!
+!           disp = .atom(a).dispersion_correction(.crystal.wavelength)
+!
+!           pos = .crystal.unit_cell_geometry(:,n)
+!           .crystal.unit_cell.change_from_fractional(pos)
+!           x = pos(1); y = pos(2); z = pos(3)
+!
+!           do k = 1,k_max
+!             Bh = k_pts(k,:)
+!             UBh = matmul(U,Bh)
+!             T = (dot_product(Bh,UBh))
+!             phase = exp(COMPLEXIFY(T,Bh(1)*x + Bh(2)*y + Bh(3)*z))
+!             ft(k) = ft(k) + disp * phase
+!           end
+!
+!         end
+!      end
+!
+!   end
+
+   check_dispersion_correction
+   ! Adds dispersion correction to the F_exp, to compare
+   ! with other experimental structure factors that have the 
+   ! dispersion correction made to them.
+   ENSURE(.crystal.created,"no crystal")
+
+      k_pts :: MAT{REAL}*
+      ft :: VEC{CPX}*
+
+      ! Make predicted structure factors
+      ft.create(.crystal.n_refl)
+      ft = .crystal.data.F_pred
+
+      ! Add dispersion
+      k_pts.create(.crystal.n_refl,3)
+      .crystal.make_k_pts(k_pts)
+      .::add_dispersion_correction(ft,k_pts)
+      k_pts.destroy
+
+      ! Reset F_calc
+      .crystal.set_F_calc(ft)
+      ft.destroy
+
+      ! Reoptimize scale, extinction etc.
+      .crystal.make_F_predicted
+
+      ! Report
+      stdout.text("Dispersion corrected F_exp")
+      .crystal.data.reflections.put_structure_factor_data
+
+   end
+
+!  ==========================
+!  Structure factor integrals
+!  ==========================
+
+   make_ft(res,dens,k_pts)
+   ! Fourier transform of a density described by AO density matrix dens
+   ! evaluated at a series of reciprocal space points k_pts
+   ! Size of res is [size(k_pts,1)]
+      dens :: MAT{REAL}, target
+      k_pts :: MAT{REAL}, IN
+      res :: VEC{CPX}, OUT
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      k_max,k,fa,fb,la,lb,na,nb,q,atom_a,atom_b :: INT
+      ft_ab :: MAT3{CPX}*
+      dens_ba :: MAT{REAL}*
+      cutoff :: REAL
+      sh :: SHELL2
+
+      k_max = size(k_pts,1)
+      cutoff = TOL(10) / .n_shell_pairs
+
+      res = ZERO
+
+      parallel do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         if (sh.skip_ft(cutoff)) then
+           sh.destroy_ptr_part
+           cycle
+         end
+
+         ft_ab.create(k_max,na,nb)
+         .::make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+
+         dens_ba => dens(fa:la,fb:lb)
+         if (fa/=fb) then ! count off-diagonals twice.
+           do k = 1,k_max
+              res(k) = res(k) + TWO*sum(ft_ab(k,:,:)*dens_ba(:,:))
+           end
+         else
+           do k = 1,k_max
+              res(k) = res(k) + sum(ft_ab(k,:,:)*dens_ba(:,:))
+           end
+         end
+
+         ft_ab.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      PARALLEL_SUM(res)
+
+   end
+
+   make_ft(res,dens,k_pts)
+   ! Fourier transform of a density described by AO density matrix dens
+   ! evaluated at a series of reciprocal space points k_pts
+   ! Size of res is [size(k_pts,1)].
+      dens :: MAT{CPX}, target
+      k_pts :: MAT{REAL}
+      res :: VEC{CPX}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      k_max,q,k,fa,la,fb,lb,na,nb,atom_a,atom_b :: INT
+      ft_ab :: MAT3{CPX}*
+      dens_ba :: MAT{CPX}*
+      cutoff :: REAL
+      sh :: SHELL2
+
+      k_max = size(k_pts,1)
+      cutoff = TOL(10) / .n_shell_pairs
+
+      res = ZERO
+
+      parallel do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         if (sh.skip_ft(cutoff)) then
+           sh.destroy_ptr_part
+           cycle
+         end
+
+         ft_ab.create(k_max,na,nb)
+         .::make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+
+         dens_ba => dens(fb:lb,fa:la)
+         if (fa/=fb) then ! count off-diagonals twice.
+           do k = 1,k_max
+              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba)
+           end
+         else
+           do k = 1,k_max
+              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba)
+           end
+         end
+
+         ft_ab.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      PARALLEL_SUM(res)
+
+   end
+
+   make_ft_gc(res,dens,k_pts)
+   ! Fourier transform of a density described by AO density matrix dens
+   ! evaluated at a series of reciprocal space points k_pts
+   ! Size of res is [size(k_pts,1)].
+      dens :: MAT{CPX}, target
+      k_pts :: MAT{REAL}
+      res :: VEC{CPX}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      k_max,q,k,fa,la,fb,lb,na,nb,atom_a,atom_b :: INT
+      ft_ab :: MAT3{CPX}*
+      dens_ba_aa,dens_ba_ab,dens_ba_ba,dens_ba_bb :: MAT{CPX}*
+      cutoff :: REAL
+      sh :: SHELL2
+
+      k_max = size(k_pts,1)
+      cutoff = TOL(10) / .n_shell_pairs
+
+      res = ZERO
+
+      parallel do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         if (sh.skip_ft(cutoff)) then
+           sh.destroy_ptr_part
+           cycle
+         end
+
+         ft_ab.create(k_max,na,nb)
+         .::make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+
+         dens_ba_aa => dens(fb:lb,fa:la)
+         dens_ba_ab => dens(fb:lb,fa+.n_bf:la+.n_bf)
+         dens_ba_ba => dens(fb+.n_bf:lb+.n_bf,fa:la)
+         dens_ba_bb => dens(fb+.n_bf:lb+.n_bf,fa+.n_bf:la+.n_bf)
+         if (fa/=fb) then ! count off-diagonals twice.
+           do k = 1,k_max
+              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_aa)
+              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_ab)
+              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_ba)
+              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_bb)
+           end
+         else
+           do k = 1,k_max
+              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_aa)
+              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_ab)
+              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_ba)
+              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_bb)
+           end
+         end
+
+         ft_ab.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      PARALLEL_SUM(res)
+
+   end
+
+   make_ft_deriv_U(res,dens,k_pts)
+   ! Fourier transform of a density described by AO density matrix dens
+   ! evaluated at a series of reciprocal space points k_pts
+   ! Size of res is [k_max,n_atom*6]
+      dens :: MAT{REAL}, target
+      k_pts :: MAT{REAL}, IN
+      res :: MAT{CPX}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      ft_ab2,tmp1,tmp2,tmpa1,tmpa2,tmpa3,tmpa4,tmpa5,tmpa6 :: CPX
+      k_max,k,fa,fb,la,lb,na,nb,q,atom_a,atom_b,basea,baseb :: INT
+      delta,g,separation,x,y,z,z2 :: REAL
+      diff :: VEC{REAL}(3)
+      ft_ab :: MAT3{CPX}*
+      dens_ba :: MAT{REAL}*
+      cutoff :: REAL
+      sh :: SHELL2
+
+      k_max = size(k_pts,1)
+      cutoff = TOL(10) / .n_shell_pairs
+
+      res = ZERO
+
+      parallel do q = 1,.n_shell_pairs
+
+       .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+       if (sh.skip_ft(cutoff)) then
+         sh.destroy_ptr_part
+         cycle
+       end
+
+       ft_ab.create(k_max,na,nb)
+       .::make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+
+       dens_ba => dens(fb:lb,fa:la)
+
+       if (fa/=fb) ft_ab = TWO * ft_ab ! count off-diagonals twice.
+
+       diff = .atom(atom_a).position-.atom(atom_b).position
+       separation = diff.norm
+       g = HALF
+       if (separation > 2.5d0) g=QUARTER
+       g = g * (-HALF) ! k_pts is 2pi * Bh so formula was divided by 4pi^2.
+
+       basea = (atom_a-1) * 6
+
+       if (atom_a==atom_b) then
+
+         delta = TWO * g
+         do k = 1,k_max
+           ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * delta
+           x = k_pts(k,1)           ! SBh_x
+           y = k_pts(k,2)           ! SBh_y
+           z = k_pts(k,3)           ! SBh_z
+           tmp1 = ft_ab2 * x
+           tmp2 = ft_ab2 * y
+           z2 = TWO * z
+           res(basea+1,k) = res(basea+1,k) + tmp1 * x
+           res(basea+2,k) = res(basea+2,k) + tmp1 * y * TWO
+           res(basea+3,k) = res(basea+3,k) + tmp1 * z2
+           res(basea+4,k) = res(basea+4,k) + tmp2 * y
+           res(basea+5,k) = res(basea+5,k) + tmp2 * z2
+           res(basea+6,k) = res(basea+6,k) + ft_ab2 * z * z
+         end
+
+       else
+
+         baseb = (atom_b-1) * 6
+         do k = 1,k_max
+           ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * g
+           x = k_pts(k,1)           ! SBh_x
+           y = k_pts(k,2)           ! SBh_y
+           z = k_pts(k,3)           ! SBh_z
+           tmp1 = ft_ab2 * x
+           tmp2 = ft_ab2 * y
+           z2 = TWO * z
+           tmpa1 = tmp1 * x
+           tmpa2 = tmp1 * y * TWO
+           tmpa3 = tmp1 * z2
+           tmpa4 = tmp2 * y
+           tmpa5 = tmp2 * z2
+           tmpa6 = ft_ab2 * z * z
+           res(basea+1,k) = res(basea+1,k) + tmpa1
+           res(basea+2,k) = res(basea+2,k) + tmpa2
+           res(basea+3,k) = res(basea+3,k) + tmpa3
+           res(basea+4,k) = res(basea+4,k) + tmpa4
+           res(basea+5,k) = res(basea+5,k) + tmpa5
+           res(basea+6,k) = res(basea+6,k) + tmpa6
+           res(baseb+1,k) = res(baseb+1,k) + tmpa1
+           res(baseb+2,k) = res(baseb+2,k) + tmpa2
+           res(baseb+3,k) = res(baseb+3,k) + tmpa3
+           res(baseb+4,k) = res(baseb+4,k) + tmpa4
+           res(baseb+5,k) = res(baseb+5,k) + tmpa5
+           res(baseb+6,k) = res(baseb+6,k) + tmpa6
+         end
+       end
+
+       ft_ab.destroy
+       sh.destroy_ptr_part
+
+      end
+
+      PARALLEL_SUM(res)
+
+   end
+
+   make_ft_deriv_U(res,dens,k_pts)
+   ! Fourier transform of a density described by AO density matrix dens
+   ! evaluated at a series of reciprocal space points k_pts
+   ! Size of res is [k_max,n_atom*6]
+      dens :: MAT{CPX}, target
+      k_pts :: MAT{REAL}, IN
+      res :: MAT{CPX}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      ft_ab2,tmp1,tmp2 :: CPX
+      k_max,k,fa,fb,la,lb,na,nb,q,atom_a,atom_b,basea,baseb :: INT
+      delta,g,separation,x,y,z :: REAL
+      diff :: VEC{REAL}(3)
+      ft_ab :: MAT3{CPX}*
+      dens_ba :: MAT{CPX}*
+      cutoff :: REAL
+      sh :: SHELL2
+
+      k_max = size(k_pts,1)
+      cutoff = TOL(10) / .n_shell_pairs
+
+      res = ZERO
+
+      parallel do q = 1, .n_shell_pairs
+
+       .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+       if (sh.skip_ft(cutoff)) then
+         sh.destroy_ptr_part
+         cycle
+       end
+
+       ft_ab.create(k_max,na,nb)
+       .::make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+
+       dens_ba => dens(fb:lb,fa:la)
+       if (fa/=fb) ft_ab = TWO * ft_ab ! count off-diagonals twice.
+
+       diff = .atom(atom_a).position-.atom(atom_b).position
+       separation = diff.norm
+       g=HALF
+       if (separation > 2.5d0) g=QUARTER
+       g = g * (-HALF) ! k_pts is 2pi * Bh so formula was divided by 4pi^2.
+
+       basea = (atom_a-1) * 6
+       if (atom_a==atom_b) then
+
+         delta = TWO * g
+         do k = 1,k_max
+           ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * delta
+           x = k_pts(k,1)           ! SBh_x
+           y = k_pts(k,2)           ! SBh_y
+           z = k_pts(k,3)           ! SBh_z
+           tmp1 = ft_ab2 * x
+           tmp2 = ft_ab2 * y
+           res(basea+1,k) = res(basea+1,k) + tmp1 * x
+           res(basea+2,k) = res(basea+2,k) + tmp1 * y
+           res(basea+3,k) = res(basea+3,k) + tmp1 * z
+           res(basea+4,k) = res(basea+4,k) + tmp2 * y
+           res(basea+5,k) = res(basea+5,k) + tmp2 * z
+           res(basea+6,k) = res(basea+6,k) + ft_ab2 * z * z
+         end
+
+       else
+
+         baseb = (atom_b-1) * 6
+         do k = 1,k_max
+           ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * g
+           x = k_pts(k,1)           ! SBh_x
+           y = k_pts(k,2)           ! SBh_y
+           z = k_pts(k,3)           ! SBh_z
+           tmp1 = ft_ab2 * x
+           tmp2 = ft_ab2 * y
+           res(basea+1,k) = res(basea+1,k) + tmp1 * x
+           res(basea+2,k) = res(basea+2,k) + tmp1 * y
+           res(basea+3,k) = res(basea+3,k) + tmp1 * z
+           res(basea+4,k) = res(basea+4,k) + tmp2 * y
+           res(basea+5,k) = res(basea+5,k) + tmp2 * z
+           res(basea+6,k) = res(basea+6,k) + ft_ab2 * z * z
+           res(baseb+1,k) = res(baseb+1,k) + tmp1 * x
+           res(baseb+2,k) = res(baseb+2,k) + tmp1 * y
+           res(baseb+3,k) = res(baseb+3,k) + tmp1 * z
+           res(baseb+4,k) = res(baseb+4,k) + tmp2 * y
+           res(baseb+5,k) = res(baseb+5,k) + tmp2 * z
+           res(baseb+6,k) = res(baseb+6,k) + ft_ab2 * z * z
+         end
+       end
+
+       ft_ab.destroy
+       sh.destroy_ptr_part
+
+      end
+
+      PARALLEL_SUM(res)
+
+   end
+
+   make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+   ! Make_ft for one pair of gaussians.
+   ! Includes partitioning and thermal smearing.
+      ft_ab :: MAT3{CPX}
+      k_pts :: MAT{REAL}, IN
+      sh :: SHELL2, IN
+      atom_a,atom_b :: INT, IN
+
+   ENSURE(.crystal.created,"no crystal data")
+
+      is_zero :: BIN
+      t :: MAT3{REAL}*
+      p :: MAT{REAL}*
+      k_max :: INT
+
+      k_max = k_pts.dim1
+
+      p.create(sh.a.n_cc,sh.b.n_cc)
+      .::make_partition_factors(p,sh,atom_a,atom_b,is_zero)
+
+      if (NOT is_zero) then
+
+         t.create(k_max,sh.a.n_cc,sh.b.n_cc)
+         .::thermal_smearing_correction(t,k_pts,atom_a,atom_b,sh)
+       ! sh.make_ft_fast(ft_ab,k_pts,t,p)
+         sh.make_ft(ft_ab,k_pts,t,p)
+         t.destroy
+
+      else
+
+        ft_ab = ZERO
+
+      end
+
+      p.destroy
+
+   end
+
+!   make_partition_factor(p,atom_a,is_zero)
+!   ! Make the partitition factor "p" for a particular thermal smearing
+!   ! "model", for "atom_a". Return "is_zero" as TRUE if p is zero.
+!      p :: REAL
+!      atom_a :: INT, IN
+!      is_zero :: BIN, OUT, optional
+!
+!   ENSURE(.crystal.created,"no crystal data")
+!
+!      ra,fa :: REAL
+!
+!      ra = .crystal.repetition_factor(atom_a)
+!
+!      if (present(is_zero)) then
+!        if (ra<1) then; is_zero = TRUE; return
+!        else;           is_zero = FALSE
+!        end
+!      end
+!
+!      if (ra<1) then; fa = ZERO
+!      else;           fa = ONE/ra
+!      end
+!
+!      select case (trim(.crystal.partition_model))
+!         case (" ","none"); p = ONE
+!         case ("mulliken"); p = fa
+!         case ("gaussian"); p = fa
+!         case default;      DIE("unknown model, "//trim(.crystal.partition_model))
+!      end
+!
+!   end
+
+   make_partition_factors(p,sh,atom_a,atom_b,is_zero)
+   ! Make the partitition factors "p" for a particular thermal
+   ! smearing "model", for a given "sh" pair with atom centers
+   ! "atom_a" and "atom_b".
+      self :: IN
+      p :: MAT{REAL}, OUT
+      sh :: SHELL2, IN
+      atom_a,atom_b :: INT, IN
+      is_zero :: BIN, OUT, optional
+
+   ENSURE(.crystal.created,"no crystal data")
+
+      ra,rb,fa,fb :: REAL
+
+      ! Get the rep. factors
+      ra = .crystal.repetition_factor(atom_a)
+      rb = .crystal.repetition_factor(atom_b)
+
+      if (present(is_zero)) then
+        if (ra<1 AND rb<1) then
+          is_zero = TRUE
+          return
+        else
+          is_zero = FALSE
+        end
+      end
+
+      if (ra<1) then; fa = ZERO
+      else;           fa = ONE/ra
+      end
+
+      if (rb<1) then; fb = ZERO
+      else;           fb = ONE/rb
+      end
+
+      select case (trim(.crystal.partition_model))
+         case (" ","none"); p = ONE
+         case ("mulliken"); p = HALF * (fa + fb)
+         case ("gaussian"); sh.make_gaussian_partition(p,fa,fb)
+         case default;      DIE("unknown model, "//trim(.crystal.partition_model))
+      end
+
+   end
+
+   thermal_smearing_correction(res,k_pts,a,b,sh)
+   ! Makes the thermal smearing correction term.  Note that res
+   ! is done over the contraction coefficients.
+   ! Dimensions of "res" are [k_max,.a.n_cc,.b.n_cc].
+      res :: MAT3{REAL}, OUT
+      k_pts :: MAT{REAL}, IN
+      a,b :: INT, IN
+      sh :: SHELL2, IN
+
+      Ua,Ub,Uab :: MAT{REAL}(3,3)
+      S,US :: VEC{REAL}(3)
+      k_max,k :: INT
+      separation,bondlength,Ta,Tb,g :: REAL
+      diff :: VEC{REAL}(3)
+
+      k_max = k_pts.dim1
+
+      select case (trim(.crystal.thermal_smearing_model))
+
+       case (" ","none")
+          res = ONE
+
+       case ("coppens") ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
+          Ua = -HALF * .atom(a).ADP_tensor
+          Ub = -HALF * .atom(b).ADP_tensor
+          do k = 1,k_max
+             S = k_pts(k,:)
+             US = matmul(Ua,S)
+             Ta = dot_product(S,US)
+             US = matmul(Ub,S)
+             Tb = dot_product(S,US)
+             res(k,:,:) = HALF*(exp(Ta)+exp(Tb))
+          end
+
+       case ("stewart") ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
+          bondlength=2.5
+          Ua = .atom(a).ADP_tensor
+          Ub = .atom(b).ADP_tensor
+          Uab = Ua + Ub
+          diff = .atom(a).position-.atom(b).position
+          separation = diff.norm
+          g=HALF
+          if (separation > bondlength) g=QUARTER
+          Uab = -HALF * g * Uab     ! -HALF g (Ua+Ub)
+          do k = 1,k_max
+             S = k_pts(k,:)
+             US = matmul(Uab,S)
+             Ta = dot_product(S,US)
+             res(k,:,:) = exp(Ta)
+          end
+
+       case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+          Ua = .atom(a).ADP_tensor
+          Ub = .atom(b).ADP_tensor
+          sh.make_tanaka_thermal_smearing(res,k_pts,Ua,Ub)
+
+       case default
+          DIE("unknown model, "//trim(.crystal.thermal_smearing_model))
+
+      end
+
+   end
+
+   ft_thermally_smear(ft_ab,k_pts,a,b)
+   ! Thermally smear the fourier transform integrals "ft_ab" evaluated
+   ! on "k_pts" for shell pair (ab) centered on atoms "a" and "b" .
+      ft_ab :: MAT3{CPX}
+      k_pts :: MAT{REAL}
+      a,b :: INT
+
+      Ua,Ub,Uab :: MAT{REAL}(3,3)
+      S,US,diff :: VEC{REAL}(3)
+      separation,bondlength,Ta,Tb,g :: REAL
+      k,k_max :: INT
+
+      k_max = k_pts.dim1
+
+      select case (trim(.crystal.thermal_smearing_model))
+
+         case (" ","none")
+
+         case ("coppens") ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
+            Ua = -HALF * .atom(a).ADP_tensor
+            Ub = -HALF * .atom(b).ADP_tensor
+            do k = 1,k_max
+               S = k_pts(k,:)
+               US = matmul(Ua,S)
+               Ta = dot_product(S,US)
+               US = matmul(Ub,S)
+               Tb = dot_product(S,US)
+               ft_ab(k,:,:) = ft_ab(k,:,:) * HALF*(exp(Ta)+exp(Tb))
+            end
+
+         case ("stewart") ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4
+            bondlength = 2.5e0
+            Ua = .atom(a).ADP_tensor
+            Ub = .atom(b).ADP_tensor
+            Uab = Ua + Ub
+            diff = .atom(a).position-.atom(b).position
+            separation = diff.norm
+            g=HALF
+            if (separation > bondlength) g=QUARTER
+            Uab = -HALF * g * Uab     ! -HALF g (Ua+Ub)
+            do k = 1,k_max
+               S = k_pts(k,:)
+               US = matmul(Uab,S)
+               Ta = dot_product(S,US)
+               ft_ab(k,:,:) = exp(Ta)*ft_ab(k,:,:)
+            end
+
+         case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+            DIE("cannot thermally smear at contracted level.")
+
+         case default
+            DIE("unknown thermal smearing model, "//trim(.crystal.thermal_smearing_model))
+      end
+
+   end
+
+   get_ft_ints
+   ! Get the fourier transform of the overlap integrals.
+   ! If the archive file exists, read it; otherwise make it.
+      arch :: ARCHIVE
+      arch.set(.name,"ft_ints")
+      if (NOT arch.exists) .::make_ft_ints
+   end
+
+   make_ft_ints
+   ! Make the fourier transform of the overlap integrals on an archive file
+   ENSURE(.crystal.created, "no crystal")
+      arch :: ARCHIVE
+      k_pts :: MAT{REAL}*
+      q,fa,la,fb,lb,na,nb,atom_a,atom_b :: INT
+      ft_ab_eq,ft_ab :: MAT3{CPX}*
+      sh :: SHELL2
+
+      arch.set(.name,"ft_ints")
+      arch.open(for="write-only")
+
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+      .crystal.make_unique_SF_k_pts(k_pts)
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         ft_ab_eq.create(size(k_pts,1),na,nb)
+         ft_ab.create(.crystal.n_refl,na,nb)
+
+         .::make_ft_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
+
+         .crystal.sum_unique_sf_ints(ft_ab,ft_ab_eq)
+
+         arch.Bfile.write(ft_ab)
+
+         ft_ab.destroy
+         ft_ab_eq.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      k_pts.destroy
+      arch.close
+
+   end
+
+!  =================
+!  Structure factors
+!  =================
+
+   make_x_structure_factors
+   ! Make the X-ray structure factors for this molecule.
+
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.density_matrix.created, "no density matrix")
+
+      ! Assign data
+      .crystal.assign_xray
+
+      ! Make the SF's
+      if (.crystal.thermal_smearing_model=="hirshfeld") then
+         .::make_H_structure_factors_h
+      else
+         .::make_x_structure_factors_p
+      end
+
+   end
+
+   make_xf_structure_factors
+   ! Make the *free* X-ray structure factors for this molecule.
+
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.xray_r_free_data.created, "no x-ray R-free reflection data")
+   ENSURE(.density_matrix.created, "no density matrix")
+
+      ! Assign data
+      .crystal.assign_xray_r_free
+
+      ! Make the SF's
+      if (.crystal.thermal_smearing_model=="hirshfeld") then
+         .::make_H_structure_factors_h
+      else
+         .::make_x_structure_factors_p
+      end
+
+   end
+
+   make_x_structure_factors_p ::: private
+   ! Make the structure factors for this molecule.
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.density_matrix.created, "no density matrix")
+
+      sf_eq,Fc :: VEC{CPX}*
+      k_pts :: MAT{REAL}*
+      genre :: STR
+
+      ! Allocate complex structure factors
+      Fc.create(.crystal.n_refl)
+
+      ! Make k points
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+      .crystal.make_unique_SF_k_pts(k_pts)
+
+      ! Make density matrix
+      .BASE:make_ao_density_matrix
+
+      ! Symmetry-generated SF'd
+      sf_eq.create(k_pts.dim1)
+
+      ! Make symmetry-generated SF's
+      !genre = .density_matrix.spinorbital_kind
+      genre = .scfdata.spinorbital_kind
+
+      if (genre.includes("complex")) then
+
+         if (.scfdata.spinorbital_kind=="general_complex") then
+           .XTAL:make_ft_gc(sf_eq,.density_matrix.general_complex,k_pts)
+         else
+           .XTAL:make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
+         end if
+
+      else
+
+         .XTAL:make_ft(sf_eq,.density_matrix.restricted,k_pts)
+         if (.scfdata.created) then
+         if (.scfdata.spinorbital_kind=="unrestricted") then
+            .density_matrix.destroy("restricted")
+         end
+         end
+
+      end
+      k_pts.destroy
+
+      ! Sum to get F_calc
+      .crystal.sum_unique_sf(Fc,sf_eq)
+
+      ! Add dispersion
+      if (.crystal.correct_dispersion) then
+         k_pts.create(.crystal.n_refl,3)
+         .crystal.make_k_pts(k_pts)
+         .XTAL:add_dispersion_correction(Fc,k_pts)
+         k_pts.destroy
+      end
+      sf_eq.destroy
+
+      ! Set Fc
+      .crystal.set_F_calc(Fc)
+      Fc.destroy
+
+      ! Correct scale factor/extinction etc.
+      .crystal.make_F_predicted
+
+   end
+
+   make_x_structure_factors_h(D)
+   ! Make the structure factors from a rhf density matrix "D".
+      D :: MAT{REAL}
+
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+
+      sf_eq,Fc :: VEC{CPX}*
+      k_pts :: MAT{REAL}*
+
+      ! Allocate complex structure factors
+      Fc.create(.crystal.n_refl)
+
+      ! Make unique k points
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+      .crystal.make_unique_SF_k_pts(k_pts)
+
+      ! Make the unique structure factors
+      sf_eq.create(k_pts.dim1)
+      .::make_ft(sf_eq,D,k_pts)
+
+      ! Clean
+      k_pts.destroy
+
+      ! Sum up unique SF's to get Fc
+      .crystal.sum_unique_sf(Fc,sf_eq)
+
+      ! Add dispersion correction
+      if (.crystal.correct_dispersion) then
+         k_pts.create(.crystal.n_refl,3)
+         .crystal.make_k_pts(k_pts)
+         .::add_dispersion_correction(Fc,k_pts)
+         k_pts.destroy
+      end
+
+      ! Clean
+      sf_eq.destroy
+
+      ! Set the calculated SF's
+      .crystal.set_F_calc(Fc)
+
+      ! Clean
+      Fc.destroy
+
+      ! Make predicted structure factors
+      .crystal.make_F_predicted
+
+      ! Debugging
+      if (.BASE:debugging("make_x_structure_factors_h")) then
+         stdout.text("X-ray structure factor data")
+         .crystal.data.reflections.put_structure_factor_data
+      end
+
+   end
+
+   make_n_structure_factors
+   ! Make the PND structure factors for this molecule.
+
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
+   DIE_IF(NOT .crystal.spacegroup.centrosymmetric,"crystal must be centrosymmetric")
+
+      ! Assign PND data
+      .crystal.assign_pnd  
+
+      ! Make the SF's
+      if (.crystal.thermal_smearing_model=="hirshfeld") then
+         .::make_H_Sz_structure_factors
+      else
+         .::make_n_structure_factors_p
+      end
+
+   end
+
+   make_nf_structure_factors
+   ! Make the free PND structure factors for this molecule.
+
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
+
+      ! Assign free SF's
+      .crystal.assign_pnd_r_free
+
+      if (.crystal.thermal_smearing_model=="hirshfeld") then
+         .::make_H_Sz_structure_factors
+      else
+         .::make_n_structure_factors_p
+      end
+
+   end
+
+   make_n_structure_factors_p ::: private
+   ! Make the structure factors for this molecule.
+
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
+
+      sf_eq,Fc :: VEC{CPX}*
+      k_pts :: MAT{REAL}*
+      genre :: STR
+      complx :: BIN
+
+      ! Allocate complex structure factors
+      Fc.create(.crystal.n_refl)
+
+      ! Make unique k points
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+      .crystal.make_unique_SF_k_pts(k_pts)
+
+      ! Make S_z density matrix
+      .BASE:make_ao_sz_density_matrix 
+
+      ! Make the symmetry-generated SF's
+      sf_eq.create(size(k_pts,1))
+      genre = .density_matrix.spinorbital_kind
+      complx = genre.includes("complex")
+      if (complx) then; .::make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
+      else;             .::make_ft(sf_eq,.density_matrix.restricted,k_pts)
+      end
+
+      ! Sum the SF's to get Fc
+      .crystal.sum_unique_sf(Fc,sf_eq)
+
+      ! Destroy the S_z density matrix
+      if (complx) then; .density_matrix.destroy("restricted_complex")
+      else;             .density_matrix.destroy("restricted")
+      end
+
+      sf_eq.destroy
+      k_pts.destroy
+
+      ! Make F predicted
+      .crystal.set_F_calc(Fc)
+      .crystal.make_F_predicted
+
+      Fc.destroy
+
+   end
+
+!  ===========================
+!  Hirshfeld structure factors
+!  ===========================
+
+   make_H_structure_factors_h(output) ::: leaky
+   ! Make the H structure factors efficiently
+      output :: BIN, optional
+
+   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid or ANOs! Use make_Hirshfeld_inputs")
+   ENSURE(.density_matrix.created,"no density matrix")
+ ! ENSURE(.density_matrix.restricted.created,"no restricted density matrix")
+
+      sf_eq,Fc :: VEC{CPX}*
+      wt, xa,ya,za,a2 :: VEC{REAL}*
+      rho, k1,k2,k3, r1,r2,r3, ga,gb :: VEC{REAL}*
+      ra,kv :: VEC{REAL}(3)
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      overlapping_atom, pi,pj,pn :: VEC{INT}*
+      skipa0,skipab,skipa,skipb :: VEC{BIN}*
+      D,DD,k_pts,pt,grida,gridb,bf_save :: MAT{REAL}*
+      sha :: SHELL1
+      bf_skip :: VEC{VEC_{BIN}}*
+      bf_grid :: VEC{MAT_{REAL}}*
+      sf,tfc  :: CPX
+      cutoff,rf, kr, Dab, fac, n_e,val, tf2,tf3,tf4 :: REAL
+      n_refl,n_k,n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+      sa,fa,la,na, sb,fb,lb,nb, as, a,b,i,j,k,n,p :: INT
+      D_destroyed,out :: BIN
+      atom_c :: ATOM*
+
+      ! Number of reflections
+      n_refl = .crystal.n_refl
+
+      ! Calculated complex structure factors
+      Fc.create(n_refl)
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+      sf_eq.create(n_k)
+      k_pts.create(n_k,3)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      .crystal.make_unique_SF_k_pts(k_pts)
+      k1 => k_pts(:,1)
+      k2 => k_pts(:,2)
+      k3 => k_pts(:,3)
+
+      ! Density matrix
+      D_destroyed = .density_matrix.restricted.destroyed
+      .BASE:make_ao_density_matrix
+
+      D => .density_matrix.restricted
+      .BASE:put_debug(D,"make_H_structure_factors_h: D")
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_function_cutoff
+
+      ! Max no of becke grid points per atom
+      n_pt = .becke_grid.max_no_of_points_per_atom
+
+      ! Atom "a" displaced points and skip switches
+      xa.create(n_pt)
+      ya.create(n_pt)
+      za.create(n_pt)
+      a2.create(n_pt)
+      skipa0.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Make the constraint
+      n_e = ZERO
+      sf_eq = ZERO
+
+      ! Loop over integration atoms "c"
+      parallel do c = 1,.n_atom
+
+         ! Repetition factor for this atom
+         rf = .crystal.repetition_factor(c)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         ! Get the Becke grid for atom "c"
+         .becke_grid.make_grid(pt,wt,bf_save,c)
+         n_pt = pt.dim1
+
+         ! Overlapping atoms
+         overlapping_atom => .overlapping_atoms_for_atom(c).element
+
+         ! Make stockholder weight function "Wc" for atom "c"
+         ! If using interpolatators, then on overlapping atoms 
+         ! are used ... otherwise nothing is skipped
+         .GRID:apply_stockholder_atom_weight(wt,c,pt)
+
+         ! Prune the grid with new "wt", get saved bf grid bf_save, 
+         ! and new no of points, n_pt 
+         .becke_grid.prune_grid(pt,wt,bf_save)
+         n_pt = pt.dim1
+
+         ! Basis function grid and skip list
+         bf_skip.create(.n_shell)
+         bf_grid.create(.n_shell)
+
+         ! Density for atom "c"
+         rho.create(n_pt)
+         rho = ZERO
+
+         ! Loop c-overlapping atoms a
+         do ca = 1,overlapping_atom.dim
+
+            oa  = overlapping_atom(ca)
+            fsa = .first_shell_for_atom(oa)
+            lsa =  .last_shell_for_atom(oa)
+            fba = .first_basis_fn_for_atom(oa)
+            ra  = .atom(oa).position
+
+            ! Make the displaced points for atom "a"
+            .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff) 
+
+            ! Loop shells on atom a
+            do sa = fsa,lsa
+
+               ! Shell a limits
+               fa = .first_basis_fn_for_shell(sa)
+               la =  .last_basis_fn_for_shell(sa)
+               na = la - fa + 1
+               as = .basis_shell_for_shell(sa)
+
+               ! Set shell "sa"
+               sha = .precomputed_basis_shellpair(as,1).a
+               sha.position = ra
+
+               ! Make shell "sa" skip list
+               skipa.create(n_pt)
+               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff) 
+
+               ! Next shell "sa" if no sig. points
+               if (n_keep==0) then
+                  skipa.destroy
+                  cycle
+               end
+
+               ! Assign the "sa" skipa list
+               bf_skip(sa).element => skipa
+
+               ! Make/copy the "sa" basis function grida
+               ! This must be copied since skipa could be TRUE
+               grida.create(n_keep,na)
+               if (oa==c) then
+                  do a = 1,na
+                     i = 0
+                     do n = 1,n_pt
+                        if (skipa(n)) cycle
+                        i = i + 1
+                        grida(i,a) = bf_save(n,a+fa-fba)
+                     end
+                  end
+               else
+                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+               end
+               bf_grid(sa).element => grida
+
+               ! Loop c-overlapping atoms b
+               do cb = 1,ca
+
+                  ob  = overlapping_atom(cb)
+                  fsb = .first_shell_for_atom(ob)
+                  lsb =  .last_shell_for_atom(ob)
+
+                  ! Loop shells on atom b
+                  do sb = fsb,min(lsb,sa)
+
+                     ! No significant points
+                     if (bf_skip(sb).element.destroyed) cycle
+
+                     ! Shell b limits
+                     fb = .first_basis_fn_for_shell(sb)
+                     lb = .last_basis_fn_for_shell(sb)
+                     nb = lb - fb + 1
+
+                     ! Set the "sb" basis function grid
+                     skipb => bf_skip(sb).element 
+                     gridb => bf_grid(sb).element 
+
+                     ! How many points in common?
+                     skipab(1:n_pt) = skipa OR skipb
+                     n_keep = count(NOT skipab(1:n_pt))
+                     if (n_keep==0) cycle
+
+                     ! Factor
+                     fac = TWO
+                     if (sa==sb) fac = ONE
+
+                     ! Density block
+                     DD => D(fa:la,fb:lb)
+
+                     if (na*nb==1) then
+
+                        ! Add density contribution to rho
+                        ga => grida(:,1)
+                        gb => gridb(:,1)
+                        Dab = fac*DD(1,1)
+                        i = 0; j = 0
+                        do n = 1,n_pt
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
+                           if (skipab(n)) cycle
+                           val    = ga(i)*gb(j)*Dab
+                           rho(n) = rho(n) + val
+                        end
+
+                     else
+
+                        ! Create space for gathered index info
+                        pi.create(n_keep); pj.create(n_keep); pn.create(n_keep)
+
+                        ! Make mapper arrays
+                        p = 0; i = 0; j = 0
+                        do n = 1,n_pt
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
+                           if (skipab(n)) cycle
+                           p = p + 1
+                           pi(p) = i
+                           pj(p) = j
+                           pn(p) = n
+                        end
+
+                        ! Add density contribution to rho
+                        do a = 1,na
+                           ga => grida(:,a)
+                           do b = 1,nb
+                              gb  => gridb(:,b)
+                              Dab = fac*DD(a,b)
+                              do p = 1,n_keep
+                                 i = pi(p)
+                                 j = pj(p)
+                                 n = pn(p)
+                                 val    = ga(i)*gb(j)*Dab
+                                 rho(n) = rho(n) + val
+                              end
+                           end
+                        end
+
+                        ! Clean up
+                        pn.destroy
+                        pj.destroy
+                        pi.destroy
+
+                     end
+
+                  end
+               end
+            end
+         end
+
+         ! Weight the atom "c" density
+         rho = rho*wt
+         n_e = n_e + sum(rho)
+
+         ! Focus on atom c
+         atom_c => .atom(c)
+
+         ! Die if there are only ADP3s
+         DIE_IF(atom_c.has_only_ADP3s_and_errors,"3rd order ADPs with Hirshfeld-atom XCW not yet implemented")
+
+         ! Temperature factor for this atom for all k_pts
+         r1 => pt(:,1)
+         r2 => pt(:,2)
+         r3 => pt(:,3)
+
+         ! Harmonic temperature factor (for each reflection)
+         atom_c.put_ADP2_to(adp2)
+
+         ! Anharmonic temperature factor?
+         if (atom_c.has_only_ADP4s_and_errors) then
+
+            ! Get anharmonic constants
+            atom_c.put_ADP3_to(adp3)
+            atom_c.put_ADP4_to(adp4)
+
+            ! Make the (unique) matrix elements
+            do k = 1,n_k
+
+               kv(1) = k1(k)
+               kv(2) = k2(k)
+               kv(3) = k3(k)
+
+               sf = (ZERO,ZERO)
+
+               do i = 1,n_pt 
+                  kr = kv(1)*r1(i)+kv(2)*r2(i)+kv(3)*r3(i)
+                  sf = sf + rho(i)*COMPLEXIFY(cos(kr),sin(kr))
+               end
+
+               ! Temperature factor contributions
+               tf2 = adp2.contract_with(kv)
+               tf3 = adp3.contract_with(kv)
+               tf4 = adp4.contract_with(kv)
+
+               tfc = exp(-HALF*tf2) * SIXTH * COMPLEXIFY(SIX + QUARTER*tf4,-tf3)
+
+               sf  = sf * rf
+
+               sf_eq(k) = sf_eq(k) + sf * tfc
+
+            end
+
+         else
+
+            ! Make the (unique) matrix elements
+            do k = 1,n_k
+
+               kv(1) = k1(k)
+               kv(2) = k2(k)
+               kv(3) = k3(k)
+
+               sf = (ZERO,ZERO)
+
+               do i = 1,n_pt 
+                  kr = kv(1)*r1(i)+kv(2)*r2(i)+kv(3)*r3(i)
+                  sf = sf + rho(i)*COMPLEXIFY(cos(kr),sin(kr))
+               end
+
+               sf  = sf * rf
+
+               tf2 = adp2.contract_with(kv)
+
+               sf_eq(k) = sf_eq(k) + sf * exp(-HALF*tf2)
+
+            end
+
+         end
+
+         ! Clean up atom "c" stuff
+         rho.destroy
+         bf_grid.destroy
+         bf_skip.destroy
+         bf_save.destroy
+         wt.destroy
+         pt.destroy
+
+      end ! -- loop over atom "c"
+
+      ! Clean up
+      skipab.destroy
+      skipa0.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      if (D_destroyed) .density_matrix.destroy("restricted")
+      k_pts.destroy
+
+      ! Check integration accuracy
+      out = FALSE
+      if (present(output)) out = output
+      if (out) then
+      stdout.flush
+      stdout.text("==================================")
+      stdout.text("Making Hirshfeld structure factors")
+      stdout.text("==================================")
+      stdout.flush
+      stdout.show("Check: no. of electrons      =",n_e)
+      end
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_eq)
+      end
+
+      ! Sum the symmetry equivalent SF's
+      .crystal.sum_unique_sf(Fc,sf_eq)
+      sf_eq.destroy
+
+      ! Dispersion correction
+      if (.crystal.correct_dispersion) then
+        k_pts.create(.crystal.n_refl,3)
+        .crystal.make_k_pts(k_pts)
+        .XTAL:add_dispersion_correction(Fc,k_pts)
+        k_pts.destroy
+      end
+
+      ! Set the calculated SF's
+      .crystal.set_F_calc(Fc)
+      Fc.destroy
+
+      ! Make chi2
+      .crystal.make_F_predicted
+      if (out) .crystal.put_F_statistics
+
+   end
+
+   make_H_Sz_structure_factors(output) ::: leaky
+   ! Make the H Sz structure factors efficiently
+      output :: BIN, optional
+
+   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid or ANOs! Use make_Hirshfeld_inputs")
+   ENSURE(.density_matrix.created,"no density matrix")
+ ! ENSURE(.density_matrix.restricted.created,"no restricted density matrix")
+
+      sf_eq,Fc :: VEC{CPX}*
+      wt, xa,ya,za,a2 :: VEC{REAL}*
+      rho, k1,k2,k3, u1,u2,u3, r1,r2,r3, ga,gb :: VEC{REAL}*
+      ra :: VEC{REAL}(3)
+      overlapping_atom, pi,pj,pn :: VEC{INT}*
+      skipa0,skipab,skipa,skipb :: VEC{BIN}*
+      D,DD,k_pts,kU,pt,grida,gridb,bf_save :: MAT{REAL}*
+      sha :: SHELL1
+      bf_skip :: VEC{VEC_{BIN}}*
+      bf_grid :: VEC{MAT_{REAL}}*
+      sf  :: CPX
+      cutoff,rf, k1k,k2k,k3k,kr, Dab, fac, n_e,val :: REAL
+      n_refl,n_k,n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+      sa,fa,la,na, sb,fb,lb,nb, as, a,b,i,j,k,n,p :: INT
+      out :: BIN
+
+      ! Number of reflections
+      n_refl = .crystal.n_refl
+
+      ! Calculated complex structure factors
+      Fc.create(n_refl)
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+      sf_eq.create(n_k)
+      k_pts.create(n_k,3)
+      kU.create(n_k,3)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      .crystal.make_unique_SF_k_pts(k_pts)
+      k1 => k_pts(:,1)
+      k2 => k_pts(:,2)
+      k3 => k_pts(:,3)
+
+      ! Density matrix
+      .BASE:make_ao_sz_density_matrix ! make S_z density matrix
+      ENSURE(.density_matrix.restricted.created, "no restricted density matrix")
+      D => .density_matrix.restricted
+      .BASE:put_debug(D,"make_H_structure_factors_h: D")
+
+      ! Make max_P and overlap matrix for schwarz-like test
+    ! schwarz_cutoff = .scfdata.eri_schwarz_cutoff
+    ! max_P.create(.n_shell_pairs)
+    ! .make_max_density_elements(max_P,D)
+    ! .make_overlap_matrix
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_function_cutoff
+
+      ! Max no of becke grid points per atom
+      n_pt = .becke_grid.max_no_of_points_per_atom
+
+      ! Atom "a" displaced points and skip switches
+      xa.create(n_pt); ya.create(n_pt); za.create(n_pt)
+      a2.create(n_pt)
+      skipa0.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Make the constraint
+      n_e = ZERO
+      sf_eq = ZERO
+
+      ! Loop over integration atoms "c"
+      parallel do c = 1,.n_atom
+
+         ! Repetition factor for this atom
+         rf = .crystal.repetition_factor(c)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         ! Get the Becke grid for atom "c"
+         .becke_grid.make_grid(pt,wt,bf_save,c)
+         n_pt = pt.dim1
+
+         ! Overlapping atoms
+         overlapping_atom => .overlapping_atoms_for_atom(c).element
+
+         ! Make stockholder weight function "Wc" for atom "c"
+         ! If using interpolatators, then on overlapping atoms 
+         ! are used ... otherwise nothing is skipped
+         .GRID:apply_stockholder_atom_weight(wt,c,pt)
+
+         ! Prune the grid with new "wt", get saved bf grid bf_save, 
+         ! and new no of points, n_pt 
+         .becke_grid.prune_grid(pt,wt,bf_save)
+         n_pt = pt.dim1
+
+         ! Basis function grid and skip list
+         bf_skip.create(.n_shell)
+         bf_grid.create(.n_shell)
+
+         ! Density for atom "c"
+         rho.create(n_pt)
+         rho = ZERO
+
+         ! Loop c-overlapping atoms a
+         do ca = 1,overlapping_atom.dim
+
+            oa  = overlapping_atom(ca)
+            fsa = .first_shell_for_atom(oa)
+            lsa =  .last_shell_for_atom(oa)
+            fba = .first_basis_fn_for_atom(oa)
+            ra  = .atom(oa).position
+
+            ! Make the displaced points for atom "a"
+            .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff) 
+
+            ! Loop shells on atom a
+            do sa = fsa,lsa
+
+               ! Shell a limits
+               fa = .first_basis_fn_for_shell(sa)
+               la =  .last_basis_fn_for_shell(sa)
+               na = la - fa + 1
+               as = .basis_shell_for_shell(sa)
+
+               ! Set shell "sa"
+               sha = .precomputed_basis_shellpair(as,1).a
+               sha.position = ra
+
+               ! Make shell "sa" skip list
+               skipa.create(n_pt)
+               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff) 
+
+               ! Next shell "sa" if no sig. points
+               if (n_keep==0) then
+                  skipa.destroy
+                  cycle
+               end
+
+               ! Assign the "sa" skipa list
+               bf_skip(sa).element => skipa
+
+               ! Make/copy the "sa" basis function grida
+               ! This must be copied since skipa could be TRUE
+               grida.create(n_keep,na)
+               if (oa==c) then
+                  do a = 1,na
+                     i = 0
+                     do n = 1,n_pt
+                        if (skipa(n)) cycle
+                        i = i + 1
+                        grida(i,a) = bf_save(n,a+fa-fba)
+                     end
+                  end
+               else
+                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+               end
+               bf_grid(sa).element => grida
+
+               ! Loop c-overlapping atoms b
+               do cb = 1,ca
+
+                  ob  = overlapping_atom(cb)
+                  fsb = .first_shell_for_atom(ob)
+                  lsb =  .last_shell_for_atom(ob)
+
+                  ! Loop shells on atom b
+                  do sb = fsb,min(lsb,sa)
+
+                     ! No significant points
+                     if (bf_skip(sb).element.destroyed) cycle
+
+                     ! Shell b limits
+                     fb = .first_basis_fn_for_shell(sb)
+                     lb = .last_basis_fn_for_shell(sb)
+                     nb = lb - fb + 1
+
+                     ! Skip test 
+                   ! bs = .basis_shell_for_shell(sb)
+                   ! sh2.set_and_precompute_from(.precomputed_basis_shellpair(as,bs),ra,rb,oa==ob,skip=FALSE)
+                   ! if (sh2.skip_ft(cutoff)) then
+                   !    sh2.destroy_ptr_part
+                   !    cycle
+                   ! end
+
+                     ! Set the "sb" basis function grid
+                     skipb => bf_skip(sb).element 
+                     gridb => bf_grid(sb).element 
+
+                     ! How many points in common?
+                     skipab(1:n_pt) = skipa OR skipb
+                     n_keep = count(NOT skipab(1:n_pt))
+                     if (n_keep==0) cycle
+
+                     ! Factor
+                     fac = TWO
+                     if (sa==sb) fac = ONE
+
+                     ! Density block
+                     DD => D(fa:la,fb:lb)
+
+                     if (na*nb==1) then
+
+                        ! Add density contribution to rho
+                        ga => grida(:,1)
+                        gb => gridb(:,1)
+                        Dab = fac*DD(1,1)
+                        i = 0; j = 0
+                        do n = 1,n_pt
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
+                           if (skipab(n)) cycle
+                           val    = ga(i)*gb(j)*Dab
+                           rho(n) = rho(n) + val
+                        end
+
+                     else
+
+                        ! Create space for gathered index info
+                        pi.create(n_keep); pj.create(n_keep); pn.create(n_keep)
+
+                        ! Make mapper arrays
+                        p = 0; i = 0; j = 0
+                        do n = 1,n_pt
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
+                           if (skipab(n)) cycle
+                           p = p + 1
+                           pi(p) = i
+                           pj(p) = j
+                           pn(p) = n
+                        end
+
+                        ! Add density contribution to rho
+                        do a = 1,na
+                           ga => grida(:,a)
+                           do b = 1,nb
+                              gb  => gridb(:,b)
+                              Dab = fac*DD(a,b)
+                              do p = 1,n_keep
+                                 i = pi(p)
+                                 j = pj(p)
+                                 n = pn(p)
+                                 val    = ga(i)*gb(j)*Dab
+                                 rho(n) = rho(n) + val
+                              end
+                           end
+                        end
+
+                        ! Clean up
+                        pn.destroy
+                        pj.destroy
+                        pi.destroy
+
+                     end
+
+                  end
+               end
+            end
+         end
+
+         ! Temperature factor for this atom for all k_pts
+         kU = matmul(k_pts,.atom(c).ADP_tensor)
+         u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
+         r1 => pt(:,1); r2 => pt(:,2); r3 => pt(:,3)
+
+         ! Weight the atom "c" density
+         rho = rho*wt
+         n_e = n_e + sum(rho)
+
+         ! Make the (unique) matrix elements
+         do k = 1,n_k
+            k1k = k1(k); k2k = k2(k); k3k = k3(k)
+            sf = (ZERO,ZERO)
+            do i = 1,n_pt 
+               kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
+               sf = sf + rho(i)*COMPLEXIFY(cos(kr),sin(kr))
+            end
+            sf = sf * rf
+            sf_eq(k) = sf_eq(k) + sf * exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+         end
+
+         ! Clean up atom "c" stuff
+         rho.destroy
+         bf_grid.destroy
+         bf_skip.destroy
+         bf_save.destroy
+         wt.destroy
+         pt.destroy
+
+      end ! -- loop over atom "c"
+
+      ! Clean up
+      skipab.destroy
+      skipa0.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+    ! max_P.destroy
+      .density_matrix.destroy("restricted")
+      kU.destroy; k_pts.destroy
+
+      ! Check integration accuracy
+      out = FALSE
+      if (present(output)) out = output
+      if (out) then
+      stdout.flush
+      stdout.text("Making Hirshfeld structure factors ...")
+      stdout.flush
+      stdout.show("Check: no. of electrons        =",n_e)
+      end
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_eq)
+      end
+
+      ! Sum the symmetry equivalent SF's
+      .crystal.sum_unique_sf(Fc,sf_eq)
+      sf_eq.destroy
+
+      ! Dispersion correction
+      if (.crystal.correct_dispersion) then
+        k_pts.create(.crystal.n_refl,3)
+        .crystal.make_k_pts(k_pts)
+        .XTAL:add_dispersion_correction(Fc,k_pts)
+        k_pts.destroy
+      end
+
+      ! Set the calculated SF's
+      .crystal.set_F_calc(Fc)
+      Fc.destroy
+
+      ! Make chi2
+      .crystal.make_F_predicted
+      if (out) .crystal.put_F_statistics
+
+   end
+
+!  =====================
+!  PND structure factors
+!  =====================
+
+   put_PND_sf
+   ! Output the magnetic structure factors
+      .crystal.put_PND_sf(.name)
+   end
+
+!   make_PND_scalar_magnetic_sf
+!   ! Make the PND scalar magnetic structure factors and assign them
+!   ! To the crystal objects structure factors for analysis
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+!      FM_s, FM_l, FM_r, Fc :: VEC{CPX}*
+!      n_refl :: INT
+!      arch :: ARCHIVE
+!      .crystal.assign_pnd
+!      n_refl = .crystal.n_refl
+!      Fc.create(n_refl)
+!      ! Spin contribution
+!      .make_PND_spin_sf
+!      FM_s.create(n_refl)
+!      arch.set(.name,"PND_spin_sf")
+!      arch.read(FM_s)
+!      ! Orbital contribution
+!    ! .make_PND_nabla_sf
+!    ! FM_l.create(n_refl)
+!    ! arch.set(.name,"PND_nabla_sf")
+!    ! arch.read(FM_l)
+!      ! Diamagnetic contribution
+!    ! .make_PND_r_sf
+!    ! FM_r.create(n_refl)
+!    ! arch.set(.name,"PND_r_sf")
+!    ! arch.read(FM_r)
+!      ! Make F_calc
+!      Fc = FM_s ! + FM_l ! + FM_r
+!      arch.set(.name,"PND_scalar_magnetic_sf")
+!      arch.write(Fc)
+!      .crystal.set_F_calc(Fc)
+!      .crystal.make_F_predicted
+!    ! FM_r.destroy
+!    ! FM_l.destroy
+!      FM_s.destroy
+!      Fc.destroy
+!   end
+!
+!   make_PND_spin_sf
+!   ! Make the PND structure factors
+!   ENSURE(.density_matrix.created, "no density")
+!      genre :: STR
+!      genre = .density_matrix.spinorbital_kind
+!      select case (genre)
+!         case ("unrestricted");    .make_u_PND_spin_sf
+!         case ("general_complex"); .make_gc_PND_spin_sf
+!         case default
+!            DIE("not implemented for "//trim(genre))
+!      end
+!   end
+!
+!   make_u_PND_spin_sf
+!   ! Make the scalar spin magnetic structure factors assuming an applied field
+!   ! in the z direction, and assuming an unrestricted density matrix exists.
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.density_matrix.created, "no density")
+!   ENSURE(.density_matrix.alpha.created, "no density")
+!      arch :: ARCHIVE
+!      fac,ans :: REAL
+!      d_aa,d_bb :: MAT{REAL}*
+!      ft_ab :: MAT4{CPX}*
+!      FM :: VEC{CPX}*
+!      sh :: SHELL2*
+!      k_max,i,q,fa,la,fb,lb :: INT
+!      arch.set(.name,"PND_ft_spin_ints")
+!      if (NOT arch.exists) .make_PND_ft_spin_ints
+!      arch.open(for="read-only",type="real")
+!      k_max = .crystal.n_refl
+!      FM.create(k_max)
+!      FM = ZERO
+!      sh.create
+!      do q = 1,.n_shell_pairs
+!         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+!         ft_ab.create(k_max,sh.a.n_comp,sh.b.n_comp,3)
+!         arch.Bfile.read(ft_ab)
+!         d_aa => .density_matrix.alpha(fb:lb,fa:la)
+!         d_bb => .density_matrix.beta( fb:lb,fa:la)
+!         fac = TWO
+!         if (fa==fb) fac=ONE
+!         do i = 1,k_max
+!            ans = ans +    ft_ab(i,:,:,3).trace_product_with(d_aa)
+!            ans = ans -    ft_ab(i,:,:,3).trace_product_with(d_bb)
+!            FM(i) = FM(i) + fac*ans
+!         end
+!         ft_ab.destroy
+!         sh.destroy_ptr_part
+!      end
+!      sh.destroy
+!      arch.close
+!      arch.set(.name,"PND_spin_sf")
+!      arch.write(FM)
+!      FM.destroy
+!   end
+!
+!   make_gc_PND_spin_sf
+!   ! Make the scalar spin magnetic structure factors assuming an applied field
+!   ! in the z direction, and assuming a general complex denisty matrix exists
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.density_matrix.created, "no density")
+!   ENSURE(.density_matrix.general_complex.created, "no density")
+!      arch :: ARCHIVE
+!      fac,ans :: REAL
+!      d_aa,d_bb,d_ba :: MAT{CPX}*
+!      ft_ab :: MAT4{CPX}*
+!      FM :: VEC{CPX}*
+!      ci :: CPX
+!      sh :: SHELL2*
+!      k_max,i,q,fa,la,fb,lb :: INT
+!      arch.set(.name,"PND_ft_spin_ints")
+!      if (NOT arch.exists) .make_PND_ft_spin_ints
+!      arch.open(for="read-only",type="real")
+!      ci = (ZERO,ONE)
+!      k_max = .crystal.n_refl
+!      FM.create(k_max)
+!      FM = ZERO
+!      sh.create
+!      do q = 1,.n_shell_pairs
+!         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+!         ft_ab.create(k_max,sh.a.n_comp,sh.b.n_comp,3)
+!         arch.Bfile.read(ft_ab)
+!         d_aa => .density_matrix.general_complex(      fb:      lb,      fa:      la)
+!         d_bb => .density_matrix.general_complex(.n_bf+fb:.n_bf+lb,.n_bf+fa:.n_bf+la)
+!         d_ba => .density_matrix.general_complex(.n_bf+fb:.n_bf+lb,      fa:      la)
+!         fac = TWO
+!         if (fa==fb) fac=ONE
+!         do i = 1,k_max
+!            ans =          ft_ab(i,:,:,1).trace_product_with(d_ba)
+!            ans = ans - ci*ft_ab(i,:,:,2).trace_product_with(d_ba)
+!            ans = ans +    ft_ab(i,:,:,3).trace_product_with(d_aa)
+!            ans = ans -    ft_ab(i,:,:,3).trace_product_with(d_bb)
+!            FM(i) = FM(i) + fac*ans
+!         end
+!         ft_ab.destroy
+!         sh.destroy_ptr_part
+!      end
+!      sh.destroy
+!      arch.close
+!      arch.set(.name,"PND_spin_sf")
+!      arch.write(FM)
+!      FM.destroy
+!   end
+!
+!   get_PND_ft_spin_ints
+!   ! Get the PND ft spin integrals on disk if they don't already exist
+!      arch :: ARCHIVE
+!      arch.set(.name,"PND_ft_spin_ints")
+!      if (NOT arch.exists) .make_PND_ft_spin_ints
+!   end
+!
+!   make_PND_ft_spin_ints
+!   ! Make the fourier transform of the PND spin integrals on the archive
+!   ENSURE(.crystal.created, "no crystal")
+!      arch :: ARCHIVE
+!      k_pts :: MAT{REAL}*
+!      sh :: SHELL2*
+!      ft_ab_eq :: MAT3{CPX}*
+!      ft_ab :: MAT4{CPX}*
+!      q,fa,la,fb,lb,atom_a,atom_b :: INT
+!      arch.set(.name,"PND_ft_spin_ints")
+!      arch.open(for="write-only",type="cpx")
+!      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+!      .crystal.make_unique_SF_k_pts(k_pts)
+!      sh.create
+!      do q = 1,.n_shell_pairs
+!         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
+!         ft_ab_eq.create(size(k_pts,1),sh.a.n_comp,sh.b.n_comp)
+!         .::make_ft_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
+!         ft_ab.create(.crystal.n_refl,sh.a.n_comp,sh.b.n_comp,3)
+!         .crystal.sum_PND_spin_ints(ft_ab,ft_ab_eq)
+!         arch.Bfile.write(ft_ab)
+!         ft_ab.destroy
+!         ft_ab_eq.destroy
+!         sh.destroy_ptr_part
+!      end
+!      sh.destroy
+!      k_pts.destroy
+!      arch.close
+!   end
+!
+!   make_PND_nabla_sf
+!   ! Make PND nabla structure factors
+!   ENSURE(.density_matrix.created, "no density")
+!      genre :: STR
+!      genre = .density_matrix.spinorbital_kind
+!      select case (genre)
+!         case ("general_complex"); .make_gc_PND_nabla_sf
+!         case default
+!            DIE("not implemented for "//trim(genre))
+!      end
+!   end
+!
+!   make_gc_PND_nabla_sf
+!   ! Make the scalar nabla magnetic structure factors assuming an applied field
+!   ! in the z direction, and assuming a general complex density exists
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.density_matrix.created, "no density")
+!   ENSURE(.density_matrix.general_complex.created, "no density")
+!      arch :: ARCHIVE
+!      fac :: REAL
+!      dens :: MAT{CPX}*
+!      ft_ab_z :: MAT3{CPX}*
+!      FM :: VEC{CPX}*
+!      sh :: SHELL2*
+!      k_max,i,q,fa,la,fb,lb :: INT
+!      arch.set(.name,"PND_ft_nabla_ints")
+!      if (NOT arch.exists) .make_PND_ft_nabla_ints
+!      arch.open(for="read-only",type="real")
+!      k_max = .crystal.n_refl
+!      FM.create(k_max)
+!      FM = ZERO
+!      sh.create
+!      do q = 1,.n_shell_pairs
+!         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+!         ft_ab_z.create(k_max,sh.a.n_comp,sh.b.n_comp)
+!         arch.Bfile.read(ft_ab_z)
+!         dens.create(sh.b.n_comp,sh.a.n_comp)
+!         dens =        .density_matrix.general_complex(      fb:      lb,      fa:      la)
+!         dens = dens + .density_matrix.general_complex(.n_bf+fb:.n_bf+lb,.n_bf+fa:.n_bf+la)
+!         fac = TWO
+!         if (fa==fb) fac=ONE
+!         do i = 1,k_max
+!            FM(i) = FM(i) + fac*ft_ab_z(i,:,:).trace_product_with(dens)
+!         end
+!         dens.destroy
+!         ft_ab_z.destroy
+!         sh.destroy_ptr_part
+!      end
+!      sh.destroy
+!      arch.close
+!      arch.set(.name,"PND_nabla_sf")
+!      arch.write(FM)
+!      FM.destroy
+!   end
+!
+!   get_PND_ft_nabla_ints
+!   ! Get the PND ft nabla integrals on disk if they don't already exist
+!      arch :: ARCHIVE
+!      arch.set(.name,"PND_ft_nabla_ints")
+!      if (NOT arch.exists) .make_PND_ft_nabla_ints
+!   end
+!
+!   make_PND_ft_nabla_ints
+!   ! Make the fourier transform of the nabla integrals on the archive
+!   ENSURE(.crystal.created, "no crystal")
+!      arch :: ARCHIVE
+!      k_pts :: MAT{REAL}*
+!      sh :: SHELL2*
+!      ft_ab_eq :: MAT4{CPX}*
+!      ft_ab_z :: MAT3{CPX}*
+!      q,fa,la,fb,lb,atom_a,atom_b :: INT
+!      arch.set(.name,"PND_ft_nabla_ints")
+!      arch.open(for="write-only",type="cpx")
+!      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+!      .crystal.make_unique_SF_k_pts(k_pts)
+!      sh.create
+!      do q = 1,.n_shell_pairs
+!         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
+!         ft_ab_eq.create(size(k_pts,1),sh.a.n_comp,sh.b.n_comp,3)
+!         .make_ft_nabla_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
+!       ! sh.make_ft_nabla(ft_ab_eq,k_pts)
+!       ! .ft_thermally_smear(ft_ab_eq(:,:,:,1),k_pts,atom_a,atom_b)
+!       ! .ft_thermally_smear(ft_ab_eq(:,:,:,2),k_pts,atom_a,atom_b)
+!       ! .ft_thermally_smear(ft_ab_eq(:,:,:,3),k_pts,atom_a,atom_b)
+!         ft_ab_z.create(.crystal.n_refl,sh.a.n_comp,sh.b.n_comp)
+!         .crystal.sum_PND_nabla_ints(ft_ab_z,ft_ab_eq)
+!         arch.Bfile.write(ft_ab_z)
+!         ft_ab_z.destroy
+!         ft_ab_eq.destroy
+!         sh.destroy_ptr_part
+!      end
+!      sh.destroy
+!      k_pts.destroy
+!      arch.close
+!   end
+!
+!   make_ft_nabla_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+!   ! Make_ft for one pair of gaussians.
+!   ! Includes partitioning, dispersion and thermal smearing.
+!      ft_ab :: MAT4{CPX}
+!      k_pts :: MAT{REAL}, IN
+!      sh :: SHELL2, IN
+!      atom_a,atom_b :: INT, IN
+!   ENSURE(.crystal.created,"no crystal data")
+!       t :: MAT3{REAL}*
+!       p :: MAT{REAL}*
+!      k_max :: INT
+!      k_max = size(k_pts,1)
+!      t.create(k_max,sh.a.n_cc,sh.b.n_cc)
+!      .thermal_smearing_correction(t,k_pts,atom_a,atom_b,sh)
+!      p.create(sh.a.n_cc,sh.b.n_cc)
+!      .make_partition_factors(p,sh,atom_a,atom_b)
+!      sh.make_ft_nabla(ft_ab,k_pts,t,p)
+!      p.destroy
+!      t.destroy
+!   end
+!
+!   make_PND_r_sf
+!   ! Make the scalar dipole magnetic structure factors assuming an applied field
+!   ! in the z direction
+!   ENSURE(.crystal.created, "no crystal")
+!      arch :: ARCHIVE
+!      fac,ans :: REAL
+!      d_aa,d_bb :: MAT{CPX}*
+!      ft_ab :: MAT4{CPX}*
+!      FM :: VEC{CPX}*
+!      sh :: SHELL2*
+!      k_max,i,q,fa,la,fb,lb :: INT
+!      arch.set(.name,"PND_ft_r_ints")
+!      if (NOT arch.exists) .make_PND_ft_r_ints
+!      arch.open(for="read-only",type="real")
+!      k_max = .crystal.n_refl
+!      FM.create(k_max)
+!      FM = ZERO
+!      sh.create
+!      do q = 1,.n_shell_pairs
+!         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+!         ft_ab.create(k_max,sh.a.n_comp,sh.b.n_comp,3)
+!         arch.Bfile.read(ft_ab)
+!         d_aa => .density_matrix.general_complex(      fb:      lb,      fa:      la)
+!         d_bb => .density_matrix.general_complex(.n_bf+fb:.n_bf+lb,.n_bf+fa:.n_bf+la)
+!         fac = TWO
+!         if (fa==fb) fac=ONE
+!         do i = 1,k_max
+!            ans =       fac*ft_ab(i,:,:,3).trace_product_with(d_aa)
+!            ans = ans + fac*ft_ab(i,:,:,3).trace_product_with(d_bb)
+!            FM(i) = FM(i) + ans
+!         end
+!         ft_ab.destroy
+!         sh.destroy_ptr_part
+!      end
+!      sh.destroy
+!      arch.close
+!      arch.set(.name,"PND_r_sf")
+!      arch.write(FM)
+!      FM.destroy
+!   end
+!
+!   get_PND_ft_r_ints
+!   ! Get the PND ft r integrals on disk if they don't already exist
+!      arch :: ARCHIVE
+!      arch.set(.name,"PND_ft_r_ints")
+!      if (NOT arch.exists) .make_PND_ft_r_ints
+!   end
+!
+!   make_PND_ft_r_ints
+!   ! Make the fourier transform of the dipole "r" integrals on the archive
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.crystal.reflection_data_exists, "no structure factor data")
+!      arch :: ARCHIVE
+!      k_pts :: MAT{REAL}*
+!      sh :: SHELL2*
+!      ft_ab_eq, ft_ab :: MAT4{CPX}*
+!      q,fa,la,fb,lb,atom_a,atom_b,n_refl :: INT
+!      n_refl = .crystal.n_refl
+!      arch.set(.name,"PND_ft_r_ints")
+!      arch.open(for="write-only",type="cpx")
+!      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+!      .crystal.make_unique_SF_k_pts(k_pts)
+!      sh.create
+!      do q = 1,.n_shell_pairs
+!         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
+!         ft_ab_eq.create(size(k_pts,1),sh.a.n_comp,sh.b.n_comp,3)
+!         sh.make_ft_r(ft_ab_eq,k_pts)
+!         .ft_thermally_smear(ft_ab_eq(:,:,:,1),k_pts,atom_a,atom_b)
+!         .ft_thermally_smear(ft_ab_eq(:,:,:,2),k_pts,atom_a,atom_b)
+!         .ft_thermally_smear(ft_ab_eq(:,:,:,3),k_pts,atom_a,atom_b)
+!         ft_ab.create(n_refl,sh.a.n_comp,sh.b.n_comp,3)
+!         .crystal.sum_ft_r_ints(ft_ab,ft_ab_eq,.B_field)
+!         arch.Bfile.write(ft_ab)
+!         ft_ab.destroy
+!         ft_ab_eq.destroy
+!         sh.destroy_ptr_part
+!      end
+!      sh.destroy
+!      k_pts.destroy
+!      arch.close
+!   end
+!
+!   make_PND_fit_ints(ints,lambda)
+!   ! Make the PND constraint integrals on the archive
+!      ints :: MAT{CPX}, target
+!      lambda :: REAL
+!      spin_archive,nabla_archive :: ARCHIVE
+!      Fc,F_exp,F_sigma :: VEC{REAL}*
+!      ints_aa,ints_bb,ints_ba :: MAT{CPX}*
+!      nabla_z :: MAT3{CPX}*
+!      spin :: MAT4{CPX}*
+!      sh :: SHELL2*
+!      ci :: CPX
+!      fac,fac1 :: REAL
+!      i,q,fa,la,fb,lb,n_bf,n_refl :: INT
+!      .get_PND_ft_spin_ints
+!      .get_PND_ft_nabla_ints
+!      .get_PND_ft_r_ints
+!      spin_archive.set(.name,"PND_ft_spin_ints")
+!      nabla_archive.set(.name,"PND_ft_nabla_ints")
+!    ! r_archive.set(.name,"PND_ft_r_ints")
+!      spin_archive.open(for="read-only",type="real")
+!    ! r_archive.open(for="read-only",type="real")
+!      ci = (ZERO,ONE)
+!      n_bf   =  .n_bf
+!      n_refl =  .crystal.n_refl
+!      Fc.create(n_refl)
+!      F_exp.create(n_refl)
+!      F_sigma.create(n_refl)
+!      Fc = abs(.crystal.F_calc)
+!      F_exp  = .crystal.F_exp
+!      F_sigma  = .crystal.F_sigma
+!      ints = ZERO
+!      sh.create
+!      fac1 = TWO*lambda/n_refl
+!      do q = 1,.n_shell_pairs
+!         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+!         spin.create(n_refl,sh.a.n_comp,sh.b.n_comp,3)
+!         spin_archive.Bfile.read(spin)
+!         ints_aa => ints(     fa:     la,     fb:     lb)
+!         ints_bb => ints(n_bf+fa:n_bf+la,n_bf+fb:n_bf+lb)
+!         ints_ba => ints(n_bf+fa:n_bf+la,     fb:     lb)
+!         do i = 1,n_refl
+!            fac = fac1*(Fc(i) - F_exp(i))/(F_sigma(i)*F_sigma(i))
+!            ints_ba = ints_ba +    fac*spin(i,:,:,1)
+!            ints_ba = ints_ba + ci*fac*spin(i,:,:,2)
+!            ints_aa = ints_aa +    fac*spin(i,:,:,3)
+!            ints_bb = ints_bb -    fac*spin(i,:,:,3)
+!         end
+!         spin.destroy
+!         nabla_z.create(n_refl,sh.a.n_comp,sh.b.n_comp)
+!         nabla_archive.Bfile.read(nabla_z)
+!         do i = 1,n_refl
+!            fac = fac1*(Fc(i) - F_exp(i))/(F_sigma(i)*F_sigma(i))
+!            ints_aa = ints_aa + fac*nabla_z(i,:,:)
+!            ints_bb = ints_bb + fac*nabla_z(i,:,:)
+!         end
+!         nabla_z.destroy
+!       ! r.create(n_refl,sh.a.n_comp,sh.b.n_comp,3)
+!       ! r_archive.Bfile.read(r)
+!       ! do i = 1,n_refl
+!       !    fac = fac1*(Fc(i) - F_exp(i))/(F_sigma(i)*F_sigma(i)*)
+!       !    ints_aa = ints_aa + fac*r(i,:,:,3)
+!       !    ints_bb = ints_bb + fac*r(i,:,:,3)
+!       ! end
+!       ! r.destroy
+!         sh.destroy_ptr_part
+!      end
+!      sh.destroy
+!      ints.make_hermitian
+!    ! r_archive.close
+!      nabla_archive.close
+!      spin_archive.close
+!      F_sigma.destroy
+!      F_exp.destroy
+!      Fc.destroy
+!   end
+
+! ===========
+! development
+! ===========
+
+   get_x_structure_factors_test 
+   ! Make the structure factors for this molecule.
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+!   ENSURE(.density_matrix.created, "no density matrix")
+
+      sf_eq,Fc :: VEC{CPX}*
+      k_pts :: MAT{REAL}*
+
+      .crystal.assign_xray
+
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+      .crystal.make_unique_SF_k_pts(k_pts)
+
+      .BASE:make_ao_density_matrix
+
+      sf_eq.create(k_pts.dim1)
+      sf_eq=(ZERO,ZERO)
+      .::make_ft_test(sf_eq,.density_matrix.restricted,k_pts)
+      k_pts.destroy
+
+      if (.scfdata.created) then
+      if (.scfdata.spinorbital_kind=="unrestricted") then
+         .density_matrix.destroy("restricted")
+      end
+      end
+
+      Fc.create(.crystal.n_refl)
+      .crystal.sum_unique_sf(Fc,sf_eq)
+
+      if (.crystal.correct_dispersion) then
+         k_pts.create(.crystal.n_refl,3)
+         .crystal.make_k_pts(k_pts)
+         .::add_dispersion_correction(Fc,k_pts)
+         k_pts.destroy
+      end
+
+      .crystal.set_F_calc(Fc)
+
+      .crystal.make_F_predicted
+
+      .crystal.put_reflection_data
+
+      Fc.destroy
+      sf_eq.destroy
+
+   end
+
+   get_x_structure_factors_pce
+   ! Make the structure factors for this molecule.
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+!   ENSURE(.density_matrix.created, "no density matrix")
+
+      sf_eq,Fc :: VEC{CPX}*
+      k_pts :: MAT{REAL}*
+
+      Fc.create(.crystal.n_refl)
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+
+      .crystal.assign_xray
+      .crystal.make_unique_SF_k_pts(k_pts)
+      .BASE:make_ao_density_matrix
+
+      sf_eq.create(k_pts.dim1)
+      sf_eq = (ZERO,ZERO)
+      select case (.scfdata.relativity_kind)
+         case ("douglas-kroll-hess"); .::make_ft_DKH(sf_eq,.density_matrix.restricted,k_pts)
+         case ("dkh");                .::make_ft_DKH(sf_eq,.density_matrix.restricted,k_pts)
+         case ("iotc");               .::make_ft_IOTC(sf_eq,.density_matrix.restricted,k_pts)
+         case default;                .::make_ft_test(sf_eq,.density_matrix.restricted,k_pts)
+      end    
+
+      if (.scfdata.created) then
+      if (.scfdata.spinorbital_kind=="unrestricted") then
+         .density_matrix.destroy("restricted")
+      end
+      end
+      k_pts.destroy
+
+      .crystal.sum_unique_sf(Fc,sf_eq)
+      if (.crystal.correct_dispersion) then
+         k_pts.create(.crystal.n_refl,3)
+         .crystal.make_k_pts(k_pts)
+         .::add_dispersion_correction(Fc,k_pts)
+         k_pts.destroy
+      end
+
+     .crystal.set_F_calc(Fc)
+
+     .crystal.make_F_predicted
+     .crystal.put_reflection_data
+
+      sf_eq.destroy
+      Fc.destroy
+
+   end
+
+   make_ft_test(sf,D,k_pts)
+   ! make the PCE corrected structure factors 
+      sf :: VEC{CPX}
+      D :: MAT{REAL}, IN
+      k_pts :: MAT{REAL}, IN
+
+      n_gcm :: INT
+      n,i,j,k_max :: INT
+      g :: CPX
+      m_out :: MAT{INT}* 
+      GG,ft_hkl,buco :: MAT{CPX}*
+      MM,YU,S,R,Z,PZP,PPZPP :: MAT{REAL}*
+      P2,Ap,Ep :: VEC{REAL}*
+
+      k_max = size(k_pts,1)
+
+      m_out.create(.n_prim,.n_prim)
+      .REL:get_n_gcm(m_out,n_gcm)  
+
+      R.create(.n_prim,.n_prim)
+      .REL:make_primitive_overlap_matrix(R)
+
+      S.create(n_gcm,n_gcm)
+      .REL:get_da_gcm_now(R,S,m_out) 
+
+      R.destroy 
+
+      MM.create(.n_prim,.n_bf)
+      .BASE:make_normalised_contraction_mx(MM)
+
+      ft_hkl.create(.n_bf,.n_bf)
+      GG.create(.n_prim,.n_prim)
+      buco.create(.n_bf,.n_prim)
+
+      do n = 1,k_max
+
+         ! here it comes babes.  point for point the density will be on
+         ! and on calculated I am sincerely sorry, but the code
+         ! comparing to its non-relativistic counterpart is really not
+         ! effective :(
+         .::make_primitive_ft_matrix(GG,k_pts(n,1),k_pts(n,2),k_pts(n,3))
+         buco.to_product_of(MM,GG,transpose_a=TRUE)
+         ft_hkl.to_product_of(buco,MM)
+         .::make_part_and_therm_smear(ft_hkl,k_pts(n,:))
+        
+         g = (ZERO,ZERO) !???
+         do i=1,.n_bf
+         do j=1,.n_bf
+            g = g + D(i,j)*ft_hkl(i,j)  !????? cmpx matrix ??? perhaps the cpx parts is not needed BUT!!!!
+         end do           
+         end do           
+        
+         stdout.flush
+         stdout.put(n)
+         stdout.put(k_pts(n,1))
+         stdout.put(k_pts(n,2))
+         stdout.put(k_pts(n,3))
+         stdout.put(g)
+        
+         sf(n) = g
+
+      end do
+
+      MM.destroy
+      buco.destroy
+
+      ! unfortunatelly the PCE corrected orbitals lose phase :(
+      if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp)then
+         PPZPP.destroy
+      end if
+
+      .BASE:put_debug(ft_hkl,"ft_hkl mx")
+
+      S.destroy
+      Z.destroy
+      PZP.destroy
+      GG.destroy
+      YU.destroy
+      Ap.destroy
+      Ep.destroy
+      P2.destroy
+      m_out.destroy
+      ft_hkl.destroy
+
+   end
+
+   make_ft_DKH(sf,D,k_pts)
+   ! make the PCE corrected structure factors 
+      sf :: VEC{CPX}
+      D :: MAT{REAL}, IN
+      k_pts :: MAT{REAL}, IN
+
+      n_gcm,met :: INT
+      n,i,j,k_max :: INT
+      g :: CPX
+      m_out :: MAT{INT}* 
+      GG,ft_hkl :: MAT{CPX}*
+      YU,S,R,Z,PZP,PPZPP :: MAT{REAL}*
+      P2,Ap,Ep :: VEC{REAL}*
+
+      k_max = k_pts.dim1
+
+      ! the method is for the PCE corr is sfs
+      met = 1
+
+      m_out.create(.n_prim,.n_prim)
+      .REL:get_n_gcm(m_out,n_gcm)  
+
+      R.create(.n_prim,.n_prim)
+      .REL:make_primitive_overlap_matrix(R)
+
+      S.create(n_gcm,n_gcm)
+      .REL:get_da_gcm_now(R,S,m_out) 
+
+      R.destroy 
+
+      YU.create(n_gcm,n_gcm)
+      Ap.create(n_gcm)
+      Ep.create(n_gcm)
+      P2.create(n_gcm)
+
+      .REL:make_DKH_mxs(YU,Ap,Ep,P2)
+
+      Z.create(n_gcm,n_gcm)
+      PZP.create(n_gcm,n_gcm)
+      .REL:make_DKH_mxs2(Z,PZP,YU)
+
+      if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp)then
+         WARN(" The use_ppzpp seems to give larger value of density at nucleus")
+         PPZPP.create(n_gcm,n_gcm)
+         .REL:make_DKH_mxs4(PPZPP,YU)
+      end if
+
+      ft_hkl.create(.n_bf,.n_bf)
+
+      do n = 1,k_max
+
+        ! here it comes babes.  point for point the density will be on
+        ! and on calculated I am sincerely sorry, but the code
+        ! comparing to its non-relativistic counterpart is really not
+        ! effective :(
+        .::make_PCE_off(ft_hkl,YU,Ap,Ep,P2,k_pts(n,1),k_pts(n,2),k_pts(n,3),m_out,n_gcm,S,Z,PZP,met,PPZPP)    
+
+        .::make_part_and_therm_smear(ft_hkl,k_pts(n,:))
+
+        g = (ZERO,ZERO) !???
+
+        do i=1,.n_bf
+        do j=1,.n_bf
+           g = g + D(i,j)*ft_hkl(i,j)  !????? cmpx matrix ??? perhaps the cpx parts is not needed BUT!!!!
+        end do           
+        end do           
+
+        stdout.flush
+        stdout.put(n)
+        stdout.put(k_pts(n,1))
+        stdout.put(k_pts(n,2))
+        stdout.put(k_pts(n,3))
+        stdout.put(real(g))
+
+        sf(n) = g
+
+     end do
+
+     ! unfortunatelly the PCE corrected orbitals lose phase :(
+     if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp) then
+        PPZPP.destroy
+     end if
+
+     ft_hkl.destroy
+     S.destroy
+     Z.destroy
+     PZP.destroy
+     GG.destroy
+     YU.destroy
+     Ap.destroy
+     Ep.destroy
+     P2.destroy
+     m_out.destroy
+
+   end
+
+   make_PCE_off(GG,YU,Ap,Ep,P2,xx,yy,zz,m_out,n_gcm,S,sZ,sPZP,met,PPZPP)
+   ! correct the picture change
+   ! g is the electron density in a given point with coordinates x=xx, y=yy, z=zz
+   ! this routine is based on the make_DKH_1e_matrix(H) routine
+      GG :: MAT{CPX}, OUT
+      YU :: MAT{REAL}, IN
+      Ap,Ep,P2 :: VEC{REAL}, IN
+      xx,yy,zz :: REAL, IN
+      m_out :: MAT{INT}, IN
+      n_gcm :: INT, IN
+      S,sZ,sPZP :: MAT{REAL}, IN
+      met :: INT, optional, IN
+      PPZPP :: MAT{REAL}, optional, IN
+
+      c :: REAL  
+      i,j,k :: INT   
+      R,D,PDP,PPDPP,Ac,T,TX,X,buco :: MAT{CPX}*  
+      WW,W2 :: MAT{REAL}*
+      A,B,Z,PZP :: MAT{REAL}*
+      M :: MAT{REAL}* 
+
+      !!!  the density operator X !!!
+      R.create(.n_prim,.n_prim)
+
+      ! it do not exist in the moment
+      select case (met)
+         case(1)
+            .::make_primitive_ft_matrix(R,xx,yy,zz)
+         case default
+            DIE("unknown value of method ")
+      end        
+
+      D.create(n_gcm,n_gcm)
+      ! put the potential energy matrix into the n_gcm non-redundant space
+      .REL:get_da_gcm_now(R,D,m_out)  
+
+      Ac.create(n_gcm,n_gcm)
+      Ac.to_product_of(YU,D,transpose_a=TRUE)
+      D.to_product_of(Ac,YU)
+
+      !!!  PDP MATRIX  !!!
+      select case (met)
+         case(1)
+            .::make_primitive_pftp_matrix(R,xx,yy,zz)
+         case default
+            DIE("unknown value of method ")
+      end        
+
+     PDP.create(n_gcm,n_gcm)
+     .REL:get_da_gcm_now(R,PDP,m_out)  
+     Ac.to_product_of(YU,PDP,transpose_a=TRUE)
+     PDP.to_product_of(Ac,YU)
+
+     if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp)then
+        DIE("the <ppftpp> are not finished switch the use_ppzpp off")
+     end if 
+
+     !!! A-O LETS GO !!!
+
+     c = SPEED_OF_LIGHT_AU
+     do i=1,n_gcm
+     do j=1,n_gcm
+        D(i,j)   = Ap(i)*D(i,j)*Ap(j)
+        PDP(i,j) = c*c*(Ap(i)/(Ep(i)+c*c))*PDP(i,j)*(Ap(j)/(Ep(j)+c*c))                                        
+     end
+     end
+
+     A.create(n_gcm,n_gcm) 
+     B.create(n_gcm,n_gcm) 
+
+     if (.scfdata.DK1_PCE) then
+
+        A = ZERO
+        B = ZERO  
+
+        do i = 1,n_gcm
+           B(i,i)=(c*P2(i)*c) / ( (c*c + Ep(i)) * (c*c + Ep(i)) )
+           A(i,i)=ONE/B(i,i)
+        end do
+
+        T.create(n_gcm,n_gcm)
+        T = matmul(sPZP, matmul(A,PDP) )
+        T = T - matmul(sPZP,D)
+        T = T - matmul(sZ,PDP)
+        T = T + matmul(sZ, matmul(B,D) )
+        T = T + matmul(D, matmul(B,sZ) )
+        T = T - matmul(PDP,sZ)
+        T = T - matmul(D,sPZP)
+        T = T + matmul(PDP, matmul(A,sPZP) )
+
+        if(.scfdata.using_SO_FDFF) then
+           DIE("using_SO_FDFF not to be used with PCE corr of ft ")
+        end if
+
+        if (.scfdata.DK2_PCE) then
+
+           !!! W1W1
+           X.create(n_gcm,n_gcm)
+           TX.create(n_gcm,n_gcm)
+           WW.create(n_gcm,n_gcm)
+
+           WW =    - matmul(sZ, matmul(B,sZ) )
+           WW = WW + matmul(sPZP,sZ) 
+           WW = WW + matmul(sZ,sPZP) 
+           WW = WW - matmul(sPZP, matmul(A,sPZP) ) 
+        
+
+           X  = D + PDP
+           TX = HALF*(matmul(WW,X)+matmul(X,WW))
+
+           WW.destroy
+        
+           Z.create(n_gcm,n_gcm)
+           PZP.create(n_gcm,n_gcm)
+
+           if (.scfdata.using_ppzpp) then
+
+              ! use the second derivatives in the [W1,[W1,X(even,0)]]
+              ! and [W2,X(odd,0)] terms   
+
+              do i=1,n_gcm
+              do j=1,n_gcm
+                 PPDPP(i,j) = Ap(i)*(c**4)/((Ep(i)+c*c)**2)*PPDPP(i,j)*Ap(j)/( (Ep(j)+c*c)**2 ) 
+                 Z(i,j)=sZ(i,j)*(Ep(i)+Ep(j))
+                 PZP(i,j)=sPZP(i,j)*(Ep(i)+Ep(j))
+              end do
+              end do
+
+              X  = PPDPP + PDP
+              TX = TX - matmul(sPZP,matmul(A,matmul(X,sZ)))
+              TX = TX + matmul(sPZP,matmul(A, matmul(X, matmul(A,sPZP))))
+              TX = TX + matmul(sZ,matmul(X,sZ))
+              TX = TX - matmul(sZ,matmul(X, matmul(A,sPZP)))
+              PPDPP.destroy 
+              X.destroy
+         
+              !!!  The -[W2,X(odd,0)] terms
+              W2.create(n_gcm,n_gcm)
+              W2 = ZERO
+              do i = 1,n_gcm
+              do j = 1,n_gcm
+              do k = 1,n_gcm
+                 W2(i,j) = W2(i,j)                        &
+                    + sPZP(i,k)*A(k,k)*(PZP(k,j)+PPZPP(k,j))/( Ep(i)+Ep(j) )*A(j,j) &
+                    - sZ(i,k)*(PZP(k,j)+PPZPP(k,j))/( Ep(i)+Ep(j) )*A(j,j) &
+                    - (Z(i,k)+PZP(i,k))*sPZP(k,j)/( Ep(i)+Ep(j) )*A(j,j)  & 
+                    + (Z(i,k)+PZP(i,k))*sZ(k,j)/( Ep(i)+Ep(j) )   
+              end do
+              end do
+              end do
+              TX = TX + matmul(W2,PDP)
+         
+              W2=ZERO
+              do i=1,n_gcm
+              do j=1,n_gcm
+              do k=1,n_gcm
+                 W2(i,j) = W2(i,j)                        &
+                    + sZ(i,k)*(Z(k,j)+PZP(k,j))/( Ep(i)+Ep(j) )   &
+                    - A(i,i)*sPZP(i,k)*(Z(k,j)+PZP(k,j))/( Ep(i)+Ep(j) )   &
+                    - A(i,i)*(PZP(i,k)+PPZPP(i,k))*sZ(k,j)/( Ep(i)+Ep(j) )  &
+                    + A(i,i)*(PZP(i,k)+PPZPP(i,k))*A(k,k)*sPZP(k,j)/( Ep(i)+Ep(j) )  
+              end do
+              end do
+              end do
+              TX = TX + matmul(PDP,W2)
+         
+              W2=ZERO
+              do i=1,n_gcm
+              do j=1,n_gcm
+              do k=1,n_gcm
+                 W2(i,j) = W2(i,j)                        &
+                    -  B(i,i)*sZ(i,k)*(Z(k,j)+PZP(k,j))/( Ep(i)+Ep(j) )   &
+                    +  sPZP(i,k)*(Z(k,j)+PZP(k,j))/( Ep(i)+Ep(j) )   &
+                    +  (PZP(i,k)+PPZPP(i,k))*sZ(k,j)/( Ep(i)+Ep(j) )   &
+                    -  (PZP(i,k)+PPZPP(i,k))*A(k,k)*sPZP(k,j)/( Ep(i)+Ep(j) )   
+              end do
+              end do
+              end do
+              TX = TX + matmul(D,W2)
+         
+              W2=ZERO
+              do i=1,n_gcm
+              do j=1,n_gcm
+              do k=1,n_gcm
+                 W2(i,j) = W2(i,j)                         &
+                   -  sPZP(i,k)*A(k,k)*(PZP(k,j)+PPZPP(k,j))/( Ep(i)+Ep(j) )    &
+                   +  sZ(i,k)*(PZP(k,j)+PPZPP(k,j))/( Ep(i)+Ep(j) )    &
+                   +  (Z(i,k)+PZP(i,k))*sPZP(k,j)/( Ep(i)+Ep(j) )    &
+                   -  (Z(i,k)+PZP(i,k))*sZ(k,j)/( Ep(i)+Ep(j) )*B(j,j)    
+              end do
+              end do
+              end do
+              TX = TX + matmul(W2,D)
+
+           else  
+
+              ! the second derivatives are not used in the
+              ! [W1,[W1,E(even,0)]] and [W2,X(odd,0)] terms   
+
+              X.destroy
+              do i=1,n_gcm
+              do j=1,n_gcm
+                 Z(i,j)=sZ(i,j)*(Ep(i)+Ep(j))
+                 PZP(i,j)=sPZP(i,j)*(Ep(i)+Ep(j))
+              end do
+              end do
+
+              TX = TX - matmul(sPZP,matmul(A,matmul(PDP,sZ)))
+              TX = TX - matmul(sPZP,matmul(D,matmul(B,sZ)))
+              TX = TX + matmul(sPZP,matmul(A, matmul(PDP, matmul(A,sPZP))))
+              TX = TX + matmul(sPZP, matmul(D,sPZP))
+              TX = TX + matmul(sZ,matmul(PDP,sZ))
+              TX = TX + matmul(sZ,matmul(B, matmul(D, matmul(B,sZ))))
+              TX = TX - matmul(sZ,matmul(PDP, matmul(A,sPZP)))
+              TX = TX - matmul(sZ,matmul(B, matmul(D,sPZP)))
+
+              !!!  The [W2,X(odd,0)] terms
+              !   the second derivatives are not used
+              W2.create(n_gcm,n_gcm)
+              W2 = ZERO
+              W2 =    matmul( sPZP, matmul(A, matmul(PZP,A) ) )
+              W2 = W2 + matmul( sPZP, Z )
+              W2 = W2 - matmul( sZ, ( matmul(PZP,A) ) )
+              W2 = W2 - matmul( sZ, ( matmul(B,Z) ) )
+              W2 = W2 - matmul( Z,  matmul(sPZP,A)  )
+              W2 = W2 - matmul( PZP,  matmul(sPZP,A)  )
+              W2 = W2 + matmul( Z,  sZ  )
+              W2 = W2 + matmul( PZP,  sZ  )
+              do i=1,n_gcm
+              do j=1,n_gcm
+                 W2(i,j) = W2(i,j)/( Ep(i)+Ep(j) ) 
+              end do
+              end do
+      
+              TX = TX + matmul(W2,PDP)
+      
+              W2 = ZERO
+              W2 =    matmul( sZ, Z )
+              W2 = W2 + matmul( sZ, PZP )
+              W2 = W2 - matmul( matmul(A,sPZP), Z )
+              W2 = W2 - matmul( matmul(A,sPZP), PZP )
+              W2 = W2 - matmul( matmul(A,PZP)  ,   sZ)
+              W2 = W2 - matmul( matmul(Z,B)  ,   sZ)
+              W2 = W2 + matmul( matmul(A,matmul(PZP,A)) , sPZP)
+              W2 = W2 + matmul( Z , sPZP)
+              do i=1,n_gcm
+              do j=1,n_gcm
+                 W2(i,j) = W2(i,j)/( Ep(i)+Ep(j) ) 
+              end do
+              end do
+      
+              TX = TX +matmul(PDP,W2)
+      
+              W2 = ZERO
+              W2 = W2 - matmul( matmul(B,sZ), Z )
+              W2 = W2 - matmul( matmul(B,sZ), PZP )
+              W2 = W2 + matmul( sPZP  ,   Z )
+              W2 = W2 + matmul( sPZP  , PZP )
+              W2 = W2 + matmul( PZP   ,  sZ )
+              W2 = W2 + matmul( matmul(B,matmul(Z,B)) , sZ)
+              W2 = W2 - matmul( matmul(PZP,A) , sPZP )
+              W2 = W2 - matmul( matmul(B,Z) , sPZP )
+              do i=1,n_gcm
+              do j=1,n_gcm
+                 W2(i,j) = W2(i,j)/( Ep(i)+Ep(j) ) 
+              end do
+              end do
+      
+              TX = TX + matmul(D,W2)
+      
+              W2 = ZERO
+              W2 = W2 - matmul( sPZP  , matmul(A,PZP) )
+              W2 = W2 - matmul( sPZP  , matmul(Z,B) )
+              W2 = W2 + matmul( sZ    , PZP)
+              W2 = W2 + matmul( sZ    , matmul( B, matmul(Z,B) ) )
+              W2 = W2 + matmul( Z , sPZP  )
+              W2 = W2 + matmul( PZP , sPZP  )
+              W2 = W2 - matmul( Z ,  matmul(sZ,B) )
+              W2 = W2 - matmul( PZP ,  matmul(sZ,B) )
+              do i=1,n_gcm
+              do j=1,n_gcm
+                 W2(i,j) = W2(i,j)/( Ep(i)+Ep(j) ) 
+              end do
+              end do
+      
+              TX = TX + matmul(W2,D)
+      
+            end if
+
+            W2.destroy
+            Z.destroy
+            PZP.destroy
+
+         end if
+      end if
+
+      A.destroy
+
+      D = D + PDP
+      PDP.destroy
+
+      if (.scfdata.DK1_PCE) then
+         D = D + T
+         T.destroy
+      end if   
+
+      if(.scfdata.DK2_PCE)then
+         D = D + TX
+         TX.destroy
+      end if
+
+      B.to_product_of(S,YU)
+
+      Ac.to_product_of(B,D)
+      D.to_product_of(Ac,B,transpose_b=TRUE)
+
+      Ac.destroy
+      B.destroy
+
+      !!! moving back to tonto style primitive basis sets 
+      ! put the Fock matrix back to the space .n_prim space
+      .REL:get_back_prim_now(D,R,m_out)  
+      D.destroy
+
+      !!! moving back to contracted basis sets 
+      M.create(.n_prim,.n_bf)
+      .BASE:make_normalised_contraction_mx(M)
+      buco.create(.n_bf,.n_prim)
+      buco.to_product_of(M,R,transpose_a=TRUE)
+      R.destroy
+
+      GG.to_product_of(buco,M)
+
+      M.destroy
+      buco.destroy
+
+   end   
+
+   make_ft_IOTC(sf,D,k_pts)
+   ! make the PCE corrected structure factors 
+   ! 
+       sf :: VEC{CPX}
+       D :: MAT{REAL}, IN
+       k_pts :: MAT{REAL}, IN
+       n_gcm :: INT
+       n,i,j,k,k_max :: INT
+       g :: CPX
+       c,alpha,alpha2 :: REAL
+       m_out :: MAT{INT}* 
+       ft_hkl :: MAT{CPX}*
+       Y,U,YU,T,A,S,R,Z,PZP :: MAT{REAL}*
+       Yr,O,SOx,SOy,SOz :: MAT{REAL}*
+       P2,Ap,E,p,ep,bp :: VEC{REAL}*
+
+      k_max = size(k_pts,1)
+      ! the method is for the PCE corr is sfs
+     R.create(.n_prim,.n_prim)
+    .REL:make_primitive_overlap_matrix(R)
+     m_out.create(.n_prim,.n_prim) 
+    .REL:make_ready_da_gcm_tr2(m_out,n_gcm)  
+!    .make_ready_da_gcm_tr(R,m_out,n_gcm)  
+! put the overlap matrix into the n_gcm non-redundant space
+     S.create(n_gcm,n_gcm)
+     .REL:get_da_gcm_now(R,S,m_out)  
+     
+     Y.create(n_gcm,n_gcm)
+     Y.to_inverse_sqrt_of(S)
+
+!!!  KINETIC ENERGY MATRIX !!!
+     R=ZERO
+     .REL:make_primitive_kinetic_matrix(R) 
+     T.create(n_gcm,n_gcm)
+! put the kinetic energy matrix into the n_gcm non-redundant space
+     .REL:get_da_gcm_now(R,T,m_out)  
+
+     A.create(n_gcm,n_gcm)
+     A.to_product_of(Y,T)   
+     T.to_product_of(A,Y)              ! T=YTY  kinetic energy in an orthogonal basis
+     U.create(n_gcm,n_gcm)
+     P2.create(n_gcm)
+     T.solve_eigenproblem(P2,U)
+     P2= TWO * P2
+     YU.create(n_gcm,n_gcm)
+     YU.to_product_of(Y,U)
+     T.destroy
+     Y.destroy
+     U.destroy
+   
+!!!  POTENTIAL ENERGY MATRIX (electron-nucleus) !!!
+     R=ZERO
+     .REL:make_primitive_nuclear_matrix(R)
+     Z.create(n_gcm,n_gcm)
+! put the potential energy matrix into the n_gcm non-redundant space
+     .REL:get_da_gcm_now(R,Z,m_out)  
+
+     A.to_product_of(YU,Z,transpose_a=TRUE)
+     Z.to_product_of(A,YU)
+
+!!!  PZP MATRIX  !!!
+     SOx.create(.n_prim,.n_prim)
+     SOy.create(.n_prim,.n_prim)
+     SOz.create(.n_prim,.n_prim)
+     R=ZERO
+         .REL:make_primitive_DKH_matrices(R,SOx,SOy,SOz)
+       SOx.destroy
+       SOy.destroy
+       SOz.destroy
+
+     PZP.create(n_gcm,n_gcm)
+! put the PZP matrix into the n_gcm non-redundant space
+     .REL:get_da_gcm_now(R,PZP,m_out) 
+
+     A.to_product_of(YU,PZP,transpose_a=TRUE)
+     PZP.to_product_of(A,YU)
+     R.destroy
+
+!!! A-O LETS GO !!!
+     c = SPEED_OF_LIGHT_AU
+     alpha = ONE/c
+     alpha2= alpha*alpha
+ 
+     E.create(n_gcm)
+     p.create(n_gcm)
+     ep.create(n_gcm)
+     Ap.create(n_gcm)
+     bp.create(n_gcm)
+
+     E=ZERO 
+     p=ZERO
+     ep=ZERO
+     Ap=ZERO
+     bp=ZERO
+
+     do i = 1,n_gcm
+
+       E(i)= c * sqrt(P2(i) + c * c)
+       p(i)=sqrt(P2(i))
+       ep(i)=sqrt(ONE+P2(i)*alpha2) 
+       Ap(i)= sqrt( (E(i) + c * c)/(TWO * E(i)) )  
+       bp(i)=ONE/(ep(i)+ONE)
+
+     end  
+    P2.destroy
+
+     do i=1,n_gcm
+       do j=1,n_gcm
+    
+        Z(i,j) = Ap(i)*Z(i,j)*Ap(j)
+        PZP(i,j) = Ap(i)*PZP(i,j)*Ap(j)
+    
+       end
+     end
+
+     Yr.create(n_gcm,n_gcm)
+     Yr=ZERO
+
+    .REL:find_da_Y_iterative(Yr,PZP,Z,p,bp,ep)
+    .BASE:put_debug(Yr,"Y matrix")
+
+! lets make ready the normalzation matrix
+     O.create(n_gcm,n_gcm)
+     O=ZERO
+     do i=1,n_gcm
+       O(i,i)=ONE
+       do j=1,n_gcm
+         do k=1,n_gcm
+           O(i,j)=O(i,j)+Yr(k,i)*Yr(k,j)
+         end do
+       end do
+     end do
+        
+     A.to_inverse_sqrt_of(O)
+     O=A
+     Z.destroy
+     PZP.destroy
+     A.destroy
+
+! hkl ft starts here
+     ft_hkl.create(.n_bf,.n_bf)
+     do n = 1,k_max
+        ft_hkl=(ZERO,ZERO)
+       .::make_IOTC_ft_PCE_off(ft_hkl,Yr,YU,Ap,bp,p,k_pts(n,1),k_pts(n,2),k_pts(n,3),m_out,n_gcm,S,O)
+
+       .::make_part_and_therm_smear(ft_hkl,k_pts(n,:))
+
+        g=(ZERO,ZERO) !???
+   
+        do i=1,.n_bf
+           do j=1,.n_bf
+               g = g + D(i,j)*ft_hkl(i,j)  !????? cmpx matrix ??? perhaps the cpx parts is not needed BUT!!!!
+           end do           
+        end do           
+
+        stdout.flush
+        stdout.put(n)
+        stdout.put(k_pts(n,1))
+        stdout.put(k_pts(n,2))
+        stdout.put(k_pts(n,3))
+        stdout.put(real(g))
+
+        sf(n)=g
+     end do
+
+    S.destroy
+    O.destroy
+    YU.destroy
+    Yr.destroy
+    Ap.destroy
+    E.destroy
+    p.destroy
+    bp.destroy
+    ep.destroy
+    m_out.destroy
+    ft_hkl.destroy
+    
+   end
+  
+   make_IOTC_ft_PCE_off(GG,Yr,YU,Ap,bp,p,xx,yy,zz,m_out,n_gcm,S,O)
+   ! correct the picture change
+   ! g is the electron density in a given point with coordinates x=xx, y=yy, z=zz
+   ! this routine is based on the make_r_DKH_matrix(H) routine
+        GG :: MAT{CPX} , OUT
+        Yr,YU :: MAT{REAL} 
+        Ap,bp,p :: VEC{REAL} 
+        xx,yy,zz :: REAL 
+        m_out :: MAT{INT} 
+        n_gcm :: INT 
+        S,O :: MAT{REAL} 
+
+        i,j :: INT   
+        D,PDP,R :: MAT{CPX}*
+        A,B,buco :: MAT{CPX}*
+        M :: MAT{REAL}* 
+
+!!!  the density operator X !!!
+     R.create(.n_prim,.n_prim)
+     R=(ZERO,ZERO)
+! it do not exist in the moment
+     .::make_primitive_ft_matrix(R,xx,yy,zz)
+     D.create(n_gcm,n_gcm)
+     D=(ZERO,ZERO)
+! put the potential energy matrix into the n_gcm non-redundant space
+     .REL:get_da_gcm_now(R,D,m_out)  
+
+     A.create(n_gcm,n_gcm)
+     A.to_product_of(YU,D,transpose_a=TRUE)
+     D.to_product_of(A,YU)
+
+!!!  PDP MATRIX  !!!
+     R=(ZERO,ZERO)
+     .::make_primitive_pftp_matrix(R,xx,yy,zz)
+
+     PDP.create(n_gcm,n_gcm)
+     PDP=(ZERO,ZERO)
+! put the PDP matrix into the n_gcm non-redundant space
+     .REL:get_da_gcm_now(R,PDP,m_out)  
+     A=(ZERO,ZERO)
+     A.to_product_of(YU,PDP,transpose_a=TRUE)
+     PDP.to_product_of(A,YU)
+
+!   if( .scfdata.using_ppzpp)then
+!      R=(ZERO,ZERO) 
+!      .make_primitive_ppDpp_matrix(R,xx,yy,zz) 
+!      PPDPP.create(n_gcm,n_gcm)
+!      .get_da_gcm_now(R,PPDPP,m_out)  
+!      A=(ZERO,ZERO)
+!      A.to_product_of(YU,PPDPP,transpose_a=TRUE)
+!      PPDPP.to_product_of(A,YU)
+!  end if 
+
+!!! A-O LETS GO !!!
+        
+     do i=1,n_gcm
+       do j=1,n_gcm
+    
+        D(i,j) = Ap(i)*D(i,j)*Ap(j)
+        PDP(i,j) = Ap(i)*PDP(i,j)*Ap(j)                                        
+    
+       end
+     end
+
+!     if(.scfdata.using_ppzpp)then
+! use the second derivatives in the [W1,[W1,X(even,0)]] and [W2,X(odd,0)] terms   
+!       do i=1,n_gcm
+!         do j=1,n_gcm
+!           PPDPP(i,j) = Ap(i)*PPDPP(i,j)*Ap(j) 
+!         end do
+!       end do
+!     end if  
+    
+     B.create(n_gcm,n_gcm) 
+     B=(ZERO,ZERO)  
+!     if(.scfdata.using_ppzpp)then
+!       .build_da_IOTC_dens(B,Yr,PDP,D,p,bp,E,n_gcm,PPDPP)
+!     else
+     .::build_da_IOTC_ft(B,Yr,PDP,D,p,bp,n_gcm)
+!     end if  
+
+     D=(ZERO,ZERO)
+!     D=matmul(O,matmul(B,O))
+     A.to_product_of(O,B)
+     D.to_product_of(A,O)
+
+     PDP.destroy
+!    if(.scfdata.using_ppzpp)then
+!     PPDPP.destroy
+ !   end if 
+   
+     B=(ZERO,ZERO)
+     B.to_product_of(S,YU)
+
+     A=(ZERO,ZERO)
+     A.to_product_of(B,D)
+     D.to_product_of(A,B,transpose_b=TRUE)
+
+     A.destroy
+     B.destroy
+
+!!! moving back to tonto style primitive basis sets 
+     R=(ZERO,ZERO)
+! put the Fock matrix back to the space .n_prim space
+     .REL:get_back_prim_now(D,R,m_out)  
+     D.destroy
+
+!!! moving back to contracted basis sets 
+     M.create(.n_prim,.n_bf)
+     .BASE:make_normalised_contraction_mx(M)
+     buco.create(.n_bf,.n_prim)
+     buco.to_product_of(M,R,transpose_a=TRUE)
+     R.destroy
+
+     GG.to_product_of(buco,M)
+
+     M.destroy
+     buco.destroy
+   end   
+
+   build_da_IOTC_ft(F,Yr,PAP,A,p,bp,n_gcm)
+   ! build the IOTC Y matrix 
+   F :: MAT{CPX}, OUT
+   Yr :: MAT{REAL}, IN
+   PAP,A :: MAT{CPX}, IN
+   p,bp :: VEC{REAL}, IN
+   n_gcm :: INT, IN
+
+   i,j,dim :: INT
+   c,alpha,alpha2,alpha3,alpha4 :: REAL
+   AAA,F1R,F1L,F2 :: MAT{CPX}*
+   
+!     n_gcm=.n_prim
+     c = SPEED_OF_LIGHT_AU
+     alpha = ONE/c
+     alpha2= alpha*alpha
+     alpha3= alpha2*alpha
+     alpha4= alpha3*alpha
+
+     dim=n_gcm
+
+     F1L.create(dim,dim);F1R.create(dim,dim);F2.create(dim,dim)
+     AAA.create(dim,dim)
+
+!     if( .scfdata.using_ppzpp)then
+!       do i = 1,dim
+!       do j = 1,dim
+!         AAA(i,j)=alpha2*bp(i)/p(i)*ppApp(i,j)*bp(j)/p(j)
+!       end do
+!       end do
+!     else
+       do i = 1,dim
+       do j = 1,dim
+         AAA(i,j)=alpha2*p(i)*bp(i)*A(i,j)*bp(j)*p(j)
+       end do
+       end do
+!     end
+
+     do i = 1,dim
+       do j = 1,dim
+         F(i,j)   =  A(i,j) + alpha2*bp(i)*PAP(i,j)*bp(j)
+         F1L(i,j) =  alpha * ( bp(i)*p(i)*A(i,j)-PAP(i,j)/p(i)*bp(j) )         
+         F1R(i,j) =  alpha * ( A(i,j)*bp(j)*p(j)-bp(i)*PAP(i,j)/p(j) )
+         F2(i,j)  =  PAP(i,j)/p(j)/p(i) + AAA(i,j)
+        end do
+     end do
+
+     AAA.to_product_of(Yr,F1L,transpose_a=TRUE)
+     F=F+AAA+matmul(F1R,Yr)
+     AAA.to_product_of(Yr,F2,transpose_a=TRUE)
+     F=F+matmul(AAA,Yr)
+  
+     AAA.destroy     
+     F1L.destroy;F1R.destroy;F2.destroy
+     
+   end
+
+
+   make_primitive_ft_matrix(ft,h1,h2,h3)
+   ! Calculate the primitive ft matrix for a given hkl
+      self :: IN
+      ft :: MAT{CPX}, OUT
+      h1,h2,h3 :: REAL, IN 
+
+   ENSURE(ft.is_square, "ft must be square")
+   ENSURE(ft.dim1==.n_prim, "wrong size, ft")
+
+     frst,last,at,l :: VEC{INT}*
+     ex :: VEC{REAL}*
+     ft_ab :: MAT{CPX}*
+     nps,a,b,fa,la,fb,lb :: INT
+     G :: GAUSSIAN2
+     p,t :: REAL 
+
+     ! Make the indexing arrays
+     .atom.make_primitive_limits(frst,last,at,l,ex)
+
+     nps = frst.dim
+
+     do a = 1,nps
+
+        G.a.set_l(l(a))
+        G.a.set_position(.atom(at(a)).position)
+        G.a.set_exponent(ex(a))
+        fa = frst(a)
+        la = last(a)
+
+        do b = 1,a
+
+           G.b.set_l(l(b))
+           G.b.set_position(.atom(at(b)).position)
+           G.b.set_exponent(ex(b))
+           fb = frst(b)
+           lb = last(b)
+
+           ! partitioning and thermal smearing
+           p = ONE
+           t = ONE
+ 
+           ft_ab.create(la-fa+1,lb-fb+1)
+           ft_ab = (ZERO,ZERO)
+
+            if ( (fa-la)==0 AND (fb-lb)==0 ) then 
+               G.make_normalised_ft_00(ft_ab,h1,h2,h3)
+            else                             
+               G.make_normalised_ft_v2(ft_ab,h1,h2,h3,.use_spherical_basis) ! cleaner newer version
+            end if
+
+            ! perhaps the thermal smearing should come after building
+            ! the whole sf-matrix
+            ft(fa:la,fb:lb) = ft_ab*p*t
+
+            ft_ab.destroy
+
+        end
+
+     end
+
+     ! Clean up indexing arrays
+     ex.destroy
+     l.destroy
+     at.destroy
+     last.destroy
+     frst.destroy
+
+     ! Make a symmetric matrix
+     ft.symmetric_reflect
+
+     ! Debug, turn on with debug_on "key"
+     .BASE:put_debug(ft,  "make_primitive_ft_matrix: ft")
+
+     ! Test
+   ! .REL:make_fd_DKH_matrix(T,SOx,SOy,SOz)
+
+   end
+
+   make_primitive_pftp_matrix(ft,h1,h2,h3)
+   ! Calculate the primitive ft matrix for a given hkl
+      self :: IN
+      ft :: MAT{CPX}, OUT
+      h1,h2,h3 :: REAL, IN 
+
+   ENSURE(ft.is_square, "ft must be square")
+   ENSURE(ft.dim1==.n_prim, "wrong size, ft")
+
+     frst,last,at,l :: VEC{INT}*
+     ex :: VEC{REAL}*
+     ft_ab :: MAT{CPX}*
+     nps,a,b,fa,la,fb,lb :: INT
+     G :: GAUSSIAN2
+     p,t :: REAL 
+
+     ! Make the indexing arrays
+     .atom.make_primitive_limits(frst,last,at,l,ex)
+
+     nps = frst.dim
+
+     do a = 1,nps
+
+        G.a.set_l(l(a))
+        G.a.set_position(.atom(at(a)).position)
+        G.a.set_exponent(ex(a))
+        fa = frst(a)
+        la = last(a)
+
+        do b = 1,a
+
+           G.b.set_l(l(b))
+           G.b.set_position(.atom(at(b)).position)
+           G.b.set_exponent(ex(b))
+           fb = frst(b)
+           lb = last(b)
+
+           ! partitioning and thermal smearing
+           p = ONE
+           t = ONE
+
+           ft_ab.create(la-fa+1,lb-fb+1)
+           ft_ab = (ZERO,ZERO)
+
+           G.make_normalised_pftp_v2(ft_ab,h1,h2,h3,.use_spherical_basis) ! cleaner newer version
+
+           ! perhaps the thermal smearing should come after building
+           ! the whole sf-matrix
+           ft(fa:la,fb:lb) = ft_ab*p*t
+
+           ft_ab.destroy
+
+        end
+
+     end
+
+     ! Clean up indexing arrays
+     ex.destroy
+     l.destroy
+     at.destroy
+     last.destroy
+     frst.destroy
+
+     ! Make a symmetric matrix
+     ft.symmetric_reflect
+
+     ! Debug, turn on with debug_on "key"
+     .BASE:put_debug(ft,  "make_primitive_pftp_matrix: ft")
+
+     ! Test
+   ! .REL:make_fd_DKH_matrix(T,SOx,SOy,SOz)
+
+   end
+
+   make_part_and_therm_smear(ft,k_vec) 
+   ! Calculate the primitive ft matrix for a given hkl
+      ft :: MAT{CPX}
+      k_vec :: VEC{REAL}
+
+  ! ENSURE(NOT .use_spherical_basis,"not yet implemented")
+
+      q,fa,la,na,fb,lb,nb,atom_a,atom_b,ag,bg :: INT
+      sh :: SHELL2
+      is_zero :: BIN
+      t :: MAT{REAL}*
+      p :: MAT{REAL}*
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         p.create(la-fa+1,lb-fb+1)
+         .::make_partition_factors(p,sh,atom_a,atom_b,is_zero)
+
+         t.create(la-fa+1,lb-fb+1)
+         .::thermal_smearing_correction_pce(t,k_vec,atom_a,atom_b)
+
+         do bg = 1,lb-fb+1
+         do ag = 1,la-fa+1
+            ft(fa-1+ag,fb-1+bg) = ft(fa-1+ag,fb-1+bg)*p(ag,bg)*t(ag,bg)
+         end do  
+         end do
+
+         t.destroy
+         p.destroy
+         sh.destroy_ptr_part
+
+      end do
+
+      ft.symmetric_reflect 
+
+   end
+
+   thermal_smearing_correction_pce(res,k_vec,a,b)
+   ! Makes the thermal smearing correction term.  Note that res is
+   ! done over the contraction coefficients. Dimensions of "res" 
+   ! are [.a.n_cc,.b.n_cc].
+      self :: IN
+      res :: MAT{REAL}, OUT
+      k_vec :: VEC{REAL}, IN
+      a,b :: INT, IN
+
+      Ua,Ub,Uab :: MAT{REAL}(3,3)
+      S,US :: VEC{REAL}(3)
+      separation,bondlength,Ta,Tb,g :: REAL
+      diff :: VEC{REAL}(3)
+
+      select case (trim(.crystal.thermal_smearing_model))
+
+      case (" ","none")
+         res = ONE
+
+      case ("coppens") ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
+         Ua = -HALF * .atom(a).ADP_tensor
+         Ub = -HALF * .atom(b).ADP_tensor
+         S  = k_vec(:)
+         US.to_product_of(Ua,S); Ta = S.dot(US)
+         US.to_product_of(Ub,S); Tb = S.dot(US)
+         res = HALF*(exp(Ta)+exp(Tb))
+
+      case ("stewart") ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
+         bondlength=2.5
+         Ua = .atom(a).ADP_tensor
+         Ub = .atom(b).ADP_tensor
+         Uab = Ua + Ub
+         diff = .atom(a).position-.atom(b).position
+         separation = diff.norm
+         g = HALF
+         if (separation>bondlength) g=QUARTER
+         Uab = -HALF * g * Uab     ! -HALF g (Ua+Ub)
+         S = k_vec(:)
+         US.to_product_of(Uab,S)
+         Ta = S.dot(US)
+         res = exp(Ta)
+
+      case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+         DIE(" tanaka model not yet implemented for PCE corrected structure factors ")
+         res = ONE
+
+      case default
+         DIE("unknown model, "//trim(.crystal.thermal_smearing_model))
+         res = ONE
+
+      end
+
+   end
+  
+end
+

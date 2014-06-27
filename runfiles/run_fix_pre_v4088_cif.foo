@@ -1,0 +1,156 @@
+! This little program will read in an accurate pre-version-4087 cif
+! file made by tonto (which is correct) and will produce corrected
+! "normal" and "molecule" cif file, i.e. with correct ADP3 and ADP4 
+! parameters, and with corrected ADP2 errors as well. The names of 
+! the cif are "fixed.cif" and "fixed.molecule.cif". Enjoy!
+!
+! Copyright (C) Dylan Jayatilaka, 1999
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: run_fix_pre_v4088_cifs $
+
+program run_FIX_PRE_V4088_CIF
+
+   implicit none
+
+   command_line :: COMMAND_LINE*
+   message, fixcif, fmt, lab3,lab4 :: STR
+   x10n :: BIN
+   n_pADPs :: INT
+   fix :: MOLECULE*
+
+   ! Create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Initialise standard I/O files.
+   std_time.start_timing
+
+   stderr.create_stderr; stderr.open
+   stdout.create_stdout
+
+   ! Initialize miscellaneous ...
+   GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
+
+   ! Get the command line
+   command_line.create
+   command_line.process_options
+   message = ": run_fix_pre_v4088_cif -x10n <y|n> -format <g|u>"
+   message = trim(message)//" -lab3 <lab3> -lab4 <lab4> <cif-to-correct>"
+   DIE_IF(NOT command_line.has_arguments       ,"no arguments"//trim(message))
+   DIE_IF(NOT command_line.n_args==1           ,"wrong no. of arguments"//trim(message))
+   DIE_IF(NOT command_line.has_options         ,"no options"//trim(message))
+   DIE_IF(NOT command_line.has_option("x10n")  ,"no -x10n option"//trim(message))
+   DIE_IF(NOT command_line.has_option("format"),"no format option"//trim(message))
+   DIE_IF(NOT command_line.has_option("lab3")  ,"no lab3 option"//trim(message))
+   DIE_IF(NOT command_line.has_option("lab4")  ,"no lab4 option"//trim(message))
+   DIE_IF(NOT command_line.n_options==4        ,"wrong no of options"//trim(message))
+
+   ! Get argument
+   fixcif = command_line.arg(1)
+
+   ! Get options
+   x10n = STR:to_bin(command_line.value_for_option("x10n"))
+   fmt  =            command_line.value_for_option("format")
+   lab3 =            command_line.value_for_option("lab3")
+   lab4 =            command_line.value_for_option("lab4")
+   command_line.destroy
+
+   ! Echo
+   stdout.flush
+   stdout.text("Fixing cif: "//trim(fixcif))
+   stdout.text("Fixed  cif: fixed.standard.cif")
+
+   ! Create molecule
+   fix.BASE:create
+
+   ! Create cif
+   fix.cif.create
+   fix.cif.set_file_name(fixcif) 
+   fix.cif.set_GC_10n_scaling(x10n) 
+   fix.cif.set_GC_format(fmt) 
+   fix.cif.set_GC_label3(lab3) 
+   fix.cif.set_GC_label4(lab4) 
+
+   ! Read cif atoms & crystal - ensure ADPs are cartesian
+   fix.CE:find_CIF_crystal_data_block(fix.cif)
+   MOLECULE.CE:open_CIF_at_data_block(fix.cif)
+   fix.XTAL:read_CIF_atoms_raw(fix.cif)   
+   fix.atom.set_ADP_axis_system("cartesian")
+   fix.XTAL:read_CIF_crystal_raw(fix.cif)
+
+   ! Read covariance matrix
+   n_pADPs = fix.atom.no_of_pADPs
+   fix.crystal.xray_data.create
+   fix.crystal.assign_xray 
+   fix.crystal.data.read_CIF(fix.cif,n_pADPs)
+
+   ! Resolve positions and make crystal frag info
+   fix.BASE:resolve_axis_system
+   fix.crystal.make_fragment_data(fix.atom,assign_atom=TRUE)
+
+   ! Set CIF format defaults
+   fix.cif.set_GC_10n_scaling(CIF_GC_SCALING) 
+   fix.cif.set_GC_format(CIF_GC_FORMAT) 
+   fix.cif.set_GC_label3(CIF_GC_LABEL3) 
+   fix.cif.set_GC_label4(CIF_GC_LABEL4) 
+
+   ! Update esd's and set pADP errors (always in Bohr)
+   fix.crystal.data.esd.create(n_pADPs)
+ ! fix.crystal.make_CIF_errors(cif,fix.crystal.data.esd)
+ ! fix.crystal.data.covariance_matrix.put_diagonal_to(fix.crystal.data.esd)
+ ! fix.crystal.asymmetric_unit_atom.set_pADP_errors_to(fix.crystal.data.esd)
+
+   ! Change name
+   fix.name = "fixed"
+
+   ! Script banner
+   stdout.flush
+   stdout.text("================")
+   stdout.text("Fix pre-4088 CIF")
+   stdout.text("================")
+   stdout.flush
+   stdout.text(". Read in an 'accurate' tonto pre v. 4087 cif")
+   stdout.text(". Ensure ADPs are in cartesian/angstrom units")
+   stdout.text(". Change ADPs into crystal/angstrom units    ")
+   stdout.text(". Write corrected cif to fixed.standard.cif  ")
+   stdout.text(". NOTE: model calc details are not available ")
+   stdout.flush
+
+   ! Results please check
+   stdout.text("Check the following is identical to your stdout:")
+   stdout.flush
+   fix.crystal.asymmetric_unit_atom.put_coordinates_and_ADPs(no_header=TRUE)
+
+   ! Write out fixed cif
+   fix.BASE:put_CIF
+   fix.BASE:put_accurate_CIF
+
+   ! Clean-up
+   fix.BASE:destroy
+
+   ! Memory report
+   TONTO_REPORT
+
+   ! Clean-up files
+   TEXTFILE:destroy(stderr)
+   TEXTFILE:destroy(stdout)
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end

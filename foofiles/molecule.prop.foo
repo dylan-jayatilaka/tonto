@@ -1,0 +1,3544 @@
+!===============================================================================
+!
+! MOLECULE.PROP: An object representation of a molecule.
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: molecule.prop.foo $
+!===============================================================================
+
+module MOLECULE.PROP
+
+   implicit none
+
+contains
+
+!  =======================
+!  One electron properties
+!  =======================
+
+   put_1e_properties ::: leaky
+   ! Put all the available one elctron properties
+
+   ENSURE(.density_matrix.created,"no density")
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.basis.created,"no basis sets specified")
+
+      ! Make the density matrix (leaky)
+      .BASE:make_ao_density_matrix    
+
+      ! Mulliken analysis (leaky)
+      .::put_mulliken_populations  
+
+      ! Moments
+      .::put_dipole
+      .::put_quadrupole
+      .::put_octupole
+
+    ! charge.create(.n_atom)
+    ! .put_gaussian_atom_charges(charge)
+    ! .put_gaussian_atom_dipoles(charge)
+    ! charge.destroy
+
+    ! .put_GH_atom_charges
+
+      ! Atomic charges & moments
+      .::put_Hirshfeld_atom_info
+
+      ! Fields and field gradients
+      .::put_E_field_at_nuclei
+      .::put_EFG_at_nuclei
+
+      ! Clean up leak here
+      .BASE:delete_atom_scf_archives 
+
+   end
+
+   put_mulliken_populations ::: leaky
+   ! sets the mulliken population matrix and the outputs it.
+      mulliken_matrix, density :: MAT{REAL}*
+      diagonals :: VEC{REAL}*
+      S2 :: MAT{REAL}*
+      mulliken_matrix2 :: MAT{CPX}*
+      diagonals2 :: VEC{CPX}*
+
+      ! Create space
+      mulliken_matrix.create(.n_bf, .n_bf)
+      diagonals.create(.n_bf)
+
+      ! Overlap matrix (leaky)
+      .INTS:make_overlap_matrix
+
+      ! general complex case (LBxxx)
+      if (.density_matrix.created("general_complex")) then
+
+         ! these objects are twice as large as usually
+         S2.create(2*.n_bf,2*.n_bf)
+         mulliken_matrix2.create(2*.n_bf,2*.n_bf)
+         diagonals2.create(2*.n_bf)
+
+         mulliken_matrix2 = (ZERO,ZERO)
+         diagonals2 = (ZERO,ZERO)
+         S2 = ZERO
+         S2.alpha_alpha_set_to(.overlap_matrix)
+         S2.beta_beta_set_to(.overlap_matrix)
+
+         stdout.flush
+         stdout.text(" These are the GCHF Mulliken populations! ")
+
+         ! fill the general_complex mulliken matrix and diagonals
+         mulliken_matrix2.to_product_of(.density_matrix.general_complex,S2)
+         mulliken_matrix2.put_diagonal_to(diagonals2)
+
+         ! Make use of the restricted mulliken matrix
+         diagonals = REALIFY(diagonals2(1:.n_bf)) + REALIFY(diagonals2(.n_bf+1:2*.n_bf))
+         mulliken_matrix = REALIFY(mulliken_matrix2(1:.n_bf,1:.n_bf)) +  &
+                           REALIFY(mulliken_matrix2(.n_bf+1:2*.n_bf,.n_bf+1:2*.n_bf))
+
+         ! Put the atomic populations
+         .::put_mulliken_populations(mulliken_matrix, diagonals)
+
+         mulliken_matrix2.destroy
+         diagonals2.destroy
+         S2.destroy
+
+         stdout.flush
+         stdout.text(" These are the GCHF Mulliken spin populations! ")
+         stdout.text(" Using the ao sz density and/or the collinear spin populations")
+         stdout.flush
+
+         density.create(.n_bf,.n_bf)
+         density = ZERO
+         .BASE:make_ao_sz_density_matrix(density)
+         mulliken_matrix=ZERO; diagonals=ZERO
+         ! fill the general_complex mulliken matrix and diagonals
+         mulliken_matrix.to_product_of(density,.overlap_matrix)
+         mulliken_matrix.put_diagonal_to(diagonals)
+         ! Put the atomic ao sz spin populations
+         .::put_mulliken_spins(mulliken_matrix, diagonals)
+         density.destroy
+
+      ! Unrestricted case
+      else if (.density_matrix.created("unrestricted")) then
+
+         ! Temporary
+         density.create(.n_bf,.n_bf)
+
+         ! Restricted density matrix
+         density = .density_matrix.alpha + .density_matrix.beta
+
+         ! Normal mulliken population
+         mulliken_matrix.to_product_of(density,.overlap_matrix)
+         mulliken_matrix.put_diagonal_to(diagonals)
+
+         ! Put the populations
+         .::put_mulliken_populations(mulliken_matrix, diagonals)
+
+         ! Unpaired density matrix
+         density = .density_matrix.alpha - .density_matrix.beta
+         mulliken_matrix.to_product_of(density,.overlap_matrix)
+         mulliken_matrix.put_diagonal_to(diagonals)
+
+         ! Put the spin populations
+         .::put_mulliken_spins(mulliken_matrix, diagonals)
+
+         ! Clean up
+         density.destroy
+
+      ! Restricted case
+      else if (.density_matrix.created("restricted")) then
+
+         ! Make the restricted mulliken matrix
+         mulliken_matrix.to_product_of(.density_matrix.restricted,.overlap_matrix)
+         mulliken_matrix.put_diagonal_to(diagonals)
+
+         ! Put the atomic populations
+         .::put_mulliken_populations(mulliken_matrix, diagonals)
+
+      else
+
+        DIE("Mulliken populations not yet implemented for this case")
+
+      end
+
+      ! Clean up
+      mulliken_matrix.destroy
+      diagonals.destroy
+
+   end
+
+   put_mulliken_populations(mulliken_matrix, diagonals)
+   ! outputs the mulliken populations to the output file
+
+  ! ENSURE(NOT .use_spherical_basis,"not implemented")
+
+      mulliken_matrix :: MAT{REAL}
+      diagonals :: VEC{REAL}
+      atom_pop :: VEC{REAL}*
+      pop :: REAL
+      o_count, a, b, c, n_comp :: INT
+
+      stdout.flush
+      stdout.text("Mulliken population analysis: ")
+      stdout.dash(int_fields=2,real_fields=1)
+      stdout.put("Atom", int_width = TRUE)
+      stdout.put("Type", int_width = TRUE)
+      stdout.put("Population")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=1)
+
+      o_count = 1
+      atom_pop.create(.n_atom)
+      atom_pop = ZERO
+
+      do a = 1, .n_atom
+      do b = 1, .atom(a).basis.n_shell
+
+         if (.use_spherical_basis) then 
+            n_comp = .atom(a).basis.shell(b).n_sph
+         else
+            n_comp = .atom(a).basis.shell(b).n_comp
+         end if  
+
+         do c = 1, n_comp
+            stdout.put(.atom(a).label, int_width = TRUE)
+            stdout.put(.atom(a).basis.shell(b).l_chr, int_width = TRUE)
+            pop = diagonals(c + o_count - 1)
+            stdout.put(pop)
+            atom_pop(a) = atom_pop(a) + pop
+            stdout.flush
+         end
+
+         o_count = o_count + n_comp
+
+      end
+      end
+
+      stdout.dash(int_fields=2,real_fields=1)
+      stdout.flush
+
+      stdout.show("Trace of the Mulliken matrix =",mulliken_matrix.trace)
+      stdout.flush
+      stdout.text("Atomic Populations: ")
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=2)
+      stdout.put("Atom", int_width = TRUE)
+      stdout.put("Population")
+      stdout.put("Charge")
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=2)
+
+      do a = 1, .n_atom
+         stdout.put(.atom(a).label, int_width = TRUE)
+         stdout.put(atom_pop(a))
+         stdout.put(.atom(a).atomic_number-atom_pop(a))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1, real_fields=2)
+
+      atom_pop.destroy
+      stdout.flush
+
+    ! stdout.text("Mulliken matrix:")
+    ! stdout.put(mulliken_matrix)
+
+   end
+
+   put_mulliken_spins(mulliken_matrix,diagonals)
+   ! Outputs the mulliken populations to the output file
+      mulliken_matrix :: MAT{REAL}
+      diagonals :: VEC{REAL}
+
+   ! ENSURE(NOT .use_spherical_basis,"not implemented")
+
+      atom_pop :: VEC{REAL}*
+      pop :: REAL
+      o_count, a, b, c, n_comp :: INT
+
+      ! Print out the spins for every basis function
+      stdout.flush
+      stdout.text("Mulliken spin population analysis: ")
+      stdout.dash(int_fields=2,real_fields=1)
+      stdout.put("Atom", int_width = TRUE)
+      stdout.put("Type", int_width = TRUE)
+      stdout.put("Spin pop")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=1)
+
+      o_count = 1
+      atom_pop.create(.n_atom)
+      atom_pop = ZERO
+
+      do a = 1, .n_atom
+      do b = 1, .atom(a).basis.n_shell
+
+         if (.use_spherical_basis) then 
+            n_comp = .atom(a).basis.shell(b).n_sph
+         else
+            n_comp = .atom(a).basis.shell(b).n_comp
+         end if  
+
+         do c = 1, n_comp
+            stdout.put(.atom(a).label, int_width = TRUE)
+            stdout.put(.atom(a).basis.shell(b).l_chr, int_width = TRUE)
+            pop = diagonals(c + o_count - 1)
+            stdout.put(pop)
+            atom_pop(a) = atom_pop(a) + pop 
+            stdout.flush
+         end
+
+         o_count = o_count + n_comp
+
+      end
+
+      end
+      stdout.dash(int_fields=2,real_fields=1)
+
+      stdout.flush
+      stdout.show("Trace of the Mulliken spin matrix =",mulliken_matrix.trace)
+
+      ! Print out the spins
+      stdout.flush
+      stdout.text("Atomic spin populations: ")
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=1)
+      stdout.put("Atom", int_width = TRUE)
+      stdout.put("Spin")
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=1)
+      do a = 1, .n_atom
+         stdout.put(.atom(a).label, int_width = TRUE)
+         stdout.put(atom_pop(a))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1, real_fields=1)
+
+      ! Clean up
+      atom_pop.destroy
+      stdout.flush
+
+   end
+
+   put_dipole
+   ! Put out the dipole to stdout
+
+      electronic,nuclear,total :: VEC{REAL}(3)
+      dmag :: REAL
+      axis :: VEC{STR}(3)
+      i :: INT
+
+      axis = [ "x", "y", "z" ]
+
+      electronic = .INTS:electronic_dipole_moment
+      nuclear    = .BASE:nuclear_dipole_moment
+      total      = electronic + nuclear
+
+      stdout.flush
+      stdout.text("Dipole moments:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      stdout.tab(int_fields=1)
+      stdout.put("Electronic")
+      stdout.put("Nuclear")
+      stdout.put("Total")
+      stdout.put("Electronic")
+      stdout.put("Nuclear")
+      stdout.put("Total")
+      stdout.flush
+      stdout.put("Component",int_width=TRUE)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      do i = 1,3
+         stdout.put(axis(i),int_width=TRUE)
+         stdout.put(electronic(i))
+         stdout.put(nuclear(i))
+         stdout.put(total(i))
+         stdout.put(electronic(i).to_units("debye"))
+         stdout.put(nuclear(i).to_units("debye"))
+         stdout.put(total(i).to_units("debye"))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=6)
+      stdout.flush
+
+      dmag = sqrt(dot_product(total,total))
+
+      stdout.show("Dipole magnitude/au    =",dmag)
+      stdout.show("Dipole magnitude/Debye =",dmag.to_units("debye"))
+
+   end
+
+   put_quadrupole
+   ! Put out the quadrupole to stdout
+
+      electronic,nuclear,total :: VEC{REAL}(6)
+      axis :: VEC{STR}(6)
+      i :: INT
+
+      axis = [ "xx","yy","zz","xy","xz","yz" ]
+
+      electronic = .INTS:electronic_quadrupole_moment
+      nuclear    = .INTS:nuclear_quadrupole_moment
+      total      = electronic + nuclear
+
+      stdout.flush
+      stdout.text("Quadrupole moments:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      stdout.tab(int_fields=1)
+      stdout.put("Electronic")
+      stdout.put("Nuclear")
+      stdout.put("Total")
+      stdout.put("Electronic")
+      stdout.put("Nuclear")
+      stdout.put("Total")
+      stdout.flush
+      stdout.put("Component",int_width=TRUE)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/Debye-A")
+      stdout.put("/Debye-A")
+      stdout.put("/Debye-A")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      do i = 1,6
+         stdout.put(axis(i),int_width=TRUE)
+         stdout.put(electronic(i))
+         stdout.put(nuclear(i))
+         stdout.put(total(i))
+         stdout.put(electronic(i).to_units("debye-angstrom"))
+         stdout.put(nuclear(i).to_units("debye-angstrom"))
+         stdout.put(total(i).to_units("debye-angstrom"))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=6)
+
+   end
+
+   put_octupole
+   ! Put out the octupole to stdout
+
+      electronic,nuclear,total :: VEC{REAL}(10)
+      axis :: VEC{STR}(10)
+      i :: INT
+
+      axis = [ "xxx","yyy","zzz","xxy","xxz","yyx","yyz","zzx","zzy","xyz" ]
+
+      electronic = .INTS:electronic_octupole_moment
+      nuclear    = .INTS:nuclear_octupole_moment
+      total      = electronic + nuclear
+
+      stdout.flush
+      stdout.text("Octupole moments:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      stdout.tab(int_fields=1)
+      stdout.put("Electronic")
+      stdout.put("Nuclear")
+      stdout.put("Total")
+      stdout.put("Electronic")
+      stdout.put("Nuclear")
+      stdout.put("Total")
+      stdout.flush
+      stdout.put("Component",int_width=TRUE)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/Debye-A2")
+      stdout.put("/Debye-A2")
+      stdout.put("/Debye-A2")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      do i = 1,10
+         stdout.put(axis(i),int_width=TRUE)
+         stdout.put(electronic(i))
+         stdout.put(nuclear(i))
+         stdout.put(total(i))
+         stdout.put(electronic(i).to_units("debye-angstrom^2"))
+         stdout.put(nuclear(i).to_units("debye-angstrom^2"))
+         stdout.put(total(i).to_units("debye-angstrom^2"))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=6)
+   end
+
+   put_E_field_at_nuclei
+   ! Put out the electric field at every nuclear position
+
+      cluster :: CLUSTER*
+      electronic,nuclear,molecule,LF,xyz, xtal, pos :: MAT{REAL}*
+      charge :: VEC{REAL}*
+      r,d,F :: VEC{REAL}(3)
+      axis :: VEC{STR}(3)
+      symbol :: VEC{STR}*
+      mol_rms,LF_rms,xtal_rms, d3 :: REAL
+      a,i, n_charges :: INT
+
+      axis = [ "x", "y", "z" ]
+      symbol => .atom.unique_tags
+
+      electronic.create(3,.n_atom)
+      nuclear.create(3,.n_atom)
+      molecule.create(3,.n_atom)
+
+      electronic = .INTS:electronic_E_field_at_nuclei
+      nuclear    = .INTS:nuclear_E_field_at_nuclei
+      molecule   = electronic + nuclear
+
+      ! Table
+      stdout.flush
+      stdout.text("Electric fields at nuclei:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=4)
+      stdout.tab(real_fields=1,int_fields=1)
+      stdout.put("Electronic")
+      stdout.put("Nuclear")
+      stdout.put("Total")
+      stdout.flush
+      stdout.put("Atom")
+      stdout.put("E_i",int_width=TRUE)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=4)
+      do a = 1,.n_atom
+      do i = 1,3
+         if (i==1) then; stdout.put(symbol(a))
+         else;           stdout.tab(real_fields=1)
+         end
+         stdout.put(axis(i),int_width=TRUE)
+         stdout.put(electronic(i,a))
+         stdout.put(nuclear(i,a))
+         stdout.put(molecule(i,a))
+         stdout.flush
+      end
+      end
+      stdout.dash(int_fields=1,real_fields=4)
+
+      ! Add crystal field?
+      if (.crystal.created) then
+
+         ! Make atomic charges and dipoles
+         if  (NOT .Hirshfeld_atom_info_made) then
+            .SCF:make_Hirshfeld_inputs
+            .SCF:make_Hirshfeld_atom_info
+         end
+
+         ! Set up the cluster ... leaky
+         LF.create(3,.n_atom)
+         cluster.create(.crystal)
+         xyz => .atom.coordinates_ptr
+         cluster.set_fragment_geometry(xyz,cartesian=TRUE)
+         xyz.destroy
+         cluster.set_generation_method("within_radius")
+         cluster.defragment= TRUE
+         cluster.radius = 10.0d0
+         if (.scfdata.created) cluster.radius = .scfdata.cluster_radius
+         cluster.make_info ! leaky
+
+         ! Make Lorentz field ... does not need full cluster
+         cluster.make_Lorentz_fields(LF)
+
+         ! Make Xtal electric field
+         xtal => electronic
+         xtal = LF + molecule
+
+         ! RMS values
+         mol_rms  = ZERO
+         LF_rms   = ZERO
+         xtal_rms = ZERO
+
+         ! Table
+         stdout.flush
+         stdout.text("Electric fields at nuclei--including crystal environment:")
+         stdout.text("Calculated using charge and dipole Lorentz field tensors,")
+         stdout.text("and Hirshfeld charges and dipoles at every u/c atom site")
+         stdout.flush
+         stdout.dash(int_fields=1,real_fields=4)
+         stdout.tab(real_fields=1,int_fields=1)
+         stdout.put("Molecule")
+         stdout.put("Environment")
+         stdout.put("Crystal")
+         stdout.flush
+         stdout.put("Atom")
+         stdout.put("E_i",int_width=TRUE)
+         stdout.put("/au")
+         stdout.put("/au")
+         stdout.put("/au")
+         stdout.flush
+         stdout.dash(int_fields=1,real_fields=4)
+         do a = 1,.n_atom
+         do i = 1,3
+            if (i==1) then; stdout.put(symbol(a))
+            else;           stdout.tab(real_fields=1)
+            end
+            stdout.put(axis(i),int_width=TRUE)
+            stdout.put(molecule(i,a))
+            stdout.put(LF(i,a))
+            stdout.put(xtal(i,a))
+            stdout.flush
+            mol_rms  = mol_rms   + dot_product(molecule(:,a),molecule(:,a))
+            LF_rms   = LF_rms    + dot_product(LF(:,a),LF(:,a))
+            xtal_rms = xtal_rms  + dot_product(xtal(:,a),xtal(:,a))
+         end
+         end
+         stdout.dash(int_fields=1,real_fields=4)
+
+         mol_rms  = sqrt(mol_rms/.n_atom)
+         LF_rms   = sqrt(LF_rms/.n_atom)
+         xtal_rms = sqrt(xtal_rms/.n_atom)
+
+         stdout.flush
+         stdout.show("RMS value for molecular    E field =",mol_rms)
+         stdout.show("RMS value for environment  E field =",LF_rms)
+         stdout.show("RMS value for Xtal (total) E field =",xtal_rms)
+
+         ! Make the cluster charges
+         n_charges = cluster.n_atoms - cluster.n_fragment_atoms
+         n_charges = 3*n_charges
+       ! n_charges = 2*n_charges
+       ! n_charges = n_charges
+         charge.create(n_charges)
+         pos.create(3,n_charges)
+         cluster.make_non_fragment_mu_charges(pos,charge)
+       ! cluster.make_non_fragment_positions2(pos,charge)
+       ! cluster.make_non_fragment_positions3(pos,charge)
+
+         ! Get the point charge electric fields
+         LF = ZERO
+         do a = 1,.n_atom
+            r = .atom(a).position
+            F = ZERO
+            do i = 1,n_charges
+               d  = r - pos(:,i)
+               d3 = sqrt(dot_product(d,d))
+               d3 = d3*d3*d3
+               F = F + charge(i)*d/d3
+            end
+            LF(:,a) = F
+         end
+
+         ! Make Xtal electric field
+         xtal => electronic
+         xtal = LF + molecule
+
+         ! RMS values
+         mol_rms  = ZERO
+         LF_rms   = ZERO
+         xtal_rms = ZERO
+
+         ! Table
+         stdout.flush
+         stdout.text("Electric fields at nuclei--including crystal environment:")
+         stdout.text("Calculated using Hirshfeld point charges and dipoles")
+         stdout.show("Cluster radius in au =",cluster.radius)
+         stdout.flush
+         stdout.dash(int_fields=1,real_fields=4)
+         stdout.tab(real_fields=1,int_fields=1)
+         stdout.put("Molecule")
+         stdout.put("Environment")
+         stdout.put("Crystal")
+         stdout.flush
+         stdout.put("Atom")
+         stdout.put("E_i",int_width=TRUE)
+         stdout.put("/au")
+         stdout.put("/au")
+         stdout.put("/au")
+         stdout.flush
+         stdout.dash(int_fields=1,real_fields=4)
+         do a = 1,.n_atom
+         do i = 1,3
+            if (i==1) then; stdout.put(symbol(a))
+            else;           stdout.tab(real_fields=1)
+            end
+            stdout.put(axis(i),int_width=TRUE)
+            stdout.put(molecule(i,a))
+            stdout.put(LF(i,a))
+            stdout.put(xtal(i,a))
+            stdout.flush
+            mol_rms  = mol_rms   + dot_product(molecule(:,a),molecule(:,a))
+            LF_rms   = LF_rms    + dot_product(LF(:,a),LF(:,a))
+            xtal_rms = xtal_rms  + dot_product(xtal(:,a),xtal(:,a))
+         end
+         end
+         stdout.dash(int_fields=1,real_fields=4)
+
+         mol_rms  = sqrt(mol_rms/.n_atom)
+         LF_rms   = sqrt(LF_rms/.n_atom)
+         xtal_rms = sqrt(xtal_rms/.n_atom)
+
+         stdout.flush
+         stdout.show("RMS value for molecular    E field =",mol_rms)
+         stdout.show("RMS value for environment  E field =",LF_rms)
+         stdout.show("RMS value for Xtal (total) E field =",xtal_rms)
+
+         ! Clean up
+         pos.destroy; charge.destroy
+         cluster.destroy
+         LF.destroy
+
+      end
+
+      molecule.destroy
+      nuclear.destroy
+      electronic.destroy
+      symbol.destroy
+
+   end
+
+   put_EFG_at_nuclei
+   ! Put out the electric field gradient at every nuclear position
+
+      electronic,nuclear,total :: MAT{REAL}*
+      axis :: VEC{STR}(6)
+      symbol :: VEC{STR}*
+      a,i :: INT
+
+      axis = [ "xx","yy","zz","xy","xz","yz" ]
+
+      symbol => .atom.unique_tags
+
+      electronic.create(6,.n_atom)
+      nuclear.create(6,.n_atom)
+      total.create(6,.n_atom)
+
+      electronic = .INTS:electronic_EFG_at_nuclei
+      nuclear    = .INTS:nuclear_EFG_at_nuclei
+      total      = electronic + nuclear
+
+      stdout.flush
+      stdout.text("Electric field gradient at nuclei:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=4)
+      stdout.tab(real_fields=1,int_fields=1)
+      stdout.put("Electronic")
+      stdout.put("Nuclear")
+      stdout.put("Total")
+      stdout.flush
+      stdout.put("Atom")
+      stdout.put("E_ij",int_width=TRUE)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=4)
+      do a = 1,.n_atom
+      do i = 1,6
+         if (i==1) then; stdout.put(symbol(a))
+         else;           stdout.tab(real_fields=1)
+         end
+         stdout.put(axis(i),int_width=TRUE)
+         stdout.put(electronic(i,a))
+         stdout.put(nuclear(i,a))
+         stdout.put(total(i,a))
+         stdout.flush
+      end
+      end
+      stdout.dash(int_fields=1,real_fields=4)
+
+      total.destroy
+      nuclear.destroy
+      electronic.destroy
+      symbol.destroy
+
+   end
+
+   spin_contamination ::: leaky
+   ! spin contamination for the UHF calculations
+   ! and ones also perhaps for the gchf one
+      ENSURE(.molecular_orbitals.alpha.created, "no alpha orbitals")
+      ENSURE(.molecular_orbitals.beta.created, "no beta orbitals")
+      MSC,S,MOa,MOb :: MAT{REAL}*
+      SC,S2 :: REAL
+      na,nb,i,j,k,l :: INT
+      
+      .INTS:make_overlap_matrix
+      S => .overlap_matrix
+      na = .BASE:no_of_alpha_electrons
+      nb = .BASE:no_of_beta_electrons
+      MOa => .molecular_orbitals.alpha
+      MOb => .molecular_orbitals.beta
+      MSC.create(na,nb)
+      MSC=ZERO 
+      SC=ZERO
+      
+      do i =1,na
+        do j=1,nb
+          do k=1,.n_bf
+            do l=1,.n_bf 
+               MSC(i,j)=  MSC(i,j)+ MOb(k,j)*S(k,l)*MOa(l,i)
+            end do
+          end do
+        SC= SC + MSC(i,j)**2
+        end do
+      end do
+
+      MSC.destroy
+
+      S2 = (na-nb)*ONE/TWO * ( (na-nb)*ONE/TWO + ONE )
+
+      stdout.flush
+      stdout.text("    SPIN CONTAMINATION   ")
+      stdout.text("    theoretical S**2=   ")
+      stdout.put(S2)
+      stdout.flush
+      stdout.text("    UHF S**2 =  ")
+      stdout.put(S2+nb-SC)
+      stdout.flush
+      
+   end
+
+!  ====================
+!  Hirshfeld properties
+!  ====================
+
+   put_Hirshfeld_atom_info ::: leaky
+   ! Put the Hirshfeld charges
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+
+      genre :: STR
+
+      ! Get the genre
+      genre = " "
+      if (.scfdata.created) then
+         genre = .scfdata.spinorbital_kind
+      else if (.density_matrix.created) then
+         genre = .density_matrix.spinorbital_kind
+      end
+
+      ! Restricted properties
+      .SCF:make_Hirshfeld_inputs
+      .SCF:make_Hirshfeld_atom_info(output=TRUE)
+      .::put_Hirshfeld_atom_moments
+
+      ! Urestricted properties?
+      if (genre/="restricted") then
+         .SCF:make_uHirshfeld_atom_info(output=TRUE)
+         .::put_uHirshfeld_atom_moments
+      end
+
+   end
+
+   put_Hirshfeld_atom_moments ::: private
+   ! Put the Hirshfeld charges
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   DIE_IF(NOT .Hirshfeld_atom_info_made,"no Hirshfeld atom info made!")
+
+      e_dipole,n_dipole,t_dipole :: VEC{REAL}(3)
+      ed,nd,td,dp :: REAL
+      a :: INT
+
+      ! Calculate dipole contributions
+      e_dipole = ZERO
+      n_dipole = ZERO
+      do a = 1,.n_atom
+         e_dipole = e_dipole + .atom(a).dipole
+         n_dipole = n_dipole + .atom(a).charge*.atom(a).position
+      end
+      t_dipole = e_dipole + n_dipole
+      ed = e_dipole.norm
+      nd = n_dipole.norm
+      td = t_dipole.norm
+
+      ! Write results in au
+      stdout.flush
+      stdout.text("Hirshfeld atom charges and Hirshfeld atom dipole moments (au):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.tab(int_fields=1)
+      stdout.put("q")
+      stdout.put("mu_x")
+      stdout.put("mu_y")
+      stdout.put("mu_z")
+      stdout.put("|mu|")
+      stdout.flush
+      stdout.put("Atom",int_width=TRUE)
+      stdout.tab(real_fields=1)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(.atom(a).charge)
+         stdout.put(.atom(a).dipole(1))
+         stdout.put(.atom(a).dipole(2))
+         stdout.put(.atom(a).dipole(3))
+         dp = .atom(a).dipole.norm
+         stdout.put(dp)
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.flush
+      stdout.text("Distributed dipole moments:")
+      stdout.flush
+      stdout.show("Total electronic dipole magnitude/au    =",ed)
+      stdout.show("Total nuclear dipole magnitude/au       =",nd)
+      stdout.show("Total dipole magnitude/au               =",td)
+
+      ! Write results in Debye
+      stdout.flush
+      stdout.text("Hirshfeld atom charges and Hirshfeld atom dipole moments (Debye):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.tab(int_fields=1)
+      stdout.put("q")
+      stdout.put("mu_x")
+      stdout.put("mu_y")
+      stdout.put("mu_z")
+      stdout.put("|mu|")
+      stdout.flush
+      stdout.put("Atom",int_width=TRUE)
+      stdout.tab(real_fields=1)
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(.atom(a).charge)
+         stdout.put(.atom(a).dipole(1).to_units("debye"))
+         stdout.put(.atom(a).dipole(2).to_units("debye"))
+         stdout.put(.atom(a).dipole(3).to_units("debye"))
+         dp = .atom(a).dipole.norm
+         stdout.put(dp.to_units("debye"))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.flush
+      stdout.show("Total electronic dipole magnitude/Debye =",ed.to_units("debye"))
+      stdout.show("Total nuclear dipole magnitude/Debye    =",nd.to_units("debye"))
+      stdout.show("Total dipole magnitude/Debye            =",td.to_units("debye"))
+
+      ! Write results in au
+      stdout.flush
+      stdout.text("Hirshfeld atom quadrupole moments (au):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      stdout.tab(int_fields=1)
+      stdout.put("Qxx")
+      stdout.put("Qyy")
+      stdout.put("Qzz")
+      stdout.put("Qxy")
+      stdout.put("Qxz")
+      stdout.put("Qyz")
+      stdout.flush
+      stdout.put("Atom",int_width=TRUE)
+      stdout.tab(int_fields=1)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(.atom(a).quadrupole(1,1))
+         stdout.put(.atom(a).quadrupole(2,2))
+         stdout.put(.atom(a).quadrupole(3,3))
+         stdout.put(.atom(a).quadrupole(1,2))
+         stdout.put(.atom(a).quadrupole(1,3))
+         stdout.put(.atom(a).quadrupole(2,3))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=6)
+
+   end
+
+   put_uHirshfeld_atom_moments ::: private
+   ! Make the unrestricted Hirshfeld atom properties
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   DIE_IF(NOT .uHirshfeld_atom_info_made,"no Hirshfeld atom info made!")
+
+      dp :: REAL
+      a :: INT
+
+      ! Write results in au
+      stdout.flush
+      stdout.text("Hirshfeld unpaired spin and unpaired spin dipole moments (au):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.tab(int_fields=1)
+      stdout.put("spin")
+      stdout.put("mu_x")
+      stdout.put("mu_y")
+      stdout.put("mu_z")
+      stdout.put("|mu|")
+      stdout.flush
+      stdout.put("Atom",int_width=TRUE)
+      stdout.tab(real_fields=1)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(.atom(a).spin)
+         stdout.put(.atom(a).spin_dipole(1))
+         stdout.put(.atom(a).spin_dipole(2))
+         stdout.put(.atom(a).spin_dipole(3))
+         dp = .atom(a).spin_dipole.norm
+         stdout.put(dp)
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.flush
+
+      ! Write results in Debye
+      stdout.flush
+      stdout.text("Hirshfeld unpaired charges and dipole moments (Debye):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.tab(int_fields=1)
+      stdout.put("spin")        !<=== ?      
+      stdout.put("mu_x")
+      stdout.put("mu_y")
+      stdout.put("mu_z")
+      stdout.put("|mu|")
+      stdout.flush
+      stdout.put("Atom",int_width=TRUE)
+      stdout.tab(real_fields=1)
+      stdout.put("/au")
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(.atom(a).spin)
+         stdout.put(.atom(a).spin_dipole(1).to_units("debye"))
+         stdout.put(.atom(a).spin_dipole(2).to_units("debye"))
+         stdout.put(.atom(a).spin_dipole(3).to_units("debye"))
+         dp = .atom(a).spin_dipole.norm
+         stdout.put(dp.to_units("debye"))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=5)
+
+   end
+
+   make_H_structure_factors ::: leaky
+   ! Put the Hirshfeld charges
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+
+
+      ! Make the inputs and call the helper
+      .SCF:make_Hirshfeld_inputs
+      .XTAL:make_H_structure_factors_h(output=TRUE)
+
+   end
+
+!  ===================
+!  Pairwise SCF energy
+!  ===================
+
+   put_scf_energy_in_mo_pairs
+   ! Analyze the SCF energy into MO pairs
+      Di :: OPMATRIX*
+      core_energy :: VEC{REAL}*
+      pair_energy :: MAT{REAL}*
+      i,j :: INT
+      energy :: REAL
+      direct :: BIN
+
+      core_energy.create(.n_a)
+      pair_energy.create(.n_a,.n_a)
+
+      core_energy = ZERO
+      pair_energy = ZERO
+
+      Di.create(.n_bf)
+
+      direct = .scfdata.using_direct_scf
+      .scfdata.set_using_direct_scf(TRUE)
+
+      do i = 1,.n_a
+
+         .BASE:make_scf_density_matrix(i)
+         .FOCK:make_fock_matrix(.density_matrix,.fock_matrix,core=TRUE,r12=FALSE)
+
+         Di.set_to(.density_matrix)
+
+         core_energy(i) = .SCF:scf_electronic_energy(Di,core=TRUE)
+
+         do j = 1,i
+
+            .BASE:make_scf_density_matrix(j)
+            .FOCK:make_fock_matrix(.density_matrix,.fock_matrix,core=FALSE,r12=TRUE)
+
+            energy = .SCF:scf_electronic_energy(Di,core=FALSE)
+
+            if (i==j) then; pair_energy(i,j) =     energy
+            else;           pair_energy(i,j) = TWO*energy
+            end
+
+         end
+
+      end
+      Di.destroy
+
+      .scfdata.set_using_direct_scf(direct)
+
+      stdout.flush
+      stdout.text("SCF MO pair energy decomposition:")
+      energy = sum(core_energy) + sum(transfer(pair_energy,(/ONE/))) + .BASE:nuclear_repulsion_energy
+      stdout.show("SCF energy =",energy)
+      stdout.text("Core energies:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.put("MO_i",int_width=TRUE)
+      stdout.put("Core energy")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      do i = 1,.n_a
+         stdout.put(i)
+         stdout.put(core_energy(i))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.flush
+      stdout.text("Orbital pair energies:")
+      stdout.dash(int_fields=2,real_fields=1)
+      stdout.put("MO_i",int_width=TRUE)
+      stdout.put("MO_j",int_width=TRUE)
+      stdout.put("Pair energy")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=1)
+      do i = 1,.n_a
+      do j = 1,i
+         stdout.put(i)
+         stdout.put(j)
+         stdout.put(pair_energy(i,j))
+         stdout.flush
+      end
+      end
+      stdout.dash(int_fields=2,real_fields=1)
+      stdout.flush
+   end
+
+   put_scf_energy_as_mo_parts
+   ! Analyze the SCF energy into MO contributions
+
+   ENSURE(.molecular_orbitals.created,"no MO's")
+   ENSURE(.orbital_energies.created,"no MO energies")
+   ENSURE(.density_matrix.created,"no density matrix")
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.scfdata.scf_kind=="rhf" OR .scfdata.scf_kind=="rks","must be restricted cakculation")
+
+      H :: MAT{REAL}*
+      mo_energy :: VEC{REAL}*
+      i :: INT
+
+      mo_energy.create(.n_a)
+      H.create(.n_bf,.n_bf)
+
+      .SCF:make_core_matrix
+      .core_matrix.restricted.change_basis_to(H,.molecular_orbitals.restricted)
+
+      do i = 1,.n_a
+         mo_energy(i) = H(i,i) + .orbital_energies.restricted(i)
+      end
+
+
+      stdout.flush
+      stdout.text("SCF MO energy decomposition:")
+      stdout.show("SCF electronic energy =",sum(mo_energy))
+      stdout.text("MO energies:")
+      stdout.flush
+      stdout.put(mo_energy)
+
+      H.destroy
+      mo_energy.destroy
+
+   end
+
+!  ========================
+!  SCF Energy decomposition
+!  ========================
+
+   put_AO_energy_partition
+   ! Put out the AO energy partition
+
+      Y :: MAT{REAL}*
+
+      Y.create(.n_bf,.n_bf)
+      Y.to_unit_matrix
+      .::put_energy_partition(Y)
+      Y.destroy
+
+   end
+
+   put_SAO_energy_partition
+   ! Put out the symmetric AO energy partition
+
+      Smh :: MAT{REAL}*
+
+      .INTS:make_overlap_matrix
+
+      Smh.create(.n_bf,.n_bf)
+      .INTS:make_r_overlap_inverse_sqrt(Smh)
+
+      .::put_energy_partition(Smh)
+
+      Smh.destroy
+   end
+
+   put_MO_energy_partition
+   ! Put out the MO energy partition. NOTE: the MO's must be ordered
+   ! contiguously, first group 1 then group 2 MO's, AND the atoms in each group
+   ! must be contiguous in the .atom list, first group 1 then group 2. This is
+   ! because the atom_group_AO_subspace_set routine is used, and by abuse of its
+   ! function with the above cobstraints, it will do the right thing and copy
+   ! quadrants.
+   ENSURE(.molecular_orbitals.created,"no MO's")
+   ENSURE(.molecular_orbitals.restricted.created,"no restricted MO's")
+      .::put_energy_partition(.molecular_orbitals.restricted)
+   end
+
+   put_energy_partition(Y)
+   ! Put out the energy decomposition specified in the .atom_group array.
+   ! The inverse of matrix "Y" is used to back transform the density matrix
+   ! (which is taken from disk). The back transformed density matrix is then
+   ! partitioned, and transformed back in order to evaluate the interaction
+   ! energies between the partitioned systems.
+      Y :: MAT{REAL}
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(size(.atom_group)==2,"must have only 2 groups")
+   ENSURE(Y.dim1==.n_bf,"incorrect size for Y array")
+
+      X, T,Z,ZZ,C,K,P,PP,W,E_T,E_Z, EE :: MAT{REAL}*
+      E_ZZ :: MAT3{REAL}*
+      E_C,E_K :: MAT4{REAL}*
+      n_group,g,h,i,j :: INT
+      fac :: REAL
+      unit :: STR
+      arch :: ARCHIVE
+      kinetic_energy,nuclear_attraction,nuclear_repulsion :: REAL
+      coulomb_repulsion,net_coulomb,bicentric_exchange :: REAL
+      exchange_attraction,total_interaction :: REAL
+
+      arch.set(.name,"density_matrix,restricted")
+      ENSURE(arch.exists,"no density matrix saved on disk")
+
+      P.create(.n_bf,.n_bf)
+      PP.create(.n_bf,.n_bf)
+      arch.read(P)
+
+      W.create(.n_bf,.n_bf)
+      T.create(.n_bf,.n_bf)
+      Z.create(.n_bf,.n_bf)
+      X.create(.n_bf,.n_bf)
+
+      X.to_inverse_of(Y)
+
+      .INTS:make_kinetic_energy_mx(T)
+      .INTS:make_nuclear_attraction_mx(Z)
+
+      n_group = size(.atom_group)
+      E_T.create(n_group,n_group); E_T = ZERO
+      E_Z.create(n_group,n_group); E_Z = ZERO
+      E_C.create(n_group,n_group,n_group,n_group); E_C = ZERO
+      E_K.create(n_group,n_group,n_group,n_group); E_K = ZERO
+      E_ZZ.create(n_group,n_group,n_group); E_ZZ = ZERO
+      ZZ.create(.n_bf,.n_bf)
+
+      PP = P
+      PP.back_transform_using(X)
+      X.destroy
+
+         do i = 1,n_group
+         do j = 1,i
+
+            W = ZERO
+            .::atom_group_AO_subspace_set(W,PP,i,j)
+            if (i/=j) &
+            .::atom_group_AO_subspace_set(W,PP,j,i)
+
+            W.back_transform_using(Y)
+
+            E_T(i,j) = T.trace_product_with(W)
+            E_Z(i,j) = Z.trace_product_with(W)
+
+            do g = 1,n_group
+               .INTS:make_nuclear_attraction_mx(ZZ,.atom_group(g).atom_index)
+               E_ZZ(i,j,g) = ZZ.trace_product_with(W)
+            end
+
+         end
+         end
+
+      ZZ.destroy
+
+      C.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
+
+      do g = 1,n_group
+      do h = 1,g
+
+         W = ZERO
+         .::atom_group_AO_subspace_set(W,PP,g,h)
+         if (g/=h) &
+         .::atom_group_AO_subspace_set(W,PP,h,g)
+         W.back_transform_using(Y)
+
+         .FOCK:make_r_JK_nosym(C,K,W)
+
+         do i = 1,n_group
+         do j = 1,i
+
+            W = ZERO
+            .::atom_group_AO_subspace_set(W,PP,i,j)
+            if (i/=j) &
+            .::atom_group_AO_subspace_set(W,PP,j,i)
+
+            W.back_transform_using(Y)
+
+            E_C(i,j,g,h) =  C.trace_product_with(W)
+            E_K(i,j,g,h) = -K.trace_product_with(W)
+
+         end
+         end
+
+      end
+      end
+
+      K.destroy
+      C.destroy
+
+      E_C = HALF*E_C
+      E_K = HALF*HALF*E_K
+      EE.create(n_group,n_group)
+      
+      stdout.text(" ")
+      stdout.text("Energies obtained with the current density matrix:")
+      stdout.text(" ")
+      fac = sum(E_T+E_Z) + sum(E_C+E_K)
+      stdout.show("SCF electronic energy =",fac)
+      stdout.show("SCF energy            =",fac+.BASE:nuclear_repulsion_energy)
+      stdout.show("Kinetic energy        =",sum(E_T))
+      
+      unit = "kcal/mol"
+      fac = unit.conversion_factor
+      E_T = fac*E_T
+      E_Z = fac*E_Z
+      E_C = fac*E_C
+      E_K = fac*E_K
+      E_ZZ = fac*E_ZZ
+      stdout.text(" ")
+      stdout.text("Energy decomposition in kcal/mol ...")
+      stdout.text(" ")
+      stdout.text("Kinetic interaction terms")
+      stdout.put(E_T)
+      stdout.text(" ")
+      stdout.text("Nuclear attraction interaction terms")
+      stdout.put(E_Z)
+      stdout.text(" ")
+      stdout.text("Nuclear attraction interaction terms ONLY for group 1 nuclei")
+      stdout.put(E_ZZ(:,:,1))
+      stdout.text(" ")
+      stdout.text("Nuclear attraction interaction terms ONLY for group 2 nuclei")
+      stdout.put(E_ZZ(:,:,2))
+      EE(1,1) = fac*.atom(.atom_group(1).atom_index).nuclear_repulsion_energy
+      EE(2,2) = fac*.atom(.atom_group(2).atom_index).nuclear_repulsion_energy
+      nuclear_repulsion = fac*.BASE:nuclear_repulsion_energy - EE(1,1) - EE(2,2)
+      EE(2,1) = nuclear_repulsion
+      EE(1,2) = ZERO
+      stdout.text(" ")
+      stdout.text("Nuclear nuclear repulsion")
+      stdout.put(EE)
+      EE(1,1) = E_C(1,1,1,1)
+      EE(2,1) = E_C(2,2,1,1)
+      EE(1,2) = E_C(1,1,2,2)
+      EE(2,2) = E_C(2,2,2,2)
+      stdout.text(" ")
+      stdout.text("Diagonal Coulomb repulsion interaction terms")
+      stdout.put(EE)
+      EE(1,1) = E_C(1,2,1,1)
+      EE(2,1) = E_C(2,1,1,1)
+      EE(1,2) = E_C(1,2,2,2)
+      EE(2,2) = E_C(2,1,2,2)
+      stdout.text(" ")
+      stdout.text("Semi diagonal Coulomb repulsion interaction terms")
+      stdout.put(EE)
+      EE(1,1) = E_C(1,2,1,2)
+      EE(2,1) = E_C(2,1,1,2)
+      EE(1,2) = E_C(1,2,2,1)
+      EE(2,2) = E_C(2,1,2,1)
+      stdout.text(" ")
+      stdout.text("Off diagonal Coulomb repulsion interaction terms")
+      stdout.put(EE)
+      stdout.text(" ")
+      stdout.text("All Coulomb repulsion interaction terms")
+      stdout.put(E_C)
+      EE(1,1) = E_K(1,1,1,1)
+      EE(2,1) = E_K(2,2,1,1)
+      EE(1,2) = E_K(1,1,2,2)
+      EE(2,2) = E_K(2,2,2,2)
+      stdout.text(" ")
+      stdout.text("Diagonal exchange interaction terms")
+      stdout.put(EE)
+      EE(1,1) = E_K(1,2,1,1)
+      EE(2,1) = E_K(2,1,1,1)
+      EE(1,2) = E_K(1,2,2,2)
+      EE(2,2) = E_K(2,1,2,2)
+      stdout.text(" ")
+      stdout.text("Semi diagonal exchange interaction terms")
+      stdout.put(EE)
+      EE(1,1) = E_K(1,2,1,2)
+      EE(2,1) = E_K(2,1,1,2)
+      EE(1,2) = E_K(1,2,2,1)
+      EE(2,2) = E_K(2,1,2,1)
+      stdout.text(" ")
+      stdout.text("Off diagonal exchange interaction terms")
+      stdout.put(EE)
+      stdout.text(" ")
+      stdout.text("All exchange interaction terms")
+      stdout.put(E_K)
+
+      kinetic_energy      = E_T(2,1)
+      nuclear_attraction  = sum(E_Z) - E_ZZ(1,1,1) - E_ZZ(2,2,2)
+      coulomb_repulsion   = sum(E_C) - E_C(1,1,1,1) - E_C(2,2,2,2)
+      net_coulomb         = nuclear_attraction + nuclear_repulsion + coulomb_repulsion
+      bicentric_exchange  = E_K(1,1,2,2) + E_K(2,2,1,1)
+      exchange_attraction = sum(E_K) - E_K(1,1,1,1) - E_K(2,2,2,2)
+      total_interaction   = kinetic_energy + net_coulomb + exchange_attraction
+
+      stdout.text(" ")
+      stdout.show("Electron-nuclear attraction =",nuclear_attraction)
+      stdout.show("Nuclear-nuclear repulsion   =",nuclear_repulsion)
+      stdout.show("Electron coulomb repulsion  =",coulomb_repulsion)
+      stdout.text(" ")
+      stdout.text("Interaction energies for "//trim(.name)//":")
+      stdout.text(" ")
+      stdout.show("Kinetic energy              =",kinetic_energy)
+      stdout.show("Exchange energy             =",exchange_attraction)
+      stdout.show("Kinetic + Exhange           =",kinetic_energy+exchange_attraction)
+      stdout.show("Bicentric Exchange          =",bicentric_exchange)
+      stdout.show("Net Coulomb energy          =",net_coulomb)
+      stdout.show("Net electronic en           =",nuclear_attraction+coulomb_repulsion)
+      stdout.show("Total int. energy           =",total_interaction)
+
+      kinetic_energy      = E_T(1,1)
+      exchange_attraction = E_K(1,1,1,1)
+      net_coulomb         = E_ZZ(1,1,1) + fac*.atom(.atom_group(1).atom_index).nuclear_repulsion_energy + E_C(1,1,1,1)
+      total_interaction   = kinetic_energy + net_coulomb + exchange_attraction
+
+      stdout.text(" ")
+      stdout.text("Monomer 1 energies:")
+      stdout.text(" ")
+      stdout.show("Kinetic energy 1            =",kinetic_energy)
+      stdout.show("Exchange energy 1           =",exchange_attraction)
+      stdout.show("Kinetic+Exhange 1           =",kinetic_energy+exchange_attraction)
+      stdout.show("Net Coulomb 1               =",net_coulomb)
+      stdout.show("Total 1                     =",total_interaction)
+
+      kinetic_energy      = E_T(2,2)
+      exchange_attraction = E_K(2,2,2,2)
+      net_coulomb         = E_ZZ(2,2,2) + fac*.atom(.atom_group(2).atom_index).nuclear_repulsion_energy + E_C(2,2,2,2)
+      total_interaction   = kinetic_energy + net_coulomb + exchange_attraction
+
+      stdout.text(" ")
+      stdout.text("Monomer 2 energies:")
+      stdout.text(" ")
+      stdout.show("Kinetic energy 2            =",kinetic_energy)
+      stdout.show("Exchange energy 2           =",exchange_attraction)
+      stdout.show("Kinetic+Exhange 2           =",kinetic_energy+exchange_attraction)
+      stdout.show("Net Coulomb 2               =",net_coulomb)
+      stdout.show("Total 2                     =",total_interaction)
+
+      EE.destroy
+      E_ZZ.destroy
+      E_K.destroy
+      E_C.destroy
+      E_Z.destroy
+      E_T.destroy
+      Z.destroy
+      T.destroy
+      W.destroy
+      PP.destroy
+      P.destroy
+
+   end
+
+!   put_roby_energy_partition
+!   ! Put out the energy decomposition specified in the .atom_group array.
+!   ! The inverse of matrix "Y" is used to back transform the density matrix
+!   ! (which is taken from disk). The back transformed density matrix is then
+!   ! partitioned, and transformed back in order to evaluate the interaction
+!   ! energies between the partitioned systems.
+!      unit :: STR
+!      arch :: ARCHIVE
+!      E_T,E_T_A,E_T_B, E_Z,E_Z_A,E_Z_B :: REAL
+!      E_C,E_C_A,E_C_B, E_K,E_K_A,E_K_B, E_N,E_N_A,E_N_B :: REAL
+!      kinetic_energy,nuclear_attraction,nuclear_repulsion :: REAL
+!      coulomb_repulsion,net_coulomb :: REAL
+!      exchange_attraction,total_interaction :: REAL
+!      energy, promotion_energy, fac :: REAL
+!      P,P_A,P_B,MO,OM,Q,T,Z,C,K :: MAT{REAL}*
+!      n,f,l :: INT
+!      ENSURE(.atom_group.created,"no atom group information")
+!      ENSURE(size(.atom_group)==2,"must have only 2 groups")
+!      arch.set(.name,"density_matrix,restricted")
+!      ENSURE(arch.exists,"no density matrix")
+!      P.create(.n_bf,.n_bf)
+!      arch.read(P) ! Read the density from disk
+!      !
+!      .make_progroup_density(MOs=TRUE)
+!  ! stdout.text(" ")
+!  ! stdout.text("WARING, no symorthonormilsation")
+!      .symorthonormalise_occupied_MOs
+!      !
+!      P_A.create(.n_bf,.n_bf)
+!      P_B.create(.n_bf,.n_bf)
+!      MO.create(.n_bf,.n_bf)
+!      OM.create(.n_bf,.n_bf)
+!      Q.create(.n_bf,.n_bf)
+!      MO = .molecular_orbitals.restricted
+!      OM.to_inverse_of(MO)
+!      P.back_transform_to(Q,OM)
+!      n = .occupation_numbers.restricted(1:).index_of_first_zero_value - 1
+!    stdout.text(" ")
+!    stdout.show("n =",n)
+!      P_A = ZERO
+!      P_A(1:n,1:n) = Q(1:n,1:n)
+!    stdout.text("P_A :")
+!    stdout.put(P_A)
+!      P_A.back_transform_using(MO)
+!      f = .occupation_numbers.restricted(n+1:).index_of_first_nonzero_value
+!      f = n + f
+!      l = .occupation_numbers.restricted(f:).index_of_first_zero_value - 1
+!      l = f + l - 1
+!    stdout.show("f =",f)
+!    stdout.show("l =",l)
+!      P_B = ZERO
+!      P_B(f:l,f:l) = Q(f:l,f:l)
+!    stdout.text("P_B :")
+!    stdout.put(P_B)
+!      P_B.back_transform_using(MO)
+!    stdout.text("Q :")
+!    stdout.put(Q)
+!      Q.destroy
+!      OM.destroy
+!      MO.destroy
+!      !
+!      unit = "kcal/mol"
+!      fac = unit.conversion_factor
+!      !
+!      T.create(.n_bf,.n_bf)
+!      .make_kinetic_energy_mx(T)
+!      E_T   = T.trace_product_with(P)*fac
+!      E_T_A = T.trace_product_with(P_A)*fac
+!      E_T_B = T.trace_product_with(P_B)*fac
+!      T.destroy
+!      !
+!      Z.create(.n_bf,.n_bf)
+!      .INTS:make_nuclear_attraction_mx(Z)
+!      E_Z   = Z.trace_product_with(P)*fac
+!      .INTS:make_nuclear_attraction_mx(Z,.atom_group(1).element)
+!      E_Z_A = Z.trace_product_with(P_A)*fac
+!      .INTS:make_nuclear_attraction_mx(Z,.atom_group(2).element)
+!      E_Z_B = Z.trace_product_with(P_B)*fac
+!      Z.destroy
+!      !
+!      C.create(.n_bf,.n_bf)
+!      K.create(.n_bf,.n_bf)
+!      .FOCK:make_r_JK_nosym(C,K,P)
+!      E_C   = HALF*C.trace_product_with(P)*fac
+!      E_K   = -QUARTER*K.trace_product_with(P)*fac
+!      .FOCK:make_r_JK_nosym(C,K,P_A)
+!      E_C_A = HALF*C.trace_product_with(P_A)*fac
+!      E_K_A = -QUARTER*K.trace_product_with(P_A)*fac
+!      .FOCK:make_r_JK_nosym(C,K,P_B)
+!      E_C_B = HALF*C.trace_product_with(P_B)*fac
+!      E_K_B = -QUARTER*K.trace_product_with(P_B)*fac
+!      K.destroy
+!      C.destroy
+!      P_B.destroy
+!      P_A.destroy
+!      P.destroy
+!      !
+!      E_N   = .BASE:nuclear_repulsion_energy*fac
+!      E_N_A = .atom(.atom_group(1).element).nuclear_repulsion_energy*fac
+!      E_N_B = .atom(.atom_group(2).element).nuclear_repulsion_energy*fac
+!      stdout.text(" ")
+!      !
+!      energy              = E_T + E_Z + E_C + E_K
+!      kinetic_energy      = E_T - E_T_A - E_T_B
+!      nuclear_attraction  = E_Z - E_Z_A - E_Z_B
+!      nuclear_repulsion   = E_N - E_N_A - E_N_B
+!      coulomb_repulsion   = E_C - E_C_A - E_C_B
+!      net_coulomb         = nuclear_attraction + nuclear_repulsion + coulomb_repulsion
+!      exchange_attraction = E_K - E_K_A - E_K_B
+!      total_interaction   = kinetic_energy + net_coulomb + exchange_attraction
+!      !
+!      stdout.text(" ")
+!      stdout.show("SCF electronic energy =",(energy/fac))
+!      stdout.show("SCF energy !      =",(energy/fac)+.BASE:nuclear_repulsion_energy)
+!      stdout.show("Kinetic energy        =",(E_T/fac))
+!      stdout.text(" ")
+!      stdout.text("Roby energy decomposition in kcal/mol ...")
+!      stdout.text(" ")
+!      stdout.text("Interaction energies for "//trim(.name)//":")
+!      stdout.text(" ")
+!      stdout.show("Energy             =",energy)
+!      stdout.show("Kinetic energy     =",kinetic_energy)
+!      stdout.show("Exchange energy    =",exchange_attraction)
+!      stdout.show("Kinetic + Exhange  =",kinetic_energy+exchange_attraction)
+!      stdout.show("Net Coulomb energy =",net_coulomb)
+!      stdout.show("Total int. energy  =",total_interaction)
+!      !
+!      kinetic_energy      = E_T_A
+!      exchange_attraction = E_K_A
+!      net_coulomb         = E_Z_A + E_N_A + E_C_A
+!      total_interaction   = kinetic_energy + net_coulomb + exchange_attraction
+!      promotion_energy    = total_interaction - .atom_group_energy(1)*fac
+!      stdout.text(" ")
+!      stdout.text("Monomer 1 energies:")
+!      stdout.text(" ")
+!      stdout.show("Kinetic energy 1   =",kinetic_energy)
+!      stdout.show("Exchange energy 1  =",exchange_attraction)
+!      stdout.show("Kinetic+Exhange 1  =",kinetic_energy+exchange_attraction)
+!      stdout.show("Net Coulomb 1      =",net_coulomb)
+!      stdout.show("Total 1            =",total_interaction)
+!      stdout.show("Promotion 1        =",promotion_energy)
+!      !
+!      kinetic_energy      = E_T_B
+!      exchange_attraction = E_K_B
+!      net_coulomb         = E_Z_B + E_N_B + E_C_B
+!      total_interaction   = kinetic_energy + net_coulomb + exchange_attraction
+!      promotion_energy    = total_interaction - .atom_group_energy(2)*fac
+!      stdout.text(" ")
+!      stdout.text("Monomer 2 energies:")
+!      stdout.text(" ")
+!      stdout.show("Kinetic energy 2   =",kinetic_energy)
+!      stdout.show("Exchange energy 2  =",exchange_attraction)
+!      stdout.show("Kinetic+Exhange 2  =",kinetic_energy+exchange_attraction)
+!      stdout.show("Net Coulomb 2      =",net_coulomb)
+!      stdout.show("Total 2            =",total_interaction)
+!      stdout.show("Promotion 2        =",promotion_energy)
+!   end
+
+   put_roby_smo_energy_partition
+   ! Put out the roby energy decomposition specified in the .atom_group array
+   ! based on symmetrically orthonormalised monomer molecular (SOMMO) fragments.
+   ! A supermolecue density matrix must exist on disk.
+      .::put_roby_energy_partition(symorthonormalise=TRUE)
+   end
+
+   put_roby_mmo_energy_partition
+   ! Put out the roby energy decomposition specified in the .atom_group array
+   ! based on monomer molecular (MMO) fragments.  A supermolecue density matrix
+   ! must exist on disk.
+      .::put_roby_energy_partition(symorthonormalise=FALSE)
+   end
+
+   put_roby_energy_partition(symorthonormalise) ::: leaky
+   ! Calculate and put out the roby energy decomposition using groups
+   ! specified in the .atom_group array.  If "symorthonormalise" is
+   ! TRUE, then the occupied monomer molecular orbitals are
+   ! symmetrically orthonormalised in order to define the fragments.
+   ! NOTE: The density matrix defining the supermolecule is read in
+   ! from the disk, so an SCF calculation or a "make_group_density_matrix"
+   ! calculation must be done before this routine is called.
+      symorthonormalise :: BIN
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+
+      unit :: STR
+      arch :: ARCHIVE
+      E_T,E_T_A,E_T_B, E_Z,E_Z_A,E_Z_B :: REAL
+      E0_A,E0_B, E0_T_A,E0_T_B, E0_Z_A,E0_Z_B :: REAL
+      E_C,E_C_A,E_C_B, E_K,E_K_A,E_K_B, E_N,E_N_A,E_N_B :: REAL
+      E0_C_A,E0_C_B, E0_K_A,E0_K_B :: REAL
+      E_kin,E_att,E_rep,E_coul,E_net_coul,E_ex,E_int,E_prom,energy, fac :: REAL
+      P,P_A,P_B,MO,D,T,Z,C,K :: MAT{REAL}*
+      n,f,l :: INT
+
+      ! Units
+      unit = "kcal/mol"
+      fac = unit.conversion_factor
+
+      ! Make the ANOs: atom groups need it (leaky)
+      .SCF::make_ANO_data
+
+      ! Make the atom_group(:).mol's
+    ! .BASE:make_atom_group_info
+
+      ! Make sure ANO data and atom_group(:).mol scfdata is up-to-date (leaky)
+      .BASE:update_group_info
+
+      ! Density matrix exists?
+      arch.set(.name,"density_matrix,restricted")
+      ENSURE(arch.exists,"no density matrix")
+
+      ! Read density from disk
+      P.create(.n_bf,.n_bf)
+      arch.read(P)
+
+      ! Make the monomer density and MO's
+      .SCF:make_progroup_density(MOs=TRUE)
+
+      ! Make the group energies
+      .SCF:make_group_energies(1,E0_A,E0_T_A,E0_Z_A,E0_C_A,E0_K_A,fac)
+      .SCF:make_group_energies(2,E0_B,E0_T_B,E0_Z_B,E0_C_B,E0_K_B,fac)
+
+      ! Symorthonormalise the occupied monomer MO's
+      if (symorthonormalise) then
+         .SCF:symorthonormalise_occupied_MOs
+      else
+         stdout.text(" ")
+         stdout.text("WARNING: no symorthonormalisation of occupied MO's")
+      end
+
+      ! Do the energy decomposition
+      P_A.create(.n_bf,.n_bf)
+      P_B.create(.n_bf,.n_bf)
+      D.create(.n_bf,.n_bf)
+
+      .INTS:make_overlap_matrix
+
+      P.change_basis_to(P_A,.overlap_matrix)
+      P_B = P_A
+      n   = .occupation_numbers.restricted(1:).index_of_first_zero_value - 1
+      MO => .molecular_orbitals.restricted(:,1:n)
+      D.to_product_of(MO,MO,transpose_b=TRUE)
+      P_A.change_basis_using(D)
+
+      f  = .occupation_numbers.restricted(n+1:).index_of_first_nonzero_value
+      f  = n + f
+      l  = .occupation_numbers.restricted(f:).index_of_first_zero_value - 1
+      l  = f + l - 1
+      MO => .molecular_orbitals.restricted(:,f:l)
+      D.to_product_of(MO,MO,transpose_b=TRUE)
+      P_B.change_basis_using(D)
+      D.destroy
+      
+      T.create(.n_bf,.n_bf)
+      .INTS:make_kinetic_energy_mx(T)
+      E_T   = T.trace_product_with(P)*fac
+      E_T_A = T.trace_product_with(P_A)*fac
+      E_T_B = T.trace_product_with(P_B)*fac
+      T.destroy
+      
+      Z.create(.n_bf,.n_bf)
+      .INTS:make_nuclear_attraction_mx(Z)
+      E_Z   = Z.trace_product_with(P)*fac
+      .INTS:make_nuclear_attraction_mx(Z,.atom_group(1).atom_index)
+      E_Z_A = Z.trace_product_with(P_A)*fac
+      .INTS:make_nuclear_attraction_mx(Z,.atom_group(2).atom_index)
+      E_Z_B = Z.trace_product_with(P_B)*fac
+      Z.destroy
+      
+      C.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
+      .FOCK:make_r_JK_nosym(C,K,P)
+      E_C   = HALF*C.trace_product_with(P)*fac
+      E_K   = -QUARTER*K.trace_product_with(P)*fac
+      .FOCK:make_r_JK_nosym(C,K,P_A)
+      E_C_A = HALF*C.trace_product_with(P_A)*fac
+      E_K_A = -QUARTER*K.trace_product_with(P_A)*fac
+      .FOCK:make_r_JK_nosym(C,K,P_B)
+      E_C_B = HALF*C.trace_product_with(P_B)*fac
+      E_K_B = -QUARTER*K.trace_product_with(P_B)*fac
+      K.destroy
+      C.destroy
+      P_B.destroy
+      P_A.destroy
+      P.destroy
+      
+      E_N   = fac*.BASE:nuclear_repulsion_energy
+      E_N_A = .atom(.atom_group(1).atom_index).nuclear_repulsion_energy*fac
+      E_N_B = .atom(.atom_group(2).atom_index).nuclear_repulsion_energy*fac
+      stdout.text(" ")
+      
+      stdout.text(" ")
+      stdout.text("Supermolecule energies:")
+      stdout.text(" ")
+      energy     = E_T + E_Z + E_C + E_K
+      stdout.show("SCF electronic energy =",(energy/fac))
+      stdout.show("... in kcal/mol       =",energy)
+      stdout.show("SCF energy =",(energy/fac)+.BASE:nuclear_repulsion_energy)
+      stdout.show("... in kcal/mol =",energy+fac*.BASE:nuclear_repulsion_energy)
+      stdout.show("Kinetic energy        =",E_T)
+      stdout.show("... in kcal/mol       =",(E_T/fac))
+      stdout.text(" ")
+      stdout.text("Roby interaction energy decomposition (kcal/mol):")
+
+      E_kin      = E_T - E_T_A - E_T_B
+      E_ex       = E_K - E_K_A - E_K_B
+      E_att      = E_Z - E_Z_A - E_Z_B
+      E_rep      = E_N - E_N_A - E_N_B
+      E_coul     = E_C - E_C_A - E_C_B
+      E_net_coul = E_att + E_rep + E_coul
+      E_int      = E_kin + E_net_coul + E_ex
+      ::put_roby_energy_parts(E_kin,E_ex,E_coul,E_att,E_rep,E_int)
+      
+      stdout.text(" ")
+      stdout.text("Interacting Monomer 1 energies (kcal/mol):")
+      stdout.text(" ")
+      E_int      = E_T_A + (E_Z_A + E_N_A + E_C_A) + E_K_A
+      E_prom     = E_int - .atom_group(1).mol.scfdata.energy*fac
+      ::put_roby_energy_parts(E_T_A,E_K_A,E_C_A,E_Z_A,E_N_A,E_int,E_prom)
+      
+      stdout.text(" ")
+      stdout.text("Isolated Monomer 1 energies (kcal/mol):")
+      stdout.text(" ")
+      stdout.show("Monomer 1 energy   =",.atom_group(1).mol.scfdata.energy)
+      stdout.show("... in k/cal mol   =",.atom_group(1).mol.scfdata.energy*fac)
+      stdout.text(" ")
+      ::put_roby_energy_parts(E0_T_A,E0_K_A,E0_C_A,E0_Z_A,E_N_A)
+      
+      stdout.text(" ")
+      stdout.text("Changes in monomer 1 energy contributions (kcal/mol):")
+      E_kin      = E_T_A - E0_T_A
+      E_ex       = E_K_A - E0_K_A
+      E_coul     = E_C_A - E0_C_A
+      E_att      = E_Z_A - E0_Z_A            ! nuclear attraction
+      E_rep      = ZERO                      ! change in nuclear repulsion is zero
+      E_net_coul = E_att + E_rep + E_coul
+      E_prom     = E_kin + E_net_coul + E_ex
+      ::put_roby_energy_parts(E_kin,E_ex,E_coul,E_att,E_rep,E_prom=E_prom)
+      
+      stdout.text(" ")
+      stdout.text("Interacting Monomer 2 energies (kcal/mol):")
+      stdout.text(" ")
+      E_int      = E_T_B + (E_Z_B + E_N_B + E_C_B) + E_K_B
+      E_prom     = E_int - .atom_group(2).mol.scfdata.energy*fac
+      ::put_roby_energy_parts(E_T_B,E_K_B,E_C_B,E_Z_B,E_N_B,E_int,E_prom)
+      
+      stdout.text(" ")
+      stdout.text("Isolated Monomer 2 energies (kcal/mol):")
+      stdout.text(" ")
+      stdout.show("Monomer 2 energy   =",.atom_group(2).mol.scfdata.energy)
+      stdout.show("... in k/cal mol   =",.atom_group(2).mol.scfdata.energy*fac)
+      stdout.text(" ")
+      ::put_roby_energy_parts(E0_T_B,E0_K_B,E0_C_B,E0_Z_B,E_N_B)
+      
+      stdout.text(" ")
+      stdout.text("Changes in monomer 2 energy contributions (kcal/mol):")
+      E_kin      = E_T_B - E0_T_B
+      E_ex       = E_K_B - E0_K_B
+      E_coul     = E_C_B - E0_C_B
+      E_att      = E_Z_B - E0_Z_B            ! nuclear attraction
+      E_rep      = ZERO                      ! change in nuclear repulsion is zero
+      E_net_coul = E_att + E_rep + E_coul
+      E_prom     = E_kin + E_net_coul + E_ex
+      ::put_roby_energy_parts(E_kin,E_ex,E_coul,E_att,E_rep,E_prom=E_prom)
+
+   end
+
+   put_roby_energy_parts(E_T,E_K,E_C,E_Z,E_N,E_int,E_prom) ::: selfless, private
+   ! Put of the Roby energy parts
+      E_T,E_K,E_C,E_Z,E_N :: REAL
+      E_int,E_prom :: REAL, optional
+
+      stdout.flush
+      stdout.show("Kinetic energy       =",E_T)
+      stdout.show("Exchange energy      =",E_K)
+      stdout.show("Kinetic + Exhange    =",E_T+E_K)
+      stdout.show("Nuclear attraction   =",E_Z)
+      stdout.show("Nuclear repulsion    =",E_N)
+      stdout.show("Electronic repulsion =",E_C)
+      stdout.show("Net coulomb energy   =",E_Z+E_N+E_C)
+
+      if (present(E_int)) &
+      stdout.show("Total int. energy    =",E_int)
+      if (present(E_prom)) &
+      stdout.show("Promotion energy     =",E_prom)
+
+   end
+
+!  =========================
+!  Crystal Explorer energies
+!  =========================
+   
+   put_group_12_Grimme2006_energy ::: leaky
+   ! Calculate the 1-2 dispersion and repulsion term from atom-atom potentials
+   ! See Spackman M. A. (1986) J. Chem. Phys. 85(11) p?
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+
+      unit :: STR
+      E_disp,fac :: REAL
+      mol_A, mol_B :: MOLECULE*
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      E_disp = mol_A.atom.Grimme06_dispersion_energy(mol_B.atom)
+
+      ! Convert units to kJmol-1
+      unit = "kJ/mol"
+      fac = unit.conversion_factor
+      E_disp = E_disp * fac
+
+      ! Output energies
+
+      stdout.flush
+      stdout.text("===========================================")
+      stdout.text("Grimme (2006) atom-atom dispersion energy")
+      stdout.text("===========================================")
+      stdout.flush
+      stdout.text(". See: Grimme (2006) J. Comp. Chem.  27(15) p. 1787")
+      stdout.text(". E_disp = sum over atoms (C6 / r^6).")
+      stdout.flush
+      stdout.show("Grimme06 dispersion energy (kJ/mol) = ", E_disp)
+
+   end
+
+
+   put_group_12_Spackman1986_energies ::: leaky
+   ! Calculate the 1-2 dispersion and repulsion term from atom-atom potentials
+   ! See Spackman M. A. (1986) J. Chem. Phys. 85(11) p?
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+
+      unit :: STR
+      E_disp,E_rep,fac :: REAL
+      mol_A, mol_B :: MOLECULE*
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      E_disp = mol_A.atom.Spackman86_dispersion_energy(mol_B.atom)
+      E_rep  = mol_A.atom.Spackman86_repulsion_energy(mol_B.atom)
+
+      ! Convert units to kJmol-1
+      unit = "kJ/mol"
+      fac = unit.conversion_factor
+      E_disp = E_disp * fac
+      E_rep  = E_rep * fac
+
+      ! Output energies
+
+      stdout.flush
+      stdout.text("==============================================")
+      stdout.text("Spackman (1986) atom-atom interaction energies")
+      stdout.text("==============================================")
+      stdout.flush
+      stdout.text(". See: Spackman (1986) JCP 85 p. 6579")
+      stdout.text(". Repulsion is an exponential fit to Gordon-Kim")
+      stdout.text("  energies, modified for H-bonding and H-H contacts")
+      stdout.text(". Dispersion from C6 London-formula-combined atomic")
+      stdout.text("  dipole polarizabilities")
+
+      stdout.flush
+      stdout.show("Spackman86 dispersion energy (kJ/mol) = ", E_disp)
+      stdout.show("Spackman86 repulsion  energy (kJ/mol) = ", E_rep)
+
+   end
+
+! Old
+
+   put_group_12_coulomb_energy_v0 ::: leaky
+   ! Calculate the 1-2 coulomb energy.
+   ! NOTE: make sure the density matrices for each group exist!
+   ! e.g. by reading gaussian or by "make_group_density_matrix"
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+   ENSURE(.atom_group(1).mol.density_matrix.created ,"no mol 1 density matrix!")
+   ENSURE(.atom_group(2).mol.density_matrix.created ,"no mol 2 density matrix!")
+
+      unit :: STR
+      E_Z,E_Z_A,E_Z_B :: REAL
+      E_C,E_C_A,E_C_B :: REAL
+      E_N,E_N_A,E_N_B :: REAL
+      E_att,E_rep,E_coul,E_net_coul, fac :: REAL
+      P,P_A,P_B,Z,C :: MAT{REAL}*
+      n_a,n_b :: INT
+      mol_A,mol_B :: MOLECULE*
+
+      ! Units
+      unit = "kJ/mol"
+      fac = unit.conversion_factor
+
+      ! Read in Gaussian FChk files in order to get density matrices of the groups
+      ! and make self be the concatenation of the atom_group molecules.
+    ! .BASE:put
+
+      ! Do the energy decomposition
+      P.create(.n_bf,.n_bf)
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+      P_A   => mol_A.density_matrix.restricted
+      P_B   => mol_B.density_matrix.restricted
+
+
+      ! Copy the density matrices
+      n_A = mol_A.n_bf
+      n_B = mol_B.n_bf
+      P = ZERO
+      P(    1:n_A,    1:n_A) = P_A
+      P(n_B+1:   ,n_B+1:   ) = P_B
+
+      ! Electron-nuclear coulomb energy
+      Z.create(.n_bf,.n_bf)
+      .INTS:make_nuclear_attraction_mx(Z)
+      E_Z   = Z.trace_product_with(P)
+      Z.destroy
+
+
+      Z.create(n_A,n_A)
+      mol_A.INTS:make_nuclear_attraction_mx(Z)
+      E_Z_A = Z.trace_product_with(P_A)
+      Z.destroy
+
+      Z.create(n_B,n_B)
+      mol_B.INTS:make_nuclear_attraction_mx(Z)
+      E_Z_B = Z.trace_product_with(P_B)
+      Z.destroy
+
+      E_att = E_Z - E_Z_A - E_Z_B
+
+      ! Electron-electron interaction energy
+      C.create(.n_bf,.n_bf)
+      .FOCK:make_r_J_nosym(C,P)
+      E_C   = HALF*C.trace_product_with(P)
+      C.destroy
+
+      C.create(n_A,n_A)
+      mol_A.FOCK:make_r_J_nosym(C,P_A) ! Molecule A coulomb matrix
+      E_C_A = HALF*C.trace_product_with(P_A)
+      C.destroy
+
+      C.create(n_B,n_B)
+      mol_B.FOCK:make_r_J_nosym(C,P_B) ! Molecule B coulomb matrix
+      E_C_B = HALF*C.trace_product_with(P_B)
+      C.destroy
+
+      E_coul = E_C - E_C_A - E_C_B
+
+      ! Clean
+      C.destroy
+      P.destroy
+      
+      ! Nuclear-nuclear repulsion energies
+      E_N   =      .BASE:nuclear_repulsion_energy
+      E_N_A = mol_A.BASE:nuclear_repulsion_energy
+      E_N_B = mol_B.BASE:nuclear_repulsion_energy
+      E_rep = E_N - E_N_A - E_N_B
+
+    ! stdout.show("E_NN(A)      = ",E_N_A)
+    ! stdout.show("E_NN(B)      = ",E_N_B)
+
+      stdout.show("E_EN(TOT)    = ",E_att)
+      stdout.show("E_NN(TOT)    = ",E_rep)
+      stdout.show("E_EE(TOT)    = ",E_coul)
+      
+      ! Do it
+      E_net_coul = E_att + E_rep + E_coul
+      E_net_coul = fac*E_net_coul
+      stdout.show("Total coulomb interaction energy kJ/mol = ",E_net_coul)
+      
+   end
+
+   put_group_12_energies_v0 ::: leaky
+   ! Calculate the group 1-2 interaction energies.
+   ! For simplicity the notations follows the reference:
+   ! P. Su & H. Li (2009) JCP 131 p. 014102
+   ! It has references to the original work and is explained fairly
+   ! clearly, except for their use of "X" for supermolecule (X=AB).
+   ! NOTE: make sure the MO's and density matrices for each group exist!
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+   ENSURE(.atom_group(1).mol.density_matrix.created ,"no mol 1 density matrix!")
+   ENSURE(.atom_group(2).mol.density_matrix.created ,"no mol 2 density matrix!")
+   ENSURE(.atom_group(1).mol.molecular_orbitals.created ,"no mol 1 MOs!")
+   ENSURE(.atom_group(2).mol.molecular_orbitals.created ,"no mol 2 MOs!")
+
+      E_en,E_ke,E_1e,E_nn,E_ee,E_ex :: REAL
+      E_tot,E_net,E_ABn,E_ABo, E_rep,E_XR :: REAL
+      X,X_A,X_B :: MAT{REAL}*
+      C,C_A,C_B :: MAT{REAL}*
+      K,K_A,K_B :: MAT{REAL}*
+      mol_A,mol_B :: MOLECULE*
+
+      ! ======================
+      ! Get non orthogonal MOs
+      ! ======================
+
+      .SCF:merge_group_MOs_r
+      .BASE:make_scf_density_matrix
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      ! Make integrals
+           .SCF:make_r_core_matrix
+      mol_A.SCF:make_r_core_matrix
+      mol_B.SCF:make_r_core_matrix
+
+      ! >> Nuclear attraction energy
+           .nuclear_attraction_matrix.uncompress
+      mol_A.nuclear_attraction_matrix.uncompress
+      mol_B.nuclear_attraction_matrix.uncompress
+
+      X   =>      .nuclear_attraction_matrix.restricted
+      X_A => mol_A.nuclear_attraction_matrix.restricted
+      X_B => mol_B.nuclear_attraction_matrix.restricted
+
+      E_en  = .::group_12_int_energy(X,X_A,X_B)
+
+           .nuclear_attraction_matrix.compress
+      mol_A.nuclear_attraction_matrix.compress
+      mol_B.nuclear_attraction_matrix.compress
+
+      ! Non-orthogonal & orthogonalized electronic energies
+      ! Nuclear-nuclear repulsion not needed.
+      E_ABn = ZERO
+      E_ABo = ZERO
+
+      ! One electron hamiltonian
+      X   =>      .core_matrix.restricted
+      X_A => mol_A.core_matrix.restricted
+      X_B => mol_B.core_matrix.restricted
+
+      ! >> One electron interaction energy <<
+      E_1e = .::group_12_int_energy(X,X_A,X_B,E_AB=E_ABn)
+      E_ke = E_1e - E_en
+
+      ! Two-electron matrices
+        C.create(     .n_bf,     .n_bf)
+      C_A.create(mol_A.n_bf,mol_A.n_bf)
+      C_B.create(mol_B.n_bf,mol_B.n_bf)
+
+        K.create(     .n_bf,     .n_bf)
+      K_A.create(mol_A.n_bf,mol_A.n_bf)
+      K_B.create(mol_B.n_bf,mol_B.n_bf)
+
+      X   =>      .density_matrix.restricted
+      X_A => mol_A.density_matrix.restricted
+      X_B => mol_B.density_matrix.restricted
+
+           .FOCK:make_r_JK_engine(C  ,K  ,X  )
+      mol_A.FOCK:make_r_JK_engine(C_A,K_A,X_A)
+      mol_B.FOCK:make_r_JK_engine(C_B,K_B,X_B)
+
+      ! >> Two-electron interaction energies <<
+      E_ee = .::group_12_int_energy(C,C_A,C_B, HALF   ,E_ABn)
+      E_ex = .::group_12_int_energy(K,K_A,K_B,-QUARTER,E_ABn)
+
+      K_B.destroy
+      K_A.destroy
+        K.destroy
+
+      C_B.destroy
+      C_A.destroy
+        C.destroy
+
+      ! >> Nuclear-nuclear repulsion energy <<
+      E_nn = .::group_12_NR_int_energy
+      
+      ! >> Total <<
+      E_tot = E_ke + E_nn + E_en + E_ee + E_ex
+      E_net =        E_nn + E_en + E_ee
+
+      stdout.flush
+      stdout.text("=================================================")
+      stdout.text("Promolecule (non-orthogonal) interaction energies")
+      stdout.text("=================================================")
+      stdout.flush
+      stdout.text(". E_pro-supermol(non-orthog) is the energy for the ")
+      stdout.text("  non-orthogonal pro-supermolecule product wavefunction ")
+      stdout.text("  Psi = Psi_1 Psi_2")
+      stdout.flush
+      stdout.text(". Delta E_X = E_X(Psi) - E_X(Psi_1) - E_X(Psi_2)")
+      stdout.text("  where the terms on the right are calculated as")
+      stdout.text("  expectation vaues of the respective operators X")
+      stdout.flush
+      stdout.text(". NOTE: none of these terms is physically meaningful")
+      stdout.text("  because they don't come from a valid antisymmetric")
+      stdout.text("  wavefunction; however the promolecule does produce")
+      stdout.text("  reasonable electronic densitiesl for use in X-ray")
+      stdout.text("  crystallography, so Delta E_coulomb, which is the ")
+      stdout.text("  classical interaction energy, is useful")
+
+      stdout.flush
+      stdout.show("0. E_pro-supermol(non-orthog)         = ",E_ABn)
+      stdout.show("1. Delta E_kinetic-energy             = ",E_ke)
+      stdout.show("2. Delta E_nn-repulsion               = ",E_nn)
+      stdout.show("3. Delta E_en-attraction              = ",E_en)
+      stdout.show("4. Delta E_ee-repulsion               = ",E_ee)
+      stdout.show("5. Delta E_ee-exchange                = ",E_ex)
+                                                         
+      stdout.flush                                       
+      stdout.show("Delta E         (1+2+3+4+5)           = ",E_tot)
+      stdout.show("Delta E_coulomb   (2+3+4)             = ",E_net)
+                                                         
+      ! In kJ/mol                                        
+      E_net = E_net.to_units("kJ/mol")                   
+      stdout.show("Delta E_coulomb (kJ/mol)              = ",E_net)
+
+      ! ======================
+      ! Now symmorthonormalize 
+      ! ======================
+
+      .SCF:symmorthonormalize_occupied_MOs_r
+      .BASE:make_scf_density_matrix
+
+      ! One electron hamiltonian
+      X    => .core_matrix.restricted
+      E_ABo = .BASE:expectation(X)
+
+      ! Two-electron integrals
+      C.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
+
+      X => .density_matrix.restricted
+      .FOCK:make_r_JK_engine(C,K,X)
+
+      E_ABo = E_ABo +    HALF*.BASE:expectation(C)
+      E_ABo = E_ABo - QUARTER*.BASE:expectation(K)
+
+      K.destroy
+      C.destroy
+
+      ! Get repulsion energy
+      E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
+      E_XR  = E_ex  + E_rep
+
+      stdout.flush
+      stdout.text("=============================================")
+      stdout.text("Promolecule (orthogonal) interaction energies")
+      stdout.text("=============================================")
+      stdout.flush
+      stdout.text(". E_pro-supermol(orthog) is the energy for the")
+      stdout.text("  orthogonal wavefunction Psi = A(Psi_1 Psi_2),")
+      stdout.text("  A = antisymmetrizer, which is QM-valid.")
+      stdout.flush
+      stdout.text(". These terms were defined by Kitaura and Morokuma")
+      stdout.flush
+      stdout.text(". NOTE: E_ee-exchage was worked out above")
+
+      stdout.flush
+      stdout.show("6. E_pro-supermol(orthog)             = ",E_ABo)
+      stdout.show("7. Delta E_repulsion (6-0)            = ",E_rep)
+      stdout.show("5. Delta E_ee-exchange                = ",E_ex)
+                                                         
+      stdout.flush                                       
+      stdout.show("Delta E_exch-repulsion (7+5)          = ",E_XR)
+                                                         
+      ! In kJ/mol                                        
+      E_XR = E_XR.to_units("kJ/mol")                     
+      stdout.show("Delta E_exch-rep (kJ/mol)             = ",E_XR)
+
+   end
+
+! New
+
+   put_group_12_energies_v1 ::: leaky
+   ! Calculate the classical and QM group 1-2 interaction energies.
+   ! NOTE: make sure the density matrices and MOs for each group exist!
+   ! e.g. by reading gaussian or by "make_group_density_matrix"
+      self :: INOUT
+
+      .::put_group_12_coulomb_energies_v1
+      .::put_group_12_QM_energies
+
+   end
+
+   put_group_12_coulomb_energies_v1 ::: leaky
+   ! Calculate the 1-2 coulomb energy.
+   ! NOTE: make sure the density matrices for each group exist!
+   ! e.g. by reading gaussian or by "make_group_density_matrix"
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+   ENSURE(.atom_group(1).mol.density_matrix.created ,"no mol 1 density matrix!")
+   ENSURE(.atom_group(2).mol.density_matrix.created ,"no mol 2 density matrix!")
+
+      E_net,E_en,E_nn,E_ee :: REAL
+      X,X_A,X_B :: MAT{REAL}*
+      C,C_A,C_B :: MAT{REAL}*
+      mol_A,mol_B :: MOLECULE*
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      .SCF:merge_group_density_matrices_r
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      ! Make integrals
+           .SCF:make_r_core_matrix
+      mol_A.SCF:make_r_core_matrix
+      mol_B.SCF:make_r_core_matrix
+
+      ! >> Nuclear attraction energy
+           .nuclear_attraction_matrix.uncompress
+      mol_A.nuclear_attraction_matrix.uncompress
+      mol_B.nuclear_attraction_matrix.uncompress
+
+      X   =>      .nuclear_attraction_matrix.restricted
+      X_A => mol_A.nuclear_attraction_matrix.restricted
+      X_B => mol_B.nuclear_attraction_matrix.restricted
+
+      E_en  = .::group_12_int_energy(X,X_A,X_B)
+
+           .nuclear_attraction_matrix.compress
+      mol_A.nuclear_attraction_matrix.compress
+      mol_B.nuclear_attraction_matrix.compress
+
+      ! Two-electron matrices
+        C.create(     .n_bf,     .n_bf)
+      C_A.create(mol_A.n_bf,mol_A.n_bf)
+      C_B.create(mol_B.n_bf,mol_B.n_bf)
+
+      X   =>      .density_matrix.restricted
+      X_A => mol_A.density_matrix.restricted
+      X_B => mol_B.density_matrix.restricted
+
+           .FOCK:make_r_J_engine(C  ,X  )
+      mol_A.FOCK:make_r_J_engine(C_A,X_A)
+      mol_B.FOCK:make_r_J_engine(C_B,X_B)
+
+      ! >> Two-electron interaction energies <<
+      E_ee = .::group_12_int_energy(C,C_A,C_B,HALF)
+
+      C_B.destroy
+      C_A.destroy
+        C.destroy
+
+      ! >> Nuclear-nuclear repulsion energy <<
+      E_nn = .::group_12_NR_int_energy
+      
+      ! >> Total <<
+      E_net = E_nn + E_en + E_ee
+
+      stdout.flush
+      stdout.text("============================")
+      stdout.text("Classical interaction energy")
+      stdout.text("============================")
+      stdout.flush
+      stdout.text("This evaluates the classical coulomb interaction energy:")
+      stdout.flush
+      stdout.text(". between the fragment density matrices which comes from")
+      stdout.text("  a product wavefunction Psi = Psi_1 Psi_2")
+      stdout.text("  >>> OR <<< ")
+      stdout.text(". from any correlated subsystem density matrices. In the")
+      stdout.text("  latter case the total density matrix is the sum of the")
+      stdout.text("  subsytem densities.")
+      stdout.flush
+      stdout.text(". Delta E_X = E_X(Psi) - E_X(Psi_1) - E_X(Psi_2)")
+      stdout.text("  where the terms on the right are calculated as")
+      stdout.text("  expectation vaues of the respective operators X")
+
+      stdout.flush
+      stdout.show("1. Delta E_nn-repulsion               = ",E_nn,right=TRUE)
+      stdout.show("2. Delta E_en-attraction              = ",E_en,right=TRUE)
+      stdout.show("3. Delta E_ee-repulsion               = ",E_ee,right=TRUE)
+                                                         
+      stdout.flush                                       
+      stdout.show("Delta E_coulomb   (1+2+3)             = ",E_net,right=TRUE)
+                                                         
+      ! In kJ/mol                                        
+      E_net = E_net.to_units("kJ/mol")                   
+      stdout.show("Delta E_coulomb (kJ/mol)              = ",E_net,right=TRUE)
+
+   end
+
+   put_group_12_QM_energies ::: leaky
+   ! Calculate the group 1-2 interaction energies.
+   ! For simplicity the notations follows the reference:
+   ! P. Su & H. Li (2009) JCP 131 p. 014102
+   ! It has references to the original work and is explained fairly
+   ! clearly, except for their use of "X" for supermolecule (X=AB).
+   ! NOTE: make sure the MO's and density matrices for each group exist!
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+   ENSURE(.atom_group(1).mol.density_matrix.created ,"no mol 1 density matrix!")
+   ENSURE(.atom_group(2).mol.density_matrix.created ,"no mol 2 density matrix!")
+   ENSURE(.atom_group(1).mol.molecular_orbitals.created ,"no mol 1 MOs!")
+   ENSURE(.atom_group(2).mol.molecular_orbitals.created ,"no mol 2 MOs!")
+
+      E_en,E_ke,E_1e,E_nn,E_ee,E_ex :: REAL
+      E_tot,E_net,E_ABn,E_ABo, E_rep,E_XR :: REAL
+      X,X_A,X_B :: MAT{REAL}*
+      C,C_A,C_B :: MAT{REAL}*
+      K,K_A,K_B :: MAT{REAL}*
+      mol_A,mol_B :: MOLECULE*
+
+      ! ======================
+      ! Get non orthogonal MOs
+      ! ======================
+
+      .SCF:merge_group_MOs_r
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      ! Make SCF density matrices
+           .BASE:make_scf_density_matrix
+      mol_A.BASE:make_scf_density_matrix
+      mol_B.BASE:make_scf_density_matrix
+
+      ! Make integrals
+           .SCF:make_r_core_matrix
+      mol_A.SCF:make_r_core_matrix
+      mol_B.SCF:make_r_core_matrix
+
+      ! >> Nuclear attraction energy
+           .nuclear_attraction_matrix.uncompress
+      mol_A.nuclear_attraction_matrix.uncompress
+      mol_B.nuclear_attraction_matrix.uncompress
+
+      X   =>      .nuclear_attraction_matrix.restricted
+      X_A => mol_A.nuclear_attraction_matrix.restricted
+      X_B => mol_B.nuclear_attraction_matrix.restricted
+
+      E_en  = .::group_12_int_energy(X,X_A,X_B)
+
+           .nuclear_attraction_matrix.compress
+      mol_A.nuclear_attraction_matrix.compress
+      mol_B.nuclear_attraction_matrix.compress
+
+      ! Non-orthogonal & orthogonalized electronic energies
+      ! Nuclear-nuclear repulsion not needed.
+      E_ABn = ZERO
+      E_ABo = ZERO
+
+      ! One electron hamiltonian
+      X   =>      .core_matrix.restricted
+      X_A => mol_A.core_matrix.restricted
+      X_B => mol_B.core_matrix.restricted
+
+      ! >> One electron interaction energy <<
+      E_1e = .::group_12_int_energy(X,X_A,X_B,E_AB=E_ABn)
+      E_ke = E_1e - E_en
+
+      ! Two-electron matrices
+        C.create(     .n_bf,     .n_bf)
+      C_A.create(mol_A.n_bf,mol_A.n_bf)
+      C_B.create(mol_B.n_bf,mol_B.n_bf)
+
+        K.create(     .n_bf,     .n_bf)
+      K_A.create(mol_A.n_bf,mol_A.n_bf)
+      K_B.create(mol_B.n_bf,mol_B.n_bf)
+
+      X   =>      .density_matrix.restricted
+      X_A => mol_A.density_matrix.restricted
+      X_B => mol_B.density_matrix.restricted
+
+           .FOCK:make_r_JK_engine(C  ,K  ,X  )
+      mol_A.FOCK:make_r_JK_engine(C_A,K_A,X_A)
+      mol_B.FOCK:make_r_JK_engine(C_B,K_B,X_B)
+
+      ! >> Two-electron interaction energies <<
+      E_ee = .::group_12_int_energy(C,C_A,C_B, HALF   ,E_ABn)
+      E_ex = .::group_12_int_energy(K,K_A,K_B,-QUARTER,E_ABn)
+
+      K_B.destroy
+      K_A.destroy
+        K.destroy
+
+      C_B.destroy
+      C_A.destroy
+        C.destroy
+
+      ! >> Nuclear-nuclear repulsion energy <<
+      E_nn = .::group_12_NR_int_energy
+      
+      ! >> Total <<
+      E_tot = E_ke + E_nn + E_en + E_ee + E_ex
+      E_net =        E_nn + E_en + E_ee
+
+      ! ======================
+      ! Now symmorthonormalize 
+      ! ======================
+
+      .SCF:symmorthonormalize_occupied_MOs_r
+      .BASE:make_scf_density_matrix
+
+      ! One electron hamiltonian
+      X    => .core_matrix.restricted
+      E_ABo = .BASE:expectation(X)
+
+      ! Two-electron integrals
+      C.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
+
+      X => .density_matrix.restricted
+      .FOCK:make_r_JK_engine(C,K,X)
+
+      E_ABo = E_ABo +    HALF*.BASE:expectation(C)
+      E_ABo = E_ABo - QUARTER*.BASE:expectation(K)
+
+      K.destroy
+      C.destroy
+
+      ! Get repulsion energy
+      E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
+      E_XR  = E_ex  + E_rep
+
+      stdout.flush
+      stdout.text("=======================================")
+      stdout.text("Quantum mechanical interaction energies")
+      stdout.text("=======================================")
+      stdout.flush
+      stdout.text(". E_pro-supermol(non-orthog) = E(Psi) where Psi = Psi_1 Psi_2")
+      stdout.text(". is the non-orthogonal pro-supermolecule product wavefunction")
+      stdout.flush
+      stdout.text(". E_pro-supermol(orthog) = E(Psi) where Psi = A(Psi_1 Psi_2)")
+      stdout.text("  is the antisymmetrized normalized pro-supermolecule wavefunction")
+      stdout.flush
+      stdout.text(". Delta E_X = E_X(Psi) - E_X(Psi_1) - E_X(Psi_2) where the")
+      stdout.text("  terms on the right are calculated as  expectation values of")
+      stdout.text("  of operators X which are the subterms of the Hamiltonian")
+      stdout.flush
+      stdout.text(". This dcomposition was first defined by Kitaura & Morokuma.")
+      stdout.text("  The code follows: P. Su and H. Li (2009) JCP 131 p. 014102.")
+      stdout.text("  See there for references, or Stone's 'Intermolecular Forces'.")
+      stdout.flush
+      stdout.text(". NOTE: E_pro-supermol(orthog) is the only QM valid number since")
+      stdout.text("  it arises from an antisymmetric wavefunction; however the non-")
+      stdout.text("  orthogonal promolecule does produce good electronic densities")
+      stdout.text("  for use in X-ray crystallography, so the sub terms which come")
+      stdout.text("  from it, produce here, may also be reasonable.")
+      stdout.flush
+      stdout.text(". NOTE: The energies here always apply to determinant orbital")
+      stdout.text("  wavefunctions NOT correlated density matrices.")
+
+      stdout.flush
+      stdout.show("1. Delta E_kinetic-energy             = ",E_ke ,right=TRUE)
+      stdout.show("2. Delta E_nn-repulsion               = ",E_nn ,right=TRUE)
+      stdout.show("3. Delta E_en-attraction              = ",E_en ,right=TRUE)
+      stdout.show("4. Delta E_ee-repulsion               = ",E_ee ,right=TRUE)
+      stdout.show("5. Delta E_ee-exchange                = ",E_ex ,right=TRUE)
+      stdout.flush                                       
+      stdout.show("6. E_pro-supermol(non-orthog)         = ",E_ABn,right=TRUE)
+      stdout.show("7. E_pro-supermol(orthog)             = ",E_ABo,right=TRUE)
+      stdout.flush                                       
+      stdout.show("Delta E         (1+2+3+4+5)           = ",E_tot,right=TRUE)
+      stdout.show("Delta E_coulomb   (2+3+4)             = ",E_net,right=TRUE)
+      stdout.show("Delta E_repulsion        (-6+7)       = ",E_rep,right=TRUE)
+      stdout.show("Delta E_exch-repulsion  (5-6+7)       = ",E_XR ,right=TRUE)
+                                                         
+      ! In kJ/mol                                        
+      E_net = E_net.to_units("kJ/mol")                     
+      E_ex  = E_ex.to_units("kJ/mol")                     
+      E_rep = E_rep.to_units("kJ/mol")                     
+      E_XR  = E_XR.to_units("kJ/mol")                     
+
+      stdout.flush                                       
+      stdout.show("Delta E_coul (kJ/mol)                 = ",E_net,right=TRUE)
+      stdout.show("Delta E_ee-exchange (kJ/mol)          = ",E_ex ,right=TRUE)
+      stdout.show("Delta E_repulsion (kJ/mol)            = ",E_rep,right=TRUE)
+      stdout.show("Delta E_exch-rep (kJ/mol)             = ",E_XR ,right=TRUE)
+
+   end
+
+   group_12_int_energy(X,X_A,X_B,fac,E_AB) result (res) ::: private
+   ! Return the group 1-2 interaction energy for one electron
+   ! operators for the total system "X" and subsystems "XA" and "XB",
+   ! in the supermolecule and subsystem bases, respectively.
+   ! If present, "E_AB" is incremented with the expectation of "X".
+   ! If present, overall factor "fac" is included.
+      self :: IN
+      X    :: MAT{REAL}, IN
+      X_A  :: MAT{REAL}, IN
+      X_B  :: MAT{REAL}, IN
+      fac  :: REAL, optional, IN
+      E_AB :: REAL, optional, INOUT
+      res  :: REAL
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+
+      E, E_A, E_B :: REAL
+      mol_A,mol_B :: MOLECULE*
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      ! Energies
+      E   =      .BASE:expectation(X)
+      E_A = mol_A.BASE:expectation(X_A)
+      E_B = mol_B.BASE:expectation(X_B)
+
+      ! Interaction energy
+      res = E - E_A - E_B
+
+      if (present(fac))  res = fac*res
+
+      if (present(E_AB)) then
+         if (present(fac)) then; E_AB = E_AB + fac*E
+         else;                 ; E_AB = E_AB +     E
+         end
+      end
+
+   end
+
+   group_12_NR_int_energy result (res) ::: private
+   ! Return the group 1-2 nuclear-repulsion interaction energy.
+      self :: IN
+      res :: REAL
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+   ENSURE(.atom_group(1).mol.density_matrix.created ,"no mol 1 density matrix!")
+   ENSURE(.atom_group(2).mol.density_matrix.created ,"no mol 2 density matrix!")
+
+      E,E_A,E_B :: REAL
+      mol_A,mol_B :: MOLECULE*
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      ! Nuclear-nuclear repulsion energies
+      E   =      .BASE:nuclear_repulsion_energy
+      E_A = mol_A.BASE:nuclear_repulsion_energy
+      E_B = mol_B.BASE:nuclear_repulsion_energy
+
+      ! Interaction energy
+      res   = E - E_A - E_B
+
+   end
+
+!  ==================
+!  Atom group setting
+!  ==================
+
+   atom_group_AO_subspace_set(P,Q,row_group,col_group)
+   ! Set P=Q only for the block whose rows correspond to basis functions
+   ! on the atoms in the atom group "row_group" and whose columns are
+   ! on the atoms in the atom group "col_group", as given in the
+   ! .atom_group array vector.
+      P,Q :: MAT{REAL}
+      row_group,col_group :: INT
+
+   ENSURE(P.dim1==.n_bf,"wrong size for P")
+   ENSURE(P.dim2==.n_bf,"wrong size for P")
+   ENSURE(Q.dim1==.n_bf,"wrong size for Q")
+   ENSURE(Q.dim2==.n_bf,"wrong size for Q")
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(row_group<=size(.atom_group),"no such row group")
+   ENSURE(col_group<=size(.atom_group),"no such column group")
+   ENSURE(row_group>0,"row group index must be positive")
+   ENSURE(col_group>0,"column group index must be positive")
+
+      i_a,i_b,a,b,fa,fb,la,lb :: INT
+
+      do i_a = 1,.atom_group(row_group).atom_index.dim
+      do i_b = 1,.atom_group(col_group).atom_index.dim
+
+         a = .atom_group(row_group).atom_index(i_a)
+         b = .atom_group(col_group).atom_index(i_b)
+
+         fa = .first_basis_fn_for_atom(a)
+         fb = .first_basis_fn_for_atom(b)
+         la = .last_basis_fn_for_atom(a)
+         lb = .last_basis_fn_for_atom(b)
+
+         P(fa:la,fb:lb) = Q(fa:la,fb:lb)
+
+      end
+      end
+
+   end
+
+   AO_subspace_set(A,B,row_atom,col_atom) ::: private
+   ! Set "A" equal to the AO subspace blocks of "B" specified by the atom
+   ! indices in "row_atom" and "col_atom". If either is missing, then copy
+   ! the entire row or col, i.e.  A(small) = B(row_atom,col_atom)
+      A,B :: MAT{REAL}
+      row_atom,col_atom :: VEC{INT}, optional
+
+   ENSURE(B.dim1==.n_bf,"B has wrong shape")
+   ENSURE(B.dim2==.n_bf,"B has wrong shape")
+
+      n_row_atoms,n_col_atoms, a1,a2 :: INT
+      i,b_i,f_i,l_i,n_i, j,b_j,f_j,l_j,n_j :: INT
+
+      if (present(row_atom) AND present(col_atom)) then
+
+         n_row_atoms = row_atom.dim
+         n_col_atoms = col_atom.dim
+         a1 = .atom(row_atom).n_bf
+         a2 = .atom(col_atom).n_bf
+         ENSURE(A.dim1==a1,"A has wrong shape")
+         ENSURE(A.dim2==a2,"A has wrong shape")
+
+         b_i = 0
+         do i = 1,n_row_atoms
+
+            f_i = .first_basis_fn_for_atom(row_atom(i))
+            l_i = .last_basis_fn_for_atom( row_atom(i))
+            n_i = .atom(row_atom(i)).n_bf
+
+            b_j = 0
+
+            do j = 1,n_col_atoms
+
+               f_j = .first_basis_fn_for_atom(col_atom(j))
+               l_j = .last_basis_fn_for_atom( col_atom(j))
+               n_j = .atom(col_atom(j)).n_bf
+
+               A(b_i+1:b_i+n_i,b_j+1:b_j+n_j) = B(f_i:l_i,f_j:l_j)
+
+               b_j = b_j + n_j
+
+            end
+
+            b_i = b_i + n_i
+
+         end
+
+      else if (present(row_atom)) then
+
+         n_row_atoms = row_atom.dim
+         a1 = .atom(row_atom).n_bf
+         a2 = .n_bf
+         ENSURE(A.dim1==a1,"A has wrong shape")
+         ENSURE(A.dim2==a2,"A has wrong shape")
+
+         b_i = 0
+
+         do i = 1,n_row_atoms
+
+            f_i = .first_basis_fn_for_atom(row_atom(i));
+            l_i = .last_basis_fn_for_atom( row_atom(i))
+            n_i = .atom(row_atom(i)).n_bf
+
+            A(b_i+1:b_i+n_i,:) = B(f_i:l_i,:)
+
+            b_i = b_i + n_i
+
+         end
+
+      else if (present(col_atom)) then
+
+         n_col_atoms = col_atom.dim
+         a1 = .n_bf
+         a2 = .atom(col_atom).n_bf
+         ENSURE(A.dim1==a1,"A has wrong shape")
+         ENSURE(A.dim2==a2,"A has wrong shape")
+
+         b_j = 0
+
+         do j = 1,n_col_atoms
+            f_j = .first_basis_fn_for_atom(col_atom(j));
+            l_j = .last_basis_fn_for_atom( col_atom(j))
+            n_j = .atom(col_atom(j)).n_bf
+
+            A(:,b_j+1:b_j+n_j) = B(:,f_j:l_j)
+
+            b_j = b_j + n_j
+
+         end
+
+      end
+
+   end
+
+   AO_subspace_zero(B,row_atom,col_atom) ::: private
+   ! Zero out the AO subspace blocks of "B" specified by the atom
+   ! indices in "row_atom" and "col_atom". If either is missing, then zero
+   ! the entire row or col, i.e.  B(row_atom,col_atom) = 0
+      B :: MAT{REAL}
+      row_atom,col_atom :: VEC{INT}, optional
+
+   ENSURE(B.dim1==.n_bf,"B has wrong shape")
+   ENSURE(B.dim2==.n_bf,"B has wrong shape")
+
+      n_row_atoms,n_col_atoms :: INT
+      i,b_i,f_i,l_i,n_i, j,b_j,f_j,l_j,n_j :: INT
+
+      if (present(row_atom) AND present(col_atom)) then
+
+         n_row_atoms = row_atom.dim
+         n_col_atoms = col_atom.dim
+
+         b_i = 0
+
+         do i = 1,n_row_atoms
+
+            f_i = .first_basis_fn_for_atom(row_atom(i))
+            l_i = .last_basis_fn_for_atom( row_atom(i))
+            n_i = .atom(row_atom(i)).n_bf
+
+            b_j = 0
+
+            do j = 1,n_col_atoms
+
+               f_j = .first_basis_fn_for_atom(col_atom(j))
+               l_j = .last_basis_fn_for_atom( col_atom(j))
+               n_j = .atom(col_atom(j)).n_bf
+
+               B(f_i:l_i,f_j:l_j) = ZERO
+
+               b_j = b_j + n_j
+
+            end
+
+            b_i = b_i + n_i
+
+         end
+
+      else if (present(row_atom)) then
+
+         n_row_atoms = row_atom.dim
+
+         b_i = 0
+
+         do i = 1,n_row_atoms
+
+            f_i = .first_basis_fn_for_atom(row_atom(i));
+            l_i = .last_basis_fn_for_atom( row_atom(i))
+            n_i = .atom(row_atom(i)).n_bf
+
+            B(f_i:l_i,:) = ZERO
+
+            b_i = b_i + n_i
+
+         end
+
+      else if (present(col_atom)) then
+
+         n_col_atoms = col_atom.dim
+
+         b_j = 0
+
+         do j = 1,n_col_atoms
+
+            f_j = .first_basis_fn_for_atom(col_atom(j));
+            l_j = .last_basis_fn_for_atom( col_atom(j))
+            n_j = .atom(col_atom(j)).n_bf
+
+            B(:,f_j:l_j) = ZERO
+
+            b_j = b_j + n_j
+
+         end
+
+      end
+
+   end
+
+   AO_subspace_put(B,A,row_atom,col_atom) ::: private
+   ! Set the AO subspace blocks of "A" specified by the atom indices in
+   ! "row_atom" and "col_atom" equal to "B". If either is missing then copy
+   ! the entire row or column, i.e.  A(row_atom,col_atom) = A() + B(small)
+   ! WARNING ==== This adds into A, and uncopied blocks are NOT set to zero.
+      A,B :: MAT{REAL}
+      row_atom,col_atom :: VEC{INT}, optional
+
+   ENSURE(A.dim1==.n_bf,"A has wrong shape")
+   ENSURE(A.dim2==.n_bf,"A has wrong shape")
+
+      n_row_atoms,n_col_atoms,b1,b2 :: INT
+      i,b_i,f_i,l_i,n_i, j,b_j,f_j,l_j,n_j :: INT
+
+      if (present(row_atom) AND present(col_atom)) then
+
+         n_row_atoms = row_atom.dim
+         n_col_atoms = col_atom.dim
+         b1 = .atom(row_atom).n_bf
+         b2 = .atom(col_atom).n_bf
+         ENSURE(B.dim1==b1,"B has wrong shape")
+         ENSURE(B.dim2==b2,"B has wrong shape")
+
+         b_i = 0
+
+         do i = 1,n_row_atoms
+
+            f_i = .first_basis_fn_for_atom(row_atom(i))
+            l_i = .last_basis_fn_for_atom( row_atom(i))
+            n_i = .atom(row_atom(i)).n_bf
+
+            b_j = 0
+
+            do j = 1,n_col_atoms
+
+               f_j = .first_basis_fn_for_atom(col_atom(j))
+               l_j = .last_basis_fn_for_atom( col_atom(j))
+               n_j = .atom(col_atom(j)).n_bf
+
+               A(f_i:l_i,f_j:l_j) = A(f_i:l_i,f_j:l_j) + B(b_i+1:b_i+n_i,b_j+1:b_j+n_j)
+
+               b_j = b_j + n_j
+
+            end
+
+            b_i = b_i + n_i
+
+         end
+
+      else if (present(row_atom)) then
+
+         n_row_atoms = row_atom.dim
+         b1 = .atom(row_atom).n_bf
+         b2 = .n_bf
+         ENSURE(B.dim1==b1,"B has wrong shape")
+         ENSURE(B.dim2==b2,"B has wrong shape")
+         
+         b_i = 0
+
+         do i = 1,n_row_atoms
+
+            f_i = .first_basis_fn_for_atom(row_atom(i));
+            l_i = .last_basis_fn_for_atom( row_atom(i))
+            n_i = .atom(row_atom(i)).n_bf
+
+            A(f_i:l_i,:) = A(f_i:l_i,:) + B(b_i+1:b_i+n_i,:)
+
+            b_i = b_i + n_i
+
+         end
+
+      else if (present(col_atom)) then
+
+         n_col_atoms = col_atom.dim
+         b1 = .atom(col_atom).n_bf
+         b2 = .n_bf
+         ENSURE(B.dim1==b1,"B has wrong shape")
+         ENSURE(B.dim2==b2,"B has wrong shape")
+
+         b_j = 0
+
+         do j = 1,n_col_atoms
+
+            f_j = .first_basis_fn_for_atom(col_atom(j));
+            l_j = .last_basis_fn_for_atom( col_atom(j))
+            n_j = .atom(col_atom(j)).n_bf
+
+            A(:,f_j:l_j) = A(:,f_j:l_j) + B(:,b_j+1:b_j+n_j)
+
+            b_j = b_j + n_j
+
+         end
+
+      end
+
+   end
+
+!  ============================
+!  Vibrationally averaged grids
+!  ============================
+
+!   get_vib_averaged_rho_grid(density_grid)
+!   ! Set "density_grid" to the vibrationally averaged electron density grid.
+!   ! If the archive file exists, read it; otherwise make it.
+!      density_grid :: VEC{REAL}
+!   ENSURE(.plot_grid.created,  "no grid")
+!   ENSURE(.atom.created,  "no atom list")
+!   ENSURE(.n_atom==2,"can only do diatomics")
+!      arch :: ARCHIVE
+!      arch.set_defaults
+!      arch.set(.name,"vib_averaged_rho_grid")
+!      if (NOT arch.exists) .make_vib_averaged_rho_grid
+!      arch.read(density_grid)
+!   end
+!
+!   make_vib_averaged_rho_grid
+!   ! Work out the averaged density on ".plot_grid" using ".natural orbitals" and the
+!   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+!   ENSURE(.plot_grid.created,  "no grid")
+!   ENSURE(.atom.created,  "no atom list")
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.n_atom==2,"can only do diatomics")
+!      arch :: ARCHIVE
+!      density_grid :: VEC{REAL}*
+!      .move_origin_to_center_of_mass
+!      density_grid.create(.plot_grid.n_pt)
+!      .integrate_rho_grid(density_grid,-FOUR,FOUR,TOL(4))
+!      arch.set(.name,"vib_averaged_rho_grid")
+!      arch.write(density_grid)
+!      arch.set(.name,"vib_averaged_rho_grid",format="ascii")
+!      arch.write_gnuplot(density_grid, .plot_grid.n_x, .plot_grid.n_y, .plot_grid.n_z)
+!      density_grid.destroy
+!   end
+!
+!   integrate_rho_grid(res,a,b,accuracy,fa0,fb0) ::: recursive
+!   ! Integrate the rho grid between the limits "a" and "b" using adaptive
+!   ! trapezoidal rule with Simpsons approximation.  If present, "accuracy"
+!   ! is the required accuracy of the integral. If present, "fa0" and
+!   ! "fb0" are the value of the rho_grid at "a" and "b" respectively.
+!   ! size of "res" is .plot_grid.n_pt.
+!      a,b :: REAL
+!      accuracy :: REAL, optional
+!      fa0,fb0 :: VEC{REAL}*, optional
+!      res :: VEC{REAL}*
+!   ENSURE(.plot_grid.created, "no grid")
+!      fa,fb,fm,one_trap,two_trap,left,right :: VEC{REAL}*
+!      n_pt :: INT
+!      same :: BIN
+!      tol,h,m :: REAL
+!      depth :: INT = 0
+!      n_pt = .plot_grid.n_pt
+!      depth = depth+1
+!      stdout.show("depth =",depth)
+!      tol = TOL(6)
+!      if (present(accuracy)) tol = accuracy
+!      h  = b-a
+!      m  = (a+b)/TWO
+!      if (present(fb0)) then; fb => fb0
+!      else;                   fb.create(n_pt); .make_rho_grid_at(b,fb)
+!      end
+!      if (present(fa0)) then; fa => fa0
+!      else;                   fa.create(n_pt); .make_rho_grid_at(a,fa)
+!      end
+!      fm.create(n_pt);    .make_rho_grid_at(m,fm)
+!      one_trap.create(n_pt)
+!      two_trap.create(n_pt)
+!      one_trap = h*(fa+fb)/TWO
+!      two_trap = h*(fa+TWO*fm+fb)/FOUR
+!      res = abs(one_trap-two_trap)
+!      same = maxval(res) < THREE*tol
+!      if (same AND depth>1) then
+!        res = (FOUR*two_trap - one_trap)/THREE
+!        two_trap.destroy
+!        one_trap.destroy
+!        fm.destroy
+!        fa.destroy
+!      else
+!        two_trap.destroy
+!        one_trap.destroy
+!        left.create(n_pt);  .integrate_rho_grid(left ,a,m,tol/TWO,fa0=fa,fb0=fm)
+!        right.create(n_pt); .integrate_rho_grid(right,m,b,tol/TWO,fa0=fm,fb0=fb)
+!        res = left + right
+!        right.destroy
+!        left.destroy
+!      end
+!      if (depth==1) fb.destroy
+!      depth = depth-1
+!   end
+!
+!   make_rho_grid_at(q,rho)
+!   ! Work out the electron density on ".plot_grid" using ".natural orbitals" and the
+!   ! ".occupation_numbers" vector at nuclear separation "q", where "q" is a
+!   ! dimensionless normal coordinate
+!   ! size or "rho" is .plot_grid.n_pt.
+!      q :: REAL
+!      rho :: VEC{REAL}
+!      pt :: MAT{REAL}*
+!      re,w,mu, gamma,d,r, wt :: REAL
+!      n :: INT
+!      re = 2.0460259 ! N2
+!      w  = 2708      ! N2
+!      re = 1.3848617 ! H2
+!      w  = 4658      ! H2
+!      mu = .reduced_mass
+!      n = 1
+!      gamma = sqrt((w/WAVENUMBER_PER_HARTREE) &
+!                  * mu * MASS_OF_ELECTRON_PER_AMU ) ! This is gamma^(1/2)
+!      d = q/gamma ! d is the cartesian displacement in Bohr
+!      r = re + d  ! r is the actual separation of atoms in Bohr
+!      stdout.show("q =",q)
+!      stdout.show("d =",d)
+!      stdout.show("r =",r)
+!      stdout.show("g =",gamma)
+!      .atom(1).set_position([ZERO,ZERO,-HALF*r])
+!      .atom(2).set_position([ZERO,ZERO, HALF*r])
+!      .move_origin_to_center_of_mass
+!      .delete_scf_integrals
+!      .scf
+!      pt.create(.plot_grid.n_pt,3); .plot_grid.make_points(pt)
+!      .make_density_grid(rho,pt)
+!      pt.destroy
+!      wt = q.harmonic_vibrational_fn(n)
+!      wt = wt*wt
+!      rho = wt * rho
+!   end
+
+!  =====================
+!  Roby analysis methods
+!  =====================
+
+   roby_analysis ::: leaky
+   ! Do one of the many kind of Roby population analysis
+   ENSURE(.roby.created,"no robydata= supplied")
+   ENSURE(.density_matrix.created,"no density")
+
+      allowed_kind :: BIN
+
+      allowed_kind = .density_matrix.spinorbital_kind==  "restricted" &
+                  OR .density_matrix.spinorbital_kind=="unrestricted"
+
+      DIE_IF(NOT allowed_kind,"only restricted or unrestricted densities are allowed")
+
+      .SCF:make_ANO_data
+
+      select case (.roby.roby_kind)
+         case("atom_bond_analysis     "); .roby.atom_bond_analysis      ! This is a main option
+         case("atom_shared_population "); .roby.atom_shared_population
+         case("atom_pair_populations  "); .roby.atom_pair_populations
+         case("atom_populations       "); .roby.atom_populations
+         case("group_bond_analysis    "); .roby.group_bond_analysis     ! This is a main option
+         case("group_shared_population"); .roby.group_shared_population
+         case("group_pair_populations "); .roby.group_pair_populations
+         case("group_populations      "); .roby.group_populations
+         case default;                UNKNOWN(.roby.roby_kind)
+      end
+
+   end
+
+!  ==========================================
+!  Roby Energy and Shared Energy calculations
+!  ==========================================
+
+!   roby_energy_analysis
+!   ! directs the energy analysis of a diatomic
+!    roby_atom :: VEC{INT}*
+!    Ep_A, Ep_B, Ep_AB, E_A, E_B, E_AB :: REAL
+!    a,b :: INT
+!    .read_roby_atom(roby_atom)
+!    ENSURE( size(roby_atom)==2, "Must supply a diatomic...")
+!    a = roby_atom(1); b=roby_atom(2)
+!    .put_roby_atom_energy( (/ a /) )
+!    .put_roby_atom_energy( (/ b /) )
+!    .put_roby_atom_energy( roby_atom )
+!    Ep_A = .roby_atom_energy( (/a/))
+!    Ep_B = .roby_atom_energy( (/b/))
+!    Ep_AB = .roby_atom_energy( roby_atom)
+!    E_A = .roby_total_atom_energy((/ a /), nuclei=roby_atom,output=TRUE)
+!    E_B = .roby_total_atom_energy((/ b /), nuclei=roby_atom,output=TRUE)
+!    E_AB = .roby_total_atom_energy(roby_atom, nuclei=roby_atom,output=TRUE)
+!!    E_AB = .roby_atom_energy(roby_atom)
+!    stdout.show( "Binding Energy: ", HALF * (E_A + E_B - E_AB + Ep_A + Ep_B - Ep_AB) )
+!    .put_roby_shared_energy(roby_atom)
+!    .put_roby_ionic_energy(roby_atom)
+!    stdout.show("Nuclear potential for A:", .atom.nuclear_repulsion_energy( (/ a /) ))
+!    stdout.show("Nuclear potential for B:", .atom.nuclear_repulsion_energy( (/ b /) ))
+!    roby_atom.destroy
+!   end
+!
+!   get_roby_shared_energy(roby_atom) result(se) ::: leaky
+!   ! returns the shared energy of the atoms given in "roby_atom"
+!   ! as well as the energy of all sub-groups of atoms "en_groups"
+!     roby_atom :: VEC{INT}
+!     se, energy_subgroup, en_groups :: REAL
+!     m,k, n_k, n_roby_atom :: INT
+!     comb_mat :: MAT{INT}*
+!     n_roby_atom = size(roby_atom)
+!     se = 0
+!     do k = 1,n_roby_atom
+!       n_k = n_roby_atom.choose(k)
+!       comb_mat.create(k,n_k)
+!       comb_mat = roby_atom.get_combination_matrix_from(k)
+!       en_groups = 0
+!       do m = 1,n_k
+!         energy_subgroup = .roby_total_atom_energy(comb_mat(:,m),output=FALSE)
+!         en_groups = en_groups + energy_subgroup
+!       end
+!       comb_mat.destroy
+!       se = se - ((-1)==k)*en_groups
+!     end
+!   end
+!
+!   get_roby_ionic_energy(roby_atom, roby_atom2) result(ionic_energy) ::: leaky
+!   ! returns the shared energy of the atoms given in "roby_atom"
+!   ! as well as the energy of all sub-groups of atoms "en_groups"
+!   roby_atom, roby_atom2 :: VEC{INT}
+!   ionic_energy, energy_group1, energy_group2 :: REAL
+!   ground1, ground2 :: REAL
+!       energy_group1 = .roby_total_atom_energy(roby_atom,output=FALSE)
+!       energy_group2 = .roby_total_atom_energy(roby_atom2,output=FALSE)
+!       ground1 = VEC{REAL}:sum(.atom(roby_atom).energy)
+!       ground2 = VEC{REAL}:sum(.atom(roby_atom2).energy)
+!       stdout.flush
+!       stdout.dash(real_fields=3)
+!       stdout.put("Ground State Energy of Atom 1"); stdout.put(ground1)
+!       stdout.flush
+!       stdout.put("Ground State Energy of Atom 2"); stdout.put(ground2)
+!       stdout.flush
+!       stdout.dash(real_fields=3)
+!       stdout.flush
+!       ionic_energy = energy_group1 - energy_group2
+!       ionic_energy = ionic_energy - ground1 + ground2
+!   end
+!
+!   put_roby_shared_energy(atoms) ::: leaky
+!   ! Evaluate and put the Roby shared energy for a group of atoms
+!      atoms :: VEC{INT}, OPTIONAL
+!      shared_energy :: REAL
+!      roby_atom :: VEC{INT}*
+!      if (PRESENT(atoms)) then
+!          roby_atom.create(size(atoms))
+!          roby_atom = atoms
+!      else
+!          .read_roby_atom(roby_atom)
+!      end
+!      shared_energy = .get_roby_shared_energy(roby_atom)
+!      stdout.flush
+!      stdout.dash(real_fields=3)
+!      stdout.show("Shared energy =",shared_energy)
+!      roby_atom.destroy
+!   end
+!
+!   put_roby_ionic_energy(atoms) ::: leaky
+!   ! Evaluate and put the Roby ionic energy for a group of atoms
+!      atoms :: VEC{INT}, OPTIONAL
+!      n_roby_atom :: INT
+!      roby_atom :: VEC{INT}*
+!      if (PRESENT(atoms)) then
+!          roby_atom.create(size(atoms))
+!          roby_atom = atoms
+!      else
+!          .read_roby_atom(roby_atom)
+!      end
+!      n_roby_atom = size(roby_atom)
+!      ENSURE(n_roby_atom==2, "current routine only for two atoms")
+!      stdout.dash(real_fields=3)
+!      stdout.show("Ionic Energy =", .get_roby_ionic_energy( roby_atom(1:1), roby_atom(2:2)))
+!      stdout.flush
+!      roby_atom.destroy
+!   end
+!
+!   put_roby_atom_energy(atoms) ::: leaky
+!   ! Evaluate and put the Roby ionic energy for a group of atoms
+!      atoms :: VEC{INT}, OPTIONAL
+!      n_roby_atom, i, a :: INT
+!      roby_atom :: VEC{INT}*
+!      E_T, E_P, E_A :: REAL
+!      if (PRESENT(atoms)) then
+!          roby_atom.create(size(atoms))
+!          roby_atom = atoms
+!      else
+!          .read_roby_atom(roby_atom)
+!      end
+!      n_roby_atom = size(roby_atom)
+!      stdout.dash(real_fields=3)
+!      stdout.flush
+!      stdout.text("Roby atom energy analysis:")
+!      stdout.flush
+!      stdout.dash(real_fields=3)
+!      stdout.flush
+!      stdout.text("Atoms =")
+!      do i=1,n_roby_atom
+!        a = roby_atom(i)
+!        stdout.text(trim(.atom(a).label))
+!      end
+!      E_T = .roby_total_atom_energy(roby_atom)
+!      E_P = .roby_atom_energy(roby_atom)
+!      E_A = E_T/2 + E_P/2
+!      stdout.flush
+!      stdout.show("Atom Total Energy =", E_T)
+!      stdout.flush
+!      stdout.show("Promoted Atom Energy =", E_P)
+!      stdout.flush
+!      stdout.show("Partitioned Atom Energy =", E_A)
+!      stdout.flush
+!      stdout.dash(real_fields=3)
+!      stdout.flush
+!      roby_atom.destroy
+!   end
+!
+!   roby_atom_energy(roby_atom) result(energy) ::: leaky
+!   ! Return the Roby promoted atom energy for the group of atoms whose
+!   ! indices are given in "roby_atom".
+!      roby_atom :: VEC{INT}
+!      energy :: REAL
+!      D,D_save :: OPMATRIX*
+!      P, Q :: MAT{REAL}*
+!      D_save => .density_matrix
+!      P.create(.n_bf, .n_bf)
+!      if (.spin_multiplicity/=1) then
+!        Q.create(.n_bf, .n_bf)
+!        .make_roby_projected_density(P,roby_atom,.density_matrix.alpha)
+!        .make_roby_projected_density(Q,roby_atom,.density_matrix.beta)
+!        D.create(.n_bf,"unrestricted")
+!        D.alpha = P        ! P is projected density
+!        D.beta = Q         ! P is projected density
+!        Q.destroy
+!      else
+!        D.create(.n_bf,"restricted")
+!        .make_roby_projected_density(P,roby_atom)
+!        D.restricted = P        ! P is projected density
+!      end
+!      .density_matrix => D
+!      .SCF:make_fock_matrix(core=FALSE)
+!      if (.spin_multiplicity/=1) then
+!          .add_core_hamiltonian(.fock_matrix.beta, roby_atom)
+!          .add_core_hamiltonian(.fock_matrix.alpha, roby_atom)
+!      else
+!          .add_core_hamiltonian(.fock_matrix.restricted, roby_atom)
+!      end
+!      energy = .SCF:scf_electronic_energy(D,roby_atom) + .atom(roby_atom).nuclear_repulsion_energy
+!      .density_matrix => D_save
+!      D.destroy
+!      P.destroy
+!   end
+!
+!   roby_total_atom_energy(roby_atom, nuclei, output) result(energy) ::: leaky
+!   ! Return the total Roby energy for the group of atoms whose
+!   ! indices are given in "roby_atom" If output is present and false energy breakdown
+!   ! output is suppressed. If nuclei is given then only the nuclei specified
+!   ! are used for E_N and N_N and N_E interactions, and the projected atoms specified by nuclei for the E_E
+!   ! repulsions
+!      roby_atom :: VEC{INT}
+!      nuclei :: VEC{INT}, optional
+!      output :: BIN, optional
+!      do_output :: BIN
+!      energy, E_k, Na_Em, Na_Ea, Ea_Nm, Ea_Em, Ea_Ea :: REAL
+!      Pa, Pb, Za, Zm, T :: MAT{REAL}*
+!      D, D_save :: MAT{REAL}*
+!      do_output=TRUE
+!      if (present(output)) do_output=output              ! puts out the energies and sub-energies and all that
+!      T.create(.n_bf, .n_bf); Pa.create(.n_bf, .n_bf)
+!      Za.create(.n_bf, .n_bf); Zm.create(.n_bf, .n_bf)
+!      if (present(nuclei)) then
+!         .INTS:make_nuclear_attraction_mx(Zm,nuclei)   ! The e->n attractions of the atoms electrons for the "nuclei"
+!      else
+!         .INTS:make_nuclear_attraction_mx(Zm)          ! The e->n attractions of the atoms electrons for all the nuclei
+!      end
+!      .INTS:make_nuclear_attraction_mx(Za,roby_atom)   ! The n->e attractions felt by the nuclei in the roby atom
+!      .make_kinetic_energy_mx(T)              ! The electronic kinetic energy matrix
+!      if (.spin_multiplicity/=1) then
+!        Pb.create(.n_bf, .n_bf)
+!        if (present(nuclei)) then          ! if we only want to look at interactions with subgroups of the molecule
+!          D_save => .density_matrix.alpha  ! store the "real" density matrix of the molecule
+!          D => .density_matrix.beta
+!          .make_roby_projected_density(Pa,nuclei,.density_matrix.alpha)
+!          .make_roby_projected_density(Pb,nuclei,.density_matrix.beta)
+!          .density_matrix.alpha => Pa      ! replace the "real" density matrix with the projected "nuclei"
+!          .density_matrix.beta => Pb
+!          .SCF:make_fock_matrix(core=FALSE)    ! calculate e-e repulsions for all electrons in projected "nuclei"
+!          !Na_Em = Za.trace_product_with(.density_matrix.alpha) + Za.trace_product_with(.density_matrix.beta)
+!          Na_Em = .density_matrix.alpha.trace_product_with(Za) + .density_matrix.beta.trace_product_with(Za)
+!                                           ! calculate n-e repulsions for all electrons in projected "nuclei"
+!                                           ! and nuclei in "roby_atom"
+!          .density_matrix.alpha => D_save  ! restore "real" density matrix
+!          .density_matrix.beta => D
+!        else
+!          .SCF:make_fock_matrix(core=FALSE)    ! calculate e-e repulsions for all electrons in molecule
+!        ! Na_Em = Za.trace_product_with(.density_matrix.alpha) + Za.trace_product_with(.density_matrix.beta)
+!          Na_Em = .density_matrix.alpha.trace_product_with(Za) + .density_matrix.beta.trace_product_with(Za)
+!                                           ! calculate e-e repulsions for all electrons in molecule with roby_atom
+!        end
+!        D_save => .density_matrix.alpha    ! save "real" density matrix
+!        D => .density_matrix.beta
+!        .make_roby_projected_density(Pa,roby_atom,.density_matrix.alpha)
+!        .make_roby_projected_density(Pb,roby_atom,.density_matrix.beta )
+!        Ea_Em = .fock_matrix.alpha.trace_product_with(Pa) + .fock_matrix.beta.trace_product_with(Pb)
+!        E_k = T.trace_product_with(Pa) + T.trace_product_with(Pb)     ! calculate Kinetic Energy for "roby_atom" electrons
+!        Na_Ea = Za.trace_product_with(Pa) + Za.trace_product_with(Pb) ! calculate Nuclear -> electron energy  (A->A)
+!        Ea_Nm = Zm.trace_product_with(Pa) + Zm.trace_product_with(Pb) ! calculate Nuclear -> electron energy  (M->A)
+!        .density_matrix.alpha => Pa        ! set "real" density matrix to be the projected atoms "roby_atom"
+!        .density_matrix.beta => Pb
+!        .SCF:make_fock_matrix(core=FALSE)      ! calculate repulsions within the "roby_atom"
+!        Ea_Ea = .fock_matrix.alpha.trace_product_with(Pa) + .fock_matrix.beta.trace_product_with(Pb)
+!        Ea_Em = Ea_Em - Ea_Ea/2            ! subtract 1/2 of the internal atom repulsions for double up
+!        .density_matrix.alpha => D_save
+!        .density_matrix.beta => D          ! reset "real" density matrix
+!        Pb.destroy
+!      else
+!        if (present(nuclei)) then             ! to look at the energy of the atom in the field of only certain atoms "nuclei"
+!          D_save => .density_matrix.restricted          ! save the "real" density matrix
+!          .make_roby_projected_density(Pa,nuclei)   ! reset the "real" density matrix to a projected density
+!          .density_matrix.restricted => Pa
+!          Na_Em = Za.trace_product_with(.density_matrix.restricted)
+!          .SCF:make_fock_matrix(core=FALSE)      ! no core and for the whole molecule
+!          .density_matrix.restricted => D_save
+!        else
+!          Na_Em = Za.trace_product_with(.density_matrix.restricted)
+!          .SCF:make_fock_matrix(core=FALSE)
+!        end
+!        D_save => .density_matrix.restricted
+!        .make_roby_projected_density(Pa,roby_atom)
+!        Ea_Em = .fock_matrix.restricted.trace_product_with(Pa)
+!        Na_Ea = Za.trace_product_with(Pa)
+!        Ea_Nm = Zm.trace_product_with(Pa)
+!        E_k = T.trace_product_with(Pa)
+!        .density_matrix.restricted => Pa
+!        .SCF:make_fock_matrix(core=FALSE)      ! no core and for the whole molecule
+!        Ea_Ea = .fock_matrix.restricted.trace_product_with(Pa)
+!        Ea_Em = Ea_Em - Ea_Ea/2
+!        .density_matrix.restricted => D_save
+!      end
+!      energy = Na_Em + E_k + Ea_Em + Ea_Nm - Na_Ea
+!      if (present(nuclei)) then
+!        energy = energy + .atom.nuclear_repulsion_energy(roby_atom,nuclei)
+!      else
+!        energy = energy + .atom.nuclear_repulsion_energy(roby_atom)
+!      end
+!      if (do_output) then
+!       stdout.dash(real_fields=3)
+!       stdout.show("N_a to E_m:",Na_Em)
+!       stdout.show("N_a to E_a:",Na_Ea)
+!       stdout.show("E_a to N_m:",Ea_Nm)
+!       stdout.show("E_a to E_m:",Ea_Em)
+!       stdout.show("N_a to N_m:", .atom.nuclear_repulsion_energy(roby_atom))
+!       stdout.show("Kinetic Energy:", E_k)
+!       stdout.show("Total Energy:", energy)
+!       stdout.dash(real_fields=3)
+!      end
+!      Pa.destroy
+!   end
+
+!  ======================================
+!  Plot covalent and ionic theta orbitals
+!  ======================================
+
+!   plot_roby_orbitals
+!   ! Plots the covalent and ionic orbitals to a grid
+!   roby_atom, roby_atom1, roby_atom2 :: VEC{INT}*
+!     .read_roby_groups(roby_atom,roby_atom1,roby_atom2)
+!     .plot_cos_sin_orbitals(roby_atom, roby_atom1, roby_atom2)
+!     roby_atom.destroy
+!     roby_atom1.destroy
+!     roby_atom2.destroy
+!   end
+!
+!   plot_cos_sin_orbitals(roby_atom, roby_atom1, roby_atom2)
+!   ! Plots the cos and sin Roby-Gould orbitals
+!   ! =========================================
+!      roby_atom, roby_atom1, roby_atom2 :: VEC{INT}
+!      C, theta_c, S, theta_s :: MAT{REAL}*
+!      cval, sval :: VEC{REAL}*
+!      c_pair, s_pair, cs_pair :: VEC{INT}*
+!      n_a, n_b, n_ab :: INT
+!      i, j, k, kk :: INT
+!      proj_COs, proj_SOs, saved_NOs :: OPMATRIX*
+!      arch :: ARCHIVE
+!      gr :: VEC{REAL}*
+!      pi_space, blurb :: BIN
+!   ! =========================================
+!      blurb = TRUE
+!      DIE_IF(.plot_grid.destroyed, "no grid exists")
+!      DIE_IF(.spin_multiplicity/=1, "multiplicity /= 1")
+!      DIE_IF(.natural_orbitals.number_kind /= "real","NOs not real")
+!      n_a = .atom(roby_atom1).n_bf
+!      n_b = .atom(roby_atom2).n_bf
+!      n_ab = .atom(roby_atom).n_bf
+!      DIE_IF(n_ab /= n_a + n_b, "n-ab /= n_a + n_b")
+!      C.create(n_ab,n_ab); theta_c.create(n_ab, n_ab); cval.create(n_ab)
+!      S.create(n_ab,n_ab); theta_s.create(n_ab, n_ab); sval.create(n_ab)
+!      .make_shared_operator(C)
+!      .make_ionic_operator(S)
+!      .diagonalise_V_AB_operator(C,roby_atom,theta_c,cval)
+!      .diagonalise_V_AB_operator(S,roby_atom,theta_s,sval)
+!      c_pair.create(n_ab); s_pair.create(n_ab); cs_pair.create(n_ab)
+!      .find_pairs(cval, sval, c_pair,s_pair,cs_pair)
+!      .put_roby_eigenvalues(roby_atom1,roby_atom2,sval,cval,c_pair,s_pair,cs_pair,blurb)
+!      saved_NOs => .natural_orbitals
+!      gr.create(.plot_grid.n_pt)
+!      proj_COs.create( .n_bf, "restricted")
+!      proj_SOs.create( .n_bf, "restricted")
+!      .AO_subspace_set(proj_COs.restricted, theta_c, roby_atom)
+!      .AO_subspace_set(proj_SOs.restricted, theta_s, roby_atom)
+!      pi_space = TRUE
+!      do i = 1, n_ab
+!        stdout.flush; stdout.put("i,c_pair(i),s_pair(i),cs_pair(i) = ")
+!        stdout.put(i); stdout.put(c_pair(i)); stdout.put(s_pair(i)); stdout.put(cs_pair(i))
+!        j = cs_pair(i)
+!        if (j < 0) cycle
+!        stdout.put("cs_pair(i) >= 0")
+!        if (pi_space AND s_pair(j)==-1) then
+!           ! sin: pi/2
+!           stdout.flush; stdout.put("pi/2")
+!           k = j
+!           kk = i
+!           .natural_orbitals => proj_SOs
+!           .make_orbital_grid(gr,k)
+!           arch.set(.name,"sin_pi_grid")
+!           arch.write(gr)
+!           arch.set(.name,"sin_pi_grid"//trim(kk.to_str)//"",format="ascii")
+!           arch.write_gnuplot(gr, .plot_grid.n_x, .plot_grid.n_y, .plot_grid.n_z)
+!        end
+!        if (s_pair(j) > -1) then
+!           stdout.flush; stdout.put("other")
+!           ! cos: +
+!           k = i
+!           kk = k
+!           .natural_orbitals => proj_COs
+!           .make_orbital_grid(gr,k)
+!           arch.set(.name,"cos_orbital_grid")
+!           arch.write(gr)
+!           arch.set(.name,"cos_orbital_grid"//trim(kk.to_str)//"",format="ascii")
+!           arch.write_gnuplot(gr, .plot_grid.n_x, .plot_grid.n_y, .plot_grid.n_z)
+!           ! cos: -
+!           k = c_pair(i)
+!           kk = k
+!           .make_orbital_grid(gr,k)
+!           arch.set(.name,"cos_orbital_grid")
+!           arch.write(gr)
+!           arch.set(.name,"cos_orbital_grid"//trim(kk.to_str)//"",format="ascii")
+!           arch.write_gnuplot(gr, .plot_grid.n_x, .plot_grid.n_y, .plot_grid.n_z)
+!           ! sin: +
+!           k = j
+!           kk = i
+!           .natural_orbitals => proj_SOs
+!           .make_orbital_grid(gr,k)
+!           arch.set(.name,"sin_orbital_grid")
+!           arch.write(gr)
+!           arch.set(.name,"sin_orbital_grid"//trim(kk.to_str)//"",format="ascii")
+!           arch.write_gnuplot(gr, .plot_grid.n_x, .plot_grid.n_y, .plot_grid.n_z)
+!           ! sin: -
+!           k = s_pair(j)
+!           kk = c_pair(i)
+!           .make_orbital_grid(gr,k)
+!           arch.set(.name,"sin_orbital_grid")
+!           arch.write(gr)
+!           arch.set(.name,"sin_orbital_grid"//trim(kk.to_str)//"",format="ascii")
+!           arch.write_gnuplot(gr, .plot_grid.n_x, .plot_grid.n_y, .plot_grid.n_z)
+!        end
+!      end
+!      .natural_orbitals => saved_NOs
+!      gr.destroy
+!      proj_COs.destroy
+!      proj_SOs.destroy
+!      C.destroy; theta_c.destroy; cval.destroy
+!      S.destroy; theta_s.destroy; sval.destroy
+!      c_pair.destroy; s_pair.destroy; cs_pair.destroy
+!   end
+
+end

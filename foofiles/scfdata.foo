@@ -1,0 +1,2339 @@
+!---------------------------------------------------------------------------
+!
+!  SCFDATA: Store SCF data and deal with iteration control ......
+!
+! Copyright (C) Daniel Grimwood, 1998
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: scfdata.foo 4411 2014-06-21 09:48:32Z bucinsky $
+!---------------------------------------------------------------------------
+
+module SCFDATA
+
+   implicit none
+
+contains
+
+!  ===================
+!  Allocation routines
+!  ===================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   nullify_ptr_part 
+   ! Nullify the pointer parts of self
+      self :: INOUT
+
+      .diis.nullify_ptr_part
+
+      nullify(.cphf_diis)
+      nullify(.crystal)
+      nullify(.cluster)
+      nullify(.cluster_charges)
+      nullify(.cluster_charge_positions)
+      nullify(.table_info)
+      nullify(.table)
+   
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts of self
+
+      .diis.destroy_ptr_part
+
+      .cphf_diis.destroy
+      nullify(.crystal)
+      .cluster.destroy
+      .cluster_charges.destroy
+      .cluster_charge_positions.destroy
+      .table_info.destroy
+      .table.destroy
+
+   end
+
+   create_copy(scfdata) ::: leaky
+   ! Create a copy of the "scfdata" object
+      self :: PTR
+      scfdata :: SCFDATA
+      .create
+      .copy(scfdata)
+   end
+
+   copy(scfdata) ::: leaky
+   ! Make a copy of the "scfdata" object
+      scfdata :: SCFDATA
+
+      self = scfdata
+
+      .nullify_ptr_part
+
+      .diis.copy(scfdata.diis)
+
+      if (scfdata.cphf_diis.created)                .cphf_diis.create_copy(scfdata.cphf_diis)
+
+      if (scfdata.crystal.created)                  .crystal => scfdata.crystal
+
+      if (scfdata.cluster.created)                  .cluster.create_copy(scfdata.cluster)
+      if (scfdata.cluster_charges.created)          .cluster_charges.create_copy(scfdata.cluster_charges)
+      if (scfdata.cluster_charge_positions.created) .cluster_charge_positions.create_copy(scfdata.cluster_charge_positions)
+
+      if (scfdata.table_info.created)               .table_info.create_copy(scfdata.table_info)
+      if (scfdata.table.created)                    .table.create_copy(scfdata.table)
+
+   end
+
+!  ===============================================
+!  Set defaults, reset, update and realted methods
+!  ===============================================
+
+   set_defaults ::: leaky
+   ! Set default SCF data values
+
+      ! The scf_kind is purposely set blank so diis comes later
+      .scf_kind                = " " 
+
+      ! DFT functional options
+      .dft_exchange_functional     = SCFDATA_DFT_EXCHANGE_FUNCTIONAL
+      .dft_correlation_functional  = SCFDATA_DFT_CORRELATION_FUNCTIONAL
+      .using_GGA_exchange          = SCFDATA_USING_GGA_EXCHANGE 
+      .using_GGA_correlation       = SCFDATA_USING_GGA_CORRELATION 
+
+      ! Iteration counters
+      .iteration               = 0
+      .total_iterations        = 0
+      .lambda_iteration        = 0
+      .min_iterations          = SCFDATA_MIN_ITERATIONS
+      .max_iterations          = SCFDATA_MAX_ITERATIONS
+
+      ! Stored energies
+      .nuclear_repulsion_energy = ZERO
+      .nuclear_attraction_energy = ZERO
+      .kinetic_energy          = ZERO
+      .energy                  = ZERO
+      .old_energy              = ZERO
+      .dft_energy_correction       = ZERO
+      .dft_alpha_energy_correction = ZERO
+      .dft_beta_energy_correction  = ZERO
+      .energy_difference       = ZERO
+
+      ! Constrained SCF/Crystal SCF data
+      .lambda                  = ZERO
+      .initial_lambda          = ZERO
+      .lambda_max              = ZERO
+      .lambda_step             = ONE
+      .fit_value               = ZERO
+      .old_fit_value           = ZERO
+      .penalty                 = ZERO
+      .old_penalty             = ZERO
+      .kappa                   = ZERO
+      .zero_oo_constraint_block = FALSE
+
+      ! Initial guess options
+      .initial_density         = "core" ! This shouldn't be changed; else atom SCF goes forever
+      .initial_mos             = "--using density--"
+      .initial_Us              = " "
+      .use_default_guess_options = TRUE
+
+      ! SCF convergence/accuracy related data
+      .convergence             = SCFDATA_CONVERGENCE             ! TOL(4)
+      .damp_finish             = SCFDATA_DAMP_FINISH
+      .damp_factor             = SCFDATA_DAMP_FACTOR
+      .level_shift             = SCFDATA_LEVEL_SHIFT
+      .level_shift_finish      = SCFDATA_LEVEL_SHIFT_FINISH
+      .linear_dependence_tol   = SCFDATA_LINEAR_DEPENDENCE_TOL
+      .linear_dependence_shift = SCFDATA_LINEAR_DEPENDENCE_SHIFT
+      .MO_gradient_stepsize    = 0.01d0
+      .max_update_stepsize     = 0.01d0
+      .eri_disk_cutoff         =  SCFDATA_ERI_DISK_CUTOFF
+      .eri_schwarz_cutoff      =  SCFDATA_ERI_SCHWARZ_CUTOFF
+      .eri_J_density_cutoff    =  SCFDATA_ERI_J_DENSITY_CUTOFF
+      .eri_K_density_cutoff    =  SCFDATA_ERI_K_DENSITY_CUTOFF
+      .eri_bf_overlap_cutoff   =  SCFDATA_ERI_BF_OVERLAP_CUTOFF
+      .eri_primitive_pair_cutoff = SCFDATA_ERI_PAIR_CUTOFF
+
+      ! For eliminating exchange correlation integrals
+      .atom_overlap_cutoff     = SCFDATA_ATOM_OVERLAP_CUTOFF
+      .XC_atom_separation_cutoff = SCFDATA_XC_ATOM_SEPARATION_CUTOFF
+
+      ! DIIS convergence related data
+      .diis.set_defaults       ! <<< leaky here ...
+      .diis_error              = ZERO
+      .old_diis_error          = ZERO
+      .diis_error_temp_cutoff  = DIIS_ERROR_TEMP_CUTOFF
+
+      ! General Complex HF options
+      .sl_1e_factor            = ONE
+      .sl_2e_factor            = ONE
+      .quantization_axis       = [ZERO, ZERO, ONE]
+
+      ! Logical switches in alphabetical order
+      .output                  = TRUE
+      .guess_output            = FALSE
+      .is_guess                = FALSE
+      .test                    = FALSE
+      .stabilize_density       = FALSE
+
+      ! Relativity   
+      .relativity_kind         = "none"
+
+      .DK1                     = TRUE 
+      .DK2                     = TRUE 
+      .using_SO_FDFF           = FALSE
+      .using_ppzpp             = FALSE
+      .DK3                     = FALSE
+      .PCE_CORR                = FALSE
+      .DK1_PCE                 = FALSE
+      .DK2_PCE                 = FALSE
+
+      ! Pauli switches
+      .set_pauli_terms_off
+
+      .using_damping           = SCFDATA_USING_DAMPING ! TRUE
+      .using_pFON              = FALSE
+      .using_delta_build       = TRUE
+      .using_direct_scf        = TRUE
+      .using_diis              = TRUE
+      .using_level_shift       = SCFDATA_USING_LEVEL_SHIFT ! TRUE
+      .using_orbital_locking   = FALSE
+      .using_exponential_update= FALSE
+      .using_MO_gradient_update= FALSE
+      .using_CPHF_diis         = TRUE
+      .using_NDDO              = FALSE
+      .using_NUDO              = FALSE
+      .using_PIE               = FALSE
+
+      ! Cluster switches
+      .using_cluster_charges   = FALSE
+      .using_SC_cluster_charges= FALSE
+      .using_qq_cluster_charges= FALSE
+      .cluster_radius          = SCFDATA_CLUSTER_RADIUS
+      .save_cluster_charges    = FALSE
+      .using_SC_Lorentz_fields = FALSE
+
+      ! how to change the finite gaussian nucleus radius
+      .nhf = 0
+
+      .delete_scf_archives     = TRUE
+      .delete_all_archives     = FALSE
+
+   end
+
+   set_pauli_terms_on 
+   ! Turn on all the Pauli terms
+      .using_1e_sl_term        = TRUE
+      .using_1e_srxa_term      = TRUE
+      .using_2e_sl_term        = TRUE
+      .using_aa_term           = TRUE
+      .using_bl_term           = TRUE
+      .using_bs_term           = TRUE
+      .using_bs_t_term         = TRUE
+   end
+
+   set_pauli_terms_off
+   ! Turn on all the Pauli terms
+      .using_1e_sl_term        = FALSE
+      .using_1e_srxa_term      = FALSE
+      .using_2e_sl_term        = FALSE
+      .using_aa_term           = FALSE
+      .using_bl_term           = FALSE
+      .using_bs_term           = FALSE
+      .using_bs_t_term         = FALSE
+   end
+
+   set_crystal(crystal)
+   ! Set the crystal 
+      crystal :: CRYSTAL*
+      
+      ! Set crystal and penalty
+      if (.iteration==0) then
+      if (associated(crystal)) then
+         .crystal => crystal
+      end
+      end
+
+   end
+
+   set_penalty
+   ! Set the penalties for the diffraction data present
+   ENSURE(.crystal.created,"No Crystal Data Present")
+
+      .old_penalty = .penalty
+
+      select case (.scf_kind)
+
+         case ("xray_rhf","xray_uhf","xray_gchf")
+            ENSURE(.crystal.xray_data.created,"No diffraction data")
+            .penalty = .crystal.xray_data.F_chi2
+
+         case ("xray_rks","xray_uks")
+            ENSURE(.crystal.xray_data.created,"No diffraction data")
+            .penalty = .crystal.xray_data.F_chi2
+
+         case ("pnd_uhf","pnd_uks")
+            ENSURE(.crystal.pnd_data.created,"No diffraction data")
+            .penalty = .crystal.pnd_data.F_chi2
+
+         case ("xray_pnd_uhf","xray_pnd_uks") 
+            ENSURE(.crystal.pnd_data.created,"No PND diffraction data")
+            ENSURE(.crystal.xray_data.created,"No X-ray diffraction data")
+            .penalty = log(.crystal.xray_data.F_chi2*.crystal.pnd_data.F_chi2)
+
+         case default
+            DIE("this is not a constrained scf")
+
+      end    
+
+   end
+
+   set_table ::: leaky
+   ! Prints out the SCF iteration banner (and related options)
+
+      n :: INT
+
+      ! Initialize save margin note data
+      .table_info.create(1,20)
+      .set_margin_info(n)
+
+      ! Set table headings
+      if (NOT .fitting) then
+
+         .table.create(5)
+         .table(1).set_heading("Iter")
+         .table(2).set_heading("Energy")
+         .table(2).set_subhead("  E/au")
+         .table(3).set_heading("Delta")
+         .table(3).set_subhead("E")
+         .table(4).set_heading("  DIIS  ")
+         .table(4).set_subhead("Gradient")
+         .table(5).set_width(0)
+
+         ! Table widths 
+         .table(1).set_width_from(.max_iterations)
+         .table(2).set_width_from(.energy)       
+         .table(3).set_width_from(.energy)          
+         .table(4).set_width_from(.energy)         
+         .table(5).force_width(0)
+         .table(5).set_left(TRUE)
+         .table(5).set_list_as_column(TRUE)
+
+      else
+
+         .table.create(8)
+         .table(1).set_heading("Iter")
+         .table(2).set_heading("Lambda")
+         .table(2).set_subhead("   L  ")
+         .table(3).set_heading("chi2")
+         .table(4).set_heading("Energy")
+         .table(4).set_subhead(" E/au ")
+         .table(5).set_heading("Penalty")
+         .table(5).set_subhead("E+L*chi2")
+         .table(6).set_heading("Delta")
+         .table(6).set_subhead("penalty")
+         .table(7).set_heading("  DIIS  ")
+         .table(7).set_subhead("Gradient")
+
+         ! Table widths 
+         .table(1).set_width_from(.max_iterations)
+         .table(2).set_width_from(.lambda)       
+         .table(3).set_width_from(TEN**3*.penalty)       
+         .table(4).set_width_from(.energy)       
+         .table(5).set_width_from(.fit_value)          
+         .table(6).set_width_from(.fit_value)        
+         .table(7).set_width_from(.energy)        
+         .table(8).force_width(0)
+         .table(8).set_left(TRUE)
+         .table(8).set_list_as_column(TRUE)
+
+      end
+
+   end
+
+   set_margin_info(n)
+   ! Set the margin information "info" for the SCF iterations
+
+      n :: INT, OUT
+
+      i,s :: INT
+
+      diff_converged :: BIN, save
+      diis_converged :: BIN, save
+      diis_save      :: BIN, save
+      diis_start     :: BIN, save
+      diis_up        :: BIN, save
+      damping_on     :: BIN, save
+      damping_off    :: BIN, save
+      level_on       :: BIN, save
+      level_off      :: BIN, save
+
+      ! Initialize saved switches
+      if (.iteration <= 0) then
+
+         diff_converged = FALSE
+
+         diis_converged = FALSE
+         diis_save      = FALSE
+         diis_start     = FALSE
+         diis_up        = FALSE
+
+         damping_on     = FALSE
+         damping_off    = FALSE
+
+         level_on       = FALSE
+         level_off      = FALSE
+
+      end
+
+      ! Initialize info
+      n = 0
+      .table_info(1)[:] = " "
+
+      ! No notes ...
+      if (.scf_done) return
+
+      ! Set margin info ...
+      if (NOT diff_converged AND .energy_difference_converged AND .iteration>0) then
+         n = n + 1
+         .table_info(1)[n] = " *Difference has converged"
+         diff_converged = TRUE
+      end
+
+      if (NOT diis_converged AND .diis.is_converged) then
+         n = n + 1
+         .table_info(1)[n] = " *Gradient has converged"
+         diis_converged = TRUE
+      end
+
+      if (.apply_damping AND NOT damping_on) then
+         n = n + 1
+         .table_info(1)[n] = " *Damping on"
+         damping_on = TRUE
+      else if (NOT .apply_damping AND NOT damping_off) then
+         n = n + 1
+         .table_info(1)[n] = " *Damping was off"
+         damping_off = TRUE
+      end
+
+      if (.apply_level_shifting AND NOT level_on) then
+         n = n + 1
+         .table_info(1)[n] = " *Levelshift on"
+         level_on = TRUE
+      else if (NOT .apply_level_shifting AND NOT level_off) then
+         n = n + 1
+         .table_info(1)[n] = " *Levelshift was off"
+         level_off = TRUE
+      end
+
+      if (.using_diis) then
+
+         if (.diis.saved_iteration==0 AND NOT diis_save) then
+            n = n + 1
+            .table_info(1)[n] = " *DIIS starts saving now"
+            diis_save = TRUE
+         end
+   
+         if (.diis.actual_iteration==0 AND NOT diis_start) then
+            n = n + 1
+            .table_info(1)[n] = " *DIIS extrapolates now"
+            diis_start = TRUE
+         end
+   
+         if (.diis.subspace_saturated AND diis_up) then
+            n = n + 1
+            i = .diis.replaced_iteration
+            s = .diis.new
+            .table_info(1)[n] = " *DIIS replaced saved #"//trim(s.to_str)//" iter #"//trim(i.to_str)
+         end
+   
+         if (.diis.kept<=2 AND diis_up) then
+            n = n + 1
+            i = .diis.iter_4(1) - 1
+            s = .diis.new
+            if (.diis.kept==1) then
+            .table_info(1)[n] = " *DIIS stuck, total reset"
+            else
+            .table_info(1)[n] = " *DIIS stuck, kept saved #"//trim(s.to_str)//" iter #"//trim(i.to_str)
+            end
+            diis_up = FALSE
+         end
+   
+         ! This must come last
+         if (.diis.subspace_saturated AND NOT diis_up) then 
+            n = n + 1
+            .table_info(1)[n] = " *DIIS subspace is saturated"
+            diis_up = TRUE
+         end
+
+      end
+
+   end
+
+   reset
+   ! Reset SCF energy and iteration data , but don't change
+   ! nuclear_repulsion_energy, convergence, direct, or max_it options
+
+      .energy                = ZERO
+      .fit_value             = ZERO
+      .old_fit_value         = ZERO
+
+      .nuclear_attraction_energy = ZERO ! Electron-nuclear attraction energy
+      .charge_attraction_energy  = ZERO ! Point-charge attraction energy
+      .electron_repulsion_energy = ZERO ! Electron-electron repulsion energy
+      .kinetic_energy            = ZERO ! Electron kinetic energy
+      .old_energy                = ZERO
+
+      .iteration             = 0
+      .total_iterations      = 0
+
+      .lambda_iteration      = 0
+      .penalty               = ZERO
+
+      ! DIIS (leaky)
+      .diis.destroy_ptr_part
+      .diis.reset_iteration_defaults
+
+   end
+
+   reset_for_next_lambda ::: leaky
+   ! Reset a few things for the next constrained-scf lambda iteration:
+
+      n :: INT
+
+      ! Reset iteration & margin info
+      .iteration = -1
+      .set_margin_info(n)
+
+      ! DIIS (leaky)
+      .diis.reset_iteration_defaults
+
+   end
+
+   update_lambda
+   ! Increments lambda by lambda_step
+      .lambda           = .lambda + .lambda_step
+      .lambda_iteration = .lambda_iteration + 1
+      .old_fit_value    = .old_energy + .lambda * .old_penalty
+      .fit_value        = .energy + .lambda * .penalty
+   end
+
+   update_iteration
+   ! Update the SCF iteration
+      .iteration        = .iteration + 1
+      .total_iterations = .total_iterations + 1
+   end
+
+   update_energy(energy)
+   ! Update the energy and penalty needed in constrained fits.
+      energy :: REAL, IN
+      
+      ! Keep old values
+      .old_energy    = .energy
+      .old_fit_value = .fit_value
+
+      ! Set new values
+      .energy = energy
+      if (.fitting) then
+         .set_penalty
+         .fit_value = energy + .lambda * .penalty
+      end
+
+      ! Set energy differences
+      .energy_difference = .energy - .old_energy
+
+   end
+
+!  ============
+!  Set routines
+!  ============
+
+   set_1e_sl_factor(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.sl_1e_factor)
+   ! Generic set
+   end
+
+   set_2e_sl_factor(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.sl_2e_factor)
+   ! Generic set
+   end
+
+   set_atom_overlap_cutoff(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.atom_overlap_cutoff)
+   ! Generic set
+   end
+
+   set_delete_scf_archives(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.delete_scf_archives)
+   ! Generic set
+   end
+
+   set_delete_all_archives(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.delete_all_archives)
+   ! Generic set
+   end
+
+   set_cluster_radius(val)
+   ! Set the cluster radius
+      val :: REAL
+   ENSURE(val>0,"cluster_radius must be positive")
+      .cluster_radius = val
+   end
+
+   set_convergence(val)
+   ! Set SCF energy convergence criteria
+      val :: REAL
+   WARN_IF(.convergence<TOL(11),"convergence may be too small")
+      .convergence = val
+   end
+
+   set_damp_factor(val)
+   ! Set the SCF density matrix damping factor
+      val :: REAL
+   ENSURE(val>ZERO,"damp_factor must be positive")
+   ENSURE(val<=ONE,"damp_factor must not exceed 1 ")
+      .damp_factor = val
+   end
+
+   set_damp_finish(val) ::: get_from(OBJECT:set, VAL?=>INT, ARG?=>.damp_finish)
+   ! Generic set
+   end
+
+   set_correlation_functional(val)
+   ! Set the DFT correlation functional
+      val :: STR
+      .dft_correlation_functional = val
+      .dft_correlation_functional.to_lower_case
+      select case (.dft_correlation_functional)
+         case("          "); .using_GGA_correlation = FALSE
+         case("none      "); .using_GGA_correlation = FALSE
+         case("vwn       "); .using_GGA_correlation = FALSE
+         case("lyp       "); .using_GGA_correlation = TRUE
+         case default;        UNKNOWN(.dft_correlation_functional)
+      end
+   end
+
+   set_exchange_functional(val)
+   ! Set the DFT exchange functional
+      val :: STR
+      .dft_exchange_functional = val
+      .dft_exchange_functional.to_lower_case
+      select case (.dft_exchange_functional)
+         case("           "); .using_GGA_exchange = FALSE
+         case("none       "); .using_GGA_exchange = FALSE
+         case("slater     "); .using_GGA_exchange = FALSE
+         case("xalpha     "); .using_GGA_exchange = FALSE
+         case("becke88    "); .using_GGA_exchange = TRUE
+         case("gill96     "); .using_GGA_exchange = TRUE
+         case default;    UNKNOWN(.dft_exchange_functional)
+      end
+   end
+
+   set_diis_error(val)
+   ! Set the DIIS error and the starting iteration for automatic DIIS start
+      val :: REAL, IN
+      .old_diis_error = .diis_error
+      .diis_error     = val
+   end
+
+   set_diis_error_temp_cutoff(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.diis_error_temp_cutoff)
+   ! Generic set
+   end
+
+   set_eri_bf_overlap_cutoff(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.eri_bf_overlap_cutoff)
+   ! Generic set
+   end
+
+   set_eri_disk_cutoff(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.eri_disk_cutoff)
+   ! Generic set
+   end
+
+   set_eri_J_density_cutoff(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.eri_J_density_cutoff)
+   ! Generic set
+   end
+
+   set_eri_K_density_cutoff(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.eri_K_density_cutoff)
+   ! Generic set
+   end
+
+   set_eri_primitive_pair_cutoff(val)
+   ! Set the ERI primitive pair cutoff
+      val :: REAL
+      sh4 :: SHELL1QUARTET
+      if (FALSE) self = self
+      sh4.set_pair_cutoff(val)
+   end
+
+   set_eri_schwarz_cutoff(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.eri_schwarz_cutoff)
+   ! Generic set
+   end
+
+   set_guess_output(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.guess_output)
+   ! Generic set
+   end
+
+   set_initial_density(val)
+   ! Set the initial density type to use for SCF guess
+      val :: STR
+
+      .initial_density = val
+
+      .initial_density.to_lower_case
+
+      select case (.initial_density)
+         case("core                ")
+         case("fock                ")
+         case("promolecule         ")
+         case("progroup            ")
+         case("restricted          ")
+         case("unrestricted        ")
+         case("general             ")
+         case("restricted_complex  ")
+         case("complex_unrestricted")
+         case("unrestricted_complex")
+         case("general_complex     ")
+         case("complex_general     ")
+         case default;  UNKNOWN(.initial_density)
+      end
+
+      ! Need to reset set this
+      .initial_mos = "--using density--"
+
+   end
+
+   set_initial_lambda(val)
+   ! Set the initial lambda value for constrained SCF
+      val :: REAL
+
+      .initial_lambda = val
+
+      .lambda = val
+
+   end
+
+   set_initial_MOs(val)
+   ! Read the initial MOs to use as SCF guess
+      val :: STR
+
+      .initial_mos = val
+      .initial_mos.to_lower_case
+
+      select case (.initial_mos)
+         case("existing            ")
+         case("restricted          ")
+         case("unrestricted        ")
+         case("general             ")
+         case("restricted_complex  ")
+         case("complex_unrestricted")
+         case("unrestricted_complex")
+         case("general_complex     ")
+         case("complex_general     ")
+         case default;   UNKNOWN(.initial_mos)
+      end
+
+      ! Need to reset set this
+      .initial_density = "--using MO's--"
+
+   end
+
+   set_initial_Us(val)
+   ! Set initial U's to use as CPHF guess
+      val :: STR
+
+      .initial_Us = val
+      .initial_Us.to_lower_case
+
+      select case (.initial_Us)
+         case("                    ")
+         case("restricted          ")
+         case default;   UNKNOWN(.initial_Us)
+      end
+
+   end
+
+   set_is_guess(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.is_guess)
+   ! Generic set
+   end
+
+   set_scf_kind(val)
+   ! Read the SCF type
+      val :: STR
+
+      .scf_kind = val
+      .scf_kind.to_lower_case
+
+      select case (.scf_kind)
+         case("gchf        ") ! General complex Hartree-Fock
+         case("ghf         ") ! General Hartree-Fock
+         case("rchf        ") ! Restricted complex Hartree-Fock
+         case("rhf         ") ! Restricted Hartree-Fock
+         case("rks         ") ! Restricted Kohn-Sham
+         case("rohf        ") ! Restricted open shell Hartree-Fock
+         case("uchf        ") ! Unrestricted complex Hartree-Fock
+         case("uhf         ") ! Unrestricted Hartree-Fock
+         case("uks         ") ! Unrestricted Kohn-Sham
+         case("xray_rhf    ") ! X-ray-constrained restricted Hartree-Fock
+         case("xray_uhf    ") ! X-ray-constrained unrestricted Hartree-Fock
+         case("xray_gchf   ") ! X-ray-constrained unrestricted Hartree-Fock
+         case("xray_rks    ") ! X-ray-constrained restricted Kohn-Sham
+         case("xray_uks    ") ! X-ray-constrained unrestricted Kohn-Sham
+         case("pnd_uhf     ") ! polarised neutron diffraction uhf 
+         case("pnd_uks     ") ! polarised neutron diffraction uks 
+         case("xray_pnd_uhf") ! joint xray, pnd uhf 
+         case("xray_pnd_uks") ! joint xray, pnd uks
+         case default;    UNKNOWN(.scf_kind)
+      end
+
+   end
+
+   set_lambda_max(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.lambda_max)
+   ! Generic set
+   end
+
+   set_lambda_step(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.lambda_step)
+   ! Generic set
+   end
+
+   set_level_shift(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.level_shift)
+   ! Generic set
+   end
+
+   set_level_shift_finish(val) ::: get_from(OBJECT:set, VAL?=>INT, ARG?=>.level_shift_finish)
+   ! Generic set
+   end
+
+   set_linear_dependence_shift(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.linear_dependence_shift)
+   ! Generic set
+   end
+
+   set_linear_dependence_tol(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.linear_dependence_tol)
+   ! Generic set
+   end
+
+   set_min_iterations(val)
+   ! Set the minimum no. of SCF interations
+      val :: INT
+   ENSURE(val>=0,"min_iteration must be non-negative")
+   ENSURE(.max_iterations>=val,"must not exceed max_iterations!")
+      .min_iterations = val
+   end
+
+   set_max_iterations(val)
+   ! Set the maximum no. of SCF interations
+      val :: INT
+   ENSURE(val>=0,"must be non-negative")
+   ENSURE(val>=.min_iterations,"must be at least as large as min_iterations!")
+      .max_iterations = val
+   end
+
+   set_max_update_stepsize(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.max_update_stepsize)
+   ! Generic set
+   end
+
+   set_nhf(val)
+   ! Set the maximum no. of SCF interations
+      val :: INT
+   ENSURE(val>=0,"must be non-negative")
+   ENSURE(val>=.min_iterations,"must be at least as large as min_iterations!")
+      .nhf = val
+   end
+
+   set_MO_gradient_stepsize(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.MO_gradient_stepsize)
+   ! Generic set
+   end
+
+   set_output(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.output)
+   ! Generic set
+   end
+
+   set_quantization_axis(val) ::: get_from(OBJECT:set, VAL?=>VEC{REAL}(3), ARG?=>.quantization_axis)
+   ! Generic set
+   end
+
+   set_relativity_kind(val)
+   ! Read whether to use Douglas-Kroll-Hess
+      val :: STR
+
+      .relativity_kind = val
+      .relativity_kind.to_lower_case
+
+      select case (.relativity_kind)
+         case ("iotc");                
+         case ("douglas-kroll-hess");  
+         case ("dkh");                 
+         case ("douglas-kroll-hess-2");
+         case ("dkh-2");               
+         case ("none");                
+         case ("pauli");               
+         case ("zora");                
+         case default;   UNKNOWN(.relativity_kind)
+      end
+
+      .set_pauli_terms_off
+      if (.relativity_kind=="pauli") .set_pauli_terms_on
+
+   end
+
+   set_save_cluster_charges(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.save_cluster_charges)
+   ! Generic set
+   end
+
+   set_stabilize_density(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.stabilize_density)
+   ! Generic set
+   end
+
+   set_test(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.test)
+   ! Generic set
+   end
+
+   set_using_1e_sl_term(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_1e_sl_term)
+   ! Generic set
+   end
+
+   set_using_1e_srxa_term(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_1e_srxa_term)
+   ! Generic set
+   end
+
+   set_using_1e_zora_term(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_1e_zora_term)
+   ! Generic set
+   end
+
+   set_using_2e_sl_term(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_2e_sl_term)
+   ! Generic set
+   end
+
+   set_using_aa_term(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_aa_term)
+   ! Generic set
+   end
+
+   set_using_bl_term(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_bl_term)
+   ! Generic set
+   end
+
+   set_using_bs_term(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_bs_term)
+   ! Generic set
+   end
+
+   set_using_bs_t_term(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_bs_t_term)
+   ! Generic set
+   end
+
+   set_using_CPHF_diis(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_CPHF_diis)
+   ! Generic set
+   end
+
+   set_using_cluster_charges(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_cluster_charges)
+   ! Generic set
+   end
+
+   set_using_damping(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_damping)
+   ! Generic set
+   end
+
+   set_use_default_guess_options(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_default_guess_options)
+   ! Generic set
+   end
+
+   set_using_delta_build(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_delta_build)
+   ! Generic set
+   end
+
+   set_using_direct_scf(val)
+   ! Set whether to use direct SCF or not
+      val :: BIN
+      .using_direct_scf = val
+      if (.using_direct_scf) .using_delta_build = TRUE
+   end
+
+   set_using_DK1(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.DK1)
+   ! Generic set
+   end
+
+   set_using_DK2(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.DK2)
+   ! Generic set
+   end
+
+   set_using_DK3(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.DK3)
+   ! Generic set
+   end
+
+   set_using_DK1_PCE(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.DK1_PCE)
+   ! Generic set
+   end
+
+   set_using_DK2_PCE(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.DK2_PCE)
+   ! Generic set
+   end
+
+   set_using_exponential_update(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_exponential_update)
+   ! Generic set
+   end
+
+   set_using_diis(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_diis)
+   ! Generic set
+   end
+
+   set_using_level_shift(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_level_shift)
+   ! Generic set
+   end
+
+   set_using_MO_gradient_update(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_MO_gradient_update)
+   ! Generic set
+   end
+
+   set_using_NDDO(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_NDDO)
+   ! Generic set
+   end
+
+   set_using_NUDO(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_NUDO)
+   ! Generic set
+   end
+
+   set_using_orbital_locking(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_orbital_locking)
+   ! Generic set
+   end
+
+   set_using_PCE_correction(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.PCE_CORR)
+   ! Generic set
+   end
+
+   set_using_PIE(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_PIE)
+   ! Generic set
+   end
+
+   set_using_ppzpp_method(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_ppzpp)
+   ! Generic set
+   end
+
+   set_using_pFON_damping(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_pFON)
+   ! Generic set
+   end
+
+   set_using_qq_cluster_charges(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_qq_cluster_charges)
+   ! Generic set
+   end
+
+   set_using_SC_cluster_charges(val)
+   ! Set whether to use SC cluster charges
+      val :: BIN
+      .using_SC_cluster_charges = val
+      if (val) .using_cluster_charges = val
+   end
+
+   set_using_SC_Lorentz_fields(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_SC_Lorentz_fields)
+   ! Generic set
+   end
+
+   set_using_SO_FDFF_method(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.using_SO_FDFF)
+   ! Generic set
+   end
+
+   set_XC_atom_separation_cutoff(val)
+   ! Set the XC atom separation cutoff
+      val :: REAL
+   ENSURE(val>ZERO,"cutoff must be positive")
+      .XC_atom_separation_cutoff = val
+   end
+
+   set_zero_oo_constraint_block(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.zero_oo_constraint_block)
+   ! Generic set
+   end
+
+!  =============
+!  Input methods
+!  =============
+
+   ! NOTE : this must be finalized after the call.
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process a command "keyword". Data is inputted from "stdin", unless
+   ! "word" is a sequence of blank separated strings. In this case,
+   ! the sequence is processed as if it were a separate file.
+      keyword :: STR
+      word :: STR
+      word = keyword
+      word.to_lower_case
+      select case (word)
+         case ("1e_sl_factor=                "); .read_1e_sl_factor
+         case ("2e_sl_factor=                "); .read_2e_sl_factor
+         case ("}                            ")  ! exit case
+         case ("atom_overlap_cutoff=         "); .read_atom_overlap_cutoff
+         case ("cluster_radius=              "); .read_cluster_radius
+         case ("convergence=                 "); .read_convergence
+         case ("converge=                    "); .read_convergence
+         case ("damp_factor=                 "); .read_damp_factor
+         case ("damp_finish=                 "); .read_damp_finish
+         case ("delete_all_archives=         "); .read_delete_all_archives
+         case ("delete_scf_archives=         "); .read_delete_scf_archives
+         case ("dft_correlation_functional=  "); .read_correlation_functional
+         case ("dft_exchange_functional=     "); .read_exchange_functional
+         case ("diis=                        "); .read_diis
+         case ("diis_error_temp_cutoff=      "); .read_diis_error_temp_cutoff
+         case ("direct=                      "); .read_using_direct_scf ! deprecated
+         case ("eri_bf_overlap_cutoff=       "); .read_eri_bf_overlap_cutoff
+         case ("eri_disk_cutoff=             "); .read_eri_disk_cutoff
+         case ("eri_j_density_cutoff=        "); .read_eri_J_density_cutoff
+         case ("eri_k_density_cutoff=        "); .read_eri_K_density_cutoff
+         case ("eri_primitive_pair_cutoff=   "); .read_eri_primitive_pair_cutoff
+         case ("eri_schwarz_cutoff=          "); .read_eri_schwarz_cutoff
+         case ("guess_output=                "); .read_guess_output
+         case ("initial_density=             "); .read_initial_density
+         case ("initial_lambda=              "); .read_initial_lambda
+         case ("initial_mos=                 "); .read_initial_MOs
+         case ("initial_us=                  "); .read_initial_Us
+         case ("kind=                        "); .read_scf_kind !  deprecated
+         case ("lambda_max=                  "); .read_lambda_max
+         case ("lambda_step=                 "); .read_lambda_step
+         case ("level_shift=                 "); .read_level_shift
+         case ("level_shift_finish=          "); .read_level_shift_finish
+         case ("linear_dependence_shift=     "); .read_linear_dependence_shift
+         case ("linear_dependence_tol=       "); .read_linear_dependence_tol
+         case ("min_iterations=              "); .read_min_iterations
+         case ("max_iterations=              "); .read_max_iterations
+         case ("max_update_stepsize=         "); .read_max_update_stepsize
+         case ("mo_gradient_stepsize=        "); .read_MO_gradient_stepsize
+         case ("nhf=                         "); .read_nhf
+         case ("output=                      "); .read_output
+         case ("put_cluster                  "); .put_cluster
+         case ("put_cluster_charges          "); .put_cluster_charges
+         case ("quantization_axis=           "); .read_quantization_axis
+         case ("relativity_kind=             "); .read_relativity_kind
+         case ("save_cluster_charges=        "); .read_save_cluster_charges
+         case ("scf_kind=                    "); .read_scf_kind
+         case ("scf_type=                    "); .read_scf_kind !  deprecated
+         case ("stabilize_density=           "); .read_stabilize_density
+         case ("test=                        "); .read_test
+         case ("use_1e_sl_term=              "); .read_using_1e_sl_term
+         case ("use_1e_s(rxa)_term=          "); .read_using_1e_srxa_term
+         case ("use_1e_zora_term=            "); .read_using_1e_zora_term
+         case ("use_2e_sl_term=              "); .read_using_2e_sl_term
+         case ("use_aa_term=                 "); .read_using_aa_term
+         case ("use_bl_term=                 "); .read_using_bl_term
+         case ("use_bs_term=                 "); .read_using_bs_term
+         case ("use_bs_t_term=               "); .read_using_bs_t_term
+         case ("use_cphf_diis=               "); .read_using_CPHF_diis
+         case ("use_cluster_charges=         "); .read_using_cluster_charges
+         case ("use_damping=                 "); .read_using_damping
+         case ("use_default_guess_options=   "); .read_use_default_guess_options
+         case ("use_delta_build=             "); .read_using_delta_build
+         case ("use_direct_scf=              "); .read_using_direct_scf
+         case ("use_diis=                    "); .read_using_diis
+         case ("use_dk1=                     "); .read_using_DK1
+         case ("use_dk2=                     "); .read_using_DK2
+         case ("use_dk3=                     "); .read_using_DK3
+         case ("use_dk1_pce=                 "); .read_using_DK1_PCE
+         case ("use_dk2_pce=                 "); .read_using_DK2_PCE
+         case ("use_exponential_update=      "); .read_using_exponential_update
+         case ("use_level_shifting=          "); .read_using_level_shift
+         case ("use_level_shift=             "); .read_using_level_shift
+         case ("use_mo_gradient_update=      "); .read_using_MO_gradient_update
+         case ("use_nddo=                    "); .read_using_NDDO
+         case ("use_nudo=                    "); .read_using_NUDO
+         case ("use_orbital_locking=         "); .read_using_orbital_locking
+         case ("use_pce_corr=                "); .read_using_PCE_correction
+         case ("use_pie=                     "); .read_using_PIE
+         case ("use_ppzpp=                   "); .read_using_ppzpp_method
+         case ("use_pfon_damping=            "); .read_using_pFON_damping
+         case ("use_qq_cluster_charges=      "); .read_using_qq_cluster_charges
+         case ("use_sc_cluster_charges=      "); .read_using_SC_cluster_charges
+         case ("use_sc_lorentz_fields=       "); .read_using_SC_Lorentz_fields
+         case ("use_so_fdff=                 "); .read_using_SO_FDFF_method
+         case ("xc_atom_separation_cutoff=   "); .read_XC_atom_separation_cutoff
+         case ("zero_oo_constraint_block=    "); .read_zero_oo_constraint_block
+         case default;           UNKNOWN(word)
+      end
+   end
+
+   finalize
+   ! Make sure the input satisfies sanity checks and generate
+   ! any other missing data
+
+      DIE_IF(.scf_kind==" ","no scf kind specified")
+      DIE_IF(.max_iterations<.min_iterations,"max_it must be greater than min_it!")
+
+      if (.using_1e_zora_term)   .using_1e_sl_term = FALSE
+      if (.using_1e_sl_term)     .using_1e_zora_term = FALSE
+
+      DIE_IF(.diis.keep           ==0,"diis.keep must be > 0")
+      DIE_IF(.diis.start_iteration==0,"diis.start_iteration must be > 0")
+      DIE_IF(.diis.save_iteration ==0,"diis.save_iteration must be > 0")
+
+      if (.using_SC_cluster_charges OR .using_cluster_charges) then
+
+         DIE_IF(.is_constrained_wavefunction AND NOT .using_SC_cluster_charges,"must use SC_cluster_charges!")
+
+         DIE_IF(.initial_density=="core" OR .initial_density=="promolecule","must start from previous density or MO's")
+
+         if (.using_SC_cluster_charges) then
+            .using_cluster_charges = TRUE
+         end
+
+      end
+
+   end
+
+!  ============
+!  Read methods
+!  ============
+
+   read_1e_sl_factor ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_1e_sl_factor), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_2e_sl_factor ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_2e_sl_factor), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_atom_overlap_cutoff ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_atom_overlap_cutoff), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_cluster_radius ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_cluster_radius), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_convergence ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_convergence), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_damp_factor ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_damp_factor), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_damp_finish ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_damp_finish), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_delete_all_archives ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_delete_all_archives), private
+   ! Generic read and set
+   end
+
+   read_delete_scf_archives ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_delete_scf_archives), private
+   ! Generic read and set
+   end
+
+   read_correlation_functional ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_correlation_functional), private
+   ! Generic read and set
+   end
+
+   read_exchange_functional ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_exchange_functional), private
+   ! Generic read and set
+   end
+
+   read_diis ::: private
+   ! Read the DIIS options
+      .diis.read_keywords
+   end
+
+   read_diis_error_temp_cutoff ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_diis_error_temp_cutoff), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_eri_bf_overlap_cutoff ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_eri_bf_overlap_cutoff), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_eri_disk_cutoff ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_eri_disk_cutoff), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_eri_J_density_cutoff ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_eri_J_density_cutoff), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_eri_K_density_cutoff ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_eri_K_density_cutoff), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_eri_primitive_pair_cutoff ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_eri_primitive_pair_cutoff), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_eri_schwarz_cutoff ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_eri_schwarz_cutoff), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_guess_output ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_guess_output), private
+   ! Generic read and set
+   end
+
+   read_initial_density ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_initial_density), private
+   ! Generic read and set
+   end
+
+   read_initial_lambda ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_initial_lambda), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_initial_MOs ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_initial_MOs), private
+   ! Generic read and set
+   end
+
+   read_initial_Us ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_initial_Us), private
+   ! Generic read and set
+   end
+
+   read_lambda_max ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_lambda_max), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_lambda_step ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_lambda_step), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_level_shift ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_level_shift), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_level_shift_finish ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_level_shift_finish), private
+   ! Generic read and set
+   end
+
+   read_linear_dependence_shift ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_linear_dependence_shift), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_linear_dependence_tol ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_linear_dependence_tol), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_min_iterations ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_min_iterations), private
+   ! Generic read and set
+   end
+
+   read_max_iterations ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_max_iterations), private
+   ! Generic read and set
+   end
+
+   read_max_update_stepsize ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_max_update_stepsize), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_nhf ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_nhf), private
+   ! Generic read and set
+   end
+
+   read_MO_gradient_stepsize ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_MO_gradient_stepsize), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_output ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_output), private
+   ! Generic read and set
+   end
+
+   read_quantization_axis ::: get_from(OBJECT:read_and_set, VAL?=>VEC{REAL}(3), SET?=>.set_quantization_axis), private
+   ! Generic read and set
+   end
+
+   read_relativity_kind ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_relativity_kind), private
+   ! Generic read and set
+   end
+
+   read_save_cluster_charges ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_save_cluster_charges), private
+   ! Generic read and set
+   end
+
+   read_scf_kind ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_scf_kind), private
+   ! Generic read and set
+   end
+
+   read_stabilize_density ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_stabilize_density), private
+   ! Generic read and set
+   end
+
+   read_test ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_test), private
+   ! Generic read and set
+   end
+
+   read_using_1e_sl_term ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_1e_sl_term), private
+   ! Generic read and set
+   end
+
+   read_using_1e_srxa_term ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_1e_srxa_term), private
+   ! Generic read and set
+   end
+
+   read_using_1e_zora_term ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_1e_zora_term), private
+   ! Generic read and set
+   end
+
+   read_using_2e_sl_term ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_2e_sl_term), private
+   ! Generic read and set
+   end
+
+   read_using_aa_term ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_aa_term), private
+   ! Generic read and set
+   end
+
+   read_using_bl_term ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_bl_term), private
+   ! Generic read and set
+   end
+
+   read_using_bs_term ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_bs_term), private
+   ! Generic read and set
+   end
+
+   read_using_bs_t_term ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_bs_t_term), private
+   ! Generic read and set
+   end
+
+   read_using_CPHF_diis ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_CPHF_diis), private
+   ! Generic read and set
+   end
+
+   read_using_cluster_charges ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_cluster_charges), private
+   ! Generic read and set
+   end
+
+   read_using_damping ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_damping), private
+   ! Generic read and set
+   end
+
+   read_use_default_guess_options ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_use_default_guess_options), private
+   ! Generic read and set
+   end
+
+   read_using_delta_build ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_delta_build), private
+   ! Generic read and set
+   end
+
+   read_using_direct_scf ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_direct_scf), private
+   ! Generic read and set
+   end
+
+   read_using_DK1 ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_DK1), private
+   ! Generic read and set
+   end
+
+   read_using_DK2 ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_DK2), private
+   ! Generic read and set
+   end
+
+   read_using_DK3 ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_DK3), private
+   ! Generic read and set
+   end
+
+   read_using_DK1_PCE ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_DK1_PCE), private
+   ! Generic read and set
+   end
+
+   read_using_DK2_PCE ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_DK2_PCE), private
+   ! Generic read and set
+   end
+
+   read_using_exponential_update ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_exponential_update), private
+   ! Generic read and set
+   end
+
+   read_using_diis ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_diis), private
+   ! Generic read and set
+   end
+
+   read_using_level_shift ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_level_shift), private
+   ! Generic read and set
+   end
+
+   read_using_MO_gradient_update ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_MO_gradient_update), private
+   ! Generic read and set
+   end
+
+   read_using_NDDO ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_NDDO), private
+   ! Generic read and set
+   end
+
+   read_using_NUDO ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_NUDO), private
+   ! Generic read and set
+   end
+
+   read_using_orbital_locking ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_orbital_locking), private
+   ! Generic read and set
+   end
+
+   read_using_PCE_correction ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_PCE_correction), private
+   ! Generic read and set
+   end
+
+   read_using_PIE ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_PIE), private
+   ! Generic read and set
+   end
+
+   read_using_ppzpp_method ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_ppzpp_method), private
+   ! Generic read and set
+   end
+
+   read_using_pFON_damping ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_pFON_damping), private
+   ! Generic read and set
+   end
+
+   read_using_qq_cluster_charges ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_qq_cluster_charges), private
+   ! Generic read and set
+   end
+
+   read_using_SC_cluster_charges ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_SC_cluster_charges), private
+   ! Generic read and set
+   end
+
+   read_using_SC_Lorentz_fields ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_SC_Lorentz_fields), private
+   ! Generic read and set
+   end
+
+   read_using_SO_FDFF_method ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_using_SO_FDFF_method), private
+   ! Generic read and set
+   end
+
+   read_XC_atom_separation_cutoff ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_XC_atom_separation_cutoff), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_zero_oo_constraint_block ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_zero_oo_constraint_block), private
+   ! Generic read and set
+   end
+
+
+!  ================================================
+!  Query the type of orbitals and their number kind
+!  ===============================================
+
+   spinorbital_kind(scf_kind) result (res)
+   ! Return the kind of spinorbitals used for the fock_matrix and
+   ! density_matrix (but *not* neccesarily the MO's -- see below) 
+   ! in doing a particular "scf_kind" of SCF calculation.
+      scf_kind :: STR, optional
+      res :: STR
+      s_kind :: STR
+
+      s_kind = .scf_kind
+      if (present(scf_kind)) s_kind = scf_kind
+
+      select case (s_kind)
+       case("rhf","rks");    res = "restricted"
+       case("rohf");         res = "unrestricted"
+       case("uhf","uks");    res = "unrestricted"
+       case("ghf");          res = "general"
+       case("rchf");         res = "restricted_complex"
+       case("uchf");         res = "unrestricted_complex"
+       case("gchf");         res = "general_complex"
+       case("pnd_uhf");      res = "unrestricted"
+       case("pnd_uks");      res = "unrestricted"
+       case("xray_rhf");     res = "restricted"
+       case("xray_rks");     res = "restricted"
+       case("xray_uhf");     res = "unrestricted"
+       case("xray_uks");     res = "unrestricted"
+       case("xray_gchf");    res = "general_complex"
+       case("xray_pnd_uhf"); res = "unrestricted"
+       case("xray_pnd_uks"); res = "unrestricted"
+       case("rdvpt");        res = "restricted"
+       case default; DIE("unknown scf kind")
+      end
+
+   end
+
+   molecular_orbital_kind(scf_kind) result (res)
+   ! Return the kind of spinorbitals used for the molecular orbitals
+   ! in a particular "scf_kind". In only differs from the
+   ! .spinorbital_kind for the ROHF kind of SCF calculation.
+   ! This is also the kind of the core_matrix needed for the SCF.
+      scf_kind :: STR, optional
+      res :: STR
+
+      s_kind :: STR
+
+      s_kind = .scf_kind
+      if (present(scf_kind)) s_kind = scf_kind
+
+      select case (s_kind)
+       case("rhf","rks");    res = "restricted"
+       case("rohf");         res = "restricted"
+       case("uhf","uks");    res = "unrestricted"
+       case("ghf");          res = "general"
+       case("rchf");         res = "restricted_complex"
+       case("uchf");         res = "unrestricted_complex"
+       case("gchf");         res = "general_complex"
+       case("pnd_uhf");      res = "unrestricted"
+       case("pnd_uks");      res = "unrestricted"
+       case("xray_rhf");     res = "restricted"
+       case("xray_rks");     res = "restricted"
+       case("xray_uhf");     res = "unrestricted"
+       case("xray_uks");     res = "unrestricted"
+       case("xray_gchf");    res = "general_complex"
+       case("xray_pnd_uhf"); res = "unrestricted"
+       case("xray_pnd_uks"); res = "unrestricted"
+       case("rdvpt");        res = "restricted"
+       case default; DIE("unknown scf kind")
+      end
+
+   end
+
+   orbital_energy_kind(scf_kind) result (res)
+   ! Return the kind of vectors used for the orbital energies in a
+   ! particular "scf_kind"
+      scf_kind :: STR, optional
+      res :: STR
+      res = .orbital_energies_kind(scf_kind)
+   end
+
+   orbital_energies_kind(scf_kind) result (res)
+   ! Return the kind of vectors used for the orbital energies in a
+   ! particular "scf_kind"
+      scf_kind :: STR, optional
+      res :: STR
+      s_kind :: STR
+      s_kind = .scf_kind
+      if (present(scf_kind)) s_kind = scf_kind
+      select case (s_kind)
+         case("rhf","rks");    res = "restricted"
+         case("rohf");         res = "restricted"
+         case("uhf","uks");    res = "unrestricted"
+         case("ghf");          res = "general"
+         case("rchf");         res = "restricted"
+         case("uchf");         res = "unrestricted"
+         case("gchf");         res = "general"
+         case("pnd_uhf");      res = "unrestricted"
+         case("pnd_uks");      res = "unrestricted"
+         case("xray_rhf");     res = "restricted"
+         case("xray_uhf");     res = "unrestricted"
+         case("xray_gchf");    res = "general"
+         case("xray_pnd_uhf"); res = "unrestricted"
+         case("xray_pnd_uks"); res = "unrestricted"
+         case("xray_rks");     res = "restricted"
+         case("xray_uks");     res = "unrestricted"
+         case("rdvpt");        res = "restricted"
+         case default; DIE("unknown scf kind")
+      end
+   end
+
+   number_kind result (res)
+   ! Return the kind of numbers used for a particular "kind" of scf calculation
+      res :: STR
+      select case (.scf_kind)
+         case("rhf","rks","rohf","uhf","uks", "ghf"); res = "real"
+         case("rchf","uchf","gchf","xray_gchf");      res = "complex"
+         case("xray_rhf","xray_rks","xray_uks");      res = "real"
+         case("xray_uhf","pnd_uhf","xray_pnd_uhf");   res = "real"
+         case("pnd_uks","xray_pnd_uks");              res = "real"
+         case("rdvpt","restricted_dvpt");             res = "real"
+         case default; DIE("unknown scf kind")
+      end
+   end
+
+   is_DFT_calculation(scf_kind) result (res)
+   ! Return TRUE if the scf kind is a DFT calculation
+      self :: IN
+      scf_kind :: STR, OUT, optional
+      res :: BIN
+
+      s_kind :: STR
+
+      s_kind = .scf_kind
+      if (present(scf_kind)) s_kind = scf_kind
+
+      res = FALSE
+      select case (s_kind)
+         case("rhf");          res = FALSE
+         case("rks");          res = TRUE
+         case("rohf");         res = FALSE
+         case("uhf");          res = FALSE
+         case("uks");          res = TRUE
+         case("ghf");          res = FALSE
+         case("rchf");         res = FALSE
+         case("uchf");         res = FALSE
+         case("gchf");         res = FALSE
+         case("xray_rhf");     res = FALSE
+         case("xray_rks");     res = TRUE
+         case("xray_uhf");     res = FALSE
+         case("xray_gchf");    res = FALSE
+         case("xray_uks");     res = TRUE
+         case("pnd_uhf");      res = FALSE
+         case("pnd_uks");      res = TRUE
+         case("xray_pnd_uhf"); res = FALSE
+         case("xray_pnd_uks"); res = TRUE
+         case("rdvpt");        res = FALSE
+         case default; DIE("unknown scf kind")
+      end
+
+   end
+
+   is_constrained_wavefunction(scf_kind) result (res)
+   ! Return TRUE if the scf kind is a constrained wavefunction
+      scf_kind :: STR, optional
+      res :: BIN
+
+      s_kind :: STR
+
+      s_kind = .scf_kind
+      if (present(scf_kind)) s_kind = scf_kind
+
+      res = FALSE
+      select case (s_kind)
+         case("rhf");          res = FALSE
+         case("rks");          res = FALSE
+         case("rohf");         res = FALSE
+         case("uhf");          res = FALSE
+         case("uks");          res = FALSE
+         case("ghf");          res = FALSE
+         case("rchf");         res = FALSE
+         case("uchf");         res = FALSE
+         case("gchf");         res = FALSE
+         case("xray_rhf");     res = TRUE 
+         case("xray_rks");     res = TRUE
+         case("xray_uhf");     res = TRUE 
+         case("xray_gchf");    res = TRUE 
+         case("xray_uks");     res = TRUE
+         case("pnd_uhf");      res = TRUE 
+         case("pnd_uks");      res = TRUE
+         case("xray_pnd_uhf"); res = TRUE 
+         case("xray_pnd_uks"); res = TRUE
+         case("rdvpt");        res = TRUE 
+         case default; DIE("unknown scf kind")
+      end
+
+   end
+
+   DFT_functional_name result (res)
+   ! Return the name of the DFT functional
+   ENSURE(.is_DFT_calculation,"must be a DFT calculation")
+      res :: STR
+
+      res = " "
+      if (.dft_exchange_functional/=" " AND .dft_exchange_functional/="none") res = .dft_exchange_functional
+
+      if (.dft_correlation_functional/=" " AND .dft_correlation_functional/="none") then
+        if (res/=" ") then
+           res = trim(res)//"-"//trim(.dft_correlation_functional)
+        else
+           res = .dft_correlation_functional
+        end
+      end
+
+   end
+
+   temperature_for_pFON result (res)
+   ! Return the temperature (in Kelvin) to use in the pFON method.
+   ! The temperature applies from iteration 0 i.e. theinitial guess
+   ! NOTE: To see whether to apply pFON use .apply_pFON
+      res :: REAL
+      if (.using_pFON) then
+        if      (.diis_error<.diis_error_temp_cutoff) then; res = ZERO
+        else if (.iteration<20) then;                       res = 1000d0 - 50*.iteration
+        else;                                               res = ZERO
+        end
+      else
+                                                            res = ZERO
+      end
+   end
+
+   apply_pFON result (res)
+   ! Return TRUE if pFON is to be applied this iteration.
+      res :: BIN
+      if      (NOT .using_pFON) then;                     res = FALSE
+      else if (.diis_error<.diis_error_temp_cutoff) then; res = FALSE
+      else;                                               res = .iteration<20
+      end
+   end
+
+!  =====
+!  Tests
+!  =====
+
+   scf_done result (res)
+   ! Return TRUE if the scf procedure is done i.e. either converged or gone on
+   ! for too long ... and, it must also have executed the requested minimum
+   ! number of times ...
+      res :: BIN
+      res = (.converged OR .exceeded_max_it) AND .exceeded_min_it
+   end
+
+   converged result (res)
+   ! Return TRUE if the SCFDATA appears to be converged
+      res :: BIN
+      res = .energy_difference_converged AND .diis.is_converged 
+   end
+
+   energy_difference_converged result (res)
+   ! For normal SCF calculations, return TRUE if the energy difference has
+   ! converged. For constrained HF calculations, return TRUE if the fit_values
+   ! have converged.
+      res :: BIN
+      res = FALSE
+      if (.fitting) then; res = abs(.fit_value-.old_fit_value) < .convergence
+      else;               res = abs(.energy_difference)        < .convergence
+      end
+   end
+
+   exceeded_max_it result (res)
+   ! Return TRUE if the SCFDATA has exceeded the maximum iterations
+      res :: BIN
+      res = .iteration >= .max_iterations
+   end
+
+   exceeded_min_it result (res)
+   ! Return TRUE if the SCFDATA has exceeded the minimum iterations
+      res :: BIN
+      res = .iteration >= .min_iterations
+      if (.fitting) res = res AND (.iteration > 1)
+   end
+
+   exceeded_lambda_max result (res)
+   ! Return TRUE if the SCFDATA has exceeded the maximum lambda
+      res :: BIN
+      res = .lambda > (ONE+TOL(10)) * .lambda_max
+                         ! TOL(10) allows for roundoff errors
+   end
+
+   will_exceed_lambda_max result (res)
+   ! Return TRUE if the SCFDATA will exceeded the maximum lambda
+   ! in the next iteration.
+      res :: BIN
+      res = .lambda + .lambda_step > (ONE+TOL(10)) * .lambda_max
+                         ! TOL(10) allows for roundoff errors
+   end
+
+   do_delta_build result (res)
+   ! Return TRUE if a delta fock matrix build is allowed (assuming that the old
+   ! fock matrix and old density matrix are available)
+      res :: BIN
+      res = .using_delta_build AND .iteration>0 
+   end
+
+   using_GGA_functional result (res)
+   ! Return TRUE if a generalised gradient approximation (GGA) functional is
+   ! being used in the DFT calculation.
+      res :: BIN
+      res = .using_GGA_exchange OR .using_GGA_correlation
+   end
+
+   is_constrained_scf result (res)
+   ! Return TRUE if we are doing a constrained SCF calculation.
+      res :: BIN
+      res = .scf_kind(1:5)=="xray_" OR .scf_kind(1:4)=="pnd_"
+   end
+
+   using_nonstandrad_eri_cutoffs result (res)
+   ! Return TRUE if nonstandard ERI cutoffs are being used
+      res :: BIN
+      res = .eri_disk_cutoff           /= SCFDATA_ERI_DISK_CUTOFF &
+         OR .eri_schwarz_cutoff        /= SCFDATA_ERI_SCHWARZ_CUTOFF &
+         OR .eri_J_density_cutoff      /= SCFDATA_ERI_J_DENSITY_CUTOFF &
+         OR .eri_K_density_cutoff      /= SCFDATA_ERI_K_DENSITY_CUTOFF &
+         OR .eri_primitive_pair_cutoff /= SCFDATA_ERI_PAIR_CUTOFF 
+   end
+
+!  ======================
+!  DIIS tests. Be careful
+!  ======================
+
+   apply_diis result (res)
+   ! Return TRUE if DIIS extrapolation must be applied this iteration,
+   ! or has been applied this iteration.
+      res :: BIN
+      if (NOT .using_diis) then; res = FALSE
+      else;                      res = .diis.apply_diis
+      end
+   end
+
+   apply_damping result (res)
+   ! Return TRUE if density matrix damping is to be applied this iteration
+      res :: BIN
+      res = .using_damping AND .iteration < .damp_finish
+   end
+
+   apply_level_shifting result (res)
+   ! Return TRUE if level shifting must be applied this iteration
+      res :: BIN
+      res = NOT .level_shift.is_zero &
+            AND .using_level_shift AND .iteration < .level_shift_finish
+   end
+
+   fitting result (res)
+   ! Return true if we are fitting the wavefunction.
+      res :: BIN
+      res = FALSE
+      select case (.scf_kind)
+         case("xray_rhf");     res = TRUE
+         case("xray_rks");     res = TRUE
+         case("xray_uhf");     res = TRUE
+         case("xray_uks");     res = TRUE
+         case("xray_gchf");    res = TRUE
+         case("pnd_uhf ");     res = TRUE
+         case("pnd_uks ");     res = TRUE
+         case("xray_pnd_uhf"); res = TRUE
+         case("xray_pnd_uks"); res = TRUE
+         case default;         res = FALSE
+      end
+   end
+
+ !  ===============
+ !  Output routines
+ !  ===============
+
+   put_banner
+   ! Prints out the nuclear energy and initial guess energy.
+
+      if (NOT .output) return
+
+      stdout.flush
+      stdout.text("===============")
+      stdout.text("SCF calculation")
+      stdout.text("===============")
+      stdout.flush
+
+   end
+
+   put_options
+   ! Prints out a summary of what options are stored in the scfdata object.
+      q :: VEC{REAL}(3)
+
+      if (NOT .output) return
+ 
+      stdout.show("SCF kind                       =", .scf_kind)
+ 
+      stdout.flush
+      stdout.text("Initial guess options:")
+      stdout.flush
+      stdout.show("Kind of initial density        =", .initial_density)
+      stdout.show("Kind of initial MO's           =", .initial_mos)
+ 
+      if (.is_DFT_calculation) then
+      stdout.show("DFT Exchange functional        =", .dft_exchange_functional)
+      stdout.show("DFT Correlation functional     =", .dft_correlation_functional)
+      end
+ 
+      if (NOT .using_direct_scf) then
+      stdout.show("Using direct SCF?              =", .using_direct_scf)
+      end
+ 
+      if (NOT .using_delta_build) then
+      stdout.show("Using delta build              =", .using_delta_build)
+      end
+ 
+      if (.using_cluster_charges) then
+      stdout.show("Using cluster charges          =", .using_cluster_charges)
+      stdout.show("Self consistent charges?       =", .using_SC_cluster_charges)
+      stdout.show("Cluster radius                 =", .cluster_radius)
+      end
+ 
+      if (.using_SC_Lorentz_fields) then
+      stdout.show("Using SC Lorentz fields        =", .using_SC_Lorentz_fields)
+      end
+ 
+      if (.using_nonstandrad_eri_cutoffs) then
+      stdout.set_real_style("e")
+      stdout.flush
+      stdout.text("Integrals:")
+      stdout.flush
+      stdout.show("ERI disk cutoff                =", .eri_disk_cutoff)
+      stdout.show("ERI Schwarz test cutoff        =", .eri_schwarz_cutoff)
+      stdout.show("ERI J density cutoff           =", .eri_J_density_cutoff)
+      stdout.show("ERI K density cutoff           =", .eri_K_density_cutoff)
+      stdout.show("ERI primitive pair cutoff      =", .eri_primitive_pair_cutoff)
+      stdout.set_real_style("f")
+      end
+ 
+      if (.using_NDDO) &
+      stdout.show("Doing NDDO?                    =", .using_NDDO)
+ 
+      if (.relativity_kind/="none") then
+ 
+      stdout.flush
+      stdout.text("Relativistic/Magnetic options:")
+      stdout.flush
+ 
+      stdout.show("Relativity kind                =", .relativity_kind)
+ 
+      if (.relativity_kind=="iotc") then
+      stdout.show("Using <PPXPP> integrals        =", .using_ppzpp)
+      end
+ 
+      if (.relativity_kind=="douglas-kroll-hess" OR .relativity_kind=="dkh" )  then
+      stdout.show("Using DK1                      =", .DK1)
+      stdout.show("Using DK2                      =", .DK2)
+      stdout.show("Using DK3                      =", .DK3)
+      stdout.show("Using <PPXPP> integrals        =", .using_ppzpp)
+      stdout.show("Using SOfullDOUBLEfullFULL :P  =", .using_SO_FDFF)
+      end
+ 
+      if (.relativity_kind=="iotc" OR .relativity_kind=="douglas-kroll-hess" OR .relativity_kind=="dkh") then
+      if (.PCE_CORR) then
+      stdout.show("Using correction of PCE (DK0)  =", .PCE_CORR)
+      stdout.show("Using DK1 PCE correction       =", .DK1_PCE)
+      stdout.show("Using DK2 PCE correction       =", .DK2_PCE)
+      end
+      end
+ 
+      if (.spinorbital_kind=="general_complex") then
+      q  = .quantization_axis
+      stdout.show("Quantization axis              =", q(1),q(2),q(3))
+      stdout.show("ZORA (1 electron) terms        =", .using_1e_zora_term)
+      stdout.show("Using B:L term                 =", .using_bl_term)
+      stdout.show("Using B:S term                 =", .using_bs_term)
+      stdout.show("Using B:S T term               =", .using_bs_t_term)
+      stdout.show("Using A:A term                 =", .using_aa_term)
+      stdout.show("Using 1e S:L term              =", .using_1e_sl_term)
+      stdout.show("Using 1e S:(rxA) term          =", .using_1e_srxa_term)
+      stdout.show("Using 2e S:L term              =", .using_2e_sl_term)
+      stdout.show("Factor for 1e S:L term         =", .sl_1e_factor)
+      stdout.show("Factor for 2e S:L term         =", .sl_2e_factor)
+      end
+ 
+      end ! relativity
+
+      stdout.flush
+      stdout.text("SCF termination options:")
+      stdout.flush
+      stdout.set_real_style("e")
+      stdout.show("Delta E convergence tolerance  =", .convergence)
+      stdout.show("Gradient/DIIS convergence      =", .diis.convergence_tolerance)
+      stdout.set_real_style("f")
+      stdout.show("Minimum # of iterations        =", .min_iterations)
+      stdout.show("Maximum # of iterations        =", .max_iterations)
+ 
+      stdout.flush
+      stdout.text("Convergence acceleration options:")
+
+      stdout.flush
+      stdout.set_real_style("e")
+      stdout.show("Linear dependence tolerance    =", .linear_dependence_tol)
+      stdout.show("Linear dependence shift        =", .linear_dependence_shift)
+      stdout.set_real_style("f")
+
+      stdout.show("Using level shift              =", .using_level_shift)
+
+      if (.using_level_shift) then
+      stdout.show("Level shift                    =", .level_shift)
+      stdout.show("Level shift  quits at          =", .level_shift_finish)
+      end
+
+      if (.using_orbital_locking) then
+      stdout.show("Using orbital locking          =", .using_orbital_locking)
+      end
+
+      stdout.show("Using density damping          =", .using_damping)
+
+      if (.using_damping) then
+      stdout.show("Damping factor                 =", .damp_factor)
+      stdout.show("Damping quits at               =", .damp_finish)
+      end
+
+      if (.using_MO_gradient_update OR .using_exponential_update) then
+      stdout.show("Using MO gradient update       =", .using_MO_gradient_update)
+      stdout.show("Using exponential update       =", .using_exponential_update)
+      stdout.set_real_style("e")
+      stdout.show("MO gradient stepsize           =", .MO_gradient_stepsize)
+      stdout.show("Maximum update stepsize        =", .max_update_stepsize)
+      stdout.set_real_style("f")
+      end
+ 
+      stdout.show("Using DIIS                     =", .using_diis)
+ 
+      if (.using_diis) .diis.put
+ 
+      if (.fitting) then
+      stdout.flush
+      stdout.text("====================================")
+      stdout.text("Experimental wavefunction parameters")
+      stdout.text("====================================")
+      stdout.flush
+      stdout.show("Lambda fitting parameter       =", .lambda)
+      stdout.show("Lambda max                     =", .lambda_max)
+      stdout.show("Lambda step                    =", .lambda_step)
+      stdout.show("Zero occ-occ constraint?       =", .zero_oo_constraint_block)
+      .put_crystal_fit_info
+      end
+
+   end
+
+   put_table_head
+   ! Prints out the SCF iteration banner (and related options)
+
+   ENSURE(.table.created,"no table created")
+
+      if (NOT .output) return
+
+      stdout.flush
+      stdout.text("==============")
+      stdout.text("SCF iterations")
+      stdout.text("==============")
+
+      ! Put the table
+      .table.put_headings
+
+   end
+
+   put_table_body_and_footer(flush)
+   ! Print out the results for the current iteration. 
+   ! If converged, print out footer as well.
+   ! NOTE: must have called put_table_head before!
+      flush :: BIN, optional
+
+      n :: INT
+
+      if (NOT .output) return
+
+      if (NOT .scf_done) then
+
+         ! Set margin notes ...
+         .set_margin_info(n)
+         n = n
+   
+         ! Set table body (leaky)
+         if (NOT .fitting) then
+            .table(1).create_values([.iteration])
+            .table(2).create_values([.energy])
+            .table(3).create_values([.energy_difference])
+            .table(4).create_values([.diis_error])
+            .table(5).create_values(.table_info)
+            .table(5).force_width(0)
+         else
+            .table(1).create_values([.iteration])
+            .table(2).create_values([.lambda])
+            .table(3).create_values([.penalty])
+            .table(4).create_values([.energy])
+            .table(5).create_values([.fit_value])
+            .table(6).create_values([.fit_value-.old_fit_value])
+            .table(7).create_values([.diis_error])
+            .table(8).create_values(.table_info)
+            .table(8).force_width(0)
+         end
+   
+         ! Put out the body
+         .table.put_body
+   
+         ! Clear columns for next time (UNleaky!)
+         .table.clear_columns
+
+      else ! the SCF is done ...
+
+        .table.put_footer
+
+        stdout.flush
+        if (.converged) then; stdout.text("* * * SCF has converged * * *")
+        else;                 stdout.text("* * * SCF has not converged * * *")
+        end
+
+        .table.put_footer(flush=flush)
+
+        if (.fitting AND NOT .will_exceed_lambda_max) then
+           .put_crystal_footer
+           .table.put_headings
+        end
+
+      end
+
+   end
+
+   put_results
+   ! Prints out the results
+
+      if (NOT .output) return
+
+      stdout.flush
+      stdout.text("===========")
+      stdout.text("SCF results")
+      stdout.text("===========")
+
+      .put_energies
+
+      if (.fitting) .put_crystal_fit_info
+
+   end
+
+   put_initial_guess_energies
+   ! Prints out initial guess energies
+
+      if (NOT .output) return
+
+      stdout.flush
+      stdout.text("======================")
+      stdout.text("Initial guess energies")
+      stdout.text("======================")
+
+      .put_energies
+
+   end
+
+   put_energies 
+   ! Prints out the table foot for an SCF calculation, after convergence
+   ! or not as the case may be
+
+      wid :: INT
+
+      if (NOT .output) return
+
+      ! Nice width
+      wid = len_trim(.nuclear_attraction_energy.to_str("f",50,stdout.real_precision))
+
+      ! Print
+      stdout.flush
+      stdout.show("Total energy (E_e+V_NN)   E    =",.energy,wid)
+      stdout.show("Total electronic energy   E_e  =",.energy-.nuclear_repulsion_energy,wid)
+      stdout.show("Nuclear repulsion energy  V_NN =",.nuclear_repulsion_energy,wid)
+      stdout.show("Electron repulsion energy V_ee =",.electron_repulsion_energy,wid)
+      stdout.show("Nuclear attraction energy V_eN =",.nuclear_attraction_energy,wid)
+      if (.using_cluster_charges) &
+      stdout.show("Charge attraction energy  V_cN =",.charge_attraction_energy,wid)
+      stdout.show("Total potential energy    V    =",.energy-.kinetic_energy,wid)
+      stdout.show("Kinetic energy            T    =",.kinetic_energy,wid)
+      stdout.show("Virial ratio             -V/T  =",(.kinetic_energy-.energy)/.kinetic_energy,wid)
+
+   end
+
+   put_crystal_fit_info
+   ! Prints out the crystal structure factor statistics.
+
+      if (NOT .output) return
+
+      if (NOT .fitting) return
+
+      stdout.show("Penalty in F                   =", .penalty)
+
+      if (.crystal.xray_data.created AND .scf_kind.includes("xray")) then
+
+         stdout.flush
+         stdout.text("==========")
+         stdout.text("X-ray data")
+         stdout.text("==========")
+         .crystal.xray_data.put_F_statistics
+
+         if (.crystal.r_free_percentage>0 AND .crystal.xray_r_free_data.created) &
+            .crystal.xray_r_free_data.put_F_free_stats
+
+      end
+
+      if (.crystal.pnd_data.created AND .scf_kind.includes("pnd")) then
+
+         stdout.flush
+         stdout.text("========")
+         stdout.text("PND data")
+         stdout.text("========")
+         .crystal.pnd_data.put_F_statistics
+
+         if (.crystal.r_free_percentage>0 AND .crystal.pnd_r_free_data.created) &
+            .crystal.pnd_r_free_data.put_F_free_stats
+
+      end
+
+   end
+
+   put_crystal_footer
+   ! Prints out the crystal structure factor statistics
+   ! In the footer of a completed lambda calculation.
+
+      if (NOT .output) return
+
+      if (NOT .fitting) return
+
+      stdout.show("Penalty in F                   =", .penalty)
+
+      if (.crystal.xray_data.created AND .scf_kind.includes("xray")) then
+
+         .crystal.xray_data.put_F_statistics
+
+         if (.crystal.r_free_percentage>0 AND .crystal.xray_r_free_data.created) &
+            .crystal.xray_r_free_data.put_F_free_stats
+
+      end
+
+      if (.crystal.pnd_data.created AND .scf_kind.includes("pnd")) then
+
+         .crystal.pnd_data.put_F_statistics
+
+         if (.crystal.r_free_percentage>0 AND .crystal.pnd_r_free_data.created) &
+            .crystal.pnd_r_free_data.put_F_free_stats
+
+      end
+
+   end
+
+   put_cluster
+   ! Put the cluster out
+   ENSURE(.cluster.created,"no cluster!")
+      .cluster.put
+   end
+
+   put_cluster_charges
+   ! Put the cluster charges out
+   ENSURE(.cluster_charges.created,"no cluster_charge array")
+   ENSURE(.cluster_charge_positions.created,"no cluster_charge_positions array")
+
+      n,i,k :: INT
+      fac :: REAL
+
+      n = .cluster_charges.dim/3
+
+      fac = STR:conversion_factor("angstrom")
+
+      stdout.flush
+      stdout.text("Cluster monopole charges/au and positions/A:")
+      stdout.flush
+
+      stdout.dash(int_fields=1,real_fields=4)
+      stdout.tab(int_fields=1)
+      stdout.put("q")
+      stdout.put("pos")
+      stdout.flush
+
+      k = 1
+      do i = 1,n
+         stdout.put(k)
+         stdout.put(.cluster_charges(k))
+         stdout.put(.cluster_charge_positions(1,k)*fac)
+         stdout.put(.cluster_charge_positions(2,k)*fac)
+         stdout.put(.cluster_charge_positions(3,k)*fac)
+         stdout.flush
+         k = k + 3
+      end
+
+      stdout.dash(int_fields=1,real_fields=4)
+
+      stdout.flush
+      stdout.text("Cluster monopole & dipole charges/au and positions/A:")
+      stdout.flush
+
+      stdout.dash(int_fields=1,real_fields=4)
+      stdout.tab(int_fields=1)
+      stdout.put("q")
+      stdout.put("pos")
+      stdout.flush
+
+      do i = 1,.cluster_charges.dim
+         stdout.put(i)
+         stdout.put(.cluster_charges(i))
+         stdout.put(.cluster_charge_positions(1,i)*fac)
+         stdout.put(.cluster_charge_positions(2,i)*fac)
+         stdout.put(.cluster_charge_positions(3,i)*fac)
+         stdout.flush
+      end
+
+      stdout.dash(int_fields=1,real_fields=4)
+
+   end
+
+end 

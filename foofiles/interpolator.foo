@@ -1,0 +1,1881 @@
+!------------------------------------------------------------------------------
+!
+! INTERPOLATOR:
+!
+! For interpolating values from a 1-D table.
+!
+! The module takes as input some "data_point"'s with their assigned "values".
+! Any data value is then assigned a value by interpolating between the two
+! nearest data points.
+! 
+! The module allows for even-spaced or uneven-spaced data. In the former case
+! all the "data_point"'s are not required: only the first data point and the
+! "spacing".
+!
+! Copyright (C) Dylan Jayatilaka, 2002
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: interpolator.foo 4071 2013-06-18 12:59:43Z dylan_ $
+!
+!------------------------------------------------------------------------------
+
+module INTERPOLATOR
+
+   implicit none
+
+contains
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   create(spacing,first) ::: leaky
+   ! Create the object
+     self :: PTR
+     spacing :: REAL
+     first :: REAL, optional
+     .create
+     .set_spacing(spacing)
+     if (present(first)) .set_table_origin(first)
+   end
+
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
+   end
+
+   copy(c) ::: leaky
+   ! Copy the contents of "c" to self.
+     c :: INTERPOLATOR, IN
+     self = c
+     .nullify_ptr_part
+     if (c.data_point.created) .data_point.create_copy(c.data_point)
+     if (c.data_value.created) .data_value.create_copy(c.data_value)
+     if (c.y2.created)         .y2.create_copy(c.y2)
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts
+      nullify(.data_point)
+      nullify(.data_value)
+      nullify(.y2)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts
+      .data_point.destroy
+      .data_value.destroy
+      .y2.destroy
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   set_defaults(spacing,first)
+   ! Set up a defaults
+      spacing,first :: REAL, optional
+      .set_interpolation_method(INTERPOLATOR_INTERPOLATION_METHOD)
+      .set_range_mapping(INTERPOLATOR_RANGE_MAPPING)
+
+      .table_length  = INTERPOLATOR_TABLE_LENGTH
+      .table_origin  = INTERPOLATOR_TABLE_ORIGIN
+      .table_spacing = INTERPOLATOR_TABLE_SPACING
+      .table_eps     = INTERPOLATOR_TABLE_EPS
+      .domain_scale_factor = ZERO
+
+      .set_domain_mapping(INTERPOLATOR_DOMAIN_MAPPING)
+
+      .n_data = 0
+      .data_point.destroy
+      .data_value.destroy
+      .finalised = FALSE
+      .y1_initial = INTERPOLATOR_Y1_INITIAL
+      .y1_final   = INTERPOLATOR_Y1_FINAL
+      if (present(spacing)) .set_spacing(spacing)
+      if (present(first))   .set_table_origin(first)
+   end
+
+   set_interpolation_method(method)
+   ! Set the interpolator "method" to use. 
+      method :: STR
+
+      .interpolation_method = method
+      .interpolation_method.to_lower_case
+
+      select case (.interpolation_method)
+         case ("linear");       .interpolation_is_spline = FALSE         
+         case ("cubic_spline"); .interpolation_is_spline = TRUE
+         case default;          UNKNOWN(.interpolation_method)
+      end
+
+   end
+
+   set_range_mapping(method)
+   ! Set the range mapping "method" i.e how the function values are
+   ! treated before being stored as table data_values 
+      method :: STR
+
+      .range_mapping = method
+      .range_mapping.to_lower_case
+
+      select case (.range_mapping)
+         case ("none       "); .range_is_logarithmic = FALSE
+         case ("logarithmic"); .range_is_logarithmic = TRUE
+         case default;         UNKNOWN(.range_mapping)
+      end
+
+   end
+
+   set_domain_mapping(method)
+   ! Set the domain mapping "method" i.e how the data_points are
+   ! treated before evaluation by the table function.
+   ! NOTE: when obtaining the tabulated values it is the users
+   ! responsibility to use the inverse domain mapping function to
+   ! obtain the actual table value x. For the sqrt-type domain
+   ! remappings the .values_for_squared method can be used; then
+   ! no remapping is necessary.
+      method :: STR
+
+      .domain_mapping = method
+      .domain_mapping.to_lower_case
+
+      select case (.domain_mapping)
+
+         case ("none               ")
+            .domain_is_sqrt_x1x  = FALSE
+            .domain_is_sqrt      = FALSE
+
+         case ("sqrt               ")
+            .domain_is_sqrt_x1x  = FALSE
+            .domain_is_sqrt      = TRUE
+
+            if (.table_length.equals(INTERPOLATOR_TABLE_LENGTH)) &
+               .table_length = .table_length*.table_length
+
+         case ("sqrt(x/(1-x))*scale")
+            .domain_is_sqrt_x1x  = TRUE
+            .domain_is_sqrt      = FALSE
+
+            .set_interpolation_method("cubic_spline")
+            .set_table_length(ONE) 
+            .set_spacing(0.0001d0) 
+
+            if (.domain_scale_factor<=ZERO) &
+               .domain_scale_factor = ONE
+
+         case default
+            UNKNOWN(.domain_mapping)
+
+      end
+
+   end
+
+   set_domain_scale_factor(fac)
+   ! Set the domain mapping scale factor
+      fac :: REAL
+      .domain_scale_factor = fac
+   end
+
+   set_spacing(spacing) ::: leaky
+   ! Set the "spacing" of an even-spaced interpolator
+      spacing :: REAL
+   ENSURE(spacing>ZERO,"spacing must be +ve")
+      .table_spacing = spacing
+   end
+
+   set_table_spacing(spacing) ::: leaky
+   ! Set the "spacing" of an even-spaced interpolator table
+      spacing :: REAL
+   ENSURE(spacing>ZERO,"spacing must be +ve")
+      .table_spacing = spacing
+   end
+
+   set_table_length(length)
+   ! Set the length of the interpolation table to be "length". This is for
+   ! constant step size interpolation tables.
+      length :: REAL
+   ENSURE(length>ZERO,"the length must be positive")
+      .table_length = length
+   end
+
+   set_table_origin(origin)
+   ! Set the "origin" of the interpolation table to be "length" i.e. the first
+   ! point. This is for constant step size interpolation tables.
+      origin :: REAL
+      .table_origin = origin
+   end
+
+   set_table_eps(eps)
+   ! Set the tolernace on the table such that values smaller than "eps" are
+   ! regarded as zero. This may reduce the length of the interpolation table.
+      eps :: REAL, IN
+ ! ENSURE(eps>ZERO,"the eps must be positive")
+      .table_eps = eps
+   end
+
+   first_data_point result (res) 
+   ! Returns the first data point
+      res :: REAL
+   ENSURE(.finalised,"Not finalised")
+   ENSURE(.n_data>0,"No data")
+   ENSURE(.data_point.created,"No data")
+      res = .data_point(1)
+   end
+
+   last_data_point result (res) 
+   ! Returns the last data point
+      res :: REAL
+   ENSURE(.finalised,"Not finalised")
+   ENSURE(.n_data>0,"No data")
+   ENSURE(.data_point.created,"No data")
+      res = .data_point(.n_data)
+   end
+
+   last_data_value result (res) 
+   ! Returns the last data value
+      res :: REAL
+   ENSURE(.finalised,"Not finalised")
+   ENSURE(.n_data>0,"No data")
+   ENSURE(.data_value.created,"No data")
+      res = .data_value(.n_data)
+   end
+
+!  =============
+!  Input methods
+!  =============
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR
+      word :: STR
+      word = keyword
+      word.to_lower_case
+      select case (word)
+         case ("}                    ")  ! exit case
+         case ("data_points=         "); .read_data_points
+         case ("data_values=         "); .read_data_values
+         case ("domain_mapping=      "); .read_domain_mapping
+         case ("domain_scale_factor= "); .read_domain_scale_factor
+         case ("interpolation_method="); .read_interpolation_method
+         case ("put                  "); .put
+         case ("range_mapping=       "); .read_range_mapping
+         case ("table_spacing=       "); .read_spacing
+         case ("table_eps=           "); .read_table_eps
+         case ("table_length=        "); .read_table_length
+         case ("table_origin=        "); .read_table_origin
+         case ("units=               "); .read_units
+         case ("y1_initial=          "); .read_y1_initial
+         case ("y1_final=            "); .read_y1_final
+         case default;         UNKNOWN(word)
+      end
+   end
+
+   read_units ::: get_from(OBJECT), private
+   ! Read a string which describes the units to be used
+   end
+
+   read_interpolation_method
+   ! Read the kind of interpolation method to use.
+      method :: STR
+      stdin.read(method)
+      .set_interpolation_method(method)
+   end
+
+   read_range_mapping
+   ! Read the range mapping method to use
+      method :: STR
+      stdin.read(method)
+      .set_range_mapping(method)
+   end
+
+   read_domain_mapping
+   ! Read the domain mapping method to use
+      method :: STR
+      stdin.read(method)
+      .set_domain_mapping(method)
+   end
+
+   read_domain_scale_factor
+   ! Read the domain mapping scale factor to use
+      stdin.read(.domain_scale_factor)
+   end
+
+   read_table_length
+   ! Read the length of the interpolation table to use. This is for constant
+   ! step size interpolation tables.
+      length :: REAL
+      stdin.read_quantity(length)
+      .set_table_length(length)
+   end
+
+   read_table_origin
+   ! Read the table origin i.e. where the data points begin. This is used for
+   ! constant step width interpolation.
+      stdin.read_quantity(.table_origin)
+   end
+
+   read_table_eps
+   ! Read the table eps value. Values smaller than this in the interpolation
+   ! table are set to zero. This may reduce the size of the table.
+      eps :: REAL
+      stdin.read_quantity(eps)
+      .set_table_eps(eps)
+   end
+
+   read_data_points ::: leaky
+   ! Read in the data points.
+      stdin.read_ptr_quantity(.data_point)
+   end
+
+   read_data_values ::: leaky
+   ! Read in the data values.
+      stdin.read_ptr_quantity(.data_point)
+   end
+
+   read_spacing ::: leaky
+   ! Read in the spacing
+      spacing :: REAL
+      stdin.read_quantity(spacing)
+      .set_spacing(spacing)
+   end
+
+   read_y1_initial
+   ! Read the initial first derivative for cubic spline interpolation
+      stdin.read_quantity(.y1_initial)
+   end
+
+   read_y1_final
+   ! Read the final first derivative for cubic spline interpolation
+      stdin.read_quantity(.y1_final)
+   end
+
+!  ============
+!  Set routines
+!  ============
+
+   set_data_points(points) ::: leaky
+   ! Set the data "points". NOTE: Make sure that .finalise is called after all
+   ! set routines.
+      points :: VEC{REAL}
+      .data_point.destroy
+      .data_point.create_copy(points)
+   end
+
+   set_data_values(values) ::: leaky
+   ! Set the data "values". NOTE: Make sure that .finalise is called after all
+   ! set routines.
+      values :: VEC{REAL}
+      .data_value.destroy
+      .data_value.create_copy(values)
+   end
+
+   finalise ::: leaky
+   ! Check everything is OK after reading data. 
+   ENSURE(.data_point.created," no data_point's")
+   ENSURE(.data_value.created," no data_value's")
+   ENSURE(.data_point.dim==.data_value.dim,"inconsistent data/value lengths")
+   ENSURE(.data_point.dim>2,"not enough data_point's")
+
+      ! Generate spline data
+      if (.interpolation_is_spline) .set_spline_2nd_derivatives
+
+      .finalised = TRUE
+
+   end
+
+   set_spline_2nd_derivatives ::: leaky
+   ! Set .y2, the second derivatives of the interpolating function at the
+   ! tabulated .data_points's. The values of the second derivatives at
+   ! the endpoints are normally zero. The values of the first derivative are
+   ! normally taken to be the finite difference of the first two or last two
+   ! points.
+   ENSURE(.data_point.created,"no data points")
+   ENSURE(.data_value.created,"no data values")
+   ENSURE(.n_data>=3,"must have at least 3 data points")
+
+      dx,dxp,dxm,dy,dyp,dym,sig,p :: REAL
+      n,i,ip1,im1 :: INT
+      x,y,u :: VEC{REAL}*
+
+      ! No of data
+      n = .n_data
+
+      ! Create the y2
+      .y2.destroy
+      .y2.create(n)
+
+      ! Shorthand for data and values
+      x => .data_point
+      y => .data_value
+
+      u.create(n)
+
+      if (.y1_initial_set) then
+         .y2(1) = -HALF
+         dx = x(2)-x(1)
+         dy = y(2)-y(1)
+         u(1) = (THREE/dx)*(dy/dx - .y1_initial)
+      else                      
+         .y2(1) = ZERO
+         u(1) = ZERO
+      end
+
+      do i = 2,n-1
+         ip1 = i + 1
+         im1 = i - 1
+         dxp = x(ip1) - x(i)
+         dxm = x(i)   - x(im1)
+         dyp = y(ip1) - y(i)
+         dym = y(i)   - y(im1)
+         dx  = x(ip1) - x(im1)
+         sig = dxm/dx
+         p = ONE/(sig*.y2(im1) + TWO)
+         .y2(i) = (sig-ONE)*p
+         u(i) = (SIX*(dyp/dxp - dym/dxm)/dx - sig*u(im1))*p
+      end
+
+      if (.y1_final_set) then
+         p = HALF
+         dy = y(n)-y(n-1)
+         dx = x(n)-x(n-1)
+         u(n) = (THREE/dx)*(.y1_final - dy/dx)
+      else
+         p = ZERO
+         u(n) = ZERO
+      end
+
+      .y2(n) = (u(n)-p*u(n-1))/(p*.y2(n-1)+ONE)
+
+      ! Back substitution of the triadiagonal algorithm
+      do i = n-1,1,-1
+         .y2(i) = .y2(i)*.y2(i+1) + u(i)
+      end
+
+      ! Set smoother second derivatives
+
+      u.destroy
+
+   end
+
+   y1_initial_set result (res)
+   ! Return TRUE if the first derivative at the start, .y1_initial, has been set
+   ! by the user
+      res :: BIN
+      res = .y1_initial /= INTERPOLATOR_Y1_INITIAL
+   end
+
+   y1_final_set result (res)
+   ! Return TRUE if the first derivative at the endpoint, .y1_final, has been
+   ! set by the user
+      res :: BIN
+      res = .y1_final /= INTERPOLATOR_Y1_FINAL
+   end
+
+!  ===================
+!  Set from a function
+!  ===================
+
+   set_even_spaced_data(func,tol,length) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from
+   ! ".table_origin", with a given ".table_spacing", and with
+   ! ".data_value" to be the corresponding values evaluated using
+   ! monotonically decreasing function "func". The number of data
+   ! values and the ".table_length" is either worked out from where
+   ! function "func" is just smaller than "tol", with maximum length
+   ! ".table_length"; or from the supplied "length".
+      tol,length :: REAL, optional
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(NOT (present(tol) AND present(length)),"can't supply both tol and length")
+
+      if (present(tol)) then
+         .set_even_spaced_data(.table_origin,.table_spacing,.table_length,func,tol)
+      else if (present(length)) then
+         .set_even_spaced_data(.table_origin,.table_spacing,length,func)
+      else
+         .set_even_spaced_data(.table_origin,.table_spacing,.table_length,func,.table_eps)
+      end
+
+   end
+
+   set_even_spaced_data(first,spacing,length,func,tol) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from the "first" value, with
+   ! a given "spacing", extending until "length", and with ".data_value"
+   ! to be the corresponding values evaluated using monotonically decreasing
+   ! function "func". The number of data values is worked out from where
+   ! function "func" is only just smaller than "tol". 
+      spacing,first,length :: REAL
+      tol :: REAL, optional
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(.n_data==0,"there is already data")
+   ENSURE(.data_value.destroyed,"there are already data_values")
+   ENSURE(.data_point.destroyed,"there are already data_points")
+   ENSURE(spacing>ZERO,"spacing must be +ve")
+
+      max_data :: INT
+      i,n :: INT
+      p,val :: REAL
+
+      ! Set table spacing
+      .table_spacing = spacing
+
+      ! Get the maximum amount of data
+      max_data = ceiling((length-first)/spacing) + 1
+
+      ! Create the table
+      .data_point.destroy
+      .data_value.destroy
+      .data_point.create(max_data)
+      .data_value.create(max_data)
+
+      ! Assign the table; exit if tolerance is reached
+      n = 0
+      do i = 1,max_data
+
+         n = n + 1
+
+         ! for numerical accuracy
+         p = first + (i-1)*spacing 
+
+         ! Assign table point
+         .data_point(n) = p
+
+         ! Domain remapping. Warning: user may need to do remapping
+         ! before using the table. In all cases below, p^2 must be given
+         if      (.domain_is_sqrt)      then; p = sqrt(p)
+         else if (.domain_is_sqrt_x1x)  then; p = .domain_scale_factor*sqrt(p/(ONE-p))
+         end
+
+         ! Call the function
+         val = func(p)
+
+         ! Range mapping
+         if (.range_is_logarithmic) then
+            DIE_IF(val<=ZERO,"-ve func cant be used with log interpolation")
+            val = log(val)
+         end
+
+         ! Assign table value
+         .data_value(n) = val
+
+         ! If too small?
+         if (present(tol)) then
+            if (val<tol) exit
+         end
+
+      end
+
+      ! Warn if the tolerance was not reached
+      if (present(tol)) then
+      if (val>=tol) then
+         WARN("data table not large enough")
+         stdout.save
+         stdout.set_real_style("e")
+         stdout.set_real_width(16)
+         stdout.set_real_precision(8)
+         stdout.show("Smallest value in table =",val)
+         stdout.show("Requested epsilon       =",tol)
+         stdout.unsave
+      end
+      end
+
+      ! Reset the table size
+      .n_data = n
+      if (present(tol)) then
+         .data_value.shrink(.n_data)
+         .data_point.shrink(.n_data)
+      end
+
+      ! Reset the table length
+      .table_length = .data_point(.n_data) 
+
+      ! Generate spline data
+      if (.interpolation_is_spline) then
+
+         ! Get approximate LHS derivative
+         p = first + spacing*HALF 
+         if      (.domain_is_sqrt)      then; p = sqrt(p)
+         else if (.domain_is_sqrt_x1x)  then; p = .domain_scale_factor*sqrt(p/(ONE-p))
+         end
+         val = func(p)
+         if (.range_is_logarithmic) val = log(val)
+         .y1_initial = TWO*(val-.data_value(1))/spacing
+
+         ! Get approximate RHS derivative
+         p = .data_point(.n_data) - spacing*HALF 
+         if      (.domain_is_sqrt)      then; p = sqrt(p)
+         else if (.domain_is_sqrt_x1x)  then; p = .domain_scale_factor*sqrt(p/(ONE-p))
+         end
+         val = func(p)
+         if (.range_is_logarithmic) val = log(val)
+         .y1_final = TWO*(.data_value(.n_data)-val)/spacing
+
+         ! Set the spline second derivatives
+         .set_spline_2nd_derivatives
+
+      end
+
+      .finalised = TRUE
+
+   end
+
+   the_table_length(func,tol) result (p)
+   ! Return the length of the interpolation table starting from ".table_origin"
+   ! with a given ".table_spacing", extending for a total ".table_length", and
+   ! with the data values to be the corresponding values evaluated using
+   ! monotonically decreasing function "func". The length of the table "p" is
+   ! worked out from where function "func" is only just smaller than "tol". 
+   ! It cannot exceed ".table_length".
+      tol,p :: REAL
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(.n_data==0,"there is already data")
+   ENSURE(.table_spacing>ZERO,"spacing must be +ve")
+
+      first,spacing,length :: REAL
+      max_data :: INT
+      i,s :: INT
+      val :: REAL
+
+      first = .table_origin
+      length = .table_length
+      spacing = .table_spacing
+      max_data = ceiling((length-first)/spacing) + 1
+
+      p = first
+      s = 0
+      do i = s+1,max_data
+         val = func(p)
+         if (val<tol) exit
+         p = p + spacing
+      end
+
+   end
+
+
+   set_even_spaced_d_data(func) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from the "first" value, with
+   ! a given "spacing", extending for a total "length", and with ".data_value"
+   ! to be the corresponding DERIVATIVE values evaluated using monotonically
+   ! decreasing function "func". The number of data values is worked out from
+   ! where function "func" is greater than "tol". 
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+      .set_even_spaced_d_data(.table_origin,.table_spacing,.table_length,func,.table_eps)
+
+   end
+
+   set_even_spaced_d_data(first,spacing,length,func,tol) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from the "first" value, with
+   ! a given "spacing", extending for a total "length", and with ".data_value"
+   ! to be the corresponding DERIVATIVE values evaluated using monotonically
+   ! decreasing function "func". The number of data values is worked out from
+   ! where function "func" is only just smaller than "tol". 
+      spacing,first,length,tol :: REAL
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(.n_data==0,"there is already data")
+   ENSURE(.data_value.destroyed,"there are already data_values")
+   ENSURE(.data_point.destroyed,"there are already data_points")
+   ENSURE(spacing>ZERO,"spacing must be +ve")
+
+      max_data :: INT
+      i,s,n :: INT
+      p,del,val0,valp,valm :: REAL
+
+      ! Set table spacing
+      .table_spacing = spacing
+
+      ! Get the maximum amount of data
+      max_data = ceiling((length-first)/spacing) + 1
+
+      ! Create the table
+      .data_point.destroy
+      .data_value.destroy
+      .data_point.create(max_data)
+      .data_value.create(max_data)
+
+      ! Assign the table; exit if tolerance is reached
+      del = TOL(6)
+      p = first 
+      s = 0
+      n = 1
+      do i = s+1,max_data
+         valp = func(p+del)
+         val0 = func(p)
+         valm = func(p-del)
+         .data_point(n) = p
+         .data_value(n) = (valp-valm)/(TWO*del)
+         p = p + spacing
+         n = n + 1
+         if (val0<tol) exit
+      end
+
+      ! Reset the table size
+      .n_data = n-1
+      .data_value.shrink(.n_data)
+      .data_point.shrink(.n_data)
+
+      ! Reset the table length
+      .table_length = .data_point(.n_data) 
+
+      ! Finalise: assume monotonic decreasing function
+      if (.range_is_logarithmic) then
+         DIE_IF(any(.data_value<=ZERO),"-ve data_values cant be used with log interpolation")
+         .data_value = log(-.data_value)
+      end
+
+      if (.interpolation_is_spline) .set_spline_2nd_derivatives
+
+      .finalised = TRUE
+
+   end
+
+
+   set_even_spaced_d2_data(func) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from the "first" value, with
+   ! a given "spacing", extending for a total "length", and with ".data_value"
+   ! to be the corresponding 2nd DERIVATIVE values evaluated using monotonically
+   ! decreasing function "func". The number of data values is worked out from
+   ! where function "func" is greater than "tol". 
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+      .set_even_spaced_d2_data(.table_origin,.table_spacing,.table_length,func,.table_eps)
+
+   end
+
+   set_even_spaced_d2_data(first,spacing,length,func,tol) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from the "first" value, with
+   ! a given "spacing", extending for a total "length", and with ".data_value"
+   ! to be the corresponding 2nd DERIVATIVE values evaluated using monotonically
+   ! decreasing function "func". The number of data values is worked out from
+   ! where function "func" is only just smaller than "tol". 
+      spacing,first,length,tol :: REAL
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(.n_data==0,"there is already data")
+   ENSURE(.data_value.destroyed,"there are already data_values")
+   ENSURE(.data_point.destroyed,"there are already data_points")
+   ENSURE(spacing>ZERO,"spacing must be +ve")
+
+      max_data :: INT
+      i,s,n :: INT
+      p,del,del2,val0,valp,valm :: REAL
+
+      ! Set table spacing
+      .table_spacing = spacing
+
+      ! Get the maximum amount of data
+      max_data = ceiling((length-first)/spacing) + 1
+
+      ! Create the table
+      .data_point.destroy
+      .data_value.destroy
+      .data_point.create(max_data)
+      .data_value.create(max_data)
+
+      ! Assign the table; exit if tolerance is reached
+      del = TOL(6)
+      del2 = del*del
+      p = first 
+      s = 0
+      n = 1
+      do i = s+1,max_data
+         valp = func(p+del)
+         val0 = func(p)
+         valm = func(p-del)
+         .data_point(n) = p
+         .data_value(n) = (valp+valm-TWO*val0)/del2
+         p = p + spacing
+         n = n + 1
+         if (val0<tol) exit
+      end
+
+      ! Reset the table size
+      .n_data = n-1
+      .data_value.shrink(.n_data)
+      .data_point.shrink(.n_data)
+
+      ! Reset the table size
+      .table_length = .data_point(.n_data) 
+
+      ! Finalise
+      .finalise
+
+   end
+
+
+   set_data_values(func) ::: leaky
+   ! Set the ".data_values" from the function "func", which returns "values"
+   ! from a set of given "points".
+      interface
+         func(points,values)
+            points :: VEC{REAL}, IN
+            values :: VEC{REAL}, OUT
+         end
+      end
+   ENSURE(.finalised,"not finalised")
+   ENSURE(.data_point.created,"no data_points")
+   ENSURE(.data_point.dim==.n_data,"wrong number of data_points")
+   WARN_IF(.data_value.created,"data_values will be lost")
+      .data_value.destroy
+      .data_value.create(.n_data)
+      call func(.data_point,.data_value)
+   end
+
+   set_data_values(func_at,pos) ::: leaky
+   ! Set the ".data_values" from the function "func_at", which returns "values"
+   ! from a set of given "points", and an additional single "pos" as parameter.
+      interface
+         func_at(points,pos,values)
+            points,values :: VEC{REAL}
+            pos :: VEC{REAL}(3)
+         end
+      end
+      pos :: VEC{REAL}(3)
+   ENSURE(.finalised,"not finalised")
+   ENSURE(.data_point.created,"no data_points")
+   ENSURE(.data_point.dim==.n_data,"wrong number of data_points")
+   WARN_IF(.data_value.created,"data_values will be lost")
+      .data_value.destroy
+      .data_value.create(.n_data)
+      call func_at(.data_point,pos,.data_value)
+   end
+
+!  =================
+!  Values for points
+!  =================
+
+   value_for(point) result (res)
+   ! Return the interpolated value for "point".
+   ! WARNING: not to be used with domain mapping unless the user
+   !          pre-treats the point
+   ! WARNING: "point" may be overwritten
+      self :: IN
+      point :: REAL, IN
+      res :: REAL
+
+ ! ENSURE(.finalised,"not finalised")
+
+      if (.interpolation_is_spline) then; res = .value_for_spline(point)
+      else;                               res = .value_for_linear(point)
+      end
+
+   end
+
+   value_for_linear(point) result (res)
+   ! WARNING: "point" may be overwritten
+   ! Return the interpolated value for "point".
+   ! WARNING: not to be used with domain mapping unless the user
+   !          pre-treats the point
+   ! WARNING: "point" may be overwritten
+      self :: IN
+      point :: REAL, IN
+      res :: REAL
+
+ ! ENSURE(.finalised,"not finalised")
+
+      pt,first,last,frac,s :: REAL
+      f,f1 :: INT
+
+      ! Rescale data if required
+      pt = point
+      if (.domain_is_sqrt_x1x) then
+        s = .domain_scale_factor
+        s = s*s
+        pt = point/(s+point)
+      end
+
+      first = .data_point(1)
+      last  = .data_point(.n_data)
+
+      if (pt<first OR last<pt) then
+         res = ZERO
+      else
+         frac = (pt-.data_point(1))/.table_spacing
+         f    = floor(frac)
+         f1   = f + 1
+         res  = .data_value(f1)
+         if (frac>f) res = res + (frac-f)*(.data_value(f1+1)-res)
+         if (.range_is_logarithmic) res = exp(res)
+      end
+
+   end
+
+   value_for_spline(point) result (res)
+   ! Return the spline interpolated value for "point".
+   ! WARNING: not to be used with domain mapping unless the user
+   !          pre-treats the point
+   ! WARNING: "point" may be overwritten
+      self :: IN
+      point :: REAL, IN
+      res :: REAL
+
+ ! ENSURE(.finalised,"not finalised")
+
+      pt,first,last,frac,dl6,v2,a,b,s :: REAL
+      f,f1,f2 :: INT
+
+      ! Rescale point if required
+      pt = point
+      if (.domain_is_sqrt_x1x) then
+        s = .domain_scale_factor
+        s = s*s
+        pt = point/(s+point)
+      end
+
+      first = .data_point(1)
+      last  = .data_point(.n_data)
+
+      if (pt<first OR last<pt) then
+         res = ZERO
+      else
+         frac = (pt-.data_point(1))/.table_spacing
+         f    = floor(frac)
+         f1   = f + 1
+         res  = .data_value(f1)
+         if (frac>f) then ! point lies between spacings
+            f2  = f1 + 1
+            v2  = .data_value(f2)
+            dl6 = .table_spacing*.table_spacing*SIXTH
+            b   = frac - f
+            a   = ONE - b
+            res = a*res + b*v2 +(a*(a*a-1)*.y2(f1) + b*(b*b-1)*.y2(f2))*dl6
+         end
+         if (.range_is_logarithmic) res = exp(res)
+      end
+
+   end
+
+
+   values_for(points,values,fac)
+   ! Return the interpolated "values" for a series of squared "points".
+   ! Optional "fac" may be app[lied to the "values"
+   ! WARNING: not to be used with domain mapping unless the user
+   !          pre-treats the points
+   ! WARNING: "points" may be overwritten
+      self :: IN
+      points :: VEC{REAL}, IN
+      values :: VEC{REAL}, OUT
+      fac :: REAL, IN, optional
+
+ ! ENSURE(.finalised,"not finalised")
+
+      if (.interpolation_is_spline) then; .values_for_spline(points,values,fac)
+      else;                               .values_for_linear(points,values,fac)
+      end
+
+   end
+
+   values_for_linear(points,values,fac)
+   ! Get interpolated "values" for a series of squared "points" 
+   ! Optional "fac" may be app[lied to the "values"
+   ! WARNING: To used with sqrt type domain mapping.
+   ! WARNING: "points" may be overwritten
+      self :: IN
+      points :: VEC{REAL}, target, IN
+      values :: VEC{REAL}, OUT
+      fac :: REAL, IN, optional
+
+ ! ENSURE(.finalised,"not finalised")
+
+      pt :: VEC{REAL}*
+      first,last,del1,p,frac,res,s :: REAL
+      i,f,f1 :: INT
+      do_fac :: BIN
+
+      ! fac present?
+      do_fac = FALSE
+      if (present(fac)) then
+      if (NOT fac.equals(ONE)) then
+         do_fac = TRUE
+      end
+      end
+
+      ! Rescale points if required
+      if (.domain_is_sqrt_x1x) then
+        pt.create(points.dim)
+        s = .domain_scale_factor; s = s*s
+        pt = points/(s+points)
+      else
+        pt => points
+      end
+
+      first = .data_point(1)
+      last  = .data_point(.n_data)
+      del1  = ONE/.table_spacing
+
+      if (NOT do_fac) then
+
+         if (.range_is_logarithmic) then
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) then
+                  values(i) = ZERO
+               else
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  res  = .data_value(f1)
+                  if (frac>f) res = res + (frac-f)*(.data_value(f1+1)-res)
+                  values(i) = exp(res)
+               end
+            end
+
+         else
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) then
+                  values(i) = ZERO
+               else
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  res  = .data_value(f1)
+                  if (frac>f) res = res + (frac-f)*(.data_value(f1+1)-res)
+                  values(i) = res
+               end
+            end
+
+         end
+
+      else ! use fac
+
+         if (.range_is_logarithmic) then
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) then
+                  values(i) = ZERO
+               else
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  res  = .data_value(f1)
+                  if (frac>f) res = res + (frac-f)*(.data_value(f1+1)-res)
+                  values(i) = fac*exp(res)
+               end
+            end
+
+         else
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) then
+                  values(i) = ZERO
+               else
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  res  = .data_value(f1)
+                  if (frac>f) res = res + (frac-f)*(.data_value(f1+1)-res)
+                  values(i) = fac*res
+               end
+            end
+
+         end
+
+      end
+
+      ! Clean up
+      if (.domain_is_sqrt_x1x) pt.destroy
+
+   end
+
+   values_for_spline(points,values,fac)
+   ! Return the spline interpolated "values" for squared "points".
+   ! Optional "fac" may be app[lied to the "values"
+   ! WARNING: To used with sqrt type domain mapping.
+   ! WARNING: "points" may be overwritten
+      self :: IN
+      points :: VEC{REAL}, target, IN
+      values :: VEC{REAL}, OUT
+      fac :: REAL, IN, optional
+
+ ! ENSURE(.finalised,"not finalised")
+
+      pt :: VEC{REAL}*
+      first,last,p,frac,del1,del6,v1,v2,a,b,s :: REAL
+      i,f,f1,f2 :: INT
+      do_fac :: BIN
+
+      ! fac present?
+      do_fac = FALSE
+      if (present(fac)) then
+      if (NOT fac.equals(ONE)) then
+         do_fac = TRUE
+      end
+      end
+
+      ! Rescale data if required
+      if (.domain_is_sqrt_x1x) then
+        pt.create(points.dim)
+        s = .domain_scale_factor; s = s*s
+        pt = points/(s+points)
+      else
+        pt => points
+      end
+
+      first = .data_point(1)
+      last  = .data_point(.n_data)
+      del1  = .table_spacing
+      del6  = del1*del1*SIXTH
+      del1  = ONE/del1
+
+      if (NOT do_fac) then
+
+         if (.range_is_logarithmic) then
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) then
+                  values(i) = ZERO
+               else
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  v1   = .data_value(f1)
+                  if (frac>f) then ! point lies between spacings
+                     f2 = f1 + 1
+                     v2 = .data_value(f2)
+                     b  = frac - f
+                     a  = ONE - b
+                     v1 = a*v1 + b*v2 +(a*(a*a-1)*.y2(f1) + b*(b*b-1)*.y2(f2))*del6
+                  end
+                  values(i) = exp(v1)
+               end
+            end
+
+         else
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) then
+                  values(i) = ZERO
+               else
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  v1   = .data_value(f1)
+                  if (frac>f) then ! point lies between spacings
+                     f2 = f1 + 1
+                     v2 = .data_value(f2)
+                     b  = frac - f
+                     a  = ONE - b
+                     v1 = a*v1 + b*v2 +(a*(a*a-1)*.y2(f1) + b*(b*b-1)*.y2(f2))*del6
+                  end
+                  values(i) = v1
+               end
+            end
+
+         end
+
+      else ! do fac
+
+         if (.range_is_logarithmic) then
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) then
+                  values(i) = ZERO
+               else
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  v1   = .data_value(f1)
+                  if (frac>f) then ! point lies between spacings
+                     f2 = f1 + 1
+                     v2 = .data_value(f2)
+                     b  = frac - f
+                     a  = ONE - b
+                     v1 = a*v1 + b*v2 +(a*(a*a-1)*.y2(f1) + b*(b*b-1)*.y2(f2))*del6
+                  end
+                  values(i) = fac*exp(v1)
+               end
+            end
+
+         else
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) then
+                  values(i) = ZERO
+               else
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  v1   = .data_value(f1)
+                  if (frac>f) then ! point lies between spacings
+                     f2 = f1 + 1
+                     v2 = .data_value(f2)
+                     b  = frac - f
+                     a  = ONE - b
+                     v1 = a*v1 + b*v2 +(a*(a*a-1)*.y2(f1) + b*(b*b-1)*.y2(f2))*del6
+                  end
+                  values(i) = fac*v1
+               end
+            end
+
+         end
+
+      end
+
+      ! Clean up
+      if (.domain_is_sqrt_x1x) pt.destroy
+
+   end
+
+
+   add_values_for(points,values,fac)
+   ! Add in the interpolated "values" for a series of "points". 
+   ! Optional "fac" may be applied to the values.
+   ! WARNING: not to be used with domain mapping unless the user
+   !          pre-treats the point
+   ! WARNING: "points" may be overwritten
+      self :: IN
+      points :: VEC{REAL}, IN
+      values :: VEC{REAL}, INOUT
+      fac :: REAL, IN, optional
+
+ ! ENSURE(.finalised,"not finalised")
+
+      if (.interpolation_is_spline) then; .add_values_for_spline(points,values,fac)
+      else;                               .add_values_for_linear(points,values,fac)
+      end
+
+   end
+
+   add_values_for_linear(points,values,fac)
+   ! Add interpolated "values" for a series of "points" 
+   ! Optional "fac" may be applied to the values.
+   ! WARNING: To used with sqrt type domain mapping.
+   ! WARNING: "points" may be overwritten
+      self :: IN
+      points :: VEC{REAL}, target, IN
+      values :: VEC{REAL}, INOUT
+      fac :: REAL, IN, optional
+
+ ! ENSURE(.finalised,"not finalised")
+
+      pt :: VEC{REAL}*
+      first,last,del1,p,frac,res,s :: REAL
+      i,f,f1 :: INT
+      do_fac :: BIN
+
+      ! fac present?
+      do_fac = FALSE
+      if (present(fac)) then
+      if (NOT fac.equals(ONE)) then
+         do_fac = TRUE
+      end
+      end
+
+      ! Rescale data if required
+      if (.domain_is_sqrt_x1x) then
+        pt.create(points.dim)
+        s = .domain_scale_factor; s = s*s
+        pt = points/(s+points)
+      else
+        pt => points
+      end
+
+      first = .data_point(1)
+      last  = .data_point(.n_data)
+      del1  = ONE/.table_spacing
+
+      if (NOT do_fac) then
+
+         if (.range_is_logarithmic) then
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) cycle
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  res  = .data_value(f1)
+                  if (frac>f) res = res + (frac-f)*(.data_value(f1+1)-res)
+                  values(i) = values(i) + exp(res)
+            end
+
+         else
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) cycle
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  res  = .data_value(f1)
+                  if (frac>f) res = res + (frac-f)*(.data_value(f1+1)-res)
+                  values(i) = values(i) + res
+            end
+
+         end
+
+      else ! use fac
+
+         if (.range_is_logarithmic) then
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) cycle
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  res  = .data_value(f1)
+                  if (frac>f) res = res + (frac-f)*(.data_value(f1+1)-res)
+                  values(i) = values(i) + fac*exp(res)
+            end
+
+         else
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) cycle
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  res  = .data_value(f1)
+                  if (frac>f) res = res + (frac-f)*(.data_value(f1+1)-res)
+                  values(i) = values(i) + fac*res
+            end
+
+         end
+
+      end
+
+      ! Clean up
+      if (.domain_is_sqrt_x1x) pt.destroy
+
+   end
+
+   add_values_for_spline(points,values,fac) 
+   ! Add in the spline interpolated "values for the "points".
+   ! Optional "fac" may be applied to the values.
+   ! WARNING: To used with sqrt type domain mapping.
+   ! WARNING: "points" may be overwritten
+      self :: IN
+      points :: VEC{REAL}, target, IN
+      values :: VEC{REAL}, INOUT
+      fac :: REAL, IN, optional
+
+ ! ENSURE(.finalised,"not finalised")
+
+      pt :: VEC{REAL}*
+      first,last,p,frac,del1,del6,v1,v2,a,b,s :: REAL
+      i,f,f1,f2 :: INT
+      do_fac :: BIN
+
+      ! fac present?
+      do_fac = FALSE
+      if (present(fac)) then
+      if (NOT fac.equals(ONE)) then
+         do_fac = TRUE
+      end
+      end
+
+      ! Rescale data if required
+      if (.domain_is_sqrt_x1x) then
+        pt.create(points.dim)
+        s = .domain_scale_factor; s = s*s
+        pt = points/(s+points)
+      else
+        pt => points
+      end
+
+      first = .data_point(1)
+      last  = .data_point(.n_data)
+      del1  = .table_spacing
+      del6  = del1*del1*SIXTH
+      del1  = ONE/del1
+
+      if (NOT do_fac) then
+
+         if (.range_is_logarithmic) then
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) cycle
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  v1   = .data_value(f1)
+                  if (frac>f) then ! point lies between spacings
+                     f2 = f1 + 1
+                     v2 = .data_value(f2)
+                     b  = frac - f
+                     a  = ONE - b
+                     v1 = a*v1 + b*v2 +(a*(a*a-1)*.y2(f1) + b*(b*b-1)*.y2(f2))*del6
+                  end
+                  values(i) = values(i) + exp(v1)
+            end
+
+         else
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) cycle
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  v1   = .data_value(f1)
+                  if (frac>f) then ! point lies between spacings
+                     f2 = f1 + 1
+                     v2 = .data_value(f2)
+                     b  = frac - f
+                     a  = ONE - b
+                     v1 = a*v1 + b*v2 +(a*(a*a-1)*.y2(f1) + b*(b*b-1)*.y2(f2))*del6
+                  end
+                  values(i) = values(i) + v1
+            end
+
+         end
+
+      else ! do fac
+
+         if (.range_is_logarithmic) then
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) cycle
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  v1   = .data_value(f1)
+                  if (frac>f) then ! point lies between spacings
+                     f2 = f1 + 1
+                     v2 = .data_value(f2)
+                     b  = frac - f
+                     a  = ONE - b
+                     v1 = a*v1 + b*v2 +(a*(a*a-1)*.y2(f1) + b*(b*b-1)*.y2(f2))*del6
+                  end
+                  values(i) = values(i) + fac*exp(v1)
+            end
+
+         else
+
+            do i = 1,pt.dim
+               p = pt(i)
+               if (p<first OR last<p) cycle
+                  frac = (p-first)*del1
+                  f    = floor(frac)
+                  f1   = f + 1
+                  v1   = .data_value(f1)
+                  if (frac>f) then ! point lies between spacings
+                     f2 = f1 + 1
+                     v2 = .data_value(f2)
+                     b  = frac - f
+                     a  = ONE - b
+                     v1 = a*v1 + b*v2 +(a*(a*a-1)*.y2(f1) + b*(b*b-1)*.y2(f2))*del6
+                  end
+                  values(i) = values(i) + fac*v1
+            end
+
+         end
+
+      end
+
+      ! Clean up
+      if (.domain_is_sqrt_x1x) pt.destroy
+
+   end
+
+!   fast_d_values_for(points) result(values)
+!   ! Return the interpolated "values" for a series of "points" in the special
+!   ! case where the table_origin is ZERO and where the data is known to be even
+!   ! spaced. The finalisation tests and other preconditions are skipped in the
+!   ! interests of speed. This version is for radial DERIVATIVES, and has a minus
+!   ! sign when the log interpolation is used.
+!      self :: IN
+!      points :: VEC{REAL}, IN
+!      values :: VEC{REAL}(points.dim)
+!   ! ENSURE(.finalised,"not finalised")
+!   ! ENSURE(.table_origin.is_zero,"table_origin is not zero")
+!   ! ENSURE(all(points)>ZERO,"the points are not all +ve")
+!      del,frac,res,last :: REAL
+!      i,n,f,i1,i2 :: INT
+!      is_log :: BIN
+!      n = 0
+!      last =.data_point(.n_data)
+!      do i = 1,points.dim       ! set points off the end of the table
+!        if (points(i)<last) cycle
+!        values(i) = ZERO
+!        n = n + 1
+!      end
+!      if (n==points.dim) return ! all points too far away
+!      is_log = .is_logarithmic
+!      if (is_log) then
+!        do i = 1,points.dim
+!          if (points(i)>=last) cycle
+!          frac = points(i)/.table_spacing
+!          f  = floor(frac)
+!          i1 = f + 1
+!          i2 = i1 + 1
+!          if (frac>f) then ! point lies between spacing
+!            del = .data_value(i2) - .data_value(i1)
+!            res = .data_value(i1) + (frac-f)*del
+!          else             ! point is exactly equal to a data_point
+!            res  = .data_value(i1)
+!          end
+!          values(i) = -exp(res)
+!        end
+!      else
+!        do i = 1,points.dim
+!          if (points(i)>=last) cycle
+!          frac = points(i)/.table_spacing
+!          f  = floor(frac)
+!          i1 = f + 1
+!          i2 = i1 + 1
+!          if (frac>f) then ! point lies between spacing
+!            del = .data_value(i2) - .data_value(i1)
+!            res = .data_value(i1) + (frac-f)*del
+!          else             ! point is exactly equal to a data_point
+!            res  = .data_value(i1)
+!          end
+!          values(i) = res
+!       end
+!     end
+!   end
+
+!  ===============
+!  Inquiry methods
+!  ===============
+
+   skip_values_for(points) result (res)
+   ! Return TRUE if the interpolated "values" for a series of "points" are all
+   ! zero, so that we can skip their evaluation.
+      self :: IN
+      points :: VEC{REAL}, IN
+      res :: BIN
+   ! ENSURE(.finalised,"not finalised")
+   ! ENSURE(.table_origin.is_zero,"table_origin is not zero")
+   ! ENSURE(all(points)>ZERO,"the points are not all +ve")
+      i,n :: INT
+      last :: REAL
+      n = 0
+      last =.data_point(.n_data)
+      do i = 1,points.dim       ! set points off the end of the table
+        if (points(i)<last) cycle
+        n = n + 1
+      end
+      res = n==points.dim
+   end
+
+!  ====
+!  Dump
+!  ====
+
+   do_dump ::: private
+   ! Dump for debugging or reading back in
+
+      stdout.dump("interpolation_method",.interpolation_method)
+      stdout.dump("interpolation_is_spline",.interpolation_is_spline)
+      stdout.dump("range_mapping",.range_mapping)
+      stdout.dump("range_is_logarithmic",.range_is_logarithmic)
+      stdout.dump("domain_mapping",.domain_mapping)
+      stdout.dump("domain_scale_factor",.domain_scale_factor)
+      stdout.dump("domain_is_sqrt",.domain_is_sqrt)
+      stdout.dump("domain_is_sqrt_x1x",.domain_is_sqrt_x1x)
+      stdout.dump("table_origin",.table_origin)
+      stdout.dump("table_eps",.table_eps)
+      stdout.dump("n_data",.n_data)
+      stdout.dmpp("data_point",.data_point)
+      stdout.dmpp("data_value",.data_value)
+      stdout.dump("finalised",.finalised)
+      stdout.dmpp("y2",.y2)
+      stdout.dump("y1_initial",.y1_initial)
+      stdout.dump("y1_final",.y1_final)
+
+   end
+
+   dump(object_name,ptr) ::: get_from(OBJECT)
+   ! Dump object data as text
+   end
+
+   dmpp(object_name) ::: get_from(OBJECT)
+   ! Dump pointer object data as text
+   end
+
+!  ==============
+!  Output methods
+!  ==============
+
+   put
+   ! Put the list of interpolating data
+   ENSURE(.finalised,"not finalised")
+      i :: INT
+
+      stdout.flush
+      stdout.text("INTERPOLATOR info")
+      stdout.flush
+      stdout.show("Interpolation method             =",.interpolation_method)
+      stdout.show("Spline interpolation?            =",.interpolation_is_spline)
+      stdout.show("Range mapping?                   =",.range_mapping)
+      stdout.show("Range is logarithmic?            =",.range_is_logarithmic)
+      stdout.show("Domain mapping?                  =",.domain_mapping)
+      stdout.show("Domain scale factor?             =",.domain_scale_factor)
+      stdout.show("Domain is sqrt'd?                =",.domain_is_sqrt)
+      stdout.show("Domain is sqrt(x/1-x)            =",.domain_is_sqrt_x1x)
+      stdout.flush
+      stdout.show("No. of interpolating data points =",.n_data)
+      stdout.flush
+      stdout.show("Initial data value (tab. origin) =",.table_origin)
+      stdout.show("Table length                     =",.table_length)
+      stdout.show("Data point spacing               =",.table_spacing)
+      stdout.show("Table eps (smallest data value)  =",.table_eps)
+
+      if (.data_value.created) then
+
+      stdout.flush
+      stdout.show("First data value                 =",.data_point(1))
+      stdout.show("Last data value                  =",.data_point(.n_data))
+
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("Value")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      do i = 1,.n_data
+         stdout.put(i)
+         stdout.put(.data_value(i))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=1)
+
+      end
+
+      if (NOT .interpolation_is_spline) return
+
+      stdout.flush
+      stdout.text("Spline y2:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("Value")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      do i = 1,.n_data
+         stdout.put(i)
+         stdout.put(.y2(i))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=1)
+
+
+   end
+
+   put_gnuplot(do_log10,to_angstrom)
+   ! Put the list of interpolating data in a gnuplot file assuming it
+   ! is even spaced
+      do_log10,to_angstrom :: BIN, optional
+   ENSURE(.finalised,"not finalised")
+
+      lg10,angstrom :: BIN
+      i :: INT
+
+      lg10 = FALSE
+      if (present(do_log10)) lg10 = do_log10
+      angstrom = FALSE
+      if (present(to_angstrom)) angstrom = to_angstrom
+
+      if (NOT lg10) then
+         if (angstrom) then    
+            stdout.text("#")
+            do i = 1,.n_data
+               stdout.put(.data_point(i).to_units("angstrom"))
+               stdout.put(.data_value(i))
+               stdout.flush
+            end
+         else
+            stdout.text("#")
+            do i = 1,.n_data
+               stdout.put(.data_point(i))
+               stdout.put(.data_value(i))
+               stdout.flush
+            end
+         end
+      else
+         if (angstrom) then    
+            stdout.text("#")
+            do i = 1,.n_data
+               stdout.put(.data_point(i).to_units("angstrom"))
+               stdout.put(log10(.data_value(i)))
+               stdout.flush
+            end
+         else
+            stdout.text("#")
+            do i = 1,.n_data
+               stdout.put(.data_point(i))
+               stdout.put(log10(.data_value(i)))
+               stdout.flush
+            end
+         end
+      end
+
+   end
+
+   put_gnuplot(ref,do_log10,to_angstrom)
+   ! Put the list of interpolating data in a gnuplot file assuming it
+   ! is even spaced, self - ref.
+      ref :: INTERPOLATOR
+      do_log10,to_angstrom :: BIN, optional
+   ENSURE(.finalised,"not finalised")
+   ENSURE(ref.finalised,"ref not finalised")
+
+      lg10,angstrom :: BIN
+      i :: INT
+
+      lg10 = FALSE
+      if (present(do_log10)) lg10 = do_log10
+      angstrom = FALSE
+      if (present(to_angstrom)) angstrom = to_angstrom
+
+      if (NOT lg10) then
+         if (angstrom) then
+            stdout.text("#")
+            do i = 1,min(.n_data,ref.n_data)
+               stdout.put(.data_point(i).to_units("angstrom"))
+               stdout.put((.data_value(i)-ref.data_value(i)))
+               stdout.flush
+            end
+         else
+            stdout.text("#")
+            do i = 1,min(.n_data,ref.n_data)
+               stdout.put(.data_point(i))
+               stdout.put((.data_value(i)-ref.data_value(i)))
+               stdout.flush
+            end
+         end
+      else
+         if (angstrom) then
+            stdout.text("#")
+            do i = 1,min(.n_data,ref.n_data)
+               stdout.put(.data_point(i).to_units("angstrom"))
+               stdout.put(log10(.data_value(i)-ref.data_value(i)))
+               stdout.flush
+            end
+         else
+            stdout.text("#")
+            do i = 1,min(.n_data,ref.n_data)
+               stdout.put(.data_point(i))
+               stdout.put(log10(.data_value(i)-ref.data_value(i)))
+               stdout.flush
+            end
+         end
+      end
+
+   end
+
+!   put_log_gnuplot
+!   ! Put the list of interpolating data in a gnuplot file assuming it
+!   ! is even spaced and logarithmic
+!   ENSURE(.finalised,"not finalised")
+!   ENSURE(.range_is_logarithmic,"not a log interpolation")
+!
+!      l10 :: REAL 
+!      i :: INT
+!
+!      l10 = ONE/log(TEN)
+!      stdout.text("#")
+!      do i = 1,.n_data
+!         stdout.put(.data_point(i).to_units("angstrom"))
+!         stdout.put(.data_value(i)*l10)
+!         stdout.flush
+!      end
+!
+!   end
+
+!   put_log_gnuplot(ref)
+!   ! Put the list of interpolating data in a gnuplot file assuming it
+!   ! is even spaced and logarithmic, self - ref.
+!      ref :: INTERPOLATOR
+!   ENSURE(.finalised,"not finalised")
+!   ENSURE(.range_is_logarithmic,"not a log interpolation")
+!   ENSURE(ref.finalised,"ref not finalised")
+!   ENSURE(ref.range_is_logarithmic,"ref not a log interpolation")
+!
+!      l10 :: REAL 
+!      i :: INT
+!
+!      l10 = ONE/log(TEN)
+!      stdout.text("#")
+!      do i = 1,min(.n_data,ref.n_data)
+!         stdout.put(.data_point(i).to_units("angstrom"))
+!         stdout.put((.data_value(i)-ref.data_value(i))*l10)
+!         stdout.flush
+!      end
+!
+!   end
+
+end

@@ -1,0 +1,1461 @@
+!-------------------------------------------------------------------------------
+!
+! OPMATRIX: Operator matrices.
+!
+! Provide a basis set (matrix) representation of a one-electron quantum
+! mechanical operator. Can cope with polymorphic types of basis representations,
+! including restricted, unrestricted, and general basis orbital matrices.
+! Also, complex types for all these matrices.
+!
+! Basically, its a polymorphic matrix type.
+!
+! Copyright (C) Dylan Jayatilaka 1998
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: opmatrix.foo 4364 2014-05-12 07:41:15Z dylan_ $
+!-------------------------------------------------------------------------------
+
+module OPMATRIX
+
+   implicit none
+
+contains
+
+! ==========
+! Allocation
+! ==========
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   create(n_bf) ::: leaky
+   ! Create an opmatrix object, in a basis set with "n_bf" spatial orbitals
+      self :: PTR
+      n_bf :: INT, IN
+
+      .create
+      .n_bf = n_bf
+
+   end
+
+   create(n_bf,genre) ::: leaky
+   ! Create an opmatrix object, in a basis set with "n_bf" spatial orbitals
+      self :: PTR
+      n_bf :: INT, IN
+      genre :: STR
+
+      .create(n_bf)
+      .create(genre)
+
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   create(genre) ::: leaky
+   ! Create the appropriate spinorbital kind the opmatrix
+      genre :: STR, IN
+
+   ENSURE(.n_bf>0, "bad number of basis functions.")
+
+      select case (genre)
+         case ("restricted");           .restricted.create(.n_bf,.n_bf)
+         case ("unrestricted");         .alpha.create(.n_bf,.n_bf)
+                                        .beta.create(.n_bf,.n_bf)
+         case ("alpha");                .alpha.create(.n_bf,.n_bf)
+         case ("beta");                 .beta.create(.n_bf,.n_bf)
+         case ("general");              .general.create(2*.n_bf,2*.n_bf)
+         case ("restricted_complex");   .restricted_complex.create(.n_bf,.n_bf)
+         case ("unrestricted_complex"); .alpha_complex.create(.n_bf,.n_bf)
+                                        .beta_complex.create(.n_bf,.n_bf)
+         case ("alpha_complex");        .alpha_complex.create(.n_bf,.n_bf)
+         case ("beta_complex");         .beta_complex.create(.n_bf,.n_bf)
+         case ("general_complex");      .general_complex.create(2*.n_bf,2*.n_bf)
+         case default;   DIE("unknown kind, "//trim(genre))
+      end
+
+   end
+
+   destroy(genre) ::: leaky
+   ! Destroy the appropriate spinorbital kind of the opmatrix
+      genre :: STR
+
+      select case (genre)
+         case ("restricted");           .restricted.destroy
+         case ("unrestricted");         .alpha.destroy; .beta.destroy
+         case ("alpha");                .alpha.destroy
+         case ("beta");                 .beta.destroy
+         case ("general");              .general.destroy
+         case ("restricted_complex");   .restricted_complex.destroy
+         case ("unrestricted_complex"); .alpha_complex.destroy
+                                        .beta_complex.destroy
+         case ("alpha_complex");        .alpha_complex.destroy
+         case ("beta_complex");         .beta_complex.destroy
+         case ("general_complex");      .general_complex.destroy
+         case ("all");                  .destroy_ptr_part
+         case default;   DIE("unknown kind, "//trim(genre))
+      end
+
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of the opmatrix object
+      nullify(.restricted)
+      nullify(.alpha)
+      nullify(.beta)
+      nullify(.general)
+      nullify(.restricted_complex)
+      nullify(.alpha_complex)
+      nullify(.beta_complex)
+      nullify(.general_complex)
+      nullify(.triangle)
+      nullify(.square)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts of the opmatrix object
+      .restricted.destroy
+      .alpha.destroy
+      .beta.destroy
+      .general.destroy
+      .restricted_complex.destroy
+      .alpha_complex.destroy
+      .beta_complex.destroy
+      .general_complex.destroy
+      .triangle.destroy
+      .square.destroy
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+   end
+
+   created(genre) result (res)
+   ! Returns FALSE if "self" is not created.
+   ! Returns FALSE, unless kind "genre" of self has been created.
+      self :: PTR
+      genre :: STR
+      res :: BIN
+
+      res = FALSE
+      if (NOT associated(self)) then; res = FALSE
+      else;                           res = .has_genre(genre)
+      end
+
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+   end
+
+   destroyed(genre) result (res)
+   ! Returns true if kind "genre" of self has *not* been created
+      self :: PTR
+      genre :: STR
+      res :: BIN
+      res = NOT .created(genre)
+   end
+
+   any_created result (res) ::: pure
+   ! Returns true if any component of self has been created
+   ! NOTE: the beta parts are NOT tested for creation.
+      self :: PTR
+      res :: BIN
+
+      c :: BIN, dimension(6)
+
+      if (.destroyed) then
+
+         res = FALSE
+
+      else
+
+         c(1) = .restricted.created
+         c(2) = .alpha.created
+         c(3) = .general.created
+         c(4) = .restricted_complex.created
+         c(5) = .alpha_complex.created
+         c(6) = .general_complex.created
+         res = any(c)
+
+      end
+
+   end
+
+   all_destroyed result (res) ::: pure
+   ! Returns true if all components of self have been destroyed
+   ! NOTE: the beta parts are NOT tested.
+      self :: PTR
+      res :: BIN
+
+      d :: BIN, dimension(6)
+
+      if (.destroyed) then
+
+         res = TRUE
+
+      else
+
+         d(1) = .restricted.destroyed
+         d(2) = .alpha.destroyed
+         d(3) = .general.destroyed
+         d(4) = .restricted_complex.destroyed
+         d(5) = .alpha_complex.destroyed
+         d(6) = .general_complex.destroyed
+         res = all(d)
+
+      end
+
+   end
+
+! ====
+! Copy
+! ====
+
+   create_copy(mx) ::: leaky
+   ! Create an opmatrix object
+      self :: PTR
+      mx :: OPMATRIX, IN
+
+      .create(mx.n_bf)
+      .set_to(mx)
+
+   end
+
+   set_to(mx) ::: leaky
+   ! Set "self" to "mx".
+      self :: INOUT
+      mx :: OPMATRIX, IN
+
+      .set(mx.n_bf)
+
+      .destroy_ptr_part
+
+      if (mx.restricted.created)         .restricted.create_copy(mx.restricted)
+      if (mx.alpha.created)              .alpha.create_copy(mx.alpha)
+      if (mx.beta.created)               .beta.create_copy(mx.beta)
+      if (mx.general.created)            .general.create_copy(mx.general)
+      if (mx.restricted_complex.created) .restricted_complex.create_copy(mx.restricted_complex)
+      if (mx.alpha_complex.created)      .alpha_complex.create_copy(mx.alpha_complex)
+      if (mx.beta_complex.created)       .beta_complex.create_copy(mx.beta_complex)
+      if (mx.general_complex.created)    .general_complex.create_copy(mx.general_complex)
+
+   end
+
+! ===========
+! Set methods
+! ===========
+
+   set_defaults
+   ! Set defaults
+      self :: INOUT
+      .n_bf = 0
+   end
+
+   set(n_bf)
+   ! Set with "n_bf" spatial orbitals
+      self :: INOUT
+      n_bf :: INT, IN
+      .n_bf = n_bf
+   end
+
+   set_to_zero
+   ! Set self to zero
+
+      if (.restricted.created)         .restricted = ZERO
+      if (.alpha.created)              .alpha      = ZERO
+      if (.beta.created)               .beta       = ZERO
+      if (.general.created)            .general    = ZERO
+
+      if (.restricted_complex.created) .restricted_complex = (ZERO,ZERO)
+      if (.alpha_complex.created)      .alpha_complex      = (ZERO,ZERO)
+      if (.beta_complex.created)       .beta_complex       = (ZERO,ZERO)
+      if (.general_complex.created)    .general_complex    = (ZERO,ZERO)
+
+   end
+
+! ===============
+! Inquiry methods
+! ===============
+
+   has_genre(genre) result (res)
+   ! Returns FALSE if self is not created.
+   ! Returns FALSE, unless subkind "genre" of self has been created.
+      genre :: STR
+      res :: BIN
+
+      res = FALSE
+      select case (genre)
+         case ("restricted");           res = .restricted.created
+         case ("unrestricted");         res = .alpha.created AND .beta.created
+         case ("general");              res = .general.created
+         case ("restricted_complex");   res = .restricted_complex.created
+         case ("unrestricted_complex"); res = .alpha_complex.created
+         case ("general_complex");      res = .general_complex.created
+         case default;   DIE("unknown kind, "//trim(genre))
+      end
+
+   end
+
+   has_genre_str result (res)
+   ! Return has_genre as a string
+      res :: STR
+
+      ss :: STR
+
+      ss = repeat("F",8)
+      if ( .restricted.created)         ss(1:1) = "T"
+      if ( .alpha.created)              ss(2:2) = "T"
+      if ( .beta.created)               ss(3:3) = "T"
+      if ( .general.created)            ss(4:4) = "T"
+      if ( .restricted_complex.created) ss(5:5) = "T"
+      if ( .alpha_complex.created)      ss(6:6) = "T"
+      if ( .beta_complex.created)       ss(7:7) = "T"
+      if ( .general_complex.created)    ss(8:8) = "T"
+
+      res =  "r:"//ss(1:1)//" "// &
+             "a:"//ss(2:2)//" "// & 
+             "b:"//ss(3:3)//" "// & 
+             "g:"//ss(4:4)//" "// & 
+            "rc:"//ss(5:5)//" "// & 
+            "ac:"//ss(6:6)//" "// & 
+            "bc:"//ss(7:7)//" "// & 
+            "gc:"//ss(8:8)
+
+   end
+
+   has_genre_strs(X) result (res)
+   ! Returns the side-by-side has_genre strings for "self" and "X".
+   ! Usefule checking if compatbile or addable.
+      X :: OPMATRIX
+      res :: STR
+
+      ss,sx :: STR
+
+      ss = repeat("F",8)
+      if ( .restricted.created)         ss(1:1) = "T"
+      if ( .alpha.created)              ss(2:2) = "T"
+      if ( .beta.created)               ss(3:3) = "T"
+      if ( .general.created)            ss(4:4) = "T"
+      if ( .restricted_complex.created) ss(5:5) = "T"
+      if ( .alpha_complex.created)      ss(6:6) = "T"
+      if ( .beta_complex.created)       ss(7:7) = "T"
+      if ( .general_complex.created)    ss(8:8) = "T"
+
+      sx = repeat("F",8)
+      if (X.restricted.created)         sx(1:1) = "T"
+      if (X.alpha.created)              sx(2:2) = "T"
+      if (X.beta.created)               sx(3:3) = "T"
+      if (X.general.created)            sx(4:4) = "T"
+      if (X.restricted_complex.created) sx(5:5) = "T"
+      if (X.alpha_complex.created)      sx(6:6) = "T"
+      if (X.beta_complex.created)       sx(7:7) = "T"
+      if (X.general_complex.created)    sx(8:8) = "T"
+
+      res =  "r:"//ss(1:1)//sx(1:1)//" "// &
+             "a:"//ss(2:2)//sx(2:2)//" "// & 
+             "b:"//ss(3:3)//sx(3:3)//" "// & 
+             "g:"//ss(4:4)//sx(4:4)//" "// & 
+            "rc:"//ss(5:5)//sx(5:5)//" "// & 
+            "ac:"//ss(6:6)//sx(6:6)//" "// & 
+            "bc:"//ss(7:7)//sx(7:7)//" "// & 
+            "gc:"//ss(8:8)//sx(8:8)
+
+   end
+
+   is_compatible_with(X,genre) result (res)
+   ! Returns TRUE if the "self" and "X" are compatible
+      X :: OPMATRIX, IN
+      genre :: STR, IN, optional
+      res :: BIN
+
+      cs,cx :: VEC{BIN}(8)
+
+      if (present(genre)) then
+
+         res = .has_genre(genre) AND X.has_genre(genre)
+
+      else
+
+         cs(1) = .restricted.created
+         cs(2) = .alpha.created
+         cs(3) = .beta.created
+         cs(4) = .general.created
+         cs(5) = .restricted_complex.created
+         cs(6) = .alpha_complex.created
+         cs(7) = .beta_complex.created
+         cs(8) = .general_complex.created
+   
+         cx(1) = X.restricted.created
+         cx(2) = X.alpha.created
+         cx(3) = X.beta.created
+         cx(4) = X.general.created
+         cx(5) = X.restricted_complex.created
+         cx(6) = X.alpha_complex.created
+         cx(7) = X.beta_complex.created
+         cx(8) = X.general_complex.created
+
+         res = all(cs EQV cx)
+
+      end
+
+   end
+
+   is_addable_with(X) result (res)
+   ! Returns TRUE if the "self" is (left) addable with "X" 
+   ! i.e. All genres in "self" are defined in "X".
+      X :: OPMATRIX, IN
+      res :: BIN
+
+      cs,cx :: VEC{BIN}(8)
+
+      cs(1) = .restricted.created
+      cs(2) = .alpha.created
+      cs(3) = .beta.created
+      cs(4) = .general.created
+      cs(5) = .restricted_complex.created
+      cs(6) = .alpha_complex.created
+      cs(7) = .beta_complex.created
+      cs(8) = .general_complex.created
+
+      cx(1) = X.restricted.created
+      cx(2) = X.alpha.created
+      cx(3) = X.beta.created
+      cx(4) = X.general.created
+      cx(5) = X.restricted_complex.created
+      cx(6) = X.alpha_complex.created
+      cx(7) = X.beta_complex.created
+      cx(8) = X.general_complex.created
+
+      ! Not addable if cs(i) is there but no cx(i)
+      res = NOT any(cs AND NOT cx)
+
+   end
+
+   number_kind result (res)
+   ! Return the kind of numbers used in the representation
+      self :: IN
+      res :: STR
+
+      res = " "
+      if      (.restricted.created )         then; res = "real"
+      else if (.alpha.created )              then; res = "real"
+      else if (.general.created )            then; res = "real"
+      else if (.restricted_complex.created ) then; res = "complex"
+      else if (.alpha_complex.created )      then; res = "complex"
+      else if (.general_complex.created )    then; res = "complex"
+      else; DIE("no object created")
+      end
+
+   end
+
+   same_spinorbital_kind_as(X,genre) result (res)
+   ! Return TRUE if "X" has the same spinorbital_kind and "self" 
+   ! or both are of kind "genre" (if present).
+   ! ****************************************************************
+   ! NOTE: Use as a last resort. Use the scfdata.scf_kind if possible.
+   ! ****************************************************************
+      X :: OPMATRIX, IN
+      genre :: STR, IN, optional
+      res :: BIN
+
+      if (present(genre)) then; res = .has_genre(genre) AND X.has_genre(genre)
+      else;                     res = .spinorbital_kind==X.spinorbital_kind
+      end
+
+   end
+
+   spinorbital_kind(genre) result (res) ::: PURE
+   ! Return the kind of spinorbitals used in the representation
+   ! NOTE: The *simplest* spinorbital kind in use is the one returned.
+   ! ****************************************************************
+   ! NOTE: Use as a last resort. Use the scfdata.scf_kind if possible.
+   ! ****************************************************************
+      self :: IN
+      genre :: STR, IN, optional
+      res :: STR
+
+   ENSURE(.any_created or present(genre),"no component created")
+
+      if (present(genre)) then
+
+         res = genre
+
+      else
+
+         res = " "
+              if (.restricted.created)         then; res = "restricted"
+         else if (.alpha.created)              then; res = "unrestricted"
+         else if (.general.created)            then; res = "general"
+         else if (.restricted_complex.created) then; res = "restricted_complex"
+         else if (.alpha_complex.created)      then; res = "unrestricted_complex"
+         else if (.general_complex.created)    then; res = "general_complex"
+         end
+
+      end
+
+   end
+
+   guess_scf_kind result (res)
+   ! Guess the kind of SCF to be used from the spinorbitals used in the
+   ! ****************************************************************
+   ! representation. WARNING: use as a last resort.
+   ! ****************************************************************
+      self :: IN
+      res :: STR
+
+      res = " "
+           if (.alpha.created )              then; res = "uhf"
+      else if (.restricted.created )         then; res = "rhf"
+      else if (.general.created )            then; res = "ghf"
+      else if (.restricted_complex.created ) then; res = "rchf"
+      else if (.alpha_complex.created )      then; res = "uchf"
+      else if (.general_complex.created )    then; res = "gchf"
+      else; DIE("no object created")
+      end
+
+   end
+
+! ==========================
+! Conversion and compression
+! ==========================
+
+   convert_to(newkind,factor,destroy_original) ::: leaky
+   ! Convert self to a new basis kind "newkind".  To convert MO's
+   ! please use the next routine.
+      self :: INOUT
+      newkind :: STR
+      factor :: REAL, optional
+      destroy_original :: BIN, optional
+
+      oldkind :: STR
+      destroy_oldkind :: BIN
+
+      destroy_oldkind = TRUE
+      if (present(destroy_original)) destroy_oldkind = destroy_original
+
+      oldkind = .spinorbital_kind
+      if (newkind==oldkind) return
+
+      .create(newkind)
+
+      ! Convert oldkind -> newkind
+      select case (oldkind)
+
+         case("restricted")
+
+            select case (newkind)
+
+               case("unrestricted")
+                  if (present(factor)) then
+                     .alpha = factor*.restricted
+                     .beta  = factor*.restricted
+                  else
+                     .alpha =        .restricted
+                     .beta  =        .restricted
+                  end
+
+               case("general")
+                  .general = ZERO
+                  if (present(factor)) then
+                     .general.alpha_alpha_set_to(.restricted,factor)
+                     .general.beta_beta_set_to(.restricted,factor)
+                  else
+                     .general.alpha_alpha_set_to(.restricted)
+                     .general.beta_beta_set_to(.restricted)
+                  end
+
+               case("restricted_complex")
+                  .restricted_complex = .restricted
+
+               case("unrestricted_complex")
+                  if (present(factor)) then
+                     .alpha_complex = factor*.restricted
+                     .beta_complex  = factor*.restricted
+                  else
+                     .alpha_complex =        .restricted
+                     .beta_complex  =        .restricted
+                  end
+
+               case("general_complex")
+                  .general_complex = ZERO
+                  if (present(factor)) then
+                     .general_complex.alpha_alpha_set_to(.restricted,factor)
+                     .general_complex.beta_beta_set_to(.restricted,factor)
+                  else
+                     .general_complex.alpha_alpha_set_to(.restricted)
+                     .general_complex.beta_beta_set_to(.restricted)
+                  end
+
+               case default
+                  DIE("cant convert kind "//trim(oldkind)//" to kind "//trim(newkind))
+
+            end
+
+         case("unrestricted")
+
+            select case (newkind)
+
+               case("restricted")
+                  if (present(factor)) then
+                     .restricted = factor*.alpha
+                  else
+                     .restricted =        .alpha
+                  end
+
+               case("general")
+                  .general = ZERO
+                  .general.alpha_alpha_set_to(.alpha)
+                  .general.beta_beta_set_to(.beta)
+
+               case("unrestricted_complex")
+                  .alpha_complex = .alpha
+                  .beta_complex  = .beta
+
+               case("general_complex")
+                  .general_complex = ZERO
+                  .general_complex.alpha_alpha_set_to(.alpha)
+                  .general_complex.beta_beta_set_to(.beta)
+
+               case default
+                  DIE("cant convert kind "//trim(oldkind)//" to kind "//trim(newkind))
+
+            end
+
+         case("general")
+
+            select case (newkind)
+
+               case("unrestricted")
+                  .general.alpha_alpha_put_to(.alpha)
+                  .general.beta_beta_put_to(.beta)
+
+               case("general_complex")
+                  .general_complex = .general
+
+               case default
+                  DIE("cant convert kind "//trim(oldkind)//" to kind "//trim(newkind))
+
+            end
+
+         case default
+
+            DIE("cant convert old kind "//trim(oldkind))
+
+      end
+
+      ! Clean
+      if (destroy_oldkind) .destroy(oldkind)
+
+   end
+
+   convert_to(newkind,na,nb,quantization_axis) ::: leaky
+   ! Convert self (which is regarded to be a set of MO's) to a
+   ! new basis kind "newkind"
+      newkind :: STR
+      na,nb :: INT
+      quantization_axis :: VEC{REAL}(3), optional
+
+      quantize :: BIN
+      oldkind :: STR
+      d,ne :: INT
+      lam,tmp,ar,br,bi :: REAL
+
+      d = .n_bf
+      ne = na + nb
+
+      oldkind = .spinorbital_kind
+      if (newkind==oldkind) return
+
+      ! Create the new (leaky)
+      .create(newkind)
+
+      select case (oldkind)
+
+         case("restricted")
+  
+            select case (newkind)
+
+               case("unrestricted")
+                  .alpha = .restricted
+                  .beta  = .restricted
+
+               case("general")
+                  .general = ZERO
+                  .general(  1:d,     1:2*nb-1:2) = .restricted(:,   1:nb)
+                  .general(d+1: ,     2:2*nb  :2) = .restricted(:,   1:nb)
+                  .general(  1:d,2*nb+1:ne      ) = .restricted(:,nb+1:na)
+                  .general(d+1: ,  ne+1:2*na    ) = .restricted(:,nb+1:na)
+                  .general(1:d  ,2*na+1:2*d -1:2) = .restricted(:,na+1: d)
+                  .general(d+1: ,2*na+2:2*d   :2) = .restricted(:,na+1: d)
+
+               case("restricted_complex")
+                  .restricted_complex = .restricted
+
+               case("unrestricted_complex")
+                  .alpha_complex = .restricted
+                  .beta_complex  = .restricted
+
+               case("general_complex")
+                  .general_complex = ZERO
+                  .general_complex(  1:d,     1:2*nb-1:2) = .restricted(:,   1:nb)
+                  .general_complex(d+1: ,     2:2*nb  :2) = .restricted(:,   1:nb)
+                  .general_complex(  1:d,2*nb+1:ne      ) = .restricted(:,nb+1:na)
+                  .general_complex(d+1: ,  ne+1:2*na    ) = .restricted(:,nb+1:na)
+                  .general_complex(  1:d,2*na+1:2*d -1:2) = .restricted(:,na+1: d)
+                  .general_complex(d+1: ,2*na+2:2*d   :2) = .restricted(:,na+1: d)
+
+               case default
+                  DIE("cant convert kind "//trim(oldkind)//" to kind "//trim(newkind))
+
+            end
+  
+         case("unrestricted")
+  
+            select case (newkind)
+
+               case("restricted","alpha")
+                  .restricted = .alpha ! Loss of information here
+                  WARN("Conversion from unrestricted to restricted ignores beta orbitals")
+
+               case("beta")
+                  .restricted = .beta  ! Loss of information here
+                  WARN("Conversion from unrestricted to restricted ignores alpha orbitals")
+
+               case("general")
+                  .general = ZERO
+                  .general(  1:d,     1:2*nb-1:2) = .alpha(:,   1:nb)
+                  .general(d+1: ,     2:2*nb  :2) = .beta (:,   1:nb)
+                  .general(  1:d,2*nb+1:ne      ) = .alpha(:,nb+1:na)
+                  .general(d+1: ,  ne+1:2*na    ) = .beta (:,nb+1:na)
+                  .general(  1:d,2*na+1:2*d -1:2) = .alpha(:,na+1: d)
+                  .general(d+1: ,2*na+2:2*d   :2) = .beta (:,na+1: d)
+
+               case("unrestricted_complex")
+                  .alpha_complex = .alpha
+                  .beta_complex  = .beta
+
+               case("general_complex")
+
+                  .general_complex = ZERO
+
+                  quantize = FALSE
+                  if (present(quantization_axis)) &
+                     quantize = NOT quantization_axis.equals((/ZERO,ZERO,ONE/))
+
+                  if (quantize) then
+
+                     lam = quantization_axis.norm
+                     tmp = abs(quantization_axis(3)+lam) ! always positive anyway
+                     if (tmp.equals(ZERO)) then
+                        ar = ZERO
+                        br = ONE
+                        bi = ZERO
+                     else
+                        ar = sqrt(tmp/(TWO*lam))
+                        br = ONE/sqrt(TWO*lam*tmp)
+                        bi = br
+                        br = br*quantization_axis(1)
+                        bi = bi*quantization_axis(2)
+                     end
+                     .general_complex(d+1: ,     1:  na) = cmplx(br,bi,kind=CPX_KIND)*.alpha(:,   1:na)
+                     .general_complex(  1:d,     1:  na) =           ar*.alpha(:,   1:na)
+                     .general_complex(d+1: ,  ne+1:nb+d) = cmplx(br,bi,kind=CPX_KIND)*.alpha(:,na+1: d)
+                     .general_complex(  1:d,  ne+1:nb+d) =           ar*.alpha(:,na+1: d)
+                     br = -br
+                     .general_complex(  1:d,  na+1:ne  ) = cmplx(br,bi,kind=CPX_KIND)*.beta (:,   1:nb)
+                     .general_complex(d+1: ,  na+1:ne  ) =           ar*.beta (:,   1:nb)
+                     .general_complex(  1:d,nb+d+1:    ) = cmplx(br,bi,kind=CPX_KIND)*.beta (:,nb+1: d)
+                     .general_complex(d+1: ,nb+d+1:    ) =           ar*.beta (:,nb+1: d)
+
+                  else
+
+                     .general_complex(  1:d,     1:na  ) = .alpha(:,   1:na)
+                     .general_complex(d+1: ,  na+1:ne  ) = .beta (:,   1:nb)
+                     .general_complex(  1:d,  ne+1:nb+d) = .alpha(:,na+1:  )
+                     .general_complex(d+1: ,nb+d+1:    ) = .beta (:,nb+1:  )
+                  end
+
+               case default
+
+                  DIE("cant convert kind "//trim(oldkind)//" to kind "//trim(newkind))
+
+            end
+  
+         case("general")
+  
+            select case (newkind)
+
+               case("unrestricted")
+                  .general.alpha_alpha_put_to(.alpha)
+                  .general.beta_beta_put_to(.beta)
+                  WARN("Conversion from general to unrestricted not recommended!")
+
+               case("general_complex")
+                  .general_complex = .general
+
+               case default
+                  DIE("cant convert kind "//trim(oldkind)//" to kind "//trim(newkind))
+
+            end
+  
+         case default
+
+            DIE("cant convert old kind "//trim(oldkind))
+
+      end
+
+      .destroy(oldkind)
+
+   end
+
+   l_compress(genre) result (res)
+   ! Return the length of the compressed object
+      res :: INT
+
+      genre :: STR, optional
+      k :: STR
+
+      if (present(genre)) then; k = genre
+      else;                     k = .spinorbital_kind
+      end
+
+      res = 0
+      select case (k)
+         case("restricted          "); res = int(HALF*.n_bf*(.n_bf+1))
+         case("unrestricted        "); res =   .n_bf*(  .n_bf+1)
+         case("general             "); res =   .n_bf*(2*.n_bf+1)
+         case("restricted_complex  "); res =   .n_bf*.n_bf
+         case("unrestricted_complex"); res = 2*.n_bf*.n_bf
+         case("general_complex     "); res = 4*.n_bf*.n_bf
+         case default;   DIE("unknown kind, "//trim(k))
+      end
+
+   end
+
+   compress(genre) ::: leaky
+   ! Compress the opmatrix into a triangle or square vector to save space
+      genre :: STR, optional
+
+      k :: STR
+      l :: INT
+      W :: VEC{REAL}@
+
+      k = .spinorbital_kind
+      if (present(genre)) k = genre
+
+      select case (k)
+
+         case("restricted")
+            .triangle.destroy
+            .triangle.create(.l_compress(k))
+            .restricted.zip_lower_triangle_to(.triangle)
+            .restricted.destroy
+
+         case("unrestricted")
+            l = .l_compress(k)
+            .triangle.destroy
+            .triangle.create(l)
+            allocate(W(l/2))
+            .alpha.zip_lower_triangle_to(W); .triangle.alpha_set_to(W)
+             .beta.zip_lower_triangle_to(W);  .triangle.beta_set_to(W)
+            deallocate(W)
+            .alpha.destroy
+            .beta.destroy
+
+         case("general")
+            .triangle.destroy
+            .triangle.create(.l_compress(k))
+            .general.zip_lower_triangle_to(.triangle)
+
+         case("restricted_complex")
+            .square.destroy
+            .square.create(.l_compress(k))
+            .restricted_complex.zip_lower_triangles_to(.square)
+            .restricted_complex.destroy
+
+         case("unrestricted_complex")
+            .square.destroy
+            l = .l_compress(k)
+            .square.create(l)
+            allocate(W(l/2))
+            .alpha_complex.zip_lower_triangles_to(W); .square.alpha_set_to(W)
+             .beta_complex.zip_lower_triangles_to(W);  .square.beta_set_to(W)
+            deallocate(W)
+            .alpha_complex.destroy
+            .beta_complex.destroy
+
+         case("general_complex")
+            .square.destroy
+            .square.create(.l_compress(k))
+            .general_complex.zip_lower_triangles_to(.square)
+            .general_complex.destroy
+
+      end
+
+   end
+
+   uncompress ::: leaky
+   ! Uncompress the opmatrix
+
+      l :: INT
+
+      l = -1
+      if (.triangle.created) l = size(.triangle)
+      if (.square.created)   l = size(.square)
+
+      if (l==.l_compress("restricted")) then
+
+            .destroy("restricted")
+             .create("restricted")
+            .restricted.symmetric_unzip_triangle(.triangle)
+            .triangle.destroy
+
+      else if (l==.l_compress("unrestricted")) then
+
+            .destroy("unrestricted")
+             .create("unrestricted")
+            .alpha.symmetric_unzip_triangle(.triangle.alpha)
+             .beta.symmetric_unzip_triangle( .triangle.beta)
+            .triangle.destroy
+
+      else if (l==.l_compress("general")) then
+
+            .destroy("general")
+             .create("general")
+            .general.symmetric_unzip_triangle(.triangle)
+            .triangle.destroy
+
+      else if (l==.l_compress("restricted_complex")) then
+
+            .destroy("restricted_complex")
+             .create("restricted_complex")
+            .restricted_complex.hermitian_unzip_triangles(.square)
+            .square.destroy
+
+      else if (l==.l_compress("unrestricted_complex")) then
+
+            .destroy("unrestricted_complex")
+             .create("unrestricted_complex")
+            .alpha_complex.hermitian_unzip_triangles(.square.alpha)
+             .beta_complex.hermitian_unzip_triangles(.square.beta)
+
+      else if (l==.l_compress("general_complex")) then
+
+            .destroy("general_complex")
+             .create("general_complex")
+            .general_complex.hermitian_unzip_triangles(.square)
+            .square.destroy
+
+      end
+
+   end
+
+! ===============
+! Math operations
+! ===============
+
+   plus(X,genre)
+   ! Add "X" to "self" for all genres. 
+      X :: OPMATRIX, IN
+      genre :: STR, IN, optional
+
+   ENSURE(.is_addable_with(X),"not (left) addable")
+
+      W :: MAT{REAL}@
+
+      if (NOT present(genre)) then
+
+         if (.restricted.created) &
+            .restricted.plus(X.restricted)
+
+         if (.alpha.created) then
+            W = X.alpha
+            .alpha.plus(W)
+            deallocate(W)
+         end
+
+         if (.beta.created) then
+            W = X.beta
+            .beta.plus(W)
+            deallocate(W)
+         end
+
+         if (.general.created) &
+            .general.plus(X.general)
+
+         if (.restricted_complex.created) &
+            .restricted_complex.plus(X.restricted_complex)
+
+         if (.alpha_complex.created) &
+            .alpha_complex.plus(X.alpha_complex)
+
+         if (.beta_complex.created) &
+            .beta_complex.plus(X.beta_complex)
+
+         if (.general_complex.created) &
+            .general_complex.plus(X.general_complex)
+
+      else
+
+         select case(genre)
+   
+            case("restricted")
+               .restricted.plus(X.restricted)
+   
+            case("unrestricted")
+               .alpha.plus(X.alpha)
+               .beta.plus(X.beta)
+   
+            case("alpha")
+               .alpha.plus(X.alpha)
+   
+            case("beta")
+               .beta.plus(X.beta)
+   
+            case("general")
+               .general.plus(X.general)
+   
+            case("restricted_complex")
+               .restricted.plus(X.restricted)
+   
+            case("unrestricted_complex")
+               .alpha_complex.plus(X.alpha_complex)
+               .beta_complex.plus(X.beta_complex)
+   
+            case("alpha_complex")
+               .alpha_complex.plus(X.alpha_complex)
+   
+            case("beta_complex")
+               .beta_complex.plus(X.beta_complex)
+   
+            case("general_complex")
+               .general_complex.plus(X.general_complex)
+   
+            case default
+               DIE("unknown kind, "//trim(genre))
+   
+         end
+
+      end
+
+   end
+
+   minus(X,genre)
+   ! Subtract "X" to "self" for all genres. The two must be compatible.
+      X :: OPMATRIX, IN
+      genre :: STR, IN, optional
+
+   ENSURE(.is_addable_with(X),"not (left) addable")
+
+      W :: MAT{REAL}@
+
+      if (NOT present(genre)) then
+
+         if (.restricted.created) &
+            .restricted.minus(X.restricted)
+
+         if (.alpha.created) then
+            W = X.alpha
+            .alpha.minus(W)
+            deallocate(W)
+         end
+
+         if (.beta.created) then
+            W = X.beta
+            .beta.minus(W)
+            deallocate(W)
+         end
+
+         if (.general.created) &
+            .general.minus(X.general)
+
+         if (.restricted_complex.created) &
+            .restricted_complex.minus(X.restricted_complex)
+
+         if (.alpha_complex.created) &
+            .alpha_complex.minus(X.alpha_complex)
+
+         if (.beta_complex.created) &
+            .beta_complex.minus(X.beta_complex)
+
+         if (.general_complex.created) &
+            .general_complex.minus(X.general_complex)
+
+      else
+
+         select case(genre)
+   
+            case("restricted")
+               .restricted.minus(X.restricted)
+   
+            case("unrestricted")
+               .alpha.minus(X.alpha)
+               .beta.minus(X.beta)
+   
+            case("alpha")
+               .alpha.minus(X.alpha)
+   
+            case("beta")
+               .beta.minus(X.beta)
+   
+            case("general")
+               .general.minus(X.general)
+   
+            case("restricted_complex")
+               .restricted.minus(X.restricted)
+   
+            case("unrestricted_complex")
+               .alpha_complex.minus(X.alpha_complex)
+               .beta_complex.minus(X.beta_complex)
+   
+            case("alpha_complex")
+               .alpha_complex.minus(X.alpha_complex)
+   
+            case("beta_complex")
+               .beta_complex.minus(X.beta_complex)
+   
+            case("general_complex")
+               .general_complex.minus(X.general_complex)
+   
+            case default
+               DIE("unknown kind, "//trim(genre))
+   
+         end
+
+      end
+
+   end
+
+   to_scaled(X,fac,genre)
+   ! Set "self" to a scaled version of "X". The two must be
+   ! compatible.
+      X :: OPMATRIX
+      fac :: REAL, IN
+      genre :: STR, IN, optional
+
+   DIE_IF(NOT .is_compatible_with(X,genre),"incompatible kinds")
+
+      W :: MAT{REAL}@
+
+      if (NOT present(genre)) then
+
+         if (.restricted.created) &
+            .restricted.to_scaled(X.restricted,fac)
+
+         if (.alpha.created) then
+            W = X.alpha
+            .alpha.to_scaled(W,fac)
+            deallocate(W)
+         end
+
+         if (.beta.created) then
+            W = X.beta
+            .beta.to_scaled(W,fac)
+            deallocate(W)
+         end
+
+         if (.general.created) &
+            .general.to_scaled(X.general,fac)
+
+         if (.restricted_complex.created) &
+            .restricted_complex.to_scaled(X.restricted_complex,fac)
+
+         if (.alpha_complex.created) &
+            .alpha_complex.to_scaled(X.alpha_complex,fac)
+
+         if (.beta_complex.created) &
+            .beta_complex.to_scaled(X.beta_complex,fac)
+
+         if (.general_complex.created) &
+            .general_complex.to_scaled(X.general_complex,fac)
+
+      else
+
+         select case(genre)
+   
+            case("restricted")
+               .restricted.to_scaled(X.restricted,fac)
+   
+            case("unrestricted")
+               .alpha.to_scaled(X.alpha,fac)
+                .beta.to_scaled(X.beta, fac)
+   
+            case("alpha")
+               .alpha.to_scaled(X.alpha,fac)
+   
+            case("beta")
+               .beta.to_scaled(X.beta,fac)
+   
+            case("general")
+               .general.to_scaled(X.general,fac)
+   
+            case("restricted_complex")
+               .restricted.to_scaled(X.restricted,fac)
+   
+            case("unrestricted_complex")
+               .alpha_complex.to_scaled(X.alpha_complex,fac)
+               .beta_complex.to_scaled(X.beta_complex,fac)
+   
+            case("alpha_complex")
+               .alpha_complex.to_scaled(X.alpha_complex,fac)
+   
+            case("beta_complex")
+               .beta_complex.to_scaled(X.beta_complex,fac)
+   
+            case("general_complex")
+               .general_complex.to_scaled(X.general_complex,fac)
+   
+            case default
+               DIE("unknown kind, "//trim(genre))
+   
+         end
+
+      end
+
+   end
+
+   plus_scaled(X,fac,genre)
+   ! Add to "self" a scaled version of "X". The two must be
+   ! compatible.
+      X :: OPMATRIX
+      fac :: REAL, IN
+      genre :: STR, IN, optional
+
+   DIE_IF(NOT .is_compatible_with(X,genre),"incompatible kinds")
+
+      if (NOT present(genre)) then
+
+         if (.restricted.created)         .restricted.plus_scaled(X.restricted,fac)
+         if (.alpha.created)              .alpha.plus_scaled(X.alpha,fac)
+         if ( .beta.created)               .beta.plus_scaled(X.beta,fac)
+         if (.general.created)            .general.plus_scaled(X.general,fac)
+         if (.restricted_complex.created) .restricted_complex.plus_scaled(X.restricted_complex,fac)
+         if (.alpha_complex.created)      .alpha_complex.plus_scaled(X.alpha_complex,fac)
+         if ( .beta_complex.created)       .beta_complex.plus_scaled(X.beta_complex,fac)
+         if (.general_complex.created)    .general_complex.plus_scaled(X.general_complex,fac)
+
+      else
+
+         select case(genre)
+   
+            case("restricted")
+               .restricted.plus_scaled(X.restricted,fac)
+   
+            case("unrestricted")
+               .alpha.plus_scaled(X.alpha,fac)
+                .beta.plus_scaled(X.beta, fac)
+   
+            case("alpha")
+               .alpha.plus_scaled(X.alpha,fac)
+   
+            case("beta")
+               .beta.plus_scaled(X.beta,fac)
+   
+            case("general")
+               .general.plus_scaled(X.general,fac)
+   
+            case("restricted_complex")
+               .restricted.plus_scaled(X.restricted,fac)
+   
+            case("unrestricted_complex")
+               .alpha_complex.plus_scaled(X.alpha_complex,fac)
+               .beta_complex.plus_scaled(X.beta_complex,fac)
+   
+            case("alpha_complex")
+               .alpha_complex.plus_scaled(X.alpha_complex,fac)
+   
+            case("beta_complex")
+               .beta_complex.plus_scaled(X.beta_complex,fac)
+   
+            case("general_complex")
+               .general_complex.plus_scaled(X.general_complex,fac)
+   
+            case default
+               DIE("unknown kind, "//trim(genre))
+   
+         end
+
+      end
+
+   end
+
+   damp(old,mix)
+   ! Constructs the new self matrix by combining it with the "old" one using a
+   ! "mix" factor, i.e.  self = (1-mix)*self + mix*old.
+      old :: OPMATRIX, IN
+      mix :: REAL, IN
+
+      .to_scaled(self,ONE-mix)
+      .plus_scaled(old,mix)
+
+   end
+
+   expectation(X) result (res)
+   ! Get the expectation value of the matrix "X", i.e:
+   !    res = Trace ( X  .self )
+      X :: MAT{REAL}
+      res :: REAL
+
+   ENSURE(X.dim1==.n_bf,"wrong X dimension")
+   ENSURE(X.is_square,"X is not square")
+
+      genre :: STR
+
+      genre = .spinorbital_kind
+
+      res = ZERO
+
+      select case (genre)
+
+         case ("restricted")
+            res = .restricted.trace_product_with(X)
+
+         case ("unrestricted")
+            res = .alpha.trace_product_with(X)
+            res =  .beta.trace_product_with(X) + res
+
+         case ("general_complex")
+            res = .general_complex.trace_product_with(X)
+
+         case default
+            DIE("not implemented, "//trim(genre))
+
+      end
+
+   end
+
+! ==================
+! Orthonormalization
+! ==================
+
+   schmidt_orthonormalise(S,scale)
+   ! Schmidt Orthonormalise self.  (For molecular orbitals).
+      S :: MAT{REAL}, IN
+      scale :: REAL, optional
+      genre :: STR
+      n :: INT
+      SS :: MAT{REAL}*
+      genre = .spinorbital_kind
+      select case(genre)
+         case("restricted")
+                  .restricted.schmidt_orthonormalise(S,scale)
+         case("unrestricted")
+                  .alpha.schmidt_orthonormalise(S)
+                  .beta.schmidt_orthonormalise(S)
+         case("alpha")
+                  .alpha.schmidt_orthonormalise(S,scale)
+         case("beta")
+                  .beta.schmidt_orthonormalise(S,scale)
+         case("general")
+                  n = 2*S.dim1
+                  SS.create(n,n)
+                  SS = ZERO
+                  SS.alpha_alpha_set_to(S)
+                  SS.beta_beta_set_to(S)
+                  .general.schmidt_orthonormalise(SS,scale)
+                  SS.destroy
+         case("restricted_complex")
+                  .restricted_complex.schmidt_orthonormalise(S,scale)
+         case("unrestricted_complex")
+                  .alpha_complex.schmidt_orthonormalise(S)
+                  .beta_complex.schmidt_orthonormalise(S)
+         case("alpha_complex")
+                  .alpha_complex.schmidt_orthonormalise(S,scale)
+         case("beta_complex")
+                  .beta_complex.schmidt_orthonormalise(S,scale)
+         case("general_complex")
+                  n = 2*S.dim1
+                  SS.create(n,n)
+                  SS = ZERO
+                  SS.alpha_alpha_set_to(S)
+                  SS.beta_beta_set_to(S)
+                  .general_complex.schmidt_orthonormalise(SS,scale)
+                  SS.destroy
+         case default;   DIE("unknown kind, "//trim(genre))
+      end
+   end
+
+   symmetrically_orthonormalise(S)
+   ! Symmetrically orthonormalise self. (For molecular orbitals).
+   ! "S" is the AO overlap matrix.
+      S :: MAT{REAL}, IN
+
+      genre :: STR
+      n :: INT
+      SS :: MAT{REAL}*
+
+      genre = .spinorbital_kind
+
+      select case(genre)
+
+         case("restricted")
+            .restricted.symmetrically_orthonormalise(S)
+
+         case("unrestricted")
+            .alpha.symmetrically_orthonormalise(S)
+            .beta.symmetrically_orthonormalise(S)
+
+         case("alpha")
+            .alpha.symmetrically_orthonormalise(S)
+
+         case("beta")
+            .beta.symmetrically_orthonormalise(S)
+
+         case("general")
+            n = 2*S.dim1
+            SS.create(n,n)
+            SS = ZERO
+            ENSURE(SS.dim1==2*S.dim1,"wrong size, S")
+            SS.alpha_alpha_set_to(S)
+            SS.beta_beta_set_to(S)
+            .general.symmetrically_orthonormalise(SS)
+            SS.destroy
+
+         case("restricted_complex")
+            .restricted.symmetrically_orthonormalise(S)
+
+         case("unrestricted_complex")
+            .alpha_complex.symmetrically_orthonormalise(S)
+            .beta_complex.symmetrically_orthonormalise(S)
+
+         case("alpha_complex")
+            .alpha_complex.symmetrically_orthonormalise(S)
+
+         case("beta_complex")
+            .beta_complex.symmetrically_orthonormalise(S)
+
+         case("general_complex")
+            n = 2*S.dim1
+            SS.create(n,n)
+            SS = ZERO
+            ENSURE(SS.dim1==2*S.dim1,"wrong size, S")
+            SS.alpha_alpha_set_to(S)
+            SS.beta_beta_set_to(S)
+            .general_complex.symmetrically_orthonormalise(SS)
+            SS.destroy
+
+         case default
+            DIE("unknown kind, "//trim(genre))
+
+      end
+
+   end
+
+end

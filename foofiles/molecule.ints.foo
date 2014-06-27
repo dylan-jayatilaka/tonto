@@ -1,0 +1,1267 @@
+!===============================================================================
+!
+! MOLECULE.INTS: An object representation of a molecule.
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: molecule.ints.foo $
+!===============================================================================
+
+module MOLECULE.INTS
+
+   implicit none
+
+contains
+
+!  ========================
+!  Overlap matrix formation
+!  ========================
+
+   make_overlap_matrix ::: leaky
+   ! Get the overlap matrix. Return if already made.
+
+      small,tol :: REAL
+      n :: INT
+
+      if (.overlap_matrix.created) return
+
+      ! Make the overlap matrix
+      .overlap_matrix.create(.n_bf,.n_bf)
+      .::make_r_overlap_matrix(.overlap_matrix)
+
+      ! Get overlap eigenvalues and eigenvectors
+      .overlap_eigenvalues.destroy
+      .overlap_eigenvectors.destroy
+      .overlap_eigenvectors.create(.n_bf,.n_bf)
+      .overlap_eigenvalues.create(.n_bf)
+      .overlap_matrix.solve_eigenproblem(.overlap_eigenvalues,.overlap_eigenvectors)
+
+      ! Test overlap eigenvalues
+      if (.scfdata.created) then
+         small = minval(abs(.overlap_eigenvalues))
+         tol = .scfdata.linear_dependence_tol
+         if (small<=tol) then
+            n = count(abs(.overlap_eigenvalues) <= tol)
+            WARN(" ")
+            WARN("Smallest cartesian overlap eigenvalue is "//trim(small.to_str("e15.8")))
+            WARN("There are "//trim(n.to_str)//" linear dependent functions")
+            WARN("The overlap tolerance is set to "//trim(tol.to_str("e15.8")))
+            WARN(" ")
+         end
+      end
+
+      ! Make maximum overlap between basis fns in shell pairs ...
+      .max_S.destroy
+      .max_S.create(.n_shell_pairs)
+      .BASE:make_max_S_for_shell_pairs(.max_S)
+
+   end
+
+   make_r_overlap_matrix(S)
+   ! Make the restricted overlap matrix "S"
+      S :: MAT{REAL}
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+
+      q,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      S = ZERO
+
+      parallel do q = 1,.n_shell_pairs
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+         sh.make_overlap(S(fa:la,fb:lb))
+         sh.destroy_ptr_part
+      end
+
+      if (DO_IN_PARALLEL) then
+        PARALLEL_SYMMETRIC_SUM(S)
+      else
+        S.symmetric_reflect
+      end
+
+      .BASE:put_debug(S,"make_r_overlap_matrix: S")
+
+   end
+
+   make_r_overlap_sqrt(S_sqrt) ::: leaky
+   ! Get "S_sqrt", the sqrt overlap matrix 
+      S_sqrt :: MAT{REAL}, OUT
+
+   ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
+   ENSURE(.overlap_eigenvalues.created,"no overlap_values")
+   ENSURE(S_sqrt.is_square,"non-square S_qrt")
+   ENSURE(S_sqrt.dim1==.overlap_eigenvectors.dim1,"wrong shape for S_sqrt")
+
+      tol :: REAL
+
+      if (.scfdata.created) then
+         tol   = .scfdata.linear_dependence_tol
+         S_sqrt.to_sqrt_of(.overlap_eigenvalues,.overlap_eigenvectors,tol)
+      else
+         S_sqrt.to_sqrt_of(.overlap_eigenvalues,.overlap_eigenvectors)
+      end
+
+   end
+
+   make_r_overlap_inverse_sqrt(S_inv) ::: leaky
+   ! Get "S_inv", the inverse sqrt overlap matrix 
+      S_inv :: MAT{REAL}, OUT
+
+   ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
+   ENSURE(.overlap_eigenvalues.created,"no overlap_values")
+   ENSURE(S_inv.is_square,"non-square S_inv")
+   ENSURE(S_inv.dim1==.overlap_eigenvectors.dim1,"wrong shape for S_sqrt")
+
+      tol :: REAL
+
+      if (.scfdata.created) then
+         tol   = .scfdata.linear_dependence_tol
+         S_inv.to_inverse_sqrt_of(.overlap_eigenvalues,.overlap_eigenvectors,tol)
+      else
+         S_inv.to_inverse_sqrt_of(.overlap_eigenvalues,.overlap_eigenvectors)
+      end
+
+   end
+
+   make_r_overlap_inverse(S_inv) ::: leaky
+   ! Get "S_inv", the inverse overlap matrix 
+      S_inv :: MAT{REAL}, OUT
+
+   ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
+   ENSURE(.overlap_eigenvalues.created,"no overlap_values")
+   ENSURE(S_inv.is_square,"non-square S_inv")
+   ENSURE(S_inv.dim1==.overlap_eigenvectors.dim1,"wrong shape for S_sqrt")
+
+      tol :: REAL
+
+      if (.scfdata.created) then
+         tol   = .scfdata.linear_dependence_tol
+         S_inv.to_inverse_of(.overlap_eigenvalues,.overlap_eigenvectors,tol)
+      else
+         S_inv.to_inverse_of(.overlap_eigenvalues,.overlap_eigenvectors)
+      end
+
+   end
+
+!  =================
+!  Kinetic integrals
+!  =================
+
+   make_kinetic_energy_mx ::: leaky
+   ! Get the kinetic energy matrix. Return if already made.
+
+      if (.kinetic_energy_matrix.created) return
+
+      ! Make it
+      .kinetic_energy_matrix.create(.n_bf,"restricted")
+      .::make_kinetic_energy_mx(.kinetic_energy_matrix.restricted)
+
+      ! Compress
+      .kinetic_energy_matrix.compress
+
+   end
+
+   make_kinetic_energy_mx(T)
+   ! Calculate the kinetic energy matrix "T".
+      T :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      q,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      T = ZERO
+
+      parallel do q = 1,.n_shell_pairs
+        .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+        sh.get_kei(T(fa:la,fb:lb))
+        sh.destroy_ptr_part
+      end
+
+      if (DO_IN_PARALLEL) then
+        PARALLEL_SYMMETRIC_SUM(T)
+      else
+        T.symmetric_reflect
+      end
+
+      .BASE:put_debug(T,"make_kinetic_energy_mx: T")
+
+   end
+
+!  =============================
+!  Kinetic and overlap integrals
+!  =============================
+
+!   make_kinetic_overlap(T,S)
+!   ! Calculate the kinetic energy matrix "T" and overlap integral matrix "S"
+!     T,S :: MAT{REAL}
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,  "no atom list")
+!     q,fa,la,fb,lb :: INT
+!     sh :: SHELL2
+!     do q=1,.n_shell_pairs
+!       .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+!       sh.get_kei(T(fa:la,fb:lb), S(fa:la,fb:lb))
+!       sh.destroy_ptr_part
+!     end
+!     S.symmetric_reflect
+!     T.symmetric_reflect
+!     .BASE:put_debug(S,"overlap matrix")
+!     .BASE:put_debug(T,"kinetic matrix")
+!   end
+
+!  ===========================
+!  Nuclear attracton integrals
+!  ===========================
+
+   make_nuclear_attraction_mx ::: leaky
+   ! Get the nuclear attraction matrix. Return if already made.
+
+      if (.nuclear_attraction_matrix.created) return
+
+      ! Make it
+      .nuclear_attraction_matrix.create(.n_bf,"restricted")
+      .::make_nuclear_attraction_mx(.nuclear_attraction_matrix.restricted)
+
+      ! Compress
+      .nuclear_attraction_matrix.compress
+
+   end
+
+   make_nuclear_attraction_mx(Z)
+   ! Calculate the nuclear attraction matrix "Z".
+      Z :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      atom :: ATOM*
+      Z_c,X,MX,M :: MAT{REAL}*
+      q,c,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      Z = ZERO
+      select case (.nucleus_model)
+        case ("finite","gaussian")
+
+        X.create(.n_prim,.n_prim)
+        X=ZERO
+        .REL:make_primitive_nuclear_matrix(X)
+        M.create(.n_prim,.n_bf)
+        .BASE:make_normalised_contraction_mx(M)
+        MX.create(.n_bf,.n_prim)
+        MX.to_product_of(M,X,transpose_a=TRUE)
+        X.destroy
+        Z.to_product_of(MX,M)
+        M.destroy
+        MX.destroy
+
+      case ("point")
+
+        parallel do q = 1,.n_shell_pairs
+
+           .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+
+           Z_c.create(na,nb)
+           do c = 1,.n_atom
+              atom => .atom(c)
+              sh.get_nuc(Z_c, atom.mass, atom.position)
+              Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.nuclear_charge * Z_c
+           end
+
+           Z_c.destroy
+           sh.destroy_ptr_part
+
+        end
+
+        if (DO_IN_PARALLEL) then
+          PARALLEL_SYMMETRIC_SUM(Z)
+        else
+          Z.symmetric_reflect
+        end
+
+      case default 
+        DIE("Unknown nucleus model")
+      end
+
+      .BASE:put_debug(Z,"make_nuclear_attraction_mx: Z")
+
+   end
+
+   make_nuclear_attraction_mx(Z,nuclei)
+   ! Calculate the nuclear attraction matrix "Z" only for a specified
+   ! list of "nuclei".
+      Z :: MAT{REAL}
+      nuclei :: VEC{INT}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      atom_c :: ATOM*
+      Z_c,M,MX,X :: MAT{REAL}*
+      q,c,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      Z = ZERO
+
+      select case (.nucleus_model)
+        case ("finite","gaussian")
+
+        X.create(.n_prim,.n_prim)
+        X=ZERO
+        .REL:make_primitive_nuclear_matrix(X)
+        M.create(.n_prim,.n_bf)
+        .BASE:make_normalised_contraction_mx(M)
+        MX.create(.n_bf,.n_prim)
+        MX.to_product_of(M,X,transpose_a=TRUE)
+        X.destroy
+        Z.to_product_of(MX,M)
+        M.destroy
+        MX.destroy
+
+        case ("point")
+        do q = 1,.n_shell_pairs
+  
+           .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+  
+           Z_c.create(na,nb)
+           do c = 1,size(nuclei)
+              atom_c => .atom(nuclei(c))
+              sh.get_nuc(Z_c, atom_c.mass,atom_c.position)
+              Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom_c.nuclear_charge * Z_c
+           end
+
+           Z_c.destroy
+           sh.destroy_ptr_part
+
+        end
+        Z.symmetric_reflect
+
+      case default 
+        DIE("Unknown nucleus model")
+      end
+
+
+   end
+
+   make_nuclear_attraction_mx(Z,charges,points)
+   ! Calculate the nuclear attraction matrix "Z" given a set of "charges" at a
+   ! set of "points".
+      Z,points :: MAT{REAL}
+      charges :: VEC{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(charges.dim==points.dim1,"inconsistent charges and points arrays")
+   ENSURE(points.dim2==3,"wrong 2nd dimension, points array")
+
+      Z_c,MX,M,X :: MAT{REAL}*
+      q,c,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      Z = ZERO
+      select case (.nucleus_model)
+        case ("finite","gaussian")
+
+        X.create(.n_prim,.n_prim)
+        X=ZERO
+        .REL:make_primitive_nuclear_matrix(X)
+        M.create(.n_prim,.n_bf)
+        .BASE:make_normalised_contraction_mx(M)
+        MX.create(.n_bf,.n_prim)
+        MX.to_product_of(M,X,transpose_a=TRUE)
+        X.destroy
+        Z.to_product_of(MX,M)
+        M.destroy
+        MX.destroy
+
+      case ("point")
+
+        parallel do q = 1,.n_shell_pairs
+  
+           .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+  
+           Z_c.create(na,nb)
+           do c = 1,charges.dim
+              sh.get_nuc(Z_c,ZERO,points(c,:))
+              Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - charges(c) * Z_c
+           end
+
+           Z_c.destroy
+           sh.destroy_ptr_part
+
+        end
+
+        if (DO_IN_PARALLEL) then
+          PARALLEL_SYMMETRIC_SUM(Z)
+        else
+          Z.symmetric_reflect
+        end
+
+      case default 
+        DIE("Unknown nucleus model")
+      end
+
+   end
+
+!  =======================
+!  Dipole moment integrals
+!  =======================
+
+   make_dipole_matrices(Dx,Dy,Dz)
+   ! Make "Di", the dipole moment integral matrices.
+      Dx,Dy,Dz :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      DDx,DDy,DDz :: MAT{REAL}*
+      q,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      Dx = ZERO
+      Dy = ZERO
+      Dz = ZERO
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+
+         DDx.create(na,nb)
+         DDy.create(na,nb)
+         DDz.create(na,nb)
+         sh.make_dipole_ints(DDx,DDy,DDz, .gauge_origin)
+
+         Dx(fa:la,fb:lb) = Dx(fa:la,fb:lb) + DDx
+         Dy(fa:la,fb:lb) = Dy(fa:la,fb:lb) + DDy
+         Dz(fa:la,fb:lb) = Dz(fa:la,fb:lb) + DDz
+
+         DDz.destroy
+         DDy.destroy
+         DDx.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      Dx.symmetric_reflect
+      Dy.symmetric_reflect
+      Dz.symmetric_reflect
+
+   end
+
+   electronic_dipole_moment result (res)
+   ! Return the electronic dipole moment
+      res :: VEC{REAL}(3)
+      Dx,Dy,Dz :: MAT{REAL}*
+
+      Dx.create(.n_bf,.n_bf)
+      Dy.create(.n_bf,.n_bf)
+      Dz.create(.n_bf,.n_bf)
+
+      .::make_dipole_matrices(Dx,Dy,Dz)
+
+      ! Minus sign for electron charge
+      res(1) = -.BASE:expectation(Dx) 
+      res(2) = -.BASE:expectation(Dy)
+      res(3) = -.BASE:expectation(Dz)
+
+      Dz.destroy
+      Dy.destroy
+      Dx.destroy
+
+   end
+
+!  ===========================
+!  Quadrupole moment integrals
+!  ===========================
+
+   make_quadrupole_matrices(Qxx,Qyy,Qzz,Qxy,Qxz,Qyz)
+   ! Make "Qij", the quadrupole moment integral matrices.
+      Qxx,Qyy,Qzz,Qxy,Qxz,Qyz :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      QQxx,QQyy,QQzz,QQxy,QQxz,QQyz :: MAT{REAL}*
+      q,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      Qxx = ZERO; Qyy = ZERO; Qzz = ZERO
+      Qxy = ZERO; Qxz = ZERO; Qyz = ZERO
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+
+         QQxx.create(na,nb)
+         QQyy.create(na,nb)
+         QQzz.create(na,nb)
+         QQxy.create(na,nb)
+         QQxz.create(na,nb)
+         QQyz.create(na,nb)
+
+         sh.make_quadrupole_ints(QQxx,QQyy,QQzz,QQxy,QQxz,QQyz, .gauge_origin)
+
+         Qxx(fa:la,fb:lb) = Qxx(fa:la,fb:lb) + QQxx
+         Qyy(fa:la,fb:lb) = Qyy(fa:la,fb:lb) + QQyy
+         Qzz(fa:la,fb:lb) = Qzz(fa:la,fb:lb) + QQzz
+         Qxy(fa:la,fb:lb) = Qxy(fa:la,fb:lb) + QQxy
+         Qxz(fa:la,fb:lb) = Qxz(fa:la,fb:lb) + QQxz
+         Qyz(fa:la,fb:lb) = Qyz(fa:la,fb:lb) + QQyz
+
+         QQyz.destroy
+         QQxz.destroy
+         QQxy.destroy
+         QQzz.destroy
+         QQyy.destroy
+         QQxx.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      Qxx.symmetric_reflect
+      Qyy.symmetric_reflect
+      Qzz.symmetric_reflect
+      Qxy.symmetric_reflect
+      Qxz.symmetric_reflect
+      Qyz.symmetric_reflect
+
+   end
+
+   electronic_quadrupole_moment result (res)
+   ! Return the electronic quadrupole moments as a vectors in the
+   ! order: xx, yy, zz, xy, xz, yz
+      res :: VEC{REAL}(6)
+
+      Qxx,Qyy,Qzz,Qxy,Qxz,Qyz :: MAT{REAL}*
+
+      Qxx.create(.n_bf,.n_bf)
+      Qyy.create(.n_bf,.n_bf)
+      Qzz.create(.n_bf,.n_bf)
+      Qxy.create(.n_bf,.n_bf)
+      Qxz.create(.n_bf,.n_bf)
+      Qyz.create(.n_bf,.n_bf)
+
+      .::make_quadrupole_matrices(Qxx,Qyy,Qzz,Qxy,Qxz,Qyz)
+
+      ! Minus sign for electron charge
+      res(1) = -.BASE:expectation(Qxx) 
+      res(2) = -.BASE:expectation(Qyy)
+      res(3) = -.BASE:expectation(Qzz)
+      res(4) = -.BASE:expectation(Qxy)
+      res(5) = -.BASE:expectation(Qxz)
+      res(6) = -.BASE:expectation(Qyz)
+
+      Qyz.destroy
+      Qxz.destroy
+      Qxy.destroy
+      Qzz.destroy
+      Qyy.destroy
+      Qxx.destroy
+
+   end
+
+   nuclear_quadrupole_moment result (res)
+   ! Return the nuclear quadrupole moment
+      res :: VEC{REAL}(6)
+      res = .atom.nuclear_quadrupole_moment
+   end
+
+!  =========================
+!  Octupole moment integrals
+!  =========================
+
+   make_octupole_matrices(Oxxx,Oyyy,Ozzz,Oxxy,Oxxz,Oyyx,Oyyz,Ozzx,Ozzy,Oxyz)
+   ! Make "Oijk", the octupole moment integral matrices.
+      Oxxx,Oyyy,Ozzz,Oxxy,Oxxz,Oyyx,Oyyz,Ozzx,Ozzy,Oxyz :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      OOxxx,OOyyy,OOzzz,OOxxy,OOxxz,OOyyx,OOyyz,OOzzx,OOzzy,OOxyz :: MAT{REAL}*
+      q,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      Oxxx = ZERO; Oyyy = ZERO; Ozzz = ZERO
+      Oxxy = ZERO; Oxxz = ZERO
+      Oyyx = ZERO; Oyyz = ZERO
+      Ozzx = ZERO; Ozzy = ZERO
+      Oxyz = ZERO
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+
+         OOxxx.create(na,nb)
+         OOyyy.create(na,nb)
+         OOzzz.create(na,nb)
+         OOxxy.create(na,nb)
+         OOxxz.create(na,nb)
+         OOyyx.create(na,nb)
+         OOyyz.create(na,nb)
+         OOzzx.create(na,nb)
+         OOzzy.create(na,nb)
+         OOxyz.create(na,nb)
+
+         sh.make_octupole_ints(OOxxx,OOyyy,OOzzz, &
+                               OOxxy,OOxxz,OOyyx, &
+                               OOyyz,OOzzx,OOzzy, &
+                               OOxyz,.gauge_origin)
+
+         Oxxx(fa:la,fb:lb) = Oxxx(fa:la,fb:lb) + OOxxx
+         Oyyy(fa:la,fb:lb) = Oyyy(fa:la,fb:lb) + OOyyy
+         Ozzz(fa:la,fb:lb) = Ozzz(fa:la,fb:lb) + OOzzz
+         Oxxy(fa:la,fb:lb) = Oxxy(fa:la,fb:lb) + OOxxy
+         Oxxz(fa:la,fb:lb) = Oxxz(fa:la,fb:lb) + OOxxz
+         Oyyx(fa:la,fb:lb) = Oyyx(fa:la,fb:lb) + OOyyx
+         Oyyz(fa:la,fb:lb) = Oyyz(fa:la,fb:lb) + OOyyz
+         Ozzx(fa:la,fb:lb) = Ozzx(fa:la,fb:lb) + OOzzx
+         Ozzy(fa:la,fb:lb) = Ozzy(fa:la,fb:lb) + OOzzy
+         Oxyz(fa:la,fb:lb) = Oxyz(fa:la,fb:lb) + OOxyz
+
+         OOxyz.destroy
+         OOzzy.destroy
+         OOzzx.destroy
+         OOyyz.destroy
+         OOyyx.destroy
+         OOxxz.destroy
+         OOxxy.destroy
+         OOzzz.destroy
+         OOyyy.destroy
+         OOxxx.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      Oxxx.symmetric_reflect
+      Oyyy.symmetric_reflect
+      Ozzz.symmetric_reflect
+      Oxxy.symmetric_reflect
+      Oxxz.symmetric_reflect
+      Oyyx.symmetric_reflect
+      Oyyz.symmetric_reflect
+      Ozzx.symmetric_reflect
+      Ozzy.symmetric_reflect
+      Oxyz.symmetric_reflect
+
+   end
+
+   electronic_octupole_moment result (res)
+   ! Return the electronic octupole moments as a vectors in the
+   ! order: xxx, yyy, zzz, xxy, xxz, yyx, yyz, zzx, zzy, xyz
+      res :: VEC{REAL}(10)
+
+      Oxxx,Oyyy,Ozzz,Oxxy,Oxxz,Oyyx,Oyyz,Ozzx,Ozzy,Oxyz :: MAT{REAL}*
+
+      Oxxx.create(.n_bf,.n_bf)
+      Oyyy.create(.n_bf,.n_bf)
+      Ozzz.create(.n_bf,.n_bf)
+      Oxxy.create(.n_bf,.n_bf)
+      Oxxz.create(.n_bf,.n_bf)
+      Oyyx.create(.n_bf,.n_bf)
+      Oyyz.create(.n_bf,.n_bf)
+      Ozzx.create(.n_bf,.n_bf)
+      Ozzy.create(.n_bf,.n_bf)
+      Oxyz.create(.n_bf,.n_bf)
+
+      .::make_octupole_matrices(Oxxx,Oyyy,Ozzz,Oxxy,Oxxz,Oyyx,Oyyz,Ozzx,Ozzy,Oxyz)
+
+      ! Minus sign for electron charge
+      res(1)  = -.BASE:expectation(Oxxx) 
+      res(2)  = -.BASE:expectation(Oyyy)
+      res(3)  = -.BASE:expectation(Ozzz)
+      res(4)  = -.BASE:expectation(Oxxy)
+      res(5)  = -.BASE:expectation(Oxxz)
+      res(6)  = -.BASE:expectation(Oyyx)
+      res(7)  = -.BASE:expectation(Oyyz)
+      res(8)  = -.BASE:expectation(Ozzx)
+      res(9)  = -.BASE:expectation(Ozzy)
+      res(10) = -.BASE:expectation(Oxyz)
+
+      Oxyz.destroy
+      Ozzy.destroy
+      Ozzx.destroy
+      Oyyz.destroy
+      Oyyx.destroy
+      Oxxz.destroy
+      Oxxy.destroy
+      Ozzz.destroy
+      Oyyy.destroy
+      Oxxx.destroy
+
+   end
+
+   nuclear_octupole_moment result (res)
+   ! Return the nuclear octupole moment
+      res :: VEC{REAL}(10)
+      res = .atom.nuclear_octupole_moment
+   end
+
+!  ========================
+!  Electric field integrals
+!  ========================
+
+   make_electric_field_matrices(Ex,Ey,Ez,c)
+   ! Make "Ei", the electric fields integral matrices evaluated at
+   ! position "c".
+      Ex,Ey,Ez :: MAT{REAL}
+       c :: VEC{REAL}(3)
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      EEx,EEy,EEz :: MAT{REAL}*
+      q,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      Ex = ZERO; Ey = ZERO; Ez = ZERO
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+
+         EEx.create(na,nb)
+         EEy.create(na,nb)
+         EEz.create(na,nb)
+
+         sh.make_E_field_ints(EEx,EEy,EEz,c)
+
+         Ex(fa:la,fb:lb) = Ex(fa:la,fb:lb) + EEx
+         Ey(fa:la,fb:lb) = Ey(fa:la,fb:lb) + EEy
+         Ez(fa:la,fb:lb) = Ez(fa:la,fb:lb) + EEz
+
+         sh.destroy_ptr_part
+         EEz.destroy
+         EEy.destroy
+         EEx.destroy
+
+      end
+
+      Ex.symmetric_reflect; Ey.symmetric_reflect; Ez.symmetric_reflect
+
+   end
+
+   electronic_E_field_at_nuclei result (res)
+   ! Return the electronic contribution to the electric fields
+   ! at the nuclei as a (3 x .n_atom) array
+      res :: MAT{REAL}(3,.n_atom)
+
+      Ex,Ey,Ez :: MAT{REAL}*
+      a :: INT
+
+      Ex.create(.n_bf,.n_bf)
+      Ey.create(.n_bf,.n_bf)
+      Ez.create(.n_bf,.n_bf)
+
+      do a = 1,.n_atom
+
+         .::make_electric_field_matrices(Ex,Ey,Ez,.atom(a).position)
+
+         ! minus sign for electron charge
+         res(1,a) = -.BASE:expectation(Ex) 
+         res(2,a) = -.BASE:expectation(Ey)
+         res(3,a) = -.BASE:expectation(Ez)
+
+      end
+
+      Ez.destroy
+      Ey.destroy
+      Ex.destroy
+
+   end
+
+   nuclear_E_field_at_nuclei result (res)
+   ! Return the nuclear contribution to the electric fields
+   ! at the nuclei as a (3 x .n_atom) array
+      res :: MAT{REAL}(3,.n_atom)
+      res = .atom.nuclear_E_field_at_nuclei
+   end
+
+!  =================================
+!  Electric field gradient integrals
+!  =================================
+
+   make_EFG_matrices(Exx,Eyy,Ezz,Exy,Exz,Eyz,c)
+   ! Make "Eij", the electric field gradient (EFG) integral matrices evaluated
+   ! at point "c".
+      Exx,Eyy,Ezz,Exy,Exz,Eyz :: MAT{REAL}
+      c :: VEC{REAL}(3)
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      EExx,EEyy,EEzz,EExy,EExz,EEyz :: MAT{REAL}*
+      q,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      Exx = ZERO
+      Eyy = ZERO
+      Ezz = ZERO
+      Exy = ZERO
+      Exz = ZERO
+      Eyz = ZERO
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+
+         EExx.create(na,nb)
+         EEyy.create(na,nb)
+         EEzz.create(na,nb)
+         EExy.create(na,nb)
+         EExz.create(na,nb)
+         EEyz.create(na,nb)
+
+         sh.make_E_gradient_ints(EExx,EEyy,EEzz,EExy,EExz,EEyz,c)
+
+         Exx(fa:la,fb:lb) = Exx(fa:la,fb:lb) + EExx
+         Eyy(fa:la,fb:lb) = Eyy(fa:la,fb:lb) + EEyy
+         Ezz(fa:la,fb:lb) = Ezz(fa:la,fb:lb) + EEzz
+         Exy(fa:la,fb:lb) = Exy(fa:la,fb:lb) + EExy
+         Exz(fa:la,fb:lb) = Exz(fa:la,fb:lb) + EExz
+         Eyz(fa:la,fb:lb) = Eyz(fa:la,fb:lb) + EEyz
+
+         sh.destroy_ptr_part
+         EEyz.destroy
+         EExz.destroy
+         EExy.destroy
+         EEzz.destroy
+         EEyy.destroy
+         EExx.destroy
+
+      end
+
+      Exx.symmetric_reflect
+      Eyy.symmetric_reflect
+      Ezz.symmetric_reflect
+      Exy.symmetric_reflect
+      Exz.symmetric_reflect
+      Eyz.symmetric_reflect
+
+   end
+
+   electronic_EFG_at_nuclei result (res)
+   ! Return the electronic contribution to the electric field gradient
+   ! (EFG) at the nuclei as a (6 x .n_atom) array. The order of the
+   ! electric field gradient elements is: xx, yy, zz, xy, xz, yz
+      res :: MAT{REAL}(6,.n_atom)
+
+      Exx,Eyy,Ezz,Exy,Exz,Eyz :: MAT{REAL}*
+      a :: INT
+
+      Exx.create(.n_bf,.n_bf)
+      Eyy.create(.n_bf,.n_bf)
+      Ezz.create(.n_bf,.n_bf)
+      Exy.create(.n_bf,.n_bf)
+      Exz.create(.n_bf,.n_bf)
+      Eyz.create(.n_bf,.n_bf)
+
+      do a = 1,.n_atom
+
+         .::make_EFG_matrices(Exx,Eyy,Ezz,Exy,Exz,Eyz,.atom(a).position)
+
+         ! Minus sign for electron charge
+         res(1,a) = -.BASE:expectation(Exx)
+         res(2,a) = -.BASE:expectation(Eyy)
+         res(3,a) = -.BASE:expectation(Ezz)
+         res(4,a) = -.BASE:expectation(Exy)
+         res(5,a) = -.BASE:expectation(Exz)
+         res(6,a) = -.BASE:expectation(Eyz)
+
+      end
+
+      Eyz.destroy
+      Exz.destroy
+      Exy.destroy
+      Ezz.destroy
+      Eyy.destroy
+      Exx.destroy
+
+   end
+
+   nuclear_EFG_at_nuclei result (res)
+   ! Return the nuclear contribution to the electric fields gradient (EFG)
+   ! at the nuclei as a (6 x .n_atom) array
+      res :: MAT{REAL}(6,.n_atom)
+      res = .atom.nuclear_EFG_at_nuclei
+   end
+
+!  ==========================
+!  Angular momentum integrals
+!  ==========================
+
+   make_L_matrices(Lx,Ly,Lz)
+   ! Make the angular momentum matrices  "Lx", "Ly", and "Lz".
+      Lx,Ly,Lz :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+      q,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      do q = 1,.n_shell_pairs
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+         sh.make_L_ints(Lx(fa:la,fb:lb),Ly(fa:la,fb:lb),Lz(fa:la,fb:lb), .gauge_origin)
+         sh.destroy_ptr_part
+      end
+
+      Lx.antisymmetric_reflect
+      Ly.antisymmetric_reflect
+      Lz.antisymmetric_reflect
+
+   end
+
+!  ====================
+!  Spin-orbit integrals
+!  ====================
+
+   make_spin_orbit_matrices(SOx,SOy,SOz)
+   ! Calculate the spin orbit matrices "SOx" "SOy" and "SOz"
+      SOx,SOy,SOz :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      SOx_c,SOy_c,SOz_c :: MAT{REAL}*
+      q,c,fa,la,na,fb,lb,nb :: INT
+      Z :: REAL
+      sh :: SHELL2
+
+      SOx = ZERO; SOy = ZERO; SOz = ZERO
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+
+         SOx_c.create(na,nb)
+         SOy_c.create(na,nb)
+         SOz_c.create(na,nb)
+
+         do c = 1,.n_atom
+
+            Z = .atom(c).nuclear_charge
+
+            sh.make_spin_orbit_ints(SOx_c,SOy_c,SOz_c, .atom(c).position)
+
+            SOx(fa:la,fb:lb) = SOx(fa:la,fb:lb) + Z*SOx_c
+            SOy(fa:la,fb:lb) = SOy(fa:la,fb:lb) + Z*SOy_c
+            SOz(fa:la,fb:lb) = SOz(fa:la,fb:lb) + Z*SOz_c
+
+         end
+
+         sh.destroy_ptr_part
+         SOz_c.destroy
+         SOy_c.destroy
+         SOx_c.destroy
+
+      end
+
+      SOx.antisymmetric_reflect
+      SOy.antisymmetric_reflect
+      SOz.antisymmetric_reflect
+
+   end
+
+   make_spin_orbit_B_matrices(SOBx,SOBy,SOBz)
+   ! Calculate the gauge modified (B field) spin orbit matrices "SOBx" "SOBy"
+   ! and "SOBz"
+      SOBx,SOBy,SOBz :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      Qxx,Qxy,Qxz,Qyx,Qyy,Qyz,Qzx,Qzy,Qzz :: MAT{REAL}*
+      n_bf :: INT
+
+      n_bf = .n_bf
+
+      Qxx.create(n_bf,n_bf)
+      Qxy.create(n_bf,n_bf)
+      Qxz.create(n_bf,n_bf)
+      Qyx.create(n_bf,n_bf)
+      Qyy.create(n_bf,n_bf)
+      Qyz.create(n_bf,n_bf)
+      Qzx.create(n_bf,n_bf)
+      Qzy.create(n_bf,n_bf)
+      Qzz.create(n_bf,n_bf)
+
+      .::make_spin_orbit_Q_matrices(Qxx,Qxy,Qxz,Qyx,Qyy,Qyz,Qzx,Qzy,Qzz)
+
+      SOBx = (Qyy + Qzz)*.B_field(1) - Qxy*.B_field(2) - Qxz*.B_field(3)
+      SOBy = (Qxx + Qzz)*.B_field(2) - Qyx*.B_field(1) - Qyz*.B_field(3)
+      SOBz = (Qxx + Qyy)*.B_field(3) - Qzx*.B_field(1) - Qzy*.B_field(2)
+
+      Qzz.destroy
+      Qzy.destroy
+      Qzx.destroy
+      Qyz.destroy
+      Qyy.destroy
+      Qyx.destroy
+      Qxz.destroy
+      Qxy.destroy
+      Qxx.destroy
+
+      SOBx.symmetric_reflect
+      SOBy.symmetric_reflect
+      SOBz.symmetric_reflect
+
+   end
+
+   make_spin_orbit_Q_matrices(Qxx,Qxy,Qxz,Qyx,Qyy,Qyz,Qzx,Qzy,Qzz)
+   ! Calculate the gauge modified (B field) spin orbit quadrupole matrices
+   ! "Qij".
+      Qxx,Qxy,Qxz,Qyx,Qyy,Qyz,Qzx,Qzy,Qzz :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      xx,xy,xz,yx,yy,yz,zx,zy,zz :: MAT{REAL}*
+      q,c,fa,la,na,fb,lb,nb :: INT
+      Z :: REAL
+      sh :: SHELL2
+
+      Qxx = ZERO; Qxy = ZERO; Qxz = ZERO
+      Qyx = ZERO; Qyy = ZERO; Qyz = ZERO
+      Qzx = ZERO; Qzy = ZERO; Qzz = ZERO
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+
+         xx.create(na,nb)
+         xy.create(na,nb)
+         xz.create(na,nb)
+         yx.create(na,nb)
+         yy.create(na,nb)
+         yz.create(na,nb)
+         zx.create(na,nb)
+         zy.create(na,nb)
+         zz.create(na,nb)
+
+         do c = 1,.n_atom
+
+            Z = .atom(c).nuclear_charge
+
+            sh.make_spin_orbit_B_ints(xx,xy,xz,yx,yy,yz,zx,zy,zz, &
+                                    .atom(c).position, .gauge_origin)
+
+            ! minus due to r-c, not c-r in the electric field part
+            ! this comment should go in gaussian2?
+            Qxx(fa:la,fb:lb) = Qxx(fa:la,fb:lb) - Z*xx
+            Qxy(fa:la,fb:lb) = Qxy(fa:la,fb:lb) - Z*xy
+            Qxz(fa:la,fb:lb) = Qxz(fa:la,fb:lb) - Z*xz
+            Qyx(fa:la,fb:lb) = Qyx(fa:la,fb:lb) - Z*yx
+            Qyy(fa:la,fb:lb) = Qyy(fa:la,fb:lb) - Z*yy
+            Qyz(fa:la,fb:lb) = Qyz(fa:la,fb:lb) - Z*yz
+            Qzx(fa:la,fb:lb) = Qzx(fa:la,fb:lb) - Z*zx
+            Qzy(fa:la,fb:lb) = Qzy(fa:la,fb:lb) - Z*zy
+            Qzz(fa:la,fb:lb) = Qzz(fa:la,fb:lb) - Z*zz
+
+         end
+
+         sh.destroy_ptr_part
+         zz.destroy
+         zy.destroy
+         zx.destroy
+         yz.destroy
+         yy.destroy
+         yx.destroy
+         xz.destroy
+         xy.destroy
+         xx.destroy
+
+      end
+
+      Qxx.symmetric_reflect
+      Qxy.symmetric_reflect
+      Qxz.symmetric_reflect
+      Qyx.symmetric_reflect
+      Qyy.symmetric_reflect
+      Qyz.symmetric_reflect
+      Qzx.symmetric_reflect
+      Qzy.symmetric_reflect
+      Qzz.symmetric_reflect
+
+   end
+
+!  ==============
+!  ZORA integrals
+!  ==============
+
+   ZORA_potential(values,pts)
+   ! Calculate the one electron ZORA potential "values" of a given set of "pts".
+   ! This is useful for numerical integration.
+      values :: VEC{REAL}, OUT
+      pts :: MAT{REAL}, IN
+      fac :: REAL
+
+      .GRID:nuclear_potential(values,pts)
+
+      fac    = ONE/(SPEED_OF_LIGHT_AU*SPEED_OF_LIGHT_AU)
+      values = ONE/(TWO + fac*values)
+
+   end
+
+   make_1e_ZORA_matrices(T,Zx,Zy,Zz)
+   ! Calculate the one-electron ZORA spin orbit matrices numerically.
+   ! This includes the relativitically modified kinetic energy integrals.
+      T, Zx,Zy,Zz :: MAT{REAL}
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.becke_grid.created,"no becke_grid")
+   ENSURE(.overlapping_atoms.created,"no overlapping_atoms")
+      ZORA  :: MAT4{REAL}*
+      a1,b1 :: MAT3{REAL}*
+      pt    :: MAT{REAL}*
+      wt,V0 :: VEC{REAL}*
+      atom1 :: VEC{INT}(1), target
+      atom2 :: VEC{INT}(2), target
+      atoms :: VEC{INT}*
+      q,atom_a,atom_b,n_pt,fa,la,na,fb,lb,nb,k,l,a,b,aa,bb,ma,mb :: INT
+      same_atoms :: BIN
+
+      ZORA.create(.n_bf,.n_bf,3,3)
+
+      ! Make the lower half of the ZORA spin orbit integrals
+      nullify(a1); nullify(b1)
+
+      do q = 1,.BASE:no_of_atom_pairs
+
+         if (NOT .overlapping_atoms(q)) cycle
+
+         .BASE:get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
+
+         same_atoms = atom_a==atom_b
+         if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
+         else;                 atom2 = [atom_a,atom_b]; atoms => atom2
+         end                                    
+         
+         ! Make the grid points and weights
+         .becke_grid.make_grid(pt,wt,atoms,compress=TRUE,weight_is_0=TRUE)
+         n_pt = pt.dim1                         ! Keep the weight_is_0 array
+
+         V0.create(n_pt)                        ! local potential grids
+         .::ZORA_potential(V0,pt)
+         .becke_grid.make_bf_grids(a1,b1,ma,mb,pt,atoms)
+         V0 = wt*V0
+         wt.destroy; pt.destroy
+         do k = 1,3
+         do l = 1,3
+         do a = 1,na
+         do b = 1,nb
+            aa = fa + a
+            bb = fb + b
+            ZORA(aa,bb,k,l) = VEC{REAL}:sum(V0*a1(:,a,k)*b1(:,b,l))
+         end
+         end
+         end
+         end
+         V0.destroy
+
+         if (same_atoms) then; a1.destroy; nullify(b1)
+         else;                 b1.destroy; a1.destroy
+         end
+
+      end
+
+      ! Make the upper half of the ZORA spin orbit integrals
+      do k = 1,3
+      do l = 1,3
+      do a = 1,.n_bf
+      do b = 1,a-1
+         ZORA(b,a,l,k) = ZORA(a,b,k,l)
+      end
+      end
+      end
+      end
+
+      ! Assemble the ZORA contribution to the 1 electron hamiltonian
+      ! Scalar kinetic energy contribution
+      T = ZORA(:,:,1,1) + ZORA(:,:,2,2) + ZORA(:,:,3,3)
+
+      ! Spin-dependent spin-orbit contribution
+      Zx = ZORA(:,:,2,3) - ZORA(:,:,3,2)
+      Zy = ZORA(:,:,3,1) - ZORA(:,:,1,3)
+      Zz = ZORA(:,:,1,2) - ZORA(:,:,2,1)
+
+      ZORA.destroy
+
+   end
+
+   make_ENA_matrix(Z)
+   ! Calculate the one-electron electron nuclear attraction matrix numerically.
+      Z :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.becke_grid.created,"no becke_grid")
+
+      pt,a0,b0 :: MAT{REAL}*
+      wt,V0 :: VEC{REAL}*
+      atom1 :: VEC{INT}(1), target
+      atom2 :: VEC{INT}(2), target
+      atoms :: VEC{INT}*
+      q,atom_a,atom_b,n_pt,fa,la,na,fb,lb,nb,a,b,aa,bb,ma,mb :: INT
+      same_atoms :: BIN
+
+      nullify(a0); nullify(b0)
+
+      do q = 1,.BASE:no_of_atom_pairs
+
+         if (NOT .overlapping_atoms(q)) cycle
+
+         .BASE:get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
+
+         same_atoms = atom_a==atom_b
+         if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
+         else;                 atom2 = [atom_a,atom_b]; atoms => atom2
+         end                                    
+         
+         ! Make the grid points and weights
+         .becke_grid.make_grid(pt,wt,atoms,compress=TRUE,weight_is_0=TRUE)
+
+         n_pt = pt.dim1                         ! Keep the weight_is_0 array
+         V0.create(n_pt)                        ! local potential grids
+         .GRID:nuclear_potential(V0,pt)
+
+         .becke_grid.make_bf_grids(a0,b0,ma,mb,pt,atoms)
+         V0 = wt*V0
+
+         wt.destroy; pt.destroy
+
+         do a = 1,na
+         do b = 1,nb
+            aa = fa + a
+            bb = fb + b
+            Z(aa,bb) = VEC{REAL}:sum(V0*a0(:,a)*b0(:,b))
+         end
+         end
+         V0.destroy
+
+         if (same_atoms) then; a0.destroy; nullify(b0)
+         else;                 b0.destroy; a0.destroy
+         end
+
+      end
+
+      Z.symmetric_reflect
+
+   end
+
+end

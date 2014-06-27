@@ -1,0 +1,1556 @@
+!---------------------------------------------------------------------------
+!
+!  STR: Methods of dealing with arbitrary length character strings
+!
+!  Notes
+!
+!  Normally, a STR variable means a character string of length STR_SIZE.
+!  However, in this module we use arbitrary length character strings.
+!
+! Copyright (C) Dylan Jayatilaka, 1998
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: str.foo 4349 2014-05-06 02:01:54Z dylan_ $
+!
+!---------------------------------------------------------------------------
+
+module STR
+
+   implicit none
+
+!  Make strings arguments arbitrary length by default
+
+#  undef  SELF_TYPE_SIZE
+#  define SELF_TYPE_SIZE  *
+
+   interface trim
+      trim_blanks_from_end
+   end
+
+   interface scan
+      index_of_character_in
+   end
+
+   interface verify
+      index_of_character_not_in
+   end
+
+contains
+
+!  =============
+!  Process items
+!  =============
+
+   n_items result (res)
+   ! Return the number of items in the string
+      res :: INT
+
+      end,f,l,last :: INT
+      item :: STR(len=BSTR_SIZE)
+
+      last = len_trim(self)
+
+      end = 0
+      res = 0
+      do
+         item = " "
+         self(end+1:).get_next_item(item,f,l)
+         if (item==" ") exit
+         end = end + l + 1
+         res = res + 1
+         if (end>last) exit
+      end
+
+   end
+
+   item(n) result (res)
+   ! Return the item no. "n" in the string.
+      self :: IN
+      n :: INT, IN
+      res :: STR(len=len(self))
+
+      .get_item(n,res)
+
+   end
+
+   get_item(n,item,position)
+   ! Get the item no. "n" in the self string and put the result in
+   ! "item". If "position" is present it is set to the index of the
+   ! character after the end of item "n".
+      self :: IN
+      n :: INT, IN
+      item :: STR, OUT
+      position :: INT, OUT, optional
+
+      word :: STR(len=len(self))
+      i,f,l :: INT
+
+      f = 1
+      do i = 1,n
+         self(f:).get_next_item(word,last=l)
+         if (word==" ") exit
+         f = f + l
+      end
+
+      ! Set the item and its position
+      item = word
+      if (present(position)) position = f
+
+   end
+
+   get_next_item(item,first,last,comment_chars,quote_chars,ignore_unmatched_quotes) ::: PURE
+   ! Get the first sequence of non-blank characters in the string
+   ! (i.e. an "item") and (if present) the "first" and "last"
+   ! character positions of the item in the self string.  If the first
+   ! character of the word is a double quote then all text between it
+   ! and the next double quote is treated as one item. If
+   ! "quote_chars" is present and not blank, then any of these
+   ! characters is regarded as a double quote; but if "quote_chars" is
+   ! blank then no quotation characters are recognised. If
+   ! "comment_chars" is present, the rest of the string following
+   ! these comment characters is ignored.
+      self :: IN
+      item :: STR, OUT
+      first,last :: INT, OUT, optional
+      comment_chars,quote_chars :: STR, IN, optional
+      ignore_unmatched_quotes :: BIN, IN, optional
+
+      ignore :: BIN
+      quotes :: STR(len=16)
+      quote  :: STR(len=1)
+      word   :: STR(len=len(self))
+      f,l,m  :: INT
+
+      quotes = '"'
+      if (present(quote_chars)) quotes = quote_chars
+
+      ignore = FALSE
+      if (present(ignore_unmatched_quotes)) ignore = ignore_unmatched_quotes
+
+      .get_next_item_position(f,l)
+
+      if (f==0) then                          
+
+         ! All characters are blanks
+         word = " "
+
+      else if (quotes/=" " AND scan(self(f:f),quotes)/=0) then 
+      
+         ! Find quoted item
+         quote = self(f:f)
+         m = l
+         l = self(f+1:).quote_position(quote)
+         if (l==0) then
+            ENSURE(ignore,"unclosed quotes")
+            l = m
+            word = self(f:l)
+         else
+            l = f+l
+            word = self(f+1:l-1)
+         end
+
+      else if (present(comment_chars)) then   
+
+         ! Comment found
+         if (scan(self(f:f),comment_chars)/=0) then
+            l = f-1
+            word = " "
+         else
+            word = self(f:l)
+         end
+
+      else
+
+         ! A plain old item found
+         word = self(f:l)
+
+      end
+
+      ! Set the item and its limits
+      item = word
+      if(present(first)) first = f
+      if(present(last))  last  = l
+
+   end
+
+   get_next_item_position(first,last) ::: pure
+   ! Get the first and last character positions of the first sequence of
+   ! non-blank characters in the string (i.e. a "word")
+      self :: IN
+      first,last :: INT, OUT
+
+      first = verify(self," ")
+      last  = scan(self(max(first,1):)//" "," ") - 1
+      last  = last + max(first,1) - 1
+      last  = max(last,0)
+
+   end
+
+   get_next_items(word)
+   ! Get items 2 and after from self, i.e. all except the first item.
+      word :: STR(len=len(self)), OUT
+
+      l :: INT
+
+      .get_next_item(word,last=l)
+
+      word = adjustl(self(2+l:))
+
+   end
+
+!  =============
+!  String search
+!  =============
+
+   quote_position(quote_chars) result (pos) ::: private, pure
+   ! Find the position of the first double quote character.
+      self :: IN
+      pos :: INT
+      quote_chars :: STR, optional, IN
+
+      if (present(quote_chars)) then; pos = scan(self,quote_chars)
+      else;                           pos = index(self,'"')
+      end
+
+   end
+
+   index_of_matching_bracket(symbol) result (res)
+   ! Return the first index of the matching "symbol" in self.  These
+   ! are usually quotes, braces, parentheses, etc ... { ... }. The
+   ! first element of self need not be an opening bracket symbol.
+   ! Returns zero if no match could be found, and also a warning.
+      symbol :: STR, IN
+      res :: INT
+
+   ENSURE(any(symbol==opening),"unrecognised opening symbol")
+   ENSURE(.includes(symbol),"opening symbol cannot be found in self")
+
+      opening :: VEC{STR}(len=1,6) = ["'",'"',"{","(","\[","<"]
+      closing :: VEC{STR}(len=1,6) = ["'",'"',"}",")","\]",">"]
+      op,cl,c :: STR(len=1)
+      i,s,n :: INT
+
+      op = symbol
+      do i = 1,size(opening)
+         if (op/=opening(i)) cycle
+         exit
+      end
+      cl = closing(i)
+      s = scan(self,op)
+      n = 0
+      res = 0
+      do i = s+1,len_trim(self)
+         c = self(i:i)
+         if      (c==op) then;           n = n + 1
+         else if (c==cl AND n==0) then; res = i; exit
+         else if (c==cl AND n >0) then;  n = n - 1
+         end
+      end
+
+      WARN_IF(res==0,"unmatching number of closing bracket symbols")
+
+   end
+
+   index_of_substring(substring,backwards) result (ind) ::: pure
+   ! Return the starting index of a substring in the original string
+      self :: IN
+      substring :: STR, IN
+      backwards :: BIN, optional, IN
+
+      ind :: INT
+
+      if (present(backwards)) then; ind = index(self,substring,backwards)
+      else;                         ind = index(self,substring)
+      end
+
+   end
+
+   is_included_in(string,at_start) result (res)
+   ! Return TRUE if self is included in "string". Trailing blanks in self are
+   ! ignored. If "at_start" is present and TRUE then the result is TRUE only
+   ! if self is included at the start of the string.
+      string :: STR, IN
+      at_start :: BIN, IN, optional
+      res :: BIN
+
+      ind :: INT
+
+      ind = index(string,trim(self))
+      res = ind /= 0
+
+      if (present(at_start)) then
+      if (at_start) then
+         res = ind == 1
+      end
+      end
+
+   end
+
+   is_included_in_any(strvec) result (res)
+   ! Return TRUE if self is included in any element of the string vector
+   ! "strvec". Trailing blanks in self are *not* ignored.
+      strvec :: VEC{STR}(:), IN
+      res :: BIN
+      res = any(index(strvec,spread(self,1,size(strvec))) /= 0)
+   end
+
+   includes(string,at_start) result (res) ::: pure
+   ! Return true if self includes "string". Trailing blanks in self are ignored
+   ! If "at_start" is present, the result is true only if "string" is the first
+   ! part of self.
+      self :: IN
+      string :: STR, IN
+      at_start :: BIN, IN, optional
+      res :: BIN
+
+      ind :: INT
+
+      ind = index(trim(self),string)
+      res = ind /= 0
+
+      if (present(at_start)) then
+      if (at_start) then
+         res = ind == 1
+      end
+      end
+
+   end
+
+   includes_any_in(strvec) result (res)
+   ! Return TRUE if self includes any element of the string vector "strvec".
+   ! Trailing blanks in self are ignored.
+      strvec :: VEC{STR}(:), IN
+      res :: BIN
+
+      i :: INT
+
+      res = FALSE
+      do i = 1,size(strvec)
+         res = index(trim(self),trim(strvec(i))) /= 0
+         if (res) exit
+      end
+   end
+
+   does_not_include(string) result (res)
+   ! Return true if self does not include string. Traling blanks in self are ignored
+      string :: STR, IN
+      res :: BIN
+
+      ind :: INT
+
+      ind = index(self(1:len_trim(self)),string)
+      res = (ind==0)
+
+   end
+
+   has_any_characters_in(set) result (res)
+   ! Return TRUE if self has any of the characters in "set".
+      set :: STR, IN
+      res :: BIN
+      res = scan(self,set) /= 0
+   end
+
+   has_all_characters_in(set) result (res)
+   ! Return TRUE if self has all of its characters in "set".
+      set :: STR, IN
+      res :: BIN
+      res = .index_of_character_not_in(set) == 0
+   end
+
+   index_of(set,backwards) result (ind)
+   ! In self, scan from left to right and return the index of the single
+   ! character "set". If backwards is present and true, scan from right to left.
+      set :: STR(len=1), IN
+      backwards :: BIN, optional
+
+      ind :: INT
+
+      if (present(backwards)) then; ind = scan(self,set,backwards)
+      else;                         ind = scan(self,set)
+      end
+
+   end
+
+   index_of_character_in(set,backwards) result (ind) ::: pure
+   ! In self, scan from left to right and return the index of the first
+   ! character in "set". If backwards is present and true, scan from
+   ! right to left
+      self :: IN
+      set :: STR, IN
+      backwards :: BIN, IN, optional
+
+      ind :: INT
+
+      if (present(backwards)) then; ind = scan(self,set,backwards)
+      else;                         ind = scan(self,set)
+      end
+
+   end
+
+   index_of_character_not_in(set,backwards) result (ind)
+   ! In self, scan from left to right and return the index of the first
+   ! character *not* in "set". If backwards is present and true, scan from
+   ! right to left
+      set :: STR, IN
+      backwards :: BIN, optional
+      ind :: INT
+      ind = verify(self,set,backwards)
+   end
+
+   index_of_alphabetical result (res)
+   ! Returns the index of the first alphabetical character.
+      res :: INT
+      alphabet :: STR(len=52) = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      res = .index_of_character_in(alphabet)
+   end
+
+   index_of_nonalphabetical result (res)
+   ! Returns the index of the first non-alphabetical character.
+      res :: INT
+      alphabet :: STR(len=52) = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      res = .index_of_character_not_in(alphabet)
+   end
+
+   index_of_lcase_alphabetical result (res)
+   ! Returns the index of the first lower case alphabetical character.
+      res :: INT
+      alphabet :: STR(len=26) = "abcdefghijklmnopqrstuvwxyz"
+      res = .index_of_character_in(alphabet)
+   end
+
+   index_of_ucase_alphabetical result (res)
+   ! Returns the index of the first upper case alphabetical character.
+      res :: INT
+      alphabet :: STR(len=26) = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      res = .index_of_character_in(alphabet)
+   end
+
+   index_of_digit result (res)
+   ! Returns the index of the first digit character.
+      res :: INT
+      digit :: STR(len=10) = "0123456789"
+      res = .index_of_character_in(digit)
+   end
+
+   index_of_nondigit result (res)
+   ! Returns the index of the first non-digit character.
+      res :: INT
+      digit :: STR(len=10) = "0123456789"
+      res = .index_of_character_not_in(digit)
+   end
+
+   last_characters(n) result (res)
+   ! Return the last "n" *nonblank* characters
+      self :: IN
+      n :: INT, IN
+      res :: STR(len=n)
+
+      f,l :: INT
+
+      l = .index_of_character_not_in(" ",backwards=TRUE) 
+      f = l - n + 1
+      DIE_IF(f<1,"can't return last characters, string is too short")
+      res = self(f:l)
+
+   end
+
+   ends_in(fin) result (res)
+   ! Return TRUE if self ends in the string "fin".
+      self :: IN
+      fin :: STR, IN
+      res :: BIN
+      res = trim(fin) == .last_characters(len(fin))
+   end
+
+!  ===========================
+!  Self-string transformations
+!  ===========================
+
+   split result (res) ::: leaky
+   ! Split the string into a vector of separate items.
+      res :: VEC{STR}(len=STR_SIZE,:)*
+
+      i,n :: INT
+
+      n = .n_items
+
+      allocate(res(n))
+      ADD_LOCATION(len(res(1))*CHR_SIZE*n,res)
+
+      do i = 1,n
+         res(i) = .item(i)
+      end
+
+   end
+
+   trim_blanks_from_end result (res)
+   ! Return the trimmed version of "self"
+      res :: STR(len=len_trim(self))
+      res = trim(self)
+   end
+
+   trim_blanks_from_start result (res)
+   ! Return the trimmed version of "self"
+      res :: STR(len=len(self))
+      res = self(verify(self," "):)
+   end
+
+   to_lower_case ::: pure
+   ! Change upper case charaters to lower case in the original string
+      self :: INOUT
+
+      i :: INT
+
+      do i = 1,len(self)
+         if("A"<=self(i:i) AND self(i:i)<="Z") then
+            self(i:i) = achar(iachar(self(i:i))+32)
+         end
+      end
+
+   end
+
+   lower_cased result (res) ::: pure
+   ! Return the lower case of self.
+      self :: IN
+      res :: STR(len=len(self))
+
+      res = self
+      res.to_lower_case
+
+   end
+
+   to_upper_case ::: pure
+   ! Change lower case charaters to upper case in the original string
+      self :: INOUT
+      i :: INT
+      do i = 1,len(self)
+         if("a"<=self(i:i) AND self(i:i)<="z") then
+            self(i:i) = achar(iachar(self(i:i))-32)
+         end
+      end
+   end
+
+   upper_cased result (res) ::: pure
+   ! Return the upper case of self.
+      self :: IN
+      res :: STR(len=len(self))
+
+      res = self
+      res.to_upper_case
+
+   end
+
+   left_justify ::: elemental
+   ! Left-justify "self" string
+      self :: INOUT
+      self = adjustl(self)
+   end
+
+   left_justified result (res) ::: elemental
+   ! Return a left-justified "self" string
+      self :: IN
+      res :: STR(len=len(self))
+      res = adjustl(self)
+   end
+
+   right_justify ::: elemental
+   ! Right-justify "self" string
+      self :: INOUT
+      self = adjustr(self)
+   end
+
+   right_justified result (res) ::: elemental
+   ! Return a right-justified "self" string
+      self :: IN
+      res :: STR(len=len(self))
+      res = adjustr(self)
+   end
+
+   center_justify ::: elemental
+   ! Centrify the self string
+      self :: INOUT
+      self = self.center_justified
+   end
+
+   center_justified result (res) ::: elemental
+   ! Return a centrified self string
+      self :: IN
+      res :: STR(len=len(self))
+
+      w,l,nr,nl :: INT
+
+      res = adjustl(self)
+
+      w   = len(self)
+      l   = len_trim(res)
+      nl  = int((w - l)/2)
+      nr  = w - l - nl
+
+      res = repeat(" ",nl) // res(1:l) // repeat(" ",nr)
+
+   end
+
+   insert(string,position)
+   ! Insert "string" at "position" into the self string.
+      string :: STR, IN
+      position :: INT, IN
+
+      rest :: STR(len=len(self))
+
+      rest = self(position:) 
+      self(position:) = string
+      self(position+len(string):) = rest
+
+   end
+
+   replace_all(a,b,repeatedly) ::: elemental
+   ! Replace all occurences of string "a" by "b" from left to right in
+   ! "self". String "b" can be zero length. If "repeatedly" is present
+   ! and TRUE, "b" is replaced repeatedly at a particular position in
+   ! "self" before moving to the next position right.
+      self :: INOUT
+      a,b :: STR, IN
+      repeatedly :: BIN, IN, optional
+
+      post :: STR(len=len(self))
+      len_a,len_b,maxlen,i :: INT
+      advance :: BIN
+
+      ! Target must be non-empty
+      if (len(a)==0) return
+
+      advance = TRUE
+      if (present(repeatedly)) advance = FALSE
+
+      ! Length of the strings
+      len_a = len(a)
+      len_b = len(b)
+
+      ! Set maxlen, limit of replacements
+      maxlen = len(self)
+      if (len_b==0 OR len_trim(a)>0) then
+         maxlen = len_trim(self)
+      end
+
+      ! Index into string "self"
+      i = 0
+
+      ! Do replacement ...
+      do
+
+         ! Next character
+         i = i + 1
+
+         ! Past end of self
+         if (i+len_a-1>maxlen) exit
+
+         ! No match? ... then go to next character in self
+         if (self(i:i+len_a-1)/=a) cycle
+
+         ! Get part after the "a" match in "post"
+         post = self(i+len_a:)
+
+         ! Assign the replacement
+         if (len_b>0) self(i:i+len_b-1) = b
+         ENSURE(i+len_b-1<=len(self),"replacement exceeds string length")
+
+         ! Assign the post match
+         self(i+len_b:) = post
+
+         ! Move to the end of the replacement
+         if (advance) then; i = i + len_b - 1
+         else;              i = i - 1
+         end
+
+      end
+
+   end
+
+   replace(a,b)
+   ! Replace first occurences of string "a" by "b". String "b" can be zero
+   ! length, however, replacements only occur up to the last nonblank
+   ! character in "self" i.e. up to len_trim(self).
+      a,b :: STR, IN
+      .replace_first(a,b)
+   end
+
+   replace_first(a,b)
+   ! Replace first occurences of string "a" by "b". String "b" can be zero
+   ! length, however, replacements only occur up to the last nonblank
+   ! character in "self" i.e. up to len_trim(self).
+      a,b :: STR, IN
+
+   ENSURE(len(a)>0,"len(a) must be non-zero")
+
+      post :: STR(len=len(self))
+      len_a,len_b,i :: INT
+
+      len_a = len(a)
+      len_b = len(b)
+      i = 0
+
+      do
+
+         i = i + 1
+
+         if (i+len_a-1>len_trim(self)) exit
+         if (self(i:i+len_a-1)/=a)     cycle
+
+         post = self(i+len_a:)
+         if (len_b>0) self(i:i+len_b-1) = b
+         ENSURE(i+len_b<len(self),"replacement exceeds string length")
+
+         self(i+len_b:) = post
+       ! i = i + len_b - 1
+         exit
+
+      end
+
+   end
+
+   replace_end_from(set,new,plus)
+   ! Replace a *contiguous* block of characters in the "set" at
+   ! the *end* of the string with the specified "new" character.
+   ! If specified, the replacement happens "plus" characters after the
+   ! first character not in "set".
+      set :: STR, IN
+      new :: STR(len=1), IN
+      plus :: INT, optional, IN
+
+      p,from,i :: INT
+
+      p = 0
+      if (present(plus)) p = plus
+
+      from = .index_of_character_not_in(set,backwards=TRUE)
+
+      do i = from+p+1,len(self)
+         self(i:i) = new
+      end
+
+   end
+
+   remove_all(a) ::: elemental
+   ! Remove all occurences of "a" from "self".
+      self :: INOUT
+      a :: STR, IN
+      .replace_all(a,'')
+   end
+
+   remove_blanks ::: elemental
+   ! Replace all blanks by moving all non-blank characters leftwards
+      self :: INOUT
+      .remove_all(" ")
+   end
+
+   separate_all_characters
+   ! Separate all nonblank characters by one space
+      i :: INT
+      i = 1
+      do
+         if (i>=len_trim(self)) exit
+         if (self(i:i)==" ") then
+            self(i:) = self(i+1:)
+         else
+            self(i+2:)    = self(i+1:)
+            self(i+1:i+1) = " "
+            i = i + 2
+         end
+      end
+   end
+
+   separate_before(characters) ::: elemental
+   ! Separate the string by placing a space before each character that
+   ! occurs in "characters".
+      self :: INOUT
+      characters :: STR, IN
+
+      thischar :: STR(len=1)
+      i,last :: INT
+
+      i = 1
+      last = len(self)
+
+      ! Loop over positions "i"
+      do
+
+        ! Past the end?
+        if (i>len_trim(self)) exit
+
+        ! Insert space if thischar matches
+        thischar = self(i:i)
+        if (characters.includes(thischar)) then
+            self(i+1:last) = self(i:last-1) ! move all along by one.
+            self(i:i) = " "
+            i = i + 1
+        end
+
+        ! Next 
+        i = i + 1
+
+      end
+
+   end
+
+   separate_after(characters) ::: elemental
+   ! Separate the string by placing a space after each character that
+   ! occurs in "characters".
+      self :: INOUT
+      characters :: STR, IN
+
+      thischar :: STR(len=1)
+      i,last :: INT
+
+      i = 1
+      last = len(self)
+
+      ! Loop over positions "i"
+      do
+
+        ! Past the end?
+        if (i>=len_trim(self)-1) exit
+
+        ! Insert space if thischar matches
+        thischar = self(i:i)
+        if (characters.includes(thischar)) then
+            self(i+2:last) = self(i+1:last-1) ! move all along by one.
+            self(i+1:i+1) = " "
+            i = i + 1
+        end
+
+        ! Next 
+        i = i + 1
+
+      end
+
+   end
+
+   pad_with(symbol,width,prepad)
+   ! Pad the end of the string with "symbol" up to length "width".
+   ! If "prepad" is present and TRUE, put the symbol before.
+      symbol :: STR(len=1)
+      width :: INT
+      prepad :: BIN, optional
+
+      pre :: BIN
+      l :: INT
+
+      l = len_trim(self)
+      if (l>=width) return
+
+      pre = FALSE
+      if (present(prepad)) pre = prepad
+
+      if (pre) then; self = repeat(symbol,width-l) // trim(self)
+      else;          self = trim(self) // repeat(symbol,width-l) 
+      end
+
+   end
+
+!  ======================
+!  File name manipulation 
+!  ======================
+
+   filename_head result (res)
+   ! Return the head part of a file name, e.g. if self is "/home/file.c" it
+   ! returnd the string "file". 
+      res :: STR(len=len(self))
+
+   ENSURE(self/=" ","string is blank!")
+
+      f,l :: INT
+
+      l = .index_of_character_in(".",backwards=TRUE)
+      if (l/=0) then
+         l = l - 1
+      else
+         l = .index_of_character_not_in(" ",backwards=TRUE)
+      end
+
+      f = self(1:l).index_of_character_in("/",backwards=TRUE)
+      if (f==0) then
+         f = 1
+      else
+         f = f + 1
+      end
+
+      res = self(f:l)
+
+   end
+
+   filename_tail result (res)
+   ! Return the tail part of a file name, e.g. if self is "/home/file.c" it
+   ! returnd the string "c". 
+      res :: STR(len=len(self))
+
+   ENSURE(self/=" ","string is blank!")
+
+      f,l :: INT
+
+      l =      .index_of_character_not_in(" ",backwards=TRUE)
+      f = self(1:l).index_of_character_in(".",backwards=TRUE)
+      ENSURE(f>0,"no dot in file name")
+      f = f + 1
+      res = self(f:l)
+
+   end
+
+   filename_directory result (res)
+   ! Return the directory part of a file name, e.g. if self is "/home/file.c" it
+   ! returnd the string "/home". 
+      res :: STR(len=len(self))
+
+   ENSURE(self/=" ","string is blank!")
+
+      l :: INT
+
+      l = .index_of_character_in("/",backwards=TRUE)
+      if (l == 0) then
+         res = "."
+      else if (l == 1) then
+         res = "/"
+      else
+         l = l - 1
+         res = self(1:l)
+      end
+
+   end
+
+!  =================
+!  Inquiry functions
+!  =================
+
+   equals(string,ignore_case) result (same) ::: pure
+   ! Test to see if the string is the same as another string
+   ! If "ignore_case" is present and TRUE then case is ignored.
+      self :: IN
+      string :: STR, IN
+      ignore_case :: BIN, IN, optional
+      same :: BIN
+      same = .same_as(string,ignore_case)
+   end
+
+   same_as(string,ignore_case) result (same) ::: pure
+   ! Test to see if the string is the same as another string
+   ! If "ignore_case" is present and TRUE then case is ignored.
+      self :: IN
+      string :: STR, IN
+      ignore_case :: BIN, IN, optional
+      same :: BIN
+      ignore :: BIN
+      s1 :: STR(len=len(self))
+      s2 :: STR(len=len(string))
+      ignore = FALSE
+      if (present(ignore_case)) ignore = ignore_case
+      if (ignore) then
+         s1 = self;   s1.to_lower_case
+         s2 = string; s2.to_lower_case
+         same = s1==s2
+      else
+         same = self==string
+      end
+   end
+
+   is_real result (res) ::: pure
+   ! Returns true if the string can be interpreted as a real number
+      self :: IN
+      res :: BIN
+
+      value :: REAL
+      i,ios :: INT
+
+      i = .index_of_character_in("0123456789")
+
+      if (i==0) then
+         res = FALSE
+      else
+         read(unit=self,fmt=*,iostat=ios) value
+         res = ios==0
+         if (res) value = value
+      end
+
+   end
+
+   is_cpx result (res)
+   ! Returns true if the string can be interpreted as a (fortran) complex number
+      res :: BIN
+      res = .is_a_true_cpx OR .is_a_real_pair
+   end
+
+   is_a_true_cpx result (res) ::: elemental
+   ! Returns true if the string can be interpreted as a true (fortran) complex
+   ! number
+      self :: IN
+      res :: BIN
+
+      value :: CPX
+      i,ios :: INT
+
+      i = .index_of_character_in("0123456789")
+
+      if (i==0) then
+
+         res = FALSE
+
+      else if ((self(1:1)=="(" OR self(1:2)=="-(") AND scan(self,",")>1) then
+
+         read(unit=self,fmt=*,iostat=ios) value
+         value = value
+         res = ios==0
+
+      else
+
+         res = FALSE
+
+      end
+
+   end
+
+   is_a_real_pair result (res) ::: elemental
+   ! Returns true if the string can be interpreted as a pair of
+   ! double precision numbers comprising a complex number
+      self :: IN
+      res :: BIN
+
+      i,ios :: INT
+      r,c :: REAL
+
+      i = .index_of_character_in("0123456789")
+
+      if (i==0) then
+
+         res = FALSE
+
+      else
+
+         read(unit=self,fmt=*,iostat=ios) r,c
+         r = r
+         c = c
+         res = ios==0
+
+      end
+
+   end
+
+   is_int result (res)
+   ! Returns true if the string can be interpreted as an integer number
+      res :: BIN
+      value,ios :: INT
+      char :: BIN
+      char = NOT self(1:1).has_any_characters_in("0123456789+-")
+      if (char) then
+         res = FALSE
+      else
+         read(unit=self,fmt=*,iostat=ios) value
+         value = value
+         res = ios==0
+      end
+   end
+
+   is_a_true_int result (res)
+   ! Returns true if the string can be interpreted as an integer number
+      res :: BIN
+      value,ios :: INT
+      if (.has_all_characters_in("0123456789-+ ")) then
+         read(unit=self,fmt=*,iostat=ios) value
+         value = value
+         res = ios==0
+      else
+         res = FALSE
+      end
+   end
+
+   is_bin result (res)
+   ! Returns true if the string can be interpreted as a logical
+      res :: BIN
+
+      word :: STR(len=len(self))
+
+      read(unit=self,fmt=*) word
+      word.to_lower_case
+
+      res = FALSE
+      select case (word)
+         case("true", "t","on", "yes","y"); res = TRUE
+         case("false","f","off","no", "n"); res = TRUE
+         case default;                      res = FALSE
+      end
+
+   end
+
+   is_imprecise_real result (res)
+   ! Returns TRUE if the string can be interpreted as an imprecise double, i.e.
+   ! a real fortran F "number" followed immediately (without intervening spaces)
+   ! by a quoted "error" in parentheses. 
+      res :: BIN
+
+      f,l :: INT
+
+      f = .index_of_substring("(")
+      l = .index_of_substring(")")
+
+      if (f==0 OR (l-f)<=1) then ! there is no error
+         res = FALSE
+      else
+         res = self(1:f-1).is_real AND self(f+1:l-1).is_real
+      end
+
+   end
+
+   is_alphabetical result (res)
+   ! Returns true if the string contains only alphabetical characters.
+      res :: BIN
+      letters :: STR(len=52) = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      res = .index_of_character_not_in(letters) == 0
+   end
+
+   is_lower_case result (res)
+   ! Returns true if the string has only lower case alphabetical characters.
+      res :: BIN
+      letters :: STR(len=26) = "abcdefghijklmnopqrstuvwxyz"
+      res = .index_of_character_not_in(letters) == 0
+   end
+
+   is_upper_case result (res)
+   ! Returns true if the string has only upper case alphabetical characters.
+      res :: BIN
+      letters :: STR(len=26) = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      res = .index_of_character_not_in(letters) == 0
+   end
+
+   is_numeric result (res)
+   ! Returns true if the string contains only digit characters.
+      res :: BIN
+      digits :: STR(len=10) = "0123456789"
+      res = .index_of_character_not_in(digits) == 0
+   end
+
+   is_alphanumeric result (res)
+   ! Returns true if the string contains only alphanumeric characters.
+      res :: BIN
+      alphanumeric :: STR(len=62) = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      res = .index_of_character_not_in(alphanumeric) == 0
+   end
+
+   has_some_alpha_characters result (res)
+   ! Return TRUE if self has some alphabetical characters
+      res :: BIN
+      letters :: STR(len=52) = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      res = .index_of_character_in(letters) /= 0
+   end
+
+   has_some_alphanumeric_chars result (res)
+   ! Return TRUE if self has some alphabetical characters
+      res :: BIN
+      alphanumeric :: STR(len=62) = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      res = .index_of_character_in(alphanumeric) /= 0
+   end
+
+!  =============
+!  String widths
+!  =============
+   
+   no_of_fields_per_value result (res) ::: pure
+   ! Returns the number of fields used to print a "self".
+      self :: IN
+      res :: INT
+
+      if (FALSE) res = transfer(self,res)
+
+      res = 1
+
+   end 
+   
+   str_length result (res) ::: pure
+   ! Returns the minimal string length.
+      self :: IN
+      res :: INT
+
+      res = len_trim(self)
+
+   end 
+   
+   get_str_length(sl,spaces) ::: pure
+   ! Returns the minimal string length.
+      self :: IN
+      sl :: INT, OUT
+      spaces :: INT, IN
+
+      sl = len_trim(self) + spaces
+
+   end 
+
+!  =================
+!  String conversion
+!  =================
+
+   to_str result (string) ::: pure
+   ! Change self to a string of minimal length
+      self :: IN
+      string :: STR(len=len_trim(self))
+      string = self
+   end
+
+   to_str(fmt,left_justify) result (string) ::: get_from(INTRINSIC), pure
+   ! Change self to a "string" using the specified fortran "fmt".
+   end
+
+   to_str(width,left_justify) result (string) ::: pure
+   ! Change self to a string of the specified width
+   ! Just takes the first width characters
+      self :: IN
+      width :: INT, IN
+      left_justify :: BIN, IN, optional
+      string :: STR(len=width)
+
+      string = self
+
+      if (present(left_justify)) then
+      if (NOT left_justify) then
+         string = adjustr(string)
+      end
+      end
+
+   end
+   
+!  ==================================
+!  Conversion to value type variables
+!  ==================================
+
+   to_real result (value) ::: elemental
+   ! Returns the real number corresponding to the first token string
+      self :: IN
+      value :: REAL
+
+      ios :: INT
+
+      read(unit=self,fmt=*,iostat=ios) value
+      ios = ios
+      value = value
+
+   end
+
+   frac_to_real result (value) ::: elemental
+   ! Returns the real number corresponding to the first token string,
+   ! represented as a fraction.
+      self :: IN
+      value :: REAL
+
+      numerator,denominator,word :: STR(len=len(self))
+      numer,denom :: REAL
+      ind :: INT
+
+      word = self
+      word.remove_blanks
+      word.separate_before("/")
+      word.separate_after("/")
+
+      ind = word.index_of_character_in("/")
+      numerator   = word(    1:ind-1)
+      denominator = word(ind+1:)
+
+      ! Get the fraction
+      numer =   numerator.to_real
+      denom = denominator.to_real
+      value = numer/denom
+
+   end
+
+   to_cpx result (value) ::: elemental
+   ! Returns the cpx number corresponding to the token string
+   ! If a single token won't do, two tokens are inputted to see
+   ! if it could be two real numbers in a row representing a cpx.
+      self :: IN
+      value :: CPX
+
+      r,c :: REAL
+
+      value = ZERO
+
+      if (.is_a_true_cpx) then
+
+         read(unit=self,fmt=*) value
+
+      else if (.is_a_real_pair) then
+
+         read(unit=self,fmt=*) r,c
+         value = cmplx(r,c,kind=CPX_KIND)
+
+    ! else
+    !    DIE("Could not read complex number")
+
+      end
+
+   end
+
+   to_int result (value) ::: elemental
+   ! Returns the integer number corresponding to the first token string
+      self :: IN
+      value :: INT
+
+      ios :: INT
+
+      read(unit=self,fmt=*,iostat=ios) value
+      ios = ios
+      value = value
+
+   end
+
+   to_bin result (value) ::: elemental
+   ! Returns the logical corresponding to the first token string
+      self :: IN
+      value :: BIN
+
+      word :: STR(len=len(self))
+
+      value = FALSE
+
+      word = self
+      word.to_lower_case
+
+      value = FALSE
+      select case (word)
+         case("true", "t","on", "yes","y"); value = TRUE
+         case("false","f","off","no", "n"); value = FALSE
+      end
+   
+   end
+
+   to_imprecise_real(value,error) ::: PURE
+   ! Returns the imprecise number corresponding to the first token, i.e. the
+   ! real number "value" with a quoted "error" in parentheses immediately
+   ! afterwards.  If the error is not present in the string it is assumed to be
+   ! zero. This only works for "f" numbers.
+      self :: IN
+      value,error :: REAL, OUT
+
+      item,real_str,err_str :: STR(len=len(self))
+      f,l,p :: INT
+
+      ! Analyze the string
+      .get_next_item(item)
+      f = item.index_of_substring("(")
+      l = item.index_of_substring(")")
+      p = item.index_of_substring(".")
+
+      ! Extract value & error
+      if (f==0 OR (l-f)<=1) then 
+
+         ! There is no error
+         real_str = item
+         err_str  = "0"
+
+      else
+
+         ! Brackets present
+         real_str = item(  1:f-1)
+         err_str  = item(f+1:l-1)
+
+      end
+
+      ENSURE(real_str.is_real,"expected real number in input")
+      ENSURE(err_str.is_real,"expected real number error in input")
+
+      ! Convert
+      value = real_str.to_real
+      error = err_str.to_real
+      if (p>0) error = error * TEN**(-f+p+1)
+
+   end
+
+!  ============================
+!  Conversion to self variables
+!  ============================
+
+   from_int(value) ::: pure
+   ! Set the original string to the result from changing integer
+   ! "value" to a string
+      self :: OUT
+      value :: INT, IN
+
+      self = " "
+      write(self,fmt=*) value
+
+      .left_justify
+
+   end
+
+   from_bin(value) ::: pure
+   ! Set the original string to the result from changing logical
+   ! "value" to a string
+      self :: OUT
+      value :: BIN, IN
+
+      self = " "
+      write(self,*) value
+
+      .left_justify
+
+   end
+
+   from_real(value) ::: pure
+   ! Set the original string to the result from changing real "value"
+   ! to a string
+      self :: OUT
+      value :: REAL, IN
+
+      self = " "
+      write(self,*) value
+
+      .left_justify
+
+   end
+
+   from_cpx(value) ::: pure
+   ! Set the original string to the result from changing cpx "value"
+   ! to a string
+      self :: OUT
+      value :: CPX, IN
+
+      self = " "
+      write(self,*) value
+      
+      .left_justify
+
+   end
+ 
+!  ================
+!  Units conversion
+!  ================
+
+   is_known_unit result (res) ::: pure
+   ! Return TRUE if the string represents a known unit string
+      self :: IN
+      res :: BIN
+
+      word :: STR(len=len(self))
+      l :: INT
+
+      word = self
+      word.to_lower_case
+
+      l = len_trim(word)
+      if (word(l:l)=="s" AND l>1) word = word(1:l-1)
+
+      res = word.is_one_of([      &
+              "debye           ", &
+              "debye-angstrom  ", &
+              "debye-angstrom^2", &
+              "degree          ", &
+              "degrees         ", &
+              "radian          ", &
+              "radians         ", &
+              "bohr            ", &
+              "bohrs           ", &
+              "angstrom        ", &
+              "angstroms       ", &
+              "angstrom^2      ", &
+              "angstrom^3      ", &
+              "angstrom^4      ", &
+              "angstrom^-1     ", &
+              "angstrom^-3     ", &
+              "angstrom^-5     ", &
+              "meter           ", &
+              "meters          ", &
+              "amu             ", &
+              "wavenumber      ", &
+              "ev              ", &
+              "kelvin          ", &
+              "joule           ", &
+              "kilojoule       ", &
+              "kjoule          ", &
+              "kj              ", &
+              "kj/mol          ", &
+              "kcal/mol        ", &
+              "kcal-mol^-1     ", &
+              "mb              ", &
+              "gb              ", &
+              "mw              " ])
+   end
+
+   conversion_factor result (res) ::: PURE
+   ! Return the conversion factor which converts a value *into* the specified
+   ! unit "self", assuming that the value has default units. In most cases
+   ! the default units are atomic units, or radians for angles, and words for
+   ! memory.
+      self :: IN
+      res :: REAL
+
+   ENSURE(self.is_known_unit,"unknown units, " // units)
+
+      word :: STR(len=len(self))
+      l :: INT
+
+      res = ONE
+
+      word = self
+      word.to_lower_case
+
+      l = len_trim(word)
+      if (word(l:l)=="s" AND l>1) word = word(1:l-1)
+
+      select case (word)
+        case ("debye           "); res = DEBYE_PER_AU
+        case ("debye-angstrom  "); res = DEBYE_PER_AU*(ANGSTROM_PER_BOHR)
+        case ("debye-angstrom^2"); res = DEBYE_PER_AU*(ANGSTROM_PER_BOHR)**2
+        case ("degree          "); res = DEGREE_PER_RADIAN
+        case ("degrees         "); res = DEGREE_PER_RADIAN
+        case ("radian          "); res = RADIAN_PER_DEGREE
+        case ("radians         "); res = RADIAN_PER_DEGREE
+        case ("bohr            "); res = BOHR_PER_BOHR
+        case ("bohrs           "); res = BOHR_PER_BOHR
+        case ("angstrom        "); res = ANGSTROM_PER_BOHR
+        case ("angstroms       "); res = ANGSTROM_PER_BOHR
+        case ("angstrom^2      "); res = ANGSTROM_PER_BOHR**2
+        case ("angstrom^3      "); res = ANGSTROM_PER_BOHR**3
+        case ("angstrom^4      "); res = ANGSTROM_PER_BOHR**4
+        case ("angstrom^-1     "); res = BOHR_PER_ANGSTROM
+        case ("angstrom^-2     "); res = BOHR_PER_ANGSTROM**2
+        case ("angstrom^-3     "); res = BOHR_PER_ANGSTROM**3
+        case ("angstrom^-4     "); res = BOHR_PER_ANGSTROM**3
+        case ("angstrom^-5     "); res = BOHR_PER_ANGSTROM**5
+        case ("meter           "); res = ANGSTROM_PER_BOHR*METER_PER_ANGSTROM
+        case ("meters          "); res = ANGSTROM_PER_BOHR*METER_PER_ANGSTROM
+        case ("amu             "); res = AMU_PER_MASS_OF_ELECTRON
+        case ("wavenumber      "); res = WAVENUMBER_PER_HARTREE
+        case ("ev              "); res = EV_PER_HARTREE
+        case ("kelvin          "); res = KELVIN_PER_HARTREE
+        case ("joule           "); res = JOULE_PER_HARTREE
+        case ("kilojoule       "); res = KJOULE_PER_HARTREE
+        case ("kjoule          "); res = KJOULE_PER_HARTREE
+        case ("kj              "); res = KJOULE_PER_HARTREE
+        case ("kj/mol          "); res = KJOULEMOL_PER_HARTREE
+        case ("kcal/mol        "); res = KCALMOL_PER_HARTREE
+        case ("kcal-mol^-1     "); res = KCALMOL_PER_HARTREE
+        case ("mb              "); res = EIGHT/(1024*1024)
+        case ("gb              "); res = EIGHT/(1024*1024*1024)
+        case ("mw              "); res = ONE/(1024*1024)
+      end
+
+   end
+
+   is_one_of(allowed) result (res) ::: pure
+   ! Return TRUE if "self" is one of the strings in "allowed".
+      self :: IN
+      allowed :: VEC{STR}, IN
+      res :: BIN
+
+      res = any(self==allowed)
+
+   end
+
+end

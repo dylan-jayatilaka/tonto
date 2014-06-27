@@ -1,0 +1,354 @@
+!-------------------------------------------------------------------------------
+!
+! POLYNOMIAL
+!
+! A representation of a polynomial expanded as a product of terms,
+! each term being a product of 1D monomials in a "variables" or a
+! "degree of freedom"
+!
+! Copyright (C) Dylan Jayatilaka, Patrick Cassam-Chenai, 2011
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: hamiltonian.foo $
+!-------------------------------------------------------------------------------
+
+
+module POLYNOMIAL
+
+   implicit none
+
+   saved_self :: POLYNOMIAL*, private
+
+contains
+
+!  ==========================
+!  Create and destroy methods
+!  ==========================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts
+      nullify(.d1_codes)
+      nullify(.series_expansion)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts
+      .d1_codes.destroy
+      .series_expansion.destroy
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   create_copy(x) ::: leaky
+   ! Create a copy of "x"
+      self :: PTR
+      x :: POLYNOMIAL, IN
+      .create
+      .copy(x)
+   end
+
+   copy(x) ::: leaky
+   ! Set self to be a copy of "x"
+      x :: POLYNOMIAL, IN
+
+      ! Copy all (pointer copy)
+      self = x
+
+      ! Nullify ptr parts
+      .nullify_ptr_part
+
+      ! Create a copy of all pointer fields
+      if (x.d1_codes.created)         .d1_codes.create_copy(x.d1_codes)
+      if (x.series_expansion.created) .series_expansion.create_copy(x.series_expansion)
+
+   end
+
+!  ============
+!  Set routines
+!  ============
+
+   set_defaults ::: leaky
+   ! Set defaults
+
+      ! Set the name
+      .set_name("unknown")
+
+      ! Set the recognized codes
+      .set_d1_codes
+
+   end
+
+   set_name(val) ::: get_from(OBJECT:set, VAL?=>STR, ARG?=>.name)
+   ! Generic set
+   end
+
+   set_d1_codes ::: leaky
+   ! Set the recognized 1D codes
+
+      .d1_codes.create(50) ! Allow for extras, later
+
+      .d1_codes.add_pair("constant",1)
+
+      .d1_codes.add_pair("p",       2)
+      .d1_codes.add_pair("q",       3)
+
+      .d1_codes.add_pair("cos",     4)
+      .d1_codes.add_pair("cospp",   5)
+      .d1_codes.add_pair("exp",     6)
+      .d1_codes.add_pair("e",       6)
+      .d1_codes.add_pair("g",       7)
+      .d1_codes.add_pair("gauss",   7)
+      .d1_codes.add_pair("gaussian",7)
+      .d1_codes.add_pair("k",       8)
+      .d1_codes.add_pair("kr",      8)
+      .d1_codes.add_pair("kratzer", 8)
+      .d1_codes.add_pair("m",       9)
+      .d1_codes.add_pair("morse",   9)
+      .d1_codes.add_pair("pcosp",  10)
+      .d1_codes.add_pair("sininvp",11)
+      .d1_codes.add_pair("tpt",    12)
+      .d1_codes.add_pair("hpt",    13)
+
+   end
+
+!  =====================
+!  Read/process keywords
+!  =====================
+
+   read_keywords ::: get_from(OBJECT), leaky
+   ! Read data from "stdin" using keyword style input.
+      self :: PTR
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process a keyword "word". Data is inputted from "stdin", unless
+   ! "word" is a sequence of blank separated strings. In this case,
+   ! the sequence is processed as if it were a separate file.
+      self :: PTR
+      keyword :: STR
+      timer :: TIME
+
+      timer.start_timing
+
+      select case (keyword(1:30))
+
+        case ("}                             "); ! exit case
+        case ("name=                         "); .read_name
+        case ("output_style_options=         "); .read_output_style_options
+        case ("put                           "); .put
+        case ("put_current_time              "); .put_current_time(timer)
+        case ("put_time_taken                "); .put_time_taken(timer)
+        case ("redirect                      "); .redirect
+        case ("revert                        "); .revert
+        case ("series_expansion=             "); .read_series_expansion
+        case  default ;               UNKNOWN(keyword)
+
+      end
+
+   end
+
+!  ============
+!  Read methods
+!  ============
+
+   read_name ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_name), private
+   ! Generic read and set
+   end
+
+   read_series_expansion ::: leaky
+   ! Read in the series expansion for the observable and analyze
+      .series_expansion.read_list_keywords
+      .series_expansion.analyze(.d1_codes)
+   end
+
+!  =====================
+!  Standard read methods
+!  =====================
+
+   read_output_style_options
+   ! Read new output style options, for example change the
+   ! width and number of field, or precision of output.
+      stdout.read_keywords(TEXTFILE::stdin)
+   end
+
+   read_memory_limit
+   ! Read in a new memory limit for the program to work within.
+      limit :: INT
+      stdin.read_quantity(limit) ! Limit is now in default units of words
+      ENSURE(limit>0,"limit must be positive")
+      tonto.reset_memory_limit(limit)
+   end
+
+   redirect ::: get_from(OBJECT), leaky
+   ! Redirect input
+   end
+
+   revert ::: get_from(OBJECT), leaky
+   ! Revert back to previous stdin file
+   end
+
+! ============
+! Put routines
+! ============
+
+   put
+   ! Put the banner
+
+      stdout.flush
+      stdout.text("======================")
+      stdout.text("Observable information")
+      stdout.text("======================")
+      stdout.flush
+      stdout.show("Name                  =",.name)
+      stdout.show("No. of 1D types       =",.d1_codes.values(.d1_codes.n_keys))
+      stdout.show("No. of 1D input codes =",.d1_codes.n_keys)
+      stdout.flush
+
+      if (.d1_codes.created)         .put_d1_codes
+    ! if (.series_expansion.created) .put_series_expansion
+   
+   end
+
+   put_d1_codes
+   ! Put the allowed d1_codes
+
+      table :: VEC{TABLE_COLUMN}*
+
+      stdout.flush
+      stdout.text("=========================")
+      stdout.text("Allowed 1D variable codes")
+      stdout.text("=========================")
+      stdout.flush
+      stdout.text(". Polynomials are entered via a product of 1D codes.") 
+      stdout.text("  Each code is separated by a dot character; spaces ")
+      stdout.text("  are not allowed.                                  ")
+      stdout.flush
+      stdout.text(". The degree-of-freedom index is entered in parentheses") 
+      stdout.text("  e.g. q(2) or m(5)                                 ") 
+      stdout.flush
+      stdout.text(". Powers are entered by a caret ^ e.g. p(2)^2")
+      stdout.flush
+      stdout.text(". Other parameters associated to a variable are entered")
+      stdout.text("  via square brackets e.g. exp[-2.2] or tpt[0.2,0.4]") 
+      stdout.flush
+      stdout.flush
+
+      ! Title
+      stdout.flush
+      stdout.show("No. of terms in series expansion =",.series_expansion.dim)
+      stdout.flush
+
+      ! Table headings
+      table.create(2)
+      table(1).set_heading("Input")
+      table(1).set_subhead(" code")
+      table(2).set_heading("  Var")
+      table(2).set_subhead("index")
+
+      ! Set table column data
+      table(1).set_values(.d1_codes.keys)
+      table(2).set_values(.d1_codes.values)
+
+      ! Make the table
+      table.put
+
+      ! Clean
+      table.nullify_ptr_part
+      table.destroy
+      
+   end
+
+   put_banner
+   ! Put the banner
+
+      stdout.text("_______________________________________________________________")
+      stdout.text("                                                               ")
+      stdout.text(" CONVIV 2                                                      ")
+      stdout.flush
+      stdout.text(" Version: "//CONVIV_VERSION//" ($Rev: $)")
+      stdout.text(" Platform: "//CONVIV_PLATFORM)
+      stdout.text(" Build-date: "//CONVIV_BUILD_DATE)
+      stdout.flush
+      stdout.text(" This is an alpha ...                                          ")
+      stdout.text("_______________________________________________________________")
+
+      stdout.flush
+      stdout.flush
+      stdout.text(std_time.start_time_message)
+      stdout.flush
+   
+   end
+
+   put_current_time(timer)
+   ! Output the current time
+      timer :: TIME
+      stdout.text(timer.current_time_message)
+   end
+
+   put_time_taken(timer)
+   ! Output the time taken as given by the "timer" object
+      timer :: TIME
+      stdout.text(timer.elapsed_time_message)
+   end
+
+! ===
+! Run
+! ===
+
+   run
+   ! Main run-loop; assumes stdin and stdout have been defined.
+      self :: PTR
+
+      ! Put a banner
+      .put_banner
+
+      ! Act on keyword
+      .read_keywords
+
+      ! Put out elapsed time
+      stdout.flush
+      stdout.text(std_time.elapsed_time_message("job "//'"'// trim(.name) //'"'))
+      stdout.text(std_time.elapsed_cpu_time_message("job "//'"'// trim(.name) //'"'))
+
+      ! Any warnings
+      if (tonto.warnings_issued) then
+      stdout.flush
+      stdout.text("WARNINGS were issued in this job.")
+      stdout.text("Look above, or in the stderr file.")
+      end
+
+   end
+
+end

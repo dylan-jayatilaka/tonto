@@ -1,0 +1,3506 @@
+!-------------------------------------------------------------------------------
+!
+! SPACEGROUP: Crystal space group object
+!
+! Synopsis
+!
+! Read in the international symmetry symbol (an integer or qualified integer) or
+! Hermann-Mauguin symbol, or Hall symbol and make the Seitz matrices for the
+! specified spacegroup. This modules provide other crystal symmetry information
+! as well. Use the method in: S. R. Hall, Acta Cryst A37, 517 (1981) and better,
+! International Tables B section A1.4.2.3, p. 112
+!
+! The code has been updated to the latest version of the Hall notation described
+! in the international tables, including explicit origin notation.
+!
+!
+! Copyright (C) S K Wolff, 1995
+! Copyright (C) D Jayatilaka, 1998-2005
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: spacegroup.foo 4398 2014-06-01 06:55:30Z dylan_ $
+!-------------------------------------------------------------------------------
+
+module SPACEGROUP
+
+   implicit none
+
+!  ===============
+!  Data statements
+!  ===============
+
+
+   ! Implied translation vectors T_implied(:,v,latt)
+   ! International tables B, table 1.4
+   ! . The first index gives the actual translation vector.
+   ! . The second index "v" runs over the number of implied vectors.
+   !   The actual number of these is stored in
+   !   "n_implied_translations" below.  
+   ! . The third index "latt" is the index of the lattice type.
+   !   See "lattice_symbols". There are 8.
+
+   lattice_symbols    :: STR(len=8), private         = "PABCIRHF" 
+
+   bar_symbol         :: STR(len=1), private         = "-"        ! Bar symbol, precedes axis orders
+   dash_symbol        :: STR(len=1), private         = "'"        !
+   double_dash_symbol :: STR(len=1), private         = '"'        !
+   star_symbol        :: STR(len=1), private         = "*"        !
+
+   n_implied_translations :: VEC{INT}(8), private
+
+   data n_implied_translations/ 1, 2, 2, 2, 2, 3, 3, 4/
+
+   T_implied :: MAT3{REAL}(3,4,8), private
+
+   data T_implied/ &
+        ZERO,      ZERO,      ZERO, &  ! "P" lattice
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  ! "A" lattice
+        ZERO,      HALF,      HALF, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  ! "B" lattice
+        HALF,      ZERO,      HALF, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  ! "C" lattice
+        HALF,      HALF,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  ! "I" lattice
+        HALF,      HALF,      HALF, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  ! "R" lattice
+    TWOTHIRD,     THIRD,     THIRD, &  !
+       THIRD,  TWOTHIRD,  TWOTHIRD, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  ! "H" lattice
+    TWOTHIRD,     THIRD,      ZERO, &  !
+       THIRD,  TWOTHIRD,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  !
+        ZERO,      ZERO,      ZERO, &  ! "F" lattice
+        ZERO,      HALF,      HALF, &  !
+        HALF,      ZERO,      HALF, &  !
+        HALF,      HALF,      ZERO/    !
+
+   ! Translation vectors. 
+   ! See International Tables B, table A1.4.2.3.
+   ! . The first index gives the actual vector. 
+   ! . The second index is linked t othe translation symbol. 
+   ! . NOTE: The numerical symbols are not stored, they can be
+   !   calculated from the subscript index and the order. 
+   !   See second column of the table mentioned.
+
+   fractional_translation_symbols :: STR(len=6), private = "123456"    
+
+   alpha_translation_symbols  :: STR(len=8), private = "abcnuvwd" 
+
+   A_axis_direction_symbols :: STR(len=6), private = "xyz""'*"  ! Axis setting symbols
+
+   T_translation_vector :: MAT{REAL}(3,8), private
+
+   data T_translation_vector/ &
+         HALF,    ZERO,    ZERO, &  ! "a" translation
+         ZERO,    HALF,    ZERO, &  ! "b" translation
+         ZERO,    ZERO,    HALF, &  ! "c" translation
+         HALF,    HALF,    HALF, &  ! "n" translation
+      QUARTER,    ZERO,    ZERO, &  ! "u" translation
+         ZERO, QUARTER,    ZERO, &  ! "v" translation
+         ZERO,    ZERO, QUARTER, &  ! "w" translation
+      QUARTER, QUARTER, QUARTER/    ! "d" translation
+
+   ! Principal rotation matrices NN(:,:,axis,i). 
+   ! From International Tables B, tables A1.4.2.4, A1.4.2.5, A1.4.2.6.
+   ! The "axis" symbol is either 1, 2, or 3 and stands for x, y, or z.
+   ! The "i" symbol is the axis order, except when i=5,7 or 8. 
+   ! . If i=5, then the matrices are for a twofold
+   !   rotation around a dash axis, and "axis" now represents the
+   !   *preceding* axis symbol. 
+   ! . If i=7 then the matrices are for a twofold rotation around a
+   !   double dash axes, with "axis" again representing the
+   !   *preceding* axis symbol.  
+   ! . If i=8 the rotation is in the * direction, and "axis" should be
+   !   a+b+c, and should be set to 1. See NN table below.
+   ! Checked 5/5/13 - Dylan
+
+   N_rotation_order_symbols :: STR(len=6), private = "1234#6"    
+
+   NN :: MAT4{REAL}(3,3,3,8), private
+
+   data NN/ &
+       1, 0, 0, 0, 1, 0, 0, 0, 1, & ! N1(:,:,x,1)
+       1, 0, 0, 0, 1, 0, 0, 0, 1, & ! N1(:,:,y,1)
+       1, 0, 0, 0, 1, 0, 0, 0, 1, & ! N1(:,:,z,1)
+       1, 0, 0, 0,-1, 0, 0, 0,-1, & ! N2(:,:,x,2)
+      -1, 0, 0, 0, 1, 0, 0, 0,-1, & ! N2(:,:,y,2)
+      -1, 0, 0, 0,-1, 0, 0, 0, 1, & ! N2(:,:,z,2)
+      -1, 0, 0, 0, 0, 1, 0,-1,-1, & ! N3(:,:,x,3)
+      -1, 0,-1, 0, 1, 0, 1, 0, 0, & ! N3(:,:,y,3)
+       0, 1, 0,-1,-1, 0, 0, 0, 1, & ! N3(:,:,z,3)
+       1, 0, 0, 0, 0, 1, 0,-1, 0, & ! N4(:,:,x,4)
+       0, 0,-1, 0, 1, 0, 1, 0, 0, & ! N4(:,:,y,4)
+       0, 1, 0,-1, 0, 0, 0, 0, 1, & ! N4(:,:,z,4)
+      -1, 0, 0, 0, 0,-1, 0,-1, 0, & ! N'(:,:,x,5) -- dash rotations
+       0, 0,-1, 0,-1, 0,-1, 0, 0, & ! N'(:,:,y,5)
+       0,-1, 0,-1, 0, 0, 0, 0,-1, & ! N'(:,:,z,5)
+       1, 0, 0, 0, 1, 1, 0,-1, 0, & ! N6(:,:,x,6)
+       0, 0,-1, 0, 1, 0, 1, 0, 1, & ! N6(:,:,y,6)
+       1, 1, 0,-1, 0, 0, 0, 0, 1, & ! N6(:,:,z,6)
+      -1, 0, 0, 0, 0, 1, 0, 1, 0, & ! N"(:,:,x,7) -- double dash rotation
+       0, 0, 1, 0,-1, 0, 1, 0, 0, & ! N"(:,:,y,7)
+       0, 1, 0, 1, 0, 0, 0, 0,-1, & ! N"(:,:,z,7) 
+       0, 1, 0, 0, 0, 1, 1, 0, 0, & ! N*(:,:,1,8) -- star rotation
+       0, 0, 0, 0, 0, 0, 0, 0, 0, & ! N*(:,:,y,8) -- The last two not used
+       0, 0, 0, 0, 0, 0, 0, 0, 0/   ! N*(:,:,z,8)
+
+   ! Spacegroup conversion table. The first element is the International Table
+   ! spacegroup number, followed by an optional colon and specific setting
+   ! index. The second column is the Schoenflies pointgroup symbol. The third
+   ! column is the Hermann-Mauguin spacegroup symbol. The fourth and final
+   ! column is the Hall notation for the spacegroup. That is the only notation
+   ! which provides a unique spacegroup specification that distinuishes all
+   ! possible settings.
+
+   spacegroup_conversion_table :: MAT{STR}(len=14,4,593), public
+
+   data spacegroup_conversion_table(1:4,  1: 30)/ &
+      "1             ", "c1^1          ", "p 1           ", "p 1           ", & ! deprecated Hall symbols
+      "2             ", "ci^1          ", "p -1          ", "-p 1          ", &
+      "3:b           ", "c2^1          ", "p 1 2 1       ", "p 2y          ", &
+      "3:b           ", "c2^1          ", "p 2           ", "p 2y          ", &
+      "3:c           ", "c2^1          ", "p 1 1 2       ", "p 2           ", &
+      "3:a           ", "c2^1          ", "p 2 1 1       ", "p 2x          ", &
+      "4:b           ", "c2^2          ", "p 1 21 1      ", "p 2yb         ", &
+      "4:b           ", "c2^2          ", "p 1 21 1      ", "p 2y1         ", &
+      "4:b           ", "c2^2          ", "p 21          ", "p 2yb         ", &
+      "4:c           ", "c2^2          ", "p 1 1 21      ", "p 2c          ", &
+      "4:c           ", "c2^2          ", "p 1 1 21      ", "p 21          ", &
+      "4:a           ", "c2^2          ", "p 21 1 1      ", "p 2xa         ", &
+      "4:a           ", "c2^2          ", "p 21 1 1      ", "p 2x1         ", &
+      "5:b1          ", "c2^3          ", "c 1 2 1       ", "c 2y          ", &
+      "5:b1          ", "c2^3          ", "c 2           ", "c 2y          ", &
+      "5:b2          ", "c2^3          ", "a 1 2 1       ", "a 2y          ", &
+      "5:b3          ", "c2^3          ", "i 1 2 1       ", "i 2y          ", &
+      "5:c1          ", "c2^3          ", "a 1 1 2       ", "a 2           ", &
+      "5:c2          ", "c2^3          ", "b 1 1 2       ", "b 2           ", &
+      "5:c3          ", "c2^3          ", "i 1 1 2       ", "i 2           ", &
+      "5:a1          ", "c2^3          ", "b 2 1 1       ", "b 2x          ", &
+      "5:a2          ", "c2^3          ", "c 2 1 1       ", "c 2x          ", &
+      "5:a3          ", "c2^3          ", "i 2 1 1       ", "i 2x          ", &
+      "6:b           ", "cs^1          ", "p 1 m 1       ", "p -2y         ", &
+      "6:b           ", "cs^1          ", "p m           ", "p -2y         ", &
+      "6:c           ", "cs^1          ", "p 1 1 m       ", "p -2          ", &
+      "6:a           ", "cs^1          ", "p m 1 1       ", "p -2x         ", &
+      "7:b1          ", "cs^2          ", "p 1 c 1       ", "p -2yc        ", &
+      "7:b1          ", "cs^2          ", "p c           ", "p -2yc        ", &
+      "7:b2          ", "cs^2          ", "p 1 n 1       ", "p -2yac       "/
+   data spacegroup_conversion_table(1:4, 31: 60)/ &
+      "7:b2          ", "cs^2          ", "p n           ", "p -2yac       ", &
+      "7:b3          ", "cs^2          ", "p 1 a 1       ", "p -2ya        ", &
+      "7:b3          ", "cs^2          ", "p a           ", "p -2ya        ", &
+      "7:c1          ", "cs^2          ", "p 1 1 a       ", "p -2a         ", &
+      "7:c2          ", "cs^2          ", "p 1 1 n       ", "p -2ab        ", &
+      "7:c3          ", "cs^2          ", "p 1 1 b       ", "p -2b         ", &
+      "7:a1          ", "cs^2          ", "p b 1 1       ", "p -2xb        ", &
+      "7:a2          ", "cs^2          ", "p n 1 1       ", "p -2xbc       ", &
+      "7:a3          ", "cs^2          ", "p c 1 1       ", "p -2xc        ", &
+      "8:b1          ", "cs^3          ", "c 1 m 1       ", "c -2y         ", &
+      "8:b1          ", "cs^3          ", "c m           ", "c -2y         ", &
+      "8:b2          ", "cs^3          ", "a 1 m 1       ", "a -2y         ", &
+      "8:b3          ", "cs^3          ", "i 1 m 1       ", "i -2y         ", &
+      "8:b3          ", "cs^3          ", "i m           ", "i -2y         ", &
+      "8:c1          ", "cs^3          ", "a 1 1 m       ", "a -2          ", &
+      "8:c2          ", "cs^3          ", "b 1 1 m       ", "b -2          ", &
+      "8:c3          ", "cs^3          ", "i 1 1 m       ", "i -2          ", &
+      "8:a1          ", "cs^3          ", "b m 1 1       ", "b -2x         ", &
+      "8:a2          ", "cs^3          ", "c m 1 1       ", "c -2x         ", &
+      "8:a3          ", "cs^3          ", "i m 1 1       ", "i -2x         ", &
+      "9:b1          ", "cs^4          ", "c 1 c 1       ", "c -2yc        ", &
+      "9:b1          ", "cs^4          ", "c c           ", "c -2yc        ", &
+      "9:b2          ", "cs^4          ", "a 1 n 1       ", "a -2yab       ", & ! a -2yac
+      "9:b3          ", "cs^4          ", "i 1 a 1       ", "i -2ya        ", &
+      "9:-b1         ", "cs^4          ", "a 1 a 1       ", "a -2ya        ", &
+      "9:-b2         ", "cs^4          ", "c 1 n 1       ", "c -2yac       ", & ! c -2ybc
+      "9:-b3         ", "cs^4          ", "i 1 c 1       ", "i -2yc        ", &
+      "9:c1          ", "cs^4          ", "a 1 1 a       ", "a -2a         ", &
+      "9:c2          ", "cs^4          ", "b 1 1 n       ", "b -2ab        ", & ! b -2bc
+      "9:c3          ", "cs^4          ", "i 1 1 b       ", "i -2b         "/
+   data spacegroup_conversion_table(1:4, 61: 90)/ &
+      "9:-c1         ", "cs^4          ", "b 1 1 b       ", "b -2b         ", &
+      "9:-c2         ", "cs^4          ", "a 1 1 n       ", "a -2ab        ", & ! a -2ac
+      "9:-c3         ", "cs^4          ", "i 1 1 a       ", "i -2a         ", &
+      "9:a1          ", "cs^4          ", "b b 1 1       ", "b -2xb        ", &
+      "9:a2          ", "cs^4          ", "c n 1 1       ", "c -2xac       ", & ! c -2xbc
+      "9:a3          ", "cs^4          ", "i c 1 1       ", "i -2xc        ", &
+      "9:-a1         ", "cs^4          ", "c c 1 1       ", "c -2xc        ", &
+      "9:-a2         ", "cs^4          ", "b n 1 1       ", "b -2xab       ", & ! b -2xbc
+      "9:-a3         ", "cs^4          ", "i b 1 1       ", "i -2xb        ", &
+      "10:b          ", "c2h^1         ", "p 1 2/m 1     ", "-p 2y         ", &
+      "10:b          ", "c2h^1         ", "p 2/m         ", "-p 2y         ", &
+      "10:c          ", "c2h^1         ", "p 1 1 2/m     ", "-p 2          ", &
+      "10:a          ", "c2h^1         ", "p 2/m 1 1     ", "-p 2x         ", &
+      "11:b          ", "c2h^2         ", "p 1 21/m 1    ", "-p 2yb        ", &
+      "11:b          ", "c2h^2         ", "p 1 21/m 1    ", "-p 2y1        ", &
+      "11:b          ", "c2h^2         ", "p 21/m        ", "-p 2yb        ", &
+      "11:c          ", "c2h^2         ", "p 1 1 21/m    ", "-p 2c         ", &
+      "11:c          ", "c2h^2         ", "p 1 1 21/m    ", "-p 21         ", &
+      "11:a          ", "c2h^2         ", "p 21/m 1 1    ", "-p 2xa        ", &
+      "11:a          ", "c2h^2         ", "p 21/m 1 1    ", "-p 2x1        ", &
+      "12:b1         ", "c2h^3         ", "c 1 2/m 1     ", "-c 2y         ", &
+      "12:b1         ", "c2h^3         ", "c 2/m         ", "-c 2y         ", &
+      "12:b2         ", "c2h^3         ", "a 1 2/m 1     ", "-a 2y         ", &
+      "12:b3         ", "c2h^3         ", "i 1 2/m 1     ", "-i 2y         ", &
+      "12:b3         ", "c2h^3         ", "i 2/m         ", "-i 2y         ", &
+      "12:c1         ", "c2h^3         ", "a 1 1 2/m     ", "-a 2          ", &
+      "12:c2         ", "c2h^3         ", "b 1 1 2/m     ", "-b 2          ", &
+      "12:c3         ", "c2h^3         ", "i 1 1 2/m     ", "-i 2          ", &
+      "12:a1         ", "c2h^3         ", "b 2/m 1 1     ", "-b 2x         ", &
+      "12:a2         ", "c2h^3         ", "c 2/m 1 1     ", "-c 2x         "/
+   data spacegroup_conversion_table(1:4, 91:120)/ &
+      "12:a3         ", "c2h^3         ", "i 2/m 1 1     ", "-i 2x         ", &
+      "13:b1         ", "c2h^4         ", "p 1 2/c 1     ", "-p 2yc        ", &
+      "13:b1         ", "c2h^4         ", "p 2/c         ", "-p 2yc        ", &
+      "13:b2         ", "c2h^4         ", "p 1 2/n 1     ", "-p 2yac       ", &
+      "13:b2         ", "c2h^4         ", "p 2/n         ", "-p 2yac       ", &
+      "13:b3         ", "c2h^4         ", "p 1 2/a 1     ", "-p 2ya        ", &
+      "13:b3         ", "c2h^4         ", "p 2/a         ", "-p 2ya        ", &
+      "13:c1         ", "c2h^4         ", "p 1 1 2/a     ", "-p 2a         ", &
+      "13:c2         ", "c2h^4         ", "p 1 1 2/n     ", "-p 2ab        ", &
+      "13:c3         ", "c2h^4         ", "p 1 1 2/b     ", "-p 2b         ", &
+      "13:a1         ", "c2h^4         ", "p 2/b 1 1     ", "-p 2xb        ", &
+      "13:a2         ", "c2h^4         ", "p 2/n 1 1     ", "-p 2xbc       ", &
+      "13:a3         ", "c2h^4         ", "p 2/c 1 1     ", "-p 2xc        ", &
+      "14:b1         ", "c2h^5         ", "p 1 21/c 1    ", "-p 2ybc       ", &
+      "14:b1         ", "c2h^5         ", "p 21/c        ", "-p 2ybc       ", &
+      "14:b2         ", "c2h^5         ", "p 1 21/n 1    ", "-p 2yn        ", &
+      "14:b2         ", "c2h^5         ", "p 21/n        ", "-p 2yn        ", &
+      "14:b3         ", "c2h^5         ", "p 1 21/a 1    ", "-p 2yab       ", &
+      "14:b3         ", "c2h^5         ", "p 21/a        ", "-p 2yab       ", &
+      "14:c1         ", "c2h^5         ", "p 1 1 21/a    ", "-p 2ac        ", &
+      "14:c2         ", "c2h^5         ", "p 1 1 21/n    ", "-p 2n         ", &
+      "14:c3         ", "c2h^5         ", "p 1 1 21/b    ", "-p 2bc        ", &
+      "14:a1         ", "c2h^5         ", "p 21/b 1 1    ", "-p 2xab       ", &
+      "14:a2         ", "c2h^5         ", "p 21/n 1 1    ", "-p 2xn        ", &
+      "14:a3         ", "c2h^5         ", "p 21/c 1 1    ", "-p 2xac       ", &
+      "15:b1         ", "c2h^6         ", "c 1 2/c 1     ", "-c 2yc        ", &
+      "15:b1         ", "c2h^6         ", "c 2/c         ", "-c 2yc        ", &
+      "15:b2         ", "c2h^6         ", "a 1 2/n 1     ", "-a 2yab       ", & ! -a 2yac
+      "15:b3         ", "c2h^6         ", "i 1 2/a 1     ", "-i 2ya        ", &
+      "15:b3         ", "c2h^6         ", "i 2/a         ", "-i 2ya        "/
+   data spacegroup_conversion_table(1:4,121:150)/ &
+      "15:-b1        ", "c2h^6         ", "a 1 2/a 1     ", "-a 2ya        ", &
+      "15:-b2        ", "c2h^6         ", "c 1 2/n 1     ", "-c 2yac       ", & ! -c 2ybc
+      "15:-b2        ", "c2h^6         ", "c 2/n         ", "-c 2yac       ", & ! -c 2ybc
+      "15:-b3        ", "c2h^6         ", "i 1 2/c 1     ", "-i 2yc        ", &
+      "15:-b3        ", "c2h^6         ", "i 2/c         ", "-i 2yc        ", &
+      "15:c1         ", "c2h^6         ", "a 1 1 2/a     ", "-a 2a         ", &
+      "15:c2         ", "c2h^6         ", "b 1 1 2/n     ", "-b 2ab        ", & ! -b 2bc
+      "15:c3         ", "c2h^6         ", "i 1 1 2/b     ", "-i 2b         ", &
+      "15:-c1        ", "c2h^6         ", "b 1 1 2/b     ", "-b 2b         ", &
+      "15:-c2        ", "c2h^6         ", "a 1 1 2/n     ", "-a 2ab        ", & ! -a 2ac
+      "15:-c3        ", "c2h^6         ", "i 1 1 2/a     ", "-i 2a         ", &
+      "15:a1         ", "c2h^6         ", "b 2/b 1 1     ", "-b 2xb        ", &
+      "15:a2         ", "c2h^6         ", "c 2/n 1 1     ", "-c 2xac       ", & ! -c 2xbc
+      "15:a3         ", "c2h^6         ", "i 2/c 1 1     ", "-i 2xc        ", &
+      "15:-a1        ", "c2h^6         ", "c 2/c 1 1     ", "-c 2xc        ", &
+      "15:-a2        ", "c2h^6         ", "b 2/n 1 1     ", "-b 2xab       ", & ! -b 2xbc
+      "15:-a3        ", "c2h^6         ", "i 2/b 1 1     ", "-i 2xb        ", &
+      "16            ", "d2^1          ", "p 2 2 2       ", "p 2 2         ", &
+      "17:           ", "d2^2          ", "p 2 2 21      ", "p 2c 2        ", &
+      "17:           ", "d2^2          ", "p 2 2 21      ", "p 21 2        ", &
+      "17:cab        ", "d2^2          ", "p 21 2 2      ", "p 2a 2a       ", &
+      "17:bca        ", "d2^2          ", "p 2 21 2      ", "p 2 2b        ", &
+      "18:           ", "d2^3          ", "p 21 21 2     ", "p 2 2ab       ", &
+      "18:cab        ", "d2^3          ", "p 2 21 21     ", "p 2bc 2       ", &
+      "18:bca        ", "d2^3          ", "p 21 2 21     ", "p 2ac 2ac     ", &
+      "19            ", "d2^4          ", "p 21 21 21    ", "p 2ac 2ab     ", &
+      "20:           ", "d2^5          ", "c 2 2 21      ", "c 2c 2        ", &
+      "20:           ", "d2^5          ", "c 2 2 21      ", "c 21 2        ", &
+      "20:cab        ", "d2^5          ", "a 21 2 2      ", "a 2a 2a       ", &
+      "20:cab        ", "d2^5          ", "a 21 2 2      ", "a 2a 21       "/
+   data spacegroup_conversion_table(1:4,151:180)/ &
+      "20:bca        ", "d2^5          ", "b 2 21 2      ", "b 2 2b        ", &
+      "21:           ", "d2^6          ", "c 2 2 2       ", "c 2 2         ", &
+      "21:cab        ", "d2^6          ", "a 2 2 2       ", "a 2 2         ", &
+      "21:bca        ", "d2^6          ", "b 2 2 2       ", "b 2 2         ", &
+      "22            ", "d2^7          ", "f 2 2 2       ", "f 2 2         ", &
+      "23            ", "d2^8          ", "i 2 2 2       ", "i 2 2         ", &
+      "24            ", "d2^9          ", "i 21 21 21    ", "i 2b 2c       ", &
+      "25:           ", "c2v^1         ", "p m m 2       ", "p 2 -2        ", &
+      "25:cab        ", "c2v^1         ", "p 2 m m       ", "p -2 2        ", &
+      "25:bca        ", "c2v^1         ", "p m 2 m       ", "p -2 -2       ", &
+      "26:           ", "c2v^2         ", "p m c 21      ", "p 2c -2       ", &
+      "26:           ", "c2v^2         ", "p m c 21      ", "p 21 -2       ", &
+      "26:ba-c       ", "c2v^2         ", "p c m 21      ", "p 2c -2c      ", &
+      "26:ba-c       ", "c2v^2         ", "p c m 21      ", "p 21 -2c      ", &
+      "26:cab        ", "c2v^2         ", "p 21 m a      ", "p -2a 2a      ", &
+      "26:-cba       ", "c2v^2         ", "p 21 a m      ", "p -2 2a       ", &
+      "26:bca        ", "c2v^2         ", "p b 21 m      ", "p -2 -2b      ", &
+      "26:a-cb       ", "c2v^2         ", "p m 21 b      ", "p -2b -2      ", &
+      "27:           ", "c2v^3         ", "p c c 2       ", "p 2 -2c       ", &
+      "27:cab        ", "c2v^3         ", "p 2 a a       ", "p -2a 2       ", &
+      "27:bca        ", "c2v^3         ", "p b 2 b       ", "p -2b -2b     ", &
+      "28:           ", "c2v^4         ", "p m a 2       ", "p 2 -2a       ", &
+      "28:           ", "c2v^4         ", "p m a 2       ", "p 2 -21       ", &
+      "28:ba-c       ", "c2v^4         ", "p b m 2       ", "p 2 -2b       ", &
+      "28:cab        ", "c2v^4         ", "p 2 m b       ", "p -2b 2       ", &
+      "28:-cba       ", "c2v^4         ", "p 2 c m       ", "p -2c 2       ", &
+      "28:-cba       ", "c2v^4         ", "p 2 c m       ", "p -21 2       ", &
+      "28:bca        ", "c2v^4         ", "p c 2 m       ", "p -2c -2c     ", &
+      "28:a-cb       ", "c2v^4         ", "p m 2 a       ", "p -2a -2a     ", &
+      "29:           ", "c2v^5         ", "p c a 21      ", "p 2c -2ac     "/
+   data spacegroup_conversion_table(1:4,181:210)/ &
+      "29:ba-c       ", "c2v^5         ", "p b c 21      ", "p 2c -2b      ", &
+      "29:cab        ", "c2v^5         ", "p 21 a b      ", "p -2b 2a      ", &
+      "29:-cba       ", "c2v^5         ", "p 21 c a      ", "p -2ac 2a     ", &
+      "29:bca        ", "c2v^5         ", "p c 21 b      ", "p -2bc -2c    ", &
+      "29:a-cb       ", "c2v^5         ", "p b 21 a      ", "p -2a -2ab    ", &
+      "30:           ", "c2v^6         ", "p n c 2       ", "p 2 -2bc      ", &
+      "30:ba-c       ", "c2v^6         ", "p c n 2       ", "p 2 -2ac      ", &
+      "30:cab        ", "c2v^6         ", "p 2 n a       ", "p -2ac 2      ", &
+      "30:-cba       ", "c2v^6         ", "p 2 a n       ", "p -2ab 2      ", &
+      "30:bca        ", "c2v^6         ", "p b 2 n       ", "p -2ab -2ab   ", &
+      "30:a-cb       ", "c2v^6         ", "p n 2 b       ", "p -2bc -2bc   ", &
+      "31:           ", "c2v^7         ", "p m n 21      ", "p 2ac -2      ", &
+      "31:ba-c       ", "c2v^7         ", "p n m 21      ", "p 2bc -2bc    ", &
+      "31:cab        ", "c2v^7         ", "p 21 m n      ", "p -2ab 2ab    ", &
+      "31:-cba       ", "c2v^7         ", "p 21 n m      ", "p -2 2ac      ", &
+      "31:bca        ", "c2v^7         ", "p n 21 m      ", "p -2 -2bc     ", &
+      "31:a-cb       ", "c2v^7         ", "p m 21 n      ", "p -2ab -2     ", &
+      "32:           ", "c2v^8         ", "p b a 2       ", "p 2 -2ab      ", &
+      "32:cab        ", "c2v^8         ", "p 2 c b       ", "p -2bc 2      ", &
+      "32:bca        ", "c2v^8         ", "p c 2 a       ", "p -2ac -2ac   ", &
+      "33:           ", "c2v^9         ", "p n a 21      ", "p 2c -2n      ", &
+      "33:           ", "c2v^9         ", "p n a 21      ", "p 21 -2n      ", &
+      "33:ba-c       ", "c2v^9         ", "p b n 21      ", "p 2c -2ab     ", &
+      "33:ba-c       ", "c2v^9         ", "p b n 21      ", "p 21 -2ab     ", &
+      "33:cab        ", "c2v^9         ", "p 21 n b      ", "p -2bc 2a     ", &
+      "33:cab        ", "c2v^9         ", "p 21 n b      ", "p -2bc 21     ", &
+      "33:-cba       ", "c2v^9         ", "p 21 c n      ", "p -2n 2a      ", &
+      "33:-cba       ", "c2v^9         ", "p 21 c n      ", "p -2n 21      ", &
+      "33:bca        ", "c2v^9         ", "p c 21 n      ", "p -2n -2ac    ", &
+      "33:a-cb       ", "c2v^9         ", "p n 21 a      ", "p -2ac -2n    "/
+   data spacegroup_conversion_table(1:4,211:240)/ &
+      "34:           ", "c2v^10        ", "p n n 2       ", "p 2 -2n       ", &
+      "34:cab        ", "c2v^10        ", "p 2 n n       ", "p -2n 2       ", &
+      "34:bca        ", "c2v^10        ", "p n 2 n       ", "p -2n -2n     ", &
+      "35:           ", "c2v^11        ", "c m m 2       ", "c 2 -2        ", &
+      "35:cab        ", "c2v^11        ", "a 2 m m       ", "a -2 2        ", &
+      "35:bca        ", "c2v^11        ", "b m 2 m       ", "b -2 -2       ", &
+      "36:           ", "c2v^12        ", "c m c 21      ", "c 2c -2       ", &
+      "36:           ", "c2v^12        ", "c m c 21      ", "c 21 -2       ", &
+      "36:ba-c       ", "c2v^12        ", "c c m 21      ", "c 2c -2c      ", &
+      "36:ba-c       ", "c2v^12        ", "c c m 21      ", "c 21 -2c      ", &
+      "36:cab        ", "c2v^12        ", "a 21 m a      ", "a -2a 2a      ", &
+      "36:cab        ", "c2v^12        ", "a 21 m a      ", "a -2a 21      ", &
+      "36:-cba       ", "c2v^12        ", "a 21 a m      ", "a -2 2a       ", &
+      "36:-cba       ", "c2v^12        ", "a 21 a m      ", "a -2 21       ", &
+      "36:bca        ", "c2v^12        ", "b b 21 m      ", "b -2 -2b      ", &
+      "36:a-cb       ", "c2v^12        ", "b m 21 b      ", "b -2b -2      ", &
+      "37:           ", "c2v^13        ", "c c c 2       ", "c 2 -2c       ", &
+      "37:cab        ", "c2v^13        ", "a 2 a a       ", "a -2a 2       ", &
+      "37:bca        ", "c2v^13        ", "b b 2 b       ", "b -2b -2b     ", &
+      "38:           ", "c2v^14        ", "a m m 2       ", "a 2 -2        ", &
+      "38:ba-c       ", "c2v^14        ", "b m m 2       ", "b 2 -2        ", &
+      "38:cab        ", "c2v^14        ", "b 2 m m       ", "b -2 2        ", &
+      "38:-cba       ", "c2v^14        ", "c 2 m m       ", "c -2 2        ", &
+      "38:bca        ", "c2v^14        ", "c m 2 m       ", "c -2 -2       ", &
+      "38:a-cb       ", "c2v^14        ", "a m 2 m       ", "a -2 -2       ", &
+      "39:           ", "c2v^15        ", "a b m 2       ", "a 2 -2c       ", &
+      "39:ba-c       ", "c2v^15        ", "b m a 2       ", "b 2 -2a       ", & ! b 2 -2c
+      "39:cab        ", "c2v^15        ", "b 2 c m       ", "b -2a 2       ", & ! b -2c 2
+      "39:-cba       ", "c2v^15        ", "c 2 m b       ", "c -2a 2       ", & ! c -2b 2
+      "39:bca        ", "c2v^15        ", "c m 2 a       ", "c -2a -2a     "/   ! c -2b -2b
+   data spacegroup_conversion_table(1:4,241:270)/ &
+      "39:a-cb       ", "c2v^15        ", "a c 2 m       ", "a -2c -2c     ", &
+      "40:           ", "c2v^16        ", "a m a 2       ", "a 2 -2a       ", &
+      "40:ba-c       ", "c2v^16        ", "b b m 2       ", "b 2 -2b       ", &
+      "40:cab        ", "c2v^16        ", "b 2 m b       ", "b -2b 2       ", &
+      "40:-cba       ", "c2v^16        ", "c 2 c m       ", "c -2c 2       ", &
+      "40:bca        ", "c2v^16        ", "c c 2 m       ", "c -2c -2c     ", &
+      "40:a-cb       ", "c2v^16        ", "a m 2 a       ", "a -2a -2a     ", &
+      "41:           ", "c2v^17        ", "a b a 2       ", "a 2 -2ab      ", & ! a 2 -2ac
+      "41:ba-c       ", "c2v^17        ", "b b a 2       ", "b 2 -2ab      ", & ! b 2 -2bc
+      "41:cab        ", "c2v^17        ", "b 2 c b       ", "b -2ab 2      ", & ! b -2bc 2
+      "41:-cba       ", "c2v^17        ", "c 2 c b       ", "c -2ac 2      ", & ! c -2bc 2
+      "41:bca        ", "c2v^17        ", "c c 2 a       ", "c -2ac -2ac   ", & ! c -2bc -2bc
+      "41:a-cb       ", "c2v^17        ", "a c 2 a       ", "a -2ab -2ab   ", & ! a -2ac -2ac
+      "42:           ", "c2v^18        ", "f m m 2       ", "f 2 -2        ", &
+      "42:cab        ", "c2v^18        ", "f 2 m m       ", "f -2 2        ", &
+      "42:bca        ", "c2v^18        ", "f m 2 m       ", "f -2 -2       ", &
+      "43:           ", "c2v^19        ", "f d d 2       ", "f 2 -2d       ", &
+      "43:cab        ", "c2v^19        ", "f 2 d d       ", "f -2d 2       ", &
+      "43:bca        ", "c2v^19        ", "f d 2 d       ", "f -2d -2d     ", &
+      "44:           ", "c2v^20        ", "i m m 2       ", "i 2 -2        ", &
+      "44:cab        ", "c2v^20        ", "i 2 m m       ", "i -2 2        ", &
+      "44:bca        ", "c2v^20        ", "i m 2 m       ", "i -2 -2       ", &
+      "45:           ", "c2v^21        ", "i b a 2       ", "i 2 -2c       ", &
+      "45:cab        ", "c2v^21        ", "i 2 c b       ", "i -2a 2       ", &
+      "45:bca        ", "c2v^21        ", "i c 2 a       ", "i -2b -2b     ", &
+      "46:           ", "c2v^22        ", "i m a 2       ", "i 2 -2a       ", &
+      "46:ba-c       ", "c2v^22        ", "i b m 2       ", "i 2 -2b       ", &
+      "46:cab        ", "c2v^22        ", "i 2 m b       ", "i -2b 2       ", &
+      "46:-cba       ", "c2v^22        ", "i 2 c m       ", "i -2c 2       ", &
+      "46:bca        ", "c2v^22        ", "i c 2 m       ", "i -2c -2c     "/
+   data spacegroup_conversion_table(1:4,271:300)/ &
+      "46:a-cb       ", "c2v^22        ", "i m 2 a       ", "i -2a -2a     ", &
+      "47            ", "d2h^1         ", "p m m m       ", "-p 2 2        ", &
+      "48:1          ", "d2h^2         ", "p n n n:1     ", "p 2 2 -1n     ", &
+      "48:2          ", "d2h^2         ", "p n n n:2     ", "-p 2ab 2bc    ", &
+      "49:           ", "d2h^3         ", "p c c m       ", "-p 2 2c       ", &
+      "49:cab        ", "d2h^3         ", "p m a a       ", "-p 2a 2       ", &
+      "49:bca        ", "d2h^3         ", "p b m b       ", "-p 2b 2b      ", &
+      "50:1          ", "d2h^4         ", "p b a n:1     ", "p 2 2 -1ab    ", &
+      "50:2          ", "d2h^4         ", "p b a n:2     ", "-p 2ab 2b     ", &
+      "50:1cab       ", "d2h^4         ", "p n c b:1     ", "p 2 2 -1bc    ", &
+      "50:2cab       ", "d2h^4         ", "p n c b:2     ", "-p 2b 2bc     ", &
+      "50:1bca       ", "d2h^4         ", "p c n a:1     ", "p 2 2 -1ac    ", &
+      "50:2bca       ", "d2h^4         ", "p c n a:2     ", "-p 2a 2c      ", &
+      "51:           ", "d2h^5         ", "p m m a       ", "-p 2a 2a      ", &
+      "51:ba-c       ", "d2h^5         ", "p m m b       ", "-p 2b 2       ", &
+      "51:cab        ", "d2h^5         ", "p b m m       ", "-p 2 2b       ", &
+      "51:-cba       ", "d2h^5         ", "p c m m       ", "-p 2c 2c      ", &
+      "51:bca        ", "d2h^5         ", "p m c m       ", "-p 2c 2       ", &
+      "51:a-cb       ", "d2h^5         ", "p m a m       ", "-p 2 2a       ", &
+      "52:           ", "d2h^6         ", "p n n a       ", "-p 2a 2bc     ", &
+      "52:ba-c       ", "d2h^6         ", "p n n b       ", "-p 2b 2n      ", &
+      "52:cab        ", "d2h^6         ", "p b n n       ", "-p 2n 2b      ", &
+      "52:-cba       ", "d2h^6         ", "p c n n       ", "-p 2ab 2c     ", &
+      "52:bca        ", "d2h^6         ", "p n c n       ", "-p 2ab 2n     ", &
+      "52:a-cb       ", "d2h^6         ", "p n a n       ", "-p 2n 2bc     ", &
+      "53:           ", "d2h^7         ", "p m n a       ", "-p 2ac 2      ", &
+      "53:ba-c       ", "d2h^7         ", "p n m b       ", "-p 2bc 2bc    ", &
+      "53:cab        ", "d2h^7         ", "p b m n       ", "-p 2ab 2ab    ", &
+      "53:-cba       ", "d2h^7         ", "p c n m       ", "-p 2 2ac      ", &
+      "53:bca        ", "d2h^7         ", "p n c m       ", "-p 2 2bc      "/
+   data spacegroup_conversion_table(1:4,301:330)/ &
+      "53:a-cb       ", "d2h^7         ", "p m a n       ", "-p 2ab 2      ", &
+      "54:           ", "d2h^8         ", "p c c a       ", "-p 2a 2ac     ", &
+      "54:ba-c       ", "d2h^8         ", "p c c b       ", "-p 2b 2c      ", &
+      "54:cab        ", "d2h^8         ", "p b a a       ", "-p 2a 2b      ", &
+      "54:-cba       ", "d2h^8         ", "p c a a       ", "-p 2ac 2c     ", &
+      "54:bca        ", "d2h^8         ", "p b c b       ", "-p 2bc 2b     ", &
+      "54:a-cb       ", "d2h^8         ", "p b a b       ", "-p 2b 2ab     ", &
+      "55:           ", "d2h^9         ", "p b a m       ", "-p 2 2ab      ", &
+      "55:cab        ", "d2h^9         ", "p m c b       ", "-p 2bc 2      ", &
+      "55:bca        ", "d2h^9         ", "p c m a       ", "-p 2ac 2ac    ", &
+      "56:           ", "d2h^10        ", "p c c n       ", "-p 2ab 2ac    ", &
+      "56:cab        ", "d2h^10        ", "p n a a       ", "-p 2ac 2bc    ", &
+      "56:bca        ", "d2h^10        ", "p b n b       ", "-p 2bc 2ab    ", &
+      "57:           ", "d2h^11        ", "p b c m       ", "-p 2c 2b      ", &
+      "57:ba-c       ", "d2h^11        ", "p c a m       ", "-p 2c 2ac     ", &
+      "57:cab        ", "d2h^11        ", "p m c a       ", "-p 2ac 2a     ", &
+      "57:-cba       ", "d2h^11        ", "p m a b       ", "-p 2b 2a      ", &
+      "57:bca        ", "d2h^11        ", "p b m a       ", "-p 2a 2ab     ", &
+      "57:a-cb       ", "d2h^11        ", "p c m b       ", "-p 2bc 2c     ", &
+      "58:           ", "d2h^12        ", "p n n m       ", "-p 2 2n       ", &
+      "58:cab        ", "d2h^12        ", "p m n n       ", "-p 2n 2       ", &
+      "58:bca        ", "d2h^12        ", "p n m n       ", "-p 2n 2n      ", &
+      "59:1          ", "d2h^13        ", "p m m n:1     ", "p 2 2ab -1ab  ", &
+      "59:2          ", "d2h^13        ", "p m m n:2     ", "-p 2ab 2a     ", &
+      "59:1cab       ", "d2h^13        ", "p n m m:1     ", "p 2bc 2 -1bc  ", &
+      "59:2cab       ", "d2h^13        ", "p n m m:2     ", "-p 2c 2bc     ", &
+      "59:1bca       ", "d2h^13        ", "p m n m:1     ", "p 2ac 2ac -1ac", &
+      "59:2bca       ", "d2h^13        ", "p m n m:2     ", "-p 2c 2a      ", &
+      "60:           ", "d2h^14        ", "p b c n       ", "-p 2n 2ab     ", &
+      "60:ba-c       ", "d2h^14        ", "p c a n       ", "-p 2n 2c      "/
+   data spacegroup_conversion_table(1:4,331:360)/ &
+      "60:cab        ", "d2h^14        ", "p n c a       ", "-p 2a 2n      ", &
+      "60:-cba       ", "d2h^14        ", "p n a b       ", "-p 2bc 2n     ", &
+      "60:bca        ", "d2h^14        ", "p b n a       ", "-p 2ac 2b     ", &
+      "60:a-cb       ", "d2h^14        ", "p c n b       ", "-p 2b 2ac     ", &
+      "61:           ", "d2h^15        ", "p b c a       ", "-p 2ac 2ab    ", &
+      "61:ba-c       ", "d2h^15        ", "p c a b       ", "-p 2bc 2ac    ", &
+      "62:           ", "d2h^16        ", "p n m a       ", "-p 2ac 2n     ", &
+      "62:ba-c       ", "d2h^16        ", "p m n b       ", "-p 2bc 2a     ", &
+      "62:cab        ", "d2h^16        ", "p b n m       ", "-p 2c 2ab     ", &
+      "62:-cba       ", "d2h^16        ", "p c m n       ", "-p 2n 2ac     ", &
+      "62:bca        ", "d2h^16        ", "p m c n       ", "-p 2n 2a      ", &
+      "62:a-cb       ", "d2h^16        ", "p n a m       ", "-p 2c 2n      ", &
+      "63:           ", "d2h^17        ", "c m c m       ", "-c 2c 2       ", &
+      "63:ba-c       ", "d2h^17        ", "c c m m       ", "-c 2c 2c      ", &
+      "63:cab        ", "d2h^17        ", "a m m a       ", "-a 2a 2a      ", &
+      "63:-cba       ", "d2h^17        ", "a m a m       ", "-a 2 2a       ", &
+      "63:bca        ", "d2h^17        ", "b b m m       ", "-b 2 2b       ", &
+      "63:a-cb       ", "d2h^17        ", "b m m b       ", "-b 2b 2       ", &
+      "64:           ", "d2h^18        ", "c m c a       ", "-c 2ac 2      ", & ! -c 2bc 2
+      "64:ba-c       ", "d2h^18        ", "c c m b       ", "-c 2ac 2ac    ", & ! -c 2bc 2bc
+      "64:cab        ", "d2h^18        ", "a b m a       ", "-a 2ab 2ab    ", & ! -a 2ac 2ac
+      "64:-cba       ", "d2h^18        ", "a c a m       ", "-a 2 2ab      ", & ! -a 2 2ac
+      "64:bca        ", "d2h^18        ", "b b c m       ", "-b 2 2ab      ", & ! -b 2 2bc
+      "64:a-cb       ", "d2h^18        ", "b m a b       ", "-b 2ab 2      ", & ! -b 2bc 2
+      "65:           ", "d2h^19        ", "c m m m       ", "-c 2 2        ", &
+      "65:cab        ", "d2h^19        ", "a m m m       ", "-a 2 2        ", &
+      "65:bca        ", "d2h^19        ", "b m m m       ", "-b 2 2        ", &
+      "66:           ", "d2h^20        ", "c c c m       ", "-c 2 2c       ", &
+      "66:cab        ", "d2h^20        ", "a m a a       ", "-a 2a 2       ", &
+      "66:bca        ", "d2h^20        ", "b b m b       ", "-b 2b 2b      "/
+   data spacegroup_conversion_table(1:4,361:390)/ &
+      "67:           ", "d2h^21        ", "c m m a       ", "-c 2a 2       ", & ! -c 2b 2
+      "67:ba-c       ", "d2h^21        ", "c m m b       ", "-c 2a 2a      ", & ! -c 2b 2b
+      "67:cab        ", "d2h^21        ", "a b m m       ", "-a 2b 2b      ", & ! -a 2c 2c
+      "67:-cba       ", "d2h^21        ", "a c m m       ", "-a 2 2c       ", &
+      "67:bca        ", "d2h^21        ", "b m c m       ", "-b 2 2a       ", & ! -b 2 2c
+      "67:a-cb       ", "d2h^21        ", "b m a m       ", "-b 2a 2       ", & ! -b 2c 2
+      "68:1          ", "d2h^22        ", "c c c a:1     ", "c 2 2 -1ac    ", & ! c 2 2 -1bc
+      "68:2          ", "d2h^22        ", "c c c a:2     ", "-c 2a 2ac     ", & ! -c 2b 2bc
+      "68:1ba-c      ", "d2h^22        ", "c c c b:1     ", "c 2 2 -1ac    ", & ! c 2 2 -1bc
+      "68:2ba-c      ", "d2h^22        ", "c c c b:2     ", "-c 2a 2c      ", & ! -c 2b 2c
+      "68:1cab       ", "d2h^22        ", "a b a a:1     ", "a 2 2 -1ab    ", & ! a 2 2 -1ac
+      "68:2cab       ", "d2h^22        ", "a b a a:2     ", "-a 2a 2c      ", &
+      "68:1-cba      ", "d2h^22        ", "a c a a:1     ", "a 2 2 -1ab    ", & ! a 2 2 -1ac
+      "68:2-cba      ", "d2h^22        ", "a c a a:2     ", "-a 2ab 2b     ", & ! -a 2ac 2c
+      "68:1bca       ", "d2h^22        ", "b b c b:1     ", "b 2 2 -1ab    ", & ! b 2 2 -1bc
+      "68:2bca       ", "d2h^22        ", "b b c b:2     ", "-b 2ab 2b     ", & ! -b 2bc 2b
+      "68:1a-cb      ", "d2h^22        ", "b b a b:1     ", "b 2 2 -1ab    ", & ! b 2 2 -1bc
+      "68:2a-cb      ", "d2h^22        ", "b b a b:2     ", "-b 2b 2ab     ", & ! -b 2b 2bc
+      "69            ", "d2h^23        ", "f m m m       ", "-f 2 2        ", &
+      "70:1          ", "d2h^24        ", "f d d d:1     ", "f 2 2 -1d     ", &
+      "70:2          ", "d2h^24        ", "f d d d:2     ", "-f 2uv 2vw    ", &
+      "71            ", "d2h^25        ", "i m m m       ", "-i 2 2        ", &
+      "72:           ", "d2h^26        ", "i b a m       ", "-i 2 2c       ", &
+      "72:cab        ", "d2h^26        ", "i m c b       ", "-i 2a 2       ", &
+      "72:bca        ", "d2h^26        ", "i c m a       ", "-i 2b 2b      ", &
+      "73:           ", "d2h^27        ", "i b c a       ", "-i 2b 2c      ", &
+      "73:ba-c       ", "d2h^27        ", "i c a b       ", "-i 2a 2b      ", &
+      "74:           ", "d2h^28        ", "i m m a       ", "-i 2b 2       ", &
+      "74:ba-c       ", "d2h^28        ", "i m m b       ", "-i 2a 2a      ", &
+      "74:cab        ", "d2h^28        ", "i b m m       ", "-i 2c 2c      "/
+   data spacegroup_conversion_table(1:4,391:420)/ &
+      "74:-cba       ", "d2h^28        ", "i c m m       ", "-i 2 2b       ", &
+      "74:bca        ", "d2h^28        ", "i m c m       ", "-i 2 2a       ", &
+      "74:a-cb       ", "d2h^28        ", "i m a m       ", "-i 2c 2       ", &
+      "75            ", "c4^1          ", "p 4           ", "p 4           ", &
+      "76:           ", "c4^2          ", "p 41          ", "p 4w          ", &
+      "76:           ", "c4^2          ", "p 41          ", "p 41          ", &
+      "77:           ", "c4^3          ", "p 42          ", "p 4c          ", &
+      "77:           ", "c4^3          ", "p 42          ", "p 42          ", &
+      "78:           ", "c4^4          ", "p 43          ", "p 4cw         ", &
+      "78:           ", "c4^4          ", "p 43          ", "p 43          ", &
+      "79            ", "c4^5          ", "i 4           ", "i 4           ", &
+      "80            ", "c4^6          ", "i 41          ", "i 4bw         ", &
+      "81            ", "s4^1          ", "p -4          ", "p -4          ", &
+      "82            ", "s4^2          ", "i -4          ", "i -4          ", &
+      "83            ", "c4h^1         ", "p 4/m         ", "-p 4          ", &
+      "84:           ", "c4h^2         ", "p 42/m        ", "-p 4c         ", &
+      "84:           ", "c4h^2         ", "p 42/m        ", "-p 42         ", &
+      "85:1          ", "c4h^3         ", "p 4/n:1       ", "p 4ab -1ab    ", &
+      "85:2          ", "c4h^3         ", "p 4/n:2       ", "-p 4a         ", &
+      "86:1          ", "c4h^4         ", "p 42/n:1      ", "p 4n -1n      ", &
+      "86:2          ", "c4h^4         ", "p 42/n:2      ", "-p 4bc        ", &
+      "87            ", "c4h^5         ", "i 4/m         ", "-i 4          ", &
+      "88:1          ", "c4h^6         ", "i 41/a:1      ", "i 4bw -1bw    ", &
+      "88:2          ", "c4h^6         ", "i 41/a:2      ", "-i 4ad        ", &
+      "89            ", "d4^1          ", "p 4 2 2       ", "p 4 2         ", &
+      "90            ", "d4^2          ", "p 4 21 2      ", "p 4ab 2ab     ", &
+      "91:           ", "d4^3          ", "p 41 2 2      ", "p 4w 2c       ", &
+      "91:           ", "d4^3          ", "p 41 2 2      ", "p 41 2c       ", &
+      "92            ", "d4^4          ", "p 41 21 2     ", "p 4abw 2nw    ", &
+      "93:           ", "d4^5          ", "p 42 2 2      ", "p 4c 2        "/
+   data spacegroup_conversion_table(1:4,421:450)/ &
+      "93:           ", "d4^5          ", "p 42 2 2      ", "p 42 2        ", &
+      "94            ", "d4^6          ", "p 42 21 2     ", "p 4n 2n       ", &
+      "95:           ", "d4^7          ", "p 43 2 2      ", "p 4cw 2c      ", &
+      "95:           ", "d4^7          ", "p 43 2 2      ", "p 43 2c       ", &
+      "96            ", "d4^8          ", "p 43 21 2     ", "p 4nw 2abw    ", &
+      "97            ", "d4^9          ", "i 4 2 2       ", "i 4 2         ", &
+      "98            ", "d4^10         ", "i 41 2 2      ", "i 4bw 2bw     ", &
+      "99            ", "c4v^1         ", "p 4 m m       ", "p 4 -2        ", &
+      "100           ", "c4v^2         ", "p 4 b m       ", "p 4 -2ab      ", &
+      "101:          ", "c4v^3         ", "p 42 c m      ", "p 4c -2c      ", &
+      "101:          ", "c4v^3         ", "p 42 c m      ", "p 42 -2c      ", &
+      "102           ", "c4v^4         ", "p 42 n m      ", "p 4n -2n      ", &
+      "103           ", "c4v^5         ", "p 4 c c       ", "p 4 -2c       ", &
+      "104           ", "c4v^6         ", "p 4 n c       ", "p 4 -2n       ", &
+      "105:          ", "c4v^7         ", "p 42 m c      ", "p 4c -2       ", &
+      "105:          ", "c4v^7         ", "p 42 m c      ", "p 42 -2       ", &
+      "106:          ", "c4v^8         ", "p 42 b c      ", "p 4c -2ab     ", &
+      "106:          ", "c4v^8         ", "p 42 b c      ", "p 42 -2ab     ", &
+      "107           ", "c4v^9         ", "i 4 m m       ", "i 4 -2        ", &
+      "108           ", "c4v^10        ", "i 4 c m       ", "i 4 -2c       ", &
+      "109           ", "c4v^11        ", "i 41 m d      ", "i 4bw -2      ", &
+      "110           ", "c4v^12        ", "i 41 c d      ", "i 4bw -2c     ", &
+      "111           ", "d2d^1         ", "p -4 2 m      ", "p -4 2        ", &
+      "112           ", "d2d^2         ", "p -4 2 c      ", "p -4 2c       ", &
+      "113           ", "d2d^3         ", "p -4 21 m     ", "p -4 2ab      ", &
+      "114           ", "d2d^4         ", "p -4 21 c     ", "p -4 2n       ", &
+      "115           ", "d2d^5         ", "p -4 m 2      ", "p -4 -2       ", &
+      "116           ", "d2d^6         ", "p -4 c 2      ", "p -4 -2c      ", &
+      "117           ", "d2d^7         ", "p -4 b 2      ", "p -4 -2ab     ", &
+      "118           ", "d2d^8         ", "p -4 n 2      ", "p -4 -2n      "/
+   data spacegroup_conversion_table(1:4,451:480)/ &
+      "119           ", "d2d^9         ", "i -4 m 2      ", "i -4 -2       ", &
+      "120           ", "d2d^10        ", "i -4 c 2      ", "i -4 -2c      ", &
+      "121           ", "d2d^11        ", "i -4 2 m      ", "i -4 2        ", &
+      "122           ", "d2d^12        ", "i -4 2 d      ", "i -4 2bw      ", &
+      "123           ", "d4h^1         ", "p 4/m m m     ", "-p 4 2        ", &
+      "124           ", "d4h^2         ", "p 4/m c c     ", "-p 4 2c       ", &
+      "125:1         ", "d4h^3         ", "p 4/n b m:1   ", "p 4 2 -1ab    ", &
+      "125:2         ", "d4h^3         ", "p 4/n b m:2   ", "-p 4a 2b      ", &
+      "126:1         ", "d4h^4         ", "p 4/n n c:1   ", "p 4 2 -1n     ", &
+      "126:2         ", "d4h^4         ", "p 4/n n c:2   ", "-p 4a 2bc     ", &
+      "127           ", "d4h^5         ", "p 4/m b m     ", "-p 4 2ab      ", &
+      "128           ", "d4h^6         ", "p 4/m n c     ", "-p 4 2n       ", &
+      "129:1         ", "d4h^7         ", "p 4/n m m:1   ", "p 4ab 2ab -1ab", &
+      "129:2         ", "d4h^7         ", "p 4/n m m:2   ", "-p 4a 2a      ", &
+      "130:1         ", "d4h^8         ", "p 4/n c c:1   ", "p 4ab 2n -1ab ", &
+      "130:2         ", "d4h^8         ", "p 4/n c c:2   ", "-p 4a 2ac     ", &
+      "131           ", "d4h^9         ", "p 42/m m c    ", "-p 4c 2       ", &
+      "132           ", "d4h^10        ", "p 42/m c m    ", "-p 4c 2c      ", &
+      "133:1         ", "d4h^11        ", "p 42/n b c:1  ", "p 4n 2c -1n   ", &
+      "133:2         ", "d4h^11        ", "p 42/n b c:2  ", "-p 4ac 2b     ", &
+      "134:1         ", "d4h^12        ", "p 42/n n m:1  ", "p 4n 2 -1n    ", &
+      "134:2         ", "d4h^12        ", "p 42/n n m:2  ", "-p 4ac 2bc    ", &
+      "135:          ", "d4h^13        ", "p 42/m b c    ", "-p 4c 2ab     ", &
+      "135:          ", "d4h^13        ", "p 42/m b c    ", "-p 42 2ab     ", &
+      "136           ", "d4h^14        ", "p 42/m n m    ", "-p 4n 2n      ", &
+      "137:1         ", "d4h^15        ", "p 42/n m c:1  ", "p 4n 2n -1n   ", &
+      "137:2         ", "d4h^15        ", "p 42/n m c:2  ", "-p 4ac 2a     ", &
+      "138:1         ", "d4h^16        ", "p 42/n c m:1  ", "p 4n 2ab -1n  ", &
+      "138:2         ", "d4h^16        ", "p 42/n c m:2  ", "-p 4ac 2ac    ", &
+      "139           ", "d4h^17        ", "i 4/m m m     ", "-i 4 2        "/
+   data spacegroup_conversion_table(1:4,481:510)/ &
+      "140           ", "d4h^18        ", "i 4/m c m     ", "-i 4 2c       ", &
+      "141:1         ", "d4h^19        ", "i 41/a m d:1  ", "i 4bw 2bw -1bw", &
+      "141:2         ", "d4h^19        ", "i 41/a m d:2  ", "-i 4bd 2      ", &
+      "142:1         ", "d4h^20        ", "i 41/a c d:1  ", "i 4bw 2aw -1bw", &
+      "142:2         ", "d4h^20        ", "i 41/a c d:2  ", "-i 4bd 2c     ", &
+      "143           ", "c3^1          ", "p 3           ", "p 3           ", &
+      "144           ", "c3^2          ", "p 31          ", "p 31          ", &
+      "145           ", "c3^3          ", "p 32          ", "p 32          ", &
+      "146:h         ", "c3^4          ", "r 3:h         ", "r 3           ", &
+      "146:r         ", "c3^4          ", "r 3:r         ", "p 3*          ", &
+      "147           ", "c3i^1         ", "p -3          ", "-p 3          ", &
+      "148:h         ", "c3i^2         ", "r -3:h        ", "-r 3          ", &
+      "148:r         ", "c3i^2         ", "r -3:r        ", "-p 3*         ", &
+      "149           ", "d3^1          ", "p 3 1 2       ", "p 3 2         ", &
+      "150           ", "d3^2          ", "p 3 2 1       ", "p 3 2""       ", &
+      "151           ", "d3^3          ", "p 31 1 2      ", "p 31 2 (0 0 4)", & ! p 31 2c (0 0 1)
+      "152           ", "d3^4          ", "p 31 2 1      ", "p 31 2""      ", &
+      "153           ", "d3^5          ", "p 32 1 2      ", "p 32 2 (0 0 2)", & ! p 32 2c (0 0 -1)
+      "154           ", "d3^6          ", "p 32 2 1      ", "p 32 2""      ", &
+      "155:h         ", "d3^7          ", "r 3 2:h       ", "r 3 2""       ", &
+      "155:r         ", "d3^7          ", "r 3 2:r       ", "p 3* 2        ", &
+      "156           ", "c3v^1         ", "p 3 m 1       ", "p 3 -2""      ", &
+      "157           ", "c3v^2         ", "p 3 1 m       ", "p 3 -2        ", &
+      "158           ", "c3v^3         ", "p 3 c 1       ", "p 3 -2""c     ", &
+      "159           ", "c3v^4         ", "p 3 1 c       ", "p 3 -2c       ", &
+      "160:h         ", "c3v^5         ", "r 3 m:h       ", "r 3 -2""      ", &
+      "160:r         ", "c3v^5         ", "r 3 m:r       ", "p 3* -2       ", &
+      "161:h         ", "c3v^6         ", "r 3 c:h       ", "r 3 -2""c     ", &
+      "161:r         ", "c3v^6         ", "r 3 c:r       ", "p 3* -2n      ", &
+      "162           ", "d3d^1         ", "p -3 1 m      ", "-p 3 2        "/
+   data spacegroup_conversion_table(1:4,511:540)/ &
+      "163           ", "d3d^2         ", "p -3 1 c      ", "-p 3 2c       ", &
+      "164           ", "d3d^3         ", "p -3 m 1      ", "-p 3 2""      ", &
+      "165           ", "d3d^4         ", "p -3 c 1      ", "-p 3 2""c     ", &
+      "166:h         ", "d3d^5         ", "r -3 m:h      ", "-r 3 2""      ", &
+      "166:r         ", "d3d^5         ", "r -3 m:r      ", "-p 3* 2       ", &
+      "167:h         ", "d3d^6         ", "r -3 c:h      ", "-r 3 2""c     ", &
+      "167:r         ", "d3d^6         ", "r -3 c:r      ", "-p 3* 2n      ", &
+      "168           ", "c6^1          ", "p 6           ", "p 6           ", &
+      "169           ", "c6^2          ", "p 61          ", "p 61          ", &
+      "170           ", "c6^3          ", "p 65          ", "p 65          ", &
+      "171           ", "c6^4          ", "p 62          ", "p 62          ", &
+      "172           ", "c6^5          ", "p 64          ", "p 64          ", &
+      "173:          ", "c6^6          ", "p 63          ", "p 6c          ", &
+      "173:          ", "c6^6          ", "p 63          ", "p 63          ", &
+      "174           ", "c3h^1         ", "p -6          ", "p -6          ", &
+      "175           ", "c6h^1         ", "p 6/m         ", "-p 6          ", &
+      "176:          ", "c6h^2         ", "p 63/m        ", "-p 6c         ", &
+      "176:          ", "c6h^2         ", "p 63/m        ", "-p 63         ", &
+      "177           ", "d6^1          ", "p 6 2 2       ", "p 6 2         ", &
+      "178           ", "d6^2          ", "p 61 2 2      ", "p 61 2 (0 0 5)", & ! p 61 2 (0 0 -1)
+      "179           ", "d6^3          ", "p 65 2 2      ", "p 65 2 (0 0 1)", &
+      "180           ", "d6^4          ", "p 62 2 2      ", "p 62 2 (0 0 4)", & ! p 62 2c (0 0 1)
+      "181           ", "d6^5          ", "p 64 2 2      ", "p 64 2 (0 0 2)", & ! p 64 2c (0 0 -1)
+      "182:          ", "d6^6          ", "p 63 2 2      ", "p 6c 2c       ", &
+      "182:          ", "d6^6          ", "p 63 2 2      ", "p 63 2c       ", &
+      "183           ", "c6v^1         ", "p 6 m m       ", "p 6 -2        ", &
+      "184           ", "c6v^2         ", "p 6 c c       ", "p 6 -2c       ", &
+      "185:          ", "c6v^3         ", "p 63 c m      ", "p 6c -2       ", &
+      "185:          ", "c6v^3         ", "p 63 c m      ", "p 63 -2       ", &
+      "186:          ", "c6v^4         ", "p 63 m c      ", "p 6c -2c      "/
+   data spacegroup_conversion_table(1:4,541:570)/ &
+      "186:          ", "c6v^4         ", "p 63 m c      ", "p 63 -2c      ", &
+      "187           ", "d3h^1         ", "p -6 m 2      ", "p -6 2        ", &
+      "188           ", "d3h^2         ", "p -6 c 2      ", "p -6c 2       ", &
+      "189           ", "d3h^3         ", "p -6 2 m      ", "p -6 -2       ", &
+      "190           ", "d3h^4         ", "p -6 2 c      ", "p -6c -2c     ", &
+      "191           ", "d6h^1         ", "p 6/m m m     ", "-p 6 2        ", &
+      "192           ", "d6h^2         ", "p 6/m c c     ", "-p 6 2c       ", &
+      "193:          ", "d6h^3         ", "p 63/m c m    ", "-p 6c 2       ", &
+      "193:          ", "d6h^3         ", "p 63/m c m    ", "-p 63 2       ", &
+      "194:          ", "d6h^4         ", "p 63/m m c    ", "-p 6c 2c      ", &
+      "194:          ", "d6h^4         ", "p 63/m m c    ", "-p 63 2c      ", &
+      "195           ", "t^1           ", "p 2 3         ", "p 2 2 3       ", &
+      "196           ", "t^2           ", "f 2 3         ", "f 2 2 3       ", &
+      "197           ", "t^3           ", "i 2 3         ", "i 2 2 3       ", &
+      "198           ", "t^4           ", "p 21 3        ", "p 2ac 2ab 3   ", &
+      "199           ", "t^5           ", "i 21 3        ", "i 2b 2c 3     ", &
+      "200           ", "th^1          ", "p m -3        ", "-p 2 2 3      ", &
+      "201:1         ", "th^2          ", "p n -3:1      ", "p 2 2 3 -1n   ", &
+      "201:2         ", "th^2          ", "p n -3:2      ", "-p 2ab 2bc 3  ", &
+      "202           ", "th^3          ", "f m -3        ", "-f 2 2 3      ", &
+      "203:1         ", "th^4          ", "f d -3:1      ", "f 2 2 3 -1d   ", &
+      "203:2         ", "th^4          ", "f d -3:2      ", "-f 2uv 2vw 3  ", &
+      "204           ", "th^5          ", "i m -3        ", "-i 2 2 3      ", &
+      "205           ", "th^6          ", "p a -3        ", "-p 2ac 2ab 3  ", &
+      "206           ", "th^7          ", "i a -3        ", "-i 2b 2c 3    ", &
+      "207           ", "o^1           ", "p 4 3 2       ", "p 4 2 3       ", &
+      "208           ", "o^2           ", "p 42 3 2      ", "p 4n 2 3      ", &
+      "209           ", "o^3           ", "f 4 3 2       ", "f 4 2 3       ", &
+      "210           ", "o^4           ", "f 41 3 2      ", "f 4d 2 3      ", &
+      "211           ", "o^5           ", "i 4 3 2       ", "i 4 2 3       "/
+   data spacegroup_conversion_table(1:4,571:593)/ &
+      "212           ", "o^6           ", "p 43 3 2      ", "p 4acd 2ab 3  ", &
+      "213           ", "o^7           ", "p 41 3 2      ", "p 4bd 2ab 3   ", &
+      "214           ", "o^8           ", "i 41 3 2      ", "i 4bd 2c 3    ", &
+      "215           ", "td^1          ", "p -4 3 m      ", "p -4 2 3      ", &
+      "216           ", "td^2          ", "f -4 3 m      ", "f -4 2 3      ", &
+      "217           ", "td^3          ", "i -4 3 m      ", "i -4 2 3      ", &
+      "218           ", "td^4          ", "p -4 3 n      ", "p -4n 2 3     ", &
+      "219           ", "td^5          ", "f -4 3 c      ", "f -4a 2 3     ", & ! f -4c 2 3
+      "220           ", "td^6          ", "i -4 3 d      ", "i -4bd 2c 3   ", &
+      "221           ", "oh^1          ", "p m -3 m      ", "-p 4 2 3      ", &
+      "222:1         ", "oh^2          ", "p n -3 n:1    ", "p 4 2 3 -1n   ", &
+      "222:2         ", "oh^2          ", "p n -3 n:2    ", "-p 4a 2bc 3   ", &
+      "223           ", "oh^3          ", "p m -3 n      ", "-p 4n 2 3     ", &
+      "224:1         ", "oh^4          ", "p n -3 m:1    ", "p 4n 2 3 -1n  ", &
+      "224:2         ", "oh^4          ", "p n -3 m:2    ", "-p 4bc 2bc 3  ", &
+      "225           ", "oh^5          ", "f m -3 m      ", "-f 4 2 3      ", &
+      "226           ", "oh^6          ", "f m -3 c      ", "-f 4a 2 3     ", & ! -f 4c 2 3
+      "227:1         ", "oh^7          ", "f d -3 m:1    ", "f 4d 2 3 -1d  ", &
+      "227:2         ", "oh^7          ", "f d -3 m:2    ", "-f 4vw 2vw 3  ", &
+      "228:1         ", "oh^8          ", "f d -3 c:1    ", "f 4d 2 3 -1ad ", & ! f 4d 2 3 -1cd
+      "228:2         ", "oh^8          ", "f d -3 c:2    ", "-f 4ud 2vw 3  ", & ! -f 4cvw 2vw 3
+      "229           ", "oh^9          ", "i m -3 m      ", "-i 4 2 3      ", &
+      "230           ", "oh^10         ", "i a -3 d      ", "-i 4bd 2c 3   "/
+
+   debug_list :: VEC{STR}*, private  DEFAULT_NULL
+
+contains
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+      self :: PTR
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of object
+      nullify(.seitz)
+      nullify(.product_of_symops)
+      nullify(.inverse_of_symops)
+      nullify(.inverted_symop)
+      nullify(.translated_symop)
+      nullify(.unique_SF_symop)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts of object
+      .seitz.destroy
+      .product_of_symops.destroy
+      .inverse_of_symops.destroy
+      .inverted_symop.destroy
+      .translated_symop.destroy
+      .unique_SF_symop.destroy
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
+   end
+
+   copy(sg) ::: leaky
+   ! Make a copy of "sg"
+      sg :: SPACEGROUP, IN
+
+      self = sg
+
+      .nullify_ptr_part
+
+      if (sg.seitz.created)             .seitz.create_copy(sg.seitz)
+      if (sg.product_of_symops.created) .product_of_symops.create_copy(sg.product_of_symops)
+      if (sg.inverse_of_symops.created) .inverse_of_symops.create_copy(sg.inverse_of_symops)
+
+      if (sg.inverted_symop.created)    .inverted_symop.create_copy(sg.inverted_symop)
+      if (sg.translated_symop.created)  .translated_symop.create_copy(sg.translated_symop)
+      if (sg.unique_SF_symop.created)   .unique_SF_symop.create_copy(sg.unique_SF_symop)
+
+   end
+
+   set_defaults ::: leaky
+   ! Set default spacegroup
+
+      .IT_symbol             = "?"
+      .IT_group_number       = 0
+      .Hall_symbol           = "?"
+      .HM_symbol             = "?"
+      .Schoenflies_symbol    = "?"
+      .lattice_symbol        = "?"
+      .lattice_symbol_index  = 0
+      .lattice_type          = "?"
+      .centrosymmetric       = FALSE
+      .axis_order            = 0
+      .axis_direction_symbol = " "
+      .axis_direction_index  = 0
+      .has_axis_bar          = FALSE
+      .translation_symbol    = " "
+      .origin_shift          = 0
+      .nL                    = 0
+      .nR                    = 0
+      .nG                    = 0
+      .n_seitz               = 0
+      .n_inverted_symops     = 0
+      .n_unique_SF_symops    = 0
+                             
+      .analyzed              = FALSE
+
+   end
+
+   set_IT_symbol(IT_symbol)
+   ! Set the international table symbol to be "IT_symbol"
+      IT_symbol :: STR
+
+      symbol :: STR
+      ind,pos :: INT
+
+      ! Lower case the symbol
+      symbol = IT_symbol
+      symbol.to_lower_case
+
+      ind = 0
+
+      ! Is the IT symbol in the table?
+      if (symbol==" " OR symbol=="?") then
+
+         WARN("IT_symbol is blank or ?")
+         return
+
+      else if (any(symbol==spacegroup_conversion_table(1,:))) then
+
+         ! Matching index
+         ind = spacegroup_conversion_table(1,:).index_of(symbol)
+         
+         ! Set IT symbol
+         .IT_symbol = symbol.trim_blanks_from_start
+         
+         ! Set the IT group no.
+         pos = index(.IT_symbol,":")
+         if (pos==0) then; .IT_group_number = .IT_symbol.to_int
+         else;             .IT_group_number = .IT_symbol(1:pos-1).to_int
+         end
+            
+         ! Set the other two symbols
+         .Schoenflies_symbol = spacegroup_conversion_table(2,ind)
+         .HM_symbol          = spacegroup_conversion_table(3,ind)
+            
+         ! Set the Hall symbol
+         .set_Hall_symbol(spacegroup_conversion_table(4,ind))
+         
+      else if (spacegroup_conversion_table(1,:).has_any_including(symbol)) then 
+         
+        ind = spacegroup_conversion_table(1,:).index_of_first_that_includes(trim(symbol))
+        .IT_symbol = spacegroup_conversion_table(1,ind)
+        WARN("Symbol "//symbol.trim//" does not match any specific IT symbol")
+        WARN("Matching symbols are:")
+        .put_matching_IT_symbols(symbol)
+         
+      end
+         
+      .analyzed = FALSE
+
+   end
+
+   set_HM_symbol(HM_symbol)
+   ! Set the Herman-Mauguin symbol to be "HM_symbol"
+      HM_symbol :: STR
+      symbol :: STR
+      ind,pos :: INT
+
+      ! Set the HM symbol
+      .HM_symbol = HM_symbol.trim_blanks_from_start
+
+      ! Replace underscores with spaces
+      if (index(trim(.HM_symbol),"_")/=0) .HM_symbol.replace_all("_"," ") 
+
+      ! Lower case it
+      symbol = .HM_symbol
+      symbol.to_lower_case
+
+      ind = 0
+
+      ! Is the IT symbol in the table?
+      if (symbol==" " OR symbol=="?") then
+
+         WARN("IT_symbol is blank or ?")
+         return
+
+      else if (any(symbol==spacegroup_conversion_table(3,:))) then
+
+         ! Matching index
+         ind = spacegroup_conversion_table(3,:).index_of(symbol)
+
+         ! Set HM symbol
+         .HM_symbol = symbol.trim_blanks_from_start
+
+         ! Set the IT symbol
+         .IT_symbol = spacegroup_conversion_table(1,ind)
+
+         ! Set the IT groutp no.
+         pos = index(.IT_symbol,":")
+         if (pos==0) then; .IT_group_number = .IT_symbol.to_int
+         else;             .IT_group_number = .IT_symbol(1:pos-1).to_int
+         end
+
+         ! Set Schonflies
+         .Schoenflies_symbol = spacegroup_conversion_table(2,ind)
+
+         ! Set Hall symbol
+         .set_Hall_symbol(spacegroup_conversion_table(4,ind))
+
+      else if (spacegroup_conversion_table(1,:).has_any_including(symbol)) then 
+
+         WARN("Symbol "//symbol.trim//" does not match any specific HM symbol")
+
+         ! Set unknown spacegroup
+         .IT_symbol          = "?"
+         .IT_group_number    = 0
+         .Schoenflies_symbol = "?"
+         .HM_symbol          = "?"
+
+         ! Report near matches
+         ind = spacegroup_conversion_table(3,:).index_of_first_that_includes(trim(symbol))
+         if (ind>0) then
+            WARN("There were part-matching symbols are:")
+            .put_matching_HM_symbols(symbol)
+         end
+
+      end
+
+      .analyzed = FALSE
+
+   end
+
+   set_Hall_symbol(Hall_symbol)
+   ! Set the Hall symbol to be "Hall_symbol"
+      Hall_symbol :: STR
+      symbol :: STR
+      ind,pos :: INT
+
+      .Hall_symbol = Hall_symbol.trim_blanks_from_start
+
+      ! Replace underscores with spaces
+      if (index(trim(.Hall_symbol),"_")/=0) .Hall_symbol.replace_all("_"," ")  
+
+      ! Lower case it
+      .Hall_symbol.to_lower_case
+
+      ! Convert to equivalent notations
+
+      symbol = .Hall_symbol
+
+      if (any(symbol==spacegroup_conversion_table(4,:))) then
+
+         ind = spacegroup_conversion_table(4,:).index_of(symbol)
+         .IT_symbol          = spacegroup_conversion_table(1,ind)
+         pos = index(.IT_symbol,":")
+         if (pos==0) then; .IT_group_number = .IT_symbol.to_int
+         else;             .IT_group_number = .IT_symbol(1:pos-1).to_int
+         end
+         .Schoenflies_symbol = spacegroup_conversion_table(2,ind)
+         .HM_symbol          = spacegroup_conversion_table(3,ind)
+
+      else
+
+         WARN("Non-standard Hall symbol, "//symbol.trim)
+         .IT_symbol          = "?"
+         .IT_group_number    = 0
+         .Schoenflies_symbol = "?"
+         .HM_symbol          = "?"
+
+      end
+
+      .analyzed = FALSE
+
+   end
+
+   set_from_symops(mat)
+   ! This will go through every spacegroup and setting to see if we
+   ! can match the symops in "mat".
+      mat :: MAT3{REAL}, IN
+
+   ENSURE(mat.dim1==4,"wrong 1st dimension, mat")
+   ENSURE(mat.dim2==4,"wrong 1st dimension, mat")
+
+      symbol :: STR
+      found :: BIN
+      sg :: SPACEGROUP*
+      g :: INT
+
+      found = FALSE
+
+      stdout.flush
+      stdout.text("Trying to correct wrong/missing spacegroup symbol.")
+
+      ! Loop over all spacegroups settings
+      do g = 1,spacegroup_conversion_table.dim2
+     
+         ! Get the symbol
+         symbol = spacegroup_conversion_table(4,g)
+     
+         ! Create and analyze
+         sg.create
+         sg.set_Hall_symbol(trim(symbol))
+         sg.analyze
+
+         ! Are the symops the same?
+         if (sg.seitz_same_as(mat,warn=FALSE)) then
+            stdout.flush
+            stdout.text("Found spacegroup Hall symbol: "//trim(symbol))
+            found = TRUE
+            exit
+         end
+
+         ! Clean
+         sg.destroy
+     
+      end
+
+      if (found) then
+
+         ! Set the Hall symbol
+         .set_Hall_symbol(symbol)
+
+      else
+
+         ! Unfound
+         stdout.flush
+         stdout.text("Unable to correct wrong/missing spacegroup symbol")
+
+      end
+
+      ! Clean
+      sg.destroy
+
+   end
+
+!  =============
+!  Input methods
+!  =============
+
+   ! NOTE: always analyze the spacegroup after reading keywords
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process a command "keyword". Data is inputted from "stdin", unless
+   ! "word" is a sequence of blank separated strings. In this case,
+   ! the sequence is processed as if it were a separate file.
+      keyword :: STR
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+         case ("}                      ")  ! exit case
+         case ("analyze                "); .analyze
+         case ("hall_symbol=           "); .read_Hall_symbol
+         case ("hermann_mauguin_symbol="); .read_HM_symbol
+         case ("hm_symbol=             "); .read_HM_symbol
+         case ("it_symbol=             "); .read_IT_symbol
+         case ("jones_faithful_symbols="); .read_jones_faithful_symbols
+         case ("put                    "); .put
+         case ("debug_off              "); .read_debug_off
+         case ("debug_on               "); .read_debug_on
+         case  default ;        UNKNOWN(word)
+      end
+
+   end
+
+   read_IT_symbol ::: leaky
+   ! Read the internation table symbol
+      symbol :: STR
+      stdin.read(symbol)
+      .set_IT_symbol(symbol)
+   end
+
+   read_Hall_symbol ::: leaky
+   ! Read the Hall symbol
+      symbol :: STR
+      stdin.read(symbol)
+      .set_Hall_symbol(symbol)
+   end
+
+   read_HM_symbol ::: leaky
+   ! Read the Hermann-Mauguin symbol
+      symbol :: STR
+      stdin.read(symbol)
+      .set_HM_symbol(symbol)
+   end
+
+   read_CIF(cif) ::: leaky
+   ! Read information from a CIF file, "cif". For a valid spacegroup either the
+   ! Hall symbol or the symmetry equivalent positions must be present. The
+   ! Hermann-Maiguin symbol is only used if the Hall symbol is not found.
+      cif :: CIF
+
+      found,jf_found,matched :: BIN
+      item,symbol,IT_symbol :: STR
+      jf_symbols,itemvec :: VEC{STR}*
+      mat :: MAT3{REAL}*
+      list :: MAT{STR}*
+
+      ! Initialise
+      .Hall_symbol = " "
+      .HM_symbol = " "
+      .analyzed = FALSE
+
+      ! First look for the Hall symbol, trying old and new labels
+      item = "_symmetry_space_group_name_Hall"
+      cif.find_item(trim(item),found)
+      if (NOT found) then ! cif v 1.1
+         item = "_space_group_name_Hall"
+         cif.find_item(trim(item),found)
+      end
+
+      ! Read the Hall symbol if there
+      if (found) then     
+         cif.read_item(trim(item),symbol,itemvec)
+         if (symbol(1:1)/="?") then
+            .set_Hall_symbol(symbol)
+            ENSURE(itemvec.destroyed,"multi-line Hall symbol")
+         else             ! "?" is not a valid symbol
+            found = FALSE
+         end
+      end
+
+      ! The Hall symbol was not there ...
+      if (NOT found) then 
+
+         ! Look for a HM symbol
+         item = "_symmetry_space_group_name_H-M"
+         cif.find_item(trim(item),found)
+         if (NOT found) then ! cif v 1.1
+            item = "_space_group_name_H-M_alt"
+            cif.find_item(trim(item),found)
+         end
+
+         ! Read the Hermann-Mauguin symbol
+         if (found) then  
+            cif.read_item(trim(item),symbol,itemvec)
+            if (symbol(1:1)/="?") then
+               .set_HM_symbol(symbol)
+               ENSURE(itemvec.destroyed,"multi-line HM symbol")
+               if (.IT_group_number==0) found = FALSE
+            else
+               found = FALSE
+            end
+         end
+
+      end
+
+      ! The HM symbol was not there either ... 
+      if (NOT found) then 
+
+         ! In desperation, try Int Tables number
+         item = "_symmetry_Int_Tables_number"
+         cif.find_item(trim(item),found)
+
+         ! Read the IT symbol
+         if (found) then  
+            cif.read_item(trim(item),IT_symbol,itemvec)
+            .set_IT_symbol(IT_symbol)
+         else
+            .set_IT_symbol("?")
+         end
+
+      end
+
+      ! Now look for Jones faithful symbols, if there ...
+      nullify(jf_symbols)
+      item = "_symmetry_equiv_pos_as_xyz"
+      cif.find_looped_item(trim(item),jf_found)
+      if (NOT jf_found) then ! cif v 1.1
+         item = "_space_group_symop_operation_xyz"
+         cif.find_item(trim(item),jf_found)
+      end
+
+      ! Always try and read the Jones-Faithful symbol
+      nullify(mat)
+      if (jf_found) then     
+         list.create(6,2) 
+         list = transpose( &
+                reshape(["/2 +","/2+ ", &
+                         "/2 -","/2- ", &
+                         "/3 +","/3+ ", &
+                         "/3 -","/3- ", &
+                         "/4 +","/4+ ", &
+                         "/4 -","/4- "],[2,6]))
+         cif.file.set_replacement_list(list)
+         cif.read_looped_item(trim(item),jf_symbols)
+         cif.file.destroy_replacement_list
+         list.destroy
+         mat.create(4,4,size(jf_symbols))
+         .decode_Jones_Faithful_symbols(jf_symbols,mat)
+         jf_symbols.destroy
+      end
+
+      ! Get spacegroup symbol brute-force
+      if (((NOT found) OR .Hall_symbol.is_one_of([" ","?"])) AND jf_found) then
+         .set_from_symops(mat)
+      end
+
+      ! Analyze the spacegroup symbol
+      if (.Hall_symbol/=" " AND .Hall_symbol/="?") .analyze
+
+      ! Compare with JF matrices, if there
+      if (.analyzed AND mat.created) then
+
+         matched = .seitz_same_as(mat,warn=TRUE)
+
+         if (NOT matched) then
+
+            stdout.flush
+            stdout.text("WARNING: inconsistent seitz matrices, using Jones-Faithful matrices")
+
+            .set_defaults
+            .seitz.destroy
+            .seitz => mat
+            .n_seitz = mat.dim3
+
+            .product_of_symops.destroy
+            .inverse_of_symops.destroy
+            .product_of_symops.create(.n_seitz,.n_seitz)
+            .inverse_of_symops.create(.n_seitz)
+            .make_multiplication_table
+            .make_inverted_symops        
+            .make_translated_symops
+            .make_unique_SF_symops
+
+            ! This counts as being analyzed ...
+            .analyzed = TRUE 
+
+         else
+
+            mat.destroy
+
+         end
+
+      end
+
+      ! Use JF matrices is spacegroup not there
+      if (NOT .analyzed AND mat.created) then
+
+         .set_defaults
+         .seitz => mat
+         .n_seitz = mat.dim3
+
+         .product_of_symops.destroy
+         .inverse_of_symops.destroy
+         .product_of_symops.create(.n_seitz,.n_seitz)
+         .inverse_of_symops.create(.n_seitz)
+         .make_multiplication_table
+         .make_inverted_symops        
+         .make_translated_symops
+         .make_unique_SF_symops
+
+         ! This counts as being analyzed ...
+         .analyzed = TRUE 
+
+      end
+
+      ! Use JF matrices is spacegroup not there
+      if (NOT .analyzed) then
+         DIE("Can't find spacegroup information")
+      end
+
+   end
+
+   read_jones_faithful_symbols ::: leaky
+   ! Read the jones faithful symbols.
+      jf_symbols :: VEC{STR}*
+    ! list :: MAT{STR}*
+      stdin.read_ptr(jf_symbols)
+    ! jf_symbols.remove_blanks
+    ! list.create(6,2) 
+    ! list = transpose( &
+    !        reshape(["/2 +","/2+ ", &
+    !                 "/2 -","/2- ", &
+    !                 "/3 +","/3+ ", &
+    !                 "/3 -","/3- ", &
+    !                 "/4 +","/4+ ", &
+    !                 "/4 -","/4- "],[2,6]))
+    ! list.destroy
+    ! do i = 1,list.dim
+    !    jf_symbols.replace_all(list(1,i),list(2,i)) 
+    ! end
+
+      ! Generate the Seitz operators
+      .seitz.destroy
+      .n_seitz = jf_symbols.dim
+      .seitz.create(4,4,.n_seitz)
+      .decode_Jones_Faithful_symbols(jf_symbols,.seitz)
+      jf_symbols.destroy
+
+      ! These are used to save time in SF calcs
+      .product_of_symops.destroy
+      .inverse_of_symops.destroy
+      .product_of_symops.create(.n_seitz,.n_seitz)
+      .inverse_of_symops.create(.n_seitz)
+      .make_multiplication_table
+      .make_inverted_symops        
+      .make_translated_symops
+      .make_unique_SF_symops
+
+      ! This counts as being analyzed ...
+      .analyzed = TRUE 
+
+   end
+
+!  =======================
+!  Spacegroup construction
+!  =======================
+
+   analyze ::: leaky
+   ! Analyze the spacegroup symbol
+
+      ! Do we need to anlayze it?
+      if (.analyzed) return
+
+      ! Clean up
+      .destroy_ptr_part
+
+      ! Decode the Hall symbol
+      .decode_Hall_symbol
+      .set_lattice_type
+      .set_spacegroup_order
+
+      ! Make the Seitz operators
+      .seitz.create(4,4,.n_seitz)
+      .seitz = ZERO
+      .form_L_seitz
+      .form_S_seitz
+      .generate_seitz
+      .shift_origin
+
+      ! Group things
+      .product_of_symops.create(.n_seitz,.n_seitz)
+      .inverse_of_symops.create(.n_seitz)
+      .make_multiplication_table
+
+      ! These are used to save time in SF calcs
+      .make_inverted_symops        
+      .make_translated_symops
+      .make_unique_SF_symops
+
+      ! Analyzed
+      .analyzed = TRUE
+
+   end
+
+   decode_Hall_symbol
+   ! Decode the Hall notation symbol for the spacegroup
+
+      buffer :: BUFFER
+      symbol,lattice,generator :: STR
+      g :: INT
+
+      ! Initialize
+      buffer.nullify_ptr_part
+      buffer.set_defaults
+
+      ! Replace explicit origin brackets (if any)
+      symbol = trim(.Hall_symbol)
+      if (index(trim(symbol),"(")/=0) symbol.replace_all("(","( ") 
+      if (index(trim(symbol),")")/=0) symbol.replace_all(")"," )")
+
+      ! Analyze the symbol into items
+      buffer.set_and_analyze(symbol)
+
+      ! Get lattice symbol
+      buffer.get_item(lattice)
+
+      ! === Decode lattice symbol ===
+      .decode_Hall_lattice_symbol(lattice)
+
+      ! Defaults for crystal axis "N" symbols
+      .has_axis_bar          = FALSE
+      .axis_order            = 1
+      .axis_direction_symbol = "_"   ! this means a blank
+      .axis_direction_index  = 0
+      .translation_symbol    = "_"   
+      .origin_shift          = 0
+
+      ! Analyze the crystal axis "N" symbols
+      ! Loop over crystal axis generators
+      do g = 1,4                            
+
+         ! Anything in buffer?
+         if (buffer.exhausted) return          
+
+         ! Get the generator
+         buffer.get_item(generator)
+
+         ! Explicit origin present?
+         if (generator(1:1)=="(") exit                    
+
+         ! === Decode generator symbol ===
+         .decode_Hall_generator_symbol(generator,g)
+
+      end
+
+      ! Set origin shift
+      if (NOT buffer.exhausted) then
+
+         ! Extract change of origin vector
+         buffer.get_int(.origin_shift(1))
+         buffer.get_int(.origin_shift(2))
+         buffer.get_int(.origin_shift(3))
+         buffer.get_item(generator)
+
+         ! Sanity check
+         DIE_IF(generator/=")","missing origin-shift closing parenthesis")
+         DIE_IF(NOT buffer.exhausted,"extra items at end of Hall symbol")
+
+      end
+
+   end
+
+   decode_Hall_generator_symbol(generator,g)
+   ! Decode the "g"-th Hall symbol "generator" which has form N^A_T
+      generator :: STR, IN
+      g :: INT, IN
+
+   DIE_IF(generator==" ","generator "//trim(g.to_str)//" symbol is blank")
+
+      i :: INT
+      gen1,as :: STR(len=1)
+      gen :: STR
+      impossible,alpha_used,frac_used :: BIN
+
+      ! Next character
+      gen  = generator
+      gen1 = generator(1:1)
+
+      ! Centrosymmetric?
+      .has_axis_bar(g) = FALSE
+
+      if (gen1==bar_symbol) then
+      
+         .has_axis_bar(g) = TRUE
+
+         ! Next character
+         gen  = gen(2:)
+         gen1 = gen(1:1)
+
+      end
+
+      ! Must have first generator's axis order
+      DIE_IF(g==1 AND gen1==" ","missing first axis order symbol")
+
+      ! Get axis order
+      .axis_order(g) = 1
+
+      if (N_rotation_order_symbols.includes(gen1)) then
+
+         .axis_order(g) = index(N_rotation_order_symbols,gen1)
+
+         ! Next character
+         gen  = gen(2:)
+         gen1 = gen(1:1)
+
+      end
+
+      ! Set default axis symbol (underscore is blank)
+      .set_default_axis_directions(g)
+
+      if (gen1==" ") return
+
+      ! Any non-default axis symbol?
+      if (A_axis_direction_symbols.includes(gen1)) then
+
+         as = gen1
+         .axis_direction_symbol(g) = as
+         .axis_direction_index(g)  = index(A_axis_direction_symbols,as)
+
+         ! Sanity checks
+         impossible = (as==dash_symbol OR as==double_dash_symbol) AND (.axis_order(g)/=2 OR g==1)
+         DIE_IF(impossible,"' or "" rotation axis only for 2nd-order rotation, after 1st axis") 
+
+         impossible = as==star_symbol AND .axis_order(g)/=3
+         DIE_IF(impossible,"* axis only for 3rd-order rotation")
+
+         ! Next character
+         gen  = gen(2:)
+         gen1 = gen(1:1)
+
+      end
+
+      ! Check for translation symbols: a,b,c,u,v,w,n and 1 .. 6
+      .translation_symbol(:,g) = "_"    ! this means a blank
+
+      if (gen1==" ") return
+
+      alpha_used = FALSE
+      frac_used = FALSE
+
+      ! Loop over (at most 3) translation symbols ...
+      do i = 1,3                            
+
+         if (gen1==" ") exit
+
+         if (alpha_translation_symbols.includes(gen1)) then
+
+            WARN_IF(frac_used,"mixed alphabetical/numeric translation symbols")
+
+            .translation_symbol(i,g) = gen1
+
+            gen  = gen(2:)
+            gen1 = gen(1:1)
+
+            alpha_used = TRUE
+
+         else if (fractional_translation_symbols.includes(gen1)) then
+
+            alpha_used = alpha_used
+            WARN_IF(alpha_used,"mixed alphabetical/numeric translation symbols")
+
+            .translation_symbol(i,g) = gen1
+
+            gen  = gen(2:)
+            gen1 = gen(1:1)
+
+            frac_used = TRUE
+
+         else 
+
+            DIE("Unknown translation symbol, "//gen)
+
+         end
+
+      end
+
+   end
+
+   set_default_axis_directions(g)
+   ! Set the default axis directions for generator "g".
+   ! NOTE: this only works if the rotation axis order is up to date.
+      g :: INT, IN
+
+   DIE_IF(NOT g.is_in_range([1,4]),"g must be in range [1,4]")
+
+      .axis_direction_symbol(g) = "_"
+      .axis_direction_index(g)  = 0
+
+      select case (g)
+
+         case (1)
+            .axis_direction_symbol(g) = "z"
+            .axis_direction_index(g)  = 3
+         !  .axis_direction_index(g)  = index(A_axis_direction_symbols,"z")
+
+         case (2)
+            if (.axis_order(2)==2) then
+
+            ! See: International Tables B 1.4.2.3.1 (ii)
+
+            ! Implicit a axis
+            if (.axis_order(1)==2 OR .axis_order(1)==4) then
+            .axis_direction_symbol(g) = "x"
+            .axis_direction_index(g)  = 1
+         !  .axis_direction_index(g)  = index(A_axis_direction_symbols,"x")
+            end
+
+            ! Implicit a-b axis symbol. 
+            ! See: International Tables B Table 1.4.2.5 for: N^z 2' a-b
+            if (.axis_order(1)==3 OR .axis_order(1)==6) then
+            .axis_direction_symbol(g) = "'"
+            .axis_direction_index(g)  = 3
+            end
+
+            end
+
+         case (3)
+            if (.axis_order(3)==3) then
+            .axis_direction_symbol(g) = "*"
+            .axis_direction_index(g)  = 6
+         !  .axis_direction_index(g)  = index(A_axis_direction_symbols,"*")
+            end
+
+      end
+
+   end
+
+   decode_Hall_lattice_symbol(lattice) 
+   ! Decode the Hall "lattice" symbol
+      lattice :: STR, IN
+
+      latt  :: STR
+      latt1 :: STR(len=1)
+
+      ! Store lattice
+      latt = lattice
+
+      ! Centrosymmetric lattice? 
+      .centrosymmetric = FALSE
+      if (latt(1:1)==bar_symbol) then
+         .centrosymmetric = TRUE
+         latt = latt(2:)
+      end
+
+      ! Get lattice symbol
+      latt.to_upper_case
+      latt1 = latt(1:1)
+      DIE_IF(NOT lattice_symbols.includes(latt1),"unknown lattice, "//latt1)
+
+      ! Set the lattice symbol & lattice symbol index
+      .lattice_symbol       = latt1
+      .lattice_symbol_index = index(lattice_symbols,latt1)
+
+   end
+
+   set_lattice_type
+   ! Set the lattice type name
+   ENSURE(.axis_order.all_in_range([1,6]),"wrong axis orders")
+
+           if (.axis_order(3)==3) then;                       .lattice_type = "Cubic"
+      else if (.axis_order(1)==4 AND .axis_order(3)/=3) then; .lattice_type = "Tetragonal"
+      else if (.axis_order(1)==2 AND .axis_order(2)==2) then; .lattice_type = "Orthorhombic"
+      else if (.axis_order(1)==2 AND .axis_order(2)==1) then; .lattice_type = "Monoclinic"
+      else if (.axis_order(1)==6) then;                       .lattice_type = "Hexagonal"
+      else if (.axis_order(1)==3) then;                       .lattice_type = "Trigonal"
+      else if (.axis_order(1)==1) then;                       .lattice_type = "Triclinic"
+      end
+
+   end
+
+   set_spacegroup_order
+   ! Work out the spacegroup orders.
+   ENSURE(.lattice_symbol_index.is_in_range([1,8]),"wrong lattice index")
+
+      g :: INT
+
+      ! No. of translation generators
+      .nL = n_implied_translations(.lattice_symbol_index)
+      if (.centrosymmetric) .nL = 2*.nL   
+
+      ! No. of seitz matrices
+      .n_seitz = .nL*product(.axis_order) 
+
+      ! No. of generators
+      .nG = .nL                           
+      do g = 1,4
+         if (.axis_order(g)>1) .nG = .nG + 1
+      end
+
+   end
+
+   form_L_seitz
+   ! Form the seitz generators corresponding to the lattice symbol L
+
+      n,v :: INT
+
+      n = .nL
+      if (.centrosymmetric) n = .nL/2
+
+      do v = 1,n
+         .seitz(1:3,1:3,v)   = NN(:,:,1,1)  ! unit matrix
+         .seitz(1:3,  4,v)   = T_implied(1:3,v,.lattice_symbol_index)
+         .seitz(  4,1:3,v)   = ZERO
+         .seitz(4  ,  4,v)   = ONE
+      end
+
+      if (NOT .centrosymmetric) return
+
+      do v = 1,n
+         .seitz(1:3,1:3,n+v) = -NN(:,:,1,1) ! inversion matrix
+         .seitz(1:3,  4,n+v) = T_implied(1:3,v,.lattice_symbol_index)
+         .seitz(  4,1:3,n+v) = ZERO
+         .seitz(4  ,  4,n+v) = ONE
+      end
+
+   end
+
+   form_S_seitz
+   ! Add the rotational seitz matrices to the generator list
+
+      t :: VEC{REAL}(3)
+      fac :: REAL
+      as,ts :: STR(len=1)
+      g,N,i,v,ax,aw,sgn :: INT
+
+      .nR = 0
+
+      do g = 1,4
+
+         ! Axis order & axis direction index
+         N  = .axis_order(g)
+         as = .axis_direction_symbol(g)
+         ax = .axis_direction_index(g)
+
+         if (N<=1) cycle
+
+         t = ZERO
+
+         ! Loop over translation symbols
+         do i = 1,3 
+
+            ! Translational symbol
+            ts = .translation_symbol(i,g)
+
+            if (ts=="_") exit
+
+            ! ===Alphabetical translation===
+            v = index(alpha_translation_symbols,ts)
+            if (v/=0) then
+               t = t + T_translation_vector(:,v)
+            end
+
+            ! ===Fractional (numerical) translation===
+            v = index(fractional_translation_symbols,ts)
+
+            if (v/=0) then
+
+               ! This is the fractional translation
+               fac = REALIFY(v)/REALIFY(N)
+
+               ! This is the direction
+               select case (ax)
+
+                  case (1); t(1) = t(1) + fac ! x axis
+
+                  case (2); t(2) = t(2) + fac ! y axis
+
+                  case (3); t(3) = t(3) + fac ! z axis
+
+                  case (6)                    ! * axis
+                            t(1) = t(1) + fac ! * a+b+c
+                            t(2) = t(2) + fac
+                            t(3) = t(3) + fac
+
+                  case (4)                    ! " axis
+                     DIE_IF(g==1,"must have previous axis")
+                     aw = .axis_direction_index(g-1)
+                     select case (aw)
+                        case (1) 
+                            t(2) = t(2) + fac ! " b+c
+                            t(3) = t(3) + fac 
+                        case (2)
+                            t(1) = t(1) + fac ! " a+c
+                            t(3) = t(3) + fac 
+                        case (3)
+                            t(1) = t(1) + fac ! " a+b
+                            t(2) = t(2) + fac 
+                        case default
+                            DIE("previous axis for "" must be x, y or z")
+                     end
+
+                  case (5)                    ! ' axis
+                     DIE("no known spacegroup with fractional translation around ' face diagonal axis")
+                   ! DIE_IF(g==1,"must have previous axis")
+                   ! aw = .axis_direction_index(g-1)
+                   ! select case (aw)
+                   !    case (1) 
+                   !        t(2) = t(2) + fac ! ' b-c
+                   !        t(3) = t(3) - fac 
+                   !    case (2)
+                   !        t(1) = t(1) + fac ! ' a-c
+                   !        t(3) = t(3) - fac 
+                   !    case (3)
+                   !        t(1) = t(1) + fac ! ' a-b
+                   !        t(2) = t(2) - fac 
+                   !    case default
+                   !        DIE("previous axis for ' must be x, y or z")
+                   ! end
+
+                  case default
+                     DIE("The axis index must be in range [1,6]")
+
+               end 
+
+            end 
+
+         end ! loop on translations
+
+         ! Implicit a-b dash symbol. See:
+         ! International Tables B 1.4.2.3.1 (ii) and
+         ! International Tables B Table 1.4.2.5 for: N^z 2' a-b
+         if (as=="'") then
+            DIE_IF(g==1,"cannot have dash symbols on 1st generator")
+            N = 5                           ! see comments for NN matrices above
+            ax = .axis_direction_index(g)   ! NOTE: must be z
+            DIE_IF(ax/=3,"axis index index must be 3")
+         end
+
+         ! Double-dash axis symbol
+         if (as=='"') then
+            DIE_IF(g==1,"cannot have dash symbols on 1st generator")
+            N = 7                           ! see comments for NN matrices above
+            ax = .axis_direction_index(g-1) ! NOTE: axis of previous N symbol
+            DIE_IF(NOT ax.is_in_range([1,3]),"previous generator rotation axis must be in range [1,3]")
+         end
+
+         ! Star axis symbol
+         if (as=="*") then
+            DIE_IF(N/=3,"star operation is only for order 3 axis")
+            N  = 8
+            ax = 1
+         end
+
+         ! Final sanity check
+         ENSURE(N.is_in_range([1,8]), "Wrong axis for rotation matrix NN")
+         ENSURE(ax.is_in_range([1,3]),"Wrong axis symbol index")
+
+         ! Set sign
+         sgn = 1
+         if (.has_axis_bar(g)) sgn = -1
+
+         ! Add the generators to the list here
+         .nR = .nR + 1
+         .seitz(1:3,1:3,.nL+.nR) = sgn*NN(:,:,ax,N)
+         .seitz(1:3,  4,.nL+.nR) = t(:)
+         .seitz(  4,1:3,.nL+.nR) = ZERO
+         .seitz(4  ,  4,.nL+.nR) = ONE
+
+      end ! loop over axis
+
+   end
+
+   generate_seitz
+   ! Generate all the Seitz matrices from the minimal generating set.
+   ENSURE(.nG>0,"number of generators must be positive")
+
+      m,i,j,k :: INT
+      equal :: BIN
+
+      m = .nG
+
+      ! Anything to do?
+      if (m==.n_seitz) return
+
+      i = 1
+
+      main: do
+
+         i = i + 1
+         j = 1
+
+         ! Loop over pair products
+         pair_products: do
+
+            j = j + 1
+
+            ! Get new pair-product
+            .seitz(:,:,m+1).to_product_of(.seitz(:,:,j),.seitz(:,:,i))
+
+            ! Put translation part to unit cell
+            .seitz(1,4,m+1) = mod(.seitz(1,4,m+1)+TWO+TOL(8),ONE)-TOL(8)
+            .seitz(2,4,m+1) = mod(.seitz(2,4,m+1)+TWO+TOL(8),ONE)-TOL(8)
+            .seitz(3,4,m+1) = mod(.seitz(3,4,m+1)+TWO+TOL(8),ONE)-TOL(8)
+
+            ! Pair-product equal to previous?
+            equal = FALSE
+            do k = 1,m
+               equal = .seitz(:,:,m+1).same_as(.seitz(:,:,k))
+               if (equal) exit
+            end
+
+            ! A new seitz matrix found
+            if (NOT equal)   m = m + 1
+
+            ! Finished everything?
+            if (m==.n_seitz) exit main
+
+            ! Next pair?
+            if (j==m)        exit pair_products
+
+         end do pair_products
+
+         ! No more pairs -- should die here?
+         if (i==m) exit main
+
+      end do main
+
+   end
+
+   make_multiplication_table
+   ! Make the multiplication table
+   ENSURE(.n_seitz>0,"no seitz matrices")
+
+      i,j,k :: INT
+      equal :: BIN
+      prod :: MAT{REAL}(4,4)
+
+      ! Make the multiplication table
+      do i = 1,.n_seitz
+      do j = 1,.n_seitz
+
+         ! Get product
+         prod.to_product_of(.seitz(:,:,j),.seitz(:,:,i))
+
+         ! Put translation part to unit cell
+         prod(1,4) = mod(prod(1,4)+TWO+TOL(8),ONE)-TOL(8)
+         prod(2,4) = mod(prod(2,4)+TWO+TOL(8),ONE)-TOL(8)
+         prod(3,4) = mod(prod(3,4)+TWO+TOL(8),ONE)-TOL(8)
+
+         ! Product equal to previous?
+         equal = FALSE
+         do k = 1,.n_seitz
+            equal = prod.same_as(.seitz(:,:,k))
+            if (NOT equal) cycle
+            .product_of_symops(j,i) = k
+            exit
+         end
+
+         ! A new seitz matrix found
+         if (NOT equal) then
+            stdout.text("prod:")
+            stdout.put(prod)
+            stdout.flush
+            stdout.text("Seitz matrices:")
+            do k = 1,.n_seitz
+               stdout.text("Symop "//trim(k.to_str)//":")
+               stdout.put(.seitz(:,:,k))
+            end
+            stdout.flush
+            DIE("product prod not found")
+         end
+
+      end
+      end
+
+      ! Get the (unique!) inverse symop
+      do i = 1,.n_seitz
+      do j = 1,.n_seitz
+          if (.product_of_symops(i,j)/=1) cycle
+          .inverse_of_symops(i) = j
+          exit
+      end
+      end
+
+   end
+
+   shift_origin
+   ! Shift the origin of the Seitz matrices, by doing a similarity transform
+
+      V :: MAT{REAL}(4,4)
+      t :: VEC{REAL}(3)
+      i :: INT
+
+      if (.origin_shift.same_as([0,0,0])) return
+
+      V.to_unit_matrix
+      V(1:3,4) = .origin_shift/TWELVE
+
+      .seitz.similarity_transform_12(V)
+
+      ! Make sure translations do not exceed one unit cell
+      do i = 1,.n_seitz 
+
+         t = .seitz(1:3,4,i)
+
+         if (all(abs(t)<ONE-TOL(8))) cycle
+
+         t = mod(t+TWO+TOL(8),ONE)-TOL(8)
+
+         .seitz(1:3,4,i) = t
+
+      end
+
+   end
+
+!  =======================================
+!  Translation and inversion unqiue symops
+!  =======================================
+
+   make_inverted_symops ::: leaky, private
+   ! Determine which of the .seitz symops are related by inversion.
+   ! Really, we should check the cartesian seitz matrices, but and
+   ! inversion is just -1 times the identity, to the cartesian
+   ! inversion operator is just the same as the crystal-axis inversion
+   ! operator, with -1 down the diagonal.
+   ENSURE(.seitz.created,"Seitz matrices not initialised")
+
+      n,i,j :: INT
+      inverted :: BIN
+
+      .inverted_symop.create(.n_seitz)
+      .inverted_symop = 0
+
+      n = 0
+
+      ! Loop on symop pairs i>j
+      do i = 2,.n_seitz
+      do j = 1,i-1
+
+         inverted = .seitz(1:3,1:3,i).equals(-.seitz(1:3,1:3,j))
+
+         if (NOT inverted) cycle
+
+         n = n + 1
+         .inverted_symop(i) = j
+         exit
+
+      end
+      end
+
+      .n_inverted_symops = n
+
+   end
+
+   make_translated_symops ::: leaky, private
+   ! Determine which of the .seitz symops are related by translation,
+   ! (including translation by the zero vector) but *not* inversion.
+   ! Really we should check the cartesian seitz operators, but the
+   ! identity oprator has the same representation in either the
+   ! crystal or cartesian axis systems.
+   ENSURE(.inverted_symop.created,"no inverted_symop array")
+   ENSURE(.seitz.created,"Seitz matrices not initialised")
+
+      i,j :: INT
+      translated :: BIN
+
+      .translated_symop.create(.n_seitz)
+      .translated_symop = 0
+
+      do i = 1,.n_seitz
+
+         ! Symop i is a translation of itself
+         .translated_symop(i) = i
+
+         ! Skip inversions
+         if (.inverted_symop(i)>0) cycle
+
+         ! Loop on symop pairs i>=j
+         do j = 1,i-1
+
+            translated = .seitz(1:3,1:3,i).equals(.seitz(1:3,1:3,j))
+
+            if (NOT translated) cycle
+
+            .translated_symop(i) = j
+            exit
+
+         end
+
+      end
+
+   end
+
+   make_unique_SF_symops ::: leaky, private
+   ! Determine which are the structure-factor unique symops, i.e. those which
+   ! generate fragment geometries which are different than a translation or
+   ! inversion. This list should be a superset of the reduced symops.
+   ENSURE(.inverted_symop.created,  "no inverted_symop array")
+   ENSURE(.translated_symop.created,"no translated_symop array")
+
+      n,i :: INT
+
+      ! How many unique symops?
+      n = 0
+      do i = 1,.n_seitz
+         if (.inverted_symop(i)>0) cycle
+         if (.translated_symop(i)<i) cycle ! Only true translations count
+         n = n + 1
+      end
+
+      ! Set the # of unique symops
+      .n_unique_SF_symops = n
+
+      ! Make the unique_SF_symop index array
+      .unique_SF_symop.create(n)
+      n = 0
+      do i = 1,.n_seitz
+         if (.inverted_symop(i)>0) cycle
+         if (.translated_symop(i)<i) cycle
+         n = n + 1
+         .unique_SF_symop(n) = i
+      end
+
+   end
+
+   unique_SF_symop_mat(u) result (res)
+   ! Return the "u"-th reduced symop matrix in the unique list made by routine
+   ! ".make_reduced_symops".
+      u :: INT
+      res :: MAT{REAL}(3,3)
+
+   ENSURE(.analyzed,"spacegroup not analyzed")
+   ENSURE(.unique_SF_symop.created,"no unique_SF_symops!")
+   ENSURE(u<=.n_unique_SF_symops,"symop index out of range")
+   ENSURE(u>0,"symop index out of range")
+
+      res = .seitz(1:3,1:3,.unique_SF_symop(u))
+
+   end
+
+!  ============================
+!  Jones-Faithful decomposition
+!  ============================
+
+   decode_Jones_Faithful_symbols(symbols,mat)
+   ! Decode a series of Jones-Faithful symbols and place in the Seitz matrices "mat".
+      symbols :: VEC{STR}, IN
+      mat :: MAT3{REAL}(4,4,size(symbols)), OUT
+      
+      i :: INT
+
+      do i = 1,symbols.dim
+         .decode_Jones_Faithful_symbol(symbols(i),mat(:,:,i))
+      end
+
+      if (.debugging("decode_Jones_Faithful_sumbols")) then
+         stdout.text("symbols:")
+         stdout.put(symbols,by_column=TRUE)
+         stdout.text("mat:")
+         stdout.put(mat)
+      end
+
+   end
+
+   decode_Jones_Faithful_symbol(symbol,mat)
+   ! Decode a single Jones-Faithful symbol, e.g. "x-y+z+1/2,y,z-x",
+   ! and place in the Seitz matrix in "mat".
+      symbol :: STR, IN
+      mat :: MAT{REAL}(4,4), OUT
+
+      buffer :: BUFFER
+      word,item :: STR
+      pos,comma,row :: INT
+      t :: REAL
+
+      if (FALSE) self = self
+
+      mat      = ZERO
+      mat(4,4) = ONE
+
+      ! Position in symbol
+      pos = 0
+
+      ! Loop over rows
+      ! Note: the row is the product of "mat" with (x,y,z,1)
+      do row = 1,3
+
+         word = symbol(pos+1:)
+         
+         if (row<3) then 
+
+            ! Extract a comma or space part of the JF symbol
+            comma = index(word,",")
+            if (comma==0) comma = index(word," ")
+            ENSURE0(comma>1,"missing comma or space separator")
+
+            ! Get the word for this row
+            word = word(1:comma-1)
+            ENSURE0(word/=" ","empty row, "//row.to_str.trim)
+
+            ! Increment pos to comma/space separator
+            pos = pos + comma
+
+            ! Increment pos to just before next symbol 
+            comma = verify(symbol(pos+1:)," ") 
+            pos = pos + comma - 1
+
+         end
+
+         ! Separate out items before +/-
+         word.to_lower_case
+         word.remove_blanks
+         word.separate_before("+-") 
+
+         ! Heavier guns
+         buffer.nullify_ptr_part
+         buffer.set_defaults
+         buffer.set_and_analyze(word)
+
+         ! Extract all symbols
+         do              
+
+            if (buffer.exhausted) exit
+
+            buffer.get(item)
+            select case (item)
+
+               ! Simple cases
+               case ("x","+x") ;  mat(row,1) =  1
+               case ("y","+y") ;  mat(row,2) =  1
+               case ("z","+z") ;  mat(row,3) =  1
+               case ("-x")     ;  mat(row,1) = -1
+               case ("-y")     ;  mat(row,2) = -1
+               case ("-z")     ;  mat(row,3) = -1
+
+               ! Fractions and integers
+               case default
+
+                 if (item.includes("/")) then 
+                   ! Should be a fraction
+                   t = item.frac_to_real
+                   t = modulo(t,ONE) ! translate to first unit cell.
+                   mat(row,4) = mat(row,4) + t
+                 else if (item.is_int) then ! ignore any integers
+                 else
+                   DIE("unknown item, "//item.trim)
+                 end
+
+            end ! case
+
+         end
+
+      end
+
+   end
+
+   recode_Jones_Faithful_symbol(jf,mat)
+   ! Recode the seitz matrix "mat" into "jf"
+      jf :: STR, OUT
+      mat :: MAT{REAL}(4,4), IN
+
+      i :: INT
+      jj :: STR
+      val :: REAL
+
+      if (FALSE) self = self
+
+      ! Build up the symbol jf for each row i
+      do i = 1,3           
+
+         jj = " "
+
+         val = mat(i,1)
+         if      (val.equals(ZERO)) then; 
+         else if (val.equals( ONE)) then; jj = trim(jj)//"+x"
+         else if (val.equals(-ONE)) then; jj = trim(jj)//"-x"
+         else; DIE("unknown value at col 1: "//trim(val.to_str))
+         end
+
+         val = mat(i,2)
+         if      (val.equals(ZERO)) then; 
+         else if (val.equals( ONE)) then; jj = trim(jj)//"+y"
+         else if (val.equals(-ONE)) then; jj = trim(jj)//"-y"
+         else; DIE("unknown value at col 2: "//trim(val.to_str))
+         end
+
+         val = mat(i,3)
+         if      (val.equals(ZERO)) then; 
+         else if (val.equals( ONE)) then; jj = trim(jj)//"+z"
+         else if (val.equals(-ONE)) then; jj = trim(jj)//"-z"
+         else; DIE("unknown value at col 3: "//trim(val.to_str))
+         end
+
+         val = mat(i,4)
+         if      (val.equals(ZERO)) then; 
+         else if (val.equals(          HALF)) then; jj = trim(jj)//"+1/2"
+         else if (val.equals(         -HALF)) then; jj = trim(jj)//"-1/2"
+         else if (val.equals(         THIRD)) then; jj = trim(jj)//"+1/3"
+         else if (val.equals(        -THIRD)) then; jj = trim(jj)//"-1/3"
+         else if (val.equals(      TWOTHIRD)) then; jj = trim(jj)//"+2/3"
+         else if (val.equals(     -TWOTHIRD)) then; jj = trim(jj)//"-2/3"
+         else if (val.equals(       QUARTER)) then; jj = trim(jj)//"+1/4"
+         else if (val.equals(      -QUARTER)) then; jj = trim(jj)//"-1/4"
+         else if (val.equals( THREEQUARTERS)) then; jj = trim(jj)//"+3/4"
+         else if (val.equals(-THREEQUARTERS)) then; jj = trim(jj)//"-3/4"
+         else if (val.equals(         SIXTH)) then; jj = trim(jj)//"+1/6"
+         else if (val.equals(        -SIXTH)) then; jj = trim(jj)//"-1/6"
+         else if (val.equals(     FIVESIXTH)) then; jj = trim(jj)//"+5/6"
+         else if (val.equals(    -FIVESIXTH)) then; jj = trim(jj)//"-5/6"
+         else; DIE("unknown value at col 4: "//trim(val.to_str))
+         end
+
+         if      (i ==1  ) then; jf =                 trim(jj)
+         else if (jf==" ") then; jf =                 trim(jj)
+         else;                   jf = trim(jf)//", "//trim(jj)
+         end
+
+      end
+
+   end
+
+   seitz_same_as(mat,warn) result (res)
+   ! Determine if the Seitz matrices are the same as those in "mat", except
+   ! for a rearrangement of order.
+      mat :: MAT3{REAL}, IN
+      warn :: BIN, IN, optional
+      res :: BIN
+
+   ENSURE(mat.dim1==4,"wrong 1st dimension, mat")
+   ENSURE(mat.dim2==4,"wrong 1st dimension, mat")
+
+      found,fownd :: VEC{BIN}(.n_seitz)
+      tmp :: MAT{REAL}(4,4)
+      out :: BIN
+      i,j :: INT
+      jf :: STR
+
+      out = TRUE
+      if (present(warn)) out = warn
+
+      if (mat.dim3/=.n_seitz) then
+
+         WARN_IF(out,"Group orders are not the same!")
+         res = FALSE
+
+      else
+
+         found = FALSE
+         fownd = FALSE
+         do i = 1,.n_seitz
+            do j = 1,.n_seitz
+               if (found(j)) cycle
+               if (.seitz(:,:,i).same_as(mat(:,:,j))) then
+                  fownd(i) = TRUE
+                  found(j) = TRUE
+                  exit
+               end
+            end
+         end
+
+         res = all(found)
+         if (res) return
+
+         ! Oops ...
+         if (.centrosymmetric) then
+            do i = 1,.n_seitz
+               do j = 1,.n_seitz
+                  if (found(j)) cycle
+                  tmp = -mat(:,:,j)  ! try inverting and rescaling
+                  tmp(1,4) = mod(tmp(1,4)+TWO+TOL(8),ONE)-TOL(8)
+                  tmp(2,4) = mod(tmp(2,4)+TWO+TOL(8),ONE)-TOL(8)
+                  tmp(3,4) = mod(tmp(3,4)+TWO+TOL(8),ONE)-TOL(8)
+                  tmp(4,4) = 1
+                  if (.seitz(:,:,i).same_as(tmp)) then
+                     fownd(i) = TRUE 
+                     found(j) = TRUE ! found inverse ... we hope that
+                     exit            ! its inverse pair also matches
+                  end
+               end
+            end
+
+            res = all(found)
+            if (res) return
+
+         end
+
+      end
+
+      ! This is a debugging message
+      if (out) then
+
+         stdout.flush
+         stdout.text("There were unmatched seitz matrices!")
+         stdout.text("Unmatched spacegroup-symbol matrices:")
+
+         do i = 1,.n_seitz
+            if (fownd(i)) cycle
+            stdout.text("Matrix "//i.to_str.trim//":")
+            .recode_Jones_Faithful_symbol(jf,.seitz(:,:,i))
+            stdout.put(trim(jf))
+            stdout.flush
+         end
+        
+         stdout.flush
+         stdout.text("Unmatched JF-symbol matrices:")
+         do j = 1,mat.dim3
+            if (found(j)) cycle
+            .recode_Jones_Faithful_symbol(jf,mat(:,:,i))
+            stdout.put(trim(jf))
+            stdout.flush
+         end
+        
+         stdout.text("================WARNING==================")
+         stdout.text("Possible wrong spacegroup information below")
+         .put
+         stdout.text("============END WARNING==================")
+
+      end
+
+   end
+
+!  ===================================
+!  Spacegroup geometry transformations
+!  ===================================
+
+   put_geometry_to_unit_cell(g)
+   ! Transform the geometry "g" in fractional coordinates into the
+   ! (1,1,1) unit cell
+       g :: MAT{REAL}
+
+   ENSURE(.seitz.created,"No Seitz matrices!")
+   ENSURE(g.dim1==3,"incorrect size for array g")
+
+      n,n_atom :: INT
+
+      n_atom = g.dim2
+      do n = 1,n_atom
+         .put_position_to_unit_cell(g(:,n))
+      end
+
+   end
+
+   put_position_to_unit_cell(p)
+   ! Transform the position "p" in fractional coordinates into the
+   ! (1,1,1) unit cell
+      p :: VEC{REAL}(3)
+
+   ENSURE(size(p)==3,"position p must have size 3")
+
+      if (FALSE) self = self
+      p = mod(p+TWO,ONE)
+
+   end
+
+   get_partition_factors(pfac,geometry,full) ::: leaky
+   ! Given a "geometry" array in fractional coordinates for a molecule,
+   ! generate the partition factors or repetition factors "pfac" to be used for
+   ! each atom in a structure factor calculation.  If present, the "full"
+   ! geometry in fractional coordinates will be returned, where all possible
+   ! symmetry distinct atom positions in the unit cell have been generated.
+      geometry :: MAT{REAL}
+      pfac :: VEC{REAL}
+      full :: MAT{REAL}*, optional
+      pa,pb :: VEC{REAL}(3)
+      a,b,n,n_atom,n_same :: INT
+      same :: BIN
+      n_atom = size(geometry,2)
+
+   ENSURE(geometry.dim1==3,"Wrong shape for geometry array")
+   ENSURE(pfac.dim==n_atom,"Incompatible shape for p array")
+   ENSURE(.seitz.created,  "Seitz matrices not initialised")
+
+      do a = 1,n_atom
+         pa = geometry(:,a)
+         .put_position_to_unit_cell(pa)
+         n_same = 0
+         do n = 1,.n_seitz
+         do b = 1,n_atom
+            pb = geometry(:,b)
+            .transform_position(pb,n)
+            .put_position_to_unit_cell(pb)
+            same = pa.same_as(pb)
+            if (same) n_same = n_same + 1
+         end
+         end
+         pfac(a) = n_same
+      end
+
+      if (present(full)) .get_full_geometry(full,geometry,pfac)
+
+   end
+
+   get_full_geometry(full,geometry,pfac) ::: leaky
+   ! Get the "full" set of distinct atom positions in the unit cell,
+   ! given a (possibly) partial "geometry", and a set of partition
+   ! factors "pfac".
+      full :: MAT{REAL}*
+      geometry :: MAT{REAL}
+      pfac :: VEC{REAL}
+
+   ENSURE(geometry.dim1==3,"Wrong shape for geometry array")
+   ENSURE(geometry.dim2==pfac.dim,"Incompatible shape for pfac array")
+   ENSURE(.seitz.created,  "Seitz matrices not initialised")
+
+      pa,pb :: VEC{REAL}(3)
+      a,b,n,n_atom,n_full :: INT
+      same :: BIN
+      rep :: REAL
+
+      n_atom = geometry.dim2
+
+      n_full = 0
+      do a = 1,n_atom
+         rep = .n_seitz/pfac(a)
+         DIE_IF(NOT rep.is_int,"rep factor for atom "//trim(a.to_str)//" not integral!")
+         n_full = n_full + int(.n_seitz/pfac(a))
+      end
+      full.create(3,n_full)
+
+      n_full = 0
+      do a = 1,n_atom
+      do n = 1,.n_seitz
+         pa = geometry(:,a)
+         .put_position_to_unit_cell(pa)
+         .transform_position(pa,n)
+         .put_position_to_unit_cell(pa)
+         same = FALSE
+         do b = 1,n_full
+            pb = full(:,b)
+            same = pa.same_as(pb)
+            if (same) exit
+         end
+         if (NOT same) then       ! New symmetry generated position
+            n_full = n_full+1
+            full(:,n_full) = pa
+         end
+      end
+      end
+
+   end
+
+   transform_geometry(g,op)
+   ! Transform the geometry "g" in fractional coordinates with the
+   ! Seitz operator with index "op"
+      g :: MAT{REAL}
+      op :: INT
+
+   ENSURE(.seitz.created,"Seitz matrices not initialised")
+   ENSURE(g.dim1==3,"incorrect size for array g")
+   ENSURE(op>0,         "operator index out of bounds")
+   ENSURE(op<=.n_seitz, "operator index out of bounds")
+
+      n,n_atom :: INT
+
+      n_atom = g.dim2
+      do n = 1,n_atom
+         .transform_position(g(:,n),op)
+      end
+
+   end
+
+   transform_position(p,op)
+   ! Transform the position "p" in fractional coordinates with the
+   ! Seitz operator with index "op"
+      p :: VEC{REAL}(3)
+      op :: INT
+
+   ENSURE(.seitz.created, "Seitz matrices not initialised")
+   ENSURE(op>0,         "operator index out of bounds")
+   ENSURE(op<=.n_seitz, "operator index out of bounds")
+
+      p = matmul(.seitz(1:3,1:3,op),p) + .seitz(1:3,4,op)
+
+   end
+
+   is_same_geometry(geom_i,geom_j) result (res)
+   ! Return TRUE if the geometries "geom_i" and "geom_j" in fractional
+   ! coordinates are the same, to within *traslational* symmetry
+      geom_i,geom_j :: MAT{REAL}
+      res :: BIN
+      gi,gj :: MAT{REAL}*
+      i,j,n_atom :: INT
+      same :: BIN
+      skip :: VEC{BIN}*
+      n_atom = size(geom_i,2)
+   ENSURE(.seitz.created, "Seitz matrices not initialised")
+   ENSURE(geom_i.dim1==3, "incorrect size for array geom_i")
+   ENSURE(geom_j.dim1==3, "incorrect size for array geom_j")
+   ENSURE(n_atom==size(geom_j,2), "incompatible sizes for geom_i, geom_j")
+      gi.create(3,n_atom); gi = geom_i; .put_geometry_to_unit_cell(gi)
+      gj.create(3,n_atom); gj = geom_j; .put_geometry_to_unit_cell(gj)
+      skip.create(n_atom); skip(:) = FALSE
+      do i = 1,n_atom
+         do j = 1,n_atom
+            same = gi(:,i).same_as(gj(:,j))
+            if (NOT same OR skip(j)) cycle
+            skip(j) = TRUE
+            exit
+         end
+      end
+      res = all(skip) ! True if all atoms in i were matched (skipped) in j
+      skip.destroy
+      gj.destroy
+      gi.destroy
+   end
+
+!  ===========================================
+!  Sum structure factors over unique SF symops
+!  ===========================================
+
+! To understand this code see Jayatilaka & Diitrich (2008)
+! Acta Cryst. A 64, p383 section 2.5 comments (i) and (ii)
+
+   make_phases_for_symop(u,phase,mask,refl)  ::: private
+   ! For each reflection in "refl", return the sum of the "phase"
+   ! shifts from each glide vector for all symops which are equivalent
+   ! to the "u"-th unique symmetry operation, .unique_SF_symop(u), as
+   ! determined by the mask array.
+      u :: INT, IN
+      phase :: VEC{CPX}, OUT
+      mask :: VEC{INT}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,"spacegroup not analyzed")
+   ENSURE(.unique_SF_symop.created,"no unique_SF_symop array!")
+   ENSURE(u<=.n_unique_SF_symops,"symop index out of range")
+   ENSURE(phase.dim==refl.dim,"wrong length for phase array")
+   ENSURE(mask.dim==.n_seitz,"wrong size, mask")
+
+      pi2,tx,ty,tz,dot :: REAL
+      s,n,n_refl,h,k,l :: INT
+      seitz :: MAT{REAL}*
+
+      n_refl = refl.dim
+      pi2 = TWO*PI
+
+      phase = ZERO
+
+      do s = 1,.n_seitz
+
+         ! Perform phase sum over symops in mask(s) 
+         ! which are the same as .unique_SF_symop(u)
+         if (mask(s)/=.unique_SF_symop(u)) cycle
+  
+         seitz => .seitz(:,:,s)
+
+         tx = pi2*seitz(1,4)
+         ty = pi2*seitz(2,4)
+         tz = pi2*seitz(3,4)
+  
+         do n = 1,n_refl
+
+            h = refl(n).h
+            k = refl(n).k
+            l = refl(n).l
+
+            dot = h*tx + k*ty + l*tz
+
+            phase(n) = phase(n) + exp(IMAGIFY(dot))
+
+         end
+
+      end
+
+   end
+
+   sum_unique_sf(sf,unique_sf,refl)
+   ! Form the structure factors "sf" from the sum of the list of
+   ! unique-symop-generated structure factors, "unique_sf".
+      sf :: VEC{CPX}, OUT
+      unique_sf :: VEC{CPX}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,                                  "spacegroup not analyzed")
+   ENSURE(sf.dim==refl.dim,                           "sf: wrong size")
+   ENSURE(unique_sf.dim==.n_unique_SF_symops*refl.dim,"unique_sf: wrong size")
+
+      phase :: VEC{CPX}*
+      u,uf,ul,n_refl :: INT
+
+      n_refl = refl.dim
+      phase.create(n_refl)
+
+      sf = ZERO
+
+      parallel do u = 1,.n_unique_SF_symops
+
+         uf = n_refl*(u-1)+1
+         ul = n_refl*u
+ 
+         ! Add up translated symop contribution
+         .make_phases_for_symop(u,phase,.translated_symop,refl)
+         sf = sf + phase*unique_sf(uf:ul)
+ 
+         ! Add up inverted symop contribution, if any
+         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+         .make_phases_for_symop(u,phase,.inverted_symop,refl)
+         sf = sf + phase*conjg(unique_sf(uf:ul))
+
+      end
+
+      PARALLEL_SUM(sf)
+      phase.destroy
+
+   end
+
+   sum_unique_sf_ints(sf_ints,unique_sf_ints,refl)
+   ! Form the structure factor integrals "sf_ints" from a sum of the list
+   ! of unique-symop-generated structure factors integrals "unique_sf_ints".
+      sf_ints :: MAT3{CPX}
+      unique_sf_ints :: MAT3{CPX}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,                                        "spacegroup not analyzed")
+   ENSURE(sf_ints.dim1==refl.dim,                           "sf_ints: wrong size")
+   ENSURE(unique_sf_ints.dim1==.n_unique_SF_symops*refl.dim,"unique_sf_ints: wrong size")
+
+      phase :: VEC{CPX}*
+      u,uf,n,n_refl :: INT
+
+      n_refl = refl.dim
+      phase.create(n_refl)
+
+      sf_ints = ZERO
+      parallel do u = 1,.n_unique_SF_symops
+
+       uf = n_refl*(u-1)
+
+       ! Add up translated symop contribution
+       .make_phases_for_symop(u,phase,.translated_symop,refl)
+       do n = 1,n_refl
+         sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*unique_sf_ints(uf+n,:,:)
+       end
+
+       ! Add up inverted symop contribution, if any
+       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+       .make_phases_for_symop(u,phase,.inverted_symop,refl)
+       do n = 1,n_refl
+         sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*conjg(unique_sf_ints(uf+n,:,:))
+       end
+
+      end
+
+      PARALLEL_SUM(sf_ints)
+      phase.destroy
+
+   end
+
+   sum_unique_sf_derivs(sf,unique_sf,refl)
+   ! Form the structure factor derivatives "sf" from a sum of the list
+   ! of unique-symop-generated structure factor derivatives "unique_sf".
+      sf :: MAT{CPX}, OUT
+      unique_sf :: MAT{CPX}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,                                   "spacegroup not analyzed")
+   ENSURE(sf.dim==refl.dim,                            "sf: wrong size")
+   ENSURE(unique_sf.dim2==.n_unique_SF_symops*refl.dim,"unique_sf: wrong dim2")
+
+      phase :: VEC{CPX}*
+      u,uf,n,n_refl :: INT
+
+      n_refl = refl.dim
+      phase.create(n_refl)
+
+      sf = ZERO
+      parallel do u = 1,.n_unique_SF_symops
+
+       uf = n_refl*(u-1)
+
+       ! Add up translated symop contribution
+       .make_phases_for_symop(u,phase,.translated_symop,refl)
+       do n = 1,n_refl
+         sf(n,:) = sf(n,:) + phase(n)*unique_sf(:,uf+n)
+       end
+
+       ! Add up inverted symop contribution, if any
+       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+       .make_phases_for_symop(u,phase,.inverted_symop,refl)
+       do n = 1,n_refl
+         sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(:,uf+n))
+       end
+
+      end
+
+      PARALLEL_SUM(sf)
+      phase.destroy
+
+   end
+
+   sum_unique_sf_derivs_t(sf,unique_sf,refl)
+   ! Form the structure factor derivatives "sf" from a sum of the list
+   ! of unique-symop-generated structure factor derivatives "unique_sf".
+   ! This version seems more efficient than the one above.
+      sf :: MAT{CPX}, OUT
+      unique_sf :: MAT{CPX}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,                                   "spacegroup not analyzed")
+   ENSURE(sf.dim1==refl.dim,                           "sf: wrong dim1")
+   ENSURE(unique_sf.dim1==.n_unique_SF_symops*refl.dim,"unique_sf: wrong dim1")
+
+      phase :: VEC{CPX}*
+      u,uf,n,n_refl :: INT
+
+      n_refl = refl.dim
+      phase.create(n_refl)
+
+      sf = ZERO
+      parallel do u = 1,.n_unique_SF_symops
+
+       uf = n_refl*(u-1)
+
+       ! Add up translated symop contribution
+       .make_phases_for_symop(u,phase,.translated_symop,refl)
+       do n = 1,n_refl
+          sf(n,:) = sf(n,:) + phase(n)*unique_sf(uf+n,:)
+       end
+
+       ! Add up inverted symop contribution, if any
+       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+       .make_phases_for_symop(u,phase,.inverted_symop,refl)
+       do n = 1,n_refl
+          sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(uf+n,:))
+       end
+
+      end
+
+      PARALLEL_SUM(sf)
+      phase.destroy
+
+   end
+
+   sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc,refl)
+   ! Form "X", the sum of the FT phase factor e^(i k.r) times the
+   ! symmetry phases (which arise from copying the molecule
+   ! around the unit cell) for a series of "k_pts" and space "pts",
+   ! multiplied by a given k-space factor "(Fr,Fc)". The result "X" is
+   ! of length of the number of space points
+   ! NOTE: This version has a *real* temperature factor "tf".
+      X :: VEC{REAL}, OUT
+      k_pts,pts :: MAT{REAL}, target, IN
+      tf :: VEC{REAL}, target, IN
+      Fr,Fc :: VEC{REAL}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,                               "spacegroup not analyzed")
+   ENSURE(X.dim==pts.dim1,                         "X: wrong size")
+   ENSURE(k_pts.dim1==.n_unique_SF_symops*refl.dim,"k_pts: wrong dim1")
+   ENSURE(k_pts.dim2==3,                           "k_pts: wrong dim2")
+   ENSURE(Fr.dim==refl.dim,                        "Fr: wrong size")
+   ENSURE(Fc.dim==refl.dim,                        "Fc: wrong size")
+
+      phase :: VEC{CPX}*
+      T, k1,k2,k3, r1,r2,r3 :: VEC{REAL}*
+      I,ph,val :: CPX
+      k1k,k2k,k3k, kr, facr,facc,valr,valc :: REAL
+      n_refl,n_p,k,p,u,uf,ul :: INT
+
+      I = IMAGIFY(ONE)
+
+      n_refl = refl.dim
+      phase.create(n_refl)
+
+      n_p = pts.dim1
+      r1 => pts(:,1) 
+      r2 => pts(:,2)
+      r3 => pts(:,3)
+
+      X = ZERO
+
+      parallel do u = 1,.n_unique_SF_symops
+
+         uf = n_refl*(u-1)+1
+         ul = n_refl*u
+
+         k1 => k_pts(uf:ul,1)
+         k2 => k_pts(uf:ul,2)
+         k3 => k_pts(uf:ul,3)
+         T  =>    tf(uf:ul)
+
+         ! Make symmetry phases
+         .make_phases_for_symop(u,phase,.translated_symop,refl)
+
+         ! Loop over the points
+         do k = 1,n_refl
+
+            k1k = k1(k)
+            k2k = k2(k)
+            k3k = k3(k)
+            ph = phase(k) * T(k)
+            facr = Fr(k)
+            facc = Fc(k)
+
+            do p = 1,n_p
+
+               kr = k1k*r1(p)+k2k*r2(p)+k3k*r3(p)
+               val  = exp(I*kr)*ph
+               valr =  real(val)
+               valc = aimag(val)
+
+               X(p) = X(p) + valr*facr + valc*facc
+
+            end
+
+         end
+
+         ! Add up inverted symop contribution, if any
+         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+
+         ! Loop over the points
+         do k = 1,n_refl
+
+            k1k = k1(k)
+            k2k = k2(k)
+            k3k = k3(k)
+            ph = phase(k) * T(k)
+            facr = Fr(k)
+            facc = Fc(k)
+
+            do p = 1,n_p
+
+               kr = k1k*r1(p)+k2k*r2(p)+k3k*r3(p)
+               val  = exp(-I*kr)*ph
+               valr =  real(val)
+               valc = aimag(val)
+
+               X(p) = X(p) + valr*facr + valc*facc
+
+            end
+
+         end
+
+      end
+
+      PARALLEL_SUM(X)
+
+      phase.destroy
+
+   end
+
+   sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc,refl)
+   ! Form "X", the sum of the FT phase factor e^(i k.r) times the
+   ! symmetry phases (which arise from copying the molecule
+   ! around the unit cell) for a series of "k_pts" and space "pts",
+   ! multiplied by a given k-space factor "(Fr,Fc)". The result "X" is
+   ! of length of the number of space points
+   ! NOTE: This version has a complex temperature factor "tf", which
+   ! can be the case when anharmonity is present.
+      X :: VEC{REAL}, OUT
+      k_pts,pts :: MAT{REAL}, target, IN
+      tf :: VEC{CPX}, target, IN
+      Fr,Fc :: VEC{REAL}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,                               "spacegroup not analyzed")
+   ENSURE(X.dim==pts.dim1,                         "X: wrong size")
+   ENSURE(k_pts.dim1==.n_unique_SF_symops*refl.dim,"k_pts: wrong dim1")
+   ENSURE(k_pts.dim2==3,                           "k_pts: wrong dim2")
+   ENSURE(Fr.dim==refl.dim,                        "Fr: wrong size")
+   ENSURE(Fc.dim==refl.dim,                        "Fc: wrong size")
+
+      phase,T :: VEC{CPX}*
+      k1,k2,k3, r1,r2,r3 :: VEC{REAL}*
+      I,ph,val :: CPX
+      k1k,k2k,k3k, kr, facr,facc,valr,valc :: REAL
+      n_refl,n_p,k,p,u,uf,ul :: INT
+
+      I = IMAGIFY(ONE)
+
+      n_refl = refl.dim
+      phase.create(n_refl)
+
+      n_p = pts.dim1
+      r1 => pts(:,1) 
+      r2 => pts(:,2)
+      r3 => pts(:,3)
+
+      X = ZERO
+
+      parallel do u = 1,.n_unique_SF_symops
+
+         uf = n_refl*(u-1)+1
+         ul = n_refl*u
+
+         k1 => k_pts(uf:ul,1)
+         k2 => k_pts(uf:ul,2)
+         k3 => k_pts(uf:ul,3)
+         T  =>    tf(uf:ul)
+
+         ! Make symmetry phases
+         .make_phases_for_symop(u,phase,.translated_symop,refl)
+
+         ! Loop over the points
+         do k = 1,n_refl
+
+            k1k = k1(k)
+            k2k = k2(k)
+            k3k = k3(k)
+            ph = phase(k) * T(k)
+            facr = Fr(k)
+            facc = Fc(k)
+
+            do p = 1,n_p
+
+               kr = k1k*r1(p)+k2k*r2(p)+k3k*r3(p)
+               val  = exp(I*kr)*ph
+               valr =  real(val)
+               valc = aimag(val)
+
+               X(p) = X(p) + valr*facr + valc*facc
+
+            end
+
+         end
+
+         ! Add up inverted symop contribution, if any
+         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+
+         ! Loop over the points
+         do k = 1,n_refl
+
+            k1k = k1(k)
+            k2k = k2(k)
+            k3k = k3(k)
+            ph = phase(k) * T(k)
+            facr = Fr(k)
+            facc = Fc(k)
+
+            do p = 1,n_p
+
+               kr = k1k*r1(p)+k2k*r2(p)+k3k*r3(p)
+               val  = exp(-I*kr)*ph
+               valr =  real(val)
+               valc = aimag(val)
+
+               X(p) = X(p) + valr*facr + valc*facc
+
+            end
+
+         end
+
+      end
+
+      PARALLEL_SUM(X)
+
+      phase.destroy
+
+   end
+
+!  ====
+!  Dump
+!  ====
+
+   do_dump ::: private
+   ! Dump for debugging or reading back in
+
+      stdout.dump("IT_symbol",.IT_symbol)
+      stdout.dump("IT_group_number",.IT_group_number)
+      stdout.dump("Hall_symbol",.Hall_symbol)
+      stdout.dump("HM_symbol",.HM_symbol)
+      stdout.dump("Schoenflies_symbol",.Schoenflies_symbol)
+      stdout.dump("lattice_symbol",.lattice_symbol)
+      stdout.dump("lattice_symbol_index",.lattice_symbol_index)
+      stdout.dump("lattice_type",.lattice_type)
+      stdout.dump("centrosymmetric",.centrosymmetric)
+      stdout.dump("axis_order",.axis_order)
+      stdout.dump("axis_direction_symbol",.axis_direction_symbol)
+      stdout.dump("axis_direction_index",.axis_direction_index)
+      stdout.dump("has_axis_bar",.has_axis_bar)
+      stdout.dump("translation_symbol",.translation_symbol)
+      stdout.dump("origin_shift",.origin_shift)
+      stdout.dump("nL",.nL)
+      stdout.dump("nR",.nR)
+      stdout.dump("nG",.nG)
+      stdout.dump("n_seitz",.n_seitz)
+      stdout.dump("seitz",.seitz)
+      stdout.dmpp("product_of_symops",.product_of_symops)
+      stdout.dmpp("inverse_of_symops",.inverse_of_symops)
+      stdout.dump("n_inverted_symops",.n_inverted_symops)
+      stdout.dmpp("inverted_symop",.inverted_symop)
+      stdout.dmpp("translated_symop",.translated_symop)
+      stdout.dump("n_unique_SF_symops",.n_unique_SF_symops)
+      stdout.dmpp("unique_SF_symop",.unique_SF_symop)
+      stdout.dump("analyzed",.analyzed)
+
+   end
+
+   dump(object_name,ptr) ::: get_from(OBJECT)
+   ! Dump object data as text
+   end
+
+   dmpp(object_name) ::: get_from(OBJECT)
+   ! Dump pointer object data as text
+   end
+
+!  ==============
+!  Output methods
+!  ==============
+
+   put
+   ! Put out the spacegroup information
+      self :: IN
+
+   ENSURE(.analyzed,"no info")
+
+      stdout.flush
+      stdout.flush
+      stdout.text("======================")
+      stdout.text("Spacegroup information")
+      stdout.text("======================")
+      stdout.flush
+
+      .put_spacegroup_name_info
+      .put_seitz_as_Jones_Faithful
+      .put_group_multiplication_table
+      .put_symop_inverse_table
+      .put_inv_trans_symop_data 
+
+   end
+
+   put_spacegroup_name_info
+   ! Put out the spacegroup name information (not the seitz matrices)
+      self :: IN
+
+   ENSURE(.analyzed,"spacegroup not analyzed")
+
+      subscripts,HM_symbol,Hall_symbol :: STR
+      sub :: MAT{STR}(len=1,3,4)
+
+      HM_symbol   = .HM_symbol
+      HM_symbol(1:1).to_upper_case
+
+      Hall_symbol = .Hall_symbol
+      Hall_symbol(1:1).to_upper_case
+
+      stdout.show("International Table no. =",.IT_group_number)
+      stdout.show("IT symbol               =",trim(.IT_symbol))
+      stdout.show("Hermann-Mauguin symbol  =",trim(HM_symbol))
+      stdout.show("Hall symbol             =",trim(Hall_symbol))
+      stdout.show("Schoenflies symbol      =",trim(.Schoenflies_symbol))
+      stdout.show("Lattice symbol          =",trim(.lattice_symbol))
+      stdout.show("Lattice type            =",trim(.lattice_type))
+
+      stdout.flush
+      stdout.show("Spacegroup order        =",.n_seitz)
+      stdout.show("Centro-symmetric?       =",.centrosymmetric)
+
+      sub = .translation_symbol
+      subscripts = &
+         sub(1,1) // sub(2,1) // sub(3,1) // " " // &
+         sub(1,2) // sub(2,2) // sub(3,2) // " " // &
+         sub(1,3) // sub(2,3) // sub(3,3)
+
+      stdout.show("Axis orders             =",.axis_order,width=4)
+      stdout.show("Axis direction symbols  =",.axis_direction_symbol,width=4)
+      stdout.show("Axis direction indices  =",.axis_direction_index,width=4)
+      stdout.show("Translation subscripts  =",subscripts,width=4)
+      stdout.show("No of T generators      =",.nL)
+      stdout.show("No of R generators      =",.nR)
+      stdout.show("No of Generators        =",.nG)
+      stdout.show("Origin shift in 12-ths  =",.origin_shift,width=4)
+
+   end
+
+   put_seitz_as_Jones_Faithful
+   ! Put out the seitz matrices in Jones-Faithful notation.
+      self :: IN
+
+      n :: INT
+      jf :: VEC{STR}*
+      table :: VEC{TABLE_COLUMN}*
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("===================")
+      stdout.text("Symmetry operations")
+      stdout.text("===================")
+      stdout.flush
+
+      ! Data
+      jf.create(.seitz.dim3)
+      do n = 1,.seitz.dim3
+         .recode_Jones_Faithful_symbol(jf(n),.seitz(:,:,n))
+      end
+
+      ! Table
+      table.create(1)
+      table(1).set_spacing(4)
+      table(1).set_heading("Symop")
+      table(1).set_center(TRUE)
+      table(1).set_values(jf)
+      table.put
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      jf.destroy
+
+   end
+
+   put_group_multiplication_table
+   ! Put the group multiplcation table
+      self :: IN
+
+      n,g :: INT
+      table :: VEC{TABLE_COLUMN}*
+
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("===============================")
+      stdout.text("Spacegroup multiplication table")
+      stdout.text("================================")
+
+      stdout.flush
+      stdout.text(". The element in the table is product(i,j) where:")
+      stdout.flush
+      stdout.text("     product(i,j) = symop(i) x symop(j)")
+      stdout.flush
+      stdout.text("  where i and j are row and column indices, respectively")
+      stdout.text("  and the product is modulo an integer shift vector.")
+      stdout.flush
+
+      ! Table
+      n = .product_of_symops.dim1
+      table.create(n)
+      do g = 1,n
+         table(g).set_heading(trim(g.to_str))
+         table(g).set_values(.product_of_symops(:,g))
+      end
+      table.put
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+
+   end
+
+   put_symop_inverse_table
+   ! Put the inverse symops
+      self :: IN
+
+      table :: VEC{TABLE_COLUMN}*
+
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("==============================")
+      stdout.text("Spacegroup symop inverse table")
+      stdout.text("==============================")
+
+      ! Table
+      table.create(1)
+      table(1).set_heading("Inverse")
+      table(1).set_subhead("symop")
+      table(1).set_values(.inverse_of_symops(:))
+      table.put
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+
+   end
+
+   put_inv_trans_symop_data ::: private
+   ! Put out the inverted translated symop data
+
+   ENSURE(.inverted_symop.created,"no inverted_symop")
+   ENSURE(.translated_symop.created,"no translated_symop")
+
+      n :: INT
+      unique :: VEC{STR}*
+      table :: VEC{TABLE_COLUMN}*
+
+      stdout.flush
+      stdout.flush
+      stdout.text("====================================")
+      stdout.text("Inversion-translation-related symops")
+      stdout.text("====================================")
+      stdout.flush
+      stdout.text(". The information in this table is used to speed up")
+      stdout.text("  structure factor calculations since the Fourier transform")
+      stdout.text("  of densities related by such related symops are related by")
+      stdout.text("  complex conjugation and/or a multiplicative phase factor")
+      stdout.flush
+
+      ! Table
+      table.create(3)
+      table(1).set_heading(" Related to")
+      table(1).set_subhead("  Inversion")
+      table(1).set_sb3head(" of symop #")
+      table(1).set_center(TRUE)
+      table(2).set_heading(" Related to")
+      table(2).set_subhead("Translation")
+      table(2).set_sb3head(" of symop #")
+      table(2).set_center(TRUE)
+      table(3).set_heading("Unique")
+      table(3).set_subhead("symop?")
+      table(3).set_center(TRUE)
+
+      ! Set data
+      unique.create(.n_seitz)
+      do n = 1,.n_seitz
+         unique(n) = "no"
+         if (.inverted_symop(n)==0 AND .translated_symop(n)==n) unique(n) = "yes"
+      end
+
+      ! Set table columns
+      table(1).set_values(.inverted_symop)
+      table(2).set_values(.translated_symop)
+      table(3).set_values(unique)
+
+      ! Put the table
+      table.put
+
+      ! Clear
+      table.clear_columns
+      table.destroy
+      unique.destroy
+
+   end
+
+   put_matching_IT_symbols(symbol)
+   ! Put out all the IT symbols which match "symbol".
+      symbol :: STR
+
+      mask :: VEC{BIN}*
+      IT,HM,Hall :: VEC{STR}*
+      n,i :: INT
+
+      if (FALSE) self = self
+
+      mask.create(593)
+      mask = spacegroup_conversion_table(1,:).includes(trim(symbol),at_start=TRUE)
+      n = count(mask)
+
+      IT.create(n);   IT   = pack(spacegroup_conversion_table(1,:),mask)
+      HM.create(n);   HM   = pack(spacegroup_conversion_table(3,:),mask)
+      Hall.create(n); Hall = pack(spacegroup_conversion_table(4,:),mask)
+
+      stdout.flush
+      stdout.dash(real_fields=3)
+      stdout.put("IT symbol")
+      stdout.put("HM symbol")
+      stdout.put("Hall symbol")
+      stdout.flush
+      stdout.dash(real_fields=3)
+      do i = 1,n
+         stdout.put(IT(i))
+         stdout.put(HM(i))
+         stdout.put(Hall(i))
+         stdout.flush
+      end
+      stdout.dash(real_fields=3)
+
+      ! Clean
+      Hall.destroy
+      HM.destroy
+      IT.destroy
+      mask.destroy
+
+   end
+
+   put_matching_HM_symbols(symbol)
+   ! Put out all the HM symbols which match "symbol".
+      symbol :: STR
+
+      mask :: VEC{BIN}*
+      IT,HM,Hall :: VEC{STR}*
+      n,i :: INT
+
+      if (FALSE) self = self
+
+      mask.create(593)
+      mask = spacegroup_conversion_table(3,:).includes(trim(symbol),at_start=TRUE)
+      n = count(mask)
+
+      IT.create(n);   IT   = pack(spacegroup_conversion_table(1,:),mask)
+      HM.create(n);   HM   = pack(spacegroup_conversion_table(3,:),mask)
+      Hall.create(n); Hall = pack(spacegroup_conversion_table(4,:),mask)
+
+      stdout.flush
+      stdout.dash(real_fields=3)
+      stdout.put("IT symbol")
+      stdout.put("HM symbol")
+      stdout.put("Hall symbol")
+      stdout.flush
+      stdout.dash(real_fields=3)
+      do i = 1,n
+         stdout.put(IT(i))
+         stdout.put(HM(i))
+         stdout.put(Hall(i))
+         stdout.flush
+      end
+      stdout.dash(real_fields=3)
+
+      ! Clean
+      Hall.destroy
+      HM.destroy
+      IT.destroy
+      mask.destroy
+   end
+
+   put_CIF
+   ! Put out the spacegroup info in CIF format
+   ENSURE(.seitz.created,"no seitz matrices")
+
+      stdout.flush
+      stdout.text("# --------------------")
+      stdout.text("# Symmetry information")
+      stdout.text("# --------------------")
+      stdout.flush
+      stdout.text("_symmetry_cell_setting             "//trim(.lattice_type))
+      stdout.text("_symmetry_space_group_name_H-M     '"//trim(.HM_symbol)//"'")
+      stdout.text("_symmetry_space_group_name_Hall    '"//trim(.Hall_symbol)//"'")
+      stdout.text("_symmetry_Int_Tables_number        '"//trim(.IT_group_number.to_str)//"'")
+
+      .put_CIF_jf_symbols
+
+   end
+
+   put_CIF_jf_symbols
+   ! Put out the Jones-Faithful sumbols in cif notation
+   ENSURE(.seitz.created,"no seitz matrices")
+
+      n :: INT
+      jf :: STR
+
+      ! The header for the Jones-Faifulke symbols
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("    _symmetry_equiv_pos_as_xyz")
+
+      ! Build up the symbol for each symop n
+      do n = 1,.seitz.dim3
+
+        ! Get the JF symbol
+        .recode_Jones_Faithful_symbol(jf,.seitz(:,:,n))
+
+        ! Put quotes around the symbol, and put it out
+        jf = "'"//trim(jf)//"'"
+        stdout.put(trim(jf),left=TRUE)
+        stdout.flush
+
+      end ! -- next symop
+
+   end
+
+!  ==============
+!  Debug printing
+!  ==============
+
+   read_debug_on ::: get_from(DEBUG), private, leaky
+   ! Read a debug descriptor and add it to the list.
+   end
+
+   read_debug_off ::: get_from(DEBUG), private, leaky
+   ! Read a debug descriptor and remove it from the list.
+   end
+
+   debugging(name) result (res) ::: get_from(DEBUG), private
+   ! Return TRUE if the debug switch "name" has been set.
+   end
+
+   put_debug_list ::: get_from(DEBUG), private
+   ! Put of the list of debug switches
+   end
+
+end

@@ -1,0 +1,3284 @@
+!-------------------------------------------------------------------------------
+!
+! ARCHIVE: For archiving tonto objects to disk
+!
+! A polymorphic file object which can store ascii or binary format.
+! Archives with the string "ascii" somewhere in their name are assumed
+! to be ascii files, otherwise they are binary files.
+!
+! An archive can't be used for input and output at the same time.
+! Also, read and write routines are used to deal with entire single
+! objects.  The archive is closed after the requested IO operation.
+!
+! If the above behaviour is not what is needed, the archive can be opened
+! for multiple object I/O in one archive (say, a list of integral blocks)
+! and you can deal "by hand" with the appropriate object of the archive.
+!
+! Copyright (C) Dylan Jayatilaka, 1998
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: archive.foo 4086 2013-07-23 07:11:14Z dylan_ $
+!-------------------------------------------------------------------------------
+
+module ARCHIVE
+
+   implicit none
+
+contains
+
+!  ==================
+!  Allocation methods
+!  ==================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+      self :: PTR
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+      self :: PTR
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts
+      nullify(.Afile)
+      nullify(.Bfile)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts
+      .Afile.destroy
+      .Bfile.destroy
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   create(root_name,name,genre,format)
+   ! Reset an archive to have main name "root_name", sub name "name"
+   ! "genre" (if present) is used to identify components of OPMATRIX and
+   ! OPVECTOR objects.
+   ! "format" (if present) is used to identify file format (e.g. ascii). The
+   ! default is binary.
+   ! Otherwise use defaults.
+      self :: PTR
+      root_name,name :: STR
+      genre,format :: STR, optional
+
+      .create
+      .root_name = root_name
+      .name      = name
+      if (present(genre))  .genre      = genre
+      if (present(format)) .format    = format
+
+   end
+
+!  ====
+!  Copy
+!  ====
+
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
+   end
+
+   copy(archive) ::: leaky
+   ! Make a copy
+      archive :: ARCHIVE
+
+      self = archive
+
+      .nullify_ptr_part
+
+      if (archive.Afile.created) .Afile.create_copy(archive.Afile)
+      if (archive.Bfile.created) .Bfile.create_copy(archive.Bfile)
+
+   end
+
+!  ===========
+!  Set methods
+!  ===========
+
+   set_defaults
+   ! Set up a default archive object
+      .root_name = "unknown"
+      .name      = "unknown"
+      .genre     = " " ! generic genre
+      .format    = " " ! assume binary format
+      .use_all_commas = FALSE
+   end
+
+   set(root_name,name,genre,format)
+   ! Reset an archive to have main name "root_name", sub name "name"
+   ! "genre" (if present) is used to identify components of OPMATRIX and
+   ! OPVECTOR objects.
+   ! "format" (if present) is used to identify file format (e.g. ascii). The
+   ! default is binary.
+   ! Otherwise use defaults.
+      root_name :: STR, optional
+      name      :: STR, optional
+      genre     :: STR, optional
+      format    :: STR, optional
+
+      .set_defaults
+
+      if (present(root_name)) .root_name = root_name
+      if (present(name))      .name      = name
+      if (present(genre))     .genre     = genre
+      if (present(format))    .format    = format
+
+   end
+
+   set_root_name(root_name)
+   ! Set an archive to have sub name "name".
+      root_name :: STR
+      .destroy_ptr_part
+      .root_name = root_name
+   end
+
+   set_root(root_name)
+   ! Set an archive to have sub name "name".
+      root_name :: STR
+      .destroy_ptr_part
+      .root_name = root_name
+   end
+
+   set_name(name)
+   ! Set an archive to have sub name "name".
+      name :: STR
+      .destroy_ptr_part
+      .name = name
+   end
+
+   set_genre(genre)
+   ! Set an archive to have genre "genre".
+      genre :: STR
+      .destroy_ptr_part
+      .genre = genre
+   end
+
+   set_format(format)
+   ! Set an archive to have format "format".
+      format :: STR
+      .destroy_ptr_part
+      .format = format
+   end
+
+   set_use_all_commas(val) 
+   ! Set whether to use all commas in the archive name
+      val :: BIN
+      .use_all_commas = val
+   end
+
+!  ===============
+!  Inquiry methods
+!  ===============
+
+   file_name(genre) result (res)
+   ! Return the archive file name from string ".root_name" by prepending the
+   ! archive header ".name". If present "genre" is also appended. If present,
+   ! ".format" is also appended.
+      genre :: STR, optional
+      res :: STR
+
+   ENSURE(.root_name/=" ","must have an archive root_name!")
+
+      k :: STR
+
+      res = trim(.root_name)
+
+      ! Add the file name
+      if (.name /=" ") then
+         if (.use_all_commas) then
+         res = trim(res) // "," // trim(.name)
+         else
+         res = trim(res) // "." // trim(.name)
+         end
+      end
+
+      ! Add the genrw
+      k = .genre
+      if (present(genre)) k = genre
+      if (k/=" ")  &
+         res = trim(res) // "," // trim(k)
+
+      ! Add the format
+      if (.format/=" ") &
+         res = trim(res) // "," // .format
+
+   end
+
+   is_ascii result (res) ::: private
+   ! Return true if the file is a text (ASCII) file
+      res :: BIN
+      res = .format.includes("ascii")
+   end
+
+   is_a_text_file result (res) ::: private
+   ! Return true if the file is a text (ASCII) file
+      res :: BIN
+      res = .format.includes("ascii")
+   end
+
+   exists(genre) result (res)
+   ! Return TRUE if the archive exists in some form on disk.
+      genre :: STR, optional
+      res :: BIN
+
+      file_name :: STR
+
+      file_name = .file_name(genre)
+
+      if (.is_ascii) then
+
+         .Afile.create(trim(file_name))
+         res = .Afile.exists
+         .Afile.destroy
+
+      else
+
+         .Bfile.create(trim(file_name))
+         res = .Bfile.exists
+         .Bfile.destroy
+
+      end
+
+   end
+
+!  ==============================
+!  Opening, closing, and deletion
+!  ==============================
+
+   open(for,genre,ascii) ::: leaky
+   ! Open archive file
+      for :: STR
+      genre :: STR, optional
+      ascii :: BIN, optional
+
+      file_name :: STR
+      text :: BIN
+
+      text = FALSE
+      if (present(ascii)) text = ascii
+
+      file_name = .file_name(genre)
+
+      if (text OR .is_ascii) then
+
+         .Afile.create(trim(file_name))
+         .Afile.open(for)
+         .Afile.set_using_array_labels(FALSE)
+         .Afile.set_real_style("e")
+
+      else
+
+         .Bfile.create(trim(file_name))
+         .Bfile.open(for)
+
+      end
+
+   end
+
+   close ::: leaky
+   ! Close *and* destroy the archive file part.
+
+      if (.Afile.created) then
+          .Afile.close
+          .Afile.destroy
+      end
+
+      if (.Bfile.created) then
+          .Bfile.close
+          .Bfile.destroy
+      end
+
+   end
+
+   delete(genre)
+   ! Delete archive file if it exists, *and* destroy the archive file part
+      genre :: STR, optional
+
+      file_name :: STR
+
+      file_name = .file_name(genre)
+
+      if (.is_ascii) then
+
+         .Afile.create(trim(file_name))
+         if (.Afile.exists) .Afile.delete
+         .Afile.destroy
+
+      else
+
+         .Bfile.create(trim(file_name))
+         if (.Bfile.exists) .Bfile.delete
+         .Bfile.destroy
+
+      end
+
+   end
+
+   delete_all_genres
+   ! Delete all genres of archive file, if they exists.
+      .delete
+      .delete("restricted")
+      .delete("unrestricted")
+      .delete("alpha")
+      .delete("beta")
+      .delete("general")
+      .delete("restricted_complex")
+      .delete("unrestricted_complex")
+      .delete("alpha_complex")
+      .delete("beta_complex")
+      .delete("general_complex")
+      .delete("complex_restricted")
+      .delete("complex_unrestricted")
+      .delete("complex_alpha")
+      .delete("complex_beta")
+      .delete("complex_general")
+   end
+
+
+!  =========================================
+!  Whole-object intrinsic-type read routines
+!  =========================================
+
+   read(item,genre) ::: template
+   ! Read from the archive, a single "item".
+      item :: ITEM?, OUT
+      genre :: STR, IN, optional
+
+      file_name :: STR
+
+      file_name = .file_name(genre)
+
+      if (.is_ascii) then
+
+         .Afile.create(trim(file_name))
+         ENSURE(.Afile.exists,"no text archive "// trim(.name))
+         .Afile.open(for="read")
+         .Afile.read(item)
+         .Afile.close
+         .Afile.destroy
+
+      else
+
+         .Bfile.create(trim(file_name))
+         ENSURE(.Bfile.exists,"no binary archive "// trim(.name))
+         .Bfile.open(for="read-only")
+         .Bfile.read(item)
+         .Bfile.close
+         .Bfile.destroy
+
+      end
+
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>INT)
+   ! Read from the archive, a single "item".
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>REAL)
+   ! Read from the archive, a single "item".
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>VEC{INT})
+   ! Read from the archive, a single "item".
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>VEC{REAL})
+   ! Read from the archive, a single "item".
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>VEC{CPX})
+   ! Read from the archive, a single "item".
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>MAT3{REAL})
+   ! Read from the archive, a single "item".
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>MAT3{CPX})
+   ! Read from the archive, a single "item".
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>MAT4{REAL})
+   ! Read from the archive, a single "item".
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>MAT4{CPX})
+   ! Read from the archive, a single "item".
+   end
+
+   read(item,genre) ::: get_from(ARCHIVE, ITEM?=>MAT5{CPX})
+   ! Read from the archive, a single "item".
+   end
+
+
+   read(item,genre,by_column) ::: template
+   ! Read a matrix "item" from the archive. If present, "by_column" is
+   ! the input order for the matrix.
+      item :: ITEM?, OUT
+      genre :: STR, IN, optional
+      by_column :: BIN, IN, optional
+
+      file_name :: STR
+
+      file_name = .file_name(genre)
+
+      if (.is_ascii) then
+
+         .Afile.create(trim(file_name))
+         ENSURE(.Afile.exists,"no text archive "// trim(.Afile.name))
+         .Afile.open(for="read")
+         .Afile.read(item,by_column)
+         .Afile.close
+         .Afile.destroy
+
+      else
+
+         .Bfile.create(trim(file_name))
+         ENSURE(.Bfile.exists,"no binary archive "// trim(.Bfile.name))
+         .Bfile.open(for="read-only")
+         .Bfile.read(item)
+         .Bfile.close
+         .Bfile.destroy
+
+      end
+
+   end
+
+   read(item,genre,by_column) ::: get_from(ARCHIVE, ITEM?=>MAT{REAL})
+   ! Read a matrix "item" from the archive. If present, "by_column" is
+   ! the input order for the matrix.
+   end
+
+   read(item,genre,by_column) ::: get_from(ARCHIVE, ITEM?=>MAT{CPX})
+   ! Read a matrix "item" from the archive. If present, "by_column" is
+   ! the input order for the matrix.
+   end
+
+
+   read(item,genre) ::: template
+   ! Read a binary archive.
+     item :: ITEM?
+     genre :: STR, optional
+
+   DIE_IF(.is_ascii,"text files not implemented")
+
+      file_name :: STR
+
+      file_name = .file_name(genre)
+     .Bfile.create(trim(file_name))
+     ENSURE(.Bfile.exists,"no binary archive "// trim(file_name))
+     .Bfile.open(for="read-only")
+     .Bfile.read(item)
+     .Bfile.close
+     .Bfile.destroy
+
+   end
+
+   read(item,genre)  ::: get_from(ARCHIVE, ITEM?=>VEC{MAT_{REAL}})
+   ! Read a binary archive.
+   end
+
+
+   read(item,genre) ::: leaky
+   ! Read from the archive operator vector "item". If present, "genre"
+   ! is the genre of "item" to be read in.
+      item :: OPVECTOR
+      genre :: STR, IN, optional
+
+      item_genre :: STR
+
+      if   (present(genre)) then; item_genre = genre
+      else if (.genre/=" ") then; item_genre = .genre
+      else;                       item_genre = item.spinorbital_kind
+      end
+
+      select case (item_genre)
+
+         case ("restricted")
+            item.destroy("restricted")
+            item.create("restricted")
+            .read( item.restricted,genre="restricted")
+
+         case ("unrestricted")
+            item.destroy("unrestricted")
+            item.create("unrestricted")
+            .read( item.alpha,genre="alpha")
+            .read( item.beta,genre="beta")
+
+         case ("alpha")
+            item.destroy("alpha")
+            item.create("alpha")
+            .read( item.alpha,genre="alpha")
+
+         case ("beta")
+            item.destroy("beta")
+            item.create("beta")
+            .read( item.beta,genre="beta")
+
+         case ("general")
+            item.destroy("general")
+            item.create("general")
+            .read( item.general,genre="general")
+
+         case default
+            DIE("unknown genre, "//trim(item_genre))
+
+      end
+
+   end
+
+   read(item,genre,by_column) ::: leaky
+   ! Read from the archive operator matrix "item". If present, "genre" is the
+   ! genre of "item" to be read in. "order" indicated the input order for ascii
+   ! files.
+      item :: OPMATRIX
+      genre :: STR, IN, optional
+      by_column :: BIN, IN, optional
+
+      itemgenre :: STR
+
+      if (present(genre))   then; itemgenre = genre
+      else if (.genre/=" ") then; itemgenre = .genre
+      else;                       itemgenre = item.spinorbital_kind
+      end
+
+      select case (itemgenre)
+         case ("restricted")
+            item.destroy("restricted")
+            item.create("restricted")
+            .read( item.restricted,"restricted",by_column)
+         case ("unrestricted")
+            item.destroy("unrestricted")
+            item.create("unrestricted")
+            .read( item.alpha,"alpha",by_column)
+            .read( item.beta,"beta",by_column)
+         case ("alpha")
+            item.destroy("alpha")
+            item.create("alpha")
+            .read( item.alpha,"alpha",by_column)
+         case ("beta")
+            item.destroy("beta")
+            item.create("beta")
+            .read( item.beta,"beta",by_column)
+         case ("general")
+            item.destroy("general")
+            item.create("general")
+            .read( item.general,"general",by_column)
+         case ("restricted_complex","complex_restricted")
+            item.destroy("restricted_complex")
+            item.create("restricted_complex")
+            .read( item.restricted_complex,"restricted_complex",by_column)
+         case ("unrestricted_complex","complex_unrestricted")
+            item.destroy("unrestricted_complex")
+            item.create("unrestricted_complex")
+            .read( item.alpha_complex,"alpha_complex",by_column)
+            .read( item.beta_complex,"beta_complex",by_column)
+         case ("alpha_complex","complex_alpha")
+            item.destroy("alpha_complex")
+            item.create("alpha_complex")
+            .read( item.alpha_complex,"alpha_complex",by_column)
+         case ("beta_complex","complex_beta")
+            item.destroy("beta_complex")
+            item.create("beta_complex")
+            .read( item.beta_complex,"beta_complex",by_column)
+         case ("general_complex","complex_general")
+            item.destroy("general_complex")
+            item.create("general_complex")
+            .read( item.general_complex,"general_complex",by_column)
+         case default
+            DIE("unknown genre, "//trim(itemgenre))
+      end
+
+   end
+
+
+!  ==========================================
+!  Whole-object intrinsic-type write routines
+!  ==========================================
+
+   write(item,genre,ascii) ::: template
+   ! Write to the archive, a single "item".
+      item :: ITEM?, IN
+      genre :: STR, IN, optional
+      ascii :: BIN, optional
+
+      file_name :: STR
+      text :: BIN
+
+      text = FALSE
+      if (present(ascii)) text = ascii
+
+      file_name = .file_name(genre)
+
+      if (text OR .is_ascii) then
+
+         .Afile.create(trim(file_name))
+         .Afile.open(for="write")
+         .Afile.set_using_array_labels(FALSE)
+         .Afile.set_real_style("e")
+         .Afile.put(item)
+         .Afile.close
+         .Afile.destroy
+
+      else
+
+         .Bfile.create(trim(file_name))
+         .Bfile.open(for="write-only")
+         .Bfile.write(item)
+         .Bfile.close
+         .Bfile.destroy
+
+      end
+
+   end
+
+   write(item,genre,ascii) ::: get_from(ARCHIVE, ITEM?=>INT)
+   ! Write to the archive, a single "item".
+   end
+
+   write(item,genre,ascii) ::: get_from(ARCHIVE, ITEM?=>REAL)
+   ! Write to the archive, a single "item".
+   end
+
+   write(item,genre,ascii) ::: get_from(ARCHIVE, ITEM?=>MAT3{REAL})
+   ! Write to the archive, a single "item".
+   end
+
+   write(item,genre,ascii) ::: get_from(ARCHIVE, ITEM?=>MAT3{CPX})
+   ! Write to the archive, a single "item".
+   end
+
+   write(item,genre,ascii) ::: get_from(ARCHIVE, ITEM?=>MAT4{REAL})
+   ! Write to the archive, a single "item".
+   end
+
+   write(item,genre,ascii) ::: get_from(ARCHIVE, ITEM?=>MAT4{CPX})
+   ! Write to the archive, a single "item".
+   end
+
+   write(item,genre,ascii) ::: get_from(ARCHIVE, ITEM?=>MAT5{CPX})
+   ! Write to the archive, a single "item".
+   end
+
+
+   write(item,genre,by_row,by_column,ascii) ::: template
+   ! Write to the archive, a single vector or matrix "item".
+      item :: ITEM?, IN
+      genre :: STR, IN, optional
+      by_row :: BIN, optional
+      by_column :: BIN, optional
+      ascii :: BIN, optional
+
+      file_name :: STR
+      text :: BIN
+
+      text = FALSE
+      if (present(ascii)) text = ascii
+
+      file_name = .file_name(genre)
+
+      if (text OR .is_ascii) then
+
+         .Afile.create(trim(file_name))
+         .Afile.open(for="write")
+         .Afile.set_using_array_labels(FALSE)
+         .Afile.set_real_style("e")
+         .Afile.put(item,by_row,by_column)
+         .Afile.close
+         .Afile.destroy
+
+      else
+
+         .Bfile.create(trim(file_name))
+         .Bfile.open(for="write-only")
+         .Bfile.write(item)
+         .Bfile.close
+         .Bfile.destroy
+
+      end
+
+   end
+
+   write(item,genre,by_row,by_column,ascii) ::: get_from(ARCHIVE, ITEM?=>VEC{INT})
+   ! Write to the archive, a single vector or matrix "item".
+   end
+
+   write(item,genre,by_row,by_column,ascii) ::: get_from(ARCHIVE, ITEM?=>VEC{REAL})
+   ! Write to the archive, a single vector or matrix "item".
+   end
+
+   write(item,genre,by_row,by_column,ascii) ::: get_from(ARCHIVE, ITEM?=>VEC{CPX})
+   ! Write to the archive, a single vector or matrix "item".
+   end
+
+   write(item,genre,by_row,by_column,ascii) ::: get_from(ARCHIVE, ITEM?=>MAT{REAL})
+   ! Write to the archive, a single vector or matrix "item".
+   end
+
+   write(item,genre,by_row,by_column,ascii) ::: get_from(ARCHIVE, ITEM?=>MAT{CPX})
+   ! Write to the archive, a single vector or matrix "item".
+   end
+
+
+   write(item1,item2,ascii) ::: template
+   ! Write to the archive, "item1" followed by "item2".
+      item1 :: ITEM1?, IN
+      item2 :: ITEM2?, IN
+      ascii :: BIN, optional
+
+      file_name :: STR
+      text :: BIN
+
+      text = FALSE
+      if (present(ascii)) text = ascii
+
+      file_name = .file_name
+
+      if (text OR .is_ascii) then
+
+         .Afile.create(trim(file_name))
+         .Afile.set_using_array_labels(FALSE)
+         .Afile.set_real_style("e")
+         .Afile.open(for="write")
+         .Afile.set_using_array_labels(FALSE)
+         .Afile.put(item1)
+         .Afile.put(item2)
+         .Afile.close
+         .Afile.destroy
+
+      else
+
+         .Bfile.create(trim(file_name))
+         .Bfile.open(for="write-only")
+         .Bfile.write(item1)
+         .Bfile.write(item2)
+         .Bfile.close
+         .Bfile.destroy
+
+      end
+
+   end
+
+   write(item1,item2,ascii) ::: get_from(ARCHIVE, ITEM1?=>VEC{REAL}, ITEM2?=>VEC{REAL})
+   ! Write to the archive, "item1" followed by "item2".
+   end
+
+   write(item1,item2,ascii) ::: get_from(ARCHIVE, ITEM1?=>VEC{REAL}, ITEM2?=>MAT{REAL})
+   ! Write to the archive, "item1" followed by "item2".
+   end
+
+   write(item1,item2,ascii) ::: get_from(ARCHIVE, ITEM1?=>MAT{REAL}, ITEM2?=>VEC{REAL})
+   ! Write to the archive, "item1" followed by "item2".
+   end
+
+   write(item1,item2,ascii) ::: get_from(ARCHIVE, ITEM1?=>MAT{REAL}, ITEM2?=>MAT{REAL})
+   ! Write to the archive, "item1" followed by "item2".
+   end
+
+
+   write(item) ::: template
+   ! Write to a binary archive
+      item :: ITEM?
+
+   DIE_IF(.is_ascii,"text files not implemented")
+
+      file_name :: STR
+
+      file_name = .file_name
+      .Bfile.create(trim(file_name))
+      .Bfile.open(for="write-only")
+      .Bfile.write(item)
+      .Bfile.close
+      .Bfile.destroy
+
+   end
+
+   write(item) ::: get_from(ARCHIVE, ITEM?=>VEC{MAT_{REAL}})
+   ! Write to a binary archive
+   end
+
+
+   write(item,genre,by_column,ascii)
+   ! Write to the archive operator vector "item". "by_column"
+   ! indicated the output order for ascii files.
+      item :: OPVECTOR, IN
+      genre :: STR, IN, optional
+      by_column :: BIN, IN, optional
+      ascii :: BIN, optional
+      itemgenre :: STR
+
+      if (present(genre)) then; itemgenre = genre
+      else;                     itemgenre = item.spinorbital_kind
+      end
+
+      select case (itemgenre)
+         case ("restricted  "); .write(item.restricted,"restricted",by_column,ascii)
+         case ("unrestricted"); .write(item.alpha,"alpha",by_column,ascii)
+                                .write(item.beta,"beta",by_column,ascii)
+         case ("alpha       "); .write(item.alpha,"alpha",by_column,ascii)
+         case ("beta        "); .write(item.beta,"beta",by_column,ascii)
+         case ("general     "); .write(item.general,"general",by_column,ascii)
+         case default;          UNKNOWN(itemgenre)
+      end
+
+   end
+
+   write(item,genre,by_column,ascii)
+   ! Write to the archive operator vector "item". "by_column"
+   ! indicates the output order for ascii files.
+      item :: OPMATRIX, IN
+      genre :: STR, IN, optional
+      by_column :: BIN, IN, optional
+      ascii :: BIN, optional
+      itemgenre :: STR
+
+      if (present(genre)) then; itemgenre = genre
+      else;                     itemgenre = item.spinorbital_kind
+      end
+
+      select case (itemgenre)
+         case ("restricted");           .write(item.restricted,"restricted",by_column,ascii)
+         case ("unrestricted");         .write(item.alpha,"alpha",by_column,ascii)
+                                        .write(item.beta,"beta",by_column,ascii)
+         case ("alpha");                .write(item.alpha,"alpha",by_column,ascii)
+         case ("beta");                 .write(item.beta,"beta",by_column,ascii)
+         case ("general");              .write(item.general,"general",by_column,ascii)
+         case ("restricted_complex");   .write(item.restricted_complex,"restricted_complex",by_column,ascii)
+         case ("unrestricted_complex"); .write(item.alpha_complex,"alpha_complex",by_column,ascii)
+                                        .write(item.beta_complex,"beta_complex",by_column,ascii)
+         case ("alpha_complex");        .write(item.alpha_complex,"alpha_complex",by_column,ascii)
+         case ("beta_complex");         .write(item.beta_complex,"beta_complex",by_column,ascii)
+         case ("general_complex");      .write(item.general_complex,"general_complex",by_column,ascii)
+         case default;                  DIE("unknown genre, "//trim(itemgenre))
+      end
+
+   end
+
+
+!  =========================================
+!  Part-object intrinsic-type write routines
+!  =========================================
+
+!   put(item,description) ::: template
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!      item :: ITEM?, IN
+!      declaration :: STR, optional, IN
+!
+!   ENSURE(.Afile.created OR .Bfile.creaated,"no file part created!")
+!
+!      ! Put item with description
+!      if (.is_ascii) then
+!
+!         ENSURE(declaration,"no type declaration")
+!
+!         stdout.set_using_fields(FALSE)
+!         .Afile.put(trim(description))
+!         .Afile.put(item)
+!         .Afile.flush
+!         stdout.set_using_fields(TRUE)
+!
+!      ! Put item 
+!      else
+!
+!         .Bfile.write(item)
+!
+!      end
+!
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>STR)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>INT)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>BIN)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>REAL)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>CPX)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!
+!   put(item,description) ::: template
+!   ! Put to the archive, a vector "item" with (for ascii files) its
+!   ! description part
+!      item :: ITEM?, IN
+!      declaration :: STR, optional, IN
+!
+!   ENSURE(.Afile.created OR .Bfile.creaated,"no file part created!")
+!
+!      ! Put item with description
+!      if (.is_ascii) then
+!
+!         ENSURE(declaration,"no type declaration")
+!
+!         stdout.set_using_fields(FALSE)
+!         .Afile.put(trim(description))
+!         .Afile.put(item)
+!         .Afile.flush
+!         stdout.set_using_fields(TRUE)
+!
+!      ! Put item 
+!      else
+!
+!         .Bfile.write(item)
+!
+!      end
+!
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>STR)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>INT)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>BIN)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>REAL)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!   put(item,description) ::: get_from(ARCHIVE, ITEM?=>CPX)
+!   ! Put to the archive, a non-array "item" with (for ascii files) its
+!   ! description part
+!   end
+!
+!
+!!  ============================================
+!!  Derived-object intrinsic-type write routines
+!!  ============================================
+!
+!   put(item,genre)
+!   ! Write to the archive operator vector "item". 
+!      item :: OPVECTOR, IN
+!      genre :: STR, IN, optional
+!      by_column :: BIN, IN, optional
+!      ascii :: BIN, optional
+!      
+!      text,file_name :: STR
+!
+!      ! Write genre-labelled archive
+!      if (present(genre)) then
+!
+!         select case (genre)
+!            case ("restricted  "); .write(item.restricted,"restricted")
+!            case ("unrestricted"); .write(item.alpha,     "alpha")
+!                                   .write(item.beta,      "beta")
+!            case ("alpha       "); .write(item.alpha,     "alpha")
+!            case ("beta        "); .write(item.beta,      "beta")
+!            case ("general     "); .write(item.general,   "general")
+!            case default;          UNKNOWN(genre)
+!         end
+!
+!      ! Archive the whole type
+!      else
+!
+!         .open(for="write",ascii=.is_ascii)
+!
+!         if (.is_ascii) then
+!
+!            ! Put
+!            .put("n_bf :: INT = ")
+!            .Afile.put(item.n_bf)
+!            .Afile.flush(item.n_bf)
+!
+!         else
+!
+!         end
+!
+!         select case (itemgenre)
+!            case ("restricted  "); .write(item.restricted,"restricted",by_column,ascii)
+!            case ("unrestricted"); .write(item.alpha,"alpha",by_column,ascii)
+!                                   .write(item.beta,"beta",by_column,ascii)
+!            case ("alpha       "); .write(item.alpha,"alpha",by_column,ascii)
+!            case ("beta        "); .write(item.beta,"beta",by_column,ascii)
+!            case ("general     "); .write(item.general,"general",by_column,ascii)
+!            case default;          UNKNOWN(itemgenre)
+!         end
+!
+!         ! Close
+!         .close
+!
+!      end
+!
+!   end
+   
+!  ===============================
+!  Program-specific write routines
+!  ===============================
+
+   write_ppm(matrix,max_colours)
+   ! Writes a ppm file.  Requires a 2D matrix of data
+   ! values (width of image specified first then height)
+   ! max_colours is the range
+      matrix :: MAT{REAL}
+      max_colours :: INT, IN, optional
+      name :: STR
+      cf :: COLOUR_FUNCTION*
+      colours :: MAT3{INT}*
+      n_div :: INT
+      minv,maxv :: REAL
+
+      n_div = 256
+      if (present(max_colours)) n_div = max_colours
+
+      name = .file_name.trim // ".ppm"
+      .Afile.create(trim(name))
+      .Afile.open(for="write")
+
+      cf.create
+      colours.create(3,matrix.dim1,matrix.dim2)
+
+      minv = minval(matrix)
+      maxv = maxval(matrix)
+      cf.rescale_data((/minv,maxv/))
+      minv = 0
+      maxv = n_div
+      cf.rescale_RGB((/minv,maxv/))
+      cf.get_RGB_for(matrix,colours)
+ 
+      .Afile.put_ppm(colours)
+
+      colours.destroy
+      cf.destroy
+
+      .Afile.close
+      .Afile.destroy
+
+   end
+
+   write_orbital(gcu,gcd,n_pt)
+   ! Write the up and down component of an orbital with the number of
+   ! "n_pt" grid points,
+      gcu,gcd :: VEC{CPX}
+      n_pt :: INT
+
+      n :: INT
+
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(14)
+      .Afile.set_real_precision(6)
+
+      do n = 1,n_pt
+            .Afile.put(gcu(n))
+            .Afile.put(gcd(n))
+            .Afile.flush
+      end
+
+      .close
+
+   end
+
+   write_gnuplot(density,n_x,n_y,n_z)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+   ! "n_y", "n_z" in gnuplot format (suitable for an splot).
+      density :: VEC{REAL}
+      n_x,n_y,n_z :: INT
+
+      n,x,y,z :: INT
+
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(14)
+      .Afile.set_real_precision(6)
+
+      n = 1
+      do z = 1,n_z
+
+         if (n_z>1) .Afile.show(" z =",z)
+
+         do y = 1,n_y
+         do x = 1,n_x
+            .Afile.put(density(n))
+            .Afile.flush
+            n = n+1
+         end
+         .Afile.flush
+         end
+
+      end
+
+      .close
+
+   end
+
+   write_gnuplot_contour(density,grid,pos,bonds)
+   ! Write a gnuplot command file to display contours for a "density"
+   ! vector corresponding to a "grid" and with atom positions "pos"
+   ! already rotated into the grid frame, and with "bond" describing
+   ! the atom connectivity. 
+      density :: VEC{REAL}, IN
+      grid    :: PLOT_GRID, IN   
+      pos     :: MAT{REAL}, IN
+      bonds   :: VEC{VEC_{INT}}, IN
+
+   ENSURE(density.dim==grid.n_pt,"inconsistent density array and grid size")
+
+      L :: VEC{REAL}(3)
+      cont_data,cont_tabl :: STR
+      bond_data,bond_tabl :: STR
+      pdf_file,val :: STR
+      op,cl :: STR(len=1)
+      logplot,neg_logplot,pos_logplot,is_2d :: BIN
+      ny :: INT
+
+      ! Type of plot? 
+      logplot     = FALSE
+      pos_logplot = FALSE
+      neg_logplot = FALSE
+
+      ! Is it a 2D plot
+      ny = grid.n_y/2
+      is_2d = ny>0
+
+      val = grid.contour_scale
+      select case (val)
+         case ("linear      ")
+         case ("log         "); logplot = TRUE
+         case ("negative-log"); logplot = TRUE; neg_logplot = TRUE
+         case ("positive-log"); logplot = TRUE; pos_logplot = TRUE
+         case default; UNKNOWN(val)
+      end
+
+      ! Constants
+      op = achar(91)
+      cl = achar(93)
+
+      .set_format("gnuplot.contour_data")
+      cont_data = .file_name
+
+      ! Save bond data file names
+      .set_format("gnuplot.bond_table")
+      bond_tabl = .file_name
+      .set_format("gnuplot.bond_data")
+      bond_data = .file_name
+
+      ! Write the bond data
+      .write_gnuplot_bonds(pos,bonds) 
+
+      ! Save contour data file names
+      .set_format("gnuplot.contour_table")
+      cont_tabl = .file_name
+      if (is_2d) then
+      .set_format("gnuplot.contour_data")
+      else
+      .set_format("gnuplot.contour_data_1d")
+      end
+      cont_data = .file_name
+
+      ! Write the contour data
+      .write_gnuplot_2d_and_1d(density,grid)
+
+      ! Get the .pdf file name
+      if (is_2d) then
+      .set_format("gnuplot.pdf")
+      else
+      .set_format("gnuplot_1d.pdf")
+      end
+      pdf_file = .file_name
+
+      ! Open & write gnuplot command file
+      .set_format("gnuplot.commands")
+      .open(for="writing",ascii=TRUE)
+
+      ! Write gnuplot command file
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(16)
+      .Afile.set_real_precision(8)
+
+      ! Header for user ...
+      .Afile.text("# ======================")
+      .Afile.text("# Gnuplot 4.6 input file")
+      .Afile.text("# ======================")
+      .Afile.text("#")
+      .Afile.text("# 1) To see this plot install gnuplot 4.6 and type:")
+      .Afile.text("#")
+      .Afile.text("#      gnuplot -persist <file>")
+      .Afile.text("#")
+      .Afile.text("# 2) You must have gnuplot 4.6. To install see here:")
+      .Afile.text("#")
+      .Afile.text("#      http://www.miscdebris.net/blog/2010/03/03/install-gnuplot-4-4-0-rc1-on-ubuntu-linux/")
+      .Afile.text("#")
+      .Afile.text("#    - This works even though it is for gnuplot 4.4")
+      .Afile.text("#    - Install newer libraries than those listed above")
+      .Afile.text("#    - Make sure you have the wxt terminal")
+      .Afile.text("#")
+      .Afile.text("# 3) You can alter the lines below to get the plot you want.")
+      .Afile.text("#    - Look for the parts marked CHANGE")
+      .Afile.text("#    - Change the contour levels for a start")
+      .Afile.text("#    - Use a linear or log scale (change format= command in stdin)")
+      .Afile.text("#    - Use different colors!")
+
+      ! Check
+      .Afile.flush
+      .Afile.text("# Check version")
+      .Afile.text("if (GPVAL_VERSION<4.6) print 'You must use gnuplot 4.6'; exit")
+
+      ! Use macros
+      .Afile.flush
+      .Afile.text("# Turn on macros")
+      .Afile.text("set macros")
+
+      ! Set terminal
+      .Afile.flush
+      .Afile.text("# Set terminal - enhanced for sub/superscripts")
+      .Afile.text("set term wxt enhanced")
+
+      ! Set contour levels
+      .Afile.flush
+      if (logplot) then
+      .Afile.text("# Set the *log10* of +ve contour levels incrementally. (CHANGE)")
+      .Afile.text("# Negative contours are set the opposite of +ve ones")
+      .Afile.text("# . MIN_VALUE - log10 of minimum +ve contour value")
+      .Afile.text("# . MAX_VALUE - log10 of maximum +ve contour value")
+      else
+      .Afile.text("# Set the contour levels incrementally. (CHANGE)")
+      .Afile.text("# . MIN_VALUE - minimum contour value")
+      .Afile.text("# . MAX_VALUE - maximum contour value, -ve of MIN_VALUE")
+      end
+      .Afile.text("# . INCREMENT - value to increment MIN_VALUE by")
+
+      .Afile.text("MIN_VALUE = "//trim(grid.contour_min_value.to_str("f8.4")))
+      .Afile.text("INCREMENT = "//trim(grid.contour_increment.to_str("f8.4")))
+      .Afile.text("MAX_VALUE = "//trim(grid.contour_max_value.to_str("f8.4")))
+
+      ! Sanity check
+      .Afile.flush
+      .Afile.text("# Sanity check ...")
+      .Afile.text("nint(x) = floor(x+0.5)")
+      .Afile.text("deln(x) = abs(x-nint(x))")
+      .Afile.text("delt(x,y) = abs(abs(x)-abs(y))")
+      .Afile.text("if (MIN_VALUE > MAX_VALUE)     print 'MIN_VALUE is too large'; exit")
+
+      if (NOT logplot) then
+      .Afile.text("if (delt(MIN_VALUE,MAX_VALUE)>0.0001) print 'MIN is not -MAX value!'; exit")
+      end
+
+      .Afile.text("if (INCREMENT<= 0)             print 'INCREMENT must be +ve!'; exit")
+      .Afile.text("RANGE = MAX_VALUE - MIN_VALUE")
+
+      if (logplot) then
+      .Afile.text("n = RANGE/INCREMENT + 1")
+      .Afile.text("if (deln(n)>0.0001)            print 'INCREMENT must divide RANGE'; exit")
+      else
+      .Afile.text("n = RANGE/INCREMENT")
+      .Afile.text("if (deln(n)>0.0001)            print 'INCREMENT must divide RANGE'; exit")
+      .Afile.text("n = n/2")
+      .Afile.text("if (deln(n)>0.0001)            print 'No. of contours must be odd'; exit")
+      end
+      
+      .Afile.text("n = nint(n)")
+      .Afile.text("MID_VALUE = MIN_VALUE + RANGE/2")
+                
+      if (is_2d) then ! -- 2D specific -1
+
+      ! Set length scale (ruler) markings in au
+      .Afile.flush
+      .Afile.text("# Ruler length (CHANGE)")
+      .Afile.text("RULER_LENGTH = 1")
+
+      ! Set contour line colors
+      .Afile.flush
+      .Afile.text("# Set MIN, MID and MAX value contour line colors (CHANGE)")
+      .Afile.text("MIN_COLOR_R = "//trim(grid.contour_min_color.RGB255(1).to_str))
+      .Afile.text("MIN_COLOR_G = "//trim(grid.contour_min_color.RGB255(2).to_str))
+      .Afile.text("MIN_COLOR_B = "//trim(grid.contour_min_color.RGB255(3).to_str))
+      .Afile.flush
+      .Afile.text("MID_COLOR_R = "//trim(grid.contour_mid_color.RGB255(1).to_str))
+      .Afile.text("MID_COLOR_G = "//trim(grid.contour_mid_color.RGB255(2).to_str))
+      .Afile.text("MID_COLOR_B = "//trim(grid.contour_mid_color.RGB255(3).to_str))
+      .Afile.flush
+      .Afile.text("MAX_COLOR_R = "//trim(grid.contour_max_color.RGB255(1).to_str))
+      .Afile.text("MAX_COLOR_G = "//trim(grid.contour_max_color.RGB255(2).to_str))
+      .Afile.text("MAX_COLOR_B = "//trim(grid.contour_max_color.RGB255(3).to_str))
+
+      ! Set fade factor
+      val = grid.contour_fade_factor.to_str("f4.2")
+      .Afile.flush
+      .Afile.text("# Apply this factor to get pastel palette colors (CHANGE)")
+      .Afile.text("FADE_FACTOR = "//trim(val))
+
+      end ! -- 2D specific part -1
+
+      .Afile.flush
+      .Afile.text("# ==== Report and do plot ====")
+
+      ! Report range and no. of contours
+      .Afile.flush
+
+      if (logplot) then
+      .Afile.text("# Range and no. of contours")
+      .Afile.text("print 'Minimum +ve log10 contour = ',MIN_VALUE")
+      .Afile.text("print 'Maximum +ve log10 contour = ',MAX_VALUE")
+      .Afile.text("print 'Contour increment         = ',INCREMENT")
+      .Afile.text("print 'No. of contours           = ',n")
+      if (NOT pos_logplot AND NOT neg_logplot) &
+      .Afile.text("print 'Total no. of contours     = ',2*n+1")
+      else
+      .Afile.text("# Range and no. of contours")
+      .Afile.text("print 'Minimum contour value = ',MIN_VALUE")
+      .Afile.text("print 'Maximum contour value = ',MAX_VALUE")
+      .Afile.text("print 'Contour increment     = ',INCREMENT")
+      .Afile.text("print 'No. of +ve contours   = ',n")
+      .Afile.text("print 'Total no. of contours = ',2*n+1")
+      end
+                
+      ! Map: makes -ve log contours, then 0, then +ve log contours
+      .Afile.flush
+
+      if (logplot) then
+      .Afile.text("# map: makes -ve log contours, then 0, then +ve log contours")
+      .Afile.text("#      it goes from -n .. -1 in integer steps,")
+      .Afile.text("#      then    from +1 .. +n in integer steps,")
+      .Afile.text("#      for every 10**(INCREMENT) factor")
+      .Afile.text("#      The abs( ) makes the transition smoother")
+      .Afile.text("EPS = 10**(MIN_VALUE)")
+      .Afile.text("FAC = 10**(-MIN_VALUE)")
+      .Afile.text("map(x) = abs(x)<EPS ? FAC*x : (x<0 ? (-log10(-x)+MIN_VALUE)/INCREMENT-1:(+log10(x)-MIN_VALUE)/INCREMENT+1)")
+      else
+      .Afile.text("# map: does nothing for linear plots")
+      .Afile.text("map(x) = x")
+      end
+                
+      ! The max and min of the map function
+      if (logplot) then
+
+      ! log plot
+      .Afile.flush
+      .Afile.text("# The max and min of the map function")
+      if      (pos_logplot) then
+      .Afile.text("MIN_MAP = 1")
+      .Afile.text("MAX_MAP = n")
+      else if (neg_logplot) then
+      .Afile.text("MIN_MAP = -n")
+      .Afile.text("MAX_MAP = -1")
+      else if (logplot) then
+      .Afile.text("MIN_MAP = -n")
+      .Afile.text("MAX_MAP = +n")
+      .Afile.text("MID_MAP = 0")
+      end
+
+      else
+
+      ! linear plot
+      .Afile.text("MIN_MAP = MIN_VALUE")
+      .Afile.text("MID_MAP = MID_VALUE")
+      .Afile.text("MAX_MAP = MAX_VALUE")
+
+      end
+                
+      if (is_2d) then ! -- 2D specific -2
+
+      ! Set data files
+      .Afile.flush
+      .Afile.text("# Set data files")
+      .Afile.text("CONTOUR_DATA  = '"//trim(cont_data)//"'")
+      .Afile.text("PDF_FILE      = '"//trim(pdf_file)//"'")
+      .Afile.text("BOND_DATA     = '"//trim(bond_data)//"'")
+      .Afile.text("CONTOUR_TAB_M = '"//trim(cont_tabl)//"_-'")
+      .Afile.text("CONTOUR_TAB_0 = '"//trim(cont_tabl)//"_0'")
+      .Afile.text("CONTOUR_TAB_P = '"//trim(cont_tabl)//"_+'")
+      .Afile.text("BOND_TABLE    = '"//trim(bond_tabl)//"'")
+                
+      ! Make the hex color strings
+      .Afile.flush
+      .Afile.text("# Make hex colors")
+      .Afile.text("MIN_COLOR = sprintf('#%02x%02x%02x',MIN_COLOR_R,MIN_COLOR_G,MIN_COLOR_B)")
+      .Afile.text("MID_COLOR = sprintf('#%02x%02x%02x',MID_COLOR_R,MID_COLOR_G,MID_COLOR_B)")
+      .Afile.text("MAX_COLOR = sprintf('#%02x%02x%02x',MAX_COLOR_R,MAX_COLOR_G,MAX_COLOR_B)")
+
+      .Afile.flush
+      .Afile.text("print 'Min-contour color     = ',MIN_COLOR")
+      .Afile.text("print 'Mid-contour color     = ',MID_COLOR")
+      .Afile.text("print 'Max-contour color     = ',MAX_COLOR")
+                
+      ! Set faded palette colors
+      .Afile.flush
+      .Afile.text("# Set faded palette colors")
+      .Afile.text("fade(x) = FADE_FACTOR*x + (1-FADE_FACTOR)*255")
+      .Afile.flush
+      .Afile.text("MIN_PCOLOR_R = fade(MIN_COLOR_R)")
+      .Afile.text("MIN_PCOLOR_G = fade(MIN_COLOR_G)")
+      .Afile.text("MIN_PCOLOR_B = fade(MIN_COLOR_B)")
+      .Afile.flush
+      .Afile.text("MAX_PCOLOR_R = fade(MAX_COLOR_R)")
+      .Afile.text("MAX_PCOLOR_G = fade(MAX_COLOR_G)")
+      .Afile.text("MAX_PCOLOR_B = fade(MAX_COLOR_B)")
+      .Afile.flush
+      .Afile.text("MIN_PCOLOR = sprintf('#%02x%02x%02x',MIN_PCOLOR_R,MIN_PCOLOR_G,MIN_PCOLOR_B)")
+      .Afile.text("MAX_PCOLOR = sprintf('#%02x%02x%02x',MAX_PCOLOR_R,MAX_PCOLOR_G,MAX_PCOLOR_B)")
+
+      ! Define palette 
+      .Afile.flush
+      .Afile.text("# Set background color palette")
+      if (pos_logplot OR neg_logplot) then
+      .Afile.text("set palette defined ( MIN_MAP MIN_PCOLOR, MAX_MAP MAX_PCOLOR) ")
+      else if (logplot) then
+      .Afile.text("set palette defined ( MIN_MAP MIN_PCOLOR, -1 MID_COLOR, 1 MID_COLOR, MAX_MAP MAX_PCOLOR) ")
+      else
+      .Afile.text("set palette defined ( MIN_MAP MIN_PCOLOR, MID_VALUE MID_COLOR, MAX_MAP MAX_PCOLOR) ")
+      end
+
+      ! Set grid width, aspect ratio
+      .Afile.flush
+      .Afile.text("# Plot side lengths ...")
+      L = HALF*grid.width
+      .Afile.flush
+      .Afile.text("# Set the correct aspect ratio")
+      .Afile.text("Lx = "//trim(L(1).to_str))
+      .Afile.text("Ly = "//trim(L(2).to_str))
+      .Afile.text("set xrange "//op//"-Lx:Lx"//cl)
+      .Afile.text("set yrange "//op//"-Lx:Lx"//cl)
+      .Afile.text("set size square")
+      .Afile.text("set view map")
+
+      ! Set no key, no ytics
+      .Afile.flush
+      .Afile.text("# Set no key and ytics")
+      .Afile.text("unset key")
+      .Afile.text("unset ytics")
+
+      ! Set distance ruler on bottom
+      .Afile.flush
+      .Afile.text("# Set xtics as ruler scale?")
+      if (grid.use_ruler_scale) then
+      val = grid.contour_font_size.to_str
+      .Afile.text("set xtics out nomirror 0,RULER_LENGTH,RULER_LENGTH font ',"//trim(val)//"'") 
+      else
+      .Afile.text("unset xtics") 
+      end
+
+      ! Macro for color background
+      .Afile.flush
+      .Afile.text("# Macro for plotting COLOR_BACKGROUND")
+      .Afile.text("COLOR_BACKGROUND = 'CONTOUR_DATA using 1:2:(map($3)) with image'")
+
+      .Afile.text("# Set contour style, contour line style")
+      .Afile.text("set contour base")
+      .Afile.text("unset surface")
+      val = grid.contour_line_width.to_str("f4.2")
+      .Afile.text("set style line 1 lw "//trim(val)//" lc rgb MIN_COLOR")
+      .Afile.text("set style line 2 lw "//trim(val)//" lt 0")
+      .Afile.text("set style line 3 lw "//trim(val)//" lc rgb MAX_COLOR")
+
+      ! Plot contours
+      if (logplot) then ! for log plots ...
+
+      if (NOT pos_logplot) then
+      .Afile.flush
+      .Afile.text("# Plot contours:-ve")
+      .Afile.text("set cntrparam level incremental MIN_MAP, 1, -1")
+      .Afile.text("set table CONTOUR_TAB_M")
+      .Afile.text("splot     CONTOUR_DATA  using 1:2:(map($3))")
+      .Afile.text("unset table")
+      end
+
+      .Afile.flush
+      .Afile.text("# Plot contours: 0")
+      .Afile.text("set cntrparam level incremental 0, 1, 0")
+      .Afile.text("set table CONTOUR_TAB_0")
+      .Afile.text("splot     CONTOUR_DATA  using 1:2:(map($3))")
+      .Afile.text("unset table")
+
+      if (NOT neg_logplot) then
+      .Afile.flush
+      .Afile.text("# Plot contours: +ve")
+      .Afile.text("set cntrparam level incremental 1, 1, MAX_MAP")
+      .Afile.text("set table CONTOUR_TAB_P")
+      .Afile.text("splot     CONTOUR_DATA  using 1:2:(map($3))")
+      .Afile.text("unset table")
+      end
+
+      .Afile.flush
+      .Afile.text("# Macro for plotting all contours")
+      if      (neg_logplot) then
+      .Afile.text("CONTOURS = 'CONTOUR_TAB_M with lines ls 1, CONTOUR_TAB_0 with lines ls 2'")
+      else if (pos_logplot) then
+      .Afile.text("CONTOURS = 'CONTOUR_TAB_0 with lines ls 2, CONTOUR_TAB_P with lines ls 3'")
+      else
+      .Afile.text("CONTOURS = 'CONTOUR_TAB_M with lines ls 1, CONTOUR_TAB_0 with lines ls 2, CONTOUR_TAB_P with lines ls 3'")
+      end
+
+      else ! for linear plot
+
+      .Afile.flush
+      .Afile.text("# Plot contours: below mid")
+      .Afile.text("set cntrparam level incremental MIN_VALUE, INCREMENT, MID_VALUE-0.5*INCREMENT")
+      .Afile.text("set table CONTOUR_TAB_M")
+      .Afile.text("splot     CONTOUR_DATA  using 1:2:(map($3))")
+      .Afile.text("unset table")
+
+      .Afile.flush
+      .Afile.text("# Plot contours: mid")
+      .Afile.text("set cntrparam level incremental MID_VALUE-0.5*INCREMENT, INCREMENT, MID_VALUE+0.5*INCREMENT")
+      .Afile.text("set table CONTOUR_TAB_0")
+      .Afile.text("splot     CONTOUR_DATA  using 1:2:(map($3))")
+      .Afile.text("unset table")
+
+      .Afile.flush
+      .Afile.text("# Plot contours: mid")
+      .Afile.text("set cntrparam level incremental MID_VALUE+0.5*INCREMENT, INCREMENT, MAX_VALUE")
+      .Afile.text("set table CONTOUR_TAB_P")
+      .Afile.text("splot     CONTOUR_DATA  using 1:2:(map($3))")
+      .Afile.text("unset table")
+
+      .Afile.flush
+      .Afile.text("# Macro for plotting all contours")
+      .Afile.text("CONTOURS = 'CONTOUR_TAB_M with lines ls 1, CONTOUR_TAB_0 with lines ls 2, CONTOUR_TAB_P with lines ls 3'")
+
+      end ! for log plots ...
+
+      ! Make table of atom-bond data 
+      .Afile.flush
+      .Afile.text("# This is the table of atom-bond data ...")
+      .Afile.text("set table BOND_TABLE")
+      .Afile.text("plot      BOND_DATA")
+      .Afile.text("unset table")
+
+      ! Macro for atom bonds
+      .Afile.flush
+      .Afile.text("# Macro for plotting ATOM_BONDS")
+      .Afile.text("ATOM_BONDS = 'BOND_TABLE with lines lt -1 lw 1.25'")
+                
+      else ! -- 1D specific -2
+
+      ! Set data files
+      .Afile.flush
+      .Afile.text("# Set data files")
+      .Afile.text("CONTOUR_DATA  = '"//trim(cont_data)//"'")
+      .Afile.text("PDF_FILE      = '"//trim(pdf_file)//"'")
+
+      end ! -- 2D specific -2
+  
+      ! Macro for cbtics
+      if (logplot) then ! --logplot
+
+      val = grid.contour_tic_dps.to_str
+      .Afile.flush
+      .Afile.text("# Make CBTICS")
+      .Afile.text("str(val) = gprintf('%."//trim(val)//"f',val)")
+      .Afile.text("add_tic(sign,pow,lev,comma) = '"//'"'//"'.sign.'10^{'.str(pow).'}"//'"'//" '.str(lev).comma")
+
+      .Afile.text("CBTICS = ''")
+
+      ! -ve log contours
+      if (NOT pos_logplot) then
+      .Afile.text("pow = MAX_VALUE")
+      .Afile.text("do for "//op//"i=-n:-1"//cl//" {    # -ve  cbtic")
+      .Afile.text("   CBTICS= CBTICS.add_tic('-',pow,i,', ')")
+      .Afile.text("   pow = pow - INCREMENT")
+      .Afile.text("}")
+      end
+      .Afile.text("   CBTICS= CBTICS.'"//'"0"'//" 0, ' # zero cbtic")
+      ! +ve log contours
+      if (NOT neg_logplot) then
+      .Afile.text("pow = MIN_VALUE")
+      .Afile.text("do for "//op//"i=1:n-1"//cl//" {    # 0ve  cbtic")
+      .Afile.text("   CBTICS= CBTICS.add_tic('',pow,i,', ')")
+      .Afile.text("   pow = pow + INCREMENT")
+      .Afile.text("}")
+      end
+      .Afile.text("   CBTICS= CBTICS.add_tic('',pow,n,'')")
+
+      end ! -- logplot
+  
+      ! Set cbtics and cbrange
+      if (is_2d) then ! 2D specific -3
+
+      .Afile.flush
+      .Afile.text("# Set cbtics and cbrange")
+
+      if (grid.use_colorbox_scale) then ! use_colorbox_scale
+
+      val = grid.contour_font_size.to_str
+      if (logplot) then ! -- logplot
+      .Afile.text("print 'CBTICS = ',CBTICS")
+      .Afile.text("set cbtics in nomirror ( @CBTICS ) font ',"//trim(val)//"'")
+      .Afile.text("set cbrange "//op//"MIN_MAP:MAX_MAP"//cl)
+      else
+      .Afile.text("set cbtics in nomirror MIN_VALUE,INCREMENT,MAX_VALUE font ',"//trim(val)//"'")
+      .Afile.text("set cbrange "//op//"MIN_VALUE:MAX_VALUE"//cl)
+      end ! -- logplot
+
+      else ! --use_colorbox_scale
+
+      .Afile.text("unset cbtics")
+
+      end  ! --use_colorbox_scale
+
+      else ! 1D specific -3
+
+      if (logplot) then ! logplot
+
+      .Afile.flush
+      .Afile.text("# Set ytics")
+      .Afile.text("unset key")
+      .Afile.text("unset xtics")
+      .Afile.text("unset ytics")
+      .Afile.text("set y2tics ( @CBTICS ) font ',10'")
+      .Afile.text("set yrange [MIN_MAP:MAX_MAP]")
+
+      else ! linear
+
+      DIE("Haven't done this yet")
+
+      end ! logplot
+
+      end ! 2D specific -3
+  
+      if (is_2d) then ! 2D specific -4
+  
+      ! Finally do the plot
+      .Afile.flush
+      .Afile.text("# Finally do the plot ...")
+      .Afile.text("plot "//op//"-Lx:Lx"//cl//" "//op//"-Ly:Ly"//cl//" @COLOR_BACKGROUND, @CONTOURS, @ATOM_BONDS")
+
+      else ! 1D specific -4
+  
+      ! Finally do the plot
+      .Afile.flush
+      .Afile.text("# Finally do the plot ...")
+      .Afile.text("plot CONTOUR_DATA using 1:(map($2)) with lines lt -1 lw 1.25")
+
+      end ! 2D specific -4
+  
+      ! Make postscript
+      .Afile.flush
+      .Afile.text("# Make postscript")
+    ! .Afile.text("set term postscript eps color enhanced solid")
+      .Afile.text("set term pdfcairo enhanced color solid")
+      .Afile.text("set output PDF_FILE")
+      .Afile.text("replot")
+
+      ! Close
+      .close
+
+   end
+
+!   write_gnuplot_log_contour(density,grid,pos,bonds)
+!   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+!   ! "n_y", "n_z" in gnuplot contour format. The required commands are
+!   ! embedded in the script.
+!      density :: VEC{REAL}, IN
+!      grid    :: PLOT_GRID, IN   
+!      pos     :: MAT{REAL}, IN
+!      bonds   :: VEC{VEC_{INT}}, IN
+!
+!   ENSURE(density.dim==grid.n_pt,"inconsistent density array and grid size")
+!
+!      cont_data,cont_tabl :: STR
+!      bond_data,bond_tabl :: STR
+!      eps_file :: STR
+!      op,cl :: STR(len=1)
+!
+!      ! Constants
+!      op = achar(91)
+!      cl = achar(93)
+!
+!      .set_format("gnuplot.contour_data")
+!      cont_data = .file_name
+!
+!      ! Save bond data file names
+!      .set_format("gnuplot.bond_table")
+!      bond_tabl = .file_name
+!      .set_format("gnuplot.bond_data")
+!      bond_data = .file_name
+!
+!      ! Write the bond data
+!      .write_gnuplot_bonds(pos,bonds) 
+!
+!      ! Save contour data file names
+!      .set_format("gnuplot.contour_table")
+!      cont_tabl = .file_name
+!      .set_format("gnuplot.contour_data")
+!      cont_data = .file_name
+!
+!      ! Write the contour data
+!      .write_gnuplot_2d(density,grid)
+!
+!      ! Write gnuplot command file
+!      .set_format("gnuplot.eps")
+!      eps_file = .file_name
+!
+!      ! Write gnuplot command file
+!      .set_format("gnuplot.log_commands")
+!      .open(for="writing",ascii=TRUE)
+!      .Afile.set_real_style("e")
+!      .Afile.set_real_width(16)
+!      .Afile.set_real_precision(8)
+!
+!      ! Header for user ...
+!      .Afile.text("# ======================")
+!      .Afile.text("# Gnuplot 4.6 input file")
+!      .Afile.text("# ======================")
+!      .Afile.text("#")
+!      .Afile.text("# 1) To see this plot install gnuplot 4.6 and type:")
+!      .Afile.text("#")
+!      .Afile.text("#      gnuplot -persist <file>")
+!      .Afile.text("#")
+!      .Afile.text("# 2) You must have gnuplot 4.6. To install see here:")
+!      .Afile.text("#")
+!      .Afile.text("#      http://www.miscdebris.net/blog/2010/03/03/install-gnuplot-4-4-0-rc1-on-ubuntu-linux/")
+!      .Afile.text("#")
+!      .Afile.text("#    - This works even though it is for gnuplot 4.4")
+!      .Afile.text("#    - Install newer libraries than those listed above")
+!      .Afile.text("#    - Make sure you have the wxt terminal")
+!      .Afile.text("#")
+!      .Afile.text("# 3) You can alter the lines below to get the plot you want.")
+!      .Afile.text("#    - Look for the parts marked CHANGE")
+!      .Afile.text("#    - Change the contour levels for a start")
+!      .Afile.text("#    - Use a linear or log scale (change format= command in stdin)")
+!      .Afile.text("#    - Use different colors!")
+!
+!      ! Check
+!      .Afile.flush
+!      .Afile.text("# Check version")
+!      .Afile.text("if (GPVAL_VERSION<4.6) print 'You must use gnuplot 4.6'; exit")
+!
+!      ! Use macros
+!      .Afile.flush
+!      .Afile.text("# Turn on macros")
+!      .Afile.text("set macros")
+!
+!      ! Set terminal
+!      .Afile.flush
+!      .Afile.text("# Set terminal - enhanced for sub/superscripts")
+!      .Afile.text("set term wxt enhanced")
+!
+!      ! Set contour levels
+!      .Afile.flush
+!      .Afile.text("# Set the *log10* of +ve contour levels incrementally. (CHANGE)")
+!      .Afile.text("# Negative contours are set the opposite of +ve ones")
+!      .Afile.text("# . MIN_VALUE - log10 of minimum +ve contour value")
+!      .Afile.text("# . INCREMENT - value to increment MIN_VALUE by")
+!      .Afile.text("# . MAX_VALUE - log10 of maximum +ve contour value")
+!
+!      .Afile.text("MIN_VALUE = "//trim(grid.contour_min_value.to_str))
+!      .Afile.text("INCREMENT = "//trim(grid.contour_increment.to_str))
+!      .Afile.text("MAX_VALUE = "//trim(grid.contour_max_value.to_str))
+!
+!      ! Sanity check
+!      .Afile.flush
+!      .Afile.text("# Sanity check ...")
+!      .Afile.text("if (MIN_VALUE>MAX_VALUE) print 'MIN_VALUE is too large'; exit")
+!      .Afile.text("if (INCREMENT<= 0)       print 'INCREMENT must be +ve!'; exit")
+!      .Afile.text("RANGE = MAX_VALUE - MIN_VALUE")
+!      .Afile.text("n     = RANGE/INCREMENT + 1")
+!      .Afile.text("if (n != int(n))         print 'INCREMENT must divide RANGE'; exit")
+!                
+!      ! Set length scale (ruler) markings in au
+!      .Afile.flush
+!      .Afile.text("# Ruler length (CHANGE)")
+!      .Afile.text("RULER_LENGTH = 1")
+!
+!      ! Set contour line colors
+!      .Afile.flush
+!      .Afile.text("# Set MIN, MID and MAX value contour line colors (CHANGE)")
+!      .Afile.text("MIN_COLOR_R = "//trim(grid.contour_min_color.RGB255(1).to_str))
+!      .Afile.text("MIN_COLOR_G = "//trim(grid.contour_min_color.RGB255(2).to_str))
+!      .Afile.text("MIN_COLOR_B = "//trim(grid.contour_min_color.RGB255(3).to_str))
+!      .Afile.flush
+!      .Afile.text("MID_COLOR_R = "//trim(grid.contour_mid_color.RGB255(1).to_str))
+!      .Afile.text("MID_COLOR_G = "//trim(grid.contour_mid_color.RGB255(2).to_str))
+!      .Afile.text("MID_COLOR_B = "//trim(grid.contour_mid_color.RGB255(3).to_str))
+!      .Afile.flush
+!      .Afile.text("MAX_COLOR_R = "//trim(grid.contour_max_color.RGB255(1).to_str))
+!      .Afile.text("MAX_COLOR_G = "//trim(grid.contour_max_color.RGB255(2).to_str))
+!      .Afile.text("MAX_COLOR_B = "//trim(grid.contour_max_color.RGB255(3).to_str))
+!
+!      ! Set fade factor
+!      .Afile.flush
+!      .Afile.text("# Apply this factor to get pastel palette colors (CHANGE)")
+!      .Afile.text("FADE_FACTOR = 0.6")
+!
+!      .Afile.flush
+!      .Afile.text("# ==== Report and do plot ====")
+!
+!      ! Work out range and no. of contours
+!      .Afile.flush
+!      .Afile.text("# Range and no. of contours")
+!      .Afile.text("print 'Minimum +ve log10 contour = ',MIN_VALUE")
+!      .Afile.text("print 'Maximum +ve log10 contour = ',MAX_VALUE")
+!      .Afile.text("print 'Contour increment         = ',INCREMENT")
+!      .Afile.text("print 'No. of +ve contours       = ',n")
+!      .Afile.text("print 'Total no. of contours     = ',2*n+1")
+!                
+!      ! Map: makes -ve log contours, then 0, then +ve log contours
+!      .Afile.flush
+!      .Afile.text("# map: makes -ve log contours, then 0, then +ve log contours")
+!      .Afile.text("# The abs( ) makes the transition smoother")
+!      .Afile.text("EPS = 0.5*10**(MIN_VALUE)")
+!      .Afile.text("FAC = (log10(EPS)-MIN_VALUE+1)/EPS")
+!      .Afile.text("map(x) = abs(x)<EPS ? FAC*x : (x<0 ? -log10(-x)+MIN_VALUE-1 : log10(x)-MIN_VALUE+1 )")
+!                
+!      ! The max and min of the map function
+!      .Afile.flush
+!      .Afile.text("# The max and min of the map function")
+!      .Afile.text("MAX_MAP = RANGE + 1")
+!      .Afile.text("MIN_MAP = -MAX_MAP")
+!                
+!      ! Make the hex color strings
+!      .Afile.flush
+!      .Afile.text("# Make hex colors")
+!      .Afile.text("MIN_COLOR = sprintf('#%x%x%x',MIN_COLOR_R,MIN_COLOR_G,MIN_COLOR_B)")
+!      .Afile.text("MID_COLOR = sprintf('#%x%x%x',MID_COLOR_R,MID_COLOR_G,MID_COLOR_B)")
+!      .Afile.text("MAX_COLOR = sprintf('#%x%x%x',MAX_COLOR_R,MAX_COLOR_G,MAX_COLOR_B)")
+!
+!      ! Set line styles
+!      .Afile.flush
+!      .Afile.text("# Set line style")
+!      .Afile.text("set style line 1 lw 0.5 lc rgb MAX_COLOR")
+!      .Afile.text("set style line 2 lw 0.5 lt 0")
+!      .Afile.text("set style line 3 lw 0.5 lc rgb MIN_COLOR")
+!                
+!      ! Set faded palette colors
+!      .Afile.flush
+!      .Afile.text("# Set faded palette colors")
+!      .Afile.text("fade(x) = FADE_FACTOR*x + (1-FADE_FACTOR)*255")
+!      .Afile.flush
+!      .Afile.text("MIN_PCOLOR_R = fade(MIN_COLOR_R)")
+!      .Afile.text("MIN_PCOLOR_G = fade(MIN_COLOR_G)")
+!      .Afile.text("MIN_PCOLOR_B = fade(MIN_COLOR_B)")
+!      .Afile.flush
+!      .Afile.text("MAX_PCOLOR_R = fade(MAX_COLOR_R)")
+!      .Afile.text("MAX_PCOLOR_G = fade(MAX_COLOR_G)")
+!      .Afile.text("MAX_PCOLOR_B = fade(MAX_COLOR_B)")
+!      .Afile.flush
+!      .Afile.text("MIN_PCOLOR = sprintf('#%x%x%x',MIN_PCOLOR_R,MIN_PCOLOR_G,MIN_PCOLOR_B)")
+!      .Afile.text("MAX_PCOLOR = sprintf('#%x%x%x',MAX_PCOLOR_R,MAX_PCOLOR_G,MAX_PCOLOR_B)")
+!
+!      ! Define palette 
+!      .Afile.flush
+!      .Afile.text("# Set background color palette")
+!      .Afile.text("set palette defined ( -1 MIN_PCOLOR, 0 MID_COLOR, 1 MAX_PCOLOR ) ")
+!
+!      ! Set aspect ratio
+!      .Afile.flush
+!      .Afile.text("# Set the correct aspect ratio")
+!      .Afile.text("set size square")
+!      .Afile.text("set view map")
+!
+!      ! Set no key and ytics
+!      .Afile.flush
+!      .Afile.text("# Set no key and ytics")
+!      .Afile.text("unset key")
+!      .Afile.text("unset ytics")
+!
+!      ! Set distance ruler on bottom
+!      .Afile.flush
+!      .Afile.text("# Set xtics as ruler scale?")
+!      if (grid.use_ruler_scale) then
+!      .Afile.text("set xtics out nomirror 0,RULER_LENGTH,RULER_LENGTH font ',7'") 
+!      else
+!      .Afile.text("unset xtics") 
+!      end
+!
+!      ! Contour levels
+!      .Afile.flush
+!      .Afile.text("# Set no. of contours")
+!      .Afile.text("set cntrparam level incremental MIN_MAP, INCREMENT, MAX_MAP")
+!      .Afile.text("set contour base")
+!      .Afile.text("unset surface")
+!
+!      ! Set data files
+!      .Afile.flush
+!      .Afile.text("# Set data files")
+!      .Afile.text("contour_table = '"//trim(cont_tabl)//"'")
+!      .Afile.text("contour_data  = '"//trim(cont_data)//"'")
+!      .Afile.text("bond_table    = '"//trim(bond_tabl)//"'")
+!      .Afile.text("bond_data     = '"//trim(bond_data)//"'")
+!      .Afile.text("eps_file      = '"//trim(eps_file)//"'")
+!
+!      ! Make table of grid data
+!      .Afile.flush
+!      .Afile.text("# This is the table for contouring ...")
+!      .Afile.text("set table contour_table")
+!      .Afile.text("splot     contour_data  using 1:2:(map($3))")
+!      .Afile.text("unset table")
+!
+!      ! Make table of atom-bond data 
+!      .Afile.flush
+!      .Afile.text("# This is the table of atom-bond data ...")
+!      .Afile.text("set table bond_table")
+!      .Afile.text("plot      bond_data")
+!      .Afile.text("unset table")
+!
+!      ! Macro for atom bonds
+!      .Afile.flush
+!      .Afile.text("# Macro for plotting COLOR_BACKGROUND")
+!      .Afile.text("COLOR_BACKGROUND = 'contour_data using 1:2:(map($3)) with image'")
+!
+!      ! Macro for atom bonds
+!      .Afile.flush
+!      .Afile.text("# Macro for plotting ATOM_BONDS")
+!      .Afile.text("ATOM_BONDS = 'bond_table with lines linetype -1 linewidth 0'")
+!  
+!      ! Macro for contours
+!      .Afile.flush
+!      .Afile.text("# Macro for plotting CONTOURS")
+!      .Afile.text("add_contour(i,style,comma) = 'contour_table index '.i.' with lines ls '.style.comma")
+!      .Afile.flush
+!      .Afile.text("CONTOURS = ''")
+!      .Afile.text("do for "//op//"i=0:n-1"//cl//"     { CONTOURS = CONTOURS.add_contour(i,1,', ') } # +ve")
+!      .Afile.text("i = i + 1;                           CONTOURS = CONTOURS.add_contour(i,2,', ')   #  0 ")
+!      .Afile.text("do for "//op//"i=n+1:2*n-1"//cl//" { CONTOURS = CONTOURS.add_contour(i,3,', ') } # -ve")
+!      .Afile.text("i = i + 1;                           CONTOURS = CONTOURS.add_contour(i,3,'')     # -ve, last")
+!
+!      ! Macro for cbtics
+!      .Afile.flush
+!      .Afile.text("# Macro for CBTICS")
+!      .Afile.text("str(val) = gprintf('%.1f',val)")
+!      .Afile.text("add_tic(sign,pow,lev,comma) = '"//'"'//"'.sign.'10^{'.str(pow).'}"//'"'//" '.str(lev).comma")
+!
+!      .Afile.flush
+!      .Afile.text("# -ve cbtic")
+!      .Afile.text("CBTICS = ''")
+!      .Afile.text("pow = MAX_VALUE")
+!      .Afile.text("lev = MIN_MAP")
+!      .Afile.text("do for "//op//"i=-n:-1"//cl//" {")
+!      .Afile.text("   CBTICS= CBTICS.add_tic('-',pow,lev,', ')")
+!      .Afile.text("   pow = pow - INCREMENT")
+!      .Afile.text("   lev = lev + INCREMENT")
+!      .Afile.text("}")
+!
+!      .Afile.flush
+!      .Afile.text("# zero cbtic")
+!      .Afile.text("   CBTICS= CBTICS.'"//'"0"'//" 0, '")
+!
+!      .Afile.flush
+!      .Afile.text("# +ve cbtic")
+!      .Afile.text("   pow = MIN_VALUE")
+!      .Afile.text("   lev = MAX_MAP - RANGE")
+!      .Afile.text("do for "//op//"i=1:n-1"//cl//" {")
+!      .Afile.text("   CBTICS= CBTICS.add_tic('+',pow,lev,', ')")
+!      .Afile.text("   pow = pow + INCREMENT")
+!      .Afile.text("   lev = lev + INCREMENT")
+!      .Afile.text("}")
+!
+!      .Afile.flush
+!      .Afile.text("# +ve cbtic, last")
+!      .Afile.text("   CBTICS= CBTICS.add_tic('+',pow,lev,'')")
+!  
+!      ! Set cbtics and cbrange
+!      .Afile.flush
+!      .Afile.text("# Set cbtics and cbrange")
+!      if (grid.use_colorbox_scale) then
+!      .Afile.text("set cbtics in nomirror ( @CBTICS ) font ',7'")
+!      else
+!      .Afile.text("unset cbtics")
+!      end
+!      .Afile.text("set cbrange "//op//"MIN_MAP:MAX_MAP"//cl)
+!  
+!      ! Finally do the plot
+!      .Afile.flush
+!      .Afile.text("# Finally do the plot ...")
+!      .Afile.text("plot @COLOR_BACKGROUND, @CONTOURS, @ATOM_BONDS")
+!  
+!      ! Make postscript
+!      .Afile.flush
+!      .Afile.text("# Make postscript")
+!      .Afile.text("set term postscript eps color enhanced solid")
+!      .Afile.text("set output eps_file")
+!      .Afile.text("replot")
+!
+!      ! Close
+!      .close
+!
+!   end
+
+!   write_gnuplot_contour(density,grid,pos,bonds)
+!   ! Write a gnuplot command file to display contours for a "density"
+!   ! vector corresponding to a "grid" and with atom positions "pos"
+!   ! already rotated into the grid frame, and with "bond" describing
+!   ! the atom connectivity.
+!      density :: VEC{REAL}, IN
+!      grid    :: PLOT_GRID, IN   
+!      pos     :: MAT{REAL}, IN
+!      bonds   :: VEC{VEC_{INT}}, IN
+!
+!   ENSURE(density.dim==grid.n_pt,"inconsistent density array and grid size")
+!
+!      cont_data,cont_tabl :: STR
+!      bond_data,bond_tabl :: STR
+!      postscript_file :: STR
+!      op,cl,dq :: STR(len=1)
+!
+!      ! Constants
+!      op = achar(91)
+!      cl = achar(93)
+!      dq = achar(34)
+!
+!      .set_format("gnuplot.contour_data")
+!      cont_data = .file_name
+!
+!      ! Save bond data file names
+!      .set_format("gnuplot.bond_table")
+!      bond_tabl = .file_name
+!      .set_format("gnuplot.bond_data")
+!      bond_data = .file_name
+!
+!      ! Write the bond data
+!      .write_gnuplot_bonds(pos,bonds) 
+!
+!      ! Save contour data file names
+!      .set_format("gnuplot.contour_table")
+!      cont_tabl = .file_name
+!      .set_format("gnuplot.contour_data")
+!      cont_data = .file_name
+!
+!      ! Write the contour data
+!      .write_gnuplot_2d(density,grid)
+!
+!      ! Write gnuplot command file
+!      .set_format("gnuplot.ps")
+!      postscript_file = .file_name
+!
+!      ! Write gnuplot command file
+!      .set_format("gnuplot.commands")
+!      .open(for="writing",ascii=TRUE)
+!      .Afile.set_real_style("e")
+!      .Afile.set_real_width(13)
+!      .Afile.set_real_precision(5)
+!
+!      ! Header for user ...
+!      .Afile.text("# ======================")
+!      .Afile.text("# Gnuplot 4.6 input file")
+!      .Afile.text("# ======================")
+!      .Afile.text("#")
+!      .Afile.text("# 1) To see this plot install gnuplot =4.6= and type:")
+!      .Afile.text("#    gnuplot -background white -persist <file>")
+!      .Afile.text("#")
+!      .Afile.text("# 2) You =must= have gnuplot 4.6 . To install, see here:")
+!      .Afile.text("#    http://yifanpeng.blogspot.com.au/2012/05/install-gnuplot-46-with-pdf-on-ubuntu.html")
+!      .Afile.text("#")
+!      .Afile.text("# 3) You should alter the lines below to get the plot you want.")
+!      .Afile.text("#    Change the contour levels for a start. Then try using a logscale.")
+!
+!      ! Use macros
+!      .Afile.flush
+!      .Afile.text("# Turn on macros")
+!      .Afile.text("set macros")
+!
+!      ! Set terminal
+!      .Afile.flush
+!      .Afile.text("# Set terminal")
+!      .Afile.text("set term x11")
+!
+!      ! Set contour levels
+!      .Afile.flush
+!      .Afile.text("# Set contour levels incrementally. (CHANGE)")
+!      .Afile.text("# LOW  - lowest  contour value")
+!      .Afile.text("# INC  - value to increment lowest contour value")
+!      .Afile.text("# HIGH - highest contour value")
+!      .Afile.text("# The zero-value contour must be included.")
+!      .Afile.text("LOW  = -0.10")
+!      .Afile.text("INC  =  0.01")
+!      .Afile.text("HIGH =  0.10")
+!
+!      ! Work out no. of contours
+!      .Afile.flush
+!      .Afile.text("# No. of contours (DON'T CHANGE)")
+!      .Afile.text("n = HIGH/INC")
+!      .Afile.text("print 'No. of +ve contours = ',n")
+!                
+!      ! Set length scale (ruler) markings in au
+!      .Afile.flush
+!      .Afile.text("# Ruler length (CHANGE)")
+!      .Afile.text("RULER_LENGTH = 1")
+!
+!      ! Set line colors
+!      .Afile.flush
+!      .Afile.text("# X11 line style (CHANGE)")
+!      .Afile.text("NEGATIVE_LINE_TYPE = 'lines linetype rgb "//dq//"red"//dq//" linewidth 0'")
+!      .Afile.text("ZERO_LINE_TYPE     = 'lines linetype 0 linewidth 0'")
+!      .Afile.text("POSITIVE_LINE_TYPE = 'lines linetype rgb "//dq//"blue"//dq//" linewidth 0'")
+!
+!      ! Set PS line colors
+!      .Afile.flush
+!      .Afile.text("# Postscript line style (CHANGE)")
+!      .Afile.text("NEGATIVE_PS_LINE_TYPE = 'lines linetype -1 linewidth 0'")
+!      .Afile.text("ZERO_PS_LINE_TYPE     = 'lines linetype  0 linewidth 0'")
+!      .Afile.text("POSITIVE_PS_LINE_TYPE = 'lines linetype -1 linewidth 0'")
+!                
+!      ! Set palette color scale
+!      .Afile.flush
+!      .Afile.text("# Background palette color scale (CHANGE)")
+!      .Afile.text("NEGATIVE_COLOR  = 'red'")
+!      .Afile.text("ZERO_COLOR      = 'white'")
+!      .Afile.text("POSITIVE_COLOR  = 'web-blue'")
+!
+!      ! Palette for image
+!      .Afile.flush
+!      .Afile.text("# Set background color palette")
+!      .Afile.text("set palette defined ( -1 NEGATIVE_COLOR, 0 ZERO_COLOR, 1 POSITIVE_COLOR) ")
+!      .Afile.text("set cbrange "//op//"LOW:HIGH"//cl)
+!
+!      ! Set aspect ratio
+!      .Afile.flush
+!      .Afile.text("# Set the correct aspect ratio")
+!      .Afile.text("set size square")
+!      .Afile.text("set view map")
+!
+!      ! Set aspect ratio and distance ruler (in au) on bottom
+!      .Afile.flush
+!      .Afile.text("# Set no key and distance ruler on bottom")
+!      .Afile.text("unset key")
+!      .Afile.text("unset ytics")
+!      .Afile.text("set xtics out 0,RULER_LENGTH nomirror") 
+!
+!      ! Contour levels
+!      .Afile.flush
+!      .Afile.text("# Set no. of contours (CHANGE)")
+!      .Afile.text("set cntrparam level incremental LOW, INC, HIGH")
+!      .Afile.text("set contour base")
+!      .Afile.text("unset surface")
+!
+!      ! Make table of grid data
+!      .Afile.flush
+!      .Afile.text("# This is the table for contouring ...")
+!      .Afile.text("set table '"//trim(cont_tabl)//"'")
+!      .Afile.text("splot     '"//trim(cont_data)//"'")
+!      .Afile.text("unset table")
+!
+!      ! Make table of atom-bond data 
+!      .Afile.flush
+!      .Afile.text("# This is the table of atom-bond data ...")
+!      .Afile.text("set table '"//trim(bond_tabl)//"'")
+!      .Afile.text("plot      '"//trim(bond_data)//"'")
+!      .Afile.text("unset table")
+!
+!      ! Macro for atom bonds
+!      .Afile.flush
+!      .Afile.text("# Command for color background")
+!      .Afile.text("COLOR_BACKGROUND = "//dq//"'"//trim(cont_data)//"' with image, "//dq)
+!
+!      ! Macro for atom bonds
+!      .Afile.flush
+!      .Afile.text("# Command for plotting atom bonds")
+!      .Afile.text("ATOM_BONDS = "//dq//"'"//trim(bond_tabl)//"' with lines linetype -1 lw 0"//dq)
+!  
+!      ! Macro for contours
+!      .Afile.flush
+!      .Afile.text("# Command for contours; they start high and go low in the file")
+!      .Afile.text("CONTOURS = ''")
+!      .Afile.text("do for "//op//"i=0:n-1"//cl//" {")
+!      .Afile.text("   CONTOURS = CONTOURS."//dq//"'"//trim(cont_tabl)//"' index "//dq//".i.' with '.POSITIVE_LINE_TYPE.', '")
+!      .Afile.text("}")
+!
+!      .Afile.flush
+!      .Afile.text("   i = i + 1")
+!      .Afile.text("   CONTOURS = CONTOURS."//dq//"'"//trim(cont_tabl)//"' index "//dq//".i.' with '.ZERO_LINE_TYPE.', '")
+!  
+!      .Afile.flush
+!      .Afile.text("do for "//op//"i=n+1:2*n"//cl//" {")
+!      .Afile.text("   CONTOURS = CONTOURS."//dq//"'"//trim(cont_tabl)//"' index "//dq//".i.' with '.NEGATIVE_LINE_TYPE.', '")
+!      .Afile.text("}")
+!  
+!      ! Finally do the plot
+!      .Afile.flush
+!      .Afile.text("# Finally do the plot ...")
+!      .Afile.text("plot @COLOR_BACKGROUND @CONTOURS @ATOM_BONDS")
+!  
+!      ! Redo postscript contours
+!      .Afile.flush
+!      .Afile.text("# REDO command for postscript")
+!      .Afile.text("CONTOURS = ''")
+!      .Afile.text("do for "//op//"i=0:n-1"//cl//" {")
+!      .Afile.text("   CONTOURS = CONTOURS."//dq//"'"//trim(cont_tabl)//"' index "//dq//".i.' with '.POSITIVE_PS_LINE_TYPE.', '")
+!      .Afile.text("}")
+!
+!      .Afile.flush
+!      .Afile.text("   i = i + 1")
+!      .Afile.text("   CONTOURS = CONTOURS."//dq//"'"//trim(cont_tabl)//"' index "//dq//".i.' with '.ZERO_PS_LINE_TYPE.', '")
+!  
+!      .Afile.flush
+!      .Afile.text("do for "//op//"i=n+1:2*n"//cl//" {")
+!      .Afile.text("   CONTOURS = CONTOURS."//dq//"'"//trim(cont_tabl)//"' index "//dq//".i.' with '.NEGATIVE_PS_LINE_TYPE.', '")
+!      .Afile.text("}")
+!  
+!      ! Do the postscript plot
+!      .Afile.flush
+!      .Afile.text("# Do the postscript plot ...")
+!      .Afile.text("set terminal postscript enhanced color")
+!      .Afile.text("set output '"//trim(postscript_file)//"'")
+!      .Afile.text("plot @COLOR_BACKGROUND @CONTOURS @ATOM_BONDS")
+!
+!      ! Close
+!      .close
+!
+!   end
+
+   write_gnuplot_2d_and_1d(density,grid) ::: private
+   ! Write a 2D "density" vector (or 1D) corresponding to a plot grid.
+      density :: VEC{REAL}
+      grid    :: PLOT_GRID, IN   
+
+      nx,ny, i,ix,iy :: INT
+      x,y, sx,sy :: REAL
+
+      ! Open the ASCII file
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(14)
+      .Afile.set_real_precision(6)
+
+      ! Grid points halved
+      nx = grid.n_x/2
+      ny = grid.n_y/2
+
+      if (ny > 0) then
+
+         .Afile.text("# gnuplot: raw 2D grid for contouring ...")
+   
+         ! Grid points & width scale factor
+         sx = (ONE/REALIFY(nx))*grid.width(1)*HALF
+         sy = (ONE/REALIFY(ny))*grid.width(2)*HALF
+   
+         ! Write out the contour grid
+         i = 1
+   
+         do iy = -ny,ny
+   
+            y = sy*iy
+   
+            do ix = -nx,nx
+   
+               x = sx*ix
+   
+               .Afile.put(x)
+               .Afile.put(y)
+               .Afile.put(density(i))
+               .Afile.flush
+   
+               i = i + 1
+   
+            end
+   
+            .Afile.flush
+   
+         end
+
+      ! This is actually a 1D plot
+      else
+
+         .Afile.text("# gnuplot: raw 1D grid for contouring ...")
+   
+         ! Grid points & width scale factor
+         sx = (ONE/REALIFY(nx))*grid.width(1)*HALF
+   
+         ! Write out the contour grid
+         i = 1
+   
+         do ix = -nx,nx
+   
+            x = sx*ix
+   
+            .Afile.put(x)
+            .Afile.put(density(i))
+            .Afile.flush
+   
+            i = i + 1
+   
+         end
+   
+         .Afile.flush
+
+      end
+
+      ! Close
+      .close
+
+   end
+
+   write_gnuplot_bonds(pos,bonds) ::: private
+   ! Write gnuplot code to draw the atom bonds.  The atom positions
+   ! "pos" must have been already projected into the plot plane, and
+   ! "bonds" is a list of the atom indices bonded to a given atom.
+      pos     :: MAT{REAL}, IN
+      bonds   :: VEC{VEC_{INT}}, IN
+
+   ENSURE(pos.dim1==3,"wrong dim1, pos")
+   ENSURE(pos.dim2==bonds.dim,"inconsistent pos and bonds")
+
+      a,na, i,b :: INT
+
+      ! Open the ASCII file
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(14)
+      .Afile.set_real_precision(6)
+
+      ! Grid data
+      .Afile.text("# gnuplot: atom bonds projected onto plot plane ...")
+
+      ! Loop over atoms a
+      do a = 1,bonds.dim
+
+         ! Any bonds?
+         if (bonds(a).element.dim==0) cycle
+
+         ! No of atoms bonded to a
+         na = bonds(a).element.dim
+
+         ! Loop over the bonded atoms
+         do i = 1,na
+
+            ! Index of bonded atom
+            b  = bonds(a)[i]
+
+            ! Draw bond only one way
+            if (b<=a) cycle
+
+            ! Put the line segment
+            .Afile.put(pos(1,a))
+            .Afile.put(pos(2,a))
+            .Afile.flush
+            .Afile.put(pos(1,b))
+            .Afile.put(pos(2,b))
+            .Afile.flush
+            .Afile.flush
+ 
+         end
+
+      end
+
+      ! Close
+      .close
+
+   end
+
+   write_mathematica(density,n_x,n_y,n_z)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+   ! "n_y", "n_z" in Mathematica format
+      density :: VEC{REAL}
+      n_x,n_y,n_z :: INT
+
+      n,x,y,z,l :: INT
+      d :: REAL
+
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(14)
+      .Afile.set_real_precision(6)
+      .Afile.text("{")
+
+      n = 1
+      do z = 1,n_z
+         do y = 1,n_y
+            .Afile.text("{")
+            do x = 1,n_x
+               d = density(n)
+               if (d==ZERO) then; l = 0
+               else;              l = floor(log10(abs(d)))
+               end
+               d = d*TEN**(-l)
+               if (x==n_x AND y==n_y AND z==n_z) then
+                  .Afile.text(d.to_str.trim//" * 10^"//l.to_str.trim//"}")
+               else if (x==n_x) then
+                  .Afile.text(d.to_str.trim//" * 10^"//l.to_str.trim//"},")
+               else
+                  .Afile.text(d.to_str.trim//" * 10^"//l.to_str.trim//",")
+               end
+               n = n+1
+            end
+            .Afile.flush
+         end
+      end
+      .Afile.text("}")
+
+      .close
+
+   end
+
+   write_mathematica(density,grid,atom,math_pos,bonds)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+   ! "n_y" in Mathematica format. You must supplu the atom list and
+   ! the mathematica positions "math_pos" in rotated grid coordinates.
+      density :: VEC{REAL}, IN
+      grid :: PLOT_GRID, IN   
+      atom :: VEC{ATOM}, IN  
+      math_pos :: MAT{REAL}, IN 
+      bonds :: VEC{VEC_{INT}}, IN
+
+   ENSURE(atom.dim==math_pos.dim1,"atom and math_pos incompatible")
+   ENSURE(math_pos.dim2==3,"wrong dim2, math_pos")
+   ENSURE(bonds.dim==atom.dim,"bonds and atom incompatible")
+
+      has_bonds :: BIN
+      n,x,y,l, a,b,c,nb :: INT  
+      d,ax,ay,bx,by,minim,maxim :: REAL
+      at_label,line,hue :: STR     
+      ob,cb :: STR(len=1)
+      ba :: VEC{REAL}(2)
+
+      ! Fix the square brackets
+      ob = achar(91)
+      cb = achar(93)
+
+      ! Open the file and set the output style
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(14)
+      .Afile.set_real_precision(6)
+
+      ! Dump the Mathematica contour data
+      .Afile.text("<<Graphics`Legend`")   
+      .Afile.text("ShowLegend"//ob)   
+      .Afile.text("Show"//ob)   
+      .Afile.text("ContourGraphics"//ob)   
+      .Afile.text("{")
+      n = 1
+      do y = 1,grid.n_y
+         .Afile.text("{")
+         do x = 1,grid.n_x
+            d = density(n)
+            if (d==ZERO) then; l = 0
+            else;              l = floor(log10(abs(d)))
+            end
+            d = d*TEN**(-l)
+            if (x==grid.n_x AND y==grid.n_y) then
+               .Afile.text(d.to_str.trim//" * 10^"//l.to_str.trim//"}")
+            else if (x==grid.n_x) then
+               .Afile.text(d.to_str.trim//" * 10^"//l.to_str.trim//"},")
+            else
+               .Afile.text(d.to_str.trim//" * 10^"//l.to_str.trim//",")
+            end
+            n = n+1
+         end
+         .Afile.flush
+      end
+      .Afile.text("}")
+      .Afile.text(cb//",") 
+
+      maxim = maxval(density)
+      minim = minval(density)
+
+      ! Has any bonds?
+      has_bonds = FALSE
+      do a = 1,n
+         if (bonds(a).element.dim==0) cycle
+         has_bonds = TRUE
+         exit
+      end
+
+      ! Print the atom labels in Epilog
+      .Afile.text("Epilog->{")
+
+      n = math_pos.dim1
+      do a = 1,n
+
+        at_label = "Text"//ob//'"'//trim(atom(a).label)//'",{'
+        at_label = trim(at_label)//trim(math_pos(a,1).to_str("F7.1"))//","
+        at_label = trim(at_label)//trim(math_pos(a,2).to_str("F7.1"))//"}"//cb
+
+        if (a<n OR has_bonds) at_label = trim(at_label)//","
+
+        .Afile.text(at_label)
+      end
+
+      ! Print the atom bond lines
+      if (has_bonds) then
+
+         ! Loop over atoms with bonds
+         do a = 1,n
+            if (bonds(a).element.dim==0) cycle
+
+            ! Loop over the bonded atoms
+            nb = bonds(a).element.dim
+            do b = 1,nb
+
+               ! Index of bonded atom
+               c  = bonds(a)[b]
+               if (c<=a) cycle
+ 
+               ! Calculate line start and finish
+               ba = math_pos(c,1:2) - math_pos(a,1:2)
+               ax = math_pos(a,1) + 0.1d0*ba(1)
+               ay = math_pos(a,2) + 0.1d0*ba(2)
+               bx = ax + 0.8d0*ba(1)
+               by = ay + 0.8d0*ba(2)
+
+               ! Print out the line
+               line = "Line"//ob//"{{"
+               line = trim(line)//trim(ax.to_str("F7.1"))//","
+               line = trim(line)//trim(ay.to_str("F7.1"))//"},{"
+               line = trim(line)//trim(bx.to_str("F7.1"))//","
+               line = trim(line)//trim(by.to_str("F7.1"))//"}}"//cb
+          !    if((a < n OR b /= nb) AND n>0) line = trim(line)//","
+          !    if(a == n AND b == nb) line = trim(line)
+               if (b<=nb AND n>0) &
+               line = trim(line)//"," ! comma only if there are atoms to follow
+               .Afile.text(line)
+            end
+         end
+      end
+      ! End Epilog
+      .Afile.text("},")
+
+      ! Print the ContourGraphics options
+      .Afile.text("Frame->False,")
+      .Afile.text("Contours->10,")
+      .Afile.text("ColorFunctionScaling->True,")
+      hue ="(Hue"//ob//"0.7-0.7#"//cb//" &)"
+      .Afile.text("ColorFunction->"//trim(hue)//cb//",")
+
+      ! Print the ShowLegend options
+      .Afile.text("{")
+      .Afile.text(trim(hue))
+      .Afile.text(",20,")
+      .Afile.text('"'//trim(minim.to_str("F12.7"))//'",')    !default format
+      .Afile.text('"'//trim(maxim.to_str("F12.7"))//'",')
+      .Afile.text("LegendPosition->{1,0},")
+      .Afile.text("LegendShadow->None")
+      .Afile.text("}")
+      .Afile.text(cb)
+
+      .close
+
+   end
+
+   write_gnuplot(j,n_x,n_y,n_z,norm,normalise)
+   ! Write a current density vector "j" corresponding to a grid with dimensions
+   ! "n_x", "n_y", "n_z" in gnuplot format (suitable for an splot).
+   ! If "norm" is present and TRUE write the norm of the vector field
+   ! If "normalise" is present and TRUE write the normalised of the vector field
+       j :: MAT{REAL}
+      n_x,n_y,n_z :: INT
+      norm,normalise :: BIN, optional
+
+      n,x,y,z :: INT
+      write_norm,write_normalised :: BIN
+      v :: VEC{REAL}(3)
+
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(14)
+      .Afile.set_real_precision(6)
+
+      write_norm = FALSE
+      if (present(norm)) write_norm = norm
+
+      write_normalised = FALSE
+      if (present(normalise)) write_normalised = normalise
+
+      n = 1
+      do z = 1,n_z
+         if (n_z>1) then
+            .Afile.put(" z = ")
+            .Afile.put(z)
+            .Afile.flush
+         end
+         do y = 1,n_y
+         do x = 1,n_x
+            v = j(n,:)
+            if (write_norm) then
+               .Afile.put( v.norm)
+            else
+               if (write_normalised) v.normalise
+               .Afile.put(v(1))
+               .Afile.put(v(2))
+               .Afile.put(v(3))
+            end
+            .Afile.flush
+            n = n+1
+         end
+         .Afile.flush
+         end
+      end
+
+      .close
+
+   end
+
+   write_contour_a_la_nancy(density,grid,atom)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+   ! "n_y", "n_z" in the "contour" format for work in Nancy. This also requires
+   ! the "atom" list and plot "grid" as well.
+      density :: VEC{REAL}
+      grid :: PLOT_GRID
+      atom :: VEC{ATOM}
+
+      n,f,l :: INT
+      vec :: VEC{REAL}(3)
+
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(20)
+      .Afile.set_real_precision(12)
+      .Afile.text("Tonto output for the contour program used in Nancy ...")
+      .Afile.put(atom.dim,real_width=TRUE)
+      vec = grid.width
+      vec.convert_to("angstrom")
+      .Afile.put(vec(1))
+      .Afile.put(vec(2))
+      .Afile.put(vec(3))
+      .Afile.flush
+      do n = 1,atom.dim
+         .Afile.put(atom(n).label)
+         vec = atom(n).position
+         vec.convert_to("angstrom")
+         .Afile.put(vec(1))
+         .Afile.put(vec(2))
+         .Afile.put(vec(3))
+         .Afile.flush
+      end
+      .Afile.put(grid.n_x)
+      .Afile.put(grid.n_y)
+      .Afile.put(grid.n_z)
+      .Afile.flush
+      .Afile.set_using_array_labels(FALSE)
+      f = 1
+      l = grid.n_x
+      do n = 1,grid.n_y*grid.n_z
+         .Afile.put(density(f:l))
+         f = f + grid.n_x
+         l = l + grid.n_x
+      end
+      .close
+   end
+
+   write_contour_a_la_spackman(density,grid,atom)
+   ! Write a "density" vector corresponding to a grid with dimensions
+   ! "n_x", "n_y" in the .contour format of Spackman. This also
+   ! requires the "atom" list and plot "grid" as well.
+      density :: VEC{REAL}
+      grid :: PLOT_GRID
+      atom :: VEC{ATOM}
+
+   DIE_IF(grid.n_z>1,"must be only one plane!")
+   DIE_IF(grid.n_z<1,"must have at least one plane!")
+
+      n,x,y,an :: INT
+      fac :: REAL
+      axes :: MAT{REAL}(3,3)
+      pos,p :: VEC{REAL}(3)
+      density2d :: MAT{REAL}*
+      units :: STR
+
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(13)
+      .Afile.set_real_precision(5)
+
+
+      ! Begin atoms list (dummy line)
+      .Afile.text("ATOMS")
+
+      ! Write out the number of atoms
+      .Afile.put(atom.dim)
+      .Afile.flush
+
+      ! Shift coordinates to grid center and rotate
+      ! Plot only atoms which are within the plot grid box.
+      ! To do this we have to change into the plot axis system.
+      axes(1,:) = grid.x_axis
+      axes(2,:) = grid.y_axis
+      axes(3,:) = grid.z_axis
+      units = "angstrom"
+      fac = units.conversion_factor
+      do n = 1,atom.dim
+         p = atom(n).position - grid.origin
+         pos.to_scaled_product_of(axes,p,fac)
+         an = atom(n).atomic_number
+         if (an<1) cycle
+         .Afile.put(an)          ! Z
+         .Afile.put(pos(1))      ! Pos in plot grid axis system
+         .Afile.put(pos(2))
+         .Afile.put(pos(3))
+         .Afile.flush
+      end
+
+      ! Create the 3d grid
+      density2d.create(grid.n_x,grid.n_y)
+      density2d = reshape(density,[grid.n_x,grid.n_y])
+
+      ! Write out the no. of points
+      .Afile.text("No. of points in each axis direction")
+      .Afile.put(grid.n_x)
+      .Afile.put(grid.n_y)
+      .Afile.flush
+
+      ! Write out the widths
+      .Afile.text("Width of each axis & grid points")
+      .Afile.put(grid.width(1)*fac)
+      .Afile.flush
+      .Afile.put(grid.width(2)*fac)
+      .Afile.flush
+
+      ! Write out the grid
+      do y = 1,grid.n_y
+      do x = 1,grid.n_x
+         .Afile.put(density2d(x,y))
+         if (mod(x,6)==0 OR x==grid.n_x) .Afile.flush
+      end
+      end
+
+      ! Clean
+      density2d.destroy
+      .close
+
+   end
+
+   write_a_la_xdgraph(density,grid,atom)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+   ! "n_y", "n_z" in the "xdgraph" format. This also requires the "atom" list
+   ! and plot "grid" as well.
+      density :: VEC{REAL}
+      grid :: PLOT_GRID
+      atom :: VEC{ATOM}
+
+      n,f,l :: INT
+      vec,v :: VEC{REAL}(3)
+      atm :: VEC{INT}(3)
+      axes :: MAT{REAL}(3,3)
+      has_axis_atoms :: BIN
+
+      has_axis_atoms = grid.x_atom_1/=0 AND grid.x_atom_2/=0 &
+                   AND grid.y_atom_1/=0 AND grid.y_atom_2/=0 &
+                   AND grid.y_atom_1==grid.x_atom_1 
+
+      if (has_axis_atoms) then
+
+         .open(for="writing",ascii=TRUE)
+         .Afile.set_margin_width(0)
+
+         if (grid.n_z==1) then; .Afile.put("2DGRDFIL",width=8)
+         else;                  .Afile.put("3DGRDFIL",width=8)
+         end
+
+         .Afile.put(0,width=3)
+         .Afile.flush
+         .Afile.put("TONTO",width=5)
+         .Afile.put("FOU",width=7)
+         .Afile.flush
+         .Afile.flush
+         .Afile.put("! Gridpoints, Origin, Physical Dimensions")
+         .Afile.flush
+         .Afile.put(grid.n_x,width=15)
+         .Afile.put(grid.n_y,width=15)
+         .Afile.put(grid.n_z,width=15)
+         .Afile.flush
+
+         .Afile.set_real_style("f")
+         .Afile.set_real_width(11)
+         .Afile.set_real_precision(4)
+         vec = grid.width
+         vec.convert_to("angstrom")
+         .Afile.put(vec(1)*HALF)
+         .Afile.put(vec(2)*HALF)
+         .Afile.put(vec(3)*HALF)
+         .Afile.flush
+         .Afile.put(vec(1))
+         .Afile.put(vec(2))
+         .Afile.put(vec(3))
+         .Afile.flush
+
+         .Afile.put("! Objects",width=9)
+         .Afile.flush
+         .Afile.put(atom.dim,width=10)
+         .Afile.flush
+         .Afile.set_real_style("f")
+         .Afile.set_real_width(10)
+         .Afile.set_real_precision(5)
+         axes(1,:) = grid.x_axis
+         axes(2,:) = grid.y_axis
+         axes(3,:) = grid.z_axis
+         atm = [grid.x_atom_1,grid.x_atom_2,grid.y_atom_2]
+         do n = 1,atom(atm).dim
+            l = min(len_trim(atom(atm(n)).label),8)
+            .Afile.put(atom(atm(n)).label,width=l)
+            .Afile.tab(width=8-l)
+            v = atom(atm(n)).position
+            v = v - grid.center
+            vec.to_product_of(axes,v)
+            vec.convert_to("angstrom")
+            .Afile.put(vec(1))
+            .Afile.put(vec(2))
+            .Afile.put(vec(3))
+            .Afile.put("ATOM",width=5)
+            .Afile.flush
+         end
+
+         do n = 1,atom.dim
+            if (n==grid.x_atom_1) cycle
+            if (n==grid.x_atom_2) cycle
+            if (n==grid.y_atom_2) cycle
+            l = min(len_trim(atom(n).label),8)
+            .Afile.put(atom(n).label,width=l)
+            .Afile.tab(width=8-l)
+            v = atom(n).position
+            v = v - grid.center
+            vec.to_product_of(axes,v)
+            vec.convert_to("angstrom")
+            .Afile.put(vec(1))
+            .Afile.put(vec(2))
+            .Afile.put(vec(3))
+            .Afile.put("ATOM",width=5)
+            .Afile.flush
+         end
+
+         .Afile.put("! Connections",width=13)
+         .Afile.flush
+         .Afile.put(0,width=10)
+         .Afile.flush
+
+         .Afile.put("! Values",width=8)
+         .Afile.flush
+
+         .Afile.set_using_array_labels(FALSE)
+         .Afile.set_real_style("e")
+         .Afile.set_real_width(13)
+         .Afile.set_real_precision(5)
+         .Afile.set_no_of_fields_per_line(6)
+         f = 1
+         l = grid.n_x
+         do n = 1,grid.n_y*grid.n_z
+            .Afile.put(density(f:l),by_row=TRUE)
+            f = f + grid.n_x
+            l = l + grid.n_x
+         end
+
+         .close
+      
+      else ! No axis atoms
+
+         .open(for="writing",ascii=TRUE)
+         .Afile.set_margin_width(0)
+         if (grid.n_z==1) then; .Afile.put("2DGRDFIL",width=8)
+         else;                  .Afile.put("3DGRDFIL",width=8)
+         end
+
+         .Afile.put(0,width=3)
+         .Afile.flush
+         .Afile.put("TONTO",width=5)
+         .Afile.put("FOU",width=7)
+         .Afile.flush
+         .Afile.flush
+
+         .Afile.put("! Gridpoints, Origin, Physical Dimensions")
+         .Afile.flush
+         .Afile.put(grid.n_x,width=15)
+         .Afile.put(grid.n_y,width=15)
+         .Afile.put(grid.n_z,width=15)
+         .Afile.flush
+         .Afile.set_real_style("f")
+         .Afile.set_real_width(11)
+         .Afile.set_real_precision(4)
+         .Afile.put(HALF)
+         .Afile.tab(width=4)
+         .Afile.put(HALF)
+         .Afile.tab(width=4)
+         .Afile.put(HALF)
+         .Afile.flush
+         .Afile.put(ONE)
+         .Afile.tab(width=4)
+         .Afile.put(ONE)
+         .Afile.tab(width=4)
+         .Afile.put(ONE)
+         .Afile.flush
+
+         .Afile.put("! Objects",width=9)
+         .Afile.flush
+         .Afile.put(0,width=10)
+         .Afile.flush
+         .Afile.set_real_style("f")
+         .Afile.set_real_width(10)
+         .Afile.set_real_precision(5)
+
+         .Afile.put("! Connections",width=13)
+         .Afile.flush
+         .Afile.put(0,width=10)
+         .Afile.flush
+
+         .Afile.put("! Values",width=8)
+         .Afile.flush
+         .Afile.set_using_array_labels(FALSE)
+         .Afile.set_real_style("e")
+         .Afile.set_real_width(13)
+         .Afile.set_real_precision(5)
+         .Afile.set_no_of_fields_per_line(6)
+         f = 1
+         l = grid.n_x
+         do n = 1,grid.n_y*grid.n_z
+            .Afile.put(density(f:l),by_row=TRUE)
+            f = f + grid.n_x
+            l = l + grid.n_x
+         end
+
+         .close
+
+      end
+
+   end
+
+   write_gaussian_cube(density,grid,atom,title)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+   ! "n_y", "n_z" in the gaussian cube format. This also requires the "atom"
+   ! list and plot "grid" as well.
+      density :: VEC{REAL}
+      grid :: PLOT_GRID
+      atom :: VEC{ATOM}
+      title :: STR
+
+      n,n_atom,x,y,z :: INT
+      an :: REAL
+      axes :: MAT{REAL}(3,3)
+      low,high,pos,por,p :: VEC{REAL}(3)
+      reverse :: MAT3{REAL}*
+
+      if (grid.n_z<=1) return
+
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("f")
+      .Afile.set_real_width(12)
+      .Afile.set_real_precision(6)
+
+      .Afile.text("3DGRIDFILE  0")
+      .Afile.text("TITLE  "//trim(title))
+
+      ! Find out the number of atoms which are within the plot grid box.
+      ! We have to change into the plot axis system.
+      axes(1,:) = grid.x_axis
+      axes(2,:) = grid.y_axis
+      axes(3,:) = grid.z_axis
+      low  = -HALF*grid.width ! bottom left front in plot axis system
+      high =  HALF*grid.width ! top right back ....
+      n_atom = 0
+      do n = 1,atom.dim
+         p = atom(n).position - grid.center
+         pos.to_product_of(axes,p)
+         if (NOT pos(:).is_in_range(low,high)) cycle
+         n_atom = n_atom + 1
+      end
+
+      .Afile.put(n_atom,width=5)
+      .Afile.put(low(1))
+      .Afile.put(low(2))
+      .Afile.put(low(3))
+      .Afile.flush
+
+      .Afile.put(grid.n_x,width=5)
+      .Afile.put(grid.del_x)
+      .Afile.put(ZERO)
+      .Afile.put(ZERO)
+      .Afile.flush
+
+      .Afile.put(grid.n_y,width=5)
+      .Afile.put(ZERO)
+      .Afile.put(grid.del_y)
+      .Afile.put(ZERO)
+      .Afile.flush
+
+      .Afile.put(grid.n_z,width=5)
+      .Afile.put(ZERO)
+      .Afile.put(ZERO)
+      .Afile.put(grid.del_z)
+      .Afile.flush
+
+      do n = 1,atom.dim
+         pos = atom(n).position - grid.center
+         por.to_product_of(axes,pos)       ! Rotated position
+         if (NOT por.is_in_range(low,high)) cycle
+         an = atom(n).atomic_number
+         if (an<1) cycle
+         .Afile.put(int(an),width=5)       ! Z
+         .Afile.put(an)                    ! Charge
+         .Afile.put(por(1))                ! Pos in plot grid axis system
+         .Afile.put(por(2))
+         .Afile.put(por(3))
+         .Afile.flush
+      end
+
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(13)
+      .Afile.set_real_precision(5)
+
+      reverse.create(grid.n_x,grid.n_y,grid.n_z)
+      reverse = reshape(density,[grid.n_x,grid.n_y,grid.n_z])
+
+      do x = 1,grid.n_x
+      do y = 1,grid.n_y
+      do z = 1,grid.n_z
+         .Afile.put(reverse(x,y,z))
+         if (mod(z,6)==0 OR z==grid.n_z) .Afile.flush
+      end
+      end
+      end
+
+      reverse.destroy
+
+      .close
+
+   end
+
+   write_xcrysden_xsf(density,grid,atom,title)
+   ! Write a "density" vector corresponding to a grid with dimensions
+   ! "n_x", "n_y", "n_z" in the XSF format. This also requires the
+   ! "atom" list and plot "grid" as well.
+      density :: VEC{REAL}
+      grid :: PLOT_GRID
+      atom :: VEC{ATOM}
+      title :: STR
+
+      n,x,y,z,an :: INT
+      fac :: REAL
+      axes :: MAT{REAL}(3,3)
+      low,high,pos,p :: VEC{REAL}(3)
+      density3d :: MAT3{REAL}*
+      units :: STR
+
+      if (grid.n_z<=1) return
+
+      .open(for="writing",ascii=TRUE)
+      .Afile.set_real_style("e")
+      .Afile.set_real_width(13)
+      .Afile.set_real_precision(5)
+
+      ! Coordinates: shift to grid center and rotate
+      ! Plot only atoms which are within the plot grid box.
+      ! To do this we have to change into the plot axis system.
+      .Afile.text("ATOMS")
+      axes(1,:) = grid.x_axis
+      axes(2,:) = grid.y_axis
+      axes(3,:) = grid.z_axis
+      units = "angstrom"
+      fac = units.conversion_factor
+      low  = -HALF*grid.width * fac ! bottom left front in plot axis system
+      high =  HALF*grid.width * fac ! top right back ....
+      do n = 1,atom.dim
+         p = atom(n).position - grid.center
+         pos.to_scaled_product_of(axes,p,fac)
+         if (NOT pos(:).is_in_range(low,high)) cycle
+         an = atom(n).atomic_number
+         if (an<1) cycle
+         .Afile.put(an)          ! Z
+         .Afile.put(pos(1))      ! Pos in plot grid axis system
+         .Afile.put(pos(2))
+         .Afile.put(pos(3))
+         .Afile.flush
+      end
+
+      ! Create the 3d grid
+      density3d.create(grid.n_x,grid.n_y,grid.n_z)
+      density3d = reshape(density,[grid.n_x,grid.n_y,grid.n_z])
+
+      ! Write out the grid
+      .Afile.flush
+      .Afile.text("BEGIN_BLOCK_DATAGRID_3D")
+      .Afile.text(title)
+      .Afile.text("BEGIN_DATAGRID_3D_"//trim(title))
+      .Afile.put(grid.n_x)
+      .Afile.put(grid.n_y)
+      .Afile.put(grid.n_z)
+      .Afile.flush
+
+      .Afile.put(low(1))
+      .Afile.put(low(2))
+      .Afile.put(low(3))
+      .Afile.flush
+
+      .Afile.put(grid.width(1)*fac)
+      .Afile.put(ZERO)
+      .Afile.put(ZERO)
+      .Afile.flush
+
+      .Afile.put(ZERO)
+      .Afile.put(grid.width(2)*fac)
+      .Afile.put(ZERO)
+      .Afile.flush
+
+      .Afile.put(ZERO)
+      .Afile.put(ZERO)
+      .Afile.put(grid.width(3)*fac)
+      .Afile.flush
+
+      do z = 1,grid.n_z
+      do y = 1,grid.n_y
+      do x = 1,grid.n_x
+         .Afile.put(density3d(x,y,z))
+         if (mod(x,6)==0 OR x==grid.n_x) .Afile.flush
+      end
+      end
+      end
+      .Afile.text("END_DATAGRID_3D")
+      .Afile.text("END_BLOCK_DATAGRID_3D")
+
+      ! Clean
+      density3d.destroy
+      .close
+
+   end
+
+   write_vapor(density,n_x,n_y,n_z)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+   ! "n_y", "n_z" in VAPOR format
+      n_x,n_y,n_z :: INT, IN
+      density :: VEC{REAL}(n_x*n_y*n_z)
+
+      u :: INT
+
+      ! Get a free unit number
+      UNIT_NUMBER:get_available_unit_number(u)
+
+      ! Get the size of the record
+      open(u,FILE=TRIM(.file_name), FORM="UNFORMATTED", ACCESS="STREAM")
+
+      ! Write code "8" for single precision data
+      write(u) density
+
+      ! Close and free
+      close(u)
+      UNIT_NUMBER:free_the_used_unit_number(u)
+
+   end
+
+   write_drishti(density,n_x,n_y,n_z)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+   ! "n_y", "n_z" in drishti format
+      density :: VEC{REAL}
+      n_x,n_y,n_z :: INT
+
+      u,ios,  n,x,y,z, n_xy, offx,offy,offz :: INT
+      ival4 :: INT(INT_4_KIND)
+      rval4 :: REAL(REAL_4_KIND)
+
+      ! Sizes
+      n_xy = n_x*n_y
+
+      ! Get a free unit number
+      UNIT_NUMBER:get_available_unit_number(u)
+
+      ! Get the size of the record
+      open(u,file=trim(.file_name),access="stream",iostat=ios)
+      DIE_IF(ios/=0,"error opening stream file")
+
+      ! Write code "8" for single precision data
+      rval4 = EIGHT
+      write(u) rval4
+
+      ! Write code "8" for single precision data
+      DIE_IF(n_x>huge(n_x)/2,"n_x dimension too large for unsigned int")
+      DIE_IF(n_y>huge(n_y)/2,"n_y dimension too large for unsigned int")
+      DIE_IF(n_z>huge(n_z)/2,"n_z dimension too large for unsigned int")
+      ival4 = n_x; write(u) ival4
+      ival4 = n_y; write(u) ival4
+      ival4 = n_z; write(u) ival4
+
+
+      ! Now write out the data in z-y-x order
+      offx = 0
+      do x = 1,n_x
+         offy = 0
+         do y = 1,n_y
+            offz = 0
+            do z = 1,n_z
+               n = offx + offy + offz + 1
+               rval4 = density(n)
+               write(u) rval4
+               offz = offz + n_xy
+            end
+            offy = offy + n_x
+         end
+         offx = offx + 1
+      end
+
+      ! Close and free
+      close(u)
+      UNIT_NUMBER:free_the_used_unit_number(u)
+
+   end
+
+   write_vtk(density,grid,title)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x",
+   ! "n_y", "n_z" in VTK format
+      density :: VEC{REAL}, IN
+      grid :: PLOT_GRID, IN
+      title :: STR, IN
+
+      lf :: STR(len=1)
+      u,i,n_x,n_y,n_z :: INT
+      d_x,d_y,d_z,o_x,o_y,o_z :: REAL
+
+      ! Get a free unit number
+      UNIT_NUMBER:free_the_used_unit_number(u)
+
+      ! Open the file in stream mode
+      open(u,FILE=trim(.file_name), ACCESS="STREAM")
+
+      ! Header info
+      lf = char(10)
+      n_x = grid.n_x;       n_y = grid.n_y;       n_z = grid.n_z
+      d_x = grid.del_x;     d_y = grid.del_y;     d_z = grid.del_z
+      o_x = grid.origin(1); o_y = grid.origin(2); o_z = grid.origin(3)
+      write(u) "# vtk DataFile Version 3.0"//lf
+      write(u) trim(title)  //lf
+      write(u) "BINARY"     //lf
+      write(u) "DATASET STRUCTURED_POINTS"//lf
+      write(u) "DIMENSIONS "//trim(n_x.to_str)//" "//trim(n_y.to_str)//" "//trim(n_z.to_str)//lf
+      write(u) "ORIGIN "    //trim(o_x.to_str)//" "//trim(o_y.to_str)//" "//trim(o_z.to_str)//lf
+      write(u) "SPACING"    //trim(d_x.to_str)//" "//trim(d_y.to_str)//" "//trim(d_z.to_str)//lf
+
+      ! Data
+      write(u) "SCALARS "   //trim(title)//" double"//lf
+      write(u) "LOOKUP_TABLE default"//lf
+      write(u) (density(i),i=1,n_x*n_y*n_z)
+
+      ! Close and free
+      close(u)
+      UNIT_NUMBER:get_available_unit_number(u)
+
+   end
+
+end
+

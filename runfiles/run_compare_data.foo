@@ -1,0 +1,265 @@
+! Copyright (C) Dylan Jayatilaka, 1999
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: run_compare_cifs $
+
+program run_COMPARE_DATA
+
+   implicit none
+
+   command_line :: COMMAND_LINE*
+   file_name,message :: STR
+   op,cl :: STR(len=1)
+   x,dx,y,dy :: VEC{REAL}*
+   ab1,ab2 :: VEC{REAL}*
+   df1,df2 :: VEC{REAL}*
+   si1,si2 :: VEC{REAL}*
+   ra1,ra2 :: VEC{REAL}*
+   label :: VEC{STR}*
+   del,csg,rat,tmp :: REAL
+   n_data,i :: INT
+
+   ! Create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Initialise standard I/O files.
+   std_time.start_timing
+
+   stderr.create_stderr; stderr.open
+   stdin.create_stdin
+   stdout.create_stdout
+
+   ! Initialize miscellaneous ...
+   GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
+
+   ! Banner
+   stdout.flush
+   stdout.text("=====================")
+   stdout.text("Compare two data sets")
+   stdout.text("=====================")
+   stdout.flush
+   stdout.text("This program compares two sets of data in a file, with")
+   stdout.text("column format: label, x, dx, y, dy, with n_data lines,")
+   stdout.text("and produces summary statistics and a gnuplot plot file.")
+   stdout.flush
+   stdout.text("Usage: run_compare_data -n <n_data> -data <file_name>")
+   stdout.flush
+   stdout.text("Summary stats (y-x) are in:   <file_name>.statistic")
+   stdout.text("Guplot file for modifying in: <file_name>.gnuplot")
+
+   ! Get the command line
+   command_line.create
+   command_line.process_options
+
+   message = "argument list: read the info above!"
+   DIE_IF(    command_line.has_arguments,trim(message))
+   DIE_IF(NOT command_line.has_options  ,trim(message))
+   DIE_IF(NOT command_line.n_options==2 ,trim(message))
+   DIE_IF(command_line.option(1)/="n"   ,trim(message))
+   DIE_IF(command_line.option(2)/="data",trim(message))
+
+   ! Get options
+   n_data    = command_line.option_value(1).to_int
+   file_name = command_line.option_value(2)
+
+   ! Reflect information
+   stdout.flush
+   stdout.show("n_data    = ",n_data)
+   stdout.show("file_name = ",file_name)
+
+   ! Clean command line
+   command_line.destroy
+
+   ! Difference-type sums
+   x.create(n_data)
+   y.create(n_data)
+   dx.create(n_data)
+   dy.create(n_data)
+
+   label.create(n_data)
+   df1.create(n_data)
+   df2.create(n_data)
+   ab1.create(n_data)
+   ab2.create(n_data)
+   si1.create(n_data)
+   si2.create(n_data)
+   ra1.create(n_data)
+   ra2.create(n_data)
+
+   df1 = ZERO; df2 = ZERO
+   ab1 = ZERO; ab2 = ZERO
+   si1 = ZERO; si2 = ZERO
+   ra1 = ZERO; ra2 = ZERO
+
+   ! Read data & make difference-type data
+   stdin.redirect(trim(file_name))
+   stdin.open(for="read")
+
+   do i = 1,n_data
+
+      ! Read data
+      stdin.read(label(i))
+      stdin.read( x(i))
+      stdin.read(dx(i))
+      stdin.read( y(i))
+      stdin.read(dy(i))
+
+      del    = y(i) - x(i)
+      df1(i) = del
+      df2(i) = del**2
+      ab1(i) = abs(del)
+      ab2(i) = del**2
+
+      csg    = sqrt(dx(i)**2 + dy(i)**2)
+      if (abs(csg)>TOL(9)) then
+      si1(i) = del/csg
+      si2(i) = del**2/csg**2
+      end
+
+      if (abs(x(i))>TOL(9)) then
+      rat = y(i)/x(i)
+      ra1(i) = rat
+      ra2(i) = rat**2
+      end
+
+   end
+
+   ! Output stats
+   stdout.redirect(trim(file_name)//".statistics")
+
+   stdout.flush
+   stdout.text("================")
+   stdout.text("Figures of merit")
+   stdout.text("================")
+
+   tmp = sum(df1)/n_data
+   stdout.show("<Y-X>                       =",tmp)
+   stdout.show("error                       =",sqrt(sum(df2)/n_data - tmp**2))
+
+   tmp = sum(ab1)/n_data
+   stdout.show("<|Y-X|>                     =",tmp)
+   stdout.show("error                       =",sqrt(sum(ab2)/n_data - tmp**2))
+
+   tmp = sum(ab1)/n_data
+   stdout.show("<(Y-X)^2>^{1/2}             =",sqrt(sum(ab2)/n_data))
+   stdout.show("error                       =",sqrt(sum(ab2)/n_data - tmp**2))
+
+   tmp = sum(si1)/n_data
+   stdout.show("<(Y-X)^2/(dX^2+dY^2)>^{1/2} =",sqrt(sum(si2)/n_data))
+   stdout.show("error                       =",sqrt(sum(si2)/n_data - tmp**2))
+
+   tmp = sum(ra1)/n_data
+   stdout.show("<Y/X>                       =",tmp)
+   stdout.show("error                       =",sqrt(sum(ra2)/n_data - tmp**2))
+
+   ! Clean
+   stdout.revert
+
+   ra2.destroy
+   ra1.destroy
+   si1.destroy
+   si2.destroy
+   ab2.destroy
+   ab1.destroy
+   df2.destroy
+   df1.destroy
+   label.destroy
+
+   dy.destroy
+   dx.destroy
+   y.destroy
+   x.destroy
+
+   ! Now make the gnuplot command file for histogram plots
+
+   op = achar(91) ! open square-becaket
+   cl = achar(93) ! close square-bracket
+
+   stdout.redirect(trim(file_name)//".gnuplot")
+
+   stdout.text('# This gnuplot script compares two sets of CIF data.')
+   stdout.text('# Change this script if you need to.')
+   stdout.text('#')
+   stdout.text('# To use type:')
+   stdout.text('#    gnuplot -e "data='//"'<data-file>'"//'; title='//"'<title>'"//'" compare.gnuplot')
+   stdout.text('#')
+   stdout.text('# <data-file> has repeated lines of format:')
+   stdout.text('#    varname x dx y dy')
+   stdout.text('#')
+   stdout.text('# varname is the string label of the variable used as the x label.')
+   stdout.text('# x (resp. dx) is the reference data (resp. its error) and likewise for y.')
+   stdout.text('#')
+   stdout.text('# A histogram of deviation (y - x) divided by the compound mean is made.')
+   stdout.text('# The relative precision dy/dx is also displayed. A separate plot of the')
+   stdout.text('# the frequency distribution is also made. Its assumed the reference data')
+   stdout.text('# x (dx) are for neutrons, and the y (dy) data is for X-rays.')
+   stdout.text('psfile = data . "_histogram.ps"')
+   stdout.text('set output psfile')
+   stdout.text('set terminal postscript eps color enhanced')
+   stdout.text('set ylabel "Deviation (compound-{/Symbol s} units)"')
+   stdout.text('set xlabel title offset 0,-2')
+   stdout.text('set nokey')
+   stdout.text('set style fill solid 0.4')
+   stdout.text('set style histogram clustered')
+   stdout.text('set style data histograms')
+   stdout.text('set xtics 1')
+   stdout.text('set ytics 1')
+   stdout.text('set yrange '//op//'-10:10'//cl)
+   stdout.text('set grid ytics lc rgb "#7f7f7f" lw 1 lt 0')
+   stdout.text('set grid xtics lc rgb "#7f7f7f" lw 1 lt 0')
+   stdout.text('set xtics rotate')
+   stdout.text('sigma(x,y) = sqrt(x**2+y**2)')
+   stdout.text('dify(x,d,y,e) = (y - x)/sigma(d,e)')
+   stdout.text('plot \')
+   stdout.text('data using (dify($2,$3,$4,$5)):xticlabel(1)')
+   stdout.text('#')
+   stdout.text('psfile = data . "_frequency.ps"')
+   stdout.text('set output psfile')
+   stdout.text('set terminal postscript eps color enhanced')
+   stdout.text('set ylabel "Frequency"')
+   stdout.text('set xlabel "Deviation (compound-{/Symbol s} units)" offset 0,0')
+   stdout.text('set nokey')
+   stdout.text('set style fill solid 0.4')
+   stdout.text('set style histogram clustered')
+   stdout.text('set style data histograms')
+   stdout.text('set xrange '//op//'-6:6'//cl)
+   stdout.text('set yrange '//op//'0:10'//cl)
+   stdout.text('set xtics 1')
+   stdout.text('set ytics 1')
+   stdout.text('set xtics norotate')
+   stdout.text('set grid xtics lc rgb "#7f7f7f" lw 1 lt 0')
+   stdout.text('set grid ytics lc rgb "#7f7f7f" lw 1 lt 0')
+   stdout.text('sigma(x,y) = sqrt(x**2+y**2)')
+   stdout.text('dify(x,d,y,e) = (y - x)/sigma(d,e)')
+   stdout.text('bin(x,s) = s*floor(x/s)')
+   stdout.text('bw = 1.0')
+   stdout.text('set boxwidth bw*0.6')
+   stdout.text('plot \')
+   stdout.text('data using (bin(dify($2,$3,$4,$5),bw)+bw/2.0):(1.0) smooth frequency with boxes')
+
+   ! Memory report
+   TONTO_REPORT
+
+   ! Clean-up files
+   TEXTFILE:destroy(stderr)
+   TEXTFILE:destroy(stdout)
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end

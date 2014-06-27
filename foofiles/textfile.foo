@@ -1,0 +1,5348 @@
+!-----------------------------------------------------------------------
+!
+! TEXTFILE : Line-oriented formatted sequential advancing file
+! input/output, including input from standard input, and output to
+! standard output.
+!
+! The TEXTFILE object is a FILE with a BUFFER and a REALFMT formatting
+! object. The input/output proceeds via a line buffer. It is forbidden
+! to open a TEXTFILE simultaneously for input and output.
+!
+! There is a default internal standard input object, "stdin",
+! and a default standard output object, "stdout".
+!
+! A line count is maintained to allow back-tracking to previous lines,
+! and particular items on each line. This is useful for input.
+!
+! For output, items can be put in columns of a specified width, with
+! double precision numbers having a specified precision and "style"
+! (set using fortran conventions). This is useful for dynamic tables,
+! which the user can change at run time. Rewind and backtracking
+! are not allowed for output files.
+!
+! It is possible to redirect the input or output to a new file
+! using the "redirect" command. The previous file can be recovered
+! using "unsave", or it will revert back automatically to the previous
+! file if the redirected file ends. It is also possible to redirect
+! input to an internal file. This is useful for processing a list of
+! text as if it were a file. Output to an internal file is not allowed.
+!
+! Note that the input buffer is limited to size BSTR_SIZE, set in the
+! "macros" file.
+!
+! The system information in "tonto" is updated whenever a I/O operation
+! or a buffer operation is performed.
+!
+! Copyright (C) Dylan Jayatilaka, 1999
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: textfile.foo 4394 2014-05-31 08:51:05Z dylan_ $
+!---------------------------------------------------------------------------
+
+module TEXTFILE
+
+   implicit none
+
+   stdin  :: TEXTFILE*, public DEFAULT_NULL
+   stdout :: TEXTFILE*, public DEFAULT_NULL
+   stderr :: TEXTFILE*, public DEFAULT_NULL
+
+contains
+
+!  =============================
+!  File creation type operations
+!  =============================
+
+   create_stdin ::: leaky
+   ! Create a the standard input file object, if needed.
+   ! Return a pointer to it if already created
+      self :: PTR
+
+      if (stdin.destroyed) then
+
+         ! Allocate and nullify
+         allocate(stdin)
+         ADD_LOCATION(SELF_TYPE_SIZE,stdin)
+         stdin.nullify_ptr_part
+
+         ! Set defaults
+         .set_defaults
+
+         ! Reset some defaults
+         stdin.name = "stdin"
+         stdin.action = "read"
+         stdin.unit = TEXTFILE_STDIN_UNIT
+
+      end
+
+      ! Reset buffer ... ?
+      stdin.buffer.set_defaults
+
+      ! Return stdin
+      self => stdin
+
+   end
+
+   create_stdout ::: leaky
+   ! Create a standard output file object.
+   ! Return a pointer to it if already created
+      self :: PTR
+
+      if (stdout.destroyed) then
+
+         ! Allocate and nullify
+         allocate(stdout)
+         ADD_LOCATION(SELF_TYPE_SIZE,stdout)
+         stdout.nullify_ptr_part
+
+         ! Set defaults
+         .set_defaults
+
+         ! Reset some defaults
+         stdout.name = "stdout"
+         stdout.action = "write"
+         stdout.unit = TEXTFILE_STDOUT_UNIT
+      
+      end
+
+      ! Reset buffer ... ?
+      stdout.buffer.set_defaults
+      stdout.clear_and_put_margin
+
+      ! Return stdout
+      self => stdout
+
+   end
+
+   create_stderr ::: leaky
+   ! Create a standard output file object.
+   ! Return a pointer to it if already created
+      self :: PTR
+
+      if (stderr.destroyed) then
+
+         ! Allocate and nullify
+         allocate(stderr)
+         ADD_LOCATION(SELF_TYPE_SIZE,stderr)
+         stderr.nullify_ptr_part
+
+         ! Set defaults
+         .set_defaults
+
+         ! Reset some defaults
+         stderr.name = "stderr"
+         stderr.action = "write"
+         stderr.unit = TEXTFILE_STDERR_UNIT
+      end
+
+      ! Reset buffer ... ?
+      stderr.buffer.set_defaults
+      stderr.clear_and_put_margin
+
+      ! Return stderr
+      self => stderr
+
+   end
+
+   create(name) ::: leaky
+   ! Create a textfile, and optionally set the name. Does not open the file.
+      self :: PTR
+      name :: STR, optional
+
+      ! Allocate and nullify
+      allocate(self)
+      ADD_MEMORY(SELF_TYPE_SIZE)
+      .nullify_ptr_part
+
+      ! Set defaults
+      .set_defaults
+
+      ! Set the name if present
+      if (present(name)) .set_name(name)
+
+      ! Get a unique unit number
+      UNIT_NUMBER:get_available_unit_number(.unit) 
+
+      ! Get ready to write
+      .clear_and_put_margin
+
+   end
+
+   create(internal) ::: leaky
+   ! Create an internal textfile
+      self :: PTR
+      internal :: VEC{STR}, IN
+
+   ENSURE(.internal.destroyed,"internal file already exists")
+
+      ! Allocate and nullify
+      allocate(self)
+      ADD_MEMORY(SELF_TYPE_SIZE)
+      .nullify_ptr_part
+
+      ! Set defaults
+      .set_defaults
+
+      ! Reset some defaults
+      .action = "read" 
+      .no_of_lines = size(internal)
+      .unit = 0
+
+      ! Copy the internal file
+      .name = "internal"
+      .internal.create(size(internal))
+      .internal = internal
+
+      ! Get ready to read
+      .read_line
+
+   end
+
+   destroy ::: leaky, recursive
+   ! Destroy a textfile
+      self :: PTR
+
+      if (.destroyed) return
+
+      .destroy_ptr_part
+
+      if (.is_open) .close
+
+      UNIT_NUMBER:free_the_used_unit_number(.unit)
+
+      DELETE_MEMORY(SELF_TYPE_SIZE)
+
+      deallocate(self)
+
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of "self".
+      nullify(.replacement_list)
+      nullify(.internal)
+      nullify(.saved)
+      .buffer.nullify_ptr_part
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts of "self", including any saved parts,
+   ! which are destroyed recursively.
+      .buffer.destroy_ptr_part
+      .replacement_list.destroy
+      .internal.destroy
+      .saved.destroy
+   end
+
+   destroy_replacement_list ::: leaky
+   ! Destroy the .replacement_list; needed if set_replacement_list is used
+      .replacement_list.destroy
+      .buffer.replacement_list.destroy
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   create_copy(file) ::: recursive, leaky
+   ! Create a copy of this textfile
+      self :: PTR
+      file :: TEXTFILE
+
+      ! Create fresh file, with no name
+      .create
+
+      ! Free nameless file unit
+      UNIT_NUMBER:free_the_used_unit_number(.unit)
+
+      ! Copy the file, unit and all
+      .copy(file)
+
+   end
+
+   copy(file,copy_saved) ::: recursive, leaky
+   ! Make a copy of this textfile. If "saved" is TRUE, recursively
+   ! copy the .saved component. Default is *not* to recursively copy.
+      file :: TEXTFILE
+      copy_saved :: BIN, optional
+      
+      ! Non pointer (simple) copy
+      self = file
+
+      ! Pointer parts are create-copied
+      .nullify_ptr_part
+      .buffer.copy(file.buffer)
+      if (file.internal.created)         .internal.create_copy(file.internal)
+      if (file.replacement_list.created) .replacement_list.create_copy(file.replacement_list)
+
+      ! Copy saved only if requested (recursive)
+      if (present(copy_saved)) then
+      if (copy_saved) then
+      if (file.saved.created)            .saved.create_copy(file.saved)
+      end
+      end
+
+   end
+
+!  ===================
+!  Saving and unsaving
+!  ===================
+
+   save ::: leaky
+   ! Saved everything about the current textfile "self" in ".saved"
+   ! Do not open a new textfile. Can be used to save style settings.
+      self :: PTR
+   ENSURE(.created,"no self")
+
+      saved :: TEXTFILE*
+
+      ! Keep self in saved
+      saved => self
+
+      ! Allocate fresh space for new self
+      nullify(self)
+      allocate(self)
+      ADD_MEMORY(SELF_TYPE_SIZE)
+
+      ! Copy self --- keep all settings, even line number.
+      ! NOTE: can't use self = saved since both are pointers 
+      ! and it would copy the target of saved.
+      self.copy(saved) 
+
+      ! Make .saved the old self
+      .saved => saved
+
+   end
+
+   unsave ::: leaky
+   ! Go back to previously saved textfile settings. Note that this
+   ! is not the same as reverting to a previously redirected textfile
+      self :: PTR
+   ENSURE(.saved.created,"no previous settings")
+
+      saved :: TEXTFILE*
+
+      ! Keep the old .saved component
+      saved => .saved
+
+      ! Destroy the pointer parts of self
+      .buffer.destroy_ptr_part
+      .replacement_list.destroy
+      .internal.destroy
+
+      ! Now deallocate self
+      DELETE_MEMORY(SELF_TYPE_SIZE)
+      deallocate(self)
+
+      ! Self is the old .saved
+      self  => saved
+   end
+
+!  ========================
+!  File redirect and revert
+!  ========================
+
+   redirect(name) ::: leaky
+   ! Save all the info for the current file in ".saved", and open a
+   ! new textfile.  This is used for input, or output redirection. 
+   ! The new file retains the style settings of the saved file
+      self :: PTR
+      name :: STR
+
+      saved :: TEXTFILE*
+
+      ! Keep self in saved
+      saved => self
+
+      ! Create a new self
+      .create(name)
+
+      ! The .saved component of new self is the old self
+      .saved => saved
+
+      ! Preserve old style settings
+      .use_style(saved)
+
+      ! Open the new file
+      .open(for=.saved.action)
+
+   end
+
+   redirect(internal) ::: leaky
+   ! Save all the info for the current file in ".saved", and open a
+   ! new internal textfile. This is used for *only* input redirection.
+   ! The new file retains the style settings of the saved file
+      self :: PTR
+      internal :: VEC{STR}, IN
+
+      saved :: TEXTFILE*
+
+      ! Keep self in saved
+      saved => self
+
+      ! Create new .internal file
+      nullify(.internal)
+      .create(internal)
+
+      ! The .saved component of new self is the old self
+      .saved => saved
+
+      ! Preserve old style settings
+      .use_style(saved)
+   end
+
+   revert ::: leaky
+   ! Revert to the previously redirected textfile, but keep current
+   ! style settings, including (for example) any default_units settings.
+   ENSURE(.saved.created,"no previous settings")
+      self :: PTR
+
+      saved :: TEXTFILE*
+
+      ! Preserve current style settings
+      .saved.use_style(self)
+
+      ! Soft-ending
+      .saved.io_status = -1     
+
+      ! Keep original .saved file
+      saved => .saved
+
+      ! Destroy pointer parts of self ...
+      ! Do not destroy .saved parts recursively, just deallocate
+      if (.internal.created) then
+         .internal.destroy      
+      else
+         .buffer.destroy_ptr_part
+         .replacement_list.destroy
+         .close
+         UNIT_NUMBER:free_the_used_unit_number(.unit)
+      end
+      DELETE_MEMORY(SELF_TYPE_SIZE)
+      deallocate(self)          
+
+      ! Self is the original
+      self => saved
+
+   end
+
+   use_style(saved) ::: private
+   ! Revert to the previously saved style settings, including any
+   ! default units.
+      saved :: TEXTFILE
+
+      .n_fields_per_line  = saved.n_fields_per_line
+      .int_width          = saved.int_width
+      .real_width         = saved.real_width
+      .real_precision     = saved.real_precision
+      .real_style         = saved.real_style
+      .line_format        = saved.line_format
+      .margin_width       = saved.margin_width
+      .using_array_labels = saved.using_array_labels
+      .default_units      = saved.default_units
+
+      ! buffer parsing style ...
+      .comment_chars      = saved.comment_chars
+      .quote_chars        = saved.quote_chars
+      .ignore_unmatched_quotes = saved.ignore_unmatched_quotes
+      .eliminate_specials = saved.eliminate_specials
+
+   end
+
+!  ============================
+!  File open, close, and delete
+!  ============================
+
+   open
+   ! Open the textfile based on its action attribute
+   ENSURE(.action/="unknown","file has unknown action")
+     .open(for=.action)
+   end
+
+   open(for)
+   ! Open the textfile "for" either "read" or "write".
+     for :: STR
+     select case (for)
+        case("read      ","reading   ","read-only ") ; .open_for_read
+        case("write     ","writing   ","write-only") ; .open_for_write
+        case default; UNKNOWN(for)
+     end
+   end
+
+   open_for(for)
+   ! Open the textfile "for" either "read" or "write".
+     for :: STR
+     .open(for)
+   end
+
+   open_for_read ::: private
+   ! Open the input file. The input file object must already be created
+   ! The file is positioned at the first line.
+   ENSURE(.internal.destroyed,"no need to open an internal file")
+
+      unit,fail :: INT
+      name :: STR
+
+      .action = "read"
+      .io_status = 0
+
+      unit = .unit
+      name = .name
+      fail = 0
+
+      if (.exists) then
+         .set_no_of_lines
+      else
+         DIE("the file "//trim(name)//" does not exist!")
+      end
+
+      if (IO_IS_ALLOWED) then
+
+         open(unit=unit,           &
+              file=trim(name),     &
+              status="old",        &
+              access="sequential", &
+              form="formatted",    &
+              iostat=fail)
+      end
+
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail/=0,"error opening old file for reading: "//trim(name))
+      .io_status = fail
+
+   end
+
+   open_for_write ::: private
+   ! Open the output file associated with the output object
+
+   ENSURE(.internal.destroyed,"no need to open an internal file")
+
+      if (.exists) then; .open_old_file_for_write
+      else;              .open_new_file_for_write
+      end
+
+   end
+
+   open_old_file_for_write ::: private
+   ! Open an old output file for writing
+
+   ENSURE(.internal.destroyed,"no need to open an internal file")
+   ENSURE(.exists, "not an existing file!")
+
+      unit,fail :: INT
+      name :: STR
+
+      .action = "write"
+      .io_status = 0
+
+      unit = .unit
+      name = .name
+      fail = 0
+
+      if (IO_IS_ALLOWED) then
+
+         open(unit=unit,           &
+              file=trim(name),     &
+              status="old",        &
+              access="sequential", &
+              form="formatted",    &
+              iostat=fail)
+      end
+
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail/=0,"error opening old file: "//trim(name))
+      .io_status = fail
+
+      .clear_and_put_margin
+
+   end
+
+   open_new_file_for_write ::: private
+   ! Open an new output file for writing
+
+   ENSURE(.internal.destroyed,"no need to open an internal file")
+   ENSURE(NOT .exists, "output file exists!")
+
+      unit,fail :: INT
+      name :: STR
+
+      .action = "write"
+      .io_status = 0
+
+      unit = .unit
+      name = .name
+      fail = 0
+
+      if (IO_IS_ALLOWED) then
+
+         open(unit=unit,           &
+              file=trim(name) ,    &
+              status="new",        &
+              access="sequential", &
+              form="formatted",    &
+              iostat=fail)
+      end
+
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail/=0,"error opening new file "//trim(name))
+      .io_status = fail
+
+   end
+
+   close
+   ! Close the input file
+      opened :: BIN
+
+      if (IO_IS_ALLOWED) then
+         inquire(unit=.unit,opened=opened)
+         if (opened) then
+            close(unit=.unit)
+         end
+      end
+
+   end
+
+   close_and_delete
+   ! Close the input file and delete it from the file system
+      if (IO_IS_ALLOWED) then
+         close(unit=.unit,status="delete")
+      end
+   end
+
+   delete
+   ! Delete the input file from the file system
+      if (NOT .is_open) .open(for="read")
+      .close_and_delete
+   end
+
+!  ============
+!  Set defaults
+!  ============
+
+   set_defaults
+   ! Set defaults
+
+      .name = "unknown"
+      .action = "unknown"
+      .unit = 0
+      .record = 0
+      .io_status = 0
+      .ignore_end_of_file = FALSE
+      .no_of_lines = -1
+
+      .set_default_format
+
+      .default_units = " "
+      .comment_chars = TEXTFILE_COMMENT_CHARS
+      .quote_chars   = TEXTFILE_QUOTE_CHARS
+      .ignore_unmatched_quotes = FALSE
+      .eliminate_specials = TRUE
+
+      .buffer.set_defaults  ! Set defaults
+
+   end
+
+   set_default_format
+   ! Set the default settings for the REAL formatting object
+   ! Extra functions added compared to inherited code
+
+      .using_fields       = TEXTFILE_USE_FIELDS
+      .n_fields_per_line  = TEXTFILE_N_FIELDS_PER_LINE
+      .spacing            = TEXTFILE_SPACING
+      .int_width          = TEXTFILE_INT_WIDTH
+      .real_width         = TEXTFILE_REAL_WIDTH
+      .real_precision     = TEXTFILE_REAL_PRECISION
+      .real_style         = TEXTFILE_REAL_STYLE
+      .line_format        = " "
+      .margin_width       = TEXTFILE_MARGIN_WIDTH
+      .using_array_labels = TEXTFILE_USE_ARRAY_LABELS
+
+   end
+
+   set_no_of_lines ::: private
+   ! Set the number of lines in the file
+
+   ENSURE(.exists, "not an existing file!")
+   ENSURE(.action=="read","not a readable file")
+
+      unit,fail,l :: INT
+      name :: STR
+      line :: STR(len=8)
+
+      unit = .unit
+      name = .name
+      fail = 0
+
+      ! Open the file
+      if (IO_IS_ALLOWED) then
+
+         open(unit=unit,           &
+              file=trim(name),     &
+              status="old",        &
+              access="sequential", &
+              form="formatted",    &
+              iostat=fail)
+      end
+
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail/=0,"error opening old file for reading: "//trim(name))
+      .io_status = fail
+
+      ! Read the lines until done
+      if (IO_IS_ALLOWED) then
+         l = 0
+         do
+            line = " "
+            line = line
+            read(unit,fmt="(a)",iostat=fail) line
+            l = l + 1
+            if (fail/=0) exit
+         end 
+      end
+
+      PARALLEL_BROADCAST(l,0)
+
+      ! Set the number of lines.
+      ! WARNING: this assumes the fail happens after
+      ! the stop record, so we have to move befor that.
+      .no_of_lines = l - 1
+
+      ! Rewind
+      if (IO_IS_ALLOWED) then
+         close(unit,iostat=fail)
+      end
+
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail/=0,"error closing file for reading: "//trim(name))
+      .io_status = fail
+
+   end
+
+   set_name(name)
+   ! Set the file name
+      name :: STR
+
+   DIE_IF(name==" ","name is blank!")
+
+      .name = name
+
+   end
+
+   reset_io_status
+   ! Reset manually the io_status if it is safe to do so.
+      .io_status = 0
+   end
+
+!  =========================================
+!  Set comment, quote and specials character
+!  =========================================
+
+   set_comment_chars(comment_chars)
+   ! Set .comment_chars to "comment_chars".
+      comment_chars :: STR
+      .comment_chars = comment_chars
+      .buffer.set_comment_chars(comment_chars)
+   end
+
+   set_quote_chars(quote_chars)
+   ! Set .quote_chars to "quote_chars".
+      quote_chars :: STR
+      .quote_chars = quote_chars
+      .buffer.set_quote_chars(quote_chars)
+   end
+
+   set_ignore_unmatched_quotes(ignore)
+   ! Set .ignoire_unmatched_quote to "ignore".
+      ignore :: BIN
+      .ignore_unmatched_quotes = ignore
+      .buffer.set_ignore_unmatched_quotes(ignore)
+   end
+
+   set_eliminate_specials(eliminate)
+   ! Set .leiminate_soecials to "eliminate".
+      eliminate :: BIN
+      .eliminate_specials = eliminate
+      .buffer.set_eliminate_specials(eliminate)
+   end
+
+   set_replacement_list(list) ::: leaky
+   ! Set the replacement_list.
+      list :: MAT{STR}*
+   ENSURE(list.created,"list destroyed")
+   ENSURE(list.dim2==2,"second dimension must be 2")
+      .replacement_list.destroy
+      .replacement_list.create_copy(list)
+      .buffer.set_replacement_list(list)
+   end
+
+!  ==========
+!  Set format
+!  ==========
+
+   set_int_width(val)
+   ! Set the width of an integer field to "val"
+      val :: INT
+
+   ENSURE(val>=0,"width less than zero")
+
+
+      .int_width = val
+
+   end
+
+   set_real_width(val)
+   ! Set the width of an integer field to "val"
+      val :: INT
+
+   ENSURE(val>=0,"width less than zero")
+   ENSURE(val>=.real_precision,"width smaller than precision")
+
+      .real_width = val
+
+   end
+
+   set_no_of_fields_per_line(val)
+   ! Set the number of fields per file to "val"
+      val :: INT
+
+   ENSURE(val>=0,"not enough fields")
+
+      .n_fields_per_line = val
+
+   end
+
+   set_spacing(val)
+   ! Set the spacing between fields
+      val :: INT
+
+   ENSURE(val>=0,"must be non-negative")
+
+      .spacing = val
+
+   end
+
+   set_real_precision(val)
+   ! Set the real precision i.e. no of decimal places to "val"
+      val :: INT
+
+   ENSURE(val>=0,"precision less than zero")
+   ENSURE(val<=.real_width,"precision greater than field width")
+
+      .real_precision = val
+
+   end
+
+   set_real_style(val)
+   ! Set the fortran format style string
+      val :: STR
+
+      style :: STR
+
+      style = val
+      select case (style)
+         case ("f","d","e","es","en","g")
+         case default; UNKNOWN(style)
+      end
+
+      .real_style = style(1:2)
+
+   end
+
+   set_line_format(fmt)
+   ! Set the line format from fortran format string "fmt". This should
+   ! include the number of fields e.g. "5f10.3". The style must be a
+   ! real style, not integer or string.
+      fmt :: STR
+
+      f,l,s :: INT
+      tmp :: STR
+
+      ! First and last character
+      tmp = adjustl(fmt)
+      tmp.get_next_item_position(f,l)
+      DIE_IF(l==0, "fmt is blank")
+      tmp = tmp(:l)
+ 
+      ! Get the number of columns
+      s = tmp.index_of_character_not_in("0123456789")
+      DIE_IF(s==0, "fmt has no # of fields")
+      .set_no_of_fields_per_line(tmp(:s-1).to_int)
+
+      ! Get the style
+      tmp = tmp(s:)
+      s = tmp.index_of_character_in("0123456789")
+      DIE_IF(s==0, "fmt has no real style")
+      .set_real_style(tmp(:s-1))
+
+      ! Get the width
+      tmp = tmp(s:)
+      s = tmp.index_of_character_not_in("0123456789")
+      DIE_IF(s==0, "fmt has no width")
+      DIE_IF(tmp(s:s)/=".", "fmt has no dot before precision")
+      .set_real_precision(0)
+      .set_real_width(tmp(:s-1).to_int)
+
+      ! Get the precision
+      tmp = tmp(s+1:)
+      .set_real_precision(tmp.to_int)
+      
+   end
+
+   set_using_fields(val)
+   ! Set whether to use fields of fixed width or not.
+      val :: BIN
+      .using_fields = val
+      .set_no_of_fields_per_line(0)
+   end
+
+   set_margin_width(val)
+   ! Set the width of the margin in the buffer to "val"
+      val :: INT
+   ENSURE(val>=0,"margin width less than zero")
+   ENSURE(val<=STR_SIZE,"margin width too large")
+      .margin_width = val
+   end
+
+   increment_margin_width(val)
+   ! Increment the width of the margin in the buffer to "val"
+      val :: INT
+      .margin_width = .margin_width + val
+   end
+
+   set_using_array_labels(using_array_labels)
+   ! Set whether to use numbered column or row labels on matrix or vector output
+      using_array_labels :: BIN
+      .using_array_labels = using_array_labels
+   end
+
+   set_default_units(units)
+   ! Set the .default_units to "units". This is reset back to 1
+   ! after a particular number has been read and converted.
+      units :: STR
+   ENSURE(units==" " OR units.is_known_unit,"Unknown units!")
+      .default_units = units
+   end
+
+!  ===================
+!  Read format options
+!  ===================
+
+   read_keywords(in)
+   ! Read the default output style parameters from another textfile, "in"
+      self :: PTR
+      in :: TEXTFILE*
+
+   ENSURE(in.action=="read","file in is not an input file")
+
+      word :: STR
+
+      in.read(word)
+      ENSURE(word=="{","expecting a {")
+
+      ! Loop over keywords
+      read_loop: do          
+         in.read(word)
+         word.to_lower_case
+         if (word=="}")      exit read_loop
+         .process_keyword(word,in)
+      end do read_loop
+
+   end
+
+   process_keyword(keyword,infile) ::: leaky
+   ! Process a command "keyword". Input keywords are optionally taken
+   ! from "infile".
+      self :: PTR
+      keyword :: STR
+      infile :: TEXTFILE*, optional
+
+      input :: TEXTFILE*
+      word,sty :: STR
+      bin :: BIN
+      val :: INT
+
+      if (present(infile)) then; input => infile
+      else;                      input => self
+      end
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+         case ("int_width=              "); input.read(val); .set_int_width(val)
+         case ("line_format=            "); input.read(sty); .set_line_format(sty)
+         case ("margin_width=           "); input.read(val); .set_margin_width(val)
+         case ("no_of_fields_per_line=  "); input.read(val); .set_no_of_fields_per_line(val)
+         case ("precision=              "); input.read(val); .set_real_precision(val)
+         case ("real_precision=         "); input.read(val); .set_real_precision(val)
+         case ("real_style=             "); input.read(sty); .set_real_style(sty)
+         case ("real_width=             "); input.read(val); .set_real_width(val)
+         case ("use_array_labels=       "); input.read(bin); .set_using_array_labels(bin)
+         case ("using_fields=           "); input.read(bin); .set_using_fields(bin)
+         case ("using_array_labels=     "); input.read(bin); .set_using_array_labels(bin)
+         case default;                  UNKNOWN(word)
+      end
+
+   end
+
+!  ====================
+!  File inquiry methods
+!  ====================
+
+   exists(name) result (res)
+   ! Returns true if the file exists on the file system.
+   ! Uses "name" if present, otherwise ".name".
+      self :: IN
+      name :: STR, optional, IN
+      res :: BIN
+
+      if (present(name)) then
+
+         if (IO_IS_ALLOWED) then
+            inquire(file=trim(name),exist=res)
+         end
+
+      else
+
+         if (IO_IS_ALLOWED) then
+            inquire(file=trim(.name),exist=res)
+         end
+
+      end
+
+      PARALLEL_BROADCAST(res,0)
+
+   end
+
+   is_open result (res)
+   ! Returns true if the file has been opened
+      self :: IN
+      res :: BIN
+
+      if (.unit==TEXTFILE_STDIN_UNIT OR .unit==TEXTFILE_STDOUT_UNIT) then
+
+         res = TRUE ! not needed for stdin, stdout
+
+      else
+
+        if (IO_IS_ALLOWED) then
+           inquire(file=.name,opened=res)
+         ! inquire(unit=.unit,opened=res)
+        end
+        PARALLEL_BROADCAST(res,0)
+
+      end
+
+   end
+
+   unit_used result (res)
+   ! Returns true if the file unit is in use
+      res :: BIN
+      if (IO_IS_ALLOWED) then
+        inquire(unit=.unit,opened=res)
+      end
+      PARALLEL_BROADCAST(res,0)
+   end
+
+   at_end_of_file result (res)
+   ! Read a line into the buffer from the input file and see if it is
+   ! at the end of file. This is an explicit test, not just a viewing
+   ! of ".io_status".  NOTE: If all lines to the end of file are
+   ! empty, then the result is also true.
+      self :: INOUT
+      res :: BIN
+
+   ENSURE(.action=="read","file does not have read status")
+
+      word :: STR
+      ignore :: BIN
+
+      ! Save ignore EOF status
+      ignore = .ignore_end_of_file 
+      .ignore_end_of_file = TRUE
+
+      ! Read a word ...
+      .read(word)
+
+      ! Is it the end of file?
+      res = .end_of_file
+
+      ! Reset .io_status and move back
+      .io_status = 0
+      .move_to_previous_item
+
+      ! Put back ignore EOF status
+      .ignore_end_of_file = ignore 
+
+   end
+
+   end_of_file result (res) ::: pure
+   ! See if .io_status/=0, indicating the end of file has been found.
+      self :: IN
+      res :: BIN
+
+      res = .io_status/=0
+
+   end
+
+   reverted result (res) ::: pure
+   ! See if .io_status/=0, indicating an internal file has ended 
+   ! i.e. a soft ending).  
+      self :: IN
+      res :: BIN
+
+      res = .io_status/=0 
+
+   end
+
+!  ===========
+!  Read a line
+!  ===========
+
+   read_line
+   ! Read a line into the buffer. 
+      self :: INOUT
+
+      if (.internal.created) then; .read_line_internal
+      else;                        .read_line_external
+      end
+
+   end
+
+   read_line_internal ::: private
+   ! Read a line into the buffer from the internal file. If the file
+   ! ends, this routine dies, UNLESS (1) .ignore_end_of_file is set,
+   ! in which case another succesive failure to read a line will
+   ! generate an error (this prevents infinite read loops, and is also
+   ! useful for testing whether at the end of a file), OR (2) there is
+   ! a .saved file, in which case the current file reverts to the
+   ! saved file, and an attempt is made to read from that saved file.
+      self :: INOUT
+
+   ENSURE(.internal.created,"no internal file")
+
+      string :: STR(len=BSTR_SIZE)
+
+      .update_system_info
+
+      if (.record<size(.internal)) then      
+      
+          ! No errors.
+         .io_status = 0
+         .record = .record + 1
+         string = .internal(.record)
+         .buffer.set_and_analyze(string)
+      
+      else                                   
+      
+         ! At end of file.
+         .io_status = 1
+
+         if (.ignore_end_of_file) then       
+
+            ! Next time don't ignore eof
+            .ignore_end_of_file = FALSE      
+
+         else                               
+
+            ! WTF?
+            .read_line_bad_eof
+
+         end
+
+      end
+
+      .update_system_info
+
+   end
+
+   read_line_external ::: private
+   ! Read a line into the buffer from the input file. If the file
+   ! ends, this routine dies, UNLESS 
+   ! (1) .ignore_end_of_file is set, in which case another succesive
+   !     failure to read a line will generate an error (this prevents
+   !     infinite read loops, and is also useful for testing whether
+   !     at the end of a file), OR 
+   ! (2) there is a .saved file, in which case the current file
+   !     reverts to the saved file, and an attempt is made to read
+   !     that saved file.
+      self :: INOUT
+
+   ENSURE(.is_open,"file is not open")
+   ENSURE(.action=="read","file does not have read action!")
+
+      string :: STR(len=BSTR_SIZE)
+      unit,fail :: INT
+
+      ! Update
+      .update_system_info
+
+      ! Read a line
+      if (IO_IS_ALLOWED) then
+         unit = .unit
+         fail = 0
+         string = " "
+         read(unit=unit,fmt="(a)",iostat=fail) string 
+      end
+      PARALLEL_BROADCAST(string,0)
+      PARALLEL_BROADCAST(fail,0)
+
+      ! Set IO status
+      .io_status = fail
+
+      ! Is the read OK?
+      select case (.io_status)
+         
+         case (0)                               
+
+               ! No errors. Analyze the line.
+               .buffer.set_and_analyze(string) 
+               .record = .record + 1
+
+         case (TEXTFILE_IOSTAT_EOF)             
+
+            if (.ignore_end_of_file) then       
+
+               ! Explicit backspace
+               ! Status still indicates EOF
+               if (IO_IS_ALLOWED) then
+                  backspace(unit=.unit,iostat=fail)
+               end
+
+            else                               
+
+               ! Unexpected EOF
+               .read_line_bad_eof
+
+            end
+         
+         case default                           
+         
+            ! Some error, but not end of file.
+            DIE("read error")
+
+      end
+
+      ! Update
+      .update_system_info
+
+   end
+
+   read_line_bad_eof ::: private
+   ! Reading a line encountered an unexpected EOF.
+      if(.saved.created) then          
+         DIE("did you forget to set ignore_end_of_file?")
+      else
+         DIE("unexpected end of file")
+      end
+   end
+
+   update_line ::: private
+   ! Get the next non-exhausted line if the current one is
+   ! exhausted---and in this case, the buffer pointer is positioned
+   ! before the first line item.  This routine performs a reversion if
+   ! there is a .saved file.
+
+      do
+
+         ! Any items to read?
+         if (.buffer.not_exhausted) exit
+
+         ! No items: read new line
+         .read_line
+
+         ! Error: no more lines to read
+         if (.end_of_file) exit  
+
+      end
+
+   end
+
+   revert_line ::: private
+   ! Revert back to the previous non-exhausted line in the input file
+   ! if the current buffer pointer is before the first item; and in
+   ! this case, the buffer pointer is repositioned *after* the last
+   ! line item.
+
+      ! Any previous line items?
+      if (.next_line_item>1) return
+
+      ! No previous items: back to non-blank line
+      do
+         .backspace_line
+         if (.buffer.not_exhausted) exit
+      end
+
+      ! Move *after* last item on non-blank line
+      .move_to_line_item(.last_line_item+1)
+
+   end
+
+!  ========================
+!  File rewind, move to end
+!  ========================
+
+   rewind
+   ! Rewind the input file, reading the first line for read-only files.
+      if (.internal.created) then; .rewind_internal
+      else;                        .rewind_external
+      end
+      select case (.action)
+         case("read      ","reading   ","read-only "); .read_line
+         case("write     ","writing   ","write-only") 
+         case default; UNKNOWN(.action)
+      end
+   end
+
+   rewind_internal ::: private
+   ! Rewind the input file, but do not read a line.
+      .record = 0
+      .io_status = 0
+   end
+
+   rewind_external ::: private
+   ! Rewind the input file, but do not read a line.
+
+      fail :: INT
+
+      .update_system_info
+
+      fail = 0
+      if (IO_IS_ALLOWED) then
+         rewind(unit=.unit,iostat=fail)
+      end
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail>0,"rewind error")
+      .io_status = fail
+
+      .record = 0
+
+   end
+
+   move_to_end
+   ! Move to the end of the input file
+      if (.internal.created) then; .move_to_end_internal
+      else;                        .move_to_end_external
+      end
+   end
+
+   move_to_end_internal ::: private
+   ! Move to the end of the input file
+      .record = size(.internal)-1
+      .read_line
+   end
+
+   move_to_end_external ::: private
+   ! Move to the end of the input file
+
+      fail :: INT
+
+      .update_system_info
+
+      ! Read till failure
+      do
+
+         fail = 0
+         if (IO_IS_ALLOWED) then
+            read(unit=.unit, fmt="()", iostat=fail)
+         end
+         PARALLEL_BROADCAST(fail,0)
+
+         if (fail/=0) exit
+
+         .record = .record + 1
+
+      end
+
+      ! Backspace twice
+      if (IO_IS_ALLOWED) then
+         backspace(unit=.unit,iostat=fail)
+         backspace(unit=.unit,iostat=fail)
+      end
+      PARALLEL_BROADCAST(fail,0)
+
+      ! Set the IO status
+      .io_status = fail
+
+      ! Set the record
+      .record = max(0,.record-1)
+
+      ! Get the last line
+      .read_line
+
+   end
+
+!  =================
+!  Skip file records
+!  =================
+
+   skip_line
+   ! Skip the next line in the input file
+      self :: INOUT
+
+      record :: INT
+
+      record = .record + 1
+      .move_to_record(record)
+
+   end
+
+   backspace_line
+   ! Move to the previous line
+      self :: INOUT
+
+      record :: INT
+
+      record = .record - 1
+      .move_to_record(record)
+
+   end
+
+   move_to_line(line)
+   ! Make sure that "line" was the last one processed
+   ! in the input file
+      self :: INOUT
+      line :: INT, IN
+
+      .move_to_record(line)
+
+   end
+
+   move_to_record(rec)
+   ! Move to the requested record "rec" in the input file.
+   ! and read it into the buffer. Set .record to the 
+   ! last processed record.
+      self :: INOUT
+      rec :: INT, IN
+
+   ENSURE(rec>=0,"line number must be non-negative")
+
+      if (.internal.created) then; .move_to_record_internal(rec)
+      else;                        .move_to_record_external(rec)
+      end
+
+   end
+
+   move_to_record_internal(rec) ::: private
+   ! Move to the requested record "rec" in the internal file.
+   ! and read it into the buffer. Set .record to the 
+   ! last processed record.
+      self :: INOUT
+      rec :: INT, IN
+
+   ENSURE(rec>=0,"record number must be non-negative")
+   ENSURE(rec<=size(.internal),"record outside file range")
+
+      .record = rec - 1
+
+      .read_line
+
+   end
+
+   move_to_record_external(rec) ::: private
+   ! Move to the requested record "rec" in the input file.
+   ! and read it into the buffer. Set .record to the 
+   ! last processed record.
+      self :: INOUT
+      rec :: INT, IN
+
+   ENSURE(rec>=0,"record number must be non-negative")
+
+      .update_system_info
+
+      if (rec<(.record+1)) then
+
+         ! Go backwards
+         do
+            .move_to_back_record
+            if (rec==(.record+1)) exit
+         end
+
+      else if (rec>(.record+1)) then
+
+         ! Go forwards
+         do
+           .move_to_next_record
+           if (rec==(.record+1)) exit
+         end
+
+      end
+
+      ! Read it
+      .read_line
+
+   end
+
+   move_to_back_record ::: private
+   ! Backspace a record. Skip system info update.
+      self :: INOUT
+
+      fail :: INT
+
+      fail = 0
+
+      if (IO_IS_ALLOWED) then
+         backspace(unit=.unit,iostat=fail)
+      end
+
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail>0,"backspace error")
+      .io_status = fail
+
+      ! Next record
+      .record = .record - 1
+
+   end
+
+   move_to_next_record ::: private
+   ! Forward space a record. Skip system info update.
+      self :: INOUT
+
+      fail :: INT
+
+      fail = 0
+
+      if (IO_IS_ALLOWED) then
+         read(unit=.unit,fmt="()",iostat=fail)
+      end
+
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail>0,"read error")
+       .io_status = fail
+
+      ! Next record
+      .record = .record + 1
+
+   end
+
+!  ===========
+!  Line search
+!  ===========
+
+   look_for_item(item,from,until,end_tokens,exact_match,head_match,return_cursor,found)
+   ! Scan through the file for an "item". If present:
+   ! . Starting at line "from"  inclusive
+   ! . Ending at line "until" inclusive
+   ! . Ending at any token which *begins* with "end_tokens"
+   ! . With "item" matching exactly, if "exact_match" is TRUE
+   ! . With "item" head-matching,    if "head_match" is TRUE
+   ! . Return cursor to orginal line, if "return_cursor" is TRUE
+   ! . Return without error, with "found" TRUE if "item" was found
+      item  :: STR, IN
+      from  :: INT, IN, optional
+      until :: INT, IN, optional
+      end_tokens  :: VEC{STR}, IN, optional
+      exact_match :: BIN, IN, optional
+      head_match  :: BIN, IN, optional
+      return_cursor :: BIN, IN, optional
+      found :: BIN, OUT, optional
+
+      start_record :: INT
+      word :: STR
+      fnd,exact,head,put_back,has_item,has_end,match :: BIN
+      i :: INT
+
+      ! Look from .record or "from"
+      start_record = .record                
+      if (present(from)) start_record = from
+
+      ! Look until EOF or "until"
+      if (present(until)) then
+         ENSURE(until>=start_record,"ending line must be greater than starting line")
+      end
+
+      ! Item to match exactly?
+      exact = FALSE
+      if (present(exact_match)) exact = exact_match
+
+      ! Item to match token head only?
+      head = FALSE
+      if (present(head_match))  head = head_match
+      if (head) exact = FALSE
+
+      ! Rewind afterwards?
+      put_back = FALSE
+      if (present(return_cursor)) put_back = return_cursor
+
+      ! Move to start
+      .move_to_record(start_record)
+
+      ! Initialize
+      .ignore_end_of_file = TRUE
+      fnd = FALSE
+
+      ! Loop over file lines
+      if (NOT .end_of_file) then
+
+        ! Now do the search here ...
+        line_search: do                       
+
+           ! Item found?
+           has_item = .buffer.string.includes(item)
+
+           ! End token found?
+           has_end = FALSE
+           if (present(end_tokens)) then
+           if (.record>start_record) then
+              has_end = .buffer.string.includes_any_in(end_tokens)
+           end
+           end
+
+           if (has_item OR has_end) then
+
+              ! Find the matching token
+              do i = 1,.buffer.n_items
+
+                 .get_next_item(word)
+
+                 if (has_item) then
+
+                    ! What kind of match was it?
+                    if (head) then;       match = word.includes(item,at_start=TRUE)
+                    else if (exact) then; match = word==item
+                    else;                 match = word.includes(item)
+                    end
+
+                    if (match) then           
+                       fnd = TRUE
+                       exit line_search
+                    end
+
+                 end
+
+                 if (has_end) then
+                 if (end_tokens.has_any_included_in(word,at_start=TRUE)) then
+                       fnd = TRUE
+                       exit line_search
+                 end
+                 end
+
+              end
+
+           end
+
+           if (present(until)) then
+              if (.record==until) exit line_search
+           end
+
+           .read_line
+
+           if (.end_of_file) exit line_search
+
+        end do line_search
+
+      end
+
+      if (present(found)) found = fnd
+      if (NOT fnd AND put_back) .move_to_record(start_record)
+
+      .ignore_end_of_file = FALSE
+
+   end
+
+   look_backwards_for_item(item,from,until,end_tokens,exact_match,head_match,return_cursor,found)
+   ! Scan *backwards* through the file for an "item". If present:
+   ! . Starting at line "from"  inclusive
+   ! . Ending at line "until" inclusive
+   ! . Ending at any token which *begins* with "end_tokens"
+   ! . With "item" matching exactly, if "exact_match" is TRUE
+   ! . With "item" head-matching,    if "head_match" is TRUE
+   ! . Return cursor to orginal line, if "return_cursor" is TRUE
+   ! . Return without error, with "found" TRUE if "item" was found
+      item  :: STR, IN
+      from  :: INT, IN, optional
+      until :: INT, IN, optional
+      end_tokens  :: VEC{STR}, IN, optional
+      exact_match :: BIN, IN, optional
+      head_match  :: BIN, IN, optional
+      return_cursor :: BIN, IN, optional
+      found :: BIN, OUT, optional
+
+      start_record,end_record :: INT
+      word :: STR
+      fnd,exact,head,put_back,has_item,has_end,match :: BIN
+      i :: INT
+
+      ! Look from .record or "from"
+      start_record = .record                
+      if (present(from)) start_record = from
+
+      ! Look until SOF or "until"
+      end_record = 1
+      if (present(until)) end_record = until
+      ENSURE(end_record<=start_record,"ending line must be smaller than starting line")
+
+      ! Item to match exactly?
+      exact = FALSE
+      if (present(exact_match)) exact = exact_match
+
+      ! Item to match token head only?
+      head = FALSE
+      if (present(head_match))  head = head_match
+      if (head) exact = FALSE
+
+      ! Rewind afterwards?
+      put_back = FALSE
+      if (present(return_cursor)) put_back = return_cursor
+
+      ! Move to start
+      .move_to_record(start_record)         
+
+      ! Initialise
+      .ignore_end_of_file = TRUE
+      fnd = FALSE
+
+      if (NOT .end_of_file) then
+
+        .move_to_last_item_on_line
+
+        ! Search for tokens ...
+        line_search: do                       
+
+           ! Item found?
+           has_item = .buffer.string.includes(item)
+
+           ! End token found?
+           has_end = FALSE
+           if (present(end_tokens)) then
+           if (.record>start_record) then
+              has_end = .buffer.string.includes_any_in(end_tokens)
+           end
+           end
+
+           if (has_item OR has_end) then
+
+              ! Look backwards ...
+              do i = .buffer.n_items,1,-1     
+
+                 .move_to_line_item(i)
+                 .get_next_item(word)
+
+                 if (has_item) then
+
+                    ! What kind of match was it?
+                    if (head) then;       match = word.includes(item,at_start=TRUE)
+                    else if (exact) then; match = word==item
+                    else;                 match = word.includes(item)
+                    end
+
+                    ! Found a match
+                    if (match) then           
+                       fnd = TRUE
+                       exit line_search
+                    end
+
+                 end
+
+                 if (has_end) then
+                 if (end_tokens.has_any_included_in(word,at_start=TRUE)) then
+                      fnd = TRUE
+                      exit line_search
+                 end
+                 end
+
+              end
+
+           end
+
+           if (.record==end_record) exit line_search
+
+           ! Move to previous line
+           .backspace_line                    
+
+        end do line_search
+
+      end
+
+      if (present(found)) found = fnd
+
+      if (NOT fnd AND put_back) .move_to_record(start_record)
+
+      .ignore_end_of_file = FALSE
+
+   end
+
+   look_for_any_item(item,from,until,end_tokens,exact_match,head_match,return_cursor,found)
+   ! Scan through the file for *any* in "item". If present:
+   ! . Starting at line "from"  inclusive
+   ! . Ending at line "until" inclusive
+   ! . Ending at any token which *begins* with "end_tokens"
+   ! . With "item" matching exactly, if "exact_match" is TRUE
+   ! . With "item" head-matching,    if "head_match" is TRUE
+   ! . Return cursor to orginal line, if "return_cursor" is TRUE
+   ! . Return without error, with "found" TRUE if "item" was found
+      item  :: VEC{STR}, IN
+      from  :: INT, IN, optional
+      until :: INT, IN, optional
+      end_tokens  :: VEC{STR}, IN, optional
+      exact_match :: BIN, IN, optional
+      head_match  :: BIN, IN, optional
+      return_cursor :: BIN, IN, optional
+      found :: BIN, OUT, optional
+
+      start_record :: INT
+      word :: STR
+      fnd,exact,head,put_back,has_item,has_end,match :: BIN
+      i,j :: INT
+
+      ! Look from .record or "from"
+      start_record = .record                
+      if (present(from)) start_record = from
+
+      ! Look until EOF or "until"
+      if (present(until)) then
+         ENSURE(until>=start_record,"ending line must be greater than starting line")
+      end
+
+      ! Item to match exactly?
+      exact = FALSE
+      if (present(exact_match)) exact = exact_match
+
+      ! Item to match token head only?
+      head = FALSE
+      if (present(head_match))  head = head_match
+      if (head) exact = FALSE
+
+      ! Rewind afterwards?
+      put_back = FALSE
+      if (present(return_cursor)) put_back = return_cursor
+
+      ! Move to start
+      .move_to_record(start_record)
+
+      ! Initialize
+      .ignore_end_of_file = TRUE
+      fnd = FALSE
+
+      if (NOT .end_of_file) then
+
+        ! Now do the search here ...
+        line_search: do                       
+
+           ! Item found?
+           has_item = .buffer.string.includes_any_in(item)
+
+           ! End token found?
+           has_end = FALSE
+           if (present(end_tokens))  then
+           if (.record>start_record) then
+              has_end = .buffer.string.includes_any_in(end_tokens)
+           end
+           end
+
+           if (has_item OR has_end) then
+
+              ! Find the matching token
+              do i = 1,.buffer.n_items
+
+                 .get_next_item(word)
+
+                 if (has_item) then
+
+                    ! What kind of match was it?
+                    if (head) then
+                       do j = 1,item.dim
+                          match = word.includes(item(j),at_start=TRUE)
+                          if (match) exit
+                       end
+                    else if (exact) then
+                       do j = 1,item.dim
+                          match = word==item(j)
+                          if (match) exit
+                       end
+                    else ! partial
+                       do j = 1,item.dim
+                          match = word.includes(item(j))
+                          if (match) exit
+                       end
+                    end
+
+                    ! Found a match
+                    if (match) then           
+                       fnd = TRUE
+                       exit line_search
+                    end
+
+                 end
+
+                 if (has_end) then
+                 if (end_tokens.has_any_included_in(word,at_start=TRUE)) then
+                       exit line_search
+                 end
+                 end
+
+              end
+
+           end
+
+           if (present(until)) then
+              if (.record==until) exit line_search
+           end
+
+           .read_line
+
+           if (.end_of_file) exit line_search
+
+        end do line_search
+
+      end
+
+      if (present(found)) found = fnd
+      if (NOT fnd AND put_back) .move_to_record(start_record)
+
+      .ignore_end_of_file = FALSE
+
+   end
+
+   look_for(item,from,until,first,found)
+   ! Scans through the file for a line which includes string "item".  If there,
+   ! the file record is left at the first line at which the match occured.  If
+   ! no match is found, the file is rewound to the initial line before the
+   ! search.  If "from" is present then it is used as the start line for the
+   ! search, and if "item" is not found the file record is returned to that
+   ! line.  If "until" is present then matches to these tokens are used to
+   ! indicate the end of search condition for "item". If "first" is present and
+   ! TRUE, then the item is matched only if it is the first non-blank token in
+   ! the input, and likewise the search is terminated only when the "until"
+   ! tokens are the first characters in the input. If "found" is present, it is
+   ! set TRUE when the item is found, else FALSE.
+      item :: STR, IN
+      from :: INT, IN, optional
+      until :: VEC{STR}, IN, optional
+      first :: BIN, IN, optional
+      found :: BIN, OUT, optional
+
+      start_record :: INT
+      word :: STR
+      fnd :: BIN
+
+      start_record = .record
+      if (present(from)) start_record = from
+
+      ! Move to start
+      .move_to_record(start_record)
+
+      ! Initialize
+      .ignore_end_of_file = TRUE
+      fnd = FALSE
+
+      line_search: do
+
+         word = .buffer.string.trim_blanks_from_start
+
+         if (item.is_included_in(word,first)) then
+            fnd = TRUE
+            exit line_search
+         end
+
+         if (present(until)) then
+         if (.record>start_record) then
+         if (until.has_any_included_in(word,first)) then
+            .move_to_record(start_record)
+            fnd = FALSE
+            exit line_search
+         end
+         end
+         end
+
+         .read_line
+
+         if (.end_of_file) then
+            .move_to_record(start_record)
+            fnd = FALSE
+            exit line_search
+         end
+
+      end do line_search
+
+      if (present(found)) found = fnd
+
+      .ignore_end_of_file = FALSE
+
+   end
+
+   look_backwards_for(item,from,until,first,found)
+   ! Scans backward through the file for a line which includes string "item".
+   ! If there, the file record is left at the first line at which the match
+   ! occured.  If no match is found, the file is rewound to the initial line
+   ! before the search.  If "from" is present then it is used as the start line
+   ! for the search, and if "item" is not found the file record is returned to
+   ! that line.  If "until" is present then matches to these tokens are used to
+   ! indicate the end of search condition for "item". If "first" is present and
+   ! TRUE, then the item is matched only if it is the first non-blank token in
+   ! the input, and likewise the search is terminated only when the "until"
+   ! tokens are the first characters in the input. If "found" is present, it is
+   ! set TRUE when the item is found, else FALSE.
+      item :: STR, IN
+      from :: INT, IN, optional
+      until :: VEC{STR}, IN, optional
+      first :: BIN, IN, optional
+      found :: BIN, OUT, optional
+
+      start_record :: INT
+      word :: STR
+      fnd :: BIN
+
+      ! Look from .record or "from"
+      start_record = .record
+      if (present(from)) start_record = from
+
+      ! Move to start
+      .move_to_record(start_record)
+
+      ! Initialize
+      .ignore_end_of_file = TRUE
+      fnd = FALSE
+
+      do
+
+         word = .buffer.string.trim_blanks_from_start
+
+         if (item.is_included_in(word,first)) then
+            fnd = TRUE
+            exit
+         end
+
+         ! Start of the file?
+         if (.record==1) then 
+            .move_to_record(start_record)
+            fnd = FALSE
+            exit
+         end
+
+         .backspace_line
+
+         if (present(until)) then
+         if (.record<start_record) then
+         if (until.has_any_included_in(word,first)) then
+            .move_to_record(start_record)
+            fnd = FALSE
+            exit
+         end
+         end
+         end
+
+      end
+
+      if (present(found)) found = fnd
+
+      .ignore_end_of_file = FALSE
+
+   end
+
+   has_string(search) result (res)
+   ! Returns TRUE if the file contains string "search". The file is returned
+   ! to its original line number after this routine.
+      search :: STR, IN
+
+      res :: BIN
+      update_record :: INT
+      found :: BIN
+
+      update_record = .record
+
+      .rewind
+
+      .ignore_end_of_file = TRUE
+      found = FALSE
+
+      do
+
+         if (search.is_included_in(.buffer.string)) then
+            found = TRUE
+            exit
+         end
+
+         .read_line
+
+         if (.end_of_file) exit
+
+      end
+
+      .move_to_record(update_record)
+
+      .ignore_end_of_file = FALSE
+
+      res = found
+
+   end
+
+!  ====================
+!  Item inquiry methods
+!  ====================
+
+   next_line_item result (res)
+   ! Return the index of the next item to be processed on the line
+      self :: IN
+      res :: INT
+      res = .buffer.next_item_number
+   end
+
+   previous_line_item  result (res)
+   ! Return the index of the previous item to be processed on the line
+      res :: INT
+      res = .buffer.item_index
+   end
+
+   last_line_item  result (res)
+   ! Return the index of the final item on the line
+      res :: INT
+      res = .buffer.n_items
+   end
+
+   n_line_items result (res)
+   ! Return the number of items on the line
+      res :: INT
+      res = .buffer.n_items
+   end
+
+   at_end_of_line result (res)
+   ! Return TRUE if at the end of the line
+      res :: BIN
+      res = .buffer.item_index==.buffer.n_items
+   end
+
+   line_number result (res)
+   ! Return the input file line number which is being processed
+      res :: INT
+      res = .record
+   end
+
+   buffer_string result (res)
+   ! Put a string into the buffer
+      self :: IN
+      res :: STR(len=BSTR_SIZE)
+      res = .buffer.buffer_string
+   end
+
+   rest_of_line result (res)
+   ! If there is anything left on the input line, then it is returned, else
+   ! nothing is returned.  Record moves to the next line.
+      res :: STR
+
+   ENSURE(.action=="read","file does not have read action!")
+
+      if (NOT .buffer.empty) then
+
+         res = .buffer.string(.buffer.item_end+1: )
+         .read_line
+
+      else
+
+         res = " "
+         .read_line
+
+      end
+
+   end
+
+   buffer_exhausted result (res)
+   ! Return whether the buffer is exhausted
+     res :: BIN
+       res = .buffer.exhausted
+   end
+
+!  ============
+!  Read an item
+!  ============
+
+   get_next_item(word) ::: private
+   ! Get the next item in the file
+      word :: STR
+      .update_line
+      .buffer.get(word)
+   end
+
+   next_item result(word) ::: leaky
+   ! Read a str from the input file and return it but
+   ! *do not advance the cursor*. Use next_str for that.
+      word :: STR
+      .read(word)
+      .move_to_previous_item
+   end
+
+   next_str result(word) ::: leaky
+   ! Read a str from the input file and return it and advance the cursor
+      word :: STR
+      .read(word)
+   end
+
+!  ==================
+!  Skip/move to items
+!  ==================
+
+   skip_next_item ::: leaky
+   ! Move to (i.e. just after) the next item in the input file.
+      .update_line
+      .buffer.skip_item
+   end
+
+   skip_next_items(n) ::: leaky
+   ! Skip several items.
+      n :: INT, IN
+      i :: INT
+      do i = 1,n
+         .skip_next_item
+      end
+   end
+
+   move_to_previous_item
+   ! Move to (i.e. before) the previous item in the input file.
+   ! Backspace a line if required.
+      .revert_line
+      .move_to_previous_item_on_line     ! move to the last read item
+   end
+
+   move_to_last_item_on_line
+   ! Move the cursor over to the beginning of the last item on the line
+      item :: INT
+      item = .last_line_item
+      .move_to_line_item(item)
+   end
+
+   move_to_previous_item_on_line
+   ! Move the cursor over to the beginning of the previous item on the
+      item :: INT
+      item = .previous_line_item
+      .move_to_line_item(item)
+   end
+
+   move_to_line_item(number)
+   ! Move the cursor over to the beginning of the item with index "number"
+   ! on the current line. (More accurately: after the end of the previous item
+   ! on the current line. So if there are "nitems" on the line you can move to
+   ! "nitem+1" if you want to, and that will be the end of the line).
+      number :: INT
+      n :: INT
+      .update_system_info
+      n = number
+      .buffer.move_to_item(n)
+   end
+
+!  ====================
+!  Read a built-in TYPE 
+!  ====================
+
+   read(value) ::: template
+   ! Read a built-in type into "value".
+      value :: VALUE?, OUT
+
+   ENSURE(.action=="read","file does not have read action!")
+
+      .update_line
+      .buffer.get(value)
+
+   end
+
+   read(value) ::: get_from(TEXTFILE, VALUE?=>STR)
+   ! Read a built-in type into "value".
+   end
+
+   read(value) ::: get_from(TEXTFILE, VALUE?=>BIN)
+   ! Read a built-in type into "value".
+   end
+
+   read(value) ::: get_from(TEXTFILE, VALUE?=>INT)
+   ! Read a built-in type into "value".
+   end
+
+   read(value) ::: get_from(TEXTFILE, VALUE?=>REAL)
+   ! Read a built-in type into "value".
+   end
+
+   read(value,format)
+   ! Read a formatted REAL into "value". Does not check the end of line!
+      value :: REAL, OUT
+      format :: STR, IN
+
+   ENSURE(.action=="read","file does not have read action!")
+
+      .update_line
+      .buffer.get(value,format)
+
+   end
+
+   read(value,error)
+   ! Read a REAL into "value" and also its associated "error", which appears in
+   ! parentheses after it.
+      value :: REAL, OUT
+      error :: REAL, OUT
+
+   ENSURE(.action=="read","file does not have read action!")
+
+      .update_line
+      .buffer.get_imprecise_real(value,error)
+
+   end
+
+   read(value) ::: get_from(TEXTFILE, VALUE?=>CPX)
+   ! Read a built-in type into "value".
+   end
+
+!  =============================
+!  Read a built-in TYPE quantity
+!  =============================
+
+   read_quantity(value) ::: template
+   ! Read a number quantity (with optional units) into "value".
+   ! WARNING: You must *not* be at the end of file to use this
+   ! routine, since it will try to read the next token as a units specifier. 
+      value :: VALUE?, OUT
+
+   ENSURE(.action=="read","file does not have read action!")
+
+      units :: STR
+      known_unit :: BIN
+
+      ! Read the value
+      .read(value)
+
+      ! Convert from assumed default units
+      if (.default_units/=" ") &
+        value.convert_from(.default_units)
+
+      ! Check for explicit units
+      if (NOT .at_end_of_file) then
+
+        ! Is there a known unit next?
+        .read(units)
+        known_unit = units.is_known_unit
+
+        ! Has conversion already been done?
+        DIE_IF(known_unit AND .default_units/=" ","two units specified!")
+
+        ! Convert from known units if we can ...
+        ! Or move back to where we were
+        if (known_unit) then; value.convert_from(units)              
+        else;                 .move_to_previous_item
+        end
+
+      end
+
+      ! Reset default units
+      .default_units = " "
+
+   end
+
+   read_quantity(value) ::: get_from(TEXTFILE, VALUE?=>INT)
+   ! Read a number quantity (with optional units) into "value".
+   ! WARNING: You must *not* be at the end of file to use this
+   ! routine, since it will try to read the next token as a units specifier. 
+   end
+
+   read_quantity(value) ::: get_from(TEXTFILE, VALUE?=>REAL)
+   ! Read a number quantity (with optional units) into "value".
+   ! WARNING: You must *not* be at the end of file to use this
+   ! routine, since it will try to read the next token as a units specifier. 
+   end
+
+   read_quantity(value,error)
+   ! Read a number quantity (with optional units) into "value".
+   ! WARNING: You must *not* be at the end of file to use this
+   ! routine, since it will try to read the next token as a units specifier. 
+      value :: REAL, OUT
+      error :: REAL, OUT
+
+   ENSURE(.action=="read","file does not have read action!")
+
+      units :: STR
+      known_unit :: BIN
+
+      ! Read the value & error
+      .read(value,error)
+
+      ! Convert from assumed default units
+      if (.default_units/=" ") then
+         value.convert_from(.default_units)
+         error.convert_from(.default_units)
+      end
+
+      ! Check for explicit units
+      if (NOT .at_end_of_file) then
+
+        ! Is there a known unit next?
+        .read(units)
+        known_unit = units.is_known_unit
+
+        ! Has conversion already been done?
+        DIE_IF(known_unit AND .default_units/=" ","two units specified!")
+
+        ! Convert from known units if we can ...
+        ! Or move back to where we were
+        if (known_unit) then
+           value.convert_from(units)              
+           error.convert_from(units)              
+        else                 
+           .move_to_previous_item
+        end
+
+      end
+
+      ! Reset default units
+      .default_units = " "
+
+   end
+
+!  ==============
+!  Read VEC{TYPE}
+!  ==============
+
+   read(v) ::: template
+   ! Read in a vector sequentially. Line breaks are not significant.
+      v :: V?, OUT
+
+      i :: INT
+
+      do i = 1,v.dim
+         .read(v(i))
+      end
+
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{STR})
+   ! Read in a vector sequentially. Line breaks are not significant.
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{BIN})
+   ! Read in a vector sequentially. Line breaks are not significant.
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{INT})
+   ! Read in a vector sequentially. Line breaks are not significant.
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{REAL})
+   ! Read in a vector sequentially. Line breaks are not significant.
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{CPX})
+   ! Read in a vector sequentially. Line breaks are not significant.
+   end
+
+   read(v,e)
+   ! Read in a vector sequentially. Line breaks are not significant.
+      v :: VEC{REAL}, OUT
+      e :: VEC{REAL}, OUT
+
+      i :: INT
+
+      do i = 1,v.dim
+         .read(v(i),e(i))
+      end
+
+   end
+
+!  =========================
+!  Read VEC{TYPE} quantities
+!  =========================
+
+   read_quantity(v) ::: template
+   ! Read in a vector quantity (with units).  Line breaks are not
+   ! significant.  WARNING: You must *not* be at the end of file to
+   ! use this routine, since it will try to read the next token after
+   ! the vector as a units specifier. 
+      v :: V?, OUT
+
+      units :: STR
+      known_unit :: BIN
+
+      ! Read the vector
+      .read(v)
+
+      ! Convert from assumed default units
+      if (.default_units/=" ") &
+         v.convert_from(.default_units)
+
+      ! Check for explicit units
+      if (NOT .at_end_of_file) then
+        
+        ! Is there a known unit next?
+        .read(units)                      
+        known_unit = units.is_known_unit
+
+        ! Has conversion already been done?
+        DIE_IF(known_unit AND .default_units/=" ","two units specified!")
+
+        ! Convert from known units if we can ...
+        ! Or move back to where we were
+        if (known_unit) then; v.convert_from(units)              
+        else;                 .move_to_previous_item
+        end
+
+      end
+
+      ! Reset default units
+      .default_units = " "
+
+   end
+
+   read_quantity(v) ::: get_from(TEXTFILE, V?=>VEC{INT})
+   ! Read in a vector quantity (with units).  Line breaks are not
+   ! significant.  WARNING: You must *not* be at the end of file to
+   ! use this routine, since it will try to read the next token after
+   ! the vector as a units specifier. 
+   end
+
+   read_quantity(v) ::: get_from(TEXTFILE, V?=>VEC{REAL})
+   ! Read in a vector quantity (with units).  Line breaks are not
+   ! significant.  WARNING: You must *not* be at the end of file to
+   ! use this routine, since it will try to read the next token after
+   ! the vector as a units specifier. 
+   end
+
+   read_quantity(v,e)
+   ! Read in a vector quantity (with units).  Line breaks are not
+   ! significant.  WARNING: You must *not* be at the end of file to
+   ! use this routine, since it will try to read the next token after
+   ! the vector as a units specifier. 
+      v :: VEC{REAL}, OUT
+      e :: VEC{REAL}, OUT
+
+      units :: STR
+      known_unit :: BIN
+
+      ! Read the vector
+      .read(v,e)
+
+      ! Convert from assumed default units
+      if (.default_units/=" ") then
+         v.convert_from(.default_units)
+         e.convert_from(.default_units)
+      end
+
+      ! Check for explicit units
+      if (NOT .at_end_of_file) then
+        
+        ! Is there a known unit next?
+        .read(units)                      
+        known_unit = units.is_known_unit
+
+        ! Has conversion already been done?
+        DIE_IF(known_unit AND .default_units/=" ","two units specified!")
+
+        ! Convert from known units if we can ...
+        ! Or move back to where we were
+        if (known_unit) then
+           v.convert_from(units)              
+           e.convert_from(units)              
+        else
+           .move_to_previous_item
+        end
+
+      end
+
+      ! Reset default units
+      .default_units = " "
+
+   end
+
+!  ===============
+!  Read VEC{TYPE}*
+!  ===============
+
+   list_length result (res) ::: leaky, private
+   ! Return the size of the list, by reading the input after an
+   ! initial opening bracket "{" until a *matching* end bracket "}"
+   ! token is found. Line breaks are not significant. 
+      res :: INT
+
+      line,item, n :: INT
+      word :: STR
+
+      ! Store original pos
+      line = .line_number
+      item = .next_line_item
+
+      ! Read open brace
+      .read(word)
+      ENSURE(word=="{","list does not begin with {")
+
+      ! Count the items
+      n = 0
+      res = 0
+      do
+         .read(word)
+         if (word=="{") n = n + 1
+         if (word=="}" AND n==0) exit
+         if (word=="}" AND n>0) n = n - 1
+         res = res + 1
+      end
+
+      ! Reinstate original position
+      .move_to_line(line)
+      .move_to_line_item(item)
+
+   end
+
+   read_ptr(v) ::: template
+   ! Read in a vector pointer "v" sequentially. Line breaks are not
+   ! significant. The "v" vector pointer is created.
+      v :: V?*
+
+      dim :: INT
+      word :: STR
+
+      ! Find out the list length
+      dim = .list_length
+      v.create(dim)
+
+      ! Read opening brace
+      .read(word)
+      ENSURE(word=="{","list does not begin with a {")
+
+      ! Read vector
+      .read(v)
+
+      ! Read closing brace
+      .read(word)
+      ENSURE(word=="}","list does not end with a }")
+
+   end
+
+   read_ptr(v) ::: get_from(TEXTFILE, V?=>VEC{STR}), leaky
+   ! Read in a vector pointer "v" sequentially. Line breaks are not
+   ! significant. The "v" vector pointer is created.
+   end
+
+   read_ptr(v) ::: get_from(TEXTFILE, V?=>VEC{BIN}), leaky
+   ! Read in a vector pointer "v" sequentially. Line breaks are not
+   ! significant. The "v" vector pointer is created.
+   end
+
+   read_ptr(v) ::: leaky
+   ! Read in a fancy vector pointer "v" sequentially. Fancy because a
+   ! looping construct in understood. Line breaks are not significant.
+   ! The "v" vector pointer is created.
+      v :: VEC{INT}*
+
+      dim,f,l,i :: INT
+      word,first,second :: STR
+
+      ! Read opening brace and first two items
+      .read(word)
+      ENSURE(word=="{","list does not begin with a {")
+      .read(first)      
+      .read(second)
+
+      ! If second item is looping construct ..
+      if (second=="...") then 
+
+         ! Read last index & create "v"
+         .read(l)
+         f = first.to_int
+         dim = l - f + 1
+         v.create(abs(dim))
+
+         ! Define sequental "v"
+         if (dim>0) then; v = [ (i, i=f,l)    ]
+         else           ; v = [ (i, i=f,l,-1) ]
+         end
+
+         ! Read closing brace
+         .read(word)
+         ENSURE(word=="}","list does not end with a {")
+
+      ! Plain old VEC{INT}*
+      else
+
+         ! Backtrack before "{"
+         .move_to_previous_item
+         .move_to_previous_item
+         .move_to_previous_item
+
+         ! Read "v" in
+         .read_ptr_helper(v)
+
+      end
+
+   end
+
+   read_ptr_helper(v) ::: get_from(TEXTFILE:read_ptr, V?=>VEC{INT}), leaky, private
+   ! Read in a vector pointer "v" sequentially. Line breaks are not
+   ! significant. The "v" vector pointer is created.
+   end
+
+   read_ptr(v) ::: get_from(TEXTFILE, V?=>VEC{REAL}), leaky
+   ! Read in a vector pointer "v" sequentially. Line breaks are not
+   ! significant. The "v" vector pointer is created.
+   end
+
+   read_ptr(v) ::: get_from(TEXTFILE, V?=>VEC{CPX}), leaky
+   ! Read in a vector pointer "v" sequentially. Line breaks are not
+   ! significant. The "v" vector pointer is created.
+   end
+
+!  ========================
+!  Read VEC{TYPE}* quantity
+!  ========================
+
+   read_ptr_quantity(v) ::: template
+   ! Read in a vector pointer quantity (with units) sequentially.
+   ! Line breaks are not significant.  WARNING: You must *not* be at
+   ! the end of file to use this routine, since it will try to read
+   ! the next token after the vector as a units specifier. 
+      v :: V?*
+
+      units :: STR
+      known_unit :: BIN
+
+      ! Read the vector pointer
+      .read_ptr(v)
+
+      ! Convert from assumed default units
+      if (.default_units/=" ") &
+         v.convert_from(.default_units)
+
+      ! Check for explicit units
+      if (NOT .at_end_of_file) then
+        
+        ! Is there a known unit next?
+        .read(units)                      
+        known_unit = units.is_known_unit
+
+        ! Has conversion already been done?
+        DIE_IF(known_unit AND .default_units/=" ","two units specified!")
+
+        ! Convert from known units if we can ...
+        ! Or move back to where we were
+        if (known_unit) then; v.convert_from(units)              
+        else;                 .move_to_previous_item
+        end
+
+      end
+
+      ! Reset default units
+      .default_units = " "
+
+   end
+
+   read_ptr_quantity(v) ::: get_from(TEXTFILE, V?=>VEC{REAL}), leaky
+   ! Read in a vector pointer quantity (with units) sequentially.
+   ! Line breaks are not significant.  WARNING: You must *not* be at
+   ! the end of file to use this routine, since it will try to read
+   end
+
+!  ===========================
+!  Read VEC{T1}, VEC{T2} pairs 
+!  ===========================
+
+   read_pair(v1,v2) ::: template
+   ! Read in a pair of vectors sequentially, alternating. Line breaks
+   ! are not significant.
+      v1 :: V1?, OUT
+      v2 :: V2?, OUT
+
+   ENSURE(v1.dim==v2.dim,"incompatible vectors")
+
+      i :: INT
+
+      do i = 1,v1.dim
+         .read(v1(i))
+         .read(v2(i))
+      end
+
+   end
+
+   read_pair(v1,v2) ::: get_from(TEXTFILE, V1?=>VEC{INT}, V2?=>VEC{INT})
+   ! Read in a pair of vectors sequentially, alternating. Line breaks
+   ! are not significant.
+   end
+
+   read_pair(v1,v2) ::: get_from(TEXTFILE, V1?=>VEC{REAL}, V2?=>VEC{REAL})
+   ! Read in a pair of vectors sequentially, alternating. Line breaks
+   ! are not significant.
+   end
+
+!  Read VEC{T1}, VEC{T2}, VEC{T3} triples
+
+   read_triple(v1,v2,v3) ::: template
+   ! Read in a triple of vectors sequentially, alternating. Line
+   ! breaks are not significant.
+      v1 :: V1?, OUT
+      v2 :: V2?, OUT
+      v3 :: V3?, OUT
+
+   ENSURE(v1.dim==v2.dim,"incompatible vectors")
+   ENSURE(v1.dim==v3.dim,"incompatible vectors")
+
+      i :: INT
+
+      do i = 1,v1.dim
+         .read(v1(i))
+         .read(v2(i))
+         .read(v3(i))
+      end
+
+   end
+
+   read_triple(v1,v2,v3) ::: get_from(TEXTFILE, V1?=>VEC{REAL}, V2?=>VEC{REAL}, V3?=>VEC{REAL})
+   ! Read in a triple of vectors sequentially, alternating. Line
+   ! breaks are not significant.
+   end
+
+!  ==============
+!  Read MAT{TYPE}
+!  ==============
+
+   read(mx,by_column) ::: template
+   ! Read in matrix "mx" by row. If "by_column" is present and TRUE it
+   ! is read in sequentially by column. Line breaks not significant.
+      mx :: MX?, OUT
+      by_column :: BIN, optional
+
+      i,j :: INT
+      read_by_column :: BIN
+
+      ! Get input order
+      read_by_column = FALSE
+      if (present(by_column)) read_by_column = by_column
+
+      ! Read by column or (default) by row
+      if (read_by_column) then
+         do j = 1,mx.dim2
+         do i = 1,mx.dim1
+            .read(mx(i,j))
+         end
+         end
+      else
+         do i = 1,mx.dim1
+         do j = 1,mx.dim2
+            .read(mx(i,j))
+         end
+         end
+      end
+
+   end
+
+   read(mx,by_column) ::: get_from(TEXTFILE, MX?=>MAT{STR})
+   ! Read in matrix "mx" by row. If "by_column" is present and TRUE it
+   ! is read in sequentially by column. Line breaks not significant.
+   end
+
+   read(mx,by_column) ::: get_from(TEXTFILE, MX?=>MAT{BIN})
+   ! Read in matrix "mx" by row. If "by_column" is present and TRUE it
+   ! is read in sequentially by column. Line breaks not significant.
+   end
+
+   read(mx,by_column) ::: get_from(TEXTFILE, MX?=>MAT{INT})
+   ! Read in matrix "mx" by row. If "by_column" is present and TRUE it
+   ! is read in sequentially by column. Line breaks not significant.
+   end
+
+   read(mx,by_column) ::: get_from(TEXTFILE, MX?=>MAT{REAL})
+   ! Read in matrix "mx" by row. If "by_column" is present and TRUE it
+   ! is read in sequentially by column. Line breaks not significant.
+   end
+
+   read(mx,format,items_per_line)
+   ! Read a formatted matrix "mx" with fortran "format" and a given
+   ! number of "items_per_line". Extra line items are skipped!
+     mx :: MAT{REAL}, OUT
+     format :: STR, IN
+     items_per_line :: INT, IN
+
+     i,j,n :: INT
+
+     .buffer.move_to_item(1)
+
+     do i = 1,mx.dim1
+
+        ! Read a row i
+        n = 0
+        do j = 1,mx.dim2
+           .read(mx(i,j),format)
+           n = n + 1
+           if (n==items_per_line) exit
+        end
+
+        ! Next non-empty line
+        do
+           .read_line
+           if (NOT .buffer.empty) exit
+        end
+
+     end
+
+   end
+
+   read(mx,by_column) ::: get_from(TEXTFILE, MX?=>MAT{CPX})
+   ! Read in matrix "mx" by row. If "by_column" is present and TRUE it
+   ! is read in sequentially by column. Line breaks not significant.
+   end
+
+!  ===============
+!  Read MAT{TYPE}*
+!  ===============
+
+   get_matrix_shape(dim) ::: private
+   ! Returns dim(1) as the number of lines which are not blank, and
+   ! dim(2) as the number of items per line between an opening and
+   ! closing brace. It is an error if there are a different number of
+   ! items per line on every non-blank line.
+      dim :: VEC{INT}(2)
+
+      line,item,first_line :: INT
+      word :: STR
+      dim1,dim2 :: INT
+
+      ! Store initial position
+      item = .next_line_item
+      line = .line_number
+
+      ! Opening brace?
+      .read(word)
+      ENSURE(word=="{","list does not begin with a {")
+
+      ! Initialize
+      dim1 = 0
+      dim2 = 0
+      dim = [dim1,dim2]
+
+      ! First token. Return if closing brace
+      .read(word)                       
+      if (word == "}") return
+
+      ! Line on which first item lies; at least one row
+      first_line = .line_number 
+      dim1 = 1                              
+
+      ! The number of columns; it shouldn't change
+      dim2 = .n_line_items                  
+      dim(2) = dim2
+
+      ! Opening { is on the same line as first item
+      if (first_line==line) dim2 = dim2 - 1 
+
+      ! Process all lines
+      do
+
+         ! Next line
+         .skip_line
+
+         ! Skip empty lines
+         if (.n_line_items==0) cycle
+
+         ! Exit if first item of next non-blank line
+         ! is closing brace
+         .read(word)                    
+         if (word == "}") exit 
+
+         ! If not empty and not clsing brace, add another row
+         dim1 = dim1 + 1                    
+         dim2 = .n_line_items
+
+         ! If non matching dim2, it must be a closing brace
+         ! (if so, exit) it is an error if not the same
+         if (dim2>dim(2)) then
+            dim2 = dim(2)
+            .move_to_line_item(dim2+1)
+            DIE_IF(.next_item/="}","different number of line items on succesive lines")
+            exit
+         else
+            DIE_IF(dim2/=dim(2),"different number of line items on succesive lines")
+         end
+      end
+
+      ! Return to initial position
+      .move_to_line(line)
+      .move_to_line_item(item)
+
+      ! Set the shape
+      dim = [dim1,dim2]
+
+   end
+
+   read_ptr(mx) ::: template
+   ! Read in a matrix pointer "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+      mx :: MX?*
+
+      word :: STR
+      dim :: VEC{INT}(2)
+
+      ! Get the shape
+      .get_matrix_shape(dim)
+
+      ! Opening brace
+      .read(word)
+      ENSURE(word=="{","matrix does not begin with a {")
+
+      ! Read the matrix
+      mx.create(dim(1),dim(2))
+      .read(mx)
+
+      ! Closing brace
+      .read(word)
+      ENSURE(word=="}","expecting close bracket symbol: }")
+
+   end
+
+   read_ptr(mx) ::: get_from(TEXTFILE, MX?=>MAT{STR}), leaky
+   ! Read in a matrix pointer "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+   read_ptr(mx) ::: get_from(TEXTFILE, MX?=>MAT{BIN}), leaky
+   ! Read in a matrix pointer "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+   read_ptr(mx) ::: get_from(TEXTFILE, MX?=>MAT{INT}), leaky
+   ! Read in a matrix pointer "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+   read_ptr(mx) ::: get_from(TEXTFILE, MX?=>MAT{REAL}), leaky
+   ! Read in a matrix pointer "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+   read_ptr(mx) ::: get_from(TEXTFILE, MX?=>MAT{CPX}), leaky
+   ! Read in a matrix pointer "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+!  ====================
+!  Read VEC{VEC_{TYPE}}
+!  ====================
+
+   read(v) ::: template
+   ! Read in an VEC{VEC_{TYPE}} "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+      v :: V?, OUT
+
+      i :: INT
+
+      do i = 1,v.dim
+         .read_ptr(v(i).element)
+      end
+
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{VEC_{INT}}), leaky
+   ! Read in an VEC{VEC_{TYPE}} "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{VEC_{REAL}}), leaky
+   ! Read in an VEC{VEC_{TYPE}} "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+!  =====================
+!  Read VEC{VEC_{TYPE}}*
+!  =====================
+
+   list_list_length result (res) ::: leaky, private
+   ! Return the size of an VEC{VEC_{INT}} list, by reading the input
+   ! until an end bracket "}" token is found. Line breaks are not
+   ! significant.
+      res :: INT
+
+      line,item :: INT
+      word :: STR
+      v :: VEC{STR}*
+
+      ! Store original pos
+      line = .line_number
+      item = .next_line_item
+
+      ! Read opening brace
+      .read(word)
+      ENSURE(word=="{","list does not begin with {")
+
+      ! Count enclosed lists
+      res = 0
+      do
+         .read(word)
+         if (word=="}") exit
+         .move_to_previous_item
+         .read_ptr(v)
+         v.destroy
+         res = res + 1
+      end
+
+      ! Reinstate original position
+      .move_to_line(line)
+      .move_to_line_item(item)
+
+   end
+
+   read_ptr(v) ::: template
+   ! Read in a VEC{VEC_{TYPE}}* "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+      v :: V?*
+
+      word :: STR
+      dim :: INT
+
+      ! Find out the list length
+      dim = .list_list_length
+      v.create(dim)
+
+      ! Read opening brace
+      .read(word)
+      ENSURE(word=="{","list does not begin with a {")
+
+      ! Read vector
+      .read(v)
+
+      ! Read closing brace
+      .read(word)
+      ENSURE(word=="}","list does not end with a {")
+
+   end
+
+   read_ptr(v) ::: get_from(TEXTFILE, V?=>VEC{VEC_{INT}}), leaky
+   ! Read in a VEC{VEC_{TYPE}}* "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+   read_ptr(v) ::: get_from(TEXTFILE, V?=>VEC{VEC_{REAL}}), leaky
+   ! Read in a VEC{VEC_{TYPE}}* "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+!  ===================
+!  Read VEC{MAT{TYPE}}
+!  ===================
+
+   read(v) ::: template
+   ! Read in an VEC{MAT_{TYPE}} "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+      v :: V?, OUT
+
+      i :: INT
+
+      do i = 1,v.dim
+         .read_ptr(v(i).element)
+      end
+
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{MAT_{INT}}), leaky
+   ! Read in an VEC{MAT_{TYPE}} "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{MAT_{REAL}}), leaky
+   ! Read in an VEC{MAT_{TYPE}} "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+!  ===============
+!  Read MAT3{TYPE}
+!  ===============
+
+   read(mx) ::: template
+   ! Read a MAT3{TYPE} matrix "mx". Indices for the element precede
+   ! the element value.
+      mx :: MX?, OUT
+
+      i1,i2,i3, j1,j2,j3 :: INT
+
+      do i1 = 1,mx.dim1
+      do i2 = 1,mx.dim2
+      do i3 = 1,mx.dim3
+         .read(j1)
+         .read(j2)
+         .read(j3)
+         .read(mx(j1,j2,j3))
+      end
+      end
+      end
+
+   end
+
+   read(mx) ::: get_from(TEXTFILE, MX?=>MAT3{REAL})
+   ! Read a MAT3{TYPE} matrix "mx". Indices for the element precede
+   ! the element value.
+   end
+
+   read(mx) ::: get_from(TEXTFILE, MX?=>MAT3{CPX})
+   ! Read a MAT3{TYPE} matrix "mx". Indices for the element precede
+   ! the element value.
+   end
+
+!  ===============
+!  Read MAT4{TYPE}
+!  ===============
+
+   read(mx) ::: template
+   ! Read a MAT4{TYPE} matrix "mx". Indices for the element precede
+   ! the element value.
+      mx :: MX?, OUT
+
+      i1,i2,i3,i4, j1,j2,j3,j4 :: INT
+
+      do i1 = 1,mx.dim1
+      do i2 = 1,mx.dim2
+      do i3 = 1,mx.dim3
+      do i4 = 1,mx.dim4
+         .read(j1)
+         .read(j2)
+         .read(j3)
+         .read(j4)
+         .read(mx(j1,j2,j3,j4))
+      end
+      end
+      end
+      end
+
+   end
+
+   read(mx) ::: get_from(TEXTFILE, MX?=>MAT4{REAL})
+   ! Read a MAT4{TYPE} matrix "mx". Indices for the element precede
+   ! the element value.
+   end
+
+   read(mx) ::: get_from(TEXTFILE, MX?=>MAT4{CPX})
+   ! Read a MAT4{TYPE} matrix "mx". Indices for the element precede
+   ! the element value.
+   end
+
+!  ===============
+!  Read MAT5{TYPE}
+!  ===============
+
+   read(mx) ::: template
+   ! Read a MAT5{TYPE} matrix "mx". Indices for the element precede
+   ! the element value.
+      mx :: MX?, OUT
+
+      i1,i2,i3,i4,i5, j1,j2,j3,j4,j5 :: INT
+
+      do i1 = 1,mx.dim1
+      do i2 = 1,mx.dim2
+      do i3 = 1,mx.dim3
+      do i4 = 1,mx.dim4
+      do i5 = 1,mx.dim5
+         .read(j1)
+         .read(j2)
+         .read(j3)
+         .read(j4)
+         .read(j5)
+         .read(mx(j1,j2,j3,j4,j5))
+      end
+      end
+      end
+      end
+      end
+
+   end
+
+   read(mx) ::: get_from(TEXTFILE, MX?=>MAT5{REAL})
+   ! Read a MAT5{TYPE} matrix "mx". Indices for the element precede
+   ! the element value.
+   end
+
+   read(mx) ::: get_from(TEXTFILE, MX?=>MAT5{CPX})
+   ! Read a MAT5{TYPE} matrix "mx". Indices for the element precede
+   ! the element value.
+   end
+
+!  ===============
+!  Output routines
+!  ===============
+
+! Clearing, flushing, tabbing, dashing & plain text line
+
+   put_margin
+   ! Clear the buffer and put a margin in
+       if (.margin_width==0) return
+       .buffer.put(repeat(" ",.margin_width))
+   end
+
+   clear_and_put_margin
+   ! Clear the buffer and put a margin in
+       .buffer.clear
+       .put_margin
+   end
+
+   flush
+   ! Flush the buffer to the output file
+   ENSURE(.action=="write","file does not have write action!")
+
+      fail :: INT
+
+      fail = 0
+      if (IO_IS_ALLOWED) then
+         ENSURE(.is_open,"file "//trim(.name)//" is not open!")
+         write(unit=.unit,iostat=fail,fmt="(a)") trim(.buffer.string)
+      end
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail>0,"read error")
+      .io_status = fail
+
+      if (IO_IS_ALLOWED) then
+         UNIT_NUMBER:flush_buffer_for_unit_number(.unit)
+      end
+
+      .clear_and_put_margin
+
+      .record = .record + 1
+
+   end
+
+   flush(times)
+   ! Flush the buffer multiple times to get extra carriage returns
+     times :: INT
+     i :: INT
+     do i = 1,times
+        .flush
+     end
+   end
+
+   tab(real_fields,int_fields,bin_fields,width)
+   ! Tab across the specified number of fields in the output buffer
+   ! "real_fields", "int_fields" and "bin_fields" refer to the number of
+   ! real, integer and logical fields to tab; "width" is the width of spaces
+   ! to tab.
+      real_fields :: INT, optional
+      int_fields :: INT, optional
+      bin_fields :: INT, optional
+      width :: INT, optional
+
+      if (present(real_fields)) .buffer.put(repeat(repeat(" ",.real_width),real_fields))
+      if (present(int_fields))  .buffer.put(repeat(repeat(" ",.int_width),int_fields))
+      if (present(bin_fields))  .buffer.put(repeat(repeat(" ",.int_width),bin_fields))
+      if (present(width))       .buffer.put(repeat(" ",width))
+
+   end
+
+   dash(symbol,real_fields,int_fields,bin_fields,width)
+   ! Put a dashed line into the buffer. "real_fields", "int_fields" and
+   ! "bin_fields" refer to the number of real, integer and logical fields
+   ! to draw the line over; "width" is the width of characters to draw the
+   ! dashed line. 
+      symbol :: STR(len=1), optional
+      real_fields :: INT, optional
+      int_fields :: INT, optional
+      bin_fields :: INT, optional
+      width :: INT, optional
+
+      dsh :: STR(len=1)
+
+      dsh = "-"
+      if (present(symbol)) dsh = symbol
+
+      if (present(real_fields)) .buffer.put(repeat(dsh,.real_width*real_fields))
+      if (present(int_fields))  .buffer.put(repeat(dsh,.int_width *int_fields))
+      if (present(bin_fields))  .buffer.put(repeat(dsh,.int_width *bin_fields))
+      if (present(width))       .buffer.put(repeat(dsh,width))
+
+      .flush
+
+   end
+
+   text(string,real_width,int_width,flush)
+   ! Put text into the output buffer as is and flush, unless
+   ! flush is present and FALSE. You can specify widths too.
+      string :: STR
+      real_width :: BIN, optional
+      int_width :: BIN, optional
+      flush :: BIN, optional
+
+      int_string :: STR(len=.int_width)
+      real_string :: STR(len=.real_width)
+      use_real_width,use_int_width,do_flush :: BIN
+
+      use_real_width = FALSE
+      if (present(real_width)) use_real_width = real_width
+
+      use_int_width = FALSE
+      if (present(int_width)) use_int_width = int_width
+
+      do_flush = TRUE
+      if (present(flush)) do_flush = flush
+      
+      if (use_real_width AND len(string)<=.real_width) then
+         real_string = string
+         .buffer.put(real_string)
+      else if (use_int_width AND len(string)<=.int_width) then
+         int_string = string
+         .buffer.put(int_string)
+      else
+         .buffer.put(string)
+      end
+
+      if (do_flush) .flush
+
+   end
+
+!  ===========================
+!  Put TYPE methods (no flush)
+!  ===========================
+
+   put(string,left,center,int_width,width)
+   ! Put a "string" into the output buffer; if it is too big, put as is.
+   ! NOTE: Head space is never altered, but trailing spaces are trimmed.
+   ! If present and TRUE:
+   ! . "left" ........ left justifies output         (default: right justified)
+   ! . "center" ...... centers the output            (overrides "left")
+   ! . "int_width" ... field width set to .int_width (default: .real_width)
+   ! If present:
+   ! . "width" ....... sets field width in chars     (overrides "int_width")
+      string :: STR, IN
+      left :: BIN, IN, optional
+      center :: BIN, IN, optional
+      int_width :: BIN, IN, optional
+      width :: INT, IN, optional
+
+      tmpcpy :: STR 
+      wid,len :: INT
+      leftify,centrify :: BIN
+
+      if (NOT .using_fields) then
+
+         ! Put string as is, separated by a space
+         ! Head space preserved, trailing space trimmed
+         if (.buffer.item_end==0) then; .buffer.put(trim(string))
+         else;                          .buffer.put(" "//trim(string))
+         end
+
+      else 
+
+         ! Get the field width
+         wid = .real_width
+         if (present(int_width)) then
+         if (int_width) then
+            wid = .int_width
+         end
+         end
+         if (present(width)) wid = width
+
+         ! Whether to left-justify
+         leftify = FALSE
+         if (present(left)) leftify = left
+
+         ! Whether to center
+         centrify = FALSE
+         if (present(center)) centrify = center
+
+         ! Sanity check
+         DIE_IF(leftify AND centrify,"too many justifications")
+
+         ! The actual string lenth
+         len = len_trim(string)
+
+         if (len>wid) then
+
+            ! If string too long, just put it in, with a space in
+            ! front (unless it is the first item). 
+            if (.buffer.item_end==0) then; .buffer.put(trim(string))
+            else;                          .buffer.put(" "//trim(string))
+            end
+
+         else if (len==wid) then
+
+            if (present(width)) then
+
+               ! If it just fits, and the user specified the character
+               ! width, put it in just as the user wanted
+               .buffer.put(trim(string))
+
+            else 
+
+               ! If it just fits, and the user didn't specify width,
+               ! put it in with a spacer in front
+               .buffer.put(" "//trim(string))
+
+            end
+
+         else if (centrify) then
+
+            ! Centered
+            tmpcpy = string
+            tmpcpy(1:wid).center_justify
+            .buffer.put(tmpcpy(1:wid))
+
+         else
+
+            ! Finally: put it in with the specified width
+            ! This works for blanks too ...
+            .buffer.put(string.to_str(wid,leftify))
+
+         end
+
+      end
+
+   end
+
+   put(value,left,center,real_width,width) ::: template
+   ! Put a "value" into the output buffer. If present and TRUE:
+   ! . "left" will left justify the string (default is right justified)
+   ! . "center" will center the string (overrides left-justification)
+   ! . "real_width" sets width to .real_width (default width is .int_width)
+   ! If present:
+   ! . "width" sets the field_width (default width is .int_width)
+      value :: VALUE?, IN
+      left :: BIN, IN, optional
+      center :: BIN, IN, optional
+      real_width :: BIN, IN, optional
+      width :: INT, IN, optional
+
+      int_width :: BIN
+
+      int_width = TRUE
+      if (present(real_width)) int_width = NOT real_width
+
+      ! Change to string, and put it out
+      .put(value.to_str,left,center,int_width,width)
+
+   end
+
+   put(value,left,center,real_width,width) ::: get_from(TEXTFILE:put, VALUE?=>BIN)
+   ! Put a "value" into the output buffer. If present and TRUE:
+   ! . "left" will left justify the string (default is right justified)
+   ! . "center" will center the string (overrides left-justification)
+   ! . "real_width" sets width to .real_width (default width is .int_width)
+   ! If present:
+   ! . "width" sets the field_width (default width is .int_width)
+   end
+
+   put(value,left,center,real_width,width) ::: get_from(TEXTFILE:put, VALUE?=>INT)
+   ! Put a "value" into the output buffer. If present and TRUE:
+   ! . "left" will left justify the string (default is right justified)
+   ! . "center" will center the string (overrides left-justification)
+   ! . "real_width" sets width to .real_width (default width is .int_width)
+   ! If present:
+   ! . "width" sets the field_width (default width is .int_width)
+   end
+
+   put_bit_string(value,left,center,int_width,width)
+   ! Put a "value" into the output buffer. If present and TRUE:
+   ! . "int_width" sets width to .int_width (default width is .real_width)
+   ! . "left" will left justify the string (default is right justified)
+   ! . "center" will center the string (overrides left-justification)
+   ! If present:
+   ! . "width" sets the field_width (default width is .int_width)
+      value :: INT, IN
+      left :: BIN, IN, optional
+      center :: BIN, IN, optional
+      int_width :: BIN, IN, optional
+      width :: INT, IN, optional
+
+      ! Change to string, and put it out
+      .put(value.to_bit_string,left,center,int_width,width)
+
+   end
+
+!  ==============
+!  Put REAL & CPX
+!  ==============
+
+   put(value,left,center,int_width,style,width,precision) ::: template
+   ! Put a real or complex "value" into the output buffer. 
+   ! If present and TRUE:
+   ! . "left" will left justify the string    (default: right-justified)
+   ! . "center" will center the string        (default: left-justified)
+   ! . "int_width" sets width to .inty_width  (default: .real_width)
+   ! If present:
+   ! . "style" sets the fortran style         (default: .real_style)
+   ! . "width" sets the field_width           (default: .real_width)
+   ! . "precision" sets the fortran precision (default: .real_precision)
+      value :: VALUE?, IN
+      left :: BIN, IN, optional
+      center :: BIN, IN, optional
+      int_width :: BIN, IN, optional
+      style :: STR, IN, optional
+      width :: INT, IN, optional
+      precision :: INT, IN, optional
+
+      sty :: STR
+      wid0,wid,pre,nf :: INT
+
+      ! Defaults
+      sty = .real_style
+      wid = .real_width
+      pre = .real_precision
+
+      ! Set int_width option
+      if (present(int_width)) then
+      if (int_width) then
+         wid = .int_width
+         pre = 3 
+      end
+      end
+
+      ! Sensible width
+      wid0 = wid
+
+      ! Set options
+      if (present(style))     sty = style
+      if (present(width))     wid = width
+      if (present(precision)) pre = precision
+
+      ! Sensible width
+      if (wid>0) wid0 = wid
+
+
+      ! Change to string, and put it out
+      nf = value.no_of_fields_per_value
+      .put(value.to_str(sty,wid0,pre,left),left,center,FALSE,width=nf*wid)
+
+   end
+
+   put(value,left,center,int_width,style,width,precision) ::: get_from(TEXTFILE, VALUE?=>REAL)
+   ! Put a real or complex "value" into the output buffer. 
+   ! If present and TRUE:
+   ! . "left" will left justify the string    (default: right-justified)
+   ! . "center" will center the string        (default: left-justified)
+   ! . "int_width" sets width to .inty_width  (default: .real_width)
+   ! If present:
+   ! . "style" sets the fortran style         (default: .real_style)
+   ! . "width" sets the field_width           (default: .real_width)
+   ! . "precision" sets the fortran precision (default: .real_precision)
+   end
+
+   put(value,left,center,int_width,style,width,precision) ::: get_from(TEXTFILE, VALUE?=>CPX)
+   ! Put a real or complex "value" into the output buffer. 
+   ! If present and TRUE:
+   ! . "left" will left justify the string    (default: right-justified)
+   ! . "center" will center the string        (default: left-justified)
+   ! . "int_width" sets width to .inty_width  (default: .real_width)
+   ! If present:
+   ! . "style" sets the fortran style         (default: .real_style)
+   ! . "width" sets the field_width           (default: .real_width)
+   ! . "precision" sets the fortran precision (default: .real_precision)
+   end
+
+!  ==============================
+!  Put imprecise REAL(WITH_ERROR)
+!  ==============================
+
+   put(value,error,left,int_width,width,precision)
+   ! Put a real "value" into the output buffer which has "error".
+   ! You can specify the "width" (defualt .real_width) or the
+   ! maximum "precision". The decimal points are lined up.
+   ! WARNING: Make sure the error is larger than the precision! 
+      value,error :: REAL, IN
+      left :: BIN, IN, optional
+      int_width :: BIN, IN, optional
+      width :: INT, IN, optional
+      precision :: INT, IN, optional
+
+      wid0,wid,pre,pr,sp :: INT
+      valstr :: STR
+
+      ! Defaults
+      wid = .real_width
+      pre = .real_precision
+
+      ! Set int_width option
+      if (present(int_width)) then
+      if (int_width) then
+         wid = .int_width
+         pre = 3 
+      end
+      end
+
+      ! Sensible width
+      wid0 = wid
+
+      ! Set options
+      if (present(width))     wid = width
+      if (present(precision)) pre = precision
+
+      ! Sensible width
+      if (wid>0) wid0 = wid
+
+      ! Change to string, and put it out. Need to use wid+3 to allow
+      ! for the error e.g. 1.002(2) takes up three extra spaces.
+      valstr = value.to_str(error,wid0,pre)
+      if (present(left)) then
+            .put(valstr,left=left,width=wid)
+      else
+         error.get_error_dp(pr)
+         if (pr<pre) then
+            sp = pre - pr
+            .put(valstr,width=max(wid-sp,0))
+            .put(repeat(" ",sp),width=max(sp,0)) ! line up decimal place
+         else
+            .put(valstr,width=wid)
+         end
+      end
+
+   end
+
+!  =============
+!  Put VEC{TYPE}
+!  =============
+
+   put(v,by_row,by_column,left,width,auto_width) ::: template
+   ! Put VEC{TYPE} into the output buffer
+      v :: V?, IN
+      by_row :: BIN, IN, optional
+      by_column :: BIN, IN, optional
+      left :: BIN, IN, optional
+      width :: INT, IN, optional
+      auto_width :: BIN, IN, optional
+
+   ENSURE(NOT (present(by_row) AND present(by_column)),"row and column options present!")
+
+      i,dim, iwid,rwid,nfpv, block,n_block,fields,f,l :: INT
+      column,auto :: BIN
+
+      ! Vector length
+      dim = v.dim
+      WARN_IF(dim==0,"zero sized dimension!")
+
+      ! Extract options
+      column = TRUE
+      if (present(by_row))    column = NOT by_row
+      if (present(by_column)) column = by_column
+
+      iwid = dim.str_length + .spacing
+      rwid = .real_width
+      if (present(width)) rwid = width
+      nfpv = v(1).no_of_fields_per_value
+
+      auto = FALSE
+      if (present(auto_width)) auto = auto_width
+
+      ! Auto field width overrides width
+      if (auto) v.get_max_str_length(rwid ARG?,.spacing)
+
+      if (column) then
+
+         ! Put vector "v" as vertical column
+         if (.using_array_labels) then
+
+            ! With labels
+            do i = 1,dim
+               .put(i,left,width=nfpv*iwid)
+               .put(v(i),left,width=rwid)
+               .flush
+            end
+
+         else
+
+            ! No labels
+            do i = 1,dim
+               .put(v(i),left,width=rwid)
+               .flush
+            end
+
+         end
+
+      else
+
+         fields = .n_fields_per_line
+         if (fields==0) fields = dim
+         n_block = int((dim-0.1)/fields) + 1
+
+         ! Put vector "v" as horizontal row
+         if (.using_array_labels) then
+
+            ! Use labels
+            do block = 1,n_block
+               f = 1 + fields*(block-1)
+               l = min(f+fields-1,dim)
+               if (block>1) .flush
+               do i = f,l
+                  .put(i,left,width=nfpv*rwid)
+               end
+               .flush(2)
+               do i = f,l
+                  .put(v(i),left,width=rwid)
+               end
+               .flush
+            end
+
+         else
+
+            ! NO labels
+            do block = 1,n_block
+               f = 1 + fields*(block-1)
+               l = min(f+fields-1,dim)
+               if (block>1) .flush
+               do i = f,l
+                  .put(v(i),left,width=rwid)
+               end
+            end
+            .flush
+
+         end
+
+      end
+
+   end
+
+   put(v,by_row,by_column,left,width,auto_width) ::: get_from(TEXTFILE, V?=>VEC{STR}, ARG?=>)
+   ! Put VEC{TYPE} into the output buffer
+   end
+
+   put(v,by_row,by_column,left,width,auto_width) ::: get_from(TEXTFILE, V?=>VEC{BIN}, ARG?=>)
+   ! Put VEC{TYPE} into the output buffer
+   end
+
+   put(v,by_row,by_column,left,width,auto_width) ::: get_from(TEXTFILE, V?=>VEC{INT}, ARG?=>)
+   ! Put VEC{TYPE} into the output buffer
+   end
+
+   put(v,by_row,by_column,left,width,auto_width) ::: get_from(TEXTFILE, V?=>VEC{REAL}, ARG?=>,.real_precision)
+   ! Put VEC{TYPE} into the output buffer
+   end
+
+   put(v,by_row,by_column,left,width,auto_width) ::: get_from(TEXTFILE, V?=>VEC{CPX}, ARG?=>,.real_precision)
+   ! Put VEC{TYPE} into the output buffer
+   end
+
+   put(v,row_label,col_label,left) ::: template
+   ! Put VEC{TYPE} into output as column, with "row_labels" and a
+   ! single "col_label".
+      v :: V?, IN
+      row_label :: VEC{STR}, IN
+      col_label :: STR, IN
+      left :: BIN, IN, optional
+
+      wid,widc,widr, i :: INT
+
+      ! Warning ...
+      WARN_IF(v.dim==0,"zero sized dimensiont!")
+
+      ! Get the width
+      row_label.get_max_str_length(widr,.spacing)
+      col_label.get_str_length(widc,spaces=0)
+      wid  = max(widr,widc,.real_width)
+
+      ! Tab column width & put column label
+      .tab(width=wid)
+      .put(col_label,left,width=wid)
+      .flush(2)
+
+      ! Put vector "v" as vertical column
+      do i = 1,v.dim
+         .put(row_label(i),left,width=wid)
+         .put(v(i),left,width=wid)
+         .flush
+      end
+
+   end
+
+   put(v,row_label,col_label,left) ::: get_from(TEXTFILE), V?=>VEC{REAL})
+   ! Put VEC{TYPE} into output as column, with "row_labels" and a
+   ! single "col_label".
+   end
+
+!  =============
+!  Put MAT{TYPE}
+!  =============
+
+   put(mx,by_row,by_column,transpose,left,width,auto_width) ::: template
+   ! Put MAT{TYPE} into the output buffer
+      mx :: MX?, IN
+      by_row :: BIN, IN, optional
+      by_column :: BIN, IN, optional
+      transpose :: BIN, IN, optional
+      left :: BIN, IN, optional
+      width :: INT, IN, optional
+      auto_width :: BIN, IN, optional
+
+   ENSURE(NOT (present(by_row) AND present(by_column)),"row and column options present!")
+
+      row,column,trans,auto :: BIN
+      i,j,dim1,dim2,maxdim, iwid,rwid,nfpv, block,n_block,fields,f,l :: INT
+
+      ! Dimensions
+      WARN_IF(any(mx.shape==0),"zero sized dimensions present!")
+      dim1 = mx.dim1
+      dim2 = mx.dim2
+
+      ! Extract options
+      row = FALSE
+      if (present(by_row)) row = by_row
+
+      column = FALSE
+      if (present(by_column)) column = by_column
+
+      trans = FALSE
+      if (present(transpose)) trans = transpose
+
+      ! Width
+      maxdim = max(dim1,dim2)
+      iwid   = maxdim.str_length + .spacing
+      rwid   = .real_width
+      if (present(width)) rwid = width
+      nfpv   = mx(1,1).no_of_fields_per_value
+
+      auto = FALSE
+      if (present(auto_width)) auto = auto_width
+
+      ! Auto field width overrides real_width
+      if (auto) mx.get_max_str_length(rwid ARG?,.spacing)
+
+      ! No of fields per line
+      fields = .n_fields_per_line
+
+      if (column) then
+         
+         ! Put columns as rows, new line for new column
+         if (fields==0) fields = dim1
+         do j = 1,dim2
+            do i = 1,dim1
+               .put(mx(i,j),left,width=rwid)
+               if(mod(i,fields)==0) .flush
+            end
+           .flush
+         end
+
+      else if (row) then
+
+         ! Put as rows, new line for new row
+         if (fields==0) fields = dim2
+         do i = 1,dim1
+            do j = 1,dim2
+               .put(mx(i,j),left,width=rwid)
+               if(mod(j,fields)==0) .flush
+            end
+           .flush
+         end
+
+      else 
+
+         if (NOT trans) then ! NO TRANSPOSE
+
+            if (NOT .using_fields) then
+
+               do i = 1,dim1
+                  do j = 1,dim2
+                     .put(mx(i,j),left,width=rwid)
+                  end
+                  .flush
+               end
+
+            else
+            
+               if (fields==0) fields = dim2
+               n_block = int((dim2-0.1)/fields) + 1
+      
+               if (.using_array_labels) then
+
+                  ! Put in row & column labels
+                  do block = 1,n_block
+                     f = 1 + fields*(block-1)
+                     l = min(f+fields-1,dim2)
+                     if (block>1) .flush
+                     .tab(width=iwid)
+                     do j = f,l
+                        .put(j,left,width=nfpv*rwid)
+                     end
+                     .flush(2)
+                     do i = 1,dim1
+                        .put(i,left,width=iwid)
+                        do j = f,l
+                           .put(mx(i,j),left,width=rwid)
+                        end
+                        .flush
+                     end
+                  end
+
+               else
+
+                  ! NO row & column labels
+                  do block = 1,n_block
+                     f = 1 + fields*(block-1)
+                     l = min(f+fields-1,dim2)
+                     if (block>1) .flush
+                     do i = 1,dim1
+                        .tab(width=iwid)
+                        do j = f,l
+                           .put(mx(i,j),left,width=rwid)
+                        end
+                        .flush
+                     end
+                  end
+
+               end
+
+            end
+
+         else ! TRANSPOSE
+
+            if (NOT .using_fields) then
+
+               do j = 1,dim2
+                  do i = 1,dim1
+                     .put(mx(i,j),left,width=rwid)
+                  end
+                  .flush
+               end
+
+            else
+
+               if (fields==0) fields = dim1
+               n_block = int((dim1-0.1)/fields) + 1
+      
+               if (.using_array_labels) then
+
+                  ! Put in row & column labels
+                  do block = 1,n_block
+                     f = 1 + fields*(block-1)
+                     l = min(f+fields-1,dim1)
+                     if (block>1) .flush
+                     .tab(width=iwid)
+                     do i = f,l
+                        .put(i,left,width=nfpv*rwid)
+                     end
+                     .flush(2)
+                     do j = 1,dim2
+                        .put(j,left,width=iwid)
+                        do i = f,l
+                           .put(mx(i,j),left,width=rwid)
+                        end
+                        .flush
+                     end
+                  end
+
+               else
+
+                  ! NO row & column labels
+                  do block = 1,n_block
+                     f = 1 + fields*(block-1)
+                     l = min(f+fields-1,dim1)
+                     if (block>1) .flush
+                     do j = 1,dim2
+                        .tab(int_fields=1)
+                        do i = f,l
+                           .put(mx(i,j),left,width=rwid)
+                        end
+                        .flush
+                     end
+                  end
+
+               end
+
+            end
+
+         end
+
+      end
+
+   end
+
+   put(mx,by_row,by_column,transpose,left,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT{STR}, ARG?=>)
+   ! Put MAT{TYPE} into the output buffer
+   end
+
+   put(mx,by_row,by_column,transpose,left,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT{BIN}, ARG?=>)
+   ! Put MAT{TYPE} into the output buffer
+   end
+
+   put(mx,by_row,by_column,transpose,left,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT{INT}, ARG?=>)
+   ! Put MAT{TYPE} into the output buffer
+   end
+
+   put(mx,by_row,by_column,transpose,left,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT{REAL}, ARG?=>,.real_precision)
+   ! Put MAT{TYPE} into the output buffer
+   end
+
+   put(mx,by_row,by_column,transpose,left,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT{CPX}, ARG?=>,.real_precision)
+   ! Put MAT{TYPE} into the output buffer
+   end
+
+   put(mx,row_label,col_label,left) ::: template
+   ! Put MAT{TYPE} into output with "row_labels" and "column_labels"
+      mx :: MX?, IN
+      row_label :: VEC{STR}, IN
+      col_label :: VEC{STR}, IN
+      left :: BIN, IN, optional
+
+      wid,widc,widr, i,j,block,n_block,fields,f,l :: INT
+
+      ! Warning ...
+      WARN_IF(any(mx.shape==0),"zero sized dimensions present!")
+
+      ! Get the width
+      row_label.get_max_str_length(widr,.spacing)
+      col_label.get_max_str_length(widc,.spacing)
+      wid  = max(widr,widc,.real_width)
+
+      ! No of fields per line
+      fields = .n_fields_per_line
+      if (fields==0) fields = mx.dim2
+
+      ! No of matrix column-blocks
+      n_block = int((fields-0.1)/fields) + 1
+
+      ! Put in (row and column-labeled) column-blocks
+      l = 0
+      do block = 1,n_block
+
+         ! First and last columns
+         f = l + 1
+         l = min(l+fields,mx.dim2)
+
+         ! New block requires new line
+         if (block>1) .flush
+
+         ! Tab column width
+         .tab(width=wid)
+
+         ! Column labels
+         do j = f,l
+            .put(col_label(j),left,width=wid)
+         end
+         .flush(2)
+
+         ! The rows of the matrix
+         do i = 1,mx.dim1
+
+            ! The row label
+            .put(row_label(i),left,width=wid)
+
+            ! The row of the matrix
+            do j = f,l
+               .put(mx(i,j),left,width=wid)
+            end
+            .flush
+
+         end
+
+      end
+
+   end
+
+   put(mx,row_label,col_label,left) ::: get_from(TEXTFILE, MX?=>MAT{REAL})
+   ! Put MAT{TYPE} into output with "row_labels" and "column_labels"
+   end
+
+!  ==============
+!  Put MAT3{TYPE}
+!  ==============
+
+   put(mx,by_dim3_matrices,width,auto_width) ::: template
+   ! Put a MAT3{TYPE} into the output buffer flat style
+      mx :: MX?, IN
+      by_dim3_matrices :: BIN, optional
+      width :: INT, IN, optional
+      auto_width :: BIN, IN, optional
+
+      dim1,dim2,dim3,maxdim,rwid,iwid,i1,i2,i3 :: INT
+      by_d3_matrices,auto :: BIN
+
+      ! Dimensions
+      WARN_IF(any(mx.shape==0),"zero sized dimensions present!")
+      dim1 = mx.dim1
+      dim2 = mx.dim2
+      dim3 = mx.dim3
+
+      ! Extract options
+      by_d3_matrices = FALSE
+      if (present(by_dim3_matrices)) by_d3_matrices = by_dim3_matrices
+
+      ! Width
+      maxdim = max(dim1,dim2,dim3)
+      iwid   = maxdim.str_length + .spacing
+      rwid   = .real_width
+      if (present(width)) rwid = width
+
+      auto = FALSE
+      if (present(auto_width)) auto = auto_width
+
+      ! Auto field width overrides width
+      if (auto) mx.get_max_str_length(rwid ARG?,.spacing)
+
+      if (by_d3_matrices) then
+ 
+         do i3 = 1,dim3
+         do i2 = 1,dim2
+         do i1 = 1,dim1
+            .put(i1,width=iwid)
+            .put(i2,width=iwid)
+            .put(i3,width=iwid)
+            .put(mx(i1,i2,i3),width=rwid)
+            .flush
+         end
+         end
+         end
+ 
+      else
+ 
+         do i3 = 1,dim3
+            stdout.flush
+            stdout.show("matrix =",i3)
+            stdout.flush
+            .put(mx(:,:,i3),width=rwid)
+         end
+ 
+      end
+
+   end
+
+   put(mx,by_dim3_matrices,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT3{INT}, ARG?=>)
+   ! Put a MAT3{TYPE} into the output buffer flat style
+   end
+
+   put(mx,by_dim3_matrices,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT3{REAL}, ARG?=>,.real_precision)
+   ! Put a MAT3{TYPE} into the output buffer flat style
+   end
+
+   put(mx,by_dim3_matrices,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT3{CPX}, ARG?=>,.real_precision)
+   ! Put a MAT3{TYPE} into the output buffer flat style
+   end
+
+!  ==============
+!  Put MAT4{TYPE}
+!  ==============
+
+   put(mx,by_matrices,width,auto_width) ::: template
+   ! Put a MAT4{TYPE} into the output buffer
+      mx :: MX?, IN
+      by_matrices :: BIN, optional
+      width :: INT, IN, optional
+      auto_width :: BIN, IN, optional
+
+      dim1,dim2,dim3,dim4,maxdim,rwid,iwid,i1,i2,i3,i4 :: INT
+      do_matrices,auto :: BIN
+
+      ! Dimensions
+      WARN_IF(any(mx.shape==0),"zero sized dimensions present!")
+      dim1 = mx.dim1
+      dim2 = mx.dim2
+      dim3 = mx.dim3
+      dim4 = mx.dim4
+
+      ! Extract options
+      do_matrices = TRUE
+      if (present(by_matrices)) do_matrices = by_matrices
+
+      ! Width
+      maxdim = max(dim1,dim2,dim3,dim4)
+      iwid   = maxdim.str_length + .spacing
+      rwid   = .real_width
+      if (present(width)) rwid = width
+
+      auto = FALSE
+      if (present(auto_width)) auto = auto_width
+
+      ! Auto field width overrides width
+      if (auto) mx.get_max_str_length(rwid ARG?,.spacing)
+
+      if (do_matrices) then
+ 
+         do i4 = 1,dim4
+         do i3 = 1,dim3
+            stdout.flush
+            stdout.text("matrix = (:,:,"//trim(i3.to_str)//","//trim(i4.to_str)//")")
+            stdout.flush
+            .put(mx(:,:,i3,i4),width=rwid)
+         end
+         end
+ 
+      else
+ 
+         do i4 = 1,dim4
+         do i3 = 1,dim3
+         do i2 = 1,dim2
+         do i1 = 1,dim1
+            .put(i1,width=iwid)
+            .put(i2,width=iwid)
+            .put(i3,width=iwid)
+            .put(i4,width=iwid)
+            .put(mx(i1,i2,i3,i4),width=rwid)
+            .flush
+         end
+         end
+         end
+         end
+ 
+      end
+
+   end
+
+   put(mx,by_matrices,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT4{INT}, ARG?=>)
+   ! Put a MAT4{TYPE} into the output buffer
+   end
+
+   put(mx,by_matrices,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT4{REAL}, ARG?=>,.real_precision)
+   ! Put a MAT4{TYPE} into the output buffer
+   end
+
+   put(mx,by_matrices,width,auto_width) ::: get_from(TEXTFILE, MX?=>MAT4{CPX}, ARG?=>,.real_precision)
+   ! Put a MAT4{TYPE} into the output buffer
+   end
+
+!  ==============
+!  Put MAT5{TYPE}
+!  ==============
+
+   put(mx) ::: template
+   ! Put a MAT5{TYPE} into the output buffer flat style
+     mx :: MX?, IN
+
+     i1,i2,i3,i4,i5 :: INT
+
+   WARN_IF(any(mx.shape==0),"there are zero sized dimensions")
+
+     do i5 = 1,mx.dim5
+     do i4 = 1,mx.dim4
+     do i3 = 1,mx.dim3
+     do i2 = 1,mx.dim2
+     do i1 = 1,mx.dim1
+        .put(i1)
+        .put(i2)
+        .put(i3)
+        .put(i4)
+        .put(i5)
+        .put(mx(i1,i2,i3,i4,i5))
+        .flush
+     end
+     end
+     end
+     end
+     end
+
+   end
+
+   put(mx) ::: get_from(TEXTFILE, MX?=>MAT5{INT})
+   ! Put a MAT5{TYPE} into the output buffer flat style
+   end
+
+   put(mx) ::: get_from(TEXTFILE, MX?=>MAT5{REAL})
+   ! Put a MAT5{TYPE} into the output buffer flat style
+   end
+
+   put(mx) ::: get_from(TEXTFILE, MX?=>MAT5{CPX})
+   ! Put a MAT5{TYPE} into the output buffer flat style
+   end
+
+!  ===================
+!  Put VEC{VEC_{TYPE}}
+!  ===================
+
+   put(v) ::: template
+   ! Put a VEC{VEC_{TYPE}} list into the output buffer
+      v :: V?, IN
+
+      i :: INT
+      using_array_labels :: BIN
+
+      ! Save label status
+      using_array_labels = .using_array_labels
+      .set_using_array_labels(FALSE)
+
+      do i = 1,v.dim
+         .text("Vector "//trim(i.to_str)//":")
+         .put(v(i).element,by_row=TRUE)
+      end
+
+      ! Restore labels
+      .set_using_array_labels(using_array_labels)
+
+   end
+
+   put(v) ::: get_from(TEXTFILE, V?=>VEC{VEC_{STR}})
+   ! Put a VEC{VEC_{TYPE}} list into the output buffer
+   end
+
+   put(v) ::: get_from(TEXTFILE, V?=>VEC{VEC_{INT}})
+   ! Put a VEC{VEC_{TYPE}} list into the output buffer
+   end
+
+   put(v) ::: get_from(TEXTFILE, V?=>VEC{VEC_{REAL}})
+   ! Put a VEC{VEC_{TYPE}} list into the output buffer
+   end
+
+!  ===================
+!  Put VEC{MAT_{TYPE}}
+!  ===================
+
+   put(v) ::: template
+   ! Put a VEC{MAT_{TYPE}} list into the output buffer
+      v :: V?, IN
+
+      i :: INT
+      using_array_labels :: BIN
+
+      ! Save label status
+      using_array_labels = .using_array_labels
+      .set_using_array_labels(FALSE)
+
+      do i = 1,v.dim
+         .text("Matrix "//trim(i.to_str)//":")
+         .put(v(i).element,by_row=TRUE)
+      end
+
+      ! Restore labels
+      .set_using_array_labels(using_array_labels)
+
+   end
+
+   put(v) ::: get_from(TEXTFILE, V?=>VEC{MAT_{INT}})
+   ! Put a VEC{MAT_{TYPE}} list into the output buffer
+   end
+
+   put(v) ::: get_from(TEXTFILE, V?=>VEC{MAT_{REAL}})
+   ! Put a VEC{MAT_{TYPE}} list into the output buffer
+   end
+
+!  =========================
+!  Put OPVECTOR and OPMATRIX
+!  =========================
+
+   put(v)
+   ! Outputs the OPVECTOR "v"
+     v :: OPVECTOR, IN
+
+     if (v.restricted.created) then
+       .flush
+       .text("Restricted part:")
+       .flush(2)
+       .put(v.restricted)
+     end
+
+     if (v.alpha.created) then
+       .flush
+       .text("Alpha part:")
+       .flush(2)
+       .put(v.alpha)
+     end
+
+     if (v.beta.created) then
+       .flush
+       .text("Beta part:")
+       .put(v.beta)
+     end
+
+     if (v.general.created) then
+       .flush
+       .text("General part:")
+       .flush(2)
+       .put(v.general)
+     end
+
+   end
+
+   put(mx,by_row,by_column)
+   ! Outputs the OPMATRIX "mx"
+     mx :: OPMATRIX, IN
+     by_row :: BIN, IN, optional
+     by_column :: BIN, IN, optional
+
+     if (mx.restricted.created) then
+       .flush
+       .text("Restricted part:")
+       .flush(2)
+       .put(mx.restricted,by_row,by_column)
+     end
+
+     if (mx.alpha.created) then
+       .flush
+       .text("Alpha part:")
+       .flush(2)
+       .put(mx.alpha,by_row,by_column)
+     end
+
+     if (mx.beta.created) then
+       .flush
+       .text("Beta part:")
+       .flush(2)
+       .put(mx.beta,by_row,by_column)
+     end
+
+     if (mx.general.created) then
+       .flush
+       .text("General part:")
+       .flush(2)
+       .put(mx.general,by_row,by_column)
+     end
+
+     if (mx.restricted_complex.created) then
+       .flush
+       .text("Complex restricted part:")
+       .put(mx.restricted_complex,by_row,by_column)
+     end
+
+     if (mx.alpha_complex.created) then
+       .flush
+       .text("Complex alpha part:")
+       .flush(2)
+       .put(mx.alpha_complex,by_row,by_column)
+     end
+
+     if (mx.beta_complex.created) then
+       .flush
+       .text("Complex beta part:")
+       .put(mx.beta_complex,by_row,by_column)
+     end
+
+     if (mx.general_complex.created) then
+       .flush
+       .text("Complex general part:")
+       .flush(2)
+       .put(mx.general_complex,by_row,by_column)
+     end
+
+   end
+
+! Miscellaneous
+
+   put_ppm(mx)
+   ! Creates a ppm file from a 3*w*h array of RGB
+   ! values and write to disk
+   
+     mx :: MAT3{INT}
+     ENSURE(minval(mx)>=0, "rgb values should be positive")
+     ENSURE(mx.dim1==3, "array should have dimensions 3*w*h")
+
+     i,w,h,k,m :: INT
+
+     i = maxval(mx)
+     w = mx.dim2
+     h = mx.dim3
+     
+     .text("P3")
+     .put(w); .flush
+     .put(h); .flush
+     .put(i); .flush
+
+     do k=1,h
+       do m=1,w
+         .put(mx(1,m,k))
+         .put(mx(2,m,k))
+         .put(mx(3,m,k))
+         .flush
+       end  
+     end
+   
+   end
+
+!  =================
+!  Show TYPE methods
+!  =================
+
+   show(pretext,value,width,dots) ::: template
+   ! Put a left-justfied formatted "value" into the output buffer with
+   ! some descriptive "pretext".
+      pretext :: STR, IN
+      value :: VALUE?, IN
+      width :: INT, IN, optional
+      dots  :: BIN, IN, optional
+
+      description :: STR(len=(len(pretext)+3))
+      do_dots :: BIN
+
+      do_dots = TRUE
+      if (present(dots)) do_dots = dots
+
+      if (do_dots) then
+
+         ! Modify the description pretext
+         description = " "
+         description = pretext
+         description.replace_end_from(" =",".",plus=1)
+   
+         ! Show it
+         .text(description,flush=FALSE)
+
+      else
+   
+         ! Show it
+         .text(pretext,flush=FALSE)
+
+      end
+
+      ! Put the value
+      if (present(width)) then; .put(value,width=width)
+      else;                     .put(value,left=TRUE,width=0)
+      end
+
+      .flush
+
+   end
+
+   show(pretext,value,width,dots) ::: get_from(TEXTFILE, VALUE?=>STR)
+   ! Put a left-justfied formatted "value" into the output buffer with
+   ! some descriptive "pretext".
+   end
+
+   show(pretext,value,width,dots) ::: get_from(TEXTFILE, VALUE?=>BIN)
+   ! Put a left-justfied formatted "value" into the output buffer with
+   ! some descriptive "pretext".
+   end
+
+   show(pretext,value,width,dots) ::: get_from(TEXTFILE, VALUE?=>INT)
+   ! Put a left-justfied formatted "value" into the output buffer with
+   ! some descriptive "pretext".
+   end
+
+   show(pretext,value,width,precision,right,dots) ::: template
+   ! Put a left-justfied formatted "value" into the output buffer with
+   ! descriptive "pretext" and nondefault "width" and "precision".
+      pretext :: STR, IN
+      value :: VALUE?, IN
+      width :: INT, IN, optional
+      precision :: INT, IN, optional
+      right :: BIN, IN, optional
+      dots  :: BIN, IN, optional
+
+      description :: STR(len=(len(pretext)+3))
+      do_dots,do_right :: BIN
+      
+      do_right = FALSE
+      if (present(right)) do_right = right
+
+      do_dots = TRUE
+      if (present(dots)) do_dots = dots
+
+      if (do_dots) then
+
+         ! Modify the description pretext
+         description = " "
+         description = pretext
+         description.replace_end_from(" =",".",plus=1)
+
+         ! Show it
+         .text(description,flush=FALSE)
+
+      else
+
+         ! Show it
+         .text(pretext,flush=FALSE)
+
+      end
+
+      ! Put the value
+      if (present(width)) then; .put(value,width=width,precision=precision)
+      else if (do_right) then;  .put(value,precision=precision)
+      else;                     .put(value,left=TRUE,width=0,precision=precision)
+      end
+
+      .flush
+
+   end
+
+   show(pretext,value,width,precision,right,dots) ::: get_from(TEXTFILE, VALUE?=>REAL)
+   ! Put a left-justfied formatted "value" into the output buffer with
+   ! descriptive "pretext" and nondefault "width" and "precision".
+   end
+
+   show(pretext,value,width,precision,right,dots) ::: get_from(TEXTFILE, VALUE?=>CPX)
+   ! Put a left-justfied formatted "value" into the output buffer with
+   ! descriptive "pretext" and nondefault "width" and "precision".
+   end
+
+   show(pretext,value,error,width,precision,dots)
+   ! Put a left-justfied formatted "value" into the output buffer with
+   ! some descriptive "pretext".
+      pretext :: STR, IN
+      value :: REAL, IN
+      error :: REAL, IN
+      width :: INT, IN, optional
+      precision :: INT, IN, optional
+      dots  :: BIN, IN, optional
+
+      description :: STR(len=(len(pretext)+3))
+      do_dots :: BIN
+
+      do_dots = TRUE
+      if (present(dots)) do_dots = dots
+
+      if (do_dots) then
+
+         ! Modify the description pretext
+         description = " "
+         description = pretext
+         description.replace_end_from(" =",".",plus=1)
+   
+         ! Show it
+         .text(description,flush=FALSE)
+
+      else
+   
+         ! Show it
+         .text(pretext,flush=FALSE)
+
+      end
+
+      ! Put the value
+      if (present(width) AND present(precision)) then
+         .put(value,error,width=width,precision=precision)
+      else if (present(precision)) then
+         .put(value,error,left=TRUE,width=0,precision=precision)
+      else
+         .put(value,error,left=TRUE,width=0)
+      end
+
+      .flush
+
+   end
+
+   show_bit_string(pretext,value,width)
+   ! Put a formatted INT as a binary number into the output buffer,
+   ! with descriptive "pretext".
+      pretext :: STR
+      value :: INT
+      width :: INT, optional
+
+      .text(pretext,flush=FALSE)
+      if (present(width)) then; .put_bit_string(value,width=width)
+      else;                     .put_bit_string(value,width=.real_width)
+      end
+      .flush
+
+   end
+
+!  ===============
+!  Show two TYPE's
+!  ===============
+
+   show(pretext,val1,val2) ::: template
+   ! Put two scalars "val1", "val2" into the output buffer, with
+   ! descriptive "pretext" before.
+      pretext :: STR, IN
+      val1,val2 :: VAL?, IN
+
+      .text(pretext,flush=FALSE)
+      .put(val1)
+      .put(val2)
+      .flush
+
+   end
+
+!   show(pretext,val1,val2) ::: get_from(TEXTFILE, VAL?=>INT)
+!   ! Put two scalars "val1", "val2" into the output buffer, with
+!   ! descriptive "pretext" before.
+!   end
+
+!   show(pretext,val1,val2) ::: get_from(TEXTFILE, VAL?=>REAL)
+!   ! Put two scalars "val1", "val2" into the output buffer, with
+!   ! descriptive "pretext" before.
+!   end
+
+!  =================
+!  Show three TYPE's
+!  =================
+
+   show(pretext,val1,val2,val3,tol) ::: template
+   ! Put three scalar "val1", "val2" and "val3" into the output buffer, with
+   ! descriptive "pretext" before.
+      pretext :: STR, IN
+      val1,val2,val3 :: VAL?, IN
+      tol :: INT, IN, optional
+
+      tol_save :: INT
+
+      .text(pretext,flush=FALSE)
+
+      if(present(tol)) then
+
+         tol_save=.real_precision
+         .real_precision=tol
+         .put(val1,width=.real_width)
+         .put(val2,width=.real_width)
+         .put(val3,width=.real_width)
+         .real_precision=tol_save
+
+      else
+
+         .put(val1,width=.real_width)
+         .put(val2,width=.real_width)
+         .put(val3,width=.real_width)
+
+      end
+
+      .flush
+
+   end
+
+   show(pretext,val1,val2,val3,tol) ::: get_from(TEXTFILE, VAL?=>BIN)
+   ! Put three scalar "val1", "val2" and "val3" into the output buffer, with
+   ! descriptive "pretext" before.
+   end
+
+   show(pretext,val1,val2,val3,tol) ::: get_from(TEXTFILE, VAL?=>INT)
+   ! Put three scalar "val1", "val2" and "val3" into the output buffer, with
+   ! descriptive "pretext" before.
+   end
+
+   show(pretext,val1,val2,val3,tol) ::: get_from(TEXTFILE, VAL?=>REAL)
+   ! Put three scalar "val1", "val2" and "val3" into the output buffer, with
+   ! descriptive "pretext" before.
+   end
+
+!  ==============
+!  Show VEC{TYPE}
+!  ==============
+
+   show(pretext,value,width,dots) ::: template
+   ! Put a formatted VEC{TYPE} "value" into the output buffer with
+   ! descriptive "pretext".
+      pretext :: STR, IN
+      value :: V?, IN
+      width :: INT, IN, optional
+      dots  :: BIN, IN, optional
+
+      description :: STR(len=(len(pretext)+3))
+      i :: INT
+      do_dots :: BIN
+
+      do_dots = TRUE
+      if (present(dots)) do_dots = dots
+
+      if (do_dots) then
+
+         ! Modify the description pretext
+         description = " "
+         description = pretext
+         description.replace_end_from(" =",".",plus=1)
+
+         ! Show it
+         .text(description,flush=FALSE)
+
+       else
+
+         ! Show it
+         .text(pretext,flush=FALSE)
+
+       end
+
+      ! Put the values
+      if (present(width)) then
+         do i = 1,value.dim
+            .put(value(i),width=width)
+         end
+      else
+         .put(value.to_concatenated_str(separator=" "),left=TRUE)
+      end
+      .flush
+
+   end
+
+   show(pretext,value,width,dots) ::: get_from(TEXTFILE, V?=>VEC{STR})
+   ! Put a formatted VEC{TYPE} "value" into the output buffer with
+   ! descriptive "pretext".
+   end
+
+   show(pretext,value,width,dots) ::: get_from(TEXTFILE, V?=>VEC{BIN})
+   ! Put a formatted VEC{TYPE} "value" into the output buffer with
+   ! descriptive "pretext".
+   end
+
+   show(pretext,value,width,dots) ::: get_from(TEXTFILE, V?=>VEC{INT})
+   ! Put a formatted VEC{TYPE} "value" into the output buffer with
+   ! descriptive "pretext".
+   end
+
+   show(pretext,value,width,dots) ::: get_from(TEXTFILE, V?=>VEC{REAL})
+   ! Put a formatted VEC{TYPE} "value" into the output buffer with
+   ! descriptive "pretext".
+   end
+
+!  =================
+!  Dump TYPE methods
+!  =================
+
+   dump(varname,value) ::: template
+   ! Dump a "value" with variable name "varname".
+      varname :: STR, IN
+      value :: VALUE?, IN
+
+      .flush
+      .text(trim(varname)//":TYPE =",flush=FALSE)
+      .put(value,left=TRUE,width=0)
+      .flush
+
+   end
+
+   dump(varname,value) ::: get_from(TEXTFILE, VALUE?=>STR)
+   ! Dump a "value" with variable name "varname".
+   end
+
+   dump(varname,value) ::: get_from(TEXTFILE, VALUE?=>BIN)
+   ! Dump a "value" with variable name "varname".
+   end
+
+   dump(varname,value) ::: get_from(TEXTFILE, VALUE?=>INT)
+   ! Dump a "value" with variable name "varname".
+   end
+
+   dump(varname,value) ::: template
+   ! Dump a REAL/CPX "value" with variable name "varname".
+      varname :: STR, IN
+      value :: VALUE?, IN
+
+      .flush
+      .text(trim(varname)//":TYPE = ",flush=FALSE)
+      .put(value,left=TRUE,style="e",width=TEXTFILE_REAL_WIDTH,precision=TEXTFILE_REAL_PRECISION)
+      .flush
+
+   end
+
+   dump(varname,value) ::: get_from(TEXTFILE, VALUE?=>REAL)
+   ! Dump a REAL/CPX "value" with variable name "varname".
+   end
+
+   dump(varname,value) ::: get_from(TEXTFILE, VALUE?=>CPX)
+   ! Dump a REAL/CPX "value" with variable name "varname".
+   end
+
+!  ==============================
+!  Dump VEC{TYPE} without pretext
+!  ==============================
+
+   dump(v) ::: template
+   ! Dump a non-numeric vector "v" without any description
+      v :: V?, IN
+
+      dim,n_block,block,fields, i,f,l :: INT
+
+      dim     = v.dim
+      fields  = TEXTFILE_N_FIELDS_PER_LINE
+      n_block = int((dim-0.1)/fields) + 1
+
+      do block = 1,n_block
+         f = 1 + fields*(block-1)
+         l = min(f+fields-1,dim)
+         if (block>1) .flush
+         do i = f,l
+            .put(v(i),left=TRUE,width=0)
+         end
+      end
+
+      .flush
+
+   end
+
+   dump(v) ::: get_from(TEXTFILE, V?=>VEC{STR})
+   ! Dump a non-numeric vector "v" without any description
+   end
+
+   dump(v) ::: get_from(TEXTFILE, V?=>VEC{BIN})
+   ! Dump a non-numeric vector "v" without any description
+   end
+
+   dump(v) ::: get_from(TEXTFILE, V?=>VEC{INT})
+   ! Dump a non-numeric vector "v" without any description
+   end
+
+   dump(v) ::: template
+   ! Dump a numeric vector "v" without any description
+      v :: V?, IN
+
+      dim,n_block,block,fields, i,f,l :: INT
+
+      dim     = v.dim
+      fields  = TEXTFILE_N_FIELDS_PER_LINE
+      n_block = int((dim-0.1)/fields) + 1
+
+      do block = 1,n_block
+         f = 1 + fields*(block-1)
+         l = min(f+fields-1,dim)
+         if (block>1) .flush
+         do i = f,l
+            .put(v(i),style="e",width=TEXTFILE_REAL_WIDTH,precision=TEXTFILE_REAL_PRECISION)
+         end
+      end
+
+      .flush
+
+   end
+
+   dump(v) ::: get_from(TEXTFILE, V?=>VEC{REAL})
+   ! Dump a numeric vector "v" without any description
+   end
+
+   dump(v) ::: get_from(TEXTFILE, V?=>VEC{CPX})
+   ! Dump a numeric vector "v" without any description
+   end
+
+!  ==============
+!  Dump VEC{TYPE}
+!  ==============
+
+   dump(varname,v,ptr) ::: template
+   ! Dump a vector "v" with variable name "varname".
+      varname :: STR, IN
+      v :: V?, IN
+      ptr :: BIN, optional, IN
+
+      dim :: INT
+      is_ptr :: BIN
+
+      ! Is this a pointer?
+      is_ptr = FALSE
+      if (present(ptr)) is_ptr = ptr
+
+      .flush
+
+      ! Variable declaration
+      if (is_ptr) then; stdout.text(trim(varname)//":VEC{TYPE}* = {")
+      else;             stdout.text(trim(varname)//":VEC{TYPE} = {")
+      end
+
+      ! Dimension
+      dim = v.dim
+      .text("dimension = "//trim(dim.to_str))
+
+      ! Dump vector
+      .dump(v)
+
+      .text("}")
+
+   end
+
+   dump(varname,v,ptr) ::: get_from(TEXTFILE, V?=>VEC{STR})
+   ! Dump a vector "v" with variable name "varname".
+   end
+
+   dump(varname,v,ptr) ::: get_from(TEXTFILE, V?=>VEC{BIN})
+   ! Dump a vector "v" with variable name "varname".
+   end
+
+   dump(varname,v,ptr) ::: get_from(TEXTFILE, V?=>VEC{INT})
+   ! Dump a vector "v" with variable name "varname".
+   end
+
+   dump(varname,v,ptr) ::: get_from(TEXTFILE, V?=>VEC{REAL})
+   ! Dump a vector "v" with variable name "varname".
+   end
+
+   dump(varname,v,ptr) ::: get_from(TEXTFILE, V?=>VEC{CPX})
+   ! Dump a vector "v" with variable name "varname".
+   end
+
+!  ==============
+!  Dump MAT{TYPE}
+!  ==============
+
+   dump(varname,mx,ptr) ::: template
+   ! Dump a matrix "mx" with variable name "varname".
+      varname :: STR, IN
+      mx :: MAT{TYPE?}, IN
+      ptr :: BIN, optional, IN
+
+      dim,dim1,dim2 :: INT
+      is_ptr :: BIN
+      v :: VEC{TYPE?}* 
+
+      ! Is this a pointer?
+      is_ptr = FALSE
+      if (present(ptr)) is_ptr = ptr
+
+      .flush
+
+      ! Variable declaration
+      if (is_ptr) then; stdout.text(trim(varname)//":MAT{TYPE}* = {")
+      else;             stdout.text(trim(varname)//":MAT{TYPE} = {")
+      end
+
+      ! Dimensions
+      dim  = mx.dim
+      dim1 = mx.dim1
+      dim2 = mx.dim2
+      .text("dimensions = "//trim(dim1.to_str)//" "//trim(dim2.to_str))
+
+      ! Dump array as vector
+      v.create(dim)
+      v = reshape(mx,[dim])
+      .dump(v)
+      v.destroy
+
+      .text("}")
+
+   end
+
+   dump(varname,mx,ptr) ::: get_from(TEXTFILE, TYPE?=>STR)
+   ! Dump a matrix "mx" with variable name "varname".
+   end
+
+   dump(varname,mx,ptr) ::: get_from(TEXTFILE, TYPE?=>BIN)
+   ! Dump a matrix "mx" with variable name "varname".
+   end
+
+   dump(varname,mx,ptr) ::: get_from(TEXTFILE, TYPE?=>INT)
+   ! Dump a matrix "mx" with variable name "varname".
+   end
+
+   dump(varname,mx,ptr) ::: get_from(TEXTFILE, TYPE?=>REAL)
+   ! Dump a matrix "mx" with variable name "varname".
+   end
+
+   dump(varname,mx,ptr) ::: get_from(TEXTFILE, TYPE?=>CPX)
+   ! Dump a matrix "mx" with variable name "varname".
+   end
+
+!  ===============
+!  Dump MAT3{TYPE}
+!  ===============
+
+   dump(varname,mx,ptr) ::: template
+   ! Dump a 3d matrix "mx" with variable name "varname".
+      varname :: STR, IN
+      mx :: MAT3{TYPE?}, IN
+      ptr :: BIN, optional, IN
+
+      dim,dim1,dim2,dim3 :: INT
+      is_ptr :: BIN
+      v :: VEC{TYPE?}* 
+
+      ! Is this a pointer?
+      is_ptr = FALSE
+      if (present(ptr)) is_ptr = ptr
+
+      .flush
+
+      ! Variable declaration
+      if (is_ptr) then; stdout.text(trim(varname)//":MAT3{TYPE}* = {")
+      else;             stdout.text(trim(varname)//":MAT3{TYPE} = {")
+      end
+
+      ! Dimensions
+      dim  = mx.dim
+      dim1 = mx.dim1
+      dim2 = mx.dim2
+      dim3 = mx.dim3
+      .text("dimensions = "//trim(dim1.to_str)//" "//trim(dim2.to_str//" "//trim(dim3.to_str)))
+
+      ! Dump array as vector
+      v.create(dim)
+      v = reshape(mx,[dim])
+      .dump(v)
+      v.destroy
+
+      .text("}")
+
+   end
+
+   dump(varname,mx,ptr) ::: get_from(TEXTFILE, TYPE?=>BIN)
+   ! Dump a 3d matrix "mx" with variable name "varname".
+   end
+
+   dump(varname,mx,ptr) ::: get_from(TEXTFILE, TYPE?=>INT)
+   ! Dump a 3d matrix "mx" with variable name "varname".
+   end
+
+   dump(varname,mx,ptr) ::: get_from(TEXTFILE, TYPE?=>REAL)
+   ! Dump a 3d matrix "mx" with variable name "varname".
+   end
+
+   dump(varname,mx,ptr) ::: get_from(TEXTFILE, TYPE?=>CPX)
+   ! Dump a 3d matrix "mx" with variable name "varname".
+   end
+
+!  =============
+!  Dump Pointers
+!  =============
+
+   dmpp(varname,value) ::: template
+   ! Dump a pointer "value" with variable name "varname".
+      varname :: STR, IN
+      value :: VALUE?*
+
+      if (value.destroyed) then
+         .flush
+         .text(trim(varname)//":TYPE* = null")
+      else
+         .dump(varname,value,ptr=TRUE)
+      end
+
+   end
+
+!  ===============
+!  Dump VEC{TYPE}*
+!  ===============
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>VEC{STR})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>VEC{BIN})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>VEC{INT})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>VEC{REAL})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>VEC{CPX})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+!  ===============
+!  Dump MAT{TYPE}*
+!  ===============
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>MAT{STR})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>MAT{BIN})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>MAT{INT})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>MAT{REAL})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>MAT{CPX})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+!  ================
+!  Dump MAT3{TYPE}*
+!  ================
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>MAT3{BIN})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>MAT3{INT})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>MAT3{REAL})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>MAT3{CPX})
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+!  ==========================
+!  Dump OPVECTOR and OPMATRIX
+!  ==========================
+
+   dump(varname,v,ptr)
+   ! Dump an OPVECTOR with variable name "varname".
+      varname :: STR, IN
+      v :: OPVECTOR, IN
+      ptr :: BIN, optional, IN
+
+      is_ptr :: BIN
+
+      ! Is this a pointer?
+      is_ptr = FALSE
+      if (present(ptr)) is_ptr = ptr
+
+      .flush
+
+      ! Variable declaration
+      if (is_ptr) then; stdout.text(trim(varname)//":OPVECTOR* = {")
+      else;             stdout.text(trim(varname)//":OPVECTOR = {")
+      end
+
+      .increment_margin_width(1)
+
+      ! Dump
+      .dump("n_bf",v.n_bf)
+      .dmpp("restricted",v.restricted)
+      .dmpp("alpha",     v.alpha)
+      .dmpp("beta",      v.beta)
+      .dmpp("general"   ,v.general)
+
+      .increment_margin_width(-1)
+      .flush
+
+      .text("}")
+
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>OPVECTOR)
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+   dump(varname,mx,ptr)
+   ! Dump an OPMATRIX with variable name "varname".
+      varname :: STR, IN
+      mx :: OPMATRIX, IN
+      ptr :: BIN, optional, IN
+
+      is_ptr :: BIN
+
+      ! Is this a pointer?
+      is_ptr = FALSE
+      if (present(ptr)) is_ptr = ptr
+
+      .flush
+
+      ! Variable declaration
+      if (is_ptr) then; stdout.text(trim(varname)//":OPMATRIX* = {")
+      else;             stdout.text(trim(varname)//":OPMATRIX = {")
+      end
+
+      .increment_margin_width(1)
+
+      ! Dump
+      .dump("n_bf",mx.n_bf)
+      .dmpp("restricted"        ,mx.restricted)
+      .dmpp("alpha"             ,mx.alpha)
+      .dmpp("beta"              ,mx.beta)
+      .dmpp("general"           ,mx.general)
+      .dmpp("restricted_complex",mx.restricted_complex)
+      .dmpp("alpha_complex"     ,mx.alpha_complex)
+      .dmpp("beta_complex"      ,mx.beta_complex)
+      .dmpp("general_complex"   ,mx.general_complex)
+      .dmpp("triangle"          ,mx.triangle)
+      .dmpp("square"            ,mx.square)
+
+      .increment_margin_width(-1)
+      .flush
+
+      .text("}")
+
+   end
+
+   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>OPMATRIX)
+   ! Dump a pointer "value" with variable name "varname".
+   end
+
+!  ================
+!  Output self info
+!  ================
+
+   put
+   ! Put all the available molecule information on file "out"
+      stdout.show("Name       =",.name)
+      stdout.show("I/O action =",.action)
+      stdout.show("Unit       =",.unit)
+      stdout.show("Line       =",.record)
+      stdout.show("Buffer     =",trim(.buffer.string))
+      stdout.show("Cursor pos =",trim(.buffer.cursor_pointer))
+   end
+
+!  ===============
+!  System routines
+!  ===============
+
+   update_system_info ::: private
+   ! Lets the system know info about the file being read, in case 
+   ! of error.
+     self :: target
+#ifndef NO_TONTO_SYSTEM_CALLS
+     tonto.io_file => self
+#endif
+   end
+
+end

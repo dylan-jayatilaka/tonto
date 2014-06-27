@@ -1,0 +1,1734 @@
+!---------------------------------------------------------------------------
+!
+!  REAL: methods which apply to double precision numbers
+!
+! Copyright (C) Daniel Grimwood, 1999
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: real.foo 4349 2014-05-06 02:01:54Z dylan_ $
+!---------------------------------------------------------------------------
+
+module REAL
+
+   implicit none
+
+   ! For calculating the series expansion of the ln Gamma function
+
+   ln_gamma_coefficients :: VEC{REAL}(0:6) , private
+
+   data ln_gamma_coefficients(0:6)/ &
+       1.000000000190015d0, &
+       76.18009172947146d0, -86.50532032941677d0, 24.01409824083091d0, &
+      -1.231739572450155d0,0.1208650973866179d-2, -0.5395239384953d-5/
+
+ ! gill_T1  :: VEC{REAL}*, private  DEFAULT_NULL
+ ! gill_m   :: INT, private   DEFAULT(0)
+ ! gill_eps :: REAL, private  DEFAULT(ZERO)
+
+   interface erf
+      error_function 
+   end
+
+   interface erfc
+      complementary_error_function 
+   end
+
+contains
+
+!  ====================
+!  Numerical operations
+!  ====================
+
+   plus(val) ::: pure
+   ! Add "val" to self
+      self :: INOUT
+      val :: REAL, IN
+      self = self + val
+   end
+
+   minus(val) ::: pure
+   ! Subtract "val" to self
+      self :: INOUT
+      val :: REAL, IN
+      self = self - val
+   end
+
+   times(val) ::: pure
+   ! Multiply "val" by self
+      self :: INOUT
+      val :: REAL, IN
+      self = self * val
+   end
+
+   raised_to(n) result (res) ::: pure
+   ! Raise "self" to the power "n"
+      self :: IN
+      n :: INT, IN
+      res :: REAL
+       i :: INT
+      res = ONE
+      do i = 1,abs(n)
+         res = res*self
+      end
+      if (n<0) res = ONE/res
+   end
+
+   swap_with(x) ::: pure
+   ! Swap the value of "self" and "x"
+      self :: INOUT
+      x :: REAL, INOUT
+
+      keep :: REAL
+
+      keep = self
+      self = x
+      x    = keep
+
+   end
+
+   to_sum_of(v) ::: get_from(INTRINSIC), pure
+   ! Set "self" to the sum of elements in vector "v"
+   end
+
+   to_sum_of(mx) ::: get_from(INTRINSIC), pure
+   ! Set "self" to the sum of elements in matrix "mx"
+   end
+
+!  =============
+!  String widths
+!  =============
+   
+   no_of_fields_per_value result (res) ::: pure
+   ! Returns the number of fields used to print a "self".
+      self :: IN
+      res :: INT
+      if (FALSE) res = transfer(self,res)
+      res = 1
+   end 
+
+   str_length result (res) ::: get_from(INTRINSIC, FMT=>*), pure
+   ! Returns the minimal string length.
+   ! Note: for real and complex only
+   end
+
+   str_length(dp) result (res) ::: pure
+   ! Return the string length from the int part of the REAL value "self",
+   ! keeping "dp" decimal places.
+      self :: IN
+      dp :: INT, IN
+      res :: INT
+
+      res = floor(self)
+      res = res.str_length
+      res = res + dp + 1 ! plus .
+
+   end
+
+   str_length(error,max_dp,spaces) result (res) ::: PURE
+   ! Return the string length of "self" assuming an it has an absolute
+   ! "error". If "error" is zero, "max_dp" decimal places are kept,
+   ! with additional extra "spaces" (if present).
+      self :: IN
+      error  :: REAL, IN
+      max_dp :: INT, IN
+      spaces :: INT, IN, optional
+      res :: INT
+
+      width :: INT
+
+      ! "width" is the width of the error-less number 1.023
+      ! with the specified precision "max_dp"
+      width = .str_length(max_dp)
+      if (present(spaces)) width = width + spaces
+
+      ! Now add (error) on the end of 1.023(error)
+      ! Note: error should be bigger than 10^-max_dp !
+      ! Otherwise the error comes out as (0)
+      res = len_trim(.to_str(error,width,max_dp))
+
+   end
+
+
+   get_str_length(sl,spaces) ::: get_from(INTRINSIC, FMT=>*), pure
+   ! Returns the minimal string length.
+   ! Note: for real and complex only
+   end
+
+   get_str_length(sl,max_dp,spaces) ::: pure
+   ! Return the string length "sl" from the int part of the REAL value
+   ! "self", keeping "max_dp" decimal places.
+      self :: IN
+      sl :: INT, OUT
+      max_dp :: INT, IN
+      spaces :: INT, IN
+
+      sf :: INT
+
+      sf = floor(self)
+      sf.get_str_length(sl,spaces)
+
+      sl = sl + max_dp + 1 ! plus .
+
+   end
+
+   get_str_length(sl,error,max_dp,spaces) ::: PURE
+   ! Return the string length "sl" of "self", assuming "self" has an
+   ! absolute "error"s. If "error" is zero, "max_dp" decimal places
+   ! are kept, with additional extra "spaces" (if present). 
+      self :: IN
+      sl :: INT, OUT
+      error  :: REAL, IN
+      max_dp :: INT, IN
+      spaces :: INT, IN
+
+      width,dp :: INT
+      string :: STR
+
+      ! "width" is the width of the error-less number 1.023
+      ! with the specified precision "max_dp"
+      .get_str_length(width,max_dp,spaces)
+
+      ! Get the decimal place "dp" and the error digit "de"
+      error.get_error_dp(dp,max_dp) 
+
+      ! Convert "self" with the right size
+      string = .to_str("f",width,precision=dp)
+
+      ! Append the error (digit)
+      sl = len_trim(string) + 3 + spaces
+
+   end
+
+   get_str_length(sl,dp,error,max_dp,spaces) ::: PURE
+   ! Return the string length "sl" of "self", the decimal places "dp"
+   ! used, assuming "self" has an absolute "error"s. If "error" is
+   ! zero, "max_dp" decimal places are kept, with additional extra
+   ! "spaces" (if present). 
+      self :: IN
+      sl :: INT, OUT
+      dp :: INT, OUT
+      error  :: REAL, IN
+      max_dp :: INT, IN
+      spaces :: INT, IN
+
+      width :: INT
+      string :: STR
+
+      ! "width" is the width of the error-less number 1.023
+      ! with the specified precision "max_dp"
+      .get_str_length(width,max_dp,spaces)
+
+      ! Get the decimal place "dp" and the error digit "de"
+      error.get_error_dp(dp,max_dp) 
+
+      ! Convert "self" with the right size
+      string = .to_str("f",width,precision=dp)
+
+      ! Append the error (digit)
+      sl = len_trim(string) + 3 + spaces
+
+   end
+
+   get_str_length(sl,dp,de,error,max_dp,spaces) ::: PURE
+   ! Return the string length "sl" of "self", the decimal places "dp"
+   ! used, and the error digit "de" assuming "self" has an absolute
+   ! "error"s. If "error" is zero, "max_dp" decimal places are
+   ! kept, with additional extra "spaces" (if present). 
+      self :: IN
+      sl :: INT, OUT
+      dp :: INT, OUT
+      de :: INT, OUT
+      error  :: REAL, IN
+      max_dp :: INT, IN
+      spaces :: INT, IN
+
+      width :: INT
+      string :: STR
+
+      ! "width" is the width of the error-less number 1.023
+      ! with the specified precision "max_dp"
+      .get_str_length(width,max_dp,spaces)
+
+      ! Get the decimal place "dp" and the error digit "de"
+      error.get_error_dp_de(dp,de,max_dp) 
+
+      ! Convert "self" with the right size
+      string = .to_str("f",width,precision=dp)
+
+      ! Append the error digit
+      string = trim(string) // "(" // trim(de.to_str) // ")"
+
+      ! Now add (error) on the end of 1.023(error)
+      ! Note: error should be bigger than 10^-max_dp !
+      ! Otherwise the error comes out as (0)
+      sl = len_trim(string) + spaces
+
+   end
+
+!  ==========================
+!  Precision and error output
+!  ==========================
+
+   get_error_dp(dp) ::: PURE
+   ! If "self" is an error, THEN return "dp" the *actual* number of
+   ! decimal places used for "self". Used for output like 1.027(5)
+   ! where dp=3 (provided max_dp>=3).
+      self :: IN
+      dp :: INT, OUT
+
+      error :: REAL
+      maxdp :: INT
+
+      maxdp = REAL_MAX_DECIMAL_PLACES
+
+      error = self
+
+      if (error==ZERO) then; dp = maxdp
+      else;                  dp = min(abs(floor(log10(error))),maxdp)
+      end
+
+   end
+
+   get_error_dp(dp,max_dp) ::: PURE
+   ! If "self" is an error, and "max_dp" is the maximum allowed
+   ! no. of decimal places THEN return the *actual* number of 
+   ! decimal places used for "self". Used for output like 1.027(5)
+   ! where dp=3 (provided max_dp>=3).
+      self :: IN
+      dp :: INT, OUT
+      max_dp :: INT, IN
+
+      error :: REAL
+      maxdp :: INT
+
+      maxdp = max_dp
+
+      error = self
+
+      if (error==ZERO) then; dp = maxdp
+      else;                  dp = min(abs(floor(log10(error))),maxdp)
+      end
+
+   end
+
+!   get_error_dp_de(dp,de) ::: PURE
+!   ! Given number "self" which is an error THEN return the decimal
+!   ! place of the uncertainty "dp", and the digit "de" of the error
+!   ! digit in decimal place "dp". Used for output like 1.027(5) where
+!   ! dp=3 and de=5 (provided max_dp>=3).
+!      self :: IN
+!      dp :: INT, OUT
+!      de :: INT, OUT
+!
+!      error :: REAL
+!      maxdp :: INT
+!
+!      maxdp = REAL_MAX_DECIMAL_PLACES
+!
+!      error = self
+!
+!      if (error==ZERO) then
+!
+!         dp = maxdp
+!         de = 0
+!
+!      else
+!
+!         dp = min(abs(floor(log10(error))),maxdp)
+!         de = nint(error*10**dp)
+!         if (de==10) then
+!            de = 1
+!            dp = dp - 1
+!         end
+!
+!      end
+!
+!   end
+
+   get_error_dp_de(dp,de,max_dp) ::: PURE
+   ! Given number "self" which is an error, and given a desired
+   ! *output* of *at most* "max_dp" decimal places THEN return the
+   ! decimal place of the uncertainty "dp", and the digit "de" of the
+   ! error digit in decimal place "dp". Used for output like 1.027(5)
+   ! where dp=3 and de=5 (provided max_dp>=3).
+      self :: IN
+      dp :: INT, OUT
+      de :: INT, OUT
+      max_dp :: INT, IN
+
+      error :: REAL
+      maxdp :: INT
+
+      maxdp = max_dp
+
+      error = self
+
+      if (error==ZERO) then
+
+         dp = maxdp
+         de = 0
+
+      else
+
+         dp = min(abs(floor(log10(error))),maxdp)
+         de = nint(error*10**dp)
+         if (de==10) then
+            de = 1
+            dp = dp - 1
+         end
+
+      end
+
+   end
+
+!  =================
+!  String conversion
+!  =================
+
+   to_str result (string) ::: get_from(INTRINSIC, FMT=>*), pure
+   ! Change self to a string of minimal length
+   end
+
+   to_str(fmt,left_justify) result (string) ::: get_from(INTRINSIC), pure
+   ! Change self to a "string" using the specified fortran "fmt".
+   end
+
+   to_str(style,width,precision,left_justify) result (string) ::: get_from(INTRINSIC, NN=>1), pure
+   ! Change self to a string with specified fortran "style", in a
+   ! field of "width" characters and "precision" decimal points.
+   end
+
+   to_str(error,width,max_dp) result (string) ::: PURE
+   ! Change "self" to a string of "width+3" with style "f" and no. of
+   ! decimal places derived from "error", but no more than "max_dp"
+   ! decimal places. The decimal places actually used is returned in
+   ! "pr" (if present). Used for output like 1.027(5) which gives dp=3
+   ! and de=5 (provided max_dp>=3). The "+3" in the width is for the
+   ! error part of the string e.g. (4) in 1.023(4).
+      self :: IN
+      error :: REAL, IN
+      width :: INT, IN
+      max_dp :: INT, optional, IN
+      string :: STR(len=width+3) ! note
+
+      dp,de :: INT
+
+      ! Get the decimal place "dp" and the error digit "de"
+      error.get_error_dp_de(dp,de,max_dp) 
+
+      ! Convert "self" with the right size
+      string = .to_str("f",width,precision=dp)
+
+      ! Append the error digit
+      string = trim(string) // "(" // trim(de.to_str) // ")"
+
+   end
+
+   to_str_no_zeros result (string) ::: pure
+   ! Change self to a "string" but remove trailing zeros
+      self :: IN
+      string :: STR
+
+      i :: INT
+
+      ! Write the real as a left-justified string
+      string = " "
+      write(string,fmt=*) self
+      string = adjustl(string)
+
+      ! Get rid of trailing zero's
+      do i = len_trim(string),1,-1
+          select case (string(i:i))
+             case ("0");   string(i:i)=" "
+             case (".");   string(i:i)=" "; exit
+             case default; exit
+          end
+      end
+
+   end
+
+   fortran_format(nval,style,width,precision) result (string) ::: selfless, public, pure
+   ! Change self to a string with specified "style", "width" and
+   ! "precision" as defined in the fortran standard 
+      style :: STR, IN
+      nval,width,precision :: INT, IN
+      string :: STR
+
+      num,wid,pre :: STR
+
+      ! Write width/style/precision as a strings
+      write(num,fmt=*) nval;      num = adjustl(num)
+      write(wid,fmt=*) width;     wid = adjustl(wid)
+      write(pre,fmt=*) precision; pre = adjustl(pre)
+
+      ! Write the format "fmt" 
+      write(string,fmt="(a)") "("//trim(num)//trim(style)//trim(wid)//"."//trim(pre)//")"
+
+   end
+
+!  ================
+!  Equality testing
+!  ================
+
+   equals(x,eps) result (res) ::: pure
+   ! Return TRUE is self is near enough to "x". If present, "eps"
+   ! defines how close before the number is considered the same.
+      self :: IN
+      x :: REAL, IN
+      eps :: REAL, IN, optional
+      res :: BIN
+
+      tol :: REAL
+
+      tol = REAL_EPSILON
+      if (present(eps)) tol = abs(eps)
+
+      res = abs(self-x) < tol
+
+   end
+
+   same_as(x,eps) result (res) ::: pure
+   ! Return TRUE is self is near enough to "x". If present, "eps"
+   ! defines how close before the number is considered the same.
+      self :: IN
+      x :: REAL, IN
+      eps :: REAL, IN, optional
+      res :: BIN
+
+      res = .equals(x,eps)
+
+   end
+
+   is_zero(eps) result (res) ::: pure
+   ! Return TRUE if self is near enough zero. If present, "eps" defines how
+   ! close to zero before the number is considered zero.
+      self :: IN
+      eps :: REAL, IN, optional
+      res :: BIN
+
+      tol :: REAL
+
+      tol = REAL_EPSILON
+      if (present(eps)) tol = abs(eps)
+
+      res = abs(self) < tol
+
+   end
+
+   is_one(eps) result (res) ::: pure
+   ! Return TRUE if self is near enough one. If present, "eps" defines how
+   ! close to one before the number is considered zero.
+      self :: IN
+      eps :: REAL, IN, optional
+      res :: BIN
+
+      tol :: REAL
+
+      tol = REAL_EPSILON
+      if (present(eps)) tol = abs(eps)
+
+      res = abs(self-ONE) < tol
+
+   end
+
+   is_minus_one(eps) result (res) ::: pure
+   ! Return TRUE if self is near enough minus one. If present, "eps" defines how
+   ! close to minus one before the number is considered zero.
+      self :: IN
+      eps :: REAL, IN, optional
+      res :: BIN
+
+      tol :: REAL
+
+      tol = REAL_EPSILON
+      if (present(eps)) tol = abs(eps)
+
+      res = abs(self+ONE) < tol
+
+   end
+
+   is_int(eps) result (res) ::: pure
+   ! Return TRUE if self is near enough to an integer. If present, "eps" defines
+   ! how close to zero the non-integer part is before the number is considered
+   ! an integer.
+      self :: IN
+      eps :: REAL, IN, optional
+      res :: BIN
+
+      val :: REAL
+
+      val = self - int(self)
+      res = val.is_zero(eps)
+
+   end
+
+   is_in_range(range) result (res) ::: pure
+   ! Return TRUE if self is within the specified "range".
+      self :: IN
+      range :: VEC{REAL}(2), IN
+      res :: BIN
+
+      res = range(1) <= self AND self <= range(2)
+
+   end
+
+!  =====================
+!  Numerical integration
+!  =====================
+
+! These are for illustration; consider using modules QUADRATURE or
+! ADAPTIVE_QUADRATURE
+
+   integral(a,b,accuracy) result (res) ::: recursive, functional
+   ! Integrate the function "self" between the limits "a" and "b"
+   ! using adaptive trapezoidal rule with Simpsons approximation acceleration.
+   ! If present, "accuracy" is the required accuracy of the integral.
+      interface
+         self(x) result (res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,b :: REAL, IN
+      accuracy :: REAL, IN, optional
+      res :: REAL
+
+      res = .integrate_adaptive_trapezoid(a,b,accuracy)
+
+   end
+
+   integrate_adaptive_trapezoid(a,b,accuracy) result (res) ::: recursive, functional
+   ! Integrate the function "self" between the limits "a" and "b"
+   ! using adaptive trapezoidal rule with Simpsons approximation acceleration.
+   ! If present, "accuracy" is the required accuracy of the integral.
+      interface
+         self(x) result (res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,b :: REAL, IN
+      accuracy :: REAL, IN, optional
+
+      res :: REAL
+      tol,h,m,fa,fb,fm,one_trap,two_trap,left,right :: REAL
+
+      tol = TOL(6)
+      if (present(accuracy)) tol = accuracy
+
+      h  = b-a
+      m  = (a+b)/TWO
+
+      fa = self(a)
+      fb = self(b)
+      fm = self(m)
+
+      one_trap = h*(fa+fb)/TWO
+      two_trap = h*(fa+TWO*fm+fb)/FOUR
+
+      if (abs(one_trap-two_trap)<THREE*tol) then
+         res   = (FOUR*two_trap - one_trap)/THREE
+      else
+         left  = .integrate_adaptive_trapezoid(a,m,tol/TWO)
+         right = .integrate_adaptive_trapezoid(m,b,tol/TWO)
+         res   = left + right
+      end
+
+   end
+
+   integrate_adaptive_simpson(a,b,accuracy) result (res) ::: recursive, functional
+   ! Integrate the function "self" between the limits "a" and "b"
+   ! using adaptive Simpson rule with acceleration.
+   ! If present, "accuracy" is the required accuracy of the integral.
+      interface
+         self(x) result (res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,b :: REAL, IN
+      accuracy :: REAL, IN, optional
+
+      res :: REAL
+      tol,h,m1,m2,m3,fa,fb,f1,f2,f3,s1,s2,left,right :: REAL
+
+      tol = TOL(6)
+      if (present(accuracy)) tol = accuracy
+
+      h   = (b-a)/TWO
+      m1  = (THREE*a+b)/FOUR
+      m2  = (a+b)/TWO
+      m3  = (a+THREE*b)/FOUR
+
+      fa = self(a)
+      fb = self(b)
+      f1 = self(m1)
+      f2 = self(m2)
+      f3 = self(m3)
+
+      s1 = h*(fa+FOUR*f2+fb)/THREE
+      s2 = h*(fa+FOUR*f1+TWO*f2+FOUR*f3+fb)/SIX
+
+      if (abs(s1-s2)<15.0d0*tol) then
+         res   = (16.0d0*s2 - s1)/15.0d0
+      else
+         left  = .integrate_adaptive_simpson(a,m2,tol/TWO)
+         right = .integrate_adaptive_simpson(m2,b,tol/TWO)
+         res   = left + right
+      end
+
+   end
+
+!  =================
+!  Special functions
+!  =================
+
+   arccos result (res) ::: pure
+   ! Return the arccosine for self. Corrects bug for numbers close to 1.
+      self :: IN
+      res :: REAL
+
+      if (abs(abs(self)-ONE)<TOL(5)) then
+
+         if (self<0) then; res = PI
+         else;             res = ZERO
+         end
+
+      else
+
+         res = acos(self)
+
+      end
+
+   end
+
+   arcsin result (res) ::: pure
+   ! Return the arcsine for self. Corrects bug for numbers close to 1.
+      self :: IN
+      res :: REAL
+      if (abs(abs(self)-ONE)<TOL(5)) then
+         if (self<0) then; res = -PI/TWO
+         else;             res = +PI/TWO
+         end
+      else
+         res = asin(self)
+      end
+   end
+
+   arcsinh result (res) ::: pure
+   ! Return the arcsinh of self. Corrects bug for numbers close to 1.
+   ! Note that self can be any real number.
+      self :: IN
+      res :: REAL
+      res = log(self + sqrt(ONE+self*self))
+   end
+
+   my_sin result (res) ::: public
+   ! Return the sin for self. Used to test integration routines.
+      self :: IN
+      res :: REAL
+      res = sin(self)
+   end
+
+   z_from_p result (res) ::: pure
+   ! Produces the normal deviate Z corresponding to "self", a given lower
+   ! tail area of P; Z is accurate to about 1 part in 10==16.
+   ! Adapted from the Royal Statistical Society f77 routine "PPND16".
+   ! algorithm AS241  appl. statist. (1988) vol 37, no 3.
+      self :: IN
+      res :: REAL
+
+      q,r :: REAL
+
+      q = self - HALF
+
+      if (abs(q) < 0.425D0) then
+
+         r   = 0.180625d+0 - q * q
+         res = q * (((((((2.5090809287301226727d+3 * r + &
+         3.3430575583588128105d+4) * r + 6.7265770927008700853d+4) * r + &
+         4.5921953931549871457d+4) * r + 1.3731693765509461125d+4) * r + &
+         1.9715909503065514427d+3) * r + 1.3314166789178437745d+2) * r + &
+         3.3871328727963666080d+0) / &
+                   (((((((5.2264952788528545610d+3 * r + &
+         2.8729085735721942674d+4) * r + 3.9307895800092710610d+4) * r + &
+         2.1213794301586595867d+4) * r + 5.3941960214247511077d+3) * r + &
+         6.8718700749205790830d+2) * r + 4.2313330701600911252d+1) * r + ONE)
+
+      else
+
+         if (q < ZERO) then; r = self
+         else;               r = ONE - self
+         end
+
+
+         res = ZERO
+
+         ENSURE(r>=ZERO,"probability is not between 0 and 1")
+         r = sqrt(-log(r))
+
+         if (r < FIVE) then
+
+            r = r - 1.6d+0
+            res = (((((((7.74545014278341407640d-4 * r + &
+            2.27238449892691845833d-2) * r + 2.41780725177450611770d-1) * r + &
+            1.27045825245236838258d+0) * r + 3.64784832476320460504d+0) * r + &
+            5.76949722146069140550d+0) * r + 4.63033784615654529590d+0) * r + &
+            1.42343711074968357734d+0) / &
+                  (((((((1.05075007164441684324d-9 * r + &
+            5.47593808499534494600d-4) * r + 1.51986665636164571966d-2) * r + &
+            1.48103976427480074590d-1) * r + 6.89767334985100004550d-1) * r + &
+            1.67638483018380384940d+0) * r + 2.05319162663775882187d+0) * r + ONE)
+
+         else
+
+            r = r - FIVE
+            res = (((((((2.01033439929228813265d-7 * r + &
+            2.71155556874348757815d-5) * r + 1.24266094738807843860d-3) * r + &
+            2.65321895265761230930d-2) * r + 2.96560571828504891230d-1) * r + &
+            1.78482653991729133580d+0) * r + 5.46378491116411436990d+0) * r + &
+            6.65790464350110377720d+0) / &
+                  (((((((2.04426310338993978564d-15 * r + &
+            1.42151175831644588870d-7) * r + 1.84631831751005468180d-5) * r + &
+            7.86869131145613259100d-4) * r + 1.48753612908506148525d-2) * r + &
+            1.36929880922735805310d-1) * r + 5.99832206555887937690d-1) * r + ONE)
+
+         end
+
+         if (q < ZERO) res = -res
+
+      end
+
+   end
+
+   cumulative_poisson(x,k) result (res) ::: selfless, PURE
+   ! The cumulative poisson probability distribution, P_x(<k).
+   ! The probability that the number of poisson events occuring
+   ! will be between 0 and k-1 inclusive.  From numerical recipes.
+      x :: REAL, IN
+      k :: INT, IN
+      res :: REAL
+
+      res = ONE - REAL::incomplete_gamma(ONE*k,x)
+
+   end
+
+   chi2(x2,nu) result (res) ::: selfless, PURE
+   ! The chi2 probability distribution, P(chi^2,nu).
+   ! The probability that the number of poisson events occuring
+   ! will be between 0 and k-1 inclusive.  From numerical recipes.
+      x2 :: REAL, IN
+      nu :: INT, IN
+      res :: REAL
+
+      res = REAL::incomplete_gamma(HALF*nu,HALF*x2)
+
+   end
+
+   error_function result (res) ::: PURE
+   ! The error function.
+   ! From numerical recipes.
+      self :: IN
+      res :: REAL
+
+#ifdef NO_ERF
+      res = REAL::incomplete_gamma_series(HALF,self*self)
+      if (self<ONE) res = -res
+#else
+      res = erf(self)
+#endif
+
+   end
+
+   complementary_error_function result (res) ::: PURE
+   ! The complementary error function.
+   ! From numerical recipes.
+      self :: IN
+      res :: REAL
+
+#ifdef NO_ERF
+      res = ONE - .erf
+#else
+      res = erfc(self)
+#endif
+
+   end
+
+   incomplete_gamma(a,x) result (res) ::: selfless, PURE
+   ! The incomplete gamma function P(a,x).
+   ! From numerical recipes.
+      a,x :: REAL, IN
+      res :: REAL
+
+   ENSURE(a>0,"a must be positive")
+   ENSURE(x>=0,"x must be non-negative")
+
+      if (x<a+ONE) then
+        res = REAL::incomplete_gamma_series(a,x)
+      else
+        res = ONE - REAL::incomplete_gamma_cfrac(a,x)
+      end
+
+   end
+
+   incomplete_gamma_series(a,x) result (res) ::: selfless, PURE
+   ! The incomplete gamma function P(a,x), series form.
+   ! From numerical recipes.
+      a,x :: REAL, IN
+      res :: REAL
+
+   ENSURE(a>0,"a must be positive")
+   ENSURE(x>=0,"x must be non-negative")
+
+      n :: INT
+      eps,ap,del,ser,gln :: REAL
+
+      eps   = REAL_EPSILON
+
+      if (x==ZERO) then
+        res = ZERO
+        return
+      end
+
+      ap  = a
+      ser = ONE/a
+      del = ser
+      n   = 0
+
+      do
+        n   = n + 1
+        ap  = ap + ONE
+        del = del*x/ap
+        ser = ser + del
+        if (abs(del)<abs(ser)*eps) exit
+      end
+
+      gln = a.ln_gamma
+      res = ser * exp(-x + a*log(x) - gln)
+
+   ENSURE(n<=REAL_MAX_ITERATIONS,"too many iterations")
+
+   end
+
+   incomplete_gamma_cfrac(a,x) result (res) ::: selfless, PURE
+   ! The *complementary* incomplete gamma function 
+   ! Q(a,x) = 1 - P(a,x), continued fraction form.  
+   ! From numerical recipes.
+      a,x :: REAL, IN
+      res :: REAL
+
+   ENSURE(a>0,"a must be positive")
+   ENSURE(x>=0,"x must be non-negative")
+
+      i :: INT
+      eps,fpmin :: REAL
+      an,b,c,d,del,h,gln :: REAL
+
+      eps   = REAL_EPSILON
+      fpmin = tiny(ONE)    
+
+      b = x + ONE - a
+      c = ONE/fpmin
+      d = ONE/b
+      h = d
+      i = 0
+
+      do
+        i = i + 1
+        an = -i*(i-a)
+        b = b + TWO
+        d = an*d + b
+        c = b + an/c
+        if (abs(d)<fpmin) d = fpmin
+        if (abs(c)<fpmin) c = fpmin
+        d = ONE/d
+        del = d*c
+        h = h*del
+        if (abs(del-ONE)<eps) exit
+      end
+
+      gln = a.ln_gamma
+      res = exp(-x + a*log(x) - gln) * h
+
+   ENSURE(n<=REAL_MAX_ITERATIONS,"too many iterations")
+
+   end
+
+   ln_gamma result (res) ::: PURE
+   ! The log of the gamma function. From Numerical Recipes, p. 207.
+   ! This formula is accurate to 2 x 10^-10. Furthermore, the same
+   ! formula can be used to calculate the complex gamma function
+   ! for Re(z)>0, and the same error bound applies, everywhere in the
+   ! positive complex half plane.
+      self :: IN
+      res :: REAL
+
+   ENSURE(self>0,"argument must be positive")
+
+      ser,tmp,x,y :: REAL
+      j :: INT
+
+      x = self
+      y = x
+
+      tmp = x + 5.5d0
+      tmp = (x+HALF)*log(tmp) - tmp
+      ser = ln_gamma_coefficients(0)
+
+      do j = 1,6
+        y = y + ONE
+        ser = ser + ln_gamma_coefficients(j)/y
+      end
+
+      res = tmp + log(SQRT_2PI*ser/x)
+
+   end
+
+   ln_gamma_v2 result (res) ::: PURE
+   ! Another version of the natural logarithm of GAMMA(X).  It was taken from
+   ! some code from the net called "quadrule.f90" It doesn't look as efficient
+   ! as the Numerical Recipes code, but it seems to have slightly more accuracy.
+   ! The original code had these comments:
+   !
+   ! The method uses Stirling's approximation, and is accurate to about
+   ! 12 decimal places. 
+   ! 
+   ! Reference:
+   !    Arthur Stroud and Don Secrest,
+   !    Gaussian Quadrature Formulas,
+   !    Prentice Hall, 1966.
+      self :: IN
+      res :: REAL
+
+   ENSURE(self>ZERO,"argument must be non-negative")
+
+      i,k,m :: INT
+      p,x,x2,y,z,z2 :: REAL
+
+      x = self
+
+      if (x<HALF) then; m = 1; x2 = ONE - x
+      else;             m = 0; x2 = x
+      end 
+
+      k = - 1
+      do
+        k = k + 1
+        if (SIX<x2+k) exit
+      end 
+      
+      z  = x2 + k
+      z2 = z*z
+      y  = (z-HALF)*log(z) - z + 0.9189385332047D+00 + &
+           ( ( ( ( ( &
+           - 4146.0D+00   / z2 &
+           + 1820.0D+00 ) / z2 &
+           - 1287.0D+00 ) / z2 &
+           + 1716.0D+00 ) / z2 &
+           - 6006.0D+00 ) / z2 &
+           + 180180.0D+00 ) / z / 2162160.0D+00
+
+      if (k>0) then
+        do i = 1,k
+          y = y - log(x2+k-i)
+        end do
+      end
+
+      ENSURE(m/=0,"m is zero - fatal error")
+
+      p = PI/sin(PI*(ONE-x2))
+      ENSURE(p>ZERO,"p is not +ve - fatal error")
+
+      y   = log(p) - y
+      res = y
+
+   end
+
+!   gamma result (res) ::: recursive
+!   ! Computes the gamma function using Hastings's approximation. This code was
+!   ! taken from the net from a routine called "quadrule.f90".
+!   ! Reference:
+!   !    Arthur Stroud and Don Secrest,
+!   !    Gaussian Quadrature Formulas,
+!   !    Prentice Hall, 1966.
+!      res :: REAL
+!   ENSURE(self>ZERO,"argument must be non-negative")
+!   ENSURE(self<70.0d0,"argument must be less than 70")
+!      gam :: REAL
+!      x,y,z,za :: REAL
+!      gam(y) = ((((((( &
+!              0.035868343D+00   * y &
+!            - 0.193527818D+00 ) * y &
+!            + 0.482199394D+00 ) * y &
+!            - 0.756704078D+00 ) * y &
+!            + 0.918206857D+00 ) * y &
+!            - 0.897056937D+00 ) * y &
+!            + 0.988205891D+00 ) * y &
+!            - 0.577191652D+00 ) * y + ONE
+!      self = x
+!      if (x==ONE) then
+!        res = ONE
+!        return
+!      end if
+!      if (x<=ONE) then
+!        res = gam(x)/x
+!        return
+!      end if
+!      z = x
+!      za = ONE
+!      do
+!        z = z - ONE
+!        if (z<ONE) then
+!          res = za*gam(z)
+!          exit
+!        else if (z==ONE) then
+!          res = za
+!          exit
+!        end if
+!        za = za * z
+!      end
+!   end
+
+!   s_from_p(p,mean)
+!   ! Calculate the Poisson upper limit of cumulation "s" from the cumulation "p".
+!   ! self is p, function returns s.
+!       p,mean :: REAL, IN
+!
+!C      ..
+!C      .. Scalar Arguments ..
+!       REAL bound,p,s,xlam
+!       INTEGER status,which
+!C      ..
+!C      .. Local Scalars ..
+!       REAL fx,pp,ss,xxlam
+!       LOGICAL qhi,qleft
+!C      ..
+!C      .. External Functions ..
+!       REAL cumpoi
+!       EXTERNAL cumpoi
+!C      ..
+!C      .. External Subroutines ..
+!       EXTERNAL invr,stinvr
+!
+!       ENSURE(p>ZERO, "p not greater than zero")
+!       ENSURE(p<ONE, "p not less than one")
+!       ENSURE(xlam>ZERO,"xlam not > 0")
+!
+!           res = FIVE
+!           CALL stinvr(ZERO,TEN==30,HALF,HALF,FIVE,TOL(4),TOL(4))
+!           status = 0
+!           CALL invr(status,res,fx,qleft,qhi)
+!           do
+!             if (status/=1) exit
+!             fx = cumpoi(res,xlam) - p
+!             CALL invr(status,res,fx,qleft,qhi)
+!           end
+!
+!           if (status==-1) then
+!             if (NOT (qleft)) then
+!               status = 2
+!               bound = inf
+!             else
+!               status = 1
+!               bound = 0.0
+!             end
+!           end
+!   end
+
+   hermite_polynomial(n,normalise) result (res) ::: PURE
+   ! Return "res", the value of the "n"th hermite polynomial H_n(self).
+   ! If present and TRUE, "normalise" gives values normalised for use
+   ! in generating harmonic vibrational wavefunctions. See below.
+      self :: IN
+      n :: INT, IN
+      normalise :: BIN, IN, optional
+      res :: REAL
+
+      coeff :: VEC{REAL}*
+      x :: REAL
+      i :: INT
+
+      allocate(coeff(n))
+      coeff = n.hermite_polynomial_coeffs(normalise)
+
+      res = ZERO
+      x = ONE
+      do i = 0,n
+         res = res + coeff(i+1)*x
+         x = x*self
+      end
+
+      deallocate(coeff)
+
+   end
+
+   harmonic_vibrational_fn(n) result (res) ::: PURE
+   ! Return "res", the value of the "n"th harmonic vibrational wavefunction
+   ! as a function of the dimensionless normal coordinate "self"
+      self :: IN
+      n :: INT, IN
+      res :: REAL
+
+      q :: REAL
+
+      q = self
+   !  fac = sqrt( ONE/ (sqrt(PI) * 2==n * n.factorial) )
+
+      res = q.hermite_polynomial(n,normalise=TRUE)*exp(-HALF*q*q)
+
+   end
+
+!   boys_function_F(m) result (res) 
+!   ! The Boys function of order "m", 
+!   ! res = F_m(T) = \int_0^1 t^2m exp(-Tt^2) dt
+!     self :: IN
+!     res :: REAL
+!   ENSURE(self>0,"argument must be positive")
+!     ser,tmp,x,y :: REAL
+!     j :: INT
+!     x = self
+!     y = x
+!     tmp = x + 5.5d0
+!     tmp = (x+HALF)*log(tmp) - tmp
+!     ser = ln_gamma_coefficients(0)
+!     do j = 1,6
+!        y = y + ONE
+!        ser = ser + ln_gamma_coefficients(j)/y
+!     end
+!     res = tmp + log(SQRT_2PI*ser/x)
+!   end
+
+!   gill_T1(m,eps) result (res) 
+!   ! The function whose root is the minimum value of T for which the use of a
+!   ! multipole expansion is accurate to "eps".
+!     self :: IN
+!     m :: INT
+!     eps,res :: REAL
+!   ENSURE(self>0,"argument must be positive")
+!   ENSURE(eps>0,"eps must be positive")
+!   ENSURE(m>0,"m must be positive")
+!      mmh,mph :: REAL
+!      mmh = m - HALF
+!      mph = m + HALF
+!      res = self - mmh*log(self) - mph.ln_gamma - log(eps)
+!   end
+
+!   gill_T1_stub result (res) 
+!   ! The function whose root is the minimum value of T for which the use of a
+!   ! multipole expansion for the Boys function of order "m" is accurate to
+!   ! "eps".  This stub is used for root finding and takes its "m" and "eps"
+!   ! values from the corresponding module variables.
+!      res :: REAL
+!   ENSURE(self>0,"argument must be positive")
+!      m :: INT
+!      eps,mmh,mph :: REAL
+!      m = gill_m
+!      eps = gill_eps
+!      mmh = m - HALF
+!      mph = m + HALF
+!      res = self - mmh*log(self) - mph.ln_gamma - log(eps)
+!   end
+
+!   set_gill_T1(m,eps) ::: selfless, public
+!   ! Set Gill's T1(m) numbers which define the minimum value of T for which the
+!   ! use of a multipole expansion is accurate to "eps". 
+!     self :: IN
+!     m :: INT
+!     eps :: REAL
+!   ENSURE(eps>0,"eps must be positive")
+!   ENSURE(m>0,"m must be positive")
+!      x1,x2 :: REAL
+!      i :: INT
+!      if (allocated(gill_T1)) gill_T1.destroy
+!      gill_T1.create(m)
+!      do i = 1,m
+!         gill_m = m
+!         gill_eps = eps
+!         x1 = ZERO
+!         x2 = -TWO*log(eps)
+!         REAL::bracket_root(REAL::gill_T1_stub,x1,x2)
+!         REAL::find_root(REAL::gill_T1_stub,x1,x2,root,tol=)
+!      end
+!   end
+
+!  ========================
+!  Unit conversion routines
+!  ========================
+
+   convert_to(units) ::: PURE
+   ! Convert the number "self" in atomic units or generic units to a
+   ! new number in "units".
+      self :: INOUT
+      units :: STR, IN
+
+   ENSURE(units.is_known_unit,"unknown units, " // units)
+
+      self = self * units.conversion_factor
+
+   end
+
+   to_units(units) result (res) ::: PURE
+   ! Convert the number "self" in atomic units or generic units to a
+   ! new number in "units".
+      self :: IN
+      units :: STR, IN
+      res :: REAL
+
+   ENSURE(units.is_known_unit,"unknown units, " // units)
+
+      res = self * units.conversion_factor
+
+   end
+
+   convert_from(units) ::: PURE
+   ! Convert the number "self" from "units" system to a new number
+   ! in atomic units or generic units.  Returns "err" whether it was successful.
+      self :: INOUT
+      units :: STR, IN
+
+   ENSURE(units.is_known_unit,"unknown units, " // units)
+
+      self = self/units.conversion_factor
+
+   end
+
+   from_units(units) result (res) ::: PURE
+   ! Convert the number "self" from "units" system to a new number
+   ! in atomic units or generic units.  Returns "err" whether it was successful.
+      self :: IN
+      units :: STR, IN
+      res :: REAL
+
+   ENSURE(units.is_known_unit,"unknown units, " // units)
+
+      res = self/units.conversion_factor
+
+   end
+
+!  =====================
+!  Root finding routines
+!  =====================
+
+   bracket_root(x1,x2,factor,max_it) ::: routinal
+   ! Given a function self(x) and initial points "x1" and "x2", bracket a root
+   ! of self(x) by expansion. If "factor" is present it is used as the (linear)
+   ! interval expansion factor. If "max_it" is present then it is the number of
+   ! times the interval is expanded.
+      interface
+         self(x) result (res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      x1,x2  :: REAL
+      factor :: REAL, optional
+      max_it :: INT, optional
+   ENSURE(x1/=x2,"non-zero range (x1,x2) required")
+      j,maxit :: INT
+      f1,f2,fac :: REAL
+      fac = 1.6d0
+      if (present(factor)) fac = factor
+      maxit = 50
+      if (present(max_it)) maxit = max_it
+      f1 = self(x1)
+      f2 = self(x2)
+      do j = 1,maxit
+         if (f1*f2<ZERO) return
+         if (abs(f1)<abs(f2)) then
+            x1 = x1 + fac*(x1-x2)
+            f1 = self(x1)
+         else
+            x2 = x2 + fac*(x2-x1)
+            f2 = self(x2)
+         end
+      end
+      DIE("Exceeded maximum number of iterations")
+   end
+
+   find_root_brent(x1,x2,root,tol,val,max_it) ::: routinal
+   ! Given a function self(x) and initial points "x1" and "x2" which bracket a
+   ! root of self, find the "root" to a precision "tol". If "val" present, then
+   ! the root which makes self have this value is returned (an isovalue).
+   ! If "max_it" is present it is set to the maximum number of iterations.
+      interface
+         self(x) result (res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      x1,x2,root,tol :: REAL
+      val :: REAL, optional
+      max_it :: INT, optional
+
+      iter :: INT
+      a,b,c,d,e,fa,fb,fc,p,q,r,s,tol1,xm :: REAL
+      maxit :: INT = 100
+      iso   :: REAL = ZERO
+      eps   :: REAL = TOL(8)
+
+      if (present(max_it)) maxit = max_it
+      if (present(val))    iso = val
+
+      a  = x1
+      b  = x2
+      fa = self(a) - iso
+      fb = self(b) - iso
+      ENSURE((fa>0 AND fb>0) OR (fa<0 AND fb<0),"root is not bracketed")
+      c = b
+      fc = fb
+      d = ZERO
+      e = ZERO
+
+      do iter = 1,maxit
+
+         ! Rename a,b,c and adjust bounding interval d
+         if ((fb>0 AND fc>0) OR (fb<0 AND fc<0)) then
+            c = a    
+            fc = fa
+            d = b - a
+            e = d
+         end
+         if (abs(fc)<abs(fb)) then
+            a  = b ; b  = c ; c  = a
+            fa = fb; fb = fc; fc = fa
+         end
+
+         ! Test convergence
+         tol1 = TWO*eps*abs(b)+HALF*tol
+         xm = HALF*(c-b)
+         if (abs(xm)<=tol1 OR fb==ZERO) then
+            root = b
+            return ! <<<<
+         end
+
+         ! Attempt inverse quadratic interpolation
+         if (abs(e)>=tol1 AND abs(fa)>abs(fb)) then
+            s = fb/fa 
+            if (a==c) then
+               p = TWO*xm*s
+               q = ONE - s
+            else
+               q = fa/fc
+               r = fb/fc
+               p = s*(TWO*xm*q*(q-r)-(b-a)*(r-ONE))
+               q = (q-ONE)*(r-ONE)*(s-ONE)
+            end
+            if (p>ZERO) q = -q
+            p = abs(p)
+            if (TWO*p<min(THREE*xm*q-abs(tol1*q),abs(e*q))) then
+               e = d  ! Accept interpolation
+               d = p/q
+            else
+               d = xm ! Interpolation failed, use bisection
+               e = d
+            end
+         else
+            d = xm    ! Bounds decreasing too slowly, use bisection
+            e = d
+         end
+         a = b; fa = fb
+         if (abs(d)> tol1) then; b = b + d
+         else;                   b = b+sign(tol1,xm)
+         end
+         fb = self(b) - iso
+      end
+
+      DIE("maximum iterations exceeded")
+
+   end
+
+!  =====================
+!  Minimization routines
+!  =====================
+
+   bracket_minimum(a,b,c,fa,fb,fc) ::: routinal
+   ! Given a function self(x) and initial points "a" and "b" search in
+   ! the downhill direction and return points "a", "b" and "c" that bracket
+   ! a minimum of the function, and return the value of the function
+   ! "fa", "fb", and "fc" at these points. NOTE: "c" is not used initially.
+      interface
+         self(x) result (res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,b,c,fa,fb,fc :: REAL
+      gold :: REAL = 1.618034
+      glimit :: REAL = 100
+      tiny :: REAL = 1.0d-20
+      fu,q,r,u,ulim :: REAL
+      fa = self(a)
+      fb = self(b)
+      if (fb>fa) then
+        a.swap_with(b)
+        fa.swap_with(fb)
+      end
+      c  = b + gold*(b-a)
+      fc = self(c)
+      do
+         if (fb<fc) exit                  ! bracket found
+         r = (b-a)*(fb-fa)                ! get u by parabolic extrapolation
+         q = (b-c)*(fb-fa)
+         u = b - ((b-c)*q-(b-a)*r)/(TWO*sign(max(abs(q-r),tiny),q-r))
+         ulim = b + glimit*(c-b)
+         if ((b-u)*(u-c)>ZERO) then       ! Parabolic u lies between b and c
+            fu = self(u)
+            if (fu<fc) then               ! got a minimum between b and c
+               a = b; fa = fb
+               b = u; fb = fu
+               exit
+            else if (fu>fb) then          ! got a minimum between a and u
+               c = u; fc = fu
+               exit
+            end
+            u = c + gold*(c-b)            ! parabolic fit no use, so magnify
+            fu = self(u)
+         else if ((c-u)*(u-ulim)>0) then ! Fit is between c and its allowed limit
+            fu = self(u)
+            if (fu<fc) then
+               b = c; fb = fc
+               c = u; fc = fu
+               u = c + gold*(c-b)
+               fu = self(u)
+            end
+         else if ((u-ulim)*(ulim-c)>0) then
+            u = ulim
+            fu = self(u)
+         else
+            u = c + gold*(c-b)            ! magnify
+            fu = self(u)
+         end
+         a = b; fa = fb
+         b = c; fb = fc
+         c = u; fc = fu
+      end
+      if (a>c) then
+         a.swap_with(c)
+         fa.swap_with(fc)
+      end
+   end
+
+   minimise_golden(a,b,c,xmin,f,tol) ::: routinal
+   ! Given a function self(x) and initial points "a", "b" and "c"
+   ! which bracket a minimum, return the minimum point "xmin" and the
+   ! value "f" at the minimum to a precision "tol" using the golden
+   ! section search method.
+      interface
+         self(x) result (res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,b,c,xmin,f,tol :: REAL
+      r :: REAL = 0.618033399
+      s,f1,f2,x0,x1,x2,x3 :: REAL
+      s = ONE - r
+      x0 = a
+      x3 = c
+      if (abs(c-b)>abs(b-a)) then
+         x1 = b; x2 = b + s*(c-b)
+      else
+         x2 = b; x1 = b - s*(b-a)
+      end
+      f1 = self(x1)
+      f2 = self(x2)
+      do
+         if (abs(x3-x0)<=tol*(abs(x1)+abs(x2))) exit
+         if (f2<f1) then
+            x0 = x1
+            x1 = x2
+            x2 = r*x1 + s*x3
+            f1 = f2
+            f2 = self(x2)
+         else
+            x3 = x2
+            x2 = x1
+            x1 = r*x2 + s*x0
+            f2 = f1
+            f1 = self(x1)
+         end
+      end
+      if (f1<f2) then; f = f1; xmin = x1
+      else;            f = f2; xmin = x2
+      end
+   end
+
+   minimise_brent(a,b,c,xmin,f,tol) ::: routinal
+   ! Given a function self(x) and initial points "a", "b" and "c"
+   ! which bracket a minimum, return the minimum point "xmin" and the
+   ! value "f" at the minimum to a precision "tol" using Brent's method.
+      interface
+         self(x) result (res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,b,c,xmin,f,tol :: REAL
+
+      cgold,zeps :: REAL
+      d,e,etemp,fu,fv,fw,fx,p,q,r,tol1,tol2,u,v,w,x,xm :: REAL
+      itmax,iter :: INT
+      failed :: BIN
+
+      itmax = REAL_MAX_ITERATIONS
+      cgold = 0.3819660
+      zeps  = TOL(10)
+
+      if (a>c) a.swap_with(c)
+      v = b
+      b = c
+      d = ZERO
+      e = ZERO
+      w = v
+      x = v
+      fx = self(x)
+      fv = fx
+      fw = fx
+      failed = TRUE
+
+      do iter = 1,itmax
+         xm = HALF*(a+b)
+         tol1 = tol*abs(x) + zeps
+         tol2 = TWO*tol1
+         if (abs(x-xm)<(tol2-HALF*(b-a))) then
+            failed = FALSE
+            exit
+         end
+         if (abs(e)>tol1) then
+            r = (x-w)*(fx-fv)
+            q = (x-v)*(fx-fw)
+            p = (x-v)*q - (x-w)*r
+            q = TWO*(q-r)
+            if (q>ZERO) p = -p
+            q = abs(q)
+            etemp = e
+            e = d
+            if (abs(p)>=abs(HALF*q*etemp) OR p<=q*(a-x) OR p>=q*(b-x)) then
+              if (x>=xm) then; e = a-x
+              else;            e = b-x
+              end
+              d = cgold*e
+            else
+              d = p/q
+              u = x + d
+              if ((u-a)<tol2 OR (b-u)<tol2) d = sign(tol1,xm-x)
+            end
+         else
+           if (x>=xm) then; e = a-x
+           else;            e = b-x
+           end
+           d = cgold*e
+         end
+         if (abs(d)>=tol1) then; u = x + d
+         else;                   u = x + sign(tol1,d)
+         end
+         fu = self(u)
+         if (fu<=fx) then
+            if (u>=x) then; a = x
+            else;           b = x
+            end
+            v = w; fv = fw
+            w = x; fw = fx
+            x = u; fx = fu
+         else
+            if (u<x) then; a = u
+            else;          b = u
+            end
+            if (fu<=fw OR w==x) then
+               v = w; fv = fw
+               w = u; fw = fu
+            else if (fu<=fv OR v==x OR v==w) then
+               v = u; fv = fu
+            end
+         end
+      end
+
+      f = fx
+      xmin = x
+
+      DIE_IF(failed,"maximum iterations exceeded")
+
+   end
+
+   to_random_normal
+   ! Set self to be a normal random number. From algorithm 488 in toms
+   ! from Netlib. This procedure cannot be made pure.
+   ! ALGORITHM APPEARED IN COMM. ACM, VOL. 17, NO. 12, P. 704.
+      self :: OUT
+
+      D :: VEC{REAL}(60) = (/0.674489750d0,0.475859630d0,0.383771164d0, &
+      0.328611323d0,0.291142827d0,0.263684322d0, &
+      0.242508452d0,0.225567444d0,0.211634166d0,0.199924267d0,0.189910758d0,0.181225181d0, &
+      0.173601400d0,0.166841909d0,0.160796729d0,0.155349717d0,0.150409384d0,0.145902577d0, &
+      0.141770033d0,0.137963174d0,0.134441762d0,0.131172150d0,0.128125965d0,0.125279090d0, &
+      0.122610883d0,0.120103560d0,0.117741707d0,0.115511892d0,0.113402349d0,0.111402720d0, &
+      0.109503852d0,0.107697617d0,0.105976772d0,0.104334841d0,0.102766012d0,0.101265052d0, &
+      0.099827234d0,0.098448282d0,0.097124309d0,0.095851778d0,0.094627461d0,0.093448407d0, &
+      0.092311909d0,0.091215482d0,0.090156838d0,0.089133867d0,0.088144619d0,0.087187293d0, &
+      0.086260215d0,0.085361834d0,0.084490706d0,0.083645487d0,0.082824924d0,0.082027847d0, &
+      0.081253162d0,0.080499844d0,0.079766932d0,0.079053527d0,0.078358781d0,0.077681899d0/)
+      U :: REAL, save = ZERO
+      first :: BIN, save = TRUE
+      A,W,V :: REAL
+      I,J,N :: INT
+
+      ! Note that on the first call, self is returned as zero, so to
+      ! get around this, we iterate twice.  On all subsequent calls,
+      ! iterate only once.
+      N = 1
+      if (first) N = 2
+
+      do J = 1,N
+
+         A = ZERO
+         I = 0
+         do
+            U = U + U
+            if (U < ONE) exit
+            U = U - ONE
+            I = I + 1
+            A = A - D(I)
+         end
+
+         outer : do
+            W = D(I+1)*U
+            V = W*(HALF*W-A)
+            do
+               call random_number(U)
+               if (V<=U) exit outer
+               call random_number(V)
+               if (U<=V) exit
+            end
+            U = (V-U)/(ONE-U)
+         end do outer
+
+         U = (U-V)/(ONE-V)
+         U = U + U
+         if (U >= ONE) then
+            U = U - ONE
+            self = W - A
+         else
+            self = A - W
+         end
+
+      end
+
+      first = FALSE
+
+   end
+
+end

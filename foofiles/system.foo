@@ -1,0 +1,2037 @@
+!-------------------------------------------------------------------------------
+!
+! SYSTEM: 
+!
+! This is the second most basic module in the Tonto system. It depends only on
+! the TYPES module.
+!
+! The SYSTEM module contains all functions which are deemed to provided by the
+! "system" i.e. error messages, graceful error termination, memory management,
+! call stack management, I/O buffer tracking, timing and profiling, and parallel
+! message passing betwen processes -- including reduction, broadcast and
+! synchronisation. The latter prallel operations are completely inherited from
+! another stand-alone module, PARALLEL. Inheritance is implemented as text
+! inclusion, so there is no fortran dependence betwen the SYSTEM and PARALLEL
+! module.
+!
+! Most of the system functionalities are activated by C macros at compile-time.
+! So, you can turn them off to obtain a lean executable for production. You can
+! see all the macros, which call routines in this module, in the "macros" file.
+! The normal "make" process produces pure Fortran where all the C macros have
+! been expanded.
+!
+! An .error_status is simply an integer, the value is set to 1 if the program
+! terminates, or -1 if a warning condition is encountered. Use the
+! -DUSE_ERROR_MANAGEMENT macro at compile time. Use
+! -DUSE_PRE_AND_POST_CONDITIONS to turn on stricted error checking at the start
+! and sometimes at the end of every routine.
+!
+! The memory management part stores the total and maximum memory used (in
+! bytes), and the the total and maximum number of blocks of memory allocated.  A
+! memory limit is also stored.  It is a fatal error to use more than the
+! allocated limit.
+!
+! The call stack management keeps track of the current call stack, which makes
+! tracking down errors easier. Use the -DUSE_CALL_STACK_MANAGEMENT macro to
+! activate memory management and call stack management together.
+!
+! The I/O part contains the file name and record number of the last acessed
+! file, in the event that this file should cause an error, the exact position
+! will be known. This feature is always on, but you get more detailed feedback
+! if using call stack management.
+!
+! The timing part provides methods to profile and time routines in the program,
+! and to print out the results acording the the call stack level. This part is
+! currently limited by the clock size set by fortran, but it may be useful for
+! rudimentary profiling. This is activated by -DUSE_TIME_PROFILING.
+!
+! The parallel part keeps track of the number of processors, the processor rank,
+! and uses a model where only the rank 0 processor performs I/O. Currently the
+! implementation is tied to MPI, so activate using -DMPI. Appropriate MPI
+! libraries should be available, and supplied in the platform speicific file,
+! and you should also provide MPI.mod file.
+!
+! A standard system object, "tonto", is provided to hold all this system
+! information in the current program. It should not be neccesary to create any
+! other system objects (except for the stdin, stdou, and stdtim objects).
+!
+! Copyright (C) Dylan Jayatilaka, 1998
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: system.foo 4082 2013-07-17 06:04:05Z dylan_ $
+!-------------------------------------------------------------------------------
+
+module SYSTEM
+
+! NOTE: Below, typing capital "USE" (rather than lower cased "use") 
+! means that the modules are not listed as dependencies in the Makefile.
+
+#ifdef MPI
+!  Note the capital USE, below which prevents the preprocessor 
+!  from making the module a dependent
+   USE mpi, only: MPI_COMM_WORLD
+   USE mpi, only: MPI_SUM
+   USE mpi, only: MPI_CHARACTER
+   USE mpi, only: MPI_LOGICAL
+   USE mpi, only: MPI_INTEGER
+   USE mpi, only: MPI_DOUBLE_PRECISION
+   USE mpi, only: MPI_DOUBLE_COMPLEX
+#endif
+
+#ifdef INTEL_ifort
+   USE ifport, only: flush
+#endif
+
+#ifdef SERVICE_ROUTINES
+   USE service_routines, only: flush
+#endif
+
+#ifdef F90_UNIX_IO
+   USE f90_unix_io, only: flush
+#endif
+
+   implicit none
+
+#undef  STACK 
+#define STACK(X)
+#undef  UNSTACK 
+#define UNSTACK(X)
+#undef  CHECK 
+#define CHECK(X)
+#undef  START_TIMER 
+#define START_TIMER(X)
+#undef  STOP_TIMER 
+#define STOP_TIMER
+
+   tonto :: SYSTEM*, public
+
+contains
+
+!  =================
+!  Creation routines
+!  =================
+
+   create ::: leaky
+   ! Create the system object
+      self :: PTR
+
+      allocate(self)
+      .initialise
+
+   end
+
+   destroy ::: leaky
+   !  Destroy the memory manager object
+      self :: PTR
+
+      if (.destroyed) return
+
+      .finalise
+      .destroy_ptr_part
+      deallocate(self)
+
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of self
+      self :: INOUT
+
+      nullify(.io_file)
+      nullify(.call_stack)
+      nullify(.memory_used_stack)
+      nullify(.memory_address_stack)
+      nullify(.memory_amount_stack)
+      nullify(.memory_call_stack)
+      nullify(.leaky_call_stack)
+      nullify(.time_call_stack)
+      nullify(.time_strt_stack)
+      nullify(.time_for_routine)
+      nullify(.name_for_routine)
+      nullify(.n_calls_for_routine)
+
+   end
+
+   destroy_ptr_part
+   ! Nullify the pointer parts of self
+      self :: INOUT
+
+      nullify(.io_file)
+
+      if (.call_stack.created)            deallocate(.call_stack)
+      if (.memory_used_stack.created)     deallocate(.memory_used_stack)
+      if (.memory_address_stack.created)  deallocate(.memory_address_stack)
+      if (.memory_amount_stack.created)   deallocate(.memory_amount_stack)
+      if (.memory_call_stack.created)     deallocate(.memory_call_stack)
+      if (.time_call_stack.created)       deallocate(.time_call_stack)
+      if (.time_strt_stack.created)       deallocate(.time_strt_stack)
+      if (.time_for_routine.created)      deallocate(.time_for_routine)
+      if (.name_for_routine.created)      deallocate(.name_for_routine)
+      if (.n_calls_for_routine.created)   deallocate(.n_calls_for_routine)
+
+   end
+
+   set_defaults(memory_limit)
+   !  Set defaults
+      self :: INOUT
+      memory_limit :: INT, optional
+
+      ! Errors & warnings
+      .error_status = 0
+      .warnings_issued = FALSE
+      .error_output_unit = SYSTEM_ERROR_OUTPUT_UNIT
+      .keyword_echo = SYSTEM_KEYWORD_ECHO
+
+      ! Memory
+      .memory_used = 0
+      .memory_blocks_used = 0
+      .max_memory_used = 0
+      .max_memory_blocks_used = 0
+      .memory_limit = SYSTEM_MEMORY_LIMIT
+      .memory_limit_exceeded = FALSE
+      .memory_leak_detected = FALSE
+      .memory_leak_level = 0
+      .memory_units = SYSTEM_MEMORY_UNITS
+
+      ! Override memory limit
+      if (present(memory_limit)) .memory_limit = memory_limit
+
+      ! Address
+      .n_addresses = 0
+      .max_addresses = 0
+      .leaky_address = 0
+      .leaky_routine = " "
+
+      ! Stack
+      .stack_level = 0
+      .max_stack_level = 0
+      .flat_stack = " "
+      .stack_show_min_level = -1
+      .stack_show_max_level = -1
+      .show_call_stack = FALSE
+
+      ! Timing
+      .time_stack_level = 0
+      .n_timed_routines = 0
+      .time_limit = ZERO
+      .show_cumulative_time = FALSE ! Note: there are usually roundoff errors in this case
+
+
+   end
+
+   initialise
+   ! Initialise the system object and set defaults
+   ! Set the random seed from the date
+
+      .nullify_ptr_part
+      .set_defaults
+
+      .initialise_cloned_random_seed
+
+      .parallel_initialise
+
+   end
+
+   initialise_cloned_random_seed 
+   ! Initialise the random seed. Only for master and broadcast it
+   ! so that all processors get the same random numbers.
+      seed :: VEC{INT}*
+      dt :: VEC{INT}(8)
+      n,i,t :: INT
+    
+      ! Get the size "n"
+      if (.is_master_processor) then
+         call random_seed(size=n)
+         PARALLEL_BROADCAST(n,0)
+      end
+
+      ! Allocate seed array
+      allocate(seed(n))
+
+      ! Get random number seed
+      if (.is_master_processor) then
+
+         ! Try system time for seed
+         call system_clock(count=t)
+
+         ! In case above does not work ...
+         if (t==0) then
+            call date_and_time(values=dt)
+            t =  dt(3) * 24 * 60 * 60 * 60 * 1000 &
+               + dt(5) * 60 * 60 * 1000 &
+               + dt(6) * 60 * 1000 + dt(7) * 1000 &
+               + dt(8)
+         end
+
+         ! Set seed array
+         i = 0
+         seed = t + 37 * [ (i, i=0,n-1) ]
+
+         ! Broadcast seed
+         PARALLEL_BROADCAST(seed,0) 
+
+      end
+
+      ! Get the random numbers from same seed 
+      ! NOTE: cloned for each processor!
+      call random_seed(put=seed)
+
+      ! Clean
+      deallocate(seed)
+
+   end
+
+   finalise
+   !  Finalise the system object
+      .parallel_finalise
+   end
+
+   unit_conversion_factor result (res) ::: private
+   ! Change the units used to display the memory
+      self :: IN
+      res :: INT
+
+      res = 0
+      select case(.memory_units)
+         case("Words");  res = 8
+         case("Bytes");  res = 1
+         case("MBytes"); res = 1000000
+         case("MWords"); res = 8000000
+         case default;   DIE("unknown memory units, "//trim(.memory_units))
+      end
+
+   end
+
+   reset_memory_limit(limit)
+   !  Reset memory limit for the memory manager.  "limit" is in the units
+   !  ".memory_units" which is Words by default.
+      self :: INOUT
+      limit :: INT, IN
+
+      fac :: INT
+
+      fac = .unit_conversion_factor
+      .memory_limit = fac*limit
+
+   end
+
+!  ================
+!  Error operations
+!  ================
+
+!   reset_error_status
+!   ! Reset the error flag
+!      .error_status = 0
+!   end
+
+   set_error_output_unit(number)
+   ! Set the error unit "number"
+      number :: INT
+      .error_output_unit = number
+   end
+
+   set_error_output_file(file)
+   ! Set the error output file to "file"
+      file :: TEXTFILE
+      .error_output_unit = file.unit
+   end
+
+   set_keyword_echo(echo)
+   ! Set whether to echo user-input keywords
+      echo :: BIN
+      .keyword_echo = echo
+   end
+
+!  ==============
+!  Error messages
+!  ==============
+
+   die(message)
+   ! Set the error flag to 1 and terminate the program with a message
+
+      message :: STR
+
+      .error_status = 1
+
+      if (.IO_is_allowed) then
+         write(.error_output_unit,*)
+         write(.error_output_unit,"(a)") &
+          "Error in "// trim(message) ! message should include the routine name via foo
+         if (.error_output_unit/=TEXTFILE_STDOUT_UNIT) then
+         write(TEXTFILE_STDOUT_UNIT,*)
+         write(TEXTFILE_STDOUT_UNIT,"(a)") &
+          "Error in "// trim(message) ! message should include the routine name via foo
+         end
+      end
+!     .report_stack_see_info
+      .report_io_file_info
+      .report_keyword_info
+      .report_stack_info
+#ifdef MPI
+      call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+#endif
+      stop
+
+   end
+
+   die_if(condition,message)
+   ! Set the error flag to 1 and terminate the program with a message
+   ! provided "condition" is TRUE
+      condition :: BIN
+      message :: STR
+      if (condition) .die(message)
+   end
+
+   warn(message,iostat,use_stack_name)
+   ! Set the error flag to -1 and issue a warning message.
+   ! If "use_stack_name" is present, the call stacl routine name is used
+   ! in the warning messsage, assuming that the call stack is associated.
+      message :: STR
+      iostat :: INT, IN, optional
+      use_stack_name :: BIN, IN, optional
+
+      name :: STR
+
+      .error_status = -1
+
+      if (present(use_stack_name)) then
+
+         if (associated(.call_stack)) then
+
+            name = .call_stack(.stack_level)
+            if (.IO_is_allowed) then
+               write(.error_output_unit,"(' ')") 
+               write(.error_output_unit,"(a)") &
+               "Warning from "// trim(name) // " ... " // trim(message)
+               if (.error_output_unit/=TEXTFILE_STDOUT_UNIT) then
+               write(TEXTFILE_STDOUT_UNIT,"(' ')") 
+               write(TEXTFILE_STDOUT_UNIT,"(a)") &
+               "Warning from "// trim(name) // " ... " // trim(message)
+               end
+            end
+
+         else
+
+            if (.IO_is_allowed) then
+               write(.error_output_unit,"(' ')") 
+               write(.error_output_unit,"(a)") &
+               "Warning: " // trim(message)
+               if (.error_output_unit/=TEXTFILE_STDOUT_UNIT) then
+               write(TEXTFILE_STDOUT_UNIT,"(' ')")
+               write(TEXTFILE_STDOUT_UNIT,"(a)") &
+               "Warning: " // trim(message)
+               end
+            end
+
+         end
+
+      else
+
+         if (.IO_is_allowed) then
+            write(.error_output_unit,"(' ')")
+            write(.error_output_unit,"(a)") &
+            "Warning from "// trim(message) ! message should include the routine name
+            if (.error_output_unit/=TEXTFILE_STDOUT_UNIT) then
+            write(TEXTFILE_STDOUT_UNIT,"(' ')")
+            write(TEXTFILE_STDOUT_UNIT,"(a)") &
+            "Warning from "// trim(message) ! message should include the routine name
+            end
+         end
+
+      end
+
+!     .report_stack_see_info
+
+      if (present(iostat)) then
+
+         if (.IO_is_allowed) then
+            write(.error_output_unit,"(' ')")
+            write(.error_output_unit,"(a,i4)") "Fortran error ",iostat
+            if (.error_output_unit/=TEXTFILE_STDOUT_UNIT) then
+            write(TEXTFILE_STDOUT_UNIT,"(' ')")
+            write(TEXTFILE_STDOUT_UNIT,"(a,i4)") "Fortran error ",iostat
+            end
+         end
+
+      end
+
+      .flush_buffer
+      .warnings_issued = TRUE
+
+   end
+
+   warn_if(condition,message,iostat)
+   ! If "condition" is true, issue a warning and continue, but set the error
+   ! flag to -1 and
+      condition :: BIN, IN
+      message :: STR, IN
+      iostat :: INT, IN, optional
+      if (condition) .warn(message,iostat)
+   end
+
+   ensure(condition,message)
+   ! Ensure "condition" is true, otherwise set the error flag to 1 and
+   ! terminate the program with a "message"
+      condition :: BIN, IN
+      message :: STR, IN
+      if (NOT condition) .die(message)
+   end
+
+   report_stack_see_info ::: private
+   ! Report information about how to compile to see call stack management
+   ! information
+
+      unit :: INT
+
+      if (associated(.call_stack)) return
+
+      unit = .error_output_unit
+
+      if (.IO_is_allowed) then
+         write(unit,"(a)") " "
+         write(unit,"(a)") "To see a routine call stack locating this error more precisely,"
+         write(unit,"(a)") "try compiling with USE_CALL_STACK_MANAGEMENT enabled."
+         if (unit/=TEXTFILE_STDOUT_UNIT) then
+         write(TEXTFILE_STDOUT_UNIT,"(a)") " "
+         write(TEXTFILE_STDOUT_UNIT,"(a)") "To see a routine call stack locating this error more precisely,"
+         write(TEXTFILE_STDOUT_UNIT,"(a)") "try compiling with USE_CALL_STACK_MANAGEMENT enabled."
+         end
+      end
+
+   end
+
+!  ===========================================================
+!  Unknown keywords: the preprocessor can define the "options"
+!  ===========================================================
+
+   unknown(word,name,options)
+   ! Set the error flag to 1 and terminate the program with a message
+   ! "Unknown option". The list of known keywords is dumped.
+      word :: STR, IN
+      name :: STR, IN
+      options :: VEC{STR}, IN
+
+      .error_status = 1
+
+      if (.IO_is_allowed) then
+         write(.error_output_unit,*)
+         write(.error_output_unit,"(a)") &
+         "Error in "// trim(name) // " ... unknown option: " // trim(word)
+         if (.error_output_unit/=TEXTFILE_STDOUT_UNIT) then
+         write(TEXTFILE_STDOUT_UNIT,*)
+         write(TEXTFILE_STDOUT_UNIT,"(a)") &
+         "Error in "// trim(name) // " ... unknown option: " // trim(word)
+         end
+      end
+
+!     .report_stack_see_info
+
+      .report_io_file_info
+      .report_keyword_info(options)
+      .report_stack_info
+#ifdef MPI
+      call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+#endif
+      stop
+
+   end
+
+   unknown(word,name)
+   ! Set the error flag to 1 and terminate the program with a message
+   ! "Unknown option". The list of known keywords is dumped.
+      word :: STR, IN
+      name :: STR, IN
+
+      .error_status = 1
+
+      if (.IO_is_allowed) then
+         write(.error_output_unit,*)
+         write(.error_output_unit,"(a)") &
+         "Error in "// trim(name) // " ... unknown option: " // trim(word)
+         if (.error_output_unit/=TEXTFILE_STDOUT_UNIT) then
+         write(TEXTFILE_STDOUT_UNIT,*)
+         write(TEXTFILE_STDOUT_UNIT,"(a)") &
+         "Error in "// trim(name) // " ... unknown option: " // trim(word)
+         end
+      end
+
+!     .report_stack_see_info
+      .report_io_file_info
+
+      if (associated(.known_keywords)) .report_keyword_info(.known_keywords)
+      .report_stack_info
+#ifdef MPI
+      call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+#endif
+
+      stop
+
+   end
+
+!  ================================
+!  Basic memory allocation tracking
+!  ================================
+
+   add_memory(used) ::: pure
+   !  Add memory usage data to the memory manager
+      self :: INOUT
+      used :: INT, IN
+
+      .memory_used                       = .memory_used + used
+      .max_memory_used                   = max(.memory_used,.max_memory_used)
+      .memory_blocks_used                = .memory_blocks_used + 1
+      .max_memory_blocks_used            = max(.memory_blocks_used,.max_memory_blocks_used)
+      .memory_used_stack(1:.stack_level) = .memory_used_stack(1:.stack_level) + used
+
+   end
+
+   delete_memory(used) ::: pure
+   !  Delete memory usage data from the memory manager
+      self :: INOUT
+      used :: INT, IN
+
+      .memory_used                       = .memory_used - used
+      .memory_blocks_used                = .memory_blocks_used - 1
+      .memory_used_stack(1:.stack_level) = .memory_used_stack(1:.stack_level) - used
+
+   end
+
+! More advanced memory tracking
+
+
+   add_memory(used,address) ::: pure
+   !  Add memory usage data and address data to the memory manager
+      self :: INOUT
+      used :: INT, IN
+      address :: INT, IN
+
+#ifdef TRACK_MEMORY_LOCATIONS
+      n :: INT
+#endif
+
+      .memory_used        = address
+      .memory_used        = .memory_used + used
+      .max_memory_used    = max(.memory_used,.max_memory_used)
+      .memory_blocks_used = .memory_blocks_used + 1
+
+#ifdef TRACK_MEMORY_LOCATIONS
+      .n_addresses = .n_addresses + 1
+      n = .n_addresses - .max_addresses
+      if (n>0) then
+         .expand_int(.memory_address_stack,n)
+         .expand_int(.memory_amount_stack,n)
+         .expand_str(.memory_call_stack,n)
+      end
+      .max_addresses = max(.n_addresses,.max_addresses)
+      
+      n = .n_addresses
+      .memory_address_stack(n) = address                  ! Address of block
+      .memory_amount_stack(n)  = used
+      .memory_call_stack(n)    = .flat_stack ! Calling stack
+      if (.leaky_amount/=0 AND .leaky_routine/=" ") then
+         if (.leaky_amount==used) then
+         if (trim(.flat_stack)==trim(.leaky_routine)) then
+            allocate(.leaky_call_stack(.stack_level))
+            .leaky_call_stack = .call_stack(1:.stack_level)
+         end
+         end
+      end
+#endif
+
+      .max_memory_blocks_used            = max(.memory_blocks_used,.max_memory_blocks_used)
+      .memory_used_stack(1:.stack_level) = .memory_used_stack(1:.stack_level) + used
+
+   end
+
+   delete_memory(used,address) ::: pure
+   !  Delete memory usage data and address data from the memory manager
+      self :: INOUT
+      used :: INT, IN
+      address :: INT, IN
+
+#ifdef TRACK_MEMORY_LOCATIONS
+      n,i,j :: INT
+#endif
+
+      .memory_used = address
+      .memory_used = .memory_used - used
+
+#ifdef TRACK_MEMORY_LOCATIONS
+      j = 0
+      do i = .n_addresses,1,-1
+         if (address/=.memory_address_stack(i)) cycle
+         j = i
+         exit
+      end
+
+      if (j==0) then
+      !    write(.error_output_unit,"(a)") "can't find memory address"
+      else ! remove the address
+          .n_addresses = .n_addresses - 1
+          n = .n_addresses
+          .memory_address_stack(j:n) = .memory_address_stack(j+1:n+1)
+          .memory_amount_stack(j:n)  = .memory_amount_stack(j+1:n+1)
+          .memory_call_stack(j:n)    = .memory_call_stack(j+1:n+1)
+      end
+#endif
+
+      .memory_blocks_used                = .memory_blocks_used - 1
+      .memory_used_stack(1:.stack_level) = .memory_used_stack(1:.stack_level) - used
+
+   end
+
+   report_undeleted_memory(out) ::: private
+   ! Report undeleted memory allocation info i.e. a profile. If present, use the
+   ! unit number for file "out", otherwise use "tonto.error_output_unit".  
+      out :: TEXTFILE, optional
+
+#ifdef TRACK_MEMORY_LOCATIONS
+      unit,i :: INT
+#endif
+
+      if (present(out)) out = out
+
+      if (.n_addresses == 0)  return
+      if (NOT .IO_is_allowed) return
+
+#ifdef TRACK_MEMORY_LOCATIONS
+      ! Process arguments ...
+      unit = tonto.error_output_unit
+      if (present(out)) unit = out.unit
+       write(unit,*)
+       write(unit,"(a)") "Undeleted memory calls:"
+       write(unit,*)
+       write(unit,"('      Address    Amount   Traceback')")
+      do i = 1,.n_addresses
+       write(unit,"(i13,i10,3x,a)") .memory_address_stack(i), &
+                                    .memory_amount_stack(i),  &
+                                    adjustl(trim(.memory_call_stack(i)))
+      end
+
+      if (unit/=TEXTFILE_STDOUT_UNIT) then
+       write(TEXTFILE_STDOUT_UNIT,*)
+       write(TEXTFILE_STDOUT_UNIT,"(a)") "Undeleted memory calls:"
+       write(TEXTFILE_STDOUT_UNIT,*)
+       write(TEXTFILE_STDOUT_UNIT,"('      Address    Amount   Traceback')")
+      do i = 1,.n_addresses
+       write(TEXTFILE_STDOUT_UNIT,"(i13,i10,3x,a)") .memory_address_stack(i), &
+                                                    .memory_amount_stack(i),  &
+                                                    adjustl(trim(.memory_call_stack(i)))
+      end
+      end
+
+      if (.leaky_call_stack.created) then
+         write(unit,*)
+         write(unit,"(a)") "Requested leaky call stack:"
+         write(unit,*)
+      do i = 1,size(.leaky_call_stack)
+         write(unit,"(i4,'. ',a43)") i,adjustl(.leaky_call_stack(i))
+      end
+      if (unit/=TEXTFILE_STDOUT_UNIT) then
+         write(TEXTFILE_STDOUT_UNIT,*)
+         write(TEXTFILE_STDOUT_UNIT,"(a)") "Requested leaky call stack:"
+         write(TEXTFILE_STDOUT_UNIT,*)
+      do i = 1,size(.leaky_call_stack)
+         write(TEXTFILE_STDOUT_UNIT,"(i4,'. ',a43)") i,adjustl(.leaky_call_stack(i))
+      end
+      end
+      end
+
+      .flush_buffer
+#endif
+
+   end
+
+
+!  ========================================================================
+!  Call stack management, per-call level memory reporting and leak checking
+!  ========================================================================
+
+   stack(routine_name)
+   ! Add another level to the call stack. Placed at the start of every
+   ! non-pure routine. (Pure routines may not have I/O).
+      self :: INOUT
+      routine_name :: STR, IN, optional
+
+      show_call_stack :: BIN 
+      l :: INT
+#ifdef TRACK_MEMORY_LOCATIONS
+      i,n :: INT
+#endif
+
+      .stack_level = .stack_level + 1
+      .expand_call_stacks
+      .memory_used_stack(.stack_level) = 0
+
+      if (present(routine_name)) then
+        .call_stack(.stack_level) = routine_name
+#ifdef TRACK_MEMORY_LOCATIONS
+        .flat_stack = trim(routine_name)
+        n = len_trim(.flat_stack)
+        do i = .stack_level-1,2,-1
+           .flat_stack = trim(.flat_stack)//","//trim(.call_stack(i))
+           n = n + 1 + len_trim(.call_stack(i))
+           if (n>len(.flat_stack)) exit
+        end
+#endif
+      else
+        .call_stack(.stack_level) = "Unknown routine"
+      end
+
+      l = .stack_level
+      show_call_stack =              & ! Show indented call stack if:
+          .show_call_stack           & ! ... switch was set
+      AND l >=.stack_show_min_level  & ! ... stack is greater than check
+      AND l <=.stack_show_max_level    ! ... stack is less    than check
+
+      if (show_call_stack) then
+      if (.IO_is_allowed) then
+        write(.error_output_unit,"(a)") &
+           repeat("   ",.stack_level)//trim(routine_name)//" {"
+      end
+      end
+
+      .flush_buffer
+      .memory_leak_detected = FALSE ! reset any memory leaks
+      if (.stack_level<.memory_leak_level) .memory_leak_level = 0
+      ! allow leak reports again at higher levels
+
+   end
+
+   unstack(routine_name)
+   ! Remove a level from the call level. Placed at the end of every
+   ! non-pure routine, *including* leaky routines.  If the current
+   ! level exceeds stack_show_min_level then a stack report is
+   ! produced --- provided that show_call_stack is not set; but if it
+   ! is set, then an indented stack report is made instead.
+      self :: INOUT
+      routine_name :: STR, optional
+
+      report_stack,show_call_stack :: BIN
+      rout_name :: STR
+      mem :: INT
+      memory :: STR(len=9)
+      l :: INT
+
+      l = .stack_level
+
+      if (l<=0) then
+
+         if (.IO_is_allowed) then
+            write(.error_output_unit,*)
+            write(.error_output_unit,"(a,I2)") &
+              "Warning from SYSTEM:unstack ... stack level is not positive, ", l
+         end
+
+         .report_io_file_info
+         .report_stack_info(full_report=TRUE)
+#ifdef MPI
+         call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+#endif
+
+         stop
+
+      else if (l>.max_stack_level) then
+        
+         if (.IO_is_allowed) then
+            write(.error_output_unit,*)
+            write(.error_output_unit,"(a,2I2)") &
+              "Warning from SYSTEM:unstack ... stack level greater than max, ", &
+              l,.max_stack_level
+         end
+#ifdef MPI
+         call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+#endif
+         stop
+
+      else
+
+         show_call_stack =              & ! Show indented call stack if:
+             .show_call_stack           & ! ... switch was set
+         AND l >=.stack_show_min_level  & ! ... stack is greater than check
+         AND l <=.stack_show_max_level    ! ... stack is less    than check
+ 
+         report_stack =                 & ! Report tabular stack info if:
+             l >= .stack_show_min_level & ! ... greater than check level
+         AND l <= .stack_show_max_level & ! ... less    than check level
+         AND .stack_show_min_level > 0  & ! ... check level was set
+         AND NOT show_call_stack          ! ... NOT doing indented view
+ 
+         if (report_stack) then
+ 
+            .report_stack_info
+ 
+         else if (show_call_stack) then
+ 
+            rout_name = .call_stack(l)
+ 
+            if (present(routine_name)) then
+               if(rout_name/=routine_name) then
+               if (.IO_is_allowed) then
+                  write(.error_output_unit,*)
+                  write(.error_output_unit,"(a)") &
+                     "Start routine "//trim(rout_name)// &
+                     " does not match end routine "//trim(routine_name)
+               end
+               end
+            end
+ 
+            mem = .memory_used_stack(l)/.unit_conversion_factor
+ 
+            if (.IO_is_allowed) then
+              write(memory,"(I9)") mem
+            end
+ 
+            if (mem==0) then
+               if (.IO_is_allowed) then
+                  write(.error_output_unit,"(a)") &
+                   repeat("   ",l)//trim(rout_name)//" } "//adjustl(memory)
+               end
+            else
+               if (.IO_is_allowed) then
+                  write(.error_output_unit,"(a)") &
+                  repeat("---",l)//trim(rout_name)//" } "//adjustl(memory)
+               end
+            end
+ 
+         end
+
+      end
+
+      .call_stack(l) = " "
+      .stack_level   = .stack_level - 1
+      .flush_buffer
+
+   end
+
+   check(routine_name)
+   ! Check for memory leaks at this level. Placed at the end of every non-pure,
+   ! non-leaky routine. A stack report is produced only if there is a leak, AND
+   ! if the level is greater than the check_level set by start_leak_test (since
+   ! for levels less or equal to than the check_level, unstack produces a stack
+   ! report).
+      routine_name :: STR, optional
+
+      if (.stack_level<=0) then
+         if (.IO_is_allowed) then
+            write(.error_output_unit,*)
+            write(.error_output_unit,"(a,I2)") &
+            "Warning from SYSTEM:check ... stack level is not positive, ", &
+            .stack_level
+         end
+
+         .report_io_file_info
+         .report_stack_info(full_report=TRUE)
+#ifdef MPI
+         call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+#endif
+         stop
+
+      end
+
+      .check_exceeded
+      .check_if_leaky
+      .unstack(routine_name)
+
+   end
+
+   will_exceed_memory_limit(amount) result (res)
+   !  Returns TRUE if memory limit will be exceeded after an allocation of
+   !  "amount" units of memory
+      amount :: INT
+      res :: BIN
+      res = (.memory_used+amount)>.memory_limit
+   end
+
+   check_exceeded ::: private
+   !  Checks whether memory limit is exceeded
+
+      name :: STR
+
+      if (.memory_used>.memory_limit AND NOT .memory_limit_exceeded) then
+         name = .call_stack(.stack_level)
+         .warn("Memory limit first exceeded in routine "//trim(name))
+         .report
+         .memory_limit_exceeded = TRUE
+      end
+
+   end
+
+   check_if_leaky ::: private
+   ! Checks whether there is a memory leak, and if so produce a
+   ! warning.  A stack report is made only if the stack_show_min_level
+   ! was not set, or if it was set, it the leak occurs below the
+   ! stack_show_min_level (since otherwise the unstack routine will
+   ! make a stack report).
+      produce_warning,produce_report :: BIN
+      l :: INT
+
+      l = .stack_level
+
+      produce_warning =  &               ! produce warning if:
+         .memory_used_stack(l) /= 0    & ! ... there is a leak at this level,
+         AND NOT .memory_leak_detected & ! ... it hasn't yet been seen,
+         AND l > .memory_leak_level      ! ... it wasn't reported already
+
+      if (produce_warning) then
+         if (.memory_used_stack(l)>0) .warn("memory leak",use_stack_name=TRUE)
+         if (.memory_used_stack(l)<0) .warn("memory sink",use_stack_name=TRUE)
+         .memory_leak_detected = TRUE
+         if (.memory_leak_level==0) then
+            .memory_leak_level = .stack_level - 1
+         else
+            .memory_leak_level = min(.memory_leak_level,.stack_level-1)
+         end
+      end
+
+      produce_report  =  &                ! produce stack report if:
+         produce_warning                & ! ... there was a warning made AND
+         AND (0 > .stack_show_min_level & ! ... stack level was not set OR
+         OR   l < .stack_show_min_level)  ! ... unstack makes no report
+
+      if (produce_report) then
+         .report_stack_info
+      end
+
+   end
+
+   ignore_memory_leak(memory_blocks_gained)
+   ! If called, this routine will reset any memory leak in the current
+   ! procedure at the point of call. This is highly dangerous and should be used
+   ! only in special cases when you are sure the leak can be tolerated.
+   ! "memory_blocks_gained" is the number of blocks that were gained in the leak
+   ! process: it is negative for a loss in memory, and positive for a gain in
+   ! memory.
+      memory_blocks_gained :: INT
+
+      if (NOT associated(.memory_used_stack)) return
+
+      .delete_memory(.memory_used_stack(.stack_level))
+      .memory_blocks_used = .memory_blocks_used + 1 - memory_blocks_gained
+
+   end
+
+   start_memory_trace(depth,show_call_stack)
+   ! Start printing out the memory stack for all routines that are
+   ! called (i.e.  at the next level). This command is undone by the
+   ! "end_memory_trace" routine. If "depth" is present, the show
+   ! starts at the current level plus "depth".  If "show_call_stack"
+   ! is present and FALSE, then a tabular style output is shown rather
+   ! than the default indented style.
+      depth :: INT, optional
+      show_call_stack :: BIN, optional
+
+      .stack_show_min_level = .stack_level + 1
+      .stack_show_max_level = .stack_level + 2
+      if (present(depth)) .stack_show_max_level = .stack_level + depth + 1
+
+      .show_call_stack = TRUE
+      if (present(show_call_stack)) .show_call_stack = show_call_stack
+
+   end
+
+   end_memory_trace
+   ! Ends memory leak testing at this level
+      .stack_show_min_level = -1
+      .stack_show_max_level = -1
+      .show_call_stack = FALSE
+   end
+
+   expand_call_stacks ::: private
+   ! Expand both stacks to a length at least equal to ".stack_level".
+
+      dim :: INT
+
+      dim = .stack_level - .max_stack_level
+      if (dim>0) then
+         .expand_int(.memory_used_stack,dim)
+         .expand_str(.call_stack,dim)
+         .max_stack_level = .stack_level
+      end
+
+   end
+
+   report(out)
+   !  Report memory usage
+
+      out :: TEXTFILE, optional
+      unit,fac :: INT
+
+      if (.max_memory_used /= 0) then
+
+         unit = tonto.error_output_unit
+         if (present(out)) unit = out.unit
+
+         if (.IO_is_allowed) then
+            fac = .unit_conversion_factor
+            write(unit,"(/'SYSTEM: Memory usage report:'/)")
+            write(unit,"('Memory currently used      = ',i9,' ',a6)") .memory_used/fac,.memory_units
+            write(unit,"('Maximum memory used        = ',i9,' ',a6)") .max_memory_used/fac,.memory_units
+            write(unit,"('Memory blocks used         = ',i9)") .memory_blocks_used
+            write(unit,"('Maximum memory blocks used = ',i9)") .max_memory_blocks_used
+            write(unit,"('Memory limit               = ',i9)") .memory_limit
+            write(unit,"('Call stack level           = ',i9)") .stack_level
+            write(unit,"('Maximum call stack depth   = ',i9)") .max_stack_level
+            if (unit/=TEXTFILE_STDOUT_UNIT) then
+            write(TEXTFILE_STDOUT_UNIT,"(/'SYSTEM: Memory usage report:'/)")
+            write(TEXTFILE_STDOUT_UNIT,"('Memory currently used      = ',i9,' ',a6)") .memory_used/fac,.memory_units
+            write(TEXTFILE_STDOUT_UNIT,"('Maximum memory used        = ',i9,' ',a6)") .max_memory_used/fac,.memory_units
+            write(TEXTFILE_STDOUT_UNIT,"('Memory blocks used         = ',i9)") .memory_blocks_used
+            write(TEXTFILE_STDOUT_UNIT,"('Maximum memory blocks used = ',i9)") .max_memory_blocks_used
+            write(TEXTFILE_STDOUT_UNIT,"('Memory limit               = ',i9)") .memory_limit
+            write(TEXTFILE_STDOUT_UNIT,"('Call stack level           = ',i9)") .stack_level
+            write(TEXTFILE_STDOUT_UNIT,"('Maximum call stack depth   = ',i9)") .max_stack_level
+            end
+         end
+
+         .report_stack_info(out)
+
+      end
+
+      .report_timing_info 
+#ifdef TRACK_MEMORY_LOCATIONS
+      .report_undeleted_memory
+#endif
+
+      .flush_buffer
+
+   end
+
+   report_stack_info(out,full_report) ::: private
+   ! Report memory stack usage. Use the unit number for file "out", if present.
+   ! If present and TRUE, "full_report" requests a full stack output.
+      out :: TEXTFILE, optional
+      full_report :: BIN, optional
+
+      unit,fac,l :: INT
+      full :: BIN
+
+      if (.max_stack_level /= 0) then
+
+         unit = tonto.error_output_unit
+         if (present(out)) unit = out.unit
+
+         full = FALSE
+         if (present(full_report)) full = full_report
+
+         fac = .unit_conversion_factor
+
+         if (.stack_level>0 AND associated(.call_stack)) then
+
+            if (.IO_is_allowed) then
+                  write(unit,*)
+                  write(unit,"(a)") "Routine call stack:"
+                  write(unit,*)
+                  write(unit,"('   Call   Routine name           ',a37)") "Memory Used"
+                  if (unit/=TEXTFILE_STDOUT_UNIT) then
+                  write(TEXTFILE_STDOUT_UNIT,*)
+                  write(TEXTFILE_STDOUT_UNIT,"(a)") "Routine call stack:"
+                  write(TEXTFILE_STDOUT_UNIT,*)
+                  write(TEXTFILE_STDOUT_UNIT,"('   Call   Routine name        ',a37)") "Memory Used"
+                  end
+            end
+
+            do l = 1,.stack_level
+               if (.IO_is_allowed) then
+                  write(unit,"(3x,i3,'.',3x,a48,i9)") &
+                              l,adjustl(.call_stack(l)),.memory_used_stack(l)/fac
+                  if (unit/=TEXTFILE_STDOUT_UNIT) then
+                  write(TEXTFILE_STDOUT_UNIT,"(3x,i3,'.',3x,a48,i9)") &
+                              l,adjustl(.call_stack(l)),.memory_used_stack(l)/fac
+                  end
+               end
+            end
+
+         end
+
+         if (full AND .max_stack_level>.stack_level AND associated(.call_stack)) then
+            if (.IO_is_allowed) then
+              write(unit, &
+            "('   ----------------------------------------------------------------')")
+              if (unit/=TEXTFILE_STDOUT_UNIT) then
+              write(TEXTFILE_STDOUT_UNIT, &
+            "('   ----------------------------------------------------------------')")
+              end
+            end
+
+            do l = .stack_level+1,.max_stack_level
+               if (.IO_is_allowed) then
+                 write(unit,"(3x,i3,'.',3x,a48,i9)") &
+                 l,adjustl(.call_stack(l)),.memory_used_stack(l)/fac
+                 if (unit/=TEXTFILE_STDOUT_UNIT) then
+                 write(TEXTFILE_STDOUT_UNIT,"(3x,i3,'.',3x,a48,i9)") &
+                 l,adjustl(.call_stack(l)),.memory_used_stack(l)/fac
+                 end
+               end
+            end
+         end
+
+      end
+
+      .flush_buffer
+
+   end
+
+   report_io_file_info ::: private
+   ! Report info about the most recent open file.
+
+      unit :: INT
+      cursor :: STR(len=BSTR_SIZE)
+      item_end :: INT
+
+      if (NOT associated(.io_file)) return
+
+      unit = tonto.error_output_unit
+
+      item_end = max(1,.io_file.buffer.item_end)
+      if (item_end>0) cursor = repeat("-",item_end-1)//"^"
+
+      if (.IO_is_allowed) then
+         write(unit,*)
+         write(unit,"('File name   = ',a)")  trim(.io_file.name)
+         write(unit,"('Line number = ',i4)") .io_file.record
+         write(unit,"('File buffer = ',a)")  trim(.io_file.buffer.string)
+         if (unit/=TEXTFILE_STDOUT_UNIT) then
+         write(TEXTFILE_STDOUT_UNIT,*)
+         write(TEXTFILE_STDOUT_UNIT,"('File name   = ',a)")  trim(.io_file.name)
+         write(TEXTFILE_STDOUT_UNIT,"('Line number = ',i4)") .io_file.record
+         write(TEXTFILE_STDOUT_UNIT,"('File buffer = ',a)")  trim(.io_file.buffer.string)
+         end
+      end
+
+      if (.IO_is_allowed) then
+         if (item_end>0) then
+         write(unit,"('Cursor -------',a)")  trim(cursor)
+         if (unit/=TEXTFILE_STDOUT_UNIT) then
+         write(TEXTFILE_STDOUT_UNIT,"('Cursor -------',a)")  trim(cursor)
+         end
+         end
+      end
+
+      .flush_buffer
+
+   end
+
+   report_keyword_info(options) ::: private
+   ! Report info about the most recent keywords used
+      options :: VEC{STR}, optional
+
+      n :: INT
+      unit :: INT
+
+      unit = tonto.error_output_unit
+
+      if (present(options)) then
+
+         if (.IO_is_allowed) then
+
+            write(unit,*)
+            write(unit,"('Allowed keyword options:')")
+            write(unit,*)
+            do n = 1,size(options)
+            write(unit,"('   ',a)") trim(options(n))
+            end
+
+            if (unit/=TEXTFILE_STDOUT_UNIT) then
+            write(TEXTFILE_STDOUT_UNIT,*)
+            write(TEXTFILE_STDOUT_UNIT,"('Allowed keyword options:')")
+            write(TEXTFILE_STDOUT_UNIT,*)
+            do n = 1,size(options)
+              write(TEXTFILE_STDOUT_UNIT,"('   ',a)") trim(options(n))
+            end
+            end
+
+         end
+
+      end
+
+      .flush_buffer
+
+   end
+
+!  ==================================================================
+!  Timing and profiling: is limited by fortrans poor clock resolution
+!  ==================================================================
+
+   start_timer(routine_name)
+   ! Start timing routine "routine_name". Placed at the start of every routine
+   ! when profiling is requested. 
+      self :: INOUT
+      routine_name :: STR, IN
+
+      start_time :: REAL
+
+      .time_stack_level = .time_stack_level + 1
+      call cpu_time(start_time)
+      .expand_time_stacks(routine_name,start_time) 
+
+   end
+
+   stop_timer
+   ! Stop the timer for the routine at the current ".time_stack_level". Placed
+   ! at the end of every routine when profiling is requested. 
+      self :: INOUT
+
+      index,i :: INT
+      start_time,finish_time,elapsed_time,total_time,total :: REAL
+
+      index = .time_call_stack(.time_stack_level)
+
+      ! Get the finishing time
+      call cpu_time(finish_time)
+
+      ! Get the starting time and elapsed time
+      start_time = .time_strt_stack(.time_stack_level)
+      elapsed_time = finish_time - start_time
+
+      ! Increment the elapsed time for the current routine
+      .time_for_routine(index) = .time_for_routine(index) + elapsed_time
+
+      if (NOT .show_cumulative_time) then
+         ! Remove this elapsed time from all the parent routines 
+         do i = 1,.time_stack_level-1
+            index = .time_call_stack(i) ! This is a parent routine index
+            .time_for_routine(index) = .time_for_routine(index) - elapsed_time
+         end
+      end
+
+      ! See whether to stop program if total time exceeded
+      if (.time_limit>ZERO) then
+
+         ! Get total time: Add up total time so far
+         total_time = ZERO
+         do i = 1,.n_timed_routines
+            total = .time_for_routine(i)
+            if (total<ZERO) cycle ! These have not completed
+            total_time = total_time + total
+         end
+
+         ! Make a report and stop if total time exceeded 
+         if (total_time>.time_limit) then
+            .report_timing_info
+            ! stop
+         end
+
+      end
+
+      ! Remove the routine from the call stack
+      .time_call_stack(.time_stack_level) = 0
+      .time_stack_level = .time_stack_level - 1
+    ! write(*,*) "---- returning, time_stack_level=",.time_stack_level
+
+   end
+
+   expand_time_stacks(routine_name,start_time) ::: pure, leaky, private
+   ! Expand all the time stacks (if required) by adding "routine_name" in the
+   ! ".name_for_routine" stack, for example. Also add the starting time.
+      self :: INOUT
+      routine_name :: STR, IN
+      start_time :: REAL, IN
+
+      index,dim :: INT
+
+      ! First expand the list of akll timed routines
+      index = .index_for_routine(routine_name)
+      if (index==0) then  ! NEW routine. 
+        ! dim = .n_timed_routines
+        ! if (associated(.time_for_routine)) dim = dim - .time_for_routine.dim
+        ! if (dim>=0) then ! Not enough space? Expand stack ...
+           .expand_real(.time_for_routine,1)
+           .expand_str( .name_for_routine,1)
+           .expand_int( .n_calls_for_routine,1)
+        ! end
+        index = .n_timed_routines + 1
+        .n_timed_routines = index
+        .time_for_routine(index) = ZERO
+        .name_for_routine(index) = routine_name
+        .n_calls_for_routine(index) = 1
+        ! write(*,*) "NEW=",index,"name=",trim(routine_name)
+      else
+        .n_calls_for_routine(index) = .n_calls_for_routine(index) + 1
+        ! write(*,*) "old=",index,"name=",trim(routine_name)
+      end
+
+      ! Now expand the timed call stack ...
+      dim = 0
+      if (associated(.time_call_stack)) dim = .time_stack_level - .time_call_stack.dim
+      if (dim==1 OR NOT associated(.time_call_stack)) then
+        .expand_int( .time_call_stack,1)
+        .expand_real(.time_strt_stack,1)
+      else
+      end
+
+      .time_call_stack(.time_stack_level) = index
+      .time_strt_stack(.time_stack_level) = start_time
+
+   end
+
+   index_for_routine(routine_name) result (index) ::: pure, leaky, private
+   ! Return the "index" for routine "routine_name" in the ".name_for_routine"
+   ! stack. 
+      self :: IN
+      routine_name :: STR, IN
+
+      index :: INT
+      i :: INT
+
+      index = 0
+      do i = 1,.n_timed_routines
+        if (.name_for_routine(i)/=routine_name) cycle
+        index = i
+        exit
+      end
+
+   end
+
+   report_timing_info(out,full_report) ::: private
+   ! Report routine timing info i.e. a profile. If present, use the unit number for file
+   ! "out", otherwise use "tonto.error_output_unit".  If present and TRUE,
+   ! "full_report" requests a full stack output, otherwise only the top 20 are
+   ! reported.
+      out :: TEXTFILE, optional
+      full_report :: BIN, optional
+
+      full :: BIN
+      order :: VEC{INT}*
+      total_time,total :: REAL
+      unit,i,j,n_routine :: INT
+
+      if (.n_timed_routines == 0) return
+      if (NOT .IO_is_allowed) return
+
+      ! Process arguments ...
+      unit = tonto.error_output_unit
+      if (present(out)) unit = out.unit
+      full = TRUE
+      if (present(full_report)) full = full_report
+      if (full) then; n_routine = .n_timed_routines
+      else;           n_routine = min(20,.n_timed_routines)
+      end
+
+      ! Set any negative times to zero and sort
+      total_time = ZERO
+      do i = 1,.n_timed_routines
+        total = .time_for_routine(i)
+        if (total<ZERO) cycle
+        total_time = total_time + total
+      end
+
+      allocate(order(.n_timed_routines))
+      order = [(i,i=1,.n_timed_routines)] ! initialise order
+      .quick_sort_decreasing(.time_for_routine,order)
+
+      write(unit,*)
+      if (.show_cumulative_time) then
+      write(unit,"(a,f10.3)") "Total cumulative time used = ",total_time
+      write(unit,*)
+      write(unit,"(a)")       "This time will exceed the total used CPU time because it includes"
+      write(unit,"(a)")       "the elapsed time of all routines called by the named routine."
+      else
+      write(unit,"(a,f10.3)") "Total elapsed time used = ",total_time
+      write(unit,*)
+      write(unit,"(a)")       "This may lead to negative elapsed times for some routines because"
+      write(unit,"(a)")       "of roundoff errors when subtracting the elapsed times of all the"
+      write(unit,"(a)")       "routine called by a particular named routine, below."
+      end
+
+      write(unit,*)
+      write(unit,"(a)") "Timed routine call stack:"
+      write(unit,*)
+      write(unit,"('   Call ',43x,a10,a10,a10)") "      Time","   % total","   # calls"
+      do i = 1,n_routine
+        j = order(i) 
+        write(unit,"(3x,i3,'.',1x,a43,f10.3,f10.3,i10)") &
+                         i, &
+                         adjustl(.name_for_routine(j)), &
+                         .time_for_routine(j), &
+                         .time_for_routine(j)*100d0/total_time, &
+                         .n_calls_for_routine(j)
+      end
+
+      if (unit/=TEXTFILE_STDOUT_UNIT) then
+      write(TEXTFILE_STDOUT_UNIT,*)
+      if (.show_cumulative_time) then
+      write(TEXTFILE_STDOUT_UNIT,"(a,f10.3)") "Total cumulative time used = ",total_time
+      write(TEXTFILE_STDOUT_UNIT,*)
+      write(TEXTFILE_STDOUT_UNIT,"(a)")       "This time will exceed the total used CPU time because it includes"
+      write(TEXTFILE_STDOUT_UNIT,"(a)")       "the elapsed time of all routines called by the named routine."
+      else
+      write(TEXTFILE_STDOUT_UNIT,"(a,f10.3)") "Total elapsed time used = ",total_time
+      write(TEXTFILE_STDOUT_UNIT,*)
+      write(TEXTFILE_STDOUT_UNIT,"(a)")       "This may lead to negative elapsed times for some routines because"
+      write(TEXTFILE_STDOUT_UNIT,"(a)")       "of roundoff errors when subtracting the elapsed times of all the"
+      write(TEXTFILE_STDOUT_UNIT,"(a)")       "routine called by a particular named routine, below."
+      end
+      write(TEXTFILE_STDOUT_UNIT,*)
+      write(TEXTFILE_STDOUT_UNIT,"(a)") "Timed routine call stack:"
+      write(TEXTFILE_STDOUT_UNIT,*)
+      write(TEXTFILE_STDOUT_UNIT,"('   Call ',43x,a10,a10,a10)") "      Time","   % total","   # calls"
+      do i = 1,n_routine
+        j = order(i) 
+        write(TEXTFILE_STDOUT_UNIT,"(3x,i3,'.',1x,a43,f10.3,f10.3,i10)") &
+                         i, &
+                         adjustl(.name_for_routine(j)), &
+                         .time_for_routine(j), &
+                         .time_for_routine(j)*100d0/total_time, &
+                         .n_calls_for_routine(j)
+      end
+      end
+
+      deallocate(order)
+
+      .flush_buffer
+
+   end
+
+   flush_buffer(unit)
+   ! Flush the output
+      unit :: INT, IN, optional
+
+      f_unit :: INT
+
+      if (present(unit)) then
+         f_unit = unit
+      else
+         f_unit = tonto.error_output_unit
+      end
+
+      if (.IO_is_allowed) then
+#ifdef FLUSH
+#ifdef GNU_gfortran
+       call flush
+#else
+       call flush(f_unit)
+#endif
+#endif
+      end
+
+   end
+
+! ====================================
+! These would be inherited if possible
+! ====================================
+
+   expand_real(stack,dim) ::: pure, leaky, private
+   ! Expands "stack" by amount "dim". Contents are retained.
+   ! Elements added are set to zero.
+      self :: IN
+      stack :: VEC{REAL}*
+      dim :: INT, IN
+
+   ENSURE(dim>0,"cannot expand stack by less than 1")
+
+      old_stack :: VEC{REAL}*
+      n :: INT
+
+      if (FALSE) n = transfer(self,n)
+
+      if (NOT associated(stack)) then
+      ! write(*,*) "NOT associated, dim=",dim
+        allocate(stack(dim))
+        stack = ZERO
+      else
+        n = stack.dim
+        old_stack => stack
+      ! write(*,*) "Associated, copying, n=",n," dim=",dim
+        nullify(stack)
+        allocate(stack(n+dim))
+        stack(1:n) = old_stack
+        stack(n+1:n+dim) = ZERO
+        deallocate(old_stack)
+      end
+
+   end
+
+   expand_int(stack,dim) ::: pure, leaky, private
+   ! Expands "stack" by amount "dim". Contents are retained.
+   ! Elements added are set to zero.
+      self :: IN
+      stack :: VEC{INT}*
+      dim :: INT, IN
+
+   ENSURE(dim>0,"cannot expand stack by less than 1")
+
+      old_stack :: VEC{INT}*
+      n :: INT
+
+      if (FALSE) n = transfer(self,n)
+
+      if (NOT associated(stack)) then
+        allocate(stack(dim))
+        stack = 0
+      else
+        n = stack.dim
+        old_stack => stack
+        nullify(stack)
+        allocate(stack(n+dim))
+        stack(1:n) = old_stack
+        stack(n+1:n+dim) = 0
+        deallocate(old_stack)
+      end
+
+   end
+
+   expand_str(stack,dim) ::: pure, leaky, private
+   ! Expands "stack" by amount "dim". Contents are retained.
+   ! Elements added are set to blank.
+      self :: IN
+      stack :: VEC{STR}*
+      dim :: INT, IN
+
+   ENSURE(dim>0,"cannot expand stack by less than 1")
+
+      old_stack :: VEC{STR}*
+      n :: INT
+
+      if (FALSE) n = transfer(self,n)
+
+      if (NOT associated(stack)) then
+        allocate(stack(dim))
+        stack = " "
+      else
+        n = stack.dim
+        old_stack => stack
+        nullify(stack)
+        allocate(stack(n+dim))
+        stack(1:n) = old_stack
+        stack(n+1:n+dim) = " "
+        deallocate(old_stack)
+      end
+
+   end
+
+   quick_sort_decreasing(vec,indices) ::: pure, recursive, private
+   ! Return the indices which sort vector from largest to smallest, i.e. on
+   ! return "vec(indices)" is sorted. NOTE: vec is *not* sorted.
+      self :: IN
+      vec :: VEC{REAL}, IN
+      indices :: VEC{INT}, INOUT
+
+      list,small,equal,large,small_indices,equal_indices,large_indices :: VEC{INT}*
+      n, i, ns, ne, nl :: INT
+      chosen :: REAL
+
+      if (indices.dim<=1) return
+
+      if (FALSE) n = transfer(self,n)
+
+      n = indices.dim
+      i = 1
+      allocate(list(n)); list = [(i,i=1,n)]
+
+      chosen = vec(1)
+      ns = count(vec>chosen)
+      nl = count(vec<chosen)
+      ne = n - ns - nl
+      allocate(small(ns)); allocate(small_indices(ns))
+      allocate(equal(ne)); allocate(equal_indices(ne))
+      allocate(large(nl)); allocate(large_indices(nl))
+      small = pack(list,vec >chosen) ! indices of large vec elements
+      equal = pack(list,vec==chosen) ! indices of equal vec elements
+      large = pack(list,vec <chosen) ! indices of small vec elements
+      small_indices = indices(small)
+      equal_indices = indices(equal)
+      large_indices = indices(large)
+      if (ns>1) .quick_sort_decreasing(vec(small),small_indices)
+      if (nl>1) .quick_sort_decreasing(vec(large),large_indices)
+      indices(1:ns)       = small_indices
+      indices(ns+1:ns+ne) = equal_indices
+      indices(ns+ne+1:)   = large_indices
+      deallocate(large_indices); deallocate(large)
+      deallocate(equal_indices); deallocate(equal)
+      deallocate(small_indices); deallocate(small)
+      deallocate(list)
+
+   end
+
+
+! =====================================
+! These are all inherited from PARALLEL
+! =====================================
+
+   parallel_initialise ::: get_from(PARALLEL:initialise)
+   ! Initialise the parallel environment.
+   end
+
+   parallel_finalise ::: get_from(PARALLEL:finalise)
+   ! Finalise the parallel environment.
+   end
+
+! Inquiry routines.
+
+   is_master_processor result (res) ::: get_from(PARALLEL), pure
+   ! Return TRUE if this is the master processor. The index of the master
+   ! processor is normally 0.
+   end
+
+   master_processor result (res) ::: get_from(PARALLEL), pure
+   ! Return the index of the master processor, which is normally 0.
+   end
+
+   this_processor result (res) ::: get_from(PARALLEL), pure
+   ! Return the index of this processor.  First index is zero!
+   end
+
+! Parallel do loops
+
+   parallel_do_start(first,stride) result (res) ::: get_from(PARALLEL), pure
+   ! Return the starting index to be used in a parallel do statement. The
+   ! "first" index and the loop "stride" can optionally be supplied, if they are
+   ! not equal to 1.  In this model, each processor skips through the whole
+   ! length of the loop.  This should be load balanced --- assuming there is no
+   ! systematic dependence in the work for each element of the loop which
+   ! depends on a multiple of the number of processors. See the "do_stride"
+   ! routine.
+   end
+
+   parallel_do_stride(stride) result (res) ::: get_from(PARALLEL), pure
+   ! Return the stride to be used in a parallel do statement.  The "stride"
+   ! length can be optionally supplied, if it is not 1.
+   end
+
+   do_in_parallel result (res) ::: get_from(PARALLEL), pure
+   ! Return TRUE if we are allowed to start to implement a given do-loop in
+   ! parallel. NOTE: Once you have parallelised a loop, remember to prevent
+   ! further parallelisation, using the ".lock_parallel_do" method. This is
+   ! typically used as the first statement after the parallel do loop is
+   ! entered.
+   end
+
+   lock_parallel_do(name) ::: get_from(PARALLEL)
+   ! Sets the parallel do-loop lock to the "name" of the locking routine.
+   ! Only the routine with the same "name" may unlock the loop. WARNING: This
+   ! assumes that the names of the routines are all distinct. NOTE: It is
+   ! currently an error if the routine is recursive. Nested parallel loops are
+   ! OK but disabled.
+   end
+
+   unlock_parallel_do(name) ::: get_from(PARALLEL)
+   ! Allow parallelisation again, if the name matches the original.
+   end
+
+! Summation routines.
+
+   parallel_vector_sum(vec,dim) ::: get_from(PARALLEL, X=>BIN, Y=>MPI_LOGICAL), public
+   ! This routine adds the versions of "vec" with dimension "dim" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_vector_sum(vec,dim) ::: get_from(PARALLEL, X=>INT, Y=>MPI_INTEGER), public
+   ! This routine adds the versions of "vec" with dimension "dim" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_vector_sum(vec,dim) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION), public
+   ! This routine adds the versions of "vec" with dimension "dim" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_vector_sum(vec,dim) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX), public
+   ! This routine adds the versions of "vec" with dimension "dim" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(val) ::: get_from(PARALLEL, XX=>BIN, YY=>MPI_LOGICAL), public
+   ! This routine adds the versions of scalar "val" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(val) ::: get_from(PARALLEL, XX=>INT, YY=>MPI_INTEGER), public
+   ! This routine adds the versions of scalar "val" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(val) ::: get_from(PARALLEL, XX=>REAL, YY=>MPI_DOUBLE_PRECISION), public
+   ! This routine adds the versions of scalar "val" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(val) ::: get_from(PARALLEL, XX=>CPX, YY=>MPI_DOUBLE_COMPLEX), public
+   ! This routine adds the versions of scalar "val" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, X=>BIN, Y=>MPI_LOGICAL)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, X=>INT, Y=>MPI_INTEGER)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_symmetric_sum(mat) ::: get_from(PARALLEL)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors. The matrix "mat" is assumed to be symmetric, and
+   ! only the lower half of "mat" is summed; the upper triangle is forced to be
+   ! the same as the lower triangle.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of a 3d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of a 3d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of a 4d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of a 4d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of a 5d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of a 5d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+   compress_to_triangle(tr,mat) ::: get_from(PARALLEL)
+   ! Converts the lower triangle of matrix "mat" to the triangle "tr".
+   ! using row order.
+   end
+
+   uncompress_from_triangle(tr,mat) ::: get_from(PARALLEL)
+   ! Converts the triangle "tr" into the symmetric matrix "mat".
+   end
+
+! Broadcast variables to all processors.
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+   end
+
+   IO_is_allowed result (res)
+   ! Return whether or not this processor is allowed to do the I/O operation.
+   ! Here, only the master processor does I/O in a parallel job.
+      res :: BIN
+      res = .is_master_processor OR (NOT .is_parallel)
+   end
+
+   synchronise_processors ::: get_from(PARALLEL)
+   ! Synchronise all processors at this point.
+   end
+
+end

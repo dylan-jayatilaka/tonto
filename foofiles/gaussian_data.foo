@@ -1,0 +1,1543 @@
+!-------------------------------------------------------------------------------
+!
+! GAUSSIAN_DATA
+!
+! This module is used to store precalculated information pertaining to gaussian
+! functions, including gaussian powers an gaussian indices, data for the reduced
+! multiplication scheme (RMS) used in electron repulsion integral evaluation,
+! data for the transfer relation, and binomial coefficients for the reverse
+! transfer relation. The type is a dummy: the data is all held as module arrays.
+!
+! Copyright (C) Dylan Jayatilaka, 2006
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: $
+!-------------------------------------------------------------------------------
+
+module GAUSSIAN_DATA
+
+   implicit none
+
+   l_max_saved :: INT, public = -1
+
+   ! List of cartesian powers for gaussian functions in increasing angular
+   ! momentum. This defines the lexical order. 
+   px :: VEC{INT}*, public  DEFAULT_NULL
+   py :: VEC{INT}*, public  DEFAULT_NULL
+   pz :: VEC{INT}*, public  DEFAULT_NULL
+   pp :: MAT{INT}*, public  DEFAULT_NULL
+
+   ! String representations of the gaussian powers
+   pxyz_rep :: VEC{STR}*, public  DEFAULT_NULL ! e.g. xxyy
+   pxyz_pow :: VEC{STR}*, public  DEFAULT_NULL ! e.g. x2y2
+   p123_rep :: VEC{STR}*, public  DEFAULT_NULL ! e.g. 1122
+ ! pLM_real :: VEC{STR}*, public  DEFAULT_NULL ! e.g. 21+
+
+   ! The normalising factors apply to gaussians with angular part different
+   ! from x^l, y^l or z^l
+   normalising_factors :: VEC{REAL}*, public  DEFAULT_NULL
+
+   ! List of cartesian indices for gaussian functions in increasing angular
+   ! momentum. The indices are the powers plus 1.
+   nx :: VEC{INT}*, public  DEFAULT_NULL
+   ny :: VEC{INT}*, public  DEFAULT_NULL
+   nz :: VEC{INT}*, public  DEFAULT_NULL
+   nn :: MAT{INT}*, public  DEFAULT_NULL
+
+   ! Set TRUE if Ishida's ordering is to be used
+   ! This turns of special code in SHELL1QUARTET
+   Ishida_ordering :: BIN, public = FALSE
+
+   ! These are indexing arrays used for the horizontal recursion relation.
+   ! They are set using the set_gaussian_indices routine.
+   first_nonzero :: VEC{INT}*, public  DEFAULT_NULL
+   index_of :: MAT3{INT}*, public  DEFAULT_NULL
+   index_m1 :: VEC{INT}*, public  DEFAULT_NULL
+   index_p1 :: MAT{INT}*, public  DEFAULT_NULL
+
+   ! The binomial coefficients, plus 1, for reverse HRR
+   binomial_p1 :: VEC{VEC_{INT}}*, public  DEFAULT_NULL
+
+   ! List of arrays used for the reduced multiplication scheme (RMS)
+   rms_indices :: MAT{RMS_INDICES}*, public  DEFAULT_NULL
+
+   ! List of arrays used for the reduced multiplication scheme (RMS)
+ ! rms2_indices :: MAT4{RMS2_INDICES}*, public  DEFAULT_NULL
+   rms2_indices :: MAT{RMS2_INDICES}*, public  DEFAULT_NULL
+
+   ! Array of spherical harmonic coefficients
+   spherical_harmonics_for :: VEC{MAT_{REAL}}*, public   DEFAULT_NULL
+
+contains
+
+! *****************
+! Memory allocation
+! *****************
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object. This version does not nullify point parts.
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object. This version does not destroy pointer parts.
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+   end
+
+   destroy_data ::: selfless, leaky
+   ! Destroy all module data and reset l_max_saved.
+
+      spherical_harmonics_for.destroy
+
+      rms2_indices.destroy
+      rms_indices.destroy
+
+      binomial_p1.destroy
+
+      index_p1.destroy
+      index_m1.destroy
+
+      first_nonzero.destroy
+      index_of.destroy
+
+      normalising_factors.destroy
+
+      nn.destroy; nz.destroy; ny.destroy; nx.destroy
+      pp.destroy; pz.destroy; py.destroy; px.destroy
+
+      p123_rep.destroy
+      pxyz_pow.destroy
+      pxyz_rep.destroy
+
+   end
+
+   set_defaults
+   ! Set defaults
+      .l_max = 0
+   end
+
+! ***********
+! Set indices
+! ***********
+
+! This is the main routine: all others are private.
+
+   set_indices(l_max) ::: selfless, leaky
+   ! Set the gaussian power indices, hrr indices, and the rms indices. 
+      l_max :: INT, IN
+
+      l2,n :: INT
+
+      ! Already made? Then return
+      if (l_max<=l_max_saved) return
+
+      ! Set l_lax_saved
+      l_max_saved = l_max
+      l2 = 2*l_max
+
+      ! Set no of components up to 2*l
+      n = GAUSSIAN_DATA::n_comp_up_to(l2)
+
+      ! Destroy all data (leaky)
+      GAUSSIAN_DATA::destroy_data  
+
+      ! Set the gaussian data
+      px.create(n); py.create(n); pz.create(n); pp.create(3,n)
+      nx.create(n); ny.create(n); nz.create(n); nn.create(3,n)
+      normalising_factors.create(n)
+      index_of.create(l2+1,l2+1,l2+1)
+      first_nonzero.create(n)
+      index_m1.create(n)
+      index_p1.create(n,3)
+      GAUSSIAN_DATA::set_gaussian_indices(l2,nx,ny,nz,first_nonzero,index_of,index_m1,index_p1)
+    ! GAUSSIAN_DATA::set_Ishida_indices(l2,nx,ny,nz,first_nonzero,index_of,index_m1,index_p1)
+
+      ! Set nn convenience arrays
+      nn(1,:) = nx
+      nn(2,:) = ny
+      nn(3,:) = nz
+
+      ! Set px,py,pz and pp convenience arrays
+      px = nx - 1
+      py = ny - 1
+      pz = nz - 1
+      pp = nn - 1
+
+      ! Set the string representations
+      pxyz_rep.create(n)
+      pxyz_pow.create(n)
+      p123_rep.create(n)
+      GAUSSIAN_DATA::set_gaussian_power_str(pxyz_rep,pxyz_pow,p123_rep,px,py,pz)
+
+      ! Set normalizing factors
+      GAUSSIAN_DATA::set_normalising_factors(l2,normalising_factors,px,py,pz)
+
+      ! Set binomial coefficients via Pascal's triangle
+      GAUSSIAN_DATA::set_binomial_p1_coefficients(l_max,binomial_p1)
+
+      ! Reduced multiplication scheme (rms) indices
+      rms_indices.create(0,l_max,0,l_max)
+      MAT{RMS_INDICES}:set_indices(rms_indices,l_max,nx,ny,nz,px,py,pz)
+
+   !  l_tri = (l_max+1)*(l_max+2)/2
+   !  rms2_indices.create(l_tri,l_tri)
+   !  MAT{RMS2_INDICES}:set_indices(rms2_indices,l_max,rms_indices,nx,ny,nz)
+
+      ! Make spherical harmonic coefficients -- created in here
+      GAUSSIAN_DATA::make_xyz_to_solid_harmonics(spherical_harmonics_for) 
+
+   end
+
+
+   set_gaussian_indices(l_max,nx,ny,nz,first_nonzero,index_of,index_m1,index_p1) ::: selfless, private
+   ! Make the xyz powers "nx", "ny", "nz" for a cartesian gaussian with angular
+   ! momentum up to "l_max". (Actually adds one to each power to avoid 0 as
+   ! lower bound). Return "first_nonzero(i)", the cartesian index (between 1 and
+   ! 3) of the first non-zero power for the gaussian with lexical index "i".
+   ! Also return "index_m1(i)" and "index_p1(i)", the lexical indices of the
+   ! gaussians with the first nonzero component decremented by one, and
+   ! incrementred by one, respectively. In the latter case we must store all
+   ! possible increments.  These are used to determine which gaussian are to be
+   ! used in the HRR recursion relations.  
+      l_max :: INT, IN
+      nx,ny,nz :: VEC{INT}, OUT
+      first_nonzero :: VEC{INT}, OUT
+      index_of :: MAT3{INT}, OUT
+      index_m1 :: VEC{INT}, OUT
+      index_p1 :: MAT{INT}, OUT
+
+   ENSURE(nx.dim==GAUSSIAN_DATA::n_comp_up_to(l_max),"wrong size, nx")
+   ENSURE(ny.dim==nx.dim,"wrong size, ny")
+   ENSURE(nz.dim==nx.dim,"wrong size, nz")
+   ENSURE(first_nonzero.dim==nx.dim,"wrong dimension, first_nonzero")
+   ENSURE(index_m1.dim ==nx.dim,"wrong dimension, index_m1")
+   ENSURE(index_p1.dim1==nx.dim,"wrong 1st dimension, index_p1")
+   ENSURE(index_p1.dim2==3,"wrong 2nd dimension, index_p1")
+   ENSURE(index_of.dim1==(l_max+1),"wrong 1st dimension, index_of")
+   ENSURE(index_of.dim2==(l_max+1),"wrong 2nd dimension, index_of")
+   ENSURE(index_of.dim3==(l_max+1),"wrong 3rd dimension, index_of")
+      
+      L,a,b,c,i, a1,b1,c1,f :: INT
+      p,m :: VEC{INT}(3)
+
+      index_of = 0
+      i = 1
+
+      ! Loop over angular momentum
+      do L = 0,l_max                            ! loop on L
+      do a = L,floor((L+2)*THIRD),-1            ! 1st highest power
+      do b = min(L-a,a),floor((L-a+1)*HALF),-1  ! 2nd highest power
+
+         ! Get the third power
+         c = L - a - b
+
+         ! All powers equal
+         if (a==b AND b==c) then
+
+           a1 = a + 1
+           nx(i  ) = a1; ny(i  ) = a1; nz(i  ) = a1
+           index_of(a1,a1,a1) = i
+           first_nonzero(i)   = 1
+           i = i + 1
+
+         ! 2nd & 3rd pwers equal
+         else if (a>b AND b==c) then
+
+           a1 = a + 1
+           b1 = b + 1
+
+           nx(i  ) = a1; ny(i  ) = b1; nz(i  ) = b1
+           nx(i+1) = b1; ny(i+1) = a1; nz(i+1) = b1
+           nx(i+2) = b1; ny(i+2) = b1; nz(i+2) = a1
+
+           index_of(a1,b1,b1) = i
+           index_of(b1,a1,b1) = i+1
+           index_of(b1,b1,a1) = i+2
+
+           first_nonzero(i  ) = 1
+           first_nonzero(i+1) = 2
+           first_nonzero(i+2) = 3
+           if (b>0) then
+             first_nonzero(i+1) = 1
+             first_nonzero(i+2) = 1
+           end
+
+           i = i + 3
+
+         ! 1st and 2nd powers equal
+         else if (a==b AND b>c) then
+
+           a1 = a + 1
+           c1 = c + 1
+
+           nx(i  ) = a1; ny(i  ) = a1; nz(i  ) = c1
+           nx(i+1) = a1; ny(i+1) = c1; nz(i+1) = a1
+           nx(i+2) = c1; ny(i+2) = a1; nz(i+2) = a1
+
+           index_of(a1,a1,c1) = i
+           index_of(a1,c1,a1) = i+1
+           index_of(c1,a1,a1) = i+2
+
+           first_nonzero(i)   = 1
+           first_nonzero(i+1) = 1
+           first_nonzero(i+2) = 2
+           if (c>0) then
+             first_nonzero(i+2) = 1
+           end
+
+           i = i + 3
+
+         ! No power equal
+         else
+
+           a1 = a + 1
+           b1 = b + 1
+           c1 = c + 1
+
+           nx(i  ) = a1; ny(i  ) = b1; nz(i  ) = c1
+           nx(i+1) = a1; ny(i+1) = c1; nz(i+1) = b1
+           nx(i+2) = b1; ny(i+2) = a1; nz(i+2) = c1
+           nx(i+3) = c1; ny(i+3) = a1; nz(i+3) = b1
+           nx(i+4) = b1; ny(i+4) = c1; nz(i+4) = a1
+           nx(i+5) = c1; ny(i+5) = b1; nz(i+5) = a1
+
+           index_of(a1,b1,c1) = i
+           index_of(a1,c1,b1) = i+1
+           index_of(b1,a1,c1) = i+2
+           index_of(c1,a1,b1) = i+3
+           index_of(b1,c1,a1) = i+4
+           index_of(c1,b1,a1) = i+5
+
+           if (a>0) then
+             first_nonzero(i  ) = 1
+             first_nonzero(i+1) = 1
+             first_nonzero(i+2) = 2
+             first_nonzero(i+3) = 2
+             first_nonzero(i+4) = 3
+             first_nonzero(i+5) = 3
+           else
+             first_nonzero(i  ) = 3
+             first_nonzero(i+1) = 3
+             first_nonzero(i+2) = 3
+             first_nonzero(i+3) = 3
+             ! i+4,i+5 must have b or c nonzero.
+           end
+
+           if (b>0) then
+             first_nonzero(i+2) = 1
+             first_nonzero(i+4) = 1
+             first_nonzero(i+5) = 2
+           end
+           if (c>0) then
+             first_nonzero(i+3) = 1
+             first_nonzero(i+5) = 1
+           end
+
+           i = i + 6
+
+         end
+
+      end
+      end
+      end
+
+      ! Now make the index_p1, index_m1 arrays
+      do i = 1,nx.dim         
+
+         ! Powers plus one
+         p = [nx(i),ny(i),nz(i)]
+         m = p        
+
+         ! First non-zero index
+         f = first_nonzero(i)
+
+         ! Subtract one power from first nonzero index
+         m(f) = m(f) - 1
+
+         ! Get index of first non-zero subtract one power
+         if (any(m<1)) then; index_m1(1) = -1
+         else;               index_m1(i) = index_of(m(1),m(2),m(3))
+         end
+
+         ! Now add one to each power amd get index
+         do f = 1,3
+            p(f) = p(f) + 1
+            if (any(p>l_max+1)) then; index_p1(i,f) = -1
+            else;                     index_p1(i,f) = index_of(p(1),p(2),p(3))
+            end
+            p(f) = p(f) - 1
+         end
+
+      end
+
+      ! Fix up s function which has no non-zero
+      first_nonzero(1) = -1   
+
+   end
+
+   set_gaussian_power_str(pxyz_rep,pxyz_pow,p123_rep,px,py,pz) ::: selfless, private
+   ! Make the xyz powers in a string representation from the integer
+   ! powers in "px", "py", "pz". Useful for output.
+   ! "pxyz_rep" are the repeated string-components e.g. xxyy
+   ! "p123_rep" are the repeated number-components e.g. 1122
+   ! "pxyz_pow" have the string-components as powers e.g. x2y2
+      pxyz_rep :: VEC{STR}, OUT
+      pxyz_pow :: VEC{STR}, OUT
+      p123_rep :: VEC{STR}, OUT
+      px,py,pz :: VEC{INT}, IN
+
+   ENSURE(pxyz_rep.dim1==px.dim1,"pxyz_rep: wrong dim1")
+   ENSURE(pxyz_pow.dim1==px.dim1,"pxyz_pow: wrong dim1")
+   ENSURE(p123_rep.dim1==px.dim1,"p123_rep: wrong dim1")
+      
+      dim,i :: INT
+      val :: STR
+
+      dim = px.dim1
+
+      do i = 1,dim
+
+         ! Make pxyz_rep
+         pxyz_rep(i) = repeat("x",px(i))//repeat("y",py(i))//repeat("z",pz(i))
+
+         ! Make p123_rep
+         p123_rep(i) = repeat("1",px(i))//repeat("2",py(i))//repeat("3",pz(i))
+
+         ! Make pxyz_pow
+         val = " "
+         if (px(i)==1) val =            "x"
+         if (px(i) >1) val =            "x"//trim(px(i).to_str)
+         if (py(i)==1) val = trim(val)//"y"
+         if (py(i) >1) val = trim(val)//"y"//trim(py(i).to_str)
+         if (pz(i)==1) val = trim(val)//"z"
+         if (pz(i) >1) val = trim(val)//"z"//trim(pz(i).to_str)
+         pxyz_pow(i) = val
+
+      end
+
+   end
+
+! Below is Ishida's original (corrected) ordering
+! To use this change make_esfs -> make_esfs_general
+! in SHELL1QUARTET
+
+   set_Ishida_indices(l_max,nx,ny,nz,first_nonzero,index_of,index_m1,index_p1) ::: selfless, private
+   ! Same as set_indices except using Ishida's ordering scheme.
+   ! See Ishida (1993), JCP 98 p2176.
+   ! NOTE: NOT WORKING
+   ! Make the xyz powers "nx", "ny", "nz" for a cartesian gaussian with angular
+   ! momentum up to "l_max". (Actually adds one to each power to avoid 0 as
+   ! lower bound). Return "first_nonzero(i)", the cartesian index (between 1 and
+   ! 3) of the first non-zero power for the gaussian with lexical index "i".
+   ! Also return "index_m1(i)" and "index_p1(i)", the lexical indices of the
+   ! gaussians with the first nonzero component decremented by one, and
+   ! incrementred by one, respectively. In the latter case we must store all
+   ! possible increments.  These are used to determine which gaussian are to be
+   ! used in the HRR recursion relations.  
+      l_max :: INT, IN
+      nx,ny,nz :: VEC{INT}, OUT
+      first_nonzero :: VEC{INT}, OUT
+      index_of :: MAT3{INT}, OUT
+      index_m1 :: VEC{INT}, OUT
+      index_p1 :: MAT{INT}, OUT
+
+   ENSURE(nx.dim==GAUSSIAN_DATA::n_comp_up_to(l_max),"wrong size, nx")
+   ENSURE(ny.dim==nx.dim,"wrong size, ny")
+   ENSURE(nz.dim==nx.dim,"wrong size, nz")
+   ENSURE(first_nonzero.dim==nx.dim,"wrong dimension, first_nonzero")
+   ENSURE(index_m1.dim==nx.dim,"wrong dimension, index_m1")
+   ENSURE(index_p1.dim1==nx.dim,"wrong 1st dimension, index_p1")
+   ENSURE(index_p1.dim2==3,"wrong 2nd dimension, index_p1")
+   ENSURE(index_of.dim1==(l_max+1),"wrong 1st dimension, index_of")
+   ENSURE(index_of.dim2==(l_max+1),"wrong 2nd dimension, index_of")
+   ENSURE(index_of.dim3==(l_max+1),"wrong 3rd dimension, index_of")
+
+      i,i1,i2,L,M,N,a1,b1,c1,f :: INT
+      p,q :: VEC{INT}(3)
+
+      Ishida_ordering = TRUE
+      index_of = -1
+      index_p1 = -1
+
+      ! S-type gaussian
+      nx(1 ) = 1; ny(1 ) =  1; nz(1 ) =  1
+      index_of( 1, 1, 1) = 1
+      first_nonzero(1 )  = 1
+
+      ! P-type gaussians and greater
+      i = 2
+      do L = 1,l_max
+
+        a1 = L + 1
+
+        i1 = i + 1
+        i2 = i + 2
+
+        nx(i ) = a1; ny(i ) =  1; nz(i ) =  1
+        nx(i1) =  1; ny(i1) = a1; nz(i1) =  1
+        nx(i2) =  1; ny(i2) =  1; nz(i2) = a1
+
+        index_of(a1, 1, 1) = i
+        index_of( 1,a1, 1) = i1
+        index_of( 1, 1,a1) = i2
+
+        first_nonzero(i )  = 1
+        first_nonzero(i1)  = 2
+        first_nonzero(i2)  = 3
+
+        i = i + 3
+
+        if (L<2) cycle
+
+        do M = 1,L/2
+
+           a1 = M + 1
+           b1 = L - M + 1
+
+           i1 = i + 1
+           i2 = i + 2
+
+           nx(i ) = a1; ny(i ) = b1; nz(i ) =  1
+           nx(i1) =  1; ny(i1) = a1; nz(i1) = b1
+           nx(i2) = b1; ny(i2) =  1; nz(i2) = a1
+
+           index_of(a1,b1, 1) = i
+           index_of( 1,a1,b1) = i1
+           index_of(b1, 1,a1) = i2
+
+           first_nonzero(i )  = 1   ! These are not first non-zero
+           first_nonzero(i1)  = 2   ! but good enough for recurrence
+           first_nonzero(i2)  = 3
+
+           i = i + 3
+
+           if (a1==b1) cycle
+
+           i1 = i + 1
+           i2 = i + 2
+
+           nx(i ) = a1; ny(i ) =  1; nz(i ) = b1
+           nx(i1) = b1; ny(i1) = a1; nz(i1) =  1
+           nx(i2) =  1; ny(i2) = b1; nz(i2) = a1
+
+           index_of(a1, 1,b1) = i
+           index_of(b1,a1, 1) = i1
+           index_of( 1,b1,a1) = i2
+
+           first_nonzero(i )  = 1   ! These are not first non-zero
+           first_nonzero(i1)  = 2   ! but good enough for recurrence
+           first_nonzero(i2)  = 3
+
+           i = i + 3
+
+        end
+
+        if (L<3) cycle
+
+        do M = 2,(2*L)/3
+        do N = max(1,2*M-L),M/2     ! <<< Mistake from Ishida?
+
+           a1 = N + 1
+           b1 = M - N + 1
+           c1 = L - M + 1
+
+           nx(i  ) = a1; ny(i  ) = b1; nz(i  ) = c1
+           index_of(a1,b1,c1) = i
+           first_nonzero(i )  = 1  
+
+           i = i + 1
+
+           if (a1==b1 AND b1==c1) cycle
+
+           i1 = i + 1
+
+           nx(i ) = c1; ny(i ) = a1; nz(i ) = b1
+           nx(i1) = b1; ny(i1) = c1; nz(i1) = a1
+
+           index_of(c1,a1,b1) = i
+           index_of(b1,c1,a1) = i1
+
+           first_nonzero(i )  = 2  
+           first_nonzero(i1)  = 3  
+
+           i = i + 2
+
+           if (a1==b1 OR b1==c1 OR a1==c1) cycle
+
+           i1 = i + 1
+           i2 = i + 2
+
+           nx(i ) = a1; ny(i ) = c1; nz(i ) = b1
+           nx(i1) = b1; ny(i1) = a1; nz(i1) = c1
+           nx(i2) = c1; ny(i2) = b1; nz(i2) = a1
+
+           index_of(a1,c1,b1) = i
+           index_of(b1,a1,c1) = i1
+           index_of(c1,b1,a1) = i2
+
+           first_nonzero(i )  = 1  
+           first_nonzero(i1)  = 2   
+           first_nonzero(i2)  = 3
+
+           i = i + 3
+
+        end
+        end
+     
+      end
+
+      ! Now make the index_p1, index_m1 arrays
+      do i = 1,nx.dim         
+
+         ! Powers plus one
+         p = [nx(i),ny(i),nz(i)]
+         q = p        
+
+         ! First non-zero index
+         f = first_nonzero(i)
+
+         ! Subtract one power from first nonzero index
+         q(f) = q(f) - 1
+
+         ! Get index of first non-zero subtract one power
+         if (any(q<1)) then; index_m1(1) = -1
+         else;               index_m1(i) = index_of(q(1),q(2),q(3))
+         end
+
+         ! Now add one to each power amd get index
+         do f = 1,3
+            p(f) = p(f) + 1
+            if (any(p>l_max+1)) then; index_p1(i,f) = -1
+            else;                     index_p1(i,f) = index_of(p(1),p(2),p(3))
+            end
+            p(f) = p(f) - 1
+         end
+
+      end
+
+      ! Fix up s function which has no non-zero
+      first_nonzero(1) = -1   
+
+   end
+
+   set_normalising_factors(l_max,normalising_factors,px,py,pz) ::: selfless, private
+   ! Make the normalising factors for cartesian gaussians
+      l_max :: INT
+      normalising_factors :: VEC{REAL}, OUT
+      px,py,pz :: VEC{INT}, IN
+
+   ENSURE(px.dim==GAUSSIAN_DATA::n_comp_up_to(l_max),"wrong size, px")
+   ENSURE(py.dim==px.dim,"wrong size, py")
+   ENSURE(pz.dim==px.dim,"wrong size, pz")
+   ENSURE(normalising_factors.dim==px.dim,"wrong dimension, normalising_factors")
+
+      val :: REAL
+      l,s,f,i :: INT
+
+      f = 0
+      do l = 0,l_max
+
+         s = f + 1
+         f = f + GAUSSIAN_DATA::n_comp(l)
+
+         do i = s,f
+            val = l.double_factorial / &
+                  (px(i).double_factorial   &
+                  *py(i).double_factorial   &
+                  *pz(i).double_factorial)
+            normalising_factors(i) = sqrt(val)
+         end
+
+      end
+
+   end
+
+   set_binomial_coefficients(l_max,binomial) ::: selfless, leaky, private
+   ! Set the binomial coefficients using Pascal's triangle
+      l_max :: INT, IN
+      binomial :: VEC{VEC_{INT}}*
+
+   ENSURE(l_max>=0,"l_max must be non-negative")
+
+      n,i :: INT
+
+      ! Create
+      binomial.create([0,l_max])
+      binomial(0).element.create(0,0)
+
+      ! Initialize peak of triangle
+      binomial(0)[0] = 1
+      do n = 1,l_max
+
+         binomial(n).element.create(0,n)
+
+         do i = 0,n
+            if      (i==0) then; binomial(n)[i] = 1
+            else if (i==n) then; binomial(n)[i] = 1
+            else;                binomial(n)[i] = binomial(n-1)[i-1] + binomial(n-1)[i]
+            end
+         end
+
+      end
+
+   end
+
+   set_binomial_p1_coefficients(l_max,binomial_p1) ::: selfless, leaky, private
+   ! Set the binomial coefficients (plus 1) using Pascal's triangle.
+   ! In this version one is added to all indices to avoid indexing from 0.
+      l_max :: INT, IN
+      binomial_p1 :: VEC{VEC_{INT}}*
+
+   ENSURE(l_max>=0,"l_max must be non-negative")
+
+      n,i :: INT
+
+      ! Create
+      binomial_p1.create(l_max+1)
+      binomial_p1(1).element.create(1)
+
+      ! Initialize peak of triangle
+      binomial_p1(1)[1] = 1
+
+      ! Do Pascal's triangle
+      do n = 2,l_max+1
+
+         binomial_p1(n).element.create(n)
+
+         do i = 1,n
+            if      (i==1) then; binomial_p1(n)[i] = 1
+            else if (i==n) then; binomial_p1(n)[i] = 1
+            else;                binomial_p1(n)[i] = binomial_p1(n-1)[i-1] + binomial_p1(n-1)[i]
+            end
+         end
+
+      end
+
+   end
+
+! These define the boundaries of each angular momentum range
+
+   n_comp(l) result (res) ::: selfless, public, pure
+   ! No. of cartesian components in a gaussian shell of momentum "l".
+      l :: INT, IN
+      res :: INT
+      res = (l+1)*(l+2)/2
+   end
+
+   n_comp_up_to(l) result (res) ::: selfless, public, pure
+   ! No. of gaussian cartesian component functions up to and including the shell
+   ! with momentum "l".
+      l :: INT, IN
+      res :: INT
+      res = (l+1)*(l+2)*(l+3)/6
+   end
+
+   n_sph(l) result (res) ::: selfless, public, pure
+   ! No. of spherical components in a gaussian shell of momentum "l".
+      l :: INT, IN
+      res :: INT
+      res = 2*l+1
+   end
+
+   n_sph_up_to(l) result (res) ::: selfless, public, pure
+   ! No. of spherical component functions up to and including the shell
+   ! with momentum "l".
+      l :: INT, IN
+      res :: INT
+      res = (l+1)*(l+1)
+   end
+
+! Make the cartesian to spherical harmonic transformation
+
+   make_xyz_to_solid_harmonics(sph) ::: selfless, leaky
+   ! Make the cartesian gaussian to *real* solid harmonic gaussian
+   ! transformation matrices up to angular momentum "l_max". The particular
+   ! transformation matrix for angular momentum "L" is sph(L).element(c,M)
+   ! where "c" is the lexical index of the cartesian gaussian and "M" is the
+   ! spherical component index, as defined in the book by Helgaker, Olsen, and
+   ! Simons, p.218. NOTE: sph is created.
+      sph :: VEC{MAT_{REAL}}*
+
+   ENSURE(l_max_saved>=0,"l_max_saved must be non-negative")
+
+      l_max,two :: INT
+      L,M,i,del,nc,x,y,z,lm1,lm0,lm2 :: INT
+      top,bot,fac,val,valp,valm :: REAL
+      ix,iy,iz,pow :: VEC{INT}(3)
+
+      ! Set l_max
+      l_max = l_max_saved
+
+      ! Initialising the tranformation matrices
+      two = 2
+      sph.create(0,l_max)
+      do L = 0,l_max
+         nc = GAUSSIAN_DATA::n_comp(L)
+         sph(L).element.create(1,nc,-L,L)
+         sph(L).element = ZERO
+      end
+
+      ! Initialising S function
+      sph(0).element(1,0) = ONE
+
+      ! Recurrence for the other functions
+      do L = 0,l_max-1
+
+         del = L.delta(0)
+         top = 2*L+1
+         fac = sqrt((two.raised_to(del))*top/(top+1))
+         nc  = GAUSSIAN_DATA::n_comp(L)
+         lm1 = GAUSSIAN_DATA::n_comp_up_to(L-1)
+         lm0 = GAUSSIAN_DATA::n_comp_up_to(L)
+
+         do i = 1,nc ! loop over cartesian gaussian in L-shell
+
+            pow = GAUSSIAN_DATA::pp(:,lm1+i)
+            ix  = pow+[1,0,0]+1; x = GAUSSIAN_DATA::index_of(ix(1),ix(2),ix(3)) - lm0 ! multipy by x
+            iy  = pow+[0,1,0]+1; y = GAUSSIAN_DATA::index_of(iy(1),iy(2),iy(3)) - lm0 ! multipy by y
+            iz  = pow+[0,0,1]+1; z = GAUSSIAN_DATA::index_of(iz(1),iz(2),iz(3)) - lm0 ! multipy by z
+
+            valp = fac*        sph(L).element(i, L)
+            valm = fac*(1-del)*sph(L).element(i,-L)
+
+            sph(L+1).element(x, L+1) = sph(L+1).element(x, L+1) + valp
+            sph(L+1).element(x,-L-1) = sph(L+1).element(x,-L-1) + valm
+            sph(L+1).element(y, L+1) = sph(L+1).element(y, L+1) - valm
+            sph(L+1).element(y,-L-1) = sph(L+1).element(y,-L-1) + valp
+
+            do M = -L,L
+
+               bot = (L+M+1)*(L-M+1)
+               val = (top/sqrt(bot))*sph(L).element(i,M)
+
+               sph(L+1).element(z,M) = sph(L+1).element(z,M) + val
+
+            end
+
+         end
+
+         if (L<=0) cycle
+
+         nc  = GAUSSIAN_DATA::n_comp(L-1)
+         lm2 = GAUSSIAN_DATA::n_comp_up_to(L-2)
+
+         do i = 1,nc ! loop over cartesian gaussians in (L-1)-shell
+
+            pow = GAUSSIAN_DATA::pp(:,lm2+i)
+            ix  = pow+[2,0,0]+1; x = GAUSSIAN_DATA::index_of(ix(1),ix(2),ix(3)) - lm0 ! multiply by x^2
+            iy  = pow+[0,2,0]+1; y = GAUSSIAN_DATA::index_of(iy(1),iy(2),iy(3)) - lm0 ! multiply by y^2
+            iz  = pow+[0,0,2]+1; z = GAUSSIAN_DATA::index_of(iz(1),iz(2),iz(3)) - lm0 ! multiply by y^2
+
+            do M = -L+1,L-1
+
+               bot = (L+M+1)*(L-M+1)
+               val = sqrt((L+M)*(L-M)/bot)*sph(L-1).element(i,M)
+
+               sph(L+1).element(x,M) = sph(L+1).element(x,M) - val
+               sph(L+1).element(y,M) = sph(L+1).element(y,M) - val
+               sph(L+1).element(z,M) = sph(L+1).element(z,M) - val
+
+            end
+
+         end
+
+      end
+
+   end
+
+! Gaussian function rotation representation matrices
+
+   d_xyz_rep_matrices_for(R,is_spherical) result (res) ::: selfless, leaky
+   ! Return the representation matrices for d xyz products found in
+   ! gaussian shells from the p xyz matrices.
+      R   :: MAT3{REAL}, IN
+      is_spherical :: BIN, IN
+      res :: MAT3{REAL}*
+
+   ENSURE(R.dim1==3,"wrong 1st dimension, self")
+   ENSURE(R.dim2==3,"wrong 2nd dimension, self")
+   ENSURE(R.dim3>0,"no p type matrices")
+
+      n,order :: INT
+      dtr :: MAT{REAL}*
+
+      res => null()
+      if (l_max_saved<2) return
+
+      order = R.dim3
+
+      if (NOT is_spherical) then
+
+         res.create(6,6,order)
+         do n = 1,order
+            res(:,:,n) = GAUSSIAN_DATA:d_xyz_rep_matrix_for(R(:,:,n))
+         end
+
+      else
+
+         res.create(5,5,order)
+         dtr.create(6,6)
+         do n = 1,order
+            dtr = GAUSSIAN_DATA:d_xyz_rep_matrix_for(R(:,:,n))
+            dtr.change_basis_to(res(:,:,n),spherical_harmonics_for(2)[:,:])
+         end
+         dtr.destroy
+
+      end
+
+   end
+
+   f_xyz_rep_matrices_for(R,is_spherical) result (res) ::: selfless, leaky
+   ! Return the representation matrices for f xyz products found in
+   ! gaussian shells from the p xyz matrices
+      R   :: MAT3{REAL}, IN
+      is_spherical :: BIN, IN
+      res :: MAT3{REAL}*
+
+   ENSURE(R.dim1==3,"wrong 1st dimension, self")
+   ENSURE(R.dim2==3,"wrong 2nd dimension, self")
+   ENSURE(R.dim3>0,"no p type matrices")
+
+      n,order :: INT
+      ftr :: MAT{REAL}*
+
+      res => null()
+      if (l_max_saved<3) return
+
+      order = R.dim3
+
+      if (NOT is_spherical) then
+
+         res.create(10,10,order)
+         do n = 1,order
+            res(:,:,n) = GAUSSIAN_DATA:f_xyz_rep_matrix_for(R(:,:,n))
+         end
+
+      else
+
+         res.create(7,7,order)
+         ftr.create(10,10)
+         do n = 1,order
+            ftr = GAUSSIAN_DATA:f_xyz_rep_matrix_for(R(:,:,n))
+            ftr.change_basis_to(res(:,:,n),spherical_harmonics_for(3)[:,:])
+         end
+         ftr.destroy
+
+      end
+
+   end
+
+   g_xyz_rep_matrices_for(R,is_spherical) result (res) ::: selfless, leaky
+   ! Return the representation matrices for g xyz products found in
+   ! gaussian shells from the p xyz matrices
+      R   :: MAT3{REAL}, IN
+      is_spherical :: BIN, IN
+      res :: MAT3{REAL}*
+
+   ENSURE(R.dim1==3,"wrong 1st dimension, self")
+   ENSURE(R.dim2==3,"wrong 2nd dimension, self")
+   ENSURE(R.dim3>0,"no p type matrices")
+
+      n,order :: INT
+      gtr :: MAT{REAL}*
+
+      order = R.dim3
+
+      res => null()
+      if (l_max_saved<4) return
+
+      if (NOT is_spherical) then
+
+         res.create(15,15,order)
+         do n = 1,order
+            res(:,:,n) = GAUSSIAN_DATA:g_xyz_rep_matrix_for(R(:,:,n))
+         end
+
+      else
+
+         res.create(9,9,order)
+         gtr.create(15,15)
+         do n = 1,order
+            gtr = GAUSSIAN_DATA:g_xyz_rep_matrix_for(R(:,:,n))
+            gtr.change_basis_to(res(:,:,n),spherical_harmonics_for(4)[:,:])
+         end
+         gtr.destroy
+
+      end
+
+   end
+
+! Cartesian gaussian function rotation representation matrices
+
+   d_xyz_rep_matrix_for(R) result (dtr) ::: selfless
+   ! Return the representation matrix for a d-type xyz product found
+   ! in gaussian shells, induced by an xyz rotation matrix "R". 
+   ! The matrix representation induced is: d = d' * dtr, when the
+   ! coordinates r of the gaussian shell functions are written in
+   ! terms of new coordinates r' as: r = R^T * r'.
+   ! ALTERNATIVELY:
+   ! If R is used to *change basis* of symmetric matrix D -> D':
+   !        D' = R^T * D * R    .... (1)
+   ! and if Dv is the row composed of the lower triangle of D in the
+   ! order given by "d1" and "d2" below, then this routine returns the
+   ! 6 x 6 tensor product matrix "dtr" which performs:
+   !       D'v = Dv * dtr       .... (2)
+   ! That is, dtr *post multiplies* the row Dv. You can see this is
+   ! correct because the (same) off-diagonal elements of D in (1)
+   ! contribute twice to every element of D', hence D'v also. You can
+   ! see these two contributions in the line below. 
+   ! NOTE: If you want the rep matrix which *pre multiplies* a
+   ! *column* Dv you need to transpose "dtr"; or else, supply R^T instead
+   ! of R to this routine.
+      R :: MAT{REAL}, IN
+      dtr :: MAT{REAL}(6,6)
+
+   ENSURE(R.is_square,"R not square")
+   ENSURE(R.dim1==3,"wrong size, R")
+
+      i,i1,i2 :: INT
+      d1 :: VEC{INT}(6)  = (/1,2,3,1,1,2/)
+      d2 :: VEC{INT}(6)  = (/1,2,3,2,3,3/)
+
+    ! sqrt3  = sqrt(THREE)
+
+      do i = 1,6 ! loop on old coordinates
+         i1 = d1(i)
+         i2 = d2(i)
+         dtr(1,i)  = R(1,i1)*R(1,i2)
+         dtr(2,i)  = R(2,i1)*R(2,i2)
+         dtr(3,i)  = R(3,i1)*R(3,i2)
+         dtr(4,i)  = R(1,i1)*R(2,i2) &
+                   + R(2,i1)*R(1,i2)
+         dtr(5,i)  = R(1,i1)*R(3,i2) &
+                   + R(3,i1)*R(1,i2)
+         dtr(6,i)  = R(2,i1)*R(3,i2) &
+                   + R(3,i1)*R(2,i2)
+      end
+
+    ! dtr(1:6,4:6) = dtr(1:6,4:6)*sqrt3 ! Put in correct normalization for old primitives
+    ! dtr(4:6,1:6) = dtr(4:6,1:6)/sqrt3 ! Put in wrong   normalization for new primitives
+
+   end
+
+   f_xyz_rep_matrix_for(R) result (ftr) ::: selfless
+   ! Return the representation matrix for an f xyz product found in
+   ! gaussian shells from a p-type xyz matrix. See comments above.
+      R :: MAT{REAL}, IN
+      ftr :: MAT{REAL}(10,10)
+
+   ENSURE(R.is_square,"R not square")
+   ENSURE(R.dim1==3,"wrong size, R")
+
+      i,i1,i2,i3 :: INT
+      f1 :: VEC{INT}(10) = (/1,2,3,1,1,2,2,3,3,1/)
+      f2 :: VEC{INT}(10) = (/1,2,3,1,1,2,2,3,3,2/)
+      f3 :: VEC{INT}(10) = (/1,2,3,2,3,1,3,1,2,3/)
+
+    ! sqrt5  = sqrt(FIVE)
+    ! sqrt15 = sqrt(15d0)
+
+      do i = 1,10
+         i1 = f1(i)
+         i2 = f2(i)
+         i3 = f3(i)
+         ftr(1,i)  = R(1,i1)*R(1,i2)*R(1,i3)
+         ftr(2,i)  = R(2,i1)*R(2,i2)*R(2,i3)
+         ftr(3,i)  = R(3,i1)*R(3,i2)*R(3,i3)
+         ftr(4,i)  = R(1,i1)*R(1,i2)*R(2,i3) &
+                   + R(1,i1)*R(2,i2)*R(1,i3) &
+                   + R(2,i1)*R(1,i2)*R(1,i3)
+         ftr(5,i)  = R(1,i1)*R(1,i2)*R(3,i3) &
+                   + R(1,i1)*R(3,i2)*R(1,i3) &
+                   + R(3,i1)*R(1,i2)*R(1,i3)
+         ftr(6,i)  = R(1,i1)*R(2,i2)*R(2,i3) &
+                   + R(2,i1)*R(1,i2)*R(2,i3) &
+                   + R(2,i1)*R(2,i2)*R(1,i3)
+         ftr(7,i)  = R(3,i1)*R(2,i2)*R(2,i3) &
+                   + R(2,i1)*R(3,i2)*R(2,i3) &
+                   + R(2,i1)*R(2,i2)*R(3,i3)
+         ftr(8,i)  = R(1,i1)*R(3,i2)*R(3,i3) &
+                   + R(3,i1)*R(1,i2)*R(3,i3) &
+                   + R(3,i1)*R(3,i2)*R(1,i3)
+         ftr(9,i)  = R(2,i1)*R(3,i2)*R(3,i3) &
+                   + R(3,i1)*R(2,i2)*R(3,i3) &
+                   + R(3,i1)*R(3,i2)*R(2,i3)
+         ftr(10,i) = R(1,i1)*R(2,i2)*R(3,i3) &
+                   + R(1,i1)*R(3,i2)*R(2,i3) &
+                   + R(2,i1)*R(1,i2)*R(3,i3) &
+                   + R(2,i1)*R(3,i2)*R(1,i3) &
+                   + R(3,i1)*R(1,i2)*R(2,i3) &
+                   + R(3,i1)*R(2,i2)*R(1,i3)
+      end
+
+    ! ftr(1:10, 4:9 ) = ftr(1:10, 4:9 )*sqrt5
+    ! ftr(1:10,10:10) = ftr(1:10,10:10)*sqrt15
+    ! ftr(4:9 , 1:10) = ftr(4:9 , 1:10)/sqrt5
+    ! ftr(10:10,1:10) = ftr(10:10,1:10)/sqrt15
+
+   end
+
+   g_xyz_rep_matrix_for(R) result (gtr) ::: selfless
+   ! Return the representation matrix for a g xyz product found in
+   ! gaussian shells from a p-type xyz matrix. See commenst above.
+      R :: MAT{REAL}, IN
+      gtr :: MAT{REAL}(15,15)
+
+   ENSURE(R.is_square,"R not square")
+   ENSURE(R.dim1==3,"wrong size, R")
+
+      i,i1,i2,i3,i4 :: INT
+      g1 :: VEC{INT}(15) = (/1,2,3,1,1,2,2,3,3,1,1,2,1,2,3/)
+      g2 :: VEC{INT}(15) = (/1,2,3,1,1,2,2,3,3,1,1,2,1,2,3/)
+      g3 :: VEC{INT}(15) = (/1,2,3,1,1,2,2,3,3,2,3,3,2,1,1/)
+      g4 :: VEC{INT}(15) = (/1,2,3,2,3,1,3,1,2,2,3,3,3,3,2/)
+
+    ! sqrt7  = sqrt(SEVEN)
+    ! sqrt35 = sqrt(35d0)         ! = sqrt(35)
+    ! sqrt353= sqrt35/sqrt(THREE) ! = sqrt(35)/sqrt(3)
+
+      do i = 1,15
+         i1 = g1(i)
+         i2 = g2(i)
+         i3 = g3(i)
+         i4 = g4(i)
+         gtr(1,i)  = R(1,i1)*R(1,i2)*R(1,i3)*R(1,i4)
+         gtr(2,i)  = R(2,i1)*R(2,i2)*R(2,i3)*R(2,i4)
+         gtr(3,i)  = R(3,i1)*R(3,i2)*R(3,i3)*R(3,i4)
+         gtr(4,i)  = R(1,i1)*R(1,i2)*R(1,i3)*R(2,i4) &
+                   + R(1,i1)*R(1,i2)*R(2,i3)*R(1,i4) &
+                   + R(1,i1)*R(2,i2)*R(1,i3)*R(1,i4) &
+                   + R(2,i1)*R(1,i2)*R(1,i3)*R(1,i4)
+         gtr(5,i)  = R(1,i1)*R(1,i2)*R(1,i3)*R(3,i4) &
+                   + R(1,i1)*R(1,i2)*R(3,i3)*R(1,i4) &
+                   + R(1,i1)*R(3,i2)*R(1,i3)*R(1,i4) &
+                   + R(3,i1)*R(1,i2)*R(1,i3)*R(1,i4)
+         gtr(6,i)  = R(1,i1)*R(2,i2)*R(2,i3)*R(2,i4) &
+                   + R(2,i1)*R(1,i2)*R(2,i3)*R(2,i4) &
+                   + R(2,i1)*R(2,i2)*R(1,i3)*R(2,i4) &
+                   + R(2,i1)*R(2,i2)*R(2,i3)*R(1,i4)
+         gtr(7,i)  = R(3,i1)*R(2,i2)*R(2,i3)*R(2,i4) &
+                   + R(2,i1)*R(3,i2)*R(2,i3)*R(2,i4) &
+                   + R(2,i1)*R(2,i2)*R(3,i3)*R(2,i4) &
+                   + R(2,i1)*R(2,i2)*R(2,i3)*R(3,i4)
+         gtr(8,i)  = R(1,i1)*R(3,i2)*R(3,i3)*R(3,i4) &
+                   + R(3,i1)*R(1,i2)*R(3,i3)*R(3,i4) &
+                   + R(3,i1)*R(3,i2)*R(1,i3)*R(3,i4) &
+                   + R(3,i1)*R(3,i2)*R(3,i3)*R(1,i4)
+         gtr(9,i)  = R(2,i1)*R(3,i2)*R(3,i3)*R(3,i4) &
+                   + R(3,i1)*R(2,i2)*R(3,i3)*R(3,i4) &
+                   + R(3,i1)*R(3,i2)*R(2,i3)*R(3,i4) &
+                   + R(3,i1)*R(3,i2)*R(3,i3)*R(2,i4)
+         gtr(10,i) = R(1,i1)*R(1,i2)*R(2,i3)*R(2,i4) &
+                   + R(1,i1)*R(2,i2)*R(1,i3)*R(2,i4) &
+                   + R(1,i1)*R(2,i2)*R(2,i3)*R(1,i4) &
+                   + R(2,i1)*R(1,i2)*R(1,i3)*R(2,i4) &
+                   + R(2,i1)*R(1,i2)*R(2,i3)*R(1,i4) &
+                   + R(2,i1)*R(2,i2)*R(1,i3)*R(1,i4)
+         gtr(11,i) = R(1,i1)*R(1,i2)*R(3,i3)*R(3,i4) &
+                   + R(1,i1)*R(3,i2)*R(1,i3)*R(3,i4) &
+                   + R(1,i1)*R(3,i2)*R(3,i3)*R(1,i4) &
+                   + R(3,i1)*R(1,i2)*R(1,i3)*R(3,i4) &
+                   + R(3,i1)*R(1,i2)*R(3,i3)*R(1,i4) &
+                   + R(3,i1)*R(3,i2)*R(1,i3)*R(1,i4)
+         gtr(12,i) = R(2,i1)*R(2,i2)*R(3,i3)*R(3,i4) &
+                   + R(2,i1)*R(3,i2)*R(2,i3)*R(3,i4) &
+                   + R(2,i1)*R(3,i2)*R(3,i3)*R(2,i4) &
+                   + R(3,i1)*R(2,i2)*R(2,i3)*R(3,i4) &
+                   + R(3,i1)*R(2,i2)*R(3,i3)*R(2,i4) &
+                   + R(3,i1)*R(3,i2)*R(2,i3)*R(2,i4)
+         gtr(13,i) = R(1,i1)*R(1,i2)*R(2,i3)*R(3,i4) &
+                   + R(1,i1)*R(1,i2)*R(3,i3)*R(2,i4) &
+                   + R(1,i1)*R(2,i2)*R(1,i3)*R(3,i4) &
+                   + R(1,i1)*R(2,i2)*R(3,i3)*R(1,i4) &
+                   + R(1,i1)*R(3,i2)*R(1,i3)*R(2,i4) &
+                   + R(1,i1)*R(3,i2)*R(2,i3)*R(1,i4) &
+                   + R(2,i1)*R(1,i2)*R(1,i3)*R(3,i4) &
+                   + R(2,i1)*R(1,i2)*R(3,i3)*R(1,i4) &
+                   + R(2,i1)*R(3,i2)*R(1,i3)*R(1,i4) &
+                   + R(3,i1)*R(1,i2)*R(1,i3)*R(2,i4) &
+                   + R(3,i1)*R(1,i2)*R(2,i3)*R(1,i4) &
+                   + R(3,i1)*R(2,i2)*R(1,i3)*R(1,i4)
+         gtr(14,i) = R(2,i1)*R(2,i2)*R(1,i3)*R(3,i4) &
+                   + R(2,i1)*R(2,i2)*R(3,i3)*R(1,i4) &
+                   + R(2,i1)*R(1,i2)*R(2,i3)*R(3,i4) &
+                   + R(2,i1)*R(1,i2)*R(3,i3)*R(2,i4) &
+                   + R(2,i1)*R(3,i2)*R(2,i3)*R(1,i4) &
+                   + R(2,i1)*R(3,i2)*R(1,i3)*R(2,i4) &
+                   + R(1,i1)*R(2,i2)*R(2,i3)*R(3,i4) &
+                   + R(1,i1)*R(2,i2)*R(3,i3)*R(2,i4) &
+                   + R(1,i1)*R(3,i2)*R(2,i3)*R(2,i4) &
+                   + R(3,i1)*R(2,i2)*R(2,i3)*R(1,i4) &
+                   + R(3,i1)*R(2,i2)*R(1,i3)*R(2,i4) &
+                   + R(3,i1)*R(1,i2)*R(2,i3)*R(2,i4)
+         gtr(15,i) = R(3,i1)*R(3,i2)*R(1,i3)*R(2,i4) &
+                   + R(3,i1)*R(3,i2)*R(2,i3)*R(1,i4) &
+                   + R(3,i1)*R(1,i2)*R(3,i3)*R(2,i4) &
+                   + R(3,i1)*R(1,i2)*R(2,i3)*R(3,i4) &
+                   + R(3,i1)*R(2,i2)*R(3,i3)*R(1,i4) &
+                   + R(3,i1)*R(2,i2)*R(1,i3)*R(3,i4) &
+                   + R(1,i1)*R(3,i2)*R(3,i3)*R(2,i4) &
+                   + R(1,i1)*R(3,i2)*R(2,i3)*R(3,i4) &
+                   + R(1,i1)*R(2,i2)*R(3,i3)*R(3,i4) &
+                   + R(2,i1)*R(3,i2)*R(3,i3)*R(1,i4) &
+                   + R(2,i1)*R(3,i2)*R(1,i3)*R(3,i4) &
+                   + R(2,i1)*R(1,i2)*R(3,i3)*R(3,i4)
+      end
+
+    ! gtr(1:15, 4:9 ) = gtr(1:15, 4:9 )*sqrt7
+    ! gtr(1:15,10:12) = gtr(1:15,10:12)*sqrt353
+    ! gtr(1:15,13:15) = gtr(1:15,13:15)*sqrt35
+    ! gtr(4:9 , 1:15) = gtr(4:9 , 1:15)/sqrt7
+    ! gtr(10:12,1:15) = gtr(10:12,1:15)/sqrt353
+    ! gtr(13:15,1:15) = gtr(13:15,1:15)/sqrt35
+
+   end
+
+! Symmetric tensor product representation matrices
+
+   symmetric_tensor_2_product_mx(res,R) ::: selfless
+   ! If R is used to *change basis* of symmetric matrix D -> D':
+   !        D' = R^T * D * R    .... (1)
+   ! and if Dv is the row composed of the lower triangle of D in the
+   ! order given by "l1" and "l2" below, then this routine returns the
+   ! 6 x 6 cartesian tensor product matrix "res" which performs:
+   !       D'v = res * Dv       .... (2)
+   ! That is, res *pre multiplies* the column Dv. You can see this is
+   ! correct because the (same) off-diagonal elements of D in (1)
+   ! contribute twice to every element of D', hence D'v also. You can
+   ! see these two contributions in the line below. 
+   ! NOTE: this is the transpose of d_xyz_rep_matrix_for(R)
+   ! NOTE: If you use the MAT:change_basis_using(R) then use this
+   ! routine with the same "R" and premultiply by "res" to achieve the
+   ! same effect. This is important for 3rd and 4th order transforms.
+      res :: MAT{REAL}(6,6), OUT
+      R :: MAT{REAL}, IN
+
+   ENSURE(R.is_square,"R not square")
+   ENSURE(R.dim1==3,"wrong size, R")
+
+      ! Lexical order: read as columns
+      l1 :: VEC{INT}(6)  = (/1,2,3,1,1,2/)
+      l2 :: VEC{INT}(6)  = (/1,2,3,2,3,3/)
+
+      i,i1,i2 :: INT
+
+      do i = 1,6 
+
+         i1 = l1(i)
+         i2 = l2(i)
+
+         res(i,1)  = R(i1,1)*R(i2,1)
+         res(i,2)  = R(i1,2)*R(i2,2)
+         res(i,3)  = R(i1,3)*R(i2,3)
+         res(i,4)  = R(i1,1)*R(i2,2) + R(i1,2)*R(i2,1)
+         res(i,5)  = R(i1,1)*R(i2,3) + R(i1,3)*R(i2,1)
+         res(i,6)  = R(i1,2)*R(i2,3) + R(i1,3)*R(i2,2)
+
+      end
+
+   end
+
+   symmetric_tensor_3_product_mx(res,R) ::: selfless
+   ! Return the third-order cartesian tensor product matrix for the
+   ! symmetric lower pyramid. See routine above.
+      res :: MAT{REAL}(10,10), OUT
+      R :: MAT{REAL}, IN
+
+   ENSURE(R.is_square,"R not square")
+   ENSURE(R.dim1==3,"wrong size, R")
+
+      ! Lexical order: read as columns
+      l1 :: VEC{INT}(10) = (/1,2,3,1,1,2,2,3,3,1/)
+      l2 :: VEC{INT}(10) = (/1,2,3,1,1,2,2,3,3,2/)
+      l3 :: VEC{INT}(10) = (/1,2,3,2,3,1,3,1,2,3/)
+
+      i,i1,i2,i3 :: INT
+
+      do i = 1,10
+
+         i1 = l1(i)
+         i2 = l2(i)
+         i3 = l3(i)
+
+         res(i, 1) = R(i1,1)*R(i2,1)*R(i3,1)
+         res(i, 2) = R(i1,2)*R(i2,2)*R(i3,2)
+         res(i, 3) = R(i1,3)*R(i2,3)*R(i3,3)
+
+         res(i, 4) = R(i1,1)*R(i2,1)*R(i3,2) &
+                   + R(i1,1)*R(i2,2)*R(i3,1) &
+                   + R(i1,2)*R(i2,1)*R(i3,1)
+         res(i, 5) = R(i1,1)*R(i2,1)*R(i3,3) &
+                   + R(i1,1)*R(i2,3)*R(i3,1) &
+                   + R(i1,3)*R(i2,1)*R(i3,1)
+         res(i, 6) = R(i1,1)*R(i2,2)*R(i3,2) &
+                   + R(i1,2)*R(i2,1)*R(i3,2) &
+                   + R(i1,2)*R(i2,2)*R(i3,1)
+         res(i, 7) = R(i1,3)*R(i2,2)*R(i3,2) &
+                   + R(i1,2)*R(i2,3)*R(i3,2) &
+                   + R(i1,2)*R(i2,2)*R(i3,3)
+         res(i, 8) = R(i1,1)*R(i2,3)*R(i3,3) &
+                   + R(i1,3)*R(i2,1)*R(i3,3) &
+                   + R(i1,3)*R(i2,3)*R(i3,1)
+         res(i, 9) = R(i1,2)*R(i2,3)*R(i3,3) &
+                   + R(i1,3)*R(i2,2)*R(i3,3) &
+                   + R(i1,3)*R(i2,3)*R(i3,2)
+
+         res(i,10) = R(i1,1)*R(i2,2)*R(i3,3) &
+                   + R(i1,1)*R(i2,3)*R(i3,2) &
+                   + R(i1,2)*R(i2,1)*R(i3,3) &
+                   + R(i1,2)*R(i2,3)*R(i3,1) &
+                   + R(i1,3)*R(i2,1)*R(i3,2) &
+                   + R(i1,3)*R(i2,2)*R(i3,1)
+
+      end
+
+   end
+
+   symmetric_tensor_4_product_mx(res,R) ::: selfless
+   ! Return the fourth-order cartesian tensor product matrix for the
+   ! symmetric lower pyramid. See routine above.
+      res :: MAT{REAL}(15,15)
+      R :: MAT{REAL}, IN
+
+   ENSURE(R.is_square,"R not square")
+   ENSURE(R.dim1==3,"wrong size, R")
+
+      ! Lexical order: read as columns
+      l1 :: VEC{INT}(15) = (/1,2,3,1,1,2,2,3,3,1,1,2,1,2,3/)
+      l2 :: VEC{INT}(15) = (/1,2,3,1,1,2,2,3,3,1,1,2,1,2,3/)
+      l3 :: VEC{INT}(15) = (/1,2,3,1,1,2,2,3,3,2,3,3,2,1,1/)
+      l4 :: VEC{INT}(15) = (/1,2,3,2,3,1,3,1,2,2,3,3,3,3,2/)
+
+      i,i1,i2,i3,i4 :: INT
+
+      do i = 1,15
+
+         i1 = l1(i)
+         i2 = l2(i)
+         i3 = l3(i)
+         i4 = l4(i)
+
+         res(i, 1) = R(i1,1)*R(i2,1)*R(i3,1)*R(i4,1)
+         res(i, 2) = R(i1,2)*R(i2,2)*R(i3,2)*R(i4,2)
+         res(i, 3) = R(i1,3)*R(i2,3)*R(i3,3)*R(i4,3)
+
+         res(i, 4) = R(i1,1)*R(i2,1)*R(i3,1)*R(i4,2) &
+                   + R(i1,1)*R(i2,1)*R(i3,2)*R(i4,1) &
+                   + R(i1,1)*R(i2,2)*R(i3,1)*R(i4,1) &
+                   + R(i1,2)*R(i2,1)*R(i3,1)*R(i4,1)
+         res(i, 5) = R(i1,1)*R(i2,1)*R(i3,1)*R(i4,3) &
+                   + R(i1,1)*R(i2,1)*R(i3,3)*R(i4,1) &
+                   + R(i1,1)*R(i2,3)*R(i3,1)*R(i4,1) &
+                   + R(i1,3)*R(i2,1)*R(i3,1)*R(i4,1)
+         res(i, 6) = R(i1,1)*R(i2,2)*R(i3,2)*R(i4,2) &
+                   + R(i1,2)*R(i2,1)*R(i3,2)*R(i4,2) &
+                   + R(i1,2)*R(i2,2)*R(i3,1)*R(i4,2) &
+                   + R(i1,2)*R(i2,2)*R(i3,2)*R(i4,1)
+         res(i, 7) = R(i1,3)*R(i2,2)*R(i3,2)*R(i4,2) &
+                   + R(i1,2)*R(i2,3)*R(i3,2)*R(i4,2) &
+                   + R(i1,2)*R(i2,2)*R(i3,3)*R(i4,2) &
+                   + R(i1,2)*R(i2,2)*R(i3,2)*R(i4,3)
+         res(i, 8) = R(i1,1)*R(i2,3)*R(i3,3)*R(i4,3) &
+                   + R(i1,3)*R(i2,1)*R(i3,3)*R(i4,3) &
+                   + R(i1,3)*R(i2,3)*R(i3,1)*R(i4,3) &
+                   + R(i1,3)*R(i2,3)*R(i3,3)*R(i4,1)
+         res(i, 9) = R(i1,2)*R(i2,3)*R(i3,3)*R(i4,3) &
+                   + R(i1,3)*R(i2,2)*R(i3,3)*R(i4,3) &
+                   + R(i1,3)*R(i2,3)*R(i3,2)*R(i4,3) &
+                   + R(i1,3)*R(i2,3)*R(i3,3)*R(i4,2)
+
+         res(i,10) = R(i1,1)*R(i2,1)*R(i3,2)*R(i4,2) &
+                   + R(i1,1)*R(i2,2)*R(i3,1)*R(i4,2) &
+                   + R(i1,1)*R(i2,2)*R(i3,2)*R(i4,1) &
+                   + R(i1,2)*R(i2,1)*R(i3,1)*R(i4,2) &
+                   + R(i1,2)*R(i2,1)*R(i3,2)*R(i4,1) &
+                   + R(i1,2)*R(i2,2)*R(i3,1)*R(i4,1)
+         res(i,11) = R(i1,1)*R(i2,1)*R(i3,3)*R(i4,3) &
+                   + R(i1,1)*R(i2,3)*R(i3,1)*R(i4,3) &
+                   + R(i1,1)*R(i2,3)*R(i3,3)*R(i4,1) &
+                   + R(i1,3)*R(i2,1)*R(i3,1)*R(i4,3) &
+                   + R(i1,3)*R(i2,1)*R(i3,3)*R(i4,1) &
+                   + R(i1,3)*R(i2,3)*R(i3,1)*R(i4,1)
+         res(i,12) = R(i1,2)*R(i2,2)*R(i3,3)*R(i4,3) &
+                   + R(i1,2)*R(i2,3)*R(i3,2)*R(i4,3) &
+                   + R(i1,2)*R(i2,3)*R(i3,3)*R(i4,2) &
+                   + R(i1,3)*R(i2,2)*R(i3,2)*R(i4,3) &
+                   + R(i1,3)*R(i2,2)*R(i3,3)*R(i4,2) &
+                   + R(i1,3)*R(i2,3)*R(i3,2)*R(i4,2)
+
+         res(i,13) = R(i1,1)*R(i2,1)*R(i3,2)*R(i4,3) &
+                   + R(i1,1)*R(i2,1)*R(i3,3)*R(i4,2) &
+                   + R(i1,1)*R(i2,2)*R(i3,1)*R(i4,3) &
+                   + R(i1,1)*R(i2,2)*R(i3,3)*R(i4,1) &
+                   + R(i1,1)*R(i2,3)*R(i3,1)*R(i4,2) &
+                   + R(i1,1)*R(i2,3)*R(i3,2)*R(i4,1) &
+                   + R(i1,2)*R(i2,1)*R(i3,1)*R(i4,3) &
+                   + R(i1,2)*R(i2,1)*R(i3,3)*R(i4,1) &
+                   + R(i1,2)*R(i2,3)*R(i3,1)*R(i4,1) &
+                   + R(i1,3)*R(i2,1)*R(i3,1)*R(i4,2) &
+                   + R(i1,3)*R(i2,1)*R(i3,2)*R(i4,1) &
+                   + R(i1,3)*R(i2,2)*R(i3,1)*R(i4,1)
+         res(i,14) = R(i1,2)*R(i2,2)*R(i3,1)*R(i4,3) &
+                   + R(i1,2)*R(i2,2)*R(i3,3)*R(i4,1) &
+                   + R(i1,2)*R(i2,1)*R(i3,2)*R(i4,3) &
+                   + R(i1,2)*R(i2,1)*R(i3,3)*R(i4,2) &
+                   + R(i1,2)*R(i2,3)*R(i3,2)*R(i4,1) &
+                   + R(i1,2)*R(i2,3)*R(i3,1)*R(i4,2) &
+                   + R(i1,1)*R(i2,2)*R(i3,2)*R(i4,3) &
+                   + R(i1,1)*R(i2,2)*R(i3,3)*R(i4,2) &
+                   + R(i1,1)*R(i2,3)*R(i3,2)*R(i4,2) &
+                   + R(i1,3)*R(i2,2)*R(i3,2)*R(i4,1) &
+                   + R(i1,3)*R(i2,2)*R(i3,1)*R(i4,2) &
+                   + R(i1,3)*R(i2,1)*R(i3,2)*R(i4,2)
+         res(i,15) = R(i1,3)*R(i2,3)*R(i3,1)*R(i4,2) &
+                   + R(i1,3)*R(i2,3)*R(i3,2)*R(i4,1) &
+                   + R(i1,3)*R(i2,1)*R(i3,3)*R(i4,2) &
+                   + R(i1,3)*R(i2,1)*R(i3,2)*R(i4,3) &
+                   + R(i1,3)*R(i2,2)*R(i3,3)*R(i4,1) &
+                   + R(i1,3)*R(i2,2)*R(i3,1)*R(i4,3) &
+                   + R(i1,1)*R(i2,3)*R(i3,3)*R(i4,2) &
+                   + R(i1,1)*R(i2,3)*R(i3,2)*R(i4,3) &
+                   + R(i1,1)*R(i2,2)*R(i3,3)*R(i4,3) &
+                   + R(i1,2)*R(i2,3)*R(i3,3)*R(i4,1) &
+                   + R(i1,2)*R(i2,3)*R(i3,1)*R(i4,3) &
+                   + R(i1,2)*R(i2,1)*R(i3,3)*R(i4,3)
+      end
+
+   end
+
+   symmetric_tensor_product_mx(res,R) ::: selfless
+   ! This routine returns blocks of the above matrices in a direct
+   ! sum, appropriate to the case when parameters are ordered in a
+   ! pADP type vector.
+      res :: MAT{REAL}, OUT
+      R :: MAT{REAL}, IN
+
+   ENSURE(res.is_square,"res not square")
+   ENSURE(R.is_square,"R not square")
+   ENSURE(R.dim1==3,"wrong size, R")
+
+      dim :: INT
+
+      dim = res.dim1
+
+      select case (dim)
+
+         case (3)
+            res = ZERO
+            res = R
+
+         case (9)
+            res = ZERO
+            res(1:3,1:3) = R
+            GAUSSIAN_DATA::symmetric_tensor_2_product_mx(res( 4: 9, 4: 9),R)
+
+         case (19)
+            res = ZERO
+            res(1:3,1:3) = R
+            GAUSSIAN_DATA::symmetric_tensor_2_product_mx(res( 4: 9, 4: 9),R)
+            GAUSSIAN_DATA::symmetric_tensor_3_product_mx(res(10:19,10:19),R)
+
+         case (34)
+            res = ZERO
+            res(1:3,1:3) = R
+            GAUSSIAN_DATA::symmetric_tensor_2_product_mx(res( 4: 9, 4: 9),R)
+            GAUSSIAN_DATA::symmetric_tensor_3_product_mx(res(10:19,10:19),R)
+            GAUSSIAN_DATA::symmetric_tensor_4_product_mx(res(20:34,20:34),R)
+
+         case default
+            DIE("unimplemented/unknown dimension, "//trim(dim.to_str))
+
+      end
+
+   end
+
+! Reorder lexical order to lower pyramid
+
+   lexical_2_to_lower_pyramid(inp,res) ::: selfless
+   ! The gaussian lexical order for L=2 is reordered to the lower
+   ! pyramid for a 3x3 tensor. 
+   !. Input  order "inp" is the lexical order
+   !. Output order "res" is lower pyramid
+      inp :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+
+   ENSURE(inp.dim==6      ,"wrong size, inp")
+   ENSURE(res.dim==inp.dim,"res and inp are inconsistent")
+
+      ! Lower pyramid order translator
+      old :: VEC{INT}(6) = [1, 4, 2, 5, 6, 3]
+
+      i :: INT
+
+      do i = 1,6
+         res(i) = inp(old(i))
+      end
+
+   end
+
+   lexical_3_to_lower_pyramid(inp,res) ::: selfless
+   ! The gaussian lexical order for L=3 is reordered to the lower
+   ! pyramid for a 3x3x3 tensor. 
+   !. Input  order "inp" is the lexical order
+   !. Output order "res" is lower pyramid
+      inp :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+
+   ENSURE(inp.dim==10     ,"wrong size, inp")
+   ENSURE(res.dim==inp.dim,"res and inp are inconsistent")
+
+      ! Lower pyramid order translator
+      old :: VEC{INT}(10) = [1, 4, 6, 2, 5, 10, 7, 8, 9, 3]
+
+      i :: INT
+
+      do i = 1,10
+         res(i) = inp(old(i))
+      end
+
+   end
+
+   lexical_4_to_lower_pyramid(inp,res) ::: selfless
+   ! The gaussian lexical order for L=4 is reordered to the lower
+   ! pyramid for a 3x3x3x3 tensor. 
+   !. Input  order "inp" is the lexical order
+   !. Output order "res" is lower pyramid
+      inp :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+
+   ENSURE(inp.dim==15     ,"wrong size, inp")
+   ENSURE(res.dim==inp.dim,"res and inp are inconsistent")
+
+      ! Lower pyramid order translator
+      old :: VEC{INT}(15) = [ 1, 4, 10, 6, 2, 5, 13, 14, 7, 11, 15, 12, 8, 9, 3 ]
+
+      i :: INT
+
+      do i = 1,15
+         res(i) = inp(old(i))
+      end
+
+   end
+
+end

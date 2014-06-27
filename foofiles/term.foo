@@ -1,0 +1,380 @@
+!-------------------------------------------------------------------------------
+!
+! TERM: 
+!
+! A product of 1D monomials in a "degree of freedom" i.e. a
+! "coordinate index", or "variable". It includes a coeficient in
+! front. Each 1D monomial is recognized according to the text codes in
+! the d1_codes map array.  And each 1D term is separated by a dot from
+! the other terms.  Example: q(1)^2.m(2).p(3)^3
+!
+! Copyright (C) Dylan Jayatilaka, Patrick Cassam-Chenai, 2011
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: observable_term.foo $
+!-------------------------------------------------------------------------------
+
+
+module TERM
+
+   implicit none
+
+   keys :: VEC{STR}*, private DEFAULT_NULL
+
+   saved_self :: TERM*, private
+
+contains
+
+!  ==========================
+!  Create and destroy methods
+!  ==========================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts
+      nullify(.d1_codes)
+      nullify(.monomial)
+      nullify(.has_any_var)
+      nullify(.has_any_dof)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts
+      nullify(.d1_codes)
+      .monomial.destroy
+      .has_any_var.destroy
+      .has_any_dof.destroy
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   create_copy(x) ::: leaky
+   ! Create a copy of "x"
+      self :: PTR
+      x :: TERM, IN
+      .create
+      .copy(x)
+   end
+
+   copy(x) ::: leaky
+   ! Set self to be a copy of "x"
+      x :: TERM, IN
+
+      ! Copy all (pointer copy)
+      self = x
+
+      ! Create copy
+      if (x.monomial.created)    .monomial.create_copy(x.monomial)
+      if (x.has_any_var.created) .has_any_var.create_copy(x.has_any_var)
+      if (x.has_any_dof.created) .has_any_dof.create_copy(x.has_any_dof)
+
+   end
+
+!  ============
+!  Set routines
+!  ============
+
+   set_defaults
+   ! Set defaults
+
+      .coefficient = ZERO
+      .descriptor = " "
+      .analyzed = FALSE
+      .n_monomials = 0
+
+   end
+
+   set_d1_codes(val)
+   ! Set the 1D codes which are recognized
+      val :: MAP{STR,INT}
+      .d1_codes => val
+   end
+
+   set_coefficient(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.coefficient)
+   ! Generic set
+   end
+
+   set_descriptor(val) ::: get_from(OBJECT:set, VAL?=>STR, ARG?=>.descriptor)
+   ! Generic set
+   end
+
+!  =====================
+!  Read/process keywords
+!  =====================
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: recursive, leaky
+   ! Process a keyword "word". Data is inputted from "stdin", unless
+   ! "word" is a sequence of blank separated strings. In this case,
+   ! the sequence is processed as if it were a separate file.
+      keyword :: STR
+      timer :: TIME
+
+      timer.start_timing
+
+      select case (keyword(1:30))
+
+        case ("}                             "); ! exit case
+        case ("coefficient=                  "); .read_coefficient
+        case ("debug_on                      "); .read_debug_on
+        case ("debug_off                     "); .read_debug_off
+        case ("descriptor=                   "); .read_descriptor
+        case ("redirect                      "); .redirect
+        case ("revert                        "); .revert
+
+        case  default ;               UNKNOWN(keyword)
+      end
+   end
+
+!  ============
+!  Read methods
+!  ============
+
+   read_coefficient ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_coefficient), private
+   ! Generic read and set a quantity with units
+   end
+
+   read_descriptor ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_descriptor), private
+   ! Generic read and set
+   end
+
+   redirect ::: get_from(OBJECT), leaky
+   ! Redirect input
+   end
+
+   revert ::: get_from(OBJECT), leaky
+   ! Revert back to previous stdin file
+   end
+
+! ====================
+! Key related routines
+! ====================
+
+   read_keys ::: get_from(OBJECT), leaky
+   ! Read the "keys".
+   end
+
+   process_keys ::: get_from(OBJECT), leaky
+   ! Process each of the words in the "keys" list.
+   ENSURE(keys.created,"no keys")
+   end
+
+   keys_created result (res) ::: get_from(OBJECT)
+   ! Return TRUE if the list-element keys are created.
+   end
+
+   set_keys(the_keys) ::: get_from(OBJECT)
+   ! This is for setting the "keys" externally.
+   end
+
+   clear_keys ::: get_from(OBJECT), leaky
+   ! This is for destroying the "keys" externally.
+   end
+
+!  =======
+!  Analyze
+!  =======
+
+   analyze_descriptor ::: leaky
+   ! Analyze the "descriptor" and decode its information
+
+   ENSURE(NOT .analyzed,"already analyzed")
+   ENSURE(.descriptor/=" ","descriptor is blank")
+   ENSURE(.parameters.destroyed,"parameters created")
+   ENSURE(.d1_codes.created,"no d1_codes!")
+
+      term,item :: STR
+      buffer :: BUFFER
+      m,n_codes,code :: INT
+
+      ! Normalize descriptor
+      .descriptor.to_lower_case
+      .descriptor.remove_blanks
+
+      ! Insert spaces before known potential-term types
+      term = .descriptor
+      term.separate_before(".")
+      term.replace_all("."," ")
+
+      ! Set the buffer & analyze
+      buffer.set_defaults
+      buffer.set_string(term)
+      buffer.analyze
+
+      ! Set the number of 1D monomials in the term
+      .n_monomials = buffer.n_items
+      DIE_IF(.n_monomials==0,"there are no 1D products in this term!")
+
+      ! Set the monomials list (leaky)
+      .monomial.create(.n_monomial)
+      .monomial.set_d1_codes(.d1_codes)
+
+      ! Process each term
+      do m = 1,.n_monomials
+
+         ! Get this part of the term
+         item = buffer.next_item
+
+         ! Set the monomial and analyze it
+         .monomial(m).set_descriptor(item)
+         .monomial(m).analyze_descriptor
+
+      end
+
+      ! What var is present? (leaky)
+      .has_any_var.create(n_codes)
+      do code = 1,n_codes
+         .has_any_var(code) = any(.monomial.variable_code==code)
+      end
+
+      ! Set analyzed
+      .analyzed = TRUE
+
+   end
+
+   set_has_any_dof(max_dof) ::: leaky
+   ! Set whether the term has any of the requested dof's in it
+   ! "max_dof" is used to create the infor array.
+      max_dof : INT, IN
+
+   ENSURE(.analyzed,"term not analyzed")
+
+      d :: INT
+
+      ! What dof is present? (leaky)
+      .has_any_dof.create(max_dof)
+      do d = 1,max_dof
+         .has_any_dof(d) = any(.monomial.dof==d)
+      end
+
+   end
+
+!  ============
+!  Info methods 
+!  ============
+
+   has_var_of_dof(varcode,dof,maxpos) result (res) ::: pure
+   ! Return TRUE if the term includes a variable with code "varcode" with
+   ! degree of freedom "dof".  If present, check only up to "maxpos"
+   ! 1D positions.
+      self :: IN
+      varcode,dof :: INT, IN
+      maxpos :: INT, IN, optional
+      res :: BIN
+
+      p,n_terms :: INT
+
+      if (NOT (present(maxpos))) then
+
+         ! Do we have any of this varcode at all?
+         res = .has_any_var(varcode)
+
+      else if (maxpos==0) then
+
+         ! No positions to examine
+         res = FALSE
+
+      else
+
+         ! No of terms to examine
+         n_terms = .n_monomials
+         if (present(maxpos)) n_terms = maxpos
+
+         ! Examine if we have it
+         res = FALSE
+         do p = 1,n_terms
+            if (.var_at_pos(p)/=varcode) cycle
+            if (.dof_at_pos(p)/=dof)     cycle
+            res = TRUE
+            exit
+         end
+
+      end
+
+   end
+
+   power_of_q(dof) result (res) ::: pure
+   ! Return the power of the q(dof) 1D term or otherwise 0
+      self :: IN
+      dof :: INT, IN
+      res :: INT
+
+   ENSURE(.analyzed,"term not analyzed")
+
+      code,m :: INT
+
+      ! code
+      code = .d1_codes.value_for_key("q")
+
+      ! Examine if we have it
+      res = 0
+      do m = 1,.n_monomials
+         if (.monomial(m).variable_code/=code) cycle
+         if (.monomial(m).dof/=dof)   cycle
+         ENSURE(.monomial(m).parameters.created)
+         res = int(.monomial(m).parameters(1))
+         exit
+      end
+
+   end
+
+   power_of_p(dof) result (res) ::: pure
+   ! Return the power of the p(dof) 1D term or otherwise 0
+      self :: IN
+      dof :: INT, IN
+      res :: INT
+
+   ENSURE(.analyzed,"term not analyzed")
+
+      code,m :: INT
+
+      ! code
+      code = .d1_codes.value_for_key("p")
+
+      ! Examine if we have it
+      res = 0
+      do m = 1,.n_monomials
+         if (.monomial(m).variable_code/=code) cycle
+         if (.monomial(m).dof/=dof)   cycle
+         ENSURE(.monomial(m).parameters.created)
+         res = int(.monomial(m).parameters(1))
+         exit
+      end
+
+   end
+
+end

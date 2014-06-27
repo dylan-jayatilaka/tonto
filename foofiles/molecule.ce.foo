@@ -1,0 +1,464 @@
+!==============================================================================-
+!
+! MOLECULE.CE: CrystalExplorer related routines
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: molecule.main.foo 2881 2006-06-27 11:15:21Z dylan_ $
+!==============================================================================-
+
+
+module MOLECULE.CE
+
+   implicit none
+
+contains
+
+!  ======================
+!  Read CIF block options
+!  ======================
+
+   read_CX_file_name 
+   ! Read the CX file name
+      stdin.read(.CX_file_name)
+   end
+
+   read_CX_uses_angstrom 
+   ! Read whether CX should use angstroms
+      stdin.read(.CX_uses_angstrom)
+   end
+
+   read_CX_isosurface ::: leaky
+   ! Read in special crystalexplorer isosurface data. This only works
+   ! if there is a .saved.cluster created . This CX isosurface differs from a normal
+   ! isosurface in that the default box sizes for the isosurface are set from
+   ! the cluster fragment (as opposed to the .atom list for normal isosurfaces),
+   ! and there is a default isosurface kind, which is the "stockholder_density".
+   ! NOTE: the isosurface has its own plotgrid, different from that used in 
+   ! normal density plots. 
+
+   ENSURE(.saved.created,"no saved molecule")
+   ENSURE(.saved.cluster.created,"no saved cluster data")
+   ENSURE(.saved.cluster.info_made, "no saved cluster info")
+   ENSURE(.saved.atom.created,"no saved atom list")
+   ENSURE(.atom.created,"no atom list")
+
+      if (.isosurface.destroyed) .isosurface.create(.atom)
+
+      .isosurface.plot_grid.set_defaults(.saved.atom)
+      .isosurface.plot_grid.n_x = 2**ISOSURFACE_MINIMUM_SCAN_LEVEL + 1
+      .isosurface.plot_grid.set_points_widths_origin
+
+      .isosurface.property = "stockholder_weight"  
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!
+      .isosurface.read_keywords
+      !!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Use unit cell as bbox if requested
+      if (.isosurface.plot_grid.use_unit_cell_as_bbox) then
+         WARN("resetting plot axes, plot widths from unit cell")
+         .isosurface.plot_grid.set_bbox_from_unit_cell(.saved.cluster.crystal.unit_cell)
+      end
+
+   end
+
+!  =========================
+!  Process CIF block options
+!  =========================
+
+   process_CIF_for_CX ::: leaky
+   ! Process the entire .cif file by reading *all* acceptable data
+   ! blocks (i.e. those with crystal and atom information) and then
+   ! writing this information to a CE information file. 
+      self :: PTR
+
+   ENSURE(.CX_file_name/=" ","no CX file name")
+   ENSURE(.cif.created,"no CIF object created")
+   ENSURE(.cif.file_name/=" ","no CIF file name specified")
+
+      found,CX_uses_angstrom :: BIN
+      cif :: CIF*
+      CX_file :: TEXTFILE*
+
+      CX_file.create(.CX_file_name)
+      CX_file.open(for="write")
+
+      ! Save .cif outside of self, since it gets destroyed
+      cif => .cif   
+      nullify(.cif)
+
+      do
+
+         ! Find next data block
+         .::find_CIF_crystal_data_block(cif,found)
+
+         ! Any data left?
+         if (NOT found) exit 
+
+         ! Read and create in from cif (leaky)
+         .XTAL:read_CIF_atoms(cif)            
+         .XTAL:read_CIF_crystal(cif)
+
+         ! Create the cluster
+         .cluster.create(.crystal)
+         .cluster.radius = ZERO       
+         .cluster.generation_method = "fragment"
+         .cluster.defragment = FALSE
+         .cluster.make_info                   
+         .cluster.put
+
+         ! Write out 
+         .::put_CX_data(CX_file,cif)       
+
+         ! Preserve
+         CX_uses_angstrom  = .CX_uses_angstrom
+         nullify(.cif)
+
+         ! Destroy self (leaky)
+         .BASE:destroy                             
+         .BASE:create
+
+         ! Next 
+         .CX_uses_angstrom = CX_uses_angstrom
+         cif.move_to_end_of_data
+
+      end
+
+      ! Clean
+      cif.destroy
+      CX_file.destroy
+
+   end
+
+   process_CIF_cell_and_symmetry ::: leaky
+   ! Process only the cell and spacegroup from the CIF file.
+   ! If ".cif.data_block_name" is not defined, use the first
+   ! acceptable data block.
+   ENSURE(.cif.created,"no CIF object created")
+
+      ! Find a data block name
+      if (.cif.data_block_name==" ") then
+         WARN("No CIF data block as specified")
+         WARN("Searching for first acceptable data block")
+         .::find_CIF_crystal_data_block(.cif)
+      end
+
+      ! Find the data block
+      ::open_CIF_at_data_block(.cif)
+      
+      ! Read crystal info
+      .XTAL:read_CIF_crystal(.cif) 
+
+   end
+
+   process_CIF ::: leaky
+   ! Process a CIF file: read atom and crystal information.
+   ! If ".cif.data_block_name" is not defined, use the first
+   ! acceptable data block.
+   ENSURE(.cif.created,"no CIF object created")
+
+      ! Find a data block name
+      if (.cif.data_block_name==" ") then
+         WARN("No CIF data block as specified")
+         WARN("Searching for first acceptable data block")
+         .::find_CIF_crystal_data_block(.cif)
+      end
+
+      ! Find the data block
+      ::open_CIF_at_data_block(.cif)
+
+      ! Read in atoms of asymmetric unit
+      .XTAL:read_CIF_atoms(.cif)   
+      
+      ! Read crystal info
+      .XTAL:read_CIF_crystal(.cif) 
+
+   end
+
+   process_CIF_raw ::: leaky
+   ! Process a CIF file, try to read crystal and atom information,
+   ! but do not make any of the crystal information arrays or try
+   ! to change into cartesian coordiantes.
+   ENSURE(.cif.created,"no CIF object created")
+
+      ! Find a data block name
+      if (.cif.data_block_name==" ") then
+         WARN("no CIF data block as specified, looking for first acceptable data block")
+         .::find_CIF_crystal_data_block(.cif)
+      end
+
+      ! Find the data block
+      ::open_CIF_at_data_block(.cif)
+
+      ! Read in atoms of asymmetric unit
+      .XTAL:read_CIF_atoms_raw(.cif)   
+      
+      ! Read crystal info
+      .XTAL:read_CIF_crystal_raw(.cif) 
+
+   end
+
+   find_CIF_crystal_data_block(cif,found) 
+   ! Find the *first* crystal data block in the "cif" file
+   ! starting from line cif.start_of_data, and set the locator
+   ! "cif.data_block_name". The name of the molecule is set to 
+   ! the name of the cif file concatenated with the block name.  
+      cif :: CIF
+      found :: BIN, optional, OUT
+
+   ENSURE(cif.file.created,"no CIF file name")
+   ENSURE(cif.file.name/=" ","no CIF file name")
+
+      fnd :: BIN
+      head :: STR
+
+      head  = cif.file.name.filename_head
+      .name = head
+
+      if (NOT cif.file.is_open) cif.open
+
+      cif.find_crystal_data_block(fnd)
+
+      if (present(found)) then
+         found = fnd
+         if (NOT found) return
+      else 
+         DIE_IF(NOT fnd,"couldn't find crystal data block")
+      end
+
+      ! Set job name
+      .name = head.trim // "_" &
+           // cif.data_block_name 
+
+      WARN("Job name has now been set to: "//.name.trim)
+
+   end
+
+   open_CIF_at_data_block(cif) ::: selfless
+   ! Open the "cif" file at the block with name "cif.data_block_name".
+      cif :: CIF*
+
+   ENSURE(cif.created,"no CIF object created")
+   ENSURE(cif.file_name/=" ","no CIF file name")
+   ENSURE(cif.data_block_name/=" ","no CIF data block name")
+
+      name :: STR
+
+      cif.open
+
+      ! Store: cif.data_block_name is trashed
+      name = cif.data_block_name 
+      cif.find_data_block(name)
+
+   end
+
+!  ===
+!  Put
+!  ===
+
+   put_CX_data
+   ! Output information that Crystal Explorer requires to the file 
+   ! with name ".CX_file_name".
+      .::put_CX_data(.cif)
+   end
+
+   put_CX_data(cif)
+   ! Output information that Crystal Explorer requires to the file 
+   ! with name ".CX_file_name".
+      cif :: CIF*
+
+      CX_file :: TEXTFILE*
+
+      if (.CX_file_name/=" ") then
+
+         CX_file.create(.CX_file_name)
+         CX_file.open(for="write")
+         .::put_CX_data(CX_file,cif)
+         CX_file.close
+         CX_file.destroy
+
+      else
+
+         .::put_CX_data(TEXTFILE::stdout,cif)
+
+      end
+
+   end
+
+   put_CX_data(CX_file,cif)
+   ! Output information that Crystal Explorer requires to file "CX_file".
+   ! NOTE: this requires a "cif" file to have been read, and a valid data block
+   ! name to be stored in the "cif" object.
+      CX_file :: TEXTFILE*
+      cif :: CIF*
+
+ ! ENSURE(cif.created,"no CIF object created")
+ ! ENSURE(cif.data_block_name/=" ","no CIF data block name")
+
+      save :: TEXTFILE*
+      CX_label,CX_name,formula,spacegroup :: STR
+      done :: BIN
+
+      if (cif.created) then
+         CX_name  = cif.file_name
+         CX_label = cif.data_block_name
+      else
+         CX_name  = "unknown"
+         CX_label = "unknown"
+      end
+
+      stdout.flush
+      stdout.text("Writing Crystal Explorer data file: " // CX_file.name.trim)
+      stdout.flush
+
+      ! Redirect stdout to out
+      save   => TEXTFILE::stdout                      
+      stdout => CX_file
+
+      ! Reset output format
+      stdout.save
+      stdout.set_int_width(7)
+      stdout.set_real_style("f")
+      stdout.set_real_precision(5)
+      stdout.set_real_width(12)
+      stdout.set_using_fields(FALSE)
+
+      stdout.flush
+      stdout.text("Crystal Explorer data")
+
+      stdout.flush
+      stdout.show("begin CIF ",CX_label,dots=FALSE)
+      stdout.show("file_name =",CX_name,dots=FALSE)
+      stdout.show("data_block_name =",CX_label,dots=FALSE)
+      stdout.text("end CIF")
+      stdout.flush
+
+      ! Crystal data and cluster/fragment positions
+      ! Try saved cluster first
+      done = FALSE
+      if (.saved.created) then
+      if (.saved.cluster.created) then
+
+         ENSURE(.saved.cluster.info_made,"no cluster information")
+         ENSURE(.saved.cluster.crystal.created,"no cluster crystal data")
+         ENSURE(.saved.cluster.n_fragment_atoms>0,"no fragment size")
+
+         formula    = .saved.cluster.crystal.CIF_chemical_formula
+         spacegroup = .saved.cluster.crystal.spacegroup.HM_symbol
+
+         stdout.show("begin crystal ",CX_label,dots=FALSE)
+         .saved.cluster.crystal.put_CX(CX_label,formula,spacegroup) 
+         .saved.cluster.put_CX(angstrom=.CX_uses_angstrom)
+         stdout.flush
+         stdout.text("end crystal")
+
+         done = TRUE
+
+      end
+      end
+
+      ! Try normal cluster
+      if (NOT done) then
+      if (.cluster.created) then
+
+         ENSURE(.cluster.info_made,"no cluster information")
+         ENSURE(.cluster.crystal.created,"no cluster crystal data")
+         ENSURE(.cluster.n_fragment_atoms>0,"no fragment size")
+
+         formula    = .cluster.crystal.CIF_chemical_formula
+         spacegroup = .cluster.crystal.spacegroup.HM_symbol
+
+         stdout.show("begin crystal ",CX_label,dots=FALSE)
+         .cluster.crystal.put_CX(CX_label,formula,spacegroup) 
+         .cluster.put_CX(angstrom=.CX_uses_angstrom)
+         stdout.flush
+         stdout.text("end crystal")
+
+         done = TRUE
+
+      end
+      end
+
+      ! Finally try .crystal and .atom
+      if (NOT done) then
+      if (.crystal.created AND .atom.created) then
+
+         formula    = .crystal.CIF_chemical_formula
+         spacegroup = .crystal.spacegroup.HM_symbol
+
+         stdout.show("begin crystal ",CX_label)
+         .crystal.put_CX(CX_label,formula,spacegroup) 
+         .atom.put_CX(CX_label,angstrom=.CX_uses_angstrom)
+         stdout.flush
+         stdout.text("end crystal")
+
+         done = TRUE
+
+      end
+      end
+
+      ! Isosurface information
+      if (.isosurface.created) then
+      if (.isosurface.atom.created) then 
+
+      ! Try saved cluster first
+      done = FALSE
+      if (.saved.created) then
+      if (.saved.cluster.created) then
+
+         stdout.flush
+         stdout.show("begin surface ",.isosurface.surface_label.trim,dots=FALSE)
+         .isosurface.put_CX(.saved.cluster.fragment_atom_indices &
+                           ,.saved.cluster.nonfragment_atom_indices &
+                           ,.atom &
+                           ,angstrom=.CX_uses_angstrom)
+         .saved.cluster.put_CX_atoms
+         .isosurface.put_fingerprint_face_atoms(.saved.cluster.fragment_atom_indices &
+                           ,.saved.cluster.nonfragment_atom_indices)
+         stdout.text("end surface")
+
+         done = TRUE
+
+      end
+      end
+
+      ! Try normal cluster
+      if (NOT done) then
+      if (.cluster.created) then
+         DIE("should we be here?")
+         done = TRUE
+      end
+      end
+
+      ! Finally try isosurface only
+      if (NOT done) then
+         DIE("should we be here?")
+         done = TRUE
+      end
+
+      end
+      end
+
+      ! Put back stdout
+      stdout.unsave
+      stdout => save                        
+
+   end
+
+end

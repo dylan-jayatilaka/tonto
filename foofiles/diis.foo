@@ -1,0 +1,815 @@
+!---------------------------------------------------------------------------
+!
+! DIIS: Simple in-core DIIS extrapolation technique for vectors
+!
+! Copyright (C) Dylan Jayatilaka, 2011
+!
+! This is a memory-hungry in-core DIIS routine. Only the simple DIIS
+! procedure is used. Since all parameter and error vectors are stored
+! in-core, you should avoid storing more than 10 vectors (which
+! corresponds to 20 Fock matrix triangles).
+!
+! There are two modes of operation:
+!
+! . If a corresponding error vector is supplied, the first
+!   nontrivial DIIS extrapolation occurs at actual iteration 2. 
+
+! . If no error vector is supplied, the error at iteration (i) is
+!   defined as error(i)[:] = param(i+1)[:] - param(i)[:] and the
+!   dimension of the DIIS problem is one less than the number of
+!   parameter vectors stored, so extrapolation occurs at actual
+!   iteration 3.
+!
+!   Enjoy.
+!
+! ===
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: diis.foo 4068 2013-06-18 10:32:59Z dylan_ $
+!---------------------------------------------------------------------------
+
+module DIIS
+
+   implicit none
+
+   debug_list :: VEC{STR}*  DEFAULT_NULL
+
+contains
+
+! =================
+! Memory allocation
+! =================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of self
+      nullify(.oldest)
+      nullify(.iter_4)
+      nullify(.itor_4)
+      nullify(.param)
+      nullify(.error)
+      nullify(.lhs)
+      nullify(.rhs)
+      nullify(.coeff)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts of self
+      .oldest.destroy
+      .iter_4.destroy
+      .itor_4.destroy
+      .param.destroy
+      .error.destroy
+      .lhs.destroy
+      .rhs.destroy
+      .coeff.destroy
+   end
+
+   create_copy(object) ::: get_from(OBJECT)
+   ! Create a copy of object
+   end
+
+   copy(object) ::: leaky
+   ! Copy the "object"
+      object :: DIIS
+
+      self = object
+
+      .nullify_ptr_part
+
+      if (object.oldest.created)   .oldest.create_copy(object.oldest)
+      if (object.iter_4.created)   .iter_4.create_copy(object.iter_4)
+      if (object.itor_4.created)   .itor_4.create_copy(object.itor_4)
+      if (object.param.created)    .param.create_copy(object.param)
+      if (object.error.created)    .error.create_copy(object.error)
+      if (object.lhs.created)      .lhs.create_copy(object.lhs)
+      if (object.rhs.created)      .rhs.create_copy(object.rhs)
+      if (object.coeff.created)    .coeff.create_copy(object.coeff)
+
+   end
+
+! ===========
+! Set methods
+! ===========
+
+   set_defaults ::: leaky
+   ! Set up the default settings
+
+      .iteration             = 0 
+      .use_errors            = TRUE
+      .start_iteration       = DIIS_START_ITERATION
+      .save_iteration        = DIIS_SAVE_ITERATION
+      .keep                  = DIIS_KEEP
+      .kept                  = 0
+      .new                   = 0
+
+      .error_length          = 1000d0
+      .convergence_tolerance = DIIS_CONVERGENCE_TOLERANCE
+      .start_tolerance       = DIIS_START_TOLERANCE
+      .replacement_method    = DIIS_REPLACEMENT_METHOD
+
+      ! Clean up (leaky)
+      .destroy_ptr_part
+
+   end
+
+   reset_iteration_defaults ::: leaky
+   ! Reset defaults without changing user settings
+
+      .iteration  = -1 ! The first time called it is iteration 0
+      .use_errors = TRUE
+      .kept       = 0
+      .new        = 0
+
+      ! Clean up old stuff (leaky)
+      .destroy_ptr_part
+
+   end
+
+   set_convergence_tolerance(tolerance)
+   ! Read the convergence tolerance
+      tolerance :: REAL, IN
+   ENSURE(tolerance>ZERO,"must have positive convergence tolerance")
+   WARN_IF(tolerance<TOL(6),"convergence tolerance may be too small")
+      .convergence_tolerance = tolerance
+   end
+
+   set_start_tolerance(tolerance)
+   ! Read the start tolerance when extrapolation is supposed to start
+      tolerance :: REAL, IN
+   ENSURE(tolerance>ZERO,"must have positive start tolerance")
+   ENSURE(tolerance>.convergence_tolerance,"start tolerance must be larger than convergence tolerance")
+   WARN_IF(tolerance<TOL(6),"start tolerance may be too small")
+      .start_tolerance = tolerance
+   end
+
+   set_keep(keep)
+   ! Set the number of parameter/error vectors to keep 
+      keep :: INT, IN
+
+   DIE_IF(keep<4,"no. to keep must be more than 4")
+
+      .keep = keep
+
+   end
+
+   set_start_iteration(start)
+   ! Set at what iteration the procedure should start
+      start :: INT, IN
+      .start_iteration = start
+   end
+
+   set_save_iteration(save_it)
+   ! Set at what iteration the procedure should start saving vectors
+      save_it :: INT, IN
+      .save_iteration = save_it
+   end
+
+   set_replacement_method(method)
+   ! Set the method to use for replaceing vectors, when the subspace
+   ! become saturated.
+      method :: STR, IN
+
+      .replacement_method = method
+      .replacement_method.to_lower_case
+
+      select case (.replacement_method)
+         case ("oldest")
+         case ("worst")
+         case default; UNKNOWN(method)
+      end
+
+   end
+
+   set_error_length(error)
+   ! Set the error length
+      error :: REAL, IN
+
+   ENSURE(error>=ZERO,"error must be +ve")
+
+      .error_length = error
+
+   end
+
+! ==============================
+! Read the keywords and settings
+! ==============================
+
+   read_keywords ::: get_from(OBJECT)
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process a command "keyword". Data is inputted from "stdin", unless
+   ! "word" is a sequence of blank separated strings. In this case,
+   ! the sequence is processed as if it were a separate file.
+      keyword :: STR
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+         case ("}                       ")  ! exit case
+         case ("convergence_tolerance=  "); .read_convergence_tolerance
+         case ("debug_on                "); .read_debug_on
+         case ("debug_off               "); .read_debug_off
+         case ("keep=                   "); .read_keep
+         case ("put_debug_list          "); .put_debug_list
+         case ("replacement_method=     "); .read_replacement_method
+         case ("save_iteration=         "); .read_save_iteration
+         case ("start_iteration=        "); .read_start_iteration
+         case ("start_tolerance=        "); .read_start_tolerance
+         case default;           UNKNOWN(word)
+      end
+
+   end
+
+   read_convergence_tolerance ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_convergence_tolerance)
+   ! Generic read and set a quantity with units
+   end
+
+   read_start_tolerance ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_start_tolerance)
+   ! Generic read and set a quantity with units
+   end
+
+   read_keep ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_keep)
+   ! Generic read and set a quantity with units
+   end
+
+   read_replacement_method ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_replacement_method)
+   ! Generic read and set
+   end
+
+   read_start_iteration ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_start_iteration)
+   ! Generic read and set a quantity with units
+   end
+
+   read_save_iteration ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_save_iteration)
+   ! Generic read and set a quantity with units
+   end
+
+! =======
+! Queries
+! =======
+
+   subspace_saturated result (res)
+   ! Return TRUE if the subspace is saturated; no more new
+   ! vectors can be stored.
+      res :: BIN
+      res = .kept == .keep
+   end
+
+   apply_diis result (res)
+   ! Return TRUE if extrapolation must be applied this iteration
+   ! (or has already been applied in this iteration). It works by
+   ! telling whether parameter vectors were saved.
+   ! NOTE: To know if the DIIS equations are to be solved for a
+   ! meaningful extrapolation, ".dimension" must be greater than 1.
+      res :: BIN
+      res = .iteration - .save_iteration >= 0
+   end
+
+   saved_iteration result (res)
+   ! Return the actual iteration number since starting to save vectors
+   ! and construct left hand side matrices -- not just the total
+   ! number of iterations in the procedure. This is usually equal to
+   ! .kept but not always -- especially in constrained SCF
+   ! calculations where we reuse past vectors.
+      res :: INT
+      res = .iteration - .save_iteration
+   end
+
+   dimension result (res) ::: private
+   ! Return the dimension of the DIIS matrix. 
+   ! . If .use_errors is TRUE  it never exceeds .kept+1
+   ! . If .use_errors is FALSE it never exceeds .kept because the
+   !   last param vector has no associated error vector.
+      res :: INT
+      res = min(.kept,.keep)
+      if (.use_errors) res = res + 1
+   end
+
+   is_stuck_or_oscillating result (res)
+   ! Return TRUE if extrapolation is stuck or oscillating
+      res :: BIN
+      res = .is_stuck OR .is_oscillating
+   end
+
+   is_stuck result (res)
+   ! Return TRUE if extrapolation stuck
+      res :: BIN
+
+      ! Stuck?
+      res = .kept==.keep &
+          AND .oldest(.keep  )==.oldest(.keep-1) &
+          AND .oldest(.keep-1)==.oldest(.keep-2)
+
+   end
+
+   is_oscillating result (res)
+   ! Return TRUE if extrapolation is oscillating
+      res :: BIN
+
+      ! Saturated and Oscillating?
+      res = .kept==.keep &
+          AND .oldest(.keep  )==.oldest(.keep-2) &
+          AND .oldest(.keep-1)==.oldest(.keep-3) 
+   end
+
+! =====================
+! Iteration information
+! =====================
+
+   actual_iteration result (res)
+   ! Return the actual iteration number since extrapolation is really
+   ! done.  Even though the first actual iteration may do nothing, it
+   ! is still counted as an actual iteration.
+      res :: INT
+      res = .iteration - .start_iteration + 1
+   end
+
+   next_replacement result (new) ::: private
+   ! This routine:
+   ! . Returns the index of the next item in the expansion which
+   !   is to be replaced. 
+   ! . Keeps a record of this item in .oldest so we know when the
+   !   procedure is stuck or oscillating.  
+   ! . If the procedure is stuck, it replaces parameter/error vectors
+   !   with the best pair, and restarts.
+   ! * NOTE: .kept is *not* to be updated until *after* this routine
+   !   is called (see .update_kept)
+   ! * NOTE: do not call this more than once per cycle.
+      new :: INT
+
+      best :: INT
+
+      new = 0
+
+      ! Find the new replacement index
+      if (.kept<.keep) then
+
+         ! Just return the next index
+         new = .kept + 1
+
+         ! Append youngest as last
+         .oldest(new) = new
+
+      else
+
+         ! Return the item to be replaced:
+         ! either the worst or oldest one.
+         select case(.replacement_method)
+            case("oldest"); new = .oldest_item
+            case("worst");  new = .worst_item
+            case default;   UNKNOWN(.replacement_method)
+         end
+
+         ! Move history up, store youngest at end
+         .oldest(1:.keep-1) = .oldest(2:.keep)
+         .oldest(.keep)     = new 
+
+      end
+
+      ! Save actual iteration no's
+      .itor_4      = .iter_4
+      .iter_4(new) = .iteration
+
+      ! stdout.text("oldest:")
+      ! stdout.put(.oldest,by_column=TRUE)
+      ! stdout.text("itor_4:")
+      ! stdout.put(.itor_4,by_column=TRUE)
+
+      ! Is it stuck?
+      if (.is_stuck_or_oscillating) then
+
+         ! Index of best item 
+         best = .best_item
+        
+         ! If best is oldest, keep nothing
+         if (best==.oldest(1)) then 
+
+            .kept = 0                   
+            best  = 0
+            new   = 1 ! New one to be stored
+
+            .oldest(1) = 1
+            .iter_4(1) = .iteration
+
+         ! Otherwise keep best parameters
+         else
+
+            .kept = 1 ! Best one stored below
+            new   = 2 ! New one to be stored
+
+            .oldest(1) = 1
+            .iter_4(1) = .iter_4(best)
+
+            .oldest(2) = 2
+            .iter_4(2) = .iteration
+
+            .param(1)[:] = .param(best)[:]
+            .error(1)[:] = .error(best)[:]
+
+         end
+
+      end
+
+   end
+
+   oldest_item result (res) ::: private
+   ! Return the index of the current item (if it is less than or equal
+   ! to the number of vectors to be kept), otherwise return the index
+   ! of the oldest item. 
+      res :: INT
+
+   ENSURE(.kept>0,"must have some kept vectors")
+   ENSURE(.oldest.created,"oldest list not created")
+
+      res = .oldest(1)
+
+      DIE_IF(res<1,"oldest item must be positive")
+      DIE_IF(res>.kept,"oldest item must be less than # kept")
+
+   end
+
+   worst_item result (res) ::: private
+   ! Return the index of the worst item which should be replaced
+   ! (when there is no more space i.e. when ".keep" limit reached)
+      res :: INT
+
+   ENSURE(.kept>0,"no stored vectors")
+   ENSURE(.lhs.created,"no LHS")
+
+      diag :: VEC{REAL}*
+      d :: INT
+
+      ! Get the diagonal
+      d = .lhs.dim1
+      diag.create(d)
+
+      ! The error vector lengths^2
+      .lhs.put_diagonal_to(diag)            
+
+      ! Worst item has the largest error
+      res = diag(1:d-1).index_of_largest_value    
+
+      ! stdout.text("errors:")
+      ! stdout.put(diag(1:d-1),by_column=TRUE)
+
+      ! Clean
+      diag.destroy
+
+   end
+
+   best_item result (res) ::: private
+   ! Return the index of the best item which should be kept,
+   ! when the procedure is reset.
+      res :: INT
+
+   ENSURE(.kept>0,"no stored vectors")
+   ENSURE(.lhs.created,"no LHS")
+
+      diag :: VEC{REAL}*
+      d :: INT
+
+      ! Get the diagonal
+      d = .lhs.dim1
+      diag.create(d)
+
+      ! The error vector lengths^2
+      .lhs.put_diagonal_to(diag)
+
+      ! Best item has the smallest error
+      res = diag(1:d-1).index_of_smallest_value   
+
+      ! Clean
+      diag.destroy
+
+   end
+
+   replaced_iteration result (res) 
+   ! Return the actual parent iteration number which was replaced
+   ! by the DIIS procedure.
+      res :: INT
+      res = .itor_4(.new)
+   end
+
+! =============
+! Extrapolation
+! =============
+
+   extrapolate(par,dim) ::: leaky
+   ! Generic extrapolation of the parameter vector "par".
+   ! No error vector is required, but in this case the number
+   ! of actual stored vectors used is .keep-1.
+      dim :: INT, IN
+      par :: VEC{REAL}(dim)
+
+      err :: VEC{REAL}*
+      ind :: INT
+
+      ! Increment iteration
+      .iteration = .iteration + 1      
+
+      ! Return if nothing to do
+      if (.iteration<.save_iteration) return
+
+      ! Initialize (*very* leaky)
+      if (.iteration==.save_iteration) then
+         .destroy_ptr_part
+         .oldest.create(.keep); .oldest = 0
+         .iter_4.create(.keep); .iter_4 = 0
+         .itor_4.create(.keep); .itor_4 = 0
+         .param.create(.keep,dim)
+         .error.create(.keep,dim)
+      end
+
+      ! Next index in param list to be replaced
+      .new = .next_replacement
+
+      ! Always save .new parameter vector 
+      ! and update the # of kept vectors
+      .param(.new)[:] = par
+      .kept = min(.kept+1,.keep)
+
+      ! Only one parameter vector? No error to define 
+      if (.kept==1) return
+
+      ! Define error for *previous* param vector
+      ind =  .oldest(.kept-1)
+      err => .error(ind).element
+      err = par - .param(ind)[:] 
+
+      ! Set the error length
+      .error_length = err.norm
+
+      ! Make sure .dimension is one smaller
+      .use_errors = FALSE ! <<<
+
+      ! Extrapolate as usual
+      .do_extrapolate(par,dim)
+
+   end
+
+   extrapolate(par,err,dim) ::: leaky
+   ! Generic extrapolation of the parameter vector "par", using "err"
+   ! as the error vector. User must define "err" properly and
+   ! consistent with "par".
+      dim :: INT, IN
+      par,err :: VEC{REAL}(dim)
+
+   ENSURE(.use_errors,"always use extrapolate with error vectors")
+
+      ! Increment iteration
+      .iteration = .iteration + 1      
+
+      ! Return if nothing to do
+      if (.iteration<.save_iteration) return
+
+      ! Initialize (*very* leaky)
+      if (.iteration==.save_iteration) then
+         .destroy_ptr_part
+         .oldest.create(.keep); .oldest = 0
+         .iter_4.create(.keep); .iter_4 = 0
+         .itor_4.create(.keep); .itor_4 = 0
+         .param.create(.keep,dim)
+         .error.create(.keep,dim)
+      end
+
+      ! Next index in param list to be replaced
+      .new = .next_replacement
+
+      ! Save .new parameter/error vector 
+      ! and update the # of kept vectors
+      .param(.new)[:] = par
+      .error(.new)[:] = err
+      .kept = min(.kept+1,.keep)
+
+      .put_debug(par,"extrapolate: par, before")
+
+      ! Set the error length
+      .error_length = err.norm
+
+      ! Now set up and solve the DIIS equations
+      .do_extrapolate(par,dim)
+
+      .put_debug(par,"extrapolate: par, after")
+
+   end
+
+   do_extrapolate(par,dim) ::: leaky, private
+   ! Do a generic extrapolation on vector "par".
+      dim :: INT, IN
+      par :: VEC{REAL}(dim)
+
+      d,i,j :: INT
+      ei,ej :: VEC{REAL}*
+      fac :: REAL
+
+      ! Size of the equations
+      d = .dimension 
+
+      ! Nontrivial extrapolation possible?
+      if (d<2) return
+
+      ! Must be bigger than start iteration
+      if (.actual_iteration<1) return
+
+      ! Create the DIIS matrices (leaky)
+      .lhs.destroy;   .lhs.create(d,d)
+      .rhs.destroy;   .rhs.create(d)
+      .coeff.destroy; .coeff.create(d)
+
+      ! Make the lower triangle of the the LHS 
+      ! Loop from oldest to youngest vector.
+      do i = 1,d-1              
+      do j = 1,i
+
+         ! Hamilton/Pulay factor for youngest
+         fac = ONE
+         if (i==.new) fac = fac + 0.02d0 
+
+         ! Define lower half of LHS
+         ei => .error(i).element
+         ej => .error(j).element
+         .lhs(i,j) = fac*dot_product(ei,ej)
+
+      end
+      end
+
+      ! Set auxiliary row on the bottom
+      .lhs(d,1:d-1) = ONE
+      .lhs(d,d)     = ZERO
+
+      ! Symmetrize
+      .lhs.symmetric_reflect
+
+      ! The DIIS RHS 
+      .rhs    = ZERO 
+      .rhs(d) = ONE
+
+      ! Solve DIIS equations
+      .lhs.solve_linear_equation(.rhs,.coeff)  
+
+      ! Now do interpolation
+      par = ZERO
+      do i = 1,d-1                      
+         par = par + .coeff(i)*.param(i)[:]
+      end
+
+   end
+
+   is_converged result (res)
+   ! Return TRUE if the procedure is converged
+      res :: BIN
+      res = .error_length<.convergence_tolerance
+   end
+
+! ======
+! Output
+! ======
+
+   put(matrices)
+   ! Print out the data to stdout
+      matrices :: BIN, IN, optional
+
+      stdout.flush
+      stdout.text("DIIS options: ")
+      stdout.flush
+      stdout.set_real_style("e")
+      stdout.show("Convergence on max(abs(error)) =",.convergence_tolerance)
+      stdout.set_real_style("f")
+      stdout.show("Extrapolate  from iteration    =",.start_iteration)
+      stdout.show("Save vectors from iteration    =",.save_iteration)
+      stdout.show("No. of vectors to keep         =",.keep)
+      stdout.show("Replace the vector which is    =",.replacement_method)
+
+      if (NOT present(matrices)) return
+      if (NOT matrices) return
+
+      if (.lhs.created) then
+      stdout.text("LHS:")
+      stdout.put(.lhs,auto_width=TRUE)
+      end
+
+      if (.rhs.created) then
+      stdout.text("RHS:")
+      stdout.put(.rhs,by_column=TRUE,auto_width=TRUE)
+      end
+
+      if (.coeff.created) then
+      stdout.text("coeff:")
+      stdout.put(.coeff,by_column=TRUE,auto_width=TRUE)
+      end
+
+   end
+
+!  ==============
+!  Debug printing
+!  ==============
+
+   set_debug_on(name) ::: get_from(DEBUG), leaky
+   ! Add a debug descriptor to the list.
+   end
+
+   set_debug_off(name) ::: get_from(DEBUG), leaky
+   ! Remove a debug descriptor from the list.
+   end
+
+   read_debug_on ::: get_from(DEBUG), leaky
+   ! Read a debug descriptor and add it to the list.
+   end
+
+   read_debug_off ::: get_from(DEBUG), leaky
+   ! Read a debug descriptor and remove it from the list.
+   end
+
+   debugging(name) result (res) ::: get_from(DEBUG)
+   ! Return TRUE if the debug switch "name" has been set.
+   end
+
+   put_debug_list ::: get_from(DEBUG)
+   ! Put of the list of debug switches
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>STR)
+   ! Put *number* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>BIN)
+   ! Put *number* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>INT)
+   ! Put *number* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>REAL)
+   ! Put *number* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>VEC{INT})
+   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>VEC{REAL})
+   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>MAT{REAL})
+   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>MAT{CPX})
+   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG)
+   ! Put *opmatrix* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+end

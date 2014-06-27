@@ -1,0 +1,528 @@
+!-------------------------------------------------------------------------------
+!
+! REFLECTION: Reflection data for crystals
+!
+! Copyright (C) Daniel Grimwood, 2000
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: reflection.foo 4077 2013-07-01 22:47:54Z dylan_ $
+!-------------------------------------------------------------------------------
+
+module REFLECTION
+
+   implicit none
+
+   keys DEFAULT_NULL :: VEC{STR}*, private
+
+   wavelength :: REAL, private
+
+contains
+
+!  ==================
+!  Create and destroy
+!  ==================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object. This version does not nullify point parts.
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object. This version does not destroy pointer parts.
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   create_copy(r) ::: leaky
+   ! Create a copy of the reflection "r"
+      self :: PTR
+      r :: REFLECTION
+      .create
+      .copy(r)
+   end
+
+   copy(r)
+   ! Make a copy of the reflection "r"
+      r :: REFLECTION
+      self = r
+   end
+
+!  ===========
+!  Set methods
+!  ===========
+
+   set_defaults
+   ! Set up a default object
+
+      .h = 0
+      .k = 0
+      .l = 0
+
+      .theta = ZERO
+      .equivalence_factor = 1
+
+      .F_exp   = ZERO
+      .F_calc  = ZERO
+      .F_pred  = ZERO
+      .F_sigma = ZERO
+
+      .I_exp_inputted = FALSE
+      .I_exp   = ZERO
+      .I_calc  = ZERO
+      .I_pred  = ZERO
+      .I_sigma = ZERO
+
+      .group   = 0
+
+   end
+
+   set_wavelength(val) ::: selfless, public
+   ! Set the wavelength in a.u. . Correct this!
+      val :: REAL
+      wavelength = val
+   end
+
+   set_hkl(vec)
+   ! Set (h k l) to "vec"
+      vec :: VEC{INT}(3), IN
+
+      .h = vec(1)
+      .k = vec(2)
+      .l = vec(3)
+
+   end
+
+   set_hkl_component(i,val)
+   ! Set (h k l) to "vec"
+      i :: INT, IN
+      val :: INT, IN
+
+      select case (i)
+         case (1); .h = val
+         case (2); .k = val
+         case (3); .l = val
+         case default
+            UNKNOWN("component index out of range")
+      end
+
+   end
+
+   hkl result (vec)
+   ! Set (h k l) to "vec"
+      vec :: VEC{INT}(3)
+
+      vec(1) = .h
+      vec(2) = .k
+      vec(3) = .l
+
+   end
+
+!  ============
+!  I/O Routines
+!  ============
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR, IN
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+         case ("}            "); ! exit surrounding loop
+         case ("f_exp=          "); .read_F_exp
+         case ("f_pred=         "); .read_F_pred
+         case ("f_sigma=        "); .read_F_sigma
+         case ("group=          "); .read_group
+         case ("h=              "); .read_h
+         case ("indices=        "); .read_indices
+         case ("i_exp=          "); .read_I_exp
+         case ("i_pred=         "); .read_I_pred
+         case ("i_sigma=        "); .read_I_sigma
+         case ("junk=           "); .read_junk
+         case ("k=              "); .read_k
+         case ("l=              "); .read_l
+         case ("units=          "); .read_units
+         case default;         UNKNOWN(word)
+      end
+
+   end
+
+   read_units ::: get_from(OBJECT), private
+   ! Read a string which describes the units to be used
+   end
+
+   read_junk ::: get_from(OBJECT), private
+   ! Read in a junk string, useful for ignoring a field
+   end
+
+   read_group
+   ! Read the group index that this reflection belongs to.
+      stdin.read(.group)
+   end
+
+   read_h
+   ! Read in the "h" Miller index
+      stdin.read(.h)
+   end
+
+   read_k
+   ! Read in the "k" Miller index
+      stdin.read(.k)
+   end
+
+   read_l
+   ! Read in the "l" Miller index
+      stdin.read(.l)
+   end
+
+   read_indices
+   ! Read in the h k l Miller indices as a triple
+      stdin.read(.h)
+      stdin.read(.k)
+      stdin.read(.l)
+   end
+
+   read_F_exp
+   ! Read in the experimentally determined structure factor
+
+      ! Read
+      stdin.read(.F_exp)
+
+      ! Set switch
+      .I_exp_inputted = FALSE
+
+      ! Set I_exp
+      .I_exp = .F_exp * .F_exp
+
+   end
+
+   read_F_sigma
+   ! Read in the experimentally determined standard devaiation in
+   ! the structure factor
+
+      ! Read
+      stdin.read(.F_sigma)
+
+      ! Sanity check: errors must be +ve!
+      DIE_IF(.F_sigma<=0,"F_sigma is not +ve, remove offending reflection")
+
+      ! Derive I_sigma
+      .derive_I_sigma_from_F_sigma
+
+   end
+
+   derive_I_sigma_from_F_sigma
+   ! I_sigma is calculated by taking the *largest* difference between
+   ! I_exp and the square of the F_exp range-mapped range.
+   ! NOTE : I_exp must have already been inputted.
+   ENSURE(NOT .I_exp_inputted,"F_exp= must have been inputted first")
+
+      s_p,s_m :: REAL
+
+      if (.F_exp>.F_sigma) then
+         s_p = -.I_exp + (.F_exp + .F_sigma)**2 
+         s_m =  .I_exp - (.F_exp - .F_sigma)**2
+      else
+         s_p = -.I_exp + (.F_exp + .F_sigma)**2
+         s_m =  .I_exp 
+      end
+
+      .I_sigma = max(s_p,s_m)
+
+   end
+
+   read_I_exp
+   ! Read in the experimentally determined intensity (without LP
+   ! factor or other instrumental factors but perhaps including
+   ! extinction and dispersion). 
+   ! NOTE: if it is negative, the sign is preserved on F_exp, for
+   ! later rejection
+   ! NOTE: F_exp is overwritten!
+
+      ! Read
+      stdin.read(.I_exp)
+
+      ! Set switch
+      .I_exp_inputted = TRUE
+
+      ! Set F_exp
+      if (.I_exp<ZERO) then; .F_exp = -sqrt(-.I_exp)
+      else;                  .F_exp =  sqrt( .I_exp)
+      end
+
+   end
+
+   read_I_sigma
+   ! Read in the experimental intensity standard deviations.  You must
+   ! have already inputted the I_exp= value. The sigma value is
+   ! calculated by solving the quadratic which gives the *largest* sigma
+   ! value, which when added to .F_exp and squared gives .I_exp+.I_sigma.
+
+      ! Read
+      stdin.read(.I_sigma)
+
+      ! Sanity check: errors must be +ve!
+      DIE_IF(.I_sigma<=0,"I_sigma is not +ve, remove offending reflection")
+
+      ! Derive F_sigma
+      .derive_F_sigma_from_I_sigma
+
+   end
+
+   derive_F_sigma_from_I_sigma
+   ! The F_sigma value is calculated by solving the quadratic which
+   ! gives the *largest* sigma value, which when added to .F_exp and
+   ! squared gives .I_exp+.I_sigma.
+   ! NOTE : F_exp must have already been inputted.
+   ENSURE(.I_exp_inputted,"I_exp= must have been inputted first")
+
+      s_p,s_m :: REAL
+
+      if (.I_exp>.I_sigma) then
+         s_p = -.F_exp + sqrt(.I_exp + .I_sigma)
+         s_m =  .F_exp - sqrt(.I_exp - .I_sigma)
+      else
+         s_p = -.F_exp + sqrt(.I_exp + .I_sigma)
+         s_m =  .F_exp 
+      end
+
+      .F_sigma = max(s_p,s_m)
+
+   end
+
+   read_F_pred
+   ! Read in a predicted (real) structure factor
+      stdin.read(.F_pred)
+   end
+
+   read_I_pred
+   ! Read in a predicted intensity
+   ! NOTE: if it is negative, the sign is preserved on F_pred, for
+   ! later rejection. 
+   ! NOTE: F_pred is overwritten!
+      stdin.read(.I_pred)
+      if (.I_pred<ZERO) then; .F_pred = -sqrt(-.I_pred)
+      else;                   .F_pred =  sqrt( .I_pred)
+      end
+   end
+
+!  ====================
+!  Key related routines
+!  ====================
+
+   read_keys ::: get_from(OBJECT), leaky
+   ! Read the "keys".
+   end
+
+   process_keys ::: get_from(OBJECT), leaky
+   ! Process each of the words in the "keys" list.
+   end
+
+   keys_created result (res) ::: get_from(OBJECT)
+   ! Return TRUE if the list-element keys are created.
+   end
+
+   set_keys(the_keys) ::: get_from(OBJECT)
+   ! This is for setting the "keys" externally.
+   end
+
+   clear_keys ::: get_from(OBJECT), leaky
+   ! This is for destroying the "keys" externally.
+   end
+
+!  ================
+!  Inquiry Routines
+!  ================
+
+   delta_F result (res) ::: elemental
+   ! Return the Delta F for the predicted structure factor.
+      self :: IN
+      res :: REAL
+      res = (.F_pred - .F_exp)
+   end
+
+   F_z result (res) ::: elemental
+   ! Return the z statistic for the predicted structure factor.
+      self :: IN
+      res :: REAL
+      res = (.F_pred - .F_exp) / .F_sigma
+   end
+
+   I_z result (res) ::: elemental
+   ! Return the z statistic for the predicted intensity.
+      self :: IN
+      res :: REAL
+      res = (.I_pred - .I_exp) / .I_sigma
+   end
+
+   F_z2 result (res) ::: elemental
+   ! Return the z**2 statistic for the predicted structure factor.
+      self :: IN
+      res :: REAL
+      z :: REAL
+      z = (.F_pred - .F_exp) / .F_sigma
+      res = z*z
+   end
+
+   I_z2 result (res) ::: elemental
+   ! Return the z**2 statistic for the predicted intensity.
+      self :: IN
+      res :: REAL
+      z :: REAL
+      z = (.I_pred - .I_exp) / .I_sigma
+      res = z*z
+   end
+
+   F_r result (res) ::: elemental
+   ! Return the r factor for the predicted structure factor.
+      self :: IN
+      res :: REAL
+      res = (.F_pred - .F_exp) / .F_exp
+   end
+
+   I_r result (res) ::: elemental
+   ! Return the r factor for the predicted intensity.
+      self :: IN
+      res :: REAL
+      res = (.I_pred - .I_exp) / .I_exp
+   end
+
+   F_exp_on_sigma result (res) ::: elemental
+   ! Return the F_exp/F_sigma
+      self :: IN
+      res :: REAL
+      res = abs(.F_exp/.F_sigma)
+   end
+
+   I_exp_on_sigma result (res) ::: elemental
+   ! Return the I_exp/I_sigma
+      self :: IN
+      res :: REAL
+      res = abs(.I_exp/.I_sigma)
+   end
+
+
+   F_phase result (res) ::: elemental
+   ! Return the phase angle of the complex structure factor.
+      self :: IN
+      res :: REAL
+      res = atan2(aimag(.F_calc),real(.F_calc))
+   end
+
+   sin_theta_on_lambda result (res) ::: elemental
+   ! Return the value of sin(theta) / lambda for reflection n.
+   ! NOTE: the wavelength is changed to be in Angstrom since that is
+   ! usually the units sin theta on lamba is reported.
+   ! NOTE: wavelength must have been previously set!
+      self :: IN
+      res :: REAL
+      res = sin(.theta)/(wavelength*ANGSTROM_PER_BOHR)
+   end
+
+   stl result (res) ::: elemental
+   ! Return the value of sin(theta) / lambda for reflection n.
+   ! NOTE: the wavelength is changed to be in Angstrom since that is
+   ! usually the units sin theta on lamba is reported.
+   ! NOTE: wavelength must have been previously set!
+      self :: IN
+      res :: REAL
+      res = sin(.theta)/(wavelength*ANGSTROM_PER_BOHR)
+   end
+
+
+   has_weak_F_exp(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection is weak in F_exp w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+      res = .F_exp_on_sigma < cutoff
+   end
+
+   has_weak_I_exp(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection is weak in I_exp w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+      res = .I_exp_on_sigma < cutoff
+   end
+
+   has_small_F_exp(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a small F_exp w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+      res = .F_exp < cutoff
+   end
+
+   has_small_I_exp(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a small I_exp w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+      res = .I_exp < cutoff
+   end
+
+   has_large_F_z(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a large F_z w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+      res = .F_z > cutoff
+   end
+
+   has_large_I_z(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a large I_z w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+      res = .I_z > cutoff
+   end
+
+   has_high_stl(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a high s.t.l w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+      res = .sin_theta_on_lambda > cutoff
+   end
+
+   has_low_stl(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a low s.t.l w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+      res = .sin_theta_on_lambda < cutoff
+   end
+
+end

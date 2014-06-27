@@ -1,0 +1,4163 @@
+!-------------------------------------------------------------------------------
+!
+! BECKE_GRID 
+! 
+! This module provides a grid and weights for 3D numerical quadrature,
+! where the 3D integrand is comprised of peaks which are centered at
+! points in space which are known beforehand (they may be the
+! positions of the atoms in a molecule, for example, and the integrand
+! may be the density). 
+!
+! These grids were first designed by Axel Becke. See the references: 
+!    A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+!    O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+!    M. Mura and P. Knowles, J. Chem. Phys. 104 (1996) p 9848.
+!
+! The 3-D grid is a direct-product combination of a radial grid and a
+! spherical grid. The radial grids are standard one-dimensional types
+! (Chebyshev, Euler-Maclaurin, etc) while the spherical grids are
+! Lebedev-Laikov grids with octahedral symmetry designed to integrate
+! exactly spherical harmonics up to angular momentum L=53 or higher. A
+! minimum L=11 is recommended. The number of radial points for each
+! atom is defined by reference to the number of points for Hydrogen,
+! according to Becke's rule of thumb (5 points more for each atomic
+! n-shell).
+!
+! The grid is essentially composed of a superposition of spherical
+! grids, which have been "translated", "scaled", and "partitioned" to
+! take into account that the grids are overlapping and
+! interpenetrating.
+!
+! This version is essentially completely rewritten compared to Steve
+! Wolff's original version. Some code remains from the original
+! elliptic partitioning.
+!
+! Copyright (C) S. K. Wolff, 1999
+! Copyright (C) D. Jayatilaka, 2005
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: becke_grid.foo 4087 2013-08-02 06:15:35Z dylan_ $
+!
+!-------------------------------------------------------------------------------
+
+module BECKE_GRID
+
+   implicit none
+
+   ! These are the Bragg slater radii.
+   ! WARNING: These are in Angstroms.
+   bragg_slater_radius :: VEC{REAL}(89), private 
+   data bragg_slater_radius/ &
+      0.35d0,0.35d0,                                           & ! 1s
+      1.45d0,1.05d0,0.85d0,0.70d0,0.65d0,0.60d0,0.50d0,0.45d0, & ! 2s+2p
+      1.80d0,1.50d0,1.25d0,1.10d0,1.00d0,1.00d0,1.00d0,1.00d0, & ! 3s+3p
+      2.20d0,1.80d0,                                           & ! 4s
+      1.60d0,1.40d0,1.35d0,1.40d0,1.40d0,                      & ! 3d: 1st transition
+      1.40d0,1.35d0,1.35d0,1.35d0,1.35d0,                      &
+                    1.30d0,1.25d0,1.15d0,1.15d0,1.15d0,1.15d0, & ! 4p
+      1.30d0,1.30d0,                                           & ! 5s
+      1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,                      & ! 4d: 2nd transition
+      1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,                      &
+                    1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,1.30d0, & ! 5p
+      1.30d0,1.30d0,                                           & ! 6s
+      1.30d0,                                                  & ! Lanthanum
+      1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,        & ! 4f: 1st Lanthanide
+      1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,        &
+             1.30d0,1.30d0,1.30d0,1.30d0,                      & ! 5d: 3rd transition
+      1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,                      &
+                    1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,1.30d0, & ! 6p
+      1.30d0,1.30d0,                                           & ! 7s
+      1.30d0                                                   / ! Ac
+
+   ! Treutler and Ahlrichs recommended zeta values
+   ! WARNING: I think these are in Angstroms.
+   TA_zeta :: VEC{REAL}(89), private 
+   data TA_zeta/ &
+      0.80d0,0.90d0,                                           & ! 1s
+      1.80d0,1.40d0,1.30d0,1.10d0,0.90d0,0.90d0,0.90d0,0.90d0, & ! 2s+2p
+      1.40d0,1.30d0,1.30d0,1.20d0,1.10d0,1.00d0,1.00d0,1.00d0, & ! 3s+3p
+      1.50d0,1.40d0,                                           & ! 4s
+      1.30d0,1.20d0,1.20d0,1.20d0,1.20d0,                      & ! 3d: 1st transition
+      1.20d0,1.20d0,1.10d0,1.10d0,1.10d0,                      &
+                    1.10d0,1.00d0,0.90d0,0.90d0,0.90d0,0.90d0, & ! 4p: values after here are guessed
+      1.50d0,1.40d0,                                           & ! 5s
+      1.30d0,1.20d0,1.20d0,1.20d0,1.20d0,                      & ! 4d: 2nd transition
+      1.20d0,1.20d0,1.10d0,1.10d0,1.10d0,                      &
+                    1.10d0,1.00d0,0.90d0,0.90d0,0.90d0,0.90d0, & ! 5p
+      1.50d0,1.40d0,                                           & ! 6s
+      1.30d0,                                                  & ! Lanthanum
+      1.00d0,1.00d0,1.00d0,1.00d0,1.00d0,1.00d0,1.00d0,        & ! 4f: 1st Lanthanide
+      1.00d0,1.00d0,1.00d0,1.00d0,1.00d0,1.00d0,1.00d0,        &
+             1.00d0,1.00d0,1.00d0,1.00d0,                      & ! 5d: 3rd transition
+      1.00d0,1.00d0,1.00d0,1.00d0,1.00d0,                      &
+                    1.00d0,1.00d0,1.00d0,1.00d0,1.00d0,1.00d0, & ! 6p
+      1.50d0,1.40d0,                                           & ! 7s
+      1.30d0                                                   / ! Ac
+
+   ! Mura and Knowles recommended alpha values
+   ! These are in atomic units
+   MK_zeta :: VEC{REAL}(89), private 
+   data MK_zeta/ &
+      5.00d0,5.00d0,                                           & ! 1s
+      7.00d0,7.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0, & ! 2s+2p
+      7.00d0,7.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0, & ! 3s+3p
+      7.00d0,7.00d0,                                           & ! 4s
+      5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,                      & ! 3d: 1st transition
+      5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,                      &
+                    5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0, & ! 4p: values after here are guessed
+      7.00d0,7.00d0,                                           & ! 5s
+      5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,                      & ! 4d: 2nd transition
+      5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,                      &
+                    5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0, & ! 5p
+      7.00d0,7.00d0,                                           & ! 6s
+      5.00d0,                                                  & ! Lanthanum
+      5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,        & ! 4f: 1st Lanthanide
+      5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,        &
+             5.00d0,5.00d0,5.00d0,5.00d0,                      & ! 5d: 3rd transition
+      5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,                      &
+                    5.00d0,5.00d0,5.00d0,5.00d0,5.00d0,5.00d0, & ! 6p
+      7.00d0,7.00d0,                                           & ! 7s
+      5.00d0                                                   / ! Ac
+
+   ! The period of the atom. Needed because the number of radial points
+   ! depends on the atom's period number.
+   period :: VEC{INT}(89), private 
+   data period/ &
+           1,     1,                                           & ! 1s
+           2,     2,     2,     2,     2,     2,     2,     2, & ! 2s+2p
+           3,     3,     3,     3,     3,     3,     3,     3, & ! 3s+3p
+           4,     4,                                           & ! 4s
+           4,     4,     4,     4,     4,                      & ! 3d: 1st transition
+           4,     4,     4,     4,     4,                      &
+                         4,     4,     4,     4,     4,     4, & ! 4p
+           5,     5,                                           & ! 5s
+           5,     5,     5,     5,     5,                      & ! 4d: 2nd transition
+           5,     5,     5,     5,     5,                      &
+                         5,     5,     5,     5,     5,     5, & ! 5p
+           6,     6,                                           & ! 6s
+           6,                                                  & ! Lanthanum
+           6,     6,     6,     6,     6,     6,     6,        & ! 4f: 6st Lanthanide
+           6,     6,     6,     6,     6,     6,     6,        &
+                  6,     6,     6,     6,                      & ! 5d: 3rd transition
+           6,     6,     6,     6,     6,                      &
+                         6,     6,     6,     6,     6,     6, & ! 6p
+           7,     7,                                           & ! 7s
+           7                                                   / ! Ac
+
+   ! Pruning parameters for SG-1. They have been extended arbitrarily.
+   sg1_pruning_parameter :: MAT{REAL}(4,7), private 
+   data sg1_pruning_parameter/ &
+      0.2500d0,0.5000d0,1.0000d0,4.5000d0,  & ! row 1
+      0.1667d0,0.5000d0,0.9000d0,3.5000d0,  & ! row 2
+      0.1000d0,0.4000d0,0.8000d0,2.5000d0,  & ! row 3
+      0.1000d0,0.4000d0,0.8000d0,2.5000d0,  & ! row 4-7 are copies of row 3
+      0.1000d0,0.4000d0,0.8000d0,2.5000d0,  & ! 
+      0.1000d0,0.4000d0,0.8000d0,2.5000d0,  & ! 
+      0.1000d0,0.4000d0,0.8000d0,2.5000d0   / ! 
+
+   ! SG-1 atomic radii, in Bohr.
+   sg1_atomic_radii :: VEC{REAL}(18), private 
+   data sg1_atomic_radii/ &
+      1.0000d0,0.5882d0,                                                       & ! 1s
+      3.0769d0,2.0513d0,1.5385d0,1.2308d0,1.0256d0,0.8791d0,0.7692d0,0.6838d0, &
+      4.0909d0,3.1579d0,2.5714d0,2.1687d0,1.8750d0,1.6514d0,1.4754d0,1.3333d0/ 
+
+contains
+
+
+!  ==========================
+!  Create and destroy methods
+!  ==========================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+      self :: PTR
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts
+   !  .atom.destroy ! Never destroy this, just nullify
+
+      .atom_zeta.destroy
+
+      .atom_min_distance.destroy
+      .atom_n1_SS.destroy
+
+      .unique_atom.destroy
+      .unique_atom_for.destroy
+
+      .n_points_for_row.destroy
+      .radial_grid.destroy
+      .lebedev_grid.destroy
+      .lebedev_H_grid.destroy
+      .lebedev_L3_grid.destroy
+      .lebedev_L5_grid.destroy
+      .lebedev_L7_grid.destroy
+      .lebedev_L9_grid.destroy
+      .lebedev_L11_grid.destroy
+
+      .unscaled_point.destroy
+      .unscaled_weight.destroy
+      .atom_points.destroy
+      .atom_weights.destroy
+
+      .atom_grid0.destroy
+      .atom_grid1.destroy
+      .weight_is_0.destroy
+
+   end
+
+   nullify_ptr_part ::: leaky
+   ! Nullify the pointer 
+
+      nullify(.atom)
+      nullify(.atom_zeta)
+
+      nullify(.atom_min_distance)
+      nullify(.atom_n1_SS)
+
+      nullify(.unique_atom)
+      nullify(.unique_atom_for)
+
+      nullify(.n_points_for_row)
+      nullify(.radial_grid)
+      nullify(.lebedev_grid)
+      nullify(.lebedev_H_grid)
+      nullify(.lebedev_L3_grid)
+      nullify(.lebedev_L5_grid)
+      nullify(.lebedev_L7_grid)
+      nullify(.lebedev_L9_grid)
+      nullify(.lebedev_L11_grid)
+
+      nullify(.unscaled_point)
+      nullify(.unscaled_weight)
+      nullify(.atom_points)
+      nullify(.atom_weights)
+
+      nullify(.atom_grid0)
+      nullify(.atom_grid1)
+      nullify(.weight_is_0)
+
+   end
+
+   destroy_grid_part ::: leaky
+   ! Destroy all the quadrature grid pointer parts
+
+      .n_points_for_row.destroy
+      .radial_grid.destroy
+      .lebedev_grid.destroy
+      .lebedev_H_grid.destroy
+      .lebedev_L3_grid.destroy
+      .lebedev_L5_grid.destroy
+      .lebedev_L7_grid.destroy
+      .lebedev_L9_grid.destroy
+      .lebedev_L11_grid.destroy
+
+      .unscaled_point.destroy
+      .unscaled_weight.destroy
+
+      .atom_points.destroy
+      .atom_weights.destroy
+
+      .atom_grid0.destroy
+      .atom_grid1.destroy
+      .weight_is_0.destroy
+
+   end
+
+   destroy_unscaled_grid ::: leaky
+   ! Destroy the quadrature grid pointer parts
+      .unscaled_weight.destroy
+      .unscaled_point.destroy
+   end
+
+   destroy_atom_info ::: leaky
+   ! Destroy atoms and positions
+   ! .atom.destroy ! Never destroy this, just nullify
+
+      .atom_min_distance.destroy
+      .atom_n1_SS.destroy
+
+      .unique_atom.destroy
+      .unique_atom_for.destroy
+
+      .atom_points.destroy
+      .atom_weights.destroy
+
+      .atom_grid0.destroy
+      .atom_grid1.destroy
+      .weight_is_0.destroy
+
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
+   end
+
+   copy(b) ::: leaky
+   ! Copy a becke_grid "b"
+      b :: BECKE_GRID
+
+      self = b
+
+      .nullify_ptr_part
+
+      if (b.atom_zeta.created)         .atom_zeta.create_copy(b.atom_zeta)
+
+      if (b.atom_min_distance.created) .atom_min_distance.create_copy(b.atom_min_distance)
+      if (b.atom_n1_SS.created)        .atom_n1_SS.create_copy(b.atom_n1_SS)
+      if (b.unique_atom.created)       .unique_atom.create_copy(b.unique_atom)
+      if (b.unique_atom_for.created)   .unique_atom_for.create_copy(b.unique_atom_for)
+
+      if (b.n_points_for_row.created)  .n_points_for_row.create_copy(b.n_points_for_row)
+      if (b.radial_grid.created)       .radial_grid.create_copy(b.radial_grid)
+      if (b.lebedev_grid.created)      .lebedev_grid.create_copy(b.lebedev_grid)
+      if (b.lebedev_H_grid.created)    .lebedev_H_grid.create_copy(b.lebedev_H_grid)
+      if (b.lebedev_L3_grid.created)   .lebedev_L3_grid.create_copy(b.lebedev_L3_grid)
+      if (b.lebedev_L5_grid.created)   .lebedev_L5_grid.create_copy(b.lebedev_L5_grid)
+      if (b.lebedev_L7_grid.created)   .lebedev_L7_grid.create_copy(b.lebedev_L7_grid)
+      if (b.lebedev_L9_grid.created)   .lebedev_L9_grid.create_copy(b.lebedev_L9_grid)
+      if (b.lebedev_L11_grid.created)  .lebedev_L11_grid.create_copy(b.lebedev_L11_grid)
+
+      if (b.unscaled_point.created)    .unscaled_point.create_copy(b.unscaled_point)
+      if (b.unscaled_weight.created)   .unscaled_weight.create_copy(b.unscaled_weight)
+      if (b.atom_points.created)       .atom_points.create_copy(b.atom_points)
+      if (b.atom_weights.created)      .atom_weights.create_copy(b.atom_weights)
+
+      if (b.atom_grid0.created)        .atom_grid0.create_copy(b.atom_grid0)
+      if (b.atom_grid1.created)        .atom_grid1.create_copy(b.atom_grid1)
+      if (b.weight_is_0.created)       .weight_is_0.create_copy(b.weight_is_0)
+
+   end
+
+   set_defaults ::: leaky
+   ! Set up a default dftgrid object
+      .set_kind(BECKE_GRID_KIND) ! leaky, because of .set_zeta
+      .set_accuracy(BECKE_GRID_ACCURACY)
+      .pruning_scheme = BECKE_GRID_PRUNING_SCHEME
+      .basis_function_cutoff = BECKE_GRID_BASIS_FUNCTION_CUTOFF
+      .basis_function_pair_cutoff = BECKE_GRID_RHO_CUTOFF
+      .partition_cutoff = BECKE_GRID_PARTITION_CUTOFF
+      .rho_cutoff = BECKE_GRID_RHO_CUTOFF
+      .n_extra_points_per_shell = BECKE_GRID_EXTRA_POINTS_PER_SHELL
+    ! .reduce_core_angular_grid = BECKE_GRID_REDUCE_CORE_ANGULAR_GRID
+      .reduce_H_angular_grid = BECKE_GRID_REDUCE_H_ANGULAR_GRID
+      .scale_atomic_grids = BECKE_GRID_SCALE_ATOMIC_GRIDS
+      .partition_power = BECKE_GRID_PARTITION_POWER
+      .partition_scheme = BECKE_GRID_PARTITION_SCHEME
+      .partition_scaling_scheme = BECKE_GRID_PARTITION_SCALING_SCHEME
+      .finalized = FALSE
+      .n_unscaled_points = 0
+      .n_points = 0
+   end
+
+!  ============
+!  Set routines
+!  ============
+
+   set_kind(kind) ::: leaky
+   ! Set the kind of interpolation to use.
+      kind :: STR
+      .kind = kind
+      .kind.to_lower_case
+      select case (.kind)
+         case ("becke                    ")                
+         case ("treutler_ahlrichs        ")                
+         case ("mura_knowles             ")                
+         case default; UNKNOWN(.kind)
+      end
+      .set_zeta ! leaky here
+   end
+
+   set_partition_scheme(scheme)
+   ! THis option describes how the masking function to be used to partition the
+   ! density-like function into separate "atomic" regions.
+      scheme :: STR
+      .partition_scheme = scheme
+      .partition_scheme.to_lower_case
+      select case (.partition_scheme)
+         case ("becke             ")
+         case ("delley            ")
+            WARN("setting partition scaling scheme to `none'")
+            .set_partition_scaling_scheme("none")
+         case ("stratmann_scuseria")
+            WARN("setting partition scaling scheme to `none'")
+            .set_partition_scaling_scheme("none")
+         case default; UNKNOWN(.partition_scheme)
+      end
+   end
+
+   set_partition_scaling_scheme(scheme)
+   ! This chooses the precise method to scale the sizes of the "atoms" generated
+   ! by the atomic partition function scheme.
+      scheme :: STR
+      .partition_scaling_scheme = scheme
+      .partition_scaling_scheme.to_lower_case
+      select case (.partition_scaling_scheme)
+         case ("none             ")
+         case ("becke            ")
+         case ("treutler_ahlrichs")
+         case default; UNKNOWN(.partition_scaling_scheme)
+      end
+   end
+
+   set_pruning_scheme(scheme)
+   ! Set the pruning scheme to reduce angular momentum of the angular grids near
+   ! atomic centers. 
+      scheme :: STR
+      .pruning_scheme = scheme
+      .pruning_scheme.to_lower_case
+      select case (.pruning_scheme)
+         case ("none             ")
+         case ("jayatilaka0      ")
+         case ("jayatilaka1      ")
+         case ("jayatilaka2      ")
+         case ("treutler_ahlrichs")
+         case default; UNKNOWN(.pruning_scheme)
+      end
+   end
+
+   set_zeta ::: leaky, private
+   ! Set the atom_zeta scaling parameters. We store them in case they need to be
+   ! manually changed ...
+   ENSURE(.kind/=" ","no kind specified")
+      fac :: REAL
+
+      .atom_zeta.destroy
+
+      if (.scale_atomic_grids) then
+
+         select case (.kind)
+
+            case ("becke                    ")                
+               .atom_zeta.create_copy(bragg_slater_radius) 
+               fac = HALF*BOHR_PER_ANGSTROM
+               .atom_zeta = fac*.atom_zeta
+               ! H and He are the Bragg radius
+               .atom_zeta(1) = TWO*.atom_zeta(1)
+               .atom_zeta(2) = TWO*.atom_zeta(2)
+
+            case ("treutler_ahlrichs        ")                
+               .atom_zeta.create_copy(TA_zeta)
+               fac = BOHR_PER_ANGSTROM
+               .atom_zeta = fac*.atom_zeta
+
+            case ("mura_knowles             ")                
+               .atom_zeta.create_copy(MK_zeta)
+
+            case default
+               UNKNOWN(.kind)
+
+         end
+
+      else
+
+         .atom_zeta.create(89)
+         .atom_zeta = ONE
+
+      end
+
+   end
+
+   set_zeta(i,zeta) ::: leaky
+   ! Set the zeta value for element "i" to be "zeta".
+   ! NOTE: This is ain atomic units
+      i :: INT
+      zeta :: REAL
+
+   ENSURE(.atom_zeta.created,"no atom_zeta array, set atom positions first")
+   ENSURE(i.is_in_range([1,89]),"i is not in the allowed range")
+
+      .atom_zeta(i) = zeta
+
+   end
+
+   set_accuracy(acc)
+   ! Set the accuracy. NOTE: the actual integration accuracy is affected not
+   ! only by this keyword, but also by the switch .reduce_H_angular_grid. It
+   ! will also depend on .n_extra_points_per_shell.
+      acc :: STR
+      .accuracy = acc
+      .accuracy.to_lower_case
+      select case (acc)
+         case ("very_low")             ! These are Treutler-Ahlrichs settings
+            .set_l_H_angular_grid(11)
+            .set_l_angular_grid(17)
+            .set_n_radial_points(20)
+         case ("sg-1");
+            .set_l_H_angular_grid(15)
+            .set_l_angular_grid(23)
+            .set_n_radial_points(25)
+          ! .set_pruning_scheme("sg-1")
+         case ("low");
+            .set_l_H_angular_grid(17)
+            .set_l_angular_grid(23)
+            .set_n_radial_points(25)
+         case ("medium")
+            .set_l_H_angular_grid(23)
+            .set_l_angular_grid(29)
+            .set_n_radial_points(30)
+         case ("high")
+            .set_l_H_angular_grid(29)
+            .set_l_angular_grid(35)
+            .set_n_radial_points(35)
+         case ("very_high")
+            .set_l_H_angular_grid(35)
+            .set_l_angular_grid(47)
+            .set_n_radial_points(45)
+         case ("extreme")             ! These are better than the Mura-Knowles settings
+            .set_l_H_angular_grid(47)
+            .set_l_angular_grid(59)
+            .set_n_radial_points(55)
+         case ("best")
+            .set_l_H_angular_grid(59)
+            .set_l_angular_grid(71)
+            .set_n_radial_points(65)
+         case default
+            UNKNOWN(acc)
+      end
+   end
+
+   set_atom_info(atom) ::: leaky
+   ! Set the list of "atoms" ... used e.g. to estimate when grid
+   ! points too far away from an atom become insignificant
+      atom :: VEC{ATOM}*
+
+   ENSURE(.kind/=" ","must set kind of quadrature first")
+
+      .destroy_atom_info
+
+      .atom => atom
+
+   end
+
+   set_basis_function_cutoff(cutoff)
+   ! Set .basis_function_cutoff, the value below which function values are
+   ! assumed to be zero, so as to eliminate *atom* grid points.
+      cutoff :: REAL
+   ENSURE(cutoff>=ZERO,"cutoff must be non-negative")
+   WARN_IF(cutoff>TOL(4),"cutoff may be too large")
+      .basis_function_cutoff = cutoff
+   end
+
+   set_partition_cutoff(cutoff)
+   ! Set .partition_cutoff, the value below which the partition function values
+   ! are assumed to be zero, so as to eliminate (full) grid points *after*
+   ! partitioning.
+      cutoff :: REAL
+   ENSURE(cutoff>=ZERO,"cutoff must be non-negative")
+   WARN_IF(cutoff>TOL(15),"cutoff may be too large")
+      .partition_cutoff = cutoff
+   end
+
+   set_rho_cutoff(cutoff)
+   ! If the density goes below ".rho_cutoff" then the functional, its energy
+   ! density, and its potential are all set to zero.
+      cutoff :: REAL
+      .rho_cutoff = cutoff
+   end
+
+   set_n_radial_points(n)
+   ! Set the number of radial points wanted for the Hydrogen atom.
+   ! The number of points used for other atoms is more: 5 more points are used
+   ! for every atomic shell that the atom has more than Hydrogen.
+      n :: INT
+   ENSURE(n>1,"n must be greater than one")
+      .n_radial_points = n
+   end
+
+   set_n_extra_points_per_shell(n)
+   ! Set the number of extra radial points to use per n-shell over and above the
+   ! default number .n_radial_points wanted for the Hydrogen atom. Normally this
+   ! is set to 5 according to Becke's rule of thumb. You might want to set it to
+   ! zero to get uniform grids for all the atoms.
+      n :: INT
+   ENSURE(n>=0,"n must be non-negative")
+      .n_extra_points_per_shell = n
+   end
+
+   set_l_angular_grid(l)
+   ! Set the angular quantum number "l" which is to be integrated exactly by the
+   ! angular grid.
+      l :: INT
+   WARN_IF(l<11,"l recommended greater than 11")
+      .l_angular_grid = l
+   end
+
+   set_l_H_angular_grid(l)
+   ! Set the angular quantum number "l" which is to be integrated exactly by the
+   ! angular grid for the Hydrogen and Helium atoms only.
+      l :: INT
+   WARN_IF(l<11,"l recommended greater than 11")
+      .l_H_angular_grid = l
+   end
+
+   set_reduce_H_angular_grid(reduce)
+   ! If set TRUE the order of the angular grid for Hydrogen and Helium are
+   ! reduced to .l_H_angular_grid.
+      reduce :: BIN
+      .reduce_H_angular_grid = reduce
+   end
+
+   set_scale_atomic_grids(scale) ::: leaky
+   ! If set TRUE, the atomic grids are scaled according to the authors
+   ! recommended scaling factors. This does *not* mean that the partition
+   ! function is also scaled to account for varying atomic sizes.
+      scale :: BIN
+      .scale_atomic_grids = scale
+      .set_zeta
+   end
+
+!  =============
+!  Input methods
+!  =============
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR
+      word :: STR
+      word = keyword
+      word.to_lower_case
+      .finalized = FALSE
+      select case (word)
+         case ("}                         ")  ! exit case
+         case ("accuracy=                 "); .read_accuracy
+         case ("basis_function_cutoff=    "); .read_basis_function_cutoff
+         case ("kind=                     "); .read_kind
+         case ("l_angular_grid=           "); .read_l_angular_grid
+         case ("l_h_angular_grid=         "); .read_l_H_angular_grid
+         case ("n_extra_points_per_shell= "); .read_n_extra_points_per_shell
+         case ("n_radial_points=          "); .read_n_radial_points
+       ! case ("reduce_core_angular_grid= "); .read_reduce_core_angular_grid
+         case ("reduce_h_angular_grid=    "); .read_reduce_H_angular_grid
+         case ("scale_atomic_grids=       "); .read_scale_atomic_grids
+         case ("partition_cutoff=         "); .read_partition_cutoff
+         case ("partition_scheme=         "); .read_partition_scheme
+         case ("partition_scaling_scheme= "); .read_partition_scaling_scheme
+         case ("pruning_scheme=           "); .read_pruning_scheme
+         case ("put                       "); .put
+         case ("put_atom_info             "); .put_atom_info
+         case ("put_radial_angular_grids  "); .put_radial_angular_grids
+         case ("put_unique_atom_grids     "); .put_unique_atom_grids
+         case ("rho_cutoff=               "); .read_rho_cutoff
+         case ("set_grid_data             "); .set_grid_data
+         case ("set_defaults              "); .set_defaults
+         case default;                    UNKNOWN(word)
+      end
+   end
+
+   read_accuracy
+   ! Read the accuracy of the numerical integration
+      word :: STR
+      stdin.read(word)
+      .set_accuracy(word)
+      .finalized = FALSE
+   end
+
+   read_kind ::: leaky
+   ! Read the .kind of quadrature desired
+      word :: STR
+      stdin.read(word)
+      word.to_lower_case
+      .set_kind(word)
+      .finalized = FALSE
+   end
+
+   read_partition_scheme
+   ! Set the partition method to use. Normally it is "becke".
+      s :: STR
+      stdin.read(s)
+      .set_partition_scheme(s)
+      .finalized = FALSE
+   end
+
+   read_partition_scaling_scheme
+   ! Set the partition scaling method to use. Normally "treutler_ahlrichs".
+      s :: STR
+      stdin.read(s)
+      .set_partition_scaling_scheme(s)
+      .finalized = FALSE
+   end
+
+   read_pruning_scheme
+   ! Set the pruning scheme to reduce angular momentum of the angular grids near
+   ! atomic centers. 
+      s :: STR
+      stdin.read(s)
+      .set_pruning_scheme(s)
+      .finalized = FALSE
+   end
+
+   read_l_angular_grid
+   ! Read .l_angular_grid, the angular momentum used for the angular grid
+      l :: INT
+      stdin.read(l)
+      .set_l_angular_grid(l)
+      .finalized = FALSE
+   end
+
+   read_l_H_angular_grid
+   ! Read .l_H_angular_grid, the angular momentum used for the angular grid for
+   ! the Hydrogen atom.
+      l :: INT
+      stdin.read(l)
+      .set_l_H_angular_grid(l)
+      .finalized = FALSE
+   end
+
+   read_n_extra_points_per_shell
+   ! Read .n_extra_points_per_shell, 
+      n :: INT
+      stdin.read(n)
+      .set_n_extra_points_per_shell(n)
+      .finalized = FALSE
+   end
+
+   read_n_radial_points
+   ! Read .n_radial_points, required to defined the radial quadrature
+      n :: INT
+      stdin.read(n)
+      .set_n_radial_points(n)
+      .finalized = FALSE
+   end
+
+!   read_reduce_core_angular_grid
+!   ! Read whether to reduce the angular momentum of the angular grid near the
+!   ! core of an atom
+!      l :: BIN
+!      stdin.read(l)
+!      .set_reduce_core_angular_grid(l)
+!   end
+
+   read_reduce_H_angular_grid
+   ! Read whether to reduce the angular momentum of the angular grid near the
+   ! core of a *hydrogen* atom
+      l :: BIN
+      stdin.read(l)
+      .set_reduce_H_angular_grid(l)
+      .finalized = FALSE
+   end
+
+   read_scale_atomic_grids
+   ! Read whether to scale the sizes of the atomic grids to account for
+   ! different atomic sizes. NOTE: this does not also scale the partitioning
+   ! scheme, for this set the .partition_scaling_scheme.
+      l :: BIN
+      stdin.read(l)
+      .set_scale_atomic_grids(l)
+      .finalized = FALSE
+   end
+
+   read_basis_function_cutoff
+   ! Read .basis_function_cutoff, the value below which function values are
+   ! assumed to be zero, so as to eliminate *atom* grid points.
+      cutoff :: REAL
+      stdin.read(cutoff)
+      .set_basis_function_cutoff(cutoff)
+      .finalized = FALSE
+   end
+
+   read_partition_cutoff
+   ! Read .partition_cutoff, the value below which the partition function values
+   ! are assumed to be zero, so as to eliminate (full) grid points *after*
+   ! partitioning.
+      cutoff :: REAL
+      stdin.read(cutoff)
+      .set_partition_cutoff(cutoff)
+      .finalized = FALSE
+   end
+
+   read_rho_cutoff
+   ! If the density goes below ".rho_cutoff" then the functional, its energy
+   ! density, and its potential are all set to zero.
+      stdin.read_quantity(.rho_cutoff)
+      .finalized = FALSE
+   end
+
+!  =====================================================================
+!  Radial, angular grid precomputation + unique atom grid precomputation
+!  =====================================================================
+
+!  This is the main finalization ...
+
+   set_grid_data(atom) ::: leaky
+   ! Set all the radial and angular grid data required to construct the product
+   ! grids for any atom in the periodic table. Then define the unique atomic
+   ! grids for the current set of atoms.
+      atom :: VEC{ATOM}*
+
+      .set_atom_info(atom)
+      .set_grid_data
+
+   end
+
+   set_grid_data ::: leaky
+   ! Set all the radial and angular grid data required to construct the product
+   ! grids for any atom in the periodic table. Then define the unique atomic
+   ! grids for the current set of atoms.
+
+      .destroy_grid_part
+
+      ! Radial and angular grids come first
+      .set_radial_grids       
+      .set_angular_grids
+
+      ! Point counting routines next, for dimensioning
+      .set_n_points_for_row   
+
+      ! Finally, make the unique atomic grids
+      .set_unique_atoms
+      .set_atom_grids         
+      .set_atom_density_grids
+      .set_atom_min_distance
+      .set_atom_n1_SS
+
+      .finalized = TRUE
+
+   end
+
+!  The following are private helper routines
+
+   set_radial_grids ::: private, leaky
+   ! Set all possible .radial_grid's that could be needed. Since a different
+   ! number of radial points is used for atoms in different rows of the periodic
+   ! table, this required a loop over the rows of the periodic table.
+   ENSURE(.kind/=" ","no grid kind set")
+      p :: INT
+      .radial_grid.create(7)
+      do p = 1,7
+         .set_radial_grid(.radial_grid(p),p)
+      end
+   end
+
+   set_radial_grid(radial,p) ::: private, leaky
+   ! Set the "radial" grid data for an atom on period "p" of the periodic table.
+   ! The standard radial grid points are modified using the mappings
+   ! recommended by the authors. The jacoboian of the transformation is included
+   ! back into the weight. The zeta scale factor is *not* included at this stage,
+   ! only at the final stage when the full grid is generated for the entire atom
+   ! list.
+      radial :: QUADRATURE
+      p  :: INT
+   ENSURE(.kind/=" ","no grid kind set")
+      nr :: INT
+      nr = .no_of_radial_points(p)
+      select case (.kind)
+         case ("becke            "); BECKE_GRID::set_B_radial_grid(radial,nr)
+         case ("treutler_ahlrichs"); BECKE_GRID::set_TA_radial_grid(radial,nr)
+         case ("mura_knowles     "); BECKE_GRID::set_MK_radial_grid(radial,nr)
+         case default;                UNKNOWN(.kind)
+      end
+   end
+
+   no_of_radial_points(p) result (res) 
+   ! Return the number of radial points in the grid for an atom in period "p" of
+   ! the periodic table.
+      p   :: INT, IN
+      res :: INT
+      res = .n_radial_points + .n_extra_points_per_shell*(p-1)
+   end
+
+   set_B_radial_grid(radial_grid,nr) ::: selfless, private, leaky
+   ! Set the Becke "radial_grid" to have "nr" points. The standard grid points
+   ! are modified using the recommended mappings. The jacoboian of the mapping
+   ! is included back into the weight. The zeta scale factor is *not* included
+   ! at this stage, only at the final stage when the full grid is generated for
+   ! the entire atom list.
+      radial_grid :: QUADRATURE
+      nr :: INT
+
+      i  :: INT
+      r,w,rr,ww,rp1,rm1 :: REAL
+
+      radial_grid.set_n_points(nr)
+      radial_grid.set_kind("gauss_chebyshev_2nd")
+    ! radial_grid.set_kind("gauss_chebyshev_1st")
+      radial_grid.set_quadrature_points ! leaky here
+
+      ! Apply the Becke mapping r = (1+x)/(1-x), for x in [-1,1]
+      do i = 1,radial_grid.n_points
+         r = radial_grid.point(i)
+         w = radial_grid.weight(i)
+         rp1 = ONE + r
+         rm1 = ONE - r
+         rr = rp1/rm1
+         ww = TWO*w/(rm1*rm1)
+         radial_grid.point(i) = rr
+         radial_grid.weight(i) = ww
+       ! r = cos(pf*(i-HALF))
+       ! !a = cos(PI*(2*i-1)/(TWO*num))
+       ! x = (ONE + r)/(ONE - r)
+       ! pt(i) = x
+       ! wt(i) = x*w*(rp1 + r*rm1)/sqrt(ONE - r*r)
+      end
+
+      radial_grid.point.reverse_order
+      radial_grid.weight.reverse_order
+
+   end
+
+   set_TA_radial_grid(radial_grid,nr) ::: selfless, private, leaky
+   ! Set the Treutler-Ahlrichs "radial_grid" to have "nr" points. The standard
+   ! grid points are modified using the recommended mappings. The jacobian of
+   ! the mapping is included back into the weight. The zeta scale factor is
+   ! *not* included at this stage, only at the final stage when the full grid is
+   ! generated for the entire atom list.
+      radial_grid :: QUADRATURE
+      nr :: INT
+
+      i :: INT
+      r,w,rr,ww,rp1,rm1,ra1,ra,ln2,a,a1,tmp :: REAL
+
+      radial_grid.set_n_points(nr)
+      radial_grid.set_kind("gauss_chebyshev_2nd")
+      radial_grid.set_quadrature_points ! leaky here
+
+      ! Apply the Treutler-Ahlrichs mapping 
+      ! r = (ln 2)^-1 (1+x)^0.6 ln(2/(1-x)), for x in [-1,1]
+      ln2 = ONE/log(TWO)
+      a  = 0.6d0
+      a1 = a - ONE
+      do i = 1,radial_grid.n_points
+         r = radial_grid.point(i)
+         w = radial_grid.weight(i)
+         rp1 = ONE + r
+         rm1 = ONE - r
+         ra1 = rp1**a1
+         ra  = ra1*rp1
+         tmp = ONE - ln2*log(rm1)
+         rr = ra*tmp
+         ww = ra1*(a*tmp+ln2*rp1/rm1)*w
+         radial_grid.point(i) = rr
+         radial_grid.weight(i) = ww
+      end
+
+      radial_grid.point.reverse_order
+      radial_grid.weight.reverse_order
+
+   end
+
+   set_MK_radial_grid(radial_grid,nr) ::: selfless, private, leaky
+   ! Set the Mura-Knowles "radial_grid" to have "nr" points. The standard grid
+   ! points are modified using the recommended mappings. The jacoboian of the
+   ! mapping is included back into the weight. The zeta scale factor is *not*
+   ! included at this stage, only at the final stage when the full grid is
+   ! generated for the entire atom list.
+      radial_grid :: QUADRATURE
+      nr :: INT
+
+      i,m,m1 :: INT
+      r,w,rr,ww,rm1,rm,tmp :: REAL
+
+      radial_grid.set_n_points(nr)
+    ! radial_grid.set_kind("open_rectangle") ! eliminate end points
+    ! radial_grid.set_kind("open_extended_simpson") ! seems not to work
+      radial_grid.set_kind("open_extended_trapezoid") ! eliminate end points
+    ! radial_grid.set_kind("gauss_legendre") 
+      radial_grid.set_quadrature_points ! leaky here
+
+      ! Apply the Mura-Knowles log 3 mapping
+      ! r = -ln (1-x^3), for x in [0,1]
+      m  = 3
+      m1 = m - 1
+      do i = 1,radial_grid.n_points
+         r = radial_grid.point(i)
+         w = radial_grid.weight(i)
+         rm1 = r**m1
+         rm  = r*rm1
+         tmp = ONE - rm
+         rr = -log(tmp)
+         ww = (ONE/tmp)*m*rm1*w
+         radial_grid.point(i) = rr
+         radial_grid.weight(i) = ww
+      end
+
+   end
+
+   set_angular_grids ::: private, leaky
+   ! Set all possible angular grid's that might be needed. At the moment only
+   ! spherical Lebedev grids are available, but they are probably the best
+   ! anyway ...
+   WARN_IF(.l_angular_grid<11,"l recommended greater than 11")
+   WARN_IF(.l_H_angular_grid<11,"l_H recommended greater than 11")
+      .lebedev_grid.create           ! Default grid
+      .lebedev_grid.set_l(.l_angular_grid)
+      .lebedev_H_grid.create         ! Needed for H atoms
+      .lebedev_H_grid.set_l(.l_H_angular_grid)
+      .lebedev_L3_grid.create        ! Needed for reduced grids near atom core
+      .lebedev_L3_grid.set_l(3)
+      .lebedev_L5_grid.create        
+      .lebedev_L5_grid.set_l(5)
+      .lebedev_L7_grid.create        
+      .lebedev_L7_grid.set_l(7)
+      .lebedev_L9_grid.create       
+      .lebedev_L9_grid.set_l(9)
+      .lebedev_L11_grid.create
+      .lebedev_L11_grid.set_l(11)
+   end
+
+   set_n_points_for_row ::: private, leaky
+   ! Set the number of points per row of the periodic table.
+      r :: INT
+      .n_points_for_row.destroy
+      .n_points_for_row.create(7)
+      do r = 1,7 ! Set no. of points for each row
+         .n_points_for_row(r) = .no_of_points_for_row(r)
+      end
+   end
+
+   set_unique_atoms ::: leaky, private
+   ! Make the list of unique_atoms, and a map array to the unique list of atoms.
+      .atom(:).atomic_number.make_unique_element_maps(.unique_atom,.unique_atom_for) 
+      .n_unique_atoms = .unique_atom.dim
+   end
+
+   set_atom_grids ::: leaky, private
+   ! Make all the atom integration grids. These grids use ".atom"
+   ! exponent information to decide when the basis functions for
+   ! an atom will have small values, to decide when to prune the
+   ! radial grid. The pruning of points with low partition weight
+   ! factors is done at a later stage when the atoms in the partition
+   ! are known. See the .prune_grid routines.
+
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.unique_atom.created,"no unique_atom array")
+
+      u,p,p_max,a,np :: INT
+      s,s3 :: REAL
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+
+      ! Create unique-atom points and weights
+      .atom_weights.destroy
+      .atom_points.destroy
+      .atom_points.create(.n_unique_atoms)
+      .atom_weights.create(.n_unique_atoms)
+
+      ! Maximum period
+      p_max = period(maxval(.atom.atomic_number))
+
+      ! Loop over atoms with periodic table row=p
+      do p = 1,p_max                       
+
+         if (all(period(.atom.atomic_number)/=p)) cycle
+
+         ! Set unscaled reference grid for row=p
+         .set_unscaled_grid(p)             
+
+         ! Space for distances
+         np = .n_unscaled_points
+
+         ! Loop for each *unique* atom
+         do u = 1,.n_unique_atoms          
+
+            a = .unique_atom(u)
+
+            if (period(.atom(a).atomic_number)/=p) cycle
+
+            ! Get "np" points where BF's are large enough
+            np = .no_of_points_for_atom(a)
+
+            ! Copy only "np" points, weights, and radii
+            .atom_points(u).element.create(np,3)
+            .atom_weights(u).element.create(np)
+            pt => .atom_points(u).element
+            wt => .atom_weights(u).element
+            pt = .unscaled_point(1:np,:)  ! Copy here 
+            wt = .unscaled_weight(1:np)
+
+            ! Do scaling if needed
+            if (.scale_atomic_grids) then
+               s  = .atom_zeta(.atom(a).atomic_number)
+               s3 = s*s*s
+               pt = s*pt
+               wt = s3*wt
+            end
+
+         end
+
+         ! Clean
+         .destroy_unscaled_grid
+
+      end
+
+   end
+
+   set_atom_density_grids ::: leaky, private
+   ! Make all the atom basis function grids. This will use up a large slab of
+   ! memory, but hopefully not too much, since it only depends on the number of
+   ! different atoms in the molecule.
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.unique_atom.created,"no unique_atom array")
+   ENSURE(.atom_points.created,"no atom_points array")
+      u,a,np,nb :: INT
+      g0,pt :: MAT{REAL}*
+      g1 :: MAT3{REAL}*
+      pos :: VEC{REAL}(3)
+
+      .atom_grid0.destroy
+      .atom_grid1.destroy
+      .atom_grid0.create(.n_unique_atoms)
+      .atom_grid1.create(.n_unique_atoms)
+
+      ! For each *unique* atom ...
+      do u = 1,.n_unique_atoms        
+
+         ! Create atom BF grids
+         a = .unique_atom(u)
+         np = .atom_points(u).element.dim1
+         nb = .atom(a).basis.n_bf
+         .atom_grid0(u).element.create(np,nb)
+         .atom_grid1(u).element.create(np,nb,3)
+
+         ! Now make the atom BF grids
+         g0 => .atom_grid0(u).element
+         g1 => .atom_grid1(u).element
+         pt => .atom_points(u).element
+         pos = .atom(a).position                    
+         
+         .atom(a).set_position([ZERO,ZERO,ZERO]) ! Reset atom to origin temporarily
+         .atom(a).make_nabla_bf_grid(g1,g0,pt)   ! <<< Make them here
+         .atom(a).set_position(pos)
+
+      end
+
+   end
+
+   set_atom_min_distance ::: leaky, private
+   ! Make the minimum distances squared between atoms.
+   ! Required for the Stratmann-Scuseria partitioning.
+
+   ENSURE(.atom.created,"no atom list")
+
+      n_atom,i,j :: INT
+      px,py,pz,dx,dy,dz,d2min,d2 :: REAL
+
+      ! No. of atoms
+      n_atom = .atom.dim1
+
+      ! Create minimum distance *squared*
+      .atom_min_distance.destroy
+      .atom_min_distance.create(n_atom)
+
+      ! Find minimum distance squared to atom i
+      do i = 1,n_atom
+
+         ! Atom i position
+         px = .atom(i).position(1)
+         py = .atom(i).position(2)
+         pz = .atom(i).position(3)
+
+         ! Minimum distance squared starts huge
+         d2min = huge(ONE)
+
+         ! Which of the atoms j is minimum?
+         do j = 1,n_atom
+
+            if (i==j) cycle
+
+            ! x2 distance
+            dx = px - .atom(j).position(1); dx = dx*dx
+            if (dx>=d2min) cycle
+
+            ! y2 distance
+            dy = py - .atom(j).position(2); dy = dy*dy
+            if (dy>=d2min) cycle
+
+            ! z2 distance
+            dz = pz - .atom(j).position(3); dz = dz*dz
+            if (dz>=d2min) cycle
+
+            d2 = dx + dy + dz
+            if (d2>=d2min) cycle
+
+            d2min = d2
+
+         end
+
+         ! Store minimum distance
+         .atom_min_distance(i)  = sqrt(d2min)
+
+      end
+
+   end
+
+   set_atom_n1_SS ::: leaky, private
+   ! Set the n1_SS values for all atoms
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.unique_atom.created,"no unique_atom array")
+   ENSURE(.atom_points.created,"no atom_points array")
+
+      n_atom,a :: INT
+
+      n_atom = .atom.dim
+      .atom_n1_SS.destroy
+      .atom_n1_SS.create(n_atom)
+
+      ! For each *unique* atom ...
+      do a = 1,n_atom
+         .atom_n1_SS(a) = .n1_SS_for_atom(a)
+      end
+
+   end
+
+!  ======================================================
+!  Unscaled atom grid generation routines + no. of points
+!  ======================================================
+
+   set_unscaled_grid(p) ::: leaky, private
+   ! Set the *unscaled* spherical quadrature grid points and weights for an atom
+   ! on period "p" of the periodic table. The unscaled grid is a direct product
+   ! of the ".radial_grid(p)" and the ".lebedev" angular grids. Based on the
+   ! .pruning_scheme this routine may reduce the order of the angular grids for
+   ! radial points near the nucleus. NOTE: unlike the SG-1 grids the pruning is
+   ! done *before* scaling  and is good for all atoms in a period "p".
+      p :: INT, IN
+
+   ENSURE(.radial_grid.created,"no radial_grid")
+   ENSURE(.lebedev_grid.created,"no lebedev_grid")
+   ENSURE(.n_points_for_row.created,"no n_points_for_row")
+
+      i,j,k, np,nr :: INT
+      pi4,r,w,pi4r2w :: REAL
+      lebedev_grid :: LEBEDEV*
+      radial_grid :: QUADRATURE*
+
+      np = .n_points_for_row(p)
+      .n_unscaled_points = np
+
+      .destroy_unscaled_grid
+      .unscaled_point.create(np,3)
+      .unscaled_weight.create(np)
+
+      radial_grid => .radial_grid(p)
+      nr = radial_grid.n_points
+
+      pi4 = FOUR*PI ! Include the factor 4*pi*r^2 in the weights.
+
+      k = 0
+      do i = 1,nr                       ! <-- Loop on radial grid
+         r = radial_grid.point(i)
+         w = radial_grid.weight(i)
+       ! ! WARNING. Is below right?
+       ! if (r<TOL(6)) then; pi4r2w = pi4*r*r*r*w*THIRD
+       ! else;               pi4r2w = pi4*r*r*w
+       ! end
+         pi4r2w = pi4*r*r*w
+         ! Set default lebedev grid
+         lebedev_grid => .lebedev_grid
+         ! Reset lebedev grid for H atoms
+         if (.reduce_H_angular_grid AND p==1) lebedev_grid => .lebedev_H_grid
+         ! Reset lebedev grids for points near the core
+         .apply_pruning_scheme(lebedev_grid,i,nr)
+         do j = 1,lebedev_grid.n_points ! <-- Loop on angular grid
+            k = k + 1
+            .unscaled_point(k,:) = r*lebedev_grid.point(j,:)
+            .unscaled_weight(k)  = pi4r2w*lebedev_grid.weight(j)
+         end
+      end
+
+   end
+
+
+!   set_unscaled_grid_SG1(p) ::: leaky, private
+!   ! Set the SG-1 *unscaled* spherical quadrature grid points and weights for an
+!   ! atom on period "p" of the periodic table. The unscaled grid is a direct
+!   ! product of the ".radial_grid(p)" and the ".lebedev" angular grids. This
+!   ! routine uses the SG-1 scheme to reduce the order of the angular grids for
+!   ! radial points near the nucleus. As a further aproximation, you can choose
+!   ! to reduce the grid for just the Hydrogen atoms even further.
+!      p :: INT, IN
+!   ENSURE(.radial_grid.created,"no radial_grid")
+!   ENSURE(.lebedev_grid.created,"no lebedev_grid")
+!   ENSURE(.n_points_for_row.created,"no n_points_for_row")
+!      i,j,k, np,nr :: INT
+!      pi4,r,w,pi4r2w, a1,a2,a3,a4 :: REAL
+!      lebedev_grid :: LEBEDEV*
+!      radial_grid :: QUADRATURE*
+!      np = .n_points_for_row(p)
+!      .n_unscaled_points = np
+!      .destroy_unscaled_grid
+!      .unscaled_point.create(np,3)
+!      .unscaled_weight.create(np)
+!      radial_grid => .radial_grid(p)
+!      nr = radial_grid.n_points
+!      a1 = sg1_pruning_parameter(1,p)
+!      a2 = sg1_pruning_parameter(2,p)
+!      a3 = sg1_pruning_parameter(3,p)
+!      a4 = sg1_pruning_parameter(4,p)
+!      pi4 = FOUR*PI ! Include the factor 4*pi*r^2 in the weights.
+!      k = 0
+!      do i = 1,nr                       ! <-- Loop on radial grid
+!         r = radial_grid.point(i)
+!         w = radial_grid.weight(i)
+!         pi4r2w = pi4*r*r*w
+!         ! Set default lebedev grid
+!         lebedev_grid => .lebedev_grid
+!         ! Reset lebedev grid for H atoms
+!         if (.reduce_H_angular_grid AND p==1) lebedev_grid => .lebedev_H_grid
+!         ! Reset lebedev grids for points near the core
+!         if      (r <=a1) then;         lebedev_grid => .lebedev_L3_grid
+!         else if (a1<r AND r<=a2) then; lebedev_grid => .lebedev_L9_grid
+!         else if (a2<r AND r<=a3) then; lebedev_grid => .lebedev_H_grid
+!         else if (a3<r AND r<=a4) then; lebedev_grid => .lebedev_grid
+!         else if (a4<r          ) then; lebedev_grid => .lebedev_H_grid
+!         end
+!         do j = 1,lebedev_grid.n_points ! <-- Loop on angular grid
+!            k = k + 1
+!            .unscaled_point(k,:) = r*lebedev_grid.point(j,:)
+!            .unscaled_weight(k)  = pi4r2w*lebedev_grid.weight(j)
+!         end
+!      end
+!   end
+
+!   no_of_points_for_row_SG1(p) result (res) ::: private
+!   ! Return the number of points in the SG1 (radial x spherical) grid, assuming that
+!   ! the atom is in period "p", and assuming the STreutler-Ahlrichs scheme to
+!   ! reduce the order of the angular mesh near the nucleus. WARNING: this
+!   ! routine must be compatible with .set_unscaled_grid. NOTE: This routine does
+!   ! not eliminate points far from the origin due to basis function atom
+!   ! exponents; this returns the maximum number of points for an atom in period
+!   ! "p" of the periodic table.
+!      p   :: INT, IN
+!      res :: INT
+!   ENSURE(p>=0 AND p<=7,"p out of range")
+!   ENSURE(.radial_grid.created,"no radial_grid")
+!   ENSURE(.lebedev_grid.created,"no lebedev_grid")
+!      lebedev_grid :: LEBEDEV*
+!      r,a1,a2,a3,a4 :: REAL
+!      nr,i :: INT
+!      nr = .radial_grid(p).n_points
+!      n3 = nr/3
+!      n2 = nr/2
+!      res = 0
+!      do i = 1,nr
+!         r = radial_grid.point(i)
+!         ! Set default lebedev grid
+!         lebedev_grid => .lebedev_grid
+!         ! Reset lebedev grid for H atoms
+!         if (.reduce_H_angular_grid AND p==1) lebedev_grid => .lebedev_H_grid
+!         ! Reset lebedev grids for points near the core
+!         if      (r <=a1) then;         lebedev_grid => .lebedev_L3_grid
+!         else if (a1<r AND r<=a2) then; lebedev_grid => .lebedev_L9_grid
+!         else if (a2<r AND r<=a3) then; lebedev_grid => .lebedev_H_grid
+!         else if (a3<r AND r<=a4) then; lebedev_grid => .lebedev_grid
+!         else if (a4<r          ) then; lebedev_grid => .lebedev_H_grid
+!         end
+!         DIE_IF(lebedev_grid.destroyed,"no lebedev_grid")
+!         res = res + lebedev_grid.n_points
+!      end
+!   end
+
+!   no_of_points_for_atom_SG1(a) result (res)
+!   ! Calculate the total number of points in the SG1 grid for atom "a" assuming
+!   ! that the array .atom_lowest_exponents has been defined. These exponents are
+!   ! used to define a corresponding gaussian; when that gaussian has value below
+!   ! .basis_function_cutoff, the contribution of the radial point is assumed to
+!   ! be zero. NOTE: this routine assumes the grid points are to be used for
+!   ! integrating products of basis functions on *all* atoms in the list (usually
+!   ! this will be at most two atoms).  NOTE: this routine assumes the radial
+!   ! grid points are ordered smallest to largest. NOTE: this routine depends on
+!   ! the atom scale factor, as well as the type of radial grid.
+!      a :: INT, IN
+!      res :: INT
+!   ENSURE(.radial_grid.created,"no radial_grid")
+!   ENSURE(.lebedev_grid.created,"no lebedev_grid")
+!   ENSURE(.atom_lowest_exponents.created,"no atom_lowest_exponents array")
+!   ENSURE(.atom_zeta.created,"no atom_zeta scale factors")
+!   ENSURE(all(.atom.atomic_number<=18),"atom's must not exceed atomic number 18")
+!      lebedev_grid :: LEBEDEV*
+!      radial_grid :: QUADRATURE*
+!      p,nr,i :: INT
+!      alpha,r_max,s,r,cutoff, a1,a2,a3,a4 :: REAL
+!      alpha = ONE/.atom_lowest_exponents(a)
+!      cutoff = .basis_function_cutoff
+!      if (cutoff<=ZERO) then; r_max = huge(ONE)
+!      else;    r_max = sqrt(-alpha*log(cutoff)) ! <<< .basis_function_cutoff defines r_max !!!
+!      end
+!      p  = period(.atom(a).atomic_number)
+!      radial_grid => .radial_grid(p)
+!      nr = .radial_grid(p).n_points
+!      a1 = sg1_pruning_parameter(1,p)
+!      a2 = sg1_pruning_parameter(2,p)
+!      a3 = sg1_pruning_parameter(3,p)
+!      a4 = sg1_pruning_parameter(4,p)
+!      res = 0
+!      do i = 1,nr
+!         s = .atom_zeta(.atom(a).atomic_number)
+!         r = s*radial_grid.point(i)
+!         if (r>r_max) exit     ! <<< This eliminates the later points in the list
+!         ! Set default lebedev grid
+!         lebedev_grid => .lebedev_grid
+!         ! Reset lebedev grid for H atoms
+!         if (.reduce_H_angular_grid AND p==1) lebedev_grid => .lebedev_H_grid
+!         ! Reset lebedev grids for points near the core
+!         if      (r <=a1) then;         lebedev_grid => .lebedev_L3_grid
+!         else if (a1<r AND r<=a2) then; lebedev_grid => .lebedev_L9_grid
+!         else if (a2<r AND r<=a3) then; lebedev_grid => .lebedev_H_grid
+!         else if (a3<r AND r<=a4) then; lebedev_grid => .lebedev_grid
+!         else if (a4<r          ) then; lebedev_grid => .lebedev_H_grid
+!         end
+!         DIE_IF(lebedev_grid.destroyed,"no lebedev_grid")
+!         res = res + lebedev_grid.n_points
+!      end
+!   end
+
+
+   no_of_points_for_row(p) result (res) ::: private
+   ! Return the number of points in the (radial x spherical) grid,
+   ! assuming that the atom is in period "p". 
+      p   :: INT, IN
+      res :: INT
+   ENSURE(p>=0 AND p<=7,"p out of range")
+   ENSURE(.radial_grid.created,"no radial_grid")
+   ENSURE(.lebedev_grid.created,"no lebedev_grid")
+      lebedev_grid :: LEBEDEV*
+      nr,i :: INT
+      nr = .radial_grid(p).n_points
+      res = 0
+      do i = 1,nr
+         ! Set default lebedev grid
+         lebedev_grid => .lebedev_grid ! Reset lebedev grid for H atoms
+         if (.reduce_H_angular_grid AND p==1) lebedev_grid => .lebedev_H_grid
+       ! .apply_pruning_scheme(lebedev_grid,i,nr,scheme="none") 
+         .apply_pruning_scheme(lebedev_grid,i,nr) 
+         DIE_IF(lebedev_grid.destroyed,"no lebedev_grid")
+         res = res + lebedev_grid.n_points
+      end
+   end
+
+   no_of_points_for_atom(a) result (res)
+   ! Calculate the total number of points in the grid for atom "a".
+   ! These exponents are used to define a corresponding gaussian; when
+   ! that gaussian has value below .basis_function_cutoff, the
+   ! contribution of the radial point is assumed to be zero. 
+   ! NOTE: this routine assumes the grid points are to be used for
+   ! integrating products of basis functions on *all* atoms in the
+   ! list (sometimes it may be at most two atoms).  
+   ! NOTE: this routine assumes the radial grid points are ordered
+   ! smallest to largest distance from the nucleus. 
+   ! NOTE: this routine depends on the atom scale factor, and the kind
+   ! of radial grid.
+      a :: INT, IN
+      res :: INT
+
+   ENSURE(.radial_grid.created,"no radial_grid")
+   ENSURE(.lebedev_grid.created,"no lebedev_grid")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.atom_zeta.created,"no atom_zeta scale factors")
+
+      lebedev_grid :: LEBEDEV*
+      radial_grid :: QUADRATURE*
+      p,nr,i :: INT
+      r_max,s,r :: REAL
+
+      ! Basis function cutoff
+      r_max = .r_max_for_atom(a)
+
+      ! Radial grid and no of radial points
+      p  = period(.atom(a).atomic_number)
+      radial_grid => .radial_grid(p)
+      nr = .radial_grid(p).n_points
+
+      ! Scale factor
+      s = ONE
+      if (.scale_atomic_grids) s = .atom_zeta(.atom(a).atomic_number)
+
+      ! Make the no of points
+      res = 0
+      do i = 1,nr
+         r = s*radial_grid.point(i)
+         if (r>r_max) exit     ! <<< This eliminates the later points in the list
+         ! Set default lebedev grid
+         lebedev_grid => .lebedev_grid ! Reset lebedev grid for H atoms
+         if (.reduce_H_angular_grid AND p==1) lebedev_grid => .lebedev_H_grid
+         .apply_pruning_scheme(lebedev_grid,i,nr)
+         DIE_IF(lebedev_grid.destroyed,"no lebedev_grid")
+         res = res + lebedev_grid.n_points
+      end
+
+   end
+
+   apply_pruning_scheme(lebedev_grid,i,nr,scheme) ::: private
+   ! Set the angular pruning scheme for "lebedev_grid" given a radial point "i"
+   ! out of a set of "nr" radial points arranged in increasing order. "scheme"
+   ! overrides the default scheme.
+      lebedev_grid :: LEBEDEV*
+      i,nr :: INT, IN
+      scheme :: STR, optional
+   ENSURE(lebedev_grid.created,"must have default ledebev_grid")
+      pruning_scheme :: STR
+      pruning_scheme = .pruning_scheme
+      if (present(scheme)) pruning_scheme = scheme
+      select case (pruning_scheme)
+         case ("none             ")
+         case ("jayatilaka0      "); .apply_pruning_scheme_J0(lebedev_grid,i,nr)
+         case ("jayatilaka1      "); .apply_pruning_scheme_J1(lebedev_grid,i,nr)
+         case ("jayatilaka2      "); .apply_pruning_scheme_J2(lebedev_grid,i,nr)
+         case ("treutler_ahlrichs"); .apply_pruning_scheme_TA(lebedev_grid,i,nr)
+         case default; UNKNOWN(pruning_scheme)
+      end
+   end
+
+   apply_pruning_scheme_J0(lebedev_grid,i,nr) ::: private
+   ! Set Jayatilaka's angular pruning scheme for "lebedev_grid" given a radial
+   ! point "i" out of a set of "nr" radial points arranged in increasing order. 
+      lebedev_grid :: LEBEDEV*
+      i,nr :: INT, IN
+   ENSURE(lebedev_grid.created,"must have default ledebev_grid")
+      n6,n3,n5,n2 :: INT
+      n6 = nr/6
+      n3 = nr/3
+      n5 = 5*nr/12
+      n2 = nr/2
+      if      (i <= n6) then;           lebedev_grid => .lebedev_L3_grid
+      else if (n6<i AND i<=n3) then;    lebedev_grid => .lebedev_L5_grid
+      else if (n3<i AND i<=n5) then;    lebedev_grid => .lebedev_L9_grid
+      else if (n5<i AND i<=n2) then;    lebedev_grid => .lebedev_L11_grid
+      end
+   end
+
+   apply_pruning_scheme_J1(lebedev_grid,i,nr) ::: private
+   ! Set Jayatilaka's angular pruning scheme for "lebedev_grid" given a radial
+   ! point "i" out of a set of "nr" radial points arranged in increasing order. 
+      lebedev_grid :: LEBEDEV*
+      i,nr :: INT, IN
+   ENSURE(lebedev_grid.created,"must have default ledebev_grid")
+      n2,n4,n5,n6 :: INT
+      n2 = 2*nr/12
+      n4 = 4*nr/12
+      n5 = 5*nr/12
+      n6 = 6*nr/12
+      if      (i <= n2) then;           lebedev_grid => .lebedev_L3_grid
+      else if (n2<i AND i<=n4) then;    lebedev_grid => .lebedev_L5_grid
+      else if (n4<i AND i<=n5) then;    lebedev_grid => .lebedev_L7_grid
+      else if (n5<i AND i<=n6) then;    lebedev_grid => .lebedev_L9_grid
+      end
+   end
+
+   apply_pruning_scheme_J2(lebedev_grid,i,nr) ::: private
+   ! Set Jayatilaka's angular pruning scheme for "lebedev_grid" given a radial
+   ! point "i" out of a set of "nr" radial points arranged in increasing order. 
+      lebedev_grid :: LEBEDEV*
+      i,nr :: INT, IN
+   ENSURE(lebedev_grid.created,"must have default ledebev_grid")
+      n2,n4,n5,n6 :: INT
+      n2 = 2*nr/12
+      n4 = 4*nr/12
+      n5 = 5*nr/12
+      n6 = 6*nr/12
+      if      (i <= n2) then;           lebedev_grid => .lebedev_L3_grid
+      else if (n2<i AND i<=n4) then;    lebedev_grid => .lebedev_L5_grid
+      else if (n4<i AND i<=n5) then;    lebedev_grid => .lebedev_L5_grid
+      else if (n5<i AND i<=n6) then;    lebedev_grid => .lebedev_L7_grid
+      end
+   end
+
+   apply_pruning_scheme_TA(lebedev_grid,i,nr) ::: private
+   ! Set Truetler-Ahlrichs angular pruning scheme for "lebedev_grid" given a radial
+   ! point "i" out of a set of "nr" radial points arranged in increasing order. 
+      lebedev_grid :: LEBEDEV*
+      i,nr :: INT, IN
+   ENSURE(lebedev_grid.created,"must have default ledebev_grid")
+      n3,n2 :: INT
+      n3 = nr/3
+      n2 = nr/2
+      if      (i <= n3) then;           lebedev_grid => .lebedev_L5_grid
+      else if (n3<i AND i<=n2) then;    lebedev_grid => .lebedev_L11_grid
+      end
+   end
+
+!  ===========================================
+!  No. of points (after scaled grids are made)
+!  ===========================================
+
+   no_of_points result (res)
+   ! Calculate the total number of points over all atoms stored in the becke
+   ! grid. This number of points does *not* take into account grid compression
+   ! but it *does* take into account each atom's lowest exponent. We can't know
+   ! the number of compressed points before the partition weights are made!
+      res :: INT
+   ENSURE(.finalized,"not finalized; use set_grid_data")
+   ENSURE(.unique_atom_for.created,"no unique_atom_for array")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.atom_weights.created,"no atom_weights array")
+      a,u :: INT
+      res = 0    
+      do a = 1,.atom.dim       
+         u = .unique_atom_for(a)
+         res = res + .atom_weights(u).element.dim
+      end
+   end
+
+   no_of_points(atom) result (res)
+   ! Return the number of points in the DFT integration grid required
+   ! to integrate "atom". This number of points does *not* take into
+   ! account grid compression, but it *does* take into account the
+   ! atoms lowest exponent.
+      res :: INT
+      atom :: INT
+   ENSURE(.finalized,"not finalized; use set_grid_data")
+   ENSURE(.unique_atom_for.created,"no unique_atom_for array")
+   ENSURE(.atom_weights.created,"no atom_weights array")
+      u :: INT
+      u = .unique_atom_for(atom)
+      res = .atom_weights(u).element.dim
+   end
+
+   no_of_points(atoms) result (res)
+   ! Return the number of points in the DFT integration grid required to
+   ! integrate those atoms whose indices appear in "atoms". This number of
+   ! points does *not* take into account grid compression, but it *does* take
+   ! into account the atoms lowest exponent.
+      res :: INT
+      atoms :: VEC{INT}, IN
+   ENSURE(.finalized,"not finalized; use set_grid_data")
+   ENSURE(.unique_atom_for.created,"no unique_atom_for array")
+   ENSURE(.atom_weights.created,"no atom_weights array")
+      a,u :: INT
+      res = 0    
+      do a = 1,atoms.dim    
+         u = .unique_atom_for(atoms(a))
+         res = res + .atom_weights(u).element.dim
+      end
+   end
+
+   max_no_of_points_per_atom result (res)
+   ! Return the maximum number of points in the DFT integration grid
+   ! required to integrate any one atom. This number of points does
+   ! *not* take into account grid compression, but it *does* take into
+   ! account the atoms lowest exponent.
+      res :: INT
+
+   ENSURE(.finalized,"not finalized; use set_grid_data")
+   ENSURE(.atom.created,"no atom array")
+   ENSURE(.unique_atom_for.created,"no unique_atom_for array")
+   ENSURE(.atom_weights.created,"no atom_weights array")
+
+      a,u :: INT
+
+      res = 0    
+      do a = 1,.atom.dim    
+         u = .unique_atom_for(a)
+         res = max(res,.atom_weights(u).element.dim)
+      end
+
+   end
+
+   r_max_for_atom(a) result (r_max)
+   ! Calculate the distance for atom "a" where the basis functions are all
+   ! negligible in value.
+      a :: INT, IN
+      r_max :: REAL
+
+      r_max = .atom(a).r_max(.basis_function_cutoff)
+
+   end
+
+   r_max_SS_for_atom(a) result(r_max)
+   ! Calculate distance from atom "a" below which the
+   ! Stratmann-Scuseria weight is one.
+      a :: INT, IN
+      r_max :: REAL
+
+   ENSURE(.atom_min_distance.created,"no atom_min_distance array")
+
+      a1,a2 :: REAL
+
+      a1 = ONE - (.stratmann_scuseria_A)
+      a2 = HALF*a1
+      r_max = a2*.atom_min_distance(a)
+
+   end
+
+   n1_SS_for_atom(a) result (res)
+   ! Return: the number of points in the grid for atom "a"
+   ! which have unit weight from the Stratmann-Scuseria scheme.
+      a :: INT, IN
+      res :: INT
+
+   ENSURE(.radial_grid.created,"no radial_grid")
+   ENSURE(.lebedev_grid.created,"no lebedev_grid")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.atom_zeta.created,"no atom_zeta scale factors")
+
+      lebedev_grid :: LEBEDEV*
+      radial_grid :: QUADRATURE*
+      p,nr,i :: INT
+      r_max,r_max_SS,s,r :: REAL
+
+      ! Basis function cutoff
+      r_max = .r_max_for_atom(a)
+
+      ! SS cutoff
+      r_max_SS = .r_max_SS_for_atom(a)
+
+      ! Radial grid and no of radial points
+      p  = period(.atom(a).atomic_number)
+      radial_grid => .radial_grid(p)
+      nr = .radial_grid(p).n_points
+
+      ! Scale factor
+      s = ONE
+      if (.scale_atomic_grids) s = .atom_zeta(.atom(a).atomic_number)
+
+      ! Make the no of points
+      res  = 0
+      do i = 1,nr
+         r = s*radial_grid.point(i)
+         if (r>r_max)    exit  
+         if (r>r_max_SS) exit 
+         ! Set default lebedev grid
+         lebedev_grid => .lebedev_grid ! Reset lebedev grid for H atoms
+         if (.reduce_H_angular_grid AND p==1) lebedev_grid => .lebedev_H_grid
+         .apply_pruning_scheme(lebedev_grid,i,nr)
+         DIE_IF(lebedev_grid.destroyed,"no lebedev_grid")
+         res = res + lebedev_grid.n_points
+      end
+
+   end
+
+!  =============================
+!  Full grid generation routines
+!  =============================
+
+   make_grid(pt,wt,atom_a) ::: leaky
+   ! Make the DFT integration grid ("pt","wt") for an atom "atom_a".
+   ! Atom grids must have been made by calling .set_grid_data
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT
+
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom_points.created,"no atom list")
+
+      u,n_pt,n :: INT
+      a1,a2,a3 :: REAL
+      p1,p2,p3 :: VEC{REAL}*
+
+      ! Unique atom for atom_a
+      u = .unique_atom_for(atom_a)
+
+      ! No. of points in the grid
+      n_pt = .atom_weights(u).element.dim
+
+      ! Create pt and wt
+      pt.create(n_pt,3)              
+      wt.create(n_pt)              
+      pt = .atom_points(u).element  ! ... leaky !
+      wt = .atom_weights(u).element ! ... leaky !
+
+      ! Grid point coordinates
+      p1 => pt(:,1)
+      p2 => pt(:,2)
+      p3 => pt(:,3)
+
+      ! Displace pt
+      a1 = .atom(atom_a).position(1)
+      a2 = .atom(atom_a).position(2)
+      a3 = .atom(atom_a).position(3)
+      do n = 1,n_pt
+          p1(n) = p1(n) + a1
+          p2(n) = p2(n) + a2
+          p3(n) = p3(n) + a3
+      end
+
+   end
+
+   make_grid(pt,wt,f0,atom_a) ::: leaky
+   ! Make the DFT integration grid ("pt","wt") for an atom "atom_a".
+   ! Also return the basis function grid "f0".
+   ! Atom grids must have been made by calling .set_grid_data
+      pt, f0 :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT
+
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom.created,"no atom list")
+
+      u,n_pt,n_bf,n,f,k :: INT
+      a1,a2,a3 :: REAL
+      p1,p2,p3 :: VEC{REAL}*
+
+      ! Unique atom for atom_a
+      u = .unique_atom_for(atom_a)
+
+      ! No. of points in the grid
+      n_pt = .atom_weights(u).element.dim
+
+      ! Create pt and wt
+      pt.create(n_pt,3)              
+      wt.create(n_pt)              
+      pt = .atom_points(u).element  ! ... leaky !
+      wt = .atom_weights(u).element ! ... leaky !
+
+      ! Grid point coordinates
+      p1 => pt(:,1)
+      p2 => pt(:,2)
+      p3 => pt(:,3)
+
+      ! Displace pt
+      a1 = .atom(atom_a).position(1)
+      a2 = .atom(atom_a).position(2)
+      a3 = .atom(atom_a).position(3)
+      do n = 1,n_pt
+          p1(n) = p1(n) + a1
+          p2(n) = p2(n) + a2
+          p3(n) = p3(n) + a3
+      end
+
+      ! No. of basis functions
+      n_bf = .atom(atom_a).basis.n_bf
+
+      ! Copy the bf grid
+      f0.create(n_pt,n_bf)
+      do f = 1,n_bf
+      do k = 1,n_pt
+         f0(k,f) = .atom_grid0(u)[k,f]
+      end
+      end
+
+   end
+
+   make_grid(pt,wt,f0,gx,gy,gz,atom_a) ::: leaky
+   ! Make the DFT integration grid ("pt","wt") for an atom "atom_a".
+   ! Return basis function grid "f0" and gradients "gx", "gy", "gz".
+   ! Atom grids must have been made by calling .set_grid_data
+      pt, f0,gx,gy,gz :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT
+
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom.created,"no atom list")
+
+      u,n_pt,n_bf,n,f,k :: INT
+      a1,a2,a3 :: REAL
+      p1,p2,p3 :: VEC{REAL}*
+
+      ! Unique atom for atom_a
+      u = .unique_atom_for(atom_a)
+
+      ! No. of points in the grid
+      n_pt = .atom_weights(u).element.dim
+
+      ! Create pt and wt
+      pt.create(n_pt,3)              
+      wt.create(n_pt)              
+      pt = .atom_points(u).element  ! ... leaky !
+      wt = .atom_weights(u).element ! ... leaky !
+
+      ! Grid point coordinates
+      p1 => pt(:,1)
+      p2 => pt(:,2)
+      p3 => pt(:,3)
+
+      ! Displace pt
+      a1 = .atom(atom_a).position(1)
+      a2 = .atom(atom_a).position(2)
+      a3 = .atom(atom_a).position(3)
+      do n = 1,n_pt
+          p1(n) = p1(n) + a1
+          p2(n) = p2(n) + a2
+          p3(n) = p3(n) + a3
+      end
+
+      ! No. of basis functions
+      n_bf = .atom(atom_a).basis.n_bf
+
+      ! Copy the bf grid
+      f0.create(n_pt,n_bf)
+      gx.create(n_pt,n_bf)
+      gy.create(n_pt,n_bf)
+      gz.create(n_pt,n_bf)
+      u = .unique_atom_for(atom_a) 
+      do f = 1,n_bf
+      do k = 1,n_pt
+         f0(k,f) = .atom_grid0(u)[k,f]
+         gx(k,f) = .atom_grid1(u)[k,f,1]
+         gy(k,f) = .atom_grid1(u)[k,f,2]
+         gz(k,f) = .atom_grid1(u)[k,f,3]
+      end
+      end
+
+   end
+
+! These below are older (deprecated?)
+
+   make_grid(pt,wt,compress,weight_is_0) ::: leaky
+   ! Make the DFT integration grid ("pt","wt") for a given list of "atoms".
+   ! If you don't want a compressed grid set "compress" to FALSE. Here
+   ! compression refers to removal of points whose partition weight is small.
+   ! Thus, if "atoms" is comprised of one atom only, no compression is allowed.
+   ! If you need the .weight_is_0 array (to save work when making basis function
+   ! grids) then set "weight_is_0" to TRUE. NOTE: the "atoms" array must have no
+   ! repetitions. NOTE: The precalculated atom grids must have been made by
+   ! calling .set_grid_data. NOTE: For linear scaling calculations, don't use this
+   ! routine: instead use the routine based on atom pairs.
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      compress,weight_is_0 :: BIN, optional
+      i :: INT
+      i = 0
+      .make_grid(pt,wt,[(i,i=1,.atom.dim)],compress,weight_is_0)
+   end
+
+   make_grid(pt,wt,atoms,compress,weight_is_0) ::: leaky
+   ! Make the DFT integration grid ("pt","wt") for a given list of "atoms".
+   ! The precalculated atom grids must have been made by calling .set_grid_data
+   ! If you don't want a compressed grid set "compress" to FALSE. Here
+   ! compression refers to removal of points whose partition weight is small.
+   ! Thus, if "atoms" is comprised of one atom only, no compression is allowed.
+   ! If you need the .weight_is_0 array (to save work when making basis function
+   ! grids) then set "weight_is_0" to TRUE. NOTE: the "atoms" array must have no
+   ! repetitions.NOTE: The precalculated atom grids must have been made by
+   ! calling .set_grid_data. 
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atoms :: VEC{INT}, IN
+      compress,weight_is_0 :: BIN, optional
+
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom_points.created,"no atom_points")
+   ENSURE(.weight_is_0.destroyed,"the weight_is_0 array exists!")
+   ENSURE(NOT atoms.has_repetitions,"the atoms array has repetitions!")
+
+      n_pt,a,u,f,l,i,k :: INT
+      keep,kompress :: BIN
+      pt0 :: MAT{REAL}*
+      wt0 :: VEC{REAL}*
+
+      kompress = TRUE
+      keep = FALSE
+      if (present(compress))    kompress = compress
+      if (present(weight_is_0)) keep = weight_is_0
+      if (atoms.dim==1)         kompress = FALSE
+
+      n_pt = .no_of_points(atoms)
+
+      pt.create(n_pt,3)                    ! leaky
+      wt.create(n_pt)
+
+      if (NOT kompress) then               ! <<< No compression
+         l = 0
+         do a = 1,atoms.dim     
+            u = .unique_atom_for(atoms(a))
+            f = l + 1
+            l = l + .atom_weights(u).element.dim
+            pt(f:l,:) = .atom_points(u).element
+            wt(f:l)   = .atom_weights(u).element
+            .displace(pt(f:l,:),atoms(a))
+            if (atoms.dim==1) cycle        ! No partition needed for one atom ...
+            .partition(wt(f:l),pt(f:l,:),a,atoms)
+         end
+
+      else                                 ! <<< Compress and partition ...
+         .weight_is_0.create(n_pt)         ! leaky here
+         l = 0
+         do a = 1,atoms.dim     
+            u = .unique_atom_for(atoms(a))
+            f = l + 1
+            l = l + .atom_weights(u).element.dim
+            pt(f:l,:) = .atom_points(u).element
+            wt(f:l)   = .atom_weights(u).element
+            .displace(pt(f:l,:),atoms(a))  ! Must have more than one atom ...
+            .partition(wt(f:l),pt(f:l,:),a,atoms,.weight_is_0(f:l))
+         end
+         .prune_pair_grid(pt,wt,atoms)     ! Prune atom-pair grids
+         n_pt = count(NOT .weight_is_0)    ! How many non-zero weights?
+         if (n_pt==wt.dim) then            ! If none we don't need it
+            .weight_is_0.destroy
+         else
+            pt0.create(n_pt,3)             ! leaky
+            wt0.create(n_pt)
+            k = 0
+            do i = 1,wt.dim                ! Compress the grid here
+               if (.weight_is_0(i)) cycle
+               k = k + 1
+               pt0(k,:) = pt(i,:)
+               wt0(k)   = wt(i)
+            end
+            if (NOT keep) .weight_is_0.destroy ! Leaky
+            wt.destroy; wt => wt0
+            pt.destroy; pt => pt0
+         end
+      end
+
+   end
+
+!  ==============
+!  Displace grids
+!  ==============
+
+   make_displacements(dx,dy,dz,d2,pt,overlapping_atom) ::: leaky
+   ! Make the displacements "dx", "dy", "dz" and squared distances
+   ! "d2" to the points "pt" from the "overlapping_atoms" 
+      dx,dy,dz,d2 :: MAT{REAL}
+      pt :: MAT{REAL}, target, IN
+      overlapping_atom :: VEC{INT}, IN
+
+   ENSURE(dx.dim1==pt.dim1,"wrong dim1, dx")
+   ENSURE(dx.dim2==overlapping_atom.dim,"wrong dim1, dx")
+   ENSURE(dx.is_same_shape_as(dx),"dy inconsistent shape")
+   ENSURE(dy.is_same_shape_as(dx),"dz inconsistent shape")
+   ENSURE(d2.is_same_shape_as(dx),"d2 inconsistent shape")
+
+      p1,p2,p3 :: VEC{REAL}*
+      n_pt,n_ov, b,ob,n :: INT
+      b1,b2,b3,x,y,z,r :: REAL
+
+      ! No. of grid points
+      n_pt = pt.dim1
+
+      ! No of overlapping atoms
+      n_ov = overlapping_atom.dim
+
+      ! Grid point coordinates
+      p1 => pt(:,1)
+      p2 => pt(:,2)
+      p3 => pt(:,3)
+
+      ! Overlapping atoms "b"
+      do b = 1,n_ov
+
+         ! Coordinates of "b"
+         ob = overlapping_atom(b)
+         b1 = .atom(ob).position(1)
+         b2 = .atom(ob).position(2)
+         b3 = .atom(ob).position(3)
+   
+         ! Displacements from  "b"
+         do n = 1,n_pt
+             x = p1(n) - b1
+             y = p2(n) - b2
+             z = p3(n) - b3
+             r = x*x+y*y+z*z
+             dx(n,b) = x
+             dy(n,b) = y
+             dz(n,b) = z
+             d2(n,b) = r
+         end
+
+      end
+
+   end
+
+   displace(pt,a) ::: private
+   ! Displace the atomic grid from the origin to the position of atom "a".
+   ! Schematically:
+   !           ("pt","wt") <-- ("pt" + ".atom(a).position", "wt"). 
+   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+      pt :: MAT{REAL}
+      a :: INT
+      n :: INT
+      do n = 1,pt.dim1
+          pt(n,:) = pt(n,:) + .atom(a).position
+      end
+   end
+
+!   displace(pt,pos) ::: selfless, private
+!   ! Displace the atomic grid from the origin to "pos". Schematically:
+!   !           ("pt","wt") <-- ("pt" + "pos", "wt"). 
+!   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+!   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+!      pt :: MAT{REAL}
+!      pos :: VEC{REAL}(3)
+!      n :: INT
+!
+!      do n = 1,pt.dim1
+!          pt(n,:) = pt(n,:) + pos
+!      end
+!
+!   end
+
+!  ===========
+!  Prune grids
+!  ===========
+
+   prune_grid(pt,wt) ::: leaky
+   ! Prune an integration grid (pt,wt) by removing all points where
+   ! the corresponding weight is less than .basis_function_cutoff.
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+
+      r1,r2,r3 :: VEC{REAL}*
+      n_pt, i,k :: INT
+
+      ! Allocate map array
+      n_pt = wt.dim
+
+      ! Efficient point coordinates
+      r1 => pt(:,1)
+      r2 => pt(:,2)
+      r3 => pt(:,3)
+
+      ! Copy only significant points
+      k = 0
+      do i = 1,n_pt
+         if (wt(i)<.basis_function_cutoff) cycle
+         k     = k + 1
+         r1(k) = r1(i)
+         r2(k) = r2(i)
+         r3(k) = r3(i)
+         wt(k) = wt(i)
+      end
+
+      ! Shrink the grid
+      pt.shrink(k,3)
+      wt.shrink(k)
+
+   end
+
+   prune_grid(pt,wt,f0) ::: leaky
+   ! Prune an integration grid (pt,wt) by removing all points where
+   ! the corresponding weight is less than .basis_function_cutoff.
+   ! Also return the corresponding basis function grid "f0".
+      pt,f0 :: MAT{REAL}*
+      wt :: VEC{REAL}*
+
+      r1,r2,r3 :: VEC{REAL}*
+      map :: VEC{INT}*
+      n_pt,n_bf,i,k,f :: INT
+
+      ! Allocate map array
+      n_pt = wt.dim
+      map.create(n_pt)
+
+      ! Efficient point coordinates
+      r1 => pt(:,1)
+      r2 => pt(:,2)
+      r3 => pt(:,3)
+
+      ! Copy only significant points
+      k = 0
+      do i = 1,n_pt
+
+         if (wt(i)<.basis_function_cutoff) cycle
+
+         k     = k + 1
+         map(k)= i
+         r1(k) = r1(i)
+         r2(k) = r2(i)
+         r3(k) = r3(i)
+         wt(k) = wt(i)
+
+      end
+
+      ! New no. of points
+      n_pt = k
+
+      ! Copy the bf grid
+      n_bf = f0.dim2
+      do f = 1,n_bf
+      do k = 1,n_pt
+         i = map(k)
+         f0(k,f) = f0(i,f)
+      end
+      end
+
+      ! Shrink the grid
+      pt.shrink(n_pt,3)
+      wt.shrink(n_pt)
+      f0.shrink(n_pt,n_bf)
+
+      ! Clean
+      map.destroy
+
+   end
+
+   prune_grid(pt,wt,f0,gx,gy,gz) ::: leaky
+   ! Prune an integration grid (pt,wt) by removing all points where
+   ! the corresponding weight is less than .basis_function_cutoff.
+   ! Also return the corresponding basis function grid "f0" and its
+   ! derivatives "gx", "gy", "gz".
+      pt,f0,gx,gy,gz :: MAT{REAL}*
+      wt :: VEC{REAL}*
+
+      r1,r2,r3 :: VEC{REAL}*
+      map :: VEC{INT}*
+      n_pt,n_bf,i,k,f :: INT
+
+      ! Allocate map array
+      n_pt = wt.dim
+      map.create(n_pt)
+
+      ! Efficient point coordinates
+      r1 => pt(:,1)
+      r2 => pt(:,2)
+      r3 => pt(:,3)
+
+      ! Copy only significant points
+      k = 0
+      do i = 1,n_pt
+         if (wt(i)<.basis_function_cutoff) cycle
+         k     = k + 1
+         map(k)= i
+         r1(k) = r1(i)
+         r2(k) = r2(i)
+         r3(k) = r3(i)
+         wt(k) = wt(i)
+      end
+
+      ! New no. of points
+      n_pt = k
+
+      ! Copy the bf grid
+      n_bf = f0.dim2
+      do f = 1,n_bf
+      do k = 1,n_pt
+         i = map(k)
+         f0(k,f) = f0(i,f)
+         gx(k,f) = gx(i,f)
+         gy(k,f) = gy(i,f)
+         gz(k,f) = gz(i,f)
+      end
+      end
+
+      ! Shrink the grid
+      pt.shrink(n_pt,3)
+      wt.shrink(n_pt)
+      f0.shrink(n_pt,n_bf)
+      gx.shrink(n_pt,n_bf)
+      gy.shrink(n_pt,n_bf)
+      gz.shrink(n_pt,n_bf)
+
+      ! Clean
+      map.destroy
+
+   end
+
+   prune_pair_grid(pt,wt,atoms) ::: leaky
+   ! Prune a two-atom grid of points which are too small when the basis
+   ! functions on each atom are multiplied together. These small points
+   ! are given zero weights.
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atoms :: VEC{INT}, IN
+
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.weight_is_0.created,"the weight_is_0 array does not exist!")
+   ENSURE(NOT atoms.has_repetitions,"the atoms array has repetitions!")
+
+      ra,rb,p,da,db :: VEC{REAL}(3)
+      a,b,cutoff,ra2,rb2 :: REAL
+      i :: INT
+
+      if (atoms.dim/=2) return
+
+      a = .atom(atoms(1)).minimum_basis_exponent
+      b = .atom(atoms(2)).minimum_basis_exponent
+      cutoff = -log(.basis_function_pair_cutoff)
+      ra = .atom(atoms(1)).position
+      rb = .atom(atoms(2)).position
+
+      do i = 1,wt.dim
+         if (.weight_is_0(i)) cycle
+         p = pt(i,:)
+         da = ra - p
+         db = rb - p
+         ra2 = dot_product(da,da)
+         rb2 = dot_product(db,db)
+         if (a*ra2+b*rb2>cutoff) .weight_is_0(i) = TRUE
+      end
+
+   end
+
+!  =======================
+!  Stratmann-Scuseria grid
+!  =======================
+
+   make_SS_grid(pt,wt,f0,atom_a,overlapping_atom) ::: leaky
+   ! Make the Stratman-Scuseria integration grid ("pt","wt")
+   ! for the "atom_a". Weights "wt" incorporate grid integration
+   ! weights and the SS partition weight for "overlapping_atoms" 
+   ! Return also the basis function grid "f0" for "atom_a".
+      pt, f0 :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT, IN
+      overlapping_atom :: VEC{INT}, IN
+
+      .make_unpruned_SS_grid(pt,wt,f0,atom_a,overlapping_atom) 
+      .prune_grid(pt,wt,f0)
+
+   end
+
+   make_SS_grid(pt,wt,f0,gx,gy,gz,atom_a,overlapping_atom) ::: leaky
+   ! Make the Stratman-Scuseria integration grid ("pt","wt")
+   ! for the "atom_a". Weights "wt" incorporate grid integration
+   ! weights and the SS partition weight for "overlapping_atoms" 
+   ! Return also the basis function grid "f0" and the basis function
+   ! derivatives "gx", "gy", "gz" for "atom_a"
+      pt, f0,gx,gy,gz :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT, IN
+      overlapping_atom :: VEC{INT}, IN
+
+      .make_unpruned_SS_grid(pt,wt,f0,gx,gy,gz,atom_a,overlapping_atom) 
+      .prune_grid(pt,wt,f0,gx,gy,gz)
+
+   end
+
+   make_unpruned_SS_grid(pt,wt,f0,atom_a,overlapping_atom) ::: leaky, private
+   ! Make the unpruned Stratman-Scuseria integration grid ("pt","wt")
+   ! for the "atom_a". Weights "wt" incorporate grid integration
+   ! weights and the SS partition weight for "overlapping_atoms" 
+   ! Return also the basis function grid "f0" for "atom_a".
+      pt, f0 :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT, IN
+      overlapping_atom :: VEC{INT}, IN
+
+      dist :: MAT{REAL}*
+      zero :: VEC{BIN}*
+      ww :: VEC{REAL}*
+      n_pt,n1_SS,n_ov,n_atom :: INT
+
+      ! Make the basic grid points
+      .make_grid(pt,wt,f0,atom_a)
+
+      ! Sizes
+      n_pt   = pt.dim1
+      n1_SS  = .atom_n1_SS(atom_a)
+      n_ov   = overlapping_atom.dim
+      n_atom = .atom.dim
+
+      ! Distances to overlapping atoms
+      dist.create(n_pt,n_ov)
+
+      ! Stratmann-Scuseria zero partition values
+      zero.create(n1_SS+1,n_pt) ! Note lbound
+
+      ! Make the distances and zero partition weights
+      .make_distances(dist,zero,pt,atom_a,overlapping_atom) 
+
+      ! Compress out the zero partition weights
+      .compress_zeros(pt,wt,f0,dist,zero,atom_a)
+      zero.destroy
+
+      if  (n_atom>1) then
+
+         ! Make the Stratman-Scuseria weights
+         n_pt = wt.dim
+         ww.create(n1_SS+1,n_pt)
+         .make_SS_weight(ww,dist,atom_a,overlapping_atom)
+   
+         ! Incorporate SS weights into grid weights
+         wt(n1_SS+1:) = ww(n1_SS+1:) * wt(n1_SS+1:)
+         ww.destroy
+
+      end
+
+      ! Clean
+      dist.destroy
+
+   end
+
+   make_unpruned_SS_grid(pt,wt,f0,gx,gy,gz,atom_a,overlapping_atom) ::: leaky, private
+   ! Make the unpruned Stratman-Scuseria integration grid ("pt","wt")
+   ! for the "atom_a". Weights "wt" incorporate grid integration
+   ! weights and the SS partition weight for "overlapping_atoms" 
+   ! Return also the basis function grid "f0" and the basis function
+   ! derivatives "gx", "gy", "gz" for "atom_a"
+      pt, f0,gx,gy,gz :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT, IN
+      overlapping_atom :: VEC{INT}, IN
+
+      dist :: MAT{REAL}*
+      zero :: VEC{BIN}*
+      ww :: VEC{REAL}*
+      n_pt,n1_SS,n_ov,n_atom :: INT
+
+      ! Make the basic grid points
+      .make_grid(pt,wt,f0,gx,gy,gz,atom_a)
+
+      ! Sizes
+      n_pt   = pt.dim1
+      n1_SS  = .atom_n1_SS(atom_a)
+      n_ov   = overlapping_atom.dim
+      n_atom = .atom.dim
+
+      ! Distances to overlapping atoms
+      dist.create(n_pt,n_ov)
+
+      ! Stratmann-Scuseria zero partition values
+      zero.create(n1_SS+1,n_pt) ! Note lbound
+
+      ! Make the distances and zero partition weights
+      .make_distances(dist,zero,pt,atom_a,overlapping_atom) 
+
+      ! Compress out the zero partition weights
+      .compress_zeros(pt,wt,f0,gx,gy,gz,dist,zero,atom_a)
+      zero.destroy
+
+      if  (n_atom>1) then
+
+         ! Make the Stratman-Scuseria weights
+         n_pt = wt.dim
+         ww.create(n1_SS+1,n_pt)
+         .make_SS_weight(ww,dist,atom_a,overlapping_atom)
+   
+         ! Incorporate SS weights into grid weights
+         wt(n1_SS+1:) = ww(n1_SS+1:) * wt(n1_SS+1:)
+         ww.destroy
+
+      end
+
+      ! Clean
+      dist.destroy
+
+   end
+
+   compress_zeros(pt,wt,f0,dist,zero,atom_a) ::: leaky, private
+   ! Compress the zero values out of the grid and displacements
+      pt,f0, dist :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      zero :: VEC{BIN}*
+      atom_a :: INT, IN
+
+      p1,p2,p3 :: VEC{REAL}*
+      map :: VEC{INT}*
+      n_pt,n1_SS,n_ov,n_bf, n,k,b,f :: INT
+
+      if (NOT any(zero)) return
+
+      ! Sizes
+      n_pt  = pt.dim1
+      n1_SS = .atom_n1_SS(atom_a)
+      n_ov  = dist.dim2
+      n_bf  = f0.dim2
+
+      ! Creat map array
+      map.create(n1_SS+1,n_pt)
+
+      ! Point coordinates
+      p1 => pt(:,1)
+      p2 => pt(:,2)
+      p3 => pt(:,3)
+
+      ! Compress out the zero pts & weights
+      k = n1_SS
+      do n = n1_SS+1,n_pt
+         if (zero(n)) cycle
+         k = k + 1
+         map(k)= n
+         p1(k) = p1(n)
+         p2(k) = p2(n)
+         p3(k) = p3(n)
+         wt(k) = wt(n) ! grid weight
+      end
+
+      ! New no of points
+      n_pt = k
+
+      ! Compress out the distances
+      do b = 1,n_ov
+         do k = n1_SS+1,n_pt
+            n = map(k)
+            dist(k,b) = dist(n,b)
+         end
+      end
+
+      ! Compress out the basis functions
+      do f = 1,n_bf
+         do k = n1_SS+1,n_pt
+            n = map(k)
+            f0(k,f) = f0(n,f)
+         end
+      end
+
+      ! Clean
+      map.destroy
+
+      ! Shrink
+      pt.shrink(n_pt,3)
+      wt.shrink(n_pt)
+      f0.shrink(n_pt,n_bf)
+      dist.shrink(n_pt,n_ov)
+
+   end
+
+   compress_zeros(pt,wt,f0,gx,gy,gz,dist,zero,atom_a) ::: leaky, private
+   ! Compress the zero values out of the grid and displacements
+      pt,f0,gx,gy,gz, dist :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      zero :: VEC{BIN}*
+      atom_a :: INT, IN
+
+      p1,p2,p3 :: VEC{REAL}*
+      map :: VEC{INT}*
+      n_pt,n1_SS,n_ov,n_bf, n,k,b,f :: INT
+
+      if (NOT any(zero)) return
+
+      ! Sizes
+      n_pt  = pt.dim1
+      n1_SS = .atom_n1_SS(atom_a)
+      n_ov  = dist.dim2
+      n_bf  = f0.dim2
+
+      ! Creat map array
+      map.create(n1_SS+1,n_pt)
+
+      ! Point coordinates
+      p1 => pt(:,1)
+      p2 => pt(:,2)
+      p3 => pt(:,3)
+
+      ! Compress out the zero pts & weights
+      k = n1_SS
+      do n = n1_SS+1,n_pt
+         if (zero(n)) cycle
+         k = k + 1
+         map(k)= n
+         p1(k) = p1(n)
+         p2(k) = p2(n)
+         p3(k) = p3(n)
+         wt(k) = wt(n) ! grid weight
+      end
+
+      ! New no of points
+      n_pt = k
+
+      ! Compress out the distances
+      do b = 1,n_ov
+         do k = n1_SS+1,n_pt
+            n = map(k)
+            dist(k,b) = dist(n,b)
+         end
+      end
+
+      ! Compress out the basis functions
+      do f = 1,n_bf
+         do k = n1_SS+1,n_pt
+            n = map(k)
+            f0(k,f) = f0(n,f)
+            gx(k,f) = gx(n,f)
+            gy(k,f) = gy(n,f)
+            gz(k,f) = gz(n,f)
+         end
+      end
+
+      ! Clean
+      map.destroy
+
+      ! Shrink
+      pt.shrink(n_pt,3)
+      wt.shrink(n_pt)
+      f0.shrink(n_pt,n_bf)
+      gx.shrink(n_pt,n_bf)
+      gy.shrink(n_pt,n_bf)
+      gz.shrink(n_pt,n_bf)
+      dist.shrink(n_pt,n_ov)
+
+   end
+
+   make_distances(dist,zero,pt,atom_a,overlapping_atom) ::: private
+   ! Make the distances "dist" to the grid points "pt" for "atom_a"
+   ! from the "overlapping_atoms" .  Also return "zero(:,b)" which is
+   ! TRUE for grid points (:) which have zero SS partiton weight.
+      dist :: MAT{REAL}
+      zero :: VEC{BIN}* ! Note lbound
+      pt :: MAT{REAL}, target, IN
+      atom_a :: INT, IN
+      overlapping_atom :: VEC{INT}, IN
+
+      p1,p2,p3 :: VEC{REAL}*
+      n_pt,n1_SS,n_ov,n,b,ob :: INT
+      b1,b2,b3,x,y,z,r,r_max_SS :: REAL
+
+      ! Sizes
+      n_pt  = pt.dim1
+      n1_SS = .atom_n1_SS(atom_a)
+      n_ov  = overlapping_atom.dim
+
+      ! Point coordinates
+      p1 => pt(:,1)
+      p2 => pt(:,2)
+      p3 => pt(:,3)
+
+      ! Initially no zero weights
+      zero = FALSE
+
+      ! Distances to the overlapping atoms
+      do b = 1,n_ov
+
+         ob = overlapping_atom(b)
+         b1 = .atom(ob).position(1)
+         b2 = .atom(ob).position(2)
+         b3 = .atom(ob).position(3)
+
+         ! These pts can't have zero weight
+         do n = 1,n1_SS
+             x = p1(n) - b1
+             y = p2(n) - b2
+             z = p3(n) - b3
+             r = sqrt(x*x+y*y+z*z)
+             dist(n,b) = r
+         end
+
+         ! Zero weights are near non atom_a
+         if (atom_a==ob) then
+
+            do n = n1_SS+1,n_pt
+                x = p1(n) - b1
+                y = p2(n) - b2
+                z = p3(n) - b3
+                r = sqrt(x*x+y*y+z*z)
+                dist(n,b) = r
+            end
+
+         else
+
+            r_max_SS = .r_max_SS_for_atom(ob)
+            do n = n1_SS+1,n_pt
+                if (zero(n)) cycle
+                x = p1(n) - b1
+                y = p2(n) - b2
+                z = p3(n) - b3
+                r = sqrt(x*x+y*y+z*z)
+                dist(n,b) = r
+                zero(n)   = r<=r_max_SS ! near ob /= atom_a
+            end
+
+         end
+
+      end
+
+   end
+
+   make_SS_weight(wt,dist,atom_a,overlapping_atom) ::: private
+   ! Make the Stratman-Scuseria partition weight "wt" for "atom_a"
+   ! given distances "dist" from the grid points to all relevant
+   ! "overlapping_atoms"
+      wt :: VEC{REAL}* ! Note lbound
+      dist :: MAT{REAL}, target, IN
+      atom_a :: INT, IN
+      overlapping_atom :: VEC{INT}, IN
+
+      ws,wb, ra,rb :: VEC{REAL}*
+      zero :: VEC{BIN}*
+      n_pt,n1_SS,n_ov, n,a,b,oa,ob :: INT
+      a1,a2,a3,b1,b2,b3,x,y,z,r :: REAL
+      aa,c5,c21,c35,mu,mu1,mu2,mu3,mu5,mu7 :: REAL
+
+      ! Sizes
+      n_pt  = ubound(wt,1)
+      n1_SS = .atom_n1_SS(atom_a)
+      n_ov  = overlapping_atom.dim
+
+      ! Stratmann-Scuseria constants
+      aa  = .stratmann_scuseria_A
+      c5  = FIVE
+      c21 = SEVEN*THREE
+      c35 = SEVEN*FIVE
+
+      ! Partition weights sum ws 
+      ws.create(n1_SS+1,n_pt)
+      ws = ZERO
+
+      ! Unnormalised weight for atom "b"
+      wb.create(n1_SS+1,n_pt)
+
+      ! Zero weights for atom a
+      zero.create(n1_SS+1,n_pt)
+
+      ! Make "wb" the SS weight for atom "b" and
+      ! make "ws" the sum of the SS weights for each atom
+      do b = 1,n_ov
+
+         ob = overlapping_atom(b)
+
+         ! Atom "b" position
+         b1 = .atom(ob).position(1)
+         b2 = .atom(ob).position(2)
+         b3 = .atom(ob).position(3)
+
+         ! Set unit weights
+         wb = ONE
+
+         rb => dist(:,b)
+
+         ! Initially, no weight wb is zero
+         zero = FALSE
+
+         ! wb = Product over atoms a of s(mu) factor
+         do a = 1,n_ov
+
+            if (a==b) cycle
+
+            oa = overlapping_atom(a)
+            a1 = .atom(oa).position(1)
+            a2 = .atom(oa).position(2)
+            a3 = .atom(oa).position(3)
+
+            ! Distance between the atoms
+            x = b1 - a1
+            y = b2 - a2
+            z = b3 - a3
+            r = sqrt(x*x+y*y+z*z)
+
+            ra => dist(:,a)
+
+            ! Make the mu and SS weight for atom b
+            do n = n1_SS+1,n_pt
+               if (zero(n)) cycle
+               mu = (rb(n)-ra(n))/r
+               if (mu<=-aa) cycle
+               if (mu>= aa) then
+                  wb(n) = ZERO
+                  zero(n) = TRUE
+               else
+                  mu1 = mu/aa
+                  mu2 = mu1*mu1
+                  mu3 = mu2*mu1
+                  mu5 = mu3*mu2
+                  mu7 = mu5*mu2
+                  z   = SIXTEENTH*(c35*mu1-c35*mu3+c21*mu5-c5*mu7)
+                  wb(n) = wb(n) * HALF*(ONE - z)
+               end
+            end 
+
+         end 
+
+         ! Sum of the weights (denominator)
+         ws = ws + wb
+
+         ! Store atom_a wt in "wt"
+         if (atom_a==ob) wt = wb
+
+      end 
+
+      ! Normalise the weight
+      wt = wt/ws
+
+      ! Clean
+      zero.destroy
+      wb.destroy; ws.destroy
+
+   end
+
+!  ==================================
+!  Partition the grids for each atoms
+!  ==================================
+
+   partition(wt,pt,a,atoms,weight_is_0) ::: private
+   ! Partition the atomic grid ("pt","wt") for the atom "a" in the list of
+   ! "atoms" so that the weights work with all the other atomic positions
+   ! Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! You can choose if you want the atom sizes to be taken account in
+   ! the construction of the partiton.
+   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+   !             Perez-Jorda and Yang 1995, CPL 241 p.469
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_0 :: VEC{BIN}, optional, OUT
+
+      select case (.partition_scheme)
+
+         case ("becke            ")
+            select case (.partition_scaling_scheme)
+               case ("none             "); .partition_B_no_adj(wt,pt,a,atoms,weight_is_0)
+               case ("becke            "); .partition_B_B_adj(wt,pt,a,atoms,weight_is_0)
+               case ("treutler_ahlrichs"); .partition_B_TA_adj(wt,pt,a,atoms,weight_is_0)
+               case default; UNKNOWN(.partition_scaling_scheme)
+            end
+
+         case ("delley           ")
+            select case (.partition_scaling_scheme)
+               case ("none             "); .partition_D(wt,pt,a,atoms,weight_is_0)
+               case default; UNKNOWN(.partition_scaling_scheme)
+            end
+
+         case ("stratmann_scuseria")
+            select case (.partition_scaling_scheme)
+               case ("none             "); .partition_SS(wt,pt,a,atoms,weight_is_0)
+               case default; UNKNOWN(.partition_scaling_scheme)
+            end
+
+         case default; UNKNOWN(.partition_scheme)
+
+      end
+
+   end
+
+   partition_D(wt,pt,a,atoms,weight_is_0) ::: private
+   ! Using a modified Delley partition function (as described by Perez-Jorda and
+   ! Yang 1995, CPL 241 p.469), partition the grid ("pt","wt") for the
+   ! atom "a" so that the weights work with all the other atomic positions
+   ! Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! In this version no atomic size adjustments is made.
+   ! NOTE : all the positions in "pos" must be distinct!!!!!!
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_0 :: VEC{BIN}, optional, OUT
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      n,n_pts,n_centers,i :: INT
+      dni,eni,s :: REAL
+      rni,posi :: VEC{REAL}(3)
+      partition :: MAT{REAL}*
+
+      n_centers = atoms.dim             ! Number of integration (atom) centers
+      n_pts = wt.dim                    ! Number of points for this atom "a"
+      partition.create(n_pts,n_centers) ! Create partition array
+
+      do i = 1,n_centers
+          posi = .atom(atoms(i)).position(:)
+          do n = 1,n_pts
+              rni = pt(n,:) - posi
+              dni = TWO*sqrt(dot_product(rni,rni))
+              eni = min(ONE/dni,7.0d2)  ! Limit the exponential below
+              s = exp(-dni)*(exp(eni)-ONE-eni)
+              partition(n,i) = s
+          end
+      end
+
+      ! Normalize the partitioning function and modify the grid weights
+      .partition_wt(wt,partition,a,weight_is_0)
+      partition.destroy
+
+   end
+
+   partition_B_no_adj(wt,pt,a,atoms,weight_is_0) ::: private
+   ! Using Becke's partition function, partition the atomic grid ("pt","wt") for
+   ! the atom "a" in the list of "atoms" so that the weights work with all the
+   ! other atomic positions. Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! In this version no atomic size adjustments is made.
+   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_0 :: VEC{BIN}, optional, OUT
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      n,n_pts,n_centers,i,j,m :: INT
+      rij,rni,rnj :: VEC{REAL}(3)
+      dij,dni,dnj,uij,h,s :: REAL
+      posi,posj :: VEC{REAL}(3)
+      partition :: MAT{REAL}*
+
+      n_centers = atoms.dim             ! Number of integration (atom) centers
+      n_pts = wt.dim                    ! Number of points for this atom "a"
+
+      partition.create(n_pts,n_centers) ! Create partition array
+      partition = ONE
+
+      do i = 1,n_centers
+          posi = .atom(atoms(i)).position
+          do j = 1,n_centers
+              if (i==j) cycle
+              posj = .atom(atoms(j)).position
+              rij = posi-posj
+              dij = sqrt(dot_product(rij,rij))
+              do n = 1,n_pts
+                  rni = pt(n,:) - posi
+                  rnj = pt(n,:) - posj
+                  dni = sqrt(dot_product(rni,rni))
+                  dnj = sqrt(dot_product(rnj,rnj))
+                  uij = (dni - dnj)/dij
+                  h = uij
+                  do m = 1,.partition_power
+                      h = 1.5d0*h - HALF*h*h*h
+                  end
+                  s = HALF*(ONE - h)
+                  ! ===========================================
+                  partition(n,i) = partition(n,i)*s
+              end
+          end
+      end
+
+      ! Normalize the partitioning function and modify the grid weights
+      .partition_wt(wt,partition,a,weight_is_0)
+      partition.destroy
+
+   end
+
+   partition_B_B_adj(wt,pt,a,atoms,weight_is_0) ::: private
+   ! Using Becke's partition function, partition the atomic grid ("pt","wt") for
+   ! the atom "a" in the list of "atoms" so that the weights work with all the
+   ! other atomic positions. Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! This version uses Becke's scheme for atomic size adjusments.
+   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_0 :: VEC{BIN}, optional, OUT
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      n,n_pts,n_centers,i,j,ai,aj,m :: INT
+      rij,rni,rnj :: VEC{REAL}(3)
+      dij,dni,dnj,uij,vij,bsri,bsrj,chi,wij,aij,h,s :: REAL
+      posi,posj :: VEC{REAL}(3)
+      partition :: MAT{REAL}*
+
+      n_centers = atoms.dim             ! Number of integration (atom) centers
+      n_pts = wt.dim                    ! Number of points for this atom "a"
+
+      partition.create(n_pts,n_centers) ! Create partition array
+      partition = ONE
+
+      do i = 1,n_centers
+          ai = atoms(i)
+          bsri = bragg_slater_radius(.atom(ai).atomic_number)
+          posi = .atom(atoms(ai)).position
+          do j = 1,n_centers
+              if (i==j) cycle
+              aj = atoms(j)
+              bsrj = bragg_slater_radius(.atom(aj).atomic_number)
+              chi = bsri/bsrj           ! Becke size adjustment
+              wij = (chi - ONE)/(chi + ONE)
+              aij = wij/(wij*wij - ONE)
+              posj = .atom(aj).position
+              rij = posi-posj
+              dij = sqrt(dot_product(rij,rij))
+              do n = 1,n_pts
+                  rni = pt(n,:) - posi
+                  rnj = pt(n,:) - posj
+                  dni = sqrt(dot_product(rni,rni))
+                  dnj = sqrt(dot_product(rnj,rnj))
+                  uij = (dni - dnj)/dij
+                  vij = uij + aij*(ONE - uij*uij)
+                  h = vij
+                  do m = 1,.partition_power
+                      h = 1.5d0*h - HALF*h*h*h
+                  end
+                  s = HALF*(ONE - h)
+                  ! ===========================================
+                  partition(n,i) = partition(n,i)*s
+              end
+          end
+      end
+
+      ! Normalize the partitioning function and modify the grid weights
+      .partition_wt(wt,partition,a,weight_is_0)
+      partition.destroy
+
+   end
+
+   partition_B_TA_adj(wt,pt,a,atoms,weight_is_0) ::: private
+   ! Using Becke's partition function, partition the atomic grid ("pt","wt") for
+   ! the atom "a" in the list of "atoms" so that the weights work with all the
+   ! other atomic positions. Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! This version uses Treutler and Ahlrichs scheme for atomic size adjusments.
+   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_0 :: VEC{BIN}, optional, OUT
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      n,n_pts,n_centers,i,j,ai,aj,m :: INT
+      rij,rni,rnj :: VEC{REAL}(3)
+      dij,dni,dnj,uij,vij,bsri,bsrj,chi,wij,aij,h,s :: REAL
+      posi,posj :: VEC{REAL}(3)
+      partition :: MAT{REAL}*
+
+      n_centers = atoms.dim             ! Number of integration (atom) centers
+      n_pts = wt.dim                    ! Number of points for this atom "a"
+
+      partition.create(n_pts,n_centers) ! Create partition array
+      partition = ONE
+
+      do i = 1,n_centers
+          ai = atoms(i)
+          bsri = bragg_slater_radius(.atom(ai).atomic_number)
+          posi = .atom(ai).position
+          do j = 1,n_centers
+              if (i==j) cycle
+              aj = atoms(j)
+              bsrj = bragg_slater_radius(.atom(aj).atomic_number)
+              chi = sqrt(bsri/bsrj)     ! Treutler-Ahlrcihs size adjustment
+              wij = (chi - ONE)/(chi + ONE)
+              aij = wij/(wij*wij - ONE)
+              posj = .atom(aj).position
+              rij = posi-posj
+              dij = sqrt(dot_product(rij,rij))
+              do n = 1,n_pts
+                  rni = pt(n,:) - posi
+                  rnj = pt(n,:) - posj
+                  dni = sqrt(dot_product(rni,rni))
+                  dnj = sqrt(dot_product(rnj,rnj))
+                  uij = (dni - dnj)/dij
+                  vij = uij + aij*(ONE - uij*uij)
+                  h = vij
+                  do m = 1,.partition_power
+                      h = 1.5d0*h - HALF*h*h*h
+                  end
+                  s = HALF*(ONE - h)
+                  ! ===========================================
+                  partition(n,i) = partition(n,i)*s
+              end
+          end
+      end
+
+      ! Normalize the partitioning function and modify the grid weights
+      .partition_wt(wt,partition,a,weight_is_0)
+      partition.destroy
+
+   end
+
+   partition_SS(wt,pt,a,atoms,weight_is_zero) ::: private
+   ! Using Stratmann and Scuseria's partition function, partition the
+   ! atomic grid ("pt","wt") for the atom "a" in the list of "atoms"
+   ! so that the weights work with all the other atomic positions
+   ! given in "atoms". Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! NOTE: the "pt" and "wt" are those for atom "atoms(a)" only.
+   ! NOTE: In this version no atomic size adjustments is made.
+   ! References: R.E. Stratmann, G E. Scuseria and M.E. Frisch, 1996 CPL 257 p. 213
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_zero :: VEC{BIN}, OUT, optional
+
+      if (atoms.dim==2) then; .partition_SS_pair(wt,pt,a,atoms,weight_is_zero)
+      else;                   .partition_SS_gnrl(wt,pt,a,atoms,weight_is_zero)
+      end
+
+   end
+
+   partition_SS_pair(wt,pt,a,atoms,weight_is_zero) ::: private
+   ! Using Stratmann and Scuseria's partition function, partition the
+   ! atomic grid ("pt","wt") for the atom "a" in the list of "atoms"
+   ! so that the weights work with all the other atomic positions
+   ! given in "atoms". Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! NOTE: the "pt" and "wt" are those for atom "atoms(a)" only.
+   ! NOTE: In this version no atomic size adjustments is made.
+   ! References: R.E. Stratmann, G E. Scuseria and M.E. Frisch, 1996 CPL 257 p. 213
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_zero :: VEC{BIN}, target, OUT, optional
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      n_centers,n_pts,i,j,k,n,m,ai,aj :: INT
+      rij,rni,rnj :: VEC{REAL}(3)
+      r_min,r_max,dij,dni,dnj,uij,uij1,uij2,uij3,uij5,uij7,h,s, aa,c5,c21,c35 :: REAL
+      posi,posj :: VEC{REAL}(3)
+      partition :: MAT{REAL}*
+      weight_is_0,weight_is_1 :: VEC{BIN}*
+      list :: VEC{INT}*
+
+      if (present(weight_is_zero)) then
+         weight_is_zero = FALSE
+         weight_is_0 => weight_is_zero
+      else
+         weight_is_0.create(wt.dim)
+      end
+
+      aa = .stratmann_scuseria_A
+      c5  = FIVE
+      c21 = SEVEN*THREE
+      c35 = SEVEN*FIVE
+      n_centers = atoms.dim             ! Number of integration (atom) centers
+      n_pts = wt.dim                    ! Number of points for this atom "a"
+
+
+      weight_is_1.create(n_pts)         ! Tells where weights are 1 or zero
+      weight_is_1 = FALSE               ! ... Do this when making atom grids!
+
+          i = a
+          ai = atoms(i)
+          posi = .atom(ai).position
+          r_min = .atom_min_distance(ai)
+          do n = 1,n_pts                ! Predetermine which weights are one
+              rni = pt(n,:) - posi
+              dni = sqrt(dot_product(rni,rni))
+              if (dni>HALF*(ONE-aa)*r_min) cycle
+              weight_is_1(n) = TRUE
+          end
+
+      k = 0                             ! Make the list of non-unit weights
+      list.create(count(NOT weight_is_1))
+      do n = 1,n_pts 
+          if (weight_is_1(n)) cycle
+          k = k + 1
+          list(k) = n
+      end
+
+      partition.create(n_pts,n_centers) 
+      partition = ONE
+      weight_is_0 = FALSE
+
+          i = a                         ! Do atom "a" partition & set weight_is_0
+          ai = atoms(i)
+          posi = .atom(ai).position
+          do j = 1,n_centers
+              if (i==j) cycle
+              aj = atoms(j)
+              posj = .atom(aj).position
+              r_max = .r_max_for_atom(aj)
+              r_max = r_max*r_max       ! Square it to save square roots
+              rij = posi-posj
+              dij = sqrt(dot_product(rij,rij))
+              do m = 1,list.dim         ! Loop over non-unit weight points
+                  n = list(m)
+                  rni = pt(n,:) - posi
+                  rnj = pt(n,:) - posj
+                  dni = dot_product(rni,rni)
+                  dnj = dot_product(rnj,rnj)
+                  if (dnj>r_max) then   ! WARNING: only valid for basis function on aj
+                     partition(n,i) = ZERO
+                     weight_is_0(n) = TRUE
+                     wt(n) = ZERO       ! <<< This is zero by cutoff ...
+                  else
+                     dni = sqrt(dni)
+                     dnj = sqrt(dnj)
+                     uij = (dni - dnj)/dij
+                     if      (uij> aa) then
+                        partition(n,i) = ZERO
+                        weight_is_0(n) = TRUE
+                        wt(n) = ZERO    ! <<< This is rigorously zero ...
+                     else if (uij>-aa) then
+                        uij1 = uij/aa
+                        uij2 = uij1*uij1
+                        uij3 = uij2*uij1
+                        uij5 = uij3*uij2
+                        uij7 = uij5*uij2
+                        h = SIXTEENTH*(c35*uij1-c35*uij3+c21*uij5-c5*uij7)
+                        s = HALF*(ONE - h)
+                        partition(n,i) = partition(n,i)*s
+                     end
+                  end
+              end
+          end
+
+      k = 0                             ! Make the list of non-unit & non-zero weights
+      list.destroy
+      list.create(count(NOT (weight_is_1 OR weight_is_0)))
+      do n = 1,n_pts 
+          if (weight_is_1(n) OR weight_is_0(n)) cycle
+          k = k + 1
+          list(k) = n
+      end
+      weight_is_1.destroy
+
+      do i = 1,n_centers                ! Now partition those non-unit weights
+          if (i==a) cycle               ! Do atoms /= a ... for normalisation
+          ai = atoms(i)
+          posi = .atom(ai).position
+          r_min = .atom_min_distance(ai)
+          do j = 1,n_centers
+              if (i==j) cycle
+              posj = .atom(atoms(j)).position
+              rij = posi-posj
+              dij = sqrt(dot_product(rij,rij))
+              do m = 1,list.dim         ! Loop over non-unit non-zero weight points
+                  n = list(m)          
+                  rni = pt(n,:) - posi
+                  rnj = pt(n,:) - posj
+                  dni = sqrt(dot_product(rni,rni))
+                  dnj = sqrt(dot_product(rnj,rnj))
+                  uij = (dni - dnj)/dij
+                  if      (uij> aa) then
+                     partition(n,i) = ZERO
+                  else if (uij>-aa) then
+                     uij1 = uij/aa
+                     uij2 = uij1*uij1
+                     uij3 = uij2*uij1
+                     uij5 = uij3*uij2
+                     uij7 = uij5*uij2
+                     h = SIXTEENTH*(c35*uij1-c35*uij3+c21*uij5-c5*uij7)
+                     s = HALF*(ONE - h)
+                     partition(n,i) = partition(n,i)*s
+                  end
+              end
+          end
+      end
+
+      ! Normalize the partitioning function and modify the grid weights
+      do m = 1,list.dim
+          n = list(m)
+          s = VEC{REAL}:sum(partition(n,:))
+          s = partition(n,a)/s
+          wt(n) = wt(n)*s
+          if (s<=.partition_cutoff) weight_is_0(n) = TRUE
+      end
+
+      partition.destroy
+      list.destroy
+
+      if (NOT present(weight_is_zero)) weight_is_0.destroy
+
+   end
+
+   partition_SS_gnrl(wt,pt,a,atoms,weight_is_zero) ::: private
+   ! Using Stratmann and Scuseria's partition function, partition the
+   ! atomic grid ("pt","wt") for the atom "a" in the list of "atoms"
+   ! so that the weights work with all the other atomic positions
+   ! given in "atoms". Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! NOTE: the "pt" and "wt" are those for atom "atoms(a)" only.
+   ! NOTE: In this version no atomic size adjustments is made.
+   ! References: R.E. Stratmann, G E. Scuseria and M.E. Frisch, 1996 CPL 257 p. 213
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_zero :: VEC{BIN}, target, OUT, optional
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      n_centers,n_pts,i,j,k,n,m,ai,aj :: INT
+      rij,rni,rnj :: VEC{REAL}(3)
+      r_min,r_max,dij,dni,dnj,uij,uij1,uij2,uij3,uij5,uij7,h,s, aa,c5,c21,c35 :: REAL
+      posi,posj :: VEC{REAL}(3)
+      partition :: MAT{REAL}*
+      weight_is_0,weight_is_1 :: VEC{BIN}*
+      list :: VEC{INT}*
+
+      if (present(weight_is_zero)) then
+         weight_is_zero = FALSE
+         weight_is_0 => weight_is_zero
+      else
+         weight_is_0.create(wt.dim)
+      end
+
+      aa = .stratmann_scuseria_A
+      c5  = FIVE
+      c21 = SEVEN*THREE
+      c35 = SEVEN*FIVE
+
+      ! Number of integration (atom) centers
+      n_centers = atoms.dim             
+
+      ! Number of points for this atom "a"
+      n_pts = wt.dim                    
+
+      ! Tells where weights are 1 or zero
+      ! ... Do this when making atom grids!
+      weight_is_1.create(n_pts)         
+      weight_is_1 = FALSE               
+
+          i = a
+          ai = atoms(i)
+          posi = .atom(ai).position
+          r_min = .atom_min_distance(ai)
+
+          ! Predetermine which weights are one
+          do n = 1,n_pts                
+              rni = pt(n,:) - posi
+              dni = sqrt(dot_product(rni,rni))
+              if (dni>HALF*(ONE-aa)*r_min) cycle
+              weight_is_1(n) = TRUE
+          end
+
+      ! Make the list of non-unit weights
+      k = 0                             
+      list.create(count(NOT weight_is_1))
+      do n = 1,n_pts 
+          if (weight_is_1(n)) cycle
+          k = k + 1
+          list(k) = n
+      end
+
+      partition.create(n_pts,n_centers) 
+      partition = ONE
+      weight_is_0 = FALSE
+
+          ! Do atom "a" partition & set weight_is_0
+          i = a                         
+          ai = atoms(i)
+          posi = .atom(ai).position
+
+          do j = 1,n_centers
+
+              if (i==j) cycle
+
+              aj = atoms(j)
+              posj = .atom(aj).position
+              r_max = .r_max_for_atom(aj)
+              r_max = r_max*r_max       ! Square it to save square roots
+              rij = posi-posj
+              dij = sqrt(dot_product(rij,rij))
+
+              ! Loop over non-unit weight points
+              do m = 1,list.dim         
+                  n = list(m)
+                  rni = pt(n,:) - posi
+                  rnj = pt(n,:) - posj
+                  dni = dot_product(rni,rni)
+                  dnj = dot_product(rnj,rnj)
+                ! if (dnj>r_max) then   ! WARNING: only valid for basis function on aj
+                !    partition(n,i) = ZERO
+                !    weight_is_0(n) = TRUE
+                !    wt(n) = ZERO       ! <<< This is zero by cutoff ...
+                ! else
+                     dni = sqrt(dni)
+                     dnj = sqrt(dnj)
+                     uij = (dni - dnj)/dij
+                     if      (uij> aa) then
+                        partition(n,i) = ZERO
+                        weight_is_0(n) = TRUE
+                        wt(n) = ZERO    ! <<< This is rigorously zero ...
+                     else if (uij>-aa) then
+                        uij1 = uij/aa
+                        uij2 = uij1*uij1
+                        uij3 = uij2*uij1
+                        uij5 = uij3*uij2
+                        uij7 = uij5*uij2
+                        h = SIXTEENTH*(c35*uij1-c35*uij3+c21*uij5-c5*uij7)
+                        s = HALF*(ONE - h)
+                        partition(n,i) = partition(n,i)*s
+                     end
+                ! end
+              end
+          end
+
+      ! Make the list of non-unit & non-zero weights
+      k = 0                             
+      list.destroy
+      list.create(count(NOT (weight_is_1 OR weight_is_0)))
+      do n = 1,n_pts 
+          if (weight_is_1(n) OR weight_is_0(n)) cycle
+          k = k + 1
+          list(k) = n
+      end
+      weight_is_1.destroy
+
+      ! Now partition those non-unit weights
+      do i = 1,n_centers                
+
+          if (i==a) cycle               
+
+          ! Do atoms /= a ... for normalisation
+          ai = atoms(i)
+          posi = .atom(ai).position
+          r_min = .atom_min_distance(ai)
+
+          do j = 1,n_centers
+
+              if (i==j) cycle
+
+              posj = .atom(atoms(j)).position
+              rij = posi-posj
+              dij = sqrt(dot_product(rij,rij))
+
+              ! Loop over non-unit non-zero weight points
+              do m = 1,list.dim         
+                  n = list(m)          
+                  rni = pt(n,:) - posi
+                  rnj = pt(n,:) - posj
+                  dni = sqrt(dot_product(rni,rni))
+                  dnj = sqrt(dot_product(rnj,rnj))
+                  uij = (dni - dnj)/dij
+                  if      (uij> aa) then
+                     partition(n,i) = ZERO
+                  else if (uij>-aa) then
+                     uij1 = uij/aa
+                     uij2 = uij1*uij1
+                     uij3 = uij2*uij1
+                     uij5 = uij3*uij2
+                     uij7 = uij5*uij2
+                     h = SIXTEENTH*(c35*uij1-c35*uij3+c21*uij5-c5*uij7)
+                     s = HALF*(ONE - h)
+                     partition(n,i) = partition(n,i)*s
+                  end
+              end
+          end
+      end
+
+      ! Normalize the partitioning function and modify the grid weights
+      do m = 1,list.dim
+          n = list(m)
+          s = VEC{REAL}:sum(partition(n,:))
+          s = partition(n,a)/s
+          wt(n) = wt(n)*s
+          if (s<=.partition_cutoff) weight_is_0(n) = TRUE
+      end
+
+      partition.destroy
+      list.destroy
+
+      if (NOT present(weight_is_zero)) weight_is_0.destroy
+
+   end
+
+   partition_wt(wt,partition,a,weight_is_0) ::: private
+   ! Partition the weights "wt" using the unnormalised "partition" for atom "a".
+   ! If present the zero weights are recorded in "weight_is_0".
+      wt :: VEC{REAL}
+      partition :: MAT{REAL}, IN
+      a :: INT, IN
+      weight_is_0 :: VEC{BIN}, optional, OUT
+
+      n :: INT
+      s :: REAL
+
+      if (present(weight_is_0)) then
+
+          weight_is_0 = FALSE
+          do n = 1,wt.dim
+              s = VEC{REAL}:sum(partition(n,:))
+              s = partition(n,a)/s
+              wt(n) = wt(n)*s
+              if (s>.partition_cutoff) cycle
+              weight_is_0(n) = TRUE
+          end
+
+      else
+
+          do n = 1,wt.dim
+              s = VEC{REAL}:sum(partition(n,:))
+              s = partition(n,a)/s
+              wt(n) = wt(n)*s
+          end
+
+      end
+
+   end
+
+!  =======================================
+!  Basis function grid generation routines
+!  =======================================
+
+   make_bf_grids(a0,b0,ma,mb,pt,atoms) ::: leaky
+   ! Make the basis function grid and basis function gradient grid, "a0", "a1"
+   ! and "b0", "b1" respectively, on the set of points "pt", for a pair of
+   ! "atoms" (a,b) in the complete atom list. NOTE: remember *not* to destroy
+   ! "b0" and "b1" sometimes. NOTE: .weight_is_0 is destroyed at the end of
+   ! this routine, since I assume that this expensive routine is called only
+   ! once for a particular pair of atoms. "ma" amd "mb" are the number of
+   ! non-zero points on atoms a and b in "atoms". NOTE: "mb" may not be defined!
+      a0,b0 :: MAT{REAL}*
+      ma,mb :: INT, OUT
+      pt :: MAT{REAL}, IN
+      atoms :: VEC{INT}, IN
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom.created,"no atom list array")
+   ENSURE(.atom_grid0.created,"no atom_grid0 array")
+   ENSURE(atoms.dim<=2,"only valid for at most two atoms")
+   ENSURE(a0.destroyed,"a0 exists!")
+   ENSURE(b0.destroyed,"b0 exists!")
+      a,b,ua,ub,na,nb,n,fa,fb,i,k,m :: INT
+      if (atoms.dim==1) then
+         a = atoms(1)
+         ua = .unique_atom_for(a) 
+         a0.create_copy(.atom_grid0(ua).element)          ! Leaky
+         ENSURE(b0.destroyed,"b0 is not destroyed!")
+         b0 => a0 
+         ma = a0.dim1
+         mb = 0
+      else
+         a = atoms(1)
+         b = atoms(2)
+         ua = .unique_atom_for(a) 
+         ub = .unique_atom_for(b) 
+         na = .atom_grid0(ua).element.dim1
+         nb = .atom_grid0(ub).element.dim1
+         fa = .atom_grid0(ua).element.dim2
+         fb = .atom_grid0(ub).element.dim2
+         n  = na + nb
+         if (.weight_is_0.destroyed) then                 ! WARNING: be careful here
+            a0.create(n,fa)                               ! Leaky
+            b0.create(n,fb)                    
+            a0(   1:na,:)   = .atom_grid0(ua).element     ! a's basis functions on a's points
+            b0(na+1: n,:)   = .atom_grid0(ub).element     ! b's basis functions on b's points
+            .atom(a).make_bf_grid(a0(na+1: n,:),pt(na+1: n,:),.rho_cutoff) ! a's basis functions on b's point
+            .atom(b).make_bf_grid(b0(   1:na,:),pt(   1:na,:),.rho_cutoff) ! b's basis functions on a's points
+ ! stdout.show("na =",na)
+ ! stdout.show("nb =",nb)
+ ! stdout.show("n  =",n )
+ ! stdout.text("a0:")
+ ! stdout.put(a0)
+         else
+            m = count(NOT .weight_is_0)
+            ENSURE(pt.dim1==m,"wrong size for pt array")
+            a0.create(m,fa)                               ! Leaky
+            b0.create(m,fb)                    
+            k = 0
+            do i = 1,na
+               if (.weight_is_0(i)) cycle
+               k = k + 1
+               a0(k,:) = .atom_grid0(ua).element(i,:)   ! a's basis functions on a's points
+            end
+            ma = k
+            mb = m - ma
+            do i = 1,nb
+               if (.weight_is_0(na+i)) cycle
+               k = k + 1
+               b0(k,:) = .atom_grid0(ub).element(i,:)   ! b's basis functions on b's points
+            end
+            .atom(a).make_bf_grid(a0(ma+1: m,:),pt(ma+1: m,:),.rho_cutoff) ! a's basis functions on b's point
+            .atom(b).make_bf_grid(b0(   1:ma,:),pt(   1:ma,:),.rho_cutoff) ! b's basis functions on a's points
+ ! stdout.show("na =",na)
+ ! stdout.show("nb =",nb)
+ ! stdout.show("n  =",n )
+ ! stdout.show("ma =",ma)
+ ! stdout.show("m  =",m )
+ ! stdout.text("a0:")
+ ! stdout.put(a0)
+            .weight_is_0.destroy                          ! <<< Destroy .weight_is_0
+         end
+      end
+   end
+
+   make_bf_grids(a1,b1,ma,mb,pt,atoms) ::: leaky
+   ! Make the basis function *gradient* grids, "a1" and "b1" respectively, on the
+   ! set of points "pt", for a pair of "atoms" (a,b) in the complete atom list.
+   ! NOTE: remember *not* to destroy "b1" sometimes. NOTE: .weight_is_0 is
+   ! destroyed at the end of this routine, since I assume that this expensive
+   ! routine is called only once for a particular pair of atoms. "ma" amd "mb"
+   ! are the number of non-zero points on atoms a and b in "atoms". NOTE: "mb"
+   ! may not be defined!
+      a1,b1 :: MAT3{REAL}*
+      ma,mb :: INT, OUT
+      pt :: MAT{REAL}, IN
+      atoms :: VEC{INT}, IN
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom.created,"no atom list array")
+   ENSURE(.atom_grid1.created,"no atom_grid1 array")
+   ENSURE(atoms.dim<=2,"only valid for at most two atoms")
+   ENSURE(a1.destroyed,"a1 exists!")
+   ENSURE(b1.destroyed,"b1 exists!")
+      a,b,ua,ub,na,nb,n,fa,fb,i,k,m :: INT
+      if (atoms.dim==1) then
+         a = atoms(1)
+         ua = .unique_atom_for(a) 
+         a1.create_copy(.atom_grid1(ua).element)
+         ENSURE(b1.destroyed,"b1 is not destroyed!")
+         b1 => a1
+         ma = a1.dim1
+         mb = 0
+      else
+         a = atoms(1)
+         b = atoms(2)
+         ua = .unique_atom_for(a) 
+         ub = .unique_atom_for(b) 
+         na = .atom_grid1(ua).element.dim1
+         nb = .atom_grid1(ub).element.dim1
+         fa = .atom_grid1(ua).element.dim2
+         fb = .atom_grid1(ub).element.dim2
+         n  = na + nb
+         if (.weight_is_0.destroyed) then                 ! WARNING: be careful here
+            a1.create(n,fa,3)                             ! Leaky
+            b1.create(n,fb,3)
+            a1(   1:na,:,:) = .atom_grid1(ua).element
+            b1(na+1: n,:,:) = .atom_grid1(ub).element
+            .atom(a).make_nabla_bf_grid(a1(na+1: n,:,:),pt(na+1: n,:),.rho_cutoff) ! a's basis functions on b's point
+            .atom(b).make_nabla_bf_grid(b1(   1:na,:,:),pt(   1:na,:),.rho_cutoff) ! b's basis functions on a's points
+         else
+            m = count(NOT .weight_is_0)
+            ENSURE(pt.dim1==m,"wrong size for pt array")
+            a1.create(m,fa,3)                             ! Leaky
+            b1.create(m,fb,3)
+            k = 0
+            do i = 1,na
+               if (.weight_is_0(i)) cycle
+               k = k + 1
+               a1(k,:,:) = .atom_grid1(ua).element(i,:,:) ! a's basis functions on a's points
+            end
+            ma = k
+            mb = m - ma
+            do i = 1,nb
+               if (.weight_is_0(na+i)) cycle
+               k = k + 1
+               b1(k,:,:) = .atom_grid1(ub).element(i,:,:) ! b's basis functions on b's points
+            end
+            .atom(a).make_nabla_bf_grid(a1(ma+1: m,:,:),pt(ma+1: m,:),.rho_cutoff) ! a's basis functions on b's point
+            .atom(b).make_nabla_bf_grid(b1(   1:ma,:,:),pt(   1:ma,:),.rho_cutoff) ! b's basis functions on a's points
+            .weight_is_0.destroy                          ! <<< Destroy .weight_is_0
+         end
+      end
+   end
+
+   make_bf_grids(a0,a1,b0,b1,ma,mb,pt,atoms) ::: leaky
+   ! Make the basis function grid and basis function gradient grid, "a0", "a1"
+   ! and "b0", "b1" respectively, on the set of points "pt", for a pair of
+   ! "atoms" (a,b) in the complete atom list. NOTE: remember *not* to destroy
+   ! "b0" and "b1" sometimes. NOTE: .weight_is_0 is destroyed at the end of
+   ! this routine, since I assume that this expensive routine is called only
+   ! once for a particular pair of atoms. "ma" amd "mb" are the number of
+   ! non-zero points on atoms a and b in "atoms". NOTE: "mb" may not be defined!
+      a0,b0 :: MAT{REAL}*
+      a1,b1 :: MAT3{REAL}*
+      ma,mb :: INT, OUT
+      pt :: MAT{REAL}
+      atoms :: VEC{INT}, IN
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom.created,"no atom list array")
+   ENSURE(.atom_grid0.created,"no atom_grid0 array")
+   ENSURE(.atom_grid1.created,"no atom_grid1 array")
+   ENSURE(atoms.dim<=2,"only valid for at most two atoms")
+   ENSURE(a0.destroyed,"a0 exists!")
+   ENSURE(a1.destroyed,"a1 exists!")
+   ENSURE(b0.destroyed,"b0 exists!")
+   ENSURE(b1.destroyed,"b1 exists!")
+
+      a,b,ua,ub,na,nb,n,fa,fb,i,k,m :: INT
+      agrid0,bgrid0 :: MAT{REAL}*
+      agrid1,bgrid1 :: MAT3{REAL}*
+
+      if (atoms.dim==1) then
+         a = atoms(1)
+         ua = .unique_atom_for(a) 
+         agrid0 => .atom_grid0(ua).element
+         agrid1 => .atom_grid1(ua).element
+         a0.create_copy(agrid0)                 ! Leaky
+         a1.create_copy(agrid1)
+         ENSURE(b0.destroyed,"b0 is not destroyed!")
+         ENSURE(b1.destroyed,"b1 is not destroyed!")
+         b0 => a0 
+         b1 => a1
+         ma = a0.dim1
+         mb = 0
+
+      else
+         a = atoms(1)
+         b = atoms(2)
+         ua = .unique_atom_for(a) 
+         ub = .unique_atom_for(b) 
+         agrid0 => .atom_grid0(ua).element
+         agrid1 => .atom_grid1(ua).element
+         bgrid0 => .atom_grid0(ub).element
+         bgrid1 => .atom_grid1(ub).element
+         na = agrid0.dim1
+         nb = bgrid0.dim1
+         fa = agrid0.dim2
+         fb = bgrid0.dim2
+         n  = na + nb
+
+         if (.weight_is_0.destroyed) then       ! WARNING: be careful here
+
+            a0.create(n,fa); a1.create(n,fa,3)  ! Leaky
+            b0.create(n,fb); b1.create(n,fb,3)
+
+            a0(   1:na,:)   = agrid0            ! a's basis functions on a's points
+            a1(   1:na,:,:) = agrid1
+            b0(na+1: n,:)   = bgrid0            ! b's basis functions on b's points
+            b1(na+1: n,:,:) = bgrid1
+
+            .atom(a).make_nabla_bf_grid(a1(na+1: n,:,:),a0(na+1: n,:),pt(na+1: n,:),.rho_cutoff) ! a's basis functions on b's point
+            .atom(b).make_nabla_bf_grid(b1(   1:na,:,:),b0(   1:na,:),pt(   1:na,:),.rho_cutoff) ! b's basis functions on a's points
+
+         else
+            m = count(NOT .weight_is_0)
+            ENSURE(pt.dim1==m,"wrong size for pt array")
+
+            a0.create(m,fa); a1.create(m,fa,3)  ! Leaky
+            b0.create(m,fb); b1.create(m,fb,3)
+
+            k = 0
+            do i = 1,na
+               if (.weight_is_0(i)) cycle
+               k = k + 1
+               a0(k,:)   = agrid0(i,:)          ! a's basis functions on a's points
+               a1(k,:,:) = agrid1(i,:,:)
+            end
+            ma = k
+            mb = m - ma
+
+            do i = 1,nb
+               if (.weight_is_0(na+i)) cycle
+               k = k + 1
+               b0(k,:)   = bgrid0(i,:)          ! b's basis functions on b's points
+               b1(k,:,:) = bgrid1(i,:,:)
+            end
+
+            .atom(a).make_nabla_bf_grid(a1(ma+1: m,:,:),a0(ma+1: m,:),pt(ma+1: m,:),.rho_cutoff) ! a's basis functions on b's point
+            .atom(b).make_nabla_bf_grid(b1(   1:ma,:,:),b0(   1:ma,:),pt(   1:ma,:),.rho_cutoff) ! b's basis functions on a's points
+
+            .weight_is_0.destroy                ! <<< Destroy .weight_is_0
+          ! .sort_points(a0,a1,b0,b1,pt,ma,mb,atoms)
+         end
+
+      end
+
+   end
+
+   sort_points(a0,a1,b0,b1,pt,ma,mb,atoms) ::: private
+   ! Sort the pointsd "pt" so that the first lot are closer to atom a, the
+   ! second lot closer to atom b, and return the number of each, "ma" and "mb".
+   ! non-zero points on atoms a and b in "atoms". NOTE: "mb" may not be defined!
+      a0,b0 :: MAT{REAL}*
+      a1,b1 :: MAT3{REAL}*
+      ma,mb :: INT, OUT
+      pt :: MAT{REAL}
+      atoms :: VEC{INT}, IN
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom.created,"no atom list array")
+   ENSURE(.atom_grid0.created,"no atom_grid0 array")
+   ENSURE(atoms.dim==2,"only valid for two atoms")
+      label :: VEC{INT}*
+      pa,pb :: VEC{REAL}(3)
+      a,b,i,n_pt :: INT
+      px,py,pz,ax,ay,az,bx,by,bz,a2,b2 :: REAL
+      a = atoms(1)
+      b = atoms(2)
+      pa = .atom(a).position
+      pb = .atom(b).position
+      n_pt = pt.dim1
+      label.create(n_pt)
+      a = 0
+      b = n_pt + 1
+      do i = 1,n_pt
+         px = pt(i,1)
+         py = pt(i,2)
+         pz = pt(i,3)
+         ax = px - pa(1)
+         ay = py - pa(2)
+         az = pz - pa(3)
+         bx = px - pb(1)
+         by = py - pb(2)
+         bz = pz - pb(3)
+         a2 = ax*ax + ay*ay + az*az
+         b2 = bx*bx + by*by + bz*bz
+         if (a2<b2) then
+            a = a + 1
+            label(a) = i
+         else
+            b = b - 1
+            label(b) = i
+         end
+      end
+      ma = a
+      mb = n_pt - ma
+
+      pt = pt(label,:)
+      a0 = a0(label,:)
+      a1 = a1(label,:,:)
+      b0 = b0(label,:)
+      b1 = b1(label,:,:)
+
+      label.destroy
+
+   end
+
+!  ==============================
+!  Numerical integration routines
+!  ==============================
+
+   integrate_function(f,ans)
+   ! Integrate the function "f" which is sharply peaked at positions "pos" in 3D
+   ! space, where the peaks resemble those in the electron density of atoms with
+   ! charge "Z". The integrand is returned as "ans".
+      self :: PTR
+      interface
+         f(f_grid,pts)
+            f_grid :: VEC{REAL}, OUT
+            pts :: MAT{REAL}, IN
+         end
+      end
+      ans :: REAL
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+
+      n_pt :: INT
+      pt :: MAT{REAL}*
+      wt,f_grid :: VEC{REAL}*
+
+      n_pt = .no_of_points
+      f_grid.create(n_pt)
+      .make_grid(pt,wt) ! leaky
+
+
+      ! Do the integration
+      call f(f_grid,pt)
+      ans = VEC{REAL}:sum(f_grid*wt)
+
+      wt.destroy
+      pt.destroy
+      f_grid.destroy
+
+
+   end
+
+!   make_matrix_elements_of(V,g,ans)
+!   ! Integrate the matrix elements of a multiplicative operator "V"
+!   ! between all components of two gaussian functions given by the
+!   ! gaussian-pair "g". The result of the integration is matrix "ans".
+!   ! Operator "V" is represented by a function which returns a "v_grid"
+!   ! on a set of "pts".
+!   ! NOTE: this is *not* a good way to get marix elements
+!      self :: PTR
+!      interface
+!         V(v_grid,pts)
+!            v_grid :: VEC{REAL}
+!            pts :: MAT{REAL}
+!         end
+!      end
+!      g :: GAUSSIAN2
+!      ans :: MAT{REAL}
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(ans.dim1==g.a.n_comp,"wrong size, ans")
+!   ENSURE(ans.dim2==g.b.n_comp,"wrong size, ans")
+!      n_pt,n,a,b :: INT
+!      pt,pos,a_grid,b_grid :: MAT{REAL}*
+!      wt,v_grid :: VEC{REAL}*
+!      Z :: VEC{INT}*
+!      if (g.a.position.equals(g.b.position)) then
+!         Z.create(1); Z = 1
+!         pos.create(1,3)
+!         pos(1,:) = g.a.position
+!      else
+!         Z.create(2); Z = 1
+!         pos.create(2,3)
+!         pos(1,:) = g.a.position
+!         pos(2,:) = g.b.position
+!      end
+!      .reduce_core_angular_grid = FALSE ! Gives better results for ME's
+!      .scale_atomic_grids = TRUE        ! This is essential for Mura-Knowles
+!    ! .partition_scaling_scheme = "none"
+!    ! .set_atoms_and_positions(Z,pos)
+!      n_pt = .no_of_points
+!      v_grid.create(n_pt)
+!      a_grid.create(n_pt,g.a.n_comp)
+!      b_grid.create(n_pt,g.b.n_comp)
+!      .make_grid(pt,wt) ! <<<<<<<<<<< leaky
+!      ! Do the integration
+!      ans = ZERO
+!         call V(v_grid,pt)
+!         v_grid = wt*v_grid
+!         g.a.make_grid(a_grid,pt)
+!         g.b.make_grid(b_grid,pt)
+!         do a = 1,g.a.n_comp
+!         do b = 1,g.b.n_comp
+!            wt = a_grid(:,a)*b_grid(:,b)
+!            ans(a,b) = ans(a,b) + sum(wt*v_grid)
+!         end
+!         end
+!      wt.destroy; pt.destroy
+!      b_grid.destroy; a_grid.destroy; v_grid.destroy
+!      pos.destroy; Z.destroy
+!   end
+
+!   make_matrix_elements_of(V,g,c,ans)
+!   ! Integrate the matrix elements of a multiplicative operator "V"
+!   ! between all components of two gaussian functions given by the
+!   ! gaussian-pair "g". The result of the integration is matrix "ans".
+!   ! Operator "V" is represented by a function which returns a "v_grid"
+!   ! on a set of "pts".
+!      self :: PTR
+!      interface
+!         V(v_grid,pts)
+!            v_grid :: VEC{REAL}
+!            pts :: MAT{REAL}
+!         end
+!      end
+!      g :: GAUSSIAN2
+!      c :: VEC{REAL}(3)
+!      ans :: MAT{REAL}
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(ans.dim1==g.a.n_comp,"wrong size, ans")
+!   ENSURE(ans.dim2==g.b.n_comp,"wrong size, ans")
+!      n_pt,n,a,b :: INT
+!      pt,pos,a_grid,b_grid :: MAT{REAL}*
+!      wt,v_grid :: VEC{REAL}*
+!      Z :: VEC{INT}*
+!      if (g.a.position.equals(g.b.position)) then
+!         Z.create(2); Z = 1
+!         pos.create(2,3)
+!         pos(1,:) = g.a.position
+!         pos(2,:) = c
+!      else
+!         Z.create(3); Z = 1
+!         pos.create(3,3)
+!         pos(1,:) = g.a.position
+!         pos(2,:) = g.b.position
+!         pos(3,:) = c
+!      end
+!    ! .reduce_core_angular_grid = FALSE
+!    ! .scale_atomic_grids = FALSE
+!    ! .partition_scaling_scheme = "none"
+!    ! .set_atom_info(Z,pos)
+!      n_pt = .no_of_points
+!      v_grid.create(n_pt)
+!      a_grid.create(n_pt,g.a.n_comp)
+!      b_grid.create(n_pt,g.b.n_comp)
+!      .make_grid(pt,wt) ! <<<<<<<<<<<
+!      ! Do the integration
+!      ans = ZERO
+!         call V(v_grid,pt)
+!         v_grid = wt*v_grid
+!         g.a.make_grid(a_grid,pt)
+!         g.b.make_grid(b_grid,pt)
+!         do a = 1,g.a.n_comp
+!         do b = 1,g.b.n_comp
+!            wt = a_grid(:,a)*b_grid(:,b)
+!            ans(a,b) = ans(a,b) + sum(wt*v_grid)
+!         end
+!         end
+!      wt.destroy; pt.destroy
+!      b_grid.destroy; a_grid.destroy; v_grid.destroy
+!      pos.destroy; Z.destroy
+!   end
+
+!  ==============
+!  Output methods
+!  ==============
+
+   put(out)
+   ! Put out to file "out"
+      out :: TEXTFILE, target, optional
+      output :: TEXTFILE*
+      if (present(out)) then; output => out
+      else;                   output => TEXTFILE::stdout
+      end
+      output.flush
+      output.text("BECKE_GRID information:")
+      output.flush
+      output.show("Kind of grid              =",.kind)
+      output.show("Accuracy                  =",.accuracy)
+      output.show("Pruning scheme            =",.pruning_scheme)
+      output.show("Partition scheme          =",.partition_scheme)
+      output.show("Partition scaling scheme  =",.partition_scaling_scheme)
+      output.show("Partition cutoff          =",.partition_cutoff)
+      output.show("Basis function cutoff     =",.basis_function_cutoff)
+      output.show("Rho cutoff                =",.rho_cutoff)
+      output.show("Becke partition_power     =",.partition_power)
+      output.show("Scale atomic grids?       =",.scale_atomic_grids)
+      if (.radial_grid.created AND .lebedev_grid.created) then
+      output.show("# of points (row=1)       =",.no_of_points_for_row(1))
+      output.show("# of points (row=2)       =",.no_of_points_for_row(2))
+      output.show("# of points (row=3)       =",.no_of_points_for_row(3))
+      end
+      output.flush
+      output.text("Radial grid:")
+      output.flush
+      output.show("n_radial_points (for H)   =",.n_radial_points)
+      output.show("n_extra_points_per_shell  =",.n_extra_points_per_shell)
+      output.flush
+      output.text("Angular grid:")
+      output.flush
+      output.show("l_angular_grid            =",.l_angular_grid)
+      output.show("l_H_angular_grid          =",.l_H_angular_grid)
+    ! output.show("reduce_core_angular_grid? =",.reduce_core_angular_grid)
+      output.show("reduce_H_angular_grid?    =",.reduce_H_angular_grid)
+   end
+
+   put_atom_info(out)
+   ! Put out the atom info to file "out"
+      out :: TEXTFILE, target, optional
+
+   ENSURE(.finalized,"not finalized")
+   ENSURE(.atom.created,"no atom list")
+
+      output :: TEXTFILE*
+      i,Z,np :: INT
+      fields :: INT
+
+      if (present(out)) then; output => out
+      else;                   output => TEXTFILE::stdout
+      end
+
+      fields = 5
+
+      output.flush
+      output.show("Total n_points            =",.no_of_points)
+      output.flush
+      output.text("Atom center information:")
+      output.flush
+
+      output.dash(int_fields=fields,real_fields=fields)
+
+      output.put("Atom #",int_width=TRUE)
+      output.put("Z",int_width=TRUE)
+      output.put("Row",int_width=TRUE)
+      output.put("x")
+      output.put("y")
+      output.put("z")
+      output.put("Scale factor")
+      output.put("Min exponent")
+      output.put("n_pts",int_width=TRUE)
+      output.put("n_max",int_width=TRUE)
+      output.flush
+
+      output.dash(int_fields=fields,real_fields=fields)
+
+      do i = 1,.atom.dim
+         output.put(i)
+         Z = .atom(i).atomic_number
+         output.put(Z)
+         output.put(period(Z))
+         output.put(.atom(i).position(1))
+         output.put(.atom(i).position(2))
+         output.put(.atom(i).position(3))
+         output.put(.atom_zeta(Z))
+         np = .no_of_points_for_atom(i)
+         output.put(.atom(i).minimum_basis_exponent)
+         output.put(np)
+         output.put(.n_points_for_row(period(Z)))
+         output.flush
+      end
+
+      output.dash(int_fields=fields,real_fields=fields)
+
+   end
+
+   put_radial_angular_grids(out)
+   ! Put out the radial and angular grid info to file "out"
+      out :: TEXTFILE, target, optional
+
+      output :: TEXTFILE*
+      i,p :: INT
+
+      if (present(out)) then; output => out
+      else;                   output => TEXTFILE::stdout
+      end
+
+      if (NOT .finalized) .set_grid_data
+
+      do p = 1,1
+      output.flush
+      output.show("Radial grid, period = ",p)
+      output.flush
+      output.dash(int_fields=1,real_fields=2)
+      output.put("pt #",int_width=TRUE)
+      output.put("pt")
+      output.put("wt")
+      output.flush
+      output.dash(int_fields=1,real_fields=2)
+      do i = 1,.radial_grid(p).n_points
+         output.put(i)
+         output.put(.radial_grid(p).point(i))
+         output.put(.radial_grid(p).weight(i))
+         output.flush
+      end
+      end
+
+      output.flush
+      output.text("Angular grid:")
+      output.flush
+      output.dash(int_fields=1,real_fields=4)
+      output.put("pt #",int_width=TRUE)
+      output.put("x")
+      output.put("y")
+      output.put("z")
+      output.put("wt")
+      output.flush
+      output.dash(int_fields=1,real_fields=4)
+      do i = 1,.lebedev_grid.n_points
+         output.put(i)
+         output.put(.lebedev_grid.point(i,1))
+         output.put(.lebedev_grid.point(i,2))
+         output.put(.lebedev_grid.point(i,3))
+         output.put(.lebedev_grid.weight(i))
+         output.flush
+      end
+      output.dash(int_fields=1,real_fields=4)
+
+   end
+
+   put_unique_atom_grids(out)
+   ! Put out the unique atom grid info to file "out"
+      out :: TEXTFILE, target, optional
+   ENSURE(.finalized,"not finalized")
+   ENSURE(.unique_atom.created,"no .unique_atom")
+   ENSURE(.atom_points.created,"no .atom_points")
+   ENSURE(.atom_weights.created,"no .atom_weights")
+      output :: TEXTFILE*
+      u,a,p,np :: INT
+      if (present(out)) then; output => out
+      else;                   output => TEXTFILE::stdout
+      end
+      output.flush
+      output.text("Atom grids:")
+      output.flush
+      output.show("No of atom grids          =",.n_unique_atoms)
+      output.flush
+      do u = 1,.n_unique_atoms
+         a = .unique_atom(u)
+         np = .atom_weights(u).element.dim
+         p = period(.atom(a).atomic_number)
+         output.flush
+         output.show("Unique atom number        =",u)
+         output.show("Atom number               =",a)
+         output.show("Atomic number             =",.atom(a).atomic_number)
+         output.show("No of points              =",np)
+         output.show("Max no of points for row  =",.n_points_for_row(p))
+         output.flush
+         output.text("Grid points:")
+         output.put(.atom_points(u).element)
+         output.flush
+         output.text("Grid weights:")
+         output.put(.atom_weights(u).element)
+      end
+   end
+
+end

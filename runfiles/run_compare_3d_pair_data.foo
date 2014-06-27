@@ -1,0 +1,566 @@
+! Copyright (C) Dylan Jayatilaka, 1999
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: run_compare_cifs $
+
+program run_COMPARE_3D_PAIR_DATA
+
+   implicit none
+
+   command_line :: COMMAND_LINE*
+   tail,file_name,message :: STR
+   op,cl :: STR(len=1)
+   x,dx,y,dy :: VEC{REAL}*
+   ab1,ab2,ab4, df1,df2, si1,si2,si4, ra1,ra2 :: VEC{REAL}*
+   del,csg,rat,tmp,mu,err :: REAL
+   n_data,n1,n2,n3,i, p1,p2,p3,m,m1,m2,m3 :: INT
+   axis,p,q :: VEC{INT}(3)
+   sep,order,label,labl1,labl2,labl3,labl4 :: VEC{STR}*
+   tdata,edata :: MAT3{REAL}*
+   udata :: BIN
+   table :: VEC{TABLE_COLUMN}*
+   L :: VEC{VEC_{STR}}*
+
+   ! Create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Initialise standard I/O files.
+   std_time.start_timing
+
+   stderr.create_stderr; stderr.open
+   stdin.create_stdin
+   stdout.create_stdout
+
+   ! Initialize miscellaneous ...
+   GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
+
+   ! Banner
+   stdout.flush
+   stdout.text("=========================")
+   stdout.text("Compare 3D pair data sets")
+   stdout.text("=========================")
+   stdout.flush
+   stdout.text("This program compares a 3D set of paired data files.")
+   stdout.flush
+   stdout.text("Each file compares Y to X data:")
+   stdout.text("  - Format:       label, x, dx, y, dy.")
+   stdout.text("  - No. of lines: n_data")
+   stdout.flush
+   stdout.text("Files are named like:")
+   stdout.text("  <L(1)(p1)><sep(1)><L(2)(p2)><sep(2)><L(3)(p3)>><tail>")
+   stdout.flush
+   stdout.text("A summary 2D table is made with:")
+   stdout.text("  - Rows labelled by n1 symbols: L(q1)(:)")
+   stdout.text("  - Rows sublabelled n2 symbols: L(q2)(:)")
+   stdout.text("  - Cols labelled by n3 symbols: L(q3)(:)")
+   stdout.flush
+   stdout.text("Usage: Arguments must in the order below:")
+   stdout.text("run_compare_3d_pair_data")
+   stdout.text("   -n_data <n_data>")
+   stdout.text("   -n1 <n1> -L1 '<L(1)(1)> <L(1)(2)> ... <L(1)(n1)>'")
+   stdout.text("   -n2 <n2> -L2 '<L(2)(1)> <L(2)(2)> ... <L(2)(n2)>'")
+   stdout.text("   -n3 <n3> -L3 '<L(3)(1)> <L(3)(2)> ... <L(3)(n3)>'")
+   stdout.text("   -sep '<sep(1)> <sep(2)>' -tail <tail>")
+   stdout.text("   -order 'q1 q2 q3'")
+   stdout.text("   -udata <t|f>")
+   stdout.flush
+   stdout.text("Specify if the data are U's with -udata. In this case")
+   stdout.text("only the first three lines out of six are used for")
+   stdout.text("obtaining the mean ratio (i.e. the mean of trace(U)")
+   stdout.flush
+   stdout.text("Summary 2D stats for (y-x) are in: <file-name>.statistics")
+
+   ! Get the command line
+   command_line.create
+   command_line.process_options
+   command_line.put
+
+   message = "argument list: read the info above!"
+   DIE_IF(    command_line.has_arguments,trim(message))
+   DIE_IF(NOT command_line.has_options  ,trim(message))
+   DIE_IF(NOT command_line.n_options==11,trim(message))
+   DIE_IF(command_line.option(1)/="n_data",trim(message))
+   DIE_IF(command_line.option(2)/="n1",  trim(message))
+   DIE_IF(command_line.option(3)/="L1",  trim(message))
+   DIE_IF(command_line.option(4)/="n2",  trim(message))
+   DIE_IF(command_line.option(5)/="L2",  trim(message))
+   DIE_IF(command_line.option(6)/="n3",  trim(message))
+   DIE_IF(command_line.option(7)/="L3",  trim(message))
+   DIE_IF(command_line.option(8)/="sep", trim(message))
+   DIE_IF(command_line.option(9)/="tail",trim(message))
+   DIE_IF(command_line.option(10)/="order",trim(message))
+   DIE_IF(command_line.option(11)/="udata",trim(message))
+
+   ! Get options
+   n_data       =  command_line.option_value(1).to_int
+   n1           =  command_line.option_value(2).to_int
+   n2           =  command_line.option_value(4).to_int
+   n3           =  command_line.option_value(6).to_int
+   L.create(3)
+   L(1).element => command_line.option_value(3).split
+   L(2).element => command_line.option_value(5).split
+   L(3).element => command_line.option_value(7).split
+   sep          => command_line.option_value(8).split
+   tail         =  command_line.option_value(9)
+   order        => command_line.option_value(10).split
+   axis         = STR:to_int(order)
+   udata        = STR:to_bin(command_line.option_value(11))
+
+   ! Reflect information
+   stdout.flush
+   stdout.show("n_data    = ",n_data)
+   stdout.show("n1        = ",n1)
+   stdout.show("n2        = ",n2)
+   stdout.show("n3        = ",n3)
+   stdout.show("L(1)      = ",L(1).element)
+   stdout.show("L(2)      = ",L(2).element)
+   stdout.show("L(3)      = ",L(3).element)
+   stdout.show("sep       = ",sep)
+   stdout.show("tail      = ",tail)
+   stdout.show("order     = ",axis)
+   stdout.show("udata     = ",udata)
+   stdout.flush
+
+   ! Clean command line
+   command_line.destroy
+
+   ! Make the table data
+   m1 = L(axis(1)).element.dim
+   m2 = L(axis(2)).element.dim
+   m3 = L(axis(3)).element.dim
+   tdata.create(m1*m2,m3,4)
+   edata.create(m1*m2,m3,4)
+   labl1.create(m1*m2); labl1 = " "
+   labl2.create(m1*m2); labl2 = " "
+   labl3.create(m1*m2); labl3 = "&"
+   labl4.create(m1*m2); labl4 = "\\"
+
+   ! Loop over all data files
+   do p1 = 1,n1
+   do p2 = 1,n2
+   do p3 = 1,n3
+
+      file_name =                  trim(L(1)[p1])//trim(sep(1))
+      file_name = trim(file_name)//trim(L(2)[p2])//trim(sep(2))
+      file_name = trim(file_name)//trim(L(3)[p3])//trim(tail)
+
+      p = [p1,p2,p3]
+      q = p(axis)
+
+      stdout.show("file_name =",file_name)
+      stdout.show("p         = ",p)
+      stdout.show("q         = ",q)
+      m  = q(2) + (q(1)-1)*m2
+      m3 = q(3)
+      stdout.show("m         = ",m)
+      stdout.show("m3        = ",m3)
+
+      ! Sublabel & label
+      labl2(m) = L(2)[p2] 
+      if (p2==1) labl1(m) = L(1)[p1]
+
+      ! Difference-type sums
+      x.create(n_data)
+      y.create(n_data)
+      dx.create(n_data)
+      dy.create(n_data)
+   
+      label.create(n_data)
+      df1.create(n_data)
+      df2.create(n_data)
+      ab1.create(n_data)
+      ab2.create(n_data)
+      ab4.create(n_data)
+      si1.create(n_data)
+      si2.create(n_data)
+      si4.create(n_data)
+      ra1.create(n_data)
+      ra2.create(n_data)
+   
+      df1 = ZERO; df2 = ZERO
+      ab1 = ZERO; ab2 = ZERO; ab4 = ZERO
+      si1 = ZERO; si2 = ZERO; si4 = ZERO
+      ra1 = ZERO; ra2 = ZERO
+   
+      ! Read data & make difference-type data
+      stdin.redirect(trim(file_name))
+      stdin.open(for="read")
+   
+      do i = 1,n_data
+   
+         ! Read data
+         stdin.read(label(i))
+         stdin.read( x(i))
+         stdin.read(dx(i))
+         stdin.read( y(i))
+         stdin.read(dy(i))
+         
+         ! Reset exact zeros for error
+       ! if (abs(dx(i))<TOL(7)) dx(i) = ONE
+       ! if (abs(dy(i))<TOL(7)) dy(i) = ONE
+   
+         del    = y(i) - x(i)
+         df1(i) = del
+         df2(i) = del**2
+         ab1(i) = abs(del)
+         ab2(i) = del**2
+         ab4(i) = del**4
+   
+         csg    = sqrt(dx(i)**2 + dy(i)**2)
+         si1(i) = del/csg
+         si2(i) = del**2/csg**2
+         si4(i) = del**4/csg**4
+   
+         if ((udata AND mod(i,6)<=3 AND mod(i,6)>=1) OR NOT udata) then
+            rat = y(i)/x(i)
+            ra1(i) = rat
+            ra2(i) = rat**2
+         end
+   
+      end
+   
+      ! Output stats
+      stdout.redirect(trim(file_name)//".statistics")
+   
+      stdout.flush
+      stdout.text("================")
+      stdout.text("Figures of merit")
+      stdout.text("================")
+   
+      tmp = sum(ab1)/n_data
+      mu  = sum(ab1)/n_data
+      err = sqrt(sum(ab2)/n_data - mu**2)
+      stdout.show("<|Y-X|>                     =",tmp)
+      stdout.show("error                       =",err)
+      tdata(m,m3,1) = tmp
+      edata(m,m3,1) = err
+   
+      tmp = sum(df1)/n_data
+      mu  = sum(df1)/n_data
+      err = sqrt(sum(df2)/n_data - tmp**2)
+      stdout.show("<Y-X>                       =",tmp)
+      stdout.show("error                       =",err)
+      tdata(m,m3,2) = tmp
+   
+      tmp = sqrt(sum(ab2)/n_data)
+      mu  = sum(ab2)/n_data               ! mean variance
+      err = sqrt(sum(ab4)/n_data - mu**2) ! std deviation in variance
+      err = sqrt(err)
+      stdout.show("<(Y-X)^2>^{1/2}             =",tmp)
+      stdout.show("sqrt(error)                 =",err)
+      edata(m,m3,2) = tmp
+    ! edata(m,m3,2) = err
+   
+      tmp = sqrt(sum(si2)/n_data)
+      mu  = sum(si2)/n_data               ! mean variance
+      err = sqrt(sum(si4)/n_data - mu**2) ! std deivatiation in variance
+      err = sqrt(err)
+      stdout.show("<(Y-X)^2/(dX^2+dY^2)>^{1/2} =",tmp)
+      stdout.show("sqrt(error)                 =",err)
+      tdata(m,m3,3) = tmp
+      edata(m,m3,3) = err
+   
+      tmp = sum(ra1)/n_data
+      if (udata) tmp = TWO*tmp
+      mu  = sum(ra1)/n_data
+      if (udata) mu = TWO*mu
+      err = sqrt(sum(ra2)/n_data - mu**2)
+      if (udata) err = sqrt(TWO*sum(ra2)/n_data - mu**2) 
+      stdout.show("<Y/X>                       =",tmp)
+      stdout.show("error                       =",err)
+      tdata(m,m3,4) = tmp
+      edata(m,m3,4) = err
+   
+      ! Clean
+      stdout.revert
+   
+      ra2.destroy
+      ra1.destroy
+      si4.destroy
+      si2.destroy
+      si1.destroy
+      ab4.destroy
+      ab2.destroy
+      ab1.destroy
+      df2.destroy
+      df1.destroy
+      label.destroy
+   
+      dy.destroy
+      dx.destroy
+      y.destroy
+      x.destroy
+
+   end
+   end
+   end
+
+   ! Put the MAD table
+   stdout.flush
+   stdout.text("\renewcommand{\Var}{$\expectation{|\Delta X|}$}")
+   stdout.text("\renewcommand{\Err}{$\sigma_\textrm{\scriptsize pop}(|\Delta X|)$}")
+   stdout.flush
+   stdout.text("\begin{table}")
+   stdout.text("\begin{center}")
+   stdout.text("\caption{%")
+   stdout.text("Mean absolute \Xdesc\ differences \Var, $\Delta X = \Xvar - \Nvar$ and corresponding")
+   stdout.text("population standard deviations \Err\ (in \Xunits), for \Ydesc . No. of data averaged: $\Xno$.")
+   stdout.text("}")
+   stdout.text("\ \\ ")
+   stdout.text("\begin{tabular}{ll|cccccc}")
+   stdout.text("\hline")
+
+   table.create(2*2+4*n3)
+   table(1).set_heading("$T$")
+   table(1).set_subhead(" ")
+   table(1).set_values(labl1)
+   table(2).set_heading("&")
+   table(2).set_subhead("&")
+   table(2).set_values(labl3)
+   table(3).set_heading("Method")
+   table(3).set_subhead(" ")
+   table(3).set_values(labl2)
+   table(4).set_heading("&")
+   table(4).set_subhead("&")
+   table(4).set_values(labl3)
+   do i = 1,n3
+   table(4*(i-1)+5).set_heading(L(axis(3))[i])
+   table(4*(i-1)+5).set_subhead("\Var")
+   table(4*(i-1)+5).set_values(tdata(:,i,1))
+   table(4*(i-1)+6).set_heading("&")
+   table(4*(i-1)+6).set_subhead("&")
+   table(4*(i-1)+6).set_values(labl3)
+   table(4*(i-1)+7).set_heading(" ")
+   table(4*(i-1)+7).set_subhead("\Err")
+   table(4*(i-1)+7).set_values(edata(:,i,1))
+   if (i<n3) then
+   table(4*(i-1)+8).set_heading("&")
+   table(4*(i-1)+8).set_subhead("&")
+   table(4*(i-1)+8).set_values(labl3)
+   end
+   end
+   table(4*(n3-1)+8).set_heading("\\ ")
+   table(4*(n3-1)+8).set_subhead("\\ ")
+   table(4*(n3-1)+8).set_values(labl4)
+
+   table.put_headings(heading_line=FALSE)
+   stdout.text("\hline \hline")
+   table.put_body
+   stdout.text("\hline")
+   table.destroy
+
+   stdout.text("\hline")
+   stdout.text("\end{tabular}")
+   stdout.text("\end{center}")
+   stdout.text("\end{table}")
+
+   ! Put the RMSD table
+   stdout.flush
+   stdout.text("\renewcommand{\Var}{$\expectation{\Delta X}$}")
+   stdout.text("\renewcommand{\Err}{$\sigma_\textrm{\scriptsize pop}(\Delta X)$}")
+   stdout.flush
+   stdout.text("\begin{table}")
+   stdout.text("\begin{center}")
+   stdout.text("\caption{%")
+   stdout.text("Mean \Xdesc\ differences \Var, $\Delta X = \Xvar - \Nvar$ and corresponding")
+   stdout.text("population standard deviations \Err\ (i.e. RMSDs, in \Xunits), for \Ydesc . No. of data averaged: $\Xno$ .")
+   stdout.text("}")
+   stdout.text("\ \\ ")
+   stdout.text("\begin{tabular}{ll|cccccc}")
+   stdout.text("\hline")
+
+   table.create(2*2+4*n3)
+   table(1).set_heading("$T$")
+   table(1).set_subhead(" ")
+   table(1).set_values(labl1)
+   table(2).set_heading("&")
+   table(2).set_subhead("&")
+   table(2).set_values(labl3)
+   table(3).set_heading("Method")
+   table(3).set_subhead(" ")
+   table(3).set_values(labl2)
+   table(4).set_heading("&")
+   table(4).set_subhead("&")
+   table(4).set_values(labl3)
+   do i = 1,n3
+   table(4*(i-1)+5).set_heading(L(axis(3))[i])
+   table(4*(i-1)+5).set_subhead("\Var")
+   table(4*(i-1)+5).set_values(tdata(:,i,2))
+   table(4*(i-1)+6).set_heading("&")
+   table(4*(i-1)+6).set_subhead("&")
+   table(4*(i-1)+6).set_values(labl3)
+   table(4*(i-1)+7).set_heading(" ")
+   table(4*(i-1)+7).set_subhead("\Err")
+   table(4*(i-1)+7).set_values(edata(:,i,2))
+   if (i<n3) then
+   table(4*(i-1)+8).set_heading("&")
+   table(4*(i-1)+8).set_subhead("&")
+   table(4*(i-1)+8).set_values(labl3)
+   end
+   end
+   table(4*(n3-1)+8).set_heading("\\ ")
+   table(4*(n3-1)+8).set_subhead("\\ ")
+   table(4*(n3-1)+8).set_values(labl4)
+
+   table.put_headings(heading_line=FALSE)
+   stdout.text("\hline \hline")
+   table.put_body
+   stdout.text("\hline")
+   table.destroy
+
+   stdout.text("\end{tabular}")
+   stdout.text("\end{center}")
+   stdout.text("\end{table}")
+
+   ! Put the compound-sigma normalised errors
+   stdout.flush
+   stdout.text("\renewcommand{\Var}{$\expectation{(\Delta X/\sigma_\textrm{\scriptsize cpd})^2}^{1/2}$}")
+   stdout.flush
+   stdout.text("\begin{table}")
+   stdout.text("\begin{center}")
+   stdout.text("\caption{%")
+   stdout.text("Compound-sigma-weighted root-mean-square \Xdesc\ differences \Var,")
+   stdout.text("where $\Delta X = \Xvar - \Nvar$, for \Ydesc .")
+   stdout.text("}")
+   stdout.text("\ \\ ")
+   stdout.text("\begin{tabular}{ll|ccc}")
+   stdout.text("\hline")
+
+   table.create(2*2+2*n3)
+   table(1).set_heading("$T$")
+   table(1).set_values(labl1)
+   table(2).set_heading("&")
+   table(2).set_values(labl3)
+   table(3).set_heading("Method")
+   table(3).set_values(labl2)
+   table(4).set_heading("&")
+   table(4).set_values(labl3)
+   do i = 1,n3
+   table(2*(i-1)+5).set_heading(L(axis(3))[i])
+   table(2*(i-1)+5).set_values(tdata(:,i,3))
+   if (i<n3) then
+   table(2*(i-1)+6).set_heading("&")
+   table(2*(i-1)+6).set_values(labl3)
+   end
+   end
+   table(2*(n3-1)+6).set_heading("\\ ")
+   table(2*(n3-1)+6).set_values(labl4)
+
+   table.put_headings(heading_line=FALSE)
+   stdout.text("\hline \hline")
+   table.put_body
+   stdout.text("\hline")
+   table.destroy
+
+   stdout.text("\end{tabular}")
+   stdout.text("\end{center}")
+   stdout.text("\end{table}")
+
+   ! Put the ratios and errors
+   stdout.flush
+   stdout.text("\renewcommand{\Var}{$\expectation{r}$}")
+   stdout.text("\renewcommand{\Err}{$\sigma_\textrm{\scriptsize pop}(r)$}")
+   stdout.flush
+   stdout.text("\begin{table}")
+   stdout.text("\begin{center}")
+   stdout.text("\caption{%")
+   if (NOT udata) then
+   stdout.text("Mean ratios \Var\ of \Xdesc, $r = \Xvar/\Nvar$, and")
+   else
+   stdout.text("Mean ratios \Var\ for diagonal \Xdesc, $r = \Xvar/\Nvar$, and")
+   end
+   stdout.text("corresponding population standard deviations \Err, for \Ydesc.")
+   stdout.text("No. of data averaged: $\Xno$.")
+   stdout.text("}")
+   stdout.text("\ \\ ")
+   stdout.text("\begin{tabular}{ll|cccccc}")
+   stdout.text("\hline")
+
+   table.create(2*2+4*n3)
+   table(1).set_heading("$T$")
+   table(1).set_subhead(" ")
+   table(2).set_heading("&")
+   table(2).set_subhead("&")
+   table(3).set_heading("Method")
+   table(3).set_subhead(" ")
+   table(4).set_heading("&")
+   table(4).set_subhead("&")
+   table(1).set_values(labl1)
+   table(2).set_values(labl3)
+   table(3).set_values(labl2)
+   table(4).set_values(labl3)
+   do i = 1,n3
+   table(4*(i-1)+5).set_heading(L(axis(3))[i])
+   table(4*(i-1)+5).set_subhead("\Var")
+   table(4*(i-1)+5).set_values(tdata(:,i,4))
+   table(4*(i-1)+6).set_heading("&")
+   table(4*(i-1)+6).set_subhead("&")
+   table(4*(i-1)+6).set_values(labl3)
+   table(4*(i-1)+7).set_heading(" ")
+   table(4*(i-1)+7).set_subhead("\Err")
+   table(4*(i-1)+7).set_values(edata(:,i,4))
+   if (i<n3) then
+   table(4*(i-1)+8).set_heading("&")
+   table(4*(i-1)+8).set_subhead("&")
+   table(4*(i-1)+8).set_values(labl3)
+   end
+   end
+   table(4*(n3-1)+8).set_heading("\\ ")
+   table(4*(n3-1)+8).set_subhead("\\ ")
+   table(4*(n3-1)+8).set_values(labl4)
+
+   table.put_headings(heading_line=FALSE)
+   stdout.text("\hline \hline")
+   table.put_body
+   stdout.text("\hline")
+   table.destroy
+
+   stdout.text("\end{tabular}")
+   stdout.text("\end{center}")
+   stdout.text("\end{table}")
+
+   ! Clear
+   labl4.destroy
+   labl3.destroy
+   labl2.destroy
+   labl1.destroy
+   edata.destroy
+   tdata.destroy
+
+   ! Now make the gnuplot command file for histogram plots
+   op = achar(91) ! open square-becaket
+   cl = achar(93) ! close square-bracket
+
+ ! stdout.redirect(trim(file_name)//".gnuplot")
+
+   ! Clean again
+   order.destroy
+   L.destroy
+
+
+   ! Memory report
+   TONTO_REPORT
+
+   ! Clean-up files
+   TEXTFILE:destroy(stderr)
+   TEXTFILE:destroy(stdout)
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end

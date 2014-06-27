@@ -1,0 +1,800 @@
+!-------------------------------------------------------------------------------
+!
+! MO_LOCALISER: Data structure for localising molecular orbitals
+!
+! This code was adapted from original work by Janos Angyan.
+! A good reference is Kleier et al (1974), JCP 61 p. 3905
+!
+! $Id: mo_localiser.foo 4009 2013-05-25 07:36:15Z dylan_ $
+!
+! Copyright (C) Dylan Jayatilaka
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!-------------------------------------------------------------------------------
+
+module MO_LOCALISER
+
+   implicit none
+
+!   type MO_LOCALISER
+!
+!   algorithm :: STR  DEFAULT(MO_LOCALISER_ALGORITHM)
+!   ! Identifier for the kind of localising algorithm
+!
+!   n_orb :: INT  DEFAULT (0)
+!   ! The number of molecular orbitals to be localised. It must not exceed the
+!   ! first dimension of the dipole integrals.
+!
+!   accuracy :: REAL  DEFAULT(MO_LOCALISER_ACCURACY)
+!   ! Used to decide when the iterative localising algorithm should terminate
+!
+!   iteration :: INT  DEFAULT(0)
+!   ! The iteration counter, for the number of iterative steps used to refine
+!   ! the localised orbitals.
+!
+!   max_iterations :: INT  DEFAULT(MO_LOCALISER_MAXIT)
+!   ! The maximum number of iterations allowed
+!
+!   MO :: MAT{REAL}*  DEFAULT_NULL
+!   ! The original molecular orbitals to be localised.
+!
+!   TM :: MAT{REAL}*  DEFAULT_NULL
+!   ! The orthogonal transformation matrix from the old to the new MO's.
+!
+!   dipole :: MAT3{REAL}*  DEFAULT_NULL
+!   ! The dipole moment integrals in the (current) MO basis, used for the Boys
+!   ! scheme and for analysing the spread of the localised orbitals. The first
+!   ! two indices are for the orbitals, the last for the component x, y, or z.
+!
+!   quadrupole :: MAT3{REAL}*  DEFAULT_NULL
+!   ! The quadrupole moment integrals in the (current) MO, used to analyze the
+!   ! localised orbitals. The first two indices are for the orbitals, the last
+!   ! for the component xx, yy, zz, xy, xz, yz.
+!
+!   end
+
+contains
+
+!  ==========================
+!  Create and destroy methods
+!  ==========================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+      self :: PTR
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts
+      nullify(.MO)
+      nullify(.TM)
+      nullify(.dipole)
+      nullify(.quadrupole)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts
+    .MO.destroy
+    .TM.destroy
+    .dipole.destroy
+    .quadrupole.destroy
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+!  ===========
+!  Set methods
+!  ===========
+
+   set_defaults(MO,dipole,quadrupole) ::: leaky
+   ! Set up the defaults. "MO" are the original molecular orbital coefficients.
+   ! "dipole" are the dipole moment integrals in the AO basis. "quadrupole" are
+   ! the quadrupole integrals in the AO basis.
+      MO :: MAT{REAL}, optional
+      dipole,quadrupole :: MAT3{REAL}, optional
+      i :: INT
+      .algorithm = MO_LOCALISER_ALGORITHM  ! boys
+      .accuracy = MO_LOCALISER_ACCURACY    ! TOL(3)
+      .max_iterations = MO_LOCALISER_MAXIT ! 20
+      .n_orb = 0
+      .iteration = 0
+      if (present(MO)) then
+         .n_orb = MO.dim2
+         .MO.create_copy(MO)
+         .TM.create(.n_orb,.n_orb)
+      end
+      if (present(dipole)) then
+         ENSURE(.MO.created,"must have MO's")
+         ENSURE(.n_orb==.MO.dim2,"inconsistent n_orb")
+         ENSURE(dipole.dim1==.MO.dim1,"wrong size, dipole")
+         ENSURE(dipole.dim2==.MO.dim1,"wrong size, dipole")
+         ENSURE(dipole.dim3==3,"wrong size, dipole")
+         .dipole.create(.n_orb,.n_orb,3)
+         do i = 1,3
+            dipole(:,:,i).change_basis_to(.dipole(:,:,i),.MO)
+         end
+      end
+      if (present(quadrupole)) then
+         ENSURE(.MO.created,"must have MO's")
+         ENSURE(.n_orb==.MO.dim2,"inconsistent n_orb")
+         ENSURE(quadrupole.dim1==.MO.dim1,"wrong size, dipole")
+         ENSURE(quadrupole.dim2==.MO.dim1,"wrong size, dipole")
+         ENSURE(quadrupole.dim3==6,"wrong size, dipole")
+         .quadrupole.create(.n_orb,.n_orb,6)
+         do i = 1,6
+            quadrupole(:,:,i).change_basis_to(.quadrupole(:,:,i),.MO)
+         end
+      end
+   end
+
+   set_accuracy(acc)
+   ! Set the accuracy
+      acc :: REAL
+   ENSURE(acc>ZERO,"accuracy must be positive")
+      .accuracy = acc
+   end
+
+   set_algorithm(alg)
+   ! Set the kind of algorithm
+      alg :: STR
+      .algorithm = alg
+      .algorithm.to_lower_case
+      select case (.algorithm)
+         case("boys")
+         case default; UNKNOWN(.algorithm)
+      end
+   end
+
+   set_max_iterations(maxit)
+   ! Set the maximum number of iterations
+      maxit :: INT
+   ENSURE(maxit>0,"must have positive iterations")
+      .max_iterations = maxit
+   end
+
+   set_MO(MO)
+   ! Set "MO" to be the current localised MO's
+      MO :: MAT{REAL}
+   ENSURE(.MO.created,"no MO's")
+      MO = .MO
+   end       
+
+!  ============
+!  Read methods
+!  ============
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR
+      word :: STR
+      word = keyword
+      word.to_lower_case
+      select case (word)
+        case ("}                          ")  ! exit read_loop
+        case ("accuracy=                  "); .read_accuracy
+        case ("algorithm=                 "); .read_algorithm
+        case ("boys_localise              "); .boys_localise
+        case ("max_iterations=            "); .read_max_iterations
+        case ("put_analysis               "); .put_analysis
+        case ("put_centroids              "); .put_centroids
+        case ("put_dipoles                "); .put_dipoles
+        case ("put_gradient               "); .put_gradient
+        case ("put_lmos                   "); .put_LMOs
+        case ("put_moments                "); .put_moments
+        case ("put_mos                    "); .put_MOs
+        case ("put_quadrupoles            "); .put_quadrupoles
+        case ("put_tranformation_matrix   "); .put_TM
+        case ("update_mos                 "); .update_MOs
+        case default;                       UNKNOWN(word)
+      end
+   end
+
+   read_accuracy
+   ! Read the accuracy to converge the orbitals to
+      acc :: REAL
+      stdin.read(acc)
+      .set_accuracy(acc)
+   end
+
+   read_algorithm
+   ! Read the algorithm to use
+      alg :: STR
+      stdin.read(alg)
+      .set_algorithm(alg)
+   end
+
+   read_max_iterations
+   ! Read the algorithm to use
+      maxit :: INT
+      stdin.read(maxit)
+      .set_max_iterations(maxit)
+   end
+
+!  ==============
+!  The algorithms
+!  ==============
+
+   boys_localise
+   ! Localization transformation of a subset of molecular orbitals by
+   ! successive 2x2 rotations. Ref: Kleier et al (1974), JCP 61 p. 3905
+   ! The function maximised in the sum-of-states function:
+   !    sum_i^n_orb  sum_k^3 <i|r_k|i><i|r_k|i>
+      dii,djj,dij :: VEC{REAL}(3)
+      qii,qjj,qij,qik,qjk,dik,djk :: REAL
+      c4a,s4a,fac,sq,xm,xp,ym,yp,z :: REAL
+      a,b,sa,ca,sa2,ca2,csa :: REAL
+      sos,old_sos,diff,del :: REAL
+      done,converged,exceeded_maxit,sos_decreases :: BIN
+      g :: MAT{REAL}*
+      pos :: VEC{INT}(2)
+      i,j,k,c :: INT
+      sos  = .boys_SOS
+      g.create(.n_orb,.n_orb)
+      .iteration = 0
+      diff = ZERO
+      .put_boys_results(sos,diff,FALSE,FALSE,FALSE)
+      .TM.to_unit_matrix
+      do                                     !  Main loop for 2x2 rotations
+         .iteration = .iteration + 1
+         .kleier_gradient(g)
+         pos = maxloc(g)
+         i = maxval(pos)
+         j = minval(pos)
+            dii = .dipole(i,i,:)
+            djj = .dipole(j,j,:)
+            dij = .dipole(i,j,:)
+            a = ZERO; b = ZERO
+            do c = 1,3                       ! Evaluate A and B functions
+               del = djj(c)-dii(c)
+               qij = dij(c)
+               a = a - QUARTER*del*del + qij*qij
+               b = b + del*qij
+            end 
+            if (a==ZERO AND b==ZERO) then
+                 ca = ONE
+                 sa = ZERO
+            else
+              fac = ONE/dsqrt(a*a+b*b)     
+              c4a = -a*fac                     ! Find optimal rotation angle
+              s4a =  b*fac                        
+              sq  = dsqrt(ONE-HALF*(ONE-c4a))
+              xm  = HALF*(ONE-sq); ym = ONE-xm
+              xp  = HALF*(ONE+sq); yp = ONE-xp
+              z   = FOUR*dsqrt(xm*ym)*(xm-ym)
+              if (z.equals(s4a)) then
+                 ca = dsqrt(xm)
+                 sa = dsqrt(ym)
+              else
+                 ca = dsqrt(xp)
+                 sa = dsqrt(yp)
+              end
+            end
+            do k = 1,.n_orb                  ! Update transformation matrix
+               dik =  ca*.TM(k,i) - sa*.TM(k,j)
+               djk =  sa*.TM(k,i) + ca*.TM(k,j)
+               .TM(k,i) = dik
+               .TM(k,j) = djk
+            end
+            ! Rotate integrals corresponding to the orbital transformation
+            !    i =  cos(alpha) * i - sin (alpha) * j 
+            !    j =  sin(alpha) * i + cos (alpha) * j 
+            do c = 1,3
+               ca2 = ca*ca
+               sa2 = sa*sa
+               csa = ca*sa
+               qii = ca2*dii(c) + sa2*djj(c) - TWO*csa*dij(c)
+               qjj = sa2*dii(c) + ca2*djj(c) + TWO*csa*dij(c)
+               qij = (ca2-sa2)*dij(c) + csa*(dii(c)-djj(c))
+               do k = 1,.n_orb
+                  if (k==i) then
+                     qik = qii; qjk = qij
+                  else if (k==j) then
+                     qik = qij; qjk = qjj
+                  else
+                     dik = .dipole(i,k,c)
+                     djk = .dipole(j,k,c)
+                     qik =  ca*dik - sa*djk
+                     qjk =  sa*dik + ca*djk
+                  end
+                  .dipole(i,k,c) = qik
+                  .dipole(k,i,c) = qik
+                  .dipole(j,k,c) = qjk
+                  .dipole(k,j,c) = qjk
+               end 
+            end ! x,y,z
+       ! end ! j main loop
+       ! end ! i main loop
+         old_sos = sos
+         sos  = .boys_SOS
+         diff = sos - old_sos
+
+         ! Check convergence          
+         converged = abs((diff/.n_orb))<.accuracy
+         exceeded_maxit = .iteration>.max_iterations
+         sos_decreases = diff<ZERO
+         .put_boys_results(sos,diff,converged,exceeded_maxit,sos_decreases)
+         done = converged OR exceeded_maxit OR sos_decreases
+         if (done) exit
+
+      end ! -- main do loop
+      g.destroy
+   end
+
+   boys_SOS result (res)
+   ! Boys sum-of-squares of orbital centroids localization function
+      res :: REAL
+      i,c :: INT
+      val :: REAL
+      res = ZERO
+      do c = 1,3
+      do i = 1,.n_orb
+         val = .dipole(i,i,c)
+         res = res + val*val
+      end
+      end
+   end       
+
+   boys_centroid_SOS result (res)
+   ! Boys sum of squares of the distances betwen orbital centroids. Maximising
+   ! this is equivalent to maximising the SOS localization function.
+      res :: REAL
+      i,j,c :: INT
+      ci,cj :: REAL
+      res = ZERO
+      do i = 2,.n_orb
+      do j = 1, i-1
+         do c = 1,3
+            ci = .dipole(i,i,c)
+            cj = .dipole(j,j,c)
+            res = res + (ci-cj)*(ci-cj)
+         end
+      end
+      end
+   end       
+
+   kleier_gradient_norm result (grad)
+   ! Localization function gradient (Kleier et al. JCP, 61 (1974) 3905)
+      grad :: REAL
+      i,j,c :: INT
+      tmp :: REAL
+      grad = ZERO
+      do i = 2,.n_orb
+      do j = 1,i-1
+         tmp = ZERO
+         do c = 1,3
+            tmp = tmp + (.dipole(i,i,c)-.dipole(j,j,c))*.dipole(i,j,c)
+         end
+         grad = grad + tmp*tmp
+      end
+      end
+      grad = FOUR*sqrt(grad)
+   end       
+
+   kleier_gradient(grad)
+   ! Localization function gradient (Kleier et al. JCP, 61 (1974) 3905)
+      grad :: MAT{REAL}
+      i,j,c :: INT
+      tmp :: REAL
+      grad = ZERO
+      do i = 2,.n_orb
+      do j = 1,i-1
+         tmp = ZERO
+         do c = 1,3
+            tmp = tmp + (.dipole(i,i,c)-.dipole(j,j,c))*.dipole(i,j,c)
+         end
+         grad(i,j) =  tmp
+         grad(j,i) = -tmp
+      end
+      end
+   end       
+
+   put_boys_results(sos,diff,converged,exceeded_maxit,sos_decreases)
+   ! Print LMO centroids
+      sos,diff :: REAL
+      converged,exceeded_maxit,sos_decreases :: BIN
+      done :: BIN
+      i :: INT
+
+      if (.iteration==0) then
+      stdout.flush
+      stdout.text("Boys localisation procedure:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.flush
+      stdout.tab(int_fields=1)
+      stdout.put("Centroid")
+      stdout.put("Centroid")
+      stdout.tab(real_fields=1)
+      stdout.put("Normalised")
+      stdout.flush
+      stdout.put("Iter",int_width=TRUE)
+      stdout.put("diff SOS")
+      stdout.put("SOS")
+      stdout.put("Delta")
+      stdout.put("delta")
+      stdout.put("Gradient")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.flush
+      end
+
+      if (.iteration>0) then
+      stdout.put(.iteration)
+      stdout.put(.boys_centroid_SOS)
+      stdout.put(sos)
+      stdout.put(diff)
+      stdout.put(diff/.n_orb)
+      stdout.put(.kleier_gradient_norm)
+      stdout.flush
+      end
+
+      done = converged OR exceeded_maxit OR sos_decreases
+
+      if (done) then
+
+         stdout.dash(int_fields=1,real_fields=5)
+         stdout.flush
+         if (converged) then
+            stdout.text("Boys procedure converged")
+         else if (exceeded_maxit) then
+            stdout.text("Boys procedure unconverged: exceeded maximum iterations")
+         else if (sos_decreases) then
+            stdout.text("Boys procedure converged? SOS decreases")
+         end
+         stdout.flush
+
+         do i = 1,6
+            .quadrupole(:,:,i).change_basis_to(.quadrupole(:,:,i),.TM)
+         end
+
+         .put_analysis ! This is important, it also does some sorting
+         .put_moments
+
+      end
+
+   end       
+
+   update_MOs
+   ! Update the original MO's by multiplying with the .TM  matrix to produce the
+   ! localised MO's. Reset .TM matrix to unity.
+   ENSURE(.MO.created,"no MO's")
+   ENSURE(.TM.created,"no transformation matrix")
+      LMO :: MAT{REAL}*
+      LMO.create(.MO.dim1,.MO.dim2)
+      LMO.to_product_of(.MO,.TM)
+      .MO = LMO
+      .TM.to_unit_matrix
+      LMO.destroy
+   end       
+
+!  =======================
+!  analysis of the results
+!  =======================
+
+   get_orbital_centroids(c)
+   ! Get the orbital centroids in "c"
+      c :: MAT{REAL}
+   ENSURE(c.dim1==3,"wrong size, c")
+   ENSURE(c.dim2==.n_orb,"wrong size, c")
+      i :: INT
+      do i = 1,.n_orb
+         c(:,i) = .dipole(i,i,:)
+      end
+   end       
+
+   get_spread_matrix(rsq,rtr,ran)
+   ! Calculate spread matrix "rsq" of a set of orbitals:
+   ! rsq(i,a,b) = <i| r_a r_b |i> - <i|r_a|i> <i|r_b|i>
+   ! The last two indices have been collapsed to one, and the order is:
+   ! ab = xx,yy,zz,xy,xz,yz.
+   ! Also get the trace and anisotropy, "rtr" and "ran" of the spread matrix.
+      rsq :: MAT{REAL}
+      rtr,ran :: VEC{REAL}
+   ENSURE(rsq.dim1==.n_orb,"wrong size, rsq")
+   ENSURE(rsq.dim2==6,"wrong size, rsq")
+   ENSURE(rtr.dim==.n_orb,"wrong size, rtr")
+   ENSURE(ran.dim==.n_orb,"wrong size, ran")
+   ENSURE(.quadrupole.created,"no quadrupole integrals")
+   ENSURE(.quadrupole.dim1>=.n_orb,"wrong size, quadrupole_integrals")
+      x,y,z,xx,yy,zz,xy,xz,yz, val :: REAL
+      i :: INT
+      do i = 1,.n_orb
+         ! Orbital centroids
+         x = .dipole(i,i,1)
+         y = .dipole(i,i,2)
+         z = .dipole(i,i,3)
+         ! Make the spread matrix moments
+         xx = .quadrupole(i,i,1) - x*x
+         yy = .quadrupole(i,i,2) - y*y
+         zz = .quadrupole(i,i,3) - z*z
+         xy = .quadrupole(i,i,4) - x*y
+         xz = .quadrupole(i,i,5) - x*z
+         yz = .quadrupole(i,i,6) - y*z
+         ! Assign the spread matrix
+         rsq(i,1) = xx
+         rsq(i,2) = yy
+         rsq(i,3) = zz
+         rsq(i,4) = xy
+         rsq(i,5) = xz
+         rsq(i,6) = yz
+         ! Trace of orbital spread matrices
+         rtr(i) = xx + yy + zz
+         ! Anisotropy of spread matrices
+         val = (xx*xx + yy*yy + zz*zz) &
+             + THREE*(xy*xy + xz*xz + yz*yz) - xy*xz - xy*yz - xz*yz
+         ran(i) = sqrt(val)
+      end
+   end
+
+   put_centroids
+   ! Print LMO centroids
+      i :: INT
+      centroid :: VEC{REAL}(3)
+      stdout.flush
+      stdout.text("LMO centroids:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=3)
+      stdout.flush
+      stdout.put("Local",int_width=TRUE)
+      stdout.tab(real_fields=1)
+      stdout.put("Centroid")
+      stdout.flush
+      stdout.put("Orb",int_width=TRUE)
+      stdout.put("x")
+      stdout.put("y")
+      stdout.put("z")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=3)
+      stdout.flush
+      do i = 1,.n_orb
+         centroid = .dipole(i,i,:)
+         stdout.put(i)
+         stdout.put(centroid(1))
+         stdout.put(centroid(2))
+         stdout.put(centroid(3))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=3)
+   end       
+
+   put_analysis
+   ! Sort the LMO centroids and print the centroids and moment analysis
+   ENSURE(.n_orb>0,"n_orb isnot positive")
+   ENSURE(.dipole.created,"no dipole integrals")
+   ENSURE(.dipole.dim1>=.n_orb,"wrong size, dipole integrals")
+
+      i :: INT
+      x,y,z :: REAL
+      rsq :: MAT{REAL}*
+      rtr,ran :: VEC{REAL}* 
+      ind :: VEC{INT}*
+
+      rtr.create(.n_orb)
+      ran.create(.n_orb)
+      rsq.create(.n_orb,6)
+
+      .get_spread_matrix(rsq,rtr,ran)
+      rsq.destroy
+
+      ! Sort according to rtr
+      ind.create(.n_orb)
+      rtr.quick_sort(ind)
+
+      ! Reorder ...
+      rtr = rtr(ind)
+      ran = ran(ind)
+      .dipole = .dipole(ind,ind,:)
+      .quadrupole = .quadrupole(ind,ind,:)
+      .TM = .TM(:,ind)
+      ind.destroy
+      
+      stdout.flush
+      stdout.text("Localised molecular orbital centroids and moment analysis:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.put("Local",int_width=TRUE)
+      stdout.tab(real_fields=1)
+      stdout.put("Centroid")
+      stdout.tab(real_fields=1)
+      stdout.put("Trace")
+      stdout.put("Anisotropy")
+      stdout.flush
+      stdout.put("Orb",int_width=TRUE)
+      stdout.put("x")
+      stdout.put("y")
+      stdout.put("z")
+      stdout.put("r2")
+      stdout.put("r2")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      do i = 1,.n_orb
+         stdout.put(i)
+         x = .dipole(i,i,1)
+         y = .dipole(i,i,2)
+         z = .dipole(i,i,3)
+         stdout.put(x)
+         stdout.put(y)
+         stdout.put(z)
+         stdout.put(rtr(i))
+         stdout.put(ran(i))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=5)
+      ran.destroy; rtr.destroy 
+   end       
+
+   put_moments
+   ! Print LMO moments
+   ENSURE(.n_orb>0,"n_orb isnot positive")
+   ENSURE(.dipole.created,"no dipole integrals")
+   ENSURE(.dipole.dim1>=.n_orb,"wrong size, dipole integrals")
+      i :: INT
+      rsq :: MAT{REAL}*
+      rtr,ran :: VEC{REAL}* 
+      rtr.create(.n_orb)
+      ran.create(.n_orb)
+      rsq.create(.n_orb,6)
+      .get_spread_matrix(rsq,rtr,ran)
+      stdout.flush
+      stdout.text("Localised molecular orbital moments:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      stdout.put("Orb",int_width=TRUE)
+      stdout.put("xx")
+      stdout.put("yy")
+      stdout.put("zz")
+      stdout.put("xy")
+      stdout.put("xz")
+      stdout.put("yz")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      do i = 1,.n_orb
+         stdout.put(i)
+         stdout.put(rsq(i,1))
+         stdout.put(rsq(i,2))
+         stdout.put(rsq(i,3))
+         stdout.put(rsq(i,4))
+         stdout.put(rsq(i,5))
+         stdout.put(rsq(i,6))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=6)
+      rsq.destroy; ran.destroy; rtr.destroy
+   end       
+
+   put_MOs
+   ! Print the MO's
+   ENSURE(.MO.created,"no MO's")
+      stdout.flush
+      stdout.text("Original MO's:")
+      stdout.flush
+      stdout.put(.MO)
+   end       
+
+   put_TM
+   ! Print the transformation matrix
+   ENSURE(.TM.created,"no transformanhtion matrix")
+      stdout.flush
+      stdout.text("LMO Transformation matrix:")
+      stdout.flush
+      stdout.put(.TM)
+      stdout.flush
+      stdout.text("Check transformation matrix orthogonality:")
+      stdout.flush
+      stdout.put(matmul(.TM,transpose(.TM)))
+   end       
+
+   put_LMOs
+   ! Print the MO's
+   ENSURE(.MO.created,"no MO's")
+      LMO :: MAT{REAL}*
+      LMO.create(.MO.dim1,.MO.dim2)
+      LMO.to_product_of(.MO,.TM)
+      stdout.flush
+      stdout.text("Localised MO's:")
+      stdout.flush
+      stdout.put(LMO)
+      LMO.destroy
+   end       
+
+   put_gradient
+   ! Print the MO's
+   ENSURE(.n_orb>0,"no occupied MO's")
+      G :: MAT{REAL}*
+      G.create(.n_orb,.n_orb)
+      .kleier_gradient(G)
+      stdout.flush
+      stdout.text("Kleier gradient vector:")
+      stdout.flush
+      stdout.put(G)
+      G.destroy
+   end       
+
+   put_dipoles
+   ! Print the dipoles out
+   ENSURE(.n_orb>0,"n_orb isnot positive")
+   ENSURE(.dipole.created,"no dipole integrals")
+   ENSURE(.dipole.dim1>=.n_orb,"wrong size, dipole integrals")
+      stdout.flush
+      stdout.text("Dipole moment integrals:")
+      stdout.flush
+      stdout.text("x:")
+      stdout.flush
+      stdout.put(.dipole(:,:,1))
+      stdout.flush
+      stdout.text("y:")
+      stdout.flush
+      stdout.put(.dipole(:,:,2))
+      stdout.flush
+      stdout.text("z:")
+      stdout.flush
+      stdout.put(.dipole(:,:,3))
+   end       
+
+   put_quadrupoles
+   ! Print the quadrupoles out
+   ENSURE(.n_orb>0,"n_orb isnot positive")
+   ENSURE(.quadrupole.created,"no quadrupole integrals")
+   ENSURE(.quadrupole.dim1>=.n_orb,"wrong size, quadrupole integrals")
+      stdout.flush
+      stdout.text("Quadrupole moment integrals:")
+      stdout.flush
+      stdout.text("xx:")
+      stdout.flush
+      stdout.put(.quadrupole(:,:,1))
+      stdout.flush
+      stdout.text("yy:")
+      stdout.flush
+      stdout.put(.quadrupole(:,:,2))
+      stdout.flush
+      stdout.text("zz:")
+      stdout.flush
+      stdout.put(.quadrupole(:,:,3))
+      stdout.flush
+      stdout.text("xy:")
+      stdout.flush
+      stdout.put(.quadrupole(:,:,4))
+      stdout.flush
+      stdout.text("xz:")
+      stdout.flush
+      stdout.put(.quadrupole(:,:,5))
+      stdout.flush
+      stdout.text("yz:")
+      stdout.flush
+      stdout.put(.quadrupole(:,:,6))
+   end       
+
+end

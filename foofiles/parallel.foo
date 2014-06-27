@@ -1,0 +1,783 @@
+module PARALLEL
+
+#ifdef MPI
+!  Note the capital USE, below which prevents the preprocessor 
+!  from making the module a dependent
+   USE mpi, only: MPI_COMM_WORLD
+   USE mpi, only: MPI_SUM
+   USE mpi, only: MPI_CHARACTER
+   USE mpi, only: MPI_LOGICAL
+   USE mpi, only: MPI_INTEGER
+   USE mpi, only: MPI_DOUBLE_PRECISION
+   USE mpi, only: MPI_DOUBLE_COMPLEX
+#endif
+
+  implicit none
+
+contains
+
+   initialise
+   ! Initialise the parallel environment.
+#ifdef MPI
+      .is_parallel = TRUE
+      .do_parallel_lock = " "
+      .master_rank = 0
+      call MPI_init(.mpi_status)
+      call MPI_comm_size(MPI_COMM_WORLD,.n_processors,.mpi_status)
+      call MPI_comm_rank(MPI_COMM_WORLD,.processor_rank,.mpi_status)
+#else
+      .is_parallel = FALSE
+      .do_parallel_lock = " "
+      .master_rank = 0
+      .n_processors = 1
+      .processor_rank = 0
+#endif
+   end
+
+   finalise
+   ! Finalise the parallel environment.
+      .is_parallel = FALSE
+#ifdef MPI
+      call MPI_finalize(.mpi_status)
+#endif
+   end
+
+! ================
+! Inquiry routines
+! ================
+
+   is_master_processor result (res) ::: pure
+   ! Return TRUE if this is the master processor. The index of the master
+   ! processor is normally 0.
+      self :: IN
+      res :: BIN
+      res = .processor_rank == .master_rank
+   end
+
+   master_processor result (res) ::: pure
+   ! Return the index of the master processor, which is normally 0.
+      self :: IN
+      res :: INT
+      res = .master_rank
+   end
+
+   this_processor result (res) ::: pure
+   ! Return the index of this processor.  First index is zero!
+      self :: IN
+      res :: INT
+      if (.is_parallel) then; res = .processor_rank
+      else;                   res = 0
+      end
+   end
+
+! ============================================================================
+! Parallel do loops: simple parallel loops are implemented in the preprocessor
+! ============================================================================
+
+   parallel_do_start(first,stride) result (res) ::: pure
+   ! Return the starting index to be used in a parallel do statement. The
+   ! "first" index and the loop "stride" can optionally be supplied, if they are
+   ! not equal to 1.  In this model, each processor skips through the whole
+   ! length of the loop.  This should be load balanced --- assuming there is no
+   ! systematic dependence in the work for each element of the loop which
+   ! depends on a multiple of the number of processors. See the "do_stride"
+   ! routine.
+      self :: IN
+      first,stride :: INT, IN, optional
+      res :: INT
+      f,s :: INT
+      f = 1
+      if (present(first)) f = first
+      s = 1
+      if (present(stride)) s = stride
+      if (.do_in_parallel) then; res = f + s*.processor_rank
+      else;                      res = f
+      end
+   end
+
+   parallel_do_stride(stride) result (res) ::: pure
+   ! Return the stride to be used in a parallel do statement.  The "stride"
+   ! length can be optionally supplied, if it is not 1.
+      self :: IN
+      stride :: INT, IN, optional
+      res :: INT
+      s :: INT
+      s = 1
+      if (present(stride)) s = stride
+      if (.do_in_parallel) then; res = s*.n_processors
+      else;                      res = s
+      end
+   end
+
+   do_in_parallel result (res) ::: pure
+   ! Return TRUE if we are allowed to start to implement a given do-loop in
+   ! parallel. NOTE: Once you have parallelised a loop, remember to prevent
+   ! further parallelisation, using the ".lock_parallel_do" method. This is
+   ! typically used as the first statement after the parallel do loop is
+   ! entered.
+      self :: IN
+      res :: BIN
+      res = .is_parallel AND .do_parallel_lock==" "
+   end
+
+   lock_parallel_do(name)
+   ! Sets the parallel do-loop lock to the "name" of the locking routine.
+   ! Only the routine with the same "name" may unlock the loop. WARNING: This
+   ! assumes that the names of the routines are all distinct. NOTE: It is
+   ! currently an error if the routine is recursive. Nested parallel loops are
+   ! OK but disabled.
+      name :: STR
+ !   ENSURE(name/=.do_parallel_lock,"recursive parallel routines not allowed")
+      if (.do_parallel_lock==name) return
+      if (.do_parallel_lock==" ") .do_parallel_lock = name
+   end
+
+   unlock_parallel_do(name)
+   ! Allow parallelisation again, if the name matches the original.
+      name :: STR
+      if (.do_parallel_lock==name) .do_parallel_lock = " "
+   end
+
+! ==================
+! Summation routines
+! ==================
+
+   parallel_vector_sum(vec,dim) ::: template
+   ! This routine adds the versions of "vec" with dimension "dim" from all
+   ! processors, and gives the result to all processors.
+      dim :: INT, IN
+      vec :: VEC{X}(dim), INOUT
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      tmp :: VEC{X}*
+
+      vec = vec
+
+      .mpi_status = 0
+      allocate(tmp(dim))
+#ifdef MPI
+      call MPI_ALLREDUCE(vec,tmp,dim,Y,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+      vec = tmp
+#else
+      DIE("wtf?")
+#endif
+      deallocate(tmp)
+
+   end
+
+   parallel_vector_sum(vec,dim) ::: get_from(PARALLEL, X=>BIN, Y=>MPI_LOGICAL), public
+   ! This routine adds the versions of "vec" with dimension "dim" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_vector_sum(vec,dim) ::: get_from(PARALLEL, X=>INT, Y=>MPI_INTEGER), public
+   ! This routine adds the versions of "vec" with dimension "dim" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_vector_sum(vec,dim) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION), public
+   ! This routine adds the versions of "vec" with dimension "dim" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_vector_sum(vec,dim) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX), public
+   ! This routine adds the versions of "vec" with dimension "dim" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(val) ::: template
+   ! This routine adds the versions of scalar "val" from all
+   ! processors, and gives the result to all processors.
+      val :: XX, INOUT
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      tmp :: XX
+
+      .mpi_status = 0
+      tmp = val
+#ifdef MPI
+      call MPI_ALLREDUCE(val,tmp,1,YY,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+#else
+      DIE("wtf?")
+#endif
+      val = tmp
+
+   end
+
+   parallel_sum(val) ::: get_from(PARALLEL, XX=>BIN, YY=>MPI_LOGICAL), public
+   ! This routine adds the versions of scalar "val" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(val) ::: get_from(PARALLEL, XX=>INT, YY=>MPI_INTEGER), public
+   ! This routine adds the versions of scalar "val" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(val) ::: get_from(PARALLEL, XX=>REAL, YY=>MPI_DOUBLE_PRECISION), public
+   ! This routine adds the versions of scalar "val" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(val) ::: get_from(PARALLEL, XX=>CPX, YY=>MPI_DOUBLE_COMPLEX), public
+   ! This routine adds the versions of scalar "val" from all
+   ! processors, and gives the result to all processors.
+   end
+
+   parallel_sum(vec) ::: template
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+      vec :: VEC{X}, INOUT
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      tmp :: VEC{X}*
+
+      vec = vec
+
+      .mpi_status = 0
+      allocate(tmp(size(vec)))
+#ifdef MPI
+      call MPI_ALLREDUCE(vec,tmp,size(vec),Y,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+      vec = tmp
+#else
+      DIE("wtf?")
+#endif
+      deallocate(tmp)
+
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, X=>BIN, Y=>MPI_LOGICAL)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, X=>INT, Y=>MPI_INTEGER)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+! These matrix summations may not be implemented, because the fortran
+! 90 interfaces might be missing from the MPICH MPI implementation; we
+! could work around this by using temporary one dimensional arrays,
+! but that would be inefficient.
+
+   parallel_sum(mat) ::: template
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+      mat :: MAT{X}, INOUT
+
+   ENSURE(.is_parallel,"must be in a parallel environment")
+
+      tmp :: MAT{X}*
+
+      mat = mat
+
+      .mpi_status = 0
+      allocate(tmp(size(mat,1),size(mat,2)))
+#ifdef MPI
+      call MPI_ALLREDUCE(mat,tmp,mat.dim,Y,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+      mat = tmp
+#else
+      DIE("wtf?")
+#endif
+      deallocate(tmp)
+
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+   end
+
+
+   parallel_symmetric_sum(mat)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors. The matrix "mat" is assumed to be symmetric, and
+   ! only the lower half of "mat" is summed; the upper triangle is forced to be
+   ! the same as the lower triangle.
+      mat :: MAT{REAL}, INOUT
+
+   ENSURE(.is_parallel,"must be in a parallel environment")
+   ENSURE(mat.dim1==mat.dim2,"mat must be square")
+
+      invec,outvec :: VEC{REAL}*
+      tri_size,dim :: INT
+
+      .mpi_status = 0
+
+      dim = mat.dim1
+      tri_size = dim*(dim+1)/2
+
+      allocate(invec(tri_size))
+      allocate(outvec(tri_size))
+#ifdef MPI
+      .compress_to_triangle(invec,mat)
+      call MPI_ALLREDUCE(invec,outvec,tri_size,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+      .uncompress_from_triangle(outvec,mat)
+#else
+      DIE("wtf?")
+#endif
+      deallocate(outvec)
+      deallocate(invec)
+
+   end
+
+
+   parallel_sum(mat) ::: template
+   ! This routine adds the versions of a 3d "mat" from all processors, and gives
+   ! the result to all processors.
+      mat :: MAT3{X}, INOUT
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      tmp :: MAT3{X}*
+
+      .mpi_status = 0
+      allocate(tmp(mat.dim1,mat.dim2,mat.dim3))
+#ifdef MPI
+      call MPI_ALLREDUCE(mat,tmp,mat.dim,Y,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+      mat = tmp
+#else
+      DIE("wtf?")
+#endif
+      deallocate(tmp)
+   
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of a 3d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of a 3d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+
+   parallel_sum(mat) ::: template
+   ! This routine adds the versions of a 4d "mat" from all processors, and gives
+   ! the result to all processors.
+      mat :: MAT4{X}, INOUT
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      tmp :: MAT4{X}*
+
+      .mpi_status = 0
+      allocate(tmp(mat.dim1,mat.dim2,mat.dim3,mat.dim4))
+#ifdef MPI
+      call MPI_ALLREDUCE(mat,tmp,mat.dim,Y,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+      mat = tmp
+#else
+      DIE("wtf?")
+#endif
+      deallocate(tmp)
+
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of a 4d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of a 4d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+
+   parallel_sum(mat) ::: template
+   ! This routine adds the versions of a 5d "mat" from all processors, and gives
+   ! the result to all processors.
+      mat :: MAT5{X}, INOUT
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      tmp :: MAT5{X}*
+
+      .mpi_status = 0
+      allocate(tmp(mat.dim1,mat.dim2,mat.dim3,mat.dim4,mat.dim5))
+#ifdef MPI
+      call MPI_ALLREDUCE(mat,tmp,mat.dim,Y,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+      mat = tmp
+#else
+      DIE("wtf?")
+#endif
+      deallocate(tmp)
+
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>REAL, Y=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of a 5d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, X=>CPX, Y=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of a 5d "mat" from all processors, and gives
+   ! the result to all processors.
+   end
+
+
+! These should be inherited, but aren't, to decouple this
+! module from any others.
+
+   compress_to_triangle(tr,mat)
+   ! Converts the lower triangle of matrix "mat" to the triangle "tr".
+   ! using row order.
+      mat :: MAT{REAL}
+      tr :: VEC{REAL}
+
+   ENSURE(mat.dim1==mat.dim2,"mat must be square")
+
+      ij,i,j :: INT
+
+      if (FALSE) self = self
+
+      ij = 0
+      do i = 1,mat.dim1
+        do j = 1,i
+           tr(ij+j) = mat(i,j)
+        end
+        ij = ij+i
+      end
+
+   end
+
+   uncompress_from_triangle(tr,mat)
+   ! Converts the triangle "tr" into the symmetric matrix "mat".
+      tr :: VEC{REAL}
+      mat :: MAT{REAL}
+
+   ENSURE(mat.dim1==mat.dim2,"mat must be square")
+
+      tmp :: REAL
+      ij,i,j :: INT
+
+      if (FALSE) self = self
+
+      ij = 0
+      do i = 1,size(mat,1)
+        do j = 1,i
+           tmp = tr(ij+j)
+           mat(j,i) = tmp
+           mat(i,j) = tmp
+        end
+        ij = ij+i
+      end
+
+   end
+
+! =====================================
+! Broadcast variables to all processors
+! =====================================
+
+   broadcast(var,processor) ::: template
+   ! Broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      proc :: INT
+
+      if (FALSE) self = self
+      var = var
+
+      proc = 0
+      if (present(processor)) proc = processor
+
+      .mpi_status = 0
+#ifdef MPI
+      call MPI_BCAST(var,LEN,MPI_TYPE,proc,MPI_COMM_WORLD,.mpi_status)
+#else
+      DIE("wtf?")
+      proc = proc
+#endif
+
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+!   ! Broadcast variable "var" from "processor" to all the others.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+! Comment: there may be problems implementing higher order array
+! broadcasts, because the interfaces may be missing from the MPI
+! module implementation; we could work around this by using temporary
+! one dimensional arrays, but that would be inefficient.
+
+   IO_is_allowed result (res)
+   ! Return whether or not this processor is allowed to do the I/O operation.
+   ! Here, only the master processor does I/O in a parallel job.
+      res :: BIN
+      res = .is_master_processor OR (NOT .is_parallel)
+   end
+
+   synchronise_processors
+   ! Synchronise all processors at this point.
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+   
+      if (FALSE) self = self
+#ifdef MPI
+      call MPI_BARRIER(MPI_COMM_WORLD,.mpi_status)
+#endif
+
+   end
+
+   set_max_n_skip_proc(n)
+   ! Set the maximum number of processors that can be skipped when assigning a
+   ! processor grid.
+      self :: INOUT
+      n :: INT, IN
+      .max_n_skip_proc = n
+   end
+
+   get_2d_processor_grid(nprocx,nprocy,nproc)
+   ! This routine returns how to divide up the processors into a two-dimensional
+   ! grid so that the number of processors in each dimension is roughly the same.
+   ! If the number of processors cannot be factored into two dimensions, then it
+   ! starts ignoring cpus.
+      self :: IN
+      nprocx, nprocy :: INT, OUT
+      nproc :: INT, IN, optional
+      n_skip,i,nprocs :: INT
+      found :: BIN
+ 
+      if (present(nproc)) then
+       nprocs = nproc
+      else
+       nprocs = .n_processors
+      end
+ 
+      ! Quick case
+      if (nprocs < 4) then
+       nprocx = nprocs
+       nprocy = 1
+       return
+      end
+ 
+      ENSURE(.max_n_skip_proc>=0,"max_n_skip_proc must be positive")
+      ! How to break up grid of processors.
+      ! Must have nprocx * nprocy = nprocs
+      ! If they can't be factored nicely then try factoring less cpus.
+      nprocs = nprocs + 1
+      do n_skip = 0,min(.max_n_skip_proc,nprocs)
+       nprocs = nprocs - 1
+       nprocy = floor(sqrt(real(nproc,kind=REAL_KIND))) ! Start from the sqrt in
+       ! case we have some nice big factors as well as small ones.
+       found = FALSE
+       do i=nprocy,1,-1
+         nprocx = nproc/nprocy
+         if (mod(nproc,nprocy)==0) then
+           found = TRUE
+           exit
+         end
+         if (nprocy<nprocx) exit ! Otherwise same test with x,y reversed.
+       end
+       if (found) exit
+      end
+   end
+
+!  =====================
+!  Scalapack/blacs stuff
+!  =====================
+
+   init_2d_proc_grid
+   ! This routine initialises blacs for a two-dimensional processor grid.
+      self :: INOUT
+
+      ! Initialise Scalapack with 2d processor grid.
+      .get_2d_processor_grid(.proc_grid_nrow,.proc_grid_ncol)
+#ifdef SCALAPACK
+      call sl_init(.blacs_2d_context, .proc_grid_nrow, .proc_grid_ncol)
+#else
+      .blacs_2d_context = 0
+      .proc_grid_nrow = 1
+      .proc_grid_ncol = 1
+#endif
+
+      ! Get my position in the global matrix.
+#ifdef SCALAPACK
+      call blacs_gridinfo(.blacs_2d_context, .proc_grid_nprow, &
+             .proc_grid_npcol, .proc_grid_myrow, .proc_grid_mycol)
+#else
+      .proc_grid_myrow = 1
+      .proc_grid_mycol = 1
+#endif
+   end
+
+   done_proc_grid
+   ! Uninitialise blacs.
+      self :: INOUT
+#ifdef SCALAPACK
+      call blacs_gridexit( .blacs_2d_context )
+      call blacs_exit( 1 ) ! 0 if you want it to shut down MPI
+#else
+      .blacs_2d_context = 0 ! so that the routine is not empty
+#endif
+   end
+
+   n_this_row(n) result (res)
+   ! Number of rows of a matrix of n rows assigned to this processor.
+      self :: IN
+      n :: INT, IN
+      res :: INT
+#ifdef SCALAPACK
+      res = numroc(n, .proc_grid_bs, .proc_grid_myrow, 0, .proc_grid_nrow)
+#else
+      res = n
+#endif
+   end
+
+   n_this_col(n)
+   ! Number of columns of a matrix of n columns assigned to this processor.
+      self :: IN
+      n :: INT, IN
+      res :: INT
+#ifdef SCALAPACK
+      res = numroc(n, .proc_grid_bs, .proc_grid_mycol, 0, .proc_grid_ncol)
+#else
+      res = n
+#endif
+   end
+
+end
