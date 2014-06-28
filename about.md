@@ -15,6 +15,13 @@ This is the official site for the Tonto program package.
 Tonto is available to non-commercial entities under the GPLv2 open source
 license.
 
+## Contacts
+
+If you are experiencing technical problems you can contact Dylan Jayatilaka.
+
+Commercial entities or those requiring consultation for using
+diffraction-related applications should contact Simon Grabowsky.
+
 ## Highlights
 
 The main feature of the package is that it can refine X-ray crystal
@@ -70,11 +77,4 @@ The contributors are
 * Mike J. Turner
 * Magda Woinska
 * Stephen K. Wolff
-
-## Contacts
-
-If you are experiencing technical problems you can contact Dylan Jayatilaka.
-
-Commercial entities or those requiring consultation for using
-diffraction-related applications should contact Simon Grabowsky.
 
