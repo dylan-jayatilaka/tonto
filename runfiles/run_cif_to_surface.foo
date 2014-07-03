@@ -30,6 +30,15 @@ program run_CIF_TO_SURFACE
    a :: INT
    found :: BIN
    m :: MOLECULE*
+   gm :: BIN
+
+   ! Moment generating variables
+   iso_points :: MAT{REAL}*
+   d_e, d_i, d_norm_e, d_norm_i, d_norm :: VEC{REAL}*
+   in, out :: VEC{INT}*
+   atom :: VEC{ATOM}*
+   qc, qs :: VEC{REAL}*
+   l_max :: INT
 
    ! Macro to create Tonto system object
    ! Initialise MPI parallel stuff too.
@@ -51,6 +60,8 @@ program run_CIF_TO_SURFACE
    cif = "input.cif"
    cxs = "output.cxs"
    res = 0.5
+   gm = FALSE
+   l_max = 10
    ! Analyze command line options
    do a = 1,command_line.n_options
 
@@ -63,6 +74,8 @@ program run_CIF_TO_SURFACE
          case("cif");  cif = value
          case("cxs");  cxs = value
          case("res");  res = value.to_real
+         case("gen");  gm = TRUE
+         case("max");  l_max = value.to_int
          case default; DIE("unknown option: "//trim(option))
       end
 
@@ -91,6 +104,8 @@ program run_CIF_TO_SURFACE
    stdout.flush
    stdout.show("CIF file     =",cif)
    stdout.show("CXS file     =",cxs)
+   stdout.show("gm           =", gm)
+   stdout.show("l_max        =", l_max)
 
    ! Set basis_set library folder
    directory = "./basis_sets"
@@ -121,17 +136,6 @@ program run_CIF_TO_SURFACE
    ! Read/process CIF
    m.XTAL:read_CIF_atoms(m.cif)
    m.XTAL:read_CIF_crystal(m.cif)
-
-      ! Initialize cluster & defragment CIF fragment
-      ! Note: Z' = 1 only so far
-      !m.cluster.create(m.crystal)
-      !m.cluster.set_generation_method("fragment")
-      !m.cluster.defragment = TRUE
-      !m.cluster.make_info
-      !m.cluster.put
-      !m.XTAL:create_cluster
-
-      !m.BASE:put
 
       ! Initialize cluster for HS
       m.cluster.create(m.crystal)
@@ -183,6 +187,39 @@ program run_CIF_TO_SURFACE
       output.open(for="write")
       m.CE:put_CX_data(output,m.cif)
       output.destroy
+
+      if (gm) then
+        stdout.text("Generating moments using spherical harmonics")
+        stdout.flush
+        d_i.create(m.isosurface.n_pt)
+        d_e.create(m.isosurface.n_pt)
+        d_norm_i.create(m.isosurface.n_pt)
+        d_norm_e.create(m.isosurface.n_pt)
+        d_norm.create(m.isosurface.n_pt)
+
+        iso_points.create(3, m.isosurface.n_pt)
+        iso_points = m.isosurface.point
+
+        atom.create(m.isosurface.atom.dim)
+        atom = m.isosurface.atom
+
+        in.create(m.saved.cluster.fragment_atom_indices.dim)
+        in = m.saved.cluster.fragment_atom_indices
+
+        out.create(m.saved.cluster.nonfragment_atom_indices.dim)
+        out = m.saved.cluster.nonfragment_atom_indices
+        m.isosurface.make_fingerprint_distances(d_e, d_i, d_norm_e, d_norm_i, d_norm, in, out, atom, angstrom=TRUE)
+
+        VEC{REAL}:make_R_multipoles(qc, qs, d_i, iso_points, l_max)
+
+        stdout.put(qc); stdout.put(qs)
+        stdout.flush
+        ! NEED TO CLEAN UP
+      end
+
+
+
+
 
       ! Destroy for next cluster
       m.cluster.destroy
