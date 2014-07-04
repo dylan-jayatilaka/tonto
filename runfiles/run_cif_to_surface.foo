@@ -30,7 +30,6 @@ program run_CIF_TO_SURFACE
    a :: INT
    found :: BIN
    m :: MOLECULE*
-   gm :: BIN
 
    ! Moment generating variables
    iso_points :: MAT{REAL}*
@@ -38,10 +37,7 @@ program run_CIF_TO_SURFACE
    in, out :: VEC{INT}*
    atom :: VEC{ATOM}*
    qc, qs :: VEC{REAL}*
-   Rc, Rs :: VEC{VEC_{VEC_{REAL}}}*
    l_max :: INT
-   L :: INT
-   N :: INT
 
    ! Macro to create Tonto system object
    ! Initialise MPI parallel stuff too.
@@ -63,7 +59,6 @@ program run_CIF_TO_SURFACE
    cif = "input.cif"
    cxs = "output.cxs"
    res = 0.5
-   gm = FALSE
    l_max = 10
    ! Analyze command line options
    do a = 1,command_line.n_options
@@ -77,7 +72,6 @@ program run_CIF_TO_SURFACE
          case("cif");  cif = value
          case("cxs");  cxs = value
          case("res");  res = value.to_real
-         case("gen");  gm = TRUE
          case("max");  l_max = value.to_int
          case default; DIE("unknown option: "//trim(option))
       end
@@ -107,7 +101,6 @@ program run_CIF_TO_SURFACE
    stdout.flush
    stdout.show("CIF file     =",cif)
    stdout.show("CXS file     =",cxs)
-   stdout.show("gm           =", gm)
    stdout.show("l_max        =", l_max)
 
    ! Set basis_set library folder
@@ -191,50 +184,46 @@ program run_CIF_TO_SURFACE
       m.CE:put_CX_data(output,m.cif)
       output.destroy
 
-      if (gm) then
-        stdout.text("Generating moments using spherical harmonics")
-        stdout.flush
-        d_i.create(m.isosurface.n_pt)
-        d_e.create(m.isosurface.n_pt)
-        d_norm_i.create(m.isosurface.n_pt)
-        d_norm_e.create(m.isosurface.n_pt)
-        d_norm.create(m.isosurface.n_pt)
+    stdout.text("Generating moments using spherical harmonics")
+    stdout.flush
 
-        iso_points.create(m.isosurface.n_pt, 3)
-        iso_points = transpose(m.isosurface.point)
+    ! Allocate all useful values
+    d_i.create(m.isosurface.n_pt)
+    d_e.create(m.isosurface.n_pt)
+    d_norm_i.create(m.isosurface.n_pt)
+    d_norm_e.create(m.isosurface.n_pt)
+    d_norm.create(m.isosurface.n_pt)
+    out.create(m.saved.cluster.nonfragment_atom_indices.dim)
+    in.create(m.saved.cluster.fragment_atom_indices.dim)
+    iso_points.create(m.isosurface.n_pt, 3)
+    atom.create(m.isosurface.atom.dim)
 
-        atom.create(m.isosurface.atom.dim)
-        atom = m.isosurface.atom
+    ! Assign their values using functions
+    iso_points = transpose(m.isosurface.point)
+    atom = m.isosurface.atom
+    in = m.saved.cluster.fragment_atom_indices
+    out = m.saved.cluster.nonfragment_atom_indices
+    m.isosurface.make_fingerprint_distances(d_e, d_i, d_norm_e, &
+    d_norm_i, d_norm, in, out, atom, angstrom=TRUE)
+    
+    ! Calculate the multipole moments
+    VEC{REAL}:make_R_multipoles(qc, qs, d_i, iso_points, l_max)
+    stdout.text("Qc moments:")
+    stdout.put(qc)
+    stdout.text("Qs moments:")
+    stdout.put(qs)
+    stdout.flush
 
-        in.create(m.saved.cluster.fragment_atom_indices.dim)
-        in = m.saved.cluster.fragment_atom_indices
+    ! NEED TO CLEAN UP
+    d_i.destroy
+    d_e.destroy
+    iso_points.destroy
+    d_norm.destroy
+    d_norm_i.destroy
+    d_norm_e.destroy
 
-        out.create(m.saved.cluster.nonfragment_atom_indices.dim)
-        out = m.saved.cluster.nonfragment_atom_indices
-        m.isosurface.make_fingerprint_distances(d_e, d_i, d_norm_e, d_norm_i, d_norm, in, out, atom, angstrom=TRUE)
-        VEC{REAL}:make_R_harmonics(Rc, Rs, iso_points, l_max)
-        VEC{REAL}:make_R_multipoles(qc, qs, d_i, iso_points, l_max)
-        stdout.text("Qc moments:")
-        stdout.put(qc)
-        stdout.text("Qs moments:")
-        stdout.put(qs)
-        stdout.flush
-
-        ! NEED TO CLEAN UP
-        d_i.destroy
-        d_e.destroy
-        iso_points.destroy
-        d_norm.destroy
-        d_norm_i.destroy
-        d_norm_e.destroy
-
-        out.destroy
-        in.destroy
-      end
-
-
-
-
+    out.destroy
+    in.destroy
 
       ! Destroy for next cluster
       m.cluster.destroy
