@@ -24,13 +24,18 @@ program run_CIF_TO_SURFACE
 
    command_line :: COMMAND_LINE
    output :: TEXTFILE*
-   option,value, cif,cxs :: STR
+   s, option, value, cif,cxs :: STR
    directory :: STR
+   property :: VEC{STR}(6)
    res :: REAL
-   a :: INT
+   a, N :: INT
    found :: BIN
    m :: MOLECULE*
 
+   ! Moment generating variables
+   qc, qs :: VEC{REAL}*
+   l_max :: INT
+   in, out :: VEC{INT}*
    ! Macro to create Tonto system object
    ! Initialise MPI parallel stuff too.
    TONTO_CREATE
@@ -46,11 +51,12 @@ program run_CIF_TO_SURFACE
    ! Get the command line
    command_line.process_options
    DIE_IF(command_line.has_arguments,"illegal arguments; use options only")
-
+   
    ! Default options
    cif = "input.cif"
    cxs = "output.cxs"
    res = 0.5
+   l_max = 10
    ! Analyze command line options
    do a = 1,command_line.n_options
 
@@ -63,12 +69,19 @@ program run_CIF_TO_SURFACE
          case("cif");  cif = value
          case("cxs");  cxs = value
          case("res");  res = value.to_real
+         case("lmax");  l_max = value.to_int
          case default; DIE("unknown option: "//trim(option))
       end
 
    end
 
-   ! Clean command line
+    property(1) = "d_e"
+    property(2) = "d_i"
+    property(3) = "d_norm_e"
+    property(4) = "d_norm_i"
+    property(5) = "d_norm"
+    property(6) = "shape"
+    ! Clean command line
    command_line.destroy_ptr_part
 
    ! Initialize molecule
@@ -76,7 +89,7 @@ program run_CIF_TO_SURFACE
    GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
 
    ! Tonto banner
-   MOLECULE.MAIN:put_banner
+   !MOLECULE.MAIN:put_banner
 
    ! Script banner
    stdout.flush
@@ -91,6 +104,7 @@ program run_CIF_TO_SURFACE
    stdout.flush
    stdout.show("CIF file     =",cif)
    stdout.show("CXS file     =",cxs)
+   stdout.show("l_max        =", l_max)
 
    ! Set basis_set library folder
    directory = "./basis_sets"
@@ -121,17 +135,6 @@ program run_CIF_TO_SURFACE
    ! Read/process CIF
    m.XTAL:read_CIF_atoms(m.cif)
    m.XTAL:read_CIF_crystal(m.cif)
-
-      ! Initialize cluster & defragment CIF fragment
-      ! Note: Z' = 1 only so far
-      !m.cluster.create(m.crystal)
-      !m.cluster.set_generation_method("fragment")
-      !m.cluster.defragment = TRUE
-      !m.cluster.make_info
-      !m.cluster.put
-      !m.XTAL:create_cluster
-
-      !m.BASE:put
 
       ! Initialize cluster for HS
       m.cluster.create(m.crystal)
@@ -172,7 +175,8 @@ program run_CIF_TO_SURFACE
       m.isosurface.plot_grid.set_cube_scale_factor(ONE)
       ! Desired separation is essentially the resolution of the calculated surface
       m.isosurface.plot_grid.desired_separation = res
-      ! m.isosurface.plot_grid.put
+    
+
 
       ! Make isosurface
       m.PLOT:isosurface_plot
@@ -182,7 +186,30 @@ program run_CIF_TO_SURFACE
       output.create(trim(cxs))
       output.open(for="write")
       m.CE:put_CX_data(output,m.cif)
-      output.destroy
+
+    out.create(m.saved.cluster.nonfragment_atom_indices.dim)
+    in.create(m.saved.cluster.fragment_atom_indices.dim)
+    in = m.saved.cluster.fragment_atom_indices
+    out = m.saved.cluster.nonfragment_atom_indices
+    ! do calculation 
+    output.set_using_fields(FALSE)
+
+    do N=1,property.dim
+        m.isosurface.make_surface_multipole_moments(qc, qs, in, out, l_max, property(N))
+        a = qc.dim * 2
+        s.from_int(a)
+        s = "begin moments_" // trim(property(N)) // " " // trim(s)
+        output.text(s)
+        output.put(qc)
+        output.put(qs)
+        output.text("end")
+    end
+    output.flush
+    
+    
+    out.destroy
+    in.destroy
+    output.destroy
 
       ! Destroy for next cluster
       m.cluster.destroy

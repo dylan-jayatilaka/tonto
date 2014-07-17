@@ -3959,6 +3959,179 @@ contains
       stdout.text("done VRML isosurface")
 
    end
+    
+
+    make_surface_multipole_moments(qc, qs, in, out, l_max, property) ::: leaky
+        self :: IN
+        in, out :: VEC{INT}, IN
+        l_max :: INT, IN
+        property :: STR, IN
+        
+        qc,qs :: VEC{REAL}*
+        atom :: VEC{ATOM}*
+        iso_points :: MAT{REAL}*
+        face_point :: MAT{REAL}*
+        face_value :: VEC{REAL}*
+
+        d_e, d_i, d_norm_e, d_norm_i, d_norm, vals :: VEC{REAL}*
+
+        N, x, y, z :: INT
+        tmp, area :: REAL
+        centre, midpoint, px, py, pz :: VEC{REAL}(3)
+
+
+        d_i.create(.n_pt)
+        d_e.create(.n_pt)
+        d_norm_i.create(.n_pt)
+        d_norm_e.create(.n_pt)
+        d_norm.create(.n_pt)
+        vals.create(.n_pt)
+        iso_points.create(.n_pt, 3)
+        face_point.create(.n_face, 3)
+        face_value.create(.n_face)
+        atom.create(.atom.dim)
+        atom = .atom
+
+        ! we need to transpose iso_points because multipole method
+        ! expects a Nx3 rather than a 3xN array
+        iso_points = transpose(.point)
+        .make_fingerprint_distances(d_e, d_i, d_norm_e, d_norm_i, d_norm, in, out, atom, angstrom=TRUE)
+
+        ! interpolate the centre of the sphere, c, by finding midpoint of
+        ! all points
+        centre(1) = sum(iso_points(:,1)) / .n_pt
+        centre(2) = sum(iso_points(:,2)) / .n_pt
+        centre(3) = sum(iso_points(:,3)) / .n_pt
+        select case(property)
+            case("d_e"); vals = d_e
+            case("d_i"); vals = d_i
+            case("d_norm_e"); vals = d_norm_e
+            case("d_norm_i"); vals = d_norm_i
+            case("shape"); 
+                do N = 1, .n_pt
+                    x = .face(1,N); y = .face(2,N); z = .face(3,N)
+                    px = iso_points(x,:); py = iso_points(y,:); pz = iso_points(z,:)
+                    midpoint = THIRD * (px + py + pz)
+                    midpoint = midpoint - centre
+                    vals(N) = sqrt(midpoint(1)**2 + midpoint(2)**2 + midpoint(3)**2)
+                end
+            case("ones"); vals = 1.0
+            case default; vals = d_norm
+        end
+
+        do N = 1, .n_face
+            ! x, y, z are the indices of each vertex on the triangle
+            x = .face(1,N); y = .face(2,N); z = .face(3,N)
+            ! px, py, pz are the vertices on the triangle
+            px = iso_points(x,:); py = iso_points(y,:); pz = iso_points(z,:)
+            ! Normalise the points on the surface to be on a sphere of radius 1
+            ! with centre at C by making a vector from the centre of the sphere
+            ! to px, giving it unit length
+            ! at the end px, py, pz will lie on the surface of a sphere of unit
+            ! radius, centre C
+            px = px - centre; px.normalise
+            py = py - centre; py.normalise
+            pz = pz - centre; pz.normalise
+
+            ! Assign the value of the point on the sphere
+            midpoint = THIRD * (px + py + pz)
+            face_point(N,:).set_to(midpoint)
+
+            ! reuse midpoint variable to calculate area of triangle that
+            ! has been projected onto the sphere
+            midpoint.to_cross_product_of(pz - px, pz - py)
+            area = 0.5 * midpoint.norm  ! A = |V1xV2|/2
+
+            ! face value weighted by area, and interpolated from values at
+            ! vertices of triangle
+            tmp = area * ONE /( THIRD * (vals(x) + vals(y) + vals(z)))
+            face_value(N) = tmp
+        end
+        ! Now that we have normalised points to lie on the surface of the sphere
+        ! and weighted vals by the area of triangles on the surface of the sphere
+        ! we can make the multipole moments of vals
+        VEC{REAL}:make_R_multipoles(qc, qs, face_value, face_point, l_max)
+        
+        ! CLEANUP
+        d_i.destroy
+        d_e.destroy
+        iso_points.destroy
+        d_norm.destroy
+        d_norm_i.destroy
+        d_norm_e.destroy
+        face_value.destroy
+        face_point.destroy
+        vals.destroy
+    end
+
+
+    clebsch_gordon_coefficient(l1, m1, l2, m2, l, m) result (retval) ::: recursive, pure
+        self :: IN
+        l1, l2, m1, m2, l, m :: INT, IN
+        retval :: REAL
+        base_case, one_case, a, b, c, d, e :: BIN
+        inv, left, right :: REAL
+
+        a = (m == (m1 + m2))
+        b = ((abs(l1 - l2) <= l) AND (l <= (l1 + l2)))
+        c = ((-l1 <= m1) AND (m1 <= l1))
+        d = ((-l2 <= m2) AND (m2 <= l2))
+        e = ((-l <= m) AND (m <= l))
+
+        one_case = (((l1 == m1) AND (m1 == 0)) AND ((l2 == l) AND (m2 == m)))
+
+        base_case = ((l1 == l2) AND (m1 == -m2) AND (l == m) AND m == 0)
+
+        if (a AND b AND c AND d AND e) then
+            ! DO STUFF
+            ! the recurrence relation is as follows:
+            ! sqrt(l(l+1) - m(m - 1)) * <l1, m1, l2, m2|l, m> =
+            ! sqrt(l1(l1 + 1) - m1(m1 - 1)) * <l1, m1 - 1, l2, m2|l, m - 1>
+            ! + sqrt(l2(l2+1) - m2(m2 - 1)) * <l1, m1, l2, m2 - 2|l, m - 1>
+            if (one_case) then
+                retval = 1.0
+            else if (base_case) then
+                retval = ((-1)**(l1 - m1)) / (sqrt(2.0*l1 + 1.0))
+            else
+                left = sqrt(1.0*(l1*(l1 + 1) - m1*(m1 - 1)))
+                right = sqrt(1.0*(l2*(l2 + 1) - m2*(m2 - 1)))
+                inv = ONE/(sqrt(1.0*(l*(l + 1) - m*(m - 1))))
+                retval = inv * (left * .clebsch_gordon_coefficient(l1, m1 - 1, l2, m2, l, m - 1) + &
+                   right * .clebsch_gordon_coefficient(l1, m1, l2, m2 - 1, l, m - 1))
+            end
+        else
+            retval = 0.0
+        end
+    end
+
+    ! might need to scrap using a function for speed
+ !   legendre_P(l, m, x) result (res)  ::: pure
+!        self::IN
+!        l, m :: INT, IN
+!        x :: REAL, IN
+!        res:: REAL
+
+!        res = ((-1)**m) * ((1 - x**2)**(m/2)) !* INT:assoc_legendre_coeffs(l
+!    end
+
+
+!    spherical_harmonic_y(l, m, phi, theta) result  (res)
+!        self :: IN
+!        l, m :: INT, IN
+!        phi, theta, :: REAL, IN ! the values of phi and theta in radians
+!        p_val, tmp, c_val :: REAL
+!        p_val = .legendre_P(l, m, cos(theta))
+!        ! this avoids factorials
+!        tmp = l - m + 1
+!        do N = l-m+2, l+m
+!            tmp = tmp * N
+!        end
+!        c_val = sqrt((2l+1)*/(tmp*4*PI))
+!    end
+
+
+       
+
 
 !  ==============
 !  Test functions
