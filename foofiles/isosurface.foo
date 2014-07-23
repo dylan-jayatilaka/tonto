@@ -3959,7 +3959,119 @@ contains
       stdout.text("done VRML isosurface")
 
    end
-    
+    ! Taken from appendix 1 in Burel & Henocq 1995
+    z_harmonic(l, m, theta) result (res) ::: recursive
+        l, m :: INT, IN
+        theta :: REAL, IN
+        res :: REAL
+        fac, tmp1, tmp2 :: REAL
+
+
+        if (m > l AND NOT m == 0) then
+            res = 0.0
+        else if ( l < 0) then
+            res = .z_harmonic(abs(l) -1, m, theta)
+        else if (l == m) then
+            fac = INT:factorial(l)
+            res = ((-0.5) ** l) / (ONE * fac)
+            res = (sin(theta) ** l) * res * sqrt(ONE * INT:factorial(2*l + 1)/(4*PI))
+        else if (m < 0) then
+            res = ((-ONE) ** m) * .z_harmonic(l, -m, theta)
+        else
+            ! TMP1 and TMP2 have been checked and are working correctly
+            tmp1 = sqrt(((2.0*l - 1)*(2.0*l + 1)) / ((l + m )*(l - m)))
+            tmp2 = sqrt((ONE * (l + m - 1) * (l - m - 1)) / ((2*l -1)*(2*l - 3)))
+            res = tmp1 * (cos(theta) * .z_harmonic(l - 1, m, theta) - tmp2 * .z_harmonic(l - 2, m, theta))
+        end
+
+    end
+
+    y_harmonic(l, m, theta, phi) result (res)
+        l, m :: INT, IN
+        theta, phi :: REAL, IN
+        res :: CPX
+
+        j :: CPX
+        j = cmplx(0, 1)
+        res = .z_harmonic(l, m, theta) * exp(j * m * phi)
+    end
+
+
+    get_surface_decomposition(coefficients, l_max, n_points) ::: leaky
+        self :: IN
+        coefficients :: VEC{CPX}*, INOUT
+        l_max :: INT, IN
+        n_points :: INT, IN
+
+        !!5810 points for best precision
+        iso_points :: MAT{REAL}*
+        centre, p, tmp_point :: VEC{REAL}(3)
+        L, M, N, X, lm :: INT
+        lebedev :: LEBEDEV*
+        fvals, radii :: VEC{REAL}*
+        minimum_angle, tmp, theta, phi, mean_radius :: REAL
+        val :: CPX
+
+        val = 0.0
+        ! shift surface to be about origin
+        iso_points.create(.n_pt, 3)
+        radii.create(.n_pt)
+        X = (l_max**2 + 5*l_max)/2
+        coefficients.create(X)
+
+        iso_points = transpose(.point)
+        centre(1) = sum(iso_points(:,1)) / .n_pt
+        centre(2) = sum(iso_points(:,2)) / .n_pt
+        centre(3) = sum(iso_points(:,3)) / .n_pt
+        do N = 1, .n_pt
+            iso_points(N,:) = (iso_points(N,:) - centre)
+            radii(N) = iso_points(N,:).norm
+        end
+        mean_radius = sum(radii) /.n_pt
+        print *, "mean_radius: ", mean_radius
+        do N = 1, .n_pt
+            p = iso_points(N,:)
+            radii(N) = p.norm/mean_radius
+        end
+
+        lebedev.create
+        lebedev.set_n_points(n_points)
+        fvals.create(n_points)
+        fvals = ONE
+
+        ! coefficients are indexed as follows: {c00,c1-1,c10,c11,c2-2,c2-1,c20,c21,c22... etc.}
+        do N = 1, n_points
+            minimum_angle = PI/2
+            p = lebedev.point(N,:)
+            do X = 1, .n_pt
+                tmp_point = iso_points(X,:)
+                tmp_point.normalise
+                tmp = dot_product(tmp_point, p)
+                ENSURE(-1 <= tmp AND tmp <= 1, "dot product not returning value between -1 and 1" )
+                tmp = acos(tmp)
+                if (tmp > PI/2) then
+                    tmp = tmp - PI/2
+                end
+                if (abs(tmp) < abs(minimum_angle)) then
+                    minimum_angle = tmp
+                    fvals(N) = radii(X)
+                end
+            end
+            ENSURE(NOT minimum_angle == PI/2, "Couldn't find any point even close???")
+        end
+        lm = 1
+        do L = 0, l_max
+            do M = -L, L
+                do N = 0, n_points
+                    theta = atan2(sqrt(lebedev.point(N,1)**2 + lebedev.point(N,2)**2), lebedev.point(N,3))
+                    phi = atan2(lebedev.point(N,2), lebedev.point(N,1))
+                    val = val + lebedev.weight(N) * fvals(N) * conjg(.y_harmonic(l,m,theta, phi))
+                end
+                coefficients(lm) = val
+                lm = lm + 1
+            end
+        end
+    end
 
     make_surface_multipole_moments(qc, qs, in, out, l_max, property) ::: leaky
         self :: IN
@@ -4007,7 +4119,7 @@ contains
             case("d_i"); vals = d_i
             case("d_norm_e"); vals = d_norm_e
             case("d_norm_i"); vals = d_norm_i
-            case("shape"); 
+            case("shape");
                 do N = 1, .n_pt
                     x = .face(1,N); y = .face(2,N); z = .face(3,N)
                     px = iso_points(x,:); py = iso_points(y,:); pz = iso_points(z,:)
@@ -4040,7 +4152,7 @@ contains
             ! reuse midpoint variable to calculate area of triangle that
             ! has been projected onto the sphere
             midpoint.to_cross_product_of(pz - px, pz - py)
-            area = 0.5 * midpoint.norm  ! A = |V1xV2|/2
+            area = 0.5 * midpoint.norm ! A = |V1xV2|/2
 
             ! face value weighted by area, and interpolated from values at
             ! vertices of triangle
@@ -4063,7 +4175,6 @@ contains
         face_point.destroy
         vals.destroy
     end
-
 
     clebsch_gordon_coefficient(l1, m1, l2, m2, l, m) result (retval) ::: recursive, pure
         self :: IN
