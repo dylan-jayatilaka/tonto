@@ -41,60 +41,168 @@ contains
     create ::: leaky
     ! Create an object
         self :: PTR
+        
+        allocate(self)
+        ADD_MEMORY(SELF_TYPE_SIZE)
+
+        .nullify_ptr_part
+
+        .factorials.create(0,10)
+        .set_defaults
     end
 
     destroy ::: leaky
     ! Destroy an object
         self :: PTR
+
+        if (.destroyed) return
+        .destroy_ptr_part
+
+        DELETE_MEMORY(SELF_TYPE_SIZE)
+        deallocate(self)
     end
 
     set_defaults
         self :: PTR
+        N :: INT
         .n_points = 0
+        .nfact = 10 ! the highest number we have a factorial stored for
+        do N = 0,10
+            .factorials(N) = INT:factorial(N)
+        end
     end
+
+    nullify_ptr_part
+        nullify(.factorials)
+    end
+
+    destroy_ptr_part
+        .factorials.destroy
+    end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
 
 ! =====================
 ! Methods to be called 
 ! =====================
 
-    clebsch_gordon_coefficient(l1, m1, l2, m2, l, m) result (retval) ::: recursive, pure
-        self :: IN
-        l1, l2, m1, m2, l, m :: INT, IN
-        retval :: REAL
-        base_case, one_case, a, b, c, d, e :: BIN
-        inv, left, right :: REAL
+    
 
-        a = (m == (m1 + m2))
-        b = ((abs(l1 - l2) <= l) AND (l <= (l1 + l2)))
-        c = ((-l1 <= m1) AND (m1 <= l1))
-        d = ((-l2 <= m2) AND (m2 <= l2))
-        e = ((-l <= m) AND (m <= l))
+    clebsch_gordan(j1, m1, j2, m2, j, m) result (res)
+        j, m, j1, j2, m1, m2 :: INT
+        res :: REAL
+        print *, "Clebsch-Gordan: "
+        print *, j1, m1, j2, m2, j, m
+        res = .clebsch(j1 *2, m1 *2, j2 * 2, m2 * 2, j * 2, m * 2)
+        print *, "Value : ", res
+    end
 
-        one_case = (((l1 == m1) AND (m1 == 0)) AND ((l2 == l) AND (m2 == m)))
+    clebsch(j1, m1, j2, m2, j, m) result (res)
+        j1, m1, j2, m2, j, m :: INT
+        res :: REAL
 
-        base_case = ((l1 == l2) AND (m1 == -m2) AND (l == m) AND m == 0)
+        j1nm1, jnj2pm1, j2pm2, jnj1nm2, j1pj2nj :: INT
+        k, mink, maxk :: INT
+        iphase :: INT
+        tmp :: REAL
+        a, b, c, d, e, f :: BIN
+        res = ZERO
 
-        if (a AND b AND c AND d AND e) then
-            ! DO STUFF
-            ! the recurrence relation is as follows:
-            ! sqrt(l(l+1) - m(m - 1)) * <l1, m1, l2, m2|l, m> =
-            ! sqrt(l1(l1 + 1) - m1(m1 - 1)) * <l1, m1 - 1, l2, m2|l, m - 1>
-            ! + sqrt(l2(l2+1) - m2(m2 - 1)) * <l1, m1, l2, m2 - 2|l, m - 1>
-            if (one_case) then
-                retval = 1.0
-            else if (base_case) then
-                retval = ((-1)**(l1 - m1)) / (sqrt(2.0*l1 + 1.0))
-            else
-                left = sqrt(1.0*(l1*(l1 + 1) - m1*(m1 - 1)))
-                right = sqrt(1.0*(l2*(l2 + 1) - m2*(m2 - 1)))
-                inv = ONE/(sqrt(1.0*(l*(l + 1) - m*(m - 1))))
-                retval = inv * (left * .clebsch_gordon_coefficient(l1, m1 - 1, l2, m2, l, m - 1) + &
-                   right * .clebsch_gordon_coefficient(l1, m1, l2, m2 - 1, l, m - 1))
-            end
+        a = abs(m1) > j1
+        b = abs(m2) > j2
+        c = abs(m) > j
+        d = j1 < 0 OR j2 < 0 OR j < 0
+        e = abs(j1 - j2) > j
+        f = j > j1 + j2
+
+        if ( a OR b OR c OR d OR e OR f OR (NOT ((m1 + m2) == M))) return
+
+        j1nm1 = (j1 - m1)/2
+        jnj2pm1 = (j - j2 + m1)/2
+        j2pm2 = (j2 + m2)/2
+        jnj1nm2 = (j - j1 - m2)/2
+        j1pj2nj = (j1 + j2 - j)/2
+
+        ! check if evenness is valid i.e. j1 and m1 both even/odd
+        a = (j1nm1 * 2 == j1 - m1)
+        b = (j2pm2 * 2 == j2 + m2)
+        c = (j1pj2nj * 2 == j1 + j2 - j)
+
+        if (NOT (a AND b AND c)) then
+            return
+        end
+
+        mink = max(max(-jnj2pm1, -jnj1nm2), 0)
+        maxk = min(min(j1nm1, j2pm2), j1pj2nj)
+
+        if (NOT ((mink/2)*2 == mink)) then
+            iphase = -1
         else
-            retval = 0.0
+            iphase = 1
+        end
+    
+        do k = mink, maxk
+            tmp =  (.fac(j1nm1 -k) * .fac(jnj2pm1 + k) * .fac(j2pm2 - k) &
+                    * .fac(jnj1nm2 + k) * .fac(k) * .fac(j1pj2nj - k))
+            res = res + iphase / tmp
+            iphase = -iphase
+        end
+
+        if (mink > maxk) then
+            res = ONE
+        end
+
+        tmp = sqrt( .fac(j1pj2nj) * .fac((j1 + j - j2) / 2) & 
+              * .fac((j2 + j - j1)/2) / .fac((j1 + j2 + j)/2 + 1) * (j + 1)  &
+              * .fac((j1 + m1)/2) * .fac(j1nm1) * .fac(j2pm2) * .fac((j2 - m2)/2) &
+              * .fac((j + m)/2) * .fac((j - m)/2))
+
+        res = res * tmp
+
+        return
+    end
+    
+
+    fac(l) result (res)
+        l :: INT
+        res :: REAL
+
+        ENSURE(.factorials.created, "Factorials array not created?")
+        N :: INT
+
+        res = ONE
+        if (l <= 1) return
+
+        if (l > .nfact) then
+            .factorials.expand(l)
+            do N = .nfact, l
+                .factorials(N) = INT:factorial(N)
+            end
+            .nfact = l
+        end
+        res = .factorials(l)
+    end
+
+    kronecker(a, b) result(res) ::: pure, selfless
+        a, b :: INT, IN
+        res :: INT
+        if (a == b) then
+            res = 1
+        else
+            res = 0
         end
     end
+
 
 
     ! Taken from appendix 1 in Burel & Henocq 1995
@@ -186,8 +294,8 @@ contains
         lebedev.set_n_points(n_points)
         fvals = ONE
 
-        .cart2sph(lebedev.point, spherical_points)
-        .cart2sph(iso_points, iso_points_spherical)
+        SPHERICAL:cart2sph(lebedev.point, spherical_points)
+        SPHERICAL:cart2sph(iso_points, iso_points_spherical)
         do N = 1, n_points
             minimum_dist= 100000000
             p = lebedev.point(N,:)
@@ -257,19 +365,19 @@ contains
     end
 
     ! MIGHT NOT BE WORKING
-    pi_tensor(l1, l2, l, m, coefficients) result(sigma) ::: pure
+    pi_tensor(l1, l2, l, m, coefficients) result(sigma)! ::: pure
 
         self :: IN
         l1, l2, l, m :: INT, IN
         coefficients :: VEC{CPX}*
         sigma :: CPX
-        m1, m2 :: INT
+        m1 :: INT
         cg :: REAL
         cl1m1, cl2mm1 :: CPX
         ! coefficients(l,m) is indexed by l**2 + l + 1 + m
         sigma = 0.0
         do m1 = -l1, l1
-            cg = .clebsch_gordon_coefficient(l1, m1, l2, m - m1, l, m)
+            cg = .clebsch_gordan(l1, m1, l2, m - m1, l, m)
             cl1m1 = coefficients((l1)**2 + l1 + m1 + 1)
             cl2mm1 = coefficients((l2)**2 + l2 + (m - m1) + 1)
             sigma = sigma + cg * cl1m1 * cl2mm1
@@ -282,9 +390,9 @@ contains
         l_max :: INT, IN
         invariants :: VEC{REAL}*, INOUT
 
-        lm, L, M, l1, l2, l3, l4 :: INT
-        cond1, cond2, cond3, cond4, cond5 :: BIN
-        sigma, cg :: REAL
+        lm, L, M, l1, l2 :: INT
+        cond1, cond2, cond3, cond4 :: BIN
+        sigma :: REAL
         c, pt :: CPX
         invariants.create(l_max+1)
         
@@ -302,34 +410,29 @@ contains
         end
 
         ! P-Invariants
-        !do L = 0, l_max
-        !    do l1 = 1, L
-        !        do l2 = 1,l1
-        !        cond1 = (1 <= l2 AND l2 <= l1 AND l1 <= l)
-        !        cond2 = (l1 - l2) <= l AND l <= (l1 + l2)
-        !        cond3 = (NOT (l2 == l1 )) OR (mod(l, 2) == 0)
-        !        cond4 = (NOT (l1 == l)) OR (mod(l2, 2) == 0)
-        !        if (cond1 AND cond2 AND cond3 AND cond4) then
-        !            sigma = 0.0
-        !            do M = -L, L
-        !                c = conjg(coefficients(l**2 + l + m + 1))
-        !                pt = .pi_tensor(l1, l2, l, m, coefficients)
-        !                sigma = sigma + abs(pt * c)
-        !            end
-        !            print *, "Appending to invariants l = ",l, "l1 = ",l1,"l2= ",l2,"value =", sigma
-        !            invariants.append(sigma)
-        !        end
-!
-!                end
-!            end
-!        end
+        do L = 0, l_max
+            do l1 = 1, L
+                do l2 = 1,l1
+                cond1 = (1 <= l2 AND l2 <= l1 AND l1 <= l)
+                cond2 = (l1 - l2) <= l AND l <= (l1 + l2)
+                cond3 = (NOT (l2 == l1 )) OR (mod(l, 2) == 0)
+                cond4 = (NOT (l1 == l)) OR (mod(l2, 2) == 0)
+                if (cond1 AND cond2 AND cond3 AND cond4) then
+                    sigma = 0.0
+                    do M = -L, L
+                        c = conjg(coefficients(l**2 + l + m + 1))
+                        pt = .pi_tensor(l1, l2, l, m, coefficients)
+                        sigma = sigma + abs(pt * c)
+                    end
+                    invariants.append(sigma)
+                end
 
-        ! Q-Invariants
-!        do L = 0, l_max
-!        end
+                end
+            end
+        end
     end
 
-    cart2sph(cart_points, spherical_points) ::: leaky
+    cart2sph(cart_points, spherical_points) ::: leaky, selfless
         ! expects an N x 3 array and will create spherical_points as N x 3
         cart_points :: MAT{REAL}*, IN
         spherical_points :: MAT{REAL}*, OUT
@@ -337,6 +440,7 @@ contains
         N :: INT
         x, y, z :: REAL
         r, theta, phi :: REAL
+
         spherical_points.create(cart_points.dim1, 3)
 
         do N = 1, cart_points.dim1
