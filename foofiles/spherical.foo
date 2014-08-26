@@ -47,7 +47,7 @@ contains
 
         .nullify_ptr_part
 
-        .factorials.create(0,10)
+        .factorials.create(0,70)
         .set_defaults
     end
 
@@ -66,9 +66,14 @@ contains
         self :: PTR
         N :: INT
         .n_points = 0
-        .nfact = 10 ! the highest number we have a factorial stored for
-        do N = 0,10
-            .factorials(N) = INT:factorial(N)
+        .nfact = 70 ! the highest number we have a factorial stored for
+
+        .recur = FALSE
+
+        .factorials(0) = 1
+        .factorials(1) = 1
+        do N = 2,.nfact
+            .factorials(N) = .factorials(N - 1) * N
         end
     end
 
@@ -97,17 +102,33 @@ contains
 ! =====================
 
     
-
+    ! Calculate the clebsch-gordan coefficient
+    ! using explicit racah formula (if the factorial is not too big)
+    ! but fail using the recurrence relation etc. if fac is too big
+    ! recur is a flag to test whether or not the factorials
+    ! used in clebsch were too large. Note that this is NOT thread
+    ! safe or parellisable using this object for future reference
     clebsch_gordan(j1, m1, j2, m2, j, m) result (res)
         j, m, j1, j2, m1, m2 :: INT
         res :: REAL
-        print *, "Clebsch-Gordan: "
-        print *, j1, m1, j2, m2, j, m
-        res = .clebsch(j1 *2, m1 *2, j2 * 2, m2 * 2, j * 2, m * 2)
-        print *, "Value : ", res
+        .recur = FALSE
+        if (j1 == j2 AND m1 == - m2 AND j == 0 AND m == 0) then
+            res = (-ONE) ** (j - m) / sqrt(TWO *j + 1)
+        else if (j1  == m1 AND m1 == 0 AND j2 == j AND m2 == m) then
+            res = ONE
+        else
+            res = .clebsch(j1 *2, m1 *2, j2 * 2, m2 * 2, j * 2, m * 2)
+            if (.recur) then
+                res = .clebsch_rec(j1, m1, j2, m2, j, m)
+            end
+        end
     end
 
+    
     clebsch(j1, m1, j2, m2, j, m) result (res)
+    ! Calculation using Racah formula taken from "Angular Momentum",
+    ! D.M.Brink & G.R.Satchler, Oxford, 1968
+
         j1, m1, j2, m2, j, m :: INT
         res :: REAL
 
@@ -116,6 +137,8 @@ contains
         iphase :: INT
         tmp :: REAL
         a, b, c, d, e, f :: BIN
+
+
         res = ZERO
 
         a = abs(m1) > j1
@@ -141,7 +164,6 @@ contains
         if (NOT (a AND b AND c)) then
             return
         end
-
         mink = max(max(-jnj2pm1, -jnj1nm2), 0)
         maxk = min(min(j1nm1, j2pm2), j1pj2nj)
 
@@ -152,46 +174,92 @@ contains
         end
     
         do k = mink, maxk
-            tmp =  (.fac(j1nm1 -k) * .fac(jnj2pm1 + k) * .fac(j2pm2 - k) &
+            tmp =  (.fac(j1nm1 - k) * .fac(jnj2pm1 + k) * .fac(j2pm2 - k) &
                     * .fac(jnj1nm2 + k) * .fac(k) * .fac(j1pj2nj - k))
-            res = res + iphase / tmp
-            iphase = -iphase
+            res = res + iphase/tmp
+            iphase = - iphase
         end
 
         if (mink > maxk) then
             res = ONE
         end
 
-        tmp = sqrt( .fac(j1pj2nj) * .fac((j1 + j - j2) / 2) & 
-              * .fac((j2 + j - j1)/2) / .fac((j1 + j2 + j)/2 + 1) * (j + 1)  &
-              * .fac((j1 + m1)/2) * .fac(j1nm1) * .fac(j2pm2) * .fac((j2 - m2)/2) &
-              * .fac((j + m)/2) * .fac((j - m)/2))
+        tmp = sqrt(ONE * .fac(j1pj2nj))
+        tmp = tmp * sqrt(.fac((j1 + j - j2) / 2)) 
+        tmp = tmp * sqrt(.fac((j2 + j - j1)/2)) 
+        tmp = tmp / sqrt(.fac((j1 + j2 + j)/2 + 1))
+        tmp = tmp * sqrt(ONE * (j + 1))
+        tmp = tmp * sqrt(.fac((j1 + m1)/2))
+        tmp = tmp * sqrt(.fac(j1nm1))
+        tmp = tmp * sqrt(.fac(j2pm2))
+        tmp = tmp * sqrt(.fac((j2 - m2)/2))
+        tmp = tmp * sqrt(.fac((j + m)/2))
+        tmp = tmp * sqrt(.fac((j - m)/2))
 
         res = res * tmp
 
         return
     end
+
     
+    ! recursion relations
+    clebsch_rec(l1, m1, l2, m2, l, m) result (retval) ::: recursive
+        self :: IN
+        l1, l2, m1, m2, l, m :: INT, IN
+        retval :: REAL
+        base_case, one_case, a, b, c, d, e :: BIN
+        inv, left, right :: REAL
+
+        a = (m == (m1 + m2))
+        b = ((abs(l1 - l2) <= l) AND (l <= (l1 + l2)))
+        c = ((-l1 <= m1) AND (m1 <= l1))
+        d = ((-l2 <= m2) AND (m2 <= l2))
+        e = ((-l <= m) AND (m <= l))
+
+        one_case = (((l1 == m1) AND (m1 == 0)) AND ((l2 == l) AND (m2 == m)))
+        base_case = ((l1 == l2) AND (m1 == -m2) AND (l == m) AND m == 0)
+
+        if (a AND b AND c AND d AND e) then
+        ! DO STUFF
+        ! the recurrence relation is as follows:
+        ! sqrt(l(l+1) - m(m - 1)) * <l1, m1, l2, m2|l, m> =
+        ! sqrt(l1(l1 + 1) - m1(m1 - 1)) * <l1, m1 - 1, l2, m2|l, m - 1>
+        ! + sqrt(l2(l2+1) - m2(m2 - 1)) * <l1, m1, l2, m2 - 2|l, m - 1>
+        if (one_case) then
+            retval = 1.0
+        else if (base_case) then
+            retval = ((-1)**(l1 - m1)) / (sqrt(2.0*l1 + 1.0))
+        else
+            left = sqrt(1.0*(l1*(l1 + 1) - m1*(m1 - 1)))
+            right = sqrt(1.0*(l2*(l2 + 1) - m2*(m2 - 1)))
+            inv = ONE/(sqrt(1.0*(l*(l + 1) - m*(m - 1))))
+            retval = inv * (left * .clebsch_rec(l1, m1 - 1, l2, m2, l, m - 1) + &
+            right * .clebsch_rec(l1, m1, l2, m2 - 1, l, m - 1))
+        end
+        else
+            retval = 0.0
+        end
+    end
+
 
     fac(l) result (res)
         l :: INT
         res :: REAL
 
         ENSURE(.factorials.created, "Factorials array not created?")
-        N :: INT
 
         res = ONE
         if (l <= 1) return
 
-        if (l > .nfact) then
-            .factorials.expand(l)
-            do N = .nfact, l
-                .factorials(N) = INT:factorial(N)
-            end
-            .nfact = l
+        if (l > 70) then
+            WARN("Factorials above 70! are not supported")
+            .recur = TRUE
+            return
         end
+
         res = .factorials(l)
     end
+
 
     kronecker(a, b) result(res) ::: pure, selfless
         a, b :: INT, IN
@@ -202,7 +270,6 @@ contains
             res = 0
         end
     end
-
 
 
     ! Taken from appendix 1 in Burel & Henocq 1995
@@ -391,7 +458,7 @@ contains
         invariants :: VEC{REAL}*, INOUT
 
         lm, L, M, l1, l2 :: INT
-        cond1, cond2, cond3, cond4 :: BIN
+        cond2, cond3, cond4 :: BIN
         sigma :: REAL
         c, pt :: CPX
         invariants.create(l_max+1)
@@ -410,16 +477,15 @@ contains
         end
 
         ! P-Invariants
-        do L = 0, l_max
-            do l1 = 1, L
+        do l = 1, l_max
+            do l1 = 1, l
                 do l2 = 1,l1
-                cond1 = (1 <= l2 AND l2 <= l1 AND l1 <= l)
                 cond2 = (l1 - l2) <= l AND l <= (l1 + l2)
                 cond3 = (NOT (l2 == l1 )) OR (mod(l, 2) == 0)
                 cond4 = (NOT (l1 == l)) OR (mod(l2, 2) == 0)
-                if (cond1 AND cond2 AND cond3 AND cond4) then
+                if (cond2 AND cond3 AND cond4) then
                     sigma = 0.0
-                    do M = -L, L
+                    do M = -l, l
                         c = conjg(coefficients(l**2 + l + m + 1))
                         pt = .pi_tensor(l1, l2, l, m, coefficients)
                         sigma = sigma + abs(pt * c)
@@ -431,6 +497,7 @@ contains
             end
         end
     end
+
 
     cart2sph(cart_points, spherical_points) ::: leaky, selfless
         ! expects an N x 3 array and will create spherical_points as N x 3
@@ -456,6 +523,60 @@ contains
         end
 
     end
+
+    ! wigner 3j calculation based on:
+    ! wignerSymbols cpp
+!    wigner3j(l1, l2, l3, m1, m2, m3) result(res)
+!        l1, l2, l3, m1, m2, m3 :: REAL, IN
+!        res :: REAL
+!        cond :: BIN
+!        l1min :: REAL
+!        ind :: INT
+!
+!        cond = ( &
+!                abs(m1 + m2 + m3) < 0.0000000001 &
+!                AND floor(l1 + l2 + l3) == (l1 + l2 + l3) &
+!                AND l3 >= abs(l1 - l2) &
+!                AND l3 <= l1 + l2 &
+!                AND abs(m1) <= l1 &
+!                AND abs(m2) <= l2 &
+!                AND abs(m3) <= l3)
+!        if (NOT cond) then
+!            res = 0.0
+!            return
+!        end
+!        
+!        l1min = max(abs(l2-l3), abs(m1))
+!        ind = int(l1 - l1min)
+!!
+
+
+
+
+!    wigner3j_auxA(l1, l2, l3, m1, m2, m3) result(res)
+!        l1, l2, l3, m1, m2, m3 :: REAL, IN
+!        res :: REAL
+!        t1, t2, t3 :: REAL
+!        
+!        t1 = l1 * l1 - (l2 - l3) ** TWO
+!        t2 = (l2 + l3 + ONE) ** TWO - l1 * l1
+!        t3 = l1 * l1 - m1 * m1
+!
+!        res = sqrt(t1 * t2 * t3)
+!
+!    wigner3j_auxB(l1, l2, l3, m1, m2 ,m3) result(res)
+!        l1, l2, l3, m1, m2, m3 :: REAL, IN
+!        res :: REAL
+!        t1, t2, t3, t4 :: REAL
+!        
+!        t1 = -(TWO * l1 + ONE)
+!        t2 = l2 * (l2 + ONE) * m1
+!        t3 = l3 * (l3 + ONE) * m1
+!        t4 = l1 * (l1 + ONE) * (m3 - m2)
+!
+!        res = t1 * (t2 - t3 - t4)
+
+
 
 ! end of module
 end
