@@ -35,35 +35,99 @@ contains
 !  ======================
 
    put_minmax_residual
-   ! Do an iterative Hirshfeld atom refinement, alternating scf and
-   ! fitting, until appropriately converged, normally to 0.001\sigma
+   ! Evaluate the min and max residual density from the
+   ! fitted structure factors, evaluated on a grid 0.1 A
+   ! per side. Also evaluate the residuals at the atom
+   ! centers and report the worst one.
 
    DIE_IF(NOT .atom.created, "no atoms to fit")
    DIE_IF(NOT .crystal.created, "no crystal")
+   DIE_IF(NOT .crystal.fragment_info_made, "no crystal fragment info")
    DIE_IF(NOT .crystal.data.created,"no crystal data")
    DIE_IF(NOT .crystal.xray_data.created,"no crystal xray data")
 
       map :: VEC{REAL}*
-
-      .plot_grid.create
-      .plot_grid.set_plot_kind("residual_error_map")
-      .plot_grid.set_desired_separation(0.05*ANGSTROM_PER_BOHR)
-
+      pt :: MAT{REAL}*
+      n_pt, maxp,minp, maxa,mina :: INT
+      maxtag,mintag :: STR
+      maxpos,minpos :: VEC{REAL}(3)
+      fac,maxd,mind :: REAL
 
       ! Set up
+      .plot_grid.create
+      .plot_grid.set_plot_kind("residual_error_map")
       .PLOT:set_up_for_plot(.plot_grid.plot_kind)
 
       ! Use unit cell as bbox if requested
+      .plot_grid.set_box_scale_factor(ONE)
+      .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
       .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell)
 
-      map.create(.plot_grid.n_pt)
-      .GRID:make_crystal_error_map(map)
-      
-      stdout.show("max = ",maxval(map))
-      stdout.show("min = ",minval(map))
+      stdout.flush
+      stdout.text("=====================")
+      stdout.text("Residual density data")
+      stdout.text("=====================")
 
+      stdout.flush
+      stdout.text(". Grid has voxels less than 0.1 A per side")
+      stdout.text(". Length units are in Angstrom")
+
+      stdout.flush
+      .plot_grid.put_minimal
+
+      ! Make the residual map
+      n_pt = .plot_grid.n_pt
+      pt.create(n_pt,3)
+      map.create(n_pt)
+      .plot_grid.make_points(pt)
+      .crystal.make_residual_error_map(map,pt)
+
+      ! Get data
+      fac    = BOHR_PER_ANGSTROM**3
+      maxp   = maxloc(map,dim=1)
+      minp   = minloc(map,dim=1)
+      maxpos = pt(maxp,:)
+      minpos = pt(minp,:)
+      maxa   = .atom.nearest_atom_to(maxpos)
+      mina   = .atom.nearest_atom_to(minpos)
+      maxtag = .atom(maxa).tag
+      mintag = .atom(mina).tag
+      maxd   = VEC{REAL}:norm(maxpos-.atom(maxa).position)
+      mind   = VEC{REAL}:norm(minpos-.atom(mina).position)
+
+      stdout.flush
+      stdout.show("Maximum residual         = ",map(maxp)*fac)
+      stdout.show("- nearest atom           = ",maxtag)
+      stdout.show("- distance to it         = ",maxd)
+      stdout.show("Minimum residual         = ",map(minp)*fac)
+      stdout.show("- nearest atom           = ",mintag)
+      stdout.show("- distance to it         = ",mind)
+
+      ! Clean
       map.destroy
+      pt.destroy
       .plot_grid.destroy
+
+      ! Create atom coords
+      pt.create(.n_atom,3)
+      map.create(.n_atom)
+      .atom.put_coordinates_to(pt,positions_as_rows=TRUE)
+      .crystal.make_residual_error_map(map,pt)
+
+      maxp   = maxloc(map,dim=1)
+      minp   = minloc(map,dim=1)
+      maxtag = .atom(maxp).tag
+      mintag = .atom(minp).tag
+
+      stdout.flush
+      stdout.show("Maximum residual on atom = ",map(maxp)*fac)
+      stdout.show("- for atom               = ",maxtag)
+      stdout.show("Minimum residual on atom = ",map(minp)*fac)
+      stdout.show("- for atom               = ",mintag)
+
+      ! Clean
+      pt.destroy
+      map.destroy
 
    end
 
@@ -79,7 +143,7 @@ contains
 
       use_cc,use_sc :: BIN
 
-      ! Initialize 
+      ! Initialize
       .crystal.initialize_refinement_data
 
       ! Turn off unwanted printing ...
@@ -91,7 +155,7 @@ contains
       ! start banner, and iteration table header
       .crystal.put_refinement_header_info
 
-      do 
+      do
 
          if (.crystal.data.restart_HAR_with_promolecule) then
 
@@ -107,7 +171,7 @@ contains
             .scfdata.set_using_cluster_charges(use_cc)
             .scfdata.set_using_SC_cluster_charges(use_sc)
 
-         end  
+         end
 
          ! SCF @ new geometry
          .SCF:scf
@@ -125,10 +189,10 @@ contains
 
          ! Put the iteration results
          .crystal.put_refinement_iteration_results
- 
+
          ! Finished?
          if (.crystal.refinement_finished) exit
- 
+
       end
 
       ! Table footer and final results
@@ -145,7 +209,8 @@ contains
       .SCF:scf
       .scfdata.set_output(TRUE)
 
-      ! Put fit analysis statistics
+      ! Put analysis
+      .::put_minmax_residual
       .crystal.put_fitting_plots
 
    end
@@ -153,7 +218,7 @@ contains
    fit_Hirshfeld_atoms ::: leaky
    ! Fit the Hirshfeld atoms to the calculated structure factors.
    ! Cartesian (bohr) coordinates are used because structure factors
-   ! are aspherical and calculated from the QM wavefunction. 
+   ! are aspherical and calculated from the QM wavefunction.
    ! NOTE: this routine does only one cycle of fitting with the
    ! current density matrix i.e. this is a "rigid atom fit".
    ! NOTE: It's tricky exactly which atom's are used for refinement:
@@ -209,7 +274,7 @@ contains
       .BASE:put_accurate_CIF   ! Accurate CIF, asymmetric unit, no errors
     ! .BASE:put_NKA_cartesian
     ! .BASE:put_excel_crystal
- 
+
       ! Clean up
       sf_n.destroy
 
@@ -222,7 +287,7 @@ contains
       .SCF:symmetrically_orthonormalise(.molecular_orbitals)
 
    end
-   
+
    get_unique_Hirshfeld_atom_SFs(sf_n) ::: leaky, private
    ! Get "sf_n", the static structure factors for the symmetry related
    ! K points with *no* thermal smearing, for every unique atom.
@@ -255,16 +320,16 @@ contains
       cutoff,rf, k1k,k2k,k3k,kr, Dab, fac, val :: REAL
       n_atom,n_k,n_pt,n_keep, u,c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
       sa,fa,la,na, sb,fb,lb,nb, as, a,b,i,j,k,n,p :: INT
- 
+
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
- 
+
       ! Symmetry generated K points and SF's
       n_k = .crystal.n_unique_SF_k_pts
 
       ! Allocate structure factor array (leaky)
       sf_n.create(n_k,n_atom)
- 
+
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
       k_pts.create(n_k,3)
@@ -279,8 +344,8 @@ contains
       D => .density_matrix.restricted
 
       ! Set up grids, atomic densities, overlapping_atoms (leaky)
-      .SCF:make_Hirshfeld_inputs(skip_NOs=TRUE) 
- 
+      .SCF:make_Hirshfeld_inputs(skip_NOs=TRUE)
+
       ! Basis function cutoff
       cutoff = .becke_grid.basis_function_cutoff
 
@@ -317,7 +382,7 @@ contains
          n_pt = pt.dim1
 
          ! Make stockholder weight function "Wc" for atom "c"
-         ! If using interpolatators, then on overlapping atoms 
+         ! If using interpolatators, then on overlapping atoms
          ! are used ... otherwise nothing is skipped
          Wc.create(n_pt)
          if (.use_interpolators) then; .GRID:make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
@@ -328,7 +393,7 @@ contains
          wt = Wc*wt
          Wc.destroy
 
-         ! Prune the grid with new "wt", get saved bf grid bf_save, 
+         ! Prune the grid with new "wt", get saved bf grid bf_save,
          ! and new no of points, n_pt (leaky)
          .becke_grid.prune_grid(pt,wt,bf_save)
          n_pt = pt.dim1
@@ -351,7 +416,7 @@ contains
             ra  = .atom(oa).position
 
             ! Make the displaced points for atom "a"
-            .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff) 
+            .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
 
             ! Loop shells on atom a
             do sa = fsa,lsa
@@ -368,7 +433,7 @@ contains
 
                ! Make shell "sa" skip list
                skipa.create(n_pt)
-               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff) 
+               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
 
                ! Next shell "sa" if no sig. points
                if (n_keep==0) then
@@ -417,8 +482,8 @@ contains
                      nb = lb - fb + 1
 
                      ! Set the "sb" basis function grid
-                     skipb => bf_skip(sb).element 
-                     gridb => bf_grid(sb).element 
+                     skipb => bf_skip(sb).element
+                     gridb => bf_grid(sb).element
 
                      ! How many points in common? Save time?
                      skipab(1:n_pt) = skipa OR skipb
@@ -453,7 +518,7 @@ contains
                         pi.create(n_keep)
                         pj.create(n_keep)
                         pn.create(n_keep)
-      
+
                         ! Make mapper arrays
                         p = 0; i = 0; j = 0
                         do n = 1,n_pt
@@ -465,7 +530,7 @@ contains
                            pj(p) = j
                            pn(p) = n
                         end
-   
+
                         ! Add density contribution to rho
                         do a = 1,na
                            ga => grida(:,a)
@@ -481,7 +546,7 @@ contains
                               end
                            end
                         end
-   
+
                         ! Clean up
                         pn.destroy
                         pj.destroy
@@ -509,13 +574,13 @@ contains
             k2k = k2(k)
             k3k = k3(k)
             sf = IMAGIFY(ZERO)
-            do i = 1,n_pt 
+            do i = 1,n_pt
                kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
                sf = sf + rho(i)*COMPLEXIFY(cos(kr),sin(kr))
             end
             sf_u(k) = sf * rf
          end
-            
+
          ! Clean up atom "c" stuff
          rho.destroy
          bf_grid.destroy
@@ -548,10 +613,10 @@ contains
       end
 
    end
-   
+
    get_unique_Voronoi_atom_SFs(sf_n) ::: leaky, private
-   ! Get "sf_n", the structure factors for the symmetry related 
-   ! K points with *no* thermal smearing, for every unique atom. 
+   ! Get "sf_n", the structure factors for the symmetry related
+   ! K points with *no* thermal smearing, for every unique atom.
       sf_n :: MAT{CPX}*
 
    ENSURE(.basis_info_made,"no basis info")
@@ -573,16 +638,16 @@ contains
       sf  :: CPX
       rf, k1k,k2k,k3k,kr :: REAL
       n_atom,n_k,n_pt, u,c,a, i,k :: INT
- 
+
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
- 
+
       ! Symmetry generated K points and SF's
       n_k = .crystal.n_unique_SF_k_pts
 
       ! Allocate structure factor array (leaky)
       sf_n.create(n_k,n_atom)
- 
+
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
       k_pts.create(n_k,3)
@@ -630,13 +695,13 @@ contains
          do k = 1,n_k
             k1k = k1(k); k2k = k2(k); k3k = k3(k)
             sf = (ZERO,ZERO)
-            do i = 1,n_pt 
+            do i = 1,n_pt
                kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
                sf = sf + rho(i)*COMPLEXIFY(cos(kr),sin(kr))
             end
             sf_u(k) = sf * rf
          end
-            
+
          ! Clean up atom "c" stuff
          rho.destroy
          wt.destroy
@@ -655,8 +720,8 @@ contains
    end
 
    get_unique_invariom_SFs(sf_n) ::: private
-   ! Get "sf_n", the structure factors for the symmetry related 
-   ! K points with *no* thermal smearing, for every unique invariom. 
+   ! Get "sf_n", the structure factors for the symmetry related
+   ! K points with *no* thermal smearing, for every unique invariom.
       sf_n :: MAT{CPX}*
 
    ENSURE(.basis_info_made,"no basis info")
@@ -688,7 +753,7 @@ contains
 
       ! Make the symmetry generated k's
       n_k = .crystal.n_unique_SF_k_pts
-      k_pt.create(n_k,3)     
+      k_pt.create(n_k,3)
       .crystal.make_unique_SF_k_pts(k_pt)
       k1 => k_pt(:,1)
       k2 => k_pt(:,2)
@@ -697,7 +762,7 @@ contains
       ! Get the invariom labels
       labels => .atom.invariom_labels
       ! Make the invariom kind table
-      ! For making the sf's we first check which invarioms are 
+      ! For making the sf's we first check which invarioms are
       ! unique as the unique atoms could be assigned the same invariom
       ! We need to get the unique invarioms for the assymetric unit
       invariom_kind.repetitions_in(labels(.crystal.unique_frag_atom))
@@ -787,7 +852,7 @@ contains
 
       ! Put invariom kind table out
       stdout.flush
-      stdout.show("No. of distinct labels =",invariom_kind.dim)                                  
+      stdout.show("No. of distinct labels =",invariom_kind.dim)
       stdout.flush
       stdout.text("Table of invariom kinds")
       stdout.flush
@@ -802,7 +867,7 @@ contains
          n_elem = invariom_kind(k).element.dim
          stdout.put(invariom_kind(k)[1],width=5)
          l = 1
-         do 
+         do
             l = l + 1
             if (l>n_elem) exit
             if (mod(l,10)==1) then
@@ -857,7 +922,7 @@ contains
 
       ! Put invariom kind table out
       stdout.flush
-      stdout.show("No. of distinct labels =",invariom_kind.dim)                                  
+      stdout.show("No. of distinct labels =",invariom_kind.dim)
       stdout.flush
       stdout.text("Table of invariom kinds")
       stdout.flush
@@ -872,7 +937,7 @@ contains
          n_elem = invariom_kind(k).element.dim
          stdout.put(invariom_kind(k)[1],width=5)
          l = 1
-         do 
+         do
             l = l + 1
             if (l>n_elem) exit
             if (mod(l,10)==1) then
@@ -970,7 +1035,7 @@ contains
       ! Parameters defining the SAHA's
       max_l          = 18     ! L-value for for spherical averaging.
       max_eps        = TOL(6) ! Maximum absolute difference for convergence
-      
+
       ! Switch interpolators on
       if (NOT .use_interpolators) then
          WARN("You must be using interpolators!")
@@ -983,8 +1048,8 @@ contains
          .interpolator.set_interpolation_method("linear")
          .interpolator.set_range_mapping("none")
          .interpolator.set_domain_mapping("sqrt(x/(1-x))*scale")
-         .interpolator.set_table_length(ONE) 
-         .interpolator.set_spacing(0.01d0) 
+         .interpolator.set_table_length(ONE)
+         .interpolator.set_spacing(0.01d0)
          .interpolator.set_table_eps(0.001d0)
       end
 
@@ -999,7 +1064,7 @@ contains
        ! interpolator(a).put
       end
 
-      ! Reassign fresh (non-ANO) interpolator copy; 
+      ! Reassign fresh (non-ANO) interpolator copy;
       ! Create averaged rho; set extrapolator.
       .BASE:destroy_ANOs
       rho_av.create(.n_atom)
@@ -1081,9 +1146,9 @@ contains
 
    end
 
-   make_spherically_averaged_HA(rho_av,eps,a,interpolator,l_max) 
+   make_spherically_averaged_HA(rho_av,eps,a,interpolator,l_max)
    ! Make the spherically averaged Hirshfeld atom density "rho_av" for
-   ! the atom with index "a". Also return "eps", the maximum 
+   ! the atom with index "a". Also return "eps", the maximum
    ! difference between the rho_av values and those stored in the
    ! interpolator data_values. The spacing and radial data values from
    ! the center of atom "a" are taken from the "interpolator". "l_max"
@@ -1108,7 +1173,7 @@ contains
       lebedev :: LEBEDEV*
 
       ! Set the spherical grid
-      lebedev.create 
+      lebedev.create
       lebedev.set_l(l_max)
 
       ! No of quadrature points (on sphere)
@@ -1151,7 +1216,7 @@ contains
 
          ! For each r, make a spherical shell of points
          do n = 1,n_pts
-            pt(n,1) = pos(1) + r*lebedev.point(n,1)  
+            pt(n,1) = pos(1) + r*lebedev.point(n,1)
             pt(n,2) = pos(2) + r*lebedev.point(n,2)
             pt(n,3) = pos(3) + r*lebedev.point(n,3)
          end
@@ -1192,7 +1257,7 @@ contains
 !  ====================
 
    make_averaged_BDAs ::: leaky
-   ! Make the spherically averaged bond density atom 
+   ! Make the spherically averaged bond density atom
    ! interpolators for every atom.
    ENSURE(.use_interpolators,"must be using interpolators")
 
@@ -1207,8 +1272,8 @@ contains
          .interpolator.set_interpolation_method("cubic_spline")
          .interpolator.set_range_mapping("none")
          .interpolator.set_domain_mapping("sqrt(x/(1-x))*scale")
-         .interpolator.set_table_length(ONE) 
-         .interpolator.set_spacing(0.001d0) 
+         .interpolator.set_table_length(ONE)
+         .interpolator.set_spacing(0.001d0)
          .interpolator.set_table_eps(CLUSTER_ATOM_DENSITY_CUTOFF)
       end
 
@@ -1298,9 +1363,9 @@ contains
 
    end
 
-   make_averaged_BDAs(rho_av,eps,a,interpolator,l_max) 
+   make_averaged_BDAs(rho_av,eps,a,interpolator,l_max)
    ! Make the spherically averaged Hirshfeld atom density "rho_av" for
-   ! the atom with index "a". Also return "eps", the maximum 
+   ! the atom with index "a". Also return "eps", the maximum
    ! difference between the rho_av values and those stored in the
    ! interpolator data_values. The spacing and radial data values from
    ! the center of atom "a" are taken from the "interpolator". "l_max"
@@ -1324,7 +1389,7 @@ contains
       lebedev :: LEBEDEV*
 
       ! Set the spherical grid
-      lebedev.create 
+      lebedev.create
       lebedev.set_l(l_max)
 
       ! No of quadrature points (on sphere)
@@ -1369,7 +1434,7 @@ contains
 
          ! For each r, make a spherical shell of points
          do n = 1,n_pts
-            pt(n,1) = pos(1) + r*lebedev.point(n,1)  
+            pt(n,1) = pos(1) + r*lebedev.point(n,1)
             pt(n,2) = pos(2) + r*lebedev.point(n,2)
             pt(n,3) = pos(3) + r*lebedev.point(n,3)
          end
@@ -1530,7 +1595,7 @@ contains
             ! Store charge
             bond(a).element.append(b)
             bond_charge(a).element.append(val)
-          
+
          end
 
          ! Clean up
@@ -1548,7 +1613,7 @@ contains
 !  Scaled and derivative stockholder grids
 !  =======================================
 
-   make_scaled_stockholder_derivs(G,H,kappa,delta,skip_NOs) 
+   make_scaled_stockholder_derivs(G,H,kappa,delta,skip_NOs)
    ! Make the scaled stockholder atom derivatives "G" and hessian "H"
    ! for used in a Newton-Raphson procedure to find the best scale
    ! factors.
@@ -1731,7 +1796,7 @@ contains
 
         if (c/=a) cycle
         where (rho>epsilon(ONE)) grid(:,c) = grid(:,c) + rho_c/rho
-         
+
       end
 
       ! Clean
@@ -1794,12 +1859,12 @@ contains
         do d = 1,.n_atom
 
            .atom(d).make_density_grid(rho_d,pt)
-   
+
            grid(:,c,d) =  rho_a*rho_c*rho_d
-   
+
            if (c==a) grid(:,c,d) = grid(:,c,d) - rho_d*rho
            if (d==a) grid(:,c,d) = grid(:,c,d) - rho_c*rho
-         
+
         end
 
       end

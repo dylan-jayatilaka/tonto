@@ -1,0 +1,129 @@
+! Copyright (C) Dylan Jayatilaka, 1999
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id: run_molecule.foo 3361 2009-09-24 15:40:02Z dylan_ $
+
+program run_MOLECULE_MP2
+
+   implicit none
+
+   m :: MOLECULE*
+   v :: MAT4{REAL}*
+   e :: VEC{REAL}*
+   MO,core :: MAT{REAL}*
+   n_bf,n_e,n_occ,i,a,j,b :: INT
+   E_HF,e_mp2,top,bottom :: REAL
+
+   ! Macro to create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Start the memory-call stack
+   tonto.start_memory_trace(30)
+
+   ! Initialise standard I/O files.
+   ! Always have this.
+   stderr.create_stderr; stderr.open
+   std_time.start_timing
+   stdin.create_stdin;   stdin.open
+   stdout.create_stdout; stdout.open
+
+   ! Run the molecule
+   m.MAIN:run
+
+   stdout.text("The BEGINNING IS HERE")
+
+   ! Important numbers
+   n_bf  = m.n_bf
+   n_e   = m.BASE:no_of_electrons
+   n_occ = n_e/2
+
+   ! Orbital energies
+   e.create(n_bf)
+   e = m.orbital_energies.restricted
+
+   stdout.show("No of basis functions =",n_bf)
+   stdout.show("No of electrons       =",n_e)
+   stdout.show("No of occupied mos    =",n_occ)
+
+   ! Get MO's
+   MO.create(n_bf,n_bf)
+   MO = m.molecular_orbitals.restricted
+
+   ! Get core
+   core.create(n_bf,n_bf)
+   core = m.core_matrix.restricted
+   core.change_basis_using(MO)
+
+   ! Get integrals
+   v.create(n_bf,n_bf,n_bf,n_bf)
+   m.FOCK:make_MO_ERI_chem_integrals(v)
+   
+   ! Show orbital energies
+   stdout.text("orbital energies:")
+   stdout.put(e)
+
+   ! Calculate HF energy
+   E_HF = ZERO
+   do i = 1,n_occ
+      do j = 1,n_occ
+         E_HF = E_HF + TWO*v(i,i,j,j) - v(i,j,i,j)
+      end
+      E_HF = E_HF + TWO*core(i,i)
+   end
+
+   stdout.show("E_HF = ", E_HF)
+
+   ! Calculate mp2 energies
+   e_mp2 = 0
+   do i = 1,n_occ
+   do j = 1,n_occ
+   do a = n_occ+1,n_bf
+   do b = n_occ+1,n_bf
+      top    = (v(i,a,j,b))**2
+      top    = top + HALF*(v(i,a,j,b) - v(i,b,j,a))**2
+      bottom = e(i) + e(j) - e(a) - e(b)
+      e_mp2 = (top/bottom) + e_mp2
+   end
+   end
+   end
+   end
+
+   ! Show integrals v
+ ! stdout.text("Here are integrals v:")
+ ! stdout.put(v)
+
+   stdout.show("E_mp2 = ", e_mp2)
+
+   stdout.text("The END")
+
+   ! Clean-up molecule
+   m.MAIN:cleanup
+
+   ! Memory report
+   TONTO_REPORT
+
+   ! Clean-up files
+   TEXTFILE:destroy(stdout)
+   TEXTFILE:destroy(stdin)
+   TEXTFILE:destroy(stderr)
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+
+end
