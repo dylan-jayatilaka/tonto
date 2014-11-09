@@ -1,0 +1,193 @@
+
+program run_NONHERMITIAN
+
+   implicit none
+
+   ! I,J,K,L : occupied spin orbitals
+   ! A,B,C,D : unoccupied spin orbitals
+   mol :: MOLECULE*
+   v,v_ :: MAT4{REAL}*
+   t,hess,d1,t1,evec :: MAT{REAL}*
+   e,e_,grad,dt1,eval :: VEC{REAL}*
+   A,B,I,J,II,AA,AI,BJ :: INT
+   n,no,nv,n_bf,n_e,n_occ,n_vir,iteration,p,m,q,nn :: INT
+   Ecc,test,r,norm :: REAL
+   failed :: BIN
+
+   ! Macro to create Tonto system object
+   ! Initialize MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Start the memory-call stack
+   tonto.start_memory_trace(30)
+
+   ! Initialise standard I/O files.
+   ! Always have this.
+   stderr.create_stderr; stderr.open
+   std_time.start_timing
+   stdin.create_stdin;   stdin.open
+   stdout.create_stdout; stdout.open
+
+   ! Run the molecule
+   mol.MAIN:run
+
+   ! Important numbers
+   ! if (n_e = odd) ...............................................
+   ! n_occ = n_e/2 + HALF ?????????????????????????????????????????
+   n_bf  = mol.n_bf
+   n_e   = mol.BASE:no_of_electrons
+   n_occ = n_e/2
+   n_vir = n_bf - n_occ
+
+   n  = 2*n_bf
+   no = 2*n_occ
+   nv = 2*n_vir
+   
+   stdout.show("# of basis functions =",n_bf)
+   stdout.show("# of electrons       =",n_e)
+   stdout.show("# of occupied MOs    =",n_occ)
+
+   ! Orbital energies
+   e.create(n)
+   e_.create(n_bf)
+   e_ = mol.orbital_energies.restricted
+   
+   do p = 1,n_bf
+      e(2*p-1) = e_(p)
+      e(2*p  ) = e_(p)
+   end
+   
+   e_.destroy
+
+   ! Check
+   stdout.text("orbital energies:")
+   stdout.put(e)
+
+   ! Get integrals
+   v.create(n,n,n,n)
+   v_.create(n_bf,n_bf,n_bf,n_bf)
+   mol.FOCK:make_MO_ERI_chem_integrals(v_)
+
+   ! Spin orbital integrals - twice as big!
+   v = ZERO
+   do p = 1,n_bf
+   do m = 1,n_bf
+   do q = 1,n_bf
+   do nn = 1,n_bf
+      v((2*p-1),(2*m-1),(2*q-1),(2*nn-1)) = v_(p,m,q,nn)
+      v((2*p)  ,(2*m)  ,(2*q),  (2*nn))   = v_(p,m,q,nn)
+      v((2*p-1),(2*m-1),(2*q),  (2*nn))   = v_(p,m,q,nn)
+      v((2*p)  ,(2*m)  ,(2*q-1),(2*nn-1)) = v_(p,m,q,nn)
+   end
+   end
+   end
+   end
+
+   v_.destroy
+
+   ! Create matrices
+   t.create(nv,no)
+   t1.create(nv,no)
+   dt1.create(nv*no)
+   grad.create(nv*no)
+   hess.create(nv*no,nv*no)
+   evec.create(nv*no,nv*no)
+   eval.create(nv*no)
+
+   r = 0.5 
+
+
+   ! Get the formula of every part of the iteration equation.
+
+   t    = r
+   grad = ZERO
+   hess = ZERO
+
+   AI = 0
+   do I = 1,no
+   do A = 1,nv
+      AI = AI + 1
+      BJ = 0
+      do J = 1,no
+      do B = 1,nv
+         BJ = BJ + 1
+         grad(AI)    = grad(AI) + v(no+A,I,no+B,J) * t(B,J) - v(no+A,J,no+B,I) * t(B,J)
+         hess(AI,BJ) = v(no+A,I,no+B,J) - v(no+A,J,no+B,I)
+      end
+      end
+   end
+   end
+
+   hess.solve_eigenproblem(eval,evec)
+   hess.to_inverse_of(eval,evec)
+   grad = -grad
+   grad = evec(:,1) 
+
+   dt1.to_product_of(hess,grad)
+
+   stdout.text("grad:")
+   stdout.put(grad)
+ ! stdout.text("hess:")
+ ! stdout.put(hess)
+
+   stdout.text("hess eigenvalues:")
+   stdout.put(eval)
+
+   stdout.text("dt1:")
+   stdout.put(dt1)
+
+   AI = 0
+   do I = 1,no
+   do A = 1,nv
+      AI = AI + 1
+      t(A,I) =  dt1(AI)
+   end
+   end
+   
+
+
+   do BJ = 1,1
+
+      AI = 0
+      do I = 1,no
+      do A = 1,nv
+         AI = AI + 1
+         t(A,I) =  evec(AI,BJ)
+      end
+      end
+   
+      ! Finally do energy! :-)
+      ! Get Ecc += HALF*v*tau
+      Ecc = 0
+      do A = 1,nv
+      do I = 1,no
+      do B = 1,nv
+      do J = 1,no
+         Ecc = Ecc + HALF * v(no+A,I,no+B,J) * (t(A,I) * t(B,J) - t(A,J) * t(B,I))
+      end
+      end
+      end
+      end
+   
+      print *,"Correlation Energy for eigenvalue "//trim(BJ.to_str)//" = ",Ecc
+
+   end
+
+   stdout.text("The END")
+
+   ! Clean-up molecule
+   mol.MAIN:cleanup
+      
+   ! Memory report
+   TONTO_REPORT
+             
+   ! Clean-up files
+   TEXTFILE:destroy(stdout)
+   TEXTFILE:destroy(stdin)
+   TEXTFILE:destroy(stderr)
+                      
+   ! Clean-up tonto system
+   TONTO_DESTROY! Work out energy
+
+end
+
