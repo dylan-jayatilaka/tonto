@@ -2855,12 +2855,12 @@ contains
       end
 
      .crystal.set_F_calc(Fc)
+      Fc.destroy
 
      .crystal.make_F_predicted
      .crystal.put_reflection_data
 
       sf_eq.destroy
-      Fc.destroy
 
    end
 
@@ -2915,13 +2915,6 @@ contains
             g = g + D(i,j)*ft_hkl(i,j)  !????? cmpx matrix ??? perhaps the cpx parts is not needed BUT!!!!
          end do           
          end do           
-        
-         stdout.flush
-         stdout.put(n)
-         stdout.put(k_pts(n,1))
-         stdout.put(k_pts(n,2))
-         stdout.put(k_pts(n,3))
-         stdout.put(g)
         
          sf(n) = g
 
@@ -3016,13 +3009,6 @@ contains
            g = g + D(i,j)*ft_hkl(i,j)  !????? cmpx matrix ??? perhaps the cpx parts is not needed BUT!!!!
         end do           
         end do           
-
-        stdout.flush
-        stdout.put(n)
-        stdout.put(k_pts(n,1))
-        stdout.put(k_pts(n,2))
-        stdout.put(k_pts(n,3))
-        stdout.put(real(g))
 
         sf(n) = g
 
@@ -3525,7 +3511,10 @@ contains
 
 ! hkl ft starts here
      ft_hkl.create(.n_bf,.n_bf)
-     do n = 1,k_max
+     sf=(ZERO,ZERO)
+     ft_hkl=(ZERO,ZERO)
+
+     parallel do n = 1,k_max
         ft_hkl=(ZERO,ZERO)
        .::make_IOTC_ft_PCE_off(ft_hkl,Yr,YU,Ap,bp,p,k_pts(n,1),k_pts(n,2),k_pts(n,3),m_out,n_gcm,S,O)
 
@@ -3539,15 +3528,13 @@ contains
            end do           
         end do           
 
-        stdout.flush
-        stdout.put(n)
-        stdout.put(k_pts(n,1))
-        stdout.put(k_pts(n,2))
-        stdout.put(k_pts(n,3))
-        stdout.put(real(g))
-
         sf(n)=g
-     end do
+     end
+
+     if (DO_IN_PARALLEL) then
+        PARALLEL_SUM(sf)
+     end
+
 
     S.destroy
     O.destroy
@@ -3755,7 +3742,8 @@ contains
      ft_ab :: MAT{CPX}*
      nps,a,b,fa,la,fb,lb :: INT
      G :: GAUSSIAN2
-     p,t :: REAL 
+     p,t :: REAL
+     k_vec :: VEC{REAL}(3)
 
      ! Make the indexing arrays
      .atom.make_primitive_limits(frst,last,at,l,ex)
@@ -3779,8 +3767,16 @@ contains
            lb = last(b)
 
            ! partitioning and thermal smearing
-           p = ONE
-           t = ONE
+           ! part=gaussian / thermal=tanaka are done here
+           select case (trim(.crystal.thermal_smearing_model))
+             case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+               k_vec(1)=h1;k_vec(2)=h2;k_vec(3)=h3
+               .::thermal_tanaka(p,G,k_vec,a,b)
+             case default
+               p = ONE
+           end  
+
+             t = ONE
  
            ft_ab.create(la-fa+1,lb-fb+1)
            ft_ab = (ZERO,ZERO)
@@ -3914,13 +3910,14 @@ contains
          .::make_partition_factors(p,sh,atom_a,atom_b,is_zero)
 
          t.create(la-fa+1,lb-fb+1)
-         .::thermal_smearing_correction_pce(t,k_vec,atom_a,atom_b)
+         .::thermal_smearing_correction_pce(t,k_vec,sh,atom_a,atom_b)
 
          do bg = 1,lb-fb+1
          do ag = 1,la-fa+1
             ft(fa-1+ag,fb-1+bg) = ft(fa-1+ag,fb-1+bg)*p(ag,bg)*t(ag,bg)
          end do  
          end do
+         
 
          t.destroy
          p.destroy
@@ -3932,17 +3929,20 @@ contains
 
    end
 
-   thermal_smearing_correction_pce(res,k_vec,a,b)
+   thermal_smearing_correction_pce(res,k_vec,sh,a,b)
    ! Makes the thermal smearing correction term.  Note that res is
    ! done over the contraction coefficients. Dimensions of "res" 
    ! are [.a.n_cc,.b.n_cc].
       self :: IN
       res :: MAT{REAL}, OUT
       k_vec :: VEC{REAL}, IN
+      sh :: SHELL2, IN
       a,b :: INT, IN
 
       Ua,Ub,Uab :: MAT{REAL}(3,3)
       S,US :: VEC{REAL}(3)
+      res2 :: MAT3{REAL}*
+      k_vec2 :: MAT{REAL}(1,3)
       separation,bondlength,Ta,Tb,g :: REAL
       diff :: VEC{REAL}(3)
 
@@ -3973,16 +3973,76 @@ contains
          US.to_product_of(Uab,S)
          Ta = S.dot(US)
          res = exp(Ta)
-
-      case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
-         DIE(" tanaka model not yet implemented for PCE corrected structure factors ")
-         res = ONE
+      
+      ! case tanaka is treated else where in prim ft and pftp
+      !case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+      !!  WARN("tanaka model is going in the ordinary way, not sure about any PCE in it !!!")
+      !!  stdout.flush
+      !   res2.create(1,res.dim1,res.dim2)
+      !   res2=ZERO
+      !   Ua = .atom(a).ADP_tensor
+      !   Ub = .atom(b).ADP_tensor
+      !   k_vec2(1,:)=k_vec(:)
+      !   sh.make_tanaka_thermal_smearing(res2,k_vec2,Ua,Ub)
+      !   res(:,:)=res2(1,:,:)
+      !   res2.destroy
 
       case default
-         DIE("unknown model, "//trim(.crystal.thermal_smearing_model))
-         res = ONE
+         DIE("unknown smearing model:"//trim(.crystal.thermal_smearing_model))
 
       end
+
+   end
+
+   thermal_tanaka(res,G,k_vec,a,b)
+   ! Makes the thermal smearing correction term.  Note that res is
+   ! done over the contraction coefficients. Dimensions of "res" 
+   ! are [.a.n_cc,.b.n_cc].
+      self :: IN
+      res :: REAL, OUT
+      k_vec :: VEC{REAL}, IN
+      G :: GAUSSIAN2, IN
+      a,b :: INT, IN
+
+      Ua,Ub,Uab :: MAT{REAL}(3,3)
+      S,US :: VEC{REAL}(3)
+      res2 :: MAT3{REAL}*
+      k_vec2 :: MAT{REAL}(1,3)
+      separation,bondlength,Ta,Tb :: REAL
+      diff :: VEC{REAL}(3)
+      ea,eb,U11,U22,U33,U21_12,U31_13,U32_23 :: REAL
+      U,Ub_eb,Ua_ea :: MAT{REAL}(3,3) 
+      S1,S2,S3 :: REAL
+
+      !!  WARN("tanaka model is going in the ordinary way, not sure about any PCE in it !!!")
+      !!  stdout.flush
+         Ua = .atom(a).ADP_tensor
+         Ub = .atom(b).ADP_tensor
+
+       ! it is currently a problem without atom_data
+       !  ea = G.a.set_exponent(ex(a))
+         ea = G.a.exponent
+         Ua_ea = ea * Ua
+
+         eb = G.b.exponent
+         Ub_eb = eb * Ub
+
+            U = - HALF * (Ua_ea + Ub_eb) / (ea + eb)
+
+            U11    = U(1,1)
+            U22    = U(2,2)
+            U33    = U(3,3)
+            U21_12 = U(2,1) + U(1,2)
+            U31_13 = U(3,1) + U(1,3)
+            U32_23 = U(3,2) + U(2,3)
+
+
+               S1 = k_vec(1)
+               S2 = k_vec(2)
+               S3 = k_vec(3)
+
+               ! S.U.S has been expanded to save multiplies and array accesses.
+               res = exp(S1*(S1*U11+S2*U21_12+S3*U31_13)+S2*(S2*U22+S3*U32_23)+S3*S3*U33)
 
    end
   
