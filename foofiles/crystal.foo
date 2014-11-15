@@ -488,6 +488,10 @@ contains
          case ("merge_ordered_equivalents     "); .merge_ordered_equivalents
          case ("pnd_data=                     "); .read_pnd_data
          case ("prune_asymmetric_unit=        "); .read_prune_asymmetric_unit
+         case ("prune_bad_reflections         "); .prune_bad_reflections
+         case ("prune_high_angle_reflections  "); .prune_high_angle_reflections
+         case ("prune_low_angle_reflections   "); .prune_low_angle_reflections
+         case ("prune_weak_reflections        "); .prune_weak_reflections
          case ("put                           "); .put
          case ("put_bond_info_with_errors     "); .put_bond_info_with_errors
          case ("put_bond_info_with_errors_to  "); .put_bond_info_with_errors_to
@@ -556,13 +560,18 @@ contains
 
    read_unit_cell
    ! Read the unit cell information
+      DIE_IF(.xray_data.created,"enter unit cell information before xray_data= !")
+      DIE_IF(.pnd_data.created, "enter unit cell information before pnd_data= !")
+
       .unit_cell.read_keywords
       .unit_cell.make_info
+
    end
 
    read_xray_data ::: leaky
    ! Read in the xray diffraction data
 
+      DIE_IF(NOT .unit_cell.info_made,"enter unit cell information before xray_data= !")
       WARN_IF(.xray_data.created,"xray diffraction data already defined!")
 
       if (.xray_data.destroyed) .xray_data.create
@@ -570,21 +579,18 @@ contains
 
       .xray_data.read_keywords
 
-      .xray_data.update
+      .xray_data.update(.unit_cell)
       .assign_xray
 
       ! Prune
-      if (.xray_data.reflections.created) then
-      if (.xray_data.reflections.have_F_exp) then
-         .data.prune_negative_F_exp
-      end
-      end
+      if (.xray_data.reflections.created) .data.prune_reflections
 
    end
 
    read_pnd_data ::: leaky
    ! Read in the pnd diffraction data
 
+      DIE_IF(NOT .unit_cell.info_made,"enter unit cell information before pnd_data= !")
       WARN_IF(.pnd_data.created,"pnd diffraction data already defined!")
 
       if (.pnd_data.destroyed) .pnd_data.create
@@ -593,7 +599,7 @@ contains
 
       .pnd_data.read_keywords
 
-      .pnd_data.update
+      .pnd_data.update(.unit_cell)
       .assign_pnd
 
    end
@@ -715,6 +721,42 @@ contains
    ! Read in the stl limit for generating (h k l)
       stdin.read(.stl_limit)
       ENSURE(.stl_limit>ZERO,"must be +ve!")
+   end
+
+!  =======
+!  Pruning
+!  =======
+
+   prune_bad_reflections
+   ! Prune the reflections with large F_z
+   ENSURE(.data.created,"no data")
+
+      .data.prune_bad_F_reflections
+
+   end
+
+   prune_high_angle_reflections
+   ! Prune the high angle reflections
+   ENSURE(.data.created,"no data")
+
+      .data.prune_high_angle_reflections
+
+   end
+
+   prune_low_angle_reflections
+   ! Prune the low angle reflections
+   ENSURE(.data.created,"no data")
+
+      .data.prune_low_angle_reflections
+
+   end
+
+   prune_weak_reflections
+   ! Prune the low angle reflections
+   ENSURE(.data.created,"no data")
+
+      .data.prune_weak_reflections
+
    end
 
 !  ===============
@@ -1023,7 +1065,7 @@ contains
 
       ! Tolerances to see if atom positions are the same
       ! --- getting this number wrong can stuff things
-      tol = TOL(3)
+      tol = CRYSTAL_SAME_ATOM_TOL
 
       ! Find and create fragment atoms
       do f = 1,n_frag_atoms
@@ -1133,8 +1175,7 @@ contains
 
       ! Tolerances to see if atom positions are the same
       ! --- getting this number wrong can stuff things
-      tol = TOL(2)/maxval(.unit_cell.length)
-      tol = TOL(3)
+      tol = CRYSTAL_SAME_ATOM_TOL
 
       ! Fractional atom occupancies?
       frac = .fragment_atom.has_disorder
@@ -1300,8 +1341,7 @@ contains
 
       ! Tolerances to see if atom positions are the same
       ! --- getting this number wrong can stuff things
-      tol = TOL(2)/maxval(.unit_cell.length)
-      tol = TOL(3)
+      tol = CRYSTAL_SAME_ATOM_TOL
 
       ! Create the arrays we want
       .frag_atom_for_unit_cell_atom.destroy
@@ -1813,15 +1853,21 @@ contains
       tol :: REAL
 
       if (.use_manual_repetition_factors) then
+
          ENSURE(.repetition_factor.created,"no repetiton_factors entered!")
+
       else
-         tol = TOL(2)/maxval(.unit_cell.length)
-         tol = TOL(3)                        ! <--- getting this number wrong can stuff things
+
+         tol = CRYSTAL_SAME_ATOM_TOL
+
          .repetition_factor.destroy
          .repetition_factor.create(.n_fragment_atoms)
+
          do a = 1,.n_fragment_atoms
+
             pa = .fragment_geometry(:,a)
             .put_to_unit_cell(pa)
+
             n_same = 0
             do b = 1,.n_fragment_atoms
             do n = 1,.spacegroup.n_seitz
@@ -1831,9 +1877,13 @@ contains
                if (same) n_same = n_same + 1
             end
             end
+
             .repetition_factor(a) = n_same
+
          end
+
       end
+
    end
 
    make_asym_atom_rep_factors ::: leaky, private
@@ -1852,26 +1902,37 @@ contains
       same :: BIN
       tol :: REAL
 
-      tol = TOL(2)/maxval(.unit_cell.length)
-      tol = TOL(3)                        ! <--- getting this number wrong can stuff things
+      tol = CRYSTAL_SAME_ATOM_TOL
+
       .asym_atom_rep_factor.destroy
       .asym_atom_stabilizer.destroy
       .asym_atom_rep_factor.create(.n_asymmetric_unit_atoms)
       .asym_atom_stabilizer.create(.n_asymmetric_unit_atoms)
+
       do a = 1,.n_asymmetric_unit_atoms
+
          pa = .asymmetric_unit_geometry(:,a)
          .put_to_unit_cell(pa)
+
          n_same = 0
+
          do n = 1,.spacegroup.n_seitz
+
             pn = pa
             .transform_position(pn,n,to_unit_cell=TRUE)
             same = pa.same_as(pn,tol)
+
             if (NOT same) cycle
+
             n_same = n_same + 1
             .asym_atom_stabilizer(a).element.append(n)
+
          end
+
          .asym_atom_rep_factor(a) = n_same
+
       end
+
    end
 
 !  =============================
@@ -2074,22 +2135,23 @@ contains
 
    ENSURE(size(p)==3, "p must be length 3")
 
-      new :: VEC{REAL}(3)
-      tol,pi :: REAL
-      i :: INT
+      new,pi :: VEC{REAL}(3)
+      tol :: REAL
 
-      tol = TOL(1)/maxval(.unit_cell.length)
-      tol = TOL(3)
+      tol = CRYSTAL_UNIT_CELL_TOL
 
-      do i = 1,3
-         pi = REALIFY(nint(p(i)))
-         if (abs(p(i)-pi)<tol) p(i) = pi
-      end
+      ! Change p to cell boundary (within tol)
+      pi = REALIFY(nint(p))
+      where (abs(p-pi)<tol) p = pi
 
+      ! The new unit cell coordinate
       new = p - floor(p)
 
-      if (present(shift)) shift = nint(new - p)
+      ! The shift applied to the (corrected) p 
+      ! to get it into the unit cell ...
+      if (present(shift)) shift = new - p
 
+      ! Set p
       p = new
 
    end
@@ -2256,20 +2318,29 @@ contains
       skip :: VEC{BIN}*
       same :: BIN
       tol :: REAL
-      tol = TOL(2)/maxval(.unit_cell.length)
-      tol = TOL(3)                        ! <--- getting this number wrong can stuff things
+
+      tol = CRYSTAL_SAME_ATOM_TOL
+
       n_atom = geom_i.dim2
       skip.create(n_atom); skip(:) = FALSE
+
       do i = 1,n_atom
-         do j = 1,n_atom
-            same = geom_i(:,i).same_as(geom_j(:,j),tol)
-            if (NOT same OR skip(j)) cycle
-            skip(j) = TRUE
-            exit
-         end
+      do j = 1,n_atom
+
+         same = geom_i(:,i).same_as(geom_j(:,j),tol)
+
+         if (NOT same OR skip(j)) cycle
+
+         skip(j) = TRUE
+         exit
+
       end
+      end
+
       res = all(skip) ! True if all atoms in i were matched (skipped) in j
+
       skip.destroy
+
    end
 
    xyz_stabilizer_matrices result (res) ::: leaky
