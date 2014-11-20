@@ -14,24 +14,24 @@ use File::Spec 'splitpath';           # To get the path to files.
 
 my $OS = '';                          # Name of the operating system.
 my $MAKE = '';
-my $SRCDIR = '.';                     # Directory for the source files 
+my $SRCDIR = '.';                     # Directory for the source files
 my $INSTALLDIR = '/usr/local/bin';    # Directory to install executables.
 my $PERL = '';                        # Location of the perl executable.
 my $FC = '';                          # The fortran compiler command.
 my $FOPTNS_TYPE = '';                 # FOPTNS setting: whether fast, debug or custom
 my $COMPILER_VENDOR = '';             # Name of the compiler vendor.
-my $COMPILER_ID_ = '';                # Compiler ID 
+my $COMPILER_ID_ = '';                # Compiler ID
 my $havelibs = 0;                     # Whether have determined the libraries to use.
 my $FSUFFIX = 'f95';                  # Fortran files have this suffix.
 my $PLATFORM_ID = '';                 # e.g. LAHEY-lf95-on-WINDOWS
 my $PLATFORM_ID_ = '';                # e.g. LAHEY_lf95_on_WINDOWS
 my $PLATFORM_INFO_FILE = '';          # This is the compiler vendor and operating system
-my $SVN_VERSION = `svnversion`;       # The svn version 
+my $GIT_VERSION = `git rev-parse --short HEAD`; # The git version
 my $INT_KIND = 4;                     # The default integer kind
 my $BIN_KIND = 4;                     # The default logical kind
 my $REAL_KIND = 8;                    # The default real kind
 my $CPX_KIND = 8;                     # The default complex kind
-my $BRACES_EXPANDING = '';            # The default for braces expanding 
+my $BRACES_EXPANDING = '';            # The default for braces expanding
 
 my $show_help = 0;
 my $show_defaults = 0;
@@ -122,7 +122,7 @@ if (defined $FC && $FC ne '') {
     ($FC,$FULLFC) = &check_for_programs($FC);
   }
 } else {
-  ($FC,$FULLFC) = 
+  ($FC,$FULLFC) =
   &check_for_programs('pathf95','mpif95','lf95','ifort','ifc','efc',
              'frt','xlf','pgf95','f95','f90','g95','gfortran','nagfor');
 }
@@ -244,7 +244,7 @@ sub get_default_integer_kind {
      chomp($INT_KIND);
      $INT_KIND =~s/\s+//g;
      $INT_KIND =~s/\W+//g;
-  } 
+  }
   unlink("inttest.f90");
   unlink("inttest.map","inttest","inttest.out","inttest.exe","inttest.o","inttest.obj");
 }
@@ -266,7 +266,7 @@ sub get_default_double_precision_kind {
      chomp($REAL_KIND);
      $REAL_KIND =~s/\s+//g;
      $REAL_KIND =~s/\W+//g;
-  } 
+  }
   unlink("realtest.map","realtest","realtest.f90","realtest.out","realtest.exe","realtest.o","realtest.obj");
 }
 
@@ -287,7 +287,7 @@ sub get_default_double_complex_kind {
      chomp($CPX_KIND);
      $CPX_KIND =~s/\s+//g;
      $CPX_KIND =~s/\W+//g;
-  } 
+  }
   unlink("complextest.map","complextest","complextest.f90","complextest.out","complextest.exe","complextest.o","complextest.obj");
 }
 
@@ -309,7 +309,7 @@ sub get_default_logical_kind {
      chomp($BIN_KIND);
      $BIN_KIND =~s/\s+//g;
      $BIN_KIND =~s/\W+//g;
-  } 
+  }
   unlink("bintest.map","bintest","bintest.f90","bintest.out","bintest.exe","bintest.o","bintest.obj");
 }
 
@@ -384,7 +384,7 @@ sub get_foptns_type {
     if    (/^FOPTNS\s*=\s*\$\(FFAST\)/)  { $loc = "fast"; }
     elsif (/^FOPTNS\s*=\s*\$\(FDEBUG\)/) { $loc = "debug"; }
     elsif (/^FOPTNS\s*=\s*\$\(FPROF\)/)  { $loc = "custom"; }
-   
+
     next if ($loc eq " ");
 
     last;
@@ -451,7 +451,7 @@ sub do_substitutions_into_Makefile {
     s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
     s/\@PLATFORM_ID\@/$PLATFORM_ID/g;
     s/\@PLATFORM_ID_\@/$PLATFORM_ID_/g;
-    s/\@SVN_VERSION\@/$SVN_VERSION/g;
+    s/\@GIT_VERSION\@/$GIT_VERSION/g;
     s/\@INT_KIND\@/$INT_KIND/g;
     s/\@BIN_KIND\@/$BIN_KIND/g;
     s/\@REAL_KIND\@/$REAL_KIND/g;
