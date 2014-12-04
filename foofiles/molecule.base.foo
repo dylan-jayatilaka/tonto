@@ -14,21 +14,23 @@
 !   straightforward to understand from the three- or four-letter
 !   pneumonic e.g. REL is for relativistic routines.
 !
+! Updated 2014-12-01
+!
 ! .BASE
-! |=>2 .CE
-! |=>3     .REL
-! |=>  |=>     .GRID
-! |=>      |=>7     .XTAL
-! |=>6         |=>1       .INTS
-! |=>2              |=>2       .GEM
-! |=>  |=>5              |=>2       .FOCK
-! |=>  |=>2    |=>7     |=>  |=>1        .SCF
-! |=>4         |=>      |=>  |=>1 |=>        .PROP
-! |=>          |=>      |=>       |=>  |=>        .PLOT
-! |=>          |=>4               |=>6      |=>5       .TAD
-! |=>3         |=>3     |=>4 |=>2      |=>1 |=>1            .CP
-! .MISC
-! .MAIN
+!     3 .REL
+!    16---24 .GRID
+!    14---12---- 1 .XTAL
+!     2--- |---- |---- 4 .CE =
+!     7--- |---- 1---- |-- | .INTS
+!    14--- |---- 5---- |-- |---- 2 .FOCK
+!    30--- 5---- 4---- 5-- |----10---- 5 .SCF
+!     2--- |---- |---- |-- |---- 1---- 5--- 1 .GEM =     =     =
+!    11--- |---- |---- 1-- |----15---- 5---13--- | .PROP =     =
+!     4--- |---- 6---- |-- |---- 3---- |--- 2--- |---- | .PLOT =
+!     4--- |---- 5---- |-- |---- 4---- 2--- 1--- |---- |---- | .CP
+!    12--- |---- 7---- |-- |---- |---- |--- 1--- |---- |---- 1-- | .TAD
+!    15--- |---- 5---- 1-- |---- 5---- 6--- 5--- |---- |---- |-- |--- 2 .MISC
+!    76--- 3---- 3----13-- 7---- 1---- |---13--- 3----19---- 6-- 9---11----24 .MAIN
 !
 ! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996
 ! Copyright (C) Dylan Jayatilaka 2012-
@@ -138,6 +140,12 @@ contains
       nullify(.dipole_hyperpolarisability)
       nullify(.U2_electric_dipole)
 
+      nullify(.force_constants)
+      nullify(.normal_mode_eigenvectors)
+      nullify(.normal_mode_eigenvalues)
+      nullify(.phi3_force_constants)
+      nullify(.phi4_force_constants)
+
    end
 
    destroy_ptr_part ::: recursive, leaky
@@ -242,6 +250,13 @@ contains
       .dipole_polarisability.destroy
       .dipole_hyperpolarisability.destroy
       .U2_electric_dipole.destroy
+
+      ! Force constants
+      .force_constants.destroy
+      .normal_mode_eigenvectors.destroy
+      .normal_mode_eigenvalues.destroy
+      .phi3_force_constants.destroy
+      .phi4_force_constants.destroy
 
    end
 
@@ -404,6 +419,12 @@ contains
       if (mol.dipole_polarisability.created)      .dipole_polarisability.create_copy(mol.dipole_polarisability)
       if (mol.dipole_hyperpolarisability.created) .dipole_hyperpolarisability.create_copy(mol.dipole_hyperpolarisability)
       if (mol.U2_electric_dipole.created)         .U2_electric_dipole.create_copy(mol.U2_electric_dipole)
+
+      if (mol.force_constants.created)            .force_constants.create_copy(mol.force_constants)
+      if (mol.normal_mode_eigenvectors.created)   .normal_mode_eigenvectors.create_copy(mol.normal_mode_eigenvectors)
+      if (mol.normal_mode_eigenvalues.created)    .normal_mode_eigenvalues.create_copy(mol.normal_mode_eigenvalues)
+      if (mol.phi3_force_constants.created)       .phi3_force_constants.create_copy(mol.phi3_force_constants)
+      if (mol.phi4_force_constants.created)       .phi4_force_constants.create_copy(mol.phi4_force_constants)
 
    end
 
@@ -651,6 +672,26 @@ contains
       end
 
       .BASE:make_overlapping_atoms
+
+   end
+
+   set_force_constants(fc) ::: leaky
+   ! Set the .force_constants to the flat array "fc".
+   ! Since it is a symmetric matrix the order does not matter.
+      fc :: VEC{REAL}, IN
+
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(fc.dim=9*.atom.dim*.atom.dim,"wrong size, fc")
+
+      n3n :: INT
+
+      ! Create space
+      n3n = 3*.atom.dim
+      .force_constants.destroy
+      .force_constants.create(n3n,n3n)
+
+      ! Reshape
+      .force_constants = reshape(fc,[n3n,n3n])
 
    end
 
@@ -2354,9 +2395,9 @@ contains
       chkfile :: TEXTFILE*
       shell_l,n_prim_for_shell,atom_for_shell,atom_p :: VEC{INT}*
       G_n_prim_for_shell,G_atom_for_shell,G_shell_type :: VEC{INT}*
-      G_ex,G_cc,G_cp, ex,cc,orb_energy :: VEC{REAL}*
+      G_ex,G_cc,G_cp, ex,cc,orb_energy, fc :: VEC{REAL}*
       temp_mat,DD,MO :: MAT{REAL}*
-      Z, a,s,t, f,l,g,h :: INT
+      Z, a,s,t, f,l,g,h, n3n,ntr :: INT
       n_prim_shells,n_shell,n_prim,n_independent :: INT
       restricted :: BIN
       archive :: ARCHIVE
@@ -2667,8 +2708,22 @@ contains
       ! Extract CC density matrix to file.  UHF untested
       .::read_gX_CC_dm(chkfile,restricted,.density_matrix)
 
+      ! Read in force constants
+      if (chkfile.has_string("Cartesian Force Constants")) then
+         n3n = 3*.atom.dim
+         ntr = n3n.triangle_number
+         .force_constants.create(n3n,n3n)
+         fc.create(ntr)
+         chkfile.look_for("Cartesian Force Constants",from=1)
+         chkfile.read_line
+         chkfile.read(fc)
+         .force_constants.symmetric_unzip_triangle(fc)
+         fc.destroy
+      end
+
       ! Close chkfile
-      chkfile.close; chkfile.destroy
+      chkfile.close
+      chkfile.destroy
 
       ! Save data in archives
       archive.set_defaults
