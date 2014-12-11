@@ -28,6 +28,224 @@ module MOLECULE.PROP
 
 contains
 
+!  ===========
+!  Frequencies
+!  ===========
+
+   read_force_constants ::: leaky
+   ! Read the force constants as a flat vector in atomic units.
+   ! SInce it is a symmetric matrix the order does not matter.
+
+      fc :: VEC{REAL}*
+      n3n :: INT
+
+      ! Read
+      stdin.read_ptr(fc)
+
+      ! Set ... leaky
+      .BASE:set_force_constants(fc)
+
+      ! Clean
+      fc.destroy
+
+   end
+
+   normal_mode_analysis ::: leaky
+   ! Make the normal modes
+   ENSURE(.force_constants.created,"no force constants")
+   ENSURE(.atom.created,"no atoms")
+
+      n3n,i,j :: INT
+      fc :: MAT{REAL}*
+      rm :: VEC{REAL}*
+      rmi,rmj :: REAL
+
+      n3n = 3*.atom.dim
+
+      ! Clean
+      .normal_mode_eigenvectors.destroy
+      .normal_mode_eigenvalues.destroy
+
+      ! Allocate
+      .normal_mode_eigenvalues.create(n3n)
+      .normal_mode_eigenvectors.create(n3n,n3n)
+
+      fc.create(n3n,n3n)
+      rm.create(n3n)
+
+      ! Masses in au ... *not* AMU
+      rm = .atom.displacement_mass_vector * MASS_OF_ELECTRON_PER_AMU
+      rm = ONE/sqrt(rm)
+
+      ! Mass weight
+      do i = 1,n3n
+         rmi = rm(i)
+         do j = 1,n3n
+            rmj = rm(j)
+            fc(i,j) = rmi * .force_constants(i,j) * rmj
+         end
+      end
+
+      ! Get modes
+      fc.solve_symmetric_eigenproblem(.normal_mode_eigenvalues,.normal_mode_eigenvectors)
+
+      ! Clean
+      rm.destroy
+      fc.destroy
+
+   end
+
+   put_normal_modes
+   ! Put the force constants and normal modes
+   ENSURE(.normal_mode_eigenvectors.created,"no normal mode eigenvectors")
+   ENSURE(.normal_mode_eigenvalues.created, "no normal mode eigenvalues")
+
+      table :: VEC{TABLE_COLUMN}*
+      eval :: VEC{REAL}*
+      ewav :: VEC{STR}*
+      n3n,i :: INT
+
+
+      stdout.flush
+      stdout.text("=========================")
+      stdout.text("Cartesian force constants")
+      stdout.text("=========================")
+      stdout.flush
+
+      n3n = 3*.atom.dim
+      stdout.show("No. of atoms        =",n3n/3)
+      stdout.show("No. of displacement =",n3n)
+      stdout.flush
+      stdout.put(.force_constants)
+
+      stdout.flush
+      stdout.text("Mass vector:")
+      stdout.flush
+      stdout.put(.atom(:).mass)
+
+      stdout.flush
+      stdout.text("========================")
+      stdout.text("Normal mode eigenvectors")
+      stdout.text("========================")
+      stdout.flush
+      stdout.text(". Eigenvalues are in cm^-1")
+      stdout.text(". Eigenvectors in mass-weighted atomic units (not AMUs)")
+      stdout.flush
+      stdout.show("cm^-1 per Hartree     =",WAVENUMBER_PER_HARTREE)
+      stdout.show("Electron mass per AMU =",MASS_OF_ELECTRON_PER_AMU)
+      stdout.flush
+
+      ! Table headings
+      ewav.create(n3n)
+      eval.create(n3n)
+      eval = .normal_mode_eigenvalues
+      eval = sqrt(abs(eval)) * WAVENUMBER_PER_HARTREE
+      ewav = eval.to_str(stdout.real_style,stdout.real_width,stdout.real_precision)
+      eval.destroy
+
+      ! Set table data
+      table.create(n3n)
+      do i = 1,n3n
+         table(i).set_heading(trim(ewav(i)))
+         table(i).set_values(.normal_mode_eigenvectors(:,i))
+      end
+
+      ! Make the table
+      table.put
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      ewav.destroy
+
+   end
+
+   put_dnc_displaced_geometries
+   ! Put the dimensionless normal coordinate displced geometries
+   ! used for evaluating the phi constants force constants.
+   ! See Schneider and Thiel (1989) CPL 157 p. 367.
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.atom.dim==1, "must have more than one atom")
+
+      table :: VEC{TABLE_COLUMN}*
+      qtox :: MAT{REAL}*
+      m12,g12,geom0,delta :: VEC{REAL}*
+      n_modes,n3n,f,l,i,s :: INT
+      step :: REAL
+
+      ! Ensure modes are there
+      if (.normal_mode_eigenvectors.destroyed) .::normal_mode_analysis
+
+      ! Step size
+      step = .phi_step_size
+
+      ! Starting mode & no of modes
+      n3n = 3*.atom.dim
+      l = n3n
+      f = 7
+      if (.atom.is_linear) f = 6
+      n_modes = l - f + 1
+
+      ! Make the dimensionless normal coordinates
+      qtox.create(n3n,n_modes)
+      m12.create(n3n)
+      g12.create(n_modes)
+      g12 = ONE/sqrt(.normal_mode_eigenvalues(f:l))
+      m12 = .atom.displacement_mass_vector * MASS_OF_ELECTRON_PER_AMU
+      m12 = ONE/sqrt(m12)
+      .normal_mode_eigenvectors.change_basis_to(qtox,m12,g12)
+      m12.destroy
+      g12.destroy
+
+      stdout.flush
+      stdout.text("================================")
+      stdout.text("Dimensionless normal coordinates")
+      stdout.text("================================")
+      stdout.flush
+      stdout.text("The columns correspoind to the non-zero modes")
+      stdout.text("assuming that the geometry is a minimum")
+      stdout.flush
+      stdout.show("No. of atoms        =",n3n/3)
+      stdout.show("No. of displacement =",n3n)
+      stdout.show("No. of modes        =",n_modes)
+      stdout.flush
+      stdout.put(qtox)
+
+      stdout.flush
+      stdout.text("========================================================")
+      stdout.text("Displaced normal coordinate geometries for Phi constants")
+      stdout.text("========================================================")
+
+      geom0.create(n3n)
+      delta.create(n3n)
+
+      stdout.flush
+      stdout.text("Undisplaced (reference) geometry")
+
+      .atom.put_coordinate_vector_to(geom0)
+      .atom.put_coordinates
+
+      do i = f,l
+      do s = -1,1,2
+
+         stdout.flush
+         stdout.show("Displacement mode      = ",i)
+         stdout.show("Displacement mode sign = ",s)
+         delta = geom0 + s*step*qtox(:,i)
+
+         .atom.set_positions_from_vector(delta)
+         .atom.put_coordinates
+
+      end
+      end
+
+      ! Clean
+      delta.destroy
+      geom0.destroy
+
+   end
+
+
 !  =======================
 !  One electron properties
 !  =======================

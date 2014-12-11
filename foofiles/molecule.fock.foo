@@ -201,9 +201,15 @@ contains
       if (add_r12) then
 
         J => F.restricted
-        if (do_direct) then; .::make_r_J_engine(J,P.restricted)
-        else;                .::make_r_J_disk(J,P.restricted)
+        if (do_direct) then
+           if(.use_spherical_basis) then; .::make_r_J_direct(J,P.restricted)
+           else;                          .::make_r_J_engine(J,P.restricted)
+           end
+        else;                             .::make_r_J_disk(J,P.restricted)
         end
+      !  if (do_direct) then; .::make_r_J_engine(J,P.restricted)
+      !  else;                .::make_r_J_disk(J,P.restricted)
+      !  end
 
         ! Exchange correlation matrix
         if (add_xc) .::add_XC_matrix(F)
@@ -315,7 +321,10 @@ contains
 
          Pab = P.alpha + P.beta
 
-         .::make_r_J_engine(J,Pab)
+       !  .::make_r_J_engine(J,Pab)
+         if(.use_spherical_basis) then; .::make_r_J_direct(J,Pab)
+         else;                          .::make_r_J_engine(J,Pab)
+         end
 
          Pab.destroy
 
@@ -825,6 +834,120 @@ contains
       ! Debug
       .BASE:put_debug(J,"make_r_JK_engine: J")
       .BASE:put_debug(K,"make_r_JK_engine: K")
+
+   end
+
+   make_r_J_direct(J,P)
+   ! Make the real coulomb matrix "J" matrix from a
+   ! symmetric density matrix "P" directly.
+      J,P :: MAT{REAL}
+
+   ENSURE(.precomputed_basis_shellpair.created,"no precomputed shell pair information")
+
+      I,max_P :: VEC{REAL}*
+      sh4s,sh4n :: SHELL1QUARTET
+      ab,cd,aa,bb,cc,dd,fa,fb,fc,fd,la,lb,lc,ld,na,nb,nc,nd :: INT
+      atom_a,atom_b,atom_c,atom_d,a,b,c,d,abcd :: INT
+      factor,cutoff,P_max,IP_max,I_abcd :: REAL
+      skip,ab_same,cd_same,any_same,no_max_I :: BIN
+
+      J = ZERO
+
+      cutoff = .scfdata.eri_schwarz_cutoff
+
+      no_max_I = FALSE
+      if (.max_I.destroyed) no_max_I = TRUE
+      if (no_max_I) .::initialize_max_I
+
+      max_P.create(.n_shell_pairs)
+
+      .::make_max_density_elements(max_P,P)
+      P_max  = maxval(max_P)
+      IP_max = maxval(.max_I) * P_max
+
+      parallel do ab = 1,.n_shell_pairs
+
+         if (.max_I(ab)*IP_max < cutoff) cycle
+
+         .BASE:get_shell_pair_indices(ab,aa,bb,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         ab_same = atom_a==atom_b
+
+         .BASE:set_new_shell_quartet_ab(sh4s,aa,bb,skip=TRUE)
+         .BASE:set_new_shell_quartet_ab(sh4n,aa,bb,skip=FALSE)
+
+         do cd = 1,ab
+
+            if (.max_I(ab)*.max_I(cd)*P_max < cutoff) cycle
+
+            .BASE:get_shell_pair_indices(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d)
+
+            cd_same = atom_c==atom_d
+
+            skip = ::schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+            if (skip) cycle
+
+            factor = ONE
+            if (aa==bb) factor = HALF
+            if (cc==dd) factor = HALF * factor
+            if (aa==cc AND bb==dd) factor = HALF * factor
+
+            any_same = ab_same OR cd_same OR &
+                       atom_a==atom_c OR atom_a==atom_d OR &
+                       atom_b==atom_c OR atom_b==atom_d
+
+            if (any_same) then
+
+               .BASE:set_new_shell_quartet_cd(sh4n,cc,dd,skip=FALSE)
+               I.create(sh4n.ab_n_bf_pairs*sh4n.cd_n_bf_pairs)
+               SHELL1QUARTET::make_ERI(sh4n,I)
+               sh4n.destroy_cd
+
+            else
+
+               .BASE:set_new_shell_quartet_cd(sh4s,cc,dd,skip=TRUE)
+               I.create(sh4s.ab_n_bf_pairs*sh4s.cd_n_bf_pairs)
+               SHELL1QUARTET::make_ERI(sh4s,I)
+               sh4s.destroy_cd
+
+            end
+
+            abcd = 0
+            do d = fd,ld
+            do c = fc,lc
+            do b = fb,lb
+            do a = fa,la
+               abcd = abcd + 1
+               I_abcd = factor * I(abcd)
+               J(a,b) = J(a,b) + I_abcd*P(d,c)
+               J(c,d) = J(c,d) + I_abcd*P(b,a)
+            end
+            end
+            end
+            end
+
+            I.destroy
+
+         end
+
+         sh4n.destroy_ab
+         sh4s.destroy_ab
+      end
+
+      max_P.destroy
+      if (no_max_I) .max_I.destroy
+
+      .::weight_diagonal_blocks(J,TWO)
+
+      J = TWO*J
+      if (DO_IN_PARALLEL) then
+        PARALLEL_SYMMETRIC_SUM(J)
+      else
+        J.symmetric_reflect
+      end
+
+      ! Debug
+      .BASE:put_debug(J,"make_r_JK_direct: J")
 
    end
 
@@ -6077,9 +6200,9 @@ contains
 
    end
 
-! =================================================================================
-! For MP2 and/or electron correlation should be possible to use also with geminals
-! =================================================================================
+!  ========================================
+!  Electron repulsion integrals - in memory
+!  ========================================
 
    make_MO_ERI_chem_integrals(v)
    ! Calculate the electron repulsion integrals (ERI's) in the MO basis
@@ -6087,7 +6210,7 @@ contains
 
       v :: MAT4{REAL}
       P :: MAT{REAL}*
-      a,b,r,s :: INT
+      a,b,c,d :: INT
 
       P.create(.n_bf,.n_bf)
       P = .molecular_orbitals.restricted
@@ -6096,28 +6219,22 @@ contains
       .::make_ERI_integrals(v)
 
       do a = 1,.n_bf
-        do b = 1,a-1
-          v(a,b,:,:).change_basis_using(P)
-          v(b,a,:,:) = v(a,b,:,:)
-        end
-        v(a,a,:,:).change_basis_using(P)
+         v(a,a,:,:).change_basis_using(P)
+         do b = 1,a-1
+            v(a,b,:,:).change_basis_using(P)
+            v(b,a,:,:) = v(a,b,:,:)
+         end
       end
 
-      stdout.flush
-      stdout.text(" First half (ab) of ERI has been transformed! ")
-
-      do r = 1,.n_bf
-        do s = 1,r-1
-          v(:,:,r,s).change_basis_using(P)
-          v(:,:,s,r) = v(:,:,r,s)
-        end
-        v(:,:,r,r).change_basis_using(P)
+      do c = 1,.n_bf
+         v(:,:,c,c).change_basis_using(P)
+         do d = 1,c-1
+            v(:,:,c,d).change_basis_using(P)
+            v(:,:,d,c) = v(:,:,c,d)
+         end
       end
 
       P.destroy
-
-      stdout.flush
-      stdout.text(" Second half (rs) of ERI has been transformed! ")
 
    end
 
@@ -6125,56 +6242,56 @@ contains
    ! Calculate the electron repulsion integrals (ERI's) in the MO basis from the
    ! AO integrals
 
-     v :: MAT4{REAL}
-     P,H :: MAT{REAL}*
-     a,b,r,s :: INT
-
-     P.create(.n_bf,.n_bf)
-     P = .molecular_orbitals.restricted
-
-     v=ZERO
-    .::make_ERI_integrals(v)
-
+      v :: MAT4{REAL}
+      P,H :: MAT{REAL}*
+      a,b,r,s :: INT
+ 
+      P.create(.n_bf,.n_bf)
+      P = .molecular_orbitals.restricted
+ 
+      v=ZERO
+      .::make_ERI_integrals(v)
+ 
       do a = 1,.n_bf
-        do b = 1,a-1
-          !pcc should swap a and b to make it faster
-          v(a,b,:,:).change_basis_using(P)
-          v(b,a,:,:) = v(a,b,:,:)
-        end
-        v(a,a,:,:).change_basis_using(P)
+         do b = 1,a-1
+           !pcc should swap a and b to make it faster
+           v(a,b,:,:).change_basis_using(P)
+           v(b,a,:,:) = v(a,b,:,:)
+         end
+         v(a,a,:,:).change_basis_using(P)
       end
-
-     stdout.flush
-     stdout.text(" First half (ab) of ERI has been transformed! ")
-
+ 
+      stdout.flush
+      stdout.text(" First half (ab) of ERI has been transformed! ")
+ 
+      do r = 1,.n_bf
+         do s = 1,r-1
+           v(:,:,r,s).change_basis_using(P)
+           v(:,:,s,r) = v(:,:,r,s)
+         end
+         v(:,:,r,r).change_basis_using(P)
+      end
+      P.destroy
+ 
+    ! stdout.flush
+    ! stdout.text(" Second half (rs) of ERI has been transformed! ")
+ 
+      H.create(.n_bf,.n_bf)
+ 
+      ! Swap b and c to have it like <a1b2|c1d2> and not (a1b1c2d2) order
+      ! hence the Szabo Ostlund notation will work
       do r = 1,.n_bf
         do s = 1,r-1
-          v(:,:,r,s).change_basis_using(P)
-          v(:,:,s,r) = v(:,:,r,s)
+          H = v(:,s,r,:)
+          v(:,s,r,:)=v(:,r,s,:)
+          v(:,r,s,:)=H
         end
-        v(:,:,r,r).change_basis_using(P)
       end
-     P.destroy
-
-     stdout.flush
-     stdout.text(" Second half (rs) of ERI has been transformed! ")
-
-    H.create(.n_bf,.n_bf)
-
-   ! swap b and c to have it like <a1b2|c1d2> and not (a1b1c2d2) order
-   ! hence the Szabo Ostlund notation will work
-     do r = 1,.n_bf
-       do s = 1,r-1
-         H = v(:,s,r,:)
-         v(:,s,r,:)=v(:,r,s,:)
-         v(:,r,s,:)=H
-       end
-     end
-
-     stdout.flush
-     stdout.text(" Swap (br) of ERI has been performed! ")
-
-    H.destroy
+ 
+    ! stdout.flush
+    ! stdout.text(" Swap (br) of ERI has been performed! ")
+ 
+      H.destroy
 
    end
 
