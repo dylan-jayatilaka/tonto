@@ -22,6 +22,9 @@ module h5output
     module procedure cd_real_8_2d
     module procedure cd_int_4_2d
     module procedure cd_int_8_2d
+    module procedure cd_complex_4_2d
+    module procedure cd_complex_8_2d
+
   end interface
 
 
@@ -297,7 +300,92 @@ contains
     CALL h5sclose_f(dspace_id, hdferr)
 
   end subroutine
-  
+
+  subroutine cd_complex_4_2d(loc_id, dataset_name, buffer)
+    integer, intent(in) :: loc_id
+    character(len=*), intent(in) :: dataset_name
+    complex(4), dimension(:,:), target, intent(in) :: buffer
+    integer :: hdferr
+    integer(hid_t) :: hdf_id, type_id, dspace_id, kind_type, dset_id
+    integer(hsize_t), dimension(2) :: dims
+    integer(hsize_t) :: offset
+    type(c_ptr) :: f_ptr
+
+    dims = shape(buffer)
+    hdf_id = loc_id
+
+    offset = c_sizeof(buffer(1,1))
+
+    ! Create a dataspace (aka r/w buffer)
+    call h5screate_simple_f(2, dims, dspace_id, hdferr)
+    
+    
+    ! create the memory datatype
+    call h5tcreate_f(H5T_COMPOUND_F, offset , type_id, hdferr)
+    offset = 0
+    call h5tinsert_f(type_id, "re", offset, H5T_NATIVE_REAL, hdferr)
+    offset = c_sizeof(buffer(1,1)) / 2
+    call h5tinsert_f(type_id, "im", offset, H5T_NATIVE_REAL, hdferr)
+    
+
+    ! create a dataset in the file to write to
+    call h5dcreate_f(hdf_id, dataset_name, type_id, dspace_id, dset_id, hdferr)
+
+    ! this is dangerous(assumes array indexed from 1,1
+    f_ptr = C_LOC(buffer(1,1))
+
+    ! write the buffer to file
+    CALL h5dwrite_f(dset_id, type_id, f_ptr, hdferr)
+
+    ! close both the dataset and the dataspace
+    CALL h5dclose_f(dset_id, hdferr)
+    CALL h5sclose_f(dspace_id, hdferr)
+
+  end subroutine
+
+
+  subroutine cd_complex_8_2d(loc_id, dataset_name, buffer)
+    integer, intent(in) :: loc_id
+    character(len=*), intent(in) :: dataset_name
+    complex(8), dimension(:,:), target, intent(in) :: buffer
+    integer :: hdferr
+    integer(hid_t) :: hdf_id, type_id, dspace_id, kind_type, dset_id
+    integer(hsize_t), dimension(2) :: dims
+    integer(hsize_t) :: offset
+    type(c_ptr) :: f_ptr
+
+    dims = shape(buffer)
+    hdf_id = loc_id
+
+    offset = c_sizeof(buffer(1,1))
+
+    ! Create a dataspace (aka r/w buffer)
+    call h5screate_simple_f(2, dims, dspace_id, hdferr)
+    
+    
+    ! create the memory datatype
+    call h5tcreate_f(H5T_COMPOUND_F, offset , type_id, hdferr)
+    offset = 0
+    call h5tinsert_f(type_id, "re", offset, H5T_NATIVE_DOUBLE, hdferr)
+    offset = c_sizeof(buffer(1,1)) / 2
+    call h5tinsert_f(type_id, "im", offset, H5T_NATIVE_DOUBLE, hdferr)
+    
+
+    ! create a dataset in the file to write to
+    call h5dcreate_f(hdf_id, dataset_name, type_id, dspace_id, dset_id, hdferr)
+
+    ! this is dangerous(assumes array indexed from 1,1
+    f_ptr = C_LOC(buffer(1,1))
+
+    ! write the buffer to file
+    CALL h5dwrite_f(dset_id, type_id, f_ptr, hdferr)
+
+    ! close both the dataset and the dataspace
+    CALL h5dclose_f(dset_id, hdferr)
+    CALL h5sclose_f(dspace_id, hdferr)
+
+  end subroutine
+ 
   ! END OF MATRIX METHODS
 
   subroutine create_dataset_str(loc_id, dataset_name, buffer)
