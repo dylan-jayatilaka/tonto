@@ -15,6 +15,7 @@ module h5output
     module procedure cd_int_8_1d
     module procedure cd_complex_4_1d
     module procedure cd_complex_8_1d
+
   end interface
 
   interface create_dataset_mat
@@ -65,7 +66,7 @@ contains
   subroutine cd_real_4_1d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    real(4), dimension(:), intent(in) :: buffer
+    real(4), dimension(:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id
     integer(hsize_t), dimension(1) :: dims
@@ -81,7 +82,7 @@ contains
   subroutine cd_real_8_1d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    real(8), dimension(:), intent(in) :: buffer
+    real(8), dimension(:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id
     integer(hsize_t), dimension(1) :: dims
@@ -97,7 +98,7 @@ contains
   subroutine cd_complex_4_1d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    complex(4), dimension(:), target, intent(in) :: buffer
+    complex(4), dimension(:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id, type_id, dspace_id, kind_type, dset_id
     integer(hsize_t), dimension(1) :: dims
@@ -116,9 +117,9 @@ contains
     ! create the memory datatype
     call h5tcreate_f(H5T_COMPOUND_F, offset , type_id, hdferr)
     offset = 0
-    call h5tinsert_f(type_id, "re", offset, H5T_NATIVE_REAL, hdferr)
+    call h5tinsert_f(type_id, "r", offset, H5T_NATIVE_REAL, hdferr)
     offset = c_sizeof(buffer(1)) / 2
-    call h5tinsert_f(type_id, "im", offset, H5T_NATIVE_REAL, hdferr)
+    call h5tinsert_f(type_id, "i", offset, H5T_NATIVE_REAL, hdferr)
     
 
     ! create a dataset in the file to write to
@@ -139,7 +140,7 @@ contains
   subroutine cd_complex_8_1d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    complex(8), dimension(:), target, intent(in) :: buffer
+    complex(8), dimension(:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id, type_id, dspace_id, kind_type, dset_id
     integer(hsize_t), dimension(1) :: dims
@@ -159,9 +160,9 @@ contains
     ! create the memory datatype
     call h5tcreate_f(H5T_COMPOUND_F, offset , type_id, hdferr)
     offset = 0
-    call h5tinsert_f(type_id, "re", offset, H5T_NATIVE_DOUBLE, hdferr)
+    call h5tinsert_f(type_id, "r", offset, H5T_NATIVE_DOUBLE, hdferr)
     offset = c_sizeof(buffer(1)) / 2
-    call h5tinsert_f(type_id, "im", offset, H5T_NATIVE_DOUBLE, hdferr)
+    call h5tinsert_f(type_id, "i", offset, H5T_NATIVE_DOUBLE, hdferr)
     
 
     ! create a dataset in the file to write to
@@ -183,7 +184,7 @@ contains
   subroutine cd_int_4_1d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    integer(4), dimension(:), intent(in) :: buffer
+    integer(4), dimension(:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id
     integer(hsize_t), dimension(1) :: dims
@@ -199,7 +200,7 @@ contains
   subroutine cd_int_8_1d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    integer(8), dimension(:), target, intent(in) :: buffer
+    integer(8), dimension(:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id, dspace_id, kind_type, dset_id
     integer(hsize_t), dimension(1) :: dims
@@ -235,7 +236,7 @@ contains
   subroutine cd_real_4_2d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    real(4), dimension(:,:), intent(in) :: buffer
+    real(4), dimension(:,:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id
     integer(hsize_t), dimension(2) :: dims
@@ -250,7 +251,7 @@ contains
   subroutine cd_real_8_2d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    real(8), dimension(:,:), intent(in) :: buffer
+    real(8), dimension(:,:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id
     integer(hsize_t), dimension(2) :: dims
@@ -266,7 +267,7 @@ contains
   subroutine cd_int_4_2d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    integer(4), dimension(:,:), intent(in) :: buffer
+    integer(4), dimension(:,:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id
     integer(hsize_t), dimension(2) :: dims
@@ -281,7 +282,7 @@ contains
   subroutine cd_int_8_2d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    integer(8), dimension(:,:), target, intent(in) :: buffer
+    integer(8), dimension(:,:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id, dspace_id, kind_type, dset_id
     integer(hsize_t), dimension(2) :: dims
@@ -304,7 +305,7 @@ contains
   subroutine cd_complex_4_2d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    complex(4), dimension(:,:), target, intent(in) :: buffer
+    complex(4), dimension(:,:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id, type_id, dspace_id, kind_type, dset_id
     integer(hsize_t), dimension(2) :: dims
@@ -323,9 +324,9 @@ contains
     ! create the memory datatype
     call h5tcreate_f(H5T_COMPOUND_F, offset , type_id, hdferr)
     offset = 0
-    call h5tinsert_f(type_id, "re", offset, H5T_NATIVE_REAL, hdferr)
+    call h5tinsert_f(type_id, "r", offset, H5T_NATIVE_REAL, hdferr)
     offset = c_sizeof(buffer(1,1)) / 2
-    call h5tinsert_f(type_id, "im", offset, H5T_NATIVE_REAL, hdferr)
+    call h5tinsert_f(type_id, "i", offset, H5T_NATIVE_REAL, hdferr)
     
 
     ! create a dataset in the file to write to
@@ -347,7 +348,7 @@ contains
   subroutine cd_complex_8_2d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
-    complex(8), dimension(:,:), target, intent(in) :: buffer
+    complex(8), dimension(:,:), pointer, intent(in) :: buffer
     integer :: hdferr
     integer(hid_t) :: hdf_id, type_id, dspace_id, kind_type, dset_id
     integer(hsize_t), dimension(2) :: dims
@@ -366,9 +367,9 @@ contains
     ! create the memory datatype
     call h5tcreate_f(H5T_COMPOUND_F, offset , type_id, hdferr)
     offset = 0
-    call h5tinsert_f(type_id, "re", offset, H5T_NATIVE_DOUBLE, hdferr)
+    call h5tinsert_f(type_id, "r", offset, H5T_NATIVE_DOUBLE, hdferr)
     offset = c_sizeof(buffer(1,1)) / 2
-    call h5tinsert_f(type_id, "im", offset, H5T_NATIVE_DOUBLE, hdferr)
+    call h5tinsert_f(type_id, "i", offset, H5T_NATIVE_DOUBLE, hdferr)
     
 
     ! create a dataset in the file to write to
@@ -385,7 +386,7 @@ contains
     CALL h5sclose_f(dspace_id, hdferr)
 
   end subroutine
- 
+
   ! END OF MATRIX METHODS
 
   subroutine create_dataset_str(loc_id, dataset_name, buffer)

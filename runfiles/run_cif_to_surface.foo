@@ -20,11 +20,12 @@
 
 program run_CIF_TO_SURFACE
 
+    USE h5output
+
     implicit none
 
     command_line :: COMMAND_LINE
-    output :: TEXTFILE*
-    s, option, value, cif,cxs :: STR
+    s, option, value, cif,hdf :: STR
     directory :: STR
     property :: VEC{STR}(6)
     res :: REAL
@@ -42,6 +43,7 @@ program run_CIF_TO_SURFACE
     surface :: MAT{REAL}*
     d_e, d_i, d_norm, d_norm_e, d_norm_i :: VEC{REAL}*
     spherical :: SPHERICAL*
+    loc_id :: INT
     ! Macro to create Tonto system object
     ! Initialise MPI parallel stuff too.
     TONTO_CREATE
@@ -60,7 +62,7 @@ program run_CIF_TO_SURFACE
 
     ! Default options
     cif = "input.cif"
-    cxs = "output.cxs"
+    hdf = "output.hdf5"
     res = 0.5
     l_max = 10
     ! Analyze command line options
@@ -73,7 +75,7 @@ program run_CIF_TO_SURFACE
             ! Analyze options
         select case (option)
             case("cif");  cif = value
-            case("cxs");  cxs = value
+            case("hdf");  hdf = value
             case("res");  res = value.to_real
             case("lmax");  l_max = value.to_int
             case default; DIE("unknown option: "//trim(option))
@@ -109,7 +111,7 @@ program run_CIF_TO_SURFACE
     stdout.text(". It only works for Z'==1 now ... ")
     stdout.flush
     stdout.show("CIF file     =",cif)
-    stdout.show("CXS file     =",cxs)
+    stdout.show("hdf file     =",hdf)
     stdout.show("l_max        =", l_max)
 
     ! Set basis_set library folder
@@ -183,33 +185,22 @@ program run_CIF_TO_SURFACE
     ! Desired separation is essentially the resolution of the calculated surface
     m.isosurface.plot_grid.desired_separation = res
 
-
-
     ! Make isosurface
     m.PLOT:isosurface_plot
 
-    ! Output cxs surface file ... in angstrom
-    m.CX_uses_angstrom = TRUE
-    output.create(trim(cxs))
-    output.open(for="write")
-    m.CE:put_CX_data(output,m.cif)
+    ! Output hdf surface file ... in angstrom
+    !m.CX_uses_angstrom = TRUE
+    !output.create(trim(hdf))
+    !output.open(for="write")
+    !m.CE:put_CX_data(output,m.cif)
 
     out.create(m.saved.cluster.nonfragment_atom_indices.dim)
     in.create(m.saved.cluster.fragment_atom_indices.dim)
+
     in = m.saved.cluster.fragment_atom_indices
     out = m.saved.cluster.nonfragment_atom_indices
 
     ! do calculation 
-    output.set_using_fields(FALSE)
-    output.set_real_style("e")
-    
-    ! spherical harmonic decomposition
-    spherical.create
-    surface.create(m.isosurface.n_pt, 3)
-    surface = transpose(m.isosurface.point)
-
-    print *, "Decomposing surface function into sum of spherical harmonics"
-    stdout.flush
     d_i.create(m.isosurface.n_pt)
     d_e.create(m.isosurface.n_pt)
     d_norm_i.create(m.isosurface.n_pt)
@@ -217,8 +208,35 @@ program run_CIF_TO_SURFACE
     d_norm.create(m.isosurface.n_pt)
 
     m.isosurface.make_fingerprint_distances(d_e,d_i,d_norm_e,d_norm_i,d_norm,in,out,m.isosurface.atom, angstrom = TRUE)
-
+    
+    ! spherical harmonic decomposition
+    spherical.create
+    surface.create(m.isosurface.n_pt, 3)
+    surface = transpose(m.isosurface.point) 
     radius = SPHERICAL:get_surface_decomposition(coefficients, property_coefficients, l_max, 434, surface, d_norm)
+
+    ! DO THE STEPS THAT WILL BE TAKEN IN PUT_CX WHEN ANGSTROM IS TRUE
+    m.isosurface.point = m.isosurface.point * ANGSTROM_PER_BOHR
+    m.isosurface.face = m.isosurface.face - 1
+
+
+    ! HDF5 STUFF
+    call init_hdf
+    call create_hdf_file(hdf, loc_id)
+
+    call create_dataset_mat(loc_id, "vertices", m.isosurface.point)
+    call create_dataset_mat(loc_id, "indices", m.isosurface.face)
+
+    call create_dataset_str(loc_id, "formula", m.crystal.CIF_chemical_formula)
+
+    
+    call create_dataset_vec(loc_id, "coefficients",coefficients)
+
+    call create_dataset_vec(loc_id, "d_e", d_e)
+    call create_dataset_vec(loc_id, "d_i", d_i)
+    call create_dataset_vec(loc_id, "d_norm", d_norm)
+    call create_dataset_vec(loc_id, "d_norm_i", d_norm_i)
+    call create_dataset_vec(loc_id, "d_norm_e", d_norm_e)
 
 
     ! reconstruct the surface
@@ -230,51 +248,28 @@ program run_CIF_TO_SURFACE
 !    print *,"end vertices_recon"
 
     ! write the multipole moments
-    do N=1,property.dim
-        m.isosurface.make_surface_multipole_moments(qc, qs, in, out, l_max, property(N))
-        a = qc.dim * 2
-        s.from_int(a)
-        s = "begin moments_" // trim(property(N)) // " " // trim(s)
-        output.text(s)
-        output.put(qc)
-        output.put(qs)
-        output.text("end moments_"// trim(property(N)))
-    end
+!    do N=1,property.dim
+!        s = ""
+!        m.isosurface.make_surface_multipole_moments(qc, qs, in, out, l_max, property(N))
+!        s = "moments_" // trim(property(N)) // " qc " // trim(s)
+!        call create_dataset_vec(loc_id, s, qc)
+!        s = ""
+!        s = "moments_" // trim(property(N)) // " qs " // trim(s)
+!        call create_dataset_vec(loc_id, s, qs)
+!    end
 
     ! put out the coefficients
-    output.flush
-    s.from_int((l_max+1)**2)
-    output.text("begin coefficients "//trim(s))
-    do N=1,(l_max+1)**2
-        output.put(coefficients(N))
-        output.text(" ")
-    end
-    output.text("end coefficients")
-    output.flush
-    output.text("begin property_coefficients "//trim(s))
-    do N=1,(l_max+1)**2
-        output.put(property_coefficients(N))
-        output.text(" ")
-    end
-    output.text("end property_coefficients")
-    output.flush
+    call create_dataset_vec(loc_id,"property_coefficients ", property_coefficients)
 
     spherical.make_invariants(coefficients, l_max, invariants)
 
-    s.from_int(invariants.dim)
-    output.text("begin invariants "//trim(s))
-    do N = 1, invariants.dim
-        output.put(invariants(N))
-        output.text(" ")
-    end
-    output.text("end invariants")
-    output.flush
+    call create_dataset_vec(loc_id, "invariants", invariants)
 
     out.destroy
     in.destroy
-    output.destroy
 
 
+    call close_hdf
 
     TONTO_REPORT
     ! Destroy for next cluster
