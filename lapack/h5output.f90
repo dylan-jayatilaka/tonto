@@ -13,6 +13,7 @@ module h5output
     module procedure cd_real_8_1d
     module procedure cd_int_4_1d
     module procedure cd_int_8_1d
+    module procedure cd_str_1d
     module procedure cd_complex_4_1d
     module procedure cd_complex_8_1d
 
@@ -62,6 +63,43 @@ contains
   ! Unfortunately, due to lack of real generics in fortran we must
   ! write a function to instantiate the interface for every data
   ! type we have to
+
+  subroutine cd_str_1d(loc_id, dataset_name, buffer)
+    integer, intent(in) :: loc_id
+    character(len=*), intent(in) :: dataset_name
+    character(len=*), dimension(:), intent(in), target :: buffer
+    integer :: hdferr, n
+    integer(hid_t) :: hdf_id, memtype, dspace_id, dset_id, filetype
+    integer(hsize_t), dimension(1) :: dims
+    integer(hsize_t) :: s_len
+    type(c_ptr) :: f_ptr
+    type(c_ptr), dimension(1:size(buffer)) :: wdata
+
+    hdf_id = loc_id
+    dims = shape(buffer)
+    s_len = len(buffer(1), kind=hsize_t)
+
+    ! going to save the strings as C-Strings
+    call h5tcopy_f(H5T_C_S1, filetype, hdferr)
+    call h5tset_size_f(filetype, s_len + 1, hdferr)
+
+    call h5tcopy_f(H5T_FORTRAN_S1, memtype, hdferr)
+    call h5tset_size_f(memtype, s_len, hdferr)
+
+    ! create the dataspace
+    call h5screate_simple_f(1, dims, dspace_id, hdferr)
+
+    ! create the dataset and write the data
+    call h5dcreate_f(hdf_id, dataset_name, filetype, dspace_id, dset_id, hdferr)
+    f_ptr = c_loc(buffer(1)(1:1))
+    call h5dwrite_f(dset_id, memtype, f_ptr, hdferr)
+
+    call h5dclose_f(dset_id, hdferr)
+    call h5sclose_f(dspace_id, hdferr)
+    call h5tclose_f(filetype, hdferr)
+    call h5tclose_f(memtype, hdferr)
+    
+  end subroutine
 
   subroutine cd_real_4_1d(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
@@ -388,7 +426,7 @@ contains
   end subroutine
 
   ! END OF MATRIX METHODS
-
+  
   subroutine create_dataset_str(loc_id, dataset_name, buffer)
     integer, intent(in) :: loc_id
     character(len=*), intent(in) :: dataset_name
