@@ -25,25 +25,24 @@ program run_CIF_TO_SURFACE
     implicit none
 
     command_line :: COMMAND_LINE
-    s, option, value, cif,hdf :: STR
+    option, value, cif,hdf :: STR
     directory :: STR
     property :: VEC{STR}(6)
     res :: REAL
-    a, u, N :: INT
+    a, u, code :: INT
     found :: BIN
     m :: MOLECULE*
 
     ! Moment generating variables
-    qc, qs :: VEC{REAL}*
     property_coefficients, coefficients :: VEC{CPX}*
     l_max :: INT
     radius :: REAL
-    in, out :: VEC{INT}*
+    d_e_atoms, d_i_atoms, atoms_inside, atoms_outside, in, out :: VEC{INT}*
     invariants :: VEC{REAL}*
     surface :: MAT{REAL}*
     d_e, d_i, d_norm, d_norm_e, d_norm_i :: VEC{REAL}*
     spherical :: SPHERICAL*
-    unit_cell :: VEC{STR}(len=4)* ! length of chemical symbols
+    unit_cell :: VEC{STR}(len=2)* ! chemical symbols in unit cell
     loc_id :: INT
     ! Macro to create Tonto system object
     ! Initialise MPI parallel stuff too.
@@ -201,15 +200,22 @@ program run_CIF_TO_SURFACE
     in = m.saved.cluster.fragment_atom_indices
     out = m.saved.cluster.nonfragment_atom_indices
 
-    ! do calculation 
+    ! GET FINGERPRINT DISTANCES (D_E etc)
+
     d_i.create(m.isosurface.n_pt)
     d_e.create(m.isosurface.n_pt)
     d_norm_i.create(m.isosurface.n_pt)
     d_norm_e.create(m.isosurface.n_pt)
     d_norm.create(m.isosurface.n_pt)
 
+
     m.isosurface.make_fingerprint_distances(d_e,d_i,d_norm_e,d_norm_i,d_norm,in,out,m.isosurface.atom, angstrom = TRUE)
-    
+
+    ! DE AND DI FACE ATOMS
+    d_e_atoms.create(m.isosurface.n_face)
+    d_i_atoms.create(m.isosurface.n_face)
+    m.isosurface.make_fingerprint_face_atoms(d_e_atoms,d_i_atoms,in,out)
+
     ! spherical harmonic decomposition
     spherical.create
     surface.create(m.isosurface.n_pt, 3)
@@ -220,69 +226,71 @@ program run_CIF_TO_SURFACE
     m.isosurface.point = m.isosurface.point * ANGSTROM_PER_BOHR
     m.isosurface.face = m.isosurface.face - 1
 
-    ! get the unit cell labels
-    print *, "About to create unit cell"
-    stdout.flush
-    ENSURE(m.saved.cluster.asymmetric_unit_atom.created,"no atom data")
-    ENSURE(m.saved.cluster.occupation_list.created,"no occupation_list")
-    ENSURE(m.saved.cluster.is_fragment_atom.created,"no is_fragment_atom")
-    ENSURE(m.saved.cluster.asymmetric_unit_atom.created,"no atom data")
-    ENSURE(m.saved.cluster.crystal.created,"no crystal data")
-    ENSURE(m.saved.cluster.crystal.fragment_info_made,"no crystal fragment_info")
+    ! MAKE INVARIANTS
+    spherical.make_invariants(coefficients, l_max, invariants)
 
+    ! get the unit cell labels
     unit_cell.create(m.saved.cluster.crystal.n_unit_cell_atoms)
-    print *, "Unit cell length: ", unit_cell.size
-    stdout.flush
+
+    ! ATOM SYMBOLS IN THE UNIT CELL
     do u = 1, m.saved.cluster.crystal.n_unit_cell_atoms
       a = m.saved.cluster.crystal.asym_atom_for_unit_cell_atom(u)
       unit_cell(u) = trim(m.saved.cluster.asymmetric_unit_atom(a).chemical_symbol)
-    end do
+    end
+
+    ! ATOMS INSIDE AND OUTSIDE SURFACE 
+    atoms_inside.create(m.saved.cluster.n_fragment_atoms)
+    do a = 1, m.saved.cluster.n_fragment_atoms
+      code = m.saved.cluster.occupation_list(a)    
+      atoms_inside(a) = CLUSTER_UA_FROM_CODE(code) 
+    end
+
+    atoms_outside.create(m.saved.cluster.n_atoms - m.saved.cluster.n_fragment_atoms)
+
+    do a = m.saved.cluster.n_fragment_atoms+1, m.saved.cluster.n_atoms
+      code = m.saved.cluster.occupation_list(a)    
+      atoms_outside(a - m.saved.cluster.n_fragment_atoms) = CLUSTER_UA_FROM_CODE(code) 
+    end
+
+    
     ! HDF5 STUFF
     call init_hdf
     call create_hdf_file(hdf, loc_id)
 
+    ! SURFACE
     call create_dataset_mat(loc_id, "vertices", m.isosurface.point)
     call create_dataset_mat(loc_id, "indices", m.isosurface.face)
-    call create_dataset_vec(loc_id, "unit_cell", unit_cell)
+    call create_dataset_vec(loc_id, "atoms_inside_surface", atoms_inside)
+    call create_dataset_vec(loc_id, "atoms_outside_surface", atoms_outside)
+    call create_dataset_vec(loc_id, "d_e_face_atoms", d_e_atoms)
+    call create_dataset_vec(loc_id, "d_i_face_atoms", d_i_atoms)
 
-    call create_dataset_str(loc_id, "formula", m.crystal.CIF_chemical_formula)
-
-    
-    call create_dataset_vec(loc_id, "coefficients",coefficients)
-
+    ! SURFACE PROPERTIES
     call create_dataset_vec(loc_id, "d_e", d_e)
     call create_dataset_vec(loc_id, "d_i", d_i)
     call create_dataset_vec(loc_id, "d_norm", d_norm)
     call create_dataset_vec(loc_id, "d_norm_i", d_norm_i)
     call create_dataset_vec(loc_id, "d_norm_e", d_norm_e)
 
+    ! CIF INFO
+    call create_dataset_vec(loc_id, "unit_cell", unit_cell)
+    call create_dataset_str(loc_id, "formula", m.crystal.CIF_chemical_formula)
 
-    ! reconstruct the surface
-    !spherical.reconstruct_shape(coefficients, points, l_max)
-!    print *,"begin vertices_recon", points.dim1
-!    do N = 1, points.dim1
-!        print *, points(N,:)
-!   end
-!    print *,"end vertices_recon"
-
-    ! write the multipole moments
-!    do N=1,property.dim
-!        s = ""
-!        m.isosurface.make_surface_multipole_moments(qc, qs, in, out, l_max, property(N))
-!        s = "moments_" // trim(property(N)) // " qc " // trim(s)
-!        call create_dataset_vec(loc_id, s, qc)
-!        s = ""
-!        s = "moments_" // trim(property(N)) // " qs " // trim(s)
-!        call create_dataset_vec(loc_id, s, qs)
-!    end
-
-    ! put out the coefficients
+    ! SPHERICAL HARMONICS STUFF
+    call create_dataset_vec(loc_id, "coefficients",coefficients)
     call create_dataset_vec(loc_id,"property_coefficients ", property_coefficients)
-
-    spherical.make_invariants(coefficients, l_max, invariants)
-
     call create_dataset_vec(loc_id, "invariants", invariants)
 
+
+    ! CLEANUP ALL THE HEAP ALLOCATED ARRAYS
+    coefficients.destroy
+    invariants.destroy
+    property_coefficients.destroy
+    d_norm_e.destroy
+    d_norm_i.destroy
+    d_norm.destroy
+    d_i.destroy
+    d_e.destroy
     out.destroy
     in.destroy
 
