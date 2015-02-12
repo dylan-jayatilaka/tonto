@@ -3507,6 +3507,136 @@ contains
 
    end
 
+   make_chi2_RLFTn_av_L(chi2,beta_mol,alpha_mol)
+   ! Make the RLFTn "chi2" matrix: 
+   !   chi2_ijk = \sum_S \beta^S_abc d^S_ai d^S_bj d^S_ck 
+   ! where d^S are the local field factor tensors and \beta^S are the (symmetry
+   ! transformed) molecular dipole site-hyperpolarisability "beta_mol" divided
+   ! by the number of non-Hydrogen atoms in a molecule.  The L tensors
+   ! are evaluated at these non H atom sites, "S". 
+      chi2      :: MAT3{REAL}(3,3,3), OUT
+      beta_mol  :: MAT3{REAL}(3,3,3), IN
+      alpha_mol :: MAT{REAL}(3,3), IN
+
+      alph0 :: MAT{REAL}(3,3)
+      beta0 :: MAT3{REAL}(3,3,3)
+      inverse_seitz,alpha :: MAT3{REAL}*
+      beta :: MAT4{REAL}*
+      pos,pos0,com, L,L0,L1, D,Df :: MAT{REAL}* 
+      mol,mol0,symop,par,non_H :: VEC{INT}*
+      n,n_mol,n_non_H,n_non_H_per_mol,dim, i1,i2,j1,j2,k1,k2,m1,m2, a,b,i,j,m :: INT
+      fac :: REAL
+
+      n     = .crystal.n_unit_cell_atoms    ! No. of atoms in unit cell
+      n_mol = .crystal.n_unit_cell_mols     ! No. of molecules
+
+      ! Molecular polarisabilities
+      alpha.create(3,3,n_mol)
+      beta.create(3,3,3,n_mol)
+
+      ! Molecule averaged L1
+      dim = 3*n_mol
+      L.create(dim,dim)
+
+      ! Get the unit cell molecule atom info
+      .get_uc_molecule_info(mol,symop,par,pos,com) 
+
+      ! Get *indices* for non-H positions
+      n_non_H = count(.asymmetric_unit_atom(par).atomic_number>1)
+      non_H.create(n_non_H)
+      non_H = pack([(a,a=1,n)],.asymmetric_unit_atom(par).atomic_number>1)
+
+      ! No. of non-H hydrogen atoms per molecule
+      DIE_IF(mod(n_non_H,n_mol)/=0,"no of non-Hydrogen atoms wrong")
+      n_non_H_per_mol = n_non_H/n_mol
+
+      ! Get the non-H positions and molecules
+      pos0.create(3,n_non_H)
+      mol0.create(  n_non_H)
+      pos0 = pos(:,non_H)
+      mol0 = mol(  non_H)
+
+      ! Get the reduced molecular polarisabilities
+      ! fac = factor to reduce polarisabilities = 1/(2 eps_0 V) 
+      !     = (2 pi/V) ... in au since eps_0 = (4 pi)^{-1}.
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
+      fac = TWO*PI/.crystal.unit_cell.volume
+      alph0 = TWO*fac*alpha_mol
+      beta0 =     fac*beta_mol
+      do m = 1,n_mol
+         alph0.change_basis_to(alpha(:,:,m),inverse_seitz(:,:,symop(m)))
+         beta0.change_basis_to(beta(:,:,:,m),inverse_seitz(:,:,symop(m)))
+      end
+      inverse_seitz.destroy
+
+      ! Make the non H charge and dipole Lorentz factor tensors
+      dim = 3*n_non_H
+      L0.create(dim,n_non_H)     ! charge L tensor
+      L1.create(dim,dim)         ! dipole L tensor
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos0,mol0)
+
+      ! Average the L(1) tensors over molecules
+      L = ZERO
+      do i1 = 1,n_mol
+      do i2 = 1,n_mol
+         m1 = 3*(i1-1)
+         m2 = 3*(i2-1)
+         do j1 = 1,n_non_H_per_mol
+         do j2 = 1,n_non_H_per_mol
+            k1 = 3*(n_non_H_per_mol*(i1-1)+j1-1)
+            k2 = 3*(n_non_H_per_mol*(i2-1)+j2-1)
+            L(m1+1:m1+3,m2+1:m2+3) = L(m1+1:m1+3,m2+1:m2+3) + L1(k1+1:k1+3,k2+1:k2+3)
+         end
+         end
+      end
+      end
+      fac = ONE/(n_non_H_per_mol*n_non_H_per_mol)
+      L = fac*L
+
+      ! Mini Clean up
+      L1.destroy; L0.destroy
+      mol0.destroy; pos0.destroy; non_H.destroy
+      com.destroy; pos.destroy; par.destroy; symop.destroy; mol.destroy
+
+      ! Make the (inverse) D matrix: D = (1 - aL)^-1 
+      dim = 3*n_mol
+      D.create(dim,dim)          
+      D.to_unit_matrix
+      i = 0
+      do a = 1,n_mol
+         j = 0
+         do b = 1,n_mol
+            D(i+1:i+3,j+1:j+3).plus_scaled_product_of(L(i+1:i+3,j+1:j+3),alpha(:,:,b),-ONE)
+            j = j + 3
+         end
+         i = i + 3
+      end
+
+      ! Invert
+      D.to_inverse_of(D)
+    
+      ! Make the local field factors
+      Df.create(dim,3)
+      CLUSTER::make_local_field_factors(Df,D)
+
+      ! Make the chi2 susceptibility
+      chi2 = ZERO
+      i = 0
+      do a = 1,n_mol
+         beta(:,:,:,a).change_basis_to(beta0,Df(i+1:i+3,:))
+         chi2 = chi2 + beta0
+         i = i + 3
+      end
+
+      ! Clean up
+      Df.destroy
+      D.destroy
+      L.destroy
+      beta.destroy
+      alpha.destroy
+
+   end
+
    make_local_field_factors(Df,D) ::: selfless
    ! Make the second ortder susceptibility from distributed
    ! polarisabilities.
