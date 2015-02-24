@@ -43,6 +43,7 @@ contains
 
       select case (.plot_grid.plot_kind)
          case("adp                                 "); .::make_ADP_grid
+         case("anharmonic_adp_correction           "); .::make_AADP_correction_grid
          case("b_field                             "); .::make_B_field_grid
          case("b_l_field                           "); .::make_B_L_field_grid
          case("b_s_field                           "); .::make_B_S_field_grid
@@ -138,6 +139,7 @@ contains
 
       select case (.isosurface.property)
          case("adp                              "); .isosurface.cubify(::ADP_grid)
+         case("anharmonic_adp_correction        "); .isosurface.cubify(::AADP_correction_grid)
          case("bond_density_atom                "); .isosurface.cubify(::bond_density_atom_grid)
          case("bond_electron_density            "); .isosurface.cubify(::bond_ED_grid)
          case("bond_weight                      "); .isosurface.cubify(::bond_weight_grid)
@@ -175,6 +177,7 @@ contains
          case("spin_density                     "); .isosurface.cubify(::spin_density_grid)
          case("stockholder_density              "); .isosurface.cubify(::stockholder_density_grid)
          case("stockholder_weight               "); .isosurface.cubify(::Hirshfeld_density_grid)
+         case("test                             "); .isosurface.cubify(::ADP_grid)
          case("true_fermi_mobility              "); .isosurface.cubify(::true_fermi_mobility_grid)
          case("tsirelson_elf                    "); .isosurface.cubify(::Tsirelson_ELF_grid)
          case default;                UNKNOWN(.isosurface.property)
@@ -188,6 +191,7 @@ contains
 
       select case (.isosurface.surface_property)
          case("adp                             "); .isosurface.plot_function(::ADP_grid)
+         case("anharmonic_adp_correction       "); .isosurface.plot_function(::AADP_correction_grid)
          case("bond_density_atom               "); .isosurface.plot_function(::bond_density_atom_grid)
          case("bond_electron_density           "); .isosurface.plot_function(::bond_ED_grid)
          case("deformation_bond_density        "); .isosurface.plot_function(::deformation_bond_density_grid)
@@ -7960,6 +7964,41 @@ contains
 
    end
 
+   make_AADP_correction_grid ::: get_from(prop_grid, GRID=>::make_AADP_correction_grid, LABEL=>"AADP_correction_grid")
+   ! Work out the property density on ".plot_grid" using ".natural orbitals" and the
+   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+   end
+
+   make_AADP_correction_grid(g,pt)
+   ! Work out the anharmonic ADP PDF correction density grid "g" for points "pt".
+      self :: IN
+      g :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.isosurface.created,"no isosurface")
+   ENSURE(.isosurface.plot_grid.center_atom>0,"no center_atom for ADP plot in isosurface.plot_grid")
+
+      a :: INT
+
+      a = .isosurface.plot_grid.center_atom
+
+      .atom(a).make_AADP_PDF_correction_grid(g,pt,.crystal.unit_cell)
+
+   end
+
+   AADP_correction_grid(g,pt) ::: selfless
+   ! Work out the anharmonic ADP PDF correction density grid "g" for points "pt".
+      g  :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      self :: MOLECULE*
+
+      .BASE:set_from_saved_self
+
+      .::make_AADP_correction_grid(g,pt)
+
+   end
+
 !  =============
 !  Bond ED grids
 !  =============
@@ -8904,6 +8943,7 @@ contains
       NO :: VEC{CPX}*
       P,D :: MAT{CPX}*
       ne,n,n_pt :: INT
+      occ :: REAL
 
       n_pt = pt.dim1
       laplacian_grid = ZERO
@@ -8911,33 +8951,33 @@ contains
       P.create(n_pt,3)
       D.create(n_pt,3)
       ne = .BASE:no_of_occupied_NOs("general")
-     ! stdout.put(.occupation_numbers.general)
 
-     ! alpha part
+      ! Alpha part
       parallel do n = 1,ne
-       .::make_laplacian_orbital_grid_c(D,P,NO,.natural_orbitals.general_complex(1:.n_prim,n), pt)
-       laplacian_grid = laplacian_grid +  &
-          .occupation_numbers.general(n) * ( &
-       NO * (D(:,1)+D(:,2)+D(:,3)) + (conjg(P(:,1))*P(:,1) + conjg(P(:,2))*P(:,2) + conjg(P(:,3))*P(:,3)))
+         .::make_laplacian_orbital_grid_c(D,P,NO,.natural_orbitals.general_complex(1:.n_prim,n), pt)
+         occ = .occupation_numbers.general(n)
+         laplacian_grid = laplacian_grid + &
+            occ * ( RE(NO*(D(:,1)+D(:,2)+D(:,3))) + RE(conjg(P(:,1))*P(:,1) + conjg(P(:,2))*P(:,2) + conjg(P(:,3))*P(:,3)))
       end
       PARALLEL_SUM(laplacian_grid)
 
-     ! beta part
+      ! Beta part
       parallel do n = 1,ne
-       .::make_laplacian_orbital_grid_c(D,P,NO,.natural_orbitals.general_complex(.n_prim+1:2*.n_prim,n), pt)
-       laplacian_grid = laplacian_grid +  &
-          .occupation_numbers.general(n) * ( &
-       NO * (D(:,1)+D(:,2)+D(:,3)) + (conjg(P(:,1))*P(:,1) + conjg(P(:,2))*P(:,2) + conjg(P(:,3))*P(:,3)))
-       !   NO * (D(:,1)+D(:,2)+D(:,3)) + (P(:,1)*P(:,1) + P(:,2)*P(:,2) + P(:,3)*P(:,3)))
+         .::make_laplacian_orbital_grid_c(D,P,NO,.natural_orbitals.general_complex(.n_prim+1:2*.n_prim,n), pt)
+         occ = .occupation_numbers.general(n)
+         laplacian_grid = laplacian_grid +  &
+            occ * ( RE(NO*(D(:,1)+D(:,2)+D(:,3))) + RE(conjg(P(:,1))*P(:,1) + conjg(P(:,2))*P(:,2) + conjg(P(:,3))*P(:,3)))
       end
       PARALLEL_SUM(laplacian_grid)
 
-      ! seems neccesarry (the factor of two)
+      ! Factor of two for derivative part
       laplacian_grid = TWO*laplacian_grid
 
+      ! Clean
       D.destroy
       P.destroy
       NO.destroy
+
    end
 
    laplacian_grid(g,pt) ::: selfless

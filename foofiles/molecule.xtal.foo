@@ -100,6 +100,7 @@ contains
 
       ! Read
       .cif.read_keywords
+      .cif.finalize
 
       ! Finalize
       if (.cif.file_name/=" " AND .cif.data_block_name/=" ") then
@@ -215,7 +216,8 @@ contains
 
       n_pADPs :: INT
       label :: STR
-      fcov_there,acov_there :: BIN
+      fcov_there :: BIN
+    ! acov_there :: BIN
 
       ! Open the CIF if needed
       if (NOT cif.file.is_open) cif.open
@@ -241,7 +243,7 @@ contains
 !
 !         .crystal.data.covariance_matrix.destroy
 !         .crystal.data.covariance_matrix.create(n_pADPs,n_pADPs)
-!         .crystal.data.read_CIF_covariance(cif,trim(label),.crystal.data.covariance_matrix)
+!         cif.read_CIF_covariance(cif,trim(label),.crystal.data.covariance_matrix)
 !
 !      end
 !      end
@@ -270,7 +272,7 @@ contains
 
          .crystal.data.fragment_covariance_matrix.destroy
          .crystal.data.fragment_covariance_matrix.create(n_pADPs,n_pADPs)
-         .crystal.data.read_CIF_covariance(cif,trim(label),.crystal.data.fragment_covariance_matrix)
+         cif.read_CIF_covariance(trim(label),.crystal.data.fragment_covariance_matrix)
 
       end
       end
@@ -3614,32 +3616,15 @@ contains
        end
      end
 
-!     if(.scfdata.using_ppzpp)then
-! use the second derivatives in the [W1,[W1,X(even,0)]] and [W2,X(odd,0)] terms   
-!       do i=1,n_gcm
-!         do j=1,n_gcm
-!           PPDPP(i,j) = Ap(i)*PPDPP(i,j)*Ap(j) 
-!         end do
-!       end do
-!     end if  
-    
      B.create(n_gcm,n_gcm) 
      B=(ZERO,ZERO)  
-!     if(.scfdata.using_ppzpp)then
-!       .build_da_IOTC_dens(B,Yr,PDP,D,p,bp,E,n_gcm,PPDPP)
-!     else
-     .::build_da_IOTC_ft(B,Yr,PDP,D,p,bp,n_gcm)
-!     end if  
+     ::build_da_IOTC_ft(B,Yr,PDP,D,p,bp,n_gcm)
 
      D=(ZERO,ZERO)
-!     D=matmul(O,matmul(B,O))
      A.to_product_of(O,B)
      D.to_product_of(A,O)
 
      PDP.destroy
-!    if(.scfdata.using_ppzpp)then
-!     PPDPP.destroy
- !   end if 
    
      B=(ZERO,ZERO)
      B.to_product_of(S,YU)
@@ -3670,60 +3655,54 @@ contains
      buco.destroy
    end   
 
-   build_da_IOTC_ft(F,Yr,PAP,A,p,bp,n_gcm)
+   build_da_IOTC_ft(F,Yr,PAP,A,p,bp,n_gcm) ::: selfless
    ! build the IOTC Y matrix 
-   F :: MAT{CPX}, OUT
-   Yr :: MAT{REAL}, IN
-   PAP,A :: MAT{CPX}, IN
-   p,bp :: VEC{REAL}, IN
-   n_gcm :: INT, IN
+      F :: MAT{CPX}, OUT
+      Yr :: MAT{REAL}, IN
+      PAP,A :: MAT{CPX}, IN
+      p,bp :: VEC{REAL}, IN
+      n_gcm :: INT, IN
 
-   i,j,dim :: INT
-   c,alpha,alpha2,alpha3,alpha4 :: REAL
-   AAA,F1R,F1L,F2 :: MAT{CPX}*
+      i,j,dim :: INT
+      c,alpha,alpha2,alpha3,alpha4 :: REAL
+      AAA,F1R,F1L,F2 :: MAT{CPX}*
    
-!     n_gcm=.n_prim
-     c = SPEED_OF_LIGHT_AU
-     alpha = ONE/c
-     alpha2= alpha*alpha
-     alpha3= alpha2*alpha
-     alpha4= alpha3*alpha
+      c = SPEED_OF_LIGHT_AU
+      alpha = ONE/c
+      alpha2= alpha*alpha
+      alpha3= alpha2*alpha
+      alpha4= alpha3*alpha
+      
+      dim=n_gcm
+      
+      F1L.create(dim,dim);F1R.create(dim,dim);F2.create(dim,dim)
+      AAA.create(dim,dim)
 
-     dim=n_gcm
+      do i = 1,dim
+      do j = 1,dim
+        AAA(i,j)=alpha2*p(i)*bp(i)*A(i,j)*bp(j)*p(j)
+      end do
+      end do
 
-     F1L.create(dim,dim);F1R.create(dim,dim);F2.create(dim,dim)
-     AAA.create(dim,dim)
-
-!     if( .scfdata.using_ppzpp)then
-!       do i = 1,dim
-!       do j = 1,dim
-!         AAA(i,j)=alpha2*bp(i)/p(i)*ppApp(i,j)*bp(j)/p(j)
-!       end do
-!       end do
-!     else
-       do i = 1,dim
-       do j = 1,dim
-         AAA(i,j)=alpha2*p(i)*bp(i)*A(i,j)*bp(j)*p(j)
-       end do
-       end do
-!     end
-
-     do i = 1,dim
-       do j = 1,dim
+      do i = 1,dim
+      do j = 1,dim
          F(i,j)   =  A(i,j) + alpha2*bp(i)*PAP(i,j)*bp(j)
          F1L(i,j) =  alpha * ( bp(i)*p(i)*A(i,j)-PAP(i,j)/p(i)*bp(j) )         
          F1R(i,j) =  alpha * ( A(i,j)*bp(j)*p(j)-bp(i)*PAP(i,j)/p(j) )
          F2(i,j)  =  PAP(i,j)/p(j)/p(i) + AAA(i,j)
-        end do
-     end do
+      end
+      end
 
      AAA.to_product_of(Yr,F1L,transpose_a=TRUE)
-     F=F+AAA+matmul(F1R,Yr)
+     F = F + AAA + matmul(F1R,Yr)
      AAA.to_product_of(Yr,F2,transpose_a=TRUE)
-     F=F+matmul(AAA,Yr)
+     F = F + matmul(AAA,Yr)
   
      AAA.destroy     
-     F1L.destroy;F1R.destroy;F2.destroy
+
+     F1L.destroy
+     F1R.destroy
+     F2.destroy
      
    end
 
@@ -3910,7 +3889,7 @@ contains
          .::make_partition_factors(p,sh,atom_a,atom_b,is_zero)
 
          t.create(la-fa+1,lb-fb+1)
-         .::thermal_smearing_correction_pce(t,k_vec,sh,atom_a,atom_b)
+         .::thermal_smearing_correction_pce(t,k_vec,atom_a,atom_b)
 
          do bg = 1,lb-fb+1
          do ag = 1,la-fa+1
@@ -3929,20 +3908,17 @@ contains
 
    end
 
-   thermal_smearing_correction_pce(res,k_vec,sh,a,b)
+   thermal_smearing_correction_pce(res,k_vec,a,b)
    ! Makes the thermal smearing correction term.  Note that res is
    ! done over the contraction coefficients. Dimensions of "res" 
    ! are [.a.n_cc,.b.n_cc].
       self :: IN
       res :: MAT{REAL}, OUT
       k_vec :: VEC{REAL}, IN
-      sh :: SHELL2, IN
       a,b :: INT, IN
 
       Ua,Ub,Uab :: MAT{REAL}(3,3)
       S,US :: VEC{REAL}(3)
-      res2 :: MAT3{REAL}*
-      k_vec2 :: MAT{REAL}(1,3)
       separation,bondlength,Ta,Tb,g :: REAL
       diff :: VEC{REAL}(3)
 
@@ -3974,19 +3950,6 @@ contains
          Ta = S.dot(US)
          res = exp(Ta)
       
-      ! case tanaka is treated else where in prim ft and pftp
-      !case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
-      !!  WARN("tanaka model is going in the ordinary way, not sure about any PCE in it !!!")
-      !!  stdout.flush
-      !   res2.create(1,res.dim1,res.dim2)
-      !   res2=ZERO
-      !   Ua = .atom(a).ADP_tensor
-      !   Ub = .atom(b).ADP_tensor
-      !   k_vec2(1,:)=k_vec(:)
-      !   sh.make_tanaka_thermal_smearing(res2,k_vec2,Ua,Ub)
-      !   res(:,:)=res2(1,:,:)
-      !   res2.destroy
-
       case default
          DIE("unknown smearing model:"//trim(.crystal.thermal_smearing_model))
 
@@ -4004,12 +3967,7 @@ contains
       G :: GAUSSIAN2, IN
       a,b :: INT, IN
 
-      Ua,Ub,Uab :: MAT{REAL}(3,3)
-      S,US :: VEC{REAL}(3)
-      res2 :: MAT3{REAL}*
-      k_vec2 :: MAT{REAL}(1,3)
-      separation,bondlength,Ta,Tb :: REAL
-      diff :: VEC{REAL}(3)
+      Ua,Ub :: MAT{REAL}(3,3)
       ea,eb,U11,U22,U33,U21_12,U31_13,U32_23 :: REAL
       U,Ub_eb,Ua_ea :: MAT{REAL}(3,3) 
       S1,S2,S3 :: REAL
