@@ -577,7 +577,7 @@ contains
 
       stdout.flush
       stdout.text("=================================================")
-      stdout.text("Unit cell susceptibilities and Refractive Indices")
+      stdout.text("Unit cell susceptibilities and refractive indices")
       stdout.text("=================================================")
 
       stdout.flush
@@ -602,6 +602,78 @@ contains
 
    end 
 
+   put_uc_chi2 ::: leaky
+   ! This code was ressurected and modified from the svn repository
+   !  extracted at {2007-07-01} ... It is supposed to represent
+   ! Munshi's results
+   DIE_IF(NOT .Hirshfeld_atom_info_made,"no Hirshfeld atom properties")
+   DIE_IF(NOT .atomic_polarisabilities_made,"no atomic polarisabilities")
+   ENSURE(.dipole_polarisability.created,"no dipole_polarisability")
+   ENSURE(.dipole_hyperpolarisability.created,"no dipole_hyperpolarisability")
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
+   DIE_IF(any(.crystal.frag_atom_for_asym_atom==0),"some asymetric unit atoms were not found")
+
+      uc_alpha,chi1_naive,chi1_centroid,chi1_nonH,chi1_nc,chi1_do,chi1 :: MAT{REAL}(3,3)
+      beta,chi2_nonH :: MAT3{REAL}(3,3,3)
+      alpha :: MAT{REAL}(3,3)
+
+      ! Get molecular alpha and beta
+      alpha = .dipole_polarisability
+      beta  = .dipole_hyperpolarisability
+
+      ! Make the susceptibilities
+      .cluster.destroy
+      .cluster.create(.crystal)
+      .cluster.make_info ! leaky here
+      .cluster.make_susceptibility2(alpha,beta,uc_alpha,chi1_naive,chi1_centroid,chi1_nonH,chi2_nonH,chi1_nc,chi1_do,chi1)
+
+
+      stdout.flush
+      stdout.text("===========================================")
+      stdout.text("Unit cell first and second susceptibilities")
+      stdout.text("===========================================")
+      stdout.flush
+      stdout.text(". This code uses a distrubted polarizability formalism")
+      stdout.text(". It was used to produce unlublished results by P. Munshi in 2007")
+
+      stdout.flush
+      stdout.text("== Unit cell alpha==")
+      stdout.flush
+      stdout.put(uc_alpha) 
+      stdout.flush
+
+      stdout.flush
+      stdout.text("=== Naive method (no local field effects) ===")
+      .CP:put_refractive_indices(chi1_naive)
+
+      stdout.flush
+      stdout.text("=== ALFFA method (single site per molecule, at COM) ===")
+      .CP:put_refractive_indices(chi1_centroid)
+
+      stdout.flush
+      stdout.text("=== RLFTn method (multiple sites per molecule) ===")
+      .CP:put_refractive_indices(chi1_nonH)
+
+      stdout.flush
+      stdout.text("=== chi2 RLFTn method (multiple sites per molecule) ===")
+      .CP:put_refractive_indices2(chi2_nonH,chi1_nonH)
+
+!      stdout.flush
+!      stdout.text("Unit cell distributed no charge susceptibility ====(DAP-q)====")
+!      .MAIN:put_refractive_indices(chi1_nc)
+!
+!      stdout.flush
+!      stdout.text("Unit cell distributed dipole only susceptibility ====(DAD)======")
+!      .MAIN:put_refractive_indices(chi1_do)
+!
+!      stdout.flush
+!      stdout.text("Unit cell distributed susceptibility ====(DAP)======")
+!      .MAIN:put_refractive_indices(chi1)
+
+   end 
+
    put_refractive_indices(chi1) ::: private
    ! Put out the permittivity and unit cell refractive index
       chi1 :: MAT{REAL}(3,3)
@@ -611,7 +683,7 @@ contains
 
       ! Print out the susceptibility
       stdout.flush
-      stdout.text("chi1 :")
+      stdout.text("chi1:")
       stdout.flush
       stdout.put(chi1) 
       stdout.flush
@@ -635,71 +707,84 @@ contains
       stdout.flush
       stdout.put(eigenvectors)
 
-      stdout.flush
-      stdout.text("Principal directions (rows):")
-      stdout.flush
-      stdout.put(transpose(eigenvectors))
-
       if (.crystal.created) then
       stdout.flush
-      stdout.text("Principal directions in crystal axis system :")
+      stdout.text("Principal directions in crystal axis system:")
       stdout.flush
       eigenvectors.change_basis_using(.crystal.unit_cell.inverse_matrix,.crystal.unit_cell.direct_matrix) 
       stdout.put(eigenvectors)
       end
+
    end 
 
-   put_uc_chi2 ::: leaky
-   ! Calculate the unit cell chi2 tensor
-   DIE_IF(.dipole_polarisability.destroyed,"no dipole_polarisability")
-   DIE_IF(.dipole_hyperpolarisability.destroyed,"no dipole_hyperpolarisability")
-   ENSURE(.atom.created,"no atom data")
-   ENSURE(.crystal.created,"no crystal data")
-   ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
-   ENSURE(all(.crystal.frag_atom_for_asym_atom/=0),"some asymetric unit atoms were not found")
-
+   put_refractive_indices2(chi2,chi1) ::: private
+   ! Put out the chi2
       chi2 :: MAT3{REAL}(3,3,3)
-      cvec :: VEC{REAL}(3)
-      fac :: REAL
+      chi1 :: MAT{REAL}(3,3)
+      v10  :: VEC{REAL}(10)
+      v3   :: VEC{REAL}(3)
 
-      ! Make sure asymmetric unit is generated from the fragment
-      ! (Also it assigns atomic charges, polarisabilities to asymmetric unit)
-      .crystal.destroy_asymmetric_unit
-      .crystal.make_fragment_data(.atom,assign_atom=TRUE,warnings=FALSE) 
-      DIE_IF(.crystal.asymmetric_unit_atom.destroyed,"atom list does not span asymmetric unit")
+      eps,eigenvectors :: MAT{REAL}(3,3)
+      eigenvalues :: VEC{REAL}(3)
+      beta :: MAT3{REAL}(3,3,3)
 
-      fac = ELECTRIC_POLARISABILITY_SI_PER_AU/ELECTRIC_FIELD_SI_PER_AU 
-
-      ! Make the cluster
-      .cluster.destroy
-      .cluster.create(.crystal)
-      .cluster.make_info ! leaky here
-
-      ! Make chi2
-      .cluster.make_chi2_RLFTn_av_L(chi2,.dipole_hyperpolarisability,.dipole_polarisability)
-      chi2.set_vector_hyperpolarisability(cvec)
-
+      ! Print out the 2nd susceptibility
       stdout.flush
-      stdout.text("========================================")
-      stdout.text("Unit cell second susceptibilities chi(2)")
-      stdout.text("========================================")
+      stdout.text("== chi2 in the xyz frame ==")
       stdout.flush
-      stdout.text("This is calculated using Spackman's RLFTn method")
-      stdout.text("i.e. with the L tensor averaged over non-H sites and")
-      stdout.text("the same scaled and rotated molecular beta is used")
-      stdout.text("at each site.")
-   
-      stdout.flush
-      stdout.text("chi(2) in au:")
+      stdout.text(". Atomic units are used")
+      stdout.text(". Element order is: xxx,yxx,yyx,yyy,zxx,zyx,zyy,zzx,zzy,zzz")
       stdout.flush
       stdout.put(chi2) 
-   
+
+      chi2.compress_to_pyramid(v10)
       stdout.flush
-      stdout.text("Vector chi(2) in au:")
+      stdout.text("Independent chi2 elements:")
+      stdout.put(v10) 
+
+      chi2.set_vector_hyperpolarisability(v3)
       stdout.flush
-      stdout.put(cvec)
+      stdout.text("Vector componenets of chi2:")
       stdout.flush
-      stdout.show(" |chi(2)| in au = ",cvec.norm)
+      stdout.put(v3)
+      stdout.flush
+      stdout.show("|chi2| = ",v3.norm)
+
+      ! Work out the permittivity
+      eps.to_unit_matrix
+      eps = eps + chi1
+
+      ! Get the optic axes
+      eps.solve_eigenproblem(eigenvalues,eigenvectors)
+
+      ! Beta in the optic axis frame
+      beta = chi2
+      beta.change_basis_using(eigenvectors)
+
+      ! chi2 in the optic axis frame
+      stdout.flush
+      stdout.text("== chi2 in the optic axis frame ==")
+      stdout.flush
+      stdout.put(chi2) 
+
+      chi2.compress_to_pyramid(v10)
+      stdout.flush
+      stdout.text("Independent chi2 elements:")
+      stdout.text("The order of elements is: xxx,yxx,yyx,yyy,zxx,zyx,zyy,zzx,zzy,zzz")
+      stdout.put(v10) 
+
+      chi2.compress_to_pyramid(v10)
+      stdout.flush
+      stdout.text("chi2 in the optic axis frame - as vector:")
+      stdout.put(v10) 
+
+      chi2.set_vector_hyperpolarisability(v3)
+      stdout.flush
+      stdout.text("Vector componenets of chi2:")
+      stdout.flush
+      stdout.put(v3)
+      stdout.flush
+      stdout.show("|chi2| = ",v3.norm)
 
    end 
 

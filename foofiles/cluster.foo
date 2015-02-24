@@ -3636,6 +3636,359 @@ contains
 
    end
 
+! Old distributed polarisability code
+! This code does the chi2 from hyperpolarizability
+
+   make_susceptibility2(alpha_mol,beta_mol,uc_alpha,chi1_naive,chi1_centroid,chi1_nonH,chi2_nonH,chi1_nc,chi1_do,chi1)
+   ! Make the second ortder susceptibility from distributed
+   ! polarisabilities.
+      alpha_mol :: MAT{REAL}(3,3), IN
+      beta_mol  :: MAT3{REAL}(3,3,3), IN
+      uc_alpha      :: MAT{REAL}(3,3), OUT ! Unit cell alpha
+      chi1_naive    :: MAT{REAL}(3,3), OUT ! Clausius-Mossotti, L=1/3
+      chi1_centroid :: MAT{REAL}(3,3), OUT ! Dipoles at the COM
+      chi1_nonH     :: MAT{REAL}(3,3), OUT ! Non-hydrogen model, RLFTn
+      chi1_nc       :: MAT{REAL}(3,3), OUT ! No charge contributons to polarisability
+      chi1_do       :: MAT{REAL}(3,3), OUT ! Atomic alpha used
+      chi1          :: MAT{REAL}(3,3), OUT ! Distributed polarisability
+      chi2_nonH     :: MAT3{REAL}(3,3,3)
+
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.asymmetric_unit_atom.created,"no asymetric cell atoms")
+
+      alph,al :: MAT{REAL}(3,3)
+      beta,be :: MAT3{REAL}(3,3,3)
+      L0,L1,Lm,D,Dnc,Ddo,Dd,AA, df :: MAT{REAL}* 
+      pos,pos0,coc,com,coc0,alpha_q :: MAT{REAL}*
+      mol,mol0,par,non_H :: VEC{INT}*
+      r,Lq :: VEC{REAL}*
+      symop,alpha_m,alpha :: MAT3{REAL}*
+      n,n_m,n_a,n_H,nH,a,b,i,j,m :: INT
+      fac :: REAL
+
+      ! Get the unit cell electrical properties for each atom
+      .get_uc_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) 
+
+      ! Get no of atoms in unit cell
+      n = par.dim
+
+      ! Factor to reduce polarisabilities (in au)
+      fac = FOUR*PI/.crystal.unit_cell.volume
+
+      ! Make the charge and dipole Lorentz factor tensors
+      D.create(3*n,3*n)
+      Dnc.create(3*n,3*n)
+      Ddo.create(3*n,3*n)
+      alpha.create(3,3,n)
+      L0.create(3*n,n)
+      L1.create(3*n,3*n)
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos,mol)
+
+      ! Get the atomic alpha's
+      alpha = ZERO
+      AA.create(3,3)
+      r.create(3)
+      do a = 1,n
+         r = pos(:,a) - coc(:,a)
+         AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
+         alpha(:,:,a) = alpha(:,:,a) + AA
+      end
+      r.destroy; AA.destroy
+
+      ! Make the D matrix
+      D.to_unit_matrix
+      Dnc.to_unit_matrix
+      Ddo.to_unit_matrix
+      i = 0
+      do a = 1,n
+         j = 0
+         do b = 1,n
+            Lq => L0(i+1:i+3,b)      
+            Lm => L1(i+1:i+3,j+1:j+3)      
+
+            Dd =>   D(i+1:i+3,j+1:j+3)      
+            Dd = Dd - fac*Lq.outer_product_with(alpha_q(:,b))
+            Dd = Dd - fac*matmul(Lm,alpha_m(:,:,b))
+
+            Dd => Dnc(i+1:i+3,j+1:j+3)      
+            Dd = Dd - fac*matmul(Lm,alpha_m(:,:,b))
+
+            Dd => Ddo(i+1:i+3,j+1:j+3)      
+            Dd = Dd - fac*matmul(Lm,alpha(:,:,b))
+            
+            j = j + 3
+         end
+         i = i + 3
+      end
+      D.to_inverse_of(D)
+      Dnc.to_inverse_of(Dnc)
+      Ddo.to_inverse_of(Ddo)
+      L1.destroy
+      L0.destroy
+
+      ! Make the distributed polarisability chi1 
+      chi1 = ZERO
+      chi1_nc = ZERO
+      chi1_do = ZERO
+      uc_alpha = ZERO
+      AA.create(3,3)
+      r.create(3)
+      i = 0
+      do a = 1,n
+         r = pos(:,a) - coc(:,a)
+         AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
+         uc_alpha = uc_alpha + AA
+         AA = fac*AA
+         j = 0
+         do b = 1,n
+            Dd =>   D(i+1:i+3,j+1:j+3)      
+            chi1 = chi1 + matmul(AA,Dd)
+            Dd => Dnc(i+1:i+3,j+1:j+3)      
+            chi1_nc = chi1_nc + matmul(AA,Dd)
+            Dd => Ddo(i+1:i+3,j+1:j+3)      
+            chi1_do = chi1_do + matmul(AA,Dd)
+            j = j + 3
+         end
+         i = i + 3
+      end
+
+      ! Clean up
+      r.destroy; AA.destroy
+      alpha.destroy
+      Ddo.destroy; Dnc.destroy; D.destroy
+
+      ! ================================================
+
+      ! Make chi1_naive
+      D.create(3,3)
+      D.to_unit_matrix
+      D = D - fac*THIRD*uc_alpha
+      D.to_inverse_of(D)
+      chi1_naive = fac*matmul(uc_alpha,D)
+      D.destroy
+
+      ! ================================================
+
+      ! Get the no of molecules
+      n_m = maxval(mol) 
+      DIE_IF(mod(n,n_m)/=0,"no of atoms in a molecule is not integral")
+
+      ! Get the no of atoms per molecule
+      n_a = n/n_m
+
+      ! Get the molecular alpha's
+      alpha.create(3,3,n_m)
+      alpha = ZERO
+      AA.create(3,3)
+      r.create(3)
+      a = 0
+      do m = 1,n_m
+         do i = 1,n_a
+            a = a + 1
+            r = pos(:,a) - coc(:,a)
+            AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
+            alpha(:,:,m) = alpha(:,:,m) + AA
+         end
+      end
+      r.destroy; AA.destroy
+
+      ! Get the centroids, use COM
+      coc0.create(3,n_m)
+      mol0.create(n_m)
+      coc0 = com(:,1:(n_m-1)*n_a+1:n_a)
+      mol0 = mol(1:(n_m-1)*n_a+1:n_a)
+
+      ! Print out centroid info ... important
+      stdout.flush
+      stdout.show("Center of mass =",coc0(:,1))
+
+      ! Make the centroid charge and dipole Lorentz factor tensors
+      D.create(3*n_m,3*n_m)
+      L0.create(3*n_m,n_m)
+      L1.create(3*n_m,3*n_m)
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,coc0,mol0)
+
+      ! Print out centroid info ... important
+
+      if (.debugging("make_susceptibility2")) then
+      stdout.flush
+      stdout.text("Arrays for centroid calculation:")
+      stdout.text("coc0 (center of mass):")
+      stdout.put(transpose(coc0))
+      stdout.text("mol0:")
+      stdout.put(mol0)
+      stdout.text("Dipole L1 tensor:")
+      stdout.put(L1)
+      stdout.text("Alpha for each molecule:")
+      stdout.put(alpha,by_dim3_matrices=TRUE)
+      end
+
+      ! Make the D matrix
+      D.to_unit_matrix
+      i = 0
+      do a = 1,n_m
+         j = 0
+         do b = 1,n_m
+            Dd => D(i+1:i+3,j+1:j+3)      
+            Lm => L1(i+1:i+3,j+1:j+3)      
+            Dd = Dd - fac*matmul(Lm,alpha(:,:,b))
+            j = j + 3
+         end
+         i = i + 3
+      end
+      D.to_inverse_of(D)
+      L1.destroy
+      L0.destroy
+
+      ! Make the chi1_centroid susceptibility
+      chi1_centroid = ZERO
+      AA.create(3,3)
+      r.create(3)
+      i = 0
+      do a = 1,n_m
+         AA = alpha(:,:,a)
+         AA = fac*AA
+         j = 0
+         do b = 1,n_m
+            Dd => D(i+1:i+3,j+1:j+3)      
+            chi1_centroid = chi1_centroid + matmul(AA,Dd)
+            j = j + 3
+         end
+         i = i + 3
+      end
+
+      ! Clean up
+      r.destroy; AA.destroy
+      D.destroy
+      mol0.destroy; coc0.destroy
+
+      ! ================================================
+      ! RLFTn
+      ! ================================================
+
+      ! Get non H positions.
+      n_H = count(.asymmetric_unit_atom(par).atomic_number>1)
+      non_H.create(n_H)
+      non_H = pack([(a,a=1,n)],.asymmetric_unit_atom(par).atomic_number>1)
+
+      ! Get the non H positions, indices, molecules.
+      pos0.create(3,n_H)
+      mol0.create(n_H)
+      pos0 = pos(:,non_H)
+      mol0 = mol(non_H)
+
+      ! Make the non H charge and dipole Lorentz factor tensors
+      D.create(3*n_H,3*n_H)        ! (1 - aL)^-1 
+      df.create(3*n_H,3)           ! local field factor tensor
+      L0.create(3*n_H,n_H)         ! charge L tensor
+      L1.create(3*n_H,3*n_H)       ! dipole L tensor
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos0,mol0)
+
+      ! Print out position info ... important
+      if (.debugging("make_susceptibility2")) then
+      stdout.flush
+      stdout.text("Arrays for non H calculation:")
+      stdout.text("non_H:")
+      stdout.put(non_H)
+      stdout.text("pos0:")
+      stdout.put(transpose(pos0))
+      stdout.text("mol0:")
+      stdout.put(mol0)
+      stdout.text("Dipole L1 tensor:")
+      stdout.put(L1)
+      end
+    
+      ! Get number of Non-H hydrogen atoms per molecule
+      DIE_IF(mod(n_H,n_m)/=0,"no of non-Hydrogen atoms wrong")
+      nH = n_H/n_m        
+
+      ! Average alpha over non-H sites
+      alpha = alpha/nH
+
+      ! Get the reduced average molecular polarisabilities
+      alph = fac*alpha_mol/nH
+      beta = fac*beta_mol/nH
+
+      ! Make the D matrix
+      D.to_unit_matrix
+      i = 0
+      do a = 1,n_H
+         j = 0
+         do b = 1,n_H
+            Dd => D(i+1:i+3,j+1:j+3)      
+            Lm => L1(i+1:i+3,j+1:j+3)      
+            m  = (b-1)/nH + 1
+
+            ! Old way
+         !  Dd = Dd - fac*matmul(Lm,alpha(:,:,m))
+
+            ! New way -- should be better -- check
+            alph.change_basis_to(al,symop(:,:,m))
+            Dd = Dd - matmul(Lm,al)
+
+            j = j + 3
+         end
+         i = i + 3
+      end
+      D.to_inverse_of(D)
+      L1.destroy
+      L0.destroy
+
+      ! Make the chi1_nonH susceptibility
+      chi1_nonH = ZERO
+      AA.create(3,3)
+      i = 0
+      do a = 1,n_H
+         m  = (a-1)/nH + 1
+         AA = alpha(:,:,m)
+         AA = fac*AA
+         j = 0
+         do b = 1,n_H
+            Dd => D(i+1:i+3,j+1:j+3)      
+            chi1_nonH = chi1_nonH + matmul(AA,Dd)
+            j = j + 3
+         end
+         i = i + 3
+      end
+
+      ! Local field factors
+      df = ZERO
+      i = 0
+      do a = 1,n_H
+         j = 0
+         do b = 1,n_H
+            df(i+1:i+3,:) = df(i+1:i+3,:) + D(i+1:i+3,j+1:j+3)      
+            j = j + 3
+         end
+         i = i + 3
+      end
+
+      ! Make the chi1_nonH and chi2_nonH susceptibility
+      chi1_nonH = ZERO
+      chi2_nonH = ZERO
+      i = 0
+      do a = 1,n_H
+         m = (a-1)/nH + 1
+         alph.change_basis_to(al,symop(:,:,m))
+         chi1_nonH = chi1_nonH + matmul(al,df(i+1:i+3,:))
+         beta.change_basis_to(be,symop(:,:,m))
+         be.change_basis_using(df(i+1:i+3,:))
+         chi2_nonH = chi2_nonH + be
+         i = i + 3
+      end
+      chi2_nonH = HALF*chi2_nonH
+
+      ! Clean up
+      df.destroy; D.destroy
+      mol0.destroy; pos0.destroy
+      non_H.destroy
+      alpha.destroy
+      alpha_m.destroy; alpha_q.destroy
+      com.destroy; coc.destroy; pos.destroy
+      par.destroy; symop.destroy; mol.destroy
+
+   end
+
    make_local_field_factors(Df,D) ::: selfless
    ! Make the second ortder susceptibility from distributed
    ! polarisabilities.
@@ -3809,358 +4162,6 @@ contains
       Dnc.to_inverse_of(Dnc)
 
    end
-
-! Old distributed polarisability code
-
-!   make_susceptibility2(alpha_mol,beta_mol,uc_alpha,chi1_naive,chi1_centroid,chi1_nonH,chi2_nonH,chi1_nc,chi1_do,chi1)
-!   ! Make the second ortder susceptibility from distributed
-!   ! polarisabilities.
-!      alpha_mol :: MAT{REAL}(3,3), IN
-!      beta_mol  :: MAT3{REAL}(3,3,3), IN
-!      uc_alpha      :: MAT{REAL}(3,3), OUT ! Unit cell alpha
-!      chi1_naive    :: MAT{REAL}(3,3), OUT ! Clausius-Mossotti, L=1/3
-!      chi1_centroid :: MAT{REAL}(3,3), OUT ! Dipoles at the COM
-!      chi1_nonH     :: MAT{REAL}(3,3), OUT ! Non-hydrogen model, RLFTn
-!      chi1_nc       :: MAT{REAL}(3,3), OUT ! No charge contributons to polarisability
-!      chi1_do       :: MAT{REAL}(3,3), OUT ! Atomic alpha used
-!      chi1          :: MAT{REAL}(3,3), OUT ! Distributed polarisability
-!      chi2_nonH     :: MAT3{REAL}(3,3,3)
-!
-!   ENSURE(.crystal.created,"no crystal")
-!   ENSURE(.asymmetric_unit_atom.created,"no asymetric cell atoms")
-!
-!      alph,al :: MAT{REAL}(3,3)
-!      beta,be :: MAT3{REAL}(3,3,3)
-!      L0,L1,Lm,D,Dnc,Ddo,Dd,AA, df :: MAT{REAL}* 
-!      pos,pos0,coc,com,coc0,dipole,alpha_q,centroid :: MAT{REAL}*
-!      mol,mol0,par,non_H :: VEC{INT}*
-!      charge,r,Lq :: VEC{REAL}*
-!      symop,alpha_m,alpha :: MAT3{REAL}*
-!      n,n_m,n_a,n_H,nH,a,b,i,j,m :: INT
-!      fac :: REAL
-!
-!      ! Get the unit cell electrical properties for each atom
-!      .get_uc_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) 
-!
-!      ! Get no of atoms in unit cell
-!      n = par.dim
-!
-!      ! Factor to reduce polarisabilities (in au)
-!      fac = FOUR*PI/.crystal.unit_cell.volume
-!
-!      ! Make the charge and dipole Lorentz factor tensors
-!      D.create(3*n,3*n)
-!      Dnc.create(3*n,3*n)
-!      Ddo.create(3*n,3*n)
-!      alpha.create(3,3,n)
-!      L0.create(3*n,n)
-!      L1.create(3*n,3*n)
-!      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos,mol)
-!
-!      ! Get the atomic alpha's
-!      alpha = ZERO
-!      AA.create(3,3)
-!      r.create(3)
-!      do a = 1,n
-!         r = pos(:,a) - coc(:,a)
-!         AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
-!         alpha(:,:,a) = alpha(:,:,a) + AA
-!      end
-!      r.destroy; AA.destroy
-!
-!      ! Make the D matrix
-!      D.to_unit_matrix
-!      Dnc.to_unit_matrix
-!      Ddo.to_unit_matrix
-!      i = 0
-!      do a = 1,n
-!         j = 0
-!         do b = 1,n
-!            Lq => L0(i+1:i+3,b)      
-!            Lm => L1(i+1:i+3,j+1:j+3)      
-!
-!            Dd =>   D(i+1:i+3,j+1:j+3)      
-!            Dd = Dd - fac*Lq.outer_product_with(alpha_q(:,b))
-!            Dd = Dd - fac*matmul(Lm,alpha_m(:,:,b))
-!
-!            Dd => Dnc(i+1:i+3,j+1:j+3)      
-!            Dd = Dd - fac*matmul(Lm,alpha_m(:,:,b))
-!
-!            Dd => Ddo(i+1:i+3,j+1:j+3)      
-!            Dd = Dd - fac*matmul(Lm,alpha(:,:,b))
-!            
-!            j = j + 3
-!         end
-!         i = i + 3
-!      end
-!      D.to_inverse_of(D)
-!      Dnc.to_inverse_of(Dnc)
-!      Ddo.to_inverse_of(Ddo)
-!      L1.destroy
-!      L0.destroy
-!
-!      ! Make the distributed polarisability chi1 
-!      chi1 = ZERO
-!      chi1_nc = ZERO
-!      chi1_do = ZERO
-!      uc_alpha = ZERO
-!      AA.create(3,3)
-!      r.create(3)
-!      i = 0
-!      do a = 1,n
-!         r = pos(:,a) - coc(:,a)
-!         AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
-!         uc_alpha = uc_alpha + AA
-!         AA = fac*AA
-!         j = 0
-!         do b = 1,n
-!            Dd =>   D(i+1:i+3,j+1:j+3)      
-!            chi1 = chi1 + matmul(AA,Dd)
-!            Dd => Dnc(i+1:i+3,j+1:j+3)      
-!            chi1_nc = chi1_nc + matmul(AA,Dd)
-!            Dd => Ddo(i+1:i+3,j+1:j+3)      
-!            chi1_do = chi1_do + matmul(AA,Dd)
-!            j = j + 3
-!         end
-!         i = i + 3
-!      end
-!
-!      ! Clean up
-!      r.destroy; AA.destroy
-!      alpha.destroy
-!      Ddo.destroy; Dnc.destroy; D.destroy
-!
-!      ! ================================================
-!
-!      ! Make chi1_naive
-!      D.create(3,3)
-!      D.to_unit_matrix
-!      D = D - fac*THIRD*uc_alpha
-!      D.to_inverse_of(D)
-!      chi1_naive = fac*matmul(uc_alpha,D)
-!      D.destroy
-!
-!      ! ================================================
-!
-!      ! Get the no of molecules
-!      n_m = maxval(mol) 
-!      DIE_IF(mod(n,n_m)/=0,"no of atoms in a molecule is not integral")
-!
-!      ! Get the no of atoms per molecule
-!      n_a = n/n_m
-!
-!      ! Get the molecular alpha's
-!      alpha.create(3,3,n_m)
-!      alpha = ZERO
-!      AA.create(3,3)
-!      r.create(3)
-!      a = 0
-!      do m = 1,n_m
-!         do i = 1,n_a
-!            a = a + 1
-!            r = pos(:,a) - coc(:,a)
-!            AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
-!            alpha(:,:,m) = alpha(:,:,m) + AA
-!         end
-!      end
-!      r.destroy; AA.destroy
-!
-!      ! Get the centroids, use COM
-!      coc0.create(3,n_m)
-!      mol0.create(n_m)
-!      coc0 = com(:,1:(n_m-1)*n_a+1:n_a)
-!      mol0 = mol(1:(n_m-1)*n_a+1:n_a)
-!
-!      ! Print out centroid info ... important
-!      stdout.flush
-!      stdout.show("Center of mass =",coc0(:,1))
-!
-!      ! Make the centroid charge and dipole Lorentz factor tensors
-!      D.create(3*n_m,3*n_m)
-!      L0.create(3*n_m,n_m)
-!      L1.create(3*n_m,3*n_m)
-!      .crystal.unit_cell.make_LFF_tensors(L0,L1,coc0,mol0)
-!
-!      ! Print out centroid info ... important
-!
-!      if (.debugging("make_susceptibility2")) then
-!      stdout.flush
-!      stdout.text("Arrays for centroid calculation:")
-!      stdout.text("coc0 (center of mass):")
-!      stdout.put(transpose(coc0))
-!      stdout.text("mol0:")
-!      stdout.put(mol0)
-!      stdout.text("Dipole L1 tensor:")
-!      stdout.put(L1)
-!      stdout.text("Alpha for each molecule:")
-!      stdout.put(alpha,by_dim3_matrices=TRUE)
-!      end
-!
-!      ! Make the D matrix
-!      D.to_unit_matrix
-!      i = 0
-!      do a = 1,n_m
-!         j = 0
-!         do b = 1,n_m
-!            Dd => D(i+1:i+3,j+1:j+3)      
-!            Lm => L1(i+1:i+3,j+1:j+3)      
-!            Dd = Dd - fac*matmul(Lm,alpha(:,:,b))
-!            j = j + 3
-!         end
-!         i = i + 3
-!      end
-!      D.to_inverse_of(D)
-!      L1.destroy
-!      L0.destroy
-!
-!      ! Make the chi1_centroid susceptibility
-!      chi1_centroid = ZERO
-!      AA.create(3,3)
-!      r.create(3)
-!      i = 0
-!      do a = 1,n_m
-!         AA = alpha(:,:,a)
-!         AA = fac*AA
-!         j = 0
-!         do b = 1,n_m
-!            Dd => D(i+1:i+3,j+1:j+3)      
-!            chi1_centroid = chi1_centroid + matmul(AA,Dd)
-!            j = j + 3
-!         end
-!         i = i + 3
-!      end
-!
-!      ! Clean up
-!      r.destroy; AA.destroy
-!      D.destroy
-!      mol0.destroy; coc0.destroy
-!
-!      ! ================================================
-!      ! RLFTn
-!      ! ================================================
-!
-!      ! Get non H positions.
-!      n_H = count(.asymmetric_unit_atom(par).atomic_number>1)
-!      non_H.create(n_H)
-!      non_H = pack([(a,a=1,n)],.asymmetric_unit_atom(par).atomic_number>1)
-!
-!      ! Get the non H positions, indices, molecules.
-!      pos0.create(3,n_H)
-!      mol0.create(n_H)
-!      pos0 = pos(:,non_H)
-!      mol0 = mol(non_H)
-!
-!      ! Make the non H charge and dipole Lorentz factor tensors
-!      D.create(3*n_H,3*n_H)        ! (1 - aL)^-1 
-!      df.create(3*n_H,3)           ! local field factor tensor
-!      L0.create(3*n_H,n_H)         ! charge L tensor
-!      L1.create(3*n_H,3*n_H)       ! dipole L tensor
-!      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos0,mol0)
-!
-!      ! Print out position info ... important
-!      if (.debugging("make_susceptibility2")) then
-!      stdout.flush
-!      stdout.text("Arrays for non H calculation:")
-!      stdout.text("non_H:")
-!      stdout.put(non_H)
-!      stdout.text("pos0:")
-!      stdout.put(transpose(pos0))
-!      stdout.text("mol0:")
-!      stdout.put(mol0)
-!      stdout.text("Dipole L1 tensor:")
-!      stdout.put(L1)
-!      end
-!    
-!      ! Get number of Non-H hydrogen atoms per molecule
-!      DIE_IF(mod(n_H,n_m)/=0,"no of non-Hydrogen atoms wrong")
-!      nH = n_H/n_m        
-!
-!      ! Average alpha over non-H sites
-!      alpha = alpha/nH
-!
-!      ! Get the reduced average molecular polarisabilities
-!      alph = fac*alpha_mol/nH
-!      beta = fac*beta_mol/nH
-!
-!      ! Make the D matrix
-!      D.to_unit_matrix
-!      i = 0
-!      do a = 1,n_H
-!         j = 0
-!         do b = 1,n_H
-!            Dd => D(i+1:i+3,j+1:j+3)      
-!            Lm => L1(i+1:i+3,j+1:j+3)      
-!            m  = (b-1)/nH + 1
-!
-!            ! Old way
-!         !  Dd = Dd - fac*matmul(Lm,alpha(:,:,m))
-!
-!            ! New way -- should be better -- check
-!            alph.change_basis_to(al,symop(:,:,m))
-!            Dd = Dd - matmul(Lm,al)
-!
-!            j = j + 3
-!         end
-!         i = i + 3
-!      end
-!      D.to_inverse_of(D)
-!      L1.destroy
-!      L0.destroy
-!
-!      ! Make the chi1_nonH susceptibility
-!      chi1_nonH = ZERO
-!      AA.create(3,3)
-!      i = 0
-!      do a = 1,n_H
-!         m  = (a-1)/nH + 1
-!         AA = alpha(:,:,m)
-!         AA = fac*AA
-!         j = 0
-!         do b = 1,n_H
-!            Dd => D(i+1:i+3,j+1:j+3)      
-!            chi1_nonH = chi1_nonH + matmul(AA,Dd)
-!            j = j + 3
-!         end
-!         i = i + 3
-!      end
-!
-!      ! Local field factors
-!      df = ZERO
-!      i = 0
-!      do a = 1,n_H
-!         j = 0
-!         do b = 1,n_H
-!            df(i+1:i+3,:) = df(i+1:i+3,:) + D(i+1:i+3,j+1:j+3)      
-!            j = j + 3
-!         end
-!         i = i + 3
-!      end
-!
-!      ! Make the chi1_nonH and chi2_nonH susceptibility
-!      chi1_nonH = ZERO
-!      chi2_nonH = ZERO
-!      i = 0
-!      do a = 1,n_H
-!         m = (a-1)/nH + 1
-!         alph.change_basis_to(al,symop(:,:,m))
-!         chi1_nonH = chi1_nonH + matmul(al,df(i+1:i+3,:))
-!         beta.change_basis_to(be,symop(:,:,m))
-!         be.change_basis_using(df(i+1:i+3,:))
-!         chi2_nonH = chi2_nonH + be
-!         i = i + 3
-!      end
-!      chi2_nonH = HALF*chi2_nonH
-!
-!      ! Clean up
-!      df.destroy; D.destroy
-!      mol0.destroy; pos0.destroy
-!      non_H.destroy
-!      alpha.destroy
-!      alpha_m.destroy; alpha_q.destroy
-!      com.destroy; coc.destroy; pos.destroy
-!      par.destroy; symop.destroy; mol.destroy
-!
-!   end
 
 !  ===============
 !  Electric fields
