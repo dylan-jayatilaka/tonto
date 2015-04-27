@@ -434,6 +434,17 @@ contains
       .reflections.set_I_calc(I_calc)
    end
 
+   set_n_param(val) ::: PURE
+   ! Set up a default diffraction_data object
+      self :: INOUT
+      val :: INT, IN
+
+   ENSURE(val>1,"n_param must be non negative")
+
+      .n_param = val
+
+   end
+
 !  ============
 !  Read methods
 !  ============
@@ -471,6 +482,7 @@ contains
          case ("f_sigma_cutoff=               "); .read_F_sigma_cutoff
          case ("f_z_cutoff=                   "); .read_F_z_cutoff
 
+         case ("i_sigma_cutoff=               "); .read_I_sigma_cutoff
          case ("i_z_cutoff=                   "); .read_I_z_cutoff
 
          case ("junk=                         "); .read_junk
@@ -483,6 +495,7 @@ contains
          case ("min_iterations=               "); .read_min_iterations
 
          case ("nka_t_sequence_no=            "); .read_NKA_T_seq_no
+         case ("n_param=                      "); .read_n_param
 
          case ("optimise_extinction=          "); .read_optimise_extinction
          case ("optimize_extinction=          "); .read_optimise_extinction
@@ -584,14 +597,14 @@ contains
 
    end
 
-!   read_I_sigma_cutoff ::: private
-!   ! Read the maximum acceptable value for I_cutoff
-!
-!      stdin.read(.I_sigma_cutoff)
-!
-!      ENSURE(.I_sigma_cutoff>ZERO,"cutoff must be positive")
-!
-!   end
+    read_I_sigma_cutoff ::: private
+    ! Read the maximum acceptable value for I_cutoff
+
+       stdin.read(.I_sigma_cutoff)
+
+       ENSURE(.I_sigma_cutoff>ZERO,"cutoff must be positive")
+
+    end
 
    read_F_z_cutoff ::: private
    ! Read the F_z cutoff for prune_bad_reflections
@@ -744,6 +757,17 @@ contains
       ENSURE(.NKA_T_sequence_no>0,"sequence no is not positive!")
    end
 
+   read_n_param
+   ! Read the no of parameters for refinement explicitly.
+   ! DO this if you are doing an XCW after an HAR
+
+      val :: INT
+
+      stdin.read(val)
+      .set_n_param(val)
+
+   end
+
 !  Refinement options
 
    read_max_allowed_param_shift
@@ -893,10 +917,19 @@ contains
 
    read_CIF(cif) ::: leaky
    ! Read information from a Crystallographic Information File "cif".
+      self :: INOUT
       cif :: CIF, IN
+
+      there :: BIN
 
       ! Read reflections
       .read_CIF_reflections(cif)
+
+      ! Read no of parameters
+      cif.find_item("_refine_ls_number_parameters",there)
+      if (there) then
+         cif.read_item("_refine_ls_number_parameters",.n_param)
+      end
 
    end
 
@@ -966,8 +999,14 @@ contains
       n   = .reflections.dim
       val = n.to_str
       stdout.text("_reflns_number_gt                  "//trim(val))
+      if (.F_sigma_cutoff >ZERO) then
       val = "F>"//trim(adjustl(.F_sigma_cutoff.to_str("f5.1")))//"u(F)"
       stdout.text("_reflns_threshold_expression       "//trim(val))
+      end
+      if (.I_sigma_cutoff >ZERO) then
+      val = "I>"//trim(adjustl(.I_sigma_cutoff.to_str("f5.1")))//"u(I)"
+      stdout.text("_reflns_threshold_expression       "//trim(val))
+      end
 
       stdout.flush
       stdout.text("# Tonto-specific keys and data")
@@ -1115,6 +1154,11 @@ contains
       if (.F_z_cutoff     >ZERO) then
          DIE_IF(NOT .reflections.have_F_exp,"no experimental data for pruning")
          .prune_bad_F_reflections
+      end
+
+      if (.I_sigma_cutoff >ZERO) then
+         DIE_IF(NOT .reflections.have_I_exp,"no experimental data for pruning")
+         .prune_weak_Is
       end
 
       if (.stl_high_cutoff>ZERO) .prune_high_angle_reflections
@@ -1452,7 +1496,7 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
+    ! if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
 
       ! Get optimum scale factors, extinction, etc.
       if (.optimise_extinction OR .optimise_scale) .get_F_optimum_parameters
@@ -1507,7 +1551,7 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
+    ! if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
 
       ! Get optimum scale factors, extinction, etc.
       if (.optimise_extinction OR .optimise_scale) .get_I_optimum_parameters
@@ -1548,6 +1592,8 @@ contains
 
    update_n_param_and_chi2 ::: private
    ! Update the number of parameters and recalculate the chi2
+      self :: INOUT
+
    DIE_IF(NOT (.refine_structure OR .fit_structure),"must be doing a structure fit/refinement")
    DIE_IF(.n_param<=0,"n_param must be +ve")
 
@@ -1583,49 +1629,6 @@ contains
       end
 
    end
-
-!!magda_beginning
-!
-!   update_n_param_and_chi2I ::: private
-!   ! Update the number of parameters and recalculate the chi2 for
-!   ! refinement against F^2
-!   DIE_IF(NOT (.refine_structure OR .fit_structure),"must be doing a structure fit/refinement")
-!   DIE_IF(.n_param<=0,"n_param must be +ve")
-!
-!      n_r,n_p :: INT
-!
-!      ! Add on extra parameters
-!      if (.optimise_extinction) then
-!
-!         DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
-!         .n_param = .n_param + 2
-!
-!      else if (.optimise_scale) then
-!
-!         if (.use_multiple_scale_factors) then
-!            .n_param = .n_param + maxval(.reflections.group)
-!         else
-!            .n_param = .n_param + 1
-!         end
-!
-!      end
-!
-!      ! Update the chi2
-!      n_r = .reflections.dim - 1
-!      n_p = .reflections.dim - .n_param
-!      .chi2I      = max(n_r,1)*.reflections.I_chi2/max(n_p,1)
-!      .chi2I_fit  = .chi2I
-!
-!      ! Debug
-!      if (.debugging("update_n_param_and_chi2")) then
-!         stdout.text("chi2I_fit0 ="//trim(.chi2I_fit0.to_str))
-!         stdout.text("chi2I_fit  ="//trim(.chi2I_fit.to_str ))
-!         .reflections.put
-!      end
-!
-!   end
-!
-!!magda_end
 
    get_F_optimum_parameters ::: private
    ! Get the scale factors, extinction parameters, etc, which minimise the chi2.
