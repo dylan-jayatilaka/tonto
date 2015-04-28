@@ -656,15 +656,13 @@ contains
 
       .scfdata.nuclear_repulsion_energy = .::nuclear_repulsion_energy
 
-      .::initialize_DFT_grids
+      if (.scfdata.is_DFT_calculation) .::initialize_DFT_grids
 
    end
 
    initialize_DFT_grids ::: leaky
    ! Initialise DFT grids, if not already done so.
    ENSURE(.scfdata.created,"no scfdata")
-
-      if (NOT .scfdata.is_DFT_calculation) return
 
       if (.becke_grid.destroyed) then
          .becke_grid.create
@@ -919,7 +917,7 @@ contains
       if (.crystal.destroyed) return
       if (.atom.destroyed)    return
 
-      .atom.resolve_axis_system(.crystal.unit_cell)
+      .atom.change_axis_system_to("cartesian",.crystal.unit_cell)
 
    end
 
@@ -2035,6 +2033,65 @@ contains
 !  ======================
 !  Gaussian chk interface
 !  ======================
+
+   write_g09_MOs
+   ! Write the alpha MO's
+      self :: IN
+
+   DIE_IF(.molecular_orbitals.destroyed,"no MOs")
+   DIE_IF(.molecular_orbitals.restricted.destroyed,"no restricted MOs")
+
+      chkfile :: TEXTFILE*
+      n :: INT
+
+      ! Open FChk file
+      chkfile.create
+      chkfile.set_name(trim(.name)//"."//"g09_alpha_MOs")
+      chkfile.set_no_of_fields_per_line(5)
+      chkfile.set_real_style("e")
+      chkfile.set_real_width(16)
+      chkfile.set_real_precision(8)
+      chkfile.set_using_array_labels(FALSE)
+      chkfile.open(for="write")
+
+      ! Write molecular orbitals.
+      n = .molecular_orbitals.restricted.dim
+      chkfile.put(reshape(.molecular_orbitals.restricted,[n]),by_column=TRUE)
+
+
+      ! Clean
+      chkfile.destroy
+
+   end
+
+   write_g09_density_matrix
+   ! Write the alpha MO's
+      self :: INOUT
+
+   DIE_IF(.density_matrix.destroyed,"no density_matrix")
+   DIE_IF(.density_matrix.restricted.destroyed,"no restricted density_matrix")
+
+      chkfile :: TEXTFILE*
+
+      ! Open FChk file
+      chkfile.create
+      chkfile.set_name(trim(.name)//"."//"g09_density_matrix")
+      chkfile.set_no_of_fields_per_line(5)
+      chkfile.set_real_style("e")
+      chkfile.set_real_width(16)
+      chkfile.set_real_precision(8)
+      chkfile.set_using_array_labels(FALSE)
+      chkfile.open(for="write")
+
+      ! Write density matrix
+      .density_matrix.compress("restricted")
+      chkfile.put(.density_matrix.triangle,by_row=TRUE)
+      .density_matrix.uncompress
+
+      ! Clean
+      chkfile.destroy
+
+   end
 
 ! Can thesed be condensed into one?
 
@@ -6527,7 +6584,7 @@ contains
    ENSURE(X.is_square,"X operator matrix is not square")
 
       orb_kind :: STR
-      W :: MAT{REAL}@
+      W :: MAT{REAL}*
 
       res = ZERO
 
@@ -6546,9 +6603,10 @@ contains
 
         case ("general_complex")
            ENSURE(X.dim1==2*.n_bf,"wrong size, X")
+           W.create(2*.n_bf,2*.n_bf)
            W = RE(.density_matrix.general_complex)
            res = MAT{REAL}:trace_product_with(W,X)
-           deallocate(W)
+           W.destroy
 
         case default
            DIE("unimplemented kind, "//trim(orb_kind))
@@ -7809,7 +7867,7 @@ contains
       .atom.put_pADP_errors_to(dX)
 
       ! Make the CIF ADP errors and reset
-      .crystal.make_CIF_esds(.cif,.atom,esd)
+      .crystal.make_CIF_esds(.cif,.atom,.crystal.data.fragment_covariance_matrix,esd)
       esd = sqrt(esd)
       .atom.set_pADP_errors_to(esd)
 
@@ -8345,9 +8403,9 @@ contains
    ! Put basic molecule information
 
       stdout.flush
-      stdout.text("# ----------------")
+      stdout.text("# ================")
       stdout.text("# Publication info")
-      stdout.text("# ----------------")
+      stdout.text("# ================")
 
       stdout.flush
       stdout.text("_publ_contact_author")
@@ -8377,9 +8435,9 @@ contains
       stdout.text(";")
 
       stdout.flush
-      stdout.text("# --------------------")
+      stdout.text("# ====================")
       stdout.text("# Chemical information")
-      stdout.text("# --------------------")
+      stdout.text("# ====================")
 
       stdout.flush
       stdout.text("_chemical_name_common              "//trim(.name))

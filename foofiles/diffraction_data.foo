@@ -417,9 +417,13 @@ contains
    set_F_calc(F_calc) ::: PURE
    ! Set the calculated structure factors
       self :: INOUT
+
       F_calc :: VEC{CPX}, IN
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       .reflections.set_F_calc(F_calc)
+
    end
 
    set_I_calc(I_calc) ::: PURE
@@ -428,6 +432,17 @@ contains
       I_calc :: VEC{REAL}, IN
    ENSURE(.reflection_data_exists,"no reflection data")
       .reflections.set_I_calc(I_calc)
+   end
+
+   set_n_param(val) ::: PURE
+   ! Set up a default diffraction_data object
+      self :: INOUT
+      val :: INT, IN
+
+   ENSURE(val>1,"n_param must be non negative")
+
+      .n_param = val
+
    end
 
 !  ============
@@ -467,6 +482,7 @@ contains
          case ("f_sigma_cutoff=               "); .read_F_sigma_cutoff
          case ("f_z_cutoff=                   "); .read_F_z_cutoff
 
+         case ("i_sigma_cutoff=               "); .read_I_sigma_cutoff
          case ("i_z_cutoff=                   "); .read_I_z_cutoff
 
          case ("junk=                         "); .read_junk
@@ -479,6 +495,7 @@ contains
          case ("min_iterations=               "); .read_min_iterations
 
          case ("nka_t_sequence_no=            "); .read_NKA_T_seq_no
+         case ("n_param=                      "); .read_n_param
 
          case ("optimise_extinction=          "); .read_optimise_extinction
          case ("optimize_extinction=          "); .read_optimise_extinction
@@ -580,14 +597,14 @@ contains
 
    end
 
-   read_I_sigma_cutoff ::: private
-   ! Read the maximum acceptable value for I_cutoff
+    read_I_sigma_cutoff ::: private
+    ! Read the maximum acceptable value for I_cutoff
 
-      stdin.read(.I_sigma_cutoff)
+       stdin.read(.I_sigma_cutoff)
 
-      ENSURE(.I_sigma_cutoff>ZERO,"cutoff must be positive")
+       ENSURE(.I_sigma_cutoff>ZERO,"cutoff must be positive")
 
-   end
+    end
 
    read_F_z_cutoff ::: private
    ! Read the F_z cutoff for prune_bad_reflections
@@ -740,6 +757,17 @@ contains
       ENSURE(.NKA_T_sequence_no>0,"sequence no is not positive!")
    end
 
+   read_n_param
+   ! Read the no of parameters for refinement explicitly.
+   ! DO this if you are doing an XCW after an HAR
+
+      val :: INT
+
+      stdin.read(val)
+      .set_n_param(val)
+
+   end
+
 !  Refinement options
 
    read_max_allowed_param_shift
@@ -889,10 +917,19 @@ contains
 
    read_CIF(cif) ::: leaky
    ! Read information from a Crystallographic Information File "cif".
+      self :: INOUT
       cif :: CIF, IN
+
+      there :: BIN
 
       ! Read reflections
       .read_CIF_reflections(cif)
+
+      ! Read no of parameters
+      cif.find_item("_refine_ls_number_parameters",there)
+      if (there) then
+         cif.read_item("_refine_ls_number_parameters",.n_param)
+      end
 
    end
 
@@ -902,7 +939,7 @@ contains
 
       there :: VEC{BIN}(5)
       h,k,l :: VEC{INT}*
-      Fm,Sg,cov :: VEC{REAL}*
+      Fm,Sg :: VEC{REAL}*
 
       ! Find reflections
       cif.find_looped_item("_diffrn_refln_index_h",there(1))
@@ -937,34 +974,6 @@ contains
 
    end
 
-   read_CIF_covariance(cif,kind,covariance_matrix) ::: leaky
-   ! Read information from a Crystallographic Information File "cif".
-      cif :: CIF, IN
-      kind :: STR, IN
-      covariance_matrix :: MAT{REAL}
-
-      cov :: VEC{REAL}*
-      np :: INT
-      there :: BIN
-
-      ! Find appropriate kind of covariance matrix
-      cif.find_item(trim(kind)//"_covariance_matrix",there)
-
-      if (there) then
-
-         ! Size
-         np = covariance_matrix.dim1
-
-         ! Read and set it
-         cov.create(np*np)
-         cif.read_item(trim(kind)//"_covariance_matrix",cov)
-         covariance_matrix = reshape(cov,[np,np])
-         cov.destroy
-
-      end
-
-   end
-
 
 ! =======
 ! Put CIF
@@ -990,8 +999,14 @@ contains
       n   = .reflections.dim
       val = n.to_str
       stdout.text("_reflns_number_gt                  "//trim(val))
+      if (.F_sigma_cutoff >ZERO) then
       val = "F>"//trim(adjustl(.F_sigma_cutoff.to_str("f5.1")))//"u(F)"
       stdout.text("_reflns_threshold_expression       "//trim(val))
+      end
+      if (.I_sigma_cutoff >ZERO) then
+      val = "I>"//trim(adjustl(.I_sigma_cutoff.to_str("f5.1")))//"u(I)"
+      stdout.text("_reflns_threshold_expression       "//trim(val))
+      end
 
       stdout.flush
       stdout.text("# Tonto-specific keys and data")
@@ -1071,14 +1086,14 @@ contains
    ! Output the covariance matrix in CIF format
 
       if (.covariance_matrix.created) &
-         .put_CIF_covariance_matrix("asym_unit",.covariance_matrix)
+         ::put_CIF_covariance_matrix("asym_unit",.covariance_matrix)
 
       if (.fragment_covariance_matrix.created) &
-         .put_CIF_covariance_matrix("fragment", .fragment_covariance_matrix)
+         ::put_CIF_covariance_matrix("fragment", .fragment_covariance_matrix)
 
    end
 
-   put_CIF_covariance_matrix(kind,covariance_matrix)
+   put_CIF_covariance_matrix(kind,covariance_matrix) ::: selfless
    ! Output the covariance matrix in CIF format
       kind :: STR, IN
       covariance_matrix :: MAT{REAL}, IN
@@ -1139,6 +1154,11 @@ contains
       if (.F_z_cutoff     >ZERO) then
          DIE_IF(NOT .reflections.have_F_exp,"no experimental data for pruning")
          .prune_bad_F_reflections
+      end
+
+      if (.I_sigma_cutoff >ZERO) then
+         DIE_IF(NOT .reflections.have_I_exp,"no experimental data for pruning")
+         .prune_weak_Is
       end
 
       if (.stl_high_cutoff>ZERO) .prune_high_angle_reflections
@@ -1225,11 +1245,11 @@ contains
       if (.show_rejects) then
 
          ! Get data
-         n_refl = old_reflections.n_refl
-         h1.create(n_refl);       h1      = old_reflections.h
-         h2.create(n_refl);       h2      = old_reflections.k
-         h3.create(n_refl);       h3      = old_reflections.l
-         val.create(n_refl);      val     = REFLECTION:SHOW?(old_reflections)
+         n_refl = bad.dim
+         h1.create(n_refl);       h1      = old_reflections(bad).h
+         h2.create(n_refl);       h2      = old_reflections(bad).k
+         h3.create(n_refl);       h3      = old_reflections(bad).l
+         val.create(n_refl);      val     = REFLECTION:SHOW?(old_reflections(bad))
 
          ! Table
          table.create(4)
@@ -1476,7 +1496,7 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
+    ! if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
 
       ! Get optimum scale factors, extinction, etc.
       if (.optimise_extinction OR .optimise_scale) .get_F_optimum_parameters
@@ -1531,7 +1551,7 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
+    ! if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
 
       ! Get optimum scale factors, extinction, etc.
       if (.optimise_extinction OR .optimise_scale) .get_I_optimum_parameters
@@ -1572,6 +1592,8 @@ contains
 
    update_n_param_and_chi2 ::: private
    ! Update the number of parameters and recalculate the chi2
+      self :: INOUT
+
    DIE_IF(NOT (.refine_structure OR .fit_structure),"must be doing a structure fit/refinement")
    DIE_IF(.n_param<=0,"n_param must be +ve")
 
@@ -1607,49 +1629,6 @@ contains
       end
 
    end
-
-!!magda_beginning
-!
-!   update_n_param_and_chi2I ::: private
-!   ! Update the number of parameters and recalculate the chi2 for
-!   ! refinement against F^2
-!   DIE_IF(NOT (.refine_structure OR .fit_structure),"must be doing a structure fit/refinement")
-!   DIE_IF(.n_param<=0,"n_param must be +ve")
-!
-!      n_r,n_p :: INT
-!
-!      ! Add on extra parameters
-!      if (.optimise_extinction) then
-!
-!         DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
-!         .n_param = .n_param + 2
-!
-!      else if (.optimise_scale) then
-!
-!         if (.use_multiple_scale_factors) then
-!            .n_param = .n_param + maxval(.reflections.group)
-!         else
-!            .n_param = .n_param + 1
-!         end
-!
-!      end
-!
-!      ! Update the chi2
-!      n_r = .reflections.dim - 1
-!      n_p = .reflections.dim - .n_param
-!      .chi2I      = max(n_r,1)*.reflections.I_chi2/max(n_p,1)
-!      .chi2I_fit  = .chi2I
-!
-!      ! Debug
-!      if (.debugging("update_n_param_and_chi2")) then
-!         stdout.text("chi2I_fit0 ="//trim(.chi2I_fit0.to_str))
-!         stdout.text("chi2I_fit  ="//trim(.chi2I_fit.to_str ))
-!         .reflections.put
-!      end
-!
-!   end
-!
-!!magda_end
 
    get_F_optimum_parameters ::: private
    ! Get the scale factors, extinction parameters, etc, which minimise the chi2.
@@ -1845,8 +1824,6 @@ contains
       ENSURE(.reflections.have_F_calc, "no calculated structure factors")
       ENSURE(scale_factors.dim==maxval(.reflections.group),"no. of scale factors does not match no. of groups")
 
-      F_calc :: CPX
-      angle_part :: VEC{REAL}*
       g,n,n_refl,n_group :: INT
 
       n_refl = .reflections.n_refl
@@ -2206,25 +2183,32 @@ contains
    ! use in the BFGS minimiser.
       p :: VEC{REAL}, IN
       res :: VEC{REAL}(size(p))
+
    ENSURE(size(p)==2, "wrong size, p")
+
       self :: DIFFRACTION_DATA*
+
       self => saved_self
       res(1) = .d_chi2_d_scale(p)
       res(2) = .d_chi2_d_ext(p)
+
    end
 
-!skonczylismy tutaj
    d_chi2I(p) result (res) ::: selfless
    ! Return the derivative of the chi2 with respect to the .scale_factor in
    ! p(1), and with respect to .extinction_factor in p(2). This routine is for
    ! use in the BFGS minimiser.
       p :: VEC{REAL}, IN
       res :: VEC{REAL}(size(p))
+
    ENSURE(size(p)==2, "wrong size, p")
+
       self :: DIFFRACTION_DATA*
+
       self => saved_self
       res(1) = .d_chi2I_d_scale(p)
       res(2) = .d_chi2I_d_ext(p)
+
    end
 
    d_chi2_d_scale(p) result (res)
@@ -2260,7 +2244,6 @@ contains
 
    end
 
-   !magda_beginnning
    d_chi2I_d_scale(p) result (res)
    ! Derivative of the chi^2 for I with respect to the scale factor
       p :: VEC{REAL}, IN
@@ -2293,7 +2276,6 @@ contains
       ext.destroy
 
    end
-   !magda_end
 
    d_chi2_d_ext(p) result (res)
    ! Derivative of the chi^2 for F with respect to the extinction parameter.
@@ -2337,49 +2319,17 @@ contains
 
    end
 
-!magda_beginning
    d_chi2I_d_ext(p) result (res)
    ! Derivative of the chi^2 for I with respect to the extinction parameter.
       p :: VEC{REAL}, IN
       res :: REAL
+
    DIE("Sorry...")
-!   ENSURE(.reflections.created,"no reflection data")
-!   ENSURE(.reflections.have_I_calc, "no calculated structure factors")
-!   ENSURE(.reflections.have_I_exp, "no experimental structure factors")
-!   ENSURE(.reflections.have_I_sigma, "no structure factor errors")
-!   ENSURE(size(p)==2, "wrong size, p")
-!
-!      tmp,extn,p1 :: REAL
-!      angle_bit,ext :: VEC{REAL}*
-!      ref :: REFLECTION*
-!      n,n_refl :: INT
-!
-!      n_refl = .reflections.n_refl
-!
-!      angle_bit.create(n_refl)
-!      ext.create(n_refl)
-!
-!      angle_bit = .extinction_angle_part
-!
-!      p1 = p(1)
-!      ext = .I_extinction_correction(ONE,p(2))
-!
-!      tmp = ZERO
-!      do n = 1,n_refl
-!       ref => .reflections(n)
-!       extn = ext(n)
-!       tmp = tmp + (p1 * ref.I_calc * extn - ref.I_exp) * &
-!           extn*extn*extn*extn*extn* &
-!           ref.I_calc*ref.I_calc*ref.I_calc * &
-!           angle_bit(n) / (ref.I_sigma * ref.I_sigma)
-!      end
-!      res = -p1*tmp/(TWO * max(n_refl-.n_param,1))
-!
-!      ext.destroy
-!      angle_bit.destroy
-!
+
+      self = self
+      res = ZERO * p(1)
+
    end
-   !magda_end
 
    d_chi2_dX(res,dFdX)
    ! Evaluate "res", the derivative of the chi^2 with respect to some
@@ -2387,6 +2337,7 @@ contains
    ! derivatives of the complex structure factors w.r.t. the X
    ! parameters.  NOTE: this routine assumes the .extinction_factor
    ! is fixed.
+      self :: INOUT
       res :: VEC{REAL}, OUT
       dFdX :: MAT{CPX}, IN
 
@@ -2445,71 +2396,22 @@ contains
 
    end
 
-   !magda_beginning
    d_chi2I_dX(res,dIdX)
    ! Evaluate "res", the derivative of the chi^2 with respect to some
    ! parameters X (e.g. thermal parameters) given "dIdX", the
    ! derivatives of the square structure factors w.r.t. the X
    ! parameters.  NOTE: this routine assumes the .extinction_factor
    ! is fixed.
+      self :: INOUT
       res :: VEC{REAL}, OUT
       dIdX :: MAT{CPX}, IN
+
    DIE("Sorry...")
-!   ENSURE(.reflections.created,"no reflection data")
-!   ENSURE(.reflections.have_I_calc, "no calculated I")
-!   ENSURE(.reflections.have_I_exp, "no experimental I")
-!   ENSURE(.reflections.have_I_sigma, "no I errors")
-!   ENSURE(dIdX.dim1==.reflections.n_refl, "wrong size, dI")
-!   ENSURE(dIdX.dim2==res.dim, "incompatible dIdX and res")
-!
-!      Icd_Icalc :: VEC{CPX}*
-!      ref :: REFLECTION*
-!      ext,angle_bit,d_scale :: VEC{REAL}*
-!      Icd,Ica,fac,extn,ext5,sg2,sdk,nrinv :: REAL
-!      n_refl,n_p,p,n :: INT
-!
-!      n_refl = .reflections.n_refl
-!      n_p = dIdX.dim2
-!
-!      Icd_Icalc.create(n_refl)
-!
-!      ext.create(n_refl)
-!      ext = .I_extinction_correction(ONE,.extinction_factor)
-!
-!      angle_bit.create(n_refl)
-!      angle_bit = .extinction_angle_part
-!
-!      sdk = ZERO
-!      do n = 1,n_refl
-!         ref => .reflections(n)
-!         extn = ext(n)
-!         ext5 = extn*extn*extn*extn*extn*.extinction_factor
-!         Ica = ref.I_calc
-!         sg2 = ONE/(ref.I_sigma*ref.I_sigma)
-!         fac = (.scale_factor*extn*Ica - ref.I_exp)*sg2
-!         Icd = fac * (extn/Ica - HALF*ext5*angle_bit(n))
-!         Icd_Icalc(n) = Icd * ref.I_calc
-!         sdk = sdk + fac*extn*Ica
-!      end
-!
-!      angle_bit.destroy
-!      ext.destroy
-!
-!      d_scale.create(n_p)
-!      .d_scale_dX(d_scale,dIdX)
-!
-!      nrinv = ONE/max(n_refl-.n_param,1)
-!      sdk = TWO*nrinv*sdk
-!      fac = TWO*.scale_factor*nrinv
-!
-!      do p = 1,n_p
-!         res(p) = sdk*d_scale(p) + fac * sum( REALIFY(Icd_Icalc * dIdX(:,p)) )
-!      end
-!      d_scale.destroy
-!      Icd_Icalc.destroy
+
+      self = self
+      res = ZERO*RE(dIdX(1,1))
 
    end
-   !magda_end
 
    d_chi2_dX_plus_se(res,dFdX)
    ! Evaluate "res", the derivative of the chi^2 with respect to some
@@ -2581,7 +2483,6 @@ contains
 
    end
 
-   !magda_beginning
    d_chi2I_dX_plus_se(res,dIdX)
    ! Evaluate "res", the derivative of the chi^2 with respect to some
    ! parameters X (e.g. thermal parameters) given "dIdX", the
@@ -2590,68 +2491,13 @@ contains
    ! extinction parameter and the scale factor.
       res :: VEC{REAL}, OUT
       dIdX :: MAT{CPX}, IN
+
    DIE("Sorry...")
-!   ENSURE(.reflections.created,"no reflection data")
-!   ENSURE(.reflections.have_I_calc, "no calculated structure factors")
-!   ENSURE(.reflections.have_I_exp, "no experimental structure factors")
-!   ENSURE(.reflections.have_I_sigma, "no structure factor errors")
-!   ENSURE(dIdX.dim1==.reflections.n_refl, "wrong size, dI")
-!   ENSURE(dIdX.dim2==res.dim-2, "incompatible dIdX and res")
-!
-!      Icd_Icalc :: VEC{CPX}*
-!      ref :: REFLECTION*
-!      ext,angle_bit :: VEC{REAL}*
-!      Icd,Ica,fac,extn,ext5,extf, Ie,Is :: REAL
-!      n_refl,n_p,p,n :: INT
-!
-!      ! Constants
-!      n_refl = .reflections.n_refl
-!      n_p = dIdX.dim2
-!
-!      ! Temporaries
-!      angle_bit.create(n_refl)
-!      ext.create(n_refl)
-!      Icd_Icalc.create(n_refl)
-!
-!      ! Different parts of the extinction
-!      angle_bit = .extinction_angle_part
-!      ext = .I_extinction_correction(ONE,.extinction_factor)
-!
-!      ! Make parameter prefactor derivative
-!      Ie = ZERO
-!      Is = ZERO
-!      do n = 1,n_refl
-!         ref => .reflections(n)
-!         extn = ext(n)
-!         ext5 = extn*extn*extn*extn*extn
-!         extf = ext5*.extinction_factor
-!         Ica = ref.I_calc
-!         fac = (.scale_factor*extn*Ica - ref.I_exp)/(ref.I_sigma*ref.I_sigma)
-!         Icd = fac * (extn/Ica - HALF*extf*angle_bit(n))
-!         Icd_Icalc(n) = Icd * ref.I_calc
-!         ! Extinction part
-!         Ie = Ie - fac*QUARTER*.scale_factor*ext5*Ica*Ica*Ica*angle_bit(n)
-!         ! Scale part
-!         Is = Is + fac*extn*Ica
-!      end
-!
-!      ! Parameter derivatives
-!      fac = TWO*.scale_factor/max(n_refl-.n_param,1)
-!      do p = 1,n_p
-!         res(p) = fac * sum( Icd_Icalc * dIdX(:,p) )
-!      end
-!
-!      ! Extinction and scale derivatives
-!      res(n_p+1) = fac*Ie
-!      res(n_p+2) = fac*Is
-!
-!      ! Cleanup
-!      Icd_Icalc.destroy
-!      ext.destroy
-!      angle_bit.destroy
+
+      self = self
+      res = ZERO*RE(dIdX(1,1))
 
    end
-!magda_end
 
    d_scale_dX(res,dFdX)
    ! Return "res" the derivative of the scale factor with respect to
@@ -2668,6 +2514,7 @@ contains
    ENSURE(.data_kind=="x-ray","only valie for X-ray data, so far")
    ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dFdX")
    ENSURE(dFdX.dim2==res.dim, "incompatible res, dFdX")
+   ENSURE(all(.reflections(:).F_sigma/=ZERO),"A structure factor has zero error F_sigma!")
 
       top,bot,fac,sg2,F_abs,F_exp,F_sig,extn,val1,val2 :: REAL
       dt,db :: VEC{CPX}*
@@ -2693,7 +2540,6 @@ contains
        F_abs = abs(F_cal)
        F_exp = abs(ref.F_exp)
        F_sig = ref.F_sigma
-       ENSURE(F_sig/=ZERO,"Structure factor has zero error!")
        sg2 = ONE / (F_sig * F_sig)
        dt(n) = extn * F_exp * sg2 * F_cal / F_abs
        db(n) = extn * sg2 * F_cal
@@ -4042,68 +3888,148 @@ contains
       .reflections.put_labelled_F_qq_plot
    end
 
-   put_chi2_vs_angle_plot
-   ! Output a table with the chi^2 for the structure factor data set broken
-   ! into sections.
-   ! Reads from stdin the number of divisions in the plot.
-      num_sections :: INT
-      n,num,k,n_refl :: INT
-      section_for :: VEC{INT}*
-      stl,stl_min,stl_max,chi2,width,stl_mean :: REAL
+   put_GOF_vs_STL_plot
+   ! Output GOF vs. sin(theta)/lambda bins.
+      n_sections,i :: INT
+      H :: VEC{REAL}*
+      C :: VEC{INT}*
+      X_min,X_max,X_bin,mid :: REAL
 
-      num_sections = 20
-      n_refl = .reflections.n_refl
+      n_sections = 20
 
-      ! Work out the limits of the sin(theta)/lambda.
-      stl_min = 1000
-      stl_max = ZERO
-      do n =1,n_refl
-         stl = .reflections(n).sin_theta_on_lambda
-         if (stl < stl_min) stl_min = stl
-         if (stl > stl_max) stl_max = stl
-      end
-      width = (TOL(3) + stl_max - stl_min)/num_sections
+      X_min = minval(REFLECTION:stl(.reflections))
+      X_max = maxval(REFLECTION:stl(.reflections))
+      X_bin = (X_max - X_min)/n_sections
 
-      section_for.create(n_refl)
-      ! Determine which section each reflection belongs to.
-      do n = 1,n_refl
-         stl = .reflections(n).sin_theta_on_lambda
-         section_for(n) = ceiling((TOL(3) + stl - stl_min) / width)
-      end
+      H.create(n_sections)
+      C.create(n_sections)
+      H.to_histogram_from_data(REFLECTION:F_z2(.reflections),REFLECTION:stl(.reflections),X_min,X_max,X_bin,C)
+      H = sqrt(H/max(C-.n_param,1))
 
       stdout.flush
       stdout.text("Chi^2 vs angle plot")
       stdout.flush
-      stdout.text("sin(theta)/lambda in Angstrom^(-1)")
-      stdout.show("Smallest sin(theta)/lambda  =",stl_min)
-      stdout.show("Largest sin(theta)/lambda   =",stl_max)
-      stdout.flush
-      stdout.put("stl")
-      stdout.put("chi^2")
+      stdout.put("sin(T)/L")
+      stdout.put("GOF")
       stdout.flush
       stdout.dash(real_fields=2)
-      do n = 1, num_sections
-         chi2 = ZERO
-         num = 0
-         stl_mean = stl_min + (n - HALF) * width
-         do k = 1, n_refl
-           if (n==section_for(k)) then
-             chi2 = chi2 + .reflections(k).F_z2
-             num = num + 1
-           end
-         end
-         stdout.put(stl_mean)
-         if (num==0) then
-           stdout.flush
-           cycle
-         else
-           chi2 = chi2 / max(num - .n_param,1)
-           stdout.put(chi2)
-           stdout.flush
-         end
+      do i = 1,n_sections
+         mid = (i-1)*X_min + HALF*X_bin
+         stdout.put(mid)
+         stdout.put(H(i))
+         stdout.flush
       end
       stdout.flush
-      section_for.destroy
+      C.destroy
+      H.destroy
+   end
+
+   put_GOF_vs_F_exp_plot
+   ! Output GOF vs. F_pred bins.
+      n_sections,i :: INT
+      H :: VEC{REAL}*
+      C :: VEC{INT}*
+      X_min,X_max,X_bin,mid :: REAL
+
+      n_sections = 20
+
+      X_min = minval(REFLECTION:F_exp(.reflections))
+      X_max = maxval(REFLECTION:F_exp(.reflections))
+      X_bin = (X_max - X_min)/n_sections
+
+      H.create(n_sections)
+      C.create(n_sections)
+      H.to_histogram_from_data(REFLECTION:F_z2(.reflections),REFLECTION:F_exp(.reflections),X_min,X_max,X_bin,C)
+      H = sqrt(H/max(C-.n_param,1))
+
+      stdout.flush
+      stdout.text("Chi^2 vs F_exp")
+      stdout.flush
+      stdout.put("sin(T)/L")
+      stdout.put("GOF")
+      stdout.flush
+      stdout.dash(real_fields=2)
+      do i = 1,n_sections
+         mid = (i-1)*X_min + HALF*X_bin
+         stdout.put(mid)
+         stdout.put(H(i))
+         stdout.flush
+      end
+      stdout.flush
+      C.destroy
+      H.destroy
+   end
+
+   put_ratio_vs_STL_plot
+   ! Output ratio vs. sin(theta)/lambda bins.
+      n_sections,i :: INT
+      H :: VEC{REAL}*
+      C :: VEC{INT}*
+      X_min,X_max,X_bin,mid :: REAL
+
+      n_sections = 20
+
+      X_min = minval(REFLECTION:stl(.reflections))
+      X_max = maxval(REFLECTION:stl(.reflections))
+      X_bin = (X_max - X_min)/n_sections
+
+      H.create(n_sections)
+      C.create(n_sections)
+      H.to_histogram_from_data(REFLECTION:F_ratio(.reflections),REFLECTION:stl(.reflections),X_min,X_max,X_bin,C)
+      H = H/max(C-.n_param,1)
+
+      stdout.flush
+      stdout.text("Ratio (F_exp/F_pred) vs. angle")
+      stdout.flush
+      stdout.put("sin(T)/L")
+      stdout.put("exp/pred")
+      stdout.flush
+      stdout.dash(real_fields=2)
+      do i = 1,n_sections
+         mid = (i-1)*X_min + HALF*X_bin
+         stdout.put(mid)
+         stdout.put(H(i))
+         stdout.flush
+      end
+      stdout.flush
+      C.destroy
+      H.destroy
+   end
+
+   put_ratio_vs_F_exp_plot
+   ! Output ratio vs. F_exp bins.
+      n_sections,i :: INT
+      H :: VEC{REAL}*
+      C :: VEC{INT}*
+      X_min,X_max,X_bin,mid :: REAL
+
+      n_sections = 20
+
+      X_min = minval(REFLECTION:F_exp(.reflections))
+      X_max = maxval(REFLECTION:F_exp(.reflections))
+      X_bin = (X_max - X_min)/n_sections
+
+      H.create(n_sections)
+      C.create(n_sections)
+      H.to_histogram_from_data(REFLECTION:F_ratio(.reflections),REFLECTION:F_exp(.reflections),X_min,X_max,X_bin,C)
+      H = H/max(C-.n_param,1)
+
+      stdout.flush
+      stdout.text("Ratio (F_exp/F_pred) vs. F_exp")
+      stdout.flush
+      stdout.put("sin(T)/L")
+      stdout.put("exp/pred")
+      stdout.flush
+      stdout.dash(real_fields=2)
+      do i = 1,n_sections
+         mid = (i-1)*X_min + HALF*X_bin
+         stdout.put(mid)
+         stdout.put(H(i))
+         stdout.flush
+      end
+      stdout.flush
+      C.destroy
+      H.destroy
    end
 
    put_fcalc_plots
