@@ -72,7 +72,7 @@ contains
       nullify(.molecule)
       nullify(.molecule_centroid)
       nullify(.unique_molecule_for)
-      nullify(.unique_symop_for)
+      nullify(.unique_symcode_for)
       nullify(.atom_connection)
 
    end
@@ -94,7 +94,7 @@ contains
       .molecule.destroy
       .molecule_centroid.destroy
       .unique_molecule_for.destroy
-      .unique_symop_for.destroy
+      .unique_symcode_for.destroy
       .atom_connection.destroy
 
    end
@@ -112,7 +112,7 @@ contains
       .molecule.destroy
       .molecule_centroid.destroy
       .unique_molecule_for.destroy
-      .unique_symop_for.destroy
+      .unique_symcode_for.destroy
       .atom_connection.destroy
    end
 
@@ -149,7 +149,7 @@ contains
       if (cluster.molecule.created)                .molecule.create_copy(cluster.molecule)
       if (cluster.molecule_centroid.created)       .molecule_centroid.create_copy(cluster.molecule_centroid)
       if (cluster.unique_molecule_for.created)     .unique_molecule_for.create_copy(cluster.unique_molecule_for)
-      if (cluster.unique_symop_for.created)        .unique_symop_for.create_copy(cluster.unique_symop_for)
+      if (cluster.unique_symcode_for.created)      .unique_symcode_for.create_copy(cluster.unique_symcode_for)
       if (cluster.atom_connection.created)         .atom_connection.create_copy(cluster.atom_connection)
    end
 
@@ -968,7 +968,7 @@ contains
       .molecule_for_atom => molecule_for_atom
 
       ! Make molecule info
-      .make_molecule_list_info
+      .make_molecule_info
 
    end
 
@@ -1073,7 +1073,7 @@ contains
       .molecule_for_atom => molecule_for_atom
 
       ! Make molecule info
-      .make_molecule_list_info
+      .make_molecule_info
 
    end
 
@@ -1256,28 +1256,23 @@ contains
 
    end
 
-   make_molecule_list_info ::: leaky
-   ! Sort the molecule_for_atom list and make symmetry and centroid
-   ! information for each molecule. Useful!
+   make_molecule_info ::: private, leaky
+   ! Sort the cluster into molecules whose indices appear in ascending
+   ! order; also store the atom indices in each molecule.
 
    ENSURE(.molecule_for_atom.created,"no molecule_for_atom")
 
-      m,mi,mj,a :: INT
       unique :: VEC{INT}*
+      mi,mj, a,m :: INT
 
-    ! n_atoms,a,i,ai,iu,ia,is,aj,ju,ja,js :: INT
-    ! unique,molmi,molmj :: VEC{INT}*
-    ! geometry :: MAT{REAL}*
-    ! symmetry_related :: BIN
-
-      ! Get the unique molecule indices & sort ascdending
+      ! Get molecule indices & sort ascdending
       unique => .molecule_for_atom.unique_elements
       unique.sort
 
-      ! Set the number of molecules
+      ! Number of molecules in cluster
       .n_molecules = unique.dim
 
-      ! Put .molecule_for_atom into consecutive ascending order
+      ! Put .molecule_for_atom into ascending order
       do mi = 1,.n_molecules
          mj = unique(mi)
          if (mj==mi) cycle
@@ -1294,89 +1289,215 @@ contains
          .molecule(m).element.append(a)
       end
 
-!      ! Make the molecule centroids (in fractionals)
-!      .molecule_centroid.create(3,.n_molecules)
-!      do mi = 1,.n_molecules
-!         molmi => .molecule(mi).element
-!         .extract_geometry(.occupation_list(molmi),geometry)
-!         .molecule_centroid(:,mi) = geometry.sum_column_vectors/geometry.dim2
-!         geometry.destroy
-!      end
-!
-!      ! Clean & get ready
-!      .unique_molecule_for.destroy
-!      .unique_molecule_for.create(.n_molecules)
-!      .unique_symop_for.destroy
-!      .unique_symop_for.create(.n_molecules)
-!
-!      ! List of unique molecules and their relating symops
-!      .unique_molecule_for    = 0
-!      .unique_molecule_for(1) = 1
-!      .unique_symop_for       = 0
-!      .unique_symop_for(1)    = 1
-!
-!      ! Make atom-order in each molecule consistent
-!      do mi = 1,.n_molecules
-!
-!         ! Was this molecule already found?
-!         if (.unique_molecule_for(mi)>0) cycle
-!
-!         molmi => .molecule(mi).element
-!         n_atoms = molmi.dim
-!
-!         ! First atom in mol mi
-!         ia = molmi(i)
-!         iu = .occupation_list(i)/1000
-!         ia = .asym_atom_for_unit_cell_atom(iu)
-!         is = .asym_symop_for_unit_cell_atom(iu)
-!         is = .crystal.spacegroup.inverse_of_symop(is)
-!
-!         ! Find the next matching molecule
-!         do mj = mi+1,.n_molecules
-!
-!            molmj => .molecule(mj).element
-!
-!            ! Must have the same # of atoms
-!            if (molmj.dim/=n_atoms) cycle
-!
-!            ! Must not be symmetry related
-!            if (.unique_molecule_for(mj)>0) cycle
-!
-!            ! Does any atom in "mj" have same asym symop parent?
-!            symmetry_related = FALSE
-!            do aj = 1,n_atoms
-!               ja = molmj(aj)
-!               ju = .occupation_list(ja)/1000
-!               ja = .asym_atom_for_unit_cell_atom(ju)
-!               js = .asym_symop_for_unit_cell_atom(ju)
-!
-!               ! Does this atom match?
-!               if (ia/=ja) cycle
-!               symmetry_related = TRUE
-!               exit
-!
-!            end
-!
-!            ! If not symmetry related keep looking
-!            if (NOT symmetry_related) cycle
-!
-!            ! Set non-unique molecule
-!            .unique_molecule_for(mj) = mi
-!
-!            ! Set the symop which maps mi->mj
-!            .unique_symop_for(mj) = .crystal.spacegroup.product_of_symops(js,is)
-!
-!            ! Reorder the atoms in mj to be consistent
-!
-!         end
-!
-!         ! Add atoms match? Copy the order, mark unique molecule
-!         if (all(.unique_molecule_for==0) then
-!            .unique_molecule_for(mi) = mi
-!            .unique_symop_for(mi)    = 1
-!         end
-!
-!      end
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.defragment) .make_unique_molecule_info
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+   end
+
+   make_unique_molecule_info ::: private, leaky
+   ! Sort the cluster molecules so that the atom order in
+   ! each is consistent. This only works for defragmented
+   ! clusters.
+
+   ENSURE(.molecule_for_atom.created,"no molecule_for_atom")
+
+      li,lj :: VEC{INT}*
+      ci,cj,ui,uj,ai,aj, permutation, new :: VEC{INT}@
+      mi,mj, ni, s,si,sj, ic,i0,i1,i2,i3, jc,j0,j1,j2,j3 :: INT
+      pi,pj,ps :: VEC{REAL}(3)
+      shift :: VEC{INT}(3)
+      related :: BIN
+
+   ! stdout.text("=============================")
+   ! stdout.text("Occupation list before unique")
+   ! stdout.text("=============================")
+   ! .put_occupation_list
+
+   !  stdout.save
+   !  stdout.set_no_of_fields_per_line(10)
+   !  stdout.set_int_width(4)
+   !  stdout.set_using_array_labels(FALSE)
+
+      ! Clean & get ready
+      .unique_molecule_for.destroy
+      .unique_molecule_for.create(.n_molecules)
+      .unique_symcode_for.destroy
+      .unique_symcode_for.create(.n_molecules)
+
+      ! List of unique molecules for each cluster atom
+      ! and their relating symops
+      .n_unique_molecules     = 0
+      .unique_molecule_for    = 0
+      .unique_symcode_for     = 0
+
+      ! Make atom-order in each molecule consistent
+      do mi = 1,.n_molecules
+
+         ! Processed?
+         if (.unique_molecule_for(mi)>0) cycle
+
+         li => .molecule(mi).element
+         ni  = li.dim
+
+         allocate(ai(ni))
+         allocate(ui(ni))
+         allocate(ci(ni))
+
+         ci  = .occupation_list(li)
+         ui  = CLUSTER_UA_FROM_CODE(ci)
+         ai  = .crystal.asym_atom_for_unit_cell_atom(ui)
+         si  = .crystal.asym_symop_for_unit_cell_atom(ui(1))
+         si  = .crystal.spacegroup.inverse_of_symops(si)
+
+         ic  = ci(1)
+
+         deallocate(ci)
+         deallocate(ui)
+
+         i0  = CLUSTER_UA_FROM_CODE(ic)
+         i1  = CLUSTER_H1_FROM_CODE(ic)
+         i2  = CLUSTER_H2_FROM_CODE(ic)
+         i3  = CLUSTER_H3_FROM_CODE(ic)
+         pi  = .crystal.unit_cell_geometry(:,i0) + [i1,i2,i3] + .fragment_offset
+
+         ! Find matching molecules
+         do mj = mi+1,.n_molecules
+
+            lj => .molecule(mj).element
+
+            ! Found?
+            if (.unique_molecule_for(mj)>0) cycle
+
+            ! Same # on atoms?
+            if (lj.dim/=ni) cycle
+
+            allocate(aj(ni))
+            allocate(uj(ni))
+            allocate(cj(ni))
+
+            cj  = .occupation_list(lj)
+            uj  = CLUSTER_UA_FROM_CODE(cj)
+            aj  = .crystal.asym_atom_for_unit_cell_atom(uj)
+            sj  = .crystal.asym_symop_for_unit_cell_atom(uj(1))
+
+            deallocate(cj)
+            deallocate(uj)
+
+            ! Match asym atoms
+            allocate(permutation(ni))
+            ai.is_permutation_of(aj,related,permutation)
+
+       ! stdout.text("here")
+       ! stdout.show("mi      =",mi)
+       ! stdout.show("mj      =",mj)
+       ! stdout.show("related =",related)
+
+            if (related) then
+
+       ! stdout.text("ai")
+       ! stdout.put(ai,by_row=TRUE)
+       ! stdout.text("aj(permutation)")
+       ! stdout.put(aj(permutation),by_row=TRUE)
+       ! stdout.text("aj")
+       ! stdout.put(aj,by_row=TRUE)
+       ! stdout.text("permutation")
+       ! stdout.put(permutation,by_row=TRUE)
+       ! stdout.text("li")
+       ! stdout.put(li,by_row=TRUE)
+       ! stdout.text("lj")
+       ! stdout.put(lj,by_row=TRUE)
+       ! stdout.text("lj(permutation)")
+       ! stdout.put(lj(permutation),by_row=TRUE)
+       ! stdout.text("ui")
+       ! stdout.put(ui,by_row=TRUE)
+       ! stdout.text("uj")
+       ! stdout.put(uj,by_row=TRUE)
+
+               ! New order
+               allocate(new(ni))
+               new = lj(permutation)
+
+               ! First atom in mj (matched to mi)
+               jc = .occupation_list(new(1))
+       ! stdout.show("new(1) =",new(1))
+
+               ! Position of first atom in mj
+               j0 = CLUSTER_UA_FROM_CODE(jc)
+               j1 = CLUSTER_H1_FROM_CODE(jc)
+               j2 = CLUSTER_H2_FROM_CODE(jc)
+               j3 = CLUSTER_H3_FROM_CODE(jc)
+               pj = .crystal.unit_cell_geometry(:,j0) + [j1,j2,j3] + .fragment_offset
+
+       ! stdout.text("fragment_offset")
+       ! stdout.put(.fragment_offset,by_row=TRUE)
+       ! stdout.text("pi0")
+       ! stdout.put(.crystal.unit_cell_geometry(:,i0),by_row=TRUE)
+       ! stdout.text("pj0")
+       ! stdout.put(.crystal.unit_cell_geometry(:,j0),by_row=TRUE)
+       ! stdout.show_bit_string("ci =",ic)
+       ! stdout.show_bit_string("cj =",jc)
+       ! stdout.text("ix")
+       ! stdout.put([i0,i1,i2,i3],by_row=TRUE)
+       ! stdout.text("jx")
+       ! stdout.put([j0,j1,j2,j3],by_row=TRUE)
+       ! stdout.text("pi")
+       ! stdout.put(pi,by_row=TRUE)
+             
+               ! Symop which maps mi->mj
+               s = .crystal.spacegroup.product_of_symops(sj,si)
+
+               ! Get shift
+               ps = pi
+               .crystal.spacegroup.transform_position(ps,s)
+
+       ! stdout.show("si =",si)
+       ! stdout.show("sj =",sj)
+       ! stdout.show("s  =",s)
+       ! stdout.text("ps= s(pi)")
+       ! stdout.put(ps,by_row=TRUE)
+       ! stdout.text("pj")
+       ! stdout.put(pj,by_row=TRUE)
+               ps    = pj - ps
+               shift = nint(ps)
+       ! stdout.show("pj-ps' =",ps)
+       ! stdout.show("shift  =",shift)
+
+               ! Unique molecule
+               .unique_molecule_for(mj) = mi
+
+               ! New symcode
+               .unique_symcode_for(mj) = CLUSTER_AT_CODE(shift(1),shift(2),shift(3),s)
+             
+               ! Reorder atoms in mj to be consistent with mi
+               .occupation_list(lj) = .occupation_list(new)
+               lj = new 
+
+               deallocate(new)
+
+            else
+
+               ! Symmetry unique molecule
+               .n_unique_molecules      = .n_unique_molecules + 1
+               .unique_molecule_for(mi) = .n_unique_molecules
+
+            end
+
+            deallocate(permutation)
+            deallocate(aj)
+
+         end
+            
+         deallocate(ai)
+
+      end
+
+   !  stdout.unsave
+
+   ! stdout.text("=============================")
+   ! stdout.text("Occupation list AFTER  unique")
+   ! stdout.text("=============================")
+   ! .put_occupation_list
 
    end
 
@@ -1987,6 +2108,7 @@ contains
    ENSURE(.crystal.created, "no crystal data")
    ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
    ENSURE(.asymmetric_unit_atom.created, "no asymmetric_cell_atom data")
+   ENSURE(.molecule_for_atom.created, "no molecule_for_atom info")
 
       ulist :: VEC{INT}*
       seitz :: MAT3{REAL}*
@@ -2022,6 +2144,7 @@ contains
          ! Reset cluster atom pos from .geometry(:,a)
          atom_a.set_position(.geometry(:,a))
          atom_a.set_axis_system("crystal")
+         atom_a.set_group(.molecule_for_atom(a))
 
       end
 
@@ -4713,7 +4836,7 @@ contains
     ! stdout.dmpp("molecule",.molecule)
       stdout.dmpp("molecule_centroid",.molecule_centroid)
       stdout.dmpp("unique_molecule_for",.unique_molecule_for)
-      stdout.dmpp("unique_symop_for",.unique_symop_for)
+      stdout.dmpp("unique_sycode_for",.unique_symcode_for)
     ! stdout.dmpp("atom_connection",.atom_connection)
       stdout.dump("n_molecules",.n_molecules)
       stdout.dump("info_made",.info_made)
@@ -5330,7 +5453,7 @@ contains
       stdout.text("ENDCART")
       stdout.text("ATOMLABELS")
       do n = 1,.n_atoms
-         u  = CLUSTER_UA_FROM_CODE(.occupation_list(n))
+         u = CLUSTER_UA_FROM_CODE(.occupation_list(n))
          a = .crystal.asym_atom_for_unit_cell_atom(u)
          word = .asymmetric_unit_atom(a).label
          word = '"'//trim(word)//'"'
