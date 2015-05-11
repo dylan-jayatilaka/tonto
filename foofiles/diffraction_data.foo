@@ -233,6 +233,7 @@ contains
 
       ! Agreement statistics
       .n_param                  = 0
+      .n_param_manually_set     = FALSE
       .chi2                     = ZERO
 
       ! Refine/fit switches
@@ -393,7 +394,7 @@ contains
    end
 
    set_refine_structure(val)
-   ! Generic set
+   ! Set whether to refine the structure
       val :: BIN
 
       .refine_structure = val
@@ -404,7 +405,7 @@ contains
    end
 
    set_fit_structure(val)
-   ! Generic set
+   ! Set whether to rigid-fit the structure
       val :: BIN
 
       .fit_structure = val
@@ -435,13 +436,14 @@ contains
    end
 
    set_n_param(val) ::: PURE
-   ! Set up a default diffraction_data object
+   ! Set the number of paramters in the model "by hand"
       self :: INOUT
       val :: INT, IN
 
    ENSURE(val>1,"n_param must be non negative")
 
       .n_param = val
+      .n_param_manually_set = TRUE
 
    end
 
@@ -921,6 +923,7 @@ contains
       cif :: CIF, IN
 
       there :: BIN
+      val :: INT
 
       ! Read reflections
       .read_CIF_reflections(cif)
@@ -928,7 +931,8 @@ contains
       ! Read no of parameters
       cif.find_item("_refine_ls_number_parameters",there)
       if (there) then
-         cif.read_item("_refine_ls_number_parameters",.n_param)
+         cif.read_item("_refine_ls_number_parameters",val)
+         .set_n_param(val)
       end
 
    end
@@ -1496,7 +1500,12 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
+      if (NOT .n_param_manually_set) then
+      if (NOT (.refine_structure OR .fit_structure)) then
+         .n_param = 0
+         .update_n_param
+      end
+      end
 
       ! Get optimum scale factors, extinction, etc.
       if (.optimise_extinction OR .optimise_scale) .get_F_optimum_parameters
@@ -1504,7 +1513,7 @@ contains
       ! Make F_predicted
       F_pred.create(.reflections.n_refl)
       if (.data_kind=="pnd") then; F_pred = REALIFY(.reflections.F_calc) * .F_extinction_correction
-      else;                        F_pred = abs(.reflections.F_calc) * .F_extinction_correction
+      else;                        F_pred =     abs(.reflections.F_calc) * .F_extinction_correction
       end
 
       ! Mix in some F_exp
@@ -1535,8 +1544,6 @@ contains
 
    end
 
-!magda_beginning
-
    make_I_predicted
    ! Make the predicted squared magnitude of the structure factors, including
    ! possibly an overall scale factor and extinction correction.
@@ -1551,7 +1558,12 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
+      if (NOT .n_param_manually_set) then
+      if (NOT (.refine_structure OR .fit_structure)) then
+         .n_param = 0
+         .update_n_param
+      end
+      end
 
       ! Get optimum scale factors, extinction, etc.
       if (.optimise_extinction OR .optimise_scale) .get_I_optimum_parameters
@@ -1588,32 +1600,49 @@ contains
 
    end
 
-!magda_end
-
-   update_n_param_and_chi2 ::: private
+   update_n_param_and_chi2
    ! Update the number of parameters and recalculate the chi2
       self :: INOUT
 
-   DIE_IF(NOT (.refine_structure OR .fit_structure),"must be doing a structure fit/refinement")
-   DIE_IF(.n_param<=0,"n_param must be +ve")
+      .update_n_param
+      .update_chi2
 
-      n_r,n_p :: INT
+   end
 
-      ! Add on extra parameters
-      if (.optimise_extinction) then
+   update_n_param
+   ! Update the number of parameters to include scale
+   ! and extinction factors.
+      self :: INOUT
 
-         DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
-         .n_param = .n_param + 2
+      if (NOT .n_param_manually_set) then
 
-      else if (.optimise_scale) then
+         ! Add on extra parameters
+         if (.optimise_extinction) then
 
-         if (.use_multiple_scale_factors) then
-            .n_param = .n_param + maxval(.reflections.group)
-         else
-            .n_param = .n_param + 1
+            DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
+            .n_param = .n_param + 2
+
+         else if (.optimise_scale) then
+
+            if (.use_multiple_scale_factors) then
+               .n_param = .n_param + maxval(.reflections.group)
+            else
+               .n_param = .n_param + 1
+            end
+
          end
 
       end
+
+   end
+
+   update_chi2
+   ! Update the number of parameters and recalculate the chi2
+      self :: INOUT
+
+   DIE_IF(.n_param<=0,"n_param must be +ve")
+
+      n_r,n_p :: INT
 
       ! Update the chi2
       n_r = .reflections.dim - 1
@@ -1650,8 +1679,6 @@ contains
 
    end
 
-!magda_beginning
-
    get_I_optimum_parameters ::: private
    ! Get the scale factors, extinction parameters, etc, which minimise the chi2.
    ! (To get the corrections cooresponding to these parameters see routine
@@ -1672,8 +1699,6 @@ contains
 
    end
 
-!magda_end
-
    F_extinction_correction result (res) ::: PURE
    ! Return the extinction correction  factors "res" to the calculated
    ! individual structure factors. NOTE: also does scale factor
@@ -1688,7 +1713,7 @@ contains
 
    end
 
-   I_extinction_correction result (res)
+   I_extinction_correction result (res) ::: private
    ! Return the I extinction correction  factors "res" to the calculated
    ! individual structure factors. NOTE: also does scale factor
       res :: VEC{REAL}(size(.reflections))
@@ -1739,7 +1764,7 @@ contains
 
    end
 
-   I_extinction_correction(scale_factor,extinction_factor) result (res)
+   I_extinction_correction(scale_factor,extinction_factor) result (res) ::: private
    ! Return the extinction correction  factors "res" to the calculated
    ! individual structure factors. NOTE: this routine also does scaling
    ! corrections without extinction.
@@ -1812,7 +1837,7 @@ contains
 
    end
 
-   I_extinction_correction(scale_factors,extinction_factor) result (res)
+   I_extinction_correction(scale_factors,extinction_factor) result (res) ::: private
    ! Return the extinction correction factors "res" to the calculated
    ! individual structure factors. WARNING: this routine in fact does no
    ! extinction correction, only multiple scale factors.
@@ -1863,14 +1888,7 @@ contains
 
    end
 
-!   optimise_scale_factor
-!   ! Determine the best scale factor to apply
-!      if (.refine_F) then; .optimise_F_scale_factor
-!      else;                .optimise_I_scale_factor
-!      end
-!   end
-
-   optimise_F_scale_factor
+   optimise_F_scale_factor ::: private
    ! Determine the structure factor scale factor to scale the calculated
    ! structure factors .F_calc by in order to minimise the chi2. (But it does
    ! not do any scaling; see .extinction_correction routine for that)
@@ -1887,15 +1905,20 @@ contains
 
       top = ZERO
       bot = ZERO
+
       do n = 1,n_refl
-       ref => .reflections(n)
-       if (.data_kind=="pnd") then; F_pred = REALIFY(ref.F_calc)
-       else;                        F_pred = abs(ref.F_calc)
-       end
-       ENSURE(ref.F_sigma/=ZERO,"Structure factor has zero error!")
-       sg2 = ONE / (ref.F_sigma * ref.F_sigma)
-       top = top + F_pred * ref.F_exp * sg2
-       bot = bot + F_pred * F_pred * sg2
+
+         ref => .reflections(n)
+
+         if (.data_kind=="pnd") then; F_pred = REALIFY(ref.F_calc)
+         else;                        F_pred = abs(ref.F_calc)
+         end
+         ENSURE(ref.F_sigma/=ZERO,"Structure factor has zero error!")
+
+         sg2 = ONE / (ref.F_sigma * ref.F_sigma)
+         top = top + F_pred * ref.F_exp * sg2
+         bot = bot + F_pred * F_pred * sg2
+
       end
 
       .scale_factor = top/bot
@@ -1903,11 +1926,15 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = .n_param + 1
+   !  if (NOT .n_param_manually_set) then
+   !  if (NOT (.refine_structure OR .fit_structure)) then
+   !     .n_param = 0
+   !  end
+   !  end
 
    end
 
-   optimise_I_scale_factor
+   optimise_I_scale_factor ::: private
    ! Determine the structure factor scale factor to scale the calculated
    ! structure factors .F_calc by in order to minimise the chi2. (But it does
    ! not do any scaling; see .extinction_correction routine for that)
@@ -1945,13 +1972,15 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = .n_param + 1
+   !  if (NOT .n_param_manually_set) then
+   !  if (NOT (.refine_structure OR .fit_structure)) then
+   !     .n_param = 0
+   !  end
+   !  end
 
    end
 
-!magda_end
-
-   optimise_F_scale_factors ::: leaky
+   optimise_F_scale_factors ::: private, leaky
    ! Multiple scale factors are determined here ...
    ! Determine the structure factor scale factors to scale the calculated
    ! structure factors .F_calc by in order to minimise the chi2. (But it does
@@ -1992,11 +2021,15 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = .n_param + n_group
+   !  if (NOT .n_param_manually_set) then
+   !  if (NOT (.refine_structure OR .fit_structure)) then
+   !     .n_param = 0
+   !  end
+   !  end
 
    end
 
-   optimise_I_scale_factors ::: leaky
+   optimise_I_scale_factors ::: private, leaky
    ! Multiple scale factors are determined here ...
    ! Determine I scale factors to scale the calculated
    ! .I_calc by in order to minimise the chi2I. (But it does
@@ -2035,13 +2068,15 @@ contains
       ! The number of parameters is assumed set before a refinement
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = .n_param + n_group
+   !  if (NOT .n_param_manually_set) then
+   !  if (NOT (.refine_structure OR .fit_structure)) then
+   !     .n_param = 0
+   !  end
+   !  end
 
    end
 
-!magda_end
-
-   optimise_F_extinction_factor
+   optimise_F_extinction_factor ::: private
    ! Optimize the .scale_factor and .extinction_factor parameter of Larson's
    ! method.
    ! NOTE: the corrections are not applied to .F_pred; use the routine
@@ -2067,11 +2102,15 @@ contains
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
       ! NOTE: one was already added to .n_param when getting the initial scale
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = .n_param + 1
+   !  if (NOT .n_param_manually_set) then
+   !  if (NOT (.refine_structure OR .fit_structure)) then
+   !     .n_param = 0
+   !  end
+   !  end
 
    end
 
-   optimise_I_extinction_factor
+   optimise_I_extinction_factor ::: private
    ! Optimize the .scale_factor and .extinction_factor parameter of Larson's
    ! method.
    ! NOTE: the corrections are not applied to .F_pred; use the routine
@@ -2097,11 +2136,15 @@ contains
       ! e.g. during get_parameter_shifts in a least-squares
       ! So only fiddle with n_param if this isn't going on.
       ! NOTE: one was already added to .n_param when getting the initial scale
-      if (NOT (.refine_structure OR .fit_structure)) .n_param = .n_param + 1
+   !  if (NOT .n_param_manually_set) then
+   !  if (NOT (.refine_structure OR .fit_structure)) then
+   !     .n_param = 0
+   !  end
+   !  end
 
    end
 
-   chi2(p) result (res) ::: selfless
+   chi2(p) result (res) ::: private, selfless
    ! Make the chi2 between the calculated and experimental structure factors
    ! with extinction and scale parameters stored in vector p.
       p :: VEC{REAL}, IN
@@ -2139,7 +2182,7 @@ contains
 
 !magda_beginning
 
-   chi2I(p) result (res) ::: selfless
+   chi2I(p) result (res) ::: private, selfless
    ! Make the chi2 between the calculated and experimental squared
    ! structure factors
    ! with extinction and scale parameters stored in vector p.
@@ -2177,7 +2220,7 @@ contains
    end
 
 !magda_end
-   d_chi2(p) result (res) ::: selfless
+   d_chi2(p) result (res) ::: private, selfless
    ! Return the derivative of the chi2 with respect to the .scale_factor in
    ! p(1), and with respect to .extinction_factor in p(2). This routine is for
    ! use in the BFGS minimiser.
@@ -2194,7 +2237,7 @@ contains
 
    end
 
-   d_chi2I(p) result (res) ::: selfless
+   d_chi2I(p) result (res) ::: private, selfless
    ! Return the derivative of the chi2 with respect to the .scale_factor in
    ! p(1), and with respect to .extinction_factor in p(2). This routine is for
    ! use in the BFGS minimiser.
@@ -2211,7 +2254,7 @@ contains
 
    end
 
-   d_chi2_d_scale(p) result (res)
+   d_chi2_d_scale(p) result (res)   ::: private
    ! Derivative of the chi^2 for F with respect to the scale factor
       p :: VEC{REAL}, IN
       res :: REAL
@@ -2244,7 +2287,7 @@ contains
 
    end
 
-   d_chi2I_d_scale(p) result (res)
+   d_chi2I_d_scale(p) result (res) ::: private
    ! Derivative of the chi^2 for I with respect to the scale factor
       p :: VEC{REAL}, IN
       res :: REAL
@@ -2277,7 +2320,7 @@ contains
 
    end
 
-   d_chi2_d_ext(p) result (res)
+   d_chi2_d_ext(p) result (res) ::: private
    ! Derivative of the chi^2 for F with respect to the extinction parameter.
       p :: VEC{REAL}, IN
       res :: REAL
@@ -2319,7 +2362,7 @@ contains
 
    end
 
-   d_chi2I_d_ext(p) result (res)
+   d_chi2I_d_ext(p) result (res) ::: private
    ! Derivative of the chi^2 for I with respect to the extinction parameter.
       p :: VEC{REAL}, IN
       res :: REAL
@@ -2331,239 +2374,265 @@ contains
 
    end
 
-   d_chi2_dX(res,dFdX)
-   ! Evaluate "res", the derivative of the chi^2 with respect to some
-   ! parameters X (e.g. thermal parameters) given "dFdX", the
-   ! derivatives of the complex structure factors w.r.t. the X
-   ! parameters.  NOTE: this routine assumes the .extinction_factor
-   ! is fixed.
-      self :: INOUT
-      res :: VEC{REAL}, OUT
-      dFdX :: MAT{CPX}, IN
 
-   ENSURE(.reflections.created,"no reflection data")
-   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
-   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
-   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
-   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dF")
-   ENSURE(dFdX.dim2==res.dim, "incompatible dFdX and res")
+!   d_chi2_dX(res,dFdX) ::: private
+!   ! Evaluate "res", the derivative of the chi^2 with respect to some
+!   ! parameters X (e.g. thermal parameters) given "dFdX", the
+!   ! derivatives of the complex structure factors w.r.t. the X
+!   ! parameters.  NOTE: this routine assumes the .extinction_factor
+!   ! is fixed.
+!      self :: INOUT
+!      res :: VEC{REAL}, OUT
+!      dFdX :: MAT{CPX}, IN
+!
+!   ENSURE(.reflections.created,"no reflection data")
+!   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+!   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+!   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+!   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dF")
+!   ENSURE(dFdX.dim2==res.dim, "incompatible dFdX and res")
+!
+!      Fcd_conjgFcalc :: VEC{CPX}*
+!      ref :: REFLECTION*
+!      ext,angle_bit,d_scale :: VEC{REAL}*
+!      Fcd,Fca,fac,extn,ext5,sg2,sdk,nrinv :: REAL
+!      n_refl,n_p,p,n :: INT
+!
+!      n_refl = .reflections.n_refl
+!      n_p = dFdX.dim2
+!
+!      Fcd_conjgFcalc.create(n_refl)
+!
+!      ext.create(n_refl)
+!      ext = .F_extinction_correction(ONE,.extinction_factor)
+!
+!      angle_bit.create(n_refl)
+!      angle_bit = .extinction_angle_part
+!
+!      sdk = ZERO
+!      do n = 1,n_refl
+!         ref => .reflections(n)
+!         extn = ext(n)
+!         ext5 = extn*extn*extn*extn*extn*.extinction_factor
+!         Fca = abs(ref.F_calc)
+!         sg2 = ONE/(ref.F_sigma*ref.F_sigma)
+!         fac = (.scale_factor*extn*Fca - ref.F_exp)*sg2
+!         Fcd = fac * (extn/Fca - HALF*ext5*angle_bit(n))
+!         Fcd_conjgFcalc(n) = Fcd * conjg(ref.F_calc)
+!         sdk = sdk + fac*extn*Fca
+!      end
+!
+!      angle_bit.destroy
+!      ext.destroy
+!
+!      d_scale.create(n_p)
+!      .d_scale_dX(d_scale,dFdX)
+!
+!      nrinv = ONE/max(n_refl-.n_param,1)
+!      sdk = TWO*nrinv*sdk
+!      fac = TWO*.scale_factor*nrinv
+!
+!      do p = 1,n_p
+!         res(p) = sdk*d_scale(p) + fac * VEC{REAL}:sum( REALIFY(Fcd_conjgFcalc * dFdX(:,p)) )
+!      end
+!      d_scale.destroy
+!      Fcd_conjgFcalc.destroy
+!
+!   end
 
-      Fcd_conjgFcalc :: VEC{CPX}*
-      ref :: REFLECTION*
-      ext,angle_bit,d_scale :: VEC{REAL}*
-      Fcd,Fca,fac,extn,ext5,sg2,sdk,nrinv :: REAL
-      n_refl,n_p,p,n :: INT
+!   d_chi2I_dX(res,dIdX) ::: private
+!   ! Evaluate "res", the derivative of the chi^2 with respect to some
+!   ! parameters X (e.g. thermal parameters) given "dIdX", the
+!   ! derivatives of the square structure factors w.r.t. the X
+!   ! parameters.  NOTE: this routine assumes the .extinction_factor
+!   ! is fixed.
+!      self :: INOUT
+!      res :: VEC{REAL}, OUT
+!      dIdX :: MAT{CPX}, IN
+!
+!   DIE("Sorry...")
+!
+!      self = self
+!      res = ZERO*RE(dIdX(1,1))
+!
+!   end
 
-      n_refl = .reflections.n_refl
-      n_p = dFdX.dim2
+!   d_chi2_dX_plus_se(res,dFdX) ::: private
+!   ! Evaluate "res", the derivative of the chi^2 with respect to some
+!   ! parameters X (e.g. thermal parameters) given "dFdX", the
+!   ! derivatives of the complex structure factors w.r.t. the X
+!   ! parameters. Two extra derivatives are included, w.r.t. the
+!   ! extinction parameter and the scale factor.
+!      res :: VEC{REAL}, OUT
+!      dFdX :: MAT{CPX}, IN
+!
+!   ENSURE(.reflections.created,"no reflection data")
+!   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+!   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+!   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+!   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dF")
+!   ENSURE(dFdX.dim2==res.dim-2, "incompatible dFdX and res")
+!
+!      Fcd_conjgFcalc :: VEC{CPX}*
+!      ref :: REFLECTION*
+!      ext,angle_bit :: VEC{REAL}*
+!      Fcd,Fca,fac,extn,ext5,extf, Fe,Fs :: REAL
+!      n_refl,n_p,p,n :: INT
+!
+!      ! Constants
+!      n_refl = .reflections.n_refl
+!      n_p = dFdX.dim2
+!
+!      ! Temporaries
+!      angle_bit.create(n_refl)
+!      ext.create(n_refl)
+!      Fcd_conjgFcalc.create(n_refl)
+!
+!      ! Different parts of the extinction
+!      angle_bit = .extinction_angle_part
+!      ext = .F_extinction_correction(ONE,.extinction_factor)
+!
+!      ! Make parameter prefactor derivative
+!      Fe = ZERO
+!      Fs = ZERO
+!      do n = 1,n_refl
+!         ref => .reflections(n)
+!         extn = ext(n)
+!         ext5 = extn*extn*extn*extn*extn
+!         extf = ext5*.extinction_factor
+!         Fca = abs(ref.F_calc)
+!         fac = (.scale_factor*extn*Fca - ref.F_exp)/(ref.F_sigma*ref.F_sigma)
+!         Fcd = fac * (extn/Fca - HALF*extf*angle_bit(n))
+!         Fcd_conjgFcalc(n) = Fcd * conjg(ref.F_calc)
+!         ! Extinction part
+!         Fe = Fe - fac*QUARTER*.scale_factor*ext5*Fca*Fca*Fca*angle_bit(n)
+!         ! Scale part
+!         Fs = Fs + fac*extn*Fca
+!      end
+!
+!      ! Parameter derivatives
+!      fac = TWO*.scale_factor/max(n_refl-.n_param,1)
+!      do p = 1,n_p
+!         res(p) = fac * VEC{REAL}:sum( REALIFY(Fcd_conjgFcalc * dFdX(:,p)) )
+!      end
+!
+!      ! Extinction and scale derivatives
+!      res(n_p+1) = fac*Fe
+!      res(n_p+2) = fac*Fs
+!
+!      ! Cleanup
+!      Fcd_conjgFcalc.destroy
+!      ext.destroy
+!      angle_bit.destroy
+!
+!   end
 
-      Fcd_conjgFcalc.create(n_refl)
+!   d_chi2I_dX_plus_se(res,dIdX) ::: private
+!   ! Evaluate "res", the derivative of the chi^2 with respect to some
+!   ! parameters X (e.g. thermal parameters) given "dIdX", the
+!   ! derivatives of the complex structure factors w.r.t. the X
+!   ! parameters. Two extra derivatives are included, w.r.t. the
+!   ! extinction parameter and the scale factor.
+!      res :: VEC{REAL}, OUT
+!      dIdX :: MAT{CPX}, IN
+!
+!   DIE("Sorry...")
+!
+!      self = self
+!      res = ZERO*RE(dIdX(1,1))
+!
+!   end
 
-      ext.create(n_refl)
-      ext = .F_extinction_correction(ONE,.extinction_factor)
+!   d_scale_dX(res,dFdX) ::: private
+!   ! Return "res" the derivative of the scale factor with respect to
+!   ! parameters X, where the *complex* structure factor parameter
+!   ! derivatives are given in "dFdX". This takes into account an
+!   ! existing extinction factor.
+!      res :: VEC{REAL}, OUT
+!      dFdX :: MAT{CPX}, IN
+!
+!   DIE_IF(NOT .reflections.created,"no reflection data")
+!   DIE_IF(NOT .reflections.have_F_calc, "no calculated structure factors")
+!   DIE_IF(NOT .reflections.have_F_exp, "no experimental structure factors")
+!   DIE_IF(NOT .reflections.have_F_sigma, "no structure factor errors")
+!   ENSURE(.data_kind=="x-ray","only valie for X-ray data, so far")
+!   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dFdX")
+!   ENSURE(dFdX.dim2==res.dim, "incompatible res, dFdX")
+!   ENSURE(all(.reflections(:).F_sigma/=ZERO),"A structure factor has zero error F_sigma!")
+!
+!      top,bot,fac,sg2,F_abs,F_exp,F_sig,extn,val1,val2 :: REAL
+!      dt,db :: VEC{CPX}*
+!      ext   :: VEC{REAL}*
+!      F_cal,dF :: CPX
+!      n,n_refl,p :: INT
+!      ref :: REFLECTION*
+!
+!      n_refl = .reflections.n_refl
+!
+!      dt.create(n_refl)
+!      db.create(n_refl)
+!
+!      ext.create(n_refl)
+!      ext = .F_extinction_correction(ONE,.extinction_factor)
+!
+!      top = ZERO
+!      bot = ZERO
+!      do n = 1,n_refl
+!       ref => .reflections(n)
+!       extn = ext(n)
+!       F_cal = extn*conjg(ref.F_calc)
+!       F_abs = abs(F_cal)
+!       F_exp = abs(ref.F_exp)
+!       F_sig = ref.F_sigma
+!       sg2 = ONE / (F_sig * F_sig)
+!       dt(n) = extn * F_exp * sg2 * F_cal / F_abs
+!       db(n) = extn * sg2 * F_cal
+!       F_abs = extn * F_abs
+!       top = top + F_abs * F_exp * sg2
+!       bot = bot + F_abs * F_abs * sg2
+!      end
+!      ext.destroy
+!
+!      bot = ONE/bot
+!      fac = -TWO*top*bot*bot
+!      do p = 1,dFdX.dim2
+!         val1 = ZERO
+!         val2 = ZERO
+!         do n = 1,n_refl
+!            dF = dFdX(n,p)
+!            val1 = val1 + REALIFY(dt(n)*dF)
+!            val2 = val2 + REALIFY(db(n)*dF)
+!         end
+!         res(p) = bot*val1 + fac*val2
+!      end
+!
+!      db.destroy
+!      dt.destroy
+!
+!   end
 
-      angle_bit.create(n_refl)
-      angle_bit = .extinction_angle_part
 
-      sdk = ZERO
-      do n = 1,n_refl
-         ref => .reflections(n)
-         extn = ext(n)
-         ext5 = extn*extn*extn*extn*extn*.extinction_factor
-         Fca = abs(ref.F_calc)
-         sg2 = ONE/(ref.F_sigma*ref.F_sigma)
-         fac = (.scale_factor*extn*Fca - ref.F_exp)*sg2
-         Fcd = fac * (extn/Fca - HALF*ext5*angle_bit(n))
-         Fcd_conjgFcalc(n) = Fcd * conjg(ref.F_calc)
-         sdk = sdk + fac*extn*Fca
-      end
+!  ===============================================
+!  Structure factors without extinction correction
+!  ===============================================
 
-      angle_bit.destroy
-      ext.destroy
+   make_phased_dF(dF)
+   ! Get phased structure factor differences from experimental values
+   ! (without extinction/scale factor correction) for residual map.
+      self :: IN
+      dF :: VEC{CPX}, OUT
 
-      d_scale.create(n_p)
-      .d_scale_dX(d_scale,dFdX)
+   ENSURE(.reflections.created, "no structure factors")
+   ENSURE(dF.dim==.reflections.dim, "incorrect size, dF")
 
-      nrinv = ONE/max(n_refl-.n_param,1)
-      sdk = TWO*nrinv*sdk
-      fac = TWO*.scale_factor*nrinv
+      phase :: VEC{CPX}*
 
-      do p = 1,n_p
-         res(p) = sdk*d_scale(p) + fac * VEC{REAL}:sum( REALIFY(Fcd_conjgFcalc * dFdX(:,p)) )
-      end
-      d_scale.destroy
-      Fcd_conjgFcalc.destroy
+      phase.create(.reflections.dim)
 
-   end
+      phase = .reflections.F_calc/abs(.reflections.F_calc)
+      dF    = (.reflections.F_exp - .reflections.F_pred) * phase
 
-   d_chi2I_dX(res,dIdX)
-   ! Evaluate "res", the derivative of the chi^2 with respect to some
-   ! parameters X (e.g. thermal parameters) given "dIdX", the
-   ! derivatives of the square structure factors w.r.t. the X
-   ! parameters.  NOTE: this routine assumes the .extinction_factor
-   ! is fixed.
-      self :: INOUT
-      res :: VEC{REAL}, OUT
-      dIdX :: MAT{CPX}, IN
-
-   DIE("Sorry...")
-
-      self = self
-      res = ZERO*RE(dIdX(1,1))
-
-   end
-
-   d_chi2_dX_plus_se(res,dFdX)
-   ! Evaluate "res", the derivative of the chi^2 with respect to some
-   ! parameters X (e.g. thermal parameters) given "dFdX", the
-   ! derivatives of the complex structure factors w.r.t. the X
-   ! parameters. Two extra derivatives are included, w.r.t. the
-   ! extinction parameter and the scale factor.
-      res :: VEC{REAL}, OUT
-      dFdX :: MAT{CPX}, IN
-
-   ENSURE(.reflections.created,"no reflection data")
-   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
-   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
-   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
-   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dF")
-   ENSURE(dFdX.dim2==res.dim-2, "incompatible dFdX and res")
-
-      Fcd_conjgFcalc :: VEC{CPX}*
-      ref :: REFLECTION*
-      ext,angle_bit :: VEC{REAL}*
-      Fcd,Fca,fac,extn,ext5,extf, Fe,Fs :: REAL
-      n_refl,n_p,p,n :: INT
-
-      ! Constants
-      n_refl = .reflections.n_refl
-      n_p = dFdX.dim2
-
-      ! Temporaries
-      angle_bit.create(n_refl)
-      ext.create(n_refl)
-      Fcd_conjgFcalc.create(n_refl)
-
-      ! Different parts of the extinction
-      angle_bit = .extinction_angle_part
-      ext = .F_extinction_correction(ONE,.extinction_factor)
-
-      ! Make parameter prefactor derivative
-      Fe = ZERO
-      Fs = ZERO
-      do n = 1,n_refl
-         ref => .reflections(n)
-         extn = ext(n)
-         ext5 = extn*extn*extn*extn*extn
-         extf = ext5*.extinction_factor
-         Fca = abs(ref.F_calc)
-         fac = (.scale_factor*extn*Fca - ref.F_exp)/(ref.F_sigma*ref.F_sigma)
-         Fcd = fac * (extn/Fca - HALF*extf*angle_bit(n))
-         Fcd_conjgFcalc(n) = Fcd * conjg(ref.F_calc)
-         ! Extinction part
-         Fe = Fe - fac*QUARTER*.scale_factor*ext5*Fca*Fca*Fca*angle_bit(n)
-         ! Scale part
-         Fs = Fs + fac*extn*Fca
-      end
-
-      ! Parameter derivatives
-      fac = TWO*.scale_factor/max(n_refl-.n_param,1)
-      do p = 1,n_p
-         res(p) = fac * VEC{REAL}:sum( REALIFY(Fcd_conjgFcalc * dFdX(:,p)) )
-      end
-
-      ! Extinction and scale derivatives
-      res(n_p+1) = fac*Fe
-      res(n_p+2) = fac*Fs
-
-      ! Cleanup
-      Fcd_conjgFcalc.destroy
-      ext.destroy
-      angle_bit.destroy
-
-   end
-
-   d_chi2I_dX_plus_se(res,dIdX)
-   ! Evaluate "res", the derivative of the chi^2 with respect to some
-   ! parameters X (e.g. thermal parameters) given "dIdX", the
-   ! derivatives of the complex structure factors w.r.t. the X
-   ! parameters. Two extra derivatives are included, w.r.t. the
-   ! extinction parameter and the scale factor.
-      res :: VEC{REAL}, OUT
-      dIdX :: MAT{CPX}, IN
-
-   DIE("Sorry...")
-
-      self = self
-      res = ZERO*RE(dIdX(1,1))
-
-   end
-
-   d_scale_dX(res,dFdX)
-   ! Return "res" the derivative of the scale factor with respect to
-   ! parameters X, where the *complex* structure factor parameter
-   ! derivatives are given in "dFdX". This takes into account an
-   ! existing extinction factor.
-      res :: VEC{REAL}, OUT
-      dFdX :: MAT{CPX}, IN
-
-   DIE_IF(NOT .reflections.created,"no reflection data")
-   DIE_IF(NOT .reflections.have_F_calc, "no calculated structure factors")
-   DIE_IF(NOT .reflections.have_F_exp, "no experimental structure factors")
-   DIE_IF(NOT .reflections.have_F_sigma, "no structure factor errors")
-   ENSURE(.data_kind=="x-ray","only valie for X-ray data, so far")
-   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dFdX")
-   ENSURE(dFdX.dim2==res.dim, "incompatible res, dFdX")
-   ENSURE(all(.reflections(:).F_sigma/=ZERO),"A structure factor has zero error F_sigma!")
-
-      top,bot,fac,sg2,F_abs,F_exp,F_sig,extn,val1,val2 :: REAL
-      dt,db :: VEC{CPX}*
-      ext   :: VEC{REAL}*
-      F_cal,dF :: CPX
-      n,n_refl,p :: INT
-      ref :: REFLECTION*
-
-      n_refl = .reflections.n_refl
-
-      dt.create(n_refl)
-      db.create(n_refl)
-
-      ext.create(n_refl)
-      ext = .F_extinction_correction(ONE,.extinction_factor)
-
-      top = ZERO
-      bot = ZERO
-      do n = 1,n_refl
-       ref => .reflections(n)
-       extn = ext(n)
-       F_cal = extn*conjg(ref.F_calc)
-       F_abs = abs(F_cal)
-       F_exp = abs(ref.F_exp)
-       F_sig = ref.F_sigma
-       sg2 = ONE / (F_sig * F_sig)
-       dt(n) = extn * F_exp * sg2 * F_cal / F_abs
-       db(n) = extn * sg2 * F_cal
-       F_abs = extn * F_abs
-       top = top + F_abs * F_exp * sg2
-       bot = bot + F_abs * F_abs * sg2
-      end
-      ext.destroy
-
-      bot = ONE/bot
-      fac = -TWO*top*bot*bot
-      do p = 1,dFdX.dim2
-         val1 = ZERO
-         val2 = ZERO
-         do n = 1,n_refl
-            dF = dFdX(n,p)
-            val1 = val1 + REALIFY(dt(n)*dF)
-            val2 = val2 + REALIFY(db(n)*dF)
-         end
-         res(p) = bot*val1 + fac*val2
-      end
-
-      db.destroy
-      dt.destroy
+      phase.destroy
 
    end
 
@@ -3790,7 +3859,14 @@ contains
 
    put_F_statistics
    ! Output the structure factor goodness of fit statistics.
-      .reflections.put_F_statistics
+      self :: INOUT
+
+      .reflections.put_F_statistics(show_chi2=FALSE)
+      stdout.show("# of fit parameters, N_p       =", .n_param)
+      stdout.show("chi^2(N_p)                     =",.chi2)
+      stdout.show("Goodness of fit (N_p)          =", sqrt(.chi2))
+      stdout.show("Effective (mean) sigma^2       =",.reflections.sigma2_eff)
+
    end
 
    put_F_free_stats
@@ -3798,11 +3874,11 @@ contains
       .reflections.put_F_free_stats
    end
 
-   put_I_statistics
-   ! Output the intensity goodness of fit statistics
-      .reflections.put_I_statistics
-    ! .put_correction_data
-   end
+!  put_I_statistics
+!  ! Output the intensity goodness of fit statistics
+!     .reflections.put_I_statistics
+!   ! .put_correction_data
+!  end
 
    put_I_free_stats
    ! Output the intensity goodness of fit statistics
