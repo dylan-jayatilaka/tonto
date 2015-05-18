@@ -3888,8 +3888,69 @@ contains
 
       if (.have_F_calc OR .have_F_pred) then
          .put_correction_data
+         if (.have_F_exp) .put_20_worst_reflections
       end
 
+      .reflections.put(core_reflection)
+
+   end
+
+   put_20_worst_reflections
+   ! Show the 20 worst reflections
+      self :: IN
+
+   ENSURE(.reflections.created,"No reflection data")
+   ENSURE(.reflections.have_F_exp,"No experimental data")
+
+      F_z :: VEC{REAL}*
+      ind :: VEC{INT}*
+      n_refl :: INT
+
+      ! No. of old reflections
+      n_refl = .reflections.n_refl
+      if (n_refl<20) return
+
+      ! Get the F_z values
+      F_z.create(n_refl)
+      F_z = REFLECTION:F_z(.reflections)
+
+      ! Sort
+      ind.create(n_refl)
+      F_z.quick_sort(ind,decreasing_order=TRUE)
+
+      ! Header
+      stdout.flush
+      stdout.text("=================")
+      stdout.text("Worst reflections")
+      stdout.text("=================")
+      stdout.flush
+      stdout.text(". Below are the 20 worst reflections from the fit")
+      stdout.text(". The criteria is the F_z value in sigma units")
+      stdout.text(". The full list of reflections follows")
+      stdout.flush
+
+      ! Put
+      .reflections(ind).put
+
+      ! Clean
+      ind.destroy
+      F_z.destroy
+
+   end
+
+   put_all_reflections(core_reflection)
+   ! Show all the reflections
+      core_reflection :: VEC{REFLECTION}*, optional
+
+   ENSURE(.reflections.created,"No reflection data")
+
+      ! Header
+      stdout.flush
+      stdout.text("===============")
+      stdout.text("All reflections")
+      stdout.text("===============")
+
+      ! Put
       .reflections.put(core_reflection)
 
    end
@@ -3907,6 +3968,244 @@ contains
    ENSURE(.reflections.created, "no reflection data")
       .reflections.put_labelled_F_qq_plot
    end
+
+
+   put_GOF_vs_STL_table
+   ! Output GOF and ratio vs. sin(theta)/lambda bins.
+      self :: INOUT
+
+      n_sections,i :: INT
+      stl,bin,GOF,ratio,RF,RwF,RF2,RwF2, dF,Fexp,Fz,Feos :: VEC{REAL}*
+      C :: VEC{INT}*
+      X_min,X_max,X_bin :: REAL
+      table :: VEC{TABLE_COLUMN}*
+
+      n_sections = 20
+
+      ! Sin theta on lambda
+      stl.create(.reflections.dim)
+      stl = REFLECTION:stl(.reflections)
+
+      ! Bin size ...
+      X_min = minval(stl)
+      X_max = maxval(stl)
+      X_bin = (X_max - X_min)/n_sections
+
+      ! Sin theta on lambda bins array for table
+      bin.create(n_sections)
+      bin = [ (X_min + i*X_bin, i=1,n_sections) ]
+
+      ! GOF
+      GOF.create(n_sections)
+      C.create(n_sections)
+      GOF.to_histogram_from_data(REFLECTION:F_z2(.reflections),stl,X_min,X_max,X_bin,C)
+      GOF = sqrt(GOF/max(C-.n_param,1))
+      C.destroy
+
+      ! ratio
+      ratio.create(n_sections)
+      C.create(n_sections)
+      ratio.to_histogram_from_data(REFLECTION:F_ratio(.reflections),stl,X_min,X_max,X_bin,C)
+      ratio = ratio/max(C,1)
+
+      ! R(F)
+      RF.create(n_sections)
+      dF.create(n_sections)
+      Fexp.create(n_sections)
+      dF.to_histogram_from_data(REFLECTION:abs_delta_F(.reflections),stl,X_min,X_max,X_bin,C)
+      Fexp.to_histogram_from_data(REFLECTION:F_exp(.reflections),stl,X_min,X_max,X_bin)
+      RF = dF/Fexp
+      Fexp.destroy
+      dF.destroy
+
+      ! R(F2)
+      RF2.create(n_sections)
+      dF.create(n_sections)
+      Fexp.create(n_sections)
+      dF.to_histogram_from_data(REFLECTION:abs_delta_F_2(.reflections),stl,X_min,X_max,X_bin,C)
+      Fexp.to_histogram_from_data(REFLECTION:F_exp_2(.reflections),stl,X_min,X_max,X_bin)
+      RF2 = dF/Fexp
+      Fexp.destroy
+      dF.destroy
+
+      ! Rw(F)
+      RwF.create(n_sections)
+      Fz.create(n_sections)
+      Feos.create(n_sections)
+      Fz.to_histogram_from_data(REFLECTION:F_z2(.reflections),stl,X_min,X_max,X_bin,C)
+      Feos.to_histogram_from_data(REFLECTION:F_exp_on_sigma_2(.reflections),stl,X_min,X_max,X_bin)
+      RwF = Fz/Feos
+      Feos.destroy
+      Fz.destroy
+
+      ! Rw(F2)
+      RwF2.create(n_sections)
+      Fz.create(n_sections)
+      Feos.create(n_sections)
+      Fz.to_histogram_from_data(REFLECTION:F2_z2(.reflections),stl,X_min,X_max,X_bin,C)
+      Feos.to_histogram_from_data(REFLECTION:F_exp_on_sigma_4(.reflections),stl,X_min,X_max,X_bin)
+      RwF2 = Fz/Feos
+      Feos.destroy
+      Fz.destroy
+
+      ! Header
+      stdout.flush
+      stdout.text("========================")
+      stdout.text("Fit statistics vs. angle")
+      stdout.text("========================")
+      stdout.flush
+      stdout.text("An analysis of the fit versus sin(theta)/lambda.")
+      stdout.flush
+
+      ! Table
+      bin = bin*BOHR_PER_ANGSTROM
+      table.create(8)
+      table(1).set_heading("sin(th)/lambda"); table(1).set_values(bin)
+      table(1).set_subhead("max value/A^-1")
+      table(2).set_heading("# of");           table(2).set_values(C)
+      table(2).set_subhead("refl")
+      table(3).set_heading("GOF");            table(3).set_values(GOF)
+      table(4).set_heading("F_exp");          table(4).set_values(ratio)
+      table(4).set_subhead("/F_pred")
+      table(5).set_heading("R(F)");           table(5).set_values(RF)
+      table(6).set_heading("Rw(F)");          table(6).set_values(RwF)
+      table(7).set_heading("R(F2)");          table(7).set_values(RF2)
+      table(8).set_heading("Rw(F2)");         table(8).set_values(RwF2)
+      table.put
+
+      ! Clean
+      table.clear_columns
+      RwF2.destroy
+      RF2.destroy
+      RwF.destroy
+      RF.destroy
+      C.destroy
+      ratio.destroy
+      GOF.destroy
+      bin.destroy
+      stl.destroy
+
+   end
+
+   put_GOF_vs_F_exp_table
+   ! Output GOF and ratio vs. F_exp bins.
+      self :: INOUT
+
+      n_sections,i :: INT
+      stl,bin,GOF,ratio,RF,RwF,RF2,RwF2, dF,Fexp,Fz,Feos :: VEC{REAL}*
+      C :: VEC{INT}*
+      X_min,X_max,X_bin :: REAL
+      table :: VEC{TABLE_COLUMN}*
+
+      n_sections = 20
+
+      ! F_exp
+      stl.create(.reflections.dim)
+      stl = REFLECTION:F_exp(.reflections)
+
+      ! Bin size ...
+      X_min = minval(stl)
+      X_max = maxval(stl)
+      X_bin = (X_max - X_min)/n_sections
+
+      ! Sin theta on lambda bins array for table
+      bin.create(n_sections)
+      bin = [ (X_min + i*X_bin, i=1,n_sections) ]
+
+      ! GOF
+      GOF.create(n_sections)
+      C.create(n_sections)
+      GOF.to_histogram_from_data(REFLECTION:F_z2(.reflections),stl,X_min,X_max,X_bin,C)
+      GOF = sqrt(GOF/max(C-.n_param,1))
+
+      ! ratio
+      ratio.create(n_sections)
+      C.create(n_sections)
+      ratio.to_histogram_from_data(REFLECTION:F_ratio(.reflections),stl,X_min,X_max,X_bin,C)
+      ratio = ratio/max(C,1)
+
+      ! R(F)
+      RF.create(n_sections)
+      dF.create(n_sections)
+      Fexp.create(n_sections)
+      dF.to_histogram_from_data(REFLECTION:abs_delta_F(.reflections),stl,X_min,X_max,X_bin,C)
+      Fexp.to_histogram_from_data(REFLECTION:F_exp(.reflections),stl,X_min,X_max,X_bin)
+      RF = ZERO
+      where (abs(Fexp)>TOL(6)) RF = dF/Fexp
+      Fexp.destroy
+      dF.destroy
+
+      ! R(F2)
+      RF2.create(n_sections)
+      dF.create(n_sections)
+      Fexp.create(n_sections)
+      dF.to_histogram_from_data(REFLECTION:abs_delta_F_2(.reflections),stl,X_min,X_max,X_bin,C)
+      Fexp.to_histogram_from_data(REFLECTION:F_exp_2(.reflections),stl,X_min,X_max,X_bin)
+      RF2 = ZERO
+      where (abs(Fexp)>TOL(6)) RF2 = dF/Fexp
+      Fexp.destroy
+      dF.destroy
+
+      ! Rw(F)
+      RwF.create(n_sections)
+      Fz.create(n_sections)
+      Feos.create(n_sections)
+      Fz.to_histogram_from_data(REFLECTION:F_z2(.reflections),stl,X_min,X_max,X_bin,C)
+      Feos.to_histogram_from_data(REFLECTION:F_exp_on_sigma_2(.reflections),stl,X_min,X_max,X_bin)
+      RwF = ZERO
+      where (abs(Feos)>TOL(6)) RwF = Fz/Feos
+      Feos.destroy
+      Fz.destroy
+
+      ! Rw(F2)
+      RwF2.create(n_sections)
+      Fz.create(n_sections)
+      Feos.create(n_sections)
+      Fz.to_histogram_from_data(REFLECTION:F2_z2(.reflections),stl,X_min,X_max,X_bin,C)
+      Feos.to_histogram_from_data(REFLECTION:F_exp_on_sigma_4(.reflections),stl,X_min,X_max,X_bin)
+      RwF2 = ZERO
+      where (abs(Feos)>TOL(6)) RwF2 = Fz/Feos
+      Feos.destroy
+      Fz.destroy
+
+      ! Header
+      stdout.flush
+      stdout.text("============================")
+      stdout.text("Fit statistics vs. intensity")
+      stdout.text("============================")
+      stdout.flush
+      stdout.text("An analysis of the fit versus F_exp is shown in the table below.")
+      stdout.flush
+
+      ! Table
+      table.create(8)
+      table(1).set_heading("F_exp");          table(1).set_values(bin)
+      table(1).set_subhead("max value")
+      table(2).set_heading("# of");           table(2).set_values(C)
+      table(2).set_subhead("refl")
+      table(3).set_heading("GOF");            table(3).set_values(GOF)
+      table(4).set_heading("F_exp");          table(4).set_values(ratio)
+      table(4).set_subhead("/F_pred")
+      table(5).set_heading("R(F)");           table(5).set_values(RF)
+      table(6).set_heading("Rw(F)");          table(6).set_values(RwF)
+      table(7).set_heading("R(F2)");          table(7).set_values(RF2)
+      table(8).set_heading("Rw(F2)");         table(8).set_values(RwF2)
+      table.put
+
+      ! Clean
+      table.clear_columns
+      RwF2.destroy
+      RF2.destroy
+      RwF.destroy
+      RF.destroy
+      C.destroy
+      ratio.destroy
+      GOF.destroy
+      bin.destroy
+      stl.destroy
+
+   end
+
 
    put_GOF_vs_STL_plot
    ! Output GOF vs. sin(theta)/lambda bins.
@@ -3928,42 +4227,6 @@ contains
 
       stdout.flush
       stdout.text("Chi^2 vs angle plot")
-      stdout.flush
-      stdout.put("sin(T)/L")
-      stdout.put("GOF")
-      stdout.flush
-      stdout.dash(real_fields=2)
-      do i = 1,n_sections
-         mid = (i-1)*X_min + HALF*X_bin
-         stdout.put(mid)
-         stdout.put(H(i))
-         stdout.flush
-      end
-      stdout.flush
-      C.destroy
-      H.destroy
-   end
-
-   put_GOF_vs_F_exp_plot
-   ! Output GOF vs. F_pred bins.
-      n_sections,i :: INT
-      H :: VEC{REAL}*
-      C :: VEC{INT}*
-      X_min,X_max,X_bin,mid :: REAL
-
-      n_sections = 20
-
-      X_min = minval(REFLECTION:F_exp(.reflections))
-      X_max = maxval(REFLECTION:F_exp(.reflections))
-      X_bin = (X_max - X_min)/n_sections
-
-      H.create(n_sections)
-      C.create(n_sections)
-      H.to_histogram_from_data(REFLECTION:F_z2(.reflections),REFLECTION:F_exp(.reflections),X_min,X_max,X_bin,C)
-      H = sqrt(H/max(C-.n_param,1))
-
-      stdout.flush
-      stdout.text("Chi^2 vs F_exp")
       stdout.flush
       stdout.put("sin(T)/L")
       stdout.put("GOF")
@@ -4003,6 +4266,43 @@ contains
       stdout.flush
       stdout.put("sin(T)/L")
       stdout.put("exp/pred")
+      stdout.flush
+      stdout.dash(real_fields=2)
+      do i = 1,n_sections
+         mid = (i-1)*X_min + HALF*X_bin
+         stdout.put(mid)
+         stdout.put(H(i))
+         stdout.flush
+      end
+      stdout.flush
+      C.destroy
+      H.destroy
+
+   end
+
+   put_GOF_vs_F_exp_plot
+   ! Output GOF vs. F_pred bins.
+      n_sections,i :: INT
+      H :: VEC{REAL}*
+      C :: VEC{INT}*
+      X_min,X_max,X_bin,mid :: REAL
+
+      n_sections = 20
+
+      X_min = minval(REFLECTION:F_exp(.reflections))
+      X_max = maxval(REFLECTION:F_exp(.reflections))
+      X_bin = (X_max - X_min)/n_sections
+
+      H.create(n_sections)
+      C.create(n_sections)
+      H.to_histogram_from_data(REFLECTION:F_z2(.reflections),REFLECTION:F_exp(.reflections),X_min,X_max,X_bin,C)
+      H = sqrt(H/max(C-.n_param,1))
+
+      stdout.flush
+      stdout.text("Chi^2 vs F_exp")
+      stdout.flush
+      stdout.put("sin(T)/L")
+      stdout.put("GOF")
       stdout.flush
       stdout.dash(real_fields=2)
       do i = 1,n_sections
