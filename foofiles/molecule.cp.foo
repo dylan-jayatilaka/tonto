@@ -1685,18 +1685,15 @@ contains
       e :: VEC{REAL}*
       U_old :: MAT3{REAL}*
       MO,U_ao,AU,J,K,W :: MAT{REAL}*
-      n_occ,n_vir,n_pert,n,a,i,iteration :: INT
-      test :: REAL
-      use_diis,converged :: BIN
+      n_occ,n_vir,n_pert,n_vo,n,a,i :: INT
+      test,delta :: REAL
+      use_diis :: BIN
       arch :: ARCHIVE
-
-      ! Use DIIS?
-      use_diis = .scfdata.using_CPHF_diis
-      use_diis = use_diis
 
       ! Dimensions
       n_occ = .n_a
       n_vir = .n_bf - .n_a
+      n_vo  = n_vir*n_occ
       n_pert = U.dim3
 
       ! Assign MO's, orbital ranges
@@ -1715,8 +1712,8 @@ contains
 
          ! Set SOS initial guess
          do n = 1,n_pert
-            do a = 1,n_vir
             do i = 1,n_occ
+            do a = 1,n_vir
                U(a,i,n) =  rhs(a,i,n)/(e(n_occ+a) - e(i))
             end
             end
@@ -1732,20 +1729,26 @@ contains
       J.create(.n_bf,.n_bf)
       K.create(.n_bf,.n_bf)
 
-      ! Begin iterative procedure
+      ! Use DIIS?
+      use_diis = .scfdata.using_CP_diis
 
-      stdout.flush
-      stdout.text("Solve CPHF equations")
+      ! Set initial convergence data/diis
+      .scfdata.update_CP_difference(delta)
+      .scfdata.set_diis_error(ZERO)
+      if (use_diis) .scfdata.reset_CP(n_pert)
 
-      iteration = 0
+      ! Banner & tabular output
+      .scfdata.put_CP_banner
+      .scfdata.put_CP_options
+      .scfdata.set_CP_table
+      .scfdata.put_CP_table_head
+      .scfdata.put_CP_table_body_and_footer
 
+      ! Begin iterations
       do
 
-         iteration = iteration + 1
-         DIE_IF(iteration>.scfdata.max_iterations,"too many iterations")
-
          U_old = U
-         test = ZERO
+         test  = ZERO
 
          ! For each perturbation, Update U
          do n = 1,n_pert
@@ -1761,42 +1764,43 @@ contains
             AU.change_basis_to(W,MO(:,n_occ+1:),MO(:,:n_occ))
 
             ! Update U
-            do a = 1,n_vir
             do i = 1,n_occ
+            do a = 1,n_vir
                U(a,i,n) = (ONE/(e(n_occ+a) - e(i))) * (rhs(a,i,n) - W(a,i))
             end
             end
 
             ! DIIS extrapolation
-          ! if (use_diis) then
-          !    .scfdata.diis.extrapolate(U(:,:,n),n_vir*n_occ)
-          !    test = max(test,.scfdata.diis.error_length)
-          !
-          !    ! Manually reset the DIIS object
-          !    if (n<n_pert) then
-          !       .scfdata.diis.iteration = .scfdata.diis.iteration - 1
-          !       .scfdata.diis.kept = .scfdata.diis.kept - 1
-          !    end
-          !
-          ! else
-               W = U(:,:,n) - U_old(:,:,n)
-               test = max(test,sqrt(W.dot(W)))
-          ! end
+            if (use_diis) then
+               .scfdata.CP_diis(n).extrapolate(reshape(U(:,:,n),[n_vo]),n_vo)
+               test = max(test,.scfdata.diis.error_length)
+            end
+           
+            ! Delta
+            W = U(:,:,n) - U_old(:,:,n)
+            delta = max(test,sqrt(W.dot(W)))
 
          end
+
+         ! Update data
+         .scfdata.update_iteration
+         .scfdata.update_CP_difference(delta)
+         .scfdata.diis.set_error_length(test)
+         .scfdata.set_diis_error(test)
+
+         ! Put table
+         .scfdata.put_CP_table_body_and_footer(flush=TRUE)
 
          ! Write archive for restart
          arch.set(.name,"U_electric_dipole",genre="restricted")
          arch.write(U)
 
-         ! Converged ?
-         stdout.show("Iteration "//iteration.to_str.trim//", convergence =",test)
-         converged = test<.scfdata.diis.convergence_tolerance
-         if (converged) exit
+         if (.scfdata.scf_done) exit
 
-      end
+      end ! iterative cycle
 
       ! Clean-up
+      .scfdata.CP_diis.destroy
       K.destroy
       J.destroy
       W.destroy
