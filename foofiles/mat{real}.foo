@@ -613,6 +613,100 @@ contains
    ! to be transposed.
    end
 
+
+   plus_difference_product_with(U,ev,eo,tol) ::: PURE
+   ! Do self += (ev(a)-eo(i)) * U(a,i).
+   ! If "tol" is present, small ev/eo and (ev-eo) get set to zero
+      self :: INOUT
+      U    :: MAT{REAL}, IN
+      ev   :: VEC{REAL}, IN
+      eo   :: VEC{REAL}, IN
+      tol  :: REAL, optional, IN
+
+   ENSURE(ev.dim==self.dim1,"wrong size, ev")
+   ENSURE(eo.dim==self.dim2,"wrong size, eo")
+
+      a,i :: INT
+      ea,ei,ai :: REAL
+
+      if (NOT present(tol)) then
+
+         do i = 1,.dim2
+         do a = 1,.dim1
+            ea = ev(a)
+            ei = eo(i)
+            ai = ea - ei
+            self(a,i) = self(a,i) + ai*U(a,i)
+         end
+         end
+
+      else
+
+         do i = 1,.dim2
+         do a = 1,.dim1
+            ea = ev(a)
+            ei = eo(i)
+            ai = ea - ei
+            if (ai.is_zero(tol)) ai = ZERO
+            if (ea.is_zero(tol)) ai = ZERO
+            if (ei.is_zero(tol)) ai = ZERO
+            self(a,i) = self(a,i) + ai*U(a,i)
+         end
+         end
+
+      end
+
+   end
+
+   plus_difference_divisor_with(U,ev,eo,tol) ::: PURE
+   ! Do self += (ev(a)-eo(i))^-1 * U(a,i).
+   ! If "tol" is present, small ev/eo and (ev-eo) get set to zero
+      self :: INOUT
+      U    :: MAT{REAL}, IN
+      ev   :: VEC{REAL}, IN
+      eo   :: VEC{REAL}, IN
+      tol  :: REAL, optional, IN
+
+   ENSURE(ev.dim==self.dim1,"wrong size, ev")
+   ENSURE(eo.dim==self.dim2,"wrong size, eo")
+
+      a,i :: INT
+      ea,ei,ai :: REAL
+
+      if (NOT present(tol)) then
+
+         do i = 1,.dim2
+         do a = 1,.dim1
+            ea = ev(a)
+            ei = eo(i)
+            ai = ea - ei
+            if (ai.is_zero(tol)) then; ai = ZERO
+            else;                      ai = ONE/ai
+            end
+            self(a,i) = self(a,i) + ai*U(a,i)
+         end
+         end
+
+      else
+
+         do i = 1,.dim2
+         do a = 1,.dim1
+            ea = ev(a)
+            ei = eo(i)
+            ai = ea - ei
+            if (ai.is_zero(tol)) then; ai = ZERO
+            else;                      ai = ONE/ai
+            end
+            if (ea.is_zero(tol))       ai = ZERO
+            if (ei.is_zero(tol))       ai = ZERO
+            self(a,i) = self(a,i) + ai*U(a,i)
+         end
+         end
+
+      end
+
+   end
+
 !  ================
 !  Trace operations
 !  ================
@@ -2911,15 +3005,17 @@ contains
    end
 
 
-   to_inverse_sqrt_of(R,tol,n_small,n_negative)
+   to_inverse_sqrt_of(R,tol,n_small,n_negative,shift)
    ! Set self = sqrt(R)^(-1). Cannot have R = self.
    ! If "tol" is present use that to decide on zero eigenvalues.
    ! If "n_small" return the number of small eigenvalues.
+   ! If "shift" then use this value instead of small eigenvalues.
       self :: OUT
       R :: MAT{REAL}, IN
       tol :: REAL, optional, IN
       n_small :: INT, optional, OUT
       n_negative :: INT, optional, OUT
+      shift :: REAL, optional, IN
 
  ! Looks like compiler problem for gfortran on 3/3/09
  ! ENSURE(.is_symmetric,"not symmetric")
@@ -2928,11 +3024,15 @@ contains
       eval :: VEC{REAL}*
       veci,vecj :: VEC{REAL}*
       d,i,j,n_n,n_s :: INT
-      eps,temp,val_n,val_s :: REAL
+      eps,sh,temp,val_n,val_s :: REAL
 
       ! Get tolerance for smallness
       eps = TOL(20)
       if (present(tol)) eps = tol
+
+      ! Shift for zeo eigenvalues
+      sh = ZERO
+      if (present(shift)) sh = shift
 
       ! Solve eigenproblem
       d = R.dim1
@@ -2953,14 +3053,17 @@ contains
          temp = eval(i)
 
          if (temp<-eps) then
+            ! Negative eigenvalues
             eval(i) = ZERO
             n_n     = n_n + 1
             val_n   = min(temp,val_n)
          else if (temp<=eps) then
-            eval(i) = ZERO
+            ! Small eigenvalues
+            eval(i) = sh   
             n_s     = n_s + 1
             val_s   = min(temp,val_s)
          else
+            ! Normal eigenvalues
             eval(i) = ONE/sqrt(temp)
          end
 
@@ -2991,7 +3094,7 @@ contains
 
    end
 
-   to_inverse_sqrt_of(R_eval,R_evec,tol,n_small,n_negative) ::: pure
+   to_inverse_sqrt_of(R_eval,R_evec,tol,n_small,n_negative,shift) ::: pure
    ! self = sqrt(R)^(-1), but supplied are the R eigenvalues "R_eval"
    ! and the R eigenvectors "R_evec". If "tol" is present use that to
    ! decide on zero eigenvalues.  If "n_small" return the number of
@@ -3002,15 +3105,20 @@ contains
       tol :: REAL, optional, IN
       n_small :: INT, optional, OUT
       n_negative :: INT, optional, OUT
+      shift :: REAL, optional, IN
 
       eval :: VEC{REAL}*
       veci,vecj :: VEC{REAL}@
       d,i,j,n_n,n_s :: INT
-      eps,temp,val_n,val_s :: REAL
+      eps,sh,temp,val_n,val_s :: REAL
 
       ! Get tolerance for smallness
       eps = TOL(20)
       if (present(tol)) eps = tol
+
+      ! Shift for zeo eigenvalues
+      sh = ZERO
+      if (present(shift)) sh = shift
 
       ! Get inverse sqrt eigenvalues
       d = R_eval.dim
@@ -3027,14 +3135,17 @@ contains
          temp = R_eval(i)
 
          if (temp<-eps) then
+            ! Negative eigenvalues
             eval(i) = ZERO
             n_n     = n_n + 1
             val_n   = min(temp,val_n)
          else if (temp<=eps) then
-            eval(i) = ZERO
+            ! Small eigenvalues
+            eval(i) = sh   
             n_s     = n_s + 1
             val_s   = min(temp,val_s)
          else
+            ! Normal eigenvalues
             eval(i) = ONE/sqrt(temp)
          end
 

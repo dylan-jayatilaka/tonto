@@ -1539,67 +1539,51 @@ contains
    ! (virtual-occupied block). The convergence tolerance and the
    ! number of iterations are controlled via the scfdata block, since
    ! this is a self consistent procedure.
-   ! WARNING: this asumed the DIIS archives have been set up already.
       self :: INOUT
-      U,rhs :: MAT3{REAL}*
+      U    :: MAT3{REAL}, INOUT
+      rhs  :: MAT3{REAL}, IN
 
    ENSURE(.scfdata.created,"no scf data")
-   ENSURE(.basis_info_made,"no basis info")
-   ENSURE(.atom.created,"no atom info")
-   ENSURE(U.created,"No U")
-   ENSURE(rhs.created,"No rhs")
-   ENSURE(U.dim1==(.n_bf-.n_a),"wrong size, U, dimension 1")
-   ENSURE(U.dim2==.n_a,"wrong size, U, dimension 2")
+   ENSURE(.molecular_orbitals.created,"no MOs")
+   ENSURE(.molecular_orbitals.restricted.created,"no restricted MOs")
+   ENSURE(U.dim1==(.n_bf-.n_a),  "wrong size, U, dimension 1")
+   ENSURE(U.dim2==.n_a,          "wrong size, U, dimension 2")
    ENSURE(rhs.dim1==(.n_bf-.n_a),"wrong size, rhs, dimension 1")
-   ENSURE(rhs.dim2==.n_a,"wrong size, rhs dimension 2")
+   ENSURE(rhs.dim2==.n_a,        "wrong size, rhs dimension 2")
    ENSURE(U.dim3==rhs.dim3,"incompatible sizes, U and rhs")
 
-      e :: VEC{REAL}*
+      e_occ,e_vir, par,err :: VEC{REAL}*
       U_old :: MAT3{REAL}*
       MO,U_ao,AU,J,K,W :: MAT{REAL}*
-      n_occ,n_vir,n_pert,n_vo,n,a,i :: INT
-      test,delta :: REAL
+      n_occ,n_vir,n_pert,n_vo, n :: INT
+      tol0,test,delta :: REAL
       use_diis :: BIN
       arch :: ARCHIVE
 
       ! Dimensions
-      n_occ = .n_a
-      n_vir = .n_bf - .n_a
-      n_vo  = n_vir*n_occ
+      n_occ  = .n_a
+      n_vir  = .n_bf - .n_a
+      n_vo   = n_vir*n_occ
       n_pert = U.dim3
+      tol0   = TOL(6)
 
       ! Assign MO's, orbital ranges
-      MO => .molecular_orbitals.restricted
-      e  => .orbital_energies.restricted
+      MO    => .molecular_orbitals.restricted
+      e_occ => .orbital_energies.restricted(      1:n_occ)
+      e_vir => .orbital_energies.restricted(n_occ+1:     )
 
-      ! Read or calculate initial approximation for U
-      if (.scfdata.initial_Us=="restricted") then
+      ! Read/initialize U's
+      .::initialize_Us(U,rhs,e_vir,e_occ,tol0)
 
-         stdout.flush
-         stdout.text("As requested from scfdata, reading U's from disk ...")
-         arch.set(.name,"U_electric_dipole",genre="restricted")
-         arch.read(U)
-
-      else
-
-         ! Set SOS initial guess
-         do n = 1,n_pert
-            do i = 1,n_occ
-            do a = 1,n_vir
-               U(a,i,n) =  rhs(a,i,n)/(e(n_occ+a) - e(i))
-            end
-            end
-         end
-
-      end
-
-      ! Allocate space for temporaries
+      ! Allocate temporaries
       U_old.create(n_vir,n_occ,n_pert)
       U_ao.create(.n_bf,.n_bf)
       AU => U_ao
       W.create(n_vir,n_occ)
       J.create(.n_bf,.n_bf)
       K.create(.n_bf,.n_bf)
+      par.create(n_vo)
+      err.create(n_vo)
 
       ! Use DIIS?
       use_diis = .scfdata.using_CP_diis
@@ -1623,40 +1607,42 @@ contains
          test  = ZERO
          delta = ZERO
 
-         ! For each perturbation, Update U
+         ! For each perturbation, update U(:,:,n)
          do n = 1,n_pert
 
-            ! U -> AO basis
+            ! U(MO) -> U(AO)
             U(:,:,n).back_transform_to(U_ao,MO(:,n_occ+1:),MO(:,:n_occ))
             U_ao.symmetrize
 
-            ! A times U -> AO basis -> MO basis -> W
+            ! Make A.U (AO) -> A.U (MO) = W
             .FOCK:make_r_JK_engine(J,K,U_ao)
             AU = FOUR*J - TWO*K
-!           .shift_dependence_from_r(AU)
+            .BASE:remove_dependence_from_r(AU)
             AU.change_basis_to(W,MO(:,n_occ+1:),MO(:,:n_occ))
 
-            ! Update U
-            do i = 1,n_occ
-            do a = 1,n_vir
-               U(a,i,n) = (ONE/(e(n_occ+a) - e(i))) * (rhs(a,i,n) - W(a,i))
-            end
-            end
-
-            ! DIIS extrapolation
+            ! DIIS extrapolation on AU (MO)
             if (use_diis) then
-               .scfdata.CP_diis(n).extrapolate(reshape(U(:,:,n),[n_vo]),n_vo)
+               par = reshape(W,[n_vo])
+               W.plus_difference_product_with(U(:,:,n),e_vir,e_occ,tol0) ! W <- H
+               err = reshape(W-rhs(:,:,n),[n_vo])                        ! H - rhs
+               .scfdata.CP_diis(n).extrapolate(par,err,n_vo)
+               W = reshape(par,[n_vir,n_occ])                            ! W <- AU
                test = max(test,.scfdata.CP_diis(n).error_length)
             end
-           
-            ! Delta
-            W = U(:,:,n) - U_old(:,:,n)
-            delta = max(delta,maxval(abs(W)))
+
+            ! Update U, U <- (rhs - W)/D
+            W        = rhs(:,:,n) - W
+            U(:,:,n) = ZERO
+            U(:,:,n).plus_difference_divisor_with(W,e_vir,e_occ,tol0)    
 
          end
+           
+         ! Delta is max |diff|
+         delta = max(delta,maxval(abs(U-U_old)))
 
          ! Update data
          .scfdata.update_iteration
+         .scfdata.update_diis_from_CP_diis
          .scfdata.update_CP_difference(delta)
          .scfdata.diis.set_error_length(test)
          .scfdata.set_diis_error(test)
@@ -1673,12 +1659,47 @@ contains
       end ! iterative cycle
 
       ! Clean-up
+      .scfdata.diis.destroy_ptr_part
       .scfdata.CP_diis.destroy
+      err.destroy
+      par.destroy
       K.destroy
       J.destroy
       W.destroy
       U_ao.destroy
       U_old.destroy
+
+   end
+
+   initialize_Us(U,rhs,e_vir,e_occ,tol0) ::: private
+   ! Initialize the U matrices
+      self  :: INOUT
+      U     :: MAT3{REAL}, OUT
+      rhs   :: MAT3{REAL}, IN
+      e_vir :: VEC{REAL}, IN
+      e_occ :: VEC{REAL}, IN
+      tol0  :: REAL, IN
+
+      arch :: ARCHIVE
+      n :: INT
+
+      if (.scfdata.initial_Us=="restricted") then
+
+         ! Read or calculate initial approximation for U
+         stdout.flush
+         stdout.text("As requested from scfdata, reading U's from disk ...")
+         arch.set(.name,"U_electric_dipole",genre="restricted")
+         arch.read(U)
+
+      else
+
+         ! Set SOS initial guess
+         U = ZERO
+         do n = 1,U.dim3
+            U(:,:,n).plus_difference_divisor_with(rhs(:,:,n),e_vir,e_occ,tol0)
+         end
+
+      end
 
    end
 
@@ -1689,6 +1710,7 @@ contains
    make_A_times_U(AU,U)
    ! Make the full A times U matrix in the MO basis
       AU,U :: MAT3{REAL}*
+
    ENSURE(.scfdata.created,"no scf data")
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,"no atom info")
@@ -1697,12 +1719,16 @@ contains
    ENSURE(AU.dim1==.n_bf,"wrong size, AU")
    ENSURE(AU.dim2==.n_bf,"wrong size, AU")
    ENSURE(U.dim3==AU.dim3,"incompatible sizes, U and AU")
+
       MO,U_ao,J,K :: MAT{REAL}*
       n :: INT
+
       MO => .molecular_orbitals.restricted
+
       U_ao.create(.n_bf,.n_bf)
       J.create(.n_bf,.n_bf)
       K.create(.n_bf,.n_bf)
+
       do n = 1,U.dim3
          U(:,:,n).back_transform_to(U_ao,MO(:,.n_a+1:),MO(:,:.n_a))
          U_ao.symmetrize              ! U -> AO basis
@@ -1710,9 +1736,11 @@ contains
          AU(:,:,n) = FOUR*J - TWO*K
          AU(:,:,n).change_basis_using(MO)
       end
+
       K.destroy
       J.destroy
       U_ao.destroy
+
    end
 
    add_A_times_U(AU,U) ::: private
