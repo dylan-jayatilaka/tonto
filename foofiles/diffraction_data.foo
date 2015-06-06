@@ -212,6 +212,9 @@ contains
       .F_sigma_cutoff         = DIFFRACTION_DATA_F_SIGMA_CUTOFF
       .I_sigma_cutoff         = DIFFRACTION_DATA_I_SIGMA_CUTOFF
       .F_z_cutoff             = -ONE
+      .I_z_cutoff             = -ONE
+      .F_pred_cutoff          = -ONE
+      .I_pred_cutoff          = -ONE
       .stl_high_cutoff        = -ONE
       .stl_low_cutoff         = -ONE
       .show_rejects           = TRUE
@@ -493,9 +496,11 @@ contains
 
          case ("exp_scale_factor=             "); .read_exp_scale_factor
 
+         case ("f_pred_cutoff=                "); .read_F_pred_cutoff
          case ("f_sigma_cutoff=               "); .read_F_sigma_cutoff
          case ("f_z_cutoff=                   "); .read_F_z_cutoff
 
+         case ("i_pred_cutoff=                "); .read_I_pred_cutoff
          case ("i_sigma_cutoff=               "); .read_I_sigma_cutoff
          case ("i_z_cutoff=                   "); .read_I_z_cutoff
 
@@ -525,6 +530,7 @@ contains
        ! case ("prune_negative_f_exp          "); .prune_negative_F_exp
        ! case ("prune_negative_i_exp          "); .prune_negative_I_exp
          case ("prune_weak_reflections        "); .prune_weak_reflections
+         case ("prune_zero_f_preds            "); .prune_zero_F_preds
          case ("put                           "); .put
          case ("put_debug_list                "); .put_debug_list
          case ("put_sin_theta_on_lambda       "); .put_sin_theta_on_lambda
@@ -635,6 +641,24 @@ contains
       stdin.read(.I_z_cutoff)
 
       ENSURE(.I_z_cutoff>=ZERO,"must be positive")
+
+   end
+
+   read_F_pred_cutoff ::: private
+   ! Read the F_pred_cutoff for prune_F_preds
+
+      stdin.read(.F_pred_cutoff)
+
+      ENSURE(.F_pred_cutoff>=ZERO,"must be positive")
+
+   end
+
+   read_I_pred_cutoff ::: private
+   ! Read the I_pred_cutoff for prune_I_preds
+
+      stdin.read(.I_pred_cutoff)
+
+      ENSURE(.I_pred_cutoff>=ZERO,"must be positive")
 
    end
 
@@ -959,24 +983,26 @@ contains
    ! Read information from a Crystallographic Information File "cif".
       cif :: CIF, IN
 
-      there :: VEC{BIN}(5)
+      there :: VEC{BIN}(6)
       h,k,l :: VEC{INT}*
-      Fm,Sg :: VEC{REAL}*
+      Fp,Fm,Sg :: VEC{REAL}*
 
       ! Find reflections
       cif.find_looped_item("_diffrn_refln_index_h",there(1))
       cif.find_looped_item("_diffrn_refln_index_k",there(2))
       cif.find_looped_item("_diffrn_refln_index_l",there(3))
-      cif.find_looped_item("_diffrn_refln_F_meas" ,there(4))
-      cif.find_looped_item("_diffrn_refln_F_sigma",there(5))
+      cif.find_looped_item("_diffrn_refln_F_calc" ,there(4))
+      cif.find_looped_item("_diffrn_refln_F_meas" ,there(5))
+      cif.find_looped_item("_diffrn_refln_F_sigma",there(6))
 
       ! Read reflections
       if (all(there)) then
 
          ! Read
          cif.read_looped_item("_diffrn_refln_index_h",h)
-         cif.read_looped_item("_diffrn_refln_index_h",k)
-         cif.read_looped_item("_diffrn_refln_index_h",l)
+         cif.read_looped_item("_diffrn_refln_index_k",k)
+         cif.read_looped_item("_diffrn_refln_index_l",l)
+         cif.read_looped_item("_diffrn_refln_F_calc" ,Fp)
          cif.read_looped_item("_diffrn_refln_F_meas" ,Fm)
          cif.read_looped_item("_diffrn_refln_F_sigma",Sg)
 
@@ -985,12 +1011,17 @@ contains
          .reflections.set_h(h)
          .reflections.set_k(k)
          .reflections.set_l(l)
+         .reflections.set_F_pred(Fp)
          .reflections.set_F_exp(Fm)
          .reflections.set_F_sigma(Sg)
 
          ! Clean
-         Sg.destroy; Fm.destroy
-         l.destroy; k.destroy; h.destroy
+         Sg.destroy
+         Fm.destroy
+         Fp.destroy
+         l.destroy
+         k.destroy
+         h.destroy
 
       end
 
@@ -1178,6 +1209,11 @@ contains
          .prune_bad_F_reflections
       end
 
+      if (.F_pred_cutoff  >ZERO) then
+         DIE_IF(NOT .reflections.have_F_exp,"no experimental data for pruning")
+         .prune_zero_F_preds
+      end
+
       if (.I_sigma_cutoff >ZERO) then
          DIE_IF(NOT .reflections.have_I_exp,"no experimental data for pruning")
          .prune_weak_Is
@@ -1233,11 +1269,6 @@ contains
          end
       end
 
-      ! Copy the non-rejects
-      old_reflections => .reflections
-      .reflections.create(g)
-      .reflections.copy(old_reflections(good))
-
       ! Print out
       stdout.flush
       title = "Reflections pruned"
@@ -1268,10 +1299,10 @@ contains
 
          ! Get data
          n_refl = bad.dim
-         h1.create(n_refl);       h1      = old_reflections(bad).h
-         h2.create(n_refl);       h2      = old_reflections(bad).k
-         h3.create(n_refl);       h3      = old_reflections(bad).l
-         val.create(n_refl);      val     = REFLECTION:SHOW?(old_reflections(bad))
+         h1.create(n_refl);       h1  = .reflections(bad(:)).h
+         h2.create(n_refl);       h2  = .reflections(bad(:)).k
+         h3.create(n_refl);       h3  = .reflections(bad(:)).l
+         val.create(n_refl);      val = REFLECTION:SHOW?(.reflections(bad(:)))
 
          ! Table
          table.create(4)
@@ -1291,6 +1322,12 @@ contains
 
       end
 
+      ! Copy the non-rejects
+      old_reflections => .reflections
+      .reflections.create(g)
+      .reflections.copy(old_reflections(good))
+      !!!!!!!!!!!!!!!!!!!!!!
+
       ! Clean
       old_reflections.destroy
       bad.destroy
@@ -1298,12 +1335,12 @@ contains
 
    end
 
-   prune_bad_F_reflections ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_large_F_z, CUTOFF?=>.F_z_cutoff, SHOW?=>F_z), leaky
+   prune_bad_F_reflections ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_large_abs_F_z, CUTOFF?=>.F_z_cutoff, SHOW?=>abs_F_z), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   prune_bad_I_reflections ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_large_I_z, CUTOFF?=>.I_z_cutoff, SHOW?=>I_z), leaky
+   prune_bad_I_reflections ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_large_abs_I_z, CUTOFF?=>.I_z_cutoff, SHOW?=>abs_I_z), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
@@ -1344,6 +1381,16 @@ contains
    end
 
    prune_weak_Is ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_weak_I_exp, CUTOFF?=>.I_sigma_cutoff, SHOW?=>I_exp_on_sigma), leaky
+   ! This routine eliminates all the reflections with respect to a
+   ! rejection test on the reflections
+   end
+
+   prune_zero_F_preds ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_zero_F_pred, CUTOFF?=>.F_pred_cutoff, SHOW?=>F_pred), leaky
+   ! This routine eliminates all the reflections with respect to a
+   ! rejection test on the reflections
+   end
+
+   prune_zero_I_preds ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_zero_I_pred, CUTOFF?=>.I_pred_cutoff, SHOW?=>I_pred), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
@@ -3886,9 +3933,15 @@ contains
 
    ENSURE(.reflections.created,"no reflections")
 
+      n_refl :: INT
+
       if (.have_F_pred) then
       if (.have_F_exp) then
-         .put_20_worst_reflections
+         n_refl = .reflections.dim
+         if      (n_refl>1000) then; .put_N_worst_reflections(n=40)
+         else if (n_refl>100)  then; .put_N_worst_reflections(n=20)
+         else if (n_refl>50)   then; .put_N_worst_reflections(n=10)
+         end
       end
       end
 
@@ -3896,20 +3949,23 @@ contains
 
    end
 
-   put_20_worst_reflections
-   ! Show the 20 worst reflections
+   put_N_worst_reflections(n)
+   ! Show the "n" worst reflections, with "n" even
       self :: IN
+      n :: INT
 
    ENSURE(.reflections.created,"No reflection data")
    ENSURE(.reflections.have_F_exp,"No experimental data")
+   ENSURE(n.is_even,"no. of reflections n is not even")
 
       F_z :: VEC{REAL}*
       ind :: VEC{INT}*
-      n_refl :: INT
+      n_refl,n2 :: INT
 
       ! No. of old reflections
       n_refl = .reflections.n_refl
-      if (n_refl<20) return
+      if (n_refl<n) return
+      n2 = n/2
 
       ! Get the F_z values
       F_z.create(n_refl)
@@ -3925,14 +3981,14 @@ contains
       stdout.text("Worst reflections")
       stdout.text("=================")
       stdout.flush
-      stdout.text(". Below are the 20 worst reflections from the fit")
-      stdout.text(". The criteria is the F_z value in sigma units")
+      stdout.text(". Below are the "//trim(n.to_str)//" worst-fitted reflections")
+      stdout.text(". The criteria is F_z = (F_calc-F_pred)/sigma, in sigma units")
       stdout.text(". The full list of reflections follows")
       stdout.flush
 
-      ! Put wors from either end
-      ind(11:20) = ind(n_refl-19:)
-      .reflections(ind(1:20)).put
+      ! Put worst from either end
+      ind(n2+1:n) = ind(n_refl-n2+1:)
+      .reflections(ind(1:n)).put
 
       ! Clean
       ind.destroy
