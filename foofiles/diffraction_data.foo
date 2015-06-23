@@ -227,10 +227,10 @@ contains
       .use_Voronoi_atoms      = FALSE
 
       ! Experimental corrections
-      .optimise_scale         = DIFFRACTION_DATA_OPTIMISE_SCALE
+      .optimize_scale         = DIFFRACTION_DATA_OPTIMIZE_SCALE
       .scale_factor           = DIFFRACTION_DATA_SCALE_FACTOR
       .exp_scale_factor       = DIFFRACTION_DATA_EXP_SCALE_FACTOR
-      .optimise_extinction    = DIFFRACTION_DATA_OPTIMISE_EXTINCTION
+      .optimize_extinction    = DIFFRACTION_DATA_OPTIMIZE_EXTINCTION
       .extinction_factor      = DIFFRACTION_DATA_EXTINCTION_FACTOR
       .correct_dispersion     = DIFFRACTION_DATA_CORRECT_DISPERSION
 
@@ -277,8 +277,9 @@ contains
 
    end
 
-   set_fit_data
+   set_fit_data ::: pure
    ! Set the defaults internal variables for a fit
+      self :: INOUT
 
       ! Refinement/fit iteration data
       .fit_iteration           = 0
@@ -298,8 +299,9 @@ contains
 
    end
 
-   set_refinement_data
+   set_refinement_data ::: pure
    ! Set the defaults internal variables for a refinement
+      self :: INOUT
 
       ! Refinement/fit iteration data
       .ref_iteration           = 0
@@ -314,27 +316,28 @@ contains
 
    end
 
-   update(unit_cell,spacegroup)
+   update(unit_cell,spacegroup) ::: PURE
    ! Update the crystal information after setting values. If the
    ! "unit_cell" is provided, then that is used to define the reflection
    ! .theta values.
-      unit_cell :: UNIT_CELL, optional
-      spacegroup :: SPACEGROUP, optional
+      self :: INOUT
+      unit_cell :: UNIT_CELL, IN, optional
+      spacegroup :: SPACEGROUP, IN, optional
 
       if (.reflections.destroyed) return
 
       if (.reflections.have_F_exp) then
          .reflections.scale_F_exp(.exp_scale_factor)
       else
-         .optimise_scale = FALSE
-         .optimise_extinction = FALSE
+         .optimize_scale = FALSE
+         .optimize_extinction = FALSE
       end
 
       if (.reflections.have_F_sigma) then
          .reflections.scale_F_sigma(.exp_scale_factor)
       else
-         .optimise_scale = FALSE
-         .optimise_extinction = FALSE
+         .optimize_scale = FALSE
+         .optimize_extinction = FALSE
       end
 
       .exp_scale_factor = ONE
@@ -345,11 +348,69 @@ contains
 
    end
 
-   set_equivalence_factors(spacegroup)
+   set_data_kind(val)
+   ! Read the data kind of crystal experiment
+      self :: INOUT
+      val :: STR, IN
+
+      .data_kind = val
+
+      .data_kind.to_lower_case
+
+      select case (.data_kind)
+         case("x-ray")
+         case("pnd  ")
+         case default; UNKNOWN(.data_kind)
+      end
+
+   end
+
+   set_thermal_smearing_model(val)
+   ! Read the thermal smearing model to use to correct for thermal vibration
+   ! in the calculated structure factors
+      self :: INOUT
+      val :: STR, IN
+
+      .thermal_smearing_model = val
+      .thermal_smearing_model.to_lower_case
+
+      select case (.thermal_smearing_model)
+         case("         ")
+         case("none     ")
+         case("coppens  ")
+         case("hirshfeld")
+         case("stewart  ")
+         case("tanaka   ")
+         case default;    UNKNOWN(.thermal_smearing_model)
+      end
+
+   end
+
+   set_optimize_extinction(val) ::: pure
+   ! Set whether to correct extinction or not according to the Larson formula
+      self :: INOUT
+      val :: BIN, IN
+
+      .optimize_extinction = val
+
+   end
+
+   set_wavelength(val)
+   ! Read the experimental wavelength
+      self :: INOUT
+      val :: REAL, IN
+
+      .wavelength = val
+      REFLECTION:set_wavelength(val)
+
+   end
+
+   set_equivalence_factors(spacegroup) ::: PURE
    ! Set the equivalence factors, the number of distinct reflections
    ! which are symmetry equivalent to a particular (hkl) triple, for all
    ! the reflections.
-      spacegroup :: SPACEGROUP
+      self :: INOUT
+      spacegroup :: SPACEGROUP, IN
 
    ENSURE(.reflections.created,"no reflection data")
 
@@ -374,10 +435,11 @@ contains
 
    end
 
-   set_theta_angles(reciprocal_matrix)
+   set_theta_angles(reciprocal_matrix) ::: pure
    ! This routine is called after the reflections are read in, in order to set
    ! all the .theta values, which are used later all over the place ...
-      reciprocal_matrix :: MAT{REAL}(3,3)
+      self :: INOUT
+      reciprocal_matrix :: MAT{REAL}(3,3), IN
 
       hkl :: VEC{INT}(3)
       kx,ky,kz,sin_theta :: REAL
@@ -398,9 +460,10 @@ contains
 
    end
 
-   set_refine_structure(val)
+   set_refine_structure(val) ::: pure
    ! Set whether to refine the structure
-      val :: BIN
+      self :: INOUT
+      val :: BIN, IN
 
       .refine_structure = val
 
@@ -409,14 +472,45 @@ contains
 
    end
 
-   set_fit_structure(val)
+   set_refine_H_ADPs(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.refine_H_ADPs), pure
+   ! Generic set
+   end
+
+   set_refine_H_U_iso(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.refine_H_U_iso), pure
+   ! Generic set
+   end
+
+   set_fit_structure(val) ::: pure
    ! Set whether to rigid-fit the structure
-      val :: BIN
+      self :: INOUT
+      val :: BIN, IN
 
       .fit_structure = val
 
       ! If fitting, you can't be refining
       if (NOT val) .refine_structure = NOT val
+
+   end
+
+   set_F_sigma_cutoff(val) ::: PURE
+   ! Set the minimum acceptable value for F_exp/sigma
+      self :: INOUT
+      val :: REAL, IN
+
+   ENSURE(val>ZERO,"cutoff must be positive")
+
+      .F_sigma_cutoff = val
+
+   end
+
+   set_F_z_cutoff(val) ::: PURE
+   ! Set the F_z_cutoff (in sigma units) for prune_bad_reflections
+      self :: INOUT
+      val :: REAL, IN
+
+   ENSURE(val>ZERO,"cutoff must be positive")
+
+      .F_z_cutoff = val
 
    end
 
@@ -516,12 +610,12 @@ contains
          case ("nka_t_sequence_no=            "); .read_NKA_T_seq_no
          case ("n_param=                      "); .read_n_param
 
-         case ("optimise_extinction=          "); .read_optimise_extinction
-         case ("optimize_extinction=          "); .read_optimise_extinction
-         case ("optimise_scale_factor=        "); .read_optimise_scale
-         case ("optimize_scale_factor=        "); .read_optimise_scale
-         case ("optimise_scale_factors=       "); .read_optimise_scale
-         case ("optimize_scale_factors=       "); .read_optimise_scale
+         case ("optimise_extinction=          "); .read_optimize_extinction
+         case ("optimize_extinction=          "); .read_optimize_extinction
+         case ("optimise_scale_factor=        "); .read_optimize_scale
+         case ("optimize_scale_factor=        "); .read_optimize_scale
+         case ("optimise_scale_factors=       "); .read_optimize_scale
+         case ("optimize_scale_factors=       "); .read_optimize_scale
 
          case ("partition_model=              "); .read_partition_model
          case ("prune_bad_f_reflections       "); .prune_bad_F_reflections
@@ -595,43 +689,46 @@ contains
 
    read_data_kind
    ! Read the data kind of crystal experiment
+      self :: INOUT
 
-      stdin.read(.data_kind)
+      val :: STR
 
-      .data_kind.to_lower_case
+      stdin.read(val)
 
-      select case (.data_kind)
-         case("x-ray")
-         case("pnd  ")
-         case default; UNKNOWN(.data_kind)
-      end
+      .set_data_kind(val)
 
    end
 
    read_F_sigma_cutoff ::: private
    ! Read the maximum acceptable value for F_cutoff
+      self :: INOUT
 
-      stdin.read(.F_sigma_cutoff)
+      val :: REAL
 
-      ENSURE(.F_sigma_cutoff>ZERO,"cutoff must be positive")
+      stdin.read(val)
+
+      .set_F_sigma_cutoff(val)
 
    end
 
-    read_I_sigma_cutoff ::: private
-    ! Read the maximum acceptable value for I_cutoff
+   read_I_sigma_cutoff ::: private
+   ! Read the maximum acceptable value for I_cutoff
 
-       stdin.read(.I_sigma_cutoff)
+      stdin.read(.I_sigma_cutoff)
 
-       ENSURE(.I_sigma_cutoff>ZERO,"cutoff must be positive")
+      ENSURE(.I_sigma_cutoff>ZERO,"cutoff must be positive")
 
-    end
+   end
 
    read_F_z_cutoff ::: private
    ! Read the F_z cutoff for prune_bad_reflections
+      self :: INOUT
 
-      stdin.read(.F_z_cutoff)
+      val :: REAL
 
-      ENSURE(.F_z_cutoff>=ZERO,"must be positive")
+      stdin.read(val)
+
+      .set_F_z_cutoff(val)
 
    end
 
@@ -697,16 +794,22 @@ contains
 
    read_wavelength ::: private
    ! Read the experimental wavelength
-      stdin.read_quantity(.wavelength)
-      REFLECTION:set_wavelength(.wavelength)
+      self :: INOUT
+
+      val :: REAL
+
+      stdin.read_quantity(val)
+
+      .set_wavelength(val)
+
    end
 
-   read_optimise_scale ::: private
+   read_optimize_scale ::: private
    ! Read the switch whether to use and overall scale factor to minimise
    ! the chi2 statistic when calculating the structure factors.
    ! NOTE: this is not the same at the overall .scale_factor which is applied
    ! to the experimental structure factors.
-      stdin.read(.optimise_scale)
+      stdin.read(.optimize_scale)
    end
 
    read_SF_mixing_parameter ::: private
@@ -723,10 +826,17 @@ contains
       stdin.read(.synthesize_sigma_I)
    end
 
-   read_optimise_extinction ::: private
+   read_optimize_extinction ::: private
    ! Read the switch whether to correct extinction or not, according to the
    ! Larson formula
-      stdin.read(.optimise_extinction)
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read(val)
+
+      .set_optimize_extinction(val)
+
    end
 
    read_correct_dispersion ::: private
@@ -738,17 +848,14 @@ contains
    read_thermal_smearing_model ::: private
    ! Read the thermal smearing model to use to correct for thermal vibration
    ! in the calculated structure factors
-      stdin.read(.thermal_smearing_model)
-      .thermal_smearing_model.to_lower_case
-      select case (.thermal_smearing_model)
-         case("         ")
-         case("none     ")
-         case("coppens  ")
-         case("hirshfeld")
-         case("stewart  ")
-         case("tanaka   ")
-         case default;    UNKNOWN(.thermal_smearing_model)
-      end
+      self :: INOUT
+
+      val :: STR
+
+      stdin.read(val)
+
+      .set_thermal_smearing_model(val)
+
    end
 
    read_partition_model ::: private
@@ -853,12 +960,26 @@ contains
 
    read_refine_H_ADPs
    ! Read whether to refine only the H atom ADP's
-      stdin.read(.refine_H_ADPs)
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read(val)
+
+      .set_refine_H_ADPs(val)
+
    end
 
    read_refine_H_U_iso
    ! Read whether to refine only the H atom U_iso's
-      stdin.read(.refine_H_U_iso)
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read(val)
+
+      .set_refine_H_U_iso(val)
+
    end
 
    read_refine_positions_only
@@ -1126,7 +1247,7 @@ contains
       stdout.text("_refine_ls_shift/su_max            "//trim(val))
     ! stdout.text("_refine_ls_shift/su_mean            ?")
 
-      if (.optimise_extinction) then
+      if (.optimize_extinction) then
       stdout.text("_refine_ls_extinction_method       Zachariasen")
       else
       stdout.text("_refine_ls_extinction_method       none")
@@ -1566,7 +1687,7 @@ contains
       .update_n_param
 
       ! Get optimum scale factors, extinction, etc.
-      if (.optimise_extinction OR .optimise_scale) .get_F_optimum_parameters
+      if (.optimize_extinction OR .optimize_scale) .get_F_optimum_parameters
 
       ! Make F_predicted
       F_pred.create(.reflections.n_refl)
@@ -1610,7 +1731,7 @@ contains
       .update_n_param
 
       ! Get optimum scale factors, extinction, etc.
-      if (.optimise_extinction OR .optimise_scale) .get_I_optimum_parameters
+      if (.optimize_extinction OR .optimize_scale) .get_I_optimum_parameters
 
       ! Make I_predicted
       I_pred.create(.reflections.n_refl)
@@ -1661,12 +1782,12 @@ contains
          end
 
          ! Add on extra parameters for scale/extinction
-         if (.optimise_extinction) then
+         if (.optimize_extinction) then
 
             DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
             .n_param = .n_param + 2
 
-         else if (.optimise_scale) then
+         else if (.optimize_scale) then
 
             if (.use_multiple_scale_factors) then
                .n_param = .n_param + maxval(.reflections.group)
@@ -1709,15 +1830,15 @@ contains
    ! (To get the corrections cooresponding to these parameters see routine
    ! .extinction_correction)
 
-      if (.optimise_extinction) then
+      if (.optimize_extinction) then
 
          DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
-         .optimise_F_extinction_factor
+         .optimize_F_extinction_factor
 
-      else if (.optimise_scale) then
+      else if (.optimize_scale) then
 
-         if (.use_multiple_scale_factors) then; .optimise_F_scale_factors
-         else;                                  .optimise_F_scale_factor
+         if (.use_multiple_scale_factors) then; .optimize_F_scale_factors
+         else;                                  .optimize_F_scale_factor
          end
 
       end
@@ -1729,15 +1850,15 @@ contains
    ! (To get the corrections cooresponding to these parameters see routine
    ! .extinction_correction)
 
-      if (.optimise_extinction) then
+      if (.optimize_extinction) then
 
          DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
-         .optimise_I_extinction_factor
+         .optimize_I_extinction_factor
 
-      else if (.optimise_scale) then
+      else if (.optimize_scale) then
 
-         if (.use_multiple_scale_factors) then; .optimise_I_scale_factors
-         else;                                  .optimise_I_scale_factor
+         if (.use_multiple_scale_factors) then; .optimize_I_scale_factors
+         else;                                  .optimize_I_scale_factor
          end
 
       end
@@ -1935,7 +2056,7 @@ contains
 
    end
 
-   optimise_F_scale_factor ::: private
+   optimize_F_scale_factor ::: private
    ! Determine the structure factor scale factor to scale the calculated
    ! structure factors .F_calc by in order to minimise the chi2. (But it does
    ! not do any scaling; see .extinction_correction routine for that)
@@ -1974,7 +2095,7 @@ contains
 
    end
 
-   optimise_I_scale_factor ::: private
+   optimize_I_scale_factor ::: private
    ! Determine the structure factor scale factor to scale the calculated
    ! structure factors .F_calc by in order to minimise the chi2. (But it does
    ! not do any scaling; see .extinction_correction routine for that)
@@ -2011,7 +2132,7 @@ contains
 
    end
 
-   optimise_F_scale_factors ::: private, leaky
+   optimize_F_scale_factors ::: private, leaky
    ! Multiple scale factors are determined here ...
    ! Determine the structure factor scale factors to scale the calculated
    ! structure factors .F_calc by in order to minimise the chi2. (But it does
@@ -2051,7 +2172,7 @@ contains
 
    end
 
-   optimise_I_scale_factors ::: private, leaky
+   optimize_I_scale_factors ::: private, leaky
    ! Multiple scale factors are determined here ...
    ! Determine I scale factors to scale the calculated
    ! .I_calc by in order to minimise the chi2I. (But it does
@@ -2089,7 +2210,7 @@ contains
 
    end
 
-   optimise_F_extinction_factor ::: private
+   optimize_F_extinction_factor ::: private
    ! Optimize the .scale_factor and .extinction_factor parameter of Larson's
    ! method.
    ! NOTE: the corrections are not applied to .F_pred; use the routine
@@ -2101,19 +2222,22 @@ contains
       chi2_min :: REAL
 
       ! Get starting scale factor
-      .optimise_F_scale_factor
+      .optimize_F_scale_factor
 
       ! Do a 2-variable minimisation
+      ! p(2) is the .extinction_factor
       p(1) = .scale_factor
-      p(2) = ZERO          ! This is the .extinction_factor
+      p(2) = ZERO          
+
       saved_self => self
-      VEC{REAL}:minimise_BFGS(::chi2,::d_chi2,p,chi2_min,tol=TOL(7),gtol=TOL(7),step=TOL(4))
+      VEC{REAL}:minimiZe_BFGS(::chi2,::d_chi2,p,chi2_min,tol=TOL(7),gtol=TOL(7),step=TOL(4))
+
       .scale_factor      = p(1)
       .extinction_factor = p(2)
 
    end
 
-   optimise_I_extinction_factor ::: private
+   optimize_I_extinction_factor ::: private
    ! Optimize the .scale_factor and .extinction_factor parameter of Larson's
    ! method.
    ! NOTE: the corrections are not applied to .F_pred; use the routine
@@ -2125,13 +2249,16 @@ contains
       chi2_min :: REAL
 
       ! Get starting scale factor
-      .optimise_I_scale_factor
+      .optimize_I_scale_factor
 
       ! Do a 2-variable minimisation
+      ! p(2) is the .extinction_factor
       p(1) = .scale_factor
-      p(2) = ZERO          ! This is the .extinction_factor
+      p(2) = ZERO
+
       saved_self => self
-      VEC{REAL}:minimise_BFGS(::chi2I,::d_chi2I,p,chi2_min,tol=TOL(7),gtol=TOL(7),step=TOL(6))
+      VEC{REAL}:minimize_BFGS(::chi2I,::d_chi2I,p,chi2_min,tol=TOL(7),gtol=TOL(7),step=TOL(6))
+
       .scale_factor = p(1)
       .extinction_factor = p(2)
 
@@ -2855,8 +2982,8 @@ contains
       ! Make derivatives of F_pred
       .d_F_pred_dX(dF,sig,del,dFdX)
 
-      ! Checked using FD, setting optimise extinction
-      ! and optimise scale OFF
+      ! Checked using FD, setting optimize extinction
+      ! and optimize scale OFF
       if (.debugging("solve_normal_equations")) then
       stdout.text("dF:")
       stdout.put(dF)
@@ -2975,7 +3102,7 @@ contains
       ! Make derivatives of I_pred
       .d_I_pred_dX(dI,sig,del,dIdX)
 
-      ! Checked using FD, setting optimise extinction
+      ! Checked using FD, setting optimize extinction
       ! and optimise scale OFF
       if (.debugging("solve_normal_equations")) then
       stdout.text("dI:")
@@ -3629,9 +3756,9 @@ contains
       end
 
       stdout.flush
-      stdout.show("Refine scale factor         =",.optimise_scale)
+      stdout.show("Refine scale factor         =",.optimize_scale)
       stdout.show("Refine multiple scales      =",.use_multiple_scale_factors)
-      stdout.show("Refine extinction parameter =",.optimise_extinction)
+      stdout.show("Refine extinction parameter =",.optimize_extinction)
 
       stdout.flush
       stdout.show("Max allowed parameter shift =",.max_allowed_param_shift)
@@ -3846,11 +3973,11 @@ contains
       stdout.show("Goodness of fit (N_p)          =", sqrt(.chi2))
       stdout.show("Effective (mean) sigma^2       =",.reflections.sigma2_eff)
 
-      if (.optimise_extinction) then;
+      if (.optimize_extinction) then;
       stdout.show("Secondary extinction factor    =", .extinction_factor)
       end
 
-      if (.optimise_scale) then
+      if (.optimize_scale) then
       if (.use_multiple_scale_factors) then
       stdout.show("Scale factors                  =", .scale_factors)
       else
@@ -3881,20 +4008,20 @@ contains
    ! Output the correction data
 
       stdout.flush
-      stdout.show("Using scale factor(s)          =", .optimise_scale)
-      stdout.show("Using extinction               =", .optimise_extinction)
+      stdout.show("Using scale factor(s)          =", .optimize_scale)
+      stdout.show("Using extinction               =", .optimize_extinction)
       stdout.show("Thermal smearing model         =", .thermal_smearing_model)
       stdout.show("Fragment partition model       =", .partition_model)
       stdout.show("Correct dispersion?            =", .correct_dispersion)
 
-      if (.optimise_extinction) then;
+      if (.optimize_extinction) then;
       stdout.show("Optimize extinction            =", TRUE)
       stdout.show("Secondary extinction factor    =", .extinction_factor)
       else
       stdout.show("Optimize extinction            =", FALSE)
       end
 
-      if (.optimise_scale) then
+      if (.optimize_scale) then
 
         if (.use_multiple_scale_factors) then
       stdout.show("Using multiple scale factors   =", TRUE)
@@ -4459,7 +4586,7 @@ contains
       ext_refs.set_F_sigma(.reflections.F_sigma)
       ext.destroy
 
-      if (NOT .optimise_extinction) return
+      if (NOT .optimize_extinction) return
 
       stdout.text("The effects of extinction.")
 

@@ -1,0 +1,395 @@
+! Copyright (C) Dylan Jayatilaka, 2015
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+
+program run_HAR
+
+   implicit none
+
+   m :: MOLECULE*
+   command_line :: COMMAND_LINE
+   option,value :: STR
+   spinorbitals :: STR
+   mess,etime,ctime :: STR
+   basis,basdir,gracc,cif,guess,job,out,err,scf :: STR
+   dtol,fos,fzcut,ldtol,radius,wavelength :: REAL
+   aniso :: VEC{STR}*
+   i, charge,mult :: INT
+   extinct,h_ADPs,h_iso,h_pos :: BIN
+
+   ! Macro to create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Set stdout & stderr to screen
+   stdout.create_stdout
+   stderr => stdout 
+
+   ! Default option values
+   basis      = "def2-SVP"
+   basdir     = "./basis_sets"
+   charge     = 0
+   cif        = "urea.cif"
+   dtol       = TOL(4)
+   err        = " "
+   extinct    = FALSE
+   fos        = THREE
+   fzcut      = -ONE
+   gracc      = "low"
+   guess      = "mos"
+   h_ADPs     = TRUE
+   h_iso      = FALSE
+   job        = " "
+   ldtol      = TOL(5)
+   mult       = 0
+   out        = " "
+   radius     = EIGHT*BOHR_PER_ANGSTROM 
+   scf        = "rks"
+   wavelength = -ONE
+
+   ! Get command line
+   command_line.set_defaults
+   command_line.process_options
+   
+   if (NOT command_line.has_option("help")) then
+
+      ! First get the <cif-file>
+      if  (NOT command_line.has_arguments) then
+         stdout.text("Supply a cif file as an argument!")
+         stdout.text("type 'run_har.exe -help' for additional help.")
+         stop
+      else if (command_line.n_args/=1) then
+         stdout.text("Supply one cif file as an argument!")
+         stdout.text("type 'run_har.exe -help' for additional help.")
+         stop
+      else
+         cif = command_line.arg(1)
+         if (cif.filename_tail/="cif") then
+         stdout.text("Supply a cif file with a '.cif' extension as an argument!")
+         stdout.text("type 'run_har.exe -help' for additional help.")
+         stop
+         end
+      end
+      
+      ! Get the <job>
+      if (command_line.has_option("job")) then
+         job = command_line.value_for_option("job")
+      end
+     
+      ! Preprocess main arguments
+      if (job==" ") job = trim(cif.filename_head)
+      if (out==" ") out = trim(job)//".out"
+      if (err==" ") err = trim(job)//".err"
+     
+      ! Set stderr properly
+      nullify(stderr)
+      stderr.create_stderr
+      stderr.set_name(err)
+      stderr.open
+
+   end
+
+   ! Analyze command line options
+   do i = 1,command_line.n_options
+
+      ! Get options
+      option = command_line.option(i)
+      value  = command_line.option_value(i)
+
+      ! Analyze options
+      select case (option)
+
+         case ("aniso-atoms   ");  aniso      = value
+         case ("basis         ");  basis      = value
+         case ("basis-dir     ");  basdir     = value
+         case ("charge        ");  charge     = value.to_int
+         case ("cluster-radius");  radius     = value.to_real
+         case ("dtol          ");  dtol       = value.to_real
+         case ("extinction    ");  extinct    = value.to_bin
+         case ("fos           ");  fos        = value.to_real
+         case ("fzcut         ");  fzcut      = value.to_real
+         case ("grid-accuracy ");  gracc      = value
+         case ("h-adps        ");  h_ADPs     = value.to_bin
+         case ("h-iso         ");  h_iso      = value.to_bin
+         case ("h-pos         ");  h_pos      = value.to_bin
+         case ("job           ") ! already dealt with above
+         case ("ldtol         ");  ldtol      = value.to_real
+         case ("mult          ");  mult       = value.to_int
+         case ("scf           ");  scf        = value
+         case ("scf-guess     ");  guess      = value
+         case ("wavelength    ");  wavelength = value.to_real
+              
+         case ("help")
+            stdout.flush
+            stdout.text("SYNOPSIS")
+            stdout.flush
+            stdout.text("    run_har.exe [options] <cif-file>")
+            stdout.flush     
+            stdout.text("    Run a Hirshfeld-atom refinement (HAR) on a molecular fragment of the crystal")
+            stdout.text("    whose coordinates, ADPs, and *F* structure factors are in the <cif-file>.")
+            stdout.text("    The electron density of the molecular fragment is calculated from a gaussian")
+            stdout.text("    <basis> single determinant SCF <wavefunction> in a field of atom-centered charges")
+            stdout.text("    and dipoles which are themselves got (self-consistently) from the fragment, and")
+            stdout.text("    which are placed on molecules surrounding the fragment out to a desired <radius>.")
+            stdout.flush
+            stdout.flush
+            stdout.text("OPTIONS")
+            stdout.flush    
+            stdout.text("   -aniso-atoms '{ <atom-label-list> }'")
+            stdout.flush    
+            stdout.text("       Refine the listed atoms anisotropically using a 4th or Gram-Charlier expansion.")
+            stdout.text("       The <atom-label-list> must correspond to the *unique* labels in the <cif-file>")
+            stdout.text("       and must be surrounded by curly braces e.g. '{ S1 Cl }'")
+            stdout.flush
+            stdout.text("   -basis <basis>")
+            stdout.flush    
+            stdout.text("       The gaussian atomic <basis> set to use. A file with the bases, also called")
+            stdout.text("       <basis>, must reside in the <basis-dir> folder (see -basis-dir option below).")
+            stdout.text("       Default: def2-SVP. Other allowed values for <basis> are:")
+            stdout.flush    
+            stdout.text("       Testing    Adequate      Excellent       Benchmark")
+            stdout.text("       __________________________________________________")
+            stdout.flush                               
+            stdout.text("       STO-3G     def2-SVP      def2-TZVP      def2-TZVPP")
+            stdout.text("                   cc-pVDZ        cc-pVTZ         cc-pVQZ")
+            stdout.text("       __________________________________________________")
+            stdout.flush                               
+            stdout.text("       Additional bases may be added into the <basis-dir> folder from the EMSL")
+            stdout.text("       basis-set library, if required. See example in <basis-dir> for the format.")
+            stdout.flush    
+            stdout.text("   -basis-dir <basis-dir>")
+            stdout.flush    
+            stdout.text("       The location of the <basis-set> library files. See -basis option above.")
+            stdout.text("       Default: './basis_directory'")
+            stdout.flush    
+            stdout.text("   -charge <q>")
+            stdout.flush    
+            stdout.text("       Set the (integer) charge of the molecule in au. Default: 0.")
+            stdout.flush    
+            stdout.text("   -cluster-radius '<radius> angstrom'")
+            stdout.flush    
+            stdout.text("       The electric potential from molecules within <radius> of the fragment in")
+            stdout.text("       by Hirshfeld atomic charges and dipoles. Default: '8 angstrom' ")
+            stdout.flush    
+            stdout.text("   -dtol <dtol>")
+            stdout.flush    
+            stdout.text("       Convergence tolerance <dtol> for the DIIS extrapolation procedure.")
+            stdout.text("       Default: 0.0001")
+            stdout.flush    
+            stdout.text("   -extinction")
+            stdout.flush    
+            stdout.text("       Whether to correct extinction via the Larson formula.")
+            stdout.flush    
+            stdout.text("   -fos <ratio>")
+            stdout.flush    
+            stdout.text("       The ratio of F/sigma below which the reflection is rejected. Default: 3.")
+            stdout.flush    
+            stdout.text("   -fzcut <F_z>")
+            stdout.flush    
+            stdout.text("       If <cif-file> is from a previous HAR and has F_pred values, then remove")
+            stdout.text("       reflections which have a z-score greater than F_z=(F_pred-F_expt)/sigma.")
+            stdout.text("       Default: none (i.e. no reflections are pruned)")
+            stdout.flush    
+            stdout.text("   -grid-accuracy [very_low|low|medium|high|very_high]")
+            stdout.flush    
+            stdout.text("       Accuracy needed for DFT integrations. Default: low")
+            stdout.flush    
+            stdout.text("   -h-adps [t|f]")
+            stdout.flush    
+            stdout.text("       Set whether to refine the H-atom ADPs. Default: t")
+            stdout.flush    
+            stdout.text("   -h-iso [t|f] ")
+            stdout.flush    
+            stdout.text("       Set isotropic H-atom ADPs and then refine isotropically. Default: f")
+            stdout.text("       - If '-h-adps f' is also set, you get isotropic H ADPs without refinement.")
+            stdout.text("       - Using this option will produce poorer X-H bond lengths.")
+            stdout.flush    
+            stdout.text("   -h-pos [t|f]")
+            stdout.flush    
+            stdout.text("       Set whether to refine H atom positions. Default: t")
+            stdout.flush    
+            stdout.text("   -help")
+            stdout.flush    
+            stdout.text("       Print this documentation")
+            stdout.flush    
+            stdout.text("   -job <job>")
+            stdout.flush    
+            stdout.text("       The name of the job, used to name the output file and other intermediates.")
+            stdout.text("       Default: the head part of <cif-file> e.g. 'urea' if <cif-file> is 'urea.cif'.")
+            stdout.text("       The name of the output file will be: <job>.out")
+            stdout.flush    
+            stdout.text("   -ldtol <ldtol>")
+            stdout.flush    
+            stdout.text("       Eliminate linear dependent basis functions i.e. eigenfunctions of the overlap")
+            stdout.text("       matrix, with eigenvalue less that <tol>.  Default: 0.00001.")
+            stdout.flush    
+            stdout.text("   -mult <m>")
+            stdout.flush    
+            stdout.text("       The multiplicity of the <wavefunction> i.e. <m>=2S+1 where S is the total spin.")
+            stdout.text("       Default: 1.")
+            stdout.flush    
+            stdout.text("   -out <output-file>")
+            stdout.flush    
+            stdout.text("   -scf <wavefunction>")
+            stdout.flush    
+            stdout.text("       The scf <wavefunction> to be used. Allowed options:")
+            stdout.flush    
+            stdout.text("       rhf     restricted Hartree-Fock")
+            stdout.text("       rks     restricted Kohn-Sham/BLYP [default]")
+            stdout.text("       uhf     unrestricted Hartree-Fock")
+            stdout.text("       uks     unrestricted Kohn-Sham/BLYP")
+            stdout.text("       gchf    general-complex (relativistic) Hartree-Fock")
+            stdout.flush    
+            stdout.text("   -scf-guess [mos|density]")
+            stdout.flush    
+            stdout.text("       Initial guess for SCF <wavefunction> method.")
+            stdout.flush    
+            stdout.text("   -wavelength <wavelength>")
+            stdout.flush    
+            stdout.text("       The <wavelength> of the X-radiation.  Default: '0.7139 angstrom'.")
+            stdout.text("       Used for e.g. dispersion correction, and defining sin(theta)/lambda.")
+            stdout.flush    
+            stop
+
+         case default
+            stdout.text("type 'run_har.exe -help' for help!")
+            stdout.flush
+            UNKNOWN(option)
+            stop
+
+      end
+
+   end
+
+   ! Clean
+   command_line.destroy_ptr_part
+
+   ! Post-processing
+   DIE_IF(NOT   scf.is_one_of(["rhf ","rks ","uhf ","uks ","gchf"]),"unknown scf: "//trim(scf))
+   DIE_IF(NOT guess.is_one_of(["mos    ","density"]),"unknown initial guess: "//trim(guess))
+   DIE_IF(NOT gracc.is_one_of(["very_low ","low      ","medium   ","high     ","very_high","extreme  "]), "unknown Becke-grid accuracy: "//trim(gracc))
+
+   ! Initialize output file
+   stdout.destroy
+   stdout.create
+   stdout.set_name(out)
+   stdout.open(for="write")
+
+   ! Start timer !!!!!!!
+   std_time.start_timing
+   !!!!!!!!!!!!!!!!!!!!!
+
+   ! Initialize molecule
+   m.BASE:create
+   GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
+   MOLECULE.MAIN:put_banner
+   m.BASE:set_name(job)
+   m.BASE:set_basis_directory(basdir)
+   m.BASE:set_basis_name(basis)
+   m.BASE:set_charge(charge)
+   m.BASE:set_spin_multiplicity(mult)
+
+   ! Read CIF
+   m.cif.create
+   m.cif.set_file_name(cif)
+   m.cif.finalize
+   m.CE:process_CIF
+   m.BASE:set_name(job)
+   DIE_IF(m.crystal.destroyed,          "no crystal information available!")
+   DIE_IF(m.crystal.xray_data.destroyed,"no x-ray F structure factors supplied!")
+
+   ! Isotropic H ADPs?
+   if (h_iso) m.atom.set_isotropic_H_ADP
+
+   ! Set crystal info
+   m.crystal.xray_data.data_kind = "x-ray"
+   m.crystal.xray_data.set_thermal_smearing_model("hirshfeld")
+   m.crystal.xray_data.set_optimize_extinction(extinct)
+   m.crystal.xray_data.set_wavelength(wavelength)
+   if (h_iso) then
+   m.atom.set_isotropic_H_ADP
+   m.crystal.xray_data.set_refine_H_U_iso(TRUE)
+   end
+   m.crystal.xray_data.set_refine_H_ADPs(h_ADPs)
+   m.crystal.xray_data.update(m.crystal.unit_cell)
+   m.crystal.xray_data.set_F_sigma_cutoff(fos)
+   if (fzcut>ZERO) then
+   m.crystal.xray_data.set_F_z_cutoff(fzcut)
+   end
+   m.crystal.xray_data.prune_reflections
+   m.crystal.assign_xray
+
+   !!!!!!!!!!
+   m.BASE:put
+   !!!!!!!!!!
+
+   ! Set Becke grid
+   m.becke_grid.create
+   m.becke_grid.set_atom_info(m.atom)
+   m.becke_grid.set_accuracy(gracc)
+   m.becke_grid.set_grid_data
+
+   ! Initial SCF
+   m.scfdata.create
+   m.scfdata.set_scf_kind("rhf")
+   m.scfdata.set_initial_density("promolecule")
+   m.scfdata.set_convergence(TOL(3))
+   m.scfdata.diis.set_convergence_tolerance(TOL(2))
+   m.scfdata.set_linear_dependence_tol(ldtol)
+   m.scfdata.finalize
+   m.SCF:scf
+
+   ! Cluster SCF
+   spinorbitals = m.scfdata.spinorbital_kind
+   m.scfdata.set_scf_kind(scf)
+   if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
+   else;                   m.scfdata.set_initial_density(spinorbitals)
+   end
+   m.scfdata.set_using_SC_cluster_charges(TRUE)
+   m.scfdata.set_cluster_radius(radius)
+   m.scfdata.set_convergence(TOL(3))
+   m.scfdata.diis.set_convergence_tolerance(dtol)
+   m.scfdata.set_linear_dependence_tol(ldtol)
+   m.scfdata.finalize
+   m.SCF:scf
+
+   ! HAR !!!!!!!!!!!!!!!!!!!!!!
+   m.TAD:refine_Hirshfeld_atoms
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+   ! Job timing
+   stdout.flush
+   mess  = "job "//'"'// trim(m.name) //'"'
+   ctime = std_time.elapsed_time_message(mess)
+   etime = std_time.elapsed_cpu_time_message(mess)
+   stdout.text(etime)
+   stdout.text(ctime)
+
+   ! Clean-up
+   m.MAIN:cleanup
+
+   ! Clean-up files
+   TEXTFILE:destroy(stderr)
+   TEXTFILE:destroy(stdout)
+ ! TEXTFILE:destroy(stdin)
+
+   ! Memory report
+   TONTO_REPORT
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end
