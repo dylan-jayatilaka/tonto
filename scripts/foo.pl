@@ -4215,7 +4215,7 @@ sub fortran_do_routine_scope {
       my $comment;
       ($fortran_out,$comment) = &split_by_comment($fortran_out);
       $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
-      &fortran_change_square_brackets;
+    # &fortran_change_square_brackets;
       $fortran_out = &convert_inherited_type_arg_macros($fortran_out);
       $fortran_out = &module_colon_to_fortran($fortran_out);
       &fortran_change_variable_declarations;
@@ -4520,7 +4520,7 @@ sub fortran_do_routine_body {
    
      $fortran_out = &fortran_convert_create_copy($fortran_out);
      $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
-     &fortran_change_square_brackets;
+   # &fortran_change_square_brackets;
      $fortran_out = &convert_inherited_type_arg_macros($fortran_out);
      $fortran_out = &module_colon_to_fortran($fortran_out);
    
@@ -4579,7 +4579,7 @@ sub fortran_do_program_scope {
 
   $fortran_out = &fortran_convert_create_copy($fortran_out);
   $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
-  &fortran_change_square_brackets;
+# &fortran_change_square_brackets;
   $fortran_out = &module_colon_to_fortran($fortran_out);
 
   ######## lines that contain a dot. ###########
@@ -4742,7 +4742,7 @@ sub fortran_do_module_scope {
 #print "-----> out = $fortran_out";
    &fortran_change_use_statements;
 #print "-----> out = $fortran_out";
-   &fortran_change_square_brackets;
+ # &fortran_change_square_brackets;
    $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
    $fortran_out .= $comment; 
 
@@ -4771,7 +4771,7 @@ sub fortran_do_type_scope {
    else {
       &fortran_add_default_initialisation;
       &fortran_change_variable_declarations;
-      &fortran_change_square_brackets;
+    # &fortran_change_square_brackets;
       # Remove private, readonly attributes in type declarations
       $fortran_out =~ s/,\s*private\s*//;
       $fortran_out =~ s/,\s*readonly\s*//;
