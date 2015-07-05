@@ -485,6 +485,9 @@ contains
    add_dispersion_correction(ft,k_pts)
    ! Adds the dispersion correction to "ft".
    ! WARNING: does not add thermal smearing !!!!
+   ! NOTE: this orutine is wrong - must loop over 
+   !    symm related fragments taking account of
+   !    inversion!!!!!
 
       k_pts :: MAT{REAL}, target
       ft :: VEC{CPX}
@@ -512,7 +515,10 @@ contains
 
         pos = .crystal.unit_cell_geometry(:,n)
         .crystal.unit_cell.change_from_fractional(pos)
-        x = pos(1); y = pos(2); z = pos(3)
+
+        x = pos(1)
+        y = pos(2)
+        z = pos(3)
 
         ft = ft + dc * exp(COMPLEXIFY(ZERO,k1*x+k2*y+k3*z))
 
@@ -623,16 +629,16 @@ contains
 
       ! Add dispersion
       k_pts.create(.crystal.n_refl,3)
-      .crystal.make_k_pts(k_pts)
+      .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
       .::add_dispersion_correction(ft,k_pts)
       k_pts.destroy
 
       ! Reset F_calc
-      .crystal.set_F_calc(ft)
+      .crystal.data.reflections.set_F_calc(ft)
       ft.destroy
 
       ! Reoptimize scale, extinction etc.
-      .crystal.make_F_predicted
+      .crystal.data.make_F_predicted
 
       ! Report
       stdout.text("Dispersion corrected F_exp")
@@ -648,7 +654,8 @@ contains
    ! Fourier transform of a density described by AO density matrix dens
    ! evaluated at a series of reciprocal space points k_pts
    ! Size of res is [size(k_pts,1)]
-      dens :: MAT{REAL}, target
+      self :: IN
+      dens :: MAT{REAL}, IN
       k_pts :: MAT{REAL}, IN
       res :: VEC{CPX}, OUT
 
@@ -657,7 +664,7 @@ contains
 
       k_max,k,fa,fb,la,lb,na,nb,q,atom_a,atom_b :: INT
       ft_ab :: MAT3{CPX}*
-      dens_ba :: MAT{REAL}*
+      dens_ba :: MAT{REAL}@
       cutoff :: REAL
       sh :: SHELL2
 
@@ -678,7 +685,7 @@ contains
          ft_ab.create(k_max,na,nb)
          .::make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
 
-         dens_ba => dens(fa:la,fb:lb)
+         dens_ba = dens(fa:la,fb:lb)
          if (fa/=fb) then ! count off-diagonals twice.
            do k = 1,k_max
               res(k) = res(k) + TWO*sum(ft_ab(k,:,:)*dens_ba(:,:))
@@ -689,6 +696,7 @@ contains
            end
          end
 
+         deallocate(dens_ba)
          ft_ab.destroy
          sh.destroy_ptr_part
 
@@ -1026,7 +1034,8 @@ contains
    make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
    ! Make_ft for one pair of gaussians.
    ! Includes partitioning and thermal smearing.
-      ft_ab :: MAT3{CPX}
+      self :: IN
+      ft_ab :: MAT3{CPX}, OUT
       k_pts :: MAT{REAL}, IN
       sh :: SHELL2, IN
       atom_a,atom_b :: INT, IN
@@ -1132,7 +1141,7 @@ contains
          case (" ","none"); p = ONE
          case ("mulliken"); p = HALF * (fa + fb)
          case ("gaussian"); sh.make_gaussian_partition(p,fa,fb)
-         case default;      DIE("unknown model, "//trim(.crystal.partition_model))
+      !  case default;      DIE("unknown model, "//trim(.crystal.partition_model))
       end
 
    end
@@ -1141,6 +1150,7 @@ contains
    ! Makes the thermal smearing correction term.  Note that res
    ! is done over the contraction coefficients.
    ! Dimensions of "res" are [k_max,.a.n_cc,.b.n_cc].
+      self :: IN
       res :: MAT3{REAL}, OUT
       k_pts :: MAT{REAL}, IN
       a,b :: INT, IN
@@ -1193,8 +1203,8 @@ contains
           Ub = .atom(b).ADP_tensor
           sh.make_tanaka_thermal_smearing(res,k_pts,Ua,Ub)
 
-       case default
-          DIE("unknown model, "//trim(.crystal.thermal_smearing_model))
+     ! case default
+     !    DIE("unknown model, "//trim(.crystal.thermal_smearing_model))
 
       end
 
@@ -1277,7 +1287,7 @@ contains
       arch.open(for="write-only")
 
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
-      .crystal.make_unique_SF_k_pts(k_pts)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       do q = 1,.n_shell_pairs
 
@@ -1288,7 +1298,7 @@ contains
 
          .::make_ft_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
 
-         .crystal.sum_unique_sf_ints(ft_ab,ft_ab_eq)
+         .crystal.spacegroup.sum_unique_sf_ints(ft_ab,ft_ab_eq,.crystal.data.reflections)
 
          arch.Bfile.write(ft_ab)
 
@@ -1360,7 +1370,7 @@ contains
 
       ! Make k points
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
-      .crystal.make_unique_SF_k_pts(k_pts)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! Make density matrix
       .BASE:make_ao_density_matrix
@@ -1393,29 +1403,29 @@ contains
       k_pts.destroy
 
       ! Sum to get F_calc
-      .crystal.sum_unique_sf(Fc,sf_eq)
+      .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
 
       ! Add dispersion
       if (.crystal.correct_dispersion) then
          k_pts.create(.crystal.n_refl,3)
-         .crystal.make_k_pts(k_pts)
+         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
          .XTAL:add_dispersion_correction(Fc,k_pts)
          k_pts.destroy
       end
       sf_eq.destroy
 
       ! Set Fc
-      .crystal.set_F_calc(Fc)
+      .crystal.data.reflections.set_F_calc(Fc)
       Fc.destroy
 
       ! Correct scale factor/extinction etc.
-      .crystal.make_F_predicted
+      .crystal.data.make_F_predicted
 
    end
 
    make_x_structure_factors_h(D)
    ! Make the structure factors from a rhf density matrix "D".
-      D :: MAT{REAL}
+      D :: MAT{REAL}, IN
 
    ENSURE(.crystal.created, "no crystal")
    ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
@@ -1428,7 +1438,7 @@ contains
 
       ! Make unique k points
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
-      .crystal.make_unique_SF_k_pts(k_pts)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! Make the unique structure factors
       sf_eq.create(k_pts.dim1)
@@ -1438,12 +1448,12 @@ contains
       k_pts.destroy
 
       ! Sum up unique SF's to get Fc
-      .crystal.sum_unique_sf(Fc,sf_eq)
+      .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
 
       ! Add dispersion correction
       if (.crystal.correct_dispersion) then
          k_pts.create(.crystal.n_refl,3)
-         .crystal.make_k_pts(k_pts)
+         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
          .::add_dispersion_correction(Fc,k_pts)
          k_pts.destroy
       end
@@ -1452,13 +1462,13 @@ contains
       sf_eq.destroy
 
       ! Set the calculated SF's
-      .crystal.set_F_calc(Fc)
+      .crystal.data.reflections.set_F_calc(Fc)
 
       ! Clean
       Fc.destroy
 
       ! Make predicted structure factors
-      .crystal.make_F_predicted
+      .crystal.data.make_F_predicted
 
       ! Debugging
       if (.BASE:debugging("make_x_structure_factors_h")) then
@@ -1523,7 +1533,7 @@ contains
 
       ! Make unique k points
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
-      .crystal.make_unique_SF_k_pts(k_pts)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! Make S_z density matrix
       .BASE:make_ao_sz_density_matrix
@@ -1537,7 +1547,7 @@ contains
       end
 
       ! Sum the SF's to get Fc
-      .crystal.sum_unique_sf(Fc,sf_eq)
+      .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
 
       ! Destroy the S_z density matrix
       if (complx) then; .density_matrix.destroy("restricted_complex")
@@ -1548,8 +1558,8 @@ contains
       k_pts.destroy
 
       ! Make F predicted
-      .crystal.set_F_calc(Fc)
-      .crystal.make_F_predicted
+      .crystal.data.reflections.set_F_calc(Fc)
+      .crystal.data.make_F_predicted
 
       Fc.destroy
 
@@ -1559,9 +1569,8 @@ contains
 !  Hirshfeld structure factors
 !  ===========================
 
-   make_H_structure_factors_h(output) ::: leaky
+   make_H_structure_factors_h ::: leaky
    ! Make the H structure factors efficiently
-      output :: BIN, optional
 
    DIE_IF(NOT .BASE:has_Hirshfeld_inputs,"no becke_grid or ANOs! Use make_Hirshfeld_inputs")
    ENSURE(.density_matrix.created,"no density matrix")
@@ -1584,23 +1593,23 @@ contains
       cutoff,rf, kr, Dab, fac, n_e,val, tf2,tf3,tf4 :: REAL
       n_refl,n_k,n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
       sa,fa,la,na, sb,fb,lb,nb, as, a,b,i,j,k,n,p :: INT
-      D_destroyed,out :: BIN
+      D_destroyed :: BIN
       atom_c :: ATOM*
 
       ! Number of reflections
-      n_refl = .crystal.n_refl
+      n_refl = .crystal.data.reflections.dim
 
       ! Calculated complex structure factors
       Fc.create(n_refl)
 
       ! Symmetry generated K points and SF's
-      n_k = .crystal.n_unique_SF_k_pts
+      n_k = .crystal.data.reflections.n_unique_SF_k_pts(.crystal.spacegroup)
       sf_eq.create(n_k)
       k_pts.create(n_k,3)
 
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
-      .crystal.make_unique_SF_k_pts(k_pts)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
       k1 => k_pts(:,1)
       k2 => k_pts(:,2)
       k3 => k_pts(:,3)
@@ -1610,7 +1619,6 @@ contains
       .BASE:make_ao_density_matrix
 
       D => .density_matrix.restricted
-      .BASE:put_debug(D,"make_H_structure_factors_h: D")
 
       ! Basis function cutoff
       cutoff = .becke_grid.basis_function_cutoff
@@ -1910,49 +1918,35 @@ contains
       if (D_destroyed) .density_matrix.destroy("restricted")
       k_pts.destroy
 
-      ! Check integration accuracy
-      out = FALSE
-      if (present(output)) out = output
-      if (out) then
-      stdout.flush
-      stdout.text("==================================")
-      stdout.text("Making Hirshfeld structure factors")
-      stdout.text("==================================")
-      stdout.flush
-      stdout.show("Check: no. of electrons      =",n_e)
-      end
-
       ! Parallel
       if (DO_IN_PARALLEL) then
          PARALLEL_SUM(sf_eq)
       end
 
       ! Sum the symmetry equivalent SF's
-      .crystal.sum_unique_sf(Fc,sf_eq)
+      .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
       sf_eq.destroy
 
       ! Dispersion correction
       if (.crystal.correct_dispersion) then
-        k_pts.create(.crystal.n_refl,3)
-        .crystal.make_k_pts(k_pts)
-        .XTAL:add_dispersion_correction(Fc,k_pts)
-        k_pts.destroy
+         k_pts.create(.crystal.n_refl,3)
+         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
+         .XTAL:add_dispersion_correction(Fc,k_pts)
+         k_pts.destroy
       end
 
       ! Set the calculated SF's
-      .crystal.set_F_calc(Fc)
+      .crystal.data.reflections.set_F_calc(Fc)
       Fc.destroy
 
       ! Make chi2
-      .crystal.set_XCW(TRUE)
-      .crystal.make_F_predicted
-      if (out) .crystal.put_F_statistics
+      .crystal.data.set_XCW(TRUE)
+      .crystal.data.make_F_predicted
 
    end
 
-   make_H_Sz_structure_factors(output) ::: leaky
+   make_H_Sz_structure_factors ::: leaky
    ! Make the H Sz structure factors efficiently
-      output :: BIN, optional
 
    ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid or ANOs! Use make_Hirshfeld_inputs")
    ENSURE(.density_matrix.created,"no density matrix")
@@ -1972,7 +1966,6 @@ contains
       cutoff,rf, k1k,k2k,k3k,kr, Dab, fac, n_e,val :: REAL
       n_refl,n_k,n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
       sa,fa,la,na, sb,fb,lb,nb, as, a,b,i,j,k,n,p :: INT
-      out :: BIN
 
       ! Number of reflections
       n_refl = .crystal.n_refl
@@ -1981,14 +1974,14 @@ contains
       Fc.create(n_refl)
 
       ! Symmetry generated K points and SF's
-      n_k = .crystal.n_unique_SF_k_pts
+      n_k = .crystal.data.reflections.n_unique_SF_k_pts(.crystal.spacegroup)
       sf_eq.create(n_k)
       k_pts.create(n_k,3)
       kU.create(n_k,3)
 
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
-      .crystal.make_unique_SF_k_pts(k_pts)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
       k1 => k_pts(:,1)
       k2 => k_pts(:,2)
       k3 => k_pts(:,3)
@@ -1997,7 +1990,6 @@ contains
       .BASE:make_ao_sz_density_matrix ! make S_z density matrix
       ENSURE(.density_matrix.restricted.created, "no restricted density matrix")
       D => .density_matrix.restricted
-      .BASE:put_debug(D,"make_H_structure_factors_h: D")
 
       ! Make max_P and overlap matrix for schwarz-like test
     ! schwarz_cutoff = .scfdata.eri_schwarz_cutoff
@@ -2253,40 +2245,29 @@ contains
       .density_matrix.destroy("restricted")
       kU.destroy; k_pts.destroy
 
-      ! Check integration accuracy
-      out = FALSE
-      if (present(output)) out = output
-      if (out) then
-      stdout.flush
-      stdout.text("Making Hirshfeld structure factors ...")
-      stdout.flush
-      stdout.show("Check: no. of electrons        =",n_e)
-      end
-
       ! Parallel
       if (DO_IN_PARALLEL) then
          PARALLEL_SUM(sf_eq)
       end
 
       ! Sum the symmetry equivalent SF's
-      .crystal.sum_unique_sf(Fc,sf_eq)
+      .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
       sf_eq.destroy
 
       ! Dispersion correction
       if (.crystal.correct_dispersion) then
-        k_pts.create(.crystal.n_refl,3)
-        .crystal.make_k_pts(k_pts)
-        .XTAL:add_dispersion_correction(Fc,k_pts)
-        k_pts.destroy
+         k_pts.create(.crystal.n_refl,3)
+         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
+         .XTAL:add_dispersion_correction(Fc,k_pts)
+         k_pts.destroy
       end
 
       ! Set the calculated SF's
-      .crystal.set_F_calc(Fc)
+      .crystal.data.reflections.set_F_calc(Fc)
       Fc.destroy
 
       ! Make chi2
-      .crystal.make_F_predicted
-      if (out) .crystal.put_F_statistics
+      .crystal.data.make_F_predicted
 
    end
 
@@ -2329,8 +2310,8 @@ contains
 !      Fc = FM_s ! + FM_l ! + FM_r
 !      arch.set(.name,"PND_scalar_magnetic_sf")
 !      arch.write(Fc)
-!      .crystal.set_F_calc(Fc)
-!      .crystal.make_F_predicted
+!      .crystal.data.reflections.set_F_calc(Fc)
+!      .crystal.data.make_F_predicted
 !    ! FM_r.destroy
 !    ! FM_l.destroy
 !      FM_s.destroy
@@ -2460,7 +2441,7 @@ contains
 !      arch.set(.name,"PND_ft_spin_ints")
 !      arch.open(for="write-only",type="cpx")
 !      k_pts.create(.crystal.n_unique_SF_k_pts,3)
-!      .crystal.make_unique_SF_k_pts(k_pts)
+!      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 !      sh.create
 !      do q = 1,.n_shell_pairs
 !         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
@@ -2552,7 +2533,7 @@ contains
 !      arch.set(.name,"PND_ft_nabla_ints")
 !      arch.open(for="write-only",type="cpx")
 !      k_pts.create(.crystal.n_unique_SF_k_pts,3)
-!      .crystal.make_unique_SF_k_pts(k_pts)
+!      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 !      sh.create
 !      do q = 1,.n_shell_pairs
 !         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
@@ -2656,7 +2637,7 @@ contains
 !      arch.set(.name,"PND_ft_r_ints")
 !      arch.open(for="write-only",type="cpx")
 !      k_pts.create(.crystal.n_unique_SF_k_pts,3)
-!      .crystal.make_unique_SF_k_pts(k_pts)
+!      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 !      sh.create
 !      do q = 1,.n_shell_pairs
 !         .BASE:get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
@@ -2769,7 +2750,7 @@ contains
       .crystal.assign_xray
 
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
-      .crystal.make_unique_SF_k_pts(k_pts)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       .BASE:make_ao_density_matrix
 
@@ -2785,18 +2766,18 @@ contains
       end
 
       Fc.create(.crystal.n_refl)
-      .crystal.sum_unique_sf(Fc,sf_eq)
+      .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
 
       if (.crystal.correct_dispersion) then
          k_pts.create(.crystal.n_refl,3)
-         .crystal.make_k_pts(k_pts)
+         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
          .::add_dispersion_correction(Fc,k_pts)
          k_pts.destroy
       end
 
-      .crystal.set_F_calc(Fc)
+      .crystal.data.reflections.set_F_calc(Fc)
 
-      .crystal.make_F_predicted
+      .crystal.data.make_F_predicted
 
       .crystal.put_reflection_data
 
@@ -2818,7 +2799,7 @@ contains
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
 
       .crystal.assign_xray
-      .crystal.make_unique_SF_k_pts(k_pts)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
       .BASE:make_ao_density_matrix
 
       sf_eq.create(k_pts.dim1)
@@ -2837,19 +2818,19 @@ contains
       end
       k_pts.destroy
 
-      .crystal.sum_unique_sf(Fc,sf_eq)
+      .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
       if (.crystal.correct_dispersion) then
          k_pts.create(.crystal.n_refl,3)
-         .crystal.make_k_pts(k_pts)
+         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
          .::add_dispersion_correction(Fc,k_pts)
          k_pts.destroy
       end
 
-     .crystal.set_F_calc(Fc)
+      .crystal.data.reflections.set_F_calc(Fc)
       Fc.destroy
 
-     .crystal.make_F_predicted
-     .crystal.put_reflection_data
+      .crystal.data.make_F_predicted
+      .crystal.put_reflection_data
 
       sf_eq.destroy
 

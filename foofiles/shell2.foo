@@ -59,7 +59,11 @@ module SHELL2
 
 contains
 
-   create ::: get_from(OBJECT), leaky
+!  ==========
+!  Allocation
+!  ==========
+
+   create ::: get_from(OBJECT), leaky, PURE
    ! Create an object. This version does not set defaults.
    end
 
@@ -93,8 +97,10 @@ contains
    ! Destroy an object
    end
 
-   nullify_ptr_part
+   nullify_ptr_part ::: pure
    ! Nullify the pointer parts of self
+      self :: INOUT
+
       .a.nullify_ptr_part
       .b.nullify_ptr_part
       nullify(.exponent_sum)
@@ -106,6 +112,7 @@ contains
       nullify(.contraction_p_prefactor)
       nullify(.pair_center)
       nullify(.center_diff)
+
    end
 
    destroy_ptr_part ::: leaky
@@ -149,6 +156,10 @@ contains
       res :: BIN
    end
 
+!  ====
+!  Copy
+!  ====
+
    create_copy(shell) ::: leaky
    ! Create a copy from "shell"
       self :: PTR
@@ -161,6 +172,7 @@ contains
    copy(shell) ::: leaky
    ! Make a copy from "shell"
       shell :: SHELL2, IN
+
       self = shell
 
       .nullify_ptr_part
@@ -223,6 +235,10 @@ contains
       .precalculate
    end
 
+!  ===========
+!  Set methods
+!  ===========
+
 !   set(shell_a,shell_b)
 !   ! Set the shell2 using shell1 objects
 !     shell_a,shell_b :: SHELL1, IN
@@ -262,6 +278,7 @@ contains
    ! "skip" can be set TRUE if NOT same_center; it skips gaussian product
    ! pairs which are too small to worry about.
    ! NOTE: this does not create many pointer parts
+      self :: OUT
       shellpr :: SHELL1PAIR, IN
       pos_a,pos_b :: VEC{REAL}, IN
       same_center,skip :: BIN, IN
@@ -502,9 +519,9 @@ contains
 
    end
 
-!===============================================================================
-!    Fourier transform integrals
-!===============================================================================
+!  ===========================
+!  Fourier transform integrals
+!  ===========================
 
    skip_ft(cutoff) result (res)
    ! Whether the ft for this shell pair is too small.
@@ -596,8 +613,9 @@ contains
    ! Calculates the Fourier transform for a product of two contracted
    ! gaussian shells, evaluated at a series of k points k_pts
    ! Dimensions of res are [k_max,.a.n_comp,.b.n_comp].
-    res :: MAT3{CPX}
-    k_pts :: MAT{REAL}
+    self :: IN
+    res :: MAT3{CPX}, OUT
+    k_pts :: MAT{REAL}, IN
 
     W :: MAT3{CPX}*
     i,k_max :: INT
@@ -622,24 +640,29 @@ contains
    ! Calculates the Fourier transform for a product of two contracted
    ! gaussian shells, evaluated at a series of k points k_pts
    ! Dimensions of res are [k_max,.a.n_comp,.b.n_comp].
-      res :: MAT3{CPX}
+      self :: IN
+      res :: MAT3{CPX}, OUT
       k_pts :: MAT{REAL}, IN
-      .make_ft_old(res,k_pts)
+
+      .make_ft_old(res,k_pts(:,1),k_pts(:,2),k_pts(:,3))
+
    end
 
-   make_ft_old(res,k_pts)
+   make_ft_old(res,k_x,k_y,k_z)
    ! Calculates the Fourier transform for a product of two contracted
    ! gaussian shells, evaluated at a series of k points k_pts
    ! Dimensions of res are [k_max,.a.n_comp,.b.n_comp].
    ! This version has the gaussian2 stuff inlined and special cases optimised,
    ! it's pretty messy but much faster.
-      res :: MAT3{CPX}, target
-      k_pts :: MAT{REAL}, target
+      self :: IN
+      res :: MAT3{CPX}, target, OUT
+      k_x,k_y,k_z :: VEC{REAL}, IN
+
       ft_x,ft_y,ft_z :: MAT3{CPX}*
       G :: GAUSSIAN2
       e :: MAT3{REAL}*
       pos :: VEC{REAL}(3)
-      k_x,k_y,k_z,k_x2,k_y2,k_z2 :: VEC{REAL}*
+      k_x2,k_y2,k_z2 :: VEC{REAL}*
       res_ij,prefac,ft_xb,ft_yb,ft_zb :: VEC{CPX}*
       ax,ay,az,bx,by,bz :: VEC{INT}*
       ft_xbx,ft_yby,ft_zbz :: MAT{CPX}*
@@ -652,14 +675,14 @@ contains
       Ex010,Ey010,Ez010,Ex110,Ey110,Ez110,Ex111,Ey111,Ez111 :: REAL
       Ex211,Ey211,Ez211,Ex011,Ey011,Ez011 :: REAL
       PA1,PA2,PA3,PB1,PB2,PB3,r2 :: REAL
-      k_max  = size(k_pts,1)
+
+      k_max  = size(k_x,1)
       res = ZERO
       G.set(.a.l,.a.position,ZERO,.b.l,.b.position,ZERO)
       select case (.a.l)
         case (0)
           select case(.b.l)
             case (0)
-              k_x => k_pts(:,1); k_y => k_pts(:,2); k_z => k_pts(:,3)
               pos = .a.position - .b.position
               r2 = dot_product(pos,pos)
               res_ij => res(:,1,1)
@@ -691,9 +714,6 @@ contains
               end
             case (1)
               prefac.create(k_max)
-              k_x => k_pts(:,1)
-              k_y => k_pts(:,2)
-              k_z => k_pts(:,3)
               PA1 = .a.position(1); PA2 = .a.position(2); PA3 = .a.position(3)
               PB1 = .b.position(1); PB2 = .b.position(2); PB3 = .b.position(3)
               e.create((/0,1/),(/0,0/),(/0,1/))
@@ -752,7 +772,6 @@ contains
               prefac.create(k_max)
               PA1 = .a.position(1); PA2 = .a.position(2); PA3 = .a.position(3)
               PB1 = .b.position(1); PB2 = .b.position(2); PB3 = .b.position(3)
-              k_x => k_pts(:,1); k_y => k_pts(:,2); k_z => k_pts(:,3)
               do aa = 1, .a.n_cc
                 ca = .a.contraction(aa)
                 ex_a=.a.exponent(aa)
@@ -822,7 +841,6 @@ contains
               e.create((/0,1/),(/0,1/),(/0,0/))
               PA1 = .a.position(1); PA2 = .a.position(2); PA3 = .a.position(3)
               PB1 = .b.position(1); PB2 = .b.position(2); PB3 = .b.position(3)
-              k_x => k_pts(:,1); k_y => k_pts(:,2); k_z => k_pts(:,3)
               do aa = 1, .a.n_cc
                 ca = .a.contraction(aa)
                 ex_a=.a.exponent(aa)
@@ -876,7 +894,6 @@ contains
               prefac.create(k_max)
               PA1 = .a.position(1); PA2 = .a.position(2); PA3 = .a.position(3)
               PB1 = .b.position(1); PB2 = .b.position(2); PB3 = .b.position(3)
-              k_x => k_pts(:,1); k_y => k_pts(:,2); k_z => k_pts(:,3)
               e.create((/0,2/),(/0,1/),(/0,1/))
               ft_x01.create(k_max)
               ft_x10.create(k_max)
@@ -986,7 +1003,6 @@ contains
               ft_y.create((/1,k_max/),(/0,.a.l/),(/0,.b.l/))
               ft_z.create((/1,k_max/),(/0,.a.l/),(/0,.b.l/))
               prefac.create(k_max)
-              k_x => k_pts(:,1); k_y => k_pts(:,2); k_z => k_pts(:,3)
               fb = .b.first_gaussian; lb = .b.last_gaussian
               bx => GAUSSIAN_DATA::px(fb:lb); by => GAUSSIAN_DATA::py(fb:lb); bz => GAUSSIAN_DATA::pz(fb:lb)
               do aa = 1, .a.n_cc
@@ -1048,7 +1064,6 @@ contains
               ft_y.create((/1,k_max/),(/0,.a.l/),(/0,.b.l/))
               ft_z.create((/1,k_max/),(/0,.a.l/),(/0,.b.l/))
               prefac.create(k_max)
-              k_x => k_pts(:,1); k_y => k_pts(:,2); k_z => k_pts(:,3)
               fa = .a.first_gaussian; la = .a.last_gaussian
               ax => GAUSSIAN_DATA::px(fa:la); ay => GAUSSIAN_DATA::py(fa:la); az => GAUSSIAN_DATA::pz(fa:la)
               do aa = 1, .a.n_cc
@@ -1099,9 +1114,6 @@ contains
               ft_y.create((/1,k_max/),(/0,.a.l/),(/0,.b.l/))
               ft_z.create((/1,k_max/),(/0,.a.l/),(/0,.b.l/))
               prefac.create(k_max)
-              k_x => k_pts(:,1)
-              k_y => k_pts(:,2)
-              k_z => k_pts(:,3)
               fa = .a.first_gaussian; la = .a.last_gaussian
               ax => GAUSSIAN_DATA::px(fa:la); ay => GAUSSIAN_DATA::py(fa:la); az => GAUSSIAN_DATA::pz(fa:la)
               do aa = 1, .a.n_cc
@@ -1157,9 +1169,6 @@ contains
               ft_y.create((/1,k_max/),(/0,.a.l/),(/0,.b.l/))
               ft_z.create((/1,k_max/),(/0,.a.l/),(/0,.b.l/))
               prefac.create(k_max)
-              k_x => k_pts(:,1)
-              k_y => k_pts(:,2)
-              k_z => k_pts(:,3)
               fa = .a.first_gaussian; la = .a.last_gaussian
               fb = .b.first_gaussian; lb = .b.last_gaussian
               ax => GAUSSIAN_DATA::px(fa:la); ay => GAUSSIAN_DATA::py(fa:la); az => GAUSSIAN_DATA::pz(fa:la)
@@ -3417,7 +3426,7 @@ contains
 
    end
 
-   make_gaussian_partition(res,factor_a,factor_b)
+   make_gaussian_partition(res,factor_a,factor_b) ::: pure
    ! Make the factors for partitioning the density contribution from
    ! each atom. Dimensions of res are [.a.n_cc,.b.n_cc].
       self :: IN
@@ -3768,9 +3777,9 @@ contains
       res = fac*res
    end
 
-!  =================================
-!  Simplistic CADPAC-style integrals
-!  =================================
+!  ======================
+!  CADPAC-style integrals
+!  ======================
 
    make_generic_ints(I) ::: template
    ! Calculate "I, a generic cartesian or spherical

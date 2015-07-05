@@ -33,9 +33,9 @@ module DIFFRACTION_DATA
 
 contains
 
-!  ==========================
-!  Create and destroy methods
-!  ==========================
+!  ==========
+!  Allocation
+!  ==========
 
    create ::: get_from(OBJECT), leaky
    ! Create an object
@@ -49,7 +49,9 @@ contains
    nullify_ptr_part
    ! Nullify the pointer parts of the diffraction data object
 
+      nullify(.reflection0)
       nullify(.reflections)
+      nullify(.hkl_range)
 
       nullify(.scale_factors)
 
@@ -99,10 +101,14 @@ contains
 
       if (.reflection_data_exists) then
 
-         .scale_factor = ONE
-         .exp_scale_factor = ONE
+         .scale_factor      = ONE
+         .exp_scale_factor  = ONE
          .extinction_factor = ZERO
+
+         .reflection0.destroy
          .reflections.destroy
+         .hkl_range.destroy
+
          .scale_factors.destroy
 
       end
@@ -163,7 +169,9 @@ contains
       .nullify_ptr_part
 
       ! Reflection-related data
+      if (data.reflection0.created)                .reflection0.create_copy(data.reflection0)
       if (data.reflections.created)                .reflections.create_copy(data.reflections)
+      if (data.hkl_range.created)                  .hkl_range.create_copy(data.hkl_range)
       if (data.scale_factors.created)              .scale_factors.create_copy(data.scale_factors)
 
       if (data.refine_U_iso_for_atom.created)      .refine_U_iso_for_atom.create_copy(data.refine_U_iso_for_atom)
@@ -217,6 +225,7 @@ contains
       .I_pred_cutoff          = -ONE
       .stl_high_cutoff        = -ONE
       .stl_low_cutoff         = -ONE
+      .stl_limit              = -ONE
       .show_rejects           = TRUE
       .synthesize_sigma_I     = DIFFRACTION_DATA_SYNTHESIZE_SIGMA_I
       .SF_mixing_parameter    = ZERO
@@ -316,37 +325,63 @@ contains
 
    end
 
-   update(unit_cell,spacegroup) ::: PURE
+   update(unit_cell,spacegroup) ::: leaky
    ! Update the crystal information after setting values. If the
    ! "unit_cell" is provided, then that is used to define the reflection
    ! .theta values.
-      self :: INOUT
+      self :: PTR
       unit_cell :: UNIT_CELL, IN, optional
       spacegroup :: SPACEGROUP, IN, optional
 
-      if (.reflections.destroyed) return
+      if (.reflections.destroyed) then
 
-      if (.reflections.have_F_exp) then
-         .reflections.scale_F_exp(.exp_scale_factor)
+         DIE_IF(.hkl_range.created AND .stl_limit>ZERO,"hkl_range and stl_limit are both specified")
+
+         ! Set hkl range ?
+         if (.hkl_range.created) .reflections.set_hkl_range(.hkl_range)
+
+         ! Set hkl up to stl_limit?
+         if (.stl_limit>ZERO) .reflections.set_hkl_up_to_stl_limit(.stl_limit,unit_cell)
+
       else
-         .optimize_scale = FALSE
-         .optimize_extinction = FALSE
+
+         ! Keep original reflections
+         .reflection0.create_copy(.reflections)
+        
+         .prune_reflections
+        
+         if (.reflections.have_F_exp) then
+            .reflection0.scale_F_exp(.exp_scale_factor)
+            .reflections.scale_F_exp(.exp_scale_factor)
+         else
+            .optimize_scale      = FALSE
+            .optimize_extinction = FALSE
+         end
+        
+         if (.reflections.have_F_sigma) then
+            .reflection0.scale_F_sigma(.exp_scale_factor)
+            .reflections.scale_F_sigma(.exp_scale_factor)
+         else
+            .optimize_scale      = FALSE
+            .optimize_extinction = FALSE
+         end
+        
+         .exp_scale_factor = ONE
+        
+         if (present(unit_cell)) then
+            .reflection0.set_theta_angles(unit_cell.reciprocal_matrix)
+            .reflections.set_theta_angles(unit_cell.reciprocal_matrix)
+         end
+        
+         if (present(spacegroup)) then
+            .reflection0.set_equivalence_factors(spacegroup)
+            .reflections.set_equivalence_factors(spacegroup)
+         end
+
       end
-
-      if (.reflections.have_F_sigma) then
-         .reflections.scale_F_sigma(.exp_scale_factor)
-      else
-         .optimize_scale = FALSE
-         .optimize_extinction = FALSE
-      end
-
-      .exp_scale_factor = ONE
-
-      if (present(unit_cell))  .set_theta_angles(unit_cell.reciprocal_matrix)
-
-      if (present(spacegroup)) .set_equivalence_factors(spacegroup)
 
    end
+
 
    set_data_kind(val)
    ! Read the data kind of crystal experiment
@@ -405,61 +440,6 @@ contains
 
    end
 
-   set_equivalence_factors(spacegroup) ::: PURE
-   ! Set the equivalence factors, the number of distinct reflections
-   ! which are symmetry equivalent to a particular (hkl) triple, for all
-   ! the reflections.
-      self :: INOUT
-      spacegroup :: SPACEGROUP, IN
-
-   ENSURE(.reflections.created,"no reflection data")
-
-      hkl,new :: VEC{INT}(3)
-      n,s,u,n_refl :: INT
-
-      n_refl = .reflections.n_refl
-
-      do n = 1,n_refl
-
-         hkl = .reflections.indices(n)
-
-         u = 1
-         do s = 2,spacegroup.n_seitz
-            new = int(matmul(REALIFY(hkl),spacegroup.seitz(1:3,1:3,s)))
-            if (hkl(1)/=new(1) OR hkl(2)/=new(2) OR hkl(3)/=new(3)) u = u + 1
-         end
-
-         .reflections(n).equivalence_factor = u
-
-      end
-
-   end
-
-   set_theta_angles(reciprocal_matrix) ::: pure
-   ! This routine is called after the reflections are read in, in order to set
-   ! all the .theta values, which are used later all over the place ...
-      self :: INOUT
-      reciprocal_matrix :: MAT{REAL}(3,3), IN
-
-      hkl :: VEC{INT}(3)
-      kx,ky,kz,sin_theta :: REAL
-      n :: INT
-
-      do n = 1,.reflections.n_refl
-
-         hkl = .reflections.indices(n)
-
-         kx = dot_product(reciprocal_matrix(1,:),hkl(:))
-         ky = dot_product(reciprocal_matrix(2,:),hkl(:))
-         kz = dot_product(reciprocal_matrix(3,:),hkl(:))
-
-         sin_theta = HALF*sqrt(kx*kx+ky*ky+kz*kz)*.wavelength
-         .reflections(n).theta = asin(sin_theta)
-
-      end
-
-   end
-
    set_refine_structure(val) ::: pure
    ! Set whether to refine the structure
       self :: INOUT
@@ -480,6 +460,18 @@ contains
    ! Generic set
    end
 
+   set_refine_4th_order(val) ::: leaky, PURE
+   ! Read the list of atoms for which fourth-order anharmonicty
+   ! parameters are to be refined.
+      self :: INOUT
+      val :: VEC{STR}, IN
+
+      .refine_4th_order_for_atom.create_copy(val)
+
+      .refine_anharmonicity = TRUE
+
+   end
+
    set_fit_structure(val) ::: pure
    ! Set whether to rigid-fit the structure
       self :: INOUT
@@ -492,6 +484,8 @@ contains
 
    end
 
+! Cutoffs
+
    set_F_sigma_cutoff(val) ::: PURE
    ! Set the minimum acceptable value for F_exp/sigma
       self :: INOUT
@@ -500,6 +494,17 @@ contains
    ENSURE(val>ZERO,"cutoff must be positive")
 
       .F_sigma_cutoff = val
+
+   end
+
+   set_I_sigma_cutoff(val) ::: PURE
+   ! Set the minimum acceptable value for F2_exp/sigma
+      self :: INOUT
+      val :: REAL, IN
+
+   ENSURE(val>ZERO,"cutoff must be positive")
+
+      .I_sigma_cutoff = val
 
    end
 
@@ -514,25 +519,39 @@ contains
 
    end
 
-   set_F_calc(F_calc) ::: PURE
-   ! Set the calculated structure factors
+   set_I_z_cutoff(val) ::: PURE
+   ! Set the I_z_cutoff (in sigma units) for prune_bad_reflections
       self :: INOUT
+      val :: REAL, IN
 
-      F_calc :: VEC{CPX}, IN
+   ENSURE(val>ZERO,"cutoff must be positive")
 
-   ENSURE(.reflection_data_exists,"no reflection data")
-
-      .reflections.set_F_calc(F_calc)
+      .I_z_cutoff = val
 
    end
 
-   set_I_calc(I_calc) ::: PURE
-   ! Set the calculated intensities
+   set_F_pred_cutoff(val) ::: PURE
+   ! Set the F_pred_cutoff
       self :: INOUT
-      I_calc :: VEC{REAL}, IN
-   ENSURE(.reflection_data_exists,"no reflection data")
-      .reflections.set_I_calc(I_calc)
+      val :: REAL, IN
+
+   ENSURE(val>ZERO,"cutoff must be positive")
+
+      .F_pred_cutoff = val
+
    end
+
+   set_I_pred_cutoff(val) ::: PURE
+   ! Set the I_pred_cutoff
+      self :: INOUT
+      val :: REAL, IN
+
+   ENSURE(val>ZERO,"cutoff must be positive")
+
+      .I_pred_cutoff = val
+
+   end
+
 
    set_n_param(val) ::: PURE
    ! Set the number of paramters in the model "by hand"
@@ -555,6 +574,30 @@ contains
       .XCW = val
 
    end
+
+
+!   set_F_calc(F_calc) ::: PURE
+!   ! Set the calculated structure factors
+!      self :: INOUT
+!
+!      F_calc :: VEC{CPX}, IN
+!
+!   ENSURE(.reflection_data_exists,"no reflection data")
+!
+!      .reflections.set_F_calc(F_calc)
+!
+!   end
+!
+!   set_I_calc(I_calc) ::: PURE
+!   ! Set the calculated intensities
+!      self :: INOUT
+!      I_calc :: VEC{REAL}, IN
+!
+!   ENSURE(.reflection_data_exists,"no reflection data")
+!
+!      .reflections.set_I_calc(I_calc)
+!
+!   end
 
 !  ============
 !  Read methods
@@ -594,6 +637,8 @@ contains
          case ("f_sigma_cutoff=               "); .read_F_sigma_cutoff
          case ("f_z_cutoff=                   "); .read_F_z_cutoff
 
+         case ("hkl_range=                    "); .read_hkl_range
+
          case ("i_pred_cutoff=                "); .read_I_pred_cutoff
          case ("i_sigma_cutoff=               "); .read_I_sigma_cutoff
          case ("i_z_cutoff=                   "); .read_I_z_cutoff
@@ -618,13 +663,11 @@ contains
          case ("optimize_scale_factors=       "); .read_optimize_scale
 
          case ("partition_model=              "); .read_partition_model
-         case ("prune_bad_f_reflections       "); .prune_bad_F_reflections
-         case ("prune_high_angle_reflections  "); .prune_high_angle_reflections
-         case ("prune_low_angle_reflections   "); .prune_low_angle_reflections
-       ! case ("prune_negative_f_exp          "); .prune_negative_F_exp
-       ! case ("prune_negative_i_exp          "); .prune_negative_I_exp
-         case ("prune_weak_reflections        "); .prune_weak_reflections
-         case ("prune_zero_f_preds            "); .prune_zero_F_preds
+       ! case ("prune_bad_f_reflections       "); .prune_bad_F_reflections
+       ! case ("prune_high_angle_reflections  "); .prune_high_angle_reflections
+       ! case ("prune_low_angle_reflections   "); .prune_low_angle_reflections
+       ! case ("prune_weak_reflections        "); .prune_weak_reflections
+       ! case ("prune_zero_f_preds            "); .prune_zero_F_preds
          case ("put                           "); .put
          case ("put_debug_list                "); .put_debug_list
          case ("put_sin_theta_on_lambda       "); .put_sin_theta_on_lambda
@@ -647,6 +690,7 @@ contains
          case ("show_fit_output=              "); .read_show_fit_output
          case ("show_rejects=                 "); .read_show_rejects
          case ("stl_high_cutoff=              "); .read_stl_high_cutoff
+         case ("stl_limit=                    "); .read_stl_limit
          case ("stl_low_cutoff=               "); .read_stl_low_cutoff
          case ("synthesize_sigma_i=           "); .read_synthesize_sigma_I
 
@@ -699,6 +743,16 @@ contains
 
    end
 
+   read_hkl_range ::: leaky, private
+   ! Read the F_pred_cutoff for prune_F_preds
+      self :: INOUT
+
+      .hkl_range.destroy
+
+      stdin.read_ptr(.hkl_range)
+
+   end
+
    read_F_sigma_cutoff ::: private
    ! Read the maximum acceptable value for F_cutoff
       self :: INOUT
@@ -713,10 +767,13 @@ contains
 
    read_I_sigma_cutoff ::: private
    ! Read the maximum acceptable value for I_cutoff
+      self :: INOUT
 
-      stdin.read(.I_sigma_cutoff)
+      val :: REAL
 
-      ENSURE(.I_sigma_cutoff>ZERO,"cutoff must be positive")
+      stdin.read(val)
+
+      .set_I_sigma_cutoff(val)
 
    end
 
@@ -734,33 +791,43 @@ contains
 
    read_I_z_cutoff ::: private
    ! Read the I_z cutoff for prune_bad_reflections
+      self :: INOUT
 
-      stdin.read(.I_z_cutoff)
+      val :: REAL
 
-      ENSURE(.I_z_cutoff>=ZERO,"must be positive")
+      stdin.read(val)
+
+      .set_I_z_cutoff(val)
 
    end
 
    read_F_pred_cutoff ::: private
    ! Read the F_pred_cutoff for prune_F_preds
+      self :: INOUT
 
-      stdin.read(.F_pred_cutoff)
+      val :: REAL
 
-      ENSURE(.F_pred_cutoff>=ZERO,"must be positive")
+      stdin.read(val)
+
+      .set_F_pred_cutoff(val)
 
    end
 
    read_I_pred_cutoff ::: private
    ! Read the I_pred_cutoff for prune_I_preds
+      self :: INOUT
 
-      stdin.read(.I_pred_cutoff)
+      val :: REAL
 
-      ENSURE(.I_pred_cutoff>=ZERO,"must be positive")
+      stdin.read(val)
+
+      .set_I_pred_cutoff(val)
 
    end
 
    read_stl_high_cutoff ::: private
    ! Read the stl_cutoff for prune_high_angle_reflections
+      self :: INOUT
 
       stdin.read_quantity(.stl_high_cutoff)
 
@@ -770,10 +837,21 @@ contains
 
    read_stl_low_cutoff ::: private
    ! Read the stl_cutoff for prune_low_angle_reflections
+      self :: INOUT
 
       stdin.read_quantity(.stl_low_cutoff)
 
       ENSURE(.stl_low_cutoff>=ZERO,"must be positive")
+
+   end
+
+   read_stl_limit
+   ! Read in the stl limit for generating (h k l)
+      self :: INOUT
+
+      stdin.read_quantity(.stl_limit)
+
+      ENSURE(.stl_limit>ZERO,"must be +ve!")
 
    end
 
@@ -870,24 +948,6 @@ contains
          case("gaussian")
          case default;    UNKNOWN(.partition_model)
       end
-   end
-
-   zero_negative_F_exp ::: leaky
-   ! This routine zero negative F_exp value
-      self :: PTR
-
-   DIE_IF(NOT .reflections.created,"no reflection data")
-   DIE_IF(NOT .reflections.have_F_exp,"no experimental data")
-
-      i :: INT
-
-      do i = 1,.reflections.n_refl
-        if (.reflections(i).F_exp < ZERO) then
-           .reflections(i).F_exp = ZERO
-           .reflections(i).F_sigma = .reflections(i).F_sigma + abs(.reflections(i).F_exp)
-        end
-      end
-
    end
 
    read_temperature
@@ -997,8 +1057,10 @@ contains
    read_refine_4th_order ::: leaky
    ! Read the list of atoms for which fourth-order anharmonicty
    ! parameters are to be refined.
+
       stdin.read_ptr(.refine_4th_order_for_atom)
       .refine_anharmonicity = TRUE
+
    end
 
    read_refine_U_iso_atoms ::: leaky
@@ -1090,15 +1152,14 @@ contains
       rval :: REAL
 
       ! Read reflections
-           if (::has_CIF_F_reflections(cif))  then; .read_CIF_F_reflections(cif)
-      else if (::has_CIF_F2_reflections(cif)) then; .read_CIF_F2_reflections(cif)
-      end
+      .reflections.read_CIF(cif)
 
       ! Read wavelength -- must be there !
       cif.find_item("_diffrn_radiation_wavelength",there)
       DIE_IF(NOT there,"no wavelength in CIF file")
       if (there) then
       cif.read_item("_diffrn_radiation_wavelength",rval)
+      rval = rval*BOHR_PER_ANGSTROM
       .set_wavelength(rval)
       end
 
@@ -1113,366 +1174,51 @@ contains
    end
 
 
-! ================
-! Read reflections
-! ================
-
-   has_CIF_F_reflections(cif) result (res) ::: selfless
-   ! Does "cif" have F reflections?
-      cif :: CIF, IN
-      res :: BIN
-
-      there :: VEC{BIN}(6)
-
-      ! Find reflections
-      cif.find_looped_item("_diffrn_refln_index_h",there(1))
-      cif.find_looped_item("_diffrn_refln_index_k",there(2))
-      cif.find_looped_item("_diffrn_refln_index_l",there(3))
-      cif.find_looped_item("_diffrn_refln_F_calc" ,there(4))
-      cif.find_looped_item("_diffrn_refln_F_meas" ,there(5))
-      cif.find_looped_item("_diffrn_refln_F_sigma",there(6))
-
-      res = all(there)
-
-   end
-
-   read_CIF_F_reflections(cif) ::: leaky
-   ! Read F reflections from "cif".
-      cif :: CIF, IN
-
-      h,k,l :: VEC{INT}*
-      Fp,Fm,Sg :: VEC{REAL}*
-
-      ! Read
-      cif.read_looped_item("_diffrn_refln_index_h",h)
-      cif.read_looped_item("_diffrn_refln_index_k",k)
-      cif.read_looped_item("_diffrn_refln_index_l",l)
-      cif.read_looped_item("_diffrn_refln_F_calc" ,Fp)
-      cif.read_looped_item("_diffrn_refln_F_meas" ,Fm)
-      cif.read_looped_item("_diffrn_refln_F_sigma",Sg)
-
-      ! Create and assign
-      .reflections.destroy
-      .reflections.create(h.dim)
-      .reflections.set_h(h)
-      .reflections.set_k(k)
-      .reflections.set_l(l)
-      .reflections.set_F_pred(Fp)
-      .reflections.set_F_exp(Fm)
-      .reflections.set_F_sigma(Sg)
-
-      ! Clean
-      Sg.destroy
-      Fm.destroy
-      Fp.destroy
-      l.destroy
-      k.destroy
-      h.destroy
-
-   end
-
-   has_CIF_F2_reflections(cif) result (res) ::: selfless
-   ! Does "cif" have F2 reflections?
-      cif :: CIF, IN
-      res :: BIN
-
-      there :: VEC{BIN}(6)
-
-      ! Find reflections
-      cif.find_looped_item("_diffrn_refln_index_h",there(1))
-      cif.find_looped_item("_diffrn_refln_index_k",there(2))
-      cif.find_looped_item("_diffrn_refln_index_l",there(3))
-      cif.find_looped_item("_diffrn_refln_F_squared_calc" ,there(4))
-      cif.find_looped_item("_diffrn_refln_F_squared_meas" ,there(5))
-      cif.find_looped_item("_diffrn_refln_F_squared_sigma",there(6))
-
-      res = all(there)
-
-   end
-
-   read_CIF_F2_reflections(cif) ::: leaky
-   ! Read F2 reflections from "cif".
-      cif :: CIF, IN
-
-      h,k,l :: VEC{INT}*
-      Fp,Fm,Sg :: VEC{REAL}*
-
-      ! Read
-      cif.read_looped_item("_diffrn_refln_index_h",h)
-      cif.read_looped_item("_diffrn_refln_index_k",k)
-      cif.read_looped_item("_diffrn_refln_index_l",l)
-      cif.read_looped_item("_diffrn_refln_F_squared_calc" ,Fp)
-      cif.read_looped_item("_diffrn_refln_F_squared_meas" ,Fm)
-      cif.read_looped_item("_diffrn_refln_F_squared_sigma",Sg)
-
-      ! Create and assign
-      .reflections.destroy
-      .reflections.create(h.dim)
-      .reflections.set_h(h)
-      .reflections.set_k(k)
-      .reflections.set_l(l)
-      .reflections.set_I_pred(Fp)
-      .reflections.set_I_exp(Fm)
-      .reflections.set_I_sigma(Sg)
-
-      ! Clean
-      Sg.destroy
-      Fm.destroy
-      Fp.destroy
-      l.destroy
-      k.destroy
-      h.destroy
-
-   end
-
-   read_shelx_F_hkl_file(file) ::: leaky
-   ! Read Sheldrick's hkl F reflections from "file".
-      self :: PTR
-      file :: TEXTFILE, INOUT
-
-      i,n_refl, h,k,l,n :: INT
-      F_exp,F_sigma :: REAL
-
-      ! Get the number of reflections
-      n_refl = 0
-      file.move_to_line(1)
-      do i = 1,file.no_of_lines
-
-         if (NOT file.buffer_exhausted) then
-
-            file.read(h)
-            file.read(k)
-            file.read(l)
-           
-            if (h==0 AND k==0 AND l==0) cycle
-           
-            n_refl = n_refl + 1
-
-         end
-
-         if (i<file.no_of_lines) file.skip_line
-
-      end
-
-      ! Create reflections
-      .reflections.create(n_refl)
-
-      ! Read them
-      n = 0
-      file.move_to_line(1)
-      do i = 1,file.no_of_lines
-
-         if (NOT file.buffer_exhausted) then
-
-            h       = file.buffer.string( 1: 4).to_int
-            k       = file.buffer.string( 5: 8).to_int
-            l       = file.buffer.string( 9:12).to_int
-           
-            if (h==0 AND k==0 AND l==0) cycle
-
-            F_exp   = file.buffer.string(13:20).to_real
-            F_sigma = file.buffer.string(21:28).to_real
-           
-            n = n + 1
-            .reflections(n).set_hkl( [h,k,l] )
-            .reflections(n).set_F_exp(F_exp)
-            .reflections(n).set_F_sigma(F_sigma)
-
-         end
-
-         if (i<file.no_of_lines) file.skip_line
-
-      end
-
-   end
-
-   read_shelx_F2_hkl_file(file) ::: leaky
-   ! Read Sheldrick's hkl F2 reflections from "file".
-      self :: PTR
-      file :: TEXTFILE, INOUT
-
-      i,n_refl, h,k,l,n :: INT
-      I_exp,I_sigma :: REAL
-
-      ! Get the number of reflections
-      n_refl = 0
-      file.move_to_line(1)
-      do i = 1,file.no_of_lines
-
-         if (NOT file.buffer_exhausted) then
-
-            file.read(h)
-            file.read(k)
-            file.read(l)
-           
-            if (h==0 AND k==0 AND l==0) cycle
-           
-            n_refl = n_refl + 1
-
-         end
-
-         if (i<file.no_of_lines) file.skip_line
-
-      end
-
-      ! Create reflections
-      .reflections.create(n_refl)
-
-      ! Read them
-      n = 0
-      file.move_to_line(1)
-      do i = 1,file.no_of_lines
-
-         if (NOT file.buffer_exhausted) then
-
-            h       = file.buffer.string( 1: 4).to_int
-            k       = file.buffer.string( 5: 8).to_int
-            l       = file.buffer.string( 9:12).to_int
-           
-            if (h==0 AND k==0 AND l==0) cycle
-
-            I_exp   = file.buffer.string(13:20).to_real
-            I_sigma = file.buffer.string(21:28).to_real
-           
-            n = n + 1
-            .reflections(n).set_hkl( [h,k,l] )
-            .reflections(n).set_I_exp(I_exp)
-            .reflections(n).set_I_sigma(I_sigma)
-
-         end
-
-         if (i<file.no_of_lines) file.skip_line
-
-      end
-
-   end
-
-   read_std_F_hkl_file(file) ::: leaky
-   ! Read normal free-form hkl F reflections from "file".
-      self :: PTR
-      file :: TEXTFILE, INOUT
-
-      i,n_refl, h,k,l,n :: INT
-      F_exp,F_sigma :: REAL
-
-      ! Get the number of reflections
-      n_refl = 0
-      file.move_to_line(1)
-      do i = 1,file.no_of_lines
-
-         if (NOT file.buffer_exhausted) then
-
-            file.read(h)
-            file.read(k)
-            file.read(l)
-           
-            if (h==0 AND k==0 AND l==0) cycle
-           
-            n_refl = n_refl + 1
-
-         end
-
-         if (i<file.no_of_lines) file.skip_line
-
-      end
-
-      ! Create reflections
-      .reflections.create(n_refl)
-
-      ! Read them
-      n = 0
-      file.move_to_line(1)
-      do i = 1,file.no_of_lines
-
-         if (NOT file.buffer_exhausted) then
-
-            file.read(h)
-            file.read(k)
-            file.read(l)
-           
-            if (h==0 AND k==0 AND l==0) cycle
-           
-            file.read(F_exp  )
-            file.read(F_sigma)
-           
-            n = n + 1
-            .reflections(n).set_hkl( [h,k,l] )
-            .reflections(n).set_F_exp(F_exp)
-            .reflections(n).set_F_sigma(F_sigma)
-
-         end
-
-         if (i<file.no_of_lines) file.skip_line
-
-      end
-
-   end
-
-   read_std_F2_hkl_file(file) ::: leaky
-   ! Read normal free-form hkl F2 reflections from "file".
-      self :: PTR
-      file :: TEXTFILE, INOUT
-
-      i,n_refl, h,k,l,n :: INT
-      I_exp,I_sigma :: REAL
-
-      ! Get the number of reflections
-      n_refl = 0
-      file.move_to_line(1)
-      do i = 1,file.no_of_lines
-
-         if (NOT file.buffer_exhausted) then
-
-            file.read(h)
-            file.read(k)
-            file.read(l)
-           
-            if (h==0 AND k==0 AND l==0) cycle
-           
-            n_refl = n_refl + 1
-
-         end
-
-         if (i<file.no_of_lines) file.skip_line
-
-      end
-
-      ! Create reflections
-      .reflections.create(n_refl)
-
-      ! Read them
-      n = 0
-      file.move_to_line(1)
-      do i = 1,file.no_of_lines
-
-         if (NOT file.buffer_exhausted) then
-
-            file.read(h)
-            file.read(k)
-            file.read(l)
-           
-            if (h==0 AND k==0 AND l==0) cycle
-           
-            file.read(I_exp  )
-            file.read(I_sigma)
-           
-            n = n + 1
-            .reflections(n).set_hkl( [h,k,l] )
-            .reflections(n).set_I_exp(I_exp)
-            .reflections(n).set_I_sigma(I_sigma)
-
-         end
-
-         if (i<file.no_of_lines) file.skip_line
-
-      end
-
-   end
-
-
 ! =======
 ! Put CIF
 ! =======
+
+   CIF_threshold_expression result (res) ::: pure
+   ! Evaluate the CIF _reflns_threshhold_expression
+   ! No refinement info. possible without reflections!
+      self :: IN
+      res :: STR
+
+      cut,but :: REAL
+
+      res = "[F > 0]"
+
+      cut = .F_sigma_cutoff
+      if (cut>ZERO) &
+      res = trim(res) // " & [F/u(F) > "//trim(adjustl(cut.to_str("f5.1")))//"]"
+
+      cut = .I_sigma_cutoff
+      if (cut>ZERO) &
+      res = trim(res) // " & [F2/u(F2) > "//trim(adjustl(cut.to_str("f5.1")))//"]"
+
+      cut = .F_z_cutoff
+      if (cut>ZERO) & 
+      res = trim(res) // " & [|F_calc-F|/u(F) < "//trim(adjustl(cut.to_str("f5.1")))//"]"
+
+      cut = .F_pred_cutoff
+      if (cut>ZERO) & 
+      res = trim(res) // " & [|F_calc| > 10^-3]"
+
+      cut = .stl_high_cutoff
+      if (cut>ZERO) then
+      but = cut*BOHR_PER_ANGSTROM
+      res = trim(res) // " & [sin(theta)/lambda < "//trim(adjustl(but.to_str("f5.1")))//"]"
+      end
+
+      cut = .stl_low_cutoff
+      if (cut>ZERO) then
+      but = cut*BOHR_PER_ANGSTROM
+      res = trim(res) // " & [sin(theta)/lambda > "//trim(adjustl(.stl_low_cutoff.to_str("f5.1")))//"]"
+      end
+
+      res = "'" // trim(res) // "'"
+
+   end
 
    put_CIF_refinement(psi)
    ! Put refinement information in CIF format
@@ -1491,9 +1237,6 @@ contains
       stdout.text("# ==================")
 
       stdout.flush
-      n   = .reflections.dim
-      val = n.to_str
-      stdout.text("_reflns_number_gt                  "//trim(val))
       if (.F_sigma_cutoff >ZERO) then
       val = "F>"//trim(adjustl(.F_sigma_cutoff.to_str("f5.1")))//"u(F)"
       stdout.text("_reflns_threshold_expression       "//trim(val))
@@ -1555,10 +1298,8 @@ contains
       else if (.refine_ADPs_only) then
       stdout.text("_refine_ls_hydrogen_treatment      refU")
       end
-      else if (.refine_positions_only) then
-      stdout.text("_refine_ls_hydrogen_treatment      refxyz")
       else
-      stdout.text("_refine_ls_hydrogen_treatment      ?")
+      stdout.text("_refine_ls_hydrogen_treatment      refxyz")
       end
 
       stdout.text("_refine_ls_weighting_scheme        sigma")
@@ -1634,7 +1375,8 @@ contains
 ! ===================
 
    prune_reflections
-   ! Prune all the reflections, as requested by cutoffs
+   ! Zero negative reflections adding appropriate error to sigma
+   ! Then prune all the reflections, as requested by cutoffs.
    ! - Only works for F's now
    ! - Negative reflections are always pruned ... is this good????
       self :: PTR
@@ -1661,11 +1403,10 @@ contains
          .prune_weak_Is
       end
 
-      if (.stl_high_cutoff>ZERO) .prune_high_angle_reflections
+      if (.stl_high_cutoff>ZERO)  .prune_high_angle_reflections
       if ( .stl_low_cutoff>ZERO)  .prune_low_angle_reflections
 
    end
-
 
    prune ::: template
    ! This routine eliminates all the reflections with respect to a
@@ -1695,6 +1436,11 @@ contains
 
       ! Are there any weak reflections?
       if (n==0) return
+
+      ! Are there any weak reflections?
+      if (n==n_refl) then
+      DIE("All reflection data has been rejected!")
+      end
 
       ! Create the "good" and "bad" lists and how many of each
       bad.create(n)
@@ -1777,32 +1523,32 @@ contains
 
    end
 
-   prune_bad_F_reflections ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_large_abs_F_z, CUTOFF?=>.F_z_cutoff, SHOW?=>abs_F_z), leaky
+   prune_bad_F_reflections ::: get_from(prune, TEST?=>has_large_abs_F_z, CUTOFF?=>.F_z_cutoff, SHOW?=>abs_F_z), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   prune_bad_I_reflections ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_large_abs_I_z, CUTOFF?=>.I_z_cutoff, SHOW?=>abs_I_z), leaky
+   prune_bad_I_reflections ::: get_from(prune, TEST?=>has_large_abs_I_z, CUTOFF?=>.I_z_cutoff, SHOW?=>abs_I_z), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   prune_high_angle_reflections ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_high_stl, CUTOFF?=>.stl_high_cutoff, SHOW?=>stl), leaky
+   prune_high_angle_reflections ::: get_from(prune, TEST?=>has_high_stl, CUTOFF?=>.stl_high_cutoff, SHOW?=>stl), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   prune_low_angle_reflections ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_low_stl, CUTOFF?=>.stl_low_cutoff SHOW?=>stl), leaky
+   prune_low_angle_reflections ::: get_from(prune, TEST?=>has_low_stl, CUTOFF?=>.stl_low_cutoff SHOW?=>stl), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   prune_negative_F_exp ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_small_F_exp, CUTOFF?=>ZERO, SHOW?=>F_exp), leaky
+   prune_negative_F_exp ::: get_from(prune, TEST?=>has_small_F_exp, CUTOFF?=>ZERO, SHOW?=>F_exp), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   prune_negative_I_exp ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_small_I_exp, CUTOFF?=>ZERO, SHOW?=>I_exp), leaky
+   prune_negative_I_exp ::: get_from(prune, TEST?=>has_small_I_exp, CUTOFF?=>ZERO, SHOW?=>I_exp), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
@@ -1817,24 +1563,42 @@ contains
       end
    end
 
-   prune_weak_Fs ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_weak_F_exp, CUTOFF?=>.F_sigma_cutoff, SHOW?=>F_exp_on_sigma), leaky
+   prune_weak_Fs ::: get_from(prune, TEST?=>has_weak_F_exp, CUTOFF?=>.F_sigma_cutoff, SHOW?=>F_exp_on_sigma), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   prune_weak_Is ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_weak_I_exp, CUTOFF?=>.I_sigma_cutoff, SHOW?=>I_exp_on_sigma), leaky
+   prune_weak_Is ::: get_from(prune, TEST?=>has_weak_I_exp, CUTOFF?=>.I_sigma_cutoff, SHOW?=>I_exp_on_sigma), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   prune_zero_F_preds ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_zero_F_pred, CUTOFF?=>.F_pred_cutoff, SHOW?=>F_pred), leaky
+   prune_zero_F_preds ::: get_from(prune, TEST?=>has_small_F_pred, CUTOFF?=>TOL(3), SHOW?=>F_pred), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   prune_zero_I_preds ::: get_from(DIFFRACTION_DATA:prune, TEST?=>has_zero_I_pred, CUTOFF?=>.I_pred_cutoff, SHOW?=>I_pred), leaky
+   prune_zero_I_preds ::: get_from(prune, TEST?=>has_zero_I_pred, CUTOFF?=>.I_pred_cutoff, SHOW?=>I_pred), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
+   end
+
+   zero_negative_F_exp ::: leaky
+   ! This routine zero negative F_exp value
+      self :: PTR
+
+   DIE_IF(NOT .reflections.created,"no reflection data")
+   DIE_IF(NOT .reflections.have_F_exp,"no experimental data")
+
+      i :: INT
+
+      do i = 1,.reflections.n_refl
+        if (.reflections(i).F_exp < ZERO) then
+           .reflections(i).F_exp = ZERO
+           .reflections(i).F_sigma = .reflections(i).F_sigma + abs(.reflections(i).F_exp)
+        end
+      end
+
    end
 
 
@@ -4289,6 +4053,7 @@ contains
       self :: INOUT
 
       .reflections.put_F_statistics(show_chi2=FALSE)
+
       stdout.show("# of fit parameters, N_p       =", .n_param)
       stdout.show("chi^2(N_p)                     =",.chi2)
       stdout.show("Goodness of fit (N_p)          =", sqrt(.chi2))
@@ -4379,6 +4144,16 @@ contains
    ! if available
       core_reflection :: VEC{REFLECTION}*, optional
 
+      .put_N_worst_reflections
+
+      .put_all_reflections(core_reflection)
+
+   end
+
+   put_N_worst_reflections
+   ! Put out a salection of the worst-fitting reflections
+      self :: IN
+
    ENSURE(.reflections.created,"no reflections")
 
       n_refl :: INT
@@ -4392,8 +4167,6 @@ contains
          end
       end
       end
-
-      .put_all_reflections(core_reflection)
 
    end
 
@@ -4431,7 +4204,7 @@ contains
       stdout.flush
       stdout.text(". Below are the "//trim(n.to_str)//" worst-fitted reflections")
       stdout.text(". The criteria is F_z = (F_calc-F_pred)/sigma, in sigma units")
-      stdout.text(". The full list of reflections follows these worst-reflections")
+      stdout.text(". The full list of reflections is in the produced CIF file")
       stdout.flush
 
       ! Put worst from either end
@@ -4478,7 +4251,7 @@ contains
 
    put_GOF_vs_STL_table
    ! Output GOF and ratio vs. sin(theta)/lambda bins.
-      self :: INOUT
+      self :: IN
 
       n_sections,i :: INT
       stl,bin,GOF,ratio,RF,RwF,RF2,RwF2, dF,Fexp,Fz,Feos :: VEC{REAL}*
@@ -4593,7 +4366,7 @@ contains
 
    put_GOF_vs_F_exp_table
    ! Output GOF and ratio vs. F_exp bins.
-      self :: INOUT
+      self :: IN
 
       n_sections,i :: INT
       stl,bin,GOF,ratio,RF,RwF,RF2,RwF2, dF,Fexp,Fz,Feos :: VEC{REAL}*
@@ -5050,136 +4823,187 @@ contains
    ! The number of reflections
       self :: IN
       res :: INT
+
    ENSURE(.reflections.created, "no reflection data")
+
       res = .reflections.n_refl
+
    end
 
    F_calc result (res) ::: PURE
    ! The calculated structure factors
       self :: IN
       res :: VEC{CPX}(size(.reflections))
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.F_calc
+
    end
 
    I_calc result (res) ::: PURE
    ! The calculated intensities
       self :: IN
       res :: VEC{REAL}(size(.reflections))
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.I_calc
+
    end
 
    F_pred result (res) ::: PURE
    ! The predicted structure factors
       self :: IN
       res :: VEC{REAL}(size(.reflections))
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.F_pred
+
    end
 
    I_pred result (res) ::: PURE
    ! The predicted intensities
       self :: IN
       res :: VEC{REAL}(size(.reflections))
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.I_pred
+
    end
 
    F_sigma result (res) ::: PURE
    ! The structure factor errors
       self :: IN
       res :: VEC{REAL}(size(.reflections))
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.F_sigma
+
    end
 
    I_sigma result (res) ::: PURE
    ! The intensity errors
       self :: IN
       res :: VEC{REAL}(size(.reflections))
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.I_sigma
+
    end
 
    F_exp result (res) ::: PURE
    ! The experimental structure factors
       self :: IN
       res :: VEC{REAL}(size(.reflections))
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.F_exp
+
    end
 
    I_exp result (res) ::: PURE
    ! The experimental intensities
       self :: IN
       res :: VEC{REAL}(size(.reflections))
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.I_exp
+
    end
 
    F_chi2 result (res) ::: PURE
    ! Returns data
       self :: IN
       res :: REAL
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.F_chi2
+
    end
 
    I_chi2 result (res) ::: PURE
    ! Returns data
       self :: IN
       res :: REAL
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.I_chi2
+
    end
 
    F_goodness_of_fit result (res) ::: PURE
    ! Returns data
       self :: IN
       res :: REAL
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.F_goodness_of_fit
+
    end
 
    I_goodness_of_fit result (res) ::: PURE
    ! Returns data
       self :: IN
       res :: REAL
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.I_goodness_of_fit
+
    end
 
    F_r_factor result (res) ::: PURE
    ! Returns data
       self :: IN
       res :: REAL
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.F_r_factor
+
    end
 
    I_r_factor result (res) ::: PURE
    ! Returns data
       self :: IN
       res :: REAL
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.I_r_factor
+
    end
 
    F_weighted_r_factor result (res) ::: PURE
    ! Returns data
       self :: IN
       res :: REAL
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.F_weighted_r_factor
+
    end
 
    I_weighted_r_factor result (res) ::: PURE
    ! Returns data
       self :: IN
       res :: REAL
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.I_weighted_r_factor
+
    end
 
    F_val_r_factor(core_reflection) result (res) ::: PURE
@@ -5187,8 +5011,11 @@ contains
       self :: IN
       core_reflection :: VEC{REFLECTION}, IN
       res :: REAL
+
    ENSURE(.reflection_data_exists,"no reflection data")
+
       res = .reflections.F_val_r_factor(core_reflection)
+
    end
 
    simulate_new_F_exp

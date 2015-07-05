@@ -30,24 +30,16 @@ module VEC{REFLECTION}
 
 contains
 
-!  ===========================
-!  Create and Destroy Routines
-!  ===========================
+!  ==========
+!  Allocation
+!  ==========
 
-   create(dim) ::: get_from(VEC{OBJECT}), leaky
+   create(dim) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Create space for object. This version does not nullify ptr parts.
    end
 
-   destroy ::: get_from(VEC{OBJECT}), leaky
+   destroy ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Destroy space for object. This version does not destroy ptr parts
-   end
-
-   create_copy(vec) ::: get_from(VEC{OBJECT}), leaky
-   ! Create a replica copy of "vec".
-   end
-
-   copy(vec) ::: get_from(VEC{OBJECT})
-   ! Copy "vec".
    end
 
    created result (res) ::: get_from(OBJECT), inlined_by_foo
@@ -58,11 +50,43 @@ contains
    ! Returns true if self has *not* been created
    end
 
+!  ====
+!  Copy
+!  ====
+
+   create_copy(vec) ::: get_from(VEC{OBJECT}), leaky
+   ! Create a replica copy of "vec".
+   end
+
+   copy(vec) ::: get_from(VEC{OBJECT})
+   ! Copy "vec".
+   end
+
+!  =======================
+!  Shrinking and expansion
+!  =======================
+
+   shrink(dim) ::: get_from(VEC{OBJECT}), leaky
+   ! Shrink self to dimension dim.  Contents are retained.
+   end
+
+   expand(dim) ::: get_from(VEC{OBJECT}), leaky
+   ! Expand the vector "self" to "dim". New slots are left undefined.
+   end
+
+   append(v) ::: get_from(VEC{OBJECT}), leaky
+   ! Expands self and appends the contents of vector "v".
+   end
+
+   append(value) ::: get_from(VEC{OBJECT}), leaky
+   ! Expands self by 1, and appends the single scalar "value" onto the end.
+   end
+
 !  ============
 !  Set routines
 !  ============
 
-   set_defaults ::: get_from(VEC{OBJECT}, leaky
+   set_defaults ::: get_from(VEC{OBJECT}, leaky, pure
    ! Set default values
    end
 
@@ -119,6 +143,21 @@ contains
          val = F_calc(n)
          self(n).F_calc = val
          self(n).I_calc = abs(val)**2
+      end
+
+   end
+
+   set_I_calc(I_calc) ::: pure
+   ! Set the calculated intensities
+      self :: INOUT
+      I_calc :: VEC{REAL}, IN
+
+   ENSURE(I_calc.dim==.dim,"I_calc: wrong size")
+
+      n :: INT
+
+      do n = 1,.dim
+         self(n).I_calc = I_calc(n)
       end
 
    end
@@ -205,22 +244,64 @@ contains
 
    end
 
-   set_I_calc(I_calc) ::: pure
-   ! Set the calculated intensities
+
+   set_equivalence_factors(spacegroup) ::: PURE
+   ! Set the equivalence factors, the number of distinct reflections
+   ! which are symmetry equivalent to a particular (hkl) triple, for all
+   ! the reflections.
       self :: INOUT
-      I_calc :: VEC{REAL}, IN
+      spacegroup :: SPACEGROUP, IN
 
-   ENSURE(I_calc.dim==.dim,"I_calc: wrong size")
-
-      n :: INT
+      hkl,new :: VEC{INT}(3)
+      n,s,u :: INT
 
       do n = 1,.dim
-         self(n).I_calc = I_calc(n)
+
+         hkl = .indices(n)
+
+         u = 1
+         do s = 2,spacegroup.n_seitz
+            new = int(matmul(REALIFY(hkl),spacegroup.seitz(1:3,1:3,s)))
+            if (hkl(1)/=new(1) OR hkl(2)/=new(2) OR hkl(3)/=new(3)) u = u + 1
+         end
+
+         self(n).equivalence_factor = u
+
+      end
+
+   end
+
+   set_theta_angles(reciprocal_matrix) ::: pure
+   ! This routine is called after the reflections are read in, in order to set
+   ! all the .theta values, which are used later all over the place ...
+      self :: INOUT
+      reciprocal_matrix :: MAT{REAL}(3,3), IN
+
+      hkl :: VEC{INT}(3)
+      kx,ky,kz,sin_theta,lambda :: REAL
+      n :: INT
+
+      lambda = REFLECTION:wavelength()
+
+      do n = 1,.dim
+
+         hkl = .indices(n)
+
+         kx = dot_product(reciprocal_matrix(1,:),hkl(:))
+         ky = dot_product(reciprocal_matrix(2,:),hkl(:))
+         kz = dot_product(reciprocal_matrix(3,:),hkl(:))
+
+         sin_theta     = HALF*sqrt(kx*kx+ky*ky+kz*kz)*lambda
+         self(n).theta = asin(sin_theta)
+
       end
 
    end
 
 
+!  ================
+!  Scaling routines
+!  ================
 
    scale_F_exp(fac) ::: pure
    ! Scale the experimental structure factors
@@ -247,7 +328,6 @@ contains
       end
 
    end
-
 
    scale_I_exp(fac) ::: pure
    ! Scale the experimental intensities
@@ -448,7 +528,9 @@ contains
       self :: IN
       n :: INT, IN
       res :: VEC{INT}(3)
-      res = (/ self(n).h, self(n).k, self(n).l /)
+
+      res = [ self(n).h, self(n).k, self(n).l ]
+
    end
 
    use_multiple_scale_factors result (res)
@@ -458,9 +540,69 @@ contains
    end
 
 
-!  ====================
-!  Statistical Routines
-!  ====================
+   max_resolution result (res) ::: pure
+   ! The maximum resolution in au
+      self :: IN
+      res :: REAL
+
+      res = maxval(REFLECTION:resolution(self))
+
+   end
+
+   min_resolution result (res) ::: pure
+   ! The minimum resolution in au
+      self :: IN
+      res :: REAL
+
+      res = minval(REFLECTION:resolution(self))
+
+   end
+
+!  ==================
+!  Enquiry statistics
+!  ==================
+
+   simulate_new_F_exp
+   ! Set the reflection data to be the experimental reflection data plus an
+   ! error.  The errors are normally distributed, with the experimental errors
+   ! being their standard deviations.
+
+      n :: INT
+      dF :: REAL
+
+      stdout.flush
+      stdout.text("Adding normally distributed random error to F_exp ...")
+
+      do n = 1,.dim
+         dF.to_random_normal ! dF has mean zero, standard deviation one
+         self(n).F_exp = self(n).F_exp + dF*self(n).F_sigma
+      end
+
+   end
+
+   add_random_error
+   ! Set the reflection data to be the experimental reflection data plus an
+   ! error.  The errors are normally distributed, with the experimental errors
+   ! being their standard deviations multiplied by a scale factor which is read
+   ! from stdin.
+
+      n :: INT
+      dF,scale :: REAL
+
+      stdout.flush
+      stdout.text("Adding normally distributed random error to F_exp ...")
+
+      ! Read
+      stdin.read(scale)
+      stdout.show("normal distribution scaled by ",scale)
+
+      do n = 1,.dim
+         dF.to_random_normal ! dF has mean zero, standard deviation one
+         dF = dF*scale
+         self(n).F_exp = self(n).F_exp + dF*self(n).F_sigma
+      end
+
+   end
 
    F_chi2 result (res) ::: pure
    ! chi2 for the structure factors
@@ -867,6 +1009,219 @@ contains
 
    end
 
+!  =============
+!  Make k points
+!  =============
+
+   make_k_pts(k_pt,unit_cell) ::: pure
+   ! Make the reciprocal lattice vectors
+   ! Dimension of "k_pt" is [.n_refl,3]
+      self :: IN
+      k_pt :: MAT{REAL}, OUT
+      unit_cell :: UNIT_CELL, IN
+
+ ! ENSURE(.data.created,"no data")
+
+      n :: INT
+      hkl :: VEC{INT}(3)
+      rcm :: MAT{REAL}(3,3)
+
+      rcm = TWO*PI*unit_cell.reciprocal_matrix
+
+      do n = 1,.dim
+
+         hkl = self(n).indices
+
+         k_pt(n,1) = dot_product(rcm(1,:),hkl(:))
+         k_pt(n,2) = dot_product(rcm(2,:),hkl(:))
+         k_pt(n,3) = dot_product(rcm(3,:),hkl(:))
+
+      end
+
+   end
+
+   n_unique_SF_k_pts(spacegroup) result (res) ::: pure
+   ! The number of unique k-points for an SF calculation
+      self :: IN
+      spacegroup :: SPACEGROUP, IN
+      res :: INT
+
+      res = spacegroup.n_unique_SF_symops * .dim
+
+   end
+
+   make_unique_SF_k_pts(k,spacegroup,unit_cell) ::: PURE
+   ! Make the symmetry generated reciprocal lattice vectors "k"
+   ! required for structure factor calculations.
+      self :: IN
+      k :: MAT{REAL}, OUT, target
+      spacegroup :: SPACEGROUP, IN
+      unit_cell :: UNIT_CELL, IN
+
+   ENSURE(k.dim1==spacegroup.n_unique_SF_symops*.dim,"k: wrong dim1")
+   ENSURE(k.dim2==3,"k: wrong dim2")
+
+      B,rcm,symop :: MAT{REAL}(3,3)
+      h1,h2,h3, n_refl,n,p,u :: INT
+
+      ! No. of reflection
+      n_refl = self.dim
+
+      ! Reciprocal cell matrix
+      rcm = TWO*PI*unit_cell.reciprocal_matrix
+
+      ! Make the
+      do u = 1,spacegroup.n_unique_SF_symops
+
+         symop = spacegroup.unique_SF_symop_mat(u)
+
+         B.to_product_of(rcm,symop,transpose_b=TRUE)
+
+         p = (u-1)*n_refl
+
+         do n = 1,n_refl
+
+            p = p + 1
+
+            h1 = self(n).h
+            h2 = self(n).k
+            h3 = self(n).l
+
+            k(p,1) = B(1,1)*h1 + B(1,2)*h2 + B(1,3)*h3
+            k(p,2) = B(2,1)*h1 + B(2,2)*h2 + B(2,3)*h3
+            k(p,3) = B(3,1)*h1 + B(3,2)*h2 + B(3,3)*h3
+
+         end
+
+      end
+
+   end
+
+!  =========
+!  Set hkl's
+!  =========
+
+   set_hkl_up_to_stl_limit(limit,unit_cell) ::: leaky
+   ! Set a h,k,l half-sphere ... useful for structure factor
+   ! calculations without having to set reflections individually.
+   ! NOTE: ensure wavelength is already set !
+      self :: PTR
+      limit :: REAL, IN
+      unit_cell :: UNIT_CELL, IN
+
+      hkl,h_max :: VEC{INT}(3)
+      k :: VEC{REAL}(3)
+      rcm :: MAT{REAL}(3,3)
+      stl :: REAL
+      ref :: REFLECTION
+      i,h, h1,h2,h3 :: INT
+
+      ! Reciprocal cell matrix
+      rcm = TWO*PI*unit_cell.reciprocal_matrix
+
+      ! Loop over axes
+      do i = 1,3
+
+         ! Max along direction "i"
+         hkl = [0,0,0]
+         h   = 0
+
+         do
+
+            h = h + 1
+            hkl(i) = h
+            k.to_product_of(rcm,REALIFY(hkl))
+            stl = HALF*k.norm
+
+            if (stl>limit) exit
+
+         end
+
+         ! Set the max
+         h_max(i) = h - 1
+
+      end
+
+      ! Add the list of reflections
+      .destroy
+      .create(0)
+      ref.set_defaults
+
+      do h1 = -h_max(1),h_max(1)
+      do h2 = -h_max(2),h_max(2)
+      do h3 = 0        ,h_max(3)
+
+         if (h1==0 AND h2==0 AND h3==0) cycle
+
+         ! Set hkl
+         hkl = [h1,h2,h3]
+         k.to_product_of(rcm,REALIFY(hkl))
+         stl = HALF*k.norm
+         if (stl>limit) cycle
+
+         ! Append
+         ref.set_hkl(hkl)
+         .append(ref)
+
+      end
+      end
+      end
+
+   end
+
+   set_hkl_range(hkl_range) ::: leaky, PURE
+   ! Set a h,k,l range ... useful for structure factor calculations
+   ! without having to set every reflection individually.
+      self :: PTR
+      hkl_range :: VEC{VEC_{INT}}, IN
+
+   ENSURE(hkl_range.dim==3,"hkl range must have three ranges")
+   ENSURE(hkl_range(1).element.dim==2,"hkl range 1 must have two limits")
+   ENSURE(hkl_range(2).element.dim==2,"hkl range 2 must have two limits")
+   ENSURE(hkl_range(3).element.dim==2,"hkl range 3 must have two limits")
+
+      f1,f2,f3, l1,l2,l3, h,k,l, dim, i :: INT
+
+      ! Get limits
+      f1 = hkl_range(1).element(1)
+      f2 = hkl_range(2).element(1)
+      f3 = hkl_range(3).element(1)
+      l1 = hkl_range(1).element(2)
+      l2 = hkl_range(2).element(2)
+      l3 = hkl_range(3).element(2)
+
+      dim = (l1-f1+1) * (l2-f2+1) * (l3-f3+1)
+      if (f1<=0 AND l1>=0) then
+      if (f2<=0 AND l2>=0) then
+      if (f3<=0 AND l3>=0) then
+         dim = dim - 1
+      end
+      end
+      end
+
+      ! Create the array
+      .destroy
+      .create(dim)
+
+      ! Report
+      i = 0
+      do h = f1,l1
+      do k = f2,l2
+      do l = f3,l3
+
+         if (h==0 AND k==0 AND l==0) cycle
+
+         i = i + 1
+         self(i).h = h
+         self(i).k = k
+         self(i).l = l
+
+      end
+      end
+      end
+
+   end
+
 !  =======================
 !  List-based I/O Routines
 !  =======================
@@ -945,7 +1300,6 @@ contains
    ! Revert back to previous stdin file
    end
 
-
 !  ===========================
 !  Non-list based I/O routines
 !  ===========================
@@ -957,94 +1311,293 @@ contains
    process_keyword(keyword) ::: leaky
    ! Process a normal (non list-type) "keyword".
       self :: PTR
-      keyword :: STR
+      keyword :: STR, IN
+
       word :: STR
+
       word = keyword
       word.to_lower_case
+
       select case (word)
-       case("}") ! do nothing.
-       case("add_random_error         "); .add_random_error
-       case("put                      "); .put
-       case("put_f_exp_data           "); .put_F_exp_data
-       case("put_f_pred_data          "); .put_F_pred_data
-       case("put_f_statistics         "); .put_F_statistics
-       case("put_i_exp_data           "); .put_I_exp_data
-       case("put_i_statistics         "); .put_I_statistics
-       case("put_intensity_data       "); .put_intensity_data
-       case("put_structure_factor_data"); .put_structure_factor_data
-       case("redirect                 "); .redirect
-       case("revert                   "); .revert
-       case("set_hkl_range=           "); .set_hkl_range
-       case("simulate_new_f_exp       "); .simulate_new_F_exp
-       case default;     UNKNOWN(word)
+         case("}") ! do nothing.
+         case("add_random_error         "); .add_random_error
+         case("put                      "); .put
+         case("put_f_exp_data           "); .put_F_exp_data
+         case("put_f_pred_data          "); .put_F_pred_data
+         case("put_f_statistics         "); .put_F_statistics
+         case("put_i_exp_data           "); .put_I_exp_data
+         case("put_i_statistics         "); .put_I_statistics
+         case("put_intensity_data       "); .put_intensity_data
+         case("put_structure_factor_data"); .put_structure_factor_data
+         case("redirect                 "); .redirect
+         case("revert                   "); .revert
+         case("simulate_new_f_exp       "); .simulate_new_F_exp
+         case default;     UNKNOWN(word)
       end
+
    end
 
-   shrink(dim) ::: get_from(VEC{OBJECT}), leaky
-   ! Shrink self to dimension dim.  Contents are retained.
-   end
+!  ========
+!  Read CIF
+!  ========
 
-   expand(dim) ::: get_from(VEC{OBJECT}), leaky
-   ! Expand the vector "self" to "dim". New slots are left undefined.
-   end
-
-   append(v) ::: get_from(VEC{OBJECT}), leaky
-   ! Expands self and appends the contents of vector "v".
-   end
-
-   append(value) ::: get_from(VEC{OBJECT}), leaky
-   ! Expands self by 1, and appends the single scalar "value" onto the end.
-   end
-
-   set_hkl_range ::: leaky
-   ! Set a h,k,l range ... useful for structure factor calculations
-   ! without having to set every reflection individually.
+   read_CIF(cif) ::: leaky
+   ! Read reflections from a "cif" file.
       self :: PTR
-      hkl_range :: VEC{VEC_{INT}}*
-      f1,f2,f3,l1,l2,l3,dim,h,k,l,i :: INT
+      cif :: CIF, IN
+
+           if (::has_CIF_F_reflections(cif))  then; .read_CIF_F_reflections(cif)
+      else if (::has_CIF_F2_reflections(cif)) then; .read_CIF_F2_reflections(cif)
+      end
+
+   end
+
+   has_CIF_F_reflections(cif) result (res) ::: selfless
+   ! Does "cif" have F reflections?
+      cif :: CIF, IN
+      res :: BIN
+
+      there :: VEC{BIN}(6)
+
+      ! Find reflections
+      cif.find_looped_item("_refln_index_h",there(1))
+      cif.find_looped_item("_refln_index_k",there(2))
+      cif.find_looped_item("_refln_index_l",there(3))
+      cif.find_looped_item("_refln_F_calc" ,there(4))
+      cif.find_looped_item("_refln_F_meas" ,there(5))
+      cif.find_looped_item("_refln_F_sigma",there(6))
+
+      res = all(there)
+
+   end
+
+   read_CIF_F_reflections(cif) ::: leaky
+   ! Read F reflections from "cif".
+      self :: PTR
+      cif :: CIF, IN
+
+      h,k,l :: VEC{INT}*
+      Fp,Fm,Sg :: VEC{REAL}*
 
       ! Read
-      stdin.read_ptr(hkl_range)
+      cif.read_looped_item("_refln_index_h",h)
+      cif.read_looped_item("_refln_index_k",k)
+      cif.read_looped_item("_refln_index_l",l)
+      cif.read_looped_item("_refln_F_calc" ,Fp)
+      cif.read_looped_item("_refln_F_meas" ,Fm)
+      cif.read_looped_item("_refln_F_sigma",Sg)
 
-      ! Sanity check
-      DIE_IF(.created,"the reflections are already created")
-      DIE_IF(hkl_range.dim/=3,"hkl range must have three ranges")
-      DIE_IF(hkl_range(1).element.dim/=2,"hkl range 1 must have two limits")
-      DIE_IF(hkl_range(2).element.dim/=2,"hkl range 2 must have two limits")
-      DIE_IF(hkl_range(3).element.dim/=2,"hkl range 3 must have two limits")
-
-      ! Get limits
-      f1 = hkl_range(1).element(1)
-      f2 = hkl_range(2).element(1)
-      f3 = hkl_range(3).element(1)
-      l1 = hkl_range(1).element(2)
-      l2 = hkl_range(2).element(2)
-      l3 = hkl_range(3).element(2)
-
-      ! Create the array
-      dim = (l1-f1+1)*(l2-f2+1)*(l3-f3+1)
-      self.create(dim)
-      stdout.show("h range =",[f1,l1])
-      stdout.show("k range =",[f2,l2])
-      stdout.show("l range =",[f3,l3])
-      stdout.show("Total # of reflection =",dim)
-      i = 0
-      do h = f1,l1
-      do k = f2,l2
-      do l = f3,l3
-        i = i + 1
-        self(i).h = h
-        self(i).k = k
-        self(i).l = l
-      end
-      end
-      end
+      ! Create and assign
+      .destroy
+      .create(h.dim)
+      .set_h(h)
+      .set_k(k)
+      .set_l(l)
+      .set_F_pred(Fp)
+      .set_F_exp(Fm)
+      .set_F_sigma(Sg)
 
       ! Clean
-      hkl_range.destroy
+      Sg.destroy
+      Fm.destroy
+      Fp.destroy
+      l.destroy
+      k.destroy
+      h.destroy
 
    end
 
+   has_CIF_F2_reflections(cif) result (res) ::: selfless
+   ! Does "cif" have F2 reflections?
+      cif :: CIF, IN
+      res :: BIN
+
+      there :: VEC{BIN}(6)
+
+      ! Find reflections
+      cif.find_looped_item("_refln_index_h",there(1))
+      cif.find_looped_item("_refln_index_k",there(2))
+      cif.find_looped_item("_refln_index_l",there(3))
+      cif.find_looped_item("_refln_F_squared_calc" ,there(4))
+      cif.find_looped_item("_refln_F_squared_meas" ,there(5))
+      cif.find_looped_item("_refln_F_squared_sigma",there(6))
+
+      res = all(there)
+
+   end
+
+   read_CIF_F2_reflections(cif) ::: leaky
+   ! Read F2 reflections from "cif".
+      self :: PTR
+      cif :: CIF, IN
+
+      h,k,l :: VEC{INT}*
+      Fp,Fm,Sg :: VEC{REAL}*
+
+      ! Read
+      cif.read_looped_item("_refln_index_h",h)
+      cif.read_looped_item("_refln_index_k",k)
+      cif.read_looped_item("_refln_index_l",l)
+      cif.read_looped_item("_refln_F_squared_calc" ,Fp)
+      cif.read_looped_item("_refln_F_squared_meas" ,Fm)
+      cif.read_looped_item("_refln_F_squared_sigma",Sg)
+
+      ! Create and assign
+      .destroy
+      .create(h.dim)
+      .set_h(h)
+      .set_k(k)
+      .set_l(l)
+      .set_I_pred(Fp)
+      .set_I_exp(Fm)
+      .set_I_sigma(Sg)
+
+      ! Clean
+      Sg.destroy
+      Fm.destroy
+      Fp.destroy
+      l.destroy
+      k.destroy
+      h.destroy
+
+   end
+
+!  ==================
+!  Read shelx/std hkl
+!  ==================
+
+   read_shelx_hkl_file(file) ::: template
+   ! Read Sheldrick's hkl F/F2 reflections from "file".
+      self :: PTR
+      file :: TEXTFILE, INOUT
+
+      i,n_refl, h,k,l,n :: INT
+      value,sigma :: REAL
+
+      n_refl = ::no_of_hkl_reflections(file)
+
+      ! Create reflections
+      .destroy
+      .create(n_refl)
+
+      ! Read them
+      n = 0
+      do i = 1,file.no_of_lines
+
+         file.move_to_line(i)
+
+         if (NOT file.buffer_exhausted) then
+
+            ! Fixed format
+            h     = file.buffer.string( 1: 4).to_int
+            k     = file.buffer.string( 5: 8).to_int
+            l     = file.buffer.string( 9:12).to_int
+           
+            if (h==0 AND k==0 AND l==0) cycle
+
+            ! Fixed format
+            value = file.buffer.string(13:20).to_real
+            sigma = file.buffer.string(21:28).to_real
+           
+            n = n + 1
+            self(n).set_hkl( [h,k,l] )
+            self(n).SET_EXP?(value)
+            self(n).SET_SIG?(sigma)
+
+         end
+
+      end
+
+   end
+
+   read_shelx_F_hkl_file(file) ::: get_from(read_shelx_hkl_file, SET_EXP?=>set_F_exp, SET_SIG?=>set_F_sigma), leaky
+   ! Read Sheldrick's hkl F/F2 reflections from "file".
+   end
+
+   read_shelx_F2_hkl_file(file) ::: get_from(read_shelx_hkl_file, SET_EXP?=>set_I_exp, SET_SIG?=>set_I_sigma), leaky
+   ! Read Sheldrick's hkl F/F2 reflections from "file".
+   end
+
+   read_std_hkl_file(file) ::: template
+   ! Read normal free-form hkl F/F2 reflections from "file".
+      self :: PTR
+      file :: TEXTFILE, INOUT
+
+      i,n_refl, h,k,l,n :: INT
+      value,sigma :: REAL
+
+      n_refl = ::no_of_hkl_reflections(file)
+
+      ! Create reflections
+      .destroy
+      .create(n_refl)
+
+      ! Read them
+      n = 0
+      do i = 1,file.no_of_lines
+
+         file.move_to_line(i)
+
+         if (NOT file.buffer_exhausted) then
+
+            file.read(h)
+            file.read(k)
+            file.read(l)
+           
+            if (h==0 AND k==0 AND l==0) cycle
+           
+            file.read(value)
+            file.read(sigma)
+           
+            n = n + 1
+            self(n).set_hkl( [h,k,l] )
+            self(n).SET_EXP?(value)
+            self(n).SET_SIG?(sigma)
+
+         end
+
+      end
+
+   end
+
+   read_std_F_hkl_file(file) ::: get_from(read_std_hkl_file, SET_EXP?=>set_F_exp, SET_SIG?=>set_F_sigma), leaky
+   ! Read normal free-form hkl F/F2 reflections from "file".
+   end
+
+   read_std_F2_hkl_file(file) ::: get_from(read_std_hkl_file, SET_EXP?=>set_I_exp, SET_SIG?=>set_I_sigma), leaky
+   ! Read normal free-form hkl F/F2 reflections from "file".
+   end
+
+   no_of_hkl_reflections(file) result (res) ::: selfless, private
+   ! Return the no. of (h k l) reflections in "file".
+   ! - Blank lines are ignored
+   ! - (0 0 0) reflection ignored too ...
+      file :: TEXTFILE, INOUT
+      res :: INT
+
+      i, h,k,l :: INT
+
+      res = 0
+
+      do i = 1,file.no_of_lines
+
+         file.move_to_line(i)
+
+         if (NOT file.buffer_exhausted) then
+
+            file.read(h)
+            file.read(k)
+            file.read(l)
+           
+            if (h==0 AND k==0 AND l==0) cycle
+           
+            res = res + 1
+
+         end
+
+      end
+
+   end
 
 !  ===============
 !  Output routines
@@ -1181,7 +1734,7 @@ contains
 
       table :: VEC{TABLE_COLUMN}*
       h,k,l,g :: VEC{INT}*
-      F_cr,F_ci,F_pred,F_exp,F_sigma,F_z :: VEC{REAL}*
+      F_cr,F_ci,F_pred,F_exp,F_sigma,F_z,stl,d :: VEC{REAL}*
       n_refl :: INT
 
       ! Constants
@@ -1192,6 +1745,8 @@ contains
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
       g.create(n_refl);       g       = .group
+      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
       F_cr.create(n_refl);    F_cr    = RE(.F_calc)
       F_ci.create(n_refl);    F_ci    = IM(.F_calc)
       F_pred.create(n_refl);  F_pred  = .F_pred
@@ -1200,23 +1755,28 @@ contains
       F_z.create(n_refl);     F_z     = REFLECTION:F_z(self)
 
       ! Make table
-      table.create(10)
-       table(1).set_heading("h");        table(1).set_values(h)
-       table(2).set_heading("k");        table(2).set_values(k)
-       table(3).set_heading("l");        table(3).set_values(l)
-       table(4).set_heading("Scale");    table(4).set_values(g)
-       table(5).set_heading("F_calc");   table(5).set_values(F_cr)
-       table(6).set_heading("F_calc");   table(6).set_values(F_ci)
-       table(7).set_heading("F_pred");   table(7).set_values(F_pred)
-       table(8).set_heading("F_exp");    table(8).set_values(F_exp)
-       table(9).set_heading("F_sigma");  table(9).set_values(F_sigma)
-      table(10).set_heading("F_z");     table(10).set_values(F_z)
-      table.put
+      table.create(12)
+       table(1).set_heading("h");         table(1).set_values(h)
+       table(2).set_heading("k");         table(2).set_values(k)
+       table(3).set_heading("l");         table(3).set_values(l)
+       table(4).set_heading("Scale");     table(4).set_values(g)
+       table(5).set_heading("stl");       table(5).set_values(stl)
+       table(6).set_heading("d");         table(6).set_values(d)
+       table(7).set_heading("F_calc");    table(7).set_values(F_cr)
+       table(8).set_heading("F_calc");    table(8).set_values(F_ci)
+       table(9).set_heading("F_pred");    table(9).set_values(F_pred)
+      table(10).set_heading("F_exp");    table(10).set_values(F_exp)
+      table(11).set_heading("F_sigma");  table(11).set_values(F_sigma)
+      table(12).set_heading("F_z");      table(12).set_values(F_z)
 
       ! Subheadings
       table(4).set_subhead("group")
-      table(5).set_subhead("Re")
-      table(6).set_subhead("Im")
+      table(5).set_subhead("/A^-1")
+      table(6).set_subhead("/A")
+      table(7).set_subhead("Re")
+      table(8).set_subhead("Im")
+
+      table.put
 
       ! Clean
       table.clear_columns
@@ -1227,6 +1787,8 @@ contains
       F_pred.destroy
       F_ci.destroy
       F_cr.destroy
+      d.destroy
+      stl.destroy
       g.destroy
       l.destroy
       k.destroy
@@ -1239,7 +1801,7 @@ contains
 
       table :: VEC{TABLE_COLUMN}*
       h,k,l :: VEC{INT}*
-      F_cr,F_ci,F_pred,F_exp,F_sigma,F_z :: VEC{REAL}*
+      F_cr,F_ci,F_pred,F_exp,F_sigma,F_z,stl,d :: VEC{REAL}*
       n_refl :: INT
 
       ! Constants
@@ -1249,6 +1811,8 @@ contains
       h.create(n_refl);       h       = .h
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
+      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
       F_cr.create(n_refl);    F_cr    = RE(.F_calc)
       F_ci.create(n_refl);    F_ci    = IM(.F_calc)
       F_pred.create(n_refl);  F_pred  = .F_pred
@@ -1257,21 +1821,26 @@ contains
       F_z.create(n_refl);     F_z     = REFLECTION:F_z(self)
 
       ! Make table
-      table.create(9)
-      table(1).set_heading("h");        table(1).set_values(h)
-      table(2).set_heading("k");        table(2).set_values(k)
-      table(3).set_heading("l");        table(3).set_values(l)
-      table(4).set_heading("F_calc");   table(4).set_values(F_cr)
-      table(5).set_heading("F_calc");   table(5).set_values(F_ci)
-      table(6).set_heading("F_pred");   table(6).set_values(F_pred)
-      table(7).set_heading("F_exp");    table(7).set_values(F_exp)
-      table(8).set_heading("F_sigma");  table(8).set_values(F_sigma)
-      table(9).set_heading("F_z");      table(9).set_values(F_z)
-      table.put
+      table.create(11)
+       table(1).set_heading("h");         table(1).set_values(h)
+       table(2).set_heading("k");         table(2).set_values(k)
+       table(3).set_heading("l");         table(3).set_values(l)
+       table(4).set_heading("stl");       table(4).set_values(stl)
+       table(5).set_heading("d");         table(5).set_values(d)
+       table(6).set_heading("F_calc");    table(6).set_values(F_cr)
+       table(7).set_heading("F_calc");    table(7).set_values(F_ci)
+       table(8).set_heading("F_pred");    table(8).set_values(F_pred)
+       table(9).set_heading("F_exp");     table(9).set_values(F_exp)
+      table(10).set_heading("F_sigma");  table(10).set_values(F_sigma)
+      table(11).set_heading("F_z");      table(11).set_values(F_z)
 
       ! Subheadings
-      table(4).set_subhead("Re")
-      table(5).set_subhead("Im")
+      table(4).set_subhead("/A^-1")
+      table(5).set_subhead("/A")
+      table(6).set_subhead("Re")
+      table(7).set_subhead("Im")
+
+      table.put
 
       ! Clean
       table.clear_columns
@@ -1282,6 +1851,8 @@ contains
       F_pred.destroy
       F_ci.destroy
       F_cr.destroy
+      d.destroy
+      stl.destroy
       l.destroy
       k.destroy
       h.destroy
@@ -1293,7 +1864,7 @@ contains
 
       table :: VEC{TABLE_COLUMN}*
       h,k,l :: VEC{INT}*
-      F_cr,F_ci,F_pred :: VEC{REAL}*
+      F_cr,F_ci,F_pred,stl,d :: VEC{REAL}*
       n_refl :: INT
 
       ! Constants
@@ -1303,22 +1874,29 @@ contains
       h.create(n_refl);      h      = .h
       k.create(n_refl);      k      = .k
       l.create(n_refl);      l      = .l
+      stl.create(n_refl);    stl    = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;    d      = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
       F_cr.create(n_refl);   F_cr   = RE(.F_calc)
       F_ci.create(n_refl);   F_ci   = IM(.F_calc)
       F_pred.create(n_refl); F_pred = .F_pred
 
       ! Make table
-      table.create(6)
+      table.create(8)
       table(1).set_heading("h");      table(1).set_values(h)
       table(2).set_heading("k");      table(2).set_values(k)
       table(3).set_heading("l");      table(3).set_values(l)
-      table(4).set_heading("F_calc"); table(4).set_values(F_cr)
-      table(5).set_heading("F_calc"); table(5).set_values(F_ci)
-      table(6).set_heading("F_pred"); table(6).set_values(F_pred)
+      table(4).set_heading("stl");    table(4).set_values(stl)
+      table(5).set_heading("d");      table(5).set_values(d)
+      table(6).set_heading("F_calc"); table(6).set_values(F_cr)
+      table(7).set_heading("F_calc"); table(7).set_values(F_ci)
+      table(8).set_heading("F_pred"); table(8).set_values(F_pred)
 
       ! Subheadings
-      table(4).set_subhead("Re")
-      table(5).set_subhead("Im")
+      table(4).set_subhead("/A^-1")
+      table(5).set_subhead("/A")
+      table(6).set_subhead("Re")
+      table(7).set_subhead("Im")
+
       table.put
 
       ! Clean
@@ -1327,6 +1905,8 @@ contains
       F_pred.destroy
       F_ci.destroy
       F_cr.destroy
+      d.destroy
+      stl.destroy
       l.destroy
       k.destroy
       h.destroy
@@ -1346,7 +1926,7 @@ contains
 
       table :: VEC{TABLE_COLUMN}*
       h,k,l :: VEC{INT}*
-      F_exp,F_sigma :: VEC{REAL}*
+      F_exp,F_sigma,stl,d :: VEC{REAL}*
       n_refl :: INT
 
       ! Constants
@@ -1356,26 +1936,37 @@ contains
       h.create(n_refl);       h       = .h
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
+      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
       F_exp.create(n_refl);   F_exp   = .F_exp
       F_sigma.create(n_refl); F_sigma = .F_sigma
 
       ! Make table
-      table.create(5)
+      table.create(7)
       table(1).set_heading("h");       table(1).set_values(h)
       table(2).set_heading("k");       table(2).set_values(k)
       table(3).set_heading("l");       table(3).set_values(l)
-      table(4).set_heading("F_exp");   table(4).set_values(F_exp)
-      table(5).set_heading("F_sigma"); table(5).set_values(F_sigma)
+      table(4).set_heading("stl");     table(4).set_values(stl)
+      table(5).set_heading("d");       table(5).set_values(d)
+      table(6).set_heading("F_exp");   table(6).set_values(F_exp)
+      table(7).set_heading("F_sigma"); table(7).set_values(F_sigma)
+
+      ! Subheadings
+      table(4).set_subhead("/A^-1")
+      table(5).set_subhead("/A")
+
       table.put
 
       ! Clean
-      table.clear_columns
-      table.destroy
       F_sigma.destroy
       F_exp.destroy
+      d.destroy
+      stl.destroy
       l.destroy
       k.destroy
       h.destroy
+      table.clear_columns
+      table.destroy
 
    end
 
@@ -1385,7 +1976,7 @@ contains
 
       table :: VEC{TABLE_COLUMN}*
       h,k,l,g :: VEC{INT}*
-      F_exp,F_sigma :: VEC{REAL}*
+      F_exp,F_sigma,stl,d :: VEC{REAL}*
       n_refl :: INT
 
       ! Constants
@@ -1396,27 +1987,36 @@ contains
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
       g.create(n_refl);       g       = .group
+      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
       F_exp.create(n_refl);   F_exp   = .F_exp
       F_sigma.create(n_refl); F_sigma = .F_sigma
 
       ! Make table
-      table.create(6)
+      table.create(8)
       table(1).set_heading("h");       table(1).set_values(h)
       table(2).set_heading("k");       table(2).set_values(k)
       table(3).set_heading("l");       table(3).set_values(l)
       table(4).set_heading("Scale");   table(4).set_values(g)
-      table(5).set_heading("F_exp");   table(5).set_values(F_exp)
-      table(6).set_heading("F_sigma"); table(6).set_values(F_sigma)
-      table.put
+      table(5).set_heading("stl");     table(5).set_values(stl)
+      table(6).set_heading("d");       table(6).set_values(d)
+      table(7).set_heading("F_exp");   table(7).set_values(F_exp)
+      table(8).set_heading("F_sigma"); table(8).set_values(F_sigma)
 
       ! Subheadings
       table(4).set_subhead("group")
+      table(5).set_subhead("/A^-1")
+      table(6).set_subhead("/A")
+
+      table.put
 
       ! Clean
       table.clear_columns
       table.destroy
       F_sigma.destroy
       F_exp.destroy
+      d.destroy
+      stl.destroy
       g.destroy
       l.destroy
       k.destroy
@@ -1735,9 +2335,15 @@ contains
 
    end
 
+!  =======
+!  Put CIF
+!  =======
 
-   put_CIF
+   put_CIF(threshold)
    ! Put reflection information in CIF format
+      self :: INOUT
+      threshold :: STR, IN
+
       i :: INT
 
       lambda :: REAL
@@ -1752,16 +2358,35 @@ contains
       stdout.text("# ===============")
       stdout.text("# Reflection data")
       stdout.text("# ===============")
+
       stdout.flush
-      stdout.text("_diffrn_radiation_wavelength  "//trim(lambda.to_str))
+      stdout.text("_diffrn_radiation_wavelength       "//trim(lambda.to_str))
+
+      stdout.flush
+      stdout.show("_reflns_d_resolution_high          ",.max_resolution*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_d_resolution_low           ",.min_resolution*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_limit_h_max                ",maxval(self(:).h)                ,dots=FALSE)
+      stdout.show("_reflns_limit_h_min                ",minval(self(:).h)                ,dots=FALSE)
+      stdout.show("_reflns_limit_k_max                ",maxval(self(:).k)                ,dots=FALSE)
+      stdout.show("_reflns_limit_k_min                ",minval(self(:).k)                ,dots=FALSE)
+      stdout.show("_reflns_limit_l_max                ",maxval(self(:).l)                ,dots=FALSE)
+      stdout.show("_reflns_limit_l_min                ",minval(self(:).l)                ,dots=FALSE)
+      stdout.show("_reflns_number_gt                  ",.dim                             ,dots=FALSE)
+      stdout.show("_reflns_number_total               ",.dim                             ,dots=FALSE)
+      stdout.show("_reflns_threshold_expression       ",threshold                        ,dots=FALSE)
+
+
+      stdout.flush
+      stdout.text("# NOTE: only reflections used in the fitting procedure are listed")
+      stdout.text("#       i.e. those that satisfy the acceptance thresholds")
       stdout.flush
       stdout.text("loop_")
-      stdout.text("    _diffrn_refln_index_h")
-      stdout.text("    _diffrn_refln_index_k")
-      stdout.text("    _diffrn_refln_index_l")
-      stdout.text("    _diffrn_refln_F_calc")
-      stdout.text("    _diffrn_refln_F_meas")
-      stdout.text("    _diffrn_refln_F_sigma")
+      stdout.text("    _refln_index_h")
+      stdout.text("    _refln_index_k")
+      stdout.text("    _refln_index_l")
+      stdout.text("    _refln_F_calc")
+      stdout.text("    _refln_F_meas")
+      stdout.text("    _refln_F_sigma")
 
       do i = 1,self.dim
          stdout.put(self(i).h)
@@ -1774,7 +2399,6 @@ contains
       end
 
    end
-
 
 !  ========
 !  QQ plots
@@ -1879,48 +2503,6 @@ contains
       do j = 1,n_refl                          ! expected quantile, d0j
          p = (TWO*(n_refl-j)+ONE)/(TWO*n_refl) ! cumulative probability
          e(n_refl-j+1) = REAL:z_from_cumulative_p(p)
-      end
-
-   end
-
-   simulate_new_F_exp
-   ! Set the reflection data to be the experimental reflection data plus an
-   ! error.  The errors are normally distributed, with the experimental errors
-   ! being their standard deviations.
-
-      n :: INT
-      dF :: REAL
-
-      stdout.flush
-      stdout.text("Adding normally distributed random error to F_exp ...")
-
-      do n = 1,.dim
-         dF.to_random_normal ! dF has mean zero, standard deviation one
-         self(n).F_exp = self(n).F_exp + dF*self(n).F_sigma
-      end
-
-   end
-
-   add_random_error
-   ! Set the reflection data to be the experimental reflection data plus an
-   ! error.  The errors are normally distributed, with the experimental errors
-   ! being their standard deviations multiplied by a scale factor which is read
-   ! from stdin.
-
-      n :: INT
-      dF,scale :: REAL
-
-      stdout.flush
-      stdout.text("Adding normally distributed random error to F_exp ...")
-
-      ! Read
-      stdin.read(scale)
-      stdout.show("normal distribution scaled by ",scale)
-
-      do n = 1,.dim
-         dF.to_random_normal ! dF has mean zero, standard deviation one
-         dF = dF*scale
-         self(n).F_exp = self(n).F_exp + dF*self(n).F_sigma
       end
 
    end
