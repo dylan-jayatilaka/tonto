@@ -7,6 +7,7 @@
 * If you want to develop first install `git` and then clone the repository
   (which may take some time)
 
+### On Linux
 ```
    git clone https://github.com/dylan-jayatilaka/tonto.git
 ```
@@ -21,6 +22,10 @@ If you intend making a parallel version install:
 
 * `mpich2`
 
+If you intend making plots we recommend to install:
+
+* `gnuplot`
+
 Your text editor is a personal choice. If you use `vim`
 you might want to install
 
@@ -30,6 +35,41 @@ you might want to install
 With these and `vim` you can syntax highlight, jump to
 tags under your cursor (e.g. routines, types, or macros) and
 have Tonto-library-specific code completion.
+
+### On Windows
+
+The compilation procedure is the same as above, but you have to first
+install the [cygwin](https://cygwin.com/install.html) unix
+environment.
+
+The programs tend to be slower when running on Windows.
+
+You will need to install the following packages from
+the menu:
+
+* `perl`
+* `gcc-core`
+* `gcc-fortran`
+* `make`
+
+And perhaps (see above) also:
+
+* `vim`
+* `ctags`
+* `cscope`
+* `gnuplot`
+
+### On Mac
+
+The compilation procedure is the same as above, but you have to first
+install the [brew](http://brew.sh/) package manager.
+environment.
+
+Then install:
+
+* `perl`
+* `gcc`
+* `make`
 
 ## 2. Get set ...
 
