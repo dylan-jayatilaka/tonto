@@ -106,6 +106,16 @@ Here `build` is usually `fast` but may be `debug` depending on if
 you change the compilation options in the platform-specific
 file -- see below.
 
+If you want to build the standalone Hirshfeld atom refinement terminal
+(HARt) program then type:
+
+```
+   make run_har.exe
+```
+
+Copy the program `run_har.exe` anywhere you like and call it `HARt` !
+For help type `HARt -help`.
+
 ## 3. Go!
 
 To run the tests, type:
