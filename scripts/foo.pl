@@ -2083,6 +2083,36 @@ sub fortran_dump_use {
 }
 
 
+##########################################################################
+# Change the start of the routine by adding ENSURE and other precondition
+# macros. Also add a comment if the routine is inherited for clarity.
+##########################################################################
+
+sub fortran_add_preconditions {
+
+  my $name = $current_rout_name;
+
+  my $pre_out = "";
+
+  if ($routine{$name}{first_active_line}) {
+     if (defined $routine{$name}{fortran_ensure_statements}) {
+        if ($pre_out ne '') { $pre_out .= "\n" }
+        $pre_out .= $routine{$name}{fortran_ensure_statements} . "\n";
+        $routine{$name}{fortran_ensure_statements} = undef;
+     }
+     if (defined $routine{$name}{being_inherited}) {
+        if ($pre_out ne '') { $pre_out .= "\n" }
+        $pre_out .= "\n      ! The following code is inherited from " .  
+                    $routine{$name}{parent_module} ;
+     }
+     if ($pre_out ne '') {
+        $fortran_out = $pre_out . "\n" . $fortran_out;
+     }
+  }
+
+}
+
+
 #############################################################
 # Change case statements with the UNKNOWN macro appropriately
 #############################################################
@@ -2360,8 +2390,10 @@ sub fortran_do_routine_interface_scope {
   $pre = $routine{$name}{indent};
 
   $attr = '';
-  if    (defined $routine{$name}{elemental})        { $attr = 'elemental '; }
-  elsif (defined $routine{$name}{pure})             { $attr = 'pure '; }
+  if    (defined $routine{$name}{elemental})        { $attr  = 'elemental '; }
+  elsif (defined $routine{$name}{ELEMENTAL})        { $attr  = 'ELEMENTAL '; }
+  elsif (defined $routine{$name}{pure})             { $attr  = 'pure '; }
+  elsif (defined $routine{$name}{PURE})             { $attr  = 'PURE '; }
   if    (defined $routine{$name}{recursive})        { $attr .= 'recursive '; }
 
   $args = '';
@@ -3297,6 +3329,7 @@ sub fortran_do_routine_body {
 
      &fortran_process_error_management;
      &fortran_process_case_statements;
+     &fortran_add_preconditions;
      $fortran_out .= $comment;
      &fortran_prepend_self_decl;
      if (! &scope_has_interface) { &fortran_prepend_use_decl; }
@@ -3826,9 +3859,11 @@ sub fortran_do_new_routine_scope {
   $name = $current_rout_name;
   $pre = $routine{$name}{indent};
   $attr = '';
-  if    ($routine{$name}{elemental})        { $attr = 'elemental ';  }
-  elsif ($routine{$name}{pure})             { $attr = 'pure ';       }
-  if    ($routine{$name}{recursive})        { $attr .= 'recursive '; }
+  if    (defined $routine{$name}{elemental}) { $attr  = 'elemental '; }
+  elsif (defined $routine{$name}{ELEMENTAL}) { $attr  = 'ELEMENTAL '; }
+  elsif (defined $routine{$name}{pure})      { $attr  = 'pure '; }
+  elsif (defined $routine{$name}{PURE})      { $attr  = 'PURE '; }
+  if    ($routine{$name}{recursive})         { $attr .= 'recursive ';  }
 
   $rout_type = '';
   if    ($routine{$name}{function})         { $rout_type = 'function'; }
@@ -4937,7 +4972,7 @@ sub analyse_routine_name {
 
         # Conditionally pure procedure (depends on ENSURE macro)
         /^PURE/ && $do_pure && do {
-           $routine{$name}{pure}=1;
+           $routine{$name}{PURE}=1;
            next
         };
 
@@ -4950,8 +4985,8 @@ sub analyse_routine_name {
 
         # Conditionally elemental (depends on ENSURE macro)
         /^ELEMENTAL/ && $do_pure && do {
-           $routine{$name}{elemental}=1;
-           $routine{$name}{pure}=1;
+           $routine{$name}{ELEMENTAL}=1;
+           $routine{$name}{PURE}=1;
            next
         };
 
