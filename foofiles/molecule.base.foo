@@ -2077,64 +2077,83 @@ contains
 !  Gaussian chk interface
 !  ======================
 
-!   write_g09_MOs
-!   ! Write the alpha MO's
-!      self :: IN
-!
-!   DIE_IF(.molecular_orbitals.destroyed,"no MOs")
-!   DIE_IF(.molecular_orbitals.restricted.destroyed,"no restricted MOs")
-!
-!      chkfile :: TEXTFILE*
-!      n :: INT
-!
-!      ! Open FChk file
-!      chkfile.create
-!      chkfile.set_name(trim(.name)//"."//"g09_alpha_MOs")
-!      chkfile.set_no_of_fields_per_line(5)
-!      chkfile.set_real_style("e")
-!      chkfile.set_real_width(16)
-!      chkfile.set_real_precision(8)
-!      chkfile.set_using_array_labels(FALSE)
-!      chkfile.open(for="write")
-!
-!      ! Write molecular orbitals.
-!      n = .molecular_orbitals.restricted.dim
-!      chkfile.put(reshape(.molecular_orbitals.restricted,[n]),by_column=TRUE)
-!
-!
-!      ! Clean
-!      chkfile.destroy
-!
-!   end
-!
-!   write_g09_density_matrix
-!   ! Write the alpha MO's
-!      self :: INOUT
-!
-!   DIE_IF(.density_matrix.destroyed,"no density_matrix")
-!   DIE_IF(.density_matrix.restricted.destroyed,"no restricted density_matrix")
-!
-!      chkfile :: TEXTFILE*
-!
-!      ! Open FChk file
-!      chkfile.create
-!      chkfile.set_name(trim(.name)//"."//"g09_density_matrix")
-!      chkfile.set_no_of_fields_per_line(5)
-!      chkfile.set_real_style("e")
-!      chkfile.set_real_width(16)
-!      chkfile.set_real_precision(8)
-!      chkfile.set_using_array_labels(FALSE)
-!      chkfile.open(for="write")
-!
-!      ! Write density matrix
-!      .density_matrix.compress("restricted")
-!      chkfile.put(.density_matrix.triangle,by_row=TRUE)
-!      .density_matrix.uncompress
-!
-!      ! Clean
-!      chkfile.destroy
-!
-!   end
+! Read *only* Tonto MO's and density from g09
+
+   read_tonto_FChk_file(name) ::: leaky
+   ! Read the MO's and density matrix from a g09 checkpoint file
+   ! as if these were just placed there in TONTO format.
+   ! WARNING: only works for restricted
+      self :: INOUT
+      name :: STR, optional
+
+   DIE_IF(NOT .basis_info_made,"must be a tonto basis set!")
+
+      chkfile :: TEXTFILE*
+      fchk :: STR
+
+      ! Get FChk file name
+      if (present(name)) then
+         fchk = name
+      else if (NOT stdin.buffer_exhausted) then
+         stdin.read(fchk) ! specified on stdin
+      else
+         fchk = .name
+      end
+
+      ! Create FChk file
+      chkfile.create(name)
+
+      ! Create orbital energies.
+      .orbital_energies.destroy
+      .orbital_energies.create(.n_bf,"restricted")
+
+      ! Find & read orbital energies.
+      chkfile.look_for("Alpha Orbital Energies",from=1)
+      chkfile.read(.orbital_energies)
+
+      ! Create MOs
+      .molecular_orbitals.destroy
+      .molecular_orbitals.create(.n_bf,"restricted")
+
+      ! Find & read in orbitals
+      chkfile.look_for("Alpha MO",from=1)
+      chkfile.read(.molecular_orbitals,by_column=TRUE)
+
+      ! Create DM 
+      .density_matrix.destroy
+      .density_matrix.create(.n_bf,"restricted")
+
+      ! Find & read in DM
+      chkfile.look_for("SCF density",from=1)
+      chkfile.read(.density_matrix,by_column=TRUE)
+
+   end
+
+   write_tonto_FChk_MO ::: leaky
+   ! Write the MO's in a way which can replace g09 fchk file section
+
+   ENSURE(NOT .use_spherical_basis,   "spherical basis not implemented")
+   ENSURE(.molecular_orbitals.created,"no MO's")
+
+      arch :: ARCHIVE 
+
+      arch.set(.name,"gaussian_MO",genre=.molecular_orbitals.spinorbital_kind,format="ascii")
+      arch.read(.molecular_orbitals,by_column=TRUE)
+
+   end
+
+   write_tonto_FChk_DM ::: leaky
+   ! Write the MO's in a way which can replace g09 fchk file section
+
+   ENSURE(NOT .use_spherical_basis,   "spherical basis not implemented")
+   ENSURE(.density_matrix.created,"no MO's")
+
+      arch :: ARCHIVE 
+
+      arch.set(.name,"gaussian_DM",genre=.density_matrix.spinorbital_kind,format="ascii")
+      arch.read(.density_matrix,by_column=TRUE)
+
+   end
 
 ! Can thesed be condensed into one?
 
@@ -3386,89 +3405,6 @@ contains
    end
 
 
-
-   write_g09_MO ::: leaky
-   ! Write the MO's in a way which can replace g09 fchk file section
-
-   DIE_IF(.use_spherical_basis,"spherical basis not implemented")
-
-      W :: OPMATRIX*
-      arch :: ARCHIVE
-      genre :: STR
-
-      arch.set_root(.name)
-      arch.set_name("gaussian_MO")
-
-      W.create_copy(.molecular_orbitals)
-
-
-      ! Reorder and weight ...
-      genre = W.spinorbital_kind
-      select case (genre)
-
-         case ("restricted")
-            .:swap_into_g94_orbital_order(W.restricted,"row")
-
-         case ("unrestricted")
-            .:swap_into_g94_orbital_order(W.alpha,"row")
-            .:swap_into_g94_orbital_order(W.beta ,"row")
-
-         case default
-            DIE("unknown genre "//trim(genre))
-
-      end
-
-      ! Put
-      arch.write_g09_MO(W)
-
-      ! Clean
-      W.destroy
-
-   end
-
-   write_g09_DM ::: leaky
-   ! Write the DM in a way which can replace g09 fchk file section
-
-   DIE_IF(.use_spherical_basis,"spherical basis not implemented")
-
-      W :: OPMATRIX*
-      arch :: ARCHIVE
-      genre :: STR
-
-      arch.set_root(.name)
-      arch.set_name("gaussian_DM")
-
-      W.create_copy(.density_matrix)
-
-
-      ! Reorder and weight ...
-      genre = W.spinorbital_kind
-      select case (genre)
-
-         case ("restricted")
-            .:swap_into_g94_orbital_order(W.restricted,"row")
-            .:swap_into_g94_orbital_order(W.restricted,"column")
-
-         case ("unrestricted")
-            .:swap_into_g94_orbital_order(W.alpha,"row")
-            .:swap_into_g94_orbital_order(W.alpha,"column")
-            .:swap_into_g94_orbital_order(W.beta ,"row")
-            .:swap_into_g94_orbital_order(W.beta ,"column")
-
-         case default
-            DIE("unknown genre "//trim(genre))
-
-      end
-
-      ! Put
-      arch.write_g09_DM(W)
-
-      ! Clean
-      W.destroy
-
-   end
-
-
    swap_from_g94_orbital_order(X,swap)
    ! Swap the order of f orbitals on matrix "X" after reading a
    ! gaussian checkpoint file, for "swap" equal to "row" or "1", or
@@ -4191,6 +4127,12 @@ contains
          ! Create mol & define it
          mol.:create
          self.:make_molecule_from_atom_group(g,mol)
+
+         ! Rotate and translate it
+         if (.atom_group(g).transform_group) then
+            mol.:rotate_by(.atom_group(g).rotation_matrix)
+            mol.atom.translate_by(.atom_group(g).shift)
+         end
          mol.atom.set_group_to(g)
 
          ! Add it to atom_group
