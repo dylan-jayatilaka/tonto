@@ -35,6 +35,7 @@ contains
    make_core_matrix(genre) ::: leaky
    ! Get the core hamiltonian matrix.
    ! If already in memory, do nothing. Otherwise make it.
+      self :: INOUT
       genre :: STR, optional
 
    ENSURE(.basis_info_made, "no basis info")
@@ -42,17 +43,17 @@ contains
 
       genus :: STR
 
-      ! No scfdata ====> make restricted core_matrix
       if (.scfdata.destroyed) then
 
+         ! No scfdata ==> make restricted core_matrix
          if (.core_matrix.destroyed("restricted")) then
             .core_matrix.create(.n_bf,"restricted") ! leaky
             .:make_r_core_matrix
          end
 
-      ! Has scfdata ====> make scfdata.spinorbital_kind core matrix
       else
 
+         ! Has scfdata ==> make scfdata.spinorbital_kind core matrix
          genus = .scfdata.spinorbital_kind
          if (present(genre)) genus = genre
 
@@ -1003,19 +1004,19 @@ contains
          c3 = .atom(c).position(3)
 
          ! Make moments
-         q               = VEC{REAL}:sum(N0)
+         q               = VEC{REAL}:sum_elements(N0)
          n_e             = n_e + q
 
-         dipole(1)       = VEC{REAL}:sum(N0*(r1-c1))
-         dipole(2)       = VEC{REAL}:sum(N0*(r2-c2))
-         dipole(3)       = VEC{REAL}:sum(N0*(r3-c3))
+         dipole(1)       = VEC{REAL}:sum_elements(N0*(r1-c1))
+         dipole(2)       = VEC{REAL}:sum_elements(N0*(r2-c2))
+         dipole(3)       = VEC{REAL}:sum_elements(N0*(r3-c3))
 
-         quadrupole(1,1) = VEC{REAL}:sum(N0*(r1-c1)*(r1-c1))
-         quadrupole(2,2) = VEC{REAL}:sum(N0*(r2-c2)*(r2-c2))
-         quadrupole(3,3) = VEC{REAL}:sum(N0*(r3-c3)*(r3-c3))
-         quadrupole(1,2) = VEC{REAL}:sum(N0*(r1-c1)*(r2-c2))
-         quadrupole(1,3) = VEC{REAL}:sum(N0*(r1-c1)*(r3-c3))
-         quadrupole(2,3) = VEC{REAL}:sum(N0*(r2-c2)*(r3-c3))
+         quadrupole(1,1) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r1-c1))
+         quadrupole(2,2) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r2-c2))
+         quadrupole(3,3) = VEC{REAL}:sum_elements(N0*(r3-c3)*(r3-c3))
+         quadrupole(1,2) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r2-c2))
+         quadrupole(1,3) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r3-c3))
+         quadrupole(2,3) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r3-c3))
 
          quadrupole(2,1) = quadrupole(1,2)
          quadrupole(3,1) = quadrupole(1,3)
@@ -1381,7 +1382,7 @@ contains
 !  SCF
 !  ===
 
-   scf ::: recursive, leaky
+   scf ::: leaky
    ! Do an SCF calculation. The following :
    !   .molecular_orbitals, .orbital_energies, .density_matrix
    ! are produced as results.
@@ -1409,7 +1410,7 @@ contains
 !  Usual SCF
 !  =========
 
-   usual_scf ::: recursive, leaky
+   usual_scf ::: leaky
    ! Do an SCF calculation. The .molecular_orbitals,
    ! .orbital_energies, and .density_matrix are produced as results.
 
@@ -1449,8 +1450,52 @@ contains
 
    end
 
-   initialize_scf ::: leaky, recursive
-   ! Initialize any SCF procedure
+   atomic_scf ::: leaky
+   ! Do an atomic SCF calculation. This is mor initial guesses.
+   ! The molecule comprises a single atom. The .molecular_orbitals,
+   ! .orbital_energies, and .density_matrix are produced as results.
+
+   ENSURE(.atom.created,   "no atom list")
+   ENSURE(.atom.dim==1 ,   "atom list length > 1")
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.scfdata.created,"no scfdata")
+
+      .:initialize_atomic_scf
+
+      .:put_scf_banner_and_options
+      .:put_scf_table_header
+
+      do
+
+         .:extrapolate_fock_matrix
+
+         .:update_molecular_orbitals
+
+         .BASE:make_scf_density_matrix
+
+         .:make_fock_matrix
+
+         .:update_scfdata
+         .:update_scfdata_error
+
+         .:put_scf_table_body
+
+         if (.scfdata.scf_done) exit
+
+      end
+
+      .:put_scf_results
+
+      .:archive_scf_results
+
+      .:cleanup_scf
+
+   end
+
+   initialize_scf ::: leaky
+   ! Initialize any molecular SCF procedure
+      self :: INOUT
+
    ENSURE(.scfdata.created,"no scfdata")
 
       ! Overlap matrix
@@ -1493,8 +1538,53 @@ contains
 
    end
 
+   initialize_atomic_scf ::: leaky
+   ! Initialize an atomic SCF procedure
+   ! The guess must be core. There is not fitting.
+      self :: INOUT
+
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(NOT .scfdata.fitting,"fitting not allowed")
+
+      ! Overlap matrix
+      .INTS:make_overlap_matrix
+      .BASE:put_debug(.overlap_matrix,"initialize_atomic_scf: overlap_matrix")
+
+      ! Integration grids
+      if (.scfdata.is_DFT_calculation) .BASE:initialize_DFT_grids
+      .BASE:put_debug(.overlap_matrix,"initialize_atomic_scf: overlap_matrix")
+
+      ! Get core guess -- different
+      .scfdata.set_is_guess(TRUE)
+      .:make_core_guess
+
+      ! Core matrix: both kinds
+      .core_matrix.destroy
+      .:make_core_matrix(.scfdata.spinorbital_kind)
+      .:make_core_matrix(.scfdata.molecular_orbital_kind)
+
+      ! Get Fock matrix
+      .:make_fock_matrix
+
+      ! Reset all SCF data (except DFT parts)
+      .scfdata.reset
+      .:update_scfdata_energies
+
+      ! Initialise DIIS error
+      .:update_scfdata_error
+
+      ! Initialise Schwarz inequality integrals (leaky)
+      .FOCK:initialize_max_I
+
+      ! Initialise SCF table (leaky)
+      .scfdata.set_table
+
+   end
+
    update_scfdata_energies ::: private
    ! Update SCF energies
+      self :: INOUT
+
    ENSURE(.scfdata.created,"no scfdata")
 
       e :: REAL
@@ -1958,7 +2048,7 @@ contains
 
         do i = fa,la
         do j = fb,min(lb,i)
-           C(i,j) = VEC{REAL}:sum( RE(ft_ab(:,i,j))*Fcr + IM(ft_ab(:,i,j))*Fci )
+           C(i,j) = VEC{REAL}:sum_elements( RE(ft_ab(:,i,j))*Fcr + IM(ft_ab(:,i,j))*Fci )
         end
         end
 
@@ -2055,8 +2145,8 @@ contains
 
         do i = fa,la
         do j = fb,min(lb,i)
-           C(i,j) = VEC{REAL}:sum( RE(ft_ab(:,i,j))*Fcr + IM(ft_ab(:,i,j))*Fci )
-           C(i+.n_bf,j+.n_bf) = VEC{REAL}:sum( RE(ft_ab(:,i,j))*Fcr + IM(ft_ab(:,i,j))*Fci )  ! ???
+           C(i,j) = VEC{REAL}:sum_elements( RE(ft_ab(:,i,j))*Fcr + IM(ft_ab(:,i,j))*Fci )
+           C(i+.n_bf,j+.n_bf) = VEC{REAL}:sum_elements( RE(ft_ab(:,i,j))*Fcr + IM(ft_ab(:,i,j))*Fci )  ! ???
         end
         end
 
@@ -2506,7 +2596,7 @@ contains
 
          do i = fa,la
             do j = fb,min(lb,i)
-               C(i,j) = VEC{REAL}:sum( RE(fac_times_alpha(:)*ft_ab(:,i,j)) )
+               C(i,j) = VEC{REAL}:sum_elements( RE(fac_times_alpha(:)*ft_ab(:,i,j)) )
             end
          end
 
@@ -3109,8 +3199,8 @@ contains
 !     stdout.flush
 !     stdout.text("Deficit charges:")
 !     stdout.put(deficit)
-!     stdout.show("sum of deficit charges =", VEC{REAL}:sum(deficit))
-!     stdout.show("sum of charges         =", VEC{REAL}:sum(charges))
+!     stdout.show("sum of deficit charges =", VEC{REAL}:sum_elements(deficit))
+!     stdout.show("sum of charges         =", VEC{REAL}:sum_elements(charges))
 !     deficit.destroy
 !   ! stdout.flush
 !   ! stdout.text("Charges:")
@@ -3231,8 +3321,8 @@ contains
 !     stdout.flush
 !     stdout.text("Deficit charges:")
 !     stdout.put(deficit)
-!     stdout.show("sum of deficit charges =", VEC{REAL}:sum(deficit))
-!     stdout.show("sum of charges         =", VEC{REAL}:sum(charges))
+!     stdout.show("sum of deficit charges =", VEC{REAL}:sum_elements(deficit))
+!     stdout.show("sum of charges         =", VEC{REAL}:sum_elements(charges))
 !     deficit.destroy
 !   ! stdout.flush
 !   ! stdout.text("Charges:")
@@ -3286,13 +3376,13 @@ contains
 !     do n = 1,.n_atom
 !        f = l + 1
 !        l = l + n_pt
-!        deficit(n) = .atom(n).atomic_number +  VEC{REAL}:sum(ch(f:l))
+!        deficit(n) = .atom(n).atomic_number +  VEC{REAL}:sum_elements(ch(f:l))
 !     end
 !     stdout.flush
 !     stdout.text("Deficit charges:")
 !     stdout.put(deficit)
-!     stdout.show("sum of deficit charges =",  VEC{REAL}:sum(deficit))
-!     stdout.show("Z times sum of deficit =",Z*VEC{REAL}:sum(deficit))
+!     stdout.show("sum of deficit charges =",  VEC{REAL}:sum_elements(deficit))
+!     stdout.show("Z times sum of deficit =",Z*VEC{REAL}:sum_elements(deficit))
 !     rho.destroy; pt.destroy; wt.destroy
 !     ! When added to any fractional position, "shift" will convert that
 !     ! position to be such that the center of the fragment molecule is at the
@@ -3324,7 +3414,7 @@ contains
 !     pos.destroy; ch.destroy
 !     ! Sum electron charges
 !     n_pt = n_pt*Z
-!     e_sum = VEC{REAL}:sum(charges(1:n_pt))
+!     e_sum = VEC{REAL}:sum_elements(charges(1:n_pt))
 !     stdout.show("sum of electrn charges =",e_sum)
 !     ! Add the nuclear charges to the list. Don't forget to add the deficit
 !     ! charges.
@@ -3340,7 +3430,7 @@ contains
 !        positions(:,n_pt+n) = pos3
 !     end
 !     deficit.destroy
-!     n_sum = VEC{REAL}:sum(charges(n_pt+1:))
+!     n_sum = VEC{REAL}:sum_elements(charges(n_pt+1:))
 !     stdout.show("sum of nuclear charges =",n_sum)
 !   end
 
@@ -4272,7 +4362,7 @@ contains
 !  Initial orbital guess routines
 !  ==============================
 
-   get_initial_guess ::: leaky, recursive
+   get_initial_guess ::: leaky
    ! Get the initial guess for the ".density_matrix" and the
    ! ".molecular_orbitals". If .scfdata.initial_mos is set, it
    ! overides .initial_density.
@@ -4374,7 +4464,7 @@ contains
 
    end
 
-   make_initial_density ::: leaky, recursive
+   make_initial_density ::: leaky
    ! Get the initial guess for the ".density_matrix"
 
    ENSURE(.scfdata.created,"no scfdata")
@@ -4433,6 +4523,8 @@ contains
    make_core_guess ::: leaky
    ! Do a core scf for the ".density_matrix", ".molecular_orbitals" and
    ! ".orbital_energies". Also makes the restricted ".core_matrix".
+      self :: INOUT
+
    ENSURE(.scfdata.created,"no scfdata")
 
       orb_kind :: STR
@@ -4447,6 +4539,10 @@ contains
       ! Get restricted core and overlap matrices (leaky)
       .:make_r_core_matrix
       .INTS:make_overlap_matrix
+
+      ! Debug
+      .BASE:put_debug(.core_matrix.restricted,"make_r_core_guess: core_matrix")
+      .BASE:put_debug(.overlap_matrix,"make_r_core_guess: overlap_matrix")
 
       ! Get the guess orbitals
       .:make_r_guess_from(.core_matrix.restricted, &
@@ -4499,6 +4595,10 @@ contains
       F.solve_eigenproblem(MO_energies,MO)
 
       ! Debug
+      .BASE:put_debug(MO,"make_r_guess_from: fock_matrix")
+      .BASE:put_debug(MO,"make_r_guess_from: R")
+      .BASE:put_debug(MO,"make_r_guess_from: F")
+      .BASE:put_debug(MO,"make_r_guess_from: MO")
       .BASE:put_debug(MO_energies,"make_r_guess_from: MO_energies")
 
       ! Back transform: c = S^{-1/2} c~
@@ -5496,7 +5596,7 @@ contains
       mol.scfdata.set_delete_all_archives(TRUE)
 
       ! Do the atomic SCF
-      mol.:scf
+      mol.:atomic_scf
 
       ! Spherically average the AO density
       mol.BASE:make_ao_density_matrix
