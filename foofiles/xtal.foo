@@ -1,6 +1,6 @@
 !-------------------------------------------------------------------------------
 !
-! CRYSTAL: Data structure for crystals
+! XTAL: Data structure for crystals
 !
 ! $Id: crystal.foo 4398 2014-06-01 06:55:30Z dylan_ $
 !
@@ -23,11 +23,11 @@
 !
 !-------------------------------------------------------------------------------
 
-module CRYSTAL
+module XTAL
 
    implicit none
 
- ! saved_self :: CRYSTAL*
+ ! saved_self :: XTAL*
 
    debug_list :: VEC{STR}*, private  DEFAULT_NULL
 
@@ -37,33 +37,21 @@ contains
 !  Create and destroy methods
 !  ==========================
 
-   create ::: get_from(OBJECT), leaky
+   create ::: get_from(OBJECT), leaky, PURE
    ! Create an object
-      self :: PTR
    end
 
-   destroy ::: leaky
+   destroy ::: get_from(OBJECT), leaky, PURE
    ! Destroy an object
-      self :: PTR
-
-      if (.destroyed) return
-
-    ! .nullify_basis_part
-
-      .destroy_ptr_part
-
-      deallocate(self)
-
    end
 
    nullify_ptr_part
    ! Nullify the pointer parts of the crystal object
 
-      nullify(.spacegroup)
-      nullify(.unit_cell)
 
-      nullify(.fragment_atom)
+      nullify(.fragment)
       nullify(.fragment_geometry)
+      nullify(.spacegroup)
 
       nullify(.asymmetric_unit_geometry)
       nullify(.asymmetric_unit_atom)
@@ -109,23 +97,13 @@ contains
       nullify(.pnd_data)
       nullify(.xray_r_free_data)
       nullify(.pnd_r_free_data)
-      nullify(.core_reflection)
 
    end
-
-!   nullify_basis_part
-!   ! Nullify the atom bases parts ... before the .bases they point
-!   ! to are destroyed.
-!
-!      if (.fragment_atom.created)        .fragment_atom.nullify_bases
-!      if (.asymmetric_unit_atom.created) .asymmetric_unit_atom.nullify_bases
-!
-!   end
 
    destroy_ptr_part ::: leaky
    ! Erase all pointer information
 
-      .spacegroup.destroy
+      .spacegroup.destroy_ptr_part
       .destroy_fragment_data
       .destroy_asymmetric_unit
       .destroy_data
@@ -141,7 +119,6 @@ contains
     .pnd_data.destroy
     .xray_r_free_data.destroy
     .pnd_r_free_data.destroy
-    .core_reflection.destroy
 
    end
 
@@ -149,9 +126,8 @@ contains
    ! Destroy the geometry and symmetry data for the fragment and unit cell.
    ! NOTE: Don't destroy asymmetric unit atom info
 
-      if (.destroy_fragment_atom) then; .fragment_atom.destroy
-      else;                             nullify(.fragment_atom)
-      end
+      .fragment.destroy
+
       .fragment_geometry.destroy
 
       ! Never destroy .asymmetric_unit_geometry
@@ -226,23 +202,18 @@ contains
 
    copy(crystal) ::: leaky
    ! Set self to be crystal.
-      crystal :: CRYSTAL, IN
+      crystal :: XTAL, IN
 
       self = crystal
 
       .nullify_ptr_part
 
-      if (crystal.spacegroup.created) &
-         .spacegroup.create_copy(crystal.spacegroup)
+      if (crystal.fragment.created)   .fragment.create_copy(crystal.fragment)
 
-      if (crystal.unit_cell.created) &
-         .unit_cell.copy(crystal.unit_cell)
+      if (crystal.spacegroup.created) .spacegroup.create_copy(crystal.spacegroup)
 
-      if (crystal.fragment_atom.created) then
-         if (.destroy_fragment_atom) then;               .fragment_atom.create_copy(crystal.fragment_atom)
-         else;                                           .fragment_atom => crystal.fragment_atom
-         end
-      end
+      if (crystal.unit_cell.created)  .unit_cell.create_copy(crystal.unit_cell)
+
       if (crystal.fragment_geometry.created)             &
          .fragment_geometry.create_copy(crystal.fragment_geometry)
 
@@ -315,8 +286,6 @@ contains
       if (crystal.xray_data.created)         .xray_data.create_copy(crystal.xray_data)
       if (crystal.pnd_data.created)          .pnd_data.create_copy(crystal.pnd_data)
 
-      if (crystal.core_reflection.created)   .core_reflection.create_copy(crystal.core_reflection)
-
    end
 
 !  ===========
@@ -327,9 +296,6 @@ contains
    ! Set up a default crystal object
 
       .CIF_chemical_formula          = "?"
-
-      .n_fragment_atoms              = 0
-      .destroy_fragment_atom         = FALSE
 
       .asymmetric_unit_source        = "?"
       .n_asymmetric_unit_atoms       = 0
@@ -346,21 +312,6 @@ contains
 
       .data_kind                     = "?"
       .r_free_percentage             = 0
-      .finalize                      = TRUE
-
-      ! Subtype defaults
-    ! .spacegroup.create
-    ! .unit_cell.create
-
-      ! Set xray_data defualts
-      if (.xray_data.created) then; .xray_data.set_defaults
-      else;                         nullify(.xray_data)
-      end
-
-      ! Set pnd_data defualts
-      if (.pnd_data.created) then;  .pnd_data.set_defaults
-      else;                         nullify(.pnd_data)
-      end
 
    end
 
@@ -384,59 +335,77 @@ contains
       if (NOT found) .CIF_chemical_formula = "?"
       DIE_IF(itemvec.created,"multi line chemical formula")
 
-      ! Read the spacegroup
-      .spacegroup.set_from_CIF(cif)
+      ! Read the spacegroup !!!
+      .spacegroup.read_CIF(cif)
+      !!!!!!!!!!!!!!!!!!!!!!!!!
 
-      ! Read the unit cell
-      .unit_cell.set_from_CIF(cif)
+      ! Read the unit cell !!!
+      .unit_cell.read_CIF(cif)
+      !!!!!!!!!!!!!!!!!!!!!!!!
 
       ! Read the atom list (if requested)
       if (NOT skip) then
-         .fragment_atom.read_CIF(cif)
+         .fragment.atom.read_CIF(cif)
       end
 
       ! Assume this is X-ray data
       ! BAD !!!
-      if (.xray_data.destroyed) .xray_data.create
+      .xray_data.destroy
+      .xray_data.create
+
       .xray_data.data_kind = "x-ray"
       .xray_data.read_CIF(cif)
-      .xray_data.update(.unit_cell)
-      .assign_xray
-
+      
       ! Update
-      .update
+      .update_xray_data
+      .assign_xray
 
       ! Eventually, this will be used
       .asymmetric_unit_source = "from-cif"
 
    end
 
-   update ::: leaky
-   ! Update the crystal information after setting values.
+   update_xray_data ::: leaky
+   ! Updated and set the xray R-free reflections
 
       if (.xray_data.created) then
 
-        .xray_data.update(.unit_cell,.spacegroup)
-
-        if (.r_free_percentage>0 AND .xray_data.reflections.created) then
-           .xray_r_free_data.destroy
-           .xray_r_free_data.create_copy(.xray_data)
-           .xray_r_free_data.reflections.destroy
-           .set_r_free_reflections(.xray_data.reflections,.xray_r_free_data.reflections)
-        end
+         DIE_IF(NOT .unit_cell.created,  "no unit cell information!")
+         DIE_IF(NOT .unit_cell.info_made,"no unit cell information!")
+         DIE_IF(NOT .spacegroup.created, "no spacegroup information!")
+         DIE_IF(NOT .spacegroup.analyzed,"no spacegroup information!")
+        
+         .xray_data.update(.unit_cell,.spacegroup)
+        
+         if (.r_free_percentage>0 AND .xray_data.reflections.created) then
+            .xray_r_free_data.destroy
+            .xray_r_free_data.create_copy(.xray_data)
+            .xray_r_free_data.reflections.destroy
+            .set_r_free_reflections(.xray_data.reflections,.xray_r_free_data.reflections)
+         end
 
       end
 
+   end
+
+   update_pnd_data ::: leaky
+   ! Update and set the PND R-free reflections
+
       if (.pnd_data.created) then
 
-        .pnd_data.update(.unit_cell,.spacegroup)
+         DIE_IF(NOT .unit_cell.created,  "no unit cell information!")
+         DIE_IF(NOT .unit_cell.info_made,"no unit cell information!")
+         DIE_IF(NOT .spacegroup.created, "no spacegroup information!")
+         DIE_IF(NOT .spacegroup.analyzed,"no spacegroup information!")
 
-        if (.r_free_percentage>0 AND .pnd_data.reflections.created) then
-           .pnd_r_free_data.destroy
-           .pnd_r_free_data.create_copy(.xray_data)
-           .pnd_r_free_data.reflections.destroy
-           .set_r_free_reflections(.pnd_data.reflections,.pnd_r_free_data.reflections)
-        end
+         .pnd_data.update(.unit_cell,.spacegroup)
+        
+         if (.r_free_percentage>0 AND .pnd_data.reflections.created) then
+            .pnd_r_free_data.destroy
+            .pnd_r_free_data.create_copy(.xray_data)
+            .pnd_r_free_data.reflections.destroy
+            .set_r_free_reflections(.pnd_data.reflections,.pnd_r_free_data.reflections)
+         end
 
       end
 
@@ -540,8 +509,100 @@ contains
 
    end
 
-   set_destroy_fragment_atom(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.destroy_fragment_atom)
-   ! Generic set
+!  ================
+!  Main controllers
+!  ================
+
+   run ::: leaky
+   ! Main molecule run-loop; assumes stdin and stdout have been defined.
+      self :: PTR
+
+      ! Create (leaky)
+      .create
+
+      ! Gaussian indices (leaky)
+      GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
+
+      ! Banner
+      ::put_banner
+
+      ! Read & process keywords
+      .:read_keywords
+
+      ! Timing
+      stdout.flush
+      stdout.text(std_time.elapsed_time_message("job "//'"'// trim(.name) //'"'))
+      stdout.text(std_time.elapsed_cpu_time_message("job "//'"'// trim(.name) //'"'))
+
+      ! Warnings
+      if (tonto.warnings_issued) then
+      stdout.flush
+      stdout.text("WARNINGS were issued in this job.")
+      stdout.text("Look above, or in the stderr file.")
+      end
+
+   end
+
+   put_banner ::: selfless
+   ! Put to stdout the current TONTO banner
+
+      stdout.text("_______________________________________________________________")
+      stdout.text("                                                               ")
+      stdout.text(" T   O   N   T   O                                             ")
+      stdout.text("                                                               ")
+      stdout.text(" A free object-based system for computational chemistry        ")
+      stdout.text("                                                               ")
+      stdout.text(" Version: "//TONTO_VERSION//" v. "//GIT_VERSION)
+      stdout.text(" Platform: "//TONTO_PLATFORM)
+      stdout.text(" Build-date: "//TONTO_BUILD_DATE)
+      stdout.text("                                                               ")
+      stdout.text(" For conditions of use, on-line documentation, and contributor ")
+      stdout.text(" and developer information see :-                              ")
+      stdout.text("                                                               ")
+      stdout.text(" www."//"theochem."//"uwa."//"edu."//"au/tonto/                ")
+      stdout.text("                                                               ")
+      stdout.text(" Dylan Jayatilaka                                              ")
+      stdout.text(" Daniel Grimwood                                               ")
+      stdout.text("_______________________________________________________________")
+
+      stdout.flush
+      stdout.flush
+      stdout.text(std_time.start_time_message)
+      stdout.flush
+
+   end
+
+   cleanup ::: leaky
+   ! Clean up all undeleted memory in all modules.
+
+      self :: PTR
+      atom :: ATOM
+      basis :: BASIS
+      coppensbasis :: COPPENSBASIS
+      coppensorbital :: COPPENSORBITAL
+    ! geminal :: GEMINAL_MF_SPECTRUM
+      reflection :: REFLECTION
+      shell :: SHELL
+      slaterbasis :: SLATERBASIS
+      slatershell :: SLATERSHELL
+
+      ! Clean self
+      .BASE:destroy
+
+      ! Gaussian indices
+      GAUSSIAN_DATA:destroy_data
+
+      ! Clear all keys
+      atom.clear_keys
+      basis.clear_keys
+      coppensbasis.clear_keys
+      coppensorbital.clear_keys
+    ! geminal.clear_keys
+      reflection.clear_keys
+      shell.clear_keys
+      slaterbasis.clear_keys
+      slatershell.clear_keys
+
    end
 
 !  ============
@@ -564,15 +625,12 @@ contains
 
       select case (word)
          case ("}                             ")  ! exit read_loop
-         case ("asymmetric_unit_geometry=     "); .read_asymmetric_unit_geometry
          case ("debug_on                      "); .read_debug_on
          case ("debug_off                     "); .read_debug_off
          case ("destroy                       "); .destroy_ptr_part; .set_defaults
          case ("destroy_asymmetric_unit       "); .destroy_asymmetric_unit
          case ("destroy_spacegroup            "); .spacegroup.destroy_ptr_part
          case ("expand_unique_reflections     "); .expand_unique_reflections
-         case ("finalize=                     "); .read_finalize
-         case ("junk=                         "); .read_junk
          case ("kind=                         "); .read_kind
          case ("merge_equivalents             "); .merge_equivalents
          case ("merge_ordered_equivalents     "); .merge_ordered_equivalents
@@ -587,22 +645,11 @@ contains
          case ("redirect                      "); .redirect
          case ("repetition_factors=           "); .read_repetition_factors
          case ("revert                        "); .revert
-         case ("spacegroup=                   "); .read_spacegroup
-         case ("unit_cell=                    "); .read_unit_cell
-         case ("units=                        "); .read_units
          case ("use_manual_repetition_factors="); .read_use_manual_rep_factors
          case ("xray_data=                    "); .read_xray_data
          case default;                       UNKNOWN(word)
       end
 
-   end
-
-   read_units ::: get_from(OBJECT), private
-   ! Read a string which describes the units to be used
-   end
-
-   read_junk ::: get_from(OBJECT), private
-   ! Read in a junk string, useful for ignoring a field
    end
 
    redirect ::: get_from(OBJECT), leaky
@@ -625,57 +672,31 @@ contains
       end
    end
 
-   read_finalize
-   ! Read whether to finalize the object.
-      stdin.read(.finalize)
-   end
-
    read_r_free_percentage
    ! Read the R free percentage
       stdin.read(.r_free_percentage)
+
       DIE_IF(.r_free_percentage<0,  "percentage must be non-negative")
       DIE_IF(.r_free_percentage>100,"percentage must be less than 100")
-   end
-
-   read_spacegroup ::: leaky
-   ! Read the spacegroup
-
-      .spacegroup.destroy
-      .spacegroup.create
-
-      .spacegroup.read_keywords
-
-      .spacegroup.analyze
-   
-   end
-
-   read_unit_cell
-   ! Read the unit cell information
-      DIE_IF(.xray_data.created,"enter unit cell information before xray_data= !")
-      DIE_IF(.pnd_data.created, "enter unit cell information before pnd_data= !")
-
-      .unit_cell.destroy
-      .unit_cell.create
-
-      .unit_cell.read_keywords
-
-      .unit_cell.make_info
+      DIE_IF(.xray_data.created,    "set this before xray_data!")
+      DIE_IF(.pnd_data.created,     "set this before pnd_data!")
 
    end
 
    read_xray_data ::: leaky
    ! Read in the xray diffraction data
+      self :: INOUT
 
-      DIE_IF(NOT .unit_cell.info_made,"enter unit cell information before xray_data= !")
-      WARN_IF(.xray_data.created,"xray diffraction data already defined!")
+      ! Clean
+      .xray_data.destroy
+      .xray_data.create
 
-      ! Create?
-      if (.xray_data.destroyed) .xray_data.create
-
-      ! Read, update and assign .data
+      ! Read
       .xray_data.data_kind = "x-ray"
       .xray_data.read_keywords
-      .xray_data.update(.unit_cell)
+
+      ! Assign and update
+      .update_xray_data
       .assign_xray
 
    end
@@ -683,14 +704,16 @@ contains
    read_pnd_data ::: leaky
    ! Read in the pnd diffraction data
 
-      DIE_IF(NOT .unit_cell.info_made,"enter unit cell information before pnd_data= !")
-      WARN_IF(.pnd_data.created,"pnd diffraction data already defined!")
+      ! Clean
+      .pnd_data.destroy
+      .pnd_data.create
 
-      if (.pnd_data.destroyed) .pnd_data.create
-
+      ! Read
       .pnd_data.data_kind = "pnd"
       .pnd_data.read_keywords
-      .pnd_data.update(.unit_cell)
+
+      ! Assign and update
+      .update_pnd_data
       .assign_pnd
 
    end
@@ -748,90 +771,15 @@ contains
 
    end
 
-   read_asymmetric_unit_geometry
-   ! Read in the asymmetric unit geometry in crystal coordinates.
-   ! The coordinates are read in as a single vector ordered as x,y,z
-   ! incrementing fastest, for the first to the last atom.
-      geometry :: VEC{REAL}*
-
-   WARN_IF(.asymmetric_unit_geometry.created,"asymmetric_unit_geometry exists!")
-
-      stdin.read_ptr(geometry)
-      ENSURE(modulo(geometry.dim,3)==0,"number of coordinates must be divisible by 3")
-
-      .n_asymmetric_unit_atoms = geometry.dim/3
-      .asymmetric_unit_geometry.destroy
-      .asymmetric_unit_geometry.create(3,.n_asymmetric_unit_atoms)
-      .asymmetric_unit_geometry = reshape(geometry,[3,.n_asymmetric_unit_atoms])
-      geometry.destroy
-
-      .asymmetric_unit_source = "manual-input"
-
-   end
-
 !  ===============
 !  General methods
 !  ===============
-
-!   make_k_pts(k_pt) ::: pure
-!   ! Convert the .reflection.hkl indices to reciprocal lattice vectors
-!   ! Dimension of "k_pt" is [.n_refl,3]
-!      self :: IN
-!      k_pt :: MAT{REAL}, OUT
-!
-! ! ENSURE(.data.created,"no data")
-!
-!      n :: INT
-!      hkl :: VEC{INT}(3)
-!      rcm :: MAT{REAL}(3,3)
-!
-!      rcm = TWO*PI*.unit_cell.reciprocal_matrix
-!
-!      do n = 1,.data.reflections.n_refl
-!
-!         hkl = .data.reflections.indices(n)
-!
-!         k_pt(n,1) = dot_product(rcm(1,:),hkl(:))
-!         k_pt(n,2) = dot_product(rcm(2,:),hkl(:))
-!         k_pt(n,3) = dot_product(rcm(3,:),hkl(:))
-!
-!      end
-!
-!   end
-!
-!   make_k_pts(k_pt,reflections) ::: pure
-!   ! Convert the .reflection.hkl indices to reciprocal lattice vectors
-!   ! Dimension of "k_pt" is [.n_refl,3]
-!      self :: IN
-!      k_pt :: MAT{REAL}, OUT
-!      reflections :: VEC{REFLECTION}, IN
-!
-! ! ENSURE(.data.created,"no data")
-!
-!      n :: INT
-!      hkl :: VEC{INT}(3)
-!      rcm :: MAT{REAL}(3,3)
-!
-!      rcm = TWO*PI*.unit_cell.reciprocal_matrix
-!
-!      do n = 1,reflections.dim
-!
-!         hkl = reflections.indices(n)
-!
-!         k_pt(n,1) = dot_product(rcm(1,:),hkl(:))
-!         k_pt(n,2) = dot_product(rcm(2,:),hkl(:))
-!         k_pt(n,3) = dot_product(rcm(3,:),hkl(:))
-!
-!      end
-!
-!   end
  
    n_unique_SF_k_pts result (res) ::: PURE
-   ! The number of unique k-points for an SF calculation
+   ! The number of unique-symop-generated k-points
       self :: IN
       res :: INT
 
-   ENSURE(.spacegroup.created ,"no spacegroup")
    ENSURE(.spacegroup.analyzed,"spacegroup not analyzed")
    ENSURE(.data.created,"no data")
    ENSURE(.data.reflections.created,"no reflection data")
@@ -839,15 +787,14 @@ contains
       res = .spacegroup.n_unique_SF_symops * .data.reflections.dim
 
    end
- 
 
 !  =========================================
 !  Fragment data, unique operators, Z number
 !  =========================================
 
-   make_fragment_data(atom,assign_atom,warnings) ::: leaky
-   ! This routine sets the ".fragment_atom" from the "atom" list.
-   ! If "assign_atom" is TRUE, ".fragment_atom" is pointed to "atom".
+   make_fragment_data(warnings) ::: leaky
+   ! This routine sets the ".fragment_geometry" from the ".fragment"
+   ! atom list.
    !
    ! The fragment is a finite portion/model of the crystal, perhaps
    ! one molecule or a cluster of atoms.
@@ -881,41 +828,15 @@ contains
    ! 5. The set of symmetry operations which leave the fragment
    !    unchanged (the stabilizer) is made
       self :: INOUT
-      atom :: VEC{ATOM}*
-      assign_atom :: BIN, optional, IN
-      warnings    :: BIN, optional, IN
+      warnings :: BIN, optional, IN
 
-   ENSURE(atom.created,"no atom array")
+   ENSURE(.fragment.created,"no fragment atoms")
 
-      assign :: BIN
-
-      assign = FALSE
-      if (present(assign_atom)) assign = assign_atom
-
-      if (NOT .spacegroup.created)  return
       if (NOT .spacegroup.analyzed) return
 
-      ! Store the fragment atom list
-      if (assign) then
-         .fragment_atom => atom ! atom must be destroyable
-         .destroy_fragment_atom = FALSE
-      else
-         .fragment_atom.create_copy(atom)
-         .destroy_fragment_atom = TRUE
-      end
-
-      if (.debugging("make_fragment_data")) then
-         stdout.text(">>make_fragment_data")
-         stdout.text("fragment_atom (before):")
-         .fragment_atom.put_coordinates
-         .fragment_atom.put_ADPs
-         stdout.text("fragment_atom.pADP_vector (before):")
-         .fragment_atom.put_pADPs
-      end
-
-      ! Get fragment geometry from the atom list
+      ! Get fragment geometry in fractional coords
       .fragment_geometry.destroy
-      .fragment_geometry => .fragment_atom.coordinates_ptr(skip_dummies=TRUE)
+      .fragment_geometry => .fragment.atom.coordinates_ptr(skip_dummies=TRUE)
       .n_fragment_atoms  = .fragment_geometry.dim2
       .unit_cell.change_into_fractional(.fragment_geometry)
 
@@ -954,96 +875,6 @@ contains
 
    end
 
-   make_fragment_data(fragment_geometry,cartesian) ::: leaky
-   ! Makes an atom list from "fragment_geometry" to which
-   ! .fragment_atoms gets set. The .asymmetric_unit_atoms (which must
-   ! be in cartesian system) and .unit_cell_geometry have to be
-   ! defined. Set "cartesian" to TRUE if the "fragment_geometry" is in
-   ! cartesians, default is fractional coordinates.
-      self :: INOUT
-      fragment_geometry :: MAT{REAL}, IN
-      cartesian :: BIN, optional, IN
-
-   ENSURE(.unit_cell_geometry.created,           "no .unit_cell_geometry")
-   ENSURE(.asymmetric_unit_atom.created,         "no .asymmetric_unit_atom")
-   ENSURE(.asym_atom_for_unit_cell_atom.created, "no .asym_atom_for_unit_cell_atom")
-
-      atom  :: VEC{ATOM}*
-      list  :: VEC{INT}*
-      pf,pu :: VEC{REAL}(3)
-      fg :: MAT{REAL}*
-      n_frag_atoms,f,u,a :: INT
-      tol :: REAL
-      cart,found :: BIN
-
-      cart = FALSE
-      if (present(cartesian)) cart = cartesian
-
-      ! Transform fragment geometry to fractional
-      fg.create_copy(fragment_geometry)
-      if (cart) .unit_cell.change_into_fractional(fg)
-
-      ! Create the list of atom indices -- leaky!!
-      n_frag_atoms = fg.dim2
-      list.create(n_frag_atoms)
-
-      ! Tolerances to see if atom positions are the same
-      ! --- getting this number wrong can stuff things
-      tol = CRYSTAL_SAME_ATOM_TOL
-
-      ! Find and create fragment atoms
-      do f = 1,n_frag_atoms
-
-         ! Shift fragment atom to unit cell
-         pf = fg(:,f)
-         CRYSTAL:put_to_unit_cell(pf)
-
-         found = FALSE
-
-         ! Loop unit cell atoms
-         do u = 1,.n_unit_cell_atoms
-
-            ! Is u the same as f?
-            pu = .unit_cell_geometry(:,u)
-            found = pu.same_as(pf,tol)
-
-            if (NOT found) cycle
-
-            ! Set asymmetric atom index for atom f
-            a = .asym_atom_for_unit_cell_atom(u)
-            list(f) = a
-
-            exit
-
-         end
-
-         DIE_IF(NOT found,"fragment atom "//trim(f.to_str)//" was not found in the unit cell")
-
-      end
-
-      ! Make the atom list, cartesian coordinates
-      .unit_cell.change_from_fractional(fg)
-      atom.create_copy(.asymmetric_unit_atom,list)
-      atom.set_positions_to(fg)
-
-      if (.debugging("make_fragment_data")) then
-          stdout.put("make_fragment_data:")
-          stdout.text("list:")
-          stdout.put(list,by_column=TRUE)
-          stdout.text("atom:")
-          atom.dump("atom:VEC{ATOM}*")
-      end
-
-      ! Make the fragment data; make it destroyable
-      .make_fragment_data(atom,assign_atom=TRUE,warnings=FALSE)
-      .destroy_fragment_atom = TRUE
-
-      ! Clean
-      list.destroy
-      fg.destroy
-
-   end
-
    make_asymmetric_unit(prune_asymmetric_unit,warnings) ::: leaky, private
    ! Get the all the atom positions in the unit cell. Also make the
    ! symops associated with each unit cell atom when it is made from
@@ -1054,7 +885,6 @@ contains
       prune_asymmetric_unit :: BIN, optional, IN
       warnings :: BIN, optional, IN
 
-   ENSURE(.fragment_atom.created,"no .fragment_atom")
    ENSURE(.fragment_geometry.created,"no .fragment_geometry")
    ENSURE(.asymmetric_unit_geometry.destroyed,"asymmetric unit exists")
 
@@ -1092,17 +922,17 @@ contains
 
       ! Copy asymmetric unit, but put it to the unit cell
       asymmetric_unit_geometry.create_copy(.asymmetric_unit_geometry)
-      CRYSTAL:put_to_unit_cell(asymmetric_unit_geometry)
+      XTAL:put_to_unit_cell(asymmetric_unit_geometry)
 
       ! Append new atoms "n" to unit cell
       .unit_cell_geometry.create(3,0)
 
       ! Tolerances to see if atom positions are the same
       ! --- getting this number wrong can stuff things
-      tol = CRYSTAL_SAME_ATOM_TOL
+      tol = XTAL_SAME_ATOM_TOL
 
       ! Fractional atom occupancies?
-      frac = .fragment_atom.has_disorder
+      frac = .fragment.atom.has_disorder
       WARN_IF(frac,"This structure has fractional occupancies and is disordered.")
 
       ! Initial loop counters
@@ -1144,7 +974,7 @@ contains
                   b = col + a
 
                   ! If already there, are the atoms at the two sites distinct?
-                  unique = .fragment_atom.are_distinct(list(a),list(b))
+                  unique = .fragment.atom.are_distinct(list(a),list(b))
                   if (unique) exit
 
                   ! Store pruned pair
@@ -1152,7 +982,7 @@ contains
 
                   ! This is a symmetry-redundant structure
                   redundant = TRUE
-                  frac = NOT .fragment_atom(list(b)).site_occupancy.equals(ONE)
+                  frac = NOT .fragment.atom(list(b)).site_occupancy.equals(ONE)
 
                   ! Prune the atom
                   .n_asymmetric_unit_atoms = .n_asymmetric_unit_atoms - 1
@@ -1173,7 +1003,7 @@ contains
             if (NOT new) then
                do i = 1,cols.dim
                   b = .asym_atom_for_unit_cell_atom(cols(i))
-                  new = .fragment_atom.are_distinct(list(a),list(b))
+                  new = .fragment.atom.are_distinct(list(a),list(b))
                   if (NOT new) exit
                end
             end
@@ -1217,7 +1047,7 @@ contains
 
          stdout.flush
          stdout.text("Fragment atom list:")
-         .fragment_atom.put_coordinates
+         .fragment.atom.put_coordinates
 
          stdout.flush
          stdout.text("Parent and pruned fragment atoms:")
@@ -1236,7 +1066,7 @@ contains
 
       ! >> Make the asymmetric unit atoms <<
       .asymmetric_unit_atom.destroy
-      .asymmetric_unit_atom.create_copy(.fragment_atom,list)
+      .asymmetric_unit_atom.create_copy(.fragment.atom,list)
 
       ! Clean
       asymmetric_unit_geometry.destroy
@@ -1249,13 +1079,11 @@ contains
    ! Arrays which relate the fragment atoms to the unit cell atoms.
       self :: INOUT
 
-   ENSURE(.fragment_atom.created,                "no .fragment_atom")
    ENSURE(.fragment_geometry.created,            "no .fragment_geometry")
    ENSURE(.unit_cell_geometry.created,           "no .unit_cell_geometry")
    ENSURE(.asymmetric_unit_atom.created,         "no .asymmetric_unit_atom")
    ENSURE(.asym_atom_for_unit_cell_atom.created, "no .asym_atom_for_cell_atom")
    ENSURE(.asym_symop_for_unit_cell_atom.created,"no .asym_symop_for_cell_atom")
-   ENSURE(.spacegroup.created,                   "no spacegroup")
    ENSURE(.spacegroup.analyzed,                  "no spacegroup info")
 
       sh :: VEC{INT}(3)
@@ -1266,7 +1094,7 @@ contains
 
       ! Tolerances to see if atom positions are the same
       ! --- getting this number wrong can stuff things
-      tol = CRYSTAL_SAME_ATOM_TOL
+      tol = XTAL_SAME_ATOM_TOL
 
       ! Create the arrays we want
       .frag_atom_for_unit_cell_atom.destroy
@@ -1297,7 +1125,7 @@ contains
 
          ! Shift fragment atom to unit cell
          pf = .fragment_geometry(:,f)
-         CRYSTAL:put_to_unit_cell(pf,shift=sh)
+         XTAL:put_to_unit_cell(pf,shift=sh)
 
          found = FALSE
 
@@ -1320,7 +1148,7 @@ contains
 
             ! Is unit cell atom u the fragment atom f?
             found = pu.same_as(pf,tol)
-            ident = .fragment_atom(f).is_xtal_identical_kind_to(.asymmetric_unit_atom(a))
+            ident = .fragment.atom(f).is_xtal_identical_kind_to(.asymmetric_unit_atom(a))
 
             if (.debugging("make_frag_atom_for_cell_atom")) then
                stdout.show("same pos?                 =",found)
@@ -1743,7 +1571,6 @@ contains
       res :: REAL
 
    ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom")
-   ENSURE(.fragment_atom.created,       "no fragment_atom")
    ENSURE(.asym_atom_for_unit_cell_atom.created,"no asym_atom_for_unit_cell_atom")
 
       ue,fe :: REAL
@@ -1752,7 +1579,7 @@ contains
       ue = .asymmetric_unit_atom(.asym_atom_for_unit_cell_atom).no_of_electrons
 
       ! Get # of electrons in fragment
-      fe = .fragment_atom.no_of_electrons
+      fe = .fragment.atom.no_of_electrons
 
       ! Z factor is the ratio
       res = ue/fe
@@ -1783,7 +1610,7 @@ contains
 
       else
 
-         tol = CRYSTAL_SAME_ATOM_TOL
+         tol = XTAL_SAME_ATOM_TOL
 
          .repetition_factor.destroy
          .repetition_factor.create(.n_fragment_atoms)
@@ -1791,7 +1618,7 @@ contains
          do a = 1,.n_fragment_atoms
 
             pa = .fragment_geometry(:,a)
-            CRYSTAL:put_to_unit_cell(pa)
+            XTAL:put_to_unit_cell(pa)
 
             n_same = 0
             do b = 1,.n_fragment_atoms
@@ -1827,7 +1654,7 @@ contains
       same :: BIN
       tol :: REAL
 
-      tol = CRYSTAL_SAME_ATOM_TOL
+      tol = XTAL_SAME_ATOM_TOL
 
       .asym_atom_rep_factor.destroy
       .asym_atom_stabilizer.destroy
@@ -1837,7 +1664,7 @@ contains
       do a = 1,.n_asymmetric_unit_atoms
 
          pa = .asymmetric_unit_geometry(:,a)
-         CRYSTAL:put_to_unit_cell(pa)
+         XTAL:put_to_unit_cell(pa)
 
          n_same = 0
 
@@ -1893,7 +1720,7 @@ contains
       .destroy_asymmetric_unit
 
       ! Make unit cell connection table
-      .make_fragment_data(atom,assign_atom=FALSE)
+      .make_fragment_data(atom)
 
       ! Elements whose bond lengths to change
       lb = lbound(H_bond_length,1)
@@ -2004,7 +1831,6 @@ contains
       to_unit_cell :: BIN, optional, IN
       unit_cell_shift :: VEC{INT}(3), optional, OUT
 
-   ENSURE(.spacegroup.created,"no spacegroup")
    ENSURE(.spacegroup.seitz.created,"Seitz matrices not initialized")
    ENSURE(op>0,"operator index out of bounds")
    ENSURE(op<=.spacegroup.n_seitz,"operator index out of bounds")
@@ -2026,7 +1852,7 @@ contains
       if (present(to_unit_cell)) to_cell = to_unit_cell
 
       if (to_cell) &
-         CRYSTAL:put_to_unit_cell(p,unit_cell_shift)
+         XTAL:put_to_unit_cell(p,unit_cell_shift)
 
    end
 
@@ -2043,11 +1869,11 @@ contains
 
       if (g.dim1==3) then
          do n = 1,g.dim2
-            CRYSTAL:put_to_unit_cell(g(:,n))
+            XTAL:put_to_unit_cell(g(:,n))
          end
       else
          do n = 1,g.dim1
-            CRYSTAL:put_to_unit_cell(g(n,:))
+            XTAL:put_to_unit_cell(g(n,:))
          end
       end
 
@@ -2065,7 +1891,7 @@ contains
       new,pi :: VEC{REAL}(3)
       tol :: REAL
 
-      tol = CRYSTAL_UNIT_CELL_TOL
+      tol = XTAL_UNIT_CELL_TOL
 
       ! Change p to cell boundary (within tol)
       pi = REALIFY(nint(p))
@@ -2098,7 +1924,7 @@ contains
       if (FALSE) self = self
 
       n_atom = g.dim2
-      center = CRYSTAL::unit_cell_offset(g)
+      center = XTAL::unit_cell_offset(g)
       do n = 1, n_atom
         g(:,n) = g(:,n) - center
       end
@@ -2146,7 +1972,6 @@ contains
    ! NOTE: I think they are not transposed any more ...
       res :: MAT3{REAL}*
 
-   ENSURE(.spacegroup.created,"no spacegroup")
    ENSURE(.spacegroup.seitz.created,"no Seitz matrices")
 
       i :: INT
@@ -2164,7 +1989,6 @@ contains
    ! in the cartesian axis system.
       res :: MAT3{REAL}*
 
-   ENSURE(.spacegroup.created,"no spacegroup")
    ENSURE(.spacegroup.seitz.created,"no Seitz matrices")
 
       i :: INT
@@ -2182,7 +2006,6 @@ contains
    ! in the cartesian axis system.
       res :: MAT3{REAL}*
 
-   ENSURE(.spacegroup.created,"no spacegroup")
    ENSURE(.spacegroup.seitz.created,"no Seitz matrices")
 
       i :: INT
@@ -2209,8 +2032,6 @@ contains
    ! operations.
    ! NOTE: geometries NOT whole-shifted to unit cell ... should they ! be?
       self :: INOUT
-
-   ENSURE(.spacegroup.created,"no spacegroup")
 
       g1,gi :: MAT{REAL}*
       i,n :: INT
@@ -2262,7 +2083,7 @@ contains
       same :: BIN
       tol :: REAL
 
-      tol = CRYSTAL_SAME_ATOM_TOL
+      tol = XTAL_SAME_ATOM_TOL
 
       n_atom = geom_i.dim2
       skip.create(n_atom); skip(:) = FALSE
@@ -2286,12 +2107,12 @@ contains
 
    end
 
-   xyz_stabilizer_matrices result (res) ::: leaky
+   xyz_stabilizer_matrices result (res) ::: leaky, PURE
    ! Create and return a list of the 3x3 part of the seitz matrices
    ! in the cartesian axis which stabilize the fragment geometry.
+      self :: IN
       res :: MAT3{REAL}*
 
-   ENSURE(.spacegroup.created,"no spacegroup")
    ENSURE(.spacegroup.seitz.created,"no Seitz matrices")
    ENSURE(.stabilizer_symop.created,"no stabilizer symop matrices")
 
@@ -2307,12 +2128,13 @@ contains
 
    end
 
-   make_stabilizer_xyz_matrices ::: leaky, private
+   make_stabilizer_xyz_matrices ::: leaky, private, PURE
    ! Make the representation matrices for xyz products found in
    ! gaussian shells, i.e. work out matrix R, where the shell row vector
    ! p'(r) = p(S^{-1}r) = p(r)R, and S is a stabilizer symop.
    ! WARNING: this routine is tied to an explicit ordering of the cartesian
    ! gaussian basis functions in a shell.
+      self :: INOUT
       str :: MAT3{REAL}*
 
       .str.destroy
@@ -2377,15 +2199,11 @@ contains
       list(1).element.append(1)
 
       n_unique = 1
-
       do i = 2,n_refl
-
         p(1) = .data.reflections(i).h
         p(2) = .data.reflections(i).k
         p(3) = .data.reflections(i).l
-
         same = FALSE
-
         main: do g = 1,.spacegroup.n_seitz
            do j = 1,i-1
               q(1) = .data.reflections(j).h
@@ -2397,7 +2215,6 @@ contains
               exit main
            end
         end do main
-
         if (same) then
            list(j).element.append(i)
            list(i).element.append(j)
@@ -2408,9 +2225,7 @@ contains
            n_unique = n_unique + 1
            list(i).element.append(i)
         end
-
       end
-
    end
 
    merge_equivalents ::: leaky
@@ -2456,30 +2271,21 @@ contains
       list :: VEC{VEC_{INT}}*
       n_unique :: INT, OUT
       show :: BIN, IN, optional
-
    ENSURE(.data.created,"no diffraction data")
    ENSURE(.data.reflections.created,"no reflection data")
-
       i,j,g,n_refl :: INT
       p,q,r :: VEC{INT}(3)
       same,disp :: BIN
-
       disp = FALSE
       if (present(show)) disp = show
-
       n_refl = .data.reflections.n_refl
-
       list.create(n_refl)
       list(1).element.append(1)
-
       n_unique = 1
-
       do i = 2,n_refl
-
         p(1) = .data.reflections(i).h
         p(2) = .data.reflections(i).k
         p(3) = .data.reflections(i).l
-
         same = FALSE
         j = i-1
         main: do g = 1,.spacegroup.n_seitz
@@ -2491,7 +2297,6 @@ contains
            if (NOT same) cycle
            exit main
         end do main
-
         if (same) then
            list(j).element.append(i)
            list(i).element.append(j)
@@ -2502,9 +2307,7 @@ contains
            n_unique = n_unique + 1
            list(i).element.append(i)
         end
-
       end
-
    end
 
    merge_ordered_equivalents ::: leaky
@@ -2559,9 +2362,7 @@ contains
 
       ! Loop over remaining reflections
       n = 0
-
       do i = 1,n_refl
-
         p(1) = .data.reflections(i).h
         p(2) = .data.reflections(i).k
         p(3) = .data.reflections(i).l
@@ -2597,6 +2398,97 @@ contains
 !  =====================================
 !  Service methods used by other modules
 !  =====================================
+
+!   sum_unique_sf(sf,unique_sf)
+!   ! Form the structure factors "sf" from the sum of the list of
+!   ! unique structure factors, "unique_sf".
+!      sf :: VEC{CPX}
+!      unique_sf :: VEC{CPX}, IN
+!
+!   ENSURE(.spacegroup.analyzed,"spacegroup not analyzed")
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!
+!      .spacegroup.sum_unique_sf(sf,unique_sf,.data.reflections)
+!
+!   end
+!
+!   sum_unique_sf_ints(sf_ints,unique_sf_ints)
+!   ! Form the structure factor integrals "sf_ints" from a sum of the list
+!   ! of unique structure factors integrals  "unique_sf_ints".
+!      sf_ints :: MAT3{CPX}
+!      unique_sf_ints :: MAT3{CPX}, IN
+!
+!   ENSURE(.spacegroup.analyzed,"spacegroup not analyzed")
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!
+!      .spacegroup.sum_unique_sf_ints(sf_ints,unique_sf_ints,.data.reflections)
+!   end
+!
+!   sum_unique_sf_derivs(sf,unique_sf)
+!   ! Form the structure factor derivatives "sf" from a sum of the list
+!   ! of unique structure factor derivatives "unique_sf".
+!      sf :: MAT{CPX}, OUT
+!      unique_sf :: MAT{CPX}, IN
+!
+!   ENSURE(.spacegroup.analyzed,"spacegroup not analyzed")
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!
+!      .spacegroup.sum_unique_sf_derivs(sf,unique_sf,.data.reflections)
+!   end
+!
+!   sum_unique_sf_derivs_t(sf,unique_sf)
+!   ! Form the structure factor derivatives "sf" from a sum of the list
+!   ! of unique structure factor derivatives "unique_sf".
+!      sf :: MAT{CPX}, OUT
+!      unique_sf :: MAT{CPX}, IN
+!
+!   ENSURE(.spacegroup.analyzed,"spacegroup not analyzed")
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!
+!      .spacegroup.sum_unique_sf_derivs_t(sf,unique_sf,.data.reflections)
+!   end
+!
+!   sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc)
+!   ! Form "X", the sum of the FT phase factor e^(i k.r) times the
+!   ! symmetry phases (which arise from copying the molecule
+!   ! around the unit cell) for a series of "k_pts" and space "pts",
+!   ! multiplied by a given k-space factor "(Fr,Fc)". The result "X" is
+!   ! of length of the number of space points
+!      X :: VEC{REAL}, OUT
+!      k_pts,pts :: MAT{REAL}, IN
+!      tf :: VEC{REAL}, IN
+!      Fr,Fc :: VEC{REAL}, IN
+!
+!   ENSURE(.spacegroup.analyzed,"spacegroup not analyzed")
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!
+!      .spacegroup.sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc,.data.reflections)
+!
+!   end
+!
+!   sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc)
+!   ! Form "X", the sum of the FT phase factor e^(i k.r) times the
+!   ! symmetry phases (which arise from copying the molecule
+!   ! around the unit cell) for a series of "k_pts" and space "pts",
+!   ! multiplied by a given k-space factor "(Fr,Fc)". The result "X" is
+!   ! of length of the number of space points
+!      X :: VEC{REAL}, OUT
+!      k_pts,pts :: MAT{REAL}, IN
+!      tf :: VEC{CPX}, IN
+!      Fr,Fc :: VEC{REAL}, IN
+!
+!   ENSURE(.spacegroup.analyzed,"spacegroup not analyzed")
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!
+!      .spacegroup.sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc,.data.reflections)
+!
+!   end
 
 ! Don't delete code below just yet ...
 
@@ -3041,90 +2933,6 @@ contains
 !
 !   end
 
-!  ===============
-!  Electric fields
-!  ===============
-
-!   make_Lorentz_fields(F,sphere_sum)
-!   ! Make the Lorentz electric fields at the unit cell atom sites.
-!   ! Warning: the asymmetric_unit_atom's should be generated from the
-!   ! fragment where charges and dipoles have been done.
-!      F :: MAT{REAL}, OUT
-!      sphere_sum :: BIN, optional
-!
-!      symop :: MAT3{REAL}*
-!      pos,L0,L1 :: MAT{REAL}*
-!      charge,dipole :: VEC{REAL}*
-!      mol :: VEC{INT}*
-!      fac :: REAL
-!      n_atom,dim, u,a,s, fu,lu :: INT
-!
-!      ! No. of atoms in unit cell
-!      n_atom = .n_unit_cell_atoms
-!      dim    = 3*n_atom
-!
-!      ! Make the Lorentz factor tensors L0, L1
-!      L0.create(dim,n_atom)      ! charge L0 tensor
-!      L1.create(dim,dim)         ! dipole L1 tensor
-!      pos.create(3,n_atom)
-!      pos = matmul(.unit_cell.direct_matrix,.unit_cell_geometry)
-!      mol => .unit_cell_mol_for_atom
-!      .unit_cell.make_LFF_tensors(L0,L1,pos,mol,sphere_sum)
-!      fac = FOUR*PI/.unit_cell.volume
-!      L0 = fac*L0
-!      L1 = fac*L1
-!
-!
-!      ! Cartesian symops
-!      symop => .xyz_seitz_matrices
-!
-!      ! Unit cell charges and dipoles
-!      charge.create(n_atom)
-!      dipole.create(dim)
-!
-!      ! Get unit cell charges and dipoles
-!      lu = 0
-!      do u = 1,n_atom
-!         a = .asym_atom_for_unit_cell_atom(u)
-!         s = .asym_symop_for_unit_cell_atom(u)
-!         charge(u) = .asymmetric_unit_atom(a).charge
-!         fu = lu + 1
-!         lu = lu + 3
-!         dipole(fu:lu) = matmul(symop(:,:,s),.asymmetric_unit_atom(a).dipole)
-!      end
-!
-!      ! Assign electric fields
-!      lu = 0
-!      do a = 1,.n_fragment_atoms
-!         u  = .unit_cell_atom_for_frag_atom(a)
-!         lu = 3*(u-1)
-!         fu = lu + 1
-!         lu = lu + 3
-!       ! F(:,a) = matmul(L0(fu:lu,:),charge) + matmul(L1(fu:lu,:),dipole)
-!         F(:,a) = matmul(L1(fu:lu,:),dipole)
-!       ! F(:,a) = matmul(L0(fu:lu,:),charge)
-!      end
-!
-!      .put_debug(charge,"make_Lorentz_fields: charge")
-!      .put_debug(dipole,"make_Lorentz_fields: dipole")
-!      .put_debug(transpose(pos),"make_Lorentz_fields: pos")
-!      .put_debug(mol,"make_Lorentz_fields: mol")
-!      .put_debug(transpose(F),"make_Lorentz_fields: F")
-!      .put_debug(L0,"make_Lorentz_fields: L0")
-!      .put_debug(L1,"make_Lorentz_fields: L1")
-!      .put_debug(matmul(L0,charge),"make_Lorentz_fields: L0 x charge")
-!      .put_debug(matmul(L1,dipole),"make_Lorentz_fields: L1 x dipole")
-!      .put_debug(.asym_symop_for_unit_cell_atom,"make_Lorentz_fields: asym_symop_for_unit_cell_atom")
-!      .put_debug(.unit_cell_atom_for_frag_atom,"make_Lorentz_fields: unit_cell_atom_for_frag_atom")
-!
-!      ! Clean up
-!      dipole.destroy; charge.destroy
-!      symop.destroy
-!      pos.destroy
-!      L1.destroy; L0.destroy
-!
-!   end
-
 !  ===================
 !  Tests for existence
 !  ===================
@@ -3226,19 +3034,6 @@ contains
    ENSURE(.data_exists,"no diffraction data")
 
       res = .data.F_weighted_r_factor
-
-   end
-
-   F_val_r_factor result (res)
-   ! Valence r factor. The set of "core_reflections" must be supplied.
-      self :: IN
-      res :: REAL
-
-   ENSURE(.xray_data.created,"no xray data")
-   ENSURE(.xray_data.reflection_data_exists,"no xray reflection data")
-   ENSURE(.core_reflection.created,"no core electron reflection data")
-
-      res = .xray_data.reflections.F_val_r_factor(.core_reflection)
 
    end
 
@@ -3405,14 +3200,15 @@ contains
    !       refinement:
    !
    ! * Structure factors are calculated only for *unique* fragment
-   !   atoms since the QM wavefunction refers to the fragment_atoms.
+   !   atoms since the QM wavefunction refers to the fragment.atom .
    !   cf. the description of "sf_n" above.
    !
-   ! * However, asymmetric unit atoms are used to "store" the updating
+   ! * However, asymmetric_unit_atoms are used to "store" the updating
    !   geometry; thus unique fragment atom pADPs and shifts are
    !   calculated (and derivatives with respect to these unique
    !   fragment atom positions and ADPs) but these parameters and
-   !   shifts are later transformed back into asymmetric unit.
+   !   shifts are later transformed back into asymmetric unit for
+   !   compatibility with standard crystallography.
 
       sf_n :: MAT{CPX}, INOUT
 
@@ -3508,12 +3304,12 @@ contains
       .put_bond_info_with_errors
 
       ! Finally: remake .asymmetric_unit_atom/unit_cell geometry from
-      ! .fragment_atom, which *must* be assigned since it must point
+      ! .fragment, which *must* be assigned since it must point
       ! to molecule.atom
       .asymmetric_unit_atom.destroy
       .asymmetric_unit_geometry.destroy
       .asymmetric_unit_source = "tonto-rigid-atom-fit"
-      .make_fragment_data(.fragment_atom,assign_atom=TRUE,warnings=FALSE)
+      .make_fragment_data(warnings=FALSE)
 
       ! Put fit analysis statistics
       if (NOT .data.refine_structure) .put_fitting_plots
@@ -3552,14 +3348,14 @@ contains
          stdout.put(X,by_column=TRUE)
          X.destroy
          stdout.text("fragment_atom (before):")
-         .fragment_atom.put_coordinates
+         .fragment.atom.put_coordinates
       end
 
-      ! Create space for the fragment_atom pADPs (leaky)
+      ! Create space for the fragment atom pADPs (leaky)
       do f = 1,.n_fragment_atoms
          a = .asym_atom_for_frag_atom(f)
          atom_a => .asymmetric_unit_atom(a)
-         atom_f =>        .fragment_atom(f)
+         atom_f =>        .fragment.atom(f)
          n_p = atom_a.no_of_pADPs
          atom_f.reset_pADPs_and_errors(n_p)
       end
@@ -3572,7 +3368,7 @@ contains
 
       ! Set the no. of parameters
       n_p = .asymmetric_unit_atom.no_of_pADPs
-      n_f = .fragment_atom.no_of_pADPs
+      n_f = .fragment.atom.no_of_pADPs
 
       ! Create refinement arrays & initialize (leaky)
       .data.initialize_fit_data(n_p,n_f,labels)
@@ -3638,7 +3434,6 @@ contains
 
       sf_n :: MAT{CPX}, INOUT
 
-   ENSURE(.spacegroup.created,"no spacegroup")
    ENSURE(sf_n.dim1==.n_unique_SF_k_pts,        "sf_n: wrong dim1")
    ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim, "sf_n: wrong dim2")
    ENSURE(.data.created,                        "no data")
@@ -3839,7 +3634,7 @@ contains
    end
 
    set_fragment_esds  ::: private
-   ! Set *all* the errors in the .fragment_atom positions/ADPs
+   ! Set *all* the errors in the  fragment atom positions/ADPs
    ENSURE(.fragment_info_made,"no fragment info")
    ENSURE(.data.created,"no data")
    ENSURE(.data.fragment_covariance_matrix.created,"no data.fragment_covariance_matrix")
@@ -3855,7 +3650,7 @@ contains
       esd = sqrt(esd)
 
       ! Set the errors
-      .fragment_atom.set_pADP_errors_to(esd)
+      .fragment.atom.set_pADP_errors_to(esd)
 
       ! Clean
       esd.destroy
@@ -3865,7 +3660,7 @@ contains
 !  Refinement: unique frag <-> asym frag parameters
 
    set_frag_from_asym_pADPs(dF)  ::: private
-   ! Set *all* .fragment_atom pADPs from the .asymmetric_unit_atom pADPs.
+   ! Set *all* fragment atom pADPs from the .asymmetric_unit_atom pADPs.
    ! If "dF" present, the shift in teach frag atom position is returned.
       dF :: MAT{REAL}, optional
 
@@ -3882,10 +3677,10 @@ contains
          .asymmetric_unit_atom.put_coordinates
          stdout.text("asymmetric_unit_atom.pADP_vector (before):")
          .asymmetric_unit_atom.put_pADPs
-         stdout.text("fragment_atom (before):")
-         .fragment_atom.put_coordinates
-         stdout.text("fragment_atom.pADP_vector (before):")
-         .fragment_atom.put_pADPs
+         stdout.text("fragment.atom (before):")
+         .fragment.atom.put_coordinates
+         stdout.text("fragment.atom.pADP_vector (before):")
+         .fragment.atom.put_pADPs
       end
 
       ! Symmetry operators & cell matrix
@@ -3895,7 +3690,7 @@ contains
       CM = .unit_cell.direct_matrix
 
       ! Loop on *all* fragment atom's
-      ! Set the .fragment_atom positions/ADP's
+      ! Set the .fragment atom positions/ADP's
       ! from the .asymmetric_unit_atom's
       do f = 1,.n_fragment_atoms
 
@@ -3904,7 +3699,7 @@ contains
          s  = .asym_symop_for_frag_atom(f)
 
          ! Atoms (fragment, asymmetric)
-         f_atom =>        .fragment_atom(f)
+         f_atom =>        .fragment.atom(f)
          a_atom => .asymmetric_unit_atom(a)
 
          ! Store original position
@@ -3939,16 +3734,16 @@ contains
          .asymmetric_unit_atom.put_coordinates
          stdout.text("asymmetric_unit_atom.pADP_vector (after):")
          .asymmetric_unit_atom.put_pADPs
-         stdout.text("fragment_atom (after):")
-         .fragment_atom.put_coordinates
-         stdout.text("fragment_atom.pADP_vectorm (after):")
-         .fragment_atom.put_pADPs
+         stdout.text("fragment.atom (after):")
+         .fragment.atom.put_coordinates
+         stdout.text("fragment.atom.pADP_vectorm (after):")
+         .fragment.atom.put_pADPs
       end
 
    end
 
    set_asym_from_ufrag_shifts ::: private
-   ! From "dX", the unique .fragment_atom shifts in positions and
+   ! From "dX", the unique fragment atom shifts in positions and
    ! ADP's, return the *asymmetric* atom shifts in positions and
    ! ADP's; place the shifts in the same "dX" parameter vector.
 
@@ -4179,7 +3974,7 @@ contains
       asyma_covariance_matrix.create(dim,dim)
       asyma_covariance_matrix = ZERO
 
-      ! Transform the unique .fragment_atom to the asym unit covariances
+      ! Transform the unique fragment atom to the asym unit covariances
       u1b = 0
       do u1 = 1,.n_unique_frag_atoms
 
@@ -4284,7 +4079,7 @@ contains
       ! Symops
       seitz => .xyz_seitz_matrices
 
-      ! Copy the asymmetric atom covariances to *all* .fragment_atom ADPs
+      ! Copy the asymmetric atom covariances to *all* fragment atom ADPs
       f1b = 0
       do f1 = 1,.n_fragment_atoms
 
@@ -4405,7 +4200,7 @@ contains
    make_unique_sf_derivs(sf_e,sf_d,sf_n)
    ! Make "sf_e" and "sf_d", the symmetry-related thermally-smeared
    ! structure factors and their derivatives, from "sf_n" the *unique*
-   ! .fragment_atom structure factors and the ".fragment_atom.ADP_tensor".
+   ! .fragment atom structure factors and the "fragment.atom.ADP_tensor".
 
       sf_e :: VEC{CPX}, OUT
       sf_d :: MAT{CPX}, OUT
@@ -4468,7 +4263,7 @@ contains
    make_unique_sfd_pos_Y_ADP4_Y(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
-   ! set of atom parameters in .fragment_atom.
+   ! set of atom parameters in fragment.atom.
    ! NOTE: this version does *all* parameters, positions and ADPs
    !       *including* up to 4th order anharmonicity.
    ! NOTE: the order of the derivatives follows the lexical order
@@ -4515,10 +4310,10 @@ contains
 
          ! Fragment atom
          f = .unique_frag_atom(u)
-         f_atom => .fragment_atom(f)
+         f_atom => .fragment.atom(f)
 
          ! Base index for unique frag atom
-         base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
+         base = .fragment.atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
 
          ! Structure factor, iunique frag atom "u"
          sf_u => sf_n(:,u)
@@ -4768,7 +4563,7 @@ contains
    make_unique_sfd_pos_Y_ADP__Y(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
-   ! set of atom parameters in .fragment_atom.
+   ! set of atom parameters in fragment atom.
    ! NOTE: this version does *all* parameters, positions and ADPs
 
       sf_e :: VEC{CPX}, OUT
@@ -4810,7 +4605,7 @@ contains
 
          f = .unique_frag_atom(u)
 
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
+         kU.to_product_of(k_pt,.fragment.atom(f).ADP_tensor)
 
          u1 => kU(:,1)
          u2 => kU(:,2)
@@ -4860,8 +4655,8 @@ contains
 
    make_unique_sfd_pos_Y_ADP__N(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
-   ! set of atom parameters in .fragment_atom.
+   ! and "sf_d" corresponding to the unique_SF_k_pts from the given
+   ! set of atom parameters in fragment atom.
    ! NOTE: this version does positions *only*
 
       sf_e :: VEC{CPX}, OUT
@@ -4904,7 +4699,7 @@ contains
 
          f = .unique_frag_atom(u)
 
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
+         kU.to_product_of(k_pt,.fragment.atom(f).ADP_tensor)
 
          u1 => kU(:,1)
          u2 => kU(:,2)
@@ -4948,7 +4743,7 @@ contains
    make_unique_sfd_pos_N_ADP__Y(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
-   ! set of atom parameters in .fragment_atom.
+   ! set of atom parameters in fragment atom.
    ! NOTE: this version does ADPs *only*
 
       sf_e :: VEC{CPX}, OUT
@@ -4990,7 +4785,7 @@ contains
 
          f = .unique_frag_atom(u)
 
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
+         kU.to_product_of(k_pt,.fragment.atom(f).ADP_tensor)
 
          u1 => kU(:,1)
          u2 => kU(:,2)
@@ -5038,7 +4833,7 @@ contains
    make_unique_sfd_pos_Y_Hiso_Y(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
-   ! set of atom parameters in .fragment_atom.
+   ! set of atom parameters in fragment.atom.
    ! NOTE: this version does H_U_iso=TRUE derivatives.
 
       sf_e :: VEC{CPX}, OUT
@@ -5081,7 +4876,7 @@ contains
 
          f = .unique_frag_atom(u)
 
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
+         kU.to_product_of(k_pt,.fragment.atom(f).ADP_tensor)
          u1 => kU(:,1)
          u2 => kU(:,2)
          u3 => kU(:,3)
@@ -5090,7 +4885,7 @@ contains
 
          base = 9*(u-1)
 
-         if (.fragment_atom(f).atomic_number>1) then
+         if (.fragment.atom(f).atomic_number>1) then
 
             do k = 1,n_k
 
@@ -5162,7 +4957,7 @@ contains
    make_unique_sfd_pos_N_Hiso_Y(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
-   ! set of atom parameters in .fragment_atom.
+   ! set of atom parameters in fragment.atom.
    ! NOTE: this version *no* positions and does H_U_iso=TRUE derivatives.
 
       sf_e :: VEC{CPX}, OUT
@@ -5204,7 +4999,7 @@ contains
 
          f = .unique_frag_atom(u)
 
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
+         kU.to_product_of(k_pt,.fragment.atom(f).ADP_tensor)
          u1 => kU(:,1)
          u2 => kU(:,2)
          u3 => kU(:,3)
@@ -5213,7 +5008,7 @@ contains
 
          base = 9*(u-1)
 
-         if (.fragment_atom(f).atomic_number>1) then
+         if (.fragment.atom(f).atomic_number>1) then
 
             do k = 1,n_k
 
@@ -5276,7 +5071,7 @@ contains
    make_unique_sfd_pos_Y_Uiso_Y(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
-   ! set of atom parameters in .fragment_atom.
+   ! set of atom parameters in .fragment.atom.
    ! NOTE: this version does U_iso for the requested atoms.
 
       sf_e :: VEC{CPX}, OUT
@@ -5319,7 +5114,7 @@ contains
 
          f = .unique_frag_atom(u)
 
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
+         kU.to_product_of(k_pt,.fragment.atom(f).ADP_tensor)
          u1 => kU(:,1)
          u2 => kU(:,2)
          u3 => kU(:,3)
@@ -5328,7 +5123,7 @@ contains
 
          base = 9*(u-1)
 
-         if (any(.fragment_atom(f).tag==.data.refine_U_iso_for_atom)) then
+         if (any(.fragment.atom(f).tag==.data.refine_U_iso_for_atom)) then
 
             do k = 1,n_k
 
@@ -5402,7 +5197,7 @@ contains
    make_unique_sfd_pos_Y_HADP_N(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
-   ! set of atom parameters in .fragment_atom.
+   ! set of atom parameters in .fragment.atom.
    ! NOTE: this version does *not* do H ADPs
 
       sf_e :: VEC{CPX}, OUT
@@ -5445,7 +5240,7 @@ contains
 
          f = .unique_frag_atom(u)
 
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
+         kU.to_product_of(k_pt,.fragment.atom(f).ADP_tensor)
          u1 => kU(:,1)
          u2 => kU(:,2)
          u3 => kU(:,3)
@@ -5455,7 +5250,7 @@ contains
          base = 9*(u-1)
 
          ! If not hydrogen atom
-         if (.fragment_atom(f).atomic_number>1) then
+         if (.fragment.atom(f).atomic_number>1) then
 
             do k = 1,n_k
 
@@ -5520,7 +5315,7 @@ contains
    make_unique_sfd_pos_N_HADP_N(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
-   ! set of atom parameters in .fragment_atom.
+   ! set of atom parameters in .fragment.atom.
    ! NOTE: this version does *not* do positions *nor* H ADPs
    !       i.e. it only does heavy atom ADPs
 
@@ -5564,7 +5359,7 @@ contains
 
          f = .unique_frag_atom(u)
 
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
+         kU.to_product_of(k_pt,.fragment.atom(f).ADP_tensor)
          u1 => kU(:,1)
          u2 => kU(:,2)
          u3 => kU(:,3)
@@ -5574,7 +5369,7 @@ contains
          base = 9*(u-1)
 
          ! If not hydrogen atom
-         if (.fragment_atom(f).atomic_number>1) then
+         if (.fragment.atom(f).atomic_number>1) then
 
             do k = 1,n_k
 
@@ -5659,6 +5454,14 @@ contains
    ENSURE(.data_exists,"no diffraction data")
       .data.solve_normal_equations(dFdX)
    end
+
+!   set_parameter_errors
+!   ! Set the parameter errors
+!   ENSURE(.data_exists,"no diffraction data")
+!
+!      .data.set_parameter_errors
+!
+!   end
 
 !  =================
 !  Refinement output
@@ -5872,13 +5675,13 @@ contains
       c1b = 0
       do f1 = 1,.n_fragment_atoms
 
-         n1  = .fragment_atom(f1).no_of_pADPs
+         n1  = .fragment.atom(f1).no_of_pADPs
 
          f2b = 0
          c2b = 0
          do f2 = 1,.n_fragment_atoms
 
-            n2  = .fragment_atom(f2).no_of_pADPs
+            n2  = .fragment.atom(f2).no_of_pADPs
 
             cm(c1b+1:c1b+3,c2b+1:c2b+3) = .data.fragment_covariance_matrix(f1b+1:f1b+3,f2b+1:f2b+3)
 
@@ -5893,9 +5696,9 @@ contains
       end
 
       ! Print out the tables with errors
-      .fragment_atom.put_bond_length_table(cm)
-      .fragment_atom.put_bond_angle_table(cm)
-      .fragment_atom.put_torsion_angle_table(cm)
+      .fragment.atom.put_bond_length_table(cm)
+      .fragment.atom.put_bond_angle_table(cm)
+      .fragment.atom.put_torsion_angle_table(cm)
 
       ! Clean
       cm.destroy
@@ -5920,13 +5723,13 @@ contains
       c1b = 0
       do f1 = 1,.n_fragment_atoms
 
-         n1  = .fragment_atom(f1).no_of_pADPs
+         n1  = .fragment.atom(f1).no_of_pADPs
 
          f2b = 0
          c2b = 0
          do f2 = 1,.n_fragment_atoms
 
-            n2  = .fragment_atom(f2).no_of_pADPs
+            n2  = .fragment.atom(f2).no_of_pADPs
 
             cm(c1b+1:c1b+3,c2b+1:c2b+3) = .data.fragment_covariance_matrix(f1b+1:f1b+3,f2b+1:f2b+3)
 
@@ -5969,9 +5772,9 @@ contains
       ! Print out the tables with errors
       save   => TEXTFILE::stdout
       stdout => file
-      .fragment_atom.put_bond_length_table(cm,parentheses=FALSE)
-      .fragment_atom.put_bond_angle_table(cm,parentheses=FALSE)
-      .fragment_atom.put_torsion_angle_table(cm,parentheses=FALSE)
+      .fragment.atom.put_bond_length_table(cm,parentheses=FALSE)
+      .fragment.atom.put_bond_angle_table(cm,parentheses=FALSE)
+      .fragment.atom.put_torsion_angle_table(cm,parentheses=FALSE)
       stdout => save
 
       ! Clean
@@ -6004,12 +5807,15 @@ contains
    ! Dump object data as text
 
       stdout.dump("CIF_chemical_formula",.CIF_chemical_formula)
-      .spacegroup.dmpp("spacegroup")
-      .unit_cell.dmpp("unit_cell")
+
+    ! .fragment.dmpp("fragment")
       stdout.dump("n_fragment_atoms",.n_fragment_atoms)
-      .fragment_atom.dmpp("fragment_atom")
-      stdout.dump("destroy_fragment_atom",.destroy_fragment_atom)
       stdout.dmpp("fragment_geometry",.fragment_geometry)
+
+      .spacegroup.dump("spacegroup")
+
+      .unit_cell.dump("unit_cell")
+
       stdout.dump("asymmetric_unit_source",.asymmetric_unit_source)
       stdout.dump("n_asymmetric_unit_atoms",.n_asymmetric_unit_atoms)
       .asymmetric_unit_atom.dmpp("asymmetric_unit_atom")
@@ -6058,8 +5864,6 @@ contains
       stdout.dump("r_free_percentage",.r_free_percentage)
     ! stdout.dmpp("xray_r_free_data",.xray_r_free_data)
     ! stdout.dmpp("pnd_r_free_data",.pnd_r_free_data)
-    ! stdout.dmpp("core_reflection",.core_reflection)
-      stdout.dump("finalize",.finalize)
 
    end
 
@@ -6082,7 +5886,6 @@ contains
       .unit_cell.put
 
       .spacegroup.put
-
       if (NOT tonto.low_verbosity) .put_xyz_seitz_matrices
 
       if (.asymmetric_unit_geometry.created) .put_asymmetric_unit_geometry
@@ -6250,7 +6053,7 @@ contains
       stdout.flush
 
       ! Data
-      ID        => .fragment_atom(.frag_parent_for_cell_atom).unique_tags
+      ID        => .fragment.atom(.frag_parent_for_cell_atom).unique_tags
       asym_atom => .asym_atom_for_unit_cell_atom
       asym_symp => .asym_symop_for_unit_cell_atom
       is_asym   => .is_asym_unit_cell_atom
@@ -6910,7 +6713,7 @@ contains
       as4f => .asym_atom_for_frag_atom
       sy4f => .asym_symop_for_frag_atom
       sh4f => .asym_shift_for_frag_atom
-      ID   => .fragment_atom.unique_tags
+      ID   => .fragment.atom.unique_tags
       un4f => .unique_atom_for_frag_atom
       rf.create(.n_fragment_atoms)
       rf = int(.repetition_factor)
@@ -6968,40 +6771,6 @@ contains
 
    end
 
-!   put_fragment_geometry_small ::: private
-!   ! Put out the fragment_geometry information
-!
-!      ID :: VEC{STR}*
-!      table :: VEC{TABLE_COLUMN}*
-!
-!      stdout.flush
-!      stdout.flush
-!      stdout.text("Fragment geometry:")
-!      stdout.flush
-!
-!      ! Data
-!      ID   => .fragment_atom.unique_tags
-!
-!      ! Table
-!      table.create(4)
-!
-!      table( 1).set_heading("frag");    table(1).set_values(ID)
-!      table( 1).set_subhead("ID")
-!
-!      table( 2).set_heading("x");       table(2).set_values(.fragment_geometry(1,:))
-!      table( 3).set_heading("y");       table(3).set_values(.fragment_geometry(2,:))
-!      table( 4).set_heading("z");       table(4).set_values(.fragment_geometry(3,:))
-!      table( 3).set_sb3head("/frac")
-!
-!      table.put
-!
-!      ! Clean
-!      table.clear_columns
-!      table.destroy
-!      ID.destroy
-!
-!   end
-
 !  ==================================
 !  Put reflection related information
 !  ==================================
@@ -7029,7 +6798,7 @@ contains
         stdout.text("======================")
         stdout.text("X-ray diffraction data")
         stdout.text("======================")
-        .xray_data.put_reflection_data(.core_reflection)
+        .xray_data.put_reflection_data
         stdout.flush
         end
       end
@@ -7068,11 +6837,6 @@ contains
 
       .data.put_F_statistics
 
-      if (.core_reflection.destroyed) return
-
-      ! Print out the valence R factor
-      stdout.show("Rval (F)                    =", .F_val_r_factor)
-
    end
 
    put_PND_sf(name)
@@ -7088,11 +6852,8 @@ contains
 
    put_CX(label,formula,spacegroup)
    ! Output some information for the Crystal Explorer program.
-
        label,formula,spacegroup :: STR
-
        .unit_cell.put_CX(label,formula,spacegroup)
-
    end
 
 !  ==================

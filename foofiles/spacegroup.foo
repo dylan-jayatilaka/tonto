@@ -906,6 +906,189 @@ contains
 
    end
 
+   set_from_CIF(cif) ::: leaky
+   ! Read information from a CIF file, "cif". For a valid spacegroup either the
+   ! Hall symbol or the symmetry equivalent positions must be present. The
+   ! Hermann-Maiguin symbol is only used if the Hall symbol is not found.
+      self :: PTR
+      cif :: CIF
+
+      found,jf_found,matched :: BIN
+      item,symbol,IT_symbol :: STR
+      jf_symbols,itemvec :: VEC{STR}*
+      mat :: MAT3{REAL}*
+      list :: MAT{STR}*
+
+      ! Destroy if there
+      .destroy
+      .create
+
+      ! Initialise
+      .Hall_symbol = " "
+      .HM_symbol = " "
+      .analyzed = FALSE
+
+      ! First look for the Hall symbol, trying old and new labels
+      item = "_symmetry_space_group_name_Hall"
+      cif.find_item(trim(item),found)
+      if (NOT found) then ! cif v 1.1
+         item = "_space_group_name_Hall"
+         cif.find_item(trim(item),found)
+      end
+
+      ! Read the Hall symbol if there
+      if (found) then     
+         cif.read_item(trim(item),symbol,itemvec)
+         if (symbol(1:1)/="?") then
+            .set_Hall_symbol(symbol)
+            ENSURE(itemvec.destroyed,"multi-line Hall symbol")
+         else             ! "?" is not a valid symbol
+            found = FALSE
+         end
+      end
+
+      ! The Hall symbol was not there ...
+      if (NOT found) then 
+
+         ! Look for a HM symbol
+         item = "_symmetry_space_group_name_H-M"
+         cif.find_item(trim(item),found)
+         if (NOT found) then ! cif v 1.1
+            item = "_space_group_name_H-M_alt"
+            cif.find_item(trim(item),found)
+         end
+
+         ! Read the Hermann-Mauguin symbol
+         if (found) then  
+            cif.read_item(trim(item),symbol,itemvec)
+            if (symbol(1:1)/="?") then
+               .set_HM_symbol(symbol)
+               ENSURE(itemvec.destroyed,"multi-line HM symbol")
+               if (.IT_group_number==0) found = FALSE
+            else
+               found = FALSE
+            end
+         end
+
+      end
+
+      ! The HM symbol was not there either ... 
+      if (NOT found) then 
+
+         ! In desperation, try Int Tables number
+         item = "_symmetry_Int_Tables_number"
+         cif.find_item(trim(item),found)
+
+         ! Read the IT symbol
+         if (found) then  
+            cif.read_item(trim(item),IT_symbol,itemvec)
+            .set_IT_symbol(IT_symbol)
+         else
+            .set_IT_symbol("?")
+         end
+
+      end
+
+      ! Now look for Jones faithful symbols, if there ...
+      nullify(jf_symbols)
+      item = "_symmetry_equiv_pos_as_xyz"
+      cif.find_looped_item(trim(item),jf_found)
+      if (NOT jf_found) then ! cif v 1.1
+         item = "_space_group_symop_operation_xyz"
+         cif.find_item(trim(item),jf_found)
+      end
+
+      ! Always try and read the Jones-Faithful symbol
+      nullify(mat)
+      if (jf_found) then     
+         list.create(6,2) 
+         list = transpose( &
+                reshape(["/2 +","/2+ ", &
+                         "/2 -","/2- ", &
+                         "/3 +","/3+ ", &
+                         "/3 -","/3- ", &
+                         "/4 +","/4+ ", &
+                         "/4 -","/4- "],[2,6]))
+         cif.file.set_replacement_list(list)
+         cif.read_looped_item(trim(item),jf_symbols)
+         cif.file.destroy_replacement_list
+         list.destroy
+         mat.create(4,4,size(jf_symbols))
+         .decode_Jones_Faithful_symbols(jf_symbols,mat)
+         jf_symbols.destroy
+      end
+
+      ! Get spacegroup symbol brute-force
+      if (((NOT found) OR .Hall_symbol.is_one_of([" ","?"])) AND jf_found) then
+         .set_from_symops(mat)
+      end
+
+      ! Analyze the spacegroup symbol
+      if (.Hall_symbol/=" " AND .Hall_symbol/="?") .analyze
+
+      ! Compare with JF matrices, if there
+      if (.analyzed AND mat.created) then
+
+         matched = .seitz_same_as(mat,warn=TRUE)
+
+         if (NOT matched) then
+
+            stdout.flush
+            stdout.text("WARNING: inconsistent seitz matrices, using Jones-Faithful matrices")
+
+            .set_defaults
+            .seitz.destroy
+            .seitz => mat
+            .n_seitz = mat.dim3
+
+            .product_of_symops.destroy
+            .inverse_of_symops.destroy
+            .product_of_symops.create(.n_seitz,.n_seitz)
+            .inverse_of_symops.create(.n_seitz)
+            .make_multiplication_table
+            .make_inverted_symops        
+            .make_translated_symops
+            .make_unique_SF_symops
+
+            ! This counts as being analyzed ...
+            .analyzed = TRUE 
+
+         else
+
+            mat.destroy
+
+         end
+
+      end
+
+      ! Use JF matrices is spacegroup not there
+      if (NOT .analyzed AND mat.created) then
+
+         .set_defaults
+         .seitz => mat
+         .n_seitz = mat.dim3
+
+         .product_of_symops.destroy
+         .inverse_of_symops.destroy
+         .product_of_symops.create(.n_seitz,.n_seitz)
+         .inverse_of_symops.create(.n_seitz)
+         .make_multiplication_table
+         .make_inverted_symops        
+         .make_translated_symops
+         .make_unique_SF_symops
+
+         ! This counts as being analyzed ...
+         .analyzed = TRUE 
+
+      end
+
+      ! Use JF matrices is spacegroup not there
+      if (NOT .analyzed) then
+         DIE("Can't find spacegroup information")
+      end
+
+   end
+
    set_IT_symbol(IT_symbol)
    ! Set the international table symbol to be "IT_symbol"
       self :: INOUT
@@ -1193,184 +1376,6 @@ contains
       symbol :: STR
       stdin.read(symbol)
       .set_HM_symbol(symbol)
-   end
-
-   read_CIF(cif) ::: leaky
-   ! Read information from a CIF file, "cif". For a valid spacegroup either the
-   ! Hall symbol or the symmetry equivalent positions must be present. The
-   ! Hermann-Maiguin symbol is only used if the Hall symbol is not found.
-      cif :: CIF
-
-      found,jf_found,matched :: BIN
-      item,symbol,IT_symbol :: STR
-      jf_symbols,itemvec :: VEC{STR}*
-      mat :: MAT3{REAL}*
-      list :: MAT{STR}*
-
-      ! Initialise
-      .Hall_symbol = " "
-      .HM_symbol = " "
-      .analyzed = FALSE
-
-      ! First look for the Hall symbol, trying old and new labels
-      item = "_symmetry_space_group_name_Hall"
-      cif.find_item(trim(item),found)
-      if (NOT found) then ! cif v 1.1
-         item = "_space_group_name_Hall"
-         cif.find_item(trim(item),found)
-      end
-
-      ! Read the Hall symbol if there
-      if (found) then     
-         cif.read_item(trim(item),symbol,itemvec)
-         if (symbol(1:1)/="?") then
-            .set_Hall_symbol(symbol)
-            ENSURE(itemvec.destroyed,"multi-line Hall symbol")
-         else             ! "?" is not a valid symbol
-            found = FALSE
-         end
-      end
-
-      ! The Hall symbol was not there ...
-      if (NOT found) then 
-
-         ! Look for a HM symbol
-         item = "_symmetry_space_group_name_H-M"
-         cif.find_item(trim(item),found)
-         if (NOT found) then ! cif v 1.1
-            item = "_space_group_name_H-M_alt"
-            cif.find_item(trim(item),found)
-         end
-
-         ! Read the Hermann-Mauguin symbol
-         if (found) then  
-            cif.read_item(trim(item),symbol,itemvec)
-            if (symbol(1:1)/="?") then
-               .set_HM_symbol(symbol)
-               ENSURE(itemvec.destroyed,"multi-line HM symbol")
-               if (.IT_group_number==0) found = FALSE
-            else
-               found = FALSE
-            end
-         end
-
-      end
-
-      ! The HM symbol was not there either ... 
-      if (NOT found) then 
-
-         ! In desperation, try Int Tables number
-         item = "_symmetry_Int_Tables_number"
-         cif.find_item(trim(item),found)
-
-         ! Read the IT symbol
-         if (found) then  
-            cif.read_item(trim(item),IT_symbol,itemvec)
-            .set_IT_symbol(IT_symbol)
-         else
-            .set_IT_symbol("?")
-         end
-
-      end
-
-      ! Now look for Jones faithful symbols, if there ...
-      nullify(jf_symbols)
-      item = "_symmetry_equiv_pos_as_xyz"
-      cif.find_looped_item(trim(item),jf_found)
-      if (NOT jf_found) then ! cif v 1.1
-         item = "_space_group_symop_operation_xyz"
-         cif.find_item(trim(item),jf_found)
-      end
-
-      ! Always try and read the Jones-Faithful symbol
-      nullify(mat)
-      if (jf_found) then     
-         list.create(6,2) 
-         list = transpose( &
-                reshape(["/2 +","/2+ ", &
-                         "/2 -","/2- ", &
-                         "/3 +","/3+ ", &
-                         "/3 -","/3- ", &
-                         "/4 +","/4+ ", &
-                         "/4 -","/4- "],[2,6]))
-         cif.file.set_replacement_list(list)
-         cif.read_looped_item(trim(item),jf_symbols)
-         cif.file.destroy_replacement_list
-         list.destroy
-         mat.create(4,4,size(jf_symbols))
-         .decode_Jones_Faithful_symbols(jf_symbols,mat)
-         jf_symbols.destroy
-      end
-
-      ! Get spacegroup symbol brute-force
-      if (((NOT found) OR .Hall_symbol.is_one_of([" ","?"])) AND jf_found) then
-         .set_from_symops(mat)
-      end
-
-      ! Analyze the spacegroup symbol
-      if (.Hall_symbol/=" " AND .Hall_symbol/="?") .analyze
-
-      ! Compare with JF matrices, if there
-      if (.analyzed AND mat.created) then
-
-         matched = .seitz_same_as(mat,warn=TRUE)
-
-         if (NOT matched) then
-
-            stdout.flush
-            stdout.text("WARNING: inconsistent seitz matrices, using Jones-Faithful matrices")
-
-            .set_defaults
-            .seitz.destroy
-            .seitz => mat
-            .n_seitz = mat.dim3
-
-            .product_of_symops.destroy
-            .inverse_of_symops.destroy
-            .product_of_symops.create(.n_seitz,.n_seitz)
-            .inverse_of_symops.create(.n_seitz)
-            .make_multiplication_table
-            .make_inverted_symops        
-            .make_translated_symops
-            .make_unique_SF_symops
-
-            ! This counts as being analyzed ...
-            .analyzed = TRUE 
-
-         else
-
-            mat.destroy
-
-         end
-
-      end
-
-      ! Use JF matrices is spacegroup not there
-      if (NOT .analyzed AND mat.created) then
-
-         .set_defaults
-         .seitz => mat
-         .n_seitz = mat.dim3
-
-         .product_of_symops.destroy
-         .inverse_of_symops.destroy
-         .product_of_symops.create(.n_seitz,.n_seitz)
-         .inverse_of_symops.create(.n_seitz)
-         .make_multiplication_table
-         .make_inverted_symops        
-         .make_translated_symops
-         .make_unique_SF_symops
-
-         ! This counts as being analyzed ...
-         .analyzed = TRUE 
-
-      end
-
-      ! Use JF matrices is spacegroup not there
-      if (NOT .analyzed) then
-         DIE("Can't find spacegroup information")
-      end
-
    end
 
    read_jones_faithful_symbols ::: leaky
