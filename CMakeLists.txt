@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.1.0)
-set(TONTO_VERSION_MAJOR 3)
-set(TONTO_VERSION_MINOR 4)
-set(TONTO_VERSION "${TONTO_VERSION_MAJOR}.${TONTO_VERSION_MINOR}")
+set(VERSION_MAJOR 3)
+set(VERSION_MINOR 6)
+set(VERSION_MINOR_MINOR 1)
+set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
 string(TIMESTAMP TONTO_BUILD_DATE "%Y-%m-%d %H:%M")
 find_package(Git)
 if(${GIT_FOUND})
@@ -18,8 +19,21 @@ project(tonto
     VERSION ${TONTO_VERSION})
 # Add preprocessor
 #set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=f2008ts -cpp -ffree-line-length-none")
-set(CMAKE_Fortran_FLAGS "-cpp -Wall -fno-sign-zero -ffree-line-length-none -O3 -DINT_KIND=4 -DBIN_KIND=4 -DREAL_KIND=8 -DCPX_KIND=8 -DGNU_gfortran -DGNU_gfortran_on_DARWIN -DNO_GENERIC_NAMES -DUSE_PRECONDITIONS -DFLUSH"
+set(CMAKE_Fortran_FLAGS "-cpp -Wall -fno-sign-zero  \
+                         -ffree-line-length-none -O3 \
+                         -DINT_KIND=4 -DBIN_KIND=4 \
+                         -DREAL_KIND=8 -DCPX_KIND=8 \
+                         -DGNU_gfortran \
+                         -DGNU_gfortran_on_DARWIN \
+                         -DNO_GENERIC_NAMES -DUSE_PRECONDITIONS -DFLUSH"
 )
+
+configure_file(
+    ${PROJECT_SOURCE_DIR}/foofiles/macros.in
+    ${PROJECT_BINARY_DIR}/macros
+)
+
+set(MACROS ${PROJECT_BINARY_DIR}/macros)
 
 set(FOO_TYPES_FILE foofiles/types.foo)
 set(FOO_SRC
@@ -344,7 +358,6 @@ set(FORTRAN_SRC
 
 set(RUN_SRC runfiles/run_molecule.foo)
 
-set(MACROS foofiles/macros)
 
 # lib tonto files
 message(STATUS "Making rules for generating f90 files")
@@ -358,7 +371,6 @@ foreach(foopath in ${FOO_SRC})
     string(REGEX REPLACE "___" "_" f90file ${f90file})
     string(REGEX REPLACE "__" "_" f90file ${f90file})
     string(REGEX REPLACE "_.f90" ".f90" f90file ${f90file})
-    message(STATUS ${f90file})
     add_custom_command(
         OUTPUT ${f90file}
         COMMAND perl -w ${FOO_SCRIPT} "${FOO_ARGS}" -fortran ${f90file} 
@@ -382,9 +394,6 @@ foreach(foopath in ${RUN_SRC})
         DEPENDS ${foopath}
     )
 endforeach(foopath)
-
-
-include_directories(${CMAKE_SOURCE_DIR}/foofiles)
 
 add_library(tonto
     ${FORTRAN_SRC}
