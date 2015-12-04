@@ -360,7 +360,7 @@ set(FORTRAN_SRC
     vec_vec_vec_real.f90
 )
 
-set(RUN_SRC runfiles/run_molecule.foo)
+set(RUN_SRC runfiles/run_molecule.foo runfiles/run_har.foo)
 
 
 # lib tonto files
@@ -416,4 +416,11 @@ add_executable(run_molecule
     ${FORTRAN_TYPES_FILE}
 )
 
+add_executable(run_har
+    run_har.f90
+    ${MACROS}
+    ${FORTRAN_TYPES_FILE}
+)
+
 target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_har tonto ${LAPACK_LIBRARIES})
