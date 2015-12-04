@@ -4,6 +4,8 @@ set(VERSION_MINOR 6)
 set(VERSION_MINOR_MINOR 1)
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
 string(TIMESTAMP TONTO_BUILD_DATE "%Y-%m-%d %H:%M")
+
+find_package(Perl REQUIRED)
 find_package(Git)
 if(${GIT_FOUND})
     execute_process(COMMAND
@@ -14,28 +16,30 @@ if(${GIT_FOUND})
 else()
     set(TONTO_GIT_REVISION "Unknown git revision")
 endif()
+
 project(tonto
     LANGUAGES Fortran
     VERSION ${TONTO_VERSION})
 # Add preprocessor
 #set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=f2008ts -cpp -ffree-line-length-none")
 set(CMAKE_Fortran_FLAGS "-cpp -Wall -fno-sign-zero  \
-                         -ffree-line-length-none -O3 \
-                         -DINT_KIND=4 -DBIN_KIND=4 \
-                         -DREAL_KIND=8 -DCPX_KIND=8 \
-                         -DGNU_gfortran \
-                         -DGNU_gfortran_on_DARWIN \
-                         -DNO_GENERIC_NAMES -DUSE_PRECONDITIONS -DFLUSH"
-)
-
-configure_file(
-    ${PROJECT_SOURCE_DIR}/foofiles/macros.in
-    ${PROJECT_BINARY_DIR}/macros
+-ffree-line-length-none -O3 \
+-DINT_KIND=4 -DBIN_KIND=4 \
+-DREAL_KIND=8 -DCPX_KIND=8 \
+-DGNU_gfortran \
+-DGNU_gfortran_on_DARWIN \
+-DNO_GENERIC_NAMES -DUSE_PRECONDITIONS -DFLUSH"
 )
 
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
+configure_file(
+    ${PROJECT_SOURCE_DIR}/include/macros.in
+    ${MACROS}
+)
+
 
 set(FOO_TYPES_FILE foofiles/types.foo)
+set(FORTRAN_TYPES_FILE types.f90)
 set(FOO_SRC
     foofiles/archive.foo
     foofiles/atom.foo
@@ -360,10 +364,10 @@ set(RUN_SRC runfiles/run_molecule.foo)
 
 
 # lib tonto files
-message(STATUS "Making rules for generating f90 files")
+message(STATUS "Rules to process .foo -> .f90 using ${PERL_EXECUTABLE}")
 set(FOO_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/foo.pl")
 set(FOO_ARGS "-no_generic -no_unknown")
-foreach(foopath in ${FOO_SRC})
+foreach(foopath ${FOO_SRC})
     get_filename_component(foofile ${foopath} NAME)
     string(REGEX REPLACE ".foo\$" ".f90" f90file ${foofile})
     # This is just so Make doesn't panic about unescaped { or ,
@@ -373,14 +377,16 @@ foreach(foopath in ${FOO_SRC})
     string(REGEX REPLACE "_.f90" ".f90" f90file ${f90file})
     add_custom_command(
         OUTPUT ${f90file}
-        COMMAND perl -w ${FOO_SCRIPT} "${FOO_ARGS}" -fortran ${f90file} 
-                -types "${CMAKE_SOURCE_DIR}/${FOO_TYPES_FILE}"
-                \"${CMAKE_SOURCE_DIR}/${foopath}\"
+        COMMAND ${PERL_EXECUTABLE}
+        ARGS -w ${FOO_SCRIPT} ${FOO_ARGS}
+        -fortran ${f90file} 
+        -types ${CMAKE_SOURCE_DIR}/${FOO_TYPES_FILE}
+        ${CMAKE_SOURCE_DIR}/${foopath}
         DEPENDS ${foopath}
     )
 endforeach(foopath)
 # Run files
-foreach(foopath in ${RUN_SRC})
+foreach(foopath ${RUN_SRC})
     get_filename_component(foofile ${foopath} NAME)
     string(REGEX REPLACE ".foo\$" ".f90" f90file ${foofile})
     string(REGEX REPLACE "{|}|," "_" f90file ${f90file})
@@ -388,9 +394,11 @@ foreach(foopath in ${RUN_SRC})
     string(REGEX REPLACE "__" "_" f90file ${f90file})
     add_custom_command(
         OUTPUT ${f90file}
-        COMMAND perl -w ${FOO_SCRIPT} "${FOO_ARGS}" -fortran ${f90file} 
-                -types "${CMAKE_SOURCE_DIR}/${FOO_TYPES_FILE}"
-                \"${CMAKE_SOURCE_DIR}/${foopath}\"
+        COMMAND ${PERL_EXECUTABLE}
+        ARGS -w ${FOO_SCRIPT} ${FOO_ARGS}
+        -fortran ${f90file} 
+        -types ${CMAKE_SOURCE_DIR}/${FOO_TYPES_FILE}
+        ${CMAKE_SOURCE_DIR}/${foopath}
         DEPENDS ${foopath}
     )
 endforeach(foopath)
@@ -405,7 +413,7 @@ find_package(LAPACK)
 add_executable(run_molecule
     run_molecule.f90
     ${MACROS}
-    types.f90
+    ${FORTRAN_TYPES_FILE}
 )
 
 target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
