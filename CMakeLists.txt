@@ -21,6 +21,7 @@ project(tonto
     LANGUAGES Fortran
     VERSION ${TONTO_VERSION})
 
+
 # Add preprocessor flags etc
 set(CMAKE_Fortran_FLAGS "-cpp -Wall -fno-sign-zero \
 -ffree-line-length-none -O3 \
@@ -36,6 +37,15 @@ configure_file(
     ${PROJECT_SOURCE_DIR}/include/macros.in
     ${MACROS}
 )
+include_directories(${PROJECT_BINARY_DIR})
+
+find_package(LAPACK)
+if(NOT ${LAPACK_FOUND})
+    message(STATUS "No lapack found, using packaged libs")
+    add_library(lapack STATIC ${CMAKE_SOURCE_DIR}/lapack/blas.f90 ${CMAKE_SOURCE_DIR}/lapack/lapack.f90 ${MACROS})
+    set(LAPACK_LIBRARIES lapack)
+endif()
+
 
 set(FOO_DIR ${CMAKE_SOURCE_DIR}/foofiles)
 set(FOO_TYPES_FILE ${FOO_DIR}/types.foo)
@@ -408,7 +418,6 @@ add_library(tonto
     ${MACROS}
 )
 
-find_package(LAPACK)
 
 add_executable(run_molecule ${CMAKE_BINARY_DIR}/run_molecule.f90)
 
