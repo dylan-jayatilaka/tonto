@@ -21,20 +21,21 @@ project(tonto
     LANGUAGES Fortran
     VERSION ${TONTO_VERSION})
 
+message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
 if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "Intel")
     set(COMPILER "Intel_ifort")
-    set(CMAKE_Fortran_FLAGS "-cpp -O3 -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+    set(CMAKE_Fortran_FLAGS "-O3 -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "PGI")
     set(COMPILER "PGI_pgfortran")
-    set(CMAKE_Fortran_FLAGS "-Mpreprocess -fast -fastsse -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+    set(CMAKE_Fortran_FLAGS "-Mpreprocess -fast -Mipa=fast,inline -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     set(COMPILER "GNU_gfortran")
-    set(CMAKE_Fortran_FLAGS "-cpp -Wall -fno-sign-zero -ffree-line-length-none -O3 -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+    set(CMAKE_Fortran_FLAGS "-Wall -fno-sign-zero -ffree-line-length-none -O3 -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
 else()
     message(STATUS "Unknown Fortran compiler, not modifying flags")
 endif()
 set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
--DREAL_KIND=8 -DCPX_KIND=8 -DNO_GENERIC_NAMES -DUSE_PRECONDITIONS -DFLUSH")
+-DREAL_KIND=8 -DCPX_KIND=8 -DUSE_ERROR_MANAGEMENT -DFLUSH")
 
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
 configure_file(
@@ -46,14 +47,14 @@ include_directories(${PROJECT_BINARY_DIR})
 find_package(LAPACK)
 if(NOT ${LAPACK_FOUND})
     message(STATUS "No lapack found, using packaged libs")
-    add_library(lapack STATIC ${CMAKE_SOURCE_DIR}/lapack/blas.f90 ${CMAKE_SOURCE_DIR}/lapack/lapack.f90 ${MACROS})
+    add_library(lapack STATIC ${CMAKE_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
     set(LAPACK_LIBRARIES lapack)
 endif()
 
 
 set(FOO_DIR ${CMAKE_SOURCE_DIR}/foofiles)
 set(FOO_TYPES_FILE ${FOO_DIR}/types.foo)
-set(FORTRAN_TYPES_FILE types.f90)
+set(FORTRAN_TYPES_FILE types.F90)
 set(FOO_SRC
     ${FOO_DIR}/archive.foo
     ${FOO_DIR}/atom.foo
@@ -215,184 +216,151 @@ set(FOO_SRC
 )
 
 set(FORTRAN_SRC
-    ${CMAKE_BINARY_DIR}/archive.f90
-    ${CMAKE_BINARY_DIR}/atom.f90
-    ${CMAKE_BINARY_DIR}/atom_group.f90
-    ${CMAKE_BINARY_DIR}/basis.f90
-    ${CMAKE_BINARY_DIR}/becke_grid.f90
-    ${CMAKE_BINARY_DIR}/bin.f90
-    ${CMAKE_BINARY_DIR}/buffer.f90
-    ${CMAKE_BINARY_DIR}/capping_square.f90
-    ${CMAKE_BINARY_DIR}/cif.f90
-    ${CMAKE_BINARY_DIR}/cluster.f90
-    ${CMAKE_BINARY_DIR}/colour.f90
-    ${CMAKE_BINARY_DIR}/colour_function.f90
-    ${CMAKE_BINARY_DIR}/command_line.f90
-    ${CMAKE_BINARY_DIR}/coppensbasis.f90
-    ${CMAKE_BINARY_DIR}/coppensorbital.f90
-    ${CMAKE_BINARY_DIR}/cpx.f90
-    ${CMAKE_BINARY_DIR}/crystal.f90
-    ${CMAKE_BINARY_DIR}/debug.f90
-    ${CMAKE_BINARY_DIR}/dft_functional.f90
-    ${CMAKE_BINARY_DIR}/diffraction_data.f90
-    ${CMAKE_BINARY_DIR}/diis.f90
-    ${CMAKE_BINARY_DIR}/file.f90
-    ${CMAKE_BINARY_DIR}/gaussian.f90
-    ${CMAKE_BINARY_DIR}/gaussian2.f90
-    ${CMAKE_BINARY_DIR}/gaussian4.f90
-    ${CMAKE_BINARY_DIR}/gaussian_data.f90
-    ${CMAKE_BINARY_DIR}/geminal_mf_scheme.f90
-    ${CMAKE_BINARY_DIR}/geminal_mf_spectrum.f90
-    ${CMAKE_BINARY_DIR}/int.f90
-    ${CMAKE_BINARY_DIR}/interpolator.f90
-    ${CMAKE_BINARY_DIR}/intrinsic.f90
-    ${CMAKE_BINARY_DIR}/irrep.f90
-    ${CMAKE_BINARY_DIR}/isosurface.f90
-    ${CMAKE_BINARY_DIR}/json.f90
-    ${CMAKE_BINARY_DIR}/lebedev.f90
-    ${CMAKE_BINARY_DIR}/map_int_int.f90
-    ${CMAKE_BINARY_DIR}/map_key_val.f90
-    ${CMAKE_BINARY_DIR}/map_str_int.f90
-    ${CMAKE_BINARY_DIR}/map_vec_int_vec_int.f90
-    ${CMAKE_BINARY_DIR}/map_vec_key_vec_val.f90
-    ${CMAKE_BINARY_DIR}/marchingcube.f90
-    ${CMAKE_BINARY_DIR}/mat3_bin.f90
-    ${CMAKE_BINARY_DIR}/mat3_cpx.f90
-    ${CMAKE_BINARY_DIR}/mat3_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/mat3_int.f90
-    ${CMAKE_BINARY_DIR}/mat3_real.f90
-    ${CMAKE_BINARY_DIR}/mat3_vec_bin.f90
-    ${CMAKE_BINARY_DIR}/mat3_vec_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/mat3_vec_int.f90
-    ${CMAKE_BINARY_DIR}/mat3_vec_real.f90
-    ${CMAKE_BINARY_DIR}/mat4_cpx.f90
-    ${CMAKE_BINARY_DIR}/mat4_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/mat4_int.f90
-    ${CMAKE_BINARY_DIR}/mat4_object.f90
-    ${CMAKE_BINARY_DIR}/mat4_real.f90
-    ${CMAKE_BINARY_DIR}/mat4_rms2_indices.f90
-    ${CMAKE_BINARY_DIR}/mat5_cpx.f90
-    ${CMAKE_BINARY_DIR}/mat5_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/mat5_int.f90
-    ${CMAKE_BINARY_DIR}/mat5_real.f90
-    ${CMAKE_BINARY_DIR}/mat_bin.f90
-    ${CMAKE_BINARY_DIR}/mat_cpx.f90
-    ${CMAKE_BINARY_DIR}/mat_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/mat_int.f90
-    ${CMAKE_BINARY_DIR}/mat_mat_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/mat_mat_real.f90
-    ${CMAKE_BINARY_DIR}/mat_object.f90
-    ${CMAKE_BINARY_DIR}/mat_real.f90
-    ${CMAKE_BINARY_DIR}/mat_rms2_indices.f90
-    ${CMAKE_BINARY_DIR}/mat_rms_indices.f90
-    ${CMAKE_BINARY_DIR}/mat_shell1pair.f90
-    ${CMAKE_BINARY_DIR}/mat_str.f90
-    ${CMAKE_BINARY_DIR}/mo_localiser.f90
-    ${CMAKE_BINARY_DIR}/molecule.base.f90
-    ${CMAKE_BINARY_DIR}/molecule.ce.f90
-    ${CMAKE_BINARY_DIR}/molecule.cp.f90
-    ${CMAKE_BINARY_DIR}/molecule.fock.f90
-    ${CMAKE_BINARY_DIR}/molecule.gem.f90
-    ${CMAKE_BINARY_DIR}/molecule.grid.f90
-    ${CMAKE_BINARY_DIR}/molecule.ints.f90
-    ${CMAKE_BINARY_DIR}/molecule.main.f90
-    ${CMAKE_BINARY_DIR}/molecule.misc.f90
-    ${CMAKE_BINARY_DIR}/molecule.plot.f90
-    ${CMAKE_BINARY_DIR}/molecule.prop.f90
-    ${CMAKE_BINARY_DIR}/molecule.rel.f90
-    ${CMAKE_BINARY_DIR}/molecule.scf.f90
-    ${CMAKE_BINARY_DIR}/molecule.tad.f90
-    ${CMAKE_BINARY_DIR}/molecule.xtal.f90
-    ${CMAKE_BINARY_DIR}/object.f90
-    ${CMAKE_BINARY_DIR}/opmatrix.f90
-    ${CMAKE_BINARY_DIR}/opvector.f90
-    ${CMAKE_BINARY_DIR}/parallel.f90
-    ${CMAKE_BINARY_DIR}/plot_grid.f90
-    ${CMAKE_BINARY_DIR}/pointgroup.f90
-    ${CMAKE_BINARY_DIR}/quadrature.f90
-    ${CMAKE_BINARY_DIR}/real.f90
-    ${CMAKE_BINARY_DIR}/reflection.f90
-    ${CMAKE_BINARY_DIR}/rms2_indices.f90
-    ${CMAKE_BINARY_DIR}/rms_indices.f90
-    ${CMAKE_BINARY_DIR}/roby.f90
-    ${CMAKE_BINARY_DIR}/rys.f90
-    ${CMAKE_BINARY_DIR}/scfdata.f90
-    ${CMAKE_BINARY_DIR}/shell.f90
-    ${CMAKE_BINARY_DIR}/shell1.f90
-    ${CMAKE_BINARY_DIR}/shell1pair.f90
-    ${CMAKE_BINARY_DIR}/shell1quartet.f90
-    ${CMAKE_BINARY_DIR}/shell2.f90
-    ${CMAKE_BINARY_DIR}/shell4.f90
-    ${CMAKE_BINARY_DIR}/slaterbasis.f90
-    ${CMAKE_BINARY_DIR}/slatershell.f90
-    ${CMAKE_BINARY_DIR}/spacegroup.f90
-    ${CMAKE_BINARY_DIR}/str.f90
-    ${CMAKE_BINARY_DIR}/system.f90
-    ${CMAKE_BINARY_DIR}/system_command.f90
-    ${CMAKE_BINARY_DIR}/table_column.f90
-    ${CMAKE_BINARY_DIR}/textfile.f90
-    ${CMAKE_BINARY_DIR}/time.f90
-    ${CMAKE_BINARY_DIR}/types.f90
-    ${CMAKE_BINARY_DIR}/unit_cell.f90
-    ${CMAKE_BINARY_DIR}/unit_number.f90
-    ${CMAKE_BINARY_DIR}/vec_atom_group.f90
-    ${CMAKE_BINARY_DIR}/vec_atom.f90
-    ${CMAKE_BINARY_DIR}/vec_basis.f90
-    ${CMAKE_BINARY_DIR}/vec_bin.f90
-    ${CMAKE_BINARY_DIR}/vec_coppensbasis.f90
-    ${CMAKE_BINARY_DIR}/vec_coppensorbital.f90
-    ${CMAKE_BINARY_DIR}/vec_cpx.f90
-    ${CMAKE_BINARY_DIR}/vec_diis.f90
-    ${CMAKE_BINARY_DIR}/vec_interpolator.f90
-    ${CMAKE_BINARY_DIR}/vec_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/vec_int.f90
-    ${CMAKE_BINARY_DIR}/vec_irrep.f90
-    ${CMAKE_BINARY_DIR}/vec_mat3_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/vec_mat3_real.f90
-    ${CMAKE_BINARY_DIR}/vec_mat4_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/vec_mat4_real.f90
-    ${CMAKE_BINARY_DIR}/vec_mat_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/vec_mat_real.f90
-    ${CMAKE_BINARY_DIR}/vec_object.f90
-    ${CMAKE_BINARY_DIR}/vec_quadrature.f90
-    ${CMAKE_BINARY_DIR}/vec_real.f90
-    ${CMAKE_BINARY_DIR}/vec_reflection.f90
-    ${CMAKE_BINARY_DIR}/vec_shell.f90
-    ${CMAKE_BINARY_DIR}/vec_slaterbasis.f90
-    ${CMAKE_BINARY_DIR}/vec_slatershell.f90
-    ${CMAKE_BINARY_DIR}/vec_str.f90
-    ${CMAKE_BINARY_DIR}/vec_table_column.f90
-    ${CMAKE_BINARY_DIR}/vec_unit_cell.f90
-    ${CMAKE_BINARY_DIR}/vec_vec_bin.f90
-    ${CMAKE_BINARY_DIR}/vec_vec_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/vec_vec_int.f90
-    ${CMAKE_BINARY_DIR}/vec_vec_real.f90
-    ${CMAKE_BINARY_DIR}/vec_vec_str.f90
-    ${CMAKE_BINARY_DIR}/vec_vec_vec_intrinsic.f90
-    ${CMAKE_BINARY_DIR}/vec_vec_vec_int.f90
-    ${CMAKE_BINARY_DIR}/vec_vec_vec_real.f90
+    ${CMAKE_CURRENT_BINARY_DIR}/archive.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/atom.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/atom_group.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/basis.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/becke_grid.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/bin.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/buffer.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/capping_square.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/cif.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/cluster.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/colour.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/colour_function.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/command_line.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/coppensbasis.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/coppensorbital.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diis.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/file.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/gaussian.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/gaussian2.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/gaussian4.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/gaussian_data.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/geminal_mf_scheme.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/geminal_mf_spectrum.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/interpolator.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/irrep.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/isosurface.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/lebedev.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/map_int_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/map_vec_int_vec_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/marchingcube.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat3_cpx.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat3_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat3_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat3_vec_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat4_cpx.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat4_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat4_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat5_cpx.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat5_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_bin.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_cpx.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_rms2_indices.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_rms_indices.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_shell1pair.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_str.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mo_localiser.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.base.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.fock.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.gem.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ints.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.plot.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.prop.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.rel.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.scf.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.tad.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.xtal.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/pointgroup.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/quadrature.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/reflection.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/rms2_indices.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/rms_indices.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/roby.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/rys.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/scfdata.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/shell.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/shell1.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/shell1pair.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/shell1quartet.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/shell2.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/shell4.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/slaterbasis.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/slatershell.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/spacegroup.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/str.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/system.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/table_column.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/time.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/types.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/unit_cell.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/unit_number.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_atom_group.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_atom.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_basis.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_bin.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_coppensbasis.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_coppensorbital.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_cpx.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_diis.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_interpolator.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_irrep.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_mat3_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_mat_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_quadrature.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_reflection.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_shell.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_slaterbasis.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_slatershell.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_str.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_table_column.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_bin.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_str.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_vec_int.F90
 )
 set(RUNFILE_DIR ${CMAKE_SOURCE_DIR}/runfiles)
 set(RUN_SRC ${RUNFILE_DIR}/run_molecule.foo ${RUNFILE_DIR}/run_har.foo)
 
 
 # lib tonto files
-message(STATUS "Rules to process .foo -> .f90 using ${PERL_EXECUTABLE}")
+message(STATUS "Rules to process .foo -> .F90 using ${PERL_EXECUTABLE}")
 set(FOO_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/foo.pl")
-set(FOO_ARGS "-no_generic -no_unknown")
+set(FOO_ARGS "")
 foreach(foopath ${FOO_SRC})
     get_filename_component(foofile ${foopath} NAME)
-    string(REGEX REPLACE ".foo\$" ".f90" f90file ${foofile})
+    string(REGEX REPLACE ".foo\$" ".F90" F90file ${foofile})
     # This is just so Make doesn't panic about unescaped { or ,
-    string(REGEX REPLACE "{|}|," "_" f90file ${f90file})
-    string(REGEX REPLACE "___" "_" f90file ${f90file})
-    string(REGEX REPLACE "__" "_" f90file ${f90file})
-    string(REGEX REPLACE "_.f90" ".f90" f90file ${f90file})
+    string(REGEX REPLACE "{|}|," "_" F90file ${F90file})
+    string(REGEX REPLACE "___" "_" F90file ${F90file})
+    string(REGEX REPLACE "__" "_" F90file ${F90file})
+    string(REGEX REPLACE "_.F90" ".F90" F90file ${F90file})
     add_custom_command(
-        OUTPUT ${f90file}
+        OUTPUT ${F90file}
         COMMAND ${PERL_EXECUTABLE}
         ARGS -w ${FOO_SCRIPT} ${FOO_ARGS}
-        -fortran "${CMAKE_BINARY_DIR}/${f90file}"
+        -fortran "${CMAKE_CURRENT_BINARY_DIR}/${F90file}"
         -types ${FOO_TYPES_FILE}
         "'${foopath}'"
         DEPENDS ${foopath}
@@ -401,15 +369,15 @@ endforeach(foopath)
 # Run files
 foreach(foopath ${RUN_SRC})
     get_filename_component(foofile ${foopath} NAME)
-    string(REGEX REPLACE ".foo\$" ".f90" f90file ${foofile})
-    string(REGEX REPLACE "{|}|," "_" f90file ${f90file})
-    string(REGEX REPLACE "___" "_" f90file ${f90file})
-    string(REGEX REPLACE "__" "_" f90file ${f90file})
+    string(REGEX REPLACE ".foo\$" ".F90" F90file ${foofile})
+    string(REGEX REPLACE "{|}|," "_" F90file ${F90file})
+    string(REGEX REPLACE "___" "_" F90file ${F90file})
+    string(REGEX REPLACE "__" "_" F90file ${F90file})
     add_custom_command(
-        OUTPUT ${f90file}
+        OUTPUT ${F90file}
         COMMAND ${PERL_EXECUTABLE}
         ARGS -w ${FOO_SCRIPT} ${FOO_ARGS}
-        -fortran "${CMAKE_BINARY_DIR}/${f90file}"
+        -fortran "${CMAKE_BINARY_DIR}/${F90file}"
         -types ${FOO_TYPES_FILE}
         "'${foopath}'"
         DEPENDS "${foopath}"
@@ -422,9 +390,9 @@ add_library(tonto
 )
 
 
-add_executable(run_molecule ${CMAKE_BINARY_DIR}/run_molecule.f90)
+add_executable(run_molecule ${CMAKE_BINARY_DIR}/run_molecule.F90)
 
-add_executable(run_har ${CMAKE_BINARY_DIR}/run_har.f90)
+add_executable(run_har ${CMAKE_BINARY_DIR}/run_har.F90)
 
 target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_har tonto ${LAPACK_LIBRARIES})
