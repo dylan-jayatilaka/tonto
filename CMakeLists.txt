@@ -21,16 +21,20 @@ project(tonto
     LANGUAGES Fortran
     VERSION ${TONTO_VERSION})
 
-
-# Add preprocessor flags etc
-set(CMAKE_Fortran_FLAGS "-cpp -Wall -fno-sign-zero \
--ffree-line-length-none -O3 \
--DINT_KIND=4 -DBIN_KIND=4 \
--DREAL_KIND=8 -DCPX_KIND=8 \
--DGNU_gfortran \
--DGNU_gfortran_on_DARWIN \
--DNO_GENERIC_NAMES -DUSE_PRECONDITIONS -DFLUSH"
-)
+if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "Intel")
+    set(COMPILER "Intel_ifort")
+    set(CMAKE_Fortran_FLAGS "-cpp -O3 -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "PGI")
+    set(COMPILER "PGI_pgfortran")
+    set(CMAKE_Fortran_FLAGS "-Mpreprocess -fast -fastsse -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
+    set(COMPILER "GNU_gfortran")
+    set(CMAKE_Fortran_FLAGS "-cpp -Wall -fno-sign-zero -ffree-line-length-none -O3 -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+else()
+    message(STATUS "Unknown Fortran compiler, not modifying flags")
+endif()
+set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
+-DREAL_KIND=8 -DCPX_KIND=8 -DNO_GENERIC_NAMES -DUSE_PRECONDITIONS -DFLUSH")
 
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
 configure_file(
@@ -322,7 +326,6 @@ set(FORTRAN_SRC
     ${CMAKE_BINARY_DIR}/slaterbasis.f90
     ${CMAKE_BINARY_DIR}/slatershell.f90
     ${CMAKE_BINARY_DIR}/spacegroup.f90
-    ${CMAKE_BINARY_DIR}/spherical.f90
     ${CMAKE_BINARY_DIR}/str.f90
     ${CMAKE_BINARY_DIR}/system.f90
     ${CMAKE_BINARY_DIR}/system_command.f90
