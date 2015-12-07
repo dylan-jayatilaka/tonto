@@ -1,45 +1,3 @@
-######################################################
-# Determine and set the Fortran compiler flags we want 
-######################################################
-
-####################################################################
-# Make sure that the default build type is RELEASE if not specified.
-####################################################################
-INCLUDE(${CMAKE_MODULE_PATH}/SetCompileFlag.cmake)
-
-# Make sure the build type is uppercase
-STRING(TOUPPER "${CMAKE_BUILD_TYPE}" BT)
-
-IF(BT STREQUAL "RELEASE")
-    SET(CMAKE_BUILD_TYPE RELEASE CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
-      FORCE)
-ELSEIF(BT STREQUAL "DEBUG")
-    SET (CMAKE_BUILD_TYPE DEBUG CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
-      FORCE)
-ELSEIF(BT STREQUAL "TESTING")
-    SET (CMAKE_BUILD_TYPE TESTING CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
-      FORCE)
-ELSEIF(NOT BT)
-    SET(CMAKE_BUILD_TYPE RELEASE CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
-      FORCE)
-    MESSAGE(STATUS "CMAKE_BUILD_TYPE not given, defaulting to RELEASE")
-ELSE()
-    MESSAGE(FATAL_ERROR "CMAKE_BUILD_TYPE not valid, choices are DEBUG, RELEASE, or TESTING")
-ENDIF(BT STREQUAL "RELEASE")
-
-message(STATUS "Testing compiler flags...")
-#########################################################
-# If the compiler flags have already been set, return now
-#########################################################
-
-IF(CMAKE_Fortran_FLAGS_RELEASE AND CMAKE_Fortran_FLAGS_TESTING AND CMAKE_Fortran_FLAGS_DEBUG)
-    RETURN ()
-ENDIF(CMAKE_Fortran_FLAGS_RELEASE AND CMAKE_Fortran_FLAGS_TESTING AND CMAKE_Fortran_FLAGS_DEBUG)
-
 ########################################################################
 # Determine the appropriate flags for this compiler for each build type.
 # For each option type, a list of possible flags is given that work
@@ -48,114 +6,75 @@ ENDIF(CMAKE_Fortran_FLAGS_RELEASE AND CMAKE_Fortran_FLAGS_TESTING AND CMAKE_Fort
 # flag is given in the call).  This way unknown compiles are supported.
 #######################################################################
 
-#####################
-### GENERAL FLAGS ###
-#####################
-
-# Don't add underscores in symbols for C-compatability
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}"
-                 Fortran "-fno-underscoring")
-
-# There is some bug where -march=native doesn't work on Mac
+# apparently there is a bug where -march=native doesn't work on Mac
 IF(APPLE)
     SET(GNUNATIVE "-mtune=native")
 ELSE()
     SET(GNUNATIVE "-march=native")
 ENDIF()
-# Optimize for the host's architecture
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}"
-                 Fortran "-xHost"        # Intel
-                         "/QxHost"       # Intel Windows
-                         ${GNUNATIVE}    # GNU
-                         "-ta=host"      # Portland Group
-                )
 
-###################
-### DEBUG FLAGS ###
-###################
+if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "Intel")
+    set(COMPILER "Intel_ifort")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+    if(WINDOWS)
+        set(HOST_FLAG "/QxHost")
+        set(DEBUG_FLAGS "/Od /warn:all /traceback /check:bounds")
+        set(RELEASE_FLAGS "/fast /unroll /Qinline /Qipo /Qip /Qvec-report0")
+    else()
+        set(HOST_FLAG "-xHost")
+        set(DEBUG_FLAGS "-O0 -warn all -traceback -check bounds")
+        set(RELEASE_FLAGS "-fast -unroll -inline -ipo -ip -vec-report0")
+    endif()
+elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "PGI")
+    set(COMPILER "PGI_pgfortran")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+    set(HOST_FLAG "-ta=host") 
+    set(DEBUG_FLAGS "-O0 -traceback -Mbounds")
+    set(RELEASE_FLAGS "-fast -Mipa=fast,inline -Munroll -Minline -Mipa -Mvect")
+elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
+    set(COMPILER "GNU_gfortran")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -fno-sign-zero -ffree-line-length-none -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+    set(HOST_FLAG ${GNUNATIVE})
+    set(DEBUG_FLAGS "-O0 -Wall -fbacktrace -fcheck=bounds")
+    set(RELEASE_FLAGS "-O3 -funroll-loops -finline-functions -flto")
+else()
 
-# NOTE: debugging symbols (-g or /debug:full) are already on by default
+endif()
 
-# Disable optimizations
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_DEBUG "${CMAKE_Fortran_FLAGS_DEBUG}"
-                 Fortran REQUIRED "-O0" # All compilers not on Windows
-                                  "/Od" # Intel Windows
-                )
+set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${HOST_FLAG}")
 
-# Turn on all warnings 
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_DEBUG "${CMAKE_Fortran_FLAGS_DEBUG}"
-                 Fortran "-warn all" # Intel
-                         "/warn:all" # Intel Windows
-                         "-Wall"     # GNU
-                                     # Portland Group (on by default)
-                )
+# Make sure the build type is uppercase
+string(TOUPPER "${CMAKE_BUILD_TYPE}" BT)
 
-# Traceback
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_DEBUG "${CMAKE_Fortran_FLAGS_DEBUG}"
-                 Fortran "-traceback"   # Intel/Portland Group
-                         "/traceback"   # Intel Windows
-                         "-fbacktrace"  # GNU (gfortran)
-                         "-ftrace=full" # GNU (g95)
-                )
+if(BT STREQUAL "RELEASE")
+    set(CMAKE_BUILD_TYPE RELEASE CACHE STRING
+      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
+      FORCE)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${RELEASE_FLAGS}")
+elseif(BT STREQUAL "DEBUG")
+    set (CMAKE_BUILD_TYPE DEBUG CACHE STRING
+      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
+      FORCE)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${DEBUG_FLAGS}")
+ELSEIF(BT STREQUAL "TESTING")
+    SET (CMAKE_BUILD_TYPE TESTING CACHE STRING
+      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
+      FORCE)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${DEBUG_FLAGS}")
+ELSEIF(NOT BT)
+    SET(CMAKE_BUILD_TYPE RELEASE CACHE STRING
+      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
+      FORCE)
+    MESSAGE(STATUS "CMAKE_BUILD_TYPE not provided, default: RELEASE")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${RELEASE_FLAGS}")
+ELSE()
+    MESSAGE(FATAL_ERROR "CMAKE_BUILD_TYPE not valid, choices are DEBUG, RELEASE, or TESTING")
+ENDIF(BT STREQUAL "RELEASE")
 
-# Check array bounds
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_DEBUG "${CMAKE_Fortran_FLAGS_DEBUG}"
-                 Fortran "-check bounds"  # Intel
-                         "/check:bounds"  # Intel Windows
-                         "-fcheck=bounds" # GNU (New style)
-                         "-fbounds-check" # GNU (Old style)
-                         "-Mbounds"       # Portland Group
-                )
+# Set default macros
+# These are the default kinds from the current build, should be a better way
+set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
+-DREAL_KIND=8 -DCPX_KIND=8 -DUSE_ERROR_MANAGEMENT -DFLUSH")
 
-#####################
-### TESTING FLAGS ###
-#####################
 
-# Optimizations
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_TESTING "${CMAKE_Fortran_FLAGS_TESTING}"
-                 Fortran REQUIRED "-O2" # All compilers not on Windows
-                                  "/O2" # Intel Windows
-                )
 
-#####################
-### RELEASE FLAGS ###
-#####################
-
-# NOTE: agressive optimizations (-O3) are already turned on by default
-
-# Unroll loops
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_RELEASE "${CMAKE_Fortran_FLAGS_RELEASE}"
-                 Fortran "-funroll-loops" # GNU
-                         "-unroll"        # Intel
-                         "/unroll"        # Intel Windows
-                         "-Munroll"       # Portland Group
-                )
-
-# Inline functions
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_RELEASE "${CMAKE_Fortran_FLAGS_RELEASE}"
-                 Fortran "-inline"            # Intel
-                         "/Qinline"           # Intel Windows
-                         "-finline-functions" # GNU
-                         "-Minline"           # Portland Group
-                )
-
-# Interprocedural (link-time) optimizations
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_RELEASE "${CMAKE_Fortran_FLAGS_RELEASE}"
-                 Fortran "-ipo"     # Intel
-                         "/Qipo"    # Intel Windows
-                         "-flto"    # GNU
-                         "-Mipa"    # Portland Group
-                )
-
-# Single-file optimizations
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_RELEASE "${CMAKE_Fortran_FLAGS_RELEASE}"
-                 Fortran "-ip"  # Intel
-                         "/Qip" # Intel Windows
-                )
-
-# Vectorize code
-SET_COMPILE_FLAG(CMAKE_Fortran_FLAGS_RELEASE "${CMAKE_Fortran_FLAGS_RELEASE}"
-                 Fortran "-vec-report0"  # Intel
-                         "/Qvec-report0" # Intel Windows
-                         "-Mvect"        # Portland Group
-                )

@@ -25,28 +25,11 @@ project(tonto
     LANGUAGES Fortran
     VERSION ${TONTO_VERSION})
 
-# Set the fortran flags
 # If desirable we can use .F03/.f03 by appending to the below variable
 # message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
 
+# Set the fortran flags
 include(SetFortranFlags)
-if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "Intel")
-    set(COMPILER "Intel_ifort")
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
-elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "PGI")
-    set(COMPILER "PGI_pgfortran")
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
-elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
-    set(COMPILER "GNU_gfortran")
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -fno-sign-zero -ffree-line-length-none -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
-else()
-    message(STATUS "Unknown Fortran compiler, not modifying flags")
-endif()
-
-# These are the default kinds from the current build, might like a better way
-set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
--DREAL_KIND=8 -DCPX_KIND=8 -DUSE_ERROR_MANAGEMENT -DFLUSH")
-
 message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
 
 # 
