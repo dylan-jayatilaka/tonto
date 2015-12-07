@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.1.0)
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake)
+
+# Set tonto version information and build date
 set(VERSION_MAJOR 3)
 set(VERSION_MINOR 6)
 set(VERSION_MINOR_MINOR 0)
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
 string(TIMESTAMP TONTO_BUILD_DATE "%Y-%m-%d %H:%M")
 
+# we need perl, git is desirable
 find_package(Perl REQUIRED)
 find_package(Git)
 if(${GIT_FOUND})
@@ -21,22 +25,31 @@ project(tonto
     LANGUAGES Fortran
     VERSION ${TONTO_VERSION})
 
-message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
+# Set the fortran flags
+# If desirable we can use .F03/.f03 by appending to the below variable
+# message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
+
+include(SetFortranFlags)
 if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "Intel")
     set(COMPILER "Intel_ifort")
-    set(CMAKE_Fortran_FLAGS "-O3 -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "PGI")
     set(COMPILER "PGI_pgfortran")
-    set(CMAKE_Fortran_FLAGS "-Mpreprocess -fast -Mipa=fast,inline -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     set(COMPILER "GNU_gfortran")
-    set(CMAKE_Fortran_FLAGS "-Wall -fno-sign-zero -ffree-line-length-none -O3 -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -fno-sign-zero -ffree-line-length-none -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME}")
 else()
     message(STATUS "Unknown Fortran compiler, not modifying flags")
 endif()
+
+# These are the default kinds from the current build, might like a better way
 set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
 -DREAL_KIND=8 -DCPX_KIND=8 -DUSE_ERROR_MANAGEMENT -DFLUSH")
 
+message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
+
+# 
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
 configure_file(
     ${PROJECT_SOURCE_DIR}/include/macros.in
@@ -44,14 +57,21 @@ configure_file(
 )
 include_directories(${PROJECT_BINARY_DIR})
 
-find_package(LAPACK)
-if(NOT ${LAPACK_FOUND})
-    message(STATUS "No lapack found, using packaged libs")
+# Deal with lapack dependency
+if(WINDOWS)
+    message(STATUS "Not going to look for lapack on WINDOWS, using packaged source")
     add_library(lapack STATIC ${CMAKE_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
     set(LAPACK_LIBRARIES lapack)
-endif()
+else()
+    find_package(LAPACK)
+    if(NOT ${LAPACK_FOUND})
+        message(STATUS "No lapack found, using packaged libs")
+        add_library(lapack STATIC ${CMAKE_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
+        set(LAPACK_LIBRARIES lapack)
+    endif()
+endif(WINDOWS)
 
-
+# Set up source files
 set(FOO_DIR ${CMAKE_SOURCE_DIR}/foofiles)
 set(FOO_TYPES_FILE ${FOO_DIR}/types.foo)
 set(FORTRAN_TYPES_FILE types.F90)
@@ -215,6 +235,7 @@ set(FOO_SRC
     ${FOO_DIR}/vec{vec_{vec_{real}}}.foo
 )
 
+# These are all the fortran source files used by run_molecule/run_har
 set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/archive.F90
     ${CMAKE_CURRENT_BINARY_DIR}/atom.F90
@@ -340,11 +361,12 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_vec_int.F90
 )
+# Set up runfiles
 set(RUNFILE_DIR ${CMAKE_SOURCE_DIR}/runfiles)
 set(RUN_SRC ${RUNFILE_DIR}/run_molecule.foo ${RUNFILE_DIR}/run_har.foo)
 
 
-# lib tonto files
+# Processing foo into fortran source 
 message(STATUS "Rules to process .foo -> .F90 using ${PERL_EXECUTABLE}")
 set(FOO_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/foo.pl")
 set(FOO_ARGS "")
@@ -353,6 +375,7 @@ foreach(foopath ${SRC})
     get_filename_component(foofile ${foopath} NAME)
     string(REGEX REPLACE ".foo\$" ".F90" F90file ${foofile})
     # This is just so Make doesn't panic about unescaped { or ,
+    # and the end result is the filenames in FORTRAN_SRC
     string(REGEX REPLACE "{|}|," "_" F90file ${F90file})
     string(REGEX REPLACE "___" "_" F90file ${F90file})
     string(REGEX REPLACE "__" "_" F90file ${F90file})
@@ -368,6 +391,7 @@ foreach(foopath ${SRC})
     )
 endforeach(foopath)
 
+# Target libtonto
 add_library(tonto
     ${FORTRAN_SRC}
     ${MACROS}
@@ -375,8 +399,8 @@ add_library(tonto
 
 
 add_executable(run_molecule ${CMAKE_BINARY_DIR}/run_molecule.F90)
-
 add_executable(run_har ${CMAKE_BINARY_DIR}/run_har.F90)
 
+# Link against dependencies
 target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_har tonto ${LAPACK_LIBRARIES})
