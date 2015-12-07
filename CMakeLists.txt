@@ -348,7 +348,8 @@ set(RUN_SRC ${RUNFILE_DIR}/run_molecule.foo ${RUNFILE_DIR}/run_har.foo)
 message(STATUS "Rules to process .foo -> .F90 using ${PERL_EXECUTABLE}")
 set(FOO_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/foo.pl")
 set(FOO_ARGS "")
-foreach(foopath ${FOO_SRC})
+set(SRC ${FOO_SRC} ${RUN_SRC})
+foreach(foopath ${SRC})
     get_filename_component(foofile ${foopath} NAME)
     string(REGEX REPLACE ".foo\$" ".F90" F90file ${foofile})
     # This is just so Make doesn't panic about unescaped { or ,
@@ -364,23 +365,6 @@ foreach(foopath ${FOO_SRC})
         -types ${FOO_TYPES_FILE}
         "'${foopath}'"
         DEPENDS ${foopath}
-    )
-endforeach(foopath)
-# Run files
-foreach(foopath ${RUN_SRC})
-    get_filename_component(foofile ${foopath} NAME)
-    string(REGEX REPLACE ".foo\$" ".F90" F90file ${foofile})
-    string(REGEX REPLACE "{|}|," "_" F90file ${F90file})
-    string(REGEX REPLACE "___" "_" F90file ${F90file})
-    string(REGEX REPLACE "__" "_" F90file ${F90file})
-    add_custom_command(
-        OUTPUT ${F90file}
-        COMMAND ${PERL_EXECUTABLE}
-        ARGS -w ${FOO_SCRIPT} ${FOO_ARGS}
-        -fortran "${CMAKE_BINARY_DIR}/${F90file}"
-        -types ${FOO_TYPES_FILE}
-        "'${foopath}'"
-        DEPENDS "${foopath}"
     )
 endforeach(foopath)
 
