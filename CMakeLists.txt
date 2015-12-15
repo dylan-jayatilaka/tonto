@@ -38,7 +38,7 @@ configure_file(
     ${PROJECT_SOURCE_DIR}/include/macros.in
     ${MACROS}
 )
-include_directories(${PROJECT_BINARY_DIR})
+include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 # Deal with lapack dependency
 if(WINDOWS)
@@ -366,7 +366,7 @@ foreach(foopath ${SRC})
     add_custom_command(
         OUTPUT ${F90file}
         COMMAND ${PERL_EXECUTABLE}
-        ARGS -w ${FOO_SCRIPT} ${FOO_ARGS}
+        ARGS ${FOO_SCRIPT} ${FOO_ARGS}
         -fortran "${CMAKE_CURRENT_BINARY_DIR}/${F90file}"
         -types ${FOO_TYPES_FILE}
         "'${foopath}'"
@@ -379,7 +379,6 @@ add_library(tonto
     ${FORTRAN_SRC}
     ${MACROS}
 )
-
 
 add_executable(run_molecule ${CMAKE_BINARY_DIR}/run_molecule.F90)
 add_executable(run_har ${CMAKE_BINARY_DIR}/run_har.F90)
