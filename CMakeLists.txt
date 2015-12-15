@@ -32,7 +32,7 @@ project(tonto
 include(SetFortranFlags)
 message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
 
-# 
+#
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
 configure_file(
     ${PROJECT_SOURCE_DIR}/include/macros.in
@@ -41,7 +41,7 @@ configure_file(
 include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 # Deal with lapack dependency
-if(WINDOWS)
+if(WIN32)
     message(STATUS "Not going to look for lapack on WINDOWS, using packaged source")
     add_library(lapack STATIC ${CMAKE_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
     set(LAPACK_LIBRARIES lapack)
@@ -52,7 +52,7 @@ else()
         add_library(lapack STATIC ${CMAKE_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
         set(LAPACK_LIBRARIES lapack)
     endif()
-endif(WINDOWS)
+endif()
 
 # Set up source files
 set(FOO_DIR ${CMAKE_SOURCE_DIR}/foofiles)
@@ -349,7 +349,7 @@ set(RUNFILE_DIR ${CMAKE_SOURCE_DIR}/runfiles)
 set(RUN_SRC ${RUNFILE_DIR}/run_molecule.foo ${RUNFILE_DIR}/run_har.foo)
 
 
-# Processing foo into fortran source 
+# Processing foo into fortran source
 message(STATUS "Rules to process .foo -> .F90 using ${PERL_EXECUTABLE}")
 set(FOO_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/foo.pl")
 set(FOO_ARGS "")
@@ -369,7 +369,7 @@ foreach(foopath ${SRC})
         ARGS ${FOO_SCRIPT} ${FOO_ARGS}
         -fortran "${CMAKE_CURRENT_BINARY_DIR}/${F90file}"
         -types ${FOO_TYPES_FILE}
-        "'${foopath}'"
+        "${foopath}"
         DEPENDS ${foopath}
     )
 endforeach(foopath)
