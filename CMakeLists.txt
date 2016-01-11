@@ -369,7 +369,7 @@ foreach(foopath ${SRC})
         ARGS ${FOO_SCRIPT} ${FOO_ARGS}
         -fortran "${CMAKE_CURRENT_BINARY_DIR}/${F90file}"
         -types ${FOO_TYPES_FILE}
-        "${foopath}"
+        \"${foopath}\"
         DEPENDS ${foopath}
     )
 endforeach(foopath)
