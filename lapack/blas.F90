@@ -1,4 +1,4 @@
-#include "../foofiles/macros"
+#include "macros"
 
       subroutine daxpy(n,da,dx,incx,dy,incy)
 !

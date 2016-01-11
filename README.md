@@ -76,30 +76,31 @@ Then install:
 To compile Tonto, type :
 
 ```
-   perl -w scripts/Makefile.pl
-   make
+    mkdir build && cd build
+    cmake ..
+    make -j
 ```
 
 If you want a specific compiler, type:
 
 ```
-   perl -w scripts/Makefile.pl -fc=<insert-your-compiler-here>
-   make
+   cmake .. -DCMAKE_Fortran_COMPILER=<insert-your-compiler-here>
+   make -j
 ```
 
-where you should replace <insert-your-comipler-here> with the
+where you should replace <insert-your-compiler-here> with the
 command for your fortran compiler.
 
 By default the `tonto` program on Linux is the executable program
 
 ```
-   GNU-gfortran-on-LINUX/fast/run_molecule.exe
+    build/run_molecule
 ```
 
 On other platforms it will be different, but of the form
 
 ```
-   <your-compiler-on-your-OS>/<build>/run_molecule.exe
+    build/run_molecule(.exe)
 ```
 
 Here `build` is usually `fast` but may be `debug` depending on if

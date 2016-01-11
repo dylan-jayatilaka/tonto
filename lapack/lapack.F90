@@ -1,4 +1,4 @@
-#include "../foofiles/macros"
+#include "macros"
 #undef STACK
 #undef E
 
