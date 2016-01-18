@@ -79,4 +79,4 @@ ENDIF(BT STREQUAL "RELEASE")
 # Set default macros
 # These are the default kinds from the current build, should be a better way
 set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
--DREAL_KIND=8 -DCPX_KIND=8 -DUSE_ERROR_MANAGEMENT -DFLUSH")
+-DREAL_KIND=8 -DCPX_KIND=8 -DUSE_ERROR_MANAGEMENT")
