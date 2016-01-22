@@ -217,7 +217,7 @@ contains
       .data_kind              = DIFFRACTION_DATA_DATA_KIND
 
       ! Experimental data
-      .wavelength             = DIFFRACTION_DATA_WAVELENGTH
+      .wavelength             = -ONE
       .temperature            = ZERO
       .NKA_T_sequence_no      = 0
 
@@ -677,14 +677,10 @@ contains
          case ("optimize_scale_factors=       "); .read_optimize_scale
 
          case ("partition_model=              "); .read_partition_model
-       ! case ("prune_bad_f_reflections       "); .prune_bad_F_reflections
-       ! case ("prune_high_angle_reflections  "); .prune_high_angle_reflections
-       ! case ("prune_low_angle_reflections   "); .prune_low_angle_reflections
-       ! case ("prune_weak_reflections        "); .prune_weak_reflections
-       ! case ("prune_zero_f_preds            "); .prune_zero_F_preds
          case ("put                           "); .put
          case ("put_debug_list                "); .put_debug_list
          case ("put_sin_theta_on_lambda       "); .put_sin_theta_on_lambda
+         case ("put_wavelength                "); .put_wavelength
 
          case ("read_cif                      "); .read_CIF
          case ("redirect                      "); .redirect
@@ -1177,7 +1173,7 @@ contains
       .reflections.read_CIF(cif)
 
       ! Read wavelength -- must be there !
-      rval = 0.71033d0
+      rval = REFLECTION:wavelength()
       rval = rval*BOHR_PER_ANGSTROM
       .set_wavelength(rval)
       cif.find_item("_diffrn_radiation_wavelength",there)
@@ -1437,27 +1433,31 @@ contains
       .prune_negative_F_exp
 
       if (.F_sigma_cutoff >ZERO) then
-         DIE_IF(NOT .reflections.have_F_exp,"no experimental data for pruning")
+         DIE_IF(NOT .reflections.have_F_exp, "no F_exp data")
          .prune_weak_Fs
       end
 
       if (.F_z_cutoff     >ZERO) then
-         DIE_IF(NOT .reflections.have_F_exp,"no experimental data for pruning")
+         DIE_IF(NOT .reflections.have_F_exp, "no F_exp data")
+         DIE_IF(NOT .reflections.have_F_pred,"no F_pred data")
          .prune_bad_F_reflections
       end
 
       if (.F_pred_cutoff  >ZERO) then
-         DIE_IF(NOT .reflections.have_F_exp,"no experimental data for pruning")
+         DIE_IF(NOT .reflections.have_F_pred,"no F_pred data")
          .prune_zero_F_preds
       end
 
       if (.I_sigma_cutoff >ZERO) then
-         DIE_IF(NOT .reflections.have_I_exp,"no experimental data for pruning")
+         DIE_IF(NOT .reflections.have_I_exp, "no I_exp data")
          .prune_weak_Is
       end
 
-      if (.stl_high_cutoff>ZERO)  .prune_high_angle_reflections
-      if ( .stl_low_cutoff>ZERO)  .prune_low_angle_reflections
+      if (.stl_high_cutoff>ZERO) &
+         .prune_high_angle_reflections
+
+      if ( .stl_low_cutoff>ZERO) &
+         .prune_low_angle_reflections
 
    end
 
@@ -1521,19 +1521,17 @@ contains
       ! Banner
       stdout.flush
       stdout.show("Rejection criteria      =","TEST?")
+      stdout.flush
+      stdout.show("No. of reflections      =",n_refl)
+      stdout.show("No. of rejects          =",b)
+      stdout.show("No. of kept reflections =",g)
+      stdout.show("Wavelength (Bohr)       =",REFLECTION:wavelength())
+      stdout.show("Wavelength (Angstrom)   =",REFLECTION:wavelength()*ANGSTROM_PER_BOHR)
       if ("SHOW?"=="stl") then
       stdout.show("Cutoff (Bohr^-1)        =",CUTOFF?)
       stdout.show("Cutoff (Angstrom^-1)    =",CUTOFF?/ANGSTROM_PER_BOHR)
       else
       stdout.show("Cutoff                  =",CUTOFF?)
-      end
-      stdout.flush
-      stdout.show("No. of reflections      =",n_refl)
-      stdout.show("No. of rejects          =",b)
-      stdout.show("No. of kept reflections =",g)
-      if ("SHOW?"=="stl") then
-      stdout.show("Wavelength (Bohr)       =",REFLECTION:wavelength())
-      stdout.show("Wavelength (Angstrom)   =",REFLECTION:wavelength()*ANGSTROM_PER_BOHR)
       end
 
       if (.show_rejects) then
@@ -4070,23 +4068,39 @@ contains
 
    put
    ! Put out the diffraction data to file "out"
+      self :: IN
 
       stdout.flush
-      stdout.text("Diffraction information:")
+      stdout.text("Diffraction data:")
+      stdout.flush
       stdout.show("data_kind                     =", .data_kind)
+      stdout.show("wavelength                    =", .wavelength.to_units("angstrom"))
 
       if (.reflections.created) then
-      stdout.text("Reflection data:")
+      stdout.flush
+      stdout.text("Reflections:")
       stdout.flush
       .put_reflection_data
       end
 
    end
 
+   put_wavelength
+   ! Put out the wavelength - for testing
+      self :: IN
+
+      stdout.show("DIFFRACTION_DATA wavelength =", .wavelength.to_units("angstrom"))
+      stdout.show("REFLECTION       wavelength =", REFLECTION:wavelength()*ANGSTROM_PER_BOHR)
+
+   end
+
    put_sin_theta_on_lambda
    ! Output sin(theta)/lambda for all reflections.
+      self :: IN
+
    ENSURE(.reflections.created,"No list of reflections")
    ENSURE(.reflections.have_indices,"No list of reflections")
+
       n :: INT
 
       stdout.text("sin(theta)/lambda for the reflections")
@@ -4110,7 +4124,7 @@ contains
 
    put_F_statistics
    ! Output the structure factor goodness of fit statistics.
-      self :: INOUT
+      self :: IN
 
       .reflections.put_F_statistics(show_chi2=FALSE)
 
@@ -4135,23 +4149,24 @@ contains
 
    put_F_free_stats
    ! Output the structure factor goodness of fit statistics.
-      .reflections.put_F_free_stats
-   end
+      self :: IN
 
-!  put_I_statistics
-!  ! Output the intensity goodness of fit statistics
-!     .reflections.put_I_statistics
-!   ! .put_correction_data
-!  end
+      .reflections.put_F_free_stats
+
+   end
 
    put_I_free_stats
    ! Output the intensity goodness of fit statistics
+      self :: IN
+
       .reflections.put_I_free_stats
       .put_correction_data
+
    end
 
    put_correction_data
    ! Output the correction data
+      self :: IN
 
       stdout.flush
       stdout.show("Using scale factor(s)          =", .optimize_scale)
@@ -4183,26 +4198,11 @@ contains
 
    end
 
-!   put_gof_data
-!   ! Output the goodness-of-fit data
-!      stdout.show("chi2                         =", .F_chi2)
-!      stdout.show("Goodness of fit in F         =", .F_goodness_of_fit)
-!      stdout.show("R factor in F                =", .F_r_factor)
-!      stdout.show("Weighted R factor in F       =", .F_weighted_r_factor)
-!   end
-!
-!   put_free_gof_data
-!   ! Output the free goodness-of-fit data
-!      stdout.show("Free chi2 in F               =", .F_chi2)
-!      stdout.show("Free goodness of fit in F    =", .F_goodness_of_fit)
-!      stdout.show("Free R factor in F           =", .F_r_factor)
-!      stdout.show("Free weighted R factor in F  =", .F_weighted_r_factor)
-!   end
-
    put_reflection_data(core_reflection)
    ! Output the reflection data and corresponding fit statistic,
    ! if available
-      core_reflection :: VEC{REFLECTION}*, optional
+      self :: IN
+      core_reflection :: VEC{REFLECTION}*, optional, IN
 
       .put_N_worst_reflections
 
@@ -4279,7 +4279,8 @@ contains
 
    put_all_reflections(core_reflection)
    ! Show all the reflections
-      core_reflection :: VEC{REFLECTION}*, optional
+      self :: IN
+      core_reflection :: VEC{REFLECTION}*, optional, IN
 
    ENSURE(.reflections.created,"No reflection data")
 
@@ -4297,15 +4298,23 @@ contains
    put_qq_plot
    ! Output a qq plot to stdout.
    ! It is a plot of the experimental quantile vs expected quantile.
+      self :: IN
+
    ENSURE(.reflections.created, "no reflection data")
+
       .reflections.put_F_qq_plot
+
    end
 
    put_labelled_qq_plot
    ! Output a qq plot to stdout.
    ! It is a plot of the experimental quantile vs expected quantile.
+      self :: IN
+
    ENSURE(.reflections.created, "no reflection data")
+
       .reflections.put_labelled_F_qq_plot
+
    end
 
 
@@ -4553,6 +4562,8 @@ contains
 
    put_GOF_vs_STL_plot
    ! Output GOF vs. sin(theta)/lambda bins.
+      self :: IN
+
       n_sections,i :: INT
       H :: VEC{REAL}*
       C :: VEC{INT}*
@@ -4589,6 +4600,8 @@ contains
 
    put_ratio_vs_STL_plot
    ! Output ratio vs. sin(theta)/lambda bins.
+      self :: IN
+
       n_sections,i :: INT
       H :: VEC{REAL}*
       C :: VEC{INT}*
@@ -4626,6 +4639,8 @@ contains
 
    put_GOF_vs_F_exp_plot
    ! Output GOF vs. F_pred bins.
+      self :: IN
+
       n_sections,i :: INT
       H :: VEC{REAL}*
       C :: VEC{INT}*
@@ -4662,6 +4677,8 @@ contains
 
    put_ratio_vs_F_exp_plot
    ! Output ratio vs. F_exp bins.
+      self :: IN
+
       n_sections,i :: INT
       H :: VEC{REAL}*
       C :: VEC{INT}*
@@ -4692,12 +4709,16 @@ contains
          stdout.flush
       end
       stdout.flush
+
       C.destroy
       H.destroy
+
    end
 
    put_fcalc_plots
    ! Output some different plots about the calculated structure factors.
+      self :: IN
+
       ext :: VEC{REAL}*
       ext_refs :: VEC{REFLECTION}*
       n,n_refl :: INT
@@ -4705,32 +4726,38 @@ contains
 
       n_refl = .reflections.n_refl
 
-      stdout.text("The effects of angle.")
-      stdout.text("Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs sin(theta)/lambda")
+      stdout.flush
+      stdout.text("Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs sin(theta)/lambda :")
+      stdout.flush
+
       do n = 1,n_refl
          stdout.put(.reflections(n).sin_theta_on_lambda)
          stdout.put(.reflections(n).F_z)
          stdout.flush
       end
+
+      stdout.flush
+      stdout.text("Scatter plot of Delta F = (Fexp-Fpred) vs sin(theta)/lambda :")
       stdout.flush
 
-      stdout.text("The effects of angle.")
-      stdout.text("Scatter plot of Delta F = (Fexp-Fpred) vs sin(theta)/lambda")
       do n = 1,n_refl
          stdout.put(.reflections(n).sin_theta_on_lambda)
          stdout.put(.reflections(n).delta_F)
          stdout.flush
       end
+
+      stdout.flush
+      stdout.text("Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs Fexp :")
       stdout.flush
 
-      stdout.text("The effects of intensity.")
-      stdout.text("Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs Fexp")
       do n = 1,n_refl
          stdout.put(.reflections(n).F_exp)
          stdout.put(.reflections(n).F_z)
          stdout.flush
       end
-      stdout.flush
+
+
+      if (.optimize_extinction) then
 
       ext_refs.create(n_refl)
       ext.create(n_refl)
@@ -4740,9 +4767,9 @@ contains
       ext_refs.set_F_sigma(.reflections.F_sigma)
       ext.destroy
 
-      if (NOT .optimize_extinction) return
-
-      stdout.text("The effects of extinction.")
+      stdout.flush
+      stdout.text("The effects of extinction:")
+      stdout.flush
 
       w = ZERO
       y = ZERO
@@ -4756,25 +4783,32 @@ contains
       stdout.show("Average value of abs(extinction correction) is ",w)
       stdout.flush
 
-      stdout.text("The effects of intensity on extinction.")
-      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs F_pred")
+      stdout.flush
+      stdout.text("The effects of intensity on extinction:")
+      stdout.flush
+
+      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs F_pred:")
       do n=1,n_refl
        stdout.put(ext_refs(n).F_pred)
        stdout.put(ext_refs(n).F_z)
        stdout.flush
       end
+
+      stdout.flush
+      stdout.text("The effects of scattering angle on extinction:")
       stdout.flush
 
-      stdout.text("The effects of scattering angle on extinction.")
-      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs sin(theta)/lambda")
+      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs sin(theta)/lambda:")
       do n = 1,n_refl
          stdout.put(.reflections(n).sin_theta_on_lambda)
          stdout.put(ext_refs(n).F_z)
          stdout.flush
       end
+
       ext_refs.destroy
 
-      stdout.flush
+      end
+
    end
 
    put_PND_sf(name)
