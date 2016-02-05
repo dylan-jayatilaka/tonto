@@ -7007,57 +7007,41 @@ contains
 ! CIF
 
    put_asymm_unit_CIF(cif,psi)
-   ! Put out a standard asymmetric-unit "cif" file
+   ! Put out an asymmetric-unit "cif" file
+      self :: INOUT
       cif :: CIF, IN
       psi :: VEC{STR}, IN
 
    ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom list")
 
       has_covariances :: BIN
-      n_pADPs :: INT
-      thresh :: STR
-      esd :: VEC{REAL}*
 
-      ! Spacegroup information
-      .spacegroup.put_CIF
-
-      ! Unit cell information
-      .unit_cell.put_CIF(.Z)
-
-      ! Put the coordinate information
-      .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell)
-
-      ! Covariances?
       has_covariances = .has_covariance_matrix
+
       if (has_covariances) then
-
-         ! Put refinement special info
-         .data.put_CIF_refinement(psi)
-
-         ! Get crystal errors
-         n_pADPs = .asymmetric_unit_atom.no_of_pADPs
-         esd.create(n_pADPs)
-         .make_CIF_esds(cif,.asymmetric_unit_atom,.data.covariance_matrix,esd)
-         esd = sqrt(esd)
-
-         ! Put to Cif with errors
-         .asymmetric_unit_atom.put_CIF_with_errors(cif,esd)
-         esd.destroy
-
+         .::put_CIF(cif,psi,.asymmetric_unit_atom,.data.covariance_matrix)
       else
-
-         .asymmetric_unit_atom.put_CIF(cif)
-
+         .::put_CIF(cif,psi,.asymmetric_unit_atom)
       end
 
-      ! Change back
-      .asymmetric_unit_atom.change_axis_system_to("cartesian",.unit_cell)
+   end
 
-      ! Put the reflection data
-      if (.data.created) then
-         DIFFRACTION_DATA:put_CIF_covariance_matrix("asym_unit",.data.covariance_matrix)
-         thresh = .data.CIF_threshold_expression
-         .data.reflections.put_CIF(thresh)
+   put_fragment_CIF(cif,psi)
+   ! Put out a fragment_atom "cif" file
+      self :: INOUT
+      cif :: CIF, IN
+      psi :: VEC{STR}, IN
+
+   ENSURE(.fragment_atom.created,"no fragment_atom list")
+
+      has_covariances :: BIN
+
+      has_covariances = .has_fragment_covariance_matrix
+
+      if (has_covariances) then
+         .::put_CIF(cif,psi,.fragment_atom,.data.fragment_covariance_matrix)
+      else
+         .::put_CIF(cif,psi,.fragment_atom)
       end
 
    end
@@ -7077,100 +7061,6 @@ contains
 
    end
 
-   put_molecule_CIF(cif,psi,atom)
-   ! Put an *accurate* *molecule* cif file, using "atom" list.
-   ! No covariance matrix given.
-      cif :: CIF, IN
-      psi :: VEC{STR}, IN
-      atom :: VEC{ATOM}, INOUT
-
-      has_covariances :: BIN
-      n_pADPs :: INT
-      thresh :: STR
-      esd :: VEC{REAL}*
-
-      ! Spacegroup information
-      .spacegroup.put_CIF
-
-      ! Unit cell information
-      .unit_cell.put_CIF(.Z)
-
-      ! Put the coordinate information
-      atom.change_axis_system_to("crystal",.unit_cell)
-
-      ! Covariances?
-      has_covariances = .has_fragment_covariance_matrix
-      if (has_covariances) then
-
-         ! Put refinement special info
-         .data.put_CIF_refinement(psi)
-
-         ! Get crystal errors
-         n_pADPs = atom.no_of_pADPs
-         esd.create(n_pADPs)
-         .make_CIF_esds(cif,atom,.data.fragment_covariance_matrix,esd)
-         esd = sqrt(esd)
-
-         ! Put to CIF with errors
-         atom.put_CIF_with_errors(cif,esd)
-         esd.destroy
-
-      else
-
-         ! CIF with no errors ...
-         atom.put_CIF(cif)
-
-      end
-
-      ! Change back
-      atom.change_axis_system_to("cartesian",.unit_cell)
-
-      ! Put the reflection data
-      if (.data.created) then
-         .data.put_CIF_covariance_matrices
-         thresh = .data.CIF_threshold_expression
-         .data.reflections.put_CIF(thresh)
-      end
-
-   end
-
-   put_accurate_CIF(cif,psi,atom)
-   ! Put accurate *asymmetric unit* cif file
-   ! Covariance matrix *is* given.
-      cif :: CIF, IN
-      psi :: VEC{STR}, IN
-      atom :: VEC{ATOM}, INOUT
-
-      thresh :: STR
-
-      if (.data.destroyed) then
-         WARN("No data, no refinement? CIF file not made.")
-         return
-      end
-
-      ! Spacegroup information
-      .spacegroup.put_CIF
-
-      ! Unit cell information
-      .unit_cell.put_CIF(.Z)
-
-      ! Put refinement information
-      .data.put_CIF_refinement(psi)
-
-      ! Put the coordinate information
-      atom.change_axis_system_to("crystal",.unit_cell)
-      atom.put_accurate_CIF(cif)
-      atom.change_axis_system_to("cartesian",.unit_cell)
-
-      ! Put the reflection data
-      if (.data.created) then
-         .data.put_CIF_covariance_matrices
-         thresh = .data.CIF_threshold_expression
-         .data.reflections.put_CIF(thresh)
-      end
-
-   end
-
    has_fragment_covariance_matrix result (res)
    ! Does the fragment_covariance matrix exist?
       self :: IN
@@ -7186,13 +7076,83 @@ contains
 
    end
 
-   make_CIF_esds(cif,atom,covariance_matrix,esd)
-   ! Make the crystal-axis-system "esd"s in the pADPs for the "atom"
-   ! list for "cif" file output. Positions are in unitless and ADP's
-   ! are in bohr^2. For anharmonic constants, the "cif.GC_format"
-   ! variable defines format, labels, and units.
+   put_CIF(cif,psi,atom,covariance_matrix) ::: private
+   ! Put a *molecular fragment* cif file with errors, using "atom"
+   ! list.  ESDs are produced from .data.fragment_covariance_matrix
+   ! and NOTE: must have the correct units on entry.
+      self :: INOUT
+      cif  :: CIF, IN
+      psi  :: VEC{STR}, IN
+      atom :: VEC{ATOM}, INOUT
+      covariance_matrix :: MAT{REAL}, optional, IN
+
+      n_pADPs :: INT
+      thresh :: STR
+      esd :: VEC{REAL}*
+
+      ! Spacegroup information
+      .spacegroup.put_CIF
+
+      ! Unit cell information; INOUT
+      .unit_cell.put_CIF(.Z)
+
+      if (present(covariance_matrix)) then
+
+         ! Put refinement special info
+         .data.put_CIF_refinement(psi)
+
+         ! Errors
+         n_pADPs = atom.no_of_pADPs
+         esd.create(n_pADPs)
+
+         ! Put the *cartesian* information
+         .::make_CIF_esds(atom,covariance_matrix,esd)
+         esd = sqrt(esd)
+         atom.put_CIF_cartesian(esd)
+         atom.put_CIF_AADP(cif,esd)
+
+         ! Put the *crystal* coordinate information
+         atom.change_axis_system_to("crystal",.unit_cell)
+         .::make_CIF_esds(atom,covariance_matrix,esd)
+         esd = sqrt(esd)
+         atom.put_CIF_crystal(esd)
+         atom.put_CIF_AADP(cif,esd)
+         atom.change_axis_system_to("cartesian",.unit_cell)
+
+         ! Clean
+         esd.destroy
+
+      else
+
+         ! Put the *cartesian* information
+         atom.put_CIF_cartesian
+         atom.put_CIF_AADP(cif)
+
+         ! Put the *crystal* coordinate information
+         atom.change_axis_system_to("crystal",.unit_cell)
+         atom.put_CIF_crystal
+         atom.put_CIF_AADP(cif)
+         atom.change_axis_system_to("cartesian",.unit_cell)
+
+      end
+
+      ! Put the reflection data
+      if (.data.created) then
+         .data.put_CIF_covariance_matrices
+         thresh = .data.CIF_threshold_expression
+         .data.reflections.put_CIF(thresh)
+      end
+
+   end
+
+   make_CIF_esds(atom,covariance_matrix,esd)
+   ! Make the "esd"s in the pADPs for the "atom" list from the
+   ! "covariance_matrix", required for the "cif" file output.  if
+   ! "atom.axis_system" is "cartesian", only the diagonal covariances
+   ! are extracted. For "crystal" axis system, positions are unitless
+   ! and ADP's are in bohr^2, and anharmonic constants are
+   ! dimensionless Gram-Charlier.
       self :: IN
-      cif :: CIF, IN
       atom :: VEC{ATOM}, IN
       covariance_matrix :: MAT{REAL}, IN
       esd :: VEC{REAL}, OUT
@@ -7217,10 +7177,11 @@ contains
       ! This is only applied to the diagonal blocks.
       T.create(34,34)
       T = ZERO
-      if (cif.GC_format=="u") then ! dimensioned anharmonics
-         GAUSSIAN_DATA:symmetric_tensor_product_mx(T,.unit_cell.reciprocal_U_matrix)
-         T(1:3,1:3) = .unit_cell.inverse_matrix ! Reset positional transform
-      else                         ! dimensionless anharmonics
+      if (atom(1).ADP_axis_system=="cartesian") then 
+         ! Do nothing
+         T.to_unit_matrix
+      else                         
+         ! Usual ADPs & dimensionless positions and (GC) anharmonics
          T(1:3,1:3) = .unit_cell.inverse_matrix ! Reset positional transform
          GAUSSIAN_DATA:symmetric_tensor_2_product_mx(T( 4: 9, 4: 9),.unit_cell.reciprocal_U_matrix)
          GAUSSIAN_DATA:symmetric_tensor_3_product_mx(T(10:19,10:19),.unit_cell.reciprocal_matrix)
@@ -7274,9 +7235,9 @@ contains
 
    end
 
-   put_excel_crystal(cif)
+   put_excel_crystal
    ! Put out the coordinate and ADP information in Excel format
-      cif :: CIF, IN
+      self :: INOUT
 
    ENSURE(.data.created,"no diffraction data")
    ENSURE(.data.covariance_matrix.created,"no covariance_matrix")
@@ -7301,7 +7262,7 @@ contains
       ! Get errors in crystal coordinates
       n_pADPs = .asymmetric_unit_atom.no_of_pADPs
       esd.create(n_pADPs)
-      .make_CIF_esds(cif,.asymmetric_unit_atom,.data.covariance_matrix,esd)
+      .make_CIF_esds(.asymmetric_unit_atom,.data.covariance_matrix,esd)
       esd = sqrt(esd)
 
       ! Change axis system to crystal
