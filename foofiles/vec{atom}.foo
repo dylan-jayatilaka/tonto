@@ -483,6 +483,7 @@ contains
    set_positions_from_vector(v)
    ! Set the positions from "v", a flat vector, where the xyz
    ! positions increment fastest
+      self :: INOUT
       v :: VEC{REAL}
 
    ENSURE(v.dim==3*.dim,"wrong size, v")
@@ -500,68 +501,46 @@ contains
 
    end
 
-   set_positions_to(mx)
-   ! Set the positions from matrix "mx". The shape, (3xN) or (Nx3),
-   ! determines how the coordinates are extracted.
+!   set_coordinates_to(mx)
+!   ! Set the positions from matrix "mx". The shape, (3xN) or (Nx3),
+!   ! determines how the coordinates are extracted.
+!      self :: INOUT
+!      mx :: MAT{REAL}, IN
+!
+!      .set_positions_to(mx)
+!
+!   end
+
+   set_positions_to(mx) ::: PURE
+   ! Set the positions from matrix "mx". The shape must be (3xN).
+      self :: INOUT
       mx :: MAT{REAL}, IN
+
+   ENSURE(mx.dim1==3,   "dim1 is not 3")
+   ENSURE(mx.dim2==.dim,"dim2 is incompatible")
 
       a :: INT
 
-      if      (mx.dim1==3 AND mx.dim2==.dim) then
-
-         do a = 1,.dim
-            self(a).set_position(mx(:,a))
-         end
-
-      else if (mx.dim1==.dim AND mx.dim2==3) then
-
-         do a = 1,.dim
-            self(a).set_position(mx(a,:))
-         end
-
-      else
-
-         DIE("incorrectly sized geometry array")
-
+      do a = 1,.dim
+         self(a).set_position(mx(:,a))
       end
 
    end
 
-   set_positions_and_errors_to(mx,me)
-   ! Set the positions and errors from matrix "mx" and "me".
-   ! The shape, (3xN) or (Nx3), determines how the coordinates
-   ! are extracted.
-      mx,me :: MAT{REAL}, IN
+   set_position_errors_to(me)
+   ! Set the position_erroros from matrix "mx". The shape must be (3xN).
+      self :: INOUT
+      me :: MAT{REAL}, IN
 
-   ENSURE(mx.is_same_shape_as(me),"matrices are not the same shape")
+   ENSURE(me.dim1==3,   "dim1 is not 3")
+   ENSURE(me.dim2==.dim,"dim2 is incompatible")
 
       a :: INT
 
-      if      (mx.dim1==3 AND mx.dim2==.dim) then
-
-         do a = 1,.dim
-            self(a).set_position_and_error(mx(:,a),me(:,a))
-         end
-
-      else if (mx.dim1==.dim AND mx.dim2==3) then
-
-         do a = 1,.dim
-            self(a).set_position_and_error(mx(a,:),me(a,:))
-         end
-
-      else
-
-         DIE("incorrectly sized geometry array")
-
+      do a = 1,.dim
+         self(a).set_position_error(me(:,a))
       end
 
-   end
-
-   set_coordinates_to(mx)
-   ! Set the positions from matrix "mx". The shape, (3xN) or (Nx3),
-   ! determines how the coordinates are extracted.
-      mx :: MAT{REAL}, IN
-      .set_positions_to(mx)
    end
 
 !  ====================
@@ -578,6 +557,21 @@ contains
 
       do a = 1,.dim
          self(a).set_site_occupancy(val(a))
+      end
+
+   end
+
+   set_site_disorder_groups(val)
+   ! Generic set
+      self :: INOUT
+      val :: VEC{INT}, IN
+
+   ENSURE(val.dim==.dim,"wrong size for occupancies")
+
+      a :: INT
+
+      do a = 1,.dim
+         self(a).set_site_disorder_group(val(a))
       end
 
    end
@@ -1649,11 +1643,31 @@ contains
 
    read_CIF_atoms(cif) ::: leaky
    ! Read information from a Crystallographic Information File, "cif".
+      self :: PTR
+      cif :: CIF
+
+      fail :: BIN
+
+      fail = FALSE
+      .read_CIF_atoms_cart(cif,fail)
+
+      if (fail) then
+         .destroy
+         fail = FALSE
+         .read_CIF_atoms_xtal(cif,fail)
+         DIE_IF(fail,"failed")
+      end
+
+   end
+
+   read_CIF_atoms_xtal(cif,fail) ::: leaky
+   ! Read information from a Crystallographic Information File, "cif".
    ! It is an error if there are no atom coordinates in the file.
    ! It is NOT an error if the ADP (thermal) tensors are missing.
    ! NOTE: self is destroyed and created from this file!
       self :: PTR
       cif :: CIF
+      fail :: BIN
 
       fs,fc,fd,fo,fl :: BIN
       IDs,labels,symbols :: VEC{STR}*
@@ -1669,7 +1683,7 @@ contains
       cif.read_looped_item("_atom_site_type_symbol",symbols,fs)
       cif.read_looped_item("_atom_site_label",labels,fl)
 
-      DIE_IF(NOT(fs OR fl),"no atom site label information in CIF file")
+      fail = NOT (fs OR fl)
 
       ! Destroy the old atom list (if there)
       .destroy
@@ -1694,22 +1708,23 @@ contains
                 "_atom_site_fract_y  ", &
                 "_atom_site_fract_z  ", &
                 "_atom_site_occupancy"]
-         cif.read_looped_items(IDs,pos,err,found=fc)
+         cif.read_looped_items(IDs,pos,err,found=fc,transpose=TRUE)
       else
          IDs.create(3)
          IDs = ["_atom_site_fract_x  ", &
                 "_atom_site_fract_y  ", &
                 "_atom_site_fract_z  "]
-         cif.read_looped_items(IDs,pos,err,found=fc)
+         cif.read_looped_items(IDs,pos,err,found=fc,transpose=TRUE)
       end
       IDs.destroy
 
-      DIE_IF(NOT fc,"no atom coordinate information in CIF file")
+      fail = NOT fc
 
-      ! Assign the positions and errors -- including pADP_vector.
+      ! Assign the positions and pADPs
       .set_axis_system("crystal")
       .reset_pADPs_and_errors(9)
-      .set_positions_and_errors_to(pos(1:3,:),err(1:3,:))
+      .set_positions_to(pos(1:3,:))
+      .set_position_errors_to(err(1:3,:))
       if (fo) .set_site_occupancies(pos(4,:))
       err.destroy
       pos.destroy
@@ -1740,32 +1755,94 @@ contains
 
    end
 
-   detect_CIF_atom_format(cif,fmt) ::: private, leaky
-   ! Detect if the file has ADP4s, using the current setting for
-   ! the cif.GC_format, either dimensionless "g" or cartesian
-   ! dimensioned "u". Optionally return the IDs and labels.
-      self :: IN
-      cif :: CIF, INOUT
-      fmt :: STR(len=1), OUT
+   read_CIF_atoms_cart(cif,fail) ::: leaky
+   ! Read Tonto information from a "cif".  Cartesian format extends
+   ! existing items in the standard CIF dictionary.
+   ! NOTE: self is destroyed and created from this file!
+      self :: PTR
+      cif :: CIF
+      fail :: BIN
 
-      IDs.create(15)
-      do i = 1,15
-         lab = self(1).ADP4_index_label(i,form="underscore-123-repeated")
-         IDs(i) = trim(cif.GC4_label)//trim(lab)
-      end
-      cif.read_looped_item(trim(cif.GC4_label)//"label",labels,fl)
-      cif.read_looped_items(IDs,U,dU,found=fu)
+      fl,fc,fe,fo :: BIN
+      IDs,labels :: VEC{STR}*
+      pos,err :: MAT{REAL}*
 
-      f4 = fu AND fl
+      ! Read the site labels FIRST because these seem to correlate with
+      ! the anisotropic U's.
+      nullify(labels)
+      cif.read_looped_item("_atom_site_Cartn_label",labels,fl)
 
-      ! Save the tags? Or clean?
-      if (present(IDs0) AND present(labels0)) then
-         if (fl) labels0 => labels
-         IDs0 => IDs
-      else
-         if (fl) labels.destroy
-         IDs.destroy
-      end
+      fail = NOT fl 
+      if (fail) return
+
+      ! Destroy the old atom list (if there)
+      .destroy
+
+      ! Create the new atom list
+      .create(labels.dim)
+      .set_atom_data_from_labels(labels)
+      labels.destroy
+
+      ! Read the coordinates
+      IDs.create(3)
+      IDs = ["_atom_site_Cartn_x", &
+             "_atom_site_Cartn_y", &
+             "_atom_site_Cartn_z"  ]
+      cif.read_looped_items(IDs,pos,found=fc)
+      IDs.destroy
+
+      stdout.text("pos:")
+      stdout.put(pos)
+
+      fail = NOT fc
+      if (fail) return
+
+      ! Set the positions
+      .set_axis_system("cartesian")
+      .reset_pADPs_and_errors(9)
+      pos.convert_from("angstrom")
+      .set_positions_to(pos)
+      pos.destroy
+
+      ! Read errors
+      IDs.create(3)
+      IDs = ["_atom_site_Cartn_x_esd", &
+             "_atom_site_Cartn_y_esd", &
+             "_atom_site_Cartn_z_esd"  ]
+      cif.read_looped_items(IDs,err,found=fe)
+      IDs.destroy
+
+      stdout.text("err:")
+      stdout.put(err)
+
+      ! Set the positions
+      err.convert_from("angstrom")
+      .set_position_errors_to(err)
+      pos.destroy
+
+      fail = NOT fe
+      if (fail) return
+
+      ! Read occupancies and disorder group
+      IDs.create(2)
+      IDs = ["_atom_site_Cartn_occupancy     ", &
+             "_atom_site_Cartn_disorder_group"]
+      cif.read_looped_items(IDs,err,transpose=TRUE,found=fo)
+      IDs.destroy
+
+      fail = NOT fo
+      if (fail) return
+
+      ! Set the occupancies
+      .set_site_occupancies(err(:,1))
+      .set_site_disorder_groups(nint(err(:,2)))
+      err.destroy
+
+      ! Clean
+      IDs.destroy
+
+      ! Update?
+      .update
 
    end
 
@@ -1779,7 +1856,7 @@ contains
 
    DIE_IF(self(:).label.no_of_unique_elements/=.dim,"not all ADP site symbols are unique!")
 
-      f3,f4,fi,fu,fl :: BIN
+      f3,f4,fi,fu,fl,fail :: BIN
       IDs,labels :: VEC{STR}*
       i,ind :: INT
       U,dU :: MAT{REAL}*
@@ -1879,25 +1956,23 @@ contains
          U_iso.destroy
       end
 
-      ! Try to read U tensor if there =======
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Read *cartesian* ADP2 tensor if there ======
+      nullify(labels)
+      nullify(U)
+      nullify(dU)
       IDs.create(6)
       do i = 1,6
-         lab = self(1).ADP_label(i,form="underscore-123-repeated")
-         IDs(i) = "_atom_site_aniso_"//trim(lab)
+         lab = self(1).ADP2_index_label(i,form="underscore-123-repeated")
+         IDs(i) = "_atom_site_ADP2_"//trim(lab)
       end
-      cif.read_looped_item("_atom_site_aniso_label",labels,fl)
+      cif.read_looped_item("_atom_site_ADP2_U_label",labels,fl)
       cif.read_looped_items(IDs,U,dU,found=fu)
 
-      ! Read the ADP2s
-      if (fl AND fu) then
+      fail = NOT (fl AND fu)
 
-         ! Change units if required
-         if (cif.U_is_B) then
-            fac = ONE/(EIGHT*PI*PI)
-            U = fac*U
-         else if (cif.U_is_beta) then
-            DIE("U_is_beta option no longer supported")
-         end
+      if (NOT fail) then
 
          ! Change U units to au^2
          U.convert_from("angstrom^2")
@@ -1916,10 +1991,13 @@ contains
             self(ind).set_ADP2_errors_to(dU(:,i))
 
          end
+   
+         ! Set the crystal axis system. For anharmonic ADPs (if any)
+         ! the form "g" or "u" was already detected and set.
+         .set_ADP_axis_system("cartesian")
 
       end
 
-      ! Clean up
       if (fu) then
          U.destroy
          dU.destroy
@@ -1927,9 +2005,58 @@ contains
       if (fl) labels.destroy
       IDs.destroy
 
-      ! Set the crystal axis system. For anharmonic ADPs (if any)
-      ! the form "g" or "u" was already detected and set.
-      .set_ADP_axis_system("crystal")
+      if (NOT fail) return
+
+      ! Read std ADP tensor if there =======
+      IDs.create(6)
+      do i = 1,6
+         lab = self(1).ADP_label(i,form="underscore-123-repeated")
+         IDs(i) = "_atom_site_aniso_"//trim(lab)
+      end
+      cif.read_looped_item("_atom_site_aniso_label",labels,fl)
+      cif.read_looped_items(IDs,U,dU,found=fu)
+   
+      ! Read the ADP2s
+      if (fl AND fu) then
+   
+         ! Change units if required
+         if (cif.U_is_B) then
+            fac = ONE/(EIGHT*PI*PI)
+            U = fac*U
+         else if (cif.U_is_beta) then
+            DIE("U_is_beta option no longer supported")
+         end
+   
+         ! Change U units to au^2
+         U.convert_from("angstrom^2")
+         dU.convert_from("angstrom^2")
+   
+         ! Match the anisotropic U labels and assign the U tensors
+         do i = 1,labels.dim
+   
+            ! Find matching index "ind"
+            ind = self(:).label.index_of(labels(i))
+            DIE_IF(ind==0,"unmatching atom_site_aniso_label, "//trim(labels(i)))
+   
+            ! Assign ADP
+            self(ind).reset_pADPs_and_errors(9)
+            self(ind).set_ADP_tensor(U(:,i))
+            self(ind).set_ADP2_errors_to(dU(:,i))
+   
+         end
+   
+         ! Set the crystal axis system. For anharmonic ADPs (if any)
+         ! the form "g" or "u" was already detected and set.
+         .set_ADP_axis_system("crystal")
+   
+      end
+
+      if (fu) then
+         U.destroy
+         dU.destroy
+      end
+      if (fl) labels.destroy
+      IDs.destroy
 
    end
 
@@ -1942,7 +2069,7 @@ contains
       cif :: CIF, INOUT
       f3,f4 :: BIN, OUT
 
-      GC_format :: VEC{STR}(2) = ["g", "u"]
+      GC_format :: VEC{STR}(2) = ["u", "g"]
       fmt :: INT
 
       do fmt = 1,GC_format.dim
@@ -12065,6 +12192,7 @@ contains
       stdout.text("_atom_site_Cartn_z")
       stdout.text("_atom_site_Cartn_adp_type")
       stdout.text("_atom_site_Cartn_occupancy")
+      stdout.text("_atom_site_Cartn_disorder_group")
 
       ! Get max tag width
       w = maxval(len_trim(self(:).tag))
@@ -12080,6 +12208,7 @@ contains
          stdout.put(pos(3))
          stdout.put(trim("Uani"),width=5)
          stdout.put(self(i).site_occupancy,width=0,left=TRUE)
+         stdout.put(self(i).site_disorder_group,width=0,left=TRUE)
          stdout.flush
 
       end
@@ -12090,7 +12219,7 @@ contains
       stdout.text("# Leave this for easier input into Tonto")
       stdout.flush
       stdout.text("loop_")
-      stdout.text("_atom_site_ADP2_U_label_")
+      stdout.text("_atom_site_ADP2_U_label")
       do i = 1,6
       lab = self(1).ADP2_index_label(i,form="underscore-123-repeated")
       stdout.text("_atom_site_ADP2_U_"//trim(lab))
@@ -12167,6 +12296,7 @@ contains
       stdout.text("_atom_site_Cartn_z_esd")
       stdout.text("_atom_site_Cartn_adp_type")
       stdout.text("_atom_site_Cartn_occupancy")
+      stdout.text("_atom_site_Cartn_disorder_group")
 
       ! Get max tag width
       w = maxval(len_trim(self(:).tag))
@@ -12190,9 +12320,11 @@ contains
          stdout.put(err(2)); stdout.flush
          stdout.put(pos(3)); stdout.flush
          stdout.put(err(3)); stdout.flush
-         stdout.put(trim("Uani"),width=0)
+         stdout.put(trim("Uani"),width=5)
          stdout.flush
          stdout.put(self(i).site_occupancy,width=0,left=TRUE)
+         stdout.flush
+         stdout.put(self(i).site_disorder_group,width=0,left=TRUE)
          stdout.flush
 
          k = k + self(i).no_of_pADPs
