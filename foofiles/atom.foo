@@ -1545,13 +1545,23 @@ contains
    set_axis_system(word)
    ! Set the axis system type to "word".
    ! Currently allowed is: "cartesian" or "crystal".
+      self :: INOUT
+      word :: STR, IN
+
+      .set_pos_axis_system(word)
+      .set_ADP_axis_system(word)
+      .set_ADPn_axis_system(word)
+
+   end
+
+   set_pos_axis_system(word)
+   ! Set the position axis system type to "word".
+   ! Currently allowed is: "cartesian" or "crystal".
    ! NOTE: all .ADP_axis_system's are changed too.
       self :: INOUT
       word :: STR, IN
 
       .pos_axis_system  = word
-      .ADP_axis_system  = word
-      .ADPn_axis_system = word
 
       select case (word)
          case ("cartesian")
@@ -1568,30 +1578,29 @@ contains
       word :: STR, IN
 
       .ADP_axis_system  = word
-      .ADPn_axis_system = word
 
-      select case (.ADP_axis_system)
+      select case (word)
          case ("cartesian")
          case ("crystal  ")
          case default
-            UNKNOWN(.ADP_axis_system)
+            UNKNOWN(word)
       end
 
    end
 
-   set_ADPn_form(val)
-   ! This may be "g" for the dimensionless Gram-Charlier anharmonic
-   ! constants, OR "u"  i.e. the constants are dimensioned in
-   ! Angstrom^n, where n=3,4 is the order of the constants. This is
-   ! like the second order cartesian ADPs, but is non-standard,
-   ! see Trueblood (1996) Acta Cryst A 52 p. 770-81 (34)-(37), but
-   ! in that paper "h" is our k/2\pi.
-      self :: INOUT
-      val :: STR, IN
+   set_ADPn_axis_system(word)
+   ! Set the ADPn axis systems to "word".
+   ! Currently allowed, is: "cartesian" or "crystal".
+      word :: STR, IN
 
-   ENSURE(val.is_one_of(["g","u"]),"unknown ADPn_format, "//trim(val))
+      .ADPn_axis_system = word
 
-      .ADPn_form = val
+      select case (word)
+         case ("cartesian")
+         case ("crystal  ")
+         case default
+            UNKNOWN(word)
+      end
 
    end
 
@@ -1805,6 +1814,50 @@ contains
    DIE_IF(U.dim/=15,"wrong size, U")
 
       .pADP_vector(20:34) = U( 1:15)
+
+   end
+
+! Set tensors
+
+   set_ADP3_vector_to(adp3)
+   ! Set the ADP3s from the "adp3" tensor into the pADP_vector.
+      self :: INOUT
+      adp3 :: MAT3{REAL}(3,3,3), OUT
+
+   ENSURE(.pADP_vector.created,"no pADP_vector")
+   ENSURE(.pADP_vector.dim>=19,"pADP_vector too small")
+
+      v3,w3 :: VEC{REAL}(10)
+
+      ! Compress tensor -> lower pyramid
+      adp3.compress_to_pyramid(v3)
+
+      ! Reorder from lower pyramid -> lexical
+      GAUSSIAN_DATA:lower_pyramid_to_lexical_3(v3,w3)
+
+      ! Set it
+      .set_ADP3_vector_to(w3)
+
+   end
+
+   set_ADP4_vector_to(adp4)
+   ! Set the ADP4s into the "adp3" tensor from the pADP_vector.
+      self :: INOUT
+      adp4 :: MAT4{REAL}(3,3,3,3), OUT
+
+   ENSURE(.pADP_vector.created,"no pADP_vector")
+   ENSURE(.pADP_vector.dim>=19,"pADP_vector too small")
+
+      v4,w4 :: VEC{REAL}(15)
+
+      ! Compress tensor -> lower pyramid
+      adp4.compress_to_pyramid(v4)
+
+      ! Reorder from lower pyramid -> lexical
+      GAUSSIAN_DATA:lower_pyramid_to_lexical_4(v4,w4)
+
+      ! Set it
+      .set_ADP4_vector_to(w4)
 
    end
 
@@ -3037,11 +3090,42 @@ contains
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
 
-      .change_pos_axis_system_to(axis_system,cell)
-      .change_ADP2_tensor_to(axis_system,cell)
-      .change_ADPn_tensor_to(axis_system,.ADPn_form,cell)
+      .change_axis_system_to_v2(axis_system,cell)
 
    end
+
+   change_axis_system_to_v1(axis_system,cell) ::: private
+   ! Change the axis system for the position *and* ADP tensors to "axis_system",
+   ! either "crystal" or "cartesian". "cell" holds the unit cell axis system
+   ! information. Specify the "form" for the anharmonic ADPs.
+   ! NOTE: Errors are *not* transformed since that needs covariances.
+   !       The errors must be transformed outside this routine.
+      self :: INOUT
+      axis_system :: STR, IN
+      cell :: UNIT_CELL, IN
+
+      .change_pos_axis_system_to(axis_system,cell)
+      .change_ADP2_tensor_to(axis_system,cell)
+      .change_ADPn_tensor_to_v1(axis_system,.ADPn_form,cell)
+
+   end
+
+   change_axis_system_to_v2(axis_system,cell) ::: private
+   ! Change the axis system for the position *and* ADP tensors to "axis_system",
+   ! either "crystal" or "cartesian". "cell" holds the unit cell axis system
+   ! information. Specify the "form" for the anharmonic ADPs.
+   ! NOTE: Errors are *not* transformed since that needs covariances.
+   !       The errors must be transformed outside this routine.
+      self :: INOUT
+      axis_system :: STR, IN
+      cell :: UNIT_CELL, IN
+
+      .change_pos_axis_system_to(axis_system,cell)
+      .change_ADP2_tensor_to(axis_system,cell)
+      .change_ADPn_tensor_to_v2(axis_system,cell)
+
+   end
+
 
    change_pos_axis_system_to(axis_system,cell)
    ! Change atom positions to a new "axis_system".
@@ -3054,18 +3138,20 @@ contains
       select case (axis_system)
 
          case ("cartesian")
-            if (.pos_axis_system=="crystal") then
-               pos.to_product_of(cell.direct_matrix,.position)
-               .set_position(pos)
-               .pos_axis_system = "cartesian"
-            end
+
+            if (.pos_axis_system=="cartesian") return
+
+            pos.to_product_of(cell.direct_matrix,.position)
+            .set_position(pos)
+            .pos_axis_system = "cartesian"
 
          case ("crystal  ")
-            if (.pos_axis_system=="cartesian") then
-               pos.to_product_of(cell.inverse_matrix,.position)
-               .set_position(pos)
-               .pos_axis_system = "crystal"
-            end
+
+            if (.pos_axis_system=="crystal") return
+
+            pos.to_product_of(cell.inverse_matrix,.position)
+            .set_position(pos)
+            .pos_axis_system = "crystal"
 
          case default
             UNKNOWN(axis_system)
@@ -3073,6 +3159,7 @@ contains
       end
 
    end
+
 
    change_ADP_axis_system_to(axis_system,form,cell)
    ! Change *all* ADP tensor to the desired "axis_system". The axes
@@ -3082,12 +3169,38 @@ contains
       axis_system,form :: STR, IN
       cell :: UNIT_CELL, IN
 
-      .change_ADP2_tensor_to(axis_system,cell)
-      .change_ADPn_tensor_to(axis_system,form,cell)
+      .change_ADP_axis_system_to_v1(axis_system,form,cell)
 
    end
 
-   change_ADP2_tensor_to(axis_system,cell) ::: private
+   change_ADP_axis_system_to_v1(axis_system,form,cell) ::: private
+   ! Change *all* ADP tensor to the desired "axis_system". The axes
+   ! are described by the unit "cell". Specify the "form" of the
+   ! anharmonic ADPs, either "g" or "u".
+      self :: INOUT
+      axis_system,form :: STR, IN
+      cell :: UNIT_CELL, IN
+
+      .change_ADP2_tensor_to(axis_system,cell)
+      .change_ADPn_tensor_to_v1(axis_system,form,cell)
+
+   end
+
+   change_ADP_axis_system_to_v2(axis_system,form,cell) ::: private
+   ! Change *all* ADP tensor to the desired "axis_system". The axes
+   ! are described by the unit "cell". Specify the "form" of the
+   ! anharmonic ADPs, either "g" or "u".
+      self :: INOUT
+      axis_system,form :: STR, IN
+      cell :: UNIT_CELL, IN
+
+      .change_ADP2_tensor_to(axis_system,cell)
+      .change_ADPn_tensor_to_v2(axis_system,cell)
+
+   end
+
+
+   change_ADP2_tensor_to(axis_system,cell)
    ! Change ADP2/s axis system into the "axis_system" frame.
       self :: INOUT
       axis_system :: STR, IN
@@ -3157,7 +3270,8 @@ contains
 
    end
 
-   change_ADPn_tensor_to(axis_system,form,cell) ::: private
+
+   change_ADPn_tensor_to_v1(axis_system,form,cell) ::: private
    ! Change ADPn vector to the "axis_system" frame.
    ! NOTE: Unlike the ADP2's, in the "crystal" axis_system these are
    ! reported in dimensionless Gram-Charlier "g" form. For
@@ -3188,24 +3302,25 @@ contains
                   ! Transform ADP3's -- direct cell matrix
                   W.create(10,10)
                   pADP.create(10)
-                  GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,cell.inverse_matrix)
+                  GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,transpose(cell.direct_matrix))
                   .pADP_vector(10:19).to_product_of(W,.pADP_vector(10:19))
                   pADP.to_product_of(W,.pADP_vector(10:19))
                   .pADP_vector(10:19) = pADP
                   pADP.destroy
                   W.destroy
 
+                  ! Set axis system
+                  .ADPn_axis_system = "cartesian"
+
                   ! Transform ADP4's -- direct cell matrix
+                  if (NOT .has_ADP4s) return
                   W.create(15,15)
                   pADP.create(15)
-                  GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,cell.inverse_matrix)
+                  GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,transpose(cell.direct_matrix))
                   pADP.to_product_of(W,.pADP_vector(20:34))
                   .pADP_vector(20:34) = pADP
                   pADP.destroy
                   W.destroy
-
-                  ! Set axis system
-                  .ADPn_axis_system = "cartesian"
 
                case ("crystal")
 
@@ -3214,23 +3329,24 @@ contains
                   ! Transform ADP3's -- reciprocal U cell matrix
                   W.create(10,10)
                   pADP.create(10)
-                  GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,cell.direct_matrix)
+                  GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,cell.reciprocal_matrix)
                   pADP.to_product_of(W,.pADP_vector(10:19))
                   .pADP_vector(10:19) = pADP
                   pADP.destroy
                   W.destroy
 
+                  ! Set axis system
+                  .ADPn_axis_system = "crystal"
+
                   ! Transform ADP4's -- reciprocal U cell matrix
+                  if (NOT .has_ADP4s) return
                   W.create(15,15)
                   pADP.create(15)
-                  GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,cell.direct_matrix)
+                  GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,cell.reciprocal_matrix)
                   pADP.to_product_of(W,.pADP_vector(20:34))
                   .pADP_vector(20:34) = pADP
                   pADP.destroy
                   W.destroy
-
-                  ! Set axis system
-                  .ADPn_axis_system = "crystal"
 
                case default
                   UNKNOWN(axis_system)
@@ -3250,23 +3366,24 @@ contains
                   ! Transform ADP3's -- direct cell matrix
                   W.create(10,10)
                   pADP.create(10)
-                  GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,cell.direct_U_matrix)
+                  GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,transpose(cell.direct_U_matrix))
                   pADP.to_product_of(W,.pADP_vector(10:19))
                   .pADP_vector(10:19) = pADP
                   pADP.destroy
                   W.destroy
 
+                  ! Set axis system
+                  .ADPn_axis_system = "cartesian"
+
                   ! Transform ADP4's -- direct cell matrix
+                  if (NOT .has_ADP4s) return
                   W.create(15,15)
                   pADP.create(15)
-                  GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,cell.direct_U_matrix)
+                  GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,transpose(cell.direct_U_matrix))
                   pADP.to_product_of(W,.pADP_vector(20:34))
                   .pADP_vector(20:34) = pADP
                   pADP.destroy
                   W.destroy
-
-                  ! Set axis system
-                  .ADPn_axis_system = "cartesian"
 
                case ("crystal  ")
 
@@ -3276,23 +3393,24 @@ contains
                   ! Transform ADP3's -- reciprocal U cell matrix
                   W.create(10,10)
                   pADP.create(10)
-                  GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,cell.reciprocal_U_matrix)
+                  GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,cell.reciprocal_matrix)
                   pADP.to_product_of(W,.pADP_vector(10:19))
                   .pADP_vector(10:19) = pADP
                   pADP.destroy
                   W.destroy
 
+                  ! Set axis system
+                  .ADPn_axis_system = "crystal"
+
                   ! Transform ADP4's -- reciprocal U cell matrix
+                  if (NOT .has_ADP4s) return
                   W.create(15,15)
                   pADP.create(15)
-                  GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,cell.reciprocal_U_matrix)
+                  GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,cell.reciprocal_matrix)
                   pADP.to_product_of(W,.pADP_vector(20:34))
                   .pADP_vector(20:34) = pADP
                   pADP.destroy
                   W.destroy
-
-                  ! Set axis system
-                  .ADPn_axis_system = "crystal"
 
                case default
                   UNKNOWN(axis_system)
@@ -3305,6 +3423,154 @@ contains
       end
 
    end
+
+   change_ADPn_tensor_to_v2(axis_system,cell) ::: private
+   ! Change ADPn vector to the "axis_system" frame.
+   ! NOTE: Unlike the ADP2's, in the "crystal" axis_system these are
+   ! reported in dimensionless Gram-Charlier "g" form. For
+   ! consistency, we also produce them in dimensioned "u" form
+   ! which have reciprocal lengths in them like the IUCr ADPs
+   ! in the crystal axis system.  However, internally, and during the
+   ! refinement, the axis_system is always "cartesian" and Bohr units.
+      self :: INOUT
+      axis_system :: STR, IN
+      cell :: UNIT_CELL, IN
+
+      adp3,new3 :: MAT3{REAL}(3,3,3)
+      adp4,new4 :: MAT4{REAL}(3,3,3,3)
+
+      select case (axis_system)
+
+         case ("cartesian")
+
+            if (.ADPn_axis_system=="cartesian") return
+
+            .ADPn_axis_system = "cartesian"
+
+            if (NOT .has_ADP3s) return
+
+            .put_ADP3_to(adp3)
+            adp3.back_transform_to(new3,cell.direct_matrix)
+            .set_ADP3_vector_to(new3)
+
+            if (NOT .has_ADP4s) return
+
+            .put_ADP4_to(adp4)
+            adp4.back_transform_to(new4,cell.direct_matrix)
+            .set_ADP4_vector_to(new4)
+
+         case ("crystal")
+
+            if (.ADPn_axis_system=="crystal") return
+
+            .ADPn_axis_system = "crystal"
+
+            if (NOT .has_ADP3s) return
+
+            .put_ADP3_to(adp3)
+            adp3.change_basis_to(new3,cell.reciprocal_matrix)
+            .set_ADP3_vector_to(new3)
+
+            if (NOT .has_ADP4s) return
+
+            .put_ADP4_to(adp4)
+            adp4.change_basis_to(new4,cell.reciprocal_matrix)
+            .set_ADP4_vector_to(new4)
+
+         case default
+            UNKNOWN(axis_system)
+
+      end
+
+   end
+
+!   change_ADPn_tensor_to_v2(axis_system,cell) ::: private
+!   ! Change ADPn vector to the "axis_system" frame.
+!   ! NOTE: Unlike the ADP2's, in the "crystal" axis_system these are
+!   ! reported in dimensionless Gram-Charlier "g" form. For
+!   ! consistency, we also produce them in dimensioned "u" form
+!   ! which have reciprocal lengths in them like the IUCr ADPs
+!   ! in the crystal axis system.  However, internally, and during the
+!   ! refinement, the axis_system is always "cartesian" and Bohr units.
+!      self :: INOUT
+!      axis_system :: STR, IN
+!      cell :: UNIT_CELL, IN
+!
+!      adp3,new3 :: MAT3{REAL}(3,3,3)
+!      adp4,new4 :: MAT4{REAL}(3,3,3,3)
+!      fac1,fac3,fac4 :: REAL
+!
+!      fac1 = ANGSTROM_PER_BOHR
+!      fac3 = ANGSTROM_PER_BOHR**3
+!      fac4 = ANGSTROM_PER_BOHR**4
+!
+!
+!      select case (axis_system)
+!
+!         case ("cartesian")
+!
+!            if (.ADPn_axis_system=="cartesian") return
+!
+!            .ADPn_axis_system = "cartesian"
+!
+!            if (NOT .has_ADP3s) return
+!
+!            .put_ADP3_to(adp3)
+!        stdout.text("crystal -> cartn:")
+!        stdout.text("Dstar:")
+!        stdout.put(cell.direct_matrix*fac1)
+!        stdout.text("adp3:")
+!        stdout.put(adp3*1000)
+!            adp3.back_transform_to(new3,cell.direct_matrix)
+!        stdout.text("new3:")
+!        stdout.put(new3*fac3*1000)
+!            .set_ADP3_vector_to(new3)
+!
+!            if (NOT .has_ADP4s) return
+!
+!            .put_ADP4_to(adp4)
+!        stdout.text("adp4:")
+!        stdout.put(adp4*10000)
+!            adp4.back_transform_to(new4,cell.direct_matrix)
+!        stdout.text("new4:")
+!        stdout.put(new4*fac4*10000)
+!            .set_ADP4_vector_to(new4)
+!
+!         case ("crystal")
+!
+!            if (.ADPn_axis_system=="crystal") return
+!
+!            .ADPn_axis_system = "crystal"
+!
+!            if (NOT .has_ADP3s) return
+!
+!            .put_ADP3_to(adp3)
+!        stdout.text("cartn -> crystal:")
+!        stdout.text("D:")
+!        stdout.put(cell.reciprocal_matrix/fac1)
+!        stdout.text("adp3:")
+!        stdout.put(adp3*fac3*1000)
+!            adp3.change_basis_to(new3,cell.reciprocal_matrix)
+!        stdout.text("new3:")
+!        stdout.put(new3*1000)
+!            .set_ADP3_vector_to(new3)
+!
+!            if (NOT .has_ADP4s) return
+!
+!            .put_ADP4_to(adp4)
+!        stdout.text("adp4:")
+!        stdout.put(adp4*fac4*10000)
+!            adp4.change_basis_to(new4,cell.reciprocal_matrix)
+!        stdout.text("new4:")
+!        stdout.put(new4*10000)
+!            .set_ADP4_vector_to(new4)
+!
+!         case default
+!            UNKNOWN(axis_system)
+!
+!      end
+!
+!   end
 
 
    change_coordinate_axes(axes)

@@ -580,14 +580,14 @@ contains
 !  Set axis system
 !  ===============
 
-   set_axis_system(val)
+   set_pos_axis_system(val)
    ! Generic set
       val :: STR
 
       a :: INT
 
       do a = 1,.dim
-         self(a).set_axis_system(val)
+         self(a).set_pos_axis_system(val)
       end
 
    end
@@ -600,6 +600,18 @@ contains
 
       do a = 1,.dim
          self(a).set_ADP_axis_system(val)
+      end
+
+   end
+
+   set_ADPn_axis_system(val)
+   ! Generic set
+      val :: STR
+
+      a :: INT
+
+      do a = 1,.dim
+         self(a).set_ADPn_axis_system(val)
       end
 
    end
@@ -1651,12 +1663,13 @@ contains
       fail = FALSE
       .read_CIF_atoms_cart(cif,fail)
 
-      if (fail) then
-         .destroy
-         fail = FALSE
-         .read_CIF_atoms_xtal(cif,fail)
-         DIE_IF(fail,"failed")
-      end
+      if (NOT fail) return
+
+      .destroy
+      fail = FALSE
+      .read_CIF_atoms_xtal(cif,fail)
+
+      DIE_IF(fail,"failed")
 
    end
 
@@ -1721,7 +1734,7 @@ contains
       fail = NOT fc
 
       ! Assign the positions and pADPs
-      .set_axis_system("crystal")
+      .set_pos_axis_system("crystal")
       .reset_pADPs_and_errors(9)
       .set_positions_to(pos(1:3,:))
       .set_position_errors_to(err(1:3,:))
@@ -1791,14 +1804,11 @@ contains
       cif.read_looped_items(IDs,pos,found=fc)
       IDs.destroy
 
-      stdout.text("pos:")
-      stdout.put(pos)
-
       fail = NOT fc
       if (fail) return
 
       ! Set the positions
-      .set_axis_system("cartesian")
+      .set_pos_axis_system("cartesian")
       .reset_pADPs_and_errors(9)
       pos.convert_from("angstrom")
       .set_positions_to(pos)
@@ -1811,9 +1821,6 @@ contains
              "_atom_site_Cartn_z_esd"  ]
       cif.read_looped_items(IDs,err,found=fe)
       IDs.destroy
-
-      stdout.text("err:")
-      stdout.put(err)
 
       ! Set the positions
       err.convert_from("angstrom")
@@ -1864,7 +1871,7 @@ contains
       fac :: REAL
       lab :: STR
 
-      .detect_CIF_AADPs(cif,f3,f4)
+      .detect_CIF_ADPns(cif,f3,f4)
 
       if (f4) then
 
@@ -1878,6 +1885,9 @@ contains
             U.convert_from("angstrom^4") ! into bohr^n
             dU.convert_from("angstrom^4")
          end
+
+         ! Read scale factor & scale
+         cif.read_item(trim(cif.GC4_label)//"scale_factor",cif.GC4_scale_factor)
          U  =  U/cif.GC4_scale_factor
          dU = dU/cif.GC4_scale_factor
 
@@ -1892,7 +1902,11 @@ contains
             self(ind).reset_pADPs_and_errors(34)
             self(ind).set_ADP4_vector_to(U(:,i))
             self(ind).set_ADP4_errors_to(dU(:,i))
-            self(ind).set_ADPn_form(cif.GC_format)
+            if (cif.GC_format=="u") then
+               self(ind).set_ADPn_axis_system("cartesian")
+            else
+               self(ind).set_ADPn_axis_system("crystal")
+            end
 
          end
 
@@ -1916,6 +1930,9 @@ contains
             U.convert_from("angstrom^3")
             dU.convert_from("angstrom^3")
          end
+
+         ! Read scale factor & scale
+         cif.read_item(trim(cif.GC3_label)//"scale_factor",cif.GC3_scale_factor)
          U  =  U/cif.GC3_scale_factor
          dU = dU/cif.GC3_scale_factor
 
@@ -1930,7 +1947,11 @@ contains
             self(ind).reset_pADPs_and_errors(19)
             self(ind).set_ADP3_vector_to(U(:,i))
             self(ind).set_ADP3_errors_to(dU(:,i))
-            self(ind).set_ADPn_form(cif.GC_format)
+            if (cif.GC_format=="u") then
+               self(ind).set_ADPn_axis_system("cartesian")
+            else
+               self(ind).set_ADPn_axis_system("crystal")
+            end
 
          end
 
@@ -2060,11 +2081,12 @@ contains
 
    end
 
-   detect_CIF_AADPs(cif,f3,f4) ::: private
-   ! Detect if the file has anharmonic ADPs (AADPs),
-   ! either dimensionless "g" or cartesian dimensioned "u"
+   detect_CIF_ADPns(cif,f3,f4) ::: private
+   ! Detect if the file has anharmonic ADPs (ADPns), either
+   ! dimensionless "g" (crystal) or dimensioned "u" (cartesian)
    ! Gram-Charlier coefficients. The cif.GC_format will be
-   ! set to this value, accordingly.
+   ! set to this value, accordingly. It looks for "u" format
+   ! first
       self :: IN
       cif :: CIF, INOUT
       f3,f4 :: BIN, OUT
@@ -2149,6 +2171,7 @@ contains
 
       ! Save the tags? Or clean?
       if (present(IDs0) AND present(labels0)) then
+         nullify(labels0)
          if (fl) labels0 => labels
          IDs0 => IDs
       else
@@ -12139,179 +12162,159 @@ contains
 !  Put cif routines
 !  ================
 
-   put_CIF_cartesian(esd)
-   ! Output the atoms and ADP's in CIF format to "stdout" in cartesian
-   ! axis system.
-      self :: IN
-      esd :: VEC{REAL}, optional, IN
-
-      if (present(esd)) then
-         .put_CIF_cartesian_e(esd)
-      else
-         .put_CIF_cartesian_n
-      end
-
-   end
-
-   put_CIF_cartesian_n ::: private
-   ! Output the atoms and ADP's in CIF format to "stdout" in cartesian
+   put_CIF_coords
+   ! Output the atoms and ADP's in CIF format to "stdout" in an
    ! axis system. This version does not produce errors.
       self :: IN
 
-   DIE_IF(any(self(:).pos_axis_system/="cartesian"),"must be in cartesian axis system!")
-   DIE_IF(any(self(:).ADP_axis_system/="cartesian"),"must be in cartesian axis system!")
+   ENSURE(self(1).pos_axis_system.is_one_of("cartesian","crystal "]),"unknown axis system!")
 
-      i,w :: INT
-      lab :: STR
+      i :: INT
       pos :: VEC{REAL}(3)
-      ADP :: VEC{REAL}(6)
-      fac1,fac2 :: REAL
+      fac :: REAL
+      is_cartn :: BIN
 
-      ! Unit conversion for ADP's
-      fac1 =  ANGSTROM_PER_BOHR
-      fac2 = fac1*fac1
+      ! Axis system?
+      is_cartn = self(1).pos_axis_system=="cartesian"
 
-      ! Reset accuracy
-      stdout.save
-      stdout.set_real_precision(5)
-      stdout.set_real_width(9)
+      ! Unit conversion
+      fac = ONE
+      if (is_cartn) fac = ANGSTROM_PER_BOHR
 
       ! CIF coordinate header
-      stdout.flush
-      stdout.text("# ===============================")
-      stdout.text("# Cartesian coordinates and ADP's")
-      stdout.text("# ===============================")
-      stdout.flush
-      stdout.text("# . Units are in Angstroms")
-      stdout.text("# . Anharmohnic ADPs may include scale factors")
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text("_atom_site_Cartn_label")
-      stdout.text("_atom_site_Cartn_x")
-      stdout.text("_atom_site_Cartn_y")
-      stdout.text("_atom_site_Cartn_z")
-      stdout.text("_atom_site_Cartn_adp_type")
-      stdout.text("_atom_site_Cartn_occupancy")
-      stdout.text("_atom_site_Cartn_disorder_group")
-
-      ! Get max tag width
-      w = maxval(len_trim(self(:).tag))
-
-      ! Put coordinates, NO errors, cartesian, Angstrom
-      do i = 1,.dim
-
-         stdout.put(self(i).tag.trim,width=w,left=TRUE)
-
-         pos = fac1 * self(i).position
-         stdout.put(pos(1))
-         stdout.put(pos(2))
-         stdout.put(pos(3))
-         stdout.put(trim("Uani"),width=5)
-         stdout.put(self(i).site_occupancy,width=0,left=TRUE)
-         stdout.put(self(i).site_disorder_group,width=0,left=TRUE)
+      if (is_cartn) then
          stdout.flush
-
+         stdout.text("# =================================")
+         stdout.text("# Cartesian axis system coordinates")
+         stdout.text("# =================================")
+         stdout.flush
+         stdout.text("# . Units are in Angstrom")
+         stdout.text("# . Please keep these precise parameters")
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("_atom_site_Cartn_label")
+         stdout.text("_atom_site_Cartn_x")
+         stdout.text("_atom_site_Cartn_y")
+         stdout.text("_atom_site_Cartn_z")
+         stdout.text("_atom_site_Cartn_adp_type")
+         stdout.text("_atom_site_Cartn_occupancy")
+         stdout.text("_atom_site_Cartn_disorder_group")
+      else
+         stdout.flush
+         stdout.text("# ===============================")
+         stdout.text("# Crystal axis system coordinates")
+         stdout.text("# ===============================")
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("_atom_site_label")
+         stdout.text("_atom_site_fract_x")
+         stdout.text("_atom_site_fract_y")
+         stdout.text("_atom_site_fract_z")
+         stdout.text("_atom_site_adp_type")
+         stdout.text("_atom_site_occupancy")
+         stdout.text("_atom_site_disorder_group")
       end
 
-      ! CIF ADP header
-      stdout.flush
-      stdout.text("# Cartesian ADPs in Angstrom^-2 units")
-      stdout.text("# Leave this for easier input into Tonto")
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text("_atom_site_ADP2_U_label")
-      do i = 1,6
-      lab = self(1).ADP2_index_label(i,form="underscore-123-repeated")
-      stdout.text("_atom_site_ADP2_U_"//trim(lab))
-      end
-
+      ! Put coordinates
       do i = 1,.dim
 
          stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
          stdout.flush
 
          ! Get values
-         self(i).put_ADP2_vector_to(ADP)
+         pos = fac * self(i).position
 
-         ! Print ADP
-         stdout.put(ADP(1))
-         stdout.put(ADP(2))
-         stdout.put(ADP(3))
+         ! Print
+         stdout.put(pos(1)); stdout.flush
+         stdout.put(pos(2)); stdout.flush
+         stdout.put(pos(3)); stdout.flush
+         stdout.put(trim("Uani"),width=0,left=TRUE)
          stdout.flush
-         stdout.put(ADP(4))
-         stdout.put(ADP(5))
-         stdout.put(ADP(6))
+         stdout.put(self(i).site_occupancy,width=0,left=TRUE)
+         stdout.flush
+         stdout.put(self(i).site_disorder_group,width=0,left=TRUE)
          stdout.flush
 
       end
 
    end
 
-   put_CIF_cartesian_e(esd) ::: private
-   ! Output atom cartesian coords and ADPs in CIF format to "stdout"
-   ! with errors "esd". The units, and format for the errors "esd" are
-   ! defined externally.
+   put_CIF_coords(esd)
+   ! Output the atoms and ADP's in CIF format to "stdout" in an
+   ! axis system, with errors "esd" provided externally.
       self :: IN
       esd :: VEC{REAL}, IN
 
-   DIE_IF(any(self(:).pos_axis_system/="cartesian"),"must be in cartesian axis system!")
-   DIE_IF(any(self(:).ADP_axis_system/="cartesian"),"must be in cartesian axis system!")
-   ENSURE(esd.dim==.no_of_pADPS,"wrong sizem esd")
+   ENSURE(self(1).pos_axis_system.is_one_of("cartesian","crystal "]),"unknown axis system!")
+   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
 
-      ADP :: VEC{REAL}(15)
-      err :: VEC{REAL}(15)
-      pos :: VEC{REAL}(3)
-      lab :: STR
-      i,k,w :: INT
-      fac1,fac2 :: REAL
-      fac3,fac4 :: REAL
+      i,k :: INT
+      pos,err :: VEC{REAL}(3)
+      fac :: REAL
+      is_cartn :: BIN
 
-      ! Unit conversion for ADP's
-      fac1 = ANGSTROM_PER_BOHR
-      fac2 = fac1*fac1
-      fac3 = fac2*fac1
-      fac4 = fac2*fac2
+      ! Axis system?
+      is_cartn = self(1).pos_axis_system=="cartesian"
 
-      ! Reset precision for errors
-      stdout.save
-      stdout.set_real_width(stdout.saved.real_width+3)
-      stdout.set_real_precision(stdout.saved.real_precision+3)
+      ! Unit conversion
+      fac = ONE
+      if (is_cartn) fac = ANGSTROM_PER_BOHR
 
       ! CIF coordinate header
-      stdout.flush
-      stdout.text("# ===============================")
-      stdout.text("# Cartesian coordinates and ADP's")
-      stdout.text("# ===============================")
-      stdout.flush
-      stdout.text("# . Units are in Angstroms")
-      stdout.text("# . Anharmohnic ADPs may include scale factors")
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text("_atom_site_Cartn_label")
-      stdout.text("_atom_site_Cartn_x")
-      stdout.text("_atom_site_Cartn_x_esd")
-      stdout.text("_atom_site_Cartn_y")
-      stdout.text("_atom_site_Cartn_y_esd")
-      stdout.text("_atom_site_Cartn_z")
-      stdout.text("_atom_site_Cartn_z_esd")
-      stdout.text("_atom_site_Cartn_adp_type")
-      stdout.text("_atom_site_Cartn_occupancy")
-      stdout.text("_atom_site_Cartn_disorder_group")
+      if (is_cartn) then
+         stdout.flush
+         stdout.text("# =================================")
+         stdout.text("# Cartesian axis system coordinates")
+         stdout.text("# =================================")
+         stdout.flush
+         stdout.text("# . Units are in Angstrom")
+         stdout.text("# . Please keep these precise parameters and ESDs")
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("_atom_Cartn_label")
+         stdout.text("_atom_Cartn_x")
+         stdout.text("_atom_Cartn_x_esd")
+         stdout.text("_atom_Cartn_y")
+         stdout.text("_atom_Cartn_y_esd")
+         stdout.text("_atom_Cartn_z")
+         stdout.text("_atom_Cartn_z_esd")
+         stdout.text("_atom_Cartn_adp_type")
+         stdout.text("_atom_Cartn_occupancy")
+         stdout.text("_atom_Cartn_disorder_group")
+      else
+         stdout.flush
+         stdout.text("# ===============================")
+         stdout.text("# Accurate fractional coordinates")
+         stdout.text("# ===============================")
+         stdout.flush
+         stdout.text("# . These are precise parameters and ESDs")
+         stdout.text("# . Keep these for a refinement restart")
+         stdout.text("# . Better yet, use the refined cartesian parameters")
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("_atom_label")
+         stdout.text("_atom_fract_x")
+         stdout.text("_atom_fract_x_esd")
+         stdout.text("_atom_fract_y")
+         stdout.text("_atom_fract_y_esd")
+         stdout.text("_atom_fract_z")
+         stdout.text("_atom_fract_z_esd")
+         stdout.text("_atom_adp_type")
+         stdout.text("_atom_occupancy")
+         stdout.text("_atom_disorder_group")
+      end
 
-      ! Get max tag width
-      w = maxval(len_trim(self(:).tag))
-
-      ! Put positions and errors (crystal exis system; unitless)
+      ! Put positions and errors
       k = 0
       do i = 1,.dim
 
          ! Tag
-         stdout.put(self(i).tag.trim,width=w,left=TRUE)
+         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
          stdout.flush
 
          ! Get values and errors in Angstrom
-         pos      = fac1 * self(i).position
-         err(1:3) = fac1 * esd(k+1:k+3)
+         pos      = fac * self(i).position
+         err(1:3) = fac * esd(k+1:k+3)
 
          ! Position & error in Angstrom
          stdout.put(pos(1)); stdout.flush
@@ -12320,7 +12323,7 @@ contains
          stdout.put(err(2)); stdout.flush
          stdout.put(pos(3)); stdout.flush
          stdout.put(err(3)); stdout.flush
-         stdout.put(trim("Uani"),width=5)
+         stdout.put(trim("Uani"),width=0)
          stdout.flush
          stdout.put(self(i).site_occupancy,width=0,left=TRUE)
          stdout.flush
@@ -12331,20 +12334,188 @@ contains
 
       end
 
-      ! CIF ADP header
+      if (NOT is_cartn) then
+
+      ! Reset precision for errors
+      stdout.save
+      stdout.set_real_width(stdout.saved.real_width+3)
+      stdout.set_real_precision(stdout.saved.real_precision+3)
+
       stdout.flush
-      stdout.text("# Cartesian ADPs in Angstrom^-2 units")
-      stdout.text("# Leave this for easier input into Tonto")
+      stdout.text("# ======================")
+      stdout.text("# Fractional coordinates")
+      stdout.text("# ======================")
+      stdout.flush
+      stdout.text("# . These are in standard presentation")
       stdout.flush
       stdout.text("loop_")
-      stdout.text("_atom_site_ADP2_label")
-      do i = 1,6
-      lab = self(1).ADP2_index_label(i,form="underscore-123-repeated")
-      stdout.text("_atom_site_ADP2_U_"//trim(lab))
-      stdout.text("_atom_site_ADP2_U_"//trim(lab)//"_esd")
+      stdout.text("_atom_label")
+      stdout.text("_atom_fract_x")
+      stdout.text("_atom_fract_y")
+      stdout.text("_atom_fract_z")
+      stdout.text("_atom_adp_type")
+      stdout.text("_atom_occupancy")
+      stdout.text("_atom_disorder_group")
+
+      ! Put positions and errors, cartesian, angstrom
+      k = 0
+      do i = 1,.dim
+
+         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+         stdout.flush
+
+         pos      = self(i).position
+         err(1:3) = esd(k+1:k+3)
+
+         ! Unitless
+         stdout.put(pos(1),err(1),left=FALSE); stdout.flush
+         stdout.put(pos(2),err(2),left=FALSE); stdout.flush
+         stdout.put(pos(3),err(3),left=FALSE); stdout.flush
+         stdout.put(trim("Uani"),width=0);     stdout.flush
+         stdout.put(self(i).site_occupancy,width=0,left=TRUE)
+         stdout.flush
+
+         k = k + self(i).no_of_pADPs
+
       end
 
-      ! Put ADP's in Angstrom^2 (cartesian axis system)
+      ! Revert
+      stdout.unsave
+
+      end
+
+   end
+
+   put_CIF_ADP2
+   ! Output the ADP2's in CIF format to "stdout" in an axis system.
+   ! This version does not produce errors.
+      self :: IN
+
+   ENSURE(self(1).ADP_axis_system.is_one_of("cartesian","crystal "]),"unknown axis system!")
+
+      i :: INT
+      lab :: STR
+      ADP :: VEC{REAL}(6)
+      fac :: REAL
+      is_cartn :: BIN
+
+      ! Axis system?
+      is_cartn = self(1).pos_axis_system=="cartesian"
+
+      ! Unit conversion for ADP's
+      fac = ONE
+      if (is_cartn) fac = ANGSTROM_PER_BOHR
+
+      ! CIF ADP header
+      if (is_cartn) then
+         stdout.flush
+         stdout.text("# ==========================")
+         stdout.text("# Cartesian axis system ADPs")
+         stdout.text("# ==========================")
+         stdout.flush
+         stdout.text("# . Units are in Angstrom^2")
+         stdout.text("# . Please keep these precise parameters")
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("_atom_site_ADP2_U_label")
+         do i = 1,6
+            lab = self(1).ADP2_index_label(i,form="underscore-123-repeated")
+            stdout.text("_atom_site_ADP2_U_"//trim(lab))
+         end
+      else
+         stdout.flush
+         stdout.text("# ========================")
+         stdout.text("# Crystal axis system ADPs")
+         stdout.text("# ========================")
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("_atom_site_aniso_label")
+         do i = 1,6
+            lab = self(1).ADP2_index_label(i,form="underscore-123-repeated")
+            stdout.text("_atom_site_aniso_U_"//trim(lab))
+         end
+      end
+
+      ! CIF data ...
+      do i = 1,.dim
+
+         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+         stdout.flush
+
+         ! Get values, change units if needed
+         self(i).put_ADP2_vector_to(ADP,fac)
+
+         ! Print ADP
+         stdout.put(ADP(1)); stdout.flush
+         stdout.put(ADP(2)); stdout.flush
+         stdout.put(ADP(3)); stdout.flush
+         stdout.put(ADP(4)); stdout.flush
+         stdout.put(ADP(5)); stdout.flush
+         stdout.put(ADP(6)); stdout.flush
+
+      end
+
+   end
+
+   put_CIF_ADP2(esd)
+   ! Output the ADP2's in CIF format to "stdout" in an axis system.
+   ! This version does not produce errors.
+      self :: IN
+      esd :: VEC{REAL}, IN
+
+   ENSURE(self(1).ADP_axis_system.is_one_of("cartesian","crystal "]),"unknown axis system!")
+   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+
+      i,k :: INT
+      lab :: STR
+      ADP,err :: VEC{REAL}(6)
+      fac2 :: REAL
+      is_cartn :: BIN
+
+      ! Axis system?
+      is_cartn = self(1).pos_axis_system=="cartesian"
+
+      ! Unit conversion for ADP's
+      fac2 = ONE
+      if (is_cartn) fac2 = ANGSTROM_PER_BOHR**2
+
+      ! CIF ADP header
+      if (is_cartn) then
+         stdout.flush
+         stdout.text("# ==========================")
+         stdout.text("# Cartesian axis system ADPs")
+         stdout.text("# ==========================")
+         stdout.flush
+         stdout.text("# . Units are in Angstrom^2")
+         stdout.text("# . Please keep these precise parameters")
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("_atom_site_ADP2_U_label")
+         do i = 1,6
+            lab = self(1).ADP2_index_label(i,form="underscore-123-repeated")
+            stdout.text("_atom_site_ADP2_U_"//trim(lab))
+            stdout.text("_atom_site_ADP2_U_"//trim(lab)//"_esd")
+         end
+      else
+         stdout.flush
+         stdout.text("# ========================")
+         stdout.text("# Crystal axis system ADPs")
+         stdout.text("# ========================")
+         stdout.flush
+         stdout.text("# . These are precise parameters and ESDs")
+         stdout.text("# . Keep these for a refinement restart")
+         stdout.text("# . Better yet, use the refined cartesian parameters")
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("_atom_site_aniso_label")
+         do i = 1,6
+            lab = self(1).ADP2_index_label(i,form="underscore-123-repeated")
+            stdout.text("_atom_site_aniso_U_"//trim(lab))
+            stdout.text("_atom_site_aniso_U_"//trim(lab)//"_esd")
+         end
+      end
+
+      ! CIF data ...
       k = 0
       do i = 1,.dim
 
@@ -12352,9 +12523,9 @@ contains
          stdout.flush
 
          ! Get values and errors in Angstrom^2
-         self(i).put_ADP2_vector_to(ADP(1:6))
-         ADP(1:6) = fac2 * ADP(1:6)
-         err(1:6) = fac2 * esd(k+4:k+9)
+         self(i).put_ADP2_vector_to(ADP)
+         ADP = fac2 * ADP
+         err = fac2 * esd(k+4:k+9)
 
          ! ADP & error in Angstrom^2
          stdout.put(ADP(1)); stdout.flush
@@ -12374,241 +12545,76 @@ contains
 
       end
 
-      ! Revert
-      stdout.unsave
+      if (NOT is_cartn) then
 
-   end
-
-   put_CIF_crystal(esd)
-   ! Output the atom and APD's in CIF format to "stdout" in crystal
-   ! axis system.
-      self :: IN
-      esd :: VEC{REAL}, optional, IN
-
-      if (present(esd)) then
-         .put_CIF_crystal_e(esd)
-      else
-         .put_CIF_crystal_n
-      end
-
-   end
-
-   put_CIF_crystal_n ::: private
-   ! Output the atom and APD's in CIF format to "stdout" in crystal
-   ! axis system. This version does not produce errors.
-      self :: IN
-
-   DIE_IF(any(self(:).pos_axis_system/="crystal"),"must be in crystal axis system!")
-   DIE_IF(any(self(:).ADP_axis_system/="crystal"),"must be in crystal axis system!")
-
-      i,w :: INT
-      lab :: STR
-      ADP :: MAT{REAL}(3,3)
-      fac1,fac2 :: REAL
-
-      ! Unit conversion for ADP's
-      fac1 =  ANGSTROM_PER_BOHR
-      fac2 = fac1*fac1
-
-      ! Reset accuracy
-      stdout.save
-      stdout.set_real_precision(5)
-      stdout.set_real_width(9)
-
-      ! CIF coordinate header
-      stdout.flush
-      stdout.text("# ================================")
-      stdout.text("# Fractional coordinates and ADP's")
-      stdout.text("# ================================")
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text("_atom_site_label")
-      stdout.text("_atom_site_fract_x")
-      stdout.text("_atom_site_fract_y")
-      stdout.text("_atom_site_fract_z")
-      stdout.text("_atom_site_adp_type")
-      stdout.text("_atom_site_occupancy")
-
-      ! Get max tag width
-      w = maxval(len_trim(self(:).tag))
-
-      ! Put coordinates, NO errors (crystal axis system; unitless)
-      do i = 1,.dim
-
-         stdout.put(self(i).tag.trim,width=w,left=TRUE)
+         ! Reset precision for errors
+         stdout.save
+         stdout.set_real_width(stdout.saved.real_width+3)
+         stdout.set_real_precision(stdout.saved.real_precision+3)
+        
+         ! CIF ADP header
          stdout.flush
-
-         stdout.put(self(i).position(1))
-         stdout.put(self(i).position(2))
-         stdout.put(self(i).position(3))
-         stdout.put(trim("Uani"),width=0)
-         stdout.put(self(i).site_occupancy,width=0,left=TRUE)
+         stdout.text("# ========================")
+         stdout.text("# Crystal axis system ADPs")
+         stdout.text("# ========================")
          stdout.flush
-
-      end
-
-      ! CIF ADP header
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text("_atom_site_aniso_label")
-      do i = 1,6
-      lab = self(1).ADP_label(i,form="underscore-123-repeated")
-      stdout.text("_atom_site_aniso_"//trim(lab))
-      end
-
-      ! Put ADP's in crystal axis system, angstrom^2, no errors
-      do i = 1,.dim
-
-         stdout.put(self(i).label.trim,width=len_trim(self(i).label))
+         stdout.text("# . These are in standard presentation")
          stdout.flush
-
-         ! Get values
-         ADP =  fac2 * self(i).ADP_tensor
-
-         ! Print ADP
-         stdout.put(ADP(1,1))
-         stdout.put(ADP(2,2))
-         stdout.put(ADP(3,3))
-         stdout.put(ADP(1,2))
-         stdout.put(ADP(1,3))
-         stdout.put(ADP(2,3))
-         stdout.flush
+         stdout.text("loop_")
+         stdout.text("_atom_site_aniso_label")
+         do i = 1,6
+         lab = self(1).ADP_label(i,form="underscore-123-repeated")
+         stdout.text("_atom_site_aniso_"//trim(lab))
+         end
+        
+         ! Put ADP's in Angstrom^2 (crystal axis system)
+         k = 0
+         do i = 1,.dim
+        
+            stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+            stdout.flush
+        
+            ! Get values and errors
+            self(i).put_ADP2_vector_to(ADP(1:6))
+            ADP(1:6) = fac2 * ADP(1:6)
+            err(1:6) = fac2 * esd(k+4:k+9)
+        
+            ! Put quantity q with error e in format q(e)
+            stdout.put(ADP(1),err(1),left=FALSE); stdout.flush
+            stdout.put(ADP(2),err(2),left=FALSE); stdout.flush
+            stdout.put(ADP(3),err(3),left=FALSE); stdout.flush
+            stdout.put(ADP(4),err(4),left=FALSE); stdout.flush
+            stdout.put(ADP(5),err(5),left=FALSE); stdout.flush
+            stdout.put(ADP(6),err(6),left=FALSE); stdout.flush
+        
+            k = k + self(i).no_of_pADPs
+        
+         end
+        
+         ! Revert
+         stdout.unsave
 
       end
 
    end
 
-   put_CIF_crystal_e(esd) ::: private
-   ! Output atom fractional coords and ADPs in CIF format to "stdout"
-   ! with errors "esd". The units, and format for the errors "esd" are
-   ! defined externally.
-      self :: IN
-      esd :: VEC{REAL}, IN
-
-   DIE_IF(any(self(:).pos_axis_system/="crystal"),"must be in crystal axis system!")
-   DIE_IF(any(self(:).ADP_axis_system/="crystal"),"must be in crystal axis system!")
-   ENSURE(esd.dim==.no_of_pADPS,"wrong sizem esd")
-
-      ADP :: VEC{REAL}(15)
-      err :: VEC{REAL}(15)
-      pos :: VEC{REAL}(3)
-      lab :: STR
-      i,k,w :: INT
-      fac1,fac2 :: REAL
-
-      ! Unit conversion for ADP's
-      fac1 = ANGSTROM_PER_BOHR
-      fac2 = fac1*fac1
-
-      ! Reset precision for errors
-      stdout.save
-      stdout.set_real_width(stdout.saved.real_width+3)
-      stdout.set_real_precision(stdout.saved.real_precision+3)
-
-      ! CIF coordinate header
-      stdout.flush
-      stdout.text("# ================================")
-      stdout.text("# Fractional coordinates and ADP's")
-      stdout.text("# ================================")
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text("_atom_site_label")
-      stdout.text("_atom_site_fract_x")
-      stdout.text("_atom_site_fract_y")
-      stdout.text("_atom_site_fract_z")
-      stdout.text("_atom_site_adp_type")
-      stdout.text("_atom_site_occupancy")
-
-      ! Get max tag width
-      w = maxval(len_trim(self(:).tag))
-
-      ! Put positions and errors, cartesian, angstrom
-      k = 0
-      do i = 1,.dim
-
-         stdout.put(self(i).tag.trim,width=w)
-         stdout.flush
-
-         pos      = self(i).position
-         err(1:3) = esd(k+1:k+3)
-
-         ! Unitless
-         stdout.put(pos(1),err(1),left=FALSE); stdout.flush
-         stdout.put(pos(2),err(2),left=FALSE); stdout.flush
-         stdout.put(pos(3),err(3),left=FALSE); stdout.flush
-         stdout.put(trim("Uani"),width=4);     stdout.flush
-         stdout.put(self(i).site_occupancy,width=0,left=TRUE)
-         stdout.flush
-
-         k = k + self(i).no_of_pADPs
-
-      end
-
-      ! CIF ADP header
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text("_atom_site_aniso_label")
-      do i = 1,6
-      lab = self(1).ADP_label(i,form="underscore-123-repeated")
-      stdout.text("_atom_site_aniso_"//trim(lab))
-      end
-
-      ! Put ADP's in Angstrom^2 (crystal axis system)
-      k = 0
-      do i = 1,.dim
-
-         stdout.put(self(i).tag.trim,width=w)
-         stdout.flush
-
-         ! Get values and errors
-         self(i).put_ADP2_vector_to(ADP(1:6))
-         ADP(1:6) = fac2 * ADP(1:6)
-         err(1:6) = fac2 * esd(k+4:k+9)
-
-         ! Put quantity q with error e in format q(e)
-         stdout.put(ADP(1),err(1),left=FALSE); stdout.flush
-         stdout.put(ADP(2),err(2),left=FALSE); stdout.flush
-         stdout.put(ADP(3),err(3),left=FALSE); stdout.flush
-         stdout.put(ADP(4),err(4),left=FALSE); stdout.flush
-         stdout.put(ADP(5),err(5),left=FALSE); stdout.flush
-         stdout.put(ADP(6),err(6),left=FALSE); stdout.flush
-
-         k = k + self(i).no_of_pADPs
-
-      end
-
-      ! Revert
-      stdout.unsave
-
-   end
-
-   put_CIF_AADP(cif,esd)
-   ! Output anharmonic ADPs in CIF format to "stdout".
-   ! Can handle any .ADP_axis_system.
-      self :: IN
-      cif :: CIF, IN
-      esd :: VEC{REAL}, optional, IN
-
-      if (present(esd)) then
-         .put_CIF_AADP_e(cif,esd)
-      else
-         .put_CIF_AADP_n(cif)
-      end
-
-   end
-
-   put_CIF_AADP_n(cif) ::: private
+   put_CIF_ADPn(cif)
    ! Output anharmonic ADPs in CIF format to "stdout".
    ! This version does not produce errors. See below.
    ! Can handle any .ADP_axis_system.
+      self :: IN
       cif :: CIF, IN
 
       i :: INT
-      lab,ADP_label :: STR
+      lab,ADPn_label :: STR
       ADP3v :: VEC{REAL}(10)
       ADP4v :: VEC{REAL}(15)
       fac1,fac2 :: REAL
       fac3,fac4 :: REAL
+      is_cartn :: BIN
+
+      ! Axis system?
+      is_cartn = self(1).ADPn_axis_system=="cartesian"
 
       ! Unit conversion for ADP's
       fac1 = ANGSTROM_PER_BOHR
@@ -12616,136 +12622,143 @@ contains
       fac3 = fac2*fac1
       fac4 = fac2*fac2
 
-
-      ! Reset accuracy
-      stdout.save
-      stdout.set_real_precision(5)
-      stdout.set_real_width(9)
-
-      ! Put ADP3's ==========
+      ! ==========
+      ! Put ADP3's
+      ! ==========
       if (.has_any_ADP3s_and_errors) then
 
-      if (self(1).ADP_axis_system=="cartesian") then
-         ADP_label = "_atom_site_ADP3_U_"
-      else
-         ADP_label = "_atom_site_anharm_GC_C_"
+         if (is_cartn) then
+            ADPn_label = "_atom_site_ADP3_U_"
+            stdout.flush
+            stdout.text("# ===========================")
+            stdout.text("# Third order cartesian ADP3s")
+            stdout.text("# ===========================")
+            stdout.flush
+            stdout.text("# . Units are in Angstrom^3")
+            stdout.text("# . Please keep these precise parameters")
+         else
+            ADPn_label = "_atom_site_anharm_GC_C_"
+            stdout.flush
+            stdout.text("# ======================================")
+            stdout.text("# Third order Gram-Charlier coefficients")
+            stdout.text("# ======================================")
+            stdout.flush
+            stdout.text("# . These parameters are dimensionless")
+         end
+         stdout.flush
+         stdout.text(trim(ADPn_label)//"scale_factor "//trim(cif.GC3_scale_factor.to_str))
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text(trim(ADPn_label)//"label")
+         do i = 1,10
+         lab = self(1).ADP3_index_label(i,form="underscore-123-repeated")
+         stdout.text(trim(ADPn_label)//trim(lab))
+         end
+       
+         do i = 1,.dim
+       
+            if (NOT self(i).has_ADP3s_and_errors) cycle
+       
+            stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+            stdout.flush
+       
+            ! Get values
+            self(i).put_ADP3_vector_to(ADP3v)
+            if (is_cartn) &
+               ADP3v = fac3 * ADP3v
+               ADP3v = cif.GC3_scale_factor*ADP3v
+       
+            ! Print ADP3
+            stdout.put(ADP3v( 1)); stdout.flush
+            stdout.put(ADP3v( 2)); stdout.flush
+            stdout.put(ADP3v( 3)); stdout.flush
+            stdout.put(ADP3v( 4)); stdout.flush
+            stdout.put(ADP3v( 5)); stdout.flush
+            stdout.put(ADP3v( 6)); stdout.flush
+            stdout.put(ADP3v( 7)); stdout.flush
+            stdout.put(ADP3v( 8)); stdout.flush
+            stdout.put(ADP3v( 9)); stdout.flush
+            stdout.put(ADP3v(10)); stdout.flush
+       
+         end
+
       end
 
-      stdout.flush
-      stdout.text("# NOTE: these numbers are usually multiplied by 1000")
-      stdout.text("#       Divide by this factor to get the true constant")
-      stdout.flush
-      stdout.text(trim(ADP_label)//"scale_factor "//trim(cif.GC3_scale_factor.to_str))
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text(trim(ADP_label)//"label")
-      do i = 1,10
-      lab = self(1).ADP3_index_label(i,form="underscore-123-repeated")
-      stdout.text(trim(ADP_label)//trim(lab))
-      end
-
-      do i = 1,.dim
-
-         if (NOT self(i).has_ADP3s_and_errors) cycle
-
-         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-         stdout.flush
-
-         ! Get values
-         self(i).put_ADP3_vector_to(ADP3v)
-         if (self(i).ADP_axis_system=="cartesian") &
-            ADP3v = fac3 * ADP3v
-            ADP3v = cif.GC3_scale_factor*ADP3v
-
-         ! Print ADP3
-         stdout.put(ADP3v( 1))
-         stdout.put(ADP3v( 2))
-         stdout.put(ADP3v( 3))
-         stdout.flush
-         stdout.put(ADP3v( 4))
-         stdout.put(ADP3v( 5))
-         stdout.put(ADP3v( 6))
-         stdout.put(ADP3v( 7))
-         stdout.flush
-         stdout.put(ADP3v( 8))
-         stdout.put(ADP3v( 9))
-         stdout.put(ADP3v(10))
-         stdout.flush
-
-      end
-
-      end
-
-      ! Put ADP4's ==========
+      ! ==========
+      ! Put ADP4's
+      ! ==========
       if (.has_any_ADP4s_and_errors) then
 
-      if (self(1).ADP_axis_system=="cartesian") then
-         ADP_label = "_atom_site_ADP4_U_"
-      else
-         ADP_label = "_atom_site_anharm_GC_D_"
+         if (is_cartn) then
+            ADPn_label = "_atom_site_ADP4_U_"
+            stdout.flush
+            stdout.text("# ============================")
+            stdout.text("# Fourth order cartesian ADP4s")
+            stdout.text("# ============================")
+            stdout.flush
+            stdout.text("# . Units are in Angstrom^4")
+            stdout.text("# . Please keep these precise parameters")
+         else
+            ADPn_label = "_atom_site_anharm_GC_D_"
+            stdout.flush
+            stdout.text("# =======================================")
+            stdout.text("# Fourth order Gram-Charlier coefficients")
+            stdout.text("# =======================================")
+            stdout.flush
+            stdout.text("# . These parameters are dimensionless")
+         end
+
+         stdout.flush
+         stdout.text(trim(ADPn_label)//"scale_factor "//trim(cif.GC4_scale_factor.to_str))
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text(trim(ADPn_label)//"label")
+         do i = 1,15
+         lab = self(1).ADP4_index_label(i,form="underscore-123-repeated")
+         stdout.text(trim(ADPn_label)//trim(lab))
+         end
+        
+         do i = 1,.dim
+        
+            if (NOT self(i).has_ADP4s_and_errors) cycle
+        
+            stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+            stdout.flush
+        
+            ! Get values
+            self(i).put_ADP4_vector_to(ADP4v)
+            if (is_cartn) &
+               ADP4v = fac4*ADP4v
+               ADP4v = cif.GC4_scale_factor*ADP4v
+        
+            ! Print ADP4
+            stdout.put(ADP4v( 1)); stdout.flush
+            stdout.put(ADP4v( 2)); stdout.flush
+            stdout.put(ADP4v( 3)); stdout.flush
+            stdout.put(ADP4v( 4)); stdout.flush
+            stdout.put(ADP4v( 5)); stdout.flush
+            stdout.put(ADP4v( 6)); stdout.flush
+            stdout.put(ADP4v( 7)); stdout.flush
+            stdout.put(ADP4v( 8)); stdout.flush
+            stdout.put(ADP4v( 9)); stdout.flush
+            stdout.put(ADP4v(10)); stdout.flush
+            stdout.put(ADP4v(11)); stdout.flush
+            stdout.put(ADP4v(12)); stdout.flush
+            stdout.put(ADP4v(13)); stdout.flush
+            stdout.put(ADP4v(14)); stdout.flush
+            stdout.put(ADP4v(15)); stdout.flush
+        
+         end
+
       end
-
-      stdout.flush
-      stdout.text("# NOTE: these numbers are multiplied by 10,000")
-      stdout.text("#       Divide by 10,000 to get the true constant")
-      stdout.flush
-      stdout.text(trim(ADP_label)//"scale_factor "//trim(cif.GC4_scale_factor.to_str))
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text(trim(ADP_label)//"label")
-      do i = 1,15
-      lab = self(1).ADP4_index_label(i,form="underscore-123-repeated")
-      stdout.text(trim(ADP_label)//trim(lab))
-      end
-
-      do i = 1,.dim
-
-         if (NOT self(i).has_ADP4s_and_errors) cycle
-
-         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-         stdout.flush
-
-         ! Get values
-         self(i).put_ADP4_vector_to(ADP4v)
-         if (self(i).ADP_axis_system=="cartesian") &
-            ADP4v = fac4*ADP4v
-            ADP4v = cif.GC4_scale_factor*ADP4v
-
-         ! Print ADP4
-         stdout.put(ADP4v( 1))
-         stdout.put(ADP4v( 2))
-         stdout.put(ADP4v( 3))
-         stdout.flush
-         stdout.put(ADP4v( 4))
-         stdout.put(ADP4v( 5))
-         stdout.put(ADP4v( 6))
-         stdout.flush
-         stdout.put(ADP4v( 7))
-         stdout.put(ADP4v( 8))
-         stdout.put(ADP4v( 9))
-         stdout.flush
-         stdout.put(ADP4v(10))
-         stdout.put(ADP4v(11))
-         stdout.put(ADP4v(12))
-         stdout.flush
-         stdout.put(ADP4v(13))
-         stdout.put(ADP4v(14))
-         stdout.put(ADP4v(15))
-         stdout.flush
-
-      end
-
-      end
-
-      ! Revert
-      stdout.unsave
 
    end
 
-   put_CIF_AADP_e(cif,esd) ::: private
+   put_CIF_ADPn(cif,esd)
    ! Output anharmonic ADPs in CIF format to "stdout".
    ! This version produces errors, stored in "esd".
    ! Can handle any .ADP_axis_system.
+      self :: IN
       cif :: CIF, IN
       esd :: VEC{REAL}, IN
 
@@ -12753,10 +12766,14 @@ contains
 
       ADP :: VEC{REAL}(15)
       err :: VEC{REAL}(15)
-      lab,ADP_label :: STR
+      lab,ADPn_label :: STR
       i,k :: INT
       fac1,fac2 :: REAL
       fac3,fac4 :: REAL
+      is_cartn :: BIN
+
+      ! Axis system?
+      is_cartn = self(1).ADPn_axis_system=="cartesian"
 
       ! Unit conversion for ADP's
       fac1 = ANGSTROM_PER_BOHR
@@ -12764,161 +12781,322 @@ contains
       fac3 = fac2*fac1
       fac4 = fac2*fac2
 
-      ! Reset precision for errors
-      stdout.save
-      stdout.set_real_width(stdout.saved.real_width+3)
-      stdout.set_real_precision(stdout.saved.real_precision+3)
-
-      ! Put ADP3's ==========
+      ! ==========
+      ! Put ADP3's 
+      ! ==========
       if (.has_any_ADP3s_and_errors) then
 
-      if (self(1).ADP_axis_system=="cartesian") then
-         ADP_label = "_atom_site_ADP3_U_"
-      else
-         ADP_label = "_atom_site_anharm_GC_C_"
-      end
-
-      stdout.flush
-      stdout.text("# NOTE 1: these numbers are multiplied by 1,000")
-      stdout.text("#         Divide by 1000 to get the true constant")
-      stdout.flush
-      stdout.text(trim(ADP_label)//"scale_factor "//trim(cif.GC3_scale_factor.to_str))
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text(trim(ADP_label)//"label")
-      do i = 1,10
-      lab = self(1).ADP3_index_label(i,form="underscore-123-repeated")
-      stdout.text(trim(ADP_label)//trim(lab))
-      stdout.text(trim(ADP_label)//trim(lab)//"_esd")
-      end
-
-      k = 0
-      do i = 1,.dim
-
-         if (NOT self(i).has_ADP3s_and_errors) cycle
-
-         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-         stdout.flush
-
-         ! Get values and errors (dimensionless)
-         self(i).put_ADP3_vector_to(ADP(1:10))
-         err(1:10) = esd(k+10:k+19)
-         if (self(i).ADP_axis_system=="cartesian") then
-            ADP(1:10) = ADP(1:10)*fac3
-            err(1:10) = err(1:10)*fac3
+         if (is_cartn) then
+            ADPn_label = "_atom_site_ADP3_U_"
+            stdout.flush
+            stdout.text("# ===========================")
+            stdout.text("# Third order cartesian ADP3s")
+            stdout.text("# ===========================")
+            stdout.flush
+            stdout.text("# . Units are in Angstrom^3")
+            stdout.text("# . Please keep these precise parameters")
+         else
+            ADPn_label = "_atom_site_anharm_GC_C_"
+            stdout.flush
+            stdout.text("# ======================================")
+            stdout.text("# Third order Gram-Charlier coefficients")
+            stdout.text("# ======================================")
+            stdout.flush
+            stdout.text("# . These are precise parameters and ESDs")
+            stdout.text("# . Keep these for a refinement restart")
+            stdout.text("# . Better yet, use the refined cartesian parameters")
          end
-         ADP(1:10) = ADP(1:10)*cif.GC3_scale_factor
-         err(1:10) = err(1:10)*cif.GC3_scale_factor
+        
+         stdout.flush
+         stdout.text(trim(ADPn_label)//"scale_factor "//trim(cif.GC3_scale_factor.to_str))
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text(trim(ADPn_label)//"label")
+         do i = 1,10
+         lab = self(1).ADP3_index_label(i,form="underscore-123-repeated")
+         stdout.text(trim(ADPn_label)//trim(lab))
+         stdout.text(trim(ADPn_label)//trim(lab)//"_esd")
+         end
+        
+         k = 0
+         do i = 1,.dim
+        
+            if (NOT self(i).has_ADP3s_and_errors) cycle
+        
+            stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+            stdout.flush
+        
+            ! Get values and errors (dimensionless)
+            self(i).put_ADP3_vector_to(ADP(1:10))
+            err(1:10) = esd(k+10:k+19)
+            if (is_cartn) then
+               ADP(1:10) = ADP(1:10)*fac3
+               err(1:10) = err(1:10)*fac3
+            end
+            ADP(1:10) = ADP(1:10)*cif.GC3_scale_factor
+            err(1:10) = err(1:10)*cif.GC3_scale_factor
+        
+            ! Put quantity q with full error.
+            stdout.put(ADP( 1)); stdout.flush
+            stdout.put(err( 1)); stdout.flush
+            stdout.put(ADP( 2)); stdout.flush
+            stdout.put(err( 2)); stdout.flush
+            stdout.put(ADP( 3)); stdout.flush
+            stdout.put(err( 3)); stdout.flush
+            stdout.put(ADP( 4)); stdout.flush
+            stdout.put(err( 4)); stdout.flush
+            stdout.put(ADP( 5)); stdout.flush
+            stdout.put(err( 5)); stdout.flush
+            stdout.put(ADP( 6)); stdout.flush
+            stdout.put(err( 6)); stdout.flush
+            stdout.put(ADP( 7)); stdout.flush
+            stdout.put(err( 7)); stdout.flush
+            stdout.put(ADP( 8)); stdout.flush
+            stdout.put(err( 8)); stdout.flush
+            stdout.put(ADP( 9)); stdout.flush
+            stdout.put(err( 9)); stdout.flush
+            stdout.put(ADP(10)); stdout.flush
+            stdout.put(err(10)); stdout.flush
+        
+            k = k + self(i).no_of_pADPs
+        
+         end
 
-         ! Put quantity q with full error.
-         stdout.put(ADP( 1)); stdout.flush
-         stdout.put(err( 1)); stdout.flush
-         stdout.put(ADP( 2)); stdout.flush
-         stdout.put(err( 2)); stdout.flush
-         stdout.put(ADP( 3)); stdout.flush
-         stdout.put(err( 3)); stdout.flush
-         stdout.put(ADP( 4)); stdout.flush
-         stdout.put(err( 4)); stdout.flush
-         stdout.put(ADP( 5)); stdout.flush
-         stdout.put(err( 5)); stdout.flush
-         stdout.put(ADP( 6)); stdout.flush
-         stdout.put(err( 6)); stdout.flush
-         stdout.put(ADP( 7)); stdout.flush
-         stdout.put(err( 7)); stdout.flush
-         stdout.put(ADP( 8)); stdout.flush
-         stdout.put(err( 8)); stdout.flush
-         stdout.put(ADP( 9)); stdout.flush
-         stdout.put(err( 9)); stdout.flush
-         stdout.put(ADP(10)); stdout.flush
-         stdout.put(err(10)); stdout.flush
+         if (NOT is_cartn) then
+   
+            ! Reset precision for errors
+            stdout.save
+            stdout.set_real_width(stdout.saved.real_width+3)
+            stdout.set_real_precision(stdout.saved.real_precision+3)
+           
+            ! CIF ADP header
+            stdout.flush
+            stdout.text("# ======================================")
+            stdout.text("# Third order Gram-Charlier coefficients")
+            stdout.text("# ======================================")
+            stdout.flush
+            stdout.text("# . These are in standard presentation")
+            stdout.flush
+            stdout.text("loop_")
+            stdout.text(trim(ADPn_label)//"label")
+            do i = 1,10
+            lab = self(1).ADP3_index_label(i,form="underscore-123-repeated")
+            stdout.text(trim(ADPn_label)//trim(lab))
+            end
+           
+            ! Put ADP's
+            k = 0
+            do i = 1,.dim
+        
+               if (NOT self(i).has_ADP3s_and_errors) cycle
+           
+               stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+               stdout.flush
+        
+               ! Get values and errors
+               self(i).put_ADP3_vector_to(ADP(1:10))
+               err(1:10) = esd(k+10:k+19)
 
-         k = k + self(i).no_of_pADPs
+               ! Units
+               if (is_cartn) then
+                  ADP(1:10) = ADP(1:10)*fac3
+                  err(1:10) = err(1:10)*fac3
+               end
+
+               ! Scale by scale_factor
+               ADP(1:10) = ADP(1:10)*cif.GC3_scale_factor
+               err(1:10) = err(1:10)*cif.GC3_scale_factor
+           
+               ! Put quantity q with error e in format q(e)
+               stdout.put(ADP( 1),err( 1),left=FALSE); stdout.flush
+               stdout.put(ADP( 2),err( 2),left=FALSE); stdout.flush
+               stdout.put(ADP( 3),err( 3),left=FALSE); stdout.flush
+               stdout.put(ADP( 4),err( 4),left=FALSE); stdout.flush
+               stdout.put(ADP( 5),err( 5),left=FALSE); stdout.flush
+               stdout.put(ADP( 6),err( 6),left=FALSE); stdout.flush
+               stdout.put(ADP( 7),err( 7),left=FALSE); stdout.flush
+               stdout.put(ADP( 8),err( 8),left=FALSE); stdout.flush
+               stdout.put(ADP( 9),err( 9),left=FALSE); stdout.flush
+               stdout.put(ADP(10),err(10),left=FALSE); stdout.flush
+           
+               k = k + self(i).no_of_pADPs
+           
+            end
+           
+            ! Revert
+            stdout.unsave
+   
+         end
 
       end
 
-      end
-
-      ! Put ADP4's ==========
+      ! ==========
+      ! Put ADP4's
+      ! ==========
       if (.has_any_ADP4s_and_errors) then
 
-      if (self(1).ADP_axis_system=="cartesian") then
-         ADP_label = "_atom_site_ADP4_U_"
-      else
-         ADP_label = "_atom_site_anharm_GC_D_"
-      end
-
-      stdout.flush
-      stdout.text("# NOTE: these numbers are multiplied by 10,000")
-      stdout.text("#       Divide by 10,000 to get the true constant")
-      stdout.flush
-      stdout.text(trim(ADP_label)//"scale_factor "//trim(cif.GC4_scale_factor.to_str))
-      stdout.flush
-      stdout.text("loop_")
-      stdout.text(trim(ADP_label)//"label")
-      do i = 1,15
-      lab = self(1).ADP4_index_label(i,form="underscore-123-repeated")
-      stdout.text(trim(ADP_label)//trim(lab))
-      stdout.text(trim(ADP_label)//trim(lab)//"_esd")
-      end
-
-      k = 0
-      do i = 1,.dim
-
-         if (NOT self(i).has_ADP4s_and_errors) cycle
-
-         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-         stdout.flush
-
-         ! Get values and errors (dimensionless)
-         self(i).put_ADP4_vector_to(ADP(1:15))
-         err(1:15) = esd(k+20:k+34)
-         if (self(i).ADP_axis_system=="cartesian") then
-            ADP(1:10) = ADP(1:10)*fac4
-            err(1:10) = err(1:10)*fac4
+         if (is_cartn) then
+            ADPn_label = "_atom_site_ADP4_U_"
+            stdout.flush
+            stdout.text("# ============================")
+            stdout.text("# Fourth order cartesian ADP4s")
+            stdout.text("# ============================")
+            stdout.flush
+            stdout.text("# . Units are in Angstrom^4")
+            stdout.text("# . Please keep these precise parameters")
+         else
+            ADPn_label = "_atom_site_anharm_GC_D_"
+            stdout.flush
+            stdout.text("# =======================================")
+            stdout.text("# Fourth order Gram-Charlier coefficients")
+            stdout.text("# =======================================")
+            stdout.flush
+            stdout.text("# . These are precise parameters and ESDs")
+            stdout.text("# . Keep these for a refinement restart")
+            stdout.text("# . Better yet, use the refined cartesian parameters")
          end
-         ADP(1:15) = ADP(1:15)*cif.GC4_scale_factor
-         err(1:15) = err(1:15)*cif.GC4_scale_factor
+        
+         stdout.flush
+         stdout.text(trim(ADPn_label)//"scale_factor "//trim(cif.GC4_scale_factor.to_str))
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text(trim(ADPn_label)//"label")
+         do i = 1,15
+         lab = self(1).ADP4_index_label(i,form="underscore-123-repeated")
+         stdout.text(trim(ADPn_label)//trim(lab))
+         stdout.text(trim(ADPn_label)//trim(lab)//"_esd")
+         end
+        
+         k = 0
+         do i = 1,.dim
+        
+            if (NOT self(i).has_ADP4s_and_errors) cycle
+        
+            stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+            stdout.flush
+        
+            ! Get values and errors (dimensionless)
+            self(i).put_ADP4_vector_to(ADP(1:15))
+            err(1:15) = esd(k+20:k+34)
 
-         ! Put quantity q with full error.
-         stdout.put(ADP( 1)); stdout.flush
-         stdout.put(err( 1)); stdout.flush
-         stdout.put(ADP( 2)); stdout.flush
-         stdout.put(err( 2)); stdout.flush
-         stdout.put(ADP( 3)); stdout.flush
-         stdout.put(err( 3)); stdout.flush
-         stdout.put(ADP( 4)); stdout.flush
-         stdout.put(err( 4)); stdout.flush
-         stdout.put(ADP( 5)); stdout.flush
-         stdout.put(err( 5)); stdout.flush
-         stdout.put(ADP( 6)); stdout.flush
-         stdout.put(err( 6)); stdout.flush
-         stdout.put(ADP( 7)); stdout.flush
-         stdout.put(err( 7)); stdout.flush
-         stdout.put(ADP( 8)); stdout.flush
-         stdout.put(err( 8)); stdout.flush
-         stdout.put(ADP( 9)); stdout.flush
-         stdout.put(err( 9)); stdout.flush
-         stdout.put(ADP(10)); stdout.flush
-         stdout.put(err(10)); stdout.flush
-         stdout.put(ADP(11)); stdout.flush
-         stdout.put(err(11)); stdout.flush
-         stdout.put(ADP(12)); stdout.flush
-         stdout.put(err(12)); stdout.flush
-         stdout.put(ADP(13)); stdout.flush
-         stdout.put(err(13)); stdout.flush
-         stdout.put(ADP(14)); stdout.flush
-         stdout.put(err(14)); stdout.flush
-         stdout.put(ADP(15)); stdout.flush
-         stdout.put(err(15)); stdout.flush
+            ! Units
+            if (is_cartn) then
+               ADP(1:15) = ADP(1:15)*fac4
+               err(1:15) = err(1:15)*fac4
+            end
 
-         k = k + self(i).no_of_pADPs
+            ! Scale by scale factor
+            ADP(1:15) = ADP(1:15)*cif.GC4_scale_factor
+            err(1:15) = err(1:15)*cif.GC4_scale_factor
+        
+            ! Put quantity q with full error.
+            stdout.put(ADP( 1)); stdout.flush
+            stdout.put(err( 1)); stdout.flush
+            stdout.put(ADP( 2)); stdout.flush
+            stdout.put(err( 2)); stdout.flush
+            stdout.put(ADP( 3)); stdout.flush
+            stdout.put(err( 3)); stdout.flush
+            stdout.put(ADP( 4)); stdout.flush
+            stdout.put(err( 4)); stdout.flush
+            stdout.put(ADP( 5)); stdout.flush
+            stdout.put(err( 5)); stdout.flush
+            stdout.put(ADP( 6)); stdout.flush
+            stdout.put(err( 6)); stdout.flush
+            stdout.put(ADP( 7)); stdout.flush
+            stdout.put(err( 7)); stdout.flush
+            stdout.put(ADP( 8)); stdout.flush
+            stdout.put(err( 8)); stdout.flush
+            stdout.put(ADP( 9)); stdout.flush
+            stdout.put(err( 9)); stdout.flush
+            stdout.put(ADP(10)); stdout.flush
+            stdout.put(err(10)); stdout.flush
+            stdout.put(ADP(11)); stdout.flush
+            stdout.put(err(11)); stdout.flush
+            stdout.put(ADP(12)); stdout.flush
+            stdout.put(err(12)); stdout.flush
+            stdout.put(ADP(13)); stdout.flush
+            stdout.put(err(13)); stdout.flush
+            stdout.put(ADP(14)); stdout.flush
+            stdout.put(err(14)); stdout.flush
+            stdout.put(ADP(15)); stdout.flush
+            stdout.put(err(15)); stdout.flush
+        
+            k = k + self(i).no_of_pADPs
+        
+         end
 
-      end
+         if (NOT is_cartn) then
+   
+            ! Reset precision for errors
+            stdout.save
+            stdout.set_real_width(stdout.saved.real_width+3)
+            stdout.set_real_precision(stdout.saved.real_precision+3)
+           
+            ! CIF ADP header
+            stdout.flush
+            stdout.text("# =======================================")
+            stdout.text("# Fourth order Gram-Charlier coefficients")
+            stdout.text("# =======================================")
+            stdout.flush
+            stdout.text("# . These are in standard presentation")
+            stdout.flush
+            stdout.text("loop_")
+            stdout.text(trim(ADPn_label)//"label")
+            do i = 1,15
+            lab = self(1).ADP4_index_label(i,form="underscore-123-repeated")
+            stdout.text(trim(ADPn_label)//trim(lab))
+            end
+           
+            ! Put ADP's
+            k = 0
+            do i = 1,.dim
+        
+               if (NOT self(i).has_ADP4s_and_errors) cycle
+           
+               stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+               stdout.flush
+        
+               ! Get values and errors
+               self(i).put_ADP4_vector_to(ADP(1:15))
+               err(1:15) = esd(k+20:k+34)
+
+               ! Units
+               if (is_cartn) then
+                  ADP(1:15) = ADP(1:15)*fac4
+                  err(1:15) = err(1:15)*fac4
+               end
+
+               ! Scale by scale_factor
+               ADP(1:15) = ADP(1:15)*cif.GC4_scale_factor
+               err(1:15) = err(1:15)*cif.GC4_scale_factor
+           
+               ! Put quantity q with error e in format q(e)
+               stdout.put(ADP( 1),err( 1),left=FALSE); stdout.flush
+               stdout.put(ADP( 2),err( 2),left=FALSE); stdout.flush
+               stdout.put(ADP( 3),err( 3),left=FALSE); stdout.flush
+               stdout.put(ADP( 4),err( 4),left=FALSE); stdout.flush
+               stdout.put(ADP( 5),err( 5),left=FALSE); stdout.flush
+               stdout.put(ADP( 6),err( 6),left=FALSE); stdout.flush
+               stdout.put(ADP( 7),err( 7),left=FALSE); stdout.flush
+               stdout.put(ADP( 8),err( 8),left=FALSE); stdout.flush
+               stdout.put(ADP( 9),err( 9),left=FALSE); stdout.flush
+               stdout.put(ADP(10),err(10),left=FALSE); stdout.flush
+               stdout.put(ADP(11),err(11),left=FALSE); stdout.flush
+               stdout.put(ADP(12),err(12),left=FALSE); stdout.flush
+               stdout.put(ADP(13),err(13),left=FALSE); stdout.flush
+               stdout.put(ADP(14),err(14),left=FALSE); stdout.flush
+               stdout.put(ADP(15),err(15),left=FALSE); stdout.flush
+           
+               k = k + self(i).no_of_pADPs
+           
+            end
+           
+            ! Revert
+            stdout.unsave
+   
+         end
 
       end ! =========
-
-      ! Revert
-      stdout.unsave
 
    end
 
