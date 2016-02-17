@@ -6,6 +6,7 @@ set(VERSION_MAJOR 3)
 set(VERSION_MINOR 6)
 set(VERSION_MINOR_MINOR 0)
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
+set(MPI 0 CACHE BOOLEAN "Build with MPI enabled")
 string(TIMESTAMP TONTO_BUILD_DATE "%Y-%m-%d %H:%M")
 
 # we need perl, git is desirable
@@ -27,6 +28,19 @@ project(tonto
 
 # If desirable we can use .F03/.f03 by appending to the below variable
 # message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
+
+if(MPI)
+    message(STATUS "Building with MPI enabled")
+    find_package(MPI)
+    if(MPI_Fortran_FOUND)
+        message(STATUS "MPI Flags: ${MPI_Fortran_FLAGS}")
+        message(STATUS "MPI compiler: ${MPI_Fortran_COMPILER}")
+        message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
+        message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
+        set(CMAKE_Fortran_COMPILER ${MPI_Fortran_COMPILER})
+        set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
+    endif()
+endif()
 
 # Set the fortran flags
 include(SetFortranFlags)
@@ -53,6 +67,8 @@ else()
         set(LAPACK_LIBRARIES lapack)
     endif()
 endif()
+
+
 
 # Set up source files
 set(FOO_DIR ${CMAKE_SOURCE_DIR}/foofiles)
