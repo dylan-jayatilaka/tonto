@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.1.0)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake)
+enable_testing()
 
 # Set tonto version information and build date
 set(VERSION_MAJOR 3)
@@ -402,3 +403,5 @@ add_executable(run_har ${CMAKE_BINARY_DIR}/run_har.F90)
 # Link against dependencies
 target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_har tonto ${LAPACK_LIBRARIES})
+
+add_subdirectory(${CMAKE_SOURCE_DIR}/tests)
