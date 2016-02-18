@@ -5,6 +5,7 @@ foreach(D ${TESTDIRS})
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
              COMMAND ${PERL_EXECUTABLE} ${TEST_SCRIPT}
              -testdir "${CMAKE_CURRENT_SOURCE_DIR}/${N}"
-             -program "${CMAKE_BINARY_DIR}/run_molecule"
+             -program "${TONTO_EXE}"
              -cmp "${CMP_SCRIPT}")
+     set_tests_properties(\"${N}\" PROPERTIES LABELS "short")
 endforeach()

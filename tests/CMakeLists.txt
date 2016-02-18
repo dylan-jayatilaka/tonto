@@ -1,5 +1,8 @@
 set(TEST_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/perform_tests.pl")
-set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/compare_output.pl")
+set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/compare_output.pl"
+    CACHE STRING "Script to compare tonto outputs")
+set(TONTO_EXE "${CMAKE_BINARY_DIR}/run_molecule"
+    CACHE STRING "Test executable")
 
 MACRO(SUBDIRLIST result curdir)
   FILE(GLOB children RELATIVE ${curdir} ${curdir}/*)
