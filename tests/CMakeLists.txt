@@ -1,6 +1,6 @@
 set(TEST_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/test.pl"
     CACHE FILEPATH "Script to perform tests in a directory")
-set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/compare_output.pl"
+set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/ndcmp"
     CACHE FILEPATH "Script to compare tonto outputs")
 set(TONTO_EXE "${CMAKE_BINARY_DIR}/run_molecule"
     CACHE FILEPATH "Test executable")
