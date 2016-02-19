@@ -5,7 +5,7 @@ foreach(D ${TESTDIRS})
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
              COMMAND ${PERL_EXECUTABLE} ${TEST_SCRIPT}
              -testdir "${CMAKE_CURRENT_SOURCE_DIR}/${N}"
-             -program "${TONTO_EXE}"
+             -program "${TEST_EXE}"
              -cmp "${CMP_SCRIPT}")
     set_tests_properties(\"${N}\" PROPERTIES LABELS "long")
 endforeach()

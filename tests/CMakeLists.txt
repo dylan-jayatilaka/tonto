@@ -1,9 +1,20 @@
-set(TEST_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/perform_tests.pl"
+set(TEST_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/test.pl"
     CACHE FILEPATH "Script to perform tests in a directory")
 set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/compare_output.pl"
     CACHE FILEPATH "Script to compare tonto outputs")
 set(TONTO_EXE "${CMAKE_BINARY_DIR}/run_molecule"
     CACHE FILEPATH "Test executable")
+
+if(MPI)
+    set(TEST_EXE "${CMAKE_BINARY_DIR}/tontompi")
+    configure_file(
+        ${CMAKE_SOURCE_DIR}/scripts/tontompi.in
+        ${TEST_EXE}
+    )
+else()
+    set(TEST_EXE "${TONTO_EXE}")
+endif()
+
 
 MACRO(SUBDIRLIST result curdir)
   FILE(GLOB children RELATIVE ${curdir} ${curdir}/*)
