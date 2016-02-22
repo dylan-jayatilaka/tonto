@@ -404,4 +404,4 @@ add_executable(run_har ${CMAKE_BINARY_DIR}/run_har.F90)
 target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_har tonto ${LAPACK_LIBRARIES})
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/tests)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)

@@ -1,6 +1,6 @@
 set(TEST_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/test.pl"
     CACHE FILEPATH "Script to perform tests in a directory")
-set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/compare_output.pl"
+set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/ndcmp"
     CACHE FILEPATH "Script to compare tonto outputs")
 set(TONTO_EXE "${CMAKE_BINARY_DIR}/run_molecule"
     CACHE FILEPATH "Test executable")
@@ -28,6 +28,6 @@ MACRO(SUBDIRLIST result curdir)
 ENDMACRO()
 
 
-add_subdirectory("short")
-add_subdirectory("long")
-add_subdirectory("cx")
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/short)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/long)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cx)
