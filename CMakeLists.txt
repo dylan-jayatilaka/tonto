@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.1.0)
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake)
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 enable_testing()
 
 # Set tonto version information and build date
@@ -58,13 +58,13 @@ include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 # Deal with lapack dependency
 if(WIN32)
     message(STATUS "Not going to look for lapack on WINDOWS, using packaged source")
-    add_library(lapack STATIC ${CMAKE_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
+    add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
     set(LAPACK_LIBRARIES lapack)
 else()
     find_package(LAPACK)
     if(NOT ${LAPACK_FOUND})
         message(STATUS "No lapack found, using packaged libs")
-        add_library(lapack STATIC ${CMAKE_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
+        add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
         set(LAPACK_LIBRARIES lapack)
     endif()
 endif()
@@ -72,7 +72,7 @@ endif()
 
 
 # Set up source files
-set(FOO_DIR ${CMAKE_SOURCE_DIR}/foofiles)
+set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
 set(FOO_TYPES_FILE ${FOO_DIR}/types.foo)
 set(FORTRAN_TYPES_FILE types.F90)
 set(FOO_SRC
@@ -362,13 +362,13 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_vec_int.F90
 )
 # Set up runfiles
-set(RUNFILE_DIR ${CMAKE_SOURCE_DIR}/runfiles)
+set(RUNFILE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runfiles)
 set(RUN_SRC ${RUNFILE_DIR}/run_molecule.foo ${RUNFILE_DIR}/run_har.foo)
 
 
 # Processing foo into fortran source
 message(STATUS "Rules to process .foo -> .F90 using ${PERL_EXECUTABLE}")
-set(FOO_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/foo.pl")
+set(FOO_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/foo.pl")
 set(FOO_ARGS "")
 set(SRC ${FOO_SRC} ${RUN_SRC})
 foreach(foopath ${SRC})
