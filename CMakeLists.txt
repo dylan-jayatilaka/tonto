@@ -397,8 +397,8 @@ add_library(tonto
     ${MACROS}
 )
 
-add_executable(run_molecule ${CMAKE_BINARY_DIR}/run_molecule.F90)
-add_executable(run_har ${CMAKE_BINARY_DIR}/run_har.F90)
+add_executable(run_molecule ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
+add_executable(run_har ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
 
 # Link against dependencies
 target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
