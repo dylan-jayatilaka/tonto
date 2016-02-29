@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #*******************************************************************************
 #
-# This script runs all the tests in a test directory. The tests are contained
+# This script runs the tests in a test directory. The tests are contained
 # in their own directory, and any bad tests are copied back there for later
 # comparison. -- dylan
 #
@@ -18,11 +18,12 @@
 use strict;
 use English;
 use File::Copy ('copy');
+use File::Path qw(make_path remove_tree);
+use File::Basename qw(basename);
 
 my $testdir = "";
-my $testjob = "";
 my $program = "";
-my $cmp     = "perl -w ./scripts/compare_output.pl";
+my $cmp     = "";
 
 my $passed = 1;
 
@@ -38,10 +39,15 @@ my $output = "";
 my @output = ( "stdout" );
 my $delete = "";
 my @delete = ( );
+my $testjob = basename($testdir);
+print("Job = $testjob\n");
+my $tmp = "Testing/Temporary/output/$testjob";
+make_path($tmp);
+print("TMP = $tmp\n");
 
 # Read extra input and output files from IO file.
 # Read files to delete at end of job
-if (open(TEST,"< $testdir/$testjob/IO")) {
+if (open(TEST,"< $testdir/IO")) {
   while (<TEST>) {
     if (m/input\s*:\s+(\S+)/)  { push (@input, $1); }
     if (m/output\s*:\s+(\S+)/) { push (@output,$1); }
@@ -51,8 +57,11 @@ if (open(TEST,"< $testdir/$testjob/IO")) {
 
 # Copy the input files to the current directory.
 foreach $input (@input) {
- copy("$testdir/$testjob/$input",$input);
+ copy("$testdir/$input","$tmp/$input");
 }
+
+my $changed = chdir($tmp);
+print("Changed directory: $changed");
 
 # Run the program on the test job
 my $status = "";
@@ -74,12 +83,12 @@ if (system($program) != 0) {
         # cmp returns 0 if they are equal
         # So $ok is 1 (true) if they are equal
         my ($ok,$ref);
-        $ref = &escape("$testdir/$testjob/$output");
+        $ref = &escape("$testdir/$output");
         $ok = -e $output && ! system("$cmp $ref $output");
 
         # Copy failed output files back
         if (! $ok) {
-            copy($output,"$testdir/$testjob/$output".".bad");
+            copy($output,"$testdir/$output".".bad");
         }
 
         # Has it passed?
@@ -105,7 +114,6 @@ sub analyse_arguments {
      $_ = $arg;
      if (/^-/) {
        /^-testdir\b/          && do { $testdir      = shift; next; };
-       /^-testjob\b/          && do { $testjob      = shift; next; };
        /^-program\b/          && do { $program      = shift; next; };
        /^-cmp\b/              && do { $cmp          = shift; next; };
        warn "\n Error : unexpected argument $arg\n";
@@ -135,13 +143,11 @@ sub analyse_arguments {
      print << 'EOF';
 
  Usage:
-    perl -w perform_tests.pl -testdir dir -program prog -cmp cmp
+    perl -w test.pl -testdir dir -program prog -cmp cmp
 
  Where:
 
     -testdir dir   means run test job in directory "dir".
-
-    -testjob job   means run test job with stdin input file in "dir/job".
 
     -program prog  "prog" is the program to test e.g. INTEL-ifort-on-LINUX/run_molecule.exe
                    It should read in the real file "stdin", and output to file "stdout".
