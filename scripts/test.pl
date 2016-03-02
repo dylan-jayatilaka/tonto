@@ -41,10 +41,8 @@ my @output = ( "stdout" );
 my $delete = "";
 my @delete = ( );
 my $testjob = basename($testdir);
-print("Job = $testjob\n");
 my $tmp = "Testing/Temporary/output/$testjob";
 make_path($tmp);
-print("TMP = $tmp\n");
 
 # Read extra input and output files from IO file.
 # Read files to delete at end of job
@@ -62,7 +60,6 @@ foreach $input (@input) {
 }
 
 my $changed = chdir($tmp);
-print("Changed directory: $changed");
 
 # Run the program on the test job
 my $status = "";
@@ -97,7 +94,6 @@ if (system("$program -b $basis") != 0) {
 
     }
 }
-print "$status\n";
 my $exit_code = ($passed == 1) ? 0 : 1;
 exit($exit_code);
 
