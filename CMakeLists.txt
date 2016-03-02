@@ -368,12 +368,9 @@ set(RUNFILE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runfiles)
 set(RUN_SRC 
     ${RUNFILE_DIR}/run_molecule.foo
     ${RUNFILE_DIR}/run_har.foo
-    ${PROJECT_BINARY_DIR}/run_test.foo)
-
-configure_file(
-    ${PROJECT_SOURCE_DIR}/tests/run_test.in
-    ${PROJECT_BINARY_DIR}/run_test.foo
+    ${RUNFILE_DIR}/run_test.foo
 )
+
 
 # Processing foo into fortran source
 message(STATUS "Rules to process .foo -> .F90 using ${PERL_EXECUTABLE}")

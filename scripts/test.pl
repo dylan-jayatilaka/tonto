@@ -24,6 +24,7 @@ use File::Basename qw(basename);
 my $testdir = "";
 my $program = "";
 my $cmp     = "";
+my $basis = "";
 
 my $passed = 1;
 
@@ -66,7 +67,7 @@ print("Changed directory: $changed");
 # Run the program on the test job
 my $status = "";
 
-if (system($program) != 0) {
+if (system("$program -b $basis") != 0) {
 
     # CRASH ....
     $status = "PROGRAM CRASHED";
@@ -116,6 +117,7 @@ sub analyse_arguments {
        /^-testdir\b/          && do { $testdir      = shift; next; };
        /^-program\b/          && do { $program      = shift; next; };
        /^-cmp\b/              && do { $cmp          = shift; next; };
+       /^-basis\b/            && do { $basis          = shift; next; };
        warn "\n Error : unexpected argument $arg\n";
        $argerr=1;
      }
@@ -139,6 +141,12 @@ sub analyse_arguments {
      $argerr = 1;
    }
 
+   if ($basis eq "") {
+     warn " Error : -basis option is empty string";
+     $argerr = 1;
+   }
+
+
    if ($argerr) {
      print << 'EOF';
 
@@ -154,6 +162,7 @@ sub analyse_arguments {
 
     -cmp     cmp   "cmp" is the comparison program for stdout files e.g.
                    "perl -w scripts/compare_stdout.pl"
+    -basis   dir   location of basis_sets directory
 
 EOF
    exit (1);
