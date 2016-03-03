@@ -100,41 +100,46 @@ To make an MPI parallel version type :
    make -j
 ```
 
-To make a DEBUG version type :
+To change build type (e.g. make a DEBUG version) type:
 
 ```
-   cmake .. -DDEBUG=1
+   cmake .. -DCMAKE_BUILD_TYPE=Debug
    make -j
 ```
 
-By default the `tonto` program produced on Linux is the executable program
+By default the `tonto` program is built with Release flags.
+The executable program is located at:
 
 ```
-    build/run_molecule
+    build/tonto(.exe)
 ```
 
-On other platforms it will be different, but of the form
+The standalone Hirshfeld atom refinement terminal
+(HARt) program will be located at:
 
 ```
-    build/run_molecule(.exe)
+   build/hart(.exe)
 ```
 
-If you want to build the standalone Hirshfeld atom refinement terminal
-(HARt) program then type:
-
-```
-   make run_har.exe
-```
-
-Copy the program `run_har.exe` anywhere you like and call it `HARt` !
-For help type `HARt -help`.
+Copy the program `build/hart` anywhere you like 
+For help type `hart -help`.
 
 ## 3. Go!
 
-To run the tests, type:
+By default, the tests use the `numdiff` program
+to check the difference between outputs.
 
+To run all tests, in the build directory type:
 ```
-   make tests
+   make tests # this will run all tests
+```
+Or you may use `ctest` directly and run only tests matching
+certain labels or regular expressions. You may also
+specify the number of processors to use when running tests.
+```
+   ctest -L short # this will run all tests with the label short.
+   ctest -R h2o # this will run all tests with h2o in their name.
+   ctest -L long -j4 # this will run all long tests with 4 jobs at a time.
 ```
 
 You should get mostly the `passed` message --- but there may be small
@@ -181,7 +186,7 @@ Look in the directories in the `tests/`` folder for examples.
 1. Make an input file called `stdin` ... or copy one you like from the
    `tests/` folder
 
-2. Type  `./<your-compiler-on-your-OS>/<build>/run_molecule.exe`
+2. run the `tonto` executable from the build directory.
 
 Congratulations --- you just ran Tonto!
 
