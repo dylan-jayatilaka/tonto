@@ -5,10 +5,12 @@ enable_testing()
 # Set tonto version information and build date
 set(VERSION_MAJOR 3)
 set(VERSION_MINOR 6)
-set(VERSION_MINOR_MINOR 0)
+set(VERSION_MINOR_MINOR 1)
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
+set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 set(MPI 0 CACHE BOOLEAN "Build with MPI enabled")
 string(TIMESTAMP TONTO_BUILD_DATE "%Y-%m-%d %H:%M")
+set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets)
 
 # we need perl, git is desirable
 find_package(Perl REQUIRED)
@@ -411,5 +413,17 @@ add_executable(run_test ${CMAKE_CURRENT_BINARY_DIR}/run_test.F90)
 target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_har tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_test tonto ${LAPACK_LIBRARIES})
+set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
+set_target_properties(run_har PROPERTIES OUTPUT_NAME hart)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
+
+install(TARGETS run_molecule DESTINATION bin)
+install(TARGETS run_har DESTINATION bin)
+
+install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
+set(CPACK_PACKAGE_NAME ${PROJECT_NAME})
+set(CPACK_PACKAGE_VERSION ${TONTO_VERSION})
+set(CPACK_STRIP_FILES ON)
+
+include(CPack)
