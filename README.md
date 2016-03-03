@@ -1,5 +1,7 @@
 # Welcome to Tonto!
 
+Tonto now uses `cmake` on this branch.
+
 ## 1. Get ready ...
 
 * If you don’t want to develop just download the zip file using the button on
@@ -17,14 +19,10 @@ While waiting you can install:
 * `perl`
 * `gfortran`
 * `make`
-
-If you intend making a parallel version install:
-
-* `mpich2`
-
-If you intend making plots we recommend to install:
-
-* `gnuplot`
+* `blas` (recommended)
+* `lapack` (recommended)
+* `mpich2` (for parallel)
+* `gnuplot` (recommended)
 
 Your text editor is a personal choice. If you use `vim`
 you might want to install
@@ -61,22 +59,26 @@ And perhaps (see above) also:
 
 ### On Mac
 
-The compilation procedure is the same as above, but you have to first
-install the [brew](http://brew.sh/) package manager.
-environment.
-
-Then install:
-
-* `perl`
-* `gcc`
-* `make`
+The compilation procedure is the same as for Linux, but you have to first
+install the [brew](http://brew.sh/) package manager, and then use that
+to install the GNU Linux software.
 
 ## 2. Get set ...
 
-To compile Tonto, type :
+To compile Tonto, first make a build directory and go into it :
 
 ```
     mkdir build && cd build
+```
+
+Of course you can change `build` to be e.g. `gfortran` after the
+name of the compiler you use. Executables from different compilers
+or with different compilation options can be produced in build 
+directories with different names. That's convenient.
+
+Now you can build the programs :
+
+```
     cmake ..
     make -j
 ```
@@ -91,7 +93,21 @@ If you want a specific compiler, type:
 where you should replace <insert-your-compiler-here> with the
 command for your fortran compiler.
 
-By default the `tonto` program on Linux is the executable program
+To make an MPI parallel version type :
+
+```
+   cmake .. -DMPI=1
+   make -j
+```
+
+To make a DEBUG version type :
+
+```
+   cmake .. -DDEBUG=1
+   make -j
+```
+
+By default the `tonto` program produced on Linux is the executable program
 
 ```
     build/run_molecule
@@ -102,10 +118,6 @@ On other platforms it will be different, but of the form
 ```
     build/run_molecule(.exe)
 ```
-
-Here `build` is usually `fast` but may be `debug` depending on if
-you change the compilation options in the platform-specific
-file -- see below.
 
 If you want to build the standalone Hirshfeld atom refinement terminal
 (HARt) program then type:
@@ -298,112 +310,5 @@ and look at the omni completion documentation.
 
 Can somebody help me do the same for the emacs editor?
 
-# Custom executables
+Or any other trendy one that people are using these days?
 
-Still here? :-)
-
-It is possible to compile specific versions of Tonto executables ---
-fast versions, debug version or custom compiles.
-
-## Compactification
-
-Executables in Tonto tend to be big. If your executable is too big,
-you can remove all "dead code" from your application by typing:
-
-```
-   make compactify
-   make
-```
-
-Consider also using the -DNO_GENERIC_NAMES compile option. See below.
-
-## Custom compile options
-
-By default, a fast production version of Tonto is compiled.
-
-You can also compile “debug” and “custom” versions of of Tonto using
-the compile switches described in the platform-specific compiler
-options file. This file is located in the `platforms/` directory, and it
-has a name like `<your-compiler-on-your-OS>` e.g. on Linux
-
-```
-   platforms/GNU-gfortran-on-LINUX.
-```
-
-
-You change the `$(FOPTNS)` in this file to get different results e.g.
-changing it to
-
-*  `$(FFAST)`
-   ... means the executables will be placed in the `fast/` subdirectory of
-   the platform-specific directory.
-
-*  `$(FDEBUG)`
-   ... means the executables will be placed in the `debug/` subdirectory of
-   the platform-specific directory. Useful for getting error messages
-   which I may ask you for if there is trouble.
-
-*  `$(FPROF)`
-   ... means the executables will be placed in the `custom/` subdirectory of
-   the platform-specific directory. You can also change the `$(FPROF)`
-   to include your desired fortran compiler options. This is useful for
-   profiling slow parts of code, and for developing.
-
-## Parallelism and more custom options
-
-There are also other kinds of compile options which control the type
-of Fortran code which is generated. To actiavte these options you
-just add them to the $(DEFS) variable in the compiler options file.
-
-A summary of switches which control the type of Fortran generated is
-given below. You can use multiple options if it is sensible to do so.
-
-Switch                      | Meaning
-----------------------------|-----------------------------------------
--DMPI                       | Parallel Tonto, using MPI. If using this
-                            | option, you must specify your specific
-                            | MPI libraries in the platforms fil by
-                            | setting the $(LIBS) variable e.g. -lmpi
-                            |
--DFLUSH                     | Flush output to stdout. The compiler must
-                            | have the flush() command.
-                            |
--DNO_TONTO_SYSTEM_CALLS     | No system checks, no parallel calls
-                            |
--DNO_TONTO_SYSTEM_CHECKS    | No system checks, retain parallel calls.
-                            | You must still define MPI
-                            |
--DNO_GENERIC_NAMES          | Prepend module name to routines. This may
-                            | reduce compile time by reducing the
-                            | namespace, but will have nonstandard
-                            | routine names > 31 characters long.
-                            |
--DUSE_ERROR_MANAGEMENT      | Use DIE and WARN macros i.e. the minimal
-                            | amount of error checking (default)
-                            |
--DUSE_PRECONDITIONS         | Use routine preconditions.This is more
-                            | robust error checking, but there will be
-                            | a perfomance hit. This option implies the
-                            | use of USE_ERROR_MANAGEMENT.
-                            |
--DUSE_CALL_STACK_MANAGEMENT | Tracks the call tree.  Good for tracking
-                            | errors and warnings. Big performance hit.
-                            | If possible, try to use the compilers own
-                            | instruments. This option imples the use
-                            | of USE_PRECONDITIONS
-                            |
--DTRACK_MEMORY_LOCATIONS    | Tracks all memory allocation and
-                            | deallocation. Useful for eliminating
-                            | memory leaks.  Compiler must have loc()
-                            | pointer function. Consider using the
-                            | compilers own options e.g. the g95
-                            | compiler. This option implies the use of
-                            | USE_CALL_STACK_MANAGEMENT
-                            |
--DUSE_TIME_PROFILING        | Time profile routines. Not very accurate.
-                            | Consider using the compiler profiling
-                            | tools. 
-                            |
--DNO_CASE_OPTIONS           | Removes informative error on string-based
-                            | case statements i.e. removes listing of
-                            | allowed keywords in Tonto.
