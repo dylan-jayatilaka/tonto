@@ -179,7 +179,7 @@ contains
       .occupied_ANO_cutoff    = ROBY_OCCUPIED_ANO_CUTOFF
       .output_theta_info      = ROBY_OUTPUT_THETA_INFO
       .analyze_all_atom_pairs = ROBY_ANALYZE_ALL_ATOM_PAIRS
-      .bond_scale_factor      = ROBY_BOND_SCALE_FACTOR
+      .bond_range_factor      = ROBY_BOND_RANGE_FACTOR
 
    end
 
@@ -306,15 +306,23 @@ contains
 
    read_analyze_all_atom_pairs
    ! Read in a switch which tells whether to bond-analyze all atoms
-   ! pairs or not
+   ! pairs or not - actually this just changes the bond_range_factor
+   ! by an order of magnitude
+      self :: INOUT
+
       stdin.read(.analyze_all_atom_pairs)
+      .bond_range_factor = FIVE*BOHR_PER_ANGSTROM
+
    end
 
    read_bond_scale_factor
    ! Read in a bond scale factor used to multiply the sum of the
    ! Bragg-Slater radii for two atoms, to determine a distance cutoff
    ! within which atoms are regarded to be bonded
-      stdin.read(.bond_scale_factor)
+      self :: INOUT
+
+      stdin.read(.bond_range_factor)
+
    end
 
 !  ===================
@@ -336,7 +344,7 @@ contains
    ! (a,b). For calculations which are homoleptic, this always returns FALSE, but
    ! for calculations which are defined by an atom_list, this returns TRUE only if
    ! .analyze_all_atom_pairs is set to FALSE and the atoms are regarded as bonded
-   ! according to the .bond_scale_factor distance cutoff.
+   ! according to the .bond_range_factor distance cutoff.
       self :: IN
       a,b :: INT, IN
       res :: BIN
@@ -344,7 +352,7 @@ contains
       if      (.is_homoleptic) then;          res = FALSE
       else if (.analyze_all_atom_pairs) then; res = FALSE
       else
-         res = NOT .atom.bonded(a,b,.bond_scale_factor)
+         res = NOT .atom.bonded(a,b,.bond_range_factor)
       end
 
    end
@@ -432,17 +440,23 @@ contains
 
    end
 
-   unique_tags(group) result (res) ::: leaky
-   ! Return a list of unique tags for .atom(group)
+   unique_tags result (res) ::: leaky
+   ! Return a list of unique tags for the atom groups
       self :: IN
-      group :: VEC{INT}, IN
       res :: VEC{STR}*
 
+      symbols :: VEC{STR}*
+      g :: INT
+
       if (.is_homoleptic) then
-         res.create(group.dim)
-         res = group.to_str
+         res.create(.atom_group.dim)
+         do g = 1,.atom_group.dim
+            symbols => .atom(.atom_group(g).element).unique_tags
+            res(g)  = VEC{STR}:to_concatenated_str(symbols)
+            symbols.destroy
+         end
       else
-         res => .atom(group).unique_tags
+         res => .atom(.atom_list).unique_tags
       end
 
    end
@@ -726,6 +740,7 @@ contains
    ! Evaluate the SUMMED Roby shared populations for groups of 3 atoms.
    ! On return, .summed_n3(a) = \sum_{bc} s_{abc}, where s_{abc} is the triple
    ! shared population for atoms a, b, and c.
+
       shared_population :: REAL
       n_group,a,b,c :: INT
 
@@ -734,7 +749,7 @@ contains
 
       .summed_n3 = ZERO
 
-      do a = 1,n_group
+      do a = 1  ,n_group
       do b = a+1,n_group
       do c = b+1,n_group
          shared_population = .shared_population([a,b,c])
@@ -1758,23 +1773,25 @@ contains
       stdout.show("Homoleptic calculation? =",.is_homoleptic)
       stdout.show("Occupied ANO cutoff     =",.occupied_ANO_cutoff)
       stdout.show("Output theta info?      =",.output_theta_info)
+      stdout.flush
 
       if (.is_homoleptic) then
+      symbol => .unique_tags
       do i = 1,.n_group
-      symbol => .unique_tags(.atom_group(i).element)
-      stdout.show("Atom group "//i.to_str.trim//"            =",symbol)
-      symbol.destroy
+      stdout.show("Atom group "//i.to_str.trim//"            =",symbol(i))
       end
       end
 
       if (.atom_list.created) then
-      symbol => .unique_tags(.atom_list)
+      symbol => .atom(.atom_list).unique_tags
       stdout.show("Atom list               =",symbol)
       stdout.show("No. of atoms            =",symbol.dim)
       symbol.destroy
       stdout.show("Analyze all atom pairs? =",.analyze_all_atom_pairs)
-      stdout.show("Bond scale factor       =",.bond_scale_factor)
+      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
       end
+
+      symbol.destroy
 
       stdout.flush
       stdout.text("Angle cutoff's in degrees")
@@ -1795,6 +1812,8 @@ contains
 
       table :: VEC{TABLE_COLUMN}*
       symbols :: VEC{STR}*
+      labels :: VEC{INT}*
+      f :: INT
 
 
       stdout.flush
@@ -1809,7 +1828,16 @@ contains
       ! Set the table headings
       table(1).set_heading("Atom")
       table(1).set_width_from(.atom.chemical_symbols)
-      symbols => .unique_tags(.atom_list)
+      if (.is_homoleptic) then
+         symbols.create(.n_group)
+         labels.create(.n_group)
+         f = 1
+         labels => f.sequence_up_to(.n_group)
+         symbols = labels.to_str
+         labels.destroy
+      else
+         symbols => .unique_tags
+      end
       table(1).set_values(symbols)
 
       table(2).set_heading(" No. of")
@@ -1817,7 +1845,7 @@ contains
       table(2).set_values(.n1)
 
       ! Put table
-      table.put
+      table.put(label_rows=FALSE)
 
       ! Clean
       symbols.destroy
@@ -1829,7 +1857,7 @@ contains
    ! Put to stdout the Roby bond indices, including the shared populations
       self :: IN
 
-      if (.is_homoleptic OR .analyze_all_atom_pairs) then
+      if (.is_homoleptic) then
          .put_bond_indices_group
       else
          .put_bond_indices_atoms
@@ -1838,76 +1866,140 @@ contains
    end
 
    put_bond_indices_group
-   ! Put to stdout the Roby bond indices, including the shared populations
+   ! Output the bond indices table for connected atoms.
       self :: IN
 
-   ENSURE(.n1.created,"no populations exist")
-   ENSURE(.n2.created,"no pair populations exist")
-   ENSURE(.bond_index.created,"no bond indices exist")
-   ENSURE(.percent_covalency.created,"no covalencies")
-   ENSURE(.atom_group.created,"no atom group data")
+   ENSURE(.is_homoleptic,"job is not homoleptic")
+   ENSURE(.n_group>1,"must be at leat two groups")
 
-      a,b,n_group :: INT
-      homoleptic :: BIN
-      symb_a,symb_b :: STR
-      shared :: REAL
+      table :: VEC{TABLE_COLUMN}*
       symbol :: VEC{STR}*
+      g_A,g_B :: VEC{INT}*
+      n_A,n_B,nAB,sAB,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      n_group, n_pair,i,a,b :: INT
 
       n_group = .n_group
-      homoleptic = .is_homoleptic
-      if (NOT homoleptic) symbol => .unique_tags(.atom_list)
-      
-      stdout.flush
-      stdout.text("Roby bond indices and populations:")
-      stdout.flush
-      stdout.dash(int_fields=2,real_fields=8)
-      stdout.tab(int_fields=2,real_fields=4)
-      stdout.put("Covalent")
-      stdout.put("Ionic")
-      stdout.put("Total")
-      stdout.flush
-      stdout.put("Atom_a",int_width=TRUE)
-      stdout.put("Atom_b",int_width=TRUE)
-      stdout.put("n_a")
-      stdout.put("n_b")
-      stdout.put("n_ab")
-      stdout.put("s_ab")
-      stdout.put("Index")
-      stdout.put("Index")
-      stdout.put("Bond Index")
-      stdout.put("% Covalency")
-      stdout.flush
-      stdout.dash(int_fields=2,real_fields=8)
-      do a = 1,n_group
-      do b = 1,a-1
-         if (homoleptic) then; symb_a = a.to_str
-         else                ; symb_a = symbol(a)
-         end
-         if (homoleptic) then; symb_b = b.to_str
-         else                ; symb_b = symbol(b)
-         end
-         stdout.put(symb_a,int_width=TRUE)
-         stdout.put(symb_b,int_width=TRUE)
-         stdout.put(.n1(a))
-         stdout.put(.n1(b))
-         stdout.put(.n2(a,b))
-         shared = .n1(a) + .n1(b) - .n2(a,b)
-         stdout.put(shared)
-         stdout.put(.cov_index(a,b))
-         stdout.put(.ion_index(a,b))
-         stdout.put(.bond_index(a,b))
-         stdout.put(.percent_covalency(a,b))
-         stdout.flush
-      end
-      end
-      stdout.dash(int_fields=2,real_fields=8)
 
-      if (NOT homoleptic) symbol.destroy
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("=======================")
+      stdout.text("Roby-Gould bond indices")
+      stdout.text("=======================")
+      stdout.flush
+      stdout.text("Bond indices appear only between atom groups.")
+      stdout.flush
+      symbol => .unique_tags
+      do i = 1,n_group
+      stdout.show("Group "//trim(i.to_str(fmt="i2"))//" = ",symbol(i))
+      end
+      symbol.destroy
+      stdout.flush
+
+      ! Create table
+      table.create(10)
+
+      ! Set the table headings
+      table( 1).set_heading("Grp")
+      table( 1).set_subhead("  A")
+      table( 2).set_heading("Grp")
+      table( 2).set_subhead("  B")
+      table( 3).set_heading("n_A")
+      table( 3).set_width_from(TEN)
+      table( 4).set_heading("n_B")
+      table( 4).set_width_from(TEN)
+      table( 5).set_heading("n_AB")
+      table( 5).set_width_from(TEN)
+      table( 6).set_heading("s_AB")
+      table( 6).set_width_from(TEN)
+      table( 7).set_heading(" Cov.")
+      table( 7).set_subhead("index")
+      table( 7).set_width_from(-TEN)
+      table( 8).set_heading("Ionic")
+      table( 8).set_subhead("index")
+      table( 8).set_width_from(-TEN)
+      table( 9).set_heading(" Bond")
+      table( 9).set_subhead("index")
+      table( 9).set_width_from(ONE)
+      table(10).set_heading("% Cov")
+      table(10).set_width_from(100d0)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Populations & indices
+      n_pair = n_group - 1
+      n_pair = n_pair.triangle_number
+      g_A.create(n_pair)
+      g_B.create(n_pair)
+      n_A.create(n_pair)
+      n_B.create(n_pair)
+      nAB.create(n_pair)
+      sAB.create(n_pair)
+      cAB.create(n_pair)
+      iAB.create(n_pair)
+      tAB.create(n_pair)
+      pAB.create(n_pair)
+
+      i = 0
+      do a = 1,.n_group
+      do b = 1,a-1
+         i = i + 1
+         g_A(i) = a
+         g_B(i) = b
+         n_A(i) = .n1(a)
+         n_B(i) = .n1(b)
+         nAB(i) = .n2(a,b)
+         sAB(i) = .n1(a) + .n1(b) - .n2(a,b)
+         cAB(i) =  .cov_index(a,b)
+         iAB(i) =  .ion_index(a,b)
+         tAB(i) = .bond_index(a,b)
+         pAB(i) = .percent_covalency(a,b)
+      end
+      end
+
+      ! Set table data
+      table( 1).set_values(g_A)
+      table( 2).set_values(g_B)
+      table( 3).set_values(n_A)
+      table( 4).set_values(n_B)
+      table( 5).set_values(nAB)
+      table( 6).set_values(sAB)
+      table( 7).set_values(cAB)
+      table( 8).set_values(iAB)
+      table( 9).set_values(tAB)
+      table(10).set_values(pAB)
+
+      ! Put body
+      stdout.flush
+      table.put_body(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+
+      pAB.destroy
+      tAB.destroy
+      iAB.destroy
+      cAB.destroy
+      sAB.destroy
+      nAB.destroy
+      n_B.destroy
+      n_A.destroy
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
 
    end
 
    put_bond_indices_atoms
    ! Output the bond indices table for connected atoms.
+      self :: IN
+
+   ENSURE(NOT .is_homoleptic,"job is homoleptic")
 
       table :: VEC{TABLE_COLUMN}*
       atom_kind :: VEC{VEC_{INT}}*
@@ -1921,7 +2013,7 @@ contains
       ! Anything to do?
       if (.atom.dim<2) return
 
-      no_of_bonds = .atom.no_of_bonds
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
       if (no_of_bonds<1) return
 
       ! Has unique labels?
@@ -1935,10 +2027,19 @@ contains
       stdout.text("Roby-Gould bond indices")
       stdout.text("=======================")
       stdout.flush
+      if (.analyze_all_atom_pairs) then
+      stdout.text("Indices appear only for atom pairs which are connected")
+      stdout.text("according to the Cambridge Structural Database (CSD)")
+      stdout.text("AND if they are within a minimum bond_range_factor")
+      stdout.flush
+      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
+      stdout.show("No. of 'bonds'          =",no_of_bonds)
+      else
       stdout.text("Indices appear only for atom pairs which are connected")
       stdout.text("according to the Cambridge Structural Database (CSD).")
       stdout.flush
       stdout.show("No. of bonds =",no_of_bonds)
+      end
       stdout.flush
 
       ! Get atom kind list
@@ -1996,7 +2097,7 @@ contains
       table(14).set_subhead("index")
       table(14).set_width_from(ONE)
       table(15).set_heading("% Cov")
-      table(15).set_width_from(TEN)
+      table(15).set_width_from(100d0)
 
       ! Put out the headings
       table.put_headings(label_rows=FALSE,no_flush=TRUE)
@@ -2006,7 +2107,7 @@ contains
       do k2 = k1,n_kind
 
          ! Get the bonded atoms per kind
-         .atom.get_bonded_atoms(pair,dist,atom_kind,k1,k2)
+         .atom.get_bonded_atoms(pair,dist,atom_kind,k1,k2,.bond_range_factor)
          dist = dist*ANGSTROM_PER_BOHR
 
          ! No of bonds in this class
@@ -2118,14 +2219,13 @@ contains
    ENSURE(.atom.created,"no atom data")
    ENSURE(.atom_group.created,"no atom group data")
 
-      a,n_group :: INT
+      a :: INT
       homoleptic :: BIN
       symb :: STR
       symbol :: VEC{STR}*
 
-      n_group = .n_group
       homoleptic = .is_homoleptic
-      if (NOT homoleptic) symbol => .unique_tags(.atom_list)
+      if (NOT homoleptic) symbol => .unique_tags
 
       stdout.flush
       stdout.text("Group charges:")
@@ -2138,7 +2238,7 @@ contains
       stdout.put("Sum_bc Sabc/3")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=4)
-      do a = 1,n_group
+      do a = 1,.n_group
          if (homoleptic) then; symb = a.to_str
          else                ; symb = symbol(a)
          end
@@ -2163,14 +2263,13 @@ contains
    ENSURE(.cruickshank_charge.created,"no Cruickshank charges")
    ENSURE(.atom.created,"no atom data")
 
-      a,n_group :: INT
+      a :: INT
       gd,cd :: VEC{REAL}(3)
 
-      n_group = .n_group
       gd = ZERO
       cd = ZERO
 
-      do a = 1,n_group
+      do a = 1,.n_group
          gd(:) = gd(:) + .gould_charge(a)*.atom(a).position(:)
          cd(:) = cd(:) + .cruickshank_charge(a)*.atom(a).position(:)
       end
@@ -2212,21 +2311,19 @@ contains
       group :: VEC{INT}, IN
       name :: STR, optional, IN
 
-      symbol :: VEC{STR}*
-      a :: INT
+      symbol :: STR
       label :: STR
+      g :: INT
 
       label = " "
       if (present(name)) label = name
 
-      symbol => .unique_tags(group)
       stdout.put("Atom "//trim(label)//" =")
-      do a = 1,size(symbol)
-         stdout.put(symbol(a),width=len_trim(symbol(a))+1)
+      do g = 1,group.dim
+         symbol = .atom(group(g)).tag
+         stdout.put(trim(symbol),width=len_trim(symbol)+1)
       end
       stdout.flush
-
-      symbol.destroy
 
    end
 
@@ -2426,11 +2523,13 @@ contains
       stdout.text("Roby-Gould pair-atom angle eigenspaces")
       stdout.text("======================================")
       stdout.flush
-      stdout.text(". Angles given to the nearest degree")
-      stdout.text(". 90-degree angle spaces are not shown")
       stdout.text(". Analysis is for:")
+      stdout.flush
       .put_unique_tags(.atom_a,"(A)")
       .put_unique_tags(.atom_b,"(B)")
+      stdout.flush
+      stdout.text(". Angles given to the nearest degree")
+      stdout.text(". 90-degree angle spaces are not shown")
 
       ! Columns
       n = .n_theta_angles
@@ -2537,10 +2636,8 @@ contains
    ENSURE(.atom.created,"no atom data")
    ENSURE(.atom_group.created,"no atom group data")
 
-      a,n_group :: INT
+      a :: INT
       symbol :: VEC{STR}*
-
-      n_group = .n_group
 
       stdout.flush
       stdout.text("===============================")
@@ -2555,7 +2652,7 @@ contains
       stdout.put("Subgrp Pop.")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=1)
-      do a = 1,n_group
+      do a = 1,.n_group
          stdout.put(symbol(a),int_width=TRUE)
          stdout.put(.subgroup_pop(a))
          stdout.flush
