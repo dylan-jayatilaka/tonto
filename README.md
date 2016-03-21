@@ -19,6 +19,7 @@ While waiting you can install:
 * `perl`
 * `gfortran`
 * `make`
+* `numdiff`
 * `blas` (recommended)
 * `lapack` (recommended)
 * `mpich2` (for parallel)
@@ -29,10 +30,17 @@ you might want to install
 
 * `exuberant-tags`
 * `cscope`
+* `gnuplot`
 
 With these and `vim` you can syntax highlight, jump to
 tags under your cursor (e.g. routines, types, or macros) and
 have Tonto-library-specific code completion.
+
+### On Mac
+
+The compilation procedure is the same as for Linux, but you have to first
+install the [brew](http://brew.sh/) package manager, and then use that
+to install the GNU Linux software.
 
 ### On Windows
 
@@ -49,6 +57,7 @@ the menu:
 * `gcc-core`
 * `gcc-fortran`
 * `make`
+* `numdiff`
 
 And perhaps (see above) also:
 
@@ -56,12 +65,6 @@ And perhaps (see above) also:
 * `ctags`
 * `cscope`
 * `gnuplot`
-
-### On Mac
-
-The compilation procedure is the same as for Linux, but you have to first
-install the [brew](http://brew.sh/) package manager, and then use that
-to install the GNU Linux software.
 
 ## 2. Get set ...
 
@@ -137,8 +140,8 @@ Or you may use `ctest` directly and run only tests matching
 certain labels or regular expressions. You may also
 specify the number of processors to use when running tests.
 ```
-   ctest -L short # this will run all tests with the label short.
-   ctest -R h2o # this will run all tests with h2o in their name.
+   ctest -L short    # this will run all tests with the label short.
+   ctest -R h2o      # this will run all tests with h2o in their name.
    ctest -L long -j4 # this will run all long tests with 4 jobs at a time.
 ```
 
