@@ -1457,7 +1457,9 @@ contains
    ! - Negative reflections are always pruned ... is this good????
       self :: PTR
 
-      .prune_negative_F_exp
+      if (.reflections.have_F_exp) then
+         .prune_negative_F_exp
+      end
 
       if (.F_sigma_cutoff >ZERO) then
          DIE_IF(NOT .reflections.have_F_exp, "no F_exp data")
@@ -1495,7 +1497,6 @@ contains
 
    ENSURE(.created,"No data")
    ENSURE(.reflections.created,"No reflection data")
-   ENSURE(.reflections.have_F_exp,"No experimental data")
 
       old_reflections :: VEC{REFLECTION}*
       good,bad,h1,h2,h3 :: VEC{INT}*
@@ -1846,36 +1847,53 @@ contains
       F_pred :: VEC{REAL}*
       n_r,n_p :: INT
 
-      ! Add on parameters for scale/extinction
-      .update_n_param
+      if (NOT .reflections.have_F_exp) then
 
-      ! Get optimum scale factors, extinction, etc.
-      if (.optimize_extinction OR .optimize_scale) .get_F_optimum_parameters
+         ! No experimental data ...
+         F_pred.create(.reflections.n_refl)
+         if (.data_kind=="pnd") then; F_pred = REALIFY(.reflections.F_calc)
+         else;                        F_pred =     abs(.reflections.F_calc)
+         end
 
-      ! Make F_predicted
-      F_pred.create(.reflections.n_refl)
-      if (.data_kind=="pnd") then; F_pred = REALIFY(.reflections.F_calc) * .F_extinction_correction
-      else;                        F_pred =     abs(.reflections.F_calc) * .F_extinction_correction
+         ! Set F_predicted
+         .reflections.set_F_pred(F_pred)
+         F_pred.destroy
+      
+      else
+
+         ! Experimental data exists ...
+         ! Add parameters for scale/extinction
+         .update_n_param
+   
+         ! Get optimum scale factors, extinction, etc.
+         if (.optimize_extinction OR .optimize_scale) .get_F_optimum_parameters
+   
+         ! Make F_predicted
+         F_pred.create(.reflections.n_refl)
+         if (.data_kind=="pnd") then; F_pred = REALIFY(.reflections.F_calc) * .F_extinction_correction
+         else;                        F_pred =     abs(.reflections.F_calc) * .F_extinction_correction
+         end
+   
+         ! Mix in some F_exp
+         if (.SF_mixing_parameter>ZERO) then
+         if (.have_F_exp) then
+            F_pred = (ONE-.SF_mixing_parameter)* F_pred &
+                   + .SF_mixing_parameter      * .reflections.F_exp
+         end
+         end
+   
+         ! Set F_predicted
+         .reflections.set_F_pred(F_pred)
+         F_pred.destroy
+   
+         ! Calculate the chi^2; reset denominator
+         n_r = .reflections.dim - 1
+         n_p = .reflections.dim - .n_param
+         .chi2      = max(n_r,1)*.reflections.F_chi2/max(n_p,1)
+         .chi2_fit0 = .chi2_fit
+         .chi2_fit  = .chi2
+
       end
-
-      ! Mix in some F_exp
-      if (.SF_mixing_parameter>ZERO) then
-      if (.have_F_exp) then
-         F_pred = (ONE-.SF_mixing_parameter)* F_pred &
-                + .SF_mixing_parameter      * .reflections.F_exp
-      end
-      end
-
-      ! Set F_predicted
-      .reflections.set_F_pred(F_pred)
-      F_pred.destroy
-
-      ! Calculate the chi^2; reset denominator
-      n_r = .reflections.dim - 1
-      n_p = .reflections.dim - .n_param
-      .chi2      = max(n_r,1)*.reflections.F_chi2/max(n_p,1)
-      .chi2_fit0 = .chi2_fit
-      .chi2_fit  = .chi2
 
    end
 
@@ -4999,8 +5017,10 @@ contains
    ! Return TRUE if have some experimental structure factors
       self :: IN
       res :: BIN
+
       res = FALSE
       if (associated(.reflections)) res = .reflections.have_F_exp
+
    end
 
    have_I_exp result (res) ::: pure
