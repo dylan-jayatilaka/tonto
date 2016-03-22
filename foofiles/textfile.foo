@@ -57,9 +57,9 @@ module TEXTFILE
 
    implicit none
 
-   stdin  :: TEXTFILE*, public DEFAULT_NULL
-   stdout :: TEXTFILE*, public DEFAULT_NULL
-   stderr :: TEXTFILE*, public DEFAULT_NULL
+   stdin  :: TEXTFILE*, public  DEFAULT_NULL
+   stdout :: TEXTFILE*, public  DEFAULT_NULL
+   stderr :: TEXTFILE*, public  DEFAULT_NULL
 
 contains
 
@@ -82,9 +82,9 @@ contains
          .set_defaults
 
          ! Reset some defaults
-         stdin.name = "stdin"
+         stdin.name   = "stdin"
          stdin.action = "read"
-         stdin.unit = TEXTFILE_STDIN_UNIT
+         stdin.unit   = TEXTFILE_STDIN_UNIT
 
       end
 
@@ -111,9 +111,9 @@ contains
          .set_defaults
 
          ! Reset some defaults
-         stdout.name = "stdout"
+         stdout.name   = "stdout"
          stdout.action = "write"
-         stdout.unit = TEXTFILE_STDOUT_UNIT
+         stdout.unit   = TEXTFILE_STDOUT_UNIT
 
       end
 
@@ -171,7 +171,10 @@ contains
       if (present(name)) .set_name(name)
 
       ! Get a unique unit number
-      UNIT_NUMBER:get_available_unit_number(.unit)
+      if (IO_IS_ALLOWED) then
+         UNIT_NUMBER:get_available_unit_number(.unit)
+      end
+      PARALLEL_BROADCAST(.unit,0)
 
       ! Get ready to write
       .clear_and_put_margin
@@ -217,18 +220,24 @@ contains
 
       if (.is_open) .close
 
-      UNIT_NUMBER:free_the_used_unit_number(.unit)
+      if (IO_IS_ALLOWED) then
+         UNIT_NUMBER:free_the_used_unit_number(.unit)
+      end
 
       deallocate(self)
 
    end
 
-   nullify_ptr_part
+   nullify_ptr_part ::: pure
    ! Nullify the pointer parts of "self".
+      self :: INOUT
+
       nullify(.replacement_list)
       nullify(.internal)
       nullify(.saved)
+
       .buffer.nullify_ptr_part
+
    end
 
    destroy_ptr_part ::: leaky
@@ -267,7 +276,9 @@ contains
       .create
 
       ! Free nameless file unit
-      UNIT_NUMBER:free_the_used_unit_number(.unit)
+      if (IO_IS_ALLOWED) then
+         UNIT_NUMBER:free_the_used_unit_number(.unit)
+      end
 
       ! Copy the file, unit and all
       .copy(file)
@@ -376,7 +387,7 @@ contains
       .use_style(saved)
 
       ! Open the new file
-      .open(for=.saved.action)
+      .open_for(.saved.action)
 
    end
 
@@ -429,7 +440,9 @@ contains
          .buffer.destroy_ptr_part
          .replacement_list.destroy
          .close
-         UNIT_NUMBER:free_the_used_unit_number(.unit)
+         if (IO_IS_ALLOWED) then
+            UNIT_NUMBER:free_the_used_unit_number(.unit)
+         end
       end
       deallocate(self)
 
@@ -465,40 +478,24 @@ contains
 !  File open, close, and delete
 !  ============================
 
-   open ::: public
-   ! Open the textfile based on its action attribute
-      self :: INOUT
-
-   ENSURE(.action/="unknown","file has unknown action")
-
-     .open(for=.action)
-
-   end
-
-   open(for) ::: public
-   ! Open the textfile "for" either "read" or "write".
+   open_for(action) ::: public
+   ! Open the textfile for "action" either "read" or "write".
      self :: INOUT
+     action :: STR, IN
 
-     for :: STR
-
-     select case (for)
+     select case (action)
         case("read      ","reading   ","read-only ") ; .open_for_read
         case("write     ","writing   ","write-only") ; .open_for_write
-        case("unknown   "); DIE("file action (read/write) not set")
-        case default; UNKNOWN(for)
+        case default; UNKNOWN(action)
      end
 
-   end
-
-   open_for(for)
-   ! Open the textfile "for" either "read" or "write".
-     for :: STR
-     .open(for)
    end
 
    open_for_read ::: private
    ! Open the input file. The input file object must already be created
    ! The file is positioned at the first line.
+      self :: INOUT
+
    ENSURE(.internal.destroyed,"no need to open an internal file")
 
       unit,fail :: INT
@@ -526,8 +523,8 @@ contains
               form="formatted",    &
               iostat=fail)
       end
-
       PARALLEL_BROADCAST(fail,0)
+
       DIE_IF(fail/=0,"error opening old file for reading: "//trim(name))
       .io_status = fail
 
@@ -535,6 +532,7 @@ contains
 
    open_for_write ::: private
    ! Open the output file associated with the output object
+      self :: INOUT
 
    ENSURE(.internal.destroyed,"no need to open an internal file")
 
@@ -546,6 +544,7 @@ contains
 
    open_old_file_for_write ::: private
    ! Open an old output file for writing
+      self :: INOUT
 
    ENSURE(.internal.destroyed,"no need to open an internal file")
    ENSURE(.exists, "not an existing file!")
@@ -569,8 +568,8 @@ contains
               form="formatted",    &
               iostat=fail)
       end
-
       PARALLEL_BROADCAST(fail,0)
+
       DIE_IF(fail/=0,"error opening old file: "//trim(name))
       .io_status = fail
 
@@ -580,6 +579,7 @@ contains
 
    open_new_file_for_write ::: private
    ! Open an new output file for writing
+      self :: INOUT
 
    ENSURE(.internal.destroyed,"no need to open an internal file")
    ENSURE(NOT .exists, "output file exists!")
@@ -603,8 +603,8 @@ contains
               form="formatted",    &
               iostat=fail)
       end
-
       PARALLEL_BROADCAST(fail,0)
+
       DIE_IF(fail/=0,"error opening new file "//trim(name))
       .io_status = fail
 
@@ -612,6 +612,8 @@ contains
 
    close
    ! Close the input file
+      self :: INOUT
+
       opened :: BIN
 
       if (IO_IS_ALLOWED) then
@@ -625,22 +627,29 @@ contains
 
    close_and_delete
    ! Close the input file and delete it from the file system
+      self :: INOUT
+
       if (IO_IS_ALLOWED) then
          close(unit=.unit,status="delete")
       end
+
    end
 
    delete
    ! Delete the input file from the file system
-      if (NOT .is_open) .open(for="read")
+      self :: INOUT
+
+      if (NOT .is_open) .open_for("read")
+
       .close_and_delete
+
    end
 
 !  ============
 !  Set defaults
 !  ============
 
-   set_defaults
+   set_defaults ::: pure
    ! Set defaults
       self :: INOUT
 
@@ -664,9 +673,10 @@ contains
 
    end
 
-   set_default_format
+   set_default_format ::: pure
    ! Set the default settings for the REAL formatting object
    ! Extra functions added compared to inherited code
+      self :: INOUT
 
       .using_fields       = TEXTFILE_USE_FIELDS
       .n_fields_per_line  = TEXTFILE_N_FIELDS_PER_LINE
@@ -705,8 +715,8 @@ contains
               form="formatted",    &
               iostat=fail)
       end
-
       PARALLEL_BROADCAST(fail,0)
+
       DIE_IF(fail/=0,"error opening old file for reading: "//trim(name))
       .io_status = fail
 
@@ -721,7 +731,6 @@ contains
             if (fail/=0) exit
          end
       end
-
       PARALLEL_BROADCAST(l,0)
 
       ! Set the number of lines.
@@ -733,8 +742,8 @@ contains
       if (IO_IS_ALLOWED) then
          close(unit,iostat=fail)
       end
-
       PARALLEL_BROADCAST(fail,0)
+
       DIE_IF(fail/=0,"error closing file for reading: "//trim(name))
       .io_status = fail
 
@@ -1023,16 +1032,16 @@ contains
          if (IO_IS_ALLOWED) then
             inquire(file=trim(name),exist=res)
          end
+         PARALLEL_BROADCAST(res,0)
 
       else
 
          if (IO_IS_ALLOWED) then
             inquire(file=trim(.name),exist=res)
          end
+         PARALLEL_BROADCAST(res,0)
 
       end
-
-      PARALLEL_BROADCAST(res,0)
 
    end
 
@@ -1059,11 +1068,14 @@ contains
 
    unit_used result (res)
    ! Returns true if the file unit is in use
+      self :: IN
       res :: BIN
+
       if (IO_IS_ALLOWED) then
         inquire(unit=.unit,opened=res)
       end
       PARALLEL_BROADCAST(res,0)
+
    end
 
    at_end_of_file result (res)
@@ -1337,6 +1349,7 @@ contains
          rewind(unit=.unit,iostat=fail)
       end
       PARALLEL_BROADCAST(fail,0)
+
       DIE_IF(fail>0,"rewind error")
       .io_status = fail
 
@@ -1509,8 +1522,8 @@ contains
       if (IO_IS_ALLOWED) then
          backspace(unit=.unit,iostat=fail)
       end
-
       PARALLEL_BROADCAST(fail,0)
+
       DIE_IF(fail>0,"backspace error")
       .io_status = fail
 
@@ -1530,8 +1543,8 @@ contains
       if (IO_IS_ALLOWED) then
          read(unit=.unit,fmt="()",iostat=fail)
       end
-
       PARALLEL_BROADCAST(fail,0)
+
       DIE_IF(fail>0,"read error")
        .io_status = fail
 
@@ -3486,6 +3499,7 @@ contains
          write(unit=.unit,iostat=fail,fmt="(a)") trim(.buffer.string)
       end
       PARALLEL_BROADCAST(fail,0)
+
       DIE_IF(fail>0,"read error")
       .io_status = fail
 
