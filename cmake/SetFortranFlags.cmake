@@ -6,12 +6,8 @@
 # flag is given in the call).  This way unknown compiles are supported.
 #######################################################################
 
-# apparently there is a bug where -march=native doesn't work on Mac
-IF(APPLE)
-    SET(GNUNATIVE "-mtune=native")
-ELSE()
-    SET(GNUNATIVE "-march=native")
-ENDIF()
+SET(GNUNATIVE "-mtune=native")
+SET(GNUGENERIC "-mtune=generic")
 
 if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "Intel")
     set(COMPILER "Intel_ifort")
@@ -32,7 +28,7 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "PGI")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     set(COMPILER "GNU_gfortran")
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -fno-sign-zero -ffree-line-length-none")
-    set(HOST_FLAG ${GNUNATIVE})
+    set(HOST_FLAG ${GNUGENERIC})
     set(DEBUG_FLAGS "-O0 -Wall -g -fbacktrace -fcheck=bounds")
     set(RELEASE_FLAGS "-O3 -funroll-loops -finline-functions")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "NAG")
