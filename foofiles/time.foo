@@ -39,44 +39,39 @@ module TIME
 
    std_time :: TIME, public
 
-   interface reset
-      start_timing
-   end
-
 contains
 
-! ============
-! Current time
-! ============
+! ==========
+! Essentials
+! ==========
 
-   current_time8 result (time)
+   current_time8 result(time) ::: selfless
    ! Returns current time as a 8-vector from date_and_time
       time :: VEC{INT}(8)
 
-      if (FALSE) self = self
-
-#ifdef MPI
-      call MPI_BARRIER(MPI_COMM_WORLD,tonto.mpi_status)
-#endif
-
+      ! Send time from processor 0
+      time = ZERO
+      if (IO_IS_ALLOWED) then
       call date_and_time(values=time)
+      end
+      PARALLEL_BROADCAST(time,0)
 
    end
 
-   current_time5 result (res)
+   current_time5 result (res) ::: selfless
    ! Returns current time as a 5-vector, using Julian days
       res :: VEC{INT}(5)
 
       time :: VEC{INT}(8)
       y,m,d,j :: INT
 
-      time = .current_time8
+      time = ::current_time8()
 
       y = time(1)
       m = time(2)
       d = time(3)
 
-      .to_julian_day(j,d,m,y)
+      ::to_julian_day(j,d,m,y)
 
       res(1) = j       ! Julian day
       res(2) = time(5) ! hour
@@ -86,13 +81,63 @@ contains
 
    end
 
+   current_cpu_time result (res) ::: selfless
+   ! Return the current cpu_time.
+      res :: REAL
 
-   current_date(d,m,y)
+      time :: REAL
+
+      ! Get the CPU time
+      time = ZERO
+      if (IO_IS_ALLOWED) then
+      call cpu_time(time)
+      end
+      PARALLEL_BROADCAST(time,0)
+
+      res = time
+
+   end
+
+
+! ============
+! Current date
+! ============
+
+   current_date_YMD_str result (res) ::: selfless
+   ! Return the date as a YYYY-MM-DD string
+      res :: STR
+
+      d,m,y :: INT
+
+      ::get_current_date_DMY(d,m,y)
+
+      res = trim(y.to_str) //"-"// &
+            trim(m.to_str) //"-"// &
+            trim(d.to_str)
+
+   end
+
+   current_date_DMY_str result (res) ::: selfless
+   ! Return the date as a DD-MM-YYYY string
+      res :: STR
+
+      d,m,y :: INT
+
+      ::get_current_date_DMY(d,m,y)
+
+      res = trim(d.to_str) //"-"// &
+            trim(m.to_str) //"-"// &
+            trim(y.to_str)
+
+   end
+
+   get_current_date_DMY(d,m,y) ::: selfless, private
    ! Return the day "d", month "m", year "y"
       d,m,y :: INT, OUT
+
       time :: VEC{INT}(8)
 
-      time = .current_time8
+      time = ::current_time8()
 
       y = time(1)
       m = time(2)
@@ -101,88 +146,50 @@ contains
    end
 
 
-   current_date_YMD_str result (res)
-   ! Return the date as a YYYY-MM-DD string
-      res :: STR
+! ============
+! Current time
+! ============
 
-      d,m,y :: INT
-
-      .current_date(d,m,y)
-
-      res = trim(y.to_str) //"-"// &
-            trim(m.to_str) //"-"// &
-            trim(d.to_str)
-
-   end
-
-   current_date_DMY_str result (res)
-   ! Return the date as a DD-MM-YYYY string
-      res :: STR
-
-      d,m,y :: INT
-
-      .current_date(d,m,y)
-
-      res = trim(d.to_str) //"-"// &
-           trim(m.to_str) //"-"// &
-           trim(y.to_str)
-
-   end
-
-
-   current_time_message result (res)
+   current_time_message result (res) ::: selfless
    ! The current time message
       res :: STR(len=40)
-      res = "The current time is " // .current_time_str // "."
+
+      res = "The current time is " // current_time_str() // "."
+
    end
 
-   current_time_str result (res)
+   current_time_str result (res) ::: selfless
    ! Return a string containing the time.
    ! Formatted as DD/MM/YYYY HH:MM:SS
       res :: STR(len=19)
-      res = .time5_to_DMY_HMS_str(.current_time5)
-   end
 
-
-   current_cpu_time result (res)
-   ! Return the current cpu_time.
-      res :: REAL
-
-      time :: REAL
-
-      if (FALSE) self = self
-      time = ZERO
-
-#ifdef MPI
-      ! For MPI, make sure all processors are here at the same code point
-      call MPI_BARRIER(MPI_COMM_WORLD,tonto.mpi_status)
-#endif
-
-      ! Get the CPU time
-      call cpu_time(time)
-
-      res = time
+      res = ::time5_to_DMY_HMS_str(::current_time5())
 
    end
 
-! ==================
-! Stopwatch funtions
-! ==================
+
+! ===================
+! Stopwatch functions
+! ===================
 
    start_timing
    ! Starts the timer
       self :: INOUT
 
-      .start_time5    = .current_time5
-      .cpu_start_time = .current_cpu_time
+      .start_time5    = ::current_time5()
+      .cpu_start_time = ::current_cpu_time()
 
    end
 
    stop_timing
    ! Stops the timer
-      .stop_time5    = .current_time5
-      .cpu_stop_time = .current_cpu_time
+      self :: INOUT
+
+      .stop_time5    = ::current_time5()
+      .cpu_stop_time = ::current_cpu_time()
+
    end
+
 
 ! ================
 ! Start/stop times
@@ -190,86 +197,60 @@ contains
 
    start_time_message result (res)
    ! The start time message
+      self :: IN
       res :: STR(len=37)
+
       res = "Timer started at " // .start_time_str // "."
+
    end
 
    start_time_str result (res)
    ! Return a string containing the start time.
    ! Formatted as DD/MM/YYYY HH:MM:SS
+      self :: IN
       res :: STR(len=19)
-      res = .time5_to_DMY_HMS_str(.start_time5)
+
+      res = ::time5_to_DMY_HMS_str(.start_time5)
+
    end
 
    stop_time_message result (res)
    ! The stop time message
+      self :: IN
       res :: STR(len=37)
+
       res = "Timer stopped at " // .stop_time_str // "."
+
    end
 
    stop_time_str result (res)
    ! Return a string containing the start time.
    ! Formatted as DD/MM/YYYY HH:MM:SS
-      res :: STR(len=19)
-      res = .time5_to_DMY_HMS_str(.stop_time5)
-   end
-
-! ============
-! Elapsed time
-! ============
-
-   elapsed_time_message(task) result (res)
-   ! Returns time taken. "Time taken is ..."
-   ! If "task" given, "Time taken for task" is ..."
-      res :: STR(len=132)
-      task :: STR, optional
-
-      .stop_timing
-
-      if (present(task)) then; res = "Wall-clock time taken for " // trim(task) // " is " // trim(.elapsed_time_str) // "."
-      else;                    res = "Wall-clock time taken is "  // trim(.elapsed_time_str) // "."
-      end
-
-   end
-
-   elapsed_time_str result (res)
-   ! Return a string containing the elapsed time.
-      res :: STR
-      res = .time5_to_DHMS_str(.elapsed_time5)
-   end
-
-   elapsed_time5 result (time)
-   ! Returns elapsed time vector
-      time :: VEC{INT}(5)
-      time = .subtract_time5s(.stop_time5,.start_time5)
-   end
-
-   elapsed_time result (secs)
-   ! Returns elapsed time in seconds
-      secs :: REAL
-      time :: VEC{INT}(5)
-      time = .subtract_time5s(.stop_time5,.start_time5)
-      secs = .time5_to_seconds(time)
-   end
-
-   subtract_time5s(time1,time2) result (res) ::: private
-   ! result = time1 - time2
       self :: IN
-      time1,time2 :: VEC{INT}(5), IN
-      res :: VEC{INT}(5)
+      res :: STR(len=19)
 
-      secs1,secs2 :: REAL
-      secs1 = .time5_to_seconds(time1)
-      secs2 = .time5_to_seconds(time2)
-      res   = .seconds_to_time5(secs1-secs2)
+      res = ::time5_to_DMY_HMS_str(.stop_time5)
 
    end
 
+
+! ================
+! Elapsed CPU time
+! ================
+
+   elapsed_cpu_time result (res)
+   ! Returns elapsed cpu time taken since .start_timing. 
+      res :: REAL
+
+      res = ::current_cpu_time() - .cpu_start_time
+
+   end
 
    elapsed_cpu_time_message(task) result (res)
    ! Returns elapsed cpu time taken since .start_timing. Message
    ! returned is: "CPU time taken is ... CPU seconds." If "task" is 
    ! given, returns  "CPU time taken for "task" is ... CPU seconds."
+      self :: IN
       task :: STR, optional
       res :: STR
 
@@ -278,47 +259,96 @@ contains
 
       time = .elapsed_cpu_time
 
-      write(time_str,'(f15.3)') time
+      write(time_str,"(f15.3)") time
 
-      if (present(task)) then; res = "CPU time taken for " // trim(task) // " is " // trim(adjustl(time_str)) // " CPU seconds."
-      else;                    res = "CPU time taken is " // trim(adjustl(time_str)) // " CPU seconds."
+      if (present(task)) then
+         res = "CPU time taken for " // trim(task) // " is " // trim(adjustl(time_str)) // " CPU seconds."
+      else
+         res = "CPU time taken is " // trim(adjustl(time_str)) // " CPU seconds."
       end
 
    end
 
-   elapsed_cpu_time result (res)
-   ! Returns elapsed cpu time taken since .start_timing. 
-      res :: REAL
-      time :: REAL
 
-      .stop_timing
+! ============
+! Elapsed time
+! ============
 
-      time = ZERO
-      res  = time
+   elapsed_time_message(task) result (res)
+   ! Returns time taken. "Time taken is ..."
+   ! If "task" given, "Time taken for task" is ..."
+   ! NOTE: YOU MUST STOP THE TIMER FIRST - this is only the message
+      self :: IN
+      res :: STR(len=132)
+      task :: STR, optional
 
-      ! Processor time
-      res  = .cpu_stop_time - .cpu_start_time
-
-#ifdef MPI
-      ! For MPI, sum up all the processor times
-      call MPI_ALLREDUCE(res,time,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,tonto.mpi_status)
-      res = time
-#endif
+      if (present(task)) then
+         res = "Wall-clock time taken for " // trim(task) // " is " // trim(.elapsed_time_str) // "."
+      else
+         res = "Wall-clock time taken is "  // trim(.elapsed_time_str) // "."
+      end
 
    end
+
+   elapsed_time_str result (res)
+   ! Return a string containing the elapsed time.
+      self :: IN
+      res :: STR
+
+      time :: VEC{INT}(5)
+
+      time = .elapsed_time5
+      res  = ::time5_to_DHMS_str(time)
+
+   end
+
+   elapsed_time5 result (time)
+   ! Returns elapsed time vector
+      self :: IN
+      time :: VEC{INT}(5)
+
+      time = ::current_time5()
+      time = ::subtract_time5s(time,.start_time5)
+
+   end
+
+   elapsed_time_s result (secs)
+   ! Returns elapsed time in seconds
+      self :: IN
+      secs :: REAL
+
+      time :: VEC{INT}(5)
+
+      time = ::current_time5()
+      time = ::subtract_time5s(time,.start_time5)
+      secs = ::time5_to_seconds(time)
+
+   end
+
+   subtract_time5s(time1,time2) result (res) ::: selfless, private
+   ! result = time1 - time2
+      time1,time2 :: VEC{INT}(5), IN
+      res :: VEC{INT}(5)
+
+      secs1,secs2 :: REAL
+
+      secs1 = ::time5_to_seconds(time1)
+      secs2 = ::time5_to_seconds(time2)
+      res   = ::seconds_to_time5(secs1-secs2)
+
+   end
+
 
 ! =====================
 ! Julian day conversion
 ! =====================
 
-   to_julian_day(j,d,m,y)
+   to_julian_day(j,d,m,y) ::: selfless
    ! Converts the days "d", months "m", years "y", into the Julian date "j".
       j :: INT, OUT
       d,m,y :: INT, IN
 
       mm,yy,c :: INT
-
-      if (FALSE) self = self
 
       mm = m
       yy = y
@@ -336,14 +366,12 @@ contains
 
    end
 
-   from_julian_day(j,d,m,y)
+   from_julian_day(j,d,m,y) ::: selfless
    ! Converts the days "d", months "m", years "y", from the Julian date "j".
       j :: INT, IN
       d,m,y :: INT, OUT
 
       jj :: INT
-
-      if (FALSE) self = self
 
       jj = j - 1721119
       y  = (4*jj-1)/146097
@@ -365,19 +393,18 @@ contains
 
    end
 
+
 ! =================
 ! 5-time conversion
 ! =================
 
-   seconds_to_time5(secs) result (res) ::: private
+   seconds_to_time5(secs) result (res) ::: selfless, private
    ! Returns the number of days, hours, minutes, seconds, milliseconds from the
    ! number of seconds.
       res :: VEC{INT}(5)
 
       secs :: REAL, IN
       sex :: REAL
-
-      if (FALSE) self = self
 
       sex = abs(secs)
       res(1) = floor( sex / 86400 ) ! days
@@ -398,13 +425,11 @@ contains
 
    end
 
-   time5_to_seconds(time) result (res) ::: private
+   time5_to_seconds(time) result (res) ::: selfless, private
    ! Returns the number of seconds from the "time" vector: 
    ! days, hours, minutes, seconds, and milliseconds.
       time :: VEC{INT}(5), IN
       res :: REAL
-
-      if (FALSE) self = self
 
       res =       time(1)*86400d0
       res = res + time(2)*3600d0
@@ -414,7 +439,7 @@ contains
 
    end
 
-   time5_to_DMY_HMS_str(time) result (res) ::: private
+   time5_to_DMY_HMS_str(time) result (res) ::: selfless, private
    ! Return a string containing the time.
    ! Formatted as DD/MM/YYYY HH:MM:SS
       time :: VEC{INT}(5), IN
@@ -424,9 +449,7 @@ contains
       year :: STR(len=4)
       i,y,m,d :: INT
 
-      if (FALSE) self = self
-
-      .from_julian_day(time(1),d,m,y)
+      ::from_julian_day(time(1),d,m,y)
 
       res = " "
       write(day  ,fmt='(i2)') d
@@ -444,68 +467,62 @@ contains
 
    end
 
-   time5_to_DHMS_str(time) result (res) ::: private
+   time5_to_DHMS_str(time) result (res) ::: selfless, private
    ! Returns the elapsed time as a string.
    ! Formatted as days, hours, min, sec, msec.
    ! If time is greater than a day, does not output min or smaller.
       time :: VEC{INT}(5), IN
       res :: STR
 
-      comma :: BIN
-
-      comma = FALSE
-
       res = " "
-      res =              .number_with_units(time(1),"day",comma)
-      res = trim(res) // .number_with_units(time(2),"hour",comma)
+
+      res =              number_with_units(time(1),"day")
+      res = trim(res) // number_with_units(time(2),"hour")
       if (time(1) == 0) then
-       res = trim(res) // .number_with_units(time(3),"minute",comma)
-       if (time(2) == 0) then
-         res = trim(res) // .number_with_units(time(4),"second",comma)
-         res = trim(res) // .number_with_units(time(5),"millisecond",comma)
-       end
+      res = trim(res) // number_with_units(time(3),"minute")
+      if (time(2) == 0) then
+      res = trim(res) // number_with_units(time(4),"second")
+      res = trim(res) // number_with_units(time(5),"millisecond")
+      end
       end
 
    end
 
-   number_with_units(number,unit,comma) result (res) ::: private
+   number_with_units(number,unit) result (res) ::: selfless, private
    ! Returns the number with its units, if the number is non-zero.
-   ! Inserts a comma if comma is true.  If the number is non-zero,
-   ! then comma is set to true.
       number :: INT, IN
       unit :: STR, IN
+      res :: STR
+
       comma :: BIN
 
-      res :: STR
       i :: INT
       res1 :: STR
 
-      if (FALSE) self = self
-
       res = " "
 
-      if (number /= 0) then
+      if (number/=0) then
 
-       comma = TRUE
-
-       ! Align left
-       res1 = " "
-       write(res1,'(i 20)') number
-       res1 = adjustl(res1)
-       i = 1
-
-       ! insert comma at start if needed.
-       if (comma) then           
-         res(1:2) = ", "
-         i = 3
-       end
-       res(i:) = trim(res1) // " " // unit
-
-       ! add "s" to "unit"s if number not 1.
-       if (number /= 1) then     
-         i=len_trim(res)+1
-         res(i:i) = "s"
-       end
+         comma = TRUE
+         
+         ! Align left
+         res1 = " "
+         write(res1,'(i 20)') number
+         res1 = adjustl(res1)
+         i = 1
+         
+         ! insert comma at start if needed.
+         if (comma) then           
+            res(1:2) = ", "
+            i = 3
+         end
+         res(i:) = trim(res1) // " " // unit
+         
+         ! add "s" to "unit"s if number not 1.
+         if (number /= 1) then     
+            i = len_trim(res)+1
+            res(i:i) = "s"
+         end
 
       end
 
