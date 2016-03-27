@@ -53,8 +53,7 @@ function(add_all_tests)
             COMMAND ${PERL_EXECUTABLE} ${TEST_SCRIPT}
             -testdir "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
             -program "${TEST_EXE}"
-            -cmp "${CMP_SCRIPT}"
-            -basis "${BASIS_SETS}")
+            -cmp "${CMP_SCRIPT}")
         set_tests_properties(\"${N}\" PROPERTIES 
             LABELS ${LABELS})
         set_tests_properties(\"${N}\" PROPERTIES 
