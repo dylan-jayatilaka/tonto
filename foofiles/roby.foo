@@ -311,7 +311,10 @@ contains
       self :: INOUT
 
       stdin.read(.analyze_all_atom_pairs)
-      .bond_range_factor = FIVE*BOHR_PER_ANGSTROM
+
+      if (.analyze_all_atom_pairs) then
+         .bond_range_factor = FIVE*BOHR_PER_ANGSTROM
+      end
 
    end
 
@@ -1861,6 +1864,7 @@ contains
          .put_bond_indices_group
       else
          .put_bond_indices_atoms
+         .put_bond_indices_short
       end
 
    end
@@ -2002,7 +2006,7 @@ contains
    ENSURE(NOT .is_homoleptic,"job is homoleptic")
 
       table :: VEC{TABLE_COLUMN}*
-      atom_kind :: VEC{VEC_{INT}}*
+      Z_list :: VEC{VEC_{INT}}*
       no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
       pair :: MAT{INT}*
       symbols,labels :: MAT{STR}*
@@ -2042,12 +2046,12 @@ contains
       end
       stdout.flush
 
-      ! Get atom kind list
-      .atom.make_atom_kind_list(atom_kind)
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
 
       ! Skip dummy atoms
-      n_kind = atom_kind.dim
-      if (.atom(atom_kind(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
 
       ! Create table
       table.create(15)
@@ -2107,7 +2111,7 @@ contains
       do k2 = k1,n_kind
 
          ! Get the bonded atoms per kind
-         .atom.get_bonded_atoms(pair,dist,atom_kind,k1,k2,.bond_range_factor)
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
          dist = dist*ANGSTROM_PER_BOHR
 
          ! No of bonds in this class
@@ -2121,8 +2125,8 @@ contains
          ! Element symbols
          symbols.create(n_bonds,2)
          symbols = " "
-         symbols(1,1) = .atom(atom_kind(k1)[1]).chemical_symbol
-         symbols(1,2) = .atom(atom_kind(k2)[1]).chemical_symbol
+         symbols(1,1) = .atom(Z_list(k1)[1]).chemical_symbol
+         symbols(1,2) = .atom(Z_list(k2)[1]).chemical_symbol
 
          ! Dashes
          dash.create(n_bonds)
@@ -2206,7 +2210,187 @@ contains
       ! Clean
       table.clear_columns
       table.destroy
-      atom_kind.destroy
+      Z_list.destroy
+
+   end
+
+   put_bond_indices_short
+   ! Output the bond indices table for connected atoms.
+      self :: IN
+
+   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+
+      table :: VEC{TABLE_COLUMN}*
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+      pair :: MAT{INT}*
+      labels :: MAT{STR}*
+      dash :: VEC{STR}*
+      dist,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      ind :: VEC{INT}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Title
+      stdout.flush
+      stdout.text("==============================")
+      stdout.text("Sorted Roby-Gould bond indices")
+      stdout.text("==============================")
+      stdout.flush
+      stdout.text(". Indices are sorted from lowest to highest")
+      stdout.flush
+      if (.analyze_all_atom_pairs) then
+      stdout.text(". Indices appear only for atom pairs which are connected")
+      stdout.text("  according to the Cambridge Structural Database (CSD)")
+      stdout.text("  AND if they are within a minimum bond_range_factor")
+      stdout.flush
+      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
+      stdout.show("No. of 'bonds'          =",no_of_bonds)
+      else
+      stdout.text(". Indices appear only for atom pairs which are connected")
+      stdout.text("  according to the Cambridge Structural Database (CSD).")
+      stdout.flush
+      stdout.show("No. of bonds =",no_of_bonds)
+      end
+      stdout.flush
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(8)
+
+      ! Set the table headings
+      table(1).set_heading("A")
+      table(1).set_width_from(.atom(:).tag)
+
+      table(2).set_spacing(0)
+      table(2).set_heading("--")
+      table(2).set_width(2)
+
+      table(3).set_heading("B")
+      table(3).set_width(table(1).width)
+      table(3).set_left_justify(TRUE)
+
+      table(4).set_heading("R(A--B)")
+      table(4).set_subheading("/Angs.")
+      table(4).set_width_from(ONE)
+
+      table(5).set_heading(" Cov.")
+      table(5).set_subhead("index")
+      table(5).set_width_from(-TEN)
+      table(6).set_heading("Ionic")
+      table(6).set_subhead("index")
+      table(6).set_width_from(-TEN)
+      table(7).set_heading(" Bond")
+      table(7).set_subhead("index")
+      table(7).set_width_from(ONE)
+      table(8).set_heading("% Cov")
+      table(8).set_width_from(100d0)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Dashes
+         dash.create(n_bonds)
+         dash    = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         cAB.create(n_bonds)
+         iAB.create(n_bonds)
+         tAB.create(n_bonds)
+         pAB.create(n_bonds)
+
+         forall (i=1:n_bonds)
+         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
+         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         pAB(i) = .percent_covalency(pair(i,1),pair(i,2))
+         end
+
+         ! Sort & rearrange
+         ind.create(n_bonds)
+         tAB.quick_sort(ind,decreasing_order=TRUE)
+         labels(:,1) = labels(ind,1)
+         labels(:,2) = labels(ind,2)
+         dist = dist(ind)
+         cAB  = cAB(ind)
+         iAB  = iAB(ind)
+         tAB  = tAB(ind)
+         pAB  = pAB(ind)
+
+         ! Set table data
+         table(1).set_values(labels(:,1))
+         table(2).set_values(dash)
+         table(3).set_values(labels(:,2))
+         table(4).set_values(dist)
+         table(5).set_values(cAB)
+         table(6).set_values(iAB)
+         table(7).set_values(tAB)
+         table(8).set_values(pAB)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+
+         ind.destroy
+         pAB.destroy
+         tAB.destroy
+         iAB.destroy
+         cAB.destroy
+         labels.destroy
+         dash.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Z_list.destroy
 
    end
 
