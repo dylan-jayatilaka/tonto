@@ -613,98 +613,11 @@ contains
 
    end
 
-!   add_dispersion_correction(ft,k_pts)
-!   ! Adds the dispersion correction to "ft".
-!
-!      k_pts :: MAT{REAL}
-!      ft :: VEC{CPX}
-!
-!   ENSURE(.crystal.created,"no crystal")
-!
-!      disp,phase :: CPX
-!      pos :: VEC{REAL}(3)
-!      U,seitz :: MAT{REAL}(3,3)
-!      Bh,UBh :: VEC{REAL}(3)
-!      phases :: VEC{CPX}*
-!      x,y,z,T :: REAL
-!      a,symop,n,k,k_max :: INT
-!
-!      if (NOT .crystal.correct_dispersion) then
-!         return
-!      end
-!
-!      select case (.crystal.thermal_smearing_model)
-!
-!       case (" ","none")
-!
-!         phases.create(ft.dim)
-!
-!         do n = 1,.crystal.n_unit_cell_atoms
-!
-!           a = .crystal.frag_atom_for_unit_cell_atom(n)
-!           if (a==0) cycle
-!
-!           disp = .atom(a).dispersion_correction(.crystal.wavelength)
-!
-!           pos = .crystal.unit_cell_geometry(:,n)
-!           .crystal.unit_cell.change_from_fractional(pos)
-!           x = pos(1); y = pos(2); z = pos(3)
-!
-!           phases = disp * exp(COMPLEXIFY(ZERO,k_pts(:,1)*x + k_pts(:,2)*y + k_pts(:,3)*z))
-!           ft(:) = ft(:) + phases
-!
-!         end
-!
-!         phases.destroy
-!
-!       ! What is this? Why bring thermal smearing into it?
-!       ! ==dylan 29/1/07
-!       case default ! thermal smearing methods collapse to be the same
-!                    ! when dealing with one atom.
-!
-!         k_max = k_pts.dim1
-!
-!         do n = 1,.crystal.n_unit_cell_atoms
-!
-!           a = .crystal.frag_atom_for_unit_cell_atom(n)
-!           if (a==0) cycle
-!
-!           symop = .crystal.asym_symop_for_unit_cell_atom(n)
-!           seitz = .crystal.spacegroup.seitz(1:3,1:3,symop)
-!
-!           U = .atom(a).ADP_tensor
-!           ! to crystal coordinates
-!           U.change_basis_using(.crystal.unit_cell.reciprocal_U_matrix)
-!           ! apply seitz operation
-!           U.change_basis_using(transpose(seitz))
-!           ! to cartesian coordinates
-!           U.change_basis_using(.crystal.unit_cell.direct_U_matrix)
-!
-!           U = -HALF * U
-!
-!           disp = .atom(a).dispersion_correction(.crystal.wavelength)
-!
-!           pos = .crystal.unit_cell_geometry(:,n)
-!           .crystal.unit_cell.change_from_fractional(pos)
-!           x = pos(1); y = pos(2); z = pos(3)
-!
-!           do k = 1,k_max
-!             Bh = k_pts(k,:)
-!             UBh = matmul(U,Bh)
-!             T = (dot_product(Bh,UBh))
-!             phase = exp(COMPLEXIFY(T,Bh(1)*x + Bh(2)*y + Bh(3)*z))
-!             ft(k) = ft(k) + disp * phase
-!           end
-!
-!         end
-!      end
-!
-!   end
-
    check_dispersion_correction
    ! Adds dispersion correction to the F_exp, to compare
    ! with other experimental structure factors that have the
    ! dispersion correction made to them.
+
    ENSURE(.crystal.created,"no crystal")
 
       k_pts :: MAT{REAL}*
@@ -768,16 +681,19 @@ contains
            cycle
          end
 
+         ! Make the FT - includes thermal smearing
          ft_ab.create(k_max,na,nb)
          .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
 
-         if (fa/=fb) then ! count off-diagonals twice.
+         ! Trace with density matrix
+         ! Count off-diagonals twice
+         if (fa/=fb) then 
            do k = 1,k_max
               res(k) = res(k) + TWO*sum(ft_ab(k,:,:)*dens(fa:la,fb:lb))
            end
          else
            do k = 1,k_max
-              res(k) = res(k) + sum(ft_ab(k,:,:)*dens(fa:la,fb:lb))
+              res(k) = res(k) +     sum(ft_ab(k,:,:)*dens(fa:la,fb:lb))
            end
          end
 
@@ -1115,6 +1031,7 @@ contains
 
    end
 
+
    make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
    ! Make_ft for one pair of gaussians.
    ! Includes partitioning and thermal smearing.
@@ -1133,15 +1050,19 @@ contains
 
       k_max = k_pts.dim1
 
+      ! Partition factors
       p.create(sh.a.n_cc,sh.b.n_cc)
       .:make_partition_factors(p,sh,atom_a,atom_b,is_zero)
 
       if (NOT is_zero) then
 
+         ! Get thermal smearing factors
          t.create(k_max,sh.a.n_cc,sh.b.n_cc)
          .:thermal_smearing_correction(t,k_pts,atom_a,atom_b,sh)
-       ! sh.make_ft_fast(ft_ab,k_pts,t,p)
+
+         ! Do thermal *and* partition factor
          sh.make_ft(ft_ab,k_pts,t,p)
+
          t.destroy
 
       else
@@ -1154,47 +1075,50 @@ contains
 
    end
 
-!   make_partition_factor(p,atom_a,is_zero)
-!   ! Make the partitition factor "p" for a particular thermal smearing
-!   ! "model", for "atom_a". Return "is_zero" as TRUE if p is zero.
-!      p :: REAL
-!      atom_a :: INT, IN
-!      is_zero :: BIN, OUT, optional
-!
-!   ENSURE(.crystal.created,"no crystal data")
-!
-!      ra,fa :: REAL
-!
-!      ra = .crystal.repetition_factor(atom_a)
-!
-!      if (present(is_zero)) then
-!        if (ra<1) then; is_zero = TRUE; return
-!        else;           is_zero = FALSE
-!        end
-!      end
-!
-!      if (ra<1) then; fa = ZERO
-!      else;           fa = ONE/ra
-!      end
-!
-!      select case (trim(.crystal.partition_model))
-!         case (" ","none"); p = ONE
-!         case ("mulliken"); p = fa
-!         case ("gaussian"); p = fa
-!         case default;      DIE("unknown model, "//trim(.crystal.partition_model))
-!      end
-!
-!   end
+   FT_for_a_in_pair_ab(FT,k1,k2,k3,sh,atom_a,atom_b)
+   ! Make FT(h) the fourier transform with respect to a list of
+   ! k points (k1,k2,k3) of an atom-A partitioned SHELL2 shellpair
+   ! "sh" centered on "atom_a" and "atom_b".
+   ! function FT of the shell gaussian gaussians.
+   ! Includes partitioning and thermal smearing.
+      self :: IN
+      FT :: MAT3{CPX}, OUT
+      k1,k2,k3 :: VEC{REAL}, IN
+      sh :: SHELL2, IN
+      atom_a,atom_b :: INT, IN
 
-   make_partition_factors(p,sh,atom_a,atom_b,is_zero)
-   ! Make the partitition factors "p" for a particular thermal
-   ! smearing "model", for a given "sh" pair with atom centers
-   ! "atom_a" and "atom_b".
+   ENSURE(.crystal.created,"no crystal data")
+
+      is_zero :: BIN
+      p :: MAT{REAL}*
+      k_max :: INT
+
+      k_max = k1.dim
+
+      p.create(sh.a.n_cc,sh.b.n_cc)
+
+      ! Partition factors
+      .:make_partition_factors(p,sh,atom_a,atom_b,is_zero)
+
+      sh.make_FT_parted(FT,k1,k2,k3,p)
+
+      p.destroy
+
+   end
+
+!  ============
+!  Partitioning
+!  ============
+
+   make_partition_factors(p,sh,atom_a,atom_b,is_zero) ::: PURE
+   ! Make the partitition factors "p" over the contractions in a
+   ! SHELL2 "sh" with atom centers "atom_a" and "atom_b" and for a
+   ! particular thermal ".crystal.partition_model",.
       self :: IN
       p :: MAT{REAL}, OUT
       sh :: SHELL2, IN
       atom_a,atom_b :: INT, IN
-      is_zero :: BIN, OUT, optional
+      is_zero :: BIN, optional, OUT
 
    ENSURE(.crystal.created,"no crystal data")
 
@@ -1225,15 +1149,18 @@ contains
          case (" ","none"); p = ONE
          case ("mulliken"); p = HALF * (fa + fb)
          case ("gaussian"); sh.make_gaussian_partition(p,fa,fb)
-      !  case default;      DIE("unknown model, "//trim(.crystal.partition_model))
       end
 
    end
 
-   thermal_smearing_correction(res,k_pts,a,b,sh)
-   ! Makes the thermal smearing correction term.  Note that res
-   ! is done over the contraction coefficients.
-   ! Dimensions of "res" are [k_max,.a.n_cc,.b.n_cc].
+!  ================
+!  Thermal smearing
+!  ================
+
+   thermal_smearing_correction(res,k_pts,a,b,sh) ::: pure
+   ! Makes the thermal smearing correction term "res" over the
+   ! contraction coefficients.  Dimensions of "res" are
+   ! [k_max,.a.n_cc,.b.n_cc].
       self :: IN
       res :: MAT3{REAL}, OUT
       k_pts :: MAT{REAL}, IN
@@ -1251,11 +1178,15 @@ contains
       select case (trim(.crystal.thermal_smearing_model))
 
        case (" ","none")
+
           res = ONE
 
-       case ("coppens") ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
+       case ("coppens") 
+       
+          ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
           Ua = -HALF * .atom(a).ADP_tensor
           Ub = -HALF * .atom(b).ADP_tensor
+
           do k = 1,k_max
              S = k_pts(k,:)
              US = matmul(Ua,S)
@@ -1265,16 +1196,21 @@ contains
              res(k,:,:) = HALF*(exp(Ta)+exp(Tb))
           end
 
-       case ("stewart") ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
-          bondlength=2.5
-          Ua = .atom(a).ADP_tensor
-          Ub = .atom(b).ADP_tensor
-          Uab = Ua + Ub
+       case ("stewart") 
+       
+          ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
+          Ua   = .atom(a).ADP_tensor
+          Ub   = .atom(b).ADP_tensor
+          Uab  = Ua + Ub
           diff = .atom(a).position-.atom(b).position
+
+          bondlength = 2.5
           separation = diff.norm
-          g=HALF
-          if (separation > bondlength) g=QUARTER
-          Uab = -HALF * g * Uab     ! -HALF g (Ua+Ub)
+          g = HALF
+          if (separation > bondlength) g = QUARTER
+
+          Uab = -HALF * g * Uab    
+
           do k = 1,k_max
              S = k_pts(k,:)
              US = matmul(Uab,S)
@@ -1282,13 +1218,88 @@ contains
              res(k,:,:) = exp(Ta)
           end
 
-       case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+       case ("tanaka") 
+       
+          ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
           Ua = .atom(a).ADP_tensor
           Ub = .atom(b).ADP_tensor
           sh.make_tanaka_thermal_smearing(res,k_pts,Ua,Ub)
 
-     ! case default
-     !    DIE("unknown model, "//trim(.crystal.thermal_smearing_model))
+      end
+
+   end
+
+   thermal_smearing_correction(res,k1,k2,k3,a,b) ::: pure
+   ! Makes the thermal smearing correction term "res" over the
+   ! contraction coefficients.  Dimensions of "res" are
+   ! [k_max,.a.n_cc,.b.n_cc].
+      self :: IN
+      res :: MAT3{REAL}, OUT
+      k1,k2,k3 :: VEC{REAL}, IN
+      a,b :: INT, IN
+
+      Ua,Ub,Uab :: MAT{REAL}(3,3)
+      S,US :: VEC{REAL}(3)
+      k_max,k :: INT
+      separation,bondlength,Ta,Tb,g :: REAL
+      diff :: VEC{REAL}(3)
+
+      k_max = k1.dim1
+
+      select case (trim(.crystal.thermal_smearing_model))
+
+       case (" ","none")
+
+          res = ONE
+
+       case ("coppens") 
+       
+          ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
+          Ua = -HALF * .atom(a).ADP_tensor
+          Ub = -HALF * .atom(b).ADP_tensor
+
+          do k = 1,k_max
+
+             S(1) = k1(k)
+             S(2) = k2(k)
+             S(3) = k3(k)
+
+             US = matmul(Ua,S)
+             Ta = dot_product(S,US)
+             US = matmul(Ub,S)
+             Tb = dot_product(S,US)
+
+             res(k,:,:) = HALF*(exp(Ta)+exp(Tb))
+
+          end
+
+       case ("stewart") 
+       
+          ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
+          Ua   = .atom(a).ADP_tensor
+          Ub   = .atom(b).ADP_tensor
+          Uab  = Ua + Ub
+          diff = .atom(a).position-.atom(b).position
+
+          bondlength = 2.5
+          separation = diff.norm
+          g = HALF
+          if (separation > bondlength) g = QUARTER
+
+          Uab = -HALF * g * Uab    
+
+          do k = 1,k_max
+
+             S(1) = k1(k)
+             S(2) = k2(k)
+             S(3) = k3(k)
+
+             US = matmul(Uab,S)
+             Ta = dot_product(S,US)
+
+             res(k,:,:) = exp(Ta)
+
+          end
 
       end
 
@@ -1297,9 +1308,10 @@ contains
    ft_thermally_smear(ft_ab,k_pts,a,b)
    ! Thermally smear the fourier transform integrals "ft_ab" evaluated
    ! on "k_pts" for shell pair (ab) centered on atoms "a" and "b" .
-      ft_ab :: MAT3{CPX}
-      k_pts :: MAT{REAL}
-      a,b :: INT
+      self :: IN
+      ft_ab :: MAT3{CPX}, INOUT
+      k_pts :: MAT{REAL}, IN
+      a,b :: INT, IN
 
       Ua,Ub,Uab :: MAT{REAL}(3,3)
       S,US,diff :: VEC{REAL}(3)
@@ -1312,9 +1324,12 @@ contains
 
          case (" ","none")
 
-         case ("coppens") ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
+         case ("coppens") 
+         
+            ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
             Ua = -HALF * .atom(a).ADP_tensor
             Ub = -HALF * .atom(b).ADP_tensor
+
             do k = 1,k_max
                S = k_pts(k,:)
                US = matmul(Ua,S)
@@ -1324,16 +1339,21 @@ contains
                ft_ab(k,:,:) = ft_ab(k,:,:) * HALF*(exp(Ta)+exp(Tb))
             end
 
-         case ("stewart") ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4
-            bondlength = 2.5e0
+         case ("stewart") 
+         
+            ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4
             Ua = .atom(a).ADP_tensor
             Ub = .atom(b).ADP_tensor
             Uab = Ua + Ub
             diff = .atom(a).position-.atom(b).position
+
+            bondlength = 2.5e0
             separation = diff.norm
-            g=HALF
+            g = HALF
             if (separation > bondlength) g=QUARTER
-            Uab = -HALF * g * Uab     ! -HALF g (Ua+Ub)
+
+            Uab = -HALF * g * Uab
+
             do k = 1,k_max
                S = k_pts(k,:)
                US = matmul(Uab,S)
@@ -1341,14 +1361,21 @@ contains
                ft_ab(k,:,:) = exp(Ta)*ft_ab(k,:,:)
             end
 
-         case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+         case ("tanaka") 
+         
+            ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
             DIE("cannot thermally smear at contracted level.")
 
          case default
             DIE("unknown model, "//trim(.crystal.thermal_smearing_model))
+
       end
 
    end
+
+!  ==================
+!  Archived integrals
+!  ==================
 
    get_ft_ints
    ! Get the fourier transform of the overlap integrals.
@@ -1471,15 +1498,15 @@ contains
       if (genre.includes("complex")) then
 
          if (.scfdata.spinorbital_kind=="general_complex") then
-            .XTAL:make_ft_gc(sf_eq,.density_matrix.general_complex,k_pts)
+            .:make_ft_gc(sf_eq,.density_matrix.general_complex,k_pts)
          else
-            .XTAL:make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
+            .:make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
          end if
 
       else
 
-         .BASE:put_debug(.density_matrix.restricted,"make_x_structure_factors_p: dm")
-         .XTAL:make_ft(sf_eq,.density_matrix.restricted,k_pts)
+         .:make_ft(sf_eq,.density_matrix.restricted,k_pts)
+
          if (.scfdata.created) then
          if (.scfdata.spinorbital_kind=="unrestricted") then
             .density_matrix.destroy("restricted")
@@ -1487,6 +1514,7 @@ contains
          end
 
       end
+
       k_pts.destroy
 
       ! Sum to get F_calc
@@ -1569,7 +1597,7 @@ contains
    ! Make the PND structure factors for this molecule.
 
    ENSURE(.crystal.created, "no crystal")
-   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.crystal.data_exists, "no reflection data")
    ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
    DIE_IF(NOT .crystal.spacegroup.centrosymmetric,"crystal must be centrosymmetric")
 
@@ -1589,7 +1617,7 @@ contains
    ! Make the free PND structure factors for this molecule.
 
    ENSURE(.crystal.created, "no crystal")
-   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.crystal.data_exists, "no reflection data")
    ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
 
       ! Assign free SF's
@@ -1604,10 +1632,10 @@ contains
    end
 
    make_n_structure_factors_p ::: private
-   ! Make the structure factors for this molecule.
+   ! Make the S_z structure factors for this molecule.
 
    ENSURE(.crystal.created, "no crystal")
-   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.crystal.data_exists, "no reflection data")
    ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
 
       sf_eq,Fc :: VEC{CPX}*
@@ -2374,7 +2402,7 @@ contains
 !   ! Make the PND scalar magnetic structure factors and assign them
 !   ! To the crystal objects structure factors for analysis
 !   ENSURE(.crystal.created, "no crystal")
-!   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+!   ENSURE(.crystal.data_exists, "no reflection data")
 !      FM_s, FM_l, FM_r, Fc :: VEC{CPX}*
 !      n_refl :: INT
 !      arch :: ARCHIVE
@@ -2717,7 +2745,7 @@ contains
 !   make_PND_ft_r_ints
 !   ! Make the fourier transform of the dipole "r" integrals on the archive
 !   ENSURE(.crystal.created, "no crystal")
-!   ENSURE(.crystal.reflection_data_exists, "no structure factor data")
+!   ENSURE(.crystal.data_exists, "no structure factor data")
 !      arch :: ARCHIVE
 !      k_pts :: MAT{REAL}*
 !      sh :: SHELL2*
