@@ -5710,9 +5710,10 @@ contains
    ENSURE(.molecular_orbitals.any_created, "no molecular orbitals")
 
       T :: REAL
-      damping,do_archive,do_delta_density,use_pFON :: BIN
+      damping,do_archive,do_delta_density,use_pFON,use_FON :: BIN
       MO,D,MOa,MOb,Da,Db,F,Fa,Fb :: MAT{REAL}*
       CMO,CD,CMOa,CMOb,CDa,CDb :: MAT{CPX}*
+      EV,Ea,Eb :: VEC{REAL}*
       scf_method,genre :: STR
 
       ! Determine (or guess) the kind of SCF method to be used.
@@ -5740,6 +5741,10 @@ contains
       use_pFON = FALSE
       if (.scfdata.created AND .fock_matrix.created(genre)) use_pFON = .scfdata.apply_pFON
 
+      ! Determine if finite temperature FON should be used
+      use_FON = FALSE
+      if (.scfdata.created) use_pFON = .scfdata.using_FON
+
       ! Create the density matrix (leaky)
       if (.density_matrix.destroyed) .density_matrix.create(.n_bf)
       .density_matrix.destroy(genre)
@@ -5765,9 +5770,18 @@ contains
                D  => .density_matrix.restricted
                MO => .molecular_orbitals.restricted
                F  => .fock_matrix.restricted
-               T = .scfdata.temperature_for_pFON
+               T  =  .scfdata.temperature_for_pFON
                ::make_finite_T_density_matrix(D,MO,F,T,.n_a)
-               D = TWO*D
+               D  = TWO*D
+
+            else if (use_FON) then
+
+               D  => .density_matrix.restricted
+               MO => .molecular_orbitals.restricted
+               EV => .orbital_energies.restricted
+               T  =  .scfdata.temperature
+               ::make_finite_T_DM_r(D,.scfdata.E_Fermi,MO,EV,T,.n_a)
+               D  = TWO*D
 
             else
 
@@ -5795,10 +5809,10 @@ contains
 
             ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
 
-            MOa => .molecular_orbitals.restricted(:,1:.n_a)
-            MOb => .molecular_orbitals.restricted(:,1:.n_b)
             Da  => .density_matrix.alpha
             Db  => .density_matrix.beta
+            MOa => .molecular_orbitals.restricted(:,1:.n_a)
+            MOb => .molecular_orbitals.restricted(:,1:.n_b)
             Da.to_product_of(MOa,MOa,transpose_b=TRUE)
             Db.to_product_of(MOb,MOb,transpose_b=TRUE)
 
@@ -5809,15 +5823,26 @@ contains
 
             if (use_pFON) then
 
-               MOa => .molecular_orbitals.alpha
-               MOb => .molecular_orbitals.beta
                Da  => .density_matrix.alpha
                Db  => .density_matrix.beta
+               MOa => .molecular_orbitals.alpha
+               MOb => .molecular_orbitals.beta
                Fa  => .fock_matrix.alpha
                Fb  => .fock_matrix.beta
                T = .scfdata.temperature_for_pFON
                ::make_finite_T_density_matrix(Da,MOa,Fa,T,.n_a)
                ::make_finite_T_density_matrix(Db,MOb,Fb,T,.n_b)
+
+            else if (use_FON) then
+
+               Da  => .density_matrix.alpha
+               Db  => .density_matrix.beta
+               MOa => .molecular_orbitals.alpha
+               MOb => .molecular_orbitals.beta
+               Ea  => .orbital_energies.alpha
+               Eb  => .orbital_energies.beta
+               T = .scfdata.temperature
+               ::make_finite_T_DM_u(Da,Db,.scfdata.E_Fermi,MOa,MOb,Ea,Eb,T,.n_a,.n_b)
 
             else
 
@@ -5970,6 +5995,110 @@ contains
 
    end
 
+   make_finite_T_DM_r(D,E_Fermi,MO,eig,T,n_e) ::: selfless
+   ! Make the restricted finite temperature density matrix "D" from
+   ! molecular orbitals "MO" according to the FON method with
+   ! temperature "T" in Kelvin and number of electrons "n_e" *for a
+   ! given spin*, as in Rabuck and Scuseria, JCP 110, 695 (1999).
+      D :: MAT{REAL}, OUT
+      E_Fermi :: REAL, OUT
+      MO :: MAT{REAL}, IN
+      eig :: VEC{REAL}, IN
+      T :: REAL, IN
+      n_e :: INT, IN
+
+   ENSURE( D.is_square, "D must be square")
+   ENSURE(MO.dim2==eig.dim,"MO and eig are incomptabile")
+   ENSURE(n_e<=MO.dim2,"fewer MO's than electrons")
+   ENSURE(T>ZERO,"T must be positive")
+
+      i :: INT
+      occ :: REAL
+
+      ! Set temperature and eigenvalues
+      REAL:set_T_Fermi(T)
+      REAL:set_E_level(eig)
+      REAL:set_n_electrons(n_e)
+
+      ! Find the Fermi energy
+      REAL:find_root_brent(REAL::Fermi_Dirac_excess_fn,x1=eig(1),x2=eig(n_e+1),root=E_Fermi,tol=TOL(6))
+
+      if (TRUE) then
+         stdout.show("HOMO      =",eig(n_e))
+         stdout.show("LUMO      =",eig(n_e+1))
+         stdout.show("E_Fermi   =",E_Fermi)
+      end
+
+      ! Set the Fermi energy
+      REAL:set_E_Fermi(E_Fermi)
+
+      ! Form the temperature broadended density
+      D = ZERO
+      do i = 1,MO.dim2
+         occ = REAL:Fermi_Dirac_fn(i)
+         D.plus_scaled_product_of(MO(:,i:i),MO(:,i:i),fac=occ,transpose_b=TRUE)
+      end
+
+   end
+
+   make_finite_T_DM_u(Da,Db,E_Fermi,MOa,MOb,Ea,Eb,T,n_a,n_b) ::: selfless
+   ! Make the restricted finite temperature density matrix "D" from
+   ! molecular orbitals "MO" according to the FON method with
+   ! temperature "T" in Kelvin and number of electrons "n_e" *for a
+   ! given spin*, as in Rabuck and Scuseria, JCP 110, 695 (1999).
+      Da,Db :: MAT{REAL}, OUT
+      E_Fermi :: REAL, OUT
+      MOa,MOb :: MAT{REAL}, IN
+      Ea,Eb :: VEC{REAL}, IN
+      T :: REAL, IN
+      n_a,n_b :: INT, IN
+
+   ENSURE( Da.is_square, "Da must be square")
+   ENSURE( Db.is_square, "Da must be square")
+   ENSURE(MOa.dim2==Ea.dim,"MOa and Ea are incomptabile")
+   ENSURE(MOb.dim2==Eb.dim,"MOb and Eb are incomptabile")
+   ENSURE(n_b<=MOb.dim2,"fewer MOb's than electrons")
+   ENSURE(T>ZERO,"T must be positive")
+
+      i :: INT
+      Emin,Emax,occ :: REAL
+
+      ! Set temperature and eigenvalues
+      REAL:set_T_Fermi(T)
+      REAL:set_E_level(Ea,Eb)
+      REAL:set_n_electrons(n_a+n_b)
+
+      ! Find the Fermi energy
+      Emin = min(Ea( 1 ),Eb( 1 ))
+      Emax = max(Ea(n_a),Eb(n_b))
+      REAL:find_root_brent(REAL::Fermi_Dirac_excess_fn,x1=Emin,x2=Emax,root=E_Fermi,tol=TOL(6))
+
+      if (TRUE) then
+         stdout.show("HOMOa     =",Ea(n_a))
+         stdout.show("HOMOb     =",Eb(n_b))
+         stdout.show("LUMOa     =",Ea(n_a+1))
+         stdout.show("LUMOb     =",Ea(n_b+1))
+         stdout.show("E_Fermi   =",E_Fermi)
+      end
+
+      ! Set the Fermi energy
+      REAL:set_E_Fermi(E_Fermi)
+
+      ! Form the temperature broadended density
+      Da = ZERO
+      do i = 1,MOa.dim2
+         occ = REAL:Fermi_Dirac_fn(i)
+         Da.plus_scaled_product_of(MOa(:,i:i),MOa(:,i:i),fac=occ,transpose_b=TRUE)
+      end
+
+      Db = ZERO
+      do i = 1,MOb.dim2
+         occ = REAL:Fermi_Dirac_fn(n_a+i)
+         Db.plus_scaled_product_of(MOb(:,i:i),MOb(:,i:i),fac=occ,transpose_b=TRUE)
+      end
+
+   end
+
    make_ao_density_matrix ::: leaky
    ! Make the AO (spin independent) density matrix from the existing density
    ! matrix. The result is placed in the "restricted" part of the density
@@ -5988,6 +6117,7 @@ contains
    ! Make the AO (spin independent) density matrix from the existing
    ! density matrix. The result is placed in the "restricted" part of
    ! the density matrix.
+      self :: IN
       D :: OPMATRIX*
 
    ENSURE(.basis_info_made, "no basis info")
