@@ -1028,7 +1028,8 @@ contains
 ! Axes
 
    resolve_axis_system
-   ! Change the axis system to crystal coordinates, if required.
+   ! Change the axis system to cartesian, if required.
+   ! NOTE: Errors (if any) are transformed straightforwardly
 
       if (.crystal.destroyed) return
       if (.atom.destroyed)    return
@@ -1038,7 +1039,8 @@ contains
    end
 
    change_axis_system_to
-   ! Change the axis system to crystal coordinates, if required.
+   ! Change the axis system.
+   ! NOTE: Errors (if any) are transformed straightforwardly
 
       axis_system :: STR
 
@@ -8220,38 +8222,8 @@ contains
    put_ADPs
    ! Output the ADPs in cartesian axes
    ENSURE(.atom.created,"no atom list")
+
       .atom.put_ADPs
-   end
-
-   put_crystal_ADPs_with_errors
-   ! Output the ADPs in cartesian axes
-   ENSURE(.atom.created,"no atom list")
-   ENSURE(.crystal.created,"no crystal")
-
-      esd,dX :: VEC{REAL}*
-      n_pADPs :: INT
-
-      n_pADPs = .atom.no_of_pADPs
-      esd.create(n_pADPs)
-      dX.create(n_pADPs)
-
-      ! Save cartesian errors
-      .atom.put_pADP_errors_to(dX)
-
-      ! Make the CIF ADP errors and reset
-      .crystal.make_CIF_esds(.atom,.crystal.data.fragment_covariance_matrix,esd)
-      esd = sqrt(esd)
-      .atom.set_pADP_errors_to(esd)
-
-      ! Change coordinates and ADPs
-      .atom.change_axis_system_to("crystal",.crystal.unit_cell)
-
-      ! Print tabel
-      .atom.put_crystal_ADPs_with_errors
-
-      ! Put back axis system *and* errors to cartesian
-      .atom.change_axis_system_to("cartesian",.crystal.unit_cell)
-      .atom.set_pADP_errors_to(dX)
 
    end
 
@@ -8357,6 +8329,7 @@ contains
       cm.destroy
 
    end
+
 
    put_principal_axes
    ! Output the atom principal axes
@@ -8686,15 +8659,20 @@ contains
 !  Put CIF
 !  =======
 
-   put_CIFs
+   put_CIFs(with_ESDs)
    ! Prints out an asymmetric and fragment cif file.
    ! Does both cartesian and crystal axes.
+   ! NOTE: IF "with_esds" is present and TRUE, it is assumed
+   ! that the covariances from a refinement are present, and
+   ! these are used to make the ESDs; otherwise ESDs are still
+   ! made by transforming in a straightforward way.
       self :: IN
+      with_ESDs :: BIN, optional, IN
 
    ENSURE(.crystal.created, "No crystal")
    ENSURE(.atom.created, "No atom")
 
-      clean :: BIN
+      clean,change_ESDs :: BIN
 
       ! Make sure CIF is there ...
       clean = FALSE
@@ -8711,34 +8689,33 @@ contains
       .crystal.put_fragment_CIF(.cif)
       stdout.revert
 
+      ! Sanity check for errors
+      change_ESDs = TRUE
+      if (present(with_ESDs)) change_ESDs = NOT with_ESDs
+
+      if (.crystal.data.created) then
+      DIE_IF(.crystal.data.covariance_matrix.created AND change_ESDs,"covariances exist")
+      DIE_IF(.crystal.data.fragment_covariance_matrix.created AND change_ESDs,"fragment covariances exist")
+      end
+
       ! Crystal/Fragment
       stdout.redirect(trim(.name)//".cryst-fragment.cif")
-      .crystal.fragment_atom.change_axis_system_to("crystal",.crystal.unit_cell)
       .:put_CIF_banner
       .:put_CIF_basics
       .:put_CIF_wavefunction
+      .crystal.fragment_atom.change_axis_system_to("crystal",.crystal.unit_cell,change_ESDs)
       .crystal.put_fragment_CIF(.cif)
-      .crystal.fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell)
+      .crystal.fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell,change_ESDs)
       stdout.revert
-
-      ! Crystal/Fragment
-    ! stdout.redirect(trim(.name)//".cryst-fragment-v1.cif")
-    ! .crystal.fragment_atom.change_axis_system_to_v1("crystal",.crystal.unit_cell)
-    ! .:put_CIF_banner
-    ! .:put_CIF_basics
-    ! .:put_CIF_wavefunction
-    ! .crystal.put_fragment_CIF(.cif)
-    ! .crystal.fragment_atom.change_axis_system_to_v1("cartesian",.crystal.unit_cell)
-    ! stdout.revert
 
       ! Crystal/Asymmetric unit
       stdout.redirect(trim(.name)//".cryst-asymm-unit.cif")
-      .crystal.asymmetric_unit_atom.change_axis_system_to("crystal",.crystal.unit_cell)
       .:put_CIF_banner
       .:put_CIF_basics
       .:put_CIF_wavefunction
+      .crystal.asymmetric_unit_atom.change_axis_system_to("crystal",.crystal.unit_cell,change_ESDs)
       .crystal.put_asymm_unit_CIF(.cif)
-      .crystal.asymmetric_unit_atom.change_axis_system_to("cartesian",.crystal.unit_cell)
+      .crystal.asymmetric_unit_atom.change_axis_system_to("cartesian",.crystal.unit_cell,change_ESDs)
       stdout.revert
 
       ! Clean up
