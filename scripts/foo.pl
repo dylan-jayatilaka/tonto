@@ -341,6 +341,9 @@ push(@all_known_type_names,$array_type);
 %{$global_var_info{std_time}} = &analyse_type_name('TIME');
 %{$global_var_info{tonto_parallel}} = &analyse_type_name('PARALLEL');
 
+# %{$global_var_info{some_dummy_argument}} = &analyse_type_name('MAT_{REAL}');
+# %{$global_var_info{spherical_harmonics_for}} = &analyse_type_name('VEC{MAT_{REAL}}*');
+
 %local_var_info = %global_var_info;
 
 
@@ -4200,9 +4203,14 @@ sub convert_dots_to_fortran {
                 $rout = 'size';
                 $underscore = '';
                 $done = 1;
-              # Modify argumentless "created" statements -> allocated
+              # Modify argumentless "created" statements
               } elsif ($post !~ '^[(]' && $rout =~ m'^created$'o) {
                 $rout = 'associated';
+                $underscore = '';
+                $done = 1;
+              # Modify argumentless "allocated" statements -> allocated
+              } elsif ($post !~ '^[(]' && $rout =~ m'^allocated$'o) {
+                $rout = 'allocated';
                 $underscore = '';
                 $done = 1;
               # Modify argumentless "destroyed" statements -> NOT allocated
@@ -4211,6 +4219,12 @@ sub convert_dots_to_fortran {
                 $underscore = '';
                 # We might have introduced a "NOT NOT".
                 if ($pre =~ s/NOT\s*$// || $pre =~ s/\.NOT\.\s*$//) { $rout = 'associated'; }
+                $done = 1;
+              } elsif ($post !~ '^[(]' && $rout =~ m'^deallocated$'o) {
+                $rout = 'NOT allocated';
+                $underscore = '';
+                # We might have introduced a "NOT NOT".
+                if ($pre =~ s/NOT\s*$// || $pre =~ s/\.NOT\.\s*$//) { $rout = 'allocated'; }
                 $done = 1;
               }
 
