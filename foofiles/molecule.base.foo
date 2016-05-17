@@ -67,7 +67,7 @@ contains
 !  Create and destroy
 !  ==================
 
-   create ::: get_from(OBJECT), leaky, public
+   create ::: get_from(OBJECT), leaky
    ! Create an object
    end
 
@@ -464,7 +464,7 @@ contains
 
    end
 
-   destroy_interpolators ::: leaky, public
+   destroy_interpolators ::: leaky
    ! Destroy the (unique) interpolators (*not* ANO interpolators)
 
    ENSURE(.atom.created,"no atoms")
@@ -984,7 +984,7 @@ contains
 
    end
 
-   set_slaterbasis_name(name) ::: leaky, public
+   set_slaterbasis_name(name) ::: leaky
    ! Set a slater *library* basis set name
       name :: STR
 
@@ -1028,7 +1028,8 @@ contains
 ! Axes
 
    resolve_axis_system
-   ! Change the axis system to crystal coordinates, if required.
+   ! Change the axis system to cartesian, if required.
+   ! NOTE: Errors (if any) are transformed straightforwardly
 
       if (.crystal.destroyed) return
       if (.atom.destroyed)    return
@@ -1038,7 +1039,8 @@ contains
    end
 
    change_axis_system_to
-   ! Change the axis system to crystal coordinates, if required.
+   ! Change the axis system.
+   ! NOTE: Errors (if any) are transformed straightforwardly
 
       axis_system :: STR
 
@@ -5710,9 +5712,10 @@ contains
    ENSURE(.molecular_orbitals.any_created, "no molecular orbitals")
 
       T :: REAL
-      damping,do_archive,do_delta_density,use_pFON :: BIN
+      damping,do_archive,do_delta_density,use_pFON,use_FON :: BIN
       MO,D,MOa,MOb,Da,Db,F,Fa,Fb :: MAT{REAL}*
       CMO,CD,CMOa,CMOb,CDa,CDb :: MAT{CPX}*
+      EV,Ea,Eb :: VEC{REAL}*
       scf_method,genre :: STR
 
       ! Determine (or guess) the kind of SCF method to be used.
@@ -5740,6 +5743,10 @@ contains
       use_pFON = FALSE
       if (.scfdata.created AND .fock_matrix.created(genre)) use_pFON = .scfdata.apply_pFON
 
+      ! Determine if finite temperature FON should be used
+      use_FON = FALSE
+      if (.scfdata.created) use_pFON = .scfdata.using_FON
+
       ! Create the density matrix (leaky)
       if (.density_matrix.destroyed) .density_matrix.create(.n_bf)
       .density_matrix.destroy(genre)
@@ -5765,9 +5772,18 @@ contains
                D  => .density_matrix.restricted
                MO => .molecular_orbitals.restricted
                F  => .fock_matrix.restricted
-               T = .scfdata.temperature_for_pFON
+               T  =  .scfdata.temperature_for_pFON
                ::make_finite_T_density_matrix(D,MO,F,T,.n_a)
-               D = TWO*D
+               D  = TWO*D
+
+            else if (use_FON) then
+
+               D  => .density_matrix.restricted
+               MO => .molecular_orbitals.restricted
+               EV => .orbital_energies.restricted
+               T  =  .scfdata.temperature
+               ::make_finite_T_DM_r(D,.scfdata.E_Fermi,MO,EV,T,.n_a)
+               D  = TWO*D
 
             else
 
@@ -5795,10 +5811,10 @@ contains
 
             ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
 
-            MOa => .molecular_orbitals.restricted(:,1:.n_a)
-            MOb => .molecular_orbitals.restricted(:,1:.n_b)
             Da  => .density_matrix.alpha
             Db  => .density_matrix.beta
+            MOa => .molecular_orbitals.restricted(:,1:.n_a)
+            MOb => .molecular_orbitals.restricted(:,1:.n_b)
             Da.to_product_of(MOa,MOa,transpose_b=TRUE)
             Db.to_product_of(MOb,MOb,transpose_b=TRUE)
 
@@ -5809,15 +5825,26 @@ contains
 
             if (use_pFON) then
 
-               MOa => .molecular_orbitals.alpha
-               MOb => .molecular_orbitals.beta
                Da  => .density_matrix.alpha
                Db  => .density_matrix.beta
+               MOa => .molecular_orbitals.alpha
+               MOb => .molecular_orbitals.beta
                Fa  => .fock_matrix.alpha
                Fb  => .fock_matrix.beta
                T = .scfdata.temperature_for_pFON
                ::make_finite_T_density_matrix(Da,MOa,Fa,T,.n_a)
                ::make_finite_T_density_matrix(Db,MOb,Fb,T,.n_b)
+
+            else if (use_FON) then
+
+               Da  => .density_matrix.alpha
+               Db  => .density_matrix.beta
+               MOa => .molecular_orbitals.alpha
+               MOb => .molecular_orbitals.beta
+               Ea  => .orbital_energies.alpha
+               Eb  => .orbital_energies.beta
+               T = .scfdata.temperature
+               ::make_finite_T_DM_u(Da,Db,.scfdata.E_Fermi,MOa,MOb,Ea,Eb,T,.n_a,.n_b)
 
             else
 
@@ -5970,6 +5997,110 @@ contains
 
    end
 
+   make_finite_T_DM_r(D,E_Fermi,MO,eig,T,n_e) ::: selfless
+   ! Make the restricted finite temperature density matrix "D" from
+   ! molecular orbitals "MO" according to the FON method with
+   ! temperature "T" in Kelvin and number of electrons "n_e" *for a
+   ! given spin*, as in Rabuck and Scuseria, JCP 110, 695 (1999).
+      D :: MAT{REAL}, OUT
+      E_Fermi :: REAL, OUT
+      MO :: MAT{REAL}, IN
+      eig :: VEC{REAL}, IN
+      T :: REAL, IN
+      n_e :: INT, IN
+
+   ENSURE( D.is_square, "D must be square")
+   ENSURE(MO.dim2==eig.dim,"MO and eig are incomptabile")
+   ENSURE(n_e<=MO.dim2,"fewer MO's than electrons")
+   ENSURE(T>ZERO,"T must be positive")
+
+      i :: INT
+      occ :: REAL
+
+      ! Set temperature and eigenvalues
+      REAL:set_T_Fermi(T)
+      REAL:set_E_level(eig)
+      REAL:set_n_electrons(n_e)
+
+      ! Find the Fermi energy
+      REAL:find_root_brent(REAL::Fermi_Dirac_excess_fn,x1=eig(1),x2=eig(n_e+1),root=E_Fermi,tol=TOL(6))
+
+      if (TRUE) then
+         stdout.show("HOMO      =",eig(n_e))
+         stdout.show("LUMO      =",eig(n_e+1))
+         stdout.show("E_Fermi   =",E_Fermi)
+      end
+
+      ! Set the Fermi energy
+      REAL:set_E_Fermi(E_Fermi)
+
+      ! Form the temperature broadended density
+      D = ZERO
+      do i = 1,MO.dim2
+         occ = REAL:Fermi_Dirac_fn(i)
+         D.plus_scaled_product_of(MO(:,i:i),MO(:,i:i),fac=occ,transpose_b=TRUE)
+      end
+
+   end
+
+   make_finite_T_DM_u(Da,Db,E_Fermi,MOa,MOb,Ea,Eb,T,n_a,n_b) ::: selfless
+   ! Make the restricted finite temperature density matrix "D" from
+   ! molecular orbitals "MO" according to the FON method with
+   ! temperature "T" in Kelvin and number of electrons "n_e" *for a
+   ! given spin*, as in Rabuck and Scuseria, JCP 110, 695 (1999).
+      Da,Db :: MAT{REAL}, OUT
+      E_Fermi :: REAL, OUT
+      MOa,MOb :: MAT{REAL}, IN
+      Ea,Eb :: VEC{REAL}, IN
+      T :: REAL, IN
+      n_a,n_b :: INT, IN
+
+   ENSURE( Da.is_square, "Da must be square")
+   ENSURE( Db.is_square, "Da must be square")
+   ENSURE(MOa.dim2==Ea.dim,"MOa and Ea are incomptabile")
+   ENSURE(MOb.dim2==Eb.dim,"MOb and Eb are incomptabile")
+   ENSURE(n_b<=MOb.dim2,"fewer MOb's than electrons")
+   ENSURE(T>ZERO,"T must be positive")
+
+      i :: INT
+      Emin,Emax,occ :: REAL
+
+      ! Set temperature and eigenvalues
+      REAL:set_T_Fermi(T)
+      REAL:set_E_level(Ea,Eb)
+      REAL:set_n_electrons(n_a+n_b)
+
+      ! Find the Fermi energy
+      Emin = min(Ea( 1 ),Eb( 1 ))
+      Emax = max(Ea(n_a),Eb(n_b))
+      REAL:find_root_brent(REAL::Fermi_Dirac_excess_fn,x1=Emin,x2=Emax,root=E_Fermi,tol=TOL(6))
+
+      if (TRUE) then
+         stdout.show("HOMOa     =",Ea(n_a))
+         stdout.show("HOMOb     =",Eb(n_b))
+         stdout.show("LUMOa     =",Ea(n_a+1))
+         stdout.show("LUMOb     =",Ea(n_b+1))
+         stdout.show("E_Fermi   =",E_Fermi)
+      end
+
+      ! Set the Fermi energy
+      REAL:set_E_Fermi(E_Fermi)
+
+      ! Form the temperature broadended density
+      Da = ZERO
+      do i = 1,MOa.dim2
+         occ = REAL:Fermi_Dirac_fn(i)
+         Da.plus_scaled_product_of(MOa(:,i:i),MOa(:,i:i),fac=occ,transpose_b=TRUE)
+      end
+
+      Db = ZERO
+      do i = 1,MOb.dim2
+         occ = REAL:Fermi_Dirac_fn(n_a+i)
+         Db.plus_scaled_product_of(MOb(:,i:i),MOb(:,i:i),fac=occ,transpose_b=TRUE)
+      end
+
+   end
+
    make_ao_density_matrix ::: leaky
    ! Make the AO (spin independent) density matrix from the existing density
    ! matrix. The result is placed in the "restricted" part of the density
@@ -5988,6 +6119,7 @@ contains
    ! Make the AO (spin independent) density matrix from the existing
    ! density matrix. The result is placed in the "restricted" part of
    ! the density matrix.
+      self :: IN
       D :: OPMATRIX*
 
    ENSURE(.basis_info_made, "no basis info")
@@ -8090,38 +8222,8 @@ contains
    put_ADPs
    ! Output the ADPs in cartesian axes
    ENSURE(.atom.created,"no atom list")
+
       .atom.put_ADPs
-   end
-
-   put_crystal_ADPs_with_errors
-   ! Output the ADPs in cartesian axes
-   ENSURE(.atom.created,"no atom list")
-   ENSURE(.crystal.created,"no crystal")
-
-      esd,dX :: VEC{REAL}*
-      n_pADPs :: INT
-
-      n_pADPs = .atom.no_of_pADPs
-      esd.create(n_pADPs)
-      dX.create(n_pADPs)
-
-      ! Save cartesian errors
-      .atom.put_pADP_errors_to(dX)
-
-      ! Make the CIF ADP errors and reset
-      .crystal.make_CIF_esds(.atom,.crystal.data.fragment_covariance_matrix,esd)
-      esd = sqrt(esd)
-      .atom.set_pADP_errors_to(esd)
-
-      ! Change coordinates and ADPs
-      .atom.change_axis_system_to("crystal",.crystal.unit_cell)
-
-      ! Print tabel
-      .atom.put_crystal_ADPs_with_errors
-
-      ! Put back axis system *and* errors to cartesian
-      .atom.change_axis_system_to("cartesian",.crystal.unit_cell)
-      .atom.set_pADP_errors_to(dX)
 
    end
 
@@ -8227,6 +8329,7 @@ contains
       cm.destroy
 
    end
+
 
    put_principal_axes
    ! Output the atom principal axes
@@ -8556,15 +8659,20 @@ contains
 !  Put CIF
 !  =======
 
-   put_CIFs
+   put_CIFs(with_ESDs)
    ! Prints out an asymmetric and fragment cif file.
    ! Does both cartesian and crystal axes.
+   ! NOTE: IF "with_esds" is present and TRUE, it is assumed
+   ! that the covariances from a refinement are present, and
+   ! these are used to make the ESDs; otherwise ESDs are still
+   ! made by transforming in a straightforward way.
       self :: IN
+      with_ESDs :: BIN, optional, IN
 
    ENSURE(.crystal.created, "No crystal")
    ENSURE(.atom.created, "No atom")
 
-      clean :: BIN
+      clean,change_ESDs :: BIN
 
       ! Make sure CIF is there ...
       clean = FALSE
@@ -8581,34 +8689,33 @@ contains
       .crystal.put_fragment_CIF(.cif)
       stdout.revert
 
+      ! Sanity check for errors
+      change_ESDs = TRUE
+      if (present(with_ESDs)) change_ESDs = NOT with_ESDs
+
+      if (.crystal.data.created) then
+      DIE_IF(.crystal.data.covariance_matrix.created AND change_ESDs,"covariances exist")
+      DIE_IF(.crystal.data.fragment_covariance_matrix.created AND change_ESDs,"fragment covariances exist")
+      end
+
       ! Crystal/Fragment
       stdout.redirect(trim(.name)//".cryst-fragment.cif")
-      .crystal.fragment_atom.change_axis_system_to("crystal",.crystal.unit_cell)
       .:put_CIF_banner
       .:put_CIF_basics
       .:put_CIF_wavefunction
+      .crystal.fragment_atom.change_axis_system_to("crystal",.crystal.unit_cell,change_ESDs)
       .crystal.put_fragment_CIF(.cif)
-      .crystal.fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell)
+      .crystal.fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell,change_ESDs)
       stdout.revert
-
-      ! Crystal/Fragment
-    ! stdout.redirect(trim(.name)//".cryst-fragment-v1.cif")
-    ! .crystal.fragment_atom.change_axis_system_to_v1("crystal",.crystal.unit_cell)
-    ! .:put_CIF_banner
-    ! .:put_CIF_basics
-    ! .:put_CIF_wavefunction
-    ! .crystal.put_fragment_CIF(.cif)
-    ! .crystal.fragment_atom.change_axis_system_to_v1("cartesian",.crystal.unit_cell)
-    ! stdout.revert
 
       ! Crystal/Asymmetric unit
       stdout.redirect(trim(.name)//".cryst-asymm-unit.cif")
-      .crystal.asymmetric_unit_atom.change_axis_system_to("crystal",.crystal.unit_cell)
       .:put_CIF_banner
       .:put_CIF_basics
       .:put_CIF_wavefunction
+      .crystal.asymmetric_unit_atom.change_axis_system_to("crystal",.crystal.unit_cell,change_ESDs)
       .crystal.put_asymm_unit_CIF(.cif)
-      .crystal.asymmetric_unit_atom.change_axis_system_to("cartesian",.crystal.unit_cell)
+      .crystal.asymmetric_unit_atom.change_axis_system_to("cartesian",.crystal.unit_cell,change_ESDs)
       stdout.revert
 
       ! Clean up

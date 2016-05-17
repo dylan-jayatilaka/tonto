@@ -48,11 +48,11 @@ contains
 !  Allocation
 !  ==========
 
-   create ::: get_from(OBJECT), leaky, public
+   create ::: get_from(OBJECT), leaky
    ! Create an object. This version does not set defaults.
    end
 
-   destroy ::: get_from(OBJECT), leaky, public
+   destroy ::: get_from(OBJECT), leaky
    ! Destroy an object
    end
 
@@ -417,8 +417,10 @@ contains
 
       .asymmetric_unit_atom.read_list_keywords
 
+      ! Change coordinates to cartesian
+      ! Errors (if any) are changed straightforwardly
       if (associated(.crystal)) &
-         .asymmetric_unit_atom.change_axis_system_to("cartesian",.crystal.unit_cell)
+      .asymmetric_unit_atom.change_axis_system_to("cartesian",.crystal.unit_cell)
 
    end
 
@@ -426,7 +428,7 @@ contains
 !  Cluster generation routines
 !  ===========================
 
-   make_info ::: leaky, public
+   make_info ::: leaky
    ! Make all the cluster information from an arbitrary .fragment_geometry.
    ! NOTE: .set_defaults must be called before this.
 
@@ -1567,11 +1569,22 @@ contains
 
       end
 
+
       ! Now reorder
       .occupation_list(new_order)   = .occupation_list
       .geometry(:,new_order)        = .geometry
       .molecule_for_atom(new_order) = .molecule_for_atom
       .is_fragment_atom(new_order)  = .is_fragment_atom
+
+     ! This needs to be here, we must update .molecule to
+     ! be in a consistent state with the rest of the object
+      .molecule.destroy
+      .molecule.create(.n_molecules)
+      do a = 1,.n_atoms
+         m = .molecule_for_atom(a)
+         .molecule(m).element.append(a)
+      end
+
 
       ! Reorder connection table
       atom_connection.create(.n_atoms)
@@ -1860,18 +1873,6 @@ contains
 !  Cluster information
 !  ===================
 
-   cartesian_geometry result (res) ::: leaky
-   ! Return the cartesian geometry for the cluster
-      res :: MAT{REAL}*
-
-   ENSURE(.fragment_geometry.created,"no fragment geometry")
-   ENSURE(.crystal.created,"no crystal data")
-
-      res.create(3,.n_atoms)
-      .crystal.unit_cell.change_from_fractional(.geometry)
-
-   end
-
    cluster_width result (res)
    ! Return the width "res" of the cluster in each of the 3 axis directions.
    ! NOTE: using crystal axis system.
@@ -1879,6 +1880,7 @@ contains
    ENSURE(.geometry.created,"no fragment geometry")
       res = .geometry.max_abs_column_difference
    end
+
 
    create_fragment_atom_list(fragment_atom) ::: leaky
    ! Create the "fragment_atom" list.
@@ -1889,11 +1891,12 @@ contains
    ENSURE(.crystal.created,"no crystal info")
 
       fragment_atom.create(.n_fragment_atoms)
+
       .make_fragment_atom_list(fragment_atom)
 
    end
 
-   make_fragment_atom_list(fragment_atom)
+   make_fragment_atom_list(fragment_atom) ::: private
    ! Make the "fragment_atom" list, a VEC{ATOM}
       self :: IN
       fragment_atom :: VEC{ATOM}, target, OUT
@@ -1950,7 +1953,7 @@ contains
 
          ! Reset cluster atom pos from .geometry(:,a)
          atom_f.set_position(.geometry(:,a))
-         atom_f.set_axis_system("crystal")
+         atom_f.set_axis_system_to("crystal")
 
       end
 
@@ -1958,7 +1961,85 @@ contains
       ulist.destroy
 
       ! Change coordinates to cartesian
+      ! Errors (if any) are changed straightforwardly
       fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell)
+
+   end
+
+
+   create_mol_atom_list(mol_atom,m) ::: leaky
+   ! Create the "mol_atom" ATOM list for molecule "m".
+      mol_atom :: VEC{ATOM}*
+      m :: INT, IN
+
+   ENSURE(.molecule.created,"no molecule list")
+   ENSURE(.molecule.dim>=m,"molecule m too large")
+   ENSURE(.molecule(m).element.created,"no molecule m atom indices")
+
+      mol_atom.create(.molecule(m).element.dim)
+
+      .make_mol_atom_list(mol_atom,m)
+
+   end
+
+   make_mol_atom_list(mol_atom,m)
+   ! Make the "fragment_atom" list, a VEC{ATOM}
+      self :: IN
+      mol_atom :: VEC{ATOM}, target, OUT
+      m :: INT, IN
+
+   ENSURE(.geometry.created,"no geometry")
+   ENSURE(.occupation_list.created,"no occupation_list")
+   ENSURE(.asymmetric_unit_atom.created,"no asymmetric_cell_atom")
+   ENSURE(.crystal.created,"no crystal info")
+   ENSURE(.crystal.asym_atom_for_unit_cell_atom.created,"no asym_atom-cell_atom")
+   ENSURE(.asymmetric_unit_atom.has_cartesian_axes, "pADPs must be in cartn axis system")
+
+      ulist :: VEC{INT}*
+      seitz :: MAT3{REAL}*
+      f,a, u,p,s :: INT
+      atom_f, atom_p :: ATOM*
+
+      ! Unit cell atoms which correspond to the molecule's atoms
+      ulist.create(.n_atoms)
+      ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
+
+      ! Seitz matrices
+      seitz => .crystal.xyz_seitz_matrices
+
+      ! Loop over molecule m atoms "f"
+      do f = 1,.molecule(m).element.dim
+
+         a = .molecule(m).element(f)
+
+         ! Extract unit cell atom and asymmetric parent
+         u = ulist(a)
+         p = .crystal.asym_atom_for_unit_cell_atom(u)
+         s = .crystal.asym_symop_for_unit_cell_atom(u)
+
+         ! Molecule and asymmetric atom parent
+         atom_f => mol_atom(f)
+         atom_p => .asymmetric_unit_atom(p)
+
+         ! Copy the parent atom
+         ! NOTE: .basis is a ptr copy
+         atom_f.copy(atom_p)
+
+         ! Transform the pADPs (which must be in cartesians)
+         atom_f.transform_pADP_vector_with(seitz(:,:,s))
+
+         ! Reset cluster atom pos from .geometry(:,a)
+         atom_f.set_position(.geometry(:,a))
+         atom_f.set_axis_system_to("crystal")
+
+      end
+
+      ! Clean
+      ulist.destroy
+
+      ! Change coordinates to cartesian
+      ! Errors (if any) are changed straightforwardly
+      mol_atom.change_axis_system_to("cartesian",.crystal.unit_cell)
 
    end
 
@@ -2142,7 +2223,7 @@ contains
 
          ! Reset cluster atom pos from .geometry(:,a)
          atom_a.set_position(.geometry(:,a))
-         atom_a.set_axis_system("crystal")
+         atom_a.set_axis_system_to("crystal")
          atom_a.set_group(.molecule_for_atom(a))
 
       end
@@ -2152,6 +2233,7 @@ contains
       ulist.destroy
 
       ! Change pos to cartesian
+      ! Errors (if any) are changed straightforwardly
       atom.change_axis_system_to("cartesian",.crystal.unit_cell)
 
       ! Update labels/groups
@@ -2211,7 +2293,7 @@ contains
          ! Reset cluster atom pos from .geometry(:,a)
          ! NOTE: .basis is a ptr copy
          atom_a.set_position(.geometry(:,a))
-         atom_a.set_axis_system("crystal")
+         atom_a.set_axis_system_to("crystal")
 
       end
 
@@ -2220,6 +2302,7 @@ contains
       ulist.destroy
 
       ! Change pos to cartesian
+      ! Errors (if any) are changed straightforwardly
       atom.change_axis_system_to("cartesian",.crystal.unit_cell)
 
       ! Update labels/groups
@@ -5402,61 +5485,6 @@ contains
 
       end
       stdout.text("end atoms_outside_surface")
-
-   end
-
-   put_spartan(label)
-   ! Outputs some information for the Spartan program: the list of atoms in
-   ! the cluster, their positions, and whether they are part of the generating
-   ! fragment or not.
-      label :: STR
-
-   ENSURE(.info_made,"call make_info first")
-   ENSURE(.occupation_list.created,"no occupation_list")
-   ENSURE(.geometry.created,"no cluster geometry")
-   ENSURE(.crystal.created,"no crystal data")
-   ENSURE(.asymmetric_unit_atom.created,"no atom data")
- ! ENSURE(.parent_for_atom.created,"no parent atoms")
-   ENSURE(.is_fragment_atom.created,"no is_fragment_atom array")
-
-      word :: STR
-      n,u,a,an :: INT
-      geometry :: MAT{REAL}*
-
-      geometry.create_copy(.geometry)
-      .crystal.unit_cell.change_from_fractional(geometry)
-      geometry = ANGSTROM_PER_BOHR*geometry
-
-      stdout.flush
-      stdout.text("=== SPARTAN DATA ===")
-      stdout.text(label.trim)
-      stdout.text("M001")
-      stdout.text("0 1")
-      do n = 1,.n_atoms
-         u  = CLUSTER_UA_FROM_CODE(.occupation_list(n))
-         a = .crystal.asym_atom_for_unit_cell_atom(u)
-         an = .asymmetric_unit_atom(a).atomic_number
-         if (an<1) cycle
-         stdout.put(an)
-         stdout.put(geometry(1,n))
-         stdout.put(geometry(2,n))
-         stdout.put(geometry(3,n))
-         stdout.flush
-      end
-      stdout.text("ENDCART")
-      stdout.text("ATOMLABELS")
-      do n = 1,.n_atoms
-         u = CLUSTER_UA_FROM_CODE(.occupation_list(n))
-         a = .crystal.asym_atom_for_unit_cell_atom(u)
-         word = .asymmetric_unit_atom(a).label
-         word = '"'//trim(word)//'"'
-         stdout.put(trim(word))
-         stdout.flush
-      end
-      stdout.text("ENDATOMLABELS")
-
-      ! Clean
-      geometry.destroy
 
    end
 
