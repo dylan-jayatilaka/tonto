@@ -26,8 +26,14 @@ module REAL
 
    implicit none
 
-   ! For calculating the series expansion of the ln Gamma function
+   ! For Fermi-Dirac distribution
+   ! NOTE: Energies and temperatures are in Hartree
+   E_Fermi :: REAL, private 
+   T_Fermi :: REAL, private
+   E_level :: VEC{REAL}@, private
+   n_electrons :: INT, private
 
+   ! For calculating the series expansion of the ln Gamma function
    ln_gamma_coefficients :: VEC{REAL}(0:6) , private
 
    data ln_gamma_coefficients(0:6)/ &
@@ -1304,7 +1310,7 @@ contains
 !      res = self - mmh*log(self) - mph.ln_gamma - log(eps)
 !   end
 
-!   set_gill_T1(m,eps) ::: selfless, public
+!   set_gill_T1(m,eps) ::: selfless
 !   ! Set Gill's T1(m) numbers which define the minimum value of T for which the
 !   ! use of a multipole expansion is accurate to "eps".
 !     self :: IN
@@ -1327,10 +1333,108 @@ contains
 !   end
 
 !  ========================
+!  Fermi-Dirac distribution
+!  ========================
+
+   set_T_Fermi(T) ::: selfless
+   ! Set the Fermi temperature T_Fermi in *Hartree*
+   ! for the Fermi-Dirac distribution
+      T :: REAL, IN
+
+   ENSURE(T>ZERO,"T must be greater than zero")
+
+      T_Fermi = T
+
+   end
+
+   set_E_level(e) ::: selfless, leaky
+   ! Set the energy levels for the Fermi-Dirac distribution
+      e :: VEC{REAL}, IN
+
+      E_level = e
+
+   end
+
+   set_E_level(ea,eb) ::: selfless, leaky
+   ! Set the alpha "ea" and beta "eb" energy levels for the
+   ! Fermi-Dirac distribution
+      ea,eb :: VEC{REAL}, IN
+
+      E_level = [ ea, eb ]
+
+   end
+
+   set_E_Fermi(e) ::: selfless
+   ! Set the Fermi energy E_Fermi.
+      e :: REAL, IN
+
+      E_Fermi = e
+
+   end
+
+   set_n_electrons(N) ::: selfless, leaky
+   ! Set the fermi energvy E_Fermi.
+      N :: INT, IN
+
+      n_electrons = REALIFY(N)
+
+   end
+
+   Fermi_Dirac_fn(i) result (res) ::: selfless, PURE
+   ! Return "res", the value of the Fermi-Dirac distribution
+   ! function. The temperature and fermi_energy are set in this
+   ! module.
+      i :: INT, IN
+      res :: REAL
+
+   ENSURE(T_Fermi>ZERO,"T must be greater than zero")
+   ENSURE(E_level.allocated,"no E_level array")
+   ENSURE(i >0,"i must be +ve")
+   ENSURE(i<=E_level.dim,"i is too large")
+
+      kT,beta :: REAL
+
+      ! kT in J, then Hartree, then beta = 1/kT in Hartree^-1
+      kT   = BOLTZMANN_SI * (T_Fermi*KELVIN_PER_HARTREE)
+      kT   = kT * HARTREE_PER_JOULE
+      beta = ONE/kT
+
+      res = ONE/(ONE + exp(beta*(E_level(i) - E_Fermi)))
+
+   end
+
+   Fermi_Dirac_excess_fn(e) result (res) ::: selfless, public
+   ! Evalaue the excess no. of electrons for the Fermi-Dirac
+   ! distribution with Fermiu energy "e", where
+   !    excess = n_electrons - sum_i Fermi_Dirac_fn(E_level(i)) 
+   ! This is minimized to find the fermi energy
+      e :: REAL, IN
+      res :: REAL
+
+   ENSURE(T_Fermi>ZERO,"T must be greater than zero")
+   ENSURE(E_level.allocated,"no E_level array")
+
+      i :: INT
+      val :: REAL
+
+      ! Set E_Fermi
+      REAL::set_E_Fermi(e)
+
+      ! Work out the excess
+      val = ZERO
+      do i = 1,E_level.dim
+         val = val + REAL::Fermi_Dirac_fn(i)
+      end
+
+      res = n_electrons - val
+
+   end
+
+!  ========================
 !  Unit conversion routines
 !  ========================
 
-   convert_to(units) ::: PURE, public
+   convert_to(units) ::: PURE
    ! Convert the number "self" in atomic units or generic units to a
    ! new number in "units".
       self :: INOUT
@@ -1342,7 +1446,7 @@ contains
 
    end
 
-   to_units(units) result (res) ::: PURE, public
+   to_units(units) result (res) ::: PURE
    ! Convert the number "self" in atomic units or generic units to a
    ! new number in "units".
       self :: IN
@@ -1355,7 +1459,7 @@ contains
 
    end
 
-   convert_from(units) ::: PURE, public
+   convert_from(units) ::: PURE
    ! Convert the number "self" from "units" system to a new number
    ! in atomic units or generic units.  Returns "err" whether it was successful.
       self :: INOUT
@@ -1421,19 +1525,22 @@ contains
    end
 
    find_root_brent(x1,x2,root,tol,val,max_it) ::: routinal
-   ! Given a function self(x) and initial points "x1" and "x2" which bracket a
-   ! root of self, find the "root" to a precision "tol". If "val" present, then
-   ! the root which makes self have this value is returned (an isovalue).
-   ! If "max_it" is present it is set to the maximum number of iterations.
+   ! Given a function self(x) and initial points "x1" and "x2" which
+   ! bracket a root of self, find the "root" to a precision "tol". If
+   ! "val" present, then the root which makes self have this value is
+   ! returned (an isovalue).  If "max_it" is present it is set to the
+   ! maximum number of iterations.
       interface
          self(x) result (res)
             x :: REAL, IN
             res :: REAL
          end
       end
-      x1,x2,root,tol :: REAL
-      val :: REAL, optional
-      max_it :: INT, optional
+      x1,x2 :: REAL, IN
+      root :: REAL, OUT
+      tol :: REAL, IN
+      val :: REAL, optional, IN
+      max_it :: INT, optional, IN
 
       iter :: INT
       a,b,c,d,e,fa,fb,fc,p,q,r,s,tol1,xm :: REAL

@@ -30,6 +30,7 @@
 module SPHERICAL
 
        implicit none
+       n_points = 5810 :: INT
 
 contains
 
@@ -340,79 +341,136 @@ contains
         res = TRUE
     end
 
-
-    get_surface_decomposition(coeff, property_coeff, l_max, n_points, surface, surface_property) result (mean_radius) ::: leaky, selfless, public
-        coeff :: VEC{CPX}*, INOUT
-        property_coeff :: VEC{CPX}*, INOUT
-        surface :: MAT{REAL}*, IN
-        surface_property :: VEC{REAL}*, IN
-        
+    ! untested, better interface for spherical harmonic transform
+    sht(f, l_max) result(coefficients) ::: selfless
         l_max :: INT, IN
-        n_points :: INT, IN
-        mean_radius :: REAL
+        coefficients((l_max + 1)*(l_max + 1)) :: CPX
 
-        !!5810 points for best precision
-        spherical_points, iso_points, iso_points_spherical :: MAT{REAL}*
-        centre, p, tmp_point :: VEC{REAL}(3)
-        n_pt, L, M, N, X, lm :: INT
+        interface
+            f(r, theta, phi) result(res)
+                r, theta, phi :: REAL, IN
+                res :: REAL
+            end 
+        end 
+
+        i, l, m :: INT
         lebedev :: LEBEDEV*
-        cvals, fvals, radii :: VEC{REAL}*
-        minimum_dist, tmp, theta, phi :: REAL
-        val, cval :: CPX
+        f_vals :: VEC{REAL}*
+        grid :: MAT{REAL}*
 
-        X = (l_max + 1)**2
-        n_pt = surface.dim1
-        ! shift surface to be about origin
-        ! create structures
-        iso_points.create(n_pt, 3)
-        radii.create(n_pt)
-        fvals.create(n_points)
-        cvals.create(n_points)
-        coeff.create(X)
-        property_coeff.create(X)
         lebedev.create
-        
+        lebedev.set_n_points(5810)
 
-        iso_points = surface
-        centre(1) = sum(iso_points(:,1)) / n_pt
-        centre(2) = sum(iso_points(:,2)) / n_pt
-        centre(3) = sum(iso_points(:,3)) / n_pt
+        SPHERICAL:cart2sph(lebedev.point, grid)
+        f_vals.create(size(grid, 1))
 
-        do N = 1, n_pt
-            iso_points(N,:) = (iso_points(N,:) - centre)
-            radii(N) = iso_points(N,:).norm
+        do i = 1, size(grid, 1)
+            f_vals(i) = f(grid(i, 1), grid(i, 2), grid(i, 3))
+        end do
+
+        do l = 0, l_max
+            do m = -l, l
+                coefficients(2*l + m + 1) = sum( lebedev.weight(:) * f_vals(:) * &
+                    conjg(sphericalHarmonicY(l, m, grid(:, 1), grid(:, 2))))
+            end do
+        end do
+
+        lebedev.destroy
+        f_vals.destroy
+    end 
+
+    get_centre(points) result(centre) ::: selfless
+        points :: MAT{REAL}*, IN ! Assumed to be a 3 x N matrix
+        centre :: VEC{REAL}(3)
+        centre = 0
+        centre(1) = sum(points(1,:)) / points.dim2 
+        centre(2) = sum(points(2,:)) / points.dim2
+        centre(3) = sum(points(3,:)) / points.dim2
+    end
+
+    shift_origin(points) ::: selfless
+        points :: MAT{REAL}*, INOUT
+        centre :: VEC{REAL}(3)
+        N :: INT
+        ! shift surface to be about origin
+        centre = get_centre(points)
+        do N = 1, points.dim2
+            points(:,N) = (points(:,N) - centre)
         end
+    end
 
-        mean_radius = sum(radii) /n_pt
+    interpolate_surface_functions(grid, surface_sph, property, f1, f2) ::: selfless
+        ! assumes spherical_points is 3 x N and column 1 contains the function values
+        ! to be interpolated
+        grid, surface_sph :: MAT{REAL}*, IN
+        property :: VEC{REAL}*, IN
+        f1, f2 :: VEC{REAL}*, OUT
+        N, X :: INT
+        minimum_dist, d :: REAL
+        p, tmp :: VEC{REAL}(3)
 
-        do N = 1,n_pt
-            p = iso_points(N,:)
-            iso_points(N,:) = p / mean_radius
-            radii(N) = p.norm/mean_radius
-        end
-
-        lebedev.set_n_points(n_points)
-        fvals = ONE
-
-        SPHERICAL:cart2sph(lebedev.point, spherical_points)
-        SPHERICAL:cart2sph(iso_points, iso_points_spherical)
-        do N = 1, n_points
+        f1.create(grid.dim2)
+        f2.create(grid.dim2)
+        f1 = 0
+        f2 = 0
+        do N = 1, grid.dim2
             minimum_dist= 100000000
-            p = lebedev.point(N,:)
-            do X = 1, n_pt
-                tmp_point = iso_points(X,:)
-                tmp_point.normalise
+            p = grid(:,N)
+            do X = 1, surface_sph.dim2
+                tmp = surface_sph(:, X)
                 ! calculate distance and update
-                tmp = ((tmp_point(2)- p(2))**2 + (tmp_point(3) - p(3))**2 + (tmp_point(1)-p(1))**2)
-                if (tmp < minimum_dist) then
-                    fvals(N) = iso_points_spherical(X,1)
-                    cvals(N) = surface_property(X)
-                    minimum_dist = tmp
+                d = 1 - (sin(tmp(2)) * sin(p(2)) * cos(tmp(3) - p(3)) + &
+                         cos(tmp(2)) * cos(p(2)))
+                if (d < minimum_dist) then
+                    f1(N) = surface_sph(1, X)
+                    f2(N) = property(X)
+                    minimum_dist = d
                 end
             end
             ! Hacky test to see if we've got something sensible
             ENSURE(NOT minimum_dist >= 100000000, "Couldn't find any point even close???")
         end
+    end
+
+    get_surface_decomposition(l_max, surface, property, coeff, pcoeff, radius) ::: leaky, selfless, public
+        l_max :: INT, IN
+        surface :: MAT{REAL}*, INOUT
+        property :: VEC{REAL}*, IN
+        coeff, pcoeff :: VEC{CPX}*, INOUT
+        radius  :: REAL, OUT
+
+        grid_points, grid_sph, surface_sph :: MAT{REAL}*
+        ylm :: VEC{CPX}(n_points)
+        n_pt, L, M, X, lm :: INT
+        lebedev :: LEBEDEV*
+        cvals, fvals :: VEC{REAL}*
+        val, cval :: CPX
+
+        X = (l_max + 1)**2
+        n_pt = surface.dim2
+        ! create structures
+        coeff.create(X)
+        pcoeff.create(X)
+        lebedev.create
+
+        SPHERICAL:shift_origin(surface)
+        SPHERICAL:cart2sph(surface, surface_sph)
+
+        ! normalize the surface by its mean radius
+        radius = sum(surface_sph(1, :)) / n_pt
+        surface_sph(1, :) = surface_sph(1, :) / radius
+
+        lebedev.set_n_points(n_points)
+        grid_points.create(3, n_points)
+        grid_points = transpose(lebedev.point)
+
+        coeff = 0
+        pcoeff = 0
+
+        SPHERICAL:cart2sph(grid_points, grid_sph)
+
+        SPHERICAL:interpolate_surface_functions(grid_sph, surface_sph, property, fvals, cvals)
+
         ! we should now have an association of closest lebedev points
         ! coeff are indexed as follows: {c00,c1-1,c10,c11,c2-2,c2-1,c20,c21,c22... etc.}
         lm = 1
@@ -420,19 +478,22 @@ contains
             do M = -L, L
                 val = cmplx(0, 0)
                 cval = cmplx(0, 0)
-                do N = 0, n_points
-                    theta = spherical_points(N,2)
-                    phi = spherical_points(N,3)
-                    ! theta and phi have been checked and make sense
-                    val = val + lebedev.weight(N) * fvals(N) * conjg(SPHERICAL:sphericalHarmonicY(l,m,theta,phi))
-                    cval = cval + lebedev.weight(N) * cvals(N) * conjg(SPHERICAL:sphericalHarmonicY(l,m,theta,phi))
-                end
+                ! theta and phi have been checked and make sense
+                ylm(:) = SPHERICAL:sphericalHarmonicY(l,m, grid_sph(2, :), grid_sph(3, :))
+                ylm(:) = conjg(ylm(:)) * lebedev.weight(:)
+                val = sum(fvals(:) * ylm(:))
+                cval = sum(cvals(:) * ylm(:))
                 coeff(lm) = 4 * PI * val
-                property_coeff(lm) = 4 * PI * cval
+                pcoeff(lm) = 4 * PI * cval
                 lm = lm + 1
             end
         end
-        print *, "Number of coeff used: ", lm
+        grid_points.destroy
+        grid_sph.destroy
+        fvals.destroy
+        cvals.destroy
+        lebedev.destroy
+        surface_sph.destroy
 
     end
 
@@ -497,14 +558,14 @@ contains
     make_invariants(coefficients, l_max, invariants) ::: leaky, selfless, public
         coefficients :: VEC{CPX}*, IN
         l_max :: INT, IN
-        invariants :: VEC{REAL}*, INOUT
+        invariants :: VEC{REAL}*, OUT
 
-        lm, L, M, l1, l2, l3, l4 :: INT
-        cond1, cond2, cond3, cond4 :: BIN
+        lm, L, M :: INT
         num, invnum :: INT
         sigma :: REAL
-        psigma, c, pt :: CPX
-        invariants.create(150)
+        c :: CPX
+        invariants.create(l_max + 1)
+        invariants = 0
         
         lm = 1
         ! keeping track of the number of N, P or Q invariants
@@ -516,11 +577,11 @@ contains
           if (num >= 10) then
             exit
           end if
-          sigma = 0.0
+          sigma = 0
           do M = -L, L
             c = coefficients(lm)
             c = c * conjg(c)
-            sigma = sigma + abs(c)
+            sigma = sigma + real(c)
             lm = lm + 1
           end do
           invariants(invnum) = sqrt(sigma)
@@ -531,32 +592,30 @@ contains
     end
 
 
-    cart2sph(cart_points, spherical_points) ::: leaky, selfless
-        ! expects an N x 3 array and will create spherical_points as N x 3
-        cart_points :: MAT{REAL}*, IN
-        spherical_points :: MAT{REAL}*, OUT
+    cart2sph(cartesian, spherical) ::: leaky, selfless
+        ! expects a 3xN array and will create spherical_points as 3xN
+        cartesian :: MAT{REAL}*, IN
+        spherical :: MAT{REAL}*, OUT
 
         N :: INT
         x, y, z :: REAL
         r, theta, phi :: REAL
+        spherical.create(3, cartesian.dim2)
 
-        spherical_points.create(cart_points.dim1, 3)
-
-        do N = 1, cart_points.dim1
-            x = cart_points(N, 1) 
-            y = cart_points(N, 2)
-            z = cart_points(N, 3)
+        do N = 1, cartesian.dim2
+            x = cartesian(1, N) 
+            y = cartesian(2, N)
+            z = cartesian(3, N)
             r = sqrt(x**2 + y**2 + z**2)
             theta = acos(z / r)
             phi = atan(y, x)
-            spherical_points(N, 1) = r
-            spherical_points(N, 2) = theta
-            spherical_points(N, 3) = phi
+            spherical(1, N) = r
+            spherical(2, N) = theta
+            spherical(3, N) = phi
         end
-
     end
 
-    sphericalHarmonicY(l, m, theta, phi) result(res) ::: pure, selfless
+    sphericalHarmonicY(l, m, theta, phi) result(res) ::: pure, selfless, elemental
         ! calculates the spherical harmonics at l, m for angles theta, phi
         ! currently only up to l == 14 is supported by this method, 
         ! can utilise the recursive sphericalHarmonicRec if  higher order
