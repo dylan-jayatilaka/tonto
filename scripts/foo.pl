@@ -4208,18 +4208,19 @@ sub convert_dots_to_fortran {
                 $rout = 'associated';
                 $underscore = '';
                 $done = 1;
-              # Modify argumentless "allocated" statements -> allocated
+              # Modify argumentless "allocated" statements
               } elsif ($post !~ '^[(]' && $rout =~ m'^allocated$'o) {
                 $rout = 'allocated';
                 $underscore = '';
                 $done = 1;
-              # Modify argumentless "destroyed" statements -> NOT allocated
+              # Modify argumentless "destroyed" statements
               } elsif ($post !~ '^[(]' && $rout =~ m'^destroyed$'o) {
                 $rout = 'NOT associated';
                 $underscore = '';
                 # We might have introduced a "NOT NOT".
                 if ($pre =~ s/NOT\s*$// || $pre =~ s/\.NOT\.\s*$//) { $rout = 'associated'; }
                 $done = 1;
+              # Modify argumentless "deallocated" statements
               } elsif ($post !~ '^[(]' && $rout =~ m'^deallocated$'o) {
                 $rout = 'NOT allocated';
                 $underscore = '';
