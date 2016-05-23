@@ -4203,8 +4203,8 @@ sub convert_dots_to_fortran {
                 $rout = 'size';
                 $underscore = '';
                 $done = 1;
-              # Modify argumentless "created" statements
-              } elsif ($post !~ '^[(]' && $rout =~ m'^created$'o) {
+              # Modify argumentless "associated" statements
+              } elsif ($post !~ '^[(]' && $rout =~ m'^associated'o) {
                 $rout = 'associated';
                 $underscore = '';
                 $done = 1;
@@ -4213,8 +4213,8 @@ sub convert_dots_to_fortran {
                 $rout = 'allocated';
                 $underscore = '';
                 $done = 1;
-              # Modify argumentless "destroyed" statements
-              } elsif ($post !~ '^[(]' && $rout =~ m'^destroyed$'o) {
+              # Modify argumentless "disassociated" statements
+              } elsif ($post !~ '^[(]' && $rout =~ m'^disassociated$'o) {
                 $rout = 'NOT associated';
                 $underscore = '';
                 # We might have introduced a "NOT NOT".

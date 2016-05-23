@@ -42,19 +42,6 @@ module SHELL2
 
    implicit none
 
-   ! List of cartesian powers for gaussian functions in a certain angular
-   ! momentum range
-!  nx, ny, nz :: VEC{INT}*, private  DEFAULT_NULL
-!  gaussian_indices :: MAT{GAUSSIAN_INDICES}*, private  DEFAULT_NULL
-
-   ! These are indexing arrays used for the horizontal recursion relation.
-   ! They are set using the set_hrr_indexing_arrays routine.
-
-!  l_max_hrr :: INT, private = -1
-!  first_nonzero :: VEC{INT}*, private  DEFAULT_NULL
-!  index_m1 :: VEC{INT}*, private  DEFAULT_NULL
-!  index_p1 :: MAT{INT}*, private  DEFAULT_NULL
-
    pair_cutoff :: REAL, private = SHELL2_PAIR_CUTOFF
 
 contains
@@ -144,16 +131,12 @@ contains
       .center_diff.destroy
    end
 
-   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   created result (res) ::: get_from(OBJECT), pure
    ! Returns true if self has been created
-      self :: PTR
-      res :: BIN
    end
 
-   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   destroyed result (res) ::: get_from(OBJECT), pure
    ! Returns true if self has *not* been created
-      self :: PTR
-      res :: BIN
    end
 
 !  ====
@@ -181,44 +164,44 @@ contains
 
         .a.copy(shell.a)
         .b.copy(shell.b)
-        if (shell.exponent_sum.created) &
+        if (shell.exponent_sum.associated) &
            .exponent_sum.create_copy(shell.exponent_sum)
-        if (shell.exponent_inv.created) &
+        if (shell.exponent_inv.associated) &
            .exponent_inv.create_copy(shell.exponent_inv)
-        if (shell.contraction_prefactor.created)   &
+        if (shell.contraction_prefactor.associated)   &
            .contraction_prefactor.create_copy(shell.contraction_prefactor)
-        if (shell.contraction_s_prefactor.created) &
+        if (shell.contraction_s_prefactor.associated) &
            .contraction_s_prefactor.create_copy(shell.contraction_s_prefactor)
-        if (shell.contraction_p_prefactor.created) &
+        if (shell.contraction_p_prefactor.associated) &
            .contraction_p_prefactor.create_copy(shell.contraction_p_prefactor)
 
       else
 
         .a = shell.a
         .b = shell.b
-        if (shell.exponent_sum.created) &
+        if (shell.exponent_sum.associated) &
            .exponent_sum => shell.exponent_sum
-        if (shell.exponent_inv.created) &
+        if (shell.exponent_inv.associated) &
            .exponent_inv => shell.exponent_inv
         if (.same_center) then
-           if (shell.contraction_prefactor.created)   &
+           if (shell.contraction_prefactor.associated)   &
               .contraction_prefactor => shell.contraction_prefactor
-           if (shell.contraction_s_prefactor.created) &
+           if (shell.contraction_s_prefactor.associated) &
               .contraction_s_prefactor => shell.contraction_s_prefactor
-           if (shell.contraction_p_prefactor.created) &
+           if (shell.contraction_p_prefactor.associated) &
               .contraction_p_prefactor => shell.contraction_p_prefactor
         else
-           if (shell.contraction_prefactor.created)   &
+           if (shell.contraction_prefactor.associated)   &
               .contraction_prefactor.create_copy(shell.contraction_prefactor)
-           if (shell.contraction_s_prefactor.created) &
+           if (shell.contraction_s_prefactor.associated) &
               .contraction_s_prefactor.create_copy(shell.contraction_s_prefactor)
-           if (shell.contraction_p_prefactor.created) &
+           if (shell.contraction_p_prefactor.associated) &
               .contraction_p_prefactor.create_copy(shell.contraction_p_prefactor)
         end
       end
 
-      if (shell.pair_center.created)  .pair_center.create_copy(shell.pair_center)
-      if (shell.center_diff.created)  .center_diff.create_copy(shell.center_diff)
+      if (shell.pair_center.associated)  .pair_center.create_copy(shell.pair_center)
+      if (shell.center_diff.associated)  .center_diff.create_copy(shell.center_diff)
 
    end
 
@@ -263,9 +246,12 @@ contains
    ! gaussian primitives, below which that primitive pair is isgnored in the
    ! calculation of the ERI's.
       cutoff :: REAL, IN
+
    ENSURE(cutoff>ZERO,"cutoff must be pisitive")
+
       if (FALSE) self = self
       pair_cutoff = cutoff
+
    end
 
    set_and_precompute_from(shellpr,pos_a,pos_b,same_center,skip) ::: leaky
@@ -5418,13 +5404,20 @@ contains
    ! Calculate the overlap matrix for the two shells
    ! For cartesians only.
       ab :: MAT{REAL}
+
       es :: VEC{REAL}*
       n :: INT
-      n = GAUSSIAN_DATA:n_comp_up_to(.a.l+.b.l) - GAUSSIAN_DATA:n_comp_up_to(.l_max-1)
+
+      n = GAUSSIAN_DATA:n_comp_up_to(.a.l+.b.l) &
+        - GAUSSIAN_DATA:n_comp_up_to(.l_max-1)
+
       es.create(n)
+
       .make_overlap_es(es)
-      .transfer(es,ab)
+      .transfer_l_a_to_l_b(es,ab)
+
       es.destroy
+
    end
 
    make_overlap_es(es) ::: private
@@ -5463,6 +5456,7 @@ contains
       es :: VEC{REAL}, INOUT
       r2ab,ea,eb :: REAL, IN
       i :: INT, IN
+
       PE :: VEC{REAL}(3)
       half_zinv,zinv,zeta,zz,PI_zinv,PEi :: REAL
       j,ne,z,lz,a1,a2 :: INT
@@ -5894,27 +5888,47 @@ contains
       ab :: MAT{REAL}, OUT
       mass_c :: REAL, IN
       pos_c :: VEC{REAL}(3), IN
+
       es :: VEC{REAL}*
       ss :: REAL
       n :: INT
-      if (.l_sum==0) then  ! ss
-       .make_nuc_ss(ss,mass_c,pos_c)
-       ab(1,1)=ss
-      else if (.l_sum==1) then ! ps or sp
-       .make_nuc_ps(ab,mass_c,pos_c)
+
+      if (.l_sum==0) then  
+      
+         ! ss
+         .make_nuc_ss(ss,mass_c,pos_c)
+         ab(1,1)=ss
+
+      else if (.l_sum==1) then 
+      
+         ! ps or sp
+         .make_nuc_ps(ab,mass_c,pos_c)
+
       else if (.l_max==1) then
-       .make_nuc_pp(ab,mass_c,pos_c)
-      else if (.l_sum==2 AND .l_max==2) then ! ds or sd
-       .make_nuc_ds(ab,mass_c,pos_c)
-      else if (.l_sum==3 AND .l_max==1) then ! dp or pd
-       .make_nuc_dp(ab,mass_c,pos_c)
+
+         ! pp
+         .make_nuc_pp(ab,mass_c,pos_c)
+
+      else if (.l_sum==2 AND .l_max==2) then 
+      
+         ! ds or sd
+         .make_nuc_ds(ab,mass_c,pos_c)
+
+      else if (.l_sum==3 AND .l_max==1) then 
+      
+         ! dp or pd
+         .make_nuc_dp(ab,mass_c,pos_c)
+
       else
-       n = GAUSSIAN_DATA:n_comp_up_to(.l_sum) - GAUSSIAN_DATA:n_comp_up_to(.l_max-1)
-       es.create(n)
-       .make_nuc_es(es,mass_c,pos_c)
-       .transfer(es,ab)
-       es.destroy
+
+         n = GAUSSIAN_DATA:n_comp_up_to(.l_sum) - GAUSSIAN_DATA:n_comp_up_to(.l_max-1)
+         es.create(n)
+         .make_nuc_es(es,mass_c,pos_c)
+         .transfer_l_a_to_l_b(es,ab)
+         es.destroy
+
       end
+
    end
 
    make_nuc_es(es,mass_c,pos_c) ::: private
@@ -6578,20 +6592,26 @@ contains
       rys.destroy
    end
 
-   transfer(es,ab)
+   transfer_l_a_to_l_b(es,ab)
    ! Applies the transfer equation to (e|s) to give (a|b)
       self :: IN
       es :: VEC{REAL}, IN
       ab :: MAT{REAL}, OUT
+
       if (.same_center) then
-        if (.a.l > .b.l) then; .transfer_l_a_same(es,ab)
-        else;                  .transfer_l_b_same(es,ab)
-        end
+
+         if (.a.l > .b.l) then; .transfer_l_a_same(es,ab)
+         else;                  .transfer_l_b_same(es,ab)
+         end
+
       else
-        if (.a.l > .b.l) then; .transfer_l_a_high(es,ab)
-        else;                  .transfer_l_b_high(es,ab)
-        end
+
+         if (.a.l > .b.l) then; .transfer_l_a_high(es,ab)
+         else;                  .transfer_l_b_high(es,ab)
+         end
+
       end
+
    end
 
    transfer_l_a_same(es,ab) ::: private
@@ -6600,87 +6620,117 @@ contains
       self :: IN
       es :: VEC{REAL}, IN
       ab :: MAT{REAL}, OUT
+
    ENSURE(.a.l>=.b.l,"shell a must have higher momentum than b")
    ENSURE(es.dim ==(GAUSSIAN_DATA:n_comp_up_to(.l_sum)-GAUSSIAN_DATA:n_comp_up_to(.l_max-1)),"wrong size, es")
    ENSURE(ab.dim1==.a.n_comp,"wrong 1st dimension, ab")
    ENSURE(ab.dim2==.b.n_comp,"wrong 2nd dimension, ab")
-   ENSURE(first_nonzero.created,"no indexing arrays")
+
       int_new,int_old :: MAT{REAL}*
       a,b,a1,a2,a3,aa,b1,l,na,fa,nb,fb,pb,t :: INT
+
       select case (.b.l)
-        case (0)                               ! (a|s) case
-           ab(:,1) = es
-        case (1)
-           if (.a.l==1) then                   ! (p|p) case
-              ab(1,1) = es(4)
-              ab(1,2) = es(7)
-              ab(1,3) = es(8)
-              ab(2,1) = es(7)
-              ab(2,2) = es(5)
-              ab(2,3) = es(9)
-              ab(3,1) = es(8)
-              ab(3,2) = es(9)
-              ab(3,3) = es(6)
-           else                                ! (a|p) case
-              na = .a.n_comp
-              fa = GAUSSIAN_DATA:n_comp_up_to(.a.l-1)        ! Offset into the index array
-              do a = 1,na                      ! Put es straight to ab
-                 aa = a+fa
-                 a1 = GAUSSIAN_DATA::index_p1(aa,1) - fa
-                 a2 = GAUSSIAN_DATA::index_p1(aa,2) - fa
-                 a3 = GAUSSIAN_DATA::index_p1(aa,3) - fa
-                 ab(a,1) = es(a1)
-                 ab(a,2) = es(a2)
-                 ab(a,3) = es(a3)
-              end
-           end
-        case default                           ! general (a|b) case
-           fa = GAUSSIAN_DATA:n_comp_up_to(.a.l-1)           ! Offset into the index array
-           na = es.dim - GAUSSIAN_DATA:n_comp(.l_sum)        ! No. of a's in int_new goes down
-           int_new.create(na,3)
-              do a = 1,na                      ! Start with p shell on a
-                 aa = a+fa
-                 a1 = GAUSSIAN_DATA::index_p1(aa,1) - fa
-                 a2 = GAUSSIAN_DATA::index_p1(aa,2) - fa
-                 a3 = GAUSSIAN_DATA::index_p1(aa,3) - fa
-                 int_new(a,1) = es(a1)
-                 int_new(a,2) = es(a2)
-                 int_new(a,3) = es(a3)
-              end
-           fb = 1
-           nb = 3
-           do l = 2,.b.l-1
-              na = na - GAUSSIAN_DATA:n_comp(.l_sum-l+1)     ! No. of a's in int_new goes down
-              pb = fb                          ! Previous offset for b, in int_old
-              fb = fb + nb                     ! Offset into index arrays
-              nb = GAUSSIAN_DATA:n_comp(l)                   ! Make only the needed b's
-              int_old => int_new
-              int_new.create(na,nb)
-              do b = 1,nb
-                 b1 = GAUSSIAN_DATA::index_m1(b+fb) - pb      ! b1 relative to int_old
-                 t = GAUSSIAN_DATA::first_nonzero(b+fb)       ! Transfer component
-                 do a = 1,na
-                    a1 = GAUSSIAN_DATA::index_p1(a+fa,t) - fa
-                    int_new(a,b) = int_old(a1,b1)
-                 end
-              end
-              int_old.destroy
-           end
-              na = .a.n_comp                   ! Final transfer into (a|b)
-              pb = fb
-              fb = fb + nb
-              nb = .b.n_comp
-              int_old => int_new
-              do b = 1,nb
-                 b1 = GAUSSIAN_DATA::index_m1(b+fb) - pb
-                 t = GAUSSIAN_DATA::first_nonzero(b+fb)
-                 do a = 1,na
-                    a1 = GAUSSIAN_DATA::index_p1(a+fa,t) - fa
-                    ab(a,b) = int_old(a1,b1)
-                 end
+
+      case (0)                               
+      
+         ! (a|s) case
+         ab(:,1) = es
+
+      case (1)
+
+         if (.a.l==1) then                   
+
+            ! (p|p) case
+            ab(1,1) = es(4)
+            ab(1,2) = es(7)
+            ab(1,3) = es(8)
+            ab(2,1) = es(7)
+            ab(2,2) = es(5)
+            ab(2,3) = es(9)
+            ab(3,1) = es(8)
+            ab(3,2) = es(9)
+            ab(3,3) = es(6)
+
+         else                                
+         
+            ! (a|p) case
+            na = .a.n_comp
+            fa = GAUSSIAN_DATA:n_comp_up_to(.a.l-1)        
+
+            ! Put es straight to ab
+            do a = 1,na        
+               aa = a+fa
+               a1 = GAUSSIAN_DATA::index_p1(aa,1) - fa
+               a2 = GAUSSIAN_DATA::index_p1(aa,2) - fa
+               a3 = GAUSSIAN_DATA::index_p1(aa,3) - fa
+               ab(a,1) = es(a1)
+               ab(a,2) = es(a2)
+               ab(a,3) = es(a3)
+            end
+
+         end
+
+      case default                           
+      
+         ! general (a|b) case
+         fa = GAUSSIAN_DATA:n_comp_up_to(.a.l-1) 
+
+         ! No. of a's in int_new goes down
+         na = es.dim - GAUSSIAN_DATA:n_comp(.l_sum)
+
+         int_new.create(na,3)
+
+         ! Start with p shell on a
+         do a = 1,na                      
+            aa = a+fa
+            a1 = GAUSSIAN_DATA::index_p1(aa,1) - fa
+            a2 = GAUSSIAN_DATA::index_p1(aa,2) - fa
+            a3 = GAUSSIAN_DATA::index_p1(aa,3) - fa
+            int_new(a,1) = es(a1)
+            int_new(a,2) = es(a2)
+            int_new(a,3) = es(a3)
+         end
+
+         fb = 1
+         nb = 3
+
+         do l = 2,.b.l-1
+            ! No. of a's in int_new goes down
+            na = na - GAUSSIAN_DATA:n_comp(.l_sum-l+1)     
+            pb = fb      ! Previous offset for b, in int_old
+            fb = fb + nb ! Offset into index arrays
+            nb = GAUSSIAN_DATA:n_comp(l) ! Make only the needed b's
+            int_old => int_new
+            int_new.create(na,nb)
+            do b = 1,nb
+               b1 = GAUSSIAN_DATA::index_m1(b+fb) - pb      ! b1 relative to int_old
+               t = GAUSSIAN_DATA::first_nonzero(b+fb)       ! Transfer component
+               do a = 1,na
+                  a1 = GAUSSIAN_DATA::index_p1(a+fa,t) - fa
+                  int_new(a,b) = int_old(a1,b1)
                end
-               int_old.destroy
-        end ! case statement
+            end
+            int_old.destroy
+         end
+
+         ! Final transfer into (a|b)
+         na = .a.n_comp                   
+         pb = fb
+         fb = fb + nb
+         nb = .b.n_comp
+         int_old => int_new
+         do b = 1,nb
+            b1 = GAUSSIAN_DATA::index_m1(b+fb) - pb
+            t = GAUSSIAN_DATA::first_nonzero(b+fb)
+            do a = 1,na
+               a1 = GAUSSIAN_DATA::index_p1(a+fa,t) - fa
+               ab(a,b) = int_old(a1,b1)
+            end
+         end
+         int_old.destroy
+
+      end
+
    end
 
    transfer_l_b_same(es,ab) ::: private
@@ -6689,87 +6739,122 @@ contains
       self :: IN
       es :: VEC{REAL}, IN
       ab :: MAT{REAL}, OUT
+
    ENSURE(.b.l>=.a.l,"shell b must have higher momentum than a")
    ENSURE(es.dim ==(GAUSSIAN_DATA:n_comp_up_to(.l_sum)-GAUSSIAN_DATA:n_comp_up_to(.l_max-1)),"wrong size, es")
    ENSURE(ab.dim1==.a.n_comp,"wrong 1st dimension, ab")
    ENSURE(ab.dim2==.b.n_comp,"wrong 2nd dimension, ab")
-   ENSURE(first_nonzero.created,"no indexing arrays")
+
       int_new,int_old :: MAT{REAL}*
       a,b,a1,b1,b2,b3,bb,l,na,fa,pa,nb,fb,t :: INT
+
       select case (.a.l)
-        case (0)                               ! (s|b) case
-           ab(1,:) = es
-        case (1)
-           if (.b.l==1) then                   ! (p|p) case
-              ab(1,1) = es(4)
-              ab(2,1) = es(7)
-              ab(3,1) = es(8)
-              ab(1,2) = es(7)
-              ab(2,2) = es(5)
-              ab(3,2) = es(9)
-              ab(1,3) = es(8)
-              ab(2,3) = es(9)
-              ab(3,3) = es(6)
-           else                                ! (p|b) case
-              nb = .b.n_comp
-              fb = GAUSSIAN_DATA:n_comp_up_to(.b.l-1)        ! Offset into the index array
-              do b = 1,nb                      ! Put es straight to ab
-                 bb = b+fb
-                 b1 = GAUSSIAN_DATA::index_p1(bb,1) - fb
-                 b2 = GAUSSIAN_DATA::index_p1(bb,2) - fb
-                 b3 = GAUSSIAN_DATA::index_p1(bb,3) - fb
-                 ab(1,b) = es(b1)
-                 ab(2,b) = es(b2)
-                 ab(3,b) = es(b3)
-              end
-           end
-       case default
-           fb = GAUSSIAN_DATA:n_comp_up_to(.b.l-1)           ! Offset into the index array
-           nb = es.dim - GAUSSIAN_DATA:n_comp(.l_sum)        ! No. of b's in int_new goes down
-           int_new.create(nb,3)                ! NOTE: int_new ia transposed
-              do b = 1,nb                      ! Start with p shell on a
-                 bb = b+fb
-                 b1 = GAUSSIAN_DATA::index_p1(bb,1) - fb
-                 b2 = GAUSSIAN_DATA::index_p1(bb,2) - fb
-                 b3 = GAUSSIAN_DATA::index_p1(bb,3) - fb
-                 int_new(b,1) = es(b1)
-                 int_new(b,2) = es(b2)
-                 int_new(b,3) = es(b3)
-              end
-           fa = 1
-           na = 3
-           do l = 2,.a.l-1
-              nb = nb - GAUSSIAN_DATA:n_comp(.l_sum-l+1)     ! No. of b's in int_new goes down
-              pa = fa                          ! Previous offset for a, in int_old
-              fa = fa + na                     ! Offset into index arrays
-              na = GAUSSIAN_DATA:n_comp(l)                   ! Make only the needed a's
-              int_old => int_new
-              int_new.create(nb,na)            ! TRANSPOSED!
-              do a = 1,na
-                 a1 = GAUSSIAN_DATA::index_m1(a+fa) - pa      ! b1 relative to int_old
-                 t = GAUSSIAN_DATA::first_nonzero(a+fa)       ! Transfer component
-                 do b = 1,nb
-                    b1 = GAUSSIAN_DATA::index_p1(b+fb,t) - fb
-                    int_new(b,a) = int_old(b1,a1)
-                 end
-              end
-              int_old.destroy
-           end
-              nb = .b.n_comp                   ! Final transfer into (a|b)
-              pa = fa
-              fa = fa + na
-              na = .a.n_comp
-              int_old => int_new
-              do a = 1,na
-                 a1 = GAUSSIAN_DATA::index_m1(a+fa) - pa
-                 t = GAUSSIAN_DATA::first_nonzero(a+fa)
-                 do b = 1,nb
-                    b1 = GAUSSIAN_DATA::index_p1(b+fb,t) - fb
-                    ab(a,b) = int_old(b1,a1)
-                 end
-              end
-              int_old.destroy
+
+      case (0)                               
+      
+         ! (s|b) case
+         ab(1,:) = es
+
+      case (1)
+
+         if (.b.l==1) then                   
+         
+            ! (p|p) case
+            ab(1,1) = es(4)
+            ab(2,1) = es(7)
+            ab(3,1) = es(8)
+            ab(1,2) = es(7)
+            ab(2,2) = es(5)
+            ab(3,2) = es(9)
+            ab(1,3) = es(8)
+            ab(2,3) = es(9)
+            ab(3,3) = es(6)
+
+         else                                
+         
+            ! (p|b) case
+            nb = .b.n_comp
+
+            ! Offset into the index array
+            fb = GAUSSIAN_DATA:n_comp_up_to(.b.l-1)
+
+            ! Put es straight to ab
+            do b = 1,nb                      
+               bb = b+fb
+               b1 = GAUSSIAN_DATA::index_p1(bb,1) - fb
+               b2 = GAUSSIAN_DATA::index_p1(bb,2) - fb
+               b3 = GAUSSIAN_DATA::index_p1(bb,3) - fb
+               ab(1,b) = es(b1)
+               ab(2,b) = es(b2)
+               ab(3,b) = es(b3)
+            end
+
+         end
+
+      case default
+
+         ! Offset into the index array
+         fb = GAUSSIAN_DATA:n_comp_up_to(.b.l-1)           
+
+         ! No. of b's in int_new goes down
+         nb = es.dim - GAUSSIAN_DATA:n_comp(.l_sum)        
+
+         int_new.create(nb,3) ! NOTE: int_new ia transposed
+
+         ! Start with p shell on a
+         do b = 1,nb                      
+            bb = b+fb
+            b1 = GAUSSIAN_DATA::index_p1(bb,1) - fb
+            b2 = GAUSSIAN_DATA::index_p1(bb,2) - fb
+            b3 = GAUSSIAN_DATA::index_p1(bb,3) - fb
+            int_new(b,1) = es(b1)
+            int_new(b,2) = es(b2)
+            int_new(b,3) = es(b3)
+         end
+
+         fa = 1
+         na = 3
+
+         do l = 2,.a.l-1
+            ! No. of b's in int_new goes down
+            nb = nb - GAUSSIAN_DATA:n_comp(.l_sum-l+1)     
+            pa = fa      ! Previous offset for a, in int_old
+            fa = fa + na ! Offset into index arrays
+            na = GAUSSIAN_DATA:n_comp(l)                   
+            ! Make only the needed a's
+            int_old => int_new
+            int_new.create(nb,na)  ! TRANSPOSED!
+            do a = 1,na
+               ! b1 relative to int_old
+               a1 = GAUSSIAN_DATA::index_m1(a+fa) - pa      
+               t = GAUSSIAN_DATA::first_nonzero(a+fa)       
+               ! Transfer component
+               do b = 1,nb
+                  b1 = GAUSSIAN_DATA::index_p1(b+fb,t) - fb
+                  int_new(b,a) = int_old(b1,a1)
+               end
+            end
+            int_old.destroy
+         end
+
+         ! Final transfer into (a|b)
+         nb = .b.n_comp                   
+         pa = fa
+         fa = fa + na
+         na = .a.n_comp
+         int_old => int_new
+         do a = 1,na
+            a1 = GAUSSIAN_DATA::index_m1(a+fa) - pa
+            t = GAUSSIAN_DATA::first_nonzero(a+fa)
+            do b = 1,nb
+               b1 = GAUSSIAN_DATA::index_p1(b+fb,t) - fb
+               ab(a,b) = int_old(b1,a1)
+            end
+         end
+         int_old.destroy
+
         end ! case statement
+
    end
 
    transfer_l_a_high(es,ab) ::: private
@@ -6778,15 +6863,17 @@ contains
       self :: IN
       es :: VEC{REAL}, IN
       ab :: MAT{REAL}, OUT
+
    ENSURE(.a.l>=.b.l,"shell a must have higher momentum than b")
    ENSURE(es.dim ==(GAUSSIAN_DATA:n_comp_up_to(.l_sum)-GAUSSIAN_DATA:n_comp_up_to(.l_max-1)),"wrong size, es")
    ENSURE(ab.dim1==.a.n_comp,"wrong 1st dimension, ab")
    ENSURE(ab.dim2==.b.n_comp,"wrong 2nd dimension, ab")
-   ENSURE(first_nonzero.created,"no indexing arrays")
+
       int_new,int_old :: MAT{REAL}*
       R :: VEC{REAL}(3)
       Rt,R1,R2,R3,es_a :: REAL
       a,b,a1,a2,a3,aa,b1,l,na,fa,nb,fb,pb,t :: INT
+
       select case (.b.l)
         case (0)                               ! (a|s) case
            ab(:,1) = es
@@ -6880,15 +6967,17 @@ contains
       self :: IN
       es :: VEC{REAL}, IN
       ab :: MAT{REAL}, OUT
+
    ENSURE(.b.l>=.a.l,"shell b must have higher momentum than a")
    ENSURE(es.dim ==(GAUSSIAN_DATA:n_comp_up_to(.l_sum)-GAUSSIAN_DATA:n_comp_up_to(.l_max-1)),"wrong size, es")
    ENSURE(ab.dim1==.a.n_comp,"wrong 1st dimension, ab")
    ENSURE(ab.dim2==.b.n_comp,"wrong 2nd dimension, ab")
-   ENSURE(first_nonzero.created,"no indexing arrays")
+
       int_new,int_old :: MAT{REAL}*
       R :: VEC{REAL}(3)
       Rt,R1,R2,R3,es_b :: REAL
       a,b,a1,b1,b2,b3,bb,l,na,fa,pa,nb,fb,t :: INT
+
       select case (.a.l)
         case (0)                               ! (s|b) case
            ab(1,:) = es
@@ -6998,15 +7087,18 @@ contains
       self :: IN
       es :: MAT{CPX}, IN
       ab :: MAT3{CPX}, OUT
+
    ENSURE(.a.l>=.b.l,"shell a must have higher momentum than b")
    ENSURE(es.dim2==(GAUSSIAN_DATA:n_comp_up_to(.l_sum)-GAUSSIAN_DATA:n_comp_up_to(.l_max-1)),"wrong size, es")
    ENSURE(ab.dim2==.a.n_comp,"wrong 2nd dimension, ab")
    ENSURE(ab.dim3==.b.n_comp,"wrong 3rd dimension, ab")
    ENSURE(ab.dim1==es.dim1,"incompatible ab and es")
-   ENSURE(first_nonzero.created,"no indexing arrays")
+
       int_new,int_old :: MAT3{CPX}*
       nk,a,b,a1,a2,a3,aa,b1,l,na,fa,nb,fb,pb,t :: INT
+
       nk = es.dim1
+
       select case (.b.l)
         case (0)                               ! (a|s) case
            ab(:,:,1) = es
@@ -7089,15 +7181,18 @@ contains
       self :: IN
       es :: MAT{CPX}, IN
       ab :: MAT3{CPX}, OUT
+
    ENSURE(.b.l>=.a.l,"shell b must have higher momentum than a")
    ENSURE(es.dim2==(GAUSSIAN_DATA:n_comp_up_to(.l_sum)-GAUSSIAN_DATA:n_comp_up_to(.l_max-1)),"wrong size, es")
    ENSURE(ab.dim2==.a.n_comp,"wrong 2nd dimension, ab")
    ENSURE(ab.dim3==.b.n_comp,"wrong 3rd dimension, ab")
    ENSURE(ab.dim1==es.dim1,"incompatible ab and es")
-   ENSURE(first_nonzero.created,"no indexing arrays")
+
       int_new,int_old :: MAT3{CPX}*
       nk,a,b,a1,b1,b2,b3,bb,l,na,fa,pa,nb,fb,t :: INT
+
       nk = es.dim1
+
       select case (.a.l)
         case (0)                               ! (s|b) case
            ab(:,1,:) = es
@@ -7180,18 +7275,21 @@ contains
       self :: IN
       es :: MAT{CPX}, target, IN
       ab :: MAT3{CPX}, OUT
+
    ENSURE(.a.l>=.b.l,"shell a must have higher momentum than b")
    ENSURE(es.dim2==(GAUSSIAN_DATA:n_comp_up_to(.l_sum)-GAUSSIAN_DATA:n_comp_up_to(.l_max-1)),"wrong size, es")
    ENSURE(ab.dim2==.a.n_comp,"wrong 2nd dimension, ab")
    ENSURE(ab.dim3==.b.n_comp,"wrong 3rd dimension, ab")
    ENSURE(ab.dim1==es.dim1,"incompatible ab and es")
-   ENSURE(first_nonzero.created,"no indexing arrays")
+
       int_new,int_old :: MAT3{CPX}*
       R :: VEC{REAL}(3)
       es_a :: VEC{CPX}*
       Rt,R1,R2,R3 :: REAL
       nk,a,b,a1,a2,a3,aa,b1,l,na,fa,nb,fb,pb,t :: INT
+
       nk = es.dim1
+
       select case (.b.l)
         case (0)                               ! (a|s) case
            ab(:,:,1) = es
@@ -7285,18 +7383,21 @@ contains
       self :: IN
       es :: MAT{CPX}, target, IN
       ab :: MAT3{CPX}, OUT
+
    ENSURE(.b.l>=.a.l,"shell b must have higher momentum than a")
    ENSURE(es.dim2==(GAUSSIAN_DATA:n_comp_up_to(.l_sum)-GAUSSIAN_DATA:n_comp_up_to(.l_max-1)),"wrong size, es")
    ENSURE(ab.dim2==.a.n_comp,"wrong 2nd dimension, ab")
    ENSURE(ab.dim3==.b.n_comp,"wrong 3rd dimension, ab")
    ENSURE(ab.dim1==es.dim1,"incompatible ab and es")
-   ENSURE(first_nonzero.created,"no indexing arrays")
+
       int_new,int_old :: MAT3{CPX}*
       R :: VEC{REAL}(3)
       es_b :: VEC{CPX}*
       Rt,R1,R2,R3 :: REAL
       nk,a,b,a1,b1,b2,b3,bb,l,na,fa,pa,nb,fb,t :: INT
+
       nk = es.dim1
+
       select case (.a.l)
         case (0)                                ! (s|b) case
            ab(:,1,:) = es
@@ -7505,31 +7606,31 @@ contains
       stdout.show("n_gaussian       =",.n_gaussian)
       stdout.show("destroy_all      =",.destroy_all)
       stdout.show("same_center      =",.same_center)
-      if (.exponent_sum.created) then
+      if (.exponent_sum.associated) then
       stdout.text("exponent_sum:")
       stdout.put(.exponent_sum)
       end
-      if (.exponent_inv.created) then
+      if (.exponent_inv.associated) then
       stdout.text("exponent_inv:")
       stdout.put(.exponent_inv)
       end
-      if (.contraction_prefactor.created) then
+      if (.contraction_prefactor.associated) then
       stdout.text("cc_prefactor:")
       stdout.put(.contraction_prefactor)
       end
-      if (.contraction_s_prefactor.created) then
+      if (.contraction_s_prefactor.associated) then
       stdout.text("cc_s_prefactor:")
       stdout.put(.contraction_s_prefactor)
       end
-      if (.contraction_p_prefactor.created) then
+      if (.contraction_p_prefactor.associated) then
       stdout.text("cc_p_prefactor:")
       stdout.put(.contraction_p_prefactor)
       end
-      if (.pair_center.created) then
+      if (.pair_center.associated) then
       stdout.text("pair_center:")
       stdout.put(.pair_center)
       end
-      if (.center_diff.created) then
+      if (.center_diff.associated) then
       stdout.text("center_diff:")
       stdout.put(.center_diff)
       end
