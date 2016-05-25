@@ -107,7 +107,10 @@ contains
       nullify(.pair)
 
       nullify(.rho)
+      nullify(.rho_E)
       nullify(.overlap_matrix)
+      nullify(.molecular_orbitals)
+      nullify(.orbital_energies)
       nullify(.atom)
 
    end
@@ -117,6 +120,7 @@ contains
    ! this module, so that this data is *not* accidentally destroyed
 
       nullify(.rho)
+      nullify(.rho_E)
       nullify(.atom)
       nullify(.overlap_matrix)
 
@@ -156,8 +160,11 @@ contains
 
       ! Never destroy these.
       nullify(.rho)
-      nullify(.atom)
+      .rho_E.destroy
       nullify(.overlap_matrix)
+      nullify(.molecular_orbitals)
+      nullify(.orbital_energies)
+      nullify(.atom)
 
    end
 
@@ -181,20 +188,27 @@ contains
 
    set_defaults(mol)
    ! Set default SCF data values
+      self :: INOUT
       mol :: MOLECULE
 
    ENSURE(mol.atom.associated,"no atom list") 
    ENSURE(mol.density_matrix.associated,"no density matrix") 
    ENSURE(mol.overlap_matrix.associated,"no overlap matrix") 
+   ENSURE(mol.molecular_orbitals.associated,"no MO's") 
+   ENSURE(mol.orbital_energies.associated,"no orbital energies") 
 
       .set_defaults
 
-      .charge            =  mol.charge
-      .spin_multiplicity =  mol.spin_multiplicity
+      .charge             =  mol.charge
+      .spin_multiplicity  =  mol.spin_multiplicity
 
-      .atom              => mol.atom
-      .rho               => mol.density_matrix
-      .overlap_matrix    => mol.overlap_matrix
+      .atom               => mol.atom
+      .rho                => mol.density_matrix
+      .overlap_matrix     => mol.overlap_matrix
+      .molecular_orbitals => mol.molecular_orbitals
+      .orbital_energies   => mol.orbital_energies
+
+      ! Make the energy density matrix ...
 
    end
 
@@ -486,6 +500,27 @@ contains
 
    end
 
+   atom_energy_analysis ::: leaky
+   ! Do a Roby bond-energy analysis.
+      self :: INOUT
+
+   ENSURE(.atom_list.associated,"no atom list")
+   ENSURE(.atom_group.disassociated,"do not use atom_group=")
+
+      .make_single_atom_groups
+      .group_energy_analysis
+
+   end
+
+   group_energy_analysis ::: leaky
+   ! Do a Roby bond-energy analysis.
+      self :: INOUT
+
+      .energy_analysis
+      .put_all_info
+
+   end
+
 ! =================================
 ! Roby population analysis routines
 ! =================================
@@ -570,14 +605,15 @@ contains
 
    end
 
-   population(group,ANO) result (res) ::: private
+   population(group,ANO,rho) result (res) ::: private
    ! Return the total Roby population for the group of atoms whose indices are
    ! given in "group", i.e Tr (P_{group;ANO} rho), where "rho" is the density
    ! matrix for a molecule. If present, the columns of the "ANO" matrix are used
    ! to define the Roby projector instead of the atomic natural orbitals.
-      self :: INOUT
+      self :: IN
       group :: VEC{INT}, IN
       ANO :: MAT{REAL}, optional, IN
+      rho :: OPMATRIX*, optional, IN
       res :: REAL
 
    ENSURE(.rho.associated,"no rho matrix")
@@ -592,7 +628,7 @@ contains
 
       .make_projection_matrix(X,group,ANO)
 
-      res = .expectation(X,group)
+      res = .expectation(X,group,rho)
 
       X.destroy
 
@@ -795,7 +831,7 @@ contains
         .atom_ab.append(.atom_a,.atom_b)
 
         .destroy_theta_info
-        .make_theta_info
+        .make_theta_info(.rho)
 
         ind  = .gould_bond_index(cov,ion,pcc)
 
@@ -875,10 +911,12 @@ contains
 
    end
 
-   make_theta_info ::: leaky, private
-   ! Calculates the Roby-Gould theta subspace information for atom groups
-   ! ".atom_a" and ".atom_b", including theta subspace populations
+   make_theta_info(rho) ::: leaky, private
+   ! Calculates the Roby-Gould theta subspace information for atom
+   ! groups ".atom_a" and ".atom_b", including theta subspace
+   ! populations
       self :: INOUT
+      rho :: OPMATRIX*, IN
 
    ENSURE(.atom_a.associated,"no atom A group")
    ENSURE(.atom_b.associated,"no atom B group")
@@ -917,8 +955,8 @@ contains
       ! Make covalent/ionic theta populations
       .pop_C.create(n_ab)
       .pop_I.create(n_ab)
-      .make_theta_populations(.pop_C,.theta_C) 
-      .make_theta_populations(.pop_I,.theta_I)
+      .make_theta_populations(.pop_C,.theta_C,rho) 
+      .make_theta_populations(.pop_I,.theta_I,rho)
 
       C.destroy
 
@@ -948,18 +986,25 @@ contains
       res = abs(arg1 + arg2)
    end
 
-   make_theta_populations(pop,theta) ::: private
-   ! Make "pop", an array of "theta" populations for a pair of Roby atoms
-   ! defined by indices in ".atom_a" and ".atom_b". "theta" itself is a matrix
-   ! whose columns are coefficients on V_AB.
-      pop :: VEC{REAL}
-      theta :: MAT{REAL}
+   make_theta_populations(pop,theta,rho) ::: private
+   ! Make "pop", an array of "theta" populations for a pair of Roby
+   ! atoms defined by indices in ".atom_a" and ".atom_b". "theta"
+   ! itself is a matrix whose columns are coefficients on V_AB.
+   ! You can use an optiona density matrix "rho".
+      self :: IN
+      pop :: VEC{REAL}, OUT
+      theta :: MAT{REAL}, optional, IN
+      rho :: OPMATRIX*, optional, IN
+
    ENSURE(.atom_ab.associated,"No roby atom group AB")
    ENSURE(pop.dim==.n_bf_ab,"wrong size, pop")
-       i :: INT
+
+      i :: INT
+
       do i = 1,.n_bf_ab
-         pop(i) = .population(.atom_ab,ANO=theta(:,i:i))
+         pop(i) = .population(.atom_ab,ANO=theta(:,i:i),rho=rho)
       end
+
    end
 
 !   make_theta_atom_populations(pop_a,pop_b,theta) ::: private
@@ -1226,6 +1271,121 @@ contains
 !      end
 !
 !   end
+
+! ======================
+! Roby-Gould bond-energy
+! =====================
+
+   energy_analysis ::: leaky, private
+   ! Do a Roby-Gould energy analysis for the atom groups
+   ! given in .atom_groups
+      self :: INOUT
+
+   ENSURE(.atom_group.associated,"no atom group defined")
+
+      n_group,a,b :: INT
+      ind,pcc,cov,ion :: REAL
+
+      n_group = .n_group
+
+      .make_populations
+      .make_pair_populations
+
+      .bond_index.create(n_group,n_group)
+      .cov_index.create(n_group,n_group)
+      .ion_index.create(n_group,n_group)
+      .percent_covalency.create(n_group,n_group)
+
+      do a = 1,n_group
+      do b = 1,a-1
+
+        if (.skip_pair(a,b)) cycle
+
+        .atom_a => .atom_group(a).element
+        .atom_b => .atom_group(b).element
+        .atom_ab.append(.atom_a,.atom_b)
+
+        .destroy_theta_info
+        .make_theta_info(.rho_E)
+
+        ind = .energy_bond_index(cov,ion,pcc)
+
+        .bond_index(a,b)        =  ind
+        .cov_index(a,b)         =  cov
+        .ion_index(a,b)         =  ion
+        .percent_covalency(a,b) =  pcc
+
+        .bond_index(b,a)        =  ind
+        .cov_index(b,a)         =  cov
+        .ion_index(b,a)         = -ion
+        .percent_covalency(b,a) =  pcc
+
+        if (.output_theta_info) then
+           .put_theta_info
+           .put_theta_bond_info
+        end
+        .destroy_theta_info
+
+        nullify(.atom_a)
+        nullify(.atom_b)
+        .atom_ab.destroy
+
+      end
+      end
+
+   end
+
+   energy_bond_index(c_ab,i_ab,pcc) result (bond_index) ::: leaky, private
+   ! Calculates the Roby-Gould-like energy "bond_index", percentage
+   ! covalent energy character "pcc", for atom groups ".atom_a" and
+   ! ".atom_b", and ".atom_ab".
+      self :: INOUT
+      c_ab,i_ab,pcc :: REAL, OUT
+      bond_index :: REAL
+
+   ENSURE(.theta_angle.associated,"no theta angles")
+   ENSURE(.pop_C.associated,"no covalent theta populations")
+   ENSURE(.pop_I.associated,"no ionic theta populations")
+   ENSURE(.pair.associated,"no pair array")
+
+      n_ab,i :: INT
+      ionic_cutoff,covalent_cutoff,zero_cutoff,angle :: REAL
+
+      ionic_cutoff    = .ionic_cutoff.to_units("degree")
+      covalent_cutoff = .covalent_cutoff.to_units("degree")
+      zero_cutoff     = .zero_cutoff.to_units("degree")
+
+      n_ab = .n_bf_ab
+
+      .covalent_index.create(n_ab)
+      .ionic_index.create(n_ab)
+
+      .covalent_index = ZERO
+      .ionic_index    = ZERO
+      pcc  = ZERO
+      c_ab = ZERO
+      i_ab = ZERO
+      bond_index = ZERO
+
+      do i = 1,n_ab
+
+        if (.pair(i)<1 OR i<.pair(i)) cycle
+
+        angle = .theta_angle(i)
+
+        .covalent_index(i) = (.pop_C(i) - .pop_C(.pair(i)))/TWO
+        .ionic_index(i)    = (.pop_I(i) - .pop_I(.pair(i)))/TWO
+
+        if (angle <= covalent_cutoff AND angle >= zero_cutoff) c_ab = c_ab + .covalent_index(i)
+        if (angle <= ionic_cutoff    AND angle >= zero_cutoff) i_ab = i_ab + .ionic_index(i)
+
+      end
+
+      bond_index = c_ab**2 + i_ab**2
+      pcc        = 100 * (c_ab**2/bond_index)
+      bond_index = sqrt(bond_index)
+
+   end
 
 ! ===================================
 ! Make and diagonalise Roby operators
@@ -1752,6 +1912,8 @@ contains
       .put_bond_indices
     ! .put_charges
     ! .put_dipole_moments
+
+    ! .put_MOs_and_energies
 
    end
 
@@ -2845,6 +3007,10 @@ contains
 
       symbol.destroy
 
+   end
+
+   put_MOs_and_energies ::: get_from(MOLECULE.BASE)
+   ! Output the current associated molecular orbitals and their energies
    end
 
 end
