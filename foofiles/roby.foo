@@ -1,10 +1,10 @@
 !---------------------------------------------------------------------------
 !
-!  ROBY:
+! ROBY:
 !
-!  Read and evaluate Roby atom data for population and bond analysis.
-!  This module has been completely rewritten from Chris Taylor's version,
-!  based on Steve Wolff's checked version.
+! Read and evaluate Roby atom data for population and bond analysis.
+! This module has been completely rewritten from Chris Taylor's
+! version, based on Steve Wolff's checked version.
 !
 ! Copyright (C) Chris Taylor, UWA, 1999.
 ! Copyright (C) Stephen Wolff, UWA, 2000-2001.
@@ -109,7 +109,8 @@ contains
       nullify(.rho)
       nullify(.rho_E)
       nullify(.overlap_matrix)
-      nullify(.molecular_orbitals)
+      nullify(.natural_orbitals)
+      nullify(.occupation_numbers)
       nullify(.orbital_energies)
       nullify(.atom)
 
@@ -162,7 +163,8 @@ contains
       nullify(.rho)
       .rho_E.destroy
       nullify(.overlap_matrix)
-      nullify(.molecular_orbitals)
+      nullify(.natural_orbitals)
+      nullify(.occupation_numbers)
       nullify(.orbital_energies)
       nullify(.atom)
 
@@ -181,7 +183,7 @@ contains
 
       .occupied_ANO_cutoff    = ROBY_OCCUPIED_ANO_CUTOFF
       .output_theta_info      = ROBY_OUTPUT_THETA_INFO
-      .analyze_all_atom_pairs = ROBY_ANALYZE_ALL_ATOM_PAIRS
+      .analyze_bonded_pairs   = ROBY_ANALYZE_BONDED_PAIRS
       .bond_range_factor      = ROBY_BOND_RANGE_FACTOR
 
    end
@@ -194,7 +196,8 @@ contains
    ENSURE(mol.atom.associated,"no atom list") 
    ENSURE(mol.density_matrix.associated,"no density matrix") 
    ENSURE(mol.overlap_matrix.associated,"no overlap matrix") 
-   ENSURE(mol.molecular_orbitals.associated,"no MO's") 
+   ENSURE(mol.natural_orbitals.associated,"no NO's") 
+   ENSURE(mol.occupation_numbers.associated,"no occupations") 
    ENSURE(mol.orbital_energies.associated,"no orbital energies") 
 
       .set_defaults
@@ -205,11 +208,14 @@ contains
       .atom               => mol.atom
       .rho                => mol.density_matrix
       .overlap_matrix     => mol.overlap_matrix
-      .molecular_orbitals => mol.molecular_orbitals
+      .natural_orbitals   => mol.natural_orbitals
+      .occupation_numbers => mol.occupation_numbers
       .orbital_energies   => mol.orbital_energies
 
       ! Make the energy density matrix ...
-      .rho_E.create_copy(.rho)
+      .rho_E.make_E_density_matrix_from(.natural_orbitals &
+                                       ,.occupation_numbers, &
+                                       .orbital_energies)
 
 
    end
@@ -234,29 +240,30 @@ contains
       word.to_lower_case
 
       select case (word)
-         case ("}                      ")  ! exit case
-         case ("analyze_all_atom_pairs="); .read_analyze_all_atom_pairs
-         case ("atom_groups=           "); .read_atom_groups
-         case ("atom_list=             "); .read_atom_list
-         case ("bond_scale_factors=    "); .read_bond_scale_factor
-         case ("covalent_cutoff=       "); .read_covalent_cutoff
-         case ("ionic_cutoff=          "); .read_ionic_cutoff
-         case ("kind=                  "); .read_kind
-         case ("output_theta_info=     "); .read_output_theta_info
-         case ("pi_on_2_cutoff=        "); .read_pi_on_2_cutoff
-         case ("zero_cutoff=           "); .read_zero_cutoff
+         case ("}                    ")  ! exit case
+         case ("analyze_bonded_pairs="); .read_analyze_bonded_pairs
+         case ("atom_groups=         "); .read_atom_groups
+         case ("atom_list=           "); .read_atom_list
+         case ("bond_scale_factors=  "); .read_bond_scale_factor
+         case ("covalent_cutoff=     "); .read_covalent_cutoff
+         case ("ionic_cutoff=        "); .read_ionic_cutoff
+         case ("kind=                "); .read_kind
+         case ("output_theta_info=   "); .read_output_theta_info
+         case ("pi_on_2_cutoff=      "); .read_pi_on_2_cutoff
+         case ("zero_cutoff=         "); .read_zero_cutoff
          case default;           UNKNOWN(word)
       end
 
    end
 
-   finalize ::: leaky
+   finalize ::: selfless, pure
    ! Make sure the input satisfies sanity checks and generate any other
    ! missing data
+
    ENSURE(.roby_kind/=" ","no calculation kind specified")
    ENSURE(.atom.associated,"no atom data supplied")
    ENSURE(.atom_list.associated NEQV .atom_group.associated,"atom_list and atom_group both used!")
-      if (FALSE) self = self
+
    end
 
    read_kind
@@ -266,6 +273,7 @@ contains
 
       select case (.roby_kind)
          case("atom_bond_analysis     ")
+         case("atom_energy_analysis   ")
          case("group_bond_analysis    ")
          case default;    UNKNOWN(.roby_kind)
       end
@@ -316,15 +324,15 @@ contains
       stdin.read(.output_theta_info)
    end
 
-   read_analyze_all_atom_pairs
-   ! Read in a switch which tells whether to bond-analyze all atoms
-   ! pairs or not - actually this just changes the bond_range_factor
-   ! by an order of magnitude
+   read_analyze_bonded_pairs
+   ! Read in a switch which tells whether to analyze all atoms
+   ! pairs of atoms (default NO) or not - actually this just changes
+   ! the bond_range_factor by an order of magnitude
       self :: INOUT
 
-      stdin.read(.analyze_all_atom_pairs)
+      stdin.read(.analyze_bonded_pairs)
 
-      if (.analyze_all_atom_pairs) then
+      if (.analyze_bonded_pairs) then
          .bond_range_factor = FIVE*BOHR_PER_ANGSTROM
       end
 
@@ -344,8 +352,8 @@ contains
 !  Information methods
 !  ===================
 
-   is_homoleptic result (res) ::: pure
-   ! Returns TRUE if the calculation data is "homoleptic" or not
+   is_multicenter result (res) ::: pure
+   ! Returns TRUE if the calculation data is multicenter or not
    ! i.e. involving groups of atoms
       self :: IN
       res :: BIN
@@ -355,17 +363,18 @@ contains
    end
 
    skip_pair(a,b) result (res) ::: private, pure
-   ! Returns TRUE if the bond index calculation should skip the pair of groups
-   ! (a,b). For calculations which are homoleptic, this always returns FALSE, but
-   ! for calculations which are defined by an atom_list, this returns TRUE only if
-   ! .analyze_all_atom_pairs is set to FALSE and the atoms are regarded as bonded
-   ! according to the .bond_range_factor distance cutoff.
+   ! Returns TRUE if the bond index calculation should skip the pair
+   ! of groups (a,b). For calculations which are multicenter, this
+   ! always returns FALSE, but for calculations which are defined by
+   ! an atom_list, this returns TRUE only if .analyze_bonded_pairs
+   ! is set to FALSE and the atoms are regarded as bonded according to
+   ! the .bond_range_factor distance cutoff.
       self :: IN
       a,b :: INT, IN
       res :: BIN
 
-      if      (.is_homoleptic) then;          res = FALSE
-      else if (.analyze_all_atom_pairs) then; res = FALSE
+      if      (.is_multicenter) then;       res = FALSE
+      else if (.analyze_bonded_pairs) then; res = FALSE
       else
          res = NOT .atom.bonded(a,b,.bond_range_factor)
       end
@@ -463,15 +472,19 @@ contains
       symbols :: VEC{STR}*
       g :: INT
 
-      if (.is_homoleptic) then
+      if (.is_multicenter) then
+
          res.create(.atom_group.dim)
          do g = 1,.atom_group.dim
             symbols => .atom(.atom_group(g).element).unique_tags
             res(g)  = VEC{STR}:to_concatenated_str(symbols)
             symbols.destroy
          end
+
       else
+
          res => .atom(.atom_list).unique_tags
+
       end
 
    end
@@ -498,7 +511,7 @@ contains
 
       .bond_analysis
     ! .charge_analysis
-      .put_all_info
+      .put_bond_analysis
 
    end
 
@@ -519,7 +532,7 @@ contains
       self :: INOUT
 
       .energy_analysis
-      .put_all_info
+      .put_energy_analysis
 
    end
 
@@ -1905,7 +1918,487 @@ contains
 ! Output methods
 ! ==============
 
-   put_all_info
+   put_energy_analysis
+   ! Put to stdout the results of a complete energy bond analysis
+      self :: IN
+
+      .put_atom_energies
+      .put_bond_energies
+
+   end
+
+   put_atom_energies
+   ! Put to stdout the Roby atom energies
+      self :: IN
+
+   ENSURE(.n1.associated,"no atom populations exist")
+   ENSURE(.atom.associated,"no atom data")
+
+      table :: VEC{TABLE_COLUMN}*
+      symbols :: VEC{STR}*
+      labels :: VEC{INT}*
+      f :: INT
+
+
+      stdout.flush
+      stdout.text("==================")
+      stdout.text("Roby atom energies")
+      stdout.text("==================")
+      stdout.flush
+
+      stdout.text("Energies reported in atomic units")
+      stdout.flush
+
+      ! Create table
+      table.create(2)
+
+      ! Set the table headings
+      table(1).set_heading("Atom")
+      table(1).set_width_from(.atom.chemical_symbols)
+      if (.is_multicenter) then
+         symbols.create(.n_group)
+         labels.create(.n_group)
+         f = 1
+         labels => f.sequence_up_to(.n_group)
+         symbols = labels.to_str
+         labels.destroy
+      else
+         symbols => .unique_tags
+      end
+      table(1).set_values(symbols)
+
+      table(2).set_heading("  Atom")
+      table(2).set_subhead("energy")
+      table(2).set_values(.n1)
+
+      ! Put table
+      table.put(label_rows=FALSE)
+
+      ! Clean
+      symbols.destroy
+      table.clear_columns
+
+   end
+
+   put_bond_energies
+   ! Put to stdout the Roby bond indices, including the shared populations
+      self :: IN
+
+      if (.is_multicenter) then
+         DIE("unimplemented")
+         ! copy put_bond_indices_group
+      else
+         .put_energy_indices_atoms
+         .put_energy_indices_short
+      end
+
+   end
+
+   put_energy_indices_atoms ::: private
+   ! Output the bond indices table for connected atoms.
+      self :: IN
+
+   ENSURE(NOT .is_multicenter,"job is multicenter")
+
+      table :: VEC{TABLE_COLUMN}*
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+      pair :: MAT{INT}*
+      symbols,labels :: MAT{STR}*
+      dash,dsh1 :: VEC{STR}*
+      dist,n_A,n_B,nAB,sAB,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("===================")
+      stdout.text("Energy bond indices")
+      stdout.text("===================")
+      stdout.flush
+      if (.analyze_bonded_pairs) then
+      stdout.text(". Bond energies appear only for atom pairs which are connected")
+      stdout.text("  according to the Cambridge Structural Database (CSD) AND if")
+      stdout.text("  they are within a minimum bond_range_factor")
+      stdout.flush
+      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
+      stdout.show("No. of 'bonds'          =",no_of_bonds)
+      else
+      stdout.text(". Energy indices appear only for all atom pairs regardless of")
+      stdout.text("  how close the atoms are together.")
+      stdout.flush
+      stdout.show("No. of bonds =",no_of_bonds)
+      end
+      stdout.flush
+      stdout.text(". Energies are in atomic units")
+      stdout.flush
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(15)
+
+      ! Set the table headings
+      table( 1).set_heading("A")
+      table( 1).set_width_from(.atom.chemical_symbols)
+
+      table( 2).set_spacing(0)
+      table( 2).set_heading("--")
+      table( 2).set_width(2)
+
+      table( 3).set_heading("B")
+      table( 3).set_width(table(1).width)
+      table( 3).set_left_justify(TRUE)
+
+      table( 4).set_heading("A")
+      table( 4).set_width_from(.atom(:).tag)
+
+      table( 5).set_spacing(0)
+      table( 5).set_heading("--")
+      table( 5).set_width(2)
+
+      table( 6).set_heading("B")
+      table( 6).set_width(table(4).width)
+      table( 6).set_left_justify(TRUE)
+
+      table( 7).set_heading("R(A--B)")
+      table( 7).set_subheading("/Angs.")
+      table( 7).set_width_from(ONE)
+
+      table( 8).set_heading("E_A")
+      table( 8).set_width_from(TEN)
+      table( 9).set_heading("E_B")
+      table( 9).set_width_from(TEN)
+      table(10).set_heading("E_AB")
+      table(10).set_width_from(TEN)
+      table(11).set_heading("Shared")
+      table(11).set_subhead("energy")
+      table(11).set_sb3head(" S_AB")
+      table(11).set_width_from(TEN)
+      table(12).set_heading("  Cov.")
+      table(12).set_subhead("energy")
+      table(12).set_width_from(-TEN)
+      table(13).set_heading(" Ionic")
+      table(13).set_subhead("energy")
+      table(13).set_width_from(-TEN)
+      table(14).set_heading("  Bond")
+      table(14).set_subhead("energy")
+      table(14).set_width_from(ONE)
+      table(15).set_heading(" % energy")
+      table(15).set_subhead("Covalency")
+      table(15).set_width_from(100d0)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Element symbols
+         symbols.create(n_bonds,2)
+         symbols = " "
+         symbols(1,1) = .atom(Z_list(k1)[1]).chemical_symbol
+         symbols(1,2) = .atom(Z_list(k2)[1]).chemical_symbol
+
+         ! Dashes
+         dash.create(n_bonds)
+         dsh1.create(n_bonds)
+         dash    = "--"
+         dsh1    = "  "
+         dsh1(1) = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         n_A.create(n_bonds)
+         n_B.create(n_bonds)
+         nAB.create(n_bonds)
+         sAB.create(n_bonds)
+         cAB.create(n_bonds)
+         iAB.create(n_bonds)
+         tAB.create(n_bonds)
+         pAB.create(n_bonds)
+
+         n_A = .n1(pair(:,1))
+         n_B = .n1(pair(:,2))
+         forall (i=1:n_bonds)
+         nAB(i) = .n2(pair(i,1),pair(i,2))
+         sAB(i) = n_A(i) + n_B(i) - nAB(i)
+         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
+         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         pAB(i) = .percent_covalency(pair(i,1),pair(i,2))
+         end
+
+         ! Set table data
+         table( 1).set_values(symbols(:,1))
+         table( 2).set_values(dsh1)
+         table( 3).set_values(symbols(:,2))
+         table( 4).set_values(labels(:,1))
+         table( 5).set_values(dash)
+         table( 6).set_values(labels(:,2))
+         table( 7).set_values(dist)
+         table( 8).set_values(n_A)
+         table( 9).set_values(n_B)
+         table(10).set_values(nAB)
+         table(11).set_values(sAB)
+         table(12).set_values(cAB)
+         table(13).set_values(iAB)
+         table(14).set_values(tAB)
+         table(15).set_values(pAB)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+
+         pAB.destroy
+         tAB.destroy
+         iAB.destroy
+         cAB.destroy
+         sAB.destroy
+         nAB.destroy
+         n_B.destroy
+         n_A.destroy
+         labels.destroy
+         dsh1.destroy
+         dash.destroy
+         symbols.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Z_list.destroy
+
+   end
+
+   put_energy_indices_short ::: private
+   ! Output the bond indices table for connected atoms.
+      self :: IN
+
+   ENSURE(NOT .is_multicenter,"job is multicenter")
+
+      table :: VEC{TABLE_COLUMN}*
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+      pair :: MAT{INT}*
+      labels :: MAT{STR}*
+      dash :: VEC{STR}*
+      dist,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      ind :: VEC{INT}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Title
+      stdout.flush
+      stdout.text("==========================")
+      stdout.text("Sorted energy bond indices")
+      stdout.text("==========================")
+      stdout.flush
+      stdout.text("Energy bond indices are sorted from lowest to highest")
+      stdout.flush
+      if (.analyze_bonded_pairs) then
+      stdout.text(". Bond energies appear only for atom pairs which are connected")
+      stdout.text("  according to the Cambridge Structural Database (CSD) AND if")
+      stdout.text("  they are within a minimum bond_range_factor")
+      stdout.flush
+      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
+      stdout.show("No. of 'bonds'          =",no_of_bonds)
+      else
+      stdout.text(". Energy indices appear only for all atom pairs regardless of")
+      stdout.text("  how close the atoms are together.")
+      stdout.flush
+      stdout.show("No. of bonds =",no_of_bonds)
+      end
+      stdout.flush
+      stdout.text(". Energies are in atomic units")
+      stdout.flush
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(8)
+
+      ! Set the table headings
+      table(1).set_heading("A")
+      table(1).set_width_from(.atom(:).tag)
+
+      table(2).set_spacing(0)
+      table(2).set_heading("--")
+      table(2).set_width(2)
+
+      table(3).set_heading("B")
+      table(3).set_width(table(1).width)
+      table(3).set_left_justify(TRUE)
+
+      table(4).set_heading("R(A--B)")
+      table(4).set_subheading("/Angs.")
+      table(4).set_width_from(ONE)
+
+      table(5).set_heading("  Cov.")
+      table(5).set_subhead("energy")
+      table(5).set_width_from(-TEN)
+      table(6).set_heading(" Ionic")
+      table(6).set_subhead("energy")
+      table(6).set_width_from(-TEN)
+      table(7).set_heading("  Bond")
+      table(7).set_subhead("energy")
+      table(7).set_width_from(ONE)
+      table(8).set_heading(" % energy")
+      table(8).set_subhead("covalency")
+      table(8).set_width_from(100d0)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Dashes
+         dash.create(n_bonds)
+         dash    = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         cAB.create(n_bonds)
+         iAB.create(n_bonds)
+         tAB.create(n_bonds)
+         pAB.create(n_bonds)
+
+         forall (i=1:n_bonds)
+         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
+         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         pAB(i) = .percent_covalency(pair(i,1),pair(i,2))
+         end
+
+         ! Sort & rearrange
+         ind.create(n_bonds)
+         tAB.quick_sort(ind,decreasing_order=TRUE)
+         labels(:,1) = labels(ind,1)
+         labels(:,2) = labels(ind,2)
+         dist = dist(ind)
+         cAB  = cAB(ind)
+         iAB  = iAB(ind)
+         tAB  = tAB(ind)
+         pAB  = pAB(ind)
+
+         ! Set table data
+         table(1).set_values(labels(:,1))
+         table(2).set_values(dash)
+         table(3).set_values(labels(:,2))
+         table(4).set_values(dist)
+         table(5).set_values(cAB)
+         table(6).set_values(iAB)
+         table(7).set_values(tAB)
+         table(8).set_values(pAB)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+
+         ind.destroy
+         pAB.destroy
+         tAB.destroy
+         iAB.destroy
+         cAB.destroy
+         labels.destroy
+         dash.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Z_list.destroy
+
+   end
+
+
+   put_bond_analysis
    ! Put to stdout the results of a complete bond analysis
       self :: IN
 
@@ -1937,12 +2430,12 @@ contains
       stdout.show("Molecule multiplicity   =",.spin_multiplicity)
       stdout.flush
       stdout.show("Kind of calculation     =",.roby_kind)
-      stdout.show("Homoleptic calculation? =",.is_homoleptic)
+      stdout.show("Homoleptic calculation? =",.is_multicenter)
       stdout.show("Occupied ANO cutoff     =",.occupied_ANO_cutoff)
       stdout.show("Output theta info?      =",.output_theta_info)
       stdout.flush
 
-      if (.is_homoleptic) then
+      if (.is_multicenter) then
       symbol => .unique_tags
       do i = 1,.n_group
       stdout.show("Atom group "//i.to_str.trim//"            =",symbol(i))
@@ -1954,7 +2447,7 @@ contains
       stdout.show("Atom list               =",symbol)
       stdout.show("No. of atoms            =",symbol.dim)
       symbol.destroy
-      stdout.show("Analyze all atom pairs? =",.analyze_all_atom_pairs)
+      stdout.show("Analyze all atom pairs? =",NOT .analyze_bonded_pairs)
       stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
       end
 
@@ -1995,7 +2488,7 @@ contains
       ! Set the table headings
       table(1).set_heading("Atom")
       table(1).set_width_from(.atom.chemical_symbols)
-      if (.is_homoleptic) then
+      if (.is_multicenter) then
          symbols.create(.n_group)
          labels.create(.n_group)
          f = 1
@@ -2024,7 +2517,7 @@ contains
    ! Put to stdout the Roby bond indices, including the shared populations
       self :: IN
 
-      if (.is_homoleptic) then
+      if (.is_multicenter) then
          .put_bond_indices_group
       else
          .put_bond_indices_atoms
@@ -2037,7 +2530,7 @@ contains
    ! Output the bond indices table for connected atoms.
       self :: IN
 
-   ENSURE(.is_homoleptic,"job is not homoleptic")
+   ENSURE(.is_multicenter,"job is not multicenter")
    ENSURE(.n_group>1,"must be at leat two groups")
 
       table :: VEC{TABLE_COLUMN}*
@@ -2163,11 +2656,11 @@ contains
 
    end
 
-   put_bond_indices_atoms
+   put_bond_indices_atoms ::: private
    ! Output the bond indices table for connected atoms.
       self :: IN
 
-   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+   ENSURE(NOT .is_multicenter,"job is multicenter")
 
       table :: VEC{TABLE_COLUMN}*
       Z_list :: VEC{VEC_{INT}}*
@@ -2195,16 +2688,16 @@ contains
       stdout.text("Roby-Gould bond indices")
       stdout.text("=======================")
       stdout.flush
-      if (.analyze_all_atom_pairs) then
-      stdout.text("Indices appear only for atom pairs which are connected")
-      stdout.text("according to the Cambridge Structural Database (CSD)")
-      stdout.text("AND if they are within a minimum bond_range_factor")
+      if (.analyze_bonded_pairs) then
+      stdout.text(". Indices appear only for atom pairs which are connected")
+      stdout.text("  according to the Cambridge Structural Database (CSD)")
+      stdout.text("  AND if they are within a minimum bond_range_factor")
       stdout.flush
       stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
       stdout.show("No. of 'bonds'          =",no_of_bonds)
       else
-      stdout.text("Indices appear only for atom pairs which are connected")
-      stdout.text("according to the Cambridge Structural Database (CSD).")
+      stdout.text(". Indices appear only for all atom pairs regardless of")
+      stdout.text("  how close they are together.")
       stdout.flush
       stdout.show("No. of bonds =",no_of_bonds)
       end
@@ -2378,11 +2871,11 @@ contains
 
    end
 
-   put_bond_indices_short
+   put_bond_indices_short ::: private
    ! Output the bond indices table for connected atoms.
       self :: IN
 
-   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+   ENSURE(NOT .is_multicenter,"job is multicenter")
 
       table :: VEC{TABLE_COLUMN}*
       Z_list :: VEC{VEC_{INT}}*
@@ -2412,7 +2905,7 @@ contains
       stdout.flush
       stdout.text(". Indices are sorted from lowest to highest")
       stdout.flush
-      if (.analyze_all_atom_pairs) then
+      if (.analyze_bonded_pairs) then
       stdout.text(". Indices appear only for atom pairs which are connected")
       stdout.text("  according to the Cambridge Structural Database (CSD)")
       stdout.text("  AND if they are within a minimum bond_range_factor")
@@ -2420,8 +2913,8 @@ contains
       stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
       stdout.show("No. of 'bonds'          =",no_of_bonds)
       else
-      stdout.text(". Indices appear only for atom pairs which are connected")
-      stdout.text("  according to the Cambridge Structural Database (CSD).")
+      stdout.text(". Indices appear only for all atom pairs regardless of")
+      stdout.text("  how close they are together.")
       stdout.flush
       stdout.show("No. of bonds =",no_of_bonds)
       end
@@ -2558,6 +3051,7 @@ contains
 
    end
 
+
    put_charges
    ! Put to stdout the group charges.
       self :: IN
@@ -2568,12 +3062,12 @@ contains
    ENSURE(.atom_group.associated,"no atom group data")
 
       a :: INT
-      homoleptic :: BIN
+      multicenter :: BIN
       symb :: STR
       symbol :: VEC{STR}*
 
-      homoleptic = .is_homoleptic
-      if (NOT homoleptic) symbol => .unique_tags
+      multicenter= .is_multicenter
+      if (NOT multicenter) symbol => .unique_tags
 
       stdout.flush
       stdout.text("Group charges:")
@@ -2587,8 +3081,8 @@ contains
       stdout.flush
       stdout.dash(int_fields=1,real_fields=4)
       do a = 1,.n_group
-         if (homoleptic) then; symb = a.to_str
-         else                ; symb = symbol(a)
+         if (multicenter) then; symb = a.to_str
+         else                 ; symb = symbol(a)
          end
          stdout.put(symb,int_width=TRUE)
          stdout.put(.gould_charge(a))
@@ -2599,7 +3093,7 @@ contains
       end
       stdout.dash(int_fields=1,real_fields=4)
 
-      if (NOT homoleptic) symbol.destroy
+      if (NOT multicenter) symbol.destroy
 
    end
 
@@ -2674,6 +3168,10 @@ contains
       stdout.flush
 
    end
+
+! ========================
+! Detailed subspace output
+! ========================
 
    put_theta_info
    ! Output Theta-space information
@@ -3009,10 +3507,6 @@ contains
 
       symbol.destroy
 
-   end
-
-   put_MOs_and_energies ::: get_from(MOLECULE.BASE)
-   ! Output the current associated molecular orbitals and their energies
    end
 
 end
