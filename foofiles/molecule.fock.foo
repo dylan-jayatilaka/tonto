@@ -210,7 +210,7 @@ contains
       !  end
 
         ! Exchange correlation matrix
-        if (add_xc) .:add_XC_matrix(F)
+        if (add_xc) .:add_XC_matrix(F,P)
 
       else
 
@@ -329,7 +329,7 @@ contains
          F.alpha = J
          F.beta = J
 
-         if (add_xc) .:add_XC_matrix(F)
+         if (add_xc) .:add_XC_matrix(F, P)
 
       else
 
@@ -3296,9 +3296,9 @@ contains
 !  Restricted DFT
 !  ==============
 
-   add_XC_matrix(K) ::: leaky
+   add_XC_matrix(K, P) ::: leaky
    ! Add the DFT exchange correlation matrix to "K".
-      K :: OPMATRIX*
+      K, P :: OPMATRIX*
 
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(.scfdata.is_DFT_calculation,"this is not a DFT calculation")
@@ -3320,10 +3320,10 @@ contains
       select case (.scfdata.scf_kind)
 
          case ("rks","xray_rks")
-            .:add_XC_matrix(K.restricted)
+            .:add_XC_matrix(K.restricted, P.restricted)
 
          case ("uks","xray_uks","pnd_uks","xray_pnd_uks")
-            .:add_XC_matrix(K.alpha,K.beta)
+            .:add_XC_matrix(K.alpha, K.beta, P.alpha, P.beta)
 
          case default
             DIE("unknown DFT SCF kind, "//trim(.scfdata.scf_kind))
@@ -3331,22 +3331,34 @@ contains
 
    end
 
-   add_XC_matrix(K)
+   add_XC_matrix(K, P)
    ! Calculate the exchange correlation matrix numerically.
-      K :: MAT{REAL}
+      K, P :: MAT{REAL}
 
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(.scfdata.is_DFT_calculation,"this is not a DFT calculation")
 
+      K_HF :: MAT{REAL}*
       E :: REAL
+      HF_X_FACTOR :: REAL = 0.2d0
 
       if (.scfdata.using_GGA_functional) then
+
+         if(.scfdata.using_hybrid_exchange) then
+            K_HF.create(.n_bf, .n_bf)
+            K_HF = 0
+            .:make_r_K_direct(K_HF, P)
+            ! 0.2 = amount of HF exchange
+            K = K - HF_X_FACTOR * (HALF * K_HF)
+            K_HF.destroy
+         end
 
          if (.BASE:debugging("use_add_GGA_XC_matrix_old")) then
             .:add_GGA_XC_matrix_old(K,E)
          else
             .:add_GGA_XC_matrix(K,E)
          end
+
 
       else
 
@@ -4194,28 +4206,24 @@ contains
 !  Unrestricted DFT
 !  ================
 
-   add_XC_matrix(Ka,Kb)
+   add_XC_matrix(Ka,Kb,Pa,Pb)
    ! Calculate the exchange correlation matrix numerically.
-      Ka,Kb :: MAT{REAL}
+      Ka,Kb,Pa,Pb :: MAT{REAL}
 
       E,Ea,Eb :: REAL
 
-      if (.scfdata.using_GGA_functional) then
-
-         if (.BASE:debugging("use_add_GGA_XC_matrix_old")) then
-            .:add_GGA_XC_matrix_old(Ka,Kb,E,Ea,Eb)
-         else
-            .:add_GGA_XC_matrix(Ka,Kb,E,Ea,Eb)
-         end
-
-      else
-
+      if (NOT .scfdata.using_GGA_functional) then
          if (.BASE:debugging("use_add_LDA_XC_matrix_old")) then
             .:add_LDA_XC_matrix_old(Ka,Kb,E,Ea,Eb)
          else
             .:add_LDA_XC_matrix(Ka,Kb,E,Ea,Eb)
          end
-
+      else
+         if (.BASE:debugging("use_add_GGA_XC_matrix_old")) then
+            .:add_GGA_XC_matrix_old(Ka,Kb,E,Ea,Eb)
+         else
+            .:add_GGA_XC_matrix(Ka,Kb,E,Ea,Eb)
+         end
       end
 
       .scfdata.dft_energy_correction       = E
