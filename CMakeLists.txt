@@ -369,6 +369,7 @@ set(FORTRAN_SRC
 set(RUNFILE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runfiles)
 set(RUN_SRC 
     ${RUNFILE_DIR}/run_molecule.foo
+    ${RUNFILE_DIR}/run_gaussian_data.foo
     ${RUNFILE_DIR}/run_har.foo
     ${RUNFILE_DIR}/run_test.foo
 )
@@ -406,11 +407,13 @@ add_library(tonto
 )
 
 add_executable(run_molecule ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
+add_executable(run_gaussian_data ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
 add_executable(run_har ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
 add_executable(run_test ${CMAKE_CURRENT_BINARY_DIR}/run_test.F90)
 
 # Link against dependencies
 target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_har tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_test tonto ${LAPACK_LIBRARIES})
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
