@@ -52,7 +52,7 @@ contains
       ! Turn off unwanted printing ...
       .crystal.data.set_refine_structure(TRUE)
       .crystal.data.set_fit_structure(FALSE)
-      .scfdata.set_output(FALSE)
+      .scfdata.set_output(TRUE)
 
       ! Banner, options/switches, initial parameters,
       ! start banner, and iteration table header
@@ -77,11 +77,7 @@ contains
          end
 
          ! SCF @ new geometry (or promolecule)
-         if (.crystal.data.use_IAM_density) then
-            .SCF:make_promolecule_density
-         else
-            .SCF:scf
-         end
+         .SCF:scf
 
          ! Reset scf initial guess
          if (.crystal.data.ref_iteration==0) &
@@ -155,6 +151,7 @@ contains
       ! Static atomic SF's for symmetry-unique atoms (sf_n)
       if      (.crystal.data.invariom_refinement) then; .TAD:get_unique_invariom_SFs(sf_n)
       else if (.crystal.data.use_Voronoi_atoms) then;   .TAD:get_unique_Voronoi_atom_SFs(sf_n)
+      else if (.crystal.data.use_IAM_density) then;     .TAD:get_unique_IAM_atom_SFs(sf_n)
       else;                                             .TAD:get_unique_Hirshfeld_atom_SFs(sf_n)
       end
 
@@ -169,13 +166,73 @@ contains
       sf_n.destroy
 
       ! Delete stored matrices
+      if (NOT .crystal.data.use_IAM_density) then
       .BASE:delete_scf_archives(keep_DM=TRUE)
       .BASE:destroy_scf_results(keep_MOs=TRUE)
       .BASE:destroy_scf_integrals
+      end
 
       ! Make sure MO's are orthonormal at new geometry
-      if (NOT .crystal.data.use_IAM_density) &
+      if (NOT .crystal.data.use_IAM_density) then
       .SCF:symmetrically_orthonormalise(.molecular_orbitals)
+      end
+
+   end
+
+   get_unique_IAM_atom_SFs(sf_n) ::: leaky, private
+   ! Get "sf_n", the IAM structure factors for the symmetry generated
+   ! K points with *no* thermal smearing, for every unique atom.
+      sf_n :: MAT{CPX}*
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.data.created, "no reflection data")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.crystal.asymmetric_unit_atom.created,"no asymmetric unit atoms")
+   ENSURE(.crystal.unique_atom_for_frag_atom.created,"no unique-frag_atom")
+   ENSURE(.crystal.asym_atom_for_frag_atom.created,"no asym-frag_atom")
+   ENSURE(.density_matrix.created, "no density matrix")
+
+      k_pts :: MAT{REAL}*
+      n_atom,n_k, u,c,a :: INT
+      rf :: REAL
+
+      ! Asymmetric unit atoms;
+      ! Symmetry generated K points and SF's
+      n_atom = .crystal.asymmetric_unit_atom.dim
+      n_k    = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_n.create(n_k,n_atom)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      ! Make the SF's
+      sf_n = ZERO
+
+      ! Loop over integration atoms "c"
+      do u = 1,.crystal.n_unique_frag_atoms
+
+         c = .crystal.unique_frag_atom(u)
+         a = .crystal.asym_atom_for_frag_atom(c)
+
+         ! Repetition factor for this atom
+         rf = .crystal.asym_atom_rep_factor(a)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         ! Structure factors
+         .atom(a).make_FT(sf_n(:,u),k_pts)
+         sf_n(:,u) = sf_n(:,u) * rf
+
+      end
+
+      ! Clean up
+      k_pts.destroy
 
    end
 
