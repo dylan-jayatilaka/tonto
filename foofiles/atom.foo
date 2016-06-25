@@ -2026,7 +2026,7 @@ contains
       fac :: REAL, optional, IN
 
    ENSURE(X.dim>=.no_of_pADPs,"wrong size, X")
-   ENSURE(.pADP_errors.created,"no pADP_errors")
+   ENSURE(.pADP_vector.created,"no pADP_vector")
 
       fac2,fac3,fac4 :: REAL
 
@@ -7691,6 +7691,37 @@ contains
 
    end
 
+   get_precomputed_shell_pair0(shell,q,fa,la,fb,lb) ::: leaky
+   ! Get the SHELL2 object "shell" correponding to the pair index "q"
+   ! Also return the basis function start indices "fa", "la", etc ...
+   ! HOWEVER, place both functions at the origin not at .position.
+      self :: IN
+      shell :: SHELL2, OUT
+      q :: INT, IN
+      fa,la,fb,lb :: INT, OUT
+
+   ENSURE(.precomputed_basis_shellpair.created,"no precomputed basis shellpair data")
+   ENSURE(.first_basis_fn_for_shell.created,"no first_basis_fn data")
+   ENSURE(.last_basis_fn_for_shell.created,"no last_basis_fn data")
+
+      a,b :: INT
+      zv  :: VEC{REAL}(3)
+
+      zv = ZERO
+
+      a  = (1+int(sqrt(8.0d0*q-7.0d0)))/2
+      b  = q - a*(a-1)/2
+
+      fa = .first_basis_fn_for_shell(a)
+      fb = .first_basis_fn_for_shell(b)
+      la = .last_basis_fn_for_shell(a)
+      lb = .last_basis_fn_for_shell(b)
+
+      shell.set_and_precompute_from(.precomputed_basis_shellpair(a,b) &
+         ,zv,zv,same_center=TRUE,skip=FALSE)
+
+   end
+
 !  ==========================
 !  Structure factor integrals
 !  ==========================
@@ -7705,7 +7736,7 @@ contains
    ENSURE(.density_matrix.created, "no .density_matrix")
    ENSURE(.density_matrix.restricted.created, "only works for restricted .density_matrix")
 
-      n_shell_pairs,q,fa,fb,la,lb,na,nb, k_max,k :: INT
+      n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
       FT :: MAT3{CPX}*
       D :: MAT{REAL}@
       sh :: SHELL2
@@ -7755,6 +7786,152 @@ contains
 
       ! Clean
     ! .precomputed_basis_shellpair.destroy
+
+   end
+
+   make_FT_along_z(res,k_z)
+   ! Fourier transform of the density described by ".density_matrix"
+   ! evaluated at a reciprocal space points [0,0,k_z(i), i = 1,dim].
+   ! NOTE: evaluated at the origin!
+      self :: PTR
+      res :: VEC{CPX}, OUT
+      k_z :: VEC{REAL}, IN
+
+   ENSURE(.density_matrix.created, "no .density_matrix")
+   ENSURE(.density_matrix.restricted.created, "only works for restricted .density_matrix")
+   ENSURE(.precomputed_basis_shellpair.created,"no precomputed basis shellpair data")
+
+      n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
+      k_x,k_y :: VEC{REAL}*
+    ! partition :: MAT{REAL}*
+      FT :: MAT3{CPX}*
+      D :: MAT{REAL}@
+      sh :: SHELL2
+
+      n_shell_pairs = .basis.no_of_shells
+      n_shell_pairs = n_shell_pairs.triangle_number
+
+      ! Other compinents
+      k_max = k_z.dim1
+      k_x.create(k_max); k_x = 0
+      k_y.create(k_max); k_y = 0
+
+      res = ZERO
+
+      do q = 1,n_shell_pairs
+
+         ! Get shell pair at origin
+         .get_precomputed_shell_pair0(sh,q,fa,la,fb,lb)
+
+         ! Make the FT 
+         FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
+         sh.make_ft_c(FT,k_x,k_y,k_z)
+
+       ! partition.create(sh.a.n_comp,sh.b.n_comp)
+       ! partition = ONE
+       ! sh.make_FT_parted_c(FT,k_x,k_y,k_z,partition)
+
+         ! Trace with density matrix
+         ! Count off-diagonals twice
+         D = .density_matrix.restricted(fa:la,fb:lb)
+         if (fa/=fb) then 
+            do k = 1,k_max
+               res(k) = res(k) + sum(FT(k,:,:)*D) * TWO
+            end
+         else
+            do k = 1,k_max
+               res(k) = res(k) + sum(FT(k,:,:)*D)
+            end
+         end
+
+         ! Clean
+       ! partition.destroy
+         FT.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      ! Clean
+      k_y.destroy
+      k_x.destroy
+
+   end
+
+   FT_along_z_r(res,k_z) ::: selfless
+   ! Real part of fourier transform of the density described by
+   ! ".density_matrix" evaluated at a reciprocal space points
+   ! [0,0,k_z(i), i = 1,dim]
+      res :: VEC{REAL}, OUT
+      k_z :: VEC{REAL}, IN
+
+      tmp :: VEC{CPX}*
+
+      tmp.create(res.dim)
+      saved_self.make_FT_along_z(tmp,k_z)
+
+      res = RE(tmp)
+
+      tmp.destroy
+
+   end
+
+   FT_along_z_i(res,k_z) ::: selfless
+   ! Imaginary part of fourier transform of the density described by
+   ! ".density_matrix" evaluated at a reciprocal space points
+   ! [0,0,k_z(i), i = 1,dim]
+      res :: VEC{REAL}, OUT
+      k_z :: VEC{REAL}, IN
+
+      tmp :: VEC{CPX}*
+
+      tmp.create(res.dim)
+      saved_self.make_FT_along_z(tmp,k_z)
+
+      res = IM(tmp)
+
+      tmp.destroy
+
+   end
+
+   put_FT_along_z_r(length,spacing) ::: leaky
+   ! Put the real part of the spherical atomic form factors (along z
+   ! direction) NOTE: X axis is converted to Angstrom^-1
+      self :: IN
+      length,spacing :: REAL, IN
+
+      interpolator :: INTERPOLATOR*
+     
+      ! Set the interpolation table
+      .set_saved_self ! Used below
+      interpolator.create
+      interpolator.set_data(length,spacing,ATOM::FT_along_z_r)
+
+      ! Clean
+      interpolator.put(fac=BOHR_PER_ANGSTROM/(FOUR*PI))
+
+      ! Clean
+      interpolator.destroy
+
+   end
+
+   put_FT_along_z_i(length,spacing) ::: leaky
+   ! Put the imaginary part of the spherical atomic form factors
+   ! (along z direction) NOTE: X axis is converted to Angstrom^-1
+      self :: IN
+      length,spacing :: REAL, IN
+
+      interpolator :: INTERPOLATOR*
+     
+      ! Set the interpolation table
+      .set_saved_self ! Used below
+      interpolator.create
+      interpolator.set_data(length,spacing,ATOM::FT_along_z_i)
+
+      ! Clean
+      interpolator.put(fac=BOHR_PER_ANGSTROM/(FOUR*PI))
+
+      ! Clean
+      interpolator.destroy
 
    end
 
