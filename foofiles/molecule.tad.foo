@@ -152,7 +152,8 @@ contains
       if      (.crystal.data.invariom_refinement) then; .TAD:get_unique_invariom_SFs(sf_n)
       else if (.crystal.data.use_Voronoi_atoms) then;   .TAD:get_unique_Voronoi_atom_SFs(sf_n)
       else if (.crystal.data.use_IAM_density) then;     .TAD:get_unique_IAM_atom_SFs(sf_n)
-      else;                                             .TAD:get_unique_Hirshfeld_atom_SFs(sf_n)
+      else if (.crystal.data.use_KM_atoms) then;        .TAD:get_unique_KM_atom_SFs(sf_n)
+      else;                                             .TAD:get_unique_Hirshfeld_atom_SFs(sf_n) ! HAR
       end
 
       !!!!!!!!! Do the fit !!!!!!!!!
@@ -236,6 +237,167 @@ contains
 
       ! Clean up
       k_pts.destroy
+
+   end
+
+   get_unique_KM_atom_SFs(sf_n) ::: leaky, private
+   ! Get "sf_n", the Koritsanszky-Michael static structure factors for
+   ! the symmetry related K points with *no* thermal smearing, for
+   ! every unique atom.  NOTE: "sf_n" is the FT rho_a(r), eqn (3) in
+   ! Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      sf_n :: MAT{CPX}*
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.density_matrix.created, "no density matrix")
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.data.created, "no reflection data")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      ra,rb :: VEC{REAL}(3)
+      overlapping_atom :: VEC{INT}*
+      FT :: MAT3{CPX}*
+      D,k_pts,part :: MAT{REAL}*
+      n_atom, k,n_k, u,c,a, ca,cb, oa,fsa,lsa, ob,fsb,lsb :: INT
+      sa,fa,la,na,as, sb,fb,lb,nb,bs :: INT
+      skip_overlap :: BIN
+      rf,fac :: REAL
+      dc :: CPX
+      sh :: SHELL2
+
+      ! Asymmetric unit atoms
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_n.create(n_k,n_atom)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      ! Density matrix (leaky)
+      .BASE:make_ao_density_matrix
+      ENSURE(.density_matrix.restricted.created, "no restricted DM")
+      D => .density_matrix.restricted
+
+      ! Do overlap?
+      skip_overlap = .crystal.data.use_zero_overlap
+
+      ! Make the SF's
+      sf_n = ZERO
+
+      ! Loop over integration atoms "c"
+      parallel do u = 1,.crystal.n_unique_frag_atoms
+
+         c = .crystal.unique_frag_atom(u)
+         a = .crystal.asym_atom_for_frag_atom(c)
+
+         ! Repetition (site-symmetry) factor for atom c
+         rf = .crystal.asym_atom_rep_factor(a)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         ! Overlapping atoms
+         overlapping_atom => .overlapping_atoms_for_atom(c).element
+
+         ! Loop c-overlapping atoms a
+         do oa = 1,.atom.dim
+
+          ! oa  = overlapping_atom(ca)
+            fsa = .first_shell_for_atom(oa)
+            lsa =  .last_shell_for_atom(oa)
+            ra  = .atom(oa).position
+
+            ! Loop shells on atom a
+            do sa = fsa,lsa
+
+               ! Shell a limits
+               fa = .first_basis_fn_for_shell(sa)
+               la =  .last_basis_fn_for_shell(sa)
+               na = la - fa + 1
+               as = .basis_shell_for_shell(sa)
+
+               ! Set shell "sa"
+               sh.a = .precomputed_basis_shellpair(as,1).a
+               sh.a.position = ra
+
+               ! Loop c-overlapping atoms b
+               do ob = 1,oa
+
+                  ! Skip overlap density?
+                  if (skip_overlap AND (oa>1 OR ob>1)) cycle
+
+                ! ob  = overlapping_atom(cb)
+                  fsb = .first_shell_for_atom(ob)
+                  lsb =  .last_shell_for_atom(ob)
+                  rb  = .atom(ob).position
+
+                  ! Loop shells on atom b
+                  do sb = fsb,min(lsb,sa)
+
+                     ! Shell b limits
+                     fb = .first_basis_fn_for_shell(sb)
+                     lb = .last_basis_fn_for_shell(sb)
+                     nb = lb - fb + 1
+                     bs = .basis_shell_for_shell(sb)
+
+                     ! Set shell "sa"
+                     sh.b = .precomputed_basis_shellpair(bs,1).a
+                     sh.b.position = rb
+
+                     ! Partitions & Structure factors
+                     FT.create(n_k,na,nb)
+                     part.create(sh.a.n_cc,sh.b.n_cc)
+                     sh.make_KM_partition(part)
+                     sh.make_FT_parted_c(FT,k_pts(:,1),k_pts(:,2),k_pts(:,3),part)
+
+                     ! Do trace
+                     if (sa/=sb) then
+                        do k = 1,n_k
+                           sf_n(k,u) = sf_n(k,u) + TWO*sum(FT(k,:,:)*D(fa:la,fb:lb))
+                        end
+                     else
+                        do k = 1,n_k
+                           sf_n(k,u) = sf_n(k,u) +     sum(FT(k,:,:)*D(fa:la,fb:lb))
+                        end
+                     end
+
+                     ! Clean
+                     part.destroy
+                     FT.destroy
+
+                  end
+               end
+            end
+         end
+
+         ! Add the dispersion correction
+         if (.crystal.correct_dispersion) then
+            dc = .atom(c).dispersion_correction(.crystal.wavelength)
+            sf_n(:,u) = sf_n(:,u) + dc
+         end
+
+      end ! -- loop over atom "c"
+
+      ! Clean up
+      k_pts.destroy
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_n)
+      end
+
+      if (.BASE:debugging("get_unique_KM_atom_SFs")) then
+         stdout.text("sf_n:")
+         stdout.put(sf_n)
+      end
 
    end
 
@@ -639,7 +801,9 @@ contains
          n_pt = pt.dim1
 
          ! Grid points
-         r1 => pt(:,1); r2 => pt(:,2); r3 => pt(:,3)
+         r1 => pt(:,1)
+         r2 => pt(:,2)
+         r3 => pt(:,3)
 
          ! Make the (unique) matrix elements
          sf_u => sf_n(:,u)
