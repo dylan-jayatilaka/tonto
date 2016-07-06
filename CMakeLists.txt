@@ -1,19 +1,25 @@
+# CMake
 cmake_minimum_required(VERSION 3.1.0)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
-enable_testing()
 
-# Set tonto version information and build date
+# Install where?
+set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
+
+# Tonto version info and build date
 set(VERSION_MAJOR 3)
 set(VERSION_MINOR 6)
 set(VERSION_MINOR_MINOR 1)
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
-set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
+
+# Tonto speicifics
 set(MPI 0 CACHE BOOLEAN "Build with MPI enabled")
 string(TIMESTAMP TONTO_BUILD_DATE "%Y-%m-%d %H:%M")
 set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets)
 
-# we need perl, git is desirable
+# Perl
 find_package(Perl REQUIRED)
+
+# Git
 find_package(Git)
 if(${GIT_FOUND})
     execute_process(COMMAND
@@ -25,6 +31,22 @@ else()
     set(TONTO_GIT_REVISION "Unknown git revision")
 endif()
 
+# Testing?
+enable_testing()
+
+# Numdiff
+find_program(NUMDIFF_EXECUTABLE
+    NAMES numdiff
+    HINTS ${NUMDIFF_DIR}
+    PATH_SUFFIXES bin
+    )
+if(NUMDIFF_EXECUTABLE MATCHES "-NOTFOUND")
+   MESSAGE(FATAL_ERROR
+   "Could not find numdiff; we need it for testing.\n"
+   )
+endif()
+
+# Tonto
 project(tonto
     LANGUAGES Fortran
     VERSION ${TONTO_VERSION})
@@ -32,6 +54,7 @@ project(tonto
 # If desirable we can use .F03/.f03 by appending to the below variable
 # message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
 
+# MPI
 if(MPI)
     message(STATUS "Building with MPI enabled")
     find_package(MPI)
@@ -49,16 +72,17 @@ endif()
 include(SetFortranFlags)
 message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
 
-#
+# Macros
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
 configure_file(
     ${PROJECT_SOURCE_DIR}/include/macros.in
     ${MACROS}
 )
 
+# Build directory
 include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
-# Deal with lapack dependency
+# LAPACK dependency
 if(WIN32)
     message(STATUS "Not going to look for lapack on WINDOWS, using packaged source")
     add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
@@ -72,9 +96,7 @@ else()
     endif()
 endif()
 
-
-
-# Set up source files
+# Foo source files
 set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
 set(FOO_TYPES_FILE ${FOO_DIR}/types.foo)
 set(FORTRAN_TYPES_FILE types.F90)
@@ -238,7 +260,7 @@ set(FOO_SRC
     ${FOO_DIR}/vec{vec_{vec_{real}}}.foo
 )
 
-# These are all the fortran source files used by run_molecule/run_har
+# Fortran source files used by run_molecule/run_har
 set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/archive.F90
     ${CMAKE_CURRENT_BINARY_DIR}/atom.F90
@@ -365,7 +387,8 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_vec_int.F90
 )
-# Set up runfiles
+
+# Set up run files
 set(RUNFILE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runfiles)
 set(RUN_SRC 
     ${RUNFILE_DIR}/run_molecule.foo
@@ -406,6 +429,7 @@ add_library(tonto
     ${MACROS}
 )
 
+# Executables
 add_executable(run_molecule ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
 add_executable(run_gaussian_data ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
 add_executable(run_har ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
@@ -424,6 +448,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 install(TARGETS run_molecule DESTINATION bin)
 install(TARGETS run_har DESTINATION bin)
 
+# Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
 set(CPACK_PACKAGE_NAME ${PROJECT_NAME})
 set(CPACK_PACKAGE_VERSION ${TONTO_VERSION})
