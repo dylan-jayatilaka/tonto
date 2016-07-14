@@ -287,7 +287,6 @@ contains
 
       ! Least squares options (zero/near zero eigenvalues)
       .tol_for_shift_on_esd     = DIFFRACTION_DATA_TOL_FOR_SHIFT_ON_ESD
-      .tol_0                    = DIFFRACTION_DATA_TOL_0
       .tol_near_0               = DIFFRACTION_DATA_TOL_NEAR_0
 
       ! Refinement/fit output control
@@ -734,7 +733,6 @@ contains
 
          case ("thermal_smearing_model=       "); .read_thermal_smearing_model
          case ("temperature=                  "); .read_temperature
-         case ("tolerance_0=                  "); .read_tol_0
          case ("tolerance_near_0=             "); .read_tol_near_0
          case ("tol_for_shift_on_esd=         "); .read_tol_for_shift_on_esd
 
@@ -1187,20 +1185,11 @@ contains
       stdin.read(.restart_HAR_with_promolecule)
    end
 
-   read_tol_0
-   ! Read the tolerance for deciding on zero eigenvalues in solving
-   ! the normal equations.
-      stdin.read(.tol_0)
-      ENSURE(.tol_0>ZERO,"tol_0 must be positive")
-      ENSURE(.tol_0<.tol_near_0,"tol_0 must be smaller than tol_near_0")
-   end
-
    read_tol_near_0
    ! Read the tolerance for deciding on *near* zero eigenvalues in
    ! solving the normal equations.
       stdin.read(.tol_near_0)
       ENSURE(.tol_near_0>ZERO,"tol_near_0 must be positive")
-      ENSURE(.tol_0<.tol_near_0,"tol_near_0 must be bigger than tol_0")
    end
 
    read_tol_for_shift_on_esd
@@ -3203,8 +3192,6 @@ contains
    ! of F^2 w.r.t. the parameters.
    ! * the ".covariance_matrix"
    ! * the ".correlation_matrix"
-   ! * ".n_0", the number of eigenvalues of the LSM equal to zero
-   !   (as determined by ".tol_0")
    ! * ".n_near_0", the no of eigenvalues of the LSM nearly equal
    !   to zero (as determined by ".tol_near_0").
    ! * ".eval_near_0" and ".evec_near_0", the eigenvalues and
@@ -3233,9 +3220,10 @@ contains
    ENSURE(dFdX.dim2==.dX.dim, "incompatible .dX and dFdX")
 
       A,dF :: MAT{REAL}*
-      rhs,sig,del :: VEC{REAL}*
+      rhs,sig,del, eval :: VEC{REAL}*
       n_refl,n_p,i,j :: INT
       fac :: REAL
+      table :: VEC{TABLE_COLUMN}*
 
       ! Constants
       n_refl = .reflections.n_refl
@@ -3261,14 +3249,14 @@ contains
       ! Make the normal matrix
       do i = 1,n_p
       do j = 1,n_p
-         A(i,j) = VEC{REAL}:sum_elements(sig*dF(:,i)*dF(:,j))
+         A(i,j) = sum(sig*dF(:,i)*dF(:,j))
       end
       end
       sig.destroy
 
       ! Make the rhs
       do i = 1,n_p
-         rhs(i) = VEC{REAL}:sum_elements(del*dF(:,i))
+         rhs(i) = sum(del*dF(:,i))
       end
 
       dF.destroy
@@ -3282,22 +3270,38 @@ contains
       end
 
       ! Solve for the shifts .dX (leaky)
-      A.solve_ill_linear_equations(rhs,.dX,.tol_0,.n_0,.tol_near_0,.n_near_0 &
-                                  ,.near_0_eigenvalues,.near_0_eigenvectors &
+      A.solve_ill_linear_equations(rhs,.dX,.tol_near_0,.n_near_0 &
+                                  ,.near_0_eigenvalues,.near_0_eigenvectors,eval &
                                   ,.covariance_matrix,.correlation_matrix)
 
       if (.debugging("solve_normal_equations")) then
       stdout.text("shifts:")
       stdout.put(.dX)
+      stdout.set_real_style("e")
       stdout.show("Normal equations check =",maxval(abs(matmul(A,.dX)-rhs)))
       stdout.show("Smallest eigenvalue    =",minval(abs(.near_0_eigenvalues)))
-      stdout.show("tol_0                  =",.tol_0)
-      stdout.show("n_0                    =",.n_0)
       stdout.show("tol_near_0             =",.tol_near_0)
       stdout.show("n_near_0               =",.n_near_0)
+      stdout.flush
+      stdout.set_real_style("f")
+      stdout.text("Distribution of values:")
+      table.put_log_table(eval,.tol_near_0)
+      if (.n_near_0>0) then
+      stdout.set_real_style("e")
+      stdout.flush
+      stdout.text("All eigenvalues:")
+      stdout.put(eval,by_column=TRUE)
+      stdout.flush
       stdout.text("Near_0 eigenvalues:")
       stdout.put(.near_0_eigenvalues,by_column=TRUE)
+      stdout.set_real_style("f")
+      stdout.flush
+      stdout.text("Near_0 eigenvectors:")
+      stdout.put(.near_0_eigenvectors)
       end
+      end
+      
+      eval.destroy
 
       ! Get the maximum shift
       .max_shift = maxval(abs(.dX))
@@ -3310,6 +3314,12 @@ contains
 
       ! Set the full covariance matrix
       .covariance_matrix = .chi2*.covariance_matrix
+
+      if (.debugging("solve_normal_equations:cov")) then
+         stdout.show("chi2  = ",.chi2)
+         stdout.text("covariance matrix:")
+         stdout.put(.covariance_matrix)
+      end
 
       ! Set the fit errors e.g. max(.dX/esd)
       ! Parameter ordering is unique fragment atom order.
@@ -3324,10 +3334,10 @@ contains
       end
 
       ! Renormalise shift if too big
-      if (.max_shift>.max_allowed_param_shift) then
-         fac = .max_allowed_param_shift/.max_shift
-         .dX = fac * .dX
-      end
+    ! if (.max_shift>.max_allowed_param_shift) then
+    !    fac = .max_allowed_param_shift/.max_shift
+    !    .dX = fac * .dX
+    ! end
 
       if (.debugging("solve_normal_equations")) then
       stdout.text("shifts after renormalisation:")
@@ -3353,7 +3363,7 @@ contains
    ENSURE(dIdX.dim2==.dX.dim, "incompatible .dX and dIdX")
 
       A,dI :: MAT{REAL}*
-      rhs,sig,del :: VEC{REAL}*
+      rhs,sig,del, eval :: VEC{REAL}*
       n_refl,n_p,i,j :: INT
       fac :: REAL
 
@@ -3402,8 +3412,9 @@ contains
       end
 
       ! Solve for the shifts .dX (leaky)
-      A.solve_ill_linear_equations(rhs,.dX,.tol_0,.n_0,.tol_near_0,.n_near_0 &
-                                  ,.near_0_eigenvalues,.near_0_eigenvectors &
+      eval.create(n_p)
+      A.solve_ill_linear_equations(rhs,.dX,.tol_near_0,.n_near_0 &
+                                  ,.near_0_eigenvalues,.near_0_eigenvectors,eval &
                                   ,.covariance_matrix,.correlation_matrix)
 
       if (.debugging("solve_normal_equations")) then
@@ -3411,13 +3422,15 @@ contains
       stdout.put(.dX)
       stdout.show("Normal equations check =",maxval(abs(matmul(A,.dX)-rhs)))
       stdout.show("Smallest eigenvalue    =",minval(abs(.near_0_eigenvalues)))
-      stdout.show("tol_0                  =",.tol_0)
-      stdout.show("n_0                    =",.n_0)
       stdout.show("tol_near_0             =",.tol_near_0)
       stdout.show("n_near_0               =",.n_near_0)
+      if (.n_near_0>0) then
       stdout.text("Near_0 eigenvalues:")
       stdout.put(.near_0_eigenvalues,by_column=TRUE)
       end
+      end
+
+      eval.destroy
 
       ! Get the maximum shift
       .max_shift = maxval(abs(.dX))
@@ -3444,10 +3457,10 @@ contains
       end
 
       ! Renormalise shift if too big
-      if (.max_shift>.max_allowed_param_shift) then
-         fac = .max_allowed_param_shift/.max_shift
-         .dX = fac * .dX
-      end
+    ! if (.max_shift>.max_allowed_param_shift) then
+    !    fac = .max_allowed_param_shift/.max_shift
+    !    .dX = fac * .dX
+    ! end
 
       if (.debugging("solve_normal_equations")) then
       stdout.text("shifts after renormalisation:")
@@ -4048,7 +4061,6 @@ contains
 
       stdout.flush
       stdout.show("Conv. tol. for shift on esd =",.tol_for_shift_on_esd)
-      stdout.show("Zero eigenvalue tolerance   =",.tol_0)
       stdout.show("Nearly zero tolerance       =",.tol_near_0)
 
    end
@@ -4194,9 +4206,6 @@ contains
          stdout.show("No. of redundant parameters   =",n_p)
          stdout.show("No. of unique parameters      =",.n_param)
          stdout.flush
-         stdout.show("Exact-zero tolerance          =",.tol_0)
-         stdout.show("No. of exact-zero eigenvalues =",.n_0)
-         stdout.flush
          stdout.show("Near-zero tolerance           =",.tol_near_0)
          stdout.show("No. of near-zero eigenvalues  =",.n_near_0)
 
@@ -4284,7 +4293,6 @@ contains
       stdout.show("max_iterations                =",.max_iterations)
       stdout.show("max_allowed_param_shift       =",.max_allowed_param_shift)
       stdout.show("tol_for_shift_on_esd          =",.tol_for_shift_on_esd)
-      stdout.show("tol_0                         =",.tol_0)
       stdout.show("tol_near_0                    =",.tol_near_0)
       stdout.flush
       stdout.show("show_fit_output?              =",.show_fit_output)

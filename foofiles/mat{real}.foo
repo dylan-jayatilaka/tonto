@@ -2269,70 +2269,57 @@ contains
       end
    end
 
-   solve_ill_linear_equations(rhs,solution,tol_0,n_0,tol_near_0,n_near_0,eval_near_0,evec_near_0,inverse,CM) ::: leaky
+   solve_ill_linear_equations(rhs,solution,tol_near_0,n_near_0,eval_near_0,evec_near_0,eval,inverse,CM) ::: leaky
    ! Solve a set of ill-conditioned linear equations. Eigenvalues of
    ! "self" less than "tol_near_0" are ignored.
       rhs :: VEC{REAL}, IN
       solution :: VEC{REAL}, OUT
-      tol_0,tol_near_0 :: REAL, IN, optional
-      n_0,n_near_0 :: INT, OUT, optional
-      eval_near_0 :: VEC{REAL}*, optional
-      evec_near_0 :: MAT{REAL}*, optional
+      tol_near_0 :: REAL, IN
+      n_near_0 :: INT, OUT
+      eval_near_0 :: VEC{REAL}*
+      evec_near_0 :: MAT{REAL}*
+      eval :: VEC{REAL}*
       inverse,CM :: MAT{REAL}, OUT, optional
 
    ENSURE(.is_square,"not square")
-   ENSURE(present(tol_0)       EQV present(n_0),        "tol/n_0 not both present")
-   ENSURE(present(tol_near_0)  EQV present(n_near_0),   "tol/n_near_0 not both present")
-   ENSURE(present(eval_near_0) EQV present(evec_near_0),"eval/evec_near_0 not both there")
 
+      ival :: VEC{REAL}*
       inv,evec :: MAT{REAL}*
-      eval :: VEC{REAL}*
-      d,i,j,k :: INT
-      temp :: REAL
+    ! eval :: VEC{REAL}*
+      d,i,j :: INT
 
       ! Temporaries
       d = .dim1
       eval.create(d)
+      ival.create(d)
       evec.create(d,d)
       inv.create(d,d)
 
       ! Solve the eigenvalue problem
       .solve_symmetric_eigenproblem(eval,evec)
 
-      ! Count eigenvalues which are zero
-      if (present(n_0) AND present(tol_0)) &
-         n_0 = count(eval<=ZERO OR abs(eval)<=tol_0)
-
       ! Count eigenvalues which are nearly zero (leaky)
-      if (present(n_near_0) AND present(tol_near_0)) then
+      n_near_0 = count(eval<=ZERO OR abs(eval)<=tol_near_0)
 
-         n_near_0 = count(abs(eval)<=tol_near_0 AND NOT (eval<=0 OR abs(eval)<=tol_0))
+      eval_near_0.destroy
+      eval_near_0.create(n_near_0)
+      evec_near_0.destroy
+      evec_near_0.create(d,n_near_0)
 
-         eval_near_0.destroy
-         eval_near_0.create(n_near_0)
-         evec_near_0.destroy
-         evec_near_0.create(d,n_near_0)
+      j = 0
 
-         j = 0
+      do i = 1,d
 
-         do i = 1,d
+         if (eval(i)<=ZERO OR abs(eval(i))<=tol_near_0) then
 
-            if (eval(i)<=ZERO OR abs(eval(i))<=tol_0) then
+            j = j + 1
+            eval_near_0(j)   = eval(i)
+            evec_near_0(:,j) = evec(:,i)
+            ival(i)          = ZERO
 
-               eval(i) = ZERO
+         else
 
-            else if (abs(eval(i))<=tol_near_0) then
-
-               j = j + 1
-               eval_near_0(j)   = eval(i)
-               evec_near_0(:,j) = evec(:,i)
-               eval(i) = ZERO
-
-            else
-
-               eval(i) = ONE/eval(i)
-
-            end
+            ival(i) = ONE/eval(i)
 
          end
 
@@ -2343,16 +2330,12 @@ contains
 
       do i = 1,d
       do j = 1,d
-         temp = ZERO
-         do k = 1,d
-            temp = temp + evec(k,i)*eval(k)*evec(k,j)
-         end
-         inv(i,j) = temp
+         inv(i,j) = sum(evec(:,i)*ival(:)*evec(:,j))
       end
       end
 
       evec.destroy
-      eval.destroy
+    ! eval.destroy
 
       ! Get the solution
       solution.to_product_of(inv,rhs)
@@ -2365,22 +2348,16 @@ contains
       ! Get correlation matrix
       if (present(CM)) then
 
-         if (present(tol_near_0)) then
-            do i = 1,d
-            do j = 1,d
-               if (inv(i,i).equals(ZERO,TOL(9)) OR inv(j,j).equals(ZERO,TOL(9))) then
-                  CM(i,j) = ZERO
-               else
-                  CM(i,j) = inv(i,j)/sqrt(inv(i,i)*inv(j,j))
-               end
-            end
-            end
-         else
-            do i = 1,d
-            do j = 1,d
+         do i = 1,d
+         do j = 1,d
+            if      (inv(i,i).equals(ZERO,tol_near_0)) then
+               CM(i,j) = ZERO
+            else if (inv(j,j).equals(ZERO,tol_near_0)) then
+               CM(i,j) = ZERO
+            else
                CM(i,j) = inv(i,j)/sqrt(inv(i,i)*inv(j,j))
             end
-            end
+         end
          end
 
       end
