@@ -394,6 +394,10 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_molecule.foo
     ${RUNFILE_DIR}/run_gaussian_data.foo
     ${RUNFILE_DIR}/run_har.foo
+    ${RUNFILE_DIR}/run_buffer.foo
+    ${RUNFILE_DIR}/run_real.foo
+    ${RUNFILE_DIR}/run_vec{str}.foo
+    ${RUNFILE_DIR}/run_mat{real}.foo
     ${RUNFILE_DIR}/run_test.foo
 )
 
@@ -429,24 +433,34 @@ add_library(tonto
     ${MACROS}
 )
 
-# Executables
-add_executable(run_molecule ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
+# Standard executables
+add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
 add_executable(run_gaussian_data ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
-add_executable(run_har ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
-add_executable(run_test ${CMAKE_CURRENT_BINARY_DIR}/run_test.F90)
+add_executable(run_har           ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
+add_executable(run_buffer        ${CMAKE_CURRENT_BINARY_DIR}/run_buffer.F90)
+add_executable(run_real          ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
+add_executable(run_vec_str       ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
+add_executable(run_mat_real      ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
+add_executable(run_test          ${CMAKE_CURRENT_BINARY_DIR}/run_test.F90)
 
-# Link against dependencies
-target_link_libraries(run_molecule tonto ${LAPACK_LIBRARIES})
+# Link exectables
+target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_har tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_test tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_test          tonto ${LAPACK_LIBRARIES})
+
+# Make non-standard-named executables
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
-set_target_properties(run_har PROPERTIES OUTPUT_NAME hart)
+set_target_properties(run_har      PROPERTIES OUTPUT_NAME hart)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 install(TARGETS run_molecule DESTINATION bin)
-install(TARGETS run_har DESTINATION bin)
+install(TARGETS run_har      DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)

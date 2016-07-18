@@ -215,6 +215,34 @@ module ATOM
        0.0000d0, 10.0000d0, &
                   0.0000d0, 10.6300d0,  9.1000d0,  8.4170d0, 10.5500d0, 14.1000d0,  8.3000d0/
 
+   ! H SDS scattering factor a_i & b_i expansion coefficients
+   ! taken from shelxl (2014) via SFAC.OUT ... nearly the same
+   ! as IT B Table 6.1.1.4 first line; Note a_0 is actually c.
+   !
+   !    f(sin theta/lambda) \sum_0^4 a_i exp(-b_i (sin theta/lambda)^2)
+   !
+   ! NOTE: sin theta/lambda in in Anstrom^-1
+
+   H_SDS_form_factor_coeff :: MAT{REAL}(2,0:4)
+
+   data H_SDS_form_factor_coeff/ &
+      0.003038d0,  0.00000d0, &
+      0.493002d0, 10.51091d0, &
+      0.322912d0, 26.12573d0, &
+      0.140191d0,  3.14236d0, &
+      0.040810d0, 57.79977d0  /
+
+   ! Neutral H atom form factor
+
+   H_HF0_form_factor_coeff :: MAT{REAL}(2,0:4)
+
+   data H_HF0_form_factor_coeff/ &
+      0.001305d0,  0.00000d0, &
+      0.489918d0, 20.65930d0, &
+      0.262003d0,  7.74039d0, &
+      0.196767d0, 49.55190d0, &
+      0.049879d0,  2.20159d0  /
+
    ! X-ray dispersion correction factors.
    ! First element is f', second is f". Cr wavelength = 2.289620 A.
 
@@ -1223,7 +1251,8 @@ contains
       .site_disorder_group = 0
 
       ! ADP
-      .U_iso = ZERO
+      .U_iso            = ZERO
+      .U_iso_error      = ZERO
       .set_ADP_tensor(ZERO)
       .pos_axis_system  = "cartesian"
       .ADP_axis_system  = "cartesian"
@@ -1256,6 +1285,11 @@ contains
       .use_interpolator       = TRUE
       .ANO_interpolators_made = FALSE
       .interpolators_made     = FALSE
+
+      ! H atom SF's
+      .use_IAM_density        = FALSE
+      .use_H_SDS_density      = TRUE 
+      .use_H_HF0_density      = FALSE
 
       .shell_info_made = FALSE
 
@@ -1497,6 +1531,16 @@ contains
 
    end
 
+   set_U_iso_error(val) ::: pure
+   ! Set U_iso error
+   ! NOTE: Do you need to set the .ADP_axis_system too?
+      self :: INOUT
+      val :: REAL, IN
+
+      .U_iso_error = val
+
+   end
+
    set_ADP_tensor(val) ::: PURE
    ! Set the ADP tensor.  Also set the pADP_vector
    ! NOTE: pADP_vector is created when position is set.
@@ -1509,6 +1553,11 @@ contains
       .ADP_tensor = val
 
       .pADP_vector(4:9) = val
+      
+      ! Set U_iso
+      if (.ADP_axis_system=="cartesian") then
+         .set_U_iso(THIRD*val)
+      end
 
    end
 
@@ -1521,6 +1570,8 @@ contains
 
    ENSURE(.pADP_vector.created,"pADP_vector destroyed")
 
+      tmp :: REAL
+
       ! Set tensor
       .ADP_tensor = val
 
@@ -1531,6 +1582,12 @@ contains
       .pADP_vector(7) = val(1,2)
       .pADP_vector(8) = val(1,3)
       .pADP_vector(9) = val(2,3)
+      
+      ! Set U_iso
+      if (.ADP_axis_system=="cartesian") then
+         tmp = THIRD*sum(.pADP_vector(4:6))
+         .set_U_iso(tmp)
+      end
 
    end
 
@@ -1795,6 +1852,8 @@ contains
    ENSURE(.pADP_vector.created,"no PADP_vector")
    ENSURE(.pADP_vector.dim==X.dim,"wrong size, X")
 
+      val :: REAL
+
       ! Set positions
       .position(1) = X(1)
       .position(2) = X(2)
@@ -1813,6 +1872,12 @@ contains
 
       ! Set. Must be correct size
       .pADP_vector = X
+      
+      ! Set U_iso
+      if (.ADP_axis_system=="cartesian") then
+         val = THIRD*sum(X(4:6))
+         .set_U_iso(val)
+      end
 
    end
 
@@ -1825,7 +1890,15 @@ contains
    ENSURE(.pADP_vector.dim>=9,"pADP_vector: wrong size")
    ENSURE(U.dim==6,"wrong size, U")
 
+      val :: REAL
+
       .pADP_vector( 4: 9) = U( 1: 6)
+      
+      ! Set U_iso
+      if (.ADP_axis_system=="cartesian") then
+         val = THIRD*sum(.pADP_vector(4:6))
+         .set_U_iso(val)
+      end
 
    end
 
@@ -1901,20 +1974,18 @@ contains
 
 ! Set errors
 
-   zero_pADP_error ::: leaky, PURE
+   zero_pADP_error ::: PURE
    ! Set position error. Also set the pADP_error.
    ! NOTE: Do you need to set the axis system too?
       self :: INOUT
 
-   ENSURE(.pADP_vector.created,"pADP_vector destroyed")
+   ENSURE(.pADP_errors.created,"pADP_errors destroyed")
 
-      .position_error = ZERO
+      dX :: VEC{REAL}(9)
 
-      if (.pADP_errors.destroyed) then
-         .pADP_errors.create(9)
-      end
+      dX = ZERO
 
-      .pADP_errors(1:9) = ZERO
+      .set_pADP_errors_to(dX)
 
    end
 
@@ -1928,8 +1999,16 @@ contains
    ENSURE(.pADP_errors.created,"no pADP_errors")
    ENSURE(.pADP_errors.dim==dX.dim,"wrong size, dX")
 
+      val :: REAL
+
       .position_error = dX(1:3)
       .pADP_errors    = dX
+      
+      ! Set U_iso error
+      if (.ADP_axis_system=="cartesian") then
+         val = THIRD*sum(.pADP_errors(4:6))
+         .set_U_iso_error(val)
+      end
 
    end
 
@@ -1942,7 +2021,15 @@ contains
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
    ENSURE(dU.dim==6,"wrong size, dU")
 
+      val :: REAL
+
       .pADP_errors( 4: 9) = dU( 1: 6)
+      
+      ! Set U_iso error
+      if (.ADP_axis_system=="cartesian") then
+         val = THIRD*sum(.pADP_errors(4:6))
+         .set_U_iso_error(val)
+      end
 
    end
 
@@ -1954,12 +2041,20 @@ contains
    ENSURE(.pADP_errors.created,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
 
+      val :: REAL
+
       .pADP_errors(4) = dU(1,1)
       .pADP_errors(5) = dU(2,2)
       .pADP_errors(6) = dU(3,3)
       .pADP_errors(7) = dU(1,2)
       .pADP_errors(8) = dU(1,3)
       .pADP_errors(9) = dU(2,3)
+      
+      ! Set U_iso error
+      if (.ADP_axis_system=="cartesian") then
+         val = THIRD*sum(.pADP_errors(4:6))
+         .set_U_iso_error(val)
+      end
 
    end
 
@@ -2555,6 +2650,8 @@ contains
    ! Set the ADP to be isotropic.
       self :: INOUT
 
+   ENSURE(.ADP_axis_system=="cartesian","not cartesian axis system")
+
       val :: REAL
       ADP :: MAT{REAL}(3,3)
 
@@ -2724,6 +2821,18 @@ contains
    end
 
    set_interpolators_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.interpolators_made)
+   ! Generic set
+   end
+
+!  ===============
+!  Set H atom SF's
+!  ===============
+
+   set_use_H_SDS_density(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_H_SDS_density)
+   ! Generic set
+   end
+
+   set_use_H_HF0_density(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_H_HF0_density)
    ! Generic set
    end
 
@@ -4271,6 +4380,52 @@ contains
 
             DIE("cannot assign for period "// trim(p.to_str))
 
+      end
+
+   end
+
+   H_SDS_form_factor(k) result (res) ::: selfless, elemental
+   ! The H atom SDS form factor where "k" is the scattering vector
+   ! in reciprocal Bohr.
+      k :: REAL, IN
+      res :: REAL
+
+      stl,a,b :: REAL
+      i :: INT
+
+      ! Convert k to s.t.l.
+      ! See Dunitz p.27-28
+      stl = HALF*k*BOHR_PER_ANGSTROM/(2*PI)
+
+      ! Do it baby
+      res = ZERO
+      do i = 0,4
+         a = H_SDS_form_factor_coeff(1,i)
+         b = H_SDS_form_factor_coeff(2,i)
+         res = res + a*exp(-b*stl*stl)
+      end
+
+   end
+
+   H_HF0_form_factor(k) result (res) ::: selfless, elemental
+   ! The H atom SDS form factor where "k" is the scattering vector
+   ! in reciprocal Bohr.
+      k :: REAL, IN
+      res :: REAL
+
+      stl,a,b :: REAL
+      i :: INT
+
+      ! Convert k to s.t.l.
+      ! See Dunitz p.27-28
+      stl = HALF*k*BOHR_PER_ANGSTROM/(2*PI)
+
+      ! Do it baby
+      res = ZERO
+      do i = 0,4
+         a = H_HF0_form_factor_coeff(1,i)
+         b = H_HF0_form_factor_coeff(2,i)
+         res = res + a*exp(-b*stl*stl)
       end
 
    end
@@ -7735,65 +7890,85 @@ contains
 
    ENSURE(.density_matrix.created, "no .density_matrix")
    ENSURE(.density_matrix.restricted.created, "only works for restricted .density_matrix")
+   ENSURE(.precomputed_basis_shellpair.created, "no precomputed_basis_shellpair info")
 
       n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
+      k_z :: VEC{REAL}*
       FT :: MAT3{CPX}*
       D :: MAT{REAL}@
       sh :: SHELL2
-
-    ! .make_precomputed_shellpairs
+      II :: CPX
 
       n_shell_pairs = .basis.no_of_shells
       n_shell_pairs = n_shell_pairs.triangle_number
 
       k_max = k_pts.dim1
+         II = IMAGIFY(ONE)
 
-      res = ZERO
+      if (.atomic_number==1 AND .use_H_SDS_density) then
 
-      do q = 1,n_shell_pairs
+         ! H atom uses Stewart-Davidson-Simpson (SDS) AIM
+         k_z.create(k_max)
+         k_pts.get_row_norms(k_z)
+         res = ATOM::H_SDS_form_factor(k_z) &
+             * exp(II*(.position(1)*k_pts(:,1) &
+                      +.position(2)*k_pts(:,2) &
+                      +.position(3)*k_pts(:,3)))
+         k_z.destroy
 
-         ! Get shell
-         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+      else if (.atomic_number==1 AND .use_H_HF0_density) then
 
-       ! stdout.text("=================")
-       ! stdout.show("q     = ",q)
-       ! stdout.show("fa,la = ",[fa,la])
-       ! stdout.show("fb,lb = ",[fb,lb])
-       ! stdout.show("na,nb = ",[sh.a.n_comp,sh.b.n_comp])
+         ! H atom uses fitted zero-charged HF (HF0) atoms
+         k_z.create(k_max)
+         k_pts.get_row_norms(k_z)
+         res = ATOM::H_HF0_form_factor(k_z) &
+             * exp(II*(.position(1)*k_pts(:,1) &
+                      +.position(2)*k_pts(:,2) &
+                      +.position(3)*k_pts(:,3)))
+         k_z.destroy
 
-         ! Make the FT 
-         FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
-         sh.make_ft_c(FT,k_pts)
+      else
 
-         ! Trace with density matrix
-         ! Count off-diagonals twice
-         D = .density_matrix.restricted(fa:la,fb:lb)
-         if (fa/=fb) then 
-            do k = 1,k_max
-               res(k) = res(k) + sum(FT(k,:,:)*D) * TWO
+         ! Non-H structure factors
+         res = ZERO
+   
+         do q = 1,n_shell_pairs
+   
+            ! Get shell
+            .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+   
+            ! Make the FT 
+            FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
+            sh.make_ft_c(FT,k_pts)
+   
+            ! Trace with density matrix
+            ! Count off-diagonals twice
+            D = .density_matrix.restricted(fa:la,fb:lb)
+            if (fa/=fb) then 
+               do k = 1,k_max
+                  res(k) = res(k) + sum(FT(k,:,:)*D) * TWO
+               end
+            else
+               do k = 1,k_max
+                  res(k) = res(k) + sum(FT(k,:,:)*D)
+               end
             end
-         else
-            do k = 1,k_max
-               res(k) = res(k) + sum(FT(k,:,:)*D)
-            end
+   
+            ! Clean
+            FT.destroy
+            sh.destroy_ptr_part
+   
          end
-
-         ! Clean
-         FT.destroy
-         sh.destroy_ptr_part
-
+   
       end
-
-      ! Clean
-    ! .precomputed_basis_shellpair.destroy
 
    end
 
    make_FT_along_z(res,k_z)
    ! Fourier transform of the density described by ".density_matrix"
    ! evaluated at a reciprocal space points [0,0,k_z(i), i = 1,dim].
-   ! NOTE: evaluated at the origin!
-      self :: PTR
+   ! NOTE: evaluated at the ORIGIN!
+      self :: IN
       res :: VEC{CPX}, OUT
       k_z :: VEC{REAL}, IN
 
@@ -7808,52 +7983,67 @@ contains
       D :: MAT{REAL}@
       sh :: SHELL2
 
-      n_shell_pairs = .basis.no_of_shells
-      n_shell_pairs = n_shell_pairs.triangle_number
-
-      ! Other compinents
       k_max = k_z.dim1
-      k_x.create(k_max); k_x = 0
-      k_y.create(k_max); k_y = 0
 
-      res = ZERO
+      if (.atomic_number==1 AND .use_H_SDS_density) then
 
-      do q = 1,n_shell_pairs
+         ! H atom uses Stewart-Davidson-Simpson (SDS) AIM
+         res = COMPLEXIFY(ATOM::H_SDS_form_factor(k_z),ZERO)
 
-         ! Get shell pair *at origin*
-         .get_precomputed_shell_pair0(sh,q,fa,la,fb,lb)
+      else if (.atomic_number==1 AND .use_H_HF0_density) then
 
-         ! Make the FT 
-         FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
-         sh.make_ft_c(FT,k_x,k_y,k_z)
+         ! H atom uses neutral atom form factors (HF0)
+         res = COMPLEXIFY(ATOM::H_HF0_form_factor(k_z),ZERO)
 
-       ! partition.create(sh.a.n_comp,sh.b.n_comp)
-       ! partition = ONE
-       ! sh.make_FT_parted_c(FT,k_x,k_y,k_z,partition)
+      else
 
-         ! Trace with density matrix
-         ! Count off-diagonals twice
-         D = .density_matrix.restricted(fa:la,fb:lb)
-         if (fa/=fb) then 
-            do k = 1,k_max
-               res(k) = res(k) + sum(FT(k,:,:)*D) * TWO
+         n_shell_pairs = .basis.no_of_shells
+         n_shell_pairs = n_shell_pairs.triangle_number
+        
+         ! Other components
+         k_x.create(k_max); k_x = 0
+         k_y.create(k_max); k_y = 0
+        
+         res = ZERO
+        
+         do q = 1,n_shell_pairs
+        
+            ! Get shell pair *AT ORIGIN*
+            .get_precomputed_shell_pair0(sh,q,fa,la,fb,lb)
+        
+            ! Make the FT 
+            FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
+            sh.make_ft_c(FT,k_x,k_y,k_z)
+        
+          ! partition.create(sh.a.n_comp,sh.b.n_comp)
+          ! partition = ONE
+          ! sh.make_FT_parted_c(FT,k_x,k_y,k_z,partition)
+        
+            ! Trace with density matrix
+            ! Count off-diagonals twice
+            D = .density_matrix.restricted(fa:la,fb:lb)
+            if (fa/=fb) then 
+               do k = 1,k_max
+                  res(k) = res(k) + sum(FT(k,:,:)*D) * TWO
+               end
+            else
+               do k = 1,k_max
+                  res(k) = res(k) + sum(FT(k,:,:)*D)
+               end
             end
-         else
-            do k = 1,k_max
-               res(k) = res(k) + sum(FT(k,:,:)*D)
-            end
+        
+            ! Clean
+          ! partition.destroy
+            FT.destroy
+            sh.destroy_ptr_part
+        
          end
-
+        
          ! Clean
-       ! partition.destroy
-         FT.destroy
-         sh.destroy_ptr_part
+         k_y.destroy
+         k_x.destroy
 
       end
-
-      ! Clean
-      k_y.destroy
-      k_x.destroy
 
    end
 
@@ -7900,13 +8090,101 @@ contains
       length,spacing :: REAL, IN
 
       interpolator :: INTERPOLATOR*
+      points :: VEC{REAL}*
      
+      ! Used below to make interpolator
+      .set_saved_self 
+
       ! Set the interpolation table
-      .set_saved_self ! Used below
       interpolator.create
       interpolator.set_data(length,spacing,ATOM::FT_along_z_r)
 
-      ! Clean
+      ! Set H SDS points from the IT C table
+    ! points.create(23)
+    ! points = [ &
+    !    0.0000, &
+    !    0.0215, &
+    !    0.0429, &
+    !    0.0644, &
+    !    0.0859, &
+    !    0.1073, &
+    !    0.1288, &
+    !    0.1503, &
+    !    0.1718, &
+    !    0.1932, &
+    !    0.2147, &
+    !    0.2576, &
+    !    0.3006, &
+    !    0.3435, &
+    !    0.3864, &
+    !    0.4294, &
+    !    0.4723, &
+    !    0.5153, &
+    !    0.5582, &
+    !    0.6011, &
+    !    0.6441, &
+    !    0.6870, &
+    !    0.7300  ]
+    ! points = FOUR*PI * ANGSTROM_PER_BOHR * points ! in Bohr^-1
+    ! interpolator.create
+    ! interpolator.set_data_points(points)
+    ! interpolator.set_data(length,spacing,ATOM::FT_along_z_r)
+
+      ! Neutral H atom form factors points
+    ! points.create(46)
+    ! points = [ &
+    !    0.00,   &
+    !    0.01,   &
+    !    0.02,   &
+    !    0.03,   &
+    !    0.04,   &
+    !    0.05,   &
+    !    0.06,   &
+    !    0.07,   &
+    !    0.08,   &
+    !    0.09,   &
+    !    0.10,   &
+    !    0.11,   &
+    !    0.12,   &
+    !    0.13,   &
+    !    0.14,   &
+    !    0.15,   &
+    !    0.16,   &
+    !    0.17,   &
+    !    0.18,   &
+    !    0.19,   &
+    !    0.20,   &
+    !    0.22,   &
+    !    0.24,   &
+    !    0.25,   &
+    !    0.26,   &
+    !    0.28,   &
+    !    0.30,   &
+    !    0.32,   &
+    !    0.34,   &
+    !    0.35,   &
+    !    0.36,   &
+    !    0.38,   &
+    !    0.40,   &
+    !    0.42,   &
+    !    0.44,   &
+    !    0.45,   &
+    !    0.46,   &
+    !    0.48,   &
+    !    0.50,   &
+    !    0.55,   &
+    !    0.60,   &
+    !    0.65,   &
+    !    0.70,   &
+    !    0.80,   &
+    !    0.90,   &
+    !    1.00    ]
+    ! points = FOUR*PI * ANGSTROM_PER_BOHR * points ! in Bohr^-1
+    ! interpolator.create
+    ! interpolator.set_data_points(points)
+    ! interpolator.set_data(length,spacing,ATOM::FT_along_z_r)
+
+      ! Put
       interpolator.put(fac=BOHR_PER_ANGSTROM/(FOUR*PI))
 
       ! Clean
