@@ -1244,6 +1244,71 @@ contains
 
    end
 
+! Put pADP errors
+
+   put_pos_errors_to(dX,esd,fac) ::: PURE
+   ! Put the position errors into matrix "dX" from the supplied
+   ! "esd" vector made from a external refinement.
+      self :: IN
+      dX :: MAT{REAL}, OUT
+      esd :: VEC{REAL}, IN
+      fac :: REAL, optional, IN
+
+   ENSURE(dX.dim1==.dim,"wrong size, dX")
+   ENSURE(dX.dim2==3   ,"wrong size, dX")
+   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+
+      a,k :: INT
+
+      k = 0
+
+      do a = 1,.dim
+
+         dX(a,1) = esd(k+1)
+         dX(a,2) = esd(k+2)
+         dX(a,3) = esd(k+3)
+
+         k = k + self(a).no_of_pADPs
+
+      end
+
+      if (present(fac)) dX = fac*dX
+
+   end
+
+   put_ADP2_errors_to(dU,esd,fac) ::: PURE
+   ! Put the U_iso errors into matrix "dU" from the supplied
+   ! "esd" vector made from a external refinement.
+      self :: IN
+      dU :: MAT{REAL}, OUT
+      esd :: VEC{REAL}, IN
+      fac :: REAL, optional, IN
+
+   ENSURE(dU.dim1==.dim,"wrong dim1, dU")
+   ENSURE(dU.dim2==6   ,"wrong dim2, dU")
+   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+
+      a,k :: INT
+
+      k = 0
+
+      do a = 1,.dim
+
+         dU(a,1) = esd(k+4) 
+         dU(a,2) = esd(k+5) 
+         dU(a,3) = esd(k+6) 
+         dU(a,4) = esd(k+7) 
+         dU(a,5) = esd(k+8) 
+         dU(a,6) = esd(k+9) 
+
+         k = k + self(a).no_of_pADPs
+
+      end
+
+      if (present(fac)) dU = fac*fac*dU
+
+   end
+
 !  ===============
 !  Coordinate info
 !  ===============
@@ -1685,6 +1750,7 @@ contains
       IDs.destroy
 
       fail = NOT fc
+      if (fail) return
 
       ! Assign the positions and pADPs
       .set_pos_axis_system_to("crystal")
@@ -1775,13 +1841,14 @@ contains
       cif.read_looped_items(IDs,err,found=fe)
       IDs.destroy
 
-      ! Set the positions
-      err.convert_from("angstrom")
-      .set_position_errors_to(err)
-      pos.destroy
+      if (fe) then
 
-      fail = NOT fe
-      if (fail) return
+         ! Set the positions
+         err.convert_from("angstrom")
+         .set_position_errors_to(err)
+         pos.destroy
+
+      end
 
       ! Read occupancies and disorder group
       IDs.create(2)
@@ -1790,13 +1857,14 @@ contains
       cif.read_looped_items(IDs,err,transpose=TRUE,found=fo)
       IDs.destroy
 
-      fail = NOT fo
-      if (fail) return
+      if (fo) then
 
-      ! Set the occupancies
-      .set_site_occupancies(err(:,1))
-      .set_site_disorder_groups(nint(err(:,2)))
-      err.destroy
+         ! Set the occupancies
+         .set_site_occupancies(err(:,1))
+         .set_site_disorder_groups(nint(err(:,2)))
+         err.destroy
+
+      end
 
       ! Clean
       IDs.destroy
@@ -3547,6 +3615,30 @@ contains
 
       do a = 1,.dim
          res(a) = self(a).ADP_principal_axis_ratio
+      end
+
+   end
+
+   ADP_type(refine_H_U_iso) result (res) ::: PURE
+   ! Return whether the atom is refined "Uani" or "Uiso"
+      self :: IN
+      refine_H_U_iso :: BIN, IN
+      res :: VEC{STR}(.dim)
+
+      a :: INT
+
+      if (NOT refine_H_U_iso OR all(self(:).atomic_number>1)) then
+
+         res = "Uani"
+
+      else
+
+         do a = 1,.dim
+            if (self(a).atomic_number>1) then; res(a) = "Uani"
+            else;                              res(a) = "Uiso"
+            end
+         end
+
       end
 
    end
@@ -10549,7 +10641,7 @@ contains
 
       table(11).set_heading("Angle(A--B--C)")
       table(11).set_subheading("/degree")
-      table(11).set_width_from(ONE)
+      table(11).set_width_from(-180d0)
 
       ! Put out the headings
       table.put_headings(label_rows=FALSE,no_flush=TRUE)
@@ -11178,7 +11270,7 @@ contains
 
       table(15).set_heading("Angle(A--B--C--D)")
       table(15).set_subheading("/degree")
-      table(15).set_width_from(ONE)
+      table(15).set_width_from(-180d0)
 
       ! Put out the headings
       table.put_headings(label_rows=FALSE,no_flush=TRUE)
@@ -12147,25 +12239,32 @@ contains
 !  Put cif routines
 !  ================
 
-   put_CIF_coords
+   put_CIF_coords(refine_H_U_iso) ::: private
    ! Output the atoms and ADP's in CIF format to "stdout" in an
    ! axis system. This version does not produce errors.
       self :: IN
+      refine_H_U_iso :: BIN, IN
 
-      i :: INT
-      pos :: VEC{REAL}(3)
-      fac :: REAL
+   ENSURE(self(1).pos_axis_system=="cartesian","not cartesian axis system!")
+
+      ID,ADP_type :: VEC{STR}*
+      Uiso,occ :: VEC{REAL}*
+      grp :: VEC{INT}*
+      xyz :: MAT{REAL}*
+      fac,fac2 :: REAL
+      table :: VEC{TABLE_COLUMN}*
       is_cartn :: BIN
 
-      ! Axis system?
+      ! Cartesin?
       is_cartn = self(1).pos_axis_system=="cartesian"
 
       ! Unit conversion
-      fac = ONE
-      if (is_cartn) fac = ANGSTROM_PER_BOHR
+      fac  = ANGSTROM_PER_BOHR
+      fac2 = fac*fac
 
       ! CIF coordinate header
       if (is_cartn) then
+
          stdout.flush
          stdout.text("# =================================")
          stdout.text("# Cartesian axis system coordinates")
@@ -12179,10 +12278,13 @@ contains
          stdout.text("_atom_site_Cartn_x")
          stdout.text("_atom_site_Cartn_y")
          stdout.text("_atom_site_Cartn_z")
+         stdout.text("_atom_site_Cartn_U_iso_or_equiv")
          stdout.text("_atom_site_Cartn_adp_type")
          stdout.text("_atom_site_Cartn_occupancy")
          stdout.text("_atom_site_Cartn_disorder_group")
+
       else
+
          stdout.flush
          stdout.text("# ===============================")
          stdout.text("# Crystal axis system coordinates")
@@ -12193,136 +12295,281 @@ contains
          stdout.text("_atom_site_fract_x")
          stdout.text("_atom_site_fract_y")
          stdout.text("_atom_site_fract_z")
+         stdout.text("_atom_site_U_iso_or_equiv")
          stdout.text("_atom_site_adp_type")
          stdout.text("_atom_site_occupancy")
          stdout.text("_atom_site_disorder_group")
-      end
-
-      ! Put coordinates
-      do i = 1,.dim
-
-         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-         stdout.flush
-
-         ! Get values
-         pos = fac * self(i).position
-
-         ! Print
-         stdout.put(pos(1)); stdout.flush
-         stdout.put(pos(2)); stdout.flush
-         stdout.put(pos(3)); stdout.flush
-         stdout.put(trim("Uani"),width=0,left=TRUE)
-         stdout.flush
-         stdout.put(self(i).site_occupancy,width=0,left=TRUE)
-         stdout.flush
-         stdout.put(self(i).site_disorder_group,width=0,left=TRUE)
-         stdout.flush
 
       end
+
+      ! Table column data
+      ID.create(.dim)
+      xyz.create(.dim,3)
+      Uiso.create(.dim)
+      ADP_type.create(.dim)
+      occ.create(.dim)
+      grp.create(.dim)
+
+      ! Get table column data
+      ID       = self.tag
+      .put_pos_vector_to(xyz,fac)
+      Uiso     = self.U_iso*fac2
+      ADP_type = .ADP_type(refine_H_U_iso)
+      occ      = self.site_occupancy
+      grp      = self.site_disorder_group
+
+      ! Table 1
+      table.create(8)
+      table(1).set_values(ID)
+      table(2).set_values(xyz(:,1))
+      table(3).set_values(xyz(:,2))
+      table(4).set_values(xyz(:,3))
+      table(5).set_values(Uiso)
+      table(6).set_values(ADP_type)
+      table(7).set_values(occ)
+      table(8).set_values(grp)
+
+      ! Put tables
+      table.put_body
+
+      ! Clean
+      table.destroy
+      grp.destroy
+      occ.destroy
+      ADP_type.destroy
+      Uiso.destroy
+      xyz.destroy
+      ID.destroy
 
    end
 
-   put_CIF_coords(esd)
+
+   put_CIF_coords(esd,refine_H_U_iso)
    ! Output the atoms and ADP's in CIF format to "stdout" in an
    ! axis system, with errors "esd" provided externally.
       self :: IN
       esd :: VEC{REAL}, IN
+      refine_H_U_iso :: BIN, IN
 
-   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
-
-      i,k :: INT
-      pos,err :: VEC{REAL}(3)
-      fac :: REAL
       is_cartn :: BIN
 
-      ! Axis system?
       is_cartn = self(1).pos_axis_system=="cartesian"
 
+      if (is_cartn) then; .put_CIF_coords_cartn(esd,refine_H_U_iso)
+      else;               .put_CIF_coords_cryst(esd,refine_H_U_iso)
+      end
+
+   end
+
+   put_CIF_coords_cartn(esd,refine_H_U_iso) ::: private
+   ! Output the atoms and ADP's in CIF format to "stdout" in an
+   ! axis system, with errors "esd" provided externally.
+      self :: IN
+      esd :: VEC{REAL}, IN
+      refine_H_U_iso :: BIN, IN
+
+   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+   ENSURE(self(1).pos_axis_system=="cartesian","not cartesian axis system!")
+
+      ID,blnk,ADP_type :: VEC{STR}*
+      Uiso,Uerr,occ :: VEC{REAL}*
+      grp :: VEC{INT}*
+      xyz,err :: MAT{REAL}*
+      fac,fac2 :: REAL
+      tabl1,tabl2 :: VEC{TABLE_COLUMN}*
+
       ! Unit conversion
-      fac = ONE
-      if (is_cartn) fac = ANGSTROM_PER_BOHR
+      fac  = ANGSTROM_PER_BOHR
+      fac2 = fac*fac
 
       ! CIF coordinate header
-      if (is_cartn) then
-         stdout.flush
-         stdout.text("# =================================")
-         stdout.text("# Cartesian axis system coordinates")
-         stdout.text("# =================================")
-         stdout.flush
-         stdout.text("# . Units are in Angstrom")
-         stdout.text("# . Please keep these precise parameters and ESDs")
-         stdout.flush
-         stdout.text("loop_")
-         stdout.text("_atom_site_Cartn_label")
-         stdout.text("_atom_site_Cartn_x")
-         stdout.text("_atom_site_Cartn_x_esd")
-         stdout.text("_atom_site_Cartn_y")
-         stdout.text("_atom_site_Cartn_y_esd")
-         stdout.text("_atom_site_Cartn_z")
-         stdout.text("_atom_site_Cartn_z_esd")
-         stdout.text("_atom_site_Cartn_adp_type")
-         stdout.text("_atom_site_Cartn_occupancy")
-         stdout.text("_atom_site_Cartn_disorder_group")
-      else
-         stdout.flush
-         stdout.text("# ===============================")
-         stdout.text("# Accurate fractional coordinates")
-         stdout.text("# ===============================")
-         stdout.flush
-         stdout.text("# . These are precise parameters and ESDs")
-         stdout.text("# . Keep these for a refinement restart")
-         stdout.text("# . Better yet, use the refined cartesian parameters")
-         stdout.flush
-         stdout.text("loop_")
-         stdout.text("_atom_site_label")
-         stdout.text("_atom_site_fract_x")
-         stdout.text("_atom_site_fract_x_esd")
-         stdout.text("_atom_site_fract_y")
-         stdout.text("_atom_site_fract_y_esd")
-         stdout.text("_atom_site_fract_z")
-         stdout.text("_atom_site_fract_z_esd")
-         stdout.text("_atom_site_adp_type")
-         stdout.text("_atom_site_occupancy")
-         stdout.text("_atom_site_disorder_group")
-      end
+      stdout.flush
+      stdout.text("# =================================")
+      stdout.text("# Cartesian axis system coordinates")
+      stdout.text("# =================================")
+      stdout.flush
+      stdout.text("# . Units are in Angstrom")
+      stdout.text("# . Please keep these precise parameters and ESDs")
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("_atom_site_Cartn_label")
+      stdout.text("_atom_site_Cartn_x")
+      stdout.text("_atom_site_Cartn_y")
+      stdout.text("_atom_site_Cartn_z")
+      stdout.text("_atom_site_Cartn_U_iso_or_equiv")
+      stdout.text("_atom_site_Cartn_adp_type")
+      stdout.text("_atom_site_Cartn_occupancy")
+      stdout.text("_atom_site_Cartn_disorder_group")
+      stdout.text("_atom_site_Cartn_x_esd")
+      stdout.text("_atom_site_Cartn_y_esd")
+      stdout.text("_atom_site_Cartn_z_esd")
+      stdout.text("_atom_site_Cartn_U_iso_or_equiv_esd")
 
-      ! Put positions and errors
-      k = 0
-      do i = 1,.dim
+      ! Table column data
+      ID.create(.dim)
+      blnk.create(.dim)
+      xyz.create(.dim,3)
+      err.create(.dim,3)
+      Uiso.create(.dim)
+      Uerr.create(.dim)
+      ADP_type.create(.dim)
+      occ.create(.dim)
+      grp.create(.dim)
 
-         ! Tag
-         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-         stdout.flush
+      ! Get table column data
+      ID       = self.tag
+      blnk     = " "
+      .put_pos_vector_to(xyz,fac)
+      .put_pos_errors_to(err,esd,fac)     ! Note esd
+      Uiso     = self.U_iso      *fac2
+      Uerr     = self.U_iso_error*fac2
+      ADP_type = .ADP_type(refine_H_U_iso)
+      occ      = self.site_occupancy
+      grp      = self.site_disorder_group
 
-         ! Get values and errors in Angstrom
-         pos      = fac * self(i).position
-         err(1:3) = fac * esd(k+1:k+3)
+      ! Table 1
+      tabl1.create(8)
+      tabl1(1).set_values(ID)
+      tabl1(2).set_values(xyz(:,1))
+      tabl1(3).set_values(xyz(:,2))
+      tabl1(4).set_values(xyz(:,3))
+      tabl1(5).set_values(Uiso)
+      tabl1(6).set_values(ADP_type)
+      tabl1(7).set_values(occ)
+      tabl1(8).set_values(grp)
 
-         ! Position & error in Angstrom
-         stdout.put(pos(1)); stdout.flush
-         stdout.put(err(1)); stdout.flush
-         stdout.put(pos(2)); stdout.flush
-         stdout.put(err(2)); stdout.flush
-         stdout.put(pos(3)); stdout.flush
-         stdout.put(err(3)); stdout.flush
-         stdout.put(trim("Uani"),width=0)
-         stdout.flush
-         stdout.put(self(i).site_occupancy,width=0,left=TRUE)
-         stdout.flush
-         stdout.put(self(i).site_disorder_group,width=0,left=TRUE)
-         stdout.flush
+      ! Table 2
+      tabl2.create(5)
+      tabl2(1).set_values(blnk)
+      tabl2(2).set_values(err(:,1))
+      tabl2(3).set_values(err(:,2))
+      tabl2(4).set_values(err(:,3))
+      tabl2(5).set_values(Uerr)
 
-         k = k + self(i).no_of_pADPs
+      tabl2(1).set_width(tabl1(1).width)
+      tabl2(2).set_width(tabl1(2).width)
+      tabl2(3).set_width(tabl1(3).width)
+      tabl2(4).set_width(tabl1(4).width)
+      tabl2(5).set_width(tabl1(5).width)
 
-      end
+      ! Put tables
+      tabl1.put_body(tabl2)
 
-      if (NOT is_cartn) then
+      ! Clean
+      tabl2.destroy
+      tabl1.destroy
+      grp.destroy
+      occ.destroy
+      ADP_type.destroy
+      Uerr.destroy
+      Uiso.destroy
+      err.destroy
+      xyz.destroy
+      blnk.destroy
+      ID.destroy
 
-      ! Reset precision for errors
-      stdout.save
-      stdout.set_real_width(stdout.saved.real_width+3)
-      stdout.set_real_precision(stdout.saved.real_precision+3)
+   end
 
+   put_CIF_coords_cryst(esd,refine_H_U_iso) ::: private
+   ! Output the atoms and ADP's in CIF format to "stdout" in an
+   ! axis system, with errors "esd" provided externally.
+      self :: IN
+      esd :: VEC{REAL}, IN
+      refine_H_U_iso :: BIN, IN
+
+   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+   ENSURE(self(1).pos_axis_system=="crystal","not crystal axis system!")
+
+      ID,blnk,ADP_type :: VEC{STR}*
+      Uiso,Uerr,occ :: VEC{REAL}*
+      grp :: VEC{INT}*
+      xyz,err :: MAT{REAL}*
+      fac,fac2 :: REAL
+      tabl1,tabl2 :: VEC{TABLE_COLUMN}*
+
+      ! Unit conversion
+      fac  = ANGSTROM_PER_BOHR
+      fac2 = fac*fac
+
+      ! CIF coordinate header
+      stdout.flush
+      stdout.text("# ===============================")
+      stdout.text("# Accurate fractional coordinates")
+      stdout.text("# ===============================")
+      stdout.flush
+      stdout.text("# . These are precise parameters and ESDs")
+      stdout.text("# . Keep these for a refinement restart")
+      stdout.text("# . Better yet, use the refined cartesian parameters")
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("_atom_site_label")
+      stdout.text("_atom_site_fract_x")
+      stdout.text("_atom_site_fract_y")
+      stdout.text("_atom_site_fract_z")
+      stdout.text("_atom_site_U_iso_or_equiv")
+      stdout.text("_atom_site_adp_type")
+      stdout.text("_atom_site_occupancy")
+      stdout.text("_atom_site_disorder_group")
+      stdout.text("_atom_site_fract_x_esd")
+      stdout.text("_atom_site_fract_y_esd")
+      stdout.text("_atom_site_fract_z_esd")
+      stdout.text("_atom_site_U_iso_or_equiv_esd")
+
+      ! Table column data
+      ID.create(.dim)
+      blnk.create(.dim)
+      xyz.create(.dim,3)
+      err.create(.dim,3)
+      Uiso.create(.dim)
+      Uerr.create(.dim)
+      ADP_type.create(.dim)
+      occ.create(.dim)
+      grp.create(.dim)
+
+      ! Get table column data
+      ID       = self.tag
+      blnk     = " "
+      .put_pos_vector_to(xyz)
+      .put_pos_errors_to(err,esd)         ! Note esd
+      Uiso     = self.U_iso      *fac2
+      Uerr     = self.U_iso_error*fac2
+      ADP_type = .ADP_type(refine_H_U_iso)
+      occ      = self.site_occupancy
+      grp      = self.site_disorder_group
+
+      ! Table 1
+      tabl1.create(8)
+      tabl1(1).set_values(ID)
+      tabl1(2).set_values(xyz(:,1))
+      tabl1(3).set_values(xyz(:,2))
+      tabl1(4).set_values(xyz(:,3))
+      tabl1(5).set_values(Uiso)
+      tabl1(6).set_values(ADP_type)
+      tabl1(7).set_values(occ)
+      tabl1(8).set_values(grp)
+
+      ! Table 2
+      tabl2.create(5)
+      tabl2(1).set_values(blnk)
+      tabl2(2).set_values(err(:,1))
+      tabl2(3).set_values(err(:,2))
+      tabl2(4).set_values(err(:,3))
+      tabl2(5).set_values(Uerr)
+
+      tabl2(1).set_width(tabl1(1).width)
+      tabl2(2).set_width(tabl1(2).width)
+      tabl2(3).set_width(tabl1(3).width)
+      tabl2(4).set_width(tabl1(4).width)
+      tabl2(5).set_width(tabl1(5).width)
+
+      ! Put tables
+      tabl1.put_body(tabl2)
+
+      ! Clean
+      tabl2.destroy
+      tabl1.destroy
+
+      ! CIF coordinate header
       stdout.flush
       stdout.text("# ======================")
       stdout.text("# Fractional coordinates")
@@ -12335,48 +12582,51 @@ contains
       stdout.text("_atom_site_fract_x")
       stdout.text("_atom_site_fract_y")
       stdout.text("_atom_site_fract_z")
+      stdout.text("_atom_site_U_iso_or_equiv")
       stdout.text("_atom_site_adp_type")
       stdout.text("_atom_site_occupancy")
       stdout.text("_atom_site_disorder_group")
 
-      ! Put positions and errors, cartesian, angstrom
-      k = 0
-      do i = 1,.dim
+      ! Set table column data
+      tabl1.create(8)
+      tabl1(1).set_values(ID)
+      tabl1(2).set_values_and_errors(xyz(:,1),err(:,1))
+      tabl1(3).set_values_and_errors(xyz(:,2),err(:,2))
+      tabl1(4).set_values_and_errors(xyz(:,3),err(:,3))
+      tabl1(5).set_values_and_errors(Uiso,Uerr)
+      tabl1(6).set_values(ADP_type)
+      tabl1(7).set_values(occ)
+      tabl1(8).set_values(grp)
 
-         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-         stdout.flush
+      ! Put table
+      tabl1.put_body
 
-         pos      = self(i).position
-         err(1:3) = esd(k+1:k+3)
-
-         ! Unitless
-         stdout.put(pos(1),err(1),left=FALSE); stdout.flush
-         stdout.put(pos(2),err(2),left=FALSE); stdout.flush
-         stdout.put(pos(3),err(3),left=FALSE); stdout.flush
-         stdout.put(trim("Uani"),width=0);     stdout.flush
-         stdout.put(self(i).site_occupancy,width=0,left=TRUE)
-         stdout.flush
-
-         k = k + self(i).no_of_pADPs
-
-      end
-
-      ! Revert
-      stdout.unsave
-
-      end
+      ! Clean
+      tabl1.destroy
+      grp.destroy
+      occ.destroy
+      ADP_type.destroy
+      Uerr.destroy
+      Uiso.destroy
+      err.destroy
+      xyz.destroy
+      blnk.destroy
+      ID.destroy
 
    end
+
 
    put_CIF_ADP2
    ! Output the ADP2's in CIF format to "stdout" in an axis system.
    ! This version does not produce errors.
       self :: IN
 
-      i :: INT
+      ID :: VEC{STR}*
+      ADP :: MAT{REAL}*
+      table :: VEC{TABLE_COLUMN}*
       lab :: STR
-      ADP :: VEC{REAL}(6)
       fac :: REAL
+      i :: INT
       is_cartn :: BIN
 
       ! Axis system?
@@ -12387,6 +12637,7 @@ contains
 
       ! CIF ADP header
       if (is_cartn) then
+
          stdout.flush
          stdout.text("# ==========================")
          stdout.text("# Cartesian axis system ADPs")
@@ -12398,10 +12649,12 @@ contains
          stdout.text("loop_")
          stdout.text("_atom_site_ADP2_U_label")
          do i = 1,6
-            lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
-            stdout.text("_atom_site_ADP2_U_"//trim(lab))
+         lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+         stdout.text("_atom_site_ADP2_U_"//trim(lab))
          end
+
       else
+
          stdout.flush
          stdout.text("# ========================")
          stdout.text("# Crystal axis system ADPs")
@@ -12410,170 +12663,270 @@ contains
          stdout.text("loop_")
          stdout.text("_atom_site_aniso_label")
          do i = 1,6
-            lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
-            stdout.text("_atom_site_aniso_U_"//trim(lab))
+         lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+         stdout.text("_atom_site_aniso_U_"//trim(lab))
          end
+
       end
 
-      ! CIF data ...
-      do i = 1,.dim
+      ! Column data
+      ID.create(.dim)
+      ADP.create(.dim,6)
 
-         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-         stdout.flush
+      ! Get column data
+      ID  = self.tag
+      .put_ADP2_vector_to(ADP,fac)
 
-         ! Get values, change units if needed
-         self(i).put_ADP2_vector_to(ADP,fac)
+      ! Table
+      table.create(7)
+      table(1).set_values(ID)
+      table(2).set_values(ADP(:,1))
+      table(3).set_values(ADP(:,2))
+      table(4).set_values(ADP(:,3))
+      table(5).set_values(ADP(:,4))
+      table(6).set_values(ADP(:,5))
+      table(7).set_values(ADP(:,6))
 
-         ! Print ADP
-         stdout.put(ADP(1)); stdout.flush
-         stdout.put(ADP(2)); stdout.flush
-         stdout.put(ADP(3)); stdout.flush
-         stdout.put(ADP(4)); stdout.flush
-         stdout.put(ADP(5)); stdout.flush
-         stdout.put(ADP(6)); stdout.flush
+      ! Clean
+      table.destroy
+      ADP.destroy
+      ID.destroy
 
+   end
+
+
+   put_CIF_ADP2(esd)
+   ! Output the ADP2's in CIF format to "stdout" in an axis system.
+   ! This version produces errors.
+      self :: IN
+      esd :: VEC{REAL}, IN
+
+      is_cartn :: BIN
+
+      is_cartn = self(1).pos_axis_system=="cartesian"
+
+      if (is_cartn) then; .put_CIF_ADP2_cartn(esd)
+      else;               .put_CIF_ADP2_cryst(esd)
       end
 
    end
 
-   put_CIF_ADP2(esd)
+   put_CIF_ADP2_cartn(esd) ::: private
    ! Output the ADP2's in CIF format to "stdout" in an axis system.
    ! This version does not produce errors.
       self :: IN
       esd :: VEC{REAL}, IN
 
    ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+   ENSURE(self(1).pos_axis_system=="cartesian","not cartesian axis system!")
 
-      i,k :: INT
+      ID,blnk :: VEC{STR}*
+      ADPv,ADPe :: MAT{REAL}*
+      tabl1,tabl2 :: VEC{TABLE_COLUMN}*
       lab :: STR
-      ADP,err :: VEC{REAL}(6)
-      fac2 :: REAL
-      is_cartn :: BIN
-
-      ! Axis system?
-      is_cartn = self(1).pos_axis_system=="cartesian"
+      fac :: REAL
+      i :: INT
 
       ! Unit conversion for ADP's
-      fac2 = ANGSTROM_PER_BOHR**2
+      fac = ANGSTROM_PER_BOHR
 
       ! CIF ADP header
-      if (is_cartn) then
-         stdout.flush
-         stdout.text("# ==========================")
-         stdout.text("# Cartesian axis system ADPs")
-         stdout.text("# ==========================")
-         stdout.flush
-         stdout.text("# . Units are in Angstrom^2")
-         stdout.text("# . Please keep these precise parameters")
-         stdout.flush
-         stdout.text("loop_")
-         stdout.text("_atom_site_ADP2_U_label")
-         do i = 1,6
-            lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
-            stdout.text("_atom_site_ADP2_U_"//trim(lab))
-            stdout.text("_atom_site_ADP2_U_"//trim(lab)//"_esd")
-         end
-      else
-         stdout.flush
-         stdout.text("# ========================")
-         stdout.text("# Crystal axis system ADPs")
-         stdout.text("# ========================")
-         stdout.flush
-         stdout.text("# . These are precise parameters and ESDs")
-         stdout.text("# . Keep these for a refinement restart")
-         stdout.text("# . Better yet, use the refined cartesian parameters")
-         stdout.flush
-         stdout.text("loop_")
-         stdout.text("_atom_site_aniso_label")
-         do i = 1,6
-            lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
-            stdout.text("_atom_site_aniso_U_"//trim(lab))
-            stdout.text("_atom_site_aniso_U_"//trim(lab)//"_esd")
-         end
+      stdout.flush
+      stdout.text("# ==========================")
+      stdout.text("# Cartesian axis system ADPs")
+      stdout.text("# ==========================")
+      stdout.flush
+      stdout.text("# . Units are in Angstrom^2")
+      stdout.text("# . Please keep these precise parameters")
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("_atom_site_ADP2_U_label")
+      do i = 1,6
+      lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+      stdout.text("_atom_site_ADP2_U_"//trim(lab))
+      end
+      do i = 1,6
+      lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+      stdout.text("_atom_site_ADP2_U_"//trim(lab)//"_esd")
       end
 
-      ! CIF data ...
-      k = 0
-      do i = 1,.dim
+      ! Column data
+      ID.create(.dim)
+      blnk.create(.dim)
+      ADPv.create(.dim,6)
+      ADPe.create(.dim,6)
 
-         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-         stdout.flush
+      ! Get column data
+      ID   = self.tag
+      blnk = " "
+      .put_ADP2_vector_to(ADPv,fac)
+      .put_ADP2_errors_to(ADPe,esd,fac)
 
-         ! Get values and errors in Angstrom^2
-         self(i).put_ADP2_vector_to(ADP)
-         ADP = fac2 * ADP
-         err = fac2 * esd(k+4:k+9)
+      ! Table 1
+      tabl1.create(7)
+      tabl1(1).set_values(ID)
+      tabl1(2).set_values(ADPv(:,1))
+      tabl1(3).set_values(ADPv(:,2))
+      tabl1(4).set_values(ADPv(:,3))
+      tabl1(5).set_values(ADPv(:,4))
+      tabl1(6).set_values(ADPv(:,5))
+      tabl1(7).set_values(ADPv(:,6))
 
-         ! ADP & error in Angstrom^2
-         stdout.put(ADP(1)); stdout.flush
-         stdout.put(err(1)); stdout.flush
-         stdout.put(ADP(2)); stdout.flush
-         stdout.put(err(2)); stdout.flush
-         stdout.put(ADP(3)); stdout.flush
-         stdout.put(err(3)); stdout.flush
-         stdout.put(ADP(4)); stdout.flush
-         stdout.put(err(4)); stdout.flush
-         stdout.put(ADP(5)); stdout.flush
-         stdout.put(err(5)); stdout.flush
-         stdout.put(ADP(6)); stdout.flush
-         stdout.put(err(6)); stdout.flush
+      ! Table 2
+      tabl2.create(7)
+      tabl2(1).set_values(blnk)
+      tabl2(2).set_values(ADPe(:,1))
+      tabl2(3).set_values(ADPe(:,2))
+      tabl2(4).set_values(ADPe(:,3))
+      tabl2(5).set_values(ADPe(:,4))
+      tabl2(6).set_values(ADPe(:,5))
+      tabl2(7).set_values(ADPe(:,6))
 
-         k = k + self(i).no_of_pADPs
+      tabl2(1).set_width(tabl1(1).width)
+      tabl2(2).set_width(tabl1(2).width)
+      tabl2(3).set_width(tabl1(3).width)
+      tabl2(4).set_width(tabl1(4).width)
+      tabl2(5).set_width(tabl1(5).width)
+      tabl2(6).set_width(tabl1(6).width)
+      tabl2(7).set_width(tabl1(7).width)
 
-      end
+      ! Put tables
+      tabl1.put_body(tabl2)
 
-      if (NOT is_cartn) then
-
-         ! Reset precision for errors
-         stdout.save
-         stdout.set_real_width(stdout.saved.real_width+3)
-         stdout.set_real_precision(stdout.saved.real_precision+3)
-        
-         ! CIF ADP header
-         stdout.flush
-         stdout.text("# ========================")
-         stdout.text("# Crystal axis system ADPs")
-         stdout.text("# ========================")
-         stdout.flush
-         stdout.text("# . These are in standard presentation")
-         stdout.flush
-         stdout.text("loop_")
-         stdout.text("_atom_site_aniso_label")
-         do i = 1,6
-         lab = ATOM:ADP_label(i,form="underscore-123-repeated")
-         stdout.text("_atom_site_aniso_"//trim(lab))
-         end
-        
-         ! Put ADP's in Angstrom^2 (crystal axis system)
-         k = 0
-         do i = 1,.dim
-        
-            stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-            stdout.flush
-        
-            ! Get values and errors
-            self(i).put_ADP2_vector_to(ADP(1:6))
-            ADP(1:6) = fac2 * ADP(1:6)
-            err(1:6) = fac2 * esd(k+4:k+9)
-        
-            ! Put quantity q with error e in format q(e)
-            stdout.put(ADP(1),err(1),left=FALSE); stdout.flush
-            stdout.put(ADP(2),err(2),left=FALSE); stdout.flush
-            stdout.put(ADP(3),err(3),left=FALSE); stdout.flush
-            stdout.put(ADP(4),err(4),left=FALSE); stdout.flush
-            stdout.put(ADP(5),err(5),left=FALSE); stdout.flush
-            stdout.put(ADP(6),err(6),left=FALSE); stdout.flush
-        
-            k = k + self(i).no_of_pADPs
-        
-         end
-        
-         ! Revert
-         stdout.unsave
-
-      end
+      ! Clean
+      tabl2.destroy
+      tabl1.destroy
+      ADPe.destroy
+      ADPv.destroy
+      blnk.destroy
+      ID.destroy
 
    end
+
+   put_CIF_ADP2_cryst(esd) ::: private
+   ! Output the ADP2's in CIF format to "stdout" in an axis system.
+   ! This version produces errors.
+      self :: IN
+      esd :: VEC{REAL}, IN
+
+   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+   ENSURE(self(1).pos_axis_system=="crystal","not crystal axis system!") 
+
+      ID,blnk :: VEC{STR}*
+      ADPv,ADPe :: MAT{REAL}*
+      tabl1,tabl2 :: VEC{TABLE_COLUMN}*
+      lab :: STR
+      fac :: REAL
+      i :: INT
+
+      ! Unit conversion for ADP's
+      fac = ANGSTROM_PER_BOHR
+
+      ! CIF ADP header
+      stdout.flush
+      stdout.text("# ========================")
+      stdout.text("# Crystal axis system ADPs")
+      stdout.text("# ========================")
+      stdout.flush
+      stdout.text("# . These are precise parameters and ESDs")
+      stdout.text("# . Keep these for a refinement restart")
+      stdout.text("# . Better yet, use the refined cartesian parameters")
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("_atom_site_aniso_label")
+      do i = 1,6
+      lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+      stdout.text("_atom_site_aniso_U_"//trim(lab))
+      end
+      do i = 1,6
+      lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+      stdout.text("_atom_site_aniso_U_"//trim(lab)//"_esd")
+      end
+
+      ! Column data
+      ID.create(.dim)
+      blnk.create(.dim)
+      ADPv.create(.dim,6)
+      ADPe.create(.dim,6)
+
+      ! Get column data
+      ID   = self.tag
+      blnk = " "
+      .put_ADP2_vector_to(ADPv,fac)
+      .put_ADP2_errors_to(ADPe,esd,fac)
+
+      ! Table 1
+      tabl1.create(7)
+      tabl1(1).set_values(ID)
+      tabl1(2).set_values(ADPv(:,1))
+      tabl1(3).set_values(ADPv(:,2))
+      tabl1(4).set_values(ADPv(:,3))
+      tabl1(5).set_values(ADPv(:,4))
+      tabl1(6).set_values(ADPv(:,5))
+      tabl1(7).set_values(ADPv(:,6))
+
+      ! Table 2
+      tabl2.create(7)
+      tabl2(1).set_values(blnk)
+      tabl2(2).set_values(ADPe(:,1))
+      tabl2(3).set_values(ADPe(:,2))
+      tabl2(4).set_values(ADPe(:,3))
+      tabl2(5).set_values(ADPe(:,4))
+      tabl2(6).set_values(ADPe(:,5))
+      tabl2(7).set_values(ADPe(:,6))
+
+      tabl2(1).set_width(tabl1(1).width)
+      tabl2(2).set_width(tabl1(2).width)
+      tabl2(3).set_width(tabl1(3).width)
+      tabl2(4).set_width(tabl1(4).width)
+      tabl2(5).set_width(tabl1(5).width)
+      tabl2(6).set_width(tabl1(6).width)
+      tabl2(7).set_width(tabl1(7).width)
+
+      ! Put tables
+      tabl1.put_body(tabl2)
+
+      ! Clean
+      tabl2.destroy
+      tabl1.destroy
+
+      ! CIF ADP header
+      stdout.flush
+      stdout.text("# ========================")
+      stdout.text("# Crystal axis system ADPs")
+      stdout.text("# ========================")
+      stdout.flush
+      stdout.text("# . These are in standard presentation")
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("_atom_site_aniso_label")
+      do i = 1,6
+      lab = ATOM:ADP_label(i,form="underscore-123-repeated")
+      stdout.text("_atom_site_aniso_"//trim(lab))
+      end
+
+      ! Table
+      tabl1.create(7)
+      tabl1(1).set_values(ID)
+      tabl1(2).set_values_and_errors(ADPv(:,1),ADPe(:,1))
+      tabl1(3).set_values_and_errors(ADPv(:,2),ADPe(:,2))
+      tabl1(4).set_values_and_errors(ADPv(:,3),ADPe(:,3))
+      tabl1(5).set_values_and_errors(ADPv(:,4),ADPe(:,4))
+      tabl1(6).set_values_and_errors(ADPv(:,5),ADPe(:,5))
+      tabl1(7).set_values_and_errors(ADPv(:,6),ADPe(:,6))
+
+      ! Put tables
+      tabl1.put_body
+
+      ! Clean
+      tabl1.destroy
+      ADPe.destroy
+      ADPv.destroy
+      blnk.destroy
+      ID.destroy
+        
+   end
+
 
    put_CIF_ADPn(cif)
    ! Output anharmonic ADPs in CIF format to "stdout".
