@@ -52,6 +52,11 @@ if(BT STREQUAL "RELEASE")
       "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
       FORCE)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${RELEASE_FLAGS}")
+elseif(BT STREQUAL "RELEASE-STATIC")
+    set(CMAKE_BUILD_TYPE RELEASE CACHE STRING
+      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
+      FORCE)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${RELEASE_FLAGS} -static")
 elseif(BT STREQUAL "DEBUG")
     set (CMAKE_BUILD_TYPE DEBUG CACHE STRING
       "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
