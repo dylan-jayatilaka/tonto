@@ -1,6 +1,19 @@
-set(TEST_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/test.pl"
+# Numdiff
+find_program(NUMDIFF_EXECUTABLE
+    NAMES numdiff
+    HINTS ${NUMDIFF_DIR}
+    PATH_SUFFIXES bin
+    )
+if(NUMDIFF_EXECUTABLE MATCHES "-NOTFOUND")
+    MESSAGE(STATUS
+        "Could not find numdiff; using slower perl script instead (Tests will take longer).")
+    set(CMP_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/compare_output.pl"
+        CACHE FILEPATH "Script to compare tonto outputs")
+endif()
+
+set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.pl"
     CACHE FILEPATH "Script to perform tests in a directory")
-set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/ndcmp"
+set(CMP_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/ndcmp"
     CACHE FILEPATH "Script to compare tonto outputs")
 set(TONTO_EXE "${CMAKE_BINARY_DIR}/run_test"
     CACHE FILEPATH "Test executable")
@@ -10,7 +23,7 @@ set(BASIS_SETS "${PROJECT_SOURCE_DIR}/basis_sets"
 if(MPI)
     set(TEST_EXE "${CMAKE_BINARY_DIR}/tontompi")
     configure_file(
-        ${CMAKE_SOURCE_DIR}/scripts/tontompi.in
+        ${PROJECT_SOURCE_DIR}/scripts/tontompi.in
         ${TEST_EXE}
     )
 else()
