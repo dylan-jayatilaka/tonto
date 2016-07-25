@@ -1,9 +1,14 @@
 set(TEST_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/test.pl"
     CACHE FILEPATH "Script to perform tests in a directory")
-set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/ndcmp"
-    CACHE FILEPATH "Script to compare tonto outputs")
+
+if(NOT ${CMP_SCRIPT})
+   set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/ndcmp"
+       CACHE FILEPATH "Script to compare tonto outputs")
+endif()
+
 set(TONTO_EXE "${CMAKE_BINARY_DIR}/run_test"
     CACHE FILEPATH "Test executable")
+
 set(BASIS_SETS "${PROJECT_SOURCE_DIR}/basis_sets"
     CACHE PATH "Basis sets directory")
 
@@ -16,6 +21,7 @@ if(MPI)
 else()
     set(TEST_EXE "${TONTO_EXE}")
 endif()
+
 message(STATUS "Testing with ${TEST_EXE}")
 
 macro(subdirlist result curdir)
