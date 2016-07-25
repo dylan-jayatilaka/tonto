@@ -34,18 +34,6 @@ endif()
 # Testing?
 enable_testing()
 
-# Numdiff
-find_program(NUMDIFF_EXECUTABLE
-    NAMES numdiff
-    HINTS ${NUMDIFF_DIR}
-    PATH_SUFFIXES bin
-    )
-if(NUMDIFF_EXECUTABLE MATCHES "-NOTFOUND")
-   MESSAGE(FATAL_ERROR
-   "Could not find numdiff; we need it for testing.\n"
-   )
-endif()
-
 # Tonto
 project(tonto
     LANGUAGES Fortran
@@ -85,13 +73,13 @@ include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 # LAPACK dependency
 if(WIN32)
     message(STATUS "Not going to look for lapack on WINDOWS, using packaged source")
-    add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
+    add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
     set(LAPACK_LIBRARIES lapack)
 else()
     find_package(LAPACK)
     if(NOT ${LAPACK_FOUND})
         message(STATUS "No lapack found, using packaged libs")
-        add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
+        add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
         set(LAPACK_LIBRARIES lapack)
     endif()
 endif()
