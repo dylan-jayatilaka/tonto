@@ -4,10 +4,9 @@ Tonto now uses `cmake` for all builds on github.
 
 ## 1. Get ready ...
 
-* If you don’t want to develop just download the zip file using the button on
-  the right.
+* If you don’t want to develop just download the latest release for your platform
 * If you want to develop first install `git` and then clone the repository
-  (which may take some time)
+  and follow the compile instructiobns below.
 
 ### On Linux
 ```
