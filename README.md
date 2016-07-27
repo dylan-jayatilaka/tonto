@@ -157,6 +157,7 @@ On Windows use the MSYS2 `cmake` option :
 ```
     cmake .. -G"MSYS Makefiles"
     make -j
+```
 
 If you want a specific compiler, use :
 
