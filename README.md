@@ -16,7 +16,8 @@ First, open a terminal and clone the repository:
    git clone https://github.com/dylan-jayatilaka/tonto.git
 ```
 
-While waiting, in another terminal window, you can install:
+While waiting, in another terminal window, or using your
+software package manager, install:
 
 * `perl`
 * `gfortran`
