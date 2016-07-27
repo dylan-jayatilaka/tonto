@@ -1,6 +1,6 @@
 # Welcome to Tonto!
 
-Tonto now uses `cmake` on this branch.
+Tonto now uses `cmake` for all builds on github.
 
 ## 1. Get ready ...
 
@@ -14,14 +14,14 @@ Tonto now uses `cmake` on this branch.
    git clone https://github.com/dylan-jayatilaka/tonto.git
 ```
 
-While waiting you can install:
+While waiting, in another terminal window, you can install:
 
 * `perl`
 * `gfortran`
 * `make`
 * `numdiff`
-* `blas` (recommended)
-* `lapack` (recommended)
+* `blas` 
+* `lapack` 
 * `mpich2` (for parallel)
 * `gnuplot` (recommended)
 
@@ -40,35 +40,93 @@ have Tonto-library-specific code completion.
 
 The compilation procedure is the same as for Linux, but you have to first
 install the [brew](http://brew.sh/) package manager, and then use that
-to install the GNU Linux software.
+to install `git` and all the other GNU Linux software.
 
 ### On Windows
 
-The compilation procedure is the same as above, but you have to first
-install the [cygwin](https://cygwin.com/install.html) unix
-environment.
+The compilation procedure is similar to Linux, but you have to first
+install the [MSYS2](https://msys2.github.io) minimal unix environment.
 
-The programs tend to be slower when running on Windows.
+IMPORTANT: if you have a [cygwin](https://cygwin.com/install.html)
+unix environment, please delete it before installing MSYS2. You will
+find cygwin under in `C:/cygwin` or something like that. We have found
+that cygwin interferes with MSYS2.
 
-You will need to install the following packages from
-the menu:
+Once you have MSYS2, open it's console; it has an "M" logo and looks a
+bit purple. Do not confuse it with the MS console. You can find it
+in `C:/mingw64`.
 
-* `perl`
-* `gcc-core`
-* `gcc-fortran`
-* `make`
-* `numdiff`
+In the MSYS2 console, update the database 
 
-And perhaps (see above) also:
+```
+pacman -Syu
+```
 
-* `vim`
-* `ctags`
-* `cscope`
-* `gnuplot`
+To be safe, close the MSYS2 console, open it again and type
+
+```
+pacman -Su
+```
+
+If you are on an `x86_64` machine (most likely) install:
+
+```
+pacman -S mingw-w64-x86_64-toolchain
+```
+
+Else if you are on an `ì686` machine then install:
+
+```
+pacman -S mingw-w64-i686-toolchain
+```
+
+Now install this stuff:
+
+```
+pacman -S base-devel
+pacman -S perl
+pacman -S git
+pacman -S make
+pacman -S mingw-w64-x86_64-cmake
+```
+
+Note that the `make` installed above is the MSYS2 `make` and
+not the GNU `make`.
+
+Now compile and install the `openblas` library which includes `lapack`:
+
+```
+git clone "https://github.com/Alexpux/MSYS2-packages"
+cd MSYS2-packages/mingw-w64-openblas
+makepkg -sLf
+pacman -U mingw-w64-openblas-*.pkg.tar.xz
+```
+
+The above will take a long time.
+
+Finally, update the `PATH` variable by editing the `.bashrc` file,
+e.g. using the `vim` editor, and add the following line at the end:
+
+```
+export PATH=$PATH:/ming64/bin
+```
+
+And source the file:
+
+```
+source ./.bashrc
+```
+
 
 ## 2. Get set ...
 
-To compile Tonto, first make a build directory and go into it :
+To compile Tonto, first go into the `tonto` directory downloaded with `git`
+
+```
+    cd tonto
+```
+
+Then make a `build` directory and go into it:
 
 ```
     mkdir build && cd build
