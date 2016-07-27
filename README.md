@@ -52,26 +52,29 @@ install the [MSYS2](https://msys2.github.io) minimal unix environment.
 
 IMPORTANT: if you have a [cygwin](https://cygwin.com/install.html)
 unix environment, please delete it before installing MSYS2. You will
-find cygwin under in `C:/cygwin` or something like that. We have found
+find cygwin as `C:/cygwin` or something like that. We have found
 that cygwin interferes with MSYS2.
 
-Once you have MSYS2, open it's console; it has an "M" logo and looks a
-bit purple. Do not confuse it with the MS console. You can find it
-in `C:/mingw64`.
+Once you have MSYS2, open it's console; it has an "M" logo with a
+bit of purple. 
 
-In the MSYS2 console, update the database 
+Do not confuse it with the Microsoft console. 
+
+You can find MSYS2 in `C:/mingw64`.
+
+In the MSYS2 console, first update the database :
 
 ```
 pacman -Syu
 ```
 
-To be safe, close the MSYS2 console, open it again and type
+Next, close the MSYS2 console, and open it again, then type
 
 ```
 pacman -Su
 ```
 
-If you are on an `x86_64` machine (most likely) install:
+If you are on an `x86_64` machine (this is most likely) then install:
 
 ```
 pacman -S mingw-w64-x86_64-toolchain
@@ -107,8 +110,10 @@ pacman -U mingw-w64-openblas-*.pkg.tar.xz
 
 The above will take a long time.
 
-Finally, update the `PATH` variable by editing the `.bashrc` file,
-e.g. using the `vim` editor, and add the following line at the end:
+Finally, update the `PATH` variable by editing the `.bashrc` file.
+e.g. using the `vim` editor.
+
+Add the following line to the end of `.bashrc` :
 
 ```
 export PATH=$PATH:/ming64/bin
@@ -140,14 +145,20 @@ name of the compiler you use. Executables from different compilers
 or with different compilation options can be produced in build 
 directories with different names. That's convenient.
 
-Now you can build the programs :
+Now on Linux and MAC, build the programs :
 
 ```
     cmake ..
     make -j
 ```
 
-If you want a specific compiler, type:
+On Windows use the MSYS2 `cmake` option :
+
+```
+    cmake .. -G"MSYS Makefiles"
+    make -j
+
+If you want a specific compiler, use :
 
 ```
    cmake .. -DCMAKE_Fortran_COMPILER=<insert-your-compiler-here>
@@ -155,16 +166,24 @@ If you want a specific compiler, type:
 ```
 
 where you should replace <insert-your-compiler-here> with the
-command for your fortran compiler.
+command for your fortran compiler. We recommend `gfortran-6`.
 
-To make an MPI parallel version type :
+If you want a static executable (recommended for Windows), in
+addition to any previous options, type:
+
+```
+   cmake .. -DCMAKE_BUILD_TYPE=RELEASE-STATIC
+   make -j
+```
+
+To make an MPI parallel version do it like this :
 
 ```
    cmake .. -DMPI=1
    make -j
 ```
 
-To change build type (e.g. make a DEBUG version) type:
+To change build type (e.g. make a DEBUG version) use this option :
 
 ```
    cmake .. -DCMAKE_BUILD_TYPE=Debug
