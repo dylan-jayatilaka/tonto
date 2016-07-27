@@ -9,6 +9,9 @@ Tonto now uses `cmake` for all builds on github.
   and follow the compile instructions below.
 
 ### On Linux
+
+First, open a terminal and clone the repository:
+
 ```
    git clone https://github.com/dylan-jayatilaka/tonto.git
 ```
