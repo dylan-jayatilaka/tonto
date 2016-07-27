@@ -110,7 +110,7 @@ pacman -U mingw-w64-openblas-*.pkg.tar.xz
 
 The above will take a long time.
 
-Finally, update the `PATH` variable by editing the `.bashrc` file.
+Finally, update the `PATH` variable by editing the `.bashrc` file
 e.g. using the `vim` editor.
 
 Add the following line to the end of `.bashrc` :
@@ -125,16 +125,23 @@ And source the file:
 source ./.bashrc
 ```
 
+Now clone the repository:
+
+```
+   git clone https://github.com/dylan-jayatilaka/tonto.git
+```
+
 
 ## 2. Get set ...
 
-To compile Tonto, first go into the `tonto` directory downloaded with `git`
+To compile Tonto, first go into the `tonto` directory downloaded with
+`git` :
 
 ```
     cd tonto
 ```
 
-Then make a `build` directory and go into it:
+Then make a `build` directory and go into that :
 
 ```
     mkdir build && cd build
@@ -145,17 +152,17 @@ name of the compiler you use. Executables from different compilers
 or with different compilation options can be produced in build 
 directories with different names. That's convenient.
 
-Now on Linux and MAC, build the programs :
+Now on Linux and Mac, build the programs :
 
 ```
     cmake ..
     make -j
 ```
 
-On Windows use the MSYS2 `cmake` option :
+On Windows use the MSYS2 `cmake` option, and allow testing :
 
 ```
-    cmake .. -G"MSYS Makefiles"
+    cmake .. -G"MSYS Makefiles" -DCMP_SCRIPT=../scripts/compare_output.pl
     make -j
 ```
 
@@ -170,14 +177,14 @@ where you should replace <insert-your-compiler-here> with the
 command for your fortran compiler. We recommend `gfortran-6`.
 
 If you want a static executable (recommended for Windows), in
-addition to any previous options, type:
+addition to any previous options, you type :
 
 ```
    cmake .. -DCMAKE_BUILD_TYPE=RELEASE-STATIC
    make -j
 ```
 
-To make an MPI parallel version do it like this :
+To make an MPI parallel version, type :
 
 ```
    cmake .. -DMPI=1
@@ -210,8 +217,9 @@ For help type `hart -help`.
 
 ## 3. Go!
 
-By default, the tests use the `numdiff` program
-to check the difference between outputs.
+On Linux and Mac, the tests use the `numdiff` program
+to check the difference between outputs. On Windows, we
+use a custom `perl` script which is not as good.
 
 To run all tests, in the build directory type:
 ```
