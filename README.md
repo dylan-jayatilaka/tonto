@@ -1,27 +1,30 @@
 # Welcome to Tonto!
 
-Tonto now uses `cmake` on this branch.
+Tonto now uses `cmake` for all builds on github.
 
 ## 1. Get ready ...
 
-* If you don’t want to develop just download the zip file using the button on
-  the right.
-* If you want to develop first install `git` and then clone the repository
-  (which may take some time)
+* If you don’t want to develop just download the latest release for your platform
+* If you want to develop first install `git` and 
+  and follow the compile instructions below.
 
 ### On Linux
+
+First, open a terminal and clone the repository:
+
 ```
    git clone https://github.com/dylan-jayatilaka/tonto.git
 ```
 
-While waiting you can install:
+While waiting, in another terminal window, or using your
+software package manager, install:
 
 * `perl`
 * `gfortran`
 * `make`
 * `numdiff`
-* `blas` (recommended)
-* `lapack` (recommended)
+* `blas` 
+* `lapack` 
 * `mpich2` (for parallel)
 * `gnuplot` (recommended)
 
@@ -40,35 +43,105 @@ have Tonto-library-specific code completion.
 
 The compilation procedure is the same as for Linux, but you have to first
 install the [brew](http://brew.sh/) package manager, and then use that
-to install the GNU Linux software.
+to install `git` and all the other GNU Linux software.
 
 ### On Windows
 
-The compilation procedure is the same as above, but you have to first
-install the [cygwin](https://cygwin.com/install.html) unix
-environment.
+The compilation procedure is similar to Linux, but you have to first
+install the [MSYS2](https://msys2.github.io) minimal unix environment.
 
-The programs tend to be slower when running on Windows.
+IMPORTANT: if you have a [cygwin](https://cygwin.com/install.html)
+unix environment, please delete it before installing MSYS2. You will
+find cygwin as `C:/cygwin` or something like that. We have found
+that cygwin interferes with MSYS2.
 
-You will need to install the following packages from
-the menu:
+Once you have MSYS2, open it's console; it has an "M" logo with a
+bit of purple. 
 
-* `perl`
-* `gcc-core`
-* `gcc-fortran`
-* `make`
-* `numdiff`
+Do not confuse it with the Microsoft console. 
 
-And perhaps (see above) also:
+You can find MSYS2 in `C:/mingw64`.
 
-* `vim`
-* `ctags`
-* `cscope`
-* `gnuplot`
+In the MSYS2 console, first update the database :
+
+```
+pacman -Syu
+```
+
+Next, close the MSYS2 console, and open it again, then type
+
+```
+pacman -Su
+```
+
+If you are on an `x86_64` machine (this is most likely) then install:
+
+```
+pacman -S mingw-w64-x86_64-toolchain
+```
+
+Else if you are on an `ì686` machine then install:
+
+```
+pacman -S mingw-w64-i686-toolchain
+```
+
+Now install this stuff:
+
+```
+pacman -S base-devel
+pacman -S perl
+pacman -S git
+pacman -S make
+pacman -S mingw-w64-x86_64-cmake
+```
+
+Note that the `make` installed above is the MSYS2 `make` and
+not the GNU `make`.
+
+Now compile and install the `openblas` library which includes `lapack`:
+
+```
+git clone "https://github.com/Alexpux/MSYS2-packages"
+cd MSYS2-packages/mingw-w64-openblas
+makepkg -sLf
+pacman -U mingw-w64-openblas-*.pkg.tar.xz
+```
+
+The above will take a long time.
+
+Finally, update the `PATH` variable by editing the `.bashrc` file
+e.g. using the `vim` editor.
+
+Add the following line to the end of `.bashrc` :
+
+```
+export PATH=$PATH:/ming64/bin
+```
+
+And source the file:
+
+```
+source ./.bashrc
+```
+
+Now clone the repository:
+
+```
+   git clone https://github.com/dylan-jayatilaka/tonto.git
+```
+
 
 ## 2. Get set ...
 
-To compile Tonto, first make a build directory and go into it :
+To compile Tonto, first go into the `tonto` directory downloaded with
+`git` :
+
+```
+    cd tonto
+```
+
+Then make a `build` directory and go into that :
 
 ```
     mkdir build && cd build
@@ -79,14 +152,21 @@ name of the compiler you use. Executables from different compilers
 or with different compilation options can be produced in build 
 directories with different names. That's convenient.
 
-Now you can build the programs :
+Now on Linux and Mac, build the programs :
 
 ```
     cmake ..
     make -j
 ```
 
-If you want a specific compiler, type:
+On Windows use the MSYS2 `cmake` option, and allow testing :
+
+```
+    cmake .. -G"MSYS Makefiles" -DCMP_SCRIPT=../scripts/compare_output.pl
+    make -j
+```
+
+If you want a specific compiler, use :
 
 ```
    cmake .. -DCMAKE_Fortran_COMPILER=<insert-your-compiler-here>
@@ -94,16 +174,24 @@ If you want a specific compiler, type:
 ```
 
 where you should replace <insert-your-compiler-here> with the
-command for your fortran compiler.
+command for your fortran compiler. We recommend `gfortran-6`.
 
-To make an MPI parallel version type :
+If you want a static executable (recommended for Windows), in
+addition to any previous options, you type :
+
+```
+   cmake .. -DCMAKE_BUILD_TYPE=RELEASE-STATIC
+   make -j
+```
+
+To make an MPI parallel version, type :
 
 ```
    cmake .. -DMPI=1
    make -j
 ```
 
-To change build type (e.g. make a DEBUG version) type:
+To change build type (e.g. make a DEBUG version) use this option :
 
 ```
    cmake .. -DCMAKE_BUILD_TYPE=Debug
@@ -129,8 +217,9 @@ For help type `hart -help`.
 
 ## 3. Go!
 
-By default, the tests use the `numdiff` program
-to check the difference between outputs.
+On Linux and Mac, the tests use the `numdiff` program
+to check the difference between outputs. On Windows, we
+use a custom `perl` script which is not as good.
 
 To run all tests, in the build directory type:
 ```
