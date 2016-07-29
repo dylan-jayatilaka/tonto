@@ -96,8 +96,10 @@ sub compare {
       $line1 =~ s/\W+//g;              # Remove non-word characters
       $line2 =~ s/\W+//g;              # Remove non-word characters
 
+    # if ($line1 ne $line2) {
     # print "line1:$line1\n";
     # print "line2:$line2\n";
+    # }
 
       return (0) if ($line1 ne $line2); # Lines differ, not same
 
