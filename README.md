@@ -223,11 +223,11 @@ use a custom `perl` script which is not as good.
 
 To run all tests, in the build directory type:
 ```
-   make tests # this will run all tests
+   ctest
 ```
 Or you may use `ctest` directly and run only tests matching
-certain labels or regular expressions. You may also
-specify the number of processors to use when running tests.
+certain labels or regular expressions; or specify the number 
+of processors to use when running tests :
 ```
    ctest -L short    # this will run all tests with the label short.
    ctest -R h2o      # this will run all tests with h2o in their name.
