@@ -126,62 +126,134 @@ contains
 
    end
 
+
+   set_F_pred(val) ::: pure
+   ! Set predicted structure factor magnitude F_pred to "val".
+      self :: INOUT
+      val :: REAL, IN
+
+      .F_pred = val
+
+   end
+
+   set_F_calc(val) ::: pure
+   ! Set calculated structure factor magnitude F_calc to "val".
+      self :: INOUT
+      val :: CPX, IN
+
+      .F_calc = val
+
+   end
+
    set_F_exp(val) ::: pure
-   ! Set the experimentally determined structure factor
-   ! F_exp to "val"
+   ! Set experimental structure factor magnitude F_exp to "val".
+   ! This can cope with -ve F_exp's when setting F_sigma
+   ! NOTE: always set before F_sigma
       self :: INOUT
       val :: REAL, IN
 
       .F_exp = val
-      .I_exp = val * val
 
    end
 
    set_F_sigma(val)
    ! Set the experimentally determined F standard devaiation to "val"
+   ! NOTE: always set after F_exp
       self :: INOUT
       val :: REAL, IN
 
    DIE_IF(val<=0,"F_sigma is not +ve, remove offending reflection")
 
-      .F_sigma = val
+      if (.F_exp>=ZERO) then
+
+         ! Set
+         .F_sigma = val
+
+      else
+
+         ! Fix
+         .F_sigma = abs(.F_exp) + val
+         .F_exp   = ZERO
+
+      end
 
       .derive_I_sigma_from_F_sigma
 
    end
 
-   set_I_exp(val) ::: pure
-   ! Set the experimental F2 value, called I_exp
-   ! NOTE: F_exp ~ sqrt(F2) is overwritten!
-   ! NOTE: The sign is preserved on F_exp, for later rejection
+   derive_I_sigma_from_F_sigma ::: private
+   ! I_sigma is calculated by taking the *largest* difference between
+   ! I_exp and the square of the F_exp range-mapped range.
+   ! NOTE: F_exp must be positive at this stage, and F_sigma adjusted
+
+   ENSURE(.F_exp>=ZERO,"F_exp must be non-negative")
+
+      s_p,s_m :: REAL
+
+      .I_exp = .F_exp*.F_exp
+
+      if (.F_exp>.F_sigma) then
+         s_p = -.I_exp + (.F_exp + .F_sigma)**2
+         s_m =  .I_exp - (.F_exp - .F_sigma)**2
+      else
+         s_p = -.I_exp + (.F_exp + .F_sigma)**2
+         s_m =  .I_exp
+      end
+
+      .I_sigma = max(s_p,s_m)
+
+   end
+
+
+   set_I_pred(val) ::: pure
+   ! Set predicted structure factor intensity I_pred to "val".
       self :: INOUT
       val :: REAL, IN
 
-      ! Set
+      .I_pred = val
+
+   end
+
+   set_I_calc(val) ::: pure
+   ! Set calculated structure factor intensity I_calc to "val".
+      self :: INOUT
+      val :: REAL, IN
+
+      .I_calc = val
+
+   end
+
+   set_I_exp(val) ::: pure
+   ! Set the experimental F2 value, called I_exp
+   ! This can cope with -ve I_exp's when setting I_sigma
+   ! NOTE: always set before I_sigma
+      self :: INOUT
+      val :: REAL, IN
+
       .I_exp = val
-
-      ! Set switch
-      .I_exp_inputted = TRUE
-
-      ! Set F_exp
-      if (.I_exp<ZERO) then; .F_exp = ZERO
-      else;                  .F_exp = sqrt( .I_exp)
-      end
 
    end
 
    set_I_sigma(val)
-   ! Read in the experimentay F2_sigma i.e. I_ sigma
-   ! You must have already inputted the I_exp= value. The sigma value is
-   ! calculated by solving the quadratic which gives the *largest* sigma
-   ! value, which when added to .F_exp and squared gives .I_exp+.I_sigma.
+   ! Read in the experimental F2_sigma i.e. I_sigma
+   ! NOTE: always set after I_exp
       self :: INOUT
       val :: REAL, IN
 
    DIE_IF(val<=0,"I_sigma is not +ve, remove: "//trim(.hkl_str))
 
-      ! Read
-      .I_sigma = val
+      if (.I_exp>=ZERO) then 
+
+         ! Set
+         .I_sigma = val
+
+      else
+
+         ! Fix
+         .I_sigma = abs(.I_exp) + val
+         .I_exp   = ZERO
+
+      end
 
       ! Derive F_sigma
       .derive_F_sigma_from_I_sigma
@@ -192,24 +264,27 @@ contains
    ! The F_sigma value is calculated by solving the quadratic which
    ! gives the *largest* sigma value, which when added to .F_exp and
    ! squared gives .I_exp+.I_sigma.
-   ! NOTE : F_exp must have already been inputted.
+   ! NOTE: I_exp must be positive at this stage, and I_sigma adjusted
       self :: INOUT
 
-   ENSURE(.I_exp_inputted,"I_exp= must have been inputted first")
+   ENSURE(.I_exp>=ZERO,"I_exp must be non-negative")
 
       s_p,s_m :: REAL
 
+      .F_exp = sqrt(.I_exp)
+
       if (.I_exp>.I_sigma) then
-         s_p = max(-.F_exp + sqrt(max(.I_exp+.I_sigma,ZERO)),ZERO)
-         s_m = max( .F_exp - sqrt(max(.I_exp-.I_sigma,ZERO)),ZERO)
+         s_p = -.F_exp + sqrt(.I_exp+.I_sigma)
+         s_m =  .F_exp - sqrt(.I_exp-.I_sigma)
       else
-         s_p = max(-.F_exp + sqrt(max(.I_exp+.I_sigma,ZERO)),ZERO)
-         s_m = max( .F_exp,ZERO)
+         s_p = -.F_exp + sqrt(.I_exp+.I_sigma)
+         s_m =  .F_exp
       end
 
       .F_sigma = max(s_p,s_m)
 
    end
+
 
    hkl result (vec) ::: pure
    ! Set (h k l) to "vec"
@@ -326,26 +401,6 @@ contains
       stdin.read(val)
 
       .set_F_sigma(val)
-
-   end
-
-   derive_I_sigma_from_F_sigma
-   ! I_sigma is calculated by taking the *largest* difference between
-   ! I_exp and the square of the F_exp range-mapped range.
-   ! NOTE : I_exp must have already been inputted.
-   ENSURE(NOT .I_exp_inputted,"F_exp= must have been inputted first")
-
-      s_p,s_m :: REAL
-
-      if (.F_exp>.F_sigma) then
-         s_p = -.I_exp + (.F_exp + .F_sigma)**2
-         s_m =  .I_exp - (.F_exp - .F_sigma)**2
-      else
-         s_p = -.I_exp + (.F_exp + .F_sigma)**2
-         s_m =  .I_exp
-      end
-
-      .I_sigma = max(s_p,s_m)
 
    end
 
@@ -611,6 +666,14 @@ contains
    end
 
 
+   F_sigma result (res) ::: elemental
+   ! Return the F_sigma ... for get_from
+      self :: IN
+      res :: REAL
+      res = .F_sigma
+   end
+
+
    F_phase result (res) ::: elemental
    ! Return the phase angle of the complex structure factor.
       self :: IN
@@ -678,7 +741,20 @@ contains
       self :: IN
       cutoff :: REAL, IN
       res :: BIN
-      res = abs(.F_calc) < cutoff
+
+      res = abs(.F_calc) <= cutoff
+
+   end
+
+   has_zero_F_calc_abs(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a zero F_calc w.r.t. "cutoff"
+   ! For pruning systematic absences.
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+
+      res = abs(.F_calc) <= cutoff
+
    end
 
    has_small_F_pred(cutoff) result (res) ::: elemental
@@ -686,15 +762,9 @@ contains
       self :: IN
       cutoff :: REAL, IN
       res :: BIN
-      res = abs(.F_pred) < cutoff
-   end
 
-   has_zero_I_pred(cutoff) result (res) ::: elemental
-   ! Return TRUE if the reflection has a zero I_pred w.r.t. "cutoff"
-      self :: IN
-      cutoff :: REAL, IN
-      res :: BIN
-      res = abs(.I_pred) < cutoff
+      res = abs(.F_pred) <= cutoff
+
    end
 
    has_weak_F_exp(cutoff) result (res) ::: elemental
@@ -727,6 +797,26 @@ contains
       cutoff :: REAL, IN
       res :: BIN
       res = .I_exp < cutoff
+   end
+
+   has_zero_F_sigma(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a zero F_sigma w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+
+      res = .F_sigma <= cutoff
+
+   end
+
+   has_zero_I_sigma(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a zero I_sigma w.r.t. "cutoff"
+      self :: IN
+      cutoff :: REAL, IN
+      res :: BIN
+
+      res = .I_sigma <= cutoff
+
    end
 
    has_large_F_z(cutoff) result (res) ::: elemental
