@@ -1,32 +1,29 @@
 # Numdiff
 find_program(NUMDIFF_EXECUTABLE
     NAMES numdiff
-    HINTS ${NUMDIFF_DIR}
-    PATH_SUFFIXES bin
-    )
+)
 if(NUMDIFF_EXECUTABLE MATCHES "-NOTFOUND")
     MESSAGE(STATUS
         "Could not find numdiff; using slower perl script instead (Tests will take longer).")
     set(CMP_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/compare_output.pl"
         CACHE FILEPATH "Script to compare tonto outputs")
+else()
+    set(CMP_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/ndcmp"
+       CACHE FILEPATH "Script to compare tonto outputs")
 endif()
 
 set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.pl"
     CACHE FILEPATH "Script to perform tests in a directory")
 
-if(NOT ${CMP_SCRIPT})
-   set(CMP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/ndcmp"
-       CACHE FILEPATH "Script to compare tonto outputs")
-endif()
 
-set(TONTO_EXE "${CMAKE_BINARY_DIR}/run_test"
+set(TONTO_EXE "${PROJECT_BINARY_DIR}/run_test"
     CACHE FILEPATH "Test executable")
 
 set(BASIS_SETS "${PROJECT_SOURCE_DIR}/basis_sets"
     CACHE PATH "Basis sets directory")
 
 if(MPI)
-    set(TEST_EXE "${CMAKE_BINARY_DIR}/tontompi")
+    set(TEST_EXE "${PROJECT_BINARY_DIR}/tontompi")
     configure_file(
         ${PROJECT_SOURCE_DIR}/scripts/tontompi.in
         ${TEST_EXE}
@@ -68,7 +65,7 @@ function(add_all_tests)
     foreach(D ${DIRS})
         get_filename_component(N "${D}" NAME)
         add_test(NAME \"${N}\"
-            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
             COMMAND ${PERL_EXECUTABLE} ${TEST_SCRIPT}
             -testdir "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
             -program "${TEST_EXE}"
