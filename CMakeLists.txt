@@ -7,8 +7,8 @@ set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
 # Tonto version info and build date
 set(VERSION_MAJOR 3)
-set(VERSION_MINOR 6)
-set(VERSION_MINOR_MINOR 1)
+set(VERSION_MINOR 7)
+set(VERSION_MINOR_MINOR 0)
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
 
 # Tonto speicifics
