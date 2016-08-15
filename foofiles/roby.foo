@@ -177,7 +177,9 @@ contains
       .pi_on_2_cutoff         = ROBY_PI_ON_2_CUTOFF *RADIAN_PER_DEGREE
 
       .occupied_ANO_cutoff    = ROBY_OCCUPIED_ANO_CUTOFF
+
       .output_theta_info      = ROBY_OUTPUT_THETA_INFO
+      .use_NAOs               = FALSE
       .analyze_all_atom_pairs = ROBY_ANALYZE_ALL_ATOM_PAIRS
       .bond_range_factor      = ROBY_BOND_RANGE_FACTOR
 
@@ -230,8 +232,10 @@ contains
          case ("covalent_cutoff=       "); .read_covalent_cutoff
          case ("ionic_cutoff=          "); .read_ionic_cutoff
          case ("kind=                  "); .read_kind
+         case ("occupied_ano_cutoff=   "); .read_occupied_ano_cutoff
          case ("output_theta_info=     "); .read_output_theta_info
          case ("pi_on_2_cutoff=        "); .read_pi_on_2_cutoff
+         case ("use_naos=              "); .read_use_naos
          case ("zero_cutoff=           "); .read_zero_cutoff
          case default;           UNKNOWN(word)
       end
@@ -293,6 +297,14 @@ contains
 
    end
 
+   read_occupied_ANO_cutoff
+   ! Read the cutoff to decide occupied ANOs or NAOs
+      self :: INOUT
+
+      stdin.read_quantity(.occupied_ANO_cutoff)
+
+   end
+
    read_zero_cutoff
    ! Angles (in radians) *less* than this one inputted are regareded as zero
       stdin.read_quantity(.zero_cutoff)
@@ -315,6 +327,15 @@ contains
       if (.analyze_all_atom_pairs) then
          .bond_range_factor = FIVE*BOHR_PER_ANGSTROM
       end
+
+   end
+
+   read_use_NAOs
+   ! Read whether to use NAOs as atomic projectors instead
+   ! of ANOs as in the original 2008 paper.
+      self :: INOUT
+
+      stdin.read(.use_NAOs)
 
    end
 
@@ -421,6 +442,25 @@ contains
    ENSURE(.atom_group.created,"no atom groups!")
 
       res = .atom_group.dim
+
+   end
+
+   no_of_occupied_NAOs(group,tol) result (res) ::: private, PURE
+   ! Return the number of occupied NAOs for the group of atoms whose
+   ! indices are in "group"
+      self :: IN
+      group :: VEC{INT}, IN
+      tol :: REAL, optional, IN
+      res :: INT
+
+   ENSURE(.atom.created,"no atom information")
+
+      eps :: REAL
+
+      eps = .occupied_ANO_cutoff
+      if (present(tol)) eps = tol
+
+      res = .atom(group).no_of_occupied_NAOs(tol=eps)
 
    end
 
@@ -575,10 +615,11 @@ contains
    end
 
    population(group,ANO) result (res) ::: private
-   ! Return the total Roby population for the group of atoms whose indices are
-   ! given in "group", i.e Tr (P_{group;ANO} rho), where "rho" is the density
-   ! matrix for a molecule. If present, the columns of the "ANO" matrix are used
-   ! to define the Roby projector instead of the atomic natural orbitals.
+   ! Return the total Roby population for the group of atoms whose
+   ! indices are given in "group", i.e Tr (P_{group;ANO} rho), where
+   ! "rho" is the density matrix for a molecule. If present, the
+   ! columns of the "ANO" matrix are used to define the Roby projector
+   ! instead of the atomic natural orbitals.
       self :: INOUT
       group :: VEC{INT}, IN
       ANO :: MAT{REAL}, optional, IN
@@ -1129,6 +1170,19 @@ contains
 
    end
 
+   group_nuclear_charges result (res) ::: pure
+   ! Sum of the nuclear charges in each group.
+      self :: IN
+      res :: VEC{REAL}(.atom_group.dim)
+
+      g :: INT
+
+      do g = 1,.atom_group.dim
+         res(g) = .atom(.atom_group(g).element).sum_of_nuclear_charges
+      end
+
+   end
+
 !   charge_analysis ::: leaky, private
 !   ! Do a Roby-Cruickshank-Avramedes and Roby-Gould charge analysis.
 !   ! NOTE: This can only be called after a bond analysis because the atom
@@ -1263,6 +1317,7 @@ contains
    ENSURE(P.is_square,"P is incorrectly dimensioned")
 
       W,X,Y :: MAT{REAL}*
+      occupation :: VEC{REAL}*
       n_occ,n_bf :: INT
 
       n_bf = .n_bf(group)
@@ -1270,14 +1325,24 @@ contains
 
       ! W = columns of ANO's
       if (present(ANO)) then
+
          ENSURE(ANO.dim1==.n_bf(group),"wrong dimension, ANO")
          n_occ = ANO.dim2
          W.create(n_bf,n_occ)
          W = ANO
+
+      else if (.use_NAOs) then
+      
+         n_occ = .no_of_occupied_NAOs(group)
+         W.create(n_bf,n_occ)
+         .make_NAO_matrix(W,group)
+
       else
+
          n_occ = .no_of_occupied_ANOs(group)
          W.create(n_bf,n_occ)
          .make_ANO_matrix(W,group)
+
       end
 
       ! Y = overlap matrix for group(:) basis
@@ -1341,87 +1406,135 @@ contains
 
    end
 
-   make_NAO_matrix(NAO,occupation,group,tol) ::: leaky
-   ! Make the natural atomic orbitals "NAO" and their "occupation"
-   ! numbers for a "group" of atoms, from the density matrix ".rho"
-   ! "tol" is used to decide when an NAO is occupied or not.
+   make_NAO_matrix(NAO,group,tol) ::: private, PURE
+   ! Make the "NAO" matrix, comprised of columns of the occupied
+   ! natural atomic orbitals, for each atom whose index appears in
+   ! "group".  If "tol" is present, use this cutoff to determine what
+   ! is an occupied natural orbital.
       self :: IN
-      NAO :: MAT{REAL}*
-      occupation :: VEC{REAL}*
+      NAO :: MAT{REAL}, OUT
       group :: VEC{INT}, IN
       tol :: REAL, optional, IN
 
-   ENSURE(.overlap_matrix.created,"no overlap matrix")
-   ENSURE(.rho.created,"no rho")
-   ENSURE(.rho.restricted.created,"no rho restricted")
+   ENSURE(NAO.dim1==.n_bf(group),"wrong shape, NAO")
+   ENSURE(NAO.dim2==.no_of_occupied_NAOs(group,tol),"wrong shape, NAO")
 
-      S,V,X,P :: MAT{REAL}*
-      n_bf,n_occ :: INT
       eps :: REAL
+      a,aa,b,n,n_bf,n_occ :: INT
 
-      ! No. of basis functions in the group
-      n_bf = .n_bf(group)
-
-      ! Create the (full) NAO and occupation matrix
-      NAO.create(n_bf,n_bf)
-      occupation.create(n_bf)
-
-      ! S = overlap matrix for group(:) basis
-      S.create(n_bf,n_bf)                   
-      .make_overlap_matrix(S,group,group)
-
-      ! Get V = S^(1/2)
-      V.create(n_bf,n_bf)
-      V.to_sqrt_of(S)
-
-      ! Diagonal part of P matrix
-      P.create(n_bf,n_bf)
-      .AO_subspace_set(P,.rho.restricted,B_row_atom=group,B_col_atom=group)
-
-      ! Transform P -> S^(1/2) P S^(1/2)
-      X.create(n_bf,n_bf)
-      P.change_basis_to(X,V)
-
-      ! Diagonalize
-      X.solve_symmetric_eigenproblem(occupation,P)
-
-      ! Get V = S^(-1/2)
-      V.to_inverse_sqrt_of(S)
-
-      ! Back transform
-      NAO.to_product_of(V,P)
-
-      ! Clean
-      X.destroy
-      P.destroy
-      V.destroy
-      S.destroy
-
-      ! Reverse order
-      occupation = occupation(n_bf:1:-1)
-      NAO        =      NAO(:,n_bf:1:-1)
-
-      ! Cutoff
+      ! Same cutoff as for ANO's
       eps = .occupied_ANO_cutoff
       if (present(tol)) eps = tol
 
-      ! Count
-      n_occ = count(occupation>=eps)
+      NAO = ZERO
 
-      ! Shrink
-      occupation.shrink(n_occ)
-      NAO.shrink_columns(n_occ)
+      b = 0; n = 0
 
-      ! Debug
-      if (TRUE) then
-         stdout.flush
-         stdout.text("occupation:")
-         stdout.put(occupation)
-         stdout.text("NAO:")
-         stdout.put(NAO)
+      do a = 1,group.dim
+
+         aa    = group(a)
+         n_bf  = .atom(aa).n_bf
+         n_occ = .atom(aa).no_of_occupied_NAOs(eps)
+
+         NAO(b+1:b+n_bf,n+1:n+n_occ) = .atom(aa).NAOs(:,1:n_occ)
+
+         b = b + n_bf
+         n = n + n_occ
+
       end
 
    end
+
+!   make_NAO_matrix(NAO,occupation,group,tol) ::: leaky
+!   ! Make the natural atomic orbitals "NAO" and their "occupation"
+!   ! numbers for a "group" of atoms, from the density matrix ".rho"
+!   ! "tol" is used to decide when an NAO is occupied or not.
+!      self :: IN
+!      NAO :: MAT{REAL}*
+!      occupation :: VEC{REAL}*
+!      group :: VEC{INT}, IN
+!      tol :: REAL, optional, IN
+!
+!   ENSURE(.overlap_matrix.created,"no overlap matrix")
+!   ENSURE(.rho.created,"no rho")
+!   ENSURE(.rho.restricted.created,"no rho restricted")
+!
+!      S,V,X,P :: MAT{REAL}*
+!      n_bf,n_occ :: INT
+!      eps :: REAL
+!
+!      ! No. of basis functions in the group
+!      n_bf = .n_bf(group)
+!
+!      ! Create the (full) NAO and occupation matrix
+!      NAO.create(n_bf,n_bf)
+!      occupation.create(n_bf)
+!
+!      ! S = overlap matrix for group(:) basis
+!      S.create(n_bf,n_bf)                   
+!      .make_overlap_matrix(S,group,group)
+!
+!      ! Get V = S^(1/2)
+!      V.create(n_bf,n_bf)
+!      V.to_sqrt_of(S)
+!
+!      ! Diagonal part of P matrix
+!      P.create(n_bf,n_bf)
+!      .AO_subspace_set(P,.rho.restricted,B_row_atom=group,B_col_atom=group)
+!
+!      ! Transform P -> S^(1/2) P S^(1/2)
+!      X.create(n_bf,n_bf)
+!      P.change_basis_to(X,V)
+!
+!      ! Diagonalize
+!      X.solve_symmetric_eigenproblem(occupation,P)
+!
+!      ! Get V = S^(-1/2)
+!      V.to_inverse_sqrt_of(S)
+!
+!      ! Back transform
+!      NAO.to_product_of(V,P)
+!
+!      ! Clean
+!      X.destroy
+!      P.destroy
+!      V.destroy
+!      S.destroy
+!
+!      ! Debug
+!      if (TRUE) then
+!         stdout.flush
+!         stdout.text("occupation:")
+!         stdout.put(occupation)
+!         stdout.text("NAO:")
+!         stdout.put(NAO)
+!      end
+!
+!      ! Reverse order
+!      occupation = occupation(n_bf:1:-1)
+!      NAO        =      NAO(:,n_bf:1:-1)
+!
+!      ! Cutoff
+!      eps = .occupied_ANO_cutoff
+!      if (present(tol)) eps = tol
+!
+!      ! Count
+!      n_occ = count(occupation>=eps)
+!
+!      ! Shrink
+!      occupation.shrink(n_occ)
+!      NAO.shrink_columns(n_occ)
+!
+!      ! Debug
+!      if (TRUE) then
+!         stdout.flush
+!         stdout.text("occupation:")
+!         stdout.put(occupation)
+!         stdout.text("NAO:")
+!         stdout.put(NAO)
+!      end
+!
+!   end
 
    make_shared_operator(R) ::: private
    ! constructs the roby_shared_operator R_AB = P_A + P_B - P_AB
@@ -1915,6 +2028,7 @@ contains
 
       table :: VEC{TABLE_COLUMN}*
       symbols :: VEC{STR}*
+      charge :: VEC{REAL}*
       labels :: VEC{INT}*
       f :: INT
 
@@ -1926,7 +2040,7 @@ contains
       stdout.flush
 
       ! Create table
-      table.create(2)
+      table.create(3)
 
       ! Set the table headings
       table(1).set_heading("Atom")
@@ -1947,12 +2061,18 @@ contains
       table(2).set_subhead("electrons")
       table(2).set_values(.n1)
 
+      charge.create(.n_group)
+      charge = -.n1 + .group_nuclear_charges
+      table(3).set_heading(" Charge")
+      table(3).set_values(charge)
+
       ! Put table
       table.put(label_rows=FALSE)
 
       ! Clean
-      symbols.destroy
       table.clear_columns
+      charge.destroy
+      symbols.destroy
 
    end
 

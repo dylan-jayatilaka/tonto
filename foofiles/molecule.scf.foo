@@ -5667,6 +5667,94 @@ contains
 
    end
 
+   make_NAOs ::: leaky
+   ! Get the restricted natural atomic orbitals (NAO) data
+
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.atom_info_made,"no atom info")
+   ENSURE(.basis.created,"no basis set")
+   ENSURE(.basis_info_made,"no basis_set info")
+   ENSURE(.density_matrix.created,"no basis_set info")
+
+      a :: INT
+
+      .BASE:make_ao_density_matrix
+      
+      if (.BASE:has_all_NAOs_made) return
+
+      do a = 1,.n_atom
+         .:make_NAOs_for_atom(a)
+      end
+
+   end
+
+   make_NAOs_for_atom(a) ::: leaky, private
+   ! Make the spherically averaged restricted atomic natural orbitals
+   ! (ANO) and density matrix data and interpolator for atom "a".
+      self :: INOUT
+      a :: INT, IN
+
+   ENSURE(.atom(a).NAOs.destroyed,           "NAO's exist! Atom "//trim(a.to_str))
+   ENSURE(.atom(a).NAO_occupations.destroyed,"NAO occs exist! Atom "//trim(a.to_str))
+   ENSURE(.overlap_matrix.created,"no overlap matrix")
+   ENSURE(.density_matrix.created,"no density matrix")
+   ENSURE(.density_matrix.restricted.created,"no restricted density matrix")
+
+      NAO, S,V,X,P :: MAT{REAL}*
+      occupation :: VEC{REAL}*
+      group :: VEC{INT}(1)
+      n_bf,n_occ :: INT
+      eps :: REAL
+
+      ! No. of basis functions in the group
+      n_bf  = .atom(a).n_bf
+      group = [ a ]
+
+      ! Create the (full) NAO and occupation matrix
+      NAO.create(n_bf,n_bf)
+      occupation.create(n_bf)
+
+      ! S = overlap matrix for group(:) basis
+      S.create(n_bf,n_bf)
+      .BASE:AO_subspace_set(S,.overlap_matrix,group,group)
+
+      ! Get V = S^(1/2)
+      V.create(n_bf,n_bf)
+      V.to_sqrt_of(S)
+
+      ! Diagonal part of P matrix
+      P.create(n_bf,n_bf)
+      .BASE:AO_subspace_set(P,.density_matrix.restricted,group,group)
+
+      ! Transform P -> S^(1/2) P S^(1/2)
+      X.create(n_bf,n_bf)
+      P.change_basis_to(X,V)
+
+      ! Diagonalize
+      X.solve_symmetric_eigenproblem(occupation,P)
+
+      ! Get V = S^(-1/2)
+      V.to_inverse_sqrt_of(S)
+
+      ! Back transform
+      NAO.to_product_of(V,P)
+
+      ! Clean
+      X.destroy
+      P.destroy
+      V.destroy
+      S.destroy
+
+      ! Reverse order
+      occupation = occupation(n_bf:1:-1)
+      NAO        =      NAO(:,n_bf:1:-1)
+
+      ! Assign
+      .atom(a).NAOs            => NAO
+      .atom(a).NAO_occupations => occupation
+
+   end
+
 !  ==========================
 !  DIIS/Orbital extrapolation
 !  ==========================
