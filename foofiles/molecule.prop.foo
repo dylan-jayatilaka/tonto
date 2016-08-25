@@ -2140,6 +2140,283 @@ contains
 
    end
 
+   put_mulliken_sf_populations 
+   ! sets the mulliken population matrix and the outputs it.
+      density,k_pts :: MAT{REAL}*
+      mulliken_matrix :: MAT{CPX}*
+      diagonals :: VEC{CPX}*
+      S2 :: MAT{CPX}*
+      mulliken_matrix2 :: MAT{CPX}*
+      diagonals2 :: VEC{CPX}*
+      MM :: MAT{REAL}*
+      GG,ft_hkl,buco :: MAT{CPX}*
+      n,k_max,n_ref :: INT
+      sf :: CPX
+      sfn :: MAT{CPX}*
+      Fc :: MAT{CPX}*
+
+      .crystal.assign_xray
+
+      Fc.create(.crystal.n_refl,3); Fc=(ZERO,ZERO)
+      sfn.create(.crystal.n_unique_SF_k_pts,3); sfn=(ZERO,ZERO)
+      k_pts.create(.crystal.n_unique_SF_k_pts,3); k_pts=ZERO
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      .BASE:make_ao_density_matrix
+
+      ! Create space
+      mulliken_matrix.create(.n_bf, .n_bf)
+      diagonals.create(.n_bf)
+
+      MM.create(.n_prim,.n_bf)
+      .BASE:make_normalised_contraction_mx(MM)
+
+      ft_hkl.create(.n_bf,.n_bf)
+      GG.create(.n_prim,.n_prim)
+      buco.create(.n_bf,.n_prim)
+      
+      k_max = size(k_pts,1)
+      n_ref = size(Fc,1)
+      sfn=ZERO
+
+      parallel do n = 1,k_max
+
+         ! here it comes babes.  point for point the density will be on
+         ! and on calculated I am sincerely sorry, but the code
+         ! comparing to its non-relativistic counterpart is really not
+         ! effective :(
+         .XTAL:make_primitive_ft_matrix(GG,k_pts(n,1),k_pts(n,2),k_pts(n,3))
+         buco.to_product_of(MM,GG,transpose_a=TRUE)
+         ft_hkl.to_product_of(buco,MM)
+         .XTAL:make_part_and_therm_smear(ft_hkl,k_pts(n,:))
+
+      ! general complex case (LBxxx)
+      if (.density_matrix.created("general_complex")) then
+
+         ! these objects are twice as large as usually
+         S2.create(2*.n_bf,2*.n_bf)
+         mulliken_matrix2.create(2*.n_bf,2*.n_bf)
+         diagonals2.create(2*.n_bf)
+
+         mulliken_matrix2 = (ZERO,ZERO)
+         diagonals2 = (ZERO,ZERO)
+         S2 = (ZERO,ZERO)
+         S2.alpha_alpha_set_to(ft_hkl)
+         S2.beta_beta_set_to(ft_hkl)
+
+         stdout.flush
+         stdout.text(" These are the GCHF Mulliken populations! ")
+
+         ! fill the general_complex mulliken matrix and diagonals
+         mulliken_matrix2.to_product_of(.density_matrix.general_complex,S2)
+         mulliken_matrix2.put_diagonal_to(diagonals2)
+
+         ! Make use of the restricted mulliken matrix
+         diagonals = REALIFY(diagonals2(1:.n_bf)) + REALIFY(diagonals2(.n_bf+1:2*.n_bf))
+         mulliken_matrix = REALIFY(mulliken_matrix2(1:.n_bf,1:.n_bf)) +  &
+                           REALIFY(mulliken_matrix2(.n_bf+1:2*.n_bf,.n_bf+1:2*.n_bf))
+
+         ! Put the atomic populations
+         .:put_mulliken_sf_populations(sfn(n,:),mulliken_matrix, diagonals)
+
+         mulliken_matrix2.destroy
+         diagonals2.destroy
+         S2.destroy
+
+         density.destroy
+
+      ! Unrestricted case
+      else if (.density_matrix.created("unrestricted")) then
+
+         ! Temporary
+         density.create(.n_bf,.n_bf)
+
+         ! Restricted density matrix
+         density = .density_matrix.alpha + .density_matrix.beta
+
+         ! Normal mulliken population
+         mulliken_matrix.to_product_of(density,ft_hkl)
+         mulliken_matrix.put_diagonal_to(diagonals)
+         
+         ! get the raw sf
+         .XTAL:make_ft_test_1(sf,density,k_pts(n,:))
+         stdout.flush
+         stdout.show("n",n)
+         stdout.show("RAW sf:",sf)
+         stdout.flush
+         ! Put the populations
+         .:put_mulliken_sf_populations(sfn(n,:),mulliken_matrix, diagonals)
+
+         ! Clean up
+         density.destroy
+
+      ! Restricted case
+      else if (.density_matrix.created("restricted")) then
+         
+         ! Temporary
+         density.create(.n_bf,.n_bf)
+
+         ! Make the restricted mulliken matrix
+         mulliken_matrix.to_product_of(.density_matrix.restricted,ft_hkl)
+         mulliken_matrix.put_diagonal_to(diagonals)
+         
+         density=.density_matrix.restricted
+         ! get the raw sf
+         .XTAL:make_ft_test_1(sf,density,k_pts(n,:))
+         stdout.flush
+         stdout.show("n",n)
+         stdout.show("RAW sf:",sf)
+         stdout.flush
+         ! Put the atomic populations
+         .:put_mulliken_sf_populations(sfn(n,:),mulliken_matrix, diagonals)
+
+         ! Clean up
+         density.destroy
+
+      else
+
+        DIE("Mulliken populations not yet implemented for this case")
+
+      end if
+
+     end
+
+     if (DO_IN_PARALLEL) then
+        PARALLEL_SUM(sfn)
+     end if
+
+      ! lets build the sf out of the unique data for atom 1 and all the rest
+      do n=1,3
+         .crystal.spacegroup.sum_unique_sf(Fc(:,n),sfn(:,n),.crystal.data.reflections)
+      end do
+
+      ! output head
+      stdout.flush
+      stdout.text("Mulliken Populations of structure factors: ")
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=8)
+      stdout.put("n", int_width = TRUE)
+      stdout.put("sf 1")
+      stdout.put(" ") ! dummy cpx
+      stdout.put("sf n-1")
+      stdout.put(" ") ! dummy cpx
+      stdout.put("sf total")
+      stdout.put(" ") ! dummy cpx
+      stdout.put("% 1")
+      stdout.put("% abs(n-1)")
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=8)
+
+      ! output
+      do n=1,n_ref
+         stdout.put(n)
+         stdout.put(Fc(n,1))
+         stdout.put(Fc(n,2))
+         stdout.put(Fc(n,1)+Fc(n,2))
+         stdout.put( abs((Fc(n,1)/(Fc(n,1)+Fc(n,2))))*100 )
+         stdout.put( abs((Fc(n,3)/(Fc(n,1)+Fc(n,2))))*100 )
+         stdout.flush
+      end do
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=8)
+
+      ! Clean up
+      mulliken_matrix.destroy
+      diagonals.destroy
+      ft_hkl.destroy
+      k_pts.destroy
+      MM.destroy
+      GG.destroy
+      buco.destroy
+      sfn.destroy
+      Fc.destroy
+
+   end
+
+   put_mulliken_sf_populations(sfn,mulliken_matrix, diagonals)
+   ! outputs the mulliken populations to the output file
+  ! ENSURE(NOT .use_spherical_basis,"not implemented")
+      sfn :: VEC{CPX}(3)
+      mulliken_matrix :: MAT{CPX}
+      diagonals :: VEC{CPX}
+
+      atom_pop :: VEC{CPX}*
+      pop :: CPX
+      o_count, a, b, c, n_comp :: INT
+
+  !    stdout.flush
+  !    stdout.text("Mulliken population analysis: ")
+  !    stdout.dash(int_fields=2,real_fields=1)
+  !    stdout.put("Atom", int_width = TRUE)
+  !    stdout.put("Type", int_width = TRUE)
+  !    stdout.put("Population")
+  !    stdout.flush
+  !    stdout.dash(int_fields=2,real_fields=1)
+
+      o_count = 1
+      atom_pop.create(.n_atom)
+      atom_pop = ZERO
+
+      do a = 1, .n_atom
+      do b = 1, .atom(a).basis.n_shell
+
+         if (.use_spherical_basis) then
+            n_comp = .atom(a).basis.shell(b).n_sph
+         else
+            n_comp = .atom(a).basis.shell(b).n_comp
+         end if
+
+         do c = 1, n_comp
+   !         stdout.put(.atom(a).label, int_width = TRUE)
+   !         stdout.put(.atom(a).basis.shell(b).l_chr, int_width = TRUE)
+            pop = diagonals(c + o_count - 1)
+   !         stdout.put(pop)
+            atom_pop(a) = atom_pop(a) + pop
+   !         stdout.flush
+         end
+
+         o_count = o_count + n_comp
+
+      end
+      end
+
+   !   stdout.dash(int_fields=2,real_fields=1)
+   !   stdout.flush
+
+      stdout.show("Trace of the Mulliken matrix =",mulliken_matrix.trace)
+      stdout.flush
+      stdout.text("Atomic Populations: ")
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=2)
+      stdout.put("Atom", int_width = TRUE)
+      stdout.put("Population")
+      stdout.put(" ") ! dummy cpx
+  !    stdout.put("Charge")
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=2)
+
+      do a = 1, .n_atom
+         stdout.put(.atom(a).label, int_width = TRUE)
+         stdout.put(atom_pop(a))
+   !      stdout.put(.atom(a).atomic_number-atom_pop(a))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1, real_fields=2)
+
+      sfn(1)=atom_pop(1)
+      do a = 2, .n_atom
+         sfn(2)=sfn(2)+atom_pop(a)
+         sfn(3)=sfn(3)+abs(atom_pop(a))
+      end
+
+      atom_pop.destroy
+      stdout.flush
+
+    ! stdout.text("Mulliken matrix:")
+    ! stdout.put(mulliken_matrix)
+
+   end
+
 !  ====================
 !  Hirshfeld properties
 !  ====================
