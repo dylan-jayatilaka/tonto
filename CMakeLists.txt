@@ -383,6 +383,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_molecule.foo
     ${RUNFILE_DIR}/run_gaussian_data.foo
     ${RUNFILE_DIR}/run_har.foo
+    ${RUNFILE_DIR}/run_himz.foo
     ${RUNFILE_DIR}/run_buffer.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
@@ -426,6 +427,7 @@ add_library(tonto
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
 add_executable(run_gaussian_data ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
 add_executable(run_har           ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
+add_executable(run_himz          ${CMAKE_CURRENT_BINARY_DIR}/run_himz.F90)
 add_executable(run_buffer        ${CMAKE_CURRENT_BINARY_DIR}/run_buffer.F90)
 add_executable(run_real          ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_vec_str       ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
@@ -436,6 +438,7 @@ add_executable(run_test          ${CMAKE_CURRENT_BINARY_DIR}/run_test.F90)
 target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES})

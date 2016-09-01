@@ -1,0 +1,230 @@
+! Copyright (C) Dylan Jayatilaka, 2016
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+
+program run_HIMZ
+
+   implicit none
+
+   command_line :: COMMAND_LINE*
+   message, n_name,c_name :: STR
+   nfile,cfile :: TEXTFILE*
+   nbi,cbi :: MAT{REAL}*
+   delta_tbl,tau_n_tbl,tau_c_tbl :: MAT{REAL}*
+   delta,tau_c,tau_n, delta_pc,tau_c_pc,tau_n_pc :: VEC{REAL}*
+   indd,indn,indc :: VEC{INT}*
+   n,nn,nc,nd :: INT
+   mw_n,mw_c :: REAL
+
+   ! Macro to create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Set stdout & stderr to screen
+   stdout.create_stdout
+   stderr => stdout 
+
+   ! Open input files
+   stderr.create_stderr
+   stderr.open_for("write")
+   stdin.create_stdin
+   stdout.create_stdout
+
+   ! Initialize miscellaneous ...
+   GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
+
+   ! Banner
+   stdout.flush
+   stdout.text("==========================================")
+   stdout.text("Compare neutral and cation CC bond indices")
+   stdout.text("==========================================")
+   stdout.flush
+   stdout.text("This program compares two sets of CC bond indices,")
+   stdout.text("for the neutral and cation, for the purpose of")
+   stdout.text("predicting the highest m/z peak in the mass spectrum.")
+   stdout.flush
+   stdout.text("Usage:")
+   stdout.flush
+   stdout.text("run_himz -n <neutral-cc-table> -c <cation-cc-table>")
+   stdout.flush
+   stdout.text("The format of the 'cc-table' files is:")
+   stdout.flush
+   stdout.text("<molecular-weight>")
+   stdout.text("<no-of-cc-bonds>")
+   stdout.text("<c-ind-1> <c-ind-2> <c-index> <i-index> <tau-index>")
+   stdout.text("  ...       ...        ...      ...         ...    ")
+
+   ! Get the command line
+   command_line.create
+   command_line.process_options
+
+   ! Sanity check
+   message = "argument list: read the info above!"
+   DIE_IF(    command_line.has_arguments,trim(message))
+   DIE_IF(NOT command_line.has_options  ,trim(message))
+   DIE_IF(NOT command_line.n_options==2 ,trim(message))
+   DIE_IF(command_line.option(1)/="n"   ,trim(message))
+   DIE_IF(command_line.option(2)/="c"   ,trim(message))
+
+   ! Get file names
+   n_name = command_line.option_value(1)
+   c_name = command_line.option_value(2)
+
+   ! Echo information
+   stdout.flush
+   stdout.show("neutral-cc-file name = ",n_name)
+   stdout.show(" cation-cc-file name = ",c_name)
+
+   ! Clean command line
+   command_line.destroy
+
+   ! Files
+   nfile.create
+   nfile.set_name(n_name)
+   nfile.open_for("read")
+   cfile.create
+   cfile.set_name(c_name)
+   cfile.open_for("read")
+
+   ! Read the numbers
+   nfile.read(mw_n)
+   nfile.read(nn)
+   cfile.read(mw_c)
+   cfile.read(nc)
+
+   ! Print them out
+   stdout.flush
+   stdout.show("nn                   = ",nn)
+   stdout.show("nc                   = ",nc)
+
+   ! Are files compatible?
+   DIE_IF(nn/=nc,"no. of bonds must be the same in each file!")
+
+   ! Read in the bond index data
+   n = nn
+   nbi.create(n,5)
+   cbi.create(n,5)
+
+   ! Read the bond indices
+   nfile.read(nbi)
+   cfile.read(cbi)
+
+   ! Print them out
+!  stdout.flush
+!  stdout.text("Neutral bond index data:")
+!  stdout.put(nbi)
+
+!  stdout.flush
+!  stdout.text("Cation bond index data:")
+!  stdout.put(cbi)
+
+   ! Define the simple tables
+   delta_tbl.create(n,4)
+   tau_n_tbl.create(n,4)
+   tau_c_tbl.create(n,4)
+
+   delta_tbl(:,1:2) = nbi(:,1:2)
+   tau_n_tbl(:,1:2) = nbi(:,1:2)
+   tau_c_tbl(:,1:2) = nbi(:,1:2)
+
+   ! Bond index things
+   indd.create(n)
+   indn.create(n)
+   indc.create(n)
+   delta.create(n)
+   tau_n.create(n)
+   tau_c.create(n)
+   delta_pc.create(n)
+   tau_n_pc.create(n)
+   tau_c_pc.create(n)
+
+   ! Calculate quantities
+   tau_n = nbi(:,5)
+   tau_c = cbi(:,5)
+   delta = tau_n - tau_c
+
+   ! Defiune new table
+
+
+   ! Sort delta
+   delta.quick_sort(indd,decreasing_order=TRUE)
+   delta     = delta(indd)
+   delta_pc  = -100*(delta - delta(1))/delta(1)
+   delta_tbl(:,3) = delta
+   delta_tbl(:,4) = delta_pc
+   delta_tbl(:,1:2) = delta_tbl(indd,1:2)
+
+   ! Sort tau_n
+   tau_n.quick_sort(indn)
+   tau_n     = tau_n(indn)
+   tau_n_pc  = 100*(tau_n - tau_n(1))/tau_n(1)
+   tau_n_tbl(:,3) = tau_n
+   tau_n_tbl(:,4) = tau_n_pc
+   tau_n_tbl(:,1:2) = tau_n_tbl(indn,1:2)
+
+   ! Sort tau_c
+   tau_c.quick_sort(indc)
+   tau_c    = tau_c(indc)
+   tau_c_pc = 100*(tau_c - tau_c(1))/tau_c(1)
+   tau_c_tbl(:,3) = tau_c
+   tau_c_tbl(:,4) = tau_c_pc
+   tau_c_tbl(:,1:2) = tau_c_tbl(indc,1:2)
+
+   ! Count how many bonds are within 5%
+   nd = count(delta_pc <= 5.0)
+   nn = count(tau_n_pc <= 5.0)
+   nc = count(tau_c_pc <= 5.0)
+
+   ! Print out sorted results
+   stdout.flush
+   stdout.text("Sorted Delta table: ")
+   stdout.put(delta_tbl)
+
+   stdout.flush
+   stdout.text("Sorted tau_n table: ")
+   stdout.put(tau_n_tbl)
+
+   stdout.flush
+   stdout.text("Sorted tau_c table: ")
+   stdout.put(tau_c_tbl)
+
+   ! Print out results
+   stdout.flush
+   stdout.show("No. of bonds with Delta < 5%  = ",nd)
+   stdout.show("No. of bonds with tau_n < 5%  = ",nn)
+   stdout.show("No. of bonds with tau_c < 5%  = ",nc)
+
+   ! Print out the pool of bonds
+   stdout.flush
+   stdout.text("Pool of Delta bonds: ")
+   stdout.put(nbi(indd(1:nd),1:2))
+
+   stdout.flush
+   stdout.text("Pool of tau_n bonds: ")
+   stdout.put(nbi(indn(1:nn),1:2))
+
+   stdout.flush
+   stdout.text("Pool of tau_c bonds: ")
+   stdout.put(nbi(indc(1:nc),1:2))
+
+   ! Clean-up files
+   TEXTFILE:destroy(stdout)
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end
