@@ -3953,6 +3953,19 @@ contains
 
    end
 
+   put_group_12_energies_v1_unrestricted ::: leaky
+   ! Calculate the classical and QM group 1-2 interaction energies.
+   ! NOTE: make sure the density matrices and MOs for each group exist!
+   ! e.g. by reading gaussian or by "make_group_density_matrix"
+      self :: INOUT
+
+      .:put_group_12_coulomb_energies_v1
+      .:put_group_12_QM_energies_unrestricted
+
+   end
+
+
+
    put_group_12_coulomb_energies_v1 ::: leaky
    ! Calculate the 1-2 coulomb energy.
    ! NOTE: make sure the density matrices for each group exist!
@@ -4055,6 +4068,288 @@ contains
 
    end
 
+   put_group_12_QM_energies_unrestricted ::: leaky
+   ! Calculate the group 1-2 interaction energies.
+   ! For simplicity the notations follows the reference:
+   ! P. Su & H. Li (2009) JCP 131 p. 014102
+   ! It has references to the original work and is explained fairly
+   ! clearly, except for their use of "X" for supermolecule (X=AB).
+   ! NOTE: make sure the MO's and density matrices for each group exist!
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+   ENSURE(.atom_group(1).mol.density_matrix.created ,"no mol 1 DM!")
+   ENSURE(.atom_group(2).mol.density_matrix.created ,"no mol 2 DM!")
+   ENSURE(.atom_group(1).mol.molecular_orbitals.created ,"no mol 1 MOs!")
+   ENSURE(.atom_group(2).mol.molecular_orbitals.created ,"no mol 2 MOs!")
+
+      ! Terms regardless of unrestricted/restricted
+      E_en,E_ke,E_1e,E_nn,E_ee,E_ex :: REAL
+      E_en_alpha,E_en_beta,E_ee_alpha,E_ee_beta,E_ex_alpha,E_Ex_beta :: REAL
+      E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
+      E_ABo_alpha, E_ABo_beta :: REAL
+      X,X_A,X_B :: MAT{REAL}*
+      C,C_A,C_B :: MAT{REAL}*
+      K,K_A,K_B :: MAT{REAL}*
+      mol_A,mol_B :: MOLECULE*
+      saved_MOs_A, saved_MOs_B :: OPMATRIX*
+
+      ! ======================
+      ! Get non orthogonal MOs
+      ! ======================
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      mol_A.INTS:make_overlap_matrix
+      mol_A.BASE:make_natural_orbitals
+      mol_B.INTS:make_overlap_matrix
+      mol_B.BASE:make_natural_orbitals
+
+      saved_MOs_A => mol_A.molecular_orbitals
+      saved_MOs_B => mol_B.molecular_orbitals
+
+      mol_A.molecular_orbitals => mol_A.natural_orbitals
+      mol_B.molecular_orbitals => mol_B.natural_orbitals
+
+      ! Changed to u in unrestricted case
+      .SCF:merge_group_MOs_u
+
+      ! Make SCF density matrices
+           .BASE:make_scf_density_matrix
+      mol_A.BASE:make_scf_density_matrix
+      mol_B.BASE:make_scf_density_matrix
+
+      ! Make integrals
+           .SCF:make_r_core_matrix
+      mol_A.SCF:make_r_core_matrix
+      mol_B.SCF:make_r_core_matrix
+
+      ! >> Nuclear attraction energy
+           .nuclear_attraction_matrix.uncompress
+      mol_A.nuclear_attraction_matrix.uncompress
+      mol_B.nuclear_attraction_matrix.uncompress
+
+      ! ALPHA CASE
+      X   =>      .nuclear_attraction_matrix.alpha
+      X_A => mol_A.nuclear_attraction_matrix.alpha
+      X_B => mol_B.nuclear_attraction_matrix.alpha
+
+      ! E_en_alpha
+      E_en_alpha  = .:group_12_int_energy(X,X_A,X_B)
+
+      X   =>      .nuclear_attraction_matrix.beta
+      X_A => mol_A.nuclear_attraction_matrix.beta
+      X_B => mol_B.nuclear_attraction_matrix.beta
+
+      E_en_beta = .:group_12_int_energy(X,X_A,X_B)
+
+           .nuclear_attraction_matrix.compress
+      mol_A.nuclear_attraction_matrix.compress
+      mol_B.nuclear_attraction_matrix.compress
+
+      ! Add alpha and beta energies
+      E_en = E_en_alpha + E_en_beta
+
+      ! Non-orthogonal & orthogonalized electronic energies
+      ! Nuclear-nuclear repulsion not needed.
+      E_ABn= ZERO
+      E_ABo_alpha = ZERO
+      E_ABo_beta = ZERO
+
+      ! One electron hamiltonian
+      ! Change to u in unrestricted case
+      X   =>      .core_matrix.restricted
+      X_A => mol_A.core_matrix.restricted
+      X_B => mol_B.core_matrix.restricted
+
+      ! Make the restricted density matrix 
+      .BASE:make_ao_density_matrix
+
+      ! >> One electron interaction energy <<
+      E_1e = .:group_12_int_energy(X,X_A,X_B,E_AB=E_ABn)
+      E_ke = E_1e - E_en
+
+      ! then destroy it so we are clearly 'unrestricted'
+      .density_matrix.restricted.destroy
+
+      ! Two-electron matrices
+      ! ALPHA
+        C.create(     .n_bf,     .n_bf)
+      C_A.create(mol_A.n_bf,mol_A.n_bf)
+      C_B.create(mol_B.n_bf,mol_B.n_bf)
+
+        K.create(     .n_bf,     .n_bf)
+      K_A.create(mol_A.n_bf,mol_A.n_bf)
+      K_B.create(mol_B.n_bf,mol_B.n_bf)
+
+      X   =>      .density_matrix.alpha
+      X_A => mol_A.density_matrix.alpha
+      X_B => mol_B.density_matrix.alpha
+
+           .FOCK:make_r_JK_engine(C  ,K  ,X  )
+      mol_A.FOCK:make_r_JK_engine(C_A,K_A,X_A)
+      mol_B.FOCK:make_r_JK_engine(C_B,K_B,X_B)
+
+      ! >> Two-electron interaction energies <<
+      E_ee_alpha = .:group_12_int_energy(C,C_A,C_B, HALF   ,E_ABn)
+      E_ex_alpha = .:group_12_int_energy(K,K_A,K_B,-QUARTER,E_ABn)
+
+      K_B.destroy
+      K_A.destroy
+        K.destroy
+
+      C_B.destroy
+      C_A.destroy
+        C.destroy
+
+      ! Two-electron matrices
+      ! BETA
+        C.create(     .n_bf,     .n_bf)
+      C_A.create(mol_A.n_bf,mol_A.n_bf)
+      C_B.create(mol_B.n_bf,mol_B.n_bf)
+
+        K.create(     .n_bf,     .n_bf)
+      K_A.create(mol_A.n_bf,mol_A.n_bf)
+      K_B.create(mol_B.n_bf,mol_B.n_bf)
+
+      X   =>      .density_matrix.beta
+      X_A => mol_A.density_matrix.beta
+      X_B => mol_B.density_matrix.beta
+
+           .FOCK:make_r_JK_engine(C  ,K  ,X  )
+      mol_A.FOCK:make_r_JK_engine(C_A,K_A,X_A)
+      mol_B.FOCK:make_r_JK_engine(C_B,K_B,X_B)
+
+      ! >> Two-electron interaction energies <<
+      E_ee_beta = .:group_12_int_energy(C,C_A,C_B, HALF   ,E_ABn)
+      E_ex_beta = .:group_12_int_energy(K,K_A,K_B,-QUARTER,E_ABn)
+
+      K_B.destroy
+      K_A.destroy
+        K.destroy
+
+      C_B.destroy
+      C_A.destroy
+        C.destroy
+
+
+      ! >> Nuclear-nuclear repulsion energy <<
+      E_nn = .:group_12_NR_int_energy
+      E_ee = E_ee_alpha + E_ee_beta
+      E_ex = E_ex_alpha + E_ex_beta
+      ! >> Total <<
+      E_tot = E_ke + E_nn + E_en + E_ee + E_ex
+      E_net =        E_nn + E_en + E_ee
+
+      ! ======================
+      ! Now symmorthonormalize
+      ! ======================
+
+      ! Change to u in unrestricted case
+      .SCF:symmorthonormalize_occupied_MOs_u
+      .BASE:make_scf_density_matrix
+
+      ! One electron hamiltonian
+      ! Change to u in unrestricted case
+      ! need one for alpha, one for beta
+      X    => .core_matrix.alpha
+      E_ABo_alpha = .BASE:expectation(X)
+
+      X    => .core_matrix.beta
+      E_ABo_beta= .BASE:expectation(X)
+
+      ! Two-electron integrals
+      C.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
+
+      X => .density_matrix.alpha
+      .FOCK:make_r_JK_engine(C,K,X)
+
+      E_ABo_alpha = E_ABo_alpha +    HALF*.BASE:expectation(C)
+      E_ABo_alpha = E_ABo_alpha - QUARTER*.BASE:expectation(K)
+
+      X => .density_matrix.beta
+      .FOCK:make_r_JK_engine(C,K,X)
+
+      E_ABo_beta = E_ABo_beta +    HALF*.BASE:expectation(C)
+      E_ABo_beta = E_ABo_beta - QUARTER*.BASE:expectation(K)
+
+      K.destroy
+      C.destroy
+
+      ! Get repulsion energy
+      E_ABo = E_ABo_alpha + E_ABo_beta
+      E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
+      E_XR  = E_ex + E_rep
+
+      stdout.flush
+      stdout.text("=======================================")
+      stdout.text("Quantum mechanical interaction energies")
+      stdout.text("=======================================")
+      stdout.flush
+      stdout.text(". E_pro-supermol(non-orthog) = E(Psi) where Psi = Psi_1 Psi_2")
+      stdout.text(". is the non-orthogonal pro-supermolecule product wavefunction")
+      stdout.flush
+      stdout.text(". E_pro-supermol(orthog) = E(Psi) where Psi = A(Psi_1 Psi_2)")
+      stdout.text("  is the antisymmetrized normalized pro-supermolecule wavefunction")
+      stdout.flush
+      stdout.text(". Delta E_X = E_X(Psi) - E_X(Psi_1) - E_X(Psi_2) where the")
+      stdout.text("  terms on the right are calculated as  expectation values of")
+      stdout.text("  of operators X which are the subterms of the Hamiltonian")
+      stdout.flush
+      stdout.text(". This dcomposition was first defined by Kitaura & Morokuma.")
+      stdout.text("  The code follows: P. Su and H. Li (2009) JCP 131 p. 014102.")
+      stdout.text("  See there for references, or Stone's 'Intermolecular Forces'.")
+      stdout.flush
+      stdout.text(". NOTE: E_pro-supermol(orthog) is the only QM valid number since")
+      stdout.text("  it arises from an antisymmetric wavefunction; however the non-")
+      stdout.text("  orthogonal promolecule does produce good electronic densities")
+      stdout.text("  for use in X-ray crystallography, so the sub terms which come")
+      stdout.text("  from it, produce here, may also be reasonable.")
+      stdout.flush
+      stdout.text(". NOTE: The energies here always apply to determinant orbital")
+      stdout.text("  wavefunctions NOT correlated density matrices. However for")
+      stdout.text("  correlated wavefunctions the highest occupied natural orbitals")
+      stdout.text("  (HONOs) are used instead of the molecular orbitals (MOs).")
+
+      stdout.flush
+      stdout.show("1. Delta E_kinetic-energy             = ",E_ke ,right=TRUE)
+      stdout.show("2. Delta E_nn-repulsion               = ",E_nn ,right=TRUE)
+      stdout.show("3. Delta E_en-attraction              = ",E_en ,right=TRUE)
+      stdout.show("4. Delta E_ee-repulsion               = ",E_ee,right=TRUE)
+      stdout.show("5. Delta E_ee-exchange                = ",E_ex,right=TRUE)
+      stdout.flush
+      stdout.show("6. E_pro-supermol(non-orthog)         = ",E_ABn,right=TRUE)
+      stdout.show("7. E_pro-supermol(orthog)             = ",E_ABo,right=TRUE)
+      stdout.flush
+      stdout.show("Delta E         (1+2+3+4+5)           = ",E_tot,right=TRUE)
+      stdout.show("Delta E_coulomb   (2+3+4)             = ",E_net,right=TRUE)
+      stdout.show("Delta E_repulsion        (-6+7)       = ",E_rep,right=TRUE)
+      stdout.show("Delta E_exch-repulsion  (5-6+7)       = ",E_XR ,right=TRUE)
+
+      ! In kJ/mol
+      E_net = E_net.to_units("kJ/mol")
+      E_ex  = E_ex.to_units("kJ/mol")
+      E_rep = E_rep.to_units("kJ/mol")
+      E_XR  = E_XR.to_units("kJ/mol")
+
+      stdout.flush
+      stdout.show("Delta E_coul (kJ/mol)                 = ",E_net,right=TRUE)
+      stdout.show("Delta E_ee-exchange (kJ/mol)          = ",E_ex,right=TRUE)
+      stdout.show("Delta E_repulsion (kJ/mol)            = ",E_rep,right=TRUE)
+      stdout.show("Delta E_exch-rep (kJ/mol)             = ",E_XR ,right=TRUE)
+
+      mol_A.natural_orbitals.destroy
+      mol_B.natural_orbitals.destroy
+      mol_A.molecular_orbitals => saved_MOs_A
+      mol_B.molecular_orbitals => saved_MOs_B
+
+   end
+
+
    put_group_12_QM_energies ::: leaky
    ! Calculate the group 1-2 interaction energies.
    ! For simplicity the notations follows the reference:
@@ -4098,6 +4393,7 @@ contains
       mol_A.molecular_orbitals => mol_A.natural_orbitals
       mol_B.molecular_orbitals => mol_B.natural_orbitals
 
+      ! Changed to u in unrestricted case
       .SCF:merge_group_MOs_r
 
       ! Make SCF density matrices
@@ -4131,6 +4427,7 @@ contains
       E_ABo = ZERO
 
       ! One electron hamiltonian
+      ! Change to u in unrestricted case
       X   =>      .core_matrix.restricted
       X_A => mol_A.core_matrix.restricted
       X_B => mol_B.core_matrix.restricted
@@ -4148,10 +4445,12 @@ contains
       K_A.create(mol_A.n_bf,mol_A.n_bf)
       K_B.create(mol_B.n_bf,mol_B.n_bf)
 
+      ! Change to u in unrestricted case
       X   =>      .density_matrix.restricted
       X_A => mol_A.density_matrix.restricted
       X_B => mol_B.density_matrix.restricted
 
+      ! CHANGE TO U for unrestricted
            .FOCK:make_r_JK_engine(C  ,K  ,X  )
       mol_A.FOCK:make_r_JK_engine(C_A,K_A,X_A)
       mol_B.FOCK:make_r_JK_engine(C_B,K_B,X_B)
@@ -4179,10 +4478,13 @@ contains
       ! Now symmorthonormalize
       ! ======================
 
+      ! Change to u in unrestricted case
       .SCF:symmorthonormalize_occupied_MOs_r
       .BASE:make_scf_density_matrix
 
       ! One electron hamiltonian
+      ! Change to u in unrestricted case
+      ! need one for alpha, one for beta
       X    => .core_matrix.restricted
       E_ABo = .BASE:expectation(X)
 
