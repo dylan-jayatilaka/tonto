@@ -4108,6 +4108,10 @@ contains
 
       mol :: MOLECULE*
       g :: INT
+      if(.scfdata.destroyed) then
+         .scfdata.create
+         .scfdata.set_defaults
+      end
 
       do g = 1,.atom_group.dim
 
@@ -4115,6 +4119,10 @@ contains
          mol.:create
          mol.:read_g09_FChk_file(.atom_group(g).fchk_file_name)
 
+         if (mol.scfdata.is_unrestricted) then
+             WARN("Setting scf_kind to uhf, as one of the groups is unrestricted")
+             .scfdata.set_scf_kind("uhf")
+         end
          ! Rotate and translate it
          mol.:rotate_by(.atom_group(g).rotation_matrix)
          mol.atom.translate_by(.atom_group(g).shift)
@@ -4257,6 +4265,9 @@ contains
 
       ! Finally: set atom info & basis info (leaky)
       ! NOTE: multiplicity not set - assume singlet
+      if(.scfdata.destroyed) then
+          WARN("No SCF data set, assuming singlet state, rhf")
+      endif
       .:set_charge(charge)
       .:set_atom_info
       .:resolve_basis_info
@@ -7248,16 +7259,16 @@ contains
       select case (orb_kind)
 
         case ("restricted")
-           ENSURE(X.dim1==.n_bf,"wrong size, X")
+           ENSURE(X.dim1==.n_bf,"(rhf) wrong size, X")
            res = .density_matrix.restricted.trace_product_with(X)
 
         case ("unrestricted")
-           ENSURE(X.dim1==.n_bf,"wrong size, X")
+           ENSURE(X.dim1==.n_bf,"(uhf) wrong size, X")
            res = .density_matrix.alpha.trace_product_with(X)
            res = .density_matrix.beta.trace_product_with(X) + res
 
         case ("general_complex")
-           ENSURE(X.dim1==2*.n_bf,"wrong size, X")
+           ENSURE(X.dim1==2*.n_bf,"(gchf) wrong size, X")
            W.create(2*.n_bf,2*.n_bf)
            W = RE(.density_matrix.general_complex)
            res = MAT{REAL}:trace_product_with(W,X)
@@ -7269,6 +7280,49 @@ contains
       end
 
    end
+
+   expectation(X) result (res)
+   ! Evaluates the expectation value of the matrix of the opmatrix X
+   ! with the current density matrix
+      self :: IN
+      X :: OPMATRIX, IN
+      res :: REAL
+
+      orb_kind, op_kind :: STR
+
+      res = ZERO
+      orb_kind = .density_matrix.spinorbital_kind
+      op_kind = X.spinorbital_kind
+
+      select case (orb_kind)
+        case ("restricted")
+           if(op_kind == "restricted") then
+              ENSURE(X.restricted.dim1==.n_bf,"(rhf) wrong size, X")
+              res = .density_matrix.restricted.trace_product_with(X.restricted)
+           else
+              ENSURE(X.alpha.dim1==.n_bf,"(rhf) wrong size, X")
+              res = .density_matrix.restricted.trace_product_with(X.alpha)
+              res = .density_matrix.restricted.trace_product_with(X.beta) + res
+           end
+
+        case ("unrestricted")
+           if(op_kind == "restricted") then
+              ENSURE(X.restricted.dim1==.density_matrix.alpha.dim1,"(uhf) wrong size, X")
+              res = .density_matrix.alpha.trace_product_with(X.restricted)
+              res = .density_matrix.beta.trace_product_with(X.restricted) + res
+           else
+              ENSURE(X.alpha.dim1==.density_matrix.alpha.dim1,"(uhf) wrong size, X")
+              res = .density_matrix.alpha.trace_product_with(X.alpha)
+              res = .density_matrix.beta.trace_product_with(X.beta) + res
+           end
+
+        case default
+           DIE("unimplemented kind, "//trim(orb_kind))
+
+      end
+
+   end
+
 
 !  =================
 !  Molecule rotation
