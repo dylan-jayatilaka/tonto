@@ -67,6 +67,9 @@ configure_file(
     ${MACROS}
 )
 
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/sbf EXCLUDE_FROM_ALL)
+include_directories(${SBF_MODULE_DIRECTORY})
+
 # Build directory
 include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
@@ -421,6 +424,7 @@ add_library(tonto
     ${FORTRAN_SRC}
     ${MACROS}
 )
+target_link_libraries(tonto sbf_fortran)
 
 # Standard executables
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
