@@ -71,19 +71,18 @@ configure_file(
 include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 # BLAS/LAPACK dependency
-# For windows install from here https://sourceforge.net/p/msys2/wiki/Contributing%20to%20MSYS2/
-#if(WIN32)
-#    message(STATUS "Not going to look for lapack on WINDOWS, using packaged source")
-#    add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
-#    set(LAPACK_LIBRARIES lapack)
-#else()
+if(NOT USE_PACKAGED_LAPACK)
     find_package(LAPACK)
     if(NOT ${LAPACK_FOUND})
         message(STATUS "No lapack found, using packaged libs")
         add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
         set(LAPACK_LIBRARIES lapack)
     endif()
-#endif()
+else()
+    message(STATUS "Using packaged libs")
+    add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
+    set(LAPACK_LIBRARIES lapack)
+endif()
 
 # Foo source files
 set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
