@@ -110,6 +110,7 @@ set(FOO_SRC
     ${FOO_DIR}/cpx.foo
     ${FOO_DIR}/crystal.foo
     ${FOO_DIR}/debug.foo
+    ${FOO_DIR}/datafile.foo
     ${FOO_DIR}/dft_functional.foo
     ${FOO_DIR}/diffraction_data.foo
     ${FOO_DIR}/diis.foo
@@ -270,6 +271,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/coppensorbital.F90
     ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diis.F90
