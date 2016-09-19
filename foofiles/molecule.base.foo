@@ -4088,6 +4088,7 @@ contains
       if (.atom_group.created) then
 
          if      (.atom_group.has_fchk_files)   then; .:make_groups_from_fchk
+         else if (.atom_group.has_sbf_files) then; .:make_groups_from_sbf
          else if (.atom_group.has_atom_indices) then; .:make_groups_from_self
          else;          DIE("Can't finalize atom groups")
          end
@@ -4143,6 +4144,44 @@ contains
       .:update_group_info
 
    end
+
+   make_groups_from_sbf ::: private, leaky
+   ! Make the atom groups by read in Gaussian Fchk files in they are defined for the groups
+   DIE_IF(.atom.created,"atoms already exists!")
+   DIE_IF(.atom_group.destroyed,"no atom groups")
+   DIE_IF(NOT .atom_group.has_sbf_files,"no fchk files")
+
+      mol :: MOLECULE*
+      g :: INT
+      do g = 1,.atom_group.dim
+         ! Create the mol & define it from FChk file
+         mol.:create
+         mol.:deserialize(.atom_group(g).sbf_file_name)
+         if (mol.scfdata.is_unrestricted) then
+            if(.scfdata.destroyed) then
+               .scfdata.create
+               .scfdata.set_defaults
+            end
+            .scfdata.set_scf_kind("uhf")
+         end
+         ! Rotate and translate it
+         mol.:rotate_by(.atom_group(g).rotation_matrix)
+         mol.atom.translate_by(.atom_group(g).shift)
+         mol.atom.set_group_to(g)
+
+         ! Add it to atom_group
+         .atom_group(g).mol => mol
+
+      end
+
+      ! Define .atom list
+      .:merge_atom_groups
+
+      ! Update group info from self
+      .:update_group_info
+
+   end
+
 
    make_groups_from_self ::: private, leaky
    ! Make the atom groups from "self"
@@ -9572,12 +9611,14 @@ contains
       .BASE:resolve_basis_info
 
       call datafile%sbf%get("scf_kind", tmp_str, err)
-      stdout.text("No SCF data in "//trim(filename)//", skipping reading density matrix etc.")
+
       ! TODO CHECK FOR ERRORS
       if (err == success) then
+         .scfdata.create
          .density_matrix.create(.n_bf)
          .molecular_orbitals.create(.n_bf)
          if(tmp_str == "unrestricted") then
+            .scfdata.set_scf_kind("uhf")
             .density_matrix.create("unrestricted")
             call datafile%sbf%get("density_matrix.alpha", tmp_mat, err)
             .density_matrix.alpha= tmp_mat
@@ -9593,6 +9634,7 @@ contains
             .molecular_orbitals.beta = tmp_mat
             deallocate(tmp_mat)
          else
+            .scfdata.set_scf_kind("rhf")
             call datafile%sbf%get("density_matrix", tmp_mat, err)
             .density_matrix.create("restricted")
             .density_matrix.restricted = tmp_mat
@@ -9602,6 +9644,8 @@ contains
             .molecular_orbitals.restricted = tmp_mat
             deallocate(tmp_mat)
          end if
+      else
+         stdout.text("No SCF data in "//trim(filename)//", skipping reading density matrix etc.")
       end if
       datafile.close
    end
