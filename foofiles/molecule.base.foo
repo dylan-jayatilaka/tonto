@@ -9475,7 +9475,12 @@ contains
       filename :: STR
       datafile :: DATAFILE
       labels :: STR(len=1), dimension(:,:), allocatable
-      i, label_length = 16 :: INT
+      i, label_length = 1 :: INT
+
+      ! how long is the longest label
+      do i = 1, .atom.size
+         if (len(trim(.atom(i).label)) > label_length) label_length = len(trim(.atom(i).label))
+      end do
 
       ! need to convert the labels to an MxN character array
       allocate(labels(.atom.size, label_length))
@@ -9489,8 +9494,22 @@ contains
       call datafile%sbf%add_dataset(sbf_Dataset("atomic_labels", labels))
       call datafile%sbf%add_dataset(sbf_Dataset("atomic_numbers", .atom(:).atomic_number))
       call datafile%sbf%add_dataset(sbf_Dataset("atomic_coordinates", .atom.coordinate_vector))
-      call datafile%sbf%add_dataset(sbf_Dataset("density_matrix", .density_matrix.restricted))
-      call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals", .molecular_orbitals.restricted))
+
+      ! SCF data
+      ! TODO should really check if it's created and DONE not just if it's unrestricted
+      if (.scfdata.created) then
+      if (.scfdata.is_unrestricted) then
+         call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("unrestricted")))
+         call datafile%sbf%add_dataset(sbf_Dataset("density_matrix.alpha", .density_matrix.alpha))
+         call datafile%sbf%add_dataset(sbf_Dataset("density_matrix.beta", .density_matrix.beta))
+         call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals.alpha", .molecular_orbitals.alpha))
+         call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals.beta", .molecular_orbitals.alpha))
+      else
+         call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("restricted")))
+         call datafile%sbf%add_dataset(sbf_Dataset("density_matrix", .density_matrix.restricted))
+         call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals", .molecular_orbitals.restricted))
+      end if
+      end if
       call datafile%sbf%serialize
       datafile.close
    end 
@@ -9499,8 +9518,11 @@ contains
       arr :: STR(len=1), dimension(:), IN
       res :: STR
       i :: INT
-      do i = 1, size(arr)
-         res(i:i) = arr(i)
+      do i = 1, len(res)
+         if (i <= size(arr)) then
+            res(i:i) = arr(i)
+         else; res(i:i) = " " ! pad with spaces
+         end if
       end do
    end
 
@@ -9515,6 +9537,7 @@ contains
       tmp_mat :: MAT{REAL}@
       labels :: VEC{STR}@
       i, err :: INT
+      success = 1 :: INT
 
       .:create
 
@@ -9530,9 +9553,10 @@ contains
 
       call datafile%sbf%get("atomic_labels", atomic_labels)
 
+      ! convert back
       allocate(labels(size(atomic_labels)))
-      do i = 1, size(atomic_labels)
-         labels(i) = char_array_to_str(atomic_labels(i,:))
+      do i = 1, size(atomic_labels, dim=1)
+         labels(i) = trim(char_array_to_str(atomic_labels(i,:)))
       end do
 
       call datafile%sbf%get("atomic_numbers", atomic_numbers)
@@ -9543,23 +9567,43 @@ contains
 
       .atom.set_atom_data_from_labels(labels)
 
-
       .BASE:set_atom_info
       .BASE:finalize_atom_groups
       .BASE:resolve_basis_info
 
-      .density_matrix.create(.n_bf)
-      call datafile%sbf%get("density_matrix", tmp_mat, err)
-      .density_matrix.create("restricted")
-      .density_matrix.restricted = tmp_mat
-      deallocate(tmp_mat)
-      .molecular_orbitals.create(.n_bf)
-      call datafile%sbf%get("molecular_orbitals", tmp_mat, err)
-      .molecular_orbitals.create("restricted")
-      .molecular_orbitals.restricted = tmp_mat
-
+      call datafile%sbf%get("scf_kind", tmp_str, err)
+      stdout.text("No SCF data in "//trim(filename)//", skipping reading density matrix etc.")
+      ! TODO CHECK FOR ERRORS
+      if (err == success) then
+         .density_matrix.create(.n_bf)
+         .molecular_orbitals.create(.n_bf)
+         if(tmp_str == "unrestricted") then
+            .density_matrix.create("unrestricted")
+            call datafile%sbf%get("density_matrix.alpha", tmp_mat, err)
+            .density_matrix.alpha= tmp_mat
+            deallocate(tmp_mat)
+            call datafile%sbf%get("density_matrix.beta", tmp_mat, err)
+            .density_matrix.beta = tmp_mat
+            deallocate(tmp_mat)
+            .molecular_orbitals.create("unrestricted")
+            call datafile%sbf%get("molecular_orbitals.alpha", tmp_mat, err)
+            .molecular_orbitals.alpha = tmp_mat
+            deallocate(tmp_mat)
+            call datafile%sbf%get("molecular_orbitals.beta", tmp_mat, err)
+            .molecular_orbitals.beta = tmp_mat
+            deallocate(tmp_mat)
+         else
+            call datafile%sbf%get("density_matrix", tmp_mat, err)
+            .density_matrix.create("restricted")
+            .density_matrix.restricted = tmp_mat
+            deallocate(tmp_mat)
+            call datafile%sbf%get("molecular_orbitals", tmp_mat, err)
+            .molecular_orbitals.create("restricted")
+            .molecular_orbitals.restricted = tmp_mat
+            deallocate(tmp_mat)
+         end if
+      end if
       datafile.close
-
    end
 
 end
