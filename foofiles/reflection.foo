@@ -97,7 +97,6 @@ contains
       .F_pred  = ZERO
       .F_sigma = ZERO
 
-      .I_exp_inputted = FALSE
       .I_exp   = ZERO
       .I_calc  = ZERO
       .I_pred  = ZERO
@@ -147,8 +146,7 @@ contains
 
    set_F_exp(val) ::: pure
    ! Set experimental structure factor magnitude F_exp to "val".
-   ! This can cope with -ve F_exp's when setting F_sigma
-   ! NOTE: always set before F_sigma
+   ! Do not do any sanity checks.
       self :: INOUT
       val :: REAL, IN
 
@@ -156,37 +154,37 @@ contains
 
    end
 
-   set_F_sigma(val)
-   ! Set the experimentally determined F standard devaiation to "val"
-   ! NOTE: always set after F_exp
+   set_F_sigma(val) ::: pure
+   ! Set the experimentally determined F_sigma to "val".
+   ! Do not do any sanity checks.
       self :: INOUT
       val :: REAL, IN
 
-   DIE_IF(val<=0,"F_sigma is not +ve, remove offending reflection")
+      .F_sigma = val
 
-      if (.F_exp>=ZERO) then
+   end
 
-         ! Set
-         .F_sigma = val
+   reset_F_exp_F_sigma ::: pure
+   ! Reset F_exp and F_sigma to sensible values.
+   ! NOTE: -ve F_sigma must have been previously pruned.
+      self :: INOUT
 
-      else
+      if (.F_exp<ZERO) then
 
-         ! Fix
-         .F_sigma = abs(.F_exp) + val
+         .F_sigma = .F_sigma + abs(.F_exp) 
          .F_exp   = ZERO
 
       end
 
-      .derive_I_sigma_from_F_sigma
+      .derive_Is_from_Fs
 
    end
 
-   derive_I_sigma_from_F_sigma ::: private
+   derive_Is_from_Fs ::: private, pure
    ! I_sigma is calculated by taking the *largest* difference between
    ! I_exp and the square of the F_exp range-mapped range.
    ! NOTE: F_exp must be positive at this stage, and F_sigma adjusted
-
-   ENSURE(.F_exp>=ZERO,"F_exp must be non-negative")
+      self :: INOUT
 
       s_p,s_m :: REAL
 
@@ -224,9 +222,8 @@ contains
    end
 
    set_I_exp(val) ::: pure
-   ! Set the experimental F2 value, called I_exp
-   ! This can cope with -ve I_exp's when setting I_sigma
-   ! NOTE: always set before I_sigma
+   ! Set the experimental F2 value, called I_exp.
+   ! Do no sanity checks.
       self :: INOUT
       val :: REAL, IN
 
@@ -234,40 +231,38 @@ contains
 
    end
 
-   set_I_sigma(val)
+   set_I_sigma(val) ::: pure
    ! Read in the experimental F2_sigma i.e. I_sigma
-   ! NOTE: always set after I_exp
+   ! Do not perform any sanity checks.
       self :: INOUT
       val :: REAL, IN
 
-   DIE_IF(val<=0,"I_sigma is not +ve, remove: "//trim(.hkl_str))
+      .I_sigma = val
 
-      if (.I_exp>=ZERO) then 
+   end
 
-         ! Set
-         .I_sigma = val
+   reset_I_exp_I_sigma ::: pure
+   ! Reset I_exp and I_sigma to sensible values.
+   ! NOTE: -ve I_sigma must have been previously pruned.
+      self :: INOUT
 
-      else
+      if (.I_exp<ZERO) then 
 
-         ! Fix
-         .I_sigma = abs(.I_exp) + val
+         .I_sigma = abs(.I_exp) + .I_sigma
          .I_exp   = ZERO
 
       end
 
-      ! Derive F_sigma
-      .derive_F_sigma_from_I_sigma
+      .derive_Fs_from_Is
 
    end
 
-   derive_F_sigma_from_I_sigma ::: private, PURE
+   derive_Fs_from_Is ::: private, pure
    ! The F_sigma value is calculated by solving the quadratic which
    ! gives the *largest* sigma value, which when added to .F_exp and
    ! squared gives .I_exp+.I_sigma.
    ! NOTE: I_exp must be positive at this stage, and I_sigma adjusted
       self :: INOUT
-
-   ENSURE(.I_exp>=ZERO,"I_exp must be non-negative")
 
       s_p,s_m :: REAL
 
@@ -315,8 +310,10 @@ contains
    end
 
    process_keyword(keyword) ::: leaky
-   ! Process command "keyword". Any required data needed by the "keyword" is
-   ! inputted from "stdin".
+   ! Process command "keyword". Any required data needed by the
+   ! "keyword" is inputted from "stdin".
+   ! NOTE: These need reflections need pruning & finalizing
+   !       to remove negative values
       keyword :: STR, IN
 
       word :: STR
@@ -325,21 +322,21 @@ contains
       word.to_lower_case
 
       select case (word)
-         case ("}            "); ! exit surrounding loop
-         case ("f_exp=          "); .read_F_exp
-         case ("f_pred=         "); .read_F_pred
-         case ("f_sigma=        "); .read_F_sigma
-         case ("group=          "); .read_group
-         case ("h=              "); .read_h
-         case ("indices=        "); .read_indices
-         case ("i_exp=          "); .read_I_exp
-         case ("i_pred=         "); .read_I_pred
-         case ("i_sigma=        "); .read_I_sigma
-         case ("junk=           "); .read_junk
-         case ("k=              "); .read_k
-         case ("l=              "); .read_l
-         case ("units=          "); .read_units
-         case default;         UNKNOWN(word)
+      case ("}            "); ! exit surrounding loop
+      case ("f_exp=          "); .read_F_exp
+      case ("f_pred=         "); .read_F_pred
+      case ("f_sigma=        "); .read_F_sigma
+      case ("group=          "); .read_group
+      case ("h=              "); .read_h
+      case ("indices=        "); .read_indices
+      case ("i_exp=          "); .read_I_exp
+      case ("i_pred=         "); .read_I_pred
+      case ("i_sigma=        "); .read_I_sigma
+      case ("junk=           "); .read_junk
+      case ("k=              "); .read_k
+      case ("l=              "); .read_l
+      case ("units=          "); .read_units
+      case default;         UNKNOWN(word)
       end
 
    end
@@ -670,7 +667,18 @@ contains
    ! Return the F_sigma ... for get_from
       self :: IN
       res :: REAL
+
       res = .F_sigma
+
+   end
+
+   I_sigma result (res) ::: elemental
+   ! Return the F_sigma ... for get_from
+      self :: IN
+      res :: REAL
+
+      res = .I_sigma
+
    end
 
 
@@ -799,8 +807,8 @@ contains
       res = .I_exp <= cutoff
    end
 
-   has_zero_F_sigma(cutoff) result (res) ::: elemental
-   ! Return TRUE if the reflection has a zero F_sigma w.r.t. "cutoff"
+   has_small_F_sigma(cutoff) result (res) ::: elemental
+   ! Return TRUE if the reflection has a small F_sigma w.r.t. "cutoff"
       self :: IN
       cutoff :: REAL, IN
       res :: BIN
@@ -809,7 +817,7 @@ contains
 
    end
 
-   has_zero_I_sigma(cutoff) result (res) ::: elemental
+   has_small_I_sigma(cutoff) result (res) ::: elemental
    ! Return TRUE if the reflection has a zero I_sigma w.r.t. "cutoff"
       self :: IN
       cutoff :: REAL, IN
