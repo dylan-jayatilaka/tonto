@@ -54,11 +54,11 @@ contains
 !  Copy
 !  ====
 
-   create_copy(vec) ::: get_from(VEC{OBJECT}), leaky
+   create_copy(vec) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Create a replica copy of "vec".
    end
 
-   copy(vec) ::: get_from(VEC{OBJECT})
+   copy(vec) ::: get_from(VEC{OBJECT}), PURE
    ! Copy "vec".
    end
 
@@ -66,19 +66,19 @@ contains
 !  Shrinking and expansion
 !  =======================
 
-   shrink(dim) ::: get_from(VEC{OBJECT}), leaky
+   shrink(dim) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Shrink self to dimension dim.  Contents are retained.
    end
 
-   expand(dim) ::: get_from(VEC{OBJECT}), leaky
+   expand(dim) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Expand the vector "self" to "dim". New slots are left undefined.
    end
 
-   append(v) ::: get_from(VEC{OBJECT}), leaky
+   append(v) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Expands self and appends the contents of vector "v".
    end
 
-   append(value) ::: get_from(VEC{OBJECT}), leaky
+   append(value) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Expands self by 1, and appends the single scalar "value" onto the end.
    end
 
@@ -291,36 +291,71 @@ contains
 
    end
 
-   set_theta_angles(reciprocal_matrix) ::: pure
-   ! This routine is called after the reflections are read in, in
-   ! order to set all the .theta values, which are used later all over
-   ! the place ...
-   ! NOTE: Make sjure the wavelength is correct!
+   set_d_and_theta(cell_matrix)
+   ! Called after the reflections are read in, in order to set all the
+   ! .d and .theta values, which are used later all over the place ...
+   ! NOTE: Make sure the wavelength is correct, else angles are wrong.
+   ! NOTE: see Dunitz "X-ray Analysis" (1995) p. 35
       self :: INOUT
-      reciprocal_matrix :: MAT{REAL}(3,3), IN
+      cell_matrix :: MAT{REAL}(3,3), IN
 
-      hkl :: VEC{INT}(3)
-      kx,ky,kz,sin_theta,lambda,fac :: REAL
-      n :: INT
-
-      fac = ONE/(FOUR*PI)
+      h :: VEC{INT}(3)
+      hv,a :: VEC{REAL}(3)
+      lambda,stl,d :: REAL
+      n,i :: INT
 
       lambda = REFLECTION:wavelength()
 
       do n = 1,.dim
 
-         hkl = .indices(n)
+         h = .indices(n)
+         i = h.index_of_first_nonzero_value
+         a = cell_matrix(:,i)
 
-         kx = dot_product(reciprocal_matrix(1,:),hkl(:))
-         ky = dot_product(reciprocal_matrix(2,:),hkl(:))
-         kz = dot_product(reciprocal_matrix(3,:),hkl(:))
+         hv = h
+         hv.normalise
 
-         sin_theta     = fac*sqrt(kx*kx+ky*ky+kz*kz)*lambda
-         self(n).theta = asin(sin_theta)
+         d   = dot_product(a,hv)/h(i)
+         stl = HALF/d
+
+         self(n).stl   = stl
+         self(n).theta = asin(stl*lambda)
+         self(n).d     = d
 
       end
 
    end
+
+!   set_theta_angles(reciprocal_matrix) ::: pure
+!   ! This routine is called after the reflections are read in, in
+!   ! order to set all the .theta values, which are used later all over
+!   ! the place ...
+!   ! NOTE: Make sjure the wavelength is correct!
+!      self :: INOUT
+!      reciprocal_matrix :: MAT{REAL}(3,3), IN
+!
+!      hkl :: VEC{INT}(3)
+!      kx,ky,kz,sin_theta,lambda,fac :: REAL
+!      n :: INT
+!
+!      fac = ONE/(FOUR*PI)
+!
+!      lambda = REFLECTION:wavelength()
+!
+!      do n = 1,.dim
+!
+!         hkl = .indices(n)
+!
+!         kx = dot_product(reciprocal_matrix(1,:),hkl(:))
+!         ky = dot_product(reciprocal_matrix(2,:),hkl(:))
+!         kz = dot_product(reciprocal_matrix(3,:),hkl(:))
+!
+!         sin_theta     = fac*sqrt(kx*kx+ky*ky+kz*kz)*lambda
+!         self(n).theta = asin(sin_theta)
+!
+!      end
+!
+!   end
 
 
 !  ================
@@ -565,21 +600,21 @@ contains
 
 
 
-   max_resolution result (res) ::: pure
-   ! The maximum resolution in au
+   d_max result (res) ::: pure
+   ! The maximum d spacing/resolution in au
       self :: IN
       res :: REAL
 
-      res = maxval(REFLECTION:resolution(self))
+      res = maxval(self(:).d)
 
    end
 
-   min_resolution result (res) ::: pure
-   ! The minimum resolution in au
+   d_min result (res) ::: pure
+   ! The minimum d spacing/resolution in au
       self :: IN
       res :: REAL
 
-      res = minval(REFLECTION:resolution(self))
+      res = minval(self(:).d)
 
    end
 
@@ -1142,68 +1177,51 @@ contains
 !  Set hkl's
 !  =========
 
-   set_hkl_up_to_stl_limit(limit,unit_cell) ::: leaky
-   ! Set a h,k,l half-sphere ... useful for structure factor
-   ! calculations without having to set reflections individually.
-   ! NOTE: ensure wavelength is already set !
+   set_hkl_up_to_stl_limit(limit,cell_matrix) ::: leaky, PURE
+   ! Set (h k l) reflections as a half-sphere up to an STL "limit".
+   ! NOTE: See Dunitz "Crystal Analysis" (1995) p. 35
       self :: PTR
       limit :: REAL, IN
-      unit_cell :: UNIT_CELL, IN
+      cell_matrix :: MAT{REAL}(3,3), IN
 
-      hkl,h_max :: VEC{INT}(3)
-      k :: VEC{REAL}(3)
-      rcm :: MAT{REAL}(3,3)
-      stl,fac :: REAL
+      h :: VEC{INT}(3)
+      hv,a :: VEC{REAL}(3)
+      d,stl :: REAL
       ref :: REFLECTION
-      i,h, h1,h2,h3 :: INT
+      i, h1,h2,h3, h_max,h1_max,h2_max,h3_max :: INT
 
-      ! Reciprocal cell matrix
-      rcm = TWO*PI*unit_cell.reciprocal_matrix
+      ! Get h_max
+      h1_max = ceiling(cell_matrix(1,1)*TWO*limit)
+      h2_max = ceiling(cell_matrix(2,2)*TWO*limit)
+      h3_max = ceiling(cell_matrix(3,3)*TWO*limit)
+      h_max  = max(h1_max,h2_max,h3_max)
 
-      fac = ONE/(FOUR*PI)
-
-      ! Loop over axes
-      do i = 1,3
-
-         ! Max along direction "i"
-         hkl = [0,0,0]
-         h   = 0
-
-         do
-
-            h = h + 1
-            hkl(i) = h
-            k.to_product_of(rcm,REALIFY(hkl))
-            stl = fac*k.norm
-
-            if (stl>limit) exit
-
-         end
-
-         ! Set the max
-         h_max(i) = h - 1
-
-      end
 
       ! Add the list of reflections
       .destroy
       .create(0)
       ref.set_defaults
 
-      do h1 = -h_max(1),h_max(1)
-      do h2 = -h_max(2),h_max(2)
-      do h3 = 0        ,h_max(3)
+      do h1 = -h_max,h_max
+      do h2 = -h_max,h_max
+      do h3 = 0     ,h_max
 
          if (h1==0 AND h2==0 AND h3==0) cycle
 
-         ! Set hkl
-         hkl = [h1,h2,h3]
-         k.to_product_of(rcm,REALIFY(hkl))
-         stl = fac*k.norm
+         h = [h1,h2,h3]
+         i = h.index_of_first_nonzero_value
+         a = cell_matrix(:,i)
+
+         hv = h
+         hv.normalise
+
+         d   = dot_product(a,hv)/h(i)
+         stl = HALF/d
+         
          if (stl>limit) cycle
 
          ! Append
-         ref.set_hkl(hkl)
+         ref.set_hkl(h)
          .append(ref)
 
       end
@@ -1860,8 +1878,8 @@ contains
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
       g.create(n_refl);       g       = .group
-      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);     stl     = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = self(:).d  *ANGSTROM_PER_BOHR
       F_cr.create(n_refl);    F_cr    = RE(.F_calc)
       F_ci.create(n_refl);    F_ci    = IM(.F_calc)
       F_pred.create(n_refl);  F_pred  = .F_pred
@@ -1926,8 +1944,8 @@ contains
       h.create(n_refl);       h       = .h
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
-      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);     stl     = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = self(:).d  *ANGSTROM_PER_BOHR
       F_cr.create(n_refl);    F_cr    = RE(.F_calc)
       F_ci.create(n_refl);    F_ci    = IM(.F_calc)
       F_pred.create(n_refl);  F_pred  = .F_pred
@@ -1989,8 +2007,8 @@ contains
       h.create(n_refl);      h      = .h
       k.create(n_refl);      k      = .k
       l.create(n_refl);      l      = .l
-      stl.create(n_refl);    stl    = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;    d      = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);    stl    = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;    d      = self(:).d  *ANGSTROM_PER_BOHR
       F_cr.create(n_refl);   F_cr   = RE(.F_calc)
       F_ci.create(n_refl);   F_ci   = IM(.F_calc)
       F_pred.create(n_refl); F_pred = .F_pred
@@ -2051,8 +2069,8 @@ contains
       h.create(n_refl);       h       = .h
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
-      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);     stl     = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = self(:).d  *ANGSTROM_PER_BOHR
       F_exp.create(n_refl);   F_exp   = .F_exp
       F_sigma.create(n_refl); F_sigma = .F_sigma
 
@@ -2102,8 +2120,8 @@ contains
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
       g.create(n_refl);       g       = .group
-      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);     stl     = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = self(:).d  *ANGSTROM_PER_BOHR
       F_exp.create(n_refl);   F_exp   = .F_exp
       F_sigma.create(n_refl); F_sigma = .F_sigma
 
@@ -2474,19 +2492,19 @@ contains
       stdout.flush
       lambda = REFLECTION:wavelength()
       lambda.convert_to("angstrom")
-      stdout.show("_diffrn_radiation_wavelength       ",lambda                           ,dots=FALSE)
+      stdout.show("_diffrn_radiation_wavelength       ",lambda                  ,dots=FALSE)
       stdout.flush
-      stdout.show("_reflns_d_resolution_high          ",.max_resolution*ANGSTROM_PER_BOHR,dots=FALSE)
-      stdout.show("_reflns_d_resolution_low           ",.min_resolution*ANGSTROM_PER_BOHR,dots=FALSE)
-      stdout.show("_reflns_limit_h_max                ",maxval(self(:).h)                ,dots=FALSE)
-      stdout.show("_reflns_limit_h_min                ",minval(self(:).h)                ,dots=FALSE)
-      stdout.show("_reflns_limit_k_max                ",maxval(self(:).k)                ,dots=FALSE)
-      stdout.show("_reflns_limit_k_min                ",minval(self(:).k)                ,dots=FALSE)
-      stdout.show("_reflns_limit_l_max                ",maxval(self(:).l)                ,dots=FALSE)
-      stdout.show("_reflns_limit_l_min                ",minval(self(:).l)                ,dots=FALSE)
-      stdout.show("_reflns_number_gt                  ",.dim                             ,dots=FALSE)
-      stdout.show("_reflns_number_total               ",.dim                             ,dots=FALSE)
-      stdout.show("_reflns_threshold_expression       ",threshold                        ,dots=FALSE)
+      stdout.show("_reflns_d_resolution_high          ",.d_max*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_d_resolution_low           ",.d_min*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_limit_h_max                ",maxval(self(:).h)       ,dots=FALSE)
+      stdout.show("_reflns_limit_h_min                ",minval(self(:).h)       ,dots=FALSE)
+      stdout.show("_reflns_limit_k_max                ",maxval(self(:).k)       ,dots=FALSE)
+      stdout.show("_reflns_limit_k_min                ",minval(self(:).k)       ,dots=FALSE)
+      stdout.show("_reflns_limit_l_max                ",maxval(self(:).l)       ,dots=FALSE)
+      stdout.show("_reflns_limit_l_min                ",minval(self(:).l)       ,dots=FALSE)
+      stdout.show("_reflns_number_gt                  ",.dim                    ,dots=FALSE)
+      stdout.show("_reflns_number_total               ",.dim                    ,dots=FALSE)
+      stdout.show("_reflns_threshold_expression       ",threshold               ,dots=FALSE)
 
       stdout.flush
       stdout.text("_reflns_special_details            ")
