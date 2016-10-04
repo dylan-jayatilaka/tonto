@@ -54,11 +54,11 @@ contains
 !  Copy
 !  ====
 
-   create_copy(vec) ::: get_from(VEC{OBJECT}), leaky
+   create_copy(vec) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Create a replica copy of "vec".
    end
 
-   copy(vec) ::: get_from(VEC{OBJECT})
+   copy(vec) ::: get_from(VEC{OBJECT}), PURE
    ! Copy "vec".
    end
 
@@ -66,19 +66,19 @@ contains
 !  Shrinking and expansion
 !  =======================
 
-   shrink(dim) ::: get_from(VEC{OBJECT}), leaky
+   shrink(dim) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Shrink self to dimension dim.  Contents are retained.
    end
 
-   expand(dim) ::: get_from(VEC{OBJECT}), leaky
+   expand(dim) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Expand the vector "self" to "dim". New slots are left undefined.
    end
 
-   append(v) ::: get_from(VEC{OBJECT}), leaky
+   append(v) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Expands self and appends the contents of vector "v".
    end
 
-   append(value) ::: get_from(VEC{OBJECT}), leaky
+   append(value) ::: get_from(VEC{OBJECT}), leaky, PURE
    ! Expands self by 1, and appends the single scalar "value" onto the end.
    end
 
@@ -89,6 +89,31 @@ contains
    set_defaults ::: get_from(VEC{OBJECT}, leaky, pure
    ! Set default values
    end
+
+   reset_F_exp_F_sigma ::: pure
+   ! Finalize the reflections
+      self :: INOUT
+
+      n :: INT
+
+      do n = 1,.dim
+         self(n).reset_F_exp_F_sigma
+      end
+
+   end
+
+   reset_I_exp_I_sigma ::: pure
+   ! Finalize the reflections
+      self :: INOUT
+
+      n :: INT
+
+      do n = 1,.dim
+         self(n).reset_I_exp_I_sigma
+      end
+
+   end
+
 
    set_h(h) ::: pure
    ! Set the h indices
@@ -266,36 +291,71 @@ contains
 
    end
 
-   set_theta_angles(reciprocal_matrix) ::: pure
-   ! This routine is called after the reflections are read in, in
-   ! order to set all the .theta values, which are used later all over
-   ! the place ...
-   ! NOTE: Make sjure the wavelength is correct!
+   set_d_and_theta(cell_matrix)
+   ! Called after the reflections are read in, in order to set all the
+   ! .d and .theta values, which are used later all over the place ...
+   ! NOTE: Make sure the wavelength is correct, else angles are wrong.
+   ! NOTE: see Dunitz "X-ray Analysis" (1995) p. 35
       self :: INOUT
-      reciprocal_matrix :: MAT{REAL}(3,3), IN
+      cell_matrix :: MAT{REAL}(3,3), IN
 
-      hkl :: VEC{INT}(3)
-      kx,ky,kz,sin_theta,lambda,fac :: REAL
-      n :: INT
-
-      fac = ONE/(FOUR*PI)
+      h :: VEC{INT}(3)
+      hv,a :: VEC{REAL}(3)
+      lambda,stl,d :: REAL
+      n,i :: INT
 
       lambda = REFLECTION:wavelength()
 
       do n = 1,.dim
 
-         hkl = .indices(n)
+         h = .indices(n)
+         i = h.index_of_first_nonzero_value
+         a = cell_matrix(:,i)
 
-         kx = dot_product(reciprocal_matrix(1,:),hkl(:))
-         ky = dot_product(reciprocal_matrix(2,:),hkl(:))
-         kz = dot_product(reciprocal_matrix(3,:),hkl(:))
+         hv = h
+         hv.normalise
 
-         sin_theta     = fac*sqrt(kx*kx+ky*ky+kz*kz)*lambda
-         self(n).theta = asin(sin_theta)
+         d   = dot_product(a,hv)/h(i)
+         stl = HALF/d
+
+         self(n).stl   = stl
+         self(n).theta = asin(stl*lambda)
+         self(n).d     = d
 
       end
 
    end
+
+!   set_theta_angles(reciprocal_matrix) ::: pure
+!   ! This routine is called after the reflections are read in, in
+!   ! order to set all the .theta values, which are used later all over
+!   ! the place ...
+!   ! NOTE: Make sjure the wavelength is correct!
+!      self :: INOUT
+!      reciprocal_matrix :: MAT{REAL}(3,3), IN
+!
+!      hkl :: VEC{INT}(3)
+!      kx,ky,kz,sin_theta,lambda,fac :: REAL
+!      n :: INT
+!
+!      fac = ONE/(FOUR*PI)
+!
+!      lambda = REFLECTION:wavelength()
+!
+!      do n = 1,.dim
+!
+!         hkl = .indices(n)
+!
+!         kx = dot_product(reciprocal_matrix(1,:),hkl(:))
+!         ky = dot_product(reciprocal_matrix(2,:),hkl(:))
+!         kz = dot_product(reciprocal_matrix(3,:),hkl(:))
+!
+!         sin_theta     = fac*sqrt(kx*kx+ky*ky+kz*kz)*lambda
+!         self(n).theta = asin(sin_theta)
+!
+!      end
+!
+!   end
 
 
 !  ================
@@ -540,21 +600,21 @@ contains
 
 
 
-   max_resolution result (res) ::: pure
-   ! The maximum resolution in au
+   d_max result (res) ::: pure
+   ! The maximum d spacing/resolution in au
       self :: IN
       res :: REAL
 
-      res = maxval(REFLECTION:resolution(self))
+      res = maxval(self(:).d)
 
    end
 
-   min_resolution result (res) ::: pure
-   ! The minimum resolution in au
+   d_min result (res) ::: pure
+   ! The minimum d spacing/resolution in au
       self :: IN
       res :: REAL
 
-      res = minval(REFLECTION:resolution(self))
+      res = minval(self(:).d)
 
    end
 
@@ -896,52 +956,6 @@ contains
 
    end
 
-   F_val_r_factor(core_reflection) result (res) ::: PURE
-   ! Valence r factor . The set of "core_reflections" must be supplied.
-      self :: IN
-      core_reflection :: VEC{REFLECTION}, IN
-      res :: REAL
-
-   ENSURE(.have_F_pred,"no predicted structure factors")
-   ENSURE(.have_F_exp,"no experimental structure factors")
-
-      top,bot,val :: REAL
-      xi :: VEC{REAL}*
-      phase :: VEC{CPX}*
-      k :: INT
-
-      ! Get the scale factor/extinction correction
-      ! Make the phases too ...
-      xi.create(.dim)
-      phase.create(.dim)
-      do k = 1,.dim
-        val = abs(self(k).F_calc)
-        if (val.is_zero) then
-           xi(k)    = ZERO
-           phase(k) = ZERO
-        else
-           val = ONE/val
-           xi(k)    = self(k).F_pred * val
-           phase(k) = self(k).F_calc * val
-        end
-      end
-
-      ! Make the valence (deformation) R factor
-      top = ZERO
-      bot = ZERO
-      do k = 1,.dim
-       val = abs(self(k).F_exp*phase(k) - xi(k)*core_reflection(k).F_calc)
-       top = top + val - xi(k)*abs(self(k).F_calc - core_reflection(k).F_calc)
-       bot = bot + val
-      end
-      res = top / bot
-
-      ! Clean up
-      phase.destroy
-      xi.destroy
-
-   end
-
    F_calc result (res) ::: pure
    ! return the calculated structure factors
       self :: IN
@@ -1163,68 +1177,51 @@ contains
 !  Set hkl's
 !  =========
 
-   set_hkl_up_to_stl_limit(limit,unit_cell) ::: leaky
-   ! Set a h,k,l half-sphere ... useful for structure factor
-   ! calculations without having to set reflections individually.
-   ! NOTE: ensure wavelength is already set !
+   set_hkl_up_to_stl_limit(limit,cell_matrix) ::: leaky, PURE
+   ! Set (h k l) reflections as a half-sphere up to an STL "limit".
+   ! NOTE: See Dunitz "Crystal Analysis" (1995) p. 35
       self :: PTR
       limit :: REAL, IN
-      unit_cell :: UNIT_CELL, IN
+      cell_matrix :: MAT{REAL}(3,3), IN
 
-      hkl,h_max :: VEC{INT}(3)
-      k :: VEC{REAL}(3)
-      rcm :: MAT{REAL}(3,3)
-      stl,fac :: REAL
+      h :: VEC{INT}(3)
+      hv,a :: VEC{REAL}(3)
+      d,stl :: REAL
       ref :: REFLECTION
-      i,h, h1,h2,h3 :: INT
+      i, h1,h2,h3, h_max,h1_max,h2_max,h3_max :: INT
 
-      ! Reciprocal cell matrix
-      rcm = TWO*PI*unit_cell.reciprocal_matrix
+      ! Get h_max
+      h1_max = ceiling(cell_matrix(1,1)*TWO*limit)
+      h2_max = ceiling(cell_matrix(2,2)*TWO*limit)
+      h3_max = ceiling(cell_matrix(3,3)*TWO*limit)
+      h_max  = max(h1_max,h2_max,h3_max)
 
-      fac = ONE/(FOUR*PI)
-
-      ! Loop over axes
-      do i = 1,3
-
-         ! Max along direction "i"
-         hkl = [0,0,0]
-         h   = 0
-
-         do
-
-            h = h + 1
-            hkl(i) = h
-            k.to_product_of(rcm,REALIFY(hkl))
-            stl = fac*k.norm
-
-            if (stl>limit) exit
-
-         end
-
-         ! Set the max
-         h_max(i) = h - 1
-
-      end
 
       ! Add the list of reflections
       .destroy
       .create(0)
       ref.set_defaults
 
-      do h1 = -h_max(1),h_max(1)
-      do h2 = -h_max(2),h_max(2)
-      do h3 = 0        ,h_max(3)
+      do h1 = -h_max,h_max
+      do h2 = -h_max,h_max
+      do h3 = 0     ,h_max
 
          if (h1==0 AND h2==0 AND h3==0) cycle
 
-         ! Set hkl
-         hkl = [h1,h2,h3]
-         k.to_product_of(rcm,REALIFY(hkl))
-         stl = fac*k.norm
+         h = [h1,h2,h3]
+         i = h.index_of_first_nonzero_value
+         a = cell_matrix(:,i)
+
+         hv = h
+         hv.normalise
+
+         d   = dot_product(a,hv)/h(i)
+         stl = HALF/d
+         
          if (stl>limit) cycle
 
          ! Append
-         ref.set_hkl(hkl)
+         ref.set_hkl(h)
          .append(ref)
 
       end
@@ -1667,9 +1664,9 @@ contains
 !  Output routines
 !  ===============
 
-   put(core_reflection)
+   put
    ! Output the reflection data.
-      core_reflection :: VEC{REFLECTION}*, optional
+      self :: IN
 
       stdout.flush
       stdout.show("Number of reflections =",.dim)
@@ -1677,37 +1674,121 @@ contains
       ! Structure factors
       stdout.flush
       stdout.text("Structure factors:")
+
       if (.have_F_pred) then
-         if (.have_F_exp) then; .put_structure_factor_data(core_reflection)
+
+         if (.have_F_exp) then; .put_structure_factor_data
          else;                  .put_F_pred_data
          end
+
       else
+
          if (.have_F_exp) then; .put_F_exp_data
          else; stdout.text("There are no structure factors yet")
          end
+
       end
 
-      ! Intensities
-    ! stdout.flush
-    ! stdout.text("Intensities:")
-    ! if (.have_I_pred) then
-    !    if (.have_I_exp) then; .put_intensity_data
-    !    else;                  .put_I_pred_data
-    !    end
-    ! else
-    !    if (.have_I_exp) then; .put_I_exp_data
-    !    else; stdout.text("There are no intensities yet")
-    !    end
-    ! end
+   end
+
+   put_intensities
+   ! Output the reflection data.
+      self :: IN
+
+      stdout.flush
+      stdout.show("Number of reflections =",.dim)
+
+      ! Structure factors
+      stdout.flush
+      stdout.text("Structure factors:")
+
+      stdout.flush
+      stdout.text("Intensities:")
+      if (.have_I_pred) then
+         if (.have_I_exp) then; .put_intensity_data
+         else;                  .put_I_pred_data
+         end
+      else
+         if (.have_I_exp) then; .put_I_exp_data
+         else; stdout.text("There are no intensities yet")
+         end
+      end
+
+   end
+
+   put_intensities_XD
+   ! Output only the experimental intensity data in XD format
+      self :: IN
+
+   ENSURE(.have_I_exp,"no experimental intensities")
+
+      table :: VEC{TABLE_COLUMN}*
+      h,k,l,group :: VEC{INT}*
+      I_exp,I_sigma :: VEC{REAL}*
+      n_refl :: INT
+
+      ! Precision
+      stdout.save
+      stdout.set_int_width(4)
+      stdout.set_real_precision(3)
+
+      ! Constants
+      n_refl = .dim
+
+      ! Get data
+      h.create(n_refl);       h       = .h
+      k.create(n_refl);       k       = .k
+      l.create(n_refl);       l       = .l
+      group.create(n_refl);   group   = 1
+      I_exp.create(n_refl);   I_exp   = .I_exp
+      I_sigma.create(n_refl); I_sigma = .I_sigma
+
+      ! Make table
+      table.create(6)
+
+      table(1).set_values(h)
+      table(2).set_values(k)
+      table(3).set_values(l)
+      table(4).set_values(group)
+      table(5).set_values(I_exp)
+      table(6).set_values(I_sigma)
+
+      table(1).set_heading("h")
+      table(1).force_width(4)
+      table(2).set_heading("k")
+      table(2).force_width(4)
+      table(3).set_heading("l")
+      table(3).force_width(4)
+      table(4).set_heading("g")
+      table(4).force_width(3)
+      table(5).set_heading("I")
+      table(5).force_width(13)
+      table(6).set_heading("sigma")
+      table(6).force_width(13)
+
+      ! Put
+      table.put_body
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      I_sigma.destroy
+      I_exp.destroy
+      l.destroy
+      k.destroy
+      h.destroy
+
+      ! Restore
+      stdout.unsave
 
    end
 
 
-   put_structure_factor_data(core_reflection)
+   put_structure_factor_data
    ! Output the structure factor data
-      core_reflection :: VEC{REFLECTION}*, optional
+      self :: IN
 
-      .put_F_statistics(core_reflection)
+      .put_F_statistics
 
       if (.use_multiple_scale_factors) then; .put_SF_group_data
       else;                                  .put_SF_nogrp_data
@@ -1715,10 +1796,10 @@ contains
 
    end
 
-   put_F_statistics(core_reflection,show_chi2)
+   put_F_statistics(show_chi2)
    ! Output the structure factor statistics
-      core_reflection :: VEC{REFLECTION}*, optional
-      show_chi2 :: BIN, optional
+      self :: IN
+      show_chi2 :: BIN, optional, IN
 
    ENSURE(.have_F_exp, "No F_exp data!")
    ENSURE(.have_F_pred,"No F_pred data!")
@@ -1738,12 +1819,6 @@ contains
       stdout.show("Rw(F)                          =", .F_weighted_r_factor)
       stdout.show("Rw(F2)                         =", .F2_weighted_r_factor)
 
-      if (present(core_reflection)) then
-      if (core_reflection.created) then
-      stdout.show("Rval(F)                        =", .F_val_r_factor(core_reflection))
-      end
-      end
-
       show = TRUE
       if (present(show_chi2)) show = show_chi2
 
@@ -1755,10 +1830,10 @@ contains
 
    end
 
-   put_F_free_stats(core_reflection,show_chi2)
+   put_F_free_stats(show_chi2)
    ! Output the structure factor statistics
-      core_reflection :: VEC{REFLECTION}*, optional
-      show_chi2 :: BIN, optional
+      self :: IN
+      show_chi2 :: BIN, optional, IN
 
    ENSURE(.have_F_exp, "No F_exp data!")
    ENSURE(.have_F_pred,"No F_pred data!")
@@ -1774,12 +1849,6 @@ contains
       stdout.show("Free R_sigma(F)              =", .F_r_sigma)
       stdout.show("Free R(F)                    =", .F_r_factor)
       stdout.show("Free Rw(F)                   =", .F_weighted_r_factor)
-
-      if (present(core_reflection)) then
-      if (core_reflection.created) then
-      stdout.show("Free Rval(F)                 =", .F_val_r_factor(core_reflection))
-      end
-      end
 
       show = TRUE
       if (present(show_chi2)) show = show_chi2
@@ -1809,8 +1878,8 @@ contains
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
       g.create(n_refl);       g       = .group
-      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);     stl     = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = self(:).d  *ANGSTROM_PER_BOHR
       F_cr.create(n_refl);    F_cr    = RE(.F_calc)
       F_ci.create(n_refl);    F_ci    = IM(.F_calc)
       F_pred.create(n_refl);  F_pred  = .F_pred
@@ -1875,8 +1944,8 @@ contains
       h.create(n_refl);       h       = .h
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
-      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);     stl     = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = self(:).d  *ANGSTROM_PER_BOHR
       F_cr.create(n_refl);    F_cr    = RE(.F_calc)
       F_ci.create(n_refl);    F_ci    = IM(.F_calc)
       F_pred.create(n_refl);  F_pred  = .F_pred
@@ -1938,8 +2007,8 @@ contains
       h.create(n_refl);      h      = .h
       k.create(n_refl);      k      = .k
       l.create(n_refl);      l      = .l
-      stl.create(n_refl);    stl    = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;    d      = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);    stl    = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;    d      = self(:).d  *ANGSTROM_PER_BOHR
       F_cr.create(n_refl);   F_cr   = RE(.F_calc)
       F_ci.create(n_refl);   F_ci   = IM(.F_calc)
       F_pred.create(n_refl); F_pred = .F_pred
@@ -2000,8 +2069,8 @@ contains
       h.create(n_refl);       h       = .h
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
-      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);     stl     = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = self(:).d  *ANGSTROM_PER_BOHR
       F_exp.create(n_refl);   F_exp   = .F_exp
       F_sigma.create(n_refl); F_sigma = .F_sigma
 
@@ -2051,8 +2120,8 @@ contains
       k.create(n_refl);       k       = .k
       l.create(n_refl);       l       = .l
       g.create(n_refl);       g       = .group
-      stl.create(n_refl);     stl     = REFLECTION:stl(self)*BOHR_PER_ANGSTROM
-      d.create(n_refl)  ;     d       = REFLECTION:resolution(self)*ANGSTROM_PER_BOHR
+      stl.create(n_refl);     stl     = self(:).stl*BOHR_PER_ANGSTROM
+      d.create(n_refl)  ;     d       = self(:).d  *ANGSTROM_PER_BOHR
       F_exp.create(n_refl);   F_exp   = .F_exp
       F_sigma.create(n_refl); F_sigma = .F_sigma
 
@@ -2423,19 +2492,19 @@ contains
       stdout.flush
       lambda = REFLECTION:wavelength()
       lambda.convert_to("angstrom")
-      stdout.show("_diffrn_radiation_wavelength       ",lambda                           ,dots=FALSE)
+      stdout.show("_diffrn_radiation_wavelength       ",lambda                  ,dots=FALSE)
       stdout.flush
-      stdout.show("_reflns_d_resolution_high          ",.max_resolution*ANGSTROM_PER_BOHR,dots=FALSE)
-      stdout.show("_reflns_d_resolution_low           ",.min_resolution*ANGSTROM_PER_BOHR,dots=FALSE)
-      stdout.show("_reflns_limit_h_max                ",maxval(self(:).h)                ,dots=FALSE)
-      stdout.show("_reflns_limit_h_min                ",minval(self(:).h)                ,dots=FALSE)
-      stdout.show("_reflns_limit_k_max                ",maxval(self(:).k)                ,dots=FALSE)
-      stdout.show("_reflns_limit_k_min                ",minval(self(:).k)                ,dots=FALSE)
-      stdout.show("_reflns_limit_l_max                ",maxval(self(:).l)                ,dots=FALSE)
-      stdout.show("_reflns_limit_l_min                ",minval(self(:).l)                ,dots=FALSE)
-      stdout.show("_reflns_number_gt                  ",.dim                             ,dots=FALSE)
-      stdout.show("_reflns_number_total               ",.dim                             ,dots=FALSE)
-      stdout.show("_reflns_threshold_expression       ",threshold                        ,dots=FALSE)
+      stdout.show("_reflns_d_resolution_high          ",.d_max*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_d_resolution_low           ",.d_min*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_limit_h_max                ",maxval(self(:).h)       ,dots=FALSE)
+      stdout.show("_reflns_limit_h_min                ",minval(self(:).h)       ,dots=FALSE)
+      stdout.show("_reflns_limit_k_max                ",maxval(self(:).k)       ,dots=FALSE)
+      stdout.show("_reflns_limit_k_min                ",minval(self(:).k)       ,dots=FALSE)
+      stdout.show("_reflns_limit_l_max                ",maxval(self(:).l)       ,dots=FALSE)
+      stdout.show("_reflns_limit_l_min                ",minval(self(:).l)       ,dots=FALSE)
+      stdout.show("_reflns_number_gt                  ",.dim                    ,dots=FALSE)
+      stdout.show("_reflns_number_total               ",.dim                    ,dots=FALSE)
+      stdout.show("_reflns_threshold_expression       ",threshold               ,dots=FALSE)
 
       stdout.flush
       stdout.text("_reflns_special_details            ")

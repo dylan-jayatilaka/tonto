@@ -348,37 +348,36 @@ contains
 
    update(unit_cell,spacegroup) ::: leaky
    ! Update the crystal information after setting values. If the
-   ! "unit_cell" is provided, then that is used to define the reflection
-   ! .theta values.
-      self :: PTR
-      unit_cell :: UNIT_CELL, IN, optional
-      spacegroup :: SPACEGROUP, IN, optional
+   ! "unit_cell" is provided, then that is used to define the
+   ! reflection .theta values.
+      self :: INOUT
+      unit_cell :: UNIT_CELL, IN
+      spacegroup :: SPACEGROUP, IN
 
       if (.reflections.destroyed) then
 
          DIE_IF(.hkl_range.created AND .stl_limit>ZERO,"hkl_range/stl_limit both given!")
 
          ! Set hkl range ?
-         if (.hkl_range.created) .reflections.set_hkl_range(.hkl_range)
+         if (.hkl_range.created) &
+            .reflections.set_hkl_range(.hkl_range)
 
          ! Set hkl up to stl_limit?
-         if (.stl_limit>ZERO) .reflections.set_hkl_up_to_stl_limit(.stl_limit,unit_cell)
+         if (.stl_limit>ZERO) &
+            .reflections.set_hkl_up_to_stl_limit(.stl_limit,unit_cell.direct_matrix)
 
       else
 
          ! Keep original reflections
          .reflection0.create_copy(.reflections)
         
-         ! Set resolution
-         if (present(unit_cell)) then
-            .reflection0.set_theta_angles(unit_cell.reciprocal_matrix)
-            .reflections.set_theta_angles(unit_cell.reciprocal_matrix)
-         end
+         ! Set d, stl, theta 
+         .reflection0.set_d_and_theta(unit_cell.direct_matrix)
+         .reflections.set_d_and_theta(unit_cell.direct_matrix)
         
-         if (present(spacegroup)) then
-            .reflection0.set_equivalence_factors(spacegroup)
-            .reflections.set_equivalence_factors(spacegroup)
-         end
+         ! Equivalence factors
+         .reflection0.set_equivalence_factors(spacegroup)
+         .reflections.set_equivalence_factors(spacegroup)
         
          ! Prune !!!!!!!!!!
          .prune_reflections
@@ -574,6 +573,15 @@ contains
 
    end
 
+   set_n_worst_reflections(val) ::: pure
+   ! Set the no. of worst reflections to show
+      self :: INOUT
+      val :: INT, IN
+
+      .n_worst_reflections = val
+
+   end
+
 ! Cutoffs
 
    set_F_sigma_cutoff(val) ::: PURE
@@ -759,6 +767,7 @@ contains
 
          case ("nka_t_sequence_no=            "); .read_NKA_T_seq_no
          case ("n_param=                      "); .read_n_param
+         case ("n_worst_reflections=          "); .read_n_worst_reflections
 
          case ("optimise_extinction=          "); .read_optimize_extinction
          case ("optimize_extinction=          "); .read_optimize_extinction
@@ -771,6 +780,7 @@ contains
          case ("prune_reflections             "); .prune_reflections
          case ("put                           "); .put
          case ("put_debug_list                "); .put_debug_list
+         case ("put_worst_reflections         "); .put_worst_reflections
          case ("put_sin_theta_on_lambda       "); .put_sin_theta_on_lambda
          case ("put_wavelength                "); .put_wavelength
 
@@ -813,8 +823,6 @@ contains
          case ("use_zero_overlap=             "); .read_use_zero_overlap
 
          case ("wavelength=                   "); .read_wavelength
-
-         case ("zero_negative_f_exp           "); .zero_negative_F_exp
 
          case default;                       UNKNOWN(word)
 
@@ -1172,6 +1180,16 @@ contains
 
    end
 
+   read_n_worst_reflections
+   ! Read the no of worst reflections to show.
+
+      val :: INT
+
+      stdin.read(val)
+      .set_n_worst_reflections(val)
+
+   end
+
 !  Refinement options
 
    read_max_allowed_param_shift
@@ -1378,6 +1396,19 @@ contains
 
       ! Read reflections
       .reflections.read_CIF(cif)
+
+      ! Prune/reset bad reflections
+      if (.have_I_exp) then
+         DIE_IF(NOT .have_I_sigma,"I_exp present but no I_sigma?")
+         .prune_small_I_sigmas
+         .reflections.reset_I_exp_I_sigma
+      end
+
+      if (.have_F_exp) then
+         DIE_IF(NOT .have_F_sigma,"F_exp present but no F_sigma?")
+         .prune_small_F_sigmas
+         .reflections.reset_F_exp_F_sigma
+      end
 
       ! Read wavelength -- must be there !
       rval = REFLECTION:wavelength()
@@ -1645,7 +1676,7 @@ contains
 ! Pruning reflections
 ! ===================
 
-   can_prune_reflections result (res) ::: PURE
+   is_prunable result (res) ::: PURE
    ! Return TRUE if there's something to prune via a set cutoff.
    ! NOTE: Zero F_sigma's and stl cutoff's are assumed already 
    !       pruned at input time.
@@ -1689,36 +1720,44 @@ contains
    prune_reflections
    ! Zero negative reflections adding appropriate error to sigma
    ! Then prune all the reflections, as requested by cutoffs.
-      self :: PTR
+      self :: INOUT
 
-      if (.reflections.have_F_exp) then
-         .prune_zero_F_sigmas
+      if (.have_I_exp) then
+         DIE_IF(NOT .have_I_sigma,"I_exp present but no I_sigma?")
+         .prune_small_I_sigmas
+         .reflections.reset_I_exp_I_sigma
+      end
+
+      if (.have_F_exp) then
+         DIE_IF(NOT .have_F_sigma,"F_exp present but no F_sigma?")
+         .prune_small_F_sigmas
+         .reflections.reset_F_exp_F_sigma
       end
 
       if (.F_sigma_cutoff >ZERO) then
-         if (.reflections.have_F_exp) then
+         if (.have_F_exp AND .have_F_sigma) then
             .prune_weak_Fs
          else
-            WARN("F_sigma_cutoff specified but no F_exp data")
-         end
-      end
-
+            WARN("F_sigma_cutoff specified but no F_exp/F_sigma data") 
+         end 
+      end 
+      
       if (.F_z_cutoff     >ZERO) then
-         if (.reflections.have_F_pred) then
+         if (.have_F_exp AND .have_F_pred) then
             .prune_bad_F_reflections
          else
-            WARN("F_z_cutoff specified but no F_pred data")
+            WARN("F_z_cutoff specified but no F_exp/F_pred data")
          end
       end
 
       if (.F_calc_cutoff  >ZERO) then
-      if (.reflections.have_F_calc) then
+      if (.have_F_calc) then
          .prune_zero_F_calcs
       end
       end
 
       if (.F_pred_cutoff  >ZERO) then
-         if (.reflections.have_F_pred) then
+         if (.have_F_pred) then
             .prune_zero_F_preds
          else
             WARN("F_pred_cutoff specified but no F_pred data")
@@ -1726,7 +1765,7 @@ contains
       end
 
       if (.I_sigma_cutoff >ZERO) then
-         if (.reflections.have_I_exp) then
+         if (.have_I_exp) then
             .prune_weak_Is
          else
             WARN("I_sigma_cutoff specified but no I_exp data")
@@ -1743,15 +1782,15 @@ contains
 
    end
 
+
    prune ::: template
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
-      self :: PTR
+      self :: INOUT
 
-   ENSURE(.created,"No data")
    ENSURE(.reflections.created,"No reflection data")
 
-      old_reflections :: VEC{REFLECTION}*
+      new_reflections :: VEC{REFLECTION}*
       good,bad,h1,h2,h3 :: VEC{INT}*
       val :: VEC{REAL}*
       table :: VEC{TABLE_COLUMN}*
@@ -1843,13 +1882,13 @@ contains
       end
 
       ! Copy the non-rejects
-      old_reflections => .reflections
-      .reflections.create(g)
-      .reflections.copy(old_reflections(good))
+      new_reflections.create(g)
+      new_reflections.copy(.reflections(good))
+      .reflections.destroy
+      .reflections => new_reflections
       !!!!!!!!!!!!!!!!!!!!!!
 
       ! Clean
-      old_reflections.destroy
       bad.destroy
       good.destroy
 
@@ -1915,29 +1954,15 @@ contains
    ! rejection test on the reflections
    end
 
-   prune_zero_F_sigmas ::: get_from(prune, TEST?=>has_zero_F_sigma, CUTOFF?=>TOL(3), SHOW?=>F_sigma), leaky
+   prune_small_F_sigmas ::: get_from(prune, TEST?=>has_small_F_sigma, CUTOFF?=>TOL(3), SHOW?=>F_sigma), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
    end
 
-   zero_negative_F_exp ::: leaky
-   ! This routine zero negative F_exp value
-      self :: PTR
-
-   DIE_IF(NOT .reflections.created,"no reflection data")
-   DIE_IF(NOT .reflections.have_F_exp,"no experimental data")
-
-      i :: INT
-
-      do i = 1,.reflections.n_refl
-        if (.reflections(i).F_exp < ZERO) then
-           .reflections(i).F_exp = ZERO
-           .reflections(i).F_sigma = .reflections(i).F_sigma + abs(.reflections(i).F_exp)
-        end
-      end
-
+   prune_small_I_sigmas ::: get_from(prune, TEST?=>has_small_I_sigma, CUTOFF?=>TOL(3), SHOW?=>I_sigma), leaky
+   ! This routine eliminates all the reflections with respect to a
+   ! rejection test on the reflections
    end
-
 
 !  ==============
 !  Debug printing
@@ -4375,10 +4400,6 @@ contains
          ! Put final fitting statistics
          .put_F_statistics
         
-         ! Analysis
-         stdout.flush
-         stdout.text("An analysis of the fit is in the file 'stdout.fit_analysis'")
-
       end
 
    end
@@ -4409,10 +4430,6 @@ contains
          ! Put final fitting statistics
          .put_F_statistics
        
-         ! Analysis
-         stdout.flush
-         stdout.text("An analysis of the fit is in the file 'stdout.fit_analysis'")
-
       end
 
    end
@@ -4601,7 +4618,7 @@ contains
          stdout.put(.reflections(n).h)
          stdout.put(.reflections(n).k)
          stdout.put(.reflections(n).l)
-         stdout.put(.reflections(n).sin_theta_on_lambda)
+         stdout.put(.reflections(n).stl)
          stdout.flush
       end
       stdout.dash(int_fields=3,real_fields=1)
@@ -4616,9 +4633,9 @@ contains
 
       stdout.show("# of reflections,    N_r       =", .reflections.n_refl)
       stdout.show("# of fit parameters, N_p       =", .n_param)
-      stdout.show("chi^2(N_p)                     =",.chi2)
+      stdout.show("chi^2(N_p)                     =", .chi2)
       stdout.show("Goodness of fit (N_p)          =", sqrt(.chi2))
-      stdout.show("Effective (mean) sigma^2       =",.reflections.sigma2_eff)
+      stdout.show("Effective (mean) sigma^2       =", .reflections.sigma2_eff)
 
       if (.optimize_extinction) then;
       stdout.show("Secondary extinction factor    =", .extinction_factor)
@@ -4685,15 +4702,35 @@ contains
 
    end
 
-   put_reflection_data(core_reflection)
+
+   put_reflection_data
    ! Output the reflection data and corresponding fit statistic,
    ! if available
       self :: IN
-      core_reflection :: VEC{REFLECTION}*, optional, IN
 
       .put_N_worst_reflections
 
-      .put_all_reflections(core_reflection)
+      .put_all_reflections
+
+   end
+
+   put_worst_reflections
+   ! Put out a selection of the worst-fitting reflections
+      self :: IN
+
+      n :: INT
+
+      if (stdin.n_line_items==2) then
+
+         stdin.read(n)
+         DIE_IF(n.is_odd,"must have an even number reflections")
+         .put_N_worst_reflections(n)
+
+      else
+
+         .put_N_worst_reflections
+
+      end
 
    end
 
@@ -4703,15 +4740,30 @@ contains
 
    ENSURE(.reflections.created,"no reflections")
 
-      n_refl :: INT
+      n_refl,n :: INT
 
       if (.have_F_pred) then
       if (.have_F_exp) then
+
          n_refl = .reflections.dim
-         if      (n_refl>1000) then; .put_N_worst_reflections(n=40)
-         else if (n_refl>100)  then; .put_N_worst_reflections(n=20)
-         else if (n_refl>50)   then; .put_N_worst_reflections(n=10)
+
+         if (.n_worst_reflections<0) then
+
+            ! Put out a reasonable no. of bad reflections
+            if      (n_refl>1000) then; .put_N_worst_reflections(n=40)
+            else if (n_refl>100)  then; .put_N_worst_reflections(n=20)
+            else if (n_refl>50)   then; .put_N_worst_reflections(n=10)
+            end
+
+         else
+
+            ! Make sure users no. of reflections is reasonable
+            n = min(.n_worst_reflections,n_refl)
+            n = 2 * (n/2)
+            .put_N_worst_reflections(n)
+
          end
+
       end
       end
 
@@ -4764,10 +4816,9 @@ contains
 
    end
 
-   put_all_reflections(core_reflection)
+   put_all_reflections
    ! Show all the reflections
       self :: IN
-      core_reflection :: VEC{REFLECTION}*, optional, IN
 
    ENSURE(.reflections.created,"No reflection data")
 
@@ -4778,9 +4829,45 @@ contains
       stdout.text("=================")
 
       ! Put
-      .reflections.put(core_reflection)
+      .reflections.put
 
    end
+
+
+   put_reflection_intensities
+   ! Show all the reflections
+      self :: IN
+
+   ENSURE(.reflections.created,"No reflection data")
+
+      ! Header
+      stdout.flush
+      stdout.text("=================")
+      stdout.text("X-ray intensities")
+      stdout.text("=================")
+
+      ! Put
+      .reflections.put_intensities
+
+   end
+
+   put_reflection_intensities_XD
+   ! Show all the reflections
+      self :: IN
+
+   ENSURE(.reflections.created,"No reflection data")
+
+      ! Header
+      stdout.flush
+      stdout.text("=================")
+      stdout.text("X-ray intensities")
+      stdout.text("=================")
+
+      ! Put
+      .reflections.put_intensities_XD
+
+   end
+
 
    put_qq_plot
    ! Output a qq plot to stdout.
@@ -5218,7 +5305,7 @@ contains
       stdout.flush
 
       do n = 1,n_refl
-         stdout.put(.reflections(n).sin_theta_on_lambda)
+         stdout.put(.reflections(n).stl)
          stdout.put(.reflections(n).F_z)
          stdout.flush
       end
@@ -5228,7 +5315,7 @@ contains
       stdout.flush
 
       do n = 1,n_refl
-         stdout.put(.reflections(n).sin_theta_on_lambda)
+         stdout.put(.reflections(n).stl)
          stdout.put(.reflections(n).delta_F)
          stdout.flush
       end
@@ -5287,7 +5374,7 @@ contains
 
       stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs sin(theta)/lambda:")
       do n = 1,n_refl
-         stdout.put(.reflections(n).sin_theta_on_lambda)
+         stdout.put(.reflections(n).stl)
          stdout.put(ext_refs(n).F_z)
          stdout.flush
       end
@@ -5300,39 +5387,47 @@ contains
 
    put_PND_sf(name)
    ! Output the magnetic structure factors
-       name :: STR
-       FM_s,FM_l :: VEC{CPX}*
-       arch :: ARCHIVE
-        n :: INT
-       FM_s.create(.reflections.n_refl)
-       arch.set(name,"PND_spin_sf")
-       arch.read(FM_s)
-       FM_l.create(.reflections.n_refl)
-       arch.set(name,"PND_nabla_sf")
-       arch.read(FM_l)
-       stdout.text("PND magnetic structure factors:")
-       stdout.flush
-       stdout.dash(int_fields=3,real_fields=3)
-       stdout.put("h", int_width=TRUE)
-       stdout.put("k", int_width=TRUE)
-       stdout.put("l", int_width=TRUE)
-       stdout.put("FM_s")
-       stdout.put("FM_l")
-       stdout.put("FM")
-       stdout.flush
-       stdout.dash(int_fields=3,real_fields=3)
-       do n = 1, .reflections.n_refl
-          stdout.put(.reflections(n).h)
-          stdout.put(.reflections(n).k)
-          stdout.put(.reflections(n).l)
-          stdout.put(real(FM_s(n)) )
-          stdout.put(real(FM_l(n)) )
-          stdout.put(real(FM_s(n)+FM_l(n)) )
-          stdout.flush
-       end
-       stdout.dash(int_fields=3,real_fields=3)
-       FM_l.destroy
-       FM_s.destroy
+      self :: IN
+      name :: STR, IN
+
+      FM_s,FM_l :: VEC{CPX}*
+      arch :: ARCHIVE
+      n :: INT
+
+      FM_s.create(.reflections.n_refl)
+
+      arch.set(name,"PND_spin_sf")
+      arch.read(FM_s)
+
+      FM_l.create(.reflections.n_refl)
+      arch.set(name,"PND_nabla_sf")
+      arch.read(FM_l)
+
+      stdout.text("PND magnetic structure factors:")
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=3)
+      stdout.put("h", int_width=TRUE)
+      stdout.put("k", int_width=TRUE)
+      stdout.put("l", int_width=TRUE)
+      stdout.put("FM_s")
+      stdout.put("FM_l")
+      stdout.put("FM")
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=3)
+      do n = 1, .reflections.n_refl
+         stdout.put(.reflections(n).h)
+         stdout.put(.reflections(n).k)
+         stdout.put(.reflections(n).l)
+         stdout.put(real(FM_s(n)) )
+         stdout.put(real(FM_l(n)) )
+         stdout.put(real(FM_s(n)+FM_l(n)) )
+         stdout.flush
+      end
+      stdout.dash(int_fields=3,real_fields=3)
+
+      FM_l.destroy
+      FM_s.destroy
+
    end
 
 
@@ -5357,44 +5452,65 @@ contains
 
    end
 
-   have_I_exp result (res) ::: pure
-   ! Return TRUE if have some experimental structure factors
+   have_F_sigma result (res) ::: pure
+   ! Return TRUE if have some F_sigma's
       self :: IN
       res :: BIN
+
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_F_sigma
+
+   end
+
+   have_I_exp result (res) ::: pure
+   ! Return TRUE if have some I_exp's
+      self :: IN
+      res :: BIN
+
       res = FALSE
       if (associated(.reflections)) res = .reflections.have_I_exp
+
+   end
+
+   have_I_sigma result (res) ::: pure
+   ! Return TRUE if have some I_sigma's
+      self :: IN
+      res :: BIN
+
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_I_sigma
+
    end
 
    have_F_calc result (res) ::: pure
    ! Return TRUE if have some calculated structure factors
       self :: IN
       res :: BIN
+
       res = FALSE
       if (associated(.reflections)) res = .reflections.have_F_calc
+
    end
 
    have_F_pred result (res) ::: pure
    ! Return TRUE if have some predicted structure factors
       self :: IN
       res :: BIN
+
       res = FALSE
       if (associated(.reflections)) res = .reflections.have_F_pred
+
    end
 
-   have_F_sigma result (res) ::: pure
-   ! Return TRUE if have some structure factor errors
-      self :: IN
-      res :: BIN
-      res = FALSE
-      if (associated(.reflections)) res = .reflections.have_F_sigma
-   end
 
    use_multiple_scale_factors result (res) ::: pure
    ! Return TRUE if we are supposed to use multiple scale factors.
       self :: IN
       res :: BIN
+
       res = FALSE
       if (associated(.reflections)) res = any(.reflections.group>0)
+
    end
 
 
@@ -5586,18 +5702,6 @@ contains
    ENSURE(.reflection_data_exists,"no reflection data")
 
       res = .reflections.I_weighted_r_factor
-
-   end
-
-   F_val_r_factor(core_reflection) result (res) ::: PURE
-   ! Valence r factor . The set of "core_reflections" must be supplied.
-      self :: IN
-      core_reflection :: VEC{REFLECTION}, IN
-      res :: REAL
-
-   ENSURE(.reflection_data_exists,"no reflection data")
-
-      res = .reflections.F_val_r_factor(core_reflection)
 
    end
 
