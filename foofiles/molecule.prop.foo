@@ -3517,12 +3517,12 @@ contains
       ! Terms regardless of unrestricted/restricted
       E_en,E_ke,E_1e,E_nn,E_ee,E_ex :: REAL
       E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
-      E_EX_FACTOR = -HALF :: REAL
       X,X_A,X_B :: OPMATRIX* 
       C,C_A,C_B :: OPMATRIX*
       K,K_A,K_B :: OPMATRIX*
       mol_A,mol_B :: MOLECULE*
       saved_MOs_A, saved_MOs_B :: OPMATRIX*
+      exchange_factors :: VEC{REAL}(3) = [-HALF, -HALF, -HALF]
 
 
       ! ======================
@@ -3547,16 +3547,18 @@ contains
       mol_B.scfdata.set_scf_kind(mol_B.molecular_orbitals.spinorbital_kind)
 
       .SCF:merge_group_MOs
+      .scfdata.set_output(FALSE)
       if (.scfdata.is_restricted) then
-         E_EX_FACTOR = -QUARTER
+         exchange_factors = -QUARTER
       end if
+
+      if (mol_A.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(2) = -QUARTER
+      if (mol_B.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(3) = -QUARTER
 
       ! Make SCF density matrices
            .BASE:make_scf_density_matrix
       mol_A.BASE:make_scf_density_matrix
       mol_B.BASE:make_scf_density_matrix
-
-      ! Create matrix temporaries
 
       ! Make integrals
            .SCF:make_core_matrix
@@ -3610,7 +3612,7 @@ contains
 
       ! Alpha density matrix with beta, beta density matrix with alpha
       E_ee = .:group_12_int_energy(C,C_A,C_B, HALF, E_ABn, TRUE)
-      E_ex = .:group_12_int_energy(K,K_A,K_B, E_EX_FACTOR,E_ABn)
+      E_ex = .:group_12_exchange_int_energy(K,K_A,K_B,exchange_factors,E_ABn)
 
       K_A.destroy; K_B.destroy
       C_A.destroy; C_B.destroy  
@@ -3644,7 +3646,7 @@ contains
       .FOCK:make_JK_engine(C,K,X)
 
       E_ABo = E_ABo +    HALF*.BASE:expectation(C, TRUE)
-      E_ABo = E_ABo + E_EX_FACTOR*.BASE:expectation(K)
+      E_ABo = E_ABo + exchange_factors(1)*.BASE:expectation(K)
 
       ! Get repulsion energy
       E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
@@ -3757,6 +3759,48 @@ contains
          if (present(fac)) then; E_AB = E_AB + fac*E
          else;                 ; E_AB = E_AB +     E
          end
+      end
+   end
+
+   group_12_exchange_int_energy(X,X_A,X_B,factors,E_AB,with_cross_terms) result (res) ::: private
+   ! Return the group 1-2 interaction energy for one electron
+   ! operators for the total system "X" and subsystems "XA" and "XB",
+   ! in the supermolecule and subsystem bases, respectively.
+   ! If present, "E_AB" is incremented with the expectation of "X".
+   ! If present, overall factor "fac" is included.
+      self :: IN
+      X    :: OPMATRIX, IN
+      X_A  :: OPMATRIX, IN
+      X_B  :: OPMATRIX, IN
+      factors  :: VEC{REAL}(3), optional, IN
+      E_AB :: REAL, optional, INOUT
+      with_cross_terms :: BIN, optional
+      res  :: REAL
+
+
+   ENSURE(.atom_group.created,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+
+      E, E_A, E_B :: REAL
+      fac :: VEC{REAL}(3) = [1.0, 1.0, 1.0]
+      mol_A,mol_B :: MOLECULE*
+
+      if (present(factors)) fac = factors
+
+      ! A & B molecules
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      ! Energies
+      E   =      .BASE:expectation(X, with_cross_terms)
+      E_A = mol_A.BASE:expectation(X_A, with_cross_terms)
+      E_B = mol_B.BASE:expectation(X_B, with_cross_terms)
+
+      ! Interaction energy
+      res = fac(1) * E - fac(2) * E_A - fac(3) * E_B
+
+      if (present(E_AB)) then
+         E_AB = E_AB + (E * fac(1))
       end
    end
 
