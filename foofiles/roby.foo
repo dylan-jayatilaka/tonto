@@ -278,8 +278,9 @@ contains
       stdin.read(.roby_kind)
 
       select case (.roby_kind)
-         case("atom_bond_analysis     ")
-         case("group_bond_analysis    ")
+         case("atom_bond_analysis       ")
+         case("atom_energy_bond_analysis")
+         case("group_bond_analysis      ")
          case default;    UNKNOWN(.roby_kind)
       end
 
@@ -839,9 +840,361 @@ contains
 !
 !   end
 
-! ==============================
-! Roby-Gould bond index routines
-! ==============================
+! =================
+! Energy bond index
+! =================
+
+   atom_energy_bond_analysis ::: leaky
+   ! Do a Roby energy-bond and Gould charge analysis.
+   ! Only works for RHF case for now.
+      self :: INOUT
+
+   ENSURE(.atom_list.created,"no atom list")
+   ENSURE(.atom_group.destroyed,"do not use atom_group=")
+   ENSURE(.core_matrix.created,"no core_matrix!")
+   ENSURE(.core_matrix.restricted.created,"no restricted core_matrix!")
+   ENSURE(.fock_matrix.created,"no fock_matrix!")
+   ENSURE(.fock_matrix.restricted.created,"no restricted fock_matrix!")
+
+      n_bf :: INT
+
+      ! Make E_matrix
+      n_bf = .core_matrix.n_bf
+      .E_matrix.create(n_bf,n_bf)
+      .E_matrix = HALF*(.core_matrix.restricted + .fock_matrix.restricted)
+
+      ! Each atom is a Roby subspace
+      .make_single_atom_groups
+
+      ! Get group energies
+      .energy_bond_analysis
+
+   end
+
+   energy_bond_analysis ::: leaky, private
+   ! Do a Roby-Gould energy-bond analysis for the atom groups
+   ! given in .atom_groups
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom group defined")
+
+      n_group,a,b :: INT
+      ind,pcc,cov,ion :: REAL
+
+      n_group = .n_group
+
+      .make_mono_energies
+      .make_pair_energies
+
+      .E_bond_index.create(n_group,n_group)
+      .E_cov_index.create(n_group,n_group)
+      .E_ion_index.create(n_group,n_group)
+      .E_percent_covalency.create(n_group,n_group)
+
+      do a = 1,n_group
+      do b = 1,a-1
+
+        if (.skip_pair(a,b)) cycle
+
+        .atom_a => .atom_group(a).element
+        .atom_b => .atom_group(b).element
+        .atom_ab.append(.atom_a,.atom_b)
+
+        !!!!!!!!!!!!!!!!!!!!!!!
+        .destroy_theta_info
+        .make_theta_energy_info
+        !!!!!!!!!!!!!!!!!!!!!!!
+
+        ind = .energy_bond_index(cov,ion,pcc)
+
+        .E_bond_index(a,b)        = ind
+        .E_cov_index(a,b)         = cov
+        .E_ion_index(a,b)         = ion
+        .E_percent_covalency(a,b) = pcc
+
+        .E_bond_index(b,a)        =  ind
+        .E_cov_index(b,a)         =  cov
+        .E_ion_index(b,a)         = -ion
+        .percent_covalency(b,a)   =  pcc
+
+        if (.output_theta_info) then
+           .put_theta_info
+           .put_theta_bond_info
+        end
+        .destroy_theta_info
+
+        nullify(.atom_a)
+        nullify(.atom_b)
+        .atom_ab.destroy
+
+      end
+      end
+
+   end
+
+   energy_bond_index(c_ab,i_ab,pcc) result (bond_index) ::: leaky, private
+   ! Calculates the Roby-Gould "bond_index", percentage covalent character
+   ! "pcc", for atom groups ".atom_a" and ".atom_b".
+      self :: INOUT
+      c_ab,i_ab,pcc :: REAL, OUT
+      bond_index :: REAL
+
+   ENSURE(.theta_angle.created,"no theta angles")
+   ENSURE(.E_C.created,"no covalent theta populations")
+   ENSURE(.E_I.created,"no ionic theta populations")
+   ENSURE(.pair.created,"no pair array")
+
+      n_ab,i :: INT
+      ionic_cutoff,covalent_cutoff,zero_cutoff,angle :: REAL
+
+      ionic_cutoff    = .ionic_cutoff.to_units("degree")
+      covalent_cutoff = .covalent_cutoff.to_units("degree")
+      zero_cutoff     = .zero_cutoff.to_units("degree")
+
+      n_ab = .n_bf_ab
+
+      .E_covalent_index.create(n_ab)
+      .E_ionic_index.create(n_ab)
+
+      .E_covalent_index = ZERO
+      .E_ionic_index    = ZERO
+      pcc  = ZERO
+      c_ab = ZERO
+      i_ab = ZERO
+      bond_index = ZERO
+
+      do i = 1,n_ab
+
+        if (.pair(i)<1 OR i<.pair(i)) cycle
+
+        angle = .theta_angle(i)
+
+        .E_covalent_index(i) = HALF*(.E_C(i) - .E_C(.pair(i)))
+        .E_ionic_index(i)    = HALF*(.E_I(i) - .E_I(.pair(i)))
+
+        if (angle <= covalent_cutoff AND angle >= zero_cutoff) c_ab = c_ab + .E_covalent_index(i)
+        if (angle <= ionic_cutoff    AND angle >= zero_cutoff) i_ab = i_ab + .E_ionic_index(i)
+
+      end
+
+      bond_index = c_ab**2 + i_ab**2
+      pcc        = 100 * (c_ab**2/bond_index)
+      bond_index = sqrt(bond_index)
+
+   end
+
+   make_theta_energy_info ::: leaky, private
+   ! Calculates the Roby-Gould theta ubspace energyinformation for
+   ! atom groups ".atom_a" and ".atom_b", including theta subspace
+   ! populations
+      self :: INOUT
+
+   ENSURE(.atom_a.created,"no atom A group")
+   ENSURE(.atom_b.created,"no atom B group")
+   ENSURE(.atom_ab.created,"no atom AB group")
+
+      C :: MAT{REAL}*
+      n_a,n_b,n_ab :: INT
+
+      n_a  = .n_bf_a
+      n_b  = .n_bf_b
+      n_ab = n_a + n_b
+
+      ! Make the Roby operator
+      C.create(n_ab,n_ab)                      
+      .make_shared_operator(C)
+
+      ! Covalent operator
+      .theta_C.create(n_ab,n_ab)
+      .eval_C.create(n_ab)
+      .diagonalize_V_AB_operator(C,.theta_C,.eval_C)
+
+      ! Find +/- pairs covalent pairs
+      ! Make |cov-> from |cov+>
+      .theta_angle.create(n_ab)
+      .pair.create(n_ab)
+      .eval_C.find_pairs(.pair,ROBY::match_pair)
+      .make_theta_angles
+      .make_gould_covalent_orbitals
+
+      ! Ionic operator
+      ! Make |ion> pairs from |cov> pairs
+      .theta_I.create(n_ab,n_ab)
+      .eval_I.create(n_ab)
+      .make_gould_ionic_orbitals
+
+      ! Make covalent/ionic theta populations
+      .E_C.create(n_ab)
+      .E_I.create(n_ab)
+      .make_theta_energies(.E_C,.theta_C) 
+      .make_theta_energies(.E_I,.theta_I)
+
+      C.destroy
+
+   end
+
+   make_theta_energies(E,theta) ::: private
+   ! Make "E", an array of "theta" energies for a pair of Roby atoms
+   ! defined by indices in ".atom_a" and ".atom_b". "theta" itself is
+   ! a matrix whose columns are coefficients on V_AB.
+      self :: INOUT
+      E :: VEC{REAL}, OUT
+      theta :: MAT{REAL}, OUT
+
+   ENSURE(.atom_ab.created,"No roby atom group AB")
+   ENSURE(E.dim==.n_bf_ab,"wrong size, E")
+
+      i :: INT
+
+      do i = 1,.n_bf_ab
+         E(i) = .subspace_energy(.atom_ab,ANO=theta(:,i:i))
+      end
+
+   end
+
+   make_mono_energies ::: leaky, private
+   ! Make the Roby energies for the defined atom groups
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom groups")
+   ENSURE(.rho.created,"no rho matrix")
+   ENSURE(.E_matrix.created,"no rho matrix")
+
+      a :: INT
+
+      .E1.destroy
+      .E1.create(.n_group)
+
+      do a = 1,.n_group
+         .atom_a => .atom_group(a).element
+         .E1(a)  =  .subspace_energy(.atom_a)
+         nullify(.atom_a)
+      end
+
+   end
+
+   make_pair_energies ::: leaky, private
+   ! Make the pair Roby energies
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom groups")
+   ENSURE(.rho.created,"no rho matrix")
+   ENSURE(.E_matrix.created,"no rho matrix")
+
+      n_group,a,b :: INT
+      E2 :: REAL
+
+      n_group = .n_group
+
+      .E2.destroy
+      .E2.create(n_group,n_group)
+
+      .E2 = ZERO
+
+      do a = 1,n_group
+      do b = 1,a-1
+
+         if (.skip_pair(a,b)) cycle
+         
+         .atom_a => .atom_group(a).element
+         .atom_b => .atom_group(b).element
+         
+         .atom_ab.append(.atom_a,.atom_b)
+
+         E2 = .subspace_energy(.atom_ab)
+
+         .n2(a,b) = E2
+         .n2(b,a) = E2
+         
+         nullify(.atom_a)
+         nullify(.atom_b)
+         .atom_ab.destroy
+
+      end
+      end
+
+   end
+
+   subspace_energy(group,ANO) result (res) ::: private
+   ! Return the total Roby energy for the group of atoms whose
+   ! indices are given in "group", i.e Tr (P_{group;ANO} (E_matrix) rho), 
+   ! where "rho" is the density matrix for a molecule. If present, the
+   ! columns of the "ANO" matrix are used to define the Roby projector
+   ! instead of the atomic natural orbitals.
+      self :: INOUT
+      group :: VEC{INT}, IN
+      ANO :: MAT{REAL}, optional, IN
+      res :: REAL
+
+   ENSURE(.rho.created,"no rho matrix")
+   ENSURE(.E_matrix.created,"no rho matrix")
+   ENSURE(.overlap_matrix.created,"no overlap matrix")
+
+      P :: MAT{REAL}*
+      n_gr :: INT
+
+      n_gr = .n_bf(group)
+
+      ! Make small P matrix
+      P.create(n_gr,n_gr)
+      .make_projection_matrix(P,group,ANO)
+
+      ! Evaluate
+      res = .expectation(.E_matrix,P,group)
+
+      ! Clean
+      P.destroy
+
+   end
+
+   expectation(E,P,group,rho) result (res) ::: private
+   ! Evaluate:
+   ! res = Trace (S(:,group) P S(group,:) E(:,:) S(:,group) P S(group,:) rho)
+   ! Note that "group" are the indices of the atoms whose basis
+   ! functions are used to define the projection matrix "P".
+      self :: IN
+      E :: MAT{REAL}, IN
+      P :: MAT{REAL}, IN
+      group :: VEC{INT}, IN
+      rho :: OPMATRIX*, optional, IN
+      res :: REAL
+
+   ENSURE(P.dim1==.n_bf(group),"wrong P dimension")
+   ENSURE(P.is_square,"P is not square")
+
+      density :: OPMATRIX*
+      W,X :: MAT{REAL}*
+      n_bf :: INT
+
+      density => .rho
+      if (present(rho)) density => rho
+
+      n_bf = .n_bf
+
+      ! Make W = S P S
+      W.create(n_bf,n_bf)
+      .overlap_transform(P,W,group)
+
+      ! Make X = W E W
+      X.create(n_bf,n_bf)
+      E.change_basis_to(X,W)
+
+      ! Make Tr (X rho)
+      if (.spin_multiplicity/=1) then
+         res = density.alpha.trace_product_with(X) &
+             + density.beta.trace_product_with(X)
+      else
+         res = density.restricted.trace_product_with(X)
+      end
+
+      X.destroy
+      W.destroy
+
+   end
+
+! ==========
+! Bond index
+! ==========
 
    bond_analysis ::: leaky, private
    ! Do a Roby-Gould bond and charge analysis for the atom groups
@@ -872,8 +1225,10 @@ contains
         .atom_b => .atom_group(b).element
         .atom_ab.append(.atom_a,.atom_b)
 
+        !!!!!!!!!!!!!!!!!!!
         .destroy_theta_info
         .make_theta_info
+        !!!!!!!!!!!!!!!!!!!
 
         ind  = .gould_bond_index(cov,ion,pcc)
 
@@ -1030,14 +1385,19 @@ contains
    ! Make "pop", an array of "theta" populations for a pair of Roby atoms
    ! defined by indices in ".atom_a" and ".atom_b". "theta" itself is a matrix
    ! whose columns are coefficients on V_AB.
-      pop :: VEC{REAL}
-      theta :: MAT{REAL}
+      self :: INOUT
+      pop :: VEC{REAL}, OUT
+      theta :: MAT{REAL}, IN
+
    ENSURE(.atom_ab.created,"No roby atom group AB")
    ENSURE(pop.dim==.n_bf_ab,"wrong size, pop")
-       i :: INT
+
+      i :: INT
+
       do i = 1,.n_bf_ab
          pop(i) = .population(.atom_ab,ANO=theta(:,i:i))
       end
+
    end
 
 !   make_theta_atom_populations(pop_a,pop_b,theta) ::: private
@@ -1064,16 +1424,24 @@ contains
 
    make_theta_angles ::: private
    ! Make the ".theta_angle" array from the Roby eigenvalues ".eval_C"
+      self :: INOUT
+
    ENSURE(.eval_C.created,"No roby eigenvalues")
    ENSURE(.theta_angle.created,"No theta_angle array")
-       i :: INT
+
+      i :: INT
       value :: REAL
+
       do i = 1,.n_bf_ab
-        value = abs(.eval_C(i))
-        value = value.arccos
-        value = value.to_units("degree")
-        .theta_angle(i) = value
+
+         value = abs(.eval_C(i))
+         value = value.arccos
+         value = value.to_units("degree")
+
+         .theta_angle(i) = value
+
       end
+
    end
 
    make_gould_covalent_orbitals ::: private
@@ -1708,20 +2076,20 @@ contains
 ! Low level Roby routines used all over the place
 ! ===============================================
 
-   expectation(X,group,rho) result (res) ::: private
-   ! Get the expectation value of the operator matrix "X" over a certain
-   ! "group" of atoms, i.e:
-   !    res = Trace ( S(:,group) X S(group,:) rho )
+   expectation(P,group,rho) result (res) ::: private
+   ! Get the expectation value of the projection operator matrix "P"
+   ! over a certain "group" of atoms, i.e:
+   !    res = Trace ( S(:,group) P S(group,:) rho )
    ! Note that "group" are the indices of the atoms whose basis functions
-   ! are used to define the matrix "X".
+   ! are used to define the matrix "P".
       self :: IN
-      X :: MAT{REAL}, IN
+      P :: MAT{REAL}, IN
       group :: VEC{INT}, IN
       rho :: OPMATRIX*, optional, IN
       res :: REAL
 
-   ENSURE(X.dim1==.n_bf(group),"wrong X dimension")
-   ENSURE(X.is_square,"X is not square")
+   ENSURE(P.dim1==.n_bf(group),"wrong P dimension")
+   ENSURE(P.is_square,"P is not square")
 
       density :: OPMATRIX*
       W :: MAT{REAL}*
@@ -1732,10 +2100,11 @@ contains
 
       n_bf = .n_bf
 
+      ! Make W = S P S
       W.create(n_bf,n_bf)
+      .overlap_transform(P,W,group)
 
-      .overlap_transform(X,W,group)
-
+      ! Make Tr ( S P S rho)
       if (.spin_multiplicity/=1) then
          res = density.alpha.trace_product_with(W) &
              + density.beta.trace_product_with(W)
@@ -1801,16 +2170,24 @@ contains
    ! Do: Y = X S(row_atom,col_atom), where S(row_atom,col_atom) is the
    ! AO subspace section of the full overlap matrix specified by the
    ! basis functions on the atom indices in "row_atom" and "col_atom".
+      self :: IN
       X,Y :: MAT{REAL}
       row_atom, col_atom :: VEC{INT}, optional
+
       SS :: MAT{REAL}*
       n_row,n_col :: INT
+
       n_row = .n_bf(row_atom)
       n_col = .n_bf(col_atom)
+
       SS.create(n_row,n_col)
+
       .make_overlap_matrix(SS,row_atom,col_atom)
+
       Y.to_product_of(X,SS)
+
       SS.destroy
+
    end
 
    make_overlap_matrix(SS,row_atom,col_atom) ::: private, PURE
