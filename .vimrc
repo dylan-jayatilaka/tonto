@@ -24,19 +24,3 @@ endif
 " -----------------------
 au BufReadPost * if line("'\"") > 0 && line("'\"") <= line("$") | exe "normal g'\"" | endif
 
-" --------------------
-"  Taglist
-" --------------------
-let tlist_foo_settings = 'foo;m:macros;t:types;v:array types;g:module variables;i:interfaces;r:routines'
-"let tlist_foo_settings = 'foo;m:macro;a:attribute;i:interface;f:function;s:subroutine'
-
-" let Tlist_Ctags_Cmd = '/home/dylan/bin/ctags'
-let Tlist_Auto_Open = 0
-let Tlist_Use_Right_Window = 1
-let Tlist_WinWidth = 35
-let Tlist_Enable_Fold_Column = 0
-let Tlist_Exist_OnlyWindow = 1
-let Tlist_Sort_Type = "order" " sort by order or name 
-" let Tlist_Display_Prototype = 1
-" let Tlist_Display_Tag_Scope = 0
-nnoremap <silent> <F2> :TlistToggle<CR>

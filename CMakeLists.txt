@@ -36,7 +36,7 @@ enable_testing()
 
 # Tonto
 project(tonto
-    LANGUAGES Fortran
+    LANGUAGES Fortran C
     VERSION ${TONTO_VERSION})
 
 # If desirable we can use .F03/.f03 by appending to the below variable

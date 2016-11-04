@@ -188,7 +188,8 @@ contains
 
    set_defaults(mol)
    ! Set default SCF data values
-      mol :: MOLECULE
+      self :: INOUT
+      mol :: MOLECULE, target, IN
 
    ENSURE(mol.atom.created,"no atom list") 
    ENSURE(mol.density_matrix.created,"no density matrix") 
@@ -202,6 +203,8 @@ contains
       .atom              => mol.atom
       .rho               => mol.density_matrix
       .overlap_matrix    => mol.overlap_matrix
+      .core_matrix       => mol.core_matrix
+      .fock_matrix       => mol.fock_matrix
 
    end
 
@@ -225,21 +228,37 @@ contains
       word.to_lower_case
 
       select case (word)
+
          case ("}                      ")  ! exit case
+
          case ("analyze_all_atom_pairs="); .read_analyze_all_atom_pairs
          case ("analyze_vdw_atom_pairs="); .read_analyze_vdw_atom_pairs
          case ("atom_groups=           "); .read_atom_groups
          case ("atom_list=             "); .read_atom_list
+
          case ("bond_scale_factors=    "); .read_bond_scale_factor
+
          case ("covalent_cutoff=       "); .read_covalent_cutoff
+
          case ("ionic_cutoff=          "); .read_ionic_cutoff
+
          case ("kind=                  "); .read_kind
+
          case ("occupied_ano_cutoff=   "); .read_occupied_ano_cutoff
          case ("output_theta_info=     "); .read_output_theta_info
+
          case ("pi_on_2_cutoff=        "); .read_pi_on_2_cutoff
+         case ("put_core_matrix        "); stdout.put(.core_matrix)
+         case ("put_density_matrix     "); stdout.put(.rho)
+         case ("put_fock_matrix        "); stdout.put(.fock_matrix)
+         case ("put_overlap_matrix     "); stdout.put(.overlap_matrix)
+         
          case ("use_naos=              "); .read_use_naos
+         
          case ("zero_cutoff=           "); .read_zero_cutoff
+
          case default;           UNKNOWN(word)
+
       end
 
    end
@@ -259,8 +278,9 @@ contains
       stdin.read(.roby_kind)
 
       select case (.roby_kind)
-         case("atom_bond_analysis     ")
-         case("group_bond_analysis    ")
+         case("atom_bond_analysis       ")
+         case("atom_energy_bond_analysis")
+         case("group_bond_analysis      ")
          case default;    UNKNOWN(.roby_kind)
       end
 
@@ -820,9 +840,364 @@ contains
 !
 !   end
 
-! ==============================
-! Roby-Gould bond index routines
-! ==============================
+! =================
+! Energy bond index
+! =================
+
+   atom_energy_bond_analysis ::: leaky
+   ! Do a Roby energy-bond and Gould charge analysis.
+   ! Only works for RHF case for now.
+      self :: INOUT
+
+   ENSURE(.atom_list.created,"no atom list")
+   ENSURE(.atom_group.destroyed,"do not use atom_group=")
+   ENSURE(.core_matrix.created,"no core_matrix!")
+   ENSURE(.core_matrix.restricted.created,"no restricted core_matrix!")
+   ENSURE(.fock_matrix.created,"no fock_matrix!")
+   ENSURE(.fock_matrix.restricted.created,"no restricted fock_matrix!")
+
+      n_bf :: INT
+
+      ! Make E_matrix
+      n_bf = .core_matrix.n_bf
+      .E_matrix.create(n_bf,n_bf)
+      .E_matrix = HALF*(.core_matrix.restricted + .fock_matrix.restricted)
+
+      ! Each atom is a Roby subspace
+      .make_single_atom_groups
+
+      ! Get group energies
+      .energy_bond_analysis
+
+      ! Output
+      .put_all_energy_info
+
+   end
+
+   energy_bond_analysis ::: leaky, private
+   ! Do a Roby-Gould energy-bond analysis for the atom groups
+   ! given in .atom_groups
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom group defined")
+
+      n_group,a,b :: INT
+      ind,pcc,cov,ion :: REAL
+
+      n_group = .n_group
+
+      .make_mono_energies
+      .make_pair_energies
+
+      .E_bond_index.create(n_group,n_group)
+      .E_cov_index.create(n_group,n_group)
+      .E_ion_index.create(n_group,n_group)
+      .E_percent_covalency.create(n_group,n_group)
+
+      do a = 1,n_group
+      do b = 1,a-1
+
+        if (.skip_pair(a,b)) cycle
+
+        .atom_a => .atom_group(a).element
+        .atom_b => .atom_group(b).element
+        .atom_ab.append(.atom_a,.atom_b)
+
+        !!!!!!!!!!!!!!!!!!!!!!!
+        .destroy_theta_info
+        .make_theta_energy_info
+        !!!!!!!!!!!!!!!!!!!!!!!
+
+        ind = .energy_bond_index(cov,ion,pcc)
+
+        .E_bond_index(a,b)        = ind
+        .E_cov_index(a,b)         = cov
+        .E_ion_index(a,b)         = ion
+        .E_percent_covalency(a,b) = pcc
+
+        .E_bond_index(b,a)        =  ind
+        .E_cov_index(b,a)         =  cov
+        .E_ion_index(b,a)         = -ion
+        .E_percent_covalency(b,a) =  pcc
+
+        if (.output_theta_info) then
+           .put_theta_info
+           .put_theta_bond_info
+        end
+        .destroy_theta_info
+
+        nullify(.atom_a)
+        nullify(.atom_b)
+        .atom_ab.destroy
+
+      end
+      end
+
+   end
+
+   energy_bond_index(c_ab,i_ab,pcc) result (bond_index) ::: leaky, private
+   ! Calculates the Roby-Gould "bond_index", percentage covalent character
+   ! "pcc", for atom groups ".atom_a" and ".atom_b".
+      self :: INOUT
+      c_ab,i_ab,pcc :: REAL, OUT
+      bond_index :: REAL
+
+   ENSURE(.theta_angle.created,"no theta angles")
+   ENSURE(.E_C.created,"no covalent theta populations")
+   ENSURE(.E_I.created,"no ionic theta populations")
+   ENSURE(.pair.created,"no pair array")
+
+      n_ab,i :: INT
+      ionic_cutoff,covalent_cutoff,zero_cutoff,angle :: REAL
+
+      ionic_cutoff    = .ionic_cutoff.to_units("degree")
+      covalent_cutoff = .covalent_cutoff.to_units("degree")
+      zero_cutoff     = .zero_cutoff.to_units("degree")
+
+      n_ab = .n_bf_ab
+
+      .E_covalent_index.create(n_ab)
+      .E_ionic_index.create(n_ab)
+
+      .E_covalent_index = ZERO
+      .E_ionic_index    = ZERO
+      pcc  = ZERO
+      c_ab = ZERO
+      i_ab = ZERO
+      bond_index = ZERO
+
+      do i = 1,n_ab
+
+        if (.pair(i)<1 OR i<.pair(i)) cycle
+
+        angle = .theta_angle(i)
+
+        .E_covalent_index(i) = HALF*(.E_C(i) - .E_C(.pair(i)))
+        .E_ionic_index(i)    = HALF*(.E_I(i) - .E_I(.pair(i)))
+
+        if (angle <= covalent_cutoff AND angle >= zero_cutoff) c_ab = c_ab + .E_covalent_index(i)
+        if (angle <= ionic_cutoff    AND angle >= zero_cutoff) i_ab = i_ab + .E_ionic_index(i)
+
+      end
+
+      bond_index = c_ab**2 + i_ab**2
+      pcc        = 100 * (c_ab**2/bond_index)
+      bond_index = sqrt(bond_index)
+
+   end
+
+   make_theta_energy_info ::: leaky, private
+   ! Calculates the Roby-Gould theta ubspace energyinformation for
+   ! atom groups ".atom_a" and ".atom_b", including theta subspace
+   ! populations
+      self :: INOUT
+
+   ENSURE(.atom_a.created,"no atom A group")
+   ENSURE(.atom_b.created,"no atom B group")
+   ENSURE(.atom_ab.created,"no atom AB group")
+
+      C :: MAT{REAL}*
+      n_a,n_b,n_ab :: INT
+
+      n_a  = .n_bf_a
+      n_b  = .n_bf_b
+      n_ab = n_a + n_b
+
+      ! Make the Roby operator
+      C.create(n_ab,n_ab)                      
+      .make_shared_operator(C)
+
+      ! Covalent operator
+      .theta_C.create(n_ab,n_ab)
+      .eval_C.create(n_ab)
+      .diagonalize_V_AB_operator(C,.theta_C,.eval_C)
+
+      ! Find +/- pairs covalent pairs
+      ! Make |cov-> from |cov+>
+      .theta_angle.create(n_ab)
+      .pair.create(n_ab)
+      .eval_C.find_pairs(.pair,ROBY::match_pair)
+      .make_theta_angles
+      .make_gould_covalent_orbitals
+
+      ! Ionic operator
+      ! Make |ion> pairs from |cov> pairs
+      .theta_I.create(n_ab,n_ab)
+      .eval_I.create(n_ab)
+      .make_gould_ionic_orbitals
+
+      ! Make covalent/ionic theta populations
+      .E_C.create(n_ab)
+      .E_I.create(n_ab)
+      .make_theta_energies(.E_C,.theta_C) 
+      .make_theta_energies(.E_I,.theta_I)
+
+      C.destroy
+
+   end
+
+   make_theta_energies(E,theta) ::: private
+   ! Make "E", an array of "theta" energies for a pair of Roby atoms
+   ! defined by indices in ".atom_a" and ".atom_b". "theta" itself is
+   ! a matrix whose columns are coefficients on V_AB.
+      self :: INOUT
+      E :: VEC{REAL}, OUT
+      theta :: MAT{REAL}, OUT
+
+   ENSURE(.atom_ab.created,"No roby atom group AB")
+   ENSURE(E.dim==.n_bf_ab,"wrong size, E")
+
+      i :: INT
+
+      do i = 1,.n_bf_ab
+         E(i) = .subspace_energy(.atom_ab,ANO=theta(:,i:i))
+      end
+
+   end
+
+   make_mono_energies ::: leaky, private
+   ! Make the Roby energies for the defined atom groups
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom groups")
+   ENSURE(.rho.created,"no rho matrix")
+   ENSURE(.E_matrix.created,"no rho matrix")
+
+      a :: INT
+
+      .E1.destroy
+      .E1.create(.n_group)
+
+      do a = 1,.n_group
+         .atom_a => .atom_group(a).element
+         .E1(a)  =  .subspace_energy(.atom_a)
+         nullify(.atom_a)
+      end
+
+   end
+
+   make_pair_energies ::: leaky, private
+   ! Make the pair Roby energies
+      self :: INOUT
+
+   ENSURE(.atom_group.created,"no atom groups")
+   ENSURE(.rho.created,"no rho matrix")
+   ENSURE(.E_matrix.created,"no rho matrix")
+
+      n_group,a,b :: INT
+      E2 :: REAL
+
+      n_group = .n_group
+
+      .E2.destroy
+      .E2.create(n_group,n_group)
+
+      .E2 = ZERO
+
+      do a = 1,n_group
+      do b = 1,a-1
+
+         if (.skip_pair(a,b)) cycle
+         
+         .atom_a => .atom_group(a).element
+         .atom_b => .atom_group(b).element
+         
+         .atom_ab.append(.atom_a,.atom_b)
+
+         E2 = .subspace_energy(.atom_ab)
+
+         .E2(a,b) = E2
+         .E2(b,a) = E2
+         
+         nullify(.atom_a)
+         nullify(.atom_b)
+         .atom_ab.destroy
+
+      end
+      end
+
+   end
+
+   subspace_energy(group,ANO) result (res) ::: private
+   ! Return the total Roby energy for the group of atoms whose
+   ! indices are given in "group", i.e Tr (P_{group;ANO} (E_matrix) rho), 
+   ! where "rho" is the density matrix for a molecule. If present, the
+   ! columns of the "ANO" matrix are used to define the Roby projector
+   ! instead of the atomic natural orbitals.
+      self :: INOUT
+      group :: VEC{INT}, IN
+      ANO :: MAT{REAL}, optional, IN
+      res :: REAL
+
+   ENSURE(.rho.created,"no rho matrix")
+   ENSURE(.E_matrix.created,"no rho matrix")
+   ENSURE(.overlap_matrix.created,"no overlap matrix")
+
+      P :: MAT{REAL}*
+      n_gr :: INT
+
+      n_gr = .n_bf(group)
+
+      ! Make small P matrix
+      P.create(n_gr,n_gr)
+      .make_projection_matrix(P,group,ANO)
+
+      ! Evaluate
+      res = .expectation(.E_matrix,P,group)
+
+      ! Clean
+      P.destroy
+
+   end
+
+   expectation(E,P,group,rho) result (res) ::: private
+   ! Evaluate:
+   ! res = Trace (S(:,group) P S(group,:) E(:,:) S(:,group) P S(group,:) rho)
+   ! Note that "group" are the indices of the atoms whose basis
+   ! functions are used to define the projection matrix "P".
+      self :: IN
+      E :: MAT{REAL}, IN
+      P :: MAT{REAL}, IN
+      group :: VEC{INT}, IN
+      rho :: OPMATRIX*, optional, IN
+      res :: REAL
+
+   ENSURE(P.dim1==.n_bf(group),"wrong P dimension")
+   ENSURE(P.is_square,"P is not square")
+
+      density :: OPMATRIX*
+      W,X :: MAT{REAL}*
+      n_bf :: INT
+
+      density => .rho
+      if (present(rho)) density => rho
+
+      n_bf = .n_bf
+
+      ! Make W = S P S
+      W.create(n_bf,n_bf)
+      .overlap_transform(P,W,group)
+
+      ! Make X = W E W
+      X.create(n_bf,n_bf)
+      E.change_basis_to(X,W)
+
+      ! Make Tr (X rho)
+      if (.spin_multiplicity/=1) then
+         res = density.alpha.trace_product_with(X) &
+             + density.beta.trace_product_with(X)
+      else
+         res = density.restricted.trace_product_with(X)
+      end
+
+      X.destroy
+      W.destroy
+
+   end
+
+! ==========
+! Bond index
+! ==========
 
    bond_analysis ::: leaky, private
    ! Do a Roby-Gould bond and charge analysis for the atom groups
@@ -853,8 +1228,10 @@ contains
         .atom_b => .atom_group(b).element
         .atom_ab.append(.atom_a,.atom_b)
 
+        !!!!!!!!!!!!!!!!!!!
         .destroy_theta_info
         .make_theta_info
+        !!!!!!!!!!!!!!!!!!!
 
         ind  = .gould_bond_index(cov,ion,pcc)
 
@@ -1011,14 +1388,19 @@ contains
    ! Make "pop", an array of "theta" populations for a pair of Roby atoms
    ! defined by indices in ".atom_a" and ".atom_b". "theta" itself is a matrix
    ! whose columns are coefficients on V_AB.
-      pop :: VEC{REAL}
-      theta :: MAT{REAL}
+      self :: INOUT
+      pop :: VEC{REAL}, OUT
+      theta :: MAT{REAL}, IN
+
    ENSURE(.atom_ab.created,"No roby atom group AB")
    ENSURE(pop.dim==.n_bf_ab,"wrong size, pop")
-       i :: INT
+
+      i :: INT
+
       do i = 1,.n_bf_ab
          pop(i) = .population(.atom_ab,ANO=theta(:,i:i))
       end
+
    end
 
 !   make_theta_atom_populations(pop_a,pop_b,theta) ::: private
@@ -1045,16 +1427,24 @@ contains
 
    make_theta_angles ::: private
    ! Make the ".theta_angle" array from the Roby eigenvalues ".eval_C"
+      self :: INOUT
+
    ENSURE(.eval_C.created,"No roby eigenvalues")
    ENSURE(.theta_angle.created,"No theta_angle array")
-       i :: INT
+
+      i :: INT
       value :: REAL
+
       do i = 1,.n_bf_ab
-        value = abs(.eval_C(i))
-        value = value.arccos
-        value = value.to_units("degree")
-        .theta_angle(i) = value
+
+         value = abs(.eval_C(i))
+         value = value.arccos
+         value = value.to_units("degree")
+
+         .theta_angle(i) = value
+
       end
+
    end
 
    make_gould_covalent_orbitals ::: private
@@ -1689,20 +2079,20 @@ contains
 ! Low level Roby routines used all over the place
 ! ===============================================
 
-   expectation(X,group,rho) result (res) ::: private
-   ! Get the expectation value of the operator matrix "X" over a certain
-   ! "group" of atoms, i.e:
-   !    res = Trace ( S(:,group) X S(group,:) rho )
+   expectation(P,group,rho) result (res) ::: private
+   ! Get the expectation value of the projection operator matrix "P"
+   ! over a certain "group" of atoms, i.e:
+   !    res = Trace ( S(:,group) P S(group,:) rho )
    ! Note that "group" are the indices of the atoms whose basis functions
-   ! are used to define the matrix "X".
+   ! are used to define the matrix "P".
       self :: IN
-      X :: MAT{REAL}, IN
+      P :: MAT{REAL}, IN
       group :: VEC{INT}, IN
       rho :: OPMATRIX*, optional, IN
       res :: REAL
 
-   ENSURE(X.dim1==.n_bf(group),"wrong X dimension")
-   ENSURE(X.is_square,"X is not square")
+   ENSURE(P.dim1==.n_bf(group),"wrong P dimension")
+   ENSURE(P.is_square,"P is not square")
 
       density :: OPMATRIX*
       W :: MAT{REAL}*
@@ -1713,10 +2103,11 @@ contains
 
       n_bf = .n_bf
 
+      ! Make W = S P S
       W.create(n_bf,n_bf)
+      .overlap_transform(P,W,group)
 
-      .overlap_transform(X,W,group)
-
+      ! Make Tr ( S P S rho)
       if (.spin_multiplicity/=1) then
          res = density.alpha.trace_product_with(W) &
              + density.beta.trace_product_with(W)
@@ -1782,16 +2173,24 @@ contains
    ! Do: Y = X S(row_atom,col_atom), where S(row_atom,col_atom) is the
    ! AO subspace section of the full overlap matrix specified by the
    ! basis functions on the atom indices in "row_atom" and "col_atom".
+      self :: IN
       X,Y :: MAT{REAL}
       row_atom, col_atom :: VEC{INT}, optional
+
       SS :: MAT{REAL}*
       n_row,n_col :: INT
+
       n_row = .n_bf(row_atom)
       n_col = .n_bf(col_atom)
+
       SS.create(n_row,n_col)
+
       .make_overlap_matrix(SS,row_atom,col_atom)
+
       Y.to_product_of(X,SS)
+
       SS.destroy
+
    end
 
    make_overlap_matrix(SS,row_atom,col_atom) ::: private, PURE
@@ -2799,6 +3198,651 @@ contains
 
    end
 
+! ===============
+! Output energies
+! ===============
+
+   put_all_energy_info
+   ! Put to stdout the energy bond analysis
+      self :: IN
+
+      .put_basics
+      .put_energies
+      .put_energy_indices
+
+   end
+
+   put_energies
+   ! Put to stdout the only Roby atom energies
+      self :: IN
+
+   ENSURE(.E1.created,"no atom energies exist")
+   ENSURE(.E2.created,"no atom pair energies exist")
+   ENSURE(.atom.created,"no atom data")
+
+      table :: VEC{TABLE_COLUMN}*
+      symbols :: VEC{STR}*
+      labels :: VEC{INT}*
+      f :: INT
+
+
+      stdout.flush
+      stdout.text("==================")
+      stdout.text("Roby atom energies")
+      stdout.text("==================")
+      stdout.flush
+
+      ! Create table
+      table.create(2)
+
+      ! Set the table headings
+      table(1).set_heading("Atom")
+      table(1).set_width_from(.atom.chemical_symbols)
+
+      if (.is_homoleptic) then
+         symbols.create(.n_group)
+         labels.create(.n_group)
+         f = 1
+         labels => f.sequence_up_to(.n_group)
+         symbols = labels.to_str
+         labels.destroy
+      else
+         symbols => .unique_tags
+      end
+
+      ! Datas
+      table(1).set_values(symbols)
+      table(2).set_heading(" Energy")
+      table(2).set_subhead("    /au")
+      table(2).set_values(.E1)
+
+      ! Put table
+      table.put(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      symbols.destroy
+
+   end
+
+   put_energy_indices
+   ! Put to stdout the Roby bond indices, including the shared populations
+      self :: IN
+
+      if (.is_homoleptic) then
+         .put_energy_indices_group
+      else
+         .put_energy_indices_atoms
+         .put_energy_indices_sorted
+      end
+
+   end
+
+   put_energy_indices_group
+   ! Output the energy bond indices table for connected atoms.
+      self :: IN
+
+   ENSURE(.is_homoleptic,"job is not homoleptic")
+   ENSURE(.n_group>1,"must be at leat two groups")
+
+      table :: VEC{TABLE_COLUMN}*
+      symbol :: VEC{STR}*
+      g_A,g_B :: VEC{INT}*
+      n_A,n_B,nAB,sAB,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      n_group, n_pair,i,a,b :: INT
+
+      n_group = .n_group
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("==============================")
+      stdout.text("Roby-Gould energy bond indices")
+      stdout.text("==============================")
+      stdout.flush
+      stdout.text("Energy bond indices appear only between atom groups.")
+      stdout.flush
+      symbol => .unique_tags
+      do i = 1,n_group
+      stdout.show("Group "//trim(i.to_str(fmt="i2"))//" = ",symbol(i))
+      end
+      symbol.destroy
+      stdout.flush
+
+      ! Create table
+      table.create(10)
+
+      ! Set the table headings
+      table( 1).set_heading("Grp")
+      table( 1).set_subhead("  A")
+      table( 2).set_heading("Grp")
+      table( 2).set_subhead("  B")
+      table( 3).set_heading("E_A")
+      table( 3).set_width_from(TEN)
+      table( 4).set_heading("E_B")
+      table( 4).set_width_from(TEN)
+      table( 5).set_heading("E_AB")
+      table( 5).set_width_from(TEN)
+      table( 6).set_heading("E^s_AB")
+      table( 6).set_width_from(TEN)
+      table( 7).set_heading("E Cov")
+      table( 7).set_subhead("index")
+      table( 7).set_width_from(-TEN)
+      table( 8).set_heading("E Ion")
+      table( 8).set_subhead("index")
+      table( 8).set_width_from(-TEN)
+      table( 9).set_heading("E Bond")
+      table( 9).set_subhead(" index")
+      table( 9).set_width_from(ONE)
+      table(10).set_heading("% E")
+      table(10).set_subhead("Cov")
+      table(10).set_width_from(100d0)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Populations & indices
+      n_pair = n_group - 1
+      n_pair = n_pair.triangle_number
+      g_A.create(n_pair)
+      g_B.create(n_pair)
+      n_A.create(n_pair)
+      n_B.create(n_pair)
+      nAB.create(n_pair)
+      sAB.create(n_pair)
+      cAB.create(n_pair)
+      iAB.create(n_pair)
+      tAB.create(n_pair)
+      pAB.create(n_pair)
+
+      i = 0
+      do a = 1,.n_group
+      do b = 1,a-1
+         i = i + 1
+         g_A(i) = a
+         g_B(i) = b
+         n_A(i) = .E1(a)
+         n_B(i) = .E1(b)
+         nAB(i) = .E2(a,b)
+         sAB(i) = .E1(a) + .E1(b) - .E2(a,b)
+         cAB(i) =  .E_cov_index(a,b)
+         iAB(i) =  .E_ion_index(a,b)
+         tAB(i) = .E_bond_index(a,b)
+         pAB(i) = .E_percent_covalency(a,b)
+      end
+      end
+
+      ! Set table data
+      table( 1).set_values(g_A)
+      table( 2).set_values(g_B)
+      table( 3).set_values(n_A)
+      table( 4).set_values(n_B)
+      table( 5).set_values(nAB)
+      table( 6).set_values(sAB)
+      table( 7).set_values(cAB)
+      table( 8).set_values(iAB)
+      table( 9).set_values(tAB)
+      table(10).set_values(pAB)
+
+      ! Put body
+      stdout.flush
+      table.put_body(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+
+      pAB.destroy
+      tAB.destroy
+      iAB.destroy
+      cAB.destroy
+      sAB.destroy
+      nAB.destroy
+      n_B.destroy
+      n_A.destroy
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+
+   end
+
+   put_energy_indices_atoms
+   ! Output the energy bond indices table for connected atoms.
+      self :: IN
+
+   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+
+      table :: VEC{TABLE_COLUMN}*
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+      pair :: MAT{INT}*
+      symbols,labels :: MAT{STR}*
+      dash,dsh1 :: VEC{STR}*
+      dist,n_A,n_B,nAB,sAB,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Title
+      if (.analyze_vdw_atom_pairs) then
+      stdout.flush
+      stdout.text("========================================")
+      stdout.text("Roby-Gould energy bond indices: VDW only")
+      stdout.text("========================================")
+      else
+      stdout.flush
+      stdout.text("==============================")
+      stdout.text("Roby-Gould energy bond indices")
+      stdout.text("==============================")
+      end
+
+      stdout.flush
+      if (.analyze_vdw_atom_pairs) then
+      stdout.text("Energy bond indices appear only for VDW bonded atom")
+      stdout.text("pairs NOT normally bonded by the CSD criterion")
+      stdout.flush
+      stdout.show("No. of 'bonds'          =",no_of_bonds)
+      else if (.analyze_all_atom_pairs) then
+      stdout.text("Energy bond indices appear only for atom pairs connected")
+      stdout.text("according to the Cambridge Structural Database (CSD)")
+      stdout.text("AND if they are within a minimum bond_range_factor")
+      stdout.flush
+      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
+      stdout.show("No. of 'bonds'          =",no_of_bonds)
+      else
+      stdout.text("Energy bond indices appear only for atom pairs connected")
+      stdout.text("according to the Cambridge Structural Database (CSD).")
+      stdout.flush
+      stdout.show("No. of bonds =",no_of_bonds)
+      end
+      stdout.flush
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(15)
+
+      ! Set the table headings
+      table( 1).set_heading("A")
+      table( 1).set_width_from(.atom.chemical_symbols)
+
+      table( 2).set_spacing(0)
+      table( 2).set_heading("--")
+      table( 2).set_width(2)
+
+      table( 3).set_heading("B")
+      table( 3).set_width(table(1).width)
+      table( 3).set_left_justify(TRUE)
+
+      table( 4).set_heading("A")
+      table( 4).set_width_from(.atom(:).tag)
+
+      table( 5).set_spacing(0)
+      table( 5).set_heading("--")
+      table( 5).set_width(2)
+
+      table( 6).set_heading("B")
+      table( 6).set_width(table(4).width)
+      table( 6).set_left_justify(TRUE)
+
+      table( 7).set_heading("R(A--B)")
+      table( 7).set_subheading("/Angs.")
+      table( 7).set_width_from(ONE)
+
+      table( 8).set_heading("E_A")
+      table( 8).set_width_from(-100d0)
+      table( 9).set_heading("E_B")
+      table( 9).set_width_from(-100d0)
+      table(10).set_heading("E_AB")
+      table(10).set_width_from(-100d0)
+      table(11).set_heading("E^s_AB")
+      table(11).set_width_from(-100d0)
+      table(12).set_heading("E Cov")
+      table(12).set_subhead("index")
+      table(12).set_width_from(-100d0)
+      table(13).set_heading("E Ion")
+      table(13).set_subhead("index")
+      table(13).set_width_from(-100d0)
+      table(14).set_heading("E Bond")
+      table(14).set_subhead(" index")
+      table(14).set_width_from(-100d0)
+      table(15).set_heading("% E")
+      table(15).set_subhead("Cov")
+      table(15).set_width_from(100d0)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         if (.analyze_vdw_atom_pairs) then
+         .atom.get_vdw_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         else
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         end
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Element symbols
+         symbols.create(n_bonds,2)
+         symbols = " "
+         symbols(1,1) = .atom(Z_list(k1)[1]).chemical_symbol
+         symbols(1,2) = .atom(Z_list(k2)[1]).chemical_symbol
+
+         ! Dashes
+         dash.create(n_bonds)
+         dsh1.create(n_bonds)
+         dash    = "--"
+         dsh1    = "  "
+         dsh1(1) = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         n_A.create(n_bonds)
+         n_B.create(n_bonds)
+         nAB.create(n_bonds)
+         sAB.create(n_bonds)
+         cAB.create(n_bonds)
+         iAB.create(n_bonds)
+         tAB.create(n_bonds)
+         pAB.create(n_bonds)
+
+         n_A = .E1(pair(:,1))
+         n_B = .E1(pair(:,2))
+         do i = 1,n_bonds
+         nAB(i) = .E2(pair(i,1),pair(i,2))
+         sAB(i) = n_A(i) + n_B(i) - nAB(i)
+         cAB(i) =  .E_cov_index(pair(i,1),pair(i,2))
+         iAB(i) =  .E_ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .E_bond_index(pair(i,1),pair(i,2))
+         pAB(i) = .E_percent_covalency(pair(i,1),pair(i,2))
+         end
+
+         ! Set table data
+         table( 1).set_values(symbols(:,1))
+         table( 2).set_values(dsh1)
+         table( 3).set_values(symbols(:,2))
+         table( 4).set_values(labels(:,1))
+         table( 5).set_values(dash)
+         table( 6).set_values(labels(:,2))
+         table( 7).set_values(dist)
+         table( 8).set_values(n_A)
+         table( 9).set_values(n_B)
+         table(10).set_values(nAB)
+         table(11).set_values(sAB)
+         table(12).set_values(cAB)
+         table(13).set_values(iAB)
+         table(14).set_values(tAB)
+         table(15).set_values(pAB)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+
+         pAB.destroy
+         tAB.destroy
+         iAB.destroy
+         cAB.destroy
+         sAB.destroy
+         nAB.destroy
+         n_B.destroy
+         n_A.destroy
+         labels.destroy
+         dsh1.destroy
+         dash.destroy
+         symbols.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Z_list.destroy
+
+   end
+
+   put_energy_indices_sorted
+   ! Output the energy bond indices table for connected atoms.
+      self :: IN
+
+   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+
+      table :: VEC{TABLE_COLUMN}*
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+      pair :: MAT{INT}*
+      labels :: MAT{STR}*
+      dash :: VEC{STR}*
+      dist,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      ind :: VEC{INT}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Title
+      if (.analyze_vdw_atom_pairs) then
+      stdout.flush
+      stdout.text("===============================================")
+      stdout.text("Sorted Roby-Gould energy bond indices: VDW only")
+      stdout.text("===============================================")
+      else
+      stdout.flush
+      stdout.text("=====================================")
+      stdout.text("Sorted Roby-Gould energy bond indices")
+      stdout.text("=====================================")
+      end
+
+      stdout.flush
+      stdout.text(". Energy bond indices are sorted from lowest to highest")
+      stdout.flush
+      if (.analyze_vdw_atom_pairs) then
+      stdout.text("Energy bond indices appear only for VDW bonded atom pairs")
+      stdout.text("and NOT normally bonded by the CSD criterion")
+      stdout.flush
+      stdout.show("No. of 'bonds'          =",no_of_bonds)
+      else if (.analyze_all_atom_pairs) then
+      stdout.text(". Energy bond indices appear only for atom pairs which connected")
+      stdout.text("  according to the Cambridge Structural Database (CSD)")
+      stdout.text("  AND if they are within a minimum bond_range_factor")
+      stdout.flush
+      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
+      stdout.show("No. of 'bonds'          =",no_of_bonds)
+      else
+      stdout.text(". Energy bond indices appear only for atom pairs which are connected")
+      stdout.text("  according to the Cambridge Structural Database (CSD).")
+      stdout.flush
+      stdout.show("No. of bonds =",no_of_bonds)
+      end
+      stdout.flush
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(8)
+
+      ! Set the table headings
+      table(1).set_heading("A")
+      table(1).set_width_from(.atom(:).tag)
+
+      table(2).set_spacing(0)
+      table(2).set_heading("--")
+      table(2).set_width(2)
+
+      table(3).set_heading("B")
+      table(3).set_width(table(1).width)
+      table(3).set_left_justify(TRUE)
+
+      table(4).set_heading("R(A--B)")
+      table(4).set_subheading("/Angs.")
+      table(4).set_width_from(ONE)
+
+      table(5).set_heading("E Cov")
+      table(5).set_subhead("index")
+      table(5).set_width_from(-TEN)
+      table(6).set_heading("E Ion")
+      table(6).set_subhead("index")
+      table(6).set_width_from(-TEN)
+      table(7).set_heading("E Bond")
+      table(7).set_subhead(" index")
+      table(7).set_width_from(ONE)
+      table(8).set_heading("% E")
+      table(8).set_subhead("Cov")
+      table(8).set_width_from(100d0)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         if (.analyze_vdw_atom_pairs) then
+         .atom.get_vdw_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         else
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         end
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Dashes
+         dash.create(n_bonds)
+         dash    = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         cAB.create(n_bonds)
+         iAB.create(n_bonds)
+         tAB.create(n_bonds)
+         pAB.create(n_bonds)
+
+         do i  = 1,n_bonds
+         cAB(i) =  .E_cov_index(pair(i,1),pair(i,2))
+         iAB(i) =  .E_ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .E_bond_index(pair(i,1),pair(i,2))
+         pAB(i) = .E_percent_covalency(pair(i,1),pair(i,2))
+         end
+
+         ! Sort & rearrange
+         ind.create(n_bonds)
+         tAB.quick_sort(ind,decreasing_order=TRUE)
+         labels(:,1) = labels(ind,1)
+         labels(:,2) = labels(ind,2)
+         dist = dist(ind)
+         cAB  = cAB(ind)
+         iAB  = iAB(ind)
+         tAB  = tAB(ind)
+         pAB  = pAB(ind)
+
+         ! Set table data
+         table(1).set_values(labels(:,1))
+         table(2).set_values(dash)
+         table(3).set_values(labels(:,2))
+         table(4).set_values(dist)
+         table(5).set_values(cAB)
+         table(6).set_values(iAB)
+         table(7).set_values(tAB)
+         table(8).set_values(pAB)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+
+         ind.destroy
+         pAB.destroy
+         tAB.destroy
+         iAB.destroy
+         cAB.destroy
+         labels.destroy
+         dash.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Z_list.destroy
+
+   end
+
+! ==============
+! Output charges
+! ==============
+
    put_charges
    ! Put to stdout the group charges.
       self :: IN
@@ -2915,6 +3959,10 @@ contains
       stdout.flush
 
    end
+
+! =================
+! Output theta info
+! =================
 
    put_theta_info
    ! Output Theta-space information
