@@ -549,7 +549,10 @@ contains
    ENSURE(.atom_list.created,"no atom list")
    ENSURE(.atom_group.destroyed,"do not use atom_group=")
 
+      ! Each atom is a Roby subspace
       .make_single_atom_groups
+
+      ! Bond orders
       .group_bond_analysis
 
    end
@@ -602,9 +605,13 @@ contains
       .n1.create(.n_group)
 
       do a = 1,.n_group
+
          .atom_a => .atom_group(a).element
-         .n1(a)  =  .population(.atom_a)
+
+         .n1(a)  =  .atom_population(.atom_a)
+
          nullify(.atom_a)
+
       end
 
    end
@@ -634,7 +641,7 @@ contains
          .atom_ab.append(.atom_a,.atom_b)
 
          
-         pop = .population(.atom_ab)
+         pop = .atom_population(.atom_ab)
 
          .n2(a,b) = pop
          .n2(b,a) = pop
@@ -648,7 +655,7 @@ contains
 
    end
 
-   population(group,ANO) result (res) ::: private
+   atom_population(group,ANO) result (res) ::: private
    ! Return the total Roby population for the group of atoms whose
    ! indices are given in "group", i.e Tr (P_{group;ANO} rho), where
    ! "rho" is the density matrix for a molecule. If present, the
@@ -662,18 +669,19 @@ contains
    ENSURE(.rho.created,"no rho matrix")
    ENSURE(.overlap_matrix.created,"no overlap matrix")
 
-      X :: MAT{REAL}*
+      P :: MAT{REAL}*
       n_gr :: INT
 
       n_gr = .n_bf(group)
 
-      X.create(n_gr,n_gr)
+      ! Make small P matrix
+      P.create(n_gr,n_gr)
+      .make_projection_matrix(P,group,ANO)
 
-      .make_projection_matrix(X,group,ANO)
+      ! Evaluate
+      res = .expectation(P,group)
 
-      res = .expectation(X,group)
-
-      X.destroy
+      P.destroy
 
    end
 
@@ -771,7 +779,7 @@ contains
 !         pop_k = 0
 !         do m = 1,n_k
 !            .atom_group.append_listed_to(.atom_ab,list=comb_mat(:,m))
-!            pop_k = pop_k + .population(.atom_ab)
+!            pop_k = pop_k + .atom_population(.atom_ab)
 !            .atom_ab.destroy
 !         end
 !         pop_group(k) = pop_k
@@ -863,6 +871,13 @@ contains
       .E_matrix.create(n_bf,n_bf)
       .E_matrix = HALF*(.core_matrix.restricted + .fock_matrix.restricted)
 
+!  !!!!!!!!!!!!!!!!!!!!!!!!
+!  .E_matrix.to_unit_matrix
+!  !!!!!!!!!!!!!!!!!!!!!!!!
+
+!  stdout.text("E_matrix:")
+!  stdout.put(.E_matrix)
+
       ! Each atom is a Roby subspace
       .make_single_atom_groups
 
@@ -886,7 +901,7 @@ contains
 
       n_group = .n_group
 
-      .make_mono_energies
+      .make_atom_energies
       .make_pair_energies
 
       .E_bond_index.create(n_group,n_group)
@@ -1050,12 +1065,12 @@ contains
       i :: INT
 
       do i = 1,.n_bf_ab
-         E(i) = .subspace_energy(.atom_ab,ANO=theta(:,i:i))
+         E(i) = .atom_energy(.atom_ab,ANO=theta(:,i:i))
       end
 
    end
 
-   make_mono_energies ::: leaky, private
+   make_atom_energies ::: leaky, private
    ! Make the Roby energies for the defined atom groups
       self :: INOUT
 
@@ -1069,9 +1084,13 @@ contains
       .E1.create(.n_group)
 
       do a = 1,.n_group
+
          .atom_a => .atom_group(a).element
-         .E1(a)  =  .subspace_energy(.atom_a)
+
+         .E1(a)  =  .atom_energy(.atom_a)
+
          nullify(.atom_a)
+
       end
 
    end
@@ -1104,7 +1123,7 @@ contains
          
          .atom_ab.append(.atom_a,.atom_b)
 
-         E2 = .subspace_energy(.atom_ab)
+         E2 = .atom_energy(.atom_ab)
 
          .E2(a,b) = E2
          .E2(b,a) = E2
@@ -1118,7 +1137,7 @@ contains
 
    end
 
-   subspace_energy(group,ANO) result (res) ::: private
+   atom_energy(group,ANO) result (res) ::: private
    ! Return the total Roby energy for the group of atoms whose
    ! indices are given in "group", i.e Tr (P_{group;ANO} (E_matrix) rho), 
    ! where "rho" is the density matrix for a molecule. If present, the
@@ -1133,65 +1152,27 @@ contains
    ENSURE(.E_matrix.created,"no rho matrix")
    ENSURE(.overlap_matrix.created,"no overlap matrix")
 
-      P :: MAT{REAL}*
+      e,P :: MAT{REAL}*
       n_gr :: INT
 
       n_gr = .n_bf(group)
+
+      ! Make small e
+      e.create(n_gr,n_gr)
+      .AO_subspace_set(e,.E_matrix,B_row_atom=group,B_col_atom=group)
 
       ! Make small P matrix
       P.create(n_gr,n_gr)
       .make_projection_matrix(P,group,ANO)
 
+      ! Change basis of e
+      e.change_basis_using(P)
+
       ! Evaluate
-      res = .expectation(.E_matrix,P,group)
+      res = .expectation(e,group)
 
       ! Clean
       P.destroy
-
-   end
-
-   expectation(E,P,group,rho) result (res) ::: private
-   ! Evaluate:
-   ! res = Trace (S(:,group) P S(group,:) E(:,:) S(:,group) P S(group,:) rho)
-   ! Note that "group" are the indices of the atoms whose basis
-   ! functions are used to define the projection matrix "P".
-      self :: IN
-      E :: MAT{REAL}, IN
-      P :: MAT{REAL}, IN
-      group :: VEC{INT}, IN
-      rho :: OPMATRIX*, optional, IN
-      res :: REAL
-
-   ENSURE(P.dim1==.n_bf(group),"wrong P dimension")
-   ENSURE(P.is_square,"P is not square")
-
-      density :: OPMATRIX*
-      W,X :: MAT{REAL}*
-      n_bf :: INT
-
-      density => .rho
-      if (present(rho)) density => rho
-
-      n_bf = .n_bf
-
-      ! Make W = S P S
-      W.create(n_bf,n_bf)
-      .overlap_transform(P,W,group)
-
-      ! Make X = W E W
-      X.create(n_bf,n_bf)
-      E.change_basis_to(X,W)
-
-      ! Make Tr (X rho)
-      if (.spin_multiplicity/=1) then
-         res = density.alpha.trace_product_with(X) &
-             + density.beta.trace_product_with(X)
-      else
-         res = density.restricted.trace_product_with(X)
-      end
-
-      X.destroy
-      W.destroy
 
    end
 
@@ -1398,7 +1379,7 @@ contains
       i :: INT
 
       do i = 1,.n_bf_ab
-         pop(i) = .population(.atom_ab,ANO=theta(:,i:i))
+         pop(i) = .atom_population(.atom_ab,ANO=theta(:,i:i))
       end
 
    end
@@ -1708,10 +1689,11 @@ contains
 ! ===================================
 
    make_projection_matrix(P,group,ANO) ::: private
-   ! Make the Roby projection matrix "P" in the AO basis made from the
-   ! concatenated basis sets for each atom in "group". If present, use
-   ! the columns of "ANO" as atomic orbital coefficients to form the
-   ! projection operator instead of the actual atomic natural orbitals
+   ! Make "P", the matrix of the Roby projection *operator in the
+   ! (nonorthgogonal) AO basis. The AO basis is the concatenated set
+   ! of basis functions for each atom in "group". If present, use the
+   ! columns of "ANO" as atomic orbital coefficients to form the
+   ! projection operator instead of the actual atomic natural orbitals.
       self :: IN
       P :: MAT{REAL}, OUT
       group :: VEC{INT}, IN
@@ -2159,6 +2141,7 @@ contains
       n_row = .n_bf(row_atom)
       n_col = .n_bf(col_atom)
 
+      ! SS = small S
       SS.create(n_row,n_col)
 
       .make_overlap_matrix(SS,row_atom,col_atom)
