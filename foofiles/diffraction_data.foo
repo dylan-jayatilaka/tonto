@@ -100,9 +100,9 @@ contains
 
       if (.reflection_data_exists) then
 
-         .scale_factor      = ONE
-         .exp_scale_factor  = ONE
-         .extinction_factor = ZERO
+         .scale_factor      = DIFFRACTION_DATA_SCALE_FACTOR
+         .exp_scale_factor  = DIFFRACTION_DATA_EXP_SCALE_FACTOR
+         .extinction_factor = DIFFRACTION_DATA_EXTINCTION_FACTOR
 
          .reflection0.destroy
          .reflections.destroy
@@ -369,6 +369,7 @@ contains
       else
 
          ! Keep original reflections
+         .reflection0.destroy
          .reflection0.create_copy(.reflections)
         
          ! Set d, stl, theta 
@@ -387,11 +388,17 @@ contains
 
             DIE_IF(NOT .reflections.have_F_sigma,"no experimental F_sigma's")
 
+            ! Explicit scaling
             if (.exp_scale_factor>ZERO) then
+
                .reflection0.scale_F_exp(.exp_scale_factor)
                .reflections.scale_F_exp(.exp_scale_factor)
                .reflection0.scale_F_sigma(.exp_scale_factor)
                .reflections.scale_F_sigma(.exp_scale_factor)
+
+               ! Turn off next time
+               .exp_scale_factor = -ONE
+
             end
 
          else
@@ -401,7 +408,6 @@ contains
 
          end
         
-         .exp_scale_factor = ONE
 
       end
 
@@ -1397,13 +1403,14 @@ contains
       ! Read reflections
       .reflections.read_CIF(cif)
 
-      ! Prune/reset bad reflections
+      ! First prune I's and define F's
       if (.have_I_exp) then
          DIE_IF(NOT .have_I_sigma,"I_exp present but no I_sigma?")
          .prune_small_I_sigmas
          .reflections.reset_I_exp_I_sigma
       end
 
+      ! Next prune F's
       if (.have_F_exp) then
          DIE_IF(NOT .have_F_sigma,"F_exp present but no F_sigma?")
          .prune_small_F_sigmas
@@ -1722,18 +1729,23 @@ contains
    ! Then prune all the reflections, as requested by cutoffs.
       self :: INOUT
 
+      n_refl,n_prun :: INT
+
+      ! Prune small I's and define F's
       if (.have_I_exp) then
          DIE_IF(NOT .have_I_sigma,"I_exp present but no I_sigma?")
          .prune_small_I_sigmas
          .reflections.reset_I_exp_I_sigma
       end
 
+      ! Next prune small F's
       if (.have_F_exp) then
          DIE_IF(NOT .have_F_sigma,"F_exp present but no F_sigma?")
          .prune_small_F_sigmas
          .reflections.reset_F_exp_F_sigma
       end
 
+      ! Prune small F_exp/F_sigma
       if (.F_sigma_cutoff >ZERO) then
          if (.have_F_exp AND .have_F_sigma) then
             .prune_weak_Fs
@@ -1742,20 +1754,43 @@ contains
          end 
       end 
       
+      ! NOTE if doing below, do it repeatedly
+      ! because the scale factor will change
       if (.F_z_cutoff     >ZERO) then
+
          if (.have_F_exp AND .have_F_pred) then
-            .prune_bad_F_reflections
+
+            do
+
+               n_refl = .reflections.dim
+
+               ! Prune
+               .prune_bad_F_reflections
+               n_prun = .reflections.dim
+
+               ! Redo?
+               if (n_prun==n_refl) then; exit
+               else;                     .make_F_predicted
+               end
+
+            end
+
          else
+
             WARN("F_z_cutoff specified but no F_exp/F_pred data")
+
          end
+
       end
 
+      ! Prune F_calc's which are zero
       if (.F_calc_cutoff  >ZERO) then
       if (.have_F_calc) then
          .prune_zero_F_calcs
       end
       end
 
+      ! Prune F_pred's which are zero
       if (.F_pred_cutoff  >ZERO) then
          if (.have_F_pred) then
             .prune_zero_F_preds
@@ -1764,13 +1799,14 @@ contains
          end
       end
 
-      if (.I_sigma_cutoff >ZERO) then
-         if (.have_I_exp) then
-            .prune_weak_Is
-         else
-            WARN("I_sigma_cutoff specified but no I_exp data")
-         end
-      end
+      ! There are no I's any more
+    ! if (.I_sigma_cutoff >ZERO) then
+    !    if (.have_I_exp) then
+    !       .prune_weak_Is
+    !    else
+    !       WARN("I_sigma_cutoff specified but no I_exp data")
+    !    end
+    ! end
 
       if (.stl_high_cutoff>ZERO) then
          .prune_high_angle_reflections
@@ -1856,12 +1892,41 @@ contains
 
       if (.show_rejects) then
 
+         stdout.flush
+         stdout.text("Rejects:")
+
          ! Get data
          n_refl = bad.dim
          h1.create(n_refl);       h1  = .reflections(bad(:)).h
          h2.create(n_refl);       h2  = .reflections(bad(:)).k
          h3.create(n_refl);       h3  = .reflections(bad(:)).l
          val.create(n_refl);      val = REFLECTION:SHOW?(.reflections(bad(:)))
+
+         ! Table
+         table.create(4)
+         table(1).set_heading("h");     table(1).set_values(h1)
+         table(2).set_heading("k");     table(2).set_values(h2)
+         table(3).set_heading("l");     table(3).set_values(h3)
+         table(4).set_heading("SHOW?"); table(4).set_values(val)
+         table.put
+
+         ! Clean
+         table.clear_columns
+         table.destroy
+         h3.destroy
+         h2.destroy
+         h1.destroy
+         val.destroy
+
+         stdout.flush
+         stdout.text("Kept:")
+
+         ! Get data
+         n_refl = good.dim
+         h1.create(n_refl);       h1  = .reflections(good(:)).h
+         h2.create(n_refl);       h2  = .reflections(good(:)).k
+         h3.create(n_refl);       h3  = .reflections(good(:)).l
+         val.create(n_refl);      val = REFLECTION:SHOW?(.reflections(good(:)))
 
          ! Table
          table.create(4)
@@ -1899,11 +1964,6 @@ contains
    ! rejection test on the reflections
    end
 
-   prune_bad_I_reflections ::: get_from(prune, TEST?=>has_large_abs_I_z, CUTOFF?=>.I_z_cutoff, SHOW?=>abs_I_z), leaky
-   ! This routine eliminates all the reflections with respect to a
-   ! rejection test on the reflections
-   end
-
    prune_high_angle_reflections ::: get_from(prune, TEST?=>has_high_stl, CUTOFF?=>.stl_high_cutoff, SHOW?=>stl), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
@@ -1912,26 +1972,6 @@ contains
    prune_low_angle_reflections ::: get_from(prune, TEST?=>has_low_stl, CUTOFF?=>.stl_low_cutoff SHOW?=>stl), leaky
    ! This routine eliminates all the reflections with respect to a
    ! rejection test on the reflections
-   end
-
-   prune_negative_F_exp ::: get_from(prune, TEST?=>has_small_F_exp, CUTOFF?=>ZERO, SHOW?=>F_exp), leaky
-   ! This routine eliminates all the reflections with respect to a
-   ! rejection test on the reflections
-   end
-
-   prune_negative_I_exp ::: get_from(prune, TEST?=>has_small_I_exp, CUTOFF?=>ZERO, SHOW?=>I_exp), leaky
-   ! This routine eliminates all the reflections with respect to a
-   ! rejection test on the reflections
-   end
-
-   prune_weak_reflections ::: leaky
-   ! This routine eliminates all the reflections which have
-   ! F_exp/F_sigma less than .F_sigma_cutoff or I_exp/I_sigma less
-   ! than .I_sigma_cutoff for intensities
-      self :: PTR
-      if (.refine_F) then; .prune_weak_Fs
-      else;                .prune_weak_Is
-      end
    end
 
    prune_weak_Fs ::: get_from(prune, TEST?=>has_weak_F_exp, CUTOFF?=>.F_sigma_cutoff, SHOW?=>F_exp_on_sigma), leaky
