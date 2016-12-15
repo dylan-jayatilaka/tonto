@@ -4139,9 +4139,7 @@ contains
       mo_2e_ints.destroy
    end
 
-   put_nn_repulsion_energy_breakdown ::: leaky
-   ! Calculate the 1-2 dispersion term from Grimme's C6 coefficients
-   ! C6 taken from Grimme (2006) J. Comp. Chem.  27(15) p. 1787
+   put_nn_repulsion_energy_breakdown
 
    ENSURE(.atom_group.created,"no atom group information")
    ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
@@ -4171,7 +4169,7 @@ contains
       E_nn.destroy
    end
 
-   put_dispersion_energy_breakdown ::: leaky
+   put_dispersion_energy_breakdown
    ! Calculate the 1-2 dispersion term from Grimme's C6 coefficients
    ! C6 taken from Grimme (2006) J. Comp. Chem.  27(15) p. 1787
 
@@ -4290,85 +4288,115 @@ contains
       ao_2e_ints.destroy
    end
 
-!   put_group12_electron_repulsion_energy_breakdown_old
-!      self :: INOUT
-!     
-!      E_ee :: MAT{REAL}*
-!      atom_group1, atom_group2 :: ATOM_GROUP*
-!      mol1, mol2 :: MOLECULE*
-!      atom_i, atom_j :: ATOM*
-!      shell_i, shell_j :: SHELL*
-!      ao_2e_ints :: MAT4{REAL}*
-!      n_1_orbitals, n_total_orbitals :: INT
-!      n_i_shells, n_j_shells, i_first_func, i_last_func :: INT
-!      j_first_func, j_last_func :: INT
-!      E_ee_ij, E_sum :: REAL
-!      i, j, i_shell, j_shell, m, n, k, l :: INT
-!      
-!      stdout.text("Just initialised variables")
-!      atom_group1 => .atom_group(1)
-!      atom_group2 => .atom_group(2)
-!      mol1 => atom_group1.mol
-!      mol2 => atom_group2.mol
-!      E_ee.create(mol1.n_atom, mol2.n_atom)
-!      ao_2e_ints.create(.n_bf, .n_bf, .n_bf, .n_bf)
-!      .SCF:merge_group_MOs
-!      .FOCK:make_ERI_integrals(ao_2e_ints)
-!      .BASE:make_scf_density_matrix
-!      .BASE:make_ao_density_matrix
-!      n_1_orbitals = mol1.n_bf
-!      n_total_orbitals = mol1.n_bf + mol2.n_bf
-!      E_sum = ZERO
-!
-!      !stdout.put(.atom_group1.atom.created)
-!      stdout.text("About to run loop")
-!      do i = 1, atom_group1.n_atoms
-!         atom_i => mol1.atom(i)
-!         n_i_shells = atom_i.basis.n_shell
-!         stdout.show("i = ", i)
-!         do j = 1, atom_group2.n_atoms
-!            E_ee_ij = ZERO
-!            atom_j => mol2.atom(j)
-!            n_j_shells = atom_j.basis.n_shell
-!            stdout.show(" j = ", j)
-!            do i_shell = 1, n_i_shells
-!               !ENSURE(atom_i.first_basis_fn_for_shell.created, "Error error error!")
-!               shell_i => atom_i.basis.shell(i_shell)
-!               i_first_func = shell_i.first_gaussian
-!               i_last_func = shell_i.last_gaussian
-!               do j_shell = 1, n_j_shells
-!                  shell_j => atom_j.basis.shell(j_shell)
-!                  j_first_func = shell_j.first_gaussian
-!                  j_last_func = shell_j.last_gaussian
-!                  do m = i_first_func, i_last_func
-!                     stdout.show("  m = ", m)
-!                     do k = j_first_func, j_last_func
-!                        stdout.show("   k = ", k)
-!                        do n = 1, n_1_orbitals
-!                           do l = n_1_orbitals + 1, n_total_orbitals
-!                              E_ee_ij = E_ee_ij + .:get_mulliken_term(m, n, k, l, ao_2e_ints)
-!                           end
-!                        end
-!                     end
-!                  end
-!               end
-!            end
-!            E_ee(i, j) = E_ee_ij
-!            E_sum = E_sum + E_ee_ij
-!         end
-!      end
-!
-!      stdout.text("Just finished running loop")
-!      
-!      stdout.flush
-!      stdout.text("===========================================")
-!      stdout.text("Electron-electron repulsion energy")
-!      stdout.text("===========================================")
-!      stdout.flush
-!      stdout.text("Electron-electron repulsion energy (hartrees) = ")
-!      stdout.put(E_ee)
-!      stdout.show("Total = ", E_sum)
-!   
-!      ao_2e_ints.destroy
-!   end
+   get_1n_nuclear_attraction_matrix(Z)
+   ! Calculate the 1-nucleus nuclear attraction 3D matrix "Z".
+   ! Indexed: nucleus-electron-electron
+      Z :: MAT3{REAL}*
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      atom :: ATOM*
+      Z_c :: MAT{REAL}*
+      q,c,fa,la,na,fb,lb,nb, i, j :: INT
+      sh :: SHELL2
+
+      parallel do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh, q, fa, la, na, fb, lb, nb)
+
+         Z_c.create(na,nb)
+         do c = 1, .n_atom
+            atom => .atom(c)
+            sh.get_nuc(Z_c, atom.mass, atom.position)
+            Z(c, fa:la, fb:lb) = -atom.nuclear_charge * Z_c
+         end
+
+         Z_c.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      do c = 1, .n_atom
+         do i = 1, Z.dim2
+            do j = 1, i - 1
+               Z(c, j, i) = Z(c, i,j)
+            end
+         end
+      end
+   end
+  
+   get_1way_ne_attraction_energy(mol_n, mol_e, attraction_mx, E_ne, E_sum, n_offset, e_offset)
+      self :: INOUT
+
+      mol_n, mol_e :: MOLECULE*
+      attraction_mx :: MAT3{REAL}*
+      E_ne :: MAT{REAL}*
+      E_sum :: REAL
+      n_offset, e_offset :: INT
+      shell, i, j, m, n, m_start, m_end, mm, nn :: INT
+      term :: REAL
+     
+      do i = 1, mol_n.n_atom
+         do shell = 1, mol_e.n_shell
+            m_start = mol_e.first_basis_fn_for_shell(shell)
+            m_end = mol_e.last_basis_fn_for_shell(shell)
+            j = mol_e.atom_for_shell(shell)         
+            do m = m_start, m_end
+               mm = m + e_offset
+               do n = 1, mol_n.n_bf
+                  nn = n + n_offset
+                  term = .density_matrix.restricted(mm, nn) * attraction_mx(i, mm, nn)
+                  E_ne(i, j) = E_ne(i, j) + term
+                  E_sum = E_sum + term
+                  stdout.show("i = ", i)
+                  stdout.show("j = ", j)
+                  stdout.show("mm = ", mm)
+                  stdout.show("nn = ", nn)
+               end
+            end
+         end
+      end
+   end
+
+!Not working yet
+   put_ne_attraction_energy_breakdown
+      self :: INOUT
+     
+      E_ne :: MAT{REAL}*
+      atom_group1, atom_group2 :: ATOM_GROUP*
+      mol1, mol2 :: MOLECULE*
+      attraction_mx :: MAT3{REAL}*
+      E_sum :: REAL
+
+      !Ensure stuff
+
+      atom_group1 => .atom_group(1)
+      atom_group2 => .atom_group(2)
+      mol1 => atom_group1.mol
+      mol2 => atom_group2.mol
+      E_ne.create(mol1.n_atom, mol2.n_atom)
+      attraction_mx.create(.n_atom, .n_bf, .n_bf)
+      .SCF:merge_group_MOs
+      .BASE:make_scf_density_matrix !Delete this line?
+      .BASE:make_ao_density_matrix
+      E_ne = ZERO
+      E_sum = ZERO
+      .:get_1n_nuclear_attraction_matrix(attraction_mx)
+
+      .:get_1way_ne_attraction_energy(mol1, mol2, attraction_mx, E_ne, E_sum, 0, mol1.n_bf)
+      .:get_1way_ne_attraction_energy(mol2, mol1, attraction_mx, E_ne, E_sum, mol1.n_bf, 0)
+      attraction_mx.destroy
+
+      stdout.flush
+      stdout.text("===========================================")
+      stdout.text("Electron-nucleus attraction energy")
+      stdout.text("===========================================")
+      stdout.flush
+      stdout.text("Electron-nucleus attraction energy (hartrees) = ")
+      stdout.put(E_ne)
+      stdout.show("Total = ", E_sum)
+
+      E_ne.destroy
+   end
 end
