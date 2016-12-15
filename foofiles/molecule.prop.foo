@@ -4082,12 +4082,18 @@ contains
 !  Samuel's stuff
 !  ==============
 
-   get_mulliken_term(m, n, k, l, ao_2e_ints) result(term)
+   get_mulliken_term(m, n, k, l, ao_2e_ints, coulomb) result(term)
       m, n, k, l :: INT
       ao_2e_ints :: MAT4{REAL}*
       term :: REAL
-   
-      term = .density_matrix.restricted(m, n) * .density_matrix.restricted(k, l) * ao_2e_ints(m, n, k, l) !Check the constant factor
+      coulomb :: BIN
+      
+      !Check constant factor
+      if (coulomb) then
+         term = .density_matrix.restricted(m, n) * .density_matrix.restricted(k, l) * ao_2e_ints(m, n, k, l)
+      else
+         term = -QUARTER * .density_matrix.restricted(m, n) * .density_matrix.restricted(k, l) * (ao_2e_ints(m, k, n, l) + ao_2e_ints(n, k, m, l))
+      end
    end
 
    get_1n_nuclear_attraction_matrix(Z)
@@ -4161,48 +4167,57 @@ contains
       end
    end
 
-!Not working yet
-   put_ne_attraction_energy_breakdown
-      self :: INOUT
-     
-      E_ne :: MAT{REAL}*
-      atom_group1, atom_group2 :: ATOM_GROUP*
+!New functions
+   put_cx_energy_breakdown(mol1, mol2, ao_2e_ints, coulomb)
+      ao_2e_ints :: MAT4{REAL}*
       mol1, mol2 :: MOLECULE*
-      attraction_mx :: MAT3{REAL}*
-      E_sum :: REAL
+      coulomb :: BIN
 
-      !Ensure stuff
+      E_cx :: MAT{REAL}*
+      n_1_orbitals, n_total_orbitals :: INT
+      E_sum, term :: REAL
+      shell1, shell2, m_start, m_end, k_start, k_end, i, j, m, n, k, l :: INT
 
-      atom_group1 => .atom_group(1)
-      atom_group2 => .atom_group(2)
-      mol1 => atom_group1.mol
-      mol2 => atom_group2.mol
-      E_ne.create(mol1.n_atom, mol2.n_atom)
-      attraction_mx.create(.n_atom, .n_bf, .n_bf)
-      .SCF:merge_group_MOs
-      .BASE:make_scf_density_matrix !Delete this line?
-      .BASE:make_ao_density_matrix
-      E_ne = ZERO
+      E_cx.create(mol1.n_atom, mol2.n_atom)
+      n_1_orbitals = mol1.n_bf
+      n_total_orbitals = mol1.n_bf + mol2.n_bf
+      E_cx = ZERO
       E_sum = ZERO
-      .:get_1n_nuclear_attraction_matrix(attraction_mx)
 
-      .:get_1way_ne_attraction_energy(mol1, mol2, attraction_mx, E_ne, E_sum, 0, mol1.n_bf)
-      .:get_1way_ne_attraction_energy(mol2, mol1, attraction_mx, E_ne, E_sum, mol1.n_bf, 0)
-      attraction_mx.destroy
-
+      do shell1 = 1, mol1.n_shell
+         m_start = mol1.first_basis_fn_for_shell(shell1)
+         m_end = mol1.last_basis_fn_for_shell(shell1)
+         i = mol1.atom_for_shell(shell1)         
+         do m = m_start, m_end
+            do shell2 = 1, mol2.n_shell
+               k_start = mol2.first_basis_fn_for_shell(shell2)
+               k_end = mol2.last_basis_fn_for_shell(shell2)
+               j = mol2.atom_for_shell(shell2)
+               do k = k_start, k_end
+                  do n = 1, n_1_orbitals
+                     do l = n_1_orbitals + 1, n_total_orbitals
+                         term = .:get_mulliken_term(m, n, k + mol1.n_bf, l, ao_2e_ints, coulomb)
+                         E_cx(i, j) = E_cx(i, j) + term
+                         E_sum = E_sum + term
+                     end
+                  end
+               end
+            end
+         end
+      end
+      
       stdout.flush
-      stdout.text("===========================================")
-      stdout.text("Electron-nucleus attraction energy")
-      stdout.text("===========================================")
-      stdout.flush
-      stdout.text("Electron-nucleus attraction energy (hartrees) = ")
-      stdout.put(E_ne)
+      if (coulomb) then
+         stdout.text("Electron-electron repulsion energy (hartrees) = ")
+      else
+         stdout.text("Exchange energy (hartrees) = ")
+      end
+      stdout.put(E_cx)
       stdout.show("Total = ", E_sum)
 
-      E_ne.destroy
+      E_cx.destroy
    end
 
-!New functions
    put_nn_repulsion_energy_breakdown(mol1, mol2)
       mol1, mol2 :: MOLECULE*
 
@@ -4251,45 +4266,7 @@ contains
       mol1, mol2 :: MOLECULE*
       ao_2e_ints :: MAT4{REAL}*
       
-      E_ee :: MAT{REAL}*
-      n_1_orbitals, n_total_orbitals :: INT
-      E_sum, term :: REAL
-      shell1, shell2, m_start, m_end, k_start, k_end, i, j, m, n, k, l :: INT
-
-      E_ee.create(mol1.n_atom, mol2.n_atom)
-      n_1_orbitals = mol1.n_bf
-      n_total_orbitals = mol1.n_bf + mol2.n_bf
-      E_ee = ZERO
-      E_sum = ZERO
-
-      do shell1 = 1, mol1.n_shell
-         m_start = mol1.first_basis_fn_for_shell(shell1)
-         m_end = mol1.last_basis_fn_for_shell(shell1)
-         i = mol1.atom_for_shell(shell1)         
-         do m = m_start, m_end
-            do shell2 = 1, mol2.n_shell
-               k_start = mol2.first_basis_fn_for_shell(shell2)
-               k_end = mol2.last_basis_fn_for_shell(shell2)
-               j = mol2.atom_for_shell(shell2)
-               do k = k_start, k_end
-                  do n = 1, n_1_orbitals
-                     do l = n_1_orbitals + 1, n_total_orbitals
-                         term = .:get_mulliken_term(m, n, k + mol1.n_bf, l, ao_2e_ints)
-                         E_ee(i, j) = E_ee(i, j) + term
-                         E_sum = E_sum + term
-                     end
-                  end
-               end
-            end
-         end
-      end
-      
-      stdout.flush
-      stdout.text("Electron-electron repulsion energy (hartrees) = ")
-      stdout.put(E_ee)
-      stdout.show("Total = ", E_sum)
-
-      E_ee.destroy
+      .:put_cx_energy_breakdown(mol1, mol2, ao_2e_ints, TRUE)
    end
 
    put_dispersion_energy_breakdown(mol1, mol2)
@@ -4315,6 +4292,13 @@ contains
       
       !stdout.put(.atom_group1.atom.created)
       E_disp.destroy
+   end
+
+   put_exchange_energy_breakdown(mol1, mol2, ao_2e_ints)
+      mol1, mol2 :: MOLECULE*
+      ao_2e_ints :: MAT4{REAL}*
+      
+      .:put_cx_energy_breakdown(mol1, mol2, ao_2e_ints, FALSE)
    end
 
    put_energy_breakdown
@@ -4351,5 +4335,8 @@ contains
       .:put_ne_attraction_energy_breakdown(mol1, mol2)
       .:put_nn_repulsion_energy_breakdown(mol1, mol2)
       .:put_dispersion_energy_breakdown(mol1, mol2)
+      .:put_exchange_energy_breakdown(mol1, mol2, ao_2e_ints)
+
+      ao_2e_ints.destroy
    end
 end
