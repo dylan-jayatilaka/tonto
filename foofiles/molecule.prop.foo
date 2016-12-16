@@ -4239,6 +4239,100 @@ contains
       E_cx.destroy
    end
 
+   get_e_field(mol_from, mol_to, e_field)
+      mol_from, mol_to :: MOLECULE*
+      e_field :: MAT3{REAL}*
+      pos :: MAT{REAL}*
+      field_mx :: MAT3{REAL}* !Indexing: component-orbital-orbital
+      i, j, k, m, n, m_start, m_end, shell :: INT
+      term :: REAL
+
+      pos => mol_to.atom.coordinates_ptr
+      field_mx.create(3, mol_from.n_bf, mol_from.n_bf)
+      
+      do i = 1, mol_to.n_atom
+         mol_from.PROP:make_electric_field_matrices(field_mx(1, :, :), field_mx(2, :, :), field_mx(3, :, :), pos(:, i))
+         do shell = 1, mol_from.n_shell
+            m_start = mol_from.first_basis_fn_for_shell(shell)
+            m_end = mol_from.last_basis_fn_for_shell(shell)
+            j = mol_from.atom_for_shell(shell)         
+            do m = m_start, m_end
+               do n = 1, mol_from.n_bf
+                  do k = 1, 3
+                     term = .density_matrix.restricted(m, n) * field_mx(k, m, n)
+                     e_field(i, j, k) = e_field(i, j, k) + term
+                  end
+               end
+            end
+         end
+      end
+   
+      field_mx.destroy
+   end
+
+   get_n_field(mol_from, mol_to, n_field)
+      mol_from, mol_to :: MOLECULE*
+      n_field :: MAT3{REAL}*
+      pos :: MAT{REAL}*
+      i, j :: INT
+      r :: REAL
+      ij :: VEC{REAL}(3)
+      atom :: ATOM*
+
+      pos => mol_from.atom.coordinates_ptr
+
+      do j = 1, mol_from.n_atom
+         atom => mol_from.atom(j)
+         do i = 1, mol_to.n_atom
+            ij = pos(:, i) - atom.position
+            r = ij.norm
+            n_field(i, j, :) = n_field(i, j, :) + (atom.nuclear_charge / (r * r * r)) * ij
+         end
+      end
+   end
+
+   get_1way_polarisation_energy(mol_from, mol_to, E_pol, E_sum, mol1_is_mol_from)
+      mol_from, mol_to :: MOLECULE*
+      E_pol :: MAT{REAL}*
+      E_sum :: REAL
+      mol1_is_mol_from :: BIN
+
+      e_field, n_field, total_field :: MAT3{REAL}* !Index: atom to, atom from, component
+      term, polarisability :: REAL      
+      use_charged_values :: BIN
+      atom :: ATOM*
+      i, j, k :: INT
+      
+      e_field.create(mol_to.n_atom, mol_from.n_atom, 3)
+      n_field.create(mol_to.n_atom, mol_from.n_atom, 3)
+      total_field.create(mol_to.n_atom, mol_from.n_atom, 3)
+
+      .:get_e_field(mol_from, mol_to, e_field)
+      .:get_n_field(mol_from, mol_to, n_field)
+      total_field = e_field + n_field
+      
+      use_charged_values = (mol_to.charge /= 0) AND (mol_to.n_atom == 1)
+      do i = 1, mol_to.n_atom
+         atom => mol_to.atom(i)
+         polarisability = atom.Thakkar_atomic_dipole_polarizability(use_charged_values)
+         do j = 1, mol_from.n_atom
+            do k = 1, mol_from.n_atom
+               term = HALF * polarisability * dot_product(total_field(i, j, :), total_field(i, k, :))
+               if (mol1_is_mol_from) then
+                  E_pol(i, j) = E_pol(i, j) + term
+               else
+                  E_pol(j, i) = E_pol(j, i) + term
+               end
+               E_sum = E_sum + term
+            end
+         end
+      end
+      
+      e_field.destroy
+      n_field.destroy
+      total_field.destroy
+   end
+
 !Functions for the terms
    put_nn_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, factor)
       mol1, mol2 :: MOLECULE*
@@ -4259,7 +4353,6 @@ contains
       E_nn.destroy
    end
 
-!Not working yet
    put_ne_attraction_energy_breakdown(mol1, mol2, E_el, E_total, factor)
       mol1, mol2 :: MOLECULE*
       E_el :: MAT{REAL}*
@@ -4268,13 +4361,8 @@ contains
       E_ne :: MAT{REAL}*
       attraction_mx :: MAT3{REAL}*
       E_sum :: REAL
-      debug :: REAL
-      i :: INT
-      debug_mat :: MAT{REAL}*
-
-      !stdout.set_real_precision(12) !Remove after testing
       
-      E_ne.create(mol1.n_atom, mol2.n_atom) !Indexing: molecule1-molecule 2
+      E_ne.create(mol1.n_atom, mol2.n_atom) !Indexing:molecule1-molecule2
       attraction_mx.create(.n_atom, .n_bf, .n_bf)
       E_ne = ZERO
       E_sum = ZERO
@@ -4290,8 +4378,6 @@ contains
       E_el = E_el + E_ne
       E_total = E_total + E_sum
       E_ne.destroy
-
-      !stdout.set_real_precision(6) !Remove after testing
    end
 
    put_ee_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, ao_2e_ints, factor)
@@ -4341,6 +4427,7 @@ contains
       !stdout.put(.atom_group1.atom.created)
       E_disp.destroy
    end
+
 !Slight deviation from correct value
    put_exchange_energy_breakdown(mol1, mol2, E_er, E_total, ao_2e_ints, factor)
       mol1, mol2 :: MOLECULE*
@@ -4368,6 +4455,24 @@ contains
       .:put_property("Total exchange-repulsion", E_er, E_total, factor)
 
       E_er.destroy
+   end
+
+   put_polarisation_energy_breakdown(mol1, mol2, factor)
+      mol1, mol2 :: MOLECULE*
+      factor :: REAL
+      E_pol :: MAT{REAL}*
+      E_sum :: REAL
+
+      E_pol.create(mol1.n_atom, mol2.n_atom)
+      E_pol = ZERO
+      E_sum = ZERO
+
+      .:get_1way_polarisation_energy(mol1, mol2, E_pol, E_sum, TRUE) !Add offsets later
+      .:get_1way_polarisation_energy(mol2, mol1, E_pol, E_sum, FALSE)
+
+      .:put_property("Polarisation", E_pol, E_sum, factor)
+
+      E_pol.destroy
    end
 
    put_energy_breakdown(units)
@@ -4416,4 +4521,3 @@ contains
       ao_2e_ints.destroy
    end
 end
-
