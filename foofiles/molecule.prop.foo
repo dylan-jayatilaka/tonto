@@ -4082,19 +4082,127 @@ contains
 !  Samuel's stuff
 !  ==============
 
-!Helper functions
-   get_mulliken_term(m, n, k, l, ao_2e_ints, coulomb) result(term)
-      m, n, k, l :: INT
+   put_energy_breakdown(units)
+      units :: STR, OPTIONAL
       ao_2e_ints :: MAT4{REAL}*
-      term :: REAL
-      coulomb :: BIN
+      atom_group1, atom_group2 :: ATOM_GROUP*
+      mol1, mol2 :: MOLECULE*
+      factor :: REAL
+
+      atom_group1 => .atom_group(1)
+      atom_group2 => .atom_group(2)
+
+      ENSURE(.atom_group.created,"no atom group information")
+      ENSURE(.atom_group.dim==2 ,"must have only 2 atom groups")
+      ENSURE(atom_group1.mol.density_matrix.created, "no density matrix for atom group 1")
+      ENSURE(atom_group2.mol.density_matrix.created, "no density matrix for atom group 2")
+      ENSURE(atom_group1.mol.molecular_orbitals.created , "no molecular orbitals for atom group 1")
+      ENSURE(atom_group2.mol.molecular_orbitals.created , "no molecular orbitals for atom group 2")
       
-      !Check constant factor
-      if (coulomb) then
-         term = .density_matrix.restricted(m, n) * .density_matrix.restricted(k, l) * ao_2e_ints(m, n, k, l)
+      mol1 => atom_group1.mol
+      mol2 => atom_group2.mol
+      ao_2e_ints.create(.n_bf, .n_bf, .n_bf, .n_bf)
+
+      .SCF:merge_group_MOs
+      .BASE:make_scf_density_matrix !Are both these
+      .BASE:make_ao_density_matrix  !lines necessary?
+      .FOCK:make_ERI_integrals(ao_2e_ints)
+      
+      stdout.flush
+      stdout.text("===============================================")
+      stdout.text("Atom-atom breakdown of interaction energy terms")
+      stdout.text("===============================================")
+
+      if (present(units)) then
+         factor = units.conversion_factor
+         stdout.text("Units: " // units)
       else
-         term = -QUARTER * .density_matrix.restricted(m, n) * .density_matrix.restricted(k, l) * (ao_2e_ints(m, k, n, l) + ao_2e_ints(n, k, m, l))
+         factor = ONE
+         stdout.text("Units: hartrees")
       end
+
+      .:put_electrostatic_energy_breakdown(mol1, mol2, ao_2e_ints, factor)
+      !.:put_distances(mol1, mol2)
+      .:put_polarisation_energy_breakdown(mol1, mol2, factor)
+      .:put_dispersion_energy_breakdown(mol1, mol2, factor)
+      .:put_exchange_repulsion_energy_breakdown(mol1, mol2, ao_2e_ints, factor)
+
+      ao_2e_ints.destroy
+   end
+
+!Electrostatic interaction
+   put_electrostatic_energy_breakdown(mol1, mol2, ao_2e_ints, factor)
+      mol1, mol2 :: MOLECULE*
+      ao_2e_ints :: MAT4{REAL}*
+      factor :: REAL
+      E_el :: MAT{REAL}*
+      E_total :: REAL
+
+      E_el.create(mol1.n_atom, mol2.n_atom)
+      E_el = ZERO
+      E_total = ZERO
+
+      .:put_ee_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, ao_2e_ints, factor)
+      .:put_ne_attraction_energy_breakdown(mol1, mol2, E_el, E_total, factor)
+      .:put_nn_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, factor)
+      
+      .:put_property("Total electrostatic", E_el, E_total, factor)
+
+      E_el.destroy
+   end
+
+   put_nn_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, factor)
+      mol1, mol2 :: MOLECULE*
+      E_el :: MAT{REAL}*
+      E_total, factor :: REAL
+
+      E_nn :: MAT{REAL}*
+      E_sum :: REAL
+
+      mol1.atom.get_nn_repulsion_energy_breakdown(mol2.atom, E_nn, E_sum)
+
+      ! Output energies
+      .:put_property("Nucleus-nucleus repulsion", E_nn, E_sum, factor)
+      
+      E_el = E_el + E_nn
+      E_total = E_total + E_sum
+      E_nn.destroy
+   end
+
+   put_ne_attraction_energy_breakdown(mol1, mol2, E_el, E_total, factor)
+      mol1, mol2 :: MOLECULE*
+      E_el :: MAT{REAL}*
+      E_total, factor :: REAL
+
+      E_ne :: MAT{REAL}*
+      attraction_mx :: MAT3{REAL}*
+      E_sum :: REAL
+      
+      E_ne.create(mol1.n_atom, mol2.n_atom) !Indexing:molecule1-molecule2
+      attraction_mx.create(.n_atom, .n_bf, .n_bf)
+      E_ne = ZERO
+      E_sum = ZERO
+      .:get_1n_nuclear_attraction_matrix(attraction_mx)
+
+      .:get_1way_ne_attraction_energy(mol1, mol2, attraction_mx, E_ne, E_sum, 0, mol1.n_bf)
+      .:get_1way_ne_attraction_energy(mol2, mol1, attraction_mx, E_ne, E_sum, mol1.n_atom, 0)
+
+      attraction_mx.destroy
+
+      .:put_property("Electron-nucleus attraction", E_ne, E_sum, factor)
+
+      E_el = E_el + E_ne
+      E_total = E_total + E_sum
+      E_ne.destroy
+   end
+
+   put_ee_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, ao_2e_ints, factor)
+      mol1, mol2 :: MOLECULE*
+      ao_2e_ints :: MAT4{REAL}*
+      E_el :: MAT{REAL}*
+      E_total, factor :: REAL
+      
+      .:put_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_el, E_total, factor, TRUE)
    end
 
    get_1n_nuclear_attraction_matrix(Z)
@@ -4124,11 +4232,6 @@ contains
          Z_c.destroy
          sh.destroy_ptr_part
 
-         !stdout.show("fa = ", fa)
-         !stdout.show("la = ", la)
-         !stdout.show("fb = ", fb)
-         !stdout.show("lb = ", lb)
-         !stdout.text(char(10))
       end
 
       do c = 1, .n_atom
@@ -4138,7 +4241,6 @@ contains
             end
          end
       end
-
    end
 
    get_1way_ne_attraction_energy(mol_n, mol_e, attraction_mx, E_ne, E_sum, n_offset, e_offset)
@@ -4175,15 +4277,212 @@ contains
       end
    end
 
-   put_property(name, matrix, total, factor)
-      name :: STR
-      matrix :: MAT{REAL}*
-      total, factor :: REAL
+!Polarisation interaction
+   put_polarisation_energy_breakdown(mol1, mol2, factor)
+      mol1, mol2 :: MOLECULE*
+      factor :: REAL
+      E_pol :: MAT{REAL}*
+      E_sum :: REAL
+
+      E_pol.create(mol1.n_atom, mol2.n_atom)
+      E_pol = ZERO
+      E_sum = ZERO
+
+      .:get_1way_polarisation_energy(mol1, mol2, E_pol, E_sum, TRUE)
+      .:get_1way_polarisation_energy(mol2, mol1, E_pol, E_sum, TRUE)
+
+      .:put_property("Polarisation", E_pol, E_sum, factor)
+
+      E_pol.destroy
+   end
+
+   get_1way_polarisation_energy(mol_from, mol_to, E_pol, E_sum, mol1_is_mol_from)
+      mol_from, mol_to :: MOLECULE*
+      E_pol :: MAT{REAL}*
+      E_sum :: REAL
+      mol1_is_mol_from :: BIN
+
+      e_field, n_field, total_field :: MAT3{REAL}* !Index: atom to, atom from, component
+      term, polarisability :: REAL      
+      use_charged_values :: BIN
+      atom :: ATOM*
+      i, j, k :: INT
       
-      stdout.text(trim(name) // " energy:")
-      stdout.put(factor * matrix)
-      stdout.show("Total = ", factor * total)
-      stdout.text(" ")
+      total_field.create(mol_to.n_atom, mol_from.n_atom, 3)
+      .:get_e_field(mol_from, mol_to, e_field)
+      .:get_n_field(mol_from, mol_to, n_field)
+      total_field = e_field + n_field
+
+      !.:put_magnitude(e_field)
+      !.:put_magnitude(n_field)
+      !.:put_magnitude(total_field)
+
+      use_charged_values = (mol_to.charge /= 0) AND (mol_to.n_atom == 1)
+      do i = 1, mol_to.n_atom
+         atom => mol_to.atom(i)
+         polarisability = atom.Thakkar_atomic_dipole_polarizability(use_charged_values)
+         do j = 1, mol_from.n_atom
+            do k = 1, mol_from.n_atom
+               term = -HALF * polarisability * dot_product(total_field(i, j, :), total_field(i, k, :))
+               !stdout.put(i)
+               !stdout.put(j)
+               !stdout.put(k)
+               !stdout.put(term)
+               !stdout.text(char(10))
+               if (mol1_is_mol_from) then
+                  E_pol(i, j) = E_pol(i, j) + term
+               else
+                  E_pol(j, i) = E_pol(j, i) + term
+               end
+               E_sum = E_sum + term
+            end
+         end
+      end
+      
+      e_field.destroy
+      n_field.destroy
+      total_field.destroy
+   end
+
+   get_e_field(mol_from, mol_to, e_field)
+      mol_from, mol_to :: MOLECULE*
+      e_field :: MAT3{REAL}*
+      pos :: MAT{REAL}*
+      field_mx :: MAT3{REAL}* !Indexing: component-orbital-orbital
+      !Ex, Ey, Ez :: MAT{REAL}*
+      i, j, k, m, n, m_start, m_end, shell :: INT
+      term :: REAL
+      
+      e_field.create(mol_to.n_atom, mol_from.n_atom, 3)
+      e_field = ZERO
+      pos => mol_to.atom.coordinates_ptr
+      field_mx.create(3, mol_from.n_bf, mol_from.n_bf)
+      !Ex.create(mol_from.n_bf, mol_from.n_bf) 
+      !Ey.create(mol_from.n_bf, mol_from.n_bf) 
+      !Ez.create(mol_from.n_bf, mol_from.n_bf) 
+
+      do i = 1, mol_to.n_atom
+         !mol_from.PROP:make_electric_field_matrices(Ex, Ey, Ez, pos(:, i))
+         !field_mx(1, :, :) = Ex
+         !field_mx(2, :, :) = Ey
+         !field_mx(3, :, :) = Ez
+         mol_from.INTS:make_electric_field_matrices(field_mx(1, :, :), field_mx(2, :, :), field_mx(3, :, :), pos(:, i))
+         do shell = 1, mol_from.n_shell
+            m_start = mol_from.first_basis_fn_for_shell(shell)
+            m_end = mol_from.last_basis_fn_for_shell(shell)
+            j = mol_from.atom_for_shell(shell)
+            !stdout.put(m_start)
+            !stdout.put(m_end)
+            !stdout.text(char(10))
+            do m = m_start, m_end
+               do n = 1, mol_from.n_bf
+                  do k = 1, 3
+                     term = -.density_matrix.restricted(m, n) * field_mx(k, m, n)
+                     e_field(i, j, k) = e_field(i, j, k) + term
+                  end
+               end
+            end
+         end
+      end
+      !do k = 1, 3
+      !   stdout.put(k)
+      !   stdout.text(char(10))
+      !   stdout.put(field_mx(3, :, :))
+      !end
+      
+      field_mx.destroy
+   end
+
+   get_n_field(mol_from, mol_to, n_field)
+      mol_from, mol_to :: MOLECULE*
+      n_field :: MAT3{REAL}*
+      
+      pos :: MAT{REAL}*
+      i, j :: INT
+      r :: REAL
+      ij :: VEC{REAL}(3)
+      atom :: ATOM*
+
+      n_field.create(mol_to.n_atom, mol_from.n_atom, 3)
+      pos => mol_to.atom.coordinates_ptr
+
+      do j = 1, mol_from.n_atom
+         atom => mol_from.atom(j)
+         do i = 1, mol_to.n_atom
+            ij = pos(:, i) - atom.position
+            r = ij.norm
+            !stdout.put(i)
+            !stdout.put(j)
+            !stdout.put(r)
+            !stdout.put(atom.nuclear_charge)
+            !stdout.text(char(10))
+            n_field(i, j, :) = (atom.nuclear_charge / (r * r * r)) * ij
+         end
+      end
+   end
+
+!Dispersion interaction
+   put_dispersion_energy_breakdown(mol1, mol2, factor)
+   ! Calculate the 1-2 dispersion term from Grimme's C6 coefficients
+   ! C6 taken from Grimme (2006) J. Comp. Chem.  27(15) p. 1787
+
+      mol1, mol2 :: MOLECULE*
+      factor :: REAL
+      E_disp :: MAT{REAL}*
+      E_sum :: REAL
+
+      ! A & B molecules
+      mol1.atom.get_dispersion_energy_breakdown(mol2.atom, E_disp, E_sum)
+
+      ! Output energies
+      .:put_property("Dispersion", E_disp, E_sum, factor)
+      
+      !stdout.put(.atom_group1.atom.created)
+      E_disp.destroy
+   end
+
+!Exchange-repulsion interaction
+   put_exchange_repulsion_energy_breakdown(mol1, mol2, ao_2e_ints, factor)
+      mol1, mol2 :: MOLECULE*
+      ao_2e_ints :: MAT4{REAL}*
+      factor :: REAL
+      E_er :: MAT{REAL}*
+      E_total :: REAL
+
+      E_er.create(mol1.n_atom, mol2.n_atom)
+      E_er = ZERO
+      E_total = ZERO
+
+      .:put_exchange_energy_breakdown(mol1, mol2, E_er, E_total, ao_2e_ints, factor)
+      !Add repulsion term later
+
+      .:put_property("Total exchange-repulsion", E_er, E_total, factor)
+
+      E_er.destroy
+   end
+
+!Slight deviation from correct value
+   put_exchange_energy_breakdown(mol1, mol2, E_er, E_total, ao_2e_ints, factor)
+      mol1, mol2 :: MOLECULE*
+      ao_2e_ints :: MAT4{REAL}*
+      E_er :: MAT{REAL}*
+      E_total, factor :: REAL
+      
+      .:put_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_er, E_total, factor, FALSE)
+   end
+
+!Exchange and electron-electron repulsion common terms
+   get_mulliken_term(m, n, k, l, ao_2e_ints, coulomb) result(term)
+      m, n, k, l :: INT
+      ao_2e_ints :: MAT4{REAL}*
+      term :: REAL
+      coulomb :: BIN
+      
+      if (coulomb) then
+         term = .density_matrix.restricted(m, n) * .density_matrix.restricted(k, l) * ao_2e_ints(m, n, k, l)
+      else
+         term = -QUARTER * .density_matrix.restricted(m, n) * .density_matrix.restricted(k, l) * (ao_2e_ints(m, k, n, l) + ao_2e_ints(n, k, m, l))
+      end
    end
 
    put_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_larger, E_total, factor, coulomb)
@@ -4239,285 +4538,57 @@ contains
       E_cx.destroy
    end
 
-   get_e_field(mol_from, mol_to, e_field)
-      mol_from, mol_to :: MOLECULE*
-      e_field :: MAT3{REAL}*
-      pos :: MAT{REAL}*
-      field_mx :: MAT3{REAL}* !Indexing: component-orbital-orbital
-      i, j, k, m, n, m_start, m_end, shell :: INT
-      term :: REAL
-
-      pos => mol_to.atom.coordinates_ptr
-      field_mx.create(3, mol_from.n_bf, mol_from.n_bf)
+!Helper functions
+   put_property(name, matrix, total, factor)
+      name :: STR
+      matrix :: MAT{REAL}*
+      total, factor :: REAL
       
-      do i = 1, mol_to.n_atom
-         mol_from.PROP:make_electric_field_matrices(field_mx(1, :, :), field_mx(2, :, :), field_mx(3, :, :), pos(:, i))
-         do shell = 1, mol_from.n_shell
-            m_start = mol_from.first_basis_fn_for_shell(shell)
-            m_end = mol_from.last_basis_fn_for_shell(shell)
-            j = mol_from.atom_for_shell(shell)         
-            do m = m_start, m_end
-               do n = 1, mol_from.n_bf
-                  do k = 1, 3
-                     term = .density_matrix.restricted(m, n) * field_mx(k, m, n)
-                     e_field(i, j, k) = e_field(i, j, k) + term
-                  end
-               end
-            end
-         end
-      end
-   
-      field_mx.destroy
+      stdout.text(trim(name) // " energy:")
+      stdout.put(factor * matrix)
+      stdout.show("Total = ", factor * total)
+      stdout.text(" ")
    end
 
-   get_n_field(mol_from, mol_to, n_field)
-      mol_from, mol_to :: MOLECULE*
-      n_field :: MAT3{REAL}*
-      pos :: MAT{REAL}*
+   put_magnitude(field_mx)
+      field_mx :: MAT3{REAL}*
+      magnitude :: MAT{REAL}*
+      component :: VEC{REAL}(3)
+      dim1, dim2, i, j :: INT
+
+      dim1 = field_mx.dim1
+      dim2 = field_mx.dim2
+      magnitude.create(dim1, dim2)
+
+      do i = 1, dim1
+         do j = 1, dim2
+            component = field_mx(i, j, :)
+            magnitude(i, j) = component.norm
+         end
+      end
+
+      stdout.put(magnitude)
+      magnitude.destroy
+   end
+
+   put_distances(mol1, mol2)
+      mol1, mol2 :: MOLECULE*
+      distances, pos1, pos2 :: MAT{REAL}*
       i, j :: INT
-      r :: REAL
       ij :: VEC{REAL}(3)
-      atom :: ATOM*
+      
+      distances.create(mol1.n_atom, mol2.n_atom)
+      pos1 => mol1.atom.coordinates_ptr
+      pos2 => mol2.atom.coordinates_ptr
 
-      pos => mol_from.atom.coordinates_ptr
-
-      do j = 1, mol_from.n_atom
-         atom => mol_from.atom(j)
-         do i = 1, mol_to.n_atom
-            ij = pos(:, i) - atom.position
-            r = ij.norm
-            n_field(i, j, :) = n_field(i, j, :) + (atom.nuclear_charge / (r * r * r)) * ij
+      do i = 1, mol1.n_atom
+         do j = 1, mol2.n_atom
+            ij = pos1(:, i) - pos2(:, j)
+            distances(i, j) = ij.norm
          end
       end
-   end
 
-   get_1way_polarisation_energy(mol_from, mol_to, E_pol, E_sum, mol1_is_mol_from)
-      mol_from, mol_to :: MOLECULE*
-      E_pol :: MAT{REAL}*
-      E_sum :: REAL
-      mol1_is_mol_from :: BIN
-
-      e_field, n_field, total_field :: MAT3{REAL}* !Index: atom to, atom from, component
-      term, polarisability :: REAL      
-      use_charged_values :: BIN
-      atom :: ATOM*
-      i, j, k :: INT
-      
-      e_field.create(mol_to.n_atom, mol_from.n_atom, 3)
-      n_field.create(mol_to.n_atom, mol_from.n_atom, 3)
-      total_field.create(mol_to.n_atom, mol_from.n_atom, 3)
-
-      .:get_e_field(mol_from, mol_to, e_field)
-      .:get_n_field(mol_from, mol_to, n_field)
-      total_field = e_field + n_field
-      
-      use_charged_values = (mol_to.charge /= 0) AND (mol_to.n_atom == 1)
-      do i = 1, mol_to.n_atom
-         atom => mol_to.atom(i)
-         polarisability = atom.Thakkar_atomic_dipole_polarizability(use_charged_values)
-         do j = 1, mol_from.n_atom
-            do k = 1, mol_from.n_atom
-               term = HALF * polarisability * dot_product(total_field(i, j, :), total_field(i, k, :))
-               if (mol1_is_mol_from) then
-                  E_pol(i, j) = E_pol(i, j) + term
-               else
-                  E_pol(j, i) = E_pol(j, i) + term
-               end
-               E_sum = E_sum + term
-            end
-         end
-      end
-      
-      e_field.destroy
-      n_field.destroy
-      total_field.destroy
-   end
-
-!Functions for the terms
-   put_nn_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, factor)
-      mol1, mol2 :: MOLECULE*
-      E_el :: MAT{REAL}*
-      E_total, factor :: REAL
-
-      E_nn :: MAT{REAL}*
-      E_sum :: REAL
-
-      mol1.atom.get_nn_repulsion_energy_breakdown(mol2.atom, E_nn, E_sum)
-
-      ! Output energies
-      .:put_property("Nucleus-nucleus repulsion", E_nn, E_sum, factor)
-      
-      !stdout.put(.atom_group1.atom.created)
-      E_el = E_el + E_nn
-      E_total = E_total + E_sum
-      E_nn.destroy
-   end
-
-   put_ne_attraction_energy_breakdown(mol1, mol2, E_el, E_total, factor)
-      mol1, mol2 :: MOLECULE*
-      E_el :: MAT{REAL}*
-      E_total, factor :: REAL
-
-      E_ne :: MAT{REAL}*
-      attraction_mx :: MAT3{REAL}*
-      E_sum :: REAL
-      
-      E_ne.create(mol1.n_atom, mol2.n_atom) !Indexing:molecule1-molecule2
-      attraction_mx.create(.n_atom, .n_bf, .n_bf)
-      E_ne = ZERO
-      E_sum = ZERO
-      .:get_1n_nuclear_attraction_matrix(attraction_mx)
-
-      .:get_1way_ne_attraction_energy(mol1, mol2, attraction_mx, E_ne, E_sum, 0, mol1.n_bf)
-      .:get_1way_ne_attraction_energy(mol2, mol1, attraction_mx, E_ne, E_sum, mol1.n_atom, 0)
-
-      attraction_mx.destroy
-
-      .:put_property("Electron-nucleus attraction", E_ne, E_sum, factor)
-
-      E_el = E_el + E_ne
-      E_total = E_total + E_sum
-      E_ne.destroy
-   end
-
-   put_ee_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, ao_2e_ints, factor)
-      mol1, mol2 :: MOLECULE*
-      ao_2e_ints :: MAT4{REAL}*
-      E_el :: MAT{REAL}*
-      E_total, factor :: REAL
-      
-      .:put_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_el, E_total, factor, TRUE)
-   end
-
-   put_electrostatic_energy_breakdown(mol1, mol2, ao_2e_ints, factor)
-      mol1, mol2 :: MOLECULE*
-      ao_2e_ints :: MAT4{REAL}*
-      factor :: REAL
-      E_el :: MAT{REAL}*
-      E_total :: REAL
-
-      E_el.create(mol1.n_atom, mol2.n_atom)
-      E_el = ZERO
-      E_total = ZERO
-
-      .:put_ee_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, ao_2e_ints, factor)
-      .:put_ne_attraction_energy_breakdown(mol1, mol2, E_el, E_total, factor)
-      .:put_nn_repulsion_energy_breakdown(mol1, mol2, E_el, E_total, factor)
-      
-      .:put_property("Total electrostatic", E_el, E_total, factor)
-
-      E_el.destroy
-   end
-
-   put_dispersion_energy_breakdown(mol1, mol2, factor)
-   ! Calculate the 1-2 dispersion term from Grimme's C6 coefficients
-   ! C6 taken from Grimme (2006) J. Comp. Chem.  27(15) p. 1787
-
-      mol1, mol2 :: MOLECULE*
-      factor :: REAL
-      E_disp :: MAT{REAL}*
-      E_sum :: REAL
-
-      ! A & B molecules
-      mol1.atom.get_dispersion_energy_breakdown(mol2.atom, E_disp, E_sum)
-
-      ! Output energies
-      .:put_property("Dispersion", E_disp, E_sum, factor)
-      
-      !stdout.put(.atom_group1.atom.created)
-      E_disp.destroy
-   end
-
-!Slight deviation from correct value
-   put_exchange_energy_breakdown(mol1, mol2, E_er, E_total, ao_2e_ints, factor)
-      mol1, mol2 :: MOLECULE*
-      ao_2e_ints :: MAT4{REAL}*
-      E_er :: MAT{REAL}*
-      E_total, factor :: REAL
-      
-      .:put_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_er, E_total, factor, FALSE)
-   end
-
-   put_exchange_repulsion_energy_breakdown(mol1, mol2, ao_2e_ints, factor)
-      mol1, mol2 :: MOLECULE*
-      ao_2e_ints :: MAT4{REAL}*
-      factor :: REAL
-      E_er :: MAT{REAL}*
-      E_total :: REAL
-
-      E_er.create(mol1.n_atom, mol2.n_atom)
-      E_er = ZERO
-      E_total = ZERO
-
-      .:put_exchange_energy_breakdown(mol1, mol2, E_er, E_total, ao_2e_ints, factor)
-      !Add repulsion term later
-
-      .:put_property("Total exchange-repulsion", E_er, E_total, factor)
-
-      E_er.destroy
-   end
-
-   put_polarisation_energy_breakdown(mol1, mol2, factor)
-      mol1, mol2 :: MOLECULE*
-      factor :: REAL
-      E_pol :: MAT{REAL}*
-      E_sum :: REAL
-
-      E_pol.create(mol1.n_atom, mol2.n_atom)
-      E_pol = ZERO
-      E_sum = ZERO
-
-      .:get_1way_polarisation_energy(mol1, mol2, E_pol, E_sum, TRUE) !Add offsets later
-      .:get_1way_polarisation_energy(mol2, mol1, E_pol, E_sum, FALSE)
-
-      .:put_property("Polarisation", E_pol, E_sum, factor)
-
-      E_pol.destroy
-   end
-
-   put_energy_breakdown(units)
-      units :: STR, OPTIONAL
-      ao_2e_ints :: MAT4{REAL}*
-      atom_group1, atom_group2 :: ATOM_GROUP*
-      mol1, mol2 :: MOLECULE*
-      factor :: REAL
-
-      atom_group1 => .atom_group(1)
-      atom_group2 => .atom_group(2)
-
-      ENSURE(.atom_group.created,"no atom group information")
-      ENSURE(.atom_group.dim==2 ,"must have only 2 atom groups")
-      ENSURE(atom_group1.mol.density_matrix.created, "no density matrix for atom group 1")
-      ENSURE(atom_group2.mol.density_matrix.created, "no density matrix for atom group 2")
-      ENSURE(atom_group1.mol.molecular_orbitals.created , "no molecular orbitals for atom group 1")
-      ENSURE(atom_group2.mol.molecular_orbitals.created , "no molecular orbitals for atom group 2")
-      
-      mol1 => atom_group1.mol
-      mol2 => atom_group2.mol
-      ao_2e_ints.create(.n_bf, .n_bf, .n_bf, .n_bf)
-
-      .SCF:merge_group_MOs
-      .BASE:make_scf_density_matrix !Are both these
-      .BASE:make_ao_density_matrix  !lines necessary?
-      .FOCK:make_ERI_integrals(ao_2e_ints)
-      
-      stdout.flush
-      stdout.text("===============================================")
-      stdout.text("Atom-atom breakdown of interaction energy terms")
-      stdout.text("===============================================")
-
-      if (present(units)) then
-         factor = units.conversion_factor
-         stdout.text("Units: " // units)
-      else
-         factor = ONE
-         stdout.text("Units: hartrees")
-      end
-
-      .:put_electrostatic_energy_breakdown(mol1, mol2, ao_2e_ints, factor)
-      .:put_dispersion_energy_breakdown(mol1, mol2, factor)
-      .:put_exchange_repulsion_energy_breakdown(mol1, mol2, ao_2e_ints, factor)
-
-      ao_2e_ints.destroy
+      stdout.put(distances)
+      distances.destroy
    end
 end
