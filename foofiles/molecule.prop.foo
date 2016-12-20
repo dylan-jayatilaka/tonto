@@ -4150,7 +4150,7 @@ contains
    end
 
 !Electrostatic interaction
-   get_electrostatic_energy_breakdown(mol1, mol2, ao_2e_ints, E_el, E_nn, E_ne, E_ee)
+   get_electrostatic_energy_breakdown(mol1, mol2, ao_2e_ints, E_el, E_nn, E_ne, E_ee) !Small numerical innacuracy
       mol1, mol2 :: MOLECULE*
       ao_2e_ints :: MAT4{REAL}*
       E_el, E_nn, E_ne, E_ee :: MAT{REAL}*
@@ -4174,8 +4174,9 @@ contains
       E_ne = ZERO
       .:get_1n_nuclear_attraction_matrix(attraction_mx)
 
-      .:get_1way_ne_attraction_energy(mol1, mol2, attraction_mx, E_ne, 0, mol1.n_bf)
       .:get_1way_ne_attraction_energy(mol2, mol1, attraction_mx, E_ne, mol1.n_atom, 0)
+      E_ne.to_transpose
+      .:get_1way_ne_attraction_energy(mol1, mol2, attraction_mx, E_ne, 0, mol1.n_bf)
 
       attraction_mx.destroy
    end
@@ -4226,28 +4227,11 @@ contains
       attraction_mx :: MAT3{REAL}*
       E_ne :: MAT{REAL}*
       n_offset, e_offset :: INT
-      shell, i, j, m, n, m_start, m_end, ii, mm, nn :: INT
-      term :: REAL
+
+      i :: INT
      
       do i = 1, mol_n.n_atom
-         ii = i + n_offset
-         do shell = 1, mol_e.n_shell
-            m_start = mol_e.first_basis_fn_for_shell(shell)
-            m_end = mol_e.last_basis_fn_for_shell(shell)
-            j = mol_e.atom_for_shell(shell)         
-            do m = m_start, m_end
-               mm = m + e_offset
-               do n = 1, mol_e.n_bf
-                  nn = n + e_offset
-                  term = .density_matrix.restricted(mm, nn) * attraction_mx(ii, mm, nn)
-                  if (e_offset == 0) then
-                     E_ne(j, i) = E_ne(j, i) + term
-                  else     
-                     E_ne(i, j) = E_ne(i, j) + term
-                  end
-               end
-            end
-         end
+         .:get_one_electron_breakdown_matrix(mol_e, attraction_mx(i + n_offset, :, :), E_ne, e_offset, i)
       end
    end
 
@@ -4275,7 +4259,7 @@ contains
       i, j, k :: INT
       
       total_field.create(mol_to.n_atom, mol_from.n_atom, 3)
-      .:get_e_field(mol_from, mol_to, e_field)
+      .:get_e_field(mol_from, mol_to, e_field, mol1_is_mol_from)
       .:get_n_field(mol_from, mol_to, n_field)
       total_field = e_field + n_field
 
@@ -4300,37 +4284,37 @@ contains
       total_field.destroy
    end
 
-   get_e_field(mol_from, mol_to, e_field)
+   get_e_field(mol_from, mol_to, e_field, mol1_is_mol_from)
       mol_from, mol_to :: MOLECULE*
       e_field :: MAT3{REAL}*
+      mol1_is_mol_from :: BIN
+      
       pos :: MAT{REAL}*
       field_mx :: MAT3{REAL}* !Indexing: component-orbital-orbital
-      i, j, k, m, n, m_start, m_end, shell :: INT
-      term :: REAL
-      
+      i, k, offset :: INT
+      !e_field_comp :: MAT{REAL}*
+
       e_field.create(mol_to.n_atom, mol_from.n_atom, 3)
       e_field = ZERO
       pos => mol_to.atom.coordinates_ptr
-      field_mx.create(3, mol_from.n_bf, mol_from.n_bf)
+      field_mx.create(3, .n_bf, .n_bf)
+      !e_field_comp.create(
+
+      if (mol1_is_mol_from) then
+         offset = 0
+      else
+         offset = mol_to.n_bf
+      end
 
       do i = 1, mol_to.n_atom
-         mol_from.INTS:make_electric_field_matrices(field_mx(1, :, :), field_mx(2, :, :), field_mx(3, :, :), pos(:, i))
-         do shell = 1, mol_from.n_shell
-            m_start = mol_from.first_basis_fn_for_shell(shell)
-            m_end = mol_from.last_basis_fn_for_shell(shell)
-            j = mol_from.atom_for_shell(shell)
-            do m = m_start, m_end
-               do n = 1, mol_from.n_bf
-                  do k = 1, 3
-                     term = -mol_from.density_matrix.restricted(m, n) * field_mx(k, m, n)
-                     e_field(i, j, k) = e_field(i, j, k) + term
-                  end
-               end
-            end
+         .INTS:make_electric_field_matrices(field_mx(1, :, :), field_mx(2, :, :), field_mx(3, :, :), pos(:, i))
+         do k = 1, 3
+            .:get_one_electron_breakdown_matrix(mol_from, field_mx(k, :, :), e_field(:, :, k), offset, i)
          end
       end
       
       field_mx.destroy
+      !e_field_comp.destroy
    end
 
    get_n_field(mol_from, mol_to, n_field)
@@ -4349,7 +4333,7 @@ contains
       do j = 1, mol_from.n_atom
          atom => mol_from.atom(j)
          do i = 1, mol_to.n_atom
-            ij = pos(:, i) - atom.position
+            ij = atom.position - pos(:, i)
             r = ij.norm
             n_field(i, j, :) = (atom.nuclear_charge / (r * r * r)) * ij
          end
@@ -4374,12 +4358,55 @@ contains
       mol1, mol2 :: MOLECULE*
       ao_2e_ints :: MAT4{REAL}*
       E_rep, E_ex, E_ee, E_ne :: MAT{REAL}*
+
+      E_exo, E_eeo, E_neo :: MAT{REAL}*
       
       E_rep.create(mol1.n_atom, mol2.n_atom)
-      E_rep = ZERO !Finish this
+      E_exo.create(mol1.n_atom, mol2.n_atom)
+      E_eeo.create(mol1.n_atom, mol2.n_atom)
+      E_neo.create(mol1.n_atom, mol2.n_atom)
+      
+      !stdout.put(mol1.density_matrix.restricted)
+      .SCF:symmorthonormalize_occupied_MOs
+      .BASE:make_scf_density_matrix
+      .BASE:make_ao_density_matrix
+      !stdout.put(mol1.density_matrix.restricted)
+
+      .:get_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_exo, FALSE) 
+      .:get_ne_attraction_energy_breakdown(mol1, mol2, E_neo)
+      .:get_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_eeo, TRUE)
+
+      E_rep = E_exo + E_eeo + E_neo - (E_ex + E_ee + E_ne)
+
+      E_exo.destroy
+      E_eeo.destroy
+      E_neo.destroy
    end
 
-!Exchange-repulsion and electrostatic common terms
+!Common terms
+   get_one_electron_breakdown_matrix(mol, mx_in, mx_out, offset, i)
+      mol :: MOLECULE*
+      mx_in, mx_out :: MAT{REAL}
+      offset, i :: INT
+
+      shell, m_start, m_end, j, m, mm, n, nn :: INT
+      term :: REAL
+      
+      do shell = 1, mol.n_shell
+         m_start = mol.first_basis_fn_for_shell(shell)
+         m_end = mol.last_basis_fn_for_shell(shell)
+         j = mol.atom_for_shell(shell)         
+         do m = m_start, m_end
+            mm = m + offset
+            do n = 1, mol.n_bf
+               nn = n + offset
+               term = .density_matrix.restricted(mm, nn) * mx_in(mm, nn)
+               mx_out(i, j) = mx_out(i, j) + term
+            end
+         end
+      end
+   end
+
    get_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_cx, coulomb)
       ao_2e_ints :: MAT4{REAL}*
       mol1, mol2 :: MOLECULE*
@@ -4434,10 +4461,16 @@ contains
       name :: STR
       matrix :: MAT{REAL}*
       factor :: REAL
+      print_mat :: MAT{REAL}*
+
+      print_mat.create(matrix.dim1, matrix.dim2)
+      print_mat = factor * matrix
       
       stdout.text(trim(name) // " energy:")
-      stdout.put(factor * matrix)
-      stdout.show("Total = ", factor * matrix.sum_elements)
+      stdout.put(print_mat)
+      stdout.show("Total = ", print_mat.sum_elements)
       stdout.text(" ")
+
+      print_mat.destroy
    end
 end
