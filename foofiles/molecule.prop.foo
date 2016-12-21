@@ -3698,7 +3698,6 @@ contains
       mol_A,mol_B :: MOLECULE*
       saved_MOs_A, saved_MOs_B :: OPMATRIX*
       exchange_factors :: VEC{REAL}(3) = [-HALF, -HALF, -HALF]
-      density_mx :: MAT{REAL}* !REMOVE AFTER TESTING
 
 
       ! ======================
@@ -3787,11 +3786,8 @@ contains
       mol_B.FOCK:make_JK_engine(C_B,K_B,X_B)
 
       ! Alpha density matrix with beta, beta density matrix with alpha
-      stdout.show("Before = ", E_ABn)
       E_ee = .:group_12_int_energy(C,C_A,C_B, HALF, E_ABn, TRUE)
-      stdout.show("With coulomb = ", E_ABn)
       E_ex = .:group_12_exchange_int_energy(K,K_A,K_B,exchange_factors,E_ABn)
-      stdout.show("With exchange = ", E_ABn)
 
       K_A.destroy; K_B.destroy
       C_A.destroy; C_B.destroy  
@@ -3807,17 +3803,8 @@ contains
       ! ======================
       ! Now symmorthonormalize
       ! ======================
-      density_mx.create(.n_bf, .n_bf)
-      density_mx = .density_matrix.restricted
-      density_mx.to_scaled(density_mx, -ONE)
-      !stdout.show("Trace product = ", .density_matrix.restricted.trace_product_with(.core_matrix.restricted))
       .SCF:symmorthonormalize_occupied_MOs
       .BASE:make_scf_density_matrix
-      density_mx.plus(.density_matrix.restricted)
-      !stdout.put(density_mx(1, :))
-      !stdout.show("Trace product = ", .density_matrix.restricted.trace_product_with(.core_matrix.restricted))
-      !stdout.show("Trace product = ", density_mx.trace_product_with(.core_matrix.restricted))
-      !stdout.put(.core_matrix.restricted)
 
       ! One electron hamiltonian
       ! need one for alpha, one for beta
@@ -3831,13 +3818,9 @@ contains
 
       X => .density_matrix
       .FOCK:make_JK_engine(C,K,X)
-      stdout.show("Before = ", E_ABo)
+
       E_ABo = E_ABo +    HALF*.BASE:expectation(C, TRUE)
-      stdout.show("With coulomb = ", E_ABo)
       E_ABo = E_ABo + exchange_factors(1)*.BASE:expectation(K)
-      stdout.show("With exchange = ", E_ABo)
-      stdout.put(.density_matrix.spinorbital_kind)
-      stdout.put(char(10))
 
       ! Get repulsion energy
       E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
@@ -3908,7 +3891,7 @@ contains
       mol_A.molecular_orbitals => saved_MOs_A
       mol_B.molecular_orbitals => saved_MOs_B
 
-   end
+end
 
    group_12_int_energy(X,X_A,X_B,fac,E_AB,with_cross_terms) result (res) ::: private
    ! Return the group 1-2 interaction energy for one electron
@@ -4251,7 +4234,7 @@ contains
       i :: INT
      
       do i = 1, mol_n.n_atom
-         mol_e.PROP:get_one_electron_breakdown_matrix(attraction_mx(i + n_offset, :, :), E_ne(i, :), .density_matrix.restricted, e_offset)
+         mol_e.PROP:get_one_electron_breakdown_matrix(attraction_mx(i + n_offset, :, :), E_ne(i, :), .density_matrix.restricted, e_offset, ONE)
       end
    end
 
@@ -4327,7 +4310,7 @@ contains
       do i = 1, mol_to.n_atom
          .INTS:make_electric_field_matrices(field_mx(1, :, :), field_mx(2, :, :), field_mx(3, :, :), pos(:, i))
          do k = 1, 3
-            mol_from.PROP:get_one_electron_breakdown_matrix(field_mx(k, :, :), e_field(i, :, k), .density_matrix.restricted, offset)
+            mol_from.PROP:get_one_electron_breakdown_matrix(field_mx(k, :, :), e_field(i, :, k), .density_matrix.restricted, offset, ONE)
          end
       end
       
@@ -4365,7 +4348,8 @@ contains
 
       E_er.create(mol1.n_atom, mol2.n_atom)
 
-      .:get_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_ex, FALSE) !Slight deviation from expected value
+      .:get_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_ex, FALSE)
+      !Slight deviation from expected value
       E_tot.plus(E_ex)
       .:get_repulsion_energy_breakdown(mol1, mol2, E_tot, E_rep, ao_2e_ints) 
       
@@ -4378,33 +4362,33 @@ contains
       E_tot, E_rep :: MAT{REAL}*
 
       atom_energies, mol1_atom_interactions, mol2_atom_interactions :: VEC{REAL}*
-      old_density_mx, density_mx_diff :: MAT{REAL}*
+      coulomb_mx, exchange_mx :: MAT{REAL}*
       i, j, m, n, k, l, shell, m_start, m_end :: INT
       density_term, coulomb_term, exchange_term, term, coulomb_total, exchange_total, total :: REAL
 
       E_rep.create(mol1.n_atom, mol2.n_atom)
       atom_energies.create(.n_atom)
-      old_density_mx.create(.n_bf, .n_bf)
-      density_mx_diff.create(.n_bf, .n_bf)
+      coulomb_mx.create(.n_bf, .n_bf)
+      exchange_mx.create(.n_bf, .n_bf)
       mol1_atom_interactions.create(mol1.n_atom)
       mol2_atom_interactions.create(mol2.n_atom)
 
       atom_energies = ZERO
-      old_density_mx = .density_matrix.restricted
-      E_rep = ZERO !Fix this later
-
-      .:get_cx_breakdown_for_repulsion(atom_energies, ao_2e_ints, -ONE)
-
+      .FOCK:make_r_JK_engine(coulomb_mx, exchange_mx, .density_matrix.restricted)
       .SCF:make_r_core_matrix
+
+      .:get_one_electron_breakdown_matrix(.core_matrix.restricted, atom_energies, .density_matrix.restricted, 0, -ONE)
+      .:get_one_electron_breakdown_matrix(coulomb_mx, atom_energies, .density_matrix.restricted, 0, -HALF)
+      .:get_one_electron_breakdown_matrix(exchange_mx, atom_energies, .density_matrix.restricted, 0, QUARTER)
+
       .SCF:symmorthonormalize_occupied_MOs
       .BASE:make_scf_density_matrix
       .BASE:make_ao_density_matrix
-      density_mx_diff = .density_matrix.restricted 
-      density_mx_diff.minus(old_density_mx)
-      !stdout.put(density_mx_diff(1,:))
 
-      .:get_one_electron_breakdown_matrix(.core_matrix.restricted, atom_energies, density_mx_diff, 0)
-      .:get_cx_breakdown_for_repulsion(atom_energies, ao_2e_ints, ONE)
+      .FOCK:make_r_JK_engine(coulomb_mx, exchange_mx, .density_matrix.restricted)
+      .:get_one_electron_breakdown_matrix(.core_matrix.restricted, atom_energies, .density_matrix.restricted, 0, ONE)
+      .:get_one_electron_breakdown_matrix(coulomb_mx, atom_energies, .density_matrix.restricted, 0, HALF)
+      .:get_one_electron_breakdown_matrix(exchange_mx, atom_energies, .density_matrix.restricted, 0, -QUARTER)
 
       mol1_atom_interactions = E_tot.sum_column_vectors
       mol2_atom_interactions = E_tot.sum_row_vectors
@@ -4414,45 +4398,18 @@ contains
             E_rep(i, j) = atom_energies(i) * E_tot(i, j) / mol1_atom_interactions(i) + atom_energies(j + mol1.n_atom) * E_tot(j, i) / mol2_atom_interactions(j) 
          end
       end
-   end
 
-   get_cx_breakdown_for_repulsion(atom_energies, ao_2e_ints, factor)
-      atom_energies :: VEC{REAL}*
-      ao_2e_ints :: MAT4{REAL}*
-      factor :: REAL
-
-      shell, m_start, m_end, i, m, n, k, l :: INT
-      density_term, coulomb_term, exchange_term, term, coulomb_total, exchange_total :: REAL
-      
-      do shell = 1, .n_shell
-         m_start = .first_basis_fn_for_shell(shell)
-         m_end = .last_basis_fn_for_shell(shell)
-         i = .atom_for_shell(shell)         
-         do m = m_start, m_end
-            do n = 1, .n_bf
-               do k = 1, .n_bf 
-                  do l = 1, .n_bf 
-                     coulomb_term = HALF * .:get_mulliken_term(m, n, k, l, ao_2e_ints, TRUE)
-                     exchange_term = HALF * .:get_mulliken_term(m, n, k, l, ao_2e_ints, FALSE)
-                     term = factor * (coulomb_term + exchange_term)
-                     atom_energies(i) = atom_energies(i) + term
-                     coulomb_total = coulomb_total + factor * coulomb_term
-                     exchange_total = exchange_total + factor * exchange_term
-                  end
-               end
-            end
-         end
-      end
-      stdout.show("Coulomb total = ", coulomb_total)
-      stdout.show("Exchange total = ", exchange_total)
+      coulomb_mx.destroy
+      exchange_mx.destroy
    end
 
 !Common terms
-   get_one_electron_breakdown_matrix(mx_in, mx_out, density_mx, offset)
+   get_one_electron_breakdown_matrix(mx_in, mx_out, density_mx, offset, factor)
       density_mx :: MAT{REAL}*
       mx_in :: MAT{REAL}
       mx_out :: VEC{REAL}
       offset :: INT
+      factor :: REAL
 
       shell, m_start, m_end, j, m, mm, n, nn :: INT
       term, total :: REAL
@@ -4466,14 +4423,12 @@ contains
             mm = m + offset
             do n = 1, .n_bf
                nn = n + offset
-               term = density_mx(mm, nn) * mx_in(mm, nn)
+               term = factor * density_mx(mm, nn) * mx_in(mm, nn)
                mx_out(j) = mx_out(j) + term
                total = total + term
             end
          end
       end
-      
-      stdout.show("Total = ", total)
    end
 
    get_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_cx, coulomb)
