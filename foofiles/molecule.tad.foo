@@ -171,6 +171,7 @@ contains
 
    end
 
+
    fit_Hirshfeld_atoms ::: leaky
    ! Fit the Hirshfeld atoms to the calculated structure factors.
    ! Cartesian (bohr) coordinates are used because structure factors
@@ -202,8 +203,7 @@ contains
       ! Static atomic SF's for symmetry-unique atoms (sf_n)
       if      (.crystal.data.invariom_refinement) then; .TAD:get_unique_invariom_SFs(sf_n)
       else if (.crystal.data.use_Voronoi_atoms) then;   .TAD:get_unique_Voronoi_atom_SFs(sf_n)
-      else if (.crystal.data.use_IAM_density) then;     .TAD:get_unique_IAM_atom_SFs(sf_n)
-      else if (.crystal.data.use_KM_atoms) then;        .TAD:get_unique_KM_atom_SFs(sf_n)
+    ! else if (.crystal.data.use_KM_atoms) then;        .TAD:get_unique_KM_atom_SFs(sf_n)
       else;                                             .TAD:get_unique_Hirshfeld_atom_SFs(sf_n) ! HAR
       end
 
@@ -231,6 +231,55 @@ contains
 
    end
 
+   IAM_refinement ::: leaky
+   ! Do an AIM refinement
+   ! Cartesian (bohr) coordinates are used because structure factors
+   ! are aspherical and calculated from the QM wavefunction.
+   ! NOTE: this routine does only one cycle of fitting with the
+   ! current density matrix i.e. this is a "rigid atom fit".
+   ! NOTE: It's tricky exactly which atom's are used for refinement:
+   ! * Structure factors are calculated only for *unique* fragment
+   !   atoms since the QM wavefunction refers to the fragment_atoms.
+   ! * However, asymmetric unit atoms are used to "store" the updating
+   !   geometry; thus unique fragment atom pADPs and shifts are
+   !   calculated (and derivatives with respect to the fragment atom
+   !   positions and ADPs) but these parameters and shifts are later
+   !   transformed back into asymmetric unit.
+
+   ENSURE(.atom.created, "no atoms to fit")
+   ENSURE(.becke_grid.created,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"becke_grid not finalized")
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.data.created,"no crystal data")
+   ENSURE(.crystal.xray_data.created,"no crystal xray data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      sf_n :: MAT{CPX}*
+      keep :: BIN
+
+      keep = .crystal.data.use_IAM_density
+      .crystal.data.set_use_IAM_density(TRUE)
+
+      .TAD:get_unique_IAM_atom_SFs(sf_n)
+
+      !!!!!!!!! Do the fit !!!!!!!!!
+      .crystal.fit_rigid_atoms(sf_n)
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Write CIF
+      .BASE:put_CIFs(with_ESDs=TRUE)
+
+      ! Clean up
+      sf_n.destroy
+
+      .crystal.data.set_use_IAM_density(keep)
+
+   end
+
+!  =================
+!  Structure factors
+!  =================
+
    get_unique_IAM_atom_SFs(sf_n) ::: leaky, private
    ! Get "sf_n", the IAM structure factors for the symmetry generated
    ! K points with *no* thermal smearing, for every unique atom.
@@ -241,6 +290,7 @@ contains
    ENSURE(.crystal.created, "no crystal")
    ENSURE(.crystal.data.created, "no reflection data")
    ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.crystal.data.use_IAM_density,"not using IAM density!")
    ENSURE(.crystal.asymmetric_unit_atom.created,"no asymmetric unit atoms")
    ENSURE(.crystal.unique_atom_for_frag_atom.created,"no unique-frag_atom")
    ENSURE(.crystal.asym_atom_for_frag_atom.created,"no asym-frag_atom")
@@ -248,7 +298,7 @@ contains
       k_pts :: MAT{REAL}*
       n_atom,n_k, u,c,a :: INT
       rf :: REAL
-      H_SDS,H_HF0 :: BIN
+      IAM,old :: BIN
 
       ! Asymmetric unit atoms;
       ! Symmetry generated K points and SF's
@@ -263,9 +313,8 @@ contains
       k_pts.create(n_k,3)
       .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
-      ! Type of H atom SF's
-      H_SDS = .crystal.data.use_H_SDS_density
-      H_HF0 = .crystal.data.use_H_HF0_density
+      ! Type of IAM SF's
+      IAM = .crystal.data.use_IAM_ITC_FFs
 
       ! Make the SF's
       sf_n = ZERO
@@ -278,11 +327,10 @@ contains
          a = .crystal.asym_atom_for_frag_atom(c)
 
          ! Structure factors
-         .atom(c).set_use_H_SDS_density(H_SDS)
-         .atom(c).set_use_H_HF0_density(H_HF0)
+         old = .atom(c).use_IAM_ITC_FFs
+         .atom(c).set_use_IAM_ITC_FFs(IAM)
          .atom(c).make_FT(sf_n(:,u),k_pts)
-         .atom(c).set_use_H_SDS_density(TRUE)  ! Put back
-         .atom(c).set_use_H_HF0_density(FALSE)
+         .atom(c).set_use_IAM_ITC_FFs(old)  ! Put back
 
          ! Repetition (site-symmetry) factor
          rf = .crystal.asym_atom_rep_factor(a)
