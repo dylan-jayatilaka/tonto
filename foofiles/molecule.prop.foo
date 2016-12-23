@@ -4122,6 +4122,9 @@ end
       stdout.text("Functional group breakdown of interaction energy terms")
       stdout.text("======================================================")
 
+
+   
+
       if (present(units)) then
          factor = units.conversion_factor
          stdout.text("Units: " // units)
@@ -4170,6 +4173,7 @@ end
       stdout.text("===============================================")
       stdout.text("Atom-atom breakdown of interaction energy terms")
       stdout.text("===============================================")
+      stdout.text("Some terms have small numerical errors on the order of 0.001%, this will be investigated later")
 
       if (present(units)) then
          factor = units.conversion_factor
@@ -4211,7 +4215,7 @@ end
       ENSURE(.atom_group.dim==2 ,"must have only 2 atom groups")
       ENSURE(.atom_group(1).mol.density_matrix.created, "no density matrix for atom group 1")
       ENSURE(.atom_group(2).mol.density_matrix.created, "no density matrix for atom group 2")
-      ENSURE(.atom_group(1).mol.molecular_orbitals.created , "no.mol.cular orbitals for atom group 1")
+      ENSURE(.atom_group(1).mol.molecular_orbitals.created , "no molecular orbitals for atom group 1")
       ENSURE(.atom_group(2).mol.molecular_orbitals.created , "no molecular orbitals for atom group 2")
 
       ao_2e_ints :: MAT4{REAL}*
@@ -4231,32 +4235,31 @@ end
       .BASE:make_ao_density_matrix  !lines necessary?
       .FOCK:make_ERI_integrals(ao_2e_ints)
       
-      .:get_electrostatic_energy_breakdown(mol1, mol2, ao_2e_ints, E_el, E_nn, E_ne, E_ee)
+      .:get_electrostatic_and_exchange_energy_breakdown(mol1, mol2, ao_2e_ints, E_el, E_nn, E_ne, E_ee, E_ex)
       .:get_polarisation_energy_breakdown(mol1, mol2, E_pol)
       mol1.atom.get_dispersion_energy_breakdown(mol2.atom, E_disp)
-      E_tot = E_el + E_pol + E_disp
-      .:get_exchange_repulsion_energy_breakdown(mol1, mol2, ao_2e_ints, E_tot, E_er, E_ex, E_rep)
+      E_tot = E_el + E_disp + E_pol + E_ex
+      .:get_exchange_repulsion_energy_breakdown(mol1, mol2, E_tot, E_er, E_ex, E_rep)
 
       ao_2e_ints.destroy
    end
 
 !Electrostatic interaction
-   get_electrostatic_energy_breakdown(mol1, mol2, ao_2e_ints, E_el, E_nn, E_ne, E_ee) !Small numerical inaccuracy
+   get_electrostatic_and_exchange_energy_breakdown(mol1, mol2, ao_2e_ints, E_el, E_nn, E_ne, E_ee, E_ex)  
       mol1, mol2 :: MOLECULE*
       ao_2e_ints :: MAT4{REAL}*
-      E_el, E_nn, E_ne, E_ee :: MAT{REAL}*
+      E_el, E_nn, E_ne, E_ee, E_ex :: MAT{REAL}*
 
       E_el.create(mol1.n_atom, mol2.n_atom)
 
       mol1.atom.get_nn_repulsion_energy_breakdown(mol2.atom, E_nn)
       .:get_ne_attraction_energy_breakdown(mol1, mol2, E_ne)
-      .:get_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_ee, TRUE)
+      .:get_ee_repulsion_and_exchange_energy_breakdown(mol1, mol2, ao_2e_ints, E_ee, E_ex)
 
       E_el = E_nn + E_ne + E_ee
    end
 
-!Not working in this version
-   get_ne_attraction_energy_breakdown(mol1, mol2, E_ne)
+   get_ne_attraction_energy_breakdown(mol1, mol2, E_ne) 
       mol1, mol2 :: MOLECULE*
       E_ne :: MAT{REAL}*
 
@@ -4271,9 +4274,9 @@ end
          mol2.PROP:get_one_electron_breakdown_matrix(attraction_mx(i, :, :), E_ne(i, :), .density_matrix.restricted, mol1.n_bf, ONE)
       end
       do i = 1, mol2.n_atom
-         mol1.PROP:get_one_electron_breakdown_matrix(attraction_mx(i + mol1.n_bf, :, :), E_ne(:, i), .density_matrix.restricted, 0, ONE)
+         mol1.PROP:get_one_electron_breakdown_matrix(attraction_mx(i + mol1.n_atom, :, :), E_ne(:, i), .density_matrix.restricted, 0, ONE)
       end
-
+      
       attraction_mx.destroy
    end
 
@@ -4312,37 +4315,33 @@ end
       end
    end
 
-   get_1way_ne_attraction_energy(mol_n, mol_e, attraction_mx, E_ne, n_offset, e_offset)
-      self :: INOUT
-
-      mol_n, mol_e :: MOLECULE*
-      attraction_mx :: MAT3{REAL}*
-      E_ne :: MAT{REAL}*
-      n_offset, e_offset :: INT
-
-      i :: INT
-     
-      do i = 1, mol_n.n_atom
-         mol_e.PROP:get_one_electron_breakdown_matrix(attraction_mx(i + n_offset, :, :), E_ne(i, :), .density_matrix.restricted, e_offset, ONE)
-      end
-   end
-
 !Polarisation interaction
    get_polarisation_energy_breakdown(mol1, mol2, E_pol)
       mol1, mol2 :: MOLECULE*
       E_pol :: MAT{REAL}*
+      
+      E_pol_T :: MAT{REAL}*
+      i, j :: INT
 
       E_pol.create(mol1.n_atom, mol2.n_atom)
-      E_pol = ZERO
+      E_pol_T.create(mol2.n_atom, mol1.n_atom)
+      E_pol_T = ZERO
 
-      .:get_1way_polarisation_energy(mol1, mol2, E_pol, TRUE)
-      .:get_1way_polarisation_energy(mol2, mol1, E_pol, FALSE)
+      .:get_1way_polarisation_energy(mol1, mol2, E_pol_T, 0)
+      do i = 1, mol1.n_atom
+         do j = 1, mol2.n_atom
+            E_pol(i, j) = E_pol_T(j, i)
+         end
+      end
+      .:get_1way_polarisation_energy(mol2, mol1, E_pol, mol1.n_bf)
+
+      E_pol_T.destroy
    end
 
-   get_1way_polarisation_energy(mol_from, mol_to, E_pol, mol1_is_mol_from)
+   get_1way_polarisation_energy(mol_from, mol_to, E_pol, offset)
       mol_from, mol_to :: MOLECULE*
       E_pol :: MAT{REAL}*
-      mol1_is_mol_from :: BIN
+      offset :: INT
 
       e_field, n_field, total_field :: MAT3{REAL}* !Index: atom to, atom from, component
       term, polarisability :: REAL      
@@ -4351,7 +4350,7 @@ end
       i, j, k :: INT
       
       total_field.create(mol_to.n_atom, mol_from.n_atom, 3)
-      .:get_e_field(mol_from, mol_to, e_field, mol1_is_mol_from)
+      .:get_e_field(mol_from, mol_to, e_field, offset)
       mol_to.atom.get_n_field(mol_from.atom, n_field)
       total_field = e_field + n_field
 
@@ -4362,11 +4361,7 @@ end
          do j = 1, mol_from.n_atom
             do k = 1, mol_from.n_atom
                term = -HALF * polarisability * dot_product(total_field(i, j, :), total_field(i, k, :))
-               if (mol1_is_mol_from) then
-                  E_pol(i, j) = E_pol(i, j) + term
-               else
-                  E_pol(j, i) = E_pol(j, i) + term
-               end
+               E_pol(i, j) = E_pol(i, j) + term
             end
          end
       end
@@ -4376,25 +4371,19 @@ end
       total_field.destroy
    end
 
-   get_e_field(mol_from, mol_to, e_field, mol1_is_mol_from)
+   get_e_field(mol_from, mol_to, e_field, offset)
       mol_from, mol_to :: MOLECULE*
       e_field :: MAT3{REAL}*
-      mol1_is_mol_from :: BIN
-      
+      offset :: INT
+
       pos :: MAT{REAL}*
       field_mx :: MAT3{REAL}* !Indexing: component-orbital-orbital
-      i, k, offset :: INT
+      i, k :: INT
 
       e_field.create(mol_to.n_atom, mol_from.n_atom, 3)
       e_field = ZERO
       pos => mol_to.atom.coordinates_ptr
       field_mx.create(3, .n_bf, .n_bf)
-
-      if (mol1_is_mol_from) then
-         offset = 0
-      else
-         offset = mol_to.n_bf
-      end
 
       do i = 1, mol_to.n_atom
          .INTS:make_electric_field_matrices(field_mx(1, :, :), field_mx(2, :, :), field_mx(3, :, :), pos(:, i))
@@ -4407,18 +4396,15 @@ end
    end
 
 !Exchange-repulsion interaction
-   get_exchange_repulsion_energy_breakdown(mol1, mol2, ao_2e_ints, E_tot, E_er, E_ex, E_rep)
+   get_exchange_repulsion_energy_breakdown(mol1, mol2, E_tot, E_er, E_ex, E_rep)
       mol1, mol2 :: MOLECULE*
-      ao_2e_ints :: MAT4{REAL}*
       E_tot, E_er, E_ex, E_rep :: MAT{REAL}*
 
       E_er.create(mol1.n_atom, mol2.n_atom)
 
-      .:get_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_ex, FALSE)
-      !Slight deviation from expected value
-      E_tot.plus(E_ex)
       .:get_repulsion_energy_breakdown(mol1, mol2, E_tot, E_rep) 
-      
+     
+      E_tot.plus(E_rep)
       E_er = E_ex + E_rep
    end
    
@@ -4471,7 +4457,6 @@ end
             E_rep(i, j) = atom_energies(i) * abs(E_tot(i, j)) / mol1_total(i) + atom_energies(j + mol1.n_atom) * abs(E_tot(i, j)) / mol2_total(j)
          end
       end
-      E_tot.plus(E_rep)
 
       coulomb_mx.destroy
       exchange_mx.destroy
@@ -4503,19 +4488,22 @@ end
       end
    end
 
-   get_cx_energy_breakdown(mol1, mol2, ao_2e_ints, E_cx, coulomb)
+   get_ee_repulsion_and_exchange_energy_breakdown(mol1, mol2, ao_2e_ints, E_ee, E_ex)
       ao_2e_ints :: MAT4{REAL}*
       mol1, mol2 :: MOLECULE*
-      coulomb :: BIN
-      E_cx :: MAT{REAL}*
+      E_ee, E_ex :: MAT{REAL}*
+
       n_1_orbitals, n_total_orbitals :: INT
-      term :: REAL
+      density_term, coulomb_term, exchange_term :: REAL
       shell1, shell2, m_start, m_end, k_start, k_end, i, j, m, n, k, l :: INT
 
-      E_cx.create(mol1.n_atom, mol2.n_atom)
+      E_ee.create(mol1.n_atom, mol2.n_atom)
+      E_ex.create(mol1.n_atom, mol2.n_atom)
+      
       n_1_orbitals = mol1.n_bf
       n_total_orbitals = mol1.n_bf + mol2.n_bf
-      E_cx = ZERO
+      E_ee = ZERO
+      E_ex = ZERO
 
       do shell1 = 1, mol1.n_shell
          m_start = mol1.first_basis_fn_for_shell(shell1)
@@ -4523,35 +4511,22 @@ end
          i = mol1.atom_for_shell(shell1)         
          do m = m_start, m_end
             do shell2 = 1, mol2.n_shell
-               k_start = mol2.first_basis_fn_for_shell(shell2)
-               k_end = mol2.last_basis_fn_for_shell(shell2)
+               k_start = mol2.first_basis_fn_for_shell(shell2) + mol1.n_bf
+               k_end = mol2.last_basis_fn_for_shell(shell2) + mol1.n_bf
                j = mol2.atom_for_shell(shell2)
                do k = k_start, k_end
                   do n = 1, n_1_orbitals
                      do l = n_1_orbitals + 1, n_total_orbitals
-                         term = .:get_mulliken_term(m, n, k + mol1.n_bf, l, ao_2e_ints, coulomb)
-                         E_cx(i, j) = E_cx(i, j) + term
+                         density_term = .density_matrix.restricted(m, n) * .density_matrix.restricted(k, l)
+                         coulomb_term = density_term * ao_2e_ints(m, n, k, l)
+                         exchange_term = -QUARTER * density_term * (ao_2e_ints(m, k, n, l) + ao_2e_ints(n, k, m, l))
+                         E_ee(i, j) = E_ee(i, j) + coulomb_term
+                         E_ex(i, j) = E_ex(i, j) + exchange_term
                      end
                   end
                end
             end
          end
-      end
-   end
-
-   get_mulliken_term(m, n, k, l, ao_2e_ints, coulomb) result(term)
-      m, n, k, l :: INT
-      ao_2e_ints :: MAT4{REAL}*
-      term :: REAL
-      coulomb :: BIN
-      
-      density_term :: REAL
-      
-      density_term = .density_matrix.restricted(m, n) * .density_matrix.restricted(k, l)
-      if (coulomb) then
-         term = density_term * ao_2e_ints(m, n, k, l)
-      else
-         term = -QUARTER * density_term * (ao_2e_ints(m, k, n, l) + ao_2e_ints(n, k, m, l))
       end
    end
 
@@ -4568,8 +4543,6 @@ end
       gge.create(group1.dim, group2.dim)
       gme.create(group1.dim, energy.dim2)
       mge.create(energy.dim1, group2.dim)
-      !mge.create(energy.dim, energy.dim)
-      !mge.create(energy.dim, energy.dim)
 
       gge = energy(group1, group2)
       gme = energy(group1, :)
