@@ -1,11 +1,18 @@
 module BREAKDOWN_DATA
    implicit none
 
-   num_interaction_directions :: INT = 4
-   num_interaction_types :: INT = 5
+   column_heading :: VEC{STR} = ["group1-group2", "group1-bulk  ", "bulk-group2  ", "bulk-bulk    "]
+   row_heading :: VEC{STR} = ["electrostatic     ", "polarisation      ", "dispersion        ", "exchange-repulsion", "total             "]
+   num_interaction_directions :: INT = column_heading.dim
+   num_interaction_types :: INT = row_heading.dim
+   num_atom_groups :: INT = 2
 
    contains
    
+!  ===================
+!  Allocation routines
+!  ===================
+
    create ::: get_from(OBJECT), leaky
    ! Create an object
    end
@@ -25,32 +32,451 @@ module BREAKDOWN_DATA
       self :: PTR
       res :: BIN
    end
+   
+   nullify_ptr_part
+   ! Nullify the pointer parts of self
+   ! Check whether need to nullify references to DM, and molecules
+      self :: INOUT
+
+      .groups.nullify_ptr_part
+      
+      nullify(.E_nn)
+      nullify(.E_ne)
+      nullify(.E_ee)
+      nullify(.E_el)
+      nullify(.E_pol)
+      nullify(.E_disp)
+      nullify(.E_ex)
+      nullify(.E_rep)
+      nullify(.E_er)
+      nullify(.E_tot)
+      nullify(.ao_2e_ints)
+      nullify(.groups)
+      nullify(.group_pairs)
+      nullify(.group_energies)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts of self
+
+      .groups.nullify_ptr_part
+      
+      .E_nn.destroy
+      .E_ne.destroy
+      .E_ee.destroy
+      .E_el.destroy
+      .E_pol.destroy
+      .E_disp.destroy
+      .E_ex.destroy
+      .E_rep.destroy
+      .E_er.destroy
+      .E_tot.destroy
+      .ao_2e_ints.destroy
+      .groups.destroy
+      .group_pairs.destroy
+      .group_energies.destroy
+   end
+
+   create_copy(breakdown_data) ::: leaky
+   ! Create a copy of the "breakdown_data" object
+      self :: PTR
+      breakdown_data :: BREAKDOWN_DATA
+      .create
+      .copy(breakdown_data)
+   end
+
+   copy(breakdown_data) ::: leaky
+   ! Make a copy of the "breakdown_data" object
+      breakdown_data :: BREAKDOWN_DATA 
+
+      self = breakdown_data
+      .nullify_ptr_part
+      .groups.copy(breakdown_data.groups)
+
+      if (breakdown_data.E_nn.created) .E_nn.create_copy(breakdown_data.E_nn)
+      if (breakdown_data.E_ne.created) .E_ne.create_copy(breakdown_data.E_ne)
+      if (breakdown_data.E_ee.created) .E_ee.create_copy(breakdown_data.E_ee)
+      if (breakdown_data.E_pol.created) .E_pol.create_copy(breakdown_data.E_pol)
+      if (breakdown_data.E_pol.created) .E_pol.create_copy(breakdown_data.E_pol)
+      if (breakdown_data.E_disp.created) .E_disp.create_copy(breakdown_data.E_disp)
+      if (breakdown_data.E_ex.created) .E_ex.create_copy(breakdown_data.E_ex)
+      if (breakdown_data.E_rep.created) .E_rep.create_copy(breakdown_data.E_rep)
+      if (breakdown_data.E_er.created) .E_er.create_copy(breakdown_data.E_er)
+      if (breakdown_data.E_tot.created) .E_tot.create_copy(breakdown_data.E_tot)
+      if (breakdown_data.ao_2e_ints.created) .ao_2e_ints.create_copy(breakdown_data.ao_2e_ints)
+      if (breakdown_data.groups.created) .groups.create_copy(breakdown_data.groups)
+      if (breakdown_data.group_pairs.created) .group_pairs.create_copy(breakdown_data.group_pairs)
+      if (breakdown_data.group_energies.created) .group_energies.create_copy(breakdown_data.group_energies)
+
+      if (breakdown_data.mol1.created) .mol1 => breakdown_data.mol1 
+      if (breakdown_data.mol2.created) .mol2 => breakdown_data.mol2 
+      if (breakdown_data.density_matrix.created) .density_matrix => breakdown_data.density_matrix 
+   end
 
    !Add other functions later
+
+!  ===========
+!  Set methods
+!  ===========
+
+!  ================
+!  Checking methods
+!  ================
+
+   group_pairs_are_valid(atom_group) result(res)
+      self :: IN
+
+      res :: BIN
+      atom_group :: VEC{ATOM_GROUP}*
+
+      i, j, k :: INT
+      group :: VEC{INT}*
+      
+      res = TRUE
+      do i = 1, .group_pairs.dim1
+         do j = 1, num_atom_groups
+            group => .groups(.group_pairs(i, j))
+            do k = 1, group.dim
+               res = res AND (group(k) >= 1) AND (group(k) <= atom_group(j).mol.n_atom)
+            end
+         end
+      end
+   end
+
+!  =============
+!  Input methods 
+!  =============
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+         case ("}                      ")  ! exit read_loop
+         case ("groups=                "); .read_groups
+         case ("group_pairs=           "); .read_group_pairs
+         case ("units=                 "); .read_units
+         case default;       UNKNOWN(word)
+      end
+
+   end
+
+   read_units ::: leaky
+      self :: INOUT
+
+      stdin.read(.units)
+      .conversion_factor = .units.conversion_factor 
+   end
    
-  get_functional_groups_energy_breakdown
-     self :: INOUT
+   read_groups ::: leaky
+      self :: INOUT
+
+      num_groups, group_size, i :: INT
+
+      stdin.read(num_groups)
+      .groups.create(num_groups)
+
+      do i = 1, num_groups
+         stdin.read(group_size)
+         .groups(i).create(group_size)
+         stdin.read(.groups(i))
+      end
+   end
+
+   read_group_pairs ::: leaky
+      self :: INOUT
+
+      ENSURE(.groups.created, "groups must be read in before group pairs")
+
+      num_pairs :: INT
+
+      stdin.read(num_pairs)
+      .group_pairs.create(num_pairs, num_atom_groups)
+      stdin.read(.group_pairs)
+   end
+   
+!  ============
+!  Calculations 
+!  ============
+
+   get_energy_breakdown(mol) ::: leaky
+      self :: INOUT
+
+      mol :: MOLECULE*
+
+      ENSURE(mol.atom_group.created, "no atom group information")
+      ENSURE(mol.atom_group.dim == num_atom_groups, "must have only 2 atom groups")
+      ENSURE(mol.atom_group(1).mol.density_matrix.created, "no density matrix for atom group 1")
+      ENSURE(mol.atom_group(2).mol.density_matrix.created, "no density matrix for atom group 2")
+      ENSURE(mol.atom_group(1).mol.molecular_orbitals.created , "no molecular orbitals for atom group 1")
+      ENSURE(mol.atom_group(2).mol.molecular_orbitals.created , "no molecular orbitals for atom group 2")
+      ENSURE(.group_pairs_are_valid(mol.atom_group), "some atoms within an atom group are not found within the relevant molecule")
+
+      .mol => mol
+      .get_atom_energy_breakdown
+      .get_functional_groups_energy_breakdown
+   end
+   
+!  ======================
+!  Atom-atom calculations 
+!  ======================
+   
+   get_atom_energy_breakdown ::: leaky
+      self :: INOUT
+
+      atom_group1, atom_group2 :: ATOM_GROUP*
+      
+      atom_group1 => .mol.atom_group(1)
+      atom_group2 => .mol.atom_group(2)
+      .mol1 => atom_group1.mol
+      .mol2 => atom_group2.mol
+      
+      .ao_2e_ints.create(.mol.n_bf, .mol.n_bf, .mol.n_bf, .mol.n_bf)
+      .E_tot.create(.mol1.n_atom, .mol2.n_atom)
+
+      .mol.SCF:merge_group_MOs
+      .mol.BASE:make_scf_density_matrix
+      density_matrix => .mol.density_matrix.restricted
+      .mol.FOCK:make_ERI_integrals(ao_2e_ints)
+      
+      .get_electrostatic_exchange_energy_breakdown
+      .get_polarisation_energy_breakdown
+      .mol1.atom.get_dispersion_energy_breakdown(.mol2.atom, .E_disp)
+      .E_tot = .E_el + .E_disp + .E_pol + .E_ex
+      .get_exchange_repulsion_energy_breakdown
+   end
+
+!Electrostatic and exchange interaction
+   get_electrostatic_and_exchange_energy_breakdown
+      self :: INOUT
+      
+      .E_el.create(.mol1.n_atom, .mol2.n_atom)
+
+      .mol1.atom.get_nn_repulsion_energy_breakdown(.mol2.atom, .E_nn)
+      .get_ne_attraction_energy_breakdown
+      .get_ee_repulsion_and_exchange_energy_breakdown
+
+      .E_el = .E_nn + .E_ne + .E_ee
+   end
+
+   get_ne_attraction_energy_breakdown
+      self :: INOUT
+      
+      attraction_mx :: MAT3{REAL}*
+      i :: INT
+
+      .E_ne.create(.mol1.n_atom, .mol2.n_atom) !Indexing:.molecule1-.molecule2
+      .E_ne = ZERO
+
+      .mol.INTS:get_nuclear_attraction_by_nucleus_matrices(attraction_mx)
+      do i = 1, .mol1.n_atom
+         .mol2.INTS:get_one_electron_operator_breakdown(attraction_mx(i, :, :), .E_ne(i, :), .density_matrix, .mol1.n_bf, ONE)
+      end
+      do i = 1, .mol2.n_atom
+         .mol1.INTS:get_one_electron_operator_breakdown(attraction_mx(i + .mol1.n_atom, :, :), .E_ne(:, i), .density_matrix, 0, ONE)
+      end
+      
+      attraction_mx.destroy
+   end
+
+   get_ee_repulsion_and_exchange_energy_breakdown
+      self :: INOUT
+      
+      n_1_orbitals, n_total_orbitals :: INT
+      density_term, coulomb_term, exchange_term :: REAL
+      shell1, shell2, m_start, m_end, k_start, k_end, i, j, m, n, k, l :: INT
+
+      .E_ee.create(.mol1.n_atom, .mol2.n_atom)
+      .E_ex.create(.mol1.n_atom, .mol2.n_atom)
+      
+      n_1_orbitals = .mol1.n_bf
+      n_total_orbitals = .mol1.n_bf + .mol2.n_bf
+      .E_ee = ZERO
+      .E_ex = ZERO
+
+      do shell1 = 1, .mol1.n_shell
+         m_start = .mol1.first_basis_fn_for_shell(shell1)
+         m_end = .mol1.last_basis_fn_for_shell(shell1)
+         i = .mol1.atom_for_shell(shell1)         
+         do m = m_start, m_end
+            do shell2 = 1, .mol2.n_shell
+               k_start = .mol2.first_basis_fn_for_shell(shell2) + .mol1.n_bf
+               k_end = .mol2.last_basis_fn_for_shell(shell2) + .mol1.n_bf
+               j = .mol2.atom_for_shell(shell2)
+               do k = k_start, k_end
+                  do n = 1, n_1_orbitals
+                     do l = n_1_orbitals + 1, n_total_orbitals
+                         density_term = .density_matrix(m, n) * .density_matrix(k, l)
+                         coulomb_term = density_term * .ao_2e_ints(m, n, k, l)
+                         exchange_term = -QUARTER * density_term * (.ao_2e_ints(m, k, n, l) + .ao_2e_ints(n, k, m, l))
+                         .E_ee(i, j) = .E_ee(i, j) + coulomb_term
+                         .E_ex(i, j) = .E_ex(i, j) + exchange_term
+                     end
+                  end
+               end
+            end
+         end
+      end
+   end
+
+!Polarisation interaction
+   get_polarisation_energy_breakdown
+      self :: INOUT
+      
+      E_pol_T :: MAT{REAL}*
+      i, j :: INT
+
+      .E_pol.create(.mol1.n_atom, .mol2.n_atom)
+      E_pol_T.create(.mol2.n_atom, .mol1.n_atom)
+      E_pol_T = ZERO
+
+      .get_1way_polarisation_energy(.mol1, .mol2, E_pol_T, 0)
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            .E_pol(i, j) = E_pol_T(j, i)
+         end
+      end
+      .get_1way_polarisation_energy(.mol2, .mol1, .E_pol, .mol1.n_bf)
+
+      E_pol_T.destroy
+   end
+
+   get_1way_polarisation_energy(mol_from, mol_to, E_pol, offset)
+      self :: INOUT
+      
+      mol_from, mol_to :: MOLECULE*
+      E_pol :: MAT{REAL}*
+      offset :: INT
+
+      e_field, n_field, total_field :: MAT3{REAL}* !Index: atom to, atom from, component
+      term, polarisability :: REAL      
+      use_charged_values :: BIN
+      atom :: ATOM*
+      i, j, k :: INT
+      
+      total_field.create(mol_to.n_atom, mol_from.n_atom, 3)
+      .mol.INTS:get_electronic_field_breakdown(mol_from, mol_to, e_field, offset) 
+      mol_to.atom.get_nuclear_field_breakdown(mol_from.atom, n_field)
+      total_field = e_field + n_field
+
+      use_charged_values = (mol_to.charge /= 0) AND (mol_to.n_atom == 1)
+      do i = 1, mol_to.n_atom
+         atom => mol_to.atom(i)
+         polarisability = atom.Thakkar_atomic_dipole_polarizability(use_charged_values)
+         do j = 1, mol_from.n_atom
+            do k = 1, mol_from.n_atom
+               term = -HALF * polarisability * dot_product(total_field(i, j, :), total_field(i, k, :))
+               E_pol(i, j) = E_pol(i, j) + term
+            end
+         end
+      end
+      
+      e_field.destroy
+      n_field.destroy
+      total_field.destroy
+   end
+
+!Exchange-repulsion interaction
+   get_exchange_repulsion_energy_breakdown
+      self :: INOUT
+
+      .E_er.create(.mol1.n_atom, .mol2.n_atom)
+
+      .get_repulsion_energy_breakdown(.mol1, .mol2, .E_tot, .E_rep) 
      
-     .group_energies.create(.group_pairs.dim1, num_interaction_types, num_interaction_directions)
-     .get_functional_groups_energy_breakdown_term(.E_el, 1)
-     .get_functional_groups_energy_breakdown_term(.E_pol, 2)
-     .get_functional_groups_energy_breakdown_term(.E_disp, 3)
-     .get_functional_groups_energy_breakdown_term(.E_er, 4)
-     .get_functional_groups_energy_breakdown_term(.E_tot, 5)
-  end
+      .E_tot.plus(.E_rep)
+      .E_er = .E_ex + .E_rep
+   end
+   
+   get_repulsion_energy_breakdown
+      self :: INOUT
 
-  get_functional_groups_energy_breakdown_term(energy, type_num)
-     self :: INOUT
+      atom_energies, mol1_total, mol2_total :: VEC{REAL}*
+      coulomb_mx, exchange_mx :: MAT{REAL}*
+      i, j :: INT
+      term :: REAL
+
+      .E_rep.create(.mol1.n_atom, .mol2.n_atom)
+      atom_energies.create(.n_atom)
+      coulomb_mx.create(.n_bf, .n_bf)
+      exchange_mx.create(.n_bf, .n_bf)
+      mol1_total.create(.mol1.n_atom)
+      mol2_total.create(.mol2.n_atom)
+
+      atom_energies = ZERO
+      .mol.FOCK:make_r_JK_engine(coulomb_mx, exchange_mx, .density_matrix)
+      .mol.SCF:make_r_core_matrix
+
+      .mol.INTS:get_one_electron_operator_breakdown(.mol.core_matrix.restricted, atom_energies, .density_matrix, 0, -ONE)
+      .mol.INTS:get_one_electron_operator_breakdown(coulomb_mx, atom_energies, .density_matrix, 0, -HALF)
+      .mol.INTS:get_one_electron_operator_breakdown(exchange_mx, atom_energies, .density_matrix, 0, QUARTER)
      
-     energy :: MAT{REAL}*
-     type_num :: INT
+      .mol.SCF:symmorthonormalize_occupied_MOs
+      .mol.BASE:make_scf_density_matrix
 
-     i :: INT
+      .mol.FOCK:make_r_JK_engine(coulomb_mx, exchange_mx, .mol.density_matrix.restricted)
+      .mol.INTS:get_one_electron_operator_breakdown(.mol.core_matrix.restricted, atom_energies, .mol.density_matrix.restricted, 0, ONE)
+      .mol.INTS:get_one_electron_operator_breakdown(coulomb_mx, atom_energies, .mol.density_matrix.restricted, 0, HALF)
+      .mol.INTS:get_one_electron_operator_breakdown(exchange_mx, atom_energies, .mol.density_matrix.restricted, 0, -QUARTER)
+      
+      mol1_total = ZERO
+      mol2_total = ZERO
 
-     do i = 1, .group_pairs.dim1
-        .get_group_pair_energy_breakdown(energy, type_num, i)
-     end
-  end
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            term = abs(.E_tot(i, j))
+            mol1_total(i) = mol1_total(i) + term
+            mol2_total(j) = mol2_total(j) + term
+         end
+      end
+      
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            .E_rep(i, j) = atom_energies(i) * abs(.E_tot(i, j)) / mol1_total(i) + atom_energies(j + .mol1.n_atom) * abs(.E_tot(i, j)) / mol2_total(j)
+         end
+      end
+
+      coulomb_mx.destroy
+      exchange_mx.destroy
+   end
+
+!  ========================
+!  Group-group calculations 
+!  ========================
+
+   get_functional_groups_energy_breakdown
+      self :: INOUT
+      
+      .group_energies.create(.group_pairs.dim1, num_interaction_types, num_interaction_directions)
+      .get_functional_groups_energy_breakdown_term(.E_el, 1)
+      .get_functional_groups_energy_breakdown_term(.E_pol, 2)
+      .get_functional_groups_energy_breakdown_term(.E_disp, 3)
+      .get_functional_groups_energy_breakdown_term(.E_er, 4)
+      .get_functional_groups_energy_breakdown_term(.E_tot, 5)
+   end
+ 
+   get_functional_groups_energy_breakdown_term(energy, type_num)
+      self :: INOUT
+      
+      energy :: MAT{REAL}*
+      type_num :: INT
+ 
+      i :: INT
+ 
+      do i = 1, .group_pairs.dim1
+         .get_group_pair_energy_breakdown(energy, type_num, i)
+      end
+   end
 
    get_group_pair_energy_breakdown(energy, type_num, pair_num)
       self :: INOUT
@@ -83,5 +509,85 @@ module BREAKDOWN_DATA
       mge.destroy
 
       .group_energies(pair_num, type_num, :) = [gg_term, gb_term, bg_term, bb_term]
+   end
+
+!  ==============
+!  Output methods 
+!  ==============
+
+   put
+      self :: IN
+
+      put_atomic_energy_breakdown
+      put_functional_group_energy_breakdown
+   end
+    
+   put_atomic_energy_breakdown
+      self :: IN
+
+      stdout.flush
+      stdout.text("===============================================")
+      stdout.text("Atom-atom breakdown of interaction energy terms")
+      stdout.text("===============================================")
+      stdout.text("Units: " // units)
+
+      !.put_atom_breakdown_matrix("Nucleus-nucleus repulsion", .E_nn)
+      !.put_atom_breakdown_matrix("Nucleus-electron attraction", .E_ne)
+      !.put_atom_breakdown_matrix("Electron-electron repulsion", .E_ee)
+      .put_atom_breakdown_matrix("Electrostatic", .E_el)
+      .put_atom_breakdown_matrix("Polarisation", .E_pol)
+      .put_atom_breakdown_matrix("Dispersion", .E_disp)
+      !.put_atom_breakdown_matrix("Exchange", .E_ex)
+      !.put_atom_breakdown_matrix("Repulsion", .E_rep)
+      .put_atom_breakdown_matrix("Exchange-repulsion", .E_er)
+      .put_atom_breakdown_matrix("Total interaction", .E_tot)
+   end
+
+   put_atom_breakdown_matrix(name, matrix)
+      self :: IN 
+      
+      name :: STR
+      matrix :: MAT{REAL}*
+      
+      print_mat :: MAT{REAL}*
+
+      print_mat.create(matrix.dim1, matrix.dim2)
+      print_mat.to_scaled(matrix, .conversion_factor)
+      
+      stdout.text(trim(name) // " energy:")
+      stdout.put(print_mat)
+      stdout.show("Total = ", print_mat.sum_elements)
+      stdout.text(" ")
+
+      print_mat.destroy
+   end
+
+   put_functional_group_energy_breakdown_inner
+      self :: IN
+
+      i :: INT
+      print_mat :: MAT{REAL}*
+
+      !Ensure stuff
+      
+      print_mat.create(num_interaction_types, num_interaction_directions)
+
+      stdout.flush
+      stdout.text("======================================================")
+      stdout.text("Functional group breakdown of interaction energy terms")
+      stdout.text("======================================================")
+      stdout.text("Units: " // units)
+      
+      do i = 1, .group_pairs.dim1
+         stdout.put("Between group ")
+         stdout.put(.group_pairs(i, 1))
+         stdout.put(" on molecule 1 and group ")
+         stdout.put(.group_pairs(i, 2))
+         stdout.put(" on molecule 2" // chr(10))
+         print_mat.to_scaled(group_energies(i, :, :), .conversion_factor)
+         stdout.put(print_mat, row_heading, column_heading)
+      end
+
+      print_mat.destroy
    end
 end

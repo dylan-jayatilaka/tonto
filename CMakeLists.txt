@@ -98,6 +98,7 @@ set(FOO_SRC
     ${FOO_DIR}/basis.foo
     ${FOO_DIR}/becke_grid.foo
     ${FOO_DIR}/bin.foo
+    ${FOO_DIR}/breakdown_data.foo
     ${FOO_DIR}/buffer.foo
     ${FOO_DIR}/capping_square.foo
     ${FOO_DIR}/cif.foo
@@ -260,6 +261,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/basis.F90
     ${CMAKE_CURRENT_BINARY_DIR}/becke_grid.F90
     ${CMAKE_CURRENT_BINARY_DIR}/bin.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/breakdown_data.F90
     ${CMAKE_CURRENT_BINARY_DIR}/buffer.F90
     ${CMAKE_CURRENT_BINARY_DIR}/capping_square.F90
     ${CMAKE_CURRENT_BINARY_DIR}/cif.F90
