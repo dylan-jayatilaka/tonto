@@ -1,10 +1,10 @@
 module BREAKDOWN_DATA
    implicit none
 
-   column_heading :: VEC{STR} = ["group1-group2", "group1-bulk  ", "bulk-group2  ", "bulk-bulk    "]
-   row_heading :: VEC{STR} = ["electrostatic     ", "polarisation      ", "dispersion        ", "exchange-repulsion", "total             "]
-   num_interaction_directions :: INT = column_heading.dim
-   num_interaction_types :: INT = row_heading.dim
+   num_interaction_directions :: INT = 4 
+   num_interaction_types :: INT = 5 
+   column_heading :: VEC{STR}(4) = ["group1-group2", "group1-bulk  ", "bulk-group2  ", "bulk-bulk    "]
+   row_heading :: VEC{STR}(5) = ["electrostatic     ", "polarisation      ", "dispersion        ", "exchange-repulsion", "total             "]
    num_atom_groups :: INT = 2
 
    contains
@@ -38,7 +38,7 @@ module BREAKDOWN_DATA
    ! Check whether need to nullify references to DM, and molecules
       self :: INOUT
 
-      .groups.nullify_ptr_part
+      if (.groups.created) .groups.nullify_ptr_part
       
       nullify(.E_nn)
       nullify(.E_ne)
@@ -119,36 +119,42 @@ module BREAKDOWN_DATA
 !  Set methods
 !  ===========
 
-!  ================
-!  Checking methods
-!  ================
+   set_defaults ::: leaky
+   ! Set up a default molecule
+      .units = "hartrees"
+      .conversion_factor = ONE
+   end
+   
+!  ===============
+!  General methods 
+!  ===============
 
-   group_pairs_are_valid(atom_group) result(res)
-      self :: IN
+   put(mol) ::: leaky
+      self :: INOUT
 
-      res :: BIN
-      atom_group :: VEC{ATOM_GROUP}*
+      mol :: MOLECULE*
 
-      i, j, k :: INT
-      group :: VEC{INT}*
+      ENSURE(mol.atom_group.created, "no atom group information")
+      ENSURE(mol.atom_group.dim == num_atom_groups, "must have only 2 atom groups")
+      ENSURE(mol.atom_group(1).mol.density_matrix.created, "no density matrix for atom group 1")
+      ENSURE(mol.atom_group(2).mol.density_matrix.created, "no density matrix for atom group 2")
+      ENSURE(mol.atom_group(1).mol.molecular_orbitals.created , "no molecular orbitals for atom group 1")
+      ENSURE(mol.atom_group(2).mol.molecular_orbitals.created , "no molecular orbitals for atom group 2")
+
+      .mol => mol
       
-      res = TRUE
-      do i = 1, .group_pairs.dim1
-         do j = 1, num_atom_groups
-            group => .groups(.group_pairs(i, j))
-            do k = 1, group.dim
-               res = res AND (group(k) >= 1) AND (group(k) <= atom_group(j).mol.n_atom)
-            end
-         end
-      end
+      .read_keywords
+      .get_atom_energy_breakdown
+      .get_functional_groups_energy_breakdown
+      .put_atomic_energy_breakdown
+      .put_functional_group_energy_breakdown
    end
 
 !  =============
 !  Input methods 
 !  =============
 
-   read_keywords ::: get_from(OBJECT), recursive, leaky
-   ! Read data from "stdin" using keyword style input.
+   read_keywords ::: get_from(OBJECT), leaky
    end
 
    process_keyword(keyword) ::: leaky
@@ -188,8 +194,8 @@ module BREAKDOWN_DATA
 
       do i = 1, num_groups
          stdin.read(group_size)
-         .groups(i).create(group_size)
-         stdin.read(.groups(i))
+         .groups(i).element.create(group_size) !Check whether dodgy
+         stdin.read(.groups(i).element)
       end
    end
 
@@ -204,27 +210,28 @@ module BREAKDOWN_DATA
       .group_pairs.create(num_pairs, num_atom_groups)
       stdin.read(.group_pairs)
    end
-   
-!  ============
-!  Calculations 
-!  ============
 
-   get_energy_breakdown(mol) ::: leaky
-      self :: INOUT
+!  ================
+!  Checking methods
+!  ================
 
-      mol :: MOLECULE*
+   group_pairs_are_valid result(res)
+      self :: IN
 
-      ENSURE(mol.atom_group.created, "no atom group information")
-      ENSURE(mol.atom_group.dim == num_atom_groups, "must have only 2 atom groups")
-      ENSURE(mol.atom_group(1).mol.density_matrix.created, "no density matrix for atom group 1")
-      ENSURE(mol.atom_group(2).mol.density_matrix.created, "no density matrix for atom group 2")
-      ENSURE(mol.atom_group(1).mol.molecular_orbitals.created , "no molecular orbitals for atom group 1")
-      ENSURE(mol.atom_group(2).mol.molecular_orbitals.created , "no molecular orbitals for atom group 2")
-      ENSURE(.group_pairs_are_valid(mol.atom_group), "some atoms within an atom group are not found within the relevant molecule")
+      res :: BIN
 
-      .mol => mol
-      .get_atom_energy_breakdown
-      .get_functional_groups_energy_breakdown
+      i, j, k :: INT
+      group :: VEC{INT}*
+      
+      res = TRUE
+      do i = 1, .group_pairs.dim1
+         do j = 1, num_atom_groups
+            group => .groups(.group_pairs(i, j)).element
+            do k = 1, group.dim
+               res = res AND (group(k) >= 1) AND (group(k) <= .mol.atom_group(j).mol.n_atom)
+            end
+         end
+      end
    end
    
 !  ======================
@@ -246,8 +253,8 @@ module BREAKDOWN_DATA
 
       .mol.SCF:merge_group_MOs
       .mol.BASE:make_scf_density_matrix
-      density_matrix => .mol.density_matrix.restricted
-      .mol.FOCK:make_ERI_integrals(ao_2e_ints)
+      .density_matrix => .mol.density_matrix.restricted
+      .mol.FOCK:make_ERI_integrals(.ao_2e_ints)
       
       .get_electrostatic_exchange_energy_breakdown
       .get_polarisation_energy_breakdown
@@ -257,7 +264,7 @@ module BREAKDOWN_DATA
    end
 
 !Electrostatic and exchange interaction
-   get_electrostatic_and_exchange_energy_breakdown
+   get_electrostatic_exchange_energy_breakdown
       self :: INOUT
       
       .E_el.create(.mol1.n_atom, .mol2.n_atom)
@@ -392,7 +399,7 @@ module BREAKDOWN_DATA
 
       .E_er.create(.mol1.n_atom, .mol2.n_atom)
 
-      .get_repulsion_energy_breakdown(.mol1, .mol2, .E_tot, .E_rep) 
+      .get_repulsion_energy_breakdown
      
       .E_tot.plus(.E_rep)
       .E_er = .E_ex + .E_rep
@@ -407,9 +414,9 @@ module BREAKDOWN_DATA
       term :: REAL
 
       .E_rep.create(.mol1.n_atom, .mol2.n_atom)
-      atom_energies.create(.n_atom)
-      coulomb_mx.create(.n_bf, .n_bf)
-      exchange_mx.create(.n_bf, .n_bf)
+      atom_energies.create(.mol.n_atom)
+      coulomb_mx.create(.mol.n_bf, .mol.n_bf)
+      exchange_mx.create(.mol.n_bf, .mol.n_bf)
       mol1_total.create(.mol1.n_atom)
       mol2_total.create(.mol2.n_atom)
 
@@ -456,6 +463,10 @@ module BREAKDOWN_DATA
 
    get_functional_groups_energy_breakdown
       self :: INOUT
+
+      ENSURE(.groups.created, "no group data")
+      ENSURE(.group_pairs.created, "no queries")
+      ENSURE(.group_pairs_are_valid, "some atoms within an atom group are not found within the relevant molecule")
       
       .group_energies.create(.group_pairs.dim1, num_interaction_types, num_interaction_directions)
       .get_functional_groups_energy_breakdown_term(.E_el, 1)
@@ -488,8 +499,8 @@ module BREAKDOWN_DATA
       gge, gme, mge :: MAT{REAL}*
       gg_term, gb_term, bg_term, bb_term :: REAL
 
-      group1 => .groups(.group_pairs(pair_num, 1))
-      group2 => .groups(.group_pairs(pair_num, 2))
+      group1 => .groups(.group_pairs(pair_num, 1)).element
+      group2 => .groups(.group_pairs(pair_num, 2)).element
       
       gge.create(group1.dim, group2.dim)
       gme.create(group1.dim, energy.dim2)
@@ -515,13 +526,6 @@ module BREAKDOWN_DATA
 !  Output methods 
 !  ==============
 
-   put
-      self :: IN
-
-      put_atomic_energy_breakdown
-      put_functional_group_energy_breakdown
-   end
-    
    put_atomic_energy_breakdown
       self :: IN
 
@@ -529,7 +533,7 @@ module BREAKDOWN_DATA
       stdout.text("===============================================")
       stdout.text("Atom-atom breakdown of interaction energy terms")
       stdout.text("===============================================")
-      stdout.text("Units: " // units)
+      stdout.text("Units: " // .units)
 
       !.put_atom_breakdown_matrix("Nucleus-nucleus repulsion", .E_nn)
       !.put_atom_breakdown_matrix("Nucleus-electron attraction", .E_ne)
@@ -549,6 +553,8 @@ module BREAKDOWN_DATA
       name :: STR
       matrix :: MAT{REAL}*
       
+      ENSURE(matrix.created, "no " // name // " energy data")
+      
       print_mat :: MAT{REAL}*
 
       print_mat.create(matrix.dim1, matrix.dim2)
@@ -562,29 +568,30 @@ module BREAKDOWN_DATA
       print_mat.destroy
    end
 
-   put_functional_group_energy_breakdown_inner
+   put_functional_group_energy_breakdown
       self :: IN
 
+      ENSURE(.group_pairs.created, "no query data") 
+      ENSURE(.group_energies.created, "no functional group energy data") 
+      
       i :: INT
       print_mat :: MAT{REAL}*
 
-      !Ensure stuff
-      
       print_mat.create(num_interaction_types, num_interaction_directions)
 
       stdout.flush
       stdout.text("======================================================")
       stdout.text("Functional group breakdown of interaction energy terms")
       stdout.text("======================================================")
-      stdout.text("Units: " // units)
+      stdout.text("Units: " // .units)
       
       do i = 1, .group_pairs.dim1
          stdout.put("Between group ")
          stdout.put(.group_pairs(i, 1))
          stdout.put(" on molecule 1 and group ")
          stdout.put(.group_pairs(i, 2))
-         stdout.put(" on molecule 2" // chr(10))
-         print_mat.to_scaled(group_energies(i, :, :), .conversion_factor)
+         stdout.put(" on molecule 2:" // char(10) // char(10))
+         print_mat  = .group_energies(i, :, :) * .conversion_factor
          stdout.put(print_mat, row_heading, column_heading)
       end
 
