@@ -136,10 +136,8 @@ module BREAKDOWN_DATA
 
       ENSURE(mol.atom_group.created, "no atom group information")
       ENSURE(mol.atom_group.dim == num_atom_groups, "must have only 2 atom groups")
-      ENSURE(mol.atom_group(1).mol.density_matrix.created, "no density matrix for atom group 1")
-      ENSURE(mol.atom_group(2).mol.density_matrix.created, "no density matrix for atom group 2")
-      ENSURE(mol.atom_group(1).mol.molecular_orbitals.created , "no molecular orbitals for atom group 1")
-      ENSURE(mol.atom_group(2).mol.molecular_orbitals.created , "no molecular orbitals for atom group 2")
+      BREAKDOWN_DATA:check_molecule(mol.atom_group(1).mol, "1")
+      BREAKDOWN_DATA:check_molecule(mol.atom_group(2).mol, "2")
 
       .mol => mol
       
@@ -170,7 +168,10 @@ module BREAKDOWN_DATA
       select case (word)
          case ("}                      ")  ! exit read_loop
          case ("groups=                "); .read_groups
-         case ("group_pairs=           "); .read_group_pairs
+         case ("group_sizes=           "); .read_group_sizes
+         case ("num_groups=            "); .read_num_groups
+         case ("num_queries=           "); .read_num_group_pairs
+         case ("queries=               "); .read_group_pairs
          case ("units=                 "); .read_units
          case default;       UNKNOWN(word)
       end
@@ -181,57 +182,68 @@ module BREAKDOWN_DATA
       self :: INOUT
 
       stdin.read(.units)
-      .conversion_factor = .units.conversion_factor 
+      .units.to_lower_case
+      if (trim(.units) == "hartree" OR trim(.units) == "hartrees") then
+         .conversion_factor = ONE
+      else
+         .conversion_factor = .units.conversion_factor 
+      end
    end
    
-   read_groups ::: leaky
+   read_num_groups ::: leaky
       self :: INOUT
 
-      num_groups, group_size, i :: INT
+      num_groups :: INT
 
       stdin.read(num_groups)
       .groups.create(num_groups)
+   end
 
-      do i = 1, num_groups
-         stdin.read(group_size)
-         .groups(i).element.create(group_size) !Check whether dodgy
+   read_group_sizes ::: leaky
+      self :: INOUT
+
+      ENSURE(.groups.created, "number of groups must be provided before group sizes")
+
+      i :: INT
+      group_sizes :: VEC{INT}(.groups.dim)
+
+      stdin.read(group_sizes)
+
+      do i = 1, .groups.dim
+         .groups(i).element.create(group_sizes(i))
+         .groups(i).element = 0 
+      end
+   end
+  
+   read_groups
+      self :: INOUT
+
+      ENSURE(.groups.created, "number of groups must be provided before groups")
+      ENSURE(.group_sizes_provided, "group sizes must be provided before groups")
+     
+      i :: INT
+      
+      do i = 1, .groups.dim
          stdin.read(.groups(i).element)
       end
    end
 
-   read_group_pairs ::: leaky
+   read_num_group_pairs ::: leaky
       self :: INOUT
 
-      ENSURE(.groups.created, "groups must be read in before group pairs")
+      num_group_pairs :: INT
 
-      num_pairs :: INT
-
-      stdin.read(num_pairs)
-      .group_pairs.create(num_pairs, num_atom_groups)
-      stdin.read(.group_pairs)
+      stdin.read(num_group_pairs)
+      .group_pairs.create(num_group_pairs, num_atom_groups)
+      .group_pairs = 0
    end
 
-!  ================
-!  Checking methods
-!  ================
+   read_group_pairs
+      self :: INOUT
 
-   group_pairs_are_valid result(res)
-      self :: IN
+      ENSURE(.group_pairs.created, "number of queries must be read in before queries")
 
-      res :: BIN
-
-      i, j, k :: INT
-      group :: VEC{INT}*
-      
-      res = TRUE
-      do i = 1, .group_pairs.dim1
-         do j = 1, num_atom_groups
-            group => .groups(.group_pairs(i, j)).element
-            do k = 1, group.dim
-               res = res AND (group(k) >= 1) AND (group(k) <= .mol.atom_group(j).mol.n_atom)
-            end
-         end
-      end
+      stdin.read(.group_pairs)
    end
    
 !  ======================
@@ -466,7 +478,8 @@ module BREAKDOWN_DATA
 
       ENSURE(.groups.created, "no group data")
       ENSURE(.group_pairs.created, "no queries")
-      ENSURE(.group_pairs_are_valid, "some atoms within an atom group are not found within the relevant molecule")
+      ENSURE(.group_pairs_are_valid, "some queries contain functional groups not on the list") 
+      ENSURE(.groups_are_valid, "some atoms within a functional group are not found within the relevant molecule")
       
       .group_energies.create(.group_pairs.dim1, num_interaction_types, num_interaction_directions)
       .get_functional_groups_energy_breakdown_term(.E_el, 1)
@@ -593,8 +606,71 @@ module BREAKDOWN_DATA
          stdout.put(" on molecule 2:" // char(10) // char(10))
          print_mat  = .group_energies(i, :, :) * .conversion_factor
          stdout.put(print_mat, row_heading, column_heading)
+         stdout.put(char(10))
       end
 
       print_mat.destroy
+   end
+
+!  ================
+!  Checking methods
+!  ================
+
+   check_molecule(mol, number) ::: selfless
+      self :: IN
+
+      mol :: MOLECULE*
+      number :: STR 
+
+      ENSURE(mol.density_matrix.created, "no density matrix for atom group " // number)
+      ENSURE(mol.molecular_orbitals.created, "no molecular orbitals for atom group " // number)
+      ENSURE(mol.scfdata.is_restricted, "atom group " // number // " does not have restricted spin orbitals")
+      ENSURE(mol.nucleus_model == "point", "atom group " // number // " does not have point as its nucleus model")
+   end
+
+   group_sizes_provided result(res)
+      self :: IN
+
+      res :: BIN
+
+      if (.groups.dim == 0) then
+         res = TRUE
+      else
+         res = .groups(1).element.created
+      end
+   end
+
+   group_pairs_are_valid result(res)
+      self :: IN
+
+      res :: BIN
+
+      i, j :: INT
+
+      res = TRUE
+      do i = 1, .group_pairs.dim1
+         do j = 1, num_atom_groups
+            res = res AND .group_pairs(i, j) >= 1 AND .group_pairs(i, j) <= .groups.dim
+         end
+      end
+   end
+
+   groups_are_valid result(res)
+      self :: IN
+
+      res :: BIN
+
+      i, j, k :: INT
+      group :: VEC{INT}*
+      
+      res = TRUE
+      do i = 1, .group_pairs.dim1
+         do j = 1, num_atom_groups
+            group => .groups(.group_pairs(i, j)).element
+            do k = 1, group.dim
+               res = res AND (group(k) >= 1) AND (group(k) <= .mol.atom_group(j).mol.n_atom)
+            end
+         end
+      end
    end
 end
