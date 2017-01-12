@@ -1,3 +1,4 @@
+
 module BREAKDOWN_DATA
    implicit none
 
@@ -51,6 +52,7 @@ module BREAKDOWN_DATA
       nullify(.E_er)
       nullify(.E_tot)
       nullify(.ao_2e_ints)
+      nullify(.attraction_mx)
       nullify(.groups)
       nullify(.group_pairs)
       nullify(.group_energies)
@@ -72,6 +74,7 @@ module BREAKDOWN_DATA
       .E_er.destroy
       .E_tot.destroy
       .ao_2e_ints.destroy
+      .attraction_mx.destroy
       .groups.destroy
       .group_pairs.destroy
       .group_energies.destroy
@@ -104,6 +107,7 @@ module BREAKDOWN_DATA
       if (breakdown_data.E_er.created) .E_er.create_copy(breakdown_data.E_er)
       if (breakdown_data.E_tot.created) .E_tot.create_copy(breakdown_data.E_tot)
       if (breakdown_data.ao_2e_ints.created) .ao_2e_ints.create_copy(breakdown_data.ao_2e_ints)
+      if (breakdown_data.attraction_mx.created) .attraction_mx.create_copy(breakdown_data.attraction_mx)
       if (breakdown_data.groups.created) .groups.create_copy(breakdown_data.groups)
       if (breakdown_data.group_pairs.created) .group_pairs.create_copy(breakdown_data.group_pairs)
       if (breakdown_data.group_energies.created) .group_energies.create_copy(breakdown_data.group_energies)
@@ -112,8 +116,6 @@ module BREAKDOWN_DATA
       if (breakdown_data.mol2.created) .mol2 => breakdown_data.mol2 
       if (breakdown_data.density_matrix.created) .density_matrix => breakdown_data.density_matrix 
    end
-
-   !Add other functions later
 
 !  ===========
 !  Set methods
@@ -291,61 +293,30 @@ module BREAKDOWN_DATA
    get_ne_attraction_energy_breakdown
       self :: INOUT
       
-      attraction_mx :: MAT3{REAL}*
       i :: INT
 
       .E_ne.create(.mol1.n_atom, .mol2.n_atom) !Indexing:.molecule1-.molecule2
       .E_ne = ZERO
 
-      .mol.INTS:get_nuclear_attraction_by_nucleus_matrices(attraction_mx)
+      .attraction_mx.create(.mol.n_atom, .mol.n_bf, .mol.n_bf)
+      .mol.INTS:get_nuclear_attraction_by_nucleus_matrices(.attraction_mx)
       do i = 1, .mol1.n_atom
-         .mol2.INTS:get_one_electron_operator_breakdown(attraction_mx(i, :, :), .E_ne(i, :), .density_matrix, .mol1.n_bf, ONE)
+         .mol2.INTS:get_one_electron_operator_breakdown(.attraction_mx(i, :, :), .E_ne(i, :), .density_matrix, .mol1.n_bf, ONE)
       end
       do i = 1, .mol2.n_atom
-         .mol1.INTS:get_one_electron_operator_breakdown(attraction_mx(i + .mol1.n_atom, :, :), .E_ne(:, i), .density_matrix, 0, ONE)
+         .mol1.INTS:get_one_electron_operator_breakdown(.attraction_mx(i + .mol1.n_atom, :, :), .E_ne(:, i), .density_matrix, 0, ONE)
       end
-      
-      attraction_mx.destroy
    end
 
    get_ee_repulsion_and_exchange_energy_breakdown
       self :: INOUT
       
-      n_1_orbitals, n_total_orbitals :: INT
-      density_term, coulomb_term, exchange_term :: REAL
-      shell1, shell2, m_start, m_end, k_start, k_end, i, j, m, n, k, l :: INT
-
       .E_ee.create(.mol1.n_atom, .mol2.n_atom)
       .E_ex.create(.mol1.n_atom, .mol2.n_atom)
-      
-      n_1_orbitals = .mol1.n_bf
-      n_total_orbitals = .mol1.n_bf + .mol2.n_bf
       .E_ee = ZERO
       .E_ex = ZERO
 
-      do shell1 = 1, .mol1.n_shell
-         m_start = .mol1.first_basis_fn_for_shell(shell1)
-         m_end = .mol1.last_basis_fn_for_shell(shell1)
-         i = .mol1.atom_for_shell(shell1)         
-         do m = m_start, m_end
-            do shell2 = 1, .mol2.n_shell
-               k_start = .mol2.first_basis_fn_for_shell(shell2) + .mol1.n_bf
-               k_end = .mol2.last_basis_fn_for_shell(shell2) + .mol1.n_bf
-               j = .mol2.atom_for_shell(shell2)
-               do k = k_start, k_end
-                  do n = 1, n_1_orbitals
-                     do l = n_1_orbitals + 1, n_total_orbitals
-                         density_term = .density_matrix(m, n) * .density_matrix(k, l)
-                         coulomb_term = density_term * .ao_2e_ints(m, n, k, l)
-                         exchange_term = -QUARTER * density_term * (.ao_2e_ints(m, k, n, l) + .ao_2e_ints(n, k, m, l))
-                         .E_ee(i, j) = .E_ee(i, j) + coulomb_term
-                         .E_ex(i, j) = .E_ex(i, j) + exchange_term
-                     end
-                  end
-               end
-            end
-         end
-      end
+      .get_ee_repulsion_and_exchange_energy_breakdown_inner(.E_ee, .E_ex, .mol1, .mol2, ONE, .mol1.n_bf)      
    end
 
 !Polarisation interaction
@@ -409,8 +380,13 @@ module BREAKDOWN_DATA
    get_exchange_repulsion_energy_breakdown
       self :: INOUT
 
+      i, j :: INT
+
       .E_er.create(.mol1.n_atom, .mol2.n_atom)
 
+      !.get_repulsion_energy_breakdown_new
+      !.put_atom_breakdown_matrix("Repulsion (new)", .E_rep)
+      !.E_rep.destroy
       .get_repulsion_energy_breakdown
      
       .E_tot.plus(.E_rep)
@@ -467,6 +443,186 @@ module BREAKDOWN_DATA
 
       coulomb_mx.destroy
       exchange_mx.destroy
+   end
+
+   get_repulsion_energy_breakdown_new
+      self :: INOUT
+
+      delta_E :: MAT{REAL}*
+
+      .E_rep.create(.mol1.n_atom, .mol2.n_atom)
+      delta_E.create(.mol.n_atom, .mol.n_atom)
+
+      .get_contributions_to_repulsion(delta_E)
+      .get_repulsion_from_contributions(delta_E)
+     
+      delta_E.destroy
+   end
+
+   get_contributions_to_repulsion(delta_E)
+      self :: INOUT
+
+      delta_E :: MAT{REAL}*
+      
+      delta_dm :: MAT{REAL}*
+      
+      delta_dm.create(.mol.n_bf, .mol.n_bf)
+
+      delta_dm.to_scaled(.density_matrix, -ONE)
+      delta_E = ZERO
+      .get_ee_repulsion_and_exchange_energy_breakdown_inner(delta_E, delta_E, .mol, .mol, -ONE, 0)
+      
+      .mol.SCF:symmorthonormalize_occupied_MOs
+      .mol.BASE:make_scf_density_matrix
+      delta_dm.plus(.density_matrix)
+      
+      .get_ee_repulsion_and_exchange_energy_breakdown_inner(delta_E, delta_E, .mol, .mol, ONE, 0)
+      .get_ne_attraction_contribution_to_repulsion(delta_E, delta_dm)
+      .get_kinetic_contribution_to_repulsion(delta_E, delta_dm)
+
+      delta_dm.destroy
+   end
+
+   get_repulsion_from_contributions(delta_E)
+      self :: INOUT
+
+      delta_E :: MAT{REAL}*
+      
+      i, j, jj :: INT
+      delta_E_total, E_rep_total :: VEC{REAL}*
+      factor :: REAL
+
+      delta_E_total.create(.mol.n_atom)
+      E_rep_total.create(.mol.n_atom)
+      delta_E_total = ZERO
+      E_rep_total = ZERO
+      
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            jj = j + .mol1.n_atom
+            .E_rep(i, j) = delta_E(i, jj) + delta_E(jj, i)
+            E_rep_total(i) = E_rep_total(i) + .E_rep(i, j)
+            E_rep_total(jj) = E_rep_total(jj) + .E_rep(i, j)
+         end
+      end
+ 
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol1.n_atom
+            delta_E_total(i) = delta_E_total(i) + delta_E(i, j)
+         end
+      end
+
+      do i = .mol1.n_atom + 1, .mol.n_atom
+         do j = .mol1.n_atom + 1, .mol.n_atom
+            delta_E_total(i) = delta_E_total(i) + delta_E(i, j)
+         end
+      end
+      .put_atom_breakdown_matrix("Delta", delta_E)
+      .put_atom_breakdown_matrix("Repulsion", .E_rep)
+      stdout.put(E_rep_total)
+      stdout.put(delta_E_total)
+
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            jj = j + .mol1.n_atom
+            factor = ONE + delta_E_total(i) / E_rep_total(i) + delta_E_total(jj) / E_rep_total(jj)
+            .E_rep(i, j) = .E_rep(i, j) * factor 
+         end
+      end
+
+      .put_atom_breakdown_matrix("Repulsion", .E_rep)
+      
+      delta_E_total.destroy
+      E_rep_total.destroy
+   end
+
+   get_ne_attraction_contribution_to_repulsion(delta_E, delta_dm)
+      self :: IN
+
+      delta_E, delta_dm :: MAT{REAL}*
+      
+      i :: INT
+      E_ne :: MAT{REAL}*
+
+      E_ne.create(.mol.n_atom, .mol.n_atom)
+      E_ne = ZERO
+
+      do i = 1, .mol.n_atom
+         .mol.INTS:get_one_electron_operator_breakdown(.attraction_mx(i, :, :), E_ne(i, :), delta_dm, 0, HALF)
+      end
+
+      delta_E.plus(E_ne)
+      E_ne.to_transpose
+      delta_E.plus(E_ne)
+
+      E_ne.destroy
+   end
+
+   get_kinetic_contribution_to_repulsion(delta_E, delta_dm)
+      self :: IN
+
+      delta_E, delta_dm :: MAT{REAL}*
+     
+      kinetic_mx :: MAT{REAL}*
+      shell1, shell2, m, m_start, m_end, n, n_start, n_end, i, j :: INT
+
+      kinetic_mx.create(.mol.n_bf, .mol.n_bf)
+      .mol.INTS:make_kinetic_energy_mx(kinetic_mx)
+      
+      do shell1 = 1, .mol.n_shell
+         m_start = .mol.first_basis_fn_for_shell(shell1)
+         m_end = .mol.last_basis_fn_for_shell(shell1)
+         i = .mol.atom_for_shell(shell1)         
+         do m = m_start, m_end
+            do shell2 = 1, .mol.n_shell
+               n_start = .mol.first_basis_fn_for_shell(shell2)
+               n_end = .mol.last_basis_fn_for_shell(shell2) 
+               j = .mol.atom_for_shell(shell2)
+               do n = n_start, n_end
+                  delta_E(i, j) = delta_E(i, j) + delta_dm(m, n) * kinetic_mx(m, n)
+               end
+            end
+         end
+      end
+      
+      kinetic_mx.destroy
+   end
+
+!Helper functions
+   get_ee_repulsion_and_exchange_energy_breakdown_inner(E_ee, E_ex, mol1, mol2, factor, offset)
+      self :: INOUT
+
+      E_ee, E_ex :: MAT{REAL}*
+      mol1, mol2 :: MOLECULE*
+      factor :: REAL
+      offset :: INT
+      
+      density_term, coulomb_term, exchange_term :: REAL
+      shell1, shell2, m_start, m_end, k_start, k_end, i, j, m, n, k, l :: INT
+
+      do shell1 = 1, mol1.n_shell
+         m_start = mol1.first_basis_fn_for_shell(shell1)
+         m_end = mol1.last_basis_fn_for_shell(shell1)
+         i = mol1.atom_for_shell(shell1)         
+         do m = m_start, m_end
+            do shell2 = 1, mol2.n_shell
+               k_start = mol2.first_basis_fn_for_shell(shell2) + offset
+               k_end = mol2.last_basis_fn_for_shell(shell2) + offset
+               j = mol2.atom_for_shell(shell2)
+               do k = k_start, k_end
+                  do n = 1, mol1.n_bf 
+                     do l = offset + 1, offset + mol2.n_bf
+                         density_term = .density_matrix(m, n) * .density_matrix(k, l) * factor
+                         coulomb_term = density_term * .ao_2e_ints(m, n, k, l)
+                         exchange_term = -QUARTER * density_term * (.ao_2e_ints(m, k, n, l) + .ao_2e_ints(n, k, m, l))
+                         E_ee(i, j) = E_ee(i, j) + coulomb_term
+                         E_ex(i, j) = E_ex(i, j) + exchange_term
+                     end
+                  end
+               end
+            end
+         end
+      end
    end
 
 !  ========================
@@ -548,14 +704,14 @@ module BREAKDOWN_DATA
       stdout.text("===============================================")
       stdout.text("Units: " // .units)
 
-      !.put_atom_breakdown_matrix("Nucleus-nucleus repulsion", .E_nn)
-      !.put_atom_breakdown_matrix("Nucleus-electron attraction", .E_ne)
-      !.put_atom_breakdown_matrix("Electron-electron repulsion", .E_ee)
+      .put_atom_breakdown_matrix("Nucleus-nucleus repulsion", .E_nn)
+      .put_atom_breakdown_matrix("Nucleus-electron attraction", .E_ne)
+      .put_atom_breakdown_matrix("Electron-electron repulsion", .E_ee)
       .put_atom_breakdown_matrix("Electrostatic", .E_el)
       .put_atom_breakdown_matrix("Polarisation", .E_pol)
       .put_atom_breakdown_matrix("Dispersion", .E_disp)
-      !.put_atom_breakdown_matrix("Exchange", .E_ex)
-      !.put_atom_breakdown_matrix("Repulsion", .E_rep)
+      .put_atom_breakdown_matrix("Exchange", .E_ex)
+      .put_atom_breakdown_matrix("Repulsion", .E_rep)
       .put_atom_breakdown_matrix("Exchange-repulsion", .E_er)
       .put_atom_breakdown_matrix("Total interaction", .E_tot)
    end
