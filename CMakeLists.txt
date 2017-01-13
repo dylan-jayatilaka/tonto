@@ -463,6 +463,8 @@ install(TARGETS run_har      DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
+
+set(CPACK_SET_DESTDIR ON)
 set(CPACK_PACKAGE_NAME ${PROJECT_NAME})
 set(CPACK_PACKAGE_VERSION ${TONTO_VERSION})
 set(CPACK_PACKAGE_CONTACT "Dylan Jayatilaka <dylan.jayatilaka@gmail.com>")
