@@ -465,6 +465,7 @@ install(TARGETS run_har      DESTINATION bin)
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
 set(CPACK_PACKAGE_NAME ${PROJECT_NAME})
 set(CPACK_PACKAGE_VERSION ${TONTO_VERSION})
+set(CPACK_PACKAGE_CONTACT "Dylan Jayatilaka <dylan.jayatilaka@gmail.com>")
 set(CPACK_GENERATOR TGZ)
 set(CPACK_STRIP_FILES ON)
 
