@@ -4087,4 +4087,191 @@ contains
       if (NOT .breakdown_data.created) .breakdown_data.create
       .breakdown_data.put(self)
    end
+
+   find_groups(letter_groups, num_groups) ::: leaky
+      self :: IN
+    
+      letter_groups :: VEC{VEC_{STR}}*
+      num_groups :: VEC{VEC_{INT}}*
+
+      bonded :: MAT{BIN}*
+      i, j :: INT
+      
+      bonded.create(.n_atom, .n_atom)
+      num_groups.create(letter_groups.dim)
+
+      do i = 1, .n_atom
+         do j = 1, .n_atom
+            bonded(i, j) = .atom.bonded(i, j)
+         end
+      end
+
+      do i = 1, letter_groups.dim
+         .:find_group(letter_groups(i).element, num_groups(i).element, bonded)
+      end
+
+      bonded.destroy
+   end
+
+   find_group(letter_group, num_group, bonded) ::: leaky
+      self :: IN
+
+      letter_group :: VEC{STR}*
+      num_group :: VEC{INT}*
+      bonded :: MAT{BIN}*
+      
+      is_element :: MAT{BIN}*
+      candidate :: VEC{INT}*
+      included :: VEC{BIN}*
+      i, j :: INT
+
+      is_element.create(.n_atom, letter_group.dim)
+      candidate.create(letter_group.dim)
+      included.create(.n_atom)
+      candidate = 0
+      included = FALSE
+
+      do i = 1, .n_atom
+         do j = 1, letter_group.dim
+            is_element(i, j) = ATOM::element_symbols(.atom(i).atomic_number) == letter_group(j)
+         end
+      end
+
+      do i = 1, .n_atom
+         do j = 1, letter_group.dim
+            if (is_element(i, j)) then
+               candidate(j) = i
+               included(i) = TRUE
+               .:find_group_inner(num_group, bonded, is_element, candidate, included)
+               candidate(j) = 0
+               included(i) = FALSE
+            end
+            if (num_group.created) then
+               exit
+            end
+         end
+         if (num_group.created) then
+            exit
+         end
+      end
+
+      is_element.destroy
+      candidate.destroy
+      included.destroy
+   end
+
+   find_group_inner(num_group, bonded, is_element, candidate, included) ::: recursive, leaky
+      self :: IN
+      num_group, candidate :: VEC{INT}*
+      bonded, is_element :: MAT{BIN}*
+      included :: VEC{BIN}*
+
+      elements_missing :: BIN
+      i, j, k :: INT
+
+      elements_missing = FALSE
+
+      !stdout.put(candidate)
+
+      do i = 1, candidate.dim
+         if (candidate(i) == 0) then
+            elements_missing = TRUE
+            do j = 1, .n_atom
+               if (is_element(j, i) AND NOT included(j)) then
+                  do k = 1, candidate.dim
+                     if (candidate(k) /= 0) then
+                        if (bonded(j, candidate(k))) then
+                           candidate(i) = j
+                           included(j) = TRUE
+                           .:find_group_inner(num_group, bonded, is_element, candidate, included)
+                           candidate(i) = 0
+                           included(j) = FALSE
+                        end
+                     end
+                     if (num_group.created) then
+                        return
+                     end
+                  end
+               end
+            end
+         end
+      end
+
+      if (NOT elements_missing) then
+         num_group.create_copy(candidate)
+      end
+   end
+
+   get_energy result(E)
+      E :: REAL
+
+      J, K :: OPMATRIX*
+      H :: MAT{REAL}*
+
+      J.create(.n_bf, "restricted")
+      K.create(.n_bf, "restricted")
+      H.create(.n_bf, .n_bf)
+
+      .SCF:make_core_matrix
+      .FOCK:make_JK_engine(J, K, .density_matrix)
+
+      H = .core_matrix.restricted + HALF * J.restricted + HALF * K.restricted
+      E = .density_matrix.restricted.trace_product_with(H)
+
+      J.destroy
+      K.destroy
+   end
+
+   put_energies
+      mol1, mol2 :: MOLECULE*
+      E, E1, E2 :: REAL
+
+      .breakdown_data.destroy
+
+      mol1 => .atom_group(1).mol
+      mol2 => .atom_group(2).mol
+
+      E1 = mol1.PROP:get_energy
+      E2 = mol2.PROP:get_energy
+      E = .PROP:get_energy
+
+      stdout.show("Energy of atom group 1 = ", E1)
+      stdout.show("Energy of atom group 2 = ", E2)
+      stdout.show("Combined energy = ", E)
+      stdout.show("Interaction_energy = ", E - E1 - E2)
+   end
+
+   get_mulliken_pop(atom_pop)
+      atom_pop :: VEC{REAL}*
+
+      mulliken_matrix :: MAT{REAL}*
+      diagonals :: VEC{REAL}*
+      pop :: REAL
+      o_count, a, b, c, n_comp :: INT
+
+      mulliken_matrix.create(.n_bf, .n_bf)
+      diagonals.create(.n_bf)
+      atom_pop.create(.n_atom)
+      .INTS:make_overlap_matrix
+
+      o_count = 1
+      atom_pop = ZERO
+      
+      mulliken_matrix.to_product_of(.density_matrix.restricted,.overlap_matrix)
+      mulliken_matrix.put_diagonal_to(diagonals)
+
+      do a = 1, .n_atom
+         do b = 1, .atom(a).basis.n_shell
+            n_comp = .atom(a).basis.shell(b).n_comp
+            do c = 1, n_comp
+               pop = diagonals(c + o_count - 1)
+               atom_pop(a) = atom_pop(a) + pop
+            end
+            o_count = o_count + n_comp
+         end
+      end
+
+      mulliken_matrix.destroy
+      diagonals.destroy
+   end
 end
