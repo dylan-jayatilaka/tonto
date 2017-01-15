@@ -152,8 +152,8 @@ module BREAKDOWN_DATA
       .read_keywords
       .get_atom_energy_breakdown
       .process_groups
-      BREAKDOWN_DATA::put_vec_vec(.mol1_groups)
-      BREAKDOWN_DATA::put_vec_vec(.mol2_groups)
+      BREAKDOWN_DATA::put_vec_vec_vec(.mol1_groups)
+      BREAKDOWN_DATA::put_vec_vec_vec(.mol2_groups)
       .get_functional_groups_energy_breakdown
       .put_atomic_energy_breakdown
       .put_functional_group_energy_breakdown
@@ -232,6 +232,7 @@ module BREAKDOWN_DATA
       self :: INOUT
 
       ENSURE(.letter_groups.created, "number of groups must be provided before groups")
+      ENSURE(.group_sizes_nonzero, "groups cannot have size zero")
       ENSURE(.group_sizes_provided, "group sizes must be provided before groups")
 
       i :: INT
@@ -576,21 +577,7 @@ module BREAKDOWN_DATA
 !  ========================
 !  Group-group calculations 
 !  ========================
-
-   get_functional_groups_energy_breakdown ::: private, leaky
-      self :: INOUT
-
-      ENSURE(.groups_present, "group not found in either molecule")
-      ENSURE(.group_pairs_are_valid, "group not found in the relevant molecule")
-      
-      .group_energies.create(.group_pairs.dim1, num_interaction_types, num_interaction_directions)
-      .get_functional_groups_energy_breakdown_term(.E_el, 1)
-      .get_functional_groups_energy_breakdown_term(.E_pol, 2)
-      .get_functional_groups_energy_breakdown_term(.E_disp, 3)
-      .get_functional_groups_energy_breakdown_term(.E_er, 4)
-      .get_functional_groups_energy_breakdown_term(.E_tot, 5)
-   end
- 
+   
    process_groups ::: private
       self :: INOUT
 
@@ -599,32 +586,60 @@ module BREAKDOWN_DATA
       .mol1.PROP:find_groups(.letter_groups, .mol1_groups)
       .mol2.PROP:find_groups(.letter_groups, .mol2_groups)
    end
+
+   get_functional_groups_energy_breakdown ::: private, leaky
+      self :: INOUT
+
+      ENSURE(.groups_present, "group not found in either molecule")
+      ENSURE(.group_pairs_are_valid, "group not found in the relevant molecule")
+
+      num_pairs, i :: INT
+
+      num_pairs = 0
+      do i = 1, .group_pairs.dim1
+         num_pairs = num_pairs + .mol1_groups(.group_pairs(i, 1)).element.dim * .mol2_groups(.group_pairs(i, 2)).element.dim
+      end
+      
+      .group_energies.create(num_pairs, num_interaction_types, num_interaction_directions)
+      .get_functional_groups_energy_breakdown_term(.E_el, 1)
+      .get_functional_groups_energy_breakdown_term(.E_pol, 2)
+      .get_functional_groups_energy_breakdown_term(.E_disp, 3)
+      .get_functional_groups_energy_breakdown_term(.E_er, 4)
+      .get_functional_groups_energy_breakdown_term(.E_tot, 5)
+   end
    
    get_functional_groups_energy_breakdown_term(energy, type_num) ::: private
       self :: INOUT
-      
       energy :: MAT{REAL}*
       type_num :: INT
  
-      i :: INT
- 
+      i, j, k, l :: INT
+      list1, list2 :: VEC{VEC_{INT}}*
+      group1, group2 :: VEC{INT}*
+     
+      l = 0
       do i = 1, .group_pairs.dim1
-         .get_group_pair_energy_breakdown(energy, type_num, i)
+         list1 => .mol1_groups(.group_pairs(i, 1)).element
+         list2 => .mol2_groups(.group_pairs(i, 2)).element
+         do j = 1, list1.dim 
+            group1 => list1(j).element 
+            do k = 1, list2.dim 
+               l = l + 1
+               group2 => list2(k).element 
+               .get_group_pair_energy_breakdown(energy, type_num, l, group1, group2)
+            end
+         end
       end
    end
 
-   get_group_pair_energy_breakdown(energy, type_num, pair_num) ::: private
+   get_group_pair_energy_breakdown(energy, type_num, pair_num, group1, group2) ::: private
       self :: INOUT
- 
       energy :: MAT{REAL}*, IN
       type_num, pair_num :: INT, IN
-      
       group1, group2 :: VEC{INT}*
+      
       gge, gme, mge :: MAT{REAL}*
       gg_term, gb_term, bg_term, bb_term :: REAL
-
-      group1 => .mol1_groups(.group_pairs(pair_num, 1)).element
-      group2 => .mol2_groups(.group_pairs(pair_num, 2)).element
 
       gge.create(group1.dim, group2.dim)
       gme.create(group1.dim, energy.dim2)
@@ -696,36 +711,49 @@ module BREAKDOWN_DATA
    put_functional_group_energy_breakdown ::: private
       self :: IN
 
-      i :: INT
+      i, j, k, l :: INT
+      list1, list2 :: VEC{VEC_{INT}}*
       print_mat :: MAT{REAL}*
 
       print_mat.create(num_interaction_types, num_interaction_directions)
 
-      stdout.flush
       stdout.text("======================================================")
       stdout.text("Functional group breakdown of interaction energy terms")
       stdout.text("======================================================")
       stdout.text("Units: " // .units)
       
+      l = 0
       do i = 1, .group_pairs.dim1
-         stdout.text("Between group " // trim(.printed_group(i, 1)) // " on molecule 1 and group " // trim(.printed_group(i, 2)) // " on molecule 2:")
-         print_mat = .group_energies(i, :, :) * .conversion_factor
-         stdout.put(print_mat, row_heading, column_heading)
-         stdout.put(char(10))
+         list1 => .mol1_groups(.group_pairs(i, 1)).element
+         list2 => .mol2_groups(.group_pairs(i, 2)).element
+         do j = 1, list1.dim 
+            do k = 1, list2.dim
+               l = l + 1
+               stdout.text("Between group " // trim(.printed_group(i, 1)) // " on molecule 1 and group " // trim(.printed_group(i, 2)) // " on molecule 2:")
+               .put_minimum_interatomic_distance(list1(j).element, list2(k).element)
+               print_mat = .group_energies(l, :, :) * .conversion_factor
+               stdout.put(print_mat, row_heading, column_heading)
+               stdout.put(char(10))
+            end
+         end
       end
 
       print_mat.destroy
    end
 
-   put_group(i, j)
+   put_minimum_interatomic_distance(group1, group2)
       self :: IN
-      i, j :: INT
+      group1, group2 :: VEC{INT}*
       
-      vec_str :: VEC{STR}*
-      k :: INT
+      atoms1, atoms2 :: VEC{ATOM}*
 
-      vec_str => .letter_groups(.group_pairs(i, j)).element
-      stdout.put(vec_str.to_concatenated_str(separator = " "))
+      atoms1.create_copy(.mol1.atom(group1))
+      atoms2.create_copy(.mol2.atom(group2))
+
+      atoms1.put_minimum_interatomic_distance(atoms2)
+
+      atoms1.destroy
+      atoms2.destroy
    end
 
    printed_group(i, j) result(res)
@@ -761,6 +789,18 @@ module BREAKDOWN_DATA
          res = TRUE
       else
          res = .letter_groups(1).element.created
+      end
+   end
+
+   group_sizes_nonzero result(res)
+      self :: IN
+      res :: BIN
+
+      i :: INT
+
+      res = TRUE
+      do i = 1, .letter_groups.dim
+         res = res AND (.letter_groups(i).element.dim > 0)
       end
    end
 
@@ -819,9 +859,24 @@ module BREAKDOWN_DATA
 !  =================
 !  Testing Functions 
 !  =================
+   
+   put_vec_vec_vec(v) ::: selfless
+      v :: VEC{VEC_{VEC_{INT}}}*
+      i :: INT
+      element :: VEC{VEC_{INT}}*
+
+      do i = 1, v.dim
+         stdout.show("Super-vector", i)
+         element => v(i).element
+         if (element.created) then
+            BREAKDOWN_DATA::put_vec_vec(element) 
+         end
+      end
+   end
+
    put_vec_vec(v) ::: selfless
       v :: VEC{VEC_{INT}}*
-      i, j :: INT
+      i :: INT
       element :: VEC{INT}*
 
       do i = 1, v.dim
