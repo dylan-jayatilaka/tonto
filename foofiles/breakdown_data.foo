@@ -3,11 +3,9 @@ module BREAKDOWN_DATA
 
    num_interaction_directions :: INT = 4 
    num_interaction_types :: INT = 5 
-   !num_named_groups :: INT = 4
    num_atom_groups :: INT = 2
    column_heading :: VEC{STR}(4) = ["group1-group2", "group1-bulk  ", "bulk-group2  ", "bulk-bulk    "]
    row_heading :: VEC{STR}(5) = ["electrostatic     ", "polarisation      ", "dispersion        ", "exchange-repulsion", "total             "]
-   !group_names :: VEC{STR}(4) = ["acid", "amide", "alcohol", "amino"]
 
    !These fit the terms to the B3LYP-D3/6-31G(d, p) energies from Turner et. al (2014), J. Phys. Chem. Lett., 5, p. 4249
    el_factor :: REAL = 0.884
@@ -56,6 +54,7 @@ module BREAKDOWN_DATA
       nullify(.E_rep)
       nullify(.E_er)
       nullify(.E_tot)
+      nullify(.distances)
       nullify(.ao_2e_ints)
       nullify(.attraction_mx)
       nullify(.letter_groups)
@@ -63,6 +62,8 @@ module BREAKDOWN_DATA
       nullify(.mol2_groups)
       nullify(.mol1_bonded)
       nullify(.mol2_bonded)
+      nullify(.mol1_symbols)
+      nullify(.mol2_symbols)
       nullify(.group_pairs)
       nullify(.group_energies)
       nullify(.mol)
@@ -83,6 +84,7 @@ module BREAKDOWN_DATA
       .E_rep.destroy
       .E_er.destroy
       .E_tot.destroy
+      .distances.destroy
       .ao_2e_ints.destroy
       .attraction_mx.destroy
       .letter_groups.destroy
@@ -90,49 +92,11 @@ module BREAKDOWN_DATA
       .mol2_groups.destroy
       .mol1_bonded.destroy
       .mol2_bonded.destroy
+      .mol1_symbols.destroy
+      .mol2_symbols.destroy
       .group_pairs.destroy
       .group_energies.destroy
    end
-
-!  create_copy(breakdown_data) ::: leaky
-!  ! Create a copy of the "breakdown_data" object
-!     self :: PTR
-!     breakdown_data :: BREAKDOWN_DATA
-!     .create
-!     .copy(breakdown_data)
-!  end
-
-!  copy(breakdown_data) ::: leaky
-!  ! Make a copy of the "breakdown_data" object
-!     breakdown_data :: BREAKDOWN_DATA 
-
-!     self = breakdown_data
-!     .nullify_ptr_part
-
-!     if (breakdown_data.E_nn.created) .E_nn.create_copy(breakdown_data.E_nn)
-!     if (breakdown_data.E_ne.created) .E_ne.create_copy(breakdown_data.E_ne)
-!     if (breakdown_data.E_ee.created) .E_ee.create_copy(breakdown_data.E_ee)
-!     if (breakdown_data.E_pol.created) .E_pol.create_copy(breakdown_data.E_pol)
-!     if (breakdown_data.E_pol.created) .E_pol.create_copy(breakdown_data.E_pol)
-!     if (breakdown_data.E_disp.created) .E_disp.create_copy(breakdown_data.E_disp)
-!     if (breakdown_data.E_ex.created) .E_ex.create_copy(breakdown_data.E_ex)
-!     if (breakdown_data.E_rep.created) .E_rep.create_copy(breakdown_data.E_rep)
-!     if (breakdown_data.E_er.created) .E_er.create_copy(breakdown_data.E_er)
-!     if (breakdown_data.E_tot.created) .E_tot.create_copy(breakdown_data.E_tot)
-!     if (breakdown_data.ao_2e_ints.created) .ao_2e_ints.create_copy(breakdown_data.ao_2e_ints)
-!     if (breakdown_data.attraction_mx.created) .attraction_mx.create_copy(breakdown_data.attraction_mx)
-!     if (breakdown_data.mol1_groups.created) .mol1_groups.create_copy(breakdown_data.mol1_groups)
-!     if (breakdown_data.mol2_groups.created) .mol2_groups.create_copy(breakdown_data.mol2_groups)
-!     if (breakdown_data.mol1_bonded.created) .mol1_groups.create_copy(breakdown_data.mol1_groups)
-!     if (breakdown_data.mol2_bonded.created) .mol2_groups.create_copy(breakdown_data.mol2_groups)
-!     if (breakdown_data.letter_groups.created) .letter_groups.create_copy(breakdown_data.letter_groups)
-!     if (breakdown_data.group_pairs.created) .group_pairs.create_copy(breakdown_data.group_pairs)
-!     if (breakdown_data.group_energies.created) .group_energies.create_copy(breakdown_data.group_energies)
-
-!     if (breakdown_data.mol1.created) .mol1 => breakdown_data.mol1 
-!     if (breakdown_data.mol2.created) .mol2 => breakdown_data.mol2 
-!     if (breakdown_data.density_matrix.created) .density_matrix => breakdown_data.density_matrix 
-!  end
 
 !  ===========
 !  Set methods
@@ -140,9 +104,13 @@ module BREAKDOWN_DATA
 
    set_defaults ::: leaky
    ! Set up a default breakdown data object
-      .units = "hartrees"
-      .conversion_factor = ONE
+      .energy_units = "hartrees"
+      .energy_factor = ONE
+      .distance_units = "bohrs"
+      .distance_factor = ONE
       .print_atom_breakdown = FALSE
+      .print_extra_terms = FALSE
+      .print_distances = FALSE
    end
    
 !  ===============
@@ -190,30 +158,48 @@ module BREAKDOWN_DATA
 
       select case (word)
          case ("}                      ")  ! exit read_loop
+         case ("distance_units=        "); .read_distance_units
+         case ("energy_units=          "); .read_energy_units
          case ("groups=                "); .read_letter_groups
          case ("group_sizes=           "); .read_group_sizes
          case ("num_groups=            "); .read_num_groups
          case ("num_queries=           "); .read_num_group_pairs
          case ("queries=               "); .read_group_pairs
-         case ("units=                 "); .read_units
-         case ("print_atom_breakdown   "); .read_print_atom_breakdown
+         case ("print_atom_breakdown   "); .print_atom_breakdown = TRUE
+         case ("print_distances        "); .print_distances = TRUE
+         case ("print_extra_terms      "); .print_extra_terms = TRUE
          case default;       UNKNOWN(word)
       end
 
    end
 
-   read_units ::: leaky
+   read_distance_units ::: leaky
       self :: INOUT
       
-      units_lower :: STR
+      lower :: STR
 
-      stdin.read(.units)
-      units_lower = trim(.units)
-      units_lower.to_lower_case
-      if (units_lower == "hartree" OR units_lower == "hartrees") then
-         .conversion_factor = ONE
+      stdin.read(.distance_units)
+      lower = trim(.distance_units)
+      lower.to_lower_case
+      if (lower == "bohr" OR lower == "bohrs") then
+         .distance_factor = ONE
       else
-         .conversion_factor = .units.conversion_factor 
+         .distance_factor = .distance_units.conversion_factor 
+      end
+   end
+   
+   read_energy_units ::: leaky
+      self :: INOUT
+      
+      lower :: STR
+
+      stdin.read(.energy_units)
+      lower = trim(.energy_units)
+      lower.to_lower_case
+      if (lower == "hartree" OR lower == "hartrees") then
+         .energy_factor = ONE
+      else
+         .energy_factor = .energy_units.conversion_factor 
       end
    end
    
@@ -299,7 +285,6 @@ module BREAKDOWN_DATA
    read_print_atom_breakdown
       self :: INOUT
 
-      .print_atom_breakdown = TRUE
    end
    
 !  ======================
@@ -324,11 +309,15 @@ module BREAKDOWN_DATA
       .density_matrix => .mol.density_matrix.restricted
       .mol.FOCK:make_ERI_integrals(.ao_2e_ints)
 
+      .mol1.atom.get_distances(.mol2.atom, .distances)
       .get_electrostatic_exchange_energy_breakdown
       .get_polarisation_energy_breakdown
       .mol1.atom.get_dispersion_energy_breakdown(.mol2.atom, .E_disp)
       .get_exchange_repulsion_energy_breakdown
       .E_tot = el_factor * .E_el + disp_factor * .E_disp + pol_factor * .E_pol + er_factor * .E_er
+
+      .mol1_symbols.create_copy(ATOM::element_symbols(.mol1.atom.atomic_number))
+      .mol2_symbols.create_copy(ATOM::element_symbols(.mol2.atom.atomic_number))
    end
 
 !Electrostatic and exchange interaction
@@ -337,7 +326,7 @@ module BREAKDOWN_DATA
       
       .E_el.create(.mol1.n_atom, .mol2.n_atom)
 
-      .mol1.atom.get_nn_repulsion_energy_breakdown(.mol2.atom, .E_nn)
+      .mol1.atom.get_nn_repulsion_energy_breakdown(.mol2.atom, .E_nn)!, .distances)
       .get_ne_attraction_energy_breakdown
       .get_ee_repulsion_and_exchange_energy_breakdown
 
@@ -410,7 +399,7 @@ module BREAKDOWN_DATA
       
       total_field.create(mol_to.n_atom, mol_from.n_atom, 3)
       .mol.INTS:get_electronic_field_breakdown(mol_from, mol_to, e_field, offset) 
-      mol_to.atom.get_nuclear_field_breakdown(mol_from.atom, n_field)
+      mol_to.atom.get_nuclear_field_breakdown(mol_from.atom, n_field, .distances)
       total_field = e_field + n_field
 
       use_charged_values = (mol_to.charge /= 0) AND (mol_to.n_atom == 1)
@@ -715,17 +704,23 @@ module BREAKDOWN_DATA
       stdout.text("===============================================")
       stdout.text("Atom-atom breakdown of interaction energy terms")
       stdout.text("===============================================")
-      stdout.text("Units: " // .units)
+      stdout.text("Units: " // .energy_units)
 
-      !.put_test_matrices
-      !.put_atom_breakdown_matrix("Nucleus-nucleus repulsion", .E_nn)
-      !.put_atom_breakdown_matrix("Nucleus-electron attraction", .E_ne)
-      !.put_atom_breakdown_matrix("Electron-electron repulsion", .E_ee)
+      if (.print_distances) then
+         .put_distances
+      end
+
+      if (.print_extra_terms) then
+         .put_atom_breakdown_matrix("Nucleus-nucleus repulsion", .E_nn)
+         .put_atom_breakdown_matrix("Nucleus-electron attraction", .E_ne)
+         .put_atom_breakdown_matrix("Electron-electron repulsion", .E_ee)
+         .put_atom_breakdown_matrix("Exchange", .E_ex)
+         .put_atom_breakdown_matrix("Repulsion", .E_rep)
+      end
+
       .put_atom_breakdown_matrix("Electrostatic", .E_el)
       .put_atom_breakdown_matrix("Polarisation", .E_pol)
       .put_atom_breakdown_matrix("Dispersion", .E_disp)
-      !.put_atom_breakdown_matrix("Exchange", .E_ex)
-      !.put_atom_breakdown_matrix("Repulsion", .E_rep)
       .put_atom_breakdown_matrix("Exchange-repulsion", .E_er)
       .put_atom_breakdown_matrix("Total interaction", .E_tot)
    end
@@ -739,14 +734,39 @@ module BREAKDOWN_DATA
       print_mat :: MAT{REAL}*
 
       print_mat.create(matrix.dim1, matrix.dim2)
-      print_mat.to_scaled(matrix, .conversion_factor)
+      print_mat.to_scaled(matrix, .energy_factor)
       
       stdout.text(trim(name) // " energy:")
-      stdout.put(print_mat)
-      stdout.show("Total = ", print_mat.sum_elements)
+      stdout.show("Total ", print_mat.sum_elements)
+      stdout.put(print_mat, .mol1_symbols, .mol2_symbols)
       stdout.text(" ")
 
       print_mat.destroy
+   end
+
+   put_distances ::: private
+      self :: IN
+
+      distance :: MAT{REAL}*
+      r :: VEC{REAL}(3)
+      i, j :: INT
+      d :: REAL
+      
+      distance.create(.mol1.n_atom, .mol2.n_atom)
+      
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            r = .mol1.atom(i).position - .mol2.atom(j).position
+            d = sqrt(dot_product(r, r))
+            distance(i, j) = d
+         end
+      end
+
+      stdout.text("Distances:") 
+      stdout.put(distance, .mol1_symbols, .mol2_symbols)
+      stdout.text(" ")
+      
+      distance.destroy
    end
 
    put_functional_group_energy_breakdown ::: private
@@ -761,7 +781,7 @@ module BREAKDOWN_DATA
       stdout.text("======================================================")
       stdout.text("Functional group breakdown of interaction energy terms")
       stdout.text("======================================================")
-      stdout.text("Units: " // .units)
+      stdout.text("Units: " // .energy_units)
       
       l = 0
       do i = 1, .group_pairs.dim1
@@ -772,7 +792,7 @@ module BREAKDOWN_DATA
                l = l + 1
                stdout.text("Between group " // trim(.printed_group(i, 1)) // " on molecule 1 and group " // trim(.printed_group(i, 2)) // " on molecule 2:")
                .put_min_distances_and_bonds(list1(j).element, list2(k).element)
-               print_mat = .group_energies(l, :, :) * .conversion_factor
+               print_mat = .group_energies(l, :, :) * .energy_factor
                stdout.put(print_mat, row_heading, column_heading)
                stdout.put(char(10))
             end
@@ -899,112 +919,112 @@ module BREAKDOWN_DATA
       end
    end
 
-!!  =================
-!!  Testing Functions 
-!!  =================
-!   
-!   put_vec3(v) ::: selfless
-!      v :: VEC{VEC_{VEC_{INT}}}*
-!      i :: INT
-!      element :: VEC{VEC_{INT}}*
-!
-!      do i = 1, v.dim
-!         stdout.show("Super-vector", i)
-!         element => v(i).element
-!         if (element.created) then
-!            BREAKDOWN_DATA::put_vec_vec(element) 
-!         end
-!      end
-!   end
-!
-!   put_vec_vec(v) ::: selfless
-!      v :: VEC{VEC_{INT}}*
-!      i :: INT
-!      element :: VEC{INT}*
-!
-!      do i = 1, v.dim
-!         stdout.show("Vector", i)
-!         element => v(i).element
-!         if (element.created) then
-!            stdout.put(element)
-!         end
-!      end
-!   end
-!
-!   !put_vec_vec(v) ::: selfless
-!   !   v :: VEC{VEC_{STR}}*
-!   !   i :: INT
-!   !   element :: VEC{STR}*
-!
-!   !   do i = 1, v.dim
-!   !      stdout.show("Vector", i)
-!   !      element => v(i).element
-!   !      if (element.created) then
-!   !         stdout.put(element)
-!   !      end
-!   !   end
-!   !end
-!
-!   put_test_matrices
-!      self :: IN
-!
-!      nncp, necp, ne_field, ee_field, eecp, distance :: MAT{REAL}*
-!      pop1, pop2 :: VEC{REAL}*
-!      r :: VEC{REAL}(3)
-!      i, j :: INT
-!      charge1, charge2, d :: REAL
-!      
-!      nncp.create(.mol1.n_atom, .mol2.n_atom)
-!      necp.create(.mol1.n_atom, .mol2.n_atom)
-!      eecp.create(.mol1.n_atom, .mol2.n_atom)
-!      ne_field.create(.mol1.n_atom, .mol2.n_atom)
-!      ee_field.create(.mol1.n_atom, .mol2.n_atom)
-!      distance.create(.mol1.n_atom, .mol2.n_atom)
-!      
-!      .mol1.PROP:get_mulliken_pop(pop1) 
-!      .mol2.PROP:get_mulliken_pop(pop2) 
-!
-!      do i = 1, .mol1.n_atom
-!         do j = 1, .mol2.n_atom
-!            charge1 = .mol1.atom(i).nuclear_charge
-!            charge2 = .mol2.atom(j).nuclear_charge
-!            r = .mol1.atom(i).position - .mol2.atom(j).position
-!            d = sqrt(dot_product(r, r))
-!            distance(i, j) = d
-!            nncp(i, j) = charge1 * charge2 
-!            necp(i, j) = -charge1 * pop2(j) - charge2 * pop1(i)
-!            eecp(i, j) = pop1(i) * pop2(j)
-!            ne_field(i, j) = necp(i, j) / d
-!            ee_field(i, j) = eecp(i, j) / d
-!         end
-!      end
-!
-!      stdout.text("Distances:") 
-!      stdout.put(distance)
-!      stdout.put(char(10))
-!      stdout.text("Nucleus-nucleus charge products:") 
-!      stdout.put(nncp)
-!      stdout.put(char(10))
-!      stdout.text("Nucleus-electron charge products:")
-!      stdout.put(necp)
-!      stdout.put(char(10))
-!      stdout.text("Electron-electron charge products:")
-!      stdout.put(eecp)
-!      stdout.put(char(10))
-!      stdout.text("Nucleus-electron attraction energy approximations:")
-!      stdout.put(ne_field)
-!      stdout.put(char(10))
-!      stdout.text("Electron-electron attraction energy approximations:")
-!      stdout.put(ee_field)
-!      stdout.put(char(10))
-!
-!      nncp.destroy
-!      necp.destroy
-!      eecp.destroy
-!      ne_field.destroy
-!      ee_field.destroy
-!      distance.destroy
-!      pop1.destroy
-!      pop2.destroy
-!   end
+!  =================
+!  Testing Functions 
+!  =================
+   
+   put_vec3(v) ::: selfless
+      v :: VEC{VEC_{VEC_{INT}}}*
+      i :: INT
+      element :: VEC{VEC_{INT}}*
+
+      do i = 1, v.dim
+         stdout.show("Super-vector", i)
+         element => v(i).element
+         if (element.created) then
+            BREAKDOWN_DATA::put_vec_vec(element) 
+         end
+      end
+   end
+
+   put_vec_vec(v) ::: selfless
+      v :: VEC{VEC_{INT}}*
+      i :: INT
+      element :: VEC{INT}*
+
+      do i = 1, v.dim
+         stdout.show("Vector", i)
+         element => v(i).element
+         if (element.created) then
+            stdout.put(element)
+         end
+      end
+   end
+
+   !put_vec_vec(v) ::: selfless
+   !   v :: VEC{VEC_{STR}}*
+   !   i :: INT
+   !   element :: VEC{STR}*
+
+   !   do i = 1, v.dim
+   !      stdout.show("Vector", i)
+   !      element => v(i).element
+   !      if (element.created) then
+   !         stdout.put(element)
+   !      end
+   !   end
+   !end
+
+   put_test_matrices
+      self :: IN
+
+      nncp, necp, ne_field, ee_field, eecp, distance :: MAT{REAL}*
+      pop1, pop2 :: VEC{REAL}*
+      r :: VEC{REAL}(3)
+      i, j :: INT
+      charge1, charge2, d :: REAL
+      
+      nncp.create(.mol1.n_atom, .mol2.n_atom)
+      necp.create(.mol1.n_atom, .mol2.n_atom)
+      eecp.create(.mol1.n_atom, .mol2.n_atom)
+      ne_field.create(.mol1.n_atom, .mol2.n_atom)
+      ee_field.create(.mol1.n_atom, .mol2.n_atom)
+      distance.create(.mol1.n_atom, .mol2.n_atom)
+      
+      .mol1.PROP:get_mulliken_pop(pop1) 
+      .mol2.PROP:get_mulliken_pop(pop2) 
+
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            charge1 = .mol1.atom(i).nuclear_charge
+            charge2 = .mol2.atom(j).nuclear_charge
+            r = .mol1.atom(i).position - .mol2.atom(j).position
+            d = sqrt(dot_product(r, r))
+            distance(i, j) = d
+            nncp(i, j) = charge1 * charge2 
+            necp(i, j) = -charge1 * pop2(j) - charge2 * pop1(i)
+            eecp(i, j) = pop1(i) * pop2(j)
+            ne_field(i, j) = necp(i, j) / d
+            ee_field(i, j) = eecp(i, j) / d
+         end
+      end
+
+      stdout.text("Distances:") 
+      stdout.put(distance)
+      stdout.put(char(10))
+      stdout.text("Nucleus-nucleus charge products:") 
+      stdout.put(nncp)
+      stdout.put(char(10))
+      stdout.text("Nucleus-electron charge products:")
+      stdout.put(necp)
+      stdout.put(char(10))
+      stdout.text("Electron-electron charge products:")
+      stdout.put(eecp)
+      stdout.put(char(10))
+      stdout.text("Nucleus-electron attraction energy approximations:")
+      stdout.put(ne_field)
+      stdout.put(char(10))
+      stdout.text("Electron-electron attraction energy approximations:")
+      stdout.put(ee_field)
+      stdout.put(char(10))
+
+      nncp.destroy
+      necp.destroy
+      eecp.destroy
+      ne_field.destroy
+      ee_field.destroy
+      distance.destroy
+      pop1.destroy
+      pop2.destroy
+   end
 end
