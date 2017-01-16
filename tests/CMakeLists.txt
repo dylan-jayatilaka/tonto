@@ -16,7 +16,7 @@ set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.pl"
     CACHE FILEPATH "Script to perform tests in a directory")
 
 
-set(TONTO_EXE "${PROJECT_BINARY_DIR}/run_test"
+set(TONTO_EXE "${PROJECT_BINARY_DIR}/tonto"
     CACHE FILEPATH "Test executable")
 
 set(BASIS_SETS "${PROJECT_SOURCE_DIR}/basis_sets"
@@ -68,7 +68,7 @@ function(add_all_tests)
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
             COMMAND ${PERL_EXECUTABLE} ${TEST_SCRIPT}
             -testdir "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
-            -program "${TEST_EXE}"
+            -program "${TEST_EXE} -b ${PROJECT_SOURCE_DIR}/basis_sets"
             -cmp "${CMP_SCRIPT}")
         set_tests_properties(\"${N}\" PROPERTIES 
             LABELS ${LABELS})

@@ -2604,18 +2604,12 @@ module TYPES
      ! IAM structure factors
      ! =====================
 
-     use_IAM_density :: BIN  DEFAULT(FALSE)
-     ! Set TRUE if the promolecule (i.e IAM) is to be used in the
-     ! density in the refinement.
-
-     use_H_SDS_density :: BIN  DEFAULT(TRUE)
-     ! Set TRUE if the Stewart-Davidson-Simpson (SDS) exponential fit
-     ! to the H-atom-in-a-molecule form factors are to be used in the
-     ! IAM refinement.
-
-     use_H_HF0_density :: BIN  DEFAULT(FALSE)
-     ! Set TRUE if the zero-charged HF (HF0) exponential fit to the
-     ! H atom form factors are to be used in the IAM refinement.
+     use_IAM_ITC_FFs :: BIN  DEFAULT(TRUE)
+     ! Set TRUE if using International Tables Vol. C IAM exponential
+     ! fit to the form factors. 
+     ! NOTE: if TRUE, for H, we use Stewart-Davidson-Simpson (SDS)
+     !       form factors.  
+     ! NOTE: if this is FALSE, the atomic density matrix is used
 
      ! ==========
      ! Shell data
@@ -2727,6 +2721,34 @@ module TYPES
    array type VEC{ATOM_GROUP}
 
      ! A 1-D array of ATOM_GROUP's
+
+   end
+
+!  Atomic data
+
+   type SASAKI_FORM_FACTORS
+
+     Z_list :: VEC{INT}*  DEFAULT_NULL
+     ! The list of atomic numbers for which form factors are required
+
+     wavelength :: REAL, readonly  DEFAULT(-ONE)
+     ! The wavelength for the data, in Angstrom
+
+     fr :: VEC{REAL}*  DEFAULT_NULL
+     ! The real part of the anomalous form factor, f'
+
+     fi :: VEC{REAL}*  DEFAULT_NULL
+     ! The imahinary part of the anomalous form factor, f''
+
+     mu_on_rho :: VEC{REAL}*  DEFAULT_NULL
+     ! Mass photoelectric attenuation coefficient, units unknown
+
+     sigma_on_rho :: VEC{REAL}*  DEFAULT_NULL
+     ! Total photon scatterin cross section, units unknown
+
+     finalized :: BIN  DEFAULT(FALSE)
+     ! Whetherthe object is finalised
+
 
    end
 
@@ -3283,16 +3305,14 @@ module TYPES
 
      use_IAM_density :: BIN  DEFAULT(FALSE)
      ! Set TRUE if the promolecule (i.e IAM) is to be used in the
-     ! density in the refinement.
+     ! density in the refinement; see also next option.
 
-     use_H_SDS_density :: BIN  DEFAULT(TRUE)
-     ! Set TRUE if the Stewart-Davidson-Simpson (SDS) exponential fit
-     ! to the H-atom-in-a-molecule form factors are to be used in the
-     ! IAM refinement.
-
-     use_H_HF0_density :: BIN  DEFAULT(FALSE)
-     ! Set TRUE if the zero-charged HF (HF0) exponential fit to the
-     ! H atom form factors are to be used in the IAM refinement.
+     use_IAM_ITC_FFs :: BIN  DEFAULT(TRUE)
+     ! Set TRUE if using International Tables Vol. C IAM exponential
+     ! fit to the form factors. 
+     ! NOTE: if TRUE, for H, we use Stewart-Davidson-Simpson (SDS)
+     !       form factors.  
+     ! NOTE: if this is FALSE, the atomic density matrix is used
 
      use_zero_overlap :: BIN  DEFAULT(FALSE)
      ! Set TRUE if you want to have zero overlap density in the
@@ -3448,6 +3468,10 @@ module TYPES
      show_fit_results :: BIN  DEFAULT(FALSE)
      ! Display fit result statistics, but no parameter values
 
+     do_standard_plots :: BIN  DEFAULT(FALSE)
+     ! Do deformation density, ELI-D, laplacian and 1-e properties
+     ! after refinement.
+
      display_near_0_eigenvectors :: BIN  DEFAULT(TRUE)
      ! Whether to display the near zero eigenvectors
 
@@ -3461,9 +3485,9 @@ module TYPES
      n_worst_reflections :: INT  DEFAULT(-1)
      ! The number of the worst reflections to show; set to be +ve
 
-     ! ================
-     ! Fit otput tables
-     ! ================
+     ! =================
+     ! Fit output tables
+     ! =================
 
      fit_table :: VEC{TABLE_COLUMN}*  DEFAULT_NULL
      ! The current fit table
@@ -3663,7 +3687,8 @@ module TYPES
      ! of the three cell axes a, b, c, in the cartesian system.
 
      inverse_matrix :: MAT{REAL}(3,3) DEFAULT(ZERO)
-     ! Inverse direct lattice cell matrix (bohr^{-1})
+     ! Inverse direct lattice cell matrix (bohr^{-1}). The columns
+     ! are the coordinates of a*, b*, c* in the cartesian system.
 
      reciprocal_matrix :: MAT{REAL}(3,3) DEFAULT(ZERO)
      ! Reciprocal lattice cell matrix (bohr^{-1}).
@@ -3696,6 +3721,10 @@ module TYPES
      unit_cell :: UNIT_CELL
      ! The crystal unit cell
 
+     ! ===========
+     ! QM fragment
+     ! ===========
+
      n_fragment_atoms :: INT  DEFAULT(0)
      ! No. of atoms in the inputted cell fragment, used to calculate
      ! structure factors, or do wavefunction fitting.
@@ -3714,6 +3743,13 @@ module TYPES
      ! do wavefunction fitting. NOTE: this should not to be confused
      ! with the "asymmetric_unit_geometry"; it may include symmetry
      ! non-unique atoms.
+
+     fragment_offset :: VEC{INT}(3)
+     ! The center point of the fragment_geometry, to the nearest unit cell
+
+     ! =====================
+     ! Asymmetric unit atoms
+     ! =====================
 
      asymmetric_unit_source :: STR  DEFAULT("?")
      ! Where did the asymmetric unit come from?
@@ -3736,6 +3772,10 @@ module TYPES
      ! symmetry-equivalent atoms repeated. This could be because of an
      ! input or CIF file error, or it could be genuinely correct
      ! because the repeated atom corresponds to a disordered position.
+
+     ! ===============
+     ! Unit cell atoms
+     ! ===============
 
      n_unit_cell_atoms :: INT  DEFAULT(0)
      ! Total no. of unit cell atoms.
@@ -3975,7 +4015,124 @@ module TYPES
      ! This is the excluded PND data used to calculate R free
 
      finalize :: BIN  DEFAULT(TRUE)
-     ! Finalize or update self after reading ...
+     ! Finalize/update non-cluster crystal data
+
+     ! ===============
+     ! Cluster-related
+     ! ===============
+
+     radius :: REAL  DEFAULT(CLUSTER_RADIUS)
+     ! The radius of the cluster. This number determines the maximum
+     ! acceptable distance between an atom in fragment_geometry and
+     ! any atom in the crystal lattice. It defines the size of the
+     ! cluster in the case that "generation_method" component (see
+     ! below) takes the value "within_radius".
+
+     atom_density_cutoff :: REAL  DEFAULT(CLUSTER_ATOM_DENSITY_CUTOFF)
+     ! This number is used to define a cluster radius (see above). The
+     ! radius is defined from it, as the *largest* distance from any
+     ! atom in the asymmetric_cell_atom list where the atomic electron
+     ! density becomes smaller than this number. It requires that
+     ! slater or coppens bases are defined in asymmetric_unit_atom's, 
+     ! and it requires that the generation method be set to
+     ! "for_hirshfeld_surface". It is primarily used for clusters
+     ! generated from a fragment which will correctly produce the
+     ! Hirshfeld surface.
+
+     generation_method :: STR  DEFAULT(CLUSTER_GENERATION_METHOD)
+     ! This option tell how to make the cluster: whether to add atoms
+     ! within a certain distance (radius) of the starting fragment,
+     ! whether to make a cluster specifically for generating a
+     ! hirshfeld surface, whether to just make the unit cell, or the
+     ! unit cell and the starting fragment.
+
+     defragment :: BIN  DEFAULT(CLUSTER_DEFRAGMENT)
+     ! If TRUE, the cluster ends are defragmented, i.e. any atoms
+     ! which are "bonded" at the ends of the cluster are included into
+     ! the cluster. This oisn't a good idea for network covalent
+     ! solids or zeolites: the defragmentation will end when all
+     ! bonded entites with the 3x3 cube of units cells near the origin
+     ! have been constructed.
+
+     n_atoms :: INT
+     ! The number of atoms in the cluster
+
+     geometry :: MAT{REAL}* DEFAULT_NULL
+     ! The (3 x .n_atoms) sized array of cluster atom positions, in
+     ! fractional coordiantes
+
+     unit_cell_offset :: VEC{REAL}(3)  DEFAULT(ZERO)
+     ! Unit cell offset to use when generating an offset unit cell.
+
+     h_min :: VEC{INT}(3), private
+     ! The minimum values of the cells to search over in a within_radius cluster
+
+     h_max :: VEC{INT}(3), private
+     ! The maximum values of the cells to search over in a within_radius cluster
+
+     n_shift :: INT  DEFAULT(0)
+     ! The number of distinct translational shifts used to generate the atoms in
+     ! the cluster.
+
+     shift :: MAT{INT}* DEFAULT_NULL
+     ! The (3 x .n_shift) sized list of translational shifts used to generate the
+     ! cluster from the crystal unit cell atoms. See ".shift_for_atom".
+     ! NOT CURRENTLY USED
+
+     shift_for_atom :: VEC{INT}* DEFAULT_NULL
+     ! ".shift_for_atom(a)" is the index of the translational shift in array
+     ! ".shift", that shift being added to the position of the crystal unit cell
+     ! atom whose index is given by ".occupation_list(a)/1000" in order to
+     ! generate the cluster atom "a" whose position is given by ".geometry(a)".
+     ! NOT CURRENTLY USED
+
+     is_fragment_atom :: VEC{BIN}* DEFAULT_NULL
+     ! is_fragment_atom(a) is TRUE if .geometry(:,a) is the position of a fragment
+     ! atom, i.e. if "a" is the index of a fragm,ent atom.
+
+     occupation_list :: VEC{INT}*  DEFAULT_NULL
+     ! The list of atoms in the cluster which are occupied. This is a coded
+     ! integer representing the triple of integers (h1,h2,h3), the cell where the
+     ! atom resides, as well as the integer index i for the unit cell atom. The
+     ! cell integers are limited to be in the range [-4,4] and at most 10^6 atoms
+     ! in the cluster.
+
+     n_molecules :: INT   DEFAULT(0)
+     ! The number of molecules in the cluster
+
+     molecule_for_atom :: VEC{INT}*  DEFAULT_NULL
+     ! An integer which tells which molecule the cluster atoms belongs to.
+
+     molecule :: VEC{VEC_{INT}}*  DEFAULT_NULL
+     ! The list of atom indices corresponding to each molecule
+
+     molecule_centroid :: MAT{REAL}*  DEFAULT_NULL
+     ! The list of molecule centroids in fractionals
+     ! NOT CURRENTLY USED
+
+     n_unique_molecules :: INT  DEFAULT(0)
+     ! The number of unique molecules in a defragmented cluster
+
+     unique_molecule_for :: VEC{INT}*  DEFAULT_NULL
+     ! The unique molecules; unique_molecule_for(mi) is the molecule
+     ! earlier in the list which is symmetry equivalent by the symop
+     ! given in unique_symcode_for.
+     ! NOT CURRENTLY USED
+
+     unique_symcode_for :: VEC{INT}*  DEFAULT_NULL
+     ! The list of symops which maps unique_molecule_for(mi) to the
+     ! non-unique molecule mi. See above.
+     ! NOT CURRENTLY USED
+
+     atom_connection :: VEC{VEC_{INT}}*  DEFAULT_NULL
+     ! atom_connection(i)[:] are those atoms which are connected to atom "i".
+
+     unit_cell_atoms_to_suppress :: VEC{INT}* DEFAULT_NULL
+     ! A list of indices into unit cell geometry. Used
+     ! to suppress those atoms in cluster generation.
+
+     info_made :: BIN  DEFAULT(FALSE)
+     ! Set to true if the routine make_info has been called
 
    end
 
@@ -4357,19 +4514,19 @@ module TYPES
    end
 
 
-! ==========
-! BIGINT
-! =========
-!
+!  ======
+!  BIGINT
+!  ======
+ 
 !    type BIGINT
 !        n :: INT DEFAULT(0)
 !        dig :: VEC{INT}* DEFAULT_NULL
 !        base :: INT DEFAULT(10)
 !    end
 
-! =========
-! JSON
-! ========
+!  ====
+!  JSON
+!  ====
 
    type JSON
       out :: TEXTFILE*, public DEFAULT_NULL
@@ -6111,6 +6268,9 @@ module TYPES
 
      atom :: VEC{ATOM}* DEFAULT_NULL
      ! List of atoms in molecule
+
+     atoms_bonded_to_atom :: VEC{VEC_{INT}}* DEFAULT_NULL
+     ! List of atom connections
 
      atom_info_made :: BIN  DEFAULT(FALSE)
      ! Set TRUE if the atom info has been made.

@@ -195,6 +195,7 @@ set(FOO_SRC
     ${FOO_DIR}/rms_indices.foo
     ${FOO_DIR}/roby.foo
     ${FOO_DIR}/rys.foo
+    ${FOO_DIR}/sasaki_form_factors.foo
     ${FOO_DIR}/scfdata.foo
     ${FOO_DIR}/shell.foo
     ${FOO_DIR}/shell1.foo
@@ -336,6 +337,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/roby.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rys.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/sasaki_form_factors.F90
     ${CMAKE_CURRENT_BINARY_DIR}/scfdata.F90
     ${CMAKE_CURRENT_BINARY_DIR}/shell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/shell1.F90
@@ -387,14 +389,14 @@ set(FORTRAN_SRC
 set(RUNFILE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runfiles)
 set(RUN_SRC 
     ${RUNFILE_DIR}/run_molecule.foo
+    ${RUNFILE_DIR}/run_buffer.foo
+    ${RUNFILE_DIR}/run_dispersion.foo
     ${RUNFILE_DIR}/run_gaussian_data.foo
     ${RUNFILE_DIR}/run_har.foo
     ${RUNFILE_DIR}/run_himz.foo
-    ${RUNFILE_DIR}/run_buffer.foo
+    ${RUNFILE_DIR}/run_mat{real}.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
-    ${RUNFILE_DIR}/run_mat{real}.foo
-    ${RUNFILE_DIR}/run_test.foo
 )
 
 
@@ -432,25 +434,25 @@ target_link_libraries(tonto sbf_fortran)
 
 # Standard executables
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
-add_executable(run_gaussian_data ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
+add_executable(run_buffer      EXCLUDE_FROM_ALL  ${CMAKE_CURRENT_BINARY_DIR}/run_buffer.F90)
+add_executable(run_dispersion   EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dispersion.F90)
+add_executable(run_gaussian_data EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
 add_executable(run_har           ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
-add_executable(run_himz          ${CMAKE_CURRENT_BINARY_DIR}/run_himz.F90)
-add_executable(run_buffer        ${CMAKE_CURRENT_BINARY_DIR}/run_buffer.F90)
-add_executable(run_real          ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
-add_executable(run_vec_str       ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
-add_executable(run_mat_real      ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
-add_executable(run_test          ${CMAKE_CURRENT_BINARY_DIR}/run_test.F90)
+add_executable(run_himz         EXCLUDE_FROM_ALL  ${CMAKE_CURRENT_BINARY_DIR}/run_himz.F90)
+add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
+add_executable(run_real         EXCLUDE_FROM_ALL  ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
+add_executable(run_vec_str      EXCLUDE_FROM_ALL  ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 
 # Link exectables
 target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_test          tonto ${LAPACK_LIBRARIES})
 
 # Make non-standard-named executables
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
@@ -463,8 +465,11 @@ install(TARGETS run_har      DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
+
+set(CPACK_SET_DESTDIR ON)
 set(CPACK_PACKAGE_NAME ${PROJECT_NAME})
 set(CPACK_PACKAGE_VERSION ${TONTO_VERSION})
+set(CPACK_PACKAGE_CONTACT "Dylan Jayatilaka <dylan.jayatilaka@gmail.com>")
 set(CPACK_GENERATOR TGZ)
 set(CPACK_STRIP_FILES ON)
 

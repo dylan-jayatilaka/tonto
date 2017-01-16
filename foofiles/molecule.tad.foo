@@ -139,9 +139,13 @@ contains
 
       ! Do/put analysis info ...
       if (.crystal.data.show_refinement_output) then
+      .crystal.put_data_analysis
       .SCF:put_minmax_residual_density
       .BASE:put_CIFs(with_ESDs=TRUE)
-      .crystal.put_data_analysis
+      end
+
+      ! DO standatd plots and properties
+      if (.crystal.data.do_standard_plots) then
       end
 
    end
@@ -202,7 +206,6 @@ contains
       ! Static atomic SF's for symmetry-unique atoms (sf_n)
       if      (.crystal.data.invariom_refinement) then; .TAD:get_unique_invariom_SFs(sf_n)
       else if (.crystal.data.use_Voronoi_atoms) then;   .TAD:get_unique_Voronoi_atom_SFs(sf_n)
-      else if (.crystal.data.use_IAM_density) then;     .TAD:get_unique_IAM_atom_SFs(sf_n)
       else if (.crystal.data.use_KM_atoms) then;        .TAD:get_unique_KM_atom_SFs(sf_n)
       else;                                             .TAD:get_unique_Hirshfeld_atom_SFs(sf_n) ! HAR
       end
@@ -230,405 +233,6 @@ contains
       end
 
    end
-
-   get_unique_IAM_atom_SFs(sf_n) ::: leaky, private
-   ! Get "sf_n", the IAM structure factors for the symmetry generated
-   ! K points with *no* thermal smearing, for every unique atom.
-      sf_n :: MAT{CPX}*
-
-   ENSURE(.basis_info_made,"no basis info")
-   ENSURE(.atom.created,"no atom list")
-   ENSURE(.crystal.created, "no crystal")
-   ENSURE(.crystal.data.created, "no reflection data")
-   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
-   ENSURE(.crystal.asymmetric_unit_atom.created,"no asymmetric unit atoms")
-   ENSURE(.crystal.unique_atom_for_frag_atom.created,"no unique-frag_atom")
-   ENSURE(.crystal.asym_atom_for_frag_atom.created,"no asym-frag_atom")
-
-      k_pts :: MAT{REAL}*
-      n_atom,n_k, u,c,a :: INT
-      rf :: REAL
-      H_SDS,H_HF0 :: BIN
-
-      ! Asymmetric unit atoms;
-      ! Symmetry generated K points and SF's
-      n_atom = .crystal.asymmetric_unit_atom.dim
-      n_k    = .crystal.n_unique_SF_k_pts
-
-      ! Allocate structure factor array (leaky)
-      sf_n.create(n_k,n_atom)
-
-      ! Make list of symmetry non-equivalent symops
-      ! and the necessary k points
-      k_pts.create(n_k,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
-
-      ! Type of H atom SF's
-      H_SDS = .crystal.data.use_H_SDS_density
-      H_HF0 = .crystal.data.use_H_HF0_density
-
-      ! Make the SF's
-      sf_n = ZERO
-
-      ! Loop over integration atoms "c"
-      do u = 1,.crystal.n_unique_frag_atoms
-
-         ! Atoms
-         c = .crystal.unique_frag_atom(u)
-         a = .crystal.asym_atom_for_frag_atom(c)
-
-         ! Structure factors
-         .atom(c).set_use_H_SDS_density(H_SDS)
-         .atom(c).set_use_H_HF0_density(H_HF0)
-         .atom(c).make_FT(sf_n(:,u),k_pts)
-         .atom(c).set_use_H_SDS_density(TRUE)  ! Put back
-         .atom(c).set_use_H_HF0_density(FALSE)
-
-         ! Repetition (site-symmetry) factor
-         rf = .crystal.asym_atom_rep_factor(a)
-         if (rf.is_zero) cycle
-         rf = ONE/rf
-
-         ! Scale
-         sf_n(:,u) = sf_n(:,u) * rf
-
-      end
-
-      ! Clean up
-      k_pts.destroy
-
-   end
-
-   get_unique_KM_atom_SFs(sf_n) ::: leaky, private
-   ! Get "sf_n", the IAM structure factors for the symmetry generated
-   ! K points with *no* thermal smearing, for every unique atom.
-      sf_n :: MAT{CPX}*
-
-   ENSURE(.basis_info_made,"no basis info")
-   ENSURE(.atom.created,"no atom list")
-   ENSURE(.crystal.created, "no crystal")
-   ENSURE(.crystal.data.created, "no reflection data")
-   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
-   ENSURE(.crystal.asymmetric_unit_atom.created,"no asymmetric unit atoms")
-   ENSURE(.crystal.unique_atom_for_frag_atom.created,"no unique-frag_atom")
-   ENSURE(.crystal.asym_atom_for_frag_atom.created,"no asym-frag_atom")
-   ENSURE(.density_matrix.created, "no density matrix")
-
-      FT :: MAT3{CPX}*
-      k_pts, D,part :: MAT{REAL}*
-      ra, rb :: VEC{REAL}(3)
-      n_atom,n_k,k, u,c :: INT
-      a,b, fsa,lsa, fsb,lsb :: INT
-      sa,fa,la,na,as, sb,fb,lb,nb,bs :: INT
-      rf :: REAL
-      sh :: SHELL2
-
-      ! Asymmetric unit atoms;
-      ! Symmetry generated K points and SF's
-      n_atom = .crystal.asymmetric_unit_atom.dim
-      n_k    = .crystal.n_unique_SF_k_pts
-
-      ! Allocate structure factor array (leaky)
-      sf_n.create(n_k,n_atom)
-
-      ! Make list of symmetry non-equivalent symops
-      ! and the necessary k points
-      k_pts.create(n_k,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
-
-      ! Density matrix (leaky)
-      .BASE:make_ao_density_matrix
-      ENSURE(.density_matrix.restricted.created, "no restricted DM")
-      D => .density_matrix.restricted
-
-      ! Make the SF's
-      sf_n = ZERO
-
-      ! Loop over integration atoms "c"
-      do u = 1,.crystal.n_unique_frag_atoms
-
-         ! Atoms
-         c = .crystal.unique_frag_atom(u)
-         a = .crystal.asym_atom_for_frag_atom(c)
-
-         ! Repetition (site-symmetry) factor
-         rf = .crystal.asym_atom_rep_factor(a)
-         if (rf.is_zero) cycle
-         rf = ONE/rf
-
-         a = c
-
-         fsa = .first_shell_for_atom(a)
-         lsa =  .last_shell_for_atom(a)
-         ra  = .atom(a).position
-
-         ! Loop shells on atom a
-         do sa = fsa,lsa
-
-            ! Shell a limits
-            fa = .first_basis_fn_for_shell(sa)
-            la =  .last_basis_fn_for_shell(sa)
-            na = la - fa + 1
-            as = .basis_shell_for_shell(sa)
-
-            ! Loop c-overlapping atoms b
-            do b = 1,.atom.dim
-
-               fsb = .first_shell_for_atom(b)
-               lsb =  .last_shell_for_atom(b)
-               rb  = .atom(b).position
-
-               ! Loop shells on atom b
-               do sb = fsb,lsb
-
-                  ! Shell b limits
-                  fb = .first_basis_fn_for_shell(sb)
-                  lb = .last_basis_fn_for_shell(sb)
-                  nb = lb - fb + 1
-                  bs = .basis_shell_for_shell(sb)
-
-                  ! Set shells
-                  sh.a = .precomputed_basis_shellpair(as,bs).a
-                  sh.b = .precomputed_basis_shellpair(as,bs).b
-                  sh.a.position = ra
-                  sh.b.position = rb
-
-                  ! Partitions & Structure factors
-                  FT.create(n_k,na,nb)
-                  part.create(sh.a.n_cc,sh.b.n_cc)
-                  sh.make_KM_partition(part)
-                  sh.make_FT_parted_c(FT,k_pts(:,1),k_pts(:,2),k_pts(:,3),part)
-
-                  ! Do trace
-                  do k = 1,n_k
-                     sf_n(k,u) = sf_n(k,u) + sum(FT(k,:,:)*D(fa:la,fb:lb))
-                  end
-
-                  ! Clean
-                  part.destroy
-                  FT.destroy
-
-               end
-            end
-         end
-
-         ! Scale
-         sf_n(:,u) = sf_n(:,u) * rf
-
-      end
-
-      ! Clean up
-      k_pts.destroy
-
-   end
-
-!   get_unique_KM_atom_SFs(sf_n) ::: leaky, private
-!   ! Get "sf_n", the Koritsanszky-Michael static structure factors for
-!   ! the symmetry related K points with *no* thermal smearing, for
-!   ! every unique atom.  NOTE: "sf_n" is the FT rho_a(r), eqn (3) in
-!   ! Jayatilaka 2008,
-!   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
-!   ! without the thermal smearing factor.
-!      sf_n :: MAT{CPX}*
-!
-!   ENSURE(.basis_info_made,"no basis info")
-!   ENSURE(.atom.created,"no atom list")
-!   ENSURE(.density_matrix.created, "no density matrix")
-!   ENSURE(.crystal.created, "no crystal")
-!   ENSURE(.crystal.data.created, "no reflection data")
-!   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
-!   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
-!
-!      ra,rb :: VEC{REAL}(3)
-!      overlapping_atom :: VEC{INT}*
-!      FT :: MAT3{CPX}*
-!      D,k_pts,part :: MAT{REAL}*
-!      n_atom, k,n_k, u,c,a, ca,cb, oa,fsa,lsa, ob,fsb,lsb :: INT
-!      sa,fa,la,na,as, sb,fb,lb,nb,bs :: INT
-!      skip_overlap :: BIN
-!      rf,fac :: REAL
-!      dc :: CPX
-!      sh :: SHELL2
-!
-!      ! Asymmetric unit atoms
-!      n_atom = .crystal.asymmetric_unit_atom.dim
-!
-!      ! Symmetry generated K points and SF's
-!      n_k = .crystal.n_unique_SF_k_pts
-!
-!      ! Allocate structure factor array (leaky)
-!      sf_n.create(n_k,n_atom)
-!
-!      ! Make list of symmetry non-equivalent symops
-!      ! and the necessary k points
-!      k_pts.create(n_k,3)
-!      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
-!
-!      ! Density matrix (leaky)
-!      .BASE:make_ao_density_matrix
-!      ENSURE(.density_matrix.restricted.created, "no restricted DM")
-!      D => .density_matrix.restricted
-!
-!      ! Do overlap?
-!      skip_overlap = .crystal.data.use_zero_overlap
-!
-!      ! Make the SF's
-!      sf_n = ZERO
-!
-!      ! Loop over integration atoms "c"
-!      parallel do u = 1,.crystal.n_unique_frag_atoms
-!
-!         c = .crystal.unique_frag_atom(u)
-!         a = .crystal.asym_atom_for_frag_atom(c)
-!
-!         ! Repetition (site-symmetry) factor for atom c
-!         rf = .crystal.asym_atom_rep_factor(a)
-!         if (rf.is_zero) cycle
-!         rf = ONE/rf
-!
-!            oa = c
-!
-!            fsa = .first_shell_for_atom(oa)
-!            lsa =  .last_shell_for_atom(oa)
-!            ra  = .atom(oa).position
-!
-!            ! Loop shells on atom a
-!            do sa = fsa,lsa
-!
-!               ! Shell a limits
-!               fa = .first_basis_fn_for_shell(sa)
-!               la =  .last_basis_fn_for_shell(sa)
-!               na = la - fa + 1
-!               as = .basis_shell_for_shell(sa)
-!
-!               ! Loop c-overlapping atoms b
-!               do ob = 1,.atom.dim
-!
-!                  ! Skip overlap density?
-!                  if (skip_overlap AND (oa/=ob)) cycle
-!
-!                  fsb = .first_shell_for_atom(ob)
-!                  lsb =  .last_shell_for_atom(ob)
-!                  rb  = .atom(ob).position
-!
-!                  ! Loop shells on atom b
-!                  do sb = fsb,lsb
-!
-!                     ! Shell b limits
-!                     fb = .first_basis_fn_for_shell(sb)
-!                     lb = .last_basis_fn_for_shell(sb)
-!                     nb = lb - fb + 1
-!                     bs = .basis_shell_for_shell(sb)
-!
-!                     ! Set shells
-!                     sh.a = .precomputed_basis_shellpair(as,bs).a
-!                     sh.b = .precomputed_basis_shellpair(as,bs).b
-!                     sh.a.position = ra
-!                     sh.b.position = rb
-!
-!                     ! Partitions & Structure factors
-!                     FT.create(n_k,na,nb)
-!                     part.create(sh.a.n_cc,sh.b.n_cc)
-!                     sh.make_KM_partition(part)
-!                     sh.make_FT_parted_c(FT,k_pts(:,1),k_pts(:,2),k_pts(:,3),part)
-!
-!                     ! Do trace
-!                     do k = 1,n_k
-!                        sf_n(k,u) = sf_n(k,u) + sum(FT(k,:,:)*D(fa:la,fb:lb))
-!                     end
-!
-!                     ! Clean
-!                     part.destroy
-!                     FT.destroy
-!
-!                  end
-!               end
-!            end
-!
-!         ! Add the dispersion correction
-!         if (.crystal.correct_dispersion) then
-!            dc = .atom(c).dispersion_correction(.crystal.wavelength)
-!            sf_n(:,u) = sf_n(:,u) + dc
-!         end
-!
-!      end ! -- loop over atom "c"
-!
-!      ! Clean up
-!      k_pts.destroy
-!
-!      ! Parallel
-!      if (DO_IN_PARALLEL) then
-!         PARALLEL_SUM(sf_n)
-!      end
-!
-!      if (.BASE:debugging("get_unique_KM_atom_SFs")) then
-!         stdout.text("sf_n:")
-!         stdout.put(sf_n)
-!      end
-!
-!   end
-
-!   get_unique_KM_atom_SFs(sf_n)
-!   ! Fourier transform of a density described by AO density matrix dens
-!   ! evaluated at a series of reciprocal space points k_pts
-!   ! Size of res is [size(k_pts,1)]
-!      self :: IN
-!      dens :: MAT{REAL}, IN
-!      k_pts :: MAT{REAL}, IN
-!      res :: VEC{CPX}, OUT
-!
-!   ENSURE(.basis_info_made, "no basis info")
-!   ENSURE(.atom.created,  "no atom list")
-!
-!      k_max,k,fa,fb,la,lb,na,nb,q,atom_a,atom_b :: INT
-!      a_unique,b_unique :: BIN
-!      ft_ab :: MAT3{CPX}*
-!      cutoff :: REAL
-!      sh :: SHELL2
-!
-!      k_max = size(k_pts,1)
-!      cutoff = TOL(10) / .n_shell_pairs
-!
-!      res = ZERO
-!
-!      parallel do q = 1,.n_shell_pairs
-!
-!         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
-!
-!         if (sh.skip_ft(cutoff)) then
-!           sh.destroy_ptr_part
-!           cycle
-!         end
-!
-!         a_unique = any(atom_a==.crystal.unique_frag_atom)
-!         b_unique = any(atom_b==.crystal.unique_frag_atom)
-!
-!         if (NOT a_unique AND NOT b_unique) cycle
-!
-!         ! Make the FT - includes thermal smearing
-!         ft_ab.create(k_max,na,nb)
-!         .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
-!
-!         ! Trace with density matrix
-!         ! Count off-diagonals twice
-!         if (fa/=fb) then 
-!           do k = 1,k_max
-!              res(k) = res(k) + TWO*sum(ft_ab(k,:,:)*dens(fa:la,fb:lb))
-!           end
-!         else
-!           do k = 1,k_max
-!              res(k) = res(k) +     sum(ft_ab(k,:,:)*dens(fa:la,fb:lb))
-!           end
-!         end
-!
-!         ft_ab.destroy
-!         sh.destroy_ptr_part
-!
-!      end
-!
-!      PARALLEL_SUM(res)
-!
-!   end
 
    get_unique_Hirshfeld_atom_SFs(sf_n) ::: leaky, private
    ! Get "sf_n", the static structure factors for the symmetry related
@@ -956,6 +560,125 @@ contains
 
    end
 
+!  Other atom structure factors
+
+!   get_unique_Mulliken_SFs(sf_static) ::: private
+!   ! Get "sf_static", the structure factors for the symmetry related
+!   ! K points with *no* thermal smearing, for every unique invariom.
+!      sf_static :: MAT{CPX}*
+!
+!   ENSURE(.basis_info_made,"no basis info")
+!   ENSURE(.atom.created,"no atom list")
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.crystal.data.created, "no reflection data")
+!   ENSURE(.crystal.asymmetric_unit_atom.created,"no asymmetric unit atoms")
+!   ENSURE(.crystal.fragment_info_made,"no crystal fragment information")
+!   ENSURE(.density_matrix.created, "no density matrix")
+!   ENSURE(.density_matrix.restricted.created, "no restricted DM")
+!   ENSURE(sf_static.dim1==.crystal.n_unique_SF_k_pts, "wrong dim1, sf_static")
+!   ENSURE(sf_static.dim2==.crystal.asymmetric_unit_atom.dim, "wrong dim2, sf_static")
+!
+!      dc :: CPX
+!      ra :: VEC{REAL}(3)
+!      k1,k2,k3 :: VEC{REAL}*
+!      n_atom,n_k, u,c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+!
+!      ! Asymmetric unit atoms
+!      n_atom = .crystal.asymmetric_unit_atom.dim
+!
+!      ! Symmetry generated K points and SF's
+!      n_k = .crystal.n_unique_SF_k_pts
+!
+!      ! Allocate structure factor array (leaky)
+!      sf_static.create(n_k,n_atom)
+!
+!      ! Make the symmetry generated k's
+!      n_k = .crystal.n_unique_SF_k_pts
+!      k1.create(n_k)
+!      k2.create(n_k)
+!      k3.create(n_k)
+!      .crystal.data.reflections.make_unique_SF_k_pts(k1,k2,k3,.crystal.spacegroup,.crystal.unit_cell)
+!
+!      ! Density matrix (leaky)
+!      .BASE:make_ao_density_matrix
+!      ENSURE(.density_matrix.restricted.created, "no restricted DM")
+!      D => .density_matrix.restricted
+!
+!      ! Make the structure factors
+!      sf_static = ZERO
+!
+!      ! Loop over unique/asymmetric atoms "u"
+!      parallel do u = 1,.crystal.n_unique_frag_atoms
+!
+!         c = .crystal.unique_frag_atom(u)
+!         a = .crystal.asym_atom_for_frag_atom(c)
+!
+!         ! Repetition factor for this atom
+!         rf = .crystal.asym_atom_rep_factor(a)
+!         if (rf.is_zero) cycle
+!         rf = ONE/rf
+!
+!         ! Overlapping atoms
+!         overlapping_atom => .overlapping_atoms_for_atom(c).element
+!
+!         ! Loop c-overlapping atoms a
+!         do ca = 1,overlapping_atom.dim
+!
+!            oa  = overlapping_atom(ca)
+!            fsa = .first_shell_for_atom(oa)
+!            lsa =  .last_shell_for_atom(oa)
+!            fba = .first_basis_fn_for_atom(oa)
+!            ra  = .atom(oa).position
+!
+!            ! Loop shells on atom a
+!            do sa = fsa,lsa
+!
+!               ! Shell a limits
+!               fa = .first_basis_fn_for_shell(sa)
+!               la =  .last_basis_fn_for_shell(sa)
+!               na = la - fa + 1
+!               as = .basis_shell_for_shell(sa)
+!
+!               ! Set shell "sa"
+!               sha = .precomputed_basis_shellpair(as,1).a
+!               sha.position = ra
+!
+!               ! Loop c-overlapping atoms b
+!               do cb = 1,ca
+!
+!                  ob  = overlapping_atom(cb)
+!                  fsb = .first_shell_for_atom(ob)
+!                  lsb =  .last_shell_for_atom(ob)
+!
+!                  ! Loop shells on atom b
+!                  do sb = fsb,min(lsb,sa)
+!
+!                  end
+!
+!               end
+!
+!            end
+!
+!         end ! unique atom u
+!
+!         ! Add the dispersion correction
+!         if (.crystal.correct_dispersion) then
+!            dc   = .atom(c).dispersion_correction(.crystal.wavelength)
+!            sf_static(:,u) = sf_static(:,u) + dc
+!         end
+!
+!      end
+!
+!      k3.destroy
+!      k2.destroy
+!      k1.destroy
+!
+!      if (DO_IN_PARALLEL) then
+!         PARALLEL_SUM(sf_n)
+!      end
+!
+!   end
+
    get_unique_Voronoi_atom_SFs(sf_n) ::: leaky, private
    ! Get "sf_n", the structure factors for the symmetry related
    ! K points with *no* thermal smearing, for every unique atom.
@@ -1165,122 +888,618 @@ contains
 
    end
 
-!   get_unique_Mulliken_SFs(sf_static) ::: private
-!   ! Get "sf_static", the structure factors for the symmetry related
-!   ! K points with *no* thermal smearing, for every unique invariom.
-!      sf_static :: MAT{CPX}*
+!  ==================
+!  KM atom refinement
+!  ==================
+
+   refine_KM_atoms ::: leaky
+   ! Do an iterative KM atom refinement, alternating scf and
+   ! fitting, until appropriately converged, normally to 0.001\sigma
+
+   DIE_IF(NOT .atom.created, "no atoms to fit")
+   DIE_IF(NOT .scfdata.created,"no scfdata")
+   DIE_IF(NOT .crystal.created, "no crystal")
+   DIE_IF(NOT .crystal.data.created,"no crystal data")
+   DIE_IF(NOT .crystal.xray_data.created,"no crystal xray data")
+
+      ! Initial SCF
+      if (.density_matrix.destroyed) then
+         if (.crystal.data.show_refinement_output) then
+         stdout.flush
+         stdout.text("Making initial density matrix for refinement ...")
+         end
+         .:promolecule_scf
+      end
+
+      ! Prune?
+      if (NOT .crystal.data.is_prunable) then
+
+         ! Initial SF's for pruning
+       ! if (NOT .crystal.data.reflections.have_F_pred) then
+       !    if (.crystal.data.show_refinement_output) then
+       !    stdout.flush
+       !    stdout.text("Making F_pred for pruning ...")
+       !    end
+       !    .XTAL:make_x_structure_factors
+       ! end
+       
+         ! Prune
+         if (.crystal.data.show_refinement_output) then
+         stdout.flush
+         stdout.text("Pruning reflections for refinement ...")
+         end
+         .crystal.data.prune_reflections
+
+      end
+
+      ! Initialize
+      if (.crystal.data.show_refinement_output) then
+      stdout.flush
+      stdout.text("Starting refinement ...")
+      end
+      .crystal.initialize_refinement_data
+
+      ! Turn off unwanted printing ...
+      .crystal.data.set_refine_structure(TRUE)
+      .crystal.data.set_fit_structure(FALSE)
+      .scfdata.set_output(FALSE)
+
+      ! Banner, options/switches, initial parameters,
+      ! start banner, and iteration table header
+      .crystal.put_refinement_header_info
+
+      do
+
+         ! Initial promolecule SCF?
+         if (.crystal.data.restart_HAR_with_promolecule) &
+            .:promolecule_scf
+
+         ! SCF @ new geometry (or promolecule)
+         .SCF:scf
+
+         ! After first SCF use previous density as initial guess
+         if (.crystal.data.ref_iteration==0) &
+            .scfdata.set_initial_density(.scfdata.spinorbital_kind)
+
+         ! Refit hirshfeld atoms 
+         .TAD:fit_KM_atoms
+         !!!!!!!!!!!!!!!!!!!!!!!!
+
+         ! Update
+         .crystal.update_refinement_parameters
+         .crystal.update_refinement_ESDs
+
+         ! Put the iteration results
+         .crystal.put_refinement_iteration_results
+
+         ! Finished?
+         if (.crystal.refinement_finished) exit
+
+      end
+
+      ! Table footer and final results
+      .crystal.put_refinement_footer_info
+
+      ! Print out bond length, angle, torsion tables with errors
+      if (.crystal.data.show_refinement_output) &
+         .crystal.put_bond_info_with_errors
+
+      ! Set geometry type
+      .crystal.asymmetric_unit_source = "tonto-refinement"
+
+      ! SCF @ final geometry
+      .SCF:scf
+      .scfdata.set_output(TRUE)
+
+      ! Do/put analysis info ...
+      if (.crystal.data.show_refinement_output) then
+      .SCF:put_minmax_residual_density
+      .BASE:put_CIFs(with_ESDs=TRUE)
+      .crystal.put_data_analysis
+      end
+
+   end
+
+   fit_KM_atoms ::: leaky
+   ! Fit the KM atoms to the calculated structure factors.
+   ! Cartesian (bohr) coordinates are used because structure factors
+   ! are aspherical and calculated from the QM wavefunction.
+   ! NOTE: this routine does only one cycle of fitting with the
+   ! current density matrix i.e. this is a "rigid atom fit".
+   ! NOTE: It's tricky exactly which atom's are used for refinement:
+   ! * Structure factors are calculated only for *unique* fragment
+   !   atoms since the QM wavefunction refers to the fragment_atoms.
+   ! * However, asymmetric unit atoms are used to "store" the updating
+   !   geometry; thus unique fragment atom pADPs and shifts are
+   !   calculated (and derivatives with respect to the fragment atom
+   !   positions and ADPs) but these parameters and shifts are later
+   !   transformed back into asymmetric unit.
+
+   ENSURE(.atom.created, "no atoms to fit")
+   ENSURE(.becke_grid.created,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"becke_grid not finalized")
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.data.created,"no crystal data")
+   ENSURE(.crystal.xray_data.created,"no crystal xray data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      sf_n :: MAT{CPX}*
+
+      ! Static atomic SF's for symmetry-unique atoms (sf_n)
+      .TAD:get_unique_KM_atom_SFs(sf_n)
+
+      !!!!!!!!! Do the fit !!!!!!!!!
+      .crystal.fit_rigid_atoms(sf_n)
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Write CIF
+      .BASE:put_CIFs(with_ESDs=TRUE)
+
+      ! Clean up
+      sf_n.destroy
+
+      ! Delete stored matrices
+      .BASE:delete_scf_archives(keep_DM=TRUE)
+      .BASE:destroy_scf_results(keep_MOs=TRUE)
+      .BASE:destroy_scf_integrals
+
+      ! Make sure MO's are orthonormal at new geometry
+      .SCF:symmetrically_orthonormalise(.molecular_orbitals)
+
+   end
+
+   get_unique_KM_atom_SFs(sf_n) ::: leaky, private
+   ! Get "sf_n", the IAM structure factors for the symmetry generated
+   ! K points with *no* thermal smearing, for every unique atom.
+      sf_n :: MAT{CPX}*
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.data.created, "no reflection data")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.crystal.asymmetric_unit_atom.created,"no asymmetric unit atoms")
+   ENSURE(.crystal.unique_atom_for_frag_atom.created,"no unique-frag_atom")
+   ENSURE(.crystal.asym_atom_for_frag_atom.created,"no asym-frag_atom")
+   ENSURE(.density_matrix.created, "no density matrix")
+
+      FT :: MAT3{CPX}*
+      k_pts, D,part :: MAT{REAL}*
+      ra, rb :: VEC{REAL}(3)
+      n_atom,n_k,k, u,c :: INT
+      a,b, fsa,lsa, fsb,lsb :: INT
+      sa,fa,la,na,as, sb,fb,lb,nb,bs :: INT
+      rf :: REAL
+      sh :: SHELL2
+
+      ! Asymmetric unit atoms;
+      ! Symmetry generated K points and SF's
+      n_atom = .crystal.asymmetric_unit_atom.dim
+      n_k    = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_n.create(n_k,n_atom)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      ! Density matrix (leaky)
+      .BASE:make_ao_density_matrix
+      ENSURE(.density_matrix.restricted.created, "no restricted DM")
+      D => .density_matrix.restricted
+
+      ! Make the SF's
+      sf_n = ZERO
+
+      ! Loop over integration atoms "c"
+      do u = 1,.crystal.n_unique_frag_atoms
+
+         ! Atoms
+         c = .crystal.unique_frag_atom(u)
+         a = .crystal.asym_atom_for_frag_atom(c)
+
+         ! Repetition (site-symmetry) factor
+         rf = .crystal.asym_atom_rep_factor(a)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         a = c
+
+         fsa = .first_shell_for_atom(a)
+         lsa =  .last_shell_for_atom(a)
+         ra  = .atom(a).position
+
+         ! Loop shells on atom a
+         do sa = fsa,lsa
+
+            ! Shell a limits
+            fa = .first_basis_fn_for_shell(sa)
+            la =  .last_basis_fn_for_shell(sa)
+            na = la - fa + 1
+            as = .basis_shell_for_shell(sa)
+
+            ! Loop c-overlapping atoms b
+            do b = 1,.atom.dim
+
+               fsb = .first_shell_for_atom(b)
+               lsb =  .last_shell_for_atom(b)
+               rb  = .atom(b).position
+
+               ! Loop shells on atom b
+               do sb = fsb,lsb
+
+                  ! Shell b limits
+                  fb = .first_basis_fn_for_shell(sb)
+                  lb = .last_basis_fn_for_shell(sb)
+                  nb = lb - fb + 1
+                  bs = .basis_shell_for_shell(sb)
+
+                  ! Set shells
+                  sh.a = .precomputed_basis_shellpair(as,bs).a
+                  sh.b = .precomputed_basis_shellpair(as,bs).b
+                  sh.a.position = ra
+                  sh.b.position = rb
+
+                  ! Partitions & Structure factors
+                  FT.create(n_k,na,nb)
+                  part.create(sh.a.n_cc,sh.b.n_cc)
+                  sh.make_KM_partition(part)
+                  sh.make_FT_parted_c(FT,k_pts(:,1),k_pts(:,2),k_pts(:,3),part)
+
+                  ! Do trace
+                  do k = 1,n_k
+                     sf_n(k,u) = sf_n(k,u) + sum(FT(k,:,:)*D(fa:la,fb:lb))
+                  end
+
+                  ! Clean
+                  part.destroy
+                  FT.destroy
+
+               end
+            end
+         end
+
+         ! Scale
+         sf_n(:,u) = sf_n(:,u) * rf
+
+      end
+
+      ! Clean up
+      k_pts.destroy
+
+   end
+
+!  ==============
+!  NAO refinement
+!  ==============
+
+!   NAO_refinement ::: leaky
+!   ! Do an iterative Hirshfeld atom refinement, alternating scf and
+!   ! fitting, until appropriately converged, normally to 0.001\sigma
+!
+!   DIE_IF(NOT .atom.created, "no atoms to fit")
+!   DIE_IF(NOT .scfdata.created,"no scfdata")
+!   DIE_IF(NOT .crystal.created, "no crystal")
+!   DIE_IF(NOT .crystal.data.created,"no crystal data")
+!   DIE_IF(NOT .crystal.xray_data.created,"no crystal xray data")
+!
+!      ! Prune?
+!      if (NOT .crystal.data.is_prunable) then
+!
+!         ! Initial SF's for pruning
+!       ! if (NOT .crystal.data.reflections.have_F_pred) then
+!       !    if (.crystal.data.show_refinement_output) then
+!       !    stdout.flush
+!       !    stdout.text("Making F_pred ...")
+!       !    end
+!       !    .XTAL:make_x_structure_factors
+!       ! end
+!       
+!         ! Prune
+!         if (.crystal.data.show_refinement_output) then
+!         stdout.flush
+!         stdout.text("Pruning reflections for refinement ...")
+!         end
+!         .crystal.data.prune_reflections
+!
+!      end
+!
+!      ! Initialize
+!      if (.crystal.data.show_refinement_output) then
+!      stdout.flush
+!      stdout.text("Starting refinement ...")
+!      end
+!      .crystal.initialize_refinement_data
+!
+!      ! Turn off unwanted printing ...
+!      .crystal.data.set_refine_structure(TRUE)
+!      .crystal.data.set_fit_structure(FALSE)
+!      .scfdata.set_output(TRUE)
+!
+!      ! Banner, options/switches, initial parameters,
+!      ! start banner, and iteration table header
+!      .crystal.put_refinement_header_info
+!
+!      do
+!
+!         ! Initial promolecule SCF?
+!         if (.crystal.data.restart_HAR_with_promolecule) &
+!            .:promolecule_scf
+!
+!         ! SCF @ new geometry (or promolecule)
+!         .SCF:scf
+!
+!         ! After first SCF use previous density as initial guess
+!         if (.crystal.data.ref_iteration==0) &
+!            .scfdata.set_initial_density(.scfdata.spinorbital_kind)
+!
+!         !!!!!!!!!!!!!!!!!!
+!         .TAD:NAO_rigid_fit
+!         !!!!!!!!!!!!!!!!!!
+!
+!         ! Update
+!         .crystal.update_refinement_parameters
+!         .crystal.update_refinement_ESDs
+!
+!         ! Put the iteration results
+!         .crystal.put_refinement_iteration_results
+!
+!         ! Finished?
+!         if (.crystal.refinement_finished) exit
+!
+!      end
+!
+!      ! Table footer and final results
+!      .crystal.put_refinement_footer_info
+!
+!      ! Print out bond length, angle, torsion tables with errors
+!      if (.crystal.data.show_refinement_output) &
+!         .crystal.put_bond_info_with_errors
+!
+!      ! Set geometry type
+!      .crystal.asymmetric_unit_source = "tonto-refinement"
+!
+!      ! SCF @ final geometry
+!      .SCF:scf
+!      .scfdata.set_output(TRUE)
+!
+!      ! Do/put analysis info ...
+!      if (.crystal.data.show_refinement_output) then
+!      .SCF:put_minmax_residual_density
+!      .BASE:put_CIFs(with_ESDs=TRUE)
+!      .crystal.put_data_analysis
+!      end
+!
+!   end
+
+!   NAO_rigid_fit ::: leaky
+!   ! Do an NAO refinement
+!   ! Cartesian (bohr) coordinates are used because structure factors
+!   ! are aspherical and calculated from the QM wavefunction.
+!   ! NOTE: this routine does only one cycle of fitting with the
+!   ! current density matrix i.e. this is a "rigid atom fit".
+!   ! NOTE: It's tricky exactly which atom's are used for refinement:
+!   ! * Structure factors are calculated only for *unique* fragment
+!   !   atoms since the QM wavefunction refers to the fragment_atoms.
+!   ! * However, asymmetric unit atoms are used to "store" the updating
+!   !   geometry; thus unique fragment atom pADPs and shifts are
+!   !   calculated (and derivatives with respect to the fragment atom
+!   !   positions and ADPs) but these parameters and shifts are later
+!   !   transformed back into asymmetric unit.
+!
+!   ENSURE(.atom.created, "no atoms to fit")
+!   ENSURE(.becke_grid.created,"no becke_grid")
+!   ENSURE(.becke_grid.finalized,"becke_grid not finalized")
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.crystal.data.created,"no crystal data")
+!   ENSURE(.crystal.xray_data.created,"no crystal xray data")
+!   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+!
+!      sf_n :: MAT{CPX}*
+!      keep :: BIN
+!
+!      .BASE:make_aspherical_atoms
+!
+!      keep = .crystal.data.use_IAM_density
+!      .crystal.data.set_use_IAM_density(TRUE)
+!      .crystal.data.set_use_IAM_ITC_FFs(FALSE)
+!
+!      .TAD:get_unique_NAO_atom_SFs(sf_n)
+!
+!      !!!!!!!!! Do the fit !!!!!!!!!
+!      .crystal.fit_rigid_atoms(sf_n)
+!      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!
+!      ! Write CIF
+!      .BASE:put_CIFs(with_ESDs=TRUE)
+!
+!      ! Clean up
+!      sf_n.destroy
+!
+!      .crystal.data.set_use_IAM_density(keep)
+!
+!      .BASE:destroy_spherical_atom_data
+!
+!   end
+
+!   get_unique_NAO_atom_SFs(sf_n) ::: leaky, private
+!   ! Get "sf_n", the IAM structure factors for the symmetry generated
+!   ! K points with *no* thermal smearing, for every unique atom.
+!      sf_n :: MAT{CPX}*
 !
 !   ENSURE(.basis_info_made,"no basis info")
 !   ENSURE(.atom.created,"no atom list")
 !   ENSURE(.crystal.created, "no crystal")
 !   ENSURE(.crystal.data.created, "no reflection data")
+!   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+!   ENSURE(.crystal.data.use_IAM_density,"not using IAM density!")
 !   ENSURE(.crystal.asymmetric_unit_atom.created,"no asymmetric unit atoms")
-!   ENSURE(.crystal.fragment_info_made,"no crystal fragment information")
-!   ENSURE(.density_matrix.created, "no density matrix")
-!   ENSURE(.density_matrix.restricted.created, "no restricted DM")
-!   ENSURE(sf_static.dim1==.crystal.n_unique_SF_k_pts, "wrong dim1, sf_static")
-!   ENSURE(sf_static.dim2==.crystal.asymmetric_unit_atom.dim, "wrong dim2, sf_static")
+!   ENSURE(.crystal.unique_atom_for_frag_atom.created,"no unique-frag_atom")
+!   ENSURE(.crystal.asym_atom_for_frag_atom.created,"no asym-frag_atom")
 !
-!      dc :: CPX
-!      ra :: VEC{REAL}(3)
-!      k1,k2,k3 :: VEC{REAL}*
-!      n_atom,n_k, u,c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+!      k_pts :: MAT{REAL}*
+!      n_atom,n_k, u,c,a :: INT
+!      rf :: REAL
+!      old :: BIN
 !
-!      ! Asymmetric unit atoms
-!      n_atom = .crystal.asymmetric_unit_atom.dim
-!
+!      ! Asymmetric unit atoms;
 !      ! Symmetry generated K points and SF's
-!      n_k = .crystal.n_unique_SF_k_pts
+!      n_atom = .crystal.asymmetric_unit_atom.dim
+!      n_k    = .crystal.n_unique_SF_k_pts
 !
 !      ! Allocate structure factor array (leaky)
-!      sf_static.create(n_k,n_atom)
+!      sf_n.create(n_k,n_atom)
 !
-!      ! Make the symmetry generated k's
-!      n_k = .crystal.n_unique_SF_k_pts
-!      k1.create(n_k)
-!      k2.create(n_k)
-!      k3.create(n_k)
-!      .crystal.data.reflections.make_unique_SF_k_pts(k1,k2,k3,.crystal.spacegroup,.crystal.unit_cell)
+!      ! Make list of symmetry non-equivalent symops
+!      ! and the necessary k points
+!      k_pts.create(n_k,3)
+!      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 !
-!      ! Density matrix (leaky)
-!      .BASE:make_ao_density_matrix
-!      ENSURE(.density_matrix.restricted.created, "no restricted DM")
-!      D => .density_matrix.restricted
+!      ! Make the SF's
+!      sf_n = ZERO
 !
-!      ! Make the structure factors
-!      sf_static = ZERO
+!      ! Loop over integration atoms "c"
+!      do u = 1,.crystal.n_unique_frag_atoms
 !
-!      ! Loop over unique/asymmetric atoms "u"
-!      parallel do u = 1,.crystal.n_unique_frag_atoms
-!
+!         ! Atoms
 !         c = .crystal.unique_frag_atom(u)
 !         a = .crystal.asym_atom_for_frag_atom(c)
 !
-!         ! Repetition factor for this atom
+!         ! Structure factors
+!         old = .atom(c).use_IAM_ITC_FFs
+!         .atom(c).set_use_IAM_ITC_FFs(FALSE)
+!         .atom(c).make_FT(sf_n(:,u),k_pts)
+!         .atom(c).set_use_IAM_ITC_FFs(old)  ! Put back
+!
+!         ! Repetition (site-symmetry) factor
 !         rf = .crystal.asym_atom_rep_factor(a)
 !         if (rf.is_zero) cycle
 !         rf = ONE/rf
 !
-!         ! Overlapping atoms
-!         overlapping_atom => .overlapping_atoms_for_atom(c).element
-!
-!         ! Loop c-overlapping atoms a
-!         do ca = 1,overlapping_atom.dim
-!
-!            oa  = overlapping_atom(ca)
-!            fsa = .first_shell_for_atom(oa)
-!            lsa =  .last_shell_for_atom(oa)
-!            fba = .first_basis_fn_for_atom(oa)
-!            ra  = .atom(oa).position
-!
-!            ! Loop shells on atom a
-!            do sa = fsa,lsa
-!
-!               ! Shell a limits
-!               fa = .first_basis_fn_for_shell(sa)
-!               la =  .last_basis_fn_for_shell(sa)
-!               na = la - fa + 1
-!               as = .basis_shell_for_shell(sa)
-!
-!               ! Set shell "sa"
-!               sha = .precomputed_basis_shellpair(as,1).a
-!               sha.position = ra
-!
-!               ! Loop c-overlapping atoms b
-!               do cb = 1,ca
-!
-!                  ob  = overlapping_atom(cb)
-!                  fsb = .first_shell_for_atom(ob)
-!                  lsb =  .last_shell_for_atom(ob)
-!
-!                  ! Loop shells on atom b
-!                  do sb = fsb,min(lsb,sa)
-!
-!                  end
-!
-!               end
-!
-!            end
-!
-!         end ! unique atom u
-!
-!         ! Add the dispersion correction
-!         if (.crystal.correct_dispersion) then
-!            dc   = .atom(c).dispersion_correction(.crystal.wavelength)
-!            sf_static(:,u) = sf_static(:,u) + dc
-!         end
+!         ! Scale
+!         sf_n(:,u) = sf_n(:,u) * rf
 !
 !      end
 !
-!      k3.destroy
-!      k2.destroy
-!      k1.destroy
-!
-!      if (DO_IN_PARALLEL) then
-!         PARALLEL_SUM(sf_n)
-!      end
+!      ! Clean up
+!      k_pts.destroy
 !
 !   end
+
+!  ==============
+!  IAM refinement
+!  ==============
+
+   refine_independent_atoms
+   ! Do an IAM refinement
+   ! Cartesian (bohr) coordinates are used because structure factors
+   ! are aspherical and calculated from the QM wavefunction.
+   ! NOTE: this routine does only one cycle of fitting with the
+   ! current density matrix i.e. this is a "rigid atom fit".
+   ! NOTE: It's tricky exactly which atom's are used for refinement:
+   ! * Structure factors are calculated only for *unique* fragment
+   !   atoms since the QM wavefunction refers to the fragment_atoms.
+   ! * However, asymmetric unit atoms are used to "store" the updating
+   !   geometry; thus unique fragment atom pADPs and shifts are
+   !   calculated (and derivatives with respect to the fragment atom
+   !   positions and ADPs) but these parameters and shifts are later
+   !   transformed back into asymmetric unit.
+
+   ENSURE(.atom.created, "no atoms to fit")
+   ENSURE(.becke_grid.created,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"becke_grid not finalized")
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.data.created,"no crystal data")
+   ENSURE(.crystal.xray_data.created,"no crystal xray data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      sf_n :: MAT{CPX}*
+      keep :: BIN
+
+      keep = .crystal.data.use_IAM_density
+      .crystal.data.set_use_IAM_density(TRUE)
+
+      .TAD:get_unique_IAM_atom_SFs(sf_n)
+
+      !!!!!!!!! Do the fit !!!!!!!!!
+      .crystal.fit_rigid_atoms(sf_n)
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Write CIF
+      .BASE:put_CIFs(with_ESDs=TRUE)
+
+      ! Clean up
+      sf_n.destroy
+
+      .crystal.data.set_use_IAM_density(keep)
+
+   end
+
+   get_unique_IAM_atom_SFs(sf_n) ::: leaky, private
+   ! Get "sf_n", the IAM structure factors for the symmetry generated
+   ! K points with *no* thermal smearing, for every unique atom.
+      sf_n :: MAT{CPX}*
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.data.created, "no reflection data")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.crystal.data.use_IAM_density,"not using IAM density!")
+   ENSURE(.crystal.asymmetric_unit_atom.created,"no asymmetric unit atoms")
+   ENSURE(.crystal.unique_atom_for_frag_atom.created,"no unique-frag_atom")
+   ENSURE(.crystal.asym_atom_for_frag_atom.created,"no asym-frag_atom")
+
+      k_pts :: MAT{REAL}*
+      n_atom,n_k, u,c,a :: INT
+      rf :: REAL
+      old :: BIN
+
+      ! Asymmetric unit atoms;
+      ! Symmetry generated K points and SF's
+      n_atom = .crystal.asymmetric_unit_atom.dim
+      n_k    = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_n.create(n_k,n_atom)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      ! Make the SF's
+      sf_n = ZERO
+
+      ! Loop over integration atoms "c"
+      do u = 1,.crystal.n_unique_frag_atoms
+
+         ! Atoms
+         c = .crystal.unique_frag_atom(u)
+         a = .crystal.asym_atom_for_frag_atom(c)
+
+         ! Structure factors
+         old = .atom(c).use_IAM_ITC_FFs
+         .atom(c).set_use_IAM_ITC_FFs(TRUE)
+         .atom(c).make_FT(sf_n(:,u),k_pts)
+         .atom(c).set_use_IAM_ITC_FFs(old)  ! Put back
+
+         ! Repetition (site-symmetry) factor
+         rf = .crystal.asym_atom_rep_factor(a)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         ! Scale
+         sf_n(:,u) = sf_n(:,u) * rf
+
+      end
+
+      ! Clean up
+      k_pts.destroy
+
+   end
 
 !  ===============
 !  Invariom labels
