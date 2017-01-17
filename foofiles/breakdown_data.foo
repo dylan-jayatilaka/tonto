@@ -69,7 +69,11 @@ module BREAKDOWN_DATA
       nullify(.mol)
       nullify(.mol1)
       nullify(.mol2)
-      nullify(.density_matrix)
+      nullify(.density_mx)
+      nullify(.new_density_mx)
+      nullify(.E_ee_helper)
+      nullify(.E_ex_helper)
+      nullify(.E_rep_helper)
    end
 
    destroy_ptr_part ::: leaky
@@ -96,6 +100,11 @@ module BREAKDOWN_DATA
       .mol2_symbols.destroy
       .group_pairs.destroy
       .group_energies.destroy
+      .density_mx.destroy
+      .new_density_mx.destroy
+      .E_ee_helper.destroy
+      .E_ex_helper.destroy
+      .E_rep_helper.destroy
    end
 
 !  ===========
@@ -304,12 +313,15 @@ module BREAKDOWN_DATA
       .mol.SCF:merge_group_MOs
       .mol.BASE:make_scf_density_matrix
       
-      .density_matrix => .mol.density_matrix.restricted
-      !stdout.show("Basis set: ", .mol1.basis_name)
+      .density_mx.create_copy(.mol.density_matrix.restricted)
       !stdout.show("Number of basis functions: ", .mol.n_bf)
-      !.put_basis
       .ao_2e_ints.create(.mol.n_bf, .mol.n_bf, .mol.n_bf, .mol.n_bf)
       .mol.FOCK:make_ERI_integrals(.ao_2e_ints)
+      
+      .mol.SCF:symmorthonormalize_occupied_MOs
+      .mol.BASE:make_scf_density_matrix
+      .new_density_mx.create_copy(.mol.density_matrix.restricted)
+      .get_cx_integrals_breakdown 
 
       .mol1.atom.get_distances(.mol2.atom, .distances)
       .get_electrostatic_exchange_energy_breakdown
@@ -325,7 +337,7 @@ module BREAKDOWN_DATA
    end
 
 !Electrostatic and exchange interaction
-   get_electrostatic_exchange_energy_breakdown ::: private, private, leaky
+   get_electrostatic_exchange_energy_breakdown ::: private, leaky
       self :: INOUT
       
       .E_el.create(.mol1.n_atom, .mol2.n_atom)
@@ -348,22 +360,23 @@ module BREAKDOWN_DATA
       .attraction_mx.create(.mol.n_atom, .mol.n_bf, .mol.n_bf)
       .mol.INTS:get_nuclear_attraction_by_nucleus_matrices(.attraction_mx)
       do i = 1, .mol1.n_atom
-         .mol2.INTS:get_one_electron_operator_breakdown(.attraction_mx(i, :, :), .E_ne(i, :), .density_matrix, .mol1.n_bf, ONE)
+         .mol2.INTS:get_one_electron_operator_breakdown(.attraction_mx(i, :, :), .E_ne(i, :), .density_mx, .mol1.n_bf, ONE)
       end
       do i = 1, .mol2.n_atom
-         .mol1.INTS:get_one_electron_operator_breakdown(.attraction_mx(i + .mol1.n_atom, :, :), .E_ne(:, i), .density_matrix, 0, ONE)
+         .mol1.INTS:get_one_electron_operator_breakdown(.attraction_mx(i + .mol1.n_atom, :, :), .E_ne(:, i), .density_mx, 0, ONE)
       end
    end
 
    get_ee_repulsion_and_exchange_energy_breakdown ::: private, leaky
       self :: INOUT
+      i, j :: INT
       
       .E_ee.create(.mol1.n_atom, .mol2.n_atom)
       .E_ex.create(.mol1.n_atom, .mol2.n_atom)
       .E_ee = ZERO
       .E_ex = ZERO
 
-      .get_ee_repulsion_and_exchange_energy_breakdown_inner(.E_ee, .E_ex, .mol1, .mol2, ONE, .mol1.n_bf)      
+      .get_ee_repulsion_and_exchange_energy_breakdown_inner(.E_ee, .E_ex, .mol1, .mol2, ONE, .mol1.n_bf, .density_mx)
    end
 
 !Polarisation interaction
@@ -455,17 +468,14 @@ module BREAKDOWN_DATA
       
       delta_dm :: MAT{REAL}*
       
-      delta_dm.create(.mol.n_bf, .mol.n_bf)
-
-      delta_dm.to_scaled(.density_matrix, -ONE)
+      delta_dm.create_copy(.new_density_mx - .density_mx)
+      
       delta_E = ZERO
-      .get_ee_repulsion_and_exchange_energy_breakdown_inner(delta_E, delta_E, .mol, .mol, -HALF, 0)
+      .get_ee_repulsion_and_exchange_energy_breakdown_inner(delta_E, delta_E, .mol, .mol, -HALF, 0, .density_mx)
+
+      !stdout.text("Symmorthonormalised MOs!")
       
-      .mol.SCF:symmorthonormalize_occupied_MOs
-      .mol.BASE:make_scf_density_matrix
-      delta_dm.plus(.density_matrix)
-      
-      .get_ee_repulsion_and_exchange_energy_breakdown_inner(delta_E, delta_E, .mol, .mol, HALF, 0)
+      .get_ee_repulsion_and_exchange_energy_breakdown_inner(delta_E, delta_E, .mol, .mol, HALF, 0, .new_density_mx)
       .get_ne_attraction_contribution_to_repulsion(delta_E, delta_dm)
       .get_kinetic_contribution_to_repulsion(delta_E, delta_dm)
 
@@ -474,7 +484,6 @@ module BREAKDOWN_DATA
 
    get_repulsion_from_contributions(delta_E) ::: private
       self :: INOUT
-
       delta_E :: MAT{REAL}*
       
       i, j, jj :: INT
@@ -572,10 +581,9 @@ module BREAKDOWN_DATA
    end
 
 !Helper functions
-   get_ee_repulsion_and_exchange_energy_breakdown_inner(E_ee, E_ex, mol1, mol2, factor, offset) ::: private
+   get_ee_repulsion_and_exchange_energy_breakdown_inner(E_ee, E_ex, mol1, mol2, factor, offset, density_mx) ::: private
       self :: INOUT
-
-      E_ee, E_ex :: MAT{REAL}*
+      E_ee, E_ex, density_mx :: MAT{REAL}*
       mol1, mol2 :: MOLECULE*
       factor :: REAL
       offset :: INT
@@ -596,7 +604,7 @@ module BREAKDOWN_DATA
                do k = k_start, k_end
                   do n = 1, mol1.n_bf 
                      do l = offset + 1, offset + mol2.n_bf
-                         density_term = .density_matrix(m, n) * .density_matrix(k, l) * factor
+                         density_term = density_mx(m, n) * density_mx(k, l) * factor
                          coulomb_term = density_term * .ao_2e_ints(m, n, k, l)
                          exchange_term = -QUARTER * density_term * (.ao_2e_ints(m, k, n, l) + .ao_2e_ints(n, k, m, l))
                          E_ee(i, j) = E_ee(i, j) + coulomb_term
@@ -608,7 +616,44 @@ module BREAKDOWN_DATA
          end
       end
 
-      !stdout.text("2e-ints processed!")
+      stdout.text("2e-ints processed!")
+   end
+
+   get_cx_integrals_breakdown ::: private
+      self :: INOUT
+      
+      density_term, delta_density_term, coulomb_term, exchange_term :: REAL
+      shell1, shell2, m_start, m_end, k_start, k_end, i, j, m, n, k, l :: INT
+
+      .E_ee_helper.create(.mol.n_atom, .mol.n_atom)
+      .E_ex_helper.create(.mol.n_atom, .mol.n_atom)
+      .E_rep_helper.create(.mol.n_atom, .mol.n_atom)
+
+      do shell1 = 1, .mol.n_shell
+         m_start = .mol.first_basis_fn_for_shell(shell1)
+         m_end = .mol.last_basis_fn_for_shell(shell1)
+         i = .mol.atom_for_shell(shell1)         
+         do m = m_start, m_end
+            do shell2 = 1, .mol.n_shell
+               k_start = .mol.first_basis_fn_for_shell(shell2)
+               k_end = .mol.last_basis_fn_for_shell(shell2)
+               j = .mol.atom_for_shell(shell2)
+               do k = k_start, k_end
+                  do n = 1, .mol.n_bf 
+                     do l = 1, .mol.n_bf
+                        density_term = .density_mx(m, n) * .density_mx(k, l)
+                        delta_density_term = .new_density_mx(m, n) * .new_density_mx(k, l) - density_term
+                        coulomb_term = HALF * .ao_2e_ints(m, n, k, l)
+                        exchange_term = -HALF * QUARTER * (.ao_2e_ints(m, k, n, l) + .ao_2e_ints(n, k, m, l))
+                        .E_ee_helper(i, j) = .E_ee_helper(i, j) + density_term * coulomb_term
+                        .E_ex_helper(i, j) = .E_ex_helper(i, j) + density_term * exchange_term
+                        .E_rep_helper(i, j) = .E_rep_helper(i, j) + delta_density_term * (coulomb_term + exchange_term)
+                     end
+                  end
+               end
+            end
+         end
+      end
    end
 
 !  ========================
@@ -801,7 +846,7 @@ module BREAKDOWN_DATA
       atoms1.create_copy(.mol1.atom(group1))
       atoms2.create_copy(.mol2.atom(group2))
 
-      atoms1.put_minimum_interatomic_distance(atoms2, .distances, .distance_units, .distance_factor)
+      atoms1.put_minimum_interatomic_distance(atoms2, .distances(group1, group2), .distance_units, .distance_factor)
       atoms1.put_bonds(.mol1_bonded(group1, group1), "1")
       atoms2.put_bonds(.mol2_bonded(group2, group2), "2")
 
