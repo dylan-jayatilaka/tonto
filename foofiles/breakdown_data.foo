@@ -13,6 +13,8 @@ module BREAKDOWN_DATA
    pol_factor :: REAL = 0.593
    disp_factor :: REAL = 0.852
    er_factor :: REAL = 0.681
+   fast_factors :: VEC{REAL}(4) = [0.882, 0.593, 0.852, 0.681]
+   accurate_factors :: VEC{REAL}(4) = [1.063, 0.756, 0.843, 0.595]
 
    contains
    
@@ -64,7 +66,7 @@ module BREAKDOWN_DATA
       nullify(.mol2_bonded)
       nullify(.mol1_symbols)
       nullify(.mol2_symbols)
-      nullify(.group_pairs)
+      nullify(.queries)
       nullify(.group_energies)
       nullify(.mol)
       nullify(.mol1)
@@ -74,6 +76,7 @@ module BREAKDOWN_DATA
       nullify(.E_ee_helper)
       nullify(.E_ex_helper)
       nullify(.E_rep_helper)
+      nullify(.scale_factors)
    end
 
    destroy_ptr_part ::: leaky
@@ -97,13 +100,15 @@ module BREAKDOWN_DATA
       .mol2_bonded.destroy
       .mol1_symbols.destroy
       .mol2_symbols.destroy
-      .group_pairs.destroy
+      .queries.destroy
       .group_energies.destroy
       .density_mx.destroy
       .new_density_mx.destroy
       .E_ee_helper.destroy
       .E_ex_helper.destroy
       .E_rep_helper.destroy
+      .scale_factors.destroy
+      .scale_factors.destroy
    end
 
 !  ===========
@@ -119,6 +124,9 @@ module BREAKDOWN_DATA
       .print_atom_breakdown = FALSE
       .print_extra_terms = FALSE
       .print_distances = FALSE
+      .scale_factors.create_copy(accurate_factors)
+      .num_groups = 0
+      .num_queries = 0
    end
    
 !  ===============
@@ -147,7 +155,7 @@ module BREAKDOWN_DATA
       if (.print_atom_breakdown) then
          .put_atomic_energy_breakdown
       end
-      if (.group_pairs.dim /= 0) then
+      if (.num_queries /= 0) then
          .put_functional_group_energy_breakdown
       end
    end
@@ -176,11 +184,12 @@ module BREAKDOWN_DATA
          case ("groups=                "); .read_letter_groups
          case ("group_sizes=           "); .read_group_sizes
          case ("num_groups=            "); .read_num_groups
-         case ("num_queries=           "); .read_num_group_pairs
-         case ("queries=               "); .read_group_pairs
+         case ("num_queries=           "); .read_num_queries
+         case ("queries=               "); .read_queries
          case ("print_atom_breakdown   "); .print_atom_breakdown = TRUE
          case ("print_distances        "); .print_distances = TRUE
          case ("print_extra_terms      "); .print_extra_terms = TRUE
+         case ("using_fast_wavefunction"); .set_factors_to_fast
          case default;       UNKNOWN(word)
       end
 
@@ -219,10 +228,8 @@ module BREAKDOWN_DATA
    read_num_groups ::: leaky
       self :: INOUT
 
-      num_groups :: INT
-
-      stdin.read(num_groups)
-      .letter_groups.create(num_groups)
+      stdin.read(.num_groups)
+      .letter_groups.create(.num_groups)
    end
 
    read_group_sizes ::: leaky
@@ -277,22 +284,27 @@ module BREAKDOWN_DATA
       end
    end
 
-   read_num_group_pairs ::: leaky
+   read_num_queries ::: leaky
       self :: INOUT
 
-      num_group_pairs :: INT
-
-      stdin.read(num_group_pairs)
-      .group_pairs.create(num_group_pairs, num_atom_groups)
-      .group_pairs = 0
+      stdin.read(.num_queries)
+      .queries.create(.num_queries, num_atom_groups)
+      .queries = 0
    end
 
-   read_group_pairs
+   read_queries
       self :: INOUT
 
-      ENSURE(.group_pairs.created, "number of queries must be read in before queries")
+      ENSURE(.queries.created, "number of queries must be read in before queries")
 
-      stdin.read(.group_pairs)
+      stdin.read(.queries)
+   end
+
+   set_factors_to_fast
+      self :: INOUT
+    
+      .scale_factors.destroy
+      .scale_factors.create_copy(fast_factors)
    end
 
 !  ======================
@@ -325,7 +337,7 @@ module BREAKDOWN_DATA
       .mol1.atom.get_dispersion_energy_breakdown(.mol2.atom, .E_disp, .distances)
       .get_exchange_repulsion_energy_breakdown
       
-      .E_tot.create_copy(el_factor * .E_el + disp_factor * .E_disp + pol_factor * .E_pol + er_factor * .E_er)
+      .E_tot.create_copy(.scale_factors(1) * .E_el + .scale_factors(2) * .E_disp + .scale_factors(3) * .E_pol + .scale_factors(4) * .E_er)
 
       .mol1_symbols.create_copy(ATOM::element_symbols(.mol1.atom.atomic_number))
       .mol2_symbols.create_copy(ATOM::element_symbols(.mol2.atom.atomic_number))
@@ -500,15 +512,17 @@ module BREAKDOWN_DATA
       .E_ex_helper.create(.mol.n_atom, .mol.n_atom)
       .E_rep_helper.create(.mol.n_atom, .mol.n_atom)
       
-      factor_mat.create(2 * .mol.n_bf, 2 * .mol.n_bf)
+      factor_mat.create(2 * .mol.n_bf - 1, 2 * .mol.n_bf - 1)
       factor_mat = ONE
       factor_mat(.mol.n_bf, .mol.n_bf) = ZERO
 
       .E_ee_helper = ZERO
       .E_ex_helper = ZERO
       .E_rep_helper = ZERO
-      
+     
+      stdout.show("Total pairs", .mol.n_shell_pairs)
       do mn = 1, .mol.n_shell_pairs
+         stdout.show("Pair", mn)
          .mol.BASE:get_shell_pair_indices(mn, shell_m, shell_n, start_m, end_m, dummy1, start_n, end_n, dummy2, a_m, a_n)
          .mol.BASE:set_new_shell_quartet_ab(sh4n, shell_m, shell_n, skip = FALSE)
          do kl = 1, mn
@@ -518,31 +532,7 @@ module BREAKDOWN_DATA
          end
          sh4n.destroy_ab
       end
-
-      !do shell_m = 1, .mol.n_shell
-      !   start_m = .mol.first_basis_fn_for_shell(shell_m)
-      !   end_m = .mol.last_basis_fn_for_shell(shell_m)
-      !   a_m = .mol.atom_for_shell(shell_m)
-      !   do shell_n = 1, .mol.n_shell
-      !      start_n = .mol.first_basis_fn_for_shell(shell_n)
-      !      end_n = .mol.last_basis_fn_for_shell(shell_n)
-      !      a_n = .mol.atom_for_shell(shell_n)
-      !      .mol.BASE:set_new_shell_quartet_ab(sh4n, shell_m, shell_n, skip = FALSE)
-      !      do shell_k = 1, .mol.n_shell
-      !         start_k = .mol.first_basis_fn_for_shell(shell_k)
-      !         end_k = .mol.last_basis_fn_for_shell(shell_k)
-      !         a_k = .mol.atom_for_shell(shell_k)
-      !         do shell_l = 1, .mol.n_shell
-      !            start_l = .mol.first_basis_fn_for_shell(shell_l)
-      !            end_l = .mol.last_basis_fn_for_shell(shell_l)
-      !            a_l = .mol.atom_for_shell(shell_l)
-      !            .process_integrals(factor_mat, sh4n, shell_k, shell_l, a_m, a_n, a_k, a_l, start_m, end_m, start_n, end_n, start_k, end_k, start_l, end_l)
-      !         end
-      !      end
-      !      sh4n.destroy_ab
-      !   end
-      !end
-
+      
       factor_mat.destroy
    end
 
@@ -550,12 +540,11 @@ module BREAKDOWN_DATA
       self :: IN
       factor_mat :: MAT{REAL}*
       sh4n :: SHELL1QUARTET
-      a_m, a_n, a_k, a_l, start_m, end_m :: INT
-      start_n, end_n, start_k, end_k, start_l, end_l :: INT
+      a_m, a_n, a_k, a_l, start_m, end_m, start_n, end_n, start_k, end_k, start_l, end_l :: INT
 
       I :: VEC{REAL}*
       m, n, k, l, mnkl :: INT
-      integral :: REAL
+      factor, integral :: REAL
       
       I.create(sh4n.ab_n_bf_pairs * sh4n.cd_n_bf_pairs)
       SHELL1QUARTET::make_ERI(sh4n, I)
@@ -567,15 +556,16 @@ module BREAKDOWN_DATA
             do n = start_n, end_n
                do m = start_m, end_m
                   mnkl = mnkl + 1
-                  integral = I(mnkl) * .get_integral_factor(factor_mat, m, n, k, l)
+                  factor = .get_integral_factor(factor_mat, start_m, start_n, start_k, start_l)
+                  integral = I(mnkl) * factor 
                   .add_cx_terms(m, n, k, l, a_m, a_n, a_k, integral)
                   .add_cx_terms(m, n, l, k, a_m, a_n, a_l, integral)
                   .add_cx_terms(n, m, k, l, a_n, a_m, a_k, integral)
                   .add_cx_terms(n, m, l, k, a_n, a_m, a_l, integral)
-                  .add_cx_terms(n, m, l, k, a_n, a_m, a_l, integral)
-                  .add_cx_terms(n, m, k, l, a_n, a_m, a_k, integral)
-                  .add_cx_terms(m, n, l, k, a_m, a_n, a_l, integral)
-                  .add_cx_terms(m, n, k, l, a_m, a_n, a_k, integral)
+                  .add_cx_terms(k, l, m, n, a_k, a_l, a_m, integral)
+                  .add_cx_terms(k, l, n, m, a_k, a_l, a_n, integral)
+                  .add_cx_terms(l, k, m, n, a_l, a_k, a_m, integral)
+                  .add_cx_terms(l, k, n, m, a_l, a_k, a_n, integral)
                end
             end
          end
@@ -591,10 +581,10 @@ module BREAKDOWN_DATA
       res :: REAL
 
       term1, term2, term3 :: REAL
-      
-      term1 = HALF * HALF + .get_entry(factor_mat, 0, m - n)
-      term2 = HALF * HALF + .get_entry(factor_mat, 0, k - l)
-      term3 = HALF * HALF + .get_entry(factor_mat, m - k, n - l) * .get_entry(factor_mat, m - l, n - k)
+
+      term1 = HALF + HALF * .get_entry(factor_mat, 0, m - n)
+      term2 = HALF + HALF * .get_entry(factor_mat, 0, k - l)
+      term3 = HALF + HALF * .get_entry(factor_mat, m - k, n - l) * .get_entry(factor_mat, m - l, n - k)
 
       res = term1 * term2 * term3
    end
@@ -603,7 +593,7 @@ module BREAKDOWN_DATA
       self :: IN
       m, n, k, l, a_m, a_n, a_k :: INT
       integral :: REAL
-                  
+      
       BREAKDOWN_DATA::add_cx_terms_inner(m, n, k, l, a_m, a_n, a_k, .E_ee_helper, .E_ex_helper, .density_mx, integral)
       BREAKDOWN_DATA::add_cx_terms_inner(m, n, k, l, a_m, a_n, a_k, .E_rep_helper, .E_rep_helper, .density_mx, -integral)
       BREAKDOWN_DATA::add_cx_terms_inner(m, n, k, l, a_m, a_n, a_k, .E_rep_helper, .E_rep_helper, .new_density_mx, integral)
@@ -615,7 +605,7 @@ module BREAKDOWN_DATA
       i, j :: INT
       res :: REAL
 
-      res = mat(i + .mol.n_atom, j + .mol.n_atom)
+      res = mat(i + .mol.n_bf, j + .mol.n_bf)
    end
 
    add_cx_terms_inner(m, n, k, l, a_m, a_n, a_k, E_ee, E_ex, density_mx, integral) ::: selfless, private
@@ -697,22 +687,24 @@ module BREAKDOWN_DATA
       self :: INOUT
 
       ENSURE(.symbols_are_valid, "invalid symbol detected")
-
-      .mol1.PROP:find_groups(.letter_groups, .mol1_groups, .mol1_bonded)
-      .mol2.PROP:find_groups(.letter_groups, .mol2_groups, .mol2_bonded)
+      
+      if (.num_groups /= 0) then
+         .mol1.PROP:find_groups(.letter_groups, .mol1_groups, .mol1_bonded)
+         .mol2.PROP:find_groups(.letter_groups, .mol2_groups, .mol2_bonded)
+      end
    end
 
    get_functional_groups_energy_breakdown ::: private, leaky
       self :: INOUT
 
       ENSURE(.groups_present, "group not found in either molecule")
-      ENSURE(.group_pairs_are_valid, "group not found in the relevant molecule")
+      ENSURE(.queries_are_valid, "group not found in the relevant molecule")
 
       num_pairs, i :: INT
 
       num_pairs = 0
-      do i = 1, .group_pairs.dim1
-         num_pairs = num_pairs + .mol1_groups(.group_pairs(i, 1)).element.dim * .mol2_groups(.group_pairs(i, 2)).element.dim
+      do i = 1, .num_queries
+         num_pairs = num_pairs + .mol1_groups(.queries(i, 1)).element.dim * .mol2_groups(.queries(i, 2)).element.dim
       end
       
       .group_energies.create(num_pairs, num_interaction_types, num_interaction_directions)
@@ -733,9 +725,9 @@ module BREAKDOWN_DATA
       group1, group2 :: VEC{INT}*
      
       l = 0
-      do i = 1, .group_pairs.dim1
-         list1 => .mol1_groups(.group_pairs(i, 1)).element
-         list2 => .mol2_groups(.group_pairs(i, 2)).element
+      do i = 1, .num_queries
+         list1 => .mol1_groups(.queries(i, 1)).element
+         list2 => .mol2_groups(.queries(i, 2)).element
          do j = 1, list1.dim 
             group1 => list1(j).element 
             do k = 1, list2.dim 
@@ -876,9 +868,9 @@ module BREAKDOWN_DATA
       stdout.text("Units: " // trim(.energy_units) // ", " // trim(.distance_units))
       
       l = 0
-      do i = 1, .group_pairs.dim1
-         list1 => .mol1_groups(.group_pairs(i, 1)).element
-         list2 => .mol2_groups(.group_pairs(i, 2)).element
+      do i = 1, .num_queries
+         list1 => .mol1_groups(.queries(i, 1)).element
+         list2 => .mol2_groups(.queries(i, 2)).element
          do j = 1, list1.dim 
             do k = 1, list2.dim
                l = l + 1
@@ -916,7 +908,7 @@ module BREAKDOWN_DATA
       i, j :: INT
       res :: STR
 
-      res = .letter_groups(.group_pairs(i, j)).element.to_concatenated_str(separator = trim(" "))
+      res = .letter_groups(.queries(i, j)).element.to_concatenated_str(separator = trim(" "))
    end
 
 !  ================
@@ -940,7 +932,7 @@ module BREAKDOWN_DATA
 
       res :: BIN
 
-      if (.letter_groups.dim == 0) then
+      if (.num_groups == 0) then
          res = TRUE
       else
          res = .letter_groups(1).element.created
@@ -954,7 +946,7 @@ module BREAKDOWN_DATA
       i :: INT
 
       res = TRUE
-      do i = 1, .letter_groups.dim
+      do i = 1, .num_groups
          res = res AND (.letter_groups(i).element.dim > 0)
       end
    end
@@ -968,7 +960,7 @@ module BREAKDOWN_DATA
       symbol :: STR*
 
       res = TRUE
-      do i = 1, .letter_groups.dim
+      do i = 1, .num_groups
          element => .letter_groups(i).element
          do j = 1, element.dim
             symbol => element(j)
@@ -984,12 +976,12 @@ module BREAKDOWN_DATA
       i :: INT
 
       res = TRUE
-      do i = 1, .mol1_groups.dim
+      do i = 1, .num_groups
          res = res AND ((.mol1_groups(i).element.created OR .mol2_groups(i).element.created))
       end
    end
 
-   group_pairs_are_valid result(res)
+   queries_are_valid result(res)
       self :: IN
 
       res :: BIN
@@ -997,16 +989,16 @@ module BREAKDOWN_DATA
       i, j, group :: INT
 
       res = TRUE
-      do i = 1, .group_pairs.dim1
+      do i = 1, .num_queries
          do j = 1, num_atom_groups
-            group = .group_pairs(i, j)
+            group = .queries(i, j)
             res = res AND group >= 1 AND group <= .mol1_groups.dim
          end
       end
       
       if (res) then
-         do i = 1, .group_pairs.dim1
-            res = res AND .mol1_groups(.group_pairs(i, 1)).element.created AND .mol2_groups(.group_pairs(i, 2)).element.created
+         do i = 1, .num_queries
+            res = res AND .mol1_groups(.queries(i, 1)).element.created AND .mol2_groups(.queries(i, 2)).element.created
          end
       end
    end
@@ -1043,20 +1035,6 @@ module BREAKDOWN_DATA
       end
    end
 
-   !put_vec_vec(v) ::: selfless
-   !   v :: VEC{VEC_{STR}}*
-   !   i :: INT
-   !   element :: VEC{STR}*
-
-   !   do i = 1, v.dim
-   !      stdout.show("Vector", i)
-   !      element => v(i).element
-   !      if (element.created) then
-   !         stdout.put(element)
-   !      end
-   !   end
-   !end
-
    put_test_matrices
       self :: IN
 
@@ -1087,11 +1065,8 @@ module BREAKDOWN_DATA
          end
       end
 
-      .put_atom_breakdown_matrix("Nucleus-nucleus charge products:", nncp) 
-      .put_atom_breakdown_matrix("Nucleus-electron charge products:", necp)
-      .put_atom_breakdown_matrix("Electron-electron charge products:", eecp)
-      .put_atom_breakdown_matrix("Nucleus-electron attraction energy approximations:", ne_field)
-      .put_atom_breakdown_matrix("Electron-electron attraction energy approximations:", ee_field)
+      .put_atom_breakdown_matrix("Approximation to nucleus-electron attraction", ne_field)
+      .put_atom_breakdown_matrix("Approximation to electron-electron repulsion", ee_field)
 
       nncp.destroy
       necp.destroy
