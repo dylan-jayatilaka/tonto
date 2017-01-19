@@ -26,6 +26,8 @@ module MOLECULE.INTS
 
    implicit none
 
+   num_dimensions :: INT = 3
+
 contains
 
 !  ========================
@@ -1436,28 +1438,69 @@ contains
       end
    end
 
-   get_electronic_field_breakdown(mol_from, mol_to, e_field, offset)
+   get_1way_polarisation_energy(atom, E_pol, charge) ::: private
+      self :: INOUT
+      
+      atom :: VEC{ATOM}*
+      E_pol :: MAT{REAL}*
+      charge :: INT
+ 
+      e_field, n_field, total_field :: MAT3{REAL}* !Index: atom to, atom from, component
+      term, polarisability :: REAL      
+      use_charged_values :: BIN
+      i, j :: INT
+      field_sum :: VEC{REAL}(3)
+      polarisabilities :: VEC{REAL}(atom.dim)
+      
+      .:get_electronic_field_breakdown(atom, e_field) 
+      atom.get_nuclear_field_breakdown(.atom, n_field)
+      total_field.create_copy(e_field + n_field)
+
+      use_charged_values = (charge /= 0) AND (atom.dim == 1)
+      do i = 1, atom.dim
+         polarisability = atom(i).Thakkar_atomic_dipole_polarizability(use_charged_values)
+         polarisabilities(i) = polarisability
+         field_sum = ZERO
+         do j = 1, .n_atom
+            field_sum = field_sum + total_field(i, j, :)
+         end
+         do j = 1, .n_atom
+            term = -HALF * polarisability * dot_product(total_field(i, j, :), field_sum)
+            E_pol(i, j) = E_pol(i, j) + term
+         end
+      end
+
+      !stdout.put(polarisabilities)
+      !stdout.text(" ")
+      !stdout.put(E_pol)
+      !stdout.text(" ")
+
+      e_field.destroy
+      n_field.destroy
+      total_field.destroy
+   end
+
+   get_electronic_field_breakdown(atom, e_field)
    !Calculates the electric field experienced by the nucleus of each atom
-   !in mol_to due to the electrons of each atom in mol_from
+   !in atom due to the electrons of each atom in self 
    !Stored in 3D array e_field
-   !Indexed: atom in mol_to-atom in mol_from-cartesian component
-      mol_from, mol_to :: MOLECULE*
+   !Indexed: atom in atom-atom in self-cartesian component
+      atom :: VEC{ATOM}*
       e_field :: MAT3{REAL}*
-      offset :: INT
 
       pos :: MAT{REAL}*
       field_mx :: MAT3{REAL}* !Indexing: component-orbital-orbital
       i, k :: INT
 
-      e_field.create(mol_to.n_atom, mol_from.n_atom, 3)
+      e_field.create(atom.dim, .n_atom, num_dimensions)
       e_field = ZERO
-      pos => mol_to.atom.coordinates_ptr
-      field_mx.create(3, .n_bf, .n_bf)
+      pos => atom.coordinates_ptr
+      field_mx.create(num_dimensions, .n_bf, .n_bf)
 
-      do i = 1, mol_to.n_atom
+      do i = 1, atom.dim 
          .:make_electric_field_matrices(field_mx(1, :, :), field_mx(2, :, :), field_mx(3, :, :), pos(:, i))
-         do k = 1, 3
-            mol_from.INTS:get_one_electron_operator_breakdown(field_mx(k, :, :), e_field(i, :, k), .density_matrix.restricted, offset, ONE)
+         do k = 1, num_dimensions
+            .:get_one_electron_operator_breakdown(field_mx(k, :, :), e_field(i, :, k), .density_matrix.restricted, 0, ONE)
          end
       end
       
