@@ -709,32 +709,39 @@ module BREAKDOWN_DATA
       type_num, pair_num :: INT, IN
       group1, group2 :: VEC{INT}*
       
-      gge, gme, mge :: MAT{REAL}*
-      gg_term, gb_term, bg_term, bb_term :: REAL
+      bulk1, bulk2 :: VEC{INT}* 
+      gge, gbe, bge, bbe :: MAT{REAL}*
 
-      gge.create(group1.dim, group2.dim)
-      gme.create(group1.dim, energy.dim2)
-      mge.create(energy.dim1, group2.dim)
+      .mol1.atom.get_bulk(group1, bulk1)
+      .mol2.atom.get_bulk(group2, bulk2)
+      
+      !stdout.text("Group 1:")
+      !stdout.put(group1)
+      !stdout.text("Group 2:")
+      !stdout.put(group2)
+      !stdout.text("Bulk 1:")
+      !stdout.put(bulk1)
+      !stdout.text("Bulk 2:")
+      !stdout.put(bulk2)
+      
+      gge.create_copy(energy(group1, group2))
+      gbe.create_copy(energy(group1, bulk2))
+      bge.create_copy(energy(bulk1, group2))
+      bbe.create_copy(energy(bulk1, bulk2))
 
-      gge = energy(group1, group2)
-      gme = energy(group1, :)
-      mge = energy(:, group2)
-
-      gg_term = gge.sum_elements
-      gb_term = gme.sum_elements - gg_term
-      bg_term = mge.sum_elements - gg_term
-      bb_term = energy.sum_elements - gg_term - gb_term - bg_term
-
+      .group_energies(pair_num, type_num, :) = [gge.sum_elements, gbe.sum_elements, bge.sum_elements, bbe.sum_elements]
+      
+      bulk1.destroy
+      bulk2.destroy
       gge.destroy
-      gme.destroy
-      mge.destroy
-
-      .group_energies(pair_num, type_num, :) = [gg_term, gb_term, bg_term, bb_term]
+      gbe.destroy
+      bge.destroy
+      bbe.destroy
    end
 
-!  ==============
-!  Output methods 
-!  ==============
+!  ===========================
+!  Output methods for textfile 
+!  ===========================
 
    put_to_textfile ::: private
       self :: IN
@@ -752,62 +759,6 @@ module BREAKDOWN_DATA
       end
    end
 
-   put_to_csv ::: private
-      self :: IN
-
-      i, j, k, l, m :: INT
-      list1, list2 :: VEC{VEC_{INT}}*
-      output :: VEC{STR}(num_interaction_types)
-
-      stdout.text("group 1 elements,group 2 elements,&
-      &minimum distance,closest atom in group 1,closest atom in group 2,&
-      &electrostatic energy,polarisation energy,dispersion energy,exchange-repulsion energy,total energy")
-      output = [.get_total(.E_el), .get_total(.E_pol), .get_total(.E_disp), .get_total(.E_er), .get_total(.E_tot)]
-      .print_csv_line("molecule", "molecule", ",,", output)
-      
-      l = 0
-      do i = 1, .num_queries
-         list1 => .mol1_groups(.queries(i, 1)).element
-         list2 => .mol2_groups(.queries(i, 2)).element
-         do j = 1, list1.dim 
-            do k = 1, list2.dim
-               l = l + 1
-               do m = 1, num_interaction_types
-                  output(m) = .get_str(.group_energies(l, m, 1))
-               end
-               .print_csv_line(.printed_group(i, 1), .printed_group(i, 2), ",,", output)
-            end
-         end
-      end
-   end
-
-   print_csv_line(group1, group2, closest, values)
-      self :: IN
-      group1, group2, closest :: STR
-      values :: VEC{STR}(num_interaction_types)
-
-      stdout.text(trim(group1) // "," // trim(group2) // "," // trim(closest) // values.to_concatenated_str(separator = ","))
-   end
-
-   get_total(mat) result(res) ::: private
-      self :: IN
-      mat :: MAT{REAL}*
-      res :: STR
-
-      res = .get_str(mat.sum_elements)
-   end
-
-   get_str(val) result(res) ::: private
-      self :: IN
-      val :: REAL
-      res :: STR
-
-      num :: REAL
-
-      num = val * .energy_factor
-      res = num.to_str
-   end
-   
    put_atomic_energy_breakdown ::: private
       self :: IN
 
@@ -967,6 +918,92 @@ module BREAKDOWN_DATA
       res = .letter_groups(.queries(i, j)).element.to_concatenated_str(separator = trim(" "))
    end
 
+!  ===========================
+!  Output methods for csv file 
+!  ===========================
+
+   put_to_csv ::: private
+      self :: IN
+
+      i, j, k, l, m :: INT
+      list1, list2 :: VEC{VEC_{INT}}*
+      output :: VEC{STR}(num_interaction_types)
+      dist_bonds_str :: STR
+
+      stdout.put("Working!") 
+      stdout.text("group 1 elements,group 2 elements,&
+      &minimum distance,closest atom in group 1,closest atom in group 2,&
+      &bonds in group 1, bonds in group 2,&
+      &electrostatic energy,polarisation energy,dispersion energy,exchange-repulsion energy,total energy")
+      output = [.get_total(.E_el), .get_total(.E_pol), .get_total(.E_disp), .get_total(.E_er), .get_total(.E_tot)]
+      .print_csv_line("molecule", "molecule", ",,,,,", output)
+      
+      l = 0
+      do i = 1, .num_queries
+         list1 => .mol1_groups(.queries(i, 1)).element
+         list2 => .mol2_groups(.queries(i, 2)).element
+         do j = 1, list1.dim 
+            do k = 1, list2.dim
+               l = l + 1
+               do m = 1, num_interaction_types
+                  output(m) = .get_str(.group_energies(l, m, 1))
+               end
+               dist_bonds_str = .get_min_distance_and_bonds_for_csv(list1(j).element, list2(k).element)
+               .print_csv_line(.printed_group(i, 1), .printed_group(i, 2), dist_bonds_str, output)
+            end
+         end
+      end
+   end
+
+   get_min_distance_and_bonds_for_csv(group1, group2) result(res) ::: private
+      self :: IN
+      group1, group2 :: VEC{INT}*
+      res :: STR
+      
+      list :: VEC{STR}(5)
+      atoms1, atoms2 :: VEC{ATOM}*
+      min_dist :: REAL
+
+      atoms1.create_copy(.mol1.atom(group1))
+      atoms2.create_copy(.mol2.atom(group2))
+
+      atoms1.get_minimum_interatomic_distance(atoms2, .distances(group1, group2), .distance_factor, list(2), list(3), min_dist)
+      list(1) = min_dist.to_str
+      atoms1.get_bonds(.mol1_bonded(group1, group1), list(4))
+      atoms2.get_bonds(.mol2_bonded(group2, group2), list(5))
+      res = list.to_concatenated_str(separator = ",")
+
+      atoms1.destroy
+      atoms2.destroy
+   end
+
+   print_csv_line(group1, group2, closest, values) ::: private
+      self :: IN
+      group1, group2, closest :: STR
+      values :: VEC{STR}(num_interaction_types)
+
+      stdout.text(trim(group1) // "," // trim(group2) // trim(closest) // values.to_concatenated_str(separator = ","))
+   end
+
+   get_total(mat) result(res) ::: private
+      self :: IN
+      mat :: MAT{REAL}*
+      res :: STR
+
+      res = .get_str(mat.sum_elements)
+   end
+
+   get_str(val) result(res) ::: private
+      self :: IN
+      val :: REAL
+      res :: STR
+
+      num :: REAL
+
+      num = val * .energy_factor
+      res = num.to_str
+   end
+   
 !  ================
 !  Checking methods
 !  ================
