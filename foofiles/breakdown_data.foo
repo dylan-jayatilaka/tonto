@@ -116,14 +116,17 @@ module BREAKDOWN_DATA
       .nullify_ptr_part
       .energy_units = "hartrees"
       .energy_factor = ONE
-      .distance_units = "bohrs"
-      .distance_factor = ONE
+      .distance_units = "angstroms"
+      .distance_factor = ONE / BOHR_PER_ANGSTROM
       .print_atom_breakdown = FALSE
       .print_extra_terms = FALSE
       .print_distances = FALSE
+      .print_totals = FALSE
       .scale_factors.create_copy(accurate_factors)
       .num_groups = 0
       .num_queries = 0
+      .read_as_structured = FALSE
+      .output_is_csv = FALSE
    end
    
 !  ===============
@@ -137,8 +140,8 @@ module BREAKDOWN_DATA
 
       ENSURE(mol.atom_group.created, "no atom group information")
       ENSURE(mol.atom_group.dim == num_atom_groups, "must have only 2 atom groups")
-      !BREAKDOWN_DATA:check_molecule(mol.atom_group(1).mol, "1")
-      !BREAKDOWN_DATA:check_molecule(mol.atom_group(2).mol, "2")
+      BREAKDOWN_DATA:check_molecule(mol.atom_group(1).mol, "1")
+      BREAKDOWN_DATA:check_molecule(mol.atom_group(2).mol, "2")
 
       .mol => mol
       
@@ -146,14 +149,10 @@ module BREAKDOWN_DATA
       .get_atom_energy_breakdown
       .process_groups
       .get_functional_groups_energy_breakdown
-      if (.print_distances) then
-         .put_distances
-      end
-      if (.print_atom_breakdown) then
-         .put_atomic_energy_breakdown
-      end
-      if (.num_queries /= 0) then
-         .put_functional_group_energy_breakdown
+      if (.output_is_csv) then
+         .put_to_csv
+      else
+         .put_to_textfile
       end
    end
 
@@ -183,9 +182,11 @@ module BREAKDOWN_DATA
          case ("num_groups=            "); .read_num_groups
          case ("num_queries=           "); .read_num_queries
          case ("queries=               "); .read_queries
+         case ("output_is_csv          "); .output_is_csv = TRUE
          case ("print_atom_breakdown   "); .print_atom_breakdown = TRUE
          case ("print_distances        "); .print_distances = TRUE
          case ("print_extra_terms      "); .print_extra_terms = TRUE
+         case ("print_totals           "); .print_totals = TRUE
          case ("using_fast_wavefunction"); .set_factors_to_fast
          case default;       UNKNOWN(word)
       end
@@ -638,7 +639,6 @@ module BREAKDOWN_DATA
           end
        end
        .mol2.INTS:get_1way_polarisation_energy(.mol1.atom, .E_pol, .mol2.charge)
-       stdout.show("Total polarisation energy (in units)", .E_pol.sum_elements * .energy_factor)
  
        E_pol_T.destroy
     end
@@ -736,10 +736,80 @@ module BREAKDOWN_DATA
 !  Output methods 
 !  ==============
 
+   put_to_textfile ::: private
+      self :: IN
+      
+      if (.print_distances) then
+         .put_distances
+      end
+      if (.print_atom_breakdown) then
+         .put_atomic_energy_breakdown
+      elseif (.print_totals) then
+         .put_energy_totals
+      end
+      if (.num_queries /= 0) then
+         .put_functional_group_energy_breakdown
+      end
+   end
+
+   put_to_csv ::: private
+      self :: IN
+
+      i, j, k, l, m :: INT
+      list1, list2 :: VEC{VEC_{INT}}*
+      output :: VEC{STR}(num_interaction_types)
+
+      stdout.text("group 1 elements,group 2 elements,&
+      &electrostatic energy,polarisation energy,dispersion energy,exchange-repulsion energy,total energy")
+      output = [.get_total(.E_el), .get_total(.E_pol), .get_total(.E_disp), .get_total(.E_er), .get_total(.E_tot)]
+      .print_csv_line("molecule", "molecule", output)
+      
+      l = 0
+      do i = 1, .num_queries
+         list1 => .mol1_groups(.queries(i, 1)).element
+         list2 => .mol2_groups(.queries(i, 2)).element
+         do j = 1, list1.dim 
+            do k = 1, list2.dim
+               l = l + 1
+               do m = 1, num_interaction_types
+                  output(m) = .get_str(.group_energies(l, m, 1))
+               end
+               .print_csv_line(.printed_group(i, 1), .printed_group(i, 2), output)
+            end
+         end
+      end
+   end
+
+   print_csv_line(group1, group2, values)
+      self :: IN
+      group1, group2 :: STR
+      values :: VEC{STR}(num_interaction_types)
+
+      stdout.text(trim(group1) // "," // trim(group2) // values.to_concatenated_str(separator = ","))
+   end
+
+   get_total(mat) result(res) ::: private
+      self :: IN
+      mat :: MAT{REAL}*
+      res :: STR
+
+      res = .get_str(mat.sum_elements)
+   end
+
+   get_str(val) result(res) ::: private
+      self :: IN
+      val :: REAL
+      res :: STR
+
+      num :: REAL
+
+      num = val * .energy_factor
+      res = num.to_str
+   end
+   
    put_atomic_energy_breakdown ::: private
       self :: IN
 
-      stdout.flush
       stdout.text("===============================================")
       stdout.text("Atom-atom breakdown of interaction energy terms")
       stdout.text("===============================================")
@@ -777,6 +847,29 @@ module BREAKDOWN_DATA
       .put_mat(print_mat)
 
       print_mat.destroy
+   end
+
+   put_energy_totals ::: private
+      self :: IN
+
+      stdout.text("========================")
+      stdout.text("Interaction energy terms")
+      stdout.text("========================")
+      stdout.text("Units: " // .energy_units)
+
+      .put_total("Electrostatic", .E_el)
+      .put_total("Polarisation", .E_pol)
+      .put_total("Dispersion", .E_disp)
+      .put_total("Exchange-repulsion", .E_er)
+      .put_total("Total", .E_tot)
+   end
+
+   put_total(name, mat) ::: private
+      self :: IN
+      name :: STR
+      mat :: MAT{REAL}*
+
+      stdout.show(trim(name) // " energy:", .energy_factor * mat.sum_elements)
    end
 
    put_distances ::: private
