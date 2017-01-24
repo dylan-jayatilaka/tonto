@@ -1,12 +1,13 @@
 module BREAKDOWN_DATA
    implicit none
 
-   num_interaction_directions :: INT = 4 
-   num_interaction_types :: INT = 5 
-   num_atom_groups :: INT = 2
-   column_heading :: VEC{STR}(4) = ["group1-group2", "group1-bulk  ", "bulk-group2  ", "bulk-bulk    "]
-   row_heading :: VEC{STR}(5) = ["electrostatic     ", "polarisation      ", "dispersion        ", "exchange-repulsion", "total             "]
-   cols_per_row :: INT = 5
+   num_interaction_directions :: INT, parameter = 4 
+   num_interaction_types :: INT, parameter = 5 
+   num_csv_cols :: INT, parameter = (num_interaction_directions + 1) * num_interaction_types
+   num_atom_groups :: INT, parameter = 2
+   cols_per_row :: INT, parameter = 5
+   column_heading :: VEC{STR}(num_interaction_directions) = ["group1-group2", "group1-bulk1 ", "bulk2-group2 ", "bulk1-bulk2  "]
+   row_heading :: VEC{STR}(num_interaction_types) = ["electrostatic     ", "polarisation      ", "dispersion        ", "exchange-repulsion", "total             "]
 
    !These fit the terms to the B3LYP-D3/6-31G(d, p) energies from Turner et. al (2014), J. Phys. Chem. Lett., 5, p. 4249
    fast_factors :: VEC{REAL}(4) = [0.882, 0.593, 0.852, 0.681]
@@ -114,6 +115,7 @@ module BREAKDOWN_DATA
    set_defaults ::: leaky
    ! Set up a default breakdown data object
       .nullify_ptr_part
+      .cif_filename = "no cif file"
       .energy_units = "hartrees"
       .energy_factor = ONE
       .distance_units = "angstroms"
@@ -126,7 +128,6 @@ module BREAKDOWN_DATA
       .num_groups = 0
       .num_queries = 0
       .read_as_structured = FALSE
-      .output_is_csv = FALSE
    end
    
 !  ===============
@@ -149,7 +150,7 @@ module BREAKDOWN_DATA
       .get_atom_energy_breakdown
       .process_groups
       .get_functional_groups_energy_breakdown
-      if (.output_is_csv) then
+      if (stdout.name.ends_in(".csv")) then
          .put_to_csv
       else
          .put_to_textfile
@@ -175,6 +176,7 @@ module BREAKDOWN_DATA
 
       select case (word)
          case ("}                      ")  ! exit read_loop
+         case ("cif_filename=          "); .read_cif_filename
          case ("distance_units=        "); .read_distance_units
          case ("energy_units=          "); .read_energy_units
          case ("groups=                "); .read_letter_groups
@@ -182,7 +184,6 @@ module BREAKDOWN_DATA
          case ("num_groups=            "); .read_num_groups
          case ("num_queries=           "); .read_num_queries
          case ("queries=               "); .read_queries
-         case ("output_is_csv          "); .output_is_csv = TRUE
          case ("print_atom_breakdown   "); .print_atom_breakdown = TRUE
          case ("print_distances        "); .print_distances = TRUE
          case ("print_extra_terms      "); .print_extra_terms = TRUE
@@ -191,6 +192,11 @@ module BREAKDOWN_DATA
          case default;       UNKNOWN(word)
       end
 
+   end
+
+   read_cif_filename
+      self :: INOUT
+      stdin.read(.cif_filename)
    end
 
    read_distance_units ::: leaky
@@ -518,9 +524,9 @@ module BREAKDOWN_DATA
       .E_ex_helper = ZERO
       .E_rep_helper = ZERO
      
-      !stdout.show("Total pairs", .mol.n_shell_pairs)
+      stdout.show("Total pairs", .mol.n_shell_pairs)
       do mn = 1, .mol.n_shell_pairs
-         !stdout.show("Pair", mn)
+         stdout.show("Pair", mn)
          .mol.BASE:get_shell_pair_indices(mn, shell_m, shell_n, start_m, end_m, dummy1, start_n, end_n, dummy2, a_m, a_n)
          .mol.BASE:set_new_shell_quartet_ab(sh4n, shell_m, shell_n, skip = FALSE)
          do kl = 1, mn
@@ -914,19 +920,19 @@ module BREAKDOWN_DATA
 !  Output methods for csv file 
 !  ===========================
 
-   put_to_csv_new ::: private
+   put_to_csv ::: private
       self :: IN
 
       i, j, k, l, m, n :: INT
       list1, list2 :: VEC{VEC_{INT}}*
       output :: VEC{STR}*
-      out_str :: STR(1024)
+      out_str :: STR
       values_str :: STR
       
-      output.create(num_interaction_types * (num_interaction_directions + 1))
+      output.create(num_interaction_types)
       
-      stdout.text(",,,," // trim(column_heading.to_concatenated_str(separator = ",,,,,")) // ",,,,,molecule-molecule,,,,,")
-      out_str = "molecule 1 filename,molecule 2 filename,group 1 elements,group 2 elements,&
+      stdout.text("energy units," // trim(.energy_units) // ",," // trim(column_heading.to_concatenated_str(separator = ",,,,,")) // ",,,,,molecule-molecule,,,,,")
+      out_str = "filename,group 1 elements,group 2 elements,&
       &minimum distance,closest atom from group 1,closest atom from group 2,bonds in group 1, bonds in group 2"
       do i = 1, num_interaction_directions + 1
          do j = 1, num_interaction_types
@@ -942,17 +948,19 @@ module BREAKDOWN_DATA
          do j = 1, list1.dim 
             do k = 1, list2.dim
                l = l + 1
+               out_str = .get_min_distance_and_bonds_for_csv(list1(j).element, list2(k).element)
+               out_str = trim(.cif_filename) // "," // trim(.printed_group(i, 1)) // "," // trim(.printed_group(i, 2)) // trim(out_str)
+               stdout.put(trim(out_str))
                do m = 1, num_interaction_directions
                   do n = 1, num_interaction_types
-                     output((m - 1) * num_interaction_types + n) = .get_str(.group_energies(l, n, m))
+                     output(n) = .get_str(.group_energies(l, n, m))
                   end
+                  out_str = output.to_concatenated_str(separator = ",")
+                  stdout.put(trim(out_str))
                end
-               output((num_interaction_directions * num_interaction_types + 1):) = [.get_total(.E_el), .get_total(.E_pol), .get_total(.E_disp), .get_total(.E_er), .get_total(.E_tot)]
-               out_str = .get_min_distance_and_bonds_for_csv(list1(j).element, list2(k).element)
-               values_str = output.to_concatenated_str(separator = ",")
-               out_str = trim(.filenames) // trim(.printed_group(i, 1)) // "," // trim(.printed_group(i, 2)) // trim(out_str)
-               out_str = trim(out_str) // trim(values_str)
-               stdout.text(out_str)
+               output = [.get_total(.E_el), .get_total(.E_pol), .get_total(.E_disp), .get_total(.E_er), .get_total(.E_tot)]
+               out_str = output.to_concatenated_str(separator = ",")
+               stdout.text(trim(out_str))
             end
          end
       end
@@ -960,38 +968,6 @@ module BREAKDOWN_DATA
       output.destroy
    end
    
-   put_to_csv ::: private
-      self :: IN
-
-      i, j, k, l, m :: INT
-      list1, list2 :: VEC{VEC_{INT}}*
-      output :: VEC{STR}(num_interaction_types)
-      dist_bonds_str :: STR
-
-      stdout.text("molecule 1 filename,molecule 2 filename,group 1 elements,group 2 elements,&
-      &minimum distance,closest atom in group 1,closest atom in group 2,&
-      &bonds in group 1, bonds in group 2,&
-      &electrostatic energy,polarisation energy,dispersion energy,exchange-repulsion energy,total energy")
-      output = [.get_total(.E_el), .get_total(.E_pol), .get_total(.E_disp), .get_total(.E_er), .get_total(.E_tot)]
-      .print_csv_line("molecule", "molecule", ",,,,,", output)
-      
-      l = 0
-      do i = 1, .num_queries
-         list1 => .mol1_groups(.queries(i, 1)).element
-         list2 => .mol2_groups(.queries(i, 2)).element
-         do j = 1, list1.dim 
-            do k = 1, list2.dim
-               l = l + 1
-               do m = 1, num_interaction_types
-                  output(m) = .get_str(.group_energies(l, m, 1))
-               end
-               dist_bonds_str = .get_min_distance_and_bonds_for_csv(list1(j).element, list2(k).element)
-               .print_csv_line(.printed_group(i, 1), .printed_group(i, 2), dist_bonds_str, output)
-            end
-         end
-      end
-   end
-
    get_min_distance_and_bonds_for_csv(group1, group2) result(res) ::: private
       self :: IN
       group1, group2 :: VEC{INT}*
@@ -1015,14 +991,6 @@ module BREAKDOWN_DATA
 
       atoms1.destroy
       atoms2.destroy
-   end
-
-   print_csv_line(group1, group2, closest, values) ::: private
-      self :: IN
-      group1, group2, closest :: STR
-      values :: VEC{STR}(num_interaction_types)
-
-      stdout.text(trim(.filenames) // trim(group1) // "," // trim(group2) // trim(closest) // values.to_concatenated_str(separator = ","))
    end
 
    filenames result(res)
