@@ -565,7 +565,7 @@ module BREAKDOWN_DATA
      
       do mn = 1, .mol.n_shell_pairs
          progress = (DBLE(mn) / DBLE(.mol.n_shell_pairs)) ** 2
-         !stdout.show("2-electron integrals progress", progress)
+         stdout.show("2-electron integrals progress", progress)
          .mol.BASE:get_shell_pair_indices(mn, shell_m, shell_n, start_m, end_m, dummy1, start_n, end_n, dummy2, a_m, a_n)
          .mol.BASE:set_new_shell_quartet_ab(sh4n, shell_m, shell_n, skip = FALSE)
          do kl = 1, mn
@@ -688,9 +688,9 @@ module BREAKDOWN_DATA
        E_pol_T.destroy
     end
  
-!  ========================
-!  Group-group calculations 
-!  ========================
+!  ==================
+!  Determining Groups 
+!  ==================
    
    process_groups ::: private, leaky
       self :: INOUT
@@ -735,8 +735,76 @@ module BREAKDOWN_DATA
       ENSURE(.brackets_matched, "unmatched bracket detected")
       ENSURE(.symbols_valid_in_word_groups, "invalid element symbol detected")
 
-      .mol1.atom.find_groups_structured(.word_groups, .mol1_groups, .mol1_bonded)
-      .mol2.atom.find_groups_structured(.word_groups, .mol2_groups, .mol2_bonded)
+      element :: VEC{VEC_{STR}}*
+      parent :: VEC{VEC_{INT}}*
+      i :: INT
+
+      element.create(.word_groups.dim)
+      parent.create(.word_groups.dim)
+
+      do i = 1, .word_groups.dim
+         BREAKDOWN_DATA::get_group_structure(.word_groups(i), element(i).element, parent(i).element)
+      end
+
+      .mol1.atom.find_groups_structured(.word_groups, .mol1_groups, .mol1_bonded, element, parent)
+      .mol2.atom.find_groups_structured(.word_groups, .mol2_groups, .mol2_bonded, element, parent)
+
+      !BREAKDOWN_DATA::put_vec3(.mol1_groups)
+      !BREAKDOWN_DATA::put_vec3(.mol2_groups)
+
+      element.destroy
+      parent.destroy
+   end
+
+   get_group_structure(word, element, parent) ::: private, leaky, selfless
+      self :: IN
+      word :: STR
+      element :: VEC{STR}*
+      parent :: VEC{INT}*
+
+      stack :: VEC{INT}* 
+      out_top, stack_top, i, group_size, length :: INT
+      chr :: STR(1)
+      
+      length = len(trim(word))
+      stack.create(length)
+
+      group_size = 0
+      do i = 1, length
+         if (word(i:i).is_upper_case) then
+            group_size = group_size + 1
+         end
+      end
+
+      element.create(group_size)
+      parent.create(group_size)
+
+      out_top = 0
+      stack_top = 1
+      stack(stack_top) = 0
+
+      do i = 1, length
+         chr = word(i:i)
+         if (chr == "(") then
+            stack_top = stack_top + 1
+            stack(stack_top) = stack(stack_top - 1)
+         elseif (chr == ")") then
+            stack_top = stack_top - 1
+         elseif (chr.is_lower_case) then
+            element(out_top) = trim(element(out_top)) // chr
+         else
+            out_top = out_top + 1
+            element(out_top) = chr
+            parent(out_top) = stack(stack_top)
+            stack(stack_top) = out_top
+         end
+      end
+
+      stack.destroy
+      
+      !stdout.put(element)
+      !stdout.put(parent)
+      !stdout.text(" ")
    end
 
    process_letter_groups ::: private, leaky
@@ -748,6 +816,10 @@ module BREAKDOWN_DATA
       .mol2.atom.find_groups(.letter_groups, .mol2_groups, .mol2_bonded)
    end
 
+!  ========================
+!  Group-group calculations 
+!  ========================
+   
    get_functional_groups_energy_breakdown ::: private, leaky
       self :: INOUT
 
