@@ -185,7 +185,7 @@ module BREAKDOWN_DATA
          case ("cif_filename=          "); .read_cif_filename
          case ("distance_units=        "); .read_distance_units
          case ("energy_units=          "); .read_energy_units
-         case ("groups=                "); .read_letter_groups
+         case ("groups=                "); .read_groups
          case ("group_sizes=           "); .read_group_sizes
          case ("num_groups=            "); .read_num_groups
          case ("num_queries=           "); .read_num_queries
@@ -194,6 +194,7 @@ module BREAKDOWN_DATA
          case ("print_distances        "); .print_distances = TRUE
          case ("print_extra_terms      "); .print_extra_terms = TRUE
          case ("print_totals           "); .print_totals = TRUE
+         case ("read_as_structured     "); .read_read_as_structured !Do not use this command yet
          case ("using_fast_wavefunction"); .set_factors_to_fast
          case default;       UNKNOWN(word)
       end
@@ -239,12 +240,17 @@ module BREAKDOWN_DATA
       self :: INOUT
 
       stdin.read(.num_groups)
-      .letter_groups.create(.num_groups)
+      if (.read_as_structured) then
+         .word_groups.create(.num_groups)
+      else
+         .letter_groups.create(.num_groups)
+      end
    end
 
    read_group_sizes ::: leaky
       self :: INOUT
 
+      ENSURE(NOT .read_as_structured, "command not available, groups to be read as structured")
       ENSURE(.letter_groups.created, "number of groups must be provided before group sizes")
 
       i :: INT
@@ -254,6 +260,16 @@ module BREAKDOWN_DATA
 
       do i = 1, .letter_groups.dim
          .letter_groups(i).element.create(group_sizes(i))
+      end
+   end
+
+   read_groups ::: leaky
+      self :: INOUT
+
+      if (.read_as_structured) then
+         .read_word_groups
+      else
+         .read_letter_groups
       end
    end
 
@@ -288,10 +304,18 @@ module BREAKDOWN_DATA
                   .letter_groups(i).element.create_copy(["N", "H", "H"])
                case ("pyridine")
                   .letter_groups(i).element.destroy
-                  .letter_groups(i).element.create_copy(["C", "C", "C", "C", "C", "H", "H", "H", "H", "N"])
+                  .letter_groups(i).element.create_copy(["H", "C", "N", "C"])
             end
          end
       end
+   end
+
+   read_word_groups ::: leaky
+      self :: INOUT
+
+      ENSURE(.word_groups.created, "number of groups must be provided before groups")
+
+      stdin.read(.word_groups)
    end
 
    read_num_queries ::: leaky
@@ -308,6 +332,14 @@ module BREAKDOWN_DATA
       ENSURE(.queries.created, "number of queries must be read in before queries")
 
       stdin.read(.queries)
+   end
+
+   read_read_as_structured
+      self :: INOUT
+
+      ENSURE(NOT .letter_groups.created, "groups already read in")
+
+      .read_as_structured = TRUE
    end
 
    set_factors_to_fast
@@ -405,51 +437,6 @@ module BREAKDOWN_DATA
       delta_dm.destroy
    end
 
-   get_repulsion_from_contributions ::: private
-      self :: INOUT
-      
-      i, j, jj :: INT
-      helper_total, E_rep_total :: VEC{REAL}*
-      factor :: REAL
-
-      helper_total.create(.mol.n_atom)
-      E_rep_total.create(.mol.n_atom)
-      helper_total = ZERO
-      E_rep_total = ZERO
-      .get_two_electron_operator_breakdown(.E_rep_helper, .E_rep)
-
-      do i = 1, .mol1.n_atom
-         do j = 1, .mol2.n_atom
-            jj = j + .mol1.n_atom
-            E_rep_total(i) = E_rep_total(i) + .E_rep(i, j)
-            E_rep_total(jj) = E_rep_total(jj) + .E_rep(i, j)
-         end
-      end
- 
-      do i = 1, .mol1.n_atom
-         do j = 1, .mol1.n_atom
-            helper_total(i) = helper_total(i) + .E_rep_helper(i, j)
-         end
-      end
-
-      do i = .mol1.n_atom + 1, .mol.n_atom
-         do j = .mol1.n_atom + 1, .mol.n_atom
-            helper_total(i) = helper_total(i) + .E_rep_helper(i, j)
-         end
-      end
-
-      do i = 1, .mol1.n_atom
-         do j = 1, .mol2.n_atom
-            jj = j + .mol1.n_atom
-            factor = ONE + helper_total(i) / E_rep_total(i) + helper_total(jj) / E_rep_total(jj)
-            .E_rep(i, j) = .E_rep(i, j) * factor 
-         end
-      end
-
-      helper_total.destroy
-      E_rep_total.destroy
-   end
-
    get_ne_attraction_contribution_to_repulsion(delta_dm) ::: private
       self :: IN
 
@@ -500,6 +487,51 @@ module BREAKDOWN_DATA
       end
       
       kinetic_mx.destroy
+   end
+
+   get_repulsion_from_contributions ::: private
+      self :: INOUT
+      
+      i, j, jj :: INT
+      helper_total, E_rep_total :: VEC{REAL}*
+      factor :: REAL
+
+      helper_total.create(.mol.n_atom)
+      E_rep_total.create(.mol.n_atom)
+      helper_total = ZERO
+      E_rep_total = ZERO
+      .get_two_electron_operator_breakdown(.E_rep_helper, .E_rep)
+
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            jj = j + .mol1.n_atom
+            E_rep_total(i) = E_rep_total(i) + .E_rep(i, j)
+            E_rep_total(jj) = E_rep_total(jj) + .E_rep(i, j)
+         end
+      end
+ 
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol1.n_atom
+            helper_total(i) = helper_total(i) + .E_rep_helper(i, j)
+         end
+      end
+
+      do i = .mol1.n_atom + 1, .mol.n_atom
+         do j = .mol1.n_atom + 1, .mol.n_atom
+            helper_total(i) = helper_total(i) + .E_rep_helper(i, j)
+         end
+      end
+
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            jj = j + .mol1.n_atom
+            factor = ONE + helper_total(i) / E_rep_total(i) + helper_total(jj) / E_rep_total(jj)
+            .E_rep(i, j) = .E_rep(i, j) * factor 
+         end
+      end
+
+      helper_total.destroy
+      E_rep_total.destroy
    end
 
 !Electrostatic and Exchange Common Functions
@@ -660,15 +692,62 @@ module BREAKDOWN_DATA
 !  Group-group calculations 
 !  ========================
    
-   process_groups ::: private
+   process_groups ::: private, leaky
       self :: INOUT
 
       ENSURE(.symbols_are_valid, "invalid symbol detected")
       
       if (.num_groups /= 0) then
-         .mol1.atom.find_groups(.letter_groups, .mol1_groups, .mol1_bonded)
-         .mol2.atom.find_groups(.letter_groups, .mol2_groups, .mol2_bonded)
+         .mol1.atom.get_bonded(.mol1_bonded)
+         .mol2.atom.get_bonded(.mol2_bonded)
+         if (.read_as_structured) then
+            .substitute_word_groups
+            .process_word_groups
+         else
+            .process_letter_groups
+         end
       end
+   end
+
+   substitute_word_groups ::: private
+      self :: INOUT
+
+      i :: INT
+      
+      do i = 1, .word_groups.dim
+         select case(trim(.word_groups(i)))
+            case ("acid")
+               .word_groups(i) = "C(OH)O"
+            case ("amide")
+               .word_groups(i) = "C(N(H)H)O"
+            case ("alcohol")
+               .word_groups(i) = "COH"
+            case ("amino")
+               .word_groups(i) = "N(H)H"
+            case ("pyridine")
+               .word_groups(i) = "HCNC"
+         end
+      end
+   end
+   
+   process_word_groups ::: private, leaky
+      self :: INOUT
+
+      ENSURE(.characters_valid, "invalid character detected") 
+      ENSURE(.brackets_matched, "unmatched bracket detected")
+      ENSURE(.symbols_valid_in_word_groups, "invalid element symbol detected")
+
+      .mol1.atom.find_groups_structured(.word_groups, .mol1_groups, .mol1_bonded)
+      .mol2.atom.find_groups_structured(.word_groups, .mol2_groups, .mol2_bonded)
+   end
+
+   process_letter_groups ::: private, leaky
+      self :: INOUT
+
+      ENSURE(.symbols_are_valid, "invalid symbol detected")
+      
+      .mol1.atom.find_groups(.letter_groups, .mol1_groups, .mol1_bonded)
+      .mol2.atom.find_groups(.letter_groups, .mol2_groups, .mol2_bonded)
    end
 
    get_functional_groups_energy_breakdown ::: private, leaky
@@ -934,7 +1013,6 @@ module BREAKDOWN_DATA
       list1, list2 :: VEC{VEC_{INT}}*
       output :: VEC{STR}*
       out_str :: STR
-      values_str :: STR
       
       output.create(num_interaction_types)
       
@@ -1078,6 +1156,82 @@ module BREAKDOWN_DATA
             res = res AND symbol.is_one_of(ATOM::element_symbols)
          end
       end
+   end
+   
+   characters_valid result(res) ::: private
+      self :: IN
+      res :: BIN
+
+      i, j :: INT
+      word :: STR
+
+      res = TRUE
+      do i = 1, .word_groups.dim
+         word = .word_groups(i)
+         do j = 1, len(word)
+            res = res AND ((word(j:j) == "(") OR (word(j:j) == ")") OR (word(j:j).is_alphabetical))
+         end
+      end
+   end
+
+   brackets_matched result(res) ::: private
+      self :: IN
+      res :: BIN
+
+      i, j, nesting :: INT
+      word :: STR
+
+      nesting = 0
+      res = TRUE
+
+      do i = 1, .word_groups.dim
+         word = .word_groups(i)
+         do j = 1, len(word)
+            if (word(j:j) == "(") then
+               nesting = nesting + 1
+            elseif (word(j:j) == ")") then
+               res = res AND (nesting > 0)
+               nesting = nesting - 1
+            end
+         end
+      end
+      
+      res = res AND (nesting == 0)
+   end
+
+   symbols_valid_in_word_groups result(res) ::: private
+      self :: IN
+      res :: BIN
+
+      i, j :: INT
+      word, symbol :: STR
+
+      symbol = " " 
+      res = TRUE
+
+      do i = 1, .word_groups.dim
+         word = .word_groups(i)
+         do j = 1, len(word)
+            if (word(j:j).is_lower_case) then
+               symbol = trim(symbol) // word(j:j) 
+            else
+               res = res AND symbol_valid(symbol)
+               symbol = word(j:j)
+            end
+         end
+      end
+      
+      res = res AND symbol_valid(symbol) 
+   end
+
+   symbol_valid(symbol) result(res) ::: selfless
+      symbol :: STR
+      res :: BIN
+
+      short_symbol :: STR(len(symbol))
+      short_symbol = trim(symbol)
+
+      res = (short_symbol == trim(" ")) OR (short_symbol == ")") OR (short_symbol == "(") OR (short_symbol.is_one_of(ATOM::element_symbols))
    end
 
    groups_present result(res)
