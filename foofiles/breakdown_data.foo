@@ -6,7 +6,8 @@ module BREAKDOWN_DATA
    num_csv_cols :: INT, parameter = (num_interaction_directions + 1) * num_interaction_types
    num_atom_groups :: INT, parameter = 2
    cols_per_row :: INT, parameter = 5
-   column_heading :: VEC{STR}(num_interaction_directions) = ["group1-group2", "group1-bulk1 ", "bulk2-group2 ", "bulk1-bulk2  "]
+   num_cycle_points :: INT, parameter = 9
+   column_heading :: VEC{STR}(num_interaction_directions) = ["group1-group2", "group1-bulk2 ", "bulk1-group2 ", "bulk1-bulk2  "]
    row_heading :: VEC{STR}(num_interaction_types) = ["electrostatic     ", "polarisation      ", "dispersion        ", "exchange-repulsion", "total             "]
 
    !These fit the terms to the B3LYP-D3/6-31G(d, p) energies from Turner et. al (2014), J. Phys. Chem. Lett., 5, p. 4249
@@ -127,7 +128,7 @@ module BREAKDOWN_DATA
       .scale_factors.create_copy(accurate_factors)
       .num_groups = 0
       .num_queries = 0
-      .read_as_structured = FALSE
+      .read_as_structured = TRUE
    end
    
 !  ===============
@@ -194,7 +195,7 @@ module BREAKDOWN_DATA
          case ("print_distances        "); .print_distances = TRUE
          case ("print_extra_terms      "); .print_extra_terms = TRUE
          case ("print_totals           "); .print_totals = TRUE
-         case ("read_as_structured     "); .read_read_as_structured !Do not use this command yet
+         case ("read_element_list      "); .read_read_as_structured
          case ("using_fast_wavefunction"); .set_factors_to_fast
          case default;       UNKNOWN(word)
       end
@@ -339,7 +340,7 @@ module BREAKDOWN_DATA
 
       ENSURE(NOT .letter_groups.created, "groups already read in")
 
-      .read_as_structured = TRUE
+      .read_as_structured = FALSE
    end
 
    set_factors_to_fast
@@ -534,7 +535,7 @@ module BREAKDOWN_DATA
       E_rep_total.destroy
    end
 
-!Electrostatic and Exchange Common Functions
+!Electrostatic and exchange-repulsion common functions
    get_two_electron_operator_breakdown(in_mx, out_mx) ::: private, leaky
       self :: INOUT
       in_mx, out_mx :: MAT{REAL}*
@@ -733,10 +734,11 @@ module BREAKDOWN_DATA
 
       ENSURE(.characters_valid, "invalid character detected") 
       ENSURE(.brackets_matched, "unmatched bracket detected")
+      ENSURE(.numbers_in_correct_place, "number in incorrect place")
       ENSURE(.symbols_valid_in_word_groups, "invalid element symbol detected")
 
       element :: VEC{VEC_{STR}}*
-      parent :: VEC{VEC_{INT}}*
+      parent :: VEC{VEC_{VEC_{INT}}}*
       i :: INT
 
       element.create(.word_groups.dim)
@@ -749,9 +751,6 @@ module BREAKDOWN_DATA
       .mol1.atom.find_groups_structured(.word_groups, .mol1_groups, .mol1_bonded, element, parent)
       .mol2.atom.find_groups_structured(.word_groups, .mol2_groups, .mol2_bonded, element, parent)
 
-      !BREAKDOWN_DATA::put_vec3(.mol1_groups)
-      !BREAKDOWN_DATA::put_vec3(.mol2_groups)
-
       element.destroy
       parent.destroy
    end
@@ -760,14 +759,16 @@ module BREAKDOWN_DATA
       self :: IN
       word :: STR
       element :: VEC{STR}*
-      parent :: VEC{INT}*
+      parent :: VEC{VEC_{INT}}*
 
-      stack :: VEC{INT}* 
-      out_top, stack_top, i, group_size, length :: INT
-      chr :: STR(1)
+      stack, cycle_points :: VEC{INT}* 
+      out_top, stack_top, i, group_size, length, link :: INT
+      chr :: STR(len=1)
       
       length = len(trim(word))
       stack.create(length)
+      cycle_points.create(num_cycle_points)
+      cycle_points = 0
 
       group_size = 0
       do i = 1, length
@@ -792,19 +793,23 @@ module BREAKDOWN_DATA
             stack_top = stack_top - 1
          elseif (chr.is_lower_case) then
             element(out_top) = trim(element(out_top)) // chr
-         else
+         elseif (chr.is_upper_case) then
             out_top = out_top + 1
             element(out_top) = chr
-            parent(out_top) = stack(stack_top)
+            parent(out_top).element.create_copy([stack(stack_top)])
             stack(stack_top) = out_top
+         else
+            link = chr.to_int
+            if (cycle_points(link) == 0) then
+               cycle_points(link) = out_top
+            else
+               parent(out_top).element.append(cycle_points(link))
+            end
          end
       end
 
       stack.destroy
-      
-      !stdout.put(element)
-      !stdout.put(parent)
-      !stdout.text(" ")
+      cycle_points.destroy
    end
 
    process_letter_groups ::: private, leaky
@@ -921,7 +926,7 @@ module BREAKDOWN_DATA
       stdout.text("Units: " // .energy_units)
 
       if (.print_extra_terms) then
-         .put_test_matrices
+         !.put_test_matrices
          .put_atom_breakdown_matrix("Nucleus-nucleus repulsion", .E_nn)
          .put_atom_breakdown_matrix("Nucleus-electron attraction", .E_ne)
          .put_atom_breakdown_matrix("Electron-electron repulsion", .E_ee)
@@ -1252,7 +1257,7 @@ module BREAKDOWN_DATA
       do i = 1, .word_groups.dim
          word = .word_groups(i)
          do j = 1, len(trim(word))
-            res = res AND ((word(j:j) == "(") OR (word(j:j) == ")") OR word(j:j).is_alphabetical)
+            res = res AND ((word(j:j) == "(") OR (word(j:j) == ")") OR word(j:j).is_alphanumeric)
          end
       end
    end
@@ -1280,6 +1285,26 @@ module BREAKDOWN_DATA
       end
       
       res = res AND (nesting == 0)
+   end
+
+   numbers_in_correct_place result(res) ::: private
+      self :: IN
+      res :: BIN
+
+      i, j :: INT
+      word :: STR
+
+      res = TRUE
+
+      do i = 1, .word_groups.dim
+         word = .word_groups(i)
+         res = res AND NOT word(1:1).is_numeric
+         do j = 2, len(word)
+            if (word(j:j).is_numeric) then
+               res = res AND word((j - 1):(j - 1)).is_alphabetical 
+            end
+         end
+      end
    end
 
    symbols_valid_in_word_groups result(res) ::: private
@@ -1311,10 +1336,10 @@ module BREAKDOWN_DATA
       symbol :: STR
       res :: BIN
 
-      short_symbol :: STR(len(symbol))
-      short_symbol = trim(symbol)
+      short_symbol :: STR(len=len(trim(symbol)))
 
-      res = (short_symbol == trim(" ")) OR (short_symbol == ")") OR (short_symbol == "(") OR (short_symbol.is_one_of(ATOM::element_symbols))
+      short_symbol = trim(symbol)
+      res = (short_symbol == trim(" ")) OR (short_symbol == ")") OR (short_symbol == "(") OR short_symbol.is_numeric OR (short_symbol.is_one_of(ATOM::element_symbols))
    end
 
    groups_present result(res)
