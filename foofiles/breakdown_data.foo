@@ -114,9 +114,9 @@ module BREAKDOWN_DATA
 !  ===========
 
    set_defaults ::: leaky
-   ! Set up a default breakdown data object
+   ! Sets up a default breakdown data object
       .nullify_ptr_part
-      .cif_filename = "no cif file"
+      .cif_filename = "NO FILENAME PROVIDED"
       .energy_units = "hartrees"
       .energy_factor = ONE
       .distance_units = "angstroms"
@@ -136,6 +136,7 @@ module BREAKDOWN_DATA
 !  ===============
 
    put(mol) ::: leaky
+   !Runs all the tasks associated with the energies breakdown (input, calculations, ouptut)
       self :: INOUT
 
       mol :: MOLECULE*
@@ -168,11 +169,12 @@ module BREAKDOWN_DATA
 !  Input methods 
 !  =============
 
+   ! Reads data from "stdin" using keyword style input.
    read_keywords ::: get_from(OBJECT), leaky
    end
 
    process_keyword(keyword) ::: leaky
-   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! Processes command "keyword". Any required data needed by the "keyword" is
    ! inputted from "stdin".
       keyword :: STR
 
@@ -195,7 +197,7 @@ module BREAKDOWN_DATA
          case ("print_distances        "); .print_distances = TRUE
          case ("print_extra_terms      "); .print_extra_terms = TRUE
          case ("print_totals           "); .print_totals = TRUE
-         case ("read_element_list      "); .read_read_as_structured
+         case ("read_element_list      "); .set_read_as_structured_to_false
          case ("using_fast_wavefunction"); .set_factors_to_fast
          case default;       UNKNOWN(word)
       end
@@ -203,11 +205,13 @@ module BREAKDOWN_DATA
    end
 
    read_cif_filename
+   !Reads in and sets the name of the .cif file used to generate the .sbf files
       self :: INOUT
       stdin.read(.cif_filename)
    end
 
    read_distance_units ::: leaky
+   !Reads in the distance units for the output, and sets the units and the conversion factor
       self :: INOUT
       
       lower :: STR
@@ -223,6 +227,7 @@ module BREAKDOWN_DATA
    end
    
    read_energy_units ::: leaky
+   !Reads in the energy units for the output, and sets the units and the conversion factor
       self :: INOUT
       
       lower :: STR
@@ -238,6 +243,7 @@ module BREAKDOWN_DATA
    end
    
    read_num_groups ::: leaky
+   !Reads in the number of groups and creates space to store them
       self :: INOUT
 
       stdin.read(.num_groups)
@@ -249,6 +255,8 @@ module BREAKDOWN_DATA
    end
 
    read_group_sizes ::: leaky
+   !Reads in the sizes of each group and creates space to store them (only if the 
+   !read_element_list flag has been set)
       self :: INOUT
 
       ENSURE(NOT .read_as_structured, "command not available, groups to be read as structured")
@@ -265,6 +273,7 @@ module BREAKDOWN_DATA
    end
 
    read_groups ::: leaky
+   !Reads in the groups
       self :: INOUT
 
       if (.read_as_structured) then
@@ -275,6 +284,7 @@ module BREAKDOWN_DATA
    end
 
    read_letter_groups ::: leaky
+   !Reads in the groups as lists of elements
       self :: INOUT
 
       ENSURE(.letter_groups.created, "number of groups must be provided before groups")
@@ -312,6 +322,7 @@ module BREAKDOWN_DATA
    end
 
    read_word_groups ::: leaky
+   !Reads in the groups using SMILES-like notation
       self :: INOUT
 
       ENSURE(.word_groups.created, "number of groups must be provided before groups")
@@ -320,6 +331,7 @@ module BREAKDOWN_DATA
    end
 
    read_num_queries ::: leaky
+   !Reads in the number of queries and creates space to store them
       self :: INOUT
 
       stdin.read(.num_queries)
@@ -328,6 +340,7 @@ module BREAKDOWN_DATA
    end
 
    read_queries
+   !Reads in the queries
       self :: INOUT
 
       ENSURE(.queries.created, "number of queries must be read in before queries")
@@ -335,7 +348,9 @@ module BREAKDOWN_DATA
       stdin.read(.queries)
    end
 
-   read_read_as_structured
+   set_read_as_structured_to_false
+   !Sets read_as_structured to false, indicating that the groups are to provided
+   !as lists of elements rather than with SMILES notation
       self :: INOUT
 
       ENSURE(NOT .letter_groups.created, "groups already read in")
@@ -344,6 +359,9 @@ module BREAKDOWN_DATA
    end
 
    set_factors_to_fast
+   !Sets the coefficients for the total energy to those for
+   !wavefunctions generated with Hartree-Fock theory and the 3-21G basis rather
+   !than B3LYP theory and the 6-31G basis (as is the default)
       self :: INOUT
     
       .scale_factors.destroy
@@ -355,6 +373,8 @@ module BREAKDOWN_DATA
 !  ======================
    
    get_atom_energy_breakdown ::: private, leaky
+   !Merges the molecular orbitals and gets the breakdown of each energy term
+   !into atom-atom components
       self :: INOUT
 
       atom_group1, atom_group2 :: ATOM_GROUP*
@@ -386,8 +406,34 @@ module BREAKDOWN_DATA
       .mol2_symbols.create_copy(ATOM::element_symbols(.mol2.atom.atomic_number))
    end
 
-!Electrostatic and exchange interaction
+   get_polarisation_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the polarisation term into atom-atom components
+      self :: INOUT
+      
+      E_pol_T :: MAT{REAL}*
+      i, j :: INT
+
+      .E_pol.create(.mol1.n_atom, .mol2.n_atom)
+      E_pol_T.create(.mol2.n_atom, .mol1.n_atom)
+      E_pol_T = ZERO
+
+      .mol1.INTS:get_1way_polarisation_energy(.mol2.atom, E_pol_T, .mol2.charge)
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            .E_pol(i, j) = E_pol_T(j, i)
+         end
+      end
+      .mol2.INTS:get_1way_polarisation_energy(.mol1.atom, .E_pol, .mol2.charge)
+
+      E_pol_T.destroy
+   end
+ 
+!  ============================
+!  Electrostatic term breakdown 
+!  ============================
+   
    get_electrostatic_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the electrostatic term into atom-atom components
       self :: INOUT
       
       .mol1.atom.get_nn_repulsion_energy_breakdown(.mol2.atom, .E_nn, .distances)
@@ -398,6 +444,8 @@ module BREAKDOWN_DATA
    end
 
    get_ne_attraction_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the nucleus-electron attraction sub-term into
+   !atom-atom components
       self :: INOUT
       
       i :: INT
@@ -415,8 +463,12 @@ module BREAKDOWN_DATA
       end
    end
 
-!Exchange-repulsion interaction
+!  =================================
+!  Exchange-repulsion term breakdown 
+!  =================================
+   
    get_exchange_repulsion_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the exchange-repulsion term into atom-atom components
       self :: INOUT
 
       .get_two_electron_operator_breakdown(.E_ex_helper, .E_ex) 
@@ -426,6 +478,8 @@ module BREAKDOWN_DATA
    end
 
    get_repulsion_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the orthogonalisation repulsion sub-term into 
+   !atom-atom components
       self :: INOUT
 
       delta_dm :: MAT{REAL}*
@@ -439,6 +493,8 @@ module BREAKDOWN_DATA
    end
 
    get_ne_attraction_contribution_to_repulsion(delta_dm) ::: private
+   !Gets the breakdown of the nucleus-electron attraction part of the repulsion
+   !sub-term into atom-atom components
       self :: IN
 
       delta_dm :: MAT{REAL}*
@@ -461,6 +517,8 @@ module BREAKDOWN_DATA
    end
 
    get_kinetic_contribution_to_repulsion(delta_dm) ::: private
+   !Gets the breakdown of the kinetic part of the repulsion sub-term into
+   !atom-atom components
       self :: IN
 
       delta_dm :: MAT{REAL}*
@@ -491,6 +549,7 @@ module BREAKDOWN_DATA
    end
 
    get_repulsion_from_contributions ::: private
+   !Combines all the parts of the orthogonalisation repulsion sub-term
       self :: INOUT
       
       i, j, jj :: INT
@@ -535,8 +594,14 @@ module BREAKDOWN_DATA
       E_rep_total.destroy
    end
 
-!Electrostatic and exchange-repulsion common functions
+!  ===================================================
+!  Electrostatic and exchange-repulsion term breakdown 
+!  ===================================================
+
    get_two_electron_operator_breakdown(in_mx, out_mx) ::: private, leaky
+   !Finalises the breakdown of one of the electron-electron repulsion or
+   !exchange sub-terms, or the electron-electron repulsion and exchange part of
+   !the orthogonalisation repulsion subterm
       self :: INOUT
       in_mx, out_mx :: MAT{REAL}*
 
@@ -544,6 +609,9 @@ module BREAKDOWN_DATA
    end
 
    get_two_electron_operator_breakdown_inner ::: private, leaky
+   !Gets the breakdown of the electron-electron repulsion and exchange sub-terms
+   !and the electron-electron repulsion and exchange part of the
+   !orthogonalisation repulsion subterm
       self :: INOUT
 
       sh4n :: SHELL1QUARTET
@@ -566,7 +634,7 @@ module BREAKDOWN_DATA
      
       do mn = 1, .mol.n_shell_pairs
          progress = (DBLE(mn) / DBLE(.mol.n_shell_pairs)) ** 2
-         stdout.show("2-electron integrals progress", progress)
+         !stdout.show("2-electron integrals progress", progress)
          .mol.BASE:get_shell_pair_indices(mn, shell_m, shell_n, start_m, end_m, dummy1, start_n, end_n, dummy2, a_m, a_n)
          .mol.BASE:set_new_shell_quartet_ab(sh4n, shell_m, shell_n, skip = FALSE)
          do kl = 1, mn
@@ -581,6 +649,9 @@ module BREAKDOWN_DATA
    end
 
    process_integrals(factor_mat, sh4n, a_m, a_n, a_k, a_l, start_m, end_m, start_n, end_n, start_k, end_k, start_l, end_l) ::: leaky, private
+   !Gets the breakdown of the electron-electron repulsion and exchange sub-terms
+   !and the electron-electron repulsion and exchange part of the
+   !orthogonalisation repulsion subterm for one quartet of shells
       self :: IN
       factor_mat :: MAT{REAL}*
       sh4n :: SHELL1QUARTET
@@ -619,6 +690,8 @@ module BREAKDOWN_DATA
    end
 
    get_integral_factor(factor_mat, m, n, k, l) result(res) ::: private
+   !Gets the factor to multiply each integral by, to prevent integrals from
+   !being double-counted
       self :: IN
       factor_mat :: MAT{REAL}*
       m, n, k, l :: INT
@@ -634,6 +707,9 @@ module BREAKDOWN_DATA
    end
 
    add_cx_terms(m, n, k, l, a_m, a_n, a_k, integral) ::: private
+   !Gets the breakdown of the electron-electron repulsion and exchange sub-terms
+   !and the electron-electron repulsion and exchange part of the
+   !orthogonalisation repulsion subterm for one quartet of basis functions 
       self :: IN
       m, n, k, l, a_m, a_n, a_k :: INT
       integral :: REAL
@@ -644,6 +720,7 @@ module BREAKDOWN_DATA
    end
 
    get_entry(mat, i, j) result(res) ::: private
+   !Returns 0 if i and j are both 0, 1 otherwise
       self :: IN
       mat :: MAT{REAL}*
       i, j :: INT
@@ -653,6 +730,9 @@ module BREAKDOWN_DATA
    end
 
    add_cx_terms_inner(m, n, k, l, a_m, a_n, a_k, E_ee, E_ex, density_mx, integral) ::: selfless, private
+   !Gets the breakdown of either the electron-electron repulsion and exchange sub-terms
+   !or the electron-electron repulsion and exchange part of the
+   !orthogonalisation repulsion subterm for one quartet of basis functions 
       self :: IN
       m, n, k, l, a_m, a_n, a_k :: INT
       E_ee, E_ex, density_mx :: MAT{REAL}*
@@ -667,33 +747,12 @@ module BREAKDOWN_DATA
       E_ex(a_m, a_n) = E_ex(a_m, a_n) + ex_term
    end
 
- !Polarisation interaction
-    get_polarisation_energy_breakdown ::: private, leaky
-       self :: INOUT
-       
-       E_pol_T :: MAT{REAL}*
-       i, j :: INT
- 
-       .E_pol.create(.mol1.n_atom, .mol2.n_atom)
-       E_pol_T.create(.mol2.n_atom, .mol1.n_atom)
-       E_pol_T = ZERO
- 
-       .mol1.INTS:get_1way_polarisation_energy(.mol2.atom, E_pol_T, .mol2.charge)
-       do i = 1, .mol1.n_atom
-          do j = 1, .mol2.n_atom
-             .E_pol(i, j) = E_pol_T(j, i)
-          end
-       end
-       .mol2.INTS:get_1way_polarisation_energy(.mol1.atom, .E_pol, .mol2.charge)
- 
-       E_pol_T.destroy
-    end
- 
 !  ==================
 !  Determining Groups 
 !  ==================
    
    process_groups ::: private, leaky
+   !Locates each group within one of the molecules
       self :: INOUT
 
       if (.num_groups /= 0) then
@@ -709,6 +768,7 @@ module BREAKDOWN_DATA
    end
 
    substitute_word_groups ::: private
+   !Replaces group names with their formulae
       self :: INOUT
 
       i :: INT
@@ -730,6 +790,8 @@ module BREAKDOWN_DATA
    end
    
    process_word_groups ::: private, leaky
+   !Locates each group within one of the molecules, if groups are inputted with
+   !SMILES-like notation
       self :: INOUT
 
       ENSURE(.characters_valid, "invalid character detected") 
@@ -756,6 +818,8 @@ module BREAKDOWN_DATA
    end
 
    get_group_structure(word, element, parent) ::: private, leaky, selfless
+   !Converts the SMILES-like representation of each group into a graph so it can
+   !be found within each molecule
       self :: IN
       word :: STR
       element :: VEC{STR}*
@@ -813,6 +877,8 @@ module BREAKDOWN_DATA
    end
 
    process_letter_groups ::: private, leaky
+   !Locates each group within one of the molecules, if groups are inputted as
+   !element lists
       self :: INOUT
 
       ENSURE(.symbols_are_valid, "invalid symbol detected")
@@ -826,6 +892,7 @@ module BREAKDOWN_DATA
 !  ========================
    
    get_functional_groups_energy_breakdown ::: private, leaky
+   !Calculates the interaction energies between pairs of groups
       self :: INOUT
 
       ENSURE(.groups_present, "group not found in either molecule")
@@ -847,6 +914,7 @@ module BREAKDOWN_DATA
    end
    
    get_functional_groups_energy_breakdown_term(energy, type_num) ::: private
+   !Calculates one of the interaction energy terms between pairs of groups
       self :: INOUT
       energy :: MAT{REAL}*
       type_num :: INT
@@ -871,6 +939,7 @@ module BREAKDOWN_DATA
    end
 
    get_group_pair_energy_breakdown(energy, type_num, pair_num, group1, group2) ::: private
+   !Calculates one of the interaction energy terms between a pair of groups
       self :: INOUT
       energy :: MAT{REAL}*, IN
       type_num, pair_num :: INT, IN
@@ -902,6 +971,7 @@ module BREAKDOWN_DATA
 !  ===========================
 
    put_to_textfile ::: private
+   !Puts the breakdown information to "stdout"
       self :: IN
       
       if (.print_distances) then
@@ -918,6 +988,7 @@ module BREAKDOWN_DATA
    end
 
    put_atomic_energy_breakdown ::: private
+   !Puts the atom-atom energy breakdown to "stdout"
       self :: IN
 
       stdout.text("===============================================")
@@ -942,6 +1013,7 @@ module BREAKDOWN_DATA
    end
 
    put_atom_breakdown_matrix(name, matrix) ::: private
+   !Puts one term in the atom-atom energy breakdown to "stdout"
       self :: IN 
       
       name :: STR
@@ -960,6 +1032,8 @@ module BREAKDOWN_DATA
    end
 
    put_energy_totals ::: private
+   !Puts the total value for all the energy terms to "stdout" instead of
+   !printing the atom-atom breakdown
       self :: IN
 
       stdout.text("========================")
@@ -984,6 +1058,8 @@ module BREAKDOWN_DATA
    end
 
    put_total(name, mat) ::: private
+   !Puts the total value for one of the energy terms to "stdout" in the correct
+   !units
       self :: IN
       name :: STR
       mat :: MAT{REAL}*
@@ -992,6 +1068,7 @@ module BREAKDOWN_DATA
    end
 
    put_distances ::: private
+   !Puts the distances between each pair of atoms to "stdout"
       self :: IN
 
       stdout.text("===================")
@@ -1002,6 +1079,9 @@ module BREAKDOWN_DATA
    end
 
    put_mat(mat) ::: private
+   !Puts a matrix to stdout with column and row labels - necessary because the default
+   !"put" function for matrices with column and row labels does not work for
+   !matrices with more than 5 columns
       self :: IN
       mat :: MAT{REAL}
 
@@ -1019,6 +1099,7 @@ module BREAKDOWN_DATA
    end
 
    put_mat_inner(mat, col1, col2) ::: private
+   !Puts a 5-column block of a matrix to "stdout" with column and row labels
       self :: IN
       mat :: MAT{REAL}
       col1, col2 :: INT
@@ -1028,6 +1109,7 @@ module BREAKDOWN_DATA
    end
 
    put_functional_group_energy_breakdown ::: private
+   !Puts the interaction energies between functional groups to "stdout"
       self :: IN
 
       i, j, k, l :: INT
@@ -1061,6 +1143,8 @@ module BREAKDOWN_DATA
    end
 
    put_min_distances_and_bonds(group1, group2)
+   !Puts the distances between a pair of groups and the bonds within each group
+   !to "stdout"
       self :: IN
       group1, group2 :: VEC{INT}*
       
@@ -1082,6 +1166,7 @@ module BREAKDOWN_DATA
 !  ===========================
 
    put_to_csv ::: private
+   !Puts the interaction energies between functional groups to a .csv file
       self :: IN
 
       i, j, k, l, m, n :: INT
@@ -1130,6 +1215,8 @@ module BREAKDOWN_DATA
    end
    
    get_min_distance_and_bonds_for_csv(group1, group2) result(res) ::: private
+   !Returns the distance between the groups, the closest pair of atoms and the
+   !bonds within each group as a comma-separated list 
       self :: IN
       group1, group2 :: VEC{INT}*
       res :: STR
@@ -1154,22 +1241,9 @@ module BREAKDOWN_DATA
       atoms2.destroy
    end
 
-   filenames result(res)
-      self :: IN
-      res :: STR
-      
-      res = trim(.wavefunction_filename(1)) // trim(.wavefunction_filename(2))
-   end
-
-   wavefunction_filename(atom_group) result(res)
-      self :: IN
-      atom_group :: INT
-      res :: STR
-
-      res = trim(.mol.atom_group(atom_group).wavefunction_file_name) // ","
-   end
-
    get_total(mat) result(res) ::: private
+   !Returns the sum of elements in one of the energy matrices as a string and in
+   !the correct units
       self :: IN
       mat :: MAT{REAL}*
       res :: STR
@@ -1178,6 +1252,7 @@ module BREAKDOWN_DATA
    end
 
    get_str(val) result(res) ::: private
+   !Converts an energy value into a string in the correct units
       self :: IN
       val :: REAL
       res :: STR
@@ -1189,6 +1264,7 @@ module BREAKDOWN_DATA
    end
 
    printed_group(i, j) result(res)
+   !Returns a group represented as a formula 
       self :: IN
       i, j :: INT
       res :: STR
@@ -1205,6 +1281,7 @@ module BREAKDOWN_DATA
 !  ================
 
    group_sizes_provided result(res)
+   !Determines whether the group sizes have been provided
       self :: IN
 
       res :: BIN
@@ -1217,6 +1294,7 @@ module BREAKDOWN_DATA
    end
 
    group_sizes_nonzero result(res)
+   !Determines whether the group sizes are all positive
       self :: IN
       res :: BIN
 
@@ -1229,6 +1307,8 @@ module BREAKDOWN_DATA
    end
 
    symbols_are_valid result(res)
+   !Determines whether the symbols in a group read in as an element list are all
+   !valid symbols
       self :: IN
       res :: BIN
 
@@ -1247,6 +1327,8 @@ module BREAKDOWN_DATA
    end
    
    characters_valid result(res) ::: private
+   !Determines whether the characters in a group read in in SMILES-like notation
+   !are valid
       self :: IN
       res :: BIN
 
@@ -1263,6 +1345,8 @@ module BREAKDOWN_DATA
    end
 
    brackets_matched result(res) ::: private
+   !Determines whether the brackets are matched in a group read in in
+   !SMILES-like notation
       self :: IN
       res :: BIN
 
@@ -1288,6 +1372,8 @@ module BREAKDOWN_DATA
    end
 
    numbers_in_correct_place result(res) ::: private
+   !Determines whether the numbers in a group read in with SMILES-like notation
+   !are in the correct places (after element symbols)
       self :: IN
       res :: BIN
 
@@ -1308,6 +1394,8 @@ module BREAKDOWN_DATA
    end
 
    symbols_valid_in_word_groups result(res) ::: private
+   !Determines whether the symbols in groups read in with SMILES-like notation
+   !are valid element symbols
       self :: IN
       res :: BIN
 
@@ -1333,6 +1421,8 @@ module BREAKDOWN_DATA
    end
 
    symbol_valid(symbol) result(res) ::: selfless
+   !Determines whether a string is a valid element symbol or one of the other
+   !characters allowed in SMILES-like notation
       symbol :: STR
       res :: BIN
 
@@ -1343,6 +1433,7 @@ module BREAKDOWN_DATA
    end
 
    groups_present result(res)
+   !Determines whether each group is present in at least one of the molecules
       self :: IN
       res :: BIN
       
@@ -1355,6 +1446,8 @@ module BREAKDOWN_DATA
    end
 
    queries_are_valid result(res)
+   !Determines whether any of the queries refer to groups that are not in the
+   !relevant molecule
       self :: IN
 
       res :: BIN
@@ -1377,10 +1470,11 @@ module BREAKDOWN_DATA
    end
 
 !  =================
-!  Testing Functions 
+!  Testing Functions - do not contribute to the code's functionality
 !  =================
    
    put_vec3(v) ::: selfless
+   !Testing
       v :: VEC{VEC_{VEC_{INT}}}*
       i :: INT
       element :: VEC{VEC_{INT}}*
@@ -1395,6 +1489,7 @@ module BREAKDOWN_DATA
    end
 
    put_vec_vec(v) ::: selfless
+   !Testing
       v :: VEC{VEC_{INT}}*
       i :: INT
       element :: VEC{INT}*
@@ -1409,6 +1504,7 @@ module BREAKDOWN_DATA
    end
 
    put_test_matrices
+   !Testing
       self :: IN
 
       nncp, necp, ne_field, ee_field, eecp :: MAT{REAL}*
@@ -1451,6 +1547,7 @@ module BREAKDOWN_DATA
    end
 
    put_basis
+   !Testing
       self :: IN
       
       v :: VEC{INT}*
