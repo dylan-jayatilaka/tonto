@@ -57,7 +57,6 @@ module BREAKDOWN_DATA
       nullify(.E_tot)
       nullify(.distances)
       nullify(.attraction_mx)
-      nullify(.letter_groups)
       nullify(.mol1_groups)
       nullify(.mol2_groups)
       nullify(.mol1_bonded)
@@ -91,7 +90,6 @@ module BREAKDOWN_DATA
       .E_tot.destroy
       .distances.destroy
       .attraction_mx.destroy
-      .letter_groups.destroy
       .mol1_groups.destroy
       .mol2_groups.destroy
       .mol1_bonded.destroy
@@ -128,7 +126,6 @@ module BREAKDOWN_DATA
       .scale_factors.create_copy(accurate_factors)
       .num_groups = 0
       .num_queries = 0
-      .read_as_structured = TRUE
    end
    
 !  ===============
@@ -189,7 +186,6 @@ module BREAKDOWN_DATA
          case ("distance_units=        "); .read_distance_units
          case ("energy_units=          "); .read_energy_units
          case ("groups=                "); .read_groups
-         case ("group_sizes=           "); .read_group_sizes
          case ("num_groups=            "); .read_num_groups
          case ("num_queries=           "); .read_num_queries
          case ("queries=               "); .read_queries
@@ -197,7 +193,6 @@ module BREAKDOWN_DATA
          case ("print_distances        "); .print_distances = TRUE
          case ("print_extra_terms      "); .print_extra_terms = TRUE
          case ("print_totals           "); .print_totals = TRUE
-         case ("read_element_list      "); .set_read_as_structured_to_false
          case ("using_fast_wavefunction"); .set_factors_to_fast
          case default;       UNKNOWN(word)
       end
@@ -247,81 +242,10 @@ module BREAKDOWN_DATA
       self :: INOUT
 
       stdin.read(.num_groups)
-      if (.read_as_structured) then
-         .word_groups.create(.num_groups)
-      else
-         .letter_groups.create(.num_groups)
-      end
-   end
-
-   read_group_sizes ::: leaky
-   !Reads in the sizes of each group and creates space to store them (only if the 
-   !read_element_list flag has been set)
-      self :: INOUT
-
-      ENSURE(NOT .read_as_structured, "command not available, groups to be read as structured")
-      ENSURE(.letter_groups.created, "number of groups must be provided before group sizes")
-
-      i :: INT
-      group_sizes :: VEC{INT}(.letter_groups.dim)
-
-      stdin.read(group_sizes)
-
-      do i = 1, .letter_groups.dim
-         .letter_groups(i).element.create(group_sizes(i))
-      end
+      .word_groups.create(.num_groups)
    end
 
    read_groups ::: leaky
-   !Reads in the groups
-      self :: INOUT
-
-      if (.read_as_structured) then
-         .read_word_groups
-      else
-         .read_letter_groups
-      end
-   end
-
-   read_letter_groups ::: leaky
-   !Reads in the groups as lists of elements
-      self :: INOUT
-
-      ENSURE(.letter_groups.created, "number of groups must be provided before groups")
-      ENSURE(.group_sizes_nonzero, "groups cannot have size zero")
-      ENSURE(.group_sizes_provided, "group sizes must be provided before groups")
-
-      i :: INT
-      element :: VEC{STR}*
-      name :: STR
-
-      do i = 1, .letter_groups.dim
-         element => .letter_groups(i).element
-         stdin.read(element)
-         if (element.dim == 1) then
-            name = element(1)
-            select case(trim(name))
-               case ("acid")
-                  .letter_groups(i).element.destroy
-                  .letter_groups(i).element.create_copy(["C", "O", "O", "H"])
-               case ("amide")
-                  .letter_groups(i).element.destroy
-                  .letter_groups(i).element.create_copy(["C", "O", "N", "H", "H"])
-               case ("alcohol")
-                  .letter_groups(i).element.destroy
-                  .letter_groups(i).element.create_copy(["C", "O", "H"])
-               case ("amino")
-                  .letter_groups(i).element.destroy
-                  .letter_groups(i).element.create_copy(["N", "H", "H"])
-               case ("pyridine")
-                  .letter_groups(i).element.destroy
-                  .letter_groups(i).element.create_copy(["H", "C", "N", "C"])
-            end
-         end
-      end
-   end
-
-   read_word_groups ::: leaky
    !Reads in the groups using SMILES-like notation
       self :: INOUT
 
@@ -346,16 +270,6 @@ module BREAKDOWN_DATA
       ENSURE(.queries.created, "number of queries must be read in before queries")
 
       stdin.read(.queries)
-   end
-
-   set_read_as_structured_to_false
-   !Sets read_as_structured to false, indicating that the groups are to provided
-   !as lists of elements rather than with SMILES notation
-      self :: INOUT
-
-      ENSURE(NOT .letter_groups.created, "groups already read in")
-
-      .read_as_structured = FALSE
    end
 
    set_factors_to_fast
@@ -758,12 +672,8 @@ module BREAKDOWN_DATA
       if (.num_groups /= 0) then
          .mol1.atom.get_bonded(.mol1_bonded)
          .mol2.atom.get_bonded(.mol2_bonded)
-         if (.read_as_structured) then
-            .substitute_word_groups
-            .process_word_groups
-         else
-            .process_letter_groups
-         end
+         .substitute_word_groups
+         .process_word_groups
       end
    end
 
@@ -810,8 +720,8 @@ module BREAKDOWN_DATA
          BREAKDOWN_DATA::get_group_structure(.word_groups(i), element(i).element, parent(i).element)
       end
 
-      .mol1.atom.find_groups_structured(.mol1_groups, .mol1_bonded, element, parent)
-      .mol2.atom.find_groups_structured(.mol2_groups, .mol2_bonded, element, parent)
+      .mol1.atom.find_groups(.mol1_groups, .mol1_bonded, element, parent)
+      .mol2.atom.find_groups(.mol2_groups, .mol2_bonded, element, parent)
 
       element.destroy
       parent.destroy
@@ -883,17 +793,6 @@ module BREAKDOWN_DATA
             res = res + 1
          end
       end
-   end
-
-   process_letter_groups ::: private, leaky
-   !Locates each group within one of the molecules, if groups are inputted as
-   !element lists
-      self :: INOUT
-
-      ENSURE(.symbols_are_valid, "invalid symbol detected")
-      
-      .mol1.atom.find_groups(.letter_groups, .mol1_groups, .mol1_bonded)
-      .mol2.atom.find_groups(.letter_groups, .mol2_groups, .mol2_bonded)
    end
 
 !  ========================
@@ -1407,63 +1306,13 @@ module BREAKDOWN_DATA
       i, j :: INT
       res :: STR
 
-      if (.letter_groups.created) then
-         res = .letter_groups(.queries(i, j)).element.to_concatenated_str(separator = trim(" "))
-      else
-         res = .word_groups(.queries(i, j))
-      end
+      res = .word_groups(.queries(i, j))
    end
    
 !  ================
 !  Checking methods
 !  ================
 
-   group_sizes_provided result(res)
-   !Determines whether the group sizes have been provided
-      self :: IN
-
-      res :: BIN
-
-      if (.num_groups == 0) then
-         res = TRUE
-      else
-         res = .letter_groups(1).element.created
-      end
-   end
-
-   group_sizes_nonzero result(res)
-   !Determines whether the group sizes are all positive
-      self :: IN
-      res :: BIN
-
-      i :: INT
-
-      res = TRUE
-      do i = 1, .num_groups
-         res = res AND (.letter_groups(i).element.dim > 0)
-      end
-   end
-
-   symbols_are_valid result(res)
-   !Determines whether the symbols in a group read in as an element list are all
-   !valid symbols
-      self :: IN
-      res :: BIN
-
-      i, j :: INT
-      element :: VEC{STR}*
-      symbol :: STR*
-
-      res = TRUE
-      do i = 1, .num_groups
-         element => .letter_groups(i).element
-         do j = 1, element.dim
-            symbol => element(j)
-            res = res AND symbol.is_one_of(ATOM::element_symbols)
-         end
-      end
-   end
-   
    characters_valid result(res) ::: private
    !Determines whether the characters in a group read in in SMILES-like notation
    !are valid
