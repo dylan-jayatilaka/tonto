@@ -1,18 +1,5 @@
 # Numdiff
-find_program(NUMDIFF_EXECUTABLE
-    NAMES numdiff
-)
-if(NUMDIFF_EXECUTABLE MATCHES "-NOTFOUND")
-    MESSAGE(STATUS
-        "Could not find numdiff; using slower perl script instead (Tests will take longer).")
-    set(CMP_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/compare_output.pl"
-        CACHE FILEPATH "Script to compare tonto outputs")
-else()
-    set(CMP_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/ndcmp"
-       CACHE FILEPATH "Script to compare tonto outputs")
-endif()
-
-set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.pl"
+set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.py"
     CACHE FILEPATH "Script to perform tests in a directory")
 
 
@@ -67,9 +54,8 @@ function(add_all_tests)
         add_test(NAME \"${N}\"
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
             COMMAND ${PERL_EXECUTABLE} ${TEST_SCRIPT}
-            -testdir "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
-            -program "${TEST_EXE} -b ${PROJECT_SOURCE_DIR}/basis_sets"
-            -cmp "${CMP_SCRIPT}")
+            -t "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
+            -p "${TEST_EXE} -b ${PROJECT_SOURCE_DIR}/basis_sets")
         set_tests_properties(\"${N}\" PROPERTIES 
             LABELS ${LABELS})
         set_tests_properties(\"${N}\" PROPERTIES 
