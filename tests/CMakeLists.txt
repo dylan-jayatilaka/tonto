@@ -53,7 +53,7 @@ function(add_all_tests)
         get_filename_component(N "${D}" NAME)
         add_test(NAME \"${N}\"
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-            COMMAND ${PERL_EXECUTABLE} ${TEST_SCRIPT}
+            COMMAND python3 ${TEST_SCRIPT}
             -t "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
             -p "${TEST_EXE} -b ${PROJECT_SOURCE_DIR}/basis_sets")
         set_tests_properties(\"${N}\" PROPERTIES 

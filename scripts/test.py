@@ -16,8 +16,8 @@ prefixes_to_ignore = ['Wall-clock', 'CPU time',
 
 test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
 
-def check_line(line):
-    return not any(map(line.startswith, prefixes_to_ignore))
+def is_junk(line):
+    return any(map(line.startswith, prefixes_to_ignore))
 
 
 def get_lines(filename):
@@ -29,8 +29,9 @@ def get_lines(filename):
     """
     lines = []
     with Path(filename).open() as f:
+        lines = [line for line in f]
         for line in f:
-            if check_line(line):
+            if not is_junk(line):
                 lines.append(line)
     return lines
 
@@ -46,7 +47,6 @@ def is_float(s):
     except ValueError:
         return False
 
-
 def equivalent(s1, s2, **kwargs):
     if is_float(s1) and is_float(s2):
         return isclose(float(s1), float(s2), **kwargs)
@@ -60,7 +60,30 @@ def check_numbers(line1, line2, **kwargs):
             for t1, t2 in zip(line1.strip('+- ').split(), line2.strip('+- ').split()))
 
 
-def diff_files(file1, file2, print_diffs=False, **kwargs):
+def diff_sbf(file1, file2, args): 
+    """Find the differences between 2 cxs files using sbftool
+    """
+    kwargs = {
+        'check': True,
+    }
+    verbosity = 1
+    completed = subprocess.run([args.sbftool, '-vc', file1, file2], **kwargs)
+    return completed
+
+
+def is_sbf(filename):
+    """Check if a file is a SBF by reading the header"""
+    with open(filename, 'rb') as f:
+        if f.read(3) == b'SBF':
+            return True
+    return False
+
+def diff_files(file1, file2, args, print_diffs=True, **kwargs):
+    """Find the differences between two output files, delegating
+    to sbftool for sbf files"""
+    if is_sbf(file1) and is_sbf(file2):
+        log.debug('Diffing with sbftool')
+        return diff_sbf(file1, file2, args)
     lines1 = get_lines(file1)
     lines2 = get_lines(file2)
     diff = list(difflib.ndiff(lines1, lines2))
@@ -68,10 +91,8 @@ def diff_files(file1, file2, print_diffs=False, **kwargs):
     del1 = [x for x in diff if x.startswith('-')]
     del2 = [x for x in diff if x.startswith('+')]
     diffs = [check_numbers(l1, l2, **kwargs) for l1, l2 in zip(del1, del2)]
-    if all(diffs):
-        return None
-    else:
-        return [''.join((a, b)) for a, b, d in zip(del1, del2, diffs) if not d]
+    return all(diffs)
+    #return [''.join((a, b)) for a, b, d in zip(del1, del2, diffs) if not d]
 
 
 class working_directory:
@@ -116,21 +137,21 @@ def parse_IO_file(path):
     return io_files
 
 
-def compare_outputs(f1, f2, cmd=None):
-    if cmd:
-        args = [cmd, f1, f2]
-        return subprocess.run(args, check=True)
+def compare_outputs(f1, f2, args):
+    if args.compare_program:
+        return subprocess.run([args.compare_program, f1, f2], check=True)
     else:
         log.debug('Using builtin diff')
-        d = diff_files(f1, f2)
+        d = diff_files(f1, f2, args)
         return d is None
 
 
-def run_program(command, test_dir, compare_prog, io_files, basis_sets):
+def run_test(args, test_dir, io_files):
     kwargs = {
         'shell': True,
         'universal_newlines': True,
         'check': True,
+        'env': {'TONTO_BASIS_SET_DIRECTORY': args.basis_sets}
     }
 
     timings = {}
@@ -140,20 +161,22 @@ def run_program(command, test_dir, compare_prog, io_files, basis_sets):
         for path in io_files['input']:
             shutil.copy(Path(test_dir, path).absolute(), '.')
         timings['cp_input'] = time.time() - timings['start']
-        completed = subprocess.run([command, '-b', basis_sets], **kwargs)
+        completed = subprocess.run([args.program], **kwargs)
         timings['tonto'] = time.time() - sum(t for t in timings.values())
         files_equivalent = []
+
         if completed:
             log.debug('Outputs to check %s', io_files['output'])
+
             for path in io_files['output']:
                 canonical = str(Path(test_dir, path).absolute())
                 log.debug('Comparing %s to %s', path, canonical)
-                d = compare_outputs(canonical, path,
-                                    cmd=compare_prog)
+                d = compare_outputs(canonical, path, args)
                 log.debug('Same file: %s', d)
                 files_equivalent.append(d)
         timings['diffs'] = time.time() - sum(t for t in timings.values())
         success = completed and all(files_equivalent)
+
         for path in io_files['output']:
             shutil.copy(Path('.', path).absolute(), 
                         Path(test_dir, path + '.bad').absolute())
@@ -180,14 +203,15 @@ def main():
                         help='Log level for running tests')
     parser.add_argument('--basis-sets', default='.',
                         help='Basis sets directory')
- 
+    parser.add_argument('--sbftool', default='../../external/sbf/src/sbftool',
+                        help='Location of sbftool')
 
     args = parser.parse_args()
+    args.sbftool = os.path.abspath(args.sbftool)
     logging.basicConfig(level=args.log_level)
     test_dir = Path(args.test_directory)
     io_files = parse_IO_file(test_dir / 'IO')
-    if run_program(args.program, test_dir, args.compare_program, io_files,
-                   args.basis_sets):
+    if run_test(args, test_dir, io_files):
         sys.exit(0)
     else:
         sys.exit(1)

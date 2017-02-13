@@ -67,7 +67,7 @@ configure_file(
     ${MACROS}
 )
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/sbf EXCLUDE_FROM_ALL)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/sbf)
 include_directories(${SBF_MODULE_DIRECTORY})
 
 # Build directory
