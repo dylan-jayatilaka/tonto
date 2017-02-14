@@ -152,7 +152,6 @@ def run_test(args, test_dir, io_files):
         'shell': False,
         'universal_newlines': True,
         'env': env,
-        'timeout': 300, #timeout if a test takes longer than 5 mins
     }
     if args.mpi:
         prog = ['mpirun', '-np', '4', args.program]
