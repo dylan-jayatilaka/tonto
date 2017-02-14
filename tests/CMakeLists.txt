@@ -2,24 +2,11 @@
 set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.py"
     CACHE FILEPATH "Script to perform tests in a directory")
 
-
 set(TONTO_EXE "${PROJECT_BINARY_DIR}/tonto"
     CACHE FILEPATH "Test executable")
 
 set(BASIS_SETS "${PROJECT_SOURCE_DIR}/basis_sets"
     CACHE PATH "Basis sets directory")
-
-if(MPI)
-    set(TEST_EXE "${PROJECT_BINARY_DIR}/tontompi")
-    configure_file(
-        ${PROJECT_SOURCE_DIR}/scripts/tontompi.in
-        ${TEST_EXE}
-    )
-else()
-    set(TEST_EXE "${TONTO_EXE}")
-endif()
-
-message(STATUS "Testing with ${TEST_EXE}")
 
 macro(subdirlist result curdir)
   file(GLOB children RELATIVE ${curdir} ${curdir}/*)
@@ -31,6 +18,13 @@ macro(subdirlist result curdir)
   endforeach()
   set(${result} ${dirlist})
 endmacro()
+
+if(WITH_MPI)
+    message(STATUS "MPI Made it to tests")
+    set(MPI_FLAG "-m" CACHE STRING "Flag for test.py" FORCE)
+else()
+    message(STATUS "NO MPI WTF")
+endif()
 
 function(add_all_tests)
     # This expects a list of test directories
@@ -55,7 +49,10 @@ function(add_all_tests)
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
             COMMAND python3 ${TEST_SCRIPT}
             -t "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
-            -p "${TEST_EXE} -b ${PROJECT_SOURCE_DIR}/basis_sets")
+            -b "${BASIS_SETS}"
+            -p "${TONTO_EXE}"
+            --log-level=DEBUG
+            ${MPI_FLAG})
         set_tests_properties(\"${N}\" PROPERTIES 
             LABELS ${LABELS})
         set_tests_properties(\"${N}\" PROPERTIES 

@@ -12,9 +12,11 @@ set(VERSION_MINOR_MINOR 0)
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
 
 # Tonto speicifics
-set(MPI 0 CACHE BOOLEAN "Build with MPI enabled")
 string(TIMESTAMP TONTO_BUILD_DATE "%Y-%m-%d %H:%M")
-set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets)
+set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets 
+    CACHE PATH "Basis sets directory")
+
+option(MPI "Use MPI" OFF)
 
 # Perl
 find_package(Perl REQUIRED)
@@ -34,31 +36,36 @@ endif()
 # Testing?
 enable_testing()
 
+
 # Tonto
 project(tonto
     LANGUAGES Fortran C
     VERSION ${TONTO_VERSION})
 
-# If desirable we can use .F03/.f03 by appending to the below variable
-# message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
-
-# MPI
 if(MPI)
     message(STATUS "Building with MPI enabled")
-    find_package(MPI)
-    if(MPI_Fortran_FOUND)
-        message(STATUS "MPI Flags: ${MPI_Fortran_FLAGS}")
-        message(STATUS "MPI compiler: ${MPI_Fortran_COMPILER}")
+    include(FindMPI)
+    # MPI
+    if(MPI_FOUND)
+        message(STATUS "MPI Fortran compiler: ${MPI_Fortran_COMPILER}")
         message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
         message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
-        set(CMAKE_Fortran_COMPILER ${MPI_Fortran_COMPILER})
         set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
+        set(WITH_MPI ON CACHE STRING "" FORCE)
+        include_directories(${MPI_Fortran_INCLUDE_PATH})
+    else()
+        message(STATUS "MPI_Fortran not found: ${MPI_Fortran_FOUND}")
     endif()
 endif()
 
+
+# If desirable we can use .F03/.f03 by appending to the below variable
+# message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
+
+
 # Set the fortran flags
 include(SetFortranFlags)
-message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
+# message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
 
 # Macros
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
@@ -75,7 +82,7 @@ include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 # BLAS/LAPACK dependency
 if(NOT USE_PACKAGED_LAPACK)
-    find_package(LAPACK)
+    find_package(LAPACK QUIET)
     if(NOT ${LAPACK_FOUND})
         message(STATUS "No lapack found, using packaged libs")
         add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
@@ -86,6 +93,7 @@ else()
     add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
     set(LAPACK_LIBRARIES lapack)
 endif()
+
 
 # Foo source files
 set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
@@ -428,7 +436,7 @@ add_library(tonto
     ${FORTRAN_SRC}
     ${MACROS}
 )
-target_link_libraries(tonto sbf_fortran)
+target_link_libraries(tonto sbf_fortran ${MPI_Fortran_LIBRARIES})
 
 # Standard executables
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)

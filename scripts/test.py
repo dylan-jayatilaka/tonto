@@ -9,7 +9,6 @@ import subprocess
 import difflib
 import time
 from math import isclose
-
 log = logging.getLogger('test')
 prefixes_to_ignore = ['Wall-clock', 'CPU time', 
     ' Version', ' Platform', 'Timer', ' Build-date']
@@ -147,12 +146,19 @@ def compare_outputs(f1, f2, args):
 
 
 def run_test(args, test_dir, io_files):
+    env = dict(os.environ)
+    env['TONTO_BASIS_SET_DIRECTORY'] = args.basis_sets
     kwargs = {
-        'shell': True,
+        'shell': False,
         'universal_newlines': True,
         'check': True,
-        'env': {'TONTO_BASIS_SET_DIRECTORY': args.basis_sets}
+        'env': env,
+        'timeout': 300, #timeout if a test takes longer than 5 mins
     }
+    if args.mpi:
+        prog = ['mpirun', '-np', '4', args.program]
+    else:
+        prog = [args.program]
 
     timings = {}
     exec_dir = temp_test_dir(test_dir.name)
@@ -161,11 +167,14 @@ def run_test(args, test_dir, io_files):
         for path in io_files['input']:
             shutil.copy(Path(test_dir, path).absolute(), '.')
         timings['cp_input'] = time.time() - timings['start']
-        completed = subprocess.run([args.program], **kwargs)
+
+        log.debug('Running program %s', ' '.join(prog))
+        completed = subprocess.run(prog, **kwargs)
+
         timings['tonto'] = time.time() - sum(t for t in timings.values())
         files_equivalent = []
 
-        if completed:
+        if completed.returncode == 0:
             log.debug('Outputs to check %s', io_files['output'])
 
             for path in io_files['output']:
@@ -193,7 +202,7 @@ def main():
     import argparse
     import os
     parser = argparse.ArgumentParser()
-    parser.add_argument('--program', '-p', default='tonto',
+    parser.add_argument('--program', '-p', default='./tonto',
                         help='Program to use to run the test jobs i.e. tonto')
     parser.add_argument('--test-directory', '-t', default='.',
                         help='Directory in which tests are located')
@@ -201,11 +210,12 @@ def main():
                         help='diff style program to compare outputs')
     parser.add_argument('--log-level', default='ERROR',
                         help='Log level for running tests')
-    parser.add_argument('--basis-sets', default='.',
+    parser.add_argument('--basis-sets', '-b', default='.',
                         help='Basis sets directory')
     parser.add_argument('--sbftool', default='../../external/sbf/src/sbftool',
                         help='Location of sbftool')
-
+    parser.add_argument('--mpi', '-m', default=False, action='store_true',
+                        help='Test with mpirun')
     args = parser.parse_args()
     args.sbftool = os.path.abspath(args.sbftool)
     logging.basicConfig(level=args.log_level)
