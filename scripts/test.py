@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-from pathlib import Path
 import logging
 from tempfile import gettempdir
 import os
+from os.path import abspath, join
 import sys
 import shutil
 import subprocess
@@ -27,7 +27,7 @@ def get_lines(filename):
     filename -- name/path of the file to read
     """
     lines = []
-    with Path(filename).open() as f:
+    with open(filename) as f:
         lines = [line for line in f]
         for line in f:
             if not is_junk(line):
@@ -66,7 +66,7 @@ def diff_sbf(file1, file2, args):
         'check': True,
     }
     verbosity = 1
-    completed = subprocess.run([args.sbftool, '-vc', file1, file2], **kwargs)
+    completed = subprocess.check_call([args.sbftool, '-vc', file1, file2], **kwargs)
     return completed
 
 
@@ -86,12 +86,10 @@ def diff_files(file1, file2, args, print_diffs=True, **kwargs):
     lines1 = get_lines(file1)
     lines2 = get_lines(file2)
     diff = list(difflib.ndiff(lines1, lines2))
-    #print(''.join(diff))
     del1 = [x for x in diff if x.startswith('-')]
     del2 = [x for x in diff if x.startswith('+')]
     diffs = [check_numbers(l1, l2, **kwargs) for l1, l2 in zip(del1, del2)]
     return all(diffs)
-    #return [''.join((a, b)) for a, b, d in zip(del1, del2, diffs) if not d]
 
 
 class working_directory:
@@ -117,7 +115,7 @@ class working_directory:
         os.chdir(self.old_directory)
 
 def temp_test_dir(testname):
-    name = gettempdir() + '/' + testname
+    name = join(gettempdir(), testname)
     log.debug('temp_test_dir = %s', name)
     return name
 
@@ -128,8 +126,8 @@ def parse_IO_file(path):
         'delete': set(),
     }
 
-    if path.exists():
-        with path.open() as f:
+    if os.path.exists(path):
+        with open(path) as f:
             for line in f:
                 tokens = line.split(':')
                 io_files[tokens[0].strip()].add(tokens[1].strip())
@@ -138,7 +136,7 @@ def parse_IO_file(path):
 
 def compare_outputs(f1, f2, args):
     if args.compare_program:
-        return subprocess.run([args.compare_program, f1, f2], check=True)
+        return subprocess.check_call([args.compare_program, f1, f2])
     else:
         log.debug('Using builtin diff')
         d = diff_files(f1, f2, args)
@@ -151,7 +149,6 @@ def run_test(args, test_dir, io_files):
     kwargs = {
         'shell': False,
         'universal_newlines': True,
-        'check': True,
         'env': env,
         'timeout': 300, #timeout if a test takes longer than 5 mins
     }
@@ -161,24 +158,25 @@ def run_test(args, test_dir, io_files):
         prog = [args.program]
 
     timings = {}
-    exec_dir = temp_test_dir(test_dir.name)
+    exec_dir = temp_test_dir(os.path.basename(test_dir.rstrip('/')))
     timings['start'] = time.time() 
     with working_directory(exec_dir, create=True):
         for path in io_files['input']:
-            shutil.copy(Path(test_dir, path).absolute(), '.')
+            shutil.copy(abspath(join(test_dir, path)), '.')
         timings['cp_input'] = time.time() - timings['start']
 
         log.debug('Running program %s', ' '.join(prog))
-        completed = subprocess.run(prog, **kwargs)
+        retcode = subprocess.check_call(prog, **kwargs)
+        completed = (retcode == 0)
 
         timings['tonto'] = time.time() - sum(t for t in timings.values())
         files_equivalent = []
 
-        if completed.returncode == 0:
+        if completed:
             log.debug('Outputs to check %s', io_files['output'])
 
             for path in io_files['output']:
-                canonical = str(Path(test_dir, path).absolute())
+                canonical = abspath(join(test_dir, path))
                 log.debug('Comparing %s to %s', path, canonical)
                 d = compare_outputs(canonical, path, args)
                 log.debug('Same file: %s', d)
@@ -187,8 +185,8 @@ def run_test(args, test_dir, io_files):
         success = completed and all(files_equivalent)
 
         for path in io_files['output']:
-            shutil.copy(Path('.', path).absolute(), 
-                        Path(test_dir, path + '.bad').absolute())
+            shutil.copy(abspath(join('.', path)),
+                        abspath(join(test_dir, path + '.bad')))
         timings['cp_output'] = time.time() - sum(t for t in timings.values())
         log.debug('Time spent:')
         for k, v in timings.items():
@@ -219,9 +217,8 @@ def main():
     args = parser.parse_args()
     args.sbftool = os.path.abspath(args.sbftool)
     logging.basicConfig(level=args.log_level)
-    test_dir = Path(args.test_directory)
-    io_files = parse_IO_file(test_dir / 'IO')
-    if run_test(args, test_dir, io_files):
+    io_files = parse_IO_file(join(args.test_directory,'IO'))
+    if run_test(args, args.test_directory, io_files):
         sys.exit(0)
     else:
         sys.exit(1)
