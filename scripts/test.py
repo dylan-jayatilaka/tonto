@@ -64,11 +64,8 @@ def check_numbers(line1, line2, **kwargs):
 def diff_sbf(file1, file2, args): 
     """Find the differences between 2 cxs files using sbftool
     """
-    kwargs = {
-        'check': True,
-    }
     verbosity = 1
-    completed = subprocess.check_call([args.sbftool, '-vc', file1, file2], **kwargs)
+    completed = subprocess.check_call([args.sbftool, '-vc', file1, file2])
     return completed
 
 
