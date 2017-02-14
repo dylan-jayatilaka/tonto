@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import difflib
 import time
-from math import isclose
 log = logging.getLogger('test')
 prefixes_to_ignore = ['Wall-clock', 'CPU time', 
     ' Version', ' Platform', 'Timer', ' Build-date']
@@ -18,6 +17,9 @@ test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
 def is_junk(line):
     return any(map(line.startswith, prefixes_to_ignore))
 
+
+def isclose(a, b, abs_tol=0.0, rel_tol=0.0):
+    return (abs(a-b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol))
 
 def get_lines(filename):
     """Read all lines from a file, returning a
