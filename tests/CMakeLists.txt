@@ -20,10 +20,7 @@ macro(subdirlist result curdir)
 endmacro()
 
 if(WITH_MPI)
-    message(STATUS "MPI Made it to tests")
     set(MPI_FLAG "-m" CACHE STRING "Flag for test.py" FORCE)
-else()
-    message(STATUS "NO MPI WTF")
 endif()
 
 function(add_all_tests)

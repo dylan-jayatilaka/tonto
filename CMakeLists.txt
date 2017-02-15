@@ -65,7 +65,7 @@ endif()
 
 # Set the fortran flags
 include(SetFortranFlags)
-# message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
+message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
 
 # Macros
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
