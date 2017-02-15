@@ -25,7 +25,7 @@ software package manager, install:
 * `blas` 
 * `lapack` 
 * `open-mpi` (for parallel)
-* `numdiff` (recommended)
+* `python3` (recommended for testing)
 * `gnuplot` (recommended)
 
 ### On MacOS
@@ -109,9 +109,10 @@ For help type `hart -help`.
 
 ## 3. Go!
 
-On Linux and Mac, the tests use the `numdiff` program
-to check the difference between outputs. On Windows, we
-use a custom `perl` script which is not as good.
+The tests use the `test.py` script located in `scripts` 
+to check the difference between outputs.  This should
+defer to `sbftool` for SBF formatted files, and will
+overcome small numerical differences.
 
 To run all tests, in the build directory type:
 ```
