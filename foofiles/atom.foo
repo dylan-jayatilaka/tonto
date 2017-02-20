@@ -909,12 +909,13 @@ contains
       res :: BIN
    end
 
-   nullify_ptr_part
+   nullify_ptr_part ::: PURE
    ! Nullify the pointer parts of the atom
    ! WARNING: all of these are usually pointer assigned in MOLECULE
    ! when defining the (spherically averaged) atomic natural orbitals.
    ! Therefore, the appropriate MOLECULE destructor should be called
    ! before using this routine.
+      self :: INOUT
 
       nullify(.basis)
       nullify(.slaterbasis)
@@ -944,6 +945,7 @@ contains
    ! a unique-atom or all-atom destruction for the
    ! different pointer parts depending on how they
    ! were created.
+      self :: INOUT
 
       ! Never destroy these ... they are always
       ! resolved outside the atom object.
@@ -992,6 +994,7 @@ contains
 
    destroy_NAOs ::: leaky
    ! Destroy the NAO pointer parts
+      self :: INOUT
 
       if (NOT .NAOs_made) return
 
@@ -1005,7 +1008,9 @@ contains
    destroy_ANOs ::: leaky
    ! Destroy the (unique-atom) ANO pointer parts
    ! (and related info)
-   DIE_IF(.kind==0,"The kind has not been set")
+      self :: INOUT
+
+   ENSURE(.kind==0,"The kind has not been set")
 
       if (NOT .ANOs_made) return
 
@@ -1031,7 +1036,9 @@ contains
 
    destroy_ANO_interpolators ::: leaky
    ! Destroy the (unique-atom) ANO interpolators
-   DIE_IF(.kind==0,"The kind has not been set")
+      self :: INOUT
+
+   ENSURE(.kind==0,"The kind has not been set")
 
       if (NOT .ANO_interpolators_made) return
 
@@ -1045,6 +1052,7 @@ contains
 
    destroy_spherical_atom_data ::: leaky
    ! Destroy the (non-unique) ANO pointer parts
+      self :: INOUT
 
       if (NOT .spherical_atom_data_made) return
 
@@ -1061,6 +1069,7 @@ contains
 
    destroy_interpolators ::: leaky
    ! Destroy the (non-unique) interpolators
+      self :: INOUT
 
       if (NOT .interpolators_made) return
 
@@ -1072,7 +1081,9 @@ contains
 
    destroy_shell_info ::: leaky
    ! Destroy the (unique-atom) shell info
-   DIE_IF(.kind==0,"The kind has not been set")
+      self :: INOUT
+
+   ENSURE(.kind==0,"The kind has not been set")
 
       if (NOT .shell_info_made) return
 
@@ -2808,12 +2819,18 @@ contains
       val = THIRD * (.ADP_tensor(1,1)+.ADP_tensor(2,2)+.ADP_tensor(3,3))
 
       ! Make it isotropic
-      ADP      = ZERO
       ADP(1,1) = val
       ADP(2,2) = val
       ADP(3,3) = val
 
-      .set_ADP_tensor(ADP)
+      ADP(1,2) = ZERO
+      ADP(2,1) = ZERO
+      ADP(1,3) = ZERO
+      ADP(3,1) = ZERO
+      ADP(2,3) = ZERO
+      ADP(3,2) = ZERO
+
+      .set_ADP_tensor(ADP(:,:))
 
    end
 
@@ -2977,12 +2994,36 @@ contains
    ! Generic set
    end
 
-!  ================
-!  IAM form factors
-!  ================
+!  ============
+!  Form factors
+!  ============
 
    set_use_IAM_ITC_FFs(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_IAM_ITC_FFs)
    ! Generic set
+   end
+
+   set_f_i(val) 
+   ! Set f'
+      self :: INOUT
+      val :: REAL, IN
+
+   ENSURE(val< HUNDRED,"f_i is too large: "//trim(val.to_str))
+   ENSURE(val>-HUNDRED,"f_i is too small: "//trim(val.to_str))
+
+      .f_i = val
+
+   end
+
+   set_f_r(val) 
+   ! Set f''
+      self :: INOUT
+      val :: REAL, IN
+
+   ENSURE(val< HUNDRED,"f_r is too large: "//trim(val.to_str))
+   ENSURE(val>-HUNDRED,"f_r is too small: "//trim(val.to_str))
+
+      .f_r = val
+
    end
 
 !  ============
@@ -3018,6 +3059,8 @@ contains
          case ("charge=                      "); .read_charge
          case ("coppensbasis_label=          "); .read_coppensbasis_label
          case ("dipole=                      "); .read_dipole
+         case ("f_i=                         "); .read_f_i
+         case ("f_r=                         "); .read_f_r
          case ("group=                       "); .read_group
          case ("junk=                        "); .read_junk
          case ("label=                       "); .read_label
@@ -3061,6 +3104,30 @@ contains
 
    read_junk ::: get_from(OBJECT), private
    ! Read in a junk string, useful for ignoring a field
+   end
+
+   read_f_i
+   ! Read f'', the imaginary part of the anomalous dispersion
+      self :: INOUT
+
+      val :: REAL
+
+      stdin.read(val)
+
+      .set_f_i(val)
+
+   end
+
+   read_f_r
+   ! Read f', the real part of the anomalous dispersion
+      self :: INOUT
+
+      val :: REAL
+
+      stdin.read(val)
+
+      .set_f_r(val)
+
    end
 
    read_group
@@ -4641,7 +4708,9 @@ contains
       end
    end
 
+!  =========================
 !  Form factors & dispersion
+!  =========================
 
    H_SDS_form_factor(k) result (res) ::: selfless, elemental
    ! The H atom SDS form factor where "k" is the scattering vector
@@ -4722,26 +4791,738 @@ contains
 
    end
 
-   dispersion_correction(wavelength) result (res)
-   ! The dispersion correction which best matches the wavelength.
+   has_dispersion result (res) ::: elemental
+   ! Return TRUE if
       self :: IN
-      wavelength :: REAL
+      res :: BIN
+
+      res = .f_r<HUNDRED AND abs(.f_i)<HUNDRED
+
+   end
+
+   dispersion_correction(wavelength) result (res)
+   ! The dispersion correction at a certain "wavelength".
+      self :: IN
+      wavelength :: REAL, IN
       res :: CPX
 
       sasaki :: SASAKI_FORM_FACTORS*
 
-      if (.atomic_number<1 OR .atomic_number>92) then
+      if (.has_dispersion) then
 
-         res = ZERO
+         res = COMPLEXIFY(.f_r,.f_i)
 
       else
+      
+         ! Look up dipersion from table ... UNRELIABLE TABLES
+         if (.atomic_number<1 OR .atomic_number>92) then
+        
+            res = ZERO
+        
+         else
+        
+            sasaki.create
+            sasaki.set_wavelength(wavelength)
+            sasaki.set_Z_list([.atomic_number])
+            sasaki.update
+            res = COMPLEXIFY(sasaki.fr(1),sasaki.fi(1))
+            sasaki.destroy
+        
+         end
 
-         sasaki.create
-         sasaki.set_wavelength(wavelength)
-         sasaki.set_Z_list([.atomic_number])
-         sasaki.update
-         res = COMPLEXIFY(sasaki.fr(1),sasaki.fi(1))
-         sasaki.destroy
+      end
+
+   end
+
+   set_dispersion_coefficient(wavelength)
+   ! Set the anomalous dispersion coefficient at a certain "wavelength".
+      self :: INOUT
+      wavelength :: REAL, IN
+
+      sasaki :: SASAKI_FORM_FACTORS*
+
+      if (.has_dispersion) then
+
+         ! Don't override an existing (fr,fi)
+
+      else
+      
+         ! Look up dipersion from table ... UNRELIABLE TABLES
+         if (.atomic_number<1 OR .atomic_number>92) then
+        
+            .f_r = ZERO
+            .f_i = ZERO
+        
+         else
+        
+            ! Get them
+            sasaki.create
+            sasaki.set_wavelength(wavelength)
+            sasaki.set_Z_list([.atomic_number])
+            sasaki.update
+
+            ! Set them
+            .f_r = sasaki.fr(1)
+            .f_i = sasaki.fi(1)
+
+            ! Clean
+            sasaki.destroy
+        
+         end
+
+      end
+
+   end
+
+   add_dispersion_H_ADP(Fc,k_pts,wavelength)
+   ! Add the anamalous dispersion correction into the calculated
+   ! structure factor "Fc", for a given set of "K_pts" and
+   ! "wavelength" (in Bohr of course!).
+      self :: IN
+      Fc :: VEC{CPX}, INOUT
+      k_pts :: MAT{REAL}, IN
+      wavelength :: REAL, IN
+
+   ENSURE(Fc.dim1==k_pts.dim1,"1st dimension of dc and k_pts are not compatible")
+   ENSURE(      3==k_pts.dim2,"2nd dimension of k_pts must be 3!")
+
+      II,anom,phase :: CPX
+      kv :: VEC{REAL}(3)
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      c1,c2,c3,c4 :: REAL
+      k,n_k :: INT
+
+      II   = (ZERO,ONE)
+      anom = .dispersion_correction(wavelength)
+
+      n_k = k_pts.dim1
+
+      ! Temperature part, ADP4's
+      if (.has_only_ADP4s_and_errors) then
+
+         ! Get ADP tensors
+         .put_ADP2_vector_to(adp2)
+         .put_ADP3_vector_to(adp3)
+         .put_ADP4_vector_to(adp4)
+
+         do k = 1,n_k
+
+            ! U tensor contracted with k vector
+            kv = k_pts(k,:)
+            c2 = adp2.contract_with(kv)*HALF
+            c3 = adp3.contract_with(kv)*SIXTH
+            c4 = adp4.contract_with(kv)*SIXTH*QUARTER
+
+            ! SF contribution (quartic anharmonic!)
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            phase = exp(II*phase)
+            Fc(k) = Fc(k) + anom * phase * exp(-c2) * (ONE - II*c3 + c4)
+
+         end
+
+      ! Temperature part, ADP3's
+      else if (.has_only_ADP3s_and_errors) then
+
+         ! Get ADP tensors
+         .put_ADP2_vector_to(adp2)
+         .put_ADP3_vector_to(adp3)
+
+         do k = 1,n_k
+
+            ! U tensor contracted with k vector
+            kv = k_pts(k,:)
+            c2 = adp2.contract_with(kv)*HALF
+            c3 = adp3.contract_with(kv)*SIXTH
+
+            ! SF contribution (cubic anharmonic!)
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            phase = exp(II*phase)
+            Fc(k) = Fc(k) + anom * phase * exp(-c2) * (ONE - II*c3)
+
+         end
+
+      ! Harmonic ...
+      else 
+
+         ! Get ADP tensor
+         .put_ADP2_vector_to(adp2)
+
+         do k = 1,n_k
+
+            ! U tensor contracted with k vector
+            kv = k_pts(k,:)
+            c2 = adp2.contract_with(kv)*HALF
+
+            ! SF contribution (harmonic!)
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            phase = exp(II*phase)
+            Fc(k) = Fc(k) + anom * phase * exp(-c2)
+
+         end
+      
+      end
+
+   end
+
+   add_derivative_dispn_H_ADP(dFc,base,k_pts,wavelength)
+   ! Add the derivative of the anamalous dispersion correction into
+   ! the derivative calculated structure factor "Fc", for a given set
+   ! of "k_pts" and "wavelength" (in Bohr of course!). "base" is the
+   ! index of where the derivatives for this atom start in the full
+   ! derivative structure factor array.
+      self :: IN
+      dFc :: MAT{CPX}, INOUT
+      base :: INT, IN
+      k_pts :: MAT{REAL}, IN
+      wavelength :: REAL, IN
+
+   ENSURE(dFc.dim1==k_pts.dim1,"1st dimension of dc and k_pts are not compatible")
+   ENSURE(       3==k_pts.dim2,"2nd dimension of k_pts must be 3!")
+
+      II,anom,phase :: CPX
+      sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
+      kv :: VEC{REAL}(3)
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      c1,c2,c3,c4 :: REAL
+      k1,k2,k3 :: REAL
+      k1_k1,k2_k2,k3_k3 :: REAL
+      k1_k2,k1_k3,k2_k3 :: REAL
+      k,n_k :: INT
+
+      II   = (ZERO,ONE)
+      anom = .dispersion_correction(wavelength)
+
+      n_k = k_pts.dim1
+
+      ! Temperature part, ADP4's
+      if (.has_only_ADP4s_and_errors) then
+
+         ! Get ADP tensors
+         .put_ADP2_vector_to(adp2)
+         .put_ADP3_vector_to(adp3)
+         .put_ADP4_vector_to(adp4)
+
+         do k = 1,n_k
+
+            ! Scattering vector
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            kv = [k1,k2,k3]
+           
+            ! Component products
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+           
+            ! U tensor contracted with k vector
+            c2 = adp2.contract_with(kv)*HALF
+            c3 = adp3.contract_with(kv)*SIXTH
+            c4 = adp4.contract_with(kv)*SIXTH*QUARTER
+           
+            ! Constant part of the derivative dispersion
+            ! correction, harmonic part only.
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            sfh   = anom * exp(II*phase) * exp(-c2)
+           
+            ! Multiples of *anharmonic* part of anamalous correction
+            sf1 = sfh * (ONE - II*c3 + c4)
+            sf2 = sf1 * HALF
+           
+            ! Pos derivatives
+            dFc(k,base+ 1) = dFc(k,base+ 1) + II*k1*sf1
+            dFc(k,base+ 2) = dFc(k,base+ 2) + II*k2*sf1
+            dFc(k,base+ 3) = dFc(k,base+ 3) + II*k3*sf1
+           
+            ! U2 derivatives
+            dFc(k,base+ 4) = dFc(k,base+ 4) - k1_k1*sf2
+            dFc(k,base+ 5) = dFc(k,base+ 5) - k2_k2*sf2
+            dFc(k,base+ 6) = dFc(k,base+ 6) - k3_k3*sf2
+            dFc(k,base+ 7) = dFc(k,base+ 7) - k1_k2*sf1
+            dFc(k,base+ 8) = dFc(k,base+ 8) - k1_k3*sf1
+            dFc(k,base+ 9) = dFc(k,base+ 9) - k2_k3*sf1
+           
+            ! Structure factor (harmonic)
+            sf1  = sfh
+           
+            ! Multiples of *harmonic* part of the anomalous correction
+            sf2  = sf1 * HALF
+            sf4  = sf1 * QUARTER
+            sf6  = sf1 * SIXTH
+            sf24 = sf1 * SIXTH*QUARTER
+           
+            ! U3 derivatives
+            dFc(k,base+10) = dFc(k,base+10) - II*k1_k1*k1*sf6
+            dFc(k,base+11) = dFc(k,base+11) - II*k2_k2*k2*sf6
+            dFc(k,base+12) = dFc(k,base+12) - II*k3_k3*k3*sf6
+            dFc(k,base+13) = dFc(k,base+13) - II*k1_k1*k2*sf2
+            dFc(k,base+14) = dFc(k,base+14) - II*k1_k1*k3*sf2
+            dFc(k,base+15) = dFc(k,base+15) - II*k2_k2*k1*sf2
+            dFc(k,base+16) = dFc(k,base+16) - II*k2_k2*k3*sf2
+            dFc(k,base+17) = dFc(k,base+17) - II*k3_k3*k1*sf2
+            dFc(k,base+18) = dFc(k,base+18) - II*k3_k3*k2*sf2
+            dFc(k,base+19) = dFc(k,base+19) - II*k1*k2*k3*sf1
+           
+            ! U4 derivatives
+            dFc(k,base+20) = dFc(k,base+20) + k1_k1*k1_k1*sf24
+            dFc(k,base+21) = dFc(k,base+21) + k2_k2*k2_k2*sf24
+            dFc(k,base+22) = dFc(k,base+22) + k3_k3*k3_k3*sf24
+            dFc(k,base+23) = dFc(k,base+23) + k1_k1*k1_k2*sf6
+            dFc(k,base+24) = dFc(k,base+24) + k1_k1*k1_k3*sf6
+            dFc(k,base+25) = dFc(k,base+25) + k2_k2*k1_k2*sf6
+            dFc(k,base+26) = dFc(k,base+26) + k2_k2*k2_k3*sf6
+            dFc(k,base+27) = dFc(k,base+27) + k3_k3*k1_k3*sf6
+            dFc(k,base+28) = dFc(k,base+28) + k3_k3*k2_k3*sf6
+            dFc(k,base+29) = dFc(k,base+29) + k1_k1*k2_k2*sf4
+            dFc(k,base+30) = dFc(k,base+30) + k1_k1*k3_k3*sf4
+            dFc(k,base+31) = dFc(k,base+31) + k2_k2*k3_k3*sf4
+            dFc(k,base+32) = dFc(k,base+32) + k1_k1*k2_k3*sf2
+            dFc(k,base+33) = dFc(k,base+33) + k2_k2*k1_k3*sf2
+            dFc(k,base+34) = dFc(k,base+34) + k3_k3*k1_k2*sf2
+
+         end
+
+      ! Temperature part, ADP3's
+      else if (.has_only_ADP3s_and_errors) then
+
+         ! Get ADP tensors
+         .put_ADP2_vector_to(adp2)
+         .put_ADP3_vector_to(adp3)
+
+         do k = 1,n_k
+
+            ! Scattering vector
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            kv = [k1,k2,k3]
+           
+            ! Component products
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+           
+            ! U tensor contracted with k vector
+            c2 = adp2.contract_with(kv)*HALF
+            c3 = adp3.contract_with(kv)*SIXTH
+           
+            ! Constant part of the derivative dispersion
+            ! correction, harmonic part only.
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            sfh   = anom * exp(II*phase) * exp(-c2)
+           
+            ! Multiples of *anharmonic* part of anamalous correction
+            sf1 = sfh * (ONE - II*c3)
+            sf2 = sf1 * HALF
+           
+            ! Pos derivatives
+            dFc(k,base+ 1) = dFc(k,base+ 1) + II*k1*sf1
+            dFc(k,base+ 2) = dFc(k,base+ 2) + II*k2*sf1
+            dFc(k,base+ 3) = dFc(k,base+ 3) + II*k3*sf1
+           
+            ! U2 derivatives
+            dFc(k,base+ 4) = dFc(k,base+ 4) - k1_k1*sf2
+            dFc(k,base+ 5) = dFc(k,base+ 5) - k2_k2*sf2
+            dFc(k,base+ 6) = dFc(k,base+ 6) - k3_k3*sf2
+            dFc(k,base+ 7) = dFc(k,base+ 7) - k1_k2*sf1
+            dFc(k,base+ 8) = dFc(k,base+ 8) - k1_k3*sf1
+            dFc(k,base+ 9) = dFc(k,base+ 9) - k2_k3*sf1
+           
+            ! Structure factor (harmonic)
+            sf1  = sfh
+           
+            ! Multiples of *harmonic* part of the anomalous correction
+            sf2  = sf1 * HALF
+            sf6  = sf1 * SIXTH
+           
+            ! U3 derivatives
+            dFc(k,base+10) = dFc(k,base+10) - II*k1_k1*k1*sf6
+            dFc(k,base+11) = dFc(k,base+11) - II*k2_k2*k2*sf6
+            dFc(k,base+12) = dFc(k,base+12) - II*k3_k3*k3*sf6
+            dFc(k,base+13) = dFc(k,base+13) - II*k1_k1*k2*sf2
+            dFc(k,base+14) = dFc(k,base+14) - II*k1_k1*k3*sf2
+            dFc(k,base+15) = dFc(k,base+15) - II*k2_k2*k1*sf2
+            dFc(k,base+16) = dFc(k,base+16) - II*k2_k2*k3*sf2
+            dFc(k,base+17) = dFc(k,base+17) - II*k3_k3*k1*sf2
+            dFc(k,base+18) = dFc(k,base+18) - II*k3_k3*k2*sf2
+            dFc(k,base+19) = dFc(k,base+19) - II*k1*k2*k3*sf1
+           
+         end
+
+      ! Harmonic ...
+      else 
+
+         ! Get ADP tensors
+         .put_ADP2_vector_to(adp2)
+
+         do k = 1,n_k
+
+            ! Scattering vector
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            kv = [k1,k2,k3]
+           
+            ! Component products
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+           
+            ! U tensor contracted with k vector
+            c2 = adp2.contract_with(kv)*HALF
+           
+            ! Constant part of the derivative dispersion
+            ! correction, harmonic part only.
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            sfh   = anom * exp(II*phase) * exp(-c2)
+           
+            ! Multiples of *anharmonic* part of anamalous correction
+            sf1 = sfh 
+            sf2 = sf1 * HALF
+           
+            ! Pos derivatives
+            dFc(k,base+ 1) = dFc(k,base+ 1) + II*k1*sf1
+            dFc(k,base+ 2) = dFc(k,base+ 2) + II*k2*sf1
+            dFc(k,base+ 3) = dFc(k,base+ 3) + II*k3*sf1
+           
+            ! U2 derivatives
+            dFc(k,base+ 4) = dFc(k,base+ 4) - k1_k1*sf2
+            dFc(k,base+ 5) = dFc(k,base+ 5) - k2_k2*sf2
+            dFc(k,base+ 6) = dFc(k,base+ 6) - k3_k3*sf2
+            dFc(k,base+ 7) = dFc(k,base+ 7) - k1_k2*sf1
+            dFc(k,base+ 8) = dFc(k,base+ 8) - k1_k3*sf1
+            dFc(k,base+ 9) = dFc(k,base+ 9) - k2_k3*sf1
+           
+         end
+
+      end
+
+   end
+
+   add_derivative_dispn_H_iso(dFc,base,k_pts,wavelength)
+   ! Add the derivative of the anamalous dispersion correction into
+   ! the derivative calculated structure factor "Fc", for a given set
+   ! of "k_pts" and "wavelength" (in Bohr of course!). "base" is the
+   ! index of where the derivatives for this atom start in the full
+   ! derivative structure factor array.
+      self :: IN
+      dFc :: MAT{CPX}, INOUT
+      base :: INT, IN
+      k_pts :: MAT{REAL}, IN
+      wavelength :: REAL, IN
+
+   ENSURE(dFc.dim1==k_pts.dim1,"1st dimension of dc and k_pts are not compatible")
+   ENSURE(       3==k_pts.dim2,"2nd dimension of k_pts must be 3!")
+
+      II,anom,phase :: CPX
+      sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
+      kv :: VEC{REAL}(3)
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      c1,c2,c3,c4 :: REAL
+      k1,k2,k3 :: REAL
+      k1_k1,k2_k2,k3_k3 :: REAL
+      k1_k2,k1_k3,k2_k3 :: REAL
+      k,n_k :: INT
+
+      II   = (ZERO,ONE)
+      anom = .dispersion_correction(wavelength)
+
+      n_k = k_pts.dim1
+
+      ! Temperature part, ADP4's
+      if (.has_only_ADP4s_and_errors) then
+
+         DIE_IF(.atomic_number==1,"can't add derivative dispersion corrections when refining H anharmonically with H isotropic")
+
+         ! Get ADP tensors
+         .put_ADP2_vector_to(adp2)
+         .put_ADP3_vector_to(adp3)
+         .put_ADP4_vector_to(adp4)
+
+         do k = 1,n_k
+
+            ! Scattering vector
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            kv = [k1,k2,k3]
+           
+            ! Component products
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+           
+            ! U tensor contracted with k vector
+            c2 = adp2.contract_with(kv)*HALF
+            c3 = adp3.contract_with(kv)*SIXTH
+            c4 = adp4.contract_with(kv)*SIXTH*QUARTER
+           
+            ! Constant part of the derivative dispersion
+            ! correction, harmonic part only.
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            sfh   = anom * exp(II*phase) * exp(-c2)
+           
+            ! Multiples of *anharmonic* part of anamalous correction
+            sf1 = sfh * (ONE - II*c3 + c4)
+            sf2 = sf1 * HALF
+           
+            ! Pos derivatives
+            dFc(k,base+ 1) = dFc(k,base+ 1) + II*k1*sf1
+            dFc(k,base+ 2) = dFc(k,base+ 2) + II*k2*sf1
+            dFc(k,base+ 3) = dFc(k,base+ 3) + II*k3*sf1
+           
+            ! U2 derivatives
+            dFc(k,base+ 4) = dFc(k,base+ 4) - k1_k1*sf2
+            dFc(k,base+ 5) = dFc(k,base+ 5) - k2_k2*sf2
+            dFc(k,base+ 6) = dFc(k,base+ 6) - k3_k3*sf2
+            dFc(k,base+ 7) = dFc(k,base+ 7) - k1_k2*sf1
+            dFc(k,base+ 8) = dFc(k,base+ 8) - k1_k3*sf1
+            dFc(k,base+ 9) = dFc(k,base+ 9) - k2_k3*sf1
+           
+            ! Structure factor (harmonic)
+            sf1  = sfh
+           
+            ! Multiples of *harmonic* part of the anomalous correction
+            sf2  = sf1 * HALF
+            sf4  = sf1 * QUARTER
+            sf6  = sf1 * SIXTH
+            sf24 = sf1 * SIXTH*QUARTER
+           
+            ! U3 derivatives
+            dFc(k,base+10) = dFc(k,base+10) - II*k1_k1*k1*sf6
+            dFc(k,base+11) = dFc(k,base+11) - II*k2_k2*k2*sf6
+            dFc(k,base+12) = dFc(k,base+12) - II*k3_k3*k3*sf6
+            dFc(k,base+13) = dFc(k,base+13) - II*k1_k1*k2*sf2
+            dFc(k,base+14) = dFc(k,base+14) - II*k1_k1*k3*sf2
+            dFc(k,base+15) = dFc(k,base+15) - II*k2_k2*k1*sf2
+            dFc(k,base+16) = dFc(k,base+16) - II*k2_k2*k3*sf2
+            dFc(k,base+17) = dFc(k,base+17) - II*k3_k3*k1*sf2
+            dFc(k,base+18) = dFc(k,base+18) - II*k3_k3*k2*sf2
+            dFc(k,base+19) = dFc(k,base+19) - II*k1*k2*k3*sf1
+           
+            ! U4 derivatives
+            dFc(k,base+20) = dFc(k,base+20) + k1_k1*k1_k1*sf24
+            dFc(k,base+21) = dFc(k,base+21) + k2_k2*k2_k2*sf24
+            dFc(k,base+22) = dFc(k,base+22) + k3_k3*k3_k3*sf24
+            dFc(k,base+23) = dFc(k,base+23) + k1_k1*k1_k2*sf6
+            dFc(k,base+24) = dFc(k,base+24) + k1_k1*k1_k3*sf6
+            dFc(k,base+25) = dFc(k,base+25) + k2_k2*k1_k2*sf6
+            dFc(k,base+26) = dFc(k,base+26) + k2_k2*k2_k3*sf6
+            dFc(k,base+27) = dFc(k,base+27) + k3_k3*k1_k3*sf6
+            dFc(k,base+28) = dFc(k,base+28) + k3_k3*k2_k3*sf6
+            dFc(k,base+29) = dFc(k,base+29) + k1_k1*k2_k2*sf4
+            dFc(k,base+30) = dFc(k,base+30) + k1_k1*k3_k3*sf4
+            dFc(k,base+31) = dFc(k,base+31) + k2_k2*k3_k3*sf4
+            dFc(k,base+32) = dFc(k,base+32) + k1_k1*k2_k3*sf2
+            dFc(k,base+33) = dFc(k,base+33) + k2_k2*k1_k3*sf2
+            dFc(k,base+34) = dFc(k,base+34) + k3_k3*k1_k2*sf2
+
+         end
+
+      ! Temperature part, ADP3's
+      else if (.has_only_ADP3s_and_errors) then
+
+         DIE_IF(.atomic_number==1,"can't add derivative dispersion corrections when refining H anharmonically with H isotropic")
+
+         ! Get ADP tensors
+         .put_ADP2_vector_to(adp2)
+         .put_ADP3_vector_to(adp3)
+
+         do k = 1,n_k
+
+            ! Scattering vector
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            kv = [k1,k2,k3]
+           
+            ! Component products
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+           
+            ! U tensor contracted with k vector
+            c2 = adp2.contract_with(kv)*HALF
+            c3 = adp3.contract_with(kv)*SIXTH
+           
+            ! Constant part of the derivative dispersion
+            ! correction, harmonic part only.
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            sfh   = anom * exp(II*phase) * exp(-c2)
+           
+            ! Multiples of *anharmonic* part of anamalous correction
+            sf1 = sfh * (ONE - II*c3)
+            sf2 = sf1 * HALF
+           
+            ! Pos derivatives
+            dFc(k,base+ 1) = dFc(k,base+ 1) + II*k1*sf1
+            dFc(k,base+ 2) = dFc(k,base+ 2) + II*k2*sf1
+            dFc(k,base+ 3) = dFc(k,base+ 3) + II*k3*sf1
+           
+            ! U2 derivatives
+            dFc(k,base+ 4) = dFc(k,base+ 4) - k1_k1*sf2
+            dFc(k,base+ 5) = dFc(k,base+ 5) - k2_k2*sf2
+            dFc(k,base+ 6) = dFc(k,base+ 6) - k3_k3*sf2
+            dFc(k,base+ 7) = dFc(k,base+ 7) - k1_k2*sf1
+            dFc(k,base+ 8) = dFc(k,base+ 8) - k1_k3*sf1
+            dFc(k,base+ 9) = dFc(k,base+ 9) - k2_k3*sf1
+           
+            ! Structure factor (harmonic)
+            sf1  = sfh
+           
+            ! Multiples of *harmonic* part of the anomalous correction
+            sf2  = sf1 * HALF
+            sf6  = sf1 * SIXTH
+           
+            ! U3 derivatives
+            dFc(k,base+10) = dFc(k,base+10) - II*k1_k1*k1*sf6
+            dFc(k,base+11) = dFc(k,base+11) - II*k2_k2*k2*sf6
+            dFc(k,base+12) = dFc(k,base+12) - II*k3_k3*k3*sf6
+            dFc(k,base+13) = dFc(k,base+13) - II*k1_k1*k2*sf2
+            dFc(k,base+14) = dFc(k,base+14) - II*k1_k1*k3*sf2
+            dFc(k,base+15) = dFc(k,base+15) - II*k2_k2*k1*sf2
+            dFc(k,base+16) = dFc(k,base+16) - II*k2_k2*k3*sf2
+            dFc(k,base+17) = dFc(k,base+17) - II*k3_k3*k1*sf2
+            dFc(k,base+18) = dFc(k,base+18) - II*k3_k3*k2*sf2
+            dFc(k,base+19) = dFc(k,base+19) - II*k1*k2*k3*sf1
+           
+         end
+
+      ! Harmonic *and* NOT H atom ...
+      else if (.atomic_number>1) then
+
+         ! Get ADP tensors
+         .put_ADP2_vector_to(adp2)
+
+         do k = 1,n_k
+
+            ! Scattering vector
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            kv = [k1,k2,k3]
+           
+            ! Component products
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+           
+            ! U tensor contracted with k vector
+            c2 = adp2.contract_with(kv)*HALF
+           
+            ! Constant part of the derivative dispersion
+            ! correction, harmonic part only.
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            sfh   = anom * exp(II*phase) * exp(-c2)
+           
+            ! Multiples of *anharmonic* part of anamalous correction
+            sf1 = sfh 
+            sf2 = sf1 * HALF
+           
+            ! Pos derivatives
+            dFc(k,base+ 1) = dFc(k,base+ 1) + II*k1*sf1
+            dFc(k,base+ 2) = dFc(k,base+ 2) + II*k2*sf1
+            dFc(k,base+ 3) = dFc(k,base+ 3) + II*k3*sf1
+           
+            ! U2 derivatives
+            dFc(k,base+ 4) = dFc(k,base+ 4) - k1_k1*sf2
+            dFc(k,base+ 5) = dFc(k,base+ 5) - k2_k2*sf2
+            dFc(k,base+ 6) = dFc(k,base+ 6) - k3_k3*sf2
+            dFc(k,base+ 7) = dFc(k,base+ 7) - k1_k2*sf1
+            dFc(k,base+ 8) = dFc(k,base+ 8) - k1_k3*sf1
+            dFc(k,base+ 9) = dFc(k,base+ 9) - k2_k3*sf1
+
+         end
+
+      ! Harmonic and H U_iso case ...
+      else 
+
+         ! Get ADP tensors
+         .put_ADP2_vector_to(adp2)
+
+         do k = 1,n_k
+
+            ! Scattering vector
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            kv = [k1,k2,k3]
+           
+            ! Component products
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+           
+            ! U tensor contracted with k vector
+            c2 = adp2.contract_with(kv)*HALF
+           
+            ! Constant part of the derivative dispersion
+            ! correction, harmonic part only.
+            phase = k_pts(k,1)*.position(1) &
+                  + k_pts(k,2)*.position(2) &
+                  + k_pts(k,3)*.position(3) 
+            sfh   = anom * exp(II*phase) * exp(-c2)
+           
+            ! Multiples of *anharmonic* part of anamalous correction
+            sf1 = sfh 
+            sf2 = HALF * sfh * (k1_k1+k2_k2+k3_k3)
+           
+            ! Pos derivatives
+            dFc(k,base+ 1) = dFc(k,base+ 1) + II*k1*sf1
+            dFc(k,base+ 2) = dFc(k,base+ 2) + II*k2*sf1
+            dFc(k,base+ 3) = dFc(k,base+ 3) + II*k3*sf1
+           
+            ! H U_iso derivatives; no off diagonal contribution
+            dFc(k,base+ 4) = dFc(k,base+ 4) - sf2
+            dFc(k,base+ 5) = dFc(k,base+ 5) - sf2
+            dFc(k,base+ 6) = dFc(k,base+ 6) - sf2
+           
+         end
 
       end
 

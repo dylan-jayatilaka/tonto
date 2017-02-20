@@ -300,22 +300,18 @@ contains
       cell :: UNIT_CELL, IN
 
       h :: VEC{INT}(3)
-      hv,a :: VEC{REAL}(3)
+      hv :: VEC{REAL}(3)
       lambda,stl,d :: REAL
-      n,i :: INT
+      n :: INT
 
       lambda = REFLECTION:wavelength()
 
       do n = 1,.dim
 
-         h = .indices(n)
-         i = h.index_of_first_nonzero_value
-         a = cell.direct_matrix(:,i)
+         h   = .indices(n)
 
-         hv = matmul(cell.reciprocal_matrix,h)
-         hv.normalise
-
-         d   = dot_product(a,hv)/h(i)
+         hv  = matmul(cell.reciprocal_matrix,h)
+         d   = ONE/hv.norm ! with HBB 6/2/16
          stl = HALF/d
 
          self(n).stl   = stl
@@ -923,7 +919,10 @@ contains
    end
 
    F2_weighted_r_factor result (res) ::: PURE
-   ! weighted r factor for the structure factors *squared*
+   ! Weighted r factor for the structure factors *squared*
+   ! NOTE: sigma is equal to (2 F_exp * F_sigma) 
+   !       *not* F_sigma or F2_sigma and this is only
+   !       appropriate for F refinement.
       self :: IN
       res :: REAL
 
@@ -931,7 +930,7 @@ contains
    ENSURE(.have_F_sigma,"no experimental structure factor errors")
    ENSURE(.have_F_pred, "no predicted structure factors")
 
-      top,bot,Fe,Fp,sg,z,b :: REAL
+      top,bot,Fe,Fp,sg,z,b,Fe2,Fp2 :: REAL
       n :: INT
 
       top = ZERO
@@ -939,14 +938,13 @@ contains
 
       do n = 1,.dim
 
-         Fp = self(n).F_pred; Fp = Fp*Fp
-         Fe = self(n).F_exp;  Fe = Fe*Fe
+         Fp = self(n).F_pred; Fp2 = Fp*Fp
+         Fe = self(n).F_exp;  Fe2 = Fe*Fe
 
-         sg = ONE/self(n).F_sigma
-         sg = sg*sg
+         sg = TWO * self(n).F_exp * self(n).F_sigma
 
-         z  = (Fe - Fp)*sg
-         b  = Fe*sg
+         z  = (Fe2 - Fp2)/sg
+         b  = Fe2/sg
 
          top = top + z*z
          bot = bot + b*b
@@ -1073,8 +1071,6 @@ contains
       self :: IN
       k_pt :: MAT{REAL}, OUT
       unit_cell :: UNIT_CELL, IN
-
- ! ENSURE(.data.created,"no data")
 
       n :: INT
       hkl :: VEC{INT}(3)
@@ -1211,7 +1207,7 @@ contains
       cell_matrix :: MAT{REAL}(3,3), IN
 
       h :: VEC{INT}(3)
-      hv,a :: VEC{REAL}(3)
+      hv :: VEC{REAL}(3)
       d,stl :: REAL
       ref :: REFLECTION
       i, h1,h2,h3, h_max,h1_max,h2_max,h3_max :: INT
@@ -1236,12 +1232,9 @@ contains
 
          h = [h1,h2,h3]
          i = h.index_of_first_nonzero_value
-         a = cell_matrix(:,i)
 
-         hv = h
-         hv.normalise
-
-         d   = dot_product(a,hv)/h(i)
+         hv  = h
+         d   = ONE/hv.norm ! with HBB 6/2/16
          stl = HALF/d
          
          if (stl>limit) cycle
@@ -2606,6 +2599,61 @@ contains
          stdout.put(self(i).F_sigma)
          stdout.put(self(i).F_pred)
          stdout.put(self(i).F_phase_in_degrees)
+         stdout.flush
+      end
+
+   end
+
+   put_xd_fco
+   ! Put reflection information in XD fco format
+      self :: INOUT
+
+      i :: INT
+      F2_pred,F2_exp,F2_sig :: REAL
+
+      stdout.flush
+      stdout.text("# ======================")
+      stdout.text("# XD fco Reflection data")
+      stdout.text("# ======================")
+
+      stdout.flush
+      stdout.show("_shelx_refln_list_code             ", 6,dots=FALSE)
+      stdout.flush
+      stdout.show("_reflns_d_resolution_high          ",.d_max*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_d_resolution_low           ",.d_min*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_limit_h_max                ",maxval(self(:).h)       ,dots=FALSE)
+      stdout.show("_reflns_limit_h_min                ",minval(self(:).h)       ,dots=FALSE)
+      stdout.show("_reflns_limit_k_max                ",maxval(self(:).k)       ,dots=FALSE)
+      stdout.show("_reflns_limit_k_min                ",minval(self(:).k)       ,dots=FALSE)
+      stdout.show("_reflns_limit_l_max                ",maxval(self(:).l)       ,dots=FALSE)
+      stdout.show("_reflns_limit_l_min                ",minval(self(:).l)       ,dots=FALSE)
+
+
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("    _refln_index_h")
+      stdout.text("    _refln_index_k")
+      stdout.text("    _refln_index_l")
+      stdout.text("    _refln_F_squared_calc")
+      stdout.text("    _refln_F_squared_meas")
+      stdout.text("    _refln_F_squared_sigma")
+      stdout.text("    _refln_sint/lambda")
+      stdout.text("    _refln_phase_calc")
+      stdout.text("    _refln_XD_refine_code")
+
+      do i = 1,self.dim
+         stdout.put(self(i).h)
+         stdout.put(self(i).k)
+         stdout.put(self(i).l)
+         F2_pred = self(i).F_pred*self(i).F_pred
+         F2_exp  = self(i).F_exp *self(i).F_exp 
+         F2_sig  = TWO * self(i).F_pred * self(i).F_sigma
+         stdout.put(F2_pred)
+         stdout.put(F2_exp)
+         stdout.put(F2_sig)
+         stdout.put(self(i)%stl*BOHR_PER_ANGSTROM)
+         stdout.put(self(i).F_phase_in_degrees)
+         stdout.put("?")
          stdout.flush
       end
 
