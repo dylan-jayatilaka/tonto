@@ -79,6 +79,10 @@ module ATOM
     "Hassium      ","Meitnerium   ","Darmstadtium ","Roentgenium  ","Copernicum   ", &
     "Ununtrium    ","Flerovium    ","Ununpentium  ","Livermorium  ","Ununseptium  ","Ununoctium   "/
 
+   !  Table of elemental anamalous dispersion coefficients
+   !  set by the user
+   element_xray_dispersion :: VEC{CPX}(118) = COMPLEXIFY(-ONE,ZERO)
+
    !  Bragg-Slater radii taken from Aaron Lee's code
    !  WARNING: this is in Angstroms!
 
@@ -1445,6 +1449,34 @@ contains
 
    end
 
+   element_symbol_from_label(label) result (symbol) ::: selfless, private
+   ! Return a normalised element symbol from an atom "label"
+      label :: STR, IN
+      symbol :: STR(len=2)
+
+   DIE_IF(NOT label(1:1).is_alphabetical,"unacceptable atom symbol: "// trim(label))
+
+      lensym :: INT
+
+      ! Label ends on nonalphabetical character
+      lensym = label.index_of_nonalphabetical - 1
+
+      ! Check label is no more than two character long
+      DIE_IF(lensym>2,"unacceptable atom symbol: "// trim(label(1:lensym)))
+
+      ! lensym could be negative -- if no nonalphabetical chars!
+      if (lensym<0) lensym = len_trim(label)
+
+      ! Recheck label is no more than two character long
+      DIE_IF(lensym>2,"unacceptable atom symbol: "// trim(label(1:lensym)))
+
+      ! Get chemical symbol
+      symbol = label(1:lensym)
+      symbol(1:1).to_upper_case
+      if (lensym>1 AND symbol(2:2).is_upper_case) symbol(2:2).to_lower_case
+
+   end
+
    set_mass ::: private
    ! Set the atomic mass from the .label and .mass_number
       self :: INOUT
@@ -1578,6 +1610,16 @@ contains
       end
 
       .pADP_errors(1:3) = val
+
+   end
+
+   check_position_and_pADP
+   ! Check if the .position and .pADP vector are consistent
+      self :: IN
+
+      if (.pADP_vector.created) then
+         DIE_IF(NOT .pADP_vector(1:3).equals(.position),"pADP_vector /= position")
+      end
 
    end
 
@@ -3059,6 +3101,7 @@ contains
          case ("charge=                      "); .read_charge
          case ("coppensbasis_label=          "); .read_coppensbasis_label
          case ("dipole=                      "); .read_dipole
+         case ("dispersion_coefficients=     "); ATOM:read_dispersion_coefficients
          case ("f_i=                         "); .read_f_i
          case ("f_r=                         "); .read_f_r
          case ("group=                       "); .read_group
@@ -3194,6 +3237,19 @@ contains
       self :: INOUT
 
       stdin.read_quantity(.dipole)
+
+   end
+
+   read_dispersion_coefficients ::: selfless
+   ! Read a table of dispersion coefficients as a single string array
+
+      table :: VEC{STR}*
+
+      stdin.read_ptr(table)
+
+      ATOM:set_dispersion_coefficients(table)
+
+      table.destroy
 
    end
 
@@ -4796,92 +4852,156 @@ contains
       self :: IN
       res :: BIN
 
-      res = .f_r<HUNDRED AND abs(.f_i)<HUNDRED
+      res = .f_r>=ZERO
 
    end
 
-   dispersion_correction(wavelength) result (res)
+   has_tabular_dispersion result (res) ::: PURE
+   ! Return TRUE if this element has a valid dispersion coefficient in
+   ! the table.
+      self :: IN
+      res :: BIN
+
+      res = ATOM:has_tabular_dispersion_for(.atomic_number)
+
+   end
+
+   has_tabular_dispersion_for(Z) result (res) ::: selfless, PURE
+   ! Return TRUE if the element with atomic number "Z"  has a
+   ! valid dispersion coefficient in the table.
+      Z :: INT, IN
+      res :: BIN
+
+      res = RE(element_xray_dispersion(Z)) >= ZERO
+
+   end
+
+   dispersion_correction result (res)
    ! The dispersion correction at a certain "wavelength".
       self :: IN
-      wavelength :: REAL, IN
       res :: CPX
 
-      sasaki :: SASAKI_FORM_FACTORS*
+      res = IMAGIFY(ZERO)
 
-      if (.has_dispersion) then
+      if (ATOM:has_tabular_dispersion_for(.atomic_number)) then
 
-         res = COMPLEXIFY(.f_r,.f_i)
+         res = element_xray_dispersion(.atomic_number)
 
       else
       
-         ! Look up dipersion from table ... UNRELIABLE TABLES
-         if (.atomic_number<1 OR .atomic_number>92) then
-        
-            res = ZERO
-        
-         else
-        
-            sasaki.create
-            sasaki.set_wavelength(wavelength)
-            sasaki.set_Z_list([.atomic_number])
-            sasaki.update
-            res = COMPLEXIFY(sasaki.fr(1),sasaki.fi(1))
-            sasaki.destroy
-        
-         end
+         DIE("You didn't enter a dispersion coefficient for element "//trim(.tag))
 
       end
 
    end
 
-   set_dispersion_coefficient(wavelength)
-   ! Set the anomalous dispersion coefficient at a certain "wavelength".
+!   set_dispersion_coefficient(wavelength)
+!   ! Set the anomalous dispersion coefficient at a certain "wavelength".
+!      self :: INOUT
+!      wavelength :: REAL, IN
+!
+!      sasaki :: SASAKI_FORM_FACTORS*
+!
+!      if (.has_dispersion) then
+!
+!         ! Don't override an existing (fr,fi)
+!
+!      else
+!      
+!         ! Look up dipersion from table ... UNRELIABLE TABLES
+!         if (.atomic_number<1 OR .atomic_number>92) then
+!        
+!            .f_r = ZERO
+!            .f_i = ZERO
+!        
+!         else
+!        
+!            ! Get them
+!            sasaki.create
+!            sasaki.set_wavelength(wavelength)
+!            sasaki.set_Z_list([.atomic_number])
+!            sasaki.update
+!
+!            ! Set them
+!            .f_r = sasaki.fr(1)
+!            .f_i = sasaki.fi(1)
+!
+!            ! Clean
+!            sasaki.destroy
+!        
+!         end
+!
+!      end
+!
+!   end
+
+   set_dispersion_coefficients(table) ::: selfless
+   ! Set the elemental dispersion coefficients from a "table"
+   ! of values comprising sequential element symbols, f' and f''.
+      table :: VEC{STR}, IN 
+
+   DIE_IF((table.dim/3)*3/=table.dim,"the table is not divisible by 3")
+
+      symbol :: STR(len=2)
+      val1,val2,val3 :: STR
+      i,offset,Z :: INT
+      f_r,f_i :: REAL
+
+      offset = 0
+
+      do i = 1,table.dim/3
+
+         val1 = table(offset+1)
+         val2 = table(offset+2)
+         val3 = table(offset+3)
+
+         ! Get the atomic number Z
+         symbol = ATOM:element_symbol_from_label(val1)
+         Z = element_symbols(1:).index_of(symbol(1:2))
+         DIE_IF(Z==0,"unknown element symbol: "//trim(symbol))
+
+         ! Get f' and f''
+         f_r = table(offset+2).to_real
+         f_i = table(offset+3).to_real
+
+         ! Set them in the table
+         element_xray_dispersion(Z) = COMPLEXIFY(f_r,f_i)
+
+         ! Next in the table
+         offset = offset + 3
+
+      end
+
+   end
+
+   set_tabular_dispersion ::: PURE
+   ! Set the atom's own dispersion coefficients from
+   ! the element_xray_dispersion table (if there).
+   ! NOTE: this routine dies if dispersion is not set.
       self :: INOUT
-      wavelength :: REAL, IN
 
-      sasaki :: SASAKI_FORM_FACTORS*
+      Z :: INT
+      f_r,f_i :: REAL
 
-      if (.has_dispersion) then
+      Z = .atomic_number
 
-         ! Don't override an existing (fr,fi)
+      f_r = RE(element_xray_dispersion(Z))
+      f_i = IM(element_xray_dispersion(Z))
 
-      else
-      
-         ! Look up dipersion from table ... UNRELIABLE TABLES
-         if (.atomic_number<1 OR .atomic_number>92) then
-        
-            .f_r = ZERO
-            .f_i = ZERO
-        
-         else
-        
-            ! Get them
-            sasaki.create
-            sasaki.set_wavelength(wavelength)
-            sasaki.set_Z_list([.atomic_number])
-            sasaki.update
+      if (f_r<ZERO) return
 
-            ! Set them
-            .f_r = sasaki.fr(1)
-            .f_i = sasaki.fi(1)
-
-            ! Clean
-            sasaki.destroy
-        
-         end
-
-      end
+      .f_r = f_r
+      .f_i = f_i
 
    end
 
-   add_dispersion_H_ADP(Fc,k_pts,wavelength)
+   add_dispersion_H_ADP(Fc,k_pts)
    ! Add the anamalous dispersion correction into the calculated
    ! structure factor "Fc", for a given set of "K_pts" and
    ! "wavelength" (in Bohr of course!).
       self :: IN
       Fc :: VEC{CPX}, INOUT
       k_pts :: MAT{REAL}, IN
-      wavelength :: REAL, IN
 
    ENSURE(Fc.dim1==k_pts.dim1,"1st dimension of dc and k_pts are not compatible")
    ENSURE(      3==k_pts.dim2,"2nd dimension of k_pts must be 3!")
@@ -4891,11 +5011,11 @@ contains
       adp2 :: MAT{REAL}(3,3)
       adp3 :: MAT3{REAL}(3,3,3)
       adp4 :: MAT4{REAL}(3,3,3,3)
-      c1,c2,c3,c4 :: REAL
+      c2,c3,c4 :: REAL
       k,n_k :: INT
 
       II   = (ZERO,ONE)
-      anom = .dispersion_correction(wavelength)
+      anom = .dispersion_correction
 
       n_k = k_pts.dim1
 
@@ -4972,7 +5092,7 @@ contains
 
    end
 
-   add_derivative_dispn_H_ADP(dFc,base,k_pts,wavelength)
+   add_derivative_dispn_H_ADP(dFc,base,k_pts)
    ! Add the derivative of the anamalous dispersion correction into
    ! the derivative calculated structure factor "Fc", for a given set
    ! of "k_pts" and "wavelength" (in Bohr of course!). "base" is the
@@ -4982,7 +5102,6 @@ contains
       dFc :: MAT{CPX}, INOUT
       base :: INT, IN
       k_pts :: MAT{REAL}, IN
-      wavelength :: REAL, IN
 
    ENSURE(dFc.dim1==k_pts.dim1,"1st dimension of dc and k_pts are not compatible")
    ENSURE(       3==k_pts.dim2,"2nd dimension of k_pts must be 3!")
@@ -4993,14 +5112,14 @@ contains
       adp2 :: MAT{REAL}(3,3)
       adp3 :: MAT3{REAL}(3,3,3)
       adp4 :: MAT4{REAL}(3,3,3,3)
-      c1,c2,c3,c4 :: REAL
+      c2,c3,c4 :: REAL
       k1,k2,k3 :: REAL
       k1_k1,k2_k2,k3_k3 :: REAL
       k1_k2,k1_k3,k2_k3 :: REAL
       k,n_k :: INT
 
       II   = (ZERO,ONE)
-      anom = .dispersion_correction(wavelength)
+      anom = .dispersion_correction
 
       n_k = k_pts.dim1
 
@@ -5224,7 +5343,7 @@ contains
 
    end
 
-   add_derivative_dispn_H_iso(dFc,base,k_pts,wavelength)
+   add_derivative_dispn_H_iso(dFc,base,k_pts)
    ! Add the derivative of the anamalous dispersion correction into
    ! the derivative calculated structure factor "Fc", for a given set
    ! of "k_pts" and "wavelength" (in Bohr of course!). "base" is the
@@ -5234,7 +5353,6 @@ contains
       dFc :: MAT{CPX}, INOUT
       base :: INT, IN
       k_pts :: MAT{REAL}, IN
-      wavelength :: REAL, IN
 
    ENSURE(dFc.dim1==k_pts.dim1,"1st dimension of dc and k_pts are not compatible")
    ENSURE(       3==k_pts.dim2,"2nd dimension of k_pts must be 3!")
@@ -5245,14 +5363,14 @@ contains
       adp2 :: MAT{REAL}(3,3)
       adp3 :: MAT3{REAL}(3,3,3)
       adp4 :: MAT4{REAL}(3,3,3,3)
-      c1,c2,c3,c4 :: REAL
+      c2,c3,c4 :: REAL
       k1,k2,k3 :: REAL
       k1_k1,k2_k2,k3_k3 :: REAL
       k1_k2,k1_k3,k2_k3 :: REAL
       k,n_k :: INT
 
       II   = (ZERO,ONE)
-      anom = .dispersion_correction(wavelength)
+      anom = .dispersion_correction
 
       n_k = k_pts.dim1
 
