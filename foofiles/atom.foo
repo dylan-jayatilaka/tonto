@@ -4995,29 +4995,50 @@ contains
 
    end
 
-   add_dispersion_H_ADP(Fc,k_pts)
+   add_dispersion_H_ADP(Fc,k_pts,cell)
    ! Add the anamalous dispersion correction into the calculated
    ! structure factor "Fc", for a given set of "K_pts" and
    ! "wavelength" (in Bohr of course!).
       self :: IN
       Fc :: VEC{CPX}, INOUT
       k_pts :: MAT{REAL}, IN
+      cell :: UNIT_CELL, IN
 
    ENSURE(Fc.dim1==k_pts.dim1,"1st dimension of dc and k_pts are not compatible")
    ENSURE(      3==k_pts.dim2,"2nd dimension of k_pts must be 3!")
 
       II,anom,phase :: CPX
+      fr :: VEC{REAL}(3)
       kv :: VEC{REAL}(3)
+      Uv :: VEC{REAL}(6)
       adp2 :: MAT{REAL}(3,3)
       adp3 :: MAT3{REAL}(3,3,3)
       adp4 :: MAT4{REAL}(3,3,3,3)
       c2,c3,c4 :: REAL
       k,n_k :: INT
 
-      II   = (ZERO,ONE)
+      II   = IMAGIFY(ONE)
       anom = .dispersion_correction
+      n_k  = k_pts.dim1
 
-      n_k = k_pts.dim1
+    ! stdout.show("ID   =",.label)
+    ! stdout.show("n_k  =",n_k)
+    ! stdout.show("f'   =",RE(anom))
+    ! stdout.show("f''  =",IM(anom))
+    ! stdout.show("x    =",.position(1))
+    ! stdout.show("y    =",.position(2))
+    ! stdout.show("z    =",.position(3))
+    ! fr = .position
+    ! cell.change_into_fractional(fr)
+    ! stdout.show("fr x =",fr(1))
+    ! stdout.show("fr y =",fr(2))
+    ! stdout.show("fr z =",fr(3))
+    ! Uv = .pADP_vector(4:9)
+    ! Uv = Uv*ANGSTROM_PER_BOHR*ANGSTROM_PER_BOHR
+    ! cell.change_ADP_into_fractional(Uv)
+    ! stdout.text("Uv:")
+    ! stdout.put(Uv)
+
 
       ! Temperature part, ADP4's
       if (.has_only_ADP4s_and_errors) then
@@ -5080,11 +5101,34 @@ contains
             c2 = adp2.contract_with(kv)*HALF
 
             ! SF contribution (harmonic!)
-            phase = k_pts(k,1)*.position(1) &
-                  + k_pts(k,2)*.position(2) &
-                  + k_pts(k,3)*.position(3) 
+            phase = kv(1)*.position(1) + kv(2)*.position(2) + kv(3)*.position(3) 
+
+          ! if (.atomic_number==16) then
+          ! if (k==1) then
+          !    print *, "Fc        = ",Fc(k)
+          !    print *, "real anom = ",RE(anom)
+          !    print *, "imag anom = ",IM(anom)
+          !    print *, "phase     = ",phase
+          ! end
+          ! end
+
             phase = exp(II*phase)
+
+          ! if (.atomic_number==16) then
+          ! if (k==1) then
+          !    print *, "phase fac = ",phase
+          ! end
+          ! end
+
             Fc(k) = Fc(k) + anom * phase * exp(-c2)
+
+          ! Fc(k) = Fc(k) + anom * phase
+
+          ! if (.atomic_number==16) then
+          ! if (k==1) then
+          !    print *, "Fc        = ",Fc(k)
+          ! end
+          ! end
 
          end
       
@@ -5118,7 +5162,7 @@ contains
       k1_k2,k1_k3,k2_k3 :: REAL
       k,n_k :: INT
 
-      II   = (ZERO,ONE)
+      II   = IMAGIFY(ONE)
       anom = .dispersion_correction
 
       n_k = k_pts.dim1
@@ -5369,7 +5413,7 @@ contains
       k1_k2,k1_k3,k2_k3 :: REAL
       k,n_k :: INT
 
-      II   = (ZERO,ONE)
+      II   = IMAGIFY(ONE)
       anom = .dispersion_correction
 
       n_k = k_pts.dim1
@@ -9099,19 +9143,76 @@ contains
       res :: VEC{CPX}, OUT
       k_pts :: MAT{REAL}, IN
 
+      if (.use_IAM_ITC_FFs) then; .make_FT_spherical(res,k_pts)
+      else;                       .make_FT_aspherical(res,k_pts)
+      end
+
+   end
+
+   make_FT_aspherical(res,k_pts)
+   ! Fourier transform of the density described by ".density_matrix"
+   ! evaluated at a reciprocal space points [k_pts(i,:), i = 1,dim ]
+      self :: IN
+      res :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+
    ENSURE(.density_matrix.created, "no .density_matrix")
    ENSURE(.density_matrix.restricted.created, "only works for restricted .density_matrix")
    ENSURE(.precomputed_basis_shellpair.created, "no precomputed_basis_shellpair info")
 
       n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
-      k_z :: VEC{REAL}*
       FT :: MAT3{CPX}*
       D :: MAT{REAL}@
       sh :: SHELL2
-      II :: CPX
 
       n_shell_pairs = .basis.no_of_shells
       n_shell_pairs = n_shell_pairs.triangle_number
+
+      k_max = k_pts.dim1
+
+      ! Use whatever atomic .density_matrix is there
+      res = ZERO
+   
+      do q = 1,n_shell_pairs
+   
+         ! Get shell
+         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+   
+         ! Make the FT 
+         FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
+         sh.make_ft_c(FT,k_pts)
+   
+         ! Trace with density matrix
+         ! Count off-diagonals twice
+         D = .density_matrix.restricted(fa:la,fb:lb)
+         if (fa/=fb) then 
+            do k = 1,k_max
+               res(k) = res(k) + sum(FT(k,:,:)*D) * TWO
+            end
+         else
+            do k = 1,k_max
+               res(k) = res(k) + sum(FT(k,:,:)*D)
+            end
+         end
+   
+         ! Clean
+         FT.destroy
+         sh.destroy_ptr_part
+   
+      end
+   
+   end
+
+   make_FT_spherical(res,k_pts)
+   ! Fourier transform of the density described by ".density_matrix"
+   ! evaluated at a reciprocal space points [k_pts(i,:), i = 1,dim ]
+      self :: IN
+      res :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+
+      k_z :: VEC{REAL}*
+      k_max :: INT
+      II :: CPX
 
       k_max = k_pts.dim1
          II = IMAGIFY(ONE)
@@ -9140,36 +9241,7 @@ contains
 
       else
 
-         ! Use whatever atomic .density_matrix is there
-         res = ZERO
-   
-         do q = 1,n_shell_pairs
-   
-            ! Get shell
-            .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
-   
-            ! Make the FT 
-            FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
-            sh.make_ft_c(FT,k_pts)
-   
-            ! Trace with density matrix
-            ! Count off-diagonals twice
-            D = .density_matrix.restricted(fa:la,fb:lb)
-            if (fa/=fb) then 
-               do k = 1,k_max
-                  res(k) = res(k) + sum(FT(k,:,:)*D) * TWO
-               end
-            else
-               do k = 1,k_max
-                  res(k) = res(k) + sum(FT(k,:,:)*D)
-               end
-            end
-   
-            ! Clean
-            FT.destroy
-            sh.destroy_ptr_part
-   
-         end
+         DIE("WTF?")
    
       end
 
