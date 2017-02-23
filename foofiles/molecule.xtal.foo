@@ -485,87 +485,6 @@ contains
 
    end
 
-!  =====================
-!  Dispersion correction
-!  =====================
-
-   add_dispersion_correction(ft,k_pts)
-   ! Adds the dispersion correction to "ft".
-   ! WARNING: does not add thermal smearing !!!!
-   ! NOTE: this orutine is wrong - must loop over 
-   !    symm related fragments taking account of
-   !    inversion!!!!!
-
-      k_pts :: MAT{REAL}, target
-      ft :: VEC{CPX}
-
-   ENSURE(.crystal.created,"no crystal")
-
-      dc :: CPX
-      k1,k2,k3 :: VEC{REAL}*
-      pos :: VEC{REAL}(3)
-      x,y,z :: REAL
-      a,n :: INT
-
-      if (NOT .crystal.correct_dispersion) return
-
-      k1 => k_pts(:,1)
-      k2 => k_pts(:,2)
-      k3 => k_pts(:,3)
-
-      do n = 1,.crystal.n_unit_cell_atoms
-
-        a = .crystal.frag_atom_for_unit_cell_atom(n)
-        if (a==0) cycle
-
-        dc = .atom(a).dispersion_correction(.crystal.wavelength)
-
-        pos = .crystal.unit_cell_geometry(:,n)
-        .crystal.unit_cell.change_from_fractional(pos)
-
-        x = pos(1)
-        y = pos(2)
-        z = pos(3)
-
-        ft = ft + dc * exp(COMPLEXIFY(ZERO,k1*x+k2*y+k3*z))
-
-      end
-
-   end
-
-   check_dispersion_correction
-   ! Adds dispersion correction to the F_exp, to compare
-   ! with other experimental structure factors that have the
-   ! dispersion correction made to them.
-
-   ENSURE(.crystal.created,"no crystal")
-
-      k_pts :: MAT{REAL}*
-      ft :: VEC{CPX}*
-
-      ! Make predicted structure factors
-      ft.create(.crystal.n_refl)
-      ft = .crystal.data.F_pred
-
-      ! Add dispersion
-      k_pts.create(.crystal.n_refl,3)
-      .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
-      .:add_dispersion_correction(ft,k_pts)
-      k_pts.destroy
-
-      ! Reset F_calc
-      .crystal.data.reflections.set_F_calc(ft)
-      ft.destroy
-
-      ! Reoptimize scale, extinction etc.
-      .crystal.data.make_F_predicted
-
-      ! Report
-      stdout.text("Dispersion corrected F_exp")
-      .crystal.data.reflections.put_structure_factor_data
-
-   end
-
 !  ==========================
 !  Structure factor integrals
 !  ==========================
@@ -574,6 +493,7 @@ contains
    ! Fourier transform of a density described by AO density matrix dens
    ! evaluated at a series of reciprocal space points k_pts
    ! Size of res is [size(k_pts,1)]
+   ! NOTE: no temperature factors introduced here
       self :: IN
       dens :: MAT{REAL}, IN
       k_pts :: MAT{REAL}, IN
@@ -1388,6 +1308,7 @@ contains
 
    make_X_structure_factors_p ::: private
    ! Make the structure factors for this molecule.
+   ! WARNING: this does not seem to include the temperature factor
       self :: INOUT
 
    ENSURE(.crystal.created, "no crystal")
@@ -1442,10 +1363,7 @@ contains
 
       ! Add dispersion
       if (.crystal.correct_dispersion) then
-         k_pts.create(.crystal.n_refl,3)
-         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
-         .XTAL:add_dispersion_correction(Fc,k_pts)
-         k_pts.destroy
+         .crystal.add_dispersion_correction(Fc)
       end
       sf_eq.destroy
 
@@ -1460,6 +1378,7 @@ contains
 
    make_X_structure_factors_h(D)
    ! Make the structure factors from a rhf density matrix "D".
+   ! WARNING: this does not seem to include the temperature factor
       D :: MAT{REAL}, IN
 
    ENSURE(.crystal.created, "no crystal")
@@ -1487,10 +1406,7 @@ contains
 
       ! Add dispersion correction
       if (.crystal.correct_dispersion) then
-         k_pts.create(.crystal.n_refl,3)
-         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
-         .:add_dispersion_correction(Fc,k_pts)
-         k_pts.destroy
+         .crystal.add_dispersion_correction(Fc)
       end
 
       ! Clean
@@ -1859,8 +1775,12 @@ contains
                end
             end
          end
+         ! Now we have the atom c electron density points
+         ! rho(:) on a series of integration grid points
 
-         ! Weight the atom "c" density
+         ! Sum up the rho(:) densities with integration
+         ! weights for the atom "c" to get total number of
+         ! electrons n_e
          rho = rho*wt
          n_e = n_e + sum(rho)
 
@@ -1889,8 +1809,9 @@ contains
                kv(2) = k2(k)
                kv(3) = k3(k)
 
+               ! sf is the contribution of the c-th atom to the
+               ! static structure factor for the k-th reflection.
                sf = (ZERO,ZERO)
-
                do i = 1,n_pt
                   kr = kv(1)*r1(i)+kv(2)*r2(i)+kv(3)*r3(i)
                   sf = sf + rho(i)*COMPLEXIFY(cos(kr),sin(kr))
@@ -1999,10 +1920,7 @@ contains
 
       ! Dispersion correction
       if (.crystal.correct_dispersion) then
-         k_pts.create(.crystal.n_refl,3)
-         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
-         .XTAL:add_dispersion_correction(Fc,k_pts)
-         k_pts.destroy
+         .crystal.add_dispersion_correction(Fc)
       end
 
       ! Set the calculated SF's
@@ -2325,10 +2243,7 @@ contains
 
       ! Dispersion correction
       if (.crystal.correct_dispersion) then
-         k_pts.create(.crystal.n_refl,3)
-         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
-         .XTAL:add_dispersion_correction(Fc,k_pts)
-         k_pts.destroy
+         .crystal.add_dispersion_correction(Fc)
       end
 
       ! Set the calculated SF's
@@ -2838,10 +2753,7 @@ contains
       .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
 
       if (.crystal.correct_dispersion) then
-         k_pts.create(.crystal.n_refl,3)
-         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
-         .:add_dispersion_correction(Fc,k_pts)
-         k_pts.destroy
+         .crystal.add_dispersion_correction(Fc)
       end
 
       .crystal.data.reflections.set_F_calc(Fc)
@@ -2857,6 +2769,7 @@ contains
 
    get_x_structure_factors_pce
    ! Make the structure factors for this molecule.
+
 !   ENSURE(.crystal.created, "no crystal")
 !   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
 !   ENSURE(.density_matrix.created, "no density matrix")
@@ -2889,10 +2802,7 @@ contains
 
       .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
       if (.crystal.correct_dispersion) then
-         k_pts.create(.crystal.n_refl,3)
-         .crystal.data.reflections.make_k_pts(k_pts,.crystal.unit_cell)
-         .:add_dispersion_correction(Fc,k_pts)
-         k_pts.destroy
+         .crystal.add_dispersion_correction(Fc)
       end
 
       .crystal.data.reflections.set_F_calc(Fc)

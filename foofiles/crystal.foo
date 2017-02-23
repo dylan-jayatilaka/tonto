@@ -42,22 +42,13 @@ contains
       self :: PTR
    end
 
-   destroy ::: leaky
+   destroy ::: get_from(OBJECT), leaky
    ! Destroy an object
-      self :: PTR
-
-      if (.destroyed) return
-
-    ! .nullify_basis_part
-
-      .destroy_ptr_part
-
-      deallocate(self)
-
    end
 
-   nullify_ptr_part
+   nullify_ptr_part ::: PURE
    ! Nullify the pointer parts of the crystal object
+      self :: INOUT
 
       .spacegroup.nullify_ptr_part
 
@@ -68,6 +59,7 @@ contains
       nullify(.asymmetric_unit_atom)
 
       nullify(.unit_cell_geometry)
+      nullify(.unit_cell_atom)
       nullify(.unique_unit_cell_atom)
       nullify(.unique_uc_atom_offset)
       nullify(.is_asym_unit_cell_atom)
@@ -113,6 +105,7 @@ contains
 
    destroy_ptr_part ::: leaky
    ! Erase all pointer information
+      self :: INOUT
 
       .spacegroup.destroy_ptr_part
       .destroy_fragment_data
@@ -123,19 +116,21 @@ contains
 
    destroy_data ::: leaky
    ! Erase all data pointer information
+      self :: INOUT
 
-    nullify(.data)
-
-    .xray_data.destroy
-    .pnd_data.destroy
-    .xray_r_free_data.destroy
-    .pnd_r_free_data.destroy
+      nullify(.data)
+      
+      .xray_data.destroy
+      .pnd_data.destroy
+      .xray_r_free_data.destroy
+      .pnd_r_free_data.destroy
 
    end
 
    destroy_fragment_data ::: leaky
    ! Destroy the geometry and symmetry data for the fragment and unit cell.
    ! NOTE: Don't destroy asymmetric unit atom info
+      self :: INOUT
 
       if (.destroy_fragment_atom) then; .fragment_atom.destroy
       else;                             nullify(.fragment_atom)
@@ -146,6 +141,7 @@ contains
       ! Never destroy .asymmetric_unit_atom
 
       .unit_cell_geometry.destroy
+      .unit_cell_atom.destroy
       .unique_unit_cell_atom.destroy
       .unique_uc_atom_offset.destroy
       .is_asym_unit_cell_atom.destroy
@@ -191,9 +187,12 @@ contains
    ! fragment atom list, in the "make_fragment_data" routine. Once
    ! set, it is never destroyed unless explicitly requested by a call
    ! or a keyword.
+      self :: INOUT
+
       .asymmetric_unit_geometry.destroy ! This is nothing to do with a fragment !
       .asymmetric_unit_atom.destroy
       .asymmetric_unit_source = "?"
+
    end
 
    created result (res) ::: get_from(OBJECT), inlined_by_foo
@@ -238,6 +237,8 @@ contains
 
       if (crystal.unit_cell_geometry.created)            &
          .unit_cell_geometry.create_copy(crystal.unit_cell_geometry)
+      if (crystal.unit_cell_atom.created)                &
+         .unit_cell_atom.create_copy(crystal.unit_cell_atom)
       if (crystal.unique_unit_cell_atom.created)         &
          .unique_unit_cell_atom.create_copy(crystal.unique_unit_cell_atom)
       if (crystal.unique_uc_atom_offset.created)         &
@@ -359,17 +360,11 @@ contains
       .n_fragment_atoms    = 0
       .unit_cell_offset = ZERO
 
-      ! Set the basis type: slater trumps gaussians for cluster
-      ! generation ...
-    ! if      (.asymmetric_unit_atom.has_all_slater_bases)   then; .asymmetric_unit_atom.set_basis_kind("slater")
-    ! else if (.asymmetric_unit_atom.has_all_coppens_bases)  then; .asymmetric_unit_atom.set_basis_kind("coppens")
-    ! else if (.asymmetric_unit_atom.has_all_gaussian_bases) then; .asymmetric_unit_atom.set_basis_kind("gaussian")
-    ! end
-
    end
 
    update ::: leaky
    ! Update the crystal information after setting values.
+      self :: INOUT
 
       if (.xray_data.created) then
 
@@ -669,11 +664,12 @@ contains
       ! Create?
       if (.xray_data.destroyed) .xray_data.create
 
-      ! Read, update and assign .data
+      ! Read, update
       .xray_data.data_kind = "x-ray"
       .xray_data.read_keywords
       .xray_data.update(.unit_cell,.spacegroup)
 
+      ! Use data
       .assign_xray
 
    end
@@ -685,11 +681,15 @@ contains
       DIE_IF(NOT .spacegroup.analyzed,"enter spacegroup information before xray_data= !")
       WARN_IF(.pnd_data.created,"pnd diffraction data already defined!")
 
+      ! Create?
       if (.pnd_data.destroyed) .pnd_data.create
 
+      ! Read, update
       .pnd_data.data_kind = "pnd"
       .pnd_data.read_keywords
       .pnd_data.update(.unit_cell,.spacegroup)
+
+      ! Use data
       .assign_pnd
 
    end
@@ -1038,6 +1038,8 @@ contains
    ! the asymmetric unit atoms. If "prune_asymmetric_unit" is present
    ! and true, any non-asymmetric unit atoms are eliminated from the
    ! asymmetric unit. This should always be done.
+   ! NOTE: .fragment_atom is in the cartesian axis system, but
+   !       .fragment_geometry is in the fractional crystal system.
       self :: INOUT
       prune_asymmetric_unit :: BIN, optional, IN
       warnings :: BIN, optional, IN
@@ -1046,10 +1048,11 @@ contains
    ENSURE(.fragment_geometry.created,"no .fragment_geometry")
    ENSURE(.asymmetric_unit_geometry.destroyed,"asymmetric unit exists")
 
-      pa :: VEC{REAL}(3)
+      pa,pos :: VEC{REAL}(3)
       offset :: VEC{INT}(3)
+      seitz :: MAT3{REAL}*
       asymmetric_unit_geometry :: MAT{REAL}*
-      n,a,b,s,col, i :: INT
+      n,a,b,s,col, i,u :: INT
       prune,warn,new,unique,frac,redundant,mess :: BIN
       pruned :: MAP{INT,INT}*
       list,cols :: VEC{INT}*
@@ -1223,8 +1226,28 @@ contains
       DIE_IF(NOT .unit_cell_geometry.created,"The unit_cell_geometry was not created!")
 
       ! >> Make the asymmetric unit atoms <<
+      ! NOTE: everything in cartesian system.
       .asymmetric_unit_atom.destroy
       .asymmetric_unit_atom.create_copy(.fragment_atom,list)
+
+      ! >> Make the unit cell atoms <<
+      .unit_cell_atom.destroy
+      .unit_cell_atom.create(.n_unit_cell_atoms)
+      seitz => .xyz_seitz_matrices
+      do u = 1,.n_unit_cell_atoms
+         a = .asym_atom_for_unit_cell_atom(u)
+         s = .asym_symop_for_unit_cell_atom(u)
+         ! Copy the parent asymmetric atom
+         .unit_cell_atom(u).copy(.asymmetric_unit_atom(a))
+         ! Transform the pADPs (which must be in cartesians)
+         .unit_cell_atom(u).transform_pADP_vector_with(seitz(:,:,s))
+         ! Reset position manually
+         pos = matmul(.unit_cell.direct_matrix,.unit_cell_geometry(:,u))
+         .unit_cell_atom(u).set_position(pos)
+      end
+      seitz.destroy
+      .unit_cell_atom.set_axis_system_to("cartesian")
+      .unit_cell_atom.update
 
       ! Clean
       asymmetric_unit_geometry.destroy
@@ -3381,7 +3404,7 @@ contains
    !   calculated (and derivatives with respect to these unique
    !   fragment atom positions and ADPs) but these parameters and
    !   shifts are later transformed back into asymmetric unit.
-
+      self :: INOUT
       sf_n :: MAT{CPX}, INOUT
 
    ENSURE(sf_n.dim1==.n_unique_SF_k_pts,       "sf_n: wrong dim1")
@@ -3586,7 +3609,7 @@ contains
    ENSURE(.data.created,"no data")
 
       if(.data.refine_F) then;  .get_parameter_shifts_F(sf_n)
-      else;                     .get_parameter_shifts_I(sf_n)
+    ! else;                     .get_parameter_shifts_I(sf_n)
       end
 
    end
@@ -3643,9 +3666,19 @@ contains
       .spacegroup.sum_unique_sf(Fc,sf_e,.data.reflections)
       sf_e.destroy
 
+      ! Add dispersion correction
+      .add_dispersion_correction(Fc)
+
       ! Set the calculated SF's
       DIE_IF(any(abs(Fc)<=TOL(10)),"there are zero F_calc's; prune them to continue")
       .data.reflections.set_F_calc(Fc)
+
+      if (.data.stop_after_dispersion) then
+         .data.reflections.put_xd_fco
+         stdout.text("Fc:")
+         stdout.put(Fc)
+         stop
+      end
 
       if (.debugging("get_parameter_shifts_F")) then
          stdout.text("Fc:")
@@ -3661,6 +3694,9 @@ contains
       dFc.create(n_refl,n_p)
       .spacegroup.sum_unique_sf_derivs_t(dFc,sf_d,.data.reflections)
       sf_d.destroy
+
+      ! Add derivative of anomalous contribution to |SF|, dFc
+      .add_D_dispersion_correction(dFc)
 
       if (.debugging("get_parameter_shifts_F")) then
          stdout.text("dFc:")
@@ -3689,78 +3725,83 @@ contains
 
    end
 
-   get_parameter_shifts_I(sf_n) ::: leaky, private
-   ! Get the *asym* atom shifts ".data.dX" by solving the
-   ! normal equations, using:
-   ! * "sf_n", the unique *fragment* atom structure factors
-   !   for the symmetry related k points
-   ! * ".data.X_ref", the *asym* atom parameters
-   !   (positions and ADP's)
-   ! "sf_n" is updated by the shift amount at the end.
+   add_dispersion_correction(Fc)
+   ! Adds the dispersion correction to "Fc".
+      self :: IN
+      Fc :: VEC{CPX}, INOUT
 
-      sf_n :: MAT{CPX}, INOUT
+   ENSURE(.unit_cell_atom.created,"no unit_cell_atom atom list!")
+   ENSURE(.data.created,"no diffraction data!")
+   DIE_IF(.correct_dispersion AND refine_positions_only,"dispersion not available for position-only refinement")
 
-   ENSURE(sf_n.dim1==.n_unique_SF_k_pts,        "sf_n: wrong dim1")
-   ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim, "sf_n: wrong dim2")
-   ENSURE(.data.created,                        "no data")
-   ENSURE(.fragment_info_made,                  "no fragment info")
+     refine_positions_only :: BIN  DEFAULT(FALSE)
+     ! Set TRUE if you only want to fit/refine the coordinates
 
-      dIa  :: MAT{REAL}*
-      sf_d,dFc :: MAT{CPX}*
-      sf_e,Fc :: VEC{CPX}*
-      n_refl,n_k,n_p :: INT
+      k_pts :: MAT{REAL}*
+      n_k,u :: INT
 
-      ! Constants
-      n_refl = .n_refl
-      n_k    = .n_unique_SF_k_pts
-      n_p    = .asymmetric_unit_atom.no_of_pADPs
+      if (NOT .correct_dispersion) return
 
-      ! Symmetry generated structure factors
-      sf_d.create(n_k,n_p) ! Symmetry generated SF derivatives
-      sf_e.create(n_k)     ! Symmetry generated SF's
+      ! Get the k points
+      n_k = .data.reflections.dim
+      k_pts.create(n_k,3)
+      .data.reflections.make_k_pts(k_pts,.unit_cell)
 
-      ! Make the symmetry-generated structure factors
-      ! and their  derivatives
-      .make_unique_sf_derivs(sf_e,sf_d,sf_n)
-
-      ! Sum the symmetry-generated SF's to get
-      ! the actual structure factors Fc
-      Fc.create(n_refl)
-      .spacegroup.sum_unique_sf(Fc,sf_e,.data.reflections)
-      sf_e.destroy
-
-      ! Set the calculated SF's
-      .data.reflections.set_F_calc(Fc)
-
-      if (.debugging("get_parameter_shifts_I")) then
-         stdout.text("Ic:")
-         stdout.put(.data.I_calc)
+      ! Loop over all atoms in unit cell, taking no advantage of
+      ! centro symmetry. Note that H U_iso refinement will not affect
+      ! this section of code.
+      do u = 1,.n_unit_cell_atoms
+         .unit_cell_atom(u).add_dispersion_H_ADP(Fc,k_pts,.unit_cell)
       end
-      Fc.destroy
 
-      ! Make chi2 in F^2
-      .data.make_I_predicted
+      ! Clean
+      k_pts.destroy
 
-      ! Sum the symmetry-generated SF's to get
-      ! the derivative structure factors dFc
-      dFc.create(n_refl,n_p)
-      .spacegroup.sum_unique_sf_derivs_t(dFc,sf_d,.data.reflections)
-      sf_d.destroy
+   end
 
-      ! Get the derivative squared absolute SF's,
-      ! ... unique fragment atoms only
-      dIa.create(n_refl,n_p)
-      .d_F_abs_2_dX(dIa,dFc)
-      dFc.destroy
+   add_D_dispersion_correction(dFc)
+   ! Adds the *derivative* dispersion correction to the structure
+   ! factor derivativesa,"dFc".
+      self :: IN
+      dFc :: MAT{CPX}, INOUT
 
-      ! Get the unique atom shifts, dX (leaky)
-      .solve_normal_equations(dIa)
-      dIa.destroy
+   ENSURE(.unit_cell_atom.created,"no unit_cell_atom atom list!")
+   ENSURE(.data.created,"no diffraction data!")
+   DIE_IF(.correct_dispersion AND .data.refine_positions_only,"dispersion not available for position-only refinement")
 
-      if (.debugging("get_parameter_shifts_I")) then
-         stdout.text("get_parameter_shifts_I, .data.dX, after:")
-         stdout.put(.data.dX)
+      k_pts :: MAT{REAL}*
+      n_k,u, f,base :: INT
+
+      if (NOT .correct_dispersion) return
+
+      ! Get the k points
+      n_k = .data.reflections.dim
+      k_pts.create(n_k,3)
+      .data.reflections.make_k_pts(k_pts,.unit_cell)
+
+      if (.data.refine_H_U_iso) then
+
+         ! Refine H isotropic U's
+         do u = 1,.n_unit_cell_atoms
+            f    = .frag_parent_for_cell_atom(u) ! unique fragment atom
+            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(f)
+            .unit_cell_atom(u).add_derivative_dispn_H_iso(dFc,base,k_pts)
+         end
+
+      else
+
+         ! Refine H ADPs
+         do u = 1,.n_unit_cell_atoms
+            f    = .frag_parent_for_cell_atom(u) ! unique fragment atom
+            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(f)
+            .unit_cell_atom(u).add_derivative_dispn_H_ADP(dFc,base,k_pts)
+         end
+
       end
+
+
+      ! Clean
+      k_pts.destroy
 
    end
 
@@ -4161,6 +4202,7 @@ contains
    update_fit_esds ::: private
    ! Set the fit errors e.g. maximum shift on esd and the positional
    ! and ADP errors for the asym unit.
+      self :: INOUT
 
    ENSURE(.data.created,"no data")
 
@@ -4179,6 +4221,7 @@ contains
    update_refinement_ESDs
    ! Update the refinement errors e.g. maximum shift on esd and the
    ! positional and ADP errors for the asym unit.
+      self :: INOUT
 
    ENSURE(.data.created,"no data")
 
@@ -4200,6 +4243,8 @@ contains
    ! Set the asymmetric atom covariance matrix from the unique
    ! fragment atom covariance_matrix (produced from refinement)
    ! Note: .covariance_matrix is over-written.
+      self :: INOUT
+
    ENSURE(.fragment_info_made,"no fragment info")
    ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom")
    ENSURE(.data.created,"no data")
@@ -4312,6 +4357,8 @@ contains
    set_frag_from_asym_cov_mx
    ! Set the total frag atom covariance matrix from the asym atom
    ! covariance matrix. Seems correct 12/9/11
+      self :: INOUT
+
    ENSURE(.fragment_info_made,"no fragment info")
    ENSURE(.data.created,"no data")
    ENSURE(.data.covariance_matrix.created,"no covariance matrix")
@@ -4398,6 +4445,7 @@ contains
 
    update_fit_parameters
    ! Update i.e. increment the fit parameters
+      self :: INOUT
 
    ENSURE(.data_exists,"no diffraction data")
 
@@ -4407,6 +4455,7 @@ contains
 
    update_refinement_parameters
    ! Update the refinement parameters
+      self :: INOUT
 
    ENSURE(.data_exists,"no diffraction data")
 
@@ -4416,6 +4465,7 @@ contains
 
    fit_finished result (res)
    ! Return whether the (rigid) fit has finished
+      self :: IN
       res :: BIN
 
    ENSURE(.data_exists,"no diffraction data")
@@ -4433,6 +4483,7 @@ contains
 
    refinement_finished result (res)
    ! Return whether the refinement has finished
+      self :: IN
       res :: BIN
 
    ENSURE(.data_exists,"no diffraction data")
@@ -4447,6 +4498,7 @@ contains
    ! Make "sf_e" and "sf_d", the symmetry-related thermally-smeared
    ! structure factors and their derivatives, from "sf_n" the *unique*
    ! .fragment_atom structure factors and the ".fragment_atom.ADP_tensor".
+      self :: INOUT
 
       sf_e :: VEC{CPX}, OUT
       sf_d :: MAT{CPX}, OUT
@@ -4465,14 +4517,14 @@ contains
                                                      .make_unique_sfd_pos_Y_Uiso_Y(sf_e,sf_d,sf_n)
          else if (.data.refine_H_ADPs) then           ! ... and refine H ADP's
 
-            if (NOT .data.refine_H_U_iso) then       ! H ADP
-               if (.data.refine_anharmonicity) then; .make_unique_sfd_pos_Y_ADP4_Y(sf_e,sf_d,sf_n)
-               else;                                 .make_unique_sfd_pos_Y_ADP__Y(sf_e,sf_d,sf_n)
-               end
-            else                                     ! H U_iso
+            if (.data.refine_H_U_iso) then           ! H U_iso
                if (.data.refine_anharmonicity) then; .make_unique_sfd_pos_Y_Hiso4Y(sf_e,sf_d,sf_n)
                else;                                 .make_unique_sfd_pos_Y_Hiso_Y(sf_e,sf_d,sf_n)
-               end
+               end                                   ! ^^Is the above redundant code, see above?
+            else                                     ! H ADP
+               if (.data.refine_anharmonicity) then; .make_unique_sfd_pos_Y_ADP4_Y(sf_e,sf_d,sf_n)
+               else;                                 .make_unique_sfd_pos_Y_ADP__Y(sf_e,sf_d,sf_n)
+               end                                   ! ^^^^^^^^ Redundant?
             end
 
          else                                        ! ... and don't refine H ADP's
@@ -4505,6 +4557,8 @@ contains
          DIE("you aren't refining anything!")
 
       end
+
+      ! Now add extra rows onto the end any large-weighted restraints
 
    end
 
@@ -5260,8 +5314,6 @@ contains
                ! U tensor contracted with k vector
                c2 = adp2.contract_with(kv)*HALF
 
-             ! stdout.show("c2    =",c2)
-
                ! Static structure factor x TF
                ! i.e. dynamic structure factor,
                ! in the harmonic approximation
@@ -5365,6 +5417,8 @@ contains
          ! ADP4's
          if (f_atom.has_only_ADP4s_and_errors) then
 
+            DIE_IF(.fragment_atom(f).atomic_number==1,"H U_iso cannot be refined with H anharmonicity")
+
             ! Get ADP tensors
             f_atom.put_ADP2_vector_to(adp2)
             f_atom.put_ADP3_vector_to(adp3)
@@ -5461,6 +5515,8 @@ contains
          ! ADP3's
          else if (f_atom.has_only_ADP3s_and_errors) then
 
+            DIE_IF(.fragment_atom(f).atomic_number==1,"H U_iso cannot be refined with H anharmonicity")
+
             ! Get ADP tensors
             f_atom.put_ADP2_vector_to(adp2)
             f_atom.put_ADP3_vector_to(adp3)
@@ -5534,7 +5590,8 @@ contains
 
             end
 
-         else if (.fragment_atom(f).atomic_number>1) then ! NO anharmonicity, NOT H atom
+         ! Harmonic (NO anharmonicity) and NOT H atom
+         else if (.fragment_atom(f).atomic_number>1) then 
 
             ! Get ADP tensor
             f_atom.put_ADP2_vector_to(adp2)
@@ -5587,7 +5644,8 @@ contains
 
             end
 
-         else ! H atom - U_iso - No anharmonicity
+         ! Harmonic (NO anharmonicity) and H atom isotropic - U_iso
+         else 
 
             ! Get ADP tensor
             f_atom.put_ADP2_vector_to(adp2)
@@ -5602,6 +5660,11 @@ contains
                k3 = k_pt(k,3)
                kv = [k1,k2,k3]
 
+               ! Component products
+               k1_k1 = k1*k1
+               k2_k2 = k2*k2
+               k3_k3 = k3*k3
+
                ! U tensor contracted with k vector
                c2 = adp2.contract_with(kv)*HALF
 
@@ -5612,17 +5675,17 @@ contains
 
                ! Multiples *harmonic* structure factor
                sf1 = sfh
-               sf2 = sf1 * HALF
+               sf2 = HALF * sfh * (k1_k1+k2_k2+k3_k3)
 
                ! SF contribution (harmonic)
                sf_e(k) = sf_e(k) + sf1
 
-               ! U2 derivatives
+               ! Pos derivatives
                sf_d(k,base+ 1) =  II*k1*sf1
                sf_d(k,base+ 2) =  II*k2*sf1
                sf_d(k,base+ 3) =  II*k3*sf1
 
-               ! Pos derivatives
+               ! U2 derivatives
                sf_d(k,base+ 4) = -sf2
                sf_d(k,base+ 5) = -sf2
                sf_d(k,base+ 6) = -sf2
@@ -5718,6 +5781,7 @@ contains
             sf_d(k,base+1) =   II*k1k*sf
             sf_d(k,base+2) =   II*k2k*sf
             sf_d(k,base+3) =   II*k3k*sf
+
             sf_d(k,base+4) = -k1k*k1k*sf2
             sf_d(k,base+5) = -k2k*k2k*sf2
             sf_d(k,base+6) = -k3k*k3k*sf2
@@ -5990,6 +6054,7 @@ contains
                sf_d(k,base+1) =   II*k1k*sf
                sf_d(k,base+2) =   II*k2k*sf
                sf_d(k,base+3) =   II*k3k*sf
+
                sf_d(k,base+4) = -k1k*k1k*sf2
                sf_d(k,base+5) = -k2k*k2k*sf2
                sf_d(k,base+6) = -k3k*k3k*sf2
@@ -5999,7 +6064,8 @@ contains
 
             end
 
-         else ! this is for H atoms only
+         ! This is for H atoms only
+         else 
 
             do k = 1,n_k
 
@@ -6010,13 +6076,14 @@ contains
                tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
 
                sf  = sf_u(k) * tf
-               sf2 = -HALF * sf * (k1k*k1k+k2k*k2k+k3k*k3k) * THIRD
+               sf2 = -HALF * sf * (k1k*k1k+k2k*k2k+k3k*k3k)
 
                sf_e(k) = sf_e(k) + sf
 
                sf_d(k,base+1) = II*k1k*sf
                sf_d(k,base+2) = II*k2k*sf
                sf_d(k,base+3) = II*k3k*sf
+
                sf_d(k,base+4) = sf2
                sf_d(k,base+5) = sf2
                sf_d(k,base+6) = sf2
@@ -6119,6 +6186,7 @@ contains
 
             end
 
+         ! For H atoms only
          else
 
             do k = 1,n_k
@@ -6130,13 +6198,16 @@ contains
                tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
 
                sf  = sf_u(k) * tf
-               sf2 = -HALF*sf * (k1k*k1k+k2k*k2k+k3k*k3k) * THIRD
+               sf2 = -HALF*sf * (k1k*k1k+k2k*k2k+k3k*k3k)
 
                sf_e(k) = sf_e(k) + sf
 
                sf_d(k,base+4) = sf2
                sf_d(k,base+5) = sf2
                sf_d(k,base+6) = sf2
+               sf_d(k,base+7) = ZERO
+               sf_d(k,base+8) = ZERO
+               sf_d(k,base+9) = ZERO
 
             end
 
@@ -6212,6 +6283,7 @@ contains
 
          if (any(.fragment_atom(f).tag==.data.refine_U_iso_for_atom)) then
 
+            ! This is for ANisotropic atoms
             do k = 1,n_k
 
                k1k = k_pt(k,1)
@@ -6237,8 +6309,10 @@ contains
 
             end
 
-         else ! this is for anistropic atoms
-
+         ! This is for H atoms only
+         else 
+         
+            ! This is for isotropic atoms
             do k = 1,n_k
 
                k1k = k_pt(k,1)
@@ -6248,13 +6322,14 @@ contains
                tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
 
                sf  = sf_u(k) * tf
-               sf2 = -HALF * sf * (k1k*k1k+k2k*k2k+k3k*k3k) * THIRD
+               sf2 = -HALF * sf * (k1k*k1k+k2k*k2k+k3k*k3k)
 
                sf_e(k) = sf_e(k) + sf
 
                sf_d(k,base+1) = II*k1k*sf
                sf_d(k,base+2) = II*k2k*sf
                sf_d(k,base+3) = II*k3k*sf
+
                sf_d(k,base+4) = sf2
                sf_d(k,base+5) = sf2
                sf_d(k,base+6) = sf2
@@ -6518,8 +6593,11 @@ contains
    ! parameters.
       res :: MAT{REAL}, OUT
       dFdX :: MAT{CPX}, IN
+
    ENSURE(.data_exists,"no diffraction data")
+
       .data.d_F_abs_dX(res,dFdX)
+
    end
 
    d_F_abs_2_dX(res,dFdX)
@@ -6656,7 +6734,7 @@ contains
       n_corr   = .data.correlation_matrix.number_in_range([min_corr,0.999d0],symmetric=TRUE)
 
       ! If no large correlations, return
-      if (n_corr<0) return
+      if (n_corr<0 AND NOT .data.display_correlation_matrix) return
 
       ! Create
       val.create(n_corr)
@@ -6667,6 +6745,9 @@ contains
 
       ! Get row and column indices
       .data.correlation_matrix.get_indices_in_range([min_corr,0.9999d0],row,col,val,symmetric=TRUE)
+
+      stdout.text("Correlation matrix:")
+      stdout.put(.data.correlation_matrix)
 
       ! Construct the row labels
       labr  => .asymmetric_unit_atom.tag_pADP_labels(row)
@@ -7528,10 +7609,9 @@ contains
 
 ! Shelx fcf file
 
-   put_shelx_fcf(cif)
-   ! Put an "atom" cif file without errors.
+   put_shelx_fcf
+   ! Put shelx fcf reflection file
       self :: INOUT
-      cif  :: CIF, IN
 
       F000 :: REAL
 
@@ -7552,6 +7632,36 @@ contains
          stdout.flush
 
          .data.reflections.put_shelx_fcf
+
+      end
+      end
+
+   end
+
+   put_xd_fco
+   ! Put XD fco reflection file
+      self :: INOUT
+
+      F000 :: REAL
+
+      ! Spacegroup information
+      .spacegroup.put_CIF
+
+      ! Unit cell information; INOUT
+      .unit_cell.put_CIF(.Z)
+
+      ! Put the reflection data
+      if (.data.created) then
+      if (.data.reflections.created) then
+
+         F000 = .no_of_unit_cell_electrons
+         F000 = F000*F000
+
+         stdout.flush
+         stdout.show("_exptl_crystal_F_squared_000        ",F000,dots=FALSE)
+         stdout.flush
+
+         .data.reflections.put_xd_fco
 
       end
       end
@@ -8488,7 +8598,7 @@ contains
 
       ! Make the atom list, cartesian coordinates
       atom.create_copy(.asymmetric_unit_atom,list)
-      atom.set_axis_system_to("fractional")
+      atom.set_axis_system_to("crystal")
       atom.set_positions_to(fg)
       atom.zero_pADP_errors
       atom.change_axis_system_to("cartesian",.unit_cell)

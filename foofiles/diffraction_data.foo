@@ -292,8 +292,8 @@ contains
 
       ! Refinement/fit output control
       .show_fit_output             = FALSE
-      .display_near_0_eigenvectors = TRUE
-      .display_correlation_matrix  = TRUE 
+      .display_near_0_eigenvectors = FALSE
+      .display_correlation_matrix  = FALSE
       .min_correlation             = DIFFRACTION_DATA_MIN_CORRELATION
 
       ! Set the internal variables for a refine/fit data
@@ -363,7 +363,7 @@ contains
 
          ! Set hkl up to stl_limit?
          if (.stl_limit>ZERO) &
-            .reflections.set_hkl_up_to_stl_limit(.stl_limit,unit_cell.direct_matrix)
+            .reflections.set_hkl_up_to_stl_limit(.stl_limit,unit_cell)
 
       else
 
@@ -763,6 +763,9 @@ contains
 
          case ("}                             ")  ! exit read_loop
 
+         case ("stop_after_dispersion=        "); .read_stop_after_dispersion
+         case ("use_real_dispersion=          "); .read_use_real_dispersion
+
          case ("correct_dispersion=           "); .read_correct_dispersion
 
          case ("d_low_cutoff=                 "); .read_d_low_cutoff
@@ -794,6 +797,7 @@ contains
          case ("make_f_predicted              "); .make_F_predicted
          case ("max_allowed_param_shift=      "); .read_max_allowed_param_shift
          case ("max_iterations=               "); .read_max_iterations
+         case ("min_correlation=              "); .read_min_correlation
          case ("min_iterations=               "); .read_min_iterations
 
          case ("nka_t_sequence_no=            "); .read_NKA_T_seq_no
@@ -1160,6 +1164,18 @@ contains
       stdin.read(.correct_dispersion)
    end
 
+   read_use_real_dispersion ::: private
+   ! Read the switch whether to correct real dispersion or not,
+   ! according to the atomic dispersion factors
+      stdin.read(.use_real_dispersion)
+   end
+
+   read_stop_after_dispersion ::: private
+   ! Stop after applying dispersion correction in the zeroth iteration
+   ! of a refinement.
+      stdin.read(.stop_after_dispersion)
+   end
+
    read_thermal_smearing_model ::: private
    ! Read the thermal smearing model to use to correct for thermal vibration
    ! in the calculated structure factors
@@ -1248,6 +1264,17 @@ contains
 
       ENSURE(.min_iterations>-1,             "min_iterations < 0 !")
       ENSURE(.max_iterations>.min_iterations,"min_iterations >= max_iterations !")
+
+   end
+
+   read_min_correlation
+   ! Read the minimum number of iterations
+      self :: INOUT
+
+      stdin.read(.min_correlation)
+
+      ENSURE(.min_correlation>=-ONE,"min_iterations < -1 !")
+      ENSURE(.min_correlation<= ONE,"min_iterations > +1 !")
 
    end
 
@@ -1452,15 +1479,24 @@ contains
          .reflections.reset_F_exp_F_sigma
       end
 
-      ! Read wavelength -- must be there !
+      ! Read wavelength
       rval = REFLECTION:wavelength()
-      rval = rval*BOHR_PER_ANGSTROM
-      .set_wavelength(rval)
-      cif.find_item("_diffrn_radiation_wavelength",there)
-      if (there) then
-      cif.read_item("_diffrn_radiation_wavelength",rval)
-      rval = rval*BOHR_PER_ANGSTROM
-      .set_wavelength(rval)
+      if (rval>ZERO) then 
+      
+         ! Was the wavelength set in the reflections? 
+         ! If so set it here in diffraction data
+         rval = rval*BOHR_PER_ANGSTROM
+         .set_wavelength(rval)
+
+         ! Is there a wavelength in the CIF?
+         ! If so this overrides the existing wavelength
+         cif.find_item("_diffrn_radiation_wavelength",there)
+         if (there) then
+         cif.read_item("_diffrn_radiation_wavelength",rval)
+         rval = rval*BOHR_PER_ANGSTROM
+         .set_wavelength(rval)
+         end
+
       end
 
       ! Read no of parameters
@@ -3457,7 +3493,7 @@ contains
       .X_ref0.create(n_p)
 
       ! Refinement table headings
-      .ref_table.create(9)
+      .ref_table.create(10)
       .ref_table(1).set_heading("Ref.")
       .ref_table(1).set_subhead("Iter")
       .ref_table(2).set_heading("No of")
@@ -3477,6 +3513,9 @@ contains
       .ref_table(8).set_sb3head("param")
       .ref_table(9).set_heading("No. of")
       .ref_table(9).set_subhead("params")
+      .ref_table(10).set_heading("No. of")
+      .ref_table(10).set_subhead("eig's")
+      .ref_table(10).set_sb3head("near 0")
 
       ! Table widths (needs to be here because of label width)
       .ref_table(1).set_width_from(.max_iterations) ! Iter
@@ -3488,6 +3527,7 @@ contains
       .ref_table(7).set_width_from(TEN*TEN)         ! Max shift/esd
       .ref_table(8).set_width_from(labels)          ! Max shift par
       .ref_table(9).set_width(3)                    ! n_param
+      .ref_table(10).set_width(3)                    ! n_param
 
    end
 
@@ -4421,6 +4461,7 @@ contains
       stdout.show("Refine scale factor         =",.optimize_scale)
       stdout.show("Refine multiple scales      =",.use_multiple_scale_factors)
       stdout.show("Refine extinction parameter =",.optimize_extinction)
+      stdout.show("Use dispersion correction   =",.correct_dispersion)
    
       stdout.flush
       stdout.show("Max allowed parameter shift =",.max_allowed_param_shift)
@@ -4513,6 +4554,7 @@ contains
          .ref_table(7).create_values([.max_refshift_on_esd])
          .ref_table(8).create_values([.max_refshift_on_esd_par])
          .ref_table(9).create_values([.n_param])
+         .ref_table(10).create_values([.n_near_0])
         
          ! Put out the body
          .ref_table.put_body
@@ -4614,7 +4656,7 @@ contains
          stdout.unsave
 
          stdout.flush
-         if (.n_near_0<=10) then
+         if (.n_near_0<=10 OR .display_near_0_eigenvectors) then
          stdout.text("Near-zero eigenvectors:")
          stdout.flush
          stdout.put(.near_0_eigenvectors)
@@ -5586,6 +5628,15 @@ contains
 !  ===================
 !  Tests for existence
 !  ===================
+
+   have_set_wavelength result (res) ::: pure
+   ! Return TRUE if the wavelength was set i.e. is +ve
+      self :: IN
+      res :: BIN
+
+      res = .wavelength > ZERO
+
+   end
 
    reflection_data_exists result (res) ::: pure
    ! Return TRUE if reflection data exists
