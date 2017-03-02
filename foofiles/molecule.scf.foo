@@ -1415,22 +1415,28 @@ contains
    ! Do an SCF calculation. The following :
    !   .molecular_orbitals, .orbital_energies, .density_matrix
    ! are produced as results.
+      self :: INOUT
+
    ENSURE(.scfdata.created,"no scfdata provided")
 
       select case (.scfdata.scf_kind)
 
-      !  case ("embedded_rhf")
-      !     .embedded_scf
+   !  case ("embedded_rhf")
+   !     .embedded_scf
 
-      !  case ("crystal_rhf")
-      !     .crystal_scf
+   !  case ("crystal_rhf")
+   !     .crystal_scf
 
-         case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
-               "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
-            .:constrained_scf
+      case ("group_scf")
+         .:group_scf
 
-         case default
-            .:usual_scf
+      case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
+            "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+         .:constrained_scf
+
+      case default
+         .:usual_scf
+
       end
 
    end
@@ -4524,8 +4530,8 @@ contains
 
          case("core                "); .:make_core_guess
          case("fock                "); .:make_fock_guess
+         case("group               "); .:make_group_guess
          case("promolecule         "); .:make_promolecule_guess
-         case("progroup            "); .:make_progroup_guess
 
          case("restricted          "); .:read_density_guess
          case("unrestricted        "); .:read_density_guess
@@ -4797,7 +4803,7 @@ contains
 
    end
 
-   make_progroup_guess ::: leaky
+   make_group_guess ::: leaky
    ! Make a .density matrix and .fock_matrix from the sum of noninteracting
    ! atom_group densities. Then get initial orbitals from this fock matrix,
    ! and make the density corresponding to these initial orbitals.
@@ -4805,7 +4811,7 @@ contains
    ENSURE(.scfdata.scf_kind/="rohf","atom guess not available for ROHF")
 
       ! Sum of group densities
-      .:get_progroup_density
+      .:group_scf
 
       ! Get a reasonable set of starting MO's
       .:make_fock_matrix
@@ -4814,7 +4820,7 @@ contains
    end
 
    make_group_energies(g,E_SCF,E_T,E_Z,E_C,E_K,fac)
-   ! Assuming group densities exist (see .make_progroup_density), then
+   ! Assuming group densities exist (see .do_group_SCF), then
    ! for group number "g" make the group SCF energy "E_SCF", the group
    ! kinetic energy "E_T", the group nuclear attraction energy "E_Z",
    ! the group coulomb energy "E_C", and the group exchange energy
@@ -5046,7 +5052,7 @@ contains
    ! will destroy any existing restricted density matrix and MOs.
    ENSURE(.molecular_orbitals.created,"no MO's")
 
-      .:make_progroup_density(MOs=TRUE) ! leaky
+      .:do_group_SCF(MOs=TRUE) ! leaky
 
       .:symorthonormalize_occupied_MOs  ! leaky
 
@@ -5493,16 +5499,16 @@ contains
    end
 
 
-!  ================
-!  Progroup density
-!  ================
+!  =========
+!  Group SCF
+!  =========
 
-   get_progroup_density ::: leaky
+   group_scf ::: leaky
    ! Reads a progroup .density_matrix from the archive, otherwise
    ! makes it. Then convert it to the right kind for an SCF calc.
       arch :: ARCHIVE
 
-      arch.set(.name,"progroup_density_matrix", genre="restricted")
+      arch.set(.name,"group_density_matrix", genre="restricted")
 
       if (arch.exists) then
 
@@ -5514,7 +5520,7 @@ contains
       else
 
          ! Make
-         .:make_progroup_density
+         .:do_group_SCF
 
       end
 
@@ -5532,12 +5538,12 @@ contains
       P :: OPMATRIX*
 
       ! Leaky
-      .:make_progroup_density
+      .:do_group_SCF
 
       ! Archive as the density_matrix
       P.create(.n_bf)
       archive.set_defaults
-      archive.set(.name,"progroup_density_matrix", genre="restricted")
+      archive.set(.name,"group_density_matrix", genre="restricted")
       archive.read(P, genre="restricted")
       archive.set(.name,"density_matrix", genre="restricted")
       archive.write(P, genre="restricted")
@@ -5545,12 +5551,13 @@ contains
 
    end
 
-   make_progroup_density(MOs,output) ::: leaky
+   do_group_SCF(MOs,output) ::: leaky
    ! Make a ".density matrix" from the sum of atom_group densities.
    ! If "MOs" is present and true, make ".molecular_orbitals" which
    ! are the columns of orbitals from each group and also make the
-   ! ".occupation_numbers" vector set to 2 for the occupied group MO's.
-   ! If output is present and FALSE the density matrix is not archived
+   ! ".occupation_numbers" vector set to 2 for the occupied group
+   ! MO's.  If output is FALSE, the density matrix is not archived
+      self :: INOUT
       MOs :: BIN, optional
       output :: BIN, optional
 
@@ -5558,11 +5565,9 @@ contains
    ENSURE(.scfdata.created,"no scfdata")
 
       do_output,do_MOs :: BIN
-      g,a,b,ga,gb,fga,lga,fgb,lgb,fa,la,fb,lb, ms,mf, no :: INT
       mol :: MOLECULE*
-      P,PG,MO,MOG :: MAT{REAL}*
       arch :: ARCHIVE
-      genre :: STR
+      g :: INT
 
       ! Optional switches
       do_output=TRUE
@@ -5593,8 +5598,6 @@ contains
       ! Update ANOs in atom_group(:).mol's
       .BASE:update_group_info
 
-      mf = 0
-
       ! Loop over atom group "g"
       do g = 1,.atom_group.dim
 
@@ -5606,21 +5609,22 @@ contains
          if (mol.BASE:no_of_electrons < 1) cycle
 
          ! Set SCF options
-         if (.atom_group(g).n_atoms>1) then
-            genre = mol.scfdata.spinorbital_kind
-            if (mol.BASE:archive_exists("molecular_orbitals",genre)) then;
-               mol.scfdata.set_initial_MOs(genre)
-            else
-               mol.scfdata.set_initial_density("core")
-            end
-         end
+       ! if (.atom_group(g).n_atoms>1) then
+       !    genre = mol.scfdata.spinorbital_kind
+       !    if (mol.BASE:archive_exists("molecular_orbitals",genre)) then;
+       !       mol.scfdata.set_initial_MOs(genre)
+       !    else
+       !       mol.scfdata.set_initial_density("promolecule")
+       !    end
+       ! end
 
          ! Output details?
          if (do_output) mol.BASE:put_basics
 
-         ! Do the SCF
+         ! Do the SCF !!!!!!!!!!!!!!!!!!!!!
          mol.scfdata.set_level_shift(100d0)
          mol.:scf
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
          ! Make the AO density matrix for this group
          if (.atom_group(g).n_MOs>0) then;
@@ -5629,37 +5633,16 @@ contains
             mol.BASE:make_ao_density_matrix
             stdout.put(mol.density_matrix.restricted)
             stdout.text("reduced P:")
-            mol.BASE:make_scf_density_matrix(method="progroup",n_a=.atom_group(g).n_MOs)
+            mol.BASE:make_scf_density_matrix(method="group",n_a=.atom_group(g).n_MOs)
             stdout.put(mol.density_matrix.restricted)
          else
             mol.BASE:make_ao_density_matrix
          end
 
          ! Copy this group density matrix
-         P  =>    .density_matrix.restricted
-         PG => mol.density_matrix.restricted
+         .BASE:set_group_density(g,mol)
 
-         do a = 1,.atom_group(g).n_atoms
-         do b = 1,.atom_group(g).n_atoms
-
-            ga  = .atom_group(g).atom_index(a)
-            gb  = .atom_group(g).atom_index(b)
-            fga =    .first_basis_fn_for_atom(ga)
-            fgb =    .first_basis_fn_for_atom(gb)
-            lga =     .last_basis_fn_for_atom(ga)
-            lgb =     .last_basis_fn_for_atom(gb)
-
-            fa  = mol.first_basis_fn_for_atom(a)
-            fb  = mol.first_basis_fn_for_atom(b)
-            la  =  mol.last_basis_fn_for_atom(a)
-            lb  =  mol.last_basis_fn_for_atom(b)
-
-            P(fga:lga,fgb:lgb) = P(fga:lga,fgb:lgb) + PG(fa:la,fb:lb)
-
-         end
-         end
-
-         if (.BASE:debugging("make_progroup_density")) then
+         if (.BASE:debugging("do_group_SCF")) then
             stdout.flush
             stdout.text("Group "//trim(g.to_str)//" density_matrix:")
             stdout.put(mol.density_matrix.restricted)
@@ -5671,27 +5654,9 @@ contains
             DIE_IF(mol.molecular_orbitals.destroyed,"no MOs")
             DIE_IF(mol.molecular_orbitals.restricted.destroyed,"no restricted MOs")
 
-            MO  =>    .molecular_orbitals.restricted
-            MOG => mol.molecular_orbitals.restricted
+            .BASE:set_group_MOs(g,mol)
 
-            ms = mf + 1
-            mf = mf + mol.n_bf
-
-            do a = 1,.atom_group(g).n_atoms
-
-               ga  = .atom_group(g).atom_index(a)
-               fga =    .first_basis_fn_for_atom(ga)
-               lga =     .last_basis_fn_for_atom(ga)
-               fa  = mol.first_basis_fn_for_atom(a)
-               la  =  mol.last_basis_fn_for_atom(a)
-
-               MO(fga:lga,ms:mf) = MO(fga:lga,ms:mf) + MOG(fa:la,:)
-            end
-
-            no = mol.n_e/2
-            .occupation_numbers.restricted(ms:ms+no-1) = TWO
-
-            if (.BASE:debugging("make_progroup_density")) then
+            if (.BASE:debugging("do_group_SCF")) then
                stdout.flush
                stdout.text("Group "//trim(g.to_str)//" MO's:")
                stdout.put(mol.molecular_orbitals.restricted)
@@ -5705,24 +5670,24 @@ contains
       end
 
       if (do_output) then
-         arch.set(.name,"progroup_density_matrix", genre="restricted")
+         arch.set(.name,"group_density_matrix", genre="restricted")
          arch.write(.density_matrix, genre="restricted")
-         if (.BASE:debugging("make_progroup_density")) then
+         if (.BASE:debugging("do_group_SCF")) then
             stdout.flush
-            stdout.text("progroup density:")
+            stdout.text("Group density:")
             stdout.put(.density_matrix.restricted)
          end
       end
 
       if (do_output AND do_MOs) then
-         arch.set(.name,"progroup_molecular_orbitals", genre="restricted")
+         arch.set(.name,"group_molecular_orbitals", genre="restricted")
          arch.write(.molecular_orbitals, genre="restricted")
-         if (.BASE:debugging("make_progroup_density")) then
+         if (.BASE:debugging("do_group_SCF")) then
             stdout.flush
-            stdout.text("progroup occupations:")
+            stdout.text("Group occupations:")
             stdout.put(.occupation_numbers.restricted)
             stdout.flush
-            stdout.text("progroup MO's:")
+            stdout.text("Group MO's:")
             stdout.put(.molecular_orbitals.restricted)
          end
       end
@@ -5739,7 +5704,7 @@ contains
    ! The orbitals and the corresponding promolecule density are *not* archived.
    ! This will destroy any existing restricted density matrix and MOs.
     ! S :: MAT{REAL}*
-      .:make_progroup_density(MOs=TRUE,output=FALSE)
+      .:do_group_SCF(MOs=TRUE,output=FALSE)
     ! S.create(.n_bf,.n_bf)
     ! .INTS:make_overlap_matrix
     ! .overlap_matrix.change_basis_to(S,.molecular_orbitals.restricted)
@@ -5754,7 +5719,7 @@ contains
    ! The orbitals and the corresponding density are *not* archived.
    ! This will destroy any existing restricted density matrix and MOs.
     ! S :: MAT{REAL}*
-      .:make_progroup_density(MOs=TRUE,output=FALSE)
+      .:do_group_SCF(MOs=TRUE,output=FALSE)
       .:symorthonormalize_occupied_MOs
     ! S.create(.n_bf,.n_bf)
     ! .INTS:make_overlap_matrix
