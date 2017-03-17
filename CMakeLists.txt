@@ -221,6 +221,7 @@ set(FOO_SRC
     ${FOO_DIR}/textfile.foo
     ${FOO_DIR}/time.foo
     ${FOO_DIR}/types.foo
+    ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/unit_cell.foo
     ${FOO_DIR}/unit_number.foo
     ${FOO_DIR}/vec{atom_group}.foo
@@ -361,6 +362,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/time.F90
     ${CMAKE_CURRENT_BINARY_DIR}/types.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/t_tensor.F90
     ${CMAKE_CURRENT_BINARY_DIR}/unit_cell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/unit_number.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_atom_group.F90
