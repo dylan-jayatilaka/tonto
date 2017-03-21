@@ -129,6 +129,7 @@ set(FOO_SRC
     ${FOO_DIR}/gaussian_data.foo
     ${FOO_DIR}/geminal_mf_scheme.foo
     ${FOO_DIR}/geminal_mf_spectrum.foo
+    ${FOO_DIR}/generalized_seniority_conf.foo
     ${FOO_DIR}/int.foo
     ${FOO_DIR}/interpolator.foo
     ${FOO_DIR}/intrinsic.foo
@@ -292,6 +293,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian_data.F90
     ${CMAKE_CURRENT_BINARY_DIR}/geminal_mf_scheme.F90
     ${CMAKE_CURRENT_BINARY_DIR}/geminal_mf_spectrum.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/generalized_seniority_conf.F90
     ${CMAKE_CURRENT_BINARY_DIR}/int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/interpolator.F90
     ${CMAKE_CURRENT_BINARY_DIR}/irrep.F90
