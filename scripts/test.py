@@ -7,6 +7,7 @@ import sys
 import shutil
 import subprocess
 import difflib
+import datetime
 import time
 log = logging.getLogger('test')
 prefixes_to_ignore = ['Wall-clock', 'CPU time', 
@@ -99,7 +100,7 @@ class working_directory:
         if directory:
             self.directory = os.path.expanduser(directory)
             if not os.path.exists(self.directory) and create:
-                os.mkdir(self.directory)
+                os.makedirs(self.directory)
         else:
             self.directory = None
 
@@ -113,8 +114,10 @@ class working_directory:
     def __exit__(self, exc_type, exc_val, exc_tb):
         os.chdir(self.old_directory)
 
-def temp_test_dir(testname):
-    name = join(gettempdir(), testname)
+def temp_test_dir(testname, subdir='tonto-tests'):
+    d = join(gettempdir(), subdir)
+    timestamp = datetime.datetime.now().strftime('-%y.%m.%d_%H:%M')
+    name = join(d, testname + timestamp)
     log.debug('temp_test_dir = %s', name)
     return name
 
