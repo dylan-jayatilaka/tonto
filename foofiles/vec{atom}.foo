@@ -7245,6 +7245,42 @@ contains
 
    end
 
+   are_nearby(a,b,dist) result (res) ::: pure
+   ! Return whether atoms "a" and "b" are nearby, i.e. within length "dist".
+      self :: IN
+      a,b :: INT, IN
+      dist :: REAL, IN
+      res :: BIN
+
+      tmp :: VEC{REAL}(3)
+      r2 :: REAL
+
+      tmp = self(a).position - self(b).position
+      tmp = abs(tmp)
+      if      (tmp(1)>dist) then; res = FALSE
+      else if (tmp(2)>dist) then; res = FALSE
+      else if (tmp(3)>dist) then; res = FALSE
+      else
+         r2 = dot_product(tmp,tmp)
+         res = (r2 < dist*dist)
+      end
+
+   end
+
+   connected(a,b,c,d) result (res) ::: pure
+   ! Return true if atoms "a" "b" "c" and "d" are connected together
+      self :: IN
+      a,b,c,d :: INT, IN
+      res :: BIN
+
+      res = .bonded(a,b) OR .bonded(a,c) OR .bonded(a,d)
+      res = res AND ( .bonded(b,a) OR .bonded(b,c) OR .bonded(b,d) )
+      res = res AND ( .bonded(c,a) OR .bonded(c,b) OR .bonded(c,d) )
+      res = res AND ( .bonded(d,a) OR .bonded(d,b) OR .bonded(d,c) )
+
+   end
+
+
    vdw_bonded(a,b,range_factor,vdw_range_pc) result (res) ::: pure
    ! Return true if "a" is vdw bonded to "b". Atoms which are
    ! covalently bonded are not van-der-waals bonded.  If present,
@@ -7281,38 +7317,100 @@ contains
 
    end
 
-   are_nearby(a,b,dist) result (res) ::: pure
-   ! Return whether atoms "a" and "b" are nearby, i.e. within length "dist".
+   shortest_vdw_bond result (res) ::: pure
+   ! Return indices of the two atoms involved in the shortest
+   ! intermolecular VdW bond. If there are none result is (0,0).
       self :: IN
-      a,b :: INT, IN
-      dist :: REAL, IN
-      res :: BIN
+      res :: VEC{INT}(2)
 
-      tmp :: VEC{REAL}(3)
-      r2 :: REAL
+      a,b :: INT
+      rab :: VEC{REAL}(3)
+      dab,test :: REAL
+      has_mols :: BIN
 
-      tmp = self(a).position - self(b).position
-      tmp = abs(tmp)
-      if      (tmp(1)>dist) then; res = FALSE
-      else if (tmp(2)>dist) then; res = FALSE
-      else if (tmp(3)>dist) then; res = FALSE
-      else
-         r2 = dot_product(tmp,tmp)
-         res = (r2 < dist*dist)
+      ! More than one molecule?
+      has_mols = any(self(:).site_disorder_group>1) OR any(self(:).group>1)
+      if (NOT has_mols) return
+
+      res  = 0
+      test = HUGE(ONE)
+
+      do a = 2,.dim
+      do b = 1,a-1
+
+         if (NOT .vdw_bonded(a,b)) cycle
+
+         rab = self(a).position - self(b).position
+         dab = rab.norm
+         
+         if (dab<test) then
+         
+            res(1) = a
+            res(2) = b
+            test   = dab
+         
+         end
+
+      end
       end
 
    end
 
-   connected(a,b,c,d) result (res) ::: pure
-   ! Return true if atoms "a" "b" "c" and "d" are connected together
+   shortest_vdw_bond_and_bonded(list,na,nb) ::: leaky, PURE
+   ! Return indices of the two atoms involved in the shortest
+   ! intermolecular VdW bond as list(1,1) and list(1,2). 
+   ! Also return any atoms connected to these atoms in
+   ! list(:,1:2) with "na" the number connected to list(1,1)
+   ! and "nb" the number connected to list(1,2).
       self :: IN
-      a,b,c,d :: INT, IN
-      res :: BIN
+      list :: MAT{INT}*
+      na,nb :: INT, OUT
 
-      res = .bonded(a,b) OR .bonded(a,c) OR .bonded(a,d)
-      res = res AND ( .bonded(b,a) OR .bonded(b,c) OR .bonded(b,d) )
-      res = res AND ( .bonded(c,a) OR .bonded(c,b) OR .bonded(c,d) )
-      res = res AND ( .bonded(d,a) OR .bonded(d,b) OR .bonded(d,c) )
+      n,a,b :: INT
+      rab :: VEC{REAL}(3)
+      connections_for :: VEC{VEC_{INT}}*
+      vdw :: VEC{INT}(2)
+
+      na = 0
+      nb = 0
+
+      vdw = .shortest_vdw_bond
+
+      ! Any vdw bonds?
+      if (all(vdw==0)) return
+
+      a = vdw(1)
+      b = vdw(2)
+
+      ! Make connjection table
+      .make_connection_table(connections_for,skip_self=TRUE)
+
+      ! Get friend sizes
+      if (connections_for(a).element.created) na = connections_for(a).element.dim
+      if (connections_for(b).element.created) nb = connections_for(b).element.dim
+
+      ! Make list
+      n = 1 + na + nb 
+      list.create(n,2)
+
+      ! VDW bond - first
+      list(1,1) = vdw(1)
+      list(1,2) = vdw(2)
+
+      ! a connections
+      if (na>0) then
+         list(2:na+1,1) = vdw(1)
+         list(2:na+1,2) = connections_for(a)[:]
+      end
+
+      ! b connections
+      if (nb>0) then
+         list(na+2:n,1) = vdw(2)
+         list(na+2:n,2) = connections_for(b)[:]
+      end
+
+      ! Clean
+      connections_for.destroy
 
    end
 
