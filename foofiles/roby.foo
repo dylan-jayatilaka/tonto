@@ -409,12 +409,29 @@ contains
       a,b :: INT, IN
       res :: BIN
 
-      if      (.is_homoleptic) then;          res = FALSE
-      else if (.analyze_all_atom_pairs) then; res = FALSE
+      if (.is_homoleptic) then;
+      
+         ! Do all 
+         res = FALSE
+
+      else if (.analyze_all_atom_pairs) then
+      
+         ! Do all
+         res = FALSE
+
       else if (.analyze_vdw_atom_pairs) then
+
+         ! Do only vdw pairs
          res = NOT .atom.vdw_bonded(a,b)
+
       else
+
+         ! Do bonded pairs
          res = NOT .atom.bonded(a,b,.bond_range_factor)
+
+         ! Do vdw pairs too
+         res = res AND NOT .atom.vdw_bonded(a,b)
+
       end
 
    end
@@ -2516,6 +2533,7 @@ contains
 
          ! LaTeX tables
          .put_bond_indices_all
+         .put_bond_indices_all_vdw
          .put_bond_indices_non_H
          .put_bond_indices_CC
 
@@ -3081,8 +3099,9 @@ contains
 
    end
 
+
    put_bond_indices_all
-   ! Output the non-H bond indices for latex "bondtable.tex".
+   ! Output the all bond indices for LaTeX script in "bondtable.tex".
       self :: IN
 
    ENSURE(NOT .is_homoleptic,"job is homoleptic")
@@ -3200,8 +3219,155 @@ contains
 
    end
 
+   put_bond_indices_all_vdw
+   ! Output all bond indices and shortest vdw bond for LaTeX script
+   ! "bondtable-vdw.tex".
+      self :: IN
+
+   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i,a :: INT
+      pair :: MAT{INT}*
+      labels :: MAT{STR}*
+      dash :: VEC{STR}*
+      vdw :: VEC{INT}(2)
+      s1,s2,val :: STR
+      dist,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+      if (NOT .atom.has_vdw_bond) return
+
+      stdout.redirect("bondtable-vdw.tex")
+
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         if (.analyze_vdw_atom_pairs) then
+         .atom.get_vdw_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         else
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         end
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Dashes
+         dash.create(n_bonds)
+         dash    = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         cAB.create(n_bonds)
+         iAB.create(n_bonds)
+         tAB.create(n_bonds)
+         pAB.create(n_bonds)
+
+         forall (i=1:n_bonds)
+         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
+         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         pAB(i) = .percent_covalency(pair(i,1),pair(i,2))
+         end
+
+         ! Put latex table
+         s1 = .atom(pair(1,1)).chemical_symbol
+         s2 = .atom(pair(1,2)).chemical_symbol
+         stdout.text("% "//trim(s1)//"--"//trim(s2)//" bonds")
+
+         do a = 1,pair.dim1
+            stdout.put("\namebond{a",width=11)
+            val = INT:to_str(pair(a,1))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{a",width=3)
+            val = INT:to_str(pair(a,2))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = REAL:to_str(tAB(a),"f10.2",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = INT:to_str(nint(pAB(a)),"i3",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}",width=1)
+            stdout.flush
+         end
+
+         ! Clean
+         pAB.destroy
+         tAB.destroy
+         iAB.destroy
+         cAB.destroy
+         labels.destroy
+         dash.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Clean
+      Z_list.destroy
+
+      ! Now put the shortest vdw bond
+      stdout.text("% Shortest vdw bond")
+
+      vdw = .atom.shortest_vdw_bond
+
+         tAB(1) = .bond_index(vdw(1),vdw(2))
+         pAB(1) = .percent_covalency(vdw(1),vdw(2))
+
+            stdout.put("\namebond{a",width=11)
+            val = INT:to_str(vdw(1))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{a",width=3)
+            val = INT:to_str(vdw(2))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = REAL:to_str(tAB(1),"f10.2",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = INT:to_str(nint(pAB(1)),"i3",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}",width=1)
+            stdout.flush
+
+      ! Revert
+      stdout.revert
+
+   end
+
    put_bond_indices_non_H
-   ! Output the non-H bond indices for latex "bondtable.tex".
+   ! Output the non-H bond indices for LaTex script in
+   ! "non-H-bondtable.tex".
       self :: IN
 
    ENSURE(NOT .is_homoleptic,"job is homoleptic")
@@ -3323,7 +3489,7 @@ contains
    end
 
    put_bond_indices_CC
-   ! Output the CC bond indices table for connected atoms.
+   ! Output the CC bond indices table in file "cc-table".
       self :: IN
 
    ENSURE(NOT .is_homoleptic,"job is homoleptic")
