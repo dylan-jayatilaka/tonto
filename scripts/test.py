@@ -11,7 +11,8 @@ import datetime
 import time
 log = logging.getLogger('test')
 prefixes_to_ignore = ['Wall-clock', 'CPU time', 
-    ' Version', ' Platform', 'Timer', ' Build-date']
+    'Version', 'Platform', 'Timer', 'Build-date',
+    'Warning', 'https', 'www', 'Peter', 'Daniel', 'Dylan']
 
 test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
 
@@ -31,10 +32,14 @@ def get_lines(filename):
     """
     lines = []
     with open(filename) as f:
-        lines = [line for line in f]
-        for line in f:
-            if not is_junk(line):
+        lines = []
+        junk_lines = []
+        for i, line in enumerate(f):
+            if not is_junk(line.strip()):
                 lines.append(line)
+            else:
+                junk_lines.append(i)
+    log.debug('Ignored junk lines: %s', junk_lines)
     return lines
 
 
@@ -57,17 +62,24 @@ def equivalent(s1, s2, **kwargs):
     
 
 def check_numbers(line1, line2, **kwargs):
-    return all(
-            equivalent(t1, t2, **kwargs) 
-            for t1, t2 in zip(line1.strip('+- ').split(), line2.strip('+- ').split()))
+    tokens1 = line1.strip('+- ').split()
+    tokens2 = line2.strip('+- ').split()
+    if len(tokens1) != len(tokens2):
+        return False
+
+    else:
+        return all(
+                equivalent(t1, t2, **kwargs) 
+                for t1, t2 in zip(tokens1, tokens2))
 
 
 def diff_sbf(file1, file2, args): 
     """Find the differences between 2 cxs files using sbftool
     """
     verbosity = 1
-    completed = subprocess.check_call([args.sbftool, '-vc', file1, file2])
-    return completed
+    retcode = subprocess.check_call([args.sbftool, '-vc', file1, file2])
+    log.debug('sbftool returned: %s', retcode)
+    return (retcode == 0)
 
 
 def is_sbf(filename):
@@ -89,7 +101,14 @@ def diff_files(file1, file2, args, print_diffs=True, **kwargs):
     del1 = [x for x in diff if x.startswith('-')]
     del2 = [x for x in diff if x.startswith('+')]
     diffs = [check_numbers(l1, l2, **kwargs) for l1, l2 in zip(del1, del2)]
-    return all(diffs)
+    correct = all(diffs)
+
+    if print_diffs:
+        log.info('Diff:\n%s', ''.join(a + b for a, b in zip(del1,del2)))
+
+    if not correct:
+        log.debug('Found differences in %s and %s', file1, file2)
+    return correct
 
 
 class working_directory:
@@ -138,11 +157,12 @@ def parse_IO_file(path):
 
 def compare_outputs(f1, f2, args):
     if args.compare_program:
-        return subprocess.check_call([args.compare_program, f1, f2])
+        return (subprocess.check_call([args.compare_program, f1, f2]) == 0)
     else:
-        log.debug('Using builtin diff')
-        d = diff_files(f1, f2, args)
-        return d is None
+        log.debug('Using builtin diffing or sbftool')
+        d = diff_files(f1, f2, args, rel_tol=args.rel_tol, abs_tol=args.abs_tol)
+        log.debug('diff_files returned: %s', d)
+        return d
 
 
 def run_test(args, test_dir, io_files):
@@ -185,15 +205,17 @@ def run_test(args, test_dir, io_files):
         timings['diffs'] = time.time() - sum(t for t in timings.values())
         success = completed and all(files_equivalent)
 
-        for path in io_files['output']:
-            shutil.copy(abspath(join('.', path)),
+        for path, equivalent in zip(io_files['output'], files_equivalent):
+            log.debug('%s: %s', path, 'GOOD' if equivalent else 'BAD')
+            if not equivalent:
+                shutil.copy(abspath(join('.', path)),
                         abspath(join(test_dir, path + '.bad')))
         timings['cp_output'] = time.time() - sum(t for t in timings.values())
         log.debug('Time spent:')
         for k, v in timings.items():
             if k != 'start':
                 log.debug('%s: \t %f s', k, v)
-    return completed
+    return success
 
 def main():
     """Show the differences between two test files
@@ -215,6 +237,10 @@ def main():
                         help='Location of sbftool')
     parser.add_argument('--mpi', '-m', default=False, action='store_true',
                         help='Test with mpirun')
+    parser.add_argument('--abs-tol', type=float, default=1e-7,
+                        help='Absolute tolerance for numerical differences')
+    parser.add_argument('--rel-tol', type=float, default=1e-3,
+                        help='Relative tolerance for numerical differences')
     args = parser.parse_args()
     args.sbftool = os.path.abspath(args.sbftool)
     logging.basicConfig(level=args.log_level)
