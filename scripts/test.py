@@ -9,10 +9,13 @@ import subprocess
 import difflib
 import datetime
 import time
+
 log = logging.getLogger('test')
+
 prefixes_to_ignore = ['Wall-clock', 'CPU time', 
     'Version', 'Platform', 'Timer', 'Build-date',
-    'Warning', 'https', 'www', 'Peter', 'Daniel', 'Dylan']
+    'Warning', 'https', 'www', 'Peter', 'Daniel', 'Dylan',
+    'time taken for']
 
 test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
 
