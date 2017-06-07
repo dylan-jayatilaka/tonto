@@ -930,6 +930,7 @@ contains
    put_ADP2_vector_to(U,fac)
    ! Put the second-order ADP vector into matrix "U".
    ! If present, include length-conversion factor "fac".
+   ! This routine used for making tables
       self :: IN
       U :: MAT{REAL}, OUT
       fac :: REAL, optional, IN
@@ -1320,7 +1321,7 @@ contains
    end
 
    put_ADP2_errors_to(dU,esd,fac) ::: PURE
-   ! Put the U_iso errors into matrix "dU" from the supplied
+   ! Put the ADP2 errors into matrix "dU" from the supplied
    ! "esd" vector made from a external refinement.
       self :: IN
       dU :: MAT{REAL}, OUT
@@ -1329,25 +1330,63 @@ contains
 
    ENSURE(dU.dim1==.dim,"wrong dim1, dU")
    ENSURE(dU.dim2==6   ,"wrong dim2, dU")
-   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
 
       a,k :: INT
 
       k = 0
 
       do a = 1,.dim
-
+      
          dU(a,1) = esd(k+4) 
          dU(a,2) = esd(k+5) 
          dU(a,3) = esd(k+6) 
          dU(a,4) = esd(k+7) 
          dU(a,5) = esd(k+8) 
          dU(a,6) = esd(k+9) 
-
+      
          k = k + self(a).no_of_pADPs
-
+      
       end
 
+      ! Change units
+      if (present(fac)) dU = fac*fac*dU
+
+   end
+
+   put_ADP2_errors_to(dU,esd,list,fac) ::: PURE
+   ! Put the ADP2 errors into matrix "dU" from the supplied
+   ! "esd" vector made from a external refinement. "list" is
+   ! the sub list of atoms to use
+      self :: IN
+      dU :: MAT{REAL}, OUT
+      esd :: VEC{REAL}, IN
+      list :: VEC{INT}
+      fac :: REAL, optional, IN
+
+   ENSURE(dU.dim1==list.dim,"wrong dim1, dU")
+   ENSURE(dU.dim2==6       ,"wrong dim2, dU")
+   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+
+      i,a,k :: INT
+
+      k = 0
+
+      do i = 1,list.dim
+
+         a = list(i)
+      
+         k = .no_of_pADPs_up_to_atom(a)
+      
+         dU(i,1) = esd(k+4) 
+         dU(i,2) = esd(k+5) 
+         dU(i,3) = esd(k+6) 
+         dU(i,4) = esd(k+7) 
+         dU(i,5) = esd(k+8) 
+         dU(i,6) = esd(k+9) 
+      
+      end
+
+      ! Change units
       if (present(fac)) dU = fac*fac*dU
 
    end
@@ -2552,6 +2591,45 @@ contains
       end
    end
 
+   no_of_H_atoms result (res) ::: pure
+   ! Return the number of H atoms
+      self :: IN
+      res :: INT
+
+      res = count(ATOM:is_a_H_atom(self))
+
+   end
+
+   no_of_non_H_atoms result (res) ::: pure
+   ! Return the number of non H atoms
+      self :: IN
+      res :: INT
+
+      res = count(ATOM:is_not_a_H_atom(self))
+
+   end
+
+   list_of_non_H_atoms result (res) ::: leaky
+   ! Return the list of indices of non-H atoms
+      self :: IN
+      res :: VEC{INT}*
+
+      n,a,i :: INT
+
+      n = .no_of_non_H_atoms
+
+      res.create(n)
+
+      i = 0
+      do a = 1,.dim
+         if (self(a).is_not_a_H_atom) then
+            i = i + 1
+            res(i) = a
+         end
+      end
+
+   end
+
    no_of_nonmetal_atoms result (res) ::: pure
    ! Return the number of non-dummy atoms
       self :: IN
@@ -2574,7 +2652,7 @@ contains
    end
 
    list_of_metal_atoms result (res) ::: leaky
-   ! Return the number of non-dummy atoms
+   ! Return the indices of the metal atoms
       self :: IN
       res :: VEC{INT}*
 
@@ -2604,6 +2682,29 @@ contains
 
       res.create(.dim)
       res = self.tag
+
+   end
+
+   non_H_atom_tags result (tags) ::: leaky
+   ! Return the list of non-H atom tags
+      self :: IN
+      tags :: VEC{STR}*
+
+      list :: VEC{INT}*
+      n :: INT
+
+      n = .no_of_non_H_atoms
+
+      tags.create(n)
+
+      ! Get the list
+      list => .list_of_non_H_atoms
+
+      ! Get the tags
+      tags = self(list).tag
+
+      ! Clean up
+      list.destroy
 
    end
 
@@ -13303,18 +13404,23 @@ contains
    end
 
 
-   put_CIF_ADP2
+   put_CIF_ADP2(refine_H_U_iso)
    ! Output the ADP2's in CIF format to "stdout" in an axis system.
    ! This version does not produce errors.
       self :: IN
+      refine_H_U_iso :: BIN, optional, IN
 
+      list :: VEC{INT}*
       ID :: VEC{STR}*
       ADP :: MAT{REAL}*
       table :: VEC{TABLE_COLUMN}*
       lab :: STR
       fac :: REAL
-      i :: INT
-      is_cartn :: BIN
+      i,dim :: INT
+      H_U_iso,is_cartn :: BIN
+
+      H_U_iso = FALSE
+      if (present(refine_H_U_iso)) H_U_iso = refine_H_U_iso
 
       ! Axis system?
       is_cartn = self(1).pos_axis_system=="cartesian"
@@ -13356,13 +13462,21 @@ contains
 
       end
 
-      ! Column data
-      ID.create(.dim)
-      ADP.create(.dim,6)
+      ! Size of table
+      dim = .dim
+      if (H_U_iso) dim = .no_of_non_H_atoms
 
-      ! Get column data
-      ID  = self.tag
-      .put_ADP2_vector_to(ADP,fac)
+      ! Get ADP data
+      ID.create(dim)
+      ADP.create(dim,6)
+      if (NOT H_U_iso) then
+         ID = self.tag
+         self.put_ADP2_vector_to(ADP,fac)
+      else
+         list => .list_of_non_H_atoms
+         ID =  self(list).tag
+         self(list).put_ADP2_vector_to(ADP,fac)
+      end
 
       ! Table
       table.create(7)
@@ -13379,43 +13493,51 @@ contains
 
       ! Clean
       table.destroy
+      if (NOT H_U_iso) list.destroy
       ADP.destroy
       ID.destroy
 
    end
 
 
-   put_CIF_ADP2(esd)
+   put_CIF_ADP2(esd,refine_H_U_iso)
    ! Output the ADP2's in CIF format to "stdout" in an axis system.
    ! This version produces errors.
       self :: IN
       esd :: VEC{REAL}, IN
+      refine_H_U_iso :: BIN, optional, IN
 
       is_cartn :: BIN
 
       is_cartn = self(1).pos_axis_system=="cartesian"
 
-      if (is_cartn) then; .put_CIF_ADP2_cartn(esd)
-      else;               .put_CIF_ADP2_cryst(esd)
+      if (is_cartn) then; .put_CIF_ADP2_cartn(esd,refine_H_U_iso)
+      else;               .put_CIF_ADP2_cryst(esd,refine_H_U_iso)
       end
 
    end
 
-   put_CIF_ADP2_cartn(esd) ::: private
+   put_CIF_ADP2_cartn(esd,refine_H_U_iso) ::: private
    ! Output the ADP2's in CIF format to "stdout" in an axis system.
    ! This version does not produce errors.
       self :: IN
       esd :: VEC{REAL}, IN
+      refine_H_U_iso :: BIN, optional, IN
 
    ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
    ENSURE(self(1).pos_axis_system=="cartesian","not cartesian axis system!")
 
+      list :: VEC{INT}*
       ID,blnk :: VEC{STR}*
       ADPv,ADPe :: MAT{REAL}*
       tabl1,tabl2 :: VEC{TABLE_COLUMN}*
       lab :: STR
       fac :: REAL
-      i :: INT
+      i,dim :: INT
+      H_U_iso :: BIN
+
+      H_U_iso = FALSE
+      if (present(refine_H_U_iso)) H_U_iso = refine_H_U_iso
 
       ! Unit conversion for ADP's
       fac = ANGSTROM_PER_BOHR
@@ -13440,17 +13562,29 @@ contains
       stdout.text("_atom_site_ADP2_U_"//trim(lab)//"_esd")
       end
 
-      ! Column data
-      ID.create(.dim)
-      blnk.create(.dim)
-      ADPv.create(.dim,6)
-      ADPe.create(.dim,6)
+      ! Size of table
+      dim = .dim
+      if (H_U_iso) dim = .no_of_non_H_atoms
+
+      ! Allocate column data
+        ID.create(dim)
+      blnk.create(dim)
+      ADPv.create(dim,6)
+      ADPe.create(dim,6)
 
       ! Get column data
-      ID   = self.tag
-      blnk = " "
-      .put_ADP2_vector_to(ADPv,fac)
-      .put_ADP2_errors_to(ADPe,esd,fac)
+      if (NOT H_U_iso) then
+         ID =  self.tag
+         blnk = " "
+         self.put_ADP2_vector_to(ADPv,fac)
+         self.put_ADP2_errors_to(ADPe,esd,fac)
+      else
+         list => .list_of_non_H_atoms
+         ID =  self(list).tag
+         blnk = " "
+         self(list).put_ADP2_vector_to(ADPv,fac)
+               self.put_ADP2_errors_to(ADPe,esd,list,fac)
+      end
 
       ! Table 1
       tabl1.create(7)
@@ -13486,6 +13620,7 @@ contains
       ! Clean
       tabl2.destroy
       tabl1.destroy
+      if (H_U_iso) list.destroy
       ADPe.destroy
       ADPv.destroy
       blnk.destroy
@@ -13493,21 +13628,27 @@ contains
 
    end
 
-   put_CIF_ADP2_cryst(esd) ::: private
+   put_CIF_ADP2_cryst(esd,refine_H_U_iso) ::: private
    ! Output the ADP2's in CIF format to "stdout" in an axis system.
    ! This version produces errors.
       self :: IN
       esd :: VEC{REAL}, IN
+      refine_H_U_iso :: BIN, optional, IN
 
    ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
    ENSURE(self(1).pos_axis_system=="crystal","not crystal axis system!") 
 
+      list :: VEC{INT}*
       ID,blnk :: VEC{STR}*
       ADPv,ADPe :: MAT{REAL}*
       tabl1,tabl2 :: VEC{TABLE_COLUMN}*
       lab :: STR
       fac :: REAL
-      i :: INT
+      i,dim :: INT
+      H_U_iso :: BIN
+
+      H_U_iso = FALSE
+      if (present(refine_H_U_iso)) H_U_iso = refine_H_U_iso
 
       ! Unit conversion for ADP's
       fac = ANGSTROM_PER_BOHR
@@ -13533,17 +13674,29 @@ contains
       stdout.text("_atom_site_aniso_U_"//trim(lab)//"_esd")
       end
 
-      ! Column data
-      ID.create(.dim)
-      blnk.create(.dim)
-      ADPv.create(.dim,6)
-      ADPe.create(.dim,6)
+      ! Size of table
+      dim = .dim
+      if (H_U_iso) dim = .no_of_non_H_atoms
+
+      ! Allocate column data
+        ID.create(dim)
+      blnk.create(dim)
+      ADPv.create(dim,6)
+      ADPe.create(dim,6)
 
       ! Get column data
-      ID   = self.tag
-      blnk = " "
-      .put_ADP2_vector_to(ADPv,fac)
-      .put_ADP2_errors_to(ADPe,esd,fac)
+      if (NOT H_U_iso) then
+         ID =  self.tag
+         blnk = " "
+         self.put_ADP2_vector_to(ADPv,fac)
+         self.put_ADP2_errors_to(ADPe,esd,fac)
+      else
+         list => .list_of_non_H_atoms
+         ID =  self(list).tag
+         blnk = " "
+         self(list).put_ADP2_vector_to(ADPv,fac)
+               self.put_ADP2_errors_to(ADPe,esd,list,fac)
+      end
 
       ! Table 1
       tabl1.create(7)
@@ -13610,6 +13763,7 @@ contains
 
       ! Clean
       tabl1.destroy
+      if (H_U_iso) list.destroy
       ADPe.destroy
       ADPv.destroy
       blnk.destroy
