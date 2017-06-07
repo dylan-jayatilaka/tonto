@@ -160,7 +160,7 @@ def compare_outputs(f1, f2, args):
         return (subprocess.check_call([args.compare_program, f1, f2]) == 0)
     else:
         log.debug('Using builtin diffing or sbftool')
-        d = diff_files(f1, f2, args)
+        d = diff_files(f1, f2, args, rel_tol=args.rel_tol, abs_tol=args.abs_tol)
         log.debug('diff_files returned: %s', d)
         return d
 
@@ -205,8 +205,10 @@ def run_test(args, test_dir, io_files):
         timings['diffs'] = time.time() - sum(t for t in timings.values())
         success = completed and all(files_equivalent)
 
-        for path in io_files['output']:
-            shutil.copy(abspath(join('.', path)),
+        for path, equivalent in zip(io_files['output'], files_equivalent):
+            log.debug('%s: %s', path, 'GOOD' if equivalent else 'BAD')
+            if not equivalent:
+                shutil.copy(abspath(join('.', path)),
                         abspath(join(test_dir, path + '.bad')))
         timings['cp_output'] = time.time() - sum(t for t in timings.values())
         log.debug('Time spent:')
@@ -235,6 +237,10 @@ def main():
                         help='Location of sbftool')
     parser.add_argument('--mpi', '-m', default=False, action='store_true',
                         help='Test with mpirun')
+    parser.add_argument('--abs-tol', type=float, default=1e-7,
+                        help='Absolute tolerance for numerical differences')
+    parser.add_argument('--rel-tol', type=float, default=1e-3,
+                        help='Relative tolerance for numerical differences')
     args = parser.parse_args()
     args.sbftool = os.path.abspath(args.sbftool)
     logging.basicConfig(level=args.log_level)
