@@ -138,44 +138,14 @@ contains
    ! Note: for real and complex only
    end
 
-   str_length(dp) result (sl) ::: pure
-   ! Return the string length from the int part of the REAL value "self",
-   ! keeping "dp" decimal places.
+   str_length(max_dp) result (sl) ::: pure
+   ! Return the string length "sl" from the int part of the REAL value
+   ! "self", keeping "max_dp" decimal places.
       self :: IN
-      dp :: INT, IN
-      sl :: INT
-
-      sl = floor(self)
-      sl = sl.str_length
-      sl = sl + dp + 1 ! plus .
-
-   end
-
-   str_length(error,max_dp,spaces) result (sl) ::: PURE
-   ! Return the string length of "self" assuming an it has an absolute
-   ! "error". If "error" is zero, "max_dp" decimal places are kept,
-   ! with additional extra "spaces" (if present).
-      self :: IN
-      error  :: REAL, IN
       max_dp :: INT, IN
-      spaces :: INT, IN, optional
       sl :: INT
 
-      width,dp :: INT
-      string :: STR
-
-      ! Get the decimal place "dp" and the error digit "de"
-      error.get_error_dp(dp,max_dp)
-
-      ! Convert "self" with the right size
-      width  =  .str_length(max_dp)
-      string = .to_str("f",width,precision=dp)
-
-      ! Append the error (digit digit)
-      sl = len_trim(string) + 4 + REAL::error_dp_de_align(error,max_dp)
-
-      ! Add spaces
-      if (present(spaces)) sl = sl + spaces
+      .get_str_length_maxdp(sl,max_dp,0)
 
    end
 
@@ -185,9 +155,9 @@ contains
    ! Note: for real and complex only
    end
 
-   get_str_length(sl,max_dp,spaces) ::: pure
+   get_str_length_maxdp(sl,max_dp,spaces) ::: pure
    ! Return the string length "sl" from the int part of the REAL value
-   ! "self", keeping "max_dp" decimal places.
+   ! "self", keeping "max_dp" decimal places, with extra "spaces".
       self :: IN
       sl :: INT, OUT
       max_dp :: INT, IN
@@ -195,6 +165,7 @@ contains
 
       sf :: INT
 
+      ! Get length of integer part
       sf = floor(self)
       sf.get_str_length(sl,spaces)
 
@@ -202,263 +173,96 @@ contains
 
    end
 
-   get_str_length(sl,error,max_dp,spaces) ::: PURE
+   get_str_length_noalign(error,sl,dp,max_dp) ::: pure
    ! Return the string length "sl" of "self", assuming "self" has an
    ! absolute "error"s. If "error" is zero, "max_dp" decimal places
-   ! are kept, with additional extra "spaces" (if present).
+   ! are kept. NOTE: This version does not add alignment spaces.
       self :: IN
-      sl :: INT, OUT
       error  :: REAL, IN
+      sl,dp  :: INT, OUT
       max_dp :: INT, IN
-      spaces :: INT, IN
 
-      width,dp :: INT
-      string :: STR
+      sf, de,le :: INT
 
-      ! "width" is the width of the error-less number 1.023
-      ! with the specified precision "max_dp"
-      .get_str_length(width,max_dp,spaces)
+      ! Get error decimal place "dp", error digit "de" & length "le"
+      if (error==ZERO) then
 
-      ! Get the decimal place "dp" and the error digit "de"
-      error.get_error_dp(dp,max_dp)
+         dp = max_dp
+         de = 0
+         le = 1
 
-      ! Convert "self" with the right size
-      string = .to_str("f",width,precision=dp)
+      else
 
-      ! Append the error (digit digit)
-      sl = len_trim(string) + 4 + REAL::error_dp_de_align(error,max_dp) + spaces
+         ! 2-digit error like (19)
+         dp = min(abs(floor(log10(error))),max_dp) + 1
+         de = nint(error*10**dp)
+         le = 2
+
+         ! 1-digit error like (7) for Acta Cryst
+         if (20<=de AND de<=100) then
+            dp = dp - 1
+            de = nint(error*10**dp)
+            le = 1
+         end
+
+      end
+
+      ! Get the string length "sl"
+      sf = floor(self)        ! First, get length of integer part
+      sf.get_str_length(sl,0) ! Add spaces also ...
+      sl = sl + dp + 1        ! plus .     (Length of non-error part)
+      sl = sl + le + 2        ! plus ( & ) (Length of the error part)
 
    end
 
-   get_str_length(sl,dp,error,max_dp,spaces) ::: PURE
+   get_str_length_align(error,sl,dp,de,le,cb,max_dp) ::: PURE
    ! Return the string length "sl" of "self", the decimal places "dp"
-   ! used, assuming "self" has an absolute "error"s. If "error" is
-   ! zero, "max_dp" decimal places are kept, with additional extra
-   ! "spaces" (if present).
+   ! used, assuming "self" has an absolute "error". Return the decimal
+   ! place "dp" of the error, the digit(s) "de" comprising the error,
+   ! the length "le" of these errror digits, which is either 1 or 2,
+   ! and the number of "bc" which is the position of the closing brace
+   ! after the decimal point.  If "error" is zero, "max_dp" decimal
+   ! places are kept.
       self :: IN
-      sl :: INT, OUT
-      dp :: INT, OUT
-      error  :: REAL, IN
-      max_dp :: INT, IN
-      spaces :: INT, IN
-
-      width :: INT
-      string :: STR
-
-      ! "width" is the width of the error-less number 1.023
-      ! with the specified precision "max_dp"
-      .get_str_length(width,max_dp,spaces)
-
-      ! Get the decimal place "dp" and the error digit "de"
-      error.get_error_dp(dp,max_dp)
-
-      ! Convert "self" with the right size
-      string = .to_str("f",width,precision=dp)
-
-      ! Append the error (digit digit)
-      sl = len_trim(string) + 4 + REAL::error_dp_de_align(error,max_dp) + spaces
-
-   end
-
-!  ==========================
-!  Precision and error output
-!  ==========================
-
-   get_error_dp(dp) ::: PURE
-   ! If "self" is an error, THEN return "dp" the *actual* number of
-   ! decimal places used for "self". Used for output like 1.027(5)
-   ! where dp=3 (provided max_dp>=3).
-      self :: IN
-      dp :: INT, OUT
-
-      error :: REAL
-      de,max_dp :: INT
-
-      max_dp = REAL_MAX_DECIMAL_PLACES
-
-      error = self
-
-      if (error==ZERO) then
-      
-         dp = max_dp
-
-      else
-      
-         dp = min(abs(floor(log10(error))),max_dp)
-         de = nint(error*10**dp)
-         if (20<=de AND de<=100) then
-            dp = dp - 1
-         end
-
-      end
-
-   end
-
-   get_error_dp(dp,max_dp) ::: PURE
-   ! If "self" is an error, and "max_dp" is the maximum allowed
-   ! no. of decimal places THEN return the *actual* number of
-   ! decimal places used for "self". Used for output like 1.027(5)
-   ! where dp=3 (provided max_dp>=3).
-      self :: IN
-      dp :: INT, OUT
+      error :: REAL, IN
+      sl,dp,de,le,cb :: INT, OUT
       max_dp :: INT, IN
 
-      error :: REAL
-      de :: INT
+      sf,si :: INT
 
-      error = self
-
-      if (error==ZERO) then
-      
-         dp = max_dp
-
-      else
-      
-         dp = min(abs(floor(log10(error))),max_dp)
-         de = nint(error*10**dp)
-         if (20<=de AND de<=100) then
-            dp = dp - 1
-         end
-
-      end
-
-   end
-
-   get_error_dp_de(dp,de,max_dp) ::: PURE
-   ! Given number "self" which is an error, and given a desired
-   ! *output* of *at most* "max_dp" decimal places THEN return the
-   ! decimal place of the uncertainty "dp", and the digit "de" of the
-   ! error digit in decimal place "dp". Used for output like 1.027(5)
-   ! where dp=3 and de=5 (provided max_dp>=3).
-      self :: IN
-      dp :: INT, OUT
-      de :: INT, OUT
-      max_dp :: INT, IN
-
-      error :: REAL
-
-      error = self
-
+      ! Get error decimal place "dp", error digit "de" & length "le"
       if (error==ZERO) then
 
          dp = max_dp
          de = 0
+         le = 1
 
       else
 
+         ! 2-digit error like (19)
          dp = min(abs(floor(log10(error))),max_dp) + 1
          de = nint(error*10**dp)
+         le = 2
+
+         ! 1-digit error like (7) for Acta Cryst
          if (20<=de AND de<=100) then
             dp = dp - 1
             de = nint(error*10**dp)
+            le = 1
          end
 
       end
 
-   end
+      ! Get the string length "sl"
+      sf = floor(self)        ! First, get length of integer part
+      sf.get_str_length(si,0) ! Add spaces also ...
+      sl = si + dp + 1        ! plus .     (Length of non-error part)
+      sl = sl + le + 2        ! plus ( & ) (Length of the error part)
 
-   error_dp_de_align(max_dp) result (width) ::: pure
-   ! Given number "self" which is an error, and given a desired
-   ! *output* of *at most* "max_dp" decimal places THEN return the
-   ! number of extra space above 4 so that an imprecise number such as
-   ! 1.027(19) is to have the decimal place *aligned*.
-      self :: IN
-      max_dp :: INT, IN
-      width :: INT
-
-      dp,de,le :: INT
-
-      error :: REAL
-
-      error = self
-
-      ! This code as in get_error_dp_de
-      if (error==ZERO) then
-
-         dp = max_dp
-         de = 0
-
-      else
-
-         dp = min(abs(floor(log10(error))),max_dp) + 1
-         de = nint(error*10**dp)
-         if (20<=de AND de<=100) then
-            dp = dp - 1
-            de = nint(error*10**dp)
-         end
-
-      end
-
-      ! Normally have error like (x)  = 3 spaces.
-      ! Worst case error is like (xx) = 4 spaces.
-      ! Allowing for worst case mean 1 extra space.
-      width = 1
-
-      ! Now padding end when there is a large error
-      ! i.e. when dp<max_dp
-      width = width + max_dp - dp
-      
-      ! If de takes two space remove 1 spaces
-      le = len_trim(de.to_str)
-      if (le==2) width = width - 1
+      ! Get closing brace pos
+      cb = dp + le + 2
 
    end
-
-!   error_dp_de_align_np(max_dp) result (width) 
-!   ! Given number "self" which is an error, and given a desired
-!   ! *output* of *at most* "max_dp" decimal places THEN return the
-!   ! number of extra space above 4 so that an imprecise number such as
-!   ! 1.027(19) is to have the decimal place *aligned*.
-!      self :: IN
-!      max_dp :: INT, IN
-!      width :: INT
-!
-!      dp,de,le :: INT
-!
-!      error :: REAL
-!
-!      error = self
-!
-!      ! This code as in get_error_dp_de
-!      if (error==ZERO) then
-!
-!         dp = max_dp
-!         de = 0
-!
-!      else
-!
-!         dp = min(abs(floor(log10(error))),max_dp) + 1
-!         de = nint(error*10**dp)
-!         if (20<=de AND de<=100) then
-!            dp = dp - 1
-!         end
-!
-!      end
-!
-!      ! Normally have error like (x)  = 3 spaces.
-!      ! Worst case error is like (xx) = 4 spaces.
-!      ! Allowing for worst case mean 1 extra space.
-!      width = 1
-!
-!      ! Now padding end when there is a large error
-!      ! i.e. when dp<max_dp
-!      width = width + max_dp - dp
-!      
-!      ! If de takes two space remove 1 spaces
-!      le = len_trim(de.to_str)
-!      if (le==2) width = width - 1
-!
-!      write(99,*) '=ERR==='
-!      write(99,*) 'error =',self
-!      write(99,*) 'width =',width
-!      write(99,*) 'max_dp=',max_dp
-!      write(99,*) 'dp    =',dp
-!      write(99,*) 'de    =',de
-!      write(99,*) 'le    =',le
-!      write(99,*) 'p     =',p
-!      write(99,*) 'string=',string
-!
-!   end
 
 !  =================
 !  String conversion
@@ -477,52 +281,76 @@ contains
    ! field of "width" characters and "precision" decimal points.
    end
 
-   to_str(error,width,max_dp) result (string) ::: PURE
-   ! Change "self" to a string of "width+3" with style "f" and no. of
-   ! decimal places derived from "error", but no more than "max_dp"
-   ! decimal places. The decimal places actually used is returned in
-   ! "pr" (if present). Used for output like 
-   !    1.027(5)   which gives dp=3 and de=5
-   !    1.0270(19) which gives dp=4 and de=19
-   ! (provided max_dp>=4). The "len=width+err_dp_de_align(...)" is for
-   ! the error part of the string to make sure the decimal place is
-   ! aligned in columns.
+
+   to_str(error,width,max_dp,max_cb) result (string) ::: PURE
+   ! Change "self" to a "string" with style "f" and no. of decimal
+   ! places derived from "error", but no more than "max_dp" decimal
+   ! places. Used for output like:
+   !    1.027(5)   ... which gives dp=3 and de=5
+   !    1.0270(19) ... which gives dp=4 and de=19
+   ! (provided "max_dp">=4). The errors are padded so that for a given
+   ! constant fixed "width" all the decimal points are aligned.
       self :: IN
       error :: REAL, IN
       width :: INT, IN
       max_dp :: INT, IN
-      string :: STR(len=(width+4+error_dp_de_align(error,max_dp))) ! note
+      max_cb :: INT, optional, IN
+      string :: STR(len=width) ! note
 
-      dp,de,le,p :: INT
+      sl,dp,de,le,cb,pad :: INT
 
       ! Get the decimal place "dp" and the error digit "de"
-      error.get_error_dp_de(dp,de,max_dp)
+      .get_str_length_align(error,sl,dp,de,le,cb,max_dp)
+
+       ! write(99,*) '========='
+       ! write(99,*) 'self    =',self
+       ! write(99,*) 'error   =',error
+       ! write(99,*) 'sl      =',sl
+       ! write(99,*) 'dp      =',dp
+       ! write(99,*) 'de      =',de
+       ! write(99,*) 'le      =',le
+       ! write(99,*) 'cb      =',cb 
+       ! write(99,*) 'width   =',width 
+       ! write(99,*) 'max_dp  =',max_dp
 
       ! Convert "self" with the right size
       string = .to_str("f",width,precision=dp)
 
-      le = len_trim(de.to_str)
-
       ! Append error digits (and spaces, see comments above)
       string = trim(string) // "(" // trim(de.to_str) // ")"
 
-      ! Add padding
-      p = error_dp_de_align(error,max_dp)
-    ! write(99,*) '======='
-    ! write(99,*) 'self  =',self
-    ! write(99,*) 'error =',error
-    ! write(99,*) 'width =',width
-    ! write(99,*) 'max_dp=',max_dp
-    ! write(99,*) 'dp    =',dp
-    ! write(99,*) 'de    =',de
-    ! write(99,*) 'le    =',le
-    ! write(99,*) 'p     =',p
-    ! write(99,*) 'string=',string
-      if (p>0) then
-      string = trim(string) // repeat(" ",p)
+      ! Adjust to end
+      string = adjustr(string)
+
+      ! Add padding, shift left
+      if (present(max_cb)) then
+      pad = max_cb - cb
+      if (pad>0) then
+      string = trim(string(pad+1:)) // repeat(" ",pad)
+      end
       end
 
    end
+
+   get_str(string,error,width,max_dp,max_cb) ::: PURE
+   ! Change "self" to a "string" with style "f" and no. of decimal
+   ! places derived from "error", but no more than "max_dp" decimal
+   ! places. Used for output like:
+   !    1.027(5)   ... which gives dp=3 and de=5
+   !    1.0270(19) ... which gives dp=4 and de=19
+   ! (provided "max_dp">=4). The errors are padded so that for a given
+   ! constant fixed "width" all the decimal points are aligned.
+      self :: IN
+      error :: REAL, IN
+      width  :: INT, IN
+      max_dp :: INT, IN
+      max_cb :: INT, optional, IN
+      string :: STR(len=width), OUT
+
+      string = .to_str(error,width,max_dp,max_cb)
+
+   end
+
 
    to_str_no_zeros result (string) ::: pure
    ! Change self to a "string" but remove trailing zeros
@@ -547,25 +375,6 @@ contains
 
    end
 
-   fortran_format(nval,style,width,precision) result (string) ::: selfless, public, pure
-   ! Change self to a string with specified "style", "width" and
-   ! "precision" as defined in the fortran standard
-      style :: STR, IN
-      nval,width,precision :: INT, IN
-      string :: STR
-
-      num,wid,pre :: STR
-
-      ! Write width/style/precision as a strings
-      write(num,fmt=*) nval;      num = adjustl(num)
-      write(wid,fmt=*) width;     wid = adjustl(wid)
-      write(pre,fmt=*) precision; pre = adjustl(pre)
-
-      ! Write the format "fmt"
-      write(string,fmt="(a)") "("//trim(num)//trim(style)//trim(wid)//"."//trim(pre)//")"
-
-   end
-
 !  ================
 !  Equality testing
 !  ================
@@ -575,7 +384,7 @@ contains
    ! defines how close before the number is considered the same.
       self :: IN
       x :: REAL, IN
-      eps :: REAL, IN, optional
+      eps :: REAL, optional, IN
       res :: BIN
 
       tol :: REAL
@@ -592,7 +401,7 @@ contains
    ! defines how close before the number is considered the same.
       self :: IN
       x :: REAL, IN
-      eps :: REAL, IN, optional
+      eps :: REAL, optional, IN
       res :: BIN
 
       res = .equals(x,eps)
@@ -603,7 +412,7 @@ contains
    ! Return TRUE if self is near enough zero. If present, "eps" defines how
    ! close to zero before the number is considered zero.
       self :: IN
-      eps :: REAL, IN, optional
+      eps :: REAL, optional, IN
       res :: BIN
 
       tol :: REAL
@@ -619,7 +428,7 @@ contains
    ! Return TRUE if self is near enough one. If present, "eps" defines how
    ! close to one before the number is considered zero.
       self :: IN
-      eps :: REAL, IN, optional
+      eps :: REAL, optional, IN
       res :: BIN
 
       tol :: REAL
@@ -635,7 +444,7 @@ contains
    ! Return TRUE if self is near enough minus one. If present, "eps" defines how
    ! close to minus one before the number is considered zero.
       self :: IN
-      eps :: REAL, IN, optional
+      eps :: REAL, optional, IN
       res :: BIN
 
       tol :: REAL
@@ -652,7 +461,7 @@ contains
    ! how close to zero the non-integer part is before the number is considered
    ! an integer.
       self :: IN
-      eps :: REAL, IN, optional
+      eps :: REAL, optional, IN
       res :: BIN
 
       val :: REAL
@@ -690,7 +499,7 @@ contains
          end
       end
       a,b :: REAL, IN
-      accuracy :: REAL, IN, optional
+      accuracy :: REAL, optional, IN
       res :: REAL
 
       res = .integrate_adaptive_trapezoid(a,b,accuracy)
@@ -708,7 +517,7 @@ contains
          end
       end
       a,b :: REAL, IN
-      accuracy :: REAL, IN, optional
+      accuracy :: REAL, optional, IN
 
       res :: REAL
       tol,h,m,fa,fb,fm,one_trap,two_trap,left,right :: REAL
@@ -747,7 +556,7 @@ contains
          end
       end
       a,b :: REAL, IN
-      accuracy :: REAL, IN, optional
+      accuracy :: REAL, optional, IN
 
       res :: REAL
       tol,h,m1,m2,m3,fa,fb,f1,f2,f3,s1,s2,left,right :: REAL
@@ -1273,7 +1082,7 @@ contains
    ! in generating harmonic vibrational wavefunctions. See below.
       self :: IN
       n :: INT, IN
-      normalise :: BIN, IN, optional
+      normalise :: BIN, optional, IN
       res :: REAL
 
       coeff :: VEC{REAL}*
@@ -1575,20 +1384,28 @@ contains
             res :: REAL
          end
       end
-      x1,x2  :: REAL
-      factor :: REAL, optional
-      max_it :: INT, optional
+      x1,x2  :: REAL, INOUT
+      factor :: REAL, optional, IN
+      max_it :: INT, optional, IN
+
    ENSURE(x1/=x2,"non-zero range (x1,x2) required")
+
       j,maxit :: INT
       f1,f2,fac :: REAL
+
       fac = 1.6d0
       if (present(factor)) fac = factor
+
       maxit = 50
       if (present(max_it)) maxit = max_it
+
       f1 = self(x1)
       f2 = self(x2)
+
       do j = 1,maxit
+
          if (f1*f2<ZERO) return
+
          if (abs(f1)<abs(f2)) then
             x1 = x1 + fac*(x1-x2)
             f1 = self(x1)
@@ -1596,8 +1413,11 @@ contains
             x2 = x2 + fac*(x2-x1)
             f2 = self(x2)
          end
+
       end
+
       DIE("Exceeded maximum number of iterations")
+
    end
 
    find_root_brent(x1,x2,root,tol,val,max_it) ::: routinal
