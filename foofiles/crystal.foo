@@ -8546,6 +8546,22 @@ contains
 
    end
 
+   make_residual_density_cell(map,nx,ny,nz)
+   ! Make the crystal residual error "map" in the unit cell with
+   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
+   ! The "map" array increments first on the x axis, then y, then z
+   ! i.e. it must be compatible with PLOT_GRID:make_points.
+   ! This routine takes advantage of the grid structure for speed.
+   ! This version need to gather the 1D phases over miller indices.
+      self :: IN
+      map :: VEC{REAL}, OUT
+      nx,ny,nz :: INT, IN
+
+      ! This version seems fastest
+      .make_residual_density_cell_n(map,nx,ny,nz)
+
+   end
+
    make_residual_density_cell_g(map,nx,ny,nz)
    ! Make the crystal residual error "map" in the unit cell with
    ! "nx", "ny" and "nz" points per cell axis. These must be odd.
@@ -8652,7 +8668,7 @@ contains
 
    end
 
-   make_residual_density_cell(map,nx,ny,nz)
+   make_residual_density_cell_n(map,nx,ny,nz)
    ! Make the crystal residual error "map" in the unit cell with
    ! "nx", "ny" and "nz" points per cell axis. These must be odd.
    ! The "map" array increments first on the x axis, then y, then z
@@ -8674,9 +8690,9 @@ contains
       ix,iy,iz :: INT
       xi,yi,zi :: REAL
       fac,del,res :: REAL
+      dF :: VEC{CPX}*
       phx,phy,phz :: MAT{CPX}*
       h_max :: VEC{INT}(3)
-      dF :: VEC{CPX}*
       ci :: CPX
 
       ! Constants
@@ -8694,6 +8710,7 @@ contains
       ! Prefactor
       ! NOTE: Factor 2 assumes Friedel pairs merged and removed
       fac = TWO/.unit_cell.volume
+      dF  = fac * dF
 
       ! Get h's
       hx.create(n_refl)
@@ -8730,7 +8747,7 @@ contains
       do iz = 1,nz
          zi = (iz-1) * del
          do r = 1,n_refl
-            phz(r,iz) = exp(ci*hz(r)*zi)
+            phz(r,iz) = exp(ci*hz(r)*zi) * dF(r) ! <--
          end
       end
 
@@ -8742,21 +8759,267 @@ contains
       do iz = 1,nz
       do iy = 1,ny
       do ix = 1,nx
-
+      
          p = p + 1
-         map(p) = fac* sum( REALIFY(dF*phx(:,ix)*phy(:,iy)*phz(:,iz)) )
-
+         map(p) = sum( REALIFY(phx(:,ix)*phy(:,iy)*phz(:,iz)) )
+      
       end
       end
       end
 
       ! Clean
-      hz.destroy
-      hy.destroy
-      hx.destroy
       phz.destroy
       phy.destroy
       phx.destroy
+      hz.destroy
+      hy.destroy
+      hx.destroy
+      dF.destroy
+
+   end
+
+   make_residual_density_cell_m(map,nx,ny,nz)
+   ! Make the crystal residual error "map" in the unit cell with
+   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
+   ! The "map" array increments first on the x axis, then y, then z
+   ! i.e. it must be compatible with PLOT_GRID:make_points.
+   ! This routine takes advantage of the grid structure for speed.
+   ! This version uses more memory for the 1D phase arrays.
+      self :: IN
+      map :: VEC{REAL}, OUT
+      nx,ny,nz :: INT, IN
+
+   ENSURE(.data.created, "no diffraction data")
+   ENSURE(.data.reflections.created, "no structure factors")
+   ENSURE(.data.have_F_calc, "no calculated structure factors")
+   ENSURE(.data.have_F_pred, "no predicted structure factors")
+   ENSURE(.data.have_F_exp, "no experimental structure factors")
+
+      n_refl,r,p :: INT
+      hx,hy,hz :: VEC{INT}*
+      ix,iy,iz :: INT
+      xi,yi,zi :: REAL
+      fac,del,res :: REAL
+      dF, phyz :: VEC{CPX}*
+      phx,phy,phz :: MAT{CPX}*
+      h_max :: VEC{INT}(3)
+      ci :: CPX
+
+      ! Constants
+      n_refl = .data.reflections.dim
+      ci     = -2*PI * IMAGIFY(ONE)
+
+      ! Maximum Miller indices
+      h_max = .data.reflections.h_max
+
+      ! Get phased structure factor differences
+      ! (without extinction, but with scale correction)
+      dF.create(n_refl)
+      .data.make_phased_dF(dF)
+
+      ! Prefactor
+      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
+      fac = TWO/.unit_cell.volume
+      dF  = fac * dF
+
+      ! Get h's
+      hx.create(n_refl)
+      hy.create(n_refl)
+      hz.create(n_refl)
+
+      hx = .data.reflections(:).h
+      hy = .data.reflections(:).k
+      hz = .data.reflections(:).l
+
+      ! Make the 1D x phases
+      phx.create(n_refl,nx)
+      del = ONE/(nx-1)
+      do ix = 1,nx
+         xi = (ix-1) * del
+         do r = 1,n_refl
+            phx(r,ix) = exp(ci*hx(r)*xi)
+         end
+      end
+
+      ! Make the 1D y phases
+      phy.create(n_refl,ny)
+      del = ONE/(ny-1)
+      do iy = 1,ny
+         yi = (iy-1) * del
+         do r = 1,n_refl
+            phy(r,iy) = exp(ci*hy(r)*yi)
+         end
+      end
+
+      ! Make the 1D z phases
+      phz.create(n_refl,nz)
+      del = ONE/(nz-1)
+      do iz = 1,nz
+         zi = (iz-1) * del
+         do r = 1,n_refl
+            phz(r,iz) = exp(ci*hz(r)*zi) * dF(r) ! <--
+         end
+      end
+
+
+      ! Grid point
+      p = 0
+
+      ! Make the residual map
+      phyz.create(n_refl)
+
+      do iz = 1,nz
+      do iy = 1,ny
+
+         phyz = phy(:,iy)*phz(:,iz)
+
+         do ix = 1,nx
+        
+            p = p + 1
+            map(p) = sum( REALIFY(phx(:,ix)*phyz(:)) )
+        
+         end
+
+      end
+      end
+
+      ! Clean
+      phyz.destroy
+      phz.destroy
+      phy.destroy
+      phx.destroy
+      hz.destroy
+      hy.destroy
+      hx.destroy
+      dF.destroy
+
+   end
+
+   make_residual_density_cell_p(map,nx,ny,nz)
+   ! Make the crystal residual error "map" in the unit cell with
+   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
+   ! The "map" array increments first on the x axis, then y, then z
+   ! i.e. it must be compatible with PLOT_GRID:make_points.
+   ! This routine takes advantage of the grid structure for speed.
+   ! This version uses a 2D phase array and reduced multiplication.
+      self :: IN
+      map :: VEC{REAL}, OUT
+      nx,ny,nz :: INT, IN
+
+   ENSURE(.data.created, "no diffraction data")
+   ENSURE(.data.reflections.created, "no structure factors")
+   ENSURE(.data.have_F_calc, "no calculated structure factors")
+   ENSURE(.data.have_F_pred, "no predicted structure factors")
+   ENSURE(.data.have_F_exp, "no experimental structure factors")
+
+      n_refl,r,p :: INT
+      hx,hy,hz :: VEC{INT}*
+      ix,iy,iz :: INT
+      xi,yi,zi :: REAL
+      fac,del,res :: REAL
+      dF, phyz :: VEC{CPX}*
+      phx,phy,phz :: MAT{CPX}*
+      ph2 :: MAT3{CPX}*
+      h_max :: VEC{INT}(3)
+      ci :: CPX
+
+      ! Constants
+      n_refl = .data.reflections.dim
+      ci     = -2*PI * IMAGIFY(ONE)
+
+      ! Maximum Miller indices
+      h_max = .data.reflections.h_max
+
+      ! Get phased structure factor differences
+      ! (without extinction, but with scale correction)
+      dF.create(n_refl)
+      .data.make_phased_dF(dF)
+
+      ! Prefactor
+      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
+      fac = TWO/.unit_cell.volume
+
+      ! Get h's
+      hx.create(n_refl)
+      hy.create(n_refl)
+      hz.create(n_refl)
+
+      hx = .data.reflections(:).h
+      hy = .data.reflections(:).k
+      hz = .data.reflections(:).l
+
+      ! Allocate the 2D phase array
+      ph2.create(n_refl,ny,nz)
+
+      ! Make the 1D z phases
+      phz.create(n_refl,nz)
+      del = ONE/(nz-1)
+      do iz = 1,nz
+         zi = (iz-1) * del
+         do r = 1,n_refl
+            phz(r,iz) = exp(ci*hz(r)*zi)
+         end
+      end
+
+      ! Make the 1D y phases
+      phy.create(n_refl,ny)
+      del = ONE/(ny-1)
+      do iy = 1,ny
+         yi = (iy-1) * del
+         do r = 1,n_refl
+            phy(r,iy) = exp(ci*hy(r)*yi)
+         end
+      end
+
+      ! Make the 2D array
+      do iz = 1,nz
+      do iy = 1,ny
+         do r = 1,n_refl
+            ph2(r,iy,iz) = phy(r,iy)*phz(r,iz)
+         end
+      end
+      end
+
+      ! Clean
+      phy.destroy
+      phz.destroy
+
+      ! Make the 1D x phases
+      phx.create(n_refl,nx)
+      del = ONE/(nx-1)
+      do ix = 1,nx
+         xi = (ix-1) * del
+         do r = 1,n_refl
+            phx(r,ix) = exp(ci*hx(r)*xi) * dF(r) * fac
+         end
+      end
+
+
+      ! Grid point
+      p = 0
+
+      ! Make the residual map
+      do iz = 1,nz
+      do iy = 1,ny
+
+         phyz => ph2(:,iy,iz)
+
+         do ix = 1,nx
+        
+            p = p + 1
+            map(p) = fac* sum( REALIFY(phx(:,ix)*phyz) )
+        
+         end
+
+      end
+      end
+
+      ! Clean
+      phx.destroy
+      ph2.destroy
+      hz.destroy
+      hy.destroy
+      hx.destroy
       dF.destroy
 
    end
