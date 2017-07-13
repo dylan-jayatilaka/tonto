@@ -3388,10 +3388,14 @@ contains
 !  Structure refinement methods
 !  ============================
 
-   fit_rigid_atoms(sf_n) ::: leaky
-   ! Fit the Hirshfeld atoms to the calculated structure factors.
-   ! "sf_n" are the static (no-thermal motion) *aspherical* *atomic*
-   ! structure factors for the *unique* fragment atoms.
+   LS_structure_fit(sf_n,output,results) ::: leaky
+   ! Least-squares fit the the positions and ADPs of the unique
+   ! fragment atoms so that the structure factors obtained from the
+   ! static *aspherical* *atomic* form factor, in "sf_n", match the
+   ! experimental structure factors. The structure factors are for all
+   ! symmetry genetrated structure factors, and only for the *unique*
+   ! .fragment atom's which correspond to but are not necessarily the
+   ! same as the .asymmetric_unit_atom's.
    !
    ! NOTE: this routine does only one cycle of fitting with the
    !       current density matrix i.e. this is a "rigid atom fit".
@@ -3410,14 +3414,13 @@ contains
    !   shifts are later transformed back into asymmetric unit.
       self :: INOUT
       sf_n :: MAT{CPX}, INOUT
+      output,results :: BIN, IN
 
    ENSURE(sf_n.dim1==.n_unique_SF_k_pts,       "sf_n: wrong dim1")
    ENSURE(sf_n.dim2==.n_asymmetric_unit_atoms, "sf_n: wrong dim2")
    ENSURE(.data_exists,                        "no data")
    ENSURE(.fragment_info_made,                 "no fragment info")
 
-      fac :: REAL
-      v :: VEC{REAL}*
       dF :: MAT{REAL}*
 
       ! Create refinement arrays & initialize (leaky)
@@ -3432,18 +3435,11 @@ contains
       ! If refining, store a copy of the pADPs in .data.X_ref
       if (.data.refine_structure) .data.X_ref = .data.X_fit
 
-      if (.debugging("fit_rigid_atoms")) then
-         stdout.text("X_fit:")
-         fac = STR:conversion_factor("angstrom")
-         v.create(.data.X_fit.dim)
-         .asymmetric_unit_atom.put_pADP_vector_to(v,fac)
-         stdout.put(v,by_column=TRUE)
-         v.destroy
-      end
-
       ! Banner, options/switches, initial parameters,
       ! start banner, and iteration table header.
-      .put_fit_header_info
+      if (output) then
+         .put_fit_header_info
+      end
 
       ! Begin rigid-atom fit loop
       do
@@ -3485,34 +3481,40 @@ contains
          dF.destroy
 
          ! Put the iteration results
-         .put_fit_iteration_results
+         if (output) then
+            .data.put_fit_table_body
+         end
 
          ! Finished?
          if (.fit_finished) exit
 
       end
 
-      ! Table footer and final results
-      .put_fit_iteration_results
-      .put_fit_footer_info
+      ! Table footer
+      if (output) then
+         .data.fit_table.put_footer
+      end
+
+      ! Final results
+      if (results) then
+         .put_fit_results
+      end
 
       ! Set the fragment covariances from cov matrix
       .set_fragment_esds
 
       ! Print out bond length, angle, torsion tables with errors
-      if (.data.show_fit_output) &
+      if (output) then
          .put_bond_info_with_errors
+      end
 
       ! Finally: remake .asymmetric_unit_atom/unit_cell geometry from
       ! .fragment_atom, which *must* be assigned since it must point
       ! to molecule.atom
       .asymmetric_unit_atom.destroy
       .asymmetric_unit_geometry.destroy
-      .asymmetric_unit_source = "tonto-rigid-atom-fit"
+      .asymmetric_unit_source = "tonto-ls-structure-fit"
       .make_fragment_data(.fragment_atom,assign_atom=TRUE,warnings=FALSE)
-
-      ! Debug
-      if (.debugging("fit_rigid_atoms")) .put_unit_cell_geometry
 
    end
 
@@ -6638,20 +6640,16 @@ contains
    ENSURE(.data_exists,"no diffraction data")
 
       ! Print header
-      .data.put_fit_header
+      DIFFRACTION_DATA:put_fit_header
 
       ! Put the fit control switches
-      if (.data.show_fit_output) then
       .data.put_refinement_switches
-      end
 
       ! Put the initial parameters
-      if (.data.show_fit_output) then
       stdout.flush(2)
       stdout.text("Initial parameter values:")
       stdout.flush
       .put_parameters(correlation_matrix=FALSE)
-      end
 
       ! Put the fit table header
       .data.put_fit_table_headings
@@ -6665,21 +6663,17 @@ contains
    ENSURE(.data_exists,"no diffraction data")
 
       ! Print header
-      .data.put_refinement_header
+      DIFFRACTION_DATA:put_refinement_header
 
       ! Put the refinement control switches
-      if (.data.show_refinement_output) then
       .data.put_refinement_switches
-      end
-
+      
       ! Put the initial parameters
-      if (.data.show_refinement_output) then
       stdout.flush
       stdout.text("Initial asymmetric unit parameter values:")
       stdout.flush
       .put_parameters(correlation_matrix=FALSE)
-      end
-
+      
       ! Put the refinement header info
       .data.put_refinement_table_headings
 
@@ -6796,29 +6790,29 @@ contains
 
    end
 
-   put_fit_iteration_results ::: private
-   ! Print out the current fit iterations results
-      self :: IN
+!   put_fit_iteration_results ::: private
+!   ! Print out the current fit iterations results
+!      self :: IN
+!
+!   ENSURE(.data_exists,"no diffraction data")
+!
+!      ! Put the table body
+!      .data.put_fit_table_body
+!
+!   end
 
-   ENSURE(.data_exists,"no diffraction data")
+!   put_refinement_iteration_results
+!   ! Print out the current refinement iterations results
+!      self :: IN
+!
+!   ENSURE(.data_exists,"no diffraction data")
+!
+!      ! Put the table body
+!      .data.put_refinement_table_body
+!
+!   end
 
-      ! Put the table body
-      .data.put_fit_table_body
-
-   end
-
-   put_refinement_iteration_results
-   ! Print out the current refinement iterations results
-      self :: IN
-
-   ENSURE(.data_exists,"no diffraction data")
-
-      ! Put the table body
-      .data.put_refinement_table_body
-
-   end
-
-   put_fit_footer_info ::: private
+   put_fit_results ::: private
    ! Finalise fit, write results
       self :: IN
 
@@ -6828,16 +6822,14 @@ contains
       .data.put_fit_results
 
       ! Put the parameters
-      if (.data.show_fit_output) then
       stdout.flush(2)
       stdout.text("Final asymmetric unit parameter values:")
       stdout.flush
       .put_parameters
-      end
 
    end
 
-   put_refinement_footer_info
+   put_refinement_results
    ! Finalise refinement, write results
       self :: IN
 
@@ -6847,12 +6839,10 @@ contains
       .data.put_refinement_results
 
       ! Put the final parameters
-      if (.data.show_refinement_output) then
       stdout.flush(2)
       stdout.text("Final asymmetric unit parameter values:")
       stdout.flush
       .put_parameters
-      end
 
    end
 
@@ -8092,23 +8082,24 @@ contains
 !  Put reflection related information
 !  ==================================
 
-   put_data_analysis
+   put_data_analysis(output)
    ! Put out analysis data for the reflections after a fit/refinement
       self :: IN
+      output :: BIN, optional, IN
 
    ENSURE(.data.created,"no diffraction data")
 
       show :: BIN
 
-      show = (.data.refine_structure AND .data.show_refinement_output) &
-          OR (.data.fit_structure    AND .data.show_fit_output) 
+      show = TRUE
+      if (present(output)) show = output
 
       if (NOT show) return
 
       .data.put_GOF_vs_STL_table
       .data.put_GOF_vs_F_exp_table
 
-      .put_reflection_data
+      .data.put_N_worst_reflections
 
       .put_fitting_plots
 
@@ -8131,13 +8122,13 @@ contains
 
       if (.xray_data.created) then
       if (.xray_data.reflections.created) then
-         .xray_data.put_reflection_data
+         .xray_data.put_reflections
       end
       end
 
       if (.xray_r_free_data.created) then
       if (.xray_r_free_data.reflections.created) then
-         .xray_r_free_data.put_reflection_data
+         .xray_r_free_data.put_reflections
       end
       end
 
@@ -8149,7 +8140,7 @@ contains
 
       if (.pnd_data.created) then
       if (.pnd_data.reflections.created) then
-         .pnd_data.put_reflection_data
+         .pnd_data.put_reflections
       end
       end
 
@@ -8339,9 +8330,6 @@ contains
       stdout.flush
       lambda = .data.wavelength.to_units("angstrom")
       stdout.show("X-ray wavelength (Angstrom) = ",lambda)
-    ! lambda = REFLECTION:wavelength()
-    ! lambda = lambda.to_units("angstrom")
-    ! stdout.show("X-ray wavelength (Angstrom) = ",lambda)
       stdout.flush
 
       ! Data analysis
@@ -8583,7 +8571,7 @@ contains
       hx,hy,hz :: INT
       ix,iy,iz :: INT
       xi,yi,zi :: REAL
-      fac,del,res :: REAL
+      fac,del  :: REAL
       phx,phy,phz :: MAT{CPX}*
       h_min,h_max :: VEC{INT}(3)
       dF :: MAT3{CPX}*
@@ -8777,7 +8765,7 @@ contains
       hx,hy,hz :: VEC{INT}*
       ix,iy,iz :: INT
       xi,yi,zi :: REAL
-      fac,del,res :: REAL
+      fac,del  :: REAL
       dF :: VEC{CPX}*
       phx,phy,phz :: MAT{CPX}*
       h_max :: VEC{INT}(3)
@@ -8887,7 +8875,7 @@ contains
       hx,hy,hz :: VEC{INT}*
       ix,iy,iz :: INT
       xi,yi,zi :: REAL
-      fac,del,res :: REAL
+      fac,del  :: REAL
       dF, phyz :: VEC{CPX}*
       phx,phy,phz :: MAT{CPX}*
       h_max :: VEC{INT}(3)
@@ -9004,7 +8992,7 @@ contains
       hx,hy,hz :: VEC{INT}*
       ix,iy,iz :: INT
       xi,yi,zi :: REAL
-      fac,del,res :: REAL
+      fac,del  :: REAL
       dF, phyz :: VEC{CPX}*
       phx,phy,phz :: MAT{CPX}*
       ph2 :: MAT3{CPX}*
