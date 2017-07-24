@@ -217,7 +217,6 @@ contains
          case("dft_energy                      "); .isosurface.plot_function(::dft_energy_grid)
          case("dft_xc_potential                "); .isosurface.plot_function(::dft_xc_pot_grid)
          case("electric_potential              "); .isosurface.plot_function(::electric_potential_grid)
-         case("multipole_electric_potential    "); .isosurface.plot_function(::multipole_electric_potential_grid)
          case("electron_density                "); .isosurface.plot_function(::electron_density_grid)
          case("elf                             "); .isosurface.plot_function(::ELF_grid)
          case("eli_d                           "); .isosurface.plot_function(::ELI_D_grid)
@@ -10577,13 +10576,21 @@ contains
    ENSURE(.density_matrix.created, "no density matrix")
    ENSURE(.density_matrix.any_created, "no density matrix")
 
-      .BASE:make_ao_density_matrix
 
-      if (trim(.density_matrix.number_kind)=="real") then
-         .:make_electric_potential_grid_r(pot_grid,pt,.density_matrix.restricted)
-      else
-         .:make_electric_potential_grid_c(pot_grid,pt,.density_matrix.restricted_complex)
-      end
+   select case(.isosurface.electric_potential_method)
+      case("exact");
+         .BASE:make_ao_density_matrix
+         if (trim(.density_matrix.number_kind)=="real") then
+            .:make_electric_potential_grid_r(pot_grid,pt,.density_matrix.restricted)
+         else
+            .:make_electric_potential_grid_c(pot_grid,pt,.density_matrix.restricted_complex)
+         end
+      case("multipole")
+         .:make_multipole_electric_potential_grid(pot_grid,pt)
+      case("mixed")
+         .:make_mixed_electric_potential_grid(pot_grid,pt)
+      case default;  UNKNOWN(.isosurface.electric_potential_method)
+   end
 
    end
 
@@ -10606,6 +10613,27 @@ contains
       ESP_grid.destroy
 
    end
+
+   make_mixed_electric_potential_grid(pot_grid,pt)
+   ! Make the electric potential "pot_grid" on a series of points "pt"
+      pot_grid :: VEC{REAL}
+      pt :: MAT{REAL}
+      ESP_grid :: VEC{REAL}*
+      ESP_grid.create(pot_grid.dim)
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.density_matrix.created, "no density matrix")
+   ENSURE(.density_matrix.any_created, "no density matrix")
+   ENSURE(trim(.density_matrix.number_kind)=="real", "must be a real density matrix")
+
+      .BASE:make_ao_density_matrix
+
+      .:nuclear_potential(pot_grid,pt)
+      .:make_mixed_ESP_grid_r(ESP_grid,pt,.density_matrix.restricted)
+      pot_grid = pot_grid + ESP_grid
+      ESP_grid.destroy
+
+   end
+
 
 
 
@@ -10654,19 +10682,15 @@ contains
    ! Make the electric potential grid "g" on a series of points "pt"
       g  :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
-
       self :: MOLECULE*
-
       .BASE:set_from_saved_self
       .:make_electric_potential_grid(g,pt)
-
    end
 
    multipole_electric_potential_grid(g,pt) ::: selfless
    ! Make the electric potential grid "g" on a series of points "pt"
       g  :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
-
       self :: MOLECULE*
 
       .BASE:set_from_saved_self
@@ -10792,7 +10816,43 @@ contains
    end
 
    make_multipole_ESP_grid_r(grid,pt,dens)
-   ! Make the multipole ESP grid
+   ! Make the multipole ESP grid (off diagonal) using the exact
+   ! for the one center terms
+   ! potential "grid" on a series of grid points "pt" using AO density
+   ! matrix "dens"
+      grid :: VEC{REAL}, INOUT
+      pt :: MAT{REAL}, IN
+      dens :: MAT{REAL}, target, IN
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+      n_pt,q,k :: INT
+      T :: T_TENSOR
+      charges :: VEC{REAL}*
+      dipoles, quadrupoles, octupoles :: MAT{REAL}*
+      e_a, e_b :: VEC{REAL}(4)
+
+      n_pt = pt.dim1
+
+      grid = ZERO
+      charges.create(.n_atom)
+      dipoles.create(.n_atom, 3)
+      quadrupoles.create(.n_atom, 6)
+      octupoles.create(.n_atom, 10)
+      .BASE:make_atomic_multipoles(charges,dipoles,quadrupoles,octupoles,od=FALSE)
+
+      parallel do q = 1, .n_atom
+         do k = 1, n_pt
+             T.create_fast(.atom(q).position, pt(k,:))
+             e_a = T.electrostatic_potential(charges(q),dipoles(q,:),quadrupoles(q,:),octupoles(q,:))
+             grid(k) = grid(k) - sum(e_a(1:2))
+         end
+      end
+
+   end
+
+   make_mixed_ESP_grid_r(grid,pt,dens)
+   ! Make the multipole ESP grid (off diagonal) using the exact
+   ! for the one center terms
    ! potential "grid" on a series of grid points "pt" using AO density
    ! matrix "dens"
       grid :: VEC{REAL}, INOUT
@@ -10818,7 +10878,7 @@ contains
       dipoles.create(.n_atom, 3)
       quadrupoles.create(.n_atom, 6)
       octupoles.create(.n_atom, 10)
-      .PROP:make_atomic_multipoles(charges,dipoles,quadrupoles,octupoles,od=TRUE)
+      .BASE:make_atomic_multipoles(charges,dipoles,quadrupoles,octupoles,od=TRUE)
 
       do q = 1, .n_atom
          do k = 1, n_pt
@@ -10827,7 +10887,6 @@ contains
              grid(k) = grid(k) - sum(e_a)
          end do
       end do
-
 
      parallel do q = 1,.n_shell_pairs
 
