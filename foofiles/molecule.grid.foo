@@ -10589,6 +10589,8 @@ contains
          .:make_multipole_electric_potential_grid(pot_grid,pt)
       case("mixed")
          .:make_mixed_electric_potential_grid(pot_grid,pt)
+      case("scm")
+         .:make_scm_electric_potential_grid(pot_grid,pt)
       case default;  UNKNOWN(.isosurface.electric_potential_method)
    end
 
@@ -10598,8 +10600,6 @@ contains
    ! Make the electric potential "pot_grid" on a series of points "pt"
       pot_grid :: VEC{REAL}
       pt :: MAT{REAL}
-      ESP_grid :: VEC{REAL}*
-      ESP_grid.create(pot_grid.dim)
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.created, "no density matrix")
    ENSURE(.density_matrix.any_created, "no density matrix")
@@ -10607,34 +10607,48 @@ contains
 
       .BASE:make_ao_density_matrix
 
-      .:nuclear_potential(pot_grid,pt)
-      .:make_multipole_ESP_grid_r(ESP_grid,pt,.density_matrix.restricted)
-      pot_grid = pot_grid + ESP_grid
-      ESP_grid.destroy
+      .:make_multipole_ESP_grid_r(pot_grid,pt,.density_matrix.restricted)
 
    end
 
-   make_mixed_electric_potential_grid(pot_grid,pt)
+   make_mixed_electric_potential_grid(grid,pt)
    ! Make the electric potential "pot_grid" on a series of points "pt"
-      pot_grid :: VEC{REAL}
+      grid :: VEC{REAL}
       pt :: MAT{REAL}
-      ESP_grid :: VEC{REAL}*
-      ESP_grid.create(pot_grid.dim)
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.created, "no density matrix")
    ENSURE(.density_matrix.any_created, "no density matrix")
    ENSURE(trim(.density_matrix.number_kind)=="real", "must be a real density matrix")
-
+      ESP_grid :: VEC{REAL}*
+      ESP_grid.create(grid.dim)
       .BASE:make_ao_density_matrix
-
-      .:nuclear_potential(pot_grid,pt)
+      .:nuclear_potential(grid,pt)
       .:make_mixed_ESP_grid_r(ESP_grid,pt,.density_matrix.restricted)
-      pot_grid = pot_grid + ESP_grid
+      grid = grid + ESP_grid
       ESP_grid.destroy
 
    end
 
+   make_scm_electric_potential_grid(grid,pt)
+   ! Make the electric potential "pot_grid" on a series of points "pt"
+      grid :: VEC{REAL}
+      pt :: MAT{REAL}
 
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.density_matrix.created, "no density matrix")
+   ENSURE(.density_matrix.any_created, "no density matrix")
+   ENSURE(trim(.density_matrix.number_kind)=="real", "must be a real density matrix")
+      ESP_grid :: VEC{REAL}*
+      ESP_grid.create(grid.dim)
+
+      .BASE:make_ao_density_matrix
+      .:nuclear_potential(grid,pt)
+      .:make_scm_ESP_grid_r(ESP_grid,pt,.density_matrix.restricted)
+      grid = grid + ESP_grid
+
+      ESP_grid.destroy
+
+   end
 
 
    make_electric_potential_grid_r(grid,pt,dens)
@@ -10835,6 +10849,7 @@ contains
       quadrupoles.create(.n_atom, 6)
       octupoles.create(.n_atom, 10)
       .BASE:make_atomic_multipoles(charges,dipoles,quadrupoles,octupoles,od=FALSE)
+      charges(:) = .atom(:).atomic_number - charges(:) ! <<< redefine charge
 
       parallel do q = 1, .n_atom
          T.electrostatic_potential_grid(charges(q),dipoles(q,:),quadrupoles(q,:),octupoles(q,:),&
@@ -10919,6 +10934,80 @@ contains
      end
 
    end
+
+   make_scm_ESP_grid_r(grid,pt,dens)
+   ! Make the multipole ESP grid (off diagonal) using the exact
+   ! for the one center terms
+   ! potential "grid" on a series of grid points "pt" using AO density
+   ! matrix "dens"
+      grid :: VEC{REAL}, INOUT
+      pt :: MAT{REAL}, IN
+      dens :: MAT{REAL}, target, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+
+      Vab,Dba :: MAT{REAL}*
+      n_pt,q,fa,fb,la,lb,na,nb,k :: INT
+      atom_a,atom_b :: INT
+      sh :: SHELL2
+      T :: T_TENSOR
+      charges :: VEC{REAL}*
+      dipoles, quadrupoles, octupoles :: MAT{REAL}*
+      V :: VEC{REAL}(4)
+
+      n_pt = pt.dim1
+
+      grid = ZERO
+      charges.create(.n_atom)
+      dipoles.create(.n_atom, 3)
+      quadrupoles.create(.n_atom, 6)
+      octupoles.create(.n_atom, 10)
+      .atom.make_connection_table
+      .BASE:make_atomic_multipoles(charges,dipoles,quadrupoles,octupoles,no_s=TRUE)
+
+      do q = 1, .n_atom
+         charges(q) = charges(q)
+         do k = 1, n_pt
+             T.create_fast(.atom(q).position, pt(k,:))
+             V = T.electrostatic_potential(charges(q),dipoles(q,:),quadrupoles(q,:),octupoles(q,:))
+             grid(k) = grid(k) - sum(V)
+         end do
+      end do
+
+     parallel do q = 1,.n_shell_pairs
+
+        .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+        if ((sh.a.l == 0) AND (sh.b.l == 0) AND atom_a == atom_b) then
+           Dba => dens(fa:la,fb:lb)
+           Vab.create(na,nb)
+
+           if (fa/=fb) then
+             do k = 1,n_pt
+               sh.get_nuc(Vab,ONE,pt(k,:))
+               grid(k) = grid(k) - sum(Vab*Dba)*TWO
+             end
+           else
+             do k = 1,n_pt
+               sh.get_nuc(Vab,ONE,pt(k,:))
+               grid(k) = grid(k) - sum(Vab*Dba)
+             end
+           end
+
+           Vab.destroy
+
+           if (DO_IN_PARALLEL) then
+              PARALLEL_SUM(grid)
+           end
+
+           sh.destroy_ptr_part
+       end
+
+     end
+
+   end
+
 
 
    make_def_e_pot_grid ::: get_from(prop_grid, GRID=>:make_def_e_pot_grid, LABEL=>"deformation_electric_potential_grid")
