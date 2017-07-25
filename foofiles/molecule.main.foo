@@ -260,6 +260,7 @@ contains
         case ("localize_mos=                 "); .SCF:localize_MOs
         case ("low_verbosity_on              "); .MAIN:set_low_verbosity_on
 
+        case ("make_all_cif_hss              "); .MAIN:make_all_CIF_HSs
         case ("make_ano_data                 "); .SCF:make_ANO_data
         case ("make_ao_density_matrix        "); .BASE:make_ao_density_matrix
         case ("make_ao_sz_density_matrix     "); .BASE:make_ao_sz_density_matrix
@@ -1148,21 +1149,172 @@ contains
 
    end
 
-   batch_hs ::: leaky
+!  ======================
+!  Batch HS & ESP methods
+!  ======================
+
+   make_all_CIF_HSs ::: leaky
+   ! Make all HS for every symmetry-unique molecule in the unit cell
+   ! of a CIF file
       self :: PTR
+
+   ENSURE(.cif.created,"no CIF file")
+
       i :: INT
       formula, name, filename :: STR
-      i = 1
+      CX_file :: TEXTFILE*
+
+
+      ! Defragment any molecules in the CIF
       .cluster.create(.crystal) 
       .cluster.set_generation_method("fragment")
       .cluster.radius = ZERO
       .cluster.defragment = TRUE
       .cluster.make_info
-      if(.cluster.n_molecules == 1) then
+
+      if (.cluster.n_molecules == 1) then
+
+         i = 1
+
+         ! Set up name
          formula = .atom.chemical_formula(FALSE)
          stdout.show("formula ", formula)
          name = trim(.name)//"-"//trim(formula)//"_"//trim(i.to_str)
-      ! Create the wavefunction
+
+         ! Make the HS
+         stdout.show("Creating Hirshfeld surface m =", i)
+         call make_HS(self, res=0.2d0)
+         stdout.text("Hirshfeld surface done.")
+
+         ! Print out cxs file
+         CX_file.create(trim(name)//".cxs")
+         CX_file.open_for("write")
+         .CE:put_CX_data(CX_file,.cif)       
+         CX_file.close
+         CX_file.destroy
+
+         return
+
+      end
+
+      ! Make all HSs for i-th cluster mol
+      do i = 1, .cluster.n_molecules
+         .MAIN:make_HS_for_cluster_mol(i)
+      end
+
+   end
+
+   make_HS_for_cluster_mol(i) ::: private, leaky
+   ! Make the HS for cluster molecule i.
+      self :: PTR
+
+      i :: INT
+      mol :: MOLECULE*
+      res :: REAL
+      formula, name, filename :: STR
+      CX_file :: TEXTFILE*
+
+      res = 0.2
+
+      ! Make the i-th cluster molecule "mol"
+      mol.BASE:create
+      .XTAL:create_cluster_mol(i, mol)
+
+      ! Set molecule name
+      formula = mol.atom.chemical_formula(FALSE)
+      stdout.show("formula ", formula)
+      name = trim(.name)//"-"//trim(formula)//"_"//trim(i.to_str)
+      mol.BASE:set_name(trim(name))
+
+      ! Set basis set
+      mol.basis_name = .basis_name
+      mol.BASE:resolve_basis_info
+
+      ! Make the HS
+      stdout.show("Creating Hirshfeld surface m =", i)
+      call make_HS(mol, res)
+      stdout.text("Hirshfeld surface done.")
+
+      ! Deposit cxs file
+      CX_file.create(trim(name)//".cxs")
+      CX_file.open_for("write")
+      mol.CE:put_CX_data(CX_file,.cif)       
+      CX_file.close
+      CX_file.destroy
+
+   end
+
+   make_HS(m, res) ::: selfless, private, leaky
+   ! Make the HS for molecule "m" with desired resolution "res".
+      m :: MOLECULE*
+      res :: REAL, IN
+
+      ! Create HS cluster for molecule "m"
+      m.cluster.create(m.crystal)
+      m.cluster.set_generation_method("for_hirshfeld_surface")
+      m.cluster.atom_density_cutoff = 1.0e-8
+      m.cluster.defragment = FALSE
+      m.cluster.make_info
+      m.XTAL:create_cluster
+
+      ! Use Slater-type HS
+      m.atom.set_basis_kind("slater")
+
+      ! Set up interpolator type
+      m.interpolator.create
+      m.interpolator.set_interpolation_method("linear")
+      m.interpolator.set_domain_mapping("sqrt")
+      m.interpolator.set_table_eps(1.0d-10)
+      m.interpolator.set_table_spacing(1.0d-1)
+      m.BASE:destroy_interpolators
+
+      ! Set up CX_isosurface
+      m.isosurface.create(m.atom)
+      m.isosurface.property = "stockholder_weight"
+      m.isosurface.triangulation_method = "recursive_marching_cube"
+      m.isosurface.iso_value = 0.5
+      m.isosurface.minimum_scan_division = 1
+      m.isosurface.voxel_proximity_factor = 5
+      m.isosurface.CX_output_distance_properties = TRUE
+      m.isosurface.CX_output_shape_properties = TRUE
+
+      ! Initialize CX_isosurface.plot_grid
+      m.isosurface.plot_grid.use_bcube_with_shape_axes
+      m.isosurface.plot_grid.set_cube_scale_factor(1.0d0)
+
+      ! Desired separation is essentially the resolution of the calculated surface
+      m.isosurface.plot_grid.desired_separation = res
+
+      ! Make HS isosurface
+      m.PLOT:isosurface_plot
+
+   end
+
+! Peter's batch code
+
+   batch_hs ::: leaky
+   ! Make a HS for every symmetry-unique molecule in a CIF file
+      self :: PTR
+
+      i :: INT
+      formula, name, filename :: STR
+
+      i = 1
+
+      ! Defragment any molecules in the CIF
+      .cluster.create(.crystal) 
+      .cluster.set_generation_method("fragment")
+      .cluster.radius = ZERO
+      .cluster.defragment = TRUE
+      .cluster.make_info
+
+      if(.cluster.n_molecules == 1) then
+
+         formula = .atom.chemical_formula(FALSE)
+         stdout.show("formula ", formula)
+         name = trim(.name)//"-"//trim(formula)//"_"//trim(i.to_str)
+
+         ! Create the wavefunction
          .BASE:set_name(trim(name))
          call make_wavefunction(self)
          stdout.text("Wavefunction done.")
@@ -1174,15 +1326,21 @@ contains
          filename = trim(name)//"-hs.sbf"
          .CE:serialize_isosurface_sbf(filename, .cif)
          return
+
       end
 
-      do i= 1, .cluster.n_molecules
+      ! Add the ESP on the HS
+      do i = 1, .cluster.n_molecules
          .MAIN:make_hs_with_esp(i)
       end do
+
    end
 
    make_hs_with_esp(i) ::: private, leaky
+   ! Make the wavefunction, then HS, then the ESP mapped on it
+   ! for the i-th molecule in the cluster.
       self :: PTR
+
       i :: INT
       mol :: MOLECULE*
       res :: REAL
@@ -1200,21 +1358,30 @@ contains
       mol.scfdata.copy(.scfdata)
       mol.basis_name = .basis_name
       mol.BASE:resolve_basis_info
+
       stdout.show("Generating wavefunction m =", i)
       call make_wavefunction(mol)
       stdout.text("Wavefunction done.")
+
       filename = trim(name)//"-wfn.sbf"
       mol.BASE:serialize(filename)
+
       stdout.show("Creating Hirshfeld surface m =", i)
       call make_hirshfeld_surface(mol, res)
       stdout.text("Hirshfeld surface done.")
+
       filename = trim(name)//"-hs.sbf"
       mol.CE:serialize_isosurface_sbf(filename, mol.cif)
+
    end
 
    make_hirshfeld_surface(m, res) ::: selfless, private, leaky
+   ! Make the HS for molecule "m" with desired resolution "res".
+   ! Also do the ESP on the HS of "m" afterwards.
       m :: MOLECULE*
       res :: REAL, IN
+
+      ! Create HS cluster for molecule "m"
       m.cluster.create(m.crystal)
       m.cluster.set_generation_method("for_hirshfeld_surface")
       m.cluster.atom_density_cutoff = 1.0e-8
@@ -1222,8 +1389,10 @@ contains
       m.cluster.make_info
       m.XTAL:create_cluster
 
+      ! Use Slater-type HS
       m.atom.set_basis_kind("slater")
-      !interpolators
+
+      ! Set up interpolator type
       m.interpolator.create
       m.interpolator.set_interpolation_method("linear")
       m.interpolator.set_domain_mapping("sqrt")
@@ -1231,7 +1400,7 @@ contains
       m.interpolator.set_table_spacing(1.0d-1)
       m.BASE:destroy_interpolators
 
-      ! Create CX_isosurface
+      ! Set up CX_isosurface
       m.isosurface.create(m.atom)
       m.isosurface.property = "stockholder_weight"
       m.isosurface.triangulation_method = "recursive_marching_cube"
@@ -1240,58 +1409,92 @@ contains
       m.isosurface.voxel_proximity_factor = 5
       m.isosurface.CX_output_distance_properties = TRUE
       m.isosurface.CX_output_shape_properties = TRUE
+
       ! Initialize CX_isosurface.plot_grid
       m.isosurface.plot_grid.use_bcube_with_shape_axes
       m.isosurface.plot_grid.set_cube_scale_factor(1.0d0)
+
       ! Desired separation is essentially the resolution of the calculated surface
       m.isosurface.plot_grid.desired_separation = res
+
       ! Make isosurface
       m.PLOT:isosurface_plot
 
+      ! Do the ESP on surface
       m.isosurface.surface_property = "electric_potential"
       m.atom.set_basis_kind("gaussian")
       m.PLOT:saved_plot_on_isosurface
+
    end
 
    generate_all_wavefunctions ::: leaky
+   ! Generate all wavefunctions from the cluster
       self :: PTR
+
       mol :: MOLECULE*
       i :: INT
       formula :: STR
       filename, name :: STR
+
+      ! Defragment the cluster
       .cluster.create(.crystal) 
       .cluster.set_generation_method("fragment")
       .cluster.radius = ZERO
       .cluster.defragment = TRUE
       .cluster.make_info
-      i = 1
-      if(.cluster.n_molecules == 1) then
+
+
+      ! Make a single wavefunction
+      if (.cluster.n_molecules == 1) then
+
          formula = .atom.chemical_formula(FALSE)
          call make_wavefunction(self)
+
+         i = 1
          filename = trim(.name)//"-"//trim(formula)//"_"//trim(i.to_str)//".sbf"
          .BASE:serialize(filename)
+
          return
+
       end
 
-      do i= 1, .cluster.n_molecules
+      ! Make several wavefunctions
+      do i = 1, .cluster.n_molecules
+
+         ! Make the i-th molecule
          mol.BASE:create
          .XTAL:create_cluster_mol(i, mol)
+
+         ! Set up the name of the molecule
          formula = mol.atom.chemical_formula(FALSE)
          name = trim(.name)//"-"//trim(formula)//"_"//trim(i.to_str)
          mol.BASE:set_name(trim(name))
          mol.basis_name = .basis_name
          mol.scfdata.copy(.scfdata)
+
+         ! Make the wavefunction
          call make_wavefunction(mol)
+
+         ! Dump data
          filename = trim(name)//".sbf"
          mol.BASE:serialize(filename)
-      end do
+
+      end
+
    end
 
    make_wavefunction(m) ::: selfless, private, leaky
+   ! Make the wavefunction for molecule "m"
+      self :: IN
       m :: MOLECULE*
+
+      ! Set up ANO data
       m.SCF:make_ANO_data
+
+      ! Do the SCF
       stdout.text("Beginning SCF")
       m.SCF:scf
+
    end
 
 end
