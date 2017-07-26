@@ -34,8 +34,6 @@ module ISOSURFACE
 
    implicit none
 
-   !iter :: INT = 0
-
 contains
 
    create ::: get_from(OBJECT), leaky
@@ -74,6 +72,7 @@ contains
       if (s.iso_values.created) .iso_values.create_copy(s.iso_values)
       if (s.point.created) .point.create_copy(s.point)
       if (s.face.created) .face.create_copy(s.face)
+      if (s.neighbour.created) .neighbour.create_copy(s.neighbour)
       if (s.cap.created) .cap.create_copy(s.cap)
       if (s.point_gradient.created) .point_gradient.create_copy(s.point_gradient)
       if (s.point_mean_curvature.created) .point_mean_curvature.create_copy(s.point_mean_curvature)
@@ -96,6 +95,7 @@ contains
       nullify(.iso_values)
       nullify(.point)
       nullify(.face)
+      nullify(.neighbour)
       nullify(.cap)
       nullify(.point_gradient)
       nullify(.point_mean_curvature)
@@ -115,6 +115,7 @@ contains
       .iso_values.destroy
       .point.destroy
       .face.destroy
+      .neighbour.destroy
       .cap.destroy
       .point_gradient.destroy
       .point_mean_curvature.destroy
@@ -141,6 +142,7 @@ contains
       .point_mean_curvature.destroy
       .point_gaussian_curvature.destroy
       .face.destroy
+      .neighbour.destroy
       .cap.destroy
       .surface_property_values.destroy
       .surface_iso_values.destroy
@@ -2201,6 +2203,13 @@ contains
 !  Connected Areas
 !  ===============
 
+   make_neighbour_list ::: leaky
+   ! Make the .neighbour list for the isosurface
+
+   ENSURE(.face.created,"no faces")
+
+   end
+
    put_connected_area
    ! Put the connected area for a given ".surface_property" out.
 
@@ -2236,15 +2245,19 @@ contains
 
    end
 
-   index_of_nearest_point result (res)
+   index_of_nearest_point result (res) ::: PURE
    ! Returns the index of the nearest isosurface point to .surface_point.
+      self :: IN
       res :: INT
 
    ENSURE(.n_pt>0,"there are no isosurface points")
 
-      .point.minus_column(.surface_point)
-      res = .point.index_of_minimum_column_norm
-      .point.plus_column(.surface_point)
+      point :: MAT{REAL}@
+
+      ! Get vectors to .surface_point
+      point = .point - spread(.surface_point,dim=2,ncopies=.point.dim2)
+
+      res = point.index_of_minimum_column_norm
 
    end
 
@@ -2314,9 +2327,10 @@ contains
    end
 
    connected_property_area(property,ind,lower,upper) result (res)
-   ! Returns the *connected* area of isosurface triangles where the "property"
-   ! values of all vertices of triangles connected to a face with index "ind" on
-   ! the surface is between "lower" and "upper", if present.
+   ! Returns the *connected* area of isosurface triangles where the
+   ! "property" values of all vertices of triangles connected to a
+   ! face with index "ind" on the surface is between "lower" and
+   ! "upper", if present.
       property :: VEC{REAL}
       ind :: INT
       lower,upper :: REAL, optional
@@ -2327,44 +2341,56 @@ contains
    ENSURE(present(lower) OR present(upper),"no bounds specified")
 
       n_vertex,i,v,p :: INT
-      add_vertex :: VEC{BIN}(3)
+      add_face :: VEC{BIN}(3)
       face,vertex :: VEC{INT}*
 
       nullify(face)
       nullify(vertex)
 
+      ! Connected faces & vertices
       face.append(ind)
       vertex.append(.face(:,ind))
 
+      ! Loop over new 
+      ! connected vertices
       do
-      ! Loop over new vertices, get all triangle faces
 
          n_vertex = vertex.dim
 
+         ! Loop over faces
          do i = 1,.n_face
 
-            ! Ignore all faces already in "face" list
+            ! Ignore faces already found
             if (any(i==face)) cycle
-            if (all(vertex/=.face(1,i)) AND all(vertex/=.face(1,i)) AND all(vertex/=.face(1,i))) cycle
 
-            ! At least one vertex is connected to face "i"
-            add_vertex = FALSE
+            ! Do any vertices in vertex match this face?
+            if (all(vertex/=.face(1,i)) AND all(vertex/=.face(2,i)) AND all(vertex/=.face(3,i))) cycle
 
-            ! Are all the vertices of this face between property limits?
+
+            ! Are vertex properties of this 
+            ! face between property limits?
+            add_face = FALSE
+
             do v = 1,3
+
                p = .face(v,i)
+
                if (present(lower)) then
                if (property(p)<lower) cycle
                end
+
                if (present(upper)) then
                if (property(p)>upper) cycle
                end
-               add_vertex(v) = TRUE
+
+               add_face(v) = TRUE
+
             end
 
-            ! All vertices pass limits
-            if (all(add_vertex)) then
-               face.append(i)           ! Add the face and any new vertices
+            ! This face passes limits
+            ! Add it and its vertices
+            if (all(add_face)) then
+               face.append(i)           
                vertex.append_only_if_unique(.face(1,i))
                vertex.append_only_if_unique(.face(2,i))
                vertex.append_only_if_unique(.face(3,i))
@@ -2383,6 +2409,82 @@ contains
       face.destroy
 
    end
+
+!   get_connected_vertices_for(property,ind,lower,face,vertex) ::: leaky
+!   ! Returns the *connected* area of isosurface triangles where the
+!   ! "property" values of all vertices of triangles connected to a
+!   ! face with index "ind" on the surface is smaller than "lower".
+!      property :: VEC{REAL}, IN
+!      ind :: INT, IN
+!      lower :: REAL, IN
+!      face   :: VEC{INT}*
+!      vertex :: VEC{INT}*
+!      res :: REAL
+!
+!   ENSURE(.n_pt>0,"there are no isosurface points")
+!   ENSURE(property.dim==.n_pt,"wrong size, property array")
+!
+!      n_vertex,i,v,p :: INT
+!      add_face :: VEC{BIN}(3)
+!
+!      ! Connected faces & vertices
+!      nullify(face)
+!      nullify(vertex)
+!      face.append(ind)
+!      vertex.append(.face(:,ind))
+!
+!      ! Loop over new 
+!      ! connected vertices
+!      do
+!
+!         n_vertex = vertex.dim
+!
+!         ! Loop over faces
+!         do i = 1,.n_face
+!
+!            ! Ignore faces already found
+!            if (any(i==face)) cycle
+!
+!            ! Do any vertices in vertex match this face?
+!            if (all(vertex/=.face(1,i)) AND all(vertex/=.face(2,i)) AND all(vertex/=.face(3,i))) cycle
+!
+!
+!            ! Are vertex properties of this 
+!            ! face between property limits?
+!            add_face = FALSE
+!
+!            do v = 1,3
+!
+!               ! Is it
+!               p = .face(v,i)
+!               if (property(p)<lower) cycle
+!
+!               add_face(v) = TRUE
+!
+!            end
+!
+!            ! This face passes limits
+!            ! Add it and its vertices
+!            if (all(add_face)) then
+!               face.append(i)           
+!               vertex.append_only_if_unique(.face(1,i))
+!               vertex.append_only_if_unique(.face(2,i))
+!               vertex.append_only_if_unique(.face(3,i))
+!            end
+!
+!         end
+!
+!         if (vertex.dim==n_vertex) exit
+!         ! Exit if no more new vertices added
+!
+!      end
+!
+!      res = .total_area(face)
+!
+!      vertex.destroy
+!      face.destroy
+!
+!   end
 
 !  ===============
 !  Area and volume
@@ -2794,6 +2896,7 @@ contains
 
    end
 
+
    d_min_to(list) result (res) ::: leaky, PURE
    ! Put out the minimum distances from each point on the
    ! isosurface to the nearest .atom in the "list"
@@ -2916,48 +3019,6 @@ contains
 
    end
 
-   d_norm_to(list) result (res) ::: leaky, PURE
-   ! Put out the normalised distances from each point on the
-   ! isosurface to the nearest .atom in the "list".
-      self :: IN
-      list :: VEC{INT}, IN
-      res  :: VEC{REAL}*
-
-   ENSURE(.point.created,"no points")
-   ENSURE(.atom.created,"no atom list")
-   ENSURE(list.dim>=0,"no list")
-   ENSURE(list.all_in_range([1,.atom.dim]),"in list out of bounds")
-
-      dist :: VEC{REAL}(3)
-      dmin,norm,rvdw :: REAL
-      n_atom,i,a,amin :: INT
-
-      n_atom = list.dim
-      res.create(.n_pt)
-
-      do i = 1,.n_pt
-
-         dmin = HUGE(ONE)
-         amin = 0
-
-         do a = 1,n_atom
-
-            dist = .atom(list(a)).position - .point(:,i)
-            norm = dist.norm
-
-            if (norm>=dmin) cycle
-
-            dmin = norm
-            amin = list(a)
-
-         end
-
-         rvdw = .atom(amin).vdw_radius_ccdc
-         res(i) = (dmin - rvdw)/rvdw
-
-      end
-
-   end
 
    make_d_min_d_norm_to(list,atom,d_min,d_norm) ::: PURE
    ! Put out the normalised distances from each point on the
@@ -3047,6 +3108,36 @@ contains
 
    end
 
+   make_fingerprint_atoms(d_e_atoms,d_i_atoms,in,out) ::: PURE
+   ! Put out lists of atoms in "atom" which are closest to a given
+   ! vertex of the surface.
+      self :: IN
+      d_e_atoms,d_i_atoms :: VEC{INT}(.n_pt), OUT
+      in,out :: VEC{INT}, IN
+
+      .make_d_min_atoms_to(in, d_i_atoms)
+      .make_d_min_atoms_to(out,d_e_atoms)
+
+   end
+
+   make_fingerprint_face_atoms(d_e_atoms,d_i_atoms,in,out) ::: PURE
+   ! Put out lists of atoms in "atom" which are closest to a given
+   ! face of the surface.
+      self :: IN
+      d_e_atoms,d_i_atoms :: VEC{INT}(.n_face), OUT
+      in,out :: VEC{INT}, IN
+
+      .make_d_min_atoms_to_face(in, d_i_atoms)
+      .make_d_min_atoms_to_face(out,d_e_atoms)
+
+      ! Subtract off the # of d_i_atoms since the
+      ! "out" array points into the whole "atom" list
+      ! and the first few are the "inside" atoms
+      d_e_atoms = d_e_atoms - in.dim
+
+   end
+
+
    make_d_min_atoms_to(list,d_min_list) ::: PURE
    ! Make the atom indices corresponding to the minimum distances
    ! from each point on the isosurface to the nearest .atom in the "list"
@@ -3135,34 +3226,100 @@ contains
 
    end
 
-   make_fingerprint_atoms(d_e_atoms,d_i_atoms,in,out) ::: PURE
-   ! Put out lists of atoms in "atom" which are closest to a given
-   ! vertex of the surface.
-      self :: IN
-      d_e_atoms,d_i_atoms :: VEC{INT}(.n_pt), OUT
-      in,out :: VEC{INT}, IN
 
-      .make_d_min_atoms_to(in, d_i_atoms)
-      .make_d_min_atoms_to(out,d_e_atoms)
+   make_d_norm_to(d_norm,list,atom) ::: PURE
+   ! Make the "d_norm" values for every point on the isosurface for
+   ! the given "list" of "atoms".
+      self :: IN
+      d_norm :: VEC{REAL}(.n_pt), OUT
+      list :: VEC{INT}, IN
+      atom :: VEC{ATOM}, IN
+
+   ENSURE(.point.created,"no points")
+   ENSURE(list.all_in_range([1,atom.dim]),"in list out of bounds")
+
+      pos :: MAT{REAL}*
+      rvdw :: VEC{REAL}*
+      dist,pt :: VEC{REAL}(3)
+      dnorm,d,dn :: REAL
+      n_atom,i,a :: INT
+
+      ! No of atoms in the list
+      n_atom = list.dim
+
+      ! The vdw radii
+      rvdw.create(n_atom)
+      atom(list).get_vdw_radii_ccdc(rvdw)
+
+      ! The atom positions
+      pos.create(3,n_atom)
+      atom(list).put_coordinates_to(pos,positions_as_rows=FALSE)
+
+      ! Get d_norm
+      do i = 1,.n_pt
+
+         ! Surface point
+         pt = .point(:,i)
+
+         ! Loop over atoms
+         dnorm = HUGE(ONE)
+
+         do a = 1,n_atom
+
+            ! Get current d_norm in "dn"
+            dist = pos(:,a) - pt
+            d    = dist.norm
+            dn = (d - rvdw(a))/rvdw(a)
+
+            ! Store if smaller
+            if (dn<dnorm) dnorm = dn
+
+         end
+
+         ! Set
+         d_norm(i) = dnorm
+
+      end
+
+      ! Clean
+      rvdw.destroy
+      pos.destroy
 
    end
 
-   make_fingerprint_face_atoms(d_e_atoms,d_i_atoms,in,out) ::: PURE
-   ! Put out lists of atoms in "atom" which are closest to a given
-   ! face of the surface.
+   make_d_norm(d_norm,in,out,atom) ::: PURE
+   ! Get the "d_norm" values for every point on the isosurface, where
+   ! the indices of the "atom"s "in" and "out" of the surface are
+   ! provided externally.
       self :: IN
-      d_e_atoms,d_i_atoms :: VEC{INT}(.n_face), OUT
+      d_norm :: VEC{REAL}(.n_pt), OUT
       in,out :: VEC{INT}, IN
+      atom :: VEC{ATOM}, IN
 
-      .make_d_min_atoms_to_face(in, d_i_atoms)
-      .make_d_min_atoms_to_face(out,d_e_atoms)
+   ENSURE(in.all_in_range([1,atom.dim]),"in list out of bounds")
+   ENSURE(out.all_in_range([1,atom.dim]),"in list out of bounds")
+   ENSURE(in.has_no_elements_common_with(out),"in and out lists overlap!")
 
-      ! Subtract off the # of d_i_atoms since the
-      ! "out" array points into the whole "atom" list
-      ! and the first few are the "inside" atoms
-      d_e_atoms = d_e_atoms - in.dim
+      d_norm_e,d_norm_i :: VEC{REAL}*
+
+      ! Temporaries
+      d_norm_i.create(.n_pt)
+      d_norm_e.create(.n_pt)
+
+      ! Get the two d_norm's
+      .make_d_norm_to(d_norm_i,in, atom)
+      .make_d_norm_to(d_norm_e,out,atom)
+
+      ! Make d_norm from the formula
+      d_norm = d_norm_i + d_norm_e
+
+      ! Clean
+      d_norm_e.destroy
+      d_norm_i.destroy
+
 
    end
+
 
    surface_group_atom_indices(atom) result (res) ::: leaky
    ! Return a list of atom indices which represent a molecule-group
@@ -4110,108 +4267,109 @@ contains
 
    end
 
-    make_surface_multipole_moments(qc, qs, in, out, l_max, property) ::: leaky
-        self :: IN
-        in, out :: VEC{INT}, IN
-        l_max :: INT, IN
-        property :: STR, IN
+   make_surface_multipole_moments(qc, qs, in, out, l_max, property) ::: leaky
+   ! Like it says ...
+      self :: IN
+      in, out :: VEC{INT}, IN
+      l_max :: INT, IN
+      property :: STR, IN
 
-        qc,qs :: VEC{REAL}*
-        atom :: VEC{ATOM}*
-        iso_points :: MAT{REAL}*
-        face_point :: MAT{REAL}*
-        face_value :: VEC{REAL}*
+      qc,qs :: VEC{REAL}*
+      atom :: VEC{ATOM}*
+      iso_points :: MAT{REAL}*
+      face_point :: MAT{REAL}*
+      face_value :: VEC{REAL}*
 
-        d_e, d_i, d_norm_e, d_norm_i, d_norm, vals :: VEC{REAL}*
+      d_e, d_i, d_norm_e, d_norm_i, d_norm, vals :: VEC{REAL}*
 
-        N, x, y, z :: INT
-        tmp, area :: REAL
-        centre, midpoint, px, py, pz :: VEC{REAL}(3)
+      N, x, y, z :: INT
+      tmp, area :: REAL
+      centre, midpoint, px, py, pz :: VEC{REAL}(3)
 
 
-        d_i.create(.n_pt)
-        d_e.create(.n_pt)
-        d_norm_i.create(.n_pt)
-        d_norm_e.create(.n_pt)
-        d_norm.create(.n_pt)
-        vals.create(.n_pt)
-        iso_points.create(.n_pt, 3)
-        face_point.create(.n_face, 3)
-        face_value.create(.n_face)
-        atom.create(.atom.dim)
-        atom = .atom
+      d_i.create(.n_pt)
+      d_e.create(.n_pt)
+      d_norm_i.create(.n_pt)
+      d_norm_e.create(.n_pt)
+      d_norm.create(.n_pt)
+      vals.create(.n_pt)
+      iso_points.create(.n_pt, 3)
+      face_point.create(.n_face, 3)
+      face_value.create(.n_face)
+      atom.create(.atom.dim)
+      atom = .atom
 
-        ! we need to transpose iso_points because multipole method
-        ! expects a Nx3 rather than a 3xN array
-        iso_points = transpose(.point)
-        .make_fingerprint_distances(d_e, d_i, d_norm_e, d_norm_i, d_norm, in, out, atom, angstrom=TRUE)
+      ! we need to transpose iso_points because multipole method
+      ! expects a Nx3 rather than a 3xN array
+      iso_points = transpose(.point)
+      .make_fingerprint_distances(d_e, d_i, d_norm_e, d_norm_i, d_norm, in, out, atom, angstrom=TRUE)
 
-        ! interpolate the centre of the sphere, c, by finding midpoint of
-        ! all points
-        centre(1) = sum(iso_points(:,1)) / .n_pt
-        centre(2) = sum(iso_points(:,2)) / .n_pt
-        centre(3) = sum(iso_points(:,3)) / .n_pt
-        select case(property)
-            case("d_e"); vals = d_e
-            case("d_i"); vals = d_i
-            case("d_norm_e"); vals = d_norm_e
-            case("d_norm_i"); vals = d_norm_i
-            case("shape");
-                do N = 1, .n_pt
-                    x = .face(1,N); y = .face(2,N); z = .face(3,N)
-                    px = iso_points(x,:); py = iso_points(y,:); pz = iso_points(z,:)
-                    midpoint = THIRD * (px + py + pz)
-                    midpoint = midpoint - centre
-                    vals(N) = sqrt(midpoint(1)**2 + midpoint(2)**2 + midpoint(3)**2)
-                end
-            case("ones"); vals = 1.0
-            case default; vals = d_norm
-        end
+      ! interpolate the centre of the sphere, c, by finding midpoint of
+      ! all points
+      centre(1) = sum(iso_points(:,1)) / .n_pt
+      centre(2) = sum(iso_points(:,2)) / .n_pt
+      centre(3) = sum(iso_points(:,3)) / .n_pt
+      select case(property)
+          case("d_e"); vals = d_e
+          case("d_i"); vals = d_i
+          case("d_norm_e"); vals = d_norm_e
+          case("d_norm_i"); vals = d_norm_i
+          case("shape");
+              do N = 1, .n_pt
+                  x = .face(1,N); y = .face(2,N); z = .face(3,N)
+                  px = iso_points(x,:); py = iso_points(y,:); pz = iso_points(z,:)
+                  midpoint = THIRD * (px + py + pz)
+                  midpoint = midpoint - centre
+                  vals(N) = sqrt(midpoint(1)**2 + midpoint(2)**2 + midpoint(3)**2)
+              end
+          case("ones"); vals = 1.0
+          case default; vals = d_norm
+      end
 
-        do N = 1, .n_face
-            ! x, y, z are the indices of each vertex on the triangle
-            x = .face(1,N); y = .face(2,N); z = .face(3,N)
-            ! px, py, pz are the vertices on the triangle
-            px = iso_points(x,:); py = iso_points(y,:); pz = iso_points(z,:)
-            ! Normalise the points on the surface to be on a sphere of radius 1
-            ! with centre at C by making a vector from the centre of the sphere
-            ! to px, giving it unit length
-            ! at the end px, py, pz will lie on the surface of a sphere of unit
-            ! radius, centre C
-            px = px - centre; px.normalise
-            py = py - centre; py.normalise
-            pz = pz - centre; pz.normalise
+      do N = 1, .n_face
+          ! x, y, z are the indices of each vertex on the triangle
+          x = .face(1,N); y = .face(2,N); z = .face(3,N)
+          ! px, py, pz are the vertices on the triangle
+          px = iso_points(x,:); py = iso_points(y,:); pz = iso_points(z,:)
+          ! Normalise the points on the surface to be on a sphere of radius 1
+          ! with centre at C by making a vector from the centre of the sphere
+          ! to px, giving it unit length
+          ! at the end px, py, pz will lie on the surface of a sphere of unit
+          ! radius, centre C
+          px = px - centre; px.normalise
+          py = py - centre; py.normalise
+          pz = pz - centre; pz.normalise
 
-            ! Assign the value of the point on the sphere
-            midpoint = THIRD * (px + py + pz)
-            face_point(N,:).set_to(midpoint)
+          ! Assign the value of the point on the sphere
+          midpoint = THIRD * (px + py + pz)
+          face_point(N,:).set_to(midpoint)
 
-            ! reuse midpoint variable to calculate area of triangle that
-            ! has been projected onto the sphere
-            midpoint.to_cross_product_of(pz - px, pz - py)
-            area = 0.5 * midpoint.norm ! A = |V1xV2|/2
+          ! reuse midpoint variable to calculate area of triangle that
+          ! has been projected onto the sphere
+          midpoint.to_cross_product_of(pz - px, pz - py)
+          area = 0.5 * midpoint.norm ! A = |V1xV2|/2
 
-            ! face value weighted by area, and interpolated from values at
-            ! vertices of triangle
-            tmp = area * ONE /( THIRD * (vals(x) + vals(y) + vals(z)))
-            face_value(N) = tmp
-        end
-        ! Now that we have normalised points to lie on the surface of the sphere
-        ! and weighted vals by the area of triangles on the surface of the sphere
-        ! we can make the multipole moments of vals
-        VEC{REAL}:make_R_multipoles(qc, qs, face_value, face_point, l_max)
+          ! face value weighted by area, and interpolated from values at
+          ! vertices of triangle
+          tmp = area * ONE /( THIRD * (vals(x) + vals(y) + vals(z)))
+          face_value(N) = tmp
+      end
+      ! Now that we have normalised points to lie on the surface of the sphere
+      ! and weighted vals by the area of triangles on the surface of the sphere
+      ! we can make the multipole moments of vals
+      VEC{REAL}:make_R_multipoles(qc, qs, face_value, face_point, l_max)
 
-        ! CLEANUP
-        d_i.destroy
-        d_e.destroy
-        iso_points.destroy
-        d_norm.destroy
-        d_norm_i.destroy
-        d_norm_e.destroy
-        face_value.destroy
-        face_point.destroy
-        vals.destroy
-    end
+      ! CLEANUP
+      d_i.destroy
+      d_e.destroy
+      iso_points.destroy
+      d_norm.destroy
+      d_norm_i.destroy
+      d_norm_e.destroy
+      face_value.destroy
+      face_point.destroy
+      vals.destroy
+   end
 
 !  ==============
 !  Test functions
