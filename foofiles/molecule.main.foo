@@ -213,6 +213,7 @@ contains
 
         case ("e_field=                      "); .:read_E_field
 
+        case ("find_d_norm_contacts          "); .MAIN:find_d_norm_contacts
         case ("fit_hirshfeld_atoms           "); .TAD:LS_fit_Hirshfeld_atoms
         case ("fit_hirshfeld_atom_kappas     "); .MISC:fit_Hirshfeld_atom_kappas
         case ("fit_km_atoms                  "); .TAD:LS_fit_KM_atoms
@@ -260,7 +261,6 @@ contains
         case ("localize_mos=                 "); .SCF:localize_MOs
         case ("low_verbosity_on              "); .MAIN:set_low_verbosity_on
 
-        case ("make_all_cif_hss              "); .MAIN:make_all_CIF_HSs
         case ("make_ano_data                 "); .SCF:make_ANO_data
         case ("make_ao_density_matrix        "); .BASE:make_ao_density_matrix
         case ("make_ao_sz_density_matrix     "); .BASE:make_ao_sz_density_matrix
@@ -1155,17 +1155,18 @@ contains
 
 ! K's red spot code
 
-   find_close_d_norm_contacts ::: leaky
+   find_d_norm_contacts ::: leaky
    ! Find the close d_norm values and store the list of indices for
    ! the corresponding closest atoms inside and outside the HS.
       self :: PTR
 
    ENSURE(.cif.created,"no CIF file")
+   ENSURE(.isosurface.created,"no isosurface")
 
       i :: INT
-      formula, name, filename :: STR
+      ub :: REAL
+      formula, name :: STR
       CX_file :: TEXTFILE*
-
 
       ! Defragment any molecules in the CIF
       .cluster.create(.crystal) 
@@ -1173,6 +1174,8 @@ contains
       .cluster.radius = ZERO
       .cluster.defragment = TRUE
       .cluster.make_info
+
+      ub = .isosurface.surface_property_ub
 
       if (.cluster.n_molecules == 1) then
 
@@ -1184,8 +1187,10 @@ contains
          name = trim(.name)//"-"//trim(formula)//"_"//trim(i.to_str)
 
          ! Make the HS
+         stdout.flush
          stdout.show("Creating Hirshfeld surface m =", i)
-         call make_HS(self, res=0.2d0)
+         call make_HS(self,ub)
+         stdout.flush
          stdout.text("Hirshfeld surface done.")
 
          ! Print out cxs file
@@ -1201,73 +1206,23 @@ contains
 
       ! Make all HSs for i-th cluster mol
       do i = 1, .cluster.n_molecules
-         .MAIN:make_HS_for_cluster_mol(i)
+         .MAIN:make_HS_for_cluster_mol(i,ub)
       end
 
    end
 
-   make_all_CIF_HSs ::: leaky
-   ! Make all HS for every symmetry-unique molecule in the unit cell
-   ! of a CIF file
-      self :: PTR
-
-   ENSURE(.cif.created,"no CIF file")
-
-      i :: INT
-      formula, name, filename :: STR
-      CX_file :: TEXTFILE*
-
-
-      ! Defragment any molecules in the CIF
-      .cluster.create(.crystal) 
-      .cluster.set_generation_method("fragment")
-      .cluster.radius = ZERO
-      .cluster.defragment = TRUE
-      .cluster.make_info
-
-      if (.cluster.n_molecules == 1) then
-
-         i = 1
-
-         ! Set up name
-         formula = .atom.chemical_formula(FALSE)
-         stdout.show("formula ", formula)
-         name = trim(.name)//"-"//trim(formula)//"_"//trim(i.to_str)
-
-         ! Make the HS
-         stdout.show("Creating Hirshfeld surface m =", i)
-         call make_HS(self, res=0.2d0)
-         stdout.text("Hirshfeld surface done.")
-
-         ! Print out cxs file
-         CX_file.create(trim(name)//".cxs")
-         CX_file.open_for("write")
-         .CE:put_CX_data(CX_file,.cif)       
-         CX_file.close
-         CX_file.destroy
-
-         return
-
-      end
-
-      ! Make all HSs for i-th cluster mol
-      do i = 1, .cluster.n_molecules
-         .MAIN:make_HS_for_cluster_mol(i)
-      end
-
-   end
-
-   make_HS_for_cluster_mol(i) ::: private, leaky
+   make_HS_for_cluster_mol(i,ub) ::: private, leaky
    ! Make the HS for cluster molecule i.
       self :: PTR
+      i :: INT, IN
+      ub :: REAL, IN
 
-      i :: INT
       mol :: MOLECULE*
       res :: REAL
-      formula, name, filename :: STR
+      formula, name :: STR
       CX_file :: TEXTFILE*
 
-      res = 0.2
+      res = 0.2d0
 
       ! Make the i-th cluster molecule "mol"
       mol.BASE:create
@@ -1284,8 +1239,10 @@ contains
       mol.BASE:resolve_basis_info
 
       ! Make the HS
+      stdout.flush
       stdout.show("Creating Hirshfeld surface m =", i)
-      call make_HS(mol, res)
+      call make_HS(mol,ub)
+      stdout.flush
       stdout.text("Hirshfeld surface done.")
 
       ! Deposit cxs file
@@ -1297,10 +1254,14 @@ contains
 
    end
 
-   make_HS(m, res) ::: selfless, private, leaky
+   make_HS(m,ub) ::: selfless, private, leaky
    ! Make the HS for molecule "m" with desired resolution "res".
       m :: MOLECULE*
-      res :: REAL, IN
+      ub :: REAL, IN
+
+      res :: REAL
+
+      res = 0.2d0
 
       ! Create HS cluster for molecule "m"
       m.cluster.create(m.crystal)
@@ -1308,7 +1269,10 @@ contains
       m.cluster.atom_density_cutoff = 1.0e-8
       m.cluster.defragment = FALSE
       m.cluster.make_info
+
+      !!!!!!!!!!!!!!!!!!!!!
       m.XTAL:create_cluster
+      !!!!!!!!!!!!!!!!!!!!!
 
       ! Use Slater-type HS
       m.atom.set_basis_kind("slater")
@@ -1322,6 +1286,7 @@ contains
       m.BASE:destroy_interpolators
 
       ! Set up CX_isosurface
+      m.isosurface.destroy
       m.isosurface.create(m.atom)
       m.isosurface.property = "stockholder_weight"
       m.isosurface.triangulation_method = "recursive_marching_cube"
@@ -1340,6 +1305,22 @@ contains
 
       ! Make HS isosurface
       m.PLOT:isosurface_plot
+
+      ! Do the d_norm close contact table
+      if (m.isosurface.created) then
+      if (m.isosurface.atom.created) then 
+      if (m.saved.created) then
+      if (m.saved.cluster.created) then
+
+         m.isosurface.set_surface_property_ub(ub)
+         m.isosurface.put_minimal_blob_info(m.saved.cluster.fragment_atom_indices    &
+                                           ,m.saved.cluster.nonfragment_atom_indices &
+                                           ,m.atom)
+
+      end
+      end
+      end
+      end
 
    end
 
@@ -1402,7 +1383,7 @@ contains
       res :: REAL
       formula, name, filename :: STR
 
-      res = 0.2
+      res = 0.2d0
 
       mol.BASE:create
       .XTAL:create_cluster_mol(i, mol)
