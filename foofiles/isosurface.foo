@@ -2288,9 +2288,9 @@ contains
 
 
    get_minimal_blobs(blob,property,limit) ::: leaky, PURE
-   ! Returns the indices of set(s) of faces comprising a *connected*
-   ! area (aka a "red spot") where the "property" values are all
-   ! smaller than "limit", otherwise known as a "blob".
+   ! Returns the indices of set(s) of vertices/points comprising a
+   ! *connected* area (aka a "red spot") where the "property" values
+   ! are all smaller than "limit", otherwise known as a "blob".
       self :: INOUT
       blob :: VEC{VEC_{INT}}*
       property :: VEC{REAL}, IN
@@ -2387,10 +2387,11 @@ contains
 
    end
 
-   put_minimal_blob_info(in,out,atom) ::: leaky
-   ! Summarize minimal blob information for the current isosurface &
-   ! surface property, assuming the surface has associated "in" and
-   ! "out" "atoms", as for e.g. Hirshfeld surfaces.
+   put_d_norm_info(in,out,atom) ::: leaky
+   ! Summarize d_norm contact/spot information for the current
+   ! isosurface & surface property, assuming the surface has
+   ! associated "in" and "out" "atoms", as for e.g. Hirshfeld
+   ! surfaces.
       self :: INOUT
       in,out :: VEC{INT}, IN
       atom :: VEC{ATOM}, IN
@@ -2403,11 +2404,12 @@ contains
        a_e, a_i :: VEC{INT}*
       ba_e,ba_i, bb,b1 :: VEC{INT}*
       bt_e,bt_i :: VEC{STR}*
-      blob :: VEC{VEC_{INT}}*
+      blob, face :: VEC{VEC_{INT}}*
       table :: VEC{TABLE_COLUMN}*
-      n_blob, i :: INT
+      n_blob, b :: INT
+      fac,fac2 :: REAL
 
-      ! Get the surface distance info ...
+      ! Get the surface distance info
       d_norm.create(.n_pt)
       d_e.create(.n_pt)
       d_i.create(.n_pt)
@@ -2420,22 +2422,25 @@ contains
 
       n_blob = blob.dim
 
+      ! Get faces in this blob
+      .facify(blob,face)
+
       ! Output the table
       stdout.flush
       stdout.flush
-      stdout.text("========================")
-      stdout.text("Minimal blob information")
-      stdout.text("========================")
+      stdout.text("=======================")
+      stdout.text("d_norm blob information")
+      stdout.text("=======================")
       stdout.flush
-      stdout.text(". Minimal blobs are connected ares of a surface property which")
-      stdout.text("  are *less than* a certain upper bound, and are useful for")
-      stdout.text("  characterising e.g. the properties of close contacts.")
+      stdout.text(". Minimal d_norm blobs are connected areas of the isosurface")
+      stdout.text("  where d_norm has a value *less than* a certain upper bound.")
+      stdout.text("  These areas are useful for characterising e.g. the weakly")
+      stdout.text("  interacting contacts.")
       stdout.flush
       stdout.text(". Blobs are sorted in increasing order of their minimal value")
       stdout.flush
-      stdout.text(". Distances to blob centers reported in Angstrom")
+      stdout.text(". Distances to blob centers, blob areas, reported in Angstrom")
       stdout.flush
-      stdout.show("Surface property               =",.surface_property)
       stdout.show("Surface property upper bound   =",.surface_property_ub)
       stdout.show("No. of blobs                   =",n_blob)
       stdout.flush
@@ -2456,7 +2461,7 @@ contains
       end
 
       ! Table
-      table.create(8)
+      table.create(9)
       table(1).set_heading("Blob")
       table(1).set_subhead("  # ")
       table(2).set_heading("  In")
@@ -2470,7 +2475,8 @@ contains
       table(7).set_heading(" d_e")
       table(7).set_subhead("  /A")
       table(8).set_heading("d_norm")
-    ! table(9).set_heading(" Area")
+      table(9).set_heading(" Area")
+      table(7).set_subhead(" /A^2")
 
       ! Get blob data
       bb.create(n_blob)
@@ -2484,22 +2490,25 @@ contains
       bd_norm.create(n_blob)
       bd_area.create(n_blob)
 
-      bb = [ (i, i=1,n_blob) ]
-      do i = 1,n_blob
-         b1(i) = blob(i)%element(1)
+      bb = [ (b, b=1,n_blob) ]
+      do b = 1,n_blob
+         b1(b) = blob(b)%element(1)
       end
 
-      bd_i    = d_i(b1)*ANGSTROM_PER_BOHR
-      bd_e    = d_e(b1)*ANGSTROM_PER_BOHR
+      fac  = ANGSTROM_PER_BOHR
+      fac2 = fac*fac
+
+      bd_i    = d_i(b1)*fac
+      bd_e    = d_e(b1)*fac
       ba_i    = a_i(b1)
       bt_i    = atom(ba_i).tag
       ba_e    = a_e(b1)
       bt_e    = atom(ba_e).tag
       bd_norm = d_norm(b1)
 
-    ! do i = 1,n_blob
-    !    bd_area = blob(i)%element(1)
-    ! end
+      do b = 1,n_blob
+         bd_area(b) = .total_area(face(b).element)*fac2
+      end
 
       ! Set table values
       table(1).set_values(bb)
@@ -2510,7 +2519,7 @@ contains
       table(6).set_values(bd_i)
       table(7).set_values(bd_e)
       table(8).set_values(bd_norm)
-    ! table(9).set_values(bd_area)
+      table(9).set_values(bd_area)
 
       ! Put
       table.put(label_rows=FALSE)
@@ -2530,6 +2539,7 @@ contains
       table.clear_columns
       table.destroy
 
+      face.destroy
       blob.destroy
 
       a_i.destroy
@@ -2537,6 +2547,51 @@ contains
       d_i.destroy
       d_e.destroy
       d_norm.destroy
+
+   end
+
+
+   facify(blob,face) ::: leaky, PURE
+   ! Given set(s) of vertices in a "blob" return the indices of the
+   ! corresponding "face"s. Note that all three vertices of a face
+   ! need to be in the vertex list "blob" before a face is added to
+   ! the "face" blob.
+      self :: IN
+      blob :: VEC{VEC_{INT}}, IN
+      face :: VEC{VEC_{INT}}*
+
+   ENSURE(.n_face>0,"there are no isosurface faces")
+
+      n_blob, b,f, v1,v2,v3 :: INT
+
+      n_blob = blob.dim
+
+      face.create(n_blob)
+
+      do b = 1,n_blob
+
+        face(b).element.create(0)
+
+        do f = 1,.n_face
+           
+           v1 = .face(1,f)
+           v2 = .face(2,f)
+           v3 = .face(3,f)
+      
+           ! Is this face in blob(b) ?
+           if (any(v1==blob(b).element)) then
+           if (any(v2==blob(b).element)) then
+           if (any(v3==blob(b).element)) then
+
+              face(b).element.append(f)
+
+           end
+           end
+           end
+
+        end
+
+      end
 
    end
 
@@ -2668,6 +2723,7 @@ contains
       res :: REAL
 
    ENSURE(.n_pt>0,"there are no isosurface points")
+   ENSURE(.n_face>0,"there are no isosurface faces")
    ENSURE(property.dim==.n_pt,"wrong size, property array")
    ENSURE(present(lower) OR present(upper),"no bounds specified")
 
