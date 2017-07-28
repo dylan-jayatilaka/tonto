@@ -282,10 +282,10 @@ contains
       stdin.read(.roby_kind)
 
       select case (.roby_kind)
-         case("atom_bond_analysis       ")
-         case("atom_energy_bond_analysis")
-         case("group_bond_analysis      ")
-         case default;    UNKNOWN(.roby_kind)
+      case("atom_bond_analysis       ")
+      case("atom_energy_bond_analysis")
+      case("group_bond_analysis      ")
+      case default;    UNKNOWN(.roby_kind)
       end
 
    end
@@ -409,12 +409,29 @@ contains
       a,b :: INT, IN
       res :: BIN
 
-      if      (.is_homoleptic) then;          res = FALSE
-      else if (.analyze_all_atom_pairs) then; res = FALSE
+      if (.is_homoleptic) then;
+      
+         ! Do all 
+         res = FALSE
+
+      else if (.analyze_all_atom_pairs) then
+      
+         ! Do all
+         res = FALSE
+
       else if (.analyze_vdw_atom_pairs) then
-         res = NOT .atom.vdw_bonded(a,b)
+
+         ! Do only vdw pairs
+         res = NOT .atom.vdw_bonded(a,b,.bond_range_factor)
+
       else
+
+         ! Do bonded pairs
          res = NOT .atom.bonded(a,b,.bond_range_factor)
+
+         ! Do vdw pairs too
+         res = res AND NOT .atom.vdw_bonded(a,b)
+
       end
 
    end
@@ -551,7 +568,6 @@ contains
       self :: INOUT
 
    ENSURE(.atom.created,"no atoms")
-   ENSURE(.atom_group.destroyed,"do not use atom_group=")
 
       i,n_atom :: INT
 
@@ -589,12 +605,12 @@ contains
    ! each element in the ".atom_list".
 
    ENSURE(.atom_list.created,"no atom list")
-   ENSURE(.atom_group.destroyed,"do not use atom_groups=")
 
       n_atom,a :: INT
 
       n_atom = size(.atom_list)
 
+      .atom_group.destroy
       .atom_group.create(n_atom)
 
       do a = 1,n_atom
@@ -884,12 +900,12 @@ contains
       .E_matrix.create(n_bf,n_bf)
       .E_matrix = HALF*(.core_matrix.restricted + .fock_matrix.restricted)
 
-!  !!!!!!!!!!!!!!!!!!!!!!!!
-!  .E_matrix.to_unit_matrix
-!  !!!!!!!!!!!!!!!!!!!!!!!!
-
-!  stdout.text("E_matrix:")
-!  stdout.put(.E_matrix)
+!     !!!!!!!!!!!!!!!!!!!!!!!!
+!     .E_matrix.to_unit_matrix
+!     !!!!!!!!!!!!!!!!!!!!!!!!
+      
+!     stdout.text("E_matrix:")
+!     stdout.put(.E_matrix)
 
       ! Each atom is a Roby subspace
       .make_single_atom_groups
@@ -950,7 +966,7 @@ contains
 
         if (.output_theta_info) then
            .put_theta_info
-           .put_theta_bond_info
+           .put_theta_energy_info
         end
         .destroy_theta_info
 
@@ -989,6 +1005,7 @@ contains
 
       .E_covalent_index = ZERO
       .E_ionic_index    = ZERO
+
       pcc  = ZERO
       c_ab = ZERO
       i_ab = ZERO
@@ -1101,6 +1118,10 @@ contains
          .atom_a => .atom_group(a).element
 
          .E1(a)  =  .atom_energy(.atom_a)
+
+         if (.n_group==.atom.dim) then
+         .E1(a) = .E1(a) + HALF*.atom.nuclear_repulsion_for_atom(a)
+         end
 
          nullify(.atom_a)
 
@@ -1354,21 +1375,32 @@ contains
 
    end
 
-   destroy_theta_info ::: leaky, private
+   destroy_theta_info ::: leaky, private, PURE
    ! Delete all the temporary theta subspace information created by various bond
    ! index routines
+      self :: INOUT
+
       .ionic_index.destroy
       .covalent_index.destroy
       .pop_B.destroy
       .pop_A.destroy
       .pop_I.destroy
       .pop_C.destroy
+
+      .E_ionic_index.destroy
+      .E_covalent_index.destroy
+      .E_B.destroy
+      .E_A.destroy
+      .E_I.destroy
+      .E_C.destroy
+
       .eval_I.destroy
       .theta_I.destroy
       .pair.destroy
       .theta_angle.destroy
       .eval_C.destroy
       .theta_C.destroy
+
    end
 
    match_pair(arg1,arg2) result (res) ::: selfless, private
@@ -1442,14 +1474,16 @@ contains
    end
 
    make_gould_covalent_orbitals ::: private
-   ! Generate the gould covalent orbitals ".theta_C" in such a way that the
-   ! negative eigenvector of each pair is generated explicitly from the positive
-   ! eigenvector by constructing the |a> and |b> parts using projectors P_A and
-   ! P_B. ".eval_C" are the eigenvalues corresponding to ".theta_C". ".pair" is
-   ! defined so that the i-th eigenvector .theta_C(:,i) is paired with
+   ! Generate the gould covalent orbitals ".theta_C" in such a way
+   ! that the negative eigenvector of each pair is generated
+   ! explicitly from the positive eigenvector by constructing the |a>
+   ! and |b> parts using projectors P_A and P_B. ".eval_C" are the
+   ! eigenvalues corresponding to ".theta_C". ".pair" is defined so
+   ! that the i-th eigenvector .theta_C(:,i) is paired with
    ! theta_C(:,pair(i)). The spaces V_A , V_B and V_AB are defined by
-   ! ".atom_a", ".atom_b", and ".atom_ab". This routine is necessary in the case
-   ! where there are degeneracies.
+   ! ".atom_a", ".atom_b", and ".atom_ab". This routine is necessary
+   ! in the case where there are degeneracies.
+      self :: INOUT
 
    ENSURE(.atom_a.created,"No roby atom A")
    ENSURE(.atom_b.created,"No roby atom B")
@@ -1508,11 +1542,13 @@ contains
    end
 
    make_gould_ionic_orbitals ::: private
-   ! Make the gould ionic orbitals ".theta_I" and eigenvalues ".eval_I"
-   ! from the covalent orbitals ".theta_C" and covalent eigenvalues
-   ! ".eval_C" which have been explicitly paired up as described by
-   ! the ".pair" array. ALSO: the ".pair" array is modified to remove all
-   ! those pairs which have zero sine and cosine eigenvalues.
+   ! Make the gould ionic orbitals ".theta_I" and eigenvalues
+   ! ".eval_I" from the covalent orbitals ".theta_C" and covalent
+   ! eigenvalues ".eval_C" which have been explicitly paired up as
+   ! described by the ".pair" array. ALSO: the ".pair" array is
+   ! modified to remove all those pairs which have zero sine and
+   ! cosine eigenvalues.
+      self :: INOUT
 
    ENSURE(.theta_C.created,"no theta_C array")
    ENSURE(.theta_C.dim1==.n_bf_ab,"wrong shape, theta_C")
@@ -2490,12 +2526,20 @@ contains
       self :: IN
 
       if (.is_homoleptic) then
+
          .put_bond_indices_group
+
       else
+
          .put_bond_indices_atoms
          .put_bond_indices_short
-         .put_bond_indices_latex
+
+         ! LaTeX tables
+         .put_bond_indices_all
+         .put_bond_indices_all_vdw
+         .put_bond_indices_non_H
          .put_bond_indices_CC
+
       end
 
    end
@@ -3058,8 +3102,9 @@ contains
 
    end
 
-   put_bond_indices_latex
-   ! Output the non-H bond indices for latex "bondtable.tex".
+
+   put_bond_indices_all
+   ! Output the all bond indices for LaTeX script in "bondtable.tex".
       self :: IN
 
    ENSURE(NOT .is_homoleptic,"job is homoleptic")
@@ -3071,13 +3116,288 @@ contains
       dash :: VEC{STR}*
       s1,s2,val :: STR
       dist,cAB,iAB,tAB,pAB :: VEC{REAL}*
-      ind :: VEC{INT}*
       has_unique_labels :: BIN
 
       ! Anything to do?
       if (.atom.dim<2) return
 
       stdout.redirect("bondtable.tex")
+
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         if (.analyze_vdw_atom_pairs) then
+         .atom.get_vdw_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         else
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         end
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Dashes
+         dash.create(n_bonds)
+         dash    = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         cAB.create(n_bonds)
+         iAB.create(n_bonds)
+         tAB.create(n_bonds)
+         pAB.create(n_bonds)
+
+         forall (i=1:n_bonds)
+         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
+         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         pAB(i) = .percent_covalency(pair(i,1),pair(i,2))
+         end
+
+         ! Put latex table
+         s1 = .atom(pair(1,1)).chemical_symbol
+         s2 = .atom(pair(1,2)).chemical_symbol
+         stdout.text("% "//trim(s1)//"--"//trim(s2)//" bonds")
+
+         do a = 1,pair.dim1
+            stdout.put("\namebond{a",width=11)
+            val = INT:to_str(pair(a,1))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{a",width=3)
+            val = INT:to_str(pair(a,2))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = REAL:to_str(tAB(a),"f10.2",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = INT:to_str(nint(pAB(a)),"i3",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}",width=1)
+            stdout.flush
+         end
+
+         ! Clean
+         pAB.destroy
+         tAB.destroy
+         iAB.destroy
+         cAB.destroy
+         labels.destroy
+         dash.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Clean
+      Z_list.destroy
+
+      stdout.revert
+
+   end
+
+   put_bond_indices_all_vdw
+   ! Output all bond indices and shortest vdw bond for LaTeX script
+   ! "bondtable-vdw.tex".
+      self :: IN
+
+   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i,a :: INT
+      pair :: MAT{INT}*
+      labels :: MAT{STR}*
+      dash :: VEC{STR}*
+      vdw :: VEC{INT}(2)
+      s1,s2,val :: STR
+      dist,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+      if (NOT .atom.has_vdw_bond) return
+
+      stdout.redirect("bondtable-vdw.tex")
+
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         if (.analyze_vdw_atom_pairs) then
+         .atom.get_vdw_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         else
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         end
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Dashes
+         dash.create(n_bonds)
+         dash    = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         cAB.create(n_bonds)
+         iAB.create(n_bonds)
+         tAB.create(n_bonds)
+         pAB.create(n_bonds)
+
+         forall (i=1:n_bonds)
+         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
+         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         pAB(i) = .percent_covalency(pair(i,1),pair(i,2))
+         end
+
+         ! Put latex table
+         s1 = .atom(pair(1,1)).chemical_symbol
+         s2 = .atom(pair(1,2)).chemical_symbol
+         stdout.text("% "//trim(s1)//"--"//trim(s2)//" bonds")
+
+         do a = 1,pair.dim1
+            stdout.put("\namebond{a",width=11)
+            val = INT:to_str(pair(a,1))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{a",width=3)
+            val = INT:to_str(pair(a,2))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = REAL:to_str(tAB(a),"f10.2",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = INT:to_str(nint(pAB(a)),"i3",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}",width=1)
+            stdout.flush
+         end
+
+         ! Clean
+         pAB.destroy
+         tAB.destroy
+         iAB.destroy
+         cAB.destroy
+         labels.destroy
+         dash.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Clean
+      Z_list.destroy
+
+      ! Now put the shortest vdw bond
+      stdout.text("% Shortest vdw bond")
+
+      ! Get shortest vdw bond
+      vdw = .atom.shortest_vdw_bond
+
+         ! Allocate & get
+         tAB.create(1)
+         pAB.create(1)
+
+         tAB(1) = .bond_index(vdw(1),vdw(2))
+         pAB(1) = .percent_covalency(vdw(1),vdw(2))
+
+            ! Print tabele
+            stdout.put("\namebond{a",width=11)
+            val = INT:to_str(vdw(1))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{a",width=3)
+            val = INT:to_str(vdw(2))
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = REAL:to_str(tAB(1),"f10.2",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = INT:to_str(nint(pAB(1)),"i3",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
+            stdout.put("}",width=1)
+            stdout.flush
+
+         ! Clean
+         pAB.destroy
+         tAB.destroy
+
+      ! Revert
+      stdout.revert
+
+   end
+
+   put_bond_indices_non_H
+   ! Output the non-H bond indices for LaTex script in
+   ! "non-H-bondtable.tex".
+      self :: IN
+
+   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i,a :: INT
+      pair :: MAT{INT}*
+      labels :: MAT{STR}*
+      dash :: VEC{STR}*
+      s1,s2,val :: STR
+      dist,cAB,iAB,tAB,pAB :: VEC{REAL}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+
+      stdout.redirect("non-H-bondtable.tex")
 
       no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
       if (no_of_bonds<1) return
@@ -3138,17 +3458,6 @@ contains
          pAB(i) = .percent_covalency(pair(i,1),pair(i,2))
          end
 
-         ! Sort & rearrange
-         ind.create(n_bonds)
-         tAB.quick_sort(ind,decreasing_order=TRUE)
-         labels(:,1) = labels(ind,1)
-         labels(:,2) = labels(ind,2)
-         dist = dist(ind)
-         cAB  = cAB(ind)
-         iAB  = iAB(ind)
-         tAB  = tAB(ind)
-         pAB  = pAB(ind)
-
          ! Put latex table
          s1 = .atom(pair(1,1)).chemical_symbol
          s2 = .atom(pair(1,2)).chemical_symbol
@@ -3164,12 +3473,14 @@ contains
             stdout.put("}{",width=2)
             val = REAL:to_str(tAB(a),"f10.2",left_justify=TRUE)
             stdout.put(val,width=len_trim(val))
+            stdout.put("}{",width=2)
+            val = INT:to_str(nint(pAB(a)),"i3",left_justify=TRUE)
+            stdout.put(val,width=len_trim(val))
             stdout.put("}",width=1)
             stdout.flush
          end
 
          ! Clean
-         ind.destroy
          pAB.destroy
          tAB.destroy
          iAB.destroy
@@ -3191,7 +3502,7 @@ contains
    end
 
    put_bond_indices_CC
-   ! Output the CC bond indices table for connected atoms.
+   ! Output the CC bond indices table in file "cc-table".
       self :: IN
 
    ENSURE(NOT .is_homoleptic,"job is homoleptic")
@@ -3345,9 +3656,8 @@ contains
    ! Put to stdout the only Roby atom energies
       self :: IN
 
-   ENSURE(.E1.created,"no atom energies exist")
-   ENSURE(.E2.created,"no atom pair energies exist")
    ENSURE(.atom.created,"no atom data")
+   ENSURE(.E1.created,"no atom energies exist")
 
       table :: VEC{TABLE_COLUMN}*
       symbols :: VEC{STR}*
@@ -3359,6 +3669,11 @@ contains
       stdout.text("==================")
       stdout.text("Roby atom energies")
       stdout.text("==================")
+      stdout.flush
+      stdout.text(". Half of the nuclear-nuclear repulsion energies")
+      stdout.text("  for all other atoms are included in the total")
+      stdout.flush
+      stdout.text(". Energies are in atomic units")
       stdout.flush
 
       ! Create table
@@ -3399,10 +3714,14 @@ contains
       self :: IN
 
       if (.is_homoleptic) then
+
          .put_energy_indices_group
+
       else
+
          .put_energy_indices_atoms
          .put_energy_indices_sorted
+
       end
 
    end
@@ -3413,6 +3732,8 @@ contains
 
    ENSURE(.is_homoleptic,"job is not homoleptic")
    ENSURE(.n_group>1,"must be at leat two groups")
+   ENSURE(.E1.created,"no atom energies exist")
+   ENSURE(.E2.created,"no atom pair energies exist")
 
       table :: VEC{TABLE_COLUMN}*
       symbol :: VEC{STR}*
@@ -3543,6 +3864,8 @@ contains
       self :: IN
 
    ENSURE(NOT .is_homoleptic,"job is homoleptic")
+   ENSURE(.E1.created,"no atom energies exist")
+   ENSURE(.E2.created,"no atom pair energies exist")
 
       table :: VEC{TABLE_COLUMN}*
       Z_list :: VEC{VEC_{INT}}*
@@ -4252,6 +4575,99 @@ contains
       table(7).set_values(i_m)
 
       table(8).set_heading(" Ion.")
+      table(8).set_subhead("index")
+      table(8).set_values(ion)
+
+      table.put(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      ion.destroy
+      i_m.destroy
+      i_p.destroy
+      cov.destroy
+      c_m.destroy
+      c_p.destroy
+      ang.destroy
+      par.destroy
+
+   end
+
+   put_theta_energy_info
+   ! Output Theta-space energy information
+      self :: IN
+
+      n,i,j,angle :: INT
+      par :: VEC{STR}*
+      ang :: VEC{INT}*
+      c_p,c_m,cov,i_p,i_m,ion :: VEC{REAL}*
+      table :: VEC{TABLE_COLUMN}*
+
+      ! Columns
+      n = .n_paired_angles
+      par.create(n)
+      ang.create(n)
+      c_p.create(n)
+      c_m.create(n)
+      cov.create(n)
+      i_p.create(n)
+      i_m.create(n)
+      ion.create(n)
+
+      ! Set column data
+      j = 0
+      do i = 1,.n_bf_ab
+
+         if (.pair(i)<1 OR i<.pair(i)) cycle
+
+         angle = nint(.theta_angle(i))
+         if (angle==90) cycle
+
+         j = j + 1
+
+         par(j) = "("//i.to_str.trim//","//.pair(i).to_str.trim//")"
+         ang(j) = angle
+         c_p(j) = .E_C(i)
+         c_m(j) = .E_C(.pair(i))
+         cov(j) = .E_covalent_index(i)
+         i_p(j) = .E_I(i)
+         i_m(j) = .E_I(.pair(i))
+         ion(j) = .E_ionic_index(i)
+
+      end
+
+      ! Do table
+      table.create(8)
+
+      table(1).set_heading("Paired")
+      table(1).set_subhead(" space")
+      table(1).set_values(par)
+
+      table(2).set_heading("theta")
+      table(2).set_subhead(" /deg")
+      table(2).set_values(ang)
+
+      table(3).set_heading("  C+  ")
+      table(3).set_subhead("energy")
+      table(3).set_values(c_p)
+
+      table(4).set_heading("  C- ")
+      table(4).set_subhead("energy")
+      table(4).set_values(c_m)
+
+      table(5).set_heading("E Cov")
+      table(5).set_subhead("index")
+      table(5).set_values(cov)
+
+      table(6).set_heading("  I+  ")
+      table(6).set_subhead("energy")
+      table(6).set_values(i_p)
+
+      table(7).set_heading("  I-  ")
+      table(7).set_subhead("energy")
+      table(7).set_values(i_m)
+
+      table(8).set_heading("E Ion")
       table(8).set_subhead("index")
       table(8).set_values(ion)
 

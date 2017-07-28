@@ -1079,11 +1079,11 @@ contains
       list.create(.n_fragment_atoms)
       list = [(a, a=1,.n_fragment_atoms)]
 
-      ! Initialise .asymmetric_unit as the whole fragment
+      ! Initialise .asymmetric_unit_geometry as the whole fragment
       .asymmetric_unit_geometry.create_copy(.fragment_geometry)
       .n_asymmetric_unit_atoms = .n_fragment_atoms
 
-      ! Copy asymmetric unit, but put it to the unit cell
+      ! Copy asymmetric unit & shift it to the unit cell
       asymmetric_unit_geometry.create_copy(.asymmetric_unit_geometry)
       .put_to_unit_cell(asymmetric_unit_geometry)
 
@@ -1114,11 +1114,11 @@ contains
          ! Loop over symops
          do s = 1,.spacegroup.n_seitz
 
-            ! Get asymmetric unit atom cell-offset
+            ! Get the (unshifted) unit atom cell-offset
             pa = .asymmetric_unit_geometry(:,a)
             .transform_position(pa,1,to_unit_cell=TRUE,unit_cell_shift=offset)
 
-            ! Transform asym unit atom with symop "s"
+            ! Transform (shifted) asym unit atom with symop "s"
             pa = asymmetric_unit_geometry(:,a)
             .transform_position(pa,s,to_unit_cell=TRUE)
 
@@ -1176,6 +1176,8 @@ contains
 
             ! New unit cell atom here ...
             n = n + 1
+
+            ! Append it's info ...
             .unit_cell_geometry.append_column(pa)
             .asym_atom_for_unit_cell_atom.append(a)
             .asym_symop_for_unit_cell_atom.append(s)
@@ -3194,6 +3196,34 @@ contains
 
    end
 
+
+   F2_exp result (res) ::: PURE
+   ! The experimental structure factors squared, (F_exp)^2
+      self :: IN
+      res :: VEC{REAL}(.data.reflections.dim)
+
+   ENSURE(.data_exists, "no diffraction data")
+
+      res = .data.F2_exp
+
+   end
+
+   F2_exp_scaled_corrected result (res) ::: PURE
+   ! The experimental structure factors squares, F_exp, on an absolute
+   ! scale, and corrected for dispersion (if any).
+   ! Method follows XD (2015) manual p. 45.
+   ! See also Ibers & Hamilton (1964) ACta Cryst. 17 p781.
+      self :: IN
+      res :: VEC{REAL}(.data.reflections.dim)
+
+   ENSURE(.data_exists, "no diffraction data")
+
+      res = .F_exp_scaled_corrected
+      res = res*res
+
+   end
+
+
    F_exp result (res) ::: PURE
    ! The experimental structure factors
       self :: IN
@@ -3202,6 +3232,54 @@ contains
    ENSURE(.data_exists, "no diffraction data")
 
       res = .data.F_exp
+
+   end
+
+   F_exp_scaled_corrected result (res) ::: PURE
+   ! The experimental structure factors F_exp on an absolute scale,
+   ! and corrected for dispersion (if any).
+   ! Method follows XD (2015) manual p. 45.
+   ! See also Ibers & Hamilton (1964) ACta Cryst. 17 p781.
+      self :: IN
+      res :: VEC{REAL}(.data.reflections.dim)
+
+   ENSURE(.data_exists, "no diffraction data")
+
+      Fc :: VEC{CPX}*
+
+      if (.correct_dispersion) then
+
+         ! Get dispersion correction
+         Fc.create(.data.reflections.dim)
+         .add_dispersion_correction(Fc)
+        
+         ! Get complex F_exp on absolute scale & remove dispersion
+         Fc = .data.F_exp_on_absolute_scale - abs(Fc)
+
+         ! Get corrected F_exp
+         res = abs(Fc)
+
+         ! Clean
+         Fc.destroy
+
+      else
+
+         ! Get F_exp on absolute scale
+         res = .data.F_exp_on_absolute_scale
+
+      end
+
+   end
+
+
+   F2_sigma result (res) ::: PURE
+   ! The structure factor errors squared
+      self :: IN
+      res :: VEC{REAL}(.data.reflections.dim)
+
+   ENSURE(.data_exists,"no diffraction data")
+
+      res = .data.F2_sigma
 
    end
 
@@ -3216,6 +3294,18 @@ contains
 
    end
 
+
+   F2_calc_abs result (res) ::: PURE
+   ! The calculated structure factors magnitude, squared
+      self :: IN
+      res :: VEC{CPX}(.data.reflections.dim)
+
+   ENSURE(.data_exists,"no diffraction data")
+
+      res = .data.F2_calc_abs
+
+   end
+
    F_calc result (res) ::: PURE
    ! The calculated structure factors
       self :: IN
@@ -3226,6 +3316,7 @@ contains
       res = .data.F_calc
 
    end
+
 
    F_chi2 result (res) ::: PURE
    ! Returns data
@@ -3386,10 +3477,14 @@ contains
 !  Structure refinement methods
 !  ============================
 
-   fit_rigid_atoms(sf_n) ::: leaky
-   ! Fit the Hirshfeld atoms to the calculated structure factors.
-   ! "sf_n" are the static (no-thermal motion) *aspherical* *atomic*
-   ! structure factors for the *unique* fragment atoms.
+   LS_structure_fit(sf_n,output,results) ::: leaky
+   ! Least-squares fit the the positions and ADPs of the unique
+   ! fragment atoms so that the structure factors obtained from the
+   ! static *aspherical* *atomic* form factor, in "sf_n", match the
+   ! experimental structure factors. The structure factors are for all
+   ! symmetry genetrated structure factors, and only for the *unique*
+   ! .fragment atom's which correspond to but are not necessarily the
+   ! same as the .asymmetric_unit_atom's.
    !
    ! NOTE: this routine does only one cycle of fitting with the
    !       current density matrix i.e. this is a "rigid atom fit".
@@ -3408,14 +3503,13 @@ contains
    !   shifts are later transformed back into asymmetric unit.
       self :: INOUT
       sf_n :: MAT{CPX}, INOUT
+      output,results :: BIN, IN
 
    ENSURE(sf_n.dim1==.n_unique_SF_k_pts,       "sf_n: wrong dim1")
    ENSURE(sf_n.dim2==.n_asymmetric_unit_atoms, "sf_n: wrong dim2")
    ENSURE(.data_exists,                        "no data")
    ENSURE(.fragment_info_made,                 "no fragment info")
 
-      fac :: REAL
-      v :: VEC{REAL}*
       dF :: MAT{REAL}*
 
       ! Create refinement arrays & initialize (leaky)
@@ -3430,18 +3524,11 @@ contains
       ! If refining, store a copy of the pADPs in .data.X_ref
       if (.data.refine_structure) .data.X_ref = .data.X_fit
 
-      if (.debugging("fit_rigid_atoms")) then
-         stdout.text("X_fit:")
-         fac = STR:conversion_factor("angstrom")
-         v.create(.data.X_fit.dim)
-         .asymmetric_unit_atom.put_pADP_vector_to(v,fac)
-         stdout.put(v,by_column=TRUE)
-         v.destroy
-      end
-
       ! Banner, options/switches, initial parameters,
       ! start banner, and iteration table header.
-      .put_fit_header_info
+      if (output) then
+         .put_fit_header_info
+      end
 
       ! Begin rigid-atom fit loop
       do
@@ -3470,7 +3557,7 @@ contains
          ! Set the fit errors e.g. max(dX/esd)
          ! Copy them to the asymmetric unit atoms.
          .update_fit_esds
-         .asymmetric_unit_atom.set_pADP_errors_to(.data.esd)
+         .asymmetric_unit_atom.set_pADP_errors_to(.data.esd,.data.refine_H_U_iso)
 
          ! Set ALL fragment_atom positions/ADPs from asym atoms HERE
          ! >>>fragment_atom must be the same as molecule.atom
@@ -3483,37 +3570,40 @@ contains
          dF.destroy
 
          ! Put the iteration results
-         .put_fit_iteration_results
+         if (output) then
+            .data.put_fit_table_body
+         end
 
          ! Finished?
          if (.fit_finished) exit
 
       end
 
-      ! Table footer and final results
-      .put_fit_iteration_results
-      .put_fit_footer_info
+      ! Table footer
+      if (output) then
+         .data.fit_table.put_footer
+      end
+
+      ! Final results
+      if (results) then
+         .put_fit_results
+      end
 
       ! Set the fragment covariances from cov matrix
       .set_fragment_esds
 
       ! Print out bond length, angle, torsion tables with errors
-      if (.data.show_fit_output) &
+      if (output) then
          .put_bond_info_with_errors
+      end
 
       ! Finally: remake .asymmetric_unit_atom/unit_cell geometry from
       ! .fragment_atom, which *must* be assigned since it must point
       ! to molecule.atom
       .asymmetric_unit_atom.destroy
       .asymmetric_unit_geometry.destroy
-      .asymmetric_unit_source = "tonto-rigid-atom-fit"
+      .asymmetric_unit_source = "tonto-ls-structure-fit"
       .make_fragment_data(.fragment_atom,assign_atom=TRUE,warnings=FALSE)
-
-      ! Put fit analysis statistics
-      if (NOT .data.refine_structure) .put_fitting_plots
-
-      ! Debug
-      if (.debugging("fit_rigid_atoms")) .put_unit_cell_geometry
 
    end
 
@@ -3727,16 +3817,15 @@ contains
 
    end
 
-   add_dispersion_correction(Fc)
+   add_dispersion_correction(Fc) ::: PURE
    ! Adds the dispersion correction to "Fc".
       self :: IN
       Fc :: VEC{CPX}, INOUT
 
    ENSURE(.unit_cell_atom.created,"no unit_cell_atom atom list!")
    ENSURE(.data.created,"no diffraction data!")
-   DIE_IF(.correct_dispersion AND refine_positions_only,"dispersion not available for position-only refinement")
+   ENSURE(NOT(.data.correct_dispersion AND .data.refine_positions_only),"dispersion not available for position-only refinement")
 
-     refine_positions_only :: BIN  DEFAULT(FALSE)
      ! Set TRUE if you only want to fit/refine the coordinates
 
       k_pts :: MAT{REAL}*
@@ -3753,7 +3842,7 @@ contains
       ! centro symmetry. Note that H U_iso refinement will not affect
       ! this section of code.
       do u = 1,.n_unit_cell_atoms
-         .unit_cell_atom(u).add_dispersion_H_ADP(Fc,k_pts,.unit_cell)
+         .unit_cell_atom(u).add_dispersion_H_ADP(Fc,k_pts)
       end
 
       ! Clean
@@ -3763,13 +3852,13 @@ contains
 
    add_D_dispersion_correction(dFc)
    ! Adds the *derivative* dispersion correction to the structure
-   ! factor derivativesa,"dFc".
+   ! factor derivatives,"dFc".
       self :: IN
       dFc :: MAT{CPX}, INOUT
 
    ENSURE(.unit_cell_atom.created,"no unit_cell_atom atom list!")
    ENSURE(.data.created,"no diffraction data!")
-   DIE_IF(.correct_dispersion AND .data.refine_positions_only,"dispersion not available for position-only refinement")
+   DIE_IF(.data.correct_dispersion AND .data.refine_positions_only,"dispersion not available for position-only refinement")
 
       k_pts :: MAT{REAL}*
       n_k,u, f,base :: INT
@@ -3864,6 +3953,8 @@ contains
 
    set_fragment_esds  ::: private
    ! Set *all* the errors in the .fragment_atom positions/ADPs
+      self :: INOUT
+
    ENSURE(.fragment_info_made,"no fragment info")
    ENSURE(.data.created,"no data")
    ENSURE(.data.fragment_covariance_matrix.created,"no data.fragment_covariance_matrix")
@@ -3879,7 +3970,7 @@ contains
       esd = sqrt(esd)
 
       ! Set the errors
-      .fragment_atom.set_pADP_errors_to(esd)
+      .fragment_atom.set_pADP_errors_to(esd,.data.refine_H_U_iso)
 
       ! Clean
       esd.destroy
@@ -5092,6 +5183,8 @@ contains
       n_k,f,u,k,base :: INT
       II,sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
       f_atom :: ATOM*
+      refine_4th_only :: BIN
+      zero3 :: REAL
 
       ! Constants
       II  = IMAGIFY(ONE)
@@ -5100,6 +5193,10 @@ contains
       ! Symmetry generated k points
       k_pt.create(n_k,3)
       .data.reflections.make_unique_SF_k_pts(k_pt,.spacegroup,.unit_cell)
+
+      ! Refine only 4th's?
+      zero3 = ONE
+      if (.data.refine_4th_order_only) zero3 = ZERO
 
       ! Initialize
       sf_e = ZERO
@@ -5184,16 +5281,16 @@ contains
                sf24 = sf1 * SIXTH*QUARTER
 
                ! U3 derivatives
-               sf_d(k,base+10) = -II*k1_k1*k1*sf6
-               sf_d(k,base+11) = -II*k2_k2*k2*sf6
-               sf_d(k,base+12) = -II*k3_k3*k3*sf6
-               sf_d(k,base+13) = -II*k1_k1*k2*sf2
-               sf_d(k,base+14) = -II*k1_k1*k3*sf2
-               sf_d(k,base+15) = -II*k2_k2*k1*sf2
-               sf_d(k,base+16) = -II*k2_k2*k3*sf2
-               sf_d(k,base+17) = -II*k3_k3*k1*sf2
-               sf_d(k,base+18) = -II*k3_k3*k2*sf2
-               sf_d(k,base+19) = -II*k1*k2*k3*sf1
+               sf_d(k,base+10) = -II*k1_k1*k1*sf6*zero3
+               sf_d(k,base+11) = -II*k2_k2*k2*sf6*zero3
+               sf_d(k,base+12) = -II*k3_k3*k3*sf6*zero3
+               sf_d(k,base+13) = -II*k1_k1*k2*sf2*zero3
+               sf_d(k,base+14) = -II*k1_k1*k3*sf2*zero3
+               sf_d(k,base+15) = -II*k2_k2*k1*sf2*zero3
+               sf_d(k,base+16) = -II*k2_k2*k3*sf2*zero3
+               sf_d(k,base+17) = -II*k3_k3*k1*sf2*zero3
+               sf_d(k,base+18) = -II*k3_k3*k2*sf2*zero3
+               sf_d(k,base+19) = -II*k1*k2*k3*sf1*zero3
 
                ! U4 derivatives
                sf_d(k,base+20) = k1_k1*k1_k1*sf24
@@ -5390,6 +5487,8 @@ contains
       n_k,f,u,k,base :: INT
       II,sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
       f_atom :: ATOM*
+      refine_4th_only :: BIN
+      zero3 :: REAL
 
       ! Constants
       II  = IMAGIFY(ONE)
@@ -5398,6 +5497,10 @@ contains
       ! Symmetry generated k points
       k_pt.create(n_k,3)
       .data.reflections.make_unique_SF_k_pts(k_pt,.spacegroup,.unit_cell)
+
+      ! Refine only 4th's?
+      zero3 = ONE
+      if (.data.refine_4th_order_only) zero3 = ZERO
 
       ! Initialize
       sf_e = ZERO
@@ -5484,16 +5587,16 @@ contains
                sf24 = sf1 * SIXTH*QUARTER
 
                ! U3 derivatives
-               sf_d(k,base+10) = -II*k1_k1*k1*sf6
-               sf_d(k,base+11) = -II*k2_k2*k2*sf6
-               sf_d(k,base+12) = -II*k3_k3*k3*sf6
-               sf_d(k,base+13) = -II*k1_k1*k2*sf2
-               sf_d(k,base+14) = -II*k1_k1*k3*sf2
-               sf_d(k,base+15) = -II*k2_k2*k1*sf2
-               sf_d(k,base+16) = -II*k2_k2*k3*sf2
-               sf_d(k,base+17) = -II*k3_k3*k1*sf2
-               sf_d(k,base+18) = -II*k3_k3*k2*sf2
-               sf_d(k,base+19) = -II*k1*k2*k3*sf1
+               sf_d(k,base+10) = -II*k1_k1*k1*sf6*zero3
+               sf_d(k,base+11) = -II*k2_k2*k2*sf6*zero3
+               sf_d(k,base+12) = -II*k3_k3*k3*sf6*zero3
+               sf_d(k,base+13) = -II*k1_k1*k2*sf2*zero3
+               sf_d(k,base+14) = -II*k1_k1*k3*sf2*zero3
+               sf_d(k,base+15) = -II*k2_k2*k1*sf2*zero3
+               sf_d(k,base+16) = -II*k2_k2*k3*sf2*zero3
+               sf_d(k,base+17) = -II*k3_k3*k1*sf2*zero3
+               sf_d(k,base+18) = -II*k3_k3*k2*sf2*zero3
+               sf_d(k,base+19) = -II*k1*k2*k3*sf1*zero3
 
                ! U4 derivatives
                sf_d(k,base+20) = k1_k1*k1_k1*sf24
@@ -6637,20 +6740,16 @@ contains
    ENSURE(.data_exists,"no diffraction data")
 
       ! Print header
-      .data.put_fit_header
+      DIFFRACTION_DATA:put_fit_header
 
       ! Put the fit control switches
-      if (.data.show_fit_output) then
       .data.put_refinement_switches
-      end
 
       ! Put the initial parameters
-      if (.data.show_fit_output) then
       stdout.flush(2)
       stdout.text("Initial parameter values:")
       stdout.flush
       .put_parameters(correlation_matrix=FALSE)
-      end
 
       ! Put the fit table header
       .data.put_fit_table_headings
@@ -6664,21 +6763,17 @@ contains
    ENSURE(.data_exists,"no diffraction data")
 
       ! Print header
-      .data.put_refinement_header
+      DIFFRACTION_DATA:put_refinement_header
 
       ! Put the refinement control switches
-      if (.data.show_refinement_output) then
       .data.put_refinement_switches
-      end
-
+      
       ! Put the initial parameters
-      if (.data.show_refinement_output) then
       stdout.flush
       stdout.text("Initial asymmetric unit parameter values:")
       stdout.flush
       .put_parameters(correlation_matrix=FALSE)
-      end
-
+      
       ! Put the refinement header info
       .data.put_refinement_table_headings
 
@@ -6795,29 +6890,29 @@ contains
 
    end
 
-   put_fit_iteration_results ::: private
-   ! Print out the current fit iterations results
-      self :: IN
+!   put_fit_iteration_results ::: private
+!   ! Print out the current fit iterations results
+!      self :: IN
+!
+!   ENSURE(.data_exists,"no diffraction data")
+!
+!      ! Put the table body
+!      .data.put_fit_table_body
+!
+!   end
 
-   ENSURE(.data_exists,"no diffraction data")
+!   put_refinement_iteration_results
+!   ! Print out the current refinement iterations results
+!      self :: IN
+!
+!   ENSURE(.data_exists,"no diffraction data")
+!
+!      ! Put the table body
+!      .data.put_refinement_table_body
+!
+!   end
 
-      ! Put the table body
-      .data.put_fit_table_body
-
-   end
-
-   put_refinement_iteration_results
-   ! Print out the current refinement iterations results
-      self :: IN
-
-   ENSURE(.data_exists,"no diffraction data")
-
-      ! Put the table body
-      .data.put_refinement_table_body
-
-   end
-
-   put_fit_footer_info ::: private
+   put_fit_results ::: private
    ! Finalise fit, write results
       self :: IN
 
@@ -6827,16 +6922,14 @@ contains
       .data.put_fit_results
 
       ! Put the parameters
-      if (.data.show_fit_output) then
       stdout.flush(2)
       stdout.text("Final asymmetric unit parameter values:")
       stdout.flush
       .put_parameters
-      end
 
    end
 
-   put_refinement_footer_info
+   put_refinement_results
    ! Finalise refinement, write results
       self :: IN
 
@@ -6846,12 +6939,10 @@ contains
       .data.put_refinement_results
 
       ! Put the final parameters
-      if (.data.show_refinement_output) then
       stdout.flush(2)
       stdout.text("Final asymmetric unit parameter values:")
       stdout.flush
       .put_parameters
-      end
 
    end
 
@@ -7428,7 +7519,17 @@ contains
 
    end
 
-   has_covariance_matrix result (res)
+   has_covariances result (res) ::: PURE
+   ! Does the covariance matrix exist?
+      self :: IN
+      res :: BIN
+
+      res = .has_covariance_matrix &
+        AND .has_fragment_covariance_matrix
+
+   end
+
+   has_covariance_matrix result (res) ::: PURE
    ! Does the covariance matrix exist?
       self :: IN
       res :: BIN
@@ -7443,7 +7544,7 @@ contains
 
    end
 
-   has_fragment_covariance_matrix result (res)
+   has_fragment_covariance_matrix result (res) ::: PURE
    ! Does the fragment_covariance matrix exist?
       self :: IN
       res :: BIN
@@ -7479,7 +7580,7 @@ contains
 
       ! Put the info
       atom.put_CIF_coords(refine_H_U_iso)
-      atom.put_CIF_ADP2
+      atom.put_CIF_ADP2(refine_H_U_iso)
       atom.put_CIF_ADPn(cif)
 
       ! Put the reflection data
@@ -7524,8 +7625,8 @@ contains
       esd = sqrt(esd)
 
       ! Put the info
-      atom.put_CIF_coords(esd,.data.refine_H_U_iso)
-      atom.put_CIF_ADP2(esd)
+      atom.put_CIF_coords(.data.refine_H_U_iso,esd)
+      atom.put_CIF_ADP2(.data.refine_H_U_iso,esd)
       atom.put_CIF_ADPn(cif,esd)
 
       ! Clean
@@ -7608,11 +7709,14 @@ contains
 
 ! Shelx fcf file
 
-   put_shelx_fcf
-   ! Put shelx fcf reflection file
+   put_shelx_fcf5
+   ! Put shelx fcf LIST=5 reflection file.
       self :: INOUT
 
       F000 :: REAL
+      fcmax :: REAL
+      F_corr,factor :: VEC{REAL}@
+      i :: INT
 
       ! Spacegroup information
       .spacegroup.put_CIF
@@ -7627,15 +7731,149 @@ contains
          F000 = .no_of_unit_cell_electrons
 
          stdout.flush
+         stdout.text("# The value below is just the no. of unit cell electrons")
+         stdout.flush
          stdout.show("_exptl_crystal_F_000               ",F000,dots=FALSE)
          stdout.flush
 
-         .data.reflections.put_shelx_fcf
+         stdout.text("# ===============")
+         stdout.text("# Reflection data")
+         stdout.text("# ===============")
+   
+         stdout.flush
+         stdout.show("_reflns_d_resolution_high          ",.data.reflections.d_max*ANGSTROM_PER_BOHR,dots=FALSE)
+         stdout.show("_reflns_d_resolution_low           ",.data.reflections.d_min*ANGSTROM_PER_BOHR,dots=FALSE)
+         stdout.show("_reflns_limit_h_max                ",maxval(.data.reflections(:).h),dots=FALSE)
+         stdout.show("_reflns_limit_h_min                ",minval(.data.reflections(:).h),dots=FALSE)
+         stdout.show("_reflns_limit_k_max                ",maxval(.data.reflections(:).k),dots=FALSE)
+         stdout.show("_reflns_limit_k_min                ",minval(.data.reflections(:).k),dots=FALSE)
+         stdout.show("_reflns_limit_l_max                ",maxval(.data.reflections(:).l),dots=FALSE)
+         stdout.show("_reflns_limit_l_min                ",minval(.data.reflections(:).l),dots=FALSE)
+
+         if (.data.scale_factors.destroyed) then
+         fcmax = .data.scale_factor
+         stdout.flush
+         stdout.show("_tonto_F_scale_factor              ",fcmax,dots=FALSE)
+         end
+   
+         fcmax = maxval(.data.reflections.F_calc_abs)
+
+         stdout.flush
+         stdout.show("_shelx_refln_list_code             ", 5,dots=FALSE)
+         stdout.show("_shelx_F_calc_maximum              ", fcmax,dots=FALSE)
+   
+         F_corr = .F_exp_scaled_corrected
+         factor = F_corr/.F_exp
+   
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("    _refln_index_h")
+         stdout.text("    _refln_index_k")
+         stdout.text("    _refln_index_l")
+         stdout.text("    _refln_F_meas")
+         stdout.text("    _refln_F_calc")
+         stdout.text("    _refln_phase_calc")
+   
+         do i = 1,.data.reflections.dim
+            stdout.put(.data.reflections(i).h,width=4)
+            stdout.put(.data.reflections(i).k,width=4)
+            stdout.put(.data.reflections(i).l,width=4)
+            stdout.put(F_corr(i),                              width=10,precision=2)
+            stdout.put(.data.reflections(i).F_calc_abs,        width=10,precision=2)
+            stdout.put(.data.reflections(i).F_phase_in_degrees,width= 7,precision=2)
+            stdout.flush
+         end
 
       end
       end
 
    end
+
+   put_shelx_fcf6
+   ! Put shelx fcf LIST=6 reflection file
+      self :: INOUT
+
+      F000 :: REAL
+      fcmax :: REAL
+      F2_cor,factor :: VEC{REAL}@
+      i :: INT
+
+      ! Spacegroup information
+      .spacegroup.put_CIF
+
+      ! Unit cell information; INOUT
+      .unit_cell.put_CIF(.Z)
+
+      ! Put the reflection data
+      if (.data.created) then
+      if (.data.reflections.created) then
+
+         F000 = .no_of_unit_cell_electrons
+
+         stdout.flush
+         stdout.text("# The value below is just the no. of unit cell electrons")
+         stdout.flush
+         stdout.show("_exptl_crystal_F_000               ",F000,dots=FALSE)
+         stdout.flush
+   
+         stdout.flush
+         stdout.text("# ===============")
+         stdout.text("# Reflection data")
+         stdout.text("# ===============")
+   
+         stdout.flush
+         stdout.show("_reflns_d_resolution_high          ",.data.reflections.d_max*ANGSTROM_PER_BOHR,dots=FALSE)
+         stdout.show("_reflns_d_resolution_low           ",.data.reflections.d_min*ANGSTROM_PER_BOHR,dots=FALSE)
+         stdout.show("_reflns_limit_h_max                ",maxval(.data.reflections(:).h),dots=FALSE)
+         stdout.show("_reflns_limit_h_min                ",minval(.data.reflections(:).h),dots=FALSE)
+         stdout.show("_reflns_limit_k_max                ",maxval(.data.reflections(:).k),dots=FALSE)
+         stdout.show("_reflns_limit_k_min                ",minval(.data.reflections(:).k),dots=FALSE)
+         stdout.show("_reflns_limit_l_max                ",maxval(.data.reflections(:).l),dots=FALSE)
+         stdout.show("_reflns_limit_l_min                ",minval(.data.reflections(:).l),dots=FALSE)
+
+         if (.data.scale_factors.destroyed) then
+         fcmax = .data.scale_factor
+         fcmax = fcmax*fcmax
+         stdout.flush
+         stdout.show("_tonto_F2_scale_factor             ",fcmax,dots=FALSE)
+         end
+   
+         fcmax = maxval(.data.reflections.F_calc_abs)
+   
+         stdout.flush
+         stdout.show("_shelx_refln_list_code             ", 6,dots=FALSE)
+         stdout.show("_shelx_F_calc_maximum              ", fcmax,dots=FALSE)
+   
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text("    _refln_index_h")
+         stdout.text("    _refln_index_k")
+         stdout.text("    _refln_index_l")
+         stdout.text("    _refln_F_squared_meas")
+         stdout.text("    _refln_F_squared_sigma")
+         stdout.text("    _refln_F_squared_calc")
+         stdout.text("    _refln_phase_calc")
+   
+         F2_cor = .F2_exp_scaled_corrected
+         factor = F2_cor/.F2_exp
+   
+         do i = 1,.data.reflections.dim
+            stdout.put(.data.reflections(i).h,width=4)
+            stdout.put(.data.reflections(i).k,width=4)
+            stdout.put(.data.reflections(i).l,width=4)
+            stdout.put(F2_cor(i),                              width=10)
+            stdout.put(.data.reflections(i).F2_sigma*factor(i),width=10)
+            stdout.put(.data.reflections(i).F2_calc_abs,       width=10)
+            stdout.put(.data.reflections(i).F_phase_in_degrees,width= 8,precision=2)
+            stdout.flush
+         end
+
+      end
+      end
+
+   end
+
+! XD fco file
 
    put_xd_fco
    ! Put XD fco reflection file
@@ -7723,13 +7961,13 @@ contains
       esd = sqrt(esd)
 
       ! Change axis system to crystal
-      .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell)
+      .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell,FALSE)
 
       ! Dump the data
       .asymmetric_unit_atom.put_excel_with_errors(esd,.data.temperature)
 
       ! Change axes back to cartesian
-      .asymmetric_unit_atom.change_axis_system_to("cartesian",.unit_cell)
+      .asymmetric_unit_atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
 
       ! Clean up
       esd.destroy
@@ -8081,23 +8319,24 @@ contains
 !  Put reflection related information
 !  ==================================
 
-   put_data_analysis
+   put_data_analysis(output)
    ! Put out analysis data for the reflections after a fit/refinement
       self :: IN
+      output :: BIN, optional, IN
 
    ENSURE(.data.created,"no diffraction data")
 
       show :: BIN
 
-      show = (.data.refine_structure AND .data.show_refinement_output) &
-          OR (.data.fit_structure    AND .data.show_fit_output) 
+      show = TRUE
+      if (present(output)) show = output
 
       if (NOT show) return
 
       .data.put_GOF_vs_STL_table
       .data.put_GOF_vs_F_exp_table
 
-      .put_reflection_data
+      .data.put_N_worst_reflections
 
       .put_fitting_plots
 
@@ -8120,13 +8359,13 @@ contains
 
       if (.xray_data.created) then
       if (.xray_data.reflections.created) then
-         .xray_data.put_reflection_data
+         .xray_data.put_reflections
       end
       end
 
       if (.xray_r_free_data.created) then
       if (.xray_r_free_data.reflections.created) then
-         .xray_r_free_data.put_reflection_data
+         .xray_r_free_data.put_reflections
       end
       end
 
@@ -8138,7 +8377,7 @@ contains
 
       if (.pnd_data.created) then
       if (.pnd_data.reflections.created) then
-         .pnd_data.put_reflection_data
+         .pnd_data.put_reflections
       end
       end
 
@@ -8243,8 +8482,12 @@ contains
 
    put_CX(label,formula,spacegroup)
    ! Output some information for the Crystal Explorer program.
-       label,formula,spacegroup :: STR
-       .unit_cell.put_CX(label,formula,spacegroup)
+      self :: INOUT
+
+      label,formula,spacegroup :: STR
+
+      .unit_cell.put_CX(label,formula,spacegroup)
+
    end
 
 !  ==================
@@ -8324,9 +8567,6 @@ contains
       stdout.flush
       lambda = .data.wavelength.to_units("angstrom")
       stdout.show("X-ray wavelength (Angstrom) = ",lambda)
-    ! lambda = REFLECTION:wavelength()
-    ! lambda = lambda.to_units("angstrom")
-    ! stdout.show("X-ray wavelength (Angstrom) = ",lambda)
       stdout.flush
 
       ! Data analysis
@@ -8453,9 +8693,14 @@ contains
 
    end
 
+
+!  ====================
+!  Residual density map
+!  ====================
+
    make_residual_density_map(map,pts)
    ! Make the crystal residual error "map" for the supplied points "pts" from
-   ! the crystal structure factors
+   ! the crystal structure factors.
       self :: IN
       map :: VEC{REAL}, OUT
       pts :: MAT{REAL}, IN
@@ -8486,8 +8731,11 @@ contains
       dF.create(n_refl)
       .data.make_phased_dF(dF)
 
-      ! Calculate residual map
+      ! Prefactor
+      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
       fac = TWO/.unit_cell.volume
+
+      ! Calculate residual map
       map = ZERO
 
       parallel do n = 1,pts.dim1
@@ -8520,6 +8768,572 @@ contains
       ! Clean
       dF.destroy
       k.destroy
+
+   end
+
+   make_residual_density_cell(map,nx,ny,nz)
+   ! Make the crystal residual error "map" in the unit cell with
+   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
+   ! The "map" array increments first on the x axis, then y, then z
+   ! i.e. it must be compatible with PLOT_GRID:make_points.
+   ! This routine takes advantage of the grid structure for speed.
+   ! This version need to gather the 1D phases over miller indices.
+      self :: IN
+      map :: VEC{REAL}, OUT
+      nx,ny,nz :: INT, IN
+
+      ! This version seems fastest
+      .make_residual_density_cell_n(map,nx,ny,nz)
+
+   end
+
+   make_residual_density_cell_c(map)
+   ! Make the crystal residual error "map" in the unit cell with
+   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
+   ! The "map" array increments first on the x axis, then y, then z
+   ! i.e. it must be compatible with PLOT_GRID:make_points.
+   ! This routine takes advantage of the grid structure for speed.
+   ! This version uses a cube of structure factors.
+      self :: IN
+      map :: MAT3{REAL}, OUT
+
+   ENSURE(.data.created, "no diffraction data")
+   ENSURE(.data.reflections.created, "no structure factors")
+   ENSURE(.data.have_F_calc, "no calculated structure factors")
+   ENSURE(.data.have_F_pred, "no predicted structure factors")
+   ENSURE(.data.have_F_exp, "no experimental structure factors")
+
+      n_refl :: INT
+      nx,ny,nz :: INT
+      hx,hy,hz :: INT
+      ix,iy,iz :: INT
+      xi,yi,zi :: REAL
+      fac,del  :: REAL
+      phx,phy,phz :: MAT{CPX}*
+      h_min,h_max :: VEC{INT}(3)
+      dF :: MAT3{CPX}*
+      ci :: CPX
+
+      ! Constants
+      nx = map.dim1
+      ny = map.dim2
+      nz = map.dim3
+      n_refl = .data.reflections.dim
+      ci     = -2*PI * IMAGIFY(ONE)
+
+      ! Maximum Miller indices
+      h_min = .data.reflections.h_min
+      h_max = .data.reflections.h_max
+
+      ! Get phased structure factor differences
+      ! (without extinction, but with scale correction)
+      dF.create(h_min,h_max)
+      .data.make_phased_dF(dF)
+
+      ! Prefactor
+      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
+      fac = TWO/.unit_cell.volume
+
+      ! Make the 1D x phases
+      phx.create([h_min(1),h_max(1)],[1,nx])
+      del = ONE/(nx-1)
+      do ix = 1,nx
+      do hx = h_min(1),h_max(1)
+         xi = (ix-1) * del
+         phx(hx,ix) = exp(ci*hx*xi)
+      end
+      end
+
+      ! Make the 1D y phases
+      phy.create([h_min(2),h_max(2)],[1,ny])
+      del = ONE/(ny-1)
+      do iy = 1,ny
+      do hy = h_min(2),h_max(2)
+         yi = (iy-1) * del
+         phy(hy,iy) = exp(ci*hy*yi)
+      end
+      end
+
+      ! Make the 1D z phases
+      phz.create([h_min(3),h_max(3)],[1,nz])
+      del = ONE/(nz-1)
+      do iz = 1,nz
+      do hz = h_min(3),h_max(3)
+         zi = (iz-1) * del
+         phz(hz,iz) = exp(ci*hz*zi) * fac ! <--
+      end
+      end
+
+      ! Do it
+      dF.change_basis_to(map,phx,phy,phz)
+
+      ! Clean
+      phx.destroy
+      phy.destroy
+      phz.destroy
+      dF.destroy
+
+   end
+
+   make_residual_density_cell_g(map,nx,ny,nz)
+   ! Make the crystal residual error "map" in the unit cell with
+   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
+   ! The "map" array increments first on the x axis, then y, then z
+   ! i.e. it must be compatible with PLOT_GRID:make_points.
+   ! This routine takes advantage of the grid structure for speed.
+   ! This version need to gather the 1D phases over miller indices.
+      self :: IN
+      map :: VEC{REAL}, OUT
+      nx,ny,nz :: INT, IN
+
+   ENSURE(.data.created, "no diffraction data")
+   ENSURE(.data.reflections.created, "no structure factors")
+   ENSURE(.data.have_F_calc, "no calculated structure factors")
+   ENSURE(.data.have_F_pred, "no predicted structure factors")
+   ENSURE(.data.have_F_exp, "no experimental structure factors")
+
+      n_refl,r,p :: INT
+      hx,hy,hz :: INT
+      ix,iy,iz :: INT
+      xi,yi,zi :: REAL
+      fac,del,res :: REAL
+      phx,phy,phz :: MAT{CPX}*
+      h_max :: VEC{INT}(3)
+      dF :: VEC{CPX}*
+      ci :: CPX
+
+      ! Constants
+      n_refl = .data.reflections.dim
+      ci     = -2*PI * IMAGIFY(ONE)
+
+      ! Maximum Miller indices
+      h_max = .data.reflections.h_max
+
+      ! Get phased structure factor differences
+      ! (without extinction, but with scale correction)
+      dF.create(n_refl)
+      .data.make_phased_dF(dF)
+
+      ! Prefactor
+      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
+      fac = TWO/.unit_cell.volume
+
+      ! Make the 1D x phases
+      phx.create([1,nx],[0,h_max(1)])
+      del = ONE/(nx-1)
+      do hx = 0,h_max(1)
+      do ix = 1,nx
+         xi = (ix-1) * del
+         phx(ix,hx) = exp(ci*hx*xi)
+      end
+      end
+
+      ! Make the 1D y phases
+      phy.create([1,ny],[0,h_max(2)])
+      del = ONE/(ny-1)
+      do hy = 0,h_max(2)
+      do iy = 1,ny
+         yi = (iy-1) * del
+         phy(iy,hy) = exp(ci*hy*yi)
+      end
+      end
+
+      ! Make the 1D z phases
+      phz.create([1,nz],[0,h_max(3)])
+      del = ONE/(nz-1)
+      do hz = 0,h_max(3)
+      do iz = 1,nz
+         zi = (iz-1) * del
+         phz(iz,hz) = exp(ci*hz*zi)
+      end
+      end
+
+
+      ! Grid point
+      p = 0
+
+      ! Make the residual map
+      do iz = 1,nz
+      do iy = 1,ny
+      do ix = 1,nx
+
+         p = p + 1
+
+         res = ZERO
+         do r = 3,n_refl
+            hx = .data.reflections(r).h
+            hy = .data.reflections(r).k
+            hz = .data.reflections(r).l
+            res = res + REALIFY(dF(r)*phx(ix,hx)*phy(iy,hy)*phz(iz,hz))
+         end
+
+         map(p) = fac*res
+
+      end
+      end
+      end
+
+      ! Clean
+      phx.destroy
+      phy.destroy
+      phz.destroy
+      dF.destroy
+
+   end
+
+   make_residual_density_cell_n(map,nx,ny,nz)
+   ! Make the crystal residual error "map" in the unit cell with
+   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
+   ! The "map" array increments first on the x axis, then y, then z
+   ! i.e. it must be compatible with PLOT_GRID:make_points.
+   ! This routine takes advantage of the grid structure for speed.
+   ! This version uses more memory for the 1D phase arrays.
+      self :: IN
+      map :: VEC{REAL}, OUT
+      nx,ny,nz :: INT, IN
+
+   ENSURE(.data.created, "no diffraction data")
+   ENSURE(.data.reflections.created, "no structure factors")
+   ENSURE(.data.have_F_calc, "no calculated structure factors")
+   ENSURE(.data.have_F_pred, "no predicted structure factors")
+   ENSURE(.data.have_F_exp, "no experimental structure factors")
+
+      n_refl,r,p :: INT
+      hx,hy,hz :: VEC{INT}*
+      ix,iy,iz :: INT
+      xi,yi,zi :: REAL
+      fac,del  :: REAL
+      dF :: VEC{CPX}*
+      phx,phy,phz :: MAT{CPX}*
+      h_max :: VEC{INT}(3)
+      ci :: CPX
+
+      ! Constants
+      n_refl = .data.reflections.dim
+      ci     = -2*PI * IMAGIFY(ONE)
+
+      ! Maximum Miller indices
+      h_max = .data.reflections.h_max
+
+      ! Get phased structure factor differences
+      ! (without extinction, but with scale correction)
+      dF.create(n_refl)
+      .data.make_phased_dF(dF)
+
+      ! Prefactor
+      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
+      fac = TWO/.unit_cell.volume
+      dF  = fac * dF
+
+      ! Get h's
+      hx.create(n_refl)
+      hy.create(n_refl)
+      hz.create(n_refl)
+
+      hx = .data.reflections(:).h
+      hy = .data.reflections(:).k
+      hz = .data.reflections(:).l
+
+      ! Make the 1D x phases
+      phx.create(n_refl,nx)
+      del = ONE/(nx-1)
+      do ix = 1,nx
+         xi = (ix-1) * del
+         do r = 1,n_refl
+            phx(r,ix) = exp(ci*hx(r)*xi)
+         end
+      end
+
+      ! Make the 1D y phases
+      phy.create(n_refl,ny)
+      del = ONE/(ny-1)
+      do iy = 1,ny
+         yi = (iy-1) * del
+         do r = 1,n_refl
+            phy(r,iy) = exp(ci*hy(r)*yi)
+         end
+      end
+
+      ! Make the 1D z phases
+      phz.create(n_refl,nz)
+      del = ONE/(nz-1)
+      do iz = 1,nz
+         zi = (iz-1) * del
+         do r = 1,n_refl
+            phz(r,iz) = exp(ci*hz(r)*zi) * dF(r) ! <--
+         end
+      end
+
+
+      ! Grid point
+      p = 0
+
+      ! Make the residual map
+      do iz = 1,nz
+      do iy = 1,ny
+      do ix = 1,nx
+      
+         p = p + 1
+         map(p) = sum( REALIFY(phx(:,ix)*phy(:,iy)*phz(:,iz)) )
+      
+      end
+      end
+      end
+
+      ! Clean
+      phz.destroy
+      phy.destroy
+      phx.destroy
+      hz.destroy
+      hy.destroy
+      hx.destroy
+      dF.destroy
+
+   end
+
+   make_residual_density_cell_m(map,nx,ny,nz)
+   ! Make the crystal residual error "map" in the unit cell with
+   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
+   ! The "map" array increments first on the x axis, then y, then z
+   ! i.e. it must be compatible with PLOT_GRID:make_points.
+   ! This routine takes advantage of the grid structure for speed.
+   ! This version uses more memory for the 1D phase arrays.
+      self :: IN
+      map :: VEC{REAL}, OUT
+      nx,ny,nz :: INT, IN
+
+   ENSURE(.data.created, "no diffraction data")
+   ENSURE(.data.reflections.created, "no structure factors")
+   ENSURE(.data.have_F_calc, "no calculated structure factors")
+   ENSURE(.data.have_F_pred, "no predicted structure factors")
+   ENSURE(.data.have_F_exp, "no experimental structure factors")
+
+      n_refl,r,p :: INT
+      hx,hy,hz :: VEC{INT}*
+      ix,iy,iz :: INT
+      xi,yi,zi :: REAL
+      fac,del  :: REAL
+      dF, phyz :: VEC{CPX}*
+      phx,phy,phz :: MAT{CPX}*
+      h_max :: VEC{INT}(3)
+      ci :: CPX
+
+      ! Constants
+      n_refl = .data.reflections.dim
+      ci     = -2*PI * IMAGIFY(ONE)
+
+      ! Maximum Miller indices
+      h_max = .data.reflections.h_max
+
+      ! Get phased structure factor differences
+      ! (without extinction, but with scale correction)
+      dF.create(n_refl)
+      .data.make_phased_dF(dF)
+
+      ! Prefactor
+      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
+      fac = TWO/.unit_cell.volume
+      dF  = fac * dF
+
+      ! Get h's
+      hx.create(n_refl)
+      hy.create(n_refl)
+      hz.create(n_refl)
+
+      hx = .data.reflections(:).h
+      hy = .data.reflections(:).k
+      hz = .data.reflections(:).l
+
+      ! Make the 1D x phases
+      phx.create(n_refl,nx)
+      del = ONE/(nx-1)
+      do ix = 1,nx
+         xi = (ix-1) * del
+         do r = 1,n_refl
+            phx(r,ix) = exp(ci*hx(r)*xi)
+         end
+      end
+
+      ! Make the 1D y phases
+      phy.create(n_refl,ny)
+      del = ONE/(ny-1)
+      do iy = 1,ny
+         yi = (iy-1) * del
+         do r = 1,n_refl
+            phy(r,iy) = exp(ci*hy(r)*yi)
+         end
+      end
+
+      ! Make the 1D z phases
+      phz.create(n_refl,nz)
+      del = ONE/(nz-1)
+      do iz = 1,nz
+         zi = (iz-1) * del
+         do r = 1,n_refl
+            phz(r,iz) = exp(ci*hz(r)*zi) * dF(r) ! <--
+         end
+      end
+
+
+      ! Grid point
+      p = 0
+
+      ! Make the residual map
+      phyz.create(n_refl)
+
+      do iz = 1,nz
+      do iy = 1,ny
+
+         phyz = phy(:,iy)*phz(:,iz)
+
+         do ix = 1,nx
+        
+            p = p + 1
+            map(p) = sum( REALIFY(phx(:,ix)*phyz(:)) )
+        
+         end
+
+      end
+      end
+
+      ! Clean
+      phyz.destroy
+      phz.destroy
+      phy.destroy
+      phx.destroy
+      hz.destroy
+      hy.destroy
+      hx.destroy
+      dF.destroy
+
+   end
+
+   make_residual_density_cell_p(map,nx,ny,nz)
+   ! Make the crystal residual error "map" in the unit cell with
+   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
+   ! The "map" array increments first on the x axis, then y, then z
+   ! i.e. it must be compatible with PLOT_GRID:make_points.
+   ! This routine takes advantage of the grid structure for speed.
+   ! This version uses a 2D phase array and reduced multiplication.
+      self :: IN
+      map :: VEC{REAL}, OUT
+      nx,ny,nz :: INT, IN
+
+   ENSURE(.data.created, "no diffraction data")
+   ENSURE(.data.reflections.created, "no structure factors")
+   ENSURE(.data.have_F_calc, "no calculated structure factors")
+   ENSURE(.data.have_F_pred, "no predicted structure factors")
+   ENSURE(.data.have_F_exp, "no experimental structure factors")
+
+      n_refl,r,p :: INT
+      hx,hy,hz :: VEC{INT}*
+      ix,iy,iz :: INT
+      xi,yi,zi :: REAL
+      fac,del  :: REAL
+      dF, phyz :: VEC{CPX}*
+      phx,phy,phz :: MAT{CPX}*
+      ph2 :: MAT3{CPX}*
+      h_max :: VEC{INT}(3)
+      ci :: CPX
+
+      ! Constants
+      n_refl = .data.reflections.dim
+      ci     = -2*PI * IMAGIFY(ONE)
+
+      ! Maximum Miller indices
+      h_max = .data.reflections.h_max
+
+      ! Get phased structure factor differences
+      ! (without extinction, but with scale correction)
+      dF.create(n_refl)
+      .data.make_phased_dF(dF)
+
+      ! Prefactor
+      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
+      fac = TWO/.unit_cell.volume
+
+      ! Get h's
+      hx.create(n_refl)
+      hy.create(n_refl)
+      hz.create(n_refl)
+
+      hx = .data.reflections(:).h
+      hy = .data.reflections(:).k
+      hz = .data.reflections(:).l
+
+      ! Allocate the 2D phase array
+      ph2.create(n_refl,ny,nz)
+
+      ! Make the 1D z phases
+      phz.create(n_refl,nz)
+      del = ONE/(nz-1)
+      do iz = 1,nz
+         zi = (iz-1) * del
+         do r = 1,n_refl
+            phz(r,iz) = exp(ci*hz(r)*zi)
+         end
+      end
+
+      ! Make the 1D y phases
+      phy.create(n_refl,ny)
+      del = ONE/(ny-1)
+      do iy = 1,ny
+         yi = (iy-1) * del
+         do r = 1,n_refl
+            phy(r,iy) = exp(ci*hy(r)*yi)
+         end
+      end
+
+      ! Make the 2D array
+      do iz = 1,nz
+      do iy = 1,ny
+         do r = 1,n_refl
+            ph2(r,iy,iz) = phy(r,iy)*phz(r,iz)
+         end
+      end
+      end
+
+      ! Clean
+      phy.destroy
+      phz.destroy
+
+      ! Make the 1D x phases
+      phx.create(n_refl,nx)
+      del = ONE/(nx-1)
+      do ix = 1,nx
+         xi = (ix-1) * del
+         do r = 1,n_refl
+            phx(r,ix) = exp(ci*hx(r)*xi) * dF(r) * fac
+         end
+      end
+
+
+      ! Grid point
+      p = 0
+
+      ! Make the residual map
+      do iz = 1,nz
+      do iy = 1,ny
+
+         phyz => ph2(:,iy,iz)
+
+         do ix = 1,nx
+        
+            p = p + 1
+            map(p) = sum( REALIFY(phx(:,ix)*phyz) )
+        
+         end
+
+      end
+      end
+
+      ! Clean
+      phx.destroy
+      ph2.destroy
+      hz.destroy
+      hy.destroy
+      hx.destroy
+      dF.destroy
 
    end
 
@@ -8600,7 +9414,7 @@ contains
       atom.set_axis_system_to("crystal")
       atom.set_positions_to(fg)
       atom.zero_pADP_errors
-      atom.change_axis_system_to("cartesian",.unit_cell)
+      atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
 
       if (.debugging("make_fragment_data")) then
           stdout.put("make_fragment_data:")
@@ -10113,7 +10927,7 @@ contains
       ! Change coordinates to cartesian
       ! Errors (if any) are changed straightforwardly
       ! WARNING: set info_made to FALSE in parent molecule, if any
-      fragment_atom.change_axis_system_to("cartesian",.unit_cell)
+      fragment_atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
 
    end
 
@@ -10189,7 +11003,7 @@ contains
 
       ! Change coordinates to cartesian
       ! Errors (if any) are changed straightforwardly
-      mol_atom.change_axis_system_to("cartesian",.unit_cell)
+      mol_atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
 
    end
 
@@ -10374,7 +11188,7 @@ contains
 
       ! Change pos to cartesian
       ! Errors (if any) are changed straightforwardly
-      atom.change_axis_system_to("cartesian",.unit_cell)
+      atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
 
       ! Update labels/groups
       atom.update
@@ -10445,7 +11259,7 @@ contains
 
       ! Change pos to cartesian
       ! Errors (if any) are changed straightforwardly
-      atom.change_axis_system_to("cartesian",.unit_cell)
+      atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
 
       ! Update labels/groups
       atom.update
@@ -12621,22 +13435,23 @@ contains
       stdout.text("==============================")
       stdout.text("Cluster generation information")
       stdout.text("==============================")
-      stdout.flush
 
+      stdout.flush
       stdout.show("Cluster generation method       =",.generation_method)
-      stdout.show("Complete connected fragments    =",.defragment)
+      stdout.show("Complete connected fragments?   =",.defragment)
       stdout.show("Radius of cluster               =",.radius)
+      stdout.flush
       stdout.show("No. of molecules                =",.n_molecules)
       stdout.show("No. of atoms                    =",.n_atoms)
       stdout.show("No. of fragment atoms           =",.n_fragment_atoms)
+      stdout.flush
       stdout.show("Fragment offset                 =",.fragment_offset)
       stdout.show("Minimum cell shift for search   =",.h_min)
       stdout.show("Maximum cell shift for search   =",.h_max)
 
       if (.fragment_geometry.created)    .put_central_fragment_coords
       if (.occupation_list.created)      .put_occupation_list
-      if (.atom_connection.created)      .put_atom_connection_table
-      if (.occupation_list.created)      .put_atom_symmetry_table
+  !   if (.atom_connection.created)      .put_atom_connection_table
 
    end
 
@@ -12656,7 +13471,7 @@ contains
       stdout.text("=======================================")
 
       stdout.flush
-      stdout.show("No. of fragment atoms           =",.n_fragment_atoms)
+      stdout.show("No. of fragment atoms =",.n_fragment_atoms)
       stdout.flush
 
       ! Unique ID tags
@@ -12690,11 +13505,10 @@ contains
    ENSURE(.asym_symop_for_unit_cell_atom.created,"no asym_symop_for_unit_cell_atom")
    ENSURE(.asym_shift_for_unit_cell_atom.created,"no asym_shift_for_unit_cell_atom")
 
-      fi :: VEC{INT}*
-      h1,h2,h3,hc,ui :: VEC{INT}*
+      ua,aa, h1,h2,h3, sy,s1,s2,s3,ac,ao :: VEC{INT}*
       r1,r2,r3 :: VEC{REAL}*
       table :: VEC{TABLE_COLUMN}*
-      a,n :: INT
+      n :: INT
 
       stdout.flush
       stdout.text("=============")
@@ -12702,64 +13516,142 @@ contains
       stdout.text("=============")
 
       stdout.flush
-      stdout.show("Cluster generation method       =",.generation_method)
-      stdout.show("Complete connected fragments    =",.defragment)
-      stdout.show("Radius of cluster               =",.radius)
-      stdout.show("No. of molecules                =",.n_molecules)
-      stdout.show("No. of atoms                    =",.n_atoms)
-      stdout.show("No. of fragment atoms           =",.n_fragment_atoms)
-      stdout.show("Fragment offset                 =",.fragment_offset)
-      stdout.show("Minimum cell shift for search   =",.h_min)
-      stdout.show("Maximum cell shift for search   =",.h_max)
+      stdout.show("No. of atoms =",.n_atoms)
+
+      stdout.flush
+      stdout.text("The table below is understood as follows:")
+      stdout.flush
+      stdout.text("  #          = Cluster atom index")
+      stdout.text("  (xyz)      = Cluster atom coord (fractional)")
+      stdout.text("  UA         = Unit cell atom index which generates (xyz)")
+      stdout.text("  Mol        = Molecule index")
+      stdout.flush              
+      stdout.text("where")      
+      stdout.flush              
+      stdout.text("  (xyz)      = (UA xyz) + (h1 h2 h3)")
+      stdout.text("  (UA xyz)   = Unit cell atom coord")
+      stdout.text("  (h1 h2 h3) = Unit cell atom shift = US")
+      stdout.flush              
+      stdout.text("Also")       
+      stdout.flush              
+      stdout.text("  (xyz)      = Op(AA xyz) + (s1 s2 s3) + (h1 h2 h3)")
+      stdout.text("  (UA xyz)   = Op(AA xyz) + (s1 s2 s3)")
+      stdout.flush              
+      stdout.text("where")      
+      stdout.flush              
+      stdout.text("  Op         = Seitz symmetry operator")
+      stdout.text("  (AA xyz)   = Asym cell atom coord")
+      stdout.text("  (s1 s2 s3) = Asym cell atom shift = AS")
+      stdout.text("  AA         = Asym cell atom index which generates (xyz)")
+      stdout.text("  AA code    = Asym atom code to make (xyz) from AA")
+      stdout.text("             = Op | h1+s1+5 | h2+s2+5 | h3+s3+5")
+      stdout.text("  AO code    = AA | Op")
+      stdout.flush
+
 
 
       ! Data
-      a = 1
-      fi => a.sequence_up_to(.n_atoms)
-
       n = .occupation_list.dim
-      ui.create(n)
-      h1.create(n); h2.create(n); h3.create(n)
-      r1.create(n); r2.create(n); r3.create(n)
-      hc.create(n)
 
-      ui = CLUSTER_UA_FROM_CODE(.occupation_list)
-      h1 = CLUSTER_H1_FROM_CODE(.occupation_list)
-      h2 = CLUSTER_H2_FROM_CODE(.occupation_list)
-      h3 = CLUSTER_H3_FROM_CODE(.occupation_list)
-      r1 = .unit_cell_geometry(1,ui) + h1
-      r2 = .unit_cell_geometry(2,ui) + h2
-      r3 = .unit_cell_geometry(3,ui) + h3
-      hc = 1000*      .asym_symop_for_unit_cell_atom(ui)
-      hc = 100* (h1+5+.asym_shift_for_unit_cell_atom(1,ui)) + hc
-      hc = 10*  (h2+5+.asym_shift_for_unit_cell_atom(2,ui)) + hc
-      hc =      (h3+5+.asym_shift_for_unit_cell_atom(3,ui)) + hc
+      ua.create(n)
+      aa.create(n)
+      h1.create(n); h2.create(n); h3.create(n)
+      sy.create(n)
+      s1.create(n); s2.create(n); s3.create(n)
+      r1.create(n); r2.create(n); r3.create(n)
+      ac.create(n)
+      ao.create(n)
+
+      ua = CLUSTER_UA_FROM_CODE(.occupation_list)
+      aa = .asym_atom_for_unit_cell_atom(ua)
+
+      h1 = CLUSTER_H1_FROM_CODE(.occupation_list) + .fragment_offset(1)
+      h2 = CLUSTER_H2_FROM_CODE(.occupation_list) + .fragment_offset(2)
+      h3 = CLUSTER_H3_FROM_CODE(.occupation_list) + .fragment_offset(3)
+
+      r1 = .unit_cell_geometry(1,ua) + h1
+      r2 = .unit_cell_geometry(2,ua) + h2
+      r3 = .unit_cell_geometry(3,ua) + h3
+
+      sy = .asym_symop_for_unit_cell_atom(ua)
+      s1 = .asym_shift_for_unit_cell_atom(1,ua)
+      s2 = .asym_shift_for_unit_cell_atom(2,ua)
+      s3 = .asym_shift_for_unit_cell_atom(3,ua)
+
+      ac = 1000* sy
+      ac = 100* (h1+5+s1) + ac
+      ac = 10*  (h2+5+s2) + ac
+      ac =      (h3+5+s3) + ac
+
+      ao = 100* aa
+      ao = sy + ao
 
       ! Table
-      table.create(9)
-      table(1).set_heading("Cell");  table(1).set_values(ui)
-      table(1).set_subhead("atom")
-      table(2).set_heading("Group"); table(2).set_values(.molecule_for_atom)
-      table(2).set_subhead("(Mol)")
-      table(4).set_heading("Coord")
-      table(3).set_subhead("- x -"); table(3).set_values(r1)
-      table(4).set_subhead("- y -"); table(4).set_values(r2)
-      table(5).set_subhead("- z -"); table(5).set_values(r3)
-      table(4).set_sb3head("/frac")
-      table(7).set_heading("UC")
-      table(6).set_subhead("h1");    table(6).set_values(h1)
-      table(7).set_subhead("h2");    table(7).set_values(h2)
-      table(8).set_subhead("h3");    table(8).set_values(h3)
-      table(9).set_subhead("code");  table(9).set_values(hc)
+      table.create(15)
+
+      table( 1).set_heading(" UA")
+      table( 1).set_values(ua)
+
+      table( 2).set_heading("Mol")
+      table( 2).set_values(.molecule_for_atom)
+
+      table( 4).set_heading("(xyz)")
+
+      table( 3).set_subhead("- x -")
+      table( 4).set_subhead("- y -")
+      table( 5).set_subhead("- z -")
+
+      table( 3).set_values(r1)
+      table( 4).set_values(r2)
+      table( 5).set_values(r3)
+
+      table( 7).set_heading("US")
+
+      table( 6).set_subhead("h1")
+      table( 7).set_subhead("h2")
+      table( 8).set_subhead("h3")
+
+      table( 6).set_values(h1)
+      table( 7).set_values(h2)
+      table( 8).set_values(h3)
+
+      table( 9).set_heading("AA")
+      table( 9).set_values(aa)
+
+      table(10).set_heading("Op")
+      table(12).set_heading("AS")
+
+      table(11).set_subhead("s1")
+      table(12).set_subhead("s2")
+      table(13).set_subhead("s3")
+
+      table(10).set_values(sy)
+      table(11).set_values(s1)
+      table(12).set_values(s2)
+      table(13).set_values(s3)
+             
+      table(14).set_heading(" AA ")
+      table(14).set_subhead("code")
+      table(14).set_values(ac)
+             
+      table(15).set_heading(" AO ")
+      table(15).set_subhead("code")
+      table(15).set_values(ao)
+             
       table.put
 
       ! Clean
       table.clear_columns
       table.destroy
-      hc.destroy
+
+      ao.destroy
+      ac.destroy
       r3.destroy; r2.destroy; r1.destroy
+      s3.destroy; s2.destroy; s1.destroy
+      sy.destroy
       h3.destroy; h2.destroy; h1.destroy
-      fi.destroy
+      aa.destroy
+      ua.destroy
 
    end
 
@@ -12827,52 +13719,6 @@ contains
       stdout.dash(int_fields=8)
 
       stdout.unsave
-
-   end
-
-   put_atom_symmetry_table
-   ! Put the atom symmetry table i.e. those atoms in the cluste related by
-   ! symmetry.
-
-   ENSURE(.occupation_list.created,"no occupation_list")
-   ENSURE(.fragment_info_made,"no crystal fragment info")
-
-      asym_atom_for_atom,unique :: VEC{INT}*
-      a,u :: INT
-
-      asym_atom_for_atom.create(.n_atoms)
-      do a = 1,.n_atoms
-           u = CLUSTER_UA_FROM_CODE(.occupation_list(a))
-           asym_atom_for_atom(a) = .asym_atom_for_unit_cell_atom(u)
-      end
-      unique => asym_atom_for_atom.indices_of_unique_elements
-
-      stdout.flush
-      stdout.text("Asymmetric (unique) atoms:")
-      stdout.flush
-      stdout.show("n_asym_atoms =",unique.dim)
-      stdout.put(unique)
-      stdout.flush
-      stdout.text("Asymmetric (unique) atoms for each atom in the cluster, and associated symop:")
-      stdout.flush
-      stdout.dash(int_fields=3)
-      stdout.put("Atom",int_width=TRUE)
-      stdout.put("Unique",int_width=TRUE)
-      stdout.put("Symop",int_width=TRUE)
-      stdout.flush
-      stdout.dash(int_fields=3)
-      do a = 1,.n_atoms
-         u = CLUSTER_UA_FROM_CODE(.occupation_list(a))
-         stdout.put(a)
-         stdout.put(asym_atom_for_atom(a))
-         stdout.put(.asym_symop_for_unit_cell_atom(u))
-         stdout.flush
-      end
-      stdout.dash(int_fields=3)
-
-      ! Clean
-      unique.destroy
-      asym_atom_for_atom.destroy
 
    end
 

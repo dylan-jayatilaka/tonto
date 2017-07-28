@@ -81,7 +81,8 @@ module ATOM
 
    !  Table of elemental anamalous dispersion coefficients
    !  set by the user
-   element_xray_dispersion :: VEC{CPX}(118) = COMPLEXIFY(-ONE,ZERO)
+   xray_dispersion_set :: BIN = FALSE
+   element_xray_dispersion :: VEC{CPX}(118) = COMPLEXIFY(ZERO,ZERO)
 
    !  Bragg-Slater radii taken from Aaron Lee's code
    !  WARNING: this is in Angstroms!
@@ -1550,13 +1551,25 @@ contains
    ! Set the atomic number (integer) and related variables
       val :: INT
 
-   DIE_IF(val<=0 OR val>118,"unknown atomic number: "//trim(val.to_str))
+   ENSURE(val>0 OR val<119,"unknown atomic number: "//trim(val.to_str))
 
       .atomic_number  = val
       .nuclear_charge = val
       .label          = .chemical_symbol
 
       .set_mass
+
+   end
+
+   set_n_core_electrons(val) ::: PURE
+   ! Set the number of core electronbs in the case ECPs are used.
+   ! For gaussian only so far.
+      self :: INOUT
+      val :: INT, IN
+
+   ENSURE(val>0 OR val<119,"val out of range: "//trim(val.to_str))
+
+      .n_core_electrons = val
 
    end
 
@@ -1647,13 +1660,13 @@ contains
 
    end
 
-   set_U_iso_error(val) ::: pure
+   set_U_iso_error(err) ::: pure
    ! Set U_iso error
    ! NOTE: Do you need to set the .ADP_axis_system too?
       self :: INOUT
-      val :: REAL, IN
+      err :: REAL, IN
 
-      .U_iso_error = val
+      .U_iso_error = err
 
    end
 
@@ -1992,7 +2005,7 @@ contains
 
          ! Set the pADPs and errors
          .set_pADP_vector_to(X)
-         .set_pADP_errors_to(dX)
+         .set_pADP_errors_to(dX,FALSE)
 
          ! Clean
          dX.destroy
@@ -2197,16 +2210,17 @@ contains
 
       dX = ZERO
 
-      .set_pADP_errors_to(dX)
+      .set_pADP_errors_to(dX,FALSE)
 
    end
 
-   set_pADP_errors_to(dX) ::: PURE
+   set_pADP_errors_to(dX,H_U_iso) ::: PURE
    ! Set the parameter errors (positions and ADPs) to "dX".
    ! NOTE: The pADP's and errors must be already created
    ! NOTE: "dX" must be correct size.
       self :: INOUT
       dX :: VEC{REAL}, IN
+      H_U_iso :: BIN, IN
 
    ENSURE(.pADP_errors.created,"no pADP_errors")
    ENSURE(.pADP_errors.dim==dX.dim,"wrong size, dX")
@@ -2217,17 +2231,21 @@ contains
       .pADP_errors    = dX
       
       ! Set U_iso error
-      if (.ADP_axis_system=="cartesian") then
-         val = THIRD*sum(.pADP_errors(4:6))
+      val = sum(.pADP_errors(4:6))
+      if (.atomic_number==1 AND H_U_iso) then
+         .set_U_iso_error(val)
+      else
+         val = THIRD*val
          .set_U_iso_error(val)
       end
 
    end
 
-   set_ADP2_errors_to(dU) ::: PURE
+   set_ADP2_errors_to(dU,H_U_iso) ::: PURE
    ! Set the second-order ADP errors from vector "dU".
       self :: INOUT
       dU :: VEC{REAL}, IN
+      H_U_iso :: BIN, IN
 
    ENSURE(.pADP_errors.created,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
@@ -2238,17 +2256,21 @@ contains
       .pADP_errors( 4: 9) = dU( 1: 6)
       
       ! Set U_iso error
-      if (.ADP_axis_system=="cartesian") then
-         val = THIRD*sum(.pADP_errors(4:6))
-         .set_U_iso_error(val)
+      val = sum(.pADP_errors(4:6))
+      if (.atomic_number==1 AND H_U_iso) then
+         .set_U_iso_error(val) ! This is correct believe it or not
+      else
+         val = THIRD*val
+         .set_U_iso_error(val) ! This is what you expect, normally
       end
 
    end
 
-   set_ADP2_errors_to(dU) ::: PURE
+   set_ADP2_errors_to(dU,H_U_iso) ::: PURE
    ! Set the second-order ADP errors from vector "dU" *matrix*
       self :: INOUT
       dU :: MAT{REAL}(3,3), IN
+      H_U_iso :: BIN, IN
 
    ENSURE(.pADP_errors.created,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
@@ -2263,8 +2285,11 @@ contains
       .pADP_errors(9) = dU(2,3)
       
       ! Set U_iso error
-      if (.ADP_axis_system=="cartesian") then
-         val = THIRD*sum(.pADP_errors(4:6))
+      val = sum(.pADP_errors(4:6))
+      if (.atomic_number==1 AND H_U_iso) then
+         .set_U_iso_error(val)
+      else
+         val = THIRD*val
          .set_U_iso_error(val)
       end
 
@@ -2884,6 +2909,27 @@ contains
 
       .set_ADP_tensor(ADP(:,:))
 
+      ! Now set the errors
+      if (.pADP_errors.created) then
+
+         ! The averaged trace of errors
+         val = THIRD * (.pADP_errors(4)+.pADP_errors(5)+.pADP_errors(6))
+
+      else
+
+         ! Use this as last resort
+         val = .U_iso_error
+
+      end
+
+      ! Make isotropic error
+      .pADP_errors(4) = val
+      .pADP_errors(5) = val
+      .pADP_errors(6) = val
+      .pADP_errors(7) = ZERO
+      .pADP_errors(8) = ZERO
+      .pADP_errors(9) = ZERO
+
    end
 
    set_group(val) ::: get_from(OBJECT:set, VAL?=>INT, ARG?=>.group), pure
@@ -3014,19 +3060,19 @@ contains
 !  Set ANO data and shell info made
 !  ================================
 
-   set_NAOs_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.NAOs_made)
+   set_NAOs_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.NAOs_made), pure
    ! Generic set
    end
 
-   set_ANOs_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.ANOs_made)
+   set_ANOs_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.ANOs_made), pure
    ! Generic set
    end
 
-   set_spherical_atom_data_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.spherical_atom_data_made)
+   set_spherical_atom_data_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.spherical_atom_data_made), pure
    ! Generic set
    end
 
-   set_shell_info_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.shell_info_made)
+   set_shell_info_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.shell_info_made), pure
    ! Generic set
    end
 
@@ -3034,15 +3080,15 @@ contains
 !  Set interpolators made?
 !  =======================
 
-   set_use_interpolator(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_interpolator)
+   set_use_interpolator(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_interpolator), pure
    ! Generic set
    end
 
-   set_ANO_interpolators_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.ANO_interpolators_made)
+   set_ANO_interpolators_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.ANO_interpolators_made), pure
    ! Generic set
    end
 
-   set_interpolators_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.interpolators_made)
+   set_interpolators_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.interpolators_made), pure
    ! Generic set
    end
 
@@ -3050,11 +3096,11 @@ contains
 !  Form factors
 !  ============
 
-   set_use_IAM_ITC_FFs(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_IAM_ITC_FFs)
+   set_use_IAM_ITC_FFs(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_IAM_ITC_FFs), pure
    ! Generic set
    end
 
-   set_f_i(val) 
+   set_f_i(val) ::: PURE
    ! Set f'
       self :: INOUT
       val :: REAL, IN
@@ -3066,7 +3112,7 @@ contains
 
    end
 
-   set_f_r(val) 
+   set_f_r(val) ::: PURE
    ! Set f''
       self :: INOUT
       val :: REAL, IN
@@ -3553,7 +3599,7 @@ contains
 !  Axis change methods
 !  ===================
 
-   change_axis_system_to(axis_system,cell,change_ESDs) ::: PURE
+   change_axis_system_to(axis_system,cell,H_U_iso,change_ESDs) ::: PURE
    ! Change the axis system for the position *and* ADP tensors to "axis_system",
    ! either "crystal" or "cartesian". "cell" holds the unit cell axis system
    ! information. Specify the "form" for the anharmonic ADPs.
@@ -3562,10 +3608,11 @@ contains
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
+      H_U_iso :: BIN, IN
       change_ESDs :: BIN, optional, IN
 
       .change_pos_axis_system_to(axis_system,cell,change_ESDs)
-      .change_ADP2_tensor_to(axis_system,cell,change_ESDs)
+      .change_ADP2_tensor_to(axis_system,cell,H_U_iso,change_ESDs)
       .change_ADPn_tensor_to_v2(axis_system,cell,change_ESDs)
 
    end
@@ -3620,7 +3667,7 @@ contains
 
    end
 
-   change_ADP2_tensor_to(axis_system,cell,change_ESDs) ::: private, PURE
+   change_ADP2_tensor_to(axis_system,cell,H_U_iso,change_ESDs) ::: private, PURE
    ! Change ADP2/s axis system into the "axis_system" frame.
    ! If "axis_system" is "cartesian" i.e. trasforming from standard
    ! crystal axes, then the errors are transformed too, linearly,
@@ -3629,6 +3676,7 @@ contains
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
+      H_U_iso :: BIN, IN
       change_ESDs :: BIN, optional, IN
 
    ENSURE(axis_system.is_one_of(["cartesian","crystal  "]),"unknown axis system!")
@@ -3672,8 +3720,12 @@ contains
 
          ! Change to cartesians !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
          .ADP_tensor.change_basis_to(ADP,cell.direct_U_matrix)
+
+         ! Set axis system *before* U_iso is set
+         .ADP_axis_system = "cartesian"
+
+         ! Now U_iso *is* set as a trace
          .set_ADP_tensor(ADP)
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
          ! Change errors?
          if (change_err) then
@@ -3682,7 +3734,7 @@ contains
          if (NOT .pADP_errors(4:9).is_zero) then
             .put_ADP2_errors_to(ADP)
             ADP.change_basis_using(cell.direct_U_matrix)
-            .set_ADP2_errors_to(ADP)
+            .set_ADP2_errors_to(ADP,H_U_iso)
          end
          end
          end
@@ -3692,21 +3744,33 @@ contains
          ! Could also check if supplied U_iso was correct
          if (chk) then
             val = THIRD*.ADP_tensor.trace
-            .U_iso = val
+            .set_U_iso(val)
          end
-
-         ! Set axis system
-         .ADP_axis_system = "cartesian"
 
       case ("crystal")
 
          if (.ADP_axis_system=="crystal") return
 
          .ADP_tensor.change_basis_to(ADP,cell.reciprocal_U_matrix)
+
+         ! Set axis system *before* U_iso is set
+         .ADP_axis_system = "crystal"
+
+         ! Now U_iso is not set as a trace
          .set_ADP_tensor(ADP)
 
-         ! Set axis system
-         .ADP_axis_system = "crystal"
+         ! Change errors?
+         if (change_err) then
+         if (.pADP_errors.created) then
+         if (.pADP_errors.dim>=9) then
+         if (NOT .pADP_errors(4:9).is_zero) then
+            .put_ADP2_errors_to(ADP)
+            ADP.change_basis_using(cell.reciprocal_U_matrix)
+            .set_ADP2_errors_to(ADP,H_U_iso)
+         end
+         end
+         end
+         end
 
       end
 
@@ -4623,6 +4687,24 @@ contains
 
    end
 
+   is_a_H_atom result(res) ::: elemental
+   ! Return whether the atom is a H atom
+      self :: IN
+      res :: BIN
+
+      res = .atomic_number==1
+
+   end
+
+   is_not_a_H_atom result(res) ::: elemental
+   ! Return whether the atom is not a H atom
+      self :: IN
+      res :: BIN
+
+      res = .atomic_number/=1
+
+   end
+
    is_a_nonmetal(Z) result(res) ::: elemental
    ! Return whether the atom is a nonmetal.
    ! If "Z" is present it is used as the atomic number.
@@ -4858,15 +4940,16 @@ contains
    end
 
    has_dispersion result (res) ::: elemental
-   ! Return TRUE if
+   ! Return TRUE if the atom has non-zero dispersion coefficients
       self :: IN
       res :: BIN
 
-      res = .f_r>=ZERO
+      res = NOT .f_r.is_zero OR &
+            NOT .f_i.is_zero
 
    end
 
-   has_tabular_dispersion result (res) ::: PURE
+   has_tabular_dispersion result (res) ::: PURE, ELEMENTAL
    ! Return TRUE if this element has a valid dispersion coefficient in
    ! the table.
       self :: IN
@@ -4876,32 +4959,22 @@ contains
 
    end
 
-   has_tabular_dispersion_for(Z) result (res) ::: selfless, PURE
+   has_tabular_dispersion_for(Z) result (res) ::: selfless, ELEMENTAL
    ! Return TRUE if the element with atomic number "Z"  has a
    ! valid dispersion coefficient in the table.
       Z :: INT, IN
       res :: BIN
 
-      res = RE(element_xray_dispersion(Z)) >= ZERO
+      res = abs(element_xray_dispersion(Z)) >= ZERO
 
    end
 
-   dispersion_correction result (res)
+   dispersion_correction result (res) ::: pure
    ! The dispersion correction at a certain "wavelength".
       self :: IN
       res :: CPX
 
-      res = IMAGIFY(ZERO)
-
-      if (ATOM:has_tabular_dispersion_for(.atomic_number)) then
-
-         res = element_xray_dispersion(.atomic_number)
-
-      else
-      
-         DIE("You didn't enter a dispersion coefficient for element "//trim(.tag))
-
-      end
+      res = element_xray_dispersion(.atomic_number)
 
    end
 
@@ -4945,6 +5018,30 @@ contains
 !
 !   end
 
+   xray_dispersion_entered result (res) ::: PURE
+   ! Return whether xray_dispersion table was entered.
+      self :: IN
+      res :: BIN
+
+      res = xray_dispersion_set
+
+   end
+
+   set_dispersion_coefficients(string) ::: selfless
+   ! Set the elemental dispersion coefficients from a "string"
+   ! of values comprising sequential element symbols, f' and f''.
+      string :: STR, IN 
+
+      table :: VEC{STR}*
+
+      table => string.split
+
+      ATOM:set_dispersion_coefficients(table)
+
+      table.destroy
+
+   end
+
    set_dispersion_coefficients(table) ::: selfless
    ! Set the elemental dispersion coefficients from a "table"
    ! of values comprising sequential element symbols, f' and f''.
@@ -4982,12 +5079,13 @@ contains
 
       end
 
+      xray_dispersion_set = TRUE
+
    end
 
    set_tabular_dispersion ::: PURE
    ! Set the atom's own dispersion coefficients from
    ! the element_xray_dispersion table (if there).
-   ! NOTE: this routine dies if dispersion is not set.
       self :: INOUT
 
       Z :: INT
@@ -4998,21 +5096,19 @@ contains
       f_r = RE(element_xray_dispersion(Z))
       f_i = IM(element_xray_dispersion(Z))
 
-      if (f_r<ZERO) return
-
       .f_r = f_r
       .f_i = f_i
 
    end
 
-   add_dispersion_H_ADP(Fc,k_pts,cell)
+   add_dispersion_H_ADP(Fc,k_pts) ::: PURE
    ! Add the anamalous dispersion correction into the calculated
    ! structure factor "Fc", for a given set of "K_pts" and
    ! "wavelength" (in Bohr of course!).
       self :: IN
       Fc :: VEC{CPX}, INOUT
       k_pts :: MAT{REAL}, IN
-      cell :: UNIT_CELL, IN
+    ! cell :: UNIT_CELL, IN
 
    ENSURE(Fc.dim1==k_pts.dim1,"1st dimension of dc and k_pts are not compatible")
    ENSURE(      3==k_pts.dim2,"2nd dimension of k_pts must be 3!")
@@ -5146,7 +5242,7 @@ contains
 
    end
 
-   add_derivative_dispn_H_ADP(dFc,base,k_pts)
+   add_derivative_dispn_H_ADP(dFc,base,k_pts) ::: PURE
    ! Add the derivative of the anamalous dispersion correction into
    ! the derivative calculated structure factor "Fc", for a given set
    ! of "k_pts" and "wavelength" (in Bohr of course!). "base" is the
@@ -5397,7 +5493,7 @@ contains
 
    end
 
-   add_derivative_dispn_H_iso(dFc,base,k_pts)
+   add_derivative_dispn_H_iso(dFc,base,k_pts) ::: PURE
    ! Add the derivative of the anamalous dispersion correction into
    ! the derivative calculated structure factor "Fc", for a given set
    ! of "k_pts" and "wavelength" (in Bohr of course!). "base" is the
@@ -5431,7 +5527,7 @@ contains
       ! Temperature part, ADP4's
       if (.has_only_ADP4s_and_errors) then
 
-         DIE_IF(.atomic_number==1,"can't add derivative dispersion corrections when refining H anharmonically with H isotropic")
+         ENSURE(.atomic_number/=1,"can't add derivative dispersion corrections when refining H anharmonically with H isotropic")
 
          ! Get ADP tensors
          .put_ADP2_vector_to(adp2)
@@ -5526,7 +5622,7 @@ contains
       ! Temperature part, ADP3's
       else if (.has_only_ADP3s_and_errors) then
 
-         DIE_IF(.atomic_number==1,"can't add derivative dispersion corrections when refining H anharmonically with H isotropic")
+         ENSURE(.atomic_number/=1,"can't add derivative dispersion corrections when refining H anharmonically with H isotropic")
 
          ! Get ADP tensors
          .put_ADP2_vector_to(adp2)
@@ -5856,18 +5952,21 @@ contains
       res :: BIN
 
       t,bond,bond_max,dx,dy,dz,r2 :: REAL
-      Za,Zb,as,bs :: INT
+      Za,Zb,as,bs,ag,bg :: INT
 
       Za =  .atomic_number
       Zb = b.atomic_number
       as =  .site_disorder_group
       bs = b.site_disorder_group
+      ag =  .group
+      bg = b.group
 
       if      (Za<1) then; res = FALSE
       else if (Zb<1) then; res = FALSE
-      else if (Za>covalent_radii_ccdc.dim) then; res = FALSE
-      else if (Zb>covalent_radii_ccdc.dim) then; res = FALSE
-      else if (as*bs>0 AND as/=bs) then; res = FALSE
+      else if (Za>covalent_radii_ccdc.dim)    then; res = FALSE
+      else if (Zb>covalent_radii_ccdc.dim)    then; res = FALSE
+      else if (as*bs>0 AND as==bs)            then; res = FALSE
+      else if (ag*bg>0 AND ag==bg)            then; res = FALSE
       else if (.is_bonded_to(b,range_factor)) then; res = FALSE
       else
 
@@ -6102,7 +6201,7 @@ contains
 !  ADP inquiry methods
 !  ====================
 
-   has_NPD_ADP result (res)
+   has_NPD_ADP result (res) ::: PURE
    ! Return TRUE if the ADP is non-zero and non-positive definite.
       self :: IN
       res :: BIN
@@ -6113,13 +6212,13 @@ contains
       res = FALSE
 
       if (NOT .ADP_tensor.is_zero) then
-         .ADP_tensor.solve_symmetric_eigenproblem(eval,evec)
+         .ADP_tensor.diagonalize_by_jacobi(eval,evec)
          res = any(eval<ZERO)
       end
 
    end
 
-   has_flat_ADP(ratio) result (res)
+   has_flat_ADP(ratio) result (res) ::: PURE
    ! Return TRUE if the ADP is flat i.e. the the max to
    ! the min eigenvalue is greater than "ratio" (or FOUR
    ! if not supplied).
@@ -6137,13 +6236,13 @@ contains
       res = FALSE
 
       if (NOT .ADP_tensor.is_zero) then
-         .ADP_tensor.solve_symmetric_eigenproblem(eval,evec)
+         .ADP_tensor.diagonalize_by_jacobi(eval,evec)
          res = abs(maxval(eval)/minval(eval)) > rat
       end
 
    end
 
-   ADP_principal_axis_ratio result (res)
+   ADP_principal_axis_ratio result (res) ::: PURE
    ! Return the actual max/min ADP principal axis ratio
    ! (or 1000 if the min eigenvalue is zero).
       self :: IN
@@ -6156,7 +6255,7 @@ contains
       res = ZERO
 
       if (NOT .ADP_tensor.is_zero) then
-         .ADP_tensor.solve_symmetric_eigenproblem(eval,evec)
+         .ADP_tensor.diagonalize_by_jacobi(eval,evec)
          maxeval = maxval(eval)
          mineval = minval(eval)
          res = 1000.0d0
@@ -6561,6 +6660,42 @@ contains
 !  ADP density plotting routines
 !  =============================
 
+   make_ADP2_grid(g,pt) 
+   ! Make the effective ADP for a series of (Nx3) points "pt" and put
+   ! the values into the grid vector "g".
+      self :: IN
+      g :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(NOT .ADP_tensor.is_zero,"no ADPs")
+   ENSURE(pt.dim2==3,"pt, dim2 is not 3")
+   ENSURE(pt.dim1==g.dim1,"pt and g, inconsistent")
+
+      u,eval :: VEC{REAL}(3)
+      LL :: MAT{REAL}(3,3)
+      n_pt,i :: INT
+      det,fac :: REAL
+
+
+      ! Get ADP principal axes
+      .ADP_tensor.solve_symmetric_eigenproblem(eval,LL)
+
+      ! Harmonic part. Note: U2^{-1} is the matrix for the PDF
+      ! in cartesian coordinates.
+      eval  = ONE/eval
+      det   = product(eval)
+      fac   = sqrt(det/(TWO*PI)**3)
+
+      n_pt = g.dim
+      do i = 1,n_pt
+         u     = pt(i,:) - .position
+         u     = matmul(u,LL)
+         g(i)  = fac * exp(-HALF*sum(u*eval*u))
+      end
+
+
+   end
+
    make_ADP2_exponent_grid(g,pt) 
    ! Make the effective ADP2 PDF exponents for a series of (Nx3)
    ! points "pt" and put the values into the grid vector "g".
@@ -6594,6 +6729,129 @@ contains
          top   = -HALF*sum(u*eval*u)
           g(i) = top
       end
+
+   end
+
+   make_ADP_grid(g,pt,unit_cell)
+   ! Make the ADP PDF values for a series of (Nx3) points "pt" and put
+   ! the values into the grid vector "g". Supply "unit_cell" for
+   ! reciprocal matrix, for the anharmonic constants.
+   ! See Coppens, International Tables for Crystlography vol B p. 22
+   ! equations (1.2.12.3) and (1.2.12.4)
+      self :: IN
+      g :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      unit_cell :: UNIT_CELL, IN
+
+   DIE_IF(.ADP_tensor.is_zero,"no ADPs")
+   ENSURE(pt.dim2==3,"pt, dim2 is not 3")
+   ENSURE(pt.dim1==g.dim1,"pt and g, inconsistent")
+
+      n :: VEC{INT}(3)
+      u,eval :: VEC{REAL}(3)
+      delta :: MAT{INT}(3,3)
+      LL :: MAT{REAL}(3,3)
+      U3 :: MAT3{REAL}(3,3,3)
+      U4 :: MAT4{REAL}(3,3,3,3)
+      n_pt,i,j,k,l,m :: INT
+      det,top,fac,H :: REAL
+      P0,g3,g4 :: VEC{REAL}*
+
+      ! Harmonic grid
+      n_pt = g.dim
+      P0.create(n_pt)
+
+      ! Get ADP principal axes
+      .ADP_tensor.solve_symmetric_eigenproblem(eval,LL)
+
+      ! Harmonic part. Note: U2^{-1} is the matrix for the PDF
+      ! in cartesian coordinates.
+      eval  = ONE/eval
+      det   = product(eval)
+      fac   = sqrt(det/(TWO*PI)**3)
+
+      do i = 1,n_pt
+         u     = pt(i,:) - .position
+         u     = matmul(u,LL)
+         top   = -HALF*sum(u*eval*u)
+         P0(i) = fac * exp(top)
+      end
+
+      g = P0
+
+      if (.has_ADP3s_and_errors) then
+
+         ! Change to Coppens "c" coefficients
+         .put_ADP3_vector_to(U3)
+         U3.change_basis_using(unit_cell.reciprocal_matrix)
+         U3.change_basis_using(LL)
+
+         delta.to_unit_matrix
+
+         g3.create(n_pt)
+         g3 = 0
+
+         do j = 1,3
+         do k = 1,3
+         do l = 1,3
+
+            n = delta(:,j)+delta(:,k)+delta(:,l)
+
+            do i = 1,n_pt
+               u = pt(i,:) - .position
+               u = matmul(u,LL)
+               H = u.hermite_polynomial_prob(n)
+               g3(i) = g3(i) + U3(j,k,l)*H
+            end
+
+         end
+         end
+         end
+
+         g = g + P0*g3/SIX
+
+         g3.destroy
+
+      end
+
+      if (.has_ADP4s_and_errors) then
+
+         ! Change to Coppens "c" coefficients
+         .put_ADP4_vector_to(U4)
+         U4.change_basis_using(unit_cell.reciprocal_matrix)
+         U4.change_basis_using(LL)
+
+         delta.to_unit_matrix
+
+         g4.create(n_pt)
+         g4 = 0
+
+         do j = 1,3
+         do k = 1,3
+         do l = 1,3
+         do m = 1,3
+
+            n = delta(:,j)+delta(:,k)+delta(:,l)+delta(:,m)
+
+            do i = 1,n_pt
+               u = pt(i,:) - .position
+               u = matmul(u,LL)
+               H = u.hermite_polynomial_prob(n)
+               g4(i) = g4(i) + U4(j,k,l,m)*H
+            end
+
+         end
+         end
+         end
+         end
+
+         g = g + P0*g4/(FOUR*SIX)
+
+         g4.destroy
+
+      end
+
+      P0.destroy
 
    end
 
@@ -6836,89 +7094,85 @@ contains
 !  Density plotting routines
 !  =========================
 
-   make_density_grid(density_grid,pt,occ)
+   make_density_grid(density_grid,pt,occ) ::: PURE
    ! Make the electron "density_grid" on "pt" using ".natural orbitals" and
    ! the ".occupation_numbers" vector.
       self :: IN
       density_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
-      occ :: REAL, IN, optional
+      occ :: REAL, optional, IN
 
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
+   ENSURE(.basis_kind.is_one_of(["gaussian","slater  ","coppens "]),"unknwon .basis_kind, "//trim(.basis_kind))
 
       select case (.basis_kind)
 
-         case ("gaussian")
-            if (.use_interpolator AND .interpolator.created) then
-               .make_interpolated_density(density_grid,pt,occ)
-            else
-               ENSURE(.basis.created,"no basis")
-               ENSURE(.natural_orbitals.created,"no natural_orbitals")
-               if (.natural_orbitals.number_kind=="real") then; .make_density_grid_r(density_grid,pt,occ)
-               else;                                            .make_density_grid_c(density_grid,pt,occ)
-               end
+      case ("gaussian")
+         if (.use_interpolator AND .interpolator.created) then
+            .make_interpolated_density(density_grid,pt,occ)
+         else
+            ENSURE(.basis.created,"no basis")
+            ENSURE(.natural_orbitals.created,"no natural_orbitals")
+            if (.natural_orbitals.number_kind=="real") then; .make_density_grid_r(density_grid,pt,occ)
+            else;                                            .make_density_grid_c(density_grid,pt,occ)
             end
+         end
 
-         case ("slater")
-            ENSURE(.slaterbasis.created,"no slaterbasis")
-            .slaterbasis.make_density_grid(density_grid,pt,.position,occ)
+      case ("slater")
+         ENSURE(.slaterbasis.created,"no slaterbasis")
+         .slaterbasis.make_density_grid(density_grid,pt,.position,occ)
 
-         case ("coppens")
-            ENSURE(.coppensbasis.created,"no coppensbasis")
-            .coppensbasis.make_density_grid(density_grid,pt,.position,occ)
-
-         case default
-            UNKNOWN(.basis_kind)
+      case ("coppens")
+         ENSURE(.coppensbasis.created,"no coppensbasis")
+         .coppensbasis.make_density_grid(density_grid,pt,.position,occ)
 
       end
 
    end
 
-   add_density_grid(density_grid,pt,occ)
+   add_density_grid(density_grid,pt,occ) ::: PURE
    ! Add the electron "density_grid" on "pt" using ".natural orbitals" and
    ! the ".occupation_numbers" vector.
       self :: IN
       density_grid :: VEC{REAL}, INOUT
       pt :: MAT{REAL}, IN
-      occ :: REAL, IN, optional
+      occ :: REAL, optional, IN
 
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
+   ENSURE(.basis_kind.is_one_of(["gaussian","slater  ","coppens "]),"unknwon .basis_kind, "//trim(.basis_kind))
 
       select case (.basis_kind)
 
-         case ("gaussian")
-            if (.use_interpolator AND .interpolator.created) then
-               .add_interpolated_density(density_grid,pt,occ)
-            else
-               ENSURE(.basis.created,"no basis")
-               ENSURE(.natural_orbitals.created,"no natural orbitals")
-               if (.natural_orbitals.number_kind=="real") then; .add_density_grid_r(density_grid,pt,occ)
-               else;                                            .add_density_grid_c(density_grid,pt,occ)
-               end
+      case ("gaussian")
+         if (.use_interpolator AND .interpolator.created) then
+            .add_interpolated_density(density_grid,pt,occ)
+         else
+            ENSURE(.basis.created,"no basis")
+            ENSURE(.natural_orbitals.created,"no natural orbitals")
+            if (.natural_orbitals.number_kind=="real") then; .add_density_grid_r(density_grid,pt,occ)
+            else;                                            .add_density_grid_c(density_grid,pt,occ)
             end
+         end
 
-         case ("slater")
-            ENSURE(.slaterbasis.created,"no slaterbasis")
-            .slaterbasis.add_density_grid(density_grid,pt,.position,occ)
+      case ("slater")
+         ENSURE(.slaterbasis.created,"no slaterbasis")
+         .slaterbasis.add_density_grid(density_grid,pt,.position,occ)
 
-         case ("coppens")
-            ENSURE(.coppensbasis.created,"no coppensbasis")
-            .coppensbasis.add_density_grid(density_grid,pt,.position,occ)
-
-         case default
-            UNKNOWN(.basis_kind)
+      case ("coppens")
+         ENSURE(.coppensbasis.created,"no coppensbasis")
+         .coppensbasis.add_density_grid(density_grid,pt,.position,occ)
 
       end
 
    end
 
-   make_density_grid_r(density_grid,pt,occ)
+   make_density_grid_r(density_grid,pt,occ) ::: PURE
    ! Make the "density_grid" for the supplied points "pt" from restricted real
    ! natural orbitals
       self :: IN
       density_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
-      occ :: REAL, IN, optional
+      occ :: REAL, optional, IN
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
@@ -6943,8 +7197,8 @@ contains
       n_occ = .no_of_occupied_NOs
 
       do n = 1,n_occ
-       .make_orbital_grid_r(NO,.natural_orbitals.restricted(:,n),pt,.position)
-       density_grid = density_grid + .occupation_numbers.restricted(n)*NO*NO
+         .make_orbital_grid_r(NO,.natural_orbitals.restricted(:,n),pt,.position)
+         density_grid = density_grid + .occupation_numbers.restricted(n)*NO*NO
       end
 
       if (do_occ) density_grid = occ*density_grid
@@ -6953,13 +7207,13 @@ contains
 
    end
 
-   add_density_grid_r(density_grid,pt,occ)
+   add_density_grid_r(density_grid,pt,occ) ::: PURE
    ! Add the "density_grid" for the supplied points "pt" from restricted real
    ! natural orbitals
       self :: IN
       density_grid :: VEC{REAL}, INOUT
       pt :: MAT{REAL}, IN
-      occ :: REAL, IN, optional
+      occ :: REAL, optional, IN
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
@@ -6997,13 +7251,13 @@ contains
 
    end
 
-   make_density_grid_c(density_grid,pt,occ)
+   make_density_grid_c(density_grid,pt,occ) ::: PURE
    ! Make the "density_grid" for the supplied points "pt" from restricted
    ! complex natural orbitals.
       self :: IN
       density_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
-      occ :: REAL, IN, optional
+      occ :: REAL, optional, IN
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
@@ -7038,13 +7292,13 @@ contains
 
    end
 
-   add_density_grid_c(density_grid,pt,occ)
+   add_density_grid_c(density_grid,pt,occ) ::: PURE
    ! Make the "density_grid" for the supplied points "pt" from restricted
    ! complex natural orbitals.
       self :: IN
       density_grid :: VEC{REAL}, INOUT
       pt :: MAT{REAL}, IN
-      occ :: REAL, IN, optional
+      occ :: REAL, optional, IN
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
@@ -7084,14 +7338,14 @@ contains
 
    end
 
-   make_density_grid(density_grid,pt,D,occ)
+   make_density_grid(density_grid,pt,D,occ) ::: PURE
    ! Make the "density_grid" for the supplied points "pt" from a
    ! density matrix "D"
       self :: IN
       density_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
       D :: MAT{REAL}, IN
-      occ :: REAL, IN, optional
+      occ :: REAL, optional, IN
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
@@ -7118,7 +7372,7 @@ contains
 
       do i = 1,pt.dim1
          W.to_product_of(D,g(i,:),transpose_a=TRUE)
-         density_grid(i) = VEC{REAL}:sum_elements(W*g(i,:))
+         density_grid(i) = sum(W*g(i,:))
       end
 
       if (do_occ) density_grid = occ*density_grid
@@ -7128,14 +7382,14 @@ contains
 
    end
 
-   add_density_grid(density_grid,pt,D,occ)
+   add_density_grid(density_grid,pt,D,occ) ::: PURE
    ! Add the "density_grid" for the supplied points "pt" from a
    ! density matrix "D"
       self :: IN
       density_grid :: VEC{REAL}, INOUT
       pt :: MAT{REAL}, IN
       D :: MAT{REAL}, IN
-      occ :: REAL, IN, optional
+      occ :: REAL, optional, IN
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
@@ -7164,14 +7418,14 @@ contains
 
         do i = 1,pt.dim1
            W.to_product_of(D,g(i,:),transpose_a=TRUE)
-           density_grid(i) = density_grid(i) + occ*VEC{REAL}:sum_elements(W*g(i,:))
+           density_grid(i) = density_grid(i) + occ*sum(W*g(i,:))
         end
 
       else
 
         do i = 1,pt.dim1
            W.to_product_of(D,g(i,:),transpose_a=TRUE)
-           density_grid(i) = density_grid(i) + VEC{REAL}:sum_elements(W*g(i,:))
+           density_grid(i) = density_grid(i) + sum(W*g(i,:))
         end
 
       end
@@ -7214,9 +7468,10 @@ contains
 !  Orbital density routines
 !  ========================
 
-   make_AO_grid(g,pt,pos)
-   ! Evaluate the AO density grid "g" on a set of grid points "pt" for an atom at position
-   ! "pos".
+   make_AO_grid(g,pt,pos) ::: PURE
+   ! Evaluate the AO density grid "g" on a set of grid points "pt" for
+   ! an atom at position "pos".
+      self :: IN
       g :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
       pos :: VEC{REAL}(3), IN
@@ -7226,7 +7481,7 @@ contains
    ENSURE(.basis.no_of_basis_functions==g.dim2,"pt and g, incompatible")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
-      sh :: SHELL1
+      sh :: SHELL1*
       n_shell,f,l,s :: INT
 
       n_shell = .basis.no_of_shells
@@ -7235,27 +7490,25 @@ contains
 
       do s = 1,n_shell
 
-         sh.set(.basis.shell(s),pos)
+         sh.create_copy(.basis.shell(s),pos)
 
          f = l + 1
-         if (sh.is_spherical)then
-           l = l + sh.n_sph  ! LBXXX
-         else
-           l = l + sh.n_comp
-         end if
-         !l = l + sh.n_comp
+         l = f + sh.n_bf - 1
 
          sh.make_grid(g(:,f:l),pt)
+
+         sh.destroy
 
       end
 
    end
 
-   make_orbital_grid_r(g,orb,pt,pos,square)
+   make_orbital_grid_r(g,orb,pt,pos,square) ::: PURE
    ! Evaluate the orbital density grid "g" for *one* AO-basis coefficient
    ! orbital vector "orb" on a set of grid points "pt" for an atom at position
    ! "pos". If "square" is present and TRUE, the square of the orbital density
    ! is returned.
+      self :: IN
       g :: VEC{REAL}, OUT
       orb :: VEC{REAL}, IN
       pt :: MAT{REAL}, IN
@@ -7267,7 +7520,7 @@ contains
    ENSURE(pt.dim2==3,"wrong size, pt")
 
       sq :: BIN
-      sh :: SHELL1
+      sh :: SHELL1*
       sh_grid :: MAT{REAL}*
       n_pt,n_shell,f,l,s :: INT
 
@@ -7282,22 +7535,17 @@ contains
 
       do s = 1,n_shell
 
-         sh.set(.basis.shell(s),pos)
+         sh.create_copy(.basis.shell(s),pos)
 
          f = l + 1
-         if (sh.is_spherical)then
-           l = f + sh.n_sph - 1
-           sh_grid.create(n_pt,sh.n_sph)
-         else
-           l = f + sh.n_comp - 1
-           sh_grid.create(n_pt,sh.n_comp)
-         end if
-
+         l = f + sh.n_bf - 1
+         sh_grid.create(n_pt,sh.n_bf)
 
          sh.make_grid(sh_grid,pt)
          g.plus_product_of(sh_grid,orb(f:l))
 
          sh_grid.destroy
+         sh.destroy
 
       end
 
@@ -7305,7 +7553,7 @@ contains
 
    end
 
-   make_orbital_grid_c(g,orb,pt,pos,square)
+   make_orbital_grid_c(g,orb,pt,pos,square) ::: PURE
    ! Evaluate the orbital density grid "g" for *one* AO-basis coefficient
    ! orbital vector "orb" on a set of grid points "pt" for an atom at position
    ! "pos". If "square" is present and TRUE, the square of the orbital density
@@ -7322,7 +7570,7 @@ contains
    ENSURE(pt.dim2==3,"wrong size, pt")
 
       sq :: BIN
-      sh :: SHELL1
+      sh :: SHELL1*
       sh_grid :: MAT{REAL}*
       n_pt,n_shell,f,l,s :: INT
 
@@ -7337,21 +7585,17 @@ contains
 
       do s = 1,n_shell
 
-         sh.set(.basis.shell(s),pos)
+         sh.create_copy(.basis.shell(s),pos)
 
          f = l + 1
-         if (sh.is_spherical)then
-           l = f + sh.n_sph - 1
-           sh_grid.create(n_pt,sh.n_sph)
-         else
-           l = f + sh.n_comp - 1
-           sh_grid.create(n_pt,sh.n_comp)
-         end if
+         l = f + sh.n_bf - 1
+         sh_grid.create(n_pt,sh.n_bf)
 
          sh.make_grid(sh_grid,pt)
          g.plus_product_of(sh_grid,orb(f:l))
 
          sh_grid.destroy
+         sh.destroy
 
       end
 
@@ -7359,11 +7603,67 @@ contains
 
    end
 
+!  =====================
+!  Exponential densities
+!  =====================
+
+   make_exponential_densities(res,pt,rho0) ::: PURE
+   ! Return the exponential density values at "pt"s into "res"
+   ! given the density "rho0" at R = 0.
+      self :: IN
+      res :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      rho0 :: REAL, IN
+
+   ENSURE(pt.dim2==3,"wrong dimension for pt array")
+
+      x,y,z,r2 :: VEC{REAL}*
+      n_pt :: INT
+
+      n_pt = pt.dim1
+
+      x.create(n_pt)
+      y.create(n_pt)
+      z.create(n_pt)
+      r2.create(n_pt)
+
+      .make_displaced_pts(x,y,z,r2,pt,n_pt)
+
+      res = rho0 * exp(-TWO*.atomic_number*sqrt(r2))
+
+   end
+
+   add_exponential_densities(res,pt,rho0) ::: PURE
+   ! Add the exponential density values at a series of "pt"s to "res"
+   ! given the density "rho0" at R = 0.
+      self :: IN
+      res :: VEC{REAL}, INOUT
+      pt :: MAT{REAL}, IN
+      rho0 :: REAL, IN
+
+   ENSURE(pt.dim2==3,"wrong dimension for pt array")
+
+      x,y,z,r2 :: VEC{REAL}*
+      n_pt :: INT
+
+      n_pt = pt.dim1
+
+      x.create(n_pt)
+      y.create(n_pt)
+      z.create(n_pt)
+      r2.create(n_pt)
+
+      .make_displaced_pts(x,y,z,r2,pt,n_pt)
+
+      res = res + rho0 * exp(-TWO*.atomic_number*sqrt(r2))
+
+   end
+
 !  ======================
 !  Spherical density at R
 !  ======================
 
-   density_at_radius(R) result (res)
+   density_at_radius(R) result (res) ::: PURE
    ! Work out the electron at radius "R".
       self :: IN
       R :: REAL, IN
@@ -7398,10 +7698,9 @@ contains
 
    end
 
-   density_value_at_radius(R) result (res) ::: selfless, public
+   density_value_at_radius(R) result (res) ::: selfless, public, PURE
    ! Return the density values at the radial value "R".
    ! This assumes that the atomic density is spherical!
-      self :: IN
       R :: REAL, IN
       res :: REAL
 
@@ -7459,7 +7758,7 @@ contains
 
    end
 
-   make_interpolated_density(density,pt,occ)
+   make_interpolated_density(density,pt,occ) ::: PURE
    ! Make the spherical atomic "density" for the supplied points "pt"
    ! using a precalculated interpolator.
       self :: IN
@@ -7496,7 +7795,7 @@ contains
 
    end
 
-   add_interpolated_density(density,pt,occ)
+   add_interpolated_density(density,pt,occ) ::: PURE
    ! Add the spherical atomic "density" for the supplied points "pt"
    ! using a precalculated interpolator.
       self :: IN
@@ -8404,8 +8703,9 @@ contains
 
    make_electric_potential_grid(pot_grid,pt)
    ! Make the electric potential "pot_grid" on a series of points "pt"
-      pot_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      pot_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(.density_matrix.created, "no density matrix")
    ENSURE(.density_matrix.restricted.created, "no restricted density matrix")
@@ -8421,9 +8721,10 @@ contains
    make_electric_potential_grid_r(pot_grid,pt,dens)
    ! Make the total electric potential "pot_grid" on a series of grid points
    ! "pt" using AO density matrix "dens"
-      pot_grid :: VEC{REAL}
-      pt :: MAT{REAL}
-      dens :: MAT{REAL}
+      self :: IN
+      pot_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      dens :: MAT{REAL}, IN
 
       elec_grid :: VEC{REAL}*
 
@@ -8438,9 +8739,10 @@ contains
    make_electronic_pot_grid_r(pot_grid,pt,dens)
    ! Make the electronic potential "pot_grid" on a series of grid points "pt"
    ! using AO density matrix "dens"
-      pot_grid :: VEC{REAL}
-      pt :: MAT{REAL}
-      dens :: MAT{REAL}, target
+      self :: IN
+      pot_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      dens :: MAT{REAL}, target, IN
 
    ENSURE(.basis.created,"no basis set")
 
@@ -8760,10 +9062,11 @@ contains
 !  Make point lists
 !  ================
 
-   make_logval(logval,r2,n_pt) ::: public
+   make_logval(logval,r2,n_pt) ::: PURE
    ! For a list of points with distances "r2" from an atom center,
    ! return the log of the mkaximuk value "logval" which can be used
    ! to implement a cutoff.
+      self :: IN
       n_pt :: INT, IN
       logval :: VEC{INT}(n_pt), OUT
       r2 :: VEC{REAL}(n_pt), IN
@@ -8785,14 +9088,20 @@ contains
    end
 
 
-   make_displaced_pts(dx,dy,dz,r2,pt,n_pt) ::: public
+   make_displaced_pts(dx,dy,dz,r2,pt,n_pt) ::: PURE
    ! For a list of points "pt" of length "n_pt", return displacements
-   ! "dx", "dy", "dz", and their square "r2".
+   ! "dx", "dy", "dz", from the atom center, and their square "r2".
+      self :: IN
+      dx,dy,dz,r2 :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
       n_pt :: INT, IN
-      dx,dy,dz,r2 :: VEC{REAL}(n_pt), OUT
-      pt :: MAT{REAL}(n_pt,3), IN
 
    ENSURE(.basis.created,"no basis set")
+   ENSURE(dx.dim ==n_pt,"wrong size, dx")
+   ENSURE(dy.dim ==n_pt,"wrong size, dy")
+   ENSURE(dz.dim ==n_pt,"wrong size, dy")
+   ENSURE(pt.dim1==n_pt,"wrong dim1, pt")
+   ENSURE(pt.dim2==3,   "wrong dim1, pt")
 
       px,py,pz, xx,yy,zz, rr :: REAL
       n :: INT
@@ -8817,17 +9126,23 @@ contains
 
    end
 
-   make_displaced_skip_pts(dx,dy,dz,r2,skip,pt,n_pt,cutoff) ::: public
+   make_displaced_skip_pts(dx,dy,dz,r2,skip,pt,n_pt,cutoff) ::: PURE
    ! For a list of points "pt" of length "n_pt", return displacements
    ! "dx", "dy", "dz", their square "r2" and "skip" which tells when
    ! the basis function is less than "cutoff".
+      self :: IN
+      dx,dy,dz,r2 :: VEC{REAL}, OUT
+      skip :: VEC{BIN}, OUT
+      pt :: MAT{REAL}, IN
       n_pt :: INT, IN
-      dx,dy,dz,r2 :: VEC{REAL}(n_pt), OUT
-      skip :: VEC{BIN}(n_pt), OUT
-      pt :: MAT{REAL}(n_pt,3), IN
       cutoff :: REAL, IN
 
    ENSURE(.basis.created,"no basis set")
+   ENSURE(dx.dim >=n_pt,"wrong size, dx")
+   ENSURE(dy.dim >=n_pt,"wrong size, dy")
+   ENSURE(dz.dim >=n_pt,"wrong size, dy")
+   ENSURE(pt.dim1==n_pt,"wrong dim1, pt")
+   ENSURE(pt.dim2==3,   "wrong dim1, pt")
 
       px,py,pz, xx,yy,zz, rr,r2_max :: REAL
       n :: INT
@@ -8856,11 +9171,12 @@ contains
    end
 
 
-   make_significant_points(x,y,z,r2,skip,pt,cutoff) ::: leaky
+   make_significant_points(x,y,z,r2,skip,pt,cutoff) ::: leaky, PURE
    ! From a given list of points "pt" return the significant displacements "x",
    ! "y", "z" and their square "r2". These are comprised of those points for
    ! which the basis functions of the atom have a significant value above
    ! "cutoff" i.e. those points for which "skip" is FALSE.
+      self :: IN
       x,y,z,r2 :: VEC{REAL}*
       skip :: VEC{BIN}*
       pt :: MAT{REAL}, IN
@@ -8911,15 +9227,17 @@ contains
 
    end
 
-   make_significant_points(x,y,z,r2,d2,skip,pt,cutoff) ::: leaky
+   make_significant_points(x,y,z,r2,d2,skip,pt,cutoff) ::: leaky, PURE
    ! From a given list of points "pt" return the significant displacements "x",
    ! "y", "z" and their square "r2". These are comprised of those points for
    ! which the basis functions of the atom have a significant value above
    ! "cutoff" i.e. those points for which "skip" is FALSE.
+      self :: IN
       x,y,z,r2,d2 :: VEC{REAL}*
       skip :: VEC{BIN}*
       pt :: MAT{REAL}, IN
       cutoff :: REAL, IN
+
    ENSURE(.basis.created,"no basis set")
 
       px,py,pz,xx,yy,zz,rr, r2_max :: REAL
@@ -8927,8 +9245,11 @@ contains
 
       n_pt = pt.dim1
       skip.create(n_pt)
-      x.create(n_pt); y.create(n_pt); z.create(n_pt)
-      r2.create(n_pt); d2.create(n_pt)
+      x.create(n_pt)
+      y.create(n_pt)
+      z.create(n_pt)
+      r2.create(n_pt)
+      d2.create(n_pt)
 
       r2_max = .r2_max(cutoff)
 
@@ -8954,27 +9275,35 @@ contains
 
       if (k==0) then
          skip.destroy
-         x.destroy; y.destroy; z.destroy
-         r2.destroy; d2.destroy
+         x.destroy
+         y.destroy
+         z.destroy
+         r2.destroy
+         d2.destroy
       else
-         x.shrink(k); y.shrink(k); z.shrink(k)
+         x.shrink(k)
+         y.shrink(k)
+         z.shrink(k)
          r2.shrink(k) ! don't shrink d2 or skip
       end
 
    end
 
-   make_significant_points(x,y,z,r2,skip,pt,skip2,cutoff) ::: leaky
+   make_significant_points(x,y,z,r2,skip,pt,skip2,cutoff) ::: leaky, PURE
    ! From a given list of points "pt" return the significant displacements "x",
    ! "y", "z" and their square "r2". These are comprised of those points for
    ! which the basis functions of the atom have a significant value above
    ! "cutoff" i.e. those points for which "skip" is FALSE. "skip2" is an array
    ! which skips (in addition) some preselcted points.
+      self :: IN
       x,y,z,r2 :: VEC{REAL}*
       skip :: VEC{BIN}*
       pt :: MAT{REAL}, IN
       skip2 :: VEC{BIN}, IN
       cutoff :: REAL, IN
+
    ENSURE(.basis.created,"no basis set")
+
       xx,yy,zz,rr, r2_max :: REAL
       n_pt,n,k :: INT
 
@@ -9005,10 +9334,14 @@ contains
 
       if (k==0) then
          skip.destroy
-         x.destroy; y.destroy; z.destroy
+         x.destroy
+         y.destroy
+         z.destroy
          r2.destroy
       else
-         x.shrink(k); y.shrink(k); z.shrink(k)
+         x.shrink(k)
+         y.shrink(k)
+         z.shrink(k)
          r2.shrink(k) ! don't shrink skip
       end
 
@@ -9159,6 +9492,48 @@ contains
 
    end
 
+   make_FT_spherical(res,k_pts)
+   ! Analytical representation of the spherical IAM form factor
+   ! evaluated at a reciprocal space points [k_pts(i,:), i = 1,dim ]
+      self :: IN
+      res :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+
+   ENSURE(.use_IAM_ITC_FFs,"use_IAM_ITC_FFs is FALSE!")
+
+      k_z :: VEC{REAL}*
+      k_max :: INT
+      II :: CPX
+
+      k_max = k_pts.dim1
+         II = IMAGIFY(ONE)
+
+      if (.atomic_number==1) then
+
+         ! H atom uses Stewart-Davidson-Simpson (SDS) AIM
+         k_z.create(k_max)
+         k_pts.get_row_norms(k_z)
+         res = ATOM::H_SDS_form_factor(k_z) &
+             * exp(II*(.position(1)*k_pts(:,1) &
+                      +.position(2)*k_pts(:,2) &
+                      +.position(3)*k_pts(:,3)))
+         k_z.destroy
+
+      else
+
+         ! Other atoms use fitted *neutral* HF form factors
+         k_z.create(k_max)
+         k_pts.get_row_norms(k_z)
+         res = .HF_n0_form_factor(k_z)
+         res = res * exp(II*(.position(1)*k_pts(:,1) &
+                            +.position(2)*k_pts(:,2) &
+                            +.position(3)*k_pts(:,3)))
+         k_z.destroy
+
+      end
+
+   end
+
    make_FT_aspherical(res,k_pts)
    ! Fourier transform of the density described by ".density_matrix"
    ! evaluated at a reciprocal space points [k_pts(i,:), i = 1,dim ]
@@ -9213,49 +9588,6 @@ contains
    
    end
 
-   make_FT_spherical(res,k_pts)
-   ! Fourier transform of the density described by ".density_matrix"
-   ! evaluated at a reciprocal space points [k_pts(i,:), i = 1,dim ]
-      self :: IN
-      res :: VEC{CPX}, OUT
-      k_pts :: MAT{REAL}, IN
-
-      k_z :: VEC{REAL}*
-      k_max :: INT
-      II :: CPX
-
-      k_max = k_pts.dim1
-         II = IMAGIFY(ONE)
-
-      if (.atomic_number==1 AND .use_IAM_ITC_FFs) then
-
-         ! H atom uses Stewart-Davidson-Simpson (SDS) AIM
-         k_z.create(k_max)
-         k_pts.get_row_norms(k_z)
-         res = ATOM::H_SDS_form_factor(k_z) &
-             * exp(II*(.position(1)*k_pts(:,1) &
-                      +.position(2)*k_pts(:,2) &
-                      +.position(3)*k_pts(:,3)))
-         k_z.destroy
-
-      else if (.use_IAM_ITC_FFs) then
-
-         ! Other atoms use fitted *neutral* HF form factors
-         k_z.create(k_max)
-         k_pts.get_row_norms(k_z)
-         res = .HF_n0_form_factor(k_z)
-         res = res * exp(II*(.position(1)*k_pts(:,1) &
-                            +.position(2)*k_pts(:,2) &
-                            +.position(3)*k_pts(:,3)))
-         k_z.destroy
-
-      else
-
-         DIE("WTF?")
-   
-      end
-
-   end
 
    make_FT_along_z(res,k_z)
    ! Fourier transform of the density described by ".density_matrix"

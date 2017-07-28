@@ -54,9 +54,9 @@ program run_HAR
    std_f2,std_f,shx_f2,shx_f :: STR
    dtol,fos,fzcut,ldtol,radius,ten :: REAL
    file :: TEXTFILE*
-   anharm :: VEC{STR}*
+   anharm,disperse :: VEC{STR}*
    i, charge,mult :: INT
-   extinct,h_ADPs,h_iso,radius_is_0 :: BIN
+   do_4_only,extinct,h_ADPs,h_iso,radius_is_0,tmetal :: BIN
 
    ! Macro to create Tonto system object
    ! Initialise MPI parallel stuff too.
@@ -66,12 +66,18 @@ program run_HAR
    stdout.create_stdout
    stderr => stdout 
 
+   ! Nullify
+   nullify(m)
+   nullify(anharm)
+   nullify(disperse)
+
    ! Default option values
    basis      = "def2-SVP"
    basdir     = "./basis_sets"
    charge     = 0
    cif        = "urea.cif"
    dtol       = TOL(2)
+   do_4_only  = FALSE
    err        = " "
    extinct    = FALSE
    fos        = THREE
@@ -177,11 +183,13 @@ program run_HAR
       ! Analyze options
       select case (option)
 
-         case ("anharm        ");  anharm    => value.split
+       ! case ("anharm        ");  anharm    => value.split
+       ! case ("4th-order-only");  do_4_only  = value.to_bin
          case ("basis         ");  basis      = value
          case ("basis-dir     ");  basdir     = value
        ! case ("charge        ");  charge     = value.to_int
          case ("cluster-radius");  radius     = value.to_real*BOHR_PER_ANGSTROM
+         case ("dispersion    ");  disperse  => value.split
          case ("dtol          ");  dtol       = value.to_real
          case ("extinction    ");  extinct    = value.to_bin
          case ("fos           ");  fos        = value.to_real
@@ -265,7 +273,7 @@ program run_HAR
             stdout.flush
             stdout.text("OPTIONS")
           ! stdout.flush    
-          ! stdout.text("   -anharm       '<atom-label-list>'")
+          ! stdout.text("   -anharm '<atom-label-list>'")
           ! stdout.flush    
           ! stdout.text("       Refine the listed atoms anharmonically using a 4th or Gram-Charlier expansion.")
           ! stdout.text("       The <atom-label-list> must correspond to the *unique* labels in the <cif-file>")
@@ -320,6 +328,16 @@ program run_HAR
             stdout.text("       Default:  0")
             stdout.text("       Maximum: 10")
             stdout.flush    
+            stdout.text("   -dispersion '<dispersion-coefficient-list>'")
+            stdout.flush    
+            stdout.text("       Enter dispersion coefficients to be used in the refinement as a quoted")
+            stdout.text("       space-separated list of the element-symbol, f' and f'', repeated. Values")
+            stdout.text("       for elements which are not specified are assumed to be zero.")
+            stdout.flush    
+            stdout.text("       Example: -dispersion 'S 0.04370 0.04026  Cl 0.05457 0.05224'")
+            stdout.flush    
+            stdout.text("       Default: No dispersion used")
+            stdout.flush    
             stdout.text("   -dtol <dtol>")
             stdout.flush    
             stdout.text("       Convergence tolerance <dtol> for the DIIS extrapolation procedure.")
@@ -330,6 +348,12 @@ program run_HAR
             stdout.text("   -extinction [t|f]")
             stdout.flush    
             stdout.text("       Whether to correct extinction via the Larson formula.")
+          ! stdout.flush    
+          ! stdout.text("   -refine-4th-order-only [t|f]'")
+          ! stdout.flush    
+          ! stdout.text("       Refine only the 4th order Gram-Charlier coefficients, leave any")
+          ! stdout.text("       3rd order coefficients unchanged. If not specified in the CIF")
+          ! stdout.text("       initial coeffiicents are assumed to be zero.")
             stdout.flush    
             stdout.text("   -fos <ratio>")
             stdout.flush    
@@ -423,8 +447,6 @@ program run_HAR
 
    end
 
-   ! Clean
-   command_line.destroy_ptr_part
 
    ! Initialize output file
    stdout.destroy
@@ -432,6 +454,26 @@ program run_HAR
    stdout.set_name(out)
    stdout.open_for("write")
    tonto.set_stdout_unit(stdout.unit)
+
+   ! Report
+   stdout.text("This is the har terminal program for performing Hirshfeld")
+   stdout.text("atom refinement (HAR) on a crystal structure stored in a CIF")
+   stdout.text("using the Tonto library for quantum crystallography")
+   stdout.flush
+   stdout.text("If you publish any of the results from this program please")
+   stdout.text("cite the following original scientific publications:")
+   stdout.flush
+   stdout.text("   D. Jayatilaka & B. Dittrich (2008) Acta Cryst. A 64 p. 383")
+   stdout.text("   S. Capelli et al (2014) IUCrJ 1 p. 361")
+   stdout.text("   M. Woinska et al (2016) Sci. Adv. 2 e1600192")
+   stdout.flush
+   stdout.text("You have run this program with the following command:")
+   stdout.flush
+   stdout.text("   hart "//trim(command_line.command_arguments))
+   stdout.flush
+
+   ! Clean
+   command_line.destroy_ptr_part
 
    ! Start timer !!!!!!!
    std_time.start_timing
@@ -473,8 +515,13 @@ program run_HAR
    m.cif.finalize
    m.CE:process_CIF
    m.BASE:set_name(job)
+
+   ! More checks
    DIE_IF(m.crystal.destroyed,          "no crystal information available!")
    DIE_IF(m.crystal.xray_data.destroyed,"no x-ray F structure factors supplied!")
+   DIE_IF(any(m.atom.atomic_number>36),  "hart is not routinely available for heavy atoms, Z>36")
+   tmetal = any(m.atom.atomic_number>=21) AND any(m.atom.atomic_number>=30)
+   DIE_IF(tmetal, "hart is not routinely available for transition metals")
 
    ! Isotropic H ADPs? Set them.
    if (h_iso) &
@@ -485,9 +532,17 @@ program run_HAR
    m.crystal.xray_data.set_thermal_smearing_model("hirshfeld")
    m.crystal.xray_data.set_optimize_extinction(extinct)
 
+   ! Dispersion
+   if (disperse.created) then
+   ATOM:set_dispersion_coefficients(disperse)
+   m.crystal.xray_data.set_correct_dispersion(TRUE)
+   end
+
    ! Anharmonicity
-   if (anharm.created) &
+   if (anharm.created) then
    m.crystal.xray_data.set_refine_4th_order(anharm)
+   m.crystal.xray_data.set_refine_4th_order_only(do_4_only)
+   end
 
    ! Refine isotropic H ADPs?
    if (h_iso) &

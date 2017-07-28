@@ -6,9 +6,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
 # Tonto version info and build date
-set(VERSION_MAJOR 3)
-set(VERSION_MINOR 7)
-set(VERSION_MINOR_MINOR 0)
+string(TIMESTAMP VERSION_MAJOR "%y")
+string(TIMESTAMP VERSION_MINOR "%m")
+string(TIMESTAMP VERSION_MINOR_MINOR "%d")
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
 
 # Tonto speicifics
@@ -221,6 +221,7 @@ set(FOO_SRC
     ${FOO_DIR}/textfile.foo
     ${FOO_DIR}/time.foo
     ${FOO_DIR}/types.foo
+    ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/unit_cell.foo
     ${FOO_DIR}/unit_number.foo
     ${FOO_DIR}/vec{atom_group}.foo
@@ -361,6 +362,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/time.F90
     ${CMAKE_CURRENT_BINARY_DIR}/types.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/t_tensor.F90
     ${CMAKE_CURRENT_BINARY_DIR}/unit_cell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/unit_number.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_atom_group.F90

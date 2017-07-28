@@ -267,12 +267,41 @@ contains
       .:put_quadrupole
       .:put_octupole
 
-    ! charge.create(.n_atom)
-    ! .put_gaussian_atom_charges(charge)
-    ! .put_gaussian_atom_dipoles(charge)
-    ! charge.destroy
+      ! Atomic charges & moments
+      .:put_Hirshfeld_atom_info
 
-    ! .put_GH_atom_charges
+      ! Fields and field gradients
+      .:put_E_field_at_nuclei
+      .:put_EFG_at_nuclei
+
+      ! Standard plots
+
+      ! Clean up leak here
+      .BASE:delete_atom_scf_archives
+
+   end
+
+   put_1e_properties_with_KM ::: leaky
+   ! Put all the available one elctron properties
+      self :: INOUT
+
+   ENSURE(.density_matrix.created,"no density")
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.basis.created,"no basis sets specified")
+
+      ! Make the density matrix (leaky)
+      .BASE:make_ao_density_matrix
+
+      ! Mulliken analysis (leaky)
+      .:put_mulliken_populations
+
+      ! Moments
+      .:put_dipole
+      .:put_quadrupole
+      .:put_octupole
+
+      ! New charges
+      .:put_KM_atom_multipoles
 
       ! Atomic charges & moments
       .:put_Hirshfeld_atom_info
@@ -287,6 +316,8 @@ contains
       .BASE:delete_atom_scf_archives
 
    end
+
+
 
    put_1e_properties_for_groups ::: leaky
    ! Put all the one electron properties for each group
@@ -1860,6 +1891,30 @@ contains
 
    end
 
+   make_dipole result(dipole)
+   ! make the dipole for self
+      self :: INOUT
+      dipole :: VEC{REAL}(3)
+      electronic,nuclear :: VEC{REAL}(3)
+      electronic = .INTS:electronic_dipole_moment
+      nuclear    = .BASE:nuclear_dipole_moment
+      dipole = electronic + nuclear
+   end
+
+   make_quadrupole result(quadrupole)
+   ! make the dipole for self
+      self :: INOUT
+      quadrupole :: MAT{REAL}(3,3)
+      electronic,nuclear,total :: VEC{REAL}(6)
+      i :: INT
+      quadrupole = ZERO
+      electronic = .INTS:electronic_quadrupole_moment
+      nuclear    = .INTS:nuclear_quadrupole_moment
+      total = electronic + nuclear
+      quadrupole = MAT{REAL}:expand_quadrupole(total)
+   end
+
+
    put_quadrupole
    ! Put out the quadrupole to stdout
 
@@ -1907,6 +1962,19 @@ contains
       stdout.dash(int_fields=1,real_fields=6)
 
    end
+
+   make_octupole result(octupole)
+   ! make the octapole for self
+      self :: INOUT
+      octupole :: MAT3{REAL}(3,3,3)
+      electronic,nuclear,total :: VEC{REAL}(10)
+      i :: INT
+      electronic = .INTS:electronic_octupole_moment
+      nuclear    = .INTS:nuclear_octupole_moment
+      total = electronic + nuclear
+      octupole = MAT3{REAL}:expand_octupole(total)
+   end
+
 
    put_octupole
    ! Put out the octupole to stdout
@@ -2740,6 +2808,7 @@ contains
 
    put_X_SF_statistics ::: leaky
    ! Put the X-ray structure factors, with summary statistics if possible
+      self :: INOUT
 
    DIE_IF(NOT .atom.created,"no atom list")
    DIE_IF(NOT .basis_info_made,"no basis info")
@@ -2747,7 +2816,7 @@ contains
    DIE_IF(NOT .crystal.data.created,"no crystal data")
 
       ! Make structure factors
-      .XTAL:make_X_structure_factors
+    ! .XTAL:make_X_structure_factors
 
       if (.crystal.data.have_F_exp) then
 
@@ -2767,14 +2836,15 @@ contains
 
    put_X_structure_factors ::: leaky
    ! Put the X-ray structure factors, with summary statistics if possible
+      self :: INOUT
 
    DIE_IF(NOT .atom.created,"no atom list")
    DIE_IF(NOT .basis_info_made,"no basis info")
    DIE_IF(NOT .crystal.created,"no crystal")
    DIE_IF(NOT .crystal.data.created,"no crystal data")
 
-      ! Make structure factors
-      .XTAL:make_X_structure_factors
+      ! Make structure factors & chi2
+    ! .XTAL:make_X_structure_factors
 
       if (.crystal.data.have_F_exp) then
 
@@ -2795,6 +2865,7 @@ contains
    put_N_structure_factors ::: leaky
    ! Put the PND (Sz) structure factors, with summary statistics
    ! if possible
+      self :: INOUT
 
    DIE_IF(NOT .atom.created,"no atom list")
    DIE_IF(NOT .basis_info_made,"no basis info")
@@ -2804,7 +2875,7 @@ contains
    DIE_IF(NOT .crystal.data.have_F_pred,"no crystal F_pred data")
 
       ! Make structure factors
-      .XTAL:make_N_structure_factors
+    ! .XTAL:make_N_structure_factors
 
       if (.crystal.data.have_F_exp) then
 
@@ -3306,14 +3377,20 @@ contains
    ! Put out the roby energy decomposition specified in the .atom_group array
    ! based on symmetrically orthonormalised monomer molecular (SOMMO) fragments.
    ! A supermolecue density matrix must exist on disk.
+      self :: INOUT
+
       .:put_roby_energy_partition(symorthonormalise=TRUE)
+
    end
 
    put_roby_mmo_energy_partition
    ! Put out the roby energy decomposition specified in the .atom_group array
    ! based on monomer molecular (MMO) fragments.  A supermolecue density matrix
    ! must exist on disk.
+      self :: INOUT
+
       .:put_roby_energy_partition(symorthonormalise=FALSE)
+
    end
 
    put_roby_energy_partition(symorthonormalise) ::: leaky
@@ -3324,7 +3401,8 @@ contains
    ! NOTE: The density matrix defining the supermolecule is read in
    ! from the disk, so an SCF calculation or a "make_group_density_matrix"
    ! calculation must be done before this routine is called.
-      symorthonormalise :: BIN
+      self :: INOUT
+      symorthonormalise :: BIN, IN
 
    ENSURE(.atom_group.created,"no atom group information")
    ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
@@ -3514,8 +3592,9 @@ contains
 
    put_roby_energy_parts(E_T,E_K,E_C,E_Z,E_N,E_int,E_prom) ::: selfless, private
    ! Put of the Roby energy parts
-      E_T,E_K,E_C,E_Z,E_N :: REAL
-      E_int,E_prom :: REAL, optional
+      self :: IN
+      E_T,E_K,E_C,E_Z,E_N :: REAL, IN
+      E_int,E_prom :: REAL, optional, IN
 
       stdout.flush
       stdout.show("Kinetic energy       =",E_T)
@@ -3528,6 +3607,7 @@ contains
 
       if (present(E_int)) &
       stdout.show("Total int. energy    =",E_int)
+
       if (present(E_prom)) &
       stdout.show("Promotion energy     =",E_prom)
 
@@ -3708,6 +3788,122 @@ contains
       .:put_group_12_QM_energies
    end
 
+   put_group_12_multipole_energies ::: leaky
+   ! Calculate the interaction (coulomb) energy with multipoles
+      self :: INOUT
+      ! A & B molecules
+      E :: VEC{REAL}(5)
+      E_tot :: REAL
+      .PROP:make_coulomb_atomic_multipole_energy(E, E_tot)
+      stdout.flush
+      stdout.text("===========================================")
+      stdout.text("Atom-atom multipole coulomb energy ")
+      stdout.text("===========================================")
+      stdout.flush
+      stdout.text("Up to and including octapole-charge/quadrupole-dipole interactions")
+      stdout.flush
+      stdout.show("Charge-charge                         = ", E(1), right=TRUE)
+      stdout.show("Charge-dipole                         = ", E(2), right=TRUE)
+      stdout.show("Charge-quadrupole/dipole-dipole       = ", E(3), right=TRUE)
+      stdout.show("Charge-octapole/quadrupole-dipole     = ", E(4), right=TRUE)
+      stdout.show("quadrupole-quadrupole/dipole-octapole = ", E(5), right=TRUE)
+      stdout.show("E_coulomb (multipole)                 = ",E_tot,right=TRUE)
+      stdout.show("E_coulomb (multipole) (kJ/mol)        = ",E_tot.to_units("kJ/mol"),right=TRUE)
+      stdout.text("The following are shown for crystalexplorer")
+      stdout.text("the only calculated value is the coulomb term")
+      stdout.show("Delta E_repulsion (kJ/mol)            = ",ZERO,right=TRUE)
+      stdout.show("Delta E_ee-exchange (kJ/mol)          = ",ZERO,right=TRUE)
+      stdout.show("Delta E_exch-rep (kJ/mol)             = ",ZERO,right=TRUE)
+      stdout.show("Delta E_coul (kJ/mol)                 = ",E_tot.to_units("kJ/mol"),right=TRUE)
+
+
+      stdout.flush
+   end
+
+   make_coulomb_multipole_energy(E, E_tot)
+      self :: INOUT
+      E :: VEC{REAL}(5), OUT
+      E_tot :: REAL, OUT
+      ! A & B molecules
+      mol_A,mol_B :: MOLECULE*
+      q_a, q_b :: REAL
+      m_a, m_b :: VEC{REAL}(3)
+      Qu_a, Qu_b :: MAT{REAL}(3,3)
+      O_a, O_b :: MAT3{REAL}(3,3,3)
+      T :: T_TENSOR
+      E = ZERO
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+      m_a = mol_A.PROP:make_dipole
+      m_b = mol_B.PROP:make_dipole
+      Qu_a = mol_A.PROP:make_quadrupole
+      Qu_b = mol_B.PROP:make_quadrupole
+      O_a = mol_A.PROP:make_octupole
+      O_b = mol_B.PROP:make_octupole
+      T.create(mol_A.atom.center_of_mass, mol_B.atom.center_of_mass)
+      q_a = mol_A.charge
+      q_b = mol_B.charge
+      E = T.interaction_energy(q_a, q_b, m_a, m_b, Qu_a, Qu_b, O_a, O_b)
+      E_tot = sum(E)
+   end 
+
+   make_coulomb_atomic_multipole_energy(E, E_tot)
+      self :: INOUT
+      E :: VEC{REAL}(5), OUT
+      E_tot :: REAL, OUT
+      ! A & B molecules
+      mol_A,mol_B :: MOLECULE*
+      charges_a :: VEC{REAL}*
+      dipoles_a, quadrupoles_a, octupoles_a :: MAT{REAL}*
+      charges_b :: VEC{REAL}*
+      dipoles_b, quadrupoles_b, octupoles_b :: MAT{REAL}*
+      q_a, q_b :: REAL
+      m_a, m_b :: VEC{REAL}(3)
+      Qu_a, Qu_b :: MAT{REAL}(3,3)
+      O_a, O_b :: MAT3{REAL}(3,3,3)
+      i, j :: INT
+      T :: T_TENSOR
+
+      mol_A => .atom_group(1).mol
+      mol_B => .atom_group(2).mol
+
+      charges_a.create(mol_A.n_atom)
+      dipoles_a.create(mol_A.n_atom, 3)
+      quadrupoles_a.create(mol_A.n_atom, 6)
+      octupoles_a.create(mol_A.n_atom, 10)
+      charges_b.create(mol_B.n_atom)
+      dipoles_b.create(mol_B.n_atom, 3)
+      quadrupoles_b.create(mol_B.n_atom, 6)
+      octupoles_b.create(mol_B.n_atom, 10)
+
+      mol_A.BASE:make_atomic_multipoles(charges_a,dipoles_a,quadrupoles_a,octupoles_a)
+      mol_B.BASE:make_atomic_multipoles(charges_b,dipoles_b,quadrupoles_b,octupoles_b)
+      E = ZERO
+
+      do i = 1, mol_A.n_atom
+         q_a = mol_A.atom(i).atomic_number - charges_a(i)
+         m_a = dipoles_a(i,:)
+         Qu_a = MAT{REAL}:expand_quadrupole(quadrupoles_a(i,:))
+         O_a = MAT3{REAL}:expand_octupole(octupoles_a(i,:))
+
+      do j = 1, mol_B.n_atom
+         q_b = mol_B.atom(j).atomic_number - charges_b(j)
+         m_b = dipoles_b(j,:)
+         Qu_b = MAT{REAL}:expand_quadrupole(quadrupoles_b(j,:))
+         O_b = MAT3{REAL}:expand_octupole(octupoles_b(j,:))
+
+         T.create(mol_A.atom(i).position, mol_B.atom(j).position)
+         E = E + T.interaction_energy(q_a, q_b, m_a, m_b, Qu_a, Qu_b, O_a, O_b)
+      end do
+      end do
+      E_tot = sum(E)
+      charges_a.destroy; charges_b.destroy
+      dipoles_a.destroy; dipoles_b.destroy
+      quadrupoles_a.destroy; charges_b.destroy
+      octupoles_a.destroy; charges_b.destroy
+   end 
+
+
    put_group_12_QM_energies ::: leaky
    ! Calculate the group 1-2 interaction energies.
    ! For simplicity the notations follows the reference:
@@ -3725,14 +3921,15 @@ contains
    ENSURE(.atom_group(2).mol.molecular_orbitals.created , "no molecular orbitals for atom group 2")
 
       ! Terms regardless of unrestricted/restricted
-      E_en,E_ke,E_1e,E_nn,E_ee,E_ex :: REAL
+      E_en,E_ke,E_1e,E_nn,E_ee,E_ex,r :: REAL
       E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
-      X,X_A,X_B :: OPMATRIX* 
-      C,C_A,C_B :: OPMATRIX*
+      P,P_A,P_B :: OPMATRIX* 
+      J,J_A,J_B :: OPMATRIX*
       K,K_A,K_B :: OPMATRIX*
       mol_A,mol_B :: MOLECULE*
       saved_MOs_A, saved_MOs_B :: OPMATRIX*
       exchange_factors :: VEC{REAL}(3) = [-HALF, -HALF, -HALF]
+      a_b :: VEC{REAL}(3)
 
 
       ! ======================
@@ -3742,6 +3939,14 @@ contains
       ! A & B molecules
       mol_A => .atom_group(1).mol
       mol_B => .atom_group(2).mol
+
+      a_b = mol_A.atom.center_of_mass - mol_B.atom.center_of_mass
+      r = a_b.norm
+      ! If the molecules are too far apart use multipoles
+      if (r.to_units("ANGSTROMS") > 12.0d0) then
+         .PROP:put_group_12_multipole_energies
+         return
+      end
 
       mol_A.INTS:make_overlap_matrix
       mol_A.BASE:make_natural_orbitals
@@ -3780,13 +3985,16 @@ contains
       mol_A.nuclear_attraction_matrix.uncompress
       mol_B.nuclear_attraction_matrix.uncompress
 
-      E_ABn = ZERO; E_ABo = ZERO
+      E_ABn = ZERO; E_ABo = ZERO; 
+      E_en = ZERO; E_1e = ZERO;
+      E_ex = ZERO; E_nn = ZERO;
+      E_ke = ZERO;
 
-      X   =>      .nuclear_attraction_matrix
-      X_A => mol_A.nuclear_attraction_matrix
-      X_B => mol_B.nuclear_attraction_matrix
+      P   =>      .nuclear_attraction_matrix
+      P_A => mol_A.nuclear_attraction_matrix
+      P_B => mol_B.nuclear_attraction_matrix
 
-      E_en = .:group_12_int_energy(X,X_A,X_B)
+      E_en = .:group_12_int_energy(P, P_A, P_B)
 
            .nuclear_attraction_matrix.compress
       mol_A.nuclear_attraction_matrix.compress
@@ -3795,37 +4003,37 @@ contains
       ! Non-orthogonal & orthogonalized electronic energies
 
       ! One electron hamiltonian
-      X   =>      .core_matrix
-      X_A => mol_A.core_matrix
-      X_B => mol_B.core_matrix
+      P   =>      .core_matrix
+      P_A => mol_A.core_matrix
+      P_B => mol_B.core_matrix
 
       ! >> One electron interaction energy <<
-      E_1e = .:group_12_int_energy(X,X_A,X_B,E_AB=E_ABn)
+      E_1e = .:group_12_int_energy(P, P_A, P_B, E_AB=E_ABn)
       E_ke = E_1e - E_en
 
-      C.create(.n_bf, .density_matrix.spinorbital_kind)
+      J.create(.n_bf, .density_matrix.spinorbital_kind)
       K.create(.n_bf, .density_matrix.spinorbital_kind)
-      C_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
+      J_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
       K_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
-      C_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
+      J_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
       K_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
 
 
       ! Two-electron matrices
-      X   =>      .density_matrix
-      X_A => mol_A.density_matrix
-      X_B => mol_B.density_matrix
+      P   =>      .density_matrix
+      P_A => mol_A.density_matrix
+      P_B => mol_B.density_matrix
 
-           .FOCK:make_JK_engine(C  ,K  ,X  )
-      mol_A.FOCK:make_JK_engine(C_A,K_A,X_A)
-      mol_B.FOCK:make_JK_engine(C_B,K_B,X_B)
+           .FOCK:make_JK_engine(J  ,K  ,P  )
+      mol_A.FOCK:make_JK_engine(J_A,K_A,P_A)
+      mol_B.FOCK:make_JK_engine(J_B,K_B,P_B)
 
       ! Alpha density matrix with beta, beta density matrix with alpha
-      E_ee = .:group_12_int_energy(C,C_A,C_B, HALF, E_ABn, TRUE)
-      E_ex = .:group_12_exchange_int_energy(K,K_A,K_B,exchange_factors,E_ABn)
+      E_ee = .:group_12_int_energy(J, J_A, J_B, HALF, E_ABn, TRUE)
+      E_ex = .:group_12_exchange_int_energy(K, K_A, K_B, exchange_factors, E_ABn)
 
       K_A.destroy; K_B.destroy
-      C_A.destroy; C_B.destroy  
+      J_A.destroy; J_B.destroy  
 
       ! >> Nuclear-nuclear repulsion energy term <<
       E_nn = .:group_12_NR_int_energy
@@ -3843,19 +4051,18 @@ contains
       .BASE:make_scf_density_matrix
 
       ! One electron hamiltonian
-      ! need one for alpha, one for beta
-      X    => .core_matrix
-      E_ABo = .BASE:expectation(X)
+      P    => .core_matrix
+      E_ABo = .BASE:expectation(P)
 
       ! Two-electron integrals
-      C.destroy; K.destroy
-      C.create(.n_bf, .density_matrix.spinorbital_kind)
+      J.destroy; K.destroy
+      J.create(.n_bf, .density_matrix.spinorbital_kind)
       K.create(.n_bf, .density_matrix.spinorbital_kind)
 
-      X => .density_matrix
-      .FOCK:make_JK_engine(C,K,X)
+      P => .density_matrix
+      .FOCK:make_JK_engine(J, K, P)
 
-      E_ABo = E_ABo +    HALF*.BASE:expectation(C, TRUE)
+      E_ABo = E_ABo +    HALF*.BASE:expectation(J, TRUE)
       E_ABo = E_ABo + exchange_factors(1)*.BASE:expectation(K)
 
       ! Get repulsion energy
@@ -3863,7 +4070,7 @@ contains
       E_XR  = E_ex + E_rep
 
       ! Clean up remaining temporaries
-      C.destroy; K.destroy
+      J.destroy; K.destroy
 
       stdout.flush
       stdout.text("=======================================")
@@ -3896,6 +4103,7 @@ contains
       stdout.text("  (HONOs) are used instead of the molecular orbitals (MOs).")
 
       stdout.flush
+      stdout.show("Separation (Å)                        = ", r.to_units("ANGSTROMS"), right=TRUE)
       stdout.show("1. Delta E_kinetic-energy             = ",E_ke ,right=TRUE)
       stdout.show("2. Delta E_nn-repulsion               = ",E_nn ,right=TRUE)
       stdout.show("3. Delta E_en-attraction              = ",E_en ,right=TRUE)
@@ -3961,7 +4169,7 @@ contains
       E_B = mol_B.BASE:expectation(X_B, with_cross_terms)
 
       ! Interaction energy
-      res = E - E_A - E_B
+      res = (E - (E_A + E_B))
 
       if (present(fac))  res = fac*res
 
@@ -3985,7 +4193,7 @@ contains
       factors  :: VEC{REAL}(3), optional, IN
       E_AB :: REAL, optional, INOUT
       with_cross_terms :: BIN, optional
-      res  :: REAL
+      res :: REAL
 
 
    ENSURE(.atom_group.created,"no atom group information")
@@ -4000,14 +4208,14 @@ contains
       ! A & B molecules
       mol_A => .atom_group(1).mol
       mol_B => .atom_group(2).mol
-
+      
       ! Energies
       E   =      .BASE:expectation(X, with_cross_terms)
       E_A = mol_A.BASE:expectation(X_A, with_cross_terms)
       E_B = mol_B.BASE:expectation(X_B, with_cross_terms)
 
       ! Interaction energy
-      res = fac(1) * E - fac(2) * E_A - fac(3) * E_B
+      res = fac(1) * E - (fac(2) * E_A + fac(3) * E_B)
 
       if (present(E_AB)) then
          E_AB = E_AB + (E * fac(1))
@@ -4037,7 +4245,7 @@ contains
       E_B = mol_B.BASE:nuclear_repulsion_energy
 
       ! Interaction energy
-      res   = E - E_A - E_B
+      res   = E - (E_A + E_B)
 
    end
 
@@ -4111,12 +4319,154 @@ contains
       end
 
       select case (.roby.roby_kind)
-         case("atom_bond_analysis       "); .roby.atom_bond_analysis
-         case("atom_energy_bond_analysis"); .roby.atom_energy_bond_analysis
-         case("group_bond_analysis      "); .roby.group_bond_analysis
-         case default;              UNKNOWN(.roby.roby_kind)
+
+      case("atom_bond_analysis       ")
+         .roby.atom_bond_analysis
+
+      case("atom_energy_bond_analysis")
+         .roby.atom_energy_bond_analysis
+
+      case("group_bond_analysis      ")
+         .roby.group_bond_analysis
+
+      case default;              UNKNOWN(.roby.roby_kind)
+
       end
 
    end
+
+
+   put_KM_atom_multipoles
+   ! Put the KM multipoles
+      ENSURE(.basis_info_made,"no basis info")
+      ENSURE(.atom.created,"no atom list")
+      ENSURE(.density_matrix.created,"no density_matrix")
+      ENSURE(.density_matrix.restricted.created,"no restricted density_matrix")
+      ENSURE(NOT .use_spherical_basis,"not implememnted for spherical")
+
+      charge :: VEC{REAL}*
+      dipole, quadrupole, octupole :: MAT{REAL}*
+      a :: INT
+      dp :: REAL
+
+      charge.create(.n_atom)
+      dipole.create(.n_atom, 3)
+      quadrupole.create(.n_atom, 6)
+      octupole.create(.n_atom, 10)
+      .BASE:make_atomic_multipoles(charge,dipole,quadrupole,octupole)
+
+      stdout.flush
+      stdout.text("Koritsanszky-Michael atomic populations: ")
+      stdout.flush
+      stdout.dash(int_fields=1, real_fields=5)
+      stdout.put("Atom", int_width = TRUE)
+      stdout.put("Charge")
+      stdout.put("mu_x")
+      stdout.put("mu_y")
+      stdout.put("mu_z")
+      stdout.put("|mu|")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.flush
+      charge(:) = .atom(:).atomic_number - charge(:) ! <<< redefine charge
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(charge(a))
+         stdout.put(dipole(a,1))
+         stdout.put(dipole(a,2))
+         stdout.put(dipole(a,3))
+         dp = dipole(a,:).norm
+         stdout.put(dp)
+         stdout.flush
+      end
+      stdout.dash(int_fields=1, real_fields=6)
+      stdout.flush
+
+      ! Write results in au
+      stdout.flush
+      stdout.text("Koritsanszky-Michael quadrupole moments (au):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      stdout.tab(int_fields=1)
+      stdout.put("Qxx")
+      stdout.put("Qyy")
+      stdout.put("Qzz")
+      stdout.put("Qxy")
+      stdout.put("Qxz")
+      stdout.put("Qyz")
+      stdout.flush
+      stdout.put("Atom",int_width=TRUE)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=6)
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(quadrupole(a,1))
+         stdout.put(quadrupole(a,2))
+         stdout.put(quadrupole(a,3))
+         stdout.put(quadrupole(a,4))
+         stdout.put(quadrupole(a,5))
+         stdout.put(quadrupole(a,6))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=6)
+
+      ! Write results in au
+      stdout.flush
+      stdout.text("Koritsanszky-Michael octupole moments (au):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=10)
+      stdout.tab(int_fields=1)
+      stdout.put("Oxxx")
+      stdout.put("Oyyy")
+      stdout.put("Ozzz")
+      stdout.put("Oxxy")
+      stdout.put("Oxxz")
+      stdout.put("Oyyx")
+      stdout.put("Oyyz")
+      stdout.put("Ozzx")
+      stdout.put("Ozzy")
+      stdout.put("Oxyz")
+      stdout.flush
+      stdout.put("Atom",int_width=TRUE)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=10)
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(octupole(a,1))
+         stdout.put(octupole(a,2))
+         stdout.put(octupole(a,3))
+         stdout.put(octupole(a,4))
+         stdout.put(octupole(a,5))
+         stdout.put(octupole(a,6))
+         stdout.put(octupole(a,7))
+         stdout.put(octupole(a,8))
+         stdout.put(octupole(a,9))
+         stdout.put(octupole(a,10))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=10)
+
+      quadrupole.destroy
+      charge.destroy
+      dipole.destroy
+
+   end
+
 
 end

@@ -1067,7 +1067,7 @@ contains
       if (.crystal.destroyed) return
       if (.atom.destroyed)    return
 
-      .atom.change_axis_system_to("cartesian",.crystal.unit_cell)
+      .atom.change_axis_system_to("cartesian",.crystal.unit_cell,FALSE)
 
    end
 
@@ -1083,7 +1083,7 @@ contains
 
       stdin.read(axis_system)
 
-      .atom.change_axis_system_to(axis_system,.crystal.unit_cell)
+      .atom.change_axis_system_to(axis_system,.crystal.unit_cell,FALSE)
 
    end
 
@@ -2262,19 +2262,26 @@ contains
       WARN_IF(.n_bf/=n_independent,"No. of basis fns /= no. of independent fns")
       WARN_IF(.n_bf/=n_independent,"MO's are wrong, but density matrix is correct")
 
-      ! Read in atoms (basis_labels set later)
-      chkfile.look_for("Atomic numbers",from=1); chkfile.read_line
+      ! Read atomic numbers & set
+      chkfile.look_for("Atomic numbers",from=1)
+      chkfile.read_line
       .atom.create(.n_atom)
       do a = 1,.n_atom
          chkfile.read(Z)
          .atom(a).set_atomic_number(Z)
+         .atom(a).set_nuclear_charge(REALIFY(Z))
       end
 
-      ! Read in nuclear charges
-      chkfile.look_for("Nuclear charges",from=1); chkfile.read_line
+      ! Assign core electrons if any
+      chkfile.look_for("Nuclear charges",from=1)
+      chkfile.read_line
       do a = 1,.n_atom
          chkfile.read(Nc)
-         .atom(a).set_nuclear_charge(Nc)
+         Z = .atom(a).atomic_number
+         if (nint(Nc)/=Z) then
+            Z = Z - nint(Nc)
+            .atom(a).set_n_core_electrons(Z)
+         end
       end
 
       ! Read in coordinates
@@ -3827,6 +3834,136 @@ contains
 
    end
 
+   write_florian_wfn_file ::: leaky
+   ! Writes a full wavefunction .ffn file
+   ENSURE(.orbital_energies.created("restricted"), "No orbital energies")
+   ENSURE(.molecular_orbitals.created("restricted"), "No orbitals")
+      name :: STR
+      wfnfile :: TEXTFILE*
+      lvec :: VEC{INT}*
+      evec :: VEC{REAL}*
+      dmatrix, cc :: MAT{REAL}*
+      sh :: SHELL*
+      i, j, pcount, a, l, atomn, shelln :: INT
+      occ :: REAL
+
+      n_vars_format :: STR, parameter = "(A8, 10X, I5,' MOL ORBITALS', I7,' PRIMITIVES', I9,' NUCLEI')"
+      atom_format :: STR, parameter = "(A5, I3, '    (CENTRE', 1I3, ') ', 3F12.8, '  CHARGE =', F5.1)"
+      c_assignment_format :: STR, parameter = "('CENTRE ASSIGNMENTS  ', 20I3)"
+      t_assignment_format :: STR, parameter = "('TYPE ASSIGNMENTS    ', 20I3)"
+      exponent_format :: STR, parameter = "('EXPONENTS ', 5D14.7)"
+      mol_title_format :: STR, parameter = "('MO ', I4,'    MO 0.0        OCC NO =',F13.7,'  ORB. ENERGY =',F12.7)"
+      coefficient_format :: STR, parameter = "(5D16.8)"
+      e_v_format :: STR, parameter = "(' THE HF ENERGY = ', F20.12, ' THE VIRIAL(-V/T)=', F13.8)"
+
+      name = .name
+      if (NOT stdin.buffer_exhausted) stdin.read(name)
+
+      wfnfile.create(trim(name)//".ffn")
+      wfnfile.open_for("write")
+
+      write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+      write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", .n_bf-1, .n_prim, .n_atom
+      write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+         .atom(i).position, REALIFY(.atom(i).atomic_number) , i = 1, .n_atom)
+      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i = 1, .atom(j).n_prim ), j = 1, .n_atom )
+
+      pcount = 1
+      lvec.create(.n_prim)
+      evec.create(.n_prim)
+      do a = 1, .n_shell
+        atomn  = .atom_for_shell(a)
+        shelln = .atom_shell_for_shell(a)
+        sh => .atom(atomn).basis.shell(shelln)
+        l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+        do j = 1, sh.n_cc
+          if (sh.l==3) then
+            lvec(pcount  ) = l + 1
+            lvec(pcount+1) = l + 2
+            lvec(pcount+2) = l + 3
+            lvec(pcount+3) = l + 4
+            lvec(pcount+4) = l + 5
+            lvec(pcount+5) = l + 7
+            lvec(pcount+6) = l + 6
+            lvec(pcount+7) = l + 8
+            lvec(pcount+8) = l + 9
+            lvec(pcount+9) = l + 10
+            do i = 1, sh.n_comp
+              evec(pcount) = sh.exponent(j)
+              pcount = pcount + 1
+            end
+          else
+            do i = 1, sh.n_comp
+              evec(pcount) = sh.exponent(j)
+              lvec(pcount) = l + i
+              pcount = pcount + 1
+            end
+          end
+        end
+      end
+
+      write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
+      write(unit = wfnfile.unit, fmt = exponent_format) evec
+
+      lvec.destroy
+      evec.destroy
+
+      dmatrix.create(.n_prim, .n_bf)
+      cc.create(.n_prim, .n_bf)
+
+      .:make_contraction_matrix(cc)
+
+      dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
+
+      do i = 1, .n_bf
+         occ = ZERO
+         if (i<.n_a) occ = TWO
+         write(unit=wfnfile.unit, fmt=mol_title_format) &
+            i, occ, .orbital_energies.restricted(i)
+         write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+      end
+
+      write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
+
+      ! Clean
+      cc.destroy
+      dmatrix.destroy
+      wfnfile.close
+      wfnfile.destroy
+
+   end
+
+!	==================
+!	= Write XYZ File =
+!	==================
+
+   write_xyz_file ::: leaky
+   ! Prints out an asymmetric-unit xyz file.
+   ! cartesian axes.
+      name :: STR
+      xyzfile :: TEXTFILE*
+      i :: INT
+
+      atomnumber :: STR, parameter = "(I3)"
+      comment :: STR, parameter = "(' written by tonto')"
+      atom_format :: STR, parameter = "(A5, 3F12.6)"
+
+      name = .name
+      if (NOT stdin.buffer_exhausted) stdin.read(name)
+
+      xyzfile.create(trim(name)//".xyz")
+      xyzfile.open_for("write")
+
+      write(unit = xyzfile.unit, fmt = atomnumber) .n_atom
+      write(unit = xyzfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+      write(unit = xyzfile.unit, fmt = atom_format) (.atom(i).label, .atom(i).position*ANGSTROM_PER_BOHR, i=1, .n_atom)
+
+      ! Cleanup
+      xyzfile.close
+      xyzfile.destroy
+
+   end
+
 !  =====================================
 !  Make molecule from atom or atom group
 !  =====================================
@@ -4531,12 +4668,13 @@ contains
 
    no_of_electrons result (res) ::: PURE
    ! Work out and return the number of electrons in the molecule.
+   ! NOTE: removed the core electrons, if any.
       self :: IN
       res :: INT
 
    ENSURE(.atom.created,  "no atom list")
 
-      res = .atom.no_of_electrons - .charge
+      res = .atom.no_of_electrons - .charge - sum(.atom(:).n_core_electrons)
 
    end
 
@@ -8661,6 +8799,7 @@ contains
 
    delete_scf_archives(keep_MOs,keep_DM) ::: recursive
    ! Delete any SCF-procedure generated archives stored on disk.
+      self :: IN
       keep_MOs,keep_DM :: BIN, optional
 
       archive :: ARCHIVE
@@ -8741,6 +8880,7 @@ contains
 
    delete_atom_scf_archives ::: recursive, leaky
    ! Delete the atom SCF archives, if they exist.
+      self :: IN
 
       a :: INT
       mol :: MOLECULE*
@@ -8764,6 +8904,7 @@ contains
 
    delete_group_scf_archives ::: recursive, private
    ! Delete any group type SCF archives.
+      self :: IN
       g :: INT
 
       if (.atom_group.destroyed) return
@@ -9328,7 +9469,7 @@ contains
    ENSURE(.crystal.created, "No crystal")
    ENSURE(.atom.created, "No atom")
 
-      clean,change_ESDs :: BIN
+      clean,change_ESDs,H_U_iso :: BIN
 
       ! Make sure CIF is there ...
       clean = FALSE
@@ -9349,19 +9490,18 @@ contains
       change_ESDs = TRUE
       if (present(with_ESDs)) change_ESDs = NOT with_ESDs
 
-      if (.crystal.data.created) then
-      DIE_IF(.crystal.data.covariance_matrix.created AND change_ESDs,"covariances exist")
-      DIE_IF(.crystal.data.fragment_covariance_matrix.created AND change_ESDs,"fragment covariances exist")
-      end
+      ! Alter sigma(U_iso) for H atoms?
+      H_U_iso = FALSE
+      if (.crystal.data.created) H_U_iso = .crystal.data.refine_H_U_iso
 
       ! Crystal/Fragment
       stdout.redirect(trim(.name)//".cryst-fragment.cif")
       .:put_CIF_banner
       .:put_CIF_basics
       .:put_CIF_wavefunction
-      .crystal.fragment_atom.change_axis_system_to("crystal",.crystal.unit_cell,change_ESDs)
+      .crystal.fragment_atom.change_axis_system_to("crystal",.crystal.unit_cell,H_U_iso,change_ESDs)
       .crystal.put_fragment_CIF(.cif)
-      .crystal.fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell,change_ESDs)
+      .crystal.fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell,H_U_iso,change_ESDs)
       stdout.revert
 
       ! Crystal/Asymmetric unit
@@ -9369,9 +9509,9 @@ contains
       .:put_CIF_banner
       .:put_CIF_basics
       .:put_CIF_wavefunction
-      .crystal.asymmetric_unit_atom.change_axis_system_to("crystal",.crystal.unit_cell,change_ESDs)
+      .crystal.asymmetric_unit_atom.change_axis_system_to("crystal",.crystal.unit_cell,H_U_iso,change_ESDs)
       .crystal.put_asymm_unit_CIF(.cif)
-      .crystal.asymmetric_unit_atom.change_axis_system_to("cartesian",.crystal.unit_cell,change_ESDs)
+      .crystal.asymmetric_unit_atom.change_axis_system_to("cartesian",.crystal.unit_cell,H_U_iso,change_ESDs)
       stdout.revert
 
       ! Put fcf files
@@ -9379,7 +9519,8 @@ contains
       if (.crystal.data.reflections.created) then
       .:put_shelx_hkl3
       .:put_shelx_hkl4
-      .:put_shelx_fcf
+      .:put_shelx_fcf5
+      .:put_shelx_fcf6
       .:put_xd_fco
       end
       end
@@ -9397,6 +9538,8 @@ contains
 
       date :: STR
 
+      stdout.text("#\#CIF_2.0")
+      stdout.flush
       stdout.text("# ========================")
       stdout.text("# Tonto generated CIF file")
       stdout.text("# ========================")
@@ -9640,9 +9783,9 @@ contains
 
    end
 
-   put_shelx_fcf
+   put_shelx_fcf5
    ! Prints out just the reflection information plus minimal
-   ! extra stuff as in the shelx fcf file.
+   ! extra stuff as in the shelx fcf LIST=5 file.
       self :: INOUT
 
    ENSURE(.crystal.created, "No crystal")
@@ -9654,13 +9797,43 @@ contains
       clean = FALSE
       if (.cif.destroyed) then
          clean = TRUE
-         .cif.create(trim(.name)//".fcf")
+         .cif.create(trim(.name)//".fcf5")
       end
 
       ! Fragment
-      stdout.redirect(trim(.name)//".fcf")
+      stdout.redirect(trim(.name)//".fcf5")
       .:put_CIF_banner
-      .crystal.put_shelx_fcf
+      .crystal.put_shelx_fcf5
+      stdout.revert
+
+      ! Clean up
+      if (clean) then
+         .cif.destroy
+      end
+
+   end
+
+   put_shelx_fcf6
+   ! Prints out just the reflection information plus minimal
+   ! extra stuff as in the shelx fcf LIST=6 file.
+      self :: INOUT
+
+   ENSURE(.crystal.created, "No crystal")
+   ENSURE(.atom.created, "No atom")
+
+      clean :: BIN
+
+      ! Make sure CIF object is there ...
+      clean = FALSE
+      if (.cif.destroyed) then
+         clean = TRUE
+         .cif.create(trim(.name)//".fcf6")
+      end
+
+      ! Fragment
+      stdout.redirect(trim(.name)//".fcf6")
+      .:put_CIF_banner
+      .crystal.put_shelx_fcf6
       stdout.revert
 
       ! Clean up
@@ -9939,5 +10112,208 @@ contains
       end if
       datafile.close
    end
+
+   make_atomic_multipoles(charge,dipole,quadrupole,octupole,od,oc,no_s)
+      self :: IN
+      charge :: VEC{REAL}, OUT
+      dipole, quadrupole, octupole :: MAT{REAL}, OUT
+      od, oc, no_s :: BIN, optional, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.density_matrix.created,"no density_matrix")
+   ENSURE(.density_matrix.restricted.created,"no restricted density_matrix")
+   ENSURE(NOT .use_spherical_basis,"not implememnted for spherical")
+
+      off_diagonal,only_disconnected, no_s_functions :: BIN
+      S,Sa,Sb,P,part :: MAT{REAL}*
+      Ax,Ay,Az,Bx,By,Bz :: MAT{REAL}*
+      Axx,Ayy,Azz,Axy,Axz,Ayz,Bxx,Byy,Bzz,Bxy,Bxz,Byz :: MAT{REAL}*
+      Axxx,Ayyy,Azzz,Axxy,Axxz,Ayyx,Ayyz,Azzx,Azzy,Axyz :: MAT{REAL}*
+      Bxxx,Byyy,Bzzz,Bxxy,Bxxz,Byyx,Byyz,Bzzx,Bzzy,Bxyz :: MAT{REAL}*
+      q,fa,la,na,fb,lb,nb,atom_a,atom_b :: INT
+      sh :: SHELL2
+      fac :: REAL
+      off_diagonal = FALSE
+      only_disconnected = FALSE
+      no_s_functions = FALSE
+      if (present(od)) off_diagonal = od
+      if (present(oc)) only_disconnected = oc
+      if (present(no_s)) no_s_functions = no_s
+
+      
+      P => .density_matrix.restricted
+      charge = ZERO
+      dipole = ZERO
+      quadrupole = ZERO
+      octupole = ZERO
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         if (atom_a==atom_b) then
+            if (no_s_functions AND sh.a.l == 0 AND sh.b.l == 0) cycle
+            if (off_diagonal) cycle
+            if (only_disconnected) cycle
+            fac = TWO
+            if (fa==fb) fac=ONE
+            S.create(na,nb)
+            Ax.create(na,nb); Ay.create(na,nb); Az.create(na,nb)
+            Axx.create(na,nb); Ayy.create(na,nb); Azz.create(na,nb)
+            Axy.create(na,nb); Axz.create(na,nb); Ayz.create(na,nb)
+
+            Axxx.create(na,nb); Ayyy.create(na,nb); Azzz.create(na,nb)
+            Axxy.create(na,nb); Axxz.create(na,nb); Ayyx.create(na,nb)
+            Ayyz.create(na,nb); Azzx.create(na,nb); Azzy.create(na,nb)
+            Axyz.create(na,nb); 
+
+            sh.make_overlap_ints(S)
+            sh.make_dipole_ints(Ax,Ay,Az,sh.a.position)
+            sh.make_quadrupole_ints(Axx,Ayy,Azz,Axy,Axz,Ayz,sh.a.position)
+            sh.make_octupole_ints(Axxx,Ayyy,Azzz,Axxy,Axxz,Ayyx,Ayyz,Azzx,Azzy,Axyz,sh.a.position)
+
+            charge(atom_a) = charge(atom_a) + fac*sum(S*P(fa:la,fb:lb))
+            dipole(atom_a,1) = dipole(atom_a,1) + fac*sum(Ax*P(fa:la,fb:lb))
+            dipole(atom_a,2) = dipole(atom_a,2) + fac*sum(Ay*P(fa:la,fb:lb))
+            dipole(atom_a,3) = dipole(atom_a,3) + fac*sum(Az*P(fa:la,fb:lb))
+            quadrupole(atom_a,1) = quadrupole(atom_a,1) + fac*sum(Axx*P(fa:la,fb:lb))
+            quadrupole(atom_a,2) = quadrupole(atom_a,2) + fac*sum(Ayy*P(fa:la,fb:lb))
+            quadrupole(atom_a,3) = quadrupole(atom_a,3) + fac*sum(Azz*P(fa:la,fb:lb))
+            quadrupole(atom_a,4) = quadrupole(atom_a,4) + fac*sum(Axy*P(fa:la,fb:lb))
+            quadrupole(atom_a,5) = quadrupole(atom_a,5) + fac*sum(Axz*P(fa:la,fb:lb))
+            quadrupole(atom_a,6) = quadrupole(atom_a,6) + fac*sum(Ayz*P(fa:la,fb:lb))
+
+            octupole(atom_a,1) = octupole(atom_a,1) + fac*sum(Axxx*P(fa:la,fb:lb))
+            octupole(atom_a,2) = octupole(atom_a,2) + fac*sum(Ayyy*P(fa:la,fb:lb))
+            octupole(atom_a,3) = octupole(atom_a,3) + fac*sum(Azzz*P(fa:la,fb:lb))
+            octupole(atom_a,4) = octupole(atom_a,4) + fac*sum(Axxy*P(fa:la,fb:lb))
+            octupole(atom_a,5) = octupole(atom_a,5) + fac*sum(Axxz*P(fa:la,fb:lb))
+            octupole(atom_a,6) = octupole(atom_a,6) + fac*sum(Ayyx*P(fa:la,fb:lb))
+            octupole(atom_a,7) = octupole(atom_a,7) + fac*sum(Ayyz*P(fa:la,fb:lb))
+            octupole(atom_a,8) = octupole(atom_a,8) + fac*sum(Azzx*P(fa:la,fb:lb))
+            octupole(atom_a,9) = octupole(atom_a,9) + fac*sum(Azzy*P(fa:la,fb:lb))
+            octupole(atom_a,10) = octupole(atom_a,10) + fac*sum(Axyz*P(fa:la,fb:lb))
+
+            S.destroy
+            Ax.destroy; Ay.destroy; Az.destroy
+            Axx.destroy; Ayy.destroy; Azz.destroy
+            Axy.destroy; Axz.destroy; Ayz.destroy
+
+            Axxx.destroy; Ayyy.destroy; Azzz.destroy
+            Axxy.destroy; Axxz.destroy; Ayyx.destroy
+            Ayyz.destroy; Azzx.destroy; Azzy.destroy
+            Axyz.destroy; 
+
+         else
+            if(only_disconnected) then
+               if (.atom.has_a_connection(atom_a,atom_b)) cycle
+            end
+            Sa.create(na,nb); Sb.create(na,nb)
+            Ax.create(na,nb); Ay.create(na,nb); Az.create(na,nb)
+            Bx.create(na,nb); By.create(na,nb); Bz.create(na,nb)
+            Axx.create(na,nb); Ayy.create(na,nb); Azz.create(na,nb)
+            Axy.create(na,nb); Axz.create(na,nb); Ayz.create(na,nb)
+            Bxx.create(na,nb); Byy.create(na,nb); Bzz.create(na,nb)
+            Bxy.create(na,nb); Bxz.create(na,nb); Byz.create(na,nb)
+            Axxx.create(na,nb); Ayyy.create(na,nb); Azzz.create(na,nb)
+            Axxy.create(na,nb); Axxz.create(na,nb); Ayyx.create(na,nb)
+            Ayyz.create(na,nb); Azzx.create(na,nb); Azzy.create(na,nb)
+            Axyz.create(na,nb); 
+            Bxxx.create(na,nb); Byyy.create(na,nb); Bzzz.create(na,nb)
+            Bxxy.create(na,nb); Bxxz.create(na,nb); Byyx.create(na,nb)
+            Byyz.create(na,nb); Bzzx.create(na,nb); Bzzy.create(na,nb)
+            Bxyz.create(na,nb); 
+
+            ! Partition factors
+            part.create(sh.a.n_cc,sh.b.n_cc)
+            sh.make_KM_partition(part)
+
+            ! Get weighted overlap integrals
+            sh.make_weighted_overlap_ints(Sa,Sb,part)
+
+            charge(atom_a) = charge(atom_a) + TWO*sum(Sa*P(fa:la,fb:lb))
+            charge(atom_b) = charge(atom_b) + TWO*sum(Sb*P(fa:la,fb:lb))
+
+            sh.make_weighted_dipole_ints(Ax,Ay,Az,Bx,By,Bz,part)
+            sh.make_weighted_quadrupole_ints(Axx,Ayy,Azz,Axy,Axz,Ayz, Bxx,Byy,Bzz,Bxy,Bxz,Byz, part)
+            sh.make_weighted_octupole_ints(Axxx,Ayyy,Azzz,Axxy,Axxz,Ayyx,Ayyz,Azzx,Azzy,Axyz,Bxxx,Byyy,Bzzz,Bxxy,Bxxz,Byyx,Byyz,Bzzx,Bzzy,Bxyz,part)
+
+            dipole(atom_a,1) = dipole(atom_a,1) + TWO*sum(Ax*P(fa:la,fb:lb))
+            dipole(atom_a,2) = dipole(atom_a,2) + TWO*sum(Ay*P(fa:la,fb:lb))
+            dipole(atom_a,3) = dipole(atom_a,3) + TWO*sum(Az*P(fa:la,fb:lb))
+
+            dipole(atom_b,1) = dipole(atom_b,1) + TWO*sum(Bx*P(fa:la,fb:lb))
+            dipole(atom_b,2) = dipole(atom_b,2) + TWO*sum(By*P(fa:la,fb:lb))
+            dipole(atom_b,3) = dipole(atom_b,3) + TWO*sum(Bz*P(fa:la,fb:lb))
+
+            quadrupole(atom_a,1) = quadrupole(atom_a,1) + TWO*sum(Axx*P(fa:la,fb:lb))
+            quadrupole(atom_a,2) = quadrupole(atom_a,2) + TWO*sum(Ayy*P(fa:la,fb:lb))
+            quadrupole(atom_a,3) = quadrupole(atom_a,3) + TWO*sum(Azz*P(fa:la,fb:lb))
+            quadrupole(atom_a,4) = quadrupole(atom_a,4) + TWO*sum(Axy*P(fa:la,fb:lb))
+            quadrupole(atom_a,5) = quadrupole(atom_a,5) + TWO*sum(Axz*P(fa:la,fb:lb))
+            quadrupole(atom_a,6) = quadrupole(atom_a,6) + TWO*sum(Ayz*P(fa:la,fb:lb))
+
+            quadrupole(atom_b,1) = quadrupole(atom_b,1) + TWO*sum(Bxx*P(fa:la,fb:lb))
+            quadrupole(atom_b,2) = quadrupole(atom_b,2) + TWO*sum(Byy*P(fa:la,fb:lb))
+            quadrupole(atom_b,3) = quadrupole(atom_b,3) + TWO*sum(Bzz*P(fa:la,fb:lb))
+            quadrupole(atom_b,4) = quadrupole(atom_b,4) + TWO*sum(Bxy*P(fa:la,fb:lb))
+            quadrupole(atom_b,5) = quadrupole(atom_b,5) + TWO*sum(Bxz*P(fa:la,fb:lb))
+            quadrupole(atom_b,6) = quadrupole(atom_b,6) + TWO*sum(Byz*P(fa:la,fb:lb))
+
+            octupole(atom_a,1) = octupole(atom_a,1) + TWO*sum(Axxx*P(fa:la,fb:lb))
+            octupole(atom_a,2) = octupole(atom_a,2) + TWO*sum(Ayyy*P(fa:la,fb:lb))
+            octupole(atom_a,3) = octupole(atom_a,3) + TWO*sum(Azzz*P(fa:la,fb:lb))
+            octupole(atom_a,4) = octupole(atom_a,4) + TWO*sum(Axxy*P(fa:la,fb:lb))
+            octupole(atom_a,5) = octupole(atom_a,5) + TWO*sum(Axxz*P(fa:la,fb:lb))
+            octupole(atom_a,6) = octupole(atom_a,6) + TWO*sum(Ayyx*P(fa:la,fb:lb))
+            octupole(atom_a,7) = octupole(atom_a,7) + TWO*sum(Ayyz*P(fa:la,fb:lb))
+            octupole(atom_a,8) = octupole(atom_a,8) + TWO*sum(Azzx*P(fa:la,fb:lb))
+            octupole(atom_a,9) = octupole(atom_a,9) + TWO*sum(Azzy*P(fa:la,fb:lb))
+            octupole(atom_a,10) = octupole(atom_a,10) + TWO*sum(Axyz*P(fa:la,fb:lb))
+
+            octupole(atom_b,1) = octupole(atom_b,1) + TWO*sum(Bxxx*P(fa:la,fb:lb))
+            octupole(atom_b,2) = octupole(atom_b,2) + TWO*sum(Byyy*P(fa:la,fb:lb))
+            octupole(atom_b,3) = octupole(atom_b,3) + TWO*sum(Bzzz*P(fa:la,fb:lb))
+            octupole(atom_b,4) = octupole(atom_b,4) + TWO*sum(Bxxy*P(fa:la,fb:lb))
+            octupole(atom_b,5) = octupole(atom_b,5) + TWO*sum(Bxxz*P(fa:la,fb:lb))
+            octupole(atom_b,6) = octupole(atom_b,6) + TWO*sum(Byyx*P(fa:la,fb:lb))
+            octupole(atom_b,7) = octupole(atom_b,7) + TWO*sum(Byyz*P(fa:la,fb:lb))
+            octupole(atom_b,8) = octupole(atom_b,8) + TWO*sum(Bzzx*P(fa:la,fb:lb))
+            octupole(atom_b,9) = octupole(atom_b,9) + TWO*sum(Bzzy*P(fa:la,fb:lb))
+            octupole(atom_b,10) = octupole(atom_b,10) + TWO*sum(Bxyz*P(fa:la,fb:lb))
+
+
+
+
+            part.destroy
+            Sb.destroy; Sa.destroy
+            Ax.destroy; Ay.destroy; Az.destroy
+            Bx.destroy; By.destroy; Bz.destroy
+            Axx.destroy; Ayy.destroy; Azz.destroy
+            Axy.destroy; Axz.destroy; Ayz.destroy
+            Bxx.destroy; Byy.destroy; Bzz.destroy
+            Bxy.destroy; Bxz.destroy; Byz.destroy
+            Axxx.destroy; Ayyy.destroy; Azzz.destroy
+            Axxy.destroy; Axxz.destroy; Ayyx.destroy
+            Ayyz.destroy; Azzx.destroy; Azzy.destroy
+            Axyz.destroy; 
+            Bxxx.destroy; Byyy.destroy; Bzzz.destroy
+            Bxxy.destroy; Bxxz.destroy; Byyx.destroy
+            Byyz.destroy; Bzzx.destroy; Bzzy.destroy
+            Bxyz.destroy; 
+
+
+
+         end
+
+         sh.destroy_ptr_part
+
+      end
+      dipole = -ONE * dipole
+      quadrupole = -ONE * quadrupole
+      octupole = -ONE * octupole
+   end
+
 
 end

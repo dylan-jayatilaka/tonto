@@ -43,9 +43,11 @@ contains
    create(name) ::: leaky
    ! Create a a cif with .file_name to be "name".
       self :: PTR
-      name :: STR
+      name :: STR, IN
+
       .create
       .set_file_name(name)
+
    end
 
    nullify_ptr_part
@@ -117,12 +119,16 @@ contains
 
    set_file_name(name) ::: leaky
    ! Set the default .file_name to be "name".
+      self :: INOUT
       name :: STR
+
  ! ENSURE(file.exists(name),"no CIF file exists named: "//name.trim)
    WARN_IF(.file_name/=" ","a file name already exists")
+
       .file_name = name
       .file.create(name) ! ignore unmatched quotes for CIF's
       .file.set_ignore_unmatched_quotes(TRUE)
+
    end
 
    set_data_block_name(name) ::: leaky
@@ -150,8 +156,8 @@ contains
             .GC4_label =  "_atom_site_anharm_GC_D_"
 
          case("cartesian","u")
-            .GC3_label =  "_atom_site_ADP3_U_"
-            .GC4_label =  "_atom_site_ADP4_U_"
+            .GC3_label =  "_atom_site_Cartn_ADP3_U_"
+            .GC4_label =  "_atom_site_Cartn_ADP4_U_"
 
          case default
             UNKNOWN(.GC_format)
@@ -634,7 +640,7 @@ contains
 !  Find/read methods
 !  =================
 
-! Single item
+! Find single basic item
 
    find_item(ID,found)
    ! Find a (non-looped) data item with identifier "ID" and leave the
@@ -662,6 +668,8 @@ contains
       end
 
    end
+
+! Read single basic item
 
    read_item(ID,item,found) ::: template
    ! Read a data "item" with string identifier "ID". If present,
@@ -700,17 +708,7 @@ contains
    ! and there is no error.
    end
 
-   read_item(ID,item,found) ::: get_from(CIF, TYPE=>VEC{REAL})
-   ! Read a data "item" with string identifier "ID". If present,
-   ! "found" is set TRUE if "ID" is found, otherwise it is set FALSE
-   ! and there is no error.
-   end
-
-   read_item(ID,item,found) ::: get_from(CIF, TYPE=>MAT{REAL})
-   ! Read a data "item" with string identifier "ID". If present,
-   ! "found" is set TRUE if "ID" is found, otherwise it is set FALSE
-   ! and there is no error.
-   end
+! Read single STR item, multiline allowed
 
    read_item(ID,item,itemvec,found) ::: leaky
    ! Read a STR data "item" with string identifier "ID". If the data
@@ -774,6 +772,8 @@ contains
 
    end
 
+! Read single REAL item, with (error)
+
    read_item(ID,item,error,found)
    ! Read a REAL data "item" with string identifier "ID". If present,
    ! any "error" associated with "item" is also returned. If present,
@@ -804,7 +804,56 @@ contains
 
    end
 
-! Single looped item
+! Read single list item
+
+   read_item(ID,item,found) ::: template
+   ! Read an array data "item" with string identifier "ID". If
+   ! present, "found" is set TRUE if "ID" is found, otherwise it is
+   ! set FALSE and there is no error.
+      ID :: STR, IN
+      item :: TYPE, OUT
+      found :: BIN, OUT, optional
+
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+   ENSURE(.start_of_data>0,"no data block found")
+
+      delimiter :: STR
+
+      ! Find "ID"
+      .find_item(ID,found)
+
+      ! Found?
+      if (present(found)) then
+        if (NOT found) return
+      end
+
+      ! Open
+      .file.read(delimiter)
+      DIE_IF(trim(delimiter)/="[", "opening delimiter [ must be present for list item")
+
+      ! Read the data
+      .file.read(item)
+
+      ! Close
+      .file.read(delimiter)
+      DIE_IF(trim(delimiter)/="]", "closing delimiter ] must be present for list item")
+
+   end
+
+   read_item(ID,item,found) ::: get_from(CIF, TYPE=>VEC{REAL})
+   ! Read an array data "item" with string identifier "ID". If
+   ! present, "found" is set TRUE if "ID" is found, otherwise it is
+   ! set FALSE and there is no error.
+   end
+
+   read_item(ID,item,found) ::: get_from(CIF, TYPE=>MAT{REAL})
+   ! Read an array data "item" with string identifier "ID". If
+   ! present, "found" is set TRUE if "ID" is found, otherwise it is
+   ! set FALSE and there is no error.
+   end
+
+! Find single looped basic item
 
    find_looped_item(ID,found,ID_pos,n_labels)
    ! In a loop_, find a list of _data identifiers "ID", and leave the
@@ -897,6 +946,8 @@ contains
 
    end
 
+! Read single looped basic item
+
    read_looped_item(ID,item,found) ::: template
    ! Read a looped/vector data "item" with string identifier "ID".
    ! If present, "found" is set TRUE if "ID" is found, else it is set
@@ -967,6 +1018,8 @@ contains
    ! FALSE and the routine returns without an error.
    end
 
+! Read single looped REAL item, with (error)
+
    read_looped_item(ID,item,error,found)
    ! Read a looped/vector data "item" with string identifier "ID".
    ! Also, read any "error" associated with the "item" (if present).
@@ -996,6 +1049,7 @@ contains
 
       ! Create the ID data-vector
       item.create(0)
+      if (present(error)) error.create(0)
 
       ! Loop over ID-type lines
       do
@@ -1026,7 +1080,7 @@ contains
 
    end
 
-! Multiple looped item
+! Find multiple looped item
 
    find_looped_items(ID,found,ID_pos,ID_ind,n_labels)
    ! In a loop_, find a list of _data identifiers "ID", and leave the
@@ -1143,6 +1197,102 @@ contains
       if (present(n_labels)) n_labels = label
 
    end
+
+! Read multiple looped STR item
+
+   read_looped_items(ID,mat,found) ::: leaky
+   ! In a loop_, read items with string identifiers "ID" into rows
+   ! of "mat", with columns equal to the number of loops. "mat" is
+   ! created. If present, "found" is set TRUE if all the "ID" are
+   ! found; else it is set FALSE and routine returns without error.
+      ID :: VEC{STR}, IN
+      mat :: MAT{STR}*
+      found :: BIN, OUT, optional
+
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+   ENSURE(.start_of_data>0,"no data block found")
+
+      ID_pos,ID_ind :: VEC{INT}(ID.dim)
+      n_labels,n,item,label,ind :: INT
+      word,val :: STR
+
+      ! Find looped ID's, their position, no. of looped labels
+      .find_looped_items(ID,found,ID_pos,ID_ind,n_labels)
+
+      ! Return if not found
+      if (present(found)) then
+         if (NOT found) return
+      end
+
+      ! Create the first column
+      mat.create(ID.dim,1)
+
+      ! The ID data column
+      n = 1
+
+      ! Loop on all ID data columns
+      do 
+
+         item = 1
+
+         ! Go through all _data labels
+         do label = 1,n_labels
+
+            ! Anything to read?
+            if (.file.at_end_of_file) then
+               DIE_IF(item==1,"EOF before reading first ID!")
+               DIE_IF(item/=ID.dim,"EOF before all ID's were preocessed!")
+               exit
+            end
+
+            if (item>ID.dim) then
+            
+               ! Skip any remaing labels
+               .file.skip_next_item
+
+            else if (label/=ID_pos(item)) then
+            
+               ! Skip unwanted labels
+               ! NOTE: ID_pos is monotone increasing
+               .file.skip_next_item
+
+            else
+
+               ! Label found; get it's ID index
+               ind = ID_ind(item)
+
+               ! Read the _data into "mat"
+               .file.read(val)
+               mat(ind,n) = val
+
+               ! Next ID label
+               item = item + 1 
+
+            end
+
+         end
+
+         ! Anything to read?
+         if (.file.at_end_of_file) exit
+
+         ! End of loop?
+         word = .file.next_item
+         if (word(1:1)=="_") exit
+         if (word(1:5)=="loop_") exit
+         if (word(1:5)=="data_") exit
+         if (word(1:5)=="save_") exit
+         if (word(1:7)=="global_") exit
+
+         ! Must be another round of ID's
+         n = n + 1
+         mat.expand_columns(n)
+
+      end
+
+   end
+
+! Read multiple looped REAL item with (error)
 
    read_looped_items(ID,mat,error,found,transpose) ::: leaky
    ! In a loop_, read items with string identifiers "ID" into rows
@@ -1263,98 +1413,6 @@ contains
             mat.expand_columns(n)
             if (present(error)) error.expand_columns(n)
          end
-
-      end
-
-   end
-
-   read_looped_items(ID,mat,found) ::: leaky
-   ! In a loop_, read items with string identifiers "ID" into rows
-   ! of "mat", with columns equal to the number of loops. "mat" is
-   ! created. If present, "found" is set TRUE if all the "ID" are
-   ! found; else it is set FALSE and routine returns without error.
-      ID :: VEC{STR}, IN
-      mat :: MAT{STR}*
-      found :: BIN, OUT, optional
-
-   ENSURE(.file.created,"CIF file has not been created")
-   ENSURE(.file.is_open,"CIF file has not been opened")
-   ENSURE(.start_of_data>0,"no data block found")
-
-      ID_pos,ID_ind :: VEC{INT}(ID.dim)
-      n_labels,n,item,label,ind :: INT
-      word,val :: STR
-
-      ! Find looped ID's, their position, no. of looped labels
-      .find_looped_items(ID,found,ID_pos,ID_ind,n_labels)
-
-      ! Return if not found
-      if (present(found)) then
-         if (NOT found) return
-      end
-
-      ! Create the first column
-      mat.create(ID.dim,1)
-
-      ! The ID data column
-      n = 1
-
-      ! Loop on all ID data columns
-      do 
-
-         item = 1
-
-         ! Go through all _data labels
-         do label = 1,n_labels
-
-            ! Anything to read?
-            if (.file.at_end_of_file) then
-               DIE_IF(item==1,"EOF before reading first ID!")
-               DIE_IF(item/=ID.dim,"EOF before all ID's were preocessed!")
-               exit
-            end
-
-            if (item>ID.dim) then
-            
-               ! Skip any remaing labels
-               .file.skip_next_item
-
-            else if (label/=ID_pos(item)) then
-            
-               ! Skip unwanted labels
-               ! NOTE: ID_pos is monotone increasing
-               .file.skip_next_item
-
-            else
-
-               ! Label found; get it's ID index
-               ind = ID_ind(item)
-
-               ! Read the _data into "mat"
-               .file.read(val)
-               mat(ind,n) = val
-
-               ! Next ID label
-               item = item + 1 
-
-            end
-
-         end
-
-         ! Anything to read?
-         if (.file.at_end_of_file) exit
-
-         ! End of loop?
-         word = .file.next_item
-         if (word(1:1)=="_") exit
-         if (word(1:5)=="loop_") exit
-         if (word(1:5)=="data_") exit
-         if (word(1:5)=="save_") exit
-         if (word(1:7)=="global_") exit
-
-         ! Must be another round of ID's
-         n = n + 1
-         mat.expand_columns(n)
 
       end
 

@@ -485,6 +485,7 @@ syn keyword fortranType DIIS FOCK_DIIS
 
 " Properties and analysis
 
+syn keyword fortranType T_TENSOR
 syn keyword fortranType INTERPOLATOR
 syn keyword fortranType ROBY
 
