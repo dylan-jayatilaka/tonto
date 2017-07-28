@@ -1288,96 +1288,181 @@ contains
 
    end
 
-!  minimize_L_BFGS(dself,x,m,tol,x_min) ::: routinal
-!  ! Use the limited memory Broyden-Fletcher-Goldfarb-Shanno
-!  ! method to minimise a vector function self(x) with derivative
-!  ! function dself(x) starting from an initial point "x",
-!  ! returning the minimum point in "p", to a tolerance "gtol"
-!  ! if present, otherwise it is set to 10^-3. If "max_it" is
-!  ! present, set that to be the maximum iterations, otherwise it
-!  ! is 1000
-!     m :: INT, IN
-!     x :: VEC{REAL}
+   minimize_L_BFGS(dself,x,m,x_min,tol,max_it,it) ::: routinal, public
+   ! Use the limited memory Broyden-Fletcher-Goldfarb-Shanno
+   ! method to minimise a vector function self(x) with derivative
+   ! function dself(x) starting from an initial point "x",
+   ! returning the minimum point in "x_min", to a tolerance "tol"
+   ! if present, otherwise it is set to 10^-3. A total of "m" vectors
+   ! can be stored at any one time. If "max_it" is present, set that
+   ! to be the maximum iterations, otherwise it
+   ! is 1000 and "it" represents the number of iterations required
+   ! to reach the minima. This code is all per the algorithm from
+   ! Nocedal & Wright
+      m :: INT, IN
+      x :: VEC{REAL}, IN
+   ! Interface for vector functions   
+      interface
+         self(x,res)
+            x :: VEC{REAL}, IN
+            res :: REAL, OUT
+         end
+      end
+      interface
+         dself(x,res)
+            x :: VEC{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      
+      x_min :: VEC{REAL}, OUT
+      it :: INT, OUT
+      tol :: REAL, optional, IN
+      max_it :: INT, optional, IN
+      k,j,n,iter :: INT
+      
+      ! mag represents the change in each iteration, alpha, c1 and c2 are
+      ! used in the line search algorithm and beta, gamma and rho are
+      ! used in the Hessian approximation
+      mag,c1,c2,alpha,beta,gamma,eps,rho :: REAL
+      
+      ! a is used to store the various alpha values in the two loop
+      ! recursion, p,q and r are used as generic vectors, and as part
+      ! of the two loop recursion process
+      a,p,q,r :: VEC{REAL}*
+      
+      ! used to calculate the vectors stored in S and Y
+      x_0,x_1 :: VEC{REAL}(size(x))
+      
+      ! Represents the Hessian, H, change in x vector, S, change in y
+      ! vector, Y and the identity, I
+      S,H,I,Y :: MAT{REAL}, PTR
+   
+      n = size(x)
+      p.create(n)
+      q.create(n)
+      r.create(n)
+      a.create(m)
+      allocate(S(n,m))
+      allocate(Y(n,m))
+      allocate(H(n,n))
+      allocate(I(n,n))
 
-!     interface
-!        self(x) result (res)
-!           x :: VEC{REAL}, IN
-!           res :: REAL
-!        end
-!     end
-!     interface
-!        dself(x) result (res)
-!           x :: VEC{REAL}, IN
-!           res :: VEC{REAL}(size(x_0))
-!        end
-!     end
-!     tol :: REAL, optional, IN
-!     max_it :: INT, optional, IN
+      ! Sets the iteration and step limits, if there is none input by
+      ! the user
+      iter = 1000
+      eps = 10d-4
+      if(present(max_it)) iter = max_it
+      if(present(tol)) eps = tol
 
-!     k,j,iter :: INT
-!     alpha,beta,gamma,eps,phi,rho :: REAL
-!     p,q,r :: VEC{REAL}
-!     S,H,I,Y :: MAT{REAL}, PTR
-!     
-!     S.create(size(x),m)
-!     Y.create(size(x),m)
-!     H.create(size(x),size(x))
-!     I.create(size(x),size(x))
+      ! The values used for line search algorithms. These values are
+      ! the ones which usually work.
+      c1 = 10d-4
+      c2 = 9d-1
+      
+      ! Zeroes the S and Y matrices which store the s and y vectors.
+      ! Also initialises the Identity matrix (for use in Hessian
+      ! calculation).
+      S = ZERO
+      Y = ZERO
+      I = ZERO
+      do k = 1,size(x)
+         I(k,k) = ONE
+      end do
 
-!     iter = 1000
-!     eps = 10d-3
-!     c1 = 10d-4
-!     c2 = 9d-1
-!     S = ZERO
-!     Y = ZERO
-!     I = ZERO
-!     S(1,1) = ONE
-!     Y(1,1) = ONE
-!     do k = 1,size(x)
-!        I(k,k) = ONE
-!     end do
-!     k = -1
-!     gamma = 1
-!     if(present(tol)) eps = tol
-!     if(present(max_it)) iter = max_it
+      ! Ensures the do while loop is entered
+      k = 0
+      mag = ONE
 
-!     do while(norm2(S(:,mod(k,m)+1))>eps .and. k <= iter )
+      ! Initialises the value of q, for use in step descent
+      ! calculation 
+      call dself(x,q)
+      
+      ! Initialises the values used in the two-loop recursion.
+      rho = 1
+      a = ZERO
+      gamma = 1 
+      
+      ! Will cause the program to exit if a suitable step can not be
+      ! determined 
+      alpha = ZERO
+      
+      x_1 = x
 
-!        H = gamma*I
-!        rho = 1/dot_product(Y(:,MOD(k,m)+1),S(:,MOD(k,m)+1))
-!        q = self(x)
+      ! Performs the loop until convergence, or the maximum number of
+      ! iterations are reached.
+      do while((mag>eps) AND (k <= iter))
 
-!        do j = min(k,m),1,-1
-!           alpha = rho*dot_product(S(:,mod(k,m)+1),q)
-!           q = q - alpha*Y(:,mod(k,m)+1)
-!        end do
+      ! The two loop recursion process approximates the Hessian by
+      ! using stored values of delta x and delta grad, as well as a
+      ! pre-scaling, gamma, to allow for a stepping at alpha = 1, to
+      ! be suitable 
+         
+      ! H^0 is approximated by I   
+         H = gamma*I
 
-!        r.to_product_of(H,q)
+         do j = k,max(1,k-m),-1
+            n = mod(j,m)
+            if (n==0) then
+               n = m
+            end if
+            rho = 1/(dot_product(Y(:,n),S(:,n)))
+            a(n) = rho*dot_product(S(:,n),q)
+            q = q - a(n)*Y(:,n)
+         end do
 
-!        do j = min(k,m),1,-1
-!           beta = rho*dot_product(Y(:,mod(k,m)+1),r)
-!           r = r + S(:,mod(k,m)+1)*(alpha - beta)         
-!        end do
+         r = matmul(H,q)
 
-!        p = -r
-!        
-!        self.line_search(dself,1,2,x,p,c1,c2,alpha)
-!        
-!        r = x + alpha*p
+         do j = max(1,k-m),k
+            n = mod(j,m)
+            if (n==0) then
+               n = m
+            end if
+            rho = 1/dot_product(Y(:,n),S(:,n))
+            beta = rho*dot_product(Y(:,n),r) 
+            r = r + (a(n) - beta)*S(:,n)
+         end do
 
-!        S(:,mod(k,m)+1) = alpha*p
-!        Y(:,mod(k,m)+1) = dself(p)-dself(x)
-!        x = r
-!        k = k + 1
-!     end do
-!     xmin = x
+      ! This is the step toward the minimum
+         p = -r
 
-!     S.destroy
-!     Y.destroy
-!     H.destroy
-!     I.destroy
-!     
-!  end
+      ! Fines the ideal multiple of the step to take (usually 1)
+      ! and stores that in alpha
+         VEC{REAL}::line_search(self,dself,10d0,x_1,p,c1,c2,alpha)
+         
+      ! Performs the step (and stores the previous x value)
+         x_0 = x_1
+         x_1 = x_1 + alpha*p
+         
+      ! Stores the vectors, s and y, in matrices S and Y. If there
+      ! are already m vectors, then it overwrites the oldest
+      ! vector.
+         n = mod(k,m) + 1
+         S(:,n) = x_1 - x_0
+         call dself(x_1,q)
+         call dself(x_0,p)
+         Y(:,n) = q - p
+
+      ! Calculates the pre-scaling for H
+         gamma = dot_product(S(:,n),Y(:,n))/dot_product(Y(:,n),Y(:,n))
+         
+      ! Updates the iteration number and calculates the shift (to
+      ! check for convergence)
+         k = k + 1
+         mag = norm2(S(:,n))
+      end do
+
+      ! Puts results to outputs
+      x_min = x_1
+      it = k
+
+      ! Cleanup
+      deallocate(S,Y,H,I)
+      p.destroy
+      q.destroy
+      r.destroy
+     
+   end
 
    minimize_FRPR(dself,p,fret,tol,ftol,algorithm,step) ::: routinal
    ! Use the Fletcher-Reeves-Polak-Ribiere method to minimise a vector
@@ -1551,8 +1636,7 @@ contains
 
    end
 
-   line_minimize_from(p,direction,fret,tol,f0,del) ::: routinal
-   ! Given a vector function self(x), minimise from point "p" along "direction".
+   line_minimize_from(p,direction,fret,tol,f0,del) ::: routinal ! Given a vector function self(x), minimise from point "p" along "direction".
    ! Return the minimum point in "p" and the minimum value "fret", with an
    ! accuracy "tol". If "f0" is present it is used as the value of the function
    ! "self" at p, f0 = self(p). If "del" is present it is set to the length
@@ -2347,8 +2431,10 @@ contains
    ! orthogonal. Furthermore P*self = norm2(x)*e_1
       self :: IN
       nu :: VEC{REAL}*, OUT
+      !b represents beta
       b :: REAL, OUT
    ENSURE(size(nu)==size(self),"incompatible vectors")
+      ! s represents sigma and m represents mu
       s,m :: REAL
       dim :: INT
 
@@ -2367,6 +2453,7 @@ contains
          else
             nu(1) = -(s/(self(1)+m))
          end if
+         !beta is such that it normalises P
          b = 2*(nu(1)**2)/(s + nu(1)**2)
          nu(:) = nu(:)/nu(1)
       end if
@@ -2381,7 +2468,9 @@ contains
    ! computes the fast 2x2 Givens transformation such that
    ! M^Tx is zero and M^(T)DM is diagonal
       self :: IN
+      ! d is the input diagonal matrix, altered to D
       d :: VEC{REAL}(2), INOUT
+      ! typ indicates the type of the transform
       typ :: INT, OUT
       alpha,beta :: REAL, OUT
    ENSURE(size(self)==2,"incorrect dimension of self")
@@ -2391,15 +2480,20 @@ contains
       tau,gamma :: REAL
 
       if (self(2) /= 0) then
+         ! By defining alpha, beta and gamma like this, M^Tx produces
+         ! zero.
          alpha = -self(1)/self(2)
          beta = -alpha*d(2)/d(1)
          gamma = -alpha*beta
          if (gamma <= 1) then
+            ! type 1 is defined by alpha and beta on the diagonal.
             typ = 1
             tau = d(1)
             d(1) = (1+gamma)*d(2)
             d(2) = (1+gamma)*tau
          else
+            ! type 2 is defined by 1's on the diagonal and alpha and
+            ! beta onm the off diagonal.
             typ = 2
             alpha = 1/alpha
             beta = 1/beta
@@ -2439,110 +2533,350 @@ contains
 !  Line search operations
 !  ======================
 
-!  line_search(dself,a,alphamax,x,p,c1,c2,alpha)
-!  ! Given a real vector, x, function f, gradient function
-!  ! df, calculaes the ideal stepping scale alpha, given
-!  ! stepping p and constants c1, c2.
-!     p :: VEC{REAL}, IN
-!     a :: REAL, IN
-!     alpha :: REAL, OUT
+   goldstein_line_search(dself,a,alphamax,x,p,c1,alpha) ::: routinal
+   ! Given a real vector, x, function f, gradient function
+   ! df, calculaes the ideal stepping scale alpha, given
+   ! stepping p and constants c1, c2.
+   ! NB: needs more testing
+      interface
+         self(x,res)
+            x :: VEC{REAL}, IN
+            res :: REAL, OUT
+         end
+      end
+      interface
+         dself(x,res)
+            x :: VEC{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      x :: VEC{REAL}, IN
+      p :: VEC{REAL}, INOUT
+      c1,a,alphamax :: REAL, IN
+      alpha :: REAL, OUT
 
-!     interface
-!        self(x) result (res)
-!           x :: VEC{REAL}, IN
-!           res :: REAL
-!        end
-!     end
-!     interface
-!        dself(x) result (res)
-!           x :: VEC{REAL}, IN
-!           res :: VEC{REAL}(size(p))
-!        end
-!     end
-!      alpha0,alpha1,phi0,phi1,phi2,dphi,dphi0 :: REAL
-!     j :: INT
-!     converged :: BIN
+      b,alpha0,phi0,phi1,phi,dphi0 :: REAL
+      temp :: VEC{REAL}*
+      iter,j :: INT
+      converged :: BIN
+      iter = 10000
+      
+      temp.create(size(x))
 
-!     alpha0 = ZERO
-!     phi0 = self(x)
-!     dphi0 = dot_product(dself(x),p)
-!     alpha1 = a
-!     j = 0
+      alpha0 = 0
+      call self(x,phi0)
+      call dself(x,temp)
+      dphi0 = dot_product(temp,p)
+      phi1 = 100
+      alpha = a
+      j = 0
+      converged = FALSE 
+      b = alphamax
 
-!     do while (j < iter) 
-!        phi2 = self(x+alpha1*p)
+      do while ((converged EQV FALSE) AND (j < iter)) 
+         call self(x+alpha*p,phi)
 
-!        if (phi2 > phi0+c1*alpha1*dphi0 .or. &
-!        &(phi2 >= phi1 .and. j>1)) then
-!           self.zoom(dself,alpha1,alpha0,c1,c2,x,p,alpha)
-!           exit
-!        end if
+         if (phi <= phi0 + c1*alpha*dphi0) then
+            if (phi >= phi0 + (1 - c1)*alpha*dphi0) then
+               converged = TRUE
+            else
+               alpha0 = alpha
+            end if
+         else
+            b = alpha
+         end if
+         if (converged EQV TRUE) cycle
+            alpha = (alpha0 + b)/2
+            j = j + 1
 
-!        dphi = dot_product(dself(x+alpha1*p),p)
-
-!        if (abs(dphi) > -c2*dphi0) then
-!           alpha = alpha1
-!           exit
-!        end if
-!        if (dphi >= ZERO) then
-!           self.zoom(dself,alpha0,alpha1,c1,c2,x,p,alpha)
-!           exit
-!        end if
-
-!        j = j + 1
-!        alpha0 = alpha1
-!        alpha1 = (alpha1+alphamax)/2
-!        phi1 = phi2
-!     end do
-!  end
-
-  zoom(dself,alphalo,alphahi,x,p,c1,c2,alpha) ::: routinal
-  ! Given a real vector, x, function f, gradient function
-  ! df, calculaes the ideal stepping scale alpha, given
-  ! stepping p and constants c1, c2.
-     interface
-        self(x) result (res)
-           x :: VEC{REAL}, IN
-           res :: REAL
-        end
      end
-     interface
-        dself(x) result (res)
-           x :: VEC{REAL}, IN
-           res :: VEC{REAL}(size(p))
-        end
+      temp.destroy
+   end
+
+   wp_line_search(dself,a,alphamax,x,p,c1,c2,alpha) ::: routinal
+   ! Given a real vector, x, function f, gradient function
+   ! df, calculaes the ideal stepping scale alpha, given
+   ! stepping p and constants c1, c2.
+   ! NB: needs more testing
+      interface
+         self(x,res)
+            x :: VEC{REAL}, IN
+            res :: REAL, OUT
+         end
+      end
+      interface
+         dself(x,res)
+            x :: VEC{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      x :: VEC{REAL}, IN
+      p :: VEC{REAL}, INOUT
+      c1,c2,a,alphamax :: REAL, IN
+      alpha :: REAL, OUT
+
+      alpha1,alpha2,phi1,phi,dphi,dphi1 :: REAL
+      temp :: VEC{REAL}*
+      iter,j :: INT
+      converged :: BIN
+      iter = 10000
+      
+      temp.create(size(x))
+
+      alpha1 = 0
+      call self(x,phi1)
+      call dself(x,temp)
+      dphi1 = dot_product(temp,p)
+      alpha = a
+      j = 0
+      converged = FALSE 
+      alpha2 = alphamax
+
+      do while ((converged EQV FALSE) AND (j < iter)) 
+         call self(x+alpha*p,phi)
+
+         if (phi <= phi1 + c1*alpha*dphi1) then
+            call dself(x+alpha*p,temp)
+            dphi = dot_product(temp,p)
+            if (dphi >= c2*dphi1) then
+               converged = TRUE
+            else
+               phi1 = phi
+               dphi1 = dphi
+               alpha1 = alpha
+               alpha = alpha + ((alpha - alpha1)*dphi)/(dphi1 - dphi)
+            end if
+         else
+            alpha2 = alpha
+            alpha = alpha1+&
+                1/2*(alpha-alpha1)/(1+(phi1-phi)/((alpha-alpha1)*dphi1))
+         end if
+         if (converged EQV TRUE) cycle
+            j = j + 1
      end
-     alphalo,alphahi,c1,c2 :: REAL, INOUT
-     x,p :: VEC{REAL}, IN
-     alpha :: REAL, OUT
-     alpha0,phi0,phi1,phi2,dphi,dphi0,phi :: REAL
-     j, iter :: INT
-     converged :: BIN
-     iter = 200
+     temp.destroy
+   end
 
-     phi0 = self(x)
-     dphi0 = dot_product(dself(x),p)
-     j = 0
+   line_search(dself,alphamax,x,p,c1,c2,b) ::: routinal
+   ! Given a real vector, x, function f, gradient function
+   ! df, calculaes the ideal stepping scale alpha, given
+   ! stepping p and constants c1, c2.
+      
+   ! Interface for vector functions   
+      interface
+         self(x,res)
+            x :: VEC{REAL}, IN
+            res :: REAL, OUT
+         end
+      end
+      interface
+         dself(x,res)
+            x :: VEC{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      x :: VEC{REAL}, IN
+      p :: VEC{REAL}, IN
+      
+      ! Wolfe constants c1 and c2 and a highest value of alpha
+      c1,c2,alphamax :: REAL, IN
+      
+      ! The output alpha value
+      b :: REAL, OUT
 
-     do while (j < iter) 
-        alpha = (alphalo+alphahi)/2
-        phi = self(x+alpha*p)
-        if ((phi > phi0+c1*alpha*dphi0) OR &
-         (phi >= self(x+p*alphalo))) then
-           alphahi = alpha
-        else
-           dphi = dot_product(dself(x+p*alpha),p)
-           if (abs(dphi) <= -c2*dphi0) then
-              exit
-           end if
-           if (dphi*(alphahi-alphalo) >= ZERO) then
-              alphahi = alphalo
-           end if
-           alphalo = alpha
-        end if
-        j = j + 1
-     END DO
-  end
+      ! alpha is the current value of alpha. alpha0 is the previous
+      ! value. phi0 is the initial phi value, phi1 is the previous phi
+      ! value and phi is thge current phi value. The same is true for
+      ! dphi0, dphi1 and dphi.
+      alpha,alpha0,phi0,phi1,phi,dphi,dphi0,dphi1 :: REAL
+      
+      ! temp is used in vector dot product calculations. Such as in
+      ! phi' (dphi)
+      temp :: VEC{REAL}*
+      
+      ! The maximum (iter) and current (j) number of iterations
+      iter,j :: INT
+      
+      ! Logical for if the loop can conclude
+      converged :: BIN
+
+      ! The maximum number of iterations that may be performed
+      iter = 10000
+      
+      ! Allows temp to be used for calculations
+      temp.create(size(x))
+
+      ! Gives the first value of alpha
+      alpha = rand(1)*alphamax 
+      
+      ! Initialise alpha0, phi0, dphi0, phi1, j and converged
+      alpha0 = 0
+      call self(x,phi0)
+      call dself(x,temp)
+      dphi0 = dot_product(temp,p)
+      call self(x+alpha*p,phi1)
+      phi1 = phi1-1
+      j = 0
+      converged = FALSE 
+
+      ! Performs the loop until it has converged or the loop has
+      ! failed
+      do while ((converged EQV FALSE) AND (j < iter)) 
+         
+      ! calculates phi for this iteration
+         call self(x+alpha*p,phi)
+
+      ! The interval alpha0, alpha will contain ideal step lengths if
+      ! any of the if conditionals below are violated
+         if (phi > phi0 + c1*alpha*dphi0) then
+      
+      ! Sends the interval off to find an ideal step and stores it in
+      ! b
+            VEC{REAL}::zoom(self,dself,alpha0,alpha,x,p,c1,c2,b,converged)
+         else if (phi >= phi1 AND j > 1) then
+      
+      ! Sends the interval off to find an ideal step and stores it in
+      ! b
+            VEC{REAL}::zoom(self,dself,alpha0,alpha,x,p,c1,c2,b,converged)
+         end if
+      
+      ! Ensures that if alpha has converged, the value does not
+      ! change   
+         if (converged EQV FALSE) then
+      
+      ! calculates dphi for this iteration      
+            call dself(x+alpha*p,temp)
+            dphi = dot_product(temp,p)
+      
+      ! If the second wolfe condition holds, this has converged      
+            if (abs(dphi) <= -c2*dphi0) then
+               converged = TRUE
+      ! Stores the ideal stepping in b         
+               b = alpha
+            else if (dphi >= 0) then
+      
+      ! Sends the interval off to find an ideal step and stores it in
+      ! b
+               VEC{REAL}::zoom(self,dself,alpha,alpha0,x,p,c1,c2,b,converged)
+            end if
+      
+      ! Ensures that if alpha has converged, the value does not
+      ! change   
+            if (converged EQV FALSE) then
+      ! Stores the values from this iteration, and proceeds to the
+      ! next iteration         
+               phi1 = phi
+               dphi1 = dphi
+               j = j + 1
+               alpha0 = alpha
+               alpha = alpha + rand(1)*alphamax
+            end if
+         end if
+     end
+     
+     ! Cleanup
+     temp.destroy
+   end
+
+   zoom(dself,low,high,x,p,c1,c2,alpha,converged) ::: routinal
+   ! Given a real vector, x, function f, gradient function
+   ! df, calculaes the ideal stepping scale alpha, given
+   ! stepping p and constants c1, c2. An ideal stepping must also
+   ! reside between low and high.
+      
+      ! Interface for vector functions   
+      interface
+         self(x,res)
+            x :: VEC{REAL}, IN
+            res :: REAL, OUT
+         end
+      end
+      interface
+         dself(x,res)
+            x :: VEC{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      
+      ! Interval in which ideal step resides, low and high and Wolfe
+      ! constants c1 and c2
+      low,high,c1,c2 :: REAL, IN
+      x,p :: VEC{REAL}, IN
+      
+      ! Ideal stepping scale
+      alpha :: REAL, OUT
+
+      ! Logical which describes whether or not it has converged to an
+      ! ideal step
+      converged :: BIN, OUT
+      
+      ! Vector used in various multiplications
+      temp :: VEC{REAL}*
+      
+      ! Flexible interval alphalo and alphahi. Initial value of phi
+      ! and dphi, phi0 and dphi0. Current values at phi and dphi. phi
+      ! value at alpha lo is at philo.
+      alphalo,alphahi,phi0,dphi,dphi0,phi,philo :: REAL
+      
+      ! The current (j) and maximum (iter) number of iterations
+      j,iter :: INT
+      iter = 10000
+      
+      ! creates temp
+      temp.create(size(x))
+      
+      ! Initialise alphalo, alphahi, phi0, dphi0, converged and j
+      alphalo = low
+      alphahi = high
+      call self(x,phi0)
+      call dself(x,temp)
+      dphi0 = dot_product(temp,p)
+      converged = FALSE
+      j = 0
+ 
+      ! Does the loops until interations maximum is reached or the
+      ! ideal stepping is found.
+      do while ((converged EQV FALSE) AND (j < iter)) 
+      
+      ! New value of alpha is determined by bisection
+         alpha = (alphalo+alphahi)/2
+         
+      ! Calculates current value of philo and phi   
+         call self(x+alphalo*p,philo)
+         call self(x+alpha*p,phi)
+
+      ! If either of these condition are satisfied alphahi becomes
+      ! alpha amd the cycle repeats   
+         if (phi > phi0+c1*alpha*dphi0) then
+            alphahi = alpha
+         else if (phi >= philo) then
+            alphahi = alpha
+         else
+     
+      ! Calculates the current value of dphi
+            call dself(x+alpha*p,temp)
+            dphi = dot_product(temp,p)
+
+      ! Cycle is complete if strong Wolfe condition holds      
+            if (abs(dphi) <= -c2*dphi0) then
+               converged = TRUE
+            end if
+
+      ! Stops pointless calculations if ideal stepping has been found
+            if (converged EQV FALSE) then
+
+      ! Ensures alphahi and alphalo are the right way around         
+               if (dphi*(alphahi-alphalo) >= ZERO) then
+                  alphahi = alphalo
+               end if
+      ! alphalo becomes alpha         
+               alphalo = alpha
+            end if
+         end if
+         j = j + 1
+      end
+      temp.destroy
+   end
 
 ! ========================
 ! Multipoles and harmonics
@@ -3098,6 +3432,78 @@ contains
       deallocate(Is)
       deallocate(Ic)
 
+   end
+
+! ==============
+! Test functions
+! ==============
+
+   rosenbrock_function(x,res) ::: selfless, public
+   ! Calculates the rosenbrock function   
+      x :: VEC{REAL}, IN
+      res :: REAL, OUT
+      res = (1-x(1))**2+100*(x(2)-x(1)**2)**2
+   end
+
+   d_rosenbrock_function(x,res) ::: selfless, public
+   ! Calculates the gradient functon of the rosenbrock function   
+      x :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+      res(1) = -2+2*x(1)-400*x(1)*(x(2)-x(1)**2)
+      res(2) = -200*x(1)**2+200*x(2)
+   end
+
+   himmelblau_function(x,res) ::: selfless, public
+   ! alculates the himmelblau function   
+      x :: VEC{REAL}, IN
+      res :: REAL, OUT
+      res = (x(1)**2 + x(2) - 11)**2 + (x(1) + x(2)**2 - 7)**2
+   end
+
+   d_himmelblau_function(x,res) ::: selfless, public
+   ! Calculates the gradient functon of the himmelblau function   
+      x :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+      res(1) = 4*x(1)*(x(1)**2+x(2)-11)+2*(x(1)+x(2)**2-7) 
+      res(2) = 2*(x(1)**2+x(2)-11)+4*x(2)*(x(1)+x(2)**2-7)
+   end
+
+   beale_function(x,res) ::: selfless, public
+   ! calculates the beale function   
+      x :: VEC{REAL}, IN
+      res :: REAL, OUT
+      res=(1.5-x(1)*(1-x(2)))**2+(2.25-x(1)*(1-x(2)**2))**2+(2.625-x(1)*(1-x(2)**3))**2
+   end
+
+   d_beale_function(x,res) ::: selfless, public
+   ! Calculates the gradient functon of the beale function   
+      x :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+      res(1) = (x(2)-1)*(2*x(1)*(x(2)-1)+3)+&
+      (x(2)**2-1)/2*(4*x(1)*(x(2)**2-1)+9)+(x(2)**3-1)/4*(8*x(1)*(x(2)**3-1)+21) 
+      res(2) = x(1)/4*(8*x(1)*(x(2)-1)+x(2)**2*(24*x(1)*(x(2)**3-1)+63)+4*&
+      x(2)*(4*x(1)*(x(2)**2-1)+9)+12)
+   end
+
+   sphere_function(x,res) ::: selfless, public
+   ! calculates the sphere function   
+      x :: VEC{REAL}, IN
+      res :: REAL, OUT
+      i :: INT
+      res = ZERO
+      do i=1,size(x)
+         res=res+x(i)**2
+      end do
+   end
+
+   d_sphere_function(x,res) ::: selfless, public
+   ! Calculates the sphere functon of the beale function   
+      x :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+      i :: INT
+      do i=1,size(x)
+         res(i)=2*x(i)
+      end do
    end
 
 end
