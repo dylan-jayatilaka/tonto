@@ -32,6 +32,32 @@ contains
 !  Memory allocation
 !  =================
 
+   create(dim) ::: get_from(VEC{OBJECT}), leaky, PURE
+   ! Allocate vector
+   end
+
+   create(lb,ub) ::: get_from(VEC{OBJECT}), leaky, PURE
+   ! Allocate the vector with lower bound "lb", upper bound "ub"
+   end
+
+   create(bounds) ::: get_from(VEC{OBJECT}), leaky, PURE
+   ! Allocate the vector with lower and upper bounds in "bounds"
+   end
+
+   destroy ::: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
+   end
+
+   created result (res) ::: get_from(OBJECT), pure
+   ! Returns true if self has been allocated
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), pure
+   ! Returns true if self has *not* been allocated
+   end
+
+! Old
+
    create(dim) ::: leaky, PURE
    ! Create space for object
       self :: PTR
@@ -93,6 +119,28 @@ contains
 
    end
 
+   created result (res) ::: inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+
+      result = associated(self)
+
+   end
+
+   destroyed result (res) ::: inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+
+      result = NOT associated(self)
+
+   end
+
+!  ====
+!  Copy
+!  ====
+
    create_copy(v) ::: leaky, PURE
    ! Create a copy of vector "v".
       self :: PTR
@@ -110,20 +158,6 @@ contains
 
       self = v
 
-   end
-
-   created result (res) ::: inlined_by_foo
-   ! Returns true if self has been created
-      self :: PTR
-      res :: BIN
-      result = associated(self)
-   end
-
-   destroyed result (res) ::: inlined_by_foo
-   ! Returns true if self has *not* been created
-      self :: PTR
-      res :: BIN
-      result = NOT associated(self)
    end
 
 !  ==================
@@ -154,6 +188,213 @@ contains
 !  =======================
 !  Shrinking and expansion
 !  =======================
+
+   shrink(dim,chop_start) ::: leaky, PURE
+   ! Shrink allocatable "self" to dimension "dim" from the end.
+   ! Contents are retained. If "chop_start" is present and TRUE,
+   ! "self" is chopped from the start, and the contents from the end
+   ! are retained.
+      self :: allocatable, INOUT
+      dim :: INT, IN
+      chop_start :: BIN, optional, IN
+
+   ENSURE(.allocated,"no self array")
+   ENSURE(dim<.dim,"dim too large")
+   ENSURE(dim>0, "dim is not +ve")
+
+      lb,ub :: INT
+      chop_end :: BIN
+
+      ! Chop from start or end?
+      chop_end = TRUE
+      if (present(chop_start)) chop_end = NOT chop_start
+
+      ! Bounds
+      lb = lbound(self,dim=1)
+      ub = ubound(self,dim=1)
+
+      if (chop_end) then
+
+         self(lb:) = [ self(lb:lb+dim-1) ]
+
+      else 
+
+         self(lb:) = [ self(ub-dim+1:ub) ]
+
+      end
+
+   end
+
+   expand(dim,init,grow_start) ::: leaky, PURE
+   ! Expand allocatable "self" to dimension "dim" from the end. New
+   ! slots are zeroed unless scalar "init" is set. If "grow_start" is
+   ! present and TRUE, then "self" is expanded from the start, keeping
+   ! the same lower bound.
+      self :: allocatable, INOUT
+      dim :: INT, IN
+      init :: INTRINSIC, optional, IN
+      grow_start :: BIN, optional, IN
+
+      lb,nc :: INT
+      grow_end :: BIN
+      val :: INTRINSIC
+
+      ! Value to initialize
+      val = INIT?
+      if (present(init)) val = init
+        
+      ! Chop from start or end?
+      grow_end = TRUE
+      if (present(grow_start)) grow_end = NOT grow_start 
+
+      if (.deallocated) then
+
+         .create(dim)
+         self = init
+
+      else
+
+         ENSURE(dim>.dim, "dim not large enough")
+         ENSURE(dim>0, "dim is not +ve")
+        
+         ! Bounds
+         nc = dim - .dim
+         lb = lbound(self,dim=1)
+
+         ! Grow it
+         if (grow_end) then
+            self(lb:) = [ self, spread(val,dim=1,ncopies=nc) ]
+         else 
+            self(lb:) = [ spread(val,dim=1,ncopies=nc), self ]
+         end
+        
+      end
+
+   end
+
+   append(v) ::: leaky, pure
+   ! Append the contents of vector "v" to allocatable "self".
+      self :: allocatable, INOUT
+      v :: VEC{INTRINSIC}, IN
+
+      if (self.deallocated) then
+         self = v
+      else
+         self = [ self, v ]
+      end
+
+   end
+
+   append(v1,v2) ::: leaky, pure
+   ! Appends vectors "v1" and "v2" to allocatable "self".
+      self :: allocatable, INOUT
+      v1,v2 :: VEC{INTRINSIC}, IN
+
+      if (self.deallocated) then
+         self = [ v1, v2 ]
+      else
+         self = [ self, v1, v2 ]
+      end
+
+   end
+
+   append(value) ::: leaky, pure
+   ! Appends the scalar "value" onto the end of allocatable "self".
+      self :: allocatable, INOUT
+      value :: INTRINSIC, IN
+
+      if (self.deallocated) then
+         self = [ value ]
+      else
+         self = [ self, value ]
+      end
+
+   end
+
+   append_only_if_unique(value) ::: leaky, pure
+   ! Appends the single scalar "value" to the end of allocatable
+   ! "self", but only if the "value" does not already occur in "self"
+      self :: allocatable, INOUT
+      value :: INTRINSIC, IN
+
+      if (self.deallocated) then
+         self = [ value ]
+      else if (all(self/=value)) then
+         self = [ self, value ]
+      end
+
+   end
+
+   prepend(v) ::: leaky, pure
+   ! Prepend vector "v" to allocatable "self".
+      self :: allocatable, INOUT
+      v :: VEC{INTRINSIC}, IN
+
+      if (self.deallocated) then
+         self = [ v ]
+      else
+         self = [ v, self ]
+      end
+
+   end
+
+   prepend(value) ::: leaky, pure
+   ! Prepend a single "value" to allocatable "self".
+      self :: allocatable, INOUT
+      value :: INTRINSIC, IN
+
+      if (self.deallocated) then
+         self = [ value ]
+      else
+         self = [ value, self ]
+      end
+
+   end
+
+   prune_element(k) ::: leaky, pure
+   ! Removes the element at position "k" from allocatable "self".
+   ! Elements after that position are moved downward.
+      self :: allocatable, INOUT
+      k :: INT, IN
+
+      lb,ub :: INT
+
+      lb = lbound(self,dim=1)
+      ub = ubound(self,dim=1)
+
+      self(lb:ub-1) = [ self(lb:k-1),self(k+1:ub) ]
+
+   end
+
+   prune(values) ::: leaky, pure
+   ! Removes the scalar "values" from allocatable "self" (if there).
+   ! The order of the elements is otherwise unchanged.
+      self :: allocatable, INOUT
+      values :: VEC{INTRINSIC}, IN
+
+      lb :: INT
+
+      lb = lbound(self,dim=1)
+
+      self(lb:) = pack(self,mask=any(spread(self,2,values.dim)==spread(values,1,.dim),dim=1))
+
+   end
+
+   prune(value) ::: leaky, pure
+   ! Remove the scalar "value" from allocatable "self" (if there).
+   ! The order of the elements is otherwise unchanged.
+      self :: allocatable, INOUT
+      value :: INTRINSIC, IN
+
+      lb :: INT
+
+      lb = lbound(self,dim=1)
+
+      self(lb:) = pack(self,mask = self/=value)
+
+   end
+
+! Old
 
    shrink(dim) ::: leaky, PURE
    ! Shrink self to dimension dim.  Contents are retained.

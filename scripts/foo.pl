@@ -226,6 +226,7 @@ $function_res_type{"REAL_to_str"} = 'STR';
     'associated',
     'atan',
     'cos',
+    'deallocated',
     'mod',
     'modulo',
     'nullify',
@@ -4208,17 +4209,29 @@ sub convert_dots_to_fortran {
                 $rout = 'size';
                 $underscore = '';
                 $done = 1;
-              # Modify argumentless "created" statements -> allocated
+              # Modify argumentless "created" statements -> associated
               } elsif ($post !~ '^[(]' && $rout =~ m'^created$'o) {
                 $rout = 'associated';
                 $underscore = '';
                 $done = 1;
-              # Modify argumentless "destroyed" statements -> NOT allocated
+              # Modify argumentless "allocated" statements -> allocated
+              } elsif ($post !~ '^[(]' && $rout =~ m'^allocated$'o) {
+                $rout = 'allocated';
+                $underscore = '';
+                $done = 1;
+              # Modify argumentless "destroyed" statements -> NOT associated
               } elsif ($post !~ '^[(]' && $rout =~ m'^destroyed$'o) {
                 $rout = 'NOT associated';
                 $underscore = '';
                 # We might have introduced a "NOT NOT".
                 if ($pre =~ s/NOT\s*$// || $pre =~ s/\.NOT\.\s*$//) { $rout = 'associated'; }
+                $done = 1;
+              # Modify argumentless "deallocated" statements -> NOT allocated
+              } elsif ($post !~ '^[(]' && $rout =~ m'^deallocated$'o) {
+                $rout = 'NOT allocated';
+                $underscore = '';
+                # We might have introduced a "NOT NOT".
+                if ($pre =~ s/NOT\s*$// || $pre =~ s/\.NOT\.\s*$//) { $rout = 'allocated'; }
                 $done = 1;
               }
 
