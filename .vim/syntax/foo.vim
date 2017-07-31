@@ -520,6 +520,10 @@ syn keyword fortranType MOLECULE.SCF
 syn keyword fortranType MOLECULE.TAD
 syn keyword fortranType MOLECULE.XTAL
 
+" Xtal
+
+syn keyword fortranType XTAL 
+
 syn keyword fortranOperator AND OR EQV NEQV NOT IN INOUT OUT
 
 hi! link fortranContinueMark NONE
