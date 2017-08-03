@@ -1141,6 +1141,14 @@ contains
    ! Converts the triangle "tr" into the antisymmetric matrix "self".
    end
 
+   unzip_lower_triangle(tr) ::: get_from(MAT{INTRINSIC}), pure
+   ! Converts the triangle "tr" into a lower triangular matrix "self".
+   end
+
+   unzip_upper_triangle(tr) ::: get_from(MAT{INTRINSIC}), pure
+   ! Converts the triangle "tr" into a upper triangular matrix "self".
+   end
+
    tri_size result (ltr) ::: get_from(MAT{INTRINSIC}), pure
    ! Returns the size of the lower triangle needed to store self.
    end
@@ -1301,6 +1309,334 @@ contains
          end
        end
      end
+   end
+
+   classical_gram_schmidt_qr(Q,R)
+   ! Given an mxn matrix decomposes the matrix into an
+   ! orthogonal mxn matrix, Q, and an nxn upper
+   ! triangular matrix R by the classical Gram-Schmidt
+   ! algorithm.
+      self :: target
+      Q,R :: MAT{REAL}, OUT
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+      ! q_ represent the unnormalised columns of Q
+      ! u is used to aggreagate the multiplications
+      q_,u :: VEC{REAL}*
+      dim1,dim2,i,j :: INT
+      dim1 = .dim1
+      dim2 = .dim2
+     
+      ! q_ has the same size as the columns of the input 
+      q_.create(dim1)
+      u.create(dim1)
+      
+      u = ZERO
+      do j = 1,dim2
+         ! Because self(:,j) = Q(:,i)*R(i,j),
+         ! the information can be stored in Q and R
+         do i = 1,j-1
+            R(i,j) = dot_product(Q(:,i),self(:,j))  
+         end do
+         ! Aggregates information of all other columns
+         do i = 1,j-1
+            u = u + R(i,j)*Q(:,i)
+         end do
+         ! Makes this column orthonormal to all other columns
+         q_ = self(:,j) - u
+         u = ZERO
+         R(j,j) = norm2(q_)
+         Q(:,j) = q_/R(j,j)
+      end do
+   end
+
+   modified_gram_schmidt_qr(Q,R)
+   ! Given an mxn matrix decomposes the matrix into an
+   ! orthogonal mxn matrix, Q, and an upper triangular matrix R
+   ! by the modified Gram-Schmidt algorithm.
+      self :: target
+      Q,R :: MAT{REAL}, OUT
+
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+
+      A :: MAT{REAL}*
+      dim,j,k :: INT
+
+      dim = .dim2
+     
+      A.create(.dim1,.dim2)
+          
+      A = self
+
+      do k = 1,dim
+
+         ! Normalises Q
+         R(k,k) = norm2(A(:,k))
+         Q(:,k) = A(:,k)/R(k,k)
+
+         ! Removes this vector from every proceeding column
+         do j = k + 1,dim
+            R(k,j)=dot_product(Q(:,k),A(:,j))
+            A(:,j)=A(:,j) - R(k,j)*Q(:,k)
+         end do
+
+      end do
+
+   end
+
+   householder_qr(R,Q)
+   ! Given an mxn matrix decomposes the matrix into an
+   ! orthogonal mxm matrix, Q (if provided), and an upper triangular mxn
+   ! matrix, R, using the householder algorithm. Q is calculated
+   ! by backwards accumulation.
+      self :: IN
+      R :: MAT{REAL}, OUT
+      Q :: MAT{REAL}, OUT, optional
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+   ENSURE(Q.dim1 == .dim1, "Wrong size Q")
+   ENSURE(Q.dim2 == .dim1, "Wrong size Q")
+      ! nu is the householder vector, v is a column input and b is a
+      ! vector which stores all the beta values
+      nu,v,b :: VEC{REAL}*
+      ! A is the editable input matrix, which stores R and the
+      ! householder vectors. I is the identity.
+      A,I :: MAT{REAL}*
+      beta :: REAL
+      dim1,dim2,j :: INT
+
+      dim1 = .dim1
+      dim2 = .dim2
+     
+      A.create(.dim1,.dim2)
+      I.create(.dim1,.dim1)
+      b.create(.dim2)
+
+      A = self
+      ! Sets up the identity matrix
+      I = ZERO
+      do j = 1,dim1
+         I(j,j)= ONE
+      end do
+      do j = 1,dim2
+         ! Creates vectors for passing through subroutines
+         v.create(.dim1-j+1)
+         nu.create(.dim1-j+1)
+         v(:) = A(j:dim1,j)
+         ! Calculates nu and beta using the householder function
+         v.householder_vector(nu,beta)
+         b(j) = beta
+         ! A = R from the top to the diagonal, beneath the diagonal
+         ! the non-nu(1) elements are stored
+         A(j:dim1,j:dim2) = matmul((I(1:dim1-j+1,1:dim1-j+1)&
+                           -b(j)*nu.outer_product_with(nu))&
+                           ,A(j:dim1,j:dim2))
+         if (j < dim1) then
+            A(j+1:dim1,j) = nu(2:)
+         end if
+         v.destroy
+         nu.destroy
+      end do
+      do j = 1,dim2
+         R(:j,j)=A(:j,j)
+      end do
+      ! Calculates Q if variable given, by aggregating the
+      ! multiplication of the matrix to produce Q
+      if (present(Q)) then
+         nu.create(.dim1)
+         Q = I
+         nu = ONE
+         do j=dim2,1,-1
+            ! Vectors are stored in A, with nu(1) = ONE
+            nu(j+1:dim1) = A(j+1:dim1,j)
+            ! Creates P matrix
+            Q(j:dim1,j:dim1)= matmul((I(1:dim1-j+1,1:dim1-j+1)&
+                          &-b(j)*nu(j:dim1).outer_product_with(nu(j:dim1)))&
+                          & ,Q(j:dim1,j:dim1))
+         end do
+      end if
+   end
+
+   block_householder_qr(R,Q)
+   ! Given an mxn matrix decomposes the matrix into an
+   ! orthogonal mxm matrix, Q, and an upper triangular mxn
+   ! matrix, R, using the householder algorithm. Q is calculated
+   ! through accumulation of W and Y.
+      self :: IN
+      R,Q :: MAT{REAL}, OUT
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+   ENSURE(Q.dim1 == .dim1, "Wrong size Q")
+   ENSURE(Q.dim2 == .dim1, "Wrong size Q")
+      nu,b,v,z :: VEC{REAL}*
+      A,I,W,Y,M :: MAT{REAL}*
+      beta :: REAL
+      dim1,dim2,j :: INT
+
+      dim1 = .dim1
+      dim2 = .dim2
+     
+      A.create(dim1,dim2)
+      W.create(dim1,dim2)
+      Y.create(dim1,dim2)
+      M.create(dim1,dim1)
+      I.create(dim1,dim1)
+      z.create(dim1)
+      b.create(dim2)
+
+      ! Determination of A is identical to Householder qr routine.
+      A = self
+      I = ZERO
+      do j = 1,dim1
+         I(j,j)= ONE
+      end do
+      do j = 1,dim2
+         v.create(.dim1-j+1)
+         nu.create(.dim1-j+1)
+         v(:) = A(j:dim1,j)
+         v.householder_vector(nu,beta)
+         b(j) = beta
+         A(j:dim1,j) = v
+         A(j:dim1,j:dim2) = matmul((I(1:dim1-j+1,1:dim1-j+1)&
+                          &-b(j)*nu.outer_product_with(nu))&
+                          & ,A(j:dim1,j:dim2))
+         if (j < dim1) then
+            A(j+1:dim1,j) = nu(2:)
+         end if
+         v.destroy
+         nu.destroy
+      end do
+      do j = 1,dim2
+         R(:j,j)=A(:j,j)
+      end do
+      nu.create(.dim1)
+      nu = ZERO
+      ! Y is simply the matrix of householder vectors with 0's before
+      ! the vector if the dimension of the vector is less than the
+      ! dimension of the Y matrix
+      Y = ZERO
+      Y(1,1) = ONE
+      Y(2:dim1,1) = A(2:dim1,1)
+      ! W is the Z produced for each column. The first column is
+      ! simply -beta*Y(1)
+      W(:,1) = -b(1)*Y(:,1)
+      do j = 2,dim2
+         nu(j-1) = ZERO
+         nu(j) = ONE
+         nu(j+1:dim1) = A(j+1:dim1,j)
+         M = I + matmul(W(:,1:j-1),transpose(Y(:,1:j-1))) 
+         z(:) = -b(j)*matmul(M,nu) 
+         W(:,j) = z(:)
+         Y(j,j) = ONE
+         Y(j+1:dim1,j) = A(j+1:dim1,j)
+       end do
+       ! As per the proof from Golub and van Loan
+       Q = I + matmul(W,transpose(Y))
+   end
+
+   fast_givens_qr(R,Q)
+   ! Given an mxn matrix decomposes the matrix into an
+   ! orthogonal mxm matrix, Q (if provided), and an upper triangular mxn
+   ! matrix, R, using the fast Givens algorithm.
+      self :: IN
+      R :: MAT{REAL}, OUT
+      Q :: MAT{REAL}, OUT, optional
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+      di :: VEC{REAL}*
+      F,M,A,D,G :: MAT{REAL}*
+      dim1,dim2,i,j,k,t :: INT
+      alpha,beta :: REAL
+
+      dim1 = .dim1
+      dim2 = .dim2
+      
+      di.create(dim1)
+      A.create(dim1,dim2)
+      D.create(dim1,dim1)
+      M.create(dim1,dim1)
+      F.create(dim1,dim1)
+      G.create(2,2)
+
+      A = self
+      di = ONE
+      D = ZERO
+      M = ZERO
+      F = ZERO
+      do j = 1,dim1
+         M(j,j) = ONE
+         F(j,j) = ONE
+      end do
+      ! If Q present, calculates the matrix M,
+      ! so Q can be calculated
+      if (present(Q)) then
+      do j = 1,dim2
+         do i = dim1,j+1,-1
+            A(i-1:i,j).fast_givens_transformation(di(i-1:i),alpha,beta,t)
+            F = ZERO
+            do k = 1,dim1
+               F(k,k) = ONE
+            end do
+      ! F is the scaled to dimension mxm matrix
+      ! version of the 2x2 Givens transform 
+      ! matrix
+            if (t == 1) then
+      ! F and G are determined by the type variable given from the
+      ! fast givens transform         
+               G = ONE
+               F(i-1,i-1) = beta
+               F(i,i) = alpha
+               F(i,i-1) = ONE
+               F(i-1,i) = ONE
+               G(1,1) = beta
+               G(2,2) = alpha
+      ! Removes elements from the initial matrix.
+               A(i-1:i,j:dim2) = matmul(transpose(G),A(i-1:i,j:dim2))
+      ! M is aggregated so Q can be calculated later         
+               M = matmul(M,F)
+            else
+               G = ONE
+               F(i,i-1) = beta
+               F(i-1,i) = alpha
+               G(1,2) = alpha
+               G(2,1) = beta
+               A(i-1:i,j:dim2) = matmul(transpose(G),A(i-1:i,j:dim2))
+               M = matmul(M,F)
+            end if
+         end do
+      end do
+      ! D is calculated so Q and R can be calculated 
+      do i = 1,dim1
+         D(i,i) = 1/sqrt(di(i))
+      end do
+      R.to_product_of(D,A)
+      Q.to_product_of(M,D) 
+      else
+      ! As above, without the need to calculate Q
+      do j = 1,dim2
+         do i = dim1,j+1,-1
+            A(i-1:i,j).fast_givens_transformation(di(i-1:i),alpha,beta,t)
+            if (t == 1) then
+               G = ONE
+               G(1,1) = beta
+               G(2,2) = alpha
+               A(i-1:i,j:dim2) = matmul(transpose(G),A(i-1:i,j:dim2))
+            else
+               G = ONE
+               G(1,2) = alpha
+               G(2,1) = beta
+               A(i-1:i,j:dim2) = matmul(transpose(G),A(i-1:i,j:dim2))
+            end if
+         end do
+      end do
+      do i = 1,dim1
+         D(i,i) = 1/sqrt(di(i))
+      end do
+      R.to_product_of(D,A)
+      end if
+      di.destroy
+      A.destroy
+      D.destroy
+      M.destroy
+      F.destroy
+      G.destroy
+
    end
 
    schmidt_orthonormalise(S,scales,n_dependent,ld_tol)
@@ -1837,6 +2173,38 @@ contains
 
    end
 
+! =====================
+! Householder vector 
+! =====================
+
+!   householder_vector(nu,b)
+!   ! Given a real vector self, returns the vector with nu(1) =
+!   ! 1 and real part b such that P = I - b*nu*nu^T is
+!   ! orthogonal. Furthermore P*self = norm2(x)*e_1
+!      self :: IN
+!      nu :: VEC{REAL}*, OUT
+!      b :: REAL, OUT
+!   ENSURE(size(nu)==.dim,"incompatible vectors")
+!      s,m,dim :: REAL
+!      
+!      dim = .dim
+!      s = dot_product(self(2:dim,1),self(2:dim,1))
+!      nu(1) = 1
+!      nu(2:dim) = self(2:dim,1)
+!      if (s == 0) then
+!         b = 0
+!      else
+!         m = sqrt(self(1,1)**2+s)
+!         if (self(1,1) <=  0) then
+!            nu(1) = self(1,1)-m
+!         else
+!            nu(1) = -s/(self(1,1)+m)
+!         end if
+!         b = 2*(nu(1)**2)/(s + nu(1)**2)
+!         nu = nu/nu(1)
+!      end if
+!   end
+
 !  ========================
 !  Linear equation routines
 !  ========================
@@ -2189,6 +2557,22 @@ contains
 
       inv.destroy
 
+   end
+
+!  ========
+!  Cholesky
+!  ========
+
+   cholesky_decomposition(tr) ::: get_from(MAT{INTRINSIC})
+   ! Decompose self into lower triangular matrices "L"
+   !   self = L L^T or self = L L^\dagger
+   ! where L is a lower triangular matrix stored as an array
+   ! going across the rows i.e. (1,1), (2,1), (2,2), (3,1) ...
+   end
+
+   cholesky_decomposition(L) ::: get_from(MAT{INTRINSIC}), conjg=>1*
+   ! Decompose self into lower triangular matrices "L"
+   !   self = L L^T or self = L L^\dagger
    end
 
 !  ==========================================================

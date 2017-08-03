@@ -405,7 +405,10 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_har.foo
     ${RUNFILE_DIR}/run_himz.foo
     ${RUNFILE_DIR}/run_mat{real}.foo
+    ${RUNFILE_DIR}/run_mat{cpx}.foo
+    ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_real.foo
+    ${RUNFILE_DIR}/run_least_squares.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
     ${RUNFILE_DIR}/run_xtal.foo
 )
@@ -451,8 +454,11 @@ add_executable(run_gaussian_data EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_har           ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
 add_executable(run_himz          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_himz.F90)
 add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
-add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
-add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
+add_executable(run_mat_cpx       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_cpx.F90)
+add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
+add_executable(run_real          EXCLUDE_FROM_ALL  ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
+add_executable(run_vec_str       EXCLUDE_FROM_ALL  ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
+add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
 add_executable(run_xtal          ${CMAKE_CURRENT_BINARY_DIR}/run_xtal.F90)
 
 # Link exectables
@@ -463,8 +469,11 @@ target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES})
 target_link_libraries(run_xtal          tonto ${LAPACK_LIBRARIES})
 
 # Make non-standard-named executables

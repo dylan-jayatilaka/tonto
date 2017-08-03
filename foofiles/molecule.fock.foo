@@ -83,6 +83,10 @@ contains
            .:make_gc_fock(P,F,direct,core,r12)
            .:add_gc_so_fock(P,F)
 
+        case ("no_ghf")
+
+           .:make_g_fock(P,F,core,r12)
+
         case default
 
            DIE("unknown SCF kind, "//trim(.scfdata.scf_kind))
@@ -432,6 +436,76 @@ contains
       ! Clean
       Fb.destroy
       Fa.destroy
+
+   end
+
+   make_g_fock(P,F,core,r12) ::: leaky
+   ! Make a new general Fock matrix.
+   ! If present and FALSE, "core" removes the core matrix contribution
+   ! If present and FALSE, "r12"  removes the two electron contribution
+      core,r12 :: BIN, optional
+      P,F :: OPMATRIX*
+
+   ENSURE(P.created,"no density matrix")
+   ENSURE(F.created,"no fock matrix")
+   ENSURE(P.general.created, "no density matrix")
+   ENSURE(F.n_bf==.n_bf, "Fock matrix dimensions wrong")
+   ENSURE(P.n_bf==.n_bf, "Density matrix dimensions wrong")
+
+      Ka,Kb,Kba,Pa,Pb,Pba,Fg :: MAT{REAL}*
+      J, Pab :: MAT{REAL}*
+      add_core,add_r12 :: BIN
+
+      F.destroy("general")
+      F.create("general")
+
+      add_core = TRUE
+      add_r12  = TRUE
+      if (present(core)) add_core = core
+      if (present(r12))  add_r12  = r12
+
+      Fg => F.general
+
+      if (add_r12) then
+
+         J.create(.n_bf,.n_bf)
+         Ka.create(.n_bf,.n_bf)
+         Kb.create(.n_bf,.n_bf)
+         Kba.create(.n_bf,.n_bf)
+
+         Pa.create(.n_bf,.n_bf);  P.general.alpha_alpha_put_to(Pa)
+         Pb.create(.n_bf,.n_bf);  P.general.beta_beta_put_to(Pb)
+         Pba.create(.n_bf,.n_bf); P.general.beta_alpha_put_to(Pba)
+         Pab.create(.n_bf,.n_bf) 
+
+         Pab = Pa + Pb
+         .:make_g_JK_direct(J,Ka,Kb,Kba,Pab,Pa,Pb,Pba)
+         
+
+         Pab.destroy
+         Pba.destroy
+         Pb.destroy
+         Pa.destroy
+
+         Ka  = J - Ka; Fg.alpha_alpha_set_to(Ka)
+         Kb  = J - Kb; Fg.beta_beta_set_to(Kb)
+         Kba = -Kba;   Fg.beta_alpha_set_to(Kba)
+
+         Kba.destroy
+         Kb.destroy
+         Ka.destroy
+         J.destroy
+
+      else
+
+         Fg = ZERO
+
+      end
+
+      Fg.symmetrize
+
+      ! Add core
+      if (add_core) .:add_core_hamiltonian(.fock_matrix)
 
    end
 
@@ -2069,6 +2143,140 @@ contains
 
       ind_archive.destroy
       eri_archive.destroy
+
+      .:weight_diagonal_blocks(J,TWO)
+      .:blockwise_symmetric_fold(Ka)
+      .:blockwise_symmetric_fold(Kb)
+
+      J.symmetric_reflect
+      Ka.symmetric_reflect
+      Kb.symmetric_reflect
+
+      J = TWO*J
+
+   end
+
+   make_g_JK_direct(J,Ka,Kb,Kba,P,Pa,Pb,Pba)
+   ! Make the general matrices "J" and exchange matrices "Ka", "Kb"
+   ! and "Kba" from a density matrices "P", "Pa", "Pb" and "Pba"
+   ! directly from the integrals.
+      self :: INOUT
+      J,Ka,Kb,Kba :: MAT{REAL}, OUT
+      P,Pa,Pb,Pba :: MAT{REAL}, IN
+
+      I :: VEC{REAL}*
+      abs_P :: MAT{REAL}*
+      max_P :: VEC{REAL}*
+      sh4s,sh4n :: SHELL1QUARTET
+      ab,cd,aa,bb,cc,dd :: INT
+      a,b,c,d,abcd,fa,fb,fc,fd,la,lb,lc,ld :: INT
+      na,nb,nc,nd,atom_a,atom_b,atom_c,atom_d :: INT
+      I_abcd,factor,cutoff :: REAL
+      skip,ab_same,cd_same,any_same,no_max_I :: BIN
+
+      J   = ZERO
+      Ka  = ZERO
+      Kb  = ZERO
+      Kba = ZERO
+
+      cutoff = .scfdata.eri_schwarz_cutoff
+
+      no_max_I = FALSE
+      if (.max_I.destroyed) no_max_I = TRUE
+      if (no_max_I) .:initialize_max_I
+
+      max_P.create(.n_shell_pairs)
+      abs_P.create(.n_bf,.n_bf)
+      abs_P = max(abs(P),abs(Pa),abs(Pb),abs(Pba))
+      .:make_max_density_elements(max_P,abs_P)
+      abs_P.destroy
+
+      do ab = 1,.n_shell_pairs
+
+         .BASE:get_shell_pair_indices(ab,aa,bb,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         ab_same = atom_a==atom_b
+
+         .BASE:set_new_shell_quartet_ab(sh4s,aa,bb,skip=TRUE)
+         .BASE:set_new_shell_quartet_ab(sh4n,aa,bb,skip=FALSE)
+
+         do cd = 1,ab
+
+            .BASE:get_shell_pair_indices(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d)
+
+            cd_same = atom_c==atom_d
+
+            skip = ::schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+            if (skip) cycle
+
+            factor = ONE                             ! Evaluate the integrals
+            if (aa==bb) factor = HALF                ! Coincidence factors
+            if (cc==dd) factor = HALF * factor
+            if (aa==cc AND bb==dd) factor = HALF * factor
+
+            any_same = ab_same OR cd_same OR &
+                       atom_a==atom_c OR atom_a==atom_d OR &
+                       atom_b==atom_c OR atom_b==atom_d
+
+            if (any_same) then
+
+               .BASE:set_new_shell_quartet_cd(sh4n,cc,dd,skip=FALSE)
+               I.create(sh4n.ab_n_bf_pairs*sh4n.cd_n_bf_pairs)
+               SHELL1QUARTET::make_ERI(sh4n,I)
+               sh4n.destroy_cd
+
+            else
+
+               .BASE:set_new_shell_quartet_cd(sh4s,cc,dd,skip=TRUE)
+               I.create(sh4s.ab_n_bf_pairs*sh4s.cd_n_bf_pairs)
+               SHELL1QUARTET::make_ERI(sh4s,I)
+               sh4s.destroy_cd
+
+            end
+
+            I = factor * I
+
+            abcd = 0
+            do d = fd,ld
+            do c = fc,lc
+            do b = fb,lb
+            do a = fa,la
+               abcd = abcd + 1
+               I_abcd = I(abcd)
+               J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
+               J(c,d)   = J(c,d)   + I_abcd*P(b,a)
+               Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric
+               Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(b,d)  ! but must be folded
+               Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(a,d)
+               Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(a,c)
+               Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(b,c)  ! These are symmetric
+               Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(b,d)  ! but must be folded
+               Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(a,d)
+               Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(a,c)
+               Kba(a,d) = Kba(a,d) + I_abcd*Pba(b,c) ! These are asymmetric
+               Kba(a,c) = Kba(a,c) + I_abcd*Pba(b,d)
+               Kba(b,c) = Kba(b,c) + I_abcd*Pba(a,d)
+               Kba(b,d) = Kba(b,d) + I_abcd*Pba(a,c)
+               Kba(d,a) = Kba(d,a) + I_abcd*Pba(c,b)
+               Kba(c,a) = Kba(c,a) + I_abcd*Pba(d,b)
+               Kba(c,b) = Kba(c,b) + I_abcd*Pba(d,a)
+               Kba(d,b) = Kba(d,b) + I_abcd*Pba(c,a)
+            end
+            end
+            end
+            end
+
+            I.destroy
+
+         end
+
+         sh4n.destroy_ab
+         sh4s.destroy_ab
+
+      end
+
+      max_P.destroy
+      if (no_max_I) .max_I.destroy
 
       .:weight_diagonal_blocks(J,TWO)
       .:blockwise_symmetric_fold(Ka)

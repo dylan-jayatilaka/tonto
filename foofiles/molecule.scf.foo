@@ -1440,6 +1440,9 @@ contains
       case ("group")
          .:group_scf
 
+      case ("no_ghf")
+         .:NO_ghf
+
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
          .:constrained_scf
@@ -1807,6 +1810,50 @@ contains
       .scfdata.table_info.destroy
       .scfdata.table.destroy
       .max_I.destroy
+
+   end
+
+!  ==========================
+!  Non-orthogonalk general HF
+!  ==========================
+
+   NO_ghf ::: leaky
+   ! Do non-orthogonal SCF calculation. Bespoke.
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,   "no atom list")
+   ENSURE(.scfdata.created,"no scfdata")
+
+      .:initialize_scf
+
+      .:put_scf_banner_and_options
+      .:put_scf_table_header
+
+      ! SCF iterations
+      do
+
+         .:extrapolate_fock_matrix
+
+         .:update_molecular_orbitals
+
+         .BASE:make_scf_density_matrix
+
+         .:make_fock_matrix
+
+         .:update_scfdata
+         .:update_scfdata_error
+
+         .:put_scf_table_body
+
+         if (.scfdata.scf_done) exit
+
+      end
+
+      .:put_scf_results
+
+      .:archive_scf_results
+
+      .:cleanup_scf
 
    end
 
@@ -3551,7 +3598,7 @@ contains
 
       scf_kind :: STR
       er,ea,eb  :: VEC{REAL}*
-      MOr,Fr,MOa,Fa,MOb,Fb :: MAT{REAL}*
+      MOr,Fr,MOa,Fa,MOb,Fb,MOg,Fg :: MAT{REAL}*
       MOc,Fc :: MAT{CPX}*
 
       ! Update the MO's
@@ -3602,6 +3649,13 @@ contains
 
             .:MO_gc_eigen_update(er,MOc,Fc)
 
+         case ("no_ghf")
+
+            er  => .orbital_energies.general
+            MOg => .molecular_orbitals.general
+            Fg  => .fock_matrix.general
+
+            .:MO_g_eigen_update(er,MOg,Fg)
          case default
             DIE("unknown scf kind, "//scf_kind.trim)
 
@@ -3717,6 +3771,49 @@ contains
 !
 !   end
 
+   MO_g_eigen_update(MO_energies,MO,F)
+   ! Solve for the new molecular orbital energies "MO_energies" and the new
+   ! molecular orbitals "MO", given an initial old set (in "MO") and a fock
+   ! matrix "F".
+   ! The new molecular orbitals "MO*U" are found from the old MOs "MO" by
+   ! solving (c^T F c)U = c^T S c U E ...... where U is an orthogonal matrix.
+      MO_energies :: VEC{REAL}
+      MO,F :: MAT{REAL}
+
+   DIE_IF(NOT F.is_symmetric,"F is not symmetric! WTF?!")
+
+      G,U :: MAT{REAL}*
+      i :: INT
+
+      ! Change F into old MO basis --> G
+      G.create(2*.n_bf,2*.n_bf)
+      F.change_basis_to(G,MO)
+
+      ! Level shift in old MO basis
+      if (.scfdata.apply_level_shifting) then
+         do i = .n_e + 1, 2*.n_bf
+            G(i,i) = .scfdata.level_shift + G(i,i)
+         end
+      end
+
+      ! Get rotation U from old to new MO's
+      U.create(2*.n_bf,2*.n_bf)
+      G.symmetrize
+      G.diagonalize_by_jacobi(MO_energies,U)
+
+      ! Lock orbitals in place, if requested
+      if (.scfdata.using_orbital_locking) U.make_diagonally_dominant
+
+      ! Update orbitals
+      G.to_product_of(MO,U)
+      MO = G
+
+      ! Clean up
+      U.destroy
+      G.destroy
+
+   end
+
    MO_gc_eigen_update(MO_energies,MO,F)
    ! Solve for the new molecular orbital energies "MO_energies" and the new
    ! molecular orbitals "MO", given an initial old set (in "MO") and a fock
@@ -3766,6 +3863,53 @@ contains
       ! Clean up
       U.destroy
       G.destroy
+
+   end
+
+   MO_g_reorder(MO_energies,MO)
+   ! Reorder the GC molecular orbitals so that the alpha orbitals come
+   ! first, then the beta. This assumes that the alph and betra
+   ! orbitals are nearly degenerate.
+      MO_energies :: VEC{REAL}
+      MO :: MAT{REAL}
+
+      e :: VEC{REAL}*
+      W :: MAT{REAL}*
+      i,k :: INT
+
+      e.create(2*.n_bf)
+      W.create(2*.n_bf,2*.n_bf)
+
+      k = 0
+      do i = 1,2*.n_b-1,2
+         k = k + 1
+         e(k)   = MO_energies(i)
+         W(:,k) = MO(:,i)
+      end
+
+      do i = 2,2*.n_b,2
+         k = k + 1
+         e(k)   = MO_energies(i)
+         W(:,k) = MO(:,i)
+      end
+
+      do i = 2*.n_b+1,.n_e
+         k = k + 1
+         e(k)   = MO_energies(i)
+         W(:,k) = MO(:,i)
+      end
+
+      do i = .n_e+1,2*.n_bf
+         k = k + 1
+         e(k)   = MO_energies(i)
+         W(:,k) = MO(:,i)
+      end
+
+      MO_energies = e
+      MO = W
+
+      W.destroy
+      e.destroy
 
    end
 
@@ -4005,7 +4149,7 @@ contains
    ENSURE(.density_matrix.has_any_genre,"no density matrix")
 
       scf_kind :: STR
-      H :: MAT{REAL}*
+      H,H2 :: MAT{REAL}*
       HH :: MAT{CPX}*
 
       res = ZERO
@@ -4046,6 +4190,22 @@ contains
            res = .density_matrix.beta.trace_product_with(H) + res
 
            H.destroy
+
+        case ("no_ghf")
+
+           H2.create(2*.n_bf,2*.n_bf)
+           H.create(.n_bf,.n_bf)
+
+           .INTS:make_kinetic_energy_mx(H)
+
+           H2 = ZERO
+           H2.alpha_alpha_set_to(H)
+           H2.beta_beta_set_to(H)
+
+           res = .density_matrix.general.trace_product_with(H2)
+
+           H.destroy
+           H2.destroy
 
         case ("gchf","xray_gchf")
 
@@ -4071,8 +4231,8 @@ contains
    end
 
    nuclear_attraction_energy result (res)
-   ! Evaluates the SCF nuclear attraction energy as a trace of ".density_matrix"
-   ! with the ".kinetic matrix".
+   ! Evaluates the SCF electron-nuclear attraction energy as a trace
+   ! of ".density_matrix"
       res :: REAL
 
    ENSURE(.scfdata.associated,           "no scfdata")
@@ -4080,7 +4240,7 @@ contains
    ENSURE(.density_matrix.has_any_genre,"no density matrix")
 
       scf_kind :: STR
-      H :: MAT{REAL}*
+      H,H2 :: MAT{REAL}*
       HH :: MAT{CPX}*
 
       res = ZERO
@@ -4121,6 +4281,22 @@ contains
            res = .density_matrix.beta.trace_product_with(H) + res
 
            H.destroy
+
+        case ("no_ghf")
+
+           H2.create(2*.n_bf,2*.n_bf)
+           H.create(.n_bf,.n_bf)
+
+           .INTS:make_nuclear_attraction_mx(H)
+
+           H2 = ZERO
+           H2.alpha_alpha_set_to(H)
+           H2.beta_beta_set_to(H)
+
+           res = .density_matrix.general.trace_product_with(H2)
+
+           H.destroy
+           H2.destroy
 
         case ("gchf","xray_gchf")
 
@@ -4155,7 +4331,7 @@ contains
    ENSURE(.density_matrix.has_any_genre,"no density matrix")
 
       scf_kind :: STR
-      H,T :: MAT{REAL}*
+      H,T,H2 :: MAT{REAL}*
       HH :: MAT{CPX}*
 
       ! Make sure .core_matrix is there
@@ -4209,6 +4385,27 @@ contains
            T.destroy
            H.destroy
 
+        case ("no_ghf")
+
+           H2.create(2*.n_bf,2*.n_bf)
+           H.create(.n_bf,.n_bf)
+           T.create(.n_bf,.n_bf)
+
+           .INTS:make_nuclear_attraction_mx(H)
+           .INTS:make_kinetic_energy_mx(T)
+
+           H2 = ZERO
+           H  = H + T
+           H2.alpha_alpha_set_to(H)
+           H2.beta_beta_set_to(H)
+           H2 = .core_matrix.general - H2
+
+           res = .density_matrix.general.trace_product_with(H2)
+
+           T.destroy
+           H.destroy
+           H2.destroy
+
         case ("gchf","xray_gchf")
 
            HH.create(2*.n_bf,2*.n_bf)
@@ -4219,8 +4416,9 @@ contains
            .INTS:make_kinetic_energy_mx(T)
 
            HH = ZERO
-           HH.alpha_alpha_set_to(H+T)
-           HH.beta_beta_set_to(H+T)
+           H  = H + T
+           HH.alpha_alpha_set_to(H)
+           HH.beta_beta_set_to(H)
            HH = .core_matrix.general_complex - HH
 
            res = RE(.density_matrix.general_complex.trace_product_with(HH))
@@ -4239,6 +4437,7 @@ contains
    scf_energy result (res)
    ! Evaluates the total SCF energy (including nuclear) as a trace of
    ! ".density_matrix" with the ".fock matrix".
+      self :: IN
       res :: REAL
 
    ENSURE(.density_matrix.associated,    "no density matrix")
@@ -4253,7 +4452,8 @@ contains
    scf_energy(P,F) result (res)
    ! Evaluates the total SCF energy (including nuclear) as a trace of
    ! "P" with the fock matrix "F".
-      P,F :: OPMATRIX
+      self :: IN
+      P,F :: OPMATRIX, IN
       res :: REAL
 
    ENSURE(.scfdata.associated, "no scf data")
@@ -4309,8 +4509,9 @@ contains
    ! Evaluates the SCF electronic energy as a trace of density "P"
    ! with ".fock_matrix". If "core" is present and FALSE, the core
    ! contribution is not added.
-      P :: OPMATRIX
-      core :: BIN, optional
+      self :: IN
+      P :: OPMATRIX, IN
+      core :: BIN, optional, IN 
       res :: REAL
 
    ENSURE(.fock_matrix.associated,    "no fock matrix")
@@ -4327,8 +4528,9 @@ contains
    ! electronic energies, and it assumes that these energy
    ! contributions were calculated at the time of the formation of "F"
    ! from "P", and that they were stored in .scfdata.
-      P,F :: OPMATRIX
-      core :: BIN, optional
+      self :: IN
+      P,F :: OPMATRIX, IN
+      core :: BIN, optional, IN
       res :: REAL
 
    ENSURE(.scfdata.associated,"no scfdata")
@@ -4374,6 +4576,9 @@ contains
                + .scfdata.dft_alpha_energy_correction &
                + .scfdata.dft_beta_energy_correction
 
+        case ("no_ghf")
+           res = HALF * P.general.trace_product_with(W.general)
+
         case ("gchf","xray_gchf")
            res = HALF * RE(P.general_complex.trace_product_with(W.general_complex))
 
@@ -4391,8 +4596,11 @@ contains
    ! Evaluates the SCF electronic energies as a trace of density "P" with
    ! fock matrix "F". In the case of UHF the energies are the E^alpha and E^beta
    ! energies. NOTE: this includes the DFT energy contributions.
+      self :: INOUT
       res :: VEC{REAL}*
+
       res => .:scf_electronic_energies(.density_matrix,.fock_matrix)
+
    end
 
    scf_electronic_energies(P,F) result (res) ::: leaky
@@ -4401,7 +4609,8 @@ contains
    ! energies. NOTE: this includes the DFT electronic energies, and it assumes
    ! that these energy contributions were calculated at the time of the
    ! formation of "F" from "P", and that they were stored in .scfdata.
-      P,F :: OPMATRIX
+      self :: INOUT
+      P,F :: OPMATRIX, IN
       res :: VEC{REAL}*
 
    ENSURE(.scfdata.associated,"no scfdata")
@@ -4436,6 +4645,11 @@ contains
            W.plus(.core_matrix)
            res(1) = HALF * P.alpha.trace_product_with(W.alpha) + .scfdata.dft_alpha_energy_correction
            res(2) = HALF * P.beta.trace_product_with(W.beta)   + .scfdata.dft_beta_energy_correction
+
+        case ("no_ghf")
+           res.create(1)
+           W.plus(.core_matrix)
+           res(1) = HALF * P.general.trace_product_with(W.general)
 
         case ("gchf","xray_gchf")
            res.create(1)
@@ -4719,6 +4933,7 @@ contains
 
       ! Get a starting MO's from this density
       .:make_fock_matrix
+      
       .:make_fock_guess
 
    end
@@ -4980,6 +5195,8 @@ contains
 
            .BASE:put_debug(e, "make_fock_guess: ea")
            .BASE:put_debug(MO,"make_fock_guess: MOa")
+           .BASE:put_debug(F, "make_fock_guess: Fa")
+           .BASE:put_debug(.density_matrix, "make_fock_guess: D ")
 
            ! Beta MO's
            e  => .orbital_energies.beta
@@ -4989,6 +5206,26 @@ contains
 
            .BASE:put_debug(e, "make_fock_guess: eb")
            .BASE:put_debug(MO,"make_fock_guess: MOb")
+           .BASE:put_debug(F, "make_fock_guess: Fb")
+
+        case ("general")
+
+           .orbital_energies.create(.n_bf,"general")
+           .molecular_orbitals.create(.n_bf,"general")
+
+           ! General complex MO's
+           e   => .orbital_energies.general
+           MO  => .molecular_orbitals.general
+           F   => .fock_matrix.general
+           .:make_g_fock_guess(e,MO,F)
+
+           .BASE:put_debug(e, "make_fock_guess: ghf e")
+           .BASE:put_debug(MO,"make_fock_guess: ghf MOs")
+           .BASE:put_debug(F, "make_fock_guess: ghf F ")
+           .BASE:put_debug(.density_matrix, "make_fock_guess: ghf D ")
+
+           ! Reorder
+           !.:MO_g_reorder(e,MO)
 
         case ("general_complex")
 
@@ -5000,13 +5237,13 @@ contains
            MOc => .molecular_orbitals.general_complex
            Fc  => .fock_matrix.general_complex
            .:make_gc_fock_guess(e,MOc,Fc)
-         ! .:make_r_guess_from(F,e,MO) ! why not this one???
 
-           .BASE:put_debug(e,  "make_fock_guess: gchf guess eigenvalues before reorder")
-           .BASE:put_debug(MOc,"make_fock_guess: gchf guess complex MOs before reorder")
+           .BASE:put_debug(e,  "make_fock_guess: gchf e")
+           .BASE:put_debug(MOc,"make_fock_guess: gchf MOs")
+           .BASE:put_debug(Fc, "make_fock_guess: gchf Fc")
 
            ! Reorder
-           .:MO_gc_reorder(e,MOc)
+           !.:MO_gc_reorder(e,MOc)
 
            .BASE:put_debug(e,  "make_fock_guess: gchf guess eigenvalues after reorder")
            .BASE:put_debug(MOc,"make_fock_guess: gchf guess complex MOs after reorder")
@@ -5022,6 +5259,50 @@ contains
 
       ! Make the (spinorbital_kind) density matrix
       .BASE:make_scf_density_matrix
+
+   end
+
+   make_g_fock_guess(MO_energies,MO,fock_matrix)
+   ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
+   ! a given complex general "fock_matrix".
+      MO_energies :: VEC{REAL}
+      MO,fock_matrix :: MAT{REAL}
+
+   ENSURE(.overlap_matrix.created,"no overlap matrix")
+   DIE_IF(NOT fock_matrix.is_symmetric, "fock_matrix not symmetric!  WTF?!")
+
+      S,R :: MAT{REAL}*
+      H :: MAT{REAL}*
+
+      R.create(2*.n_bf,2*.n_bf)
+      S.create(.n_bf,.n_bf)
+
+      ! S = S^-1/2, R = big inverse S
+      .INTS:make_r_overlap_inverse_sqrt(S)
+
+      ! R = big inverse S
+      R = ZERO
+      R.alpha_alpha_set_to(S)
+      R.beta_beta_set_to(S)
+      S.destroy
+
+      ! H = Fock matrix
+      H.create(2*.n_bf,2*.n_bf)
+      H = fock_matrix
+
+      ! H = S^-1/2 F S^-1/2
+      H.change_basis_using(R)
+
+      !  Solve for c~
+      H.solve_symmetric_eigenproblem(MO_energies,MO)
+
+      !  c  = S^-1/2 c~
+      H.to_product_of(R,MO)
+      MO = H
+
+      ! Clean
+      H.destroy
+      R.destroy
 
    end
 
@@ -5058,7 +5339,7 @@ contains
 
       .BASE:put_debug(H,"make_gc_fock_guess: H matrix in orthonormalised AO basis")
 
-      H.make_hermitian
+      H.make_hermitian !WTF?!
       H.diagonalize_by_jacobi(MO_energies,MO)
 
       ! Debug: check diagonalization
@@ -6080,7 +6361,7 @@ contains
       ! Spinorbital kind before compression
       spinorbital_kind = .fock_matrix.spinorbital_kind
 
-      ! Make commutator
+      ! Make commutator C
       C.create(.fock_matrix.n_bf,spinorbital_kind)
       MOLECULE.SCF:make_diis_commutator(C,.fock_matrix,.density_matrix,.overlap_matrix)
 
@@ -6109,6 +6390,11 @@ contains
 
          case ("uhf","uks","xray_uhf","xray_uks", &
                "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+            dim = C.triangle.dim
+            .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
+            error = C.triangle.norm
+
+         case ("no_ghf")
             dim = C.triangle.dim
             .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
             error = C.triangle.norm
@@ -6143,14 +6429,13 @@ contains
    ! .error_length to be sqrt(C-.C). The minus sign is because C is
    ! antisymmetric.
       F,D :: OPMATRIX*
-      S :: MAT{REAL}*
+      S :: MAT{REAL}, IN
       res :: REAL
 
    ENSURE(F.associated,"no Fock matrix")
    ENSURE(F.has_any_genre,"no Fock matrix")
    ENSURE(D.associated,"no density matrix")
    ENSURE(D.has_any_genre,"no density matrix")
-   ENSURE(S.associated,"no overlap matrix")
    ENSURE(F.n_bf==S.dim1,"Incompatible F and S")
    ENSURE(D.n_bf==S.dim1,"Incompatible D and S")
 
@@ -6168,10 +6453,11 @@ contains
       ! Set error length
       res = ZERO
       select case (spinorbital_kind)
-         case("restricted");      res = C.triangle.norm
-         case("unrestricted");    res = C.triangle.norm
-         case("general_complex"); res = C.square.norm
-         case default;            UNKNOWN(spinorbital_kind)
+      case("restricted");      res = C.triangle.norm
+      case("unrestricted");    res = C.triangle.norm
+      case("general");         res = C.triangle.norm
+      case("general_complex"); res = C.square.norm
+      case default;            UNKNOWN(spinorbital_kind)
       end
 
       ! Clean
@@ -6181,7 +6467,7 @@ contains
 
    make_diis_commutator(C,F,D,S) ::: selfless
    ! Make the DIIS commutator opmatrix, C = FDS - SDF.
-      C :: OPMATRIX
+      C :: OPMATRIX, INOUT
       F,D :: OPMATRIX, IN
       S :: MAT{REAL}, IN
 
@@ -6192,15 +6478,18 @@ contains
       select case (F.spinorbital_kind)
 
          case("restricted")
-            MOLECULE.SCF:make_diis_commutator(C.restricted,F.restricted,D.restricted,S)
+            MOLECULE.SCF:make_diis_commutator_r(C.restricted,F.restricted,D.restricted,S)
 
          case("unrestricted")
-            MOLECULE.SCF:make_diis_commutator(C.alpha,F.alpha,D.alpha,S)
-            MOLECULE.SCF:make_diis_commutator(C.beta,F.beta,D.beta,S)
+            MOLECULE.SCF:make_diis_commutator_r(C.alpha,F.alpha,D.alpha,S)
+            MOLECULE.SCF:make_diis_commutator_r(C.beta,F.beta,D.beta,S)
             C.alpha = C.alpha + C.beta
 
+         case("general")
+            MOLECULE.SCF:make_diis_commutator_g(C.general,F.general,D.general,S)
+
          case("general_complex")
-            MOLECULE.SCF:make_diis_commutator(C.general_complex,F.general_complex,D.general_complex,S)
+            MOLECULE.SCF:make_diis_commutator_gc(C.general_complex,F.general_complex,D.general_complex,S)
 
          case default
             DIE("unimplemented")
@@ -6209,7 +6498,7 @@ contains
 
    end
 
-   make_diis_commutator(C,F,D,S) ::: selfless
+   make_diis_commutator_r(C,F,D,S) ::: selfless, private
    ! Make the real DIIS commutator matrix, C = FDS - SDF.
       C :: MAT{REAL}
       F,D,S :: MAT{REAL}, IN
@@ -6225,7 +6514,37 @@ contains
 
    end
 
-   make_diis_commutator(C,F,D,S) ::: selfless
+   make_diis_commutator_g(C,F,D,S) ::: selfless, private
+   ! Make the general DIIS commutator matrix, C = FDS - SDF.
+      C :: MAT{REAL}, INOUT
+      F,D :: MAT{REAL}, IN
+      S :: MAT{REAL}, IN
+
+      O,W :: MAT{REAL}*
+
+      W.create(F.dim1,F.dim1)
+
+      ! Make the overlap matrix
+      O.create(F.dim1,F.dim1)
+      O = ZERO
+      O.alpha_alpha_set_to(S)
+      O.beta_beta_set_to(S)
+
+      ! D x S
+      W.to_product_of(D,O)
+      O.destroy
+
+      ! F x D x S
+      C.to_product_of(F,W)
+      W.destroy
+
+      ! Make FDS - SDF
+      C.antisymmetric_fold
+      C.antisymmetric_reflect
+
+   end
+
+   make_diis_commutator_gc(C,F,D,S) ::: selfless, private
    ! Make the complex DIIS commutator matrix, C = FDS - SDF.
       C :: MAT{CPX}
       F,D :: MAT{CPX}, IN
