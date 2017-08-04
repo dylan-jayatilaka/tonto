@@ -3993,31 +3993,19 @@ contains
 
             F  => .fock_matrix.restricted
             P  => .density_matrix.restricted
-            MO => .molecular_orbitals.restricted
+            MO => .molecular_orbitals.restricted(:,1:.n_a)
 
-            g.create(.n_bf,.n_bf)
+            g.create(.n_bf,.n_a)
 
             .:make_MO_r_gradient(g,F,P,MO)
 
+            ! Gradient norm
             f1 = g.trace_product_with(transpose(g))
-            MO = MO - (TOL(2)/sqrt(f1))*g
 
-            .:schmidt_orthonormalise(.molecular_orbitals,scale)
+            ! Go down a bit in the "g" direction
+            step = .scfdata.max_update_stepsize
+            MO = MO - step*g
 
-            scale = ONE/scale
-            .BASE:make_scf_density_matrix
-            .:make_fock_matrix
-
-            h.create(.n_bf,.n_bf)
-            .:make_MO_r_gradient(h,F,P,MO)
-            h = (scale*h-g)/TOL(2)
-            f2 = h.trace_product_with(transpose(h))
-
-            step = f1/f2
-            step = min(.scfdata.max_update_stepsize,step)
-            MO = MO - (step + TOL(2)/sqrt(f1))*g
-
-            h.destroy
             g.destroy
 
          case default
@@ -4029,45 +4017,42 @@ contains
 
    end
 
-   make_MO_r_gradient(g,F,P,c) ::: PURE
-   ! Make the real gradient "g" of the molecular orbitals,
-   ! g = (FPS - (1/2)SPFPS)c
+   make_MO_r_gradient(g,F,D,MO)
+   ! Make the real gradient "g" of the *occupied* MO's,
+   ! g = F MO S^{-1} - (1/2)S D F MO S^{-1}
       self :: IN
       g :: MAT{REAL}, OUT
-      F,P,c :: MAT{REAL}, IN
+      F,D,MO :: MAT{REAL}, IN
 
-   ENSURE(g.is_same_shape_as(c),"gradient g and c are not the same")
+   ENSURE(g.is_same_shape_as(MO),"gradient g and MO are not the same shape")
    ENSURE(F.is_square,"F is not square")
    ENSURE(F.dim1==.n_bf,"F is not the right size, n_bf = "//trim(.n_bf.to_str))
-   ENSURE(P.is_same_shape_as(F),"P is not the right size")
+   ENSURE(D.is_same_shape_as(F),"D is not the right size")
    ENSURE( .overlap_matrix.created,"NO overlap_matrix")
 
-    ! S_inv,S,D :: MAT{REAL}@
+      S_inv, FcSm1,cSm1 :: MAT{REAL}*
 
-    ! S_inv.create(.n_a,.n_a)
+      ! Make S, S^{-1} in the MO basis
+      S_inv.create(.n_a,.n_a)
+      .BASE:make_ELMO_S_inv_r(S_inv,MO)
 
-    ! ! Make S in the occupied MO basis 
-    ! S.create(.n_a,.n_a)
-    ! .overlap_matrix.change_basis_to(S,c(:,1:.n_a))
-    
-    ! ! Make S^{-1} 
-    ! S_inv.to_inverse_of(S)
-    ! S.destroy
+      ! Make gradient
+      FcSm1.create(.n_bf,.n_a)
+      cSm1.create(.n_bf,.n_a)
+      cSm1.to_product_of(MO,S_inv)
+      FcSm1.to_product_of(F,cSm1)
+      cSm1.destroy
+      cSm1.create(.n_bf,.n_bf)
+      cSm1.to_scaled_product_of(.overlap_matrix,D,fac=HALF)
 
-    ! ! Make D the density matrix
-    ! D.create(.n_bf,.n_bf)
-    ! S_inv.back_transform_to(D,c(:,1:.n_a))
+      ! Assemble 1st and 2nd terms of gradient
+      g = FcSm1
+      g.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
 
-
-    ! W.to_product_of(P,.overlap_matrix)
-    ! S.to_product_of(F,W)
-    ! g =       S ! = FPS
-    ! W = -HALF*W ! = -PS ... 1/2 is for double occupancy in P
-    ! S.plus_product_of(W,g,transpose_a=TRUE)
-    ! W.destroy
-
-    ! g.to_product_of(S,c)
-    ! S.destroy
+      ! Clean up
+      cSm1.destroy
+      FcSm1.destroy
+      S_inv.destroy
 
    end
 
