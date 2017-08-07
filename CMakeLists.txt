@@ -135,6 +135,7 @@ set(FOO_SRC
     ${FOO_DIR}/irrep.foo
     ${FOO_DIR}/isosurface.foo
     ${FOO_DIR}/json.foo
+    ${FOO_DIR}/l_bfgs.foo
     ${FOO_DIR}/lebedev.foo
     ${FOO_DIR}/map{int,int}.foo
     ${FOO_DIR}/map{key,val}.foo
@@ -297,6 +298,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/interpolator.F90
     ${CMAKE_CURRENT_BINARY_DIR}/irrep.F90
     ${CMAKE_CURRENT_BINARY_DIR}/isosurface.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/l_bfgs.F90
     ${CMAKE_CURRENT_BINARY_DIR}/lebedev.F90
     ${CMAKE_CURRENT_BINARY_DIR}/map_int_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/map_vec_int_vec_int.F90

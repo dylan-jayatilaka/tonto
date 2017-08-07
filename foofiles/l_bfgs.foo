@@ -1,0 +1,317 @@
+!---------------------------------------------------------------------------
+!
+! L_BFGS: Low memory BFGS minimiser routine.
+!
+! Copyright (C) Max Davidson, 2017
+!
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!---------------------------------------------------------------------------
+
+module L_BFGS
+
+   implicit none
+
+contains
+
+! =================
+! Memory allocation
+! =================
+
+   create ::: get_from(OBJECT), leaky, PURE
+   ! Create an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky, PURE
+   ! Destroy an object
+   end
+
+   nullify_ptr_part ::: pure
+   ! Nullify the pointer parts of self
+      self :: INOUT
+
+      nullify(.param)
+      nullify(.error)
+
+   end
+
+   destroy_ptr_part ::: leaky, PURE
+   ! Destroy the pointer parts of self
+      self :: INOUT
+
+      .param.destroy
+      .error.destroy
+
+   end
+
+!  ===========
+!  Set methods
+!  ===========
+
+   set_defaults ::: leaky, PURE
+   ! Set up the default settings
+      self :: INOUT
+
+      .iteration             = 0 
+      .start_iteration       = DIIS_START_ITERATION
+      .save_iteration        = DIIS_SAVE_ITERATION
+      .keep                  = DIIS_KEEP
+      .kept                  = 0
+
+      .error_length          = 1000d0
+      .convergence_tolerance = DIIS_CONVERGENCE_TOLERANCE
+      .start_tolerance       = DIIS_START_TOLERANCE
+
+      ! Clean up (leaky)
+      .destroy_ptr_part
+
+   end
+
+   reset_iteration_defaults ::: leaky
+   ! Reset defaults without changing user settings
+      self :: INOUT
+
+      .iteration  = -1 ! The first time called it is iteration 0
+      .kept       = 0
+
+      ! Clean up old stuff (leaky)
+      .destroy_ptr_part
+
+   end
+
+   set_convergence_tolerance(tolerance) ::: PURE
+   ! Read the convergence tolerance
+      self :: INOUT
+      tolerance :: REAL, IN
+
+   ENSURE(tolerance>ZERO,"must have positive convergence tolerance")
+ ! WARN_IF(tolerance<TOL(6),"convergence tolerance may be too small")
+
+      .convergence_tolerance = tolerance
+
+   end
+
+   set_start_tolerance(tolerance) ::: PURE
+   ! Read the start tolerance when extrapolation is supposed to start
+      self :: INOUT
+      tolerance :: REAL, IN
+
+   ENSURE(tolerance>ZERO,"must have positive start tolerance")
+   ENSURE(tolerance>.convergence_tolerance,"start tolerance is <= convergence tolerance")
+ ! WARN_IF(tolerance<TOL(6),"start tolerance may be too small")
+
+      .start_tolerance = tolerance
+
+   end
+
+   set_keep(keep)
+   ! Set the number of parameter/error vectors to keep 
+      self :: INOUT
+      keep :: INT, IN
+
+   DIE_IF(keep<4,"no. to keep must be more than 4")
+
+      .keep = keep
+
+   end
+
+   set_start_iteration(start) ::: pure
+   ! Set at what iteration the procedure should start
+      self :: INOUT
+      start :: INT, IN
+
+      .start_iteration = start
+
+   end
+
+   set_save_iteration(save_it) ::: pure
+   ! Set at what iteration the procedure should start saving vectors
+      self :: INOUT
+      save_it :: INT, IN
+
+      .save_iteration = save_it
+
+   end
+
+   set_error_length(error) ::: PURE 
+   ! Set the error length
+      self :: INOUT
+      error :: REAL, IN
+
+   ENSURE(error>=ZERO,"error must be +ve")
+
+      .error_length = error
+
+   end
+
+!  =================
+!  Read the keywords
+!  =================
+
+   read_keywords ::: get_from(OBJECT)
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process a command "keyword". Data is inputted from "stdin", unless
+   ! "word" is a sequence of blank separated strings. In this case,
+   ! the sequence is processed as if it were a separate file.
+      keyword :: STR
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+      case ("}                       ")  ! exit case
+      case ("convergence_tolerance=  "); .read_convergence_tolerance
+      case ("keep=                   "); .read_keep
+      case ("save_iteration=         "); .read_save_iteration
+      case ("start_iteration=        "); .read_start_iteration
+      case ("start_tolerance=        "); .read_start_tolerance
+      case default;           UNKNOWN(word)
+      end
+
+   end
+
+   read_convergence_tolerance ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_convergence_tolerance)
+   ! Generic read and set a quantity with units
+   end
+
+   read_start_tolerance ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_start_tolerance)
+   ! Generic read and set a quantity with units
+   end
+
+   read_keep ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_keep)
+   ! Generic read and set a quantity with units
+   end
+
+   read_start_iteration ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_start_iteration)
+   ! Generic read and set a quantity with units
+   end
+
+   read_save_iteration ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_save_iteration)
+   ! Generic read and set a quantity with units
+   end
+
+!  =======
+!  Queries
+!  =======
+
+   subspace_saturated result (res) ::: pure
+   ! Return TRUE if the subspace is saturated; no more new
+   ! vectors can be stored.
+      self :: IN
+      res :: BIN
+
+      res = .kept == .keep
+
+   end
+
+   apply_l_bfgs result (res) ::: pure
+   ! Return TRUE if extrapolation must be applied this iteration
+      self :: IN
+      res :: BIN
+
+      res = .iteration - .save_iteration >= 0
+
+   end
+
+   saved_iteration result (res) ::: pure
+   ! Return the actual iteration number since starting to save vectors
+   ! and construct left hand side matrices -- not just the total
+   ! number of iterations in the procedure. This is usually equal to
+   ! .kept but not always -- especially in constrained SCF
+   ! calculations where we reuse past vectors.
+      self :: IN
+      res :: INT
+
+      res = .iteration - .save_iteration
+
+   end
+
+!  =============
+!  Extrapolation
+!  =============
+
+   extrapolate(par,err,dim) ::: leaky
+   ! Generic extrapolation of the parameter vector "par", using "err"
+   ! as the error vector. User must define "err" properly and
+   ! consistent with "par".
+      self :: INOUT
+      dim :: INT, IN
+      par :: VEC{REAL}(dim), INOUT
+      err :: VEC{REAL}(dim), IN
+
+      ! Increment iteration
+      .iteration = .iteration + 1      
+
+      ! Return if nothing to do
+      if (.iteration<.save_iteration) return
+
+      ! Save parameter/error vector 
+      .param(.iteration)[:] = par
+      .error(.iteration)[:] = err
+      .kept = min(.kept+1,.keep)
+
+      ! Set the error length
+      .error_length = err.norm
+
+      ! Now set up and solve the DIIS equations
+      .do_extrapolate(par,dim)
+
+   end
+
+   do_extrapolate(par,dim) ::: leaky, private
+   ! Do a generic extrapolation on vector "par".
+      self :: INOUT
+      dim :: INT, IN
+      par :: VEC{REAL}(dim), INOUT
+
+   end
+
+   is_converged result (res) ::: PURE
+   ! Return TRUE if the procedure is converged
+      self :: IN
+      res :: BIN
+
+      res = .error_length<.convergence_tolerance
+
+   end
+
+!  ======
+!  Output
+!  ======
+
+   put
+   ! Print out info
+      self :: IN
+
+      stdout.flush
+      stdout.text("L_BFGS options: ")
+      stdout.flush
+      stdout.set_real_style("e")
+      stdout.show("Convergence on max(abs(error)) =",.convergence_tolerance)
+      stdout.set_real_style("f")
+      stdout.show("Extrapolate  from iteration    =",.start_iteration)
+      stdout.show("Save vectors from iteration    =",.save_iteration)
+      stdout.show("No. of vectors to keep         =",.keep)
+
+   end
+
+end
