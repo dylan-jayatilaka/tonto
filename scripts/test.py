@@ -96,7 +96,7 @@ def is_sbf(filename):
 def diff_files(file1, file2, args, print_diffs=True, **kwargs):
     """Find the differences between two output files, delegating
     to sbftool for sbf files"""
-    verbose = args.get('verbose', False)
+    verbose = kwargs.get('verbose', False)
     if is_sbf(file1) and is_sbf(file2):
         log.debug('Diffing with sbftool')
         return diff_sbf(file1, file2, args)
