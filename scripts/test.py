@@ -210,7 +210,10 @@ def run_test(args, test_dir, io_files):
 
         for path, equivalent in zip(io_files['output'], files_equivalent):
             log.debug('%s: %s', path, 'GOOD' if equivalent else 'BAD')
-            if not equivalent:
+            if equivalent:
+                shutil.copy(abspath(join('.', path)),
+                        abspath(join(test_dir, path + '.good')))
+            else:
                 shutil.copy(abspath(join('.', path)),
                         abspath(join(test_dir, path + '.bad')))
         timings['cp_output'] = time.time() - sum(t for t in timings.values())
