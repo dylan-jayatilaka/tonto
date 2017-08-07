@@ -3,6 +3,7 @@ import logging
 from tempfile import gettempdir
 import os
 from os.path import abspath, join
+from itertools import zip_longest
 import sys
 import shutil
 import subprocess
@@ -95,15 +96,19 @@ def is_sbf(filename):
 def diff_files(file1, file2, args, print_diffs=True, **kwargs):
     """Find the differences between two output files, delegating
     to sbftool for sbf files"""
+    verbose = args.get('verbose', False)
     if is_sbf(file1) and is_sbf(file2):
         log.debug('Diffing with sbftool')
         return diff_sbf(file1, file2, args)
     lines1 = get_lines(file1)
     lines2 = get_lines(file2)
     diff = list(difflib.ndiff(lines1, lines2))
+    if verbose:
+        for line in diff:
+            print(line.strip())
     del1 = [x for x in diff if x.startswith('-')]
     del2 = [x for x in diff if x.startswith('+')]
-    diffs = [check_numbers(l1, l2, **kwargs) for l1, l2 in zip(del1, del2)]
+    diffs = [check_numbers(l1, l2, **kwargs) for l1, l2 in zip_longest(del1, del2, fillvalue='')]
     correct = all(diffs)
 
     if print_diffs:
