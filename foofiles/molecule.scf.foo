@@ -3977,8 +3977,8 @@ contains
    ENSURE(.molecular_orbitals.has_any_genre,"no MO's")
 
       orb_kind :: STR
-      g,h,MO,F,P :: MAT{REAL}*
-      f1,f2,scale :: REAL
+      gm,h,MO,F,P :: MAT{REAL}*
+      f1,f2 :: REAL
       step :: REAL = ONE
 
       orb_kind = .scfdata.scf_kind
@@ -3995,18 +3995,18 @@ contains
             P  => .density_matrix.restricted
             MO => .molecular_orbitals.restricted(:,1:.n_a)
 
-            g.create(.n_bf,.n_a)
+            gm.create(.n_bf,.n_a)
 
-            .:make_MO_r_gradient(g,F,P,MO)
+            .:make_MO_r_gradient(gm,F,P,MO)
 
             ! Gradient norm
-            f1 = g.trace_product_with(transpose(g))
+            f1 = gm.trace_product_with(transpose(gm))
 
             ! Go down a bit in the "g" direction
             step = .scfdata.max_update_stepsize
-            MO = MO - step*g
+            MO = MO - step*gm
 
-            g.destroy
+            gm.destroy
 
          case default
             DIE("SCF kind "//trim(orb_kind)//" not implemented")
@@ -4017,14 +4017,56 @@ contains
 
    end
 
-   make_MO_r_gradient(g,F,D,MO)
+   MO_r_gradient_update(MO,gv) ::: selfless, public
+   ! USed by L_BFGS to get the E gradient ...
+      MO :: VEC{REAL}, IN
+      gv :: VEC{REAL}, OUT
+
+      F,P :: MAT{REAL}*
+      self :: MOLECULE*
+
+       ! Restore self
+       .BASE:set_from_saved_self
+
+ ! ENSURE(.scfdata.using_MO_gradient_update,"not allowed")
+ ! ENSURE(.fock_matrix.associated,"no fock_matrix")
+ ! ENSURE(.fock_matrix.has_any_genre,"no fock_matrix")
+ ! ENSURE(.density_matrix.associated,"no density_matrix")
+ ! ENSURE(.density_matrix.has_any_genre,"no density_matrix")
+ ! ENSURE(.molecular_orbitals.associated,"no MO's")
+ ! ENSURE(.molecular_orbitals.has_any_genre,"no MO's")
+
+       ! Get "g"
+       F  => .fock_matrix.restricted
+       P  => .density_matrix.restricted
+       .:make_MO_r_gradient(gv,F,P,reshape(MO,[.n_bf,.n_a]))
+
+   end
+
+   make_MO_r_gradient(gv,F,D,MO)
    ! Make the real gradient "g" of the *occupied* MO's,
-   ! g = F MO S^{-1} - (1/2)S D F MO S^{-1}
+   ! g = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vector.
       self :: IN
-      g :: MAT{REAL}, OUT
+      gv :: VEC{REAL}, OUT
       F,D,MO :: MAT{REAL}, IN
 
-   ENSURE(g.is_same_shape_as(MO),"gradient g and MO are not the same shape")
+      gm :: MAT{REAL}*
+
+      gm.create(.n_bf,.n_a)
+      .:make_MO_r_gradient(gm,F,D,MO)
+
+      gv = reshape(gm,[size(gm)])
+
+   end
+
+   make_MO_r_gradient(gm,F,D,MO)
+   ! Make the real gradient "g" of the *occupied* MO's,
+   ! g = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrix
+      self :: IN
+      gm :: MAT{REAL}, OUT
+      F,D,MO :: MAT{REAL}, IN
+
+   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
    ENSURE(F.is_square,"F is not square")
    ENSURE(F.dim1==.n_bf,"F is not the right size, n_bf = "//trim(.n_bf.to_str))
    ENSURE(D.is_same_shape_as(F),"D is not the right size")
@@ -4046,8 +4088,8 @@ contains
       cSm1.to_scaled_product_of(.overlap_matrix,D,fac=HALF)
 
       ! Assemble 1st and 2nd terms of gradient
-      g = FcSm1
-      g.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+      gm = FcSm1
+      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
 
       ! Clean up
       cSm1.destroy
