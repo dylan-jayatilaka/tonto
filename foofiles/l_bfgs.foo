@@ -200,28 +200,20 @@ contains
 !  L-BFGS
 !  ======
 
-   minimize_L_BFGS(func,grad,par,grd) ::: public
+   minimize_L_BFGS(func,par)
    ! Use the limited memory Broyden-Fletcher-Goldfarb-Shanno method to
    ! minimise the molecular orbitals with gradient function from
    ! Stoll(1980). This code is all per Nocedal & Wright
    ! NOTE: set saved_self before calling self & dself
       interface
-         func(x,res)
+         func(x,res,g)
             x :: VEC{REAL}, IN
-            res :: REAL, OUT
-         end
-      end
-      interface
-         grad(x,res)
-            x :: VEC{REAL}, IN
-            res :: VEC{REAL}, OUT
+            res  :: REAL, OUT
+            g :: VEC{REAL}, OUT
          end
       end
       par :: VEC{REAL}, INOUT
-      grd :: VEC{REAL}, INOUT
       
-   ENSURE(par.dim1==grd.dim1,"inconsistent par and grd")
-
       j,n,m :: INT
       
       ! alpha, c1 and c2 are used in the line search algorithm and
@@ -235,17 +227,19 @@ contains
       
       .iteration = .iteration + 1
       n =  par.dim1
-      m = .par.dim1 ! Note self
+
+      ! Gradient 
+      q.create(n)
+      call func(par,c1,q)
 
       ! Store the parameter & gradient
       ! NOTE: you should reset if you change
       ! any of the par vectors outside of here ...
       .par.append_fifo(par,.keep)
-      .grd.append_fifo(grd,.keep)
+      .grd.append_fifo(q  ,.keep)
 
-      ! Gradient 
-      q.create(n)
-      call grad(par,q)
+      ! Size of the kept vectors
+      m = .par.dim1 ! Note self
 
       ! Converged?
       .grd_norm = q.norm
@@ -314,18 +308,142 @@ contains
 
       ! Fines the ideal multiple of the step to take (usually 1)
       ! and stores that in alpha
-      VEC{REAL}::line_search(func,grad,10d0,par,q,c1,c2,alpha)
+      call line_search(func,10d0,par,q,c1,c2,alpha)
          
       ! Performs the step (and stores the previous x value)
       par = par + alpha*q
          
       ! Cleanup
-      q.destroy
-      s.destroy
-      y.destroy
       a.destroy     
+      y.destroy
+      s.destroy
+      q.destroy
 
    end
+   
+!   minimize_L_BFGS(func,grad,par)
+!   ! Use the limited memory Broyden-Fletcher-Goldfarb-Shanno method to
+!   ! minimise the molecular orbitals with gradient function from
+!   ! Stoll(1980). This code is all per Nocedal & Wright
+!   ! NOTE: set saved_self before calling self & dself
+!      interface
+!         func(x,res)
+!            x :: VEC{REAL}, IN
+!            res :: REAL, OUT
+!         end
+!      end
+!      interface
+!         grad(x,res)
+!            x :: VEC{REAL}, IN
+!            res :: VEC{REAL}, OUT
+!         end
+!      end
+!      par :: VEC{REAL}, INOUT
+!      
+!      j,n,m :: INT
+!      
+!      ! alpha, c1 and c2 are used in the line search algorithm and
+!      ! beta, gamma and rho are used in the Hessian approximation
+!      alpha,beta,gamma,rho,c1,c2 :: REAL
+!      
+!      ! a is used to store the various alpha values in the two loop
+!      ! recursion, p,q and r are used as generic vectors, and as part
+!      ! of the two loop recursion process
+!      a,q,s,y :: VEC{REAL}*
+!      
+!      .iteration = .iteration + 1
+!      n =  par.dim1
+!      m = .par.dim1 ! Note self
+!
+!      ! Gradient 
+!      q.create(n)
+!      call grad(par,q)
+!
+!      ! Store the parameter & gradient
+!      ! NOTE: you should reset if you change
+!      ! any of the par vectors outside of here ...
+!      .par.append_fifo(par,.keep)
+!      .grd.append_fifo(q  ,.keep)
+!
+!      ! Converged?
+!      .grd_norm = q.norm
+!      if(.is_converged) then
+!         ! Cleanup
+!         q.destroy
+!         return
+!      end if
+!   
+!      ! Workspace
+!      s.create(n)
+!      y.create(n)
+!      a.create(m)
+!      a = ZERO
+!
+!      ! The values used for line search algorithms. These values are
+!      ! the ones which usually work.
+!      c1 = 10d-4
+!      c2 = 9d-1
+!
+!      
+!      ! Initialises the values used in the two-loop recursion.
+!      rho = 1
+!      if (m>1) then   
+!         s = .par(m).element - .par(m-1).element
+!         y = .grd(m).element - .grd(m-1).element
+!         gamma = dot_product(s,y)/dot_product(y,y)
+!      else
+!         gamma = 1 
+!      end if
+!      
+!      ! Will cause the program to exit if a suitable step can not be
+!      ! determined 
+!      alpha = ZERO
+!      
+!
+!      ! The two loop recursion process approximates the Hessian by
+!      ! using stored values of delta x and delta grad, as well as a
+!      ! pre-scaling, gamma, to allow for a stepping at alpha = 1, to
+!      ! be suitable 
+!         
+!      ! H^0 is approximated by I   
+!         
+!         if (m > 1) then
+!            do j = m,2,-1
+!               s = .par(j).element - .par(j-1).element
+!               y = .grd(j).element - .grd(j-1).element
+!               rho = 1/(dot_product(y,s))
+!               a(j) = rho*dot_product(s,q)
+!               q = q - a(j)*y
+!            end do
+!         end if
+!
+!         q = gamma*q
+!
+!         do j = 2,m
+!            s = .par(j).element - .par(j-1).element
+!            y = .grd(j).element - .grd(j-1).element
+!            rho = 1/dot_product(y,s)
+!            beta = rho*dot_product(y,q) 
+!            q = q + (a(j) - beta)*s
+!         end do
+!
+!      ! This is the step toward the minimum
+!         q = -q
+!
+!      ! Fines the ideal multiple of the step to take (usually 1)
+!      ! and stores that in alpha
+!      VEC{REAL}::line_search(func,grad,10d0,par,q,c1,c2,alpha)
+!         
+!      ! Performs the step (and stores the previous x value)
+!      par = par + alpha*q
+!         
+!      ! Cleanup
+!      q.destroy
+!      s.destroy
+!      y.destroy
+!      a.destroy     
+!
+!   end
 
 !   gradient(g,F,D,MO)
    ! Make the real gradient "g" of the *occupied* MO's,
@@ -365,6 +483,211 @@ contains
 !      S_inv.destroy
 
 !   end
+
+!  ===========
+!  Line Search
+!  ===========
+
+   line_search(func,alphamax,x,p,c1,c2,b) ::: selfless
+   ! Given a real vector, x, function f, gradient function
+   ! df, calculaes the ideal stepping scale alpha, given
+   ! stepping p and constants c1, c2.
+      
+   ! Interface for vector functions   
+      interface
+         func(x,res,g)
+            x :: VEC{REAL}, IN
+            res  :: REAL, OUT
+            g :: VEC{REAL}, OUT
+         end
+      end
+      x :: VEC{REAL}, IN
+      p :: VEC{REAL}, IN
+      
+      ! Wolfe constants c1 and c2 and a highest value of alpha
+      c1,c2,alphamax :: REAL, IN
+      
+      ! The output alpha value
+      b :: REAL, OUT
+
+      ! alpha is the current value of alpha. alpha0 is the previous
+      ! value. phi0 is the initial phi value, phi1 is the previous phi
+      ! value and phi is thge current phi value. The same is true for
+      ! dphi0, dphi1 and dphi.
+      alpha,alpha0,phi0,phi1,phi,dphi,dphi0,dphi1 :: REAL
+      
+      ! temp is used in vector dot product calculations. Such as in
+      ! phi' (dphi)
+      temp :: VEC{REAL}*
+      
+      ! The maximum (iter) and current (j) number of iterations
+      iter,j :: INT
+      
+      ! Logical for if the loop can conclude
+      converged :: BIN
+
+      ! The maximum number of iterations that may be performed
+      iter = 10000
+      
+      ! Allows temp to be used for calculations
+      temp.create(size(x))
+
+      ! Gives the first value of alpha
+      alpha = rand(1)*alphamax 
+      
+      ! Initialise alpha0, phi0, dphi0, phi1, j and converged
+      alpha0 = 0
+      call func(x,phi0,temp)
+      dphi0 = dot_product(temp,p)
+      phi1=0
+      j = 1
+      converged = FALSE 
+
+      ! Performs the loop until it has converged or the loop has
+      ! failed
+      do while ((converged EQV FALSE) AND (j < iter)) 
+         
+      ! calculates phi for this iteration
+         call func(x+alpha*p,phi,temp)
+
+      ! The interval alpha0, alpha will contain ideal step lengths if
+      ! any of the if conditionals below are violated
+         if (phi > phi0 + c1*alpha*dphi0) then
+      
+      ! Sends the interval off to find an ideal step and stores it in
+      ! b
+            call zoom(func,alpha0,alpha,x,p,c1,c2,b,converged)
+         else if (phi >= phi1 AND j > 1) then
+      
+      ! Sends the interval off to find an ideal step and stores it in
+      ! b
+            call zoom(func,alpha0,alpha,x,p,c1,c2,b,converged)
+         end if
+      
+      ! Ensures that if alpha has converged, the value does not
+      ! change   
+         if (converged EQV FALSE) then
+      ! calculates dphi for this iteration      
+            dphi = dot_product(temp,p)
+      ! If the second wolfe condition holds, this has converged      
+            if (abs(dphi) <= -c2*dphi0) then
+               converged = TRUE
+      ! Stores the ideal stepping in b         
+               b = alpha
+            else if (dphi >= 0) then
+      ! Sends the interval off to find an ideal step and stores it in
+      ! b
+               call zoom(func,alpha,alpha0,x,p,c1,c2,b,converged)
+            end if
+      ! Ensures that if alpha has converged, the value does not
+      ! change   
+            if (converged EQV FALSE) then
+      ! Stores the values from this iteration, and proceeds to the
+      ! next iteration         
+               phi1 = phi
+               dphi1 = dphi
+               j = j + 1
+               alpha0 = alpha
+               alpha = alpha + rand(1)*alphamax
+            end if
+         end if
+     end
+     
+     ! Cleanup
+     temp.destroy
+   end
+
+   zoom(func,low,high,x,p,c1,c2,alpha,converged) ::: selfless 
+   ! Given a real vector, x, function f, gradient function
+   ! df, calculaes the ideal stepping scale alpha, given
+   ! stepping p and constants c1, c2. An ideal stepping must also
+   ! reside between low and high.
+      
+      ! Interface for vector functions   
+      interface
+         func(x,res,g)
+            x :: VEC{REAL}, IN
+            res  :: REAL, OUT
+            g :: VEC{REAL}, OUT
+         end
+      end
+      ! Interval in which ideal step resides, low and high and Wolfe
+      ! constants c1 and c2
+      low,high,c1,c2 :: REAL, IN
+      x,p :: VEC{REAL}, IN
+      
+      ! Ideal stepping scale
+      alpha :: REAL, OUT
+
+      ! Logical which describes whether or not it has converged to an
+      ! ideal step
+      converged :: BIN, OUT
+      
+      ! Vector used in various multiplications
+      temp :: VEC{REAL}*
+      
+      ! Flexible interval alphalo and alphahi. Initial value of phi
+      ! and dphi, phi0 and dphi0. Current values at phi and dphi. phi
+      ! value at alpha lo is at philo.
+      alphalo,alphahi,phi0,dphi,dphi0,phi,philo :: REAL
+      
+      ! The current (j) and maximum (iter) number of iterations
+      j,iter :: INT
+      iter = 10000
+      
+      ! creates temp
+      temp.create(size(x))
+      
+      ! Initialise alphalo, alphahi, phi0, dphi0, converged and j
+      alphalo = low
+      alphahi = high
+      call func(x,phi0,temp)
+      dphi0 = dot_product(temp,p)
+      converged = FALSE
+      j = 0
+ 
+      ! Does the loops until interations maximum is reached or the
+      ! ideal stepping is found.
+      do while ((converged EQV FALSE) AND (j < iter)) 
+      
+      ! New value of alpha is determined by bisection
+         alpha = (alphalo+alphahi)/2
+         
+      ! Calculates current value of philo and phi   
+         call func(x+alphalo*p,philo,temp)
+         call func(x+alpha*p,phi,temp)
+
+      ! If either of these condition are satisfied alphahi becomes
+      ! alpha amd the cycle repeats   
+         if (phi > phi0+c1*alpha*dphi0) then
+            alphahi = alpha
+         else if (phi >= philo) then
+            alphahi = alpha
+         else
+     
+      ! Calculates the current value of dphi
+            dphi = dot_product(temp,p)
+
+      ! Cycle is complete if strong Wolfe condition holds      
+            if (abs(dphi) <= -c2*dphi0) then
+               converged = TRUE
+            end if
+
+      ! Stops pointless calculations if ideal stepping has been found
+            if (converged EQV FALSE) then
+
+      ! Ensures alphahi and alphalo are the right way around         
+               if (dphi*(alphahi-alphalo) >= ZERO) then
+                  alphahi = alphalo
+               end if
+      ! alphalo becomes alpha         
+               alphalo = alpha
+            end if
+         end if
+         j = j + 1
+      end
+      temp.destroy
+   end
 
 
 !  =======
