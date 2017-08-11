@@ -1261,6 +1261,17 @@ contains
 !  Orthogonalisation
 !  =================
 
+   normalise(S) ::: get_from(MAT{INTRINSIC}), PURE
+   ! Normalise the column vectors in "self" using "S" as the metric.
+   end
+
+   is_linearly_dependent(S,tol,col) result (res) ::: get_from(MAT{INTRINSIC})
+   ! Return TRUE if the columns are linearly dependent with respect to "S".
+   ! If present, "tol" is the tolerance used to establish linear dependency.
+   ! If present, "col" is the column number where the dependence was first
+   ! noticed when Schmidt orthogonalising is used, starting from column 1.
+   end
+
    schmidt_orthonormalise(lambda)
    ! Schmidt orthonormalise the column vectors in "self".
    ! If the eigenvalue (lambda) of a vector is less than a cutoff, then that
@@ -1320,18 +1331,21 @@ contains
      end
    end
 
-   classical_gram_schmidt_qr(Q,R)
+   classical_gram_schmidt_qr(Q,R) ::: PURE
    ! Given an mxn matrix decomposes the matrix into an
    ! orthogonal mxn matrix, Q, and an nxn upper
    ! triangular matrix R by the classical Gram-Schmidt
    ! algorithm.
-      self :: target
+      self :: IN
       Q,R :: MAT{REAL}, OUT
+
    ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+
       ! q_ represent the unnormalised columns of Q
       ! u is used to aggreagate the multiplications
       q_,u :: VEC{REAL}*
       dim1,dim2,i,j :: INT
+
       dim1 = .dim1
       dim2 = .dim2
      
@@ -1341,28 +1355,37 @@ contains
       
       u = ZERO
       do j = 1,dim2
+
          ! Because self(:,j) = Q(:,i)*R(i,j),
          ! the information can be stored in Q and R
          do i = 1,j-1
             R(i,j) = dot_product(Q(:,i),self(:,j))  
          end do
+
          ! Aggregates information of all other columns
          do i = 1,j-1
             u = u + R(i,j)*Q(:,i)
          end do
+
          ! Makes this column orthonormal to all other columns
          q_ = self(:,j) - u
-         u = ZERO
+         u  = ZERO
          R(j,j) = norm2(q_)
          Q(:,j) = q_/R(j,j)
+
       end do
+
+      ! Clean
+      u.destroy
+      q_.destroy
+
    end
 
-   modified_gram_schmidt_qr(Q,R)
-   ! Given an mxn matrix decomposes the matrix into an
-   ! orthogonal mxn matrix, Q, and an upper triangular matrix R
-   ! by the modified Gram-Schmidt algorithm.
-      self :: target
+   modified_gram_schmidt_qr(Q,R) ::: PURE
+   ! Given an mxn matrix decomposes the matrix into an orthogonal mxn
+   ! matrix, Q, and an upper triangular matrix R by the modified
+   ! Gram-Schmidt algorithm.
+      self :: IN
       Q,R :: MAT{REAL}, OUT
 
    ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
@@ -1383,29 +1406,35 @@ contains
          Q(:,k) = A(:,k)/R(k,k)
 
          ! Removes this vector from every proceeding column
-         do j = k + 1,dim
-            R(k,j)=dot_product(Q(:,k),A(:,j))
-            A(:,j)=A(:,j) - R(k,j)*Q(:,k)
+         do j = k+1,dim
+            R(k,j) = dot_product(Q(:,k),A(:,j))
+            A(:,j) = A(:,j) - R(k,j)*Q(:,k)
          end do
 
       end do
 
+      ! Clean
+      A.destroy
+
    end
 
-   householder_qr(R,Q)
-   ! Given an mxn matrix decomposes the matrix into an
-   ! orthogonal mxm matrix, Q (if provided), and an upper triangular mxn
-   ! matrix, R, using the householder algorithm. Q is calculated
-   ! by backwards accumulation.
+   householder_qr(R,Q) ::: PURE
+   ! Given an mxn matrix decomposes the matrix into an orthogonal mxm
+   ! matrix, Q (if provided), and an upper triangular mxn matrix, R,
+   ! using the householder algorithm. Q is calculated by backwards
+   ! accumulation.
       self :: IN
       R :: MAT{REAL}, OUT
       Q :: MAT{REAL}, OUT, optional
+
    ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
    ENSURE(Q.dim1 == .dim1, "Wrong size Q")
    ENSURE(Q.dim2 == .dim1, "Wrong size Q")
+
       ! nu is the householder vector, v is a column input and b is a
       ! vector which stores all the beta values
       nu,v,b :: VEC{REAL}*
+
       ! A is the editable input matrix, which stores R and the
       ! householder vectors. I is the identity.
       A,I :: MAT{REAL}*
@@ -1420,60 +1449,82 @@ contains
       b.create(.dim2)
 
       A = self
+
       ! Sets up the identity matrix
-      I = ZERO
-      do j = 1,dim1
-         I(j,j)= ONE
-      end do
+      I.to_unit_matrix
+
       do j = 1,dim2
+
          ! Creates vectors for passing through subroutines
          v.create(.dim1-j+1)
          nu.create(.dim1-j+1)
          v(:) = A(j:dim1,j)
+
          ! Calculates nu and beta using the householder function
          v.householder_vector(nu,beta)
          b(j) = beta
+
          ! A = R from the top to the diagonal, beneath the diagonal
          ! the non-nu(1) elements are stored
          A(j:dim1,j:dim2) = matmul((I(1:dim1-j+1,1:dim1-j+1)&
                            -b(j)*nu.outer_product_with(nu))&
                            ,A(j:dim1,j:dim2))
+
          if (j < dim1) then
             A(j+1:dim1,j) = nu(2:)
          end if
+
+         ! Clean
          v.destroy
          nu.destroy
+
       end do
+
+      ! Why not rename A -> R ? DJ
       do j = 1,dim2
          R(:j,j)=A(:j,j)
       end do
+
       ! Calculates Q if variable given, by aggregating the
       ! multiplication of the matrix to produce Q
       if (present(Q)) then
+
          nu.create(.dim1)
          Q = I
          nu = ONE
-         do j=dim2,1,-1
+         do j = dim2,1,-1
+
             ! Vectors are stored in A, with nu(1) = ONE
             nu(j+1:dim1) = A(j+1:dim1,j)
+
             ! Creates P matrix
             Q(j:dim1,j:dim1)= matmul((I(1:dim1-j+1,1:dim1-j+1)&
                           &-b(j)*nu(j:dim1).outer_product_with(nu(j:dim1)))&
                           & ,Q(j:dim1,j:dim1))
          end do
+         nu.destroy
+
       end if
+
+      ! Clean
+      b.destroy
+      I.destroy
+      A.destroy
+
    end
 
-   block_householder_qr(R,Q)
+   block_householder_qr(R,Q) ::: PURE
    ! Given an mxn matrix decomposes the matrix into an
    ! orthogonal mxm matrix, Q, and an upper triangular mxn
    ! matrix, R, using the householder algorithm. Q is calculated
    ! through accumulation of W and Y.
       self :: IN
       R,Q :: MAT{REAL}, OUT
-   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+
+   ENSURE(.dim1>=.dim2,"more vectorst than dimension of vector space")
    ENSURE(Q.dim1 == .dim1, "Wrong size Q")
    ENSURE(Q.dim2 == .dim1, "Wrong size Q")
+
       nu,b,v,z :: VEC{REAL}*
       A,I,W,Y,M :: MAT{REAL}*
       beta :: REAL
@@ -1492,10 +1543,8 @@ contains
 
       ! Determination of A is identical to Householder qr routine.
       A = self
-      I = ZERO
-      do j = 1,dim1
-         I(j,j)= ONE
-      end do
+      I.to_unit_matrix
+
       do j = 1,dim2
          v.create(.dim1-j+1)
          nu.create(.dim1-j+1)
@@ -1512,17 +1561,21 @@ contains
          v.destroy
          nu.destroy
       end do
+
       do j = 1,dim2
          R(:j,j)=A(:j,j)
       end do
+
       nu.create(.dim1)
       nu = ZERO
+
       ! Y is simply the matrix of householder vectors with 0's before
       ! the vector if the dimension of the vector is less than the
       ! dimension of the Y matrix
       Y = ZERO
       Y(1,1) = ONE
       Y(2:dim1,1) = A(2:dim1,1)
+
       ! W is the Z produced for each column. The first column is
       ! simply -beta*Y(1)
       W(:,1) = -b(1)*Y(:,1)
@@ -1536,18 +1589,31 @@ contains
          Y(j,j) = ONE
          Y(j+1:dim1,j) = A(j+1:dim1,j)
        end do
+
        ! As per the proof from Golub and van Loan
        Q = I + matmul(W,transpose(Y))
+
+       ! Clean
+       b.destroy
+       z.destroy
+       I.destroy
+       M.destroy
+       Y.destroy
+       W.destroy
+       A.destroy
+
    end
 
-   fast_givens_qr(R,Q)
+   fast_givens_qr(R,Q) ::: PURE
    ! Given an mxn matrix decomposes the matrix into an
    ! orthogonal mxm matrix, Q (if provided), and an upper triangular mxn
    ! matrix, R, using the fast Givens algorithm.
       self :: IN
       R :: MAT{REAL}, OUT
       Q :: MAT{REAL}, OUT, optional
+
    ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+
       di :: VEC{REAL}*
       F,M,A,D,G :: MAT{REAL}*
       dim1,dim2,i,j,k,t :: INT
@@ -1566,28 +1632,30 @@ contains
       A = self
       di = ONE
       D = ZERO
-      M = ZERO
-      F = ZERO
-      do j = 1,dim1
-         M(j,j) = ONE
-         F(j,j) = ONE
-      end do
+      M.to_unit_matrix
+      F.to_unit_matrix
+
       ! If Q present, calculates the matrix M,
       ! so Q can be calculated
       if (present(Q)) then
-      do j = 1,dim2
+
+         do j = 1,dim2
          do i = dim1,j+1,-1
+
             A(i-1:i,j).fast_givens_transformation(di(i-1:i),alpha,beta,t)
+
+           ! F is the scaled to dimension mxm matrix
+           ! version of the 2x2 Givens transform 
+           ! matrix
             F = ZERO
             do k = 1,dim1
                F(k,k) = ONE
             end do
-      ! F is the scaled to dimension mxm matrix
-      ! version of the 2x2 Givens transform 
-      ! matrix
+
             if (t == 1) then
-      ! F and G are determined by the type variable given from the
-      ! fast givens transform         
+
+               ! F and G are determined by the type variable given
+               ! from the fast givens transform         
                G = ONE
                F(i-1,i-1) = beta
                F(i,i) = alpha
@@ -1595,11 +1663,15 @@ contains
                F(i-1,i) = ONE
                G(1,1) = beta
                G(2,2) = alpha
-      ! Removes elements from the initial matrix.
+
+               ! Removes elements from the initial matrix.
                A(i-1:i,j:dim2) = matmul(transpose(G),A(i-1:i,j:dim2))
-      ! M is aggregated so Q can be calculated later         
+
+               ! M is aggregated so Q can be calculated later         
                M = matmul(M,F)
+
             else
+
                G = ONE
                F(i,i-1) = beta
                F(i-1,i) = alpha
@@ -1607,38 +1679,55 @@ contains
                G(2,1) = beta
                A(i-1:i,j:dim2) = matmul(transpose(G),A(i-1:i,j:dim2))
                M = matmul(M,F)
+
             end if
+
          end do
-      end do
-      ! D is calculated so Q and R can be calculated 
-      do i = 1,dim1
-         D(i,i) = 1/sqrt(di(i))
-      end do
-      R.to_product_of(D,A)
-      Q.to_product_of(M,D) 
+         end do
+
+         ! D is calculated so Q and R can be calculated 
+         do i = 1,dim1
+            D(i,i) = 1/sqrt(di(i))
+         end do
+
+         R.to_product_of(D,A)
+         Q.to_product_of(M,D) 
+
       else
-      ! As above, without the need to calculate Q
-      do j = 1,dim2
+
+         ! As above, without the need to calculate Q
+         do j = 1,dim2
          do i = dim1,j+1,-1
+
             A(i-1:i,j).fast_givens_transformation(di(i-1:i),alpha,beta,t)
+
             if (t == 1) then
+
                G = ONE
                G(1,1) = beta
                G(2,2) = alpha
                A(i-1:i,j:dim2) = matmul(transpose(G),A(i-1:i,j:dim2))
+
             else
+
                G = ONE
                G(1,2) = alpha
                G(2,1) = beta
                A(i-1:i,j:dim2) = matmul(transpose(G),A(i-1:i,j:dim2))
+
             end if
+
          end do
-      end do
-      do i = 1,dim1
-         D(i,i) = 1/sqrt(di(i))
-      end do
-      R.to_product_of(D,A)
+         end do
+
+         do i = 1,dim1
+            D(i,i) = 1/sqrt(di(i))
+         end do
+
+         R.to_product_of(D,A)
+
       end if
+
       di.destroy
       A.destroy
       D.destroy
@@ -1837,13 +1926,6 @@ contains
    ! normalisation factors used to normalise each column after the Schmidt
    ! procedure. Only those vectors with norm more than the linear dependence
    ! tolerance are normalised.
-   end
-
-   is_linearly_dependent(S,tol,col) result (res) ::: get_from(MAT{INTRINSIC})
-   ! Return TRUE if the columns are linearly dependent with respect to "S".
-   ! If present, "tol" is the tolerance used to establish linear dependency.
-   ! If present, "col" is the column number where the dependence was first
-   ! noticed when Schmidt orthogonalising is used, starting from column 1.
    end
 
    schmidt_orthonormalise(scale) ::: get_from(MAT{INTRINSIC})
@@ -2181,38 +2263,6 @@ contains
      eigenvectors.destroy
 
    end
-
-! =====================
-! Householder vector 
-! =====================
-
-!   householder_vector(nu,b)
-!   ! Given a real vector self, returns the vector with nu(1) =
-!   ! 1 and real part b such that P = I - b*nu*nu^T is
-!   ! orthogonal. Furthermore P*self = norm2(x)*e_1
-!      self :: IN
-!      nu :: VEC{REAL}*, OUT
-!      b :: REAL, OUT
-!   ENSURE(size(nu)==.dim,"incompatible vectors")
-!      s,m,dim :: REAL
-!      
-!      dim = .dim
-!      s = dot_product(self(2:dim,1),self(2:dim,1))
-!      nu(1) = 1
-!      nu(2:dim) = self(2:dim,1)
-!      if (s == 0) then
-!         b = 0
-!      else
-!         m = sqrt(self(1,1)**2+s)
-!         if (self(1,1) <=  0) then
-!            nu(1) = self(1,1)-m
-!         else
-!            nu(1) = -s/(self(1,1)+m)
-!         end if
-!         b = 2*(nu(1)**2)/(s + nu(1)**2)
-!         nu = nu/nu(1)
-!      end if
-!   end
 
 !  ========================
 !  Linear equation routines
@@ -4267,6 +4317,7 @@ contains
    end
 
    expand_quadrupole(compressed) result(res) ::: pure, selfless
+   ! ?
       compressed :: VEC{REAL}(6), IN
       res :: MAT{REAL}(3,3)
       i :: INT
@@ -4286,6 +4337,7 @@ contains
    end
 
    compress_quadrupole(quadrupole) result(res) ::: pure, selfless
+   ! ?
       quadrupole :: MAT{REAL}(3,3), IN
       res :: VEC{REAL}(6)
       i :: INT
