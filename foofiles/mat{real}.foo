@@ -2521,6 +2521,115 @@ contains
       end
    end
 
+!  ============
+!  Least squares
+!  ============
+
+   solve_normal_equations(grad,shift) ::: leaky
+   ! Get the "shift" in some parameter vector by solving 
+   ! the normal equations given a gradient vector "grad".
+   ! "self" is used just workspace for the Hessian.
+      self :: PTR
+      grad  :: VEC{REAL}, IN
+      shift :: VEC{REAL}, OUT
+
+      H :: MAT{REAL}*
+      dim, i,j :: INT
+
+
+      ! Hessian
+      dim = grad.dim
+      H.create(dim,dim)
+
+      ! Make the normal matrix (outer product)
+      do i = 1,dim
+      do j = 1,dim
+         H(i,j) = TWO*grad(i)*grad(j)
+      end
+      end
+
+      ! Solve for the shifts .dX (leaky)
+      H.solve_ill_linear_equations(grad,shift,tol_near_0=1.0d-60)
+
+   end
+
+   solve_ill_linear_equations(rhs,solution,tol_near_0) ::: leaky
+   ! Solve a set of ill-conditioned linear equations. Eigenvalues of
+   ! "self" less than "tol_near_0" are ignored.
+      rhs :: VEC{REAL}, IN
+      solution :: VEC{REAL}, OUT
+      tol_near_0 :: REAL, IN
+
+   ENSURE(.is_square,"not square")
+
+      eval :: VEC{REAL}*
+      eval_near_0 :: VEC{REAL}*
+      evec_near_0 :: MAT{REAL}*
+      ival :: VEC{REAL}*
+      inv,evec :: MAT{REAL}*
+    ! eval :: VEC{REAL}*
+      n_near_0, d,i,j :: INT
+
+      ! Temporaries
+      d = .dim1
+      eval.create(d)
+      ival.create(d)
+      evec.create(d,d)
+      inv.create(d,d)
+
+      ! Solve the eigenvalue problem
+      .solve_symmetric_eigenproblem(eval,evec)
+
+      ! Count eigenvalues which are nearly zero (leaky)
+      n_near_0 = count(eval<=ZERO OR abs(eval)<=tol_near_0)
+
+      eval_near_0.destroy
+      eval_near_0.create(n_near_0)
+      evec_near_0.destroy
+      evec_near_0.create(d,n_near_0)
+
+      j = 0
+
+      do i = 1,d
+
+         if (eval(i)<=ZERO OR abs(eval(i))<=tol_near_0) then
+
+            j = j + 1
+            eval_near_0(j)   = eval(i)
+            evec_near_0(:,j) = evec(:,i)
+            ival(i)          = ZERO
+
+         else
+
+            ival(i) = ONE/eval(i)
+
+         end
+
+      end
+
+      ! Make the inverse
+      evec = transpose(evec)
+
+      do i = 1,d
+      do j = 1,d
+         inv(i,j) = sum(evec(:,i)*ival(:)*evec(:,j))
+      end
+      end
+
+      evec.destroy
+    ! eval.destroy
+
+      ! Get the solution
+      solution.to_product_of(inv,rhs)
+
+      ! Clean
+      inv.destroy
+      evec.destroy
+      ival.destroy
+      eval.destroy
+
+   end
+
    solve_ill_linear_equations(rhs,solution,tol_near_0,n_near_0,eval_near_0,evec_near_0,eval,inverse,CM) ::: leaky
    ! Solve a set of ill-conditioned linear equations. Eigenvalues of
    ! "self" less than "tol_near_0" are ignored.

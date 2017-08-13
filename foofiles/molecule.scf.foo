@@ -26,6 +26,8 @@ module MOLECULE.SCF
 
    implicit none
 
+   elmo_self :: MOLECULE*  DEFAULT_NULL
+
 contains
 
 !  ===========
@@ -3582,7 +3584,8 @@ contains
    ! orbitals.
    ENSURE(.scfdata.associated,"no scfdata")
 
-      if      (.scfdata.using_MO_gradient_update) then; .:MO_gradient_update
+      if      (.scfdata.use_ELMO) then;                 .:ELMO_update
+      else if (.scfdata.using_MO_gradient_update) then; .:MO_gradient_update
     ! else if (.scfdata.using_exponential_update) then; .:MO_exponential_update
       else;                                             .:MO_eigen_update
       end
@@ -3977,6 +3980,7 @@ contains
    ENSURE(.molecular_orbitals.has_any_genre,"no MO's")
 
       orb_kind :: STR
+      MOv :: VEC{REAL}*
       gm,h,MO,F,P :: MAT{REAL}*
       f1,f2 :: REAL
       step :: REAL = ONE
@@ -3985,118 +3989,228 @@ contains
 
       select case (orb_kind)
 
-         case ("rhf     ", &
-               "rks     ", &
-               "xray_rhf", &
-               "xray_rks", &
-               "noninteracting-group-rhf")
+      case ("rhf     ", &
+            "rks     ", &
+            "xray_rhf", &
+            "xray_rks", &
+            "noninteracting-group-rhf")
 
-            F  => .fock_matrix.restricted
-            P  => .density_matrix.restricted
-            MO => .molecular_orbitals.restricted(:,1:.n_a)
+         F  => .fock_matrix.restricted
+         P  => .density_matrix.restricted
+         MO => .molecular_orbitals.restricted(:,1:.n_a)
 
-            gm.create(.n_bf,.n_a)
+         MOv.create(size(MO))
+         MOv = reshape(MO,[size(MO)])
+         .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_r,MOv)
 
-            .:make_MO_r_gradient(gm,F,P,MO)
+         MO = reshape(MOv,[.n_bf,.n_a])
 
-            ! Gradient norm
-            f1 = gm.trace_product_with(transpose(gm))
-
-            ! Go down a bit in the "g" direction
-            step = .scfdata.max_update_stepsize
-            MO = MO - step*gm
-
-            gm.destroy
-
-         case default
-            DIE("SCF kind "//trim(orb_kind)//" not implemented")
+      case default
+         DIE("SCF kind "//trim(orb_kind)//" not implemented")
 
       end
 
-      .scfdata.set_diis_error(f1)
+   end
+
+
+! ELMO
+
+   ELMO_update
+   ! Use the BFGS ELMO update ...
+      self :: target
+
+   ENSURE(.scfdata.use_ELMO,"not allowed")
+   ENSURE(.fock_matrix.associated,"no fock_matrix")
+   ENSURE(.fock_matrix.has_any_genre,"no fock_matrix")
+   ENSURE(.density_matrix.associated,"no density_matrix")
+   ENSURE(.density_matrix.has_any_genre,"no density_matrix")
+   ENSURE(.molecular_orbitals.associated,"no MO's")
+   ENSURE(.molecular_orbitals.has_any_genre,"no MO's")
+
+      orb_kind :: STR
+      MOv, gv,sh :: VEC{REAL}*
+      gm,h,MO,F,P :: MAT{REAL}*
+      E :: REAL
+
+      orb_kind = .scfdata.scf_kind
+
+      select case (orb_kind)
+
+      case ("rhf     ", &
+            "rks     ", &
+            "xray_rhf", &
+            "xray_rks", &
+            "noninteracting-group-rhf")
+
+         F  => .fock_matrix.restricted
+         P  => .density_matrix.restricted
+         MO => .molecular_orbitals.restricted(:,1:.n_a)
+
+         if (.scfdata.use_BFGS) then
+
+            ! Convert the vector
+            MOv.create(size(MO))
+            MOv = reshape(MO,[size(MO)])
+
+            ! BFGS
+            elmo_self => self
+            .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_r,MOv)
+
+            ! Back to matrix
+            MO = reshape(MOv,[.n_bf,.n_a])
+
+            MOv.destroy
+
+         else
+
+            ! Least squares method
+            sh.create(.n_bf*.n_a)
+            gv.create(.n_bf*.n_a)
+            gm.create(.n_bf,.n_a)
+
+            .:make_ELMO_gradient_r(MO,E,gm)
+
+            gv = reshape(gm,[size(gv)])
+
+            h.solve_normal_equations(gv,sh)
+
+            MO = MO + reshape(sh,[.n_bf,.n_a])
+
+            ! Clean
+            gm.destroy
+            gv.destroy
+            sh.destroy
+
+         end
+
+      case default
+         DIE("SCF kind "//trim(orb_kind)//" not implemented")
+
+      end
 
    end
 
-   MO_r_gradient_update(MO,gv) ::: selfless, public
-   ! USed by L_BFGS to get the E gradient ...
+   ELMO_electronic_energy_r(MO) result (res)
+   ! Evaluates the ELMO electronic energy for an arbitrary
+   ! non-orthogonal set of "MO" coefficients. NOTE: the density matrix
+   ! and Fock is reconstruicted from, scratch!
+      self :: IN
+      MO :: MAT{REAL}, IN
+      res :: REAL
+
+      P,F :: OPMATRIX*
+
+      ! Create
+      F.create(.n_bf,"restricted")
+      P.create(.n_bf,"restricted")
+
+      ! Make ELMO density matrix "D"
+      .BASE:make_ELMO_density_matrix_r(P.restricted,MO)
+
+      ! Make two electron Fock matrix
+      .FOCK:make_r_fock(P,F,core=FALSE)
+
+      ! Make energy matrix
+      F.scale_by(HALF)     ! 2-electron part x 1/2
+      F.plus(.core_matrix) ! + h
+
+      ! Do it
+      res = P.restricted.trace_product_with(F.restricted)
+
+      ! Cleanup
+      P.destroy
+      F.destroy
+
+   end
+
+   ELMO_gradient_r(MO,E,gv) ::: selfless
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
       MO :: VEC{REAL}, IN
+      E  :: REAL, OUT
       gv :: VEC{REAL}, OUT
 
-      F,P :: MAT{REAL}*
+      Cm,gm :: MAT{REAL}*
       self :: MOLECULE*
 
-       ! Restore self
-       .BASE:set_from_saved_self
+      ! Restore self
+      self => elmo_self
 
- ! ENSURE(.scfdata.using_MO_gradient_update,"not allowed")
- ! ENSURE(.fock_matrix.associated,"no fock_matrix")
- ! ENSURE(.fock_matrix.has_any_genre,"no fock_matrix")
- ! ENSURE(.density_matrix.associated,"no density_matrix")
- ! ENSURE(.density_matrix.has_any_genre,"no density_matrix")
- ! ENSURE(.molecular_orbitals.associated,"no MO's")
- ! ENSURE(.molecular_orbitals.has_any_genre,"no MO's")
-
-       ! Get "g"
-       F  => .fock_matrix.restricted
-       P  => .density_matrix.restricted
-       .:make_MO_r_gradient(gv,F,P,reshape(MO,[.n_bf,.n_a]))
-
-   end
-
-   make_MO_r_gradient(gv,F,D,MO)
-   ! Make the real gradient "g" of the *occupied* MO's,
-   ! g = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vector.
-      self :: IN
-      gv :: VEC{REAL}, OUT
-      F,D,MO :: MAT{REAL}, IN
-
-      gm :: MAT{REAL}*
-
+      Cm.create(.n_bf,.n_a)
       gm.create(.n_bf,.n_a)
-      .:make_MO_r_gradient(gm,F,D,MO)
 
-      gv = reshape(gm,[size(gm)])
+      Cm = reshape(MO,[.n_bf,.n_a])
+      gm = reshape(gv,[.n_bf,.n_a])
+
+      .:make_ELMO_gradient_r(Cm,E,gm)
+
+      gv = reshape(gm,[.n_bf*.n_a])
+
+      gm.destroy
+      Cm.destroy
 
    end
 
-   make_MO_r_gradient(gm,F,D,MO)
-   ! Make the real gradient "g" of the *occupied* MO's,
-   ! g = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrix
+   make_ELMO_gradient_r(MO,E,gm)
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrices!!!
       self :: IN
+      MO :: MAT{REAL}, IN
+      E  :: REAL, OUT
       gm :: MAT{REAL}, OUT
-      F,D,MO :: MAT{REAL}, IN
 
+   ENSURE(MO.dim1==.n_bf AND MO.dim2==.n_a,"MO wrong shape")
    ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
-   ENSURE(F.is_square,"F is not square")
-   ENSURE(F.dim1==.n_bf,"F is not the right size, n_bf = "//trim(.n_bf.to_str))
-   ENSURE(D.is_same_shape_as(F),"D is not the right size")
    ENSURE( .overlap_matrix.created,"NO overlap_matrix")
 
+      P,F :: OPMATRIX*
       S_inv, FcSm1,cSm1 :: MAT{REAL}*
+
+      ! Create Fock & density matrix
+      F.create(.n_bf,"restricted")
+      P.create(.n_bf,"restricted")
 
       ! Make S, S^{-1} in the MO basis
       S_inv.create(.n_a,.n_a)
       .BASE:make_ELMO_S_inv_r(S_inv,MO)
 
+      ! Back transform -> P
+      S_inv.back_transform_to(P.restricted,MO(:,1:.n_a))
+
+      ! Factor 2 for RHF
+      P.scale_by(TWO)
+
+      ! Make two electron Fock matrix 
+      .FOCK:make_r_fock(P,F)
+
       ! Make gradient
       FcSm1.create(.n_bf,.n_a)
       cSm1.create(.n_bf,.n_a)
       cSm1.to_product_of(MO,S_inv)
-      FcSm1.to_product_of(F,cSm1)
+      FcSm1.to_product_of(F.restricted,cSm1)
       cSm1.destroy
       cSm1.create(.n_bf,.n_bf)
-      cSm1.to_scaled_product_of(.overlap_matrix,D,fac=HALF)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.restricted,fac=HALF)
 
       ! Assemble 1st and 2nd terms of gradient
       gm = FcSm1
       gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
 
+      ! Make 2 x energy matrix
+      F.plus(.core_matrix)
+
+      ! Do energy
+      E = HALF * F.expectation(P.restricted)
+
       ! Clean up
       cSm1.destroy
       FcSm1.destroy
       S_inv.destroy
+      P.destroy
+      F.destroy
 
    end
+
 
 !   MO_exponential_update
 !   ! Update the molecular orbitals using an antisymmetric first-order
@@ -4586,31 +4700,31 @@ contains
 
       select case (.scfdata.scf_kind)
 
-        case ("rhf","xray_rhf","noninteracting-group-rhf")
-           res = HALF * P.restricted.trace_product_with(W.restricted)
+      case ("rhf","xray_rhf","noninteracting-group-rhf")
+         res = HALF * P.restricted.trace_product_with(W.restricted)
 
-        case ("rks","xray_rks")
-           res = HALF * P.restricted.trace_product_with(W.restricted) &
-               + .scfdata.dft_energy_correction
+      case ("rks","xray_rks")
+         res = HALF * P.restricted.trace_product_with(W.restricted) &
+             + .scfdata.dft_energy_correction
 
-        case ("uhf","xray_uhf","rohf","pnd_uhf","xray_pnd_uhf")
-           res = HALF * P.alpha.trace_product_with(W.alpha) &
-               + HALF * P.beta.trace_product_with(W.beta)
+      case ("uhf","xray_uhf","rohf","pnd_uhf","xray_pnd_uhf")
+         res = HALF * P.alpha.trace_product_with(W.alpha) &
+             + HALF *  P.beta.trace_product_with(W.beta)
 
-        case ("uks","xray_uks","pnd_uks","xray_pnd_uks")
-           res = HALF * P.alpha.trace_product_with(W.alpha) &
-               + HALF * P.beta.trace_product_with(W.beta) &
-               + .scfdata.dft_alpha_energy_correction &
-               + .scfdata.dft_beta_energy_correction
+      case ("uks","xray_uks","pnd_uks","xray_pnd_uks")
+         res = HALF * P.alpha.trace_product_with(W.alpha) &
+             + HALF *  P.beta.trace_product_with(W.beta) &
+             + .scfdata.dft_alpha_energy_correction &
+             + .scfdata.dft_beta_energy_correction
 
-        case ("no_ghf")
-           res = HALF * P.general.trace_product_with(W.general)
+      case ("no_ghf")
+         res = HALF * P.general.trace_product_with(W.general)
 
-        case ("gchf","xray_gchf")
-           res = HALF * RE(P.general_complex.trace_product_with(W.general_complex))
+      case ("gchf","xray_gchf")
+         res = HALF * RE(P.general_complex.trace_product_with(W.general_complex))
 
-        case default
-           DIE("unknown scf kind, "//trim(.scfdata.scf_kind))
+      case default
+         DIE("unknown scf kind, "//trim(.scfdata.scf_kind))
 
       end
 
@@ -4692,6 +4806,56 @@ contains
       W.destroy
 
    end
+
+!  ELMO
+
+!   ELMO_energy_r(MO) result (res) ::: selfless, public
+!   ! Evaluates the ELMO electronic energy for an arbitrary
+!   ! non-orthogonal set of "MO" coefficients. NOTE: the density matrix
+!   ! and Fock is reconstruicted from, scratch!
+!      MO :: MAT{REAL}, IN
+!      res :: REAL
+!
+!      self :: MOLECULE*
+!
+!      .BASE:set_saved_self
+!
+!      res = .:ELMO_electronic_energy_r(MO)
+!
+!   end
+!
+!   ELMO_electronic_energy_r(MO) result (res)
+!   ! Evaluates the ELMO electronic energy for an arbitrary
+!   ! non-orthogonal set of "MO" coefficients. NOTE: the density matrix
+!   ! and Fock is reconstruicted from, scratch!
+!      self :: IN
+!      MO :: MAT{REAL}, IN
+!      res :: REAL
+!
+!      P,F :: OPMATRIX*
+!
+!      ! Create
+!      F.create(.n_bf,"restricted")
+!      P.create(.n_bf,"restricted")
+!
+!      ! Make ELMO density matrix "D"
+!      .BASE:make_ELMO_density_matrix_r(P.restricted,MO)
+!
+!      ! Make two electron Fock matrix
+!      .FOCK:make_r_fock(P,F,core=FALSE)
+!
+!      ! Make energy matrix
+!      F.scale_by(HALF)     ! 2-electron part x 1/2
+!      F.plus(.core_matrix) ! + h
+!
+!      ! Do it
+!      res = P.restricted.trace_product_with(F.restricted)
+!
+!      ! Cleanup
+!      P.destroy
+!      F.destroy
+!
+!   end
 
 !  ==============================
 !  Initial orbital guess routines
@@ -6377,6 +6541,8 @@ contains
       error :: REAL
       C :: OPMATRIX*
       dim :: INT
+
+      if (.scfdata.use_ELMO) return
 
       if (NOT .scfdata.using_diis) return
 
