@@ -85,3 +85,6 @@ set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
 if(WITH_MPI)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DMPI")
 endif()
+if(WITH_LIBXC)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DUSING_LIBXC")
+endif()

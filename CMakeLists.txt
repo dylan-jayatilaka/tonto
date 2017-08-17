@@ -17,6 +17,7 @@ set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets
     CACHE PATH "Basis sets directory")
 
 option(MPI "Use MPI" OFF)
+option(LIBXC "Use LibXC" OFF)
 
 # Perl
 find_package(Perl REQUIRED)
@@ -55,6 +56,20 @@ if(MPI)
         include_directories(${MPI_Fortran_INCLUDE_PATH})
     else()
         message(STATUS "MPI_Fortran not found: ${MPI_Fortran_FOUND}")
+    endif()
+endif()
+
+if(LIBXC)
+    message(STATUS "Building with LibXC enabled")
+    include(FindLibxc)
+    # libxc
+    if(LIBXC_FOUND)
+        message(STATUS "LibXC include: ${LIBXC_INCLUDE_DIR}")
+        message(STATUS "LibXC libs:${LIBXC_LIBRARIES}")
+        set(WITH_LIBXC ON CACHE STRING "" FORCE)
+        include_directories(${LIBXC_INCLUDE_DIR})
+    else()
+        message(STATUS "LibXC not found: ${LIBXC_FOUND}")
     endif()
 endif()
 
@@ -446,7 +461,7 @@ add_library(tonto
     ${FORTRAN_SRC}
     ${MACROS}
 )
-target_link_libraries(tonto sbf_fortran ${MPI_Fortran_LIBRARIES})
+target_link_libraries(tonto sbf_fortran ${MPI_Fortran_LIBRARIES} ${LIBXC_LIBRARIES})
 
 # Standard executables
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
