@@ -1442,7 +1442,7 @@ contains
       case ("group")
          .:group_scf
 
-      case ("no_ghf")
+      case ("ghf","no_ghf")
          .:NO_ghf
 
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
@@ -3652,7 +3652,7 @@ contains
 
             .:MO_gc_eigen_update(er,MOc,Fc)
 
-         case ("no_ghf")
+         case ("ghf","no_ghf")
 
             er  => .orbital_energies.general
             MOg => .molecular_orbitals.general
@@ -4029,7 +4029,8 @@ contains
 
       orb_kind :: STR
       MOv, gv,sh :: VEC{REAL}*
-      gm,h,MO,F,P :: MAT{REAL}*
+      gm,MO,MOa,MOb,F,P,Fa,Fb,Pa,Pb :: MAT{REAL}*
+      i :: INT
       E :: REAL
 
       orb_kind = .scfdata.scf_kind
@@ -4072,9 +4073,141 @@ contains
 
             gv = reshape(gm,[size(gv)])
 
-            h.solve_normal_equations(gv,sh)
+            MAT{REAL}::solve_normal_equations(gv,sh)
+
+            MO = MO + 0.001*reshape(sh,[.n_bf,.n_a])
+            
+            do i=1,.n_a
+               MO(:,i) = MO(:,i)/(MO(:,i).norm)
+            end do
+
+            ! Clean
+            gm.destroy
+            gv.destroy
+            sh.destroy
+
+         end
+      
+      case ("no_ghf","ghf")
+
+         F  => .fock_matrix.general
+         P  => .density_matrix.general
+         MO => .molecular_orbitals.general(:,1:.n_e)
+
+         if (.scfdata.use_BFGS) then
+
+            ! Convert the vector
+            MOv.create(size(MO))
+            MOv = reshape(MO,[size(MO)])
+
+            ! BFGS
+            elmo_self => self
+            .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_g,MOv)
+
+            ! Back to matrix
+            MO = reshape(MOv,[2*.n_bf,.n_e])
+
+            MOv.destroy
+
+         else
+
+            ! Least squares method
+            sh.create(.n_bf*.n_e)
+            gv.create(.n_bf*.n_e)
+            gm.create(.n_bf,.n_e)
+
+            .:make_ELMO_gradient_g(MO,E,gm)
+
+            gv = reshape(gm,[size(gv)])
+
+            MAT{REAL}::solve_normal_equations(gv,sh)
+
+            MO = MO + 0.001*reshape(sh,[.n_bf,.n_a])
+            
+            do i=1,.n_a
+               MO(:,i) = MO(:,i)/(MO(:,i).norm)
+            end do
+
+            ! Clean
+            gm.destroy
+            gv.destroy
+            sh.destroy
+
+         end
+      
+      case ("uhf     ")
+
+
+         if (.scfdata.use_BFGS) then
+            
+           ! MOa => .molecular_orbitals.alpha(:,1:.n_a)
+           ! MOb => .molecular_orbitals.beta(:,1:.n_b)
+
+            ! Convert the vector
+           ! MOv.create((size(MOa)+size(MOb)))
+           ! MOv(1:(.n_a*.n_bf)) = reshape(MOa,[size(MOa)])
+!            MOv((.n_a*.n_bf+1):.n_bf*(.n_a+.n_b)) = reshape(MOb,[size(MOb)])
+!            
+!            ! BFGS
+!            elmo_self => self
+!            .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_u,MOv)
+!
+!            ! Back to matrix
+!            MOa = reshape(MOv(1:.n_a*.n_bf),[.n_bf,.n_a])
+!            MOb = reshape(MOv((.n_bf*.n_a+1):.n_bf*(.n_a+.n_b)),[.n_bf,.n_b])
+!
+!            MOv.destroy
+!            
+!            ! Back to matrix
+!
+!            MOv.destroy
+
+            MOa => .molecular_orbitals.alpha(:,1:.n_a)
+            MOb => .molecular_orbitals.beta(:,1:.n_b)
+
+            ! Convert the vector
+            MOv.create(size(MOa))
+            MOv = reshape(MOa,[size(MOa)])
+
+            ! BFGS
+            elmo_self => self
+            .scfdata.bfgs.minimize_L_BFGS_a(::ELMO_gradient_u_a,MOv)
+
+            ! Back to matrix
+            MOa = reshape(MOv,[.n_bf,.n_a])
+            MOv.destroy
+
+            ! Convert the vector
+            MOv.create(size(MOb))
+            MOv = reshape(MOb,[size(MOb)])
+
+            ! BFGS
+            .scfdata.bfgs.minimize_L_BFGS_b(::ELMO_gradient_u_b,MOv)
+
+            ! Back to matrix
+            MOb = reshape(MOv,[.n_bf,.n_b])
+            MOv.destroy
+
+!            MOb = reshape(MOv((.n_bf*.n_a+1):.n_bf*(.n_a+.n_b)),[.n_bf,.n_b])
+
+         else
+
+            ! Least squares method
+            sh.create(.n_bf*.n_a)
+            gv.create(.n_bf*.n_a)
+            gm.create(.n_bf,.n_a)
+
+            .:make_ELMO_gradient_r(MO,E,gm)
+
+            gv = reshape(gm,[size(gv)])
+
+            MAT{REAL}::solve_normal_equations(gv,sh)
 
             MO = MO + reshape(sh,[.n_bf,.n_a])
+            
+            do i=1,.n_a
+               MO(:,i) = MO(:,i)/(MO(:,i).norm)
+            end do
 
             ! Clean
             gm.destroy
@@ -4123,6 +4256,34 @@ contains
 
    end
 
+   ELMO_gradient_g(MO,E,gv) ::: selfless
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
+      MO :: VEC{REAL}, IN
+      E  :: REAL, OUT
+      gv :: VEC{REAL}, OUT
+
+      Cm,gm :: MAT{REAL}*
+      self :: MOLECULE*
+
+      ! Restore self
+      self => elmo_self
+
+      Cm.create(2*.n_bf,.n_e)
+      gm.create(2*.n_bf,.n_e)
+
+      Cm = reshape(MO,[2*.n_bf,.n_e])
+      gm = reshape(gv,[2*.n_bf,.n_e])
+
+      .:make_ELMO_gradient_g(Cm,E,gm)
+
+      gv = reshape(gm,[size(gm)])
+
+      gm.destroy
+      Cm.destroy
+
+   end
+
    ELMO_gradient_r(MO,E,gv) ::: selfless
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
    ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
@@ -4150,6 +4311,91 @@ contains
       Cm.destroy
 
    end
+
+   ELMO_gradient_u(MO,E,gv) ::: selfless
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
+      MO :: VEC{REAL}, IN
+      E  :: REAL, OUT
+      gv :: VEC{REAL}, OUT
+
+      Cm,gm :: MAT{REAL}*
+      self :: MOLECULE*
+
+      ! Restore self
+      self => elmo_self
+
+      Cm.create(.n_bf,(.n_a+.n_b))
+      gm.create(.n_bf,(.n_a+.n_b))
+
+      Cm = reshape(MO,[.n_bf,(.n_a+.n_b)])
+      gm = reshape(gv,[.n_bf,(.n_a+.n_b)])
+      
+      .:make_ELMO_gradient_u(Cm,E,gm)
+
+      gv = reshape(gm,[.n_bf*(.n_a+.n_b)])
+
+      gm.destroy
+      Cm.destroy
+
+   end
+
+   ELMO_gradient_u_a(MOa,E,gv) ::: selfless
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
+      MOa :: VEC{REAL}, IN
+      E  :: REAL, OUT
+      gv :: VEC{REAL}, OUT
+
+      Cm,gm :: MAT{REAL}*
+      self :: MOLECULE*
+
+      ! Restore self
+      self => elmo_self
+
+      Cm.create(.n_bf,.n_a)
+      gm.create(.n_bf,.n_a)
+
+      Cm = reshape(MOa,[.n_bf,.n_a])
+      gm = reshape(gv,[.n_bf,.n_a])
+      
+      .:make_ELMO_gradient_u_a(Cm,E,gm)
+
+      gv = reshape(gm,[.n_bf*.n_a])
+
+      gm.destroy
+      Cm.destroy
+
+   end
+
+   ELMO_gradient_u_b(MOb,E,gv) ::: selfless
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
+      MOb :: VEC{REAL}, IN
+      E  :: REAL, OUT
+      gv :: VEC{REAL}, OUT
+
+      Cm,gm :: MAT{REAL}*
+      self :: MOLECULE*
+
+      ! Restore self
+      self => elmo_self
+
+      Cm.create(.n_bf,.n_a)
+      gm.create(.n_bf,.n_a)
+
+      Cm = reshape(MOb,[.n_bf,.n_b])
+      gm = reshape(gv,[.n_bf,.n_b])
+      
+      .:make_ELMO_gradient_u_b(Cm,E,gm)
+
+      gv = reshape(gm,[.n_bf*.n_a])
+
+      gm.destroy
+      Cm.destroy
+
+   end
+
 
    make_ELMO_gradient_r(MO,E,gm)
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
@@ -4211,6 +4457,307 @@ contains
 
    end
 
+   make_ELMO_gradient_g(MO,E,gm)
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrices!!!
+      self :: IN
+      MO :: MAT{REAL}, IN
+      E  :: REAL, OUT
+      gm :: MAT{REAL}, OUT
+
+   ENSURE(MO.dim1==2*.n_bf AND MO.dim2==.n_e,"MO wrong shape")
+   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
+
+      P,F :: OPMATRIX*
+      V,S_inv, FcSm1,cSm1 :: MAT{REAL}*
+
+      ! Create Fock & density matrix
+      P.create(.n_bf,"general")
+      F.create(.n_bf,"general")
+      F.general = ZERO
+      P.general = ZERO
+
+      ! Make S, S^{-1} in the MO basis
+      S_inv.create(.n_e,.n_e)
+      S_inv = ZERO
+      .BASE:make_ELMO_S_inv_g(S_inv,MO)
+
+      ! Back transform -> P
+      S_inv.back_transform_to(P.general,MO)
+      !stdout.text("Density: ")
+      !stdout.put(P.general)
+
+      ! Make two electron Fock matrix 
+      .FOCK:make_g_fock(P,F)
+      !stdout.text("Fock: ")
+      !stdout.put(F.general)
+
+      ! Make gradient
+      FcSm1.create(2*.n_bf,.n_e)
+      cSm1.create(2*.n_bf,.n_e)
+      cSm1.to_product_of(MO,S_inv)
+      FcSm1.to_product_of(F.general,cSm1)
+      cSm1.destroy
+      V.create(2*.n_bf, 2*.n_bf)
+      V = ZERO
+      V.alpha_alpha_set_to(.overlap_matrix)
+      V.beta_beta_set_to(.overlap_matrix)
+      !V.alpha_beta_set_to(.overlap_matrix)
+      !V.beta_alpha_set_to(.overlap_matrix)
+      cSm1.create(2*.n_bf,2*.n_bf)
+      cSm1.to_scaled_product_of(V,P.general,fac=ONE)
+
+      ! Assemble 1st and 2nd terms of gradient
+      gm = FcSm1
+      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+      !stdout.text("Gradient: ")
+      !stdout.put(gm)
+
+      ! Make 2 x energy matrix
+      F.plus(.core_matrix)
+
+      ! Do energy
+      E = HALF * F.general.trace_product_with(P.general)
+
+      ! Clean up
+      cSm1.destroy
+      V.destroy
+      FcSm1.destroy
+      S_inv.destroy
+      P.destroy
+      F.destroy
+
+   end
+
+   make_ELMO_gradient_u(MO,E,gm)
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrices!!!
+      self :: IN
+      MO :: MAT{REAL}, IN
+      E  :: REAL, OUT
+      gm :: MAT{REAL}, OUT
+
+   ENSURE(MO.dim1==.n_bf AND MO.dim2==(.n_a+.n_b),"MO wrong shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
+
+      P,F :: OPMATRIX*
+      MOa,MOb,S_inv_a,S_inv_b,FcSm1,cSm1 :: MAT{REAL}*
+
+      ! Create Fock & density matrix
+      F.create(.n_bf,"unrestricted")
+      P.create(.n_bf,"unrestricted")
+      MOa.create(.n_bf,.n_a)
+      MOb.create(.n_bf,.n_b)
+      MOa = MO(:,1:.n_a)
+      MOb = MO(:,(.n_a+1):(.n_a+.n_b))
+
+      ! Repeating for the beta case
+      S_inv_b.create(.n_b,.n_b)
+      .BASE:make_ELMO_S_inv_u_b(S_inv_b,MOb)
+      
+      ! Back transform -> P
+      S_inv_b.back_transform_to(P.beta,MOb)
+      
+      ! alpha
+      ! Make S, S^{-1} in the MO basis
+      S_inv_a.create(.n_a,.n_a)
+      .BASE:make_ELMO_S_inv_u_a(S_inv_a,MOa)
+
+      ! Back transform -> P
+      S_inv_a.back_transform_to(P.alpha,MOa)
+      
+      ! Make two electron Fock matrix 
+      .FOCK:make_u_fock(P,F)
+
+      ! Make gradient
+      FcSm1.create(.n_bf,.n_a)
+      cSm1.create(.n_bf,.n_a)
+      cSm1.to_product_of(MOa,S_inv_a)
+      FcSm1.to_product_of(F.alpha,cSm1)
+      cSm1.destroy
+      cSm1.create(.n_bf,.n_bf)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.alpha,fac=ONE)
+
+      ! Assemble 1st and 2nd terms of gradient
+      gm(:,1:.n_a) = FcSm1
+      gm(:,1:.n_a).plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.beta,fac=ONE)
+      gm(:,1:.n_a).plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+      cSm1.destroy
+      FcSm1.destroy
+
+      ! Make gradient
+      FcSm1.create(.n_bf,.n_b)
+      cSm1.create(.n_bf,.n_b)
+      cSm1.to_product_of(MOb,S_inv_b)
+      FcSm1.to_product_of(F.beta,cSm1)
+      cSm1.destroy
+      cSm1.create(.n_bf,.n_bf)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.alpha,fac=HALF)
+
+      ! Assemble 1st and 2nd terms of gradient
+      gm(:,.n_a+1:.n_a+.n_b) = FcSm1
+      gm(:,.n_a+1:.n_a+.n_b).plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.beta,fac=HALF)
+      gm(:,.n_a+1:.n_a+.n_b).plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+
+      ! Make 2 x energy matrix
+      F.plus(.core_matrix)
+
+      ! Do energy
+      E = HALF * P.alpha.trace_product_with(F.alpha) &
+        + HALF * P.beta.trace_product_with(F.alpha) &
+        + HALF * P.alpha.trace_product_with(F.beta) &
+        + HALF * P.beta.trace_product_with(F.beta)
+
+      ! Clean up
+      cSm1.destroy
+      FcSm1.destroy
+      S_inv_b.destroy
+      S_inv_a.destroy
+      P.destroy
+      F.destroy
+
+   end
+
+   make_ELMO_gradient_u_a(MOa,E,gm)
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrices!!!
+      self :: IN
+      MOa :: MAT{REAL}, IN
+      E  :: REAL, OUT
+      gm :: MAT{REAL}, OUT
+
+   ENSURE(MOa.dim1==.n_bf AND MOa.dim2==.n_a,"MO wrong shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
+
+      P,F :: OPMATRIX*
+      MOb,S_inv, FcSm1,cSm1 :: MAT{REAL}*
+
+      ! Create Fock & density matrix
+      F.create(.n_bf,"unrestricted")
+      P.create(.n_bf,"unrestricted")
+      MOb => .molecular_orbitals.beta(:,1:.n_b)
+      
+      ! Repeating for the beta case
+      S_inv.create(.n_b,.n_b)
+      .BASE:make_ELMO_S_inv_u_b(S_inv,MOb)
+      
+      ! Back transform -> P
+      S_inv.back_transform_to(P.beta,MOb)
+      S_inv.destroy
+      
+      ! alpha
+      ! Make S, S^{-1} in the MO basis
+      S_inv.create(.n_a,.n_a)
+      .BASE:make_ELMO_S_inv_u_a(S_inv,MOa)
+
+      ! Back transform -> P
+      S_inv.back_transform_to(P.alpha,MOa)
+      
+      ! Make two electron Fock matrix 
+      .FOCK:make_u_fock(P,F)
+
+      ! Make gradient
+      FcSm1.create(.n_bf,.n_a)
+      cSm1.create(.n_bf,.n_a)
+      cSm1.to_product_of(MOa,S_inv)
+      FcSm1.to_product_of(F.alpha,cSm1)
+      cSm1.destroy
+      cSm1.create(.n_bf,.n_bf)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.alpha,fac=HALF)
+
+      ! Assemble 1st and 2nd terms of gradient
+      gm = FcSm1
+      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.beta,fac=HALF)
+      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+
+      ! Make 2 x energy matrix
+      F.plus(.core_matrix)
+
+      ! Do energy
+      E = HALF * P.alpha.trace_product_with(F.alpha) &
+        + HALF * P.beta.trace_product_with(F.alpha)
+
+      ! Clean up
+      cSm1.destroy
+      FcSm1.destroy
+      S_inv.destroy
+      P.destroy
+      F.destroy
+
+   end
+
+   make_ELMO_gradient_u_b(MOb,E,gm)
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrices!!!
+      self :: IN
+      MOb :: MAT{REAL}, IN
+      E  :: REAL, OUT
+      gm :: MAT{REAL}, OUT
+
+   ENSURE(MOa.dim1==.n_bf AND MOa.dim2==.n_a,"MO wrong shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
+
+      P,F :: OPMATRIX*
+      MOa,S_inv, FcSm1,cSm1 :: MAT{REAL}*
+
+      ! Create Fock & density matrix
+      F.create(.n_bf,"unrestricted")
+      P.create(.n_bf,"unrestricted")
+      MOa => .molecular_orbitals.alpha(:,1:.n_a)
+
+      ! Repeating for the beta case
+      S_inv.create(.n_a,.n_a)
+      .BASE:make_ELMO_S_inv_u_a(S_inv,MOa)
+      
+      ! Back transform -> P
+      S_inv.back_transform_to(P.alpha,MOa)
+      S_inv.destroy
+
+      ! beta
+      ! Make S, S^{-1} in the MO basis
+      S_inv.create(.n_b,.n_b)
+      .BASE:make_ELMO_S_inv_u_b(S_inv,MOb)
+
+      ! Back transform -> P
+      S_inv.back_transform_to(P.beta,MOb)
+
+      ! Make two electron Fock matrix 
+      .FOCK:make_u_fock(P,F)
+
+      ! Make gradient
+      FcSm1.create(.n_bf,.n_b)
+      cSm1.create(.n_bf,.n_b)
+      cSm1.to_product_of(MOb,S_inv)
+      FcSm1.to_product_of(F.beta,cSm1)
+      cSm1.destroy
+      cSm1.create(.n_bf,.n_bf)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.beta,fac=ONE)
+
+      ! Assemble 1st and 2nd terms of gradient
+      gm = FcSm1
+      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.alpha,fac=ONE)
+      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+
+      ! Make 2 x energy matrix
+      F.plus(.core_matrix)
+
+      ! Do energy
+      E = HALF *  P.beta.trace_product_with(F.beta) &
+        + HALF * P.alpha.trace_product_with(F.beta)
+
+      ! Clean up
+      cSm1.destroy
+      FcSm1.destroy
+      S_inv.destroy
+      P.destroy
+      F.destroy
+
+   end
 
 !   MO_exponential_update
 !   ! Update the molecular orbitals using an antisymmetric first-order
@@ -4332,7 +4879,7 @@ contains
 
            H.destroy
 
-        case ("no_ghf")
+        case ("ghf","no_ghf")
 
            H2.create(2*.n_bf,2*.n_bf)
            H.create(.n_bf,.n_bf)
@@ -4423,7 +4970,7 @@ contains
 
            H.destroy
 
-        case ("no_ghf")
+        case ("ghf","no_ghf")
 
            H2.create(2*.n_bf,2*.n_bf)
            H.create(.n_bf,.n_bf)
@@ -4526,7 +5073,7 @@ contains
            T.destroy
            H.destroy
 
-        case ("no_ghf")
+        case ("ghf","no_ghf")
 
            H2.create(2*.n_bf,2*.n_bf)
            H.create(.n_bf,.n_bf)
@@ -4717,7 +5264,7 @@ contains
              + .scfdata.dft_alpha_energy_correction &
              + .scfdata.dft_beta_energy_correction
 
-      case ("no_ghf")
+      case ("ghf","no_ghf")
          res = HALF * P.general.trace_product_with(W.general)
 
       case ("gchf","xray_gchf")
@@ -4787,7 +5334,7 @@ contains
            res(1) = HALF * P.alpha.trace_product_with(W.alpha) + .scfdata.dft_alpha_energy_correction
            res(2) = HALF * P.beta.trace_product_with(W.beta)   + .scfdata.dft_beta_energy_correction
 
-        case ("no_ghf")
+        case ("ghf","no_ghf")
            res.create(1)
            W.plus(.core_matrix)
            res(1) = HALF * P.general.trace_product_with(W.general)
@@ -6589,7 +7136,7 @@ contains
             .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
             error = C.triangle.norm
 
-         case ("no_ghf")
+         case ("ghf","no_ghf")
             dim = C.triangle.dim
             .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
             error = C.triangle.norm

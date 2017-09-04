@@ -6321,7 +6321,7 @@ contains
             MO => .molecular_orbitals.restricted
 
             .:make_ELMO_density_matrix_r(D,MO)
-
+         
          else
 
             MO => .molecular_orbitals.restricted(:,1:.n_a)
@@ -6371,6 +6371,15 @@ contains
             T = .scfdata.temperature
             ::make_finite_T_DM_u(Da,Db,.scfdata.E_Fermi,MOa,MOb,Ea,Eb,T,.n_a,.n_b)
 
+         else if (.scfdata.use_ELMO) then
+           
+            MOa => .molecular_orbitals.alpha(:,1:.n_a)
+            MOb => .molecular_orbitals.beta(:,1:.n_b)
+            Da  => .density_matrix.alpha
+            Db  => .density_matrix.beta
+
+            .:make_ELMO_density_matrix_u(Da,Db,MOa,MOb)
+         
          else
 
             MOa => .molecular_orbitals.alpha(:,1:.n_a)
@@ -6382,14 +6391,26 @@ contains
 
          end
 
-      case ("ghf")
-
+      case ("ghf","no_ghf")
+            
          ENSURE(.molecular_orbitals.is_associated_with_genre("general"),"no MO's")
          ENSURE(.spin_multiplicity==1,"this is not a singlet state")
 
-         MO => .molecular_orbitals.general(:,1:.n_e)
-         D  => .density_matrix.general
-         D.to_product_of(MO,MO,transpose_b=TRUE)
+         if (.scfdata.use_ELMO) then
+            
+            D  => .density_matrix.general
+            MO => .molecular_orbitals.general(:,1:.n_e)
+
+            .:make_ELMO_density_matrix_g(D,MO)
+         
+         else
+
+
+            MO => .molecular_orbitals.general(:,1:.n_e)
+            D  => .density_matrix.general
+            D.to_product_of(MO,MO,transpose_b=TRUE)
+         
+         end if
 
       case ("rchf")
 
@@ -6449,6 +6470,26 @@ contains
 
    end
 
+   make_ELMO_density_matrix_g(D,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      D :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+      S_inv :: MAT{REAL}@
+
+      ! Make (S^MO){-1} in MO basis & back transform
+      S_inv.create(.n_e,.n_e)
+      S_inv = ZERO
+      .:make_ELMO_S_inv_g(S_inv,MO)
+
+      ! Back transform -> D
+      S_inv.back_transform_to(D,MO)
+      S_inv.destroy
+
+   end
+   
    make_ELMO_density_matrix_r(D,MO)
    ! Make the inverse of the occupied-coccupied block of the MO
    ! overlap matrix.
@@ -6470,6 +6511,67 @@ contains
       D = TWO*D
 
    end
+   
+   make_ELMO_density_matrix_u(Da,Db,MOa,MOb)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      
+      Da,Db :: MAT{REAL}, OUT
+      MOa,MOb :: MAT{REAL}, IN
+
+      S_inv :: MAT{REAL}@
+
+      ! alpha
+      ! Make (S^MO){-1} in MO basis & back transform
+      S_inv.create(.n_a,.n_a)
+      .:make_ELMO_S_inv_u_a(S_inv,MOa)
+
+      ! Back transform -> Da
+      S_inv.back_transform_to(Da,MOa)
+      S_inv.destroy
+
+
+      ! beta
+      ! Make (S^MO){-1} in MO basis & back transform
+      S_inv.create(.n_b,.n_b)
+      .:make_ELMO_S_inv_u_b(S_inv,MOb)
+
+      ! Back transform -> Db
+      S_inv.back_transform_to(Db,MOb)
+      S_inv.destroy
+
+   end
+
+   make_ELMO_S_inv_g(S_inv,MO)
+   ! Make the inverse of the occupied-occupied block of the
+   ! general MO overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+      V :: MAT{REAL}*
+
+      ! Make S in the occupied MO basis 
+      S.create(.n_e,.n_e)
+      V.create(2*.n_bf, 2*.n_bf)
+      V = ZERO
+      V.alpha_alpha_set_to(.overlap_matrix)
+      V.beta_beta_set_to(.overlap_matrix)
+      !V.alpha_beta_set_to(.overlap_matrix)
+      !V.beta_alpha_set_to(.overlap_matrix)
+      V.change_basis_to(S,MO)
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+
+   end
 
    make_ELMO_S_inv_r(S_inv,MO)
    ! Make the inverse of the occupied-coccupied block of the MO
@@ -6485,6 +6587,52 @@ contains
       ! Make S in the occupied MO basis 
       S.create(.n_a,.n_a)
       .overlap_matrix.change_basis_to(S,MO(:,1:.n_a))
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+
+   end
+
+   make_ELMO_S_inv_u_a(S_inv,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+
+      ! Make S in the occupied MO basis 
+      S.create(.n_a,.n_a)
+      .overlap_matrix.change_basis_to(S,MO)
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+
+   end
+
+   make_ELMO_S_inv_u_b(S_inv,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+
+      ! Make S in the occupied MO basis 
+      S.create(.n_b,.n_b)
+      .overlap_matrix.change_basis_to(S,MO)
       
       ! Make S^{-1} (IMPURE)
       S_inv.to_inverse_of(S)
@@ -7216,7 +7364,7 @@ contains
                Db = ZERO
             end
 
-         case ("ghf")
+         case ("ghf", "no_ghf")
 
             ENSURE(.spin_multiplicity==1,"this is not a singlet state")
 
