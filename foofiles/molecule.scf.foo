@@ -1442,8 +1442,8 @@ contains
       case ("group")
          .:group_scf
 
-      case ("ghf","no_ghf")
-         .:NO_ghf
+    ! case ("ghf","no_ghf")
+    !    .:NO_ghf
 
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
@@ -4256,31 +4256,73 @@ contains
 
    end
 
-   ELMO_gradient_g(MO,E,gv) ::: selfless
+   make_ELMO_gradient_r(MO,E,gm)
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
-   ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
-      MO :: VEC{REAL}, IN
+   ! gm = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrices!!!
+      self :: IN
+      MO :: MAT{REAL}, IN
       E  :: REAL, OUT
-      gv :: VEC{REAL}, OUT
+      gm :: MAT{REAL}, OUT
 
-      Cm,gm :: MAT{REAL}*
-      self :: MOLECULE*
+   ENSURE(MO.dim1==.n_bf AND MO.dim2==.n_a,"MO wrong shape")
+   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
 
-      ! Restore self
-      self => elmo_self
+      P,F :: OPMATRIX*
+      S_inv, FcSm1,cSm1 :: MAT{REAL}*
 
-      Cm.create(2*.n_bf,.n_e)
-      gm.create(2*.n_bf,.n_e)
+      ! Create Fock & density matrix
+      F.create(.n_bf,"restricted")
+      P.create(.n_bf,"restricted")
 
-      Cm = reshape(MO,[2*.n_bf,.n_e])
-      gm = reshape(gv,[2*.n_bf,.n_e])
+      ! Make S, S^{-1} in the MO basis
+      S_inv.create(.n_a,.n_a)
+      .BASE:make_ELMO_S_inv_r(S_inv,MO)
+    ! stdout.text("S_inv: ")
+    ! stdout.put(S_inv)
 
-      .:make_ELMO_gradient_g(Cm,E,gm)
+      ! Back transform -> P
+      S_inv.back_transform_to(P.restricted,MO(:,1:.n_a))
+      stdout.text("P: ")
+      stdout.put(P.restricted)
 
-      gv = reshape(gm,[size(gm)])
+      ! Factor 2 for RHF
+      P.scale_by(TWO)
 
-      gm.destroy
-      Cm.destroy
+      ! Make two electron Fock matrix 
+      .FOCK:make_r_fock(P,F)
+      stdout.text("Fock: ")
+      stdout.put(F.restricted)
+
+      ! Make gradient
+      FcSm1.create(.n_bf,.n_a)
+      cSm1.create(.n_bf,.n_a)
+      cSm1.to_product_of(MO,S_inv)
+      FcSm1.to_product_of(F.restricted,cSm1)
+      cSm1.destroy
+      cSm1.create(.n_bf,.n_bf)
+      cSm1.to_scaled_product_of(.overlap_matrix,P.restricted,fac=HALF)
+
+      ! Assemble 1st and 2nd terms of gradient
+      gm = FcSm1
+      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+
+      stdout.text("gm:")
+      stdout.put(gm)
+      stop
+
+      ! Make 2 x energy matrix
+      F.plus(.core_matrix)
+
+      ! Do energy
+      E = HALF * F.expectation(P.restricted)
+
+      ! Clean up
+      cSm1.destroy
+      FcSm1.destroy
+      S_inv.destroy
+      P.destroy
+      F.destroy
 
    end
 
@@ -4311,6 +4353,111 @@ contains
       Cm.destroy
 
    end
+
+   make_ELMO_gradient_g(MO,E,gm)
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - S D F MO S^{-1}, as matrices!!!
+      self :: INOUT
+      MO :: MAT{REAL}, IN
+      E  :: REAL, OUT
+      gm :: MAT{REAL}, OUT
+
+   ENSURE(MO.dim1==2*.n_bf AND MO.dim2==.n_e,"MO wrong shape")
+   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
+
+      P,F :: OPMATRIX*
+      V,S_inv, FcSm1,cSm1 :: MAT{REAL}*
+
+      ! Create Fock & density matrix
+      P.create(.n_bf,"general")
+      F.create(.n_bf,"general")
+      F.general = ZERO
+      P.general = ZERO
+
+      ! Make S, S^{-1} in the MO basis
+      S_inv.create(.n_e,.n_e)
+      S_inv = ZERO
+      .BASE:make_ELMO_S_inv_g(S_inv,MO)
+    ! stdout.text("S_inv: ")
+    ! stdout.put(S_inv)
+
+      ! Back transform -> P
+      S_inv.back_transform_to(P.general,MO(:,1:.n_e))
+      stdout.text("P: ")
+      stdout.put(P.general)
+
+      ! Make two electron Fock matrix 
+      .FOCK:make_g_fock(P,F)
+      stdout.text("Fock: ")
+      stdout.put(F.general)
+
+      ! Make gradient
+      FcSm1.create(2*.n_bf,.n_e)
+      cSm1.create(2*.n_bf,.n_e)
+      cSm1.to_product_of(MO,S_inv)
+      FcSm1.to_product_of(F.general,cSm1)
+      cSm1.destroy
+
+      V.create(2*.n_bf, 2*.n_bf)
+      V = ZERO
+      V.alpha_alpha_set_to(.overlap_matrix)
+        V.beta_beta_set_to(.overlap_matrix)
+      cSm1.create(2*.n_bf,2*.n_bf)
+      cSm1.to_scaled_product_of(V,P.general,fac=TWO)
+
+      ! Assemble 1st and 2nd terms of gradient
+      gm = FcSm1
+      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-TWO)
+
+      stdout.text("2*gm:")
+      stdout.put(TWO*gm)
+      stop
+
+      ! Make 2 x energy matrix
+      F.plus(.core_matrix)
+
+      ! Do energy
+      E = HALF * F.general.trace_product_with(P.general)
+
+      ! Clean up
+      cSm1.destroy
+      V.destroy
+      FcSm1.destroy
+      S_inv.destroy
+      P.destroy
+      F.destroy
+
+   end
+
+   ELMO_gradient_g(MO,E,gv) ::: selfless
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
+      MO :: VEC{REAL}, IN
+      E  :: REAL, OUT
+      gv :: VEC{REAL}, OUT
+
+      Cm,gm :: MAT{REAL}*
+      self :: MOLECULE*
+
+      ! Restore self
+      self => elmo_self
+
+      Cm.create(2*.n_bf,.n_e)
+      gm.create(2*.n_bf,.n_e)
+
+      Cm = reshape(MO,[2*.n_bf,.n_e])
+      gm = reshape(gv,[2*.n_bf,.n_e])
+
+      .:make_ELMO_gradient_g(Cm,E,gm)
+
+      gv = reshape(gm,[size(gm)])
+
+      gm.destroy
+      Cm.destroy
+
+   end
+
 
    ELMO_gradient_u(MO,E,gv) ::: selfless
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
@@ -4396,139 +4543,6 @@ contains
 
    end
 
-
-   make_ELMO_gradient_r(MO,E,gm)
-   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
-   ! gm = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrices!!!
-      self :: IN
-      MO :: MAT{REAL}, IN
-      E  :: REAL, OUT
-      gm :: MAT{REAL}, OUT
-
-   ENSURE(MO.dim1==.n_bf AND MO.dim2==.n_a,"MO wrong shape")
-   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
-   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
-
-      P,F :: OPMATRIX*
-      S_inv, FcSm1,cSm1 :: MAT{REAL}*
-
-      ! Create Fock & density matrix
-      F.create(.n_bf,"restricted")
-      P.create(.n_bf,"restricted")
-
-      ! Make S, S^{-1} in the MO basis
-      S_inv.create(.n_a,.n_a)
-      .BASE:make_ELMO_S_inv_r(S_inv,MO)
-
-      ! Back transform -> P
-      S_inv.back_transform_to(P.restricted,MO(:,1:.n_a))
-
-      ! Factor 2 for RHF
-      P.scale_by(TWO)
-
-      ! Make two electron Fock matrix 
-      .FOCK:make_r_fock(P,F)
-
-      ! Make gradient
-      FcSm1.create(.n_bf,.n_a)
-      cSm1.create(.n_bf,.n_a)
-      cSm1.to_product_of(MO,S_inv)
-      FcSm1.to_product_of(F.restricted,cSm1)
-      cSm1.destroy
-      cSm1.create(.n_bf,.n_bf)
-      cSm1.to_scaled_product_of(.overlap_matrix,P.restricted,fac=HALF)
-
-      ! Assemble 1st and 2nd terms of gradient
-      gm = FcSm1
-      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
-
-      ! Make 2 x energy matrix
-      F.plus(.core_matrix)
-
-      ! Do energy
-      E = HALF * F.expectation(P.restricted)
-
-      ! Clean up
-      cSm1.destroy
-      FcSm1.destroy
-      S_inv.destroy
-      P.destroy
-      F.destroy
-
-   end
-
-   make_ELMO_gradient_g(MO,E,gm)
-   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
-   ! gm = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrices!!!
-      self :: IN
-      MO :: MAT{REAL}, IN
-      E  :: REAL, OUT
-      gm :: MAT{REAL}, OUT
-
-   ENSURE(MO.dim1==2*.n_bf AND MO.dim2==.n_e,"MO wrong shape")
-   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
-   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
-
-      P,F :: OPMATRIX*
-      V,S_inv, FcSm1,cSm1 :: MAT{REAL}*
-
-      ! Create Fock & density matrix
-      P.create(.n_bf,"general")
-      F.create(.n_bf,"general")
-      F.general = ZERO
-      P.general = ZERO
-
-      ! Make S, S^{-1} in the MO basis
-      S_inv.create(.n_e,.n_e)
-      S_inv = ZERO
-      .BASE:make_ELMO_S_inv_g(S_inv,MO)
-
-      ! Back transform -> P
-      S_inv.back_transform_to(P.general,MO)
-      !stdout.text("Density: ")
-      !stdout.put(P.general)
-
-      ! Make two electron Fock matrix 
-      .FOCK:make_g_fock(P,F)
-      !stdout.text("Fock: ")
-      !stdout.put(F.general)
-
-      ! Make gradient
-      FcSm1.create(2*.n_bf,.n_e)
-      cSm1.create(2*.n_bf,.n_e)
-      cSm1.to_product_of(MO,S_inv)
-      FcSm1.to_product_of(F.general,cSm1)
-      cSm1.destroy
-      V.create(2*.n_bf, 2*.n_bf)
-      V = ZERO
-      V.alpha_alpha_set_to(.overlap_matrix)
-      V.beta_beta_set_to(.overlap_matrix)
-      !V.alpha_beta_set_to(.overlap_matrix)
-      !V.beta_alpha_set_to(.overlap_matrix)
-      cSm1.create(2*.n_bf,2*.n_bf)
-      cSm1.to_scaled_product_of(V,P.general,fac=ONE)
-
-      ! Assemble 1st and 2nd terms of gradient
-      gm = FcSm1
-      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
-      !stdout.text("Gradient: ")
-      !stdout.put(gm)
-
-      ! Make 2 x energy matrix
-      F.plus(.core_matrix)
-
-      ! Do energy
-      E = HALF * F.general.trace_product_with(P.general)
-
-      ! Clean up
-      cSm1.destroy
-      V.destroy
-      FcSm1.destroy
-      S_inv.destroy
-      P.destroy
-      F.destroy
-
-   end
 
    make_ELMO_gradient_u(MO,E,gm)
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
@@ -5669,9 +5683,10 @@ contains
       else;                                .:make_promolecule_density
       end
 
-      ! Get a starting MO's from this density
+      ! Get a starting fock matrix from this density
       .:make_fock_matrix
-      
+
+      ! Make the MO's 
       .:make_fock_guess
 
    end
@@ -5882,6 +5897,7 @@ contains
    ! From an initial .fock_matrix make the .molecular_orbitals, and
    ! .orbital_energies.  Then make the .density_matrix from these orbitals.
    ! Destroy .fock_matrix afterwards
+
    ENSURE(.scfdata.associated,"no scfdata")
    ENSURE(.fock_matrix.is_associated_with_genre(.scfdata.spinorbital_kind),"need an initial fock matrix")
 
@@ -6003,8 +6019,11 @@ contains
    make_g_fock_guess(MO_energies,MO,fock_matrix)
    ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
    ! a given complex general "fock_matrix".
-      MO_energies :: VEC{REAL}
-      MO,fock_matrix :: MAT{REAL}
+      self :: INOUT
+
+      MO_energies :: VEC{REAL}, OUT
+      MO :: MAT{REAL}, OUT
+      fock_matrix :: MAT{REAL}, IN
 
    ENSURE(.overlap_matrix.created,"no overlap matrix")
    DIE_IF(NOT fock_matrix.is_symmetric, "fock_matrix not symmetric!  WTF?!")
@@ -6075,18 +6094,8 @@ contains
       ! H = S^-1/2 F S^-1/2
       H.change_basis_using(R)
 
-      .BASE:put_debug(H,"make_gc_fock_guess: H matrix in orthonormalised AO basis")
-
-      H.make_hermitian !WTF?!
+    ! H.make_hermitian !WTF?!
       H.diagonalize_by_jacobi(MO_energies,MO)
-
-      ! Debug: check diagonalization
-      if (.BASE:debugging("make_gc_fock_guess: H diagonalisation check")) then
-         H.change_basis_using(MO)
-         stdout.text("make_gc_fock_guess: H diagonalisation check:")
-         stdout.put(H)
-         stdout.put(MO_energies)
-      end
 
       !  c  = S^-1/2 c~
       H.to_product_of(R,MO)
@@ -7089,6 +7098,7 @@ contains
       C :: OPMATRIX*
       dim :: INT
 
+      ! DIIS forbidden for ELMO
       if (.scfdata.use_ELMO) return
 
       if (NOT .scfdata.using_diis) return
