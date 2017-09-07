@@ -3809,8 +3809,6 @@ contains
    ENSURE(.data.associated,"no diffraction data!")
    ENSURE(NOT(.data.correct_dispersion AND .data.refine_positions_only),"dispersion not available for position-only refinement")
 
-     ! Set TRUE if you only want to fit/refine the coordinates
-
       k_pts :: MAT{REAL}*
       n_k,u :: INT
 
@@ -3844,7 +3842,7 @@ contains
    DIE_IF(.data.correct_dispersion AND .data.refine_positions_only,"dispersion not available for position-only refinement")
 
       k_pts :: MAT{REAL}*
-      n_k,u, f,base :: INT
+      n_k,u, f,uf,base :: INT
 
       if (NOT .correct_dispersion) return
 
@@ -3858,7 +3856,8 @@ contains
          ! Refine H isotropic U's
          do u = 1,.n_unit_cell_atoms
             f    = .frag_parent_for_cell_atom(u) ! unique fragment atom
-            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(f)
+            uf   = .asym_atom_for_frag_atom(f)
+            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(uf)
             .unit_cell_atom(u).add_derivative_dispn_H_iso(dFc,base,k_pts)
          end
 
@@ -3867,7 +3866,8 @@ contains
          ! Refine H ADPs
          do u = 1,.n_unit_cell_atoms
             f    = .frag_parent_for_cell_atom(u) ! unique fragment atom
-            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(f)
+            uf   = .asym_atom_for_frag_atom(f)
+            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(uf)
             .unit_cell_atom(u).add_derivative_dispn_H_ADP(dFc,base,k_pts)
          end
 
@@ -6980,6 +6980,52 @@ contains
 
    end
 
+   put_CIF_bond_info_tables(atom,covariance_matrix) ::: selfless
+   ! Put out the CIF bond lengths for an "atom" list with an associated "covariance_matrix"
+      atom :: VEC{ATOM}, IN
+      covariance_matrix :: MAT{REAL}, IN
+
+      f1,n1,f1b,c1b :: INT
+      f2,n2,f2b,c2b :: INT
+      cm :: MAT{REAL}*
+
+      ! Positional covariance matrix
+      cm.create(3*atom.dim,3*atom.dim)
+
+      ! Get just the positional covariance matrix (sigh)
+      f1b = 0
+      c1b = 0
+      do f1 = 1,atom.dim
+
+         n1  = atom(f1).no_of_pADPs
+
+         f2b = 0
+         c2b = 0
+         do f2 = 1,atom.dim
+
+            n2  = atom(f2).no_of_pADPs
+
+            cm(c1b+1:c1b+3,c2b+1:c2b+3) = covariance_matrix(f1b+1:f1b+3,f2b+1:f2b+3)
+
+            f2b = f2b + n2
+            c2b = c2b + 3
+
+         end
+
+         f1b = f1b + n1
+         c1b = c1b + 3
+
+      end
+
+      ! Print out the *CIF* tables with errors
+      atom.put_CIF_bond_length_table(cm)
+      atom.put_CIF_bond_angle_table(cm)
+
+      ! Clean
+      cm.destroy
+
+   end
+
    make_pos_covariance_matrix(cm) ::: leaky
    ! Allocate and make the positional covarinace matrix "cm".
       cm :: MAT{REAL}*
@@ -7512,6 +7558,30 @@ contains
 
    end
 
+   put_asymm_unit_CIF_bond_info 
+   ! Put out an asymmetric-unit "cif" file, bond info only
+      self :: INOUT
+
+   ENSURE(.asymmetric_unit_atom.associated,"no asymmetric_unit_atom list")
+   ENSURE(.asymmetric_unit_atom(1).pos_axis_system=="cartesian","not cartesian axes!")
+   ENSURE(.has_covariance_matrix,"no covariance!")
+
+      ::put_CIF_bond_info_tables(.asymmetric_unit_atom,.data.covariance_matrix)
+
+   end
+
+   put_fragment_CIF_bond_info
+   ! Put out a fragment_atom "cif" file, bond info only
+      self :: IN
+
+   ENSURE(.fragment_atom.associated,"no fragment_atom list")
+   ENSURE(.fragment_atom(1).pos_axis_system=="cartesian","not cartesian axes!")
+   ENSURE(.has_fragment_covariance_matrix,"no covariance!")
+
+      ::put_CIF_bond_info_tables(.fragment_atom,.data.fragment_covariance_matrix)
+
+   end
+
    has_covariances result (res) ::: PURE
    ! Does the covariance matrix exist?
       self :: IN
@@ -7559,13 +7629,19 @@ contains
       atom :: VEC{ATOM}, IN
 
       thresh :: STR
-      refine_H_U_iso :: BIN
+      refine_H_U_iso,cart,har :: BIN
+
+      ! Placeholders
+      ::put_CIF_crystal_data
 
       ! Spacegroup information
       .spacegroup.put_CIF
 
       ! Unit cell information; INOUT
-      .unit_cell.put_CIF(.Z)
+      cart = atom(1).pos_axis_system == "cartesian"
+      har  = FALSE
+      if (.data.associated) har = .data.refine_structure OR .data.fit_structure
+      .unit_cell.put_CIF(.Z,cart,har)
 
       ! Any data?
       refine_H_U_iso = TRUE
@@ -7576,13 +7652,30 @@ contains
       atom.put_CIF_ADP2(refine_H_U_iso)
       atom.put_CIF_ADPn(cif)
 
+      ! Put covariance matrix  
+      if (cif.use_CIF2) then
+      if (atom(1).pos_axis_system=="cartesian") then
+      if (.data.associated) then
+      if (.data.reflections.associated) then
+         .data.put_CIF_covariance_matrices(cif)
+      end
+      end
+      end
+      end
+      
+      ! Put wavelength and other refl data
+      if (.data.associated) then
+      if (.data.reflections.associated) then
+         thresh = .data.CIF_threshold_expression
+         .data.reflections.put_CIF_refln_data(thresh)
+      end
+      end
+
       ! Put the reflection data
       if (.data.associated) then
-         .data.put_CIF_covariance_matrices(cif.use_CIF2)
-         if (.data.reflections.associated) then
-            thresh = .data.CIF_threshold_expression
-            .data.reflections.put_CIF(thresh)
-         end
+      if (.data.reflections.associated) then
+       ! .data.reflections.put_xd_fco
+      end
       end
 
    end
@@ -7600,13 +7693,20 @@ contains
 
       n_pADPs :: INT
       thresh :: STR
+      cart,har :: BIN
       esd :: VEC{REAL}*
+
+      ! Placeholders
+      ::put_CIF_crystal_data
 
       ! Spacegroup information
       .spacegroup.put_CIF
 
       ! Unit cell information; INOUT
-      .unit_cell.put_CIF(.Z)
+      cart = atom(1).pos_axis_system == "cartesian"
+      har  = FALSE
+      if (.data.associated) har = .data.refine_structure OR .data.fit_structure
+      .unit_cell.put_CIF(.Z,cart,har)
 
       ! Put refinement special info
       .data.put_CIF_refinement
@@ -7622,15 +7722,70 @@ contains
       atom.put_CIF_ADP2(.data.refine_H_U_iso,esd)
       atom.put_CIF_ADPn(cif,esd)
 
+      ! Put bond & angle info
+      if (atom(1).pos_axis_system=="cartesian") then
+      ::put_CIF_bond_info_tables(atom,covariance_matrix)
+      end
+
       ! Clean
       esd.destroy
 
-      ! Put the reflection data
-      .data.put_CIF_covariance_matrices(cif.use_CIF2)
+      ! Put covariance matrix  
+      if (cif.use_CIF2) then
+      if (atom(1).pos_axis_system=="cartesian") then
+      if (.data.associated) then
+      if (.data.reflections.associated) then
+         .data.put_CIF_covariance_matrices(cif)
+      end
+      end
+      end
+      end
+      
+      ! Put wavelength and other refl data
+      if (.data.associated) then
       if (.data.reflections.associated) then
          thresh = .data.CIF_threshold_expression
-         .data.reflections.put_CIF(thresh)
+         .data.reflections.put_CIF_refln_data(thresh)
       end
+      end
+
+      ! Put the reflection data
+      if (.data.associated) then
+      if (.data.reflections.associated) then
+       ! .data.reflections.put_xd_fco
+      end
+      end
+
+   end
+
+   put_CIF_crystal_data ::: selfless, private
+   ! Put placeholders forCIF crystal data
+      self :: IN
+
+      stdout.flush
+      stdout.text("# =======")
+      stdout.text("# Crystal")
+      stdout.text("# =======")
+
+      stdout.flush
+      stdout.show("_exptl_crystal_description         ","?"     ,dots=FALSE)
+      stdout.show("_exptl_crystal_colour              ","?"     ,dots=FALSE)
+      stdout.show("_exptl_crystal_size_max            ","?"     ,dots=FALSE)
+      stdout.show("_exptl_crystal_size_mid            ","?"     ,dots=FALSE)
+      stdout.show("_exptl_crystal_size_min            ","?"     ,dots=FALSE)
+      stdout.show("_exptl_crystal_density_diffrn      ","?"     ,dots=FALSE)
+
+      stdout.flush
+      stdout.text("# ==============")
+      stdout.text("# Absortion data")
+      stdout.text("# ==============")
+
+      stdout.flush
+      stdout.show("_exptl_absorpt_coefficient_mu      ","?"     ,dots=FALSE)
+      stdout.show("_exptl_absorpt_correction_type     ","'none'",dots=FALSE)
+      stdout.show("_exptl_absorpt_process_details     ","?"     ,dots=FALSE)
+      stdout.show("_exptl_absorpt_correction_T_min    ","?"     ,dots=FALSE)
+      stdout.show("_exptl_absorpt_correction_T_max    ","?"     ,dots=FALSE)
 
    end
 
@@ -7700,7 +7855,157 @@ contains
 
    end
 
-! Shelx fcf file
+   put_CIF_reflections(threshold)
+   ! Put reflection information in CIF format *on an absolute scale*
+      self :: IN
+      threshold :: STR, IN
+
+   ENSURE(.data.associated,"no diffraction data!")
+
+      table :: VEC{TABLE_COLUMN}*
+      h,k,l,g :: VEC{INT}@
+      stl,d,fac :: VEC{REAL}@
+      F_cr,F_ci,F_ph :: VEC{REAL}@
+      F_pred,F_exp,F_sigma,F_z :: VEC{REAL}@
+      n_refl :: INT
+
+      lambda :: REAL
+      thmax  :: REAL
+    ! fcmax  :: REAL
+
+      ! Constants
+      n_refl = .data.reflections.dim
+
+      stdout.flush
+      stdout.text("# ================")
+      stdout.text("# Diffraction data")
+      stdout.text("# ================")
+
+      lambda = REFLECTION:wavelength()
+      lambda.convert_to("angstrom")
+
+      stdout.flush
+      stdout.show("_diffrn_radiation_type             ","?"                     ,dots=FALSE)
+      stdout.show("_diffrn_radiation_wavelength       ",lambda                  ,dots=FALSE)
+
+      stdout.flush
+      stdout.show("_diffrn_measurement_method         ","?"                     ,dots=FALSE)
+      stdout.show("_diffrn_measurement_device_type    ","?"                     ,dots=FALSE)
+
+      thmax = maxval(abs(.data.reflections(:).theta))*DEGREE_PER_RADIAN
+
+      stdout.flush
+      stdout.show("_diffrn_reflns_number              ","?"                     ,dots=FALSE)
+      stdout.show("_diffrn_reflns_theta_max           ",thmax                   ,dots=FALSE)
+
+      stdout.flush
+      stdout.text("# ===========")
+      stdout.text("# Reflections")
+      stdout.text("# ===========")
+
+      stdout.flush
+      stdout.show("_reflns_d_resolution_high          ",.data.reflections(:).d_max*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_d_resolution_low           ",.data.reflections(:).d_min*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_limit_h_max                ",maxval(.data.reflections(:).h),dots=FALSE)
+      stdout.show("_reflns_limit_h_min                ",minval(.data.reflections(:).h),dots=FALSE)
+      stdout.show("_reflns_limit_k_max                ",maxval(.data.reflections(:).k),dots=FALSE)
+      stdout.show("_reflns_limit_k_min                ",minval(.data.reflections(:).k),dots=FALSE)
+      stdout.show("_reflns_limit_l_max                ",maxval(.data.reflections(:).l),dots=FALSE)
+      stdout.show("_reflns_limit_l_min                ",minval(.data.reflections(:).l),dots=FALSE)
+      stdout.show("_reflns_number_gt                  ",n_refl                   ,dots=FALSE)
+      stdout.show("_reflns_number_total               ",n_refl                   ,dots=FALSE)
+      stdout.show("_reflns_threshold_expression       ",threshold                ,dots=FALSE)
+
+      stdout.flush
+      stdout.text("_reflns_special_details            ")
+      stdout.text(";")
+      stdout.text("* Specify symmetry and Friedel pair averaging *")
+
+      stdout.flush
+      stdout.text(". Only.data reflections which satisfy the threshold expression")
+      stdout.text("  are listed below, and only they are considered observed,")
+      stdout.text("  thus the *_gt, *_all, & *_total data are always the same")
+      stdout.text(";")
+
+    ! fcmax = maxval(abs(.data.reflections(:).F_calc))
+    ! stdout.flush
+    ! stdout.show("_shelx_F_calc_maximum              ", fcmax,dots=FALSE)
+
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("    _refln_index_h")
+      stdout.text("    _refln_index_k")
+      stdout.text("    _refln_index_l")
+      stdout.text("    _refln_index_group")
+      stdout.text("    _refln_stl")
+      stdout.text("    _refln_d_spacing")
+      stdout.text("    _refln_A_calc")
+      stdout.text("    _refln_B_calc")
+      stdout.text("    _refln_phase_calc")
+      stdout.text("    _refln_F_calc")
+      stdout.text("    _refln_F_meas")
+      stdout.text("    _refln_F_sigma")
+      stdout.text("    _refln_delta_F_on_sigma")
+
+      ! Get data
+      h       = .data.reflections(:).h
+      k       = .data.reflections(:).k
+      l       = .data.reflections(:).l
+      g       = .data.reflections(:).group
+      stl     = .data.reflections(:).stl*BOHR_PER_ANGSTROM
+      d       = .data.reflections(:).d  *ANGSTROM_PER_BOHR
+      allocate(F_cr(n_refl))
+      allocate(F_ci(n_refl))
+      F_cr    = RE(.data.reflections(:).F_calc)
+      F_ci    = IM(.data.reflections(:).F_calc)
+      F_ph    = REFLECTION:F_phase_in_degrees(.data.reflections(:))
+      F_exp   = .F_exp_scaled_corrected
+      fac     =  F_exp/.data.reflections.F_exp
+      F_pred  = .data.reflections.F_pred *fac
+      F_sigma = .data.reflections.F_sigma*fac
+      F_z     = REFLECTION:F_z(.data.reflections(:))
+
+      ! Make table
+      table.create(13)
+       table(1).set_values(h)
+       table(2).set_values(k)
+       table(3).set_values(l)
+       table(4).set_values(g)
+       table(5).set_values(stl)
+       table(6).set_values(d)
+       table(7).set_values(F_cr)
+       table(8).set_values(F_ci)
+       table(9).set_values(F_ph)
+      table(10).set_values(F_pred)
+      table(11).set_values(F_exp)
+      table(12).set_values(F_sigma)
+      table(13).set_values(F_z)
+
+      ! Body
+      table.put_body
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+
+   end
+
+! fcf files
+
+   put_tonto_fcf
+   ! Put a tonto fcf file with all the info and scaled so that
+   ! Olex2 can make difference density maps.
+      self :: IN
+
+   ENSURE(.data.associated,"no data!")
+   ENSURE(.data.reflections.associated,"no reflections!")
+
+      thresh :: STR
+
+       thresh = .data.CIF_threshold_expression
+        .put_CIF_reflections(thresh)
+
+   end
 
    put_shelx_fcf5
    ! Put shelx fcf LIST=5 reflection file.
@@ -7715,7 +8020,7 @@ contains
       .spacegroup.put_CIF
 
       ! Unit cell information; INOUT
-      .unit_cell.put_CIF(.Z)
+      .unit_cell.put_CIF(.Z,cart=FALSE,har=FALSE)
 
       ! Put the reflection data
       if (.data.associated) then
@@ -7734,8 +8039,8 @@ contains
          stdout.text("# ===============")
    
          stdout.flush
-         stdout.show("_reflns_d_resolution_high          ",.data.reflections.d_max*ANGSTROM_PER_BOHR,dots=FALSE)
-         stdout.show("_reflns_d_resolution_low           ",.data.reflections.d_min*ANGSTROM_PER_BOHR,dots=FALSE)
+         stdout.show("_reflns_d_resolution_high          ",.data.reflections.d_min*ANGSTROM_PER_BOHR,dots=FALSE)
+         stdout.show("_reflns_d_resolution_low           ",.data.reflections.d_max*ANGSTROM_PER_BOHR,dots=FALSE)
          stdout.show("_reflns_limit_h_max                ",maxval(.data.reflections(:).h),dots=FALSE)
          stdout.show("_reflns_limit_h_min                ",minval(.data.reflections(:).h),dots=FALSE)
          stdout.show("_reflns_limit_k_max                ",maxval(.data.reflections(:).k),dots=FALSE)
@@ -7794,7 +8099,7 @@ contains
       .spacegroup.put_CIF
 
       ! Unit cell information; INOUT
-      .unit_cell.put_CIF(.Z)
+      .unit_cell.put_CIF(.Z,cart=FALSE,har=FALSE)
 
       ! Put the reflection data
       if (.data.associated) then
@@ -7877,7 +8182,7 @@ contains
       .spacegroup.put_CIF
 
       ! Unit cell information; INOUT
-      .unit_cell.put_CIF(.Z)
+      .unit_cell.put_CIF(.Z,cart=FALSE,har=FALSE)
 
       ! Put the reflection data
       if (.data.associated) then
