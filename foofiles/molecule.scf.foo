@@ -4258,7 +4258,7 @@ contains
 
    make_ELMO_gradient_r(MO,E,gm)
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
-   ! gm = F MO S^{-1} - (1/2)S D F MO S^{-1}, as matrices!!!
+   ! gm = 4 (F MO S^{-1} - (1/2)S P F MO S^{-1}) as matrices!!!
       self :: IN
       MO :: MAT{REAL}, IN
       E  :: REAL, OUT
@@ -4269,7 +4269,7 @@ contains
    ENSURE( .overlap_matrix.created,"NO overlap_matrix")
 
       P,F :: OPMATRIX*
-      S_inv, FcSm1,cSm1 :: MAT{REAL}*
+      SP,S_inv, FcSm1,cSm1 :: MAT{REAL}*
 
       ! Create Fock & density matrix
       F.create(.n_bf,"restricted")
@@ -4288,22 +4288,22 @@ contains
       ! Make two electron Fock matrix 
       .FOCK:make_r_fock(P,F)
 
-      ! Make gradient
+      ! Make F x c x S-1
       FcSm1.create(.n_bf,.n_a)
       cSm1.create(.n_bf,.n_a)
       cSm1.to_product_of(MO,S_inv)
       FcSm1.to_product_of(F.restricted,cSm1)
       cSm1.destroy
-      cSm1.create(.n_bf,.n_bf)
-      cSm1.to_scaled_product_of(.overlap_matrix,P.restricted,fac=HALF)
+
+      ! Make S x P ... note 1/2 to cancel factor 2 in P.restricted
+      SP.create(.n_bf,.n_bf)
+      SP.to_scaled_product_of(.overlap_matrix,P.restricted,fac=HALF)
 
       ! Assemble 1st and 2nd terms of gradient
       gm = FcSm1
-      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-ONE)
+      gm.plus_scaled_product_of(SP,FcSm1,fac=-ONE)
 
-      stdout.text("gm:")
-      stdout.put(gm)
-      stop
+      gm = FOUR*gm
 
       ! Make 2 x energy matrix
       F.plus(.core_matrix)
@@ -4312,7 +4312,7 @@ contains
       E = HALF * F.expectation(P.restricted)
 
       ! Clean up
-      cSm1.destroy
+      SP.destroy
       FcSm1.destroy
       S_inv.destroy
       P.destroy
@@ -4350,7 +4350,7 @@ contains
 
    make_ELMO_gradient_g(MO,E,gm)
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
-   ! gm = F MO S^{-1} - S D F MO S^{-1}, as matrices!!!
+   ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
       self :: INOUT
       MO :: MAT{REAL}, IN
       E  :: REAL, OUT
@@ -4361,7 +4361,7 @@ contains
    ENSURE( .overlap_matrix.created,"NO overlap_matrix")
 
       P,F :: OPMATRIX*
-      V,S_inv, FcSm1,cSm1 :: MAT{REAL}*
+      SSP,SS,S_inv, FcSm1,cSm1 :: MAT{REAL}*
 
       ! Create Fock & density matrix
       P.create(.n_bf,"general")
@@ -4379,8 +4379,6 @@ contains
       
       ! Make two electron Fock matrix 
       .FOCK:make_g_fock(P,F)
-      stdout.text("Fock: ")
-      stdout.put(F.general)
 
       ! Make gradient
       FcSm1.create(2*.n_bf,.n_e)
@@ -4389,20 +4387,21 @@ contains
       FcSm1.to_product_of(F.general,cSm1)
       cSm1.destroy
 
-      V.create(2*.n_bf, 2*.n_bf)
-      V = ZERO
-      V.alpha_alpha_set_to(.overlap_matrix)
-        V.beta_beta_set_to(.overlap_matrix)
-      cSm1.create(2*.n_bf,2*.n_bf)
-      cSm1.to_scaled_product_of(V,P.general,fac=ONE)
+      ! Make spin-orbital SSP
+      SS.create(2*.n_bf, 2*.n_bf)
+      SS = ZERO
+      SS.alpha_alpha_set_to(.overlap_matrix)
+        SS.beta_beta_set_to(.overlap_matrix)
+
+      ! Make SS x P
+      SSP.create(2*.n_bf,2*.n_bf)
+      SSP.to_scaled_product_of(SS,P.general,fac=ONE)
 
       ! Assemble 1st and 2nd terms of gradient
       gm = FcSm1
-      gm.plus_scaled_product_of(cSm1,FcSm1,fac=-TWO)
+      gm.plus_scaled_product_of(SSP,FcSm1,fac=-ONE)
 
-      stdout.text("2*gm:")
-      stdout.put(TWO*gm)
-      stop
+      gm = TWO*gm
 
       ! Make 2 x energy matrix
       F.plus(.core_matrix)
@@ -4411,8 +4410,8 @@ contains
       E = HALF * F.general.trace_product_with(P.general)
 
       ! Clean up
-      cSm1.destroy
-      V.destroy
+      SSP.destroy
+      SS.destroy
       FcSm1.destroy
       S_inv.destroy
       P.destroy
