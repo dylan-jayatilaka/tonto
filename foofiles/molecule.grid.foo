@@ -20,7 +20,6 @@
 ! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 ! Boston, MA  02111-1307, USA.
 !
-! $Id: $
 !===============================================================================
 
 module MOLECULE.GRID
@@ -11065,6 +11064,150 @@ contains
        end
 
      end
+
+   end
+
+
+   make_mixed_ESP_grid_r_v2(grid,pt,P)
+   ! Make the multipole ESP grid (off diagonal) using the exact for
+   ! the one center terms potential "grid" on a series of grid points
+   ! "pt" using AO density matrix "P"
+      grid :: VEC{REAL}, INOUT
+      pt :: MAT{REAL}, IN
+      P :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+
+      VD :: VEC{MAT3_{REAL}}*
+      Vab :: MAT{REAL}@
+      Pba :: MAT{REAL}@
+      P_max,tol, Va,Vb :: REAL
+      skip :: BIN
+      n_pt,q,a,b,fa,fb,la,lb,na,nb,k :: INT
+      atom_a,atom_b :: INT
+      sh :: SHELL2
+      T :: T_TENSOR
+      pole0 :: VEC{REAL}*
+      pole2,pole4,pole8 :: MAT{REAL}*
+      V :: VEC{REAL}(4)
+
+      n_pt = pt.dim1
+
+      grid = ZERO
+
+      ! Make atomic multipoles
+    ! pole0.create(.n_atom)
+    ! pole2.create(.n_atom, 3)
+    ! pole4.create(.n_atom, 6)
+    ! pole8.create(.n_atom, 10)
+
+    ! .BASE:make_atomic_multipoles(pole0,pole2,pole4,pole8,oc=TRUE)
+
+    ! ! Make mutipole potential
+    ! do q = 1, .n_atom
+    ! do k = 1, n_pt
+    !    T.create_fast(.atom(q).position, pt(k,:))
+    !    V = T.electrostatic_potential(pole0(q),pole2(q,:),pole4(q,:),pole8(q,:))
+    !    grid(k) = grid(k) - sum(V)
+    ! end do
+    ! end do
+
+    ! pole8.destroy
+    ! pole4.destroy
+    ! pole2.destroy
+    ! pole0.destroy
+
+      ! Diagonal blocks for schwarz test
+      .:make_diagonal_block_V_ints(VD,pt)
+
+      ! Schwarz test tolerance
+      tol = TOL(6)
+
+      ! Make exact potential
+      parallel do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,a,fa,la,na,b,fb,lb,nb,atom_a,atom_b)
+
+         ! Density matrix
+         Pba = P(fa:la,fb:lb)
+         P_max = maxval(abs(Pba))
+
+         if (fa==fb) then
+
+            ! Do basis-fn diagonal exactly
+            do k = 1,n_pt
+               grid(k) = grid(k) - sum(VD(a).element(:,:,k)*Pba)
+            end
+
+         else if (P_max>tol) then
+            
+            ! Schwarz test for off diagonals & large P's
+            allocate(Vab(na,nb))
+            do k = 1,n_pt
+               Va = sqrt(maxval(abs(VD(a).element(:,:,k))))
+               Vb = sqrt(maxval(abs(VD(b).element(:,:,k))))
+               if (P_max*Va*Vb > tol) then
+                  sh.get_nuc(Vab,ZERO,pt(k,:))
+                  grid(k) = grid(k) - sum(Vab*Pba)*TWO
+               end
+            end
+            deallocate(Vab)
+
+         end
+
+         sh.destroy_ptr_part
+
+      end
+            
+      ! Clean
+      VD.destroy
+
+      ! Reduce
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(grid)
+      end
+
+   end
+
+   make_diagonal_block_V_ints(V,pt) ::: private, leaky
+   ! Make "V" the diagonal block nuclear attraction integrals 
+   ! (a| |r_k - r|^-1 |a) over a shell q, a in q, for each 
+   ! point r_k = "pt(k,1:3)".
+      V :: VEC{MAT3_{REAL}}*, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(3==pt.dim2,"wrong dim2, pt")
+
+      n_pt,q,s,fa,fb,la,lb,na,nb,k :: INT
+      atom_a,atom_b :: INT
+      sh :: SHELL2
+
+      n_pt = pt.dim1
+
+      V.create(.n_shell)
+
+      s = 0
+
+      parallel do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+
+         if (fa==fb) then
+
+            s = s + 1
+            V(s).element.create(na,na,n_pt)
+
+            do k = 1,n_pt
+               sh.get_nuc(V(s).element(:,:,k),ZERO,pt(k,:))
+            end
+
+         end
+
+         sh.destroy_ptr_part
+
+      end
 
    end
 
