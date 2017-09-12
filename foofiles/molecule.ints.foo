@@ -284,18 +284,19 @@ contains
       end
 
       if (DO_IN_PARALLEL) then
-        PARALLEL_SYMMETRIC_SUM(T)
+         PARALLEL_SYMMETRIC_SUM(T)
       else
-        T.symmetric_reflect
+         T.symmetric_reflect
       end
 
       .BASE:put_debug(T,"make_kinetic_energy_mx: T")
 
    end
 
-   make_ELMO_kinetic_energy_mx(T)
+   make_ELMO01_T_mx(T)
    ! Calculate the kinetic energy matrix "T".
-      T :: MAT{REAL}
+      self :: IN
+      T :: MAT{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.associated,  "no atom list")
@@ -306,21 +307,26 @@ contains
       T = ZERO
 
       parallel do q = 1,.n_shell_pairs
+
         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
-        if(atom_a /= atom_b AND (NOT .BASE:connected(atom_a,atom_b))) cycle
-        sh.get_kei(T(fa:la,fb:lb))
+
+         ! For ELMO(0,y) we only want atom_a==atom_b
+        if(atom_a == atom_b ) then
+           sh.get_kei(T(fa:la,fb:lb))
+        end
+
         sh.destroy_ptr_part
+
       end
 
       if (DO_IN_PARALLEL) then
-        PARALLEL_SYMMETRIC_SUM(T)
+         PARALLEL_SYMMETRIC_SUM(T)
       else
-        T.symmetric_reflect
+         T.symmetric_reflect
       end
 
-      .BASE:put_debug(T,"make_kinetic_energy_mx: T")
-
    end
+
 !  =============================
 !  Kinetic and overlap integrals
 !  =============================
@@ -361,64 +367,49 @@ contains
 
    end
 
-   make_ELMO_nuclear_attraction_mx(Z)
-   ! Calculate the nuclear attraction matrix "Z".
-      Z :: MAT{REAL}
+   make_ELMO01_NA_mx(Z)
+   ! Calculate the ELMO01 nuclear attraction matrix "Z".
+      self :: INOUT
+      Z :: MAT{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.associated,  "no atom list")
 
       atom :: ATOM*
       Z_c,X,MX,M :: MAT{REAL}*
-      atom_a,atom_b,q,c,fa,la,na,fb,lb,nb :: INT
+      atom_a,atom_b,q,n,c,fa,la,na,fb,lb,nb :: INT
       sh :: SHELL2
 
       Z = ZERO
-      select case (.nucleus_model)
-        case ("finite","gaussian")
 
-        X.create(.n_prim,.n_prim)
-        X=ZERO
-        .REL:make_primitive_nuclear_matrix(X)
-        M.create(.n_prim,.n_bf)
-        .BASE:make_normalised_contraction_mx(M)
-        MX.create(.n_bf,.n_prim)
-        MX.to_product_of(M,X,transpose_a=TRUE)
-        X.destroy
-        Z.to_product_of(MX,M)
-        M.destroy
-        MX.destroy
+      parallel do q = 1,.n_shell_pairs
 
-      case ("point")
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
-        parallel do q = 1,.n_shell_pairs
+         ! For ELMO(0,y) we only want atom_a==atom_b
+         if (atom_a == atom_b) then
 
-           .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
-           if(atom_a /= atom_b AND (NOT .BASE:connected(atom_a,atom_b))) cycle
+            ! For ELMO(x,1) loop over connected nuclei
+            Z_c.create(na,nb)
+            do n = 1,.atoms_bonded_to_atom(atom_a).element.dim
+               c = .atoms_bonded_to_atom(atom_a)[n]
+               sh.get_nuc(Z_c, ZERO, .atom(c).position)
+               Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - .atom(c).nuclear_charge * Z_c
+            end
+            Z_c.destroy
 
-           Z_c.create(na,nb)
-           do c = 1,.n_atom
-              atom => .atom(c)
-              sh.get_nuc(Z_c, atom.mass, atom.position)
-              Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.nuclear_charge * Z_c
-           end
+         end
 
-           Z_c.destroy
-           sh.destroy_ptr_part
+         ! Clean
+         sh.destroy_ptr_part
 
-        end
-
-        if (DO_IN_PARALLEL) then
-          PARALLEL_SYMMETRIC_SUM(Z)
-        else
-          Z.symmetric_reflect
-        end
-
-      case default
-        DIE("Unknown nucleus model")
       end
 
-      .BASE:put_debug(Z,"make_nuclear_attraction_mx: Z")
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SYMMETRIC_SUM(Z)
+      else
+         Z.symmetric_reflect
+      end
 
    end
 
