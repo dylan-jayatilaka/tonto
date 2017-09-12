@@ -293,6 +293,34 @@ contains
 
    end
 
+   make_ELMO_kinetic_energy_mx(T)
+   ! Calculate the kinetic energy matrix "T".
+      T :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+
+      atom_a,atom_b,q,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      T = ZERO
+
+      parallel do q = 1,.n_shell_pairs
+        .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+        if(atom_a /= atom_b AND (NOT .BASE:connected(atom_a,atom_b))) cycle
+        sh.get_kei(T(fa:la,fb:lb))
+        sh.destroy_ptr_part
+      end
+
+      if (DO_IN_PARALLEL) then
+        PARALLEL_SYMMETRIC_SUM(T)
+      else
+        T.symmetric_reflect
+      end
+
+      .BASE:put_debug(T,"make_kinetic_energy_mx: T")
+
+   end
 !  =============================
 !  Kinetic and overlap integrals
 !  =============================
@@ -330,6 +358,67 @@ contains
 
       ! Compress
       .nuclear_attraction_matrix.compress
+
+   end
+
+   make_ELMO_nuclear_attraction_mx(Z)
+   ! Calculate the nuclear attraction matrix "Z".
+      Z :: MAT{REAL}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+
+      atom :: ATOM*
+      Z_c,X,MX,M :: MAT{REAL}*
+      atom_a,atom_b,q,c,fa,la,na,fb,lb,nb :: INT
+      sh :: SHELL2
+
+      Z = ZERO
+      select case (.nucleus_model)
+        case ("finite","gaussian")
+
+        X.create(.n_prim,.n_prim)
+        X=ZERO
+        .REL:make_primitive_nuclear_matrix(X)
+        M.create(.n_prim,.n_bf)
+        .BASE:make_normalised_contraction_mx(M)
+        MX.create(.n_bf,.n_prim)
+        MX.to_product_of(M,X,transpose_a=TRUE)
+        X.destroy
+        Z.to_product_of(MX,M)
+        M.destroy
+        MX.destroy
+
+      case ("point")
+
+        parallel do q = 1,.n_shell_pairs
+
+           .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+           if(atom_a /= atom_b AND (NOT .BASE:connected(atom_a,atom_b))) cycle
+
+           Z_c.create(na,nb)
+           do c = 1,.n_atom
+              atom => .atom(c)
+              sh.get_nuc(Z_c, atom.mass, atom.position)
+              Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.nuclear_charge * Z_c
+           end
+
+           Z_c.destroy
+           sh.destroy_ptr_part
+
+        end
+
+        if (DO_IN_PARALLEL) then
+          PARALLEL_SYMMETRIC_SUM(Z)
+        else
+          Z.symmetric_reflect
+        end
+
+      case default
+        DIE("Unknown nucleus model")
+      end
+
+      .BASE:put_debug(Z,"make_nuclear_attraction_mx: Z")
 
    end
 
