@@ -4029,7 +4029,7 @@ contains
 
       orb_kind :: STR
       MOv, gv,sh :: VEC{REAL}*
-      gm,MO,MOa,MOb,F,P,Fa,Fb,Pa,Pb :: MAT{REAL}*
+      gm,ge,MO,MOa,MOb,F,P,Fa,Fb,Pa,Pb :: MAT{REAL}*
       i :: INT
       E :: REAL
 
@@ -4109,12 +4109,12 @@ contains
 
             MOv.destroy
 
-         else
+         elseif (.scfdata.use_LSQ) then
 
             ! Least squares method
-            sh.create(.n_bf*.n_e)
-            gv.create(.n_bf*.n_e)
-            gm.create(.n_bf,.n_e)
+            sh.create(2*.n_bf*.n_e)
+            gv.create(2*.n_bf*.n_e)
+            gm.create(2*.n_bf,.n_e)
 
             .:make_ELMO_gradient_g(MO,E,gm)
 
@@ -4133,6 +4133,28 @@ contains
             gv.destroy
             sh.destroy
 
+         ! A simple Gradient Check Operation
+         else
+            ! Creates the gradient matrix
+            gm.create(2*.n_bf,.n_e)
+            gm=ZERO
+
+            ! Calculates gradient with equations derived from Stoll
+            .:make_ELMO_gradient_g(MO,E,gm)
+            ge.create(2*.n_bf,.n_e)
+            ge = gm
+            stdout.text("Equation Gradient: ")
+            stdout.put(ge)
+            gm = ZERO
+
+            ! Ensures all values are solely due to FD approach 
+            .:make_ELMO_gradient_g_fd(MO,E,gm)
+            stdout.text("Finite Difference Gradient: ")
+            stdout.put(gm)
+            
+            stdout.show("Difference is: ", norm2(gm-ge))
+            stop
+         
          end
       
       case ("uhf     ")
@@ -4380,9 +4402,9 @@ contains
         do bm = 1,2*.n_bf*.n_e
 
            ! ????
-           b = (bm-1) /(2*.n_bf) + 1
-           m = bm  - b*(2*.n_bf)
-
+           b = mod(bm-1,2*.n_bf) + 1
+           m = floor(real(bm-1)/(2*.n_bf)) + 1
+           
            ! Add step
            MO(b,m) = MO(b,m) + stps
 
@@ -4398,9 +4420,10 @@ contains
            S_inv.create(.n_e,.n_e)
            S_inv = ZERO
            .BASE:make_ELMO_S_inv_g(S_inv,MO)
-         
+
            ! Back transform -> P
            S_inv.back_transform_to(P.general,MO(:,1:.n_e))
+           S_inv.destroy
            
            ! Make two electron Fock matrix 
            .FOCK:make_g_fock(P,F)
@@ -4412,11 +4435,10 @@ contains
            E = HALF * F.general.trace_product_with(P.general)
 
            ! Add part
-           gm(b,m) = gm(b,m) + stp2*E
+           gm(b,m) = gm(b,m) + step*stp2*E
 
            ! Remove step
            MO(b,m) = MO(b,m) - stps
-
         end
 
       end
