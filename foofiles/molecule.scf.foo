@@ -4159,27 +4159,53 @@ contains
 
          ! A simple Gradient Check Operation
          else
-            ! Creates the gradient matrix
-            gm.create(2*.n_bf,.n_e)
-            gm=ZERO
-
-            ! Calculates gradient with equations derived from Stoll
-            .:make_NOMO_gradient_g(MO,E,gm)
-            ge.create(2*.n_bf,.n_e)
-            ge = gm
-            stdout.text("Equation Gradient: ")
-            stdout.put(ge)
-            gm = ZERO
-
-            ! Ensures all values are solely due to FD approach 
-            .:make_NOMO_gradient_g_fd(MO,E,gm)
-            stdout.text("Finite Difference Gradient: ")
-            stdout.put(gm)
             
-            stdout.show("Difference is: ", norm2(gm-ge))
-            stop
+            if (.scfdata.use_ELMO) then
+               ! Creates the gradient matrix
+               gm.create(2*.n_bf,.n_e)
+               gm=ZERO
+
+               ! Calculates gradient with equations derived from Stoll
+               .:make_ELMO_gradient_g(MO,E,gm)
+               ge.create(2*.n_bf,.n_e)
+               ge = gm
+               stdout.text("Equation Gradient: ")
+               stdout.put(ge)
+               gm = ZERO
+
+               ! Ensures all values are solely due to FD approach 
+               .:make_ELMO_gradient_g_fd(MO,E,gm)
+               stdout.text("Finite Difference Gradient: ")
+               stdout.put(gm)
+               
+               stdout.show("Difference is: ", norm2(gm-ge))
+               stop
+            
+            else
+
+               ! Creates the gradient matrix
+               gm.create(2*.n_bf,.n_e)
+               gm=ZERO
+
+               ! Calculates gradient with equations derived from Stoll
+               .:make_NOMO_gradient_g(MO,E,gm)
+               ge.create(2*.n_bf,.n_e)
+               ge = gm
+               stdout.text("Equation Gradient: ")
+               stdout.put(ge)
+               gm = ZERO
+
+               ! Ensures all values are solely due to FD approach 
+               .:make_NOMO_gradient_g_fd(MO,E,gm)
+               stdout.text("Finite Difference Gradient: ")
+               stdout.put(gm)
+               
+               stdout.show("Difference is: ", norm2(gm-ge))
+               stop
+            
+            end if
          
-         end
+         end if
       
       case ("uhf     ")
 
@@ -4391,6 +4417,86 @@ contains
 
       gm.destroy
       Cm.destroy
+
+   end
+
+   make_ELMO_gradient_g_fd(MO,E,gm)
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
+      self :: INOUT
+      MO :: MAT{REAL}, INOUT
+      E  :: REAL, OUT
+      gm :: MAT{REAL}, OUT
+
+   ENSURE(MO.dim1==2*.n_bf AND MO.dim2==.n_e,"MO wrong shape")
+   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
+
+      P,F :: OPMATRIX*
+      S_inv :: MAT{REAL}*
+      step, bm,b,m :: INT
+      stps,stp2,leng :: REAL
+
+      nullify(P)
+      nullify(F)
+
+      leng = 0.001d0
+         
+      gm = ZERO
+
+      do step = -1,1,2
+
+        stps = step*leng
+        stp2 = ONE/(TWO*leng)
+
+        do bm = 1,2*.n_bf*.n_e
+
+           ! ????
+           b = mod(bm-1,2*.n_bf) + 1
+           m = floor(real(bm-1)/(2*.n_bf)) + 1
+           
+           ! Add step
+           MO(b,m) = MO(b,m) + stps
+
+           ! Fock & density matrix
+           P.destroy
+           F.destroy
+           P.create(.n_bf,"general")
+           F.create(.n_bf,"general")
+           F.general = ZERO
+           P.general = ZERO
+         
+           ! Make S, S^{-1} in the MO basis
+           S_inv.create(.n_e,.n_e)
+           S_inv = ZERO
+           .BASE:make_NOMO_S_inv_g(S_inv,MO)
+
+           ! Back transform -> P
+           S_inv.back_transform_to(P.general,MO(:,1:.n_e))
+           S_inv.destroy
+           
+           ! Make two electron Fock matrix 
+           .FOCK:make_ELMO_g_fock(P,F)
+         
+           ! Make 2 x energy matrix
+           F.plus(.core_matrix)
+         
+           ! Do energy E(x0+/-step)
+           E = HALF * F.general.trace_product_with(P.general)
+
+           ! Add part
+           gm(b,m) = gm(b,m) + step*stp2*E
+
+           ! Remove step
+           MO(b,m) = MO(b,m) - stps
+        end
+
+      end
+
+      ! Clean up
+      S_inv.destroy
+      P.destroy
+      F.destroy
 
    end
 
