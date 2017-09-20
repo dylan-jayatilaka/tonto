@@ -4132,6 +4132,7 @@ contains
                MOv.destroy
                 
             end if
+
          elseif (.scfdata.use_LSQ) then
 
             ! Least squares method
@@ -4473,8 +4474,9 @@ contains
 
    end
 
-   make_NOMO_gradient_g(MO,E,gm)
-   ! Make the NOMO energy "E" and gradient "g" of the "MO"s,
+
+   make_gradient_g(MO,E,gm) ::: template
+   ! Make the NOMO GHF energy "E" and gradient "g" of the "MO"s,
    ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
       self :: INOUT
       MO :: MAT{REAL}, IN
@@ -4503,7 +4505,7 @@ contains
       S_inv.back_transform_to(P.general,MO(:,1:.n_e))
       
       ! Make two electron Fock matrix 
-      .FOCK:make_g_fock(P,F)
+      .FOCK:FOCK?(P,F)
 
       ! Make gradient
       FcSm1.create(2*.n_bf,.n_e)
@@ -4544,79 +4546,19 @@ contains
 
    end
 
-   make_ELMO_gradient_g(MO,E,gm)
-   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   make_NOMO_gradient_g(MO,E,gm) ::: get_from(make_gradient_g, FOCK?=>make_g_fock)
+   ! Make the NOMO GHF energy "E" and gradient "g" of the "MO"s,
    ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
-      self :: INOUT
-      MO :: MAT{REAL}, IN
-      E  :: REAL, OUT
-      gm :: MAT{REAL}, OUT
-
-   ENSURE(MO.dim1==2*.n_bf AND MO.dim2==.n_e,"MO wrong shape")
-   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
-   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
-
-      P,F :: OPMATRIX*
-      SSP,SS,S_inv, FcSm1,cSm1 :: MAT{REAL}*
-
-      ! Create Fock & density matrix
-      P.create(.n_bf,"general")
-      F.create(.n_bf,"general")
-      F.general = ZERO
-      P.general = ZERO
-
-      ! Make S, S^{-1} in the MO basis
-      S_inv.create(.n_e,.n_e)
-      S_inv = ZERO
-      .BASE:make_NOMO_S_inv_g(S_inv,MO)
-
-      ! Back transform -> P
-      S_inv.back_transform_to(P.general,MO(:,1:.n_e))
-      
-      ! Make two electron Fock matrix 
-      .FOCK:make_ELMO_g_fock(P,F)
-
-      ! Make gradient
-      FcSm1.create(2*.n_bf,.n_e)
-      cSm1.create(2*.n_bf,.n_e)
-      cSm1.to_product_of(MO,S_inv)
-      FcSm1.to_product_of(F.general,cSm1)
-      cSm1.destroy
-
-      ! Make spin-orbital SSP
-      SS.create(2*.n_bf, 2*.n_bf)
-      SS = ZERO
-      SS.alpha_alpha_set_to(.overlap_matrix)
-        SS.beta_beta_set_to(.overlap_matrix)
-
-      ! Make SS x P
-      SSP.create(2*.n_bf,2*.n_bf)
-      SSP.to_scaled_product_of(SS,P.general,fac=ONE)
-
-      ! Assemble 1st and 2nd terms of gradient
-      gm = FcSm1
-      gm.plus_scaled_product_of(SSP,FcSm1,fac=-ONE)
-
-      gm = TWO*gm
-
-      ! Make 2 x energy matrix
-      F.plus(.core_matrix)
-
-      ! Do energy
-      E = HALF * F.general.trace_product_with(P.general)
-
-      ! Clean up
-      SSP.destroy
-      SS.destroy
-      FcSm1.destroy
-      S_inv.destroy
-      P.destroy
-      F.destroy
-
    end
 
-   NOMO_gradient_g(MO,E,gv) ::: selfless
-   ! Make the NOMO energy "E" and gradient "g" of the "MO"s,
+   make_ELMO_gradient_g(MO,E,gm) ::: get_from(make_gradient_g, FOCK?=>make_ELMO_g_fock)
+   ! Make the NOMO GHF energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
+   end
+
+
+   gradient_g(MO,E,gv) ::: template, selfless
+   ! Make the GHF energy "E" and gradient "g" of the "MO"s,
    ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
       MO :: VEC{REAL}, IN
       E  :: REAL, OUT
@@ -4634,7 +4576,7 @@ contains
       Cm = reshape(MO,[2*.n_bf,.n_e])
       gm = reshape(gv,[2*.n_bf,.n_e])
 
-      .:make_NOMO_gradient_g(Cm,E,gm)
+      .:GRAD?(Cm,E,gm)
 
       gv = reshape(gm,[size(gm)])
 
@@ -4643,32 +4585,14 @@ contains
 
    end
 
-   ELMO_gradient_g(MO,E,gv) ::: selfless
-   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   NOMO_gradient_g(MO,E,gv) ::: get_from(gradient_g, GRAD?=>make_NOMO_gradient_g), selfless
+   ! Make the GHF energy "E" and gradient "g" of the "MO"s,
    ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
-      MO :: VEC{REAL}, IN
-      E  :: REAL, OUT
-      gv :: VEC{REAL}, OUT
+   end
 
-      Cm,gm :: MAT{REAL}*
-      self :: MOLECULE*
-
-      ! Restore self
-      self => nomo_self
-
-      Cm.create(2*.n_bf,.n_e)
-      gm.create(2*.n_bf,.n_e)
-
-      Cm = reshape(MO,[2*.n_bf,.n_e])
-      gm = reshape(gv,[2*.n_bf,.n_e])
-
-      .:make_ELMO_gradient_g(Cm,E,gm)
-
-      gv = reshape(gm,[size(gm)])
-
-      gm.destroy
-      Cm.destroy
-
+   ELMO_gradient_g(MO,E,gv) ::: get_from(gradient_g, GRAD?=>make_ELMO_gradient_g), selfless
+   ! Make the GHF energy "E" and gradient "g" of the "MO"s,
+   ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
    end
 
 
@@ -4985,6 +4909,7 @@ contains
       F.destroy
 
    end
+
 
 !   MO_exponential_update
 !   ! Update the molecular orbitals using an antisymmetric first-order
