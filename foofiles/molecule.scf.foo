@@ -68,6 +68,9 @@ contains
          ! Make core matrix
          select case (genus)
 
+         case ("general")
+            .:make_g_core_matrix
+
          case ("general_complex")
             .:make_gc_core_matrix
 
@@ -200,6 +203,34 @@ contains
       .nuclear_attraction_matrix.compress
 
       .BASE:put_debug(H,"make_r_NREL_core_matrix: H")
+
+   end
+
+   make_g_core_matrix ::: leaky
+   ! Make the general core hamiltonian matrix.
+   ! If already in memory, do nothing.
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+   ENSURE(.scfdata.associated,  "no scfdata")
+
+      ! Return if core matrix already there
+      if (.core_matrix.is_associated_with_genre("general")) then
+         return
+      end
+
+  !    ! Allocate core matrix
+  !    if (.core_matrix.disassociated) then; .core_matrix.create(.n_bf)
+  !    else;                             .core_matrix.set(.n_bf)
+  !    end
+  !    .core_matrix.create("general")
+  !    .core_matrix.general = ZERO
+
+      ! Add the lower half in ... depending on the method
+      ! NOTE: there may be some failures here ...
+      .:add_g_core_matrix
+
+      ! Make it symmetrical 
+      .core_matrix.general.symmetrize
 
    end
 
@@ -488,6 +519,33 @@ contains
          end
 
       end
+
+   end
+
+   add_g_core_matrix ::: leaky
+   ! Add the Pauli core hamiltonian ... including B-field terms
+   ! NOTE: only lower half is made
+   ENSURE(.scfdata.associated,"no scfdata")
+ !  ENSURE(.scfdata.using_pauli_terms," no Pauli?")
+ !  ENSURE(.core_matrix.is_associated_with_genre("general"),"no core matrix")
+
+      HH :: MAT{REAL}*
+
+      ! Diagonal part
+      .:make_r_core_matrix
+      ! Allocate core matrix
+      if (.core_matrix.disassociated) then; .core_matrix.create(.n_bf)
+      else;                             .core_matrix.set(.n_bf)
+      end
+      .core_matrix.create("general")
+      .core_matrix.general = ZERO
+
+
+      ! === ALIAS ===
+      HH => .core_matrix.general
+
+      HH.alpha_alpha_plus(.core_matrix.restricted)
+      HH.beta_beta_plus(.core_matrix.restricted)
 
    end
 
@@ -1442,8 +1500,8 @@ contains
       case ("group")
          .:group_scf
 
-    ! case ("ghf","no_ghf")
-    !    .:NO_ghf
+     case ("ghf","no_ghf")
+        .:NO_ghf
 
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
@@ -1670,7 +1728,7 @@ contains
       ! Energies
       .scfdata.nuclear_repulsion_energy  = .BASE:nuclear_repulsion_energy
       .scfdata.nuclear_attraction_energy = .:nuclear_attraction_energy
-      !if (.scfdata.using_cluster_charges) &
+      if (.scfdata.using_cluster_charges) &
       .scfdata.charge_attraction_energy  = .:charge_attraction_energy
       .scfdata.kinetic_energy            = .:kinetic_energy
 
@@ -1826,7 +1884,13 @@ contains
    ENSURE(.atom.created,   "no atom list")
    ENSURE(.scfdata.created,"no scfdata")
 
-      .:initialize_scf
+    !  if(.scfdata.use_ELMO_01) then
+    !     .scfdata.set_use_ELMO_01(FALSE)
+         .:initialize_scf
+    !     .scfdata.set_use_ELMO_01(TRUE)
+    !  else
+    !     .:initialize_scf
+    !  end if
 
       .:put_scf_banner_and_options
       .:put_scf_table_header
@@ -1850,6 +1914,18 @@ contains
          if (.scfdata.scf_done) exit
 
       end
+
+      if(.scfdata.use_ELMO_01) then
+         .scfdata.set_use_ELMO_01(FALSE)
+         .BASE:make_scf_density_matrix
+
+         .:make_fock_matrix
+
+         .:update_scfdata
+         .:update_scfdata_error
+
+         .:put_scf_table_body
+      end if
 
       .:put_scf_results
 
@@ -4030,8 +4106,8 @@ contains
       orb_kind :: STR
       MOv, gv,sh :: VEC{REAL}*
       gm,ge,MO,MOa,MOb,F,P,Fa,Fb,Pa,Pb :: MAT{REAL}*
+      E,delta :: REAL
       i :: INT
-      E :: REAL
 
       orb_kind = .scfdata.scf_kind
 
@@ -4104,14 +4180,14 @@ contains
 
                ! BFGS
                nomo_self => self
-               .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_g,MOv)
+               .scfdata.bfgs.minimize_L_BFGS(::ELMO_01_gradient_g,MOv)
 
                ! Back to matrix
                MO = reshape(MOv,[2*.n_bf,.n_e])
                 
-               do i=1,.n_a
-                  MO(:,i) = MO(:,i)/(MO(:,i).norm)
-               end do
+               !do i=1,.n_a
+               !   MO(:,i) = MO(:,i)/(MO(:,i).norm)
+               !end do
 
                 
                MOv.destroy
@@ -4144,9 +4220,11 @@ contains
 
             gv = reshape(gm,[size(gv)])
 
-            MAT{REAL}::solve_normal_equations(gv,sh)
+            delta = .scfdata.energy - .scfdata.E_initial
 
-            MO = MO + 0.001*reshape(sh,[.n_bf,.n_a])
+            MAT{REAL}::solve_normal_equations(gv,sh,delta)
+
+            MO = MO + 1*reshape(sh,[.n_bf,.n_a])
             
             do i=1,.n_a
                MO(:,i) = MO(:,i)/(MO(:,i).norm)
@@ -4162,12 +4240,15 @@ contains
             
             if (.scfdata.use_ELMO) then
                
+               stdout.text("Fock: ")
+               stdout.put(F)
+
                ! Creates the gradient matrix
                gm.create(2*.n_bf,.n_e)
                gm=ZERO
 
                ! Calculates gradient with equations derived from Stoll
-               .:make_ELMO_gradient_g(MO,E,gm)
+               .:make_ELMO_01_gradient_g(MO,E,gm)
                ge.create(2*.n_bf,.n_e)
                ge = gm
                stdout.text("Equation Gradient: ")
@@ -4175,7 +4256,7 @@ contains
                gm = ZERO
 
                ! Ensures all values are solely due to FD approach 
-               .:make_ELMO_gradient_g_fd(MO,E,gm)
+               .:make_ELMO_01_gradient_g_fd(MO,E,gm)
                stdout.text("Finite Difference Gradient: ")
                stdout.put(gm)
                
@@ -4187,14 +4268,14 @@ contains
 
                ! BFGS
                nomo_self => self
-               .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_g,MOv)
+               .scfdata.bfgs.minimize_L_BFGS(::ELMO_01_gradient_g,MOv)
 
                ! Back to matrix
                MO = reshape(MOv,[2*.n_bf,.n_e])
                 
-               do i=1,.n_a
-                  MO(:,i) = MO(:,i)/(MO(:,i).norm)
-               end do
+               !do i=1,.n_a
+               !   MO(:,i) = MO(:,i)/(MO(:,i).norm)
+               !end do
 
                 
                MOv.destroy
@@ -4439,7 +4520,7 @@ contains
 
    end
 
-   make_ELMO_gradient_g_fd(MO,E,gm)
+   make_ELMO_01_gradient_g_fd(MO,E,gm)
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
    ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
       self :: INOUT
@@ -4495,7 +4576,7 @@ contains
            S_inv.destroy
            
            ! Make two electron Fock matrix 
-           .FOCK:make_ELMO_g_fock(P,F)
+           .FOCK:make_ELMO_01_g_fock(P,F)
 
            ! Make 2 x energy matrix
            F.plus(.core_matrix)
@@ -4679,7 +4760,12 @@ contains
    ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
    end
 
-   make_ELMO_gradient_g(MO,E,gm) ::: get_from(make_gradient_g, FOCK?=>make_ELMO_g_fock)
+   make_ELMO_01_gradient_g(MO,E,gm) ::: get_from(make_gradient_g, FOCK?=>make_ELMO_01_g_fock)
+   ! Make the NOMO GHF energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
+   end
+
+   make_ELMO_11_gradient_g(MO,E,gm) ::: get_from(make_gradient_g, FOCK?=>make_ELMO_11_g_fock)
    ! Make the NOMO GHF energy "E" and gradient "g" of the "MO"s,
    ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
    end
@@ -4718,7 +4804,12 @@ contains
    ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
    end
 
-   ELMO_gradient_g(MO,E,gv) ::: get_from(gradient_g, GRAD?=>make_ELMO_gradient_g), selfless
+   ELMO_01_gradient_g(MO,E,gv) ::: get_from(gradient_g, GRAD?=>make_ELMO_01_gradient_g), selfless
+   ! Make the GHF energy "E" and gradient "g" of the "MO"s,
+   ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
+   end
+
+   ELMO_11_gradient_g(MO,E,gv) ::: get_from(gradient_g, GRAD?=>make_ELMO_11_gradient_g), selfless
    ! Make the GHF energy "E" and gradient "g" of the "MO"s,
    ! gv = F MO S^{-1} - (1/2)S D F MO S^{-1}, as vectors!!!
    end
@@ -5164,11 +5255,11 @@ contains
            H2.create(2*.n_bf,2*.n_bf)
            H.create(.n_bf,.n_bf)
 
-           if (.scfdata.use_ELMO_01) then
-              .INTS:make_ELMO01_T_mx(H)
-           else
+          ! if (.scfdata.use_ELMO_01) then
+          !    .INTS:make_ELMO01_T_mx(H)
+          ! else
               .INTS:make_kinetic_energy_mx(H)
-           end if     
+          ! end if     
 
            H2 = ZERO
            H2.alpha_alpha_set_to(H)
@@ -5259,11 +5350,11 @@ contains
            H2.create(2*.n_bf,2*.n_bf)
            H.create(.n_bf,.n_bf)
         
-           if (.scfdata.use_ELMO_01) then
-              .INTS:make_ELMO01_NA_mx(H)
-           else
+           !if (.scfdata.use_ELMO_01) then
+           !   .INTS:make_ELMO01_NA_mx(H)
+           !else
               .INTS:make_nuclear_attraction_mx(H)
-           end
+           !end
 
            H2 = ZERO
            H2.alpha_alpha_set_to(H)
@@ -5367,13 +5458,13 @@ contains
            H.create(.n_bf,.n_bf)
            T.create(.n_bf,.n_bf)
 
-           if (.scfdata.use_ELMO_01) then
-              .INTS:make_ELMO01_T_mx(T)
-              .INTS:make_ELMO01_NA_mx(H)
-           else   
+           !if (.scfdata.use_ELMO_01) then
+           !   .INTS:make_ELMO01_T_mx(T)
+           !   .INTS:make_ELMO01_NA_mx(H)
+           !else   
               .INTS:make_nuclear_attraction_mx(H)
               .INTS:make_kinetic_energy_mx(T)
-           end if
+           !end if
 
            H2 = ZERO
            H  = H + T
