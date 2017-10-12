@@ -261,6 +261,7 @@ contains
 
       ! Mulliken analysis (leaky)
       .:put_mulliken_populations
+      .:put_Mayer_bond_indices
 
       ! Moments
       .:put_dipole
@@ -317,8 +318,6 @@ contains
 
    end
 
-
-
    put_1e_properties_for_groups ::: leaky
    ! Put all the one electron properties for each group
       self :: INOUT
@@ -347,6 +346,270 @@ contains
       end
 
    end
+
+!  Mayer bond indices
+
+   put_Mayer_bond_indices ::: leaky
+   ! Write out the Mayer bond indices
+      self :: INOUT
+
+   ENSURE(.density_matrix.created,"no density matrix")
+   ENSURE(.density_matrix.restricted.created,"only for restricted densities")
+
+      table :: VEC{TABLE_COLUMN}*
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+      a,b,fa,la,fb,lb :: INT
+      PD, Q,Z,V,F :: VEC{REAL}*
+      PS,BO :: MAT{REAL}*
+      pair :: MAT{INT}*
+      symbols,labels :: MAT{STR}*
+      dash,dsh1 :: VEC{STR}*
+      dist,bAB :: VEC{REAL}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+
+      no_of_bonds = .atom.no_of_bonds(ROBY_BOND_RANGE_FACTOR)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Overlap matrix (leaky)
+      .INTS:make_overlap_matrix
+
+      ! Restricted Mulliken matrix
+      PS.create(.n_bf,.n_bf)
+      PS.to_product_of(.density_matrix.restricted,.overlap_matrix)
+
+      ! Mulliken diagonal populations
+      PD.create(.n_bf)
+      PS.put_diagonal_to(PD)
+      
+      ! Bond orders etc.
+      BO.create(.n_atom,.n_atom)
+      Q.create(.n_atom)
+      Z.create(.n_atom)
+      V.create(.n_atom)
+      F.create(.n_atom)
+
+      do a = 1,.n_atom
+
+         fa = .first_basis_fn_for_atom(a)
+         la =  .last_basis_fn_for_atom(a)
+
+         ! Mullken population & charge
+         Q(a) = sum(PD(fa:la))
+         Z(a) = -Q(a) + .atom(a).nuclear_charge
+
+         ! Bond orders
+         do b = 1,.n_atom
+
+            fb = .first_basis_fn_for_atom(b)
+            lb =  .last_basis_fn_for_atom(b)
+
+            BO(a,b) = PS(fa:la,fb:lb).trace_product_with(PS(fb:lb,fa:la))
+
+         end
+
+         ! Valences
+         V(a) = TWO*Q(a) - BO(a,a)
+
+         ! Make free valences
+         F(a) = V(a)
+         do b = 1,.n_atom
+            if (b/=a) then
+               F(a) = F(a) - BO(a,b)
+            end
+         end
+
+      end
+
+      ! Title
+      stdout.flush
+      stdout.text("=========================================")
+      stdout.text("Mayer populations, valences & bond orders")
+      stdout.text("=========================================")
+
+      stdout.flush
+      stdout.text(". These bond indices and valences are defined in:")
+      stdout.text("  Mayer (1986) Int. J. QUantum Chem. 29 p 477-83.")
+      stdout.flush
+      stdout.text(". Indices appear only for atom pairs which are connected")
+      stdout.text("  according to the Cambridge Structural Database (CSD).")
+
+      stdout.flush
+      stdout.show("No. of bonds =",no_of_bonds)
+
+      stdout.flush
+
+      ! Create table
+      table.create(5)
+      table(1).set_heading("Atom")
+      table(1).set_width_from(.atom.chemical_symbols)
+      table(2).set_heading("Mulliken")
+      table(2).set_subhead("Pop")
+      table(3).set_heading("Charge")
+      table(4).set_heading("  Mayer")
+      table(4).set_subhead("Valence")
+      table(5).set_heading("   Free")
+      table(5).set_subhead("Valence")
+
+      ! Set data
+      labels.create(.n_atom,1)
+      labels(:,1) = .atom(:).tag
+      table(1).set_values(labels(:,1))
+      table(2).set_values(Q)
+      table(3).set_values(Z)
+      table(4).set_values(V)
+      table(5).set_values(F)
+
+      ! Put
+      table.put(label_rows=FALSE)
+
+      ! Clean
+      labels.destroy
+      table.clear_columns
+      table.destroy
+
+
+
+      ! Put bond indices
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(8)
+
+      ! Set the table headings
+      table(1).set_heading("A")
+      table(1).set_width_from(.atom.chemical_symbols)
+
+      table(2).set_spacing(0)
+      table(2).set_heading("--")
+      table(2).set_width(2)
+
+      table(3).set_heading("B")
+      table(3).set_width(table(1).width)
+      table(3).set_left_justify(TRUE)
+
+      table(4).set_heading("A")
+      table(4).set_width_from(.atom(:).tag)
+
+      table(5).set_spacing(0)
+      table(5).set_heading("--")
+      table(5).set_width(2)
+
+      table(6).set_heading("B")
+      table(6).set_width(table(4).width)
+      table(6).set_left_justify(TRUE)
+
+      table(7).set_heading("R(A--B)")
+      table(7).set_subheading("/Angs.")
+      table(7).set_width_from(ONE)
+
+      table(8).set_heading(" Bond")
+      table(8).set_subhead("order")
+      table(8).set_width_from(TEN)
+
+      ! Put out the headings
+      stdout.flush
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,ROBY_BOND_RANGE_FACTOR)
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Element symbols
+         symbols.create(n_bonds,2)
+         symbols = " "
+         symbols(1,1) = .atom(Z_list(k1)[1]).chemical_symbol
+         symbols(1,2) = .atom(Z_list(k2)[1]).chemical_symbol
+
+         ! Dashes
+         dash.create(n_bonds)
+         dsh1.create(n_bonds)
+         dash    = "--"
+         dsh1    = "  "
+         dsh1(1) = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         bAB.create(n_bonds)
+         do i = 1,n_bonds
+         bAB(i) = BO(pair(i,1),pair(i,2))
+         end
+
+         ! Set table data
+         table(1).set_values(symbols(:,1))
+         table(2).set_values(dsh1)
+         table(3).set_values(symbols(:,2))
+         table(4).set_values(labels(:,1))
+         table(5).set_values(dash)
+         table(6).set_values(labels(:,2))
+         table(7).set_values(dist)
+         table(8).set_values(bAB)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+
+         bAB.destroy
+         labels.destroy
+         dsh1.destroy
+         dash.destroy
+         symbols.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Z_list.destroy
+
+      F.destroy
+      V.destroy
+      Q.destroy
+      BO.destroy
+      PD.destroy
+      PS.destroy
+
+   end
+
+!  Mulliken populations
 
    put_mulliken_populations ::: leaky
    ! sets the mulliken population matrix and the outputs it.
@@ -461,80 +724,118 @@ contains
 
    end
 
-   put_mulliken_populations(mulliken_matrix, diagonals)
-   ! outputs the mulliken populations to the output file
+   put_mulliken_populations(mulliken_matrix,diagonals)
+   ! Output the Mulliken populations
+      self :: IN
+      mulliken_matrix :: MAT{REAL}, IN
+      diagonals :: VEC{REAL}, IN
 
-  ! ENSURE(NOT .use_spherical_basis,"not implemented")
+      table :: VEC{TABLE_COLUMN}*
+      tags,lmom :: VEC{STR}*
+      pops,chrg :: VEC{REAL}*
+      off, a,b,c, fa,la,n_bf :: INT
 
-      mulliken_matrix :: MAT{REAL}
-      diagonals :: VEC{REAL}
-      atom_pop :: VEC{REAL}*
-      pop :: REAL
-      o_count, a, b, c, n_comp :: INT
+      ! Atomic data
+      pops.create(.n_atom)
+      chrg.create(.n_atom)
 
-      stdout.flush
-      stdout.text("Mulliken population analysis: ")
-      stdout.dash(int_fields=2,real_fields=1)
-      stdout.put("Atom", int_width = TRUE)
-      stdout.put("Type", int_width = TRUE)
-      stdout.put("Population")
-      stdout.flush
-      stdout.dash(int_fields=2,real_fields=1)
+      ! Basis-fn data
+      tags.create(.n_bf)
+      lmom.create(.n_bf)
 
-      o_count = 1
-      atom_pop.create(.n_atom)
-      atom_pop = ZERO
+      off = 0 
 
-      do a = 1, .n_atom
-      do b = 1, .atom(a).basis.n_shell
+      do a = 1,.n_atom
 
-         if (.use_spherical_basis) then
-            n_comp = .atom(a).basis.shell(b).n_sph
-         else
-            n_comp = .atom(a).basis.shell(b).n_comp
-         end if
+         ! Mulliken population & charge
+         fa = .first_basis_fn_for_atom(a)
+         la =  .last_basis_fn_for_atom(a)
+         pops(a) = sum(diagonals(fa:la))
+         chrg(a) = .atom(a).nuclear_charge - pops(a)
 
-         do c = 1, n_comp
-            stdout.put(.atom(a).label, int_width = TRUE)
-            stdout.put(.atom(a).basis.shell(b).l_chr, int_width = TRUE)
-            pop = diagonals(c + o_count - 1)
-            stdout.put(pop)
-            atom_pop(a) = atom_pop(a) + pop
-            stdout.flush
+         ! Symbols for each basis fn.
+         do b = 1,.atom(a).basis.n_shell
+
+            n_bf = .atom(a).basis.shell(b).n_bf
+            do c = 1,n_bf
+               tags(off+c) = .atom(a).tag
+               lmom(off+c) = .atom(a).basis.shell(b).l_chr
+            end
+
+            off = off + n_bf
+
          end
 
-         o_count = o_count + n_comp
-
-      end
       end
 
-      stdout.dash(int_fields=2,real_fields=1)
+
+      ! Title
       stdout.flush
-
+      stdout.text("===================================")
+      stdout.text("Mulliken basis-function populations")
+      stdout.text("===================================")
+      stdout.flush
       stdout.show("Trace of the Mulliken matrix =",mulliken_matrix.trace)
       stdout.flush
-      stdout.text("Atomic Populations: ")
-      stdout.flush
-      stdout.dash(int_fields=1, real_fields=2)
-      stdout.put("Atom", int_width = TRUE)
-      stdout.put("Population")
-      stdout.put("Charge")
-      stdout.flush
-      stdout.dash(int_fields=1, real_fields=2)
 
-      do a = 1, .n_atom
-         stdout.put(.atom(a).label, int_width = TRUE)
-         stdout.put(atom_pop(a))
-         stdout.put(.atom(a).atomic_number-atom_pop(a))
-         stdout.flush
-      end
-      stdout.dash(int_fields=1, real_fields=2)
+      ! Create table
+      table.create(3)
+      table(1).set_heading("Atom")
+      table(1).set_width_from(.atom.chemical_symbols)
+      table(2).set_heading("Basis")
+      table(2).set_subhead("func.")
+      table(3).set_heading("Mulliken")
+      table(3).set_subhead("    Pop.")
 
-      atom_pop.destroy
+      ! Set data
+      table(1).set_values(tags)
+      table(2).set_values(lmom)
+      table(3).set_values(diagonals)
+
+      ! Put
+      table.put(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      lmom.destroy
+      tags.destroy
+
+
+      stdout.flush
+      stdout.text("===========================")
+      stdout.text("Mulliken atomic populations")
+      stdout.text("===========================")
+      stdout.flush
+      stdout.show("Sum of the Mulliken populations =",sum(pops))
+      stdout.show("Sum of the Mulliken charges     =",sum(chrg))
       stdout.flush
 
-    ! stdout.text("Mulliken matrix:")
-    ! stdout.put(mulliken_matrix)
+      ! Create table
+      table.create(3)
+      table(1).set_heading("Atom")
+      table(1).set_width_from(.atom.chemical_symbols)
+      table(2).set_heading("Mulliken")
+      table(2).set_subhead("    Pop.")
+      table(3).set_heading("Mulliken")
+      table(3).set_subhead("  charge")
+
+      ! Set data
+      tags.create(.n_atom)
+      tags = .atom(:).tag
+      table(1).set_values(tags)
+      table(2).set_values(pops)
+      table(3).set_values(chrg)
+
+      ! Put
+      table.put(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      tags.destroy
+      chrg.destroy
+      pops.destroy
 
    end
 
@@ -664,6 +965,8 @@ contains
 
 
    end
+
+!  Spin expectation values
 
    get_uhf_sx_sy_sz ::: leaky
    ! evaluation of expectation values of sigma_x, sigma_y and sigma_z
@@ -1836,6 +2139,8 @@ contains
 
    end
 
+!  Charge multipoles
+
    put_dipole
    ! Put out the dipole to stdout
 
@@ -1851,7 +2156,9 @@ contains
       total      = electronic + nuclear
 
       stdout.flush
-      stdout.text("Dipole moments:")
+      stdout.text("==============")
+      stdout.text("Dipole moments")
+      stdout.text("==============")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=6)
       stdout.tab(int_fields=1)
@@ -1931,7 +2238,9 @@ contains
       total      = electronic + nuclear
 
       stdout.flush
-      stdout.text("Quadrupole moments:")
+      stdout.text("==================")
+      stdout.text("Quadrupole moments")
+      stdout.text("==================")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=6)
       stdout.tab(int_fields=1)
@@ -1995,7 +2304,9 @@ contains
       total      = electronic + nuclear
 
       stdout.flush
-      stdout.text("Octupole moments:")
+      stdout.text("================")
+      stdout.text("Octupole moments")
+      stdout.text("================")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=6)
       stdout.tab(int_fields=1)
@@ -2027,6 +2338,8 @@ contains
       end
       stdout.dash(int_fields=1,real_fields=6)
    end
+
+! Field gradient
 
    put_E_field_at_nuclei
    ! Put out the electric field at every nuclear position
@@ -2352,6 +2665,9 @@ contains
 
    end
 
+!  Structure factor populations
+!  What is this? --dylan
+
    put_mulliken_sf_populations 
    ! makes the mulliken population analysis of structure factors
       density,k_pts :: MAT{REAL}*
@@ -2624,8 +2940,13 @@ contains
 
       ! Write results in au
       stdout.flush
-      stdout.text("Hirshfeld atom charges and Hirshfeld atom dipole moments (au):")
+      stdout.text("=========================================")
+      stdout.text("Hirshfeld atom charges and dipole moments")
+      stdout.text("=========================================")
       stdout.flush
+      stdout.text("The data below are in atomic units")
+      stdout.flush
+
       stdout.dash(int_fields=1,real_fields=5)
       stdout.tab(int_fields=1)
       stdout.put("q")
@@ -2661,8 +2982,13 @@ contains
 
       ! Write results in Debye
       stdout.flush
-      stdout.text("Hirshfeld atom charges and Hirshfeld atom dipole moments (Debye):")
+      stdout.text("=========================================")
+      stdout.text("Hirshfeld atom charges and dipole moments")
+      stdout.text("=========================================")
       stdout.flush
+      stdout.text("The data below are in Debye units")
+      stdout.flush
+
       stdout.dash(int_fields=1,real_fields=5)
       stdout.tab(int_fields=1)
       stdout.put("q")
@@ -2696,7 +3022,9 @@ contains
 
       ! Write results in au
       stdout.flush
-      stdout.text("Hirshfeld atom quadrupole moments (au):")
+      stdout.text("=================================")
+      stdout.text("Hirshfeld atom quadrupole moments")
+      stdout.text("=================================")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=6)
       stdout.tab(int_fields=1)
