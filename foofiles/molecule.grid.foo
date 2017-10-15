@@ -327,8 +327,8 @@ contains
 !  ============
 
    make_orbital_grid
-   ! Work out the orbital on ".plot_grid" using ".natural orbitals" for orbital "orb"
-   ! A Gnuplot ascii file is generated.
+   ! Evaluate the values for orbital ".plot_grid.orb" of
+   ! ".natural_orbitals" and write them out to a file.
       self :: INOUT
 
    ENSURE(.plot_grid.associated, "no grid")
@@ -429,7 +429,7 @@ contains
 
    orbital_grid(grid,pt) ::: selfless
    ! Work out the orbital "grid" for a series of points "pt" for using
-   ! the ".natural orbitals", for a partcular orbital .plot_grid.orbital.
+   ! the ".natural orbitals", for orbital.isosurface.plot_grid.orbital. 
    ! NOTE: for complex orbitals, the absolute value times the sign of
    ! the complex part
       grid  :: VEC{REAL}, OUT
@@ -479,13 +479,88 @@ contains
 
    end
 
+   make_ELMO_grid(orbitals,atom_indices)
+   ! Evaluate the values for ELMO ".plot_grid.orb" of "orbitals"
+   ! defined over the "atom_indices", and write out to a file.
+      self :: INOUT
+      orbitals :: MAT{REAL}, IN
+      atom_indices :: VEC{INT}, IN
+
+   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.plot_grid.orbital>=0, "non-positive grid orbital")
+   ENSURE(.plot_grid.orbital<=orbitals.dim2, "orbital our of range")
+   ENSURE(orbitals.dim1==.atom(atom_indices).no_of_basis_functions, "wrong dim2, orbitals")
+
+      arch :: ARCHIVE
+      pt :: MAT{REAL}*
+      gr :: VEC{REAL}*
+      orb :: INT
+
+      ! Orbital to be plotted
+      orb = .plot_grid.orbital
+
+      ! Make points "pt"
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Make orbitals
+      gr.create(.plot_grid.n_pt)
+      .:make_ELMO_grid_r(gr,orbitals(:,orb),pt,atom_indices)
+
+      ! Write out
+      .:dump_plot_grid(gr,"orbital_"//trim(orb.to_str)//"_grid")
+
+      ! Clean
+      gr.destroy
+      pt.destroy
+
+   end
+
+   ELMO_grid(grid,pt,orbitals,atom_indices) ::: selfless
+   ! Evaluate the values for ELMO ".plot_grid.orb" of "orbitals"
+   ! defined over the "atom_indices", and write out to a file.
+      grid  :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      orbitals :: MAT{REAL}, IN
+      atom_indices :: VEC{INT}, IN
+
+   ENSURE(pt.dim1==grid.dim1,"incompatible # of points, g and pt arrays")
+   ENSURE(pt.dim2==3,"wrong shape, pt array")
+
+      gridc :: VEC{CPX}*
+      n_pt,orb :: INT
+      plot_grid :: PLOT_GRID*
+      self :: MOLECULE*
+
+      ! Get back self
+      .BASE:set_from_saved_self
+
+   ENSURE(.isosurface.associated,"no isosurface")
+   ENSURE(.isosurface.plot_grid.orbital>=0,"non-positive grid orbital")
+   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+
+      n_pt = pt.dim1
+
+      plot_grid => .isosurface.plot_grid
+
+      ! Get orbital to plot
+      orb = plot_grid.orbital
+
+      ! Make the orbital grid
+      .:make_ELMO_grid_r(grid,orbitals(:,orb),pt,atom_indices)
+
+   end
+
+!  Low-level orbital-type-specific routines 
+
    make_orbital_grid_r(grid,orb,pt,square)
-   ! Evaluate the orbital density "grid" for *one* AO-basis coefficient
+   ! Evaluate the orbital "grid" for *one* AO-basis coefficient
    ! orbital vector "orb" on a set of grid points "pt"
+      self :: IN
       grid :: VEC{REAL}, OUT
       orb :: VEC{REAL}, IN
       pt :: MAT{REAL}, IN
-      square :: BIN, optional
+      square :: BIN, optional, IN
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.associated,  "no atom list")
@@ -521,7 +596,7 @@ contains
    end
 
    make_orbital_grid_c(grid,orb,pt,square)
-   ! Evaluate the orbital density "grid" for *one* AO-basis orbital
+   ! Evaluate the orbital "grid" for *one* AO-basis orbital
    ! coefficient vector "orb" on a set of grid points "pt"
       grid :: VEC{CPX}, OUT
       orb :: VEC{CPX}, IN
@@ -558,6 +633,56 @@ contains
       end
 
       if (sq) grid = conjg(grid)*grid
+
+   end
+
+   make_ELMO_grid_r(grid,orb,pt,atom_indices,square)
+   ! Evaluate the ELMO "grid" for *one* AO-basis coefficient orbital
+   ! vector "orb" on a set of grid points "pt"
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      orb :: VEC{REAL}, IN
+      pt :: MAT{REAL}, IN
+      atom_indices :: VEC{INT}, IN
+      square :: BIN, optional, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+   ENSURE(orb.dim==.atom(atom_indices).no_of_basis_functions, "wrong dim2, orbitals")
+
+      n_pt, i,a,fa,la :: INT
+      sq :: BIN
+      ga :: VEC{REAL}*
+
+      sq = FALSE
+      if (present(square)) sq = square
+
+      n_pt = pt.dim1
+
+      grid = ZERO
+
+      do i = 1,atom_indices.dim
+
+         ! Atom index a
+         a = atom_indices(a)
+
+         ! Basis fn limits
+         fa = .first_basis_fn_for_atom(a)
+         la =  .last_basis_fn_for_atom(a)
+
+         ! Atom a grid, ga
+         ga.create(n_pt)
+         .atom(a).make_orbital_grid_r(ga,orb(fa:la),pt)
+
+         ! Add ga to grid
+         grid = grid + ga
+
+         ! Clean
+         ga.destroy
+
+      end
+
+      if (sq) grid = grid*grid
 
    end
 
@@ -652,6 +777,8 @@ contains
    make_orbital_density_grid
    ! Work out the orbital on ".plot_grid" using ".natural orbitals" for orbital "orb"
    ! A Gnuplot ascii file is generated.
+      self :: INOUT
+
    ENSURE(.plot_grid.associated, "no grid")
    ENSURE(.plot_grid.orbital>=0, "non-positive grid orbital")
    ENSURE(.natural_orbitals.associated, "no natural orbitals")
