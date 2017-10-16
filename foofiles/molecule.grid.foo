@@ -20,7 +20,6 @@
 ! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 ! Boston, MA  02111-1307, USA.
 !
-! $Id: $
 !===============================================================================
 
 module MOLECULE.GRID
@@ -124,6 +123,8 @@ contains
          case("reduced_k_kinetic_energy            "); .:make_rK_kinetic_energy_grid
          case("reduced_v_from_virial               "); .:make_rV_from_virial_grid
          case("residual_density_map                "); .:make_residual_density_map
+         case("roby-gould_covalent_orbital         "); .:make_RG_cov_orbital_grid
+         case("roby-gould_ionic_orbital            "); .:make_RG_ion_orbital_grid
        ! case("spin_current_density                "); .:make_spin_j_grid
          case("spin_density                        "); .:make_spin_density_grid
          case("spherical_atom_density              "); .:make_spherical_atom_grid
@@ -185,6 +186,8 @@ contains
          case("oscillator_orbital               "); .isosurface.cubify(::oscillator_orbital_grid)
          case("orbital_density                  "); .isosurface.cubify(::orbital_density_grid)
          case("promolecule_density              "); .isosurface.cubify(::promolecule_density_grid)
+         case("roby-gould_covalent_orbital      "); .isosurface.cubify(::RG_cov_orbital_grid)
+         case("roby-gould_ionic_orbital         "); .isosurface.cubify(::RG_ion_orbital_grid)
          case("spin_density                     "); .isosurface.cubify(::spin_density_grid)
          case("stockholder_density              "); .isosurface.cubify(::stockholder_density_grid)
          case("stockholder_weight               "); .isosurface.cubify(::Hirshfeld_density_grid)
@@ -242,6 +245,8 @@ contains
          case("promolecule_density             "); .isosurface.plot_function(::promolecule_density_grid)
          case("product_e_field_grid            "); .isosurface.plot_function(::product_E_field_grid)
          case("product_esp_grid                "); .isosurface.plot_function(::product_ESP_grid)
+         case("roby-gould_covalent_orbital     "); .isosurface.plot_function(::RG_cov_orbital_grid)
+         case("roby-gould_ionic_orbital        "); .isosurface.plot_function(::RG_ion_orbital_grid)
          case("spin_density                    "); .isosurface.plot_function(::spin_density_grid)
          case("stockholder_density             "); .isosurface.plot_function(::stockholder_density_grid)
          case("stockholder_weight              "); .isosurface.plot_function(::Hirshfeld_density_grid)
@@ -328,8 +333,8 @@ contains
 !  ============
 
    make_orbital_grid
-   ! Work out the orbital on ".plot_grid" using ".natural orbitals" for orbital "orb"
-   ! A Gnuplot ascii file is generated.
+   ! Evaluate the values for orbital ".plot_grid.orb" of
+   ! ".natural_orbitals" and write them out to a file.
       self :: INOUT
 
    ENSURE(.plot_grid.associated, "no grid")
@@ -430,7 +435,7 @@ contains
 
    orbital_grid(grid,pt) ::: selfless
    ! Work out the orbital "grid" for a series of points "pt" for using
-   ! the ".natural orbitals", for a partcular orbital .plot_grid.orbital.
+   ! the ".natural orbitals", for orbital.isosurface.plot_grid.orbital. 
    ! NOTE: for complex orbitals, the absolute value times the sign of
    ! the complex part
       grid  :: VEC{REAL}, OUT
@@ -480,13 +485,16 @@ contains
 
    end
 
+!  Low-level orbital-type-specific routines 
+
    make_orbital_grid_r(grid,orb,pt,square)
-   ! Evaluate the orbital density "grid" for *one* AO-basis coefficient
+   ! Evaluate the orbital "grid" for *one* AO-basis coefficient
    ! orbital vector "orb" on a set of grid points "pt"
+      self :: IN
       grid :: VEC{REAL}, OUT
       orb :: VEC{REAL}, IN
       pt :: MAT{REAL}, IN
-      square :: BIN, optional
+      square :: BIN, optional, IN
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.associated,  "no atom list")
@@ -522,7 +530,7 @@ contains
    end
 
    make_orbital_grid_c(grid,orb,pt,square)
-   ! Evaluate the orbital density "grid" for *one* AO-basis orbital
+   ! Evaluate the orbital "grid" for *one* AO-basis orbital
    ! coefficient vector "orb" on a set of grid points "pt"
       grid :: VEC{CPX}, OUT
       orb :: VEC{CPX}, IN
@@ -646,6 +654,221 @@ contains
 
    end
 
+!  ========================
+!  Roby-Gould orbital grids
+!  ========================
+
+   make_RG_cov_orbital_grid
+   ! Evaluate the Roby-Gould covalent orbital ".plot_grid.orb" and
+   ! write it out to a file.
+      self :: IN
+
+   ENSURE(.roby.associated, "no roby data -- do one group analysis")
+   ENSURE(.roby.theta_C.associated, "no Roby-Gould covalent orbitals")
+   ENSURE(.plot_grid.associated, "no plot_grid")
+   ENSURE(.plot_grid.orbital>=0, "non-positive theta orbital")
+   ENSURE(.plot_grid.orbital<=.roby.theta_C.dim2, "orbital out of range, "//trim(.plot_grid.orbital.to_str))
+
+      pt :: MAT{REAL}*
+      gr :: VEC{REAL}*
+      orb :: INT
+
+      ! Orbital to be plotted
+      orb = .plot_grid.orbital
+
+      ! Points to plot
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Make the grid, gr
+      gr.create(.plot_grid.n_pt)
+      .:make_ELMO_grid_r(gr,.roby.theta_C(:,orb),pt,.roby.atom_ab)
+
+      ! Write grid, gr
+      .:dump_plot_grid(gr,"Roby-Gould_covalent_orbital_"//trim(orb.to_str)//"_grid")
+
+      ! Clean
+      gr.destroy
+      pt.destroy
+
+   end
+
+   RG_cov_orbital_grid(gr,pt) ::: selfless
+   ! Evaluate the Roby-Gould covalent orbital ".plot_grid.orb" for the
+   ! points "pt" and store in the grid "gr"
+      gr :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(pt.dim1==gr.dim, "pt & gr incompatible")
+   ENSURE(pt.dim2==3,      "wrong dim2, pt")
+
+      orb :: INT
+      self :: MOLECULE*
+
+      .BASE:set_from_saved_self
+
+   ENSURE(.roby.associated, "no roby data -- do one group analysis")
+   ENSURE(.roby.theta_C.associated, "no Roby-Gould covalent orbitals")
+   ENSURE(.isosurface.plot_grid.orbital>=0, "non-positive theta orbital")
+   ENSURE(.isosurface.plot_grid.orbital<=.roby.theta_C.dim2, "orbital out of range, "//trim(.plot_grid.orbital.to_str))
+
+      ! Orbital to be plotted
+      orb = .isosurface.plot_grid.orbital
+
+      ! Make the grid, gr
+      .:make_ELMO_grid_r(gr,.roby.theta_C(:,orb),pt,.roby.atom_ab)
+
+   end
+
+
+   make_RG_ion_orbital_grid
+   ! Evaluate the Roby-Gould ionic orbital ".plot_grid.orb" and write
+   ! it out to a file.
+      self :: INOUT
+
+   ENSURE(.roby.associated, "no roby data -- do one group analysis")
+   ENSURE(.roby.theta_I.associated, "no Roby-Gould ionic orbitals")
+   ENSURE(.plot_grid.associated, "no plot_grid")
+   ENSURE(.plot_grid.orbital>=0, "non-positive theta orbital")
+   ENSURE(.plot_grid.orbital<=.roby.theta_I.dim2, "orbital out of range, "//trim(.plot_grid.orbital.to_str))
+
+      pt :: MAT{REAL}*
+      gr :: VEC{REAL}*
+      orb :: INT
+
+      ! Orbital to be plotted
+      orb = .plot_grid.orbital
+
+      ! Points to plot
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Make the grid, gr
+      gr.create(.plot_grid.n_pt)
+      .:make_ELMO_grid_r(gr,.roby.theta_I(:,orb),pt,.roby.atom_ab)
+
+      ! Write grid, gr
+      .:dump_plot_grid(gr,"Roby-Gould_ionic_orbital_"//trim(orb.to_str)//"_grid")
+
+      ! Clean
+      gr.destroy
+      pt.destroy
+
+   end
+
+   RG_ion_orbital_grid(gr,pt) ::: selfless
+   ! Evaluate the Roby-Gould ionic orbital ".plot_grid.orb" for the
+   ! points "pt" and store in the grid "gr"
+      gr :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(pt.dim1==gr.dim, "pt & gr incompatible")
+   ENSURE(pt.dim2==3,      "wrong dim2, pt")
+
+      orb :: INT
+      self :: MOLECULE*
+
+      .BASE:set_from_saved_self
+
+   ENSURE(.roby.associated, "no roby data -- do one group analysis")
+   ENSURE(.roby.theta_I.associated, "no Roby-Gould ionic orbitals")
+   ENSURE(.isosurface.plot_grid.orbital>=0, "non-positive theta orbital")
+   ENSURE(.isosurface.plot_grid.orbital<=.roby.theta_I.dim2, "orbital out of range, "//trim(.plot_grid.orbital.to_str))
+
+      ! Orbital to be plotted
+      orb = .isosurface.plot_grid.orbital
+
+      ! Make the grid, gr
+      .:make_ELMO_grid_r(gr,.roby.theta_C(:,orb),pt,.roby.atom_ab)
+
+   end
+
+
+   make_ELMO_grid_r(grid,orb,pt,atom_indices,square) ::: PURE
+   ! Evaluate the ELMO "grid" for *one* AO-basis coefficient orbital
+   ! vector "orb" on a set of grid points "pt"
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      orb :: VEC{REAL}, IN
+      pt :: MAT{REAL}, IN
+      atom_indices :: VEC{INT}, IN
+      square :: BIN, optional, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+   ENSURE(orb.dim==.atom(atom_indices).no_of_basis_functions, "wrong dim2, orbitals")
+
+      n_pt, i,a,fa,la :: INT
+      sq :: BIN
+      ga :: VEC{REAL}*
+
+      sq = FALSE
+      if (present(square)) sq = square
+
+      n_pt = pt.dim1
+
+      grid = ZERO
+
+      do i = 1,atom_indices.dim
+
+         ! Atom index a
+         a = atom_indices(i)
+
+         ! Basis fn limits
+         fa = .first_basis_fn_for_atom(a)
+         la =  .last_basis_fn_for_atom(a)
+
+         ! Atom a grid, ga
+         ga.create(n_pt)
+         .atom(a).make_orbital_grid_r(ga,orb(fa:la),pt)
+
+         ! Add ga to grid
+         grid = grid + ga
+
+         ! Clean
+         ga.destroy
+
+      end
+
+      if (sq) grid = grid*grid
+
+   end
+
+!   ELMO_grid(grid,pt,orbitals,atom_indices) ::: selfless
+!   ! Evaluate the values for ELMO ".plot_grid.orb" of "orbitals"
+!   ! defined over the "atom_indices", and write out to a file.
+!      grid  :: VEC{REAL}, OUT
+!      pt :: MAT{REAL}, IN
+!      orbitals :: MAT{REAL}, IN
+!      atom_indices :: VEC{INT}, IN
+!
+!   ENSURE(pt.dim1==grid.dim1,"incompatible # of points, g and pt arrays")
+!   ENSURE(pt.dim2==3,"wrong shape, pt array")
+!
+!      gridc :: VEC{CPX}*
+!      n_pt,orb :: INT
+!      plot_grid :: PLOT_GRID*
+!      self :: MOLECULE*
+!
+!      ! Get back self
+!      .BASE:set_from_saved_self
+!
+!   ENSURE(.isosurface.associated,"no isosurface")
+!   ENSURE(.isosurface.plot_grid.orbital>=0,"non-positive grid orbital")
+!   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+!
+!      n_pt = pt.dim1
+!
+!      plot_grid => .isosurface.plot_grid
+!
+!      ! Get orbital to plot
+!      orb = plot_grid.orbital
+!
+!      ! Make the orbital grid
+!      .:make_ELMO_grid_r(grid,orbitals(:,orb),pt,atom_indices)
+!
+!   end
+
 !  ====================
 !  Orbital density grid
 !  ====================
@@ -653,6 +876,8 @@ contains
    make_orbital_density_grid
    ! Work out the orbital on ".plot_grid" using ".natural orbitals" for orbital "orb"
    ! A Gnuplot ascii file is generated.
+      self :: INOUT
+
    ENSURE(.plot_grid.associated, "no grid")
    ENSURE(.plot_grid.orbital>=0, "non-positive grid orbital")
    ENSURE(.natural_orbitals.associated, "no natural orbitals")
@@ -3048,9 +3273,10 @@ contains
    ! Evaluate the laplacian orbital density grid "g", as well as the nabla
    ! orbital grid "h" and the orbital grid "i" for *one* AO-basis orbital
    ! vector "orb" on a set of grid points "pt"
-      g,h :: MAT{REAL}
-      i :: VEC{REAL}
-      orb :: VEC{REAL}, IN, target
+      self :: INOUT
+      g,h :: MAT{REAL}, OUT 
+      i :: VEC{REAL}, OUT
+      orb :: VEC{REAL}, IN
       pt :: MAT{REAL}, IN
 
    ENSURE(.basis_info_made, "no basis info")
@@ -3064,7 +3290,6 @@ contains
       sh :: SHELL1
       sh_grid1,sh_grid2 :: MAT3{REAL}*
       sh_grid3 :: MAT{REAL}*
-      orb_a :: VEC{REAL}*
       n_pt,fa,la,na,a :: INT
 
       n_pt = pt.dim1
@@ -3083,14 +3308,13 @@ contains
 
          sh.make_laplacian_grid(sh_grid1,sh_grid2,sh_grid3,pt)
 
-         orb_a => orb(fa:la)
-         g(:,1).plus_product_of(sh_grid1(:,:,1),orb_a)
-         g(:,2).plus_product_of(sh_grid1(:,:,2),orb_a)
-         g(:,3).plus_product_of(sh_grid1(:,:,3),orb_a)
-         h(:,1).plus_product_of(sh_grid2(:,:,1),orb_a)
-         h(:,2).plus_product_of(sh_grid2(:,:,2),orb_a)
-         h(:,3).plus_product_of(sh_grid2(:,:,3),orb_a)
-              i.plus_product_of(sh_grid3,       orb_a)
+         g(:,1).plus_product_of(sh_grid1(:,:,1),orb(fa:la))
+         g(:,2).plus_product_of(sh_grid1(:,:,2),orb(fa:la))
+         g(:,3).plus_product_of(sh_grid1(:,:,3),orb(fa:la))
+         h(:,1).plus_product_of(sh_grid2(:,:,1),orb(fa:la))
+         h(:,2).plus_product_of(sh_grid2(:,:,2),orb(fa:la))
+         h(:,3).plus_product_of(sh_grid2(:,:,3),orb(fa:la))
+              i.plus_product_of(sh_grid3,       orb(fa:la))
 
          sh_grid3.destroy
          sh_grid2.destroy
@@ -9087,8 +9311,9 @@ contains
 
    make_local_ionisation_grid_r(grid,pt)
    ! Work out Politzer's local ionisation energy "grid" using points "pt"
-      grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
    ENSURE(.molecular_orbitals.is_associated_with_genre("restricted"), "no restricted MO's")
    ENSURE(.orbital_energies.is_associated_with_genre("restricted"),"no restricted MO energies")
@@ -9191,11 +9416,13 @@ contains
    make_laplacian_grid(laplacian_grid,pt)
    ! Work out the electron "laplacian_grid" on "pt" using ".natural orbitals"
    ! and  the ".occupation_numbers" vector.
-      laplacian_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: INOUT
+      laplacian_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(.natural_orbitals.associated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
+
       NO_kind :: STR
 
       NO_kind = .natural_orbitals.spinorbital_kind
@@ -9225,8 +9452,8 @@ contains
    make_laplacian_grid_r(laplacian_grid,pt)
    ! Make the "laplacian_grid" for the supplied points "pt" from restricted
    ! real natural orbitals
-      laplacian_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      laplacian_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
    ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
@@ -9448,8 +9675,10 @@ contains
       g  :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
       self :: MOLECULE*
+
       .BASE:set_from_saved_self
       .:make_laplacian_grid(g,pt)
+
    end
 
 
@@ -10910,7 +11139,6 @@ contains
       octupoles.create(.n_atom, 10)
 
       .BASE:make_atomic_multipoles(charges,dipoles,quadrupoles,octupoles,od=FALSE)
-      charges(:) = .atom(:).atomic_number - charges(:) ! <<< redefine charge
 
       parallel do q = 1, .n_atom
          T.electrostatic_potential_grid(charges(q),dipoles(q,:),quadrupoles(q,:),octupoles(q,:),&
@@ -11066,6 +11294,145 @@ contains
        end
 
      end
+
+   end
+
+
+   make_mixed_ESP_grid_r_v2(grid,pt,P)
+   ! Make the multipole ESP grid (off diagonal) using the exact for
+   ! the one center terms potential "grid" on a series of grid points
+   ! "pt" using AO density matrix "P"
+      grid :: VEC{REAL}, INOUT
+      pt :: MAT{REAL}, IN
+      P :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+
+      VD :: VEC{MAT3_{REAL}}*
+      Vab :: MAT{REAL}@
+      Pba :: MAT{REAL}@
+      P_max,tol, Va,Vb :: REAL
+      skip :: BIN
+      n_pt,q,a,b,fa,fb,la,lb,na,nb,k :: INT
+      atom_a,atom_b :: INT
+      sh :: SHELL2
+      T :: T_TENSOR
+      pole0 :: VEC{REAL}*
+      pole2,pole4,pole8 :: MAT{REAL}*
+      V :: VEC{REAL}(4)
+
+      n_pt = pt.dim1
+
+      grid = ZERO
+
+      ! Make atomic multipoles
+    ! pole0.create(.n_atom)
+    ! pole2.create(.n_atom, 3)
+    ! pole4.create(.n_atom, 6)
+    ! pole8.create(.n_atom, 10)
+
+    ! .BASE:make_atomic_multipoles(pole0,pole2,pole4,pole8,oc=TRUE)
+
+    ! ! Make mutipole potential
+    ! do q = 1, .n_atom
+    ! do k = 1, n_pt
+    !    T.create_fast(.atom(q).position, pt(k,:))
+    !    V = T.electrostatic_potential(pole0(q),pole2(q,:),pole4(q,:),pole8(q,:))
+    !    grid(k) = grid(k) - sum(V)
+    ! end do
+    ! end do
+
+    ! pole8.destroy
+    ! pole4.destroy
+    ! pole2.destroy
+    ! pole0.destroy
+
+      ! Diagonal blocks for schwarz test
+      .:make_diagonal_block_V_ints(VD,pt)
+
+      ! Schwarz test tolerance
+      tol = TOL(6)
+
+      ! Make exact potential
+      parallel do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,a,fa,la,na,b,fb,lb,nb,atom_a,atom_b)
+
+         ! Density matrix
+         Pba = P(fa:la,fb:lb)
+         P_max = maxval(abs(Pba))
+
+         if (fa==fb) then
+
+            ! Do basis-fn diagonal exactly
+            do k = 1,n_pt
+               grid(k) = grid(k) - sum(VD(a).element(:,:,k)*Pba)
+            end
+
+         else if (P_max>tol) then
+            
+            ! Schwarz test for off diagonals & large P's
+            allocate(Vab(na,nb))
+            do k = 1,n_pt
+               Va = sqrt(maxval(abs(VD(a).element(:,:,k))))
+               Vb = sqrt(maxval(abs(VD(b).element(:,:,k))))
+               if (P_max*Va*Vb > tol) then
+                  sh.get_nuc(Vab,ZERO,pt(k,:))
+                  grid(k) = grid(k) - sum(Vab*Pba)*TWO
+               end
+            end
+            deallocate(Vab)
+
+         end
+
+         sh.destroy_ptr_part
+
+      end
+            
+      ! Clean
+      VD.destroy
+
+      ! Reduce
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(grid)
+      end
+
+   end
+
+   make_diagonal_block_V_ints(V,pt) ::: private, leaky
+   ! Make "V" the diagonal block nuclear attraction integrals 
+   ! (a| |r_k - r|^-1 |a) over a shell q, a in q, for each 
+   ! point r_k = "pt(k,1:3)".
+      V :: VEC{MAT3_{REAL}}*, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(3==pt.dim2,"wrong dim2, pt")
+
+      n_pt,q,a,b,fa,fb,la,lb,na,nb,k :: INT
+      atom_a,atom_b :: INT
+      sh :: SHELL2
+
+      n_pt = pt.dim1
+
+      V.create(.n_shell)
+
+      parallel do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,a,fa,la,na,b,fb,lb,nb,atom_a,atom_b)
+
+         if (a==b) then
+
+            V(a).element.create(na,na,n_pt)
+            do k = 1,n_pt
+               sh.get_nuc(V(a).element(:,:,k),ZERO,pt(k,:))
+            end
+
+         end
+
+         sh.destroy_ptr_part
+
+      end
 
    end
 
