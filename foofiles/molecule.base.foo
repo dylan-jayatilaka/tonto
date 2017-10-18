@@ -1465,7 +1465,9 @@ contains
       molden_file.move_to_line(line)
 
       ! Find [ATOMS] block
+      ! or [Atoms]
       molden_file.look_for(op//"Atoms"//cl,found=found)
+      if(NOT found) molden_file.look_for(op//"ATOMS"//cl,found=found)
       DIE_IF(NOT found, "No ATOMS line")
       DIE_IF(molden_file.n_line_items/=2, "Expecting two items on ATOMS line")
 
@@ -1685,6 +1687,7 @@ contains
       orb.destroy
 
       ! Swap orbital order
+      stdout.text("Reordering basis functions into tonto order")
       if (is_unrestricted) then
          .:swap_molden_orbital_order(.molecular_orbitals.alpha,"row")
          .:swap_molden_orbital_order(.molecular_orbitals.beta,"row")
@@ -1695,7 +1698,9 @@ contains
 
       ! Make density matrix (leaky)
       .:make_scf_density_matrix
-      if(NOT .natural_orbitals.associated) .:make_natural_orbitals
+      stdout.text("Occupation")
+      stdout.put(.occupation_numbers)
+      !if(NOT .natural_orbitals.associated) .:make_natural_orbitals
 
       ! Print out data
       stdout.flush
@@ -1707,8 +1712,8 @@ contains
       stdout.text(". Atom coordinates and bases")
       stdout.text(". Molecular orbitals and their occupancies")
       stdout.flush
-      if (is_unrestricted) then; stdout.text("The data is for *restricted* orbitals")
-      else;                      stdout.text("The data is for *unrestricted* orbitals")
+      if (is_unrestricted) then; stdout.text("The data is for *unrestricted* orbitals")
+      else;                      stdout.text("The data is for *restricted* orbitals")
       end
 
       stdout.flush
@@ -1721,9 +1726,24 @@ contains
       stdout.put(.occupation_numbers)
 
       stdout.flush
-      stdout.text("Natural orbitals:")
+      stdout.text("Orbital energies:")
       stdout.flush
-      stdout.put(.natural_orbitals)
+      stdout.put(.orbital_energies)
+
+      stdout.flush
+      stdout.text("Density matrix:")
+      stdout.flush
+      stdout.put(.density_matrix)
+
+      stdout.flush
+      !.SCF:make_fock_matrix
+      !.SCF:put_scf_energy
+      stdout.flush
+
+     !stdout.flush
+     !stdout.text("Natural orbitals:")
+     !stdout.flush
+     !stdout.put(.natural_orbitals)
 
       ! Save data in archive files
       archive.set_defaults
@@ -2051,12 +2071,22 @@ contains
    ! Swap the order of orbitals on matrix "X" after reading a
    ! molden input file, for "swap" equal to "row" or "1", or
    ! "coloumn" or "2".  This is nearly the same as gaussian.
+   !
+   ! The molden orderring is as follows:
+   !  5D: D 0, D+1, D-1, D+2, D-2
+   !  6D: xx, yy, zz, xy, xz, yz
+   !  7F: F 0, F+1, F-1, F+2, F-2, F+3, F-3
+   ! 10F: xxx, yyy, zzz, xyy, xxy, xxz, xzz, yzz, yyz, xyz
+   !  9G: G 0, G+1, G-1, G+2, G-2, G+3, G-3, G+4, G-4
+   ! 15G: xxxx yyyy zzzz xxxy xxxz yyyx yyyz zzzx zzzy,
+   !      xxyy xxzz yyzz xxyz yyxz zzxy
       X :: MAT{REAL}
       swap :: STR
 
       s,f,l,ls,fg,lg,i,j :: INT
       fac :: VEC{REAL}*
       ff :: VEC{INT}(10) = (/ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 /)
+      sph_reorder :: VEC{INT}@
 
       select case (swap)
 
@@ -2065,17 +2095,35 @@ contains
                f  = .first_basis_fn_for_shell(s)
                l  = .last_basis_fn_for_shell(s)
                ls = .angular_moment_for_shell(s)
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
-               if (ls==3) then ! swap f functions
-                  X(f:l,:) = X(f-1+ff,:)
-               end
-               if (ls>1) then  ! normalisation factors
-                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                  fg = lg + 1
-                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
-                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do i = f,l
-                     X(i,:) = X(i,:)*fac(i-f+1)
+               if(.atom(.atom_for_shell(s)).basis.is_spherical) then
+                  ! do spherical test
+                  sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
+                  stdout.show("Reordering: ", sph_reorder)
+                  if (ls>=1) then ! swap f functions
+                     X(f:l,:) = X(f-1+sph_reorder,:)
+                  end
+                  if (ls>1) then  ! normalisation factors
+                     lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                     fg = lg + 1
+                     lg = lg + GAUSSIAN_DATA:n_comp(ls)
+                     fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+                     do i = f,l
+                        X(i,:) = X(i,:)*fac(i-f+1)
+                     end
+                  end
+               else
+                  ENSURE(ls<=4,"cannot yet convert order for h shells")
+                  if (ls==3) then ! swap f functions
+                     X(f:l,:) = X(f-1+ff,:)
+                  end
+                  if (ls>1) then  ! normalisation factors
+                     lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                     fg = lg + 1
+                     lg = lg + GAUSSIAN_DATA:n_comp(ls)
+                     fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+                     do i = f,l
+                        X(i,:) = X(i,:)*fac(i-f+1)
+                     end
                   end
                end
             end
