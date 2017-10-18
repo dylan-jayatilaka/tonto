@@ -299,6 +299,7 @@ contains
       .constraint_matrix.destroy
 
       .atom_group.destroy
+      .elmo_connection_table.destroy
 
    end
 
@@ -423,6 +424,7 @@ contains
       if (mol.normal_mode_eigenvalues.associated)    .normal_mode_eigenvalues.create_copy(mol.normal_mode_eigenvalues)
       if (mol.phi3_force_constants.associated)       .phi3_force_constants.create_copy(mol.phi3_force_constants)
       if (mol.phi4_force_constants.associated)       .phi4_force_constants.create_copy(mol.phi4_force_constants)
+      if (mol.elmo_connection_table.associated)       .elmo_connection_table.create_copy(mol.elmo_connection_table)
 
    end
 
@@ -1432,8 +1434,6 @@ contains
    ! Read a Molden MOs file
       file_name :: STR, optional
 
-   ENSURE(NOT .use_spherical_basis,"not implemented")
-
       molden_file,save :: TEXTFILE*
       archive :: ARCHIVE
       pos :: VEC{REAL}(3)
@@ -1458,8 +1458,16 @@ contains
       molden_file.create(name)
       molden_file.open_for("read")
 
+      ! Find out if this file is using a spherical basis
+      line = molden_file.line_number
+      molden_file.look_for(op//"5D"//cl,found=found)
+      if(found) .use_spherical_basis = TRUE
+      molden_file.move_to_line(line)
+
       ! Find [ATOMS] block
-      molden_file.look_for(op//"ATOMS"//cl,found=found)
+      ! or [Atoms]
+      molden_file.look_for(op//"Atoms"//cl,found=found)
+      if(NOT found) molden_file.look_for(op//"ATOMS"//cl,found=found)
       DIE_IF(NOT found, "No ATOMS line")
       DIE_IF(molden_file.n_line_items/=2, "Expecting two items on ATOMS line")
 
@@ -1476,7 +1484,7 @@ contains
       .n_atom = 0
       do
          molden_file.read(item)
-         if (item==op//"Molden") exit
+         if (item(1:1)==op) exit
          DIE_IF(molden_file.end_of_file,"file ended unexpectedly")
          .n_atom = .n_atom + 1
          molden_file.read_line
@@ -1489,6 +1497,7 @@ contains
       ! Create basis -- Different one for every atom (leaky)
       if (.basis.associated) .basis.destroy
       .basis.create(.n_atom)
+      if(.use_spherical_basis) .basis.set_spherical(TRUE)
 
       ! Move back to atoms line
       molden_file.move_to_line(line)
@@ -1639,6 +1648,8 @@ contains
             molden_file.skip_next_item
             molden_file.read(orb(f))
          end
+         stdout.show("Read orbital", i)
+         stdout.show("orb:", orb)
 
          ! Increment orbital
          if (spin=="Alpha") i = i + 1
@@ -1676,6 +1687,7 @@ contains
       orb.destroy
 
       ! Swap orbital order
+      stdout.text("Reordering basis functions into tonto order")
       if (is_unrestricted) then
          .:swap_molden_orbital_order(.molecular_orbitals.alpha,"row")
          .:swap_molden_orbital_order(.molecular_orbitals.beta,"row")
@@ -1686,6 +1698,9 @@ contains
 
       ! Make density matrix (leaky)
       .:make_scf_density_matrix
+      stdout.text("Occupation")
+      stdout.put(.occupation_numbers)
+      !if(NOT .natural_orbitals.associated) .:make_natural_orbitals
 
       ! Print out data
       stdout.flush
@@ -1697,8 +1712,8 @@ contains
       stdout.text(". Atom coordinates and bases")
       stdout.text(". Molecular orbitals and their occupancies")
       stdout.flush
-      if (is_unrestricted) then; stdout.text("The data is for *restricted* orbitals")
-      else;                      stdout.text("The data is for *unrestricted* orbitals")
+      if (is_unrestricted) then; stdout.text("The data is for *unrestricted* orbitals")
+      else;                      stdout.text("The data is for *restricted* orbitals")
       end
 
       stdout.flush
@@ -1711,9 +1726,24 @@ contains
       stdout.put(.occupation_numbers)
 
       stdout.flush
-      stdout.text("Natural orbitals:")
+      stdout.text("Orbital energies:")
       stdout.flush
-      stdout.put(.natural_orbitals)
+      stdout.put(.orbital_energies)
+
+      stdout.flush
+      stdout.text("Density matrix:")
+      stdout.flush
+      stdout.put(.density_matrix)
+
+      stdout.flush
+      !.SCF:make_fock_matrix
+      !.SCF:put_scf_energy
+      stdout.flush
+
+     !stdout.flush
+     !stdout.text("Natural orbitals:")
+     !stdout.flush
+     !stdout.put(.natural_orbitals)
 
       ! Save data in archive files
       archive.set_defaults
@@ -1839,6 +1869,7 @@ contains
       stdin => molden_file
       do a = 1,.n_atom
          .basis(a).read_molden
+         .basis(a).put
          .basis(a).set_label(.atom(a).basis_label)
       end
       stdin => save
@@ -2040,12 +2071,22 @@ contains
    ! Swap the order of orbitals on matrix "X" after reading a
    ! molden input file, for "swap" equal to "row" or "1", or
    ! "coloumn" or "2".  This is nearly the same as gaussian.
+   !
+   ! The molden orderring is as follows:
+   !  5D: D 0, D+1, D-1, D+2, D-2
+   !  6D: xx, yy, zz, xy, xz, yz
+   !  7F: F 0, F+1, F-1, F+2, F-2, F+3, F-3
+   ! 10F: xxx, yyy, zzz, xyy, xxy, xxz, xzz, yzz, yyz, xyz
+   !  9G: G 0, G+1, G-1, G+2, G-2, G+3, G-3, G+4, G-4
+   ! 15G: xxxx yyyy zzzz xxxy xxxz yyyx yyyz zzzx zzzy,
+   !      xxyy xxzz yyzz xxyz yyxz zzxy
       X :: MAT{REAL}
       swap :: STR
 
       s,f,l,ls,fg,lg,i,j :: INT
       fac :: VEC{REAL}*
       ff :: VEC{INT}(10) = (/ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 /)
+      sph_reorder :: VEC{INT}@
 
       select case (swap)
 
@@ -2054,17 +2095,35 @@ contains
                f  = .first_basis_fn_for_shell(s)
                l  = .last_basis_fn_for_shell(s)
                ls = .angular_moment_for_shell(s)
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
-               if (ls==3) then ! swap f functions
-                  X(f:l,:) = X(f-1+ff,:)
-               end
-               if (ls>1) then  ! normalisation factors
-                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                  fg = lg + 1
-                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
-                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do i = f,l
-                     X(i,:) = X(i,:)*fac(i-f+1)
+               if(.atom(.atom_for_shell(s)).basis.is_spherical) then
+                  ! do spherical test
+                  sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
+                  stdout.show("Reordering: ", sph_reorder)
+                  if (ls>=1) then ! swap f functions
+                     X(f:l,:) = X(f-1+sph_reorder,:)
+                  end
+                  if (ls>1) then  ! normalisation factors
+                     lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                     fg = lg + 1
+                     lg = lg + GAUSSIAN_DATA:n_comp(ls)
+                     fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+                     do i = f,l
+                        X(i,:) = X(i,:)*fac(i-f+1)
+                     end
+                  end
+               else
+                  ENSURE(ls<=4,"cannot yet convert order for h shells")
+                  if (ls==3) then ! swap f functions
+                     X(f:l,:) = X(f-1+ff,:)
+                  end
+                  if (ls>1) then  ! normalisation factors
+                     lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                     fg = lg + 1
+                     lg = lg + GAUSSIAN_DATA:n_comp(ls)
+                     fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+                     do i = f,l
+                        X(i,:) = X(i,:)*fac(i-f+1)
+                     end
                   end
                end
             end
@@ -5004,6 +5063,69 @@ contains
 
    end
 
+   connected(a,b) result (res) ::: pure
+   ! Return true if atoms "a" and "b" are connected
+      self :: IN
+      a,b :: INT, IN
+      res :: BIN
+      
+      if (a <= .atoms_bonded_to_atom.dim1) then
+         res = any(b==.atoms_bonded_to_atom(a).element(:))
+      else
+         res = FALSE
+      end if
+
+   end
+  
+   connected_or_identical(a,b) result (res) ::: pure
+   ! Return true if atoms "a" and "b" are connected
+   ! or if they are the same atom
+      self :: IN
+      a,b :: INT, IN
+      res :: BIN
+     
+      if (a == b) then 
+         res = TRUE
+      else if (a <= .atoms_bonded_to_atom.dim1) then
+         res = any(b==.atoms_bonded_to_atom(a).element(:))
+      else
+         res = FALSE
+      end if
+
+   end
+
+   make_elmo_connection_table ::: leaky
+      self :: INOUT
+   ! construct the elmo connection table
+      i, j :: INT
+      .elmo_connection_table.create(.n_atom,.n_atom)
+
+      ! set default connection to something huge
+      ! to signify not connected
+      ! divide by 2 to prevent overflow errors
+      .elmo_connection_table = (huge(i) - 1) / 2
+
+      ! initialize same atom connections
+      do i = 1, .n_atom
+         .elmo_connection_table(i,i) = 0
+      end do
+
+      do i = 1, .n_atom
+         do j = 1, .atoms_bonded_to_atom(i).element.dim
+            .elmo_connection_table(i, .atoms_bonded_to_atom(i).element(j)) = 1
+         end do
+      end do
+      .elmo_connection_table = .elmo_connection_table.floyd_warshall
+   end
+
+   elmo_connected(a,b, degree) result(res) ::: pure
+      self :: IN
+      a, b, degree :: INT, IN
+      res :: BIN
+      res = (.elmo_connection_table(a,b) <= degree)
+   end 
+
+
 !  =================
 !  Atom pair indices
 !  =================
@@ -6049,7 +6171,7 @@ contains
 
       T :: REAL
       damping,do_archive,do_delta_density :: BIN
-      use_ELMO,use_pFON,use_FON :: BIN
+      use_NOMO,use_ELMO,use_pFON,use_FON :: BIN
       MO,D,MOa,MOb,Da,Db,F,Fa,Fb :: MAT{REAL}*
       CMO,CD,CMOa,CMOb,CDa,CDb :: MAT{CPX}*
       EV,Ea,Eb :: VEC{REAL}*
@@ -6076,7 +6198,11 @@ contains
       else if (.scfdata.associated) then; damping = damping AND .scfdata.apply_damping
       end
 
-      ! Determine if finite temperature FON should be used
+      ! Determine if NOMO should be used
+      use_NOMO = FALSE
+      if (.scfdata.associated) use_NOMO = .scfdata.use_NOMO
+
+      ! Determine if ELMO should be used
       use_ELMO = FALSE
       if (.scfdata.associated) use_ELMO = .scfdata.use_ELMO
 
@@ -6142,13 +6268,13 @@ contains
             ::make_finite_T_DM_r(D,.scfdata.E_Fermi,MO,EV,T,.n_a)
             D  = TWO*D
 
-         else if (.scfdata.use_ELMO) then
+         else if (.scfdata.use_NOMO) then
            
             D  => .density_matrix.restricted
             MO => .molecular_orbitals.restricted
 
-            .:make_ELMO_density_matrix_r(D,MO)
-
+            .:make_NOMO_density_matrix_r(D,MO)
+         
          else
 
             MO => .molecular_orbitals.restricted(:,1:.n_a)
@@ -6198,6 +6324,15 @@ contains
             T = .scfdata.temperature
             ::make_finite_T_DM_u(Da,Db,.scfdata.E_Fermi,MOa,MOb,Ea,Eb,T,.n_a,.n_b)
 
+         else if (.scfdata.use_NOMO) then
+           
+            MOa => .molecular_orbitals.alpha(:,1:.n_a)
+            MOb => .molecular_orbitals.beta(:,1:.n_b)
+            Da  => .density_matrix.alpha
+            Db  => .density_matrix.beta
+
+            .:make_NOMO_density_matrix_u(Da,Db,MOa,MOb)
+         
          else
 
             MOa => .molecular_orbitals.alpha(:,1:.n_a)
@@ -6209,14 +6344,27 @@ contains
 
          end
 
-      case ("ghf")
-
+      case ("ghf","no_ghf")
+            
          ENSURE(.molecular_orbitals.is_associated_with_genre("general"),"no MO's")
-         ENSURE(.spin_multiplicity==1,"this is not a singlet state")
+         !WTF!!!? Should this be here?
+         !ENSURE(.spin_multiplicity==1,"this is not a singlet state")
 
-         MO => .molecular_orbitals.general(:,1:.n_e)
-         D  => .density_matrix.general
-         D.to_product_of(MO,MO,transpose_b=TRUE)
+         if (.scfdata.use_NOMO) then
+            
+            D  => .density_matrix.general
+            MO => .molecular_orbitals.general(:,1:.n_e)
+
+            .:make_NOMO_density_matrix_g(D,MO)
+         
+         else
+
+
+            MO => .molecular_orbitals.general(:,1:.n_e)
+            D  => .density_matrix.general
+            D.to_product_of(MO,MO,transpose_b=TRUE)
+         
+         end if
 
       case ("rchf")
 
@@ -6276,7 +6424,27 @@ contains
 
    end
 
-   make_ELMO_density_matrix_r(D,MO)
+   make_NOMO_density_matrix_g(D,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      D :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+      S_inv :: MAT{REAL}@
+
+      ! Make (S^MO){-1} in MO basis & back transform
+      S_inv.create(.n_e,.n_e)
+      S_inv = ZERO
+      .:make_NOMO_S_inv_g(S_inv,MO)
+
+      ! Back transform -> D
+      S_inv.back_transform_to(D,MO)
+      S_inv.destroy
+
+   end
+   
+   make_NOMO_density_matrix_r(D,MO)
    ! Make the inverse of the occupied-coccupied block of the MO
    ! overlap matrix.
       self :: IN
@@ -6287,7 +6455,7 @@ contains
 
       ! Make (S^MO){-1} in MO basis & back transform
       S_inv.create(.n_a,.n_a)
-      .:make_ELMO_S_inv_r(S_inv,MO)
+      .:make_NOMO_S_inv_r(S_inv,MO)
 
       ! Back transform -> D
       S_inv.back_transform_to(D,MO(:,1:.n_a))
@@ -6297,9 +6465,71 @@ contains
       D = TWO*D
 
    end
-
-   make_ELMO_S_inv_r(S_inv,MO)
+   
+   make_NOMO_density_matrix_u(Da,Db,MOa,MOb)
    ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      
+      Da,Db :: MAT{REAL}, OUT
+      MOa,MOb :: MAT{REAL}, IN
+
+      S_inv :: MAT{REAL}@
+
+      ! alpha
+      ! Make (S^MO){-1} in MO basis & back transform
+      S_inv.create(.n_a,.n_a)
+      .:make_NOMO_S_inv_u_a(S_inv,MOa)
+
+      ! Back transform -> Da
+      S_inv.back_transform_to(Da,MOa)
+      S_inv.destroy
+
+
+      ! beta
+      ! Make (S^MO){-1} in MO basis & back transform
+      S_inv.create(.n_b,.n_b)
+      .:make_NOMO_S_inv_u_b(S_inv,MOb)
+
+      ! Back transform -> Db
+      S_inv.back_transform_to(Db,MOb)
+      S_inv.destroy
+
+   end
+
+   make_NOMO_S_inv_g(S_inv,MO)
+   ! Make the inverse of the occupied-occupied block of the
+   ! general MO overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+      V :: MAT{REAL}*
+
+      ! Make S in the SAO asis 
+      V.create(2*.n_bf, 2*.n_bf)
+      V = ZERO
+      V.alpha_alpha_set_to(.overlap_matrix)
+        V.beta_beta_set_to(.overlap_matrix)
+
+      ! Make S in the occupied MO basis 
+      S.create(.n_e,.n_e)
+      V.change_basis_to(S,MO(:,1:.n_e))
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+      V.destroy
+
+   end
+
+   make_NOMO_S_inv_r(S_inv,MO)
+   ! Make the inverse of the occupied-occupied block of the MO
    ! overlap matrix.
       self :: IN
       S_inv :: MAT{REAL}, OUT
@@ -6321,6 +6551,52 @@ contains
 
    end
 
+   make_NOMO_S_inv_u_a(S_inv,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+
+      ! Make S in the occupied MO basis 
+      S.create(.n_a,.n_a)
+      .overlap_matrix.change_basis_to(S,MO)
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+
+   end
+
+   make_NOMO_S_inv_u_b(S_inv,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+
+      ! Make S in the occupied MO basis 
+      S.create(.n_b,.n_b)
+      .overlap_matrix.change_basis_to(S,MO)
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+
+   end
+   
 !   make_ELMO_S_S_inv_r(S,S_inv,MO) ::: PURE
 !   ! Make "S", the occupied-occupied block of the MO overlap matrix
 !   ! and it's inverse "S_inv".
@@ -7043,7 +7319,7 @@ contains
                Db = ZERO
             end
 
-         case ("ghf")
+         case ("ghf", "no_ghf")
 
             ENSURE(.spin_multiplicity==1,"this is not a singlet state")
 
@@ -9237,12 +9513,15 @@ contains
 
    put_MOs_and_energies
    ! Output the current associated molecular orbitals and their energies
+      self :: IN
+
       stdout.flush
       stdout.text("Molecular orbital energies:")
       stdout.put(.orbital_energies)
       stdout.flush
       stdout.text("Molecular orbitals:")
       stdout.put(.molecular_orbitals)
+
    end
 
    put_MO_energies
@@ -10050,7 +10329,7 @@ contains
    end
 
    make_atomic_multipoles(charge,dipole,quadrupole,octupole,od,oc,no_s)
-   ! Make the atomic multiploes using the KM partitioing
+   ! Make the atomic multipoles using the tanaka partitioing
       self :: IN
       charge :: VEC{REAL}, OUT
       dipole, quadrupole, octupole :: MAT{REAL}, OUT
