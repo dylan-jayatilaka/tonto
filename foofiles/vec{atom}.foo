@@ -842,6 +842,75 @@ contains
 
    end
 
+!  =====
+!  Modes
+!  =====
+
+   initialize_local_H_modes(L)
+   ! Initialize local H modes as columns. These come in triples.
+   ! The first is the XH stretch. The next two are the two XH bends.
+      L :: MAT{REAL}
+
+   ENSURE(L.dim1==3*.dim,"wrong size, dim1")
+   ENSURE(L.dim2==3*count(self.atomic_number==1),"wrong size, dim2")
+
+      unit :: MAT{REAL}(3,3)
+      r1,r2,r3 :: VEC{REAL}(3)
+      h,i,x, fh,lh :: INT
+
+      ! Make the connection table
+      .make_connection_table
+
+      ! Initialise L
+      L = ZERO
+
+      ! Set unit vectors
+      unit.to_unit_matrix
+
+      ! Make the H modes
+      i  = 0
+      lh = 0
+
+      do h = 1,.dim
+
+         fh = lh + 1
+         lh = lh + 3
+
+         ! Only look for a = H atom
+         if(self(h).atomic_number>1) cycle
+
+         ! Make sure H atom connects one other
+         if (connections_for(h).element.dim>1) then
+            DIE("H atom connected tomore than one other")
+         end
+
+         ! Get XH vector
+         x  = connections_for(h)[1]
+         r1 = self(h).position - self(x).position
+         r1.normalise
+
+         ! Get the two perpendicular vectors
+         r2.to_cross_product_of(r1,unit(:,1))
+         if (r2.is_zero) &
+         r2.to_cross_product_of(r1,unit(:,2))
+         r2.normalise
+         r3.to_cross_product_of(r1,r2)
+
+         ! Set L
+         L(fh:lh,i+1) = r1
+         L(fh:lh,i+2) = r2
+         L(fh:lh,i+3) = r3
+
+         ! Next H mode
+         i = i + 3
+
+      end
+
+      ! Clean
+      connections_for.destroy
+
+   end
+
 !  ============
 !  pADP/ADP put
 !  ============
@@ -4338,16 +4407,72 @@ contains
 
    end
 
+   has_all_shell_info result (res) ::: PURE
+   ! Return TRUE if all shell info is there for every atom.
+      self :: IN
+      res :: BIN
+
+      res = all(self(:).shell_info_made)
+
+   end
+
+
+   minimum_basis_exponents result (res) ::: PURE
+   ! Return the minimum exponent in the basis.
+      self :: IN
+      res :: VEC{REAL}(.dim)
+
+      i :: INT
+
+      do i = 1,.dim
+         res(i) = self(i).minimum_basis_exponent
+      end
+
+   end
+
+
+   tag_xyz_basis_fn_part result (res) ::: PURE
+   ! Return a character representation for the cartesian product part
+   ! of the gaussians in this shell.
+      self :: IN
+      res :: VEC{STR}(.no_of_basis_functions)
+
+      a,i,f,l, width,spaces :: INT
+      labels :: VEC{STR}@
+
+      l = 0
+
+      do a = 1,.dim
+
+         f = l + 1
+         l = l + self(a).basis.no_of_basis_functions
+
+         labels = self(a).basis.xyz_basis_fn_part
+         width  = maxval(len_trim(labels)) + 1
+         do i = f,l
+            spaces = width - len_trim(labels(i-f+1))
+            res(i) = trim(self(a).tag) // repeat(" ",spaces) // trim(labels(i-f+1))
+         end
+
+      end
+
+   end
+
    basis_labels result (labels) ::: leaky
    ! Return a list of basis set "labels". Missing labels are returned blank.
+      self :: IN
       labels :: VEC{STR}*
+
       i :: INT
+
       labels.create(size(self))
-      do i = 1,size(self)
+
+      do i = 1,.dim
          if (self(i).basis_label/=" ") then; labels(i) = self(i).basis_label
          else;                               labels(i) = " "
          end
       end
+
    end
 
    library_basis_labels(suffix) result (labels) ::: leaky
@@ -4375,28 +4500,6 @@ contains
       do Z = 1,Z_max
          labels(Z) = ATOM:library_basis_label(Z,suffix)
       end
-   end
-
-   minimum_basis_exponents result (res) ::: PURE
-   ! Return the minimum exponent in the basis.
-      self :: IN
-      res :: VEC{REAL}(.dim)
-
-      i :: INT
-
-      do i = 1,.dim
-         res(i) = self(i).minimum_basis_exponent
-      end
-
-   end
-
-   has_all_shell_info result (res) ::: PURE
-   ! Return TRUE if all shell info is there for every atom.
-      self :: IN
-      res :: BIN
-
-      res = all(self(:).shell_info_made)
-
    end
 
 !  ======================
@@ -5228,15 +5331,20 @@ contains
       self :: IN
       first,last,momentum :: VEC{INT}*, OUT
 
-      a,as,n,ss,f,l :: INT
+      n_shell, a,as,n,ss,f,l :: INT
 
-      first.create(.n_shell)
-      last.create(.n_shell)
-      momentum.create(.n_shell)
+      n_shell = .no_of_shells
+      first.create(n_shell)
+      last.create(n_shell)
+      momentum.create(n_shell)
 
-      ss = 0; l = 0
+      ss = 0
+      l  = 0
+
       do a = 1,.dim
-         n = self(a).basis.n_shell
+
+         n = self(a).basis.shell.dim
+
          do as = 1,n
             ss = ss + 1
             f = l + 1
@@ -5245,6 +5353,7 @@ contains
             last(ss)  = l
             momentum(ss) = self(a).basis.shell(as).l
          end
+
       end
 
    end
@@ -5261,7 +5370,7 @@ contains
 
       l = 0
       do a = 1,.dim
-         n = self(a).basis.n_shell
+         n = self(a).basis.shell.dim
          first(a) = l + 1
          do as = 1,n
             l = l + self(a).basis.shell(as).n_bf
@@ -5331,7 +5440,7 @@ contains
 
       ss = 0
       do a = 1,.dim
-         n = self(a).basis.n_shell
+         n = self(a).basis.shell.dim
          ss = ss + n
          if (s<=ss) exit
       end
@@ -5346,11 +5455,11 @@ contains
 
       a,ss,n :: INT
 
-      res.create(.n_shell)
+      res.create(.no_of_shells)
 
       ss = 0
       do a = 1,.dim
-         n = self(a).basis.n_shell
+         n = self(a).basis.shell.dim
          res(ss+1:ss+n) = a
          ss = ss + n
       end
@@ -5369,7 +5478,7 @@ contains
       n = 0
       ss = 0
       do a = 1,.dim
-         n = self(a).basis.n_shell
+         n = self(a).basis.shell.dim
          ss = ss + n
          if (s<=ss) exit
       end
@@ -5386,11 +5495,11 @@ contains
 
       a,ss,n,as :: INT
 
-      res.create(.n_shell)
+      res.create(.no_of_shells)
 
       ss = 0
       do a = 1,.dim
-         n = self(a).basis.n_shell
+         n = self(a).basis.shell.dim
          do as = 1,n
             res(ss+as) = as
          end
@@ -5409,7 +5518,7 @@ contains
 
       res = 1
       do at = 1,(a-1)
-         n = self(a).basis.n_shell
+         n = self(a).basis.shell.dim
          res = res + n
       end
 
@@ -5425,7 +5534,7 @@ contains
       ss = 0
       do a = 1,.dim
          first(a) = ss + 1
-         n = self(a).basis.n_shell
+         n = self(a).basis.shell.dim
          ss = ss + n
          last(a) = ss
       end
@@ -5443,7 +5552,7 @@ contains
 
       ss = 0
       do a = 1,.dim
-         n = self(a).basis.n_shell
+         n = self(a).basis.shell.dim
          res(a) = ss + 1
          ss = ss + n
       end
@@ -9179,8 +9288,8 @@ contains
 !  ==============================
 
    no_of_shells result (res) ::: pure
-   ! Work out and return the number of gaussian shells in the basis set for the
-   ! molecule
+   ! Work out and return the number of gaussian shells in the basis
+   ! set for the molecule
       self :: IN
       res :: INT
 
@@ -9188,35 +9297,54 @@ contains
 
       res = 0
       do a = 1,.dim
-         res = res + self(a).basis.no_of_shells
+         res = res + self(a).basis.shell.dim
       end
 
    end
 
-   n_shell result (res) ::: pure
-   ! Work out and return the number of gaussian shells in the basis set for the
-   ! molecule
-      self :: IN
-      res :: INT
+!   n_shell result (res) ::: pure
+!   ! Work out and return the number of gaussian shells in the basis set for the
+!   ! molecule
+!      self :: IN
+!      res :: INT
+!
+!      a :: INT
+!
+!      res = 0
+!      do a = 1,.dim
+!         res = res + self(a).basis.shell.dim
+!      end
+!
+!   end
 
-      a :: INT
-
-      res = 0
-      do a = 1,.dim
-         res = res + self(a).basis.n_shell
-      end
-
-   end
-
-   n_shell_pairs result (res) ::: pure
-   ! Return the number of shell pairs in the basis set for the molecule
+   no_of_shell_pairs result (res) ::: PURE
+   ! Return the number of shell pairs in the concatenated  basis set
       self :: IN
       res :: INT
 
       n_shell :: INT
 
-      n_shell = .n_shell
+      n_shell = .no_of_shells
+      ENSURE(n_shell<=sqrt(TWO)*(huge(1))**HALF,"too many shells")
+
       res = n_shell*(n_shell+1)/2
+
+   end
+
+   no_of_shell_quartets result (res) ::: PURE
+   ! Return the number of shell quartets in the b concatenated asis set 
+   ! Note, "res" will die at 22    shells for integer(2).
+   !       "res" will die at 361   shells for integer(4).
+   !       "res" will die at 92681 shells for integer(8).
+      self :: IN
+      res :: INT
+
+      n_pairs :: INT
+
+      n_pairs = .no_of_shell_pairs
+      ENSURE(n_pairs<=sqrt(TWO)*(huge(1))**HALF,"too many shells")
+
+      res = n_pairs*(n_pairs+1)/2
 
    end
 
@@ -9265,20 +9393,20 @@ contains
 
    end
 
-   n_bf result (res) ::: pure
-   ! Work out and return the number of basis functions in the concatenated
-   ! basis set for the atom list.
-      self :: IN
-      res :: INT
-
-      a :: INT
-
-      res = 0
-      do a = 1,.dim
-         res = res + self(a).basis.n_bf
-      end
-
-   end
+!   n_bf result (res) ::: pure
+!   ! Work out and return the number of basis functions in the concatenated
+!   ! basis set for the atom list.
+!      self :: IN
+!      res :: INT
+!
+!      a :: INT
+!
+!      res = 0
+!      do a = 1,.dim
+!         res = res + self(a).basis.n_bf
+!      end
+!
+!   end
 
    no_of_primitives result (res) ::: pure
    ! Work out and return the number of primitives in the concatenated
@@ -9310,20 +9438,20 @@ contains
 
    end
 
-   n_prim result (res) ::: pure
-   ! Work out and return the number of primitives in the concatenated
-   ! basis sets.
-      self :: IN
-      res :: INT
-
-      a :: INT
-
-      res = 0
-      do a = 1,.dim
-         res = res + self(a).basis.n_prim
-      end
-
-   end
+!   n_prim result (res) ::: pure
+!   ! Work out and return the number of primitives in the concatenated
+!   ! basis sets.
+!      self :: IN
+!      res :: INT
+!
+!      a :: INT
+!
+!      res = 0
+!      do a = 1,.dim
+!         res = res + self(a).basis.n_prim
+!      end
+!
+!   end
 
 !  ===============================
 !  Basis set existence information
@@ -13314,7 +13442,7 @@ contains
    end
 
 !  ================
-!  Put cif routines
+!  Put CIF routines
 !  ================
 
    put_CIF_coords(refine_H_U_iso)
@@ -15429,68 +15557,69 @@ contains
 
    end
 
-   initialize_local_H_modes(L)
-   ! Initialize local H modes as columns. These come in triples.
-   ! The first is the XH stretch. The next two are the two XH bends.
-      L :: MAT{REAL}
+!  ============
+!  Put orbitals
+!  ============
 
-   ENSURE(L.dim1==3*.dim,"wrong size, dim1")
-   ENSURE(L.dim2==3*count(self.atomic_number==1),"wrong size, dim2")
+   put_orbitals(orb,pair)
+   ! Output the orbitals "orb" in a table with basis function labels.
+      self :: IN
+      orb :: MAT{REAL}, IN
+      pair :: BIN, optional, IN
 
-      unit :: MAT{REAL}(3,3)
-      r1,r2,r3 :: VEC{REAL}(3)
-      h,i,x, fh,lh :: INT
+   ENSURE(.has_all_gaussian_bases,"no gaussian bases")
+   ENSURE(orb.dim2==.no_of_basis_functions,"wrong dim2, orb: "//trim(INT:to_str(orb.dim2)))
 
-      ! Make the connection table
-      .make_connection_table
+      table :: VEC{TABLE_COLUMN}*
+      labels :: VEC{STR}*
+      is_pair :: BIN
+      c :: INT
 
-      ! Initialise L
-      L = ZERO
-
-      ! Set unit vectors
-      unit.to_unit_matrix
-
-      ! Make the H modes
-      i  = 0
-      lh = 0
-
-      do h = 1,.dim
-
-         fh = lh + 1
-         lh = lh + 3
-
-         ! Only look for a = H atom
-         if(self(h).atomic_number>1) cycle
-
-         ! Make sure H atom connects one other
-         if (connections_for(h).element.dim>1) then
-            DIE("H atom connected tomore than one other")
-         end
-
-         ! Get XH vector
-         x  = connections_for(h)[1]
-         r1 = self(h).position - self(x).position
-         r1.normalise
-
-         ! Get the two perpendicular vectors
-         r2.to_cross_product_of(r1,unit(:,1))
-         if (r2.is_zero) &
-         r2.to_cross_product_of(r1,unit(:,2))
-         r2.normalise
-         r3.to_cross_product_of(r1,r2)
-
-         ! Set L
-         L(fh:lh,i+1) = r1
-         L(fh:lh,i+2) = r2
-         L(fh:lh,i+3) = r3
-
-         ! Next H mode
-         i = i + 3
-
+      ! Bond/antibond pair?
+      is_pair = FALSE
+      if (present(pair)) then
+      if (orb.dim2==2) then
+         is_pair = pair
+      end
       end
 
+      ! Basis-fn tags
+      labels.create(.no_of_basis_functions)
+      labels = .tag_xyz_basis_fn_part
+
+      ! Create table
+      table.create(orb.dim2+1)
+
+      ! Set table headings
+      table(1).set_heading("Basis")
+      table(1).set_subhead("func.")
+
+      if (is_pair) then
+         table(2).set_heading("Bond")
+         table(2).set_subhead("Orb.")
+         table(3).set_heading("Anti")
+         table(3).set_subhead("bond")
+      else
+         do c = 1,orb.dim2
+         table(c+1).set_heading("Orb")
+         table(c+1).set_subhead(trim(c.to_str))
+         end
+      end
+
+      ! Set data
+      table(1).set_values(labels)
+      do c = 1,orb.dim2
+         table(c+1).set_values(orb(:,c))
+      end
+
+
+      ! Put
+      table.put(label_rows=FALSE)
+
       ! Clean
-      connections_for.destroy
+      table.clear_columns
+      table.destroy
+      labels.destroy
 
    end
 
