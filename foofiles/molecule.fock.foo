@@ -2476,7 +2476,8 @@ contains
       na,nb,nc,nd,atom_a,atom_b,atom_c,atom_d :: INT
       I_abcd,factor,cutoff :: REAL
       skip,ab_same,cd_same,any_same,no_max_I :: BIN
-      ab_con,ac_con,ad_con,bc_con,bd_con,cd_con :: BIN
+      ab_con_b,ac_con_b,ad_con_b,bc_con_b,bd_con_b,cd_con_b :: BIN
+      ab_con_p,ac_con_p,ad_con_p,bc_con_p,bd_con_p,cd_con_p :: BIN
 
       J   = ZERO
       Ka  = ZERO
@@ -2500,8 +2501,8 @@ contains
          .BASE:get_shell_pair_indices(ab,aa,bb,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
          ab_same = atom_a==atom_b
-         ab_con = .BASE:elmo_connected(atom_a,atom_b, .scfdata.elmo_p)
-         !if(NOT ab_con) cycle
+         ab_con_b = .BASE:elmo_connected(atom_a,atom_b, .scfdata.elmo_b)
+         ab_con_p = .BASE:elmo_connected(atom_a,atom_b, .scfdata.elmo_p)
 
          .BASE:set_new_shell_quartet_ab(sh4s,aa,bb,skip=TRUE)
          .BASE:set_new_shell_quartet_ab(sh4n,aa,bb,skip=FALSE)
@@ -2511,69 +2512,91 @@ contains
             .BASE:get_shell_pair_indices(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d)
 
             cd_same = atom_c==atom_d
-            ac_con = .BASE:elmo_connected(atom_a,atom_c, .scfdata.elmo_b)
-            ad_con = .BASE:elmo_connected(atom_a,atom_d, .scfdata.elmo_p)
-            bc_con = .BASE:elmo_connected(atom_b,atom_c, .scfdata.elmo_p)
-            bd_con = .BASE:elmo_connected(atom_b,atom_d, .scfdata.elmo_b)
-            cd_con = .BASE:elmo_connected(atom_c,atom_d, .scfdata.elmo_p)
 
-            if(NOT (ac_con AND bd_con)) cycle
-            if(NOT (ab_con OR ad_con OR bc_con OR cd_con)) cycle
+            ac_con_b = .BASE:elmo_connected(atom_a,atom_c, .scfdata.elmo_b)
+            bd_con_b = .BASE:elmo_connected(atom_b,atom_d, .scfdata.elmo_b)
+            ab_con_b = .BASE:elmo_connected(atom_a,atom_b, .scfdata.elmo_b)
+            ad_con_b = .BASE:elmo_connected(atom_a,atom_d, .scfdata.elmo_b)
+            bc_con_b = .BASE:elmo_connected(atom_b,atom_c, .scfdata.elmo_b)
+            cd_con_b = .BASE:elmo_connected(atom_c,atom_d, .scfdata.elmo_b)
+
+            ac_con_p = .BASE:elmo_connected(atom_a,atom_c, .scfdata.elmo_p)
+            bd_con_p = .BASE:elmo_connected(atom_b,atom_d, .scfdata.elmo_p)
+            ab_con_p = .BASE:elmo_connected(atom_a,atom_b, .scfdata.elmo_p)
+            ad_con_p = .BASE:elmo_connected(atom_a,atom_d, .scfdata.elmo_p)
+            bc_con_p = .BASE:elmo_connected(atom_b,atom_c, .scfdata.elmo_p)
+            cd_con_p = .BASE:elmo_connected(atom_c,atom_d, .scfdata.elmo_p)
+
             skip = ::schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
             if (skip) cycle
-
-            factor = ONE                             ! Evaluate the integrals
-            if (aa==bb) factor = HALF                ! Coincidence factors
-            if (cc==dd) factor = HALF * factor
-            if (aa==cc AND bb==dd) factor = HALF * factor
 
             any_same = ab_same OR cd_same OR &
                        atom_a==atom_c OR atom_a==atom_d OR &
                        atom_b==atom_c OR atom_b==atom_d
 
+            ! Evaluate the integrals
             if (any_same) then
-
+               ! Save work
                .BASE:set_new_shell_quartet_cd(sh4n,cc,dd,skip=FALSE)
                I.create(sh4n.ab_n_bf_pairs*sh4n.cd_n_bf_pairs)
                SHELL1QUARTET::make_ERI(sh4n,I)
                sh4n.destroy_cd
-
             else
-
+               ! No atoms the same, no savings
                .BASE:set_new_shell_quartet_cd(sh4s,cc,dd,skip=TRUE)
                I.create(sh4s.ab_n_bf_pairs*sh4s.cd_n_bf_pairs)
                SHELL1QUARTET::make_ERI(sh4s,I)
                sh4s.destroy_cd
-
             end
 
+            ! Coincidence factors
+            factor = ONE
+            if (aa==bb) factor = HALF                
+            if (cc==dd) factor = HALF * factor
+            if (aa==cc AND bb==dd) factor = HALF * factor
+
+            ! Coincidence-scaled integrals
             I = factor * I
 
             abcd = 0
+
+            ! Contract
             do d = fd,ld
             do c = fc,lc
             do b = fb,lb
             do a = fa,la
+
                abcd = abcd + 1
                I_abcd = I(abcd)
-               J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
-               J(c,d)   = J(c,d)   + I_abcd*P(b,a)
-               Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric
-               Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(b,d)  ! but must be folded
-               Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(a,d)
-               Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(a,c)
-               Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(b,c)  ! These are symmetric
-               Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(b,d)  ! but must be folded
-               Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(a,d)
-               Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(a,c)
-               Kba(a,d) = Kba(a,d) + I_abcd*Pba(b,c) ! These are asymmetric
-               Kba(a,c) = Kba(a,c) + I_abcd*Pba(b,d)
-               Kba(b,c) = Kba(b,c) + I_abcd*Pba(a,d)
-               Kba(b,d) = Kba(b,d) + I_abcd*Pba(a,c)
-               Kba(d,a) = Kba(d,a) + I_abcd*Pba(c,b)
-               Kba(c,a) = Kba(c,a) + I_abcd*Pba(d,b)
-               Kba(c,b) = Kba(c,b) + I_abcd*Pba(d,a)
-               Kba(d,b) = Kba(d,b) + I_abcd*Pba(c,a)
+
+               if(ab_con_b AND cd_con_b AND (ac_con_p OR ad_con_p OR bc_con_p OR bd_con_p)) then
+                  J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
+                  J(c,d)   = J(c,d)   + I_abcd*P(b,a)
+               end
+
+               ! a, d on within elmo_b, b and c within elmo_p of a and d
+               if(ad_con_b AND bc_con_b AND (ab_con_p OR ac_con_p OR bd_con_p OR cd_con_p)) then
+                  Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric
+                  Kba(a,d) = Kba(a,d) + I_abcd*Pba(b,c) ! These are asymmetric
+                  Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(b,c)  ! These are symmetric
+                  Kba(d,a) = Kba(d,a) + I_abcd*Pba(c,b)
+                  Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(a,d)
+                  Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(a,d)
+                  Kba(b,c) = Kba(b,c) + I_abcd*Pba(a,d)
+                  Kba(c,b) = Kba(c,b) + I_abcd*Pba(d,a)
+               end
+
+               if(ac_con_b AND bd_con_b AND (ab_con_p OR ad_con_p OR bc_con_p OR cd_con_p)) then
+                  Kba(a,c) = Kba(a,c) + I_abcd*Pba(b,d)
+                  Kba(c,a) = Kba(c,a) + I_abcd*Pba(d,b)
+                  Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(a,c)
+                  Kba(b,d) = Kba(b,d) + I_abcd*Pba(a,c)
+                  Kba(d,b) = Kba(d,b) + I_abcd*Pba(c,a)
+                  Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(a,c)
+                  Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(b,d)  ! but must be folded
+                  Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(b,d)  ! but must be folded
+               end
+
             end
             end
             end
