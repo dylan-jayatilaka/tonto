@@ -339,7 +339,7 @@ contains
 
       arch :: ARCHIVE
       pt :: MAT{REAL}*
-      gr :: VEC{REAL}*
+      gr,gu,gd :: VEC{REAL}*
       gcu,gcd :: VEC{CPX}*
       orb :: INT
       relativity,okind :: STR
@@ -404,6 +404,15 @@ contains
                   .:make_orbital_grid_r(gr,.natural_orbitals.restricted(:,orb),pt)
                   .:dump_plot_grid(gr,"orbital_"//trim(orb.to_str)//"_grid")
                   gr.destroy
+
+               case("general")
+                  gu.create(.plot_grid.n_pt)
+                  gd.create(.plot_grid.n_pt)
+                  .:make_orbital_grid_g(gu,gd,.natural_orbitals.general(:,orb),pt)
+                  arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid",format="ascii")
+                  arch.write_orbital(gu,gd,.plot_grid.n_pt)
+                  gu.destroy
+                  gd.destroy
 
                case("general_complex")
                   gcu.create(.plot_grid.n_pt)
@@ -559,6 +568,98 @@ contains
       end
 
       if (sq) grid = conjg(grid)*grid
+
+   end
+
+   make_orbital_grid_g(grid,orb,pt)
+   ! Evaluate the orbital density "grid" for *one* AO-basis orbital
+   ! coefficient vector "orb" on a set of grid points "pt"
+      grid :: VEC{REAL}, OUT
+      orb :: VEC{REAL}, IN
+      pt :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+
+      sh :: SHELL1
+      sh_grid :: MAT{REAL}*
+      gu,gd :: VEC{REAL}*
+      n_pt,np,a,fa,la,na :: INT
+
+      n_pt = pt.dim1
+      np   = .n_prim
+
+      gu.create(n_pt)
+      gd.create(n_pt)
+
+      grid = ZERO
+      gu = ZERO
+      gd = ZERO
+
+      do a = 1,.n_shell
+
+         .BASE:set_shell(sh,a,fa,la,na)
+
+         sh_grid.create(n_pt,na)
+         sh.make_grid(sh_grid,pt)
+
+         if (norm2(orb(fa:la))      >TOL(6)) then ! a
+            gu.plus_product_of(sh_grid,orb(fa   :la   )) ! a
+         end if
+         if (norm2(orb(fa+np:la+np))>TOL(6)) then ! a
+            gd.plus_product_of(sh_grid,orb(fa+np:la+np)) ! b
+         end if
+
+         sh_grid.destroy
+
+      end
+
+      grid = gu*gu + gd*gd
+
+      gu.destroy
+      gd.destroy
+
+   end
+
+   make_orbital_grid_g(gu,gd,orb,pt)
+   ! Evaluate the orbital density for the alpha "gu" or beta "gd" part
+   ! of *one* AO-basis orbital coefficient vector "orb" on a set of
+   ! grid points "pt"
+      gu,gd :: VEC{REAL}, OUT
+      orb :: VEC{REAL}, IN
+      pt :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+
+      sh :: SHELL1
+      sh_grid :: MAT{REAL}*
+      n_pt,np,a,fa,la,na :: INT
+
+      n_pt = pt.dim1
+      np   = .n_prim
+
+      gu = ZERO
+      gd = ZERO
+
+      do a = 1,.n_shell
+
+         .BASE:set_shell(sh,a,fa,la,na)
+
+         sh_grid.create(n_pt,na)
+
+         sh.make_grid(sh_grid,pt)
+
+         if (norm2(orb(fa:la))>0.0001) then ! a
+            gu.plus_product_of(sh_grid,orb(fa   :la   )) ! a
+         end if
+         if (norm2(orb(fa+np:la+np))>0.0001) then ! a
+            gd.plus_product_of(sh_grid,orb(fa+np:la+np)) ! b
+         end if
+
+         sh_grid.destroy
+
+      end
 
    end
 
@@ -749,6 +850,10 @@ contains
                   stdout.text("into the appropriate restricted file(s) and plot in the rhf regime!")
                   DIE("UHF/UKS unimplemented")
 
+               case("general")
+                  .:make_orbital_grid_g(gr,.molecular_orbitals.general(:,orb),pt)
+                  
+
                case("general_complex")
                   gc.create(.plot_grid.n_pt)
                   .:make_orbital_grid_gc(gc,.molecular_orbitals.general_complex(:,orb),pt)
@@ -785,6 +890,7 @@ contains
       n_pt,orb :: INT
       grid :: PLOT_GRID*
       self :: MOLECULE*
+      orb_kind :: STR
 
       ! Get back self
       .BASE:set_from_saved_self
@@ -805,13 +911,15 @@ contains
          ENSURE(orb>0,"non positive orbital")
       end
 
-      if (trim(.natural_orbitals.number_kind)== "real") then
+      orb_kind = .natural_orbitals.spinorbital_kind
+      select case (orb_kind)
+      case ("restricted")
          .:make_orbital_grid_r(g,.natural_orbitals.restricted(:,orb),pt,square=TRUE)
-      else
-         gc.create(n_pt)
-         .:make_orbital_grid_c(gc,.natural_orbitals.restricted_complex(:,orb),pt,square=TRUE)
-         g = RE(gc)
-         gc.destroy
+      case ("general   ")
+         ! Below *only* does the square
+         .:make_orbital_grid_g(g,.natural_orbitals.general(:,orb),pt) 
+      case default
+         DIE("Density for orbital "//trim(orb_kind)//"not yet implemented")
       end
 
    end
@@ -4061,6 +4169,45 @@ contains
       end
 
       NO.destroy
+
+   end
+
+   make_density_grid_g(density_grid,pt,sgn)
+   ! Make the "density_grid" for the supplied points "pt" from restricted
+   ! complex natural orbitals.
+      density_grid :: VEC{REAL}
+      pt :: MAT{REAL}
+      sgn :: INT, optional
+
+   ENSURE(pt.dim2==3,  "incorrect dimension for points array")
+   ENSURE(.natural_orbitals.is_associated_with_genre("general"), "no natural orbitals")
+   ENSURE(.occupation_numbers.is_associated_with_genre("general"), "no occupation numbers")
+
+      gd,gu :: VEC{REAL}*
+      n_occ,n :: INT
+      occ :: REAL
+      fac :: REAL
+
+      n_occ = .BASE:no_of_occupied_NOs
+      if (present(sgn)) then
+         fac = sgn*ONE
+         WARN(" This is the collinear 2-comp/gchf spin density, using sz! ")
+      else
+         fac = ONE
+      end
+
+      gu.create(pt.dim1)
+      gd.create(pt.dim1)
+
+      density_grid = ZERO
+      do n = 1,n_occ
+         .:make_orbital_grid_g(gu,gd,.natural_orbitals.general(:,n),pt)
+         occ = .occupation_numbers.general(n)
+         density_grid = density_grid  +  occ * (fac*gd*gd + gu*gu)
+      end
+
+      gd.destroy
+      gu.destroy
 
    end
 

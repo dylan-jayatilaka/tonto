@@ -10305,6 +10305,7 @@ contains
    end
 
    serialize(filename)
+   ! Dump essential data to an SBF file
       filename :: STR
       datafile :: DATAFILE
       labels :: STR(len=1), dimension(:,:), allocatable
@@ -10331,35 +10332,41 @@ contains
       ! SCF data
       ! TODO should really check if it's created and DONE not just if it's unrestricted
       if (.scfdata.associated) then
-      if (.scfdata.is_unrestricted) then
-         call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("unrestricted")))
-         call datafile%sbf%add_dataset(sbf_Dataset("density_matrix.alpha", .density_matrix.alpha))
-         call datafile%sbf%add_dataset(sbf_Dataset("density_matrix.beta", .density_matrix.beta))
-         call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals.alpha", .molecular_orbitals.alpha))
-         call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals.beta", .molecular_orbitals.alpha))
-      else
-         call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("restricted")))
-         call datafile%sbf%add_dataset(sbf_Dataset("density_matrix", .density_matrix.restricted))
-         call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals", .molecular_orbitals.restricted))
+
+         select case (.scfdata.spinorbital_kind)
+
+         case ("restricted")
+            call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("restricted")))
+            call datafile%sbf%add_dataset(sbf_Dataset("density_matrix", .density_matrix.restricted))
+            call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals", .molecular_orbitals.restricted))
+
+         case ("unrestricted")
+            call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("unrestricted")))
+            call datafile%sbf%add_dataset(sbf_Dataset("density_matrix.alpha", .density_matrix.alpha))
+            call datafile%sbf%add_dataset(sbf_Dataset("density_matrix.beta", .density_matrix.beta))
+            call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals.alpha", .molecular_orbitals.alpha))
+            call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals.beta", .molecular_orbitals.alpha))
+
+         case ("general")
+            call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("general")))
+            call datafile%sbf%add_dataset(sbf_Dataset("density_matrix.general", .density_matrix.general))
+            call datafile%sbf%add_dataset(sbf_Dataset("molecular_orbitals.general", .molecular_orbitals.general))
+
+         case default
+            DIE("Serializing these orbitals is not implemented")
+
+         end
+
       end if
-      end if
+
       call datafile%sbf%serialize
+
       datafile.close
+
    end 
 
-   char_array_to_str(arr) result(res) ::: pure, selfless
-      arr :: STR(len=1), dimension(:), IN
-      res :: STR
-      i :: INT
-      do i = 1, len(res)
-         if (i <= size(arr)) then
-            res(i:i) = arr(i)
-         else; res(i:i) = " " ! pad with spaces
-         end if
-      end do
-   end
-
    deserialize(filename)
+   ! Undump essential data to an SBF file
       self :: PTR
       filename :: STR
       datafile :: DATAFILE
@@ -10417,7 +10424,23 @@ contains
          .scfdata.create
          .density_matrix.create(.n_bf)
          .molecular_orbitals.create(.n_bf)
-         if(tmp_str == "unrestricted") then
+
+         select case (.scfdata.spinorbital_kind)
+
+         case ("restricted")
+            .scfdata.set_scf_kind("rhf")
+            call datafile%sbf%get("density_matrix", tmp_mat, err)
+            DIE_IF(err /= success, sbf_strerr(err))
+            .density_matrix.create("restricted")
+            .density_matrix.restricted = tmp_mat
+            deallocate(tmp_mat)
+            call datafile%sbf%get("molecular_orbitals", tmp_mat, err)
+            DIE_IF(err /= success, sbf_strerr(err))
+            .molecular_orbitals.create("restricted")
+            .molecular_orbitals.restricted = tmp_mat
+            deallocate(tmp_mat)
+
+         case ("unrestricted")
             .scfdata.set_scf_kind("uhf")
             .density_matrix.create("unrestricted")
             call datafile%sbf%get("density_matrix.alpha", tmp_mat, err)
@@ -10437,23 +10460,45 @@ contains
             DIE_IF(err /= success, sbf_strerr(err))
             .molecular_orbitals.beta = tmp_mat
             deallocate(tmp_mat)
-         else
-            .scfdata.set_scf_kind("rhf")
-            call datafile%sbf%get("density_matrix", tmp_mat, err)
+
+         case ("general")
+            .scfdata.set_scf_kind("ghf")
+            call datafile%sbf%get("density_matrix.general", tmp_mat, err)
             DIE_IF(err /= success, sbf_strerr(err))
-            .density_matrix.create("restricted")
-            .density_matrix.restricted = tmp_mat
+            .density_matrix.create("general")
+            .density_matrix.general = tmp_mat
             deallocate(tmp_mat)
-            call datafile%sbf%get("molecular_orbitals", tmp_mat, err)
+            call datafile%sbf%get("molecular_orbitals.general", tmp_mat, err)
             DIE_IF(err /= success, sbf_strerr(err))
-            .molecular_orbitals.create("restricted")
-            .molecular_orbitals.restricted = tmp_mat
+            .molecular_orbitals.create("general")
+            .molecular_orbitals.general = tmp_mat
             deallocate(tmp_mat)
-         end if
+
+         case default
+            DIE("Serializing these orbitals is not implemented")
+
+         end
+
       else
+
          stdout.text("No SCF data in "//trim(filename)//", skipping reading density matrix etc.")
+
       end if
+
       datafile.close
+   end
+
+   char_array_to_str(arr) result(res) ::: pure, selfless
+   ! Char to STR array for C routines
+      arr :: STR(len=1), dimension(:), IN
+      res :: STR
+      i :: INT
+      do i = 1, len(res)
+         if (i <= size(arr)) then
+            res(i:i) = arr(i)
+         else; res(i:i) = " " ! pad with spaces
+         end if
+      end do
    end
 
    make_atomic_multipoles(charge,dipole,quadrupole,octupole,od,oc,no_s)
