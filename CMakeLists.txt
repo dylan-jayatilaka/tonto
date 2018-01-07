@@ -157,7 +157,6 @@ set(FOO_SRC
     ${FOO_DIR}/mat4{int}.foo
     ${FOO_DIR}/mat4{object}.foo
     ${FOO_DIR}/mat4{real}.foo
-    ${FOO_DIR}/mat4{rms2_indices}.foo
     ${FOO_DIR}/mat5{cpx}.foo
     ${FOO_DIR}/mat5{intrinsic}.foo
     ${FOO_DIR}/mat5{int}.foo
@@ -170,7 +169,6 @@ set(FOO_SRC
     ${FOO_DIR}/mat{mat_{real}}.foo
     ${FOO_DIR}/mat{object}.foo
     ${FOO_DIR}/mat{real}.foo
-    ${FOO_DIR}/mat{rms2_indices}.foo
     ${FOO_DIR}/mat{rms_indices}.foo
     ${FOO_DIR}/mat{shell1pair}.foo
     ${FOO_DIR}/mat{str}.foo
@@ -199,7 +197,6 @@ set(FOO_SRC
     ${FOO_DIR}/quadrature.foo
     ${FOO_DIR}/real.foo
     ${FOO_DIR}/reflection.foo
-    ${FOO_DIR}/rms2_indices.foo
     ${FOO_DIR}/rms_indices.foo
     ${FOO_DIR}/roby.foo
     ${FOO_DIR}/rys.foo
@@ -316,7 +313,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/mat_cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_real.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/mat_rms2_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_shell1pair.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_str.F90
@@ -343,7 +339,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/reflection.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/rms2_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/roby.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rys.F90
