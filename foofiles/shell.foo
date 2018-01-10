@@ -55,11 +55,11 @@ contains
       l :: INT, IN
 
       .l              = l
-      .l_chr          = SHELL::l_chr(.l)
+      .l_chr          = GAUSSIAN_DATA:l_chr(l)
       .first_gaussian = GAUSSIAN_DATA:n_comp_up_to(l-1) + 1
       .last_gaussian  = GAUSSIAN_DATA:n_comp_up_to(l)
 
-      .set_n_comp
+      .set_n_sph
 
    end
 
@@ -67,13 +67,9 @@ contains
    ! Set the l value
    end
 
-   set_n_comp ::: template
-   ! Set the number of components. "L" shells are a special case.
+   set_n_sph ::: template
+   ! Set the number of spherical components & basis functions
       self :: INOUT
-
-      if (.l_chr=="L") then; .n_comp = 4
-      else;                  .n_comp = GAUSSIAN_DATA:n_comp(.l)
-      end
 
       .n_sph = 2*.l + 1
 
@@ -83,8 +79,8 @@ contains
 
    end
 
-   set_n_comp ::: get_from(SHELL), pure
-   ! Set the number of components. "L" shells are a special case.
+   set_n_sph ::: get_from(SHELL), pure
+   ! Set the number of spherical components & basis functions
    end
 
    set_spherical(val) ::: template
@@ -94,7 +90,7 @@ contains
 
       .is_spherical = val
 
-      .set_n_comp
+      .set_n_sph
 
    end
 
@@ -195,19 +191,11 @@ contains
    ENSURE(.n_cc>0,"n_cc must be entered first")
    ENSURE(.contraction.deallocated,"cc already entered")
 
-      if (.l_chr/="L") then
 
-         .contraction.create(.n_cc)
-         stdin.read(.contraction)
+      .contraction.destroy
+      .contraction.create(.n_cc)
 
-      else 
-
-         ! Read l-shell as alternating columns
-         .contraction_s.create(.n_cc)     
-         .contraction_p.create(.n_cc)     
-         stdin.read_pair(.contraction_s,.contraction_p)
-
-      end
+      stdin.read(.contraction)
 
    end
 
@@ -219,20 +207,13 @@ contains
    ENSURE(.exponent.deallocated,"ex already entered")
    ENSURE(.contraction.deallocated,"ex already entered")
 
-      if (.l_chr/="L") then
+      .contraction.destroy
+      .exponent.destroy
 
-         .exponent.create(.n_cc)
-         .contraction.create(.n_cc)
-         stdin.read_pair(.exponent,.contraction)
+      .exponent.create(.n_cc)
+      .contraction.create(.n_cc)
 
-      else
-
-         .exponent.create(.n_cc)
-         .contraction_s.create(.n_cc)
-         .contraction_p.create(.n_cc)
-         stdin.read_triple(.exponent,.contraction_s,.contraction_p)
-
-      end
+      stdin.read_pair(.exponent,.contraction)
 
    end
 
@@ -246,28 +227,16 @@ contains
 
       i :: INT
 
-      if (.l_chr/="L") then
+      .contraction.destroy
+      .exponent.destroy
 
-         .exponent.create(.n_cc)
-         .contraction.create(.n_cc)
-         do i = 1,.n_cc
-            stdin.skip_next_item
-            stdin.read(.exponent(i))
-            stdin.read(.contraction(i))
-         end
+      .exponent.create(.n_cc)
+      .contraction.create(.n_cc)
 
-      else
-
-         .exponent.create(.n_cc)
-         .contraction_s.create(.n_cc)
-         .contraction_p.create(.n_cc)
-         do i = 1,.n_cc
-            stdin.skip_next_item
-            stdin.read(.exponent(i))
-            stdin.read(.contraction_s(i))
-            stdin.read(.contraction_p(i))
-         end
-
+      do i = 1,.n_cc
+         stdin.skip_next_item
+         stdin.read(.exponent(i))
+         stdin.read(.contraction(i))
       end
 
    end
@@ -300,45 +269,9 @@ contains
 !  Miscellaneous methods
 !  =====================
 
-   l_chr(l) result (res) ::: selfless, private, PURE
-   ! Return a character representation for angular mtm "l"
-   ! Of course, "L" shells are never returned: they have mixed mtm.
-      l :: INT, IN
-      res :: STR(len=1)
-
-   ENSURE(l>=0 AND l<=23,"angular momentum too large:"// trim(l.to_str))
-
-
-      select case (l)
-      case (0);     res="s"
-      case (1);     res="p"
-      case (2);     res="d"
-      case (3);     res="f"
-      case (4);     res="g"
-      case default; res = achar(l-4+iachar("g"))
-      end
-
-   end
-
-   xyz_basis_fn_part result (res) ::: PURE
+   xyz_basis_fn_part result (res) ::: get_from(GAUSSIAN), PURE
    ! Return a character representation for the cartesian
    ! product part of the gaussians in this shell.
-      self :: IN
-      res :: VEC{STR}(.n_comp)
-
-   ENSURE(NOT .is_spherical,"not yet available for sphericals")
-
-      i, width,spaces :: INT
-      labels :: VEC{STR}@
-
-      labels = GAUSSIAN_DATA:xyz_product_str_for(.l)
-      width  = maxval(len_trim(labels))
-
-      do i = 1,.n_comp
-         spaces = .l + 1 - width
-         res(i) = trim(.l_chr) // repeat(" ",spaces) // trim(labels(i))
-      end
-
    end
 
    same_as(sh) result(same) ::: pure
@@ -351,9 +284,7 @@ contains
       same = .l_chr==sh.l_chr &
          AND (.is_spherical          EQV sh.is_spherical) &
          AND (.exponent.allocated      EQV sh.exponent.allocated) &
-         AND (.contraction.allocated   EQV sh.contraction.allocated) &
-         AND (.contraction_s.allocated EQV sh.contraction_s.allocated) &
-         AND (.contraction_p.allocated EQV sh.contraction_p.allocated) 
+         AND (.contraction.allocated   EQV sh.contraction.allocated) 
 
       ! If not, we are done
       if (NOT same) return
@@ -363,13 +294,7 @@ contains
       if (NOT same) return
 
       ! Check contractions ...
-      if (.l_chr/="L") then
-         if (.contraction.allocated   AND sh.contraction.allocated)   same = .contraction.same_as(sh.contraction) 
-      else
-         if (.contraction_s.allocated AND sh.contraction_s.allocated) same = .contraction_s.same_as(sh.contraction_s) 
-         if (NOT same) return
-         if (.contraction_p.allocated AND sh.contraction_p.allocated) same = .contraction_p.same_as(sh.contraction_p) 
-      end
+      if (.contraction.allocated AND sh.contraction.allocated)   same = .contraction.same_as(sh.contraction) 
 
    end
 
@@ -403,147 +328,37 @@ contains
 
    end
 
-   make_contraction_matrix(ccm,ccp) ::: PURE
-   ! Return the contraction coefficient matrix "ccm" which converts
-   ! primitives to basis functions. It is with respect to uniform
-   ! normalisation i.e. all components are normalised to the first
-   ! component, x^l. If this is an "L" shell, "ccp" may also be
-   ! returned, the contraction matrix for the "p" shell. size "ccm" is
-   ! normally (.n_prim,.n_comp).
-      self :: IN
-      ccm :: MAT{REAL}, OUT
-      ccp :: MAT{REAL}, OUT
-
-   ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
-   ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
-   ENSURE(ccp.dim1==3*.n_cc,"wrong 1st dimension, ccp")
-   ENSURE(ccp.dim2==3,"wrong 2nd dimension, ccp")
-   ENSURE(.l_chr=="L","must be an L shell")
-   ENSURE(.l    == 2 ,"must have L=2")
-   ENSURE(.n_cc>0,"no contraction coefficients")
-   ENSURE(.contraction.allocated,"no contraction coefficients")
-   ENSURE(.contraction_s.allocated,"no s contraction coefficients")
-   ENSURE(.contraction_p.allocated,"no p contraction coefficients")
-
-      b,p,i :: INT
-
-      do b = 1,1             ! do over basis components
-         p = b               ! primitive p
-         do i = 1,.n_cc      ! do over contractions
-            ccm(p,b) = .contraction_s(i)
-            p = p + 1
-         end
-      end
-
-      do b = 1,3             ! do over basis components
-         p = b               ! primitive p
-         do i = 1,.n_cc      ! do over contractions
-            ccp(p,b) = .contraction_p(i)
-            p = p + 3
-         end
-      end
-
-   end
-
-   make_normalised_contraction_mx(ccm,ccp,sph)
+   make_normalised_contraction_mx(ccm,sph)
    ! Return the contraction coefficient matrix "ccm". All the
    ! primitives are assumed correctly normalised.
       ccm :: MAT{REAL}, OUT
-      ccp :: MAT{REAL}, OUT
       sph :: BIN, IN, optional
+
    ENSURE(.n_cc>0,"no contraction coefficients")
+   ENSURE(.contraction.allocated,"no contraction coefficients")
+
       b,p,i,nc :: INT
       is_sph :: BIN
 
       is_sph = FALSE
       if(present(sph)) is_sph = sph
 
-      if (.l_chr/="L") then
-         if (is_sph) then
-           ENSURE(ccm.dim1==.n_sph_prim,"wrong 1st dimension, ccm")
-           ENSURE(ccm.dim2==.n_sph,"wrong 2nd dimension, ccm")
-           nc = .n_sph
-         else
-           ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
-           ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
-           nc = .n_comp
-         end
-         ENSURE(.contraction.allocated,"no contraction coefficients")
-         do b = 1,.n_comp       ! do over basis components
-            p = b               ! primitive p
-            do i = 1,.n_cc      ! do over contractions
-               ccm(p,b) = .contraction(i)
-               p = p + nc
-            end
-         end
+      if (is_sph) then
+        ENSURE(ccm.dim1==.n_sph_prim,"wrong 1st dimension, ccm")
+        ENSURE(ccm.dim2==.n_sph,"wrong 2nd dimension, ccm")
+        nc = .n_sph
       else
-         ENSURE(ccm.dim1==.n_cc,"wrong 1st dimension, ccm")
-         ENSURE(ccm.dim2==1,"wrong 2nd dimension, ccm")
-         ENSURE(ccp.dim1==3*.n_cc,"wrong 1st dimension, ccp")
-         ENSURE(ccp.dim2==3,"wrong 2nd dimension, ccp")
-         ENSURE(.contraction_s.allocated,"no s contraction coefficients")
-         ENSURE(.contraction_p.allocated,"no p contraction coefficients")
-         do b = 1,1             ! do over basis components
-            p = b               ! primitive p
-            do i = 1,.n_cc      ! do over contractions
-               ccm(p,b) = .contraction_s(i)
-               p = p + 1
-            end
-         end
-         do b = 1,3             ! do over basis components
-            p = b               ! primitive p
-            do i = 1,.n_cc      ! do over contractions
-               ccp(p,b) = .contraction_p(i)
-               p = p + 3
-            end
-         end
+        ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
+        ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
+        nc = .n_comp
       end
-   end
 
-   make_normalised_contraction_mx(ccm,sph) ::: PURE
-   ! Return the contraction coefficient matrix "ccm". All the
-   ! primitives are assumed correctly normalised.
-      self :: IN
-      ccm :: MAT{REAL}, OUT
-      sph :: BIN, optional, IN
-
-   ENSURE(.n_cc>0,"no contraction coefficients")
-   ENSURE(.l_chr/="L","the angular momentum is wrong, L=S+P does not works")
-   ENSURE(.contraction.allocated,"no contraction coefficients")
-
-      b,p,i :: INT
-      is_sph :: BIN
-
-
-      is_sph = FALSE
-      if(present(sph)) is_sph = sph
-
-      if (is_sph AND .n_sph/=.n_comp) then
-
-         ENSURE(ccm.dim1==.n_sph_prim,"wrong 1st dimension, ccm")
-         ENSURE(ccm.dim2==.n_sph,"wrong 2nd dimension, ccm")
-
-         do b = 1,.n_sph       ! do over basis components
-           p = b               ! primitive p
-           do i = 1,.n_cc      ! do over contractions
-             ccm(p,b) = .contraction(i)
-              p = p + .n_sph
-           end
+      do b = 1,.n_comp       ! do over basis components
+         p = b               ! primitive p
+         do i = 1,.n_cc      ! do over contractions
+            ccm(p,b) = .contraction(i)
+            p = p + nc
          end
-
-      else
-
-         ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
-         ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
-
-         do b = 1,.n_comp       ! do over basis components
-            p = b               ! primitive p
-            do i = 1,.n_cc      ! do over contractions
-               ccm(p,b) = .contraction(i)
-               p = p + .n_comp
-            end
-         end
-
       end
 
    end
@@ -691,8 +506,6 @@ contains
 
       stdout.dmpp("exponent",.exponent)
       stdout.dmpp("contraction",.contraction)
-      stdout.dmpp("contraction_s",.contraction_s)
-      stdout.dmpp("contraction_p",.contraction_p)
 
    end
 
