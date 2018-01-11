@@ -27,7 +27,9 @@ module ATOM
 
    implicit none
 
-   keys :: VEC{STR}*, private DEFAULT_NULL
+   keys :: VEC{STR}@, private
+
+   saved_self :: ATOM@, private
 
 !  ===============
 !  Data statements
@@ -886,113 +888,18 @@ module ATOM
    117, 292,  292.2075500000d0, -1.00000000d0, &
    118, 294, -294.0000000000d0, -1.00000000d0  /
 
-   saved_self :: ATOM*, private  DEFAULT_NULL
-
 contains
 
-!  ==================
-!  Allocation methods
-!  ==================
+!  ==========
+!  Allocation
+!  ==========
 
    create ::: get_from(OBJECT), leaky, PURE
-   ! Create an object
+   ! Allocate an object
    end
 
    destroy ::: get_from(OBJECT), leaky, PURE
-   ! Destroy an object
-   end
-
-   nullify_ptr_part ::: PURE
-   ! Nullify the pointer parts of the atom
-   ! WARNING: all of these are usually pointer assigned in MOLECULE
-   ! when defining the (spherically averaged) atomic natural orbitals.
-   ! Therefore, the appropriate MOLECULE destructor should be called
-   ! before using this routine.
-      self :: INOUT
-
-      nullify(.basis)
-      nullify(.slaterbasis)
-      nullify(.coppensbasis)
-
-      nullify(.pADP_vector)
-      nullify(.pADP_errors)
-
-      nullify(.atomic_orbitals)
-      nullify(.density_matrix)
-      nullify(.natural_orbitals)
-      nullify(.occupation_numbers)
-      nullify(.NAOs)
-      nullify(.NAO_occupations)
-
-      .kind = 0
-      .ANOs_made                = FALSE
-      .NAOs_made                = FALSE
-      .spherical_atom_data_made = FALSE
-
-      nullify(.interpolator)
-
-      .interpolators_made       = FALSE
-      .ANO_interpolators_made   = FALSE
-
-      nullify(.first_basis_fn_for_shell)
-      nullify(.last_basis_fn_for_shell)
-      nullify(.precomputed_basis_shellpair)
-
-      .shell_info_made          = FALSE
-
-   end
-
-   destroy_ptr_part ::: leaky, PURE
-   ! Destroy the pointer parts of an atom
-   ! WARNING: take care using this, you may need
-   ! a unique-atom or all-atom destruction for the
-   ! different pointer parts depending on how they
-   ! were created.
-      self :: INOUT
-
-      ! Never destroy these ... they are always
-      ! resolved outside the atom object.
-      nullify(.basis)
-      nullify(.slaterbasis)
-      nullify(.coppensbasis)
-
-      ! WARNING: this may not be correct
-      ! The destroy should be done outside of this module
-      if (.kind==0 OR .is_unique_kind) then
-
-         .atomic_orbitals.destroy
-         .density_matrix.destroy
-         .natural_orbitals.destroy
-         .occupation_numbers.destroy
-
-         .interpolator.destroy
-
-         .first_basis_fn_for_shell.destroy
-         .last_basis_fn_for_shell.destroy
-         .precomputed_basis_shellpair.destroy
-
-      else
-
-         nullify(.atomic_orbitals)
-         nullify(.density_matrix)
-         nullify(.natural_orbitals)
-         nullify(.occupation_numbers)
-
-         nullify(.interpolator)
-
-         nullify(.first_basis_fn_for_shell)
-         nullify(.last_basis_fn_for_shell)
-         nullify(.precomputed_basis_shellpair)
-
-      end
-
-      ! Destroy NAOs - can always do this
-      .destroy_NAOs
-
-      ! Do always destroy these
-      .pADP_vector.destroy
-      .pADP_errors.destroy
-
+   ! Deallocate "self"
    end
 
    destroy_NAOs ::: leaky, PURE
@@ -1017,21 +924,10 @@ contains
 
       if (NOT .ANOs_made) return
 
-      if (.is_unique_kind) then
-
-         .atomic_orbitals.destroy
-         .density_matrix.destroy
-         .natural_orbitals.destroy
-         .occupation_numbers.destroy
-
-      else
-
-         nullify(.atomic_orbitals)
-         nullify(.density_matrix)
-         nullify(.natural_orbitals)
-         nullify(.occupation_numbers)
-
-      end
+      .atomic_orbitals.destroy
+      .density_matrix.destroy
+      .natural_orbitals.destroy
+      .occupation_numbers.destroy
 
       .ANOs_made = FALSE
 
@@ -1045,9 +941,7 @@ contains
 
       if (NOT .ANO_interpolators_made) return
 
-      if (.is_unique_kind) then; .interpolator.destroy
-      else;                      nullify(.interpolator)
-      end
+      .interpolator.destroy
 
       .ANO_interpolators_made = FALSE
 
@@ -1090,19 +984,9 @@ contains
 
       if (NOT .shell_info_made) return
 
-      if (.is_unique_kind) then
-
-         .first_basis_fn_for_shell.destroy
-         .last_basis_fn_for_shell.destroy
-         .precomputed_basis_shellpair.destroy
-
-      else
-
-         nullify(.first_basis_fn_for_shell)
-         nullify(.last_basis_fn_for_shell)
-         nullify(.precomputed_basis_shellpair)
-
-      end
+      .first_basis_fn_for_shell.destroy
+      .last_basis_fn_for_shell.destroy
+      .precomputed_basis_shellpair.destroy
 
       .shell_info_made = FALSE
 
@@ -1112,176 +996,96 @@ contains
 !  Copy
 !  ====
 
-   create_copy(object) ::: get_from(OBJECT), leaky
-   ! Create a copy of object
-   end
+! These are really sets not copies ...
 
-   copy(atom) ::: leaky
-   ! Make self to be a copy of atom.
-   ! WARNING: This method only nullifies pointer parts. It is your
-   ! responsibility to destroy pointer parts (if you want to) before
-   ! calling this method.
-      atom :: ATOM, IN
-
-      self = atom
-
-      .nullify_ptr_part
-
-      ! Copy the pADP data
-      if (atom.pADP_vector.associated)     .pADP_vector.create_copy(atom.pADP_vector)
-      if (atom.pADP_errors.associated)     .pADP_errors.create_copy(atom.pADP_errors)
-
-      ! Re-assign bases
-      if (atom.basis.associated)           .basis        => atom.basis
-      if (atom.slaterbasis.associated)     .slaterbasis  => atom.slaterbasis
-      if (atom.coppensbasis.associated)    .coppensbasis => atom.coppensbasis
-
-      ! Re-assign unique-atom ANO data
-      .copy_ANOs(atom)
-      .copy_ANO_interpolators(atom)
-      .copy_shell_info(atom)
-
-      ! Re-assign unique-atom ANO data
-      .copy_spherical_atom_data(atom)
-      .copy_interpolators(atom)
-
-      ! Always safely copy NAOs
-      .copy_NAOs(atom)
-
-      ! Set kind via VEC{ATOM}:update?
-      ! Do it yourself if you want to
-    ! .kind = 0
-
-   end
-
-   copy_NAOs(atom) ::: leaky
+   copy_NAOs(atom) ::: leaky, PURE
    ! Copy the NAO pointer parts (and related info)
+      self :: INOUT
       atom :: ATOM, IN
 
       if (NOT atom.NAOs_made) return
 
-      .NAOs.create_copy(atom.NAOs)
-      .NAO_occupations.create_copy(atom.NAO_occupations)
+      .NAOs = atom.NAOs
+      .NAO_occupations = atom.NAO_occupations
 
       .NAOs_made = TRUE
 
    end
 
-   copy_ANOs(atom) ::: leaky
+   copy_ANOs(atom) ::: leaky, PURE
    ! Copy the (unique-atom) ANO pointer parts (and related info)
+      self :: INOUT
       atom :: ATOM, IN
 
       if (NOT atom.ANOs_made) return
 
-      if (.kind==0 OR .is_unique_kind) then
-
-         .atomic_orbitals.create_copy(atom.atomic_orbitals)
-         .density_matrix.create_copy(atom.density_matrix)
-         .natural_orbitals.create_copy(atom.natural_orbitals)
-         .occupation_numbers.create_copy(atom.occupation_numbers)
-
-      else
-
-         .atomic_orbitals    => atom.atomic_orbitals
-         .density_matrix     => atom.density_matrix
-         .natural_orbitals   => atom.natural_orbitals
-         .occupation_numbers => atom.occupation_numbers
-
-      end
+      .atomic_orbitals    = atom.atomic_orbitals
+      .density_matrix     = atom.density_matrix
+      .natural_orbitals   = atom.natural_orbitals
+      .occupation_numbers = atom.occupation_numbers
 
       ! Kinds may not be sequential
       .ANOs_made = TRUE
 
    end
 
-   copy_ANO_interpolators(atom) ::: leaky
+   copy_ANO_interpolators(atom) ::: leaky, PURE
    ! Copy the (unique-atom) ANO interpolators
+      self :: INOUT
       atom :: ATOM, IN
 
       if (NOT atom.ANO_interpolators_made) return
 
-      if (.kind==0 OR .is_unique_kind) then
-
-         .interpolator.destroy
-         .interpolator.create_copy(atom.interpolator)
-
-      else
-
-         nullify(.interpolator)
-         .interpolator => atom.interpolator
-
-      end
+      .interpolator = atom.interpolator
 
       ! Kinds may not be sequential
       .ANO_interpolators_made = TRUE
 
    end
 
-   copy_shell_info(atom) ::: leaky
+   copy_shell_info(atom) ::: leaky, PURE
    ! Destroy the (unique-atom) shell info
+      self :: INOUT
       atom :: ATOM, IN
 
       if (NOT atom.shell_info_made) return
 
-      if (.kind==0 OR .is_unique_kind) then
-
-         .first_basis_fn_for_shell.destroy
-         .last_basis_fn_for_shell.destroy
-         .precomputed_basis_shellpair.destroy
-
-         .first_basis_fn_for_shell.create_copy(atom.first_basis_fn_for_shell)
-         .last_basis_fn_for_shell.create_copy(atom.last_basis_fn_for_shell)
-         .precomputed_basis_shellpair.create_copy(atom.precomputed_basis_shellpair)
-
-      else
-
-         nullify(.first_basis_fn_for_shell)
-         nullify(.last_basis_fn_for_shell)
-         nullify(.precomputed_basis_shellpair)
-
-         .first_basis_fn_for_shell    => atom.first_basis_fn_for_shell
-         .last_basis_fn_for_shell     => atom.last_basis_fn_for_shell
-         .precomputed_basis_shellpair => atom.precomputed_basis_shellpair
-
-      end
+      .first_basis_fn_for_shell    = atom.first_basis_fn_for_shell
+      .last_basis_fn_for_shell     = atom.last_basis_fn_for_shell
+      .precomputed_basis_shellpair = atom.precomputed_basis_shellpair
 
       ! Kinds may not be sequential
       .shell_info_made = TRUE
 
    end
 
-   copy_spherical_atom_data(atom) ::: leaky
+   copy_spherical_atom_data(atom) ::: leaky, PURE
    ! Copy the (non-unique) ANO pointer parts
+      self :: INOUT
       atom :: ATOM, IN
 
       if (NOT atom.spherical_atom_data_made) return
 
-      .atomic_orbitals.destroy
-      .density_matrix.destroy
-      .natural_orbitals.destroy
-      .occupation_numbers.destroy
+      .atomic_orbitals    = atom.atomic_orbitals
+      .density_matrix     = atom.density_matrix
+      .natural_orbitals   = atom.natural_orbitals
+      .occupation_numbers = atom.occupation_numbers
 
-      .atomic_orbitals.create_copy(atom.atomic_orbitals)
-      .density_matrix.create_copy(atom.density_matrix)
-      .natural_orbitals.create_copy(atom.natural_orbitals)
-      .occupation_numbers.create_copy(atom.occupation_numbers)
-
-      .interpolator.destroy
-      .interpolator.create_copy(atom.interpolator)
+      .interpolator       = atom.interpolator
 
       ! Kinds may not be sequential
       .spherical_atom_data_made = TRUE
 
    end
 
-   copy_interpolators(atom) ::: leaky
+   copy_interpolators(atom) ::: leaky, PURE
    ! Destroy the (non-unique) interpolators
-      atom :: ATOM
+      self :: INOUT
+      atom :: ATOM, IN
 
       if (NOT atom.interpolators_made) return
 
-      .interpolator.destroy
-      .interpolator.create_copy(atom.interpolator)
+      .interpolator = atom.interpolator
 
       ! Kinds may not be sequential
       .interpolators_made = TRUE
@@ -1292,89 +1096,8 @@ contains
 !  Set methods
 !  ===========
 
-   set_defaults ::: leaky, PURE
-   ! Set a default atom
-      self :: INOUT
-
-      .label                    = "?"
-      .tag                      = " "
-                                
-      .atomic_number            = 0
-      .nuclear_charge           = ZERO
-      .oxidation_state          = 0
-                                
-      .mass_number              = 0
-      .mass                     = ZERO
-
-      ! Leaky
-      .set_position([ ZERO,ZERO,ZERO ])
-      .set_position_error([ ZERO,ZERO,ZERO ])
-
-      .group                    = 0
-                                
-      .site_occupancy           = ONE
-      .site_disorder_group      = 0
-                                
-      ! ADP                     
-      .U_iso                    = ZERO
-      .U_iso_error              = ZERO
-      .set_ADP_tensor(ZERO)     
-      .pos_axis_system          = "cartesian"
-      .ADP_axis_system          = "cartesian"
-      .ADPn_axis_system         = "cartesian"
-                                
-      ! Charges                 
-      .charge                   = ZERO
-      .dipole                   = ZERO
-      .quadrupole               = ZERO
-      .spin                     = ZERO
-      .spin_dipole              = ZERO
-      .spin_quadrupole          = ZERO
-      .charge_polarisability    = ZERO
-      .dipole_polarisability    = ZERO
-
-      ! Basis
-      .basis_label              = " "
-      .basis_kind               = " "
-      .slaterbasis_label        = " "
-      .coppensbasis_label       = " "
-      .kind                     = 0
-      .is_unique_kind           = FALSE
-
-      ! ANO
-      .energy                   = ZERO
-      .ANOs_made                = FALSE
-      .spherical_atom_data_made = FALSE
-      .NAOs_made                = FALSE
-
-      ! Interpolator
-      .use_interpolator         = TRUE
-      .ANO_interpolators_made   = FALSE
-      .interpolators_made       = FALSE
-
-      ! IAM SF's
-      .use_IAM_ITC_FFs        = TRUE
-
-      .shell_info_made = FALSE
-
-      ! Protien defaults
-      .invariom_label          = " "
-      .protein_strand          = 0
-      .residue_atom_code       = " "
-      .residue_code            = " "
-      .residue_sequence_number = 0
-
-      ! MM
-      .mm_forcefield_name         = " "
-      .mm_atom_type               = " "
-      .mm_charge                  = ZERO
-      .restraining_position       = [ ZERO,ZERO,ZERO ]
-      .restraining_force_constant = ZERO
-
-   end
-
    set_saved_self ::: get_from(OBJECT)
-   ! Set saved_self. This version has self a target.
+   ! Set saved_self
    end
 
 !  ============================
@@ -1385,7 +1108,7 @@ contains
    ! Set the atom data such as its label, atomic_number, mass_number,
    ! nuclear_charge and atomic mass.
       self :: INOUT
-      label :: STR
+      label :: STR, IN
 
       Z :: INT
 
@@ -1597,7 +1320,7 @@ contains
 
       .position = val
 
-      if (.pADP_vector.disassociated) then
+      if (.pADP_vector.deallocated) then
          .pADP_vector.create(9)
          .pADP_vector(1:9) = ZERO
       end
@@ -1612,11 +1335,11 @@ contains
       self :: INOUT
       val :: VEC{REAL}(3), IN
 
-   ENSURE(.pADP_vector.associated,"pADP_vector destroyed")
+   ENSURE(.pADP_vector.allocated,"pADP_vector destroyed")
 
       .position_error = val
 
-      if (.pADP_errors.disassociated) then
+      if (.pADP_errors.deallocated) then
          .pADP_errors.create(9)
          .pADP_errors(1:9) = ZERO
       end
@@ -1629,7 +1352,7 @@ contains
    ! Check if the .position and .pADP vector are consistent
       self :: IN
 
-      if (.pADP_vector.associated) then
+      if (.pADP_vector.allocated) then
          DIE_IF(NOT .pADP_vector(1:3).equals(.position),"pADP_vector /= position")
       end
 
@@ -1666,7 +1389,7 @@ contains
       self :: INOUT
       val :: REAL, IN
 
-   ENSURE(.pADP_vector.associated,"pADP_vector destroyed")
+   ENSURE(.pADP_vector.allocated,"pADP_vector destroyed")
 
       .ADP_tensor = val
 
@@ -1686,7 +1409,7 @@ contains
       self :: INOUT
       mx :: MAT{REAL}(3,3), IN
 
-   ENSURE(.pADP_vector.associated,"pADP_vector destroyed")
+   ENSURE(.pADP_vector.allocated,"pADP_vector destroyed")
 
       tmp :: REAL
 
@@ -1805,7 +1528,7 @@ contains
       adp2 :: MAT{REAL}(3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=9,"pADP_vector too small")
 
       fac2 :: REAL
@@ -1833,7 +1556,7 @@ contains
       adp3 :: MAT3{REAL}(3,3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=19,"pADP_vector too small")
 
       fac3 :: REAL
@@ -1860,7 +1583,7 @@ contains
       adp4 :: MAT4{REAL}(3,3,3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=34,"pADP_vector too small")
 
       fac4 :: REAL
@@ -1887,7 +1610,7 @@ contains
       adp2_errors :: MAT{REAL}(3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"pADP_errors too small")
 
       fac2 :: REAL
@@ -1915,7 +1638,7 @@ contains
       adp3_errors :: MAT3{REAL}(3,3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"pADP_errors too small")
 
       fac3 :: REAL
@@ -1942,7 +1665,7 @@ contains
       adp4_errors :: MAT4{REAL}(3,3,3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=34,"pADP_errors too small")
 
       fac4 :: REAL
@@ -1970,11 +1693,11 @@ contains
       self :: INOUT
       dim  :: INT, IN
 
-      X,dX :: VEC{REAL}*
+      X,dX :: VEC{REAL}@
       n :: INT
 
       ! Create pADPs, and set to existing pADPs
-      if (.pADP_vector.disassociated OR .pADP_errors.disassociated) then
+      if (.pADP_vector.deallocated OR .pADP_errors.deallocated) then
 
          ! Space for X, dX
          n = .no_of_pADPs
@@ -2021,7 +1744,7 @@ contains
       X :: VEC{REAL}, IN
 
    ENSURE(X.dim>=9,"X too small")
-   ENSURE(.pADP_vector.associated,"no PADP_vector")
+   ENSURE(.pADP_vector.allocated,"no PADP_vector")
    ENSURE(.pADP_vector.dim==X.dim,"wrong size, X")
 
       val :: REAL
@@ -2058,7 +1781,7 @@ contains
       self :: INOUT
       U :: VEC{REAL}, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=9,"pADP_vector: wrong size")
    ENSURE(U.dim==6,"wrong size, U")
 
@@ -2079,7 +1802,7 @@ contains
       self :: INOUT
       U :: VEC{REAL}, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=19,"pADP_vector: wrong size")
    ENSURE(U.dim==10,"wrong size, U")
 
@@ -2092,7 +1815,7 @@ contains
       self :: INOUT
       U :: VEC{REAL}, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=34,"pADP_vector: wrong size")
    ENSURE(U.dim==15,"wrong size, U")
 
@@ -2107,7 +1830,7 @@ contains
       self :: INOUT
       adp3 :: MAT3{REAL}(3,3,3), OUT
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=19,"pADP_vector too small")
 
       v3,w3 :: VEC{REAL}(10)
@@ -2128,7 +1851,7 @@ contains
       self :: INOUT
       adp4 :: MAT4{REAL}(3,3,3,3), OUT
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=19,"pADP_vector too small")
 
       v4,w4 :: VEC{REAL}(15)
@@ -2149,7 +1872,7 @@ contains
       self :: INOUT
       adp3 :: MAT3{REAL}(3,3,3), OUT
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"pADP_errors too small")
 
       v3,w3 :: VEC{REAL}(10)
@@ -2170,7 +1893,7 @@ contains
       self :: INOUT
       adp4 :: MAT4{REAL}(3,3,3,3), OUT
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"pADP_errors too small")
 
       v4,w4 :: VEC{REAL}(15)
@@ -2193,7 +1916,7 @@ contains
    ! NOTE: Do you need to set the axis system too?
       self :: INOUT
 
-   ENSURE(.pADP_errors.associated,"pADP_errors destroyed")
+   ENSURE(.pADP_errors.allocated,"pADP_errors destroyed")
 
       dX :: VEC{REAL}(9)
 
@@ -2211,7 +1934,7 @@ contains
       dX :: VEC{REAL}, IN
       H_U_iso :: BIN, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim==dX.dim,"wrong size, dX")
 
       val :: REAL
@@ -2236,7 +1959,7 @@ contains
       dU :: VEC{REAL}, IN
       H_U_iso :: BIN, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
    ENSURE(dU.dim==6,"wrong size, dU")
 
@@ -2261,7 +1984,7 @@ contains
       dU :: MAT{REAL}(3,3), IN
       H_U_iso :: BIN, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
 
       val :: REAL
@@ -2289,7 +2012,7 @@ contains
       self :: INOUT
       dU :: VEC{REAL}, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"wrong size, pADP_errors")
    ENSURE(dU.dim==10,"wrong size, dU")
 
@@ -2302,7 +2025,7 @@ contains
       self :: INOUT
       dU :: VEC{REAL}, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=34,"wrong size, pADP_errors")
    ENSURE(dU.dim==15,"wrong size, dU")
 
@@ -2347,7 +2070,7 @@ contains
       fac :: REAL, optional, IN
 
    ENSURE(X.dim>=.no_of_pADPs,"wrong size, X")
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
 
       fac2,fac3,fac4 :: REAL
 
@@ -2502,7 +2225,7 @@ contains
       U :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=19,"no pADP3s")
    ENSURE(U.dim==10,"wrong size, U")
 
@@ -2532,7 +2255,7 @@ contains
       U :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=34,"no pADP3s")
    ENSURE(U.dim==15,"wrong size, U")
 
@@ -2570,7 +2293,7 @@ contains
       dX = ZERO
 
       ! Return if there are no errors
-      if (.pADP_errors.disassociated) return
+      if (.pADP_errors.deallocated) return
 
       ! In atomic units
       if (NOT present(fac)) then
@@ -2594,7 +2317,7 @@ contains
       dX :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim==dX.dim,"wrong size, dX")
 
       fac2,fac3,fac4 :: REAL
@@ -2626,7 +2349,7 @@ contains
       dX :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
    ENSURE(dX.dim==9,"wrong size, dX")
 
@@ -2659,7 +2382,7 @@ contains
       dU :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
    ENSURE(dU.dim==6,"wrong size, dU")
 
@@ -2688,7 +2411,7 @@ contains
       dU :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"wrong size, pADP_errors")
    ENSURE(dU.dim==10,"wrong size, dU")
 
@@ -2719,7 +2442,7 @@ contains
       dU :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=34,"wrong size, pADP_errors")
    ENSURE(dU.dim==15,"wrong size, dU")
 
@@ -2819,14 +2542,14 @@ contains
       self :: INOUT
       R :: MAT{REAL}(3,3), IN
 
-      W :: MAT{REAL}*
-      X,U :: VEC{REAL}*
+      W :: MAT{REAL}@
+      X,U :: VEC{REAL}@
 
       ! Create
       X.create(.no_of_pADPs)
 
       ! Transform position
-      if (.pADP_vector.associated) then
+      if (.pADP_vector.allocated) then
          ENSURE(.pADP_vector(1:3).equals(.position),"pADP_vector /= position")
       end
       X(1:3).to_product_of(R,.position)
@@ -2841,7 +2564,7 @@ contains
       W.destroy
 
       ! Transform ADP3's
-      if (.pADP_vector.associated) then
+      if (.pADP_vector.allocated) then
       if (.pADP_vector.dim>=19) then
       W.create(10,10)
       GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,R)
@@ -2851,7 +2574,7 @@ contains
       end
 
       ! Transform ADP4's
-      if (.pADP_vector.associated) then
+      if (.pADP_vector.allocated) then
       if (.pADP_vector.dim>=34) then
       W.create(15,15)
       GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,R)
@@ -2899,7 +2622,7 @@ contains
       .set_ADP_tensor(ADP(:,:))
 
       ! Now set the errors
-      if (.pADP_errors.associated) then
+      if (.pADP_errors.allocated) then
 
          ! The averaged trace of errors
          val = THIRD * (.pADP_errors(4)+.pADP_errors(5)+.pADP_errors(6))
@@ -3288,13 +3011,11 @@ contains
    read_dispersion_coefficients ::: selfless
    ! Read a table of dispersion coefficients as a single string array
 
-      table :: VEC{STR}*
+      table :: VEC{STR}@
 
       stdin.read_ptr(table)
 
       ATOM:set_dispersion_coefficients(table)
-
-      table.destroy
 
    end
 
@@ -3719,7 +3440,7 @@ contains
 
          ! Change errors?
          if (change_err) then
-         if (.pADP_errors.associated) then
+         if (.pADP_errors.allocated) then
          if (.pADP_errors.dim>=9) then
          if (NOT .pADP_errors(4:9).is_zero) then
             .put_ADP2_errors_to(ADP)
@@ -3751,7 +3472,7 @@ contains
 
          ! Change errors?
          if (change_err) then
-         if (.pADP_errors.associated) then
+         if (.pADP_errors.allocated) then
          if (.pADP_errors.dim>=9) then
          if (NOT .pADP_errors(4:9).is_zero) then
             .put_ADP2_errors_to(ADP)
@@ -3808,7 +3529,7 @@ contains
 !
 !            ! Transform errors to cartesian?
 !            if (change_ESDs) then
-!            if (.pADP_errors.associated) then
+!            if (.pADP_errors.allocated) then
 !            if (.pADP_errors.dim>=19) then
 !            if (NOT .pADP_errors(10:19).is_zero) then
 !               pADP.to_product_of(W,.pADP_errors(10:19))
@@ -3832,7 +3553,7 @@ contains
 !
 !            ! Transform errors to cartesian?
 !            if (change_ESDs) then
-!            if (.pADP_errors.associated) then
+!            if (.pADP_errors.allocated) then
 !            if (.pADP_errors.dim>=34) then
 !            if (NOT .pADP_errors(20:34).is_zero) then
 !               pADP.to_product_of(W,.pADP_errors(20:34))
@@ -3915,7 +3636,7 @@ contains
 
          ! Transform errors to cartesian?
          if (change_err) then
-         if (.pADP_errors.associated) then
+         if (.pADP_errors.allocated) then
          if (.pADP_errors.dim>=19) then
          if (NOT .pADP_errors(10:19).is_zero) then
          .put_ADP3_errors_to(adp3)
@@ -3934,7 +3655,7 @@ contains
 
          ! Transform errors to cartesian?
          if (change_err) then
-         if (.pADP_errors.associated) then
+         if (.pADP_errors.allocated) then
          if (.pADP_errors.dim>=34) then
          if (NOT .pADP_errors(20:34).is_zero) then
          .put_ADP4_errors_to(adp4)
@@ -4007,11 +3728,11 @@ contains
    ! . If that fails, try to matching using only the chemical symbol
    !   e.g. if the basis was obtained from reading an external
    !   program, like gaussian.
-      basis :: VEC{BASIS?}*
-      suffix :: STR, optional
-      found :: BIN, optional
+      basis :: VEC{BASIS?}@
+      suffix :: STR, optional, IN
+      found :: BIN, optional, OUT
 
-   DIE_IF(basis.disassociated,"no basis")
+   DIE_IF(basis.deallocated,"no basis")
 
       library_label, symbol :: STR
       fnd :: BIN
@@ -4113,7 +3834,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = .has_a_dummy_label AND .nuclear_charge==ZERO AND .basis.disassociated
+      res = .has_a_dummy_label AND .nuclear_charge==ZERO AND .basis.deallocated
 
    end
 
@@ -4122,7 +3843,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = NOT .has_a_dummy_label OR .nuclear_charge/=ZERO OR .basis.associated
+      res = NOT .has_a_dummy_label OR .nuclear_charge/=ZERO OR .basis.allocated
 
    end
 
@@ -4137,7 +3858,7 @@ contains
    ! Return TRUE if this is a point-charge (no basis set)
       self :: IN
       res :: BIN
-      res = .has_a_dummy_label AND .nuclear_charge>ZERO AND .basis.disassociated
+      res = .has_a_dummy_label AND .nuclear_charge>ZERO AND .basis.deallocated
    end
 
    is_a_pseudo_atom result (res) ::: elemental
@@ -4161,14 +3882,14 @@ contains
       mixed :: BIN
 
       ! Which kind of bases created?
-      bases_created     = .basis.associated        AND atom.basis.associated
-      coppens_created   = .coppensbasis.associated AND atom.coppensbasis.associated
-      slater_created    = .slaterbasis.associated  AND atom.slaterbasis.associated
+      bases_created     = .basis.allocated        AND atom.basis.allocated
+      coppens_created   = .coppensbasis.allocated AND atom.coppensbasis.allocated
+      slater_created    = .slaterbasis.allocated  AND atom.slaterbasis.allocated
 
       ! Which kind of bases destroyed?
-      bases_destroyed   = .basis.disassociated        AND atom.basis.disassociated
-      coppens_destroyed = .coppensbasis.disassociated AND atom.coppensbasis.disassociated
-      slater_destroyed  = .slaterbasis.disassociated  AND atom.slaterbasis.disassociated
+      bases_destroyed   = .basis.deallocated        AND atom.basis.deallocated
+      coppens_destroyed = .coppensbasis.deallocated AND atom.coppensbasis.deallocated
+      slater_destroyed  = .slaterbasis.deallocated  AND atom.slaterbasis.deallocated
 
       ! Mixed bases?
       mixed = NOT (bases_created   OR bases_destroyed)   OR &
@@ -4233,7 +3954,7 @@ contains
    ! Return TRUE if this is a pseudo atom without integral charge
       self :: IN
       res :: BIN
-      res = .basis.associated AND .basis.is_resolved
+      res = .basis.allocated AND .basis.is_resolved
    end
 
    basis_descriptor result (res) ::: template
@@ -4242,7 +3963,7 @@ contains
       self :: IN
       res :: STR
 
-      if (.ARG?.associated) then
+      if (.ARG?.allocated) then
          res = .ARG?.label
          if (.is_a_ghost_atom) then
             res = trim(res)//" (ghost atom)"
@@ -4907,7 +4628,7 @@ contains
 
    ENSURE(.atomic_number.is_in_range([1,98]),"Z out of range, Z = "//trim(.atomic_number.to_str))
 
-      stl :: VEC{REAL}*
+      stl :: VEC{REAL}@
       a,b :: REAL
       i :: INT
 
@@ -5022,13 +4743,11 @@ contains
    ! of values comprising sequential element symbols, f' and f''.
       string :: STR, IN 
 
-      table :: VEC{STR}*
+      table :: VEC{STR}@
 
-      table => string.split
+      table = string.split
 
       ATOM:set_dispersion_coefficients(table)
-
-      table.destroy
 
    end
 
@@ -5795,7 +5514,7 @@ contains
       tol :: REAL, optional, IN
       res :: INT
 
-   ENSURE(.NAO_occupations.associated,"no NAO occupations")
+   ENSURE(.NAO_occupations.allocated,"no NAO occupations")
 
       eps :: REAL
 
@@ -5814,7 +5533,7 @@ contains
       tol :: REAL, optional, IN
       res :: INT
 
-   ENSURE(.occupation_numbers.associated,"no occupation numbers")
+   ENSURE(.occupation_numbers.allocated,"no occupation numbers")
 
       res = .occupation_numbers.no_of_occupied(axiskind,tol)
 
@@ -5825,7 +5544,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = .NAOs.associated AND .NAO_occupations.associated
+      res = .NAOs.allocated AND .NAO_occupations.allocated
 
    end
 
@@ -5834,7 +5553,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = .natural_orbitals.associated AND .occupation_numbers.associated
+      res = .natural_orbitals.allocated AND .occupation_numbers.allocated
 
    end
 
@@ -5988,9 +5707,9 @@ contains
 
       res = ZERO
 
-      if (.coppensbasis.associated)     then; res = .coppensbasis.min_exponent
-      else if (.slaterbasis.associated) then; res = .slaterbasis.min_exponent
-      else if (.basis.associated)       then; res = .basis.min_exponent
+      if (.coppensbasis.allocated)     then; res = .coppensbasis.min_exponent
+      else if (.slaterbasis.allocated) then; res = .slaterbasis.min_exponent
+      else if (.basis.allocated)       then; res = .basis.min_exponent
       end
 
    end
@@ -6002,7 +5721,7 @@ contains
       cutoff :: REAL, IN
       res :: REAL
 
-      if (.basis.disassociated) then; res = ZERO
+      if (.basis.deallocated) then; res = ZERO
       else;                       res = .basis.r_max(cutoff)
       end
 
@@ -6015,7 +5734,7 @@ contains
       cutoff :: REAL, IN
       res :: REAL
 
-      if (.basis.disassociated) then; res = ZERO
+      if (.basis.deallocated) then; res = ZERO
       else;                       res = .basis.r2_max(cutoff)
       end
 
@@ -6262,7 +5981,7 @@ contains
    ! Return TRUE if there are pADP's.
       self :: IN
       res :: BIN
-      res = .pADP_vector.associated
+      res = .pADP_vector.allocated
    end
 
    has_ADP3s result (res) ::: pure
@@ -6289,7 +6008,7 @@ contains
    ! Also check if the dimensions are equal.
       self :: IN
       res :: BIN
-      res = .pADP_vector.associated AND .pADP_errors.associated
+      res = .pADP_vector.allocated AND .pADP_errors.allocated
       if (NOT res) return
       res = .pADP_vector.dim==.pADP_errors.dim
    end
@@ -6346,7 +6065,7 @@ contains
       self :: IN
       res :: INT
 
-      if (.pADP_vector.associated) then; res = .pADP_vector.dim
+      if (.pADP_vector.allocated) then; res = .pADP_vector.dim
       else;                           res = 9
       end
 
@@ -6561,7 +6280,7 @@ contains
    ENSURE(U.dim==actual.dim2,"U incompatible with actual")
    ENSURE(reference.dim2==actual.dim2,"reference incompatible with actual")
 
-      U0,X,Rd :: MAT{REAL}*
+      U0,X,Rd :: MAT{REAL}@
       d,n,p,q,i,iteration :: INT
       val :: REAL
 
@@ -6745,7 +6464,7 @@ contains
       U4 :: MAT4{REAL}(3,3,3,3)
       n_pt,i,j,k,l,m :: INT
       det,top,fac,H :: REAL
-      P0,g3,g4 :: VEC{REAL}*
+      P0,g3,g4 :: VEC{REAL}@
 
       ! Harmonic grid
       n_pt = g.dim
@@ -6868,7 +6587,7 @@ contains
       U4 :: MAT4{REAL}(3,3,3,3)
       n_pt,i,j,k,l,m :: INT
       det,top,fac,H :: REAL
-      P0,g3,g4 :: VEC{REAL}*
+      P0,g3,g4 :: VEC{REAL}@
 
       ! Harmonic grid
       n_pt = g.dim
@@ -6997,7 +6716,7 @@ contains
       U4 :: MAT4{REAL}(3,3,3,3)
       n_pt,i,j,k,l,m :: INT
       H :: REAL
-      g3,g4 :: VEC{REAL}*
+      g3,g4 :: VEC{REAL}@
 
       n_pt = g.dim
 
@@ -7098,22 +6817,22 @@ contains
       select case (.basis_kind)
 
       case ("gaussian")
-         if (.use_interpolator AND .interpolator.associated) then
+         if (.use_interpolator AND .interpolator.allocated) then
             .make_interpolated_density(density_grid,pt,occ)
          else
-            ENSURE(.basis.associated,"no basis")
-            ENSURE(.natural_orbitals.associated,"no natural_orbitals")
+            ENSURE(.basis.allocated,"no basis")
+            ENSURE(.natural_orbitals.allocated,"no natural_orbitals")
             if (.natural_orbitals.number_kind=="real") then; .make_density_grid_r(density_grid,pt,occ)
             else;                                            .make_density_grid_c(density_grid,pt,occ)
             end
          end
 
       case ("slater")
-         ENSURE(.slaterbasis.associated,"no slaterbasis")
+         ENSURE(.slaterbasis.allocated,"no slaterbasis")
          .slaterbasis.make_density_grid(density_grid,pt,.position,occ)
 
       case ("coppens")
-         ENSURE(.coppensbasis.associated,"no coppensbasis")
+         ENSURE(.coppensbasis.allocated,"no coppensbasis")
          .coppensbasis.make_density_grid(density_grid,pt,.position,occ)
 
       end
@@ -7134,22 +6853,22 @@ contains
       select case (.basis_kind)
 
       case ("gaussian")
-         if (.use_interpolator AND .interpolator.associated) then
+         if (.use_interpolator AND .interpolator.allocated) then
             .add_interpolated_density(density_grid,pt,occ)
          else
-            ENSURE(.basis.associated,"no basis")
-            ENSURE(.natural_orbitals.associated,"no natural orbitals")
+            ENSURE(.basis.allocated,"no basis")
+            ENSURE(.natural_orbitals.allocated,"no natural orbitals")
             if (.natural_orbitals.number_kind=="real") then; .add_density_grid_r(density_grid,pt,occ)
             else;                                            .add_density_grid_c(density_grid,pt,occ)
             end
          end
 
       case ("slater")
-         ENSURE(.slaterbasis.associated,"no slaterbasis")
+         ENSURE(.slaterbasis.allocated,"no slaterbasis")
          .slaterbasis.add_density_grid(density_grid,pt,.position,occ)
 
       case ("coppens")
-         ENSURE(.coppensbasis.associated,"no coppensbasis")
+         ENSURE(.coppensbasis.allocated,"no coppensbasis")
          .coppensbasis.add_density_grid(density_grid,pt,.position,occ)
 
       end
@@ -7166,10 +6885,10 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"),"no restricted NO's")
-   ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"),"no restricted NO's")
+   ENSURE(.occupation_numbers.is_allocated_with_genre("restricted"),"no occupation numbers")
 
-      NO :: VEC{REAL}*
+      NO :: VEC{REAL}@
       n_occ,n :: INT
       do_occ :: BIN
 
@@ -7207,10 +6926,10 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"),"no restricted NO's")
-   ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"),"no restricted NO's")
+   ENSURE(.occupation_numbers.is_allocated_with_genre("restricted"),"no occupation numbers")
 
-      NO :: VEC{REAL}*
+      NO :: VEC{REAL}@
       n_occ,n :: INT
       do_occ :: BIN
 
@@ -7251,10 +6970,10 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted_complex"),"no restricted NO's")
-   ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted_complex"),"no restricted NO's")
+   ENSURE(.occupation_numbers.is_allocated_with_genre("restricted"),"no occupation numbers")
 
-      NO :: VEC{CPX}*
+      NO :: VEC{CPX}@
       n_occ,n :: INT
       do_occ :: BIN
 
@@ -7292,10 +7011,10 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted_complex"),"no restricted NO's")
-   ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted_complex"),"no restricted NO's")
+   ENSURE(.occupation_numbers.is_allocated_with_genre("restricted"),"no occupation numbers")
 
-      NO :: VEC{CPX}*
+      NO :: VEC{CPX}@
       n_occ,n :: INT
       do_occ :: BIN
 
@@ -7342,8 +7061,8 @@ contains
    ENSURE(D.is_square,"D, not square")
    ENSURE(D.dim1==.basis.no_of_basis_functions,"D, wrong size")
 
-      g :: MAT{REAL}*
-      W :: VEC{REAL}*
+      g :: MAT{REAL}@
+      W :: VEC{REAL}@
       i :: INT
       do_occ :: BIN
 
@@ -7386,8 +7105,8 @@ contains
    ENSURE(D.is_square,"D, not square")
    ENSURE(D.dim1==.basis.no_of_basis_functions,"D, wrong size")
 
-      g :: MAT{REAL}*
-      W :: VEC{REAL}*
+      g :: MAT{REAL}@
+      W :: VEC{REAL}@
       i :: INT
       do_occ :: BIN
 
@@ -7440,7 +7159,7 @@ contains
 !         case ("gaussian")
 !            DIE("gaussian case, use different routines")
 !         case ("slater")
-!            ENSURE(.slaterbasis.associated,"no slaterbasis")
+!            ENSURE(.slaterbasis.allocated,"no slaterbasis")
 !            .slaterbasis.make_d_density_grid(d0_density,d1_density,d2_density,pt,.position)
 !         case ("coppens")
 !            DIE("not implemented yet")
@@ -7466,12 +7185,12 @@ contains
       pt :: MAT{REAL}, IN
       pos :: VEC{REAL}(3), IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim1==g.dim1,"pt and g, incompatible")
    ENSURE(.basis.no_of_basis_functions==g.dim2,"pt and g, incompatible")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
-      sh :: SHELL1*
+      sh :: SHELL1
       n_shell,f,l,s :: INT
 
       n_shell = .basis.no_of_shells
@@ -7480,14 +7199,12 @@ contains
 
       do s = 1,n_shell
 
-         sh.create_copy(.basis.shell(s),pos)
+         sh.set(.basis.shell(s),pos)
 
          f = l + 1
          l = f + sh.n_bf - 1
 
          sh.make_grid(g(:,f:l),pt)
-
-         sh.destroy
 
       end
 
@@ -7520,13 +7237,13 @@ contains
       pos :: VEC{REAL}(3), IN
       square :: BIN, optional, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
       sq :: BIN
-      sh :: SHELL1*
-      sh_grid :: MAT{REAL}*
+      sh :: SHELL1
+      sh_grid :: MAT{REAL}@
       n_pt,n_shell,f,l,s :: INT
 
       sq = FALSE
@@ -7540,7 +7257,7 @@ contains
 
       do s = 1,n_shell
 
-         sh.create_copy(.basis.shell(s),pos)
+         sh.set(.basis.shell(s),pos)
 
          f = l + 1
          l = f + sh.n_bf - 1
@@ -7550,7 +7267,6 @@ contains
          g.plus_product_of(sh_grid,orb(f:l))
 
          sh_grid.destroy
-         sh.destroy
 
       end
 
@@ -7570,13 +7286,13 @@ contains
       pos :: VEC{REAL}(3), IN
       square :: BIN, optional, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
       sq :: BIN
-      sh :: SHELL1*
-      sh_grid :: MAT{REAL}*
+      sh :: SHELL1
+      sh_grid :: MAT{REAL}@
       n_pt,n_shell,f,l,s :: INT
 
       sq = FALSE
@@ -7590,7 +7306,7 @@ contains
 
       do s = 1,n_shell
 
-         sh.create_copy(.basis.shell(s),pos)
+         sh.set(.basis.shell(s),pos)
 
          f = l + 1
          l = f + sh.n_bf - 1
@@ -7600,7 +7316,6 @@ contains
          g.plus_product_of(sh_grid,orb(f:l))
 
          sh_grid.destroy
-         sh.destroy
 
       end
 
@@ -7622,7 +7337,7 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
 
-      x,y,z,r2 :: VEC{REAL}*
+      x,y,z,r2 :: VEC{REAL}@
       n_pt :: INT
 
       n_pt = pt.dim1
@@ -7648,7 +7363,7 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
 
-      x,y,z,r2 :: VEC{REAL}*
+      x,y,z,r2 :: VEC{REAL}@
       n_pt :: INT
 
       n_pt = pt.dim1
@@ -7682,7 +7397,7 @@ contains
       select case (.basis_kind)
 
       case ("gaussian")
-         ENSURE(.basis.associated,"no basis")
+         ENSURE(.basis.allocated,"no basis")
          pt(1,:) = .position + [R,ZERO,ZERO]
          if (.natural_orbitals.number_kind == "real") then; .make_density_grid_r(density_grid,pt)
          else;                                              .make_density_grid_c(density_grid,pt)
@@ -7690,13 +7405,13 @@ contains
          res = density_grid(1)
 
       case ("slater")
-         ENSURE(.slaterbasis.associated,"no slaterbasis")
-         ENSURE(.slaterbasis.shell.associated,"no slaterbasis shells")
+         ENSURE(.slaterbasis.allocated,"no slaterbasis")
+         ENSURE(.slaterbasis.shell.allocated,"no slaterbasis shells")
          res = .slaterbasis.density_at_radius(R)
 
       case ("coppens")
-         ENSURE(.coppensbasis.associated,"no coppensbasis")
-         ENSURE(.coppensbasis.orbital.associated,"no coppensbasis orbital")
+         ENSURE(.coppensbasis.allocated,"no coppensbasis")
+         ENSURE(.coppensbasis.orbital.allocated,"no coppensbasis orbital")
          res = .coppensbasis.density_at_radius(R)
 
       end
@@ -7723,20 +7438,19 @@ contains
    ! NOTE: This is for a gaussian basis set; for slater or coppens
    ! bases use the interpolators stored in those bases.
       self :: INOUT
-      interpolator :: INTERPOLATOR*, optional
+      interpolator :: INTERPOLATOR@, optional, IN
 
    ENSURE(.basis_kind=="gaussian","interpolation must be for a gaussian basis")
 
       ! Create a copy of the template if it exists
       if (present(interpolator)) then
-      if (interpolator.associated) then
-         .interpolator.destroy
-         .interpolator.create_copy(interpolator)
+      if (interpolator.allocated) then
+         .interpolator = interpolator
       end
       end
 
       ! If no template, create a default interpolator
-      if (.interpolator.disassociated) .interpolator.create
+      if (.interpolator.deallocated) .interpolator.create
 
       ! Set domain scale factor. May not be required.
       .interpolator.set_domain_scale_factor(.bragg_slater_radius*BOHR_PER_ANGSTROM)
@@ -7754,11 +7468,13 @@ contains
       tol :: REAL, IN
       length :: REAL
 
-      interpolator :: INTERPOLATOR*
+      interpolator :: INTERPOLATOR@
 
       interpolator.create
+
       .set_saved_self   ! Used by function below
       length = interpolator.the_table_length(ATOM::density_value_at_radius,tol)
+
       interpolator.destroy
 
    end
@@ -7773,10 +7489,10 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.interpolator.associated,"no interpolator defined!")
+   ENSURE(.interpolator.allocated,"no interpolator defined!")
    ENSURE(.interpolator.domain_mapping(1:4)=="sqrt","must using sqrt-like mapping")
 
-      R2 :: VEC{REAL}*
+      R2 :: VEC{REAL}@
       n_pt,n :: INT
       x,y,z :: REAL
 
@@ -7795,9 +7511,6 @@ contains
       ! Get the interpolated density values
       .interpolator.values_for(R2,density,occ)
 
-      ! Clean up
-      R2.destroy
-
    end
 
    add_interpolated_density(density,pt,occ) ::: PURE
@@ -7810,10 +7523,10 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.interpolator.associated,"no interpolator defined!")
+   ENSURE(.interpolator.allocated,"no interpolator defined!")
    ENSURE(.interpolator.domain_mapping(1:4)=="sqrt","must using sqrt-like mapping")
 
-      R2 :: VEC{REAL}*
+      R2 :: VEC{REAL}@
       n_pt,n :: INT
       x,y,z :: REAL
 
@@ -7831,9 +7544,6 @@ contains
 
       ! Get the interpolated density values
       .interpolator.add_values_for(R2,density,occ)
-
-      ! Clean up
-      R2.destroy
 
    end
 
@@ -7878,35 +7588,38 @@ contains
    ENSURE(pts.dim2==3,"wrong dimension for points array")
    ENSURE(nabla_grid.dim1==pts.dim1,"wrong 1st dimension for nabla_grid array")
    ENSURE(nabla_grid.dim2==3,"wrong 2nd dimension for nabla_grid array")
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
-   ENSURE(.occupation_numbers.associated, "no occupation numbers")
-   ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.allocated, "no occupation numbers")
+   ENSURE(.occupation_numbers.is_allocated_with_genre("restricted"),"no occupation numbers")
 
-      orb :: VEC{REAL}*
-      nabla_orb :: MAT{REAL}*
+      orb :: VEC{REAL}@
+      nabla_orb :: MAT{REAL}@
       occ :: REAL
       n_occ,n,n_pts :: INT
 
       n_pts = size(pts,1)
+
       nabla_grid = ZERO
+
       orb.create(n_pts)
       nabla_orb.create(n_pts,3)
 
       n_occ = .no_of_occupied_NOs
 
       do n = 1,n_occ
-       .make_nabla_orbital_grid_r(nabla_orb,orb,.natural_orbitals.restricted(:,n), pts)
-       occ = .occupation_numbers.restricted(n)
-       nabla_grid(:,1) = nabla_grid(:,1) + occ*orb(:)*nabla_orb(:,1)
-       nabla_grid(:,2) = nabla_grid(:,2) + occ*orb(:)*nabla_orb(:,2)
-       nabla_grid(:,3) = nabla_grid(:,3) + occ*orb(:)*nabla_orb(:,3)
+
+         .make_nabla_orbital_grid_r(nabla_orb,orb,.natural_orbitals.restricted(:,n), pts)
+
+         occ = .occupation_numbers.restricted(n)
+
+         nabla_grid(:,1) = nabla_grid(:,1) + occ*orb(:)*nabla_orb(:,1)
+         nabla_grid(:,2) = nabla_grid(:,2) + occ*orb(:)*nabla_orb(:,2)
+         nabla_grid(:,3) = nabla_grid(:,3) + occ*orb(:)*nabla_orb(:,3)
+
       end
 
       nabla_grid = TWO*nabla_grid
-
-      orb.destroy
-      nabla_orb.destroy
 
    end
 
@@ -7922,31 +7635,38 @@ contains
    ENSURE(nabla_grid.dim2==3,  "wrong dimension for nabla_grid array")
    ENSURE(nabla_grid.dim1==pts.dim1,"wrong dimension for nabla_grid array")
    ENSURE(grid.dim==pts.dim1,"wrong dimension for grid array")
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
-   ENSURE(.occupation_numbers.associated, "no occupation numbers")
-   ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.allocated, "no occupation numbers")
+   ENSURE(.occupation_numbers.is_allocated_with_genre("restricted"),"no occupation numbers")
 
-      orb :: VEC{REAL}*
-      nabla_orb :: MAT{REAL}*
+      orb :: VEC{REAL}@
+      nabla_orb :: MAT{REAL}@
       occ :: REAL
       n_occ,n,n_pts :: INT
 
       n_pts = size(pts,1)
+
       nabla_grid = ZERO
       grid = ZERO
+
       orb.create(n_pts)
       nabla_orb.create(n_pts,3)
 
       n_occ = .no_of_occupied_NOs
 
       do n = 1,n_occ
-       .make_nabla_orbital_grid_r(nabla_orb,orb,.natural_orbitals.restricted(:,n), pts)
-       occ = .occupation_numbers.restricted(n)
-       nabla_grid(:,1) = nabla_grid(:,1) + occ*orb(:)*nabla_orb(:,1)
-       nabla_grid(:,2) = nabla_grid(:,2) + occ*orb(:)*nabla_orb(:,2)
-       nabla_grid(:,3) = nabla_grid(:,3) + occ*orb(:)*nabla_orb(:,3)
-       grid(:) = grid(:) + occ*orb(:)*orb(:)
+
+         .make_nabla_orbital_grid_r(nabla_orb,orb,.natural_orbitals.restricted(:,n), pts)
+
+         occ = .occupation_numbers.restricted(n)
+
+         nabla_grid(:,1) = nabla_grid(:,1) + occ*orb(:)*nabla_orb(:,1)
+         nabla_grid(:,2) = nabla_grid(:,2) + occ*orb(:)*nabla_orb(:,2)
+         nabla_grid(:,3) = nabla_grid(:,3) + occ*orb(:)*nabla_orb(:,3)
+
+         grid(:) = grid(:) + occ*orb(:)*orb(:)
+
       end
 
       nabla_grid = TWO*nabla_grid
@@ -7964,16 +7684,15 @@ contains
       orb :: VEC{REAL}, IN, target
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
    ENSURE(g.dim1==pt.dim1,"grid array has wrong 1st dimension")
    ENSURE(g.dim2==3,"grid array has wrong 2nd dimension")
    ENSURE(h.dim==pt.dim1,"grid array has wrong 1st dimension")
 
-      orb_a :: VEC{REAL}*
       sh :: SHELL1
-      sh_grid :: MAT3{REAL}*
-      sh_grid0 :: MAT{REAL}*
+      sh_grid :: MAT3{REAL}@
+      sh_grid0 :: MAT{REAL}@
       n_shell,n_pt,f,l,a :: INT
 
       n_pt = pt.dim1
@@ -8000,13 +7719,12 @@ contains
          end if
 
          sh.make_nabla_grid(sh_grid,sh_grid0,pt)
-         orb_a => orb(f:l)
 
-         g(:,1).plus_product_of(sh_grid(:,:,1),orb_a)
-         g(:,2).plus_product_of(sh_grid(:,:,2),orb_a)
-         g(:,3).plus_product_of(sh_grid(:,:,3),orb_a)
+         g(:,1).plus_product_of(sh_grid(:,:,1),orb(f:l))
+         g(:,2).plus_product_of(sh_grid(:,:,2),orb(f:l))
+         g(:,3).plus_product_of(sh_grid(:,:,3),orb(f:l))
 
-         h.plus_product_of(sh_grid0,orb_a)
+         h.plus_product_of(sh_grid0,orb(f:l))
 
          sh_grid0.destroy
          sh_grid.destroy
@@ -8025,7 +7743,7 @@ contains
       laplacian_grid :: VEC{REAL}
       pt :: MAT{REAL}
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind == "real") then
@@ -8043,11 +7761,11 @@ contains
       pt :: MAT{REAL}
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
-   ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.restricted.allocated, "no occupation #'s")
 
-      NO :: VEC{REAL}*
-      P,D :: MAT{REAL}*
+      NO :: VEC{REAL}@
+      P,D :: MAT{REAL}@
       n_occ,n,n_pt :: INT
       occ :: REAL
 
@@ -8060,10 +7778,16 @@ contains
       D.create(n_pt,3)
 
       n_occ = .no_of_occupied_NOs
+
       do n = 1,n_occ
-       .make_laplacian_orbital_grid_r(D,P,NO,.natural_orbitals.restricted(:,n), pt)
-       occ = .occupation_numbers.restricted(n)
-       laplacian_grid = laplacian_grid +  occ * (NO*(D(:,1)+D(:,2)+D(:,3)) + (P(:,1)*P(:,1)+P(:,2)*P(:,2)+P(:,3)*P(:,3)))
+
+         .make_laplacian_orbital_grid_r(D,P,NO,.natural_orbitals.restricted(:,n), pt)
+
+         occ = .occupation_numbers.restricted(n)
+
+         laplacian_grid = laplacian_grid +  occ * ( &
+                          NO*(D(:,1)+D(:,2)+D(:,3)) &
+                        + (P(:,1)*P(:,1)+P(:,2)*P(:,2)+P(:,3)*P(:,3)) )
       end
 
       laplacian_grid = TWO*laplacian_grid
@@ -8083,7 +7807,7 @@ contains
       orb :: VEC{REAL}, IN, target
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
    ENSURE(g.dim1==pt.dim1, "grid array has wrong 1st dimension")
    ENSURE(g.dim2==3,        "grid array has wrong 2nd dimension")
@@ -8092,9 +7816,8 @@ contains
    ENSURE(i.dim==pt.dim1,  "grid array has wrong 1st dimension")
 
       sh :: SHELL1
-      sh_grid,sh_grid1 :: MAT3{REAL}*
-      sh_grid0 :: MAT{REAL}*
-      orb_a :: VEC{REAL}*
+      sh_grid,sh_grid1 :: MAT3{REAL}@
+      sh_grid0 :: MAT{REAL}@
       n_pt,f,l,a,n_shell :: INT
 
       n_pt = pt.dim1
@@ -8125,16 +7848,14 @@ contains
 
          sh.make_laplacian_grid(sh_grid,sh_grid1,sh_grid0,pt)
 
-         orb_a => orb(f:l)
+         g(:,1).plus_product_of(sh_grid(:,:,1),orb(f:l))
+         g(:,2).plus_product_of(sh_grid(:,:,2),orb(f:l))
+         g(:,3).plus_product_of(sh_grid(:,:,3),orb(f:l))
+         h(:,1).plus_product_of(sh_grid1(:,:,1),orb(f:l))
+         h(:,2).plus_product_of(sh_grid1(:,:,2),orb(f:l))
+         h(:,3).plus_product_of(sh_grid1(:,:,3),orb(f:l))
 
-         g(:,1).plus_product_of(sh_grid(:,:,1),orb_a)
-         g(:,2).plus_product_of(sh_grid(:,:,2),orb_a)
-         g(:,3).plus_product_of(sh_grid(:,:,3),orb_a)
-         h(:,1).plus_product_of(sh_grid1(:,:,1),orb_a)
-         h(:,2).plus_product_of(sh_grid1(:,:,2),orb_a)
-         h(:,3).plus_product_of(sh_grid1(:,:,3),orb_a)
-
-         i.plus_product_of(sh_grid0,orb_a)
+         i.plus_product_of(sh_grid0,orb(f:l))
 
          sh_grid0.destroy
          sh_grid1.destroy
@@ -8150,7 +7871,7 @@ contains
       laplacian_grid :: VEC{REAL}
       pt :: MAT{REAL}
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind == "real") then
@@ -8168,30 +7889,39 @@ contains
       pt :: MAT{REAL}
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
-   ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.restricted.allocated, "no occupation #'s")
 
-      rho,NO :: VEC{REAL}*
-      P,D :: MAT{REAL}*
+      rho,NO :: VEC{REAL}@
+      P,D :: MAT{REAL}@
       n_occ,n,n_pt :: INT
       occ :: REAL
 
       n_pt = pt.dim1
-      laplacian_grid = ZERO
 
-      rho.create(n_pt); rho = ZERO
+      rho.create(n_pt)
       NO.create(n_pt)
       P.create(n_pt,3)
       D.create(n_pt,3)
 
+
+      laplacian_grid = ZERO
+      rho = ZERO
+
       n_occ = .no_of_occupied_NOs
 
       do n = 1,n_occ
-       .make_laplacian_orbital_grid_r(D,P,NO,.natural_orbitals.restricted(:,n), pt)
-       occ = .occupation_numbers.restricted(n)
-       laplacian_grid = laplacian_grid +  occ * ( &
-          NO * (D(:,1)+D(:,2)+D(:,3)) + (P(:,1)*P(:,1) + P(:,2)*P(:,2) + P(:,3)*P(:,3)))
-       rho = rho + occ*NO*NO
+
+         .make_laplacian_orbital_grid_r(D,P,NO,.natural_orbitals.restricted(:,n), pt)
+
+         occ = .occupation_numbers.restricted(n)
+
+         laplacian_grid = laplacian_grid +  occ * ( &
+                          NO * (D(:,1)+D(:,2)+D(:,3)) &
+                        + (P(:,1)*P(:,1) + P(:,2)*P(:,2) + P(:,3)*P(:,3)) )
+
+         rho = rho + occ*NO*NO
+
       end
 
       laplacian_grid = TWO*laplacian_grid/rho
@@ -8230,15 +7960,19 @@ contains
    make_H_from_virial_grid(H_grid,pt)
    ! Work out the energy density using the virial relationsip 2G + V = (1/4) L,
    ! or H = G + V = (1/4)L - G
-      H_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      H_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-      G_grid :: VEC{REAL}*
+      G_grid :: VEC{REAL}@
 
       G_grid.create(H_grid.dim)
+
       .make_G_kinetic_energy_grid(G_grid,pt)
       .make_laplacian_grid(H_grid,pt)
+
       H_grid = QUARTER*H_grid - G_grid
+
       G_grid.destroy
 
    end
@@ -8246,15 +7980,19 @@ contains
    make_rH_from_virial_grid(H_grid,pt)
    ! Work out the reduced energy density using the virial relationsip
    ! 2G + V = (1/4) L, or H = G + V = (1/4)L - G
-      H_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      H_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-      G_grid :: VEC{REAL}*
+      G_grid :: VEC{REAL}@
 
       G_grid.create(H_grid.dim)
+
       .make_rG_kinetic_energy_grid(G_grid,pt)
       .make_rL_grid(H_grid,pt)
+
       H_grid = QUARTER*H_grid - G_grid
+
       G_grid.destroy
 
    end
@@ -8262,15 +8000,19 @@ contains
    make_H_Kirzhnits_grid(H_grid,pt)
    ! Work out the energy density using the Kirzhnits relationsip 2G + V = (1/4) L,
    ! or H = G + V = (1/4)L - G
-      H_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      H_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-      G_grid :: VEC{REAL}*
+      G_grid :: VEC{REAL}@
 
       G_grid.create(H_grid.dim)
+
       .make_G_Kirzhnits_grid(G_grid,pt)
       .make_laplacian_grid(H_grid,pt)
+
       H_grid = QUARTER*H_grid - G_grid
+
       G_grid.destroy
 
    end
@@ -8278,15 +8020,19 @@ contains
    make_V_from_virial_grid(V,pt)
    ! Work out the potential energy density from using the
    ! virial theorem: V = (1/4) L - 2G
-      V :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      V :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-      G :: VEC{REAL}*
+      G :: VEC{REAL}@
 
       G.create(V.dim)
+
       .make_G_kinetic_energy_grid(G,pt)
       .make_laplacian_grid(V,pt)
+
       V = QUARTER*V - TWO*G
+
       G.destroy
 
    end
@@ -8294,15 +8040,19 @@ contains
    make_rV_from_virial_grid(V,pt)
    ! Work out the reduced potenbtial energy density from using the
    ! virial theorem: V = (1/4) L - 2G
-      V :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      V :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-      G :: VEC{REAL}*
+      G :: VEC{REAL}@
 
       G.create(V.dim)
+
       .make_rG_kinetic_energy_grid(G,pt)
       .make_rL_grid(V,pt)
+
       V = QUARTER*V - TWO*G
+
       G.destroy
 
    end
@@ -8310,15 +8060,19 @@ contains
    make_V_Kirzhnits_grid(V,pt)
    ! Work out the potential energy density from using the
    ! Kirzhnits theorem: V = (1/4) L - 2G
-      V :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      V :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-      G :: VEC{REAL}*
+      G :: VEC{REAL}@
 
       G.create(V.dim)
+
       .make_G_Kirzhnits_grid(G,pt)
       .make_laplacian_grid(V,pt)
+
       V = QUARTER*V - TWO*G
+
       G.destroy
 
    end
@@ -8330,16 +8084,17 @@ contains
    make_G_kinetic_energy_grid(G_grid,pt)
    ! Work out the G-type kinetic energy density (using nabla phi.nabla phi) on
    ! "pt" using ".natural orbitals" and  the ".occupation_numbers" vector.
-      G_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      G_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind=="real") then
-        .make_G_kinetic_energy_grid_r(G_grid,pt)
+         .make_G_kinetic_energy_grid_r(G_grid,pt)
       else
-        DIE("code not written yet")
+         DIE("code not written yet")
       end
 
    end
@@ -8347,15 +8102,16 @@ contains
    make_G_kinetic_energy_grid_r(G_grid,pt)
    ! Make the G-type kinetic energy density "G_grid" for the supplied points
    ! "pt" from restricted real natural orbitals
-      G_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      G_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
-   ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.restricted.allocated, "no occupation #'s")
 
-      NO :: VEC{REAL}*
-      P :: MAT{REAL}*
+      NO :: VEC{REAL}@
+      P :: MAT{REAL}@
       n_occ,n,n_pt :: INT
 
       n_pt = pt.dim1
@@ -8367,10 +8123,12 @@ contains
       n_occ = .no_of_occupied_NOs
 
       do n = 1,n_occ
-       .make_nabla_orbital_grid_r(P,NO,.natural_orbitals.restricted(:,n), pt)
-       G_grid(:) = G_grid(:) &
-                 + .occupation_numbers.restricted(n) &
-                 * (P(:,1)*P(:,1) + P(:,2)*P(:,2) + P(:,3)*P(:,3))
+
+         .make_nabla_orbital_grid_r(P,NO,.natural_orbitals.restricted(:,n), pt)
+
+         G_grid(:) = G_grid(:) &
+                   + .occupation_numbers.restricted(n) &
+                   * (P(:,1)*P(:,1) + P(:,2)*P(:,2) + P(:,3)*P(:,3))
       end
 
       G_grid(:) = HALF*G_grid(:)
@@ -8383,16 +8141,17 @@ contains
    make_rG_kinetic_energy_grid(G_grid,pt)
    ! Work out the reduced G-type kinetic energy density (using nabla phi.nabla phi) on
    ! "pt" using ".natural orbitals" and  the ".occupation_numbers" vector.
-      G_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      G_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind=="real") then
-        .make_rG_kinetic_energy_grid_r(G_grid,pt)
+         .make_rG_kinetic_energy_grid_r(G_grid,pt)
       else
-        DIE("code not written yet")
+         DIE("code not written yet")
       end
 
    end
@@ -8400,32 +8159,39 @@ contains
    make_rG_kinetic_energy_grid_r(G_grid,pt)
    ! Make the reduced G-type kinetic energy density "G_grid" for the supplied points
    ! "pt" from restricted real natural orbitals
-      G_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      G_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
-   ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.restricted.allocated, "no occupation #'s")
 
-      rho,NO :: VEC{REAL}*
-      P :: MAT{REAL}*
+      rho,NO :: VEC{REAL}@
+      P :: MAT{REAL}@
       n_occ,n,n_pt :: INT
       occ :: REAL
 
       n_pt = pt.dim1
-      G_grid = ZERO
 
-      rho.create(n_pt); rho = ZERO
+      rho.create(n_pt)
       NO.create(n_pt)
       P.create(n_pt,3)
+
+      G_grid = ZERO
+      rho = ZERO
 
       n_occ = .no_of_occupied_NOs
 
       do n = 1,n_occ
-       .make_nabla_orbital_grid_r(P,NO,.natural_orbitals.restricted(:,n), pt)
-       occ = .occupation_numbers.restricted(n)
-       G_grid = G_grid + occ * (P(:,1)*P(:,1) + P(:,2)*P(:,2) + P(:,3)*P(:,3))
-       rho = rho + occ*NO*NO
+
+         .make_nabla_orbital_grid_r(P,NO,.natural_orbitals.restricted(:,n), pt)
+
+         occ = .occupation_numbers.restricted(n)
+
+         G_grid = G_grid + occ * (P(:,1)*P(:,1) + P(:,2)*P(:,2) + P(:,3)*P(:,3))
+         rho    = rho + occ*NO*NO
+
       end
 
       G_grid = HALF*G_grid/rho
@@ -8439,16 +8205,17 @@ contains
    make_G_Kirzhnits_grid(G_grid,pt)
    ! Work out the G-type Kirzhnits kinetic energy density (using nabla phi.nabla phi) on
    ! "pt" using ".natural orbitals" and  the ".occupation_numbers" vector.
-      G_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      G_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind=="real") then
-        .make_G_Kirzhnits_grid_r(G_grid,pt)
+         .make_G_Kirzhnits_grid_r(G_grid,pt)
       else
-        DIE("code not written yet")
+         DIE("code not written yet")
       end
 
    end
@@ -8456,24 +8223,30 @@ contains
    make_G_Kirzhnits_grid_r(G_grid,pt)
    ! Make the G-type Kirzhnits kinetic energy density "G_grid" for the supplied points
    ! "pt" from restricted real natural orbitals
-      G_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      G_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
-   ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.restricted.allocated, "no occupation #'s")
 
-      NO,rho,nab_ro2,lap_rho :: VEC{REAL}*
-      G,L,nab_rho :: MAT{REAL}*
+      NO,rho,nab_ro2,lap_rho :: VEC{REAL}@
+      G,L,nab_rho :: MAT{REAL}@
       lambda,k2,fac,occ,occ2 :: REAL
       n_occ,n,n_pt :: INT
 
       n_pt = pt.dim1
 
-      rho.create(n_pt);       rho = ZERO
-      lap_rho.create(n_pt);   lap_rho = ZERO
+      rho.create(n_pt)
+      lap_rho.create(n_pt)
       nab_ro2.create(n_pt)
-      nab_rho.create(n_pt,3); nab_rho = ZERO
+      nab_rho.create(n_pt,3)
+
+      rho = ZERO
+      lap_rho = ZERO
+      nab_rho = ZERO
+
       NO.create(n_pt)
       G.create(n_pt,3)
       L.create(n_pt,3)
@@ -8481,19 +8254,30 @@ contains
       n_occ = .no_of_occupied_NOs
 
       do n = 1,n_occ
-       .make_laplacian_orbital_grid_r(L,G,NO,.natural_orbitals.restricted(:,n), pt)
-       occ  = .occupation_numbers.restricted(n)
-       occ2 = TWO*occ
-       rho  = rho + occ *NO*NO
-       nab_rho(:,1) = nab_rho(:,1) + occ2*NO*G(:,1)
-       nab_rho(:,2) = nab_rho(:,2) + occ2*NO*G(:,1)
-       nab_rho(:,3) = nab_rho(:,3) + occ2*NO*G(:,1)
-       lap_rho = lap_rho + occ2*(NO*(L(:,1)+L(:,2)+L(:,3)) + (G(:,1)*G(:,1) + G(:,2)*G(:,2) + G(:,3)*G(:,3)))
+
+         .make_laplacian_orbital_grid_r(L,G,NO,.natural_orbitals.restricted(:,n), pt)
+
+         occ  = .occupation_numbers.restricted(n)
+         occ2 = TWO*occ
+
+         rho  = rho + occ *NO*NO
+
+         nab_rho(:,1) = nab_rho(:,1) + occ2*NO*G(:,1)
+         nab_rho(:,2) = nab_rho(:,2) + occ2*NO*G(:,1)
+         nab_rho(:,3) = nab_rho(:,3) + occ2*NO*G(:,1)
+
+         lap_rho = lap_rho + occ2*( &
+                   NO*(L(:,1)+L(:,2)+L(:,3)) &
+                 + (G(:,1)*G(:,1) + G(:,2)*G(:,2) + G(:,3)*G(:,3)) )
+
       end
 
-      L.destroy; G.destroy; NO.destroy
+      L.destroy
+      G.destroy
+      NO.destroy
 
       nab_ro2 = nab_rho(:,1)*nab_rho(:,1) + nab_rho(:,2)*nab_rho(:,2) + nab_rho(:,3)*nab_rho(:,3)
+
       nab_rho.destroy
 
       lambda = ONE/72.0d0
@@ -8501,7 +8285,9 @@ contains
       fac = 0.3d0*(THREE*PI*PI)**(TWOTHIRD)
       G_grid = fac*rho**(FIVE/THREE) + lambda*nab_ro2/rho + k2*lap_rho
 
-      nab_ro2.destroy; lap_rho.destroy; rho.destroy
+      nab_ro2.destroy
+      lap_rho.destroy
+      rho.destroy
 
    end
 
@@ -8512,16 +8298,17 @@ contains
    make_K_kinetic_energy_grid(K_grid,pt)
    ! Work out the K-type kinetic energy density (using the nabla^2) on "pt"
    ! using ".natural orbitals" and  the ".occupation_numbers" vector.
-      K_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      K_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind=="real") then
-        .make_K_kinetic_energy_grid_r(K_grid,pt)
+         .make_K_kinetic_energy_grid_r(K_grid,pt)
       else
-        DIE("code not written yet")
+         DIE("code not written yet")
       end
 
    end
@@ -8529,18 +8316,20 @@ contains
    make_K_kinetic_energy_grid_r(K_grid,pt)
    ! Make the K-type kinetic energy density "K_grid" for the supplied points
    ! "pt" from restricted real natural orbitals
-      K_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      K_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
-   ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.restricted.allocated, "no occupation #'s")
 
-      NO :: VEC{REAL}*
-      P,D :: MAT{REAL}*
+      NO :: VEC{REAL}@
+      P,D :: MAT{REAL}@
       n_occ,n,n_pt :: INT
 
       n_pt = pt.dim1
+
       K_grid = ZERO
 
       NO.create(n_pt)
@@ -8550,9 +8339,11 @@ contains
       n_occ = .no_of_occupied_NOs
 
       do n = 1,n_occ
-       .make_laplacian_orbital_grid_r(D,P,NO,.natural_orbitals.restricted(:,n), pt)
-       K_grid(:) = K_grid(:) &
-                 + .occupation_numbers.restricted(n) * NO * (D(:,1)+D(:,2)+D(:,3))
+
+         .make_laplacian_orbital_grid_r(D,P,NO,.natural_orbitals.restricted(:,n), pt)
+
+         K_grid(:) = K_grid(:) &
+                   + .occupation_numbers.restricted(n) * NO * (D(:,1)+D(:,2)+D(:,3))
       end
 
       K_grid(:) = -HALF*K_grid(:)
@@ -8566,46 +8357,57 @@ contains
    make_rK_kinetic_energy_grid(K_grid,pt)
    ! Work out the reduced K-type kinetic energy density (using the nabla^2) on "pt"
    ! using ".natural orbitals" and  the ".occupation_numbers" vector.
-      K_grid :: VEC{REAL}
-      pt :: MAT{REAL}
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+      self :: IN
+      K_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
+
       if (.natural_orbitals.number_kind=="real") then
-        .make_rK_kinetic_energy_grid_r(K_grid,pt)
+         .make_rK_kinetic_energy_grid_r(K_grid,pt)
       else
-        DIE("code not written yet")
+         DIE("code not written yet")
       end
+
    end
 
    make_rK_kinetic_energy_grid_r(K_grid,pt)
    ! Make the K-type kinetic energy density "K_grid" for the supplied points
    ! "pt" from restricted real natural orbitals
-      K_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      K_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
-   ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.restricted.allocated, "no occupation #'s")
 
-      rho,NO :: VEC{REAL}*
-      P,D :: MAT{REAL}*
+      rho,NO :: VEC{REAL}@
+      P,D :: MAT{REAL}@
       n_occ,n,n_pt :: INT
       occ :: REAL
 
       n_pt = pt.dim1
       K_grid = ZERO
 
-      rho.create(n_pt); rho = ZERO
+      rho.create(n_pt)
       NO.create(n_pt)
       P.create(n_pt,3)
       D.create(n_pt,3)
 
+      rho = ZERO
+
       n_occ = .no_of_occupied_NOs
+
       do n = 1,n_occ
-       .make_laplacian_orbital_grid_r(D,P,NO,.natural_orbitals.restricted(:,n), pt)
-       occ = .occupation_numbers.restricted(n)
-       K_grid = K_grid + occ * NO * (D(:,1)+D(:,2)+D(:,3))
-       rho = rho + occ*NO*NO
+
+         .make_laplacian_orbital_grid_r(D,P,NO,.natural_orbitals.restricted(:,n), pt)
+
+         occ = .occupation_numbers.restricted(n)
+
+         K_grid = K_grid + occ * NO * (D(:,1)+D(:,2)+D(:,3))
+         rho    = rho + occ*NO*NO
+
       end
 
       K_grid = -HALF*K_grid/rho
@@ -8622,20 +8424,24 @@ contains
 !  =============
 
    make_dft_xc_pot_grid(V,pt,exchange,correlation)
-   ! Work out the DFT exchange-correlation potential "V" at a series of points
-   ! "pt".
-      V :: VEC{REAL}
-      pt :: MAT{REAL}
-      exchange,correlation :: STR
+   ! Work out the DFT exchange-correlation potential "V" at a series
+   ! of points "pt".
+      self :: IN
+      V :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      exchange,correlation :: STR, IN
 
       dft :: DFT_FUNCTIONAL
-      rho :: VEC{REAL}*
+      rho :: VEC{REAL}@
 
       rho.create(V.dim)
       .make_density_grid(rho,pt)
+
       V = ZERO
+
       dft.new_r_potential(exchange,V,rho)
       dft.new_r_potential(correlation,V,rho)
+
       rho.destroy
 
    end
@@ -8643,18 +8449,22 @@ contains
    make_dft_eff_pot_grid(V,pt,exchange,correlation)
    ! Work out the DFT effective potential "V" (i.e. the DFT potential plus the
    ! classical electric potential) on a grid of points "pt".
-      V :: VEC{REAL}
-      pt :: MAT{REAL}
-      exchange,correlation :: STR
+      self :: IN
+      V :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      exchange,correlation :: STR, IN
 
-      rho :: VEC{REAL}*
+      rho :: VEC{REAL}@
       dft :: DFT_FUNCTIONAL
 
       .make_electric_potential_grid(V,pt)
+
       rho.create(V.dim)
       .make_density_grid(rho,pt)
+
       dft.new_r_potential(exchange,V,rho)
       dft.new_r_potential(correlation,V,rho)
+
       rho.destroy
 
    end
@@ -8662,42 +8472,54 @@ contains
    make_dft_energy_grid(V,pt,exchange,correlation)
    ! Work out the Slater DFT energy "V" (i.e. the Slater potential times the
    ! density plus the classical electric energy) on a grid of points "pt".
-      V :: VEC{REAL}
-      pt :: MAT{REAL}
-      exchange,correlation :: STR
+      self :: IN
+      V :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      exchange,correlation :: STR, IN
 
-   ENSURE(.density_matrix.associated, "no density matrix")
-   ENSURE(.density_matrix.restricted.associated, "no restricted density matrix")
+   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_matrix.restricted.allocated, "no restricted density matrix")
 
-      Ve,rho :: VEC{REAL}*
+      Ve,rho :: VEC{REAL}@
       dft :: DFT_FUNCTIONAL
 
       .nuclear_potential(V,pt)
+
       Ve.create(V.dim)
       .make_electronic_pot_grid_r(Ve,pt,.density_matrix.restricted)
+
       V = -V - HALF*Ve
+
       Ve.destroy
+
       rho.create(V.dim)
       .make_density_grid(rho,pt)
+
       dft.new_r_energy_density(exchange,V,rho)
       dft.new_r_energy_density(correlation,V,rho)
+
       V = V*rho
+
       rho.destroy
 
    end
 
    make_H_dft_energy_grid(H_grid,pt,exchange,correlation)
    ! Work out the H DFT energy density "H_grid" on a set ofpoints "pt"
-      H_grid :: VEC{REAL}
-      pt :: MAT{REAL}
-      exchange,correlation :: STR
+      self :: IN
+      H_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      exchange,correlation :: STR, IN
 
-      G_grid :: VEC{REAL}*
+      G_grid :: VEC{REAL}@
 
       G_grid.create(H_grid.dim)
+
       .make_G_kinetic_energy_grid(G_grid,pt)
       .make_dft_energy_grid(H_grid,pt,exchange,correlation)
+
       H_grid = H_grid + G_grid
+
       G_grid.destroy
 
    end
@@ -8712,8 +8534,8 @@ contains
       pot_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
 
-   ENSURE(.density_matrix.associated, "no density matrix")
-   ENSURE(.density_matrix.restricted.associated, "no restricted density matrix")
+   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_matrix.restricted.allocated, "no restricted density matrix")
 
       if (.density_matrix.number_kind == "real") then
          .make_electric_potential_grid_r(pot_grid,pt,.density_matrix.restricted)
@@ -8731,12 +8553,15 @@ contains
       pt :: MAT{REAL}, IN
       dens :: MAT{REAL}, IN
 
-      elec_grid :: VEC{REAL}*
+      elec_grid :: VEC{REAL}@
 
       .nuclear_potential(pot_grid,pt)
+
       elec_grid.create(size(pot_grid))
       .make_electronic_pot_grid_r(elec_grid,pt,dens)
+
       pot_grid.plus(elec_grid)
+
       elec_grid.destroy
 
    end
@@ -8747,11 +8572,11 @@ contains
       self :: IN
       pot_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
-      dens :: MAT{REAL}, target, IN
+      dens :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
-      Vab,Dba :: MAT{REAL}*
+      Vab,Dba :: MAT{REAL}@
       sh :: SHELL2
       n_pt,n_shell_pairs,q,fa,fb,la,lb,k :: INT
 
@@ -8765,7 +8590,7 @@ contains
 
          .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
 
-         Dba => dens(fa:la,fb:lb)
+         Dba = dens(fa:la,fb:lb)
 
          if (sh.is_spherical)then
            Vab.create(sh.a.n_sph,sh.b.n_sph)
@@ -8777,27 +8602,27 @@ contains
 
            do k = 1,n_pt
               sh.get_nuc(Vab,ONE,pt(k,:))
-              pot_grid(k) = pot_grid(k) - TWO*MAT{REAL}:sum_elements(Vab*Dba)
+              pot_grid(k) = pot_grid(k) - TWO*sum(Vab*Dba)
            end
 
          else
 
            do k = 1,n_pt
               sh.get_nuc(Vab,ONE,pt(k,:))
-              pot_grid(k) = pot_grid(k) -     MAT{REAL}:sum_elements(Vab*Dba)
+              pot_grid(k) = pot_grid(k) -     sum(Vab*Dba)
            end
 
          end
 
          Vab.destroy
-         sh.destroy_ptr_part
 
       end
 
    end
 
-   nuclear_potential(values,pts)
+   nuclear_potential(values,pts) ::: pure
    ! Calculate the nuclear potential "values" of a given set of "pts".
+      self :: IN
       values :: VEC{REAL}, OUT
       pts :: MAT{REAL}, IN
 
@@ -8805,18 +8630,23 @@ contains
       r,x,y,z,xi,yi,zi :: REAL
 
       values = ZERO
+
       x = .position(1)
       y = .position(2)
       z = .position(3)
 
       do i = 1,values.dim
+
          xi = pts(i,1) - x
          yi = pts(i,2) - y
          zi = pts(i,3) - z
+
          r  = sqrt(xi*xi + yi*yi + zi*zi)
+
          if (r>tiny(r)) then; values(i) = values(i) + .atomic_number/r
          else;                values(i) = values(i) + huge(ONE)
          end
+
       end
 
    end
@@ -8832,7 +8662,7 @@ contains
       grid :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(grid.dim1==pt.dim1,"incompatible grid and pt arrays")
    ENSURE(grid.dim2==.basis.no_of_basis_functions,"wrong size, grid array")
@@ -8867,7 +8697,7 @@ contains
       nabla_grid :: MAT3{REAL}, OUT
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(nabla_grid.dim1==pt.dim1,"incompatible nabla_grid and pt arrays")
    ENSURE(nabla_grid.dim2==.basis.no_of_basis_functions,"wrong size, nabla_grid array")
@@ -8895,7 +8725,7 @@ contains
       grid :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(nabla_grid.dim1==pt.dim1,"incompatible nabla_grid and pt arrays")
    ENSURE(nabla_grid.dim2==.basis.no_of_basis_functions,"wrong size, nabla_grid array")
@@ -8909,15 +8739,20 @@ contains
       n_shell = .basis.no_of_shells
 
       l = 0
+
       do s = 1,n_shell
+
          sh.set(.basis.shell(s),.position)
+
          f = l + 1
          if (sh.is_spherical)then
            l = l + sh.n_sph  ! LBXXX
          else
            l = l + sh.n_comp
          end if
+
          sh.make_nabla_grid(nabla_grid(:,f:l,1),nabla_grid(:,f:l,2),nabla_grid(:,f:l,3),grid(:,f:l),pt)
+
       end
 
    end
@@ -8931,12 +8766,12 @@ contains
       pt :: MAT{REAL}, IN
       cutoff :: REAL
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(grid0.dim1==pt.dim1,"incompatible grid0 and pt arrays")
    ENSURE(grid0.dim2==.basis.no_of_basis_functions,"wrong size, grid0 array")
 
-      x,y,z,r2 :: VEC{REAL}*
+      x,y,z,r2 :: VEC{REAL}@
       sh :: SHELL1
       n_pt,s,f,l,n_shell :: INT
 
@@ -8953,14 +8788,18 @@ contains
 
       l = 0
       do s = 1,n_shell
+
          sh.set(.basis.shell(s),.position)
+
          f = l + 1
          if (sh.is_spherical)then
            l = l + sh.n_sph
          else
            l = l + sh.n_comp
          end if
+
          sh.make_grid(grid0(:,f:l),x,y,z,r2,cutoff)
+
       end
 
       r2.destroy
@@ -8978,13 +8817,13 @@ contains
       pt :: MAT{REAL}, IN
       cutoff :: REAL
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(grid1.dim1==pt.dim1,"incompatible grid1 and pt arrays")
    ENSURE(grid1.dim2==.basis.no_of_basis_functions,"wrong size, grid1 array")
    ENSURE(grid1.dim3==3,"wrong size, grid1 array")
 
-      x,y,z,r2 :: VEC{REAL}*
+      x,y,z,r2 :: VEC{REAL}@
       sh :: SHELL1
       n_pt,s,n_shell :: INT
 
@@ -9019,9 +8858,9 @@ contains
       grid1 :: MAT3{REAL}, OUT
       grid0 :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
-      cutoff :: REAL
+      cutoff :: REAL, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(grid1.dim1==pt.dim1,"incompatible grid1 and pt arrays")
    ENSURE(grid1.dim2==.basis.no_of_basis_functions,"wrong size, grid1 array")
@@ -9031,7 +8870,7 @@ contains
 
       sh :: SHELL1
       n_pt,s,f,l,n_shell :: INT
-      x,y,z,r2 :: VEC{REAL}*
+      x,y,z,r2 :: VEC{REAL}@
 
       n_pt = pt.dim1
 
@@ -9046,14 +8885,18 @@ contains
 
       l = 0
       do s = 1,n_shell
+
          sh.set(.basis.shell(s),.position)
+
          f = l + 1
          if (sh.is_spherical)then
            l = l + sh.n_sph
          else
            l = l + sh.n_comp
          end if
+
          sh.make_nabla_grid(grid1(:,f:l,1),grid1(:,f:l,2),grid1(:,f:l,3),grid0(:,f:l),x,y,z,r2,cutoff)
+
       end
 
       r2.destroy
@@ -9076,7 +8919,7 @@ contains
       logval :: VEC{INT}(n_pt), OUT
       r2 :: VEC{REAL}(n_pt), IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       rr,ex :: REAL
       n :: INT
@@ -9101,7 +8944,7 @@ contains
       pt :: MAT{REAL}, IN
       n_pt :: INT, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(dx.dim ==n_pt,"wrong size, dx")
    ENSURE(dy.dim ==n_pt,"wrong size, dy")
    ENSURE(dz.dim ==n_pt,"wrong size, dy")
@@ -9120,6 +8963,7 @@ contains
          xx = pt(n,1) - px
          yy = pt(n,2) - py
          zz = pt(n,3) - pz
+
          rr = xx*xx + yy*yy + zz*zz
 
          dx(n)   = xx
@@ -9142,7 +8986,7 @@ contains
       n_pt :: INT, IN
       cutoff :: REAL, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(dx.dim >=n_pt,"wrong size, dx")
    ENSURE(dy.dim >=n_pt,"wrong size, dy")
    ENSURE(dz.dim >=n_pt,"wrong size, dy")
@@ -9163,6 +9007,7 @@ contains
          xx = pt(n,1) - px
          yy = pt(n,2) - py
          zz = pt(n,3) - pz
+
          rr = xx*xx + yy*yy + zz*zz
 
          dx(n)   = xx
@@ -9182,12 +9027,12 @@ contains
    ! which the basis functions of the atom have a significant value above
    ! "cutoff" i.e. those points for which "skip" is FALSE.
       self :: IN
-      x,y,z,r2 :: VEC{REAL}*
-      skip :: VEC{BIN}*
+      x,y,z,r2 :: VEC{REAL}@, OUT
+      skip :: VEC{BIN}@, OUT
       pt :: MAT{REAL}, IN
       cutoff :: REAL, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       px,py,pz,xx,yy,zz,rr, r2_max :: REAL
       n_pt,n,k :: INT
@@ -9207,18 +9052,25 @@ contains
       pz = .position(3)
 
       k = 0
+
       do n = 1,n_pt
+
          xx = pt(n,1) - px
          yy = pt(n,2) - py
          zz = pt(n,3) - pz
+
          rr = xx*xx + yy*yy + zz*zz
+
          skip(n) = rr>r2_max
+
          if (skip(n)) cycle
+
          k = k + 1
          x(k) = xx
          y(k) = yy
          z(k) = zz
          r2(k) = rr
+
       end
 
       if (k==0) then
@@ -9238,17 +9090,18 @@ contains
    ! which the basis functions of the atom have a significant value above
    ! "cutoff" i.e. those points for which "skip" is FALSE.
       self :: IN
-      x,y,z,r2,d2 :: VEC{REAL}*
-      skip :: VEC{BIN}*
+      x,y,z,r2,d2 :: VEC{REAL}@, OUT
+      skip :: VEC{BIN}@, OUT
       pt :: MAT{REAL}, IN
       cutoff :: REAL, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       px,py,pz,xx,yy,zz,rr, r2_max :: REAL
       n_pt,n,k :: INT
 
       n_pt = pt.dim1
+
       skip.create(n_pt)
       x.create(n_pt)
       y.create(n_pt)
@@ -9263,19 +9116,27 @@ contains
       pz = .position(3)
 
       k = 0
+
       do n = 1,n_pt
+
          xx = pt(n,1) - px
          yy = pt(n,2) - py
          zz = pt(n,3) - pz
+
          rr = xx*xx + yy*yy + zz*zz
+
          d2(n) = rr
          skip(n) = rr>r2_max
+
          if (skip(n)) cycle
+
          k = k + 1
+
          x(k) = xx
          y(k) = yy
          z(k) = zz
          r2(k) = rr
+
       end
 
       if (k==0) then
@@ -9301,13 +9162,13 @@ contains
    ! "cutoff" i.e. those points for which "skip" is FALSE. "skip2" is an array
    ! which skips (in addition) some preselcted points.
       self :: IN
-      x,y,z,r2 :: VEC{REAL}*
-      skip :: VEC{BIN}*
+      x,y,z,r2 :: VEC{REAL}@, OUT
+      skip :: VEC{BIN}@, OUT
       pt :: MAT{REAL}, IN
       skip2 :: VEC{BIN}, IN
       cutoff :: REAL, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       xx,yy,zz,rr, r2_max :: REAL
       n_pt,n,k :: INT
@@ -9321,20 +9182,28 @@ contains
       r2.create(n_pt)
 
       r2_max = .r2_max(cutoff)
+
       k = 0
 
       do n = 1,n_pt
+
          xx = pt(n,1) - .position(1)
          yy = pt(n,2) - .position(2)
          zz = pt(n,3) - .position(3)
+
          rr = xx*xx + yy*yy + zz*zz
+
          skip(n) = skip2(n) OR rr>r2_max
+
          if (skip(n)) cycle
+
          k = k + 1
+
          x(k) = xx
          y(k) = yy
          z(k) = zz
          r2(k) = rr
+
       end
 
       if (k==0) then
@@ -9362,7 +9231,7 @@ contains
    ! corresponding to the molecule basis set shell number
       self :: INOUT
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       .first_basis_fn_for_shell.destroy
       .last_basis_fn_for_shell.destroy
@@ -9378,32 +9247,37 @@ contains
    ! Set the indices of first and last basis functions in a particular shell
    ! "s", first(s) and last(s), respectively.
       self :: IN
-      first,last :: VEC{INT}*
+      first,last :: VEC{INT}@, OUT
 
       n_shell,f,l,s :: INT
 
       n_shell = .basis.no_of_shells
+
       first.create(n_shell)
       last.create(n_shell)
 
       l = 0
+
       do s = 1,n_shell
+
          f = l + 1
          l = f + .basis.shell(s).n_bf - 1
+
          first(s) = f
          last(s)  = l
+
       end
 
    end
 
-   make_precomputed_shellpairs ::: leaky
+   make_precomputed_shellpairs ::: leaky, PURE
    ! Make a SHELLPAIR vector "shellpair" which includes precomputed data for the
    ! basis set.
    ! NOTE for later: n_unique_shells should be a basisvec routine.
    ! NOTE for later: precomputed_basis_shellpair should be a MAT{REAL} type
       self :: INOUT
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       n,a,b :: INT
 
@@ -9414,15 +9288,15 @@ contains
 
       do a = 1,n
       do b = 1,n
-         .precomputed_basis_shellpair(a,b).copy_a(.basis.shell(a))
-         .precomputed_basis_shellpair(a,b).copy_b(.basis.shell(b))
+         .precomputed_basis_shellpair(a,b).set_a(.basis.shell(a))
+         .precomputed_basis_shellpair(a,b).set_b(.basis.shell(b))
          .precomputed_basis_shellpair(a,b).make_precalculated_data
       end
       end
 
    end
 
-   get_precomputed_shell_pair(shell,q,fa,la,fb,lb) ::: leaky
+   get_precomputed_shell_pair(shell,q,fa,la,fb,lb) ::: leaky, PURE
    ! Get the SHELL2 object "shell" correponding to the pair index "q"
    ! Also return the basis function start indices "fa", "la", etc ...
       self :: IN
@@ -9430,9 +9304,9 @@ contains
       q :: INT, IN
       fa,la,fb,lb :: INT, OUT
 
-   ENSURE(.precomputed_basis_shellpair.associated,"no precomputed basis shellpair data")
-   ENSURE(.first_basis_fn_for_shell.associated,"no first_basis_fn data")
-   ENSURE(.last_basis_fn_for_shell.associated,"no last_basis_fn data")
+   ENSURE(.precomputed_basis_shellpair.allocated,"no precomputed basis shellpair data")
+   ENSURE(.first_basis_fn_for_shell.allocated,"no first_basis_fn data")
+   ENSURE(.last_basis_fn_for_shell.allocated,"no last_basis_fn data")
 
       a,b :: INT
 
@@ -9445,11 +9319,11 @@ contains
       lb = .last_basis_fn_for_shell(b)
 
       shell.set_and_precompute_from(.precomputed_basis_shellpair(a,b) &
-         ,.position,.position,same_center=TRUE,skip=FALSE)
+                                   ,.position,.position,same_center=TRUE,skip=FALSE)
 
    end
 
-   get_precomputed_shell_pair0(shell,q,fa,la,fb,lb) ::: leaky
+   get_precomputed_shell_pair0(shell,q,fa,la,fb,lb) ::: leaky, PURE
    ! Get the SHELL2 object "shell" correponding to the pair index "q"
    ! Also return the basis function start indices "fa", "la", etc ...
    ! HOWEVER, place both functions at the origin not at .position.
@@ -9458,9 +9332,9 @@ contains
       q :: INT, IN
       fa,la,fb,lb :: INT, OUT
 
-   ENSURE(.precomputed_basis_shellpair.associated,"no precomputed basis shellpair data")
-   ENSURE(.first_basis_fn_for_shell.associated,"no first_basis_fn data")
-   ENSURE(.last_basis_fn_for_shell.associated,"no last_basis_fn data")
+   ENSURE(.precomputed_basis_shellpair.allocated,"no precomputed basis shellpair data")
+   ENSURE(.first_basis_fn_for_shell.allocated,"no first_basis_fn data")
+   ENSURE(.last_basis_fn_for_shell.allocated,"no last_basis_fn data")
 
       a,b :: INT
       zv  :: VEC{REAL}(3)
@@ -9476,7 +9350,7 @@ contains
       lb = .last_basis_fn_for_shell(b)
 
       shell.set_and_precompute_from(.precomputed_basis_shellpair(a,b) &
-         ,zv,zv,same_center=TRUE,skip=FALSE)
+                                   ,zv,zv,same_center=TRUE,skip=FALSE)
 
    end
 
@@ -9484,7 +9358,7 @@ contains
 !  Structure factor integrals
 !  ==========================
 
-   make_FT(res,k_pts)
+   make_FT(res,k_pts) ::: PURE
    ! Fourier transform of the density described by ".density_matrix"
    ! evaluated at a reciprocal space points [k_pts(i,:), i = 1,dim ]
       self :: IN
@@ -9497,7 +9371,7 @@ contains
 
    end
 
-   make_FT_spherical(res,k_pts)
+   make_FT_spherical(res,k_pts) ::: PURE
    ! Analytical representation of the spherical IAM form factor
    ! evaluated at a reciprocal space points [k_pts(i,:), i = 1,dim ]
       self :: IN
@@ -9506,7 +9380,7 @@ contains
 
    ENSURE(.use_IAM_ITC_FFs,"use_IAM_ITC_FFs is FALSE!")
 
-      k_z :: VEC{REAL}*
+      k_z :: VEC{REAL}@
       k_max :: INT
       II :: CPX
 
@@ -9539,19 +9413,19 @@ contains
 
    end
 
-   make_FT_aspherical(res,k_pts)
+   make_FT_aspherical(res,k_pts) ::: PURE
    ! Fourier transform of the density described by ".density_matrix"
    ! evaluated at a reciprocal space points [k_pts(i,:), i = 1,dim ]
       self :: IN
       res :: VEC{CPX}, OUT
       k_pts :: MAT{REAL}, IN
 
-   ENSURE(.density_matrix.associated, "no .density_matrix")
-   ENSURE(.density_matrix.restricted.associated, "only works for restricted .density_matrix")
-   ENSURE(.precomputed_basis_shellpair.associated, "no precomputed_basis_shellpair info")
+   ENSURE(.density_matrix.allocated, "no .density_matrix")
+   ENSURE(.density_matrix.restricted.allocated, "only works for restricted .density_matrix")
+   ENSURE(.precomputed_basis_shellpair.allocated, "no precomputed_basis_shellpair info")
 
       n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
-      FT :: MAT3{CPX}*
+      FT :: MAT3{CPX}@
       D :: MAT{REAL}@
       sh :: SHELL2
 
@@ -9570,6 +9444,7 @@ contains
    
          ! Make the FT 
          FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
+
          sh.make_ft_c(FT,k_pts)
    
          ! Trace with density matrix
@@ -9587,14 +9462,13 @@ contains
    
          ! Clean
          FT.destroy
-         sh.destroy_ptr_part
    
       end
    
    end
 
 
-   make_FT_along_z(res,k_z)
+   make_FT_along_z(res,k_z) ::: PURE
    ! Fourier transform of the density described by ".density_matrix"
    ! evaluated at a reciprocal space points [0,0,k_z(i), i = 1,dim].
    ! NOTE: evaluated at the ORIGIN!
@@ -9602,14 +9476,13 @@ contains
       res :: VEC{CPX}, OUT
       k_z :: VEC{REAL}, IN
 
-   ENSURE(.density_matrix.associated, "no .density_matrix")
-   ENSURE(.density_matrix.restricted.associated, "only works for restricted .density_matrix")
-   ENSURE(.precomputed_basis_shellpair.associated,"no precomputed basis shellpair data")
+   ENSURE(.density_matrix.allocated, "no .density_matrix")
+   ENSURE(.density_matrix.restricted.allocated, "only works for restricted .density_matrix")
+   ENSURE(.precomputed_basis_shellpair.allocated,"no precomputed basis shellpair data")
 
       n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
-      k_x,k_y :: VEC{REAL}*
-    ! partition :: MAT{REAL}*
-      FT :: MAT3{CPX}*
+      k_x,k_y :: VEC{REAL}@
+      FT :: MAT3{CPX}@
       D :: MAT{REAL}@
       sh :: SHELL2
 
@@ -9632,8 +9505,8 @@ contains
          n_shell_pairs = n_shell_pairs.triangle_number
         
          ! Other components
-         k_x.create(k_max); k_x = 0
-         k_y.create(k_max); k_y = 0
+         k_x.create(k_max); k_x = ZERO
+         k_y.create(k_max); k_y = ZERO
         
          res = ZERO
         
@@ -9645,10 +9518,6 @@ contains
             ! Make the FT 
             FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
             sh.make_ft_c(FT,k_x,k_y,k_z)
-        
-          ! partition.create(sh.a.n_comp,sh.b.n_comp)
-          ! partition = ONE
-          ! sh.make_FT_parted_c(FT,k_x,k_y,k_z,partition)
         
             ! Trace with density matrix
             ! Count off-diagonals twice
@@ -9664,9 +9533,7 @@ contains
             end
         
             ! Clean
-          ! partition.destroy
             FT.destroy
-            sh.destroy_ptr_part
         
          end
         
@@ -9678,39 +9545,35 @@ contains
 
    end
 
-   FT_along_z_r(res,k_z) ::: selfless
+   FT_along_z_r(res,k_z) ::: selfless, PURE
    ! Real part of fourier transform of the density described by
    ! ".density_matrix" evaluated at a reciprocal space points
    ! [0,0,k_z(i), i = 1,dim]
       res :: VEC{REAL}, OUT
       k_z :: VEC{REAL}, IN
 
-      tmp :: VEC{CPX}*
+      tmp :: VEC{CPX}@
 
       tmp.create(res.dim)
       saved_self.make_FT_along_z(tmp,k_z)
 
       res = RE(tmp)
 
-      tmp.destroy
-
    end
 
-   FT_along_z_i(res,k_z) ::: selfless
+   FT_along_z_i(res,k_z) ::: selfless, PURE
    ! Imaginary part of fourier transform of the density described by
    ! ".density_matrix" evaluated at a reciprocal space points
    ! [0,0,k_z(i), i = 1,dim]
       res :: VEC{REAL}, OUT
       k_z :: VEC{REAL}, IN
 
-      tmp :: VEC{CPX}*
+      tmp :: VEC{CPX}@
 
       tmp.create(res.dim)
       saved_self.make_FT_along_z(tmp,k_z)
 
       res = IM(tmp)
-
-      tmp.destroy
 
    end
 
@@ -9720,8 +9583,7 @@ contains
       self :: IN
       length,spacing :: REAL, IN
 
-      interpolator :: INTERPOLATOR*
-    ! points :: VEC{REAL}*
+      interpolator :: INTERPOLATOR@
      
       ! Used below to make interpolator
       .set_saved_self 
@@ -9829,10 +9691,12 @@ contains
       self :: IN
       length,spacing :: REAL, IN
 
-      interpolator :: INTERPOLATOR*
+      interpolator :: INTERPOLATOR@
      
       ! Set the interpolation table
       .set_saved_self ! Used below
+
+      ! Set the interpolation table
       interpolator.create
       interpolator.set_data(length,spacing,ATOM::FT_along_z_i)
 
@@ -9850,6 +9714,7 @@ contains
 
    do_dump ::: private
    ! Dump object data as text
+      self :: IN
 
       stdout.dump("label",.label)
       stdout.dump("tag",.tag)
@@ -9942,11 +9807,11 @@ contains
 
       .put_short
 
-      if (.residue_sequence_number/=0) .put_mm_info
+      if (.residue_sequence_number/=0)   .put_mm_info
 
-      if (.basis.associated)              .basis.put
-      if (.slaterbasis.associated)        .slaterbasis.put
-      if (.coppensbasis.associated)       .coppensbasis.put
+      if (.basis.allocated)              .basis.put
+      if (.slaterbasis.allocated)        .slaterbasis.put
+      if (.coppensbasis.allocated)       .coppensbasis.put
 
       .put_ANOs
 
@@ -9975,21 +9840,21 @@ contains
 
       stdout.flush
 
-      if (.atomic_orbitals.associated) then
+      if (.atomic_orbitals.allocated) then
          stdout.flush
          stdout.text("Atomic orbitals:")
          stdout.flush
          stdout.put(.atomic_orbitals)
       end
 
-      if (.density_matrix.associated) then
+      if (.density_matrix.allocated) then
          stdout.flush
          stdout.text("Density matrix:")
          stdout.flush
          stdout.put(.atomic_orbitals)
       end
 
-      if (.natural_orbitals.associated) then
+      if (.natural_orbitals.allocated) then
          stdout.flush
          stdout.text("Natural occupations and orbitals:")
          stdout.flush
@@ -10017,11 +9882,11 @@ contains
    end
 
    put_natural_orbitals
-   ! Put out the current associated molecular orbitals to file "out"
+   ! Put out the current allocated molecular orbitals to file "out"
       self :: IN
 
-   ENSURE(.natural_orbitals.associated,"no natural orbitals")
-   ENSURE(.occupation_numbers.associated,"no natural orbital occupations")
+   ENSURE(.natural_orbitals.allocated,"no natural orbitals")
+   ENSURE(.occupation_numbers.allocated,"no natural orbital occupations")
 
       stdout.flush
       stdout.text("Natural orbital occupations:")
@@ -10035,23 +9900,24 @@ contains
 
    put_interpolator
    ! Put out the atom information to file "stdout"
+      self :: IN
 
       select case (.basis_kind)
 
-         case ("slater")
-            ENSURE(.slaterbasis.associated,"no slaterbasis")
-            stdout.flush
-            stdout.text("Atom slaterbasis info:")
-            .slaterbasis.interpolator.put
+      case ("slater")
+         ENSURE(.slaterbasis.allocated,"no slaterbasis")
+         stdout.flush
+         stdout.text("Atom slaterbasis info:")
+         .slaterbasis.interpolator.put
 
-         case ("coppens")
-            ENSURE(.coppensbasis.associated,"no coppensbasis")
-            stdout.flush
-            stdout.text("Atom coppensbasis info:")
-            .coppensbasis.interpolator.put
+      case ("coppens")
+         ENSURE(.coppensbasis.allocated,"no coppensbasis")
+         stdout.flush
+         stdout.text("Atom coppensbasis info:")
+         .coppensbasis.interpolator.put
 
-         case default
-            DIE("no interpolator for basis "//trim(.basis_kind))
+      case default
+         DIE("no interpolator for basis "//trim(.basis_kind))
 
       end
 
