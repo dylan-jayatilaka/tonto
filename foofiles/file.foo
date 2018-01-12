@@ -51,103 +51,29 @@ module FILE
 
 contains
 
-!  ==================
-!  Allocation methods
-!  ==================
+!  ==========
+!  Allocation
+!  ==========
 
-   create ::: get_from(OBJECT), leaky
-   ! Create an object
+   create ::: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
    end
 
    create(name) ::: leaky
    ! Create a file-label object. Does not open the file.  Sets the filename if
    ! present.
-      self :: PTR
-      name :: STR
+      self :: allocatable, OUT
+      name :: STR, IN
 
       .create
+
       .name = name
+
       UNIT_NUMBER:get_available_unit_number(.unit)
-
-   end
-
-   destroy ::: leaky
-   ! Destroy a file-label object
-      self :: PTR
-
-      if (.disassociated) return
-
-      ! Close and free unit
-      if (.is_open AND .unit_used) .close
-      UNIT_NUMBER:free_the_used_unit_number(.unit)
-
-      ! Clean
-
-      .destroy_ptr_part
-
-      deallocate(self)
-
-   end
-
-   nullify_ptr_part
-   ! Nullify the pointer parts
-      nullify( .real_buffer )
-      nullify( .int_buffer )
-      nullify( .cpx_buffer )
-   end
-
-   destroy_ptr_part ::: leaky
-   ! Destroy pointer parts
-      .real_buffer.destroy
-      .int_buffer.destroy
-      .cpx_buffer.destroy
-   end
-
-
-!  ====
-!  Copy
-!  ====
-
-   create_copy(f) ::: leaky
-   ! Create a copy a file "f"
-      self :: PTR
-       f :: FILE
-      .create
-      .copy(f)
-   end
-
-   copy(f) ::: leaky
-   ! Copy a file "f"
-      f :: FILE
-      self = f
-      .nullify_ptr_part
-      if (f.int_buffer.associated) &
-         .int_buffer.create_copy(f.int_buffer)
-      if (f.real_buffer.associated) &
-         .real_buffer.create_copy(f.real_buffer)
-      if (f.cpx_buffer.associated) &
-         .cpx_buffer.create_copy(f.cpx_buffer)
-   end
-
-
-!  ===========
-!  Set methods
-!  ===========
-
-   set_defaults
-   ! Set up defaults
-
-      .record = 1
-
-      .io_status   = 0
-      .file_status = "unknown"
-
-      .action   = "readwrite"
-      .buffered = FALSE
-
-      .real_buffer_pos = 1
-      .int_buffer_pos  = 1
-      .cpx_buffer_pos  = 1
 
    end
 
@@ -163,9 +89,10 @@ contains
    ! * If present, "buffered" indicated whether the file is to be
    !   buffered, and the "type" of the buffer must also be specified as
    !   "real" or "int"
-      action :: STR, optional
-      buffered :: BIN,    optional
-      type :: STR, optional
+      self :: INOUT
+      action :: STR, optional, IN
+      buffered :: BIN, optional, IN
+      type :: STR, optional, IN
 
    ENSURE(present(buffered) EQV present(type),"buffered and type not both present")
 
@@ -173,12 +100,12 @@ contains
 
       if (present(action)) then
 
-        select case (action)
-           case("rw        ","readwrite ","read-write") ;              .action = "readwrite"
-           case("r         ","read      ","reading   ","read-only ") ; .action = "read"
-           case("w         ","write     ","writing   ","write-only") ; .action = "write"
-           case default; UNKNOWN(action)
-        end
+         select case (action)
+         case("rw        ","readwrite ","read-write") ;              .action = "readwrite"
+         case("r         ","read      ","reading   ","read-only ") ; .action = "read"
+         case("w         ","write     ","writing   ","write-only") ; .action = "write"
+         case default; UNKNOWN(action)
+         end
 
       end
 
@@ -201,30 +128,30 @@ contains
 
       if (.buffered) then
 
-        ENSURE(present(type),"type of buffer must be specified")
-        ENSURE(.action/="readwrite","buffer must be either read-only or write-only")
-
-        type1 = type
-        type1.to_lower_case
-
-        select case (type1)
-
-           case("real")
-              .real_buffer.create(FILE_BUFFER_LENGTH)
-              if (.action == "read") .get_real_buffer
-
-           case("int")
-              .int_buffer.create(FILE_BUFFER_LENGTH)
-              if (.action == "read") .get_int_buffer
-
-           case("cpx")
-              .cpx_buffer.create(FILE_BUFFER_LENGTH)
-              if (.action == "read") .get_cpx_buffer
-
-           case default
-              DIE("unknown buffer type, "//trim(type))
-
-        end
+         ENSURE(present(type),"type of buffer must be specified")
+         ENSURE(.action/="readwrite","buffer must be either read-only or write-only")
+        
+         type1 = type
+         type1.to_lower_case
+        
+         select case (type1)
+        
+         case("real")
+            .real_buffer.create(FILE_BUFFER_LENGTH)
+            if (.action == "read") .get_real_buffer
+        
+         case("int")
+            .int_buffer.create(FILE_BUFFER_LENGTH)
+            if (.action == "read") .get_int_buffer
+        
+         case("cpx")
+            .cpx_buffer.create(FILE_BUFFER_LENGTH)
+            if (.action == "read") .get_cpx_buffer
+        
+         case default
+            DIE("unknown buffer type, "//trim(type))
+        
+         end
 
       end
 
@@ -232,36 +159,47 @@ contains
 
    close ::: leaky
    ! Close the file
+      self :: INOUT
+
+   ENSURE(.is_open,"file is not open")
+
       opened :: BIN
-      WARN_IF(NOT .is_open,"file is not open")
+
       if (.action=="write") then
-       if (.real_buffer_pos > 1) .flush_real_buffer
-       if (.int_buffer_pos > 1) .flush_int_buffer
-       if (.cpx_buffer_pos > 1) .flush_cpx_buffer
+         if (.real_buffer_pos > 1) .flush_real_buffer
+         if (.int_buffer_pos  > 1) .flush_int_buffer
+         if (.cpx_buffer_pos  > 1) .flush_cpx_buffer
       end
-      .destroy_ptr_part
+
       if (IO_IS_ALLOWED) then
-       inquire(unit=.unit,opened=opened)
-       if (opened) then
-         close(unit=.unit)
-       end
+         inquire(unit=.unit,opened=opened)
+         if (opened) then
+           close(unit=.unit)
+         end
       end
+
       DIE_IF(.io_status/=0,"error closing "//trim(.file_status)//" file "//.name)
+
    end
 
    close_and_delete ::: leaky
    ! Close the file and delete it from the file system
-      WARN_IF(NOT .is_open,"file is not open")
+      self :: INOUT
+
+   ENSURE(.is_open,"file is not open")
+
       if (.action=="write") then
-       if (.real_buffer_pos > 1) .flush_real_buffer
-       if (.int_buffer_pos > 1) .flush_int_buffer
-       if (.cpx_buffer_pos > 1) .flush_cpx_buffer
+         if (.real_buffer_pos > 1) .flush_real_buffer
+         if (.int_buffer_pos  > 1) .flush_int_buffer
+         if (.cpx_buffer_pos  > 1) .flush_cpx_buffer
       end
-      .destroy_ptr_part
+
       if (IO_IS_ALLOWED) then
       close(unit=.unit,status="delete",iostat=.io_status)
       end
+
       DIE_IF(.io_status/=0,"error closing and deleting"//trim(.file_status)//" file "//.name)
+
    end
 
    delete
@@ -283,7 +221,8 @@ contains
 
    read(value) ::: template
    ! Read a "value" from the file.
-      value :: VALUE?
+      self :: INOUT
+      value :: VALUE?, OUT
 
       if (.buffered) then
 
@@ -327,7 +266,8 @@ contains
 
    read(values) ::: template
    ! Read a series of "values" from the file.
-      values :: VALUES?
+      self :: INOUT
+      values :: VALUES?, OUT
 
       if (.buffered) then
 
@@ -347,38 +287,6 @@ contains
 
    end
 
-!#ifdef SUN_f95
-   read(values) 
-   ! Read a series of *string* "values" from the file.
-   ! For Sun Fortran 8.6, on Linux
-      values :: VEC{STR}
-
-      vals :: VEC{STR}(len=len(values(1)),values.dim)
-
-      if (.buffered) then
-
-         DIE("unavailable")
-
-      else
-
-         if (IO_IS_ALLOWED) then
-            read(unit=.unit,iostat=.io_status) vals
-            ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
-            values = vals
-         end
-         PARALLEL_BROADCAST(values,0)
-
-         .record = .record + 1
-
-      end
-
-   end
-!#else
-!   read(values) ::: get_from(FILE, VALUES?=>VEC{STR}, .read_buffered(values)=>DIE("unavailable"))
-!   ! Read a series of "values" from the file.
-!   end
-!#endif
-
    read(values) ::: get_from(FILE, VALUES?=>VEC{BIN}, .read_buffered(values)=>DIE("unavailable"))
    ! Read a series of "values" from the file.
    end
@@ -395,38 +303,6 @@ contains
    ! Read a series of "values" from the file.
    end
 
-!#ifdef SUN_f95
-   read(values) 
-   ! Read a series of *string* "values" from the file.
-   ! For Sun Fortran 8.6, on Linux
-      values :: MAT{STR}
-
-      vals :: MAT{STR}(len=len(values(1,1)),values.dim1,values.dim2)
-
-      if (.buffered) then
-
-         DIE("unavailable")
-
-      else
-
-         if (IO_IS_ALLOWED) then
-            read(unit=.unit,iostat=.io_status) vals
-            ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
-            values = vals
-         end
-         PARALLEL_BROADCAST(values,0)
-
-         .record = .record + 1
-
-      end
-
-   end
-!#else
-!   read(values) ::: get_from(FILE, VALUES?=>MAT{STR}, .read_buffered(values)=>DIE("unavailable"))
-!   ! Read a series of "values" from the file.
-!   end
-!#endif
-
    read(values) ::: get_from(FILE, VALUES?=>MAT{BIN}, .read_buffered(values)=>DIE("unavailable"))
    ! Read a series of "values" from the file.
    end
@@ -442,10 +318,6 @@ contains
    read(values) ::: get_from(FILE, VALUES?=>MAT{CPX})
    ! Read a series of "values" from the file.
    end
-
-!   read(values) ::: get_from(FILE, VALUES?=>MAT3{STR}, .read_buffered(values)=>DIE("unavailable"))
-!   ! Read a series of "values" from the file.
-!   end
 
    read(values) ::: get_from(FILE, VALUES?=>MAT3{BIN}, .read_buffered(values)=>DIE("unavailable"))
    ! Read a series of "values" from the file.
@@ -503,11 +375,12 @@ contains
    ! Read a series of "values" from the file.
    end
 
-!  vectors of embedded arrays
+!  Vectors of embedded arrays
 
    read(v) ::: template
    ! Read an vector of embedded array types 
-      v :: V?
+      self :: INOUT
+      v :: V?, OUT
 
       i :: INT
 
@@ -546,6 +419,7 @@ contains
 
    write(value) ::: template
    ! Write the "value" to the file.
+      self :: INOUT
       value :: VALUE?, IN
 
       if (.buffered) then
@@ -589,6 +463,7 @@ contains
 
    write(values) ::: template
    ! Write the "values" to the file.
+      self :: INOUT
       values :: VALUES?, IN
 
       if (.buffered) then
@@ -608,36 +483,6 @@ contains
 
    end
 
-!#ifdef SUN_f95
-   write(values)
-   ! Write the *string* "values" to the file.
-      values :: VEC{STR}, IN
-
-      vals :: VEC{STR}(len=len(values(1)),values.dim)
-
-      if (.buffered) then
-
-         DIE("unavailable")
-
-      else
-
-         if (IO_IS_ALLOWED) then
-            vals = values
-            write(unit=.unit,iostat=.io_status) vals
-            ENSURE(.io_status==0,"write error, #"//trim(.io_status.to_str))
-         end
-
-         .record = .record + 1
-
-      end
-
-   end
-!#else
-!   write(values) ::: get_from(FILE, VALUES?=>VEC{STR}, .write_buffered(values)=>DIE("unavailable"))
-!   ! Write the "values" to the file.
-!   end
-!#end
-
    write(values) ::: get_from(FILE, VALUES?=>VEC{BIN}, .write_buffered(values)=>DIE("unavailable"))
    ! Write the "values" to the file.
    end
@@ -653,36 +498,6 @@ contains
    write(values) ::: get_from(FILE, VALUES?=>VEC{CPX})
    ! Write the "values" to the file.
    end
-
-!#ifdef SUN_f95
-   write(values)
-   ! Write the *string* "values" to the file.
-      values :: MAT{STR}, IN
-
-      vals :: MAT{STR}(len=len(values(1,1)),values.dim1,values.dim2)
-
-      if (.buffered) then
-
-         DIE("unavailable")
-
-      else
-
-         if (IO_IS_ALLOWED) then
-            vals = values
-            write(unit=.unit,iostat=.io_status) vals
-            ENSURE(.io_status==0,"write error, #"//trim(.io_status.to_str))
-         end
-
-         .record = .record + 1
-
-      end
-
-   end
-!#else
-!   write(values) ::: get_from(FILE, VALUES?=>MAT{STR}, .write_buffered(values)=>DIE("unavailable"))
-!   ! Write the "values" to the file.
-!   end
-!#end
 
    write(values) ::: get_from(FILE, VALUES?=>MAT{BIN}, .write_buffered(values)=>DIE("unavailable"))
    ! Write the "values" to the file.
@@ -764,7 +579,8 @@ contains
 
    write(v) ::: template
    ! Write a vector of embedded array types 
-      v :: V?
+      self :: INOUT
+      v :: V?, IN
 
       i :: INT
 
@@ -802,9 +618,10 @@ contains
 
    read_buffered(value) ::: template
    ! Reads the "value" from the buffer, and reads buffer from disk when empty.
+      self :: INOUT
       value :: VALUE?, OUT
 
-   ENSURE(BUFF?.associated,"buffer not created")
+   ENSURE(BUFF?.allocated,"buffer not created")
 
       if (POS?>FILE_BUFFER_LENGTH) GET?
 
@@ -829,9 +646,10 @@ contains
 
    write_buffered(value) ::: template
    ! Writes the "value" to the buffer, and writes buffer to disk when full.
+      self :: INOUT
       value :: VALUE?, IN
 
-   ENSURE(BUFF?.associated,"buffer not created")
+   ENSURE(BUFF?.allocated,"buffer not created")
 
       BUFF?(POS?) = value
 
@@ -856,9 +674,10 @@ contains
 
    read_buffered(values) ::: template
    ! Reads the "values" from the buffer, and reads buffer from disk when empty.
+      self :: INOUT
       values :: VALUES?, OUT
 
-   ENSURE(BUFF?.associated,"buffer not created")
+   ENSURE(BUFF?.allocated,"buffer not created")
 
       length,pos,buffer_top,values_top,get_length :: INT
 
@@ -899,9 +718,10 @@ contains
 
    write_buffered(values) ::: template
    ! Writes the "values" to the buffer, and writes buffer to disk when full.
+      self :: INOUT
       values :: VALUES?, IN
 
-   ENSURE(BUFF?.associated,"buffer not created")
+   ENSURE(BUFF?.allocated,"buffer not created")
 
       length,pos,buffer_top,values_top,put_length :: INT
 
@@ -941,8 +761,11 @@ contains
 
    write_buffered(values) ::: template
    ! Writes the multidimensional "values" to the buffer, writes buffer to disk when full.
+      self :: INOUT
       values :: VALUES?, IN
+
       .write_buffered(reshape(values,[values.dim]))
+
    end
 
    write_buffered(values) ::: get_from(FILE, VALUES?=>MAT{INT})
@@ -996,6 +819,7 @@ contains
 
    read_buffered(values) ::: template
    ! Reads the multidimensional "values" from the buffer.
+      self :: INOUT
       values :: ARR{VALUE}, OUT
 
       tmp :: VEC{VALUE}*
@@ -1059,10 +883,11 @@ contains
 
 
    flush_real_buffer
-   ! Writes the real_buffer to disk, and positions the pointer at the start of
-   ! the buffer.
+   ! Writes the real_buffer to disk, and positions the pointer at the
+   ! start of the buffer.
+      self :: INOUT
 
-   ENSURE(.real_buffer.associated, "buffer not created")
+   ENSURE(.real_buffer.allocated, "buffer not created")
 
       .real_buffer(.real_buffer_pos:) = ZERO
 
@@ -1075,10 +900,11 @@ contains
    end
 
    flush_int_buffer
-   ! Writes the int_buffer to disk, and positions the pointer at the start of
-   ! the buffer.
+   ! Writes the int_buffer to disk, and positions the pointer at the
+   ! start of the buffer.
+      self :: INOUT
 
-   ENSURE(.int_buffer.associated, "buffer not created")
+   ENSURE(.int_buffer.allocated, "buffer not created")
 
       .int_buffer(.int_buffer_pos:) = 0
 
@@ -1091,10 +917,11 @@ contains
    end
 
    flush_cpx_buffer
-   ! Writes the cpx_buffer to disk, and positions the pointer at the start of
-   ! the buffer.
+   ! Writes the cpx_buffer to disk, and positions the pointer at the
+   ! start of the buffer.
+      self :: INOUT
 
-   ENSURE(.cpx_buffer.associated, "buffer not created")
+   ENSURE(.cpx_buffer.allocated, "buffer not created")
 
       .cpx_buffer(.cpx_buffer_pos:) = (ZERO,ZERO)
 
@@ -1108,10 +935,11 @@ contains
 
 
    get_real_buffer
-   ! Reads the real_buffer from disk, and positions the pointer at the start of
-   ! the buffer.
+   ! Reads the real_buffer from disk, and positions the pointer at the
+   ! start of the buffer.
+      self :: INOUT
 
-   ENSURE(.real_buffer.associated, "buffer not created")
+   ENSURE(.real_buffer.allocated, "buffer not created")
 
       if (IO_IS_ALLOWED)  read(unit=.unit,iostat=.io_status) .real_buffer
       ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
@@ -1123,10 +951,11 @@ contains
    end
 
    get_int_buffer
-   ! Reads the int_buffer from disk, and positions the pointer at the start of
-   ! the buffer.
+   ! Reads the int_buffer from disk, and positions the pointer at the
+   ! start of the buffer.
+      self :: INOUT
 
-   ENSURE(.int_buffer.associated, "buffer not created")
+   ENSURE(.int_buffer.allocated, "buffer not created")
 
       if (IO_IS_ALLOWED)  read(unit=.unit,iostat=.io_status) .int_buffer
       ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
@@ -1138,10 +967,11 @@ contains
    end
 
    get_cpx_buffer
-   ! Reads the cpx_buffer from disk, and positions the pointer at the start of
-   ! the buffer.
+   ! Reads the cpx_buffer from disk, and positions the pointer at the
+   ! start of the buffer.
+      self :: INOUT
 
-   ENSURE(.cpx_buffer.associated, "buffer not created")
+   ENSURE(.cpx_buffer.allocated, "buffer not created")
 
       if (IO_IS_ALLOWED) read(unit=.unit,iostat=.io_status) .cpx_buffer
       ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
@@ -1155,6 +985,7 @@ contains
 
    write_buffered(v)
    ! Writes the mat to the buffer, and writes buffer to disk when full.
+      self :: INOUT
       v :: VEC{MAT_{REAL}}, IN
 
       b :: INT
@@ -1167,7 +998,8 @@ contains
 
    read_buffered(v)
    ! Reads the mat from the buffer.
-      v :: VEC{MAT_{REAL}}
+      self :: INOUT
+      v :: VEC{MAT_{REAL}}, OUT
 
       b :: INT
 
@@ -1184,54 +1016,72 @@ contains
 
    rewind
    ! Rewind the file
+      self :: INOUT
 
       if (IO_IS_ALLOWED) rewind(unit=.unit,iostat=.io_status)
+
       ENSURE(.io_status==0,"rewind error, #"// trim(.io_status.to_str))
+
       .record = 1
 
    end
 
    backspace
-   ! Backspace the file one record of the file. Backspacing before record 1 has
-   ! no effect.
+   ! Backspace the file one record of the file. Backspacing before
+   ! record 1 has no effect.
+      self :: INOUT
 
       if (IO_IS_ALLOWED) backspace(unit=.unit,iostat=.io_status)
+
       ENSURE(.io_status==0,"backspace error, #"// trim(.io_status.to_str))
+
       .record = max(1,.record-1)
 
    end
 
    skip
-   ! Skip over the next record of the file. An error is generated if at the end
-   ! of the file
+   ! Skip over the next record of the file. An error is generated if
+   ! at the end of the file
+      self :: INOUT
 
       if (IO_IS_ALLOWED) read(unit=.unit,iostat=.io_status)
+
       ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
+
       .record = .record + 1
 
    end
 
    move_to_end
    ! Move to the end of the file, say for adding more data
+      self :: INOUT
 
       do
+
          if (IO_IS_ALLOWED) read(unit=.unit,iostat=.io_status)
          PARALLEL_BROADCAST(.io_status,0)
+
          if (.io_status/=0) exit
+
          .record = .record + 1
+
       end
 
    end
 
    move_to_position(pos)
    ! Move to a particular record position in the file
-      pos :: INT
+      self :: INOUT
+      pos :: INT, IN
+
       .move_to_record(pos)
+
    end
 
    move_to_record(rec)
    ! Move to a particular record position in the file
-      rec :: INT
+      self :: INOUT
+      rec :: INT, IN
 
    ENSURE(rec>=1,"can't move to non-positive record")
 
@@ -1261,14 +1111,18 @@ contains
    exists(name) result (res)
    ! Returns true if the file exists on the file system.  If present, "name" is
    ! used, otherwise .name is used.
-      res :: BIN
+      self :: IN
       name :: STR, IN, optional
+      res :: BIN
+
       if (present(name)) then
-        if (IO_IS_ALLOWED) inquire(file=name,exist=res)
+         if (IO_IS_ALLOWED) inquire(file=name,exist=res)
       else
-        if (IO_IS_ALLOWED) inquire(file=.name,exist=res)
+         if (IO_IS_ALLOWED) inquire(file=.name,exist=res)
       end
+
       PARALLEL_BROADCAST(res,0)
+
    end
 
    is_open result (res)
@@ -1277,33 +1131,42 @@ contains
       res :: BIN
 
       if (IO_IS_ALLOWED) then
-       ! inquire(unit=.unit,opened=res)
          inquire(file=.name,opened=res)
       end
+
       PARALLEL_BROADCAST(res,0)
 
    end
 
    unit_used result (res)
    ! Returns true if the file unit is in use
+      self :: IN
       res :: BIN
+
       if (IO_IS_ALLOWED)  inquire(unit=.unit,opened=res)
+
       PARALLEL_BROADCAST(res,0)
+
    end
 
-   position result (res)
+   position result (res) ::: pure
    ! Return record position of the file
+      self :: IN
       res :: INT
+
       res = .record
+
    end
 
    is_for_reading result (res)
    ! Return whether the file is opened for reading.
+      self :: IN
       res :: BIN
 
       reading :: STR(len=5)
 
       if (IO_IS_ALLOWED) inquire(unit=.unit,read=reading)
+
       PARALLEL_BROADCAST(reading,0)
 
       if (reading=="YES") then; res = TRUE
