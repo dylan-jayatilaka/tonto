@@ -1649,8 +1649,8 @@ contains
       .:make_core_matrix(.scfdata.spinorbital_kind)
       .:make_core_matrix(.scfdata.molecular_orbital_kind)
 
-      ! Get Fock matrix
-      .:make_fock_matrix
+         ! Get Fock matrix
+         .:make_fock_matrix
 
       ! Make structure factors?
       if (.scfdata.fitting) then
@@ -1667,11 +1667,15 @@ contains
       ! Add constraint to F?
       if (.scfdata.fitting) .:add_constraint_to_fock_matrix
 
-      ! Initialise DIIS error
-      .:update_scfdata_error
+      if (.scfdata.using_diis) then
+         ! Initialise DIIS error
+         .:update_scfdata_error
+      end if
 
-      ! Initialise Schwarz inequality integrals (leaky)
-      .FOCK:initialize_max_I
+     ! if (NOT .scfdata.use_ELMO) then
+         ! Initialise Schwarz inequality integrals (leaky)
+         .FOCK:initialize_max_I
+   !   end if
 
       ! Initialise SCF table (leaky)
       .scfdata.set_table
@@ -1884,9 +1888,12 @@ contains
    NO_ghf ::: leaky
    ! Do non-orthogonal SCF calculation. Bespoke.
 
+
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,   "no atom list")
    ENSURE(.scfdata.created,"no scfdata")
+      datafile :: DATAFILE
+
       if(.scfdata.use_NOMO) then
 
          .nomo_gradient.create(2*.n_bf,.n_e)
@@ -1895,13 +1902,15 @@ contains
 
             .BASE:make_elmo_connection_table
 
-            .scfdata.set_use_ELMO(FALSE)
+            !.scfdata.set_use_ELMO(FALSE)
             .:initialize_scf
 
-            .scfdata.set_use_ELMO(TRUE)
+            !.scfdata.set_use_ELMO(TRUE)
             ! Make ELMO Core matrix
-            .core_matrix.destroy
-            .:make_core_matrix("general")
+            !.kinetic_energy_matrix.destroy
+            !.nuclear_attraction_matrix.destroy
+            !.core_matrix.destroy
+            !.:make_core_matrix("general")
          else
             .:initialize_scf
          end if
@@ -1910,6 +1919,10 @@ contains
          .:put_scf_table_header
    
          ! SCF iterations
+         datafile.open("fock_matrix.sbf")
+         call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
+         call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
+         call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general))
          do
    
           ! .:extrapolate_fock_matrix
@@ -1927,6 +1940,17 @@ contains
    
          
          if(.scfdata.use_ELMO) then
+            
+            !datafile.open("fock_matrix.sbf")
+            
+            !call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
+            call datafile%sbf%add_dataset(sbf_Dataset("Gradient", .nomo_gradient))
+            !call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general))
+            !call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
+            call datafile%sbf%add_dataset(sbf_Dataset("Density", .density_matrix.general))
+            call datafile%sbf%serialize
+            datafile.close
+
             .scfdata.set_use_ELMO(FALSE)
             
             .kinetic_energy_matrix.destroy
@@ -4190,6 +4214,29 @@ contains
 
             MOv.destroy
 
+         elseif (.scfdata.use_LSQ) then
+         !else
+
+               ! Creates the gradient matrix
+               gm.create(.n_bf,.n_a)
+               gm=ZERO
+
+               ! Calculates gradient with equations derived from Stoll
+               .:make_NOMO_gradient_r(MO,E,gm)
+               ge.create(.n_bf,.n_a)
+               ge = gm
+               stdout.text("Equation Gradient: ")
+               stdout.put(ge)
+               gm = ZERO
+
+               ! Ensures all values are solely due to FD approach 
+               .:make_NOMO_gradient_r_fd(MO,E,gm)
+               stdout.text("Finite Difference Gradient: ")
+               stdout.put(gm)
+               
+               stdout.show("Difference is: ", norm2(gm-ge))
+               stop
+            
          else
 
             ! Least squares method
@@ -4275,35 +4322,36 @@ contains
                 
             end if
 
-         elseif (.scfdata.use_LSQ) then
+        ! elseif (.scfdata.use_LSQ) then
 
-            ! Least squares method
-            sh.create(2*.n_bf*.n_e)
-            gv.create(2*.n_bf*.n_e)
-            gm.create(2*.n_bf,.n_e)
+   !         ! Least squares method
+   !         sh.create(2*.n_bf*.n_e)
+   !         gv.create(2*.n_bf*.n_e)
+   !         gm.create(2*.n_bf,.n_e)
 
-            .:make_NOMO_gradient_g(MO,E,gm)
+   !         .:make_NOMO_gradient_g(MO,E,gm)
 
-            gv = reshape(gm,[size(gv)])
+   !         gv = reshape(gm,[size(gv)])
 
-            delta = .scfdata.energy - .scfdata.E_initial
+   !         delta = .scfdata.energy - .scfdata.E_initial
 
-            MAT{REAL}::solve_normal_equations(gv,sh,delta)
+   !         MAT{REAL}::solve_normal_equations(gv,sh,delta)
 
-            MO = MO + 1*reshape(sh,[.n_bf,.n_a])
-            
-            !do i=1,.n_a
-            !   MO(:,i) = MO(:,i)/(MO(:,i).norm)
-            !end do
+   !         MO = MO + 1*reshape(sh,[.n_bf,.n_a])
+   !         
+   !         !do i=1,.n_a
+   !         !   MO(:,i) = MO(:,i)/(MO(:,i).norm)
+   !         !end do
 
-            ! Clean
-            gm.destroy
-            gv.destroy
-            sh.destroy
+   !         ! Clean
+   !         gm.destroy
+   !         gv.destroy
+   !         sh.destroy
 
          ! A simple Gradient Check Operation
-         else
-            
+         elseif (.scfdata.use_LSQ) then
+        ! else
+            .scfdata.set_use_ELMO(FALSE)
             if (.scfdata.use_ELMO) then
                
                ! Creates the gradient matrix
@@ -4311,7 +4359,7 @@ contains
                gm=ZERO
 
                ! Calculates gradient with equations derived from Stoll
-               .:make_ELMO_01_gradient_g(MO,E,gm)
+               .:make_ELMO_gradient_g(MO,E,gm)
                ge.create(2*.n_bf,.n_e)
                ge = gm
                stdout.text("Equation Gradient: ")
@@ -4319,11 +4367,12 @@ contains
                gm = ZERO
 
                ! Ensures all values are solely due to FD approach 
-               .:make_ELMO_01_gradient_g_fd(MO,E,gm)
+               .:make_ELMO_gradient_g_fd(MO,E,gm)
                stdout.text("Finite Difference Gradient: ")
                stdout.put(gm)
                
                stdout.show("Difference is: ", norm2(gm-ge))
+               stop
                
                ! Convert the vector
                MOv.create(size(MO))
@@ -4583,6 +4632,167 @@ contains
 
    end
 
+   make_NOMO_gradient_r_fd(MO,E,gm)
+   ! Make the NOMO energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
+      self :: INOUT
+      MO :: MAT{REAL}, INOUT
+      E  :: REAL, OUT
+      gm :: MAT{REAL}, OUT
+
+   ENSURE(MO.dim1==.n_bf AND MO.dim2==.n_a,"MO wrong shape")
+   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
+
+      P,F :: OPMATRIX*
+      S_inv :: MAT{REAL}*
+      step, bm,b,m :: INT
+      stps,stp2,leng :: REAL
+
+      nullify(P)
+      nullify(F)
+
+      leng = 0.001d0
+         
+      gm = ZERO
+
+      do step = -1,1,2
+
+        stps = step*leng
+        stp2 = ONE/(TWO*leng)
+
+        do bm = 1,.n_bf*.n_a
+
+           ! ????
+           b = mod(bm-1,.n_bf) + 1
+           m = floor(real(bm-1)/(.n_bf)) + 1
+           
+           ! Add step
+           MO(b,m) = MO(b,m) + stps
+
+           ! Fock & density matrix
+           P.destroy
+           F.destroy
+           P.create(.n_bf,"restricted")
+           F.create(.n_bf,"restricted")
+           F.general = ZERO
+           P.general = ZERO
+         
+           ! Make S, S^{-1} in the MO basis
+           S_inv.create(.n_a,.n_a)
+           S_inv = ZERO
+           .BASE:make_NOMO_S_inv_r(S_inv,MO)
+
+           ! Back transform -> P
+           S_inv.back_transform_to(P.restricted,MO(:,1:.n_a))
+           S_inv.destroy
+           P.scale_by(TWO)
+           
+           ! Make two electron Fock matrix 
+           .FOCK:make_r_fock(P,F)
+         
+           ! Make 2 x energy matrix
+           F.plus(.core_matrix)
+         
+           ! Do energy E(x0+/-step)
+           E = HALF * F.restricted.trace_product_with(P.restricted)
+
+           ! Add part
+           gm(b,m) = gm(b,m) + step*stp2*E
+
+           ! Remove step
+           MO(b,m) = MO(b,m) - stps
+        end
+
+      end
+
+      ! Clean up
+      S_inv.destroy
+      P.destroy
+      F.destroy
+
+   end
+
+   make_ELMO_gradient_g_fd(MO,E,gm)
+   ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
+   ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
+      self :: INOUT
+      MO :: MAT{REAL}, INOUT
+      E  :: REAL, OUT
+      gm :: MAT{REAL}, OUT
+
+   ENSURE(MO.dim1==2*.n_bf AND MO.dim2==.n_e,"MO wrong shape")
+   ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
+
+      P,F :: OPMATRIX*
+      S_inv :: MAT{REAL}*
+      step, bm,b,m :: INT
+      stps,stp2,leng :: REAL
+
+      nullify(P)
+      nullify(F)
+
+      leng = 0.0001d0
+         
+      gm = ZERO
+
+      do step = -1,1,2
+
+        stps = step*leng
+        stp2 = ONE/(TWO*leng)
+
+        do bm = 1,2*.n_bf*.n_e
+
+           ! ????
+           b = mod(bm-1,2*.n_bf) + 1
+           m = floor(real(bm-1)/(2*.n_bf)) + 1
+           
+           ! Add step
+           MO(b,m) = MO(b,m) + stps
+
+           ! Fock & density matrix
+           P.destroy
+           F.destroy
+           P.create(.n_bf,"general")
+           F.create(.n_bf,"general")
+           F.general = ZERO
+           P.general = ZERO
+         
+           ! Make S, S^{-1} in the MO basis
+           S_inv.create(.n_e,.n_e)
+           S_inv = ZERO
+           .BASE:make_NOMO_S_inv_g(S_inv,MO)
+
+           ! Back transform -> P
+           S_inv.back_transform_to(P.general,MO(:,1:.n_e))
+           S_inv.destroy
+           
+           ! Make two electron Fock matrix 
+           .FOCK:make_ELMO_g_fock(P,F)
+
+           ! Make 2 x energy matrix
+           F.plus(.core_matrix)
+         
+           ! Do energy E(x0+/-step)
+           E = HALF * F.general.trace_product_with(P.general)
+
+           ! Add part
+           gm(b,m) = gm(b,m) + step*stp2*E
+
+           ! Remove step
+           MO(b,m) = MO(b,m) - stps
+        end
+
+      end
+        
+      ! Clean up
+      S_inv.destroy
+      P.destroy
+      F.destroy
+
+   end
+
    make_ELMO_01_gradient_g_fd(MO,E,gm)
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
    ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
@@ -4760,10 +4970,6 @@ contains
       SSP,SS,S_inv, FcSm1,cSm1 :: MAT{REAL}*
 
       ! Create Fock & density matrix
-      !P.create(.n_bf,"general")
-      !F.create(.n_bf,"general")
-      !F.general = ZERO
-      !P.general = ZERO
       P => .density_matrix
       F => .fock_matrix
       F.general = ZERO
@@ -4779,9 +4985,6 @@ contains
       
       ! Make two electron Fock matrix 
       .FOCK:FOCK?(P,F)
-      !stdout.text("Density: ")
-      !stdout.put(P)
-      
 
       ! Make gradient
       FcSm1.create(2*.n_bf,.n_e)
@@ -4820,8 +5023,6 @@ contains
       SS.destroy
       FcSm1.destroy
       S_inv.destroy
-      !P.destroy
-      !F.destroy
 
    end
 
@@ -6074,6 +6275,8 @@ contains
       MO_energies :: VEC{REAL}, OUT
 
    DIE_IF(NOT fock_matrix.is_symmetric,"fock_matrix not symmetric!  WTF?!")
+      mask :: MAT{BIN}@
+      i, j :: INT
 
       F,R :: MAT{REAL}* DEFAULT_NULL
 
@@ -6082,6 +6285,14 @@ contains
 
       !  Get S^{-1/2 }
       .INTS:make_r_overlap_inverse_sqrt(R)
+      if(.scfdata.use_ELMO) mask = (fock_matrix == ZERO)
+      if(.scfdata.use_ELMO) then
+        do i=1, mask.dim1
+        do j=1, mask.dim2
+           if (mask(i,j)) R(i,j) = ZERO
+        end do
+        end do
+      end if
 
       !  H~ = S^-1/2 H S^-1/2
       fock_matrix.change_basis_to(F,R)
@@ -6124,6 +6335,7 @@ contains
       ! Get a starting fock matrix from this density
       .:make_fock_matrix
 
+      !if (.scfdata.use_ELMO) return
       ! Make the MO's 
       .:make_fock_guess
 
