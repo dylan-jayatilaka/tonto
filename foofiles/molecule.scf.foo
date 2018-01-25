@@ -1918,11 +1918,6 @@ contains
          .:put_scf_banner_and_options
          .:put_scf_table_header
    
-         ! SCF iterations
-         datafile.open("fock_matrix.sbf")
-         call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
-         call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
-         call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general))
          do
    
           ! .:extrapolate_fock_matrix
@@ -1941,12 +1936,12 @@ contains
          
          if(.scfdata.use_ELMO) then
             
-            !datafile.open("fock_matrix.sbf")
+            datafile.open("fock_matrix.sbf")
             
-            !call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
+            call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
             call datafile%sbf%add_dataset(sbf_Dataset("Gradient", .nomo_gradient))
-            !call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general))
-            !call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
+            call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general))
+            call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
             call datafile%sbf%add_dataset(sbf_Dataset("Density", .density_matrix.general))
             call datafile%sbf%serialize
             datafile.close
@@ -4351,7 +4346,6 @@ contains
          ! A simple Gradient Check Operation
          elseif (.scfdata.use_LSQ) then
         ! else
-            .scfdata.set_use_ELMO(FALSE)
             if (.scfdata.use_ELMO) then
                
                ! Creates the gradient matrix
@@ -4380,7 +4374,7 @@ contains
 
                ! BFGS
                nomo_self => self
-               .scfdata.bfgs.minimize_L_BFGS(::ELMO_01_gradient_g,MOv)
+               .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_g,MOv)
 
                ! Back to matrix
                MO = reshape(MOv,[2*.n_bf,.n_e])
@@ -4726,7 +4720,6 @@ contains
    ENSURE( .overlap_matrix.created,"NO overlap_matrix")
 
       P,F :: OPMATRIX*
-      S_inv :: MAT{REAL}*
       step, bm,b,m :: INT
       stps,stp2,leng :: REAL
 
@@ -4743,6 +4736,7 @@ contains
         stp2 = ONE/(TWO*leng)
 
         do bm = 1,2*.n_bf*.n_e
+           
 
            ! ????
            b = mod(bm-1,2*.n_bf) + 1
@@ -4750,6 +4744,7 @@ contains
            
            ! Add step
            MO(b,m) = MO(b,m) + stps
+           .INTS:zero_ELMO_grad_mx(MO)
 
            ! Fock & density matrix
            P.destroy
@@ -4759,15 +4754,7 @@ contains
            F.general = ZERO
            P.general = ZERO
          
-           ! Make S, S^{-1} in the MO basis
-           S_inv.create(.n_e,.n_e)
-           S_inv = ZERO
-           .BASE:make_NOMO_S_inv_g(S_inv,MO)
-
-           ! Back transform -> P
-           S_inv.back_transform_to(P.general,MO(:,1:.n_e))
-           S_inv.destroy
-           
+           .BASE:make_NOMO_density_matrix_g(P.general,MO) 
            ! Make two electron Fock matrix 
            .FOCK:make_ELMO_g_fock(P,F)
 
@@ -4782,12 +4769,13 @@ contains
 
            ! Remove step
            MO(b,m) = MO(b,m) - stps
+           .INTS:zero_ELMO_grad_mx(MO)
         end
 
       end
+      
         
       ! Clean up
-      S_inv.destroy
       P.destroy
       F.destroy
 
@@ -4978,10 +4966,14 @@ contains
       ! Make S, S^{-1} in the MO basis
       S_inv.create(.n_e,.n_e)
       S_inv = ZERO
-      .BASE:make_NOMO_S_inv_g(S_inv,MO)
+      .BASE:make_NOMO_S_inv_g(S_inv,MO(:,1:.n_e))
 
       ! Back transform -> P
       S_inv.back_transform_to(P.general,MO(:,1:.n_e))
+
+      if (.scfdata.use_ELMO) then
+         .BASE:zero_ELMO_g_mx(P.general)
+      end
       
       ! Make two electron Fock matrix 
       .FOCK:FOCK?(P,F)
@@ -5008,6 +5000,10 @@ contains
       gm.plus_scaled_product_of(SSP,FcSm1,fac=-ONE)
 
       gm = TWO*gm
+
+      !if (.scfdata.use_ELMO) then
+      !   .INTS:zero_ELMO_grad_mx(gm)
+      !end
 
       ! Make 2 x energy matrix
       F.plus(.core_matrix)
@@ -6680,6 +6676,7 @@ contains
 
       S,R :: MAT{REAL}*
       H :: MAT{REAL}*
+      datafile :: DATAFILE
 
       R.create(2*.n_bf,2*.n_bf)
       S.create(.n_bf,.n_bf)
@@ -6699,13 +6696,24 @@ contains
 
       ! H = S^-1/2 F S^-1/2
       H.change_basis_using(R)
+      
+      if(.scfdata.use_ELMO) .BASE:zero_ELMO_g_mx(H)
+      !datafile.open("fock_matrix.sbf")
+      !call datafile%sbf%add_dataset(sbf_Dataset("Overlap", H))!.overlap_matrix))
 
       !  Solve for c~
       H.solve_symmetric_eigenproblem(MO_energies,MO)
 
       !  c  = S^-1/2 c~
+      if(.scfdata.use_ELMO) then
+         .BASE:zero_ELMO_g_mx(R)
+      end
       H.to_product_of(R,MO)
       MO = H
+
+      if(.scfdata.use_ELMO) then
+         .INTS:reorder_ELMO_g_mx(MO)
+      end
 
       ! Clean
       H.destroy
