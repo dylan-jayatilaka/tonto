@@ -4956,7 +4956,8 @@ contains
 
       P,F :: OPMATRIX*
       SSP,SS,S_inv, FcSm1,cSm1 :: MAT{REAL}*
-
+      inc,a,b,i,n,fa,la,fb,lb :: INT
+      
       ! Create Fock & density matrix
       P => .density_matrix
       F => .fock_matrix
@@ -4971,9 +4972,9 @@ contains
       ! Back transform -> P
       S_inv.back_transform_to(P.general,MO(:,1:.n_e))
 
-      if (.scfdata.use_ELMO) then
-         .BASE:zero_ELMO_g_mx(P.general)
-      end
+      !if (.scfdata.use_ELMO) then
+      !   .BASE:zero_ELMO_g_mx(P.general)
+      !end
       
       ! Make two electron Fock matrix 
       .FOCK:FOCK?(P,F)
@@ -4983,7 +4984,6 @@ contains
       cSm1.create(2*.n_bf,.n_e)
       cSm1.to_product_of(MO,S_inv)
       FcSm1.to_product_of(F.general,cSm1)
-      cSm1.destroy
       
       ! Make spin-orbital SSP
       SS.create(2*.n_bf, 2*.n_bf)
@@ -4991,19 +4991,63 @@ contains
       SS.alpha_alpha_set_to(.overlap_matrix)
         SS.beta_beta_set_to(.overlap_matrix)
 
+      ! Assemble 1st term of gradient
+      gm = FcSm1
+      
       ! Make SS x P
       SSP.create(2*.n_bf,2*.n_bf)
-      SSP.to_scaled_product_of(SS,P.general,fac=ONE)
+      if (NOT .scfdata.use_ELMO) then
+         cSm1.destroy
+         SSP.to_scaled_product_of(SS,P.general,fac=ONE)
 
-      ! Assemble 1st and 2nd terms of gradient
-      gm = FcSm1
-      gm.plus_scaled_product_of(SSP,FcSm1,fac=-ONE)
+         gm.plus_scaled_product_of(SSP,FcSm1,fac=-ONE)
+      else
+         ! Premultiplies to determine required matrix (PFcS^-1)
+         cSm1.to_scaled_product_of(P.general,FcSm1,fac=-ONE)
+         FcSm1 = cSm1
+         cSm1.destroy
 
+         ! Restricted dimension
+         n = MO.dim1/2
+         inc = 1
+
+         ! Occupied orbitals for all atoms
+         do a = 1,.n_atom
+            
+            !Unblock/initialise the overlap matrix
+            SSP=SS
+            
+            ! Check connections are non-zero too!
+            do b = 1,.n_atom
+
+               if (.BASE:elmo_connected(a,b,.scfdata.elmo_b)) cycle
+
+               ! alpha spinbasis
+               fa = .first_basis_fn_for_atom(a)
+               la =  .last_basis_fn_for_atom(a)
+               fb = .first_basis_fn_for_atom(b)
+               lb =  .last_basis_fn_for_atom(b)
+               SSP(fb:lb,fa:la) = ZERO
+               SSP(fa:la,fb:lb) = ZERO
+
+               ! beta spinbasis
+               fa = fa + n
+               la = la + n
+               fb = fb + n
+               lb = lb + n
+               SSP(fb:lb,fa:la) = ZERO
+               SSP(fa:la,fb:lb) = ZERO
+
+            end do
+            
+            gm.plus_scaled_product_of(SSP,FcSm1,fac=ONE)
+
+         end
+
+
+      end if   
       gm = TWO*gm
 
-      !if (.scfdata.use_ELMO) then
-      !   .INTS:zero_ELMO_grad_mx(gm)
-      !end
 
       ! Make 2 x energy matrix
       F.plus(.core_matrix)
@@ -6281,14 +6325,14 @@ contains
 
       !  Get S^{-1/2 }
       .INTS:make_r_overlap_inverse_sqrt(R)
-      if(.scfdata.use_ELMO) mask = (fock_matrix == ZERO)
-      if(.scfdata.use_ELMO) then
-        do i=1, mask.dim1
-        do j=1, mask.dim2
-           if (mask(i,j)) R(i,j) = ZERO
-        end do
-        end do
-      end if
+     ! if(.scfdata.use_ELMO) mask = (fock_matrix == ZERO)
+     ! if(.scfdata.use_ELMO) then
+     !   do i=1, mask.dim1
+     !   do j=1, mask.dim2
+     !      if (mask(i,j)) R(i,j) = ZERO
+     !   end do
+     !   end do
+     ! end if
 
       !  H~ = S^-1/2 H S^-1/2
       fock_matrix.change_basis_to(F,R)
