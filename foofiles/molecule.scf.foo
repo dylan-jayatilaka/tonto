@@ -1683,10 +1683,8 @@ contains
          .:update_scfdata_error
       end if
 
-     ! if (NOT .scfdata.use_ELMO) then
-         ! Initialise Schwarz inequality integrals (leaky)
-         .FOCK:initialize_max_I
-   !   end if
+      ! Initialise Schwarz inequality integrals (leaky)
+      .FOCK:initialize_max_I
 
       ! Initialise SCF table (leaky)
       .scfdata.set_table
@@ -1908,6 +1906,7 @@ contains
       if(.scfdata.use_NOMO) then
 
          .nomo_gradient.create(2*.n_bf,.n_e)
+         .nomo_gradient = ZERO
 
          if(.scfdata.use_ELMO) then
 
@@ -7858,12 +7857,15 @@ contains
    ! Make the SCF error vector from the current fock_matrix and
    ! density_matrix, and return the error "length".  Useful for reporting the
    ! error length.
-      length :: REAL
+      self :: INOUT
+      length :: REAL, OUT
 
    ENSURE(.fock_matrix.associated,"no fock matrix")
    ENSURE(.fock_matrix.has_any_genre,"no fock matrix")
    ENSURE(.density_matrix.associated,"no density matrix")
    ENSURE(.density_matrix.has_any_genre,"no density matrix")
+
+      E :: REAL
 
       ! Get overlap matrix (leaky)
       .INTS:make_overlap_matrix
@@ -7872,7 +7874,8 @@ contains
       if (NOT .scfdata.use_ELMO) then
          length = ::diis_error_length(.fock_matrix,.density_matrix,.overlap_matrix)
       else
-         length = sqrt(.nomo_gradient.dot(.nomo_gradient))
+         .:make_ELMO_gradient_g(.molecular_orbitals.general(:,1:.n_e),E,.nomo_gradient)
+         length = norm2(.nomo_gradient)
       end
 
       ! Set the length
@@ -7883,6 +7886,7 @@ contains
 
    extrapolate_fock_matrix ::: leaky
    ! Extrapolate the fock matrix, currently only using DIIS.
+      self :: INOUT
 
    ENSURE(.scfdata.associated,"no scf data")
    ENSURE(.fock_matrix.associated,"no fock matrix")
@@ -7891,11 +7895,10 @@ contains
       spinorbital_kind,scf_kind :: STR
       error :: REAL
       C :: OPMATRIX*
+      pv,gv :: VEC{REAL}*
       dim :: INT
 
       ! DIIS forbidden for NOMO
-      if (.scfdata.use_NOMO) return
-
       if (NOT .scfdata.using_diis) return
 
       .scfdata.set_diis_error(ZERO)
@@ -7942,9 +7945,29 @@ contains
             error = C.triangle.norm
 
          case ("ghf","no_ghf")
-            dim = C.triangle.dim
-            .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
-            error = C.triangle.norm
+
+            if (NOT .scfdata.use_ELMO) then
+
+               dim = C.triangle.dim
+               .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
+               error = C.triangle.norm
+
+            else
+
+               dim = size(.nomo_gradient)
+               pv.create(dim)
+               gv.create(dim)
+               pv = reshape(.molecular_orbitals.general(:,1:.n_e),[dim])
+               gv = reshape(.nomo_gradient,[dim])
+               .scfdata.diis.extrapolate(pv,gv,dim)
+
+               .molecular_orbitals.general(:,1:.n_e) = reshape(pv,[2*.n_bf,.n_e])
+               error = gv.norm
+
+               gv.destroy
+               pv.destroy
+
+            end
 
          case ("gchf","xray_gchf")
             dim = C.square.dim
