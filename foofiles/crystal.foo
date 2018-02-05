@@ -906,6 +906,19 @@ contains
       res = .spacegroup.n_unique_SF_symops * .data.reflections.dim
 
    end
+ 
+   n_symop_generated_SF_k_pts result (res) ::: PURE
+   ! The number of symmetry generated k-points for an SF calculation
+      self :: IN
+      res :: INT
+
+   ENSURE(.spacegroup.analyzed,"spacegroup not analyzed")
+   ENSURE(.data.associated,"no data")
+   ENSURE(.data.reflections.associated,"no reflection data")
+
+      res = .spacegroup.n_seitz * .data.reflections.dim
+
+   end
 
 !  =========================================
 !  Fragment data, unique operators, Z number
@@ -1785,8 +1798,9 @@ contains
 !  ==================
 
    make_repetition_factors ::: leaky, private
-   ! The number of times a fragment atom with index "a" is mapped into
-   ! itself under the symmetry group is the ".repetition_factor(a)".
+   ! The number of times *any* fragment atom is mapped onto a
+   ! particular fragment atom with index "a" under *all* spacegroup
+   ! symmetry group, is the ".repetition_factor(a)".
    ! It is used to correct structure factors for fragment geometries
    ! which are "oversampled" relative to the asymmetric cell geometry.
       self :: INOUT
@@ -3191,7 +3205,7 @@ contains
 
    end
 
-   F2_exp_scaled_corrected result (res) ::: PURE
+   F2_exp_scaled_corrected result (res)
    ! The experimental structure factors squares, F_exp, on an absolute
    ! scale, and corrected for dispersion (if any).
    ! Method follows XD (2015) manual p. 45.
@@ -3218,7 +3232,7 @@ contains
 
    end
 
-   F_exp_scaled_corrected result (res) ::: PURE
+   F_exp_scaled_corrected result (res)
    ! The experimental structure factors F_exp on an absolute scale,
    ! and corrected for dispersion (if any).
    ! Method follows XD (2015) manual p. 45.
@@ -3742,7 +3756,7 @@ contains
       sf_e.destroy
 
       ! Add dispersion correction
-      .add_dispersion_correction(Fc)
+      if (.correct_dispersion) .add_dispersion_correction(Fc)
 
       ! Set the calculated SF's
       DIE_IF(any(abs(Fc)<=TOL(10)),"there are zero F_calc's; prune them to continue")
@@ -3771,12 +3785,7 @@ contains
       sf_d.destroy
 
       ! Add derivative of anomalous contribution to |SF|, dFc
-      .add_D_dispersion_correction(dFc)
-
-      if (.debugging("get_parameter_shifts_F")) then
-         stdout.text("dFc:")
-         stdout.put(dFc)
-      end
+      if (.correct_dispersion) .add_D_dispersion_correction(dFc)
 
       ! Get the derivative absolute SF's,
       ! ... unique fragment atoms only
@@ -3800,84 +3809,266 @@ contains
 
    end
 
-   add_dispersion_correction(Fc) ::: PURE
-   ! Adds the dispersion correction to "Fc".
+   add_dispersion_correction(Fc)
+   ! Add the anomalous dispersion correction in "Fc" for the set of
+   ! symmetry-unique atoms.
+   ! 1/2/18 
+   ! Anomalous dispersion checked for the YQ28 (harmonic) IAM refined
+   ! job but modified to remove refinement and calculate a molecular
+   ! density with STO-3G basis, and by comparing to structure factors
+   ! from the version below which was previously checked against XD:
+   !    Version: 18.01.31 v. daf061c
+   !    Platform: Linux-4.13.0-32-generic
+   !    Build-date: 2018-01-31 14:35
       self :: IN
       Fc :: VEC{CPX}, INOUT
 
-   ENSURE(.unit_cell_atom.associated,"no unit_cell_atom atom list!")
    ENSURE(.data.associated,"no diffraction data!")
-   ENSURE(NOT(.data.correct_dispersion AND .data.refine_positions_only),"dispersion not available for position-only refinement")
 
+      n_k :: INT
       k_pts :: MAT{REAL}*
-      n_k,u :: INT
+      Fa :: VEC{CPX}*
 
-      if (NOT .correct_dispersion) return
+      n_k = .n_symop_generated_SF_k_pts
 
-      ! Get the k points
-      n_k = .data.reflections.dim
       k_pts.create(n_k,3)
-      .data.reflections.make_k_pts(k_pts,.unit_cell)
+      Fa.create(n_k)
 
-      ! Loop over all atoms in unit cell, taking no advantage of
-      ! centro symmetry. Note that H U_iso refinement will not affect
-      ! this section of code.
-      do u = 1,.n_unit_cell_atoms
-         .unit_cell_atom(u).add_dispersion_H_ADP(Fc,k_pts)
-      end
+      ! The full list of symmetry-generated k points
+      .data.reflections.make_symop_generated_SF_k_pts(k_pts,.spacegroup,.unit_cell)
+
+      ! Note: each atom contribution scales by a site-symmetry factor
+      Fa = ZERO
+      .fragment_atom.add_dispersion_correction(Fa,k_pts,.repetition_factor)
+
+      ! Add together symmetry contributions
+      .spacegroup.add_unique_sd(Fc,Fa,.data.reflections)
 
       ! Clean
+      Fa.destroy
       k_pts.destroy
 
    end
 
+!   add_D_dispersion_correction_fd(Fc)
+!   ! Add the anomalous dispersion correction in "Fc" for the set of
+!   ! symmetry-unique atoms.
+!   ! 1/2/18 
+!   ! Anomalous dispersion checked for the YQ28 (harmonic) IAM refined
+!   ! job but modified to remove refinement and calculate a molecular
+!   ! density with STO-3G basis, and by comparing to structure factors
+!   ! from the version below which was previously checked against XD:
+!   !    Version: 18.01.31 v. daf061c
+!   !    Platform: Linux-4.13.0-32-generic
+!   !    Build-date: 2018-01-31 14:35
+!      self :: IN
+!      Fc :: VEC{CPX}, INOUT
+!
+!   ENSURE(.data.associated,"no diffraction data!")
+!
+!      n_k :: INT
+!      k_pts :: MAT{REAL}*
+!      Fa :: VEC{CPX}*
+!      dFa :: MAT{CPX}*
+!      pADP :: VEC{REAL}(9)
+!
+!      n_p = .asymmetric_unit_atom.no_of_pADPs
+!      n_k = .n_symop_generated_SF_k_pts
+!
+!      k_pts.create(n_k,3)
+!      Fa.create(n_k)
+!      dFa.create(n_k,9)
+!
+!      ! The full list of symmetry-generated k points
+!      .data.reflections.make_symop_generated_SF_k_pts(k_pts,.spacegroup,.unit_cell)
+!
+!      do step = -1,1,2
+!
+!        stps = step*leng
+!        stp2 = ONE/(TWO*leng)
+!
+!        uf = .unique_fragment_atom(3)
+!        .fragment_atom(uf).put_pADP_vector_to(pADPs)
+!
+!        do p = 1,9
+!           pADPs(p) = pADPs(p) + stps
+!           uf = .unique_fragment_atom(3)
+!           .fragment_atom(uf).set_pADP_vector_to(pADPs)
+!
+!           .fragment_atom(uf).add_dispersion_correction(Fa,k_pts,.repetition_factor)
+!
+!           ! Add part
+!           dFa(:,p) = dFa(:,p) + step*stp2*Fa
+!
+!           pADPs(p) = pADPs(p) - stps
+!           .fragment_atom(f).set_pADP_vector_to(pADPs)
+!
+!        end
+!
+!      end
+!
+!      ! Note: each atom contribution scales by a site-symmetry factor
+!      Fa = ZERO
+!      .fragment_atom.add_dispersion_correction(Fa,k_pts,.repetition_factor)
+!
+!      ! Add together symmetry contributions
+!      .spacegroup.add_unique_sd(Fc,Fa,.data.reflections)
+!
+!      ! Clean
+!      Fa.destroy
+!      k_pts.destroy
+!
+!   end
+
+!   add_dispersion_correction(Fc) ::: PURE
+!   ! Adds the dispersion correction to "Fc".
+!   ! Works by applying dispersion to symmetry geberated atoms i.e. the
+!   ! whole unit cell.
+!      self :: IN
+!      Fc :: VEC{CPX}, INOUT
+!
+!   ENSURE(.unit_cell_atom.associated,"no unit_cell_atom atom list!")
+!   ENSURE(.data.associated,"no diffraction data!")
+!   ENSURE(NOT(.data.correct_dispersion AND .data.refine_positions_only),"dispersion not available for position-only refinement")
+!
+!      k_pts :: MAT{REAL}*
+!      n_k,u :: INT
+!
+!      if (NOT .correct_dispersion) return
+!
+!      ! Get the k points
+!      n_k = .data.reflections.dim
+!      k_pts.create(n_k,3)
+!      .data.reflections.make_k_pts(k_pts,.unit_cell)
+!
+!      ! Loop over all atoms in unit cell, taking no advantage of
+!      ! centro symmetry. Note that H U_iso refinement will not affect
+!      ! this section of code.
+!      do u = 1,.n_unit_cell_atoms
+!         .unit_cell_atom(u).add_dispersion_H_ADP(Fc,k_pts)
+!      end
+!
+!      ! Clean
+!      k_pts.destroy
+!
+!   end
+
    add_D_dispersion_correction(dFc)
-   ! Adds the *derivative* dispersion correction to the structure
-   ! factor derivatives,"dFc".
+   ! Add the anomalous dispersion correction in "Fc" for the set of
+   ! symmetry-unique atoms.
       self :: IN
       dFc :: MAT{CPX}, INOUT
 
-   ENSURE(.unit_cell_atom.associated,"no unit_cell_atom atom list!")
    ENSURE(.data.associated,"no diffraction data!")
-   DIE_IF(.data.correct_dispersion AND .data.refine_positions_only,"dispersion not available for position-only refinement")
 
+      dFa,dFb :: MAT{CPX}*
       k_pts :: MAT{REAL}*
-      n_k,u, f,uf,base :: INT
+      n_k,n_p, f,uf,base :: INT
 
-      if (NOT .correct_dispersion) return
-
-      ! Get the k points
-      n_k = .data.reflections.dim
+      ! Size of symmetry generated k points
+      n_k = .n_symop_generated_SF_k_pts
       k_pts.create(n_k,3)
-      .data.reflections.make_k_pts(k_pts,.unit_cell)
+
+      ! Size of anamalous Jacobian
+      n_p = .asymmetric_unit_atom.no_of_pADPs
+      dFa.create(n_k,n_p)
+      dFb.create(.data.reflections.dim,n_p)
+
+      ! The full list of symmetry-generated k points
+      .data.reflections.make_symop_generated_SF_k_pts(k_pts,.spacegroup,.unit_cell)
+
+      ! Note: each atom contribution scales by a site-symmetry factor
+      dFa = ZERO
+      dFb = ZERO
 
       if (.data.refine_H_U_iso) then
 
          ! Refine H isotropic U's
-         do u = 1,.n_unit_cell_atoms
-            f    = .frag_parent_for_cell_atom(u) ! unique fragment atom
+         do f = 1,.n_fragment_atoms
             uf   = .asym_atom_for_frag_atom(f)
             base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(uf)
-            .unit_cell_atom(u).add_derivative_dispn_H_iso(dFc,base,k_pts)
+            .fragment_atom(f).add_derivative_dispn_H_iso_d(dFa,base,k_pts,.repetition_factor(f))
          end
 
       else
 
          ! Refine H ADPs
-         do u = 1,.n_unit_cell_atoms
-            f    = .frag_parent_for_cell_atom(u) ! unique fragment atom
+         ! Extra work being done here - do you see the rep factor?
+         do f = 1,.n_fragment_atoms
             uf   = .asym_atom_for_frag_atom(f)
             base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(uf)
-            .unit_cell_atom(u).add_derivative_dispn_H_ADP(dFc,base,k_pts)
+            .fragment_atom(f).add_derivative_dispn_H_ADP_d(dFa,base,k_pts,.repetition_factor(f))
          end
 
       end
 
+      ! Add together symmetry contributions
+      .spacegroup.add_unique_sf_derivs_td(dFb,dFa,.data.reflections)
+
+    ! stdout.text("dFc S contribution before:")
+    ! stdout.put(dFc(:,18+1:18+9))
+
+    ! stdout.text("Anomalous dFc S contribution:")
+    ! stdout.put(dFb(:,18+1:18+9))
+
+      dFc = dFc + dFb
+
+      dFb.destroy
 
       ! Clean
+      dFa.destroy
       k_pts.destroy
 
    end
+
+!   add_D_dispersion_correction(dFc)
+!   ! Adds the *derivative* dispersion correction to the structure
+!   ! factor derivatives,"dFc".
+!      self :: IN
+!      dFc :: MAT{CPX}, INOUT
+!
+!   ENSURE(.unit_cell_atom.associated,"no unit_cell_atom atom list!")
+!   ENSURE(.data.associated,"no diffraction data!")
+!   DIE_IF(.data.correct_dispersion AND .data.refine_positions_only,"dispersion not available for position-only refinement")
+!
+!      k_pts :: MAT{REAL}*
+!      n_k,u, f,uf,base, s :: INT
+!
+!      if (NOT .correct_dispersion) return
+!
+!      ! Get the k points
+!      n_k = .data.reflections.dim
+!      k_pts.create(n_k,3)
+!      .data.reflections.make_k_pts(k_pts,.unit_cell)
+!
+!      if (.data.refine_H_U_iso) then
+!
+!         ! Refine H isotropic U's
+!         do u = 1,.n_unit_cell_atoms
+!            f    = .frag_parent_for_cell_atom(u) ! unique fragment atom
+!            uf   = .asym_atom_for_frag_atom(f)
+!            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(uf)
+!            .unit_cell_atom(u).add_derivative_dispn_H_iso(dFc,base,k_pts)
+!         end
+!
+!      else
+!
+!         ! Refine H ADPs
+!         do u = 1,.n_unit_cell_atoms
+!            f    = .frag_parent_for_cell_atom(u) ! unique fragment atom
+!            uf   = .asym_atom_for_frag_atom(f)
+!            s    = .asym_symop_for_frag_atom(f)
+!            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(uf)
+!            .unit_cell_atom(u).add_derivative_dispn_H_ADP(dFc,base,k_pts)
+!         end
+!
+!      end
+!
+!
+!      ! Clean
+!      k_pts.destroy
+!
+!   end
 
    shift_update_sf_n(sf_n,dF) ::: private
    ! Update the unique *fragment* atom structure factors "sf_n" with
