@@ -1929,8 +1929,6 @@ contains
          
             do
       
-               ! Calculates gradient with equations derived from Stoll
-               .:make_ELMO_gradient_g(.molecular_orbitals.general(:,1:.n_e),.scfdata.energy,.nomo_gradient)
                
                ! This is actually updating the MO's
                .:extrapolate_fock_matrix
@@ -1939,7 +1937,7 @@ contains
    
                .:make_fock_matrix
    
-               !.:update_molecular_orbitals
+               .:update_molecular_orbitals
       
                .:update_scfdata
                .:update_scfdata_error
@@ -4324,6 +4322,11 @@ contains
                nomo_self => self
                .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_g,MOv)
 
+               if (.scfdata.iteration==3) then
+                  .:make_ELMO_gradient_g_fd(MO,E,gm)
+                  stop
+               end
+
                ! Back to matrix
                MO = reshape(MOv,[2*.n_bf,.n_e])
 
@@ -4619,6 +4622,7 @@ contains
 
    end
 
+
    make_NOMO_gradient_r_fd(MO,E,gm)
    ! Make the NOMO energy "E" and gradient "g" of the "MO"s,
    ! gm = F MO S^{-1} - S P F MO S^{-1}, as matrices!!!
@@ -4712,67 +4716,97 @@ contains
    ENSURE(gm.is_same_shape_as(MO),"gradient gm and MO are not the same shape")
    ENSURE( .overlap_matrix.created,"NO overlap_matrix")
 
-      P,F :: OPMATRIX*
       step, bm,b,m :: INT
+      atom_a,atom_b, fe,le,fa,la, n,ne :: INT
       stps,stp2,leng :: REAL
 
-      nullify(P)
-      nullify(F)
-
+         n = MO.dim1/2
       leng = 0.0001d0
          
       gm = ZERO
 
-      do step = -1,1,2
+      le = 0
 
-        stps = step*leng
-        stp2 = ONE/(TWO*leng)
-
-        do bm = 1,2*.n_bf*.n_e
-           
-
-           ! ????
-           b = mod(bm-1,2*.n_bf) + 1
-           m = floor(real(bm-1)/(2*.n_bf)) + 1
-           
-           ! Add step
-           MO(b,m) = MO(b,m) + stps
-           .INTS:zero_ELMO_grad_mx(MO)
-
-           ! Fock & density matrix
-           P.destroy
-           F.destroy
-           P.create(.n_bf,"general")
-           F.create(.n_bf,"general")
-           F.general = ZERO
-           P.general = ZERO
+      ! Occupied orbitals for all atoms
+      do atom_a = 1,.n_atom
          
-           .BASE:make_NOMO_density_matrix_g(P.general,MO) 
-           ! Make two electron Fock matrix 
-           .FOCK:make_ELMO_g_fock(P,F)
-
-           ! Make 2 x energy matrix
-           F.plus(.core_matrix)
+         ! ELMO indices
+         ne = .n_e_on_atom(atom_a)
+         fe = le + 1
+         le = le + ne
          
-           ! Do energy E(x0+/-step)
-           E = HALF * F.general.trace_product_with(P.general)
+         ! Check connections are non-zero too!
+         do atom_b = 1,.n_atom
 
-           ! Add part
-           gm(b,m) = gm(b,m) + step*stp2*E
+            if (NOT .BASE:elmo_connected(atom_a,atom_b,.scfdata.elmo_b)) cycle
 
-           ! Remove step
-           MO(b,m) = MO(b,m) - stps
-           .INTS:zero_ELMO_grad_mx(MO)
-        end
-
-      end
+            fa = .first_basis_fn_for_atom(atom_b)
+            la =  .last_basis_fn_for_atom(atom_b)
       
-        
-      ! Clean up
+            do step = -1,1,2
+            
+               stps = step*leng
+               stp2 = ONE/(TWO*leng)
+
+               do b = fe,le
+               do m = fa,la
+
+                  ! Alpha
+                  MO(b,m) = MO(b,m) + stps
+                  .:make_ELMO_E_g(MO,E)
+                  MO(b,m) = MO(b,m) - stps
+                  gm(b,m) = gm(b,m) + step*stp2*E
+
+                  ! Beta
+                  MO(b,m+n) = MO(b,m+n) + stps
+                  .:make_ELMO_E_g(MO,E)
+                  MO(b,m+n) = MO(b,m+n) - stps
+                  gm(b,m+n) = gm(b,m+n) + step*stp2*E
+
+               end
+               end
+            end ! -- step
+
+         end
+      end
+         
+   end
+
+   make_ELMO_E_g(MO,E)
+   ! Make the ELMO energy "E" from scratch.
+      self :: INOUT
+      MO :: MAT{REAL}, IN
+      E  :: REAL, OUT
+
+   ENSURE(MO.dim1==2*.n_bf AND MO.dim2==.n_e,"MO wrong shape")
+   ENSURE( .overlap_matrix.created,"NO overlap_matrix")
+
+      P,F :: OPMATRIX*
+
+      ! Fock & density matrix
+      P.create(.n_bf,"general")
+      F.create(.n_bf,"general")
+      F.general = ZERO
+      P.general = ZERO
+
+      ! ELMO desnity
+      .BASE:make_NOMO_density_matrix_g(P.general,MO) 
+
+      ! Make two electron Fock matrix 
+      .FOCK:make_ELMO_g_fock(P,F)
+
+      ! Make 2 x energy matrix
+      F.plus(.core_matrix)
+      
+      ! Do energy E(x0+/-step)
+      E = HALF * F.general.trace_product_with(P.general)
+
+      ! Clean
       P.destroy
       F.destroy
 
    end
+
 
    make_ELMO_01_gradient_g_fd(MO,E,gm)
    ! Make the ELMO energy "E" and gradient "g" of the "MO"s,
@@ -5086,9 +5120,8 @@ contains
 
               end
 
-         end do
+            end do
             
-
          end
 
 
