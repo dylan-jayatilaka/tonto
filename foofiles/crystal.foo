@@ -75,6 +75,7 @@ contains
       nullify(.asym_atom_for_frag_atom)
 
       nullify(.unique_frag_atom)
+      nullify(.unique_index_for_frag_atom)
       nullify(.unique_atom_for_frag_atom)
       nullify(.unique_symop_for_frag_atom)
       nullify(.asym_symop_for_frag_atom)
@@ -157,6 +158,7 @@ contains
       .asym_atom_for_frag_atom.destroy
 
       .unique_frag_atom.destroy
+      .unique_index_for_frag_atom.destroy
       .unique_atom_for_frag_atom.destroy
       .unique_symop_for_frag_atom.destroy
       .asym_symop_for_frag_atom.destroy
@@ -256,6 +258,8 @@ contains
 
       if (crystal.unique_frag_atom.associated)              &
          .unique_frag_atom.create_copy(crystal.unique_frag_atom)
+      if (crystal.unique_index_for_frag_atom.associated)              &
+         .unique_index_for_frag_atom.create_copy(crystal.unique_index_for_frag_atom)
       if (crystal.unique_atom_for_frag_atom.associated)     &
          .unique_atom_for_frag_atom.create_copy(crystal.unique_atom_for_frag_atom)
       if (crystal.unique_symop_for_frag_atom.associated)    &
@@ -1408,9 +1412,11 @@ contains
 
       ! Create the arrays we want
       .unique_frag_atom.destroy
+      .unique_index_for_frag_atom.destroy
       .unique_atom_for_frag_atom.destroy
       .unique_symop_for_frag_atom.destroy
 
+      .unique_index_for_frag_atom.create(.n_fragment_atoms)
       .unique_atom_for_frag_atom.create(.n_fragment_atoms)
       .unique_symop_for_frag_atom.create(.n_fragment_atoms)
 
@@ -1432,10 +1438,12 @@ contains
          unique = m==0
          if (unique) then
             .n_unique_frag_atoms = .n_unique_frag_atoms + 1
+            .unique_index_for_frag_atom(f) = .n_unique_frag_atoms
             .unique_atom_for_frag_atom(f) = f
             .unique_symop_for_frag_atom(f) = 1 ! identity
             .unique_frag_atom.append(f)
          else
+            .unique_index_for_frag_atom(f) = 0
             .unique_atom_for_frag_atom(f) = m
             u = .unit_cell_atom_for_frag_atom(m)
             t = .asym_symop_for_unit_cell_atom(u)
@@ -1808,7 +1816,7 @@ contains
    ENSURE(.fragment_geometry.associated, "no fragment_geometry!")
 
       pa,pb :: VEC{REAL}(3)
-      a,b,n,n_same :: INT
+      a,n,n_same :: INT
       same :: BIN
       tol :: REAL
 
@@ -1829,13 +1837,11 @@ contains
             .put_to_unit_cell(pa)
 
             n_same = 0
-            do b = 1,.n_fragment_atoms
             do n = 1,.spacegroup.n_seitz
-               pb = .fragment_geometry(:,b)
+               pb = pa
                .transform_position(pb,n,to_unit_cell=TRUE)
                same = pa.same_as(pb,tol)
                if (same) n_same = n_same + 1
-            end
             end
 
             .repetition_factor(a) = n_same
@@ -3728,7 +3734,7 @@ contains
 
       ! Constants
       n_refl = .n_refl
-      n_k    = .n_unique_SF_k_pts
+      n_k    = sf_n.dim1
       n_p    = .asymmetric_unit_atom.no_of_pADPs
 
       ! Symmetry generated structure factors
@@ -3743,6 +3749,9 @@ contains
       ! the actual structure factors Fc
       Fc.create(n_refl)
       .spacegroup.sum_unique_sf(Fc,sf_e,.data.reflections)
+    ! Fc.create(n_refl)
+    ! Fc = ZERO
+    ! .spacegroup.add_full_sd(Fc,sf_e,.data.reflections)
       sf_e.destroy
 
       ! Add dispersion correction
@@ -3751,8 +3760,13 @@ contains
       ! Set the calculated SF's
       DIE_IF(any(abs(Fc)<=TOL(10)),"there are zero F_calc's; prune them to continue")
       .data.reflections.set_F_calc(Fc)
-
       Fc.destroy
+
+    ! print *,"a-star = ",.unit_cell.a_star
+    ! stdout.set_real_width(24)
+    ! stdout.set_real_precision(16)
+    ! .data.reflections.put_CIF("?")
+    ! stop
 
       ! Make chi2 in F (and I?)
       .data.make_F_predicted
@@ -3760,14 +3774,19 @@ contains
       ! Sum the symmetry-generated SF's to get
       ! the derivative structure factors dFc
       dFc.create(n_refl,n_p)
-      .spacegroup.sum_unique_sf_derivs_t(dFc,sf_d,.data.reflections)
+      .spacegroup.sum_unique_sf_derivs(dFc,sf_d,.data.reflections)
+    ! dFc.create(n_refl,n_p)
+    ! dFc = ZERO
+    ! .spacegroup.add_full_sf_derivs_d(dFc,sf_d,.data.reflections)
       sf_d.destroy
 
       ! Add derivative of anomalous contribution to |SF|, dFc
       if (.correct_dispersion) then
          .add_D_dispersion_correction(dFc)
-       ! .add_D_dispersion_correction_fd(dFc)
+       ! .add_D_dispersion_correction_fd
       end
+
+    ! .make_full_sf_derivatives_fd(dFc,sf_n)
 
       ! Get the derivative absolute SF's,
       ! ... unique fragment atoms only
@@ -3778,6 +3797,119 @@ contains
       ! Get the unique atom shifts, dX (leaky)
       .solve_normal_equations(dFa)
       dFa.destroy
+
+   end
+
+   make_full_sf_derivatives_fd(dFc,sf_n)
+   ! Make the structure factor derivatives by finite differences.
+      self :: INOUT
+      dFc :: MAT{CPX}, INOUT
+      sf_n :: MAT{CPX}, INOUT
+
+   ENSURE(.data.associated,"no diffraction data!")
+
+      dF :: MAT{REAL}*
+      sf_d :: MAT{CPX}*
+      sf_e,Fc :: VEC{CPX}*
+
+      pADP,pADP0 :: VEC{REAL}*
+      n_refl,n_p,n_k :: INT
+      step, u,f,base,np,p :: INT
+      stps,stp2,leng :: REAL
+
+    ! stdout.text("sf_n:")
+    ! stdout.put(sf_n)
+    ! stdout.text("dFc analytic formula:")
+    ! stdout.put(dFc)
+    ! Stop if you can't do the finite differences
+    ! stop
+
+
+      ! Constants
+      n_refl = .n_refl
+      n_k    = sf_n.dim1
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry generated structure factors
+      sf_d.create(n_k,n_p) ! Symmetry generated SF derivatives
+      sf_e.create(n_k)     ! Symmetry generated SF's
+      Fc.create(n_refl)
+
+      dF.create(3,.n_fragment_atoms)
+
+      leng = TOL(7)
+
+      dFc = ZERO
+
+      do u = 1,.n_unique_frag_atoms
+
+         f    = .unique_frag_atom(u)
+         base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
+         np   = .fragment_atom(f).no_of_pADPs
+
+         pADP0.create(np)
+         pADP.create(np)
+         pADP0 = ZERO
+         pADP = ZERO
+         .fragment_atom(f).put_pADP_vector_to(pADP0)
+
+         ! Finite difference steps
+         do step = -1,1,2
+       
+            stps = step*leng
+            stp2 = ONE/(TWO*leng)
+        
+            ! Finite difference parameter p
+            do p = 1,np
+
+               ! Add pADP fd shift & shift SF's sf_n
+               pADP = ZERO
+               pADP(p) = stps
+               dF = ZERO
+               dF(:,f) = pADP(1:3)
+               .shift_update_sf_n(sf_n,dF)
+               pADP    = pADP0
+               pADP(p) = pADP0(p) + stps
+               .fragment_atom(f).set_pADP_vector_to(pADP)
+
+               ! Get structure factors for full symmetry generated SFs
+               ! WARNING: Remember to modify the codes in here to make
+               ! derivatives of all structure factors 
+               ! i.e. REMOVE SYMMETRY SAVINGS DEVICES.
+               .make_unique_sf_derivs(sf_e,sf_d,sf_n)
+
+               ! Get structure factors Fc ...
+               Fc = ZERO
+               .spacegroup.add_full_sd(Fc,sf_e,.data.reflections)
+               if (.correct_dispersion) .add_dispersion_correction(Fc)
+           
+               ! Add derivative
+               dFc(:,base+p) = dFc(:,base+p) + step*stp2*Fc
+           
+               ! Remove pADP fd shift & put back sf_n
+               pADP = ZERO
+               pADP(p) = -stps
+               dF = ZERO
+               dF(:,f) = pADP(1:3)
+               .shift_update_sf_n(sf_n,dF)
+               pADP    = pADP0
+               pADP(p) = pADP0(p) - stps
+               .fragment_atom(f).set_pADP_vector_to(pADP)
+           
+            end
+
+         end
+
+         pADP.destroy
+         pADP0.destroy
+
+      end
+
+    ! stdout.text("sf_n:")
+    ! stdout.put(sf_n)
+    ! stdout.text("dFc fd:")
+    ! stdout.put(dFc)
+    ! stop ! <<<<<<<<<<<<<<<<<<<
 
    end
 
@@ -3821,7 +3953,7 @@ contains
       end
 
       ! Add together symmetry contributions
-      .spacegroup.add_unique_sd(Fc,Fa,.data.reflections)
+      .spacegroup.add_full_sd(Fc,Fa,.data.reflections)
 
       ! Clean
       Fa.destroy
@@ -3829,7 +3961,7 @@ contains
 
    end
 
-   add_D_dispersion_correction_fd(dFc)
+   add_D_dispersion_correction_fd
    ! Add the anomalous dispersion correction in "Fc" for the set of
    ! symmetry-unique atoms.
    ! 1/2/18 
@@ -3841,7 +3973,6 @@ contains
    !    Platform: Linux-4.13.0-32-generic
    !    Build-date: 2018-01-31 14:35
       self :: IN
-      dFc :: MAT{CPX}, INOUT
 
    ENSURE(.data.associated,"no diffraction data!")
 
@@ -3864,7 +3995,6 @@ contains
       .data.reflections.make_symop_generated_SF_k_pts(k_pts,.spacegroup,.unit_cell)
 
       dFa = ZERO
-      dFb = ZERO
 
       leng = TOL(5)
 
@@ -3910,22 +4040,15 @@ contains
       end
 
       ! Add together symmetry contributions
-      .spacegroup.add_unique_sf_derivs_td(dFb,dFa,.data.reflections)
-
-    ! stdout.text("dFc S contribution before:")
-    ! stdout.put(dFc(:,18+1:18+9))
-
-      stdout.text("FD Anomalous dFb S contribution:")
-      stdout.put(dFb)
-
-    ! dFc = dFc + dFb
-
-      stop
+      dFb = ZERO
+      .spacegroup.add_full_sf_derivs_d(dFb,dFa,.data.reflections)
 
       ! Clean
       dFb.destroy
       dFa.destroy
       k_pts.destroy
+
+      stop
 
    end
 
@@ -3956,7 +4079,6 @@ contains
 
       ! Note: each atom contribution scales by a site-symmetry factor
       dFa = ZERO
-      dFb = ZERO
 
       if (.data.refine_H_U_iso) then
 
@@ -3985,7 +4107,8 @@ contains
       end
 
       ! Add together symmetry contributions
-      .spacegroup.add_unique_sf_derivs_td(dFb,dFa,.data.reflections)
+      dFb = ZERO
+      .spacegroup.add_full_sf_derivs_d(dFb,dFa,.data.reflections)
 
     ! stdout.text("dFc S contribution before:")
     ! stdout.put(dFc(:,18+1:18+9))
@@ -4022,6 +4145,10 @@ contains
       n_k = .n_unique_SF_k_pts
       k_pt.create(n_k,3)
       .data.reflections.make_unique_SF_k_pts(k_pt,.spacegroup,.unit_cell)
+
+    ! n_k = .n_symop_generated_SF_k_pts
+    ! k_pt.create(n_k,3)
+    ! .data.reflections.make_symop_generated_SF_k_pts(k_pt,.spacegroup,.unit_cell)
 
       ! Loop over unique *frag* atoms
       do u = 1,.n_unique_frag_atoms
@@ -4087,8 +4214,9 @@ contains
 
    set_frag_from_asym_pADPs(dF)  ::: private
    ! Set *all* .fragment_atom pADPs from the .asymmetric_unit_atom pADPs.
-   ! If "dF" present, the shift in teach frag atom position is returned.
-      dF :: MAT{REAL}, optional
+   ! If "dF" present, the shift in each frag atom position is returned.
+      self :: target, IN
+      dF :: MAT{REAL}, optional, OUT
 
    ENSURE(.fragment_info_made,"no fragment info")
 
@@ -4698,7 +4826,6 @@ contains
    ! structure factors and their derivatives, from "sf_n" the *unique*
    ! .fragment_atom structure factors and the ".fragment_atom.ADP_tensor".
       self :: INOUT
-
       sf_e :: VEC{CPX}, OUT
       sf_d :: MAT{CPX}, OUT
       sf_n :: MAT{CPX}, INOUT
@@ -5365,17 +5492,18 @@ contains
 
                !test refine_H_pos Lorraine
                if (.data.refine_H_pos) then 
-                  ! Pos derivatives
+
                   sf_d(k,base+ 1) =  II*k1*sf1
                   sf_d(k,base+ 2) =  II*k2*sf1
                   sf_d(k,base+ 3) =  II*k3*sf1
-               else              
+
+               else if (.fragment_atom(f).atomic_number>1) then
+
                   ! If not hydrogen atom
-                  if (.fragment_atom(f).atomic_number>1) then
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-                  end
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
+
                end
 
                ! U2 derivatives
@@ -5476,15 +5604,13 @@ contains
                   sf_d(k,base+ 2) =  II*k2*sf1
                   sf_d(k,base+ 3) =  II*k3*sf1
 
-               else
+               else if (.fragment_atom(f).atomic_number>1) then
 
                   ! If not hydrogen atom
-                  if (.fragment_atom(f).atomic_number>1) then
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
 
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-                  end
                end
 
                ! U2 derivatives
@@ -5554,22 +5680,20 @@ contains
                ! SF contribution (harmonic)
                sf_e(k) = sf_e(k) + sf1
 
-               !test refine_H_pos Lorraine
                if (.data.refine_H_pos) then
 
                   ! Pos derivatives
                   sf_d(k,base+ 1) =  II*k1*sf1
                   sf_d(k,base+ 2) =  II*k2*sf1
                   sf_d(k,base+ 3) =  II*k3*sf1
-               else
 
-                  ! If not hydrogen atom
-                  if (.fragment_atom(f).atomic_number>1) then
+               else if (.fragment_atom(f).atomic_number>1) then
                   
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-                  end
+                  ! If not hydrogen atom
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
+
                end
 
                ! U2 derivatives
@@ -5707,20 +5831,20 @@ contains
 
                !test refine_H_pos Lorraine
                if (.data.refine_H_pos) then
+
                   ! Pos derivatives
                   sf_d(k,base+ 1) =  II*k1*sf1
                   sf_d(k,base+ 2) =  II*k2*sf1
                   sf_d(k,base+ 3) =  II*k3*sf1
-               else
+
+               else if (.fragment_atom(f).atomic_number>1) then
 
                   ! If not hydrogen atom
-                  if (.fragment_atom(f).atomic_number>1) then
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-                  end
-               end
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
 
+               end
 
                ! U2 derivatives
                sf_d(k,base+ 4) = -k1_k1*sf2
@@ -5816,18 +5940,18 @@ contains
                 
                !test refine_H_pos Lorraine
                if (.data.refine_H_pos) then
-                  ! Pos derivatives
+
                   sf_d(k,base+ 1) =  II*k1*sf1
                   sf_d(k,base+ 2) =  II*k2*sf1
                   sf_d(k,base+ 3) =  II*k3*sf1
-               else
+
+               else if (.fragment_atom(f).atomic_number>1) then
 
                   ! If not hydrogen atom
-                  if (.fragment_atom(f).atomic_number>1) then
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-                  end
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
+
                end
 
                ! U2 derivatives
@@ -5900,18 +6024,19 @@ contains
 
                !test refine_H_pos Lorraine
                if (.data.refine_H_pos) then
+
                   ! Pos derivatives
                   sf_d(k,base+ 1) =  II*k1*sf1
                   sf_d(k,base+ 2) =  II*k2*sf1
                   sf_d(k,base+ 3) =  II*k3*sf1
-               else
+
+               else if (.fragment_atom(f).atomic_number>1) then
 
                   ! If not hydrogen atom
-                  if (.fragment_atom(f).atomic_number>1) then
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-                  end
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
+
                end
 
                ! U2 derivatives
@@ -5962,18 +6087,19 @@ contains
 
                !test refine_H_pos Lorraine
                if (.data.refine_H_pos) then
+
                   ! Pos derivatives
                   sf_d(k,base+ 1) =  II*k1*sf1
                   sf_d(k,base+ 2) =  II*k2*sf1
                   sf_d(k,base+ 3) =  II*k3*sf1
-               else
+
+               else if (.fragment_atom(f).atomic_number>1) then
 
                   ! If not hydrogen atom
-                  if (.fragment_atom(f).atomic_number>1) then
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-                  end
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
+
                end
 
                ! U2 derivatives
@@ -6028,11 +6154,12 @@ contains
 
       ! Constants
       II  = IMAGIFY(ONE)
-      n_k = .n_unique_SF_k_pts
+      n_k = sf_n.dim1
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
       .data.reflections.make_unique_SF_k_pts(k_pt,.spacegroup,.unit_cell)
+    ! .data.reflections.make_symop_generated_SF_k_pts(k_pt,.spacegroup,.unit_cell)
 
       ! K times thermal tensors
       kU.create(n_k,3)
@@ -6076,15 +6203,12 @@ contains
                sf_d(k,base+2) =   II*k2k*sf
                sf_d(k,base+3) =   II*k3k*sf
 
-            else 
+            else if (.fragment_atom(f).atomic_number>1) then
 
                ! If not hydrogen atom
-               if (.fragment_atom(f).atomic_number>1) then
-
-                  sf_d(k,base+1) =   II*k1k*sf
-                  sf_d(k,base+2) =   II*k2k*sf
-                  sf_d(k,base+3) =   II*k3k*sf
-               end
+               sf_d(k,base+1) =   II*k1k*sf
+               sf_d(k,base+2) =   II*k2k*sf
+               sf_d(k,base+3) =   II*k3k*sf
 
             end
 
@@ -6181,16 +6305,18 @@ contains
 
             !test refine_H_pos Lorraine
             if (.data.refine_H_pos) then
+
                sf_d(k,base+1) =   II*k1k*sf
                sf_d(k,base+2) =   II*k2k*sf
                sf_d(k,base+3) =   II*k3k*sf
-            else
+
+            else if (.fragment_atom(f).atomic_number>1) then
+
                ! If not hydrogen atom
-               if (.fragment_atom(f).atomic_number>1) then
-                  sf_d(k,base+1) =   II*k1k*sf
-                  sf_d(k,base+2) =   II*k2k*sf
-                  sf_d(k,base+3) =   II*k3k*sf
-               end
+               sf_d(k,base+1) =   II*k1k*sf
+               sf_d(k,base+2) =   II*k2k*sf
+               sf_d(k,base+3) =   II*k3k*sf
+
             end
 
          end
@@ -6653,7 +6779,6 @@ contains
                   sf_d(k,base+3) = II*k3k*sf
                end
 
-
                sf_d(k,base+4) = sf2
                sf_d(k,base+5) = sf2
                sf_d(k,base+6) = sf2
@@ -7111,28 +7236,6 @@ contains
       val.destroy
 
    end
-
-!   put_fit_iteration_results ::: private
-!   ! Print out the current fit iterations results
-!      self :: IN
-!
-!   ENSURE(.data_exists,"no diffraction data")
-!
-!      ! Put the table body
-!      .data.put_fit_table_body
-!
-!   end
-
-!   put_refinement_iteration_results
-!   ! Print out the current refinement iterations results
-!      self :: IN
-!
-!   ENSURE(.data_exists,"no diffraction data")
-!
-!      ! Put the table body
-!      .data.put_refinement_table_body
-!
-!   end
 
    put_fit_results ::: private
    ! Finalise fit, write results
@@ -8430,7 +8533,7 @@ contains
    ! Put XD fco reflection file
       self :: INOUT
 
-      F000,F_cal,F2_cal,F2_exp,F2_sig,factor :: REAL
+      F000,F2_cal,F2_exp,F2_sig,factor :: REAL
       F_p :: VEC{CPX}@
       F_exp :: VEC{REAL}@
       d_max,d_min :: REAL
@@ -8836,66 +8939,73 @@ contains
    ENSURE(.fragment_info_made,"no fragment info")
 
       ID :: VEC{STR}*
-      as4f,sy4f,un4f,rf :: VEC{INT}*
+      as4f,sy4f,un4f,ui4f,rf :: VEC{INT}*
       sh4f :: MAT{REAL}*
       table :: VEC{TABLE_COLUMN}*
+      f :: INT
 
       stdout.flush
       stdout.flush
-      stdout.text("Fragment geometry:")
+      stdout.text("QM fragment geometry:")
       stdout.flush
 
       ! Data
+      f = 1
       as4f => .asym_atom_for_frag_atom
       sy4f => .asym_symop_for_frag_atom
       sh4f => .asym_shift_for_frag_atom
       ID   => .fragment_atom.unique_tags
+      ui4f => .unique_index_for_frag_atom
       un4f => .unique_atom_for_frag_atom
       rf.create(.n_fragment_atoms)
       rf = int(.repetition_factor)
 
       ! Table
-      table.create(11)
+      table.create(12)
 
-      table( 1).set_heading("frag");    table(1).set_values(ID)
-      table( 1).set_subhead("ID")
+      table( 1).set_heading("ID");     table(1).set_values(ID)
 
       table( 2).set_spacing(2)
-      table( 2).set_heading("Rep");     table(2).set_values(rf)
+      table( 2).set_heading("Rep");    table(2).set_values(rf)
       table( 2).set_subhead("fac")
       table( 2).set_sb3head("tor")
 
       table( 3).set_spacing(2)
-      table( 3).set_heading("Uniq");    table(3).set_values(un4f)
+      table( 3).set_heading("Uniq");   table(3).set_values(ui4f)
       table( 3).set_subhead("atom")
 
-      table( 5).set_heading("Coord")
-      table( 4).set_subhead("- x -");    table(4).set_values(.fragment_geometry(1,:))
-      table( 5).set_subhead("- y -");    table(5).set_values(.fragment_geometry(2,:))
-      table( 6).set_subhead("- z -");    table(6).set_values(.fragment_geometry(3,:))
-      table( 5).set_sb3head("/frac")
+      table( 4).set_spacing(3)
+      table( 4).set_heading("Uniq");   table(4).set_values(un4f)
+      table( 4).set_subhead("atom")
+      table( 4).set_sb3head("ID")
 
-      table( 7).set_heading("From");    table(7).set_values(as4f)
-      table( 7).set_subhead("asym")
-      table( 7).set_sb3head("atom")
+      table( 6).set_heading("Coord")
+      table( 5).set_subhead("- x -");  table(5).set_values(.fragment_geometry(1,:))
+      table( 6).set_subhead("- y -");  table(6).set_values(.fragment_geometry(2,:))
+      table( 7).set_subhead("- z -");  table(7).set_values(.fragment_geometry(3,:))
+      table( 6).set_sb3head("/frac")
 
-      table( 8).set_spacing(2)
-      table( 8).set_heading("Using");   table(8).set_values(sy4f)
-      table( 8).set_subhead("symop")
+      table( 8).set_heading("From");   table(8).set_values(as4f)
+      table( 8).set_subhead("asym")
+      table( 8).set_sb3head("atom")
 
       table( 9).set_spacing(2)
-      table( 9).set_real_precision(1)
-      table( 9).set_heading("     ");   table(9).set_values(sh4f(1,:))
-      table( 9).set_subhead("- x -")
+      table( 9).set_heading("Using");  table(9).set_values(sy4f)
+      table( 9).set_subhead("symop")
+
       table(10).set_spacing(2)
       table(10).set_real_precision(1)
-      table(10).set_heading("Shift");   table(10).set_values(sh4f(2,:))
-      table(10).set_subhead("- y -")
+      table(10).set_heading("     ");  table(10).set_values(sh4f(1,:))
+      table(10).set_subhead("- x -")
       table(11).set_spacing(2)
       table(11).set_real_precision(1)
-      table(11).set_heading("     ");   table(11).set_values(sh4f(3,:))
-      table(11).set_subhead("- z -")
-      table(10).set_sb3head("/frac")
+      table(11).set_heading("Shift");  table(11).set_values(sh4f(2,:))
+      table(11).set_subhead("- y -")
+      table(12).set_spacing(2)
+      table(12).set_real_precision(1)
+      table(12).set_heading("     ");  table(12).set_values(sh4f(3,:))
+      table(12).set_subhead("- z -")
+      table(11).set_sb3head("/frac")
 
       table.put
 
