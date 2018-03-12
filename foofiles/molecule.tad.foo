@@ -284,10 +284,333 @@ contains
       parallel do u = 1,.crystal.n_unique_frag_atoms
 
          c = .crystal.unique_frag_atom(u)
-         a = .crystal.asym_atom_for_frag_atom(c)
+       ! a = .crystal.asym_atom_for_frag_atom(c)
 
          ! Repetition factor for this atom
-         rf = .crystal.asym_atom_rep_factor(a)
+         rf = .crystal.repetition_factor(c)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         ! Overlapping atoms
+         overlapping_atom => .overlapping_atoms_for_atom(c).element
+
+         ! Get the Becke grid for atom "c" (leaky)
+         .becke_grid.make_grid(pt,wt,bf_save,c)
+         n_pt = pt.dim1
+
+         ! Make stockholder weight function "Wc" for atom "c"
+         ! If using interpolatators, then on overlapping atoms
+         ! are used ... otherwise nothing is skipped
+         Wc.create(n_pt)
+         if (.use_interpolators) then; .GRID:make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
+         else;                         .GRID:make_stockholder_atom_grid(Wc,c,pt)
+         end
+
+         ! Incorporate integration weight
+         wt = Wc*wt
+         Wc.destroy
+
+         ! Prune the grid with new "wt", get saved bf grid bf_save,
+         ! and new no of points, n_pt (leaky)
+         .becke_grid.prune_grid(pt,wt,bf_save)
+         n_pt = pt.dim1
+
+         ! Basis function grid and skip list
+         bf_skip.create(.n_shell)
+         bf_grid.create(.n_shell)
+
+         ! Density for atom "c"
+         rho.create(n_pt)
+         rho = ZERO
+
+         ! Loop c-overlapping atoms a
+         do ca = 1,overlapping_atom.dim
+
+            oa  = overlapping_atom(ca)
+            fsa = .first_shell_for_atom(oa)
+            lsa =  .last_shell_for_atom(oa)
+            fba = .first_basis_fn_for_atom(oa)
+            ra  = .atom(oa).position
+
+            ! Make the displaced points for atom "a"
+            .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
+
+            ! Loop shells on atom a
+            do sa = fsa,lsa
+
+               ! Shell a limits
+               fa = .first_basis_fn_for_shell(sa)
+               la =  .last_basis_fn_for_shell(sa)
+               na = la - fa + 1
+               as = .basis_shell_for_shell(sa)
+
+               ! Set shell "sa"
+               sha = .precomputed_basis_shellpair(as,1).a
+               sha.position = ra
+
+               ! Make shell "sa" skip list
+               skipa.create(n_pt)
+               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
+
+               ! Next shell "sa" if no sig. points
+               if (n_keep==0) then
+                  skipa.destroy
+                  cycle
+               end
+
+               ! Assign the "sa" skipa list
+               bf_skip(sa).element => skipa
+
+               ! Make/copy the "sa" basis function grida
+               ! This must be copied since skipa could be TRUE
+               grida.create(n_keep,na)
+               if (oa/=c) then
+                  ! Calculate grid if necessary
+                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+               else
+                  ! Extract grid values from saved grid values
+                  do a = 1,na
+                     i = 0
+                     do n = 1,n_pt
+                        if (skipa(n)) cycle
+                        i = i + 1
+                        grida(i,a) = bf_save(n,a+fa-fba)
+                     end
+                  end
+               end
+               bf_grid(sa).element => grida
+
+               ! Loop c-overlapping atoms b
+               do cb = 1,ca
+
+                  ob  = overlapping_atom(cb)
+                  fsb = .first_shell_for_atom(ob)
+                  lsb =  .last_shell_for_atom(ob)
+
+                  ! Loop shells on atom b
+                  do sb = fsb,min(lsb,sa)
+
+                     ! No significant points ... save time!
+                     if (bf_skip(sb).element.disassociated) cycle
+
+                     ! Shell b limits
+                     fb = .first_basis_fn_for_shell(sb)
+                     lb = .last_basis_fn_for_shell(sb)
+                     nb = lb - fb + 1
+
+                     ! Set the "sb" basis function grid
+                     skipb => bf_skip(sb).element
+                     gridb => bf_grid(sb).element
+
+                     ! How many points in common? Save time?
+                     skipab(1:n_pt) = skipa OR skipb
+                     n_keep = count(NOT skipab(1:n_pt))
+                     if (n_keep==0) cycle
+
+                     ! Factor
+                     fac = TWO
+                     if (sa==sb) fac = ONE
+
+                     ! Density block
+
+                     if (na*nb==1) then ! s.s product
+
+                        ! Add density contribution to rho
+                        ga => grida(:,1)
+                        gb => gridb(:,1)
+                        Dab = fac*.density_matrix.restricted(fa,fb)
+                        i = 0; j = 0
+                        do n = 1,n_pt
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
+                           if (skipab(n)) cycle
+                           val    = ga(i)*gb(j)*Dab
+                           rho(n) = rho(n) + val
+                        end
+
+                     else              ! not s.s product
+
+                        ! Create space for gathered index info
+                        pi.create(n_keep)
+                        pj.create(n_keep)
+                        pn.create(n_keep)
+
+                        ! Make mapper arrays
+                        p = 0; i = 0; j = 0
+                        do n = 1,n_pt
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
+                           if (skipab(n)) cycle
+                           p = p + 1
+                           pi(p) = i
+                           pj(p) = j
+                           pn(p) = n
+                        end
+
+                        ! Add density contribution to rho
+                        do a = 1,na
+                           ga => grida(:,a)
+                           do b = 1,nb
+                              gb  => gridb(:,b)
+                              Dab = fac*.density_matrix.restricted(fa+a-1,fb+b-1)
+                              do p = 1,n_keep
+                                 i = pi(p)
+                                 j = pj(p)
+                                 n = pn(p)
+                                 val    = ga(i)*gb(j)*Dab
+                                 rho(n) = rho(n) + val
+                              end
+                           end
+                        end
+
+                        ! Clean up
+                        pn.destroy
+                        pj.destroy
+                        pi.destroy
+
+                     end
+
+                  end
+               end
+            end
+         end
+
+         ! Grid points
+         r1 => pt(:,1)
+         r2 => pt(:,2)
+         r3 => pt(:,3)
+
+         ! Weight the atom "c" density
+         rho = rho*wt
+
+         ! Make the (unique) matrix elements
+         sf_u => sf_n(:,u)
+         do k = 1,n_k
+            k1k = k1(k)
+            k2k = k2(k)
+            k3k = k3(k)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
+               sf = sf + rho(i)*COMPLEXIFY(cos(kr),sin(kr))
+            end
+            sf_u(k) = sf * rf
+         end
+
+         ! Clean up atom "c" stuff
+         rho.destroy
+         bf_grid.destroy
+         bf_skip.destroy
+         bf_save.destroy
+         wt.destroy
+         pt.destroy
+
+      end ! -- loop over atom "c"
+
+      ! Clean up
+      skipab.destroy
+      skipa0.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      k_pts.destroy
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_n)
+      end
+
+      if (.BASE:debugging("get_unique_Hirshfeld_atom_SFs")) then
+         stdout.text("sf_n:")
+         stdout.put(sf_n)
+      end
+
+   end
+
+   get_full_Hirshfeld_atom_SFs(sf_n) ::: leaky, private
+   ! Get "sf_n", the static structure factors for the symmetry related
+   ! K points with *no* thermal smearing, for every unique atom.
+   ! NOTE: "sf_n" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      self :: INOUT
+      sf_n :: MAT{CPX}*
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.becke_grid.associated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"becke_grid not finalized")
+   ENSURE(.density_matrix.associated, "no density matrix")
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data.associated, "no reflection data")
+   ENSURE(.crystal.xray_data.associated, "no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      ra :: VEC{REAL}(3)
+      sf_u :: VEC{CPX}*
+      Wc,wt, xa,ya,za,a2 :: VEC{REAL}*
+      rho, k1,k2,k3, r1,r2,r3, ga,gb :: VEC{REAL}*
+      overlapping_atom, pi,pj,pn :: VEC{INT}*
+      skipa0,skipab,skipa,skipb :: VEC{BIN}*
+      k_pts,pt,grida,gridb,bf_save :: MAT{REAL}*
+      sha :: SHELL1
+      bf_skip :: VEC{VEC_{BIN}}*
+      bf_grid :: VEC{MAT_{REAL}}*
+      sf   :: CPX
+      cutoff,rf, k1k,k2k,k3k,kr, Dab, fac, val :: REAL
+      n_atom,n_k,n_pt,n_keep, u,c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+      sa,fa,la,na, sb,fb,lb,nb, as, a,b,i,j,k,n,p :: INT
+
+      ! Asymmetric unit atoms
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_symop_generated_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_n.create(n_k,n_atom)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.data.reflections.make_symop_generated_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      k1 => k_pts(:,1)
+      k2 => k_pts(:,2)
+      k3 => k_pts(:,3)
+
+      ! Density matrix (leaky)
+      .BASE:make_ao_density_matrix
+      ENSURE(.density_matrix.restricted.associated, "no restricted DM")
+
+      ! Set up grids, atomic densities, overlapping_atoms (leaky)
+      .SCF:make_Hirshfeld_inputs(skip_NOs=TRUE)
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_function_cutoff
+
+      ! Max no of becke grid points per atom
+      n_pt = .becke_grid.max_no_of_points_per_atom
+
+      ! Atom "a" displaced points and skip switches
+      xa.create(n_pt)
+      ya.create(n_pt)
+      za.create(n_pt)
+      a2.create(n_pt)
+      skipa0.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Make the SF's
+      sf_n = ZERO
+
+      ! Loop over integration atoms "c"
+      parallel do u = 1,.crystal.n_unique_frag_atoms
+
+         c = .crystal.unique_frag_atom(u)
+       ! a = .crystal.asym_atom_for_frag_atom(c)
+
+         ! Repetition factor for this atom
+         rf = .crystal.repetition_factor(c)
          if (rf.is_zero) cycle
          rf = ONE/rf
 
@@ -602,7 +925,7 @@ contains
       ! Asymmetric unit atoms;
       ! Symmetry generated K points and SF's
       n_atom = .crystal.asymmetric_unit_atom.dim
-      n_k    = .crystal.n_unique_SF_k_pts
+      n_k    = .crystal.n_symop_generated_SF_k_pts
 
       ! Allocate structure factor array (leaky)
       sf_n.create(n_k,n_atom)
@@ -610,7 +933,7 @@ contains
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
       k_pts.create(n_k,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      .crystal.data.reflections.make_symop_generated_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! Density matrix (leaky)
       .BASE:make_ao_density_matrix
@@ -854,7 +1177,8 @@ contains
     ! if (.crystal.data.refine_H_U_iso) .atom.set_isotropic_H_ADP
 
       ! Get atom SF's
-      .TAD:get_unique_IAM_atom_SFs(sf_n)
+    ! .TAD:get_unique_IAM_atom_SFs(sf_n)
+      .TAD:get_full_IAM_atom_SFs(sf_n)
 
       ! Do a least squares
       .TAD:LS_fit_using(sf_n,.crystal.data.show_fit_output,.crystal.data.show_fit_results)
@@ -864,6 +1188,17 @@ contains
 
       ! Restore original state
       .crystal.data.set_use_IAM_density(keep)
+
+      ! Do/put analysis info ...
+      .crystal.put_data_analysis(output=TRUE)
+      .SCF:get_minmax_residual_density(output=TRUE)
+
+      ! Put final CIF after residuals
+      .BASE:put_CIFs(with_ESDs=TRUE)
+
+      ! Do standatd plots and properties
+      if (.crystal.data.do_standard_plots) then
+      end
 
 
    end
@@ -884,7 +1219,7 @@ contains
    ENSURE(.crystal.asym_atom_for_frag_atom.associated,"no asym-frag_atom")
 
       k_pts :: MAT{REAL}*
-      n_atom,n_k, u,c,a :: INT
+      n_atom,n_k, u,f :: INT
       rf :: REAL
       old :: BIN
     ! rc :: VEC{REAL}(3)
@@ -912,17 +1247,96 @@ contains
       do u = 1,.crystal.n_unique_frag_atoms
 
          ! Atoms
-         c = .crystal.unique_frag_atom(u)
-         a = .crystal.asym_atom_for_frag_atom(c)
+         f = .crystal.unique_frag_atom(u)
 
          ! Structure factors
-         old = .atom(c).use_IAM_ITC_FFs
-         .atom(c).set_use_IAM_ITC_FFs(TRUE)
-         .atom(c).make_FT(sf_n(:,u),k_pts)
-         .atom(c).set_use_IAM_ITC_FFs(old)  ! Put back
+         old = .atom(f).use_IAM_ITC_FFs
+         .atom(f).set_use_IAM_ITC_FFs(TRUE)
+         .atom(f).make_FT(sf_n(:,u),k_pts)
+         .atom(f).set_use_IAM_ITC_FFs(old)  ! Put back
 
          ! Repetition (site-symmetry) factor
-         rf = .crystal.asym_atom_rep_factor(a)
+         rf = .crystal.repetition_factor(f)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         ! Scale
+         sf_n(:,u) = sf_n(:,u) * rf
+
+       ! ! Add on real part of dispersion - testing only
+       ! if (.crystal.data.use_real_dispersion) then
+       !    sf = .atom(c).dispersion_correction * rf
+       !    rc = .atom(c).position
+       !    do k = 1,n_k
+       !       k1 = k_pts(k,1)
+       !       k2 = k_pts(k,2)
+       !       k3 = k_pts(k,3)
+       !       kr = k1*rc(1)+k2*rc(2)+k3*rc(3)
+       !       sf_n(k,u) = sf_n(k,u) + sf*COMPLEXIFY(cos(kr),sin(kr))
+       !    end
+       ! end
+
+      end
+
+      ! Clean up
+      k_pts.destroy
+
+   end
+
+   get_full_IAM_atom_SFs(sf_n) ::: leaky, private
+   ! Get "sf_n", the IAM structure factors for the symmetry generated
+   ! K points with *no* thermal smearing, for every unique atom.
+      self :: INOUT
+      sf_n :: MAT{CPX}*
+
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data.associated, "no reflection data")
+   ENSURE(.crystal.xray_data.associated, "no x-ray reflection data")
+   ENSURE(.crystal.data.use_IAM_density,"not using IAM density!")
+   ENSURE(.crystal.asymmetric_unit_atom.associated,"no asymmetric unit atoms")
+   ENSURE(.crystal.unique_atom_for_frag_atom.associated,"no unique-frag_atom")
+   ENSURE(.crystal.asym_atom_for_frag_atom.associated,"no asym-frag_atom")
+
+      k_pts :: MAT{REAL}*
+      n_atom,n_k, u,f :: INT
+      rf :: REAL
+      old :: BIN
+    ! rc :: VEC{REAL}(3)
+    ! k  :: INT
+    ! k1,k2,k3,kr :: REAL
+    ! sf :: CPX
+
+      ! Asymmetric unit atoms;
+      ! Symmetry generated K points and SF's
+      n_atom = .crystal.asymmetric_unit_atom.dim
+      n_k    = .crystal.n_symop_generated_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_n.create(n_k,n_atom)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.data.reflections.make_symop_generated_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      ! Make the SF's
+      sf_n = ZERO
+
+      ! Loop over integration atoms "c"
+      do u = 1,.crystal.n_unique_frag_atoms
+
+         ! Atoms
+         f = .crystal.unique_frag_atom(u)
+
+         ! Structure factors
+         old = .atom(f).use_IAM_ITC_FFs
+         .atom(f).set_use_IAM_ITC_FFs(TRUE)
+         .atom(f).make_FT(sf_n(:,u),k_pts)
+         .atom(f).set_use_IAM_ITC_FFs(old)  ! Put back
+
+         ! Repetition (site-symmetry) factor
+         rf = .crystal.repetition_factor(f)
          if (rf.is_zero) cycle
          rf = ONE/rf
 

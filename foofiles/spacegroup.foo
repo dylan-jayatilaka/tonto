@@ -1366,9 +1366,13 @@ contains
 
    read_jones_faithful_symbols ::: leaky
    ! Read the jones faithful symbols.
+      self :: INOUT
+
       jf_symbols :: VEC{STR}*
     ! list :: MAT{STR}*
+
       stdin.read_ptr(jf_symbols)
+
     ! jf_symbols.remove_blanks
     ! list.create(6,2) 
     ! list = transpose( &
@@ -2065,10 +2069,8 @@ contains
 
    make_inverted_symops ::: leaky, private
    ! Determine which of the .seitz symops are related by inversion.
-   ! Really, we should check the cartesian seitz matrices, but and
-   ! inversion is just -1 times the identity, to the cartesian
-   ! inversion operator is just the same as the crystal-axis inversion
-   ! operator, with -1 down the diagonal.
+      self :: INOUT
+
    ENSURE(.seitz.associated,"Seitz matrices not initialized")
 
       n,i,j :: INT
@@ -2101,9 +2103,10 @@ contains
    make_translated_symops ::: leaky, private
    ! Determine which of the .seitz symops are related by translation,
    ! (including translation by the zero vector) but *not* inversion.
-   ! Really we should check the cartesian seitz operators, but the
-   ! identity oprator has the same representation in either the
-   ! crystal or cartesian axis systems.
+   ! Unlike inversions, a symop is at least a (zero) translation of
+   ! itself.
+      self :: INOUT
+
    ENSURE(.inverted_symop.associated,"no inverted_symop array")
    ENSURE(.seitz.associated,"Seitz matrices not initialized")
 
@@ -2115,7 +2118,8 @@ contains
 
       do i = 1,.n_seitz
 
-         ! Symop i is a translation of itself
+         ! Symop i is at least a translation 
+         ! of itself
          .translated_symop(i) = i
 
          ! Skip inversions
@@ -2141,6 +2145,8 @@ contains
    ! Determine which are the structure-factor unique symops, i.e. those which
    ! generate fragment geometries which are different than a translation or
    ! inversion. This list should be a superset of the reduced symops.
+      self :: INOUT
+
    ENSURE(.inverted_symop.associated,  "no inverted_symop array")
    ENSURE(.translated_symop.associated,"no translated_symop array")
 
@@ -2659,24 +2665,26 @@ contains
 !  Sum structure factors over unique SF symops
 !  ===========================================
 
-! To understand this code see Jayatilaka & Diitrich (2008)
+! To understand this code see Jayatilaka & Dittrich (2008)
 ! Acta Cryst. A 64, p383 section 2.5 comments (i) and (ii)
+! NOTE: These were checked on KHMal with HBB 01/03/18
 
-   make_phases_for_symop(u,phase,mask,refl) ::: private, PURE
-   ! For each reflection in "refl", return the sum of the "phase"
-   ! shifts from each glide vector for all symops which are equivalent
-   ! to the "u"-th unique symmetry operation, .unique_SF_symop(u), as
-   ! determined by the mask array.
+   make_phases_for_symop(u,t_phase,mask,refl) ::: private
+   ! For each reflection in "refl", return in "t_phase" the sum of the
+   ! *exponentiated* screw/glide phase shifts from each glide vector
+   ! for all symops which are equivalent to the "u"-th unique symmetry
+   ! operation, .unique_SF_symop(u), as determined by the "mask"
+   ! array.
       self :: IN
       u :: INT, IN
-      phase :: VEC{CPX}, OUT
+      t_phase :: VEC{CPX}, OUT
       mask :: VEC{INT}, IN
       refl :: VEC{REFLECTION}, IN
 
    ENSURE(.analyzed,"spacegroup not analyzed")
    ENSURE(.unique_SF_symop.associated,"no unique_SF_symop array!")
    ENSURE(u<=.n_unique_SF_symops,"symop index out of range")
-   ENSURE(phase.dim==refl.dim,"wrong length for phase array")
+   ENSURE(t_phase.dim==refl.dim,"wrong length for t_phase array")
    ENSURE(mask.dim==.n_seitz,"wrong size, mask")
 
       pi2,tx,ty,tz,dot :: REAL
@@ -2685,14 +2693,16 @@ contains
       n_refl = refl.dim
       pi2 = TWO*PI
 
-      phase = ZERO
+      t_phase = ZERO
 
       do s = 1,.n_seitz
 
          ! Perform phase sum over symops in mask(s) 
          ! which are the same as .unique_SF_symop(u)
+         ! i.e. those which have the same 3x3 rotational part
+         ! of the seitz matrix but different translation part
          if (mask(s)/=.unique_SF_symop(u)) cycle
-  
+
          tx = pi2*.seitz(1,4,s)
          ty = pi2*.seitz(2,4,s)
          tz = pi2*.seitz(3,4,s)
@@ -2705,7 +2715,8 @@ contains
 
             dot = h*tx + k*ty + l*tz
 
-            phase(n) = phase(n) + exp(IMAGIFY(dot))
+            ! Sum of exponentiated phase !
+            t_phase(n) = t_phase(n) + exp(IMAGIFY(dot))
 
          end
 
@@ -2713,10 +2724,46 @@ contains
 
    end
 
-   ! NOTE: I tried to correct the symmetry  bug on 25/07
-   ! by conjugating the phase ... I rremoved it by hand again
+   make_phases_for_symop(s,t_phase,refl) ::: private
+   ! For each reflection in "refl", return in "t_phase" the
+   ! exponential of the screw/glide phase shifts from each glide
+   ! vector for the "s"-th symmetry operation.
+      self :: IN
+      s :: INT, IN
+      t_phase :: VEC{CPX}, OUT
+      refl :: VEC{REFLECTION}, IN
 
-   sum_unique_sf(sf,unique_sf,refl) ::: PURE
+   ENSURE(.analyzed,"spacegroup not analyzed")
+   ENSURE(s<=.n_seitz,"symop index out of range")
+   ENSURE(t_phase.dim==refl.dim,"wrong length for t_phase array")
+
+      pi2,tx,ty,tz,dot :: REAL
+      n,n_refl,h,k,l :: INT
+
+      n_refl = refl.dim
+      pi2 = TWO*PI
+
+      ! Glide/screw part
+      tx = pi2*.seitz(1,4,s)
+      ty = pi2*.seitz(2,4,s)
+      tz = pi2*.seitz(3,4,s)
+  
+      do n = 1,n_refl
+
+         h = refl(n).h
+         k = refl(n).k
+         l = refl(n).l
+
+         dot = h*tx + k*ty + l*tz
+
+         ! Exponential of glide/screw part of symop "s"
+         t_phase(n) = exp(IMAGIFY(dot))
+
+      end
+
+   end
+
+   sum_unique_sf(sf,unique_sf,refl) 
    ! Form the structure factors "sf" from the sum of the list of
    ! unique-symop-generated structure factors, "unique_sf".
       self :: IN
@@ -2728,11 +2775,11 @@ contains
    ENSURE(sf.dim==refl.dim,                           "sf: wrong size")
    ENSURE(unique_sf.dim==.n_unique_SF_symops*refl.dim,"unique_sf: wrong size")
 
-      phase :: VEC{CPX}*
+      t_phase :: VEC{CPX}*
       u,uf,ul,n_refl :: INT
 
       n_refl = refl.dim
-      phase.create(n_refl)
+      t_phase.create(n_refl)
 
       sf = ZERO
 
@@ -2742,22 +2789,69 @@ contains
          ul = n_refl*u
  
          ! Add up translated symop contribution
-         .make_phases_for_symop(u,phase,.translated_symop,refl)
-         sf = sf + phase*unique_sf(uf:ul)
- 
+         .make_phases_for_symop(u,t_phase,.translated_symop,refl)
+         sf = sf + t_phase*unique_sf(uf:ul)
+
+       ! stdout.text("translation:")
+       ! stdout.text("sf including t-phase:")
+       ! stdout.put(phase * unique_sf(uf:ul))
+
          ! Add up inverted symop contribution, if any
+         ! Inversions conjugate the structure factor
          if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-         .make_phases_for_symop(u,phase,.inverted_symop,refl)
-         sf = sf + phase*conjg(unique_sf(uf:ul))
+         .make_phases_for_symop(u,t_phase,.inverted_symop,refl)
+         sf = sf + t_phase*conjg(unique_sf(uf:ul))
+
+       ! stdout.text("inversion:")
+       ! stdout.text("sf including t-phase:")
+       ! stdout.put(phase *conjg(unique_sf(uf:ul)))
 
       end
 
       PARALLEL_SUM(sf)
-      phase.destroy
+
+      t_phase.destroy
 
    end
 
-   sum_unique_sf_ints(sf_ints,unique_sf_ints,refl) ::: PURE
+   add_full_sd(sf,full_sf,refl)
+   ! *Add* the *anomalous* structure factors into "sf" from the sum of
+   ! the list of symop-generated structure factors, "full_sf".
+   ! NOTE: this does not use translational or inversion symmetyry.
+      self :: IN
+      sf :: VEC{CPX}, INOUT
+      full_sf :: VEC{CPX}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,                     "spacegroup not analyzed")
+   ENSURE(sf.dim==refl.dim,              "sf: wrong size")
+   ENSURE(full_sf.dim==.n_seitz*refl.dim,"full_sf: wrong size")
+
+      t_phase :: VEC{CPX}*
+      s,f,l,n_refl :: INT
+
+      n_refl = refl.dim
+      t_phase.create(n_refl)
+
+      parallel do s = 1,.n_seitz
+
+         f = n_refl*(s-1)+1
+         l = n_refl* s
+ 
+         ! Add up translated symop contribution
+         ! These are the same as in sum_unique_sf
+         .make_phases_for_symop(s,t_phase,refl)
+         sf = sf + t_phase * full_sf(f:l)
+
+      end
+
+      PARALLEL_SUM(sf)
+
+      t_phase.destroy
+
+   end
+
+   sum_unique_sf_ints(sf_ints,unique_sf_ints,refl)
    ! Form the structure factor integrals "sf_ints" from a sum of the list
    ! of unique-symop-generated structure factors integrals "unique_sf_ints".
       self :: IN
@@ -2765,133 +2859,136 @@ contains
       unique_sf_ints :: MAT3{CPX}, IN
       refl :: VEC{REFLECTION}, IN
 
-   ENSURE(.analyzed,                                        "spacegroup not analyzed")
-   ENSURE(sf_ints.dim1==refl.dim,                           "sf_ints: wrong size")
+   ENSURE(.analyzed,             "spacegroup not analyzed")
+   ENSURE(sf_ints.dim1==refl.dim,"sf_ints: wrong size")
    ENSURE(unique_sf_ints.dim1==.n_unique_SF_symops*refl.dim,"unique_sf_ints: wrong size")
 
-      phase :: VEC{CPX}*
+      t_phase :: VEC{CPX}*
       u,uf,n,n_refl :: INT
 
       n_refl = refl.dim
-      phase.create(n_refl)
+      t_phase.create(n_refl)
 
       sf_ints = ZERO
       parallel do u = 1,.n_unique_SF_symops
 
-       uf = n_refl*(u-1)
-
-       ! Add up translated symop contribution
-       .make_phases_for_symop(u,phase,.translated_symop,refl)
-       do n = 1,n_refl
-          sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*unique_sf_ints(uf+n,:,:)
-       end
-
-       ! Add up inverted symop contribution, if any
-       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-       .make_phases_for_symop(u,phase,.inverted_symop,refl)
-       do n = 1,n_refl
-          sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*conjg(unique_sf_ints(uf+n,:,:))
-       end
+         uf = n_refl*(u-1)
+         
+         ! Add up translated symop contribution
+         .make_phases_for_symop(u,t_phase,.translated_symop,refl)
+         do n = 1,n_refl
+            sf_ints(n,:,:) = sf_ints(n,:,:) + t_phase(n)*unique_sf_ints(uf+n,:,:)
+         end
+         
+         ! Add up inverted symop contribution, if any
+         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+         .make_phases_for_symop(u,t_phase,.inverted_symop,refl)
+         do n = 1,n_refl
+            sf_ints(n,:,:) = sf_ints(n,:,:) + t_phase(n)*conjg(unique_sf_ints(uf+n,:,:))
+         end
 
       end
 
       PARALLEL_SUM(sf_ints)
 
-      phase.destroy
+      t_phase.destroy
 
    end
 
-   sum_unique_sf_derivs(sf,unique_sf,refl) ::: PURE
-   ! Form the structure factor derivatives "sf" from a sum of the list
-   ! of unique-symop-generated structure factor derivatives "unique_sf".
+   sum_unique_sf_derivs(sf_d,unique_sf_d,refl)
+   ! Form the structure factor derivatives "sf_d" from a sum of the
+   ! list of unique-symop-generated structure factor derivatives
+   ! "unique_sf_d".
       self :: IN
-      sf :: MAT{CPX}, OUT
-      unique_sf :: MAT{CPX}, IN
+      sf_d :: MAT{CPX}, OUT
+      unique_sf_d :: MAT{CPX}, IN
       refl :: VEC{REFLECTION}, IN
 
-   ENSURE(.analyzed,                                   "spacegroup not analyzed")
-   ENSURE(sf.dim==refl.dim,                            "sf: wrong size")
-   ENSURE(unique_sf.dim2==.n_unique_SF_symops*refl.dim,"unique_sf: wrong dim2")
+   ENSURE(.analyzed,          "spacegroup not analyzed")
+   ENSURE(sf_d.dim1==refl.dim,"sf_d: wrong dim1")
+   ENSURE(unique_sf_d.dim1==.n_unique_SF_symops*refl.dim,"unique_sf_d: wrong dim1")
 
-      phase :: VEC{CPX}*
+      t_phase :: VEC{CPX}*
       u,uf,n,n_refl :: INT
 
       n_refl = refl.dim
-      phase.create(n_refl)
+      t_phase.create(n_refl)
 
-      sf = ZERO
+      sf_d = ZERO
       parallel do u = 1,.n_unique_SF_symops
 
-       uf = n_refl*(u-1)
+         uf = n_refl*(u-1)
 
-       ! Add up translated symop contribution
-       .make_phases_for_symop(u,phase,.translated_symop,refl)
-       do n = 1,n_refl
-          sf(n,:) = sf(n,:) + phase(n)*unique_sf(:,uf+n)
-       end
+         ! Add up translated symop contribution
+         .make_phases_for_symop(u,t_phase,.translated_symop,refl)
+         do n = 1,n_refl
+            sf_d(n,:) = sf_d(n,:) + t_phase(n)*unique_sf_d(uf+n,:)
+         end
 
-       ! Add up inverted symop contribution, if any
-       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-       .make_phases_for_symop(u,phase,.inverted_symop,refl)
-       do n = 1,n_refl
-          sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(:,uf+n))
-       end
+       ! stdout.text("translational part:")
+       ! stdout.show("phase        = ",phase(1))
+       ! stdout.text("derivative sf including phase:")
+       ! stdout.put(phase(1)*unique_sf(uf+1,1:9))
+         
+         ! Add up inverted symop contribution, if any
+         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+         .make_phases_for_symop(u,t_phase,.inverted_symop,refl)
+         do n = 1,n_refl
+            sf_d(n,:) = sf_d(n,:) + t_phase(n)*conjg(unique_sf_d(uf+n,:))
+         end
+
+       ! stdout.text("inversion part:")
+       ! stdout.show("phase        = ",phase(1))
+       ! stdout.text("derivative sf:")
+       ! stdout.put(phase(1)*conjg(unique_sf(uf+1,1:9)))
 
       end
 
-      PARALLEL_SUM(sf)
+      PARALLEL_SUM(sf_d)
 
-      phase.destroy
+      t_phase.destroy
 
    end
 
-   sum_unique_sf_derivs_t(sf,unique_sf,refl) ::: PURE
-   ! Form the structure factor derivatives "sf" from a sum of the list
-   ! of unique-symop-generated structure factor derivatives "unique_sf".
-   ! This version seems more efficient than the one above.
-   ! (Actually there is no difference? -DJ 28/7/17)
+   add_full_sf_derivs_d(sf_d,full_sf_d,refl)
+   ! *Add* the *anomalous* structure factor *derivatives* into "sf_d"
+   ! from a sum of symop-generated structure factor derivatives
+   ! "full_sf_d". NOTE: do not use translational or inversion symmetry.
       self :: IN
-      sf :: MAT{CPX}, OUT
-      unique_sf :: MAT{CPX}, IN
+      sf_d :: MAT{CPX}, INOUT
+      full_sf_d :: MAT{CPX}, IN
       refl :: VEC{REFLECTION}, IN
 
-   ENSURE(.analyzed,                                   "spacegroup not analyzed")
-   ENSURE(sf.dim1==refl.dim,                           "sf: wrong dim1")
-   ENSURE(unique_sf.dim1==.n_unique_SF_symops*refl.dim,"unique_sf: wrong dim1")
+   ENSURE(.analyzed,          "spacegroup not analyzed")
+   ENSURE(sf_d.dim1==refl.dim,"sf_d: wrong dim1")
+   ENSURE(full_sf_d.dim1==.n_seitz*refl.dim,"unique_sf_d: wrong dim1")
 
-      phase :: VEC{CPX}*
-      u,uf,n,n_refl :: INT
+      t_phase :: VEC{CPX}*
+      s,f,n,n_refl :: INT
 
       n_refl = refl.dim
-      phase.create(n_refl)
 
-      sf = ZERO
-      parallel do u = 1,.n_unique_SF_symops
+      t_phase.create(n_refl)
 
-       uf = n_refl*(u-1)
+      parallel do s = 1,.n_seitz
 
-       ! Add up translated symop contribution
-       .make_phases_for_symop(u,phase,.translated_symop,refl)
-       do n = 1,n_refl
-          sf(n,:) = sf(n,:) + phase(n)*unique_sf(uf+n,:)
-       end
-
-       ! Add up inverted symop contribution, if any
-       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-       .make_phases_for_symop(u,phase,.inverted_symop,refl)
-       do n = 1,n_refl
-          sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(uf+n,:))
-       end
+         f = n_refl*(s-1)
+         
+         ! Add up translated symop contribution
+         .make_phases_for_symop(s,t_phase,refl)
+         do n = 1,n_refl
+            sf_d(n,:) = sf_d(n,:) + t_phase(n)*full_sf_d(f+n,:)
+         end
 
       end
 
-      PARALLEL_SUM(sf)
+      PARALLEL_SUM(sf_d)
 
-      phase.destroy
+      t_phase.destroy
 
    end
 
-   sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc,refl) ::: PURE
+   sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc,refl)
    ! Form "X", the sum of the FT phase factor e^(i k.r) times the
    ! symmetry phases (which arise from copying the molecule
    ! around the unit cell) for a series of "k_pts" and space "pts",
@@ -3016,7 +3113,7 @@ contains
 
    end
 
-   sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc,refl) ::: PURE
+   sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc,refl)
    ! Form "X", the sum of the FT phase factor e^(i k.r) times the
    ! symmetry phases (which arise from copying the molecule
    ! around the unit cell) for a series of "k_pts" and space "pts",
