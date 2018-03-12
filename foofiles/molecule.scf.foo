@@ -30,6 +30,1109 @@ module MOLECULE.SCF
 
 contains
 
+!  ====================
+!  Hirshfeld properties
+!  ====================
+
+   make_Hirshfeld_inputs(skip_NOs) ::: leaky
+   ! Set up the quanitites for a Hirshfeld calculation:
+   ! (1) DFT grid information
+   ! (2) ANO's and ANOP interpolators grid information
+   ! (3) Assign NO's to MO's
+   ! NOTE: this procedure needs to go in .SCF because a molecular SCF
+   ! is done for each atom. We could change this by making
+   ! atom-specific SCF routines ... that would be nicer.
+      self :: INOUT
+      skip_NOs :: BIN, optional, IN
+
+   DIE_IF(NOT .atom.associated,"no atoms")
+   DIE_IF(NOT .basis_info_made,"no basis info")
+   DIE_IF(NOT .scfdata.associated,"no scfdata")
+
+      ! Set up integration grid
+      .GRID:set_up_becke_grid
+
+      ! ANO's
+      .:make_ANO_data
+
+      ! Skip NO's?
+      if (present(skip_NOs)) then
+      if (skip_NOs) return
+      end
+
+      ! Assign NO's to MO's for density evaluation
+      if (.molecular_orbitals.associated) .BASE:assign_NOs_to_MOs
+
+   end
+
+!  Needed for core-matrix-cluster-of-charges method
+
+   make_Hirshfeld_atom_info(output) ::: leaky
+   ! Make the Hirshfeld atom properties
+      output :: BIN, optional
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_Hirshfeld_inputs?")
+
+      pt,D :: MAT{REAL}*
+      wt,N0,r1,r2,r3 :: VEC{REAL}*
+      q,n_e,c1,c2,c3 :: REAL
+      dipole :: VEC{REAL}(3)
+      quadrupole :: MAT{REAL}(3,3)
+      c :: INT
+      archive :: ARCHIVE
+      genre :: STR
+      out :: BIN
+
+      out = TRUE
+      if (present(output)) out = output
+
+      ! If no density in memory get from disk
+      if (.density_matrix.disassociated) then
+
+         ! Create density
+         WARN("no density matrix, trying to read from file")
+         .density_matrix.create(.n_bf)
+
+         ! Get genre
+         if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
+         else;                       genre = "restricted"
+         end
+
+         ! Read density or make it from MO's
+         archive.set_defaults
+         archive.set(.name,"density_matrix",genre)
+         if (archive.exists) then
+            archive.read(.density_matrix)
+         else
+            .molecular_orbitals.destroy
+            .molecular_orbitals.create(.n_bf)
+            archive.set(.name,"molecular_orbitals",genre)
+            archive.read(.molecular_orbitals)
+            .BASE:make_scf_density_matrix
+         end
+
+      end
+
+      ! Make the AO density matrix
+      D.create(.n_bf,.n_bf)
+      .BASE:make_ao_density_matrix(D)
+
+      ! Total no of electrons (check)
+      n_e = ZERO
+
+      ! Loop over atoms "c"
+      do c = 1,.n_atom
+
+         if (.atom(c).atomic_number<1) cycle
+
+         ! Get Hirshfeld density N0 for atom "c"
+         .GRID:make_Hirshfeld_rho_grid(N0,pt,wt,c,D)
+
+         ! Integration points
+         r1 => pt(:,1)
+         r2 => pt(:,2)
+         r3 => pt(:,3)
+
+         ! Atom c position
+         c1 = .atom(c).position(1)
+         c2 = .atom(c).position(2)
+         c3 = .atom(c).position(3)
+
+         ! Make moments
+         q               = VEC{REAL}:sum_elements(N0)
+         n_e             = n_e + q
+
+         dipole(1)       = VEC{REAL}:sum_elements(N0*(r1-c1))
+         dipole(2)       = VEC{REAL}:sum_elements(N0*(r2-c2))
+         dipole(3)       = VEC{REAL}:sum_elements(N0*(r3-c3))
+
+         quadrupole(1,1) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r1-c1))
+         quadrupole(2,2) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r2-c2))
+         quadrupole(3,3) = VEC{REAL}:sum_elements(N0*(r3-c3)*(r3-c3))
+         quadrupole(1,2) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r2-c2))
+         quadrupole(1,3) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r3-c3))
+         quadrupole(2,3) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r3-c3))
+
+         quadrupole(2,1) = quadrupole(1,2)
+         quadrupole(3,1) = quadrupole(1,3)
+         quadrupole(3,2) = quadrupole(2,3)
+
+
+         ! charges and moments
+         q          = -q + .atom(c).atomic_number
+         dipole     = -dipole
+         quadrupole = -quadrupole
+
+         ! Assign the charges and moments
+         .atom(c).set_charge(q)
+         .atom(c).set_dipole(dipole)
+         .atom(c).set_quadrupole(quadrupole)
+
+         ! Clean up
+         wt.destroy; pt.destroy
+         N0.destroy
+
+      end ! -- integration atom c
+
+      ! Clean up
+      D.destroy
+
+      ! Check integration accuracy
+      if (out) then
+      stdout.flush
+      stdout.text("Making Hirshfeld atom info ...")
+      stdout.flush
+      stdout.show("Check: no. of electrons =",n_e)
+      end
+
+      ! Put charges to asymmetric unit
+      if (.crystal.associated) then
+         .crystal.destroy_asymmetric_unit
+         .crystal.make_fragment_data(.atom,assign_atom=TRUE,warnings=FALSE)
+      end
+
+      .Hirshfeld_atom_info_made = TRUE
+
+   end
+
+   make_uHirshfeld_atom_info(output) ::: leaky
+   ! Make the H structure factors efficiently
+      output :: BIN, optional
+
+   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_Hirshfeld_inputs?")
+   ENSURE(.density_matrix.associated,"no density matrix")
+
+      wt, xa,ya,za,a2 :: VEC{REAL}*
+      r1,r2,r3, ga,gb :: VEC{REAL}*
+      ra,dipole :: VEC{REAL}(3)
+      overlapping_atom :: VEC{INT}*
+      skipa0,skipab, skipa,skipb :: VEC{BIN}*
+      D,pt,grida,gridb,bf_save :: MAT{REAL}*
+      sha :: SHELL1
+      bf_skip :: VEC{VEC_{BIN}}*
+      bf_grid :: VEC{MAT_{REAL}}*
+      cutoff, n_e,q,c1,c2,c3, Dab, fac,val :: REAL
+      n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+      sa,fa,la,na,ba, sb,fb,lb, a,b,i,j,n :: INT
+      out :: BIN
+
+      out = TRUE
+      if (present(output)) out = output
+
+      ! Make the AO density matrix
+      D.create(.n_bf,.n_bf)
+      .BASE:make_ao_sz_density_matrix(D)
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_function_cutoff
+
+      ! Max no of becke grid points per atom
+      n_pt = .becke_grid.max_no_of_points_per_atom
+
+      ! Atom "a" displaced points and skip switches
+      xa.create(n_pt); ya.create(n_pt); za.create(n_pt)
+      a2.create(n_pt)
+      skipa0.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Total no of electrons
+      n_e = ZERO
+
+      ! Loop over integration atoms "c"
+      do c = 1,.n_atom
+
+         ! Get the Becke grid for atom "c"
+         .becke_grid.make_grid(pt,wt,bf_save,c)
+         n_pt = pt.dim1
+
+         ! Overlapping atoms
+         overlapping_atom => .overlapping_atoms_for_atom(c).element
+
+         ! Make stockholder weight function "Wc" for atom "c"
+         .GRID:apply_stockholder_atom_weight(wt,c,pt)
+
+         ! Prune the grid with new "wt", get saved bf grid bf_save,
+         ! and new no of points, n_pt -- leaky
+         .becke_grid.prune_grid(pt,wt,bf_save)
+         n_pt = pt.dim1
+
+         ! Integration points
+         r1 => pt(:,1)
+         r2 => pt(:,2)
+         r3 => pt(:,3)
+
+         ! Basis function grid and skip list
+         bf_skip.create(.n_shell)
+         bf_grid.create(.n_shell)
+
+         ! Atom c position
+         c1 = .atom(c).position(1)
+         c2 = .atom(c).position(2)
+         c3 = .atom(c).position(3)
+
+         ! Charges and dipoles
+         q  = ZERO
+         dipole = ZERO
+
+         ! Loop c-overlapping atoms "oa"
+         do ca = 1,overlapping_atom.dim
+
+            oa  = overlapping_atom(ca)
+            fsa = .first_shell_for_atom(oa)
+            lsa =  .last_shell_for_atom(oa)
+            fba = .first_basis_fn_for_atom(oa)
+            ra  = .atom(oa).position
+
+            ! Make the displaced points for atom "oa"
+            .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
+
+            ! Loop shells on atom a
+            do sa = fsa,lsa
+
+               fa = .first_basis_fn_for_shell(sa)
+               la =  .last_basis_fn_for_shell(sa)
+               na = la - fa + 1
+               ba = .basis_shell_for_shell(sa)
+
+               ! Set shell "sa"
+               sha = .precomputed_basis_shellpair(ba,1).a
+               sha.position = ra
+
+               ! Make shell "sa" skipa list
+               skipa.create(n_pt)
+               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
+
+!              if (n_keep<n_pt) then
+!              stdout.show("shell sa =",sa)
+!              stdout.show("n_keep   =",n_keep)
+!              stdout.show("n_pt     =",n_pt)
+!            ! stdout.text("skipa:")
+!            ! stdout.put(skipa)
+!              end
+
+               ! Next shell "sa" if no sig. points
+               if (n_keep==0) then
+                  skipa.destroy
+                  cycle
+               end
+
+               ! Assign the "sa" skipa list
+               bf_skip(sa).element => skipa
+
+               ! Make/copy the "sa" basis function grida
+               ! This must be copied since skipa could be TRUE
+               grida.create(n_keep,na)
+!              if (FALSE) then
+               if (oa==c) then
+                  do a = 1,na
+                     i = 0
+                     do n = 1,n_pt
+                        if (skipa(n)) cycle
+                        i = i + 1
+                        grida(i,a) = bf_save(n,a+fa-fba)
+                     end
+                  end
+               else
+                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+               end
+               bf_grid(sa).element => grida
+
+             ! stdout.text("grida:")
+             ! stdout.put(grida)
+
+               ! Loop c-overlapping atoms b
+               do cb = 1,ca
+
+                  ob  = overlapping_atom(cb)
+                  fsb = .first_shell_for_atom(ob)
+                  lsb =  .last_shell_for_atom(ob)
+
+                  ! Loop shells on atom b
+                  do sb = fsb,min(lsb,sa)
+
+                     if (bf_skip(sb).element.disassociated) cycle
+
+                     fb = .first_basis_fn_for_shell(sb)
+                     lb = .last_basis_fn_for_shell(sb)
+
+                     ! Set the "sb" basis function grid
+                     skipb => bf_skip(sb).element
+                     gridb => bf_grid(sb).element
+
+                   ! stdout.text("skipb:")
+                   ! stdout.put(skipb)
+                   ! stdout.text("gridb:")
+                   ! stdout.put(gridb)
+
+                     ! How many points in common?
+                     skipab(1:n_pt) = skipa OR skipb
+                     n_keep = count(NOT skipab(1:n_pt))
+                     if (n_keep==0) cycle
+
+                     ! Factor
+                     fac = TWO
+                     if (sa==sb) fac = ONE
+
+                     ! Make the ab bf product
+                     do a = fa,la
+                        ga => grida(:,a-fa+1)
+                        do b = fb,lb
+                           gb  => gridb(:,b-fb+1)
+                           Dab = fac*D(a,b)
+                           i = 0; j = 0
+                           do n = 1,n_pt
+                              if (NOT skipa(n)) i = i + 1
+                              if (NOT skipb(n)) j = j + 1
+                              if (skipab(n)) cycle
+                              val = ga(i)*gb(j)*wt(n)*Dab
+                              n_e = n_e + val
+                              q   = q   + val
+                              dipole(1) = dipole(1) + val * (r1(n)-c1)
+                              dipole(2) = dipole(2) + val * (r2(n)-c2)
+                              dipole(3) = dipole(3) + val * (r3(n)-c3)
+                           end
+                        end
+                     end
+
+                  end ! -- loops sa,sb
+               end
+            end       ! -- lops ca,cb
+         end
+
+         ! Assign the charges and d[poles
+         .atom(c).set_spin(q)
+         .atom(c).set_spin_dipole(dipole)
+
+         ! Clean up
+         bf_save.destroy
+         bf_grid.destroy
+         bf_skip.destroy
+         wt.destroy
+         pt.destroy
+
+      end ! -- integration atom c
+
+      ! Clean up
+      skipab.destroy
+      skipa0.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      D.destroy
+
+      ! Put back the AO density matrix
+      .BASE:make_ao_density_matrix
+
+      ! Check integration accuracy
+      if (out) then
+      stdout.flush
+      stdout.text("Making unpaired Hirshfeld atom info ...")
+      stdout.flush
+      stdout.show("Check: no. of unpaired electrons =",n_e)
+      end
+
+      .uHirshfeld_atom_info_made = TRUE
+
+   end
+
+!  ============
+!  Form factors
+!  ============
+
+   get_unique_IAM_atom_SFs(sf_n) ::: leaky
+   ! Get "sf_n", the IAM structure factors for the symmetry generated
+   ! K points with *no* thermal smearing, for every unique atom.
+      self :: INOUT
+      sf_n :: MAT{CPX}*
+
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data.associated, "no reflection data")
+   ENSURE(.crystal.xray_data.associated, "no x-ray reflection data")
+   ENSURE(.crystal.data.use_IAM_density,"not using IAM density!")
+   ENSURE(.crystal.asymmetric_unit_atom.associated,"no asymmetric unit atoms")
+   ENSURE(.crystal.unique_atom_for_frag_atom.associated,"no unique-frag_atom")
+   ENSURE(.crystal.asym_atom_for_frag_atom.associated,"no asym-frag_atom")
+
+      k_pts :: MAT{REAL}*
+      n_atom,n_k, u,f :: INT
+      rf :: REAL
+      old :: BIN
+    ! rc :: VEC{REAL}(3)
+    ! k  :: INT
+    ! k1,k2,k3,kr :: REAL
+    ! sf :: CPX
+
+      ! Asymmetric unit atoms;
+      ! Symmetry generated K points and SF's
+      n_atom = .crystal.asymmetric_unit_atom.dim
+      n_k    = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_n.create(n_k,n_atom)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      ! Make the SF's
+      sf_n = ZERO
+
+      ! Loop over integration atoms "c"
+      do u = 1,.crystal.n_unique_frag_atoms
+
+         ! Atoms
+         f = .crystal.unique_frag_atom(u)
+
+         ! Structure factors
+         old = .atom(f).use_IAM_ITC_FFs
+         .atom(f).set_use_IAM_ITC_FFs(TRUE)
+         .atom(f).make_FT(sf_n(:,u),k_pts)
+         .atom(f).set_use_IAM_ITC_FFs(old)  ! Put back
+
+         ! Repetition (site-symmetry) factor
+         rf = .crystal.repetition_factor(f)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         ! Scale
+         sf_n(:,u) = sf_n(:,u) * rf
+
+       ! ! Add on real part of dispersion - testing only
+       ! if (.crystal.data.use_real_dispersion) then
+       !    sf = .atom(c).dispersion_correction * rf
+       !    rc = .atom(c).position
+       !    do k = 1,n_k
+       !       k1 = k_pts(k,1)
+       !       k2 = k_pts(k,2)
+       !       k3 = k_pts(k,3)
+       !       kr = k1*rc(1)+k2*rc(2)+k3*rc(3)
+       !       sf_n(k,u) = sf_n(k,u) + sf*COMPLEXIFY(cos(kr),sin(kr))
+       !    end
+       ! end
+
+      end
+
+      ! Clean up
+      k_pts.destroy
+
+   end
+
+   get_unique_Hirshfeld_atom_SFs(sf_n,spin_density) ::: leaky
+   ! Get "sf_n", the static structure factors for the symmetry related
+   ! K points with *no* thermal smearing, for every unique atom.
+   ! NOTE: call .:make_Hirshfeld_inputs(skip_NOs=TRUE) beforehand!
+   ! NOTE: "sf_n" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      self :: INOUT
+      sf_n :: MAT{CPX}*
+      spin_density :: BIN, optional, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.becke_grid.associated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"becke_grid not finalized")
+   ENSURE(.density_matrix.associated, "no density matrix")
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data.associated, "no reflection data")
+   ENSURE(.crystal.xray_data.associated, "no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      rc,ra :: VEC{REAL}(3)
+      sf_u :: VEC{CPX}*
+      Wc,wt, xa,ya,za,a2 :: VEC{REAL}*
+      rho, k1,k2,k3, r1,r2,r3, ga,gb :: VEC{REAL}*
+      overlapping_atom, pi,pj,pn :: VEC{INT}*
+      skipa0,skipab,skipa,skipb :: VEC{BIN}*
+      k_pts,pt,grida,gridb,bf_save :: MAT{REAL}*
+      sha :: SHELL1
+      bf_skip :: VEC{VEC_{BIN}}*
+      bf_grid :: VEC{MAT_{REAL}}*
+      sf   :: CPX
+      cutoff,sc,s2, k1k,k2k,k3k,kr, Dab, fac, val :: REAL
+      n_atom,n_k,n_pt,n_keep :: INT
+      u,c,ca,cb :: INT
+      oa,fsa,lsa,fba :: INT
+      ob,fsb,lsb :: INT
+      sa,fa,la,na, as :: INT
+      sb,fb,lb,nb :: INT
+      a,b,i,j,k,n,p :: INT
+      spin :: BIN
+
+      ! Make sure HA stuff is there
+      .:make_Hirshfeld_inputs(skip_NOs=TRUE)
+
+      ! Asymmetric unit atoms
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_n.create(n_k,n_atom)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      k1 => k_pts(:,1)
+      k2 => k_pts(:,2)
+      k3 => k_pts(:,3)
+
+      ! X-ray or PND?
+      spin = FALSE
+      if (present(spin_density)) spin = spin_density
+
+      ! Density matrix (leaky)
+      if (NOT spin) then; .BASE:make_ao_density_matrix
+      else;               .BASE:make_ao_sz_density_matrix
+      end
+      ENSURE(.density_matrix.restricted.associated, "no restricted DM")
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_function_cutoff
+
+      ! Max no of becke grid points per atom
+      n_pt = .becke_grid.max_no_of_points_per_atom
+
+      ! Atom "a" displaced points and skip switches
+      xa.create(n_pt)
+      ya.create(n_pt)
+      za.create(n_pt)
+      a2.create(n_pt)
+      skipa0.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Make the SF's
+      sf_n = ZERO
+
+      ! Loop over integration atoms "c"
+      parallel do u = 1,.crystal.n_unique_frag_atoms
+
+         c  = .crystal.unique_frag_atom(u)
+         rc = .atom(c).position
+
+         ! Repetition factor for this atom
+         sc = .crystal.frag_atom_sym_factor(c)
+         if (sc.is_zero) cycle
+         s2 = ONE/sc
+       ! s2 = s2*s2
+
+         ! Overlapping atoms
+         overlapping_atom => .overlapping_atoms_for_atom(c).element
+
+         ! Get the Becke grid for atom "c" (leaky)
+         .becke_grid.make_grid(pt,wt,bf_save,c)
+         n_pt = pt.dim1
+
+         ! Make stockholder weight function "Wc" for atom "c"
+         ! If using interpolatators, then on overlapping atoms
+         ! are used ... otherwise nothing is skipped
+         Wc.create(n_pt)
+         if (.use_interpolators) then; .GRID:make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
+         else;                         .GRID:make_stockholder_atom_grid(Wc,c,pt)
+         end
+
+         ! Incorporate integration weight
+         wt = Wc*wt
+         Wc.destroy
+
+         ! Prune the grid with new "wt", get saved bf grid bf_save,
+         ! and new no of points, n_pt (leaky)
+         .becke_grid.prune_grid(pt,wt,bf_save)
+         n_pt = pt.dim1
+
+         ! Basis function grid and skip list
+         bf_skip.create(.n_shell)
+         bf_grid.create(.n_shell)
+
+         ! Density for atom "c"
+         rho.create(n_pt)
+         rho = ZERO
+
+         ! Loop c-overlapping atoms a
+         do ca = 1,overlapping_atom.dim
+
+            oa  = overlapping_atom(ca)
+            fsa = .first_shell_for_atom(oa)
+            lsa =  .last_shell_for_atom(oa)
+            fba = .first_basis_fn_for_atom(oa)
+            ra  = .atom(oa).position
+
+            ! Make the displaced points for atom "a"
+            .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
+
+            ! Loop shells on atom a
+            do sa = fsa,lsa
+
+               ! Shell a limits
+               fa = .first_basis_fn_for_shell(sa)
+               la =  .last_basis_fn_for_shell(sa)
+               na = la - fa + 1
+               as = .basis_shell_for_shell(sa)
+
+               ! Set shell "sa"
+               sha = .precomputed_basis_shellpair(as,1).a
+               sha.position = ra
+
+               ! Make shell "sa" skip list
+               skipa.create(n_pt)
+               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
+
+               ! Next shell "sa" if no sig. points
+               if (n_keep==0) then
+                  skipa.destroy
+                  cycle
+               end
+
+               ! Assign the "sa" skipa list
+               bf_skip(sa).element => skipa
+
+               ! Make/copy the "sa" basis function grida
+               ! This must be copied since skipa could be TRUE
+               grida.create(n_keep,na)
+               if (oa/=c) then
+                  ! Calculate grid if necessary
+                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+               else
+                  ! Extract grid values from saved grid values
+                  do a = 1,na
+                     i = 0
+                     do n = 1,n_pt
+                        if (skipa(n)) cycle
+                        i = i + 1
+                        grida(i,a) = bf_save(n,a+fa-fba)
+                     end
+                  end
+               end
+               bf_grid(sa).element => grida
+
+               ! Loop c-overlapping atoms b
+               do cb = 1,ca
+
+                  ob  = overlapping_atom(cb)
+                  fsb = .first_shell_for_atom(ob)
+                  lsb =  .last_shell_for_atom(ob)
+
+                  ! Loop shells on atom b
+                  do sb = fsb,min(lsb,sa)
+
+                     ! No significant points ... save time!
+                     if (bf_skip(sb).element.disassociated) cycle
+
+                     ! Shell b limits
+                     fb = .first_basis_fn_for_shell(sb)
+                     lb = .last_basis_fn_for_shell(sb)
+                     nb = lb - fb + 1
+
+                     ! Set the "sb" basis function grid
+                     skipb => bf_skip(sb).element
+                     gridb => bf_grid(sb).element
+
+                     ! How many points in common? Save time?
+                     skipab(1:n_pt) = skipa OR skipb
+                     n_keep = count(NOT skipab(1:n_pt))
+                     if (n_keep==0) cycle
+
+                     ! Factor
+                     fac = TWO
+                     if (sa==sb) fac = ONE
+
+                     ! Density block
+
+                     if (na*nb==1) then ! s.s product
+
+                        ! Add density contribution to rho
+                        ga => grida(:,1)
+                        gb => gridb(:,1)
+                        Dab = fac*.density_matrix.restricted(fa,fb)
+                        i = 0; j = 0
+                        do n = 1,n_pt
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
+                           if (skipab(n)) cycle
+                           val    = ga(i)*gb(j)*Dab
+                           rho(n) = rho(n) + val
+                        end
+
+                     else              ! not s.s product
+
+                        ! Create space for gathered index info
+                        pi.create(n_keep)
+                        pj.create(n_keep)
+                        pn.create(n_keep)
+
+                        ! Make mapper arrays
+                        p = 0; i = 0; j = 0
+                        do n = 1,n_pt
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
+                           if (skipab(n)) cycle
+                           p = p + 1
+                           pi(p) = i
+                           pj(p) = j
+                           pn(p) = n
+                        end
+
+                        ! Add density contribution to rho
+                        do a = 1,na
+                           ga => grida(:,a)
+                           do b = 1,nb
+                              gb  => gridb(:,b)
+                              Dab = fac*.density_matrix.restricted(fa+a-1,fb+b-1)
+                              do p = 1,n_keep
+                                 i = pi(p)
+                                 j = pj(p)
+                                 n = pn(p)
+                                 val    = ga(i)*gb(j)*Dab
+                                 rho(n) = rho(n) + val
+                              end
+                           end
+                        end
+
+                        ! Clean up
+                        pn.destroy
+                        pj.destroy
+                        pi.destroy
+
+                     end
+
+                  end
+               end
+            end
+         end
+
+         ! Grid points
+         r1 => pt(:,1)
+         r2 => pt(:,2)
+         r3 => pt(:,3)
+
+         ! Weight the atom "c" density
+         rho = rho*wt
+
+         ! Make the (unique) matrix elements
+         sf_u => sf_n(:,u)
+         do k = 1,n_k
+            k1k = k1(k)
+            k2k = k2(k)
+            k3k = k3(k)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
+               sf = sf + rho(i)*COMPLEXIFY(cos(kr),sin(kr))
+            end
+            sf_u(k) = sf * s2
+         end
+
+         ! Clean up atom "c" stuff
+         rho.destroy
+         bf_grid.destroy
+         bf_skip.destroy
+         bf_save.destroy
+         wt.destroy
+         pt.destroy
+
+      end ! -- loop over atom "c"
+
+      ! Clean up
+      skipab.destroy
+      skipa0.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      k_pts.destroy
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_n)
+      end
+
+   end
+
+!  =================
+!  Structure factors
+!  =================
+
+!  X-ray
+
+   make_X_structure_factors
+   ! Make the X-ray structure factors for this molecule.
+      self :: INOUT
+
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.xray_data.associated, "no x-ray reflection data")
+   ENSURE(.density_matrix.associated, "no density matrix")
+
+      ! Assign data
+      .crystal.assign_xray
+
+      ! Make the SF's
+      if (.crystal.thermal_smearing_model=="hirshfeld") then
+         .:make_X_structure_factors_h
+      else
+         .:make_X_structure_factors_p
+      end
+
+   end
+
+   make_X_free_structure_factors
+   ! Make the *free* X-ray structure factors for this molecule.
+      self :: INOUT
+
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.xray_r_free_data.associated, "no x-ray R-free reflection data")
+   ENSURE(.density_matrix.associated, "no density matrix")
+
+      ! Assign data
+      .crystal.assign_xray_r_free
+
+      ! Make the SF's
+      if (.crystal.thermal_smearing_model=="hirshfeld") then
+         .:make_X_structure_factors_h
+      else
+         .:make_X_structure_factors_p
+      end
+
+   end
+
+   make_X_structure_factors_h ::: private
+   ! Make the structure factors for this molecule.
+   ! WARNING: this does not seem to include the temperature factor
+      self :: INOUT
+
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data.associated, "no reflection data")
+   ENSURE(.density_matrix.associated, "no density matrix")
+   ENSURE(.scfdata.associated, "no scfdata")
+
+      sf_n :: MAT{CPX}*
+
+      ! Get atomic form factors
+      .:get_unique_Hirshfeld_atom_SFs(sf_n)
+
+      ! Make F_pred & chi2
+      .crystal.make_F_predicted_from(sf_n)
+
+      sf_n.destroy
+
+   end
+
+   make_X_structure_factors_p ::: private
+   ! Make basis-fn pair structure factors for this molecule.
+   ! WARNING: this does not seem to include the temperature factor
+      self :: INOUT
+
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data.associated, "no reflection data")
+   ENSURE(.density_matrix.associated, "no density matrix")
+   ENSURE(.scfdata.associated, "no scfdata")
+
+      sf_eq,Fc :: VEC{CPX}@
+      k_pts :: MAT{REAL}@
+      n_k :: INT
+      genre :: STR
+
+      ! Allocate complex structure factors
+      Fc.create(.crystal.n_refl)
+
+      ! Make k points
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      ! Make density matrix
+      .BASE:make_ao_density_matrix
+
+      ! Symmetry-generated SF'd
+      sf_eq.create(k_pts.dim1)
+
+      ! Make symmetry-generated SF's
+      genre = .scfdata.spinorbital_kind
+
+      if (genre.includes("complex")) then
+
+         if (.scfdata.spinorbital_kind=="general_complex") then
+            .XTAL:make_ft_gc(sf_eq,.density_matrix.general_complex,k_pts)
+         else
+            .XTAL:make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
+         end if
+
+      else
+
+         .XTAL:make_ft(sf_eq,.density_matrix.restricted,k_pts)
+
+         if (.scfdata.associated) then
+         if (.scfdata.spinorbital_kind=="unrestricted") then
+            .density_matrix.destroy("restricted")
+         end
+         end
+
+      end
+
+      ! Make the predicted SF's
+      .crystal.make_F_predicted_from(sf_eq)
+
+   end
+
+!   make_X_structure_factors_h(D)
+!   ! Make the structure factors from a rhf density matrix "D".
+!   ! WARNING: this does not seem to include the temperature factor
+!      D :: MAT{REAL}, IN
+!
+!   ENSURE(.crystal.associated, "no crystal")
+!   ENSURE(.crystal.xray_data.associated, "no x-ray reflection data")
+!
+!      sf_eq,Fc :: VEC{CPX}*
+!      k_pts :: MAT{REAL}*
+!      n_k :: INT
+!
+!      ! Allocate complex structure factors
+!      Fc.create(.crystal.n_refl)
+!
+!      ! Make unique k points
+!      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+!      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+!
+!      ! Make the unique structure factors
+!      sf_eq.create(k_pts.dim1)
+!      .:make_ft(sf_eq,D,k_pts)
+!
+!      ! Clean
+!      k_pts.destroy
+!
+!      ! Sum up unique SF's to get Fc
+!      .crystal.spacegroup.sum_unique_sf(Fc,sf_eq,.crystal.data.reflections)
+!      sf_eq.destroy
+!
+!      ! Dispersion correction into Fc
+!      if (.crystal.correct_dispersion) .crystal.add_dispersion_correction(Fc)
+!
+!      ! Set the calculated SF's
+!      .crystal.data.reflections.set_F_calc(Fc)
+!
+!      ! Clean
+!      Fc.destroy
+!
+!      ! Make predicted structure factors
+!      .crystal.data.make_F_predicted
+!
+!      ! Debugging
+!      if (.BASE:debugging("make_x_structure_factors_h")) then
+!         stdout.text("X-ray structure factor data")
+!         .crystal.data.reflections.put_structure_factor_data
+!      end
+!
+!   end
+
+!  PND
+
+   make_N_structure_factors
+   ! Make the PND structure factors for this molecule.
+      self :: INOUT
+
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data_exists, "no reflection data")
+   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
+   DIE_IF(NOT .crystal.spacegroup.centrosymmetric,"crystal must be centrosymmetric")
+
+      ! Assign PND data
+      .crystal.assign_pnd
+
+      ! Make the SF's
+      if (.crystal.thermal_smearing_model=="hirshfeld") then
+         .:make_N_structure_factors_h
+      else
+         .:make_N_structure_factors_p
+      end
+
+   end
+
+   make_N_free_structure_factors
+   ! Make the free PND structure factors for this molecule.
+      self :: INOUT
+
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data_exists, "no reflection data")
+   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
+
+      ! Assign free SF's
+      .crystal.assign_pnd_r_free
+
+      if (.crystal.thermal_smearing_model=="hirshfeld") then
+         .:make_N_structure_factors_h
+      else
+         .:make_N_structure_factors_p
+      end
+
+   end
+
+   make_N_structure_factors_h ::: private
+   ! Make the structure factors for this molecule.
+   ! WARNING: this does not seem to include the temperature factor
+      self :: INOUT
+
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data.associated, "no reflection data")
+   ENSURE(.density_matrix.associated, "no density matrix")
+   ENSURE(.scfdata.associated, "no scfdata")
+
+      sf_n :: MAT{CPX}*
+
+      ! Get atomic spin form factors
+      .:get_unique_Hirshfeld_atom_SFs(sf_n,spin_density=TRUE)
+
+      ! Make F_pred & chi2
+      .crystal.make_F_predicted_from(sf_n)
+
+      sf_n.destroy
+
+   end
+
+   make_N_structure_factors_p ::: private
+   ! Make the S_z structure factors for this molecule.
+
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data_exists, "no reflection data")
+   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
+
+      sf_eq,Fc :: VEC{CPX}@
+      k_pts :: MAT{REAL}@
+      genre :: STR
+      complx :: BIN
+
+      ! Allocate complex structure factors
+      Fc.create(.crystal.n_refl)
+
+      ! Make unique k points
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      ! Make S_z density matrix
+      .BASE:make_ao_sz_density_matrix
+
+      ! Make the symmetry-generated SF's
+      sf_eq.create(k_pts.dim1)
+      genre = .density_matrix.spinorbital_kind
+      complx = genre.includes("complex")
+      if (complx) then; .XTAL:make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
+      else;             .XTAL:make_ft(sf_eq,.density_matrix.restricted,k_pts)
+      end
+
+      ! Destroy the S_z density matrix
+      if (complx) then; .density_matrix.destroy("restricted_complex")
+      else;             .density_matrix.destroy("restricted")
+      end
+
+      ! Make the predicted SF's
+      .crystal.make_F_predicted_from(sf_eq)
+
+   end
+
 !  ===========
 !  Core matrix
 !  ===========
@@ -997,414 +2100,6 @@ contains
    end
 
 !  ====================
-!  Hirshfeld properties
-!  ====================
-
-   make_Hirshfeld_inputs(skip_NOs) ::: leaky
-   ! Set up the quanitites for a Hirshfeld calculation:
-   ! (1) DFT grid information
-   ! (2) ANO's and ANOP interpolators grid information
-   ! (3) Assign NO's to MO's
-   ! NOTE: this procedure needs to go in .SCF because a molecular SCF
-   ! is done for each atom. We could change this by making
-   ! atom-specific SCF routines ... that would be nicer.
-      self :: INOUT
-      skip_NOs :: BIN, optional, IN
-
-   DIE_IF(NOT .atom.associated,"no atoms")
-   DIE_IF(NOT .basis_info_made,"no basis info")
-   DIE_IF(NOT .scfdata.associated,"no scfdata")
-
-      ! Set up integration grid
-      .GRID:set_up_becke_grid
-
-      ! ANO's
-      .:make_ANO_data
-
-      ! Skip NO's?
-      if (present(skip_NOs)) then
-      if (skip_NOs) return
-      end
-
-      ! Assign NO's to MO's for density evaluation
-      if (.molecular_orbitals.associated) .BASE:assign_NOs_to_MOs
-
-   end
-
-!  Needed for core-matrix-cluster-of-charges method
-
-   make_Hirshfeld_atom_info(output) ::: leaky
-   ! Make the Hirshfeld atom properties
-      output :: BIN, optional
-
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.associated,  "no atom list")
-   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_Hirshfeld_inputs?")
-
-      pt,D :: MAT{REAL}*
-      wt,N0,r1,r2,r3 :: VEC{REAL}*
-      q,n_e,c1,c2,c3 :: REAL
-      dipole :: VEC{REAL}(3)
-      quadrupole :: MAT{REAL}(3,3)
-      c :: INT
-      archive :: ARCHIVE
-      genre :: STR
-      out :: BIN
-
-      out = TRUE
-      if (present(output)) out = output
-
-      ! If no density in memory get from disk
-      if (.density_matrix.disassociated) then
-
-         ! Create density
-         WARN("no density matrix, trying to read from file")
-         .density_matrix.create(.n_bf)
-
-         ! Get genre
-         if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-         else;                       genre = "restricted"
-         end
-
-         ! Read density or make it from MO's
-         archive.set_defaults
-         archive.set(.name,"density_matrix",genre)
-         if (archive.exists) then
-            archive.read(.density_matrix)
-         else
-            .molecular_orbitals.destroy
-            .molecular_orbitals.create(.n_bf)
-            archive.set(.name,"molecular_orbitals",genre)
-            archive.read(.molecular_orbitals)
-            .BASE:make_scf_density_matrix
-         end
-
-      end
-
-      ! Make the AO density matrix
-      D.create(.n_bf,.n_bf)
-      .BASE:make_ao_density_matrix(D)
-
-      ! Total no of electrons (check)
-      n_e = ZERO
-
-      ! Loop over atoms "c"
-      do c = 1,.n_atom
-
-         if (.atom(c).atomic_number<1) cycle
-
-         ! Get Hirshfeld density N0 for atom "c"
-         .GRID:make_Hirshfeld_rho_grid(N0,pt,wt,c,D)
-
-         ! Integration points
-         r1 => pt(:,1)
-         r2 => pt(:,2)
-         r3 => pt(:,3)
-
-         ! Atom c position
-         c1 = .atom(c).position(1)
-         c2 = .atom(c).position(2)
-         c3 = .atom(c).position(3)
-
-         ! Make moments
-         q               = VEC{REAL}:sum_elements(N0)
-         n_e             = n_e + q
-
-         dipole(1)       = VEC{REAL}:sum_elements(N0*(r1-c1))
-         dipole(2)       = VEC{REAL}:sum_elements(N0*(r2-c2))
-         dipole(3)       = VEC{REAL}:sum_elements(N0*(r3-c3))
-
-         quadrupole(1,1) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r1-c1))
-         quadrupole(2,2) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r2-c2))
-         quadrupole(3,3) = VEC{REAL}:sum_elements(N0*(r3-c3)*(r3-c3))
-         quadrupole(1,2) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r2-c2))
-         quadrupole(1,3) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r3-c3))
-         quadrupole(2,3) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r3-c3))
-
-         quadrupole(2,1) = quadrupole(1,2)
-         quadrupole(3,1) = quadrupole(1,3)
-         quadrupole(3,2) = quadrupole(2,3)
-
-
-         ! charges and moments
-         q          = -q + .atom(c).atomic_number
-         dipole     = -dipole
-         quadrupole = -quadrupole
-
-         ! Assign the charges and moments
-         .atom(c).set_charge(q)
-         .atom(c).set_dipole(dipole)
-         .atom(c).set_quadrupole(quadrupole)
-
-         ! Clean up
-         wt.destroy; pt.destroy
-         N0.destroy
-
-      end ! -- integration atom c
-
-      ! Clean up
-      D.destroy
-
-      ! Check integration accuracy
-      if (out) then
-      stdout.flush
-      stdout.text("Making Hirshfeld atom info ...")
-      stdout.flush
-      stdout.show("Check: no. of electrons =",n_e)
-      end
-
-      ! Put charges to asymmetric unit
-      if (.crystal.associated) then
-         .crystal.destroy_asymmetric_unit
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE,warnings=FALSE)
-      end
-
-      .Hirshfeld_atom_info_made = TRUE
-
-   end
-
-   make_uHirshfeld_atom_info(output) ::: leaky
-   ! Make the H structure factors efficiently
-      output :: BIN, optional
-
-   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_Hirshfeld_inputs?")
-   ENSURE(.density_matrix.associated,"no density matrix")
-
-      wt, xa,ya,za,a2 :: VEC{REAL}*
-      r1,r2,r3, ga,gb :: VEC{REAL}*
-      ra,dipole :: VEC{REAL}(3)
-      overlapping_atom :: VEC{INT}*
-      skipa0,skipab, skipa,skipb :: VEC{BIN}*
-      D,pt,grida,gridb,bf_save :: MAT{REAL}*
-      sha :: SHELL1
-      bf_skip :: VEC{VEC_{BIN}}*
-      bf_grid :: VEC{MAT_{REAL}}*
-      cutoff, n_e,q,c1,c2,c3, Dab, fac,val :: REAL
-      n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
-      sa,fa,la,na,ba, sb,fb,lb, a,b,i,j,n :: INT
-      out :: BIN
-
-      out = TRUE
-      if (present(output)) out = output
-
-      ! Make the AO density matrix
-      D.create(.n_bf,.n_bf)
-      .BASE:make_ao_sz_density_matrix(D)
-
-      ! Basis function cutoff
-      cutoff = .becke_grid.basis_function_cutoff
-
-      ! Max no of becke grid points per atom
-      n_pt = .becke_grid.max_no_of_points_per_atom
-
-      ! Atom "a" displaced points and skip switches
-      xa.create(n_pt); ya.create(n_pt); za.create(n_pt)
-      a2.create(n_pt)
-      skipa0.create(n_pt)
-      skipab.create(n_pt)
-
-      ! Total no of electrons
-      n_e = ZERO
-
-      ! Loop over integration atoms "c"
-      do c = 1,.n_atom
-
-         ! Get the Becke grid for atom "c"
-         .becke_grid.make_grid(pt,wt,bf_save,c)
-         n_pt = pt.dim1
-
-         ! Overlapping atoms
-         overlapping_atom => .overlapping_atoms_for_atom(c).element
-
-         ! Make stockholder weight function "Wc" for atom "c"
-         .GRID:apply_stockholder_atom_weight(wt,c,pt)
-
-         ! Prune the grid with new "wt", get saved bf grid bf_save,
-         ! and new no of points, n_pt -- leaky
-         .becke_grid.prune_grid(pt,wt,bf_save)
-         n_pt = pt.dim1
-
-         ! Integration points
-         r1 => pt(:,1)
-         r2 => pt(:,2)
-         r3 => pt(:,3)
-
-         ! Basis function grid and skip list
-         bf_skip.create(.n_shell)
-         bf_grid.create(.n_shell)
-
-         ! Atom c position
-         c1 = .atom(c).position(1)
-         c2 = .atom(c).position(2)
-         c3 = .atom(c).position(3)
-
-         ! Charges and dipoles
-         q  = ZERO
-         dipole = ZERO
-
-         ! Loop c-overlapping atoms "oa"
-         do ca = 1,overlapping_atom.dim
-
-            oa  = overlapping_atom(ca)
-            fsa = .first_shell_for_atom(oa)
-            lsa =  .last_shell_for_atom(oa)
-            fba = .first_basis_fn_for_atom(oa)
-            ra  = .atom(oa).position
-
-            ! Make the displaced points for atom "oa"
-            .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
-
-            ! Loop shells on atom a
-            do sa = fsa,lsa
-
-               fa = .first_basis_fn_for_shell(sa)
-               la =  .last_basis_fn_for_shell(sa)
-               na = la - fa + 1
-               ba = .basis_shell_for_shell(sa)
-
-               ! Set shell "sa"
-               sha = .precomputed_basis_shellpair(ba,1).a
-               sha.position = ra
-
-               ! Make shell "sa" skipa list
-               skipa.create(n_pt)
-               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
-
-!              if (n_keep<n_pt) then
-!              stdout.show("shell sa =",sa)
-!              stdout.show("n_keep   =",n_keep)
-!              stdout.show("n_pt     =",n_pt)
-!            ! stdout.text("skipa:")
-!            ! stdout.put(skipa)
-!              end
-
-               ! Next shell "sa" if no sig. points
-               if (n_keep==0) then
-                  skipa.destroy
-                  cycle
-               end
-
-               ! Assign the "sa" skipa list
-               bf_skip(sa).element => skipa
-
-               ! Make/copy the "sa" basis function grida
-               ! This must be copied since skipa could be TRUE
-               grida.create(n_keep,na)
-!              if (FALSE) then
-               if (oa==c) then
-                  do a = 1,na
-                     i = 0
-                     do n = 1,n_pt
-                        if (skipa(n)) cycle
-                        i = i + 1
-                        grida(i,a) = bf_save(n,a+fa-fba)
-                     end
-                  end
-               else
-                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
-               end
-               bf_grid(sa).element => grida
-
-             ! stdout.text("grida:")
-             ! stdout.put(grida)
-
-               ! Loop c-overlapping atoms b
-               do cb = 1,ca
-
-                  ob  = overlapping_atom(cb)
-                  fsb = .first_shell_for_atom(ob)
-                  lsb =  .last_shell_for_atom(ob)
-
-                  ! Loop shells on atom b
-                  do sb = fsb,min(lsb,sa)
-
-                     if (bf_skip(sb).element.disassociated) cycle
-
-                     fb = .first_basis_fn_for_shell(sb)
-                     lb = .last_basis_fn_for_shell(sb)
-
-                     ! Set the "sb" basis function grid
-                     skipb => bf_skip(sb).element
-                     gridb => bf_grid(sb).element
-
-                   ! stdout.text("skipb:")
-                   ! stdout.put(skipb)
-                   ! stdout.text("gridb:")
-                   ! stdout.put(gridb)
-
-                     ! How many points in common?
-                     skipab(1:n_pt) = skipa OR skipb
-                     n_keep = count(NOT skipab(1:n_pt))
-                     if (n_keep==0) cycle
-
-                     ! Factor
-                     fac = TWO
-                     if (sa==sb) fac = ONE
-
-                     ! Make the ab bf product
-                     do a = fa,la
-                        ga => grida(:,a-fa+1)
-                        do b = fb,lb
-                           gb  => gridb(:,b-fb+1)
-                           Dab = fac*D(a,b)
-                           i = 0; j = 0
-                           do n = 1,n_pt
-                              if (NOT skipa(n)) i = i + 1
-                              if (NOT skipb(n)) j = j + 1
-                              if (skipab(n)) cycle
-                              val = ga(i)*gb(j)*wt(n)*Dab
-                              n_e = n_e + val
-                              q   = q   + val
-                              dipole(1) = dipole(1) + val * (r1(n)-c1)
-                              dipole(2) = dipole(2) + val * (r2(n)-c2)
-                              dipole(3) = dipole(3) + val * (r3(n)-c3)
-                           end
-                        end
-                     end
-
-                  end ! -- loops sa,sb
-               end
-            end       ! -- lops ca,cb
-         end
-
-         ! Assign the charges and d[poles
-         .atom(c).set_spin(q)
-         .atom(c).set_spin_dipole(dipole)
-
-         ! Clean up
-         bf_save.destroy
-         bf_grid.destroy
-         bf_skip.destroy
-         wt.destroy
-         pt.destroy
-
-      end ! -- integration atom c
-
-      ! Clean up
-      skipab.destroy
-      skipa0.destroy
-      a2.destroy
-      za.destroy
-      ya.destroy
-      xa.destroy
-      D.destroy
-
-      ! Put back the AO density matrix
-      .BASE:make_ao_density_matrix
-
-      ! Check integration accuracy
-      if (out) then
-      stdout.flush
-      stdout.text("Making unpaired Hirshfeld atom info ...")
-      stdout.flush
-      stdout.show("Check: no. of unpaired electrons =",n_e)
-      end
-
-      .uHirshfeld_atom_info_made = TRUE
-
-   end
-
-!  ====================
 !  Fock matrix routines
 !  ====================
 
@@ -2019,20 +2714,20 @@ contains
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf");
          if (.crystal.thermal_smearing_model=="hirshfeld") &
             .:make_Hirshfeld_inputs(skip_NOs=TRUE)
-         .XTAL:make_X_structure_factors
-         if (.crystal.xray_r_free_data.associated) .XTAL:make_X_free_structure_factors
+         .:make_X_structure_factors
+         if (.crystal.xray_r_free_data.associated) .:make_X_free_structure_factors
 
       case ("pnd_uhf","pnd_uks");
-         .XTAL:make_n_structure_factors
-         if (.crystal.pnd_r_free_data.associated)  .XTAL:make_N_free_structure_factors
+         .:make_N_structure_factors
+         if (.crystal.pnd_r_free_data.associated)  .:make_N_free_structure_factors
 
       case ("xray_pnd_uhf","xray_pnd_uks");
          if (.crystal.thermal_smearing_model=="hirshfeld") &
             .:make_Hirshfeld_inputs(skip_NOs=TRUE)
-         .XTAL:make_X_structure_factors
-         .XTAL:make_N_structure_factors
-         if (.crystal.xray_r_free_data.associated) .XTAL:make_X_free_structure_factors
-         if (.crystal.pnd_r_free_data.associated)  .XTAL:make_N_free_structure_factors
+         .:make_X_structure_factors
+         .:make_N_structure_factors
+         if (.crystal.xray_r_free_data.associated) .:make_X_free_structure_factors
+         if (.crystal.pnd_r_free_data.associated)  .:make_N_free_structure_factors
 
       case default
          DIE("unknown wavefunction fitting kind, "//scf_kind.trim)
