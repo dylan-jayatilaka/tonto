@@ -31,6 +31,7 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     set(HOST_FLAG ${GNUGENERIC})
     set(DEBUG_FLAGS "-Og -Wall -g -fbacktrace -fcheck=bounds -DUSE_PRECONDITIONS -DDEBUG")
     set(RELEASE_FLAGS "-O -fbacktrace -DUSE_ERROR_MANAGEMENT")
+    set(FAST_FLAGS "-Ofast -faggressive-loop-optimizations -fno-strict-aliasing -funroll-loops -march=native")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "NAG")
     set(COMPILER "NAG_nagfor")
     set(HOST_FLAG "-dusty -kind=byte -maxcontin=1023")
@@ -67,6 +68,11 @@ ELSEIF(BT STREQUAL "TESTING")
       "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
       FORCE)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${DEBUG_FLAGS}")
+ELSEIF(BT STREQUAL "FAST")
+    SET (CMAKE_BUILD_TYPE TESTING CACHE STRING
+        "Choose the type of build, options are DEBUG, RELEASE, FAST, or TESTING."
+      FORCE)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${FAST_FLAGS}")
 ELSEIF(NOT BT)
     SET(CMAKE_BUILD_TYPE RELEASE CACHE STRING
       "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
