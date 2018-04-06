@@ -1504,8 +1504,10 @@ contains
       case ("group")
          .:group_scf
 
-     case ("ghf","no_ghf")
-        .:NO_ghf
+     case ("no_ghf")
+        DIE_IF(NOT .scfdata.use_NOMO,"must be NOMO calculation")
+        DIE_IF(NOT .scfdata.use_ELMO,"must be ELMO calculation")
+        .:ELMO
 
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
@@ -1890,387 +1892,192 @@ contains
 
    end
 
-!  ==========================
-!  Non-orthogonal general HF
-!  ==========================
+!  ====
+!  ELMO
+!  ====
 
-   NO_ghf ::: leaky
+   ELMO ::: leaky
    ! Do non-orthogonal SCF calculation. Bespoke.
-      self :: target
-
+      self :: INOUT
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,   "no atom list")
    ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.scfdata.scf_kind=="no_ghf","not a no_ghf calculation")
+   ENSURE(.scfdata.use_NOMO,"must be a NOMO calculation")
+   ENSURE(.scfdata.use_ELMO,"must be a ELMO calculation")
+
+      ! Connections
+      .BASE:make_elmo_connection_table
+
+      ! Gradient
+      .nomo_gradient.destroy
+      .nomo_gradient.create(2*.n_bf,.n_e)
+      .nomo_gradient = ZERO
       
-      ! Uncomment below, and within routine for characterisation of key properties
-      datafile :: DATAFILE
-      MOv, pv,gv,sh :: VEC{REAL}*
-      gm,ge,MO,MOa,MOb,F,P :: MAT{REAL}*
-      E :: REAL
-      i :: INT
+      ! Overlap matrix
+      .INTS:make_overlap_matrix
 
-      if(.scfdata.use_NOMO) then
+      ! Get initial MO's
+      .:make_promolecule_density ! Fix for general ANOs
+      .:make_fock_matrix         ! should be OK, ELMO is used to make F
+      .:make_fock_guess          ! should be OK, atom-atom blocks are zeroed
+      !!!!!!!!! FIX !!!!!!!!!!!
 
-         .nomo_gradient.create(2*.n_bf,.n_e)
-         .nomo_gradient = ZERO
+      ! Core matrix: both kinds
+      .core_matrix.destroy
+      .:make_core_matrix(.scfdata.spinorbital_kind)
+      .:make_core_matrix(.scfdata.molecular_orbital_kind)
 
-         if(.scfdata.use_ELMO) .BASE:make_elmo_connection_table
-      
-         ! Overlap matrix
-         .INTS:make_overlap_matrix
+      ! Make fock
+      .:make_fock_matrix
 
-         ! Get initial guess
-         .:get_initial_guess
+      ! Reset all SCF data (except DFT parts)
+      .scfdata.reset
+      .scfdata.set_crystal(.crystal)
+      .:update_scfdata_energies
 
-         ! Core matrix: both kinds
-         .core_matrix.destroy
-         .:make_core_matrix(.scfdata.spinorbital_kind)
-         .:make_core_matrix(.scfdata.molecular_orbital_kind)
+      ! Add constraint to F?
+      if (.scfdata.using_diis) .:update_scfdata_error
 
-         if( .scfdata.use_ELMO) then
-         !.scfdata.set_use_ELMO(FALSE)
-         
-         ! Get Fock matrix
-         .:make_fock_matrix
+      ! Initialise Schwarz inequality integrals (leaky)
+      .FOCK:initialize_max_I
 
-         !.scfdata.set_use_ELMO(TRUE)
-         else
-         
-         ! Get Fock matrix
-         .:make_fock_matrix
-      
-         end
+      ! Initialise SCF table (leaky)
+      .scfdata.set_table
+      .:put_scf_banner_and_options
+      .:put_scf_table_header
 
-         ! Reset all SCF data (except DFT parts)
-         .scfdata.reset
-         .scfdata.set_crystal(.crystal)
-         if (.scfdata.fitting) .scfdata.set_penalty
-         .:update_scfdata_energies
-
-         ! Add constraint to F?
-         if (.scfdata.fitting) .:add_constraint_to_fock_matrix
-
-         if (.scfdata.using_diis) .:update_scfdata_error
-
-         ! Initialise Schwarz inequality integrals (leaky)
-         .FOCK:initialize_max_I
-
-         ! Initialise SCF table (leaky)
-         .scfdata.set_table
-         .:put_scf_banner_and_options
-         .:put_scf_table_header
-   
-         if (.scfdata.using_diis) then
-         
-            do
-      
-   
-               .:update_molecular_orbitals
-               
-               ! This is actually updating the MO's
-               .:extrapolate_fock_matrix
-      
-               .:update_scfdata
-               .:update_scfdata_error
-      
-               .:put_scf_table_body
-               
-               ! Uncomment below for characterisation of key properties
-               !datafile.open("fock_matrix.sbf")
-               !call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
-               !call datafile%sbf%add_dataset(sbf_Dataset("Gradient", .nomo_gradient))
-               !call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general(:,1:.n_e)))
-               !call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
-               !call datafile%sbf%add_dataset(sbf_Dataset("Density", .density_matrix.general))
-               !call datafile%sbf%serialize
-               !datafile.close
-      
-               if (.scfdata.scf_done) exit
-      
-            end
-
-         else
-
-            do
-      
-      
-               F  => .fock_matrix.general
-               P  => .density_matrix.general
-               MO => .molecular_orbitals.general(:,1:.n_e)
-               MO(:,.n_e+1:) = ZERO
-               ! Convert to vector
-               MOv.create(size(MO))
-               MOv = reshape(MO,[size(MO)])
-
-               ! BFGS
-               nomo_self => self
-               .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_g,MOv)
-
-     !          if (.scfdata.iteration==3) then
-     !             gm.create(2*.n_bf,.n_e)
-     !             gm=ZERO
-     !             .:make_ELMO_gradient_g(MO,E,gm)
-     !             ge.create(2*.n_bf,.n_e)
-     !             ge = gm
-     !             stdout.text("Equation Gradient: ")
-     !             stdout.put(ge)
-     !             
-     !             gm = ZERO
-     !             .:make_ELMO_gradient_g_fd(MO,E,gm)
-     !             stdout.text("FD Gradient: ")
-     !             stdout.put(gm)
-
-     !             stdout.show("Difference is: ", norm2(gm-ge))
-     !             stop
-     !          end
-
-     !          ! Back to matrix
-               MO = reshape(MOv,[2*.n_bf,.n_e])
-
-              do i=1,.n_e
-                 MO(:,i) = MO(:,i)/(MO(:,i).norm)
-              end do
-
-               .:update_scfdata
-               .:update_scfdata_error
-      
-               .:put_scf_table_body
-               
-               ! Uncomment below for characterisation of key properties
-               datafile.open("fock_matrix.sbf")
-               call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
-               call datafile%sbf%add_dataset(sbf_Dataset("Gradient", .nomo_gradient))
-               call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general(:,1:.n_e)))
-               call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
-               call datafile%sbf%add_dataset(sbf_Dataset("Density", .density_matrix.general))
-               call datafile%sbf%serialize
-               datafile.close
-      
-               if (.scfdata.scf_done) exit
-      
-            end
-
-         end if 
-         
-         if(.scfdata.use_ELMO) then
+      ! Solve for ELMOs
+      .:do_ELMO
+      !!!!!!!!!!!!!!!!!
             
-            
-            ! Print out the correct "full energy"
-            .scfdata.set_use_ELMO(FALSE)
-            .scfdata.set_ELMO_B(1000)
-            .scfdata.set_ELMO_P(1000)
-            
-            ! Create the full core matrix
-            .kinetic_energy_matrix.destroy
-            .nuclear_attraction_matrix.destroy
-            .core_matrix.destroy
-            .:make_core_matrix(.scfdata.spinorbital_kind)
-            .:make_core_matrix(.scfdata.molecular_orbital_kind)
-            
-            ! Remake the "full" density matrix
-            .BASE:make_scf_density_matrix
-   
-            ! Remake the "full" Fock matrix
-            .:make_fock_matrix
-   
-            .:update_scfdata
-            .:update_scfdata_error
-   
-         end if
-   
-         .:put_scf_results
-
-         .:archive_scf_results
-   
-         .:cleanup_scf
-      else
+      ! Print out the correct "full energy"
+      .scfdata.set_use_ELMO(FALSE)
+      .scfdata.set_ELMO_B(1000)
+      .scfdata.set_ELMO_P(1000)
       
-         .:initialize_scf
-         .:put_scf_banner_and_options
-         .:put_scf_table_header
+      ! Create the full core matrix
+      .kinetic_energy_matrix.destroy
+      .nuclear_attraction_matrix.destroy
+      .core_matrix.destroy
+      .:make_core_matrix(.scfdata.spinorbital_kind)
+      .:make_core_matrix(.scfdata.molecular_orbital_kind)
+      
+      ! Remake the "full" density matrix
+      .BASE:make_scf_density_matrix
    
-         ! SCF iterations
-         do
+      ! Remake the "full" Fock matrix
+      .:make_fock_matrix
    
-            .:extrapolate_fock_matrix
+      .:update_scfdata
+      .:update_scfdata_error
    
-            .:update_molecular_orbitals
    
-            .BASE:make_scf_density_matrix
-   
-            .:make_fock_matrix
-   
-            .:update_scfdata
-            .:update_scfdata_error
-   
-            .:put_scf_table_body
-   
-            if (.scfdata.scf_done) exit
-   
-         end
-   
-         .:put_scf_results
-   
-         .:archive_scf_results
-   
-         .:cleanup_scf
+      .:put_scf_results
 
-      end if
-
+      .:archive_scf_results
+   
+      .:cleanup_scf
 
    end
 
-!   NO_ghf ::: leaky
-!   ! Do non-orthogonal SCF calculation. Bespoke.
-!
-!
-!   ENSURE(.basis_info_made,"no basis info")
-!   ENSURE(.atom.created,   "no atom list")
-!   ENSURE(.scfdata.created,"no scfdata")
-!      
-!      ! Uncomment below, and within routine for characterisation of key properties
-!       datafile :: DATAFILE
-!
-!      if(.scfdata.use_NOMO) then
-!
-!         .nomo_gradient.create(2*.n_bf,.n_e)
-!         .nomo_gradient = ZERO
-!
-!         if(.scfdata.use_ELMO) then
-!
-!            .BASE:make_elmo_connection_table
-!
-!            .:initialize_scf
-!
-!         else
-!
-!            .:initialize_scf
-!
-!         end if
-!   
-!         .:put_scf_banner_and_options
-!         .:put_scf_table_header
-!   
-!         if (.scfdata.using_diis) then
-!         
-!            do
-!      
-!               ! This is actually updating the MO's
-!               .:extrapolate_fock_matrix
-!   
-!               .:update_molecular_orbitals
-!      
-!               .:update_scfdata
-!               .:update_scfdata_error
-!      
-!               .:put_scf_table_body
-!               
-!               ! Uncomment below for characterisation of key properties
-!               !datafile.open("fock_matrix.sbf")
-!               !call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
-!               !call datafile%sbf%add_dataset(sbf_Dataset("Gradient", .nomo_gradient))
-!               !call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general(:,1:.n_e)))
-!               !call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
-!               !call datafile%sbf%add_dataset(sbf_Dataset("Density", .density_matrix.general))
-!               !call datafile%sbf%serialize
-!               !datafile.close
-!      
-!               if (.scfdata.scf_done) exit
-!      
-!            end
-!
-!         else
-!
-!            do
-!      
-!      
-!               .:update_molecular_orbitals
-!      
-!               .:update_scfdata
-!               .:update_scfdata_error
-!      
-!               .:put_scf_table_body
-!               
-!               ! Uncomment below for characterisation of key properties
-!               datafile.open("fock_matrix.sbf")
-!               call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
-!               call datafile%sbf%add_dataset(sbf_Dataset("Gradient", .nomo_gradient))
-!               call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general(:,1:.n_e)))
-!               call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
-!               call datafile%sbf%add_dataset(sbf_Dataset("Density", .density_matrix.general))
-!               call datafile%sbf%serialize
-!               datafile.close
-!      
-!               if (.scfdata.scf_done) exit
-!      
-!            end
-!
-!         end if 
-!         
-!         if(.scfdata.use_ELMO) then
-!            
-!            ! Print out the correct "full energy"
-!            .scfdata.set_use_ELMO(FALSE)
-!            
-!            ! Create the full core matrix
-!            .kinetic_energy_matrix.destroy
-!            .nuclear_attraction_matrix.destroy
-!            .core_matrix.destroy
-!            .:make_core_matrix("general")
-!            
-!            ! Remake the "full" density matrix
-!            .BASE:make_scf_density_matrix
-!   
-!            ! Remake the "full" Fock matrix
-!            .:make_fock_matrix
-!   
-!            .:update_scfdata
-!            .:update_scfdata_error
-!   
-!         end if
-!   
-!         .:put_scf_results
-!
-!         .:archive_scf_results
-!   
-!         .:cleanup_scf
-!      else
-!      
-!         .:initialize_scf
-!         .:put_scf_banner_and_options
-!         .:put_scf_table_header
-!   
-!         ! SCF iterations
-!         do
-!   
-!            .:extrapolate_fock_matrix
-!   
-!            .:update_molecular_orbitals
-!   
-!            .BASE:make_scf_density_matrix
-!   
-!            .:make_fock_matrix
-!   
-!            .:update_scfdata
-!            .:update_scfdata_error
-!   
-!            .:put_scf_table_body
-!   
-!            if (.scfdata.scf_done) exit
-!   
-!         end
-!   
-!         .:put_scf_results
-!   
-!         .:archive_scf_results
-!   
-!         .:cleanup_scf
-!
-!      end if
-!
-!
-!   end
+   do_ELMO ::: leaky
+   ! Extrapolate the fock matrix, currently only using DIIS.
+      self :: INOUT
+   
+      if (.scfdata.using_diis) then; .:do_ELMO_DIIS
+      else;                          .:do_ELMO_BFGS
+      end
+
+   end
+
+   do_ELMO_DIIS ::: leaky
+   ! Extrapolate the fock matrix, currently only using DIIS.
+   ! Actually this does BFGS as well ...
+      self :: INOUT
+
+    ! datafile :: DATAFILE
+   
+      do
+      
+         .:update_molecular_orbitals
+         
+         ! This is actually updating the MO's
+         .:extrapolate_fock_matrix
+      
+         .:update_scfdata
+         .:update_scfdata_error
+      
+         .:put_scf_table_body
+         
+         ! Uncomment below for characterisation of key properties
+         !datafile.open("fock_matrix.sbf")
+         !call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
+         !call datafile%sbf%add_dataset(sbf_Dataset("Gradient", .nomo_gradient))
+         !call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general(:,1:.n_e)))
+         !call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
+         !call datafile%sbf%add_dataset(sbf_Dataset("Density", .density_matrix.general))
+         !call datafile%sbf%serialize
+         !datafile.close
+      
+         if (.scfdata.scf_done) exit
+      
+      end
+
+   end
+
+   do_ELMO_BFGS ::: leaky
+   ! Extrapolate the fock matrix, currently only using DIIS.
+      self :: target, INOUT
+      
+      ! Uncomment below, and within routine for characterisation of key properties
+      datafile :: DATAFILE
+      MOv :: VEC{REAL}*
+      MO,F,P :: MAT{REAL}*
+      i :: INT
+   
+      do
+      
+         F  => .fock_matrix.general
+         P  => .density_matrix.general
+         MO => .molecular_orbitals.general(:,1:.n_e)
+         MO(:,.n_e+1:) = ZERO
+         ! Convert to vector
+         MOv.create(size(MO))
+         MOv = reshape(MO,[size(MO)])
+
+         ! BFGS
+         nomo_self => self
+         .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_g,MOv)
+
+         ! Back to matrix
+         MO = reshape(MOv,[2*.n_bf,.n_e])
+
+         do i = 1,.n_e
+           MO(:,i) = MO(:,i)/(MO(:,i).norm)
+         end do
+
+         .:update_scfdata
+         .:update_scfdata_error
+      
+         .:put_scf_table_body
+         
+         ! Uncomment below for characterisation of key properties
+         datafile.open("fock_matrix.sbf")
+         call datafile%sbf%add_dataset(sbf_Dataset("Fock", .fock_matrix.general))
+         call datafile%sbf%add_dataset(sbf_Dataset("Gradient", .nomo_gradient))
+         call datafile%sbf%add_dataset(sbf_Dataset("MO", .molecular_orbitals.general(:,1:.n_e)))
+         call datafile%sbf%add_dataset(sbf_Dataset("Overlap", .overlap_matrix))
+         call datafile%sbf%add_dataset(sbf_Dataset("Density", .density_matrix.general))
+         call datafile%sbf%serialize
+         datafile.close
+      
+         if (.scfdata.scf_done) exit
+      
+      end
+
+   end
 
 !  ===============
 !  Constrained SCF
