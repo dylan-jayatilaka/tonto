@@ -623,6 +623,39 @@ contains
 
    end
 
+   set_general_scf_guess_defaults_from(scfdata) ::: leaky
+   ! Set scf  data options for a guess-type SCF defaults
+      scfdata :: SCFDATA*
+
+      ! Set the SCF defaults (leaky)
+      if (scfdata.disassociated) then
+         .:set_scf_defaults
+         .scfdata.set_output(FALSE)
+      else if (scfdata.use_default_guess_options) then
+         .:set_scf_defaults
+         .scfdata.set_output(FALSE)
+      else
+         .:set_scf_defaults(scfdata) ! leaky
+      end
+
+      .scfdata.set_scf_kind("ghf")
+      
+      ! Reset some defaults from scfdata, if it is there
+      if (scfdata.associated) then
+         .scfdata.set_output(scfdata.guess_output)
+         .scfdata.set_convergence(scfdata.convergence)
+         .scfdata.diis.set_convergence_tolerance(scfdata.diis.convergence_tolerance)
+         .scfdata.set_relativity_kind(scfdata.relativity_kind)
+      end
+
+      ! Nuclear energy
+      .scfdata.nuclear_repulsion_energy = .:nuclear_repulsion_energy
+
+      ! Finalise
+      .scfdata.finalize
+
+   end
+
    set_scf_defaults(scfdata) ::: leaky
    ! Set up scf defaults for molecule
       scfdata :: SCFDATA*, optional
@@ -3994,6 +4027,43 @@ contains
 
    end
 
+   make_molecule_from_general_atom(n,mol) ::: leaky
+   ! Make a fully fledged molecule "mol" from a single atom "n" in self
+   ! The new molecule is ready for an SCF calculation.
+   ! DANGER: see warnings below
+      n :: INT, IN
+      mol :: MOLECULE
+
+   ENSURE(.atom.associated,"no atom info")
+   ENSURE(n<=.n_atom,"atom number n too big")
+
+      i :: INT
+
+      ! Clear the pointer part
+      mol.:nullify_ptr_part
+
+      ! Create the single atom and copy its pointers
+      ! WARNING: dont destroy ptr parts of mol.atom
+      mol.atom.create_copy(.atom(n:n))
+      mol.atom(1).set_position([ZERO,ZERO,ZERO])
+
+      ! Set default molecule e.g. the name, atom_info
+      ! and default multiplicity ...
+      mol.:set_defaults
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol
+      mol.:set_basis_data_from(self)
+
+      ! Don't remake ANO data if there
+      i = 0
+      mol.:set_ANOs_from_sublist_of(self,[(i,i=n,n)])
+
+      ! Set guess-type SCF defaults
+      mol.:set_general_scf_guess_defaults_from(.scfdata)
+
+   end
+
    make_molecule_from_atom_group(n,mol) ::: leaky
    ! Make a fully fledged molecule "mol" from group "n" of atoms
    ! specified in .atom_group(n).element(:), ready fro an SCF calculation.
@@ -7087,9 +7157,10 @@ contains
 
          case ("general")
 
-            D.destroy("restricted")
-            D.create("restricted")
-            D.restricted = D.general.alpha_alpha + D.general.beta_beta
+            !do nothing
+            !D.destroy("restricted")
+            !D.create("restricted")
+            !D.restricted = D.general.alpha_alpha + D.general.beta_beta
 
          case ("restricted_complex")
             ! do nothing
@@ -8470,7 +8541,7 @@ contains
       select case (orb_kind)
          case ("restricted        "); .:make_restricted_NOs
          case ("unrestricted      "); .:make_unrestricted_NOs
-!        case ("general           "); .:make_general_NOs
+         case ("general           "); .:make_general_NOs
          case ("restricted_complex"); .:make_restricted_complex_NOs
          case ("general_complex   "); .:make_general_complex_NOs
          case default;                UNKNOWN(orb_kind)
@@ -8596,6 +8667,58 @@ contains
 
       .occupation_numbers.restricted       = .occupation_numbers.restricted(.n_bf:1:-1)
       .natural_orbitals.restricted_complex = .natural_orbitals.restricted_complex(:,.n_bf:1:-1)
+
+   end
+
+   make_general_NOs ::: leaky
+   ! Make the general natural orbitals and occupations from the
+   ! density matrix.
+      self :: INOUT
+
+   ENSURE(.density_matrix.associated,"no density matrix")
+   ENSURE(.density_matrix.general.associated,"no density matrix")
+   ENSURE(.overlap_matrix.associated, "no overlap matrix")
+
+      R :: MAT{REAL}*
+      V,X :: MAT{REAL}*
+
+      ! Recreate
+      .natural_orbitals.destroy
+      .natural_orbitals.create(.n_bf,"general")
+      .occupation_numbers.destroy
+      .occupation_numbers.create(.n_bf,"general")
+
+
+      V.create(2*.n_bf,2*.n_bf)
+      R.create(.n_bf,.n_bf)
+
+      .:make_r_overlap_sqrt(R)
+
+      V = ZERO
+      V.alpha_alpha_set_to(R)
+      V.beta_beta_set_to(R)
+
+      R.destroy
+
+      X.create(2*.n_bf,2*.n_bf)
+      X = .density_matrix.general
+      X.change_basis_using(V)
+      X.solve_symmetric_eigenproblem(.occupation_numbers.general,V)
+
+      R.create(.n_bf,.n_bf)
+      .:make_r_overlap_inverse_sqrt(R)
+
+      X = ZERO
+      X.alpha_alpha_set_to(R)
+      X.beta_beta_set_to(R)
+      R.destroy
+
+      .natural_orbitals.general.to_product_of(X,V)
+      .occupation_numbers.general = .occupation_numbers.general(2*.n_bf:1:-1)
+      .natural_orbitals.general   = .natural_orbitals.general(:,2*.n_bf:1:-1)
+
+      X.destroy
+      V.destroy
 
    end
 
