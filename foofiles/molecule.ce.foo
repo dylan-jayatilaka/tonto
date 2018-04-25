@@ -687,16 +687,26 @@ contains
    ! calculate the total lattice energy for this molecule cluster
       self :: PTR
 
-      a,n :: INT
-      central, other, combined :: VEC{ATOM}*
+      a,n,i,j,k :: INT
+      n_molecules :: INT
       separation :: VEC{REAL}(3)
+      abs_distances :: MAT{REAL}* ! vector of absolute distances between corrseponding atoms
       E, E_tot :: VEC{REAL}(4) ! [ rep, coul, pol, disp ] 
       conversion_factor :: REAL
       display_unit :: STR
       rot :: MAT{REAL}(3,3)
       t :: VEC{REAL}(3)
+      unique_symops :: VEC{INT}@
+      central_atoms :: VEC{ATOM}@
+      d :: VEC{REAL}@
+      all_atoms :: VEC{ATOM}*
+      frac_radius :: VEC{REAL}(3)
+      h_min, h_max :: VEC{INT}(3)
+      occupied_pos, already_done :: MAT{REAL}*
+      equivalent :: BIN
+      timer :: TIME
 
-      mol1, mol2, merged, tmp :: MOLECULE*
+      mol1, mol2 :: MOLECULE*
 
       display_unit = "kJ/mol"
       conversion_factor = display_unit.conversion_factor
@@ -708,86 +718,168 @@ contains
 
       stdout.flush
       stdout.show("Radius of cluster               =",.cluster.radius)
-      stdout.show("No. of molecules                =",.cluster.n_molecules)
-      stdout.show("No. of atoms                    =",.cluster.n_atoms)
       stdout.show("No. of fragment atoms           =",.cluster.n_fragment_atoms)
-      stdout.show("Fragment offset                 =",.cluster.fragment_offset)
 
       E = 0
       E_tot = 0
 
-      .cluster.create_mol_atom_list(central, 1)
-
-
-      do n = 2, .cluster.n_molecules
-         .cluster.create_mol_atom_list(other, n)
-         E(4) = central.Grimme06_dispersion_energy(other)
-         E_tot(4) = E_tot(4) + E(4)
-         stdout.show("E_disp", E(4))
-         stdout.show("E_disp in "//trim(display_unit), E(4) * conversion_factor)
-      end do
-
-      ! assume Z=1 for now
       mol1.BASE:create
-      .XTAL:create_cluster_mol(1, mol1)
-      ! Calculate the wavefunction for the central molecule
-      mol1.basis_name = .basis_name
-      mol1.scfdata.copy(.scfdata)
+      mol1.scfdata.create_copy(.scfdata)
+      .cluster.create_atom_list(mol1.atom)
 
-      tmp.BASE:create_copY(mol1)
+      mol1.BASE:set_atom_info
+      mol1.BASE:finalize_atom_groups
+      mol1.BASE:resolve_basis_info
+      mol1.BASE:set_basis_name(.basis_name)
 
+      mol1.atom.put
       mol1.SCF:make_ANO_data
+
+      !! Do the SCF
+      timer.start_timing
       mol1.SCF:scf
-      mol1.BASE:destroy_ANO_interpolators
-      mol1.BASE:destroy_atom_shell_info
+      timer.stop_timing
+      stdout.show("Time taken for SCF (s) = ", timer.elapsed_time_s, 8)
+
       mol1.atom.put_coordinates
-      stdout.show("Unique frag atoms", mol1.crystal.n_unique_frag_atoms)
+      central_atoms = mol1.atom
+      all_atoms.create_copy(mol1.atom)
+!      mol1.atom.change_axis_system_to("crystal", .crystal.unit_cell, FALSE)
 
-      ! CrystalExplorer calculates the rotation and translation as follows:
-      !
-      ! Matrix3q m = unitCell().directCellMatrix() *
-      !       spaceGroup()->rotationMatrixForSymop(symopId) *
-      !       unitCell().inverseCellMatrix();
-      ! Vector3q v = unitCell().directCellMatrix() * crystalSymops[symopId];
-      !
-      ! Where symopId is the symop for the first atom in the fragment
-      ! relative to the other molecule
-      
+      unique_symops = .crystal.asym_symop_for_unit_cell_atom.unique_elements
+      stdout.show("Unique symops =", unique_symops)
 
-      do n = 2, .cluster.n_molecules
-          mol2.BASE:create
-          .XTAL:create_cluster_mol(n, mol2)
-          ! copy wavefunction information
-          mol2.basis_name = .basis_name
-          mol2.scfdata.copy(.scfdata)
-          ! not working, need to fix to enable copying wavefunctions
-          !.cluster.extract_molecule_transform(n, rot, t)
-          !stdout.show("Unique frag atoms", mol2.crystal.n_unique_frag_atoms)
-          !stdout.show("Unique frag atom list", mol2.crystal.unique_atom_for_frag_atom)
-          !stdout.show("Unique symop atom list", mol2.crystal.unique_symop_for_frag_atom)
-          !stdout.show("Translation vector", t)
-          !stdout.text("Rotation matrix")
-          !stdout.put(rot)
+      ! calculate how many unit cells we'll need to look in
+      frac_radius = .cluster.radius /.cluster.crystal.unit_cell.length
+      h_max = ceiling(frac_radius + maxval(.cluster.fragment_geometry, dim=2) &
+                      - .cluster.fragment_offset)
+      h_min = floor(-frac_radius + minval(.cluster.fragment_geometry, dim=2) &
+                      - .cluster.fragment_offset)
 
-          ! this is the slow way to do it... new wfn for each molecule
-          mol2.SCF:make_ANO_data
-          mol2.SCF:scf
-          mol2.BASE:destroy_ANO_interpolators
-          mol2.BASE:destroy_atom_shell_info
+      ! Look at least one cell away ...
+      h_max = max(h_max,[ 1, 1, 1])
+      h_min = min(h_min,[-1,-1,-1])
 
-          E(3) = mol1.PROP:intermolecular_polarization_energy(mol2)
-          stdout.show("E_pol", E(3))
-          stdout.show("E_pol in "//trim(display_unit), E(3) * conversion_factor)
-          E_tot(3) = E_tot(3) + E(3)
+    stdout.show("h_max", h_max)
+    stdout.show("h_min", h_min)
+
+    ! position of first atom in molecule
+    occupied_pos.create(3, 1)
+    occupied_pos(:, 1) = mol1.atom(1).position
+    ! create a n_atom + 4 x n_molecule array of unique interactions
+    ! where 1-n_atom are the abs distance between the central
+    ! molecule and the symmetry related one
+    ! and the remaining values are the number of pairs
+    ! the 4 energy terms
+    d.create(mol1.atom.dim + 5)
+    abs_distances.create(d.dim, 0)
+    
+
+! loop over unit cells
+      n_molecules = 0
+      timer.start_timing
+      do i = h_min(1),h_max(1)
+      do j = h_min(2),h_max(2)
+      do k = h_min(3),h_max(3)
+          do n = 1, unique_symops.dim
+              mol2.BASE:create
+              mol2.scfdata.create_copy(.scfdata)
+              mol2.atom.create_copy(central_atoms)
+              mol2.density_matrix.create_copy(mol1.density_matrix)
+              mol2.molecular_orbitals.create_copy(mol1.molecular_orbitals)
+              mol2.BASE:set_atom_info
+              mol2.BASE:finalize_atom_groups
+              mol2.BASE:resolve_basis_info
+              ! this is time consuming
+              mol2.BASE:set_basis_name(.basis_name)
+
+              rot = .crystal.spacegroup.seitz(1:3, 1:3, unique_symops(n))
+              t = .crystal.spacegroup.seitz(1:3, 4, unique_symops(n))
+              ! convert transformations into cartesian space
+              rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
+              rot = matmul(.crystal.unit_cell.direct_matrix, rot)
+              t = matmul(.crystal.unit_cell.direct_matrix, t + [i, j, k])
+
+              mol2.BASE:rotate_by(rot)
+              mol2.atom.translate_by(t)
+              separation = mol2.atom.center_of_mass - mol1.atom.center_of_mass
+
+              ! Check if this molecule is within the radius
+              if(separation.norm > .cluster.radius) cycle
+
+              ! Check if we already have molecule here
+              ! This is needed as some symops + unit cell
+              ! translations are redundant
+              equivalent = FALSE
+              do a = 1, occupied_pos.dim2
+                  if (occupied_pos(:, a).distance_to(mol2.atom(1).position) < 0.5) then
+                      equivalent = TRUE
+                      exit
+                  end if
+              end do
+              if(equivalent) cycle
+
+              ! check absolute distances
+              d = 0
+              d(1) = 1
+              do a = 1, mol1.atom.dim
+                  d(a+5) = abs(mol1.atom(a).position.distance_to(mol2.atom(a).position))
+              end do
+
+              ! There has to be a better way to do this, but this works for now
+              ! and eliminates most redundant calculations
+              do a = 1, abs_distances.dim2
+                  if (all(((d(6:) - abs_distances(6:, a)).abs < 0.01))) then
+                      equivalent = TRUE
+                      abs_distances(1, a) = abs_distances(1, a) + 1
+                      exit
+                  end if
+              end do
+              if(equivalent) cycle
+              occupied_pos.append_column(mol2.atom(1).position)
+              !abs_distances
+              
+
+              ! If we have a unique molecule relation calculate the energies
+              E = ZERO
+              ! Disp
+              E(3) = mol1.PROP:intermolecular_polarization_energy(mol2)
+              E(4) = mol1.atom.Grimme06_dispersion_energy(mol2.atom)
+              d(2:5) = E
+              abs_distances.append_column(d(:))
+
+              n_molecules = n_molecules + 1
+              all_atoms.append(mol2.atom)
+
+              mol2.BASE:destroy
+
+          end do
+      end do
+      end do
       end do
 
+      timer.stop_timing
+      stdout.show("Time taken for Symmetry related mols (s) = ", timer.elapsed_time_s)
 
-  
+      all_atoms.put_xyz_file(trim(.name)//"-cluster")
+
+      E_tot = ZERO
+      do a = 1, abs_distances.dim2
+          stdout.show("N equivalent", abs_distances(1, a))
+          E_tot = E_tot + abs_distances(2:5, a) * abs_distances(1, a)
+      end do
+
+      E_tot = E_tot * 0.5d0 ! Total lattice energy = 0.5 * the sum
       stdout.text("Totals:")
-      stdout.show("E_disp", E_tot(4))
-      stdout.show("E_pol", E_tot(3))
-      stdout.show("E_disp in "//trim(display_unit), E_tot(4) * conversion_factor)
+      stdout.show("n_molecules", n_molecules)
+      stdout.show("E_ele                     =", E_tot(1))
+      stdout.show("E_rep                     =", E_tot(2))
+      stdout.show("E_pol                     =", E_tot(3))
+      stdout.show("E_disp                    =", E_tot(4))
+      stdout.show("E_ele in "//trim(display_unit), E_tot(1) * conversion_factor)
+      stdout.show("E_rep in "//trim(display_unit), E_tot(2) * conversion_factor)
       stdout.show("E_pol in "//trim(display_unit), E_tot(3) * conversion_factor)
+      stdout.show("E_disp in "//trim(display_unit), E_tot(4) * conversion_factor)
 
 
    end
