@@ -696,13 +696,14 @@ contains
       display_unit :: STR
       rot :: MAT{REAL}(3,3)
       t :: VEC{REAL}(3)
-      unique_symops :: VEC{INT}@
+      unique_symops :: VEC{INT}*
       central_atoms :: VEC{ATOM}@
       d :: VEC{REAL}@
-      all_atoms :: VEC{ATOM}*
       frac_radius :: VEC{REAL}(3)
       h_min, h_max :: VEC{INT}(3)
-      occupied_pos, already_done :: MAT{REAL}*
+      occupied_pos :: MAT{REAL}*
+      progress :: REAL
+      step, total :: REAL
       equivalent :: BIN
       timer :: TIME
 
@@ -739,14 +740,13 @@ contains
       timer.start_timing
       mol1.SCF:scf
       timer.stop_timing
-      stdout.show("Time taken for SCF (s) = ", timer.elapsed_time_s, 8)
+      stdout.show("Time taken for SCF (s) = ", timer.elapsed_time_s)
 
       mol1.atom.put_coordinates
       central_atoms = mol1.atom
-      all_atoms.create_copy(mol1.atom)
 !      mol1.atom.change_axis_system_to("crystal", .crystal.unit_cell, FALSE)
 
-      unique_symops = .crystal.asym_symop_for_unit_cell_atom.unique_elements
+      unique_symops.create_copy(.crystal.asym_symop_for_unit_cell_atom.unique_elements)
       stdout.show("Unique symops =", unique_symops)
 
       ! calculate how many unit cells we'll need to look in
@@ -777,11 +777,26 @@ contains
 
 ! loop over unit cells
       n_molecules = 0
+      stdout.text("Starting lattice energy calculation")
       timer.start_timing
+      step = 0
+      total = product(h_max - h_min)
       do i = h_min(1),h_max(1)
       do j = h_min(2),h_max(2)
       do k = h_min(3),h_max(3)
           do n = 1, unique_symops.dim
+              rot = .crystal.spacegroup.seitz(1:3, 1:3, unique_symops(n))
+              t = .crystal.spacegroup.seitz(1:3, 4, unique_symops(n))
+              ! convert transformations into cartesian space
+              rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
+              rot = matmul(.crystal.unit_cell.direct_matrix, rot)
+              t = matmul(.crystal.unit_cell.direct_matrix, t + [i, j, k])
+
+              ! Check if this molecule is within the radius
+              if((t - mol1.atom.center_of_mass).norm > .cluster.radius) then
+                  cycle
+              end if
+
               mol2.BASE:create
               mol2.name = .name//" "//trim(n.to_str)//trim(VEC{INT}:to_concatenated_str([i,j,k]))
               mol2.scfdata.create_copy(.scfdata)
@@ -793,20 +808,9 @@ contains
               mol2.BASE:resolve_basis_info
               ! this is time consuming
               mol2.BASE:set_basis_name(.basis_name)
-
-              rot = .crystal.spacegroup.seitz(1:3, 1:3, unique_symops(n))
-              t = .crystal.spacegroup.seitz(1:3, 4, unique_symops(n))
-              ! convert transformations into cartesian space
-              rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
-              rot = matmul(.crystal.unit_cell.direct_matrix, rot)
-              t = matmul(.crystal.unit_cell.direct_matrix, t + [i, j, k])
-
               mol2.BASE:rotate_by(rot)
               mol2.atom.translate_by(t)
-              separation = mol2.atom.center_of_mass - mol1.atom.center_of_mass
 
-              ! Check if this molecule is within the radius
-              if(separation.norm > .cluster.radius) cycle
 
               ! Check if we already have molecule here
               ! This is needed as some symops + unit cell
@@ -815,6 +819,7 @@ contains
               do a = 1, occupied_pos.dim2
                   if (occupied_pos(:, a).distance_to(mol2.atom(1).position) < 0.5) then
                       equivalent = TRUE
+                      mol2.BASE:destroy
                       exit
                   end if
               end do
@@ -835,6 +840,7 @@ contains
                   if (all(((d(6:) - abs_distances(6:, a)).abs < 0.01))) then
                       equivalent = TRUE
                       abs_distances(1, a) = abs_distances(1, a) + 1
+                      mol2.BASE:destroy
                       exit
                   end if
               end do
@@ -851,19 +857,17 @@ contains
               abs_distances.append_column(d(:))
 
               n_molecules = n_molecules + 1
-              all_atoms.append(mol2.atom)
 
               mol2.BASE:destroy
-
           end do
+          step = step + 1
+          stdout.text(trim(REAL:to_str(step/total * 100))//"%")
       end do
       end do
       end do
 
       timer.stop_timing
       stdout.show("Time taken for Symmetry related mols (s) = ", timer.elapsed_time_s)
-
-      all_atoms.put_xyz_file(trim(.name)//"-cluster")
 
       E_tot = ZERO
       do a = 1, abs_distances.dim2
@@ -882,6 +886,8 @@ contains
       stdout.show("E_rep in "//trim(display_unit), E_tot(2) * conversion_factor)
       stdout.show("E_pol in "//trim(display_unit), E_tot(3) * conversion_factor)
       stdout.show("E_disp in "//trim(display_unit), E_tot(4) * conversion_factor)
+      stdout.show("E_total ", sum(E_tot))
+      stdout.show("E_total in "//trim(display_unit), sum(E_tot) * conversion_factor)
 
 
    end
