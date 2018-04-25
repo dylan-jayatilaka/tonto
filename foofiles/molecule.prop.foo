@@ -4189,6 +4189,216 @@ contains
    end
 
 
+   intermolecular_qm_energies(mol_B) result(res)
+   ! Calculate the group 1-2 interaction energies.
+   ! For simplicity the notations follows the reference:
+   ! P. Su & H. Li (2009) JCP 131 p. 014102
+   ! It has references to the original work and is explained fairly
+   ! clearly, except for their use of "X" for supermolecule (X=AB).
+   ! NOTE: make sure the MO's and density matrices for each group exist!
+      self :: PTR
+      res :: VEC{REAL}(2) ! E_coul, E_rep
+      mol_B :: MOLECULE*
+
+   ENSURE(.atom_group.associated,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 atom groups")
+   ENSURE(.atom_group(1).mol.density_matrix.associated, "no density matrix for atom group 1")
+   ENSURE(.atom_group(2).mol.density_matrix.associated, "no density matrix for atom group 2")
+   ENSURE(.atom_group(1).mol.molecular_orbitals.associated , "no molecular orbitals for atom group 1")
+   ENSURE(.atom_group(2).mol.molecular_orbitals.associated , "no molecular orbitals for atom group 2")
+
+      ! Terms regardless of unrestricted/restricted
+      E_en,E_ke,E_1e,E_nn,E_ee,E_ex,r :: REAL
+      E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
+      P,P_A,P_B :: OPMATRIX* 
+      J,J_A,J_B :: OPMATRIX*
+      K,K_A,K_B :: OPMATRIX*
+      mol_A :: MOLECULE*
+      saved_MOs_A, saved_MOs_B :: OPMATRIX*
+      exchange_factors :: VEC{REAL}(3) = [-HALF, -HALF, -HALF]
+      a_b :: VEC{REAL}(3)
+
+      merged :: MOLECULE*
+
+
+      ! ======================
+      ! Get non orthogonal MOs
+      ! ======================
+
+      ! A & B molecules
+      mol_A => self
+
+      ! Hacky method to reuse code, should be rewritten
+      merged.BASE:create_from_mols(mol_A, mol_B)
+      merged.BASE:put
+
+      a_b = mol_A.atom.center_of_mass - mol_B.atom.center_of_mass
+      r = a_b.norm
+      stdout.show("r", r)
+      ! If the molecules are too far apart use multipoles
+     !if (r.to_units("ANGSTROMS") > 12.0d0) then
+     !   .PROP:put_group_12_multipole_energies
+     !   return
+     !end
+
+      mol_A.INTS:make_overlap_matrix
+      mol_A.BASE:make_natural_orbitals
+      mol_B.INTS:make_overlap_matrix
+      mol_B.BASE:make_natural_orbitals
+
+      saved_MOs_A => mol_A.molecular_orbitals
+      saved_MOs_B => mol_B.molecular_orbitals
+
+      mol_A.molecular_orbitals => mol_A.natural_orbitals
+      mol_B.molecular_orbitals => mol_B.natural_orbitals
+      mol_A.scfdata.set_scf_kind(mol_A.molecular_orbitals.spinorbital_kind)
+      mol_B.scfdata.set_scf_kind(mol_B.molecular_orbitals.spinorbital_kind)
+
+      merged.SCF:merge_group_MOs
+      merged.scfdata.set_output(FALSE)
+      if (merged.scfdata.is_restricted) then
+         exchange_factors = -QUARTER
+      end if
+
+      if (mol_A.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(2) = -QUARTER
+      if (mol_B.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(3) = -QUARTER
+
+      ! Make SCF density matrices
+     merged.BASE:make_scf_density_matrix
+      mol_A.BASE:make_scf_density_matrix
+      mol_B.BASE:make_scf_density_matrix
+
+      ! Make integrals
+     merged.SCF:make_core_matrix
+      mol_A.SCF:make_core_matrix
+      mol_B.SCF:make_core_matrix
+
+      ! >> Nuclear attraction energy << 
+     merged.nuclear_attraction_matrix.uncompress
+      mol_A.nuclear_attraction_matrix.uncompress
+      mol_B.nuclear_attraction_matrix.uncompress
+
+      E_ABn = ZERO; E_ABo = ZERO; 
+      E_en = ZERO; E_1e = ZERO;
+      E_ex = ZERO; E_nn = ZERO;
+      E_ke = ZERO;
+
+      P   => merged.nuclear_attraction_matrix
+      P_A => mol_A.nuclear_attraction_matrix
+      P_B => mol_B.nuclear_attraction_matrix
+
+      E_en = merged.:group_12_int_energy(P, P_A, P_B)
+
+      merged.nuclear_attraction_matrix.compress
+      mol_A.nuclear_attraction_matrix.compress
+      mol_B.nuclear_attraction_matrix.compress
+
+      ! Non-orthogonal & orthogonalized electronic energies
+
+      ! One electron hamiltonian
+      P   => merged.core_matrix
+      P_A => mol_A.core_matrix
+      P_B => mol_B.core_matrix
+
+      ! >> One electron interaction energy <<
+      E_1e = merged.:group_12_int_energy(P, P_A, P_B, E_AB=E_ABn)
+      E_ke = E_1e - E_en
+
+      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      J_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
+      K_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
+      J_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
+      K_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
+
+
+      ! Two-electron matrices
+      P   => merged.density_matrix
+      P_A => mol_A.density_matrix
+      P_B => mol_B.density_matrix
+
+      merged.FOCK:make_JK_engine(J  ,K  ,P  )
+      mol_A.FOCK:make_JK_engine(J_A,K_A,P_A)
+      mol_B.FOCK:make_JK_engine(J_B,K_B,P_B)
+
+      ! Alpha density matrix with beta, beta density matrix with alpha
+      E_ee = merged.:group_12_int_energy(J, J_A, J_B, HALF, E_ABn, TRUE)
+      E_ex = merged.:group_12_exchange_int_energy(K, K_A, K_B, exchange_factors, E_ABn)
+
+      K_A.destroy; K_B.destroy
+      J_A.destroy; J_B.destroy  
+
+      ! >> Nuclear-nuclear repulsion energy term <<
+      E_nn = merged.:group_12_NR_int_energy
+      ! >> Electron repulsion energy term <<
+
+      ! >> Total <<
+      E_tot = E_ke + E_nn + E_en + E_ee + E_ex
+      E_net =        E_nn + E_en + E_ee
+
+      ! ======================
+      ! Now symmorthonormalize
+      ! ======================
+
+      merged.SCF:symmorthonormalize_occupied_MOs
+      merged.BASE:make_scf_density_matrix
+
+      ! One electron hamiltonian
+      P    => merged.core_matrix
+      E_ABo = merged.BASE:expectation(P)
+
+      ! Two-electron integrals
+      J.destroy; K.destroy
+      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+
+      P => merged.density_matrix
+      merged.FOCK:make_JK_engine(J, K, P)
+
+      E_ABo = E_ABo +    HALF * merged.BASE:expectation(J, TRUE)
+      E_ABo = E_ABo + exchange_factors(1) * merged.BASE:expectation(K)
+
+      ! Get repulsion energy
+      E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
+      E_XR  = E_ex + E_rep
+
+      ! Clean up remaining temporaries
+      J.destroy; K.destroy
+
+      stdout.show("Separation (Å)                        = ", r.to_units("ANGSTROMS"), right=TRUE)
+      stdout.show("1. Delta E_kinetic-energy             = ",E_ke ,right=TRUE)
+      stdout.show("2. Delta E_nn-repulsion               = ",E_nn ,right=TRUE)
+      stdout.show("3. Delta E_en-attraction              = ",E_en ,right=TRUE)
+      stdout.show("4. Delta E_ee-repulsion               = ",E_ee,right=TRUE)
+      stdout.show("5. Delta E_ee-exchange                = ",E_ex,right=TRUE)
+      stdout.flush
+      stdout.show("6. E_pro-supermol(non-orthog)         = ",E_ABn,right=TRUE)
+      stdout.show("7. E_pro-supermol(orthog)             = ",E_ABo,right=TRUE)
+      stdout.flush
+      stdout.show("Delta E         (1+2+3+4+5)           = ",E_tot,right=TRUE)
+      stdout.show("Delta E_coulomb   (2+3+4)             = ",E_net,right=TRUE)
+      stdout.show("Delta E_repulsion        (-6+7)       = ",E_rep,right=TRUE)
+      stdout.show("Delta E_exch-repulsion  (5-6+7)       = ",E_XR ,right=TRUE)
+      res = [E_net, E_XR]
+
+      ! In kJ/mol
+      E_net = E_net.to_units("kJ/mol")
+      E_ex  = E_ex.to_units("kJ/mol")
+      E_rep = E_rep.to_units("kJ/mol")
+      E_XR  = E_XR.to_units("kJ/mol")
+
+      stdout.flush
+      stdout.show("Delta E_coul (kJ/mol)                 = ",E_net,right=TRUE)
+      stdout.show("Delta E_ee-exchange (kJ/mol)          = ",E_ex,right=TRUE)
+      stdout.show("Delta E_repulsion (kJ/mol)            = ",E_rep,right=TRUE)
+      stdout.show("Delta E_exch-rep (kJ/mol)             = ",E_XR ,right=TRUE)
+
+      mol_A.natural_orbitals.destroy
+      mol_B.natural_orbitals.destroy
+      mol_A.molecular_orbitals => saved_MOs_A
+      mol_B.molecular_orbitals => saved_MOs_B
+    end 
+
    put_group_12_energies ::: leaky
    ! Calculate the classical and QM group 1-2 interaction energies.
    ! NOTE: make sure the density matrices and MOs for each group exist!
