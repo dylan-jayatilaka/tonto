@@ -683,50 +683,114 @@ contains
 
    end
 
+
+    put_lattice_energies_table(energies_table, unique_molecules) ::: selfless
+        energies_table :: MAT{REAL}* 
+        unique_molecules :: MAT{REAL}*
+        table :: VEC{TABLE_COLUMN}*
+        a :: INT
+        E_tot :: VEC{REAL}(4)
+        scale_factors :: VEC{REAL}(4)
+        conversion_factor :: REAL
+        display_unit :: STR
+        display_unit = "kJ/mol"
+        scale_factors = [1.0573d0, 0.6177d0 , 0.7399d0, 0.8708d0] 
+        conversion_factor = display_unit.conversion_factor
+
+        stdout.text("==========================")
+        stdout.text("Lattice energy dimer pairs")
+        stdout.text("==========================")
+        stdout.text(" ")
+        table.create(7)
+        table(1).set_heading("N")
+        table(2).set_heading("E_coul")
+        table(3).set_heading("E_rep")
+        table(4).set_heading("E_pol")
+        table(5).set_heading("E_disp")
+        table(6).set_heading("symop")
+        table(7).set_subhead("separation")
+
+        do a = 1, table.dim
+            table(a).set_values(energies_table(a, :))
+        end do
+
+        table.put(label_rows=FALSE)
+        table.destroy
+
+        table.create(3)
+        stdout.text("=================================")
+        stdout.text("Lattice energy occupied positions")
+        stdout.text("=================================")
+        stdout.text(" ")
+        table(1).set_heading("x")
+        table(2).set_heading("y")
+        table(3).set_heading("z")
+
+        do a = 1, table.dim
+            table(a).set_values(unique_molecules(a, :))
+        end do
+
+        table.put(label_rows=FALSE)
+        table.destroy
+
+        do a = 1, energies_table.dim2
+            E_tot = E_tot + energies_table(2:5, a) * energies_table(1, a)
+        end do
+        E_tot = E_tot * 0.5
+        stdout.text("Totals:")
+        stdout.show("Symmetry unique_molecules", energies_table.dim2)
+        stdout.show("E_ele                     =", E_tot(1))
+        stdout.show("E_rep                     =", E_tot(2))
+        stdout.show("E_pol                     =", E_tot(3))
+        stdout.show("E_disp                    =", E_tot(4))
+        stdout.show("E_total ", sum(E_tot))
+        stdout.text("In "//trim(display_unit))
+        stdout.show("E_ele                     =", E_tot(1) * conversion_factor)
+        stdout.show("E_rep                     =", E_tot(2) * conversion_factor)
+        stdout.show("E_pol                     =", E_tot(3) * conversion_factor)
+        stdout.show("E_disp                    =", E_tot(4) * conversion_factor)
+        stdout.show("E_total                   =", sum(E_tot) * conversion_factor)
+        stdout.show("E_total (scaled)          =", E_tot.dot(scale_factors) * conversion_factor)
+
+    end 
+
     total_lattice_energy
    ! calculate the total lattice energy for this molecule cluster
       self :: PTR
 
       a,n,i,j,k :: INT
       n_molecules :: INT
-      separation :: VEC{REAL}(3)
-      abs_distances :: MAT{REAL}* ! vector of absolute distances between corrseponding atoms
+      position, separation :: VEC{REAL}(3)
+      energy_table :: MAT{REAL}* ! vector of absolute distances between corrseponding atoms
       E, E_tot :: VEC{REAL}(4) ! [ rep, coul, pol, disp ] 
-      conversion_factor :: REAL
-      display_unit :: STR
       rot :: MAT{REAL}(3,3)
-      t :: VEC{REAL}(3)
+      t, t_symop :: VEC{REAL}(3)
       unique_symops :: VEC{INT}*
       central_atoms :: VEC{ATOM}@
       d :: VEC{REAL}@
-      frac_radius :: VEC{REAL}(3)
-      h_min, h_max :: VEC{INT}(3)
+      frac_radius, offset :: VEC{REAL}(3)
+      h_min, h_max, prev_h_min, prev_h_max :: VEC{INT}(3)
       occupied_pos :: MAT{REAL}*
-      progress :: REAL
+      progress, radius, prev_radius, delta, e_iter, e_prev, dist :: REAL
       step, total :: REAL
       equivalent :: BIN
       timer :: TIME
+      new_mols :: INT
+      !all_atoms :: VEC{ATOM}*
+      n_iter :: INT
 
-      mol1, mol2 :: MOLECULE*
+      mol1 :: MOLECULE*
+      mol2 :: MOLECULE*
 
-      display_unit = "kJ/mol"
-      conversion_factor = display_unit.conversion_factor
-
-      stdout.flush
-      stdout.text("=============")
-      stdout.text("Cluster atoms")
-      stdout.text("=============")
-
-      stdout.flush
-      stdout.show("Radius of cluster               =",.cluster.radius)
-      stdout.show("No. of fragment atoms           =",.cluster.n_fragment_atoms)
 
       E = 0
       E_tot = 0
 
+    ! Central fragment wavefunction stuff
       mol1.BASE:create
       mol1.scfdata.create_copy(.scfdata)
       .cluster.create_atom_list(mol1.atom)
+      central_atoms = mol1.atom
 
       mol1.BASE:set_atom_info
       mol1.BASE:finalize_atom_groups
@@ -743,62 +807,68 @@ contains
       stdout.show("Time taken for SCF (s) = ", timer.elapsed_time_s)
 
       mol1.atom.put_coordinates
-      central_atoms = mol1.atom
 !      mol1.atom.change_axis_system_to("crystal", .crystal.unit_cell, FALSE)
 
       unique_symops.create_copy(.crystal.asym_symop_for_unit_cell_atom.unique_elements)
       stdout.show("Unique symops =", unique_symops)
 
       ! calculate how many unit cells we'll need to look in
-      frac_radius = .cluster.radius /.cluster.crystal.unit_cell.length
-      h_max = ceiling(frac_radius + maxval(.cluster.fragment_geometry, dim=2) &
-                      - .cluster.fragment_offset)
-      h_min = floor(-frac_radius + minval(.cluster.fragment_geometry, dim=2) &
-                      - .cluster.fragment_offset)
-
-      ! Look at least one cell away ...
-      h_max = max(h_max,[ 1, 1, 1])
-      h_min = min(h_min,[-1,-1,-1])
-
-    stdout.show("h_max", h_max)
-    stdout.show("h_min", h_min)
+#define MAX_SEARCH_RADIUS 60.0d0
+#define CONVERGENCE_TOLERANCE  0.0002
+      ! Roughly 1 kJ/mol
 
     ! position of first atom in molecule
     occupied_pos.create(3, 1)
-    occupied_pos(:, 1) = mol1.atom(1).position
-    ! create a n_atom + 4 x n_molecule array of unique interactions
-    ! where 1-n_atom are the abs distance between the central
-    ! molecule and the symmetry related one
-    ! and the remaining values are the number of pairs
-    ! the 4 energy terms
-    d.create(mol1.atom.dim + 5)
-    abs_distances.create(d.dim, 0)
+    occupied_pos(:, 1) = mol1.atom.center_of_atoms
+    ! create a 7 x n_molecule array of unique interactions
+    ! 1 = number of molecules
+    ! 2-5 are the energy terms
+    ! 6-7 are the symop and separation
+    d.create(7)
+    energy_table.create(d.dim, 0)
     
+    offset = mol1.atom.center_of_atoms
+    n_iter = 0
+
 
 ! loop over unit cells
       n_molecules = 0
       stdout.text("Starting lattice energy calculation")
       timer.start_timing
-      step = 0
-      total = product(h_max - h_min)
-      do i = h_min(1),h_max(1)
-      do j = h_min(2),h_max(2)
-      do k = h_min(3),h_max(3)
+      total = unique_symops.dim
+      radius = 7.2 ! (roughly 3.8 angstroms * 2)
+      e_prev = ZERO
+      e_iter = ZERO
+      delta = INT_HUGE
+      prev_h_min = 0
+      prev_h_max = 0
+      prev_radius = 0
+      do while (abs(delta) > CONVERGENCE_TOLERANCE)
+          !all_atoms.create_copy(mol1.atom)
+          e_prev = e_iter
+          step = 0
+          new_mols = 0
+
+          frac_radius = radius /.cluster.crystal.unit_cell.length
+          h_max = ceiling(frac_radius + maxval(.cluster.fragment_geometry, dim=2) &
+                          - .cluster.fragment_offset)
+          h_min = floor(-frac_radius + minval(.cluster.fragment_geometry, dim=2) &
+                          - .cluster.fragment_offset)
+
+          h_max = max(h_max, [1,1,1])
+          h_min = min(h_min, [-1,-1,-1])
+          stdout.show("h_max", h_max)
+          stdout.show("h_min", h_min)
+
           do n = 1, unique_symops.dim
+              ! convert to cartesian space
               rot = .crystal.spacegroup.seitz(1:3, 1:3, unique_symops(n))
-              t = .crystal.spacegroup.seitz(1:3, 4, unique_symops(n))
-              ! convert transformations into cartesian space
               rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
               rot = matmul(.crystal.unit_cell.direct_matrix, rot)
-              t = matmul(.crystal.unit_cell.direct_matrix, t + [i, j, k])
-
-              ! Check if this molecule is within the radius
-              if((t - mol1.atom.center_of_mass).norm > .cluster.radius) then
-                  cycle
-              end if
+              t_symop = .crystal.spacegroup.seitz(1:3, 4, unique_symops(n))
+              t_symop = matmul(rot, t_symop)
 
               mol2.BASE:create
-              mol2.name = .name//" "//trim(n.to_str)//trim(VEC{INT}:to_concatenated_str([i,j,k]))
               mol2.scfdata.create_copy(.scfdata)
               mol2.atom.create_copy(central_atoms)
               mol2.density_matrix.create_copy(mol1.density_matrix)
@@ -809,86 +879,122 @@ contains
               ! this is time consuming
               mol2.BASE:set_basis_name(.basis_name)
               mol2.BASE:rotate_by(rot)
-              mol2.atom.translate_by(t)
 
 
-              ! Check if we already have molecule here
-              ! This is needed as some symops + unit cell
-              ! translations are redundant
-              equivalent = FALSE
-              do a = 1, occupied_pos.dim2
-                  if (occupied_pos(:, a).distance_to(mol2.atom(1).position) < 0.5) then
-                      equivalent = TRUE
-                      mol2.BASE:destroy
-                      exit
+
+              do i = h_min(1),h_max(1)
+                  ! don't search the same unit cells too many times
+                  !if (i > prev_h_min(1) + 1 AND i < prev_h_max(1) - 1) cycle
+              do j = h_min(2),h_max(2)
+                  !if (j > prev_h_min(2) + 1 AND i < prev_h_max(2) - 1) cycle
+              do k = h_min(3),h_max(3)
+                  !if (k > prev_h_min(3) + 1 AND i < prev_h_max(3) - 1) cycle
+
+                  ! get translation for this unit cell
+                  t = t_symop + matmul(.crystal.unit_cell.direct_matrix, [i, j, k])
+
+                  mol2.atom.translate_by(t)
+                  position = mol2.atom.center_of_atoms
+                  separation = position - offset
+                  mol2.atom.get_distance_to(mol1.atom, dist)
+                  ! Check if this molecule is within the radius
+                  if(dist > radius OR dist < prev_radius) then
+                      mol2.atom.translate_by(-t)
+                      cycle
                   end if
+
+
+
+                  ! Check if we already have molecule here
+                  ! This is needed as some symops + unit cell
+                  ! translations are redundant
+                  ! and we might be searching the same unit cell twice
+                  equivalent = FALSE
+                  do a = 1, occupied_pos.dim2
+                      if (occupied_pos(:, a).distance_to(position) < 0.1) then
+                          equivalent = TRUE
+                          mol2.atom.translate_by(-t)
+                          exit
+                      end if
+                  end do
+                  if(equivalent) cycle
+                  occupied_pos.append_column(position)
+
+                  ! check absolute distances
+                  d = 0
+                  d(1) = 1
+                  d(6) = n
+                  d(7) = separation.norm
+
+                  ! There has to be a better way to do this, but this works for now
+                  ! and eliminates most redundant calculations
+                  ! If we have already calculated these energies, continue and
+                  ! increment the counter
+                  !all_atoms.append(mol2.atom)
+                  n_molecules = n_molecules + 1
+                  do a = 1, energy_table.dim2
+                      if(abs(energy_table(6, a) - d(6)) > 0.00001) cycle
+                      if ((abs(d(7) - energy_table(7, a)) < 0.0001)) then
+                          equivalent = TRUE
+                          energy_table(1, a) = energy_table(1, a) + 1
+                          mol2.atom.translate_by(-t)
+                          exit
+                      end if
+                  end do
+                  if(equivalent) cycle
+
+                  ! If we have a unique molecule pair calculate the energies
+                  E = ZERO
+                  ! Disp
+                  E(3) = mol1.PROP:intermolecular_polarization_energy(mol2)
+                  E(4) = mol1.atom.Grimme06_dispersion_energy(mol2.atom)
+                  E(1:2) = mol1.PROP:intermolecular_qm_energies(mol2)
+                  d(2:5) = E
+                  energy_table.append_column(d(:))
+
+                  new_mols = new_mols + 1
+                  mol2.atom.translate_by(-t)
               end do
-              if(equivalent) cycle
-
-              ! check absolute distances
-              d = 0
-              d(1) = 1
-              do a = 1, mol1.atom.dim
-                  d(a+5) = abs(mol1.atom(a).position.distance_to(mol2.atom(a).position))
               end do
-
-              ! There has to be a better way to do this, but this works for now
-              ! and eliminates most redundant calculations
-              ! If we have already calculated these energies, continue and
-              ! increment the counter
-              do a = 1, abs_distances.dim2
-                  if (all(((d(6:) - abs_distances(6:, a)).abs < 0.01))) then
-                      equivalent = TRUE
-                      abs_distances(1, a) = abs_distances(1, a) + 1
-                      mol2.BASE:destroy
-                      exit
-                  end if
               end do
-              if(equivalent) cycle
-              occupied_pos.append_column(mol2.atom(1).position)
-
-              ! If we have a unique molecule pair calculate the energies
-              E = ZERO
-              ! Disp
-              E(3) = mol1.PROP:intermolecular_polarization_energy(mol2)
-              E(4) = mol1.atom.Grimme06_dispersion_energy(mol2.atom)
-              E(1:2) = mol1.PROP:intermolecular_qm_energies(mol2)
-              d(2:5) = E
-              abs_distances.append_column(d(:))
-
-              n_molecules = n_molecules + 1
-
+              step = step + 1
+              progress = step/total * 100
+              stdout.show("Iteration progress", progress)
               mol2.BASE:destroy
           end do
-          step = step + 1
-          stdout.text(trim(REAL:to_str(step/total * 100))//"%")
+          n_iter = n_iter + 1
+          !all_atoms.put_xyz_file(trim(.name)//trim(n_iter.to_str)//trim("atoms"))
+          !all_atoms.destroy
+          MOLECULE.CE:put_lattice_energies_table(energy_table, occupied_pos)
+          e_iter = ZERO
+          E_tot = ZERO
+          do a = 1, energy_table.dim2
+              E_tot = E_tot + energy_table(2:5, a) * energy_table(1, a)
+          end do
+          e_iter = sum(E_tot)
+
+          delta = e_iter - e_prev
+          stdout.show("Energy change ", delta)
+          stdout.show("# of new molecules ", new_mols)
+          stdout.show("n_molecules ", n_molecules)
+          prev_h_min = h_min
+          prev_h_max = h_max
+          prev_radius = radius
+          radius = radius + 7.2
+          if (radius > MAX_SEARCH_RADIUS) then
+              stdout.text("No convergence achieved, max search radius exceeded")
+              stdout.show("Max search radius", MAX_SEARCH_RADIUS)
+              exit
+          end
+
       end do
-      end do
-      end do
+#undef CONVERGENCE_TOLERANCE
+#undef MAX_SEARCH_RADIUS
 
       timer.stop_timing
       stdout.show("Time taken for Symmetry related mols (s) = ", timer.elapsed_time_s)
 
-      E_tot = ZERO
-      do a = 1, abs_distances.dim2
-          stdout.show("N equivalent", abs_distances(1, a))
-          E_tot = E_tot + abs_distances(2:5, a) * abs_distances(1, a)
-      end do
-
-      E_tot = E_tot * 0.5d0 ! Total lattice energy = 0.5 * the sum
-      stdout.text("Totals:")
-      stdout.show("n_molecules", n_molecules)
-      stdout.show("E_ele                     =", E_tot(1))
-      stdout.show("E_rep                     =", E_tot(2))
-      stdout.show("E_pol                     =", E_tot(3))
-      stdout.show("E_disp                    =", E_tot(4))
-      stdout.show("E_ele in "//trim(display_unit), E_tot(1) * conversion_factor)
-      stdout.show("E_rep in "//trim(display_unit), E_tot(2) * conversion_factor)
-      stdout.show("E_pol in "//trim(display_unit), E_tot(3) * conversion_factor)
-      stdout.show("E_disp in "//trim(display_unit), E_tot(4) * conversion_factor)
-      stdout.show("E_total ", sum(E_tot))
-      stdout.show("E_total in "//trim(display_unit), sum(E_tot) * conversion_factor)
-
+      MOLECULE.CE:put_lattice_energies_table(energy_table, occupied_pos)
 
    end
 

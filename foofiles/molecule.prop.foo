@@ -4217,29 +4217,26 @@ contains
       saved_MOs_A, saved_MOs_B :: OPMATRIX*
       exchange_factors :: VEC{REAL}(3) = [-HALF, -HALF, -HALF]
       a_b :: VEC{REAL}(3)
-      E :: VEC{REAL}(5)
 
       merged :: MOLECULE*
 
 
-      ! ======================
-      ! Get non orthogonal MOs
-      ! ======================
-
       ! A & B molecules
       mol_A => self
-
-      ! Hacky method to reuse code, should be rewritten
-      merged.BASE:create_from_mols(mol_A, mol_B)
 
       a_b = mol_A.atom.center_of_mass - mol_B.atom.center_of_mass
       r = a_b.norm
      ! If the molecules are too far apart use multipoles
      if (r.to_units("ANGSTROMS") > 12.0d0) then
-        merged.PROP:make_coulomb_atomic_multipole_energy(E, E_net)
-        res = [E_net, ZERO]
+        res = ZERO
+        res(1) = .:intermolecular_coulomb_atomic_multipole_energy(mol_B)
         return
      end
+
+
+      ! Hacky method to reuse code, should be rewritten
+      merged.BASE:create_from_mols(mol_A, mol_B)
+
 
       mol_A.INTS:make_overlap_matrix
       mol_A.BASE:make_natural_orbitals
@@ -4498,6 +4495,64 @@ contains
       quadrupoles_a.destroy; charges_b.destroy
       octupoles_a.destroy; charges_b.destroy
    end 
+
+   intermolecular_coulomb_atomic_multipole_energy(mol_B) result(E_coul)
+      self :: PTR
+      E_coul :: REAL
+      ! A & B molecules
+      mol_B :: MOLECULE*
+
+      E :: VEC{REAL}(5)
+      mol_A :: MOLECULE*
+      charges_a :: VEC{REAL}*
+      dipoles_a, quadrupoles_a, octupoles_a :: MAT{REAL}*
+      charges_b :: VEC{REAL}*
+      dipoles_b, quadrupoles_b, octupoles_b :: MAT{REAL}*
+      q_a, q_b :: REAL
+      m_a, m_b :: VEC{REAL}(3)
+      Qu_a, Qu_b :: MAT{REAL}(3,3)
+      O_a, O_b :: MAT3{REAL}(3,3,3)
+      i, j :: INT
+      T :: T_TENSOR
+
+      mol_A => self
+
+      charges_a.create(mol_A.n_atom)
+      dipoles_a.create(mol_A.n_atom, 3)
+      quadrupoles_a.create(mol_A.n_atom, 6)
+      octupoles_a.create(mol_A.n_atom, 10)
+      charges_b.create(mol_B.n_atom)
+      dipoles_b.create(mol_B.n_atom, 3)
+      quadrupoles_b.create(mol_B.n_atom, 6)
+      octupoles_b.create(mol_B.n_atom, 10)
+
+      mol_A.BASE:make_atomic_multipoles(charges_a,dipoles_a,quadrupoles_a,octupoles_a)
+      mol_B.BASE:make_atomic_multipoles(charges_b,dipoles_b,quadrupoles_b,octupoles_b)
+      E = ZERO
+
+      do i = 1, mol_A.n_atom
+         q_a = mol_A.atom(i).atomic_number - charges_a(i)
+         m_a = dipoles_a(i,:)
+         Qu_a = MAT{REAL}:expand_quadrupole(quadrupoles_a(i,:))
+         O_a = MAT3{REAL}:expand_octupole(octupoles_a(i,:))
+
+      do j = 1, mol_B.n_atom
+         q_b = mol_B.atom(j).atomic_number - charges_b(j)
+         m_b = dipoles_b(j,:)
+         Qu_b = MAT{REAL}:expand_quadrupole(quadrupoles_b(j,:))
+         O_b = MAT3{REAL}:expand_octupole(octupoles_b(j,:))
+
+         T.create(mol_A.atom(i).position, mol_B.atom(j).position)
+         E = E + T.interaction_energy(q_a, q_b, m_a, m_b, Qu_a, Qu_b, O_a, O_b)
+      end do
+      end do
+      E_coul = sum(E)
+      charges_a.destroy; charges_b.destroy
+      dipoles_a.destroy; dipoles_b.destroy
+      quadrupoles_a.destroy; charges_b.destroy
+      octupoles_a.destroy; charges_b.destroy
+   end 
+
 
 
    put_group_12_QM_energies ::: leaky
