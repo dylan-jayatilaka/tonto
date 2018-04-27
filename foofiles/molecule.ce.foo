@@ -689,33 +689,16 @@ contains
         unique_molecules :: MAT{REAL}*
         table :: VEC{TABLE_COLUMN}*
         a :: INT
-        E_tot :: VEC{REAL}(4)
-        scale_factors :: VEC{REAL}(4)
+        b3lyp_scale_factors, hf_scale_factors, scale_factors :: VEC{REAL}(4)
+        n, symop :: VEC{INT}(energies_table.dim2)
+        E_coul, E_rep, E_pol, E_disp, sep, E_tot :: VEC{REAL}(energies_table.dim2)
         conversion_factor :: REAL
         display_unit :: STR
         display_unit = "kJ/mol"
-        scale_factors = [1.0573d0, 0.6177d0 , 0.7399d0, 0.8708d0] 
+        ! E_ele, E_pol, E_dis, E_rep
+        hf_scale_factors= [1.019, 0.651, 0.901, 0.811] 
+        b3lyp_scale_factors = [1.0573d0, 0.7399d0, 0.8708d0, 0.6177d0] 
         conversion_factor = display_unit.conversion_factor
-
-        stdout.text("==========================")
-        stdout.text("Lattice energy dimer pairs")
-        stdout.text("==========================")
-        stdout.text(" ")
-        table.create(7)
-        table(1).set_heading("N")
-        table(2).set_heading("E_coul")
-        table(3).set_heading("E_rep")
-        table(4).set_heading("E_pol")
-        table(5).set_heading("E_disp")
-        table(6).set_heading("symop")
-        table(7).set_subhead("separation")
-
-        do a = 1, table.dim
-            table(a).set_values(energies_table(a, :))
-        end do
-
-        table.put(label_rows=FALSE)
-        table.destroy
 
         table.create(3)
         stdout.text("=================================")
@@ -733,24 +716,54 @@ contains
         table.put(label_rows=FALSE)
         table.destroy
 
-        do a = 1, energies_table.dim2
-            E_tot = E_tot + energies_table(2:5, a) * energies_table(1, a)
+        stdout.text("=============================")
+        stdout.text("Lattice energy dimer energies")
+        stdout.text("=============================")
+        stdout.text(" ")
+        table.create(8)
+        table(1).set_heading("N")
+        table(2).set_heading("Symop")
+        table(3).set_heading("Separation")
+        table(4).set_heading("E_ele")
+        table(5).set_heading("E_pol")
+        table(6).set_heading("E_dis")
+        table(7).set_heading("E_rep")
+        table(8).set_heading("E_tot")
+
+
+        n = int(energies_table(1, :))
+        table(1).set_values(n)
+        symop = int(energies_table(6, :))
+        table(2).set_values(symop)
+        sep = energies_table(7, :) * ANGSTROM_PER_BOHR
+        table(3).set_values(sep)
+
+        E_coul = energies_table(2, :) * KJOULEMOL_PER_HARTREE
+        E_rep = energies_table(3, :) * KJOULEMOL_PER_HARTREE
+        E_pol = energies_table(4, :) * KJOULEMOL_PER_HARTREE
+        E_disp = energies_table(5, :) * KJOULEMOL_PER_HARTREE
+
+        do a = 1, E_coul.dim
+            E_tot(a) = n(a) * hf_scale_factors.dot([E_coul(a), E_pol(a), E_disp(a), E_rep(a)])
         end do
-        E_tot = E_tot * 0.5
+        table(4).set_values(E_coul)
+        table(5).set_values(E_pol)
+        table(6).set_values(E_disp)
+        table(7).set_values(E_rep)
+        table(8).set_values(E_tot)
+
+        table.put(label_rows=FALSE)
+        table.destroy
+
         stdout.text("Totals:")
         stdout.show("Symmetry unique_molecules", energies_table.dim2)
-        stdout.show("E_ele                     =", E_tot(1))
-        stdout.show("E_rep                     =", E_tot(2))
-        stdout.show("E_pol                     =", E_tot(3))
-        stdout.show("E_disp                    =", E_tot(4))
-        stdout.show("E_total ", sum(E_tot))
-        stdout.text("In "//trim(display_unit))
-        stdout.show("E_ele                     =", E_tot(1) * conversion_factor)
-        stdout.show("E_rep                     =", E_tot(2) * conversion_factor)
-        stdout.show("E_pol                     =", E_tot(3) * conversion_factor)
-        stdout.show("E_disp                    =", E_tot(4) * conversion_factor)
-        stdout.show("E_total                   =", sum(E_tot) * conversion_factor)
-        stdout.show("E_total (scaled)          =", E_tot.dot(scale_factors) * conversion_factor)
+        stdout.show("E_ele                     =", sum(E_coul))
+        stdout.show("E_pol                     =", sum(E_pol))
+        stdout.show("E_dis                     =", sum(E_disp))
+        stdout.show("E_rep                     =", sum(E_rep))
+        stdout.show("E_tot                     =", sum(E_coul + E_pol + E_disp + E_rep))
+        stdout.show("E_tot (scaled)            =", sum(E_tot))
+        stdout.show("E_lat (0.5 * E_tot)       =", sum(E_tot) * 0.5)
 
     end 
 
@@ -819,7 +832,7 @@ contains
 
     ! position of first atom in molecule
     occupied_pos.create(3, 1)
-    occupied_pos(:, 1) = mol1.atom.center_of_atoms
+    occupied_pos(:, 1) = mol1.atom.center_of_mass
     ! create a 7 x n_molecule array of unique interactions
     ! 1 = number of molecules
     ! 2-5 are the energy terms
@@ -827,7 +840,8 @@ contains
     d.create(7)
     energy_table.create(d.dim, 0)
     
-    offset = mol1.atom.center_of_atoms
+    offset = mol1.atom.center_of_mass
+    stdout.show("Molecule center of mass offset", offset)
     n_iter = 0
 
 
@@ -857,16 +871,19 @@ contains
 
           h_max = max(h_max, [1,1,1])
           h_min = min(h_min, [-1,-1,-1])
-          stdout.show("h_max", h_max)
-          stdout.show("h_min", h_min)
+        !  stdout.show("h_max", h_max)
+        !  stdout.show("h_min", h_min)
 
           do n = 1, unique_symops.dim
               ! convert to cartesian space
               rot = .crystal.spacegroup.seitz(1:3, 1:3, unique_symops(n))
               rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
               rot = matmul(.crystal.unit_cell.direct_matrix, rot)
+              stdout.text("Rotation matrix (cartesian)")
+              stdout.put(rot)
               t_symop = .crystal.spacegroup.seitz(1:3, 4, unique_symops(n))
-              t_symop = matmul(rot, t_symop)
+              stdout.text("Translation vector (frac)")
+              stdout.put(t_symop)
 
               mol2.BASE:create
               mol2.scfdata.create_copy(.scfdata)
@@ -891,10 +908,10 @@ contains
                   !if (k > prev_h_min(3) + 1 AND i < prev_h_max(3) - 1) cycle
 
                   ! get translation for this unit cell
-                  t = t_symop + matmul(.crystal.unit_cell.direct_matrix, [i, j, k])
+                  t = matmul(.crystal.unit_cell.direct_matrix, t_symop + [i, j, k])
 
                   mol2.atom.translate_by(t)
-                  position = mol2.atom.center_of_atoms
+                  position = mol2.atom.center_of_mass
                   separation = position - offset
                   mol2.atom.get_distance_to(mol1.atom, dist)
                   ! Check if this molecule is within the radius
