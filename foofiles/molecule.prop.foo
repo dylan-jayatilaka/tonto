@@ -4189,6 +4189,168 @@ contains
    end
 
 
+   symmetric_intermolecular_qm_energies(mol_B, monomer_energies) result(res) 
+    ! Calculate the group 1-2 interaction energies.
+    ! monomer energies is a vector if TWO * -monomer energies
+    ! Effectively avoiding calculating the expectations for the
+    ! monomers each time
+
+    !!!! IF mol_B and  self are symmetry related !!!!
+
+    ! For simplicity the notations follows the reference:
+    ! P. Su & H. Li (2009) JCP 131 p. 014102
+    ! It has references to the original work and is explained fairly
+    ! clearly, except for their use of "X" for supermolecule (X=AB).
+    ! NOTE: make sure the MO's and density matrices for each group exist!
+
+      self :: PTR
+      mol_B :: MOLECULE*
+      monomer_energies :: VEC{REAL}(4) ! E_en, E_1e, E_ee, E_ex
+      res :: VEC{REAL}(2) ! E_coul, E_rep
+
+      ! Terms regardless of unrestricted/restricted
+      E_en,E_ke,E_1e,E_nn,E_ee,E_ex,r :: REAL
+      E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
+      P :: OPMATRIX* 
+      J :: OPMATRIX*
+      K :: OPMATRIX*
+      mol_A :: MOLECULE*
+      saved_MOs_A, saved_MOs_B :: OPMATRIX*
+      exchange_factor :: REAL = -HALF
+      a_b :: VEC{REAL}(3)
+
+      merged :: MOLECULE*
+
+
+      ! A & B molecules
+      mol_A => self
+
+      a_b = mol_A.atom.center_of_mass - mol_B.atom.center_of_mass
+      r = a_b.norm
+     ! If the molecules are too far apart use multipoles
+     if (r.to_units("ANGSTROMS") > 12.0d0) then
+        res = ZERO
+        res(1) = .:intermolecular_coulomb_atomic_multipole_energy(mol_B)
+        return
+     end
+
+
+      ! Hacky method to reuse code, should be rewritten
+      merged.BASE:create_from_mols(mol_A, mol_B)
+
+
+      saved_MOs_A => mol_A.molecular_orbitals
+      saved_MOs_B => mol_B.molecular_orbitals
+
+      mol_A.molecular_orbitals => mol_A.natural_orbitals
+      mol_B.molecular_orbitals => mol_B.natural_orbitals
+      mol_A.scfdata.set_scf_kind(mol_A.molecular_orbitals.spinorbital_kind)
+      mol_B.scfdata.set_scf_kind(mol_B.molecular_orbitals.spinorbital_kind)
+
+      merged.SCF:merge_group_MOs
+      merged.scfdata.set_output(FALSE)
+      if (merged.scfdata.is_restricted) then
+         exchange_factor = -QUARTER
+      end if
+
+      ! Make SCF density matrices
+     merged.BASE:make_scf_density_matrix
+
+      ! Make integrals
+     merged.SCF:make_core_matrix
+
+      ! >> Nuclear attraction energy << 
+     merged.nuclear_attraction_matrix.uncompress
+
+      E_ABn = ZERO; E_ABo = ZERO; 
+      E_en = ZERO; E_1e = ZERO;
+      E_ex = ZERO; E_nn = ZERO;
+      E_ke = ZERO;
+
+      P   => merged.nuclear_attraction_matrix
+
+      E_en = merged.BASE:expectation(P) + monomer_energies(1)
+
+      merged.nuclear_attraction_matrix.compress
+
+      ! Non-orthogonal & orthogonalized electronic energies
+
+      ! One electron hamiltonian
+      P   => merged.core_matrix
+
+      ! >> One electron interaction energy <<
+      E_1e = merged.BASE:expectation(P)
+      E_ABn = E_ABn + E_1e
+      E_1e = E_1e + monomer_energies(2)
+      E_ke = E_1e - E_en
+
+      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+
+      ! Two-electron matrices
+      P   => merged.density_matrix
+
+      merged.FOCK:make_JK_engine(J  ,K  ,P  )
+
+      ! Alpha density matrix with beta, beta density matrix with alpha
+      E_ee = merged.BASE:expectation(J) * HALF
+      E_ABn = E_ABn + E_ee
+      E_ee = E_ee + monomer_energies(3)
+      E_ex = merged.BASE:expectation(K) * exchange_factor
+      E_ABn = E_ABn + E_ex
+      E_ex = E_ex + monomer_energies(4)
+
+
+      ! >> Nuclear-nuclear repulsion energy term <<
+      E_nn = merged.:group_12_NR_int_energy
+      ! >> Electron repulsion energy term <<
+
+      ! >> Total <<
+      E_tot = E_ke + E_nn + E_en + E_ee + E_ex
+      E_net =        E_nn + E_en + E_ee
+
+      ! ======================
+      ! Now symmorthonormalize
+      ! ======================
+
+      merged.SCF:symmorthonormalize_occupied_MOs
+      merged.BASE:make_scf_density_matrix
+
+      ! One electron hamiltonian
+      P    => merged.core_matrix
+      E_ABo = merged.BASE:expectation(P)
+
+      ! Two-electron integrals
+      J.destroy; K.destroy
+      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+
+      P => merged.density_matrix
+      merged.FOCK:make_JK_engine(J, K, P)
+
+      E_ABo = E_ABo +    HALF * merged.BASE:expectation(J, TRUE)
+      E_ABo = E_ABo + exchange_factor * merged.BASE:expectation(K)
+
+      ! Get repulsion energy
+      E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
+      E_XR  = E_ex + E_rep
+
+      ! Clean up remaining temporaries
+      J.destroy; K.destroy
+
+      res = [E_net, E_XR]
+      ! In kJ/mol
+      merged.molecular_orbitals.destroy
+      merged.natural_orbitals.destroy
+      merged.density_matrix.destroy
+
+      mol_A.molecular_orbitals => saved_MOs_A
+      mol_B.molecular_orbitals => saved_MOs_B
+
+
+   end
+
+
    intermolecular_qm_energies(mol_B) result(res)
    ! Calculate the group 1-2 interaction energies.
    ! For simplicity the notations follows the reference:
