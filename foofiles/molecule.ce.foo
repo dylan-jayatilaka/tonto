@@ -684,9 +684,8 @@ contains
    end
 
 
-    put_lattice_energies_table(energies_table, unique_molecules)
+    put_lattice_energies_table(energies_table)
         energies_table :: MAT{REAL}* 
-        unique_molecules :: MAT{REAL}*
         table :: VEC{TABLE_COLUMN}*
         a :: INT
         b3lyp_scale_factors, hf_scale_factors, scale_factors :: VEC{REAL}(4)
@@ -705,22 +704,6 @@ contains
         if(.scfdata.scf_kind == "rks") then
             scale_factors = b3lyp_scale_factors
         end
-
-!       table.create(3)
-!       stdout.text("=================================")
-!       stdout.text("Lattice energy occupied positions")
-!       stdout.text("=================================")
-!       stdout.text(" ")
-!       table(1).set_heading("x")
-!       table(2).set_heading("y")
-!       table(3).set_heading("z")
-
-!       do a = 1, table.dim
-!           table(a).set_values(unique_molecules(a, :))
-!       end do
-
-!       table.put(label_rows=FALSE)
-!       table.destroy
 
         stdout.text("=============================")
         stdout.text("Lattice energy dimer energies")
@@ -834,8 +817,7 @@ contains
       frac_radius, offset :: VEC{REAL}(3)
       h_min, h_max, prev_h_min, prev_h_max :: VEC{INT}(3)
       occupied_pos :: MAT{REAL}*
-      progress, radius, prev_radius, delta, e_iter, e_prev, dist :: REAL
-      step, total :: REAL
+      radius, prev_radius, delta, e_iter, e_prev, dist :: REAL
       equivalent :: BIN
       timer, timer_12 :: TIME
       symop_strings :: VEC{STR}*
@@ -843,7 +825,7 @@ contains
       new_mols, cells_skipped :: INT
       wavefunction_filename :: STR
       uc_count :: MAT3{INT}(-10:10,-10:10,-10:10)
-      n_iter :: INT
+      n_iter, n_symops :: INT
 
       mol1 :: MOLECULE*
       mol2 :: MOLECULE*
@@ -857,18 +839,22 @@ contains
       mol1.BASE:create
       !mol1.BASE:read_g09_FChk_file(trim(wavefunction_filename))
       mol1.scfdata.create_copy(.scfdata)
-      .cluster.create_atom_list(mol1.atom)
+      mol1.name = trim(.cif.data_block_name)
+      .cluster.create_mol_atom_list(mol1.atom, 1)
       central_atoms = mol1.atom
 
       mol1.BASE:set_atom_info
       mol1.BASE:finalize_atom_groups
       mol1.BASE:resolve_basis_info
       mol1.BASE:set_basis_name(.basis_name)
+      mol1.atom.put
 
       mol1.SCF:make_ANO_data
       !! Do the SCF
       timer.start_timing
+      mol1.scfdata.set_output(TRUE)
       mol1.SCF:scf
+      mol1.scfdata.set_output(FALSE)
       timer.stop_timing
       stdout.show("Time taken for SCF (s) = ", timer.elapsed_time_s)
 
@@ -877,10 +863,12 @@ contains
       mol1.BASE:make_atomic_multipoles
 
       unique_symops.create_copy(.crystal.asym_symop_for_unit_cell_atom.unique_elements)
-      stdout.show("Unique symops =", unique_symops)
-      symop_strings.create(unique_symops.dim)
+      stdout.show("Num unique symops        =", unique_symops)
+      stdout.show("Num unique molecules     = ", .cluster.n_unique_molecules)
+      n_symops = unique_symops.dim
+      symop_strings.create(n_symops)
 
-      do i = 1, unique_symops.dim
+      do i = 1, n_symops
         .crystal.spacegroup.recode_Jones_Faithful_symbol(symop_strings(i), &
             .crystal.spacegroup.seitz(:,:, unique_symops(i)))
         stdout.show(unique_symops(i).to_str, symop_strings(i))
@@ -906,7 +894,6 @@ contains
     n_molecules = 0
     stdout.text("Starting lattice energy calculation")
     timer.start_timing
-    total = unique_symops.dim
     radius = 7.2 ! (roughly 3.8 angstroms * 2)
     e_prev = ZERO
     e_iter = ZERO
@@ -923,7 +910,6 @@ contains
 
     do while (abs(delta) > CONVERGENCE_TOLERANCE)
         e_prev = e_iter
-        step = 0
         new_mols = 0
 
         frac_radius = radius /.cluster.crystal.unit_cell.length
@@ -937,11 +923,12 @@ contains
         h_min = min(h_min, [-1,-1,-1])
         h_min = max(h_min, [-10, -10, -10])
         ! only search a maximum of 20 unit cells
+        n_iter = n_iter + 1
         stdout.show("Iteration", n_iter)
         stdout.show("Within radius", radius)
 
-        do n = 1, unique_symops.dim
-            stdout.show("Symop", symop_strings(n))
+        do n = 1, n_symops
+            stdout.show("Symop "//trim(n.to_str)//"/"//trim(n_symops.to_str), symop_strings(n))
             ! convert to cartesian space
             rot = .crystal.spacegroup.seitz(1:3, 1:3, unique_symops(n))
             rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
@@ -949,7 +936,7 @@ contains
             t_symop = .crystal.spacegroup.seitz(1:3, 4, unique_symops(n))
 
             mol2.BASE:create
-            mol2.scfdata.create_copy(.scfdata)
+            mol2.scfdata.create_copy(mol1.scfdata)
             mol2.atom.create_copy(central_atoms)
             mol2.density_matrix.create_copy(mol1.density_matrix)
             mol2.molecular_orbitals.create_copy(mol1.molecular_orbitals)
@@ -965,17 +952,17 @@ contains
             !loop over unit cells
             do i = h_min(1),h_max(1)
                 ! don't search the same unit cells too many times
-                if (all(uc_count(i,:,:) >= unique_symops.dim)) then
+                if (all(uc_count(i,:,:) >= n_symops)) then
                     cells_skipped = cells_skipped + (h_max(2) - h_min(2) + 1) * (h_max(3) - h_min(3) + 1)
                     cycle
                 end
             do j = h_min(2),h_max(2)
-                if (all(uc_count(i,j,:) >= unique_symops.dim)) then
+                if (all(uc_count(i,j,:) >= n_symops)) then
                     cells_skipped = cells_skipped + (h_max(3) - h_min(3) + 1)
                     cycle
                 end
             do k = h_min(3),h_max(3)
-                if (uc_count(i,j,k) >= unique_symops.dim) then
+                if (uc_count(i,j,k) >= n_symops) then
                     cells_skipped = cells_skipped + 1
                     cycle
                 end
@@ -1048,6 +1035,7 @@ contains
                 energy_table.append_column(d(:))
 
                 new_mols = new_mols + 1
+                stdout.show("New molecule ", new_mols)
                 mol2.atom.translate_by(-t)
             end
             end
@@ -1056,8 +1044,7 @@ contains
             mol2.BASE:destroy
           end 
 
-          n_iter = n_iter + 1
-          .:put_lattice_energies_table(energy_table, occupied_pos)
+          .:put_lattice_energies_table(energy_table)
           e_iter = ZERO
           E_tot = ZERO
           do a = 1, energy_table.dim2
@@ -1067,8 +1054,8 @@ contains
 
           delta = e_iter - e_prev
           stdout.show("Energy change ", delta)
-          stdout.show("# of new molecules ", new_mols)
-          stdout.show("n_molecules ", n_molecules)
+          stdout.show("New molecules ", new_mols)
+          stdout.show("Total molecules", n_molecules)
           prev_h_min = h_min
           prev_h_max = h_max
           prev_radius = radius
@@ -1087,10 +1074,9 @@ contains
       stdout.show("Time taken for Symmetry related mols (s) = ", timer.elapsed_time_s)
       stdout.show("Time taken for E_ele + E_rep (s) = ", time_in_qm)
 
-      .:put_lattice_energies_table(energy_table, occupied_pos)
+      .:put_lattice_energies_table(energy_table)
 
    end
-
 
 
 end
