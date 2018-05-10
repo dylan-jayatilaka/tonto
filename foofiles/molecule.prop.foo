@@ -4189,16 +4189,16 @@ contains
    end
 
 
-   intermolecular_overlap_repulsion(mol_B, monomer_energies) result(res)
+   intermolecular_overlap_repulsion(mol_B) result(res)
       self :: PTR
       mol_B :: MOLECULE*
-      monomer_energies :: VEC{REAL}(4) ! E_en, E_1e, E_ee, E_ex
       res :: REAL
    ! Calculate the exchange-repulsion energy based on the following
    ! overlap formula (see Soderhjelm et al. JCP 124 (2006) eq. 14)
    ! E = S^2 (1 + 20 e ^(-R))
       mol_A :: MOLECULE*
       S2, S :: REAL
+      X, Y :: MAT{REAL}@
       i, j, a, b, n_a, n_b :: INT
       exchange_factor = -HALF :: REAL
 
@@ -4210,10 +4210,6 @@ contains
 
       merged.SCF:merge_group_MOs
       merged.scfdata.set_output(FALSE)
-
-      if (merged.scfdata.is_restricted) then
-         exchange_factor = -QUARTER
-      end if
 
       ! Make SCF density matrices
       merged.INTS:make_overlap_matrix
@@ -4231,20 +4227,23 @@ contains
 
 
 
-      do a = 1, n_a
-          do b = 1, n_b
-              S = ZERO
-              do i = 1, mol_A.n_bf
-                  do j = 1, mol_B.n_bf
-                      S = S + MO_a(i,a) * S_ab(a,.n_bf + b) * MO_b(j, b)
-                  end do
-              end do
-              S2 = S2 + S*S
-        end do
-      end do
+!     do a = 1, n_a
+!         do b = 1, n_b
+!             S = ZERO
+!             do i = 1, mol_A.n_bf
+!                 do j = 1, mol_B.n_bf
+!                     S = S + MO_a(i,a) * S_ab(a, .n_bf + b) * MO_b(j, b)
+!                 end do
+!             end do
+!             S2 = S2 + S*S
+!       end do
+!     end do
+      Y = matmul(S_ab, MO_b(:,1:n_b))
+      X = matmul(transpose(MO_a(:,1:n_a)), Y)
+      S2 = sum(X*X)
 
       res = 0.92 * S2
-      stdout.show("Overlap repulsion", res)
+      !stdout.show("Overlap repulsion", res)
       nullify(merged.atom_group(1).mol)
       nullify(merged.atom_group(2).mol)
       merged.BASE:destroy
@@ -4360,6 +4359,7 @@ contains
       E_ABn = E_ABn + E_ee
       E_ee = E_ee + monomer_energies(3)
       E_ex = merged.BASE:expectation(K) * exchange_factor
+!      E_rep_overlap = mol_A.:intermolecular_overlap_repulsion(mol_B)
       E_ABn = E_ABn + E_ex
       E_ex = E_ex + monomer_energies(4)
 
@@ -4394,6 +4394,8 @@ contains
 
       E_ABo = E_ABo +    HALF * merged.BASE:expectation(J, TRUE)
       E_ABo = E_ABo + exchange_factor * merged.BASE:expectation(K)
+!      stdout.show("E_exchange-rep", exchange_factor * merged.BASE:expectation(K) - E_ex + monomer_energies(4))
+!      stdout.show("E_rep_overlap", E_rep_overlap)
       ! Get repulsion energy
       E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
       E_XR  = E_ex + E_rep
@@ -4402,7 +4404,7 @@ contains
       ! Clean up remaining temporaries
 
       res = [E_net, E_XR]
-      if (E_XR <0.00001) then
+      if (abs(E_XR) <0.00001) then
           stdout.show("Extremely small repulsion (could have avoided calculation)", &
                       E_XR * KJOULEMOL_PER_HARTREE)
           stdout.show("E_ele", E_net * KJOULEMOL_PER_HARTREE)
