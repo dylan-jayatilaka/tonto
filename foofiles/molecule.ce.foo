@@ -684,14 +684,16 @@ contains
    end
 
 
-    put_lattice_energies_table(energies_table)
-        energies_table :: MAT{REAL}* 
+    put_lattice_energies_table(energies_table, symop_strings)
+        energies_table :: MAT{REAL}, TARGET
+        symop_strings :: VEC{STR}
         table :: VEC{TABLE_COLUMN}*
         a :: INT
         b3lyp_scale_factors, hf_scale_factors, scale_factors :: VEC{REAL}(4)
         indices :: VEC{INT}@
-        n, symop :: VEC{INT}(energies_table.dim2)
+        n :: VEC{INT}(energies_table.dim2)
         E_coul, E_rep, E_pol, E_disp, sep, E_tot, prox :: VEC{REAL}(energies_table.dim2)
+        symop :: VEC{STR}(energies_table.dim2)
         conversion_factor :: REAL
         display_unit :: STR
         display_unit = "kJ/mol"
@@ -731,7 +733,7 @@ contains
 
         n = int(energies_table(1, :))
         table(1).set_values(n)
-        symop = int(energies_table(6, :))
+        symop = symop_strings(int(energies_table(6, :)))
         table(2).set_values(symop)
         sep = energies_table(7, :) * ANGSTROM_PER_BOHR
         table(3).set_values(sep)
@@ -834,6 +836,9 @@ contains
       wavefunction_filename :: STR
       uc_count :: MAT3{INT}(-10:10,-10:10,-10:10)
       n_iter, n_symops :: INT
+      all_atoms :: VEC{ATOM}*
+      molecule_bounds :: MAT{REAL}(3,2)
+      positions_frac :: MAT{REAL}@
 
       mol1 :: MOLECULE*
       mol2 :: MOLECULE*
@@ -872,7 +877,6 @@ contains
 
       unique_symops.create_copy(.crystal.asym_symop_for_unit_cell_atom.unique_elements)
       stdout.show("Num unique symops        =", unique_symops)
-      stdout.show("Num unique molecules     = ", .cluster.n_unique_molecules)
       n_symops = unique_symops.dim
       symop_strings.create(n_symops)
 
@@ -902,7 +906,7 @@ contains
     n_molecules = 0
     stdout.text("Starting lattice energy calculation")
     timer.start_timing
-    radius = 7.2 ! (roughly 3.8 angstroms * 2)
+    radius = 11.34 ! Roughly 6 angstrom
     e_prev = ZERO
     e_iter = ZERO
     delta = INT_HUGE
@@ -915,16 +919,36 @@ contains
     ! keep track of how many molecules in each uc we've added
     uc_count = 0
     cells_skipped = 0
+    allocate(positions_frac(3, central_atoms.dim1))
+    do i = 1, central_atoms.dim1
+        positions_frac(:, i) = central_atoms(i).position
+    end do
+    positions_frac = matmul(.crystal.unit_cell.inverse_matrix, positions_frac)
+
+    ! min and max fractional coord of molecule
+    molecule_bounds(:, 1) = minval(positions_frac, dim=2)
+    molecule_bounds(:, 2) = maxval(positions_frac, dim=2)
+    deallocate(positions_frac)
+
+    radius = VEC{REAL}:norm(&
+        matmul(.crystal.unit_cell.direct_matrix, &
+               molecule_bounds(:,2) - molecule_bounds(:,1)))
+
+    radius = min(radius, 13.60) ! 7.2 Angstroms
+
+    stdout.show("Radius", radius * ANGSTROM_PER_BOHR)
+    stdout.show("molecule_bounds(:,1)", molecule_bounds(:,1))
+    stdout.show("molecule_bounds(:,2)", molecule_bounds(:,2))
+
 
     do while (abs(delta) > CONVERGENCE_TOLERANCE)
         e_prev = e_iter
         new_mols = 0
 
         frac_radius = radius /.cluster.crystal.unit_cell.length
-        h_max = ceiling(frac_radius + maxval(.cluster.fragment_geometry, dim=2) &
-                - .cluster.fragment_offset)
-        h_min = floor(-frac_radius + minval(.cluster.fragment_geometry, dim=2) &
-                - .cluster.fragment_offset)
+        stdout.show("frac_radius", frac_radius)
+        h_max = ceiling(frac_radius + molecule_bounds(:, 2))
+        h_min = floor(-frac_radius + molecule_bounds(:, 1))
 
         h_max = max(h_max, [1,1,1])
         h_max = min(h_max, [10, 10, 10])
@@ -933,8 +957,11 @@ contains
         ! only search a maximum of 20 unit cells
         n_iter = n_iter + 1
         stdout.show("Iteration", n_iter)
-        stdout.show("Within radius", radius)
+        stdout.show("Within radius (angstroms)", radius * ANGSTROM_PER_BOHR)
+        stdout.show("h_min", h_min)
+        stdout.show("h_max", h_max)
 
+        !all_atoms.create_copy(central_atoms)
         do n = 1, n_symops
             stdout.show("Symop "//trim(n.to_str)//"/"//trim(n_symops.to_str), symop_strings(n))
             ! convert to cartesian space
@@ -983,7 +1010,7 @@ contains
                 separation = position - offset
                 mol2.atom.get_distance_to(mol1.atom, dist)
                 ! Check if this molecule is within the radius
-                if(dist > radius OR dist < prev_radius) then
+                if(dist > radius OR dist <= prev_radius) then
                     mol2.atom.translate_by(-t)
                     cycle
                 end if
@@ -999,6 +1026,9 @@ contains
                     if (occupied_pos(:, a).distance_to(position) < 0.1) then
                         equivalent = TRUE
                         mol2.atom.translate_by(-t)
+                        stdout.text("Redundant molecule discarded")
+                        stdout.show("Symop", symop_strings(n))
+                        stdout.show("Separation", separation.norm)
                         exit
                     end if
                 end do
@@ -1012,6 +1042,7 @@ contains
                 d(6) = n
                 d(7) = separation.norm
                 d(8) = dist
+                !all_atoms.append(mol2.atom)
 
                 ! There has to be a better way to do this, but this works for now
                 ! and eliminates most redundant calculations
@@ -1019,16 +1050,25 @@ contains
                 ! increment the counter
                 n_molecules = n_molecules + 1
                 do a = 1, energy_table.dim2
-                     if(abs(energy_table(6, a) - d(6)) > 0.00001) cycle
-                     if(abs(d(8) - energy_table(8, a)) >  0.0001) cycle
-                     if ((abs(d(7) - energy_table(7, a)) < 0.0001)) then
+                     if(abs(energy_table(6, a) - d(6)) > 0.001) cycle
+                     if(abs(d(8) - energy_table(8, a)) >  0.001) cycle
+                     if ((abs(d(7) - energy_table(7, a)) < 0.001)) then
                         equivalent = TRUE
+                        stdout.text("Equivalent molecule found")
+                        stdout.show("Symop", symop_strings(n))
+                        stdout.show("Separation", d(7) * ANGSTROM_PER_BOHR)
+                        stdout.show("Proximity", d(8) * ANGSTROM_PER_BOHR)
+
                         energy_table(1, a) = energy_table(1, a) + 1
                         mol2.atom.translate_by(-t)
                         exit
                      end if
                 end
-                if(equivalent) cycle
+
+                if(equivalent) then
+                    stdout.text("Equivalent, cycling...")
+                    cycle
+                end if
 
                 ! If we have a unique molecule pair calculate the energies
                 E = ZERO
@@ -1052,7 +1092,7 @@ contains
             mol2.BASE:destroy
           end 
 
-          .:put_lattice_energies_table(energy_table)
+          .:put_lattice_energies_table(energy_table, symop_strings)
           e_iter = ZERO
           E_tot = ZERO
           do a = 1, energy_table.dim2
@@ -1061,6 +1101,7 @@ contains
           e_iter = sum(E_tot)
 
           delta = e_iter - e_prev
+          stdout.show("Cells skipped", cells_skipped)
           stdout.show("Energy change ", delta)
           stdout.show("New molecules ", new_mols)
           stdout.show("Total molecules", n_molecules)
@@ -1073,7 +1114,8 @@ contains
               stdout.show("Max search radius", MAX_SEARCH_RADIUS)
               exit
           end
-
+          !all_atoms.put_xyz_file(trim(.name)//trim(n_iter.to_str))
+          !all_atoms.destroy
       end do
 #undef CONVERGENCE_TOLERANCE
 #undef MAX_SEARCH_RADIUS
@@ -1082,7 +1124,7 @@ contains
       stdout.show("Time taken for Symmetry related mols (s) = ", timer.elapsed_time_s)
       stdout.show("Time taken for E_ele + E_rep (s) = ", time_in_qm)
 
-      .:put_lattice_energies_table(energy_table)
+      .:put_lattice_energies_table(energy_table, symop_strings)
 
    end
 
