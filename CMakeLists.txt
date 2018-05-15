@@ -44,17 +44,28 @@ project(tonto
 
 if(MPI)
     message(STATUS "Building with MPI enabled")
-    include(FindMPI)
-    # MPI
-    if(MPI_FOUND)
-        message(STATUS "MPI Fortran compiler: ${MPI_Fortran_COMPILER}")
-        message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
-        message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
-        set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
-        set(WITH_MPI ON CACHE STRING "" FORCE)
-        include_directories(${MPI_Fortran_INCLUDE_PATH})
+    if(MSMPI)
+       set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -I${msmpi-linux-home}/Include -L${msmpi-linux-home}/Lib/x64 -lmsmpi")
+       set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${msmpi-linux-home}/Include -L${msmpi-linux-home}/Lib/x64 -lmsmpi")
+       set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS} ${CMAKE_Fortran_FLAGS}")
+       set(WITH_MPI ON CACHE STRING "" FORCE)
+       set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lmsmpi")
+       set(MPI_Fortran_INCLUDE_PATH "${msmpi-linux-home}/Include")
+       include_directories("${msmpi-linux-home}/Include")
+       set(MPI_LIBRARIES "${msmpi-linux-home}/Lib/x64/libmsmpi.a")
     else()
-        message(STATUS "MPI_Fortran not found: ${MPI_Fortran_FOUND}")
+       include(FindMPI)
+       # MPI
+       if(MPI_FOUND)
+           message(STATUS "MPI Fortran compiler: ${MPI_Fortran_COMPILER}")
+           message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
+           message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
+           set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
+           set(WITH_MPI ON CACHE STRING "" FORCE)
+           include_directories(${MPI_Fortran_INCLUDE_PATH})
+       else()
+           message(STATUS "MPI_Fortran not found: ${MPI_Fortran_FOUND}")
+       endif()
     endif()
 endif()
 
@@ -65,7 +76,8 @@ endif()
 
 # Set the fortran flags
 include(SetFortranFlags)
-message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
+message(STATUS "Fortran Compiler flags: ${CMAKE_Fortran_FLAGS}")
+message(STATUS "CXX Compiler Flags: ${CMAKE_CXX_FLAGS}")
 
 # Macros
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
@@ -246,6 +258,7 @@ set(FOO_SRC
     ${FOO_DIR}/vec{object}.foo
     ${FOO_DIR}/vec{quadrature}.foo
     ${FOO_DIR}/vec{real}.foo
+    #${FOO_DIR}/vec{rys}.foo
     ${FOO_DIR}/vec{reflection}.foo
     ${FOO_DIR}/vec{shell}.foo
     ${FOO_DIR}/vec{slaterbasis}.foo
@@ -382,6 +395,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_mat_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_real.F90
+    #${CMAKE_CURRENT_BINARY_DIR}/vec_rys.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_reflection.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_shell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_slaterbasis.F90
@@ -404,12 +418,12 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_gaussian_data.foo
     ${RUNFILE_DIR}/run_har.foo
     ${RUNFILE_DIR}/run_himz.foo
-    ${RUNFILE_DIR}/run_least_squares.foo
     ${RUNFILE_DIR}/run_mat{real}.foo
     ${RUNFILE_DIR}/run_mat{cpx}.foo
     ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
+    ${RUNFILE_DIR}/run_least_squares.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
 
@@ -453,28 +467,28 @@ add_executable(run_dispersion    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_gaussian_data EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
 add_executable(run_har           ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
 add_executable(run_himz          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_himz.F90)
-add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
+add_executable(run_shell2        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_shel2.F90)
 add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
 add_executable(run_mat_cpx       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_cpx.F90)
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
-add_executable(run_shell2        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_shell2.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
+add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
 
 # Link exectables
-target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 # Make non-standard-named executables
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
