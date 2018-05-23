@@ -123,8 +123,10 @@ contains
          case("reduced_k_kinetic_energy            "); .:make_rK_kinetic_energy_grid
          case("reduced_v_from_virial               "); .:make_rV_from_virial_grid
          case("residual_density_map                "); .:make_residual_density_map
+         case("roby-gould_ano_density              "); .:make_RG_ANO_density_grid
          case("roby-gould_covalent_orbital         "); .:make_RG_cov_orbital_grid
          case("roby-gould_ionic_orbital            "); .:make_RG_ion_orbital_grid
+         case("roby-gould_nao_density              "); .:make_RG_NAO_density_grid
        ! case("spin_current_density                "); .:make_spin_j_grid
          case("spin_density                        "); .:make_spin_density_grid
          case("spherical_atom_density              "); .:make_spherical_atom_grid
@@ -658,6 +660,80 @@ contains
 !  Roby-Gould orbital grids
 !  ========================
 
+   make_RG_ANO_density_grid
+   ! Evaluate the Roby-Gould ANO density grid for the atom with 
+   ! index .roby.center_atom. Assumes double occupancy.
+      self :: IN
+
+   ENSURE(.roby.associated, "no roby data -- do one group analysis")
+   ENSURE(.plot_grid.associated, "no plot_grid")
+   ENSURE(.plot_grid.center_atom>0, "plot_grid center_atom not specified!")
+   ENSURE(.atom(.plot_grid.center_atom).natural_orbitals.associated, "no natural orbitals!")
+   ENSURE(.atom(.plot_grid.center_atom).natural_orbitals.restricted.associated, "no restricted natural orbitals!")
+
+      pt, ANO :: MAT{REAL}*
+      rho, occ :: VEC{REAL}*
+      a :: INT
+
+      ! Do this atom
+      a = .plot_grid.center_atom
+      ANO => .atom(a).natural_orbitals.restricted
+      occ => .atom(a).occupation_numbers.restricted
+
+      ! Points to plot
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Make the grid, rho
+      rho.create(.plot_grid.n_pt)
+      .:make_atom_density_grid_r(rho,ANO,occ,pt,a)
+
+      ! Write grid, rho
+      .:dump_plot_grid(rho,"Roby-Gould_ANO_density_atom_"//trim(a.to_str)//"_grid")
+
+      ! Clean
+      rho.destroy
+      pt.destroy
+
+   end
+
+   make_RG_NAO_density_grid
+   ! Evaluate the Roby-Gould NAO density grid for the atom with 
+   ! index .roby.center_atom. Assumes double occupancy.
+      self :: IN
+
+   ENSURE(.roby.associated, "no roby data -- do one group analysis")
+   ENSURE(.plot_grid.associated, "no plot_grid")
+   ENSURE(.plot_grid.center_atom>0, "plot_grid center_atom not specified!")
+   ENSURE(.atom(.plot_grid.center_atom).NAOs.associated, "no natural orbitals!")
+   ENSURE(.atom(.plot_grid.center_atom).NAO_occupations.associated, "no restricted natural orbitals!")
+
+      pt, NAO :: MAT{REAL}*
+      rho, occ :: VEC{REAL}*
+      a :: INT
+
+      ! Do this atom
+      a = .plot_grid.center_atom
+      NAO => .atom(a).NAOs
+      occ => .atom(a).NAO_occupations
+
+      ! Points to plot
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Make the grid, rho
+      rho.create(.plot_grid.n_pt)
+      .:make_atom_density_grid_r(rho,NAO,occ,pt,a)
+
+      ! Write grid, rho
+      .:dump_plot_grid(rho,"Roby-Gould_NAO_density_atom_"//trim(a.to_str)//"_grid")
+
+      ! Clean
+      rho.destroy
+      pt.destroy
+
+   end
+
    make_RG_cov_orbital_grid
    ! Evaluate the Roby-Gould covalent orbital ".plot_grid.orb" and
    ! write it out to a file.
@@ -785,6 +861,44 @@ contains
 
    end
 
+
+   make_atom_density_grid_r(grid,NO,occ,pt,atom) ::: PURE
+   ! Evaluate the atom density "grid" for all "NO"s and occupation
+   ! numbers "occ" for the atom with index "atom" on a set of grid
+   ! points "pt"
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      NO   :: MAT{REAL}, IN
+      occ  :: VEC{REAL}, IN
+      pt   :: MAT{REAL}, IN
+      atom :: INT, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,  "no atom list")
+   ENSURE(NO.dim2==occ.dim, "incompatible dim2, NO & occ")
+   ENSURE(NO.dim1==.atom(atom).basis.no_of_basis_functions, "wrong dim1, NO")
+   ENSURE(pt.dim2==3, "pt dim2 is not 3")
+
+      n :: INT
+      g :: VEC{REAL}*
+
+      grid = ZERO
+
+      g.create(pt.dim1)
+
+      parallel do n = 1,NO.dim2
+         .atom(atom).make_orbital_grid_r(g,NO(:,n),pt)
+         grid = grid + occ(n)*g*g
+      end
+
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(grid)
+      end
+
+      ! Clean
+      g.destroy
+
+   end
 
    make_ELMO_grid_r(grid,orb,pt,atom_indices,square) ::: PURE
    ! Evaluate the ELMO "grid" for *one* AO-basis coefficient orbital
@@ -1132,6 +1246,7 @@ contains
          grid(n) = g
 
       end
+
       if (DO_IN_PARALLEL) then
          PARALLEL_SUM(grid)
       end
@@ -8105,8 +8220,9 @@ contains
 !  ==========================
 
    dump_plot_grid(grid,name,form)
-   ! Dump out the plot "grid" to an appropriate with with "name", in various
-   ! formats. If present, "factor" is a conversion factor to apply.
+   ! Dump (write) out the plot "grid" to an appropriate file with
+   ! "name", in various formats "form", otherwise (like most things)
+   ! taken from the .plot_grid settings.
       self :: IN
       grid :: VEC{REAL}, INOUT
       name :: STR, IN
@@ -8202,12 +8318,7 @@ contains
             arch.set(title,name,format="drishti.raw")
             arch.write_drishti(grid, .plot_grid.n_x, .plot_grid.n_y, .plot_grid.n_z)
 
-         case ("gaussian")
-
-            arch.set(title,name,format="gaussian.cube")
-            arch.write_gaussian_cube(grid,.plot_grid,.atom,name)
-
-         case ("gaussian.cube")
+         case ("gaussian","gaussian.cube")
 
             arch.set(title,name,format="gaussian.cube")
             arch.write_gaussian_cube(grid,.plot_grid,.atom,name)
