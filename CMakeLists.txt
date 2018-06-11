@@ -205,6 +205,7 @@ set(FOO_SRC
     ${FOO_DIR}/object.foo
     ${FOO_DIR}/opmatrix.foo
     ${FOO_DIR}/opvector.foo
+    ${FOO_DIR}/pair_energy.foo
     ${FOO_DIR}/parallel.foo
     ${FOO_DIR}/plot_grid.foo
     ${FOO_DIR}/pointgroup.foo
@@ -256,6 +257,7 @@ set(FOO_SRC
     ${FOO_DIR}/vec{mat_{intrinsic}}.foo
     ${FOO_DIR}/vec{mat_{real}}.foo
     ${FOO_DIR}/vec{object}.foo
+    ${FOO_DIR}/vec{pair_energy}.foo
     ${FOO_DIR}/vec{quadrature}.foo
     ${FOO_DIR}/vec{real}.foo
     #${FOO_DIR}/vec{rys}.foo
@@ -351,6 +353,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
     ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/pair_energy.F90
     ${CMAKE_CURRENT_BINARY_DIR}/pointgroup.F90
     ${CMAKE_CURRENT_BINARY_DIR}/quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/real.F90
@@ -393,6 +396,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_irrep.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_mat3_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_mat_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_pair_energy.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_real.F90
     #${CMAKE_CURRENT_BINARY_DIR}/vec_rys.F90
