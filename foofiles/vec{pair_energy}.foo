@@ -24,10 +24,11 @@ module VEC{PAIR_ENERGY}
 
    implicit none
 
-   SCALE_FACTORS_B3LYP :: VEC{REAL}(4) = [1.0573d0, 0.6177d0, 0.7399d0, 0.8708d0] 
-   SCALE_FACTORS_HF :: VEC{REAL}(4) = [1.019, 0.811, 0.651, 0.901] 
-   SCALE_FACTORS :: VEC{REAL}(4) = [1.019, 0.811, 0.651, 0.901] 
+   energy_model_ce_b3lyp :: VEC{REAL}(4) = [1.0573d0, 0.6177d0, 0.7399d0, 0.8708d0] 
+   energy_model_ce_hf :: VEC{REAL}(4) = [1.019, 0.811, 0.651, 0.901] 
+   energy_model_scale_factors :: VEC{REAL}(4) = [ONE, ONE, ONE, ONE]
                                   ! E_ele, E_rep, E_pol, E_dis
+   energy_model :: STR = "ce-hf"
 
 contains
 
@@ -129,11 +130,15 @@ contains
       res :: REAL
       i :: INT
       use_scale :: BIN = TRUE
-      fac :: VEC{REAL}(4) = [1.0, 1.0, 1.0, 1.0]
+      fac :: VEC{REAL}(4)
       res = ZERO
       if(present(scaled)) use_scale = scaled
 
-      if(use_scale) fac = SCALE_FACTORS
+      if(use_scale) then
+          fac = energy_model_scale_factors
+      else
+          fac = ONE
+      end
 
       do i = 1, .dim
           res = res + fac.dot(self(i).components(:)) * self(i).n_equivalent
@@ -151,7 +156,7 @@ contains
       res = ZERO
       if(present(scaled)) use_scale = scaled
 
-      if(use_scale) fac = SCALE_FACTORS(1)
+      if(use_scale) fac = energy_model_scale_factors(1)
 
       do i = 1, .dim
           res = res + (self(i).components(1) * self(i).n_equivalent)
@@ -168,7 +173,7 @@ contains
       res = ZERO
       if(present(scaled)) use_scale = scaled
 
-      if(use_scale) fac = SCALE_FACTORS(2)
+      if(use_scale) fac = energy_model_scale_factors(2)
 
       do i = 1, .dim
           res = res + (self(i).components(2) * self(i).n_equivalent)
@@ -185,7 +190,7 @@ contains
       res = ZERO
       if(present(scaled)) use_scale = scaled
 
-      if(use_scale) fac = SCALE_FACTORS(3)
+      if(use_scale) fac = energy_model_scale_factors(3)
 
       do i = 1, .dim
           res = res + (self(i).components(3) * self(i).n_equivalent)
@@ -202,15 +207,13 @@ contains
       res = ZERO
       if(present(scaled)) use_scale = scaled
 
-      if(use_scale) fac = SCALE_FACTORS(4)
+      if(use_scale) fac = energy_model_scale_factors(4)
 
       do i = 1, .dim
           res = res + (self(i).components(4) * self(i).n_equivalent)
       end
       res = res * KJOULEMOL_PER_HARTREE * fac
    end
-
-
 
 
    put_lattice_energy_table
@@ -221,7 +224,7 @@ contains
       E_tot :: REAL
       n_equiv :: VEC{INT}(.dim)
       symop :: VEC{STR}(.dim)
-      sep, prox, e_ele, e_pol, e_dis, e_rep :: VEC{REAL}(.dim)
+      sep, prox, e_ele, e_pol, e_dis, e_rep, tot_col :: VEC{REAL}(.dim)
       conversion_factor :: REAL
       display_unit :: STR
       display_unit = "kJ/mol"
@@ -233,11 +236,12 @@ contains
       self(1:).center_separation.quick_sort(indices)
 
 
+      stdout.flush
       stdout.text("=============================")
       stdout.text("Lattice energy dimer energies")
       stdout.text("=============================")
-      stdout.text(" ")
-      table.create(8)
+      stdout.flush
+      table.create(9)
       table(1).set_heading("N")
       table(2).set_heading("Symop")
       table(3).set_heading("Separation")
@@ -246,6 +250,7 @@ contains
       table(6).set_heading("E_pol")
       table(7).set_heading("E_dis")
       table(8).set_heading("E_rep")
+      table(9).set_heading("E_tot")
 
 
       symop(:) = self(indices).symop_str
@@ -256,6 +261,13 @@ contains
       e_rep(:) = self(indices).components(2) * KJOULEMOL_PER_HARTREE
       e_pol(:) = self(indices).components(3) * KJOULEMOL_PER_HARTREE
       e_dis(:) = self(indices).components(4) * KJOULEMOL_PER_HARTREE
+      !do a = 1, .dim
+      tot_col(:) = e_ele(:) * energy_model_scale_factors(1) + &
+                   e_rep(:) * energy_model_scale_factors(2) + &
+                   e_pol(:) * energy_model_scale_factors(3) + &
+                   e_dis(:) * energy_model_scale_factors(4) 
+      !end
+
  
       ! sort the energies table by separation
       table(1).set_values(n_equiv)
@@ -266,10 +278,12 @@ contains
       table(6).set_values(e_pol)
       table(7).set_values(e_dis)
       table(8).set_values(e_rep)
+      table(9).set_values(tot_col)
       table.put(label_rows=FALSE)
       table.destroy
 
       stdout.flush
+
       stdout.text("Totals: ")
       stdout.show("Unique pairs              =", .dim)
       stdout.show("E_ele                     =", .total_ele(scaled=FALSE))
@@ -281,16 +295,24 @@ contains
       stdout.show("E_tot                     =", E_tot)
       E_tot = .total_energy(scaled=TRUE)
       stdout.show("E_tot (scaled)            =", E_tot)
-      stdout.show("E_lat (0.5 * E_tot)       =", E_tot * 0.5)
+      stdout.show("E_lat (0.5 * E_tot)       =", E_tot * HALF)
 
     end 
 
-    set_scale_factors(method) ::: selfless
+    set_energy_model(method) ::: selfless
         method :: STR
-        select case (method)
-            case ("ce-hf"); SCALE_FACTORS = SCALE_FACTORS_HF
-            case ("ce-b3lyp"); SCALE_FACTORS = SCALE_FACTORS_B3LYP
+        energy_model = trim(method)
+        stdout.show("Using energy model", energy_model)
+        select case (energy_model)
+            case ("ce-hf"); energy_model_scale_factors = energy_model_ce_hf 
+            case ("ce-b3lyp"); energy_model_scale_factors = energy_model_ce_b3lyp
+            case default; energy_model_scale_factors = ONE
         end
+        stdout.text("Scale factors:")
+        stdout.show("E_ele:", energy_model_scale_factors(1))
+        stdout.show("E_rep:", energy_model_scale_factors(2))
+        stdout.show("E_pol:", energy_model_scale_factors(3))
+        stdout.show("E_dis:", energy_model_scale_factors(4))
     end
 
     put
