@@ -683,95 +683,6 @@ contains
 
    end
 
-
-    put_lattice_energies_table(energies_table, symop_strings)
-        energies_table :: MAT{REAL}, TARGET
-        symop_strings :: VEC{STR}
-        table :: VEC{TABLE_COLUMN}*
-        a :: INT
-        b3lyp_scale_factors, hf_scale_factors, scale_factors :: VEC{REAL}(4)
-        indices :: VEC{INT}@
-        n :: VEC{INT}(energies_table.dim2)
-        E_coul, E_rep, E_pol, E_disp, sep, E_tot, prox :: VEC{REAL}(energies_table.dim2)
-        symop :: VEC{STR}(energies_table.dim2)
-        conversion_factor :: REAL
-        display_unit :: STR
-        display_unit = "kJ/mol"
-        ! E_ele, E_pol, E_dis, E_rep
-        hf_scale_factors = [1.019, 0.651, 0.901, 0.811] 
-        b3lyp_scale_factors = [1.0573d0, 0.7399d0, 0.8708d0, 0.6177d0] 
-        conversion_factor = display_unit.conversion_factor
-
-        scale_factors = hf_scale_factors
-
-        if(.scfdata.scf_kind == "rks") then
-            scale_factors = b3lyp_scale_factors
-        end
-
-        stdout.text("=============================")
-        stdout.text("Lattice energy dimer energies")
-        stdout.text("=============================")
-        stdout.text(" ")
-        table.create(9)
-        table(1).set_heading("N")
-        table(2).set_heading("Symop")
-        table(3).set_heading("Separation")
-        table(4).set_heading("Proximity")
-        table(5).set_heading("E_ele")
-        table(6).set_heading("E_pol")
-        table(7).set_heading("E_dis")
-        table(8).set_heading("E_rep")
-        table(9).set_heading("E_tot")
-
-        ! sort the energies table by separation
-        allocate(indices(energies_table.dim2))
-        energies_table(7,:).quick_sort(indices)
-        do a = 1, energies_table.dim1
-            energies_table(a,:) = energies_table(a, indices)
-        end do
-
-
-        n = int(energies_table(1, :))
-        table(1).set_values(n)
-        symop = symop_strings(int(energies_table(6, :)))
-        table(2).set_values(symop)
-        sep = energies_table(7, :) * ANGSTROM_PER_BOHR
-        table(3).set_values(sep)
-        prox = energies_table(8, :) * ANGSTROM_PER_BOHR
-        table(4).set_values(prox)
-
-        E_coul = energies_table(2, :) * KJOULEMOL_PER_HARTREE
-        E_rep = energies_table(3, :) * KJOULEMOL_PER_HARTREE
-        E_pol = energies_table(4, :) * KJOULEMOL_PER_HARTREE
-        E_disp = energies_table(5, :) * KJOULEMOL_PER_HARTREE
-
-        do a = 1, E_coul.dim
-            E_tot(a) = n(a) * scale_factors.dot([E_coul(a), E_pol(a), E_disp(a), E_rep(a)])
-        end do
-        table(5).set_values(E_coul)
-        table(6).set_values(E_pol)
-        table(7).set_values(E_disp)
-        table(8).set_values(E_rep)
-        table(9).set_values(E_tot)
-
-        table.put(label_rows=FALSE)
-        table.destroy
-
-        stdout.text(" ")
-        stdout.text("Totals:")
-        stdout.show("Symmetry unique_molecules", energies_table.dim2)
-        stdout.show("E_ele                     =", sum(E_coul*n))
-        stdout.show("E_pol                     =", sum(E_pol*n))
-        stdout.show("E_dis                     =", sum(E_disp*n))
-        stdout.show("E_rep                     =", sum(E_rep*n))
-        stdout.show("E_tot                     =", sum(E_coul*n + E_pol*n + E_disp*n + E_rep*n))
-        stdout.show("E_tot (scaled)            =", sum(E_tot))
-        stdout.show("E_lat (0.5 * E_tot)       =", sum(E_tot) * 0.5)
-        stdout.text(" ")
-
-    end 
-
-
     make_monomer_energies_for_lattice_energy result(res)
         self :: PTR
         res :: VEC{REAL}(4) ! E_en, E_1e, E_ee, E_ex
@@ -816,8 +727,7 @@ contains
       a,n,i,j,k :: INT
       n_molecules :: INT
       position, separation :: VEC{REAL}(3)
-      energy_table :: MAT{REAL}* ! vector of absolute distances between corrseponding atoms
-      E, E_tot :: VEC{REAL}(4) ! [ rep, coul, pol, disp ] 
+      E, E_tot :: VEC{REAL}(4) ! [ ele, rep, pol, disp ] 
       rot :: MAT{REAL}(3,3)
       t, t_symop :: VEC{REAL}(3)
       unique_symops :: VEC{INT}*
@@ -839,6 +749,8 @@ contains
       all_atoms :: VEC{ATOM}*
       molecule_bounds :: MAT{REAL}(3,2)
       positions_frac :: MAT{REAL}@
+      pair_energies :: VEC{PAIR_ENERGY}*
+      p_e :: PAIR_ENERGY
 
       mol1 :: MOLECULE*
       mol2 :: MOLECULE*
@@ -869,7 +781,7 @@ contains
       mol1.SCF:scf
       mol1.scfdata.set_output(FALSE)
       timer.stop_timing
-      stdout.show("Time taken for SCF (s) = ", timer.elapsed_time_s)
+      stdout.show("time taken for SCF (s) = ", timer.elapsed_time_s)
 
       !! Make monomer energies and multipoles
       monomer_energies  = mol1.:make_monomer_energies_for_lattice_energy
@@ -899,7 +811,6 @@ contains
     ! 2-5 are the energy terms
     ! 6-7 are the symop and separation
     d.create(8)
-    energy_table.create(d.dim, 0)
     
     offset = mol1.atom.center_of_mass
     n_iter = 0
@@ -940,6 +851,7 @@ contains
     stdout.show("molecule_bounds(:,1)", molecule_bounds(:,1))
     stdout.show("molecule_bounds(:,2)", molecule_bounds(:,2))
 
+    pair_energies.create(0)
 
     do while (abs(delta) > CONVERGENCE_TOLERANCE)
         e_prev = e_iter
@@ -1004,6 +916,7 @@ contains
 
                 ! get translation for this unit cell
                 t = matmul(.crystal.unit_cell.direct_matrix, t_symop + [i, j, k])
+                p_e.set_defaults
 
                 mol2.atom.translate_by(t)
                 position = mol2.atom.center_of_mass
@@ -1014,8 +927,6 @@ contains
                     mol2.atom.translate_by(-t)
                     cycle
                 end if
-
-
 
                 ! Check if we already have molecule here
                 ! This is needed as some symops + unit cell
@@ -1033,42 +944,29 @@ contains
                     end if
                 end do
                 if(equivalent) cycle
+
                 occupied_pos.append_column(position)
                 uc_count(i,j,k) = uc_count(i,j,k) + 1
 
-                ! check absolute distances
-                d = 0
-                d(1) = 1
-                d(6) = n
-                d(7) = separation.norm
-                d(8) = dist
                 !all_atoms.append(mol2.atom)
+                p_e.set_center_separation(separation.norm)
+                p_e.set_closest_distance(dist)
+                p_e.set_symop_id(n)
+                p_e.set_symop_str(symop_strings(n))
 
                 ! There has to be a better way to do this, but this works for now
                 ! and eliminates most redundant calculations
                 ! If we have already calculated these energies, continue and
                 ! increment the counter
                 n_molecules = n_molecules + 1
-                do a = 1, energy_table.dim2
-                     if(abs(energy_table(6, a) - d(6)) > 0.001) cycle
-                     if(abs(d(8) - energy_table(8, a)) >  0.001) cycle
-                     if ((abs(d(7) - energy_table(7, a)) < 0.001)) then
-                        equivalent = TRUE
-                        stdout.text("Equivalent molecule found")
-                        stdout.show("Symop", symop_strings(n))
-                        stdout.show("Separation", d(7) * ANGSTROM_PER_BOHR)
-                        stdout.show("Proximity", d(8) * ANGSTROM_PER_BOHR)
-
-                        energy_table(1, a) = energy_table(1, a) + 1
-                        mol2.atom.translate_by(-t)
-                        exit
-                     end if
-                end
-
-                if(equivalent) then
+                a = pair_energies.equivalent_pair(p_e)
+                equivalent = (a > 0)
+                if (equivalent) then
+                    pair_energies(a).increment_count
+                    mol2.atom.translate_by(-t)
                     stdout.text("Equivalent, cycling...")
                     cycle
-                end if
+                end
 
                 ! If we have a unique molecule pair calculate the energies
                 E = ZERO
@@ -1079,9 +977,9 @@ contains
                 E(1:2) = mol1.PROP:symmetric_intermolecular_qm_energies(mol2, monomer_energies)
                 timer_12.stop_timing
                 time_in_qm = time_in_qm + timer_12.elapsed_time_s
-                d(2:5) = E
-                energy_table.append_column(d(:))
 
+                p_e.set_energy_components(E)
+                pair_energies.append(p_e.clone)
                 new_mols = new_mols + 1
                 stdout.show("New molecule ", new_mols)
                 mol2.atom.translate_by(-t)
@@ -1092,15 +990,9 @@ contains
             mol2.BASE:destroy
           end 
 
-          .:put_lattice_energies_table(energy_table, symop_strings)
-          e_iter = ZERO
-          E_tot = ZERO
-          do a = 1, energy_table.dim2
-              E_tot = E_tot + energy_table(2:5, a) * energy_table(1, a)
-          end
-          e_iter = sum(E_tot)
-
+          e_iter = pair_energies.total_energy(scaled=FALSE)
           delta = e_iter - e_prev
+          pair_energies.put_lattice_energy_table
           stdout.show("Cells skipped", cells_skipped)
           stdout.show("Energy change ", delta)
           stdout.show("New molecules ", new_mols)
@@ -1121,10 +1013,9 @@ contains
 #undef MAX_SEARCH_RADIUS
 
       timer.stop_timing
-      stdout.show("Time taken for Symmetry related mols (s) = ", timer.elapsed_time_s)
-      stdout.show("Time taken for E_ele + E_rep (s) = ", time_in_qm)
-
-      .:put_lattice_energies_table(energy_table, symop_strings)
+      stdout.show("time taken for Symmetry related mols (s) = ", timer.elapsed_time_s)
+      stdout.show("time taken for E_ele + E_rep (s) = ", time_in_qm)
+      pair_energies.put_lattice_energy_table
 
    end
 
