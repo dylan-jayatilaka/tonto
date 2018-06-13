@@ -719,87 +719,17 @@ contains
     end
 
 
-    total_lattice_energy_v2
+    total_lattice_energy
       self :: PTR
       mol1, mol2 :: MOLECULE*
-      i, n :: INT
+      i, n, current_symop :: INT
       p_e :: PAIR_ENERGY
       pair_energies :: VEC{PAIR_ENERGY}@
-      indices :: VEC{INT}@
-
-    ! Central fragment wavefunction stuff
-      mol1.BASE:create
-      !mol1.BASE:read_g09_FChk_file(trim(wavefunction_filename))
-      mol1.scfdata.create_copy(.scfdata)
-      mol1.name = trim(.cif.data_block_name)
-      .cluster.create_mol_atom_list(mol1.atom, 1)
-
-      mol1.BASE:set_atom_info
-
-      .cluster.create(.crystal) 
-      .cluster.set_generation_method("within_radius")
-      .cluster.radius = 40d0
-      .cluster.defragment = TRUE
-      .cluster.make_info
-
-      stdout.text("New lattice energy")
-      do i = 2, .cluster.n_molecules
-          p_e = .cluster.pair_energy_for_molecule(i)
-          pair_energies.append_or_increment(p_e.clone)
-      end
-
-      indices.create(pair_energies.dim)
-      pair_energies(:).symop_id.quick_sort(indices)
-      pair_energies(:) = pair_energies(indices)
-
-      do i = 1, pair_energies.dim
-         
-      end
-
-      pair_energies.put_lattice_energy_table
-
-      mol1.BASE:destroy
-
-    end
-
-
-    total_lattice_energy
-   ! calculate the total lattice energy for this molecule cluster
-      self :: PTR
-
-      a,n,i,j,k :: INT
-      position, separation :: VEC{REAL}(3)
-      E, E_tot :: VEC{REAL}(4) ! [ ele, rep, pol, disp ] 
-      rot :: MAT{REAL}(3,3)
-      t, t_symop :: VEC{REAL}(3)
-      unique_symops :: VEC{INT}*
+      indices, indices_calc :: VEC{INT}@
+      monomer_energies, E :: VEC{REAL}(4)
       central_atoms :: VEC{ATOM}@
-      monomer_energies :: VEC{REAL}(4) ! E_ele, E_rep
-      frac_radius, offset :: VEC{REAL}(3)
-      h_min, h_max, prev_h_min, prev_h_max :: VEC{INT}(3)
-      occupied_pos :: MAT{REAL}*
-      radius, prev_radius, delta, e_iter, e_prev, dist :: REAL
-      equivalent :: BIN
-      timer, timer_12 :: TIME
-      symop_strings :: VEC{STR}*
-      time_in_qm :: REAL
-      new_mols, cells_skipped :: INT
-      wavefunction_filename :: STR
-      uc_count :: MAT3{INT}(-10:10,-10:10,-10:10)
-      n_iter, n_symops :: INT
-      all_atoms :: VEC{ATOM}*
-      molecule_bounds :: MAT{REAL}(3,2)
-      positions_frac :: MAT{REAL}@
-      pair_energies :: VEC{PAIR_ENERGY}*
-      p_e :: PAIR_ENERGY
-
-      mol1 :: MOLECULE*
-      mol2 :: MOLECULE*
-
-
-      E = 0
-      E_tot = 0
-      wavefunction_filename = "urea.fchk"
+      e_iter, e_prev, delta_e, radius :: REAL
+      sep :: VEC{REAL}(3)
 
     ! Central fragment wavefunction stuff
       mol1.BASE:create
@@ -807,6 +737,7 @@ contains
       mol1.scfdata.create_copy(.scfdata)
       mol1.name = trim(.cif.data_block_name)
       .cluster.create_mol_atom_list(mol1.atom, 1)
+
       central_atoms = mol1.atom
 
       mol1.BASE:set_atom_info
@@ -817,247 +748,99 @@ contains
 
       mol1.SCF:make_ANO_data
       !! Do the SCF
-      timer.start_timing
       mol1.scfdata.set_output(TRUE)
       mol1.SCF:scf
       mol1.scfdata.set_output(FALSE)
-      timer.stop_timing
-      stdout.show("time taken for SCF (s) = ", timer.elapsed_time_s)
 
       !! Make monomer energies and multipoles
       monomer_energies  = mol1.:make_monomer_energies_for_lattice_energy
       mol1.BASE:make_atomic_multipoles
 
-      unique_symops.create_copy(.crystal.asym_symop_for_unit_cell_atom.unique_elements)
-      stdout.show("Num unique symops        =", unique_symops)
-      n_symops = unique_symops.dim
-      symop_strings.create(n_symops)
+      if(.scfdata.scf_kind == "rks") then
+         VEC{PAIR_ENERGY}:set_energy_model("ce-b3lyp")
+      else
+         VEC{PAIR_ENERGY}:set_energy_model("ce-hf")
+      end if
 
-      do i = 1, n_symops
-        .crystal.spacegroup.recode_Jones_Faithful_symbol(symop_strings(i), &
-            .crystal.spacegroup.seitz(:,:, unique_symops(i)))
-        stdout.show(unique_symops(i).to_str, symop_strings(i))
-      end do
+      .cluster.create(.crystal) 
+      .cluster.set_generation_method("within_radius")
+      .cluster.radius = 40d0
+      .cluster.defragment = TRUE
+      .cluster.make_info
 
-      ! calculate how many unit cells we'll need to look in
-#define MAX_SEARCH_RADIUS 60.0d0
-#define CONVERGENCE_TOLERANCE  0.4
-      ! kJ/mol
+      stdout.text("New lattice energy")
+      do i = 2, .cluster.n_molecules
+          p_e = .cluster.pair_energy_for_molecule(i)
+          stdout.show("p_e.symop_id", p_e.symop_id)
+          pair_energies.append_or_increment(p_e.clone)
+      end
 
-    ! position of molecule
-    occupied_pos.create(3, 1)
-    occupied_pos(:, 1) = mol1.atom.center_of_mass
-    
-    offset = mol1.atom.center_of_mass
-    n_iter = 0
-    stdout.text("Starting lattice energy calculation")
-    timer.start_timing
-    radius = 11.34 ! Roughly 6 angstrom
-    e_prev = ZERO
-    e_iter = ZERO
-    delta = INT_HUGE
-    prev_h_min = 0
-    prev_h_max = 0
-    prev_radius = 0
-    time_in_qm = ZERO
-
-
-    ! keep track of how many molecules in each uc we've added
-    uc_count = 0
-    cells_skipped = 0
-    allocate(positions_frac(3, central_atoms.dim1))
-    do i = 1, central_atoms.dim1
-        positions_frac(:, i) = central_atoms(i).position
-    end do
-    positions_frac = matmul(.crystal.unit_cell.inverse_matrix, positions_frac)
-
-    ! min and max fractional coord of molecule
-    molecule_bounds(:, 1) = minval(positions_frac, dim=2)
-    molecule_bounds(:, 2) = maxval(positions_frac, dim=2)
-    deallocate(positions_frac)
-
-    radius = VEC{REAL}:norm(&
-        matmul(.crystal.unit_cell.direct_matrix, &
-               molecule_bounds(:,2) - molecule_bounds(:,1)))
-
-    radius = min(radius, 13.60) ! 7.2 Angstroms
-
-    stdout.show("Radius", radius * ANGSTROM_PER_BOHR)
-    stdout.show("molecule_bounds(:,1)", molecule_bounds(:,1))
-    stdout.show("molecule_bounds(:,2)", molecule_bounds(:,2))
-
-    if(.scfdata.scf_kind == "rks") then
-        VEC{PAIR_ENERGY}:set_energy_model("ce-b3lyp")
-    else
-        VEC{PAIR_ENERGY}:set_energy_model("ce-hf")
-    end if
-    pair_energies.create(0)
-
-    do while (abs(delta) > CONVERGENCE_TOLERANCE)
-        e_prev = e_iter
-        new_mols = 0
-
-        frac_radius = radius /.cluster.crystal.unit_cell.length
-        stdout.show("frac_radius", frac_radius)
-        h_max = ceiling(frac_radius + molecule_bounds(:, 2))
-        h_min = floor(-frac_radius + molecule_bounds(:, 1))
-
-        h_max = max(h_max, [1,1,1])
-        h_max = min(h_max, [10, 10, 10])
-        h_min = min(h_min, [-1,-1,-1])
-        h_min = max(h_min, [-10, -10, -10])
-        ! only search a maximum of 20 unit cells
-        n_iter = n_iter + 1
-        stdout.show("Iteration", n_iter)
-        stdout.show("Within radius (angstroms)", radius * ANGSTROM_PER_BOHR)
-        stdout.show("h_min", h_min)
-        stdout.show("h_max", h_max)
-
-        !all_atoms.create_copy(central_atoms)
-        do n = 1, n_symops
-            stdout.show("Symop "//trim(n.to_str)//"/"//trim(n_symops.to_str), symop_strings(n))
-            ! convert to cartesian space
-            rot = .crystal.spacegroup.seitz(1:3, 1:3, unique_symops(n))
-            rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
-            rot = matmul(.crystal.unit_cell.direct_matrix, rot)
-            t_symop = .crystal.spacegroup.seitz(1:3, 4, unique_symops(n))
-
-            mol2.BASE:create
-            mol2.scfdata.create_copy(mol1.scfdata)
-            mol2.atom.create_copy(central_atoms)
-            mol2.density_matrix.create_copy(mol1.density_matrix)
-            mol2.molecular_orbitals.create_copy(mol1.molecular_orbitals)
-            mol2.BASE:set_atom_info
-            mol2.BASE:finalize_atom_groups
-            mol2.BASE:resolve_basis_info
-            mol2.BASE:set_basis_name(.basis_name)
-            mol2.BASE:rotate_by(rot)
-            mol2.INTS:make_overlap_matrix
-            mol2.BASE:make_natural_orbitals
-            mol2.BASE:make_atomic_multipoles
-
-            !loop over unit cells
-            do i = h_min(1),h_max(1)
-                ! don't search the same unit cells too many times
-                if (all(uc_count(i,:,:) >= n_symops)) then
-                    cells_skipped = cells_skipped + (h_max(2) - h_min(2) + 1) * (h_max(3) - h_min(3) + 1)
-                    cycle
-                end
-            do j = h_min(2),h_max(2)
-                if (all(uc_count(i,j,:) >= n_symops)) then
-                    cells_skipped = cells_skipped + (h_max(3) - h_min(3) + 1)
-                    cycle
-                end
-            do k = h_min(3),h_max(3)
-                if (uc_count(i,j,k) >= n_symops) then
-                    cells_skipped = cells_skipped + 1
-                    cycle
-                end
-
-                ! get translation for this unit cell
-                t = matmul(.crystal.unit_cell.direct_matrix, t_symop + [i, j, k])
-                p_e.set_defaults
-
-                mol2.atom.translate_by(t)
-                position = mol2.atom.center_of_mass
-                separation = position - offset
-                mol2.atom.get_distance_to(mol1.atom, dist)
-                ! Check if this molecule is within the radius
-                if(dist > radius OR dist <= prev_radius) then
-                    mol2.atom.translate_by(-t)
-                    cycle
-                end if
-
-                ! Check if we already have molecule here
-                ! This is needed as some symops + unit cell
-                ! translations are redundant
-                ! and we might be searching the same unit cell twice
-                equivalent = FALSE
-                do a = 1, occupied_pos.dim2
-                    if (occupied_pos(:, a).distance_to(position) < 0.1) then
-                        equivalent = TRUE
-                        mol2.atom.translate_by(-t)
-                        stdout.text("Redundant molecule discarded")
-                        stdout.show("Symop", symop_strings(n))
-                        stdout.show("Separation", separation.norm)
-                        exit
-                    end if
-                end do
-                if(equivalent) cycle
-
-                occupied_pos.append_column(position)
-                uc_count(i,j,k) = uc_count(i,j,k) + 1
-
-                !all_atoms.append(mol2.atom)
-                p_e.set_center_separation(separation.norm)
-                p_e.set_closest_distance(dist)
-                p_e.set_symop_id(n)
-                p_e.set_symop_str(symop_strings(n))
-                p_e.set_rot_b(rot)
-                p_e.set_trans_b(t)
-
-                ! There has to be a better way to do this, but this works for now
-                ! and eliminates most redundant calculations
-                ! If we have already calculated these energies, continue and
-                ! increment the counter
-                a = pair_energies.equivalent_pair(p_e)
-                equivalent = (a > 0)
-                if (equivalent) then
-                    pair_energies(a).increment_count
-                    mol2.atom.translate_by(-t)
-                    cycle
-                end
-
-                ! If we have a unique molecule pair calculate the energies
-                E = ZERO
-                ! Disp
-                E(3) = mol1.PROP:intermolecular_polarization_energy(mol2)
-                E(4) = mol1.atom.Grimme06_dispersion_energy(mol2.atom)
-                timer_12.start_timing
-                E(1:2) = mol1.PROP:symmetric_intermolecular_qm_energies(mol2, monomer_energies)
-                timer_12.stop_timing
-                time_in_qm = time_in_qm + timer_12.elapsed_time_s
-
-                p_e.set_energy_components(E)
-                pair_energies.append(p_e.clone)
-                new_mols = new_mols + 1
-                stdout.show("New molecule ", new_mols)
-                mol2.atom.translate_by(-t)
-            end
-            end
-            end
-
-            mol2.BASE:destroy
-          end 
-
-          e_iter = pair_energies.total_energy(scaled=FALSE)
-          delta = e_iter - e_prev
-          pair_energies.put_lattice_energy_table
-          stdout.show("Cells skipped", cells_skipped)
-          stdout.show("Energy change ", delta)
-          stdout.show("New molecules ", new_mols)
-          stdout.show("Total molecules", pair_energies.dim1)
-          prev_h_min = h_min
-          prev_h_max = h_max
-          prev_radius = radius
-          radius = radius + 7.2
-          if (radius > MAX_SEARCH_RADIUS) then
-              stdout.text("No convergence achieved, max search radius exceeded")
-              stdout.show("Max search radius", MAX_SEARCH_RADIUS)
-              exit
-          end
-          !all_atoms.put_xyz_file(trim(.name)//trim(n_iter.to_str))
-          !all_atoms.destroy
-      end do
-#undef CONVERGENCE_TOLERANCE
-#undef MAX_SEARCH_RADIUS
-
-      timer.stop_timing
-      stdout.show("time taken for Symmetry related mols (s) = ", timer.elapsed_time_s)
-      stdout.show("time taken for E_ele + E_rep (s) = ", time_in_qm)
+      stdout.text("All dimers before calculation")
       pair_energies.put_lattice_energy_table
 
-   end
+      indices.create(pair_energies.dim)
+      pair_energies(:).symop_id.quick_sort(indices)
+      pair_energies(:) = pair_energies(indices)
 
+      current_symop = 0
+      radius = 11.34 ! Roughly 6 angstrom
+      e_iter = ZERO
+      delta_e = INT_HUGE
+      mol2.BASE:create
+
+      do while (abs(delta_e) > 0.4)
+         do i = 1, pair_energies.dim
+            if(pair_energies(i).energy_calculated) cycle
+            if(pair_energies(i).closest_distance > radius) cycle
+            if(current_symop /= pair_energies(i).symop_id) then
+
+                mol2.BASE:destroy
+                mol2.BASE:create
+                mol2.scfdata.create_copy(mol1.scfdata)
+                mol2.atom.create_copy(central_atoms)
+                mol2.density_matrix.create_copy(mol1.density_matrix)
+                mol2.molecular_orbitals.create_copy(mol1.molecular_orbitals)
+                mol2.BASE:set_atom_info
+                mol2.BASE:finalize_atom_groups
+                mol2.BASE:resolve_basis_info
+                mol2.BASE:set_basis_name(.basis_name)
+                mol2.BASE:rotate_by(pair_energies(i).rot_b)
+                mol2.INTS:make_overlap_matrix
+                mol2.BASE:make_natural_orbitals
+                mol2.BASE:make_atomic_multipoles
+                current_symop = pair_energies(i).symop_id
+            end if
+            mol2.atom.translate_by(pair_energies(i).trans_b)
+            !sep = mol1.atom.center_of_mass - mol2.atom.center_of_mass
+            !if (abs(sep.norm - pair_energies(i).center_separation) > 0.001) then
+            !    stdout.text("Error: different separations!")
+            !    pair_energies(i).put
+            !    stdout.show("trans_b         = ", pair_energies(i).trans_b)
+            !    stdout.show("i               = ", i)
+            !end
+
+            ! If we have a unique molecule pair calculate the energies
+            E = ZERO
+            ! Disp
+            E(1:2) = mol1.PROP:symmetric_intermolecular_qm_energies(mol2, monomer_energies)
+            E(3) = mol1.PROP:intermolecular_polarization_energy(mol2)
+            E(4) = mol1.atom.Grimme06_dispersion_energy(mol2.atom)
+            pair_energies(i).set_energy_components(E)
+            pair_energies(i).set_energy_calculated(TRUE)
+            mol2.atom.translate_by(-pair_energies(i).trans_b)
+         end
+         e_iter = pair_energies.total_energy(scaled=TRUE)
+         delta_e = e_iter - e_prev
+         e_prev = e_iter
+         indices_calc = pair_energies.calculated_pairs
+         pair_energies(indices_calc).put_lattice_energy_table
+         if(all(pair_energies(:).energy_calculated)) exit
+         radius = radius + 7.2
+      end
+
+      mol1.BASE:destroy
+      mol2.BASE:destroy
+
+    end
 
 end
