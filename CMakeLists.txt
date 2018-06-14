@@ -194,6 +194,7 @@ set(FOO_SRC
     ${FOO_DIR}/opmatrix.foo
     ${FOO_DIR}/opvector.foo
     ${FOO_DIR}/parallel.foo
+    ${FOO_DIR}/pauli_block_geminals.foo
     ${FOO_DIR}/plot_grid.foo
     ${FOO_DIR}/pointgroup.foo
     ${FOO_DIR}/quadrature.foo
@@ -337,6 +338,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.xtal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/pauli_block_geminals.F90
     ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90
     ${CMAKE_CURRENT_BINARY_DIR}/pointgroup.F90
     ${CMAKE_CURRENT_BINARY_DIR}/quadrature.F90
