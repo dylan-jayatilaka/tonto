@@ -719,6 +719,36 @@ contains
     end
 
 
+    estimate_z result(res)
+      res :: INT
+      res = .crystal.n_unit_cell_atoms / .cluster.molecule(1).element.dim
+    end
+
+    calculate_cell_dipole_correction(mol_dipole) result(res)
+      mol_dipole :: VEC{REAL}(3), IN
+      res :: REAL
+      cell_dipole :: VEC{REAL}(3)
+      i :: INT
+      unique_symops :: VEC{INT}@
+      rot :: MAT{REAL}(3,3)
+      .cluster.create(.crystal) 
+      .cluster.set_generation_method("unit_cell")
+      .cluster.defragment = TRUE
+      .cluster.make_info
+      res = ZERO
+      cell_dipole = ZERO
+      unique_symops = .crystal.asym_symop_for_unit_cell_atom.unique_elements
+      do i = 1, unique_symops.dim
+        rot = .crystal.spacegroup.seitz(1:3, 1:3, unique_symops(i))
+        rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
+        rot = matmul(.crystal.unit_cell.direct_matrix, rot)
+        cell_dipole = cell_dipole + matmul(rot, mol_dipole)
+      end do
+
+      res = - TWOTHIRD * PI * (cell_dipole.norm) ** 2
+      res = res / (unique_symops.dim * .crystal.unit_cell.volume)
+    end
+
     total_lattice_energy(wavefunction_filename)
       self :: PTR
       wavefunction_filename :: STR
@@ -731,13 +761,18 @@ contains
       central_atoms :: VEC{ATOM}@
       e_iter, e_prev, delta_e, radius :: REAL
       sep :: VEC{REAL}(3)
-
+      Z :: INT
+      cell_dipole_correction :: REAL
+      mol_dipole :: VEC{REAL}(3)
+      stdout.text("Loading g09 wavefunction")
     ! Central fragment wavefunction stuff
       mol1.BASE:create
       mol1.BASE:read_g09_FChk_file(trim(wavefunction_filename))
       !mol1.scfdata.create_copy(.scfdata)
       mol1.name = trim(.cif.data_block_name)
 !      .cluster.create_mol_atom_list(mol1.atom, 1)
+
+
 
       central_atoms = mol1.atom
 
@@ -763,6 +798,11 @@ contains
       !   VEC{PAIR_ENERGY}:set_energy_model("ce-hf")
       !end if
 
+
+      mol_dipole = mol1.PROP:make_dipole
+      cell_dipole_correction = .:calculate_cell_dipole_correction(mol_dipole)
+      stdout.show("Dipole correction", cell_dipole_correction)
+
       VEC{PAIR_ENERGY}:set_energy_model("ce-b3lyp")
       .cluster.create(.crystal) 
       .cluster.set_generation_method("within_radius")
@@ -777,7 +817,7 @@ contains
       end
 
       stdout.text("All dimers before calculation")
-      pair_energies.put_lattice_energy_table
+      pair_energies.put_lattice_energy_table(cell_dipole_correction)
 
       indices.create(pair_energies.dim)
       pair_energies(:).symop_id.quick_sort(indices)
@@ -834,8 +874,11 @@ contains
          delta_e = e_iter - e_prev
          e_prev = e_iter
          indices_calc = pair_energies.calculated_pairs
-         pair_energies(indices_calc).put_lattice_energy_table
-         if(all(pair_energies(:).energy_calculated)) exit
+         pair_energies(indices_calc).put_lattice_energy_table(cell_dipole_correction)
+         if(all(pair_energies(:).energy_calculated)) then
+             stdout.show("Convergence not achieved at within radius", .cluster.radius)
+             exit
+         end
          radius = radius + 7.2
       end
 
