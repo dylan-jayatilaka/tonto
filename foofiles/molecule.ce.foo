@@ -731,10 +731,6 @@ contains
       i :: INT
       unique_symops :: VEC{INT}@
       rot :: MAT{REAL}(3,3)
-      .cluster.create(.crystal) 
-      .cluster.set_generation_method("unit_cell")
-      .cluster.defragment = TRUE
-      .cluster.make_info
       res = ZERO
       cell_dipole = ZERO
       unique_symops = .crystal.asym_symop_for_unit_cell_atom.unique_elements
@@ -744,15 +740,39 @@ contains
         rot = matmul(.crystal.unit_cell.direct_matrix, rot)
         cell_dipole = cell_dipole + matmul(rot, mol_dipole)
       end do
-
       res = - TWOTHIRD * PI * (cell_dipole.norm) ** 2
       res = res / (unique_symops.dim * .crystal.unit_cell.volume)
-      .cluster.destroy
+    end
+
+    create_wavefunction_file_for_lattice ::: leaky, private
+        mol :: MOLECULE*
+        model :: STR
+        mol.BASE:create
+        mol.scfdata.create
+        mol.name = trim(.cif.data_block_name)
+        .cluster.create_mol_atom_list(mol.atom, 1)
+        mol.BASE:set_atom_info
+        mol.BASE:finalize_atom_groups
+
+        mol.scfdata.scf_kind = "rhf"
+        VEC{PAIR_ENERGY}:get_energy_model(model)
+        stdout.show("Making wavefunction for energy model ", trim(model))
+        if(trim(model) == "ce-b3lyp") then
+            mol.scfdata.scf_kind = "rks"
+            mol.BASE:set_basis_name("6-31G(d,p)")
+            mol.scfdata.set_exchange_functional("b3lypgx")
+            mol.scfdata.set_correlation_functional("b3lypgc")
+        end 
+        mol.BASE:set_basis_name("3-21G")
+        mol.SCF:make_ANO_data
+        mol.SCF:scf
+        mol.BASE:serialize(trim(mol.name)//".sbf")
     end
 
     total_lattice_energy(wavefunction_filename)
       self :: PTR
       wavefunction_filename :: STR
+      file_exists :: BIN
       mol1, mol2 :: MOLECULE*
       i, n, current_symop :: INT
       p_e :: PAIR_ENERGY
@@ -764,44 +784,65 @@ contains
       Z :: INT
       cell_dipole_correction :: REAL
       mol_dipole :: VEC{REAL}(3)
-      stdout.text("Loading g09 wavefunction")
 
-    ! Central fragment wavefunction stuff
-      mol1.BASE:create
-      mol1.BASE:read_g09_FChk_file(trim(wavefunction_filename))
-      mol1.name = trim(.cif.data_block_name)
-      mol1.atom.put
 
-      !! Make monomer energies and multipoles
-      monomer_energies  = mol1.:make_monomer_energies_for_lattice_energy
-      mol1.BASE:make_atomic_multipoles
-
+      ! Central fragment wavefunction stuff
       !if(.scfdata.scf_kind == "rks") then
       !   VEC{PAIR_ENERGY}:set_energy_model("ce-b3lyp")
       !else
       !   VEC{PAIR_ENERGY}:set_energy_model("ce-hf")
       !end if
 
-     .cluster.create(.crystal) 
-     .cluster.set_generation_method("fragment")
-     .cluster.defragment = TRUE
-     .cluster.make_info
-
-      VEC{PAIR_ENERGY}:set_energy_model("ce-b3lyp")
       .cluster.create(.crystal) 
       .cluster.set_generation_method("within_radius")
       .cluster.radius = 40d0
       .cluster.defragment = TRUE
       .cluster.make_info
 
-      stdout.text("New lattice energy")
+      mol1.BASE:create
+
+      inquire(file=trim(wavefunction_filename), exist=file_exists)
+      if (file_exists) then
+          stdout.text("Loading g09 wavefunction")
+          mol1.BASE:read_wavefunction_file(trim(wavefunction_filename))
+      else 
+          stdout.text("Wavefunction file does not exist")
+          .:create_wavefunction_file_for_lattice
+          wavefunction_filename = trim(.cif.data_block_name)//".sbf"
+          mol1.BASE:read_wavefunction_file(trim(wavefunction_filename))
+      end
+
+      mol1.name = trim(.cif.data_block_name)
+      mol1.atom.put
+
+
+      stdout.flush
+      stdout.text("==============================")
+      stdout.text("CrystalExplorer lattice energy")
+      stdout.text("==============================")
+
+      stdout.text("Calculating monomer energies")
+      !! Make monomer energies and multipoles
+      monomer_energies  = mol1.:make_monomer_energies_for_lattice_energy
+      stdout.text("Monomer energies (Hartree)")
+      stdout.show("E_en               =", monomer_energies(1))
+      stdout.show("E_1e               =", monomer_energies(2))
+      stdout.show("E_ee               =", monomer_energies(3))
+      stdout.show("E_ex               =", monomer_energies(4))
+      stdout.flush
+
+      mol1.BASE:make_atomic_multipoles
+      mol_dipole = mol1.PROP:make_dipole
+      cell_dipole_correction = .:calculate_cell_dipole_correction(mol_dipole)
+      stdout.show("Cell dipole correction =", cell_dipole_correction)
+
       do i = 2, .cluster.n_molecules
           p_e = .cluster.pair_energy_for_molecule(i)
           pair_energies.append_or_increment(p_e.clone)
       end
 
-      stdout.text("All dimers before calculation")
-      pair_energies.put_lattice_energy_table(cell_dipole_correction)
+      !stdout.text("All dimers before calculation")
+      !pair_energies.put_lattice_energy_table(cell_dipole_correction)
 
       indices.create(pair_energies.dim)
       pair_energies(:).symop_id.quick_sort(indices)
@@ -814,6 +855,7 @@ contains
       mol2.BASE:create
 
       do while (abs(delta_e) > 0.1)
+         stdout.show("Calculating pairs within radius = ", radius)
          do i = 1, pair_energies.dim
             if(pair_energies(i).energy_calculated) cycle
             if(pair_energies(i).closest_distance > radius) cycle
@@ -821,7 +863,7 @@ contains
 
                 mol2.BASE:destroy
                 mol2.BASE:create
-                mol2.BASE:read_g09_FChk_file(wavefunction_filename)
+                mol2.BASE:read_wavefunction_file(wavefunction_filename)
                 !stdout.text("Set atom info")
                 !mol2.BASE:set_atom_info
                 !stdout.text("finalize atom info")
@@ -837,12 +879,12 @@ contains
             end if
             mol2.atom.translate_by(pair_energies(i).trans_b)
             sep = mol1.atom.center_of_mass - mol2.atom.center_of_mass
-            if (abs(sep.norm - pair_energies(i).center_separation) > 0.001) then
-                stdout.text("Error: different separations!")
-                pair_energies(i).put
-                stdout.show("trans_b         = ", pair_energies(i).trans_b)
-                stdout.show("i               = ", i)
-            end
+            !if (abs(sep.norm - pair_energies(i).center_separation) > 0.001) then
+            !    stdout.text("Error: different separations!")
+            !    pair_energies(i).put
+            !    stdout.show("trans_b         = ", pair_energies(i).trans_b)
+            !    stdout.show("i               = ", i)
+            !end
 
             ! If we have a unique molecule pair calculate the energies
             E = ZERO
@@ -860,18 +902,11 @@ contains
          indices_calc = pair_energies.calculated_pairs
          pair_energies(indices_calc).put_lattice_energy_table(cell_dipole_correction)
          if(all(pair_energies(:).energy_calculated)) then
-             stdout.show("Convergence not achieved at within radius", .cluster.radius)
+             stdout.show("Convergence not achieved within radius", .cluster.radius)
              exit
          end
          radius = radius + 7.2
       end
-
-      mol_dipole = mol1.PROP:make_dipole
-      cell_dipole_correction = .:calculate_cell_dipole_correction(mol_dipole)
-      stdout.show("Dipole correction", cell_dipole_correction)
-      indices_calc = pair_energies.calculated_pairs
-      pair_energies(indices_calc).put_lattice_energy_table(cell_dipole_correction)
-
 
       mol1.BASE:destroy
       mol2.BASE:destroy
