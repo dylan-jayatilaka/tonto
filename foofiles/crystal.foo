@@ -4978,21 +4978,19 @@ contains
 
       sf_u :: VEC{CPX}@
       kv   :: VEC{REAL}(3)
+      k_pt :: MAT{REAL}*
       adp2 :: MAT{REAL}(3,3)
       adp3 :: MAT3{REAL}(3,3,3)
       adp4 :: MAT4{REAL}(3,3,3,3)
-      k_pt,kU  :: MAT{REAL}*
-      u1,u2,u3 :: VEC{REAL}*
-      k1k,k2k,k3k,tf :: REAL
       k1,k2,k3, c2,c3,c4 :: REAL
       k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
-      n_k,f,u,k,base :: INT
-      f_atom :: ATOM*
-      tag :: STR
-      has_skip,do_skip,has_Uiso,do_Uiso :: BIN
-      is_H_atom,refine_positions,refine_ADPs,refine_Uiso :: BIN
-      II,sf,sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
       zero3 :: REAL
+      n_k,f,u,k,base :: INT
+      has_skip,has_Uiso,is_H_atom :: BIN
+      refine_positions,refine_Uiso :: BIN
+      refine_ADPs,refine_ADP4s,refine_ADP3s :: BIN
+      II,sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
+      tag :: STR
 
       ! Is there a nothing list?
       has_skip = .data.refine_nothing_for_atom.associated
@@ -5010,9 +5008,6 @@ contains
       zero3 = ONE
       if (.data.refine_4th_order_only) zero3 = ZERO
 
-      ! K times thermal tensors
-      kU.create(n_k,3)
-
       ! Initialize
       sf_e = ZERO
       sf_d = ZERO
@@ -5022,107 +5017,244 @@ contains
 
          ! Fragment atom
          f = .unique_frag_atom(u)
-         f_atom => .fragment_atom(f)
+
+         ! This atom's label
+         tag = .fragment_atom(f).tag
+
+         ! Skip this atom?
+         if (has_skip) then
+         if (any(.data.refine_nothing_for_atom==tag)) then
+            cycle
+         end
+         end
+
+         ! Structure factor, unique frag atom "u"
+         sf_u = sf_n(:,u)
 
          ! Base index for unique frag atom
          base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
 
-         !make_unique_sf_derivs Structure factor, iunique frag atom "u"
-         sf_u = sf_n(:,u)
+         ! Defaults
+         refine_positions = TRUE
+         refine_ADPs      = TRUE
+         refine_Uiso      = FALSE
+         refine_ADP4s     = .fragment_atom(f).has_only_ADP4s_and_errors
+         refine_ADP3s     = .fragment_atom(f).has_only_ADP3s_and_errors
 
-         ! Do we refine positions & ADPs?
-         is_H_atom = f_atom.atomic_number==1
+         ! Special cases for H atom
+         is_H_atom = .fragment_atom(f).atomic_number==1
          if (is_H_atom) then
             refine_positions = .data.refine_H_positions
             refine_ADPs      = .data.refine_H_ADPs
             refine_Uiso      = .data.refine_H_U_iso
-         else
-            refine_positions = TRUE
-            refine_ADPs      = TRUE
-            refine_Uiso      = FALSE
          end
 
-         ! k.U
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
-         u1 => kU(:,1)
-         u2 => kU(:,2)
-         u3 => kU(:,3)
-
-         ! This atom's label
-         tag = f_atom.tag
-
-         ! Skip this atom?
-         do_skip = FALSE
-         if (has_skip) then
-         if (any(tag==.data.refine_nothing_for_atom)) do_skip = TRUE
-         end
-
-         ! Skip the atoms in the nothings list?
-         if (do_skip) cycle
-
-         ! Do U_iso this atom?
-         do_Uiso = FALSE
+         ! Final check to do U_iso this atom?
+         if (NOT refine_Uiso) then
          if (has_Uiso) then
-         if (any(tag==.data.refine_U_iso_for_atom)) do_Uiso = TRUE
+         if (any(.data.refine_U_iso_for_atom==tag)) then
+            refine_Uiso = TRUE
+         end
+         end
          end
 
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-         if (do_Uiso) then ! For isotropic harmonic refinement
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         ! Get ADP2s
+         .fragment_atom(f).put_ADP2_vector_to(adp2)
 
-            DIE_IF(f_atom.has_only_ADP4s_and_errors,"can't do isotropic ADP4s for atom "//trim(tag))
-            DIE_IF(f_atom.has_only_ADP3s_and_errors,"can't do isotropic ADP3s for atom "//trim(tag))
-         
-            ! This is for (harmonic) isotropic atoms
+         ! Sanity check
+         DIE_IF(refine_Uiso AND refine_ADP4s,"can't refine isotropic ADPs & ADP4s for "//trim(tag))
+         DIE_IF(refine_Uiso AND refine_ADP3s,"can't refine isotropic ADPs & ADP3s for "//trim(tag))
+         DIE_IF(NOT adp2.equals(.fragment_atom(f).ADP_tensor),"ADP2 not equal to ADP_tensor")
+
+         ! ADP4's !!!!!!!!!!!!!
+         if (refine_ADP4s) then
+         !!!!!!!!!!!!!!!!!!!!!!
+
+            ! Get ADP tensors
+            .fragment_atom(f).put_ADP3_vector_to(adp3)
+            .fragment_atom(f).put_ADP4_vector_to(adp4)
+
             do k = 1,n_k
 
-               k1k = k_pt(k,1)
-               k2k = k_pt(k,2)
-               k3k = k_pt(k,3)
+               ! Scattering vector
+               k1 = k_pt(k,1)
+               k2 = k_pt(k,2)
+               k3 = k_pt(k,3)
+               kv = [k1,k2,k3]
 
-               tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+               ! Component products
+               k1_k1 = k1*k1
+               k2_k2 = k2*k2
+               k3_k3 = k3*k3
+               k1_k2 = k1*k2
+               k1_k3 = k1*k3
+               k2_k3 = k2*k3
 
-               sf  = sf_u(k) * tf
-               sf2 = HALF * sf * (k1k*k1k+k2k*k2k+k3k*k3k)
+               ! U tensor contracted with k vector
+               c2 = adp2.contract_with(kv)*HALF
+               c3 = adp3.contract_with(kv)*SIXTH
+               c4 = adp4.contract_with(kv)*SIXTH*QUARTER
 
-               sf_e(k) = sf_e(k) + sf
-               
-               ! Positions
-               if (refine_positions) then
-                  sf_d(k,base+1) = II*k1k*sf
-                  sf_d(k,base+2) = II*k2k*sf
-                  sf_d(k,base+3) = II*k3k*sf
+               ! Static structure factor x TF
+               ! i.e. dynamic structure factor,
+               ! in the harmonic approximation
+               sfh = sf_u(k) * exp(-c2)
+
+               ! Multiples of *anharmonic* structure factor
+               sf1 = sfh * (ONE - II*c3 + c4)
+               sf2 = sf1 * HALF
+
+               ! SF contribution (anharmonic!)
+               sf_e(k) = sf_e(k) + sf1
+
+               if (refine_positions) then 
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
                end
 
-               ! Isotropic ADPs
                if (refine_ADPs) then
-                  sf_d(k,base+4) = -sf2
-                  sf_d(k,base+5) = -sf2
-                  sf_d(k,base+6) = -sf2
-                  sf_d(k,base+7) = ZERO
-                  sf_d(k,base+8) = ZERO
-                  sf_d(k,base+9) = ZERO
+
+                  ! U2 derivatives
+                  sf_d(k,base+ 4) = -k1_k1*sf2
+                  sf_d(k,base+ 5) = -k2_k2*sf2
+                  sf_d(k,base+ 6) = -k3_k3*sf2
+                  sf_d(k,base+ 7) = -k1_k2*sf1
+                  sf_d(k,base+ 8) = -k1_k3*sf1
+                  sf_d(k,base+ 9) = -k2_k3*sf1
+                 
+                  ! Structure factor (harmonic)
+                  sf1  = sfh
+                 
+                  ! Multiples of *harmonic* sf
+                  sf2  = sf1 * HALF
+                  sf4  = sf1 * QUARTER
+                  sf6  = sf1 * SIXTH
+                  sf24 = sf1 * SIXTH*QUARTER
+                 
+                  ! U3 derivatives
+                  sf_d(k,base+10) = -II*k1_k1*k1*sf6*zero3
+                  sf_d(k,base+11) = -II*k2_k2*k2*sf6*zero3
+                  sf_d(k,base+12) = -II*k3_k3*k3*sf6*zero3
+                  sf_d(k,base+13) = -II*k1_k1*k2*sf2*zero3
+                  sf_d(k,base+14) = -II*k1_k1*k3*sf2*zero3
+                  sf_d(k,base+15) = -II*k2_k2*k1*sf2*zero3
+                  sf_d(k,base+16) = -II*k2_k2*k3*sf2*zero3
+                  sf_d(k,base+17) = -II*k3_k3*k1*sf2*zero3
+                  sf_d(k,base+18) = -II*k3_k3*k2*sf2*zero3
+                  sf_d(k,base+19) = -II*k1*k2*k3*sf1*zero3
+                 
+                  ! U4 derivatives
+                  sf_d(k,base+20) = k1_k1*k1_k1*sf24
+                  sf_d(k,base+21) = k2_k2*k2_k2*sf24
+                  sf_d(k,base+22) = k3_k3*k3_k3*sf24
+                  sf_d(k,base+23) = k1_k1*k1_k2*sf6
+                  sf_d(k,base+24) = k1_k1*k1_k3*sf6
+                  sf_d(k,base+25) = k2_k2*k1_k2*sf6
+                  sf_d(k,base+26) = k2_k2*k2_k3*sf6
+                  sf_d(k,base+27) = k3_k3*k1_k3*sf6
+                  sf_d(k,base+28) = k3_k3*k2_k3*sf6
+                  sf_d(k,base+29) = k1_k1*k2_k2*sf4
+                  sf_d(k,base+30) = k1_k1*k3_k3*sf4
+                  sf_d(k,base+31) = k2_k2*k3_k3*sf4
+                  sf_d(k,base+32) = k1_k1*k2_k3*sf2
+                  sf_d(k,base+33) = k2_k2*k1_k3*sf2
+                  sf_d(k,base+34) = k3_k3*k1_k2*sf2
+
                end
 
             end
 
+         ! ADP3's !!!!!!!!!!!!!!!!!!
+         else if (refine_ADP3s) then
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+            ! Get ADP tensors
+            .fragment_atom(f).put_ADP3_vector_to(adp3)
 
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-         else ! For *AN*isotropic atoms
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            do k = 1,n_k
 
-            ! ADP4's
-            if (f_atom.has_only_ADP4s_and_errors) then
+               ! Scattering vector
+               k1 = k_pt(k,1)
+               k2 = k_pt(k,2)
+               k3 = k_pt(k,3)
+               kv = [k1,k2,k3]
 
-               DIE_IF(refine_Uiso,"can't refine Uiso & anharmonic for "//trim(tag))
-               ! Get ADP tensors
-               f_atom.put_ADP2_vector_to(adp2)
-               f_atom.put_ADP3_vector_to(adp3)
-               f_atom.put_ADP4_vector_to(adp4)
-   
-               DIE_IF(NOT adp2.equals(f_atom.ADP_tensor),"ADP2 not equal to ADP_tensor")
-   
+               ! Component products
+               k1_k1 = k1*k1
+               k2_k2 = k2*k2
+               k3_k3 = k3*k3
+               k1_k2 = k1*k2
+               k1_k3 = k1*k3
+               k2_k3 = k2*k3
+
+               ! U tensor contracted with k vector
+               c2 = adp2.contract_with(kv)*HALF
+               c3 = adp3.contract_with(kv)*SIXTH
+
+               ! Static structure factor x TF
+               ! i.e. dynamic structure factor,
+               ! in the harmonic approximation
+               sfh = sf_u(k) * exp(-c2)
+
+               ! Multiples of *anharmonic* structure factor
+               ! -- 3rd order only.
+               sf1 = sfh * (ONE - II*c3)
+               sf2 = sf1 * HALF
+
+               ! SF contribution (anharmonic!)
+               sf_e(k) = sf_e(k) + sf1
+
+               !test refine_H_positions Lorraine
+               if (refine_positions) then
+
+                  ! Pos derivatives
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
+
+               end
+
+               if (refine_ADPs) then
+
+                  ! U2 derivatives
+                  sf_d(k,base+ 4) = -k1_k1*sf2
+                  sf_d(k,base+ 5) = -k2_k2*sf2
+                  sf_d(k,base+ 6) = -k3_k3*sf2
+                  sf_d(k,base+ 7) = -k1_k2*sf1
+                  sf_d(k,base+ 8) = -k1_k3*sf1
+                  sf_d(k,base+ 9) = -k2_k3*sf1
+                 
+                  ! Structure factor (harmonic!)
+                  sf1  = sfh
+                 
+                  ! Multiples of *harmonic* sf
+                  sf2  = sf1 * HALF
+                  sf6  = sf1 * SIXTH
+                 
+                  ! U3 derivatives
+                  sf_d(k,base+10) = -II*k1_k1*k1*sf6
+                  sf_d(k,base+11) = -II*k2_k2*k2*sf6
+                  sf_d(k,base+12) = -II*k3_k3*k3*sf6
+                  sf_d(k,base+13) = -II*k1_k1*k2*sf2
+                  sf_d(k,base+14) = -II*k1_k1*k3*sf2
+                  sf_d(k,base+15) = -II*k2_k2*k1*sf2
+                  sf_d(k,base+16) = -II*k2_k2*k3*sf2
+                  sf_d(k,base+17) = -II*k3_k3*k1*sf2
+                  sf_d(k,base+18) = -II*k3_k3*k2*sf2
+                  sf_d(k,base+19) = -II*k1*k2*k3*sf1
+
+               end
+
+            end
+
+         ! ADP2's !!!!!!!!!!!!!!
+         else ! NO anharmonicity
+         !!!!!!!!!!!!!!!!!!!!!!!
+
+            ! This is for isotropic refinement
+            if (refine_Uiso) then ! For U_iso 
+
                do k = 1,n_k
    
                   ! Scattering vector
@@ -5141,90 +5273,45 @@ contains
    
                   ! U tensor contracted with k vector
                   c2 = adp2.contract_with(kv)*HALF
-                  c3 = adp3.contract_with(kv)*SIXTH
-                  c4 = adp4.contract_with(kv)*SIXTH*QUARTER
    
                   ! Static structure factor x TF
                   ! i.e. dynamic structure factor,
                   ! in the harmonic approximation
                   sfh = sf_u(k) * exp(-c2)
    
-                  ! Multiples of *anharmonic* structure factor
-                  sf1 = sfh * (ONE - II*c3 + c4)
-                  sf2 = sf1 * HALF
+                  ! Multiples *harmonic* structure factor
+                  sf1 = sfh
+                  sf2 = sf1 * HALF * (k1_k1+k2_k2+k3_k3)
    
-                  ! SF contribution (anharmonic!)
+                  ! SF contribution (harmonic)
                   sf_e(k) = sf_e(k) + sf1
    
-                  if (refine_positions) then 
+                  if (refine_positions) then
+   
+                     ! Pos derivatives
                      sf_d(k,base+ 1) =  II*k1*sf1
                      sf_d(k,base+ 2) =  II*k2*sf1
                      sf_d(k,base+ 3) =  II*k3*sf1
+   
                   end
    
                   if (refine_ADPs) then
    
-                     ! U2 derivatives
-                     sf_d(k,base+ 4) = -k1_k1*sf2
-                     sf_d(k,base+ 5) = -k2_k2*sf2
-                     sf_d(k,base+ 6) = -k3_k3*sf2
-                     sf_d(k,base+ 7) = -k1_k2*sf1
-                     sf_d(k,base+ 8) = -k1_k3*sf1
-                     sf_d(k,base+ 9) = -k2_k3*sf1
-                    
-                     ! Structure factor (harmonic)
-                     sf1  = sfh
-                    
-                     ! Multiples of *harmonic* sf
-                     sf2  = sf1 * HALF
-                     sf4  = sf1 * QUARTER
-                     sf6  = sf1 * SIXTH
-                     sf24 = sf1 * SIXTH*QUARTER
-                    
-                     ! U3 derivatives
-                     sf_d(k,base+10) = -II*k1_k1*k1*sf6*zero3
-                     sf_d(k,base+11) = -II*k2_k2*k2*sf6*zero3
-                     sf_d(k,base+12) = -II*k3_k3*k3*sf6*zero3
-                     sf_d(k,base+13) = -II*k1_k1*k2*sf2*zero3
-                     sf_d(k,base+14) = -II*k1_k1*k3*sf2*zero3
-                     sf_d(k,base+15) = -II*k2_k2*k1*sf2*zero3
-                     sf_d(k,base+16) = -II*k2_k2*k3*sf2*zero3
-                     sf_d(k,base+17) = -II*k3_k3*k1*sf2*zero3
-                     sf_d(k,base+18) = -II*k3_k3*k2*sf2*zero3
-                     sf_d(k,base+19) = -II*k1*k2*k3*sf1*zero3
-                    
-                     ! U4 derivatives
-                     sf_d(k,base+20) = k1_k1*k1_k1*sf24
-                     sf_d(k,base+21) = k2_k2*k2_k2*sf24
-                     sf_d(k,base+22) = k3_k3*k3_k3*sf24
-                     sf_d(k,base+23) = k1_k1*k1_k2*sf6
-                     sf_d(k,base+24) = k1_k1*k1_k3*sf6
-                     sf_d(k,base+25) = k2_k2*k1_k2*sf6
-                     sf_d(k,base+26) = k2_k2*k2_k3*sf6
-                     sf_d(k,base+27) = k3_k3*k1_k3*sf6
-                     sf_d(k,base+28) = k3_k3*k2_k3*sf6
-                     sf_d(k,base+29) = k1_k1*k2_k2*sf4
-                     sf_d(k,base+30) = k1_k1*k3_k3*sf4
-                     sf_d(k,base+31) = k2_k2*k3_k3*sf4
-                     sf_d(k,base+32) = k1_k1*k2_k3*sf2
-                     sf_d(k,base+33) = k2_k2*k1_k3*sf2
-                     sf_d(k,base+34) = k3_k3*k1_k2*sf2
+                     ! U_iso derivatives
+                     sf_d(k,base+ 4) = -sf2
+                     sf_d(k,base+ 5) = -sf2
+                     sf_d(k,base+ 6) = -sf2
+                     sf_d(k,base+ 7) = ZERO
+                     sf_d(k,base+ 8) = ZERO
+                     sf_d(k,base+ 9) = ZERO
    
                   end
    
                end
-   
-            ! ADP3's
-            else if (f_atom.has_only_ADP3s_and_errors) then
 
-               DIE_IF(refine_Uiso,"can't refine Uiso & anharmonic for "//trim(tag))
-   
-               ! Get ADP tensors
-               f_atom.put_ADP2_vector_to(adp2)
-               f_atom.put_ADP3_vector_to(adp3)
-   
-               DIE_IF(NOT adp2.equals(f_atom.ADP_tensor),"ADP2 not equal to ADP_tensor")
-   
+            ! This is *AN*isotropic refinement
+            else ! For ADP2s !!!!!!!!!!!!!!!!!
+
                do k = 1,n_k
    
                   ! Scattering vector
@@ -5243,22 +5330,19 @@ contains
    
                   ! U tensor contracted with k vector
                   c2 = adp2.contract_with(kv)*HALF
-                  c3 = adp3.contract_with(kv)*SIXTH
    
                   ! Static structure factor x TF
                   ! i.e. dynamic structure factor,
                   ! in the harmonic approximation
                   sfh = sf_u(k) * exp(-c2)
    
-                  ! Multiples of *anharmonic* structure factor
-                  ! -- 3rd order only.
-                  sf1 = sfh * (ONE - II*c3)
+                  ! Multiples *harmonic* structure factor
+                  sf1 = sfh
                   sf2 = sf1 * HALF
    
-                  ! SF contribution (anharmonic!)
+                  ! SF contribution (harmonic)
                   sf_e(k) = sf_e(k) + sf1
    
-                  !test refine_H_positions Lorraine
                   if (refine_positions) then
    
                      ! Pos derivatives
@@ -5277,152 +5361,9 @@ contains
                      sf_d(k,base+ 7) = -k1_k2*sf1
                      sf_d(k,base+ 8) = -k1_k3*sf1
                      sf_d(k,base+ 9) = -k2_k3*sf1
-                    
-                     ! Structure factor (harmonic!)
-                     sf1  = sfh
-                    
-                     ! Multiples of *harmonic* sf
-                     sf2  = sf1 * HALF
-                     sf6  = sf1 * SIXTH
-                    
-                     ! U3 derivatives
-                     sf_d(k,base+10) = -II*k1_k1*k1*sf6
-                     sf_d(k,base+11) = -II*k2_k2*k2*sf6
-                     sf_d(k,base+12) = -II*k3_k3*k3*sf6
-                     sf_d(k,base+13) = -II*k1_k1*k2*sf2
-                     sf_d(k,base+14) = -II*k1_k1*k3*sf2
-                     sf_d(k,base+15) = -II*k2_k2*k1*sf2
-                     sf_d(k,base+16) = -II*k2_k2*k3*sf2
-                     sf_d(k,base+17) = -II*k3_k3*k1*sf2
-                     sf_d(k,base+18) = -II*k3_k3*k2*sf2
-                     sf_d(k,base+19) = -II*k1*k2*k3*sf1
    
                   end
    
-               end
-   
-            else ! NO anharmonicity
-   
-               ! Get ADP tensor
-               f_atom.put_ADP2_vector_to(adp2)
-   
-               DIE_IF(NOT adp2.equals(f_atom.ADP_tensor),"ADP2 not equal to ADP_tensor")
-   
-               if (is_H_atom AND refine_Uiso) then
-
-                  ! This is for H atoms AND H isotropic
-                  do k = 1,n_k
-      
-                     ! Scattering vector
-                     k1 = k_pt(k,1)
-                     k2 = k_pt(k,2)
-                     k3 = k_pt(k,3)
-                     kv = [k1,k2,k3]
-      
-                     ! Component products
-                     k1_k1 = k1*k1
-                     k2_k2 = k2*k2
-                     k3_k3 = k3*k3
-                     k1_k2 = k1*k2
-                     k1_k3 = k1*k3
-                     k2_k3 = k2*k3
-      
-                     ! U tensor contracted with k vector
-                     c2 = adp2.contract_with(kv)*HALF
-      
-                     ! Static structure factor x TF
-                     ! i.e. dynamic structure factor,
-                     ! in the harmonic approximation
-                     sfh = sf_u(k) * exp(-c2)
-      
-                     ! Multiples *harmonic* structure factor
-                     sf1 = sfh
-                     sf2 = sf1 * HALF * (k1k*k1k+k2k*k2k+k3k*k3k)
-      
-                     ! SF contribution (harmonic)
-                     sf_e(k) = sf_e(k) + sf1
-      
-                     if (refine_positions) then
-      
-                        ! Pos derivatives
-                        sf_d(k,base+ 1) =  II*k1*sf1
-                        sf_d(k,base+ 2) =  II*k2*sf1
-                        sf_d(k,base+ 3) =  II*k3*sf1
-      
-                     end
-      
-                     if (refine_ADPs) then
-      
-                        sf_d(k,base+ 4) = -sf2
-                        sf_d(k,base+ 5) = -sf2
-                        sf_d(k,base+ 6) = -sf2
-                        sf_d(k,base+ 7) = ZERO
-                        sf_d(k,base+ 8) = ZERO
-                        sf_d(k,base+ 9) = ZERO
-      
-                     end
-      
-                  end
-
-               else
-
-                  ! This is for non-H atoms OR H *AN*isotropic
-                  do k = 1,n_k
-      
-                     ! Scattering vector
-                     k1 = k_pt(k,1)
-                     k2 = k_pt(k,2)
-                     k3 = k_pt(k,3)
-                     kv = [k1,k2,k3]
-      
-                     ! Component products
-                     k1_k1 = k1*k1
-                     k2_k2 = k2*k2
-                     k3_k3 = k3*k3
-                     k1_k2 = k1*k2
-                     k1_k3 = k1*k3
-                     k2_k3 = k2*k3
-      
-                     ! U tensor contracted with k vector
-                     c2 = adp2.contract_with(kv)*HALF
-      
-                     ! Static structure factor x TF
-                     ! i.e. dynamic structure factor,
-                     ! in the harmonic approximation
-                     sfh = sf_u(k) * exp(-c2)
-      
-                     ! Multiples *harmonic* structure factor
-                     sf1 = sfh
-                     sf2 = sf1 * HALF
-      
-                     ! SF contribution (harmonic)
-                     sf_e(k) = sf_e(k) + sf1
-      
-                     if (refine_positions) then
-      
-                        ! Pos derivatives
-                        sf_d(k,base+ 1) =  II*k1*sf1
-                        sf_d(k,base+ 2) =  II*k2*sf1
-                        sf_d(k,base+ 3) =  II*k3*sf1
-      
-                     end
-      
-                     if (refine_ADPs) then
-      
-                        ! U2 derivatives; U_iso is not possible here
-                        ! through this logical chain ... if you want
-                        ! that use refine_U_iso_for_atoms= { ... }
-                        sf_d(k,base+ 4) = -k1_k1*sf2
-                        sf_d(k,base+ 5) = -k2_k2*sf2
-                        sf_d(k,base+ 6) = -k3_k3*sf2
-                        sf_d(k,base+ 7) = -k1_k2*sf1
-                        sf_d(k,base+ 8) = -k1_k3*sf1
-                        sf_d(k,base+ 9) = -k2_k3*sf1
-      
-                     end
-      
-                  end
-
                end
 
             end
@@ -5432,14 +5373,12 @@ contains
       end
 
       ! Clean
-      kU.destroy
       k_pt.destroy
 
       if (DO_IN_PARALLEL) then
          PARALLEL_SUM(sf_e)
          PARALLEL_SUM(sf_d)
       end
-
 
    end
 
