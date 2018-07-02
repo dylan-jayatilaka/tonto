@@ -2076,6 +2076,7 @@ contains
       n,i,j :: INT
       inverted :: BIN
 
+      .inverted_symop.destroy
       .inverted_symop.create(.n_seitz)
       .inverted_symop = 0
 
@@ -2108,11 +2109,13 @@ contains
       self :: INOUT
 
    ENSURE(.inverted_symop.associated,"no inverted_symop array")
+   ENSURE(.translated_symop.disassociated,"translated_symop exists!")
    ENSURE(.seitz.associated,"Seitz matrices not initialized")
 
       i,j :: INT
       translated :: BIN
 
+      .translated_symop.destroy
       .translated_symop.create(.n_seitz)
       .translated_symop = 0
 
@@ -3246,22 +3249,23 @@ contains
 
    end
 
-   symmetrize_unique_SFs(sf,stabilizer,refl) ::: PURE
-   ! Symmetrize the list of unique non T&I symmetry-generated
+   symmetrize_unique_SFs(sf,stabilizer,refl,diff) ::: PURE
+   ! Symmetrize the list of unique non-T&I symmetry-generated
    ! reflections over the lost of stablizer symops.
       self :: IN
       sf :: VEC{CPX}, INOUT
       stabilizer :: VEC{INT}, IN
       refl :: VEC{REFLECTION}, IN
+      diff :: REAL, OUT
 
    ENSURE(.analyzed,        "spacegroup not analyzed")
    ENSURE(sf.dim==refl.dim,"sf_ints: wrong size")
    ENSURE(sf.dim==.n_unique_SF_symops*refl.dim,"unique_sf_ints: wrong size")
 
-      t_phase :: VEC{CPX}*
+      average,absdiff,t_phase :: VEC{CPX}*
       n_refl,n_stab :: INT
       n,s, f1,l1,fn,ln :: INT
-      fac :: REAL
+      fac,val :: REAL
 
       n_refl = refl.dim
       n_stab = stabilizer.dim
@@ -3271,9 +3275,8 @@ contains
 
       ! Phases
       t_phase.create(n_refl)
-
-      ! Repetition factor for this atom
-      fac = ONE/n_stab
+      average.create(n_refl)
+      absdiff.create(n_refl)
 
       ! First set of reflections
       s  = stabilizer(1)
@@ -3281,8 +3284,10 @@ contains
       l1 = n_refl* s
 
       ! Do averaging of first set
-      do n = 2,n_stab
+      average = ZERO
+      do n = 1,n_stab
          
+         ! n-th set of reflections
          s  = stabilizer(n)
          fn = n_refl*(s-1)+1
          ln = n_refl* s
@@ -3290,33 +3295,41 @@ contains
          ! Add up translated symop contribution
          .make_phases_for_symop(s,t_phase,.translated_symop,refl)
 
-         sf(f1:l1) = sf(f1:l1) + t_phase*sf(fn:ln)
+         average = average + t_phase*sf(fn:ln)
    
          ! Add up inverted symop contribution, if any
          ! Inversions conjugate the structure factor
-         if (NOT .is_inverted_unique_SF_symop(s)) cycle
+         if (NOT .is_inverted_symop(s)) cycle
 
          .make_phases_for_symop(s,t_phase,.inverted_symop,refl)
 
-         sf(f1:l1) = sf(f1:l1) + t_phase*conjg(sf(fn:ln))
+         average = average + t_phase*conjg(sf(fn:ln))
    
       end
 
       ! Average here
-      sf(f1:l1) = fac*sf(f1:l1)
+      fac = ONE/n_stab
+      average = fac*average
 
-      ! Copy back out
-      do n = 2,n_stab
+      ! Copy back out; get diff^2
+      absdiff = ZERO
+      do n = 1,n_stab
          
          s  = stabilizer(n)
          fn = n_refl*(s-1)+1
          ln = n_refl* s
 
-         sf(fn:ln) = sf(f1:l1)
+         absdiff   = absdiff + abs(sf(fn:ln)-average)**2
+         sf(fn:ln) = average
 
       end
 
+      ! Report
+      diff = sqrt(sum(absdiff))
+
       ! Clean
+      absdiff.destroy
+      average.destroy
       t_phase.destroy
 
    end
