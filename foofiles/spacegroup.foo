@@ -2664,13 +2664,69 @@ contains
       gi.destroy
    end
 
-   is_inverted_symop(u) result (res) ::: PURE
-   ! Return TRUE if "u" is the index of an inverted symop
+   parent_translation_symop_for(s) result (res) ::: PURE
+   ! For a given symop with index "s", return the index of the
+   ! parent translation symop in the list of unique symops. If it does
+   ! not have a parent, return 0.
       self :: IN
-      u :: INT, IN
+      s :: INT, IN
+      res :: INT
+
+      n :: INT
+
+      res = 0
+
+      do n = 1,.n_seitz
+          if (s/=n) then
+          if (s==.translated_symop(n)) then
+             res = n
+             exit
+          end
+          end
+      end
+
+   end
+
+   parent_inversion_symop_for(s) result (res) ::: PURE
+   ! For a given symop with index "s", return the index of the
+   ! parent translation symop in the list of unique symops. If it does
+   ! not have a parent, return 0.
+      self :: IN
+      s :: INT, IN
+      res :: INT
+
+      n :: INT
+
+      res = 0
+
+      do n = 1,.n_seitz
+          if (s/=n) then
+          if (s==.inverted_symop(n)) then
+             res = n
+             exit
+          end
+          end
+      end
+
+   end
+
+   is_translated_symop(s) result (res) ::: PURE
+   ! Return TRUE if "s" is the index of an translated symop
+      self :: IN
+      s :: INT, IN
       res :: BIN
 
-      res = any(.inverted_symop==u)
+      res = .parent_translation_symop_for(s) /= 0
+
+   end
+
+   is_inverted_symop(s) result (res) ::: PURE
+   ! Return TRUE if "s" is the index of an inverted symop
+      self :: IN
+      s :: INT, IN
+      res :: BIN
+
+      res = .parent_inversion_symop_for(s) /= 0
 
    end
 
@@ -2692,6 +2748,47 @@ contains
 ! To understand this code see Jayatilaka & Dittrich (2008)
 ! Acta Cryst. A 64, p383 section 2.5 comments (i) and (ii)
 ! NOTE: These were checked on KHMal with HBB 01/03/18
+
+   make_phase_for_symop(s,t_phase,refl) ::: PURE
+   ! For each reflection in "refl", return in "t_phase" the sum of the
+   ! *exponentiated* screw/glide phase shifts from each glide vector
+   ! for all symops which are equivalent to the "u"-th unique symmetry
+   ! operation, .unique_SF_symop(u), as determined by the "mask"
+   ! array.
+      self :: IN
+      s :: INT, IN
+      t_phase :: VEC{CPX}, OUT
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,"spacegroup not analyzed")
+   ENSURE(s<=.n_seitz,"symop index out of range")
+   ENSURE(t_phase.dim==refl.dim,"wrong length for t_phase array")
+   ENSURE(mask.dim==.n_seitz,"wrong size, mask")
+
+      pi2,tx,ty,tz,dot :: REAL
+      n,n_refl,h,k,l :: INT
+
+      n_refl = refl.dim
+      pi2 = TWO*PI
+
+      tx = pi2*.seitz(1,4,s)
+      ty = pi2*.seitz(2,4,s)
+      tz = pi2*.seitz(3,4,s)
+  
+      do n = 1,n_refl
+
+         h = refl(n).h
+         k = refl(n).k
+         l = refl(n).l
+
+         dot = h*tx + k*ty + l*tz
+
+         ! Sum of exponentiated phase !
+         t_phase(n) = exp(IMAGIFY(dot))
+
+      end
+
+   end
 
    make_phases_for_symop(u,t_phase,mask,refl) ::: PURE
    ! For each reflection in "refl", return in "t_phase" the sum of the
@@ -3264,7 +3361,7 @@ contains
 
       average,absdiff,t_phase :: VEC{CPX}*
       n_refl,n_stab :: INT
-      n,s, f1,l1,fn,ln :: INT
+      n,s, pi,pt, f,l :: INT
       fac,val :: REAL
 
       n_refl = refl.dim
@@ -3278,32 +3375,37 @@ contains
       average.create(n_refl)
       absdiff.create(n_refl)
 
-      ! First set of reflections
-      s  = stabilizer(1)
-      f1 = n_refl*(s-1)+1
-      l1 = n_refl* s
-
-      ! Do averaging of first set
       average = ZERO
+
+      ! Do averaging
       do n = 1,n_stab
          
          ! n-th set of reflections
          s  = stabilizer(n)
-         fn = n_refl*(s-1)+1
-         ln = n_refl* s
     
-         ! Add up translated symop contribution
-         .make_phases_for_symop(s,t_phase,.translated_symop,refl)
+         ! Translated symop contribution
+         .make_phase_for_symop(s,t_phase,refl)
 
-         average = average + t_phase*sf(fn:ln)
-   
-         ! Add up inverted symop contribution, if any
-         ! Inversions conjugate the structure factor
-         if (NOT .is_inverted_symop(s)) cycle
+         pi = .parent_inversion_symop_for(s)
+         pt = .parent_translation_symop_for(s)
 
-         .make_phases_for_symop(s,t_phase,.inverted_symop,refl)
+         if (pi>0) then
 
-         average = average + t_phase*conjg(sf(fn:ln))
+            f = n_refl*(pi-1)+1
+            l = n_refl* s
+
+            average = average + t_phase*conjg(sf(f:l))
+
+         else 
+
+            ENSURE(pt>0,"Symop "//trim(s.to_str)//" is not a translation nor inversion symop!")
+
+            f = n_refl*(pt-1)+1
+            l = n_refl* s
+
+
+            average = average + t_phase*      sf(f:l)
+         end
    
       end
 
@@ -3316,11 +3418,11 @@ contains
       do n = 1,n_stab
          
          s  = stabilizer(n)
-         fn = n_refl*(s-1)+1
-         ln = n_refl* s
+         f = n_refl*(s-1)+1
+         l = n_refl* s
 
-         absdiff   = absdiff + abs(sf(fn:ln)-average)**2
-         sf(fn:ln) = average
+         absdiff   = absdiff + abs(sf(f:l)-average)**2
+         sf(f:l) = average
 
       end
 
