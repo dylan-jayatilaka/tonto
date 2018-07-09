@@ -2076,6 +2076,7 @@ contains
       n,i,j :: INT
       inverted :: BIN
 
+      .inverted_symop.destroy
       .inverted_symop.create(.n_seitz)
       .inverted_symop = 0
 
@@ -2108,11 +2109,13 @@ contains
       self :: INOUT
 
    ENSURE(.inverted_symop.associated,"no inverted_symop array")
+   ENSURE(.translated_symop.disassociated,"translated_symop exists!")
    ENSURE(.seitz.associated,"Seitz matrices not initialized")
 
       i,j :: INT
       translated :: BIN
 
+      .translated_symop.destroy
       .translated_symop.create(.n_seitz)
       .translated_symop = 0
 
@@ -2155,7 +2158,7 @@ contains
       ! How many unique symops?
       n = 0
       do i = 1,.n_seitz
-         if (.inverted_symop(i)>0) cycle
+         if (.inverted_symop(i)  >0) cycle
          if (.translated_symop(i)<i) cycle ! Only true translations count
          n = n + 1
       end
@@ -2167,7 +2170,7 @@ contains
       .unique_SF_symop.create(n)
       n = 0
       do i = 1,.n_seitz
-         if (.inverted_symop(i)>0) cycle
+         if (.inverted_symop(i)  >0) cycle
          if (.translated_symop(i)<i) cycle
          n = n + 1
          .unique_SF_symop(n) = i
@@ -2661,6 +2664,83 @@ contains
       gi.destroy
    end
 
+   parent_translation_symop_for(s) result (res) ::: PURE
+   ! For a given symop with index "s", return the index of the
+   ! parent translation symop in the list of unique symops. If it does
+   ! not have a parent, return 0.
+      self :: IN
+      s :: INT, IN
+      res :: INT
+
+      n :: INT
+
+      res = 0
+
+      do n = 1,.n_seitz
+          if (s/=n) then
+          if (s==.translated_symop(n)) then
+             res = n
+             exit
+          end
+          end
+      end
+
+   end
+
+   parent_inversion_symop_for(s) result (res) ::: PURE
+   ! For a given symop with index "s", return the index of the
+   ! parent translation symop in the list of unique symops. If it does
+   ! not have a parent, return 0.
+      self :: IN
+      s :: INT, IN
+      res :: INT
+
+      n :: INT
+
+      res = 0
+
+      do n = 1,.n_seitz
+          if (s/=n) then
+          if (s==.inverted_symop(n)) then
+             res = n
+             exit
+          end
+          end
+      end
+
+   end
+
+   is_translated_symop(s) result (res) ::: PURE
+   ! Return TRUE if "s" is the index of an translated symop
+      self :: IN
+      s :: INT, IN
+      res :: BIN
+
+      res = .parent_translation_symop_for(s) /= 0
+
+   end
+
+   is_inverted_symop(s) result (res) ::: PURE
+   ! Return TRUE if "s" is the index of an inverted symop
+      self :: IN
+      s :: INT, IN
+      res :: BIN
+
+      res = .parent_inversion_symop_for(s) /= 0
+
+   end
+
+   is_inverted_unique_SF_symop(u) result (res) ::: PURE
+   ! Return TRUE if "u" is the index of an inverted symop from
+   ! the list of unique_SF_symops.
+      self :: IN
+      u :: INT, IN
+      res :: BIN
+
+      res = any(.inverted_symop==.unique_SF_symop(u))
+
+   end
+
 !  ===========================================
 !  Sum structure factors over unique SF symops
 !  ===========================================
@@ -2669,7 +2749,48 @@ contains
 ! Acta Cryst. A 64, p383 section 2.5 comments (i) and (ii)
 ! NOTE: These were checked on KHMal with HBB 01/03/18
 
-   make_phases_for_symop(u,t_phase,mask,refl) ::: private, PURE
+   make_phase_for_symop(s,t_phase,refl) ::: PURE
+   ! For each reflection in "refl", return in "t_phase" the sum of the
+   ! *exponentiated* screw/glide phase shifts from each glide vector
+   ! for all symops which are equivalent to the "u"-th unique symmetry
+   ! operation, .unique_SF_symop(u), as determined by the "mask"
+   ! array.
+      self :: IN
+      s :: INT, IN
+      t_phase :: VEC{CPX}, OUT
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,"spacegroup not analyzed")
+   ENSURE(s<=.n_seitz,"symop index out of range")
+   ENSURE(t_phase.dim==refl.dim,"wrong length for t_phase array")
+   ENSURE(mask.dim==.n_seitz,"wrong size, mask")
+
+      pi2,tx,ty,tz,dot :: REAL
+      n,n_refl,h,k,l :: INT
+
+      n_refl = refl.dim
+      pi2 = TWO*PI
+
+      tx = pi2*.seitz(1,4,s)
+      ty = pi2*.seitz(2,4,s)
+      tz = pi2*.seitz(3,4,s)
+  
+      do n = 1,n_refl
+
+         h = refl(n).h
+         k = refl(n).k
+         l = refl(n).l
+
+         dot = h*tx + k*ty + l*tz
+
+         ! Sum of exponentiated phase !
+         t_phase(n) = exp(IMAGIFY(dot))
+
+      end
+
+   end
+
+   make_phases_for_symop(u,t_phase,mask,refl) ::: PURE
    ! For each reflection in "refl", return in "t_phase" the sum of the
    ! *exponentiated* screw/glide phase shifts from each glide vector
    ! for all symops which are equivalent to the "u"-th unique symmetry
@@ -2724,7 +2845,7 @@ contains
 
    end
 
-   make_phases_for_symop(s,t_phase,refl) ::: private, PURE
+   make_phases_for_symop(s,t_phase,refl) ::: PURE
    ! For each reflection in "refl", return in "t_phase" the
    ! exponential of the screw/glide phase shifts from each glide
    ! vector for the "s"-th symmetry operation.
@@ -2792,19 +2913,13 @@ contains
          .make_phases_for_symop(u,t_phase,.translated_symop,refl)
          sf = sf + t_phase*unique_sf(uf:ul)
 
-       ! stdout.text("translation:")
-       ! stdout.text("sf including t-phase:")
-       ! stdout.put(phase * unique_sf(uf:ul))
+         if (NOT .is_inverted_unique_SF_symop(u)) cycle
 
          ! Add up inverted symop contribution, if any
          ! Inversions conjugate the structure factor
-         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
          .make_phases_for_symop(u,t_phase,.inverted_symop,refl)
          sf = sf + t_phase*conjg(unique_sf(uf:ul))
 
-       ! stdout.text("inversion:")
-       ! stdout.text("sf including t-phase:")
-       ! stdout.put(phase *conjg(unique_sf(uf:ul)))
 
       end
 
@@ -2881,7 +2996,8 @@ contains
          end
          
          ! Add up inverted symop contribution, if any
-         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+         if (NOT .is_inverted_unique_SF_symop(u)) cycle
+
          .make_phases_for_symop(u,t_phase,.inverted_symop,refl)
          do n = 1,n_refl
             sf_ints(n,:,:) = sf_ints(n,:,:) + t_phase(n)*conjg(unique_sf_ints(uf+n,:,:))
@@ -2925,22 +3041,13 @@ contains
             sf_d(n,:) = sf_d(n,:) + t_phase(n)*unique_sf_d(uf+n,:)
          end
 
-       ! stdout.text("translational part:")
-       ! stdout.show("phase        = ",phase(1))
-       ! stdout.text("derivative sf including phase:")
-       ! stdout.put(phase(1)*unique_sf(uf+1,1:9))
-         
          ! Add up inverted symop contribution, if any
-         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+         if (NOT .is_inverted_unique_SF_symop(u)) cycle
+
          .make_phases_for_symop(u,t_phase,.inverted_symop,refl)
          do n = 1,n_refl
             sf_d(n,:) = sf_d(n,:) + t_phase(n)*conjg(unique_sf_d(uf+n,:))
          end
-
-       ! stdout.text("inversion part:")
-       ! stdout.show("phase        = ",phase(1))
-       ! stdout.text("derivative sf:")
-       ! stdout.put(phase(1)*conjg(unique_sf(uf+1,1:9)))
 
       end
 
@@ -3073,7 +3180,7 @@ contains
          end
 
          ! Add up inverted symop contribution, if any
-         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+         if (NOT .is_inverted_unique_SF_symop(u)) cycle
 
          ! Loop over the points
          do k = 1,n_refl
@@ -3199,7 +3306,7 @@ contains
          end
 
          ! Add up inverted symop contribution, if any
-         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+         if (NOT .is_inverted_unique_SF_symop(u)) cycle
 
          ! Loop over the points
          do k = 1,n_refl
@@ -3236,6 +3343,125 @@ contains
       r3.destroy
       r2.destroy
       r1.destroy
+
+   end
+
+   symmetrize_unique_SFs(sf,stabilizer,refl,diff)
+   ! Symmetrize the list of unique non-T&I symmetry-generated
+   ! reflections over the lost of stablizer symops.
+   ! NOTE: these are the original lst of reflections, not
+   ! the expanded list when the symmetry operations acton them.
+      self :: IN
+      sf :: VEC{CPX}, INOUT
+      stabilizer :: VEC{INT}, IN
+      refl :: VEC{REFLECTION}, IN
+      diff :: REAL, OUT
+
+   ENSURE(.analyzed,        "spacegroup not analyzed")
+   ENSURE(sf.dim==refl.dim,"sf_ints: wrong size")
+   ENSURE(sf.dim==.n_unique_SF_symops*refl.dim,"unique_sf_ints: wrong size")
+
+      average,absdiff,t_phase :: VEC{CPX}*
+      n_refl,n_stab :: INT
+      u,us, n,s, pi,pt, f,l :: INT
+      fac,val :: REAL
+
+      n_refl = refl.dim
+      n_stab = stabilizer.dim
+
+      ! Anything to do?
+      if (n_stab<=1) return
+
+      ! Phases
+      t_phase.create(n_refl)
+      average.create(n_refl)
+      absdiff.create(n_refl)
+
+      average = ZERO
+
+      ! Restricted list of symmetry ops
+      do u = 1,.n_unique_SF_symops
+
+         us =.unique_SF_symop(u)
+         f  = n_refl*(u-1)+1
+         l  = n_refl* u
+
+         ! Do averaging
+         do n = 1,n_stab
+            
+            ! n-th set of reflections
+            s  = stabilizer(n)
+
+            ! Is this the same as any unique symop?
+            if (s /= us) cycle
+       
+            ! Translated symop contribution
+            .make_phase_for_symop(s,t_phase,refl)
+
+            ! Are the t_phases always 1? L says they are.
+            if (.is_inverted_symop(s)) then
+               average = average + t_phase*conjg(sf(f:l))
+            else 
+               average = average + t_phase*sf(f:l)
+            end
+        
+         end
+
+      end
+
+      ! Average here
+      fac = ONE/n_stab
+      average = fac*average
+
+
+      ! Copy back out; get diff^2
+      absdiff = ZERO
+      do u = 1,.n_unique_SF_symops
+         
+         f = n_refl*(u-1)+1
+         l = n_refl* u
+
+       ! absdiff   = absdiff + abs(sf(f:l)-average)**2
+
+         ! Do averaging
+         do n = 1,n_stab
+            
+            ! n-th set of reflections
+            s  = stabilizer(n)
+
+            ! Is this the same as any unique symop?
+            if (s /= us) cycle
+       
+            ! Translated symop contribution
+            .make_phase_for_symop(s,t_phase,refl)
+
+            ! Are the t_phases always 1? L says they are.
+            if (.is_inverted_symop(s)) then
+               where (t_phase/=ZERO)
+                  sf(f:l) = conjg(average/t_phase)
+               elsewhere
+                  sf(f:l) = ZERO
+               end
+            else 
+               average = average + t_phase*sf(f:l)
+               where (t_phase/=ZERO)
+                  sf(f:l) = average/t_phase
+               elsewhere
+                  sf(f:l) = ZERO
+               end
+            end
+        
+         end
+
+      end
+
+      ! Report
+      diff = sqrt(sum(absdiff))
+
+      ! Clean
+      absdiff.destroy
+      average.destroy
+      t_phase.destroy
 
    end
 
@@ -3459,6 +3685,7 @@ contains
 
    put_inv_trans_symop_data ::: private
    ! Put out the inverted translated symop data
+      self :: IN
 
    ENSURE(.inverted_symop.associated,"no inverted_symop")
    ENSURE(.translated_symop.associated,"no translated_symop")
