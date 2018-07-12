@@ -2943,10 +2943,14 @@ contains
    ENSURE(full_sf.dim==.n_seitz*refl.dim,"full_sf: wrong size")
 
       t_phase :: VEC{CPX}*
+      s_t :: VEC{CPX}*
       s,f,l,n_refl :: INT
 
       n_refl = refl.dim
       t_phase.create(n_refl)
+      s_t.create(n_refl)
+
+      s_t = ZERO
 
       parallel do s = 1,.n_seitz
 
@@ -2956,12 +2960,15 @@ contains
          ! Add up translated symop contribution
          ! These are the same as in sum_unique_sf
          .make_phases_for_symop(s,t_phase,refl)
-         sf = sf + t_phase * full_sf(f:l)
+         s_t = s_t + t_phase * full_sf(f:l)
 
       end
 
-      PARALLEL_SUM(sf)
+      PARALLEL_SUM(s_t)
 
+      sf = sf + s_t
+
+      s_t.destroy
       t_phase.destroy
 
    end
@@ -3071,11 +3078,15 @@ contains
    ENSURE(full_sf_d.dim1==.n_seitz*refl.dim,"unique_sf_d: wrong dim1")
 
       t_phase :: VEC{CPX}*
+      sf_t :: MAT{CPX}*
       s,f,n,n_refl :: INT
 
       n_refl = refl.dim
 
       t_phase.create(n_refl)
+      sf_t.create(sf_d.dim1,sf_d.dim2)
+
+      sf_t = ZERO
 
       parallel do s = 1,.n_seitz
 
@@ -3084,13 +3095,16 @@ contains
          ! Add up translated symop contribution
          .make_phases_for_symop(s,t_phase,refl)
          do n = 1,n_refl
-            sf_d(n,:) = sf_d(n,:) + t_phase(n)*full_sf_d(f+n,:)
+            sf_t(n,:) = sf_t(n,:) + t_phase(n)*full_sf_d(f+n,:)
          end
 
       end
 
-      PARALLEL_SUM(sf_d)
+      PARALLEL_SUM(sf_t)
 
+      sf_d = sf_d + sf_t
+
+      sf_t.destroy
       t_phase.destroy
 
    end
@@ -3380,7 +3394,7 @@ contains
       average = ZERO
 
       ! Restricted list of symmetry ops
-      do u = 1,.n_unique_SF_symops
+      parallel do u = 1,.n_unique_SF_symops
 
          us =.unique_SF_symop(u)
          f  = n_refl*(u-1)+1
@@ -3409,6 +3423,8 @@ contains
 
       end
 
+      PARALLEL_SUM(average)
+
       ! Average here
       fac = ONE/n_stab
       average = fac*average
@@ -3416,11 +3432,11 @@ contains
 
       ! Copy back out; get diff^2
       absdiff = ZERO
-      do u = 1,.n_unique_SF_symops
+      parallel do u = 1,.n_unique_SF_symops
          
          f = n_refl*(u-1)+1
          l = n_refl* u
-
+       ! Florian here: Why is this here, if we don't use it? diff is 0 in this case...
        ! absdiff   = absdiff + abs(sf(f:l)-average)**2
 
          ! Do averaging
@@ -3454,6 +3470,9 @@ contains
          end
 
       end
+
+      PARALLEL_SUM(absdiff)
+      PARALLEL_SUM(sf)
 
       ! Report
       diff = sqrt(sum(absdiff))
