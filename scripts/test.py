@@ -183,7 +183,7 @@ def run_test(args, test_dir, io_files):
         'env': env,
     }
     if args.mpi:
-        prog = ['mpirun', '-np', '4', args.program]
+        prog = ['mpirun', '-np', '2', args.program]
     else:
         prog = [args.program]
 

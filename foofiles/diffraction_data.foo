@@ -272,7 +272,7 @@ contains
       .refine_positions_only        = FALSE
       .refine_ADPs_only             = FALSE
       .refine_H_ADPs                = TRUE
-      .refine_H_pos                 = TRUE ! test new keyword for H_positons. Lorraine
+      .refine_H_positions           = TRUE 
       .refine_H_U_iso               = FALSE
       .refine_anharmonicity         = FALSE
       .refine_4th_order_only        = FALSE
@@ -477,7 +477,6 @@ contains
 
    end
 
-!Test Lorraine
    set_partition_model(val) ::: PURE
    ! Read the thermal smearing model to use to correct for thermal vibration
    ! in the calculated structure factors
@@ -523,8 +522,7 @@ contains
 
    end
 
-   ! test new keyword for H_positons. Lorraine
-   set_refine_H_pos(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.refine_H_pos), pure
+   set_refine_H_positions(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.refine_H_positions), pure
    ! Generic set
    end
 
@@ -632,6 +630,15 @@ contains
    end
 
 ! Cutoffs
+
+   set_F_sigma_noise(val) ::: PURE
+   ! Set noise to add to F_exp and F_sigma, in units of F_sigma.
+      self :: INOUT
+      val :: REAL, IN
+
+      .F_sigma_noise = val
+
+   end
 
    set_F_sigma_cutoff(val) ::: PURE
    ! Set the minimum acceptable value for F_exp/sigma
@@ -799,6 +806,7 @@ contains
          case ("f_calc_cutoff=                "); .read_F_calc_cutoff
          case ("f_pred_cutoff=                "); .read_F_pred_cutoff
          case ("f_sigma_cutoff=               "); .read_F_sigma_cutoff
+         case ("f_sigma_noise=                "); .read_F_sigma_noise
          case ("f_z_cutoff=                   "); .read_F_z_cutoff
 
          case ("hkl_range=                    "); .read_hkl_range
@@ -831,7 +839,7 @@ contains
          case ("optimize_scale_factors=       "); .read_optimize_scale
 
          case ("partition_model=              "); .read_partition_model
-         case ("prune_reflections             "); .prune_reflections
+       ! case ("prune_reflections             "); .prune_reflections ! Apply automatically?
          case ("put                           "); .put
          case ("put_debug_list                "); .put_debug_list
          case ("put_worst_reflections         "); .put_worst_reflections
@@ -843,13 +851,14 @@ contains
          case ("refine_3rd_order_for_atoms=   "); .read_refine_3rd_order
          case ("refine_4th_order_for_atoms=   "); .read_refine_4th_order
          case ("refine_4th_order_only=        "); .read_refine_4th_order_only
-         case ("refine_adps_only=             "); .read_refine_ADPs_only
+       ! case ("refine_adps_only=             "); .read_refine_ADPs_only
          case ("refine_f=                     "); .read_refine_F
-         case ("refine_h_pos=                 "); .read_refine_H_pos ! test new keyword for H_positons. Lorraine
+         case ("refine_h_positions=           "); .read_refine_H_positions
          case ("refine_h_adps=                "); .read_refine_H_ADPs
          case ("refine_h_u_iso=               "); .read_refine_H_U_iso
-         case ("refine_positions_only=        "); .read_refine_positions_only
-         case ("refine_u_iso_for_atoms=       "); .read_refine_U_iso_atoms
+         case ("refine_nothing_for_atoms=     "); .read_refine_nothing_for_atoms
+       ! case ("refine_positions_only=        "); .read_refine_positions_only
+         case ("refine_u_iso_for_atoms=       "); .read_refine_U_iso_for_atoms
          case ("reflection_data=              "); .read_reflection_data
          case ("restart_har_with_promolecule= "); .read_restart_with_promolecule
          case ("revert                        "); .revert
@@ -962,6 +971,18 @@ contains
       stdin.read(val)
 
       .set_I_sigma_cutoff(val)
+
+   end
+
+   read_F_sigma_noise ::: private
+   ! Read noise to add to F_exp and F_sigma, in units of F_sigma.
+      self :: INOUT
+
+      val :: REAL
+
+      stdin.read(val)
+
+      .set_F_sigma_noise(val)
 
    end
 
@@ -1372,8 +1393,9 @@ contains
    ! Read in reflection data in the standard order from "stdin".
       self :: INOUT
 
-   DIE_IF(.reflections.associated,"reflections already exist!")
    DIE_IF(REFLECTION:wavelength()<ZERO,"specify wavelength for radiation before reflection_data!")
+
+      if (.reflections.associated) .reflections.destroy
 
       .reflections.read_list_keywords
 
@@ -1395,8 +1417,7 @@ contains
 
    end
 
-   ! test new keyword for H_positons. Lorraine
-   read_refine_H_pos
+   read_refine_H_positions
    ! Read whether to refine only the H atom positions
       self :: INOUT
 
@@ -1404,7 +1425,7 @@ contains
 
       stdin.read(val)
 
-      .set_refine_H_pos(val)
+      .set_refine_H_positions(val)
 
    end
 
@@ -1476,7 +1497,15 @@ contains
 
    end
 
-   read_refine_U_iso_atoms ::: leaky
+   read_refine_nothing_for_atoms ::: leaky
+   ! Read the list of atoms for which no parameter is refined.
+      self :: INOUT
+
+      stdin.read_ptr(.refine_nothing_for_atom)
+
+   end
+
+   read_refine_U_iso_for_atoms ::: leaky
    ! Read the list of atoms refined isotropically
       self :: INOUT
 
@@ -2007,6 +2036,7 @@ contains
 
    prune_reflections
    ! Zero negative reflections adding appropriate error to sigma
+   ! If random errors are to be added, process and add error to sigma.
    ! Then prune all the reflections, as requested by cutoffs.
       self :: INOUT
 
@@ -2024,6 +2054,12 @@ contains
          DIE_IF(NOT .have_F_sigma,"F_exp present but no F_sigma?")
          .prune_small_F_sigmas
          .reflections.reset_F_exp_F_sigma
+      end
+
+      ! Add noise
+      if (.F_sigma_noise/=ZERO AND .have_F_exp) then
+         DIE_IF(NOT .have_F_sigma,"F_exp present but no F_sigma?")
+         .reflections.add_noise(.F_sigma_noise)
       end
 
       ! Prune small F_exp/F_sigma
@@ -4599,7 +4635,10 @@ contains
                        AND .fit_iteration>=.min_iterations
 
       ! chi2 inceased?
-      .chi2_increased = .chi2_fit>.chi2_fit0 AND .fit_iteration>.min_iterations
+      ! Florian here: Added TOL(14) due to differences between machines and also # of CPUs
+      ! when running tests, as numerical difference was giving problems, plase tell me if
+      ! this is reasonable!!!! (@Dylan and @Peter)
+      .chi2_increased = .chi2_fit>.chi2_fit0 + TOL(14) AND .fit_iteration>.min_iterations
 
       ! Roll back the parameters is chi2 increases
       ! WARNING: covariances are not rolled back ...
@@ -4941,7 +4980,7 @@ contains
       stdout.show("refine_structure?             =",.refine_structure)
       stdout.show("refine_F?                     =",.refine_F)
       stdout.show("refine_positions_only?        =",.refine_positions_only)
-      stdout.show("refine_H_pos                  =",.refine_H_pos)  !test refine_H_pos Lorraine
+      stdout.show("refine_H_positions            =",.refine_H_positions)
       stdout.show("refine_ADPs_only?             =",.refine_ADPs_only)
       stdout.show("refine_H_ADPs?                =",.refine_H_ADPs)
       stdout.show("refine_H_U_iso?               =",.refine_H_U_iso)
@@ -6233,56 +6272,56 @@ contains
    end
 
 
-   simulate_new_F_exp
-   ! Simulate a new experiment by adding normally distributed experimental
-   ! errors the the F_exp.
-      self :: INOUT
-
-   ENSURE(.reflection_data_exists,"no reflection data")
-   ENSURE(.have_F_exp,"no experimental structure factors")
-   ENSURE(.have_F_sigma,"no experimental structure factor errors")
-
-      F_exp :: VEC{REAL}*
-      n :: INT
-      chi2,z :: REAL
-
-      stdout.flush
-      stdout.text("Adding simulated errors to F_exp using F_sigma.")
-
-      F_exp.create(.n_refl)
-      F_exp = .reflections.F_exp
-
-      .reflections.simulate_new_F_exp
-
-      chi2 = ZERO
-      do n = 1,.n_refl
-         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
-         chi2 = chi2 + z*z
-      end
-      chi2 = chi2 / max(.n_refl - 1,1)
-
-      stdout.text("chi^2 of old F_exp to new F_exp is " // trim(chi2.to_str))
-      stdout.flush
-      stdout.dash(real_fields=4)
-      stdout.put("F_exp (old)")
-      stdout.put("F_exp (new)")
-      stdout.put("F_sigma")
-      stdout.put("dF/sigma")
-      stdout.flush
-      stdout.dash(real_fields=4)
-
-      do n=1,.n_refl
-         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
-         stdout.put(F_exp(n))
-         stdout.put(.reflections(n).F_exp)
-         stdout.put(.reflections(n).F_sigma)
-         stdout.put(z)
-         stdout.flush
-      end
-
-      stdout.dash(real_fields=4)
-      F_exp.destroy
-
-   end
+!   simulate_new_F_exp
+!   ! Simulate a new experiment by adding normally distributed experimental
+!   ! errors the the F_exp.
+!      self :: INOUT
+!
+!   ENSURE(.reflection_data_exists,"no reflection data")
+!   ENSURE(.have_F_exp,"no experimental structure factors")
+!   ENSURE(.have_F_sigma,"no experimental structure factor errors")
+!
+!      F_exp :: VEC{REAL}*
+!      n :: INT
+!      chi2,z :: REAL
+!
+!      stdout.flush
+!      stdout.text("Adding simulated errors to F_exp using F_sigma.")
+!
+!      F_exp.create(.n_refl)
+!      F_exp = .reflections.F_exp
+!
+!      .reflections.simulate_new_F_exp
+!
+!      chi2 = ZERO
+!      do n = 1,.n_refl
+!         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
+!         chi2 = chi2 + z*z
+!      end
+!      chi2 = chi2 / max(.n_refl - 1,1)
+!
+!      stdout.text("chi^2 of old F_exp to new F_exp is " // trim(chi2.to_str))
+!      stdout.flush
+!      stdout.dash(real_fields=4)
+!      stdout.put("F_exp (old)")
+!      stdout.put("F_exp (new)")
+!      stdout.put("F_sigma")
+!      stdout.put("dF/sigma")
+!      stdout.flush
+!      stdout.dash(real_fields=4)
+!
+!      do n=1,.n_refl
+!         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
+!         stdout.put(F_exp(n))
+!         stdout.put(.reflections(n).F_exp)
+!         stdout.put(.reflections(n).F_sigma)
+!         stdout.put(z)
+!         stdout.flush
+!      end
+!
+!      stdout.dash(real_fields=4)
+!      F_exp.destroy
+!
+!   end
 
 end
