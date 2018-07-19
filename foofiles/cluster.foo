@@ -1327,45 +1327,101 @@ contains
 
    end
 
-
-   pair_energy_for_molecule(m) result(pe) ::: public, leaky
+   make_pairs_within_radius_of(m, radius, min_radius) result(res) ::: public, leaky
       m :: INT
+      radius :: REAL
+      min_radius :: REAL, optional
+      res :: VEC{PAIR_ENERGY}@
       pe :: PAIR_ENERGY
-      h1, h2, h3, s, code :: INT
-      mol_a, mol_b :: VEC{ATOM}*
+      h1, h2, h3 :: INT
+      h_max, h_min :: VEC{INT}(3)
       rot :: MAT{REAL}(3,3)
       t_symop, t :: VEC{REAL}(3)
       symop_str :: STR
+      unique_symops :: VEC{INT}@
+      i,j,k,n, symop_id, n_symops :: INT
+      central_atoms :: VEC{ATOM}*
+      atoms_b :: VEC{ATOM}*
+      positions_frac :: MAT{REAL}@
+      molecule_bounds :: MAT{REAL}(3,2)
+      frac_radius :: VEC{REAL}(3)
+      seitz :: MAT{REAL}*
+      lower, upper :: REAL
+      upper = radius
+      lower = ZERO
 
-      pe.set_defaults
-      pe.set_mol_a(.unique_molecule_for(m))
-      pe.set_mol_b(m)
-      code = .unique_symcode_for(m)
-      h1 = CLUSTER_H1_FROM_CODE(code)
-      h2 = CLUSTER_H2_FROM_CODE(code)
-      h3 = CLUSTER_H3_FROM_CODE(code)
-      ! oddly this is the symop stored where the unit cell atom is usually stored
-      s  = CLUSTER_UA_FROM_CODE(code)
-      pe.set_symop_id(s)
-      rot = .crystal.spacegroup.seitz(1:3, 1:3, s)
-      rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
-      rot = matmul(.crystal.unit_cell.direct_matrix, rot)
-      t_symop = .crystal.spacegroup.seitz(1:3, 4, s)
-      t = matmul(.crystal.unit_cell.direct_matrix, t_symop + [h1, h2, h3])
+      if (present(min_radius)) then
+          lower = min_radius
+      end
 
-      pe.set_rot_b(rot)
-      pe.set_trans_b(t)
-      .crystal.spacegroup.recode_Jones_Faithful_symbol(symop_str, .crystal.spacegroup.seitz(:,:, s))
-      pe.set_symop_str(trim(symop_str))
-      pe.set_symcode(code)
-      .create_mol_atom_list(mol_a, .unique_molecule_for(m))
-      .create_mol_atom_list(mol_b, m)
-      pe.pos_a = mol_a.center_of_mass
-      pe.pos_b = mol_b.center_of_mass
-      pe.set_center_separation((pe.pos_a - pe.pos_b).norm)
-      mol_a.get_distance_to(mol_b, pe.closest_distance)
-      mol_a.destroy
-      mol_b.destroy
+      unique_symops = .crystal.asym_symop_for_unit_cell_atom.unique_elements
+      n_symops = size(unique_symops)
+      .create_mol_atom_list(central_atoms, m)
+
+      ! Calculated molecule bounds in fractional coordinates
+      allocate(positions_frac(3, size(central_atoms, dim=1)))
+      do i = 1, size(central_atoms, dim=1)
+         positions_frac(:,1) = central_atoms(i).position
+      end
+      positions_frac = matmul(.crystal.unit_cell.inverse_matrix, positions_frac)
+      molecule_bounds(:, 1) = minval(positions_frac, dim=2)
+      molecule_bounds(:, 2) = maxval(positions_frac, dim=2)
+      deallocate(positions_frac)
+
+      frac_radius = radius / .crystal.unit_cell.length
+
+      h_max = ceiling(frac_radius + molecule_bounds(:,2))
+      h_min = floor(-frac_radius + molecule_bounds(:,1))
+      h_max = max(h_max, [1,1,1])
+      h_min = min(h_min, [-1,-1,-1])
+
+      ! iterate through symops
+      do n = 1, n_symops
+          atoms_b.create_copy(central_atoms)
+          symop_id = unique_symops(n)
+
+          seitz => .crystal.spacegroup.seitz(:,:, symop_id)
+          rot = seitz(1:3,1:3)
+          rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
+          rot = matmul(.crystal.unit_cell.direct_matrix, rot)
+
+          atoms_b.rotate_by(rot)
+          t_symop = seitz(1:3, 4)
+
+          do i = h_min(1), h_max(1)
+             if (abs(i * .crystal.unit_cell.length(1)) < lower) cycle
+          do j = h_min(2), h_max(2)
+             if (abs(j * .crystal.unit_cell.length(2)) < lower) cycle
+          do k = h_min(3), h_max(3)
+             if (abs(k * .crystal.unit_cell.length(3)) < lower) cycle
+             t = matmul(.crystal.unit_cell.direct_matrix, t_symop + [i,j,k])
+
+             atoms_b.translate_by(t)
+             pe.set_defaults
+             pe.set_mol(m)
+             pe.pos_a = central_atoms.center_of_mass
+             pe.pos_b = atoms_b.center_of_mass
+             pe.set_center_separation((pe.pos_a - pe.pos_b).norm)
+             central_atoms.get_distance_to(atoms_b, pe.closest_distance)
+             atoms_b.translate_by(-t)
+             if (pe.center_separation < 0.001) cycle
+             if (pe.closest_distance > upper) cycle
+             if (pe.closest_distance < lower) cycle
+
+             pe.set_symop_id(symop_id)
+             pe.set_rot(rot)
+             pe.set_trans(t)
+             .crystal.spacegroup.recode_Jones_Faithful_symbol(symop_str, seitz)
+             pe.set_symop_str(trim(symop_str))
+
+             pe.unit_cell = [i,j,k]
+             res.append_or_increment(pe)
+          end
+          end
+          end
+          atoms_b.destroy
+      end do
+
    end
 
    make_unique_molecule_info ::: private, leaky
