@@ -74,6 +74,7 @@ endif()
 # message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
 
 
+
 # Set the fortran flags
 include(SetFortranFlags)
 message(STATUS "Fortran Compiler flags: ${CMAKE_Fortran_FLAGS}")
@@ -87,10 +88,7 @@ configure_file(
 )
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/sbf)
-include_directories(${SBF_MODULE_DIRECTORY})
-
-# Build directory
-include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/)
 
 # BLAS/LAPACK dependency
 if(NOT USE_PACKAGED_LAPACK)
@@ -462,7 +460,12 @@ add_library(tonto
     ${FORTRAN_SRC}
     ${MACROS}
 )
-target_link_libraries(tonto sbf_fortran ${MPI_Fortran_LIBRARIES})
+target_link_libraries(tonto sbf_fortran dftd3 ${MPI_Fortran_LIBRARIES})
+
+# Build directory
+target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
+target_include_directories(tonto PUBLIC ${SBF_MODULE_DIRECTORY} ${DFTD3_MODULE_DIRECTORY})
+
 
 # Standard executables
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
@@ -493,6 +496,7 @@ target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+
 
 # Make non-standard-named executables
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)

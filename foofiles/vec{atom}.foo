@@ -23,6 +23,8 @@
 
 module VEC{ATOM}
 
+   USE dftd3_api
+
    implicit none
 
    ! Atom connection table, to save work
@@ -8884,7 +8886,7 @@ contains
 
    end
 
-   Grimme06_dispersion_energy(atom) result (res) ::: PURE
+   Grimme06_dispersion_energy(atom) result (res) !::: PURE
    ! Return Grimmes's dispersion energy between "self" and "atom"s.
    ! Based on C6 terms from Grimme (2006) J. Comp. Chem.  27(15) p. 1787
    ! E_disp = sum over atoms (C6 / r^6).
@@ -8921,6 +8923,84 @@ contains
 
       end
 
+   end
+
+   dispersion_energy(atom) result (res)
+      self :: IN
+      atom :: VEC{ATOM}, IN
+      res :: REAL
+      e1, e2, edisp :: REAL
+      n1, n2 :: INT
+      i :: INT
+      s6, rs6, s18, rs18, alp :: REAL
+      ours :: REAL
+
+      coords :: MAT{REAL}@
+      atomic_numbers :: VEC{INT}@
+      version :: INT
+      type(dftd3_calc) calc
+      type(dftd3_input) input
+      n1 = .dim
+      n2 = atom.dim
+      allocate(coords(3, n1 + n2))
+      allocate(atomic_numbers(n1 + n2))
+      ! Versions:
+      ! 6: DFT-D3 with Becke-Johnson damping parameters
+      ! 5: DFT-D3 with zero damping parameters
+      ! 4: DFT-D3 with Becke-Johnson finite-damping, variant 2 with their radii
+      ! 3: DFT-D3 with no damping
+      ! 2: DFT-D2
+      version = 4
+
+      ! include 3 body terms
+      input%threebody = FALSE
+
+      ! Numerical gradients
+      input%numgrad = FALSE
+
+      ! Cutoffs (should parameterize these)
+      !input%cutoff = sqrt(9000.0d0)
+      !input%cutoff_cn = sqrt(1600.0d0)
+
+      call dftd3_init(calc, input)
+      ! D2
+!     rs6 = 1.0d0
+!     s18 = 0.0d0
+!     alp = 20.0d0
+
+      ! hf
+    ! s6 = 1.0 
+    ! rs6 =0.3385
+    ! s18 =0.9171
+    ! rs18=2.8830
+
+      ! b3lyp
+      s6 = 1.0 
+      rs6 =0.3981
+      s18 =1.9889
+      rs18=4.4211
+
+      call dftd3_set_params(calc, [s6, rs6, s18, rs18, alp], version)
+
+      atomic_numbers = [self(:).atomic_number, atom(:).atomic_number]
+
+      do i = 1,n1
+          coords(:, i) = self(i).position
+      end do
+
+      do i = 1,n2
+          coords(:, i+n1) = atom(i).position
+      end do
+
+      edisp = ZERO
+      e1 = ZERO
+      e2 = ZERO
+      call dftd3_dispersion(calc, coords, atomic_numbers, edisp)
+      call dftd3_dispersion(calc, coords(:,1:n1), atomic_numbers(1:n1), e1)
+      call dftd3_dispersion(calc, coords(:,n1+1:n1+n2),&
+                            atomic_numbers(n1+1:n1+n2), e2)
+
+      res = edisp - e2 - e1
    end
 
    polarization_energy(F_sq, use_charged_values) result (res) !::: PURE
