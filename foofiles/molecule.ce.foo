@@ -783,7 +783,7 @@ contains
       pair_energies :: VEC{PAIR_ENERGY}@
       indices, indices_calc :: VEC{INT}@
       monomer_energies, E :: VEC{REAL}(4)
-      e_iter, e_prev, delta_e, radius :: REAL
+      e_iter, e_prev, delta_e, radius, prev_radius :: REAL
       sep :: VEC{REAL}(3)
       Z :: INT
       cell_dipole_correction :: REAL
@@ -799,7 +799,7 @@ contains
 
       .cluster.create(.crystal) 
       .cluster.set_generation_method("fragment")
-      .cluster.radius = 60
+      .cluster.radius = 100
       .cluster.defragment = TRUE
       .cluster.make_info
 
@@ -840,14 +840,9 @@ contains
       cell_dipole_correction = .:calculate_cell_dipole_correction(mol_dipole)
       stdout.show("Cell dipole correction =", cell_dipole_correction)
 
-      ! 1 being the first molecule in the crystal
-      pair_energies = .cluster.make_pairs_within_radius_of(1, .cluster.radius)
-
-      indices.create(pair_energies.dim)
-      pair_energies(:).symop_id.quick_sort(indices)
-      pair_energies(:) = pair_energies(indices)
 
       current_symop = 0
+      prev_radius = ZERO
       radius = 7.2 ! Roughly 3.8 angstrom
       e_iter = ZERO
       delta_e = INT_HUGE
@@ -855,21 +850,27 @@ contains
 
       do while (abs(delta_e) > 0.4)
          stdout.show("Calculating pairs within radius = ", radius)
+
+         ! 1 being the first molecule in the crystal
+         .cluster.make_pairs_within_radius_of(1, pair_energies, radius, prev_radius)
+         prev_radius = radius
+
+!         indices.create(pair_energies.dim)
+!         stdout.show("indices: ", indices)
+!         stdout.flush
+!         pair_energies(:).symop_id.quick_sort(indices)
+!         pair_energies(:) = pair_energies(indices)
+!         indices.destroy
+
+!         stdout.text("Sorted pairs by symop")
+!         stdout.flush
+
          do i = 1, pair_energies.dim
             if(pair_energies(i).energy_calculated) cycle
-            if(pair_energies(i).closest_distance > radius) cycle
             if(current_symop /= pair_energies(i).symop_id) then
-
                 mol2.BASE:destroy
                 mol2.BASE:create
                 mol2.BASE:read_wavefunction_file(wavefunction_filename)
-                !stdout.text("Set atom info")
-                !mol2.BASE:set_atom_info
-                !stdout.text("finalize atom info")
-                !mol2.BASE:finalize_atom_groups
-                !stdout.text("resolve basis info")
-                !mol2.BASE:resolve_basis_info
-                !mol2.BASE:set_basis_name(.basis_name)
                 mol2.BASE:rotate_by(pair_energies(i).rot)
                 mol2.INTS:make_overlap_matrix
                 mol2.BASE:make_natural_orbitals
@@ -878,12 +879,6 @@ contains
             end if
             mol2.atom.translate_by(pair_energies(i).trans)
             sep = mol1.atom.center_of_mass - mol2.atom.center_of_mass
-            !if (abs(sep.norm - pair_energies(i).center_separation) > 0.001) then
-            !    stdout.text("Error: different separations!")
-            !    pair_energies(i).put
-            !    stdout.show("trans         = ", pair_energies(i).trans)
-            !    stdout.show("i               = ", i)
-            !end
 
             ! If we have a unique molecule pair calculate the energies
             E = ZERO
@@ -900,12 +895,12 @@ contains
          e_prev = e_iter
          indices_calc = pair_energies.calculated_pairs
          pair_energies(indices_calc).put_lattice_energy_table(cell_dipole_correction)
-         if(all(pair_energies(:).energy_calculated)) then
+
+         radius = radius + 7.2
+         if (radius > .cluster.radius) then
              stdout.show("Convergence not achieved within radius", .cluster.radius)
              exit
          end
-         radius = radius + 7.2
-         if (radius > .cluster.radius) radius = .cluster.radius
       end
 
       mol1.BASE:destroy
