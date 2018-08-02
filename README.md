@@ -79,7 +79,7 @@ to RELEASE-STATIC as follows:
 To make an MPI parallel version (e.g. using openmpi) , type :
 
 ```
-   cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=micc -DMPI=1
+   cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DMPI=1
    make -j
 ```
 
