@@ -76,10 +76,10 @@ to RELEASE-STATIC as follows:
    make -j
 ```
 
-To make an MPI parallel version, type :
+To make an MPI parallel version (e.g. using openmpi) , type :
 
 ```
-   cmake .. -DMPI=1
+   cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=micc -DMPI=1
    make -j
 ```
 
