@@ -24,7 +24,7 @@ software package manager, install:
 * `make`
 * `blas` 
 * `lapack` 
-* `open-mpi` (for parallel)
+* `openmpi-3.0` (for parallel)
 * `python3` (recommended for testing)
 * `gnuplot` (recommended)
 
