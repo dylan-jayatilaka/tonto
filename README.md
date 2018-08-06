@@ -24,7 +24,7 @@ software package manager, install:
 * `make`
 * `blas` 
 * `lapack` 
-* `open-mpi` (for parallel)
+* `openmpi-3.0` (for parallel)
 * `python3` (recommended for testing)
 * `gnuplot` (recommended)
 
@@ -76,10 +76,10 @@ to RELEASE-STATIC as follows:
    make -j
 ```
 
-To make an MPI parallel version, type :
+To make an MPI parallel version (e.g. using openmpi) , type :
 
 ```
-   cmake .. -DMPI=1
+   cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DMPI=1
    make -j
 ```
 
