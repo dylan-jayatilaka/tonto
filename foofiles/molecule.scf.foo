@@ -2716,7 +2716,8 @@ contains
 
          if (.scfdata.do_outputs) then
             ! Calculate the residuals at this lambda
-            .:get_minmax_residual_density(output=TRUE)
+            .:get_minmax_residual_density_XCW(output=TRUE)
+   !        .:get_minmax_residual_density(output=TRUE)
    !        .:put_scf_results
    !        .crystal.put_refinement_results
             .crystal.put_bond_info_with_errors
@@ -3572,6 +3573,31 @@ contains
 
    end
 
+   get_minmax_residual_density_XCW(output)
+   ! Evaluate the min and max residual density from the
+   ! fitted structure factors, evaluated on a grid 0.1 A
+   ! per side. Also evaluate the residuals at the atom
+   ! centers and report the worst one. Store results in the
+   ! diffraction data object.
+      self :: INOUT
+      output :: BIN, IN
+
+   ENSURE(.crystal.associated,"no crystal")
+   ENSURE(.crystal.data.associated,"no crystal data")
+
+      .:get_minmax_residual_density_p_XCW( &
+         .crystal.data.min_residual, &
+         .crystal.data.max_residual, &
+         .crystal.data.rms_residual, &
+         .crystal.data.min_atom_residual, &
+         .crystal.data.max_atom_residual, &
+         .crystal.data.rms_atom_residual, &
+         .crystal.data.min_atom_residual_tag, &
+         .crystal.data.max_atom_residual_tag, &
+         output)   
+
+   end
+
    get_minmax_residual_density_p(minp,maxp,rmsp,minpa,maxpa,rmspa,minat,maxat,output) ::: private
    ! Evaluate the min and max residual density from the
    ! fitted structure factors, evaluated on a grid 0.1 A
@@ -3677,6 +3703,152 @@ contains
 
       ! Write cube file
       .GRID:dump_plot_grid(map,"residual_density_map",form="cell.cube")
+
+      ! Clean
+      pt.destroy
+      map.destroy
+      .plot_grid.destroy
+
+      ! Create atom coords
+      pt.create(.n_atom,3)
+      map.create(.n_atom)
+      .atom.put_coordinates_to(pt,positions_as_rows=TRUE)
+      .crystal.make_residual_density_map(map,pt)
+
+      ! Change to /A3
+      map    = fac3*map
+
+      maxa   = maxloc(map,dim=1)
+      mina   = minloc(map,dim=1)
+      maxpa  = map(maxa)
+      minpa  = map(mina)
+      rmspa  = map.standard_deviation
+      maxat  = .atom(maxa).tag
+      minat  = .atom(mina).tag
+
+      if (output) then
+      stdout.flush
+      stdout.text("Residuals on atoms:")
+      stdout.flush
+      stdout.show("Maximum                 = ",maxpa)
+      stdout.show("- for atom              = ",maxat)
+      stdout.show("Minimum                 = ",minpa)
+      stdout.show("- for atom              = ",minat)
+      stdout.show("RMS                     = ",rmspa)
+      end
+
+      ! Clean
+      pt.destroy
+      map.destroy
+      .plot_grid.destroy
+
+   end
+
+   get_minmax_residual_density_p_XCW(minp,maxp,rmsp,minpa,maxpa,rmspa,minat,maxat,output) ::: private
+   ! Evaluate the min and max residual density from the
+   ! fitted structure factors, evaluated on a grid 0.1 A
+   ! per side. Also evaluate the residuals at the atom
+   ! centers and report the worst one.
+      self :: IN
+      minp, maxp, rmsp  :: REAL, OUT
+      minpa,maxpa,rmspa :: REAL, OUT
+      minat,maxat       :: STR, OUT
+      output :: BIN, IN
+
+   DIE_IF(NOT .atom.associated, "no atoms to fit")
+   DIE_IF(NOT .crystal.associated, "no crystal")
+   DIE_IF(NOT .crystal.fragment_info_made, "no crystal fragment info")
+   DIE_IF(NOT .crystal.data.associated,"no crystal data")
+   DIE_IF(NOT .crystal.xray_data.associated,"no crystal xray data")
+
+      map :: VEC{REAL}*
+      pt :: MAT{REAL}*
+      n_pt, maxa,mina :: INT
+      maxtag,mintag :: STR
+      maxpos,minpos :: VEC{REAL}(3)
+      fac,fac3,maxd,mind :: REAL
+
+      ! Set up
+      if (.plot_grid.disassociated) .plot_grid.create
+      .plot_grid.set_plot_kind("residual_density_map")
+
+      ! Use unit cell as bbox if requested
+      .plot_grid.set_box_scale_factor(ONE)
+
+      if (.plot_grid.desired_separation.is_zero) then
+      if (.plot_grid.n_x.is_one) then
+         .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
+      end
+      if (.plot_grid.n_y.is_one) then
+         .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
+      end
+      if (.plot_grid.n_z.is_one) then
+         .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
+      end
+      end
+    ! .plot_grid.set_center_to_center_of(.atom)
+      .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell)
+
+      if (output) then
+
+      stdout.flush
+      stdout.text("=====================")
+      stdout.text("Residual density data")
+      stdout.text("=====================")
+
+      stdout.flush
+      stdout.text(". Grid has voxels less than 0.1 A per side")
+      stdout.text(". Length units are in Angstrom")
+
+      stdout.flush
+      .plot_grid.put_minimal
+
+      end
+
+      ! Make the residual map
+      n_pt = .plot_grid.n_pt
+      pt.create(n_pt,3) ! Needed to see cartesian (xyz) coord
+      map.create(n_pt)  ! Done in fractionals using plot.nx's
+      .plot_grid.set_plot_kind("residual_density_map")
+      .plot_grid.make_points(pt)
+    ! .crystal.make_residual_density_map(map,pt)
+      .crystal.make_residual_density_cell(map,.plot_grid.n_x,.plot_grid.n_y,.plot_grid.n_z)
+
+      ! Change to /A3
+      fac    = ANGSTROM_PER_BOHR
+      fac3   = BOHR_PER_ANGSTROM**3
+      map    = fac3*map
+
+      maxa   = maxloc(map,dim=1)
+      mina   = minloc(map,dim=1)
+      maxp   = map(maxa)
+      minp   = map(mina)
+      rmsp   = map.standard_deviation
+
+      maxpos = pt(maxa,:)
+      minpos = pt(mina,:)
+      maxa   = .atom.nearest_atom_to(maxpos)
+      mina   = .atom.nearest_atom_to(minpos)
+      maxtag = .atom(maxa).tag
+      mintag = .atom(mina).tag
+      maxd   = VEC{REAL}:norm(maxpos-.atom(maxa).position)
+      mind   = VEC{REAL}:norm(minpos-.atom(mina).position)
+
+      if (output) then
+      stdout.flush
+      stdout.text("Unit cell residual density:")
+      stdout.flush
+      stdout.show("Maximum                 = ",maxp)
+      stdout.show("- nearest atom          = ",maxtag)
+      stdout.show("- distance to it        = ",maxd*fac)
+      stdout.show("Minimum                 = ",minp)
+      stdout.show("- nearest atom          = ",mintag)
+      stdout.show("- distance to it        = ",mind*fac)
+      stdout.show("RMS                     = ",rmsp)
+      end
+
+      ! Write cube file
+      .GRID:dump_plot_grid_XCW(map,"residual_density_map",form="cell.cube")
 
       ! Clean
       pt.destroy
