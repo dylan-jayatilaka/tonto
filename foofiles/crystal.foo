@@ -4007,7 +4007,7 @@ contains
 
       Fu :: VEC{CPX}@
       k_pts :: MAT{REAL}@
-      n_k, u,c :: INT
+      n_k, u,f :: INT
       rf :: REAL
 
       n_k = .n_symop_generated_SF_k_pts
@@ -4021,10 +4021,10 @@ contains
       ! Note: each atom contribution scales by a site-symmetry factor
       Fu = ZERO
       do u = 1,.n_unique_frag_atoms
-         c  = .unique_frag_atom(u)
-         rf = .frag_atom_sym_factor(c)
+         f  = .unique_frag_atom(u)
+         rf = .frag_atom_sym_factor(f)
          if (rf.is_zero) cycle
-         .fragment_atom(c).add_dispersion_H_ADP(Fu,k_pts,rf)
+         .fragment_atom(f).add_dispersion(Fu,k_pts,rf)
       end
 
       ! Add together symmetry contributions
@@ -4042,7 +4042,7 @@ contains
 
       dFa,dFb :: MAT{CPX}*
       k_pts :: MAT{REAL}*
-      n_k,n_p, u,c,a,base :: INT
+      n_k,n_p, u,f,base :: INT
       rf :: REAL
 
       ! Size of symmetry generated k points
@@ -4060,30 +4060,12 @@ contains
       ! Note: each atom contribution scales by a site-symmetry factor
       dFa = ZERO
 
-      if (.data.refine_H_U_iso) then
-
-         ! Refine H isotropic U's
-         do u = 1,.n_unique_frag_atoms
-            c  = .unique_frag_atom(u)
-            a  = .asym_atom_for_frag_atom(c)
-            rf = .asym_atom_sym_factor(a)
-            if (rf.is_zero) cycle
-            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
-            .fragment_atom(c).add_derivative_dispn_H_iso_d(dFa,base,k_pts,rf)
-         end
-
-      else
-
-         ! Refine H ADPs
-         do u = 1,.n_unique_frag_atoms
-            c  = .unique_frag_atom(u)
-            a  = .asym_atom_for_frag_atom(c)
-            rf = .asym_atom_sym_factor(a)
-            if (rf.is_zero) cycle
-            base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
-            .fragment_atom(c).add_derivative_dispn_H_ADP_d(dFa,base,k_pts,rf)
-         end
-
+      do u = 1,.n_unique_frag_atoms
+         f  = .unique_frag_atom(u)
+         rf = .frag_atom_sym_factor(f)
+         if (rf.is_zero) cycle
+         base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
+         .fragment_atom(f).add_derivative_dispn(dFa,base,k_pts,rf)
       end
 
       ! Add together symmetry contributions
@@ -4895,7 +4877,7 @@ contains
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from the given
    ! set of temperature-independent form factors "sf_n", 
-   !   - skipoing atoms in .refine_nothing_for_atom list, &
+   !   - skipping atoms in .refine_nothing_for_atom list, &
    !   - refining U_iso for atoms in .refine_U_iso_for_atom list
    !   - The rest are refined *An*isotropically unless
    !     you specify refine_H_positions or refine_H_ADPs FALSE
@@ -4927,6 +4909,7 @@ contains
       n_k,f,u,k,base :: INT
       has_skip,has_Uiso,is_H_atom :: BIN
       refine_positions,refine_Uiso :: BIN
+      refine_positions_only,refine_ADPs_only :: BIN
       refine_ADPs,refine_ADP4s,refine_ADP3s :: BIN
       II,sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
       tag :: STR
@@ -4978,9 +4961,21 @@ contains
          ! Base index for unique frag atom
          base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
 
+         refine_ADPs_only = .data.refine_ADPs_only
+         refine_positions_only = .data.refine_positions_only
+
          ! Defaults per atom
-         refine_positions = TRUE
-         refine_ADPs      = TRUE
+         if (NOT refine_ADPs_only) then 
+            refine_positions = TRUE 
+         else
+            refine_positions = FALSE
+         end
+
+         if (NOT refine_positions_only) then 
+            refine_ADPs      = TRUE
+         else
+            refine_ADPs      = FALSE
+         end
          refine_Uiso      = FALSE
          refine_ADP4s     = .fragment_atom(f).has_only_ADP4s_and_errors
          refine_ADP3s     = .fragment_atom(f).has_only_ADP3s_and_errors
@@ -6164,7 +6159,8 @@ contains
 
    ENSURE(.asymmetric_unit_atom.associated,"no asymmetric_unit_atom list")
    ENSURE(.asymmetric_unit_atom(1).pos_axis_system=="cartesian","not cartesian axes!")
-   ENSURE(.has_covariance_matrix,"no covariance!")
+
+      if (NOT .has_covariance_matrix) return
 
       ::put_CIF_bond_info_tables(.asymmetric_unit_atom,.data.covariance_matrix)
 
@@ -6176,7 +6172,8 @@ contains
 
    ENSURE(.fragment_atom.associated,"no fragment_atom list")
    ENSURE(.fragment_atom(1).pos_axis_system=="cartesian","not cartesian axes!")
-   ENSURE(.has_fragment_covariance_matrix,"no covariance!")
+
+      if (NOT .has_fragment_covariance_matrix) return
 
       ::put_CIF_bond_info_tables(.fragment_atom,.data.fragment_covariance_matrix)
 
@@ -6610,10 +6607,10 @@ contains
    ! Olex2 can make difference density maps.
       self :: IN
 
-   ENSURE(.data.associated,"no data!")
-   ENSURE(.data.reflections.associated,"no reflections!")
-
       thresh :: STR
+
+      if (.data.disassociated)             return
+      if (.data.reflections.disassociated) return
 
       thresh = .data.CIF_threshold_expression
       .put_CIF_reflections(thresh)
@@ -7727,7 +7724,7 @@ contains
       ! Get phased structure factor differences
       ! (without extinction, but with scale correction)
       dF.create(n_refl)
-      .data.make_phased_dF(dF)
+      .data.make_phased_dF_a(dF)
 
       ! Prefactor
       ! NOTE: Factor 2 assumes Friedel pairs merged and removed
@@ -7826,7 +7823,7 @@ contains
       ! Get phased structure factor differences
       ! (without extinction, but with scale correction)
       dF.create(h_min,h_max)
-      .data.make_phased_dF(dF)
+      .data.make_phased_dF_b(dF)
 
       ! Prefactor
       ! NOTE: Factor 2 assumes Friedel pairs merged and removed
@@ -7910,7 +7907,7 @@ contains
       ! Get phased structure factor differences
       ! (without extinction, but with scale correction)
       dF.create(n_refl)
-      .data.make_phased_dF(dF)
+      .data.make_phased_dF_a(dF)
 
       ! Prefactor
       ! NOTE: Factor 2 assumes Friedel pairs merged and removed
@@ -8016,7 +8013,7 @@ contains
       ! Get phased structure factor differences
       ! (without extinction, but with scale correction)
       dF.create(n_refl)
-      .data.make_phased_dF(dF)
+      .data.make_phased_dF_a(dF)
 
       ! Prefactor
       ! NOTE: Factor 2 assumes Friedel pairs merged and removed
@@ -8126,7 +8123,7 @@ contains
       ! Get phased structure factor differences
       ! (without extinction, but with scale correction)
       dF.create(n_refl)
-      .data.make_phased_dF(dF)
+      .data.make_phased_dF_a(dF)
 
       ! Prefactor
       ! NOTE: Factor 2 assumes Friedel pairs merged and removed
@@ -8244,7 +8241,7 @@ contains
       ! Get phased structure factor differences
       ! (without extinction, but with scale correction)
       dF.create(n_refl)
-      .data.make_phased_dF(dF)
+      .data.make_phased_dF_a(dF)
 
       ! Prefactor
       ! NOTE: Factor 2 assumes Friedel pairs merged and removed
