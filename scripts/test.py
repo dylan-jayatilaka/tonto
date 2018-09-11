@@ -16,7 +16,8 @@ log = logging.getLogger('test')
 prefixes_to_ignore = ['Wall-clock', 'CPU time', 
     'Version', 'Platform', 'Timer', 'Build-date',
     'Warning', 'https', 'www', 'Peter', 'Daniel', 'Dylan',
-    'Look', 'time taken for']
+    'WARNINGS',
+    'Look above', 'time taken for']
 
 test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
 
