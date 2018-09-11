@@ -89,5 +89,5 @@ set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
 -DREAL_KIND=8 -DCPX_KIND=8 -DFLUSH")
 
 if(WITH_MPI)
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DMPI")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DMPI=1")
 endif()
