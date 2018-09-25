@@ -2665,9 +2665,9 @@ contains
    end
 
    parent_translation_symop_for(s) result (res) ::: PURE
-   ! For a given symop with index "s", return the index of the
-   ! parent translation symop in the list of unique symops. If it does
-   ! not have a parent, return 0.
+   ! For a given symop with index "s", return the index of the parent
+   ! translation symop in the list of unique symops. If it does not
+   ! have a parent, return 0.
       self :: IN
       s :: INT, IN
       res :: INT
@@ -2726,7 +2726,7 @@ contains
       s :: INT, IN
       res :: BIN
 
-      res = .parent_inversion_symop_for(s) /= 0
+      res = NOT .is_translated_symop(s)
 
    end
 
@@ -3375,8 +3375,8 @@ contains
    ENSURE(sf.dim==.n_unique_SF_symops*refl.dim,"unique_sf_ints: wrong size")
 
       absdiff :: VEC{REAL}*
-      average,t_phase :: VEC{CPX}*
-      n_refl,n_stab :: INT
+      af,average :: VEC{CPX}*
+      n_refl,n_stab,ns :: INT
       u,us, n,s, f,l :: INT
       fac :: REAL
 
@@ -3387,37 +3387,55 @@ contains
       if (n_stab<=1) return
 
       ! Phases
-      t_phase.create(n_refl)
       average.create(n_refl)
       absdiff.create(n_refl)
+      af.create(n_refl)
 
+    ! stdout.show("n_refl = ",n_refl)
+    ! stdout.show("n_stab = ",n_stab)
+
+      ns = 0
       average = ZERO
 
       ! Restricted list of symmetry ops
       parallel do u = 1,.n_unique_SF_symops
 
-         us =.unique_SF_symop(u)
+         us = .unique_SF_symop(u)
          f  = n_refl*(u-1)+1
          l  = n_refl* u
 
-         ! Do averaging
+         ! Average over stablizer symops
+         ! which are also unique symops
          do n = 1,n_stab
             
             ! n-th set of reflections
-            s  = stabilizer(n)
+            s = stabilizer(n)
 
-            ! Is this the same as any unique symop?
+            ! Same as any unique symop?
             if (s /= us) cycle
+
+            ns = ns + 1
+          ! stdout.show("s  = ",s)
+          ! stdout.show("ns = ",ns)
        
             ! Translated symop contribution
-            .make_phase_for_symop(s,t_phase,refl)
+          ! .make_phase_for_symop(s,t_phase,refl)
 
-            ! Are the t_phases always 1? L says they are.
-            if (.is_inverted_symop(s)) then
-               average = average + t_phase*conjg(sf(f:l))
+            ! Are the t_phases always 1? 
+            ! LM: says they are.
+            ! DJ: looks like they are ...
+            if (.is_translated_symop(s)) then
+               average = average + sf(f:l)
+          !    stdout.show("is_inverted = ",FALSE)
             else 
-               average = average + t_phase*sf(f:l)
+               average = average + conjg(sf(f:l))
+          !    stdout.show("is_inverted = ",TRUE)
             end
+
+          ! stdout.text("t_phase:")
+          ! stdout.put(t_phase)
+          ! stdout.text("sf:")
+          ! stdout.put(sf(f:l))
         
          end
 
@@ -3426,19 +3444,21 @@ contains
       PARALLEL_SUM(average)
 
       ! Average here
-      fac = ONE/n_stab
+      fac = ONE/ns
       average = fac*average
+
+    ! stdout.text("avsf:")
+    ! stdout.put(average)
 
 
       ! Copy back out; get diff^2
       absdiff = ZERO
       parallel do u = 1,.n_unique_SF_symops
          
-         us =.unique_SF_symop(u)
+         us = .unique_SF_symop(u)
          f  = n_refl*(u-1)+1
          l  = n_refl* u
-       ! Florian here: Why is this here, if we don't use it? diff is 0 in this case...
-       ! absdiff   = absdiff + abs(sf(f:l)-average)**2
+
 
          ! Do averaging
          do n = 1,n_stab
@@ -3449,24 +3469,14 @@ contains
             ! Is this the same as any unique symop?
             if (s /= us) cycle
        
-            ! Translated symop contribution
-            .make_phase_for_symop(s,t_phase,refl)
-
-            ! Are the t_phases always 1? L says they are.
-            if (.is_inverted_symop(s)) then
-               where (t_phase/=ZERO)
-                  sf(f:l) = conjg(average/t_phase)
-               elsewhere
-                  sf(f:l) = ZERO
-               end
+            if (.is_translated_symop(s)) then
+               af = average
             else 
-               average = average + t_phase*sf(f:l)
-               where (t_phase/=ZERO)
-                  sf(f:l) = average/t_phase
-               elsewhere
-                  sf(f:l) = ZERO
-               end
+               af = conjg(average)
             end
+
+            absdiff = absdiff + abs(sf(f:l)-af)**2
+            sf(f:l) = af
         
          end
 
@@ -3479,9 +3489,9 @@ contains
       diff = sqrt(sum(absdiff))
 
       ! Clean
+      af.destroy
       absdiff.destroy
       average.destroy
-      t_phase.destroy
 
    end
 
