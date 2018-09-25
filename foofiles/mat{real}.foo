@@ -2552,7 +2552,7 @@ contains
    !
    ! NOTE: R^T is returned as RT
    ! NOTE: "self" is destroyed by this process.
-      self :: IN
+      self :: INOUT
       D :: VEC{REAL}, OUT
       L :: MAT{REAL}, OUT
       RT :: MAT{REAL}, OUT
@@ -2570,14 +2570,14 @@ contains
    ! NOTE: R^T is returned as RT
    ! NOTE: "self" is destroyed by this process.
    ! This routine uses the divide & conquer method.
-      self :: IN
+      self :: INOUT
       D :: VEC{REAL}, OUT
       L :: MAT{REAL}, OUT
       RT :: MAT{REAL}, OUT
       fail :: BIN, OUT, optional
 
    ENSURE(.dim1>=.dim2,"self must have dim1 >= dim2")
-   ENSURE(D.dim==min(.dim1,.dim2),"wrong size, D")
+   ENSURE(D.dim==.dim2,"wrong size, D")
    ENSURE(L.is_square,"L is not square")
    ENSURE(L.dim1==.dim1,"wrong size, L")
    ENSURE(RT.is_square,"RT is not square")
@@ -2593,7 +2593,7 @@ contains
       W.create(dimw)
       I.create(dimi)
 
-      call dgesdd("A",.dim1,self,.dim1,D,L,.dim1,RT,.dim2,W,dimw,I,dimi,info)
+      call dgesdd("A",.dim1,.dim2,self,.dim1,D,L,.dim1,RT,.dim2,W,dimw,I,info)
 
       if (present(fail)) then
          fail = FALSE
@@ -2601,10 +2601,6 @@ contains
       else
          ENSURE(info==0,"no solution, error found")
       end
-
-      ! Clean
-      I.destroy
-      W.destroy
 
    end
 
@@ -2649,13 +2645,12 @@ contains
 
    ENSURE(.is_square,"not square")
 
-      rhs :: VEC{REAL}*
-      eval :: VEC{REAL}*
-      eval_near_0 :: VEC{REAL}*
-      evec_near_0 :: MAT{REAL}*
-      ival :: VEC{REAL}*
-      inv,evec :: MAT{REAL}*
-    ! eval :: VEC{REAL}*
+      rhs :: VEC{REAL}@
+      eval :: VEC{REAL}@
+      eval_near_0 :: VEC{REAL}@
+      evec_near_0 :: MAT{REAL}@
+      ival :: VEC{REAL}@
+      inv,evec,RT :: MAT{REAL}@
       n_near_0, d,i,j :: INT
       del :: REAL
 
@@ -2668,10 +2663,11 @@ contains
       eval.create(d)
       ival.create(d)
       evec.create(d,d)
+      RT.create(d,d)
       inv.create(d,d)
 
-      ! Solve the eigenvalue problem
-      .solve_symmetric_eigenproblem(eval,evec)
+      ! Solve SVD problem
+      .singular_value_decomposition(eval,evec,RT)
 
       ! Count eigenvalues which are nearly zero (leaky)
       n_near_0 = count(eval<=ZERO OR abs(eval)<=tol_near_0)
@@ -2698,34 +2694,21 @@ contains
 
       end
 
-      ! Make the inverse
+      ! Make the pseudo inverse
       evec = transpose(evec)
-
       do i = 1,d
       do j = 1,d
-         inv(i,j) = sum(evec(:,i)*ival(:)*evec(:,j))
+         inv(i,j) = sum(RT(:,i)*ival(:)*evec(:,j))
       end
       end
-
-      evec.destroy
-    ! eval.destroy
 
       ! Get scaled RHS
-      rhs.create_copy(grad)
+      rhs = grad
       rhs = TWO*delta*grad
 
       ! Get the solution
       solution.to_product_of(inv,rhs)
       solution = -solution
-
-      ! Clean
-      rhs.destroy
-      evec_near_0.destroy
-      eval_near_0.destroy
-
-      evec.destroy
-      ival.destroy
-      eval.destroy
 
    end
 
@@ -2736,27 +2719,29 @@ contains
       solution :: VEC{REAL}, OUT
       tol_near_0 :: REAL, IN
       n_near_0 :: INT, OUT
-      eval_near_0 :: VEC{REAL}*
-      evec_near_0 :: MAT{REAL}*
-      eval :: VEC{REAL}*
+      eval_near_0 :: VEC{REAL}@
+      evec_near_0 :: MAT{REAL}@
+      eval :: VEC{REAL}@
       inverse,CM :: MAT{REAL}, OUT, optional
 
    ENSURE(.is_square,"not square")
 
-      ival :: VEC{REAL}*
-      inv,evec :: MAT{REAL}*
-    ! eval :: VEC{REAL}*
+      ival :: VEC{REAL}@
+      inv,evec,RT :: MAT{REAL}@
       d,i,j :: INT
 
-      ! Temporaries
+      ! Dimension
       d = .dim1
+
+      ! Temporaries
       eval.create(d)
       ival.create(d)
       evec.create(d,d)
+      RT.create(d,d)
       inv.create(d,d)
 
-      ! Solve the eigenvalue problem
-      .solve_symmetric_eigenproblem(eval,evec)
+      ! Solve SVD problem
+      .singular_value_decomposition(eval,evec,RT)
 
       ! Count eigenvalues which are nearly zero (leaky)
       n_near_0 = count(eval<=ZERO OR abs(eval)<=tol_near_0)
@@ -2785,17 +2770,13 @@ contains
 
       end
 
-      ! Make the inverse
+      ! Make the pseudo inverse
       evec = transpose(evec)
-
       do i = 1,d
       do j = 1,d
-         inv(i,j) = sum(evec(:,i)*ival(:)*evec(:,j))
+         inv(i,j) = sum(RT(:,i)*ival(:)*evec(:,j))
       end
       end
-
-      evec.destroy
-    ! eval.destroy
 
       ! Get the solution
       solution.to_product_of(inv,rhs)
@@ -2821,8 +2802,6 @@ contains
          end
 
       end
-
-      inv.destroy
 
    end
 
