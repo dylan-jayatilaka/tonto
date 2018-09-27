@@ -5401,7 +5401,11 @@ contains
       axes = .plot_grid.plot_axes
 
       g3=reshape(grid,[nx,ny,nz])
+#ifdef MPI
+      .:cubes_to_basin_parallel(g3,nx,ny,nz,.plot_grid.width,axes,CP,EDS,VOL)
+#else
       .:cubes_to_basin(g3,nx,ny,nz,.plot_grid.width,axes,CP,EDS,VOL)
+#endif
 
       ! Print results
 
@@ -5587,6 +5591,260 @@ contains
           stdout.show("Volume of CP",VOL(i))
     end do
     stdout.show("Total electrons", dv)
+    ED.destroy
+    Maxima.destroy
+
+   end
+
+   cubes_to_basin_parallel(grid,nx,ny,nz,gridlength,gridvector,CP,EDS,VOL) ::: leaky
+   ! A tonto implementation of the cubes to basin code, originally
+   ! implemented by Florian from Tobias (spelling).
+    nx,ny,nz :: INT, IN
+    grid :: MAT3{REAL}, IN
+    gridlength :: VEC{REAL}(3), IN
+    gridvector :: MAT{REAL}(3,3), IN
+    CP :: MAT3{INT}*, OUT
+    EDS,VOL :: VEC{REAL}*, OUT
+
+    nprocs,i,ii,px,mx,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
+    GradMax,distance,MaxVal,dv :: REAL
+    Max :: VEC{INT}(3)
+    List :: VEC{VEC_{INT}}*
+    stitch_send,stitch_recv :: MAT{INT}*
+    ED :: MAT3{REAL}*
+    Maxima :: VEC{REAL}*
+    tests,testr :: VEC{INT}(3)
+
+    nprocs = tonto.n_processors
+       mx = nx - (nprocs-1)*int(nx/nprocs)
+    if(tonto.processor_rank==tonto.master_rank)then
+       ED.create(mx+3,ny+2,nz+2)
+       CP.create(mx+3,ny+2,nz+2)
+    else if(tonto.processor_rank<nprocs - 1)then
+       px = int(nx/nprocs)
+       ED.create(px+3,ny+2,nz+2)
+       CP.create(px+3,ny+2,nz+2)
+    else
+       px = int(nx/nprocs)
+       ED.create(px+2,ny+2,nz+2)
+       CP.create(px+2,ny+2,nz+2)
+    end if
+    Maxima.create(1)
+    
+    if(tonto.processor_rank==tonto.master_rank)then
+       ED = ZERO
+       ED(2:mx+2,2:ny+1,2:nz+1)=grid(1:mx+1,:,:)
+    else if(tonto.processor_rank<nprocs - 1)then
+       ED = ZERO
+       ED(2:px+2,2:ny+1,2:nz+1)= &
+       grid(mx+(tonto.processor_rank-1)*px+1:mx+(tonto.processor_rank)*px+1,:,:)
+    else 
+       ED = ZERO
+       ED(2:px+1,2:ny+1,2:nz+1)= &
+       grid(mx+(tonto.processor_rank-1)*px+1:mx+(tonto.processor_rank)*px,:,:)
+    end if
+    CP = ZERO
+    iCP = ZERO
+    GradMax = 1
+    
+    if(tonto.processor_rank==tonto.master_rank)then
+       px = mx
+    end if
+   
+
+    do x=2,px+1
+    do y=2,ny+1
+    do z=2,nz+1
+       if (CP(x,y,z) == ZERO) then
+       ! Only perform if critical direction not known
+          List.create(3,0)
+          ListMax = 0
+          ! Gives the length of the number of points in the
+          ! current list
+          
+          Max(1) = x
+          Max(2) = y
+          Max(3) = z
+
+          do while (NOT(GradMax == ZERO OR CP(Max(1),Max(2),Max(3)) > 0))
+             xs = Max(1)
+             ys = Max(2)
+             zs = Max(3)
+             MaxVal = ED(xs,ys,zs)
+             ListMax = ListMax + 1
+             
+             ! Appends to list if necessary
+             if(size(List(1).element) < ListMax) then
+                List(1).element.append(xs)
+             else
+                List(1).element(ListMax) = xs
+             end if
+             if(size(List(2).element) < ListMax) then
+                List(2).element.append(ys)
+             else
+                List(2).element(ListMax) = ys
+             end if
+             if(size(List(3).element) < ListMax) then
+                List(3).element.append(zs)
+             else
+                List(3).element(ListMax) = zs
+             end if
+
+             GradMax = 0
+
+             do ix = xs-1,xs+1
+             do iy = ys-1,ys+1
+             do iz = zs-1,zs+1
+
+                ! NOTE: Initial version used xs for all distances, if
+                ! errors are occurring consider altering zs and ys.
+                
+                distance = sqrt(((ix-xs)*gridlength(1))**2 &
+                         + ((iy-ys)*gridlength(2))**2      &
+                         + ((iz-zs)*gridlength(3))**2)
+                
+                if ((ED(ix,iy,iz) - ED(xs,ys,zs))/distance > GradMax) then
+                ! Determines the optimal gradient direction
+                   Max(1)  = ix
+                   Max(2)  = iy
+                   Max(3)  = iz
+                   MaxVal  = ED(ix,iy,iz)
+                   GradMax = (ED(ix,iy,iz)-ED(xs,ys,zs))/distance
+                end if
+             end do
+             end do
+             end do
+          end do
+       
+
+       if(CP(Max(1),Max(2),Max(3)) /= 0) then
+          do i=1,ListMax
+             CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
+             CP(Max(1),Max(2),Max(3))
+          end do
+       else
+          if (iCP == ZERO) then
+             Maxima(1) = MaxVal
+          else
+             Maxima.append(MaxVal)
+          end if
+!          if(mod(tonto.processor_rank,2)==0)then
+             iCP = iCP + 1
+!          else
+!             ii = -1
+!             iCP = iCP - 1
+!          end if
+          do i =1,ListMax
+             CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
+             iCP
+          end do
+       end if
+       do i=1,ListMax
+          CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
+          CP(Max(1),Max(2),Max(3))
+       end do
+       List.destroy
+       GradMax = 1
+       end if
+    end do
+    end do
+    end do
+       
+    stitch_send.create(CP.dim2,CP.dim3)
+    stitch_recv.create(CP.dim2,CP.dim3)
+    stitch_send = reshape(CP(px+2,:,:),[ny,nz])
+    stitch_recv = ZERO
+!    tests.create(3)
+!    testr.create(3)
+    tests(1) = 1
+    tests(2) = 2
+    tests(3) = 3
+    testr = ZERO
+    ii = 1
+    i = tonto.processor_rank
+    if(tonto.processor_rank==1)then
+       tonto.send(tests,tonto.processor_rank+1)
+!       print*, tonto.processor_rank, ii
+       !tonto.send(stitch_send,tonto.processor_rank+1)
+       !print*, tonto.processor_rank, stitch_send(2,2)
+    else if(tonto.processor_rank==2)then
+!       tonto.send(CP(px+2,:,:),tonto.processor_rank+1)
+       tonto.recv(testr,tonto.processor_rank-1)
+!       tonto.recv(stitch_recv,tonto.processor_rank-1)
+!       print*, tonto.processor_rank, stitch_recv(2,2)
+!    else
+!       tonto.recv(stitch(1,:,:),tonto.processor_rank-1)
+!       print*, tonto.processor_rank, stitch(2,2,2)
+    end if
+    stdout.text("I am the Master")
+    tonto.barrier
+    print*, tonto.processor_rank, testr
+    tonto.finalize
+    stop
+    
+!    do i=1,iCP
+!    xs = 0
+!    do x=2,px+1
+!    do y=2,ny+1
+!    do z=2,nz+1
+!       if(i==CP(x,y,z)) then
+!          xs = xs + 1
+!       end if
+!    end do
+!    end do
+!    end do
+!    end do
+    
+
+    EDS.create(iCP)
+    VOL.create(iCP)
+    EDS = ZERO
+    VOL = ZERO
+
+    ! Cross product for the volume (or so I am told)
+    ! Divide by total number of points! Move to plot grid
+
+    dv = abs(gridvector(1,1)*gridvector(2,2)*gridvector(3,3) &
+       -     gridvector(3,1)*gridvector(2,2)*gridvector(1,3) &
+       +     gridvector(1,2)*gridvector(2,3)*gridvector(3,1) &
+       -     gridvector(3,2)*gridvector(2,3)*gridvector(1,1) &
+       +     gridvector(1,3)*gridvector(2,1)*gridvector(3,2) &
+       -     gridvector(3,3)*gridvector(2,1)*gridvector(1,2))
+    
+    
+    ! Corrects dv with the gridsize
+    dv = dv/(nx-1)/(ny-1)/(nz-1)                             &
+       *     gridlength(1)*gridlength(2)*gridlength(3)       
+
+    do x=1,px+2
+    do y=1,ny+2
+    do z=1,nz+2
+    do i=1,iCP
+       if(i==CP(x,y,z)) then
+          EDS(i) = EDS(i) + ED(x,y,z)*dv ! electrons in this voxel
+          VOL(i) = VOL(i) + dv           ! size of voxel
+       end if
+    end do
+    end do
+    end do
+    end do
+    dv = 0
+    do i=1,iCP
+          print*,tonto.processor_rank,"Critical point", i
+          !stdout.show("Critical point", i)
+          print*,tonto.processor_rank,"Number of electrons", EDS(i)
+          !stdout.show("Number of electrons",EDS(i))
+          dv = dv + EDS(i)
+          print*,tonto.processor_rank,"Volume of CP", VOL(i)
+          !stdout.show("Volume of CP",VOL(i))
+    end do
+    print*,tonto.processor_rank,"Total electrons", dv
+    !stdout.show("Total electrons", dv)
+#ifdef MPI    
+    tonto.barrier
+#endif    
+    stop
+    
     ED.destroy
     Maxima.destroy
 
