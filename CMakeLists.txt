@@ -36,11 +36,13 @@ endif()
 # Testing?
 enable_testing()
 
-
 # Tonto
 project(tonto
     LANGUAGES Fortran C
     VERSION ${TONTO_VERSION})
+
+# LAPACK
+find_package(LAPACK REQUIRED)
 
 if(MPI)
     message(STATUS "Building with MPI enabled")
@@ -89,22 +91,6 @@ configure_file(
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/sbf)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/)
-
-# BLAS/LAPACK dependency
-if(NOT USE_PACKAGED_LAPACK)
-    find_package(LAPACK QUIET)
-    if(NOT ${LAPACK_FOUND})
-        message(STATUS "No lapack found, using packaged libs")
-        add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
-        target_include_directories(lapack PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
-        set(LAPACK_LIBRARIES lapack)
-    endif()
-else()
-    message(STATUS "Using packaged libs")
-    add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
-    target_include_directories(lapack PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
-    set(LAPACK_LIBRARIES lapack)
-endif()
 
 
 # Foo source files
