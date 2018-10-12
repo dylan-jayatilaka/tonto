@@ -17,6 +17,7 @@ set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets
     CACHE PATH "Basis sets directory")
 
 option(MPI "Use MPI" OFF)
+option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
 
 # Perl
 find_package(Perl REQUIRED)
@@ -42,15 +43,15 @@ project(tonto
     VERSION ${TONTO_VERSION})
 
 # LAPACK
-if(NOT ${COMPILE_LAPACK})
-    find_package(LAPACK REQUIRED)
-else()
+if(COMPILE_LAPACK)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
     set(LAPACK_LIBRARIES 
         ${PROJECT_BINARY_DIR}/external/lapack-release/lib/liblapack.a
         ${PROJECT_BINARY_DIR}/external/lapack-release/lib/libblas.a
     )
     message(STATUS "Compiling lapack: ${LAPACK_LIBRARIES}")
+else()
+    find_package(LAPACK REQUIRED)
 endif()
 
 if(MPI)
