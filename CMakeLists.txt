@@ -57,8 +57,9 @@ endif()
 if(MPI)
     message(STATUS "Building with MPI enabled")
     if(MSMPI)
-       set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -I${msmpi-linux-home}/Include -L${msmpi-linux-home}/Lib/x64 -lmsmpi")
+       set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -I${msmpi-linux-home}/Include -L${msmpi-linux-home}/Lib/x64 -lmsmpi -D _WIN32")
        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${msmpi-linux-home}/Include -L${msmpi-linux-home}/Lib/x64 -lmsmpi")
+       set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -I${msmpi-linux-home}/Include -L${msmpi-linux-home}/Lib/x64 -lmsmpi")
        set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS} ${CMAKE_Fortran_FLAGS}")
        set(WITH_MPI ON CACHE STRING "" FORCE)
        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lmsmpi")
@@ -85,12 +86,11 @@ endif()
 # If desirable we can use .F03/.f03 by appending to the below variable
 # message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
 
-
-
 # Set the fortran flags
 include(SetFortranFlags)
 message(STATUS "Fortran Compiler flags: ${CMAKE_Fortran_FLAGS}")
 message(STATUS "CXX Compiler Flags: ${CMAKE_CXX_FLAGS}")
+message(STATUS "C Compiler Flags: ${CMAKE_C_FLAGS}")
 
 # Macros
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
@@ -101,7 +101,6 @@ configure_file(
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/sbf)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/)
-
 
 # Foo source files
 set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
@@ -457,10 +456,15 @@ endforeach(foopath)
 
 # Target libtonto
 add_library(tonto
-    ${FORTRAN_SRC}
-    ${MACROS}
+   ${FORTRAN_SRC}
+   ${MACROS}
 )
-target_link_libraries(tonto sbf_fortran dftd3 ${MPI_Fortran_LIBRARIES})
+
+if(COMPILE_LAPACK)
+	target_link_libraries(tonto sbf_fortran dftd3 lapack blas ${MPI_Fortran_LIBRARIES})
+else()
+	target_link_libraries(tonto sbf_fortran dftd3 ${MPI_Fortran_LIBRARIES})
+endif()	
 
 # Build directory
 target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
