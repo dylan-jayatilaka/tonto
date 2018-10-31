@@ -412,6 +412,27 @@ contains
 
    end
 
+   xyz_basis_fn_part result (res) ::: PURE
+   ! Return a character representation for the cartesian
+   ! product part of the gaussians in this shell.
+      self :: IN
+      res :: VEC{STR}(.n_comp)
+
+   ENSURE(NOT .is_spherical,"not yet available for sphericals")
+
+      i, width,spaces :: INT
+      labels :: VEC{STR}@
+
+      labels = GAUSSIAN_DATA:xyz_product_str_for(.l)
+      width  = maxval(len_trim(labels))
+
+      do i = 1,.n_comp
+         spaces = .l + 1 - width
+         res(i) = trim(.l_chr) // repeat(" ",spaces) // trim(labels(i))
+      end
+
+   end
+
    same_as(sh) result(same) ::: pure
    ! Return TRUE if the shell "self" is the same as "sh".
       self :: IN
@@ -448,65 +469,72 @@ contains
 !  Contractions
 !  ============
 
-   make_contraction_matrix(ccm,ccp)
+   make_contraction_matrix(ccm) ::: PURE
+   ! Return the contraction coefficient matrix "ccm" which converts
+   ! primitives to basis functions. It is with respect to uniform
+   ! normalisation i.e. all components are normalised to the first
+   ! component, x^l. 
+      self :: IN
+      ccm :: MAT{REAL}, OUT
+
+   ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
+   ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
+   ENSURE(.l_chr/="L","must not be an L=S+P shell")
+   ENSURE(.n_cc>0,"no contraction coefficients")
+   ENSURE(.contraction.associated,"no contraction coefficients")
+
+      b,p,i :: INT
+
+      do b = 1,.n_comp       ! do over basis components
+         p = b               ! primitive p
+         do i = 1,.n_cc      ! do over contractions
+            ccm(p,b) = .contraction(i)
+            p = p + .n_comp
+         end
+      end
+
+   end
+
+   make_contraction_matrix(ccm,ccp) ::: PURE
    ! Return the contraction coefficient matrix "ccm" which converts
    ! primitives to basis functions. It is with respect to uniform
    ! normalisation i.e. all components are normalised to the first
    ! component, x^l. If this is an "L" shell, "ccp" may also be
    ! returned, the contraction matrix for the "p" shell. size "ccm" is
    ! normally (.n_prim,.n_comp).
+      self :: IN
       ccm :: MAT{REAL}, OUT
-      ccp :: MAT{REAL}, OUT, optional
+      ccp :: MAT{REAL}, OUT
+
+   ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
+   ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
+   ENSURE(ccp.dim1==3*.n_cc,"wrong 1st dimension, ccp")
+   ENSURE(ccp.dim2==3,"wrong 2nd dimension, ccp")
+   ENSURE(.l_chr=="L","must be an L shell")
+   ENSURE(.l    == 2 ,"must have L=2")
    ENSURE(.n_cc>0,"no contraction coefficients")
+   ENSURE(.contraction.associated,"no contraction coefficients")
+   ENSURE(.contraction_s.associated,"no s contraction coefficients")
+   ENSURE(.contraction_p.associated,"no p contraction coefficients")
+
       b,p,i :: INT
-      if (.l<2) then
-         if (.l_chr/="L") then
-            ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
-            ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
-            ENSURE(.contraction.associated,"no contraction coefficients")
-            do b = 1,.n_comp       ! do over basis components
-               p = b               ! primitive p
-               do i = 1,.n_cc      ! do over contractions
-                  ccm(p,b) = .contraction(i)
-                  p = p + .n_comp
-               end
-            end
-         else
-            ENSURE(present(ccp),"no ccp matrix")
-            ENSURE(ccm.dim1==.n_cc,"wrong 1st dimension, ccm")
-            ENSURE(ccm.dim2==1,"wrong 2nd dimension, ccm")
-            ENSURE(ccp.dim1==3*.n_cc,"wrong 1st dimension, ccp")
-            ENSURE(ccp.dim2==3,"wrong 2nd dimension, ccp")
-            ENSURE(.contraction_s.associated,"no s contraction coefficients")
-            ENSURE(.contraction_p.associated,"no p contraction coefficients")
-            do b = 1,1             ! do over basis components
-               p = b               ! primitive p
-               do i = 1,.n_cc      ! do over contractions
-                  ccm(p,b) = .contraction_s(i)
-                  p = p + 1
-               end
-            end
-            do b = 1,3             ! do over basis components
-               p = b               ! primitive p
-               do i = 1,.n_cc      ! do over contractions
-                  ccp(p,b) = .contraction_p(i)
-                  p = p + 3
-               end
-            end
+
+      do b = 1,1             ! do over basis components
+         p = b               ! primitive p
+         do i = 1,.n_cc      ! do over contractions
+            ccm(p,b) = .contraction_s(i)
+            p = p + 1
          end
-      else
-            ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
-            ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
-            ENSURE(.contraction.associated,"no contraction coefficients")
-            GAUSSIAN_DATA:set_indices(.l)     ! Make sure indices are there
-            do b = 1,.n_comp       ! do over basis components
-               p = b               ! primitive p
-               do i = 1,.n_cc      ! do over contractions
-                  ccm(p,b) = .contraction(i)
-                  p = p + .n_comp
-               end
-            end
       end
+
+      do b = 1,3             ! do over basis components
+         p = b               ! primitive p
+         do i = 1,.n_cc      ! do over contractions
+            ccp(p,b) = .contraction_p(i)
+            p = p + 3
+         end
+      end
+
    end
 
    make_normalised_contraction_mx(ccm,ccp,sph)
@@ -569,7 +597,11 @@ contains
    ! primitives are assumed correctly normalised.
       ccm :: MAT{REAL}, OUT
       sph :: BIN, IN, optional
+
    ENSURE(.n_cc>0,"no contraction coefficients")
+   ENSURE(.l_chr/="L","the angular momentum is wrong, L=S+P does not works")
+   ENSURE(.contraction.associated,"no contraction coefficients")
+
       b,p,i :: INT
       is_sph :: BIN
 
@@ -577,8 +609,6 @@ contains
       is_sph = FALSE
       if(present(sph)) is_sph = sph
 
-      ENSURE(.l_chr/="L","the angular momentum is wrong, L=S+P does not works")
-      ENSURE(.contraction.associated,"no contraction coefficients")
       if (is_sph AND .n_sph/=.n_comp) then
           ENSURE(ccm.dim1==.n_sph_prim,"wrong 1st dimension, ccm")
           ENSURE(ccm.dim2==.n_sph,"wrong 2nd dimension, ccm")
@@ -765,11 +795,11 @@ contains
 
    put
    ! Put the shell information to "stdout"
+      self :: IN
 
       table :: VEC{TABLE_COLUMN}*
 
       ! Title
-      stdout.flush
       stdout.flush
       stdout.text("===================")
       stdout.text("Gaussian type shell")

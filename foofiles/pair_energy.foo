@@ -1,0 +1,235 @@
+!---------------------------------------------------------------------
+!
+! PAIR_ENERGY:
+!
+! For holding information around dimer interactions, both for calculation
+! of CrystalExplorer model energies and lattice energies
+!
+! Copyright (C) Peter Spackman 2018
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!---------------------------------------------------------------------
+module PAIR_ENERGY
+
+   implicit none
+
+   distance_threshold :: REAL = 0.1
+   separation_threshold :: REAL = 0.001
+
+
+contains
+
+   set_defaults ::: pure
+      self :: INOUT
+      .center_separation = ZERO
+      .closest_distance = ZERO
+      .mol = 1
+      .components = ZERO
+      .rot.to_unit_matrix
+      .trans = ZERO
+      .energy_calculated = FALSE
+      .pos_a = ZERO
+      if(allocated(.pos_b)) deallocate(.pos_b)
+      allocate(.pos_b(1:3,1))
+      .pos_b(:,1) = ZERO
+      .unit_cell = 0
+   end
+
+   nullify_ptr_part ::: PURE
+      self :: INOUT
+   end
+
+   destroy_ptr_part ::: PURE
+      self :: INOUT
+   end
+
+   copy(val) ::: PURE
+      self :: INOUT
+      val :: PAIR_ENERGY, IN
+
+      .unit_cell = val.unit_cell
+      .energy_calculated = val.energy_calculated
+      .n_equivalent = val.n_equivalent
+      .symop_id = val.symop_id
+      .center_separation = val.center_separation
+      .closest_distance = val.closest_distance
+      .components = val.components
+      .set_symop_str(val.symop_str)
+      .mol = val.mol
+      .rot = val.rot
+      .trans = val.trans
+      .pos_b = val.pos_b
+      .pos_a = val.pos_a
+   end
+
+   clone result(res) ::: PURE
+      self :: IN
+      res :: PAIR_ENERGY
+      res.copy(self)
+   end
+
+   is_equivalent(other) result(res) ::: pure
+      self :: IN
+      other :: PAIR_ENERGY, IN
+      res :: BIN
+      res = FALSE
+
+      if(.symop_id /= other.symop_id) return
+      if (abs(.closest_distance - other.closest_distance) > 0.01) return
+      if (abs(.center_separation - other.center_separation) < 0.01) then
+         res = TRUE
+      end
+   end
+
+   is_identical(other) result(res) ::: pure
+      self :: IN
+      other :: PAIR_ENERGY, IN
+      res :: BIN
+      dist :: REAL
+      i :: INT
+      res = TRUE
+
+      if (.mol /= other.mol) then
+          res = FALSE
+          return
+      end
+
+      do i = 1, size(.pos_b, dim=2)
+          dist = .pos_b(:,i).distance_to(other.pos_b(:,1)) 
+          if (dist < 0.1) then
+              res = TRUE
+              return
+          end
+      end 
+      res = FALSE
+   end
+
+
+   increment_count(pos) ::: pure
+      self :: INOUT
+      pos :: VEC{REAL}(3), IN
+      new_pos :: MAT{REAL}@
+      ! TODO rework the storage of positions
+      self.n_equivalent = self.n_equivalent + 1
+      allocate(new_pos(1:3,1:self.n_equivalent))
+      new_pos(:,1:self.n_equivalent-1) = .pos_b(:,:)
+      new_pos(:,self.n_equivalent) = pos(:)
+      deallocate(.pos_b)
+      .pos_b = new_pos
+   end
+
+
+   set_mol(n) ::: pure
+      self :: INOUT
+      n :: INT, IN
+      .mol = n
+   end
+
+   set_rot(r) ::: pure
+      self :: INOUT
+      r :: MAT{REAL}(3,3), IN
+      .rot = r
+   end
+
+   set_trans(r) ::: pure
+      self :: INOUT
+      r :: VEC{REAL}(3), IN
+      .trans = r
+   end
+
+   set_n_equivalent(n) ::: pure
+      self :: INOUT
+      n :: INT, IN
+      .n_equivalent = n 
+   end
+
+   set_center_separation(sep) ::: pure
+      self :: INOUT
+      sep :: REAL, IN
+      .center_separation = sep
+   end
+
+   set_closest_distance(dist) ::: pure
+      self :: INOUT
+      dist :: REAL, IN
+      .closest_distance = dist
+   end
+
+   set_symop_id(symop) ::: pure
+      self :: INOUT
+      symop :: INT, IN
+      .symop_id = symop
+   end
+
+   set_symop_str(symop) ::: pure
+      self :: INOUT
+      symop :: STR, IN
+      .symop_str = trim(symop)
+   end
+
+   set_energy_components(components) ::: pure
+      self :: INOUT
+      components :: VEC{REAL}(4), IN
+      i :: INT
+      .components(1:4) = components(1:4)
+   end
+
+   set_distance_threshold(threshold) ::: selfless
+      threshold :: REAL, IN
+      distance_threshold = threshold
+   end
+
+   set_coulomb(e) ::: pure
+      self :: INOUT
+      e :: REAL, IN
+      .components(1) = e
+   end
+
+   set_energy_calculated(v) ::: pure
+      self :: INOUT
+      v :: BIN, IN
+      .energy_calculated = v
+   end
+
+   set_unit_cell(h) ::: pure
+      self :: INOUT
+      h :: VEC{INT}(3), IN
+      .unit_cell = h
+   end
+
+   total_energy(scale_factors) result(res)
+      scale_factors :: VEC{REAL}(4), optional
+      res :: REAL
+      if (present(scale_factors)) then
+          res = scale_factors.dot(.components)
+      else
+          res = sum(.components)
+      end
+   end
+
+   put
+      stdout.show("Mol", .mol)
+      stdout.show("N", .n_equivalent)
+      stdout.show("pos_a", .pos_a)
+      stdout.text("pos_b")
+      stdout.put(.pos_b)
+      stdout.show("symop", .symop_str)
+      stdout.show("sep", .center_separation)
+      stdout.show("prox", .closest_distance)
+      stdout.flush
+   end
+end

@@ -1,0 +1,215 @@
+! Copyright (C) Dylan Jayatilaka, 2018
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+
+
+program run_MPI_MATMUL
+
+! This is a copy of the MPUI matmul program
+! from the MPI book of Gropp et al.
+
+   use mpi
+
+   implicit none
+
+   rows :: INT
+   parameter(rows=100)
+
+   cols :: INT
+   parameter(cols=100)
+
+   a :: MAT{REAL}(rows,cols)
+   b :: VEC{REAL}(cols)
+   c :: VEC{REAL}(rows)
+   buffer :: VEC{REAL}(cols)
+   ans :: REAL
+
+   status(MPI_STATUS_SIZE) :: VEC{INT}(MPI_STATUS_SIZE)
+   myid, numprocs, ierr :: INT
+   i, j, numsent, sender :: INT
+   anstype, row :: INT
+
+   ! Macro to create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   ! Initialise standard I/O files too.
+   TONTO_CREATE 
+
+ ! stdin.create_stdin
+ ! stdout.open_for("reading")
+
+ ! stdout.create_stdout
+ ! stdout.open_for("writing")
+
+ ! stderr.create_stderr
+ ! stderr.open_for("writing")
+
+   if (tonto.is_master_processor) then
+
+      ! manager initializes and then dispatches
+      ! initialize a and b (arbitrary)
+      do j = 1,cols
+         b(j) = j
+         do i = 1,rows
+            a(i,j) = ZERO
+         end
+         a(j,j) = ONE
+      end
+
+      numsent = 0
+
+      ! Send b to each worker process
+      tonto.broadcast(b)
+    ! call MPI_BCAST(b, cols, MPI_DOUBLE_PRECISION, 0, &
+    !                MPI_COMM_WORLD, ierr)
+
+      ! Send a row to each worker process
+      ! Tag with row number
+      do i = 1,min(tonto.n_processors-1,rows)
+
+         do j = 1,cols
+            buffer(j) = a(i,j)
+         end
+
+         print *, "1"
+
+         tonto.send(buffer,i)
+
+         print *, "2"
+
+         numsent = numsent + 1
+
+      end
+
+      do i = 1,rows
+
+         print *, "3"
+
+         tonto.recv(ans,MPI_ANY_SOURCE,tag=MPI_ANY_TAG)
+       ! call MPI_RECV(ans, 1, MPI_DOUBLE_PRECISION, &
+       !               MPI_ANY_SOURCE, MPI_ANY_TAG, &
+       !               MPI_COMM_WORLD, status, ierr)
+
+         print *, "4"
+
+         sender     = tonto.mpi_status(MPI_SOURCE)
+       ! sender     = status(MPI_SOURCE)
+         anstype    = tonto.mpi_status(MPI_TAG) ! row is tag value
+       ! anstype    = status(MPI_TAG) ! row is tag value
+         c(anstype) = ans
+
+         print *, "5"
+
+         if (numsent < rows) then        
+
+            ! Send another row
+            do j = 1,cols
+               buffer(j) = a(numsent+1,j)
+            end
+
+            print *, "6"
+
+            tonto.send(buffer,sender,tag=numsent+1)
+
+          ! call MPI_SEND(buffer, cols, MPI_DOUBLE_PRECISION, &
+          !               sender, numsent+1, MPI_COMM_WORLD, ierr)
+
+            print *, "7"
+
+            numsent = numsent + 1
+
+         else      
+
+            print *, "8"
+         
+            ! Tell sender that there is no more work
+          ! tonto.send(buffer,sender,tag=0)
+            call MPI_SEND(MPI_BOTTOM, 0, MPI_DOUBLE_PRECISION, &
+                 sender, 0, MPI_COMM_WORLD, ierr)
+
+            print *, "9"
+
+         end
+
+      end
+
+      ! Print out the answer
+      do i = 1,cols
+         print *, "c(", i, ") = ", c(i)
+      end
+
+   else
+
+      print *, "rank = ",tonto.processor_rank
+
+      ! Workers receive b, then compute dot products 
+      ! until done message received
+      tonto.broadcast(b)
+    ! call MPI_BCAST(b, cols, MPI_DOUBLE_PRECISION, 0, &
+    !                MPI_COMM_WORLD, ierr)
+
+      print *, tonto.processor_rank, "A"
+
+      if (myid < rows) then
+
+         ! Skip if more processes than work
+         do
+
+            print *, tonto.processor_rank, "B"
+
+            tonto.recv(buffer,0,tag=MPI_ANY_TAG)
+          ! call MPI_RECV(buffer, cols, MPI_DOUBLE_PRECISION, &
+          !               0, MPI_ANY_TAG, MPI_COMM_WORLD, &
+          !               status, ierr)
+
+            print *, tonto.processor_rank, "C"
+
+            if (tonto.mpi_status(MPI_TAG) == 0) exit
+          ! if (status(MPI_TAG) == 0) exit
+
+            row = tonto.mpi_status(MPI_TAG)
+          ! row = status(MPI_TAG)
+            ans = 0.0
+            do i = 1,cols
+               ans = ans + buffer(i)*b(i)
+            end
+
+            print *, tonto.processor_rank, "D"
+
+            tonto.send(ans,0,tag=row)
+          ! call MPI_SEND(ans, 1, MPI_DOUBLE_PRECISION, 0, &
+          !               row, MPI_COMM_WORLD, ierr)
+
+            print *, tonto.processor_rank, "E"
+
+         end
+
+      end
+
+   end
+
+   ! Stop timing & report time
+ ! std_time.stop_timing
+ ! stdout.text(std_time.elapsed_time_message)
+ ! stdout.text(std_time.elapsed_cpu_time_message)
+
+ ! ! Clean up standard files and Tonto system object
+ ! TEXTFILE:destroy(stderr)
+ ! TEXTFILE:destroy(stdin)
+ ! TEXTFILE:destroy(stdout)
+
+   TONTO_DESTROY
+
+end

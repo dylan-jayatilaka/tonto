@@ -67,14 +67,6 @@ contains
       nullify(.X_ref)
       nullify(.X_ref0)
 
-      nullify(.near_0_eigenvalues)
-      nullify(.near_0_eigenvectors)
-
-      nullify(.esd)
-      nullify(.covariance_matrix)
-      nullify(.correlation_matrix)
-      nullify(.fragment_covariance_matrix)
-
    end
 
    destroy_ptr_part ::: leaky, PURE
@@ -124,14 +116,6 @@ contains
       .dX.destroy
       .X_fit.destroy
       .X_fit0.destroy
-
-      .near_0_eigenvalues.destroy
-      .near_0_eigenvectors.destroy
-
-      .esd.destroy
-      .covariance_matrix.destroy
-      .correlation_matrix.destroy
-      .fragment_covariance_matrix.destroy
 
    end
 
@@ -187,15 +171,6 @@ contains
       if (data.X_fit0.associated)                     .X_fit0.create_copy(data.X_fit0)
       if (data.X_ref.associated)                      .X_ref.create_copy(data.X_ref)
       if (data.X_ref0.associated)                     .X_ref0.create_copy(data.X_ref0)
-
-      if (data.near_0_eigenvalues.associated)         .near_0_eigenvalues.create_copy(data.near_0_eigenvalues)
-      if (data.near_0_eigenvectors.associated)        .near_0_eigenvectors.create_copy(data.near_0_eigenvectors)
-
-      if (data.esd.associated)                        .esd.create_copy(data.esd)
-      if (data.covariance_matrix.associated)          .covariance_matrix.create_copy(data.covariance_matrix)
-      if (data.correlation_matrix.associated)         .correlation_matrix.create_copy(data.correlation_matrix)
-      if (data.fragment_covariance_matrix.associated) &
-         .fragment_covariance_matrix.create_copy(data.fragment_covariance_matrix)
 
    end
 
@@ -272,6 +247,7 @@ contains
       .refine_positions_only        = FALSE
       .refine_ADPs_only             = FALSE
       .refine_H_ADPs                = TRUE
+      .refine_H_positions           = TRUE 
       .refine_H_U_iso               = FALSE
       .refine_anharmonicity         = FALSE
       .refine_4th_order_only        = FALSE
@@ -476,6 +452,20 @@ contains
 
    end
 
+   set_partition_model(val) ::: PURE
+   ! Read the thermal smearing model to use to correct for thermal vibration
+   ! in the calculated structure factors
+      self :: INOUT
+      val :: STR, IN
+
+   ENSURE(val.is_one_of(["         ","none     ","mulliken ","gaussian "]),"unknown data_kind, "//trim(val))
+
+      .partition_model = val
+
+      .partition_model.to_lower_case
+
+   end
+
    set_optimize_extinction(val) ::: pure
    ! Set whether to correct extinction or not according to the Larson formula
       self :: INOUT
@@ -505,6 +495,10 @@ contains
       ! If refining you can't be fitting
       if (val) .fit_structure = NOT val
 
+   end
+
+   set_refine_H_positions(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.refine_H_positions), pure
+   ! Generic set
    end
 
    set_refine_H_ADPs(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.refine_H_ADPs), pure
@@ -611,6 +605,15 @@ contains
    end
 
 ! Cutoffs
+
+   set_F_sigma_noise(val) ::: PURE
+   ! Set noise to add to F_exp and F_sigma, in units of F_sigma.
+      self :: INOUT
+      val :: REAL, IN
+
+      .F_sigma_noise = val
+
+   end
 
    set_F_sigma_cutoff(val) ::: PURE
    ! Set the minimum acceptable value for F_exp/sigma
@@ -778,6 +781,7 @@ contains
          case ("f_calc_cutoff=                "); .read_F_calc_cutoff
          case ("f_pred_cutoff=                "); .read_F_pred_cutoff
          case ("f_sigma_cutoff=               "); .read_F_sigma_cutoff
+         case ("f_sigma_noise=                "); .read_F_sigma_noise
          case ("f_z_cutoff=                   "); .read_F_z_cutoff
 
          case ("hkl_range=                    "); .read_hkl_range
@@ -810,7 +814,7 @@ contains
          case ("optimize_scale_factors=       "); .read_optimize_scale
 
          case ("partition_model=              "); .read_partition_model
-         case ("prune_reflections             "); .prune_reflections
+       ! case ("prune_reflections             "); .prune_reflections ! Apply automatically?
          case ("put                           "); .put
          case ("put_debug_list                "); .put_debug_list
          case ("put_worst_reflections         "); .put_worst_reflections
@@ -824,10 +828,12 @@ contains
          case ("refine_4th_order_only=        "); .read_refine_4th_order_only
          case ("refine_adps_only=             "); .read_refine_ADPs_only
          case ("refine_f=                     "); .read_refine_F
+         case ("refine_h_positions=           "); .read_refine_H_positions
          case ("refine_h_adps=                "); .read_refine_H_ADPs
          case ("refine_h_u_iso=               "); .read_refine_H_U_iso
+         case ("refine_nothing_for_atoms=     "); .read_refine_nothing_for_atoms
          case ("refine_positions_only=        "); .read_refine_positions_only
-         case ("refine_u_iso_for_atoms=       "); .read_refine_U_iso_atoms
+         case ("refine_u_iso_for_atoms=       "); .read_refine_U_iso_for_atoms
          case ("reflection_data=              "); .read_reflection_data
          case ("restart_har_with_promolecule= "); .read_restart_with_promolecule
          case ("revert                        "); .revert
@@ -940,6 +946,18 @@ contains
       stdin.read(val)
 
       .set_I_sigma_cutoff(val)
+
+   end
+
+   read_F_sigma_noise ::: private
+   ! Read noise to add to F_exp and F_sigma, in units of F_sigma.
+      self :: INOUT
+
+      val :: REAL
+
+      stdin.read(val)
+
+      .set_F_sigma_noise(val)
 
    end
 
@@ -1216,22 +1234,43 @@ contains
 
    end
 
+!  read_partition_model ::: private
+!  ! Read the partition model to used to correct for oversampled fragments
+!  ! of the unit cell when calculating the structure factors
+!     self :: INOUT
+
+!     stdin.read(.partition_model)
+
+!     .partition_model.to_lower_case
+
+!     select case(.partition_model)
+!        case("        ")
+!        case("none    ")
+!        case("mulliken")
+!        case("gaussian")
+!        case default;    UNKNOWN(.partition_model)
+!     end
+
+!  end
+
    read_partition_model ::: private
    ! Read the partition model to used to correct for oversampled fragments
    ! of the unit cell when calculating the structure factors
       self :: INOUT
 
-      stdin.read(.partition_model)
+      val :: STR
 
-      .partition_model.to_lower_case
+      stdin.read(val)
 
-      select case(.partition_model)
-         case("        ")
-         case("none    ")
-         case("mulliken")
-         case("gaussian")
-         case default;    UNKNOWN(.partition_model)
-      end
+      .set_partition_model(val)
+
+!     select case(.partition_model)
+!        case("        ")
+!        case("none    ")
+!        case("mulliken")
+!        case("gaussian")
+!        case default;    UNKNOWN(.partition_model)
+!     end
 
    end
 
@@ -1353,6 +1392,18 @@ contains
 
    end
 
+   read_refine_H_positions
+   ! Read whether to refine only the H atom positions
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read(val)
+
+      .set_refine_H_positions(val)
+
+   end
+
    read_refine_H_ADPs
    ! Read whether to refine only the H atom ADP's
       self :: INOUT
@@ -1421,7 +1472,15 @@ contains
 
    end
 
-   read_refine_U_iso_atoms ::: leaky
+   read_refine_nothing_for_atoms ::: leaky
+   ! Read the list of atoms for which no parameter is refined.
+      self :: INOUT
+
+      stdin.read_ptr(.refine_nothing_for_atom)
+
+   end
+
+   read_refine_U_iso_for_atoms ::: leaky
    ! Read the list of atoms refined isotropically
       self :: INOUT
 
@@ -1808,14 +1867,14 @@ contains
 
       ! Asymmetric unit covariance
       if (cif.use_CIF2) then
-      if (.covariance_matrix.associated) then
+      if (.covariance_matrix.allocated) then
          ::put_CIF_covariance_matrix("asym_unit",.covariance_matrix,cif.use_CIF2)
       end
       end
 
       ! Fragment covariance?
       if (cif.use_CIF2) then
-      if (.fragment_covariance_matrix.associated) then
+      if (.fragment_covariance_matrix.allocated) then
          ::put_CIF_covariance_matrix("fragment",.fragment_covariance_matrix,cif.use_CIF2)
       end
       end
@@ -1862,6 +1921,7 @@ contains
 
       ! Matrix contents
       stdout.put(covariance_matrix,by_column=TRUE)
+      stdout.flush
 
       ! Closing brace
       if (CIF2) then
@@ -1951,6 +2011,7 @@ contains
 
    prune_reflections
    ! Zero negative reflections adding appropriate error to sigma
+   ! If random errors are to be added, process and add error to sigma.
    ! Then prune all the reflections, as requested by cutoffs.
       self :: INOUT
 
@@ -1968,6 +2029,12 @@ contains
          DIE_IF(NOT .have_F_sigma,"F_exp present but no F_sigma?")
          .prune_small_F_sigmas
          .reflections.reset_F_exp_F_sigma
+      end
+
+      ! Add noise
+      if (.F_sigma_noise/=ZERO AND .have_F_exp) then
+         DIE_IF(NOT .have_F_sigma,"F_exp present but no F_sigma?")
+         .reflections.add_noise(.F_sigma_noise)
       end
 
       ! Prune small F_exp/F_sigma
@@ -3475,7 +3542,7 @@ contains
 !  Structure factors without extinction correction
 !  ===============================================
 
-   make_phased_dF(dF) ::: PURE
+   make_phased_dF_a(dF) ::: PURE
    ! Get phased structure factor differences from experimental values
    ! (without extinction/scale factor correction) for residual map.
       self :: IN
@@ -3508,7 +3575,7 @@ contains
 
    end
 
-   make_phased_dF(dF) ::: PURE
+   make_phased_dF_b(dF) ::: PURE
    ! Get phased structure factor differences from experimental values
    ! (without extinction/scale factor correction) for residual map.
       self :: IN
@@ -3777,10 +3844,10 @@ contains
    ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dFdX")
    ENSURE(dFdX.dim2==.dX.dim, "incompatible .dX and dFdX")
 
-      A,dF :: MAT{REAL}*
-      rhs,sig,del, eval :: VEC{REAL}*
+      A,dF :: MAT{REAL}@
+      rhs,sig,del, eval :: VEC{REAL}@
       n_refl,n_p,i,j :: INT
-    ! fac :: REAL
+      fac :: REAL
     ! table :: VEC{TABLE_COLUMN}*
 
       ! Constants
@@ -3799,10 +3866,8 @@ contains
 
       ! Checked using FD, setting optimize extinction
       ! and optimize scale OFF
-      if (.debugging("solve_normal_equations")) then
-         stdout.text("dF:")
-         stdout.put(dF)
-      end
+    ! stdout.text("dF:")
+    ! stdout.put(dF)
 
       ! Make the normal matrix
       do i = 1,n_p
@@ -3810,56 +3875,52 @@ contains
          A(i,j) = sum(sig*dF(:,i)*dF(:,j))
       end
       end
-      sig.destroy
+    ! sig.destroy
 
       ! Make the rhs
       do i = 1,n_p
          rhs(i) = sum(del*dF(:,i))
       end
 
-      dF.destroy
-      del.destroy
+    ! dF.destroy
+    ! del.destroy
 
-      if (.debugging("solve_normal_equations")) then
-         stdout.text("A:")
-         stdout.put(A)
-         stdout.text("rhs:")
-         stdout.put(rhs)
-      end
+    ! stdout.text("A:")
+    ! stdout.put(A)
+    ! stdout.text("rhs:")
+    ! stdout.put(rhs)
 
       ! Solve for the shifts .dX (leaky)
       A.solve_ill_linear_equations(rhs,.dX,.tol_near_0,.n_near_0 &
                                   ,.near_0_eigenvalues,.near_0_eigenvectors,eval &
                                   ,.covariance_matrix,.correlation_matrix)
 
-      if (.debugging("solve_normal_equations")) then
-         stdout.text("shifts:")
-         stdout.put(.dX)
-         stdout.set_real_style("e")
-         stdout.show("Normal equations check =",maxval(abs(matmul(A,.dX)-rhs)))
-         stdout.show("Smallest eigenvalue    =",minval(abs(.near_0_eigenvalues)))
-         stdout.show("tol_near_0             =",.tol_near_0)
-         stdout.show("n_near_0               =",.n_near_0)
-         stdout.flush
-         stdout.set_real_style("f")
-         stdout.text("Distribution of values:")
-       ! table.put_log_table(eval,.tol_near_0)
-         if (.n_near_0>0) then
-         stdout.set_real_style("e")
-         stdout.flush
-         stdout.text("All eigenvalues:")
-         stdout.put(eval,by_column=TRUE)
-         stdout.flush
-         stdout.text("Near_0 eigenvalues:")
-         stdout.put(.near_0_eigenvalues,by_column=TRUE)
-         stdout.set_real_style("f")
-         stdout.flush
-         stdout.text("Near_0 eigenvectors:")
-         stdout.put(.near_0_eigenvectors)
-         end
-      end
+    ! stdout.text("shifts:")
+    ! stdout.put(.dX)
+    ! stdout.set_real_style("e")
+    ! stdout.show("Normal equations check =",maxval(abs(matmul(A,.dX)-rhs)))
+    ! stdout.show("Smallest eigenvalue    =",minval(abs(.near_0_eigenvalues)))
+    ! stdout.show("tol_near_0             =",.tol_near_0)
+    ! stdout.show("n_near_0               =",.n_near_0)
+    ! stdout.flush
+    ! stdout.set_real_style("f")
+    ! stdout.text("Distribution of values:")
+    ! ! table.put_log_table(eval,.tol_near_0)
+    ! if (.n_near_0>0) then
+    ! stdout.set_real_style("e")
+    ! stdout.flush
+    ! stdout.text("All eigenvalues:")
+    ! stdout.put(eval,by_column=TRUE)
+    ! stdout.flush
+    ! stdout.text("Near_0 eigenvalues:")
+    ! stdout.put(.near_0_eigenvalues,by_column=TRUE)
+    ! stdout.set_real_style("f")
+    ! stdout.flush
+    ! stdout.text("Near_0 eigenvectors:")
+    ! stdout.put(.near_0_eigenvectors)
+    ! end
       
-      eval.destroy
+    ! eval.destroy
 
       ! Get the maximum shift
       where (abs(.dX)<DIFFRACTION_DATA_SMALLEST_SHIFT) 
@@ -3876,20 +3937,18 @@ contains
       ! Set the full covariance matrix
       .covariance_matrix = .chi2*.covariance_matrix
 
-      if (.debugging("solve_normal_equations:cov")) then
-         stdout.text("shifts after zeroing:")
-         stdout.put(.dX)
-         stdout.show("chi2  = ",.chi2)
-         stdout.text("covariance matrix:")
-         stdout.put(.covariance_matrix)
-      end
+    ! stdout.text("shifts after zeroing:")
+    ! stdout.put(.dX)
+    ! stdout.show("chi2  = ",.chi2)
+    ! stdout.text("covariance matrix:")
+    ! stdout.put(.covariance_matrix)
 
       ! Set the fit errors e.g. max(.dX/esd)
       ! Parameter ordering is unique fragment atom order.
       .update_fit_esds
 
-      rhs.destroy
-      A.destroy
+    ! rhs.destroy
+    ! A.destroy
 
       if (.debugging("solve_normal_equations")) then
          stdout.text("shifts before renormalisation:")
@@ -3897,15 +3956,13 @@ contains
       end
 
       ! Renormalise shift if too big
-    ! if (.max_shift>.max_allowed_param_shift) then
-    !    fac = .max_allowed_param_shift/.max_shift
-    !    .dX = fac * .dX
-    ! end
+      if (.max_shift>.max_allowed_param_shift) then
+         fac = .max_allowed_param_shift/.max_shift
+         .dX = fac * .dX
+    !    stdout.text("shifts after renormalisation:")
+    !    stdout.put(.dX)
+      end
 
-    ! if (.debugging("solve_normal_equations")) then
-    ! stdout.text("shifts after renormalisation:")
-    ! stdout.put(.dX)
-    ! end
 
    end
 
@@ -3923,8 +3980,8 @@ contains
    ENSURE(dIdX.dim1==.reflections.n_refl, "wrong size, dFdX")
    ENSURE(dIdX.dim2==.dX.dim, "incompatible .dX and dIdX")
 
-      A,dI :: MAT{REAL}*
-      rhs,sig,del, eval :: VEC{REAL}*
+      A,dI :: MAT{REAL}@
+      rhs,sig,del, eval :: VEC{REAL}@
       n_refl,n_p,i,j :: INT
 
       ! Constants
@@ -3954,15 +4011,15 @@ contains
          A(i,j) = sum(sig*dI(:,i)*dI(:,j))
       end
       end
-      sig.destroy
+    ! sig.destroy
 
       ! Make the rhs
       do i = 1,n_p
          rhs(i) = sum(del*dI(:,i))
       end
 
-      dI.destroy
-      del.destroy
+    ! dI.destroy
+    ! del.destroy
 
       if (.debugging("solve_normal_equations")) then
       stdout.text("A:")
@@ -3990,7 +4047,7 @@ contains
       end
       end
 
-      eval.destroy
+    ! eval.destroy
 
       ! Get the maximum shift
       where (abs(.dX)<DIFFRACTION_DATA_SMALLEST_SHIFT) 
@@ -4011,8 +4068,8 @@ contains
       ! Parameter ordering is unique fragment atom order.
       .update_fit_esds
 
-      rhs.destroy
-      A.destroy
+    ! rhs.destroy
+    ! A.destroy
 
       if (.debugging("solve_normal_equations")) then
       stdout.text("shifts before renormalisation:")
@@ -4039,8 +4096,8 @@ contains
    ! covariance matrix has been transformed from a unique-fragment
    ! atom ordering to asymmetric-unit ordering.
 
-   ENSURE(.covariance_matrix.associated,"no covariance_matrix")
-   ENSURE(.esd.associated,"no esd")
+   ENSURE(.covariance_matrix.allocated,"no covariance_matrix")
+   ENSURE(.esd.allocated,"no esd")
    ENSURE(.dX.associated,"no dX")
    ENSURE(.esd.dim==.covariance_matrix.dim1,"esd, covariance_mx mismatch")
    ENSURE(.esd.dim==.dX.dim,                "esd, dX mismatch")
@@ -4117,8 +4174,8 @@ contains
    ! Update the esd's for the current fit.
    ! NOTE: must have updated X_ref and X_ref0
 
-   ENSURE(.covariance_matrix.associated,"no covariance_matrix")
-   ENSURE(.esd.associated,"no esd")
+   ENSURE(.covariance_matrix.allocated,"no covariance_matrix")
+   ENSURE(.esd.allocated,"no esd")
    ENSURE(.dX.associated, "no dX")
    ENSURE(.esd.dim==.covariance_matrix.dim1,"esd, covariance_mx mismatch")
    ENSURE(.esd.dim==.dX.dim,                "esd, dX mismatch")
@@ -4543,7 +4600,10 @@ contains
                        AND .fit_iteration>=.min_iterations
 
       ! chi2 inceased?
-      .chi2_increased = .chi2_fit>.chi2_fit0 AND .fit_iteration>.min_iterations
+      ! Florian here: Added TOL(14) due to differences between machines and also # of CPUs
+      ! when running tests, as numerical difference was giving problems, plase tell me if
+      ! this is reasonable!!!! (@Dylan and @Peter)
+      .chi2_increased = .chi2_fit>.chi2_fit0 + TOL(14) AND .fit_iteration>.min_iterations
 
       ! Roll back the parameters is chi2 increases
       ! WARNING: covariances are not rolled back ...
@@ -4807,7 +4867,7 @@ contains
          stdout.show("No. of near-zero eigenvalues  =",.n_near_0)
 
 
-      if (.near_0_eigenvectors.associated) then
+      if (.near_0_eigenvectors.allocated) then
       if (.n_near_0>0) then
 
          stdout.flush
@@ -4885,6 +4945,7 @@ contains
       stdout.show("refine_structure?             =",.refine_structure)
       stdout.show("refine_F?                     =",.refine_F)
       stdout.show("refine_positions_only?        =",.refine_positions_only)
+      stdout.show("refine_H_positions            =",.refine_H_positions)
       stdout.show("refine_ADPs_only?             =",.refine_ADPs_only)
       stdout.show("refine_H_ADPs?                =",.refine_H_ADPs)
       stdout.show("refine_H_U_iso?               =",.refine_H_U_iso)
@@ -5947,6 +6008,28 @@ contains
 
    end
 
+   F_pred_complex(optimize) result (res)
+   ! The predicted structure factors including the complex phase.
+   ! NOTE: this routine does *not* reset .chi2
+      self :: INOUT
+      optimize :: BIN, optional
+      res :: VEC{CPX}(size(.reflections))
+
+   ENSURE(.reflections.associated,"no reflection data")
+
+      opt :: BIN
+
+      opt = FALSE
+      if (present(optimize)) opt = optimize
+
+      ! Get optimum corrections if asked ...
+      if (opt) .get_F_optimum_parameters
+   
+      ! Multiply scale factor
+      res = .reflections.F_calc * .F_extinction_correction
+   
+   end
+
    I_pred result (res) ::: PURE
    ! The predicted intensities
       self :: IN
@@ -6018,7 +6101,7 @@ contains
    F_exp_on_absolute_scale result (res) ::: PURE
    ! The experimental structure factors F_exp corrected by the
    ! scale_factor(s) and extinction, to be on an absolute scale.
-   ! NOTE: Dispersion *not* removed, see F_scaled_corrected in CRYSTAL.
+   ! NOTE: Dispersion *not* removed, see F_exp_scaled_corrected in CRYSTAL.
       self :: IN
       res :: VEC{REAL}(size(.reflections))
 
@@ -6037,6 +6120,7 @@ contains
       res = .reflections.F_exp/fac
 
    end
+
 
    I_exp result (res) ::: PURE
    ! The experimental intensities
@@ -6153,56 +6237,56 @@ contains
    end
 
 
-   simulate_new_F_exp
-   ! Simulate a new experiment by adding normally distributed experimental
-   ! errors the the F_exp.
-      self :: INOUT
-
-   ENSURE(.reflection_data_exists,"no reflection data")
-   ENSURE(.have_F_exp,"no experimental structure factors")
-   ENSURE(.have_F_sigma,"no experimental structure factor errors")
-
-      F_exp :: VEC{REAL}*
-      n :: INT
-      chi2,z :: REAL
-
-      stdout.flush
-      stdout.text("Adding simulated errors to F_exp using F_sigma.")
-
-      F_exp.create(.n_refl)
-      F_exp = .reflections.F_exp
-
-      .reflections.simulate_new_F_exp
-
-      chi2 = ZERO
-      do n = 1,.n_refl
-         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
-         chi2 = chi2 + z*z
-      end
-      chi2 = chi2 / max(.n_refl - 1,1)
-
-      stdout.text("chi^2 of old F_exp to new F_exp is " // trim(chi2.to_str))
-      stdout.flush
-      stdout.dash(real_fields=4)
-      stdout.put("F_exp (old)")
-      stdout.put("F_exp (new)")
-      stdout.put("F_sigma")
-      stdout.put("dF/sigma")
-      stdout.flush
-      stdout.dash(real_fields=4)
-
-      do n=1,.n_refl
-         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
-         stdout.put(F_exp(n))
-         stdout.put(.reflections(n).F_exp)
-         stdout.put(.reflections(n).F_sigma)
-         stdout.put(z)
-         stdout.flush
-      end
-
-      stdout.dash(real_fields=4)
-      F_exp.destroy
-
-   end
+!   simulate_new_F_exp
+!   ! Simulate a new experiment by adding normally distributed experimental
+!   ! errors the the F_exp.
+!      self :: INOUT
+!
+!   ENSURE(.reflection_data_exists,"no reflection data")
+!   ENSURE(.have_F_exp,"no experimental structure factors")
+!   ENSURE(.have_F_sigma,"no experimental structure factor errors")
+!
+!      F_exp :: VEC{REAL}*
+!      n :: INT
+!      chi2,z :: REAL
+!
+!      stdout.flush
+!      stdout.text("Adding simulated errors to F_exp using F_sigma.")
+!
+!      F_exp.create(.n_refl)
+!      F_exp = .reflections.F_exp
+!
+!      .reflections.simulate_new_F_exp
+!
+!      chi2 = ZERO
+!      do n = 1,.n_refl
+!         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
+!         chi2 = chi2 + z*z
+!      end
+!      chi2 = chi2 / max(.n_refl - 1,1)
+!
+!      stdout.text("chi^2 of old F_exp to new F_exp is " // trim(chi2.to_str))
+!      stdout.flush
+!      stdout.dash(real_fields=4)
+!      stdout.put("F_exp (old)")
+!      stdout.put("F_exp (new)")
+!      stdout.put("F_sigma")
+!      stdout.put("dF/sigma")
+!      stdout.flush
+!      stdout.dash(real_fields=4)
+!
+!      do n=1,.n_refl
+!         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
+!         stdout.put(F_exp(n))
+!         stdout.put(.reflections(n).F_exp)
+!         stdout.put(.reflections(n).F_sigma)
+!         stdout.put(z)
+!         stdout.flush
+!      end
+!
+!      stdout.dash(real_fields=4)
+!      F_exp.destroy
+!
+!   end
 
 end

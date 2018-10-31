@@ -261,6 +261,7 @@ contains
 
       ! Mulliken analysis (leaky)
       .:put_mulliken_populations
+      .:put_Mayer_bond_indices
 
       ! Moments
       .:put_dipole
@@ -317,8 +318,6 @@ contains
 
    end
 
-
-
    put_1e_properties_for_groups ::: leaky
    ! Put all the one electron properties for each group
       self :: INOUT
@@ -347,6 +346,276 @@ contains
       end
 
    end
+
+!  Mayer bond indices
+
+   put_Mayer_bond_indices ::: leaky
+   ! Write out the Mayer bond indices
+      self :: INOUT
+
+   ENSURE(.density_matrix.created,"no density matrix")
+   ENSURE(.density_matrix.restricted.created,"only for restricted densities")
+
+      table :: VEC{TABLE_COLUMN}*
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+      a,b,fa,la,fb,lb :: INT
+      PD, Q,Z,V,F :: VEC{REAL}*
+      PS,BO :: MAT{REAL}*
+      pair :: MAT{INT}*
+      symbols,labels :: MAT{STR}*
+      dash,dsh1 :: VEC{STR}*
+      dist,bAB :: VEC{REAL}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+
+      no_of_bonds = .atom.no_of_bonds(ROBY_BOND_RANGE_FACTOR)
+      if (no_of_bonds<1) return
+
+      if (.scfdata.created) then
+      if (.scfdata.spinorbital_kind/="restricted") then
+         return ! Do not do for anything but restricted for now
+      end
+      end
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Overlap matrix (leaky)
+      .INTS:make_overlap_matrix
+
+      ! Restricted Mulliken matrix
+      PS.create(.n_bf,.n_bf)
+      PS.to_product_of(.density_matrix.restricted,.overlap_matrix)
+
+      ! Mulliken diagonal populations
+      PD.create(.n_bf)
+      PS.put_diagonal_to(PD)
+      
+      ! Bond orders etc.
+      BO.create(.n_atom,.n_atom)
+      Q.create(.n_atom)
+      Z.create(.n_atom)
+      V.create(.n_atom)
+      F.create(.n_atom)
+
+      do a = 1,.n_atom
+
+         fa = .first_basis_fn_for_atom(a)
+         la =  .last_basis_fn_for_atom(a)
+
+         ! Mullken population & charge
+         Q(a) = sum(PD(fa:la))
+         Z(a) = -Q(a) + .atom(a).nuclear_charge
+
+         ! Bond orders
+         do b = 1,.n_atom
+
+            fb = .first_basis_fn_for_atom(b)
+            lb =  .last_basis_fn_for_atom(b)
+
+            BO(a,b) = PS(fa:la,fb:lb).trace_product_with(PS(fb:lb,fa:la))
+
+         end
+
+         ! Valences
+         V(a) = TWO*Q(a) - BO(a,a)
+
+         ! Make free valences
+         F(a) = V(a)
+         do b = 1,.n_atom
+            if (b/=a) then
+               F(a) = F(a) - BO(a,b)
+            end
+         end
+
+      end
+
+      ! Title
+      stdout.flush
+      stdout.text("=========================================")
+      stdout.text("Mayer populations, valences & bond orders")
+      stdout.text("=========================================")
+
+      stdout.flush
+      stdout.text(". These bond indices and valences are defined in:")
+      stdout.text("  Mayer (1986) Int. J. QUantum Chem. 29 p 477-83.")
+      stdout.flush
+      stdout.text(". Indices appear only for atom pairs which are connected")
+      stdout.text("  according to the Cambridge Structural Database (CSD).")
+
+      stdout.flush
+      stdout.show("No. of bonds =",no_of_bonds)
+
+      stdout.flush
+
+      ! Create table
+      table.create(5)
+      table(1).set_heading("Atom")
+      table(1).set_width_from(.atom.chemical_symbols)
+      table(2).set_heading("Mulliken")
+      table(2).set_subhead("Pop")
+      table(3).set_heading("Charge")
+      table(4).set_heading("  Mayer")
+      table(4).set_subhead("Valence")
+      table(5).set_heading("   Free")
+      table(5).set_subhead("Valence")
+
+      ! Set data
+      labels.create(.n_atom,1)
+      labels(:,1) = .atom(:).tag
+      table(1).set_values(labels(:,1))
+      table(2).set_values(Q)
+      table(3).set_values(Z)
+      table(4).set_values(V)
+      table(5).set_values(F)
+
+      ! Put
+      table.put(label_rows=FALSE)
+
+      ! Clean
+      labels.destroy
+      table.clear_columns
+      table.destroy
+
+
+
+      ! Put bond indices
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(8)
+
+      ! Set the table headings
+      table(1).set_heading("A")
+      table(1).set_width_from(.atom.chemical_symbols)
+
+      table(2).set_spacing(0)
+      table(2).set_heading("--")
+      table(2).set_width(2)
+
+      table(3).set_heading("B")
+      table(3).set_width(table(1).width)
+      table(3).set_left_justify(TRUE)
+
+      table(4).set_heading("A")
+      table(4).set_width_from(.atom(:).tag)
+
+      table(5).set_spacing(0)
+      table(5).set_heading("--")
+      table(5).set_width(2)
+
+      table(6).set_heading("B")
+      table(6).set_width(table(4).width)
+      table(6).set_left_justify(TRUE)
+
+      table(7).set_heading("R(A--B)")
+      table(7).set_subheading("/Angs.")
+      table(7).set_width_from(ONE)
+
+      table(8).set_heading(" Bond")
+      table(8).set_subhead("order")
+      table(8).set_width_from(TEN)
+
+      ! Put out the headings
+      stdout.flush
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,ROBY_BOND_RANGE_FACTOR)
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Element symbols
+         symbols.create(n_bonds,2)
+         symbols = " "
+         symbols(1,1) = .atom(Z_list(k1)[1]).chemical_symbol
+         symbols(1,2) = .atom(Z_list(k2)[1]).chemical_symbol
+
+         ! Dashes
+         dash.create(n_bonds)
+         dsh1.create(n_bonds)
+         dash    = "--"
+         dsh1    = "  "
+         dsh1(1) = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         bAB.create(n_bonds)
+         do i = 1,n_bonds
+         bAB(i) = BO(pair(i,1),pair(i,2))
+         end
+
+         ! Set table data
+         table(1).set_values(symbols(:,1))
+         table(2).set_values(dsh1)
+         table(3).set_values(symbols(:,2))
+         table(4).set_values(labels(:,1))
+         table(5).set_values(dash)
+         table(6).set_values(labels(:,2))
+         table(7).set_values(dist)
+         table(8).set_values(bAB)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+
+         bAB.destroy
+         labels.destroy
+         dsh1.destroy
+         dash.destroy
+         symbols.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Z_list.destroy
+
+      F.destroy
+      V.destroy
+      Q.destroy
+      BO.destroy
+      PD.destroy
+      PS.destroy
+
+   end
+
+!  Mulliken populations
 
    put_mulliken_populations ::: leaky
    ! sets the mulliken population matrix and the outputs it.
@@ -461,80 +730,118 @@ contains
 
    end
 
-   put_mulliken_populations(mulliken_matrix, diagonals)
-   ! outputs the mulliken populations to the output file
+   put_mulliken_populations(mulliken_matrix,diagonals)
+   ! Output the Mulliken populations
+      self :: IN
+      mulliken_matrix :: MAT{REAL}, IN
+      diagonals :: VEC{REAL}, IN
 
-  ! ENSURE(NOT .use_spherical_basis,"not implemented")
+      table :: VEC{TABLE_COLUMN}*
+      tags,lmom :: VEC{STR}*
+      pops,chrg :: VEC{REAL}*
+      off, a,b,c, fa,la,n_bf :: INT
 
-      mulliken_matrix :: MAT{REAL}
-      diagonals :: VEC{REAL}
-      atom_pop :: VEC{REAL}*
-      pop :: REAL
-      o_count, a, b, c, n_comp :: INT
+      ! Atomic data
+      pops.create(.n_atom)
+      chrg.create(.n_atom)
 
-      stdout.flush
-      stdout.text("Mulliken population analysis: ")
-      stdout.dash(int_fields=2,real_fields=1)
-      stdout.put("Atom", int_width = TRUE)
-      stdout.put("Type", int_width = TRUE)
-      stdout.put("Population")
-      stdout.flush
-      stdout.dash(int_fields=2,real_fields=1)
+      ! Basis-fn data
+      tags.create(.n_bf)
+      lmom.create(.n_bf)
 
-      o_count = 1
-      atom_pop.create(.n_atom)
-      atom_pop = ZERO
+      off = 0 
 
-      do a = 1, .n_atom
-      do b = 1, .atom(a).basis.n_shell
+      do a = 1,.n_atom
 
-         if (.use_spherical_basis) then
-            n_comp = .atom(a).basis.shell(b).n_sph
-         else
-            n_comp = .atom(a).basis.shell(b).n_comp
-         end if
+         ! Mulliken population & charge
+         fa = .first_basis_fn_for_atom(a)
+         la =  .last_basis_fn_for_atom(a)
+         pops(a) = sum(diagonals(fa:la))
+         chrg(a) = .atom(a).nuclear_charge - pops(a)
 
-         do c = 1, n_comp
-            stdout.put(.atom(a).label, int_width = TRUE)
-            stdout.put(.atom(a).basis.shell(b).l_chr, int_width = TRUE)
-            pop = diagonals(c + o_count - 1)
-            stdout.put(pop)
-            atom_pop(a) = atom_pop(a) + pop
-            stdout.flush
+         ! Symbols for each basis fn.
+         do b = 1,.atom(a).basis.n_shell
+
+            n_bf = .atom(a).basis.shell(b).n_bf
+            do c = 1,n_bf
+               tags(off+c) = .atom(a).tag
+               lmom(off+c) = .atom(a).basis.shell(b).l_chr
+            end
+
+            off = off + n_bf
+
          end
 
-         o_count = o_count + n_comp
-
-      end
       end
 
-      stdout.dash(int_fields=2,real_fields=1)
+
+      ! Title
       stdout.flush
-
+      stdout.text("===================================")
+      stdout.text("Mulliken basis-function populations")
+      stdout.text("===================================")
+      stdout.flush
       stdout.show("Trace of the Mulliken matrix =",mulliken_matrix.trace)
       stdout.flush
-      stdout.text("Atomic Populations: ")
-      stdout.flush
-      stdout.dash(int_fields=1, real_fields=2)
-      stdout.put("Atom", int_width = TRUE)
-      stdout.put("Population")
-      stdout.put("Charge")
-      stdout.flush
-      stdout.dash(int_fields=1, real_fields=2)
 
-      do a = 1, .n_atom
-         stdout.put(.atom(a).label, int_width = TRUE)
-         stdout.put(atom_pop(a))
-         stdout.put(.atom(a).atomic_number-atom_pop(a))
-         stdout.flush
-      end
-      stdout.dash(int_fields=1, real_fields=2)
+      ! Create table
+      table.create(3)
+      table(1).set_heading("Atom")
+      table(1).set_width_from(.atom.chemical_symbols)
+      table(2).set_heading("Basis")
+      table(2).set_subhead("func.")
+      table(3).set_heading("Mulliken")
+      table(3).set_subhead("    Pop.")
 
-      atom_pop.destroy
+      ! Set data
+      table(1).set_values(tags)
+      table(2).set_values(lmom)
+      table(3).set_values(diagonals)
+
+      ! Put
+      table.put(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      lmom.destroy
+      tags.destroy
+
+
+      stdout.flush
+      stdout.text("===========================")
+      stdout.text("Mulliken atomic populations")
+      stdout.text("===========================")
+      stdout.flush
+      stdout.show("Sum of the Mulliken populations =",sum(pops))
+      stdout.show("Sum of the Mulliken charges     =",sum(chrg))
       stdout.flush
 
-    ! stdout.text("Mulliken matrix:")
-    ! stdout.put(mulliken_matrix)
+      ! Create table
+      table.create(3)
+      table(1).set_heading("Atom")
+      table(1).set_width_from(.atom.chemical_symbols)
+      table(2).set_heading("Mulliken")
+      table(2).set_subhead("    Pop.")
+      table(3).set_heading("Mulliken")
+      table(3).set_subhead("  charge")
+
+      ! Set data
+      tags.create(.n_atom)
+      tags = .atom(:).tag
+      table(1).set_values(tags)
+      table(2).set_values(pops)
+      table(3).set_values(chrg)
+
+      ! Put
+      table.put(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      tags.destroy
+      chrg.destroy
+      pops.destroy
 
    end
 
@@ -664,6 +971,8 @@ contains
 
 
    end
+
+!  Spin expectation values
 
    get_uhf_sx_sy_sz ::: leaky
    ! evaluation of expectation values of sigma_x, sigma_y and sigma_z
@@ -1836,6 +2145,8 @@ contains
 
    end
 
+!  Charge multipoles
+
    put_dipole
    ! Put out the dipole to stdout
 
@@ -1851,7 +2162,9 @@ contains
       total      = electronic + nuclear
 
       stdout.flush
-      stdout.text("Dipole moments:")
+      stdout.text("==============")
+      stdout.text("Dipole moments")
+      stdout.text("==============")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=6)
       stdout.tab(int_fields=1)
@@ -1931,7 +2244,9 @@ contains
       total      = electronic + nuclear
 
       stdout.flush
-      stdout.text("Quadrupole moments:")
+      stdout.text("==================")
+      stdout.text("Quadrupole moments")
+      stdout.text("==================")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=6)
       stdout.tab(int_fields=1)
@@ -1995,7 +2310,9 @@ contains
       total      = electronic + nuclear
 
       stdout.flush
-      stdout.text("Octupole moments:")
+      stdout.text("================")
+      stdout.text("Octupole moments")
+      stdout.text("================")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=6)
       stdout.tab(int_fields=1)
@@ -2027,6 +2344,8 @@ contains
       end
       stdout.dash(int_fields=1,real_fields=6)
    end
+
+! Field gradient
 
    put_E_field_at_nuclei
    ! Put out the electric field at every nuclear position
@@ -2352,6 +2671,9 @@ contains
 
    end
 
+!  Structure factor populations
+!  What is this? --dylan
+
    put_mulliken_sf_populations 
    ! makes the mulliken population analysis of structure factors
       density,k_pts :: MAT{REAL}*
@@ -2624,8 +2946,13 @@ contains
 
       ! Write results in au
       stdout.flush
-      stdout.text("Hirshfeld atom charges and Hirshfeld atom dipole moments (au):")
+      stdout.text("=========================================")
+      stdout.text("Hirshfeld atom charges and dipole moments")
+      stdout.text("=========================================")
       stdout.flush
+      stdout.text("The data below are in atomic units")
+      stdout.flush
+
       stdout.dash(int_fields=1,real_fields=5)
       stdout.tab(int_fields=1)
       stdout.put("q")
@@ -2661,8 +2988,13 @@ contains
 
       ! Write results in Debye
       stdout.flush
-      stdout.text("Hirshfeld atom charges and Hirshfeld atom dipole moments (Debye):")
+      stdout.text("=========================================")
+      stdout.text("Hirshfeld atom charges and dipole moments")
+      stdout.text("=========================================")
       stdout.flush
+      stdout.text("The data below are in Debye units")
+      stdout.flush
+
       stdout.dash(int_fields=1,real_fields=5)
       stdout.tab(int_fields=1)
       stdout.put("q")
@@ -2696,7 +3028,9 @@ contains
 
       ! Write results in au
       stdout.flush
-      stdout.text("Hirshfeld atom quadrupole moments (au):")
+      stdout.text("=================================")
+      stdout.text("Hirshfeld atom quadrupole moments")
+      stdout.text("=================================")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=6)
       stdout.tab(int_fields=1)
@@ -3785,6 +4119,503 @@ contains
 
    end
 
+   intermolecular_polarization_energy(mol_B) result(res) ::: leaky
+   ! Calculate the 1-2 polarization term
+   ! Atomic polarizabilities from Thakkar and Lupinetti (2006)
+      self :: PTR
+      mol_B :: MOLECULE*
+      res :: REAL
+   ENSURE(.atom_group.associated,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
+   ENSURE(.atom_group(1).mol.density_matrix.associated ,"no mol 1 DM!")
+   ENSURE(.atom_group(2).mol.density_matrix.associated ,"no mol 2 DM!")
+
+      E_pol :: REAL
+      mol_A :: MOLECULE* 
+      electronic_at_A, nuclear_at_A, total_at_A, electronic_at_B, nuclear_at_B, total_at_B :: MAT{REAL}*
+      F_sq_A, F_sq_B :: VEC{REAL}*
+
+      ! A & B molecules
+      mol_A => self
+
+      ! Electric field from B at A
+      electronic_at_A.create(3,mol_A.n_atom)
+      nuclear_at_A.create(3,mol_A.n_atom)
+      total_at_A.create(3,mol_A.n_atom)
+
+      electronic_at_A =  mol_B.INTS:electronic_E_field_at_atoms(mol_A.atom)
+      nuclear_at_A    = mol_B.INTS:nuclear_E_field_at_atoms(mol_A.atom)
+      total_at_A      = electronic_at_A + nuclear_at_A
+
+      ! Electric field from A at B
+      electronic_at_B.create(3,mol_B.n_atom)
+      nuclear_at_B.create(3,mol_B.n_atom)
+      total_at_B.create(3,mol_B.n_atom)
+
+      electronic_at_B = mol_A.INTS:electronic_E_field_at_atoms(mol_B.atom)
+      nuclear_at_B    = mol_A.INTS:nuclear_E_field_at_atoms(mol_B.atom)
+      total_at_B      = electronic_at_B + nuclear_at_B
+
+      ! Magnitude of the electric field squared
+      F_sq_A.create(total_at_A.dim2)
+      F_sq_B.create(total_at_B.dim2)
+
+      F_sq_A = total_at_A.column_norms
+      F_sq_A = F_sq_A**2
+      F_sq_B = total_at_B.column_norms
+      F_sq_B = F_sq_B**2
+
+      ! Polarization Energy
+      E_pol = ZERO
+      E_pol = E_pol + mol_A.atom.polarization_energy(F_sq_A, &
+                        ((mol_A.charge /= 0) AND (mol_A.n_atom == 1)))
+      E_pol = E_pol + mol_B.atom.polarization_energy(F_sq_B, &
+                        ((mol_B.charge /= 0) AND (mol_B.n_atom == 1)))
+
+      res = E_pol
+
+      ! Tidy up
+      electronic_at_A.destroy
+      nuclear_at_A.destroy
+      total_at_A.destroy
+
+      electronic_at_B.destroy
+      nuclear_at_B.destroy
+      total_at_B.destroy
+
+      F_sq_A.destroy
+      F_sq_B.destroy
+
+   end
+
+
+   intermolecular_overlap_repulsion(mol_B) result(res)
+      self :: PTR
+      mol_B :: MOLECULE*
+      res :: REAL
+   ! Calculate the exchange-repulsion energy based on the following
+   ! overlap formula (see Soderhjelm et al. JCP 124 (2006) eq. 14)
+   ! E = S^2 (1 + 20 e ^(-R))
+      mol_A :: MOLECULE*
+      S2, S :: REAL
+      X, Y :: MAT{REAL}@
+      i, j, a, b, n_a, n_b :: INT
+      exchange_factor = -HALF :: REAL
+
+      merged :: MOLECULE*
+      MO_a, MO_b :: MAT{REAL}@
+      S_ab :: MAT{REAL}*
+
+      mol_A => self
+      merged.BASE:create_from_mols(mol_A, mol_B)
+
+      merged.SCF:merge_group_MOs
+      merged.scfdata.set_output(FALSE)
+
+      ! Make SCF density matrices
+      merged.INTS:make_overlap_matrix
+
+
+      ! Overlap between phi_i and phi_j
+      ! = sum_{a b} c_{a i} S_{ab} c_{b j}
+      S2 = ZERO
+      n_a = mol_A.occupation_numbers.restricted(1:).index_of_first_zero_value - 1
+      n_b = mol_B.occupation_numbers.restricted(1:).index_of_first_zero_value - 1
+
+      allocate(MO_a(merged.n_bf, n_a))
+      allocate(MO_b(merged.n_bf, n_b))
+      MO_a = ZERO
+      MO_b = ZERO
+      MO_a(:.n_bf, :) = .molecular_orbitals.restricted(:,1:n_a)
+      MO_b(.n_bf+1:, :) = mol_B.molecular_orbitals.restricted(:,1:n_b)
+      S_ab => merged.overlap_matrix
+
+
+
+!     do a = 1, n_a
+!         do b = 1, n_b
+!             S = ZERO
+!             do i = 1, mol_A.n_bf
+!                 do j = 1, mol_B.n_bf
+!                     S = S + MO_a(i,a) * S_ab(a, .n_bf + b) * MO_b(j, b)
+!                 end do
+!             end do
+!             S2 = S2 + S*S
+!       end do
+!     end do
+      Y = matmul(S_ab, MO_b(:,:))
+      X = matmul(transpose(MO_a(:,:)), Y)
+      S2 = sum(X*X)
+
+      res = 0.92 * S2
+      stdout.show("Overlap repulsion", res)
+      nullify(merged.atom_group(1).mol)
+      nullify(merged.atom_group(2).mol)
+      merged.BASE:destroy
+  end
+
+   symmetric_intermolecular_qm_energies(mol_B, monomer_energies) result(res) 
+    ! Calculate the group 1-2 interaction energies.
+    ! monomer energies is a vector if TWO * -monomer energies
+    ! Effectively avoiding calculating the expectations for the
+    ! monomers each time
+
+    !!!! IF mol_B and  self are symmetry related !!!!
+
+    ! For simplicity the notations follows the reference:
+    ! P. Su & H. Li (2009) JCP 131 p. 014102
+    ! It has references to the original work and is explained fairly
+    ! clearly, except for their use of "X" for supermolecule (X=AB).
+    ! NOTE: make sure the MO's and density matrices for each group exist!
+
+      self :: PTR
+      mol_B :: MOLECULE*
+      monomer_energies :: VEC{REAL}(4) ! E_en, E_1e, E_ee, E_ex
+      res :: VEC{REAL}(2) ! E_coul, E_rep
+
+      ! Terms regardless of unrestricted/restricted
+      E_en,E_ke,E_1e,E_nn,E_ee,E_ex,r :: REAL
+      E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
+      E_rep_overlap :: REAL
+      P :: OPMATRIX* 
+      J :: OPMATRIX*
+      K :: OPMATRIX*
+      mol_A :: MOLECULE*
+      saved_MOs_A, saved_MOs_B :: OPMATRIX*
+      exchange_factor :: REAL = -HALF
+      timer :: TIME
+
+      merged :: MOLECULE*
+
+
+      ! A & B molecules
+      mol_A => self
+
+     mol_A.atom.get_distance_to(mol_B.atom, r)
+     ! If the molecules are too far apart use multipoles
+     ! Set to use where the minimum separation is nearly 8 A
+     ! E_rep_overlap = .:intermolecular_overlap_repulsion(mol_B)
+     if (r > 13.6) then ! 7.2 Angstroms
+        res = ZERO
+        res(1) = .:intermolecular_coulomb_atomic_multipole_energy(mol_B)
+        return
+     end
+
+
+
+      ! Hacky method to reuse code, should be rewritten
+      merged.BASE:create_from_mols(mol_A, mol_B)
+
+
+      saved_MOs_A => mol_A.molecular_orbitals
+      saved_MOs_B => mol_B.molecular_orbitals
+
+      mol_A.molecular_orbitals => mol_A.natural_orbitals
+      mol_B.molecular_orbitals => mol_B.natural_orbitals
+      mol_A.scfdata.set_scf_kind(mol_A.molecular_orbitals.spinorbital_kind)
+      mol_B.scfdata.set_scf_kind(mol_B.molecular_orbitals.spinorbital_kind)
+
+      merged.SCF:merge_group_MOs
+      merged.scfdata.set_output(FALSE)
+      if (merged.scfdata.is_restricted) then
+         exchange_factor = -QUARTER
+      end if
+
+      ! Make SCF density matrices
+     merged.BASE:make_scf_density_matrix
+
+      ! Make integrals
+     merged.SCF:make_core_matrix
+
+      ! >> Nuclear attraction energy << 
+     merged.nuclear_attraction_matrix.uncompress
+
+      E_ABn = ZERO; E_ABo = ZERO; 
+      E_en = ZERO; E_1e = ZERO;
+      E_ex = ZERO; E_nn = ZERO;
+      E_ke = ZERO;
+
+      P   => merged.nuclear_attraction_matrix
+
+      E_en = merged.BASE:expectation(P) + monomer_energies(1)
+
+      merged.nuclear_attraction_matrix.compress
+
+      ! Non-orthogonal & orthogonalized electronic energies
+
+      ! One electron hamiltonian
+      P   => merged.core_matrix
+
+      ! >> One electron interaction energy <<
+      E_1e = merged.BASE:expectation(P)
+      E_ABn = E_ABn + E_1e
+      E_1e = E_1e + monomer_energies(2)
+      E_ke = E_1e - E_en
+
+      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+
+      ! Two-electron matrices
+      P   => merged.density_matrix
+
+      merged.FOCK:make_JK_engine(J  ,K  ,P  )
+
+      ! Alpha density matrix with beta, beta density matrix with alpha
+      E_ee = merged.BASE:expectation(J) * HALF
+      E_ABn = E_ABn + E_ee
+      E_ee = E_ee + monomer_energies(3)
+      E_ex = merged.BASE:expectation(K) * exchange_factor
+!      E_rep_overlap = mol_A.:intermolecular_overlap_repulsion(mol_B)
+      E_ABn = E_ABn + E_ex
+      E_ex = E_ex + monomer_energies(4)
+
+
+      ! >> Nuclear-nuclear repulsion energy term <<
+      E_nn = merged.:group_12_NR_int_energy
+      ! >> Electron repulsion energy term <<
+
+      ! >> Total <<
+      E_tot = E_ke + E_nn + E_en + E_ee + E_ex
+      E_net =        E_nn + E_en + E_ee
+
+
+      ! ======================
+      ! Now symmorthonormalize
+      ! ======================
+
+      merged.SCF:symmorthonormalize_occupied_MOs
+      merged.BASE:make_scf_density_matrix
+
+      ! One electron hamiltonian
+      P    => merged.core_matrix
+      E_ABo = merged.BASE:expectation(P)
+
+      ! Two-electron integrals
+      J.destroy; K.destroy
+      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+
+      P => merged.density_matrix
+      merged.FOCK:make_JK_engine(J, K, P)
+
+      E_ABo = E_ABo +    HALF * merged.BASE:expectation(J, TRUE)
+      E_ABo = E_ABo + exchange_factor * merged.BASE:expectation(K)
+!      stdout.show("E_exchange-rep", exchange_factor * merged.BASE:expectation(K) - E_ex + monomer_energies(4))
+!      stdout.show("E_rep_overlap", E_rep_overlap)
+      ! Get repulsion energy
+      E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
+      E_XR  = E_ex + E_rep
+
+
+      ! Clean up remaining temporaries
+
+      res = [E_net, E_XR]
+      if (abs(E_XR) <0.00001) then
+          stdout.show("Extremely small repulsion (could have avoided calculation)", &
+                      E_XR * KJOULEMOL_PER_HARTREE)
+          stdout.show("E_ele", E_net * KJOULEMOL_PER_HARTREE)
+          stdout.show("separation", r * ANGSTROM_PER_BOHR)
+      end if
+
+      J.destroy; K.destroy
+      merged.molecular_orbitals.destroy
+      merged.natural_orbitals.destroy
+      merged.density_matrix.destroy
+
+      mol_A.molecular_orbitals => saved_MOs_A
+      mol_B.molecular_orbitals => saved_MOs_B
+
+      ! need to destroy but don't want to destroy atom_group
+      nullify(merged.atom_group(1).mol)
+      nullify(merged.atom_group(2).mol)
+      merged.BASE:destroy
+
+   end
+
+
+   intermolecular_qm_energies(mol_B) result(res)
+   ! Calculate the group 1-2 interaction energies.
+   ! For simplicity the notations follows the reference:
+   ! P. Su & H. Li (2009) JCP 131 p. 014102
+   ! It has references to the original work and is explained fairly
+   ! clearly, except for their use of "X" for supermolecule (X=AB).
+   ! NOTE: make sure the MO's and density matrices for each group exist!
+      self :: PTR
+      res :: VEC{REAL}(2) ! E_coul, E_rep
+      mol_B :: MOLECULE*
+
+   ENSURE(.atom_group.associated,"no atom group information")
+   ENSURE(.atom_group.dim==2 ,"must have only 2 atom groups")
+   ENSURE(.atom_group(1).mol.density_matrix.associated, "no density matrix for atom group 1")
+   ENSURE(.atom_group(2).mol.density_matrix.associated, "no density matrix for atom group 2")
+   ENSURE(.atom_group(1).mol.molecular_orbitals.associated , "no molecular orbitals for atom group 1")
+   ENSURE(.atom_group(2).mol.molecular_orbitals.associated , "no molecular orbitals for atom group 2")
+
+      ! Terms regardless of unrestricted/restricted
+      E_en,E_ke,E_1e,E_nn,E_ee,E_ex,r :: REAL
+      E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
+      P,P_A,P_B :: OPMATRIX* 
+      J,J_A,J_B :: OPMATRIX*
+      K,K_A,K_B :: OPMATRIX*
+      mol_A :: MOLECULE*
+      saved_MOs_A, saved_MOs_B :: OPMATRIX*
+      exchange_factors :: VEC{REAL}(3) = [-HALF, -HALF, -HALF]
+
+      merged :: MOLECULE*
+
+
+      ! A & B molecules
+      mol_A => self
+
+      mol_A.atom.get_distance_to(mol_B.atom, r)
+     ! If the molecules are too far apart use multipoles
+     ! Set to use where the minimum separation is approximately 6.35 Angstrom
+     if (r > 13.6) then ! 7.2 Angstroms
+        res = ZERO
+        res(1) = .:intermolecular_coulomb_atomic_multipole_energy(mol_B)
+        return
+     end
+
+
+      ! Hacky method to reuse code, should be rewritten
+      merged.BASE:create_from_mols(mol_A, mol_B)
+
+
+      mol_A.INTS:make_overlap_matrix
+      mol_A.BASE:make_natural_orbitals
+      mol_B.INTS:make_overlap_matrix
+      mol_B.BASE:make_natural_orbitals
+
+      saved_MOs_A => mol_A.molecular_orbitals
+      saved_MOs_B => mol_B.molecular_orbitals
+
+      mol_A.molecular_orbitals => mol_A.natural_orbitals
+      mol_B.molecular_orbitals => mol_B.natural_orbitals
+      mol_A.scfdata.set_scf_kind(mol_A.molecular_orbitals.spinorbital_kind)
+      mol_B.scfdata.set_scf_kind(mol_B.molecular_orbitals.spinorbital_kind)
+
+      merged.SCF:merge_group_MOs
+      merged.scfdata.set_output(FALSE)
+      if (merged.scfdata.is_restricted) then
+         exchange_factors = -QUARTER
+      end if
+
+      if (mol_A.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(2) = -QUARTER
+      if (mol_B.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(3) = -QUARTER
+
+      ! Make SCF density matrices
+     merged.BASE:make_scf_density_matrix
+      mol_A.BASE:make_scf_density_matrix
+      mol_B.BASE:make_scf_density_matrix
+
+      ! Make integrals
+     merged.SCF:make_core_matrix
+      mol_A.SCF:make_core_matrix
+      mol_B.SCF:make_core_matrix
+
+      ! >> Nuclear attraction energy << 
+     merged.nuclear_attraction_matrix.uncompress
+      mol_A.nuclear_attraction_matrix.uncompress
+      mol_B.nuclear_attraction_matrix.uncompress
+
+      E_ABn = ZERO; E_ABo = ZERO; 
+      E_en = ZERO; E_1e = ZERO;
+      E_ex = ZERO; E_nn = ZERO;
+      E_ke = ZERO;
+
+      P   => merged.nuclear_attraction_matrix
+      P_A => mol_A.nuclear_attraction_matrix
+      P_B => mol_B.nuclear_attraction_matrix
+
+      E_en = merged.:group_12_int_energy(P, P_A, P_B)
+
+      merged.nuclear_attraction_matrix.compress
+      mol_A.nuclear_attraction_matrix.compress
+      mol_B.nuclear_attraction_matrix.compress
+
+      ! Non-orthogonal & orthogonalized electronic energies
+
+      ! One electron hamiltonian
+      P   => merged.core_matrix
+      P_A => mol_A.core_matrix
+      P_B => mol_B.core_matrix
+
+      ! >> One electron interaction energy <<
+      E_1e = merged.:group_12_int_energy(P, P_A, P_B, E_AB=E_ABn)
+      E_ke = E_1e - E_en
+
+      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      J_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
+      K_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
+      J_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
+      K_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
+
+
+      ! Two-electron matrices
+      P   => merged.density_matrix
+      P_A => mol_A.density_matrix
+      P_B => mol_B.density_matrix
+
+      merged.FOCK:make_JK_engine(J  ,K  ,P  )
+      mol_A.FOCK:make_JK_engine(J_A,K_A,P_A)
+      mol_B.FOCK:make_JK_engine(J_B,K_B,P_B)
+
+      ! Alpha density matrix with beta, beta density matrix with alpha
+      E_ee = merged.:group_12_int_energy(J, J_A, J_B, HALF, E_ABn, TRUE)
+      E_ex = merged.:group_12_exchange_int_energy(K, K_A, K_B, exchange_factors, E_ABn)
+
+      K_A.destroy; K_B.destroy
+      J_A.destroy; J_B.destroy  
+
+      ! >> Nuclear-nuclear repulsion energy term <<
+      E_nn = merged.:group_12_NR_int_energy
+      ! >> Electron repulsion energy term <<
+
+      ! >> Total <<
+      E_tot = E_ke + E_nn + E_en + E_ee + E_ex
+      E_net =        E_nn + E_en + E_ee
+
+      ! ======================
+      ! Now symmorthonormalize
+      ! ======================
+
+      merged.SCF:symmorthonormalize_occupied_MOs
+      merged.BASE:make_scf_density_matrix
+
+      ! One electron hamiltonian
+      P    => merged.core_matrix
+      E_ABo = merged.BASE:expectation(P)
+
+      ! Two-electron integrals
+      J.destroy; K.destroy
+      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+
+      P => merged.density_matrix
+      merged.FOCK:make_JK_engine(J, K, P)
+
+      E_ABo = E_ABo +    HALF * merged.BASE:expectation(J, TRUE)
+      E_ABo = E_ABo + exchange_factors(1) * merged.BASE:expectation(K)
+
+      ! Get repulsion energy
+      E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
+      E_XR  = E_ex + E_rep
+
+      ! Clean up remaining temporaries
+      J.destroy; K.destroy
+
+      res = [E_net, E_XR]
+      ! In kJ/mol
+      mol_A.natural_orbitals.destroy
+      mol_B.natural_orbitals.destroy
+      mol_A.molecular_orbitals => saved_MOs_A
+      mol_B.molecular_orbitals => saved_MOs_B
+      merged.molecular_orbitals.destroy
+      merged.natural_orbitals.destroy
+      merged.density_matrix.destroy
+    end 
+
    put_group_12_energies ::: leaky
    ! Calculate the classical and QM group 1-2 interaction energies.
    ! NOTE: make sure the density matrices and MOs for each group exist!
@@ -3907,6 +4738,55 @@ contains
       quadrupoles_a.destroy; charges_b.destroy
       octupoles_a.destroy; charges_b.destroy
    end 
+
+   intermolecular_coulomb_atomic_multipole_energy(mol_B) result(E_coul)
+      self :: PTR
+      E_coul :: REAL
+      ! A & B molecules
+      mol_B :: MOLECULE*
+      ENSURE(.charges.associated, "no atomic charge information")
+      ENSURE(.dipoles.associated, "no atomic dipole information")
+      ENSURE(.quadrupoles.associated, "no atomic quadrupole information")
+      ENSURE(.octupoles.associated, "no atomic octupole information")
+      ENSURE(mol_B.charges.associated, "no atomic charge information")
+      ENSURE(mol_B.dipoles.associated, "no atomic dipole information")
+      ENSURE(mol_B.quadrupoles.associated, "no atomic quadrupole information")
+      ENSURE(mol_B.octupoles.associated, "no atomic octupole information")
+
+
+
+      E :: VEC{REAL}(5)
+      mol_A :: MOLECULE*
+      q_a, q_b :: REAL
+      m_a, m_b :: VEC{REAL}(3)
+      Qu_a, Qu_b :: MAT{REAL}(3,3)
+      O_a, O_b :: MAT3{REAL}(3,3,3)
+      i, j :: INT
+      T :: T_TENSOR
+
+      mol_A => self
+
+      E = ZERO
+
+      do i = 1, mol_A.n_atom
+         q_a = mol_A.atom(i).atomic_number - mol_A.charges(i)
+         m_a = mol_A.dipoles(i,:)
+         Qu_a = MAT{REAL}:expand_quadrupole(mol_A.quadrupoles(i,:))
+         O_a = MAT3{REAL}:expand_octupole(mol_A.octupoles(i,:))
+
+      do j = 1, mol_B.n_atom
+         q_b = mol_B.atom(j).atomic_number - mol_B.charges(j)
+         m_b = mol_B.dipoles(j,:)
+         Qu_b = MAT{REAL}:expand_quadrupole(mol_B.quadrupoles(j,:))
+         O_b = MAT3{REAL}:expand_octupole(mol_B.octupoles(j,:))
+
+         T.create(mol_A.atom(i).position, mol_B.atom(j).position)
+         E = E + T.interaction_energy(q_a, q_b, m_a, m_b, Qu_a, Qu_b, O_a, O_b)
+      end do
+      end do
+      E_coul = sum(E)
+   end 
+
 
 
    put_group_12_QM_energies ::: leaky
@@ -4317,9 +5197,11 @@ contains
       .SCF:make_ANO_data
       .SCF:make_NAOs
 
+      if (.roby.atom_group.destroyed) then
       if (.atom_group.associated) then
       if (.atom_group.has_atom_indices) then
          .roby.atom_group => .atom_group.atom_lists
+      end
       end
       end
 
@@ -4331,15 +5213,20 @@ contains
       case("atom_energy_bond_analysis")
          .roby.atom_energy_bond_analysis
 
+      case("atom_hyper_analysis       ")
+         .roby.atom_hyper_analysis
+
       case("group_bond_analysis      ")
          .roby.group_bond_analysis
+
+      case("group_hyper_analysis      ")
+         .roby.group_hyper_analysis
 
       case default;              UNKNOWN(.roby.roby_kind)
 
       end
 
    end
-
 
    put_KM_atom_multipoles
    ! Put the KM multipoles
@@ -4470,6 +5357,496 @@ contains
       quadrupole.destroy
       charge.destroy
       dipole.destroy
+
+   end
+
+!  =============
+!  Bader methods
+!  =============
+
+   get_Bader_regions
+   ! Calculate the electron density and integrate
+      self :: IN
+
+   ENSURE(.plot_grid.associated,"No plot_grid!")
+
+      n,nx,ny,nz :: INT
+      axes :: MAT{REAL}(3,3)
+      CP :: MAT3{INT}*
+      EDS,VOL :: VEC{REAL}*
+      grid :: VEC{REAL}*
+      g3 :: MAT3{REAL}*
+      pt :: MAT{REAL}*
+
+      nx = .plot_grid.n_x
+      ny = .plot_grid.n_y
+      nz = .plot_grid.n_z
+      n  = .plot_grid.n_pt
+
+      ! Make space for grid values and grid points
+      g3.create(nx,ny,nz)
+      grid.create(n)
+      pt.create(n,3)
+      
+      ! Make the grid points
+      .plot_grid.make_points(pt)
+      
+      ! Make the ED grid values
+      .GRID:make_density_grid_r(grid,pt)
+
+      ! Clean up
+      pt.destroy
+
+      ! Do it
+      axes = .plot_grid.plot_axes
+
+      g3=reshape(grid,[nx,ny,nz])
+#ifdef MPI
+      .:cubes_to_basin_parallel(g3,nx,ny,nz,.plot_grid.width,axes,CP,EDS,VOL)
+#else
+      .:cubes_to_basin(g3,nx,ny,nz,.plot_grid.width,axes,CP,EDS,VOL)
+#endif
+
+      ! Print results
+
+      ! Clean
+      VOL.destroy
+      EDS.destroy
+      CP.destroy
+      g3.destroy
+
+   end
+
+   cubes_to_basin(grid,nx,ny,nz,gridlength,gridvector,CP,EDS,VOL) ::: leaky
+   ! A tonto implementation of the cubes to basin code, originally
+   ! implemented by Florian from Tobias (spelling).
+    nx,ny,nz :: INT, IN
+    grid :: MAT3{REAL}, IN
+    gridlength :: VEC{REAL}(3), IN
+    gridvector :: MAT{REAL}(3,3), IN
+    CP :: MAT3{INT}*, OUT
+    EDS,VOL :: VEC{REAL}*, OUT
+
+    i,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
+    GradMax,distance,MaxVal,dv :: REAL
+    Max :: VEC{INT}(3)
+    List :: VEC{VEC_{INT}}*
+    ED :: MAT3{REAL}*
+    Maxima :: VEC{REAL}*
+
+    ED.create(nx+2,ny+2,nz+2)
+    CP.create(nx+2,ny+2,nz+2)
+    Maxima.create(1)
+    
+    ED = ZERO
+    ED(2:nx+1,2:ny+1,2:nz+1)=grid 
+    CP = ZERO
+    iCP = ZERO
+    GradMax = 1
+
+    do x=2,nx+1
+    do y=2,ny+1
+    do z=2,nz+1
+       if (CP(x,y,z) == ZERO) then
+       ! Only perform if critical direction not known
+          List.create(3,0)
+          ListMax = 0
+          ! Gives the length of the number of points in the
+          ! current list
+          
+          Max(1) = x
+          Max(2) = y
+          Max(3) = z
+
+          do while (NOT(GradMax == ZERO OR CP(Max(1),Max(2),Max(3)) > 0))
+             xs = Max(1)
+             ys = Max(2)
+             zs = Max(3)
+             MaxVal = ED(xs,ys,zs)
+             ListMax = ListMax + 1
+             
+             ! Appends to list if necessary
+             if(size(List(1).element) < ListMax) then
+                List(1).element.append(xs)
+             else
+                List(1).element(ListMax) = xs
+             end if
+             if(size(List(2).element) < ListMax) then
+                List(2).element.append(ys)
+             else
+                List(2).element(ListMax) = ys
+             end if
+             if(size(List(3).element) < ListMax) then
+                List(3).element.append(zs)
+             else
+                List(3).element(ListMax) = zs
+             end if
+
+             GradMax = 0
+
+             do ix = xs-1,xs+1
+             do iy = ys-1,ys+1
+             do iz = zs-1,zs+1
+
+                ! NOTE: Initial version used xs for all distances, if
+                ! errors are occurring consider altering zs and ys.
+                
+                distance = sqrt(((ix-xs)*gridlength(1))**2 &
+                         + ((iy-ys)*gridlength(2))**2      &
+                         + ((iz-zs)*gridlength(3))**2)
+                
+                if ((ED(ix,iy,iz) - ED(xs,ys,zs))/distance > GradMax) then
+                ! Determines the optimal gradient direction
+                   Max(1)  = ix
+                   Max(2)  = iy
+                   Max(3)  = iz
+                   MaxVal  = ED(ix,iy,iz)
+                   GradMax = (ED(ix,iy,iz)-ED(xs,ys,zs))/distance
+                end if
+             end do
+             end do
+             end do
+          end do
+       
+
+       if(CP(Max(1),Max(2),Max(3)) > 0) then
+          do i=1,ListMax
+             CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
+             CP(Max(1),Max(2),Max(3))
+          end do
+       else
+          if (iCP == ZERO) then
+             Maxima(1) = MaxVal
+          else
+             Maxima.append(MaxVal)
+          end if
+          iCP = iCP + 1
+          do i =1,ListMax
+             CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
+             iCP
+          end do
+       end if
+       do i=1,ListMax
+          CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
+          CP(Max(1),Max(2),Max(3))
+       end do
+       List.destroy
+       GradMax = 1
+       end if
+    end do
+    end do
+    end do
+    
+    do i=1,iCP
+    xs = 0
+    do x=2,nx+1
+    do y=2,ny+1
+    do z=2,nz+1
+       if(i==CP(x,y,z)) then
+          xs = xs + 1
+       end if
+    end do
+    end do
+    end do
+    stdout.show("Size of CP", xs)
+    end do
+
+    EDS.create(iCP)
+    VOL.create(iCP)
+    EDS = ZERO
+    VOL = ZERO
+
+    ! Cross product for the volume (or so I am told)
+    ! Divide by total number of points! Move to plot grid
+
+    dv = abs(gridvector(1,1)*gridvector(2,2)*gridvector(3,3) &
+       -     gridvector(3,1)*gridvector(2,2)*gridvector(1,3) &
+       +     gridvector(1,2)*gridvector(2,3)*gridvector(3,1) &
+       -     gridvector(3,2)*gridvector(2,3)*gridvector(1,1) &
+       +     gridvector(1,3)*gridvector(2,1)*gridvector(3,2) &
+       -     gridvector(3,3)*gridvector(2,1)*gridvector(1,2))
+    
+    
+    ! Corrects dv with the gridsize
+    dv = dv/(nx-1)/(ny-1)/(nz-1)                             &
+       *     gridlength(1)*gridlength(2)*gridlength(3)       
+
+    do x=1,nx+2
+    do y=1,ny+2
+    do z=1,nz+2
+    do i=1,iCP
+       if(i==CP(x,y,z)) then
+          EDS(i) = EDS(i) + ED(x,y,z)*dv ! electrons in this voxel
+          VOL(i) = VOL(i) + dv           ! size of voxel
+       end if
+    end do
+    end do
+    end do
+    end do
+    dv = 0
+    do i=1,iCP
+          stdout.show("Critical point", i)
+          stdout.show("Number of electrons",EDS(i))
+          dv = dv + EDS(i)
+          stdout.show("Volume of CP",VOL(i))
+    end do
+    stdout.show("Total electrons", dv)
+    ED.destroy
+    Maxima.destroy
+
+   end
+
+   cubes_to_basin_parallel(grid,nx,ny,nz,gridlength,gridvector,CP,EDS,VOL) ::: leaky
+   ! A tonto implementation of the cubes to basin code, originally
+   ! implemented by Florian from Tobias (spelling).
+    nx,ny,nz :: INT, IN
+    grid :: MAT3{REAL}, IN
+    gridlength :: VEC{REAL}(3), IN
+    gridvector :: MAT{REAL}(3,3), IN
+    CP :: MAT3{INT}*, OUT
+    EDS,VOL :: VEC{REAL}*, OUT
+
+    nprocs,i,ii,px,mx,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
+    GradMax,distance,MaxVal,dv :: REAL
+    Max :: VEC{INT}(3)
+    List :: VEC{VEC_{INT}}*
+    stitch_send,stitch_recv :: MAT{INT}*
+    ED :: MAT3{REAL}*
+    Maxima :: VEC{REAL}*
+    tests,testr :: VEC{INT}(3)
+
+    nprocs = tonto.n_processors
+       mx = nx - (nprocs-1)*int(nx/nprocs)
+    if(tonto.processor_rank==tonto.master_rank)then
+       ED.create(mx+3,ny+2,nz+2)
+       CP.create(mx+3,ny+2,nz+2)
+    else if(tonto.processor_rank<nprocs - 1)then
+       px = int(nx/nprocs)
+       ED.create(px+3,ny+2,nz+2)
+       CP.create(px+3,ny+2,nz+2)
+    else
+       px = int(nx/nprocs)
+       ED.create(px+2,ny+2,nz+2)
+       CP.create(px+2,ny+2,nz+2)
+    end if
+    Maxima.create(1)
+    
+    if(tonto.processor_rank==tonto.master_rank)then
+       ED = ZERO
+       ED(2:mx+2,2:ny+1,2:nz+1)=grid(1:mx+1,:,:)
+    else if(tonto.processor_rank<nprocs - 1)then
+       ED = ZERO
+       ED(2:px+2,2:ny+1,2:nz+1)= &
+       grid(mx+(tonto.processor_rank-1)*px+1:mx+(tonto.processor_rank)*px+1,:,:)
+    else 
+       ED = ZERO
+       ED(2:px+1,2:ny+1,2:nz+1)= &
+       grid(mx+(tonto.processor_rank-1)*px+1:mx+(tonto.processor_rank)*px,:,:)
+    end if
+    CP = ZERO
+    iCP = ZERO
+    GradMax = 1
+    
+    if(tonto.processor_rank==tonto.master_rank)then
+       px = mx
+    end if
+   
+
+    do x=2,px+1
+    do y=2,ny+1
+    do z=2,nz+1
+       if (CP(x,y,z) == ZERO) then
+       ! Only perform if critical direction not known
+          List.create(3,0)
+          ListMax = 0
+          ! Gives the length of the number of points in the
+          ! current list
+          
+          Max(1) = x
+          Max(2) = y
+          Max(3) = z
+
+          do while (NOT(GradMax == ZERO OR CP(Max(1),Max(2),Max(3)) > 0))
+             xs = Max(1)
+             ys = Max(2)
+             zs = Max(3)
+             MaxVal = ED(xs,ys,zs)
+             ListMax = ListMax + 1
+             
+             ! Appends to list if necessary
+             if(size(List(1).element) < ListMax) then
+                List(1).element.append(xs)
+             else
+                List(1).element(ListMax) = xs
+             end if
+             if(size(List(2).element) < ListMax) then
+                List(2).element.append(ys)
+             else
+                List(2).element(ListMax) = ys
+             end if
+             if(size(List(3).element) < ListMax) then
+                List(3).element.append(zs)
+             else
+                List(3).element(ListMax) = zs
+             end if
+
+             GradMax = 0
+
+             do ix = xs-1,xs+1
+             do iy = ys-1,ys+1
+             do iz = zs-1,zs+1
+
+                ! NOTE: Initial version used xs for all distances, if
+                ! errors are occurring consider altering zs and ys.
+                
+                distance = sqrt(((ix-xs)*gridlength(1))**2 &
+                         + ((iy-ys)*gridlength(2))**2      &
+                         + ((iz-zs)*gridlength(3))**2)
+                
+                if ((ED(ix,iy,iz) - ED(xs,ys,zs))/distance > GradMax) then
+                ! Determines the optimal gradient direction
+                   Max(1)  = ix
+                   Max(2)  = iy
+                   Max(3)  = iz
+                   MaxVal  = ED(ix,iy,iz)
+                   GradMax = (ED(ix,iy,iz)-ED(xs,ys,zs))/distance
+                end if
+             end do
+             end do
+             end do
+          end do
+       
+
+       if(CP(Max(1),Max(2),Max(3)) /= 0) then
+          do i=1,ListMax
+             CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
+             CP(Max(1),Max(2),Max(3))
+          end do
+       else
+          if (iCP == ZERO) then
+             Maxima(1) = MaxVal
+          else
+             Maxima.append(MaxVal)
+          end if
+!          if(mod(tonto.processor_rank,2)==0)then
+             iCP = iCP + 1
+!          else
+!             ii = -1
+!             iCP = iCP - 1
+!          end if
+          do i =1,ListMax
+             CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
+             iCP
+          end do
+       end if
+       do i=1,ListMax
+          CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
+          CP(Max(1),Max(2),Max(3))
+       end do
+       List.destroy
+       GradMax = 1
+       end if
+    end do
+    end do
+    end do
+       
+    stitch_send.create(CP.dim2,CP.dim3)
+    stitch_recv.create(CP.dim2,CP.dim3)
+    stitch_send = reshape(CP(px+2,:,:),[ny,nz])
+    stitch_recv = ZERO
+!    tests.create(3)
+!    testr.create(3)
+    tests(1) = 1
+    tests(2) = 2
+    tests(3) = 3
+    testr = ZERO
+    ii = 1
+    i = tonto.processor_rank
+    if(tonto.processor_rank==1)then
+       tonto.send(tests,tonto.processor_rank+1)
+!       print*, tonto.processor_rank, ii
+       !tonto.send(stitch_send,tonto.processor_rank+1)
+       !print*, tonto.processor_rank, stitch_send(2,2)
+    else if(tonto.processor_rank==2)then
+!       tonto.send(CP(px+2,:,:),tonto.processor_rank+1)
+       tonto.recv(testr,tonto.processor_rank-1)
+!       tonto.recv(stitch_recv,tonto.processor_rank-1)
+!       print*, tonto.processor_rank, stitch_recv(2,2)
+!    else
+!       tonto.recv(stitch(1,:,:),tonto.processor_rank-1)
+!       print*, tonto.processor_rank, stitch(2,2,2)
+    end if
+    stdout.text("I am the Master")
+    tonto.barrier
+    print*, tonto.processor_rank, testr
+    tonto.finalize
+    stop
+    
+!    do i=1,iCP
+!    xs = 0
+!    do x=2,px+1
+!    do y=2,ny+1
+!    do z=2,nz+1
+!       if(i==CP(x,y,z)) then
+!          xs = xs + 1
+!       end if
+!    end do
+!    end do
+!    end do
+!    end do
+    
+
+    EDS.create(iCP)
+    VOL.create(iCP)
+    EDS = ZERO
+    VOL = ZERO
+
+    ! Cross product for the volume (or so I am told)
+    ! Divide by total number of points! Move to plot grid
+
+    dv = abs(gridvector(1,1)*gridvector(2,2)*gridvector(3,3) &
+       -     gridvector(3,1)*gridvector(2,2)*gridvector(1,3) &
+       +     gridvector(1,2)*gridvector(2,3)*gridvector(3,1) &
+       -     gridvector(3,2)*gridvector(2,3)*gridvector(1,1) &
+       +     gridvector(1,3)*gridvector(2,1)*gridvector(3,2) &
+       -     gridvector(3,3)*gridvector(2,1)*gridvector(1,2))
+    
+    
+    ! Corrects dv with the gridsize
+    dv = dv/(nx-1)/(ny-1)/(nz-1)                             &
+       *     gridlength(1)*gridlength(2)*gridlength(3)       
+
+    do x=1,px+2
+    do y=1,ny+2
+    do z=1,nz+2
+    do i=1,iCP
+       if(i==CP(x,y,z)) then
+          EDS(i) = EDS(i) + ED(x,y,z)*dv ! electrons in this voxel
+          VOL(i) = VOL(i) + dv           ! size of voxel
+       end if
+    end do
+    end do
+    end do
+    end do
+    dv = 0
+    do i=1,iCP
+          print*,tonto.processor_rank,"Critical point", i
+          !stdout.show("Critical point", i)
+          print*,tonto.processor_rank,"Number of electrons", EDS(i)
+          !stdout.show("Number of electrons",EDS(i))
+          dv = dv + EDS(i)
+          print*,tonto.processor_rank,"Volume of CP", VOL(i)
+          !stdout.show("Volume of CP",VOL(i))
+    end do
+    print*,tonto.processor_rank,"Total electrons", dv
+    !stdout.show("Total electrons", dv)
+#ifdef MPI    
+    tonto.barrier
+#endif    
+    stop
+    
+    ED.destroy
+    Maxima.destroy
 
    end
 
