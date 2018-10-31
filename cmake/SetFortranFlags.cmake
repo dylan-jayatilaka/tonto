@@ -31,10 +31,10 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     set(HOST_FLAG ${GNUGENERIC})
     set(DEBUG_FLAGS "-Og -Wall -g -fbacktrace -fcheck=bounds -DUSE_PRECONDITIONS -DDEBUG")
     set(RELEASE_FLAGS "-O -fbacktrace -DUSE_ERROR_MANAGEMENT")
+    set(FAST_FLAGS "-Ofast -faggressive-loop-optimizations -fno-strict-aliasing -funroll-loops -march=native")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "NAG")
     set(COMPILER "NAG_nagfor")
     set(HOST_FLAG "-dusty -kind=byte -maxcontin=1023")
-    set(DEBUG_FLAGS "-O0 -g -gline -mtrace -C=all -DUSE_PRECONDITIONS -DDEBUG")
     set(RELEASE_FLAGS "-no_underflow_warning -w -O4 -DUSE_ERROR_MANAGEMENT")
 else()
     set(COMPILER "Unknown")
@@ -67,6 +67,11 @@ ELSEIF(BT STREQUAL "TESTING")
       "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
       FORCE)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${DEBUG_FLAGS}")
+ELSEIF(BT STREQUAL "FAST")
+    SET (CMAKE_BUILD_TYPE TESTING CACHE STRING
+        "Choose the type of build, options are DEBUG, RELEASE, FAST, or TESTING."
+      FORCE)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${FAST_FLAGS}")
 ELSEIF(NOT BT)
     SET(CMAKE_BUILD_TYPE RELEASE CACHE STRING
       "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
@@ -83,5 +88,5 @@ set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
 -DREAL_KIND=8 -DCPX_KIND=8 -DFLUSH")
 
 if(WITH_MPI)
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DMPI")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DMPI=1")
 endif()

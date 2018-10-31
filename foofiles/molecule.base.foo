@@ -145,6 +145,11 @@ contains
       nullify(.normal_mode_eigenvalues)
       nullify(.phi3_force_constants)
       nullify(.phi4_force_constants)
+      
+      nullify(.charges)
+      nullify(.dipoles)
+      nullify(.quadrupoles)
+      nullify(.octupoles)
 
    end
 
@@ -236,6 +241,12 @@ contains
       .phi3_force_constants.destroy
       .phi4_force_constants.destroy
 
+      ! multipoles
+      .charges.destroy
+      .dipoles.destroy
+      .octupoles.destroy
+      .quadrupoles.destroy
+
    end
 
    destroy_atom_group ::: recursive, leaky
@@ -299,6 +310,7 @@ contains
       .constraint_matrix.destroy
 
       .atom_group.destroy
+      .elmo_connection_table.destroy
 
    end
 
@@ -423,6 +435,7 @@ contains
       if (mol.normal_mode_eigenvalues.associated)    .normal_mode_eigenvalues.create_copy(mol.normal_mode_eigenvalues)
       if (mol.phi3_force_constants.associated)       .phi3_force_constants.create_copy(mol.phi3_force_constants)
       if (mol.phi4_force_constants.associated)       .phi4_force_constants.create_copy(mol.phi4_force_constants)
+      if (mol.elmo_connection_table.associated)       .elmo_connection_table.create_copy(mol.elmo_connection_table)
 
    end
 
@@ -774,14 +787,19 @@ contains
    ! Match the basis set labels for every atom with the actual atomic basis set.
    ! Also perform any finalization procedures to fully define all objects.
    ! This version is supposed to work for multiple bases.
+      self :: INOUT
+
       .:resolve_coppensbases
       .:resolve_slaterbases
       .:resolve_gaussianbases
+
    end
 
    resolve_gaussianbases ::: leaky
    ! Match the basis set labels for every atom with the actual atomic
    ! basis set.
+      self :: INOUT
+
       library_basis_labels :: VEC{STR}*
       n_unique :: INT
       library :: STR
@@ -822,6 +840,7 @@ contains
       ! Resolve from existing .basis .....
       else if (.basis.associated) then
 
+            ! Assume it is a gaussian basis set
             .basis.set_spherical(.use_spherical_basis)
             .atom.resolve_bases(.basis)
             .atom.set_basis_kind("gaussian")
@@ -843,6 +862,8 @@ contains
    resolve_slaterbases ::: leaky
    ! Match the basis set labels for every atom with the actual atomic
    ! basis set.
+      self :: INOUT
+
       library_basis_labels :: VEC{STR}*
       n_unique :: INT
       library :: STR
@@ -894,6 +915,8 @@ contains
    resolve_coppensbases ::: leaky
    ! Match the basis set labels for every atom with the actual atomic
    ! basis set.
+      self :: INOUT
+
       library_basis_labels :: VEC{STR}*
       n_unique :: INT
       library :: STR
@@ -944,6 +967,7 @@ contains
 
    set_basis_directory(directory)
    ! Set the basis directory (for all kinds of bases)
+      self :: IN
       directory :: STR, IN
 
       .basis.set_library_directory(directory)
@@ -954,28 +978,40 @@ contains
 
    set_basis_info ::: leaky
    ! Set the molecule basis set information; the atom list must exist.
-   ENSURE(.atom.associated,"no atom info")
+      self :: INOUT
+
+   ENSURE(.atom.associated, "no atoms!")
 
       if (.basis.disassociated) return
 
       if (NOT .atom.bases_are_resolved) then
 
          .basis_info_made = FALSE
-
-      else
-
-         .n_basis       = .basis.dim
-         .n_bf          = .atom.n_bf
-         .n_prim        = .atom.n_prim
-         .n_shell       = .atom.n_shell
-         .n_shell_pairs = .:no_of_shell_pairs
-
-         ! Make shell-basis-function limts, etc. (keaky)
-         .:make_shell_info
-
-         .basis_info_made = TRUE
+         .:resolve_basis_info
 
       end
+
+      .:make_basis_info
+
+   end
+
+   make_basis_info ::: leaky
+   ! Make the basis set information
+      self :: INOUT
+
+   ENSURE(.atom.associated,  "no atoms!")
+   ENSURE(.basis.associated, "no basis!")
+
+      .n_basis       = .basis.dim
+      .n_bf          = .atom.no_of_basis_functions
+      .n_prim        = .atom.no_of_primitives
+      .n_shell       = .atom.no_of_shells
+      .n_shell_pairs = .atom.no_of_shell_pairs
+
+      ! Make shell-basis-function limts, etc. (keaky)
+      .:make_shell_info
+
+      .basis_info_made = TRUE
 
    end
 
@@ -1432,8 +1468,6 @@ contains
    ! Read a Molden MOs file
       file_name :: STR, optional
 
-   ENSURE(NOT .use_spherical_basis,"not implemented")
-
       molden_file,save :: TEXTFILE*
       archive :: ARCHIVE
       pos :: VEC{REAL}(3)
@@ -1458,8 +1492,16 @@ contains
       molden_file.create(name)
       molden_file.open_for("read")
 
+      ! Find out if this file is using a spherical basis
+      line = molden_file.line_number
+      molden_file.look_for(op//"5D"//cl,found=found)
+      if(found) .use_spherical_basis = TRUE
+      molden_file.move_to_line(line)
+
       ! Find [ATOMS] block
-      molden_file.look_for(op//"ATOMS"//cl,found=found)
+      ! or [Atoms]
+      molden_file.look_for(op//"Atoms"//cl,found=found)
+      if(NOT found) molden_file.look_for(op//"ATOMS"//cl,found=found)
       DIE_IF(NOT found, "No ATOMS line")
       DIE_IF(molden_file.n_line_items/=2, "Expecting two items on ATOMS line")
 
@@ -1476,7 +1518,7 @@ contains
       .n_atom = 0
       do
          molden_file.read(item)
-         if (item==op//"Molden") exit
+         if (item(1:1)==op) exit
          DIE_IF(molden_file.end_of_file,"file ended unexpectedly")
          .n_atom = .n_atom + 1
          molden_file.read_line
@@ -1489,6 +1531,7 @@ contains
       ! Create basis -- Different one for every atom (leaky)
       if (.basis.associated) .basis.destroy
       .basis.create(.n_atom)
+      if(.use_spherical_basis) .basis.set_spherical(TRUE)
 
       ! Move back to atoms line
       molden_file.move_to_line(line)
@@ -1639,6 +1682,8 @@ contains
             molden_file.skip_next_item
             molden_file.read(orb(f))
          end
+         stdout.show("Read orbital", i)
+         stdout.show("orb:", orb)
 
          ! Increment orbital
          if (spin=="Alpha") i = i + 1
@@ -1676,6 +1721,7 @@ contains
       orb.destroy
 
       ! Swap orbital order
+      stdout.text("Reordering basis functions into tonto order")
       if (is_unrestricted) then
          .:swap_molden_orbital_order(.molecular_orbitals.alpha,"row")
          .:swap_molden_orbital_order(.molecular_orbitals.beta,"row")
@@ -1686,6 +1732,9 @@ contains
 
       ! Make density matrix (leaky)
       .:make_scf_density_matrix
+      stdout.text("Occupation")
+      stdout.put(.occupation_numbers)
+      !if(NOT .natural_orbitals.associated) .:make_natural_orbitals
 
       ! Print out data
       stdout.flush
@@ -1697,8 +1746,8 @@ contains
       stdout.text(". Atom coordinates and bases")
       stdout.text(". Molecular orbitals and their occupancies")
       stdout.flush
-      if (is_unrestricted) then; stdout.text("The data is for *restricted* orbitals")
-      else;                      stdout.text("The data is for *unrestricted* orbitals")
+      if (is_unrestricted) then; stdout.text("The data is for *unrestricted* orbitals")
+      else;                      stdout.text("The data is for *restricted* orbitals")
       end
 
       stdout.flush
@@ -1711,9 +1760,24 @@ contains
       stdout.put(.occupation_numbers)
 
       stdout.flush
-      stdout.text("Natural orbitals:")
+      stdout.text("Orbital energies:")
       stdout.flush
-      stdout.put(.natural_orbitals)
+      stdout.put(.orbital_energies)
+
+      stdout.flush
+      stdout.text("Density matrix:")
+      stdout.flush
+      stdout.put(.density_matrix)
+
+      stdout.flush
+      !.SCF:make_fock_matrix
+      !.SCF:put_scf_energy
+      stdout.flush
+
+     !stdout.flush
+     !stdout.text("Natural orbitals:")
+     !stdout.flush
+     !stdout.put(.natural_orbitals)
 
       ! Save data in archive files
       archive.set_defaults
@@ -1839,6 +1903,7 @@ contains
       stdin => molden_file
       do a = 1,.n_atom
          .basis(a).read_molden
+         .basis(a).put
          .basis(a).set_label(.atom(a).basis_label)
       end
       stdin => save
@@ -2040,12 +2105,22 @@ contains
    ! Swap the order of orbitals on matrix "X" after reading a
    ! molden input file, for "swap" equal to "row" or "1", or
    ! "coloumn" or "2".  This is nearly the same as gaussian.
+   !
+   ! The molden orderring is as follows:
+   !  5D: D 0, D+1, D-1, D+2, D-2
+   !  6D: xx, yy, zz, xy, xz, yz
+   !  7F: F 0, F+1, F-1, F+2, F-2, F+3, F-3
+   ! 10F: xxx, yyy, zzz, xyy, xxy, xxz, xzz, yzz, yyz, xyz
+   !  9G: G 0, G+1, G-1, G+2, G-2, G+3, G-3, G+4, G-4
+   ! 15G: xxxx yyyy zzzz xxxy xxxz yyyx yyyz zzzx zzzy,
+   !      xxyy xxzz yyzz xxyz yyxz zzxy
       X :: MAT{REAL}
       swap :: STR
 
       s,f,l,ls,fg,lg,i,j :: INT
       fac :: VEC{REAL}*
       ff :: VEC{INT}(10) = (/ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 /)
+      sph_reorder :: VEC{INT}@
 
       select case (swap)
 
@@ -2054,17 +2129,35 @@ contains
                f  = .first_basis_fn_for_shell(s)
                l  = .last_basis_fn_for_shell(s)
                ls = .angular_moment_for_shell(s)
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
-               if (ls==3) then ! swap f functions
-                  X(f:l,:) = X(f-1+ff,:)
-               end
-               if (ls>1) then  ! normalisation factors
-                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                  fg = lg + 1
-                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
-                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do i = f,l
-                     X(i,:) = X(i,:)*fac(i-f+1)
+               if(.atom(.atom_for_shell(s)).basis.is_spherical) then
+                  ! do spherical test
+                  sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
+                  stdout.show("Reordering: ", sph_reorder)
+                  if (ls>=1) then ! swap f functions
+                     X(f:l,:) = X(f-1+sph_reorder,:)
+                  end
+                  if (ls>1) then  ! normalisation factors
+                     lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                     fg = lg + 1
+                     lg = lg + GAUSSIAN_DATA:n_comp(ls)
+                     fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+                     do i = f,l
+                        X(i,:) = X(i,:)*fac(i-f+1)
+                     end
+                  end
+               else
+                  ENSURE(ls<=4,"cannot yet convert order for h shells")
+                  if (ls==3) then ! swap f functions
+                     X(f:l,:) = X(f-1+ff,:)
+                  end
+                  if (ls>1) then  ! normalisation factors
+                     lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                     fg = lg + 1
+                     lg = lg + GAUSSIAN_DATA:n_comp(ls)
+                     fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+                     do i = f,l
+                        X(i,:) = X(i,:)*fac(i-f+1)
+                     end
                   end
                end
             end
@@ -2206,6 +2299,7 @@ contains
       ! Create scfdata
       .scfdata.destroy
       .scfdata.create
+      .scfdata.set_output(FALSE)
 
       ! Get FChk file name
       if (present(name)) then
@@ -3638,8 +3732,8 @@ contains
       write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
       write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
       write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-         .atom(i).position, REALIFY(.atom(i).atomic_number) , i = 1, .n_atom)
-      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i = 1, .atom(j).n_prim ), j = 1, .n_atom )
+         .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
 
       pcount = 1
       lvec.create(.n_prim)
@@ -3748,8 +3842,8 @@ contains
       write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
       write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
       write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-         .atom(i).position, REALIFY(.atom(i).atomic_number) , i = 1, .n_atom)
-      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i = 1, .atom(j).n_prim ), j = 1, .n_atom )
+         .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
 
       pcount = 1
       lvec.create(.n_prim)
@@ -3800,7 +3894,7 @@ contains
 
       do i = 1, n_orbitals
          occ = ZERO
-         if (i<.n_a) occ = TWO
+         if (i<=.n_a) occ = TWO
          write(unit=wfnfile.unit, fmt=mol_title_format) &
             i, occ, .orbital_energies.restricted(i)
          write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
@@ -3850,10 +3944,10 @@ contains
       wfnfile.open_for("write")
 
       write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-      write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", .n_bf-1, .n_prim, .n_atom
+      write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", .n_bf, .n_prim, .n_atom
       write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-         .atom(i).position, REALIFY(.atom(i).atomic_number) , i = 1, .n_atom)
-      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i = 1, .atom(j).n_prim ), j = 1, .n_atom )
+         .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
 
       pcount = 1
       lvec.create(.n_prim)
@@ -3904,7 +3998,7 @@ contains
 
       do i = 1, .n_bf
          occ = ZERO
-         if (i<.n_a) occ = TWO
+         if (i<=.n_a) occ = TWO
          write(unit=wfnfile.unit, fmt=mol_title_format) &
             i, occ, .orbital_energies.restricted(i)
          write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
@@ -4163,7 +4257,8 @@ contains
       .slaterbasis        => mol.slaterbasis
       .coppensbasis       => mol.coppensbasis
 
-      .:set_basis_info ! leaky
+      ! Do it
+      .:set_basis_info
 
    end
 
@@ -4237,6 +4332,15 @@ contains
 
       g :: INT
 
+      ! Last attempt to find groups
+    ! if (NOT .atom.has_groups) then
+    ! if (.crystal.molecule_for_atom.associated) then
+    ! if (.crystal.molecule_for_atom.dim==.atom.dim) then
+    !    .atom(:).group = .crystal.molecule_for_atom(:)
+    ! end
+    ! end
+    ! end
+
       if (.atom_group.associated) then
 
          if (.atom_group.has_wavefunction_files) then; .:make_groups_from_wavefunction_files
@@ -4247,12 +4351,36 @@ contains
       else if (.atom.associated AND .atom.has_groups) then
 
          .atom_group.create(.atom.no_of_groups)
+
          do g = 1,.atom_group.dim
             .atom_group(g).atom_index => .atom(:).group.indices_of_elements_matching(g)
             .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
          end
 
+         if (.atom_group_charges.associated) then
+            DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
+            do g = 1,.atom_group.dim
+               .atom_group(g).set_charge(.atom_group_charges(g))
+            end
+         end
+
+         .:make_groups_from_self
+
       end
+
+   end
+
+   read_wavefunction_file(filename) ::: leaky
+   ! Open and read a given "filename", either a gaussian .fchk file or
+   ! an .sbf file.
+      self :: PTR
+      filename :: STR
+
+      if(filename.ends_in("fchk", case_sensitive=FALSE)) then
+        .:read_g09_FChk_file(filename)
+      else
+        .:deserialize(filename)
+      end if
 
    end
 
@@ -4304,6 +4432,8 @@ contains
 
    make_groups_from_self ::: private, leaky
    ! Make the atom groups from "self"
+      self :: INOUT
+
    DIE_IF(NOT .atom_group.associated,"no atom groups!")
 
       mol :: MOLECULE*
@@ -4334,7 +4464,11 @@ contains
          mol.atom.set_group_to(g)
 
          ! Add it to atom_group
-         .atom_group(g).mol.BASE:destroy
+         ! PRS 23/04/2017
+         ! This appears to be a bug, I don't think it's necessary
+         ! to destroy this and it definitely can destroy things
+         ! that are still in use
+         ! .atom_group(g).mol.BASE:destroy
          .atom_group(g).mol => mol
 
       end
@@ -4382,9 +4516,44 @@ contains
 
    end
 
+   create_from_mols(mol_A, mol_B) ::: leaky
+   ! Create a molecule by merging "mol_A" and "mol_B"
+      self :: PTR
+      mol_A, mol_B :: MOLECULE*
+
+      i, n_A, n_B :: INT
+
+      .:create
+      .:set_defaults
+
+      mol_A.:make_scf_density_matrix
+      mol_B.:make_scf_density_matrix
+
+      n_A = mol_A.atom.dim
+      n_B = mol_B.atom.dim
+
+      .atom.create_copy(mol_A.atom)
+      .atom.append(mol_B.atom)
+      .atom_group.create(2)
+      .atom_group(1).set_atom(mol_A.atom)
+      .atom_group(1).atom_index.create_copy([ (i, i=1,n_A) ])
+      .atom_group(1).mol => mol_A
+
+      .atom_group(2).set_atom(mol_B.atom)
+      .atom_group(2).atom_index.create_copy([ (i, i=n_A + 1,n_A + n_B) ])
+      .atom_group(2).mol => mol_B
+      .:merge_atom_groups
+
+      if (.atom_group.has_all_mols) then
+         .:update_group_info
+      end
+
+   end
+
    merge_atom_groups ::: private, leaky
    ! Delete any existing .atom and .basis and set to the concatenation
    ! of the molecules in .atom_group
+      self :: INOUT
 
       mol :: MOLECULE*
       g, charge, unpaired_electrons :: INT
@@ -4433,9 +4602,9 @@ contains
 
       ! Finally: set atom info & basis info (leaky)
       ! NOTE: multiplicity not set - assume singlet
-      if(.scfdata.disassociated) then
-          WARN("No SCF data set, assuming singlet state, rhf")
-      endif
+!      if(.scfdata.disassociated) then
+!          WARN("No SCF data set, assuming singlet state, rhf")
+!      endif
       .:set_charge(charge)
       .:set_spin_multiplicity(unpaired_electrons + 1)
       .:set_atom_info
@@ -4752,39 +4921,6 @@ contains
    end
 
 
-   no_of_shell_pairs result (res) ::: PURE
-   ! Return the number of shell pairs in the basis set for the molecule
-      self :: IN
-      res :: INT
-
-   ENSURE(.atom.associated,  "no atom list")
-   ENSURE(.atom.bases_are_resolved,"gaussian bases not all resolved")
-
-      n_shell :: INT
-
-      n_shell = .atom.n_shell
-      res     = n_shell*(n_shell+1)/2
-
-   end
-
-   n_shell_quartets result (res) ::: PURE
-   ! Return the number of shell quartets in the basis set for the molecule
-   ! Note, "res" will die at 22 shells for integer(2).
-   !       "res" will die at 361 shells for integer(4).
-   !       "res" will die at 92681 shells for integer(8).
-      self :: IN
-      res :: INT
-
-   ENSURE(.::no_of_shell_pairs<=sqrt(TWO)*(huge(1))**HALF,"too many shells")
-
-      n :: INT
-
-      n = .:no_of_shell_pairs
-
-      res = n*(n+1)/2
-
-   end
-
    no_of_occupied_NOs(genre,tol) result (res) ::: PURE
    ! Returns the number of non-zero occupied natural orbitals. For this purpose,
    ! zero is defined to be "tol" if present, or TOL(7) otherwise
@@ -4928,7 +5064,7 @@ contains
       max_S :: VEC{REAL}, OUT
 
    ENSURE(.overlap_matrix.associated,"no overlap_matrix")
-   ENSURE(max_S.dim==.:no_of_shell_pairs,"wrong size, S_max")
+   ENSURE(max_S.dim==.n_shell_pairs,"wrong size, S_max")
 
       ab,a,b,fa,fb,la,lb :: INT
 
@@ -5036,6 +5172,69 @@ contains
       .atom.make_connection_table(.atoms_bonded_to_atom)
 
    end
+
+   connected(a,b) result (res) ::: pure
+   ! Return true if atoms "a" and "b" are connected
+      self :: IN
+      a,b :: INT, IN
+      res :: BIN
+      
+      if (a <= .atoms_bonded_to_atom.dim1) then
+         res = any(b==.atoms_bonded_to_atom(a).element(:))
+      else
+         res = FALSE
+      end if
+
+   end
+  
+   connected_or_identical(a,b) result (res) ::: pure
+   ! Return true if atoms "a" and "b" are connected
+   ! or if they are the same atom
+      self :: IN
+      a,b :: INT, IN
+      res :: BIN
+     
+      if (a == b) then 
+         res = TRUE
+      else if (a <= .atoms_bonded_to_atom.dim1) then
+         res = any(b==.atoms_bonded_to_atom(a).element(:))
+      else
+         res = FALSE
+      end if
+
+   end
+
+   make_elmo_connection_table ::: leaky
+      self :: INOUT
+   ! construct the elmo connection table
+      i, j :: INT
+      .elmo_connection_table.create(.n_atom,.n_atom)
+
+      ! set default connection to something huge
+      ! to signify not connected
+      ! divide by 2 to prevent overflow errors
+      .elmo_connection_table = (huge(i) - 1) / 2
+
+      ! initialize same atom connections
+      do i = 1, .n_atom
+         .elmo_connection_table(i,i) = 0
+      end do
+
+      do i = 1, .n_atom
+         do j = 1, .atoms_bonded_to_atom(i).element.dim
+            .elmo_connection_table(i, .atoms_bonded_to_atom(i).element(j)) = 1
+         end do
+      end do
+      .elmo_connection_table = .elmo_connection_table.floyd_warshall
+   end
+
+   elmo_connected(a,b, degree) result(res) ::: pure
+      self :: IN
+      a, b, degree :: INT, IN
+      res :: BIN
+      res = (.elmo_connection_table(a,b) <= degree)
+   end 
+
 
 !  =================
 !  Atom pair indices
@@ -5656,6 +5855,8 @@ contains
    ! Define a vector of atom numbers corresponding to the molecule's
    ! basis set shell numbers; also define a vector of atom shell numbers
    ! corresponding to the molecule basis set shell number
+      self :: INOUT
+
    ENSURE(.atom.associated,"no atom information")
    ENSURE(.atom.bases_are_resolved,"gaussian bases not all resolved")
    ENSURE(.n_atom>0,"no atoms")
@@ -5861,13 +6062,19 @@ contains
 
       b = 1
       p = 1
+
       cc_mat = ZERO
+
       do a = 1,.n_atom
+
          ap = .atom(a).basis.n_prim
          ab = .atom(a).basis.n_bf
+
          .atom(a).basis.make_contraction_matrix(cc_mat(p:p+ap-1,b:b+ab-1))
+
          p = p + ap
          b = b + ab
+
       end
 
    end
@@ -5922,8 +6129,8 @@ contains
 
          n_row_atoms = row_atom.dim
          n_col_atoms = col_atom.dim
-         a1 = .atom(row_atom).n_bf
-         a2 = .atom(col_atom).n_bf
+         a1 = .atom(row_atom).no_of_basis_functions
+         a2 = .atom(col_atom).no_of_basis_functions
          ENSURE(A.dim1==a1,"A has wrong shape")
          ENSURE(A.dim2==a2,"A has wrong shape")
 
@@ -5932,7 +6139,7 @@ contains
 
             f_i = .first_basis_fn_for_atom(row_atom(i))
             l_i = .last_basis_fn_for_atom( row_atom(i))
-            n_i = .atom(row_atom(i)).n_bf
+            n_i = l_i - f_i + 1
 
             b_j = 0
 
@@ -5940,7 +6147,7 @@ contains
 
                f_j = .first_basis_fn_for_atom(col_atom(j))
                l_j = .last_basis_fn_for_atom( col_atom(j))
-               n_j = .atom(col_atom(j)).n_bf
+               n_j = l_j - f_j + 1
 
                A(b_i+1:b_i+n_i,b_j+1:b_j+n_j) = B(f_i:l_i,f_j:l_j)
 
@@ -5955,7 +6162,7 @@ contains
       else if (present(row_atom)) then
 
          n_row_atoms = row_atom.dim
-         a1 = .atom(row_atom).n_bf
+         a1 = .atom(row_atom).no_of_basis_functions
          a2 = .n_bf
          ENSURE(A.dim1==a1,"A has wrong shape")
          ENSURE(A.dim2==a2,"A has wrong shape")
@@ -5964,9 +6171,9 @@ contains
 
          do i = 1,n_row_atoms
 
-            f_i = .first_basis_fn_for_atom(row_atom(i));
+            f_i = .first_basis_fn_for_atom(row_atom(i))
             l_i = .last_basis_fn_for_atom( row_atom(i))
-            n_i = .atom(row_atom(i)).n_bf
+            n_i = l_i - f_i + 1
 
             A(b_i+1:b_i+n_i,:) = B(f_i:l_i,:)
 
@@ -5978,16 +6185,16 @@ contains
 
          n_col_atoms = col_atom.dim
          a1 = .n_bf
-         a2 = .atom(col_atom).n_bf
+         a2 = .atom(col_atom).no_of_basis_functions
          ENSURE(A.dim1==a1,"A has wrong shape")
          ENSURE(A.dim2==a2,"A has wrong shape")
 
          b_j = 0
 
          do j = 1,n_col_atoms
-            f_j = .first_basis_fn_for_atom(col_atom(j));
+            f_j = .first_basis_fn_for_atom(col_atom(j))
             l_j = .last_basis_fn_for_atom( col_atom(j))
-            n_j = .atom(col_atom(j)).n_bf
+            n_j = l_j - f_j + 1
 
             A(:,b_j+1:b_j+n_j) = B(:,f_j:l_j)
 
@@ -5998,187 +6205,6 @@ contains
       end
 
    end
-
-!   AO_subspace_zero(B,row_atom,col_atom) ::: private
-!   ! Zero out the AO subspace blocks of "B" specified by the atom
-!   ! indices in "row_atom" and "col_atom". If either is missing, then zero
-!   ! the entire row or col, i.e.  B(row_atom,col_atom) = 0
-!      B :: MAT{REAL}
-!      row_atom,col_atom :: VEC{INT}, optional
-!
-!   ENSURE(B.dim1==.n_bf,"B has wrong shape")
-!   ENSURE(B.dim2==.n_bf,"B has wrong shape")
-!
-!      n_row_atoms,n_col_atoms :: INT
-!      i,b_i,f_i,l_i,n_i, j,b_j,f_j,l_j,n_j :: INT
-!
-!      if (present(row_atom) AND present(col_atom)) then
-!
-!         n_row_atoms = row_atom.dim
-!         n_col_atoms = col_atom.dim
-!
-!         b_i = 0
-!
-!         do i = 1,n_row_atoms
-!
-!            f_i = .first_basis_fn_for_atom(row_atom(i))
-!            l_i = .last_basis_fn_for_atom( row_atom(i))
-!            n_i = .atom(row_atom(i)).n_bf
-!
-!            b_j = 0
-!
-!            do j = 1,n_col_atoms
-!
-!               f_j = .first_basis_fn_for_atom(col_atom(j))
-!               l_j = .last_basis_fn_for_atom( col_atom(j))
-!               n_j = .atom(col_atom(j)).n_bf
-!
-!               B(f_i:l_i,f_j:l_j) = ZERO
-!
-!               b_j = b_j + n_j
-!
-!            end
-!
-!            b_i = b_i + n_i
-!
-!         end
-!
-!      else if (present(row_atom)) then
-!
-!         n_row_atoms = row_atom.dim
-!
-!         b_i = 0
-!
-!         do i = 1,n_row_atoms
-!
-!            f_i = .first_basis_fn_for_atom(row_atom(i));
-!            l_i = .last_basis_fn_for_atom( row_atom(i))
-!            n_i = .atom(row_atom(i)).n_bf
-!
-!            B(f_i:l_i,:) = ZERO
-!
-!            b_i = b_i + n_i
-!
-!         end
-!
-!      else if (present(col_atom)) then
-!
-!         n_col_atoms = col_atom.dim
-!
-!         b_j = 0
-!
-!         do j = 1,n_col_atoms
-!
-!            f_j = .first_basis_fn_for_atom(col_atom(j));
-!            l_j = .last_basis_fn_for_atom( col_atom(j))
-!            n_j = .atom(col_atom(j)).n_bf
-!
-!            B(:,f_j:l_j) = ZERO
-!
-!            b_j = b_j + n_j
-!
-!         end
-!
-!      end
-!
-!   end
-
-!   AO_subspace_put(B,A,row_atom,col_atom) ::: private
-!   ! Set the AO subspace blocks of "A" specified by the atom indices in
-!   ! "row_atom" and "col_atom" equal to "B". If either is missing then copy
-!   ! the entire row or column, i.e.  A(row_atom,col_atom) = A() + B(small)
-!   ! WARNING ==== This adds into A, and uncopied blocks are NOT set to zero.
-!      A,B :: MAT{REAL}
-!      row_atom,col_atom :: VEC{INT}, optional
-!
-!   ENSURE(A.dim1==.n_bf,"A has wrong shape")
-!   ENSURE(A.dim2==.n_bf,"A has wrong shape")
-!
-!      n_row_atoms,n_col_atoms,b1,b2 :: INT
-!      i,b_i,f_i,l_i,n_i, j,b_j,f_j,l_j,n_j :: INT
-!
-!      if (present(row_atom) AND present(col_atom)) then
-!
-!         n_row_atoms = row_atom.dim
-!         n_col_atoms = col_atom.dim
-!         b1 = .atom(row_atom).n_bf
-!         b2 = .atom(col_atom).n_bf
-!         ENSURE(B.dim1==b1,"B has wrong shape")
-!         ENSURE(B.dim2==b2,"B has wrong shape")
-!
-!         b_i = 0
-!
-!         do i = 1,n_row_atoms
-!
-!            f_i = .first_basis_fn_for_atom(row_atom(i))
-!            l_i = .last_basis_fn_for_atom( row_atom(i))
-!            n_i = .atom(row_atom(i)).n_bf
-!
-!            b_j = 0
-!
-!            do j = 1,n_col_atoms
-!
-!               f_j = .first_basis_fn_for_atom(col_atom(j))
-!               l_j = .last_basis_fn_for_atom( col_atom(j))
-!               n_j = .atom(col_atom(j)).n_bf
-!
-!               A(f_i:l_i,f_j:l_j) = A(f_i:l_i,f_j:l_j) + B(b_i+1:b_i+n_i,b_j+1:b_j+n_j)
-!
-!               b_j = b_j + n_j
-!
-!            end
-!
-!            b_i = b_i + n_i
-!
-!         end
-!
-!      else if (present(row_atom)) then
-!
-!         n_row_atoms = row_atom.dim
-!         b1 = .atom(row_atom).n_bf
-!         b2 = .n_bf
-!         ENSURE(B.dim1==b1,"B has wrong shape")
-!         ENSURE(B.dim2==b2,"B has wrong shape")
-!
-!         b_i = 0
-!
-!         do i = 1,n_row_atoms
-!
-!            f_i = .first_basis_fn_for_atom(row_atom(i));
-!            l_i = .last_basis_fn_for_atom( row_atom(i))
-!            n_i = .atom(row_atom(i)).n_bf
-!
-!            A(f_i:l_i,:) = A(f_i:l_i,:) + B(b_i+1:b_i+n_i,:)
-!
-!            b_i = b_i + n_i
-!
-!         end
-!
-!      else if (present(col_atom)) then
-!
-!         n_col_atoms = col_atom.dim
-!         b1 = .atom(col_atom).n_bf
-!         b2 = .n_bf
-!         ENSURE(B.dim1==b1,"B has wrong shape")
-!         ENSURE(B.dim2==b2,"B has wrong shape")
-!
-!         b_j = 0
-!
-!         do j = 1,n_col_atoms
-!
-!            f_j = .first_basis_fn_for_atom(col_atom(j));
-!            l_j = .last_basis_fn_for_atom( col_atom(j))
-!            n_j = .atom(col_atom(j)).n_bf
-!
-!            A(:,f_j:l_j) = A(:,f_j:l_j) + B(:,b_j+1:b_j+n_j)
-!
-!            b_j = b_j + n_j
-!
-!         end
-!
-!      end
-!
-!   end
 
 !  ======================
 !  Density matrix methods
@@ -6257,7 +6283,7 @@ contains
 
       T :: REAL
       damping,do_archive,do_delta_density :: BIN
-      use_ELMO,use_pFON,use_FON :: BIN
+      use_NOMO,use_ELMO,use_pFON,use_FON :: BIN
       MO,D,MOa,MOb,Da,Db,F,Fa,Fb :: MAT{REAL}*
       CMO,CD,CMOa,CMOb,CDa,CDb :: MAT{CPX}*
       EV,Ea,Eb :: VEC{REAL}*
@@ -6284,7 +6310,11 @@ contains
       else if (.scfdata.associated) then; damping = damping AND .scfdata.apply_damping
       end
 
-      ! Determine if finite temperature FON should be used
+      ! Determine if NOMO should be used
+      use_NOMO = FALSE
+      if (.scfdata.associated) use_NOMO = .scfdata.use_NOMO
+
+      ! Determine if ELMO should be used
       use_ELMO = FALSE
       if (.scfdata.associated) use_ELMO = .scfdata.use_ELMO
 
@@ -6350,13 +6380,13 @@ contains
             ::make_finite_T_DM_r(D,.scfdata.E_Fermi,MO,EV,T,.n_a)
             D  = TWO*D
 
-         else if (.scfdata.use_ELMO) then
+         else if (.scfdata.use_NOMO) then
            
             D  => .density_matrix.restricted
             MO => .molecular_orbitals.restricted
 
-            .:make_ELMO_density_matrix_r(D,MO)
-
+            .:make_NOMO_density_matrix_r(D,MO)
+         
          else
 
             MO => .molecular_orbitals.restricted(:,1:.n_a)
@@ -6406,6 +6436,15 @@ contains
             T = .scfdata.temperature
             ::make_finite_T_DM_u(Da,Db,.scfdata.E_Fermi,MOa,MOb,Ea,Eb,T,.n_a,.n_b)
 
+         else if (.scfdata.use_NOMO) then
+           
+            MOa => .molecular_orbitals.alpha(:,1:.n_a)
+            MOb => .molecular_orbitals.beta(:,1:.n_b)
+            Da  => .density_matrix.alpha
+            Db  => .density_matrix.beta
+
+            .:make_NOMO_density_matrix_u(Da,Db,MOa,MOb)
+         
          else
 
             MOa => .molecular_orbitals.alpha(:,1:.n_a)
@@ -6417,14 +6456,27 @@ contains
 
          end
 
-      case ("ghf")
-
+      case ("ghf","no_ghf")
+            
          ENSURE(.molecular_orbitals.is_associated_with_genre("general"),"no MO's")
-         ENSURE(.spin_multiplicity==1,"this is not a singlet state")
+         !WTF!!!? Should this be here?
+         !ENSURE(.spin_multiplicity==1,"this is not a singlet state")
 
-         MO => .molecular_orbitals.general(:,1:.n_e)
-         D  => .density_matrix.general
-         D.to_product_of(MO,MO,transpose_b=TRUE)
+         if (.scfdata.use_NOMO) then
+            
+            D  => .density_matrix.general
+            MO => .molecular_orbitals.general(:,1:.n_e)
+
+            .:make_NOMO_density_matrix_g(D,MO)
+         
+         else
+
+
+            MO => .molecular_orbitals.general(:,1:.n_e)
+            D  => .density_matrix.general
+            D.to_product_of(MO,MO,transpose_b=TRUE)
+         
+         end if
 
       case ("rchf")
 
@@ -6484,7 +6536,27 @@ contains
 
    end
 
-   make_ELMO_density_matrix_r(D,MO)
+   make_NOMO_density_matrix_g(D,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      D :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+      S_inv :: MAT{REAL}@
+
+      ! Make (S^MO){-1} in MO basis & back transform
+      S_inv.create(.n_e,.n_e)
+      S_inv = ZERO
+      .:make_NOMO_S_inv_g(S_inv,MO)
+
+      ! Back transform -> D
+      S_inv.back_transform_to(D,MO)
+      S_inv.destroy
+
+   end
+   
+   make_NOMO_density_matrix_r(D,MO)
    ! Make the inverse of the occupied-coccupied block of the MO
    ! overlap matrix.
       self :: IN
@@ -6495,7 +6567,7 @@ contains
 
       ! Make (S^MO){-1} in MO basis & back transform
       S_inv.create(.n_a,.n_a)
-      .:make_ELMO_S_inv_r(S_inv,MO)
+      .:make_NOMO_S_inv_r(S_inv,MO)
 
       ! Back transform -> D
       S_inv.back_transform_to(D,MO(:,1:.n_a))
@@ -6505,9 +6577,71 @@ contains
       D = TWO*D
 
    end
-
-   make_ELMO_S_inv_r(S_inv,MO)
+   
+   make_NOMO_density_matrix_u(Da,Db,MOa,MOb)
    ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      
+      Da,Db :: MAT{REAL}, OUT
+      MOa,MOb :: MAT{REAL}, IN
+
+      S_inv :: MAT{REAL}@
+
+      ! alpha
+      ! Make (S^MO){-1} in MO basis & back transform
+      S_inv.create(.n_a,.n_a)
+      .:make_NOMO_S_inv_u_a(S_inv,MOa)
+
+      ! Back transform -> Da
+      S_inv.back_transform_to(Da,MOa)
+      S_inv.destroy
+
+
+      ! beta
+      ! Make (S^MO){-1} in MO basis & back transform
+      S_inv.create(.n_b,.n_b)
+      .:make_NOMO_S_inv_u_b(S_inv,MOb)
+
+      ! Back transform -> Db
+      S_inv.back_transform_to(Db,MOb)
+      S_inv.destroy
+
+   end
+
+   make_NOMO_S_inv_g(S_inv,MO)
+   ! Make the inverse of the occupied-occupied block of the
+   ! general MO overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+      V :: MAT{REAL}*
+
+      ! Make S in the SAO asis 
+      V.create(2*.n_bf, 2*.n_bf)
+      V = ZERO
+      V.alpha_alpha_set_to(.overlap_matrix)
+        V.beta_beta_set_to(.overlap_matrix)
+
+      ! Make S in the occupied MO basis 
+      S.create(.n_e,.n_e)
+      V.change_basis_to(S,MO(:,1:.n_e))
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+      V.destroy
+
+   end
+
+   make_NOMO_S_inv_r(S_inv,MO)
+   ! Make the inverse of the occupied-occupied block of the MO
    ! overlap matrix.
       self :: IN
       S_inv :: MAT{REAL}, OUT
@@ -6529,6 +6663,52 @@ contains
 
    end
 
+   make_NOMO_S_inv_u_a(S_inv,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+
+      ! Make S in the occupied MO basis 
+      S.create(.n_a,.n_a)
+      .overlap_matrix.change_basis_to(S,MO)
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+
+   end
+
+   make_NOMO_S_inv_u_b(S_inv,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+
+      ! Make S in the occupied MO basis 
+      S.create(.n_b,.n_b)
+      .overlap_matrix.change_basis_to(S,MO)
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+
+   end
+   
 !   make_ELMO_S_S_inv_r(S,S_inv,MO) ::: PURE
 !   ! Make "S", the occupied-occupied block of the MO overlap matrix
 !   ! and it's inverse "S_inv".
@@ -7251,7 +7431,7 @@ contains
                Db = ZERO
             end
 
-         case ("ghf")
+         case ("ghf", "no_ghf")
 
             ENSURE(.spin_multiplicity==1,"this is not a singlet state")
 
@@ -7372,7 +7552,7 @@ contains
 
       ! Create a-th atoms density matrix
       .atom(a).density_matrix.destroy
-      .atom(a).density_matrix.create(.atom(a).n_bf)
+      .atom(a).density_matrix.create(.atom(a).basis.n_bf)
       .atom(a).density_matrix.create(genre="restricted")
 
       ! Copy the a-th atom-atom block
@@ -7939,6 +8119,65 @@ contains
       new.destroy
 
    end
+
+   rotate_fock(R)
+   ! Rotate the molecular orbital matrix using matrix "R" which
+   ! specifies how positions in space are to be transformed
+   ! i.e. x' = Rx.
+      self :: INOUT
+      R :: MAT{REAL}, IN
+
+      genre :: STR
+
+      if (.fock_matrix.disassociated) return
+      if (.fock_matrix.is_disassociated_or_no_genre) return
+
+      genre = .fock_matrix.spinorbital_kind
+
+      select case (genre)
+         case("restricted")
+            .:rotate_fock_matrix_r(.fock_matrix.restricted,R)
+         case("unrestricted")
+            .:rotate_fock_matrix_r(.fock_matrix.alpha,R)
+            .:rotate_fock_matrix_r(.fock_matrix.beta,R)
+         case default;   DIE("unknown kind, "//trim(genre))
+      end
+
+   end
+
+   rotate_fock_matrix_r(F,R)
+   ! Rotate the fock matrix "P" using matrix "R", where "R" specifies
+   ! how positions in space are to be transformed i.e. x' = Rx.
+      self :: IN
+      F :: MAT{REAL}, INOUT
+      R :: MAT{REAL}, IN
+
+   ENSURE(F.is_square,"wrong shape for density matrix P")
+   ENSURE(F.dim1==.n_bf,"wrong dim1 for density matrix P")
+   ENSURE(R.is_square,"rotation matrix R is not square")
+   ENSURE(R.dim1==3,"rotation matrix R is not 3x3")
+
+      new :: MAT{REAL}*
+      tr :: VEC{MAT_{REAL}}*
+      s,first,last,a :: INT
+
+      new.create(.n_bf,.n_bf)
+      tr.make_gaussian_xyz_matrices(R)
+
+      do s = 1,.n_shell
+         first = .first_basis_fn_for_shell(s)
+         last = .last_basis_fn_for_shell(s)
+         a = .angular_moment_for_shell(s)
+         new(first:last,:).to_product_of(tr(a)[:,:],F(first:last,:), transpose_b=TRUE)
+      end
+      F = new
+
+      tr.destroy
+      new.destroy
+
+   end
+
+
 
    rotate_group(g,axis,angle) ::: leaky
    ! Rotate a group "g" of atoms in the molecule using a matrix defined by its
@@ -8758,7 +8997,8 @@ contains
       if (avec_lambda) then
         if (.scfdata.associated) then
         if (.scfdata.scf_kind.includes("xray_") OR .scfdata.scf_kind.includes("pnd_")) then
-        archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
+   !    archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
+        archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6")))
         archive.write(opmatrix,genre)
         end
         end
@@ -8786,7 +9026,8 @@ contains
       if (avec_lambda) then
         if (.scfdata.associated) then
         if (.scfdata.scf_kind.includes("xray_") OR .scfdata.scf_kind.includes("pnd_")) then
-        archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
+    !   archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
+        archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6")))
         archive.write(opvector,genre)
         end
         end
@@ -8809,7 +9050,8 @@ contains
       if (avec_lambda) then
         if (.scfdata.associated) then
         if (.scfdata.scf_kind.includes("xray_") OR .scfdata.scf_kind.includes("pnd_")) then
-        archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
+     !  archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
+        archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6")))
         archive.write(item,genre)
         end
         end
@@ -9038,6 +9280,7 @@ contains
 
    put
    ! Put all the available molecule information on file
+      self :: INOUT
 
    DIE_IF(tonto.disassociated,"no tonto variable")
 
@@ -9065,6 +9308,7 @@ contains
 
    put_basics
    ! Put basic molecule information
+      self :: IN
 
       stdout.flush
       stdout.flush
@@ -9114,17 +9358,7 @@ contains
 
    ENSURE(.atom.associated,"no atom list")
 
-      have_wavelength :: BIN
-
-      have_wavelength = .crystal.associated
-      if (have_wavelength) have_wavelength = .crystal.data.associated
-      if (have_wavelength) have_wavelength = .crystal.data.have_set_wavelength
-
-      if (have_wavelength) then
-         .atom.put_coordinate_info(.crystal.data.wavelength)
-      else
-         .atom.put_coordinate_info
-      end
+      .atom.put_coordinate_info
 
       if (.basis.associated)        .:put_bases
     ! if (.coppensbasis.associated) .put_coppensbases
@@ -9136,6 +9370,8 @@ contains
 
    put_ADPs
    ! Output the ADPs in cartesian axes
+     self :: IN
+
    ENSURE(.atom.associated,"no atom list")
 
       .atom.put_ADPs
@@ -9145,11 +9381,12 @@ contains
 
    put_bond_length_with_error ::: leaky
    ! Read two atoms, and output the bond length with associated error
+      self :: IN
 
    ENSURE(.atom.associated,"no atom list")
    ENSURE(.crystal.associated,"no crystal")
    ENSURE(.crystal.data.associated,"no diffraction data")
-   ENSURE(.crystal.data.covariance_matrix.associated,"no cov matrix created")
+   ENSURE(.crystal.data.covariance_matrix.allocated,"no cov matrix created")
 
       cm :: MAT{REAL}*
       a1,a2,n_f :: INT
@@ -9179,11 +9416,12 @@ contains
    put_bond_angle_with_error ::: leaky
    ! Output the atom coordinate and basis set information
    ! Read three atoms, and output the bond angle with associated error
+      self :: IN
 
    ENSURE(.atom.associated,"no atom list")
    ENSURE(.crystal.associated,"no crystal")
    ENSURE(.crystal.data.associated,"no diffraction data")
-   ENSURE(.crystal.data.covariance_matrix.associated,"no cov matrix created")
+   ENSURE(.crystal.data.covariance_matrix.allocated,"no cov matrix created")
 
       cm :: MAT{REAL}*
       a1,a2,a3,n_f :: INT
@@ -9212,11 +9450,12 @@ contains
 
    put_torsion_angle_with_error ::: leaky
    ! Output the atom coordinate and basis set information
-   ENSURE(.atom.associated,"no atom list")
+      self :: IN
 
+   ENSURE(.atom.associated,"no atom list")
    ENSURE(.crystal.associated,"no crystal")
    ENSURE(.crystal.data.associated,"no diffraction data")
-   ENSURE(.crystal.data.covariance_matrix.associated,"no cov matrix created")
+   ENSURE(.crystal.data.covariance_matrix.allocated,"no cov matrix created")
 
       cm :: MAT{REAL}*
       a1,a2,a3,a4,n_f :: INT
@@ -9248,12 +9487,17 @@ contains
 
    put_principal_axes
    ! Output the atom principal axes
+      self :: INOUT
+
    ENSURE(.atom.associated,"no atom list")
+
       .atom.put_principal_axes
+
    end
 
    put_bases
    ! Output the molecule basis set information, if the bases are all resolved.
+      self :: IN
 
    ENSURE(.atom.associated,"no atom list")
    ENSURE(.basis.associated,"no basis set list")
@@ -9270,7 +9514,7 @@ contains
       stdout.flush
       stdout.show("No. of basis sets      =",.n_basis)
       stdout.show("No. of shells          =",.n_shell)
-      stdout.show("No. of shell pairs     =",.:no_of_shell_pairs)
+      stdout.show("No. of shell pairs     =",.n_shell_pairs)
       stdout.show("No. of basis functions =",.n_bf)
       stdout.show("No. of primitives      =",.n_prim)
       stdout.flush
@@ -9282,24 +9526,34 @@ contains
    end
 
    put_slaterbases
-   ! Output the molecule slaterbasis set information, if the bases are all
-   ! resolved.
+   ! Output the molecule slaterbasis set information, if the bases are
+   ! all resolved.
+      self :: IN
+
    ENSURE(.atom.associated,"no atom list")
    ENSURE(.slaterbasis.associated,"no basis set list")
+
       if (NOT .atom.slaterbases_are_resolved) return
+
       stdout.flush
       stdout.text("Molecule atom slaterbasis set information:")
       stdout.flush
       stdout.show("No. of basis sets =",.slaterbasis.dim)
+
       .slaterbasis.put
+
    end
 
    put_coppensbases
    ! Output the molecule coppensbasis set information, if the bases are all
    ! resolved.
+      self :: IN
+
    ENSURE(.atom.associated,"no atom list")
    ENSURE(.coppensbasis.associated,"no basis set list")
+
       if (NOT .atom.coppensbases_are_resolved) return
+
       stdout.flush
       stdout.text("Molecule atom coppensbasis set information:")
       stdout.flush
@@ -9307,7 +9561,9 @@ contains
       stdout.show("Maximum N value   =",.coppensbasis.maximum_basis_n_value)
       stdout.show("No. of orbitals   =",.coppensbasis.no_of_orbitals)
       stdout.show("No. of primitives =",.coppensbasis.no_of_primitives)
+
       .coppensbasis.put
+
    end
 
 !   put_atom_ADP_tensors
@@ -9341,12 +9597,18 @@ contains
 
    put_atom_groups
    ! Out out the .atom_group info array
+      self :: IN
+
    ENSURE(.atom_group.associated,"no atom group information")
+
       .atom_group.put
+
    end
 
    put_overlapping_atoms
    ! Out out the .overlapping_atom info array
+      self :: IN
+
    ENSURE(.overlapping_atoms.associated,"no overlapping_atoms")
    ENSURE(.atom.associated,"no atoms")
 
@@ -9379,6 +9641,8 @@ contains
 
    put_overlapping_atoms_4_atom
    ! Out out the .overlapping_atoms_for_atom info array
+      self :: IN
+
    ENSURE(.overlapping_atoms.associated,"no overlapping_atoms")
    ENSURE(.atom.associated,"no atoms")
 
@@ -9410,7 +9674,10 @@ contains
 
    put_pointgroup
    ! Output the current pointgroup
+      self :: IN
+
       .pointgroup.put
+
    end
 
    put_plot_grid
@@ -9421,70 +9688,102 @@ contains
 
    put_becke_grid
    ! Output the current DFT grid.
+      self :: IN
+
    ENSURE(.becke_grid.associated,"no Becke integration grid to output")
+
       .becke_grid.put
+
    end
 
    put_crystal
    ! Output the current crystal
+      self :: INOUT
+
       .crystal.put
+
    end
 
    put_cluster
    ! Put out the cluster information
+      self :: IN
+
    ENSURE(.cluster.associated,"no cluster data")
+
       .cluster.put
+
    end
 
    put_molecular_orbitals
    ! Output the current associated molecular orbitals
+      self :: IN
+
       stdout.flush
       stdout.text("Molecular orbitals:")
       stdout.put(.molecular_orbitals)
+
    end
 
    put_MOs_and_energies
    ! Output the current associated molecular orbitals and their energies
+      self :: IN
+
       stdout.flush
       stdout.text("Molecular orbital energies:")
       stdout.put(.orbital_energies)
       stdout.flush
       stdout.text("Molecular orbitals:")
       stdout.put(.molecular_orbitals)
+
    end
 
    put_MO_energies
    ! Output the molecular orbital energies
+      self :: IN
+
       stdout.flush
       stdout.text("Molecular orbital energies:")
       stdout.put(.orbital_energies)
+
    end
 
    put_natural_orbitals
    ! Output the current associated molecular orbitals
+      self :: IN
+
       stdout.flush
       stdout.text("Natural orbital occupations:")
       stdout.put(.occupation_numbers)
       stdout.flush
       stdout.text("Natural orbitals:")
       stdout.put(.natural_orbitals)
+
    end
 
    put_density_matrix
    ! Output the current associated density matrix
+      self :: IN
+
    ENSURE(.density_matrix.associated,"no density matrix")
+
       stdout.flush
       stdout.text("Density matrix:")
       stdout.put(.density_matrix)
+
    end
 
    put_fock_matrix
    ! Output the current associated fock matrix
+      self :: IN
+
    ENSURE(.fock_matrix.associated,"no fock matrix")
+
       stdout.flush
       stdout.text("Fock matrix:")
       stdout.put(.fock_matrix)
+
    end
+
 
    put_vrml
    ! Output a VRML file for the coordinate geometry
@@ -9522,6 +9821,8 @@ contains
 
    put_ANOs ::: leaky
    ! Put the ANO data out for all atoms in the molecule.
+      self :: IN
+
    ENSURE(.atom.associated,"no atoms")
 
       k,a,b :: INT
@@ -9564,6 +9865,52 @@ contains
 !  Put CIF
 !  =======
 
+   put_grown_CIF(with_ESDs)
+   ! Prints out fragment cif file.
+   ! Does only cartesian axes.
+   ! NOTE: IF "with_esds" is present and TRUE, it is assumed
+   ! that the covariances from a refinement are present, and
+   ! these are used to make the ESDs; otherwise ESDs are still
+   ! made by transforming in a straightforward way.
+      self :: INOUT
+      with_ESDs :: BIN, optional, IN
+
+   ENSURE(.crystal.associated, "No crystal")
+   ENSURE(.atom.associated, "No atom")
+
+      clean,change_ESDs,H_U_iso :: BIN
+
+      ! Make sure CIF is there ...
+      clean = FALSE
+      if (.cif.disassociated) then
+         clean = TRUE
+         .cif.create(trim(.name)//".cif")
+      end
+
+      ! Cartesian fragment/CIF2
+      .cif.set_use_CIF2(TRUE)
+      stdout.redirect(trim(.name)//".cartesian.cif2")
+      .:put_CIF_banner(.cif.use_CIF2)
+      .:put_CIF_basics
+      .:put_CIF_wavefunction
+      .crystal.put_fragment_CIF(.cif)
+      stdout.revert
+
+      ! Sanity check for errors
+      change_ESDs = TRUE
+      if (present(with_ESDs)) change_ESDs = NOT with_ESDs
+
+      ! Alter sigma(U_iso) for H atoms?
+      H_U_iso = FALSE
+      if (.crystal.data.associated) H_U_iso = .crystal.data.refine_H_U_iso
+
+      ! Clean up
+      if (clean) then
+         .cif.destroy
+      end
+
+   end
+
    put_CIFs(with_ESDs)
    ! Prints out an asymmetric and fragment cif file.
    ! Does both cartesian and crystal axes.
@@ -9588,7 +9935,7 @@ contains
 
       ! Cartesian fragment/CIF2
       .cif.set_use_CIF2(TRUE)
-      stdout.redirect(trim(.name)//".hart.cif2")
+      stdout.redirect(trim(.name)//".cartesian.cif2")
       .:put_CIF_banner(.cif.use_CIF2)
       .:put_CIF_basics
       .:put_CIF_wavefunction
@@ -9603,21 +9950,12 @@ contains
       H_U_iso = FALSE
       if (.crystal.data.associated) H_U_iso = .crystal.data.refine_H_U_iso
 
-      ! Crystal fragment/CIF1
-      .cif.set_use_CIF2(FALSE)
-      stdout.redirect(trim(.name)//".hart.cif")
-      .:put_CIF_banner(.cif.use_CIF2)
-      .:put_CIF_basics
-      .:put_CIF_wavefunction
-      .crystal.fragment_atom.change_axis_system_to("crystal",.crystal.unit_cell,H_U_iso,change_ESDs)
-      .crystal.put_fragment_CIF(.cif)
-      .crystal.fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell,H_U_iso,change_ESDs)
-      .crystal.put_fragment_CIF_bond_info   ! Must be cartesian
-      stdout.revert
+        .:put_tonto_fcf 
+        .:put_xd_fco
 
       ! Crystal asymmetric-unit/CIF1
       .cif.set_use_CIF2(FALSE)
-      stdout.redirect(trim(.name)//".arch.cif")
+      stdout.redirect(trim(.name)//".archive.cif")
       .:put_CIF_banner(.cif.use_CIF2)
       .:put_CIF_basics
       .:put_CIF_wavefunction
@@ -9631,12 +9969,106 @@ contains
       if (.crystal.data.associated) then
       if (.crystal.data.reflections.associated) then
 
-        .:put_tonto_fcf 
-        .:put_xd_fco
+
       ! .:put_shelx_hkl3
       ! .:put_shelx_hkl4
       ! .:put_shelx_fcf5
       ! .:put_shelx_fcf6
+
+      ! Crystal fragment/CIF1
+      .cif.set_use_CIF2(FALSE)
+      stdout.redirect(trim(.name)//".fractional.cif1")
+      .:put_CIF_banner(.cif.use_CIF2)
+      .:put_CIF_basics
+      .:put_CIF_wavefunction
+      .crystal.fragment_atom.change_axis_system_to("crystal",.crystal.unit_cell,H_U_iso,change_ESDs)
+      .crystal.put_fragment_CIF(.cif)
+      .crystal.fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell,H_U_iso,change_ESDs)
+      .crystal.put_fragment_CIF_bond_info   ! Must be cartesian
+      stdout.revert
+
+      end
+      end
+
+      ! Clean up
+      if (clean) then
+         .cif.destroy
+      end
+
+   end
+
+   put_CIFs_XCW(with_ESDs)
+   ! Prints out an asymmetric and fragment cif file.
+   ! Does both cartesian and crystal axes.
+   ! NOTE: IF "with_esds" is present and TRUE, it is assumed
+   ! that the covariances from a refinement are present, and
+   ! these are used to make the ESDs; otherwise ESDs are still
+   ! made by transforming in a straightforward way.
+      self :: INOUT
+      with_ESDs :: BIN, optional, IN
+
+   ENSURE(.crystal.associated, "No crystal")
+   ENSURE(.atom.associated, "No atom")
+
+      clean,change_ESDs,H_U_iso :: BIN
+
+      ! Make sure CIF is there ...
+      clean = FALSE
+      if (.cif.disassociated) then
+         clean = TRUE
+         .cif.create(trim(.name)//".cif")
+      end
+
+      ! Cartesian fragment/CIF2
+      .cif.set_use_CIF2(TRUE)
+      stdout.redirect(trim(.name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".cartesian.cif2")
+      .:put_CIF_banner(.cif.use_CIF2)
+      .:put_CIF_basics
+      .:put_CIF_wavefunction
+      .crystal.put_fragment_CIF(.cif)
+      stdout.revert
+
+      ! Sanity check for errors
+      change_ESDs = TRUE
+      if (present(with_ESDs)) change_ESDs = NOT with_ESDs
+
+      ! Alter sigma(U_iso) for H atoms?
+      H_U_iso = FALSE
+      if (.crystal.data.associated) H_U_iso = .crystal.data.refine_H_U_iso
+
+        .:put_tonto_fcf_XCW 
+        .:put_xd_fco_XCW
+
+      ! Crystal asymmetric-unit/CIF1
+       .cif.set_use_CIF2(TRUE)
+
+         stdout.redirect(trim(.name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".archive.cif")
+      .:put_CIF_banner(.cif.use_CIF2)
+      .:put_CIF_basics
+      .:put_CIF_wavefunction
+      .crystal.asymmetric_unit_atom.change_axis_system_to("crystal",.crystal.unit_cell,H_U_iso,change_ESDs)
+      .crystal.put_asymm_unit_CIF(.cif)
+      if (.crystal.has_covariances) then
+         .crystal.asymmetric_unit_atom.change_axis_system_to("cartesian",.crystal.unit_cell,H_U_iso,change_ESDs)
+         .crystal.put_asymm_unit_CIF_bond_info ! Must be cartesian
+      end
+      stdout.revert
+
+      ! Put other files
+      if (.crystal.data.associated) then
+      if (.crystal.data.reflections.associated) then
+
+      ! Crystal fragment/CIF1
+      .cif.set_use_CIF2(FALSE)
+      stdout.redirect(trim(.name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".fractional.cif1")
+      .:put_CIF_banner(.cif.use_CIF2)
+      .:put_CIF_basics
+      .:put_CIF_wavefunction
+      .crystal.fragment_atom.change_axis_system_to("crystal",.crystal.unit_cell,H_U_iso,change_ESDs)
+      .crystal.put_fragment_CIF(.cif)
+      .crystal.fragment_atom.change_axis_system_to("cartesian",.crystal.unit_cell,H_U_iso,change_ESDs)
+      .crystal.put_fragment_CIF_bond_info   ! Must be cartesian
+      stdout.revert
 
       end
       end
@@ -9978,12 +10410,59 @@ contains
       clean = FALSE
       if (.cif.disassociated) then
          clean = TRUE
-         .cif.create(trim(.name)//".fco")
+         .cif.create(trim(.name)//".archive.fcf")
       end
 
       ! Fragment
       stdout.save
-      stdout.redirect(trim(.name)//".fcf")
+      stdout.redirect(trim(.name)//".archive.fcf")
+      .:put_CIF_banner(.cif.use_CIF2)
+      .crystal.put_tonto_fcf
+      stdout.revert
+      stdout.unsave
+
+      ! Clean up
+      if (clean) then
+         .cif.destroy
+      end
+
+   end
+
+   put_tonto_fcf_XCW
+   ! Prints out the tonto fcf file
+      self :: INOUT
+
+   ENSURE(.crystal.associated, "No crystal")
+   ENSURE(.atom.associated, "No atom")
+
+      clean :: BIN
+
+      ! Make sure CIF object is there ...
+      clean = FALSE
+      if (.cif.disassociated) then
+         clean = TRUE
+         if (.scfdata.do_outputs) then
+            if (NOT .scfdata.exceeded_lambda_max) then
+               .cif.create(trim(.name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".archive.fcf")
+            else
+               .cif.create(trim(.name)//".archive.fcf")
+            end
+         else
+            .cif.create(trim(.name)//".archive.fcf")
+         end
+      end
+
+      ! Fragment
+      stdout.save
+      if (.scfdata.do_outputs) then
+         if (NOT .scfdata.exceeded_lambda_max) then
+            stdout.redirect(trim(.name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".archive.fcf")
+         else
+            stdout.redirect(trim(.name)//".archive.fcf")
+         end
+      else
+         stdout.redirect(trim(.name)//".archive.fcf")
+      end
       .:put_CIF_banner(.cif.use_CIF2)
       .crystal.put_tonto_fcf
       stdout.revert
@@ -10010,12 +10489,63 @@ contains
       clean = FALSE
       if (.cif.disassociated) then
          clean = TRUE
-         .cif.create(trim(.name)//".fco")
+         .cif.create(trim(.name)//".archive.fco")
       end
 
       ! Fragment
       stdout.save
-      stdout.redirect(trim(.name)//".fco")
+      stdout.redirect(trim(.name)//".archive.fco")
+      stdout.set_int_width(5)
+      stdout.set_real_precision(4)
+      stdout.set_real_width(13)
+      .:put_CIF_banner(.cif.use_CIF2)
+      .crystal.put_xd_fco
+      stdout.revert
+      stdout.unsave
+
+      ! Clean up
+      if (clean) then
+         .cif.destroy
+      end
+
+   end
+
+   put_xd_fco_XCW
+   ! Prints out just the F2 reflection information plus minimal
+   ! extra stuff as in the XD fco file.
+      self :: INOUT
+
+   ENSURE(.crystal.associated, "No crystal")
+   ENSURE(.atom.associated, "No atom")
+
+      clean :: BIN
+
+      ! Make sure CIF object is there ...
+      clean = FALSE
+      if (.cif.disassociated) then
+         clean = TRUE
+         if (.scfdata.do_outputs) then
+            if (NOT .scfdata.exceeded_lambda_max) then
+               .cif.create(trim(.name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".archive.fco")
+            else
+               .cif.create(trim(.name)//".archive.fco")
+            end
+         else
+            .cif.create(trim(.name)//".archive.fco")
+         end
+      end
+
+      ! Fragment
+      stdout.save
+      if (.scfdata.do_outputs) then
+         if (NOT .scfdata.exceeded_lambda_max) then
+            stdout.redirect(trim(.name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".archive.fco")
+         else
+            stdout.redirect(trim(.name)//".archive.fco")
+         end
+      else
+         stdout.redirect(trim(.name)//".archive.fco")
+      end
       stdout.set_int_width(5)
       stdout.set_real_precision(4)
       stdout.set_real_width(13)
@@ -10114,12 +10644,15 @@ contains
    ! it has been set.
    end
 
+
    serialize(filename)
    ! Write out data from sbf file
       filename :: STR
       datafile :: DATAFILE
       labels :: STR(len=1), dimension(:,:), allocatable
       i, label_length = 1 :: INT
+
+    if (tonto.is_master_processor) then
 
       ! how long is the longest label
       do i = 1, .atom.size
@@ -10138,6 +10671,8 @@ contains
       call datafile%sbf%add_dataset(sbf_Dataset("atomic_labels", labels))
       call datafile%sbf%add_dataset(sbf_Dataset("atomic_numbers", .atom(:).atomic_number))
       call datafile%sbf%add_dataset(sbf_Dataset("atomic_coordinates", .atom.coordinate_vector))
+      call datafile%sbf%add_dataset(sbf_Dataset("charge_multiplicity", [.charge, .spin_multiplicity]))
+
 
       ! SCF data
       ! TODO should really check if it's created and DONE not just if it's unrestricted
@@ -10156,6 +10691,9 @@ contains
       end if
       call datafile%sbf%serialize
       datafile.close
+
+    end if 
+
    end 
 
    deserialize(filename)
@@ -10167,6 +10705,7 @@ contains
       atomic_labels :: STR(len=1), dimension(:,:), allocatable
       atomic_numbers :: VEC{INT}@
       atomic_coordinates :: VEC{REAL}@
+      charge_multiplicity :: VEC{INT}@
       tmp_mat :: MAT{REAL}@
       labels :: VEC{STR}@
       i, err :: INT
@@ -10206,6 +10745,15 @@ contains
 
       .atom.set_atom_data_from_labels(labels)
 
+      call datafile%sbf%get("charge_multiplicity", charge_multiplicity, err)
+      if(err /= success) then
+          stderr.show("Error reading charge_multiplicity from file, not setting:", sbf_strerr(err))
+      else
+          .:set_charge(charge_multiplicity(1))
+          .:set_spin_multiplicity(charge_multiplicity(2))
+      endif
+
+
       .BASE:set_atom_info
       .BASE:finalize_atom_groups
       .BASE:resolve_basis_info
@@ -10215,7 +10763,8 @@ contains
       ! TODO CHECK FOR ERRORS
       if (err == success) then
          .scfdata.create
-         .density_matrix.create(.n_bf)
+         .scfdata.set_output(FALSE)
+        .density_matrix.create(.n_bf)
          .molecular_orbitals.create(.n_bf)
          if(tmp_str == "unrestricted") then
             .scfdata.set_scf_kind("uhf")
@@ -10257,8 +10806,235 @@ contains
 
    end
 
+
+   make_atomic_multipoles(od,oc,no_s)
+   ! Make the atomic multipoles using the tanaka partitioing
+      self :: PTR
+      od, oc, no_s :: BIN, optional, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.density_matrix.associated,"no density_matrix")
+   ENSURE(.density_matrix.restricted.associated,"no restricted density_matrix")
+   ENSURE(NOT .use_spherical_basis,"not implememnted for spherical")
+
+      off_diagonal,only_disconnected, no_s_functions :: BIN
+      S,Sa,Sb,P,part :: MAT{REAL}*
+      Ax,Ay,Az,Bx,By,Bz :: MAT{REAL}*
+      Axx,Ayy,Azz,Axy,Axz,Ayz,Bxx,Byy,Bzz,Bxy,Bxz,Byz :: MAT{REAL}*
+      Axxx,Ayyy,Azzz,Axxy,Axxz,Ayyx,Ayyz,Azzx,Azzy,Axyz :: MAT{REAL}*
+      Bxxx,Byyy,Bzzz,Bxxy,Bxxz,Byyx,Byyz,Bzzx,Bzzy,Bxyz :: MAT{REAL}*
+      q,fa,la,na,fb,lb,nb,atom_a,atom_b :: INT
+      sh :: SHELL2
+      fac :: REAL
+
+      off_diagonal = FALSE
+      only_disconnected = FALSE
+      no_s_functions = FALSE
+      if (present(od)) off_diagonal = od
+      if (present(oc)) only_disconnected = oc
+      if (present(no_s)) no_s_functions = no_s
+
+      
+      P => .density_matrix.restricted
+
+      .charges.create(.n_atom)
+      .dipoles.create(.n_atom, 3)
+      .quadrupoles.create(.n_atom, 6)
+      .octupoles.create(.n_atom, 10)
+  
+
+      .charges     = ZERO
+      .dipoles     = ZERO
+      .quadrupoles = ZERO
+      .octupoles   = ZERO
+
+      do q = 1,.n_shell_pairs
+
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         if (atom_a==atom_b) then
+
+            if (no_s_functions AND sh.a.l == 0 AND sh.b.l == 0) cycle
+            if (off_diagonal) cycle
+            if (only_disconnected) cycle
+
+            fac = TWO
+            if (fa==fb) fac=ONE
+
+            S.create(na,nb)
+            Ax.create(na,nb); Ay.create(na,nb); Az.create(na,nb)
+            Axx.create(na,nb); Ayy.create(na,nb); Azz.create(na,nb)
+            Axy.create(na,nb); Axz.create(na,nb); Ayz.create(na,nb)
+
+            Axxx.create(na,nb); Ayyy.create(na,nb); Azzz.create(na,nb)
+            Axxy.create(na,nb); Axxz.create(na,nb); Ayyx.create(na,nb)
+            Ayyz.create(na,nb); Azzx.create(na,nb); Azzy.create(na,nb)
+            Axyz.create(na,nb); 
+
+            sh.make_overlap_ints(S)
+            sh.make_dipole_ints(Ax,Ay,Az,sh.a.position)
+            sh.make_quadrupole_ints(Axx,Ayy,Azz,Axy,Axz,Ayz,sh.a.position)
+            sh.make_octupole_ints(Axxx,Ayyy,Azzz,Axxy,Axxz,Ayyx,Ayyz,Azzx,Azzy,Axyz,sh.a.position)
+
+            .charges(atom_a)       = .charges(atom_a)       + fac*sum(S*P(fa:la,fb:lb))
+            .dipoles(atom_a,1)     = .dipoles(atom_a,1)     + fac*sum(Ax*P(fa:la,fb:lb))
+            .dipoles(atom_a,2)     = .dipoles(atom_a,2)     + fac*sum(Ay*P(fa:la,fb:lb))
+            .dipoles(atom_a,3)     = .dipoles(atom_a,3)     + fac*sum(Az*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,1) = .quadrupoles(atom_a,1) + fac*sum(Axx*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,2) = .quadrupoles(atom_a,2) + fac*sum(Ayy*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,3) = .quadrupoles(atom_a,3) + fac*sum(Azz*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,4) = .quadrupoles(atom_a,4) + fac*sum(Axy*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,5) = .quadrupoles(atom_a,5) + fac*sum(Axz*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,6) = .quadrupoles(atom_a,6) + fac*sum(Ayz*P(fa:la,fb:lb))
+
+            .octupoles(atom_a, 1)  = .octupoles(atom_a, 1)  + fac*sum(Axxx*P(fa:la,fb:lb))
+            .octupoles(atom_a, 2)  = .octupoles(atom_a, 2)  + fac*sum(Ayyy*P(fa:la,fb:lb))
+            .octupoles(atom_a, 3)  = .octupoles(atom_a, 3)  + fac*sum(Azzz*P(fa:la,fb:lb))
+            .octupoles(atom_a, 4)  = .octupoles(atom_a, 4)  + fac*sum(Axxy*P(fa:la,fb:lb))
+            .octupoles(atom_a, 5)  = .octupoles(atom_a, 5)  + fac*sum(Axxz*P(fa:la,fb:lb))
+            .octupoles(atom_a, 6)  = .octupoles(atom_a, 6)  + fac*sum(Ayyx*P(fa:la,fb:lb))
+            .octupoles(atom_a, 7)  = .octupoles(atom_a, 7)  + fac*sum(Ayyz*P(fa:la,fb:lb))
+            .octupoles(atom_a, 8)  = .octupoles(atom_a, 8)  + fac*sum(Azzx*P(fa:la,fb:lb))
+            .octupoles(atom_a, 9)  = .octupoles(atom_a, 9)  + fac*sum(Azzy*P(fa:la,fb:lb))
+            .octupoles(atom_a,10)  = .octupoles(atom_a,10)  + fac*sum(Axyz*P(fa:la,fb:lb))
+
+            S.destroy
+            Ax.destroy; Ay.destroy; Az.destroy
+            Axx.destroy; Ayy.destroy; Azz.destroy
+            Axy.destroy; Axz.destroy; Ayz.destroy
+
+            Axxx.destroy; Ayyy.destroy; Azzz.destroy
+            Axxy.destroy; Axxz.destroy; Ayyx.destroy
+            Ayyz.destroy; Azzx.destroy; Azzy.destroy
+            Axyz.destroy; 
+
+         else
+
+            if(only_disconnected) then
+               if (.atom.has_a_connection(atom_a,atom_b)) cycle
+            end
+
+            ! Partition factors
+            part.create(sh.a.n_cc,sh.b.n_cc)
+            sh.make_KM_partition(part)
+
+            ! Get weighted overlap integrals
+            Sa.create(na,nb); Sb.create(na,nb)
+
+            sh.make_weighted_overlap_ints(Sa,Sb,part)
+
+            .charges(atom_a) = .charges(atom_a) + TWO*sum(Sa*P(fa:la,fb:lb))
+            .charges(atom_b) = .charges(atom_b) + TWO*sum(Sb*P(fa:la,fb:lb))
+
+            Sb.destroy; Sa.destroy
+
+            ! .dipoless
+            Ax.create(na,nb); Ay.create(na,nb); Az.create(na,nb)
+            Bx.create(na,nb); By.create(na,nb); Bz.create(na,nb)
+
+            sh.make_weighted_dipole_ints(Ax,Ay,Az,Bx,By,Bz,part)
+
+            .dipoles(atom_a,1) = .dipoles(atom_a,1) + TWO*sum(Ax*P(fa:la,fb:lb))
+            .dipoles(atom_a,2) = .dipoles(atom_a,2) + TWO*sum(Ay*P(fa:la,fb:lb))
+            .dipoles(atom_a,3) = .dipoles(atom_a,3) + TWO*sum(Az*P(fa:la,fb:lb))
+
+            .dipoles(atom_b,1) = .dipoles(atom_b,1) + TWO*sum(Bx*P(fa:la,fb:lb))
+            .dipoles(atom_b,2) = .dipoles(atom_b,2) + TWO*sum(By*P(fa:la,fb:lb))
+            .dipoles(atom_b,3) = .dipoles(atom_b,3) + TWO*sum(Bz*P(fa:la,fb:lb))
+
+            Ax.destroy; Ay.destroy; Az.destroy
+            Bx.destroy; By.destroy; Bz.destroy
+
+            ! .quadrupoless
+            Axx.create(na,nb); Ayy.create(na,nb); Azz.create(na,nb)
+            Axy.create(na,nb); Axz.create(na,nb); Ayz.create(na,nb)
+            Bxx.create(na,nb); Byy.create(na,nb); Bzz.create(na,nb)
+            Bxy.create(na,nb); Bxz.create(na,nb); Byz.create(na,nb)
+
+            sh.make_weighted_quadrupole_ints(Axx,Ayy,Azz,Axy,Axz,Ayz &
+                                            ,Bxx,Byy,Bzz,Bxy,Bxz,Byz, part)
+
+            .quadrupoles(atom_a,1) = .quadrupoles(atom_a,1) + TWO*sum(Axx*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,2) = .quadrupoles(atom_a,2) + TWO*sum(Ayy*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,3) = .quadrupoles(atom_a,3) + TWO*sum(Azz*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,4) = .quadrupoles(atom_a,4) + TWO*sum(Axy*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,5) = .quadrupoles(atom_a,5) + TWO*sum(Axz*P(fa:la,fb:lb))
+            .quadrupoles(atom_a,6) = .quadrupoles(atom_a,6) + TWO*sum(Ayz*P(fa:la,fb:lb))
+
+            .quadrupoles(atom_b,1) = .quadrupoles(atom_b,1) + TWO*sum(Bxx*P(fa:la,fb:lb))
+            .quadrupoles(atom_b,2) = .quadrupoles(atom_b,2) + TWO*sum(Byy*P(fa:la,fb:lb))
+            .quadrupoles(atom_b,3) = .quadrupoles(atom_b,3) + TWO*sum(Bzz*P(fa:la,fb:lb))
+            .quadrupoles(atom_b,4) = .quadrupoles(atom_b,4) + TWO*sum(Bxy*P(fa:la,fb:lb))
+            .quadrupoles(atom_b,5) = .quadrupoles(atom_b,5) + TWO*sum(Bxz*P(fa:la,fb:lb))
+            .quadrupoles(atom_b,6) = .quadrupoles(atom_b,6) + TWO*sum(Byz*P(fa:la,fb:lb))
+
+            Axx.destroy; Ayy.destroy; Azz.destroy
+            Axy.destroy; Axz.destroy; Ayz.destroy
+            Bxx.destroy; Byy.destroy; Bzz.destroy
+            Bxy.destroy; Bxz.destroy; Byz.destroy
+
+            ! .octupoless
+            Axxx.create(na,nb); Ayyy.create(na,nb); Azzz.create(na,nb)
+            Axxy.create(na,nb); Axxz.create(na,nb); Ayyx.create(na,nb)
+            Ayyz.create(na,nb); Azzx.create(na,nb); Azzy.create(na,nb)
+            Axyz.create(na,nb); 
+            Bxxx.create(na,nb); Byyy.create(na,nb); Bzzz.create(na,nb)
+            Bxxy.create(na,nb); Bxxz.create(na,nb); Byyx.create(na,nb)
+            Byyz.create(na,nb); Bzzx.create(na,nb); Bzzy.create(na,nb)
+            Bxyz.create(na,nb); 
+
+            sh.make_weighted_octupole_ints(Axxx,Ayyy,Azzz,Axxy,Axxz,Ayyx,Ayyz,Azzx,Azzy,Axyz & 
+                                          ,Bxxx,Byyy,Bzzz,Bxxy,Bxxz,Byyx,Byyz,Bzzx,Bzzy,Bxyz,part)
+
+            .octupoles(atom_a, 1) = .octupoles(atom_a, 1) + TWO*sum(Axxx*P(fa:la,fb:lb))
+            .octupoles(atom_a, 2) = .octupoles(atom_a, 2) + TWO*sum(Ayyy*P(fa:la,fb:lb))
+            .octupoles(atom_a, 3) = .octupoles(atom_a, 3) + TWO*sum(Azzz*P(fa:la,fb:lb))
+            .octupoles(atom_a, 4) = .octupoles(atom_a, 4) + TWO*sum(Axxy*P(fa:la,fb:lb))
+            .octupoles(atom_a, 5) = .octupoles(atom_a, 5) + TWO*sum(Axxz*P(fa:la,fb:lb))
+            .octupoles(atom_a, 6) = .octupoles(atom_a, 6) + TWO*sum(Ayyx*P(fa:la,fb:lb))
+            .octupoles(atom_a, 7) = .octupoles(atom_a, 7) + TWO*sum(Ayyz*P(fa:la,fb:lb))
+            .octupoles(atom_a, 8) = .octupoles(atom_a, 8) + TWO*sum(Azzx*P(fa:la,fb:lb))
+            .octupoles(atom_a, 9) = .octupoles(atom_a, 9) + TWO*sum(Azzy*P(fa:la,fb:lb))
+            .octupoles(atom_a,10) = .octupoles(atom_a,10) + TWO*sum(Axyz*P(fa:la,fb:lb))
+
+            .octupoles(atom_b, 1) = .octupoles(atom_b, 1) + TWO*sum(Bxxx*P(fa:la,fb:lb))
+            .octupoles(atom_b, 2) = .octupoles(atom_b, 2) + TWO*sum(Byyy*P(fa:la,fb:lb))
+            .octupoles(atom_b, 3) = .octupoles(atom_b, 3) + TWO*sum(Bzzz*P(fa:la,fb:lb))
+            .octupoles(atom_b, 4) = .octupoles(atom_b, 4) + TWO*sum(Bxxy*P(fa:la,fb:lb))
+            .octupoles(atom_b, 5) = .octupoles(atom_b, 5) + TWO*sum(Bxxz*P(fa:la,fb:lb))
+            .octupoles(atom_b, 6) = .octupoles(atom_b, 6) + TWO*sum(Byyx*P(fa:la,fb:lb))
+            .octupoles(atom_b, 7) = .octupoles(atom_b, 7) + TWO*sum(Byyz*P(fa:la,fb:lb))
+            .octupoles(atom_b, 8) = .octupoles(atom_b, 8) + TWO*sum(Bzzx*P(fa:la,fb:lb))
+            .octupoles(atom_b, 9) = .octupoles(atom_b, 9) + TWO*sum(Bzzy*P(fa:la,fb:lb))
+            .octupoles(atom_b,10) = .octupoles(atom_b,10) + TWO*sum(Bxyz*P(fa:la,fb:lb))
+
+            Axxx.destroy; Ayyy.destroy; Azzz.destroy
+            Axxy.destroy; Axxz.destroy; Ayyx.destroy
+            Ayyz.destroy; Azzx.destroy; Azzy.destroy
+            Axyz.destroy; 
+            Bxxx.destroy; Byyy.destroy; Bzzz.destroy
+            Bxxy.destroy; Bxxz.destroy; Byyx.destroy
+            Byyz.destroy; Bzzx.destroy; Bzzy.destroy
+            Bxyz.destroy; 
+
+            part.destroy
+
+         end
+
+         sh.destroy_ptr_part
+
+      end
+
+      ! Electron .charges
+      .dipoles     = -ONE * .dipoles
+      .quadrupoles = -ONE * .quadrupoles
+      .octupoles   = -ONE * .octupoles
+
+   end
+
    make_atomic_multipoles(charge,dipole,quadrupole,octupole,od,oc,no_s)
-   ! Make the atomic multiploes using the KM partitioing
+   ! Make the atomic multipoles using the tanaka partitioing
       self :: IN
       charge :: VEC{REAL}, OUT
       dipole, quadrupole, octupole :: MAT{REAL}, OUT

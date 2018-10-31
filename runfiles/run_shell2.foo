@@ -1,0 +1,189 @@
+! Copyright (C) Dylan Jayatilaka, 1999
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+
+program run_SHELL2
+
+   implicit none
+
+   sh :: SHELL2*
+   k_pts,P :: MAT{REAL}*
+   T :: MAT3{REAL}*
+   FT :: MAT3{CPX}* ! <<< These are what MOON needs
+   ADP_a,ADP_b :: MAT{REAL}(3,3)
+   l_max, k,k_max, n_cc :: INT
+   la,lb :: INT
+   ra,rb :: INT
+
+   ! Macro to create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Error messages in stderr
+   stderr.create_stderr
+   stderr.open_for("write")
+
+   ! Output in stdout
+   stdout.create_stdout
+   stdout.open_for("write")
+
+   ! Input in stdout
+ ! stdin.create_stdin
+ ! stdin.open_for("read")
+
+   ! Run a stand alone program
+
+   ! Maximum L for a shell
+   l_max = 2
+
+   ! Set gaussian power data
+   GAUSSIAN_DATA:set_indices(2*l_max)
+
+   ! Set k_pts, k = 2 PI Cell Matrix
+   k_max = 8
+   k_pts.create(k_max,3)
+   k_pts(1,1:3) = [1,0,0]
+   k_pts(2,1:3) = [0,1,0]
+   k_pts(3,1:3) = [0,0,1]
+   k_pts(4,1:3) = [1,1,0]
+   k_pts(5,1:3) = [1,0,1]
+   k_pts(6,1:3) = [0,1,1]
+   k_pts(7,1:3) = [1,1,1]
+   k_pts(8,1:3) = [1,2,3]
+
+   stdout.flush
+   stdout.text(">>> k_pts:")
+   stdout.put(k_pts)
+
+   ! Set ADP's
+   ADP_a = reshape([0.1,0.2,0.3, 0.2,0.4,0.5, 0.3,0.5,0.6],[3,3])
+   ADP_b = 1.1*(ADP_a + 0.02)
+
+   stdout.flush
+   stdout.text(">>> ADP_a:")
+   stdout.put(ADP_a)
+
+   stdout.flush
+   stdout.text(">>> ADP_b:")
+   stdout.put(ADP_b)
+
+   do la = 0,l_max
+   do lb = 0,l_max
+
+      ! Define pair of gaussian shells 
+      ! "sh" below ... it has L=0,4
+      ! NOTE: all data in AU i.e. Bohrs, not angstrom!
+      sh.create
+
+      n_cc = 2
+
+      sh.a.n_cc = n_cc
+      sh.b.n_cc = n_cc
+
+      sh.a.contraction.create(n_cc)
+      sh.b.contraction.create(n_cc)
+
+      sh.a.contraction(1) = ONE
+      sh.b.contraction(1) = ONE
+
+      sh.a.contraction(2) = ONE
+      sh.b.contraction(2) = THREE
+
+      sh.a.exponent.create(n_cc)
+      sh.b.exponent.create(n_cc)
+
+      sh.a.exponent(1) = 2d0
+      sh.b.exponent(1) = 1d0
+
+      sh.a.exponent(2) = 20d0
+      sh.b.exponent(2) = 10d0
+
+      sh.a.set_l(la)
+      sh.b.set_l(lb)
+      sh.a.set_n_comp
+      sh.b.set_n_comp
+
+      sh.a.position = [0.0d0, 0.2d0, 0.0d0]
+      sh.b.position = [0.3d0,-0.3d0, 0.6d0]
+
+      sh.precalculate
+
+      ! Output the sh info
+      stdout.flush
+      stdout.text(">>> New shell")
+      stdout.show("L_a = ",la)
+      stdout.show("L_b = ",lb)
+      stdout.flush
+      sh.put
+
+      ! Get thermal smearing factors
+      T.create(k_max,n_cc,n_cc)
+      sh.thermal_smearing_correction(T,"stewart",k_pts,ADP_a,ADP_b)
+      stdout.flush
+      stdout.text(">>> T:")
+      do k = 1,k_max
+         stdout.flush
+         stdout.show("k = ",k)
+         stdout.put(T(k,:,:))
+      end
+
+      ! Get thermal smearing factors
+      P.create(n_cc,n_cc)
+      ra = 1
+      rb = 1
+      sh.make_partition_factors(P,"gaussian",ra,rb)
+      stdout.flush
+      stdout.text(">>> P:")
+      stdout.put(P)
+
+      ! Make Fourier transform of basis function pair
+      ! It is a square matrix for the number of cartesian
+      ! gaussian components e.g. 3 for p, l=1, 6 for d,l=2
+      ! for every k scattering vector.
+      FT.create(k_max,sh.a.n_comp,sh.b.n_comp)
+      sh.make_ft(FT,k_pts,T,P)
+
+      ! Output the FT
+      stdout.flush
+      stdout.text(">>> FT:")
+      do k = 1,k_max
+         stdout.flush
+         stdout.show("k = ",k)
+         stdout.put(FT(k,:,:))
+      end
+
+      ! Clean
+      FT.destroy
+      P.destroy
+      T.destroy
+      sh.destroy
+
+   end
+   end
+
+   ! Clean
+   k_pts.destroy
+
+
+   ! Clean-up files
+ ! TEXTFILE:destroy(stdin)
+   TEXTFILE:destroy(stdout)
+   TEXTFILE:destroy(stderr)
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end

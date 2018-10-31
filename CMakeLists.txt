@@ -17,6 +17,7 @@ set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets
     CACHE PATH "Basis sets directory")
 
 option(MPI "Use MPI" OFF)
+option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
 
 # Perl
 find_package(Perl REQUIRED)
@@ -36,25 +37,48 @@ endif()
 # Testing?
 enable_testing()
 
-
 # Tonto
 project(tonto
     LANGUAGES Fortran C
     VERSION ${TONTO_VERSION})
 
+# LAPACK
+if(COMPILE_LAPACK)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
+    set(LAPACK_LIBRARIES 
+        ${PROJECT_BINARY_DIR}/external/lapack-release/lib/liblapack.a
+        ${PROJECT_BINARY_DIR}/external/lapack-release/lib/libblas.a
+    )
+    message(STATUS "Compiling lapack: ${LAPACK_LIBRARIES}")
+else()
+    find_package(LAPACK REQUIRED)
+endif()
+
 if(MPI)
     message(STATUS "Building with MPI enabled")
-    include(FindMPI)
-    # MPI
-    if(MPI_FOUND)
-        message(STATUS "MPI Fortran compiler: ${MPI_Fortran_COMPILER}")
-        message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
-        message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
-        set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
-        set(WITH_MPI ON CACHE STRING "" FORCE)
-        include_directories(${MPI_Fortran_INCLUDE_PATH})
+    if(MSMPI)
+       set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -I${msmpi-linux-home}/Include -L${msmpi-linux-home}/Lib/x64 -lmsmpi -D _WIN32")
+       set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${msmpi-linux-home}/Include -L${msmpi-linux-home}/Lib/x64 -lmsmpi")
+       set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -I${msmpi-linux-home}/Include -L${msmpi-linux-home}/Lib/x64 -lmsmpi")
+       set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS} ${CMAKE_Fortran_FLAGS}")
+       set(WITH_MPI ON CACHE STRING "" FORCE)
+       set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lmsmpi")
+       set(MPI_Fortran_INCLUDE_PATH "${msmpi-linux-home}/Include")
+       include_directories("${msmpi-linux-home}/Include")
+       set(MPI_LIBRARIES "${msmpi-linux-home}/Lib/x64/libmsmpi.a")
     else()
-        message(STATUS "MPI_Fortran not found: ${MPI_Fortran_FOUND}")
+       include(FindMPI)
+       # MPI
+       if(MPI_FOUND)
+           message(STATUS "MPI Fortran compiler: ${MPI_Fortran_COMPILER}")
+           message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
+           message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
+           set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
+           set(WITH_MPI ON CACHE STRING "" FORCE)
+           include_directories(${MPI_Fortran_INCLUDE_PATH})
+       else()
+           message(STATUS "MPI_Fortran not found: ${MPI_Fortran_FOUND}")
+       endif()
     endif()
 endif()
 
@@ -62,10 +86,11 @@ endif()
 # If desirable we can use .F03/.f03 by appending to the below variable
 # message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
 
-
 # Set the fortran flags
 include(SetFortranFlags)
-message(STATUS "Compiler flags: ${CMAKE_Fortran_FLAGS}")
+message(STATUS "Fortran Compiler flags: ${CMAKE_Fortran_FLAGS}")
+message(STATUS "CXX Compiler Flags: ${CMAKE_CXX_FLAGS}")
+message(STATUS "C Compiler Flags: ${CMAKE_C_FLAGS}")
 
 # Macros
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
@@ -75,25 +100,7 @@ configure_file(
 )
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/sbf)
-include_directories(${SBF_MODULE_DIRECTORY})
-
-# Build directory
-include_directories(${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
-
-# BLAS/LAPACK dependency
-if(NOT USE_PACKAGED_LAPACK)
-    find_package(LAPACK QUIET)
-    if(NOT ${LAPACK_FOUND})
-        message(STATUS "No lapack found, using packaged libs")
-        add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
-        set(LAPACK_LIBRARIES lapack)
-    endif()
-else()
-    message(STATUS "Using packaged libs")
-    add_library(lapack STATIC ${CMAKE_CURRENT_SOURCE_DIR}/lapack/blas.F90 ${CMAKE_CURRENT_SOURCE_DIR}/lapack/lapack.F90 ${MACROS})
-    set(LAPACK_LIBRARIES lapack)
-endif()
-
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/)
 
 # Foo source files
 set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
@@ -193,6 +200,7 @@ set(FOO_SRC
     ${FOO_DIR}/object.foo
     ${FOO_DIR}/opmatrix.foo
     ${FOO_DIR}/opvector.foo
+    ${FOO_DIR}/pair_energy.foo
     ${FOO_DIR}/parallel.foo
     ${FOO_DIR}/plot_grid.foo
     ${FOO_DIR}/pointgroup.foo
@@ -244,8 +252,10 @@ set(FOO_SRC
     ${FOO_DIR}/vec{mat_{intrinsic}}.foo
     ${FOO_DIR}/vec{mat_{real}}.foo
     ${FOO_DIR}/vec{object}.foo
+    ${FOO_DIR}/vec{pair_energy}.foo
     ${FOO_DIR}/vec{quadrature}.foo
     ${FOO_DIR}/vec{real}.foo
+    #${FOO_DIR}/vec{rys}.foo
     ${FOO_DIR}/vec{reflection}.foo
     ${FOO_DIR}/vec{shell}.foo
     ${FOO_DIR}/vec{slaterbasis}.foo
@@ -261,7 +271,6 @@ set(FOO_SRC
     ${FOO_DIR}/vec{vec_{vec_{intrinsic}}}.foo
     ${FOO_DIR}/vec{vec_{vec_{int}}}.foo
     ${FOO_DIR}/vec{vec_{vec_{real}}}.foo
-    ${FOO_DIR}/xtal.foo
 )
 
 # Fortran source files used by run_molecule/run_har
@@ -339,6 +348,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
     ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/pair_energy.F90
     ${CMAKE_CURRENT_BINARY_DIR}/pointgroup.F90
     ${CMAKE_CURRENT_BINARY_DIR}/quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/real.F90
@@ -381,8 +391,10 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_irrep.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_mat3_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_mat_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_pair_energy.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_real.F90
+    #${CMAKE_CURRENT_BINARY_DIR}/vec_rys.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_reflection.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_shell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_slaterbasis.F90
@@ -394,7 +406,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_vec_int.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/xtal.F90
 )
 
 # Set up run files
@@ -408,11 +419,13 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_himz.foo
     ${RUNFILE_DIR}/run_mat{real}.foo
     ${RUNFILE_DIR}/run_mat{cpx}.foo
+    ${RUNFILE_DIR}/run_mpi_matmul.foo
+    ${RUNFILE_DIR}/run_mpi_pi.foo
     ${RUNFILE_DIR}/run_qr.foo
+    ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_least_squares.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
-    ${RUNFILE_DIR}/run_xtal.foo
 )
 
 
@@ -443,10 +456,20 @@ endforeach(foopath)
 
 # Target libtonto
 add_library(tonto
-    ${FORTRAN_SRC}
-    ${MACROS}
+   ${FORTRAN_SRC}
+   ${MACROS}
 )
-target_link_libraries(tonto sbf_fortran ${MPI_Fortran_LIBRARIES})
+
+if(COMPILE_LAPACK)
+	target_link_libraries(tonto sbf_fortran dftd3 lapack blas ${MPI_Fortran_LIBRARIES})
+else()
+	target_link_libraries(tonto sbf_fortran dftd3 ${MPI_Fortran_LIBRARIES})
+endif()	
+
+# Build directory
+target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
+target_include_directories(tonto PUBLIC ${SBF_MODULE_DIRECTORY} ${DFTD3_MODULE_DIRECTORY})
+
 
 # Standard executables
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
@@ -455,39 +478,42 @@ add_executable(run_dispersion    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_gaussian_data EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
 add_executable(run_har           ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
 add_executable(run_himz          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_himz.F90)
+add_executable(run_shell2        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_shell2.F90)
 add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
 add_executable(run_mat_cpx       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_cpx.F90)
+add_executable(run_mpi_matmul    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_matmul.F90)
+add_executable(run_mpi_pi        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
-add_executable(run_real          EXCLUDE_FROM_ALL  ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
-add_executable(run_vec_str       EXCLUDE_FROM_ALL  ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
+add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
+add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
-add_executable(run_xtal          ${CMAKE_CURRENT_BINARY_DIR}/run_xtal.F90)
 
 # Link exectables
-target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES})
-target_link_libraries(run_xtal          tonto ${LAPACK_LIBRARIES})
+target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mpi_pi        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+
 
 # Make non-standard-named executables
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
 set_target_properties(run_har      PROPERTIES OUTPUT_NAME hart)
-set_target_properties(run_xtal     PROPERTIES OUTPUT_NAME xtal)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 install(TARGETS run_molecule DESTINATION bin)
 install(TARGETS run_har      DESTINATION bin)
-install(TARGETS run_xtal     DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)

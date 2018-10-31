@@ -1327,6 +1327,115 @@ contains
 
    end
 
+   make_pairs_within_radius_of(m, res, radius, min_radius) ::: public, leaky
+   ! ???
+      m :: INT
+      radius :: REAL
+      min_radius :: REAL, optional
+      res :: VEC{PAIR_ENERGY}@, INOUT
+
+      pe :: PAIR_ENERGY
+      h_max, h_min :: VEC{INT}(3)
+      rot :: MAT{REAL}(3,3)
+      t_symop, t :: VEC{REAL}(3)
+      symop_str :: STR
+      unique_symops :: VEC{INT}@
+      i,j,k,n, symop_id, n_symops :: INT
+      central_atoms :: VEC{ATOM}*
+      atoms_b :: VEC{ATOM}*
+      positions_frac :: MAT{REAL}@
+      molecule_bounds :: MAT{REAL}(3,2)
+      frac_radius :: VEC{REAL}(3)
+      seitz :: MAT{REAL}*
+      lower, upper :: REAL
+      old_n, n_atom, n_asym :: INT
+
+      lower = ZERO
+
+      if (present(min_radius)) then
+          lower = min_radius + 0.00000001
+      end
+      upper = radius
+      stdout.show("lower bound", lower)
+      stdout.show("upper bound", upper)
+      stdout.flush
+
+      unique_symops = .crystal.asym_symop_for_unit_cell_atom.unique_elements
+      n_symops = size(unique_symops)
+      .create_mol_atom_list(central_atoms, m)
+
+      n_atom = size(central_atoms)
+      n_asym = size(.crystal.asymmetric_unit_atom)
+
+      ! Calculated molecule bounds in fractional coordinates
+      allocate(positions_frac(3, size(central_atoms, dim=1)))
+      do i = 1, size(central_atoms, dim=1)
+         positions_frac(:,1) = central_atoms(i).position
+      end
+      positions_frac = matmul(.crystal.unit_cell.inverse_matrix, positions_frac)
+      molecule_bounds(:, 1) = minval(positions_frac, dim=2)
+      molecule_bounds(:, 2) = maxval(positions_frac, dim=2)
+      deallocate(positions_frac)
+
+      frac_radius = radius / .crystal.unit_cell.length
+
+      h_max = ceiling(frac_radius + molecule_bounds(:,2))
+      h_min = floor(-frac_radius + molecule_bounds(:,1))
+      h_max = max(h_max, [1,1,1])
+      h_min = min(h_min, [-1,-1,-1])
+
+      old_n = 0
+      if (allocated(res)) old_n = size(res, dim=1)
+      ! iterate through symops
+      do n = 1, n_symops
+          atoms_b.create_copy(central_atoms)
+          symop_id = unique_symops(n)
+
+          seitz => .crystal.spacegroup.seitz(:,:, symop_id)
+          rot = seitz(1:3,1:3)
+          rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
+          rot = matmul(.crystal.unit_cell.direct_matrix, rot)
+
+          atoms_b.rotate_by(rot)
+          t_symop = seitz(1:3, 4)
+          .crystal.spacegroup.recode_Jones_Faithful_symbol(symop_str, seitz)
+
+          do i = h_min(1), h_max(1)
+          do j = h_min(2), h_max(2)
+          do k = h_min(3), h_max(3)
+             t = matmul(.crystal.unit_cell.direct_matrix, t_symop + [i,j,k])
+
+             atoms_b.translate_by(t)
+             pe.set_defaults
+             pe.set_mol(m)
+             pe.pos_a = central_atoms.center_of_mass
+             pe.pos_b(:,1) = atoms_b.center_of_mass
+             pe.set_center_separation(pe.pos_a.distance_to(pe.pos_b(:,1)))
+             central_atoms.get_distance_to(atoms_b, pe.closest_distance)
+             atoms_b.translate_by(-t)
+             pe.set_symop_id(symop_id)
+             pe.set_rot(rot)
+             pe.set_trans(t)
+             pe.set_symop_str(trim(symop_str))
+
+             pe.unit_cell = [i,j,k]
+             ! mols are in the same position
+             if (pe.center_separation < 0.001) cycle
+             ! mol_b not in the shell
+             if (pe.closest_distance > upper) cycle
+             if (pe.closest_distance < lower) cycle
+             res.append_or_increment(pe.clone)
+
+          end
+          end
+          end
+      end do
+
+      stdout.show("Generated pairs in shell, n = ", size(res, dim=1) - old_n)
+      stdout.flush
+
+   end
+
    make_unique_molecule_info ::: private, leaky
    ! Sort the cluster molecules so that the atom order in
    ! each is consistent. This only works for defragmented
