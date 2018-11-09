@@ -760,61 +760,71 @@ contains
   ! have the same block structure and zero coefficients
   ! for the same blocks
   i :: INT
+    .homogeneous = TRUE
     stdout.text(" ")
     stdout.text("Checking homogeneity of bra and ket sets")
     do i=1,.n_geminals
       stdout.show("bra and ket geminals", i)
       stdout.text("block structure test")
-      .check_block_structure(.bra_set.vec(i), .ket_set.vec(i))
+      .check_block_structure(.bra_set.vec(i), .ket_set.vec(i),.homogeneous)
       stdout.text("zero coefficients test")
-      .check_nonzero_coef(.bra_set.vec(i), .ket_set.vec(i))
+      .check_nonzero_coef(.bra_set.vec(i), .ket_set.vec(i),.homogeneous)
     end
   end
 
-  check_block_structure(pbt1,pbt2)
+  check_block_structure(pbt1,pbt2,hom)
   ! check if the two geminals (pbt) have the same block structure,
   ! i.e. the same block types in the same positions
   pbt1, pbt2 :: PAULI_BLOCK_TENSOR, IN
-  i, nb, counter :: INT
+  hom :: BIN
+  i, nb :: INT
+  passed :: BIN
+    passed= TRUE
     nb = size(pbt1.block_dim)
-    counter = 0
     do i=1,nb
       if (pbt1.block_type(i) /= pbt2.block_type(i)) then
-        counter = counter + 1
+        stdout.show("block structure test not passed for block:",i)
+        passed= FALSE
+        hom= FALSE
       end
     end
-    if (counter /= 0) then
-      stdout.text("not passed")
-    else
-      stdout.text("passed")
-    end
+    if (passed) stdout.text("passed")
   end
 
-  check_nonzero_coef(pbt1,pbt2)
+  check_nonzero_coef(pbt1,pbt2,hom)
   ! check if the two geminals have zero coefficients in the same
   ! positions, i.e. for the same blocks 
   pbt1, pbt2 :: PAULI_BLOCK_TENSOR, IN
-  i, nb, counter :: INT
+  hom :: BIN
+  i, nb :: INT
+  passed, test1, test2 :: BIN
+    passed = TRUE
     nb = size(pbt1.block_dim)
-    counter = 0
     do i=1,nb
-      if (abs(pbt1.coef(i)) < TOL(15) OR abs(pbt2.coef(i)) < TOL(15)) then
-         if (abs(pbt1.coef(i)) > TOL(15) OR abs(pbt2.coef(i)) > TOL(15)) then
-           counter = counter + 1
-         end
+     ! if (abs(pbt1.coef(i)) < TOL(15) AND abs(pbt2.coef(i)) > TOL(15) &
+     ! & OR abs(pbt1.coef(i)) > TOL(15)  AND abs(pbt2.coef(i)) < TOL(15)) then
+      test1 = FALSE
+      test2 = FALSE
+      if (abs(pbt2.coef(i))>TOL(15) AND abs(pbt1.coef(i))<TOL(15)) then
+         test1 = TRUE 
+      end
+      if (abs(pbt1.coef(i))>TOL(15) AND abs(pbt2.coef(i))<TOL(15)) then
+         test2 = TRUE 
+      end
+      if (test1 OR test2) then
+        stdout.show("not passed for block:",i)
+        passed = FALSE
+        hom = FALSE
       end
     end
-    if (counter /= 0) then
-      stdout.text("not passed")
-    else
-      stdout.text("passed")
-    end
+    if (passed) stdout.text("passed")
   end
 ! de
 
 ! davide: 03-11-2018
    check_model_constraints
    ! check if geminals satisfy the constraints of the model 
+     .pbt_constraints = TRUE
      stdout.text(" ")
      stdout.text("Checking model constraints on bra set")
      .check_model_constraints(.bra_set)
@@ -928,11 +938,11 @@ contains
    find_nonzero_coef
    ! identification of nonzero coefficients in each geminal 
      stdout.text(" ")
-     stdout.text("Bra set of geminals - nonzero coefficients")
+     stdout.text("Bra set of geminals - blocks with nonzero coefficient")
      .find_nonzero_coef(.bra_set,.n_blocks)
      if (NOT .bra_is_ket) then
        stdout.text(" ")
-       stdout.text("Ket set of geminals - nonzero coefficients")
+       stdout.text("Ket set of geminals - blocks with nonzero coefficient")
        .find_nonzero_coef(.ket_set,.n_blocks)
      end
    end
@@ -941,25 +951,30 @@ contains
    ! call to the routine for identification of nonzero coefficients
    pbt_set :: PAULI_BLOCK_TENSOR_SET
    nb :: INT
-   i :: INT
-     do i=1,.n_geminals
+   i, ng :: INT
+     ng = size(pbt_set.vec)
+     do i=1,ng
        stdout.show("geminal", i)
 !       stdout.text("block   coeff.")
-       .find_nonzero_coef(pbt_set.vec(i),nb)
+       .find_nonzero_coef(pbt_set.vec(i),nb,ng)
      end
    end
 
-   find_nonzero_coef(pbt,nb)
+   find_nonzero_coef(pbt,nb,ng)
    ! identification of nonzero coefficients in one geminal 
    pbt :: PAULI_BLOCK_TENSOR
-   nb :: INT
+   nb, ng :: INT
    i, counter, nn :: INT
    allocate(pbt.nonzero_coef(nb))
    counter = 0
      do i=1,nb 
        if (pbt.coef(i) /= ZERO) then
          counter = counter + 1
-         pbt.nonzero_coef(counter) = i
+         if (pbt.block_dim(i) == 1) then
+           pbt.nonzero_coef(counter) = 0
+         else
+           pbt.nonzero_coef(counter) = i - ng
+         end
        end
      end
 !   pbt.n_nonzero_coef = counter
@@ -968,8 +983,9 @@ contains
 !     do i=1,pbt.n_nonzero_coef
      do i=1,size(pbt.nonzero_coef)
 !       stdout.put( pbt.nonzero_coef(i), pbt.coef(pbt.nonzero_coef(i)) )
-       stdout.show( "block", pbt.nonzero_coef(i) )
-       stdout.show( "coeff.", pbt.coef(pbt.nonzero_coef(i)) )
+       !stdout.show( "block", pbt.nonzero_coef(i) )
+       !stdout.show( "coeff.", pbt.coef(pbt.nonzero_coef(i)) )
+       stdout.show( " ", pbt.nonzero_coef(i) )
      end
    end
 ! de
@@ -1014,6 +1030,125 @@ contains
 !     end
 !   end
 !! de
+
+ prep_nonzero_coef_ind
+ ! prepare lists of block indeces with nonzero coefficients
+ ! (one list for each geminal)
+  i, s, j :: INT
+
+   .check_bra_ket_homogeneity
+   if (NOT .homogeneous) then
+     stdout.text("bra and ket not homogeneous")
+     stop
+   end
+
+   .nonzero_coef_ind.create(.n_geminals)
+
+   stdout.text("Indeces of blocks with nonzero coefficient:")
+   stdout.text("(nonzero_coef_ind vectors)")
+   do i=1,.n_geminals
+     s = size(.bra_set.vec(i).nonzero_coef)
+     .nonzero_coef_ind(i).element.create(s)
+     .nonzero_coef_ind(i).element = .bra_set.vec(i).nonzero_coef
+     stdout.show("geminal", i)
+     do j=1,s
+       stdout.show(" ",.nonzero_coef_ind(i).element(j))
+     end
+   end
+ end
+
+
+ make_int_term_list
+ ! make the list of non zero block indices combinations for integral
+ ! formula relevant to the standard PBT model
+   list1 :: VEC_INT_LIST*
+   list2 :: VEC_INT_LIST*
+   i :: INT
+
+ .check_bra_ket_homogeneity
+ if (NOT .homogeneous) then
+   stdout.text("bra and ket not homogeneous")
+   stop
+ end
+
+ .check_model_constraints
+ if (NOT .pbt_constraints ) then
+   stdout.text("PBT constraints not enforced")
+   stop
+ end
+ nullify(list1)
+ allocate(list1)
+
+ ! The construction of combinations is initialized:
+ ! the first index of the initial combinations is set 
+ ! equal to one element of the first list of indeces.
+ allocate(list1.item(.n_geminals))
+ !list1.item(1)= v(1)%ind(1)
+ list1.item(1) = .nonzero_coef_ind(1).element(1)
+ nullify(list1.next)
+ !do i=2,size(v(1)%ind)
+ do i=2,size(.nonzero_coef_ind(1).element)
+   nullify(list2)
+   allocate(list2)
+   allocate(list2.item(.n_geminals))
+   !list2.item(1)= v(1)%ind(i)
+   list2.item(1) = .nonzero_coef_ind(1).element(i)
+   list2.next => list1
+   list1 => list2
+ end 
+
+ stdout.text(" ")
+ stdout.text("Initialized combinations of indeces:")
+ do
+   if(NOT associated(list1.next)) exit
+   stdout.put(list1.item)
+   list1=>list1.next
+ end
+
+! stdout.text(" ")
+! stdout.text("nonzero_coef_ind vector sizes:")
+! do i=1,.n_geminals
+!    stdout.show(" ",size(.nonzero_coef_ind(i).element))
+! end
+
+! nc = size(v(1)%ind) ! nc = number of initialized combinations (allocated)
+!                     !      nc = the number of indeces in the first list
+! do k=1,nl-1
+!    counter = 0  ! for each value of k, it counts the number of
+!                 ! combinations produced 
+!    do i=1,nc    ! nc = number of combinations (of k indeces) already produced
+!Nextgem:       do j=1,size(v(k+1)%ind)
+!          do l=1,k
+!             if (comb(i)%ind(l) == v(k+1)%ind(j) .and. comb(i)%ind(l) /= 0) cycle nextgem
+!          end 
+!          counter = counter + 1
+!          if (.not. allocated(w_vec(counter)%ind)) then
+!             allocate(w_vec(counter)%ind(nl))
+!          end
+!          do ll=1,k
+!             w_vec(counter)%ind(ll) = comb(i)%ind(ll)  
+!          end
+!          w_vec(counter)%ind(k+1) = v(k+1)%ind(j)
+!       end 
+!    end 
+!    do kk = 1,counter
+!       if (.not. allocated(comb(kk)%ind)) then
+!          allocate(comb(kk)%ind(nl))
+!       end 
+!       comb(kk)%ind = w_vec(kk)%ind
+!    end 
+!    nc = counter  ! number of selected combinations at iteration k 
+!    if (debug) then
+!       write(6,'(/,a,i5)') &
+!       & " Selected combinations of indeces at iteration", k
+!       do kk = 1,nc 
+!          write(6,'(a,i5,a)') " combination", kk, ":"
+!          write(6,*) (comb(kk)%ind(ii), ii=1,k+1)
+!       end 
+!    end 
+! end 
+  end
+
 
 !  ====================
 !  Key related routines
