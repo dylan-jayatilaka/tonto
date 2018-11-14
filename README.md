@@ -21,10 +21,8 @@ software package manager, install:
 
 * `perl`
 * `gfortran`
-* `make`
-* `blas` 
-* `lapack` 
-* `openmpi-3.0` (for parallel)
+* `make` 
+* `openmp-3.0` or `mpich2` (for parallel)
 * `python3` (recommended for testing)
 * `gnuplot` (recommended)
 
@@ -66,7 +64,7 @@ If you want a specific compiler, use :
 ```
 
 where you should replace <insert-your-compiler-here> with the
-command for your fortran compiler. We recommend `gfortran-6`.
+command for your fortran compiler. We recommend `gfortran`.
 
 If you want a static executable for redistribution set the build type
 to RELEASE-STATIC as follows:
@@ -140,6 +138,8 @@ using your favourite tool e.g.
 ```
    vimdiff stdout stdout.bad
 ```
+
+## 4. Developing
 
 ## Problems, bugs, contributions
 
