@@ -82,7 +82,7 @@ To make an MPI parallel version (e.g. using openmpi) , type :
 To change build type (e.g. make a DEBUG version) use this option :
 
 ```
-   cmake .. -DCMAKE_BUILD_TYPE=Debug
+   cmake .. -DCMAKE_BUILD_TYPE=debug
    make -j
 ```
 
@@ -138,6 +138,32 @@ using your favourite tool e.g.
 ```
 
 ## 4. Developing
+
+Developers are very welcome!
+
+Just contact Dylan, and you will be added to the list so you can push back your changes.
+
+Of course, you will have to know something about programming.
+* I hope you know how to use `git`?
+* We use the `foo` preprocessor which converts to Fortran95, so knowing something about modern Fortran is essential.
+* There is a description of `foo` on some web pages, but probably it is easier to look at the code.
+* Also, we use an object oriented style; each file represents an abstract data type or class.
+* All objects are "friends" and the derived types are in the `types.foo` file.
+
+Finally, there are the rules, which are brief, and which follow.
+* In the beginning do your work in a branch
+* Your work must not break any tests
+* When you compile under `-DCMAKE_BUILD_TYPE=debug` there must be no warnings, as far as possible
+* Methods should have meaningful names, and meaningful comments, explaining at least the input arguments, or what state changes happen to the `self` object.
+* There must be no unused routine arguments and no unused variables, as far as possible
+* Avoid using capitals for variables because capitals are macros and used for types. Single letter capitals are OK.
+* Use the .create / .destroy / .created / .destroyed / .allocated / .desllocated / .associated / .disaasociated methods where possible so I can migrate to a different language at a later date
+* Use the standard 3 space indent for Fortran, especially for routine methods, so vim collapsing works
+* Try to keep method code short, to a screenful if possible --- use helper routines!
+* If must keep dead code, alternative algorithms, keep it neat and make a main `algorithm` which may call label `algorthm_v1`, `algorithm_v2`, ... so that we can learn what works and what doesn't.
+* If you satisy all the above, you should push to the main branch!
+
+I hope this is not to onerous!
 
 ## Problems, bugs, contributions
 
