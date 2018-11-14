@@ -155,38 +155,40 @@ Finally, there are the rules. Most of this is common sense anyway.
 
 * Initially, do your work in a branch.
 * Do not break any tests 
-  - this code is used in at least two commercial projects!
+  - This code is used in at least two commercial projects!
 * Ensure there are no warnings when you compile under `-DCMAKE_BUILD_TYPE=debug`
-  - as far as possible.
+  - As far as possible
 * Methods
-  - should have meaningful names.
-  - should have meaningful comments
-  - method arguments should be explained
-  - any state changes in the `self` object should be explained.
-* Declare the intent of all method arguments, including `self`.
+  - Should have long meaningful names
+  - Should have meaningful comments
+  - Method arguments should be explained
+  - Any state changes in the `self` object should be explained
+* Declare the intent of all method arguments
+  -- Including `self`, even if it is `INOUT`
 * There must be no unused routine arguments and no unused variables
-  - as far as possible.
+  - As far as possible.
 * If a method has no side effects, please declare it PURE.
 * Liberally use method preconditions
-  - these add to the method documentation
+  - These add to the method documentation
+  - They also aid in detecting bugs
 * Avoid using capitals for variables
-  - capitals are macros and may be used for types.
-  - one or two letter capitals for variables are OK
+  - Capitals are macros and may be used for types
+  - One or two letter capitals for variables are OK
 * For arrays, use the following allocation | deallocation methods
   -  `.create` | `.destroy` 
   - `.created` | `.destroyed` 
   - `.allocated` | `.desllocated` 
   - `.associated` | `.disaasociated` 
 * Use the standard 3 space indent for `Fortran`
-  - especially for routine methods, so `vim` collapsing works.
+  - Especially for routine methods, so `vim` collapsing works.
   - Plus, it looks better.
 * Try to keep method code short
-  - to a screenful if possible
-  - use helper routines!
-* If must keep dead code, or alternative algorithms, keep it neat
-  - make a main `algorithm` which may call ...
-  - `algorthm_v1`, `algorithm_v2`, ... 
-  - this way we can learn what works and what doesn't.
+  - To one screenful if possible
+  - Use helper routines!
+* If you must keep dead code, or display alternative algorithms, keep it neat:
+  - Make a main `algorithm` 
+  - Let is call the alternatives `algorthm_v1`, `algorithm_v2`, ... 
+  - This way we can learn what works and what doesn't.
 * If you satisy all the above, push it to the main branch!
   - Don't forget to delete the working branch.
 
