@@ -181,11 +181,10 @@ Most of this is common sense anyway.
 * Avoid using capitals for variables
   - Capitals are macros and may be used for types
   - One or two letter capitals for variables are OK
-* For arrays, use the following allocation | deallocation methods
+* For array allocation | deallocation use
   - `.create` | `.destroy` 
-  - `.created` | `.destroyed` 
-  - `.allocated` | `.deallocated` 
-  - `.associated` | `.disassociated` 
+  - For allocatables: `.allocated` | `.deallocated` 
+  - For pointers: `.associated` | `.disassociated` 
 * Use the standard 3 space indent for `Fortran`
   - Especially for routine methods, so `vim` collapsing works.
   - Plus, it looks better.
