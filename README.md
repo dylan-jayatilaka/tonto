@@ -144,13 +144,15 @@ Developers are very welcome!
 Just contact Dylan, and you will be added to the list so you can push back your changes.
 
 Of course, you will have to know something about programming.
+
 * I hope you know how to use `git`?
 * We use the `foo` preprocessor which converts to `Fortran03`, so knowing something about modern `Fortran` is essential.
 * There is a description of `foo` on some web pages, but probably it is easier to look at the code.
 * Also, we use an object oriented style; each file represents an abstract data type or class.
 * All objects are "friends" and the derived types are in the `types.foo` file.
 
-Finally, there are the rules, which are brief, and which follow. Most of this is common sense anyway.
+Finally, there are the rules. Most of this is common sense anyway.
+
 * Initially, do your work in a branch.
 * Do not break any tests 
   - this code is used in at least two commercial projects!
