@@ -145,7 +145,7 @@ Just contact Dylan, and you will be added to the list so you can push back your 
 
 Of course, you will have to know something about programming.
 * I hope you know how to use `git`?
-* We use the `foo` preprocessor which converts to Fortran95, so knowing something about modern Fortran is essential.
+* We use the `foo` preprocessor which converts to `Fortran03`, so knowing something about modern `Fortran` is essential.
 * There is a description of `foo` on some web pages, but probably it is easier to look at the code.
 * Also, we use an object oriented style; each file represents an abstract data type or class.
 * All objects are "friends" and the derived types are in the `types.foo` file.
@@ -160,9 +160,9 @@ Finally, there are the rules, which are brief, and which follow. Most of this is
 * There must be no unused routine arguments and no unused variables, as far as possible.
 * If a method has no side effects, please declare it PURE.
 * Liberally use method preconditions, please.
-* Avoid using capitals for variables because capitals are macros and may be used for types (single letter or short name capitals are OK).
-* Use the .create / .destroy / .created / .destroyed / .allocated / .desllocated / .associated / .disaasociated methods where possible, so I can migrate to a different language at a later date.
-* Use the standard 3 space indent for Fortran, especially for routine methods, so vim collapsing works. Plus, it looks better.
+* Avoid using capitals for variables because capitals are macros and may be used for types.
+* Use the `.create` / `.destroy` / `.created` / `.destroyed` / `.allocated` / `.desllocated` / `.associated` / `.disaasociated` methods where possible, so we can migrate to a different language at a later date.
+* Use the standard 3 space indent for `Fortran`, especially for routine methods, so `vim` collapsing works. Plus, it looks better.
 * Try to keep method code short, to a screenful if possible --- use helper routines!
 * If must keep dead code, or alternative algorithms, keep it neat --- make a main `algorithm` which may call label `algorthm_v1`, `algorithm_v2`, ... so that we can learn what works and what doesn't.
 * If you satisy all the above, push it to the main branch! Don't forget to delete the working branch.
