@@ -172,26 +172,24 @@ Most of this is common sense anyway.
   - If there are no side effects, please declare it PURE.
   - Declare the intent of all method arguments, including `self`, even if it is `INOUT`
   - No unused arguments and no unused variables, as far as possible.
-* Liberally use method preconditions
-  - These add to the method documentation
-  - They also aid in detecting bugs
+  - Liberally use method preconditions - they aid documentation and bug detection
+  - Keep methods short, to one screenful if possible. Call helper methods!
+* If you must keep dead code, or display alternative algorithms, keep it neat:
+  - Make a main `algorithm` 
+  - Let it call the alternatives `algorthm_v1`, `algorithm_v2`, ... 
+  - This way we can learn what works and what doesn't.
 * Avoid using capitals for variables
   - Capitals are macros and may be used for types
   - One or two letter capitals for variables are OK
 * For array allocation | deallocation use
   - `.create` | `.destroy` 
-  - For allocatables: `.allocated` | `.deallocated` 
-  - For pointers: `.associated` | `.disassociated` 
-* Use the standard 3 space indent for `Fortran`
-  - Especially for routine methods, so `vim` collapsing works.
+  - `.allocated` | `.deallocated` (for allocatables)
+  - `.associated` | `.disassociated`(for pointers)
+  - Use `@` symbol for allocatables
+  - Use `*` symbol for pointers
+* Indentation
+  - Use the standard 3 space indent for `Fortran`, so `vim` collapsing works.
   - Plus, it looks better.
-* Try to keep method code short
-  - To one screenful if possible
-  - Use helper routines!
-* If you must keep dead code, or display alternative algorithms, keep it neat:
-  - Make a main `algorithm` 
-  - Let it call the alternatives `algorthm_v1`, `algorithm_v2`, ... 
-  - This way we can learn what works and what doesn't.
 * If you satisy all the above, push it to the main branch!
   - Don't forget to delete the working branch.
 
