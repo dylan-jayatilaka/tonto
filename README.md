@@ -179,10 +179,10 @@ Finally, there are the rules. Most of this is common sense anyway.
   - Capitals are macros and may be used for types
   - One or two letter capitals for variables are OK
 * For arrays, use the following allocation | deallocation methods
-  -  `.create` | `.destroy` 
+  - `.create` | `.destroy` 
   - `.created` | `.destroyed` 
-  - `.allocated` | `.desllocated` 
-  - `.associated` | `.disaasociated` 
+  - `.allocated` | `.deallocated` 
+  - `.associated` | `.disassociated` 
 * Use the standard 3 space indent for `Fortran`
   - Especially for routine methods, so `vim` collapsing works.
   - Plus, it looks better.
