@@ -6,7 +6,7 @@
 * For running jobs, we recommend downloading the latest release for your platform (see "releases" tab above)
 * If you want to develop, first install `git` and  follow the compile instructions below.
 
-### On Linux
+### ---> On Linux
 
 First, open a terminal and clone the repository:
 
@@ -24,11 +24,11 @@ software package manager, install:
 * `python3` (recommended for testing)
 * `gnuplot` (recommended)
 
-### On MacOS
+### ---> On MacOS
 
 See [Building on MacOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-MacOS)
 
-### On Windows
+### ---> On Windows
 
 See [Building on Windows](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-Windows)
 
