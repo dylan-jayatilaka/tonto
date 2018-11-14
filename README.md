@@ -191,7 +191,7 @@ Finally, there are the rules. Most of this is common sense anyway.
   - Use helper routines!
 * If you must keep dead code, or display alternative algorithms, keep it neat:
   - Make a main `algorithm` 
-  - Let is call the alternatives `algorthm_v1`, `algorithm_v2`, ... 
+  - Let it call the alternatives `algorthm_v1`, `algorithm_v2`, ... 
   - This way we can learn what works and what doesn't.
 * If you satisy all the above, push it to the main branch!
   - Don't forget to delete the working branch.
