@@ -3,10 +3,8 @@
 
 ## 1. Get ready ...
 
-* If you're not planning on modifying tonto source (i.e. developing), we recommend 
-downloading the latest release for your platform.
-* If you want to develop, first install `git` and 
-  and follow the compile instructions below.
+* For running jobs, we recommend downloading the latest release for your platform.
+* If you want to develop, first install `git` and  follow the compile instructions below.
 
 ### On Linux
 
