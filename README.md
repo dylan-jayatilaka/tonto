@@ -143,7 +143,7 @@ Developers are very welcome!
 
 Just contact Dylan, and you will be added to the list so you can push back your changes.
 
-Of course, you will have to know something about programming.
+### What you need to know about programming
 
 * I hope you know how to use `git`?
 * We use the `foo` preprocessor which converts to `Fortran03`
@@ -155,7 +155,9 @@ Of course, you will have to know something about programming.
 * All objects are "friends"
   - The derived types are in the `types.foo` file.
 
-Finally, there are the rules. Most of this is common sense anyway.
+### The rules
+
+Most of this is common sense anyway.
 
 * Initially, do your work in a branch.
 * Do not break any tests 
