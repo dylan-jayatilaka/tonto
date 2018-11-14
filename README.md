@@ -137,7 +137,7 @@ using your favourite tool e.g.
    vimdiff stdout stdout.bad
 ```
 
-## 4. Developing
+## 4. Developing & Ettiquette
 
 Developers are very welcome!
 
@@ -151,8 +151,8 @@ Of course, you will have to know something about programming.
 * All objects are "friends" and the derived types are in the `types.foo` file.
 
 Finally, there are the rules, which are brief, and which follow.
-* In the beginning do your work in a branch
-* Your work must not break any tests
+* In the beginning do your work in a branch.
+* Your work must not break any tests. This code is used in at least two commercial projects!
 * When you compile under `-DCMAKE_BUILD_TYPE=debug` there must be no warnings, as far as possible
 * Methods should have meaningful names, and meaningful comments, explaining at least the input arguments, or what state changes happen to the `self` object.
 * There must be no unused routine arguments and no unused variables, as far as possible
