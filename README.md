@@ -150,7 +150,7 @@ Of course, you will have to know something about programming.
 * Also, we use an object oriented style; each file represents an abstract data type or class.
 * All objects are "friends" and the derived types are in the `types.foo` file.
 
-Finally, there are the rules, which are brief, and which follow.
+Finally, there are the rules, which are brief, and which follow. Most of this is common sense anyway.
 * In the beginning do your work in a branch.
 * Your work must not break any tests. This code is used in at least two commercial projects!
 * When you compile under `-DCMAKE_BUILD_TYPE=debug` there must be no warnings, as far as possible.
