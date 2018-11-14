@@ -155,7 +155,9 @@ Finally, there are the rules, which are brief, and which follow. Most of this is
 * Do not break any tests --- this code is used in at least two commercial projects!
 * Ensure there are no warnings when you compile under `-DCMAKE_BUILD_TYPE=debug`, as far as possible.
 * Methods should have meaningful names.
-* Methods should have meaningful comments, explaining at least the input arguments, or what state changes happen to the `self` object.
+* Methods should have meaningful comments
+-- explain the input arguments
+-- explain what state changes happen to the `self` object.
 * Declare the intent of all method arguments, including `self`.
 * There must be no unused routine arguments and no unused variables, as far as possible.
 * If a method has no side effects, please declare it PURE.
