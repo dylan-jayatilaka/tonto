@@ -153,17 +153,17 @@ Of course, you will have to know something about programming.
 Finally, there are the rules, which are brief, and which follow.
 * In the beginning do your work in a branch.
 * Your work must not break any tests. This code is used in at least two commercial projects!
-* When you compile under `-DCMAKE_BUILD_TYPE=debug` there must be no warnings, as far as possible
+* When you compile under `-DCMAKE_BUILD_TYPE=debug` there must be no warnings, as far as possible.
 * Methods should have meaningful names, and meaningful comments, explaining at least the input arguments, or what state changes happen to the `self` object.
-* There must be no unused routine arguments and no unused variables, as far as possible
+* There must be no unused routine arguments and no unused variables, as far as possible.
 * Avoid using capitals for variables because capitals are macros and used for types. Single letter capitals are OK.
-* Use the .create / .destroy / .created / .destroyed / .allocated / .desllocated / .associated / .disaasociated methods where possible so I can migrate to a different language at a later date
-* Use the standard 3 space indent for Fortran, especially for routine methods, so vim collapsing works
+* Use the .create / .destroy / .created / .destroyed / .allocated / .desllocated / .associated / .disaasociated methods where possible so I can migrate to a different language at a later date.
+* Use the standard 3 space indent for Fortran, especially for routine methods, so vim collapsing works. Plus, it looks better.
 * Try to keep method code short, to a screenful if possible --- use helper routines!
 * If must keep dead code, alternative algorithms, keep it neat and make a main `algorithm` which may call label `algorthm_v1`, `algorithm_v2`, ... so that we can learn what works and what doesn't.
 * If you satisy all the above, you should push to the main branch!
 
-I hope this is not to onerous!
+That's all.
 
 ## Problems, bugs, contributions
 
