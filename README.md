@@ -154,7 +154,10 @@ Finally, there are the rules, which are brief, and which follow. Most of this is
 * In the beginning do your work in a branch.
 * Your work must not break any tests. This code is used in at least two commercial projects!
 * When you compile under `-DCMAKE_BUILD_TYPE=debug` there must be no warnings, as far as possible.
-* Methods should have meaningful names, and meaningful comments, explaining at least the input arguments, or what state changes happen to the `self` object.
+* Methods should have meaningful names.
+* Methods should have meaningful comments, explaining at least the input arguments, or what state changes happen to the `self` object.
+* The intent of all method arguments must be declared, including self.
+* If a method has no side effects, please declare it PURE.
 * There must be no unused routine arguments and no unused variables, as far as possible.
 * Avoid using capitals for variables because capitals are macros and used for types. Single letter capitals are OK.
 * Use the .create / .destroy / .created / .destroyed / .allocated / .desllocated / .associated / .disaasociated methods where possible so I can migrate to a different language at a later date.
