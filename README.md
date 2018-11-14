@@ -148,7 +148,7 @@ Of course, you will have to know something about programming.
 * I hope you know how to use `git`?
 * We use the `foo` preprocessor which converts to `Fortran03`
   - So knowing something about modern `Fortran` is essential.
-* There is a description of `foo` on some web pages
+  - There is a description of `foo` on some web pages, somewhere
   - But probably it is easier to look at the code.
 * Also, we use an object oriented style
   - Each file represents an abstract data type or class.
