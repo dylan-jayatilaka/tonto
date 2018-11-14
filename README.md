@@ -3,7 +3,7 @@
 
 ## 1. Get ready ...
 
-* For running jobs, we recommend downloading the latest release for your platform.
+* For running jobs, we recommend downloading the latest release for your platform (see "releases" tab above)
 * If you want to develop, first install `git` and  follow the compile instructions below.
 
 ### On Linux
