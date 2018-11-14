@@ -137,7 +137,7 @@ using your favourite tool e.g.
    vimdiff stdout stdout.bad
 ```
 
-## 4. Developing & Ettiquette
+## 4. Developing & Etiquette
 
 Developers are very welcome!
 
