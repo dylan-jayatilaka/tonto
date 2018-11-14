@@ -152,23 +152,41 @@ Of course, you will have to know something about programming.
 
 Finally, there are the rules, which are brief, and which follow. Most of this is common sense anyway.
 * Initially, do your work in a branch.
-* Do not break any tests --- this code is used in at least two commercial projects!
-* Ensure there are no warnings when you compile under `-DCMAKE_BUILD_TYPE=debug`, as far as possible.
+* Do not break any tests 
+  - this code is used in at least two commercial projects!
+* Ensure there are no warnings when you compile under `-DCMAKE_BUILD_TYPE=debug`
+  - as far as possible.
 * Methods
-** should have meaningful names.
-** should have meaningful comments
-** input arguments should be explained
-** any state changes in the `self` object should be explained.
+  - should have meaningful names.
+  - should have meaningful comments
+  - method arguments should be explained
+  - any state changes in the `self` object should be explained.
 * Declare the intent of all method arguments, including `self`.
-* There must be no unused routine arguments and no unused variables, as far as possible.
+* There must be no unused routine arguments and no unused variables
+  - as far as possible.
 * If a method has no side effects, please declare it PURE.
-* Liberally use method preconditions, please.
-* Avoid using capitals for variables because capitals are macros and may be used for types.
-* Use the `.create` / `.destroy` / `.created` / `.destroyed` / `.allocated` / `.desllocated` / `.associated` / `.disaasociated` methods where possible, so we can migrate to a different language at a later date.
-* Use the standard 3 space indent for `Fortran`, especially for routine methods, so `vim` collapsing works. Plus, it looks better.
-* Try to keep method code short, to a screenful if possible --- use helper routines!
-* If must keep dead code, or alternative algorithms, keep it neat --- make a main `algorithm` which may call label `algorthm_v1`, `algorithm_v2`, ... so that we can learn what works and what doesn't.
-* If you satisy all the above, push it to the main branch! Don't forget to delete the working branch.
+* Liberally use method preconditions
+  - these add to the method documentation
+* Avoid using capitals for variables
+  - capitals are macros and may be used for types.
+  - one or two letter capitals for variables are OK
+* For arrays, use the following allocation | deallocation methods
+  -  `.create` | `.destroy` 
+  - `.created` | `.destroyed` 
+  - `.allocated` | `.desllocated` 
+  - `.associated` | `.disaasociated` 
+* Use the standard 3 space indent for `Fortran`
+  - especially for routine methods, so `vim` collapsing works.
+  - Plus, it looks better.
+* Try to keep method code short
+  - to a screenful if possible
+  - use helper routines!
+* If must keep dead code, or alternative algorithms, keep it neat
+  - make a main `algorithm` which may call ...
+  - `algorthm_v1`, `algorithm_v2`, ... 
+  - this way we can learn what works and what doesn't.
+* If you satisy all the above, push it to the main branch!
+  - Don't forget to delete the working branch.
 
 That's all.
 
