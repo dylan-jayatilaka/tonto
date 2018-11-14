@@ -151,20 +151,21 @@ Of course, you will have to know something about programming.
 * All objects are "friends" and the derived types are in the `types.foo` file.
 
 Finally, there are the rules, which are brief, and which follow. Most of this is common sense anyway.
-* In the beginning do your work in a branch.
-* Your work must not break any tests. This code is used in at least two commercial projects!
-* When you compile under `-DCMAKE_BUILD_TYPE=debug` there must be no warnings, as far as possible.
+* Initially, do your work in a branch.
+* Do not break any tests --- this code is used in at least two commercial projects!
+* Ensure there are no warnings when you compile under `-DCMAKE_BUILD_TYPE=debug`, as far as possible.
 * Methods should have meaningful names.
 * Methods should have meaningful comments, explaining at least the input arguments, or what state changes happen to the `self` object.
-* The intent of all method arguments must be declared, including `self`.
-* If a method has no side effects, please declare it PURE.
+* Declare the intent of all method arguments, including `self`.
 * There must be no unused routine arguments and no unused variables, as far as possible.
-* Avoid using capitals for variables because capitals are macros and used for types. Single letter capitals are OK.
-* Use the .create / .destroy / .created / .destroyed / .allocated / .desllocated / .associated / .disaasociated methods where possible so I can migrate to a different language at a later date.
+* If a method has no side effects, please declare it PURE.
+* Liberally use method preconditions, please.
+* Avoid using capitals for variables because capitals are macros and may be used for types (single letter or short name capitals are OK).
+* Use the .create / .destroy / .created / .destroyed / .allocated / .desllocated / .associated / .disaasociated methods where possible, so I can migrate to a different language at a later date.
 * Use the standard 3 space indent for Fortran, especially for routine methods, so vim collapsing works. Plus, it looks better.
 * Try to keep method code short, to a screenful if possible --- use helper routines!
-* If must keep dead code, alternative algorithms, keep it neat and make a main `algorithm` which may call label `algorthm_v1`, `algorithm_v2`, ... so that we can learn what works and what doesn't.
-* If you satisy all the above, you should push to the main branch!
+* If must keep dead code, or alternative algorithms, keep it neat --- make a main `algorithm` which may call label `algorthm_v1`, `algorithm_v2`, ... so that we can learn what works and what doesn't.
+* If you satisy all the above, push it to the main branch! Don't forget to delete the working branch.
 
 That's all.
 
