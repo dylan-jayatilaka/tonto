@@ -164,7 +164,7 @@ Finally, there are the rules. Most of this is common sense anyway.
   - Method arguments should be explained
   - Any state changes in the `self` object should be explained
 * Declare the intent of all method arguments
-  -- Including `self`, even if it is `INOUT`
+  - Including `self`, even if it is `INOUT`
 * There must be no unused routine arguments and no unused variables
   - As far as possible.
 * If a method has no side effects, please declare it PURE.
