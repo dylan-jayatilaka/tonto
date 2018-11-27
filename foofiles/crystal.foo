@@ -1015,10 +1015,11 @@ contains
       ! Sanity check
       DIE_IF(.asymmetric_unit_atom.disassociated,"no asymmetric_unit_atom list!")
 
-      ! Relate cell and asym atoms to fragment atoms
+      ! Relate all the different atoms: 
+      ! unit cell atoms, fragment atoms, asymmetric atoms.
       .make_cell_atom_for_frag_atom
-
-      ! Make unique fragment atoms
+      .make_frag_atom_for_cell_atom
+      .make_asym_atom_for_frag_atom
       .make_unique_frag_atoms
 
       ! Make the unit cell connection table
@@ -1275,12 +1276,101 @@ contains
    ENSURE(.unit_cell_geometry.associated,           "no .unit_cell_geometry")
    ENSURE(.asymmetric_unit_atom.associated,         "no .asymmetric_unit_atom")
    ENSURE(.asym_atom_for_unit_cell_atom.associated, "no .asym_atom_for_cell_atom")
-   ENSURE(.asym_symop_for_unit_cell_atom.associated,"no .asym_symop_for_cell_atom")
    ENSURE(.spacegroup.analyzed,                  "no spacegroup info")
 
       sh :: VEC{INT}(3)
-      pu,pa,pf :: VEC{REAL}(3)
-      f,s,u,a, is,as :: INT
+      pu,pf :: VEC{REAL}(3)
+      s,f,u,a, is :: INT
+      found,samep,ident :: BIN
+      tol :: REAL
+
+      ! Tolerances to see if atom positions are the same
+      ! --- getting this number wrong can stuff things
+      tol = .same_atom_tol
+
+      ! Create the arrays we want
+      .unit_cell_atom_for_frag_atom.destroy
+      .unit_cell_symop_for_frag_atom.destroy
+      .unit_cell_shift_for_frag_atom.destroy
+
+      .unit_cell_atom_for_frag_atom.create(.n_fragment_atoms)
+      .unit_cell_symop_for_frag_atom.create(.n_fragment_atoms)
+      .unit_cell_shift_for_frag_atom.create(3,.n_fragment_atoms)
+
+      ! Initialise
+      .unit_cell_atom_for_frag_atom  = 0
+      .unit_cell_symop_for_frag_atom = 0
+      .unit_cell_shift_for_frag_atom = 0
+
+      ! Find matching fragment atom
+      do f = 1,.n_fragment_atoms
+
+         found = FALSE
+      
+         ! Loop over symops
+         symops: do s = 1,.spacegroup.n_seitz
+
+            ! Loop unit cell atoms
+            do u = 1,.n_unit_cell_atoms
+
+               ! Asymmetric atom a for unit cell atom u
+               a = .asym_atom_for_unit_cell_atom(u)
+         
+               ! Unit cell position
+               pu = .unit_cell_geometry(:,u)
+
+               ! Fragment atom position
+               pf = .fragment_geometry(:,f)
+
+               ! Shift fragment atom to unit cell, f -> u
+               .transform_position(pf,s,to_unit_cell=TRUE,unit_cell_shift=sh)
+   
+               ! Is unit cell atom u the fragment atom f?
+               samep = pu.same_as(pf,tol)
+               ident = .fragment_atom(f).is_xtal_identical_kind_to(.asymmetric_unit_atom(a))
+   
+               ! Found fragment atom f?
+               found = samep AND ident
+   
+               if (NOT found) cycle
+
+               ! Get unit cell atom which generates this frag atom
+               is = .spacegroup.inverse_of_symops(s)     
+               .unit_cell_atom_for_frag_atom(f) = u
+               .unit_cell_symop_for_frag_atom(f) = is    ! is maps u -> f
+                 
+               ! Get shift for unit cell atom -> frag atom
+               pf = .fragment_geometry(:,f)
+               pu = .unit_cell_geometry(:,u)
+               .transform_position(pu,is)
+               .unit_cell_shift_for_frag_atom(:,f) = nint(pf - pu)
+
+               exit symops
+
+            end ! -- u, unit cell atoms
+
+         end do symops ! s, symops
+
+         DIE_IF(NOT found,"fragment atom "//f.to_str.trim//" not found in unit cell")
+
+      end ! -- f, frag atoms
+
+   end
+
+   make_frag_atom_for_cell_atom ::: leaky, private
+   ! Relate fragment atoms to unit cell atoms
+      self :: INOUT
+
+   ENSURE(.asym_atom_for_unit_cell_atom.associated, "no .asym_atom_for_cell_atom")
+   ENSURE(.unit_cell_geometry.associated,           "no .unit_cell_geometry")
+   ENSURE(.fragment_geometry.associated,            "no .fragment_geometry")
+   ENSURE(.fragment_atom.associated,                "no .fragment_atom")
+   ENSURE(.asymmetric_unit_atom.associated,         "no .asymmetric_unit_atom")
+   ENSURE(.spacegroup.analyzed,                  "no spacegroup info")
+
+      sh :: VEC{INT}(3)
+      pu,pf :: VEC{REAL}(3)
+      u,s,f,a :: INT
       found,samep,ident :: BIN
       tol :: REAL
 
@@ -1292,39 +1382,21 @@ contains
       .frag_atom_for_unit_cell_atom.destroy
       .frag_symop_for_unit_cell_atom.destroy
       .frag_shift_for_unit_cell_atom.destroy
-      .unit_cell_atom_for_frag_atom.destroy
-      .unit_cell_symop_for_frag_atom.destroy
-      .unit_cell_shift_for_frag_atom.destroy
-      .asym_atom_for_frag_atom.destroy
-      .asym_symop_for_frag_atom.destroy
-      .asym_shift_for_frag_atom.destroy
 
       .frag_atom_for_unit_cell_atom.create(.n_unit_cell_atoms)
       .frag_symop_for_unit_cell_atom.create(.n_unit_cell_atoms)
       .frag_shift_for_unit_cell_atom.create(3,.n_unit_cell_atoms)
-      .unit_cell_atom_for_frag_atom.create(.n_fragment_atoms)
-      .unit_cell_symop_for_frag_atom.create(.n_fragment_atoms)
-      .unit_cell_shift_for_frag_atom.create(3,.n_fragment_atoms)
-      .asym_atom_for_frag_atom.create(.n_fragment_atoms)
-      .asym_symop_for_frag_atom.create(.n_fragment_atoms)
-      .asym_shift_for_frag_atom.create(3,.n_fragment_atoms)
 
       ! Initialise
       .frag_atom_for_unit_cell_atom  = 0
       .frag_symop_for_unit_cell_atom = 0
       .frag_shift_for_unit_cell_atom = 0
-      .unit_cell_atom_for_frag_atom  = 0
-      .unit_cell_symop_for_frag_atom = 0
-      .unit_cell_shift_for_frag_atom = 0
-      .asym_atom_for_frag_atom  = 0
-      .asym_symop_for_frag_atom = 0
-      .asym_shift_for_frag_atom = 0
 
       ! Loop unit cell atoms
       do u = 1,.n_unit_cell_atoms
 
          found = FALSE
-      
+
          ! Loop over symops
          symops: do s = 1,.spacegroup.n_seitz
 
@@ -1350,66 +1422,81 @@ contains
                ! Found fragment atom f?
                found = samep AND ident
    
-             ! stdout.show("u                         =",u)
-             ! stdout.show("a                         =",a)
-             ! stdout.show("s                         =",s)
-             ! stdout.show("f                         =",f)
-             ! stdout.show("cell atom position pu     =",pu)
-             ! stdout.show("fragment position  pf     =",pf)
-             ! stdout.show("shift sh (pf0 + sh = pu)  =",sh)
-             ! stdout.show("same pos?                 =",found)
-             ! stdout.show("xtal identical            =",ident)
-             ! if (found) &
-             ! stdout.text("SAME POS")
-             ! stdout.text("===========================")
-
                if (NOT found) cycle
 
                ! Get frag atom which generates this unit cell atom
                .frag_atom_for_unit_cell_atom(u) = f
-               .frag_symop_for_unit_cell_atom(u) = s
+               .frag_symop_for_unit_cell_atom(u) = s     ! s  maps f -> u
                .frag_shift_for_unit_cell_atom(:,u) = sh
 
-               ! Unit cell atom for frag atom f already found?
-               ! Maybe more than one unit cell atom matches!
-               if (.unit_cell_atom_for_frag_atom(f)==0) then
-
-                  ! Inverse: Get unit cell atom which generates this frag atom
-                  is = .spacegroup.inverse_of_symops(s)
-                  .unit_cell_atom_for_frag_atom(f) = u
-                  .unit_cell_symop_for_frag_atom(f) = is
-
-                  ! Get shift for unit cell atom -> frag atom
-                  pf = .fragment_geometry(:,f)
-                  pu = .unit_cell_geometry(:,u)
-                  .transform_position(pu,is)
-                  .unit_cell_shift_for_frag_atom(:,f) = nint(pf - pu)
-
-                  ! Get asym atom which generates this frag atom
-                  ! NOTE: Maybe more than one asym atom matches!
-                  .asym_atom_for_frag_atom(f) = a
-                  as = .asym_symop_for_unit_cell_atom(u)
-                  .asym_symop_for_frag_atom(f) = as
-      
-                  ! Get shift for asym atom -> frag atom
-                  pf = .fragment_geometry(:,f)
-                  pa = .asymmetric_unit_geometry(:,a)
-                  .transform_position(pa,as)
-                  .asym_shift_for_frag_atom(:,f) = nint(pf - pa)
-
-               end
-
-               exit symops ! take lowest u, s, any f
+               exit symops
 
             end ! -- f, frag atoms
 
          end do symops ! -- s, symops
 
-         if (NOT found) then
-            DIE("fragment atom "//f.to_str.trim//" was not found in the unit cell")
-         end
+         DIE_IF(NOT found,"Unit cell atom "//u.to_str.trim//" not found in fragment")
 
       end
+
+   end
+
+   make_asym_atom_for_frag_atom ::: leaky, private
+   ! Relate asymmetric unit atoms to the fragment atoms.
+      self :: INOUT
+
+   ENSURE(.fragment_geometry.associated, "no .fragment_geometry")
+   ENSURE(.asymmetric_unit_geometry.associated, "no .asymmetric_unit_geometry")
+   ENSURE(.asym_atom_for_unit_cell_atom.associated, "no .asym_atom_for_unit_cell_atom")
+   ENSURE(.asym_symop_for_unit_cell_atom.associated, "no .asym_symop_for_unit_cell_atom")
+   ENSURE(.unit_cell_atom_for_frag_atom.associated, "no .unit_cell_atom_for_frag_atom")
+   ENSURE(.unit_cell_symop_for_frag_atom.associated, "no .unit_cell_symop_for_frag_atom")
+   ENSURE(.spacegroup.analyzed,                  "no spacegroup info")
+
+      pa,pf :: VEC{REAL}(3)
+      f,a,u, as,us,af :: INT
+      tol :: REAL
+
+      ! Tolerances to see if atom positions are the same
+      ! --- getting this number wrong can stuff things
+      tol = .same_atom_tol
+
+      ! Create the arrays we want
+      .asym_atom_for_frag_atom.destroy
+      .asym_symop_for_frag_atom.destroy
+      .asym_shift_for_frag_atom.destroy
+
+      .asym_atom_for_frag_atom.create(.n_fragment_atoms)
+      .asym_symop_for_frag_atom.create(.n_fragment_atoms)
+      .asym_shift_for_frag_atom.create(3,.n_fragment_atoms)
+
+      ! Initialise
+      .asym_atom_for_frag_atom  = 0
+      .asym_symop_for_frag_atom = 0
+      .asym_shift_for_frag_atom = 0
+
+      ! Find matching fragment atom
+      do f = 1,.n_fragment_atoms
+      
+         ! Asymmetric atom a for unit cell atom u
+         u = .unit_cell_atom_for_frag_atom(f)
+         a = .asym_atom_for_unit_cell_atom(u)
+
+         ! Get symop which mapys asym atom to frag atom
+         us = .unit_cell_symop_for_frag_atom(f)    ! us maps u -> f
+         as = .asym_symop_for_unit_cell_atom(u)    ! as maps a -> u
+         af = .spacegroup.product_of_symops(us,as) ! af maps a -> f
+      
+         .asym_atom_for_frag_atom(f) = a
+         .asym_symop_for_frag_atom(f) = af
+          
+         ! Get shift for asym atom -> frag atom
+         pf = .fragment_geometry(:,f)
+         pa = .asymmetric_unit_geometry(:,a)
+         .transform_position(pa,af)
+         .asym_shift_for_frag_atom(:,f) = nint(pf - pa)
+
+      end ! -- f, frag atoms
 
    end
 
@@ -1423,7 +1510,7 @@ contains
    ENSURE(.unit_cell_atom_for_frag_atom.associated, "no .unit_cell_atom_for_frag_atom")
    ENSURE(.asym_symop_for_unit_cell_atom.associated,"no .asym_symop_for_cell_atom")
 
-      f,a,m,u,s,t :: INT
+      f,a,m, t,u,v,w :: INT
       unique :: BIN
 
       ! Create the arrays we want
@@ -1444,14 +1531,11 @@ contains
          ! Asym atom for this fragment atom
          a = .asym_atom_for_frag_atom(f)
 
-         ! Asym symop which can generate this frag atom
-         u = .unit_cell_atom_for_frag_atom(f)
-         s = .asym_symop_for_unit_cell_atom(u)
-
          ! Does this asym atom "a" occur before?
          ! If not, its unique.
          m = .asym_atom_for_frag_atom(1:f-1).index_of_value(a)
          unique = m==0
+
          if (unique) then
             .n_unique_frag_atoms = .n_unique_frag_atoms + 1
             .unique_index_for_frag_atom(f) = .n_unique_frag_atoms
@@ -1461,11 +1545,17 @@ contains
          else
             .unique_index_for_frag_atom(f) = 0
             .unique_atom_for_frag_atom(f) = m
-            u = .unit_cell_atom_for_frag_atom(m)
-            t = .asym_symop_for_unit_cell_atom(u)
-            t = .spacegroup.inverse_of_symops(t)   ! inverse of symop(t) maps m -> a
-            t = .spacegroup.product_of_symops(s,t) ! s maps a -> f (except for trans)
-            .unique_symop_for_frag_atom(f) = t
+            t = .asym_symop_for_frag_atom(m)       ! t maps m -> a
+            u = .asym_symop_for_frag_atom(f)       ! u maps f -> a
+       ! stdout.flush
+       ! stdout.show("f = ",f)
+       ! stdout.show("a = ",a)
+       ! stdout.show("m = ",m)
+       ! stdout.show("t = ",t)
+       ! stdout.show("u = ",u)
+            v = .spacegroup.inverse_of_symops(u)   ! v maps a -> f
+            w = .spacegroup.product_of_symops(v,t) ! w maps m -> f (except for trans)
+            .unique_symop_for_frag_atom(f) = w     !   maps m -> f
          end
 
       end
