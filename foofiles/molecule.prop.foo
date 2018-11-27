@@ -5606,53 +5606,53 @@ contains
     CP :: MAT3{INT}*, OUT
     EDS,VOL :: VEC{REAL}*, OUT
 
-    nprocs,i,ii,px,mx,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
-    GradMax,distance,MaxVal,dv :: REAL
+    request,nprocs,i,ii,px,mx,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
+    err,GradMax,distance,MaxVal,dv :: REAL
     Max :: VEC{INT}(3)
     List :: VEC{VEC_{INT}}*
-    stitch_send,stitch_recv :: MAT{INT}*
+    swap_recv,swap,stitch_send,stitch_recv :: MAT{INT}*
     ED :: MAT3{REAL}*
+    EDSS,VOLS,EDSR,VOLR :: MAT{REAL}*
     Maxima :: VEC{REAL}*
-    tests,testr :: VEC{INT}(3)
 
     nprocs = tonto.n_processors
-       mx = nx - (nprocs-1)*int(nx/nprocs)
+    mx = nx - (nprocs-1)*int(nx/nprocs)
     if(tonto.processor_rank==tonto.master_rank)then
-       ED.create(mx+3,ny+2,nz+2)
-       CP.create(mx+3,ny+2,nz+2)
+       ED.create(mx+4,ny+2,nz+2)
+       CP.create(mx+4,ny+2,nz+2)
     else if(tonto.processor_rank<nprocs - 1)then
+       px = int(nx/nprocs)
+       ED.create(px+5,ny+2,nz+2)
+       CP.create(px+5,ny+2,nz+2)
+    else
        px = int(nx/nprocs)
        ED.create(px+3,ny+2,nz+2)
        CP.create(px+3,ny+2,nz+2)
-    else
-       px = int(nx/nprocs)
-       ED.create(px+2,ny+2,nz+2)
-       CP.create(px+2,ny+2,nz+2)
     end if
-    Maxima.create(1)
     
     if(tonto.processor_rank==tonto.master_rank)then
        ED = ZERO
-       ED(2:mx+2,2:ny+1,2:nz+1)=grid(1:mx+1,:,:)
+       ED(2:mx+3,2:ny+1,2:nz+1)=grid(1:mx+2,:,:)
+       px = mx - 1
+       ii = 2
     else if(tonto.processor_rank<nprocs - 1)then
        ED = ZERO
-       ED(2:px+2,2:ny+1,2:nz+1)= &
-       grid(mx+(tonto.processor_rank-1)*px+1:mx+(tonto.processor_rank)*px+1,:,:)
+       ED(2:px+4,2:ny+1,2:nz+1)= &
+       grid(mx+(tonto.processor_rank-1)*px:mx+(tonto.processor_rank)*px+2,:,:)
+       ii = 3
     else 
        ED = ZERO
-       ED(2:px+1,2:ny+1,2:nz+1)= &
-       grid(mx+(tonto.processor_rank-1)*px+1:mx+(tonto.processor_rank)*px,:,:)
+       ED(2:px+2,2:ny+1,2:nz+1)= &
+       grid(mx+(tonto.processor_rank-1)*px:mx+(tonto.processor_rank)*px,:,:)
+       px = px - 2
+       ii = 3
     end if
     CP = ZERO
     iCP = ZERO
     GradMax = 1
+    Maxima.create(1)
     
-    if(tonto.processor_rank==tonto.master_rank)then
-       px = mx
-    end if
-   
-
-    do x=2,px+1
+    do x=ii,px+3
     do y=2,ny+1
     do z=2,nz+1
        if (CP(x,y,z) == ZERO) then
@@ -5728,12 +5728,7 @@ contains
           else
              Maxima.append(MaxVal)
           end if
-!          if(mod(tonto.processor_rank,2)==0)then
-             iCP = iCP + 1
-!          else
-!             ii = -1
-!             iCP = iCP - 1
-!          end if
+          iCP = iCP + 1
           do i =1,ListMax
              CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
              iCP
@@ -5749,39 +5744,35 @@ contains
     end do
     end do
     end do
-       
-    stitch_send.create(CP.dim2,CP.dim3)
-    stitch_recv.create(CP.dim2,CP.dim3)
-    stitch_send = reshape(CP(px+2,:,:),[ny,nz])
-    stitch_recv = ZERO
-!    tests.create(3)
-!    testr.create(3)
-    tests(1) = 1
-    tests(2) = 2
-    tests(3) = 3
-    testr = ZERO
-    ii = 1
-    i = tonto.processor_rank
-    if(tonto.processor_rank==1)then
-       tonto.send(tests,tonto.processor_rank+1)
-!       print*, tonto.processor_rank, ii
-       !tonto.send(stitch_send,tonto.processor_rank+1)
-       !print*, tonto.processor_rank, stitch_send(2,2)
-    else if(tonto.processor_rank==2)then
-!       tonto.send(CP(px+2,:,:),tonto.processor_rank+1)
-       tonto.recv(testr,tonto.processor_rank-1)
-!       tonto.recv(stitch_recv,tonto.processor_rank-1)
-!       print*, tonto.processor_rank, stitch_recv(2,2)
-!    else
-!       tonto.recv(stitch(1,:,:),tonto.processor_rank-1)
-!       print*, tonto.processor_rank, stitch(2,2,2)
+    if(tonto.processor_rank==tonto.master_rank)then
+       stitch_send.create(CP.dim2-2,CP.dim3-2)
+       stitch_send = reshape(CP(px+3,2:ny+1,2:nz+1),[ny,nz])
+       tonto.send(stitch_send,tonto.processor_rank+1,&
+       tonto.processor_rank+1)
+    else if(tonto.processor_rank<nprocs - 1)then
+       stitch_send.create(CP.dim2-2,CP.dim3-2)
+       stitch_recv.create(CP.dim2-2,CP.dim3-2)
+       stitch_send = reshape(CP(px+3,2:ny+1,2:nz+1),[ny,nz])
+       ! Send stitching immediately, send to master at the end which
+       ! CPs overlap. Use this to determine whther to sum integrals or
+       ! to create new integral point.`
+       tonto.recv(stitch_recv,tonto.processor_rank-1,&
+       tonto.processor_rank)
+       tonto.send(stitch_send,tonto.processor_rank+1,&
+       tonto.processor_rank+1)
+    else
+       stitch_recv.create(CP.dim2-2,CP.dim3-2)
+       tonto.recv(stitch_recv,tonto.processor_rank-1, &
+       tonto.processor_rank)
+       do y = 1,ny
+       do z = 1,nz
+          if (CP(3,y+1,z+1) /= stitch_recv(y,z)) then
+          print*, CP(3,y+1,z+1), "replaced with", stitch_recv(y,z)
+          end if
+       end do
+       end do
     end if
-    stdout.text("I am the Master")
     tonto.barrier
-    print*, tonto.processor_rank, testr
-    tonto.finalize
-    stop
-    
 !    do i=1,iCP
 !    xs = 0
 !    do x=2,px+1
@@ -5816,9 +5807,19 @@ contains
     dv = dv/(nx-1)/(ny-1)/(nz-1)                             &
        *     gridlength(1)*gridlength(2)*gridlength(3)       
 
-    do x=1,px+2
-    do y=1,ny+2
-    do z=1,nz+2
+    if(tonto.processor_rank==tonto.master_rank)then
+       ii = 2
+       mx = px + 2
+    else if(tonto.processor_rank < nprocs)then
+       ii = 3
+       mx = px + 2
+    else
+       ii = 3
+       mx = px +4
+    end if 
+    do x=ii,mx
+    do y=2,ny+1
+    do z=2,nz+1
     do i=1,iCP
        if(i==CP(x,y,z)) then
           EDS(i) = EDS(i) + ED(x,y,z)*dv ! electrons in this voxel
@@ -5829,17 +5830,182 @@ contains
     end do
     end do
     dv = 0
-    do i=1,iCP
-          print*,tonto.processor_rank,"Critical point", i
-          !stdout.show("Critical point", i)
-          print*,tonto.processor_rank,"Number of electrons", EDS(i)
-          !stdout.show("Number of electrons",EDS(i))
-          dv = dv + EDS(i)
-          print*,tonto.processor_rank,"Volume of CP", VOL(i)
-          !stdout.show("Volume of CP",VOL(i))
-    end do
+    if (tonto.processor_rank /= tonto.master_rank) then
+       swap.create(2,0)
+       ii = 0
+       do y = 1, ny
+       do z = 1, nz
+          if (CP(3,y+1,z+1) == stitch_recv(y,z)) cycle
+          do i = 1,swap.dim2
+             if (CP(3,y+1,z+1) == swap(1,i)) then
+                if (stitch_recv(y,z) == swap(2,i)) then
+                   ii = 1
+                   exit
+                end if
+             end if
+          end do
+          if (ii == 1) then
+             ii = 0
+             cycle
+          end if
+          print*, tonto.processor_rank,CP(3,y+1,z+1), "should be replaced with", &
+          stitch_recv(y,z)
+          swap.append_column([CP(3,y+1,z+1),stitch_recv(y,z)])
+          !add CP to list to ignore, cycle
+          !At the end cycle the list
+       end do
+       end do
+       do i = 1,swap.dim2-1
+       do ii = i+1,swap.dim2
+          if (swap(1,i) == swap(1,ii)) then
+             print*, "merges"
+          end if
+       end do
+       end do
+       if (tonto.processor_rank == 1 AND tonto.processor_rank<nprocs-1) then
+          tonto.send(swap.dim2,tonto.processor_rank+1)
+          tonto.send(swap,tonto.processor_rank+1)
+       else if (tonto.processor_rank < nprocs-1 AND &
+          tonto.processor_rank /= tonto.master_rank) then
+          tonto.recv(ii,tonto.processor_rank-1)
+          swap_recv.create(2,ii)
+          tonto.recv(swap_recv,tonto.processor_rank-1)
+          do i = 1,swap.dim2
+             do ii = 1,swap_recv.dim2
+                ! Ensure the swaps are consistent with the master
+                ! processor
+                if (swap(2,i) == swap_recv(1,ii)) then
+                   swap(2,i) = swap_recv(2,ii)
+                   exit
+                end if
+             end do
+          end do
+          tonto.send(swap.dim2,tonto.processor_rank+1)
+          tonto.send(swap,tonto.processor_rank+1)
+       else if (nprocs > 2 AND tonto.processor_rank == nprocs) then
+          tonto.recv(ii,tonto.processor_rank-1)
+          swap_recv.create(2,ii)
+          tonto.recv(swap_recv,tonto.processor_rank-1)
+          do i = 1,swap.dim2
+             do ii = 1,swap_recv.dim2
+                ! Ensure the swaps are consistent with the master
+                ! processor
+                if (swap(2,i) == swap_recv(1,ii)) then
+                   swap(2,i) = swap_recv(2,ii)
+                   exit
+                end if
+             end do
+          end do
+       else
+       end if
+    end if
+    if (tonto.processor_rank /= tonto.master_rank) then
+       VOLS.create(2,iCP)
+       EDSS.create(2,iCP)
+       do i=1,iCP
+             x = 0
+             ii = i
+             do y = 1, swap.dim2
+                if (i == swap(1,y)) then
+                   ii = swap(2,y)
+                   x = 1
+                   exit
+                end if
+             end do
+             if (x /= 1) then
+                do ys = 2,ny+1
+                do zs = 2,nz+1
+                   if (i == CP(3,ys,zs)) then
+                      x = 1 
+                      exit
+                   end if
+                end do
+                   if (x == 1) exit
+                end do
+             ! Have a test for if the point is not in the swap, so it
+             ! can be updated according to the master.
+               if (x /= 1) then
+                  ii = -i
+                end if
+             end if
+             VOLS(1,i) = ii
+             VOLS(2,i) = VOL(i)
+             EDSS(1,i) = ii
+             EDSS(2,i) = EDS(i)
+             print*,tonto.processor_rank,"Critical point", ii
+             !stdout.show("Critical point", i)
+             print*,tonto.processor_rank,"Number of electrons", EDS(i)
+             !stdout.show("Number of electrons",EDS(i))
+             dv = dv + EDS(i)
+             print*,tonto.processor_rank,"Volume of CP", VOL(i)
+             !stdout.show("Volume of CP",VOL(i))
+             ii = 0
+       end do
+       tonto.send(iCP,tonto.master_rank,3)
+       tonto.send(EDSS,tonto.master_rank,1)
+       tonto.send(VOLS,tonto.master_rank,2)
+    else
+       ! Probe how many there are for each critical point (1,2,3,etc.)
+       ! Receive them in order and print out the data.
+       ! Check it against a generic run with water, and then other
+       ! molecules.
+       do i = 1, nprocs - 1
+          ! How many Critical points?
+          tonto.recv(y,i,3)
+          print*, "CP", y
+          EDSR.create(2,y)
+          VOLR.create(2,y)
+          ! Receive what critical point?
+          ! Receive EDS and VOL for summation. Tags are included to
+          ! prevent crossover. MaxVal is placeholder for ED and
+          ! GradMax is a placeholder for Vol to reduce variable usage
+          tonto.recv(EDSR,i,1)
+          tonto.recv(VOLR,i,2)
+          do x = 1, y
+             if (EDS.dim < EDSR(1,x)) then
+                EDS.append(EDSR(2,x))
+                VOL.append(VOLR(2,x))
+             else
+                EDS(EDSR(1,x)) = EDS(EDSR(1,x)) + EDSR(2,x) 
+                VOL(VOLR(1,x)) = VOL(VOLR(1,x)) + VOLR(2,x) 
+             end if
+          end do
+          EDSR.destroy
+          VOLR.destroy
+       print*, "external"
+!       do x=1,EDSR.dim
+!             if (EDSR(1,x) < 0) then
+!                iCP = iCP + 1
+!                EDSR(1,x) = iCP
+!                VOLR(1,x) = iCP
+!             end if
+!             print*,tonto.processor_rank,"Critical point", EDSR(1,x)
+!             !stdout.show("Critical point", i)
+!             print*,tonto.processor_rank,"Number of electrons", &
+!             EDSR(2,x)
+!             !stdout.show("Number of electrons",EDS(i))
+!             dv = dv + EDSR(2,x)
+!             print*,tonto.processor_rank,"Volume of CP", VOLR(2,x)
+!             !stdout.show("Volume of CP",VOL(i))
+!       end do
+!       print*,tonto.processor_rank,"Total electrons", dv
+       end do
+       dv = 0
+       print*, "local"
+       do i=1,EDS.dim
+             print*,tonto.processor_rank,"Critical point", i
+             !stdout.show("Critical point", i)
+             print*,tonto.processor_rank,"Number of electrons", EDS(i)
+             !stdout.show("Number of electrons",EDS(i))
+             dv = dv + EDS(i)
+             print*,tonto.processor_rank,"Volume of CP", VOL(i)
+             !stdout.show("Volume of CP",VOL(i))
+       end do
+    end if
     print*,tonto.processor_rank,"Total electrons", dv
     !stdout.show("Total electrons", dv)
+    tonto.finalize
+    stop
 #ifdef MPI    
     tonto.barrier
 #endif    
