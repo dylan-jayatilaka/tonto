@@ -544,22 +544,21 @@ contains
    ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
 
       rc,ra :: VEC{REAL}(3)
-      Wc,wt, xa,ya,za,a2, rho, ga,gb :: VEC{REAL}*
-      overlapping_atom, pi,pj,pn :: VEC{INT}*
-      skipa0,skipab,skipa,skipb :: VEC{BIN}*
-      k_pts,pt,grida,gridb,bf_save :: MAT{REAL}*
+      Wc,wt, xa,ya,za,a2, rho :: VEC{REAL}*
+      pi,pj,pn :: VEC{INT}*
+      skipa0,skipab :: VEC{BIN}*
+      k_pts,pt,bf_save :: MAT{REAL}*
       sha :: SHELL1
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
       sf, II  :: CPX
       cutoff,sc,s2, k1,k2,k3,kr, Dab, fac, val :: REAL
       n_atom,n_k,n_pt,n_keep :: INT
-      u,c,ca,cb :: INT
-      oa,fsa,lsa,fba :: INT
-      ob,fsb,lsb :: INT
-      sa,fa,la,na, as :: INT
+      u,c,as, a,b,i,j,k,n,p :: INT
+      ca,oa,fsa,lsa,fba :: INT
+      cb,ob,fsb,lsb :: INT
+      sa,fa,la,na :: INT
       sb,fb,lb,nb :: INT
-      a,b,i,j,k,n,p :: INT
       spin :: BIN
 
       ! Make sure HA stuff is there
@@ -618,9 +617,6 @@ contains
          s2 = ONE/sc
        ! s2 = s2*s2
 
-         ! Overlapping atoms
-         overlapping_atom => .overlapping_atoms_for_atom(c).element
-
          ! Get the Becke grid for atom "c" (leaky)
          .becke_grid.make_grid(pt,wt,bf_save,c)
          n_pt = pt.dim1
@@ -630,7 +626,7 @@ contains
          ! are used ... otherwise nothing is skipped
          Wc.create(n_pt)
          if (.use_interpolators) then
-            .GRID:make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
+            .GRID:make_stockholder_atom_grid(Wc,c,pt,.overlapping_atoms_for_atom(c)[:])
          else
             .GRID:make_stockholder_atom_grid(Wc,c,pt)
          end
@@ -639,7 +635,7 @@ contains
          wt = Wc*wt
          Wc.destroy
 
-         ! Prune the grid with new "wt", get saved bf grid bf_save,
+         ! Prune the grid with new "wt", get saved bf grid, bf_save,
          ! and new no of points, n_pt (leaky)
          .becke_grid.prune_grid(pt,wt,bf_save)
          n_pt = pt.dim1
@@ -653,9 +649,9 @@ contains
          rho = ZERO
 
          ! Loop c-overlapping atoms a
-         do ca = 1,overlapping_atom.dim
+         do ca = 1,.overlapping_atoms_for_atom(c).element.dim
 
-            oa  = overlapping_atom(ca)
+            oa  = .overlapping_atoms_for_atom(c)[ca]
             fsa = .first_shell_for_atom(oa)
             lsa =  .last_shell_for_atom(oa)
             fba = .first_basis_fn_for_atom(oa)
@@ -667,7 +663,7 @@ contains
             ! Loop shells on atom a
             do sa = fsa,lsa
 
-               ! Shell a limits
+               ! Shell a limit
                fa = .first_basis_fn_for_shell(sa)
                la =  .last_basis_fn_for_shell(sa)
                na = la - fa + 1
@@ -678,41 +674,40 @@ contains
                sha.position = ra
 
                ! Make shell "sa" skip list
-               skipa.create(n_pt)
-               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
+               bf_skip(sa).element.create(n_pt)
+               sha.make_skip_list(bf_skip(sa).element,n_keep,a2,skipa0,n_pt,cutoff)
 
                ! Next shell "sa" if no sig. points
                if (n_keep==0) then
-                  skipa.destroy
+                  bf_skip(sa).element.destroy
                   cycle
                end
 
                ! Assign the "sa" skipa list
-               bf_skip(sa).element => skipa
+             ! bf_skip(sa).element => skipa
 
                ! Make/copy the "sa" basis function grida
                ! This must be copied since skipa could be TRUE
-               grida.create(n_keep,na)
+               bf_grid(sa).element.create(n_keep,na)
                if (oa/=c) then
                   ! Calculate grid if necessary
-                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+                  sha.make_skip_grid(bf_grid(sa).element,n_keep,na,xa,ya,za,a2,bf_skip(sa).element,n_pt)
                else
                   ! Extract grid values from saved grid values
                   do a = 1,na
                      i = 0
                      do n = 1,n_pt
-                        if (skipa(n)) cycle
+                        if (bf_skip(sa)[n]) cycle
                         i = i + 1
-                        grida(i,a) = bf_save(n,a+fa-fba)
+                        bf_grid(sa)[i,a] = bf_save(n,a+fa-fba)
                      end
                   end
                end
-               bf_grid(sa).element => grida
 
                ! Loop c-overlapping atoms b
                do cb = 1,ca
 
-                  ob  = overlapping_atom(cb)
+                  ob  = .overlapping_atoms_for_atom(c)[cb]
                   fsb = .first_shell_for_atom(ob)
                   lsb =  .last_shell_for_atom(ob)
 
@@ -727,12 +722,8 @@ contains
                      lb = .last_basis_fn_for_shell(sb)
                      nb = lb - fb + 1
 
-                     ! Set the "sb" basis function grid
-                     skipb => bf_skip(sb).element
-                     gridb => bf_grid(sb).element
-
                      ! How many points in common? Save time?
-                     skipab(1:n_pt) = skipa OR skipb
+                     skipab(1:n_pt) = bf_skip(sa).element OR bf_skip(sb).element
                      n_keep = count(NOT skipab(1:n_pt))
                      if (n_keep==0) cycle
 
@@ -745,15 +736,13 @@ contains
                      if (na*nb==1) then ! s.s product
 
                         ! Add density contribution to rho
-                        ga => grida(:,1)
-                        gb => gridb(:,1)
                         Dab = fac*.density_matrix.restricted(fa,fb)
                         i = 0; j = 0
                         do n = 1,n_pt
-                           if (NOT skipa(n)) i = i + 1
-                           if (NOT skipb(n)) j = j + 1
+                           if (NOT bf_skip(sa)[n]) i = i + 1
+                           if (NOT bf_skip(sb)[n]) j = j + 1
                            if (skipab(n)) cycle
-                           val    = ga(i)*gb(j)*Dab
+                           val    = bf_grid(sa)[i,1]*bf_grid(sb)[j,1]*Dab
                            rho(n) = rho(n) + val
                         end
 
@@ -767,8 +756,8 @@ contains
                         ! Make mapper arrays
                         p = 0; i = 0; j = 0
                         do n = 1,n_pt
-                           if (NOT skipa(n)) i = i + 1
-                           if (NOT skipb(n)) j = j + 1
+                           if (NOT bf_skip(sa)[n]) i = i + 1
+                           if (NOT bf_skip(sb)[n]) j = j + 1
                            if (skipab(n)) cycle
                            p = p + 1
                            pi(p) = i
@@ -778,15 +767,13 @@ contains
 
                         ! Add density contribution to rho
                         do a = 1,na
-                           ga => grida(:,a)
                            do b = 1,nb
-                              gb  => gridb(:,b)
                               Dab = fac*.density_matrix.restricted(fa+a-1,fb+b-1)
                               do p = 1,n_keep
                                  i = pi(p)
                                  j = pj(p)
                                  n = pn(p)
-                                 val    = ga(i)*gb(j)*Dab
+                                 val    = bf_grid(sa)[i,a]*bf_grid(sb)[j,b]*Dab
                                  rho(n) = rho(n) + val
                               end
                            end
@@ -809,15 +796,18 @@ contains
 
          ! Make the (unique) structure factors
          do k = 1,n_k
+
             k1 = k_pts(k,1)
             k2 = k_pts(k,2)
             k3 = k_pts(k,3)
+
             sf = IMAGIFY(ZERO)
             do i = 1,n_pt
                kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
                sf = sf + rho(i)*exp(IMAGIFY(kr))
             end
             sf_n(k,u) = sf * s2
+
          end
 
          ! Clean up atom "c" stuff
@@ -850,7 +840,7 @@ contains
 
    end
 
-   symmetrize_unique_HA_SFs(sf_n)
+   symmetrize_unique_HA_SFs(sf_n) ::: PURE
    ! Get "sf_n", the static structure factors for the symmetry related
    ! K points with *no* thermal smearing, for every unique atom.
    ! NOTE: call .:make_Hirshfeld_inputs(skip_NOs=TRUE) beforehand!
@@ -1263,7 +1253,7 @@ contains
       if (.scfdata.is_guess)  return
 
       ! Add cluster charges if needed
-      ! NOTE: includes the self-consisten case
+      ! Includes the self-consistent case
       if (.scfdata.using_cluster_charges) then
 
          if  (NOT .Hirshfeld_atom_info_made) then
@@ -1734,6 +1724,7 @@ contains
     ! .crystal.put_unit_cell_geometry
 
       ! Make the cluster of molecules
+      .crystal.destroy_cluster_info
       .crystal.set_generation_method("within_radius")
       .crystal.set_defragment(.scfdata.defragment)
       .crystal.set_radius(.scfdata.cluster_radius)
@@ -2270,6 +2261,7 @@ contains
    usual_scf ::: leaky
    ! Do an SCF calculation. The .molecular_orbitals,
    ! .orbital_energies, and .density_matrix are produced as results.
+      self :: INOUT
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.associated,   "no atom list")
