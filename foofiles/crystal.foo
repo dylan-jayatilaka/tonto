@@ -3883,7 +3883,7 @@ contains
    ENSURE(.data_exists,                        "no data")
    ENSURE(.fragment_info_made,                 "no fragment info")
 
-      dF :: MAT{REAL}*
+      dF :: MAT{REAL}@
 
       ! Create refinement arrays & initialize (leaky)
       ! - asymmetric atom and fragment atom pADPs are set.
@@ -4221,7 +4221,8 @@ contains
    shift_update_sf_n(sf_n,dF) ::: private
    ! Update the unique *fragment* atom structure factors "sf_n" with
    ! the frag atom positional shifts (after stabilization) in "dF"
-      sf_n :: MAT{CPX}, target, INOUT
+      self :: IN
+      sf_n :: MAT{CPX}, INOUT
       dF   :: MAT{REAL}, IN
 
    ENSURE(sf_n.dim1==.n_unique_SF_k_pts,       "sf_n: wrong dim1")
@@ -4231,8 +4232,7 @@ contains
 
       d1,d2,d3, k1,k2,k3, kr  :: REAL
       n_k, u,f, k :: INT
-      sf_u :: VEC{CPX}*
-      k_pt :: MAT{REAL}*
+      k_pt :: MAT{REAL}@
 
       ! Get the k points
       n_k = .n_unique_SF_k_pts
@@ -4254,9 +4254,6 @@ contains
          d2 = dF(2,f)
          d3 = dF(3,f)
 
-         ! Structure factors, unique atom "u"
-         sf_u => sf_n(:,u)
-
          ! Update sf_u
          do k = 1,n_k
 
@@ -4266,7 +4263,7 @@ contains
 
             kr = k1*d1 + k2*d2 + k3*d3
 
-            sf_u(k) = sf_u(k) * cmplx(cos(kr),sin(kr),kind=CPX_KIND)
+            sf_n(k,u) = sf_n(k,u) * cmplx(cos(kr),sin(kr),kind=CPX_KIND)
 
          end
 
@@ -4319,17 +4316,6 @@ contains
       CM :: MAT{REAL}(3,3)
       shift :: VEC{REAL}(3)
 
-      ! Debug
-      if (.debugging("set_frag_from_asym_pADPs")) then
-         .asymmetric_unit_atom.put_coordinates
-         stdout.text("asymmetric_unit_atom.pADP_vector (before):")
-         .asymmetric_unit_atom.put_pADPs
-         stdout.text("fragment_atom (before):")
-         .fragment_atom.put_coordinates
-         stdout.text("fragment_atom.pADP_vector (before):")
-         .fragment_atom.put_pADPs
-      end
-
       ! Symmetry operators & cell matrix
       seitz = .xyz_seitz_matrices
 
@@ -4370,22 +4356,6 @@ contains
 
       ! Clean
       seitz.destroy
-
-      ! Debug
-      if (.debugging("set_frag_from_asym_pADPs")) then
-         if (present(dF)) then
-         stdout.text("dF:")
-         stdout.put(dF)
-         end
-         stdout.text("asymmetric_unit_atom (after):")
-         .asymmetric_unit_atom.put_coordinates
-         stdout.text("asymmetric_unit_atom.pADP_vector (after):")
-         .asymmetric_unit_atom.put_pADPs
-         stdout.text("fragment_atom (after):")
-         .fragment_atom.put_coordinates
-         stdout.text("fragment_atom.pADP_vectorm (after):")
-         .fragment_atom.put_pADPs
-      end
 
    end
 
@@ -4673,8 +4643,9 @@ contains
       u1,f1,a1,s1,n1, u1b,u1f,u1l, a1b,a1f,a1l :: INT
       u2,f2,a2,s2,n2, u2b,u2f,u2l, a2b,a2f,a2l :: INT
       dim  :: INT
-      diag :: VEC{REAL}*
-      T1,T2, asyma_covariance_matrix,acov,ucov :: MAT{REAL}*
+      asym_covariance_matrix :: MAT{REAL}@
+      acov,ucov :: MAT{REAL}@
+      T1,T2 :: MAT{REAL}@
       seitz :: MAT3{REAL}@
 
       ! *Inverse* symops (see below)
@@ -4682,8 +4653,10 @@ contains
 
       ! Create asym atom frag covariance matrix
       dim = .data.covariance_matrix.dim1
-      asyma_covariance_matrix.create(dim,dim)
-      asyma_covariance_matrix = ZERO
+
+      ! Asym covariance matrix
+      asym_covariance_matrix.create(dim,dim)
+      asym_covariance_matrix = ZERO
 
       ! Transform the unique .fragment_atom to the asym unit covariances
       u1b = 0
@@ -4727,49 +4700,36 @@ contains
             GAUSSIAN_DATA:symmetric_tensor_product_mx(T2,seitz(:,:,s2))
 
             ! Transform covariances: ufrag -> asym atom
-            acov => asyma_covariance_matrix(a1f:a1l,a2f:a2l)
-            ucov => .data.covariance_matrix(u1f:u1l,u2f:u2l)
+            acov.create(n1,n2)
+            ucov.create(n1,n2)
+            ucov = .data.covariance_matrix(u1f:u1l,u2f:u2l)
             ucov.back_transform_to(acov,T1,T2)
+            asym_covariance_matrix(a1f:a1l,a2f:a2l) = acov
 
             ! Increment
             u2b = u2b + n2
+
+            ! Clean
+            acov.destroy
+            ucov.destroy
+            T2.destroy
 
          end
 
          ! Increment
          u1b = u1b + n1
 
-      end
-
-      ! Debugging
-      if (.debugging("set_asym_from_ufrag_cov_mx")) then
-
-         stdout.text("acov:")
-         stdout.put(acov)
-
-         stdout.text("ucov:")
-         stdout.put(ucov)
-
-         diag.create(acov.dim1)
-         acov.put_diagonal_to(diag)
-         diag = sign(sqrt(abs(diag)),diag)
-         stdout.text("acov esds:")
-         stdout.put(diag)
-
-         ucov.put_diagonal_to(diag)
-         diag = sign(sqrt(abs(diag)),diag)
-         stdout.text("ucov esds:")
-         stdout.put(diag)
-
-         diag.destroy
+         ! Clean
+         T1.destroy
 
       end
 
-      ! Overwrite ufrag-atom cov mx with asym-atom cov mx
-      .data.covariance_matrix = asyma_covariance_matrix
+      ! Reset the covariance matrix to be for
+      ! the asymmetric unit
+      .data.covariance_matrix = asym_covariance_matrix
 
       ! Clean
-      asyma_covariance_matrix.destroy
+      asym_covariance_matrix.destroy
       seitz.destroy
 
    end
@@ -4786,7 +4746,7 @@ contains
 
       f1,a1,s1,n1, f1b,f1f,f1l, a1b,a1f,a1l :: INT
       f2,a2,s2,n2, f2b,f2f,f2l, a2b,a2f,a2l :: INT
-      acov,fcov :: MAT{REAL}*
+      acov,fcov :: MAT{REAL}@
       T1,T2 :: MAT{REAL}@
       seitz :: MAT3{REAL}@
 
@@ -4833,32 +4793,32 @@ contains
             GAUSSIAN_DATA:symmetric_tensor_product_mx(T2,seitz(:,:,s2))
 
             ! Transform ...
-            fcov => .data.fragment_covariance_matrix(f1f:f1l,f2f:f2l)
-            acov =>          .data.covariance_matrix(a1f:a1l,a2f:a2l)
+            acov.create(n1,n2)
+            fcov.create(n1,n2)
+            acov = .data.covariance_matrix(a1f:a1l,a2f:a2l)
             acov.back_transform_to(fcov,T1,T2)
+            .data.fragment_covariance_matrix(f1f:f1l,f2f:f2l) = fcov
 
-            ! Clean, increment
-            T2.destroy
+            ! Increment
             f2b = f2b + n2
+
+            ! Clean
+            fcov.destroy
+            acov.destroy
+            T2.destroy
 
          end
 
-         ! Clean, increment
-         T1.destroy
+         ! Increment
          f1b = f1b + n1
+
+         ! Clean
+         T1.destroy
 
       end
 
       ! Clean
       seitz.destroy
-
-      ! Debugging
-      if (.debugging("set_frag_from_asym_cov_max")) then
-         stdout.text("acov:")
-         stdout.put(acov)
-         stdout.text("fcov:")
-         stdout.put(fcov)
-      end
 
    end
 
@@ -5552,7 +5512,7 @@ contains
 
    end
 
-   put_parameters(correlation_matrix) ::: private
+   put_parameters(correlation_matrix)
    ! Write refinement results
       self :: IN
       correlation_matrix :: BIN, optional, IN
@@ -5967,9 +5927,6 @@ contains
       stdout.dump("unit_cell_offset",.unit_cell_offset)
       stdout.dump("h_min",.h_min)
       stdout.dump("h_max",.h_max)
-      stdout.dump("n_shift",.n_shift)
-      stdout.dmpp("shift",.shift)
-      stdout.dmpp("shift_for_atom",.shift_for_atom)
       stdout.dmpp("is_fragment_atom",.is_fragment_atom)
       stdout.dmpp("occupation_list",.occupation_list)
 
@@ -8653,6 +8610,24 @@ contains
 
       ! Finished ...
       .info_made = TRUE
+
+   end
+
+   destroy_cluster_info ::: leaky, PURE
+   ! Destroy the pointer parts
+      self :: INOUT
+
+      .geometry.destroy
+      .is_fragment_atom.destroy
+      .occupation_list.destroy
+      .molecule_for_atom.destroy
+      .molecule.destroy
+      .molecule_centroid.destroy
+      .unique_molecule_for.destroy
+      .unique_symcode_for.destroy
+      .atom_connection.destroy
+
+      .info_made = FALSE
 
    end
 
