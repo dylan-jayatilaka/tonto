@@ -4142,60 +4142,61 @@ contains
 
    end
 
-!  create_from_molecule(parent,name,ind,charge,multiplicity) ::: leaky
-!  ! Create a molecule "self" from a "parent" molecule; set the
-!  ! "name", "charge" and "multiplicity"; use only the atoms with
-!  ! indices "ind" in the parent atom list. Make the molecule ready
-!  ! for an SCF calculation using intelligent guesses from the
-!  ! "parent" molecule.
-!     self :: PTR
-!     parent :: MOLECULE, IN
-!     name :: STR, IN
-!     ind :: VEC{INT}, IN
-!     charge :: INT, optional, IN
-!     multiplicity :: INT, optional, IN
+   make_molecule_from_atom_group_mod(n,mol) ::: leaky
+   ! Make a fully fledged molecule "mol" from group "n" of atoms
+   ! specified in .atom_group(n).element(:), ready fro an SCF calculation.
+      n :: INT
+      mol :: MOLECULE
 
-!  ENSURE(parent.atom_info_made,     "parent: no atom info")
-!  ENSURE(ind.dim    <=parent.n_atom,"ind: array too large")
-!  ENSURE(maxval(ind)<=parent.n_atom,"ind: element is too large")
-!  ENSURE(minval(ind)>0,             "ind: element is too small")
-!  ENSURE(NOT ind.has_repetitions,  "ind: has repeated elements")
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+   DIE_IF(n>.atom_group.dim,"group number n too big")
+   DIE_IF(n<1,"group number n less than 1!")
 
-!     ! Create
-!     .:create
+      ! Clear the pointer part
+      mol.:nullify_ptr_part
 
-!     ! Create the single atom and copy its pointers
-!     ! WARNING: dont destroy ptr parts of .atom
-!     .atom.create_copy(parent.atom(ind))
+      ! Create the single atom and copy its pointers
+      ! WARNING: dont destroy ptr parts of mol.atom
+      mol.atom.create_copy(.atom(.atom_group(n).atom_index))
 
-!     ! Set default molecule e.g. the name, atom_info
-!     ! and default multiplicity ...
-!     .:set_defaults
+      ! Set default molecule e.g. the name, atom_info
+      ! and default multiplicity ...
+      mol.:set_defaults
 
-!     ! Set details & re-make atom info
-!     .name = name
-!     if (present(charge)) .charge = charge
-!     if (present(multiplicity)) .spin_multiplicity = multiplicity
+      ! Reset .name after .set_defaults
+      mol.name              = .atom_group(n).name
+      mol.charge            = .atom_group(n).charge
+      mol.spin_multiplicity = mol.:default_spin_multiplicity
+      mol.atom_info_made    = FALSE
+      mol.:set_atom_info
 
-!     ! re-make atom info
-!     .atom_info_made    = FALSE
-!     .:set_atom_info
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol !
+      mol.:set_basis_data_from(self)
 
-!     ! Copy the basis set and set the basis info
-!     ! WARNING: dont destroy basis of mol !
-!     .:set_basis_data_from(parent)
+      ! Don't remake ANO data if there
+      mol.:copy_ANOs_from_sublist_of(self,.atom_group(n).atom_index)
 
-!     ! Don't remake ANO data if there
-!     .:set_ANOs_from_sublist_of(parent,ind)
+      ! Assign the crystal
+      ! WARNING: dont destroy ...
+      if (.crystal.associated) mol.crystal => .crystal
 
-!     ! Assign the crystal
-!     ! WARNING: dont destroy ...
-!     if (parent.crystal.associated) .crystal => parent.crystal
+      ! Set guess-type SCF defaults
+      mol.:set_scf_guess_defaults_from(.scfdata)
 
-!     ! Set guess-type SCF defaults
-!     .:set_scf_guess_defaults_from(parent.scfdata)
+      ! Set density matrix from parent?
+      ! Restricted only. Do not clobber
+      if (.density_matrix.associated) then
+      if (.density_matrix.restricted.associated) then
+      if (mol.density_matrix.disassociated) then
+         mol.density_matrix.create(mol.n_bf,"restricted")
+         .:put_group_density_to_mod(mol.density_matrix.restricted,n,mol)
+      end
+      end
+      end
 
-!  end
+   end
 
 !   make_scfdata_cluster_molecule(n,mol) ::: leaky
 !   ! Make a fully fledged molecule "mol" from the cluster stored
@@ -4322,6 +4323,65 @@ contains
 
    end
 
+   copy_ANOs_from_sublist_of(mol,list) ::: private
+   ! copy ANO data and atom shell info from molecule "mol" from the
+   ! sublist "list".
+      mol :: MOLECULE, IN
+      list :: VEC{INT}, IN
+
+   ENSURE(.atom.associated,"no atoms")
+   ENSURE(.n_atom_kind>0,"atoms not finalized")
+   ENSURE(mol.atom.associated,"mol has no atoms")
+   ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
+   ENSURE(list.dim==.atom.dim,"inconsistent list length")
+
+      a,b :: INT
+      made_ANO,made_int,made_shl :: BIN
+
+      ! Assign ANO orbitals
+      made_ANO = mol.:has_all_ANOs_made
+      .atom.set_ANOs_made(made_ANO)
+      if (made_ANO) then
+         do a = 1,list.dim
+            b = list(a)
+            .atom(a).density_matrix.create_copy(mol.atom(b).density_matrix)
+            .atom(a).natural_orbitals.create_copy(mol.atom(b).natural_orbitals)
+            .atom(a).occupation_numbers.create_copy(mol.atom(b).occupation_numbers)
+            .atom(a).atomic_orbitals.create_copy(mol.atom(b).atomic_orbitals)
+            .atom(a).set_energy(mol.atom(b).energy)
+         end
+      end
+
+      ! Assign ANO interpolators
+      made_ANO = mol.:has_all_ANO_interpolators
+      made_int = mol.:has_all_interpolators
+      .atom.set_ANO_interpolators_made(made_ANO)
+      .atom.set_interpolators_made(made_int)
+      if (made_ANO OR made_int) then
+         do a = 1,list.dim
+            b = list(a)
+            .atom(a).interpolator.create_copy(mol.atom(b).interpolator)
+         end
+      end
+
+      ! Assign atom shell info
+      made_shl = mol.:has_all_atom_shell_info
+      .atom.set_shell_info_made(made_shl)
+      if (made_shl) then
+         do a = 1,list.dim
+            b = list(a)
+            .atom(a).first_basis_fn_for_shell.create_copy(mol.atom(b).first_basis_fn_for_shell)
+            .atom(a).last_basis_fn_for_shell.create_copy(mol.atom(b).last_basis_fn_for_shell)
+            .atom(a).precomputed_basis_shellpair.create_copy(mol.atom(b).precomputed_basis_shellpair)
+         end
+      end
+
+      ! Since all are ptr assigned, no atom is unique
+      ! and all ptrs must be nullified
+      .atom.set_is_unique_kind(TRUE)
+
+   end
+
 !  ================
 !  Atoms group info
 !  ================
@@ -4365,8 +4425,118 @@ contains
          end
 
          .:make_groups_from_self
-
+      
       end
+
+   end
+
+!   finalize_atom_groups_mod(reference_atoms) ::: leaky
+!   ! Finalize the .atom_group information
+!   ! Modified by Florian for use in unit cell density
+!      self :: INOUT
+!      reference_atoms :: VEC{ATOM}
+!
+!      g,i :: INT
+!      mapping_list :: VEC{INT}*
+!
+!      ! Last attempt to find groups
+!    ! if (NOT .atom.has_groups) then
+!    ! if (.crystal.molecule_for_atom.associated) then
+!    ! if (.crystal.molecule_for_atom.dim==.atom.dim) then
+!    !    .atom(:).group = .crystal.molecule_for_atom(:)
+!    ! end
+!    ! end
+!    ! end
+!
+!      if (.atom_group.associated) then
+!
+!         if (.atom_group.has_wavefunction_files) then; .:make_groups_from_wavefunction_files
+!         else if (.atom_group.has_atom_indices)  then; .:make_groups_from_self_mod
+!         else;          DIE("Can't finalize atom groups")
+!         end
+!
+!      else if (.atom.associated AND .atom.has_groups) then
+!
+!         .atom_group.create(.atom.no_of_groups)
+!
+!         reference_atoms.put_list
+!
+!         mapping_list => .:make_mapping_list(reference_atoms)
+!
+!         do g = 1,.atom_group.dim
+!            .atom_group(g).atom_index => .atom(:).group.indices_of_elements_matching(g)
+!            .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
+!            if(g==1) then
+!               stdout.put("atom_index for group")
+!               stdout.put(g)
+!               stdout.put("BEFORE MANIPUALTION")
+!               stdout.flush
+!               do i = 1, .atom_group(g).n_atoms
+!                  .atom(.atom_group(g).atom_index(i)).put_short
+!               end
+!            end if
+!            .atom_group(g).sort_indices(mapping_list)
+!            if(g==1) then
+!               stdout.put("atom_index for group")
+!               stdout.put(g)
+!               stdout.put("AFTER MANIPUALTION")
+!               stdout.flush
+!               do i = 1, .atom_group(g).n_atoms
+!                  .atom(.atom_group(g).atom_index(i)).put_short
+!               end
+!            end if
+!         end
+!
+!         mapping_list.destroy
+!
+!         if (.atom_group_charges.associated) then
+!            DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
+!            do g = 1,.atom_group.dim
+!               .atom_group(g).set_charge(.atom_group_charges(g))
+!            end
+!         end
+!
+!         .:make_groups_from_self_mod
+!      
+!      end
+!
+!   end
+
+   make_mapping_list(reference_atoms) result (mapping_list) ::: PURE
+   ! Make a list which maps atom indices on each other
+      self :: IN
+      reference_atoms :: VEC{ATOM}, IN
+      mapping_list :: VEC{INT}*
+
+      i,j,k :: INT
+
+      mapping_list.create(reference_atoms.dim)
+      mapping_list=ZERO
+      do i=1, reference_atoms.dim
+         do j=1, .atom.dim
+            if(any(mapping_list==i)) then
+               cycle
+            end if
+            if(reference_atoms(i).position(1) < .atom(j).position(1)+0.000001 AND reference_atoms(i).position(1) > .atom(j).position(1)-0.000001) then
+            if(reference_atoms(i).position(2) < .atom(j).position(2)+0.000001 AND reference_atoms(i).position(2) > .atom(j).position(2)-0.000001) then
+            if(reference_atoms(i).position(3) < .atom(j).position(3)+0.000001 AND reference_atoms(i).position(3) > .atom(j).position(3)-0.000001) then
+
+               if(j>reference_atoms.dim) then
+                  k = modulo(j,reference_atoms.dim)
+               else
+                  k = j
+               end if
+
+               mapping_list(k) = i
+   
+            end if
+            end if
+            end if
+         end
+      end
+      
+    ! stdout.show("dim   = ",reference_atoms.dim)
+    ! stdout.flush
 
    end
 
@@ -4429,7 +4599,6 @@ contains
 
    end
 
-
    make_groups_from_self ::: private, leaky
    ! Make the atom groups from "self"
       self :: INOUT
@@ -4482,6 +4651,59 @@ contains
 
    end
 
+   make_groups_from_self_mod ::: private, leaky
+   ! Make the atom groups from "self"
+   ! Modified by Florian for unit cell density
+      self :: INOUT
+
+   DIE_IF(NOT .atom_group.associated,"no atom groups!")
+
+      mol :: MOLECULE*
+      g :: INT
+
+      ! Check is indices are sensible
+      .atom_group.finalize(.atom)
+
+      ! Create each group from "self"
+      do g = 1,.atom_group.dim
+
+         ! Create mol & define it
+         mol.:create
+         self.:make_molecule_from_atom_group_mod(g,mol)
+
+         ! Read the MOs & make the density
+         ! This won't work until Tonto can read in its own dump
+         if (.atom_group(g).MO_file_name/=" ") then
+             mol.:read_archive("molecular_orbitals","restricted")
+             mol.:make_scf_density_matrix
+         end
+
+         ! Rotate and translate mol
+         if (.atom_group(g).transform_group) then
+            mol.:rotate_by(.atom_group(g).rotation_matrix)
+            mol.atom.translate_by(.atom_group(g).shift)
+         end
+         mol.atom.set_group_to(g)
+
+         ! Add it to atom_group
+         ! PRS 23/04/2017
+         ! This appears to be a bug, I don't think it's necessary
+         ! to destroy this and it definitely can destroy things
+         ! that are still in use
+         ! .atom_group(g).mol.BASE:destroy
+         .atom_group(g).mol => mol
+
+      end
+
+      ! Define .atom list
+    ! .:merge_atom_groups
+
+      ! Update group infor from self
+      ! Is the below needed????
+      .:update_group_info_mod
+
+   end
+
    update_group_info ::: leaky
    ! Update .atom_group information (ANOs, crystal, SCF guess ...)
       self :: INOUT
@@ -4504,6 +4726,40 @@ contains
 
          ! Don't remake ANO data if there
          mol.:set_ANOs_from_sublist_of(self,.atom_group(g).atom_index)
+
+         ! Assign the crystal
+         ! WARNING: dont destroy ...
+         if (.crystal.associated) mol.crystal => .crystal
+
+         ! Set guess-type SCF defaults
+         mol.:set_scf_guess_defaults_from(.scfdata)
+
+      end
+
+   end
+
+   update_group_info_mod ::: leaky
+   ! Update .atom_group information (ANOs, crystal, SCF guess ...)
+      self :: INOUT
+
+   ENSURE(.atom.associated,"atom groups must be defined after atoms=")
+   ENSURE(.atom_group.has_all_mols,"atom_group has missing mols")
+
+      mol :: MOLECULE*
+      g :: INT
+
+      if (.scfdata.disassociated) then
+         .:set_scf_defaults
+         .scfdata.set_output(FALSE)
+      end
+
+      do g = 1,.atom_group.dim
+
+         mol => .atom_group(g).mol
+         ENSURE(mol.associated,"atom_group molecule "//trim(g.to_str)//" does not exist")
+
+         ! Don't remake ANO data if there
+         mol.:copy_ANOs_from_sublist_of(self,.atom_group(g).atom_index)
 
          ! Assign the crystal
          ! WARNING: dont destroy ...
@@ -5205,9 +5461,11 @@ contains
    end
 
    make_elmo_connection_table ::: leaky
-      self :: INOUT
    ! construct the elmo connection table
-      i, j :: INT
+      self :: INOUT
+
+      i, j :: INT 
+
       .elmo_connection_table.create(.n_atom,.n_atom)
 
       ! set default connection to something huge
@@ -5231,7 +5489,9 @@ contains
    elmo_connected(a,b, degree) result(res) ::: pure
       self :: IN
       a, b, degree :: INT, IN
+
       res :: BIN
+
       res = (.elmo_connection_table(a,b) <= degree)
    end 
 
@@ -6213,6 +6473,7 @@ contains
    make_density_matrix_from_NOs ::: leaky
    ! Make the .density_matrix from the *natural_orbitals* and the
    ! *occupation_numbers* vector. Only restricted so far.
+      self :: INOUT
 
    ENSURE(.occupation_numbers.associated, "no occupation numbers")
    ENSURE(.natural_orbitals.associated, "no natural orbitals")
@@ -6273,9 +6534,9 @@ contains
    ! . If .scfdata.apply_pFON a finite temperature density matrix is
    !   made with temperature .scfdata.temperature_for_pFON (untested)
       self :: INOUT
-      damp :: BIN, optional
-      n_a :: INT, optional
-      method :: STR, optional
+      damp :: BIN, optional, IN
+      n_a :: INT, optional, IN
+      method :: STR, optional, IN
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.molecular_orbitals.associated, "no molecular orbitals")
@@ -6908,9 +7169,10 @@ contains
    end
 
    make_ao_density_matrix ::: leaky
-   ! Make the AO (spin independent) density matrix from the existing density
-   ! matrix. The result is placed in the "restricted" part of the density
-   ! matrix.
+   ! Make the AO (spin independent) density matrix from the existing
+   ! density matrix. The result is placed in the "restricted" part of
+   ! the density matrix.
+      self :: INOUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.associated, "no density matrix")
@@ -6935,62 +7197,60 @@ contains
       genre :: STR
 
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = D.spinorbital_kind
+      else;                          genre = D.spinorbital_kind
       end
 
       select case (genre)
 
-         case ("restricted")
-            ! do nothing
+      case ("restricted")
+         ! do nothing
 
-         case ("unrestricted")
+      case ("unrestricted")
 
-            D.destroy("restricted")
-            D.create("restricted")
-            D.restricted = D.alpha + D.beta
+         D.destroy("restricted")
+         D.create("restricted")
+         D.restricted = D.alpha + D.beta
 
-         case ("general")
+      case ("general")
 
-            D.destroy("restricted")
-            D.create("restricted")
-            D.restricted = D.general.alpha_alpha + D.general.beta_beta
+         D.destroy("restricted")
+         D.create("restricted")
+         D.restricted = D.general.alpha_alpha + D.general.beta_beta
 
-         case ("restricted_complex")
-            ! do nothing
+      case ("restricted_complex")
+         ! do nothing
 
-         case ("unrestricted_complex")
+      case ("unrestricted_complex")
 
-            D.destroy("restricted_complex")
-            D.create("restricted_complex")
-            D.restricted_complex = D.alpha_complex + D.beta_complex
+         D.destroy("restricted_complex")
+         D.create("restricted_complex")
+         D.restricted_complex = D.alpha_complex + D.beta_complex
 
-         case ("general_complex")
+      case ("general_complex")
 
-            D.destroy("restricted_complex")
-            D.create("restricted_complex")
-            D.restricted_complex = D.general_complex.alpha_alpha + D.general_complex.beta_beta
-
-         case default
-
-            DIE("unknown kind, "//trim(genre))
+         D.destroy("restricted_complex")
+         D.create("restricted_complex")
+         D.restricted_complex = D.general_complex.alpha_alpha + D.general_complex.beta_beta
 
       end
 
    end
 
-   make_ao_density_matrix(P)
+   make_ao_density_matrix(P) 
    ! Make the AO (spin independent) density matrix "P" from the
    ! existing density matrix.
-      P :: MAT{REAL}
+      self :: IN
+      P :: MAT{REAL}, OUT
 
       .:make_ao_RE_density_matrix(P)
 
    end
 
-   make_ao_RE_density_matrix(P)
+   make_ao_RE_density_matrix(P) 
    ! Make the REAL AO (spin independent) density matrix "P" from the
    ! existing density matrix.
-      P :: MAT{REAL}
+      self :: IN
+      P :: MAT{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.associated, "no density matrix")
@@ -7001,43 +7261,41 @@ contains
       genre :: STR
 
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .density_matrix.spinorbital_kind
+      else;                          genre = .density_matrix.spinorbital_kind
       end
 
       select case (genre)
 
-         case ("restricted")
-            P = .density_matrix.restricted
+      case ("restricted")
+         P = .density_matrix.restricted
 
-         case ("unrestricted")
-            P = .density_matrix.alpha + .density_matrix.beta
+      case ("unrestricted")
+         P = .density_matrix.alpha + .density_matrix.beta
 
-         case ("general")
-            P = .density_matrix.general.alpha_alpha &
-              + .density_matrix.general.beta_beta
+      case ("general")
+         P = .density_matrix.general.alpha_alpha &
+           + .density_matrix.general.beta_beta
 
-         case ("restricted_complex")
-            P = RE(.density_matrix.restricted_complex)
+      case ("restricted_complex")
+         P = RE(.density_matrix.restricted_complex)
 
-         case ("unrestricted_complex")
-            P = RE(.density_matrix.alpha_complex) &
-              + RE(.density_matrix.beta_complex)
+      case ("unrestricted_complex")
+         P = RE(.density_matrix.alpha_complex) &
+           + RE(.density_matrix.beta_complex)
 
-         case ("general_complex")
-            P = RE(.density_matrix.general_complex.alpha_alpha) &
-              + RE(.density_matrix.general_complex.beta_beta)
-
-         case default
-            DIE("unknown kind, "//trim(genre))
+      case ("general_complex")
+         P = RE(.density_matrix.general_complex.alpha_alpha) &
+           + RE(.density_matrix.general_complex.beta_beta)
 
       end
 
    end
 
-   make_ao_IM_density_matrix(P)
+   make_ao_IM_density_matrix(P) 
    ! Make the IMAGINARY AO (spin independent) density matrix "P" from
    ! the existing density matrix.
-      P :: MAT{REAL}
+      self :: IN
+      P :: MAT{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.associated, "no density matrix")
@@ -7048,7 +7306,7 @@ contains
       genre :: STR
 
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .density_matrix.spinorbital_kind
+      else;                          genre = .density_matrix.spinorbital_kind
       end
 
       P = ZERO
@@ -7059,19 +7317,16 @@ contains
 
       select case (genre)
 
-         case ("restricted_complex")
-            P = IM(.density_matrix.restricted_complex)
+      case ("restricted_complex")
+         P = IM(.density_matrix.restricted_complex)
 
-         case ("unrestricted_complex")
-            P = IM(.density_matrix.alpha_complex) &
-              + IM(.density_matrix.beta_complex)
+      case ("unrestricted_complex")
+         P = IM(.density_matrix.alpha_complex) &
+           + IM(.density_matrix.beta_complex)
 
-         case ("general_complex")
-            P = IM(.density_matrix.general_complex.alpha_alpha) &
-              + IM(.density_matrix.general_complex.beta_beta)
-
-         case default
-            DIE("unknown kind, "//trim(genre))
+      case ("general_complex")
+         P = IM(.density_matrix.general_complex.alpha_alpha) &
+           + IM(.density_matrix.general_complex.beta_beta)
 
       end
 
@@ -7081,6 +7336,7 @@ contains
    ! Make the AO (spin independent) density matrix from the existing
    ! density matrix. The result is placed in the "restricted" part of
    ! the density matrix. NOTE: factor 1/2 not included.
+      self :: INOUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.associated, "no density matrix")
@@ -7094,6 +7350,7 @@ contains
    ! Make the AO (spin independent) density matrix from the existing
    ! density matrix. The result is placed in the "restricted" part of
    ! the density matrix. NOTE: factor 1/2 not included!
+      self :: IN
       D :: OPMATRIX*
 
    ENSURE(.basis_info_made, "no basis info")
@@ -7110,28 +7367,25 @@ contains
 
       select case (genre)
 
-         case ("unrestricted")
-            D.destroy("restricted")
-            D.create("restricted")
-            D.restricted = D.alpha - D.beta
+      case ("unrestricted")
+         D.destroy("restricted")
+         D.create("restricted")
+         D.restricted = D.alpha - D.beta
 
-         case ("general")
-            D.destroy("restricted")
-            D.create("restricted")
-            D.restricted = D.general.alpha_alpha - D.general.beta_beta
+      case ("general")
+         D.destroy("restricted")
+         D.create("restricted")
+         D.restricted = D.general.alpha_alpha - D.general.beta_beta
 
-         case ("unrestricted_complex")
-            D.destroy("restricted_complex")
-            D.create("restricted_complex")
-            D.restricted_complex = D.alpha_complex - D.beta_complex
+      case ("unrestricted_complex")
+         D.destroy("restricted_complex")
+         D.create("restricted_complex")
+         D.restricted_complex = D.alpha_complex - D.beta_complex
 
-         case ("general_complex")
-            D.destroy("restricted_complex")
-            D.create("restricted_complex")
-            D.restricted_complex = D.general_complex.alpha_alpha - D.general_complex.beta_beta
-
-         case default
-            DIE("unknown kind, "//trim(genre))
+      case ("general_complex")
+         D.destroy("restricted_complex")
+         D.create("restricted_complex")
+         D.restricted_complex = D.general_complex.alpha_alpha - D.general_complex.beta_beta
 
       end
 
@@ -7141,7 +7395,8 @@ contains
    ! Make the AO (spin independent) density matrix from the existing
    ! density matrix. The result is placed in the "restricted" part of
    ! the density matrix. NOTE: factor 1/2 not included!
-      P :: MAT{REAL}
+      self :: IN
+      P :: MAT{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.associated, "no density matrix")
@@ -7152,7 +7407,7 @@ contains
       genre :: STR
 
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .density_matrix.spinorbital_kind
+      else;                          genre = .density_matrix.spinorbital_kind
       end
 
       if (genre=="restricted") return
@@ -7160,24 +7415,21 @@ contains
 
       select case (genre)
 
-         case ("unrestricted")
-            P = .density_matrix.alpha &
-              - .density_matrix.beta
+      case ("unrestricted")
+         P = .density_matrix.alpha &
+           - .density_matrix.beta
 
-         case ("general")
-            P = .density_matrix.general.alpha_alpha &
-              - .density_matrix.general.beta_beta
+      case ("general")
+         P = .density_matrix.general.alpha_alpha &
+           - .density_matrix.general.beta_beta
 
-         case ("unrestricted_complex")
-            P = RE(.density_matrix.alpha_complex) &
-              - RE(.density_matrix.beta_complex )
+      case ("unrestricted_complex")
+         P = RE(.density_matrix.alpha_complex) &
+           - RE(.density_matrix.beta_complex )
 
-         case ("general_complex")
-            P = RE(.density_matrix.general_complex.alpha_alpha) &
-              - RE(.density_matrix.general_complex.beta_beta)
-
-         case default
-            DIE("unknown kind, "//trim(genre))
+      case ("general_complex")
+         P = RE(.density_matrix.general_complex.alpha_alpha) &
+           - RE(.density_matrix.general_complex.beta_beta)
 
       end
 
@@ -7186,7 +7438,8 @@ contains
    make_ao_spin_densities(S) ::: leaky
    ! Make  the AO spin density matrices.
    ! NOTE: factor 1/2 IS included.
-      S :: MAT3{CPX}
+      self :: IN
+      S :: MAT3{CPX}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.associated, "no density matrix")
@@ -7199,7 +7452,7 @@ contains
       I :: CPX
 
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .density_matrix.spinorbital_kind
+      else;                          genre = .density_matrix.spinorbital_kind
       end
 
       S = ZERO
@@ -7209,31 +7462,28 @@ contains
 
       select case (genre)
 
-         case ("unrestricted")
-            S(:,:,3) = .density_matrix.alpha &
-                     - .density_matrix.beta
+      case ("unrestricted")
+         S(:,:,3) = .density_matrix.alpha &
+                  - .density_matrix.beta
 
-         case ("general")
-            S(:,:,1) = .density_matrix.general.alpha_beta  &
-                     + .density_matrix.general.beta_alpha
-            S(:,:,3) = .density_matrix.general.alpha_alpha &
-                     - .density_matrix.general.beta_beta
+      case ("general")
+         S(:,:,1) = .density_matrix.general.alpha_beta  &
+                  + .density_matrix.general.beta_alpha
+         S(:,:,3) = .density_matrix.general.alpha_alpha &
+                  - .density_matrix.general.beta_beta
 
-         case ("unrestricted_complex")
-            S(:,:,3) = .density_matrix.alpha_complex &
-                     - .density_matrix.beta_complex
+      case ("unrestricted_complex")
+         S(:,:,3) = .density_matrix.alpha_complex &
+                  - .density_matrix.beta_complex
 
-         case ("general_complex")
-            I = IMAGIFY(ONE)
-            S(:,:,1) =   .density_matrix.general_complex.alpha_beta  &
-                     +   .density_matrix.general_complex.beta_alpha
-            S(:,:,2) = I*.density_matrix.general_complex.alpha_beta  &
-                     - I*.density_matrix.general_complex.beta_alpha
-            S(:,:,3) =   .density_matrix.general_complex.alpha_alpha &
-                     -   .density_matrix.general_complex.beta_beta
-
-         case default
-            DIE("unknown kind, "//trim(genre))
+      case ("general_complex")
+         I = IMAGIFY(ONE)
+         S(:,:,1) =   .density_matrix.general_complex.alpha_beta  &
+                  +   .density_matrix.general_complex.beta_alpha
+         S(:,:,2) = I*.density_matrix.general_complex.alpha_beta  &
+                  - I*.density_matrix.general_complex.beta_alpha
+         S(:,:,3) =   .density_matrix.general_complex.alpha_alpha &
+                  -   .density_matrix.general_complex.beta_beta
 
       end
 
@@ -7245,7 +7495,8 @@ contains
    make_ao_RE_spin_densities(S) ::: leaky
    ! Make the REAL part of the AO spin density matrices.
    ! NOTE: factor 1/2 IS included.
-      S :: MAT3{REAL}
+      self :: IN
+      S :: MAT3{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.associated, "no density matrix")
@@ -7258,7 +7509,7 @@ contains
       I :: CPX
 
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .density_matrix.spinorbital_kind
+      else;                          genre = .density_matrix.spinorbital_kind
       end
 
       S = ZERO
@@ -7268,31 +7519,28 @@ contains
 
       select case (genre)
 
-         case ("unrestricted")
-            S(:,:,3) = .density_matrix.alpha &
-                     - .density_matrix.beta
+      case ("unrestricted")
+         S(:,:,3) = .density_matrix.alpha &
+                  - .density_matrix.beta
 
-         case ("general")
-            S(:,:,1) = .density_matrix.general.alpha_beta  &
-                     + .density_matrix.general.beta_alpha
-            S(:,:,3) = .density_matrix.general.alpha_alpha &
-                     - .density_matrix.general.beta_beta
+      case ("general")
+         S(:,:,1) = .density_matrix.general.alpha_beta  &
+                  + .density_matrix.general.beta_alpha
+         S(:,:,3) = .density_matrix.general.alpha_alpha &
+                  - .density_matrix.general.beta_beta
 
-         case ("unrestricted_complex")
-            S(:,:,3) = RE(.density_matrix.alpha_complex) &
-                     - RE(.density_matrix.beta_complex)
+      case ("unrestricted_complex")
+         S(:,:,3) = RE(.density_matrix.alpha_complex) &
+                  - RE(.density_matrix.beta_complex)
 
-         case ("general_complex")
-            I = IMAGIFY(ONE)
-            S(:,:,1) = RE(  .density_matrix.general_complex.alpha_beta)  &
-                     + RE(  .density_matrix.general_complex.beta_alpha)
-            S(:,:,2) = RE(I*.density_matrix.general_complex.alpha_beta)  &
-                     - RE(I*.density_matrix.general_complex.beta_alpha)
-            S(:,:,3) = RE(  .density_matrix.general_complex.alpha_alpha) &
-                     - RE(  .density_matrix.general_complex.beta_beta)
-
-         case default
-            DIE("unknown kind, "//trim(genre))
+      case ("general_complex")
+         I = IMAGIFY(ONE)
+         S(:,:,1) = RE(  .density_matrix.general_complex.alpha_beta)  &
+                  + RE(  .density_matrix.general_complex.beta_alpha)
+         S(:,:,2) = RE(I*.density_matrix.general_complex.alpha_beta)  &
+                  - RE(I*.density_matrix.general_complex.beta_alpha)
+         S(:,:,3) = RE(  .density_matrix.general_complex.alpha_alpha) &
+                  - RE(  .density_matrix.general_complex.beta_beta)
 
       end
 
@@ -7304,7 +7552,8 @@ contains
    make_ao_IM_spin_densities(S) ::: leaky
    ! Make the IMAGINARY part of the AO spin density matrices.
    ! NOTE: factor 1/2 IS included.
-      S :: MAT3{REAL}
+      self :: IN
+      S :: MAT3{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.associated, "no density matrix")
@@ -7317,7 +7566,7 @@ contains
       I :: CPX
 
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .density_matrix.spinorbital_kind
+      else;                          genre = .density_matrix.spinorbital_kind
       end
 
       S = ZERO
@@ -7329,21 +7578,18 @@ contains
 
       select case (genre)
 
-         case ("unrestricted_complex")
-            S(:,:,3) = IM(.density_matrix.alpha_complex) &
-                     - IM(.density_matrix.beta_complex)
+      case ("unrestricted_complex")
+         S(:,:,3) = IM(.density_matrix.alpha_complex) &
+                  - IM(.density_matrix.beta_complex)
 
-         case ("general_complex")
-            I = IMAGIFY(ONE)
-            S(:,:,1) = IM(  .density_matrix.general_complex.alpha_beta)  &
-                     - IM(  .density_matrix.general_complex.beta_alpha)
-            S(:,:,2) = IM(I*.density_matrix.general_complex.alpha_beta)  &
-                     - IM(I*.density_matrix.general_complex.beta_alpha)
-            S(:,:,3) = IM(  .density_matrix.general_complex.alpha_alpha) &
-                     - IM(  .density_matrix.general_complex.beta_beta)
-
-         case default
-            DIE("unknown kind, "//trim(genre))
+      case ("general_complex")
+         I = IMAGIFY(ONE)
+         S(:,:,1) = IM(  .density_matrix.general_complex.alpha_beta)  &
+                  - IM(  .density_matrix.general_complex.beta_alpha)
+         S(:,:,2) = IM(I*.density_matrix.general_complex.alpha_beta)  &
+                  - IM(I*.density_matrix.general_complex.beta_alpha)
+         S(:,:,3) = IM(  .density_matrix.general_complex.alpha_alpha) &
+                  - IM(  .density_matrix.general_complex.beta_beta)
 
       end
 
@@ -7381,112 +7627,112 @@ contains
 
       select case (.scfdata.scf_kind)
 
-         case ("rhf","rks","xray_rhf","xray_rks","noninteracting-group-rhf")
+      case ("rhf","rks","xray_rhf","xray_rks","noninteracting-group-rhf")
 
-            ENSURE(.spin_multiplicity==1,"Not a singlet state: "//trim(.BASE:chemical_formula)//", mult="//trim(.spin_multiplicity.to_str))
+         ENSURE(.spin_multiplicity==1,"Not a singlet state: "//trim(.BASE:chemical_formula)//", mult="//trim(.spin_multiplicity.to_str))
 
-            D  => .density_matrix.restricted
+         D  => .density_matrix.restricted
 
-            if (n>0 AND n<=.n_a) then
-               MO => .molecular_orbitals.restricted(:,n:n)
-               D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
-            else
-               D = ZERO
-            end
+         if (n>0 AND n<=.n_a) then
+            MO => .molecular_orbitals.restricted(:,n:n)
+            D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
+         else
+            D = ZERO
+         end
 
-         case ("rohf")
+      case ("rohf")
 
-            Da => .density_matrix.alpha
-            Db => .density_matrix.beta
+         Da => .density_matrix.alpha
+         Db => .density_matrix.beta
 
-            if (n>0 AND n<=.n_b) then
-               MOa => .molecular_orbitals.restricted(:,n:n)
-               MOb => .molecular_orbitals.restricted(:,n:n)
-               Da.to_product_of(MOa,MOa,transpose_b=TRUE)
-               Db.to_product_of(MOb,MOb,transpose_b=TRUE)
-            else if (n>nb AND n<=.n_a) then
-               MOa => .molecular_orbitals.restricted(:,n:n)
-               Da.to_product_of(MOa,MOa,transpose_b=TRUE)
-               Da = ZERO
-               Db = ZERO
-            end
+         if (n>0 AND n<=.n_b) then
+            MOa => .molecular_orbitals.restricted(:,n:n)
+            MOb => .molecular_orbitals.restricted(:,n:n)
+            Da.to_product_of(MOa,MOa,transpose_b=TRUE)
+            Db.to_product_of(MOb,MOb,transpose_b=TRUE)
+         else if (n>nb AND n<=.n_a) then
+            MOa => .molecular_orbitals.restricted(:,n:n)
+            Da.to_product_of(MOa,MOa,transpose_b=TRUE)
+            Da = ZERO
+            Db = ZERO
+         end
 
-         case ("uhf","uks","xray_uhf","xray_uks", &
-               "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+      case ("uhf","uks","xray_uhf","xray_uks", &
+            "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
 
-            Da => .density_matrix.alpha
-            Db => .density_matrix.beta
+         Da => .density_matrix.alpha
+         Db => .density_matrix.beta
 
-            if (n>0 AND n<=.n_a) then
-               MOa => .molecular_orbitals.alpha(:,n:n)
-               Da.to_product_of(MOa,MOa,transpose_b=TRUE)
-            else
-               Da = ZERO
-            end
+         if (n>0 AND n<=.n_a) then
+            MOa => .molecular_orbitals.alpha(:,n:n)
+            Da.to_product_of(MOa,MOa,transpose_b=TRUE)
+         else
+            Da = ZERO
+         end
 
-            if (m>0 AND m<=.n_b) then
-               MOb => .molecular_orbitals.beta(:,m:m)
-               Db.to_product_of(MOb,MOb,transpose_b=TRUE)
-            else
-               Db = ZERO
-            end
+         if (m>0 AND m<=.n_b) then
+            MOb => .molecular_orbitals.beta(:,m:m)
+            Db.to_product_of(MOb,MOb,transpose_b=TRUE)
+         else
+            Db = ZERO
+         end
 
-         case ("ghf", "no_ghf")
+      case ("ghf", "no_ghf")
 
-            ENSURE(.spin_multiplicity==1,"this is not a singlet state")
+         ENSURE(.spin_multiplicity==1,"this is not a singlet state")
 
-            D =>  .density_matrix.general
+         D =>  .density_matrix.general
 
-            if (n>0 AND n<=.n_e) then
-               MO => .molecular_orbitals.general(:,n:n)
-               D.to_product_of(MO,MO,transpose_b=TRUE)
-            else
-               D = ZERO
-            end
+         if (n>0 AND n<=.n_e) then
+            MO => .molecular_orbitals.general(:,n:n)
+            D.to_product_of(MO,MO,transpose_b=TRUE)
+         else
+            D = ZERO
+         end
 
-         case ("rchf")
+      case ("rchf")
 
-            CD => .density_matrix.restricted_complex
+         CD => .density_matrix.restricted_complex
 
-            if (n>0 AND n<=.n_a) then
-               CMO => .molecular_orbitals.restricted_complex(:,n:n)
-               CD.to_scaled_product_of(CMO,CMO,fac=TWO,dagger_b=TRUE)
-            else
-               CD = ZERO
-            end
+         if (n>0 AND n<=.n_a) then
+            CMO => .molecular_orbitals.restricted_complex(:,n:n)
+            CD.to_scaled_product_of(CMO,CMO,fac=TWO,dagger_b=TRUE)
+         else
+            CD = ZERO
+         end
 
-         case ("uchf")
+      case ("uchf")
 
-            CDa => .density_matrix.alpha_complex
-            CDb => .density_matrix.beta_complex
+         CDa => .density_matrix.alpha_complex
+         CDb => .density_matrix.beta_complex
 
-            if (n>0 AND n<=.n_a) then
-               CMOa => .molecular_orbitals.alpha_complex(:,n:n)
-               CDa.to_product_of(CMOa,CMOa,dagger_b=TRUE)
-            else
-               CDa = ZERO
-            end
+         if (n>0 AND n<=.n_a) then
+            CMOa => .molecular_orbitals.alpha_complex(:,n:n)
+            CDa.to_product_of(CMOa,CMOa,dagger_b=TRUE)
+         else
+            CDa = ZERO
+         end
 
-            if (m>0 AND m<=.n_b) then
-               CMOb => .molecular_orbitals.beta_complex(:,m:m)
-               CDb.to_product_of(CMOb,CMOb,dagger_b=TRUE)
-            else
-               CDb = ZERO
-            end
+         if (m>0 AND m<=.n_b) then
+            CMOb => .molecular_orbitals.beta_complex(:,m:m)
+            CDb.to_product_of(CMOb,CMOb,dagger_b=TRUE)
+         else
+            CDb = ZERO
+         end
 
-         case ("gchf","xray_gchf")
+      case ("gchf","xray_gchf")
 
-            CD =>  .density_matrix.general_complex
+         CD =>  .density_matrix.general_complex
 
-            if (n>0 AND n<=.n_e) then
-               CMO => .molecular_orbitals.general_complex(:,n:n)
-               CD.to_product_of(CMO,CMO,dagger_b=TRUE)
-            else
-               CD = ZERO
-            end
+         if (n>0 AND n<=.n_e) then
+            CMO => .molecular_orbitals.general_complex(:,n:n)
+            CD.to_product_of(CMO,CMO,dagger_b=TRUE)
+         else
+            CD = ZERO
+         end
 
-         case default;
-            DIE("unknown kind, "//trim(.scfdata.scf_kind))
+      case default;
+         DIE("unknown kind, "//trim(.scfdata.scf_kind))
 
       end
 
@@ -7737,6 +7983,7 @@ contains
    ENSURE(.atom_group.associated,"no atom group information")
    ENSURE(g>0,"group number must be positive")
    ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
+   ENSURE(.density_matrix.associated,"No Denisty Matrix")
 
       a,b,aa,bb,fa,la,fb,lb,faa,laa,fbb,lbb :: INT
 
@@ -7750,6 +7997,39 @@ contains
          fbb = .first_basis_fn_for_atom(bb)
          laa = .last_basis_fn_for_atom(aa)
          lbb = .last_basis_fn_for_atom(bb)
+         fa  = mol.first_basis_fn_for_atom(a)
+         fb  = mol.first_basis_fn_for_atom(b)
+         la  = mol.last_basis_fn_for_atom(a)
+         lb  = mol.last_basis_fn_for_atom(b)
+         P(fa:la,fb:lb) = .density_matrix.restricted(faa:laa,fbb:lbb)
+      end
+      end
+
+   end
+
+   put_group_density_to_mod(P,g,mol) ::: PURE
+   ! Put the atom group "g" in the whole .density matrix into "P".
+   ! "mol" is a molecule created from the appropriate atom group "g".
+      self :: IN
+      P :: MAT{REAL}, OUT
+      g :: INT, IN
+      mol :: MOLECULE, IN
+
+   ENSURE(.atom_group.associated,"no atom group information")
+   ENSURE(g>0,"group number must be positive")
+   ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
+   ENSURE(.density_matrix.associated,"No Denisty Matrix")
+
+      a,b,fa,la,fb,lb,faa,laa,fbb,lbb :: INT
+
+      P = ZERO
+
+      do a = 1,.atom_group(g).n_atoms ! Copy this atom density
+      do b = 1,.atom_group(g).n_atoms
+         faa = .first_basis_fn_for_atom(a)
+         fbb = .first_basis_fn_for_atom(b)
+         laa = .last_basis_fn_for_atom(a)
+         lbb = .last_basis_fn_for_atom(b)
          fa  = mol.first_basis_fn_for_atom(a)
          fb  = mol.first_basis_fn_for_atom(b)
          la  = mol.last_basis_fn_for_atom(a)
@@ -8767,11 +9047,11 @@ contains
    ENSURE(mat.is_square,"non-square matrix")
    ENSURE(mat.dim1==.n_bf,"incorrectly dimensioned matrix")
 
-      sym,W :: MAT{TYPE}*
-      tra,trb :: MAT{REAL}*
+      sym,W :: MAT{TYPE}@
+      tra,trb :: MAT{REAL}@
       n,a,b,i,j,na,nb :: INT
       fa,fb,fi,fj,la,lb,li,lj :: INT
-      image :: MAT{INT}*
+      image :: MAT{INT}@
 
       image.create(.n_shell, .pointgroup.order)
       .:make_image_of_shell(image)
@@ -8783,7 +9063,7 @@ contains
 
          do a = 1,.n_shell
 
-            tra => .pointgroup.xyz_matrix(n,.angular_moment_for_shell(a))
+            tra = .pointgroup.xyz_matrix(n,.angular_moment_for_shell(a))
             i = image(a,n)
             fa = .first_basis_fn_for_shell(a)
             fi = .first_basis_fn_for_shell(i)
@@ -8793,7 +9073,7 @@ contains
 
             do b = 1,.n_shell
 
-               trb => .pointgroup.xyz_matrix(n,.angular_moment_for_shell(b))
+               trb = .pointgroup.xyz_matrix(n,.angular_moment_for_shell(b))
                j = image(b,n)
                fb = .first_basis_fn_for_shell(b)
                fj = .first_basis_fn_for_shell(j)
@@ -8805,8 +9085,11 @@ contains
                W.to_product_of(tra,mat(fa:la,fb:lb))
                sym(fi:li,fj:lj).plus_product_of(W,trb,transpose_b=TRUE)
                W.destroy
+               trb.destroy
 
             end
+
+            tra.destroy
 
          end
 
@@ -8876,8 +9159,8 @@ contains
    ENSURE(mat.is_square,"non-square matrix")
    ENSURE(mat.dim1==.n_bf,"incorrectly dimensioned matrix")
 
-      sym,w :: MAT{TYPE}*
-      tra,trb :: MAT{REAL}*
+      sym,w :: MAT{TYPE}@
+      tra,trb :: MAT{REAL}@
       n,a,b,i,j,na,nb :: INT
       fa,fb,fi,fj,la,lb,li,lj :: INT
       image :: MAT{INT}*
@@ -8892,7 +9175,7 @@ contains
 
          do a = 1,.n_shell
 
-            tra => .crystal.xyz_stabilizer_matrix(n,.angular_moment_for_shell(a))
+            tra = .crystal.xyz_stabilizer_matrix(n,.angular_moment_for_shell(a))
 
             i  = image(a,n)
             fa = .first_basis_fn_for_shell(a)
@@ -8903,7 +9186,7 @@ contains
 
             do b = 1,.n_shell
 
-               trb => .crystal.xyz_stabilizer_matrix(n,.angular_moment_for_shell(b))
+               trb = .crystal.xyz_stabilizer_matrix(n,.angular_moment_for_shell(b))
 
                j  = image(b,n)
                fb = .first_basis_fn_for_shell(b)
@@ -8916,8 +9199,11 @@ contains
                w.to_product_of(tra,mat(fa:la,fb:lb))
                sym(fi:li,fj:lj).plus_product_of(w,trb,transpose_b=TRUE)
                w.destroy
+               trb.destroy
 
             end
+
+            tra.destroy
 
          end
 
