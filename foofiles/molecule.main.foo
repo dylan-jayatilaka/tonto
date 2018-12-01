@@ -320,6 +320,7 @@ contains
         case ("plot_grid=                    "); .:read_plot_grid
         case ("plot_ku_density               "); .PLOT:plot_ku_density
         case ("plot_on_isosurface            "); .PLOT:plot_on_isosurface
+        case ("plot_unit_cell_density        "); .:plot_unit_cell_density
         case ("pointgroup=                   "); .:read_pointgroup
         case ("put                           "); .BASE:put
         case ("put_1e_properties             "); .PROP:put_1e_properties
@@ -944,6 +945,174 @@ contains
 
    end
 
+   plot_unit_cell_density ::: leaky
+   ! Plot the unit cell density using the previously calcualted or
+   ! read in SCF and auto complete the moelcules to get everything
+   ! that would contribute to the unit cell
+   ! Florian wrote this, comments are highly welcomed
+      self :: PTR
+
+ ! ENSURE(.BASE:basis_info_made, "no basis info")
+ ! ENSURE(.molecular_orbitals.associated, "no molecular orbitals")
+ ! ENSURE(.molecular_orbitals.has_any_genre, "no molecular orbitals")
+      
+      g,s,a,inv :: INT
+      x,y,z :: REAL
+
+      dist2 :: VEC{REAL}*
+      R :: MAT3{REAL}*
+      rot_found :: VEC{BIN}*
+      work_atom :: VEC{ATOM}*
+      grid,grid_sum :: VEC{REAL}*
+      pt :: MAT{REAL}*
+
+      stdout.flush
+      stdout.text("================================")
+      stdout.text("Calculation of unit cell density")
+      stdout.text("================================")
+      stdout.flush
+
+      work_atom.create_copy(.atom)
+
+      .BASE:make_scf_density_matrix
+      .SCF:make_ANO_data
+
+      .crystal.asymmetric_unit_geometry.destroy
+      .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+
+      .crystal.generation_method = "for_unit_cell_density"
+      .crystal.make_cluster_info
+      .crystal.put_occupation_list
+
+      .atom.expand(.crystal.n_atoms)
+      .crystal.make_atom_list(.atom)
+      
+    ! .:sort_atom_list(work_atom)
+
+      ! NEED TO SYMMETRY APPLY THE ATOM GROUPS AND TEHIR WFNS NOW!
+    ! .BASE:finalize_atom_groups_mod(work_atom)
+
+!!       rot_found.create(.atom_group.dim)
+!!       dist2.create(work_atom.dim)
+!!       rot_found = FALSE
+!!       rot_found(1) = TRUE
+!!       R => .crystal.xyz_seitz_matrices
+!! 
+!!       do g=2, .atom_group.dim
+!!          do s=1, R.dim3
+!!             ! Skip if we already found a matching symop
+!!             if (rot_found(g)) cycle
+!!             ! Create a new copy of the atom group
+!!             work_atom.destroy
+!!             work_atom.create_copy(.atom_group(g).mol.atom)
+!!             ! Try this symop
+!!             work_atom.rotate_positions_by(R(:,:,s))
+!!             ! By calculating the distance between the correspoding atoms
+!!             do a=1, work_atom.dim
+!!                x = (work_atom(a).position(1) - .atom_group(1).mol.atom(a).position(1))**2
+!!                y = (work_atom(a).position(2) - .atom_group(1).mol.atom(a).position(2))**2
+!!                z = (work_atom(a).position(3) - .atom_group(1).mol.atom(a).position(3))**2
+!!                dist2(a) = x + y + z
+!!             end
+!! 
+!!             ! Cycle if not all atoms are mapped by this symop
+!!             if (any(dist2 > dist2(1)+0.001) OR any(dist2 < dist2(1) -0.001)) cycle
+!!             
+!!             rot_found(g) = TRUE
+!!             stdout.put("Atom group ")
+!!             stdout.put(g)
+!!             stdout.put("Using Symop:")
+!!             stdout.flush
+!! 
+!!             ! If the moelcule in focus can be transformed by symop s to the fragment atoms,
+!!             ! then the density matrix of fragmetn atoms needs to be transformed by the inverse
+!!             inv = .crystal.spacegroup.inverse_of_symops(s)
+!!             stdout.put(R(:,:,inv))
+!!             stdout.flush
+!!             .atom_group(g).mol.BASE:make_atom_shell_info
+!! 
+!!             .atom_group(g).mol.BASE:rotate_molecular_orbitals(R(:,:,inv))
+!!             .atom_group(g).mol.BASE:rotate_density_matrix(R(:,:,inv))
+!!             
+!!          end
+!!       end
+!! 
+!!       DIE_IF(NOT any(rot_found), "Not all molecules could be mapped onto fragment molecule!")
+!! 
+!!       ! Clean up a bit
+!!       work_atom.destroy
+!!       dist2.destroy
+!!       rot_found.destroy
+!!       R.destroy
+!! 
+!!       do g=1, .atom_group.dim
+!!          .atom_group(g).mol.INTS:make_overlap_matrix
+!!          .atom_group(g).mol.BASE:make_natural_orbitals
+!!       end 
+!! 
+!! !     .BASE:put
+!! 
+!!       stdout.flush
+!!       stdout.show("# of molecules         =",.atom_group.dim)
+!!       stdout.show("Atoms in each molecule =",.atom_group(1).mol.atom.dim)
+!! 
+!!       ! Set up a default cell.cube
+!!       if (.plot_grid.disassociated) .plot_grid.create(.atom)
+!!       .plot_grid.set_plot_kind("electron_density")
+!!       .plot_grid.set_plot_format("cell.cube")
+!! 
+!!       ! Set up
+!!       .PLOT:set_up_for_plot(.plot_grid.plot_kind)
+!! 
+!!       ! Read from stdin 3 integers for number of gridpoints in all axes
+!!       .plot_grid.read_all_points
+!! 
+!!       ! Use unit cell as bbox
+!!       .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell)
+!! 
+!!       ! See plot_grid parameters
+!!       .plot_grid.put
+!!       
+!!       ! Make space for grid values and grid points
+!!       grid.create(.plot_grid.n_pt)
+!!       grid_sum.create(.plot_grid.n_pt)
+!!       pt.create(.plot_grid.n_pt,3)
+!! 
+!!       ! Make the grid points
+!!       .plot_grid.make_points(pt)
+!! 
+!!       grid_sum = ZERO
+!! 
+!!       stdout.text("Working on molecule:")
+!!       ! Do the plot
+!!       parallel do g=1, .atom_group.dim
+!!          stdout.put(g)
+!!          stdout.put("out of")
+!!          stdout.put(.atom_group.dim)
+!!          stdout.flush
+!!          .atom_group(g).mol.GRID:make_density_grid(grid,pt)
+!!          grid_sum = grid_sum + grid
+!!       end 
+!! 
+!!       if(DO_IN_PARALLEL) then
+!!          PARALLEL_SUM(grid_sum)
+!!       end if
+!! 
+!!       .GRID:dump_plot_grid(grid_sum,"unit_cell_electron_density_grid")
+!! 
+!!       ! Clean up
+!!       .plot_grid.destroy
+!!       grid.destroy
+!!       grid_sum.destroy
+!!       pt.destroy
+!! 
+!!       ! Put .atom back
+!! !     .atom.destroy
+!! !     .atom.create_copy(conserve_atom)
+!! !     conserve_atom.destroy
+
+   end
+
    read_pointgroup ::: leaky
    ! Read in the pointgroup data
       if (.pointgroup.disassociated) .pointgroup.create
@@ -1024,6 +1193,33 @@ contains
    end
 
 !  S
+
+!   sort_atom_list(atom1)
+!   ! Make a list, which maps the atoms of vec(atom} 2 onto the atoms of vec{atom} 1,
+!   ! By comparing their positions and stores the mapping list into mapping_list.
+!   ! It is assumed atom 2 is a list of atoms consisting of same molecules,
+!   ! e.g. symmetry generated replications of atom1 in a different order
+!      self :: PTR
+!      atom1 :: VEC{ATOM}, IN
+!
+!      mapping_list :: VEC{INT}*
+!      temp_atoms :: VEC{ATOM}*
+!      i,j,k :: INT
+!
+!      mapping_list => .BASE:make_mapping_list(atom1)
+!
+!      k=ONE
+!      do i=1, .atom.dim/atom1.dim
+!         temp_atoms.create_copy(.atom(k:k+atom1.dim-1))
+!         do j=1, atom1.dim
+!            .atom(k) = temp_atoms(mapping_list(j))
+!            k = k +1
+!         end
+!         temp_atoms.destroy
+!      end
+!      mapping_list.destroy
+!
+!   end
 
    read_spin_multiplicity
    ! Read in the spin multiplicity
