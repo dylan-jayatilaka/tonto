@@ -101,6 +101,26 @@ contains
 
    end
 
+   destroy_cluster_info_ptr_part ::: leaky, PURE
+   ! Destroy the non-symop informational ptr parts. These incclude the actual
+   ! .geometry of the cluster as wellas information relating to the .symop's
+   ! used to generate the cluster.
+      self :: INOUT
+
+      .geometry.destroy
+      .shift.destroy
+      .shift_for_atom.destroy
+      .is_fragment_atom.destroy
+      .occupation_list.destroy
+      .molecule_for_atom.destroy
+      .molecule.destroy
+      .molecule_centroid.destroy
+      .unique_molecule_for.destroy
+      .unique_symcode_for.destroy
+      .atom_connection.destroy
+
+   end
+
    create_copy(object) ::: get_from(OBJECT), leaky
    ! Create a copy of object
    end
@@ -455,32 +475,31 @@ contains
       ! Generate the cluster
       select case (.generation_method)
 
-      case ("within_radius")
-         .make_within_radius
+         case ("within_radius")
+            .make_within_radius
 
-      case ("for_hirshfeld_surface")
-         .make_HS_radius
-         .make_within_radius
-         .defragment = FALSE
+         case ("for_hirshfeld_surface")
+            .make_HS_radius
+            .make_within_radius
+            .defragment = FALSE
 
-      case ("for_unit_cell_density")
-       ! .do_defragment
-         .make_HS_radius
-         .make_within_radius
-         .defragment = FALSE
+         case ("for_unit_cell_density")
+          ! .do_defragment
+            .make_HS_radius
+            .make_within_radius
+            .defragment = FALSE
 
-      case ("offset_unit_cell_density")
-         .make_HS_radius
-         .make_within_radius
-         .defragment = FALSE
+         case ("offset_unit_cell_density")
+            .make_HS_radius
+            .make_within_radius
+            .defragment = FALSE
 
       end
 
-      ! Current no. of atoms in cluster
-      .n_atoms = .occupation_list.dim
-
-      ! Find connected fragments
-      .do_defragment
+      ! Defragment/find molecules in the cluster
+      if (.defragment) then; .do_defragment
+      else;                  .do_connectify
+      end
 
       ! Extract cordinates from occupation list
       .extract_geometry
@@ -518,7 +537,7 @@ contains
             ENSURE(.fragment_geometry.associated,"no fragment_geometry")
             ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
             ENSURE(.crystal.unit_cell_atom_for_frag_atom.associated,"no cell-frag_atom array")
-            ENSURE(.crystal.unit_cell_shift_for_frag_atom.associated,"no cell-frag_atom array")
+            ENSURE(.crystal.unit_cell_shft_for_frag_atom.associated,"no cell-frag_atom array")
 
             ! Get fragment offset i.e. center
             pos = .fragment_geometry.mean_column_vector
@@ -533,10 +552,10 @@ contains
 
                ! Get unit cell atom & shift
                u = .crystal.unit_cell_atom_for_frag_atom(f)
-               h = .crystal.unit_cell_shift_for_frag_atom(:,f)
+               h = .crystal.unit_cell_shft_for_frag_atom(:,f)
 
                ! Shift relative to recentered unit cell
-               h = h - .fragment_offset
+               h = h + .fragment_offset
 
                DIE_IF(any(h<-CLUSTER_H_MAX),"frag too wide, h = "//trim(h.to_concatenated_str))
                DIE_IF(any(h> CLUSTER_H_MAX),"frag too wide, h = "//trim(h.to_concatenated_str))
@@ -552,7 +571,7 @@ contains
 
                ! Offset h to apply to "u" to get frag atom "f".
                ! Must reverse h. See above.
-             ! h = -h
+               h = -h
 
                ! Get occ code ...
                .occupation_list(f) = CLUSTER_AT_CODE(h(1),h(2),h(3),u)
@@ -889,43 +908,22 @@ contains
 
    end
 
-   do_defragment ::: leaky, PURE
-   ! Defragment the generated cluster and find the connected molecules
-   ! using the .unit_cell_connection table. Make the .atom_connection
-   ! table.
-      self :: INOUT
+   do_connectify ::: leaky
+   ! Find the connected molecules in the "occupation_list" from the
+   ! .crystal.unit_cell_connection table.
 
-      ! Current no. of atoms in cluster
-      .n_atoms = .occupation_list.dim
-
-      ! Find connected atoms
-      .find_molecules
-
-      ! Sort molecule indices ascending
-      .sort_molecule_indices
-
-      ! Sort atoms in molecules to be consistent
-      if (.defragment) .sort_atoms_in_molecules
-
-      ! Sort cluster into molecules
-      .sort_into_molecules
-
-   end
-
-   find_molecules ::: leaky, PURE
-   ! Defragment the generated cluster and find the connected atoms
-   ! i.e. molecules using the .unit_cell_connection table. Make the
-   ! .atom_connection table.
-      self :: INOUT
-
-   ENSURE(.occupation_list.associated,"no occupation_list")
+   ENSURE(.crystal.associated,"no crystal")
    ENSURE(.crystal.unit_cell_connection.associated,"no unit cell connection table")
 
-      i,c,code,old :: INT
-      k1,k2,k3,t :: INT
-      h1,h2,h3,u :: INT
-      mi,mo :: INT
-      con :: VEC{INT}@
+      i,c,code,h1,h2,h3,u,k1,k2,k3,t,old,mi,mo :: INT
+      con,molecule_for_atom :: VEC{INT}*
+      unit_cell_connection :: VEC{VEC_{VEC_{INT}}}*
+
+      ! No. of atoms
+      .n_atoms = .occupation_list.dim
+
+      ! Connection table
+      unit_cell_connection => .crystal.unit_cell_connection
 
       ! Clear info arrays
       .atom_connection.destroy
@@ -933,9 +931,106 @@ contains
       .molecule_for_atom.destroy
 
       ! Assume every atom it's own molecule
-      .molecule_for_atom.create(.n_atoms)
+      molecule_for_atom.create(.n_atoms)
       do i = 1,.n_atoms
-         .molecule_for_atom(i) = i
+         molecule_for_atom(i) = i
+      end
+
+      ! Loop on all atoms "i"
+      i = 0
+
+      do
+
+         i = i + 1
+
+         ! Finished atoms "i"?
+         if (i>.n_atoms) exit
+
+         ! Info about atom "i"
+         mi   = molecule_for_atom(i)       ! Molecule "mi" for i
+         code = .occupation_list(i)        ! Occupation code
+         u    = CLUSTER_UA_FROM_CODE(code) ! Unit cell atom
+
+         ! No connections? next ...
+         if (unit_cell_connection(u).element.dim==0) cycle
+
+         ! Get unit cell atom offset for atom "i"
+         h1 = CLUSTER_H1_FROM_CODE(code)
+         h2 = CLUSTER_H2_FROM_CODE(code)
+         h3 = CLUSTER_H3_FROM_CODE(code)
+
+         ! Find atoms which connect to u
+         do c = 1,unit_cell_connection(u).element.dim
+
+            ! List of connections
+            con => unit_cell_connection(u)[c].element
+
+            ! Get code for connected atom
+            k1 = h1 + con(1)
+            k2 = h2 + con(2)
+            k3 = h3 + con(3)
+            t  =      con(4)
+            code = CLUSTER_AT_CODE(k1,k2,k3,t)
+
+            ! Is it new in the occupation list?
+            old = .occupation_list.index_of_value(code)
+
+            if (old>0) then
+
+               ! This is an old (found) atom. Replace the molecule
+               ! index by the lower of  "mi" and "mo" everywhere.
+               mo = molecule_for_atom(old)
+               if (mo<mi) then
+                  where (molecule_for_atom==mi) molecule_for_atom = mo
+                  mi = mo
+               else if (mo>mi) then
+                  where (molecule_for_atom==mo) molecule_for_atom = mi
+               end
+
+               ! Atom "old" is connection to "i"
+               .atom_connection(i).element.append(old)
+
+            end
+
+         end ! connections to u
+
+      end ! atoms "i"
+
+      ! Set (sorted) molecule index array
+      .molecule_for_atom => molecule_for_atom
+
+      ! Make molecule info
+      .make_molecule_info
+
+   end
+
+   do_defragment ::: leaky
+   ! Defragment the generated cluster and find the connected molecules using the
+   ! .unit_cell_connection table.
+
+   ENSURE(.occupation_list.associated,"no occupation_list")
+   ENSURE(.crystal.associated,"no crystal")
+   ENSURE(.crystal.unit_cell_connection.associated,"no unit cell connection table")
+
+      i,c,code,h1,h2,h3,u,k1,k2,k3,t,old,mi,mo :: INT
+      con,molecule_for_atom :: VEC{INT}*
+      unit_cell_connection :: VEC{VEC_{VEC_{INT}}}*
+
+      ! Initial no. of atoms
+      .n_atoms = .occupation_list.dim
+
+      ! Connection table
+      unit_cell_connection => .crystal.unit_cell_connection
+
+      ! Clear info arrays
+      .atom_connection.destroy
+      .atom_connection.create(.n_atoms)
+      .molecule_for_atom.destroy
+
+      ! Assume every atom it's own molecule
+      molecule_for_atom.create(.n_atoms)
+      do i = 1,.n_atoms
+         molecule_for_atom(i) = i
       end
 
       ! Loop on all atoms "i"
@@ -949,12 +1044,12 @@ contains
          if (i>.n_atoms) exit
 
          ! Info about atom "i"
-         mi   = .molecule_for_atom(i)      ! Molecule "mi" for i
+         mi   = molecule_for_atom(i)       ! Molecule "mi" for i
          code = .occupation_list(i)        ! Occupation code
          u    = CLUSTER_UA_FROM_CODE(code) ! Unit cell atom
 
          ! No connections to this atom? next ...
-         if (.crystal.unit_cell_connection(u).element.dim==0) cycle
+         if (unit_cell_connection(u).element.dim==0) cycle
 
          ! Get unit cell atom offset for atom "i"
          h1 = CLUSTER_H1_FROM_CODE(code)
@@ -962,10 +1057,10 @@ contains
          h3 = CLUSTER_H3_FROM_CODE(code)
 
          ! Loop on atoms "c" connected to "u"
-         do c = 1,.crystal.unit_cell_connection(u).element.dim
+         do c = 1,unit_cell_connection(u).element.dim
 
             ! List of connections
-            con = .crystal.unit_cell_connection(u)[c].element
+            con => unit_cell_connection(u)[c].element
 
             ! Get code for connected atom
             k1 = h1 + con(1)
@@ -974,8 +1069,6 @@ contains
             t  =      con(4)
             code = CLUSTER_AT_CODE(k1,k2,k3,t)
 
-            con.destroy
-
             ! Is it new in the occupation list?
             old = .occupation_list.index_of_value(code)
 
@@ -983,23 +1076,21 @@ contains
 
                ! This is an old (found) atom. Replace the molecule
                ! index by the lower of  "mi" and "mo" everywhere.
-               mo = .molecule_for_atom(old)
+               mo = molecule_for_atom(old)
                if (mo<mi) then
-                  where (.molecule_for_atom==mi) .molecule_for_atom = mo
+                  where (molecule_for_atom==mi) molecule_for_atom = mo
                   mi = mo
                else if (mo>mi) then
-                  where (.molecule_for_atom==mo) .molecule_for_atom = mi
+                  where (molecule_for_atom==mo) molecule_for_atom = mi
                end
-
-               ! Atom "old" is connection to "i"
                .atom_connection(i).element.append(old)
 
-            else if (.defragment) then
+            else
 
                ! This is a new atom. Increment no. of atoms,
                ! store in the occ list and add new connection.
                .occupation_list.append(code)
-               .molecule_for_atom.append(mi)
+               molecule_for_atom.append(mi)
                .n_atoms = .n_atoms + 1
                .atom_connection.expand(.n_atoms)
                .atom_connection(i).element.append(.n_atoms)
@@ -1010,299 +1101,16 @@ contains
 
       end
 
-   end
+      ! Set (sorted) molecule index array
+      .molecule_for_atom => molecule_for_atom
 
-   sort_molecule_indices ::: leaky, PURE
-   ! Arrange molecule indices on ascending order
-      self :: INOUT
-
-   ENSURE(.occupation_list.associated,"no occupation_list")
-   ENSURE(.crystal.unit_cell_connection.associated,"no unit cell connection table")
-
-      mi,mj, a,m :: INT
-      unique :: VEC{INT}@
-
-      ! Get molecule indices & sort ascdending
-      unique.to_unique_elements_of(.molecule_for_atom)
-      unique.sort
-
-      ! Number of molecules in cluster
-      .n_molecules = unique.dim
-
-      ! Put .molecule_for_atom into ascending order
-      do mi = 1,.n_molecules
-         mj = unique(mi)
-         if (mj==mi) cycle
-         where (.molecule_for_atom==mj) .molecule_for_atom = mi
-      end
-
-      ! Make molecule array
-      .molecule.destroy
-      .molecule.create(.n_molecules)
-      do a = 1,.n_atoms
-         m = .molecule_for_atom(a)
-         .molecule(m).element.append(a)
-      end
+      ! Make molecule info
+      .make_molecule_info
 
    end
 
-   sort_atoms_in_molecules ::: private, leaky, PURE
-   ! Sort the atom order in each molecule so that it is consistent.
-   ! This only works for defragmented clusters, and the molecules are
-   ! *not* put consecutively here, that is done in sort_into_molecules.
-      self :: INOUT
-
-   ENSURE(.defragment,"not defragmented!")
-   ENSURE(.molecule_for_atom.associated,"no molecule_for_atom")
-
-      ni,s,i :: INT
-      mi,si :: INT
-      mj,sj :: INT
-      ic,i0,i1,i2,i3 :: INT
-      jc,j0,j1,j2,j3 :: INT
-      li,cj,uj,fj :: VEC{INT}@
-      lj,ci,ui,fi :: VEC{INT}@
-      perm,new :: VEC{INT}@
-    ! geom :: MAT{REAL}@
-      pi,pj,ps :: VEC{REAL}(3)
-      shift :: VEC{INT}(3)
-      related :: BIN
-
-      ! Clean & get ready
-      .unique_molecule_for.destroy
-      .unique_molecule_for.create(.n_molecules)
-      .unique_symcode_for.destroy
-      .unique_symcode_for.create(.n_molecules)
-
-      ! List of unique molecules for each cluster atom
-      ! and their relating symops
-      .n_unique_molecules     = 1
-      .unique_molecule_for    = 0
-      .unique_symcode_for     = 0
-
-      ! Loop on molecules, mi.
-      ! Make atom-order in matching molecules consistent
-      do mi = 1,.n_molecules
-
-         ! Processed?
-         if (.unique_molecule_for(mi)>0) cycle
-
-         ! Molecule "mi" indices
-         li = .molecule(mi)[:]
-         ni = li.dim
-
-         fi.create(ni)
-         ui.create(ni)
-         ci.create(ni)
-
-         ! Cluster codes for mi
-         ci(:) = .occupation_list(li)
-
-         ! Unit cell atom indices for mi
-         ui(:) = CLUSTER_UA_FROM_CODE(ci)
-
-         ! Parent fragment atom indices for mi
-         fi(:) = .crystal.frag_atom_for_unit_cell_atom(ui)
-
-         ! Symop which generate the molecule mi
-         ! ACtually the inverse for later
-         si = .crystal.frag_symop_for_unit_cell_atom(ui(1))
-         si = .crystal.spacegroup.inverse_of_symops(si)
-
-         ! Cluster symop for 1st atom in molecule mi
-         ic = ci(1)
-         i0 = CLUSTER_UA_FROM_CODE(ic)
-         i1 = CLUSTER_H1_FROM_CODE(ic)
-         i2 = CLUSTER_H2_FROM_CODE(ic)
-         i3 = CLUSTER_H3_FROM_CODE(ic)
-
-         ci.destroy
-         ui.destroy
-
-         ! Position of 1st atom in molecule mi
-         pi = .crystal.unit_cell_geometry(:,i0) + [i1,i2,i3] + .fragment_offset
-
-         ! Find matching molecules, mj
-         do mj = mi+1,.n_molecules
-
-            lj = .molecule(mj).element(:)
-
-            ! Found?
-            if (.unique_molecule_for(mj)>0) cycle
-
-            ! Reject unless: same # on atoms?
-            if (lj.dim/=ni) cycle
-
-            fj.create(ni)
-            uj.create(ni)
-            cj.create(ni)
-
-            ! Cluster codes for mj
-            cj(:) = .occupation_list(lj)
-
-            ! Unit cell atom indices for mi
-            uj(:) = CLUSTER_UA_FROM_CODE(cj)
-
-            ! Parent fragment atom indices for mj
-            fj(:) = .crystal.frag_atom_for_unit_cell_atom(uj)
-
-            ! Symop which generate the molecule mi
-            sj  = .crystal.frag_symop_for_unit_cell_atom(uj(1))
-
-            cj.destroy
-            uj.destroy
-
-            ! Match frag atoms order
-            perm.create(ni)
-            fj.is_permutation_of(fi,related,perm)
-
-            if (related) then
-
-               ! New order
-               new.create(ni)
-               new(:) = lj(perm)
-
-               ! First atom in mj (matched to mi)
-               jc = .occupation_list(new(1))
-
-               ! Cluster symop for matching 1st atom in molecule mj
-               j0 = CLUSTER_UA_FROM_CODE(jc)
-               j1 = CLUSTER_H1_FROM_CODE(jc)
-               j2 = CLUSTER_H2_FROM_CODE(jc)
-               j3 = CLUSTER_H3_FROM_CODE(jc)
-
-               ! Position of 1st atom in mj
-               pj = .crystal.unit_cell_geometry(:,j0) + [j1,j2,j3] + .fragment_offset
-
-               ! Symop which maps mi->mj
-               ! Symops act on coordinates to the right like matrices
-               s = .crystal.spacegroup.product_of_symops(sj,si)
-
-               ! Get shift
-               ps = pi
-               .crystal.spacegroup.transform_position(ps,s)
-
-               ps    = pj - ps
-               shift = nint(ps)
-
-               ! Unique molecule
-               .unique_molecule_for(mj) = mi
-
-               ! New symcode
-               .unique_symcode_for(mj) = CLUSTER_AT_CODE(shift(1),shift(2),shift(3),s)
-
-               ! Reorder atoms in mj to be consistent with mi
-               .occupation_list(new) = .occupation_list(lj)
-               .molecule(mj).element = new
-
-               ! Reorder connection table
-             ! do i = 1,new.dim
-             !    .atom_connection(new(i)).element(new) = .atom_connection(lj(i)).element(lj)
-             ! end
-         
-               new.destroy
-
-               ! Check this geometry against occupation list
-             ! geom = .fragment_geometry(:,fi)
-             ! .transform_geometry(geom,s,translate=REALIFY(shift))
-             ! stdout.text("geom:")
-             ! stdout.put(transpose(geom))
-             ! geom.destroy
-
-            else
-
-               ! Symmetry unique molecule
-               .n_unique_molecules      = .n_unique_molecules + 1
-               .unique_molecule_for(mi) = .n_unique_molecules
-
-            end
-
-            fj.destroy
-            perm.destroy
-
-         end
-
-         fi.destroy
-            
-      end
-
-   end
-
-   sort_into_molecules ::: private, leaky, PURE
-   ! Sort cluster molecule indices into ascending order.
-   ! Rearrange mapping arrays.
-      self :: INOUT
-
-   ENSURE(.molecule_for_atom.associated,"no molecule_for_atom")
-
-      a,m,i :: INT
-      atom_connection :: VEC{VEC_{INT}}*
-      new_order :: VEC{INT}@
-      connected :: BIN
-
-      ! Clear flags telling if fragment atom
-      .is_fragment_atom.destroy
-      .is_fragment_atom.create(.n_atoms)
-
-      ! New ordering
-      new_order.create(.n_atoms)
-
-      a = 0
-
-      ! Loop over molecules
-      do m = 1,.n_molecules
-
-          ! Loop over atoms "i"
-          do i = 1,.n_atoms
-
-             if (.molecule_for_atom(i)/=m) cycle
-
-             ! Atom index
-             a = a + 1
-             new_order(i) = a
-
-             ! Set flag if fragment atom
-             if (i<=.n_fragment_atoms) then; .is_fragment_atom(i) = TRUE
-             else;                           .is_fragment_atom(i) = FALSE
-             end
-
-          end
-
-      end
-
-      ! Now reorder
-      .occupation_list(new_order)   = .occupation_list
-      .molecule_for_atom(new_order) = .molecule_for_atom
-      .is_fragment_atom(new_order)  = .is_fragment_atom
-
-      ! This needs to be here, we must update .molecule to
-      ! be in a consistent state with the rest of the object
-      .molecule.destroy
-      .molecule.create(.n_molecules)
-      do a = 1,.n_atoms
-         m = .molecule_for_atom(a)
-         .molecule(m).element.append(a)
-      end
-
-      ! Reorder connection table
-      atom_connection.create(.n_atoms)
-      do i = 1,.n_atoms
-         connected = .atom_connection(i).element.associated
-         if (NOT connected) cycle
-         atom_connection(new_order(i)).element.create_copy(new_order(.atom_connection(i)[:]))
-      end
-      .atom_connection.destroy
-      .atom_connection => atom_connection
-
-      ! Clean
-      new_order.destroy
-
-   end
-
-
-   do_defragment(occupation_list) ::: leaky, PURE
+   do_defragment(occupation_list) ::: leaky
    ! Defragment the "occupation_list"
-      self :: IN
       occupation_list :: VEC{INT}*
 
    ENSURE(occupation_list.associated,"no occupation_list")
@@ -1310,10 +1118,14 @@ contains
    ENSURE(.crystal.unit_cell_connection.associated,"no unit cell connection table")
 
       n_atoms,i,c,code,h1,h2,h3,u,k1,k2,k3,t,old :: INT
-      con :: VEC{INT}@
+      con :: VEC{INT}*
+      unit_cell_connection :: VEC{VEC_{VEC_{INT}}}*
 
       ! Initial no. of atoms
       n_atoms = occupation_list.dim
+
+      ! Connection table
+      unit_cell_connection => .crystal.unit_cell_connection
 
       ! Loop on all atoms "i"
       i = 0
@@ -1330,7 +1142,7 @@ contains
          u    = CLUSTER_UA_FROM_CODE(code) ! Unit cell atom
 
          ! No connections to this atom? next ...
-         if (.crystal.unit_cell_connection(u).element.dim==0) cycle
+         if (unit_cell_connection(u).element.dim==0) cycle
 
          ! Get unit cell atom offset "h"
          h1 = CLUSTER_H1_FROM_CODE(code)
@@ -1338,10 +1150,10 @@ contains
          h3 = CLUSTER_H3_FROM_CODE(code)
 
          ! Loop on atoms "c" connected to "u"
-         do c = 1,.crystal.unit_cell_connection(u).element.dim
+         do c = 1,unit_cell_connection(u).element.dim
 
             ! List of connections
-            con = .crystal.unit_cell_connection(u)[c].element
+            con => unit_cell_connection(u)[c].element
 
             ! Get code for connected atom
             k1 = h1 + con(1)
@@ -1349,8 +1161,6 @@ contains
             k3 = h3 + con(3)
             t  =      con(4)
             code = CLUSTER_AT_CODE(k1,k2,k3,t)
-
-            con.destroy
 
             ! Is it new in the occupation list?
             old = occupation_list.index_of_value(code)
@@ -1368,10 +1178,9 @@ contains
 
    end
 
-   do_defragment_uc_atom(u,geometry) ::: leaky, PURE
+   do_defragment_uc_atom(u,geometry) ::: leaky
    ! Defragment a single atom "u" in the unit cell and produce a
    ! "geometry" in crystal coordinates.
-      self :: IN
       u :: INT, IN
       geometry :: MAT{REAL}*
 
@@ -1390,13 +1199,12 @@ contains
 
    end
 
-   do_defragment_uc_atom(u,symop,par,pos,mass) ::: leaky, PURE
+   do_defragment_uc_atom(u,symop,par,pos,mass) ::: leaky
    ! Defragment a single atom "u" in the unit cell and produce the
    ! "symop" (index) which maps the asymmetric parent-atom "par" into
    ! "u", the *list* of cartesian positions in "pos",  and the list of
    ! corresponding atomic masses in "mass".  Needed for LFF refractive
    ! index calculations.
-      self :: IN
       u :: INT, IN
       symop :: INT, OUT
       par :: VEC{INT}, OUT
@@ -1421,17 +1229,16 @@ contains
 
    end
 
-   do_defragment_uc_atom(u,pos,charge,dipole,frag_atom) ::: leaky, PURE
+   do_defragment_uc_atom(u,pos,charge,dipole,frag_atom) ::: leaky
    ! Defragment a single atom "u" in the unit cell and extract
    ! *cartesian* atom positions "pos", the atomic charges and dipoles
    ! "charge" and "dipole" in a *flat* array, and the frag atom for
    ! the atoms.  These properties are requited for LFF refractive
    ! index calculations.
-      self :: IN
       u :: INT, IN
       pos :: MAT{REAL}, OUT
       charge,dipole :: VEC{REAL}, OUT
-      frag_atom :: VEC{INT}, optional, OUT
+      frag_atom :: VEC{INT}, optional
 
       occupation_list :: VEC{INT}*
 
@@ -1448,7 +1255,7 @@ contains
 
    end
 
-   do_defragment_uc_atom(u,symop,par,pos,charge,mass,dipole,alpha_q,alpha_m) ::: leaky, PURE
+   do_defragment_uc_atom(u,symop,par,pos,charge,mass,dipole,alpha_q,alpha_m) ::: leaky
    ! Defragment a single atom "u" in the unit cell and for the
    ! *molecule* produce the "symop" (3x3 matrix) which maps "u" into
    ! the *last* asymmetric parent-atom "par" in the *list* of
@@ -1456,7 +1263,6 @@ contains
    ! "mass", and "dipole", and the atomic charge and dipole
    ! polarizabilities "alpha_q" and "alpha_m".
    ! NOTE: symop matrix seems strange cf. routine above.
-      self :: IN
       u :: INT, IN
       symop :: MAT{REAL}, OUT
       par :: VEC{INT}, OUT
@@ -1482,6 +1288,44 @@ contains
 
    end
 
+   make_molecule_info ::: private, leaky
+   ! Sort the cluster into molecules whose indices appear in ascending
+   ! order; also store the atom indices in each molecule.
+
+   ENSURE(.molecule_for_atom.associated,"no molecule_for_atom")
+
+      unique :: VEC{INT}*
+      mi,mj, a,m :: INT
+
+      ! Get molecule indices & sort ascdending
+      unique => .molecule_for_atom.unique_elements
+      unique.sort
+
+      ! Number of molecules in cluster
+      .n_molecules = unique.dim
+
+      ! Put .molecule_for_atom into ascending order
+      do mi = 1,.n_molecules
+         mj = unique(mi)
+         if (mj==mi) cycle
+         where (.molecule_for_atom==mj) .molecule_for_atom = mi
+      end
+
+      ! Clean
+      unique.destroy
+
+      ! Now make the molecule list
+      .molecule.create(.n_molecules)
+      do a = 1,.n_atoms
+         m = .molecule_for_atom(a)
+         .molecule(m).element.append(a)
+      end
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.defragment) .make_unique_molecule_info
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+   end
 
    make_pairs_within_radius_of(m, res, radius, min_radius) ::: public, leaky
    ! ???
@@ -1516,9 +1360,8 @@ contains
       stdout.show("upper bound", upper)
       stdout.flush
 
-      unique_symops.to_unique_elements_of(.crystal.asym_symop_for_unit_cell_atom)
+      unique_symops = .crystal.asym_symop_for_unit_cell_atom.unique_elements
       n_symops = size(unique_symops)
-
       .create_mol_atom_list(central_atoms, m)
 
       n_atom = size(central_atoms)
@@ -1593,21 +1436,228 @@ contains
 
    end
 
-!  ============================================
-!  Extract geometry & info from occupation list
-!  ============================================
+   make_unique_molecule_info ::: private, leaky
+   ! Sort the cluster molecules so that the atom order in
+   ! each is consistent. This only works for defragmented
+   ! clusters.
 
-   extract_geometry ::: leaky, PURE
+   ENSURE(.molecule_for_atom.associated,"no molecule_for_atom")
+
+      li,lj :: VEC{INT}*
+      ci,cj,ui,uj,ai,aj, permutation, new :: VEC{INT}*
+      mi,mj, ni, s,si,sj, ic,i0,i1,i2,i3, jc,j0,j1,j2,j3 :: INT
+      pi,pj,ps :: VEC{REAL}(3)
+      shift :: VEC{INT}(3)
+      related :: BIN
+
+   ! stdout.text("=============================")
+   ! stdout.text("Occupation list before unique")
+   ! stdout.text("=============================")
+   ! .put_occupation_list
+
+   !  stdout.save
+   !  stdout.set_no_of_fields_per_line(10)
+   !  stdout.set_int_width(4)
+   !  stdout.set_using_array_labels(FALSE)
+
+      ! Clean & get ready
+      .unique_molecule_for.destroy
+      .unique_molecule_for.create(.n_molecules)
+      .unique_symcode_for.destroy
+      .unique_symcode_for.create(.n_molecules)
+
+      ! List of unique molecules for each cluster atom
+      ! and their relating symops
+      .n_unique_molecules     = 0
+      .unique_molecule_for    = 0
+      .unique_symcode_for     = 0
+
+      ! Make atom-order in each molecule consistent
+      do mi = 1,.n_molecules
+
+         ! Processed?
+         if (.unique_molecule_for(mi)>0) cycle
+
+         li => .molecule(mi).element
+         ni  = li.dim
+
+         ai.create(ni)
+         ui.create(ni)
+         ci.create(ni)
+
+         ci  = .occupation_list(li)
+         ui  = CLUSTER_UA_FROM_CODE(ci)
+         ai  = .crystal.asym_atom_for_unit_cell_atom(ui)
+         si  = .crystal.asym_symop_for_unit_cell_atom(ui(1))
+         si  = .crystal.spacegroup.inverse_of_symops(si)
+
+         ic  = ci(1)
+
+         ci.destroy
+         ui.destroy
+
+         i0  = CLUSTER_UA_FROM_CODE(ic)
+         i1  = CLUSTER_H1_FROM_CODE(ic)
+         i2  = CLUSTER_H2_FROM_CODE(ic)
+         i3  = CLUSTER_H3_FROM_CODE(ic)
+         pi  = .crystal.unit_cell_geometry(:,i0) + [i1,i2,i3] + .fragment_offset
+
+         ! Find matching molecules
+         do mj = mi+1,.n_molecules
+
+            lj => .molecule(mj).element
+
+            ! Found?
+            if (.unique_molecule_for(mj)>0) cycle
+
+            ! Same # on atoms?
+            if (lj.dim/=ni) cycle
+
+            aj.create(ni)
+            uj.create(ni)
+            cj.create(ni)
+
+            cj  = .occupation_list(lj)
+            uj  = CLUSTER_UA_FROM_CODE(cj)
+            aj  = .crystal.asym_atom_for_unit_cell_atom(uj)
+            sj  = .crystal.asym_symop_for_unit_cell_atom(uj(1))
+
+            cj.destroy
+            uj.destroy
+
+            ! Match asym atoms
+            permutation.create(ni)
+            ai.is_permutation_of(aj,related,permutation)
+
+       ! stdout.text("here")
+       ! stdout.show("mi      =",mi)
+       ! stdout.show("mj      =",mj)
+       ! stdout.show("related =",related)
+
+            if (related) then
+
+       ! stdout.text("ai")
+       ! stdout.put(ai,by_row=TRUE)
+       ! stdout.text("aj(permutation)")
+       ! stdout.put(aj(permutation),by_row=TRUE)
+       ! stdout.text("aj")
+       ! stdout.put(aj,by_row=TRUE)
+       ! stdout.text("permutation")
+       ! stdout.put(permutation,by_row=TRUE)
+       ! stdout.text("li")
+       ! stdout.put(li,by_row=TRUE)
+       ! stdout.text("lj")
+       ! stdout.put(lj,by_row=TRUE)
+       ! stdout.text("lj(permutation)")
+       ! stdout.put(lj(permutation),by_row=TRUE)
+       ! stdout.text("ui")
+       ! stdout.put(ui,by_row=TRUE)
+       ! stdout.text("uj")
+       ! stdout.put(uj,by_row=TRUE)
+
+               ! New order
+               new.create_copy(lj(permutation))
+
+               ! First atom in mj (matched to mi)
+               jc = .occupation_list(new(1))
+       ! stdout.show("new(1) =",new(1))
+
+               ! Position of first atom in mj
+               j0 = CLUSTER_UA_FROM_CODE(jc)
+               j1 = CLUSTER_H1_FROM_CODE(jc)
+               j2 = CLUSTER_H2_FROM_CODE(jc)
+               j3 = CLUSTER_H3_FROM_CODE(jc)
+               pj = .crystal.unit_cell_geometry(:,j0) + [j1,j2,j3] + .fragment_offset
+
+       ! stdout.text("fragment_offset")
+       ! stdout.put(.fragment_offset,by_row=TRUE)
+       ! stdout.text("pi0")
+       ! stdout.put(.crystal.unit_cell_geometry(:,i0),by_row=TRUE)
+       ! stdout.text("pj0")
+       ! stdout.put(.crystal.unit_cell_geometry(:,j0),by_row=TRUE)
+       ! stdout.show_bit_string("ci =",ic)
+       ! stdout.show_bit_string("cj =",jc)
+       ! stdout.text("ix")
+       ! stdout.put([i0,i1,i2,i3],by_row=TRUE)
+       ! stdout.text("jx")
+       ! stdout.put([j0,j1,j2,j3],by_row=TRUE)
+       ! stdout.text("pi")
+       ! stdout.put(pi,by_row=TRUE)
+             
+               ! Symop which maps mi->mj
+               s = .crystal.spacegroup.product_of_symops(sj,si)
+
+               ! Get shift
+               ps = pi
+               .crystal.spacegroup.transform_position(ps,s)
+
+       ! stdout.show("si =",si)
+       ! stdout.show("sj =",sj)
+       ! stdout.show("s  =",s)
+       ! stdout.text("ps= s(pi)")
+       ! stdout.put(ps,by_row=TRUE)
+       ! stdout.text("pj")
+       ! stdout.put(pj,by_row=TRUE)
+               ps    = pj - ps
+               shift = nint(ps)
+       ! stdout.show("pj-ps' =",ps)
+       ! stdout.show("shift  =",shift)
+
+               ! Unique molecule
+               .unique_molecule_for(mj) = mi
+
+               ! New symcode
+               .unique_symcode_for(mj) = CLUSTER_AT_CODE(shift(1),shift(2),shift(3),s)
+             
+               ! Reorder atoms in mj to be consistent with mi
+               .occupation_list(lj) = .occupation_list(new)
+               lj = new 
+
+               new.destroy
+
+            else
+
+               ! Symmetry unique molecule
+               .n_unique_molecules      = .n_unique_molecules + 1
+               .unique_molecule_for(mi) = .n_unique_molecules
+
+            end
+
+            permutation.destroy
+            aj.destroy
+
+         end
+            
+         ai.destroy
+
+      end
+
+   !  stdout.unsave
+
+   ! stdout.text("=============================")
+   ! stdout.text("Occupation list AFTER  unique")
+   ! stdout.text("=============================")
+   ! .put_occupation_list
+
+   end
+
+!  ==================================================
+!  Extract geometry & info from coded occupation list
+!  ==================================================
+
+   extract_geometry ::: leaky
    ! Extract the .geometry (fractional) from the final .occupation list.
    ! . Place connected molecules in order
    ! . Set the .is_fragment_atom flag array
-      self :: INOUT
 
    ENSURE(.occupation_list.associated,"no occupation_list")
    ENSURE(.crystal.associated,"no crystal")
    ENSURE(.crystal.unit_cell_geometry.associated,"no crystal unit cell geometry")
 
-      i,code,h1,h2,h3,u :: INT
+      a,m,i,code,h1,h2,h3,u :: INT
+      atom_connection :: VEC{VEC_{INT}}*
+      new_order :: VEC{INT}*
+      connected :: BIN
 
       ! No of atoms to extract
       .n_atoms = .occupation_list.dim
@@ -1616,28 +1666,82 @@ contains
       .geometry.destroy
       .geometry.create(3,.n_atoms)
 
-      ! Loop over atoms "i"
-      do i = 1,.n_atoms
+      ! Clear flags telling if fragment atom
+      .is_fragment_atom.destroy
+      .is_fragment_atom.create(.n_atoms)
 
-         ! Get occ code for this atom
-         code = .occupation_list(i)
+      ! New ordering
+      new_order.create(.n_atoms)
 
-         ! Get unit cell atom "u" and cell offset "h"
-         h1 = CLUSTER_H1_FROM_CODE(code)
-         h2 = CLUSTER_H2_FROM_CODE(code)
-         h3 = CLUSTER_H3_FROM_CODE(code)
-         u  = CLUSTER_UA_FROM_CODE(code)
+      a = 0
 
-         ! Get the cluster atom coordinate
-         .geometry(:,i) = .crystal.unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
+      ! Loop over molecules
+      do m = 1,.n_molecules
+
+          ! Loop over atoms "i"
+          do i = 1,.n_atoms
+
+             if (.molecule_for_atom(i)/=m) cycle
+
+             ! Atom index
+             a = a + 1
+             new_order(i) = a
+
+             ! Get occ code for this atom
+             code = .occupation_list(i)
+
+             ! Get unit cell atom "u" and cell offset "h"
+             h1 = CLUSTER_H1_FROM_CODE(code)
+             h2 = CLUSTER_H2_FROM_CODE(code)
+             h3 = CLUSTER_H3_FROM_CODE(code)
+             u  = CLUSTER_UA_FROM_CODE(code)
+
+             ! Get the cluster atom coordinate
+             .geometry(:,i) = .crystal.unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
+
+             ! Set flag if fragment atom
+             if (i<=.n_fragment_atoms) then; .is_fragment_atom(i) = TRUE
+             else;                           .is_fragment_atom(i) = FALSE
+             end
+
+          end
 
       end
 
+
+      ! Now reorder
+      .occupation_list(new_order)   = .occupation_list
+      .geometry(:,new_order)        = .geometry
+      .molecule_for_atom(new_order) = .molecule_for_atom
+      .is_fragment_atom(new_order)  = .is_fragment_atom
+
+     ! This needs to be here, we must update .molecule to
+     ! be in a consistent state with the rest of the object
+      .molecule.destroy
+      .molecule.create(.n_molecules)
+      do a = 1,.n_atoms
+         m = .molecule_for_atom(a)
+         .molecule(m).element.append(a)
+      end
+
+
+      ! Reorder connection table
+      atom_connection.create(.n_atoms)
+      do i = 1,.n_atoms
+         connected = .atom_connection(i).element.associated
+         if (NOT connected) cycle
+         atom_connection(new_order(i)).element.create_copy(new_order(.atom_connection(i)[:]))
+      end
+      .atom_connection.destroy
+      .atom_connection => atom_connection
+
+      ! Clean
+      new_order.destroy
+
    end
 
-   extract_geometry(occupation_list,geometry) ::: leaky, PURE
+   extract_geometry(occupation_list,geometry) ::: leaky
    ! Extract the geometry (fractional) from an "occupation_list".
-      self :: IN
       occupation_list :: VEC{INT}, IN
       geometry :: MAT{REAL}*
 
@@ -1649,7 +1753,7 @@ contains
       ! No. of atoms to extract
       n_atoms = occupation_list.dim
 
-      ! Extracted geometry. LEAKY
+      ! Extracted geometry
       geometry.create(3,n_atoms)
 
       ! Loop over atoms "i"
@@ -1671,11 +1775,10 @@ contains
 
    end
 
-   extract_atom_info(occupation_list,par,pos,mass) ::: PURE
+   extract_atom_info(occupation_list,par,pos,mass)
    ! From a "occupation_list", extract the *cartesian* atom positions
    ! "pos", the index of the asymmetric-parent-atom in "par" and the
    ! atomic "mass" for each atom.
-      self :: IN
       occupation_list :: VEC{INT}, IN
       par :: VEC{INT}, OUT
       pos :: MAT{REAL}, OUT
@@ -1719,18 +1822,17 @@ contains
 
    end
 
-   extract_atom_info(occupation_list,pos,charge,dipole,frag_atom) ::: PURE
+   extract_atom_info(occupation_list,pos,charge,dipole,frag_atom)
    ! From the "occupation_list", extract the *cartesian* atom
    ! positions "pos", the atomic charges and dipoles "charge" and
    ! "dipole" in a *flat* array, and the frag atom for the atoms.
    ! NOTE:
    ! . All the quantities are available and non-zero.
    ! . "pos" and "dipole" are in the cartesian frame.
-      self :: IN
       occupation_list :: VEC{INT}, IN
       pos :: MAT{REAL}, OUT
       charge,dipole :: VEC{REAL}, OUT
-      frag_atom :: VEC{INT}, optional, OUT
+      frag_atom :: VEC{INT}, OUT, optional
 
    ENSURE(.crystal.associated,"no crystal")
    ENSURE(.crystal.fragment_info_made,"no crystal fragment_info")
@@ -1740,12 +1842,12 @@ contains
    ENSURE(charge.dim==occupation_list.dim, "charge, wrong size")
    ENSURE(dipole.dim==3*occupation_list.dim, "dipole, wrong size")
 
-      seitz :: MAT3{REAL}@
+      seitz :: MAT3{REAL}*
       i,l,code,h1,h2,h3,u, p,s :: INT
       q :: VEC{REAL}(3)
 
       ! Symops
-      seitz = .crystal.xyz_seitz_matrices
+      seitz => .crystal.xyz_seitz_matrices
 
       ! Counter, dipole array
       l = 0
@@ -1794,7 +1896,7 @@ contains
 
    end
 
-   extract_molecule_atom_info(occupation_list,symop,par,pos,charge,mass,dipole,alpha_q,alpha_m) ::: PURE
+   extract_molecule_atom_info(occupation_list,symop,par,pos,charge,mass,dipole,alpha_q,alpha_m)
    ! From a *molecule* "occupation_list", extract the *cartesian* atom
    ! positions "pos", the indiex of the asymmetric-parent-atom in
    ! "par", the corresponding 3x3 symop matrix which maps the unit
@@ -1806,7 +1908,6 @@ contains
    ! . "pos" and everything else are in *cartesians*.
    ! . The symop returned is the last one for "occupation_list"
    !   This is OK for a whole molecule
-      self :: IN
       occupation_list :: VEC{INT}, IN
       symop :: MAT{REAL}, OUT
       par :: VEC{INT}, OUT
@@ -1829,13 +1930,13 @@ contains
    ENSURE(all(shape(alpha_q)==[3,occupation_list.dim]),"alpha_q, wrong size")
    ENSURE(all(shape(alpha_m)==[3,3,occupation_list.dim]), "alpha_m, wrong size")
 
-      T  :: MAT{REAL}@
-      inverse_seitz :: MAT3{REAL}@
+      T  :: MAT{REAL}*
+      inverse_seitz :: MAT3{REAL}*
       i,code,h1,h2,h3,u, p,s :: INT
       q :: VEC{REAL}(3)
 
       ! Transposed/Inverse symops
-      inverse_seitz = .crystal.transposed_xyz_seitz_matrices
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
 
       ! Loop over atoms "i"
       do  i = 1,occupation_list.dim
@@ -1856,7 +1957,7 @@ contains
          ! Set parent asymmetric atom and symop
          p = .crystal.asym_atom_for_unit_cell_atom(u)
          s = .crystal.asym_symop_for_unit_cell_atom(u)
-         T = inverse_seitz(:,:,s)
+         T => inverse_seitz(:,:,s)
          par(i) = p
 
          ! Set the inverse 3x3 symop
@@ -1899,8 +2000,6 @@ contains
 
          ! stdout.text("alpha_m:")
          ! stdout.put(alpha_m(:,:,i))
-
-         T.destroy
 
       end
 
@@ -1954,8 +2053,8 @@ contains
    ENSURE(.crystal.asym_atom_for_unit_cell_atom.associated,"no asym_atom-cell_atom")
    ENSURE(.asymmetric_unit_atom.has_cartesian_axes, "pADPs must be in cartn axis system")
 
-      ulist :: VEC{INT}@
-      seitz :: MAT3{REAL}@
+      ulist :: VEC{INT}*
+      seitz :: MAT3{REAL}*
       a,f,u,p,s :: INT
       atom_f, atom_p :: ATOM*
 
@@ -1964,7 +2063,7 @@ contains
       ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
 
       ! Seitz matrices
-      seitz = .crystal.xyz_seitz_matrices
+      seitz => .crystal.xyz_seitz_matrices
 
       ! Fragment atom
       f = 0
@@ -2038,8 +2137,8 @@ contains
    ENSURE(.crystal.asym_atom_for_unit_cell_atom.associated,"no asym_atom-cell_atom")
    ENSURE(.asymmetric_unit_atom.has_cartesian_axes, "pADPs must be in cartn axis system")
 
-      ulist :: VEC{INT}@
-      seitz :: MAT3{REAL}@
+      ulist :: VEC{INT}*
+      seitz :: MAT3{REAL}*
       f,a, u,p,s :: INT
       atom_f, atom_p :: ATOM*
 
@@ -2048,7 +2147,7 @@ contains
       ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
 
       ! Seitz matrices
-      seitz = .crystal.xyz_seitz_matrices
+      seitz => .crystal.xyz_seitz_matrices
 
       ! Loop over molecule m atoms "f"
       do f = 1,.molecule(m).element.dim
@@ -2078,7 +2177,6 @@ contains
       end
 
       ! Clean
-      seitz.destroy
       ulist.destroy
 
       ! Change coordinates to cartesian
@@ -2132,6 +2230,37 @@ contains
 
          ! Set the fragment atom index
          f = f + 1
+         res(f) = a
+
+      end
+
+   end
+
+   crystal_asym_unit_atom_indices result (res)
+   ! Return the indices of the crystal asymmetric unit cell atoms
+   ! corresponding to the fragment atoms of the *cluster*.
+      self :: IN
+      res :: VEC{INT}(.n_fragment_atoms)
+
+   ENSURE(.n_fragment_atoms>0,      "no fragment atoms")
+   ENSURE(.is_fragment_atom.associated,"no is_fragment_atom")
+   ENSURE(.occupation_list.associated, "no occupation_list")
+   ENSURE(.crystal.associated        , "no crystal")
+
+      f,i,code,u,a :: INT
+
+      f = 0
+
+      ! Loop over atoms
+      do  i = 1,.n_atoms
+
+         if (NOT .is_fragment_atom(i)) cycle
+
+         code = .occupation_list(i)
+         u    = CLUSTER_UA_FROM_CODE(code)
+         a    = .crystal.asym_atom_for_unit_cell_atom(u)
+
+         f      = f + 1
          res(f) = a
 
       end
@@ -2204,8 +2333,8 @@ contains
    ENSURE(.asymmetric_unit_atom.has_cartesian_axes, "asymmetric_unit_atom not in cartesian axes")
    ENSURE(.molecule_for_atom.associated, "no molecule_for_atom info")
 
-      ulist :: VEC{INT}@
-      seitz :: MAT3{REAL}@
+      ulist :: VEC{INT}*
+      seitz :: MAT3{REAL}*
       a,u,p,s :: INT
 
       ! Unit cell atoms which correspond to the fragment atoms
@@ -2213,7 +2342,7 @@ contains
       ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
 
       ! Seitz matrices
-      seitz = .crystal.xyz_seitz_matrices
+      seitz => .crystal.xyz_seitz_matrices
 
       ! Loop over cluster atoms "a"
       do a = 1,.n_atoms
@@ -2268,8 +2397,8 @@ contains
    ENSURE(.asymmetric_unit_atom.associated, "no asymmetric_cell_atom data")
    ENSURE(.asymmetric_unit_atom.has_cartesian_axes, "pADPs must be in cartn axis system")
 
-      ulist :: VEC{INT}@
-      seitz :: MAT3{REAL}@
+      ulist :: VEC{INT}*
+      seitz :: MAT3{REAL}*
       a,u,p,s :: INT
       atom_p, atom_a :: ATOM*
 
@@ -2278,7 +2407,7 @@ contains
       ulist = CLUSTER_UA_FROM_CODE(.occupation_list(list))
 
       ! Seitz matrices
-      seitz = .crystal.xyz_seitz_matrices
+      seitz => .crystal.xyz_seitz_matrices
 
       ! Loop over cluster atoms "a"
       do a = 1, ulist.dim
@@ -2334,14 +2463,14 @@ contains
    ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
    ENSURE(.asymmetric_unit_atom.associated, "no asymmetric_cell_atom data")
 
-      seitz  :: MAT3{REAL}@
+      seitz  :: MAT3{REAL}*
       dipole :: VEC{REAL}(3)
       d,mu,q :: REAL
       a,i,code,h1,h2,h3,u, p,s :: INT
       r :: VEC{REAL}(3)
 
       ! Normal XYZ symops
-      seitz = .crystal.xyz_seitz_matrices
+      seitz => .crystal.xyz_seitz_matrices
 
       i = -2
 
@@ -2408,7 +2537,7 @@ contains
    ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
    ENSURE(.asymmetric_unit_atom.associated, "no asymmetric_cell_atom data")
 
-      seitz  :: MAT3{REAL}@
+      seitz  :: MAT3{REAL}*
       dipole,eval :: VEC{REAL}(3)
       quadrupole,evec :: MAT{REAL}(3,3)
       d,mu,q :: REAL
@@ -2416,7 +2545,7 @@ contains
       r :: VEC{REAL}(3)
 
       ! NOrmal XYZ symops
-      seitz = .crystal.xyz_seitz_matrices
+      seitz => .crystal.xyz_seitz_matrices
 
       ! Counter for charges
       i = 1
@@ -2538,8 +2667,8 @@ contains
    ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
    ENSURE(.crystal.unit_cell_mol_for_atom.associated,"no cell_mol_for_atom")
 
-      ulist :: VEC{INT}@
-      seitz :: MAT3{REAL}@
+      ulist :: VEC{INT}*
+      seitz :: MAT3{REAL}*
       tensor0,tensor1 :: TENSOR_TYPE
       m,a,u,s :: INT
 
@@ -2551,7 +2680,7 @@ contains
       ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
 
       ! Inverse XYZ symops
-      seitz = .crystal.transposed_xyz_seitz_matrices
+      seitz => .crystal.transposed_xyz_seitz_matrices
 
       ! stdout.text("Making unit cell tensor")
       ! stdout.text("original tensor")
@@ -3315,7 +3444,7 @@ contains
       alpha :: MAT{REAL}(3,3)
       mol,symop,par :: VEC{INT}*
       pos,com :: MAT{REAL}*
-      inverse_seitz :: MAT3{REAL}@
+      inverse_seitz :: MAT3{REAL}*
       n_mol,m :: INT
 
       ! Get the unit cell molecule atom info
@@ -3323,7 +3452,7 @@ contains
       com.destroy; pos.destroy; par.destroy; mol.destroy
 
       ! Transposed/Inverse symops
-      inverse_seitz = .crystal.transposed_xyz_seitz_matrices
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
 
       ! No of molecules
       n_mol = symop.dim
@@ -3363,8 +3492,7 @@ contains
       alpha_mol :: MAT{REAL}(3,3), IN
 
       mol,mol0,symop,par :: VEC{INT}*
-      alpha :: MAT3{REAL}*
-      inverse_seitz :: MAT3{REAL}@
+      inverse_seitz,alpha :: MAT3{REAL}*
       pos,com, L0,L1, D,Df :: MAT{REAL}*
       alph :: MAT{REAL}(3,3)
       n_mol,dim,a,b,i,j,m :: INT
@@ -3399,7 +3527,7 @@ contains
 
       ! Get the reduced molecular polarisabilities
       ! fac = factor to reduce polarisabilities = 1/(eps_0 V) (in au)
-      inverse_seitz = .crystal.transposed_xyz_seitz_matrices
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
       fac = FOUR*PI/.crystal.unit_cell.volume
       alph = fac*alpha_mol
       do m = 1,n_mol
@@ -3473,8 +3601,7 @@ contains
       alpha_mol :: MAT{REAL}(3,3), IN
 
       mol,mol0,symop,par,non_H :: VEC{INT}*
-      alpha :: MAT3{REAL}*
-      inverse_seitz :: MAT3{REAL}@
+      inverse_seitz,alpha :: MAT3{REAL}*
       pos,pos0,com, L0,L1, D,Df :: MAT{REAL}*
       alph :: MAT{REAL}(3,3)
       n,n_mol,n_non_H,n_non_H_per_mol,dim,a,b,i,j,m :: INT
@@ -3503,7 +3630,7 @@ contains
 
       ! Get the reduced averaged site polarisabilities
       ! fac = factor to reduce polarisabilities = 1/(eps_0 V) (in au)
-      inverse_seitz = .crystal.transposed_xyz_seitz_matrices
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
       fac = FOUR*PI/.crystal.unit_cell.volume
       alph = fac*alpha_mol/n_non_H_per_mol
       do m = 1,n_mol
@@ -3595,8 +3722,7 @@ contains
       alpha_mol :: MAT{REAL}(3,3), IN
 
       mol,mol0,symop,par,non_H :: VEC{INT}*
-      alpha :: MAT3{REAL}*
-      inverse_seitz :: MAT3{REAL}@
+      inverse_seitz,alpha :: MAT3{REAL}*
       pos,pos0,com, L,L0,L1, D,Df :: MAT{REAL}*
       alph :: MAT{REAL}(3,3)
       n,n_mol,n_non_H,n_non_H_per_mol,dim, i1,i2,j1,j2,k1,k2,m1,m2, a,b,i,j,m :: INT
@@ -3632,7 +3758,7 @@ contains
 
       ! Get the reduced molecular polarisabilities
       ! fac = factor to reduce polarisabilities = 1/(eps_0 V) (in au)
-      inverse_seitz = .crystal.transposed_xyz_seitz_matrices
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
       fac = FOUR*PI/.crystal.unit_cell.volume
       alph = fac*alpha_mol
       do m = 1,n_mol
@@ -3723,8 +3849,7 @@ contains
 
       alph0 :: MAT{REAL}(3,3)
       beta0 :: MAT3{REAL}(3,3,3)
-      alpha :: MAT3{REAL}*
-      inverse_seitz :: MAT3{REAL}@
+      inverse_seitz,alpha :: MAT3{REAL}*
       beta :: MAT4{REAL}*
       pos,pos0,com, L,L0,L1, D,Df :: MAT{REAL}*
       mol,mol0,symop,par,non_H :: VEC{INT}*
@@ -3763,7 +3888,7 @@ contains
       ! Get the reduced molecular polarisabilities
       ! fac = factor to reduce polarisabilities = 1/(2 eps_0 V)
       !     = (2 pi/V) ... in au since eps_0 = (4 pi)^{-1}.
-      inverse_seitz = .crystal.transposed_xyz_seitz_matrices
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
       fac = TWO*PI/.crystal.unit_cell.volume
       alph0 = TWO*fac*alpha_mol
       beta0 =     fac*beta_mol
@@ -5024,261 +5149,79 @@ contains
       self :: IN
 
    ENSURE(.occupation_list.associated,"no occupation_list")
+   ENSURE(.crystal.associated,"no crystal")
+   ENSURE(.crystal.unit_cell_geometry.associated,"no crystal unit cell geometry")
 
-      ua,   h1,h2,h3 :: VEC{INT}@
-      aa,ay,a1,a2,a3 :: VEC{INT}@
-      fa,fy,f1,f2,f3 :: VEC{INT}@
-      r1,r2,r3 :: VEC{REAL}@
-      ID :: VEC{STR}@
+      fi :: VEC{INT}*
+      h1,h2,h3,hc,ui :: VEC{INT}*
+      r1,r2,r3 :: VEC{REAL}*
       table :: VEC{TABLE_COLUMN}*
-      n :: INT
+      a,n :: INT
 
       stdout.flush
-      stdout.text("===========================")
-      stdout.text("Cluster atoms and molecules")
-      stdout.text("===========================")
-
-      stdout.flush
-      stdout.text("This table shows the coordinates of the atoms in the cluster")
-      stdout.text("and their relationship to the unit cell atoms, asymmetric")
-      stdout.text("unit atoms, and the QM fragment atoms via symmetry opeerators")
-      stdout.text("and translational shifts.")
-      stdout.flush
-      stdout.text(". The first atoms correspond to the fragment geometry which")
-      stdout.text("  was used to generate the cluster.")
-      if (.defragment) then
-      stdout.flush
-      stdout.text(". The molecules are ordered so that the atoms in each are")
-      stdout.text("  generated in a consistent order by the stated symop.")
-      end
-
-      stdout.flush
-      stdout.show("Cluster generation method     =",.generation_method)
-      stdout.show("Complete connected fragments  =",.defragment)
-      stdout.show("Radius of cluster             =",.radius)
-      stdout.show("Fragment offset               =",.fragment_offset)
-      stdout.show("Minimum cell shift for search =",.h_min)
-      stdout.show("Maximum cell shift for search =",.h_max)
-      stdout.flush
-      stdout.show("No. of fragment atoms         =",.crystal.n_fragment_atoms)
-      stdout.show("No. of cluster atoms          =",.n_atoms)
-      stdout.show("No. of molecules              =",.n_molecules)
-      stdout.show("No. of unique molecules       =",.n_unique_molecules)
-      stdout.show("No. of unit cell atoms        =",.crystal.n_unit_cell_atoms)
-
-      stdout.flush
-      stdout.text("The table headings are as follows:")
-      stdout.flush
-      stdout.text("  #          = Cluster atom index")
-      stdout.text("  Mol        = Molecule index")
-      stdout.text("  (UA xyz)   = Cluster atom coord (fractional)")
-      stdout.text("  UA         = Unit cell atom index which generates (xyz)")
-      stdout.text("  FA         = Fragment  atom index which generates (xyz)")
-      stdout.text("  AA         = Asym cell atom index which generates (xyz)")
-      stdout.flush              
-      stdout.text("where:")      
-      stdout.flush              
-      stdout.text("  (UA xyz)   = (FA Op) (UA xyz) + (f1 f2 f3) + (h1 h2 h3)")
-      stdout.text("             =              (FA xyz)         + (h1 h2 h3)")
-      stdout.flush
-      stdout.text("             = (AA Op) (UA xyz) + (a1 a2 a3) + (h1 h2 h3)")
-      stdout.text("             =              (UA xyz)         + (h1 h2 h3)")
-      stdout.flush
-      stdout.text("  (h1 h2 h3) = Unit cell atom shift = US")
-      stdout.flush
-      stdout.text("  (FA xyz)   = Fragment  atom coord")
-      stdout.text("  (f1 f2 f3) = Fragment  atom shift = FS")
-      stdout.flush
-      stdout.text("  (AA xyz)   = Unit cell atom coord")
-      stdout.text("  (a1 a2 a3) = Asym cell atom shift = US")
-      stdout.flush
-    ! stdout.text("  AA code    = Asym atom code to make (xyz) from AA")
-    ! stdout.text("             = Op | h1+s1+5 | h2+s2+5 | h3+s3+5")
-    ! stdout.text("  AO code    = AA | Op")
-      stdout.flush
-
-
-
-      ! Data
-      n = .occupation_list.dim
-
-      ua.create(n)
-      ID.create(n)
-      h1.create(n); h2.create(n); h3.create(n)
-      r1.create(n); r2.create(n); r3.create(n)
-      fa.create(n); fy.create(n)
-      f1.create(n); f2.create(n); f3.create(n)
-      aa.create(n); ay.create(n)
-      a1.create(n); a2.create(n); a3.create(n)
-    ! ac.create(n)
-    ! ao.create(n)
-
-      ua = CLUSTER_UA_FROM_CODE(.occupation_list)
-
-      h1 = CLUSTER_H1_FROM_CODE(.occupation_list) + .fragment_offset(1)
-      h2 = CLUSTER_H2_FROM_CODE(.occupation_list) + .fragment_offset(2)
-      h3 = CLUSTER_H3_FROM_CODE(.occupation_list) + .fragment_offset(3)
-
-      r1 = .crystal.unit_cell_geometry(1,ua) + h1
-      r2 = .crystal.unit_cell_geometry(2,ua) + h2
-      r3 = .crystal.unit_cell_geometry(3,ua) + h3
-
-      fa = .crystal.frag_atom_for_unit_cell_atom(ua)
-      fy = .crystal.frag_symop_for_unit_cell_atom(ua)
-      f1 = .crystal.frag_shift_for_unit_cell_atom(1,ua)
-      f2 = .crystal.frag_shift_for_unit_cell_atom(2,ua)
-      f3 = .crystal.frag_shift_for_unit_cell_atom(3,ua)
-
-      ID = .crystal.fragment_atom(fa).tag
-
-      aa = .crystal.asym_atom_for_unit_cell_atom(ua)
-      ay = .crystal.asym_symop_for_unit_cell_atom(ua)
-      a1 = .crystal.asym_shift_for_unit_cell_atom(1,ua)
-      a2 = .crystal.asym_shift_for_unit_cell_atom(2,ua)
-      a3 = .crystal.asym_shift_for_unit_cell_atom(3,ua)
-
-    ! ac = 1000* sy
-    ! ac = 100* (h1+5+s1) + ac
-    ! ac = 10*  (h2+5+s2) + ac
-    ! ac =      (h3+5+s3) + ac
-
-    ! ao = 100* aa
-    ! ao = sy + ao
-
-
-      ! Table
-      table.create(19)
-
-      table( 1).set_heading(" UA");   table( 1).set_values(ua)
-
-      table( 2).set_heading("Mol");   table( 2).set_values(.molecule_for_atom)
-
-      table( 3).set_heading("ID");    table( 3).set_values(ID)
-
-      table( 5).set_heading("(UA xyz)")
-      table( 4).set_subhead("- x -"); table( 4).set_values(r1)
-      table( 5).set_subhead("- y -"); table( 5).set_values(r2)
-      table( 6).set_subhead("- z -"); table( 6).set_values(r3)
-
-      table( 8).set_heading("US")
-      table( 7).set_subhead("h1");    table( 7).set_values(h1)
-      table( 8).set_subhead("h2");    table( 8).set_values(h2)
-      table( 9).set_subhead("h3");    table( 9).set_values(h3)
-
-
-      table(10).set_heading("FA");    table(10).set_values(fa)
-      table(11).set_heading("FA");    table(11).set_values(fy)
-      table(11).set_subhead("Op")     
-      table(13).set_heading("FS")     
-      table(12).set_subhead("f1");    table(12).set_values(f1)
-      table(13).set_subhead("f2");    table(13).set_values(f2)
-      table(14).set_subhead("f3");    table(14).set_values(f3)
-                                      
-      table(15).set_heading("AA");    table(15).set_values(aa)
-      table(16).set_heading("AA");    table(16).set_values(ay)
-      table(16).set_subhead("Op")     
-      table(16).set_heading("AS")     
-      table(17).set_subhead("a1");    table(17).set_values(a1)
-      table(18).set_subhead("a2");    table(18).set_values(a2)
-      table(19).set_subhead("a3");    table(19).set_values(a3)
-                                      
-                                      
-    ! table(19).set_heading(" AA ");  table(16).set_values(ac)
-    ! table(19).set_subhead("code")   
-    !                                 
-    ! table(20).set_heading(" AO ");  table(17).set_values(ao)
-    ! table(20).set_subhead("code")
-             
-      table.put
-
-      ! Clean
-      table.clear_columns
-      table.destroy
-
-    ! ao.destroy
-    ! ac.destroy
-      a3.destroy; a2.destroy; a1.destroy
-      ay.destroy; aa.destroy
-      f3.destroy; f2.destroy; f1.destroy
-      fy.destroy; fa.destroy
-      r3.destroy; r2.destroy; r1.destroy
-      h3.destroy; h2.destroy; h1.destroy
-      ID.destroy
-      ua.destroy
-
-   end
-
-   put_short_occupation_list
-   ! Put the .occupation_list table
-      self :: IN
-
-   ENSURE(.occupation_list.associated,"no occupation_list")
-
-      ua,   h1,h2,h3 :: VEC{INT}@
-      r1,r2,r3 :: VEC{REAL}@
-      table :: VEC{TABLE_COLUMN}*
-      n :: INT
-
-      stdout.flush
-      stdout.text("===============")
-      stdout.text("Occupation list")
-      stdout.text("===============")
+      stdout.text("=============")
+      stdout.text("Cluster atoms")
+      stdout.text("=============")
 
       stdout.flush
       stdout.show("Cluster generation method       =",.generation_method)
-      stdout.show("Complete connected fragments?   =",.defragment)
+      stdout.show("Complete connected fragments    =",.defragment)
       stdout.show("Radius of cluster               =",.radius)
-      stdout.flush
       stdout.show("No. of molecules                =",.n_molecules)
       stdout.show("No. of atoms                    =",.n_atoms)
       stdout.show("No. of fragment atoms           =",.n_fragment_atoms)
-      stdout.flush
       stdout.show("Fragment offset                 =",.fragment_offset)
       stdout.show("Minimum cell shift for search   =",.h_min)
       stdout.show("Maximum cell shift for search   =",.h_max)
 
-      ! Data
-      n = .occupation_list.dim
 
-      ua.create(n)
+      ! Data
+      a = 1
+      fi => a.sequence_up_to(.n_atoms)
+
+      n = .occupation_list.dim
+      ui.create(n)
       h1.create(n); h2.create(n); h3.create(n)
       r1.create(n); r2.create(n); r3.create(n)
+      hc.create(n)
 
-      ua = CLUSTER_UA_FROM_CODE(.occupation_list)
-
-      h1 = CLUSTER_H1_FROM_CODE(.occupation_list) + .fragment_offset(1)
-      h2 = CLUSTER_H2_FROM_CODE(.occupation_list) + .fragment_offset(2)
-      h3 = CLUSTER_H3_FROM_CODE(.occupation_list) + .fragment_offset(3)
-
-      r1 = .crystal.unit_cell_geometry(1,ua) + h1
-      r2 = .crystal.unit_cell_geometry(2,ua) + h2
-      r3 = .crystal.unit_cell_geometry(3,ua) + h3
+      ui = CLUSTER_UA_FROM_CODE(.occupation_list)
+      h1 = CLUSTER_H1_FROM_CODE(.occupation_list)
+      h2 = CLUSTER_H2_FROM_CODE(.occupation_list)
+      h3 = CLUSTER_H3_FROM_CODE(.occupation_list)
+      r1 = .crystal.unit_cell_geometry(1,ui) + h1
+      r2 = .crystal.unit_cell_geometry(2,ui) + h2
+      r3 = .crystal.unit_cell_geometry(3,ui) + h3
+      hc = 1000*      .crystal.asym_symop_for_unit_cell_atom(ui)
+      hc = 100* (h1+5+.crystal.asym_shift_for_unit_cell_atom(1,ui)) + hc
+      hc = 10*  (h2+5+.crystal.asym_shift_for_unit_cell_atom(2,ui)) + hc
+      hc =      (h3+5+.crystal.asym_shift_for_unit_cell_atom(3,ui)) + hc
 
       ! Table
-      table.create(7)
-
-      table( 1).set_heading(" UA");   table( 1).set_values(ua)
-
-      table( 3).set_heading("(UA xyz)")
-      table( 2).set_subhead("- x -"); table( 2).set_values(r1)
-      table( 3).set_subhead("- y -"); table( 3).set_values(r2)
-      table( 4).set_subhead("- z -"); table( 4).set_values(r3)
-
-      table( 6).set_heading("US")
-      table( 5).set_subhead("h1");    table( 5).set_values(h1)
-      table( 6).set_subhead("h2");    table( 6).set_values(h2)
-      table( 7).set_subhead("h3");    table( 7).set_values(h3)
-
-
+      table.create(9)
+      table(1).set_heading("Cell");  table(1).set_values(ui)
+      table(1).set_subhead("atom")
+      table(2).set_heading("Group"); table(2).set_values(.molecule_for_atom)
+      table(2).set_subhead("(Mol)")
+      table(4).set_heading("Coord")
+      table(3).set_subhead("- x -"); table(3).set_values(r1)
+      table(4).set_subhead("- y -"); table(4).set_values(r2)
+      table(5).set_subhead("- z -"); table(5).set_values(r3)
+      table(4).set_sb3head("/frac")
+      table(7).set_heading("UC")
+      table(6).set_subhead("h1");    table(6).set_values(h1)
+      table(7).set_subhead("h2");    table(7).set_values(h2)
+      table(8).set_subhead("h3");    table(8).set_values(h3)
+      table(9).set_subhead("code");  table(9).set_values(hc)
       table.put
 
       ! Clean
       table.clear_columns
       table.destroy
-
+      hc.destroy
       r3.destroy; r2.destroy; r1.destroy
       h3.destroy; h2.destroy; h1.destroy
-      ua.destroy
+      fi.destroy
 
    end
 
@@ -5405,18 +5348,18 @@ contains
    ENSURE(.asymmetric_unit_atom.associated,"no atom data")
    ENSURE(.crystal.associated,"no crystal data")
 
-      seitz :: MAT3{REAL}@
+      seitz :: MAT3{REAL}*
       therm :: MAT{REAL}(3,3)
       a,u,p,s :: INT
 
       stdout.text("   atoms= {")
       stdout.flush
       stdout.text("      keys= { label= ")
-      stdout.text("              { axis_system= crystal } pos=")
-      stdout.text("              { units= angstrom^2 } ADP_tensor= }")
+      stdout.text('              { axis_system= crystal } pos=')
+      stdout.text('              { units= angstrom^2 } ADP_tensor= }')
       stdout.flush
       stdout.text("      data= {")
-      seitz = .crystal.transposed_xyz_seitz_matrices ! transposed !
+      seitz => .crystal.transposed_xyz_seitz_matrices ! transposed !
       do a = 1,.n_atoms
          u = CLUSTER_UA_FROM_CODE(.occupation_list(a))
          p = .crystal.asym_atom_for_unit_cell_atom(u)
@@ -5437,11 +5380,10 @@ contains
          stdout.put(therm(2,3))
          stdout.flush
       end
+      seitz.destroy
       stdout.text("      }")
       stdout.text("   }")
       stdout.flush
-
-      seitz.destroy
 
    end
 
@@ -5461,17 +5403,17 @@ contains
 
       u,a,s,n,i,j :: INT
       geometry :: MAT{REAL}*
-      ulist :: VEC{INT}@
+      ulist :: VEC{INT}*
       therm :: MAT{REAL}(3,3)
       angst :: BIN
-      seitz :: MAT3{REAL}@
+      seitz :: MAT3{REAL}*
     ! conn  :: VEC_{VEC_{INT}}*
 
       angst = FALSE
       if (present(angstrom)) angst = angstrom
 
       ! Transposed seutz matrices
-      seitz = .crystal.transposed_xyz_seitz_matrices
+      seitz => .crystal.transposed_xyz_seitz_matrices
 
       ! Get uniot cell atom indices
       ulist.create(.n_atoms)
