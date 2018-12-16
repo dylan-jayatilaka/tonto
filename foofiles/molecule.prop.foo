@@ -5615,6 +5615,7 @@ contains
       ED_send,ED_recv,mer,EDSS,VOLS,EDSR,VOLR :: MAT{REAL}*
       Maxima :: VEC{REAL}*
 
+      ! Establishes the partitions on each processor.
       nprocs = tonto.n_processors
       mx = nx - (nprocs-1)*int(nx/nprocs)
       if(tonto.processor_rank==tonto.master_rank)then
@@ -5630,7 +5631,9 @@ contains
          CP.create(px+2,ny+2,nz+2,3)
       end if
       
-      
+      ! Fills the partitions with the electron density grid.
+      ! Boundaries in between processors are filled wiht more ED grid
+      ! points, all other boundaries are zeroed.
       if(tonto.processor_rank==tonto.master_rank)then
          ED = ZERO
          ED(2:mx+2,2:ny+1,2:nz+1)=grid(1:mx+1,:,:)
@@ -5644,79 +5647,91 @@ contains
          ED(1:px+1,2:ny+1,2:nz+1)= &
          grid(mx+(tonto.processor_rank-1)*px:mx+(tonto.processor_rank)*px,:,:)
       end if
-      CP = ZERO
-      iCP = ZERO
-      GradMax = 1
-      Maxima.create(1)
       
+      ! Initialises the partition
+      CP = ZERO
+      GradMax = 1
+      
+      ! Cycles through the partition to determine all gradient paths
+      ! within this partition.
       do x=2,px+1
       do y=2,ny+1
       do z=2,nz+1
-         if (CP(x,y,z,1) == ZERO) then
-         ! Only perform if critical direction not known
+         
+         ! Avoids unnecessary computation in the partition if a
+         ! gradient path has already been found.
+         if (sum(abs(CP(x,y,z,:))) == ZERO) then
+         
+            ! Creates a list for gradient path following. Chnaging the
+            ! order of this list will improve the efficiency of this
+            ! program.
             List.create(3,0)
-            ListMax = 0
             ! Gives the length of the number of points in the
             ! current list
+            ListMax = 0
             
+            ! Initialises the Maximum direction to be the starting
+            ! point of the 3x3x3 cube
             Max(1) = x
             Max(2) = y
             Max(3) = z
 
-            ! make sure xs is not in the overextended region, move
-            ! outside if this happens
-            do while (NOT(GradMax == ZERO OR CP(Max(1),Max(2),Max(3),1)> 0))
+            ! Follows the gradient path until either it becomes a
+            ! previous gradient path (CP > 0) OR a maximum is found
+            ! (GradMax = ZERO)
+            do while (NOT(GradMax == ZERO OR sum(abs(CP(Max(1),Max(2),Max(3),:)))> 0))
+               ! Stores the initial value of this iteration
                xs = Max(1)
                ys = Max(2)
                zs = Max(3)
-               MaxVal = ED(xs,ys,zs)
+               
+               ! Gives the list size (Given the access to the dim
+               ! function, this actually may be unnecessary)
                ListMax = ListMax + 1
                
-               ! Appends to list if necessary
-               if(size(List(1).element) < ListMax) then
-                  List(1).element.append(xs)
-               else
-                  List(1).element(ListMax) = xs
-               end if
-               if(size(List(2).element) < ListMax) then
-                  List(2).element.append(ys)
-               else
-                  List(2).element(ListMax) = ys
-               end if
-               if(size(List(3).element) < ListMax) then
-                  List(3).element.append(zs)
-               else
-                  List(3).element(ListMax) = zs
-               end if
+               ! Appends the current point to the list
+               List(1).element.append(xs)
+               List(2).element.append(ys)
+               List(3).element.append(zs)
 
-               GradMax = 0
-
+               ! Leaves the loop, if it is on the x-boundaries, as
+               ! this could cause incorrect gradient paths due to a
+               ! lack of information
                if ( Max(1) == 1) exit
                if ( Max(1) == px+2) exit
+               
+               !Re-initialises the gradient
+               GradMax = 0
+               
+               ! Loops through all the neighbouring points (3x3x3) to
+               ! determine the gradient path
                do ix = xs-1,xs+1
                do iy = ys-1,ys+1
                do iz = zs-1,zs+1
-                  ! NOTE: Initial version used xs for all distances, if
-                  ! errors are occurring consider altering zs and ys.
+                  ! Calculates the distance in each of the grid
+                  ! directions
                   distance = sqrt(((ix-xs)*gridlength(1))**2 &
                            + ((iy-ys)*gridlength(2))**2      &
                            + ((iz-zs)*gridlength(3))**2)
                   
+                  ! Separate option at current grid point to avoid
+                  ! divide by zero error
                   if (ix == xs AND iy == ys AND iz == zs) then
+                     
+                     ! Only update if this is the correct direction
                      if (ZERO >= GradMax) then
-                     ! Determines the optimal gradient direction
                         Max(1)  = ix
                         Max(2)  = iy
                         Max(3)  = iz
-                        MaxVal  = ED(ix,iy,iz)
                         GradMax = ZERO
                      end if
+                  
+                  ! Only update if this is a steeper gradient to
+                  ! follow.
                   else if ((ED(ix,iy,iz) - ED(xs,ys,zs))/distance > GradMax) then
-                  ! Determines the optimal gradient direction
                      Max(1)  = ix
                      Max(2)  = iy
                      Max(3)  = iz
-                     MaxVal  = ED(ix,iy,iz)
                      GradMax = (ED(ix,iy,iz)-ED(xs,ys,zs))/distance
                   end if
                end do
@@ -5724,166 +5739,109 @@ contains
                end do
             end do
          
-
-         if(CP(Max(1),Max(2),Max(3),1) /= 0) then
+         ! Checks if this is an old or a new gradient path. This is
+         ! for old paths
+         if(sum(abs(CP(Max(1),Max(2),Max(3),:))) /= 0) then
+            
+            ! Update all points on the path to point to the same
+            ! maxima on this path
             do i=1,ListMax
                CP(List(1).element(i),List(2).element(i),List(3).element(i),1)=CP(Max(1),Max(2),Max(3),1)
                CP(List(1).element(i),List(2).element(i),List(3).element(i),2)=CP(Max(1),Max(2),Max(3),2)
                CP(List(1).element(i),List(2).element(i),List(3).element(i),3)=CP(Max(1),Max(2),Max(3),3)
             end do
+         
+         ! New path
          else
+            
+            ! Update all points on the path to point to the same
+            ! maxima on this path
             do i=1,ListMax
                CP(List(1).element(i),List(2).element(i),List(3).element(i),1)=Max(1)
                CP(List(1).element(i),List(2).element(i),List(3).element(i),2)=Max(2)
                CP(List(1).element(i),List(2).element(i),List(3).element(i),3)=Max(3)
             end do
-            if (iCP == ZERO) then
-               Maxima(1) = MaxVal
-            else
-               Maxima.append(MaxVal)
-            end if
-            iCP = iCP + 1
          end if
+         
+         ! Resets the list for the next iteration
          List.destroy
+         
+         ! Rests the gradient, so it will enter the do while loop at
+         ! the next iteration.
          GradMax = 1
          end if
       end do
       end do
       end do
-      ED.destroy   
+      
+      ! The partition is not used after this, so it is destroyed to
+      ! clear memory
+      ED.destroy
+
+      ! Gives all processors information about the size of each
+      ! partition, for sending and receiving purposes.
       px = int(nx/nprocs)
       mx = nx - (nprocs-1)*int(nx/nprocs)
-      ! CP analysis complete in each processor. Now boundaries are sent
-      ! between processors, to investigate how the CP's should be
-      ! labelled
-      ! SOmething is wrong with the merge here, does not appear to
-      ! align the send and the local point.
+      
+      
       if(tonto.processor_rank==tonto.master_rank)then
+         
+         ! Creates a grid to merge all the critical points
          CP_master.create(grid.dim1,ny,nz,3)
+         
+         ! Remove the boundary from the index notation
          CP(:,:,:,:) =CP(:,:,:,:) - 1
+
+         ! Initialise the grid
          CP_master(1:mx,:,:,:) = ZERO
+         
+         ! Assign the master's partition to the grid
          CP_master(1:mx,:,:,:) = CP(2:mx+1,2:ny+1,2:nz+1,:)
+         
+         ! Cleanup the partition
          CP.destroy
-         print*, mx
+         
+         ! Receive the partitions from the other processors
          do i = 1, nprocs - 1
-            print*, mx + (i)*px
             tonto.recv(CP_master(mx+(i-1)*px+1:mx+i*px,:,:,:),i,i)
          end do
-         !GradMax = 0
-         !do i = 1, nprocs - 1
-         !x = CP_master(mx+(i-1)*px+int(px/2),int(ny/2),int(nz/2),1)
-         !y = CP_master(mx+(i-1)*px+int(px/2),int(ny/2),int(nz/2),2)
-         !z = CP_master(mx+(i-1)*px+int(px/2),int(ny/2),int(nz/2),3)
-         !if(x < mx + (i-1)*px OR x > mx + i*px) then
-         !   print*, "try again"
-         !end if
-         !   Max(1)  = x
-         !   Max(2)  = y
-         !   Max(3)  = z
-         !do ix = x-1,x+1
-         !do iy = y-1,y+1
-         !do iz = z-1,z+1
-         !   ! NOTE: Initial version used xs for all distances, if
-         !   ! errors are occurring consider altering zs and ys.
-         !   distance = sqrt(((ix-x)*gridlength(1))**2 &
-         !            + ((iy-y)*gridlength(2))**2      &
-         !            + ((iz-z)*gridlength(3))**2)
-         !
-         !   if (ix == x AND iy == y AND iz == z) then
-         !      if (ZERO > GradMax) then
-         !      ! Determines the optimal gradient direction
-         !         Max(1)  = ix
-         !         Max(2)  = iy
-         !         Max(3)  = iz
-         !         MaxVal  = ED(ix,iy,iz)
-         !         GradMax = ZERO
-         !      end if
-         !   else if ((grid(ix,iy,iz) - grid(x,y,z))/distance > GradMax) then
-         !! Determines the optimal gradient direction
-         !   Max(1)  = ix
-         !   Max(2)  = iy
-         !   Max(3)  = iz
-         !   GradMax = (grid(ix,iy,iz)-grid(x,y,z))/distance
-         !end if
-         !end do
-         !end do
-         !end do
-         !print*, x, y, z, grid(x,y,z)
-         !if(Max(1) == x AND Max(2) == y AND Max(3) == z) then
-         !   print*, "We good"
-         !else
-         !   print*, "OH NO!", Max(1), Max(2), Max(3),grid(Max(1),Max(2),Max(3))
-         !end if
-         !end do
-         !stop
+      
       else 
-         !x = CP(int(px/2)+1,int(ny/2)+1,int(nz/2)+1,1)
-         !y = CP(int(px/2)+1,int(ny/2)+1,int(nz/2)+1,2)
-         !z = CP(int(px/2)+1,int(ny/2)+1,int(nz/2)+1,3)
-         !   Max(1)  = x
-         !   Max(2)  = y
-         !   Max(3)  = z
-         !do ix = x-1,x+1
-         !do iy = y-1,y+1
-         !do iz = z-1,z+1
-         !   ! NOTE: Initial version used xs for all distances, if
-         !   ! errors are occurring consider altering zs and ys.
-         !   distance = sqrt(((ix-x)*gridlength(1))**2 &
-         !            + ((iy-y)*gridlength(2))**2      &
-         !            + ((iz-z)*gridlength(3))**2)
-         !
-         !   if (ix == x AND iy == y AND iz == z) then
-         !      if (ZERO > GradMax) then
-         !      ! Determines the optimal gradient direction
-         !         Max(1)  = ix
-         !         Max(2)  = iy
-         !         Max(3)  = iz
-         !         MaxVal  = ED(ix,iy,iz)
-         !         GradMax = ZERO
-         !      end if
-         !   else if ((grid(ix,iy,iz) - grid(x,y,z))/distance > GradMax) then
-         !! Determines the optimal gradient direction
-         !   Max(1)  = ix
-         !   Max(2)  = iy
-         !   Max(3)  = iz
-         !   GradMax = (ED(ix,iy,iz)-ED(x,y,z))/distance
-         !end if
-         !end do
-         !end do
-         !end do
-         !print*, x, y, z, ED(x,y,z)
-         !if(Max(1) == x AND Max(2) == y AND Max(3) == z) then
-         !   print*, "We good"
-         !else
-         !   print*, "OH NO!", Max(1), Max(2), Max(3),ED(Max(1),Max(2),Max(3))
-         !end if
-         ! Move it to the correct indexing system. Note: Only the 
+         
+         ! Move it to the correct indexing system.  
          CP(2:px+1,2:ny+1,2:nz+1,1) = CP(2:px+1,2:ny+1,2:nz+1,1)+mx+(tonto.processor_rank-1)*px 
          CP(:,:,:,:) = CP(:,:,:,:) - 1
+         
+         ! Send the partition to the master processor for merging
          tonto.send(CP(2:px+1,2:ny+1,2:nz+1,:),tonto.master_rank,tonto.processor_rank)
       end if
-      tonto.barrier
+      
       if(tonto.processor_rank == tonto.master_rank) then
-       !  do x = 1,CP_master.d136ddim1
-       !  do y = 1,CP_master.dim2
-       !  do z = 1,CP_master.dim3
-       !     if(CP_master(x,y,z,1) == ZERO OR CP_master(x,y,z,2) == ZERO OR CP_master(x,y,z,3) == ZERO) then
-       !        print*, "Issue at", x,y,z
-       !     end if
-       !  end do
-       !  end do
-       !  end do
-         !do i = 1, nprocs - 1
-            ii = mx + (i-1)*px 
-            do x = 1,CP_master.dim1
+            
+         ! The important regions are at the interface of the
+         ! boundaries. This cycles through all regions at the boundary
+         do i = 1, nprocs - 1
+            do x = mx + (i-1)*px-1, mx + (i-1)*px +2 
             do y = 1,CP_master.dim2
             do z = 1,CP_master.dim3
+               
                !if(CP_master(x,y,z,1) < ii) cycle
+               
+               ! Save what values need to be replaced, as if the
+               ! current points maxima is updated, it will not be able
+               ! to be used as a reference.
                Replace(:) = CP_master(x,y,z,:)
-               !print*, x,y,z
-               !print*, Replace(:)
+
+               ! Check if the maxima of the point is different from
+               ! the maxima of the maxima
                if(sum(abs(CP_master(x,y,z,:)-CP_master(Replace(1),Replace(2),Replace(3),:)))> ZERO) then
+                  
+                  ! Store the new maxima
                   Max(:) = CP_master(Replace(1),Replace(2),Replace(3),:)
+                  
+                  ! Replace all instances of the old maxima with the
+                  ! new maxima. Note: Lists would make this process
+                  ! much faster
                   do xs = 1,CP_master.dim1
                   do ys = 1,CP_master.dim2
                   do zs = 1,CP_master.dim3
@@ -5893,181 +5851,16 @@ contains
                   end do
                   end do
                   end do
-               !else if (CP_master(x,y,z,1) == 17 OR CP_master(x,y,z,1) == 32 OR CP_master(x,y,z,1) == 46) then
-               !print*, CP_master(x,y,z,:)
+
                end if
-               !GradMax = 0
-               !do ix = x-1,x+1
-               !do iy = y-1,y+1
-               !do iz = z-1,z+1
-               !   if (iz < 1 OR iz > CP_master.dim3) cycle
-               !   if (iy < 1 OR iy > CP_master.dim2) cycle
-               !   if (ix < 1 OR ix > CP_master.dim1) cycle
-               !   ! NOTE: Initial version used xs for all distances, if
-               !   ! errors are occurring consider altering zs and ys.
-               !   distance = sqrt(((ix-x)*gridlength(1))**2 &
-               !            + ((iy-y)*gridlength(2))**2      &
-               !            + ((iz-z)*gridlength(3))**2)
-               !   
-               !   if (ix == x AND iy == y AND iz == z) then
-               !      if (ZERO > GradMax) then
-               !      ! Determines the optimal gradient direction
-               !         Max(1)  = ix
-               !         Max(2)  = iy
-               !         Max(3)  = iz
-               !         GradMax = ZERO
-               !      end if
-               !   else if((grid(ix,iy,iz) - grid(x,y,z))/distance > GradMax) then
-               !      ! Determines the optimal gradient direction
-               !      Max(1)  = ix
-               !      Max(2)  = iy
-               !      Max(3)  = iz
-               !      GradMax = (grid(ix,iy,iz)-grid(x,y,z))/distance
-               !   end if
-               !end do
-               !end do
-               !end do
-               !if (CP_master(Max(1),Max(2),Max(3),1) /= CP_master(x,y,z,1) OR CP_master(Max(1),Max(2),Max(3),2) /= CP_master(x,y,z,2) OR CP_master(Max(1),Max(2),Max(3),3) /= CP_master(x,y,z,3) ) then
-               !   print*, "old",x,y,z, grid(x,y,z)
-               !   print*, "new",Max(1),Max(2),Max(3),grid(Max(1),Max(2),Max(3))
-               !   Replace(1) = CP_master(x,y,z,1)
-               !   Replace(2) = CP_master(x,y,z,2)
-               !   Replace(3) = CP_master(x,y,z,3)
-               !   do xs = 1,CP_master.dim1
-               !   do ys = 1,CP_master.dim2
-               !   do zs = 1,CP_master.dim3
-               !      if (CP_master(xs,ys,zs,1) == Replace(1) AND CP_master(xs,ys,zs,2) == Replace(2) AND CP_master(xs,ys,zs,3) == Replace(3) ) then
-               !         CP_master(xs,ys,zs,:) = CP_master(Max(1),Max(2),Max(3),:)
-               !      end if
-               !   end do
-               !   end do
-               !   end do
-               !end if
+
             end do
             end do
             end do
-          !  ii = mx + (i-1)*px + 1
-          !  do x = 1,CP_master.dim1
-          !  do y = 1,CP_master.dim2
-          !  do z = 1,CP_master.dim3
-          !     !if(CP_master(x,y,z,1) > ii) cycle
-          !     Replace(:) = CP_master(x,y,z,:)
-          !     if(abs(sum(CP_master(x,y,z,:)-Cp_master(Replace(1),Replace(2),Replace(3),:)))> ZERO) then
-          !        Max(:) = CP_master(Replace(1),Replace(2),Replace(3),:)
-          !        do xs = 1,CP_master.dim1
-          !        do ys = 1,CP_master.dim2
-          !        do zs = 1,CP_master.dim3
-          !           if (CP_master(xs,ys,zs,1) == Replace(1) AND CP_master(xs,ys,zs,2) == Replace(2) AND CP_master(xs,ys,zs,3) == Replace(3) ) then
-          !              CP_master(xs,ys,zs,:) = CP_master(Max(1),Max(2),Max(3),:)
-          !           end if
-          !        end do
-          !        end do
-          !        end do
-          !    ! else if (CP_master(x,y,z,1) == 17 OR CP_master(x,y,z,1) == 32 OR CP_master(x,y,z,1) == 46) then
-          !    ! print*, CP_master(x,y,z,:)
-          !     end if
-              ! GradMax = 0
-              ! do ix = x-1,x+1
-              ! do iy = y-1,y+1
-              ! do iz = z-1,z+1
-              !    if (iz < 1 OR iz > CP_master.dim3) cycle
-              !    if (iy < 1 OR iy > CP_master.dim2) cycle
-              !    if (ix < 1 OR ix > CP_master.dim1) cycle
-              !    ! NOTE: Initial version used xs for all distances, if
-              !    ! errors are occurring consider altering zs and ys.
-              !    distance = sqrt(((ix-x)*gridlength(1))**2 &
-              !             + ((iy-y)*gridlength(2))**2      &
-              !             + ((iz-z)*gridlength(3))**2)
-              !    
-              !    if (ix == x AND iy == y AND iz == z) then
-              !       if (ZERO > GradMax) then
-              !       ! Determines the optimal gradient direction
-              !          Max(1)  = ix
-              !          Max(2)  = iy
-              !          Max(3)  = iz
-              !          GradMax = ZERO
-              !       end if
-              !    else if((grid(ix,iy,iz) - grid(x,y,z))/distance > GradMax) then
-              !       ! Determines the optimal gradient direction
-              !       Max(1)  = ix
-              !       Max(2)  = iy
-              !       Max(3)  = iz
-              !       GradMax = (grid(ix,iy,iz)-grid(x,y,z))/distance
-              !    end if
-              ! end do
-              ! end do
-              ! end do
-              ! if (CP_master(Max(1),Max(2),Max(3),1) /= CP_master(x,y,z,1) OR CP_master(Max(1),Max(2),Max(3),2) /= CP_master(x,y,z,2) OR CP_master(Max(1),Max(2),Max(3),3) /= CP_master(x,y,z,3) ) then
-              !    print*, "old",x,y,z, grid(x,y,z)
-              !    print*, "new",Max(1),Max(2),Max(3),grid(Max(1),Max(2),Max(3))
-              !    Replace(1) = CP_master(x,y,z,1)
-              !    Replace(2) = CP_master(x,y,z,2)
-              !    Replace(3) = CP_master(x,y,z,3)
-              !    do xs = 1,CP_master.dim1
-              !    do ys = 1,CP_master.dim2
-              !    do zs = 1,CP_master.dim3
-              !       if (CP_master(xs,ys,zs,1) == Replace(1) AND CP_master(xs,ys,zs,2) == Replace(2) AND CP_master(xs,ys,zs,3) == Replace(3) ) then
-              !          CP_master(xs,ys,zs,:) = CP_master(Max(1),Max(2),Max(3),:)
-              !       end if
-              !    end do
-              !    end do
-              !    end do
-              ! end if
-          !  end do
-          !  end do
-          !  end do
-        ! end do
-        ! do x = 1,CP_master.dim1
-        ! do y = 1,CP_master.dim2
-        ! do z = 1,CP_master.dim3
-        !    do ix = x-1,x+1
-        !       if (ix < 1 OR ix > CP_master.dim1) cycle
-        !    do iy = y-1,y+1
-        !       if (iy < 1 OR iy > CP_master.dim2) cycle
-        !    do iz = z-1,z+1
-        !       if (iz < 1 OR iz > CP_master.dim3) cycle
-        !       ! NOTE: Initial version used xs for all distances, if
-        !       ! errors are occurring consider altering zs and ys.
-        !       distance = sqrt(((ix-x)*gridlength(1))**2 &
-        !                + ((iy-y)*gridlength(2))**2      &
-        !                + ((iz-z)*gridlength(3))**2)
-        !       
-        !       if (ix == x AND iy == y AND iz == z) then
-        !          if (ZERO >= GradMax) then
-        !          ! Determines the optimal gradient direction
-        !             Max(1)  = ix
-        !             Max(2)  = iy
-        !             Max(3)  = iz
-        !             GradMax = ZERO
-        !          end if
-        !       else if((grid(ix,iy,iz) - grid(x,y,z))/distance > GradMax) then
-        !          ! Determines the optimal gradient direction
-        !          Max(1)  = ix
-        !          Max(2)  = iy
-        !          Max(3)  = iz
-        !          GradMax = (grid(ix,iy,iz)-grid(x,y,z))/distance
-        !       end if
-        !    end do
-        !    end do
-        !    end do
-        !    if(sum(abs(CP_master(x,y,z,:)-CP_master(Max(1),Max(2),Max(3),:))) >0) then
-        !       Replace(:) = CP_master(x,y,z,:)
-        !          do xs = 1,CP_master.dim1
-        !          do ys = 1,CP_master.dim2
-        !          do zs = 1,CP_master.dim3
-        !             if (CP_master(xs,ys,zs,1) == Replace(1) AND CP_master(xs,ys,zs,2) == Replace(2) AND CP_master(xs,ys,zs,3) == Replace(3) ) then
-        !                CP_master(xs,ys,zs,:) = CP_master(Max(1),Max(2),Max(3),:)
-        !             end if
-        !          end do
-        !          end do
-        !          end do
-        !!       CP_master(x,y,z,:) = CP_master(Replace(1),Replace(2),Replace(3),:)
-        !    end if
-        ! end do
-        ! end do
-        ! end do
-         ! Cross product for the volume (or so I am told)
-         ! Divide by total number of points! Move to plot grid
+
+         end do
+         
+         ! This is the determinant of the grid vectors
          dv = abs(gridvector(1,1)*gridvector(2,2)*gridvector(3,3) &
             -     gridvector(3,1)*gridvector(2,2)*gridvector(1,3) &
             +     gridvector(1,2)*gridvector(2,3)*gridvector(3,1) &
@@ -6076,16 +5869,36 @@ contains
             -     gridvector(3,3)*gridvector(2,1)*gridvector(1,2))
          
          
-         ! Corrects dv with the gridsize
+         ! Scales dv to the correct grid size
          dv = dv/(nx-1)/(ny-1)/(nz-1)                             &
-            *     gridlength(1)*gridlength(2)*gridlength(3)       
+            *     gridlength(1)*gridlength(2)*gridlength(3)
+
+         ! Initialise the output variables
+
+         ! Stores each maxima that exists. The index in this matrix is
+         ! used in each subsequent vector
          CPS.create(3,0) 
+         ! Stores the some of the electron density across all voxels
          EDS.create(0)
+         ! Stores the sum of the volume covered by these voxels
          VOL.create(0)
+         ! Stores the ED value of each maxima. (not currently output,
+         ! but can easily be added
+         Maxima.create(0)
+         ! Illustrates the current number of maxima, and the index of
+         ! the current maxima.
+         iCP = 0
+
+         ! Cycles through all space to sum the volume and ED sum of
+         ! the grid for each CP
          do x = 1, CP_master.dim1
          do y = 1, CP_master.dim2
          do z = 1, CP_master.dim3
+            
+            ! This is essentially a logical
             ii = 0
+            
+            ! Checks this maxima against already appended maxima 
             do i = 1,CPS.dim2
                if(CP_master(x,y,z,1) == CPS(1,i) AND CP_master(x,y,z,2) == CPS(2,i) AND CP_master(x,y,z,3) == CPS(3,i)) then
                   ii = 1
@@ -6093,1351 +5906,43 @@ contains
                   exit
                end if
             end do
+            
+            ! Append the maxima if it is a new maxima, and add the
+            ! volume and electron densities to their respective
+            ! matrices
             if (ii == 0) then
-               print*, "This does happen"
                CPS.append_column(CP_master(x,y,z,:))
-               print*, CPS.dim2
-               iCP = CPS.dim2
-            end if
-            if(iCP > EDS.dim) then
+               Maxima.append(grid(CP_master(x,y,z,1),CP_master(x,y,z,2),CP_master(x,y,z,3)))
                EDS.append(grid(x,y,z)*dv)
                VOL.append(dv)
             else
                EDS(iCP) = EDS(iCP) + grid(x,y,z)*dv
                VOL(iCP) = VOL(iCP) + dv
             end if
+
          end do
          end do
          end do
+         
+         ! Puts the output into the stdout, note this could be made to
+         ! look a lot nicer, and to utilise the tonto system
+         ! functions. 
          do i=1,EDS.dim
-           !    GradMax = ZERO
-           !    x = CPS(1,i)
-           !    y = CPS(2,i)
-           !    z = CPS(3,i)
-           !    do ix = x-1,x+1
-           !       if( ix < 1 OR ix > grid.dim1) cycle
-           !    do iy = y-1,y+1
-           !       if( iy < 1 OR iy > grid.dim2) cycle
-           !    do iz = z-1,z+1
-           !       if( iz < 1 OR iz > grid.dim3) cycle
-           !       ! NOTE: Initial version used xs for all distances, if
-           !       ! errors are occurring consider altering zs and ys.
-           !       distance = sqrt(((ix-x)*gridlength(1))**2 &
-           !                + ((iy-y)*gridlength(2))**2      &
-           !                + ((iz-z)*gridlength(3))**2)
-           !       
-           !       if (ix == x AND iy == y AND iz == z) then
-           !          if (ZERO >= GradMax) then
-           !          ! Determines the optimal gradient direction
-           !             Max(1)  = ix
-           !             Max(2)  = iy
-           !             Max(3)  = iz
-           !             GradMax = ZERO
-           !          end if
-           !       else if((grid(ix,iy,iz) - grid(x,y,z))/distance > GradMax) then
-           !          ! Determines the optimal gradient direction
-           !          Max(1)  = ix
-           !          Max(2)  = iy
-           !          Max(3)  = iz
-           !          GradMax = (grid(ix,iy,iz)-grid(x,y,z))/distance
-           !       end if
-           !    end do
-           !    end do
-           !    end do
-           !if(sum(abs(CPS(:,i)-Max(:))) >0) then
-           !   print*, grid(CPS(1,i),CPS(2,i),CPS(3,i)), "should be", grid(Max(1),Max(2),Max(3))
-           !   print*,CPS(:,i), "should be:",CP_master(CPS(1,i),CPS(2,i),CPS(3,i),:)
-           !end if
            print*, i, EDS(i), VOL(i)
          end do
-         stop
-         tonto.barrier
          
       end if
+
+      ! Idles the other processor
+      tonto.barrier
+
+      ! Finalises the MPI program
       tonto.finalize
        
-   end
-
-   cubes_2_basin_parallel(grid,nx,ny,nz,gridlength,gridvector,CP,EDS,VOL) ::: leaky
-   ! A tonto implementation of the cubes to basin code, originally
-   ! implemented by Florian from Tobias (spelling).
-      nx,ny,nz :: INT, IN
-      grid :: MAT3{REAL}, IN
-      gridlength :: VEC{REAL}(3), IN
-      gridvector :: MAT{REAL}(3,3), IN
-      CP :: MAT3{INT}*, OUT
-      EDS,VOL :: VEC{REAL}*, OUT
-
-      nprocs,i,ii,px,mx,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
-      err,GradMax,distance,MaxVal,dv :: REAL
-      Max :: VEC{INT}(3)
-      List :: VEC{VEC_{INT}}*
-      merges,swap_recv,swap,stitch_losend,stitch_hisend,stitch_hirecv,stitch_lorecv :: MAT{INT}*
-      ED :: MAT3{REAL}*
-      ED_send,ED_recv,mer,EDSS,VOLS,EDSR,VOLR :: MAT{REAL}*
-      Maxima :: VEC{REAL}*
-
-      nprocs = tonto.n_processors
-      mx = nx - (nprocs-1)*int(nx/nprocs)
-      if(tonto.processor_rank==tonto.master_rank)then
-         ED.create(mx+4,ny+2,nz+2)
-         CP.create(mx+4,ny+2,nz+2)
-      else if(tonto.processor_rank<nprocs - 1)then
-         px = int(nx/nprocs)
-         ED.create(px+6,ny+2,nz+2)
-         CP.create(px+6,ny+2,nz+2)
-      else
-         px = int(nx/nprocs)
-         ED.create(px+4,ny+2,nz+2)
-         CP.create(px+4,ny+2,nz+2)
-      end if
-      
-      
-      if(tonto.processor_rank==tonto.master_rank)then
-         ED = ZERO
-         ED(2:mx+3,2:ny+1,2:nz+1)=grid(1:mx+2,:,:)
-         px = mx - 1
-         ii = 2
-      else if(tonto.processor_rank<nprocs - 1)then
-         ED = ZERO
-         ED(2:px+5,2:ny+1,2:nz+1)= &
-         grid(mx+(tonto.processor_rank-1)*px-1:mx+(tonto.processor_rank)*px+2,:,:)
-         px = px + 1
-         ii = 4
-      else 
-         ED = ZERO
-         ED(2:px+3,2:ny+1,2:nz+1)= &
-         grid(mx+(tonto.processor_rank-1)*px-1:mx+(tonto.processor_rank)*px,:,:)
-         px = px
-         ii = 4
-      end if
-      CP = ZERO
-      iCP = ZERO
-      GradMax = 1
-      Maxima.create(1)
-      
-      do x=ii,px+3
-      do y=2,ny+1
-      do z=2,nz+1
-         if (CP(x,y,z) == ZERO) then
-         ! Only perform if critical direction not known
-            List.create(3,0)
-            ListMax = 0
-            ! Gives the length of the number of points in the
-            ! current list
-            
-            Max(1) = x
-            Max(2) = y
-            Max(3) = z
-
-            ! make sure xs is not in the overextended region, move
-            ! outside if this happens
-            do while (NOT(GradMax == ZERO OR CP(Max(1),Max(2),Max(3))> 0))
-               xs = Max(1)
-               ys = Max(2)
-               zs = Max(3)
-               MaxVal = ED(xs,ys,zs)
-               ListMax = ListMax + 1
-               
-               ! Appends to list if necessary
-               if(size(List(1).element) < ListMax) then
-                  List(1).element.append(xs)
-               else
-                  List(1).element(ListMax) = xs
-               end if
-               if(size(List(2).element) < ListMax) then
-                  List(2).element.append(ys)
-               else
-                  List(2).element(ListMax) = ys
-               end if
-               if(size(List(3).element) < ListMax) then
-                  List(3).element.append(zs)
-               else
-                  List(3).element(ListMax) = zs
-               end if
-
-               GradMax = 0
-               if ( xs == ii - 2) exit
-               if ( xs == px+4) exit
-
-               do ix = xs-1,xs+1
-               do iy = ys-1,ys+1
-               do iz = zs-1,zs+1
-                  ! NOTE: Initial version used xs for all distances, if
-                  ! errors are occurring consider altering zs and ys.
-                  distance = sqrt(((ix-xs)*gridlength(1))**2 &
-                           + ((iy-ys)*gridlength(2))**2      &
-                           + ((iz-zs)*gridlength(3))**2)
-                  
-                  if ((ED(ix,iy,iz) - ED(xs,ys,zs))/distance > GradMax) then
-                  ! Determines the optimal gradient direction
-                     Max(1)  = ix
-                     Max(2)  = iy
-                     Max(3)  = iz
-                     MaxVal  = ED(ix,iy,iz)
-                     GradMax = (ED(ix,iy,iz)-ED(xs,ys,zs))/distance
-                  end if
-               end do
-               end do
-               end do
-            end do
-         
-
-         if(CP(Max(1),Max(2),Max(3)) /= 0) then
-            do i=1,ListMax
-               CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
-               CP(Max(1),Max(2),Max(3))
-            end do
-         else
-            if (iCP == ZERO) then
-               Maxima(1) = MaxVal
-            else
-               Maxima.append(MaxVal)
-            end if
-            iCP = iCP + 1
-            do i =1,ListMax
-               CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
-               iCP
-            end do
-         end if
-         List.destroy
-         GradMax = 1
-         end if
-      end do
-      end do
-      end do
-      ! CP analysis complete in each processor. Now boundaries are sent
-      ! between processors, to investigate how the CP's should be
-      ! labelled
-      ! SOmething is wrong with the merge here, does not appear to
-      ! align the send and the local point.
-      if(tonto.processor_rank==tonto.master_rank)then
-         stitch_hisend.create(CP.dim2-2,CP.dim3-2)
-         stitch_hirecv.create(CP.dim2-2,CP.dim3-2)
-         stitch_hisend = reshape(CP(px+3,2:ny+1,2:nz+1),[ny,nz])
-         tonto.sendrecv(stitch_hisend,stitch_hirecv,tonto.processor_rank+1,tonto.processor_rank+1,tonto.processor_rank+1,tonto.processor_rank+1)
-         !stitch_hisend.destroy
-      else if(tonto.processor_rank<nprocs - 1)then
-         stitch_losend.create(CP.dim2-2,CP.dim3-2)
-         stitch_hisend.create(CP.dim2-2,CP.dim3-2)
-         stitch_lorecv.create(CP.dim2-2,CP.dim3-2)
-         stitch_hirecv.create(CP.dim2-2,CP.dim3-2)
-         stitch_losend = reshape(CP(3,2:ny+1,2:nz+1),[ny,nz])
-         stitch_hisend = reshape(CP(px+3,2:ny+1,2:nz+1),[ny,nz])
-         ! Send stitching immediately, send to master at the end which
-         ! CPs overlap. Use this to determine whther to sum integrals or
-         ! to create new integral point.`
-         tonto.sendrecv(stitch_losend,stitch_lorecv,tonto.processor_rank-1,tonto.processor_rank,tonto.processor_rank-1,tonto.processor_rank)
-         tonto.sendrecv(stitch_hisend,stitch_hirecv,tonto.processor_rank+1,tonto.processor_rank+1,tonto.processor_rank+1,tonto.processor_rank+1)
-         !stitch_losend.destroy
-         !stitch_hisend.destroy
-      else
-         stitch_losend.create(CP.dim2-2,CP.dim3-2)
-         stitch_lorecv.create(CP.dim2-2,CP.dim3-2)
-         stitch_losend = reshape(CP(3,2:ny+1,2:nz+1),[ny,nz])
-         tonto.sendrecv(stitch_losend,stitch_lorecv,tonto.processor_rank-1,tonto.processor_rank,tonto.processor_rank-1,tonto.processor_rank)
-         !stitch_losend.destroy
-      end if
-      tonto.barrier
-      ! ED norm calculated for error analysis.
-      !if(tonto.processor_rank==tonto.master_rank)then
-      !   print*, "Error: ", norm2(ED(px+2,2:ny+1,2:nz+1) - stitch_hirecv)
-      !else if(tonto.processor_rank<nprocs - 1)then
-      !   print*, "Error: ", norm2(ED(4,2:ny+1,2:nz+1) - stitch_lorecv)
-      !   print*, "Error: ", norm2(ED(px+2,2:ny+1,2:nz+1) - stitch_hirecv)
-      !else
-      !   print*, "Error: ", norm2(ED(4,2:ny+1,2:nz+1) - stitch_lorecv)
-      !end if
-      !tonto.barrier
-      !tonto.finalize
-      !stop
-      !if(tonto.processor_rank/=tonto.master_rank)then
-      !   print*, "Error: ", norm2(ED(3,2:ny+1,2:nz+1) - ED_recv)
-      !end if
-      ! Using the send and receives, combine previous CPs into the
-      ! correct amount of CPs.
-      EDS.create(iCP)
-      VOL.create(iCP)
-      EDS = ZERO
-      VOL = ZERO
-
-      ! Cross product for the volume (or so I am told)
-      ! Divide by total number of points! Move to plot grid
-      dv = abs(gridvector(1,1)*gridvector(2,2)*gridvector(3,3) &
-         -     gridvector(3,1)*gridvector(2,2)*gridvector(1,3) &
-         +     gridvector(1,2)*gridvector(2,3)*gridvector(3,1) &
-         -     gridvector(3,2)*gridvector(2,3)*gridvector(1,1) &
-         +     gridvector(1,3)*gridvector(2,1)*gridvector(3,2) &
-         -     gridvector(3,3)*gridvector(2,1)*gridvector(1,2))
-      
-      
-      ! Corrects dv with the gridsize
-      dv = dv/(nx-1)/(ny-1)/(nz-1)                             &
-         *     gridlength(1)*gridlength(2)*gridlength(3)       
-
-      !Determination of the start and end points on each processor
-      if(tonto.processor_rank==tonto.master_rank)then
-         ii = 2
-         mx = px + 2
-      else if(tonto.processor_rank < nprocs - 1)then
-         ii = 4
-         mx = px + 2
-      else
-         ii = 4
-         mx = px +3
-      end if 
-      ! Count the amount in each basin
-      do x=ii,mx
-      do y=2,ny+1
-      do z=2,nz+1
-         EDS(CP(x,y,z)) = EDS(CP(x,y,z)) + ED(x,y,z)*dv ! electrons in this voxel
-         VOL(CP(x,y,z)) = VOL(CP(x,y,z)) + dv           ! size of voxel
-      end do
-      end do
-      end do
-      tonto.barrier
-      if(tonto.processor_rank==tonto.master_rank)then
-      ! No merge and merge above 
-      print*,tonto.processor_rank, EDS.dim
-      .:bader_master_merge(CP(px+2,2:ny+1,2:nz+1),stitch_hirecv,EDS,VOL,mer) 
-      print*,tonto.processor_rank, mer.dim2
-      !print*, "mer:", mer
-      else if(tonto.processor_rank<nprocs - 1)then
-      ! No merge, merge above, merge below and merge above below 
-      print*,tonto.processor_rank, EDS.dim
-      .:bader_central_merge(CP(4,2:ny+1,2:nz+1),CP(px+2,2:ny+1,2:nz+1),stitch_lorecv,stitch_hirecv,EDS,VOL,mer) 
-      print*,tonto.processor_rank, mer.dim2
-      print*, "I do go here"
-      !print*, "mer:", mer
-      else
-      ! No merge and merge below 
-      print*,tonto.processor_rank, EDS.dim
-      .:bader_end_merge(CP(4,2:ny+1,2:nz+1),stitch_lorecv,EDS,VOL,mer) 
-      print*,tonto.processor_rank, mer.dim2
-      !print*, "mer:", mer
-      end if 
-      tonto.barrier
+      ! Stops the program (ending it regularly appears to cause a seg
+      ! fault
       stop
-      tonto.finalize
-      do i=0,iCP
-         print*, tonto.processor_rank, i, EDS(i), VOL(i)   
-      end do
-      dv = 0
-      if (tonto.processor_rank /= tonto.master_rank) then
-         swap.create(2,0)
-         ii = 0
-         do y = 1, ny
-         do z = 1, nz
-            !if (CP(3,y+1,z+1) == stitch_recv(y,z)) cycle
-            do i = 1,swap.dim2
-               if (CP(3,y+1,z+1) == swap(1,i)) then
-           !       if (stitch_recv(y,z) == swap(2,i)) then
-                     ii = 1
-                     exit
-           !       end if
-               end if
-            end do
-            if (ii == 1) then
-               ii = 0
-               cycle
-            end if
-            !print*, tonto.processor_rank,CP(3,y+1,z+1), "maps to", &
-            !stitch_recv(y,z)
-            !swap.append_column([CP(3,y+1,z+1),stitch_recv(y,z)])
-            !add CP to list to ignore, cycle
-            !At the end cycle the list
-         end do
-         end do
-         EDSS.create(3,iCP)
-         EDSS = ZERO
-         do i=1,iCP
-            EDSS(1,i) = i
-         end do
-         ! Merge in such a way that the lowest critical point is
-         ! preserved. This is done by placing the higher number first
-         ! and then replacing the critical point with the new one.
-         merges.create(2,0)
-         do i = 1,swap.dim2-1
-         do ii = i+1,swap.dim2
-            if (swap(1,i) == swap(1,ii)) then
-               if(swap(2,ii) < swap (2,i)) then
-                  merges.append_column([swap(2,i),swap(2,ii)])
-                  print*, "merges"
-               else
-                  merges.append_column([swap(2,ii),swap(2,i)])
-                  print*, "merges"
-               end if
-            end if
-         end do
-         end do
-         tonto.send(merges.dim2,tonto.processor_rank-1)
-         if (merges.dim > 0) then
-            tonto.send(merges,tonto.processor_rank-1)
-         end if
-         merges.destroy
-         if(tonto.processor_rank < nprocs - 1) then
-            ii = 0
-            tonto.recv(ii,tonto.processor_rank+1)
-            if (ii > 0) then
-               merges.create(2,ii)
-               tonto.recv(merges,tonto.processor_rank+1)
-               do x = 1, iCP
-                  do i = 1, ii
-                     if (EDSS(1,x) == merges(1,i)) then
-                        EDSS(1,x) = merges(2,i)
-                     end if
-                  end do
-               end do
-            end if
-         end if
-         do i=1,iCP
-            x = 0
-            ii = i
-            do y = 1, swap.dim2
-               if (i == swap(1,y)) then
-                  ii = swap(2,y)
-                  x = 1
-                  exit
-               end if
-            end do
-            ! Have a test for if the point is not in the swap, so it
-            ! can be updated according to the master.
-              if (x /= 1) then
-                 print*, "I am negative"
-                 ii = -i
-               end if
-            EDSS(1,i) = ii
-         end do
-         if (tonto.processor_rank == 1 AND tonto.processor_rank<nprocs-1) then
-            tonto.send(swap.dim2,tonto.processor_rank+1,1)
-            tonto.send(swap,tonto.processor_rank+1,2)
-         else if (tonto.processor_rank < nprocs-1 AND &
-            tonto.processor_rank /= tonto.master_rank) then
-            tonto.recv(ii,tonto.processor_rank-1,1)
-            swap_recv.create(2,ii)
-            tonto.recv(swap_recv,tonto.processor_rank-1,2)
-            do i = 1,swap.dim2
-               do ii = 1,swap_recv.dim2
-                  ! Ensure the swaps are consistent with the master
-                  ! processor
-                  if (swap(2,i) == swap_recv(1,ii)) then
-                     swap(2,i) = swap_recv(2,ii)
-                     exit
-                  end if
-               end do
-            end do
-            tonto.send(swap.dim2,tonto.processor_rank+1,1)
-            tonto.send(swap,tonto.processor_rank+1,2)
-            do i = 1, EDSS.dim2
-               do x = 1,swap.dim2
-                  if (EDSS(1,i) == swap(1,x)) then
-                     EDSS(1,i) = swap(2,x)
-                  end if
-               end do
-            end do
-         else if (nprocs > 2 AND tonto.processor_rank == nprocs) then
-            tonto.recv(ii,tonto.processor_rank-1,1)
-            swap_recv.create(2,ii)
-            tonto.recv(swap_recv,tonto.processor_rank-1,2)
-            do i = 1,swap.dim2
-               do ii = 1,swap_recv.dim2
-                  ! Ensure the swaps are consistent with the master
-                  ! processor
-                  if (swap(2,i) == swap_recv(1,ii)) then
-                     swap(2,i) = swap_recv(2,ii)
-                     exit
-                  end if
-               end do
-            end do
-            do i = 1, EDSS.dim2
-               do x = 1,swap.dim2
-                  if (EDSS(1,i) == swap(1,x)) then
-                     EDSS(1,i) = swap(2,x)
-                  end if
-               end do
-            end do
-         end if
-         do i=1,iCP
-               EDSS(2,i) = EDS(i)
-               EDSS(3,i) = VOL(i)
-               print*,tonto.processor_rank,"Critical point", EDSS(1,i)
-               !stdout.show("Critical point", i)
-               print*,tonto.processor_rank,"Number of electrons", EDS(i)
-               !stdout.show("Number of electrons",EDS(i))
-               print*,tonto.processor_rank,"Volume of CP", VOL(i)
-               !stdout.show("Volume of CP",VOL(i))
-         end do
-         tonto.send(iCP,tonto.master_rank,3)
-         tonto.send(EDSS,tonto.master_rank,1)
-      else
-         ! Probe how many there are for each critical point (1,2,3,etc.)
-         ! Receive them in order and print out the data.
-         ! Check it against a generic run with water, and then other
-         ! molecules.
-         ii = 0
-         tonto.recv(ii,tonto.processor_rank+1)
-         if (ii > 0) then
-            merges.create(2,ii)
-            tonto.recv(merges,tonto.processor_rank+1)
-            do x = 1, iCP
-               do i = 1, ii
-                  if (x == merges(2,i)) then
-                     EDS(x) = EDS(x) + EDS(merges(1,i))
-                     VOL(x) = VOL(x) + VOL(merges(1,i))
-                     EDS.prune_element(merges(1,i))
-                     VOL.prune_element(merges(1,i))
-                  end if
-               end do
-            end do
-         end if
-         do i=1,iCP
-               print*,tonto.processor_rank,"Critical point", i
-               !stdout.show("Critical point", i)
-               print*,tonto.processor_rank,"Number of electrons", EDS(i)
-               !stdout.show("Number of electrons",EDS(i))
-               print*,tonto.processor_rank,"Volume of CP", VOL(i)
-               !stdout.show("Volume of CP",VOL(i))
-         end do
-         swap_recv.create(2,0)
-         do i = 1, nprocs - 1
-            ! How many Critical points?
-            tonto.recv(y,i,3)
-            print*, "CP", y
-            EDSR.create(3,y)
-            ! Receive what critical point?
-            ! Receive EDS and VOL for summation. Tags are included to
-            ! prevent crossover. MaxVal is placeholder for ED and
-            ! GradMax is a placeholder for Vol to reduce variable usage
-            tonto.recv(EDSR,i,1)
-            swap.create(2,0)
-            do x = 1, y
-               if (EDSR(1,x) < ZERO) then
-                  swap.append_column([int(-EDSR(1,x)),EDS.dim+1])
-                  EDS.append(EDSR(2,x))
-                  VOL.append(EDSR(3,x))
-               else
-                  if (swap_recv.dim > ZERO) then
-                     do z = 1, swap_recv.dim2
-                        if (EDSR(1,x) == swap_recv(1,z)) then
-                     !  These statements cause a seg fault
-                           print*, EDSR(1,x)
-                           print*, swap_recv(2,x)
-                           EDSR(1,x) = swap_recv(2,z)
-                           exit
-                        end if
-                     end do
-                  end if
-                  EDS(int(EDSR(1,x))) = EDS(int(EDSR(1,x))) + EDSR(2,x) 
-                  VOL(int(EDSR(1,x))) = VOL(int(EDSR(1,x))) + EDSR(3,x) 
-               end if
-            end do
-            swap_recv.destroy
-            swap_recv.create(2,swap.dim2)
-            swap_recv = swap
-            swap.destroy
-            EDSR.destroy
-         print*, "external"
-         do x=1,EDSR.dim
-               if (EDSR(1,x) < 0) then
-                  iCP = iCP + 1
-                  EDSR(1,x) = iCP
-                  VOLR(1,x) = iCP
-               end if
-               print*,tonto.processor_rank,"Critical point", EDSR(1,x)
-               !stdout.show("Critical point", i)
-               print*,tonto.processor_rank,"Number of electrons", &
-               EDSR(2,x)
-               !stdout.show("Number of electrons",EDS(i))
-               dv = dv + EDSR(2,x)
-               print*,tonto.processor_rank,"Volume of CP", VOLR(2,x)
-               !stdout.show("Volume of CP",VOL(i))
-         end do
-         print*,tonto.processor_rank,"Total electrons", dv
-         end do
-         dv = 0
-         print*, "local"
-         do i=1,EDS.dim
-               print*,tonto.processor_rank,"Critical point", i
-               !stdout.show("Critical point", i)
-               print*,tonto.processor_rank,"Number of electrons", EDS(i)
-               !stdout.show("Number of electrons",EDS(i))
-               dv = dv + EDS(i)
-               print*,tonto.processor_rank,"Volume of CP", VOL(i)
-               !stdout.show("Volume of CP",VOL(i))
-         end do
-      end if
-      tonto.barrier
-      print*,tonto.processor_rank,"Total electrons", dv
-      !stdout.show("Total electrons", dv)
-      tonto.finalize
-      stop
-#ifdef MPI    
-      tonto.barrier
-#endif    
-      stop
-    
-      ED.destroy
-      Maxima.destroy
-
-   end
-
-   bader_master_merge(CP_high,stitch_hirecv,EDS,VOL,mer) ::: leaky
-   ! Creates a merge for partitions with regions above.
-      CP_high :: MAT{INT}, IN
-      stitch_hirecv :: MAT{INT}, INOUT
-      EDS,VOL :: VEC{REAL}, INOUT
-      mer :: MAT{REAL}*, OUT
-
-      i,ii,x,y,z,xs,ys,zs,ix,iy,iz,iCP :: INT
-
-      iCP = EDS.dim
-      mer.create(3,0)
-      do y = 1,stitch_hirecv.dim2
-      do x = 1,stitch_hirecv.dim1
-         ! Create mergeabove and mergebelow
-         i = CP_high(x,y)
-         ii = stitch_hirecv(x,y)
-         if(ii == 0) cycle
-         do xs = x, stitch_hirecv.dim1
-            if(stitch_hirecv(xs,y) == 0) cycle
-            z = CP_high(xs,y)
-            if(ii == stitch_hirecv(xs,y)) then
-               if(i == z) then
-                  ! Checks if the point exists in merge. Note: no
-                  ! alterations need to be made as the CPs are
-                  ! identical. If it does not exist, it adds it into
-                  ! the merge.
-                  if (VOL(z) < 0) then
-                     stitch_hirecv(xs,y) = 0
-                     cycle
-                  else
-                     mer.append_column([dfloat(z),EDS(z),VOL(z)])
-                     EDS(z) = ZERO
-                     VOL(z) = -mer.dim2
-                     stitch_hirecv(xs,y) = 0
-                     cycle
-                  end if
-               else
-                 if (VOL(z) < 0 AND VOL(i) < 0) then
-                    if (mer(1,-int(VOL(i))) > mer(1,-int(VOL(z)))) then
-                       ix = int(mer(1,-int(VOL(i))))
-                       iy = int(mer(1,-int(VOL(z))))
-                       mer(1,-int(VOL(i))) = mer(1,-int(VOL(z)))
-                       .:number_updater(mer,ix,iy)
-                    else
-                       ix = int(mer(1,-int(VOL(z))))
-                       iy = int(mer(1,-int(VOL(i))))
-                       mer(1,-int(VOL(z))) = mer(1,-int(VOL(i)))
-                       .:number_updater(mer,ix,iy)
-                    end if
-                    stitch_hirecv(xs,y) = 0
-                    cycle
-                 else if (VOL(i) < 0) then
-                    if (mer(1,-int(VOL(i))) > z) then
-                       ix = int(mer(1,-int(VOL(i))))
-                       iy = z
-                       mer(1,-int(VOL(i))) = z
-                       .:number_updater(mer,ix,iy)
-                    end if
-                    mer(2,-int(VOL(i))) = mer(2,-int(VOL(i))) + EDS(z)
-                    EDS(z) = ZERO
-                    mer(3,-int(VOL(i))) = mer(3,-int(VOL(i))) + VOL(z)
-                    VOL(z) = VOL(i) 
-                    stitch_hirecv(xs,y) = 0
-                    cycle
-                 else if (VOL(z) < 0) then
-                    if (mer(1,-int(VOL(z))) > i) then
-                       ix = int(mer(1,-int(VOL(z))))
-                       iy = i
-                       mer(1,-int(VOL(z))) = i
-                       .:number_updater(mer,ix,iy)
-                    end if
-                    mer(2,-int(VOL(z))) = mer(2,-int(VOL(z))) + EDS(i)
-                    EDS(i) = ZERO
-                    mer(3,-int(VOL(z))) = mer(3,-int(VOL(z))) + VOL(i)
-                    VOL(i) = VOL(z) 
-                    stitch_hirecv(xs,y) = 0
-                    cycle
-                 else
-                    EDS(z) = EDS(i) + EDS(z)
-                    VOL(z) = VOL(i) + VOL(z)
-                    if( z > i) then
-                       mer.append_column([dfloat(i),EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                    else
-                       mer.append_column([dfloat(z),EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                    end if
-                    EDS(z) = ZERO
-                    EDS(i) = ZERO
-                    VOL(z) = -mer.dim2
-                    VOL(i) = -mer.dim2
-                    stitch_hirecv(xs,y) = 0
-                    cycle
-                 end if
-               end if
-            end if
-         end do
-         do ys = y+1, stitch_hirecv.dim2
-         do xs = 1, stitch_hirecv.dim1
-            if(stitch_hirecv(xs,ys) == 0) cycle
-            z = CP_high(xs,ys)
-            if(ii == stitch_hirecv(xs,ys)) then
-               if(i == z) then
-                  if (VOL(z) < 0) then
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  else
-                     mer.append_column([dfloat(z),EDS(z),VOL(z)])
-                     EDS(z) = ZERO
-                     VOL(z) = -mer.dim2
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  end if
-               else
-                  if (VOL(z) < 0 AND VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > mer(1,-int(VOL(z)))) then
-                        ix = int(mer(1,-int(VOL(i))))
-                        iy = int(mer(1,-int(VOL(z))))
-                        mer(1,-int(VOL(i))) = mer(1,-int(VOL(z)))
-                        .:number_updater(mer,ix,iy)
-                     else
-                        ix = int(mer(1,-int(VOL(z))))
-                        iy = int(mer(1,-int(VOL(i))))
-                        mer(1,-int(VOL(z))) = mer(1,-int(VOL(i)))
-                        .:number_updater(mer,ix,iy)
-                     end if
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  else if (VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > z ) then
-                        ix = int(mer(1,-int(VOL(i))))
-                        iy = z
-                        mer(1,-int(VOL(i))) = z
-                        .:number_updater(mer,ix,iy)
-                     end if
-                     mer(2,-int(VOL(i))) = mer(2,-int(VOL(i))) + EDS(z)
-                     EDS(z) = ZERO
-                     mer(3,-int(VOL(i))) = mer(3,-int(VOL(i))) + VOL(z)
-                     VOL(z) = VOL(i) 
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  else if (VOL(z) < 0) then
-                     if (mer(1,-int(VOL(z))) > i) then
-                        ix = int(mer(1,-int(VOL(z))))
-                        iy = i
-                        mer(1,-int(VOL(z))) = i
-                        .:number_updater(mer,ix,iy)
-                     end if
-                     mer(2,-int(VOL(z))) = mer(2,-int(VOL(z))) + EDS(i)
-                     EDS(i) = ZERO
-                     mer(3,-int(VOL(z))) = mer(3,-int(VOL(z))) + VOL(i)
-                     VOL(i) = VOL(z) 
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  else
-                     if( z > i) then
-                        mer.append_column([dfloat(i),EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                     else
-                        mer.append_column([dfloat(z),EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                     end if
-                     VOL(z) = -mer.dim2
-                     VOL(i) = -mer.dim2
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  end if
-               end if
-            end if
-         end do
-         end do
-      end do
-      end do
-      do i = 1,mer.dim2
-         if (i > mer.dim2) exit
-      do ii = i+1,mer.dim2
-         if (ii > mer.dim2) exit
-         do while (mer(1,i) == mer(1,ii)) 
-            mer(2,i) = mer(2,ii) + mer(2,i)
-            mer(3,i) = mer(3,ii) + mer(3,i)
-            mer.prune_column(ii)
-         end do
-      end do
-      end do
-      do i = 1, iCP
-         if(VOL(i) <= ZERO) cycle
-         if(EDS(i) <= ZERO) cycle
-         mer.append_column([ZERO,EDS(i),VOL(i)])
-      end do
-
-   end
-
-   bader_central_merge(CP_low,CP_high,stitch_lorecv,stitch_hirecv,EDS,VOL,mer) ::: leaky
-   ! Creates a merge for partitions with regions above.
-      CP_low,CP_high :: MAT{INT}, IN
-      stitch_lorecv,stitch_hirecv :: MAT{INT}, INOUT
-      EDS,VOL :: VEC{REAL}, INOUT
-      mer :: MAT{REAL}*, OUT
-
-      i,ii,x,y,z,xs,ys,zs,ix,iy,iz,iCP :: INT
-
-      iCP = EDS.dim
-      print*, iCP
-      mer.create(4,0)
-      do y = 1,stitch_hirecv.dim2
-      do x = 1,stitch_hirecv.dim1
-         ! Create mergeabove and mergebelow
-         i = CP_high(x,y)
-         ii = stitch_hirecv(x,y)
-         if(ii == 0) cycle
-         do xs = x, stitch_hirecv.dim1
-            if(stitch_hirecv(xs,y) == 0) cycle
-            z = CP_high(xs,y)
-            if(ii == stitch_hirecv(xs,y)) then
-               if(i == z) then
-                  if (VOL(z) < 0) then
-                     stitch_hirecv(xs,y) = 0
-                     cycle
-                  else
-                     mer.append_column([ZERO,dfloat(z),EDS(z),VOL(z)])
-                     EDS(z) = ZERO
-                     VOL(z) = -mer.dim2
-                     stitch_hirecv(xs,y) = 0
-                     cycle
-                  end if
-               else
-                 if (VOL(z) < 0 AND VOL(i) < 0) then
-                    if (mer(2,-int(VOL(i))) > mer(2,-int(VOL(z)))) then
-                       .:number_updater(mer,int(mer(2,-int(VOL(i)))),int(mer(2,-int(VOL(z)))),2)
-                       mer(2,-int(VOL(i))) = int(mer(2,-int(VOL(z))))
-                    else
-                       .:number_updater(mer,int(mer(2,-int(VOL(z)))),int(mer(2,-int(VOL(i)))),2)
-                       mer(2,-int(VOL(z))) = int(mer(2,-int(VOL(i))))
-                    end if
-                    stitch_hirecv(xs,y) = 0
-                    cycle
-                 else if (VOL(i) < 0) then
-                    if (mer(2,-int(VOL(i))) > z) then
-                       .:number_updater(mer,int(mer(2,-int(VOL(i)))),z,2)
-                       mer(2,-int(VOL(i))) = z
-                    end if
-                    mer(3,-int(VOL(i))) = mer(3,-int(VOL(i))) + EDS(z)
-                    EDS(z) = ZERO
-                    mer(4,-int(VOL(i))) = mer(4,-int(VOL(i))) + VOL(z)
-                    VOL(z) = VOL(i) 
-                    stitch_hirecv(xs,y) = 0
-                    cycle
-                 else if (VOL(z) < 0) then
-                    if (mer(2,-int(VOL(z))) > i) then
-                       .:number_updater(mer,int(mer(2,-int(VOL(z)))),i,2)
-                       mer(2,-int(VOL(z))) = i
-                    end if
-                    mer(3,-int(VOL(z))) = mer(3,-int(VOL(z))) + EDS(i)
-                    EDS(i) = ZERO
-                    mer(4,-int(VOL(z))) = mer(4,-int(VOL(z))) + VOL(i)
-                    VOL(i) = VOL(z) 
-                    stitch_hirecv(xs,y) = 0
-                    cycle
-                 else
-                    EDS(z) = EDS(i) + EDS(z)
-                    VOL(z) = VOL(i) + VOL(z)
-                    if( z > i) then
-                       mer.append_column([ZERO,dfloat(i),EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                    else
-                       mer.append_column([ZERO,dfloat(z),EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                    end if
-                    EDS(z) = ZERO
-                    EDS(i) = ZERO
-                    VOL(z) = -mer.dim2
-                    VOL(i) = -mer.dim2
-                    stitch_hirecv(xs,y) = 0
-                    cycle
-                 end if
-               end if
-            end if
-         end do
-         do ys = y+1, stitch_hirecv.dim2
-         do xs = 1, stitch_hirecv.dim1
-            if(stitch_hirecv(xs,ys) == 0) cycle
-            z = CP_high(xs,ys)
-            if(ii == stitch_hirecv(xs,ys)) then
-               if(i == z) then
-                  if (VOL(z) < 0) then
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  else
-                     mer.append_column([ZERO,dfloat(z),EDS(z),VOL(z)])
-                     EDS(z) = ZERO
-                     VOL(z) = -mer.dim2
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  end if
-               else
-                  if (VOL(z) < 0 AND VOL(i) < 0) then
-                     if (mer(2,-int(VOL(i))) > mer(2,-int(VOL(z)))) then
-                       .:number_updater(mer,int(mer(2,-int(VOL(i)))),int(mer(2,-int(VOL(z)))),2)
-                       mer(2,-int(VOL(i))) = int(mer(2,-int(VOL(z))))
-                     else
-                       .:number_updater(mer,int(mer(2,-int(VOL(z)))),int(mer(2,-int(VOL(i)))),2)
-                       mer(2,-int(VOL(z))) = int(mer(2,-int(VOL(i))))
-                     end if
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  else if (VOL(i) < 0) then
-                     if (mer(2,-int(VOL(i))) > z ) then
-                       .:number_updater(mer,int(mer(2,-int(VOL(i)))),z,2)
-                       mer(2,-int(VOL(i))) = z
-                     end if
-                     mer(3,-int(VOL(i))) = mer(3,-int(VOL(i))) + EDS(z)
-                     EDS(z) = ZERO
-                     mer(4,-int(VOL(i))) = mer(4,-int(VOL(i))) + VOL(z)
-                     VOL(z) = VOL(i) 
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  else if (VOL(z) < 0) then
-                     if (mer(2,-int(VOL(z))) > i) then
-                       .:number_updater(mer,int(mer(2,-int(VOL(z)))),i,2)
-                       mer(2,-int(VOL(z))) = i
-                     end if
-                     mer(3,-int(VOL(z))) = mer(3,-int(VOL(z))) + EDS(i)
-                     EDS(i) = ZERO
-                     mer(4,-int(VOL(z))) = mer(4,-int(VOL(z))) + VOL(i)
-                     VOL(i) = VOL(z) 
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  else
-                     if( z > i) then
-                        mer.append_column([dfloat(i),EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                     else
-                        mer.append_column([dfloat(z),EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                     end if
-                     VOL(z) = -mer.dim2
-                     VOL(i) = -mer.dim2
-                     stitch_hirecv(xs,ys) = 0
-                     cycle
-                  end if
-               end if
-            end if
-         end do
-         end do
-      end do
-      end do
-      do y = 1,stitch_lorecv.dim2
-      do x = 1,stitch_lorecv.dim1
-         ! Create mergeabove and mergebelow
-         i = CP_low(x,y)
-         ii = stitch_lorecv(x,y)
-         if(ii == 0) cycle
-         iz = ZERO
-         do xs = x, stitch_lorecv.dim1
-            if(stitch_lorecv(xs,y) == 0) cycle
-            z = CP_low(xs,y)
-            if(ii == stitch_lorecv(xs,y)) then
-               if(i == z) then
-                  if (VOL(z) < 0) then
-                     if(mer(1,-int(VOL(z))) == 0) then
-                        mer(1,-int(VOL(z))) = z
-                     end if
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  else
-                     mer.append_column([dfloat(ii),ZERO,EDS(z),VOL(z)])
-                     VOL(z) = -mer.dim2
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  end if
-               else
-                  if (VOL(z) < 0 AND VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > ii) then
-                        if (mer(1,-int(VOL(z))) == ZERO) then   
-                           .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                           mer(1,-int(VOL(z))) = ii
-                           mer(1,-int(VOL(i))) = ii
-                        else
-                           if (ii > mer(1,-int(VOL(z)))) then
-                              .:number_updater(mer,int(mer(1,-int(VOL(i)))),int(mer(1,-int(VOL(z)))))
-                              mer(1,-int(VOL(i))) = int(mer(1,-int(VOL(z))))
-                           else
-                              .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                              .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                              mer(1,-int(VOL(z))) = ii
-                              mer(1,-int(VOL(i))) = ii
-                           end if
-                        end if
-                     else if (mer(1,-int(VOL(i))) == ZERO) then 
-                        if (mer(1,-int(VOL(z))) == ZERO) then   
-                           mer(1,-int(VOL(z))) = ii
-                           mer(1,-int(VOL(i))) = ii
-                        else
-                           if (ii > mer(1,-int(VOL(z)))) then
-                              mer(1,-int(VOL(i))) = mer(1,-int(VOL(z)))
-                           else
-                              .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                              mer(1,-int(VOL(z))) = ii
-                              mer(1,-int(VOL(i))) = ii
-                           end if
-                        end if
-                     else
-                        if (mer(1,-int(VOL(z))) == ZERO) then   
-                           mer(1,-int(VOL(z))) = mer(1,-int(VOL(i)))
-                        else
-                           if (mer(1,-int(VOL(i))) > mer(1,-int(VOL(z)))) then
-                              .:number_updater(mer,int(mer(1,-int(VOL(i)))),int(mer(1,-int(VOL(z)))))
-                              mer(1,-int(VOL(i))) = mer(1,-int(VOL(z)))
-                           else
-                              .:number_updater(mer,int(mer(1,-int(VOL(z)))),int(mer(1,-int(VOL(i)))))
-                              mer(1,-int(VOL(z))) = mer(1,-int(VOL(i)))
-                           end if
-                        end if
-                     end if
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  else if (VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > ii) then
-                        .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                        mer(1,-int(VOL(i))) = ii
-                     else if(mer(1,-int(VOL(i))) == ZERO) then
-                        mer(1,-int(VOL(i))) = ii
-                     end if
-                     mer(3,-int(VOL(i))) = mer(3,-int(VOL(i))) + EDS(z)
-                     EDS(z) = ZERO
-                     mer(4,-int(VOL(i))) = mer(4,-int(VOL(i))) + VOL(z)
-                     VOL(z) = VOL(i) 
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  else if (VOL(z) < 0) then
-                     if (mer(1,-int(VOL(z))) > ii) then
-                        .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                        mer(1,-int(VOL(z))) = ii
-                     else if(mer(1,-int(VOL(z))) == ZERO) then
-                        mer(1,-int(VOL(z))) = ii
-                     end if
-                     mer(3,-int(VOL(z))) = mer(3,-int(VOL(z))) + EDS(i)
-                     EDS(i) = ZERO
-                     mer(4,-int(VOL(z))) = mer(4,-int(VOL(z))) + VOL(i)
-                     VOL(i) = VOL(z) 
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  else
-                     EDS(z) = EDS(i) + EDS(z)
-                     VOL(z) = VOL(i) + VOL(z)
-                     mer.append_column([dfloat(ii),ZERO,EDS(z),VOL(z)])
-                     EDS(z) = ZERO
-                     EDS(i) = ZERO
-                     VOL(z) = -mer.dim2
-                     VOL(i) = -mer.dim2
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  end if
-               end if
-            end if
-         end do
-         do ys = y+1, stitch_lorecv.dim2
-         do xs = 1, stitch_lorecv.dim1
-            if(stitch_lorecv(xs,ys) == 0) cycle
-            z = CP_low(xs,ys)
-            if(ii == stitch_lorecv(xs,ys)) then
-               if(i == z) then
-                  if (VOL(z) < 0) then
-                     if(mer(1,-int(VOL(z))) == 0) then
-                        mer(1,-int(VOL(z))) = z
-                     end if
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  else
-                     mer.append_column([dfloat(ii),ZERO,EDS(z),VOL(z)])
-                     VOL(z) = -mer.dim2
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  end if
-               else
-                  if (VOL(z) < 0 AND VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > ii) then
-                        if (mer(1,-int(VOL(z))) == ZERO) then   
-                           .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                           mer(1,-int(VOL(z))) = ii
-                        else
-                           if (ii > mer(1,-int(VOL(z)))) then
-                              .:number_updater(mer,int(mer(1,-int(VOL(i)))),int(mer(1,-int(VOL(z)))))
-                              mer(1,-int(VOL(z))) = mer(1,-int(VOL(i))) 
-                           else
-                              .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                              .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                              mer(1,-int(VOL(z))) = ii
-                              mer(1,-int(VOL(i))) = ii
-                           end if
-                        end if
-                     else if (mer(1,-int(VOL(i))) == ZERO) then 
-                        if (mer(1,-int(VOL(z))) == ZERO) then   
-                           mer(1,-int(VOL(z))) = ii
-                           mer(1,-int(VOL(i))) = ii
-                        else
-                           if (ii > mer(1,-int(VOL(z)))) then
-                              mer(1,-int(VOL(i))) = mer(1,-int(VOL(z)))
-                           else
-                              .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                               mer(1,-int(VOL(i))) = ii
-                           end if
-                        end if
-                     else
-                        if (mer(1,-int(VOL(z))) == ZERO) then   
-                           mer(1,-int(VOL(z))) = mer(1,-int(VOL(i)))
-                        else
-                           if (mer(1,-int(VOL(i))) > mer(1,-int(VOL(z)))) then
-                              .:number_updater(mer,int(mer(1,-int(VOL(i)))),int(mer(1,-int(VOL(z)))))
-                              mer(1,-int(VOL(i))) = mer(1,-int(VOL(z)))
-                           else
-                              .:number_updater(mer,int(mer(1,-int(VOL(z)))),int(mer(1,-int(VOL(i)))))
-                              mer(1,-int(VOL(z))) = mer(1,-int(VOL(i)))
-                           end if
-                        end if
-                     end if
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  else if (VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > ii) then
-                        .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                     else if(mer(1,-int(VOL(i))) == ZERO) then
-                        mer(1,-int(VOL(i))) = ii
-                     end if
-                     mer(3,-int(VOL(i))) = mer(3,-int(VOL(i))) + EDS(z)
-                     EDS(z) = ZERO
-                     mer(4,-int(VOL(i))) = mer(4,-int(VOL(i))) + VOL(z)
-                     VOL(z) = VOL(i) 
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  else if (VOL(z) < 0) then
-                     if (mer(1,-int(VOL(z))) > ii) then
-                        .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                     else if(mer(1,-int(VOL(z))) == ZERO) then
-                        mer(1,-int(VOL(z))) = ii
-                     end if
-                     mer(3,-int(VOL(z))) = mer(3,-int(VOL(z))) + EDS(i)
-                     EDS(i) = ZERO
-                     mer(4,-int(VOL(z))) = mer(4,-int(VOL(z))) + VOL(i)
-                     VOL(i) = VOL(z) 
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  else
-                     mer.append_column([dfloat(ii),ZERO,EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                     VOL(z) = -mer.dim2
-                     VOL(i) = -mer.dim2
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  end if
-               end if
-            end if
-         end do
-         end do
-      end do
-      end do
-      do i = 1,mer.dim2
-         if (i > mer.dim2) exit
-      do ii = i+1,mer.dim2
-         if (ii > mer.dim2) exit
-         do while (mer(1,i) == mer(1,ii)) 
-            if(mer(2,i) /= mer(2,ii)) cycle
-            mer(3,i) = mer(3,ii) + mer(3,i)
-            mer(4,i) = mer(4,ii) + mer(4,i)
-            mer.prune_column(ii)
-         end do
-      end do
-      end do
-      do i = 1, iCP
-         if(VOL(i) <= ZERO) cycle
-         if(EDS(i) <= ZERO) cycle
-         mer.append_column([ZERO,ZERO,EDS(i),VOL(i)])
-      end do
-
-   end
-
-   bader_end_merge(CP_low,stitch_lorecv,EDS,VOL,mer) ::: leaky
-   ! Creates a merge for partitions with regions above and below.
-      CP_low :: MAT{INT}, IN
-      stitch_lorecv :: MAT{INT}, INOUT
-      EDS,VOL :: VEC{REAL}, INOUT
-      mer :: MAT{REAL}*, OUT
-
-      i,ii,x,y,z,xs,ys,zs,ix,iy,iz,iCP :: INT
-
-      iCP = EDS.dim
-      mer.create(3,0)
-      do y = 1,stitch_lorecv.dim2
-      do x = 1,stitch_lorecv.dim1
-         ! Create mergeabove and mergebelow
-         i = CP_low(x,y)
-         ii = stitch_lorecv(x,y)
-         if(ii == 0) cycle
-         do xs = x, stitch_lorecv.dim1
-            if(stitch_lorecv(xs,y) == 0) cycle
-            z = CP_low(xs,y)
-            if(ii == stitch_lorecv(xs,y)) then
-               if(i == z) then
-                  ! Checks if the point exists in merge. Note: no
-                  ! alterations need to be made as the CPs are
-                  ! identical. If it does not exist, it adds it into
-                  ! the merge.
-                  if (VOL(z) < 0) then
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  else
-                     mer.append_column([dfloat(ii),EDS(z),VOL(z)])
-                     VOL(z) = -mer.dim2
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  end if
-               else
-                  if (VOL(z) < 0 AND VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > ii) then
-                        if (ii > mer(1,-int(VOL(z)))) then
-                           .:number_updater(mer,int(mer(1,-int(VOL(i)))),int(mer(1,-int(VOL(z)))))
-                        else
-                           .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                           .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                        end if
-                     else
-                        if (mer(1,-int(VOL(i))) > mer(1,-int(VOL(z)))) then
-                           .:number_updater(mer,int(mer(1,-int(VOL(i)))),int(mer(1,-int(VOL(z)))))
-                        else
-                           .:number_updater(mer,int(mer(1,-int(VOL(z)))),int(mer(1,-int(VOL(i)))))
-                        end if
-                     end if
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  else if (VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > ii) then
-                        .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                     end if
-                     mer(2,-int(VOL(i))) = mer(2,-int(VOL(i))) + EDS(z)
-                     EDS(z) = ZERO
-                     mer(3,-int(VOL(i))) = mer(3,-int(VOL(i))) + VOL(z)
-                     VOL(z) = VOL(i) 
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  else if (VOL(z) < 0) then
-                     if (mer(1,-int(VOL(z))) > ii) then
-                        .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                     end if
-                     mer(2,-int(VOL(z))) = mer(2,-int(VOL(z))) + EDS(i)
-                     EDS(i) = ZERO
-                     mer(3,-int(VOL(z))) = mer(3,-int(VOL(z))) + VOL(i)
-                     VOL(i) = VOL(z) 
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  else
-                     EDS(z) = EDS(i) + EDS(z)
-                     VOL(z) = VOL(i) + VOL(z)
-                     mer.append_column([dfloat(ii),EDS(z),VOL(z)])
-                     EDS(z) = ZERO
-                     EDS(i) = ZERO
-                     VOL(z) = -mer.dim2
-                     VOL(i) = -mer.dim2
-                     stitch_lorecv(xs,y) = 0
-                     cycle
-                  end if
-               end if
-            end if
-         end do
-         do ys = y+1, stitch_lorecv.dim2
-         do xs = 1, stitch_lorecv.dim1
-            if(stitch_lorecv(xs,ys) == 0) cycle
-            z = CP_low(xs,ys)
-            if(ii == stitch_lorecv(xs,ys)) then
-               if(i == z) then
-                  if (VOL(z) < 0) then
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  else
-                     mer.append_column([dfloat(ii),EDS(z),VOL(z)])
-                     VOL(z) = -mer.dim2
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  end if
-               else
-                  if (VOL(z) < 0 AND VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > ii) then
-                        if (ii > mer(1,-int(VOL(z)))) then
-                           .:number_updater(mer,int(mer(1,-int(VOL(i)))),int(mer(1,-int(VOL(z)))))
-                        else
-                           .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                           .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                        end if
-                     else
-                        if (mer(1,-int(VOL(i))) > mer(1,-int(VOL(z)))) then
-                           .:number_updater(mer,int(mer(1,-int(VOL(i)))),int(mer(1,-int(VOL(z)))))
-                        else
-                           .:number_updater(mer,int(mer(1,-int(VOL(z)))),int(mer(1,-int(VOL(i)))))
-                        end if
-                     end if
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  else if (VOL(i) < 0) then
-                     if (mer(1,-int(VOL(i))) > ii ) then
-                        .:number_updater(mer,int(mer(1,-int(VOL(i)))),ii)
-                     end if
-                     mer(2,-int(VOL(i))) = mer(2,-int(VOL(i))) + EDS(z)
-                     EDS(z) = ZERO
-                     mer(3,-int(VOL(i))) = mer(3,-int(VOL(i))) + VOL(z)
-                     VOL(z) = VOL(i) 
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  else if (VOL(z) < 0) then
-                     if (mer(1,-int(VOL(z))) > ii) then
-                        .:number_updater(mer,int(mer(1,-int(VOL(z)))),ii)
-                     end if
-                     mer(2,-int(VOL(z))) = mer(2,-int(VOL(z))) + EDS(i)
-                     EDS(i) = ZERO
-                     mer(3,-int(VOL(z))) = mer(3,-int(VOL(z))) + VOL(i)
-                     VOL(i) = VOL(z) 
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  else
-                     mer.append_column([dfloat(ii),EDS(z)+EDS(i),VOL(z)+VOL(i)])
-                     VOL(z) = -mer.dim2
-                     VOL(i) = -mer.dim2
-                     stitch_lorecv(xs,ys) = 0
-                     cycle
-                  end if
-               end if
-            end if
-         end do
-         end do
-      end do
-      end do
-      do i = 1,mer.dim2
-         if (i > mer.dim2) exit
-      do ii = i+1,mer.dim2
-         if (ii > mer.dim2) exit
-         do while (mer(1,i) == mer(1,ii)) 
-            mer(2,i) = mer(2,ii) + mer(2,i)
-            mer(3,i) = mer(3,ii) + mer(3,i)
-            mer.prune_column(ii)
-         end do
-      end do
-      end do
-      do i = 1, iCP
-         if(VOL(i) <= ZERO) cycle
-         if(EDS(i) <= ZERO) cycle
-         mer.append_column([ZERO,EDS(i),VOL(i)])
-      end do
-
-   end
-
-   number_updater(mer,old,new,col) 
-   ! Replaces all instances of "old" in "mer" with "new".
-      self :: INOUT
-      old,new :: INT, IN
-      col :: INT, IN, optional
-      mer :: MAT{REAL}*, INOUT
-
-      a,i,ii :: INT
-      
-      ii = 1
-      a = old
-      if(present(col)) ii = col
-      do i = 1,mer.dim2
-         if(int(mer(ii,i)) == a) then
-            mer(ii,i) = new
-         end if
-      end do
-
+   
    end
 
 
