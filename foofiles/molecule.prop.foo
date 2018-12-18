@@ -5373,11 +5373,13 @@ contains
       n,nx,ny,nz :: INT
       axes :: MAT{REAL}(3,3)
       CP :: MAT3{INT}*
-      CP1 :: MAT4{INT}*
       EDS,VOL :: VEC{REAL}*
       grid :: VEC{REAL}*
       g3 :: MAT3{REAL}*
       pt :: MAT{REAL}*
+#ifdef MPI      
+      CP1 :: MAT4{INT}*
+#endif      
 
       nx = .plot_grid.n_x
       ny = .plot_grid.n_y
@@ -5403,12 +5405,11 @@ contains
 
       g3=reshape(grid,[nx,ny,nz])
 #ifdef MPI
-      .:cubes_to_basin_parallel(g3,nx,ny,nz,.plot_grid.width,axes,CP1,EDS,VOL)
+      call cubes_to_basin_parallel(g3,nx,ny,nz,.plot_grid.width,axes,CP1,EDS,VOL)
 #else
       .:cubes_to_basin(g3,nx,ny,nz,.plot_grid.width,axes,CP,EDS,VOL)
 #endif
 
-      ! Print results
 
       ! Clean
       VOL.destroy
@@ -5594,8 +5595,8 @@ contains
 
    end
 
-   cubes_to_basin_parallel(grid,nx,ny,nz,gridlength,gridvector,CP_master,EDS,VOL) ::: leaky
-   ! A tonto implementation of the cubes to basin code, originally
+   cubes_to_basin_parallel(grid,nx,ny,nz,gridlength,gridvector,CP_master,EDS,VOL) ::: leaky, selfless
+   ! A parallel tonto implementation of the cubes to basin code, originally
    ! implemented by Florian from Tobias (spelling).
       nx,ny,nz :: INT, IN
       grid :: MAT3{REAL}, IN
@@ -5605,28 +5606,25 @@ contains
       EDS,VOL :: VEC{REAL}*, OUT
 
       nprocs,i,ii,px,mx,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
-      err,GradMax,distance,MaxVal,dv :: REAL
+      GradMax,distance,dv :: REAL
       Max,Replace :: VEC{INT}(3)
       List :: VEC{VEC_{INT}}*
-      merges,swap_recv,swap,stitch_losend,stitch_hisend,stitch_hirecv,stitch_lorecv :: MAT{INT}*
       CP :: MAT4{INT}*
       ED :: MAT3{REAL}*
       CPS :: MAT{INT}*
-      ED_send,ED_recv,mer,EDSS,VOLS,EDSR,VOLR :: MAT{REAL}*
       Maxima :: VEC{REAL}*
 
       ! Establishes the partitions on each processor.
       nprocs = tonto.n_processors
       mx = nx - (nprocs-1)*int(nx/nprocs)
+      px = int(nx/nprocs)
       if(tonto.processor_rank==tonto.master_rank)then
          ED.create(mx+2,ny+2,nz+2)
          CP.create(mx+2,ny+2,nz+2,3)
       else if(tonto.processor_rank<nprocs - 1)then
-         px = int(nx/nprocs)
          ED.create(px+2,ny+2,nz+2)
          CP.create(px+2,ny+2,nz+2,3)
       else
-         px = int(nx/nprocs)
          ED.create(px+2,ny+2,nz+2)
          CP.create(px+2,ny+2,nz+2,3)
       end if
@@ -5821,11 +5819,17 @@ contains
          ! The important regions are at the interface of the
          ! boundaries. This cycles through all regions at the boundary
          do i = 1, nprocs - 1
-            do x = mx + (i-1)*px-1, mx + (i-1)*px +2 
+            do x = mx + (i-1)*px, mx + (i-1)*px +1 
             do y = 1,CP_master.dim2
             do z = 1,CP_master.dim3
                
-               !if(CP_master(x,y,z,1) < ii) cycle
+               ii = x
+
+               if (x == mx +(i-1)*px) then
+                  if(CP_master(x,y,z,1) < ii) cycle
+               else
+                  if(CP_master(x,y,z,1) > ii) cycle
+               end if
                
                ! Save what values need to be replaced, as if the
                ! current points maxima is updated, it will not be able
@@ -5843,6 +5847,11 @@ contains
                   ! new maxima. Note: Lists would make this process
                   ! much faster
                   do xs = 1,CP_master.dim1
+                     if (x == mx +(i-1)*px) then
+                        if(xs > ii) cycle
+                     else
+                        if(xs < ii) cycle
+                     end if
                   do ys = 1,CP_master.dim2
                   do zs = 1,CP_master.dim3
                      if (CP_master(xs,ys,zs,1) == Replace(1) AND CP_master(xs,ys,zs,2) == Replace(2) AND CP_master(xs,ys,zs,3) == Replace(3) ) then
@@ -5938,7 +5947,7 @@ contains
 
       ! Finalises the MPI program
       tonto.finalize
-       
+
       ! Stops the program (ending it regularly appears to cause a seg
       ! fault
       stop
