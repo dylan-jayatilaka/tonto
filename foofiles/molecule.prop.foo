@@ -5430,7 +5430,7 @@ contains
     EDS,VOL :: VEC{REAL}*, OUT
 
     i,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
-    GradMax,distance,MaxVal,dv :: REAL
+    GradMax,distance,MaxVal,dv,t1,t2,t3 :: REAL
     Max :: VEC{INT}(3)
     List :: VEC{VEC_{INT}}*
     ED :: MAT3{REAL}*
@@ -5446,6 +5446,8 @@ contains
     iCP = ZERO
     GradMax = 1
 
+    call cpu_time(t1)
+    
     do x=2,nx+1
     do y=2,ny+1
     do z=2,nz+1
@@ -5527,7 +5529,6 @@ contains
              CP(List(1).element(i),List(2).element(i),List(3).element(i))=&
              iCP
           end do
-          stdout.put(Max)
        end if
        List.destroy
        GradMax = 1
@@ -5536,19 +5537,8 @@ contains
     end do
     end do
     
-    do i=1,iCP
-    xs = 0
-    do x=2,nx+1
-    do y=2,ny+1
-    do z=2,nz+1
-       if(i==CP(x,y,z)) then
-          xs = xs + 1
-       end if
-    end do
-    end do
-    end do
-    stdout.show("Size of CP", xs)
-    end do
+    call cpu_time(t2)
+    stdout.show("Elapsed time for gradient search",t2-t1)
 
     EDS.create(iCP)
     VOL.create(iCP)
@@ -5593,6 +5583,10 @@ contains
     ED.destroy
     Maxima.destroy
 
+    call cpu_time(t3)
+    stdout.show("Elapsed time for summation and output",t3-t2)
+   
+   
    end
 
    cubes_to_basin_parallel(grid,nx,ny,nz,gridlength,gridvector,CP_master,EDS,VOL) ::: leaky, selfless
@@ -5606,9 +5600,9 @@ contains
       EDS,VOL :: VEC{REAL}*, OUT
 
       nprocs,i,ii,px,mx,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
-      GradMax,distance,dv :: REAL
+      GradMax,distance,dv,t1,t2,t3,t4,t5 :: REAL
       Max,Replace :: VEC{INT}(3)
-      List :: VEC{VEC_{INT}}*
+      List :: MAT{INT}*
       CP :: MAT4{INT}*
       ED :: MAT3{REAL}*
       CPS :: MAT{INT}*
@@ -5650,6 +5644,10 @@ contains
       CP = ZERO
       GradMax = 1
       
+      ! Used for process timing.
+      if (tonto.processor_rank == tonto.master_rank) then
+         call cpu_time(t1)
+      end if
       ! Cycles through the partition to determine all gradient paths
       ! within this partition.
       do x=2,px+1
@@ -5688,9 +5686,7 @@ contains
                ListMax = ListMax + 1
                
                ! Appends the current point to the list
-               List(1).element.append(xs)
-               List(2).element.append(ys)
-               List(3).element.append(zs)
+               List.append_column([xs,ys,zs])
 
                ! Leaves the loop, if it is on the x-boundaries, as
                ! this could cause incorrect gradient paths due to a
@@ -5744,9 +5740,7 @@ contains
             ! Update all points on the path to point to the same
             ! maxima on this path
             do i=1,ListMax
-               CP(List(1).element(i),List(2).element(i),List(3).element(i),1)=CP(Max(1),Max(2),Max(3),1)
-               CP(List(1).element(i),List(2).element(i),List(3).element(i),2)=CP(Max(1),Max(2),Max(3),2)
-               CP(List(1).element(i),List(2).element(i),List(3).element(i),3)=CP(Max(1),Max(2),Max(3),3)
+               CP(List(1,i),List(2,i),List(3,i),:)=CP(Max(1),Max(2),Max(3),:)
             end do
          
          ! New path
@@ -5755,10 +5749,9 @@ contains
             ! Update all points on the path to point to the same
             ! maxima on this path
             do i=1,ListMax
-               CP(List(1).element(i),List(2).element(i),List(3).element(i),1)=Max(1)
-               CP(List(1).element(i),List(2).element(i),List(3).element(i),2)=Max(2)
-               CP(List(1).element(i),List(2).element(i),List(3).element(i),3)=Max(3)
+               CP(List(1,i),List(2,i),List(3,i),:)=Max(:)
             end do
+         
          end if
          
          ! Resets the list for the next iteration
@@ -5771,6 +5764,16 @@ contains
       end do
       end do
       end do
+      
+      ! Prints how long the gradient path following method takes. The
+      ! barrier is use to ensure all processors have completed the
+      ! job.
+      tonto.barrier
+      if (tonto.processor_rank == tonto.master_rank) then
+         call cpu_time(t2)
+         stdout.show("Elapsed time for gradient search:", t2-t1)
+      end if
+      
       
       ! The partition is not used after this, so it is destroyed to
       ! clear memory
@@ -5812,6 +5815,15 @@ contains
          
          ! Send the partition to the master processor for merging
          tonto.send(CP(2:px+1,2:ny+1,2:nz+1,:),tonto.master_rank,tonto.processor_rank)
+      end if
+      
+      ! Prints how long the communication takes. The
+      ! barrier is use to ensure all processors have completed the
+      ! job.
+      tonto.barrier
+      if (tonto.processor_rank == tonto.master_rank) then
+         call cpu_time(t3)
+         stdout.show("Elapsed time for communication:", t3-t2)
       end if
       
       if(tonto.processor_rank == tonto.master_rank) then
@@ -5869,6 +5881,11 @@ contains
 
          end do
          
+         ! Prints how long the merge procedure takes.
+         if (tonto.processor_rank == tonto.master_rank) then
+            call cpu_time(t4)
+            stdout.show("Elapsed time for merge:", t4-t3)
+         end if
          ! This is the determinant of the grid vectors
          dv = abs(gridvector(1,1)*gridvector(2,2)*gridvector(3,3) &
             -     gridvector(3,1)*gridvector(2,2)*gridvector(1,3) &
@@ -5937,11 +5954,21 @@ contains
          ! look a lot nicer, and to utilise the tonto system
          ! functions. 
          do i=1,EDS.dim
-           print*, i, EDS(i), VOL(i)
+           stdout.show("CP:",i)
+           stdout.put([EDS(i), VOL(i)])
          end do
          
       end if
 
+      ! Prints how long the summation procedure takes. The
+      ! barrier is use to ensure all processors have completed the
+      ! job.
+      tonto.barrier
+      if (tonto.processor_rank == tonto.master_rank) then
+         call cpu_time(t5)
+         stdout.show("Elapsed time for summation and output:", t5-t4)
+      end if
+      
       ! Idles the other processor
       tonto.barrier
 
