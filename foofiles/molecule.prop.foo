@@ -5603,10 +5603,13 @@ contains
       GradMax,distance,dv,t1,t2,t3,t4,t5 :: REAL
       Max,Replace :: VEC{INT}(3)
       List :: MAT{INT}*
+      pathup,pathdown :: VEC{MAT_{INT}}*
       CP :: MAT4{INT}*
+      CP_hisend,CP_losend,CP_hirecv,CP_lorecv :: MAT3{INT}*
       ED :: MAT3{REAL}*
       CPS :: MAT{INT}*
       Maxima :: VEC{REAL}*
+      changes :: BIN
 
       ! Establishes the partitions on each processor.
       nprocs = tonto.n_processors
@@ -5644,10 +5647,21 @@ contains
       CP = ZERO
       GradMax = 1
       
+      ! Create a path for the boundary at the bottom, if it exists.
+      if (tonto.processor_rank /= tonto.master_rank) then   
+         pathdown.create(0)
+      end if
+      
+      ! Create a path for the boundary at the top, if it exists.
+      if (tonto.processor_rank /= nprocs - 1) then   
+         pathup.create(0)
+      end if
+      
       ! Used for process timing.
       if (tonto.processor_rank == tonto.master_rank) then
          call cpu_time(t1)
       end if
+      
       ! Cycles through the partition to determine all gradient paths
       ! within this partition.
       do x=2,px+1
@@ -5662,6 +5676,7 @@ contains
             ! order of this list will improve the efficiency of this
             ! program.
             List.create(3,0)
+            
             ! Gives the length of the number of points in the
             ! current list
             ListMax = 0
@@ -5743,6 +5758,36 @@ contains
                CP(List(1,i),List(2,i),List(3,i),:)=CP(Max(1),Max(2),Max(3),:)
             end do
          
+            ! Appends the list if the maxima is on the boundary
+            if(tonto.processor_rank > 0) then
+               if(CP(Max(1),Max(2),Max(3),1) == 1) then
+                  
+                  ! Find which existing path it matches
+                  do i = 1, pathdown.dim1
+                     if(sum(abs(CP(Max(1),Max(2),Max(3),:) - pathdown(i).element(:,1))) /= 0) then
+                        pathdown(i).element.destroy
+                        pathdown(i).element.create(3,pathdown(i).element.dim2+List.dim2)
+                        !pathdown(i).element(:,pathdown(i).element.dim2+1:pathdown(i).element.dim2+List.dim2) = List
+                     end if
+                  end do
+               
+               end if
+            end if
+            if(tonto.processor_rank < nprocs - 1) then
+               if(CP(Max(1),Max(2),Max(3),1) == px+2) then
+                  
+                  ! Find which existing path it matches
+                  do i = 1, pathup.dim1
+                     if(sum(abs(CP(Max(1),Max(2),Max(3),:) - pathup(i).element(:,1))) /= 0) then
+                        pathup(i).element.destroy
+                        pathup(i).element.create(3,pathup(i).element.dim2+List.dim2)
+                        !pathup(i).element(:,pathup(i).element.dim2+1:pathup(i).element.dim2+List.dim2) = List
+                     end if
+                  end do
+               
+               end if
+            end if
+         
          ! New path
          else
             
@@ -5751,6 +5796,36 @@ contains
             do i=1,ListMax
                CP(List(1,i),List(2,i),List(3,i),:)=Max(:)
             end do
+
+            ! Adds the list if the maxima is on the boundary
+            if(tonto.processor_rank > 0) then
+               if(Max(1) == 1) then
+                  
+                  ! Makes the maximum the header of the path. This
+                  ! makes searching much easier
+                  List.swap_columns(1,List.dim2)
+                  
+                  ! Adds the list
+                  pathdown.expand(List.dim1+1)
+                  pathdown(pathdown.dim1).element.create(3,0)
+                  pathdown(pathdown.dim1).element.append_columns(List)
+               
+               end if
+            end if
+            if(tonto.processor_rank < nprocs - 1) then
+               if(Max(1) == px+2) then
+                  
+                  ! Makes the maximum the header of the path. This
+                  ! makes searching much easier
+                  List.swap_columns(1,List.dim2)
+                  
+                  ! Adds the list
+                  pathup.expand(List.dim1+1)
+                  pathup(pathup.dim1).element.create(3,0)
+                  pathup(pathup.dim1).element.append_columns(List)
+               
+               end if
+            end if
          
          end if
          
@@ -5765,10 +5840,11 @@ contains
       end do
       end do
       
+      tonto.barrier
+      stop
       ! Prints how long the gradient path following method takes. The
       ! barrier is use to ensure all processors have completed the
       ! job.
-      tonto.barrier
       if (tonto.processor_rank == tonto.master_rank) then
          call cpu_time(t2)
          stdout.show("Elapsed time for gradient search:", t2-t1)
@@ -5784,8 +5860,127 @@ contains
       px = int(nx/nprocs)
       mx = nx - (nprocs-1)*int(nx/nprocs)
       
-      
       if(tonto.processor_rank==tonto.master_rank)then
+         CP_hisend.create(ny+2,nz+2,3)
+         CP_hirecv.create(ny+2,nz+2,3)
+      else if( tonto.processor_rank < nprocs - 1) then
+         CP(2:px+1,2:ny+1,2:nz+1,1) = CP(2:px+1,2:ny+1,2:nz+1,1)+mx+(tonto.processor_rank-1)*px 
+         CP_hisend.create(ny+2,nz+2,3)
+         CP_hirecv.create(ny+2,nz+2,3)
+         CP_losend.create(ny+2,nz+2,3)
+         CP_lorecv.create(ny+2,nz+2,3)
+      else
+         CP(2:px+1,2:ny+1,2:nz+1,1) = CP(2:px+1,2:ny+1,2:nz+1,1)+mx+(tonto.processor_rank-1)*px 
+         CP_losend.create(ny+2,nz+2,3)
+         CP_lorecv.create(ny+2,nz+2,3)
+      end if
+      
+      
+      !if(tonto.processor_rank==tonto.master_rank)then
+      !   
+      !   ! Creates a grid to merge all the critical points
+      !   CP_master.create(grid.dim1,ny,nz,3)
+      !   
+      !   ! Remove the boundary from the index notation
+      !   CP(:,:,:,:) =CP(:,:,:,:) - 1
+
+      !   ! Initialise the grid
+      !   CP_master(1:mx,:,:,:) = ZERO
+      !   
+      !   ! Assign the master's partition to the grid
+      !   CP_master(1:mx,:,:,:) = CP(2:mx+1,2:ny+1,2:nz+1,:)
+      !   
+      !   ! Cleanup the partition
+      !   CP.destroy
+      !   
+      !   ! Receive the partitions from the other processors
+      !   do i = 1, nprocs - 1
+      !      tonto.recv(CP_master(mx+(i-1)*px+1:mx+i*px,:,:,:),i,i)
+      !   end do
+      !
+      !else 
+      !   
+      !   ! Move it to the correct indexing system.  
+      !   CP(2:px+1,2:ny+1,2:nz+1,1) = CP(2:px+1,2:ny+1,2:nz+1,1)+mx+(tonto.processor_rank-1)*px 
+      !   CP(:,:,:,:) = CP(:,:,:,:) - 1
+      !   
+      !   ! Send the partition to the master processor for merging
+      !   tonto.send(CP(2:px+1,2:ny+1,2:nz+1,:),tonto.master_rank,tonto.processor_rank)
+      !end if
+      
+      ! Prints how long the communication takes. The
+      ! barrier is use to ensure all processors have completed the
+      ! job.
+      tonto.barrier
+      if (tonto.processor_rank == tonto.master_rank) then
+         call cpu_time(t3)
+         stdout.show("Elapsed time for communication:", t3-t2)
+      end if
+      
+      stop
+      changes = TRUE
+      
+      do while (changes EQV TRUE)
+         changes = FALSE
+         if(tonto.processor_rank==tonto.master_rank)then
+            CP_hisend = CP(px+1,:,:,:)
+            tonto.sendrecv(CP_hisend,CP_hirecv,tonto.processor_rank+1)
+         else if( tonto.processor_rank < nprocs - 1) then
+            CP_hisend = CP(px+1,:,:,:)
+            tonto.sendrecv(CP_hisend,CP_hirecv,tonto.processor_rank+1)
+            CP_losend = CP(2,:,:,:)
+            tonto.sendrecv(CP_losend,CP_lorecv,tonto.processor_rank-1)
+         else
+            CP_losend = CP(2,:,:,:)
+            tonto.sendrecv(CP_losend,CP_lorecv,tonto.processor_rank-1)
+         end if
+         if(tonto.processor_rank==tonto.master_rank)then
+            do i = 1,pathup.dim1
+               if (sum(abs(pathup(i).element(:,1)-CP_hirecv(pathup(i).element(2,1),pathup(i).element(3,1),:))) /= 0) then
+                  Max(:) = CP_hirecv(pathup(i).element(2,1),pathup(i).element(3,1),:)
+                  do ii = 1, pathup(i).element.dim2
+                     CP(pathup(i).element(1,ii),pathup(i).element(2,ii),pathup(i).element(3,ii),:) = Max(:)
+                     if (pathup(i).element(1,ii) == 2) changes = TRUE
+                  end do
+               end if
+            end do
+            tonto.parallel_or(changes)
+         else if( tonto.processor_rank < nprocs - 1) then
+            do i = 1,pathup.dim1
+               if (sum(abs(pathup(i).element(:,1)-CP_hirecv(pathup(i).element(2,1),pathup(i).element(3,1),:))) /= 0) then
+                  Max(:) = CP_hirecv(pathup(i).element(2,1),pathup(i).element(3,1),:)
+                  do ii = 1, pathup(i).element.dim2
+                     CP(pathup(i).element(1,ii),pathup(i).element(2,ii),pathup(i).element(3,ii),:) = Max(:)
+                     if (pathup(i).element(1,ii) == 2) changes = TRUE
+                  end do
+               end if
+            end do
+            do i = 1,pathdown.dim1
+               if (sum(abs(pathdown(i).element(:,1)-CP_hirecv(pathdown(i).element(2,1),pathdown(i).element(3,1),:))) /= 0) then
+                  Max(:) = CP_hirecv(pathdown(i).element(2,1),pathdown(i).element(3,1),:)
+                  do ii = 1, pathdown(i).element.dim2
+                     CP(pathdown(i).element(1,ii),pathdown(i).element(2,ii),pathdown(i).element(3,ii),:) = Max(:)
+                     if (pathdown(i).element(1,ii) == px+1) changes = TRUE
+                  end do
+               end if
+            end do
+            tonto.parallel_or(changes)
+         else
+            do i = 1,pathdown.dim1
+               if (sum(abs(pathdown(i).element(:,1)-CP_hirecv(pathdown(i).element(2,1),pathdown(i).element(3,1),:))) /= 0) then
+                  Max(:) = CP_hirecv(pathdown(i).element(2,1),pathdown(i).element(3,1),:)
+                  do ii = 1, pathdown(i).element.dim2
+                     CP(pathdown(i).element(1,ii),pathdown(i).element(2,ii),pathdown(i).element(3,ii),:) = Max(:)
+                     if (pathdown(i).element(1,ii) == px+1) changes = TRUE
+                  end do
+               end if
+            end do
+            tonto.parallel_or(changes)
+         end if
+      end do
+      if(tonto.processor_rank==tonto.master_rank)then
+         CP_hisend.destroy
+         CP_hirecv.destroy
          
          ! Creates a grid to merge all the critical points
          CP_master.create(grid.dim1,ny,nz,3)
@@ -5806,80 +6001,79 @@ contains
          do i = 1, nprocs - 1
             tonto.recv(CP_master(mx+(i-1)*px+1:mx+i*px,:,:,:),i,i)
          end do
-      
-      else 
-         
-         ! Move it to the correct indexing system.  
-         CP(2:px+1,2:ny+1,2:nz+1,1) = CP(2:px+1,2:ny+1,2:nz+1,1)+mx+(tonto.processor_rank-1)*px 
+      !   ! Send the partition to the master processor for merging
+      !   tonto.send(CP(2:px+1,2:ny+1,2:nz+1,:),tonto.master_rank,tonto.processor_rank)
+      else if( tonto.processor_rank < nprocs - 1) then
+         CP_hisend.destroy
+         CP_hirecv.destroy
+         CP_lorecv.destroy
          CP(:,:,:,:) = CP(:,:,:,:) - 1
-         
+      
+         ! Send the partition to the master processor for merging
+         tonto.send(CP(2:px+1,2:ny+1,2:nz+1,:),tonto.master_rank,tonto.processor_rank)
+      else
+         CP_hisend.destroy
+         CP_hirecv.destroy
+         CP_lorecv.destroy
+         CP(:,:,:,:) = CP(:,:,:,:) - 1
+      
          ! Send the partition to the master processor for merging
          tonto.send(CP(2:px+1,2:ny+1,2:nz+1,:),tonto.master_rank,tonto.processor_rank)
       end if
-      
-      ! Prints how long the communication takes. The
-      ! barrier is use to ensure all processors have completed the
-      ! job.
-      tonto.barrier
-      if (tonto.processor_rank == tonto.master_rank) then
-         call cpu_time(t3)
-         stdout.show("Elapsed time for communication:", t3-t2)
-      end if
-      
       if(tonto.processor_rank == tonto.master_rank) then
             
-         ! The important regions are at the interface of the
-         ! boundaries. This cycles through all regions at the boundary
-         do i = 1, nprocs - 1
-            do x = mx + (i-1)*px, mx + (i-1)*px +1 
-            do y = 1,CP_master.dim2
-            do z = 1,CP_master.dim3
-               
-               ii = x
+      !   ! The important regions are at the interface of the
+      !   ! boundaries. This cycles through all regions at the boundary
+      !   do i = 1, nprocs - 1
+      !      do x = mx + (i-1)*px, mx + (i-1)*px +1 
+      !      do y = 1,CP_master.dim2
+      !      do z = 1,CP_master.dim3
+      !         
+      !         ii = x
 
-               if (x == mx +(i-1)*px) then
-                  if(CP_master(x,y,z,1) < ii) cycle
-               else
-                  if(CP_master(x,y,z,1) > ii) cycle
-               end if
-               
-               ! Save what values need to be replaced, as if the
-               ! current points maxima is updated, it will not be able
-               ! to be used as a reference.
-               Replace(:) = CP_master(x,y,z,:)
+      !         if (x == mx +(i-1)*px) then
+      !            if(CP_master(x,y,z,1) < ii) cycle
+      !         else
+      !            if(CP_master(x,y,z,1) > ii) cycle
+      !         end if
+      !         
+      !         ! Save what values need to be replaced, as if the
+      !         ! current points maxima is updated, it will not be able
+      !         ! to be used as a reference.
+      !         Replace(:) = CP_master(x,y,z,:)
 
-               ! Check if the maxima of the point is different from
-               ! the maxima of the maxima
-               if(sum(abs(CP_master(x,y,z,:)-CP_master(Replace(1),Replace(2),Replace(3),:)))> ZERO) then
-                  
-                  ! Store the new maxima
-                  Max(:) = CP_master(Replace(1),Replace(2),Replace(3),:)
-                  
-                  ! Replace all instances of the old maxima with the
-                  ! new maxima. Note: Lists would make this process
-                  ! much faster
-                  do xs = 1,CP_master.dim1
-                     if (x == mx +(i-1)*px) then
-                        if(xs > ii) cycle
-                     else
-                        if(xs < ii) cycle
-                     end if
-                  do ys = 1,CP_master.dim2
-                  do zs = 1,CP_master.dim3
-                     if (CP_master(xs,ys,zs,1) == Replace(1) AND CP_master(xs,ys,zs,2) == Replace(2) AND CP_master(xs,ys,zs,3) == Replace(3) ) then
-                        CP_master(xs,ys,zs,:) = Max(:)
-                     end if
-                  end do
-                  end do
-                  end do
+      !         ! Check if the maxima of the point is different from
+      !         ! the maxima of the maxima
+      !         if(sum(abs(CP_master(x,y,z,:)-CP_master(Replace(1),Replace(2),Replace(3),:)))> ZERO) then
+      !            
+      !            ! Store the new maxima
+      !            Max(:) = CP_master(Replace(1),Replace(2),Replace(3),:)
+      !            
+      !            ! Replace all instances of the old maxima with the
+      !            ! new maxima. Note: Lists would make this process
+      !            ! much faster
+      !            do xs = 1,CP_master.dim1
+      !               if (x == mx +(i-1)*px) then
+      !                  if(xs > ii) cycle
+      !               else
+      !                  if(xs < ii) cycle
+      !               end if
+      !            do ys = 1,CP_master.dim2
+      !            do zs = 1,CP_master.dim3
+      !               if (CP_master(xs,ys,zs,1) == Replace(1) AND CP_master(xs,ys,zs,2) == Replace(2) AND CP_master(xs,ys,zs,3) == Replace(3) ) then
+      !                  CP_master(xs,ys,zs,:) = Max(:)
+      !               end if
+      !            end do
+      !            end do
+      !            end do
 
-               end if
+      !         end if
 
-            end do
-            end do
-            end do
+      !      end do
+      !      end do
+      !      end do
 
-         end do
+      !   end do
          
          ! Prints how long the merge procedure takes.
          if (tonto.processor_rank == tonto.master_rank) then
