@@ -89,6 +89,12 @@ To change build type (e.g. make a DEBUG version) use this option :
    cmake .. -DCMAKE_BUILD_TYPE=Debug
    make -j
 ```
+In case you do NOT have lapack and blas isntalled theere is a packaged lapack included by tonto, which you can also request manually:
+
+```
+   cmake .. -DCOMPILE_LAPACK=ON
+   make -j
+```
 
 By default the `tonto` program is built with Release flags.
 The executable program is located at:
