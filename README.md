@@ -3,10 +3,12 @@
 
 ## 1. Get ready ...
 
-* For running jobs, we recommend downloading the latest release for your platform (see "releases" tab above)
-* If you want to develop, first install `git` and  follow the compile instructions below.
+* If you're not planning on modifying tonto source (i.e. developing), we recommend 
+downloading the latest release for your platform.
+* If you want to develop, first install `git` and 
+  and follow the compile instructions below.
 
-### ---> On Linux
+### On Linux
 
 First, open a terminal and clone the repository:
 
@@ -19,16 +21,18 @@ software package manager, install:
 
 * `perl`
 * `gfortran`
-* `make` 
-* `openmp-3.0` or `mpich2` (for parallel)
+* `make`
+* `blas` 
+* `lapack` 
+* `openmpi-3.0` (for parallel)
 * `python3` (recommended for testing)
 * `gnuplot` (recommended)
 
-### ---> On MacOS
+### On MacOS
 
 See [Building on MacOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-MacOS)
 
-### ---> On Windows
+### On Windows
 
 See [Building on Windows](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-Windows)
 
@@ -62,7 +66,7 @@ If you want a specific compiler, use :
 ```
 
 where you should replace <insert-your-compiler-here> with the
-command for your fortran compiler. We recommend `gfortran`.
+command for your fortran compiler. We recommend `gfortran-6`.
 
 If you want a static executable for redistribution set the build type
 to RELEASE-STATIC as follows:
@@ -82,7 +86,13 @@ To make an MPI parallel version (e.g. using openmpi) , type :
 To change build type (e.g. make a DEBUG version) use this option :
 
 ```
-   cmake .. -DCMAKE_BUILD_TYPE=debug
+   cmake .. -DCMAKE_BUILD_TYPE=Debug
+   make -j
+```
+In the case you do NOT have lapack and blas installed, there is a packaged lapack included in tonto, which you can also request manually:
+
+```
+   cmake .. -DCOMPILE_LAPACK=ON
    make -j
 ```
 
@@ -136,64 +146,6 @@ using your favourite tool e.g.
 ```
    vimdiff stdout stdout.bad
 ```
-
-## 4. Developing & Etiquette
-
-Developers are very welcome!
-
-Just contact Dylan, and you will be added to the list so you can push back your changes.
-
-### What you need to know about programming
-
-* I hope you know how to use `git`?
-* We use the `foo` preprocessor which converts to `Fortran03`
-  - So knowing something about modern `Fortran` is essential.
-  - There is a description of `foo` on some web pages, somewhere
-  - But probably it is easier to look at the code.
-* Also, we use an object oriented style
-  - Each file represents an abstract data type or class.
-* All objects are "friends"
-  - The derived types are in the `types.foo` file.
-
-### The rules
-
-Most of this is common sense anyway.
-
-* Initially, do your work in a branch.
-* Do not break any tests 
-  - This code is used in at least two commercial projects!
-* Ensure there are no warnings when you compile under `-DCMAKE_BUILD_TYPE=debug`
-  - As far as possible
-* Methods
-  - Should have long meaningful names
-  - Should have meaningful comments
-  - Method arguments should be explained
-  - Any state changes in the `self` object should be explained
-  - If there are no side effects, please declare it PURE.
-  - Declare the intent of all method arguments, including `self`, even if it is `INOUT`
-  - No unused arguments and no unused variables, as far as possible.
-  - Liberally use method preconditions - they aid documentation and bug detection
-  - Keep methods short, to one screenful if possible. Call helper methods!
-* If you must keep dead code, or display alternative algorithms, keep it neat:
-  - Make a main `algorithm` 
-  - Let it call the alternatives `algorthm_v1`, `algorithm_v2`, ... 
-  - This way we can learn what works and what doesn't.
-* Avoid using capitals for variables
-  - Capitals are macros and may be used for types
-  - One or two letter capitals for variables are OK
-* For array allocation | deallocation use
-  - `.create` | `.destroy` 
-  - `.allocated` | `.deallocated` (for allocatables)
-  - `.associated` | `.disassociated`(for pointers)
-  - Use `@` symbol for allocatables
-  - Use `*` symbol for pointers
-* Indentation
-  - Use the standard 3 space indent for `Fortran`, so `vim` collapsing works.
-  - Plus, it looks better.
-* If you satisy all the above, push it to the main branch!
-  - Don't forget to delete the working branch.
-
-That's all.
 
 ## Problems, bugs, contributions
 
