@@ -141,19 +141,19 @@ contains
          c3 = .atom(c).position(3)
 
          ! Make moments
-         q               = sum(N0)
+         q               = VEC{REAL}:sum_elements(N0)
          n_e             = n_e + q
 
-         dipole(1)       = sum(N0*(r1-c1))
-         dipole(2)       = sum(N0*(r2-c2))
-         dipole(3)       = sum(N0*(r3-c3))
+         dipole(1)       = VEC{REAL}:sum_elements(N0*(r1-c1))
+         dipole(2)       = VEC{REAL}:sum_elements(N0*(r2-c2))
+         dipole(3)       = VEC{REAL}:sum_elements(N0*(r3-c3))
 
-         quadrupole(1,1) = sum(N0*(r1-c1)*(r1-c1))
-         quadrupole(2,2) = sum(N0*(r2-c2)*(r2-c2))
-         quadrupole(3,3) = sum(N0*(r3-c3)*(r3-c3))
-         quadrupole(1,2) = sum(N0*(r1-c1)*(r2-c2))
-         quadrupole(1,3) = sum(N0*(r1-c1)*(r3-c3))
-         quadrupole(2,3) = sum(N0*(r2-c2)*(r3-c3))
+         quadrupole(1,1) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r1-c1))
+         quadrupole(2,2) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r2-c2))
+         quadrupole(3,3) = VEC{REAL}:sum_elements(N0*(r3-c3)*(r3-c3))
+         quadrupole(1,2) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r2-c2))
+         quadrupole(1,3) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r3-c3))
+         quadrupole(2,3) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r3-c3))
 
          quadrupole(2,1) = quadrupole(1,2)
          quadrupole(3,1) = quadrupole(1,3)
@@ -335,7 +335,7 @@ contains
                      end
                   end
                else
-                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+                  sha.make_skip_grid(grida,n_keep,xa,ya,za,a2,skipa,n_pt)
                end
                bf_grid(sa).element => grida
 
@@ -544,21 +544,22 @@ contains
    ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
 
       rc,ra :: VEC{REAL}(3)
-      Wc,wt, xa,ya,za,a2, rho :: VEC{REAL}*
-      pi,pj,pn :: VEC{INT}*
-      skipa0,skipab :: VEC{BIN}*
-      k_pts,pt,bf_save :: MAT{REAL}*
+      Wc,wt, xa,ya,za,a2, rho, ga,gb :: VEC{REAL}*
+      overlapping_atom, pi,pj,pn :: VEC{INT}*
+      skipa0,skipab,skipa,skipb :: VEC{BIN}*
+      k_pts,pt,grida,gridb,bf_save :: MAT{REAL}*
       sha :: SHELL1
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
       sf, II  :: CPX
       cutoff,sc,s2, k1,k2,k3,kr, Dab, fac, val :: REAL
       n_atom,n_k,n_pt,n_keep :: INT
-      u,c,as, a,b,i,j,k,n,p :: INT
-      ca,oa,fsa,lsa,fba :: INT
-      cb,ob,fsb,lsb :: INT
-      sa,fa,la,na :: INT
+      u,c,ca,cb :: INT
+      oa,fsa,lsa,fba :: INT
+      ob,fsb,lsb :: INT
+      sa,fa,la,na, as :: INT
       sb,fb,lb,nb :: INT
+      a,b,i,j,k,n,p :: INT
       spin :: BIN
 
       ! Make sure HA stuff is there
@@ -617,6 +618,9 @@ contains
          s2 = ONE/sc
        ! s2 = s2*s2
 
+         ! Overlapping atoms
+         overlapping_atom => .overlapping_atoms_for_atom(c).element
+
          ! Get the Becke grid for atom "c" (leaky)
          .becke_grid.make_grid(pt,wt,bf_save,c)
          n_pt = pt.dim1
@@ -626,7 +630,7 @@ contains
          ! are used ... otherwise nothing is skipped
          Wc.create(n_pt)
          if (.use_interpolators) then
-            .GRID:make_stockholder_atom_grid(Wc,c,pt,.overlapping_atoms_for_atom(c)[:])
+            .GRID:make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
          else
             .GRID:make_stockholder_atom_grid(Wc,c,pt)
          end
@@ -635,7 +639,7 @@ contains
          wt = Wc*wt
          Wc.destroy
 
-         ! Prune the grid with new "wt", get saved bf grid, bf_save,
+         ! Prune the grid with new "wt", get saved bf grid bf_save,
          ! and new no of points, n_pt (leaky)
          .becke_grid.prune_grid(pt,wt,bf_save)
          n_pt = pt.dim1
@@ -649,9 +653,9 @@ contains
          rho = ZERO
 
          ! Loop c-overlapping atoms a
-         do ca = 1,.overlapping_atoms_for_atom(c).element.dim
+         do ca = 1,overlapping_atom.dim
 
-            oa  = .overlapping_atoms_for_atom(c)[ca]
+            oa  = overlapping_atom(ca)
             fsa = .first_shell_for_atom(oa)
             lsa =  .last_shell_for_atom(oa)
             fba = .first_basis_fn_for_atom(oa)
@@ -663,7 +667,7 @@ contains
             ! Loop shells on atom a
             do sa = fsa,lsa
 
-               ! Shell a limit
+               ! Shell a limits
                fa = .first_basis_fn_for_shell(sa)
                la =  .last_basis_fn_for_shell(sa)
                na = la - fa + 1
@@ -674,40 +678,41 @@ contains
                sha.position = ra
 
                ! Make shell "sa" skip list
-               bf_skip(sa).element.create(n_pt)
-               sha.make_skip_list(bf_skip(sa).element,n_keep,a2,skipa0,n_pt,cutoff)
+               skipa.create(n_pt)
+               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
 
                ! Next shell "sa" if no sig. points
                if (n_keep==0) then
-                  bf_skip(sa).element.destroy
+                  skipa.destroy
                   cycle
                end
 
                ! Assign the "sa" skipa list
-             ! bf_skip(sa).element => skipa
+               bf_skip(sa).element => skipa
 
                ! Make/copy the "sa" basis function grida
                ! This must be copied since skipa could be TRUE
-               bf_grid(sa).element.create(n_keep,na)
+               grida.create(n_keep,na)
                if (oa/=c) then
                   ! Calculate grid if necessary
-                  sha.make_skip_grid(bf_grid(sa).element,n_keep,na,xa,ya,za,a2,bf_skip(sa).element,n_pt)
+                  sha.make_skip_grid(grida,n_keep,xa,ya,za,a2,skipa,n_pt)
                else
                   ! Extract grid values from saved grid values
                   do a = 1,na
                      i = 0
                      do n = 1,n_pt
-                        if (bf_skip(sa)[n]) cycle
+                        if (skipa(n)) cycle
                         i = i + 1
-                        bf_grid(sa)[i,a] = bf_save(n,a+fa-fba)
+                        grida(i,a) = bf_save(n,a+fa-fba)
                      end
                   end
                end
+               bf_grid(sa).element => grida
 
                ! Loop c-overlapping atoms b
                do cb = 1,ca
 
-                  ob  = .overlapping_atoms_for_atom(c)[cb]
+                  ob  = overlapping_atom(cb)
                   fsb = .first_shell_for_atom(ob)
                   lsb =  .last_shell_for_atom(ob)
 
@@ -722,8 +727,12 @@ contains
                      lb = .last_basis_fn_for_shell(sb)
                      nb = lb - fb + 1
 
+                     ! Set the "sb" basis function grid
+                     skipb => bf_skip(sb).element
+                     gridb => bf_grid(sb).element
+
                      ! How many points in common? Save time?
-                     skipab(1:n_pt) = bf_skip(sa).element OR bf_skip(sb).element
+                     skipab(1:n_pt) = skipa OR skipb
                      n_keep = count(NOT skipab(1:n_pt))
                      if (n_keep==0) cycle
 
@@ -736,13 +745,15 @@ contains
                      if (na*nb==1) then ! s.s product
 
                         ! Add density contribution to rho
+                        ga => grida(:,1)
+                        gb => gridb(:,1)
                         Dab = fac*.density_matrix.restricted(fa,fb)
                         i = 0; j = 0
                         do n = 1,n_pt
-                           if (NOT bf_skip(sa)[n]) i = i + 1
-                           if (NOT bf_skip(sb)[n]) j = j + 1
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
                            if (skipab(n)) cycle
-                           val    = bf_grid(sa)[i,1]*bf_grid(sb)[j,1]*Dab
+                           val    = ga(i)*gb(j)*Dab
                            rho(n) = rho(n) + val
                         end
 
@@ -756,8 +767,8 @@ contains
                         ! Make mapper arrays
                         p = 0; i = 0; j = 0
                         do n = 1,n_pt
-                           if (NOT bf_skip(sa)[n]) i = i + 1
-                           if (NOT bf_skip(sb)[n]) j = j + 1
+                           if (NOT skipa(n)) i = i + 1
+                           if (NOT skipb(n)) j = j + 1
                            if (skipab(n)) cycle
                            p = p + 1
                            pi(p) = i
@@ -767,13 +778,15 @@ contains
 
                         ! Add density contribution to rho
                         do a = 1,na
+                           ga => grida(:,a)
                            do b = 1,nb
+                              gb  => gridb(:,b)
                               Dab = fac*.density_matrix.restricted(fa+a-1,fb+b-1)
                               do p = 1,n_keep
                                  i = pi(p)
                                  j = pj(p)
                                  n = pn(p)
-                                 val    = bf_grid(sa)[i,a]*bf_grid(sb)[j,b]*Dab
+                                 val    = ga(i)*gb(j)*Dab
                                  rho(n) = rho(n) + val
                               end
                            end
@@ -796,18 +809,15 @@ contains
 
          ! Make the (unique) structure factors
          do k = 1,n_k
-
             k1 = k_pts(k,1)
             k2 = k_pts(k,2)
             k3 = k_pts(k,3)
-
             sf = IMAGIFY(ZERO)
             do i = 1,n_pt
                kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
                sf = sf + rho(i)*exp(IMAGIFY(kr))
             end
             sf_n(k,u) = sf * s2
-
          end
 
          ! Clean up atom "c" stuff
@@ -840,7 +850,7 @@ contains
 
    end
 
-   symmetrize_unique_HA_SFs(sf_n) ::: PURE
+   symmetrize_unique_HA_SFs(sf_n)
    ! Get "sf_n", the static structure factors for the symmetry related
    ! K points with *no* thermal smearing, for every unique atom.
    ! NOTE: call .:make_Hirshfeld_inputs(skip_NOs=TRUE) beforehand!
@@ -1253,7 +1263,7 @@ contains
       if (.scfdata.is_guess)  return
 
       ! Add cluster charges if needed
-      ! Includes the self-consistent case
+      ! NOTE: includes the self-consisten case
       if (.scfdata.using_cluster_charges) then
 
          if  (NOT .Hirshfeld_atom_info_made) then
@@ -1701,8 +1711,7 @@ contains
    ! Make the point charge matrix "Z" from the point charges in .atom
    ! and the positions derived from ".scfdata.cluster".
    ! WARNING: the crystal asym unit charges must be defined.
-      self :: IN
-      Z :: MAT{REAL}, OUT
+      Z :: MAT{REAL}
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.associated,"no atom list")
@@ -1717,41 +1726,50 @@ contains
       sh :: SHELL2
 
       ! Set up the cluster ... leaky
-    ! .scfdata.cluster.destroy
-    ! .scfdata.cluster.create(.crystal)
+      .scfdata.cluster.destroy
+      .scfdata.cluster.create(.crystal)
 
-    ! stdout.text("crystal unit cell:")
-    ! .crystal.put_unit_cell_geometry
+      if (.BASE:debugging("make_pt_charge_matrix")) then
+      stdout.text("crystal unit cell:")
+      .scfdata.cluster.crystal.put_unit_cell_geometry
+      end
 
-      ! Make the cluster of molecules
-      .crystal.destroy_cluster_info
-      .crystal.set_generation_method("within_radius")
-      .crystal.set_defragment(.scfdata.defragment)
-      .crystal.set_radius(.scfdata.cluster_radius)
-      .crystal.make_cluster_info ! leaky
+      ! Make the cluster
+      .scfdata.cluster.set_generation_method("within_radius")
+      if (.scfdata.defragment) then
+         .scfdata.cluster.defragment= TRUE
+      else
+         .scfdata.cluster.defragment= FALSE
+      end
+      .scfdata.cluster.radius = .scfdata.cluster_radius
+      .scfdata.cluster.make_info ! leaky
 
-    ! stdout.text("cluster information:")
-    ! .crystal.put_occupation_list
+      if (.BASE:debugging("cluster charges")) then
+      stdout.text("cluster information:")
+      .scfdata.cluster.put
+      end
 
       ! Make the cluster charges
-      n_charges = .crystal.n_atoms - .crystal.n_fragment_atoms
+      n_charges = .scfdata.cluster.n_atoms - .scfdata.cluster.n_fragment_atoms
 
       if (NOT .scfdata.using_qq_cluster_charges) then
          n_charges = 3*n_charges
          charge.create(n_charges)
          pos.create(3,n_charges)
-         .crystal.make_non_fragment_mu_charges(pos,charge)
+         .scfdata.cluster.make_non_fragment_mu_charges(pos,charge)
       else
          n_charges = 9*n_charges
          charge.create(n_charges)
          pos.create(3,n_charges)
-         .crystal.make_non_fragment_qq_charges(pos,charge)
+         .scfdata.cluster.make_non_fragment_qq_charges(pos,charge)
       end
 
-    ! stdout.text("Cluster point charges:")
-    ! stdout.put(charge)
-    ! stdout.text("Cluster point charge positions:")
-    ! stdout.put(transpose(pos))
+      if (.BASE:debugging("cluster charges")) then
+      stdout.text("Cluster point charges:")
+      stdout.put(charge)
+      stdout.text("Cluster point charge positions:")
+      stdout.put(transpose(pos))
+      end
 
       ! Make the charge contribution to one electron Hamiltonian
       Z = ZERO
@@ -1778,7 +1796,7 @@ contains
       else
          Z.symmetric_reflect
       end
-    ! .BASE:put_debug(Z,"make_pt_charge_matrix: Z")
+      .BASE:put_debug(Z,"make_pt_charge_matrix: Z")
 
 
       if (.scfdata.save_cluster_charges) then
@@ -1918,7 +1936,7 @@ contains
                      end
                   end
                else
-                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+                  sha.make_skip_grid(grida,n_keep,xa,ya,za,a2,skipa,n_pt)
                end
                bf_grid(sa).element => grida
 
@@ -2261,7 +2279,6 @@ contains
    usual_scf ::: leaky
    ! Do an SCF calculation. The .molecular_orbitals,
    ! .orbital_energies, and .density_matrix are produced as results.
-      self :: INOUT
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.associated,   "no atom list")
@@ -3306,7 +3323,7 @@ contains
                      end
                   end
                else
-                  sha.make_skip_grid(grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+                  sha.make_skip_grid(grida,n_keep,xa,ya,za,a2,skipa,n_pt)
                end
                bf_grid(sa).element => grida
 

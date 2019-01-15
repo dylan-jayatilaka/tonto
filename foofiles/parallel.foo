@@ -10,6 +10,7 @@ module PARALLEL
    USE mpi, only: MPI_DOUBLE_COMPLEX
    USE mpi, only: MPI_COMM_WORLD
    USE mpi, only: MPI_SUM
+   USE mpi, only: MPI_LOR
    USE mpi, only: MPI_STATUS_SIZE
    USE mpi, only: MPI_INIT
    USE mpi, only: MPI_COMM_DUP
@@ -517,13 +518,38 @@ contains
 
    end
 
+! ==============
+! Logical Reduce
+! ==============
+   
+   parallel_or(bin) ::: template
+   ! This routine collects binary statements, and returns true if one
+   ! binary statements is true.
+      bin :: BIN, INOUT
+
+   ENSURE(.is_parallel,"must be in a parallel environment")
+
+      tmp :: BIN
+
+#ifdef MPI
+      call MPI_ALLREDUCE(bin,tmp,1,MPI_LOGICAL,MPI_LOR,MPI_COMM_WORLD,.mpi_error)
+      bin = tmp
+#else
+      bin = bin
+      tmp = bin
+      self = self
+      DIE("wtf?")
+#endif
+
+   end
+
 ! =======================
 ! Barrier Synchronization
 ! =======================
 
    barrier ::: template 
    ! Sets up a barrier for some communicator.
-
+   self :: INOUT
    ENSURE(.is_parallel,"must be in a parallel environment")
       
       
@@ -531,17 +557,18 @@ contains
       call MPI_BARRIER(MPI_COMM_WORLD,.mpi_error)
 #else
       DIE("wtf?")
+      self = self
 #endif
 
    end
 
    parallel_wait(request) ::: template 
    ! Stalls a processor until a request is complete.
-      request :: INT, IN
+      request :: INT, INOUT
    ENSURE(.is_parallel,"must be in a parallel environment")
       
-      status :: VEC{INT}*
 #ifdef MPI
+      status :: VEC{INT}*
       ALLOCATE(status(MPI_STATUS_SIZE))
 #endif      
       
@@ -550,6 +577,8 @@ contains
       DEALLOCATE(status)
 #else
       DIE("wtf?")
+      self = self
+      request = request
 #endif
    end
 
@@ -559,8 +588,8 @@ contains
       requests :: VEC{INT}, IN
    ENSURE(.is_parallel,"must be in a parallel environment")
       
-      status :: VEC{INT}*
 #ifdef MPI
+      status :: VEC{INT}*
       ALLOCATE(status(MPI_STATUS_SIZE))
 #endif      
       
@@ -569,6 +598,7 @@ contains
       DEALLOCATE(status)
 #else
       DIE("wtf?")
+      self = self
 #endif
 
    end
@@ -579,7 +609,7 @@ contains
 
    isend(var,processor,tag,req) ::: template
    ! Asynchronous send variable "var" from "processor" to some other processor.
-      var :: VAR_TYPE, IN
+      var :: VAR_TYPE, INOUT
       processor :: INT, IN
       tag :: INT, IN, optional
       req :: INT, OUT, optional
@@ -601,6 +631,12 @@ contains
 #else
       DIE("wtf?")
       proc = proc
+      req = req
+      self = self
+      request =1 
+      var = var
+      if(present(tag)) mtag = tag
+      if (present(req)) req = request
 #endif
 
    end
@@ -733,7 +769,14 @@ contains
       if(present(req)) req = request
 #else
       DIE("wtf?")
+      var = var
       proc = proc
+      req = req
+      self = self
+      request = 1
+      mtag = mtag
+      if(present(tag)) mtag = tag
+      if (present(req)) req = request
 #endif
 
    end
@@ -845,7 +888,7 @@ contains
 
    send(var,processor,tag) ::: template
    ! Send "var" from this processor to some other "processor".
-      var :: VAR_TYPE, IN
+      var :: VAR_TYPE, INOUT
       processor :: INT, IN
       tag :: INT, IN, optional
 
@@ -862,10 +905,14 @@ contains
 
 #ifdef MPI
       if(present(tag)) mtag = tag
-      call MPI_SEND(var,LEN,MPI_TYPE,proc,mtag,MPI_COMM_WORLD,.mpi_error)
+      call MPI_SSEND(var,LEN,MPI_TYPE,proc,mtag,MPI_COMM_WORLD,.mpi_error)
 #else
       DIE("wtf?")
       proc = proc
+      self = self
+      mtag = mtag
+      if(present(tag)) mtag = tag
+      var = var
 #endif
 
    end
@@ -986,8 +1033,8 @@ contains
    ENSURE(.is_parallel,"must be in a parallel environment")
 
       proc,mtag :: INT
-      status :: VEC{INT}*
 #ifdef MPI
+      status :: VEC{INT}*
       ALLOCATE(status(MPI_STATUS_SIZE))
 #endif      
       if (FALSE) self = self
@@ -1002,7 +1049,11 @@ contains
       DEALLOCATE(status)
 #else
       DIE("wtf?")
+      var = var
       proc = proc
+      self = self
+      mtag = mtag
+      if(present(tag)) mtag = tag
 #endif
 
    end
@@ -1106,6 +1157,227 @@ contains
 
    recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
    ! Receive variable "var" from "processor".
+   end
+
+! =====================
+! Blocking send/receive
+! =====================
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: template
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+      self :: INOUT
+      vars :: VAR_TYPE, IN
+      varr :: VAR_TYPE, INOUT
+      processor :: INT, IN
+      processorr :: INT, IN, optional
+      tags,tagr :: INT, IN, optional
+
+
+   ENSURE(.is_parallel,"must be in a parallel environment")
+
+      proc1,proc2,mtag1,mtag2 :: INT
+#ifdef MPI
+      status :: VEC{INT}*
+      ALLOCATE(status(MPI_STATUS_SIZE))
+#endif      
+      if (FALSE) self = self
+
+      mtag1 = 1
+      mtag2 = 1
+      proc1 = processor
+      proc2 = processor
+
+#ifdef MPI
+      if(present(tags)) mtag1 = tags
+      if(present(tagr)) mtag2 = tagr
+      if(present(processorr)) proc2 = processorr
+      call MPI_SENDRECV(vars,LEN1,MPI_TYPE,proc1,mtag1,varr,LEN2,MPI_TYPE,proc2,mtag2,MPI_COMM_WORLD,status,.mpi_error)
+      DEALLOCATE(status)
+#else
+      DIE("wtf?")
+      self = self
+      varr = vars
+      if(present(tags)) mtag1 = tags
+      if(present(tagr)) mtag2 = tagr
+      if(present(processorr)) proc2 = processorr
+#endif
+
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN1=>len(vars)), LEN2=>len(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN1=>1, LEN2=>1)
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN1=>1, LEN2=>1)
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>1, LEN2=>1)
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>1, LEN2=>1)
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(vars)*len(vars)), LEN2=>size(varr)*len(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(vars)*len(vars)), LEN2=>size(varr)*len(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
+   end
+
+   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
+   ! Send a variable to a processor and receives a different variable
+   ! form the same or different processor. Note: this only works for
+   ! variables of the same type, as astronomical amounts of code 
+   ! would be required to do this for the individual types.
    end
 
 ! =====================================

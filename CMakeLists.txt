@@ -43,6 +43,11 @@ project(tonto
     VERSION ${TONTO_VERSION})
 
 # LAPACK
+find_package(LAPACK)
+if(${LAPACK_FOUND})
+else()
+    set(COMPILE_LAPACK "ON")
+endif() 
 if(COMPILE_LAPACK)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
     set(LAPACK_LIBRARIES 
@@ -50,8 +55,6 @@ if(COMPILE_LAPACK)
         ${PROJECT_BINARY_DIR}/external/lapack-release/lib/libblas.a
     )
     message(STATUS "Compiling lapack: ${LAPACK_LIBRARIES}")
-else()
-    find_package(LAPACK REQUIRED)
 endif()
 
 if(MPI)
