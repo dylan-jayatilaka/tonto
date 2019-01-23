@@ -1,0 +1,156 @@
+! This program calculates the anomalous dispersion correction
+! for the structure and list of reflections in a given CIF
+!
+! Copyright (C) Dylan Jayatilaka, 2019
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+
+program run_DC
+
+   implicit none
+
+   command_line :: COMMAND_LINE*
+   message,name :: STR
+   m :: MOLECULE*
+   c2,phase :: REAL
+   n_refl,u,k :: INT
+   II,anom,val :: CPX
+   r,x,kv :: VEC{REAL}(3)
+   adp2 :: MAT{REAL}(3,3)
+   k_pt :: MAT{REAL}@
+   F_anom :: VEC{CPX}@
+
+   ! Macro to create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Set stdout & stderr to screen
+   stdout.create_stdout
+   stderr => stdout 
+
+   ! Open input files
+   stderr.create_stderr
+   stderr.open_for("write")
+   stdin.create_stdin
+   stdout.create_stdout
+
+   ! Banner
+   stdout.flush
+   stdout.text("================================")
+   stdout.text("Anomalous dispersion corrections")
+   stdout.text("================================")
+   stdout.flush
+   stdout.text("Usage:")
+   stdout.flush
+   stdout.text("run_dc <cif-file>")
+   stdout.flush
+
+   ! Get the command line
+   command_line.create
+   command_line.process_options
+
+   ! Sanity check
+   message = "argument list: read the info above!"
+   DIE_IF(NOT command_line.has_arguments,trim(message))
+   DIE_IF(    command_line.has_options  ,trim(message))
+   DIE_IF(NOT command_line.n_args==1 ,trim(message))
+
+   ! Get cif file name
+   name = command_line.arg(1)
+
+   stdout.show("CIF file name = ",name)
+   stdout.flush
+
+   ! Create molecule
+   m.MAIN:setup
+
+   ! Process the cif file
+   m.cif.create(name)
+   m.CE:process_CIF
+
+   ! Print out
+   m.BASE:put
+
+   ! Arrays
+   n_refl = m.crystal.data.reflections.dim
+   k_pt.create(n_refl,3)
+   F_anom.create(n_refl)
+
+   ! Make the k points
+   m.crystal.data.reflections.make_k_pts(k_pt,m.crystal.unit_cell)
+
+   stdout.text("k_pts:")
+   stdout.put(k_pt)
+
+   ! Initialize
+   II = IMAGIFY(ONE)
+   F_anom = ZERO
+
+   ! Unit cell atoms u
+   do u = 1,m.crystal.n_unit_cell_atoms
+
+      ! Cartesian position
+      r = m.crystal.unit_cell_atom(u).position
+
+      ! Fractional
+      x = r
+      m.crystal.unit_cell.change_into_fractional(x)
+
+      ! Get ADP tensor
+      m.crystal.unit_cell_atom(u).put_ADP2_vector_to(adp2)
+
+      ! (f',f'')
+      anom = m.crystal.unit_cell_atom(u).dispersion_correction
+
+      ! Check
+      stdout.text("=====")
+      stdout.show("Unit cell atom u = ",u)
+      stdout.show("Element          = ",trim(m.crystal.unit_cell_atom(u).label))
+      stdout.show("Position         = ",r)
+      stdout.show("Fractioal coord  = ",x)
+      stdout.show("f'  (real)       = ",RE(anom))
+      stdout.show("f'' (imag)       = ",IM(anom))
+      stdout.text("adp2:")
+      stdout.put(adp2)
+
+      ! Add contribution for u-th atom
+      ! For all atoms u ...
+      do k = 1,n_refl
+
+         ! ADP tensor contracted with k vector
+         kv = k_pt(k,:)
+         c2 = adp2.contract_with(kv)*HALF
+
+         ! SF contribution (harmonic!)
+         phase = kv(1)*r(1) + kv(2)*r(2) + kv(3)*r(3) ! k.r
+         val   = anom * exp(II*phase) * exp(-c2)
+
+         ! Add contribution
+         F_anom(k) = F_anom(k) + val
+
+      end
+
+   end
+
+   ! Print result
+   stdout.text("F_anom:")
+   stdout.put(F_anom)
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end
