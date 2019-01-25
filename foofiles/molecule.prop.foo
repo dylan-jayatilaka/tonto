@@ -5369,16 +5369,16 @@ contains
       self :: IN
 
 #ifdef MPI
-      .:get_Bader_regions_para
+      .:get_Bader_basis_para
 #else
-      .:get_Bader_regions_sing
+      .:get_Bader_basins_sing
 #endif
 
    end
 
 ! Non-parallel algorithm
 
-   get_Bader_regions_sing
+   get_Bader_basins_sing
    ! Calculate the electron density and integrate
       self :: IN
 
@@ -5426,16 +5426,15 @@ contains
       dv :: REAL, IN
 
       n_path,n_basin :: INT
-      i,n,b,ng :: INT
+      i,m,b,ng :: INT
        x, y, z :: INT
       nx,ny,nz :: INT
-      qx,qy,qz :: INT
       dx,dy,dz :: INT
+      qx,qy,qz :: INT
+      mx,my,mz :: INT
       px,py,pz :: INT
-      pt :: VEC{INT}(3)
       path :: MAT{INT}*
       basin :: MAT3{INT}*
-      ED_max_at_pt :: VEC{REAL}*
       ED_max,ED_p,ED_q :: REAL
       EG_max,Grad,d :: REAL
       t1,t2,t3 :: REAL
@@ -5447,7 +5446,6 @@ contains
 
       ! Basin indices & ED values on path
       basin.create(nx+2,ny+2,nz+2)
-      ED_max_at_pt.create(0)
       
       basin = ZERO
       n_basin = ZERO
@@ -5455,81 +5453,85 @@ contains
   
       call cpu_time(t1)
       
-      ! Nonboundary region
-      do x = 2,nx+1
-      do y = 2,ny+1
+      ! Nonboundary grid points
       do z = 2,nz+1
+      do y = 2,ny+1
+      do x = 2,nx+1
 
          ! Any basin index?
          if (basin(x,y,z) /= 0) cycle
 
+         ! No! Start new path
          path.create(3,0)
          n_path = 0
-
-         ! Gives the length of the number of points in the
-         ! current list
          
-         pt = [x,y,z]
-  
+         ! Starting path point
+         px = x
+         py = y
+         pz = z
+
+         ! Follow maximum gradient
          do 
 
             ! Grad to small?
             if (EG_max==ZERO) exit
 
-            ! Found previous basin?
-            if (basin(pt(1),pt(2),pt(3)) > 0) exit
+            ! Landed on previously found basin?
+            if (basin(px,py,pz) > 0) exit
 
-            ! New path pt
-            px = pt(1)
-            py = pt(2)
-            pz = pt(3)
-
-            ! Energy at this pt
+            ! Energy at new path pt?
             ED_p   = ED(px,py,pz)
             ED_max = ED_p
             
-            ! Appends the current point to the list
+            ! Append new path pt to list
             n_path = n_path + 1
             path.append_column([px,py,pz])
             
-            ! Find neighbour point corresponding
-            ! to the largest gradient
-            n = 0
+            ! Loop over neighbours q around p that
+            ! corresponds to the max gradient value
+            m = 0
+            mx = px ! Max grad position
+            my = py
+            mz = pz
             EG_max = ZERO
-            do qx = px-1,px+1
-            do qy = py-1,py+1
             do qz = pz-1,pz+1
+            do qy = py-1,py+1
+            do qx = px-1,px+1
   
-               n = n + 1
+               m = m + 1
                
-               if (n==14) then
+               if (m==14) then
                      
                   ! Central point has d==0
                   if (ZERO >= EG_max) then
-                     pt(1)  = qx
-                     pt(2)  = qy
-                     pt(3)  = qz
+                     mx = qx
+                     my = qy
+                     mz = qz
                      EG_max = ZERO
                   end if
 
                else
 
-                  ! Calculate Grad
+                  ! Energy at neighbour q
                   ED_q = ED(qx,qy,qz)
                  
-                  dx   = qx - px
-                  dy   = qy - py
-                  dz   = qz - pz
-                  d    = dx*dx + dy*dy + dz*dz
-                  d    = sqrt(d)
+                  ! Grad separation
+                  dx = qx - px
+                  dy = qy - py
+                  dz = qz - pz
+                  d  = dx*dx + dy*dy + dz*dz
+                  d  = sqrt(d)
+
+                  ! Calculate Grad
                   Grad = (ED_q-ED_p)/d
                      
                   ! Bigger Grad found?
                   if (Grad <= EG_max) cycle
                  
-                  pt(1)  = qx
-                  pt(2)  = qy
-                  pt(3)  = qz
+                  ! Yes!
+                  mx = qx
+                  my = qy
+                  mz = qz
                   ED_max = ED_q
                   EG_max = Grad
 
@@ -5539,31 +5541,30 @@ contains
             end do
             end do
 
+            ! New path point
+            px = mx
+            py = my
+            pz = mz
+
          end do
          
   
-         ! Basin index
-         b = basin(pt(1),pt(2),pt(3))
+         ! Basin index at last path pt
+         b = basin(px,py,pz)
 
-         if (b > 0) then
-        
-            ! Reassign path to be in a "b" region
-            do i = 1,n_path
-               basin(path(1,i),path(2,i),path(3,i)) = b
-            end do
-        
-         else
-        
-            ! Brand new region
+         ! New basin?
+         if (b==0) then
             n_basin = n_basin + 1
-            do i =1,n_path
-               basin(path(1,i),path(2,i),path(3,i)) = n_basin
-            end do
+            b = n_basin
+         end
         
-            ! Stor useful info
-            ED_max_at_pt.append(ED_max)
-        
-         end if
+         ! Reassign path to be in a "b" region
+         do i = 1,n_path
+            px = path(1,i)
+            py = path(2,i)
+            pz = path(3,i)
+            basin(px,py,pz) = b
+         end do
 
          path.destroy
          EG_max = HUGE(ONE)
@@ -5576,14 +5577,13 @@ contains
       stdout.show("Elapsed time for gradient search",t2-t1)
   
       ! Output
-      .:put_Bader_region_info(ED,basin,n_basin,dv)
+      .:put_Bader_basin_info(ED,basin,n_basin,dv)
       
       ! Timing
       call cpu_time(t3)
       stdout.show("Elapsed time for summation and output",t3-t2)
 
       ! Clean
-      ED_max_at_pt.destroy
       basin.destroy
 
    end
@@ -5593,7 +5593,7 @@ contains
       self :: IN
       CP :: MAT3{INT}, IN
       ED :: MAT3{REAL}, IN
-      n_regions :: INT, IN
+      n_basin :: INT, IN
       dv :: REAL, IN
 
       x,y,z,i :: INT
@@ -5606,8 +5606,8 @@ contains
       ny = ED.dim2 - 2
       nz = ED.dim3 - 2
 
-      EDS.create(n_regions)
-      VOL.create(n_regions)
+      EDS.create(n_basin)
+      VOL.create(n_basin)
 
       ! Add up volumes
       EDS = ZERO
@@ -5629,7 +5629,7 @@ contains
       stdout.flush
       stdout.text("This method uses the Henkelman (2007) method")
       stdout.flush
-      stdout.show("No. of basins found = ", n_regions)
+      stdout.show("No. of basins found = ", n_basin)
       stdout.show("Voxel volume        = ", dv)
       stdout.show("Volume of grid      = ", sum(VOL))
       stdout.show("No. of electrons    = ", sum(EDS))
@@ -5659,7 +5659,7 @@ contains
 
 ! Parallel algorithm
 
-   get_Bader_regions_para
+   get_Bader_basins_para
    ! Calculate the electron density and integrate
       self :: IN
 
