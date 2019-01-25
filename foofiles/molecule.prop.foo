@@ -5376,6 +5376,8 @@ contains
 
    end
 
+! Non-parallel algorithm
+
    get_Bader_regions_sing
    ! Calculate the electron density and integrate
       self :: IN
@@ -5383,7 +5385,6 @@ contains
    ENSURE(.plot_grid.associated,"No plot_grid!")
 
       n,nx,ny,nz :: INT
-      axes :: MAT{REAL}(3,3)
       CP :: MAT3{INT}*
       EDS,VOL :: VEC{REAL}*
       grid :: VEC{REAL}*
@@ -5413,40 +5414,44 @@ contains
       grid.destroy
 
       ! Do it
-      axes = .plot_grid.plot_axes
-      .:cubes_to_basin(g3,.plot_grid.width,axes)
-
+      .:cubes_to_basin(g3,.plot_grid.pixel_volume)
 
    end
 
-   cubes_to_basin(ED,gridlength,gridvector) ::: leaky
+   cubes_to_basin(ED,dv) ::: leaky
    ! A tonto implementation of the cubes to basin code, originally
    ! implemented by Florian from Tobias (spelling).
       self :: IN
       ED :: MAT3{REAL}, IN
-      gridlength :: VEC{REAL}(3), IN
-      gridvector :: MAT{REAL}(3,3), IN
+      dv :: REAL, IN
 
-      basin :: MAT3{INT}*
-      b :: INT
-      i,n,x,y,z,px,py,pz,ix,iy,iz,n_path,n_basin :: INT
+      n_path,n_basin :: INT
+      i,n,b,ng :: INT
+       x, y, z :: INT
       nx,ny,nz :: INT
-      Grad,Grad_max,d,ED_max,ED_p,ED_i,dv,t1,t2,t3 :: REAL
+      qx,qy,qz :: INT
+      dx,dy,dz :: INT
+      px,py,pz :: INT
       pt :: VEC{INT}(3)
       path :: MAT{INT}*
+      basin :: MAT3{INT}*
       ED_max_at_pt :: VEC{REAL}*
+      ED_max,ED_p,ED_q :: REAL
+      EG_max,Grad,d :: REAL
+      t1,t2,t3 :: REAL
   
       ! Remove boundary
       nx = ED.dim1 - 2
       ny = ED.dim2 - 2
       nz = ED.dim3 - 2
 
+      ! Basin indices & ED values on path
       basin.create(nx+2,ny+2,nz+2)
       ED_max_at_pt.create(0)
       
       basin = ZERO
       n_basin = ZERO
-      Grad_max = huge(ONE)
+      EG_max = huge(ONE)
   
       call cpu_time(t1)
       
@@ -5469,7 +5474,7 @@ contains
          do 
 
             ! Grad to small?
-            if (Grad_max==ZERO) exit
+            if (EG_max==ZERO) exit
 
             ! Found previous basin?
             if (basin(pt(1),pt(2),pt(3)) > 0) exit
@@ -5490,43 +5495,43 @@ contains
             ! Find neighbour point corresponding
             ! to the largest gradient
             n = 0
-            Grad_max = ZERO
-            do ix = px-1,px+1
-            do iy = py-1,py+1
-            do iz = pz-1,pz+1
+            EG_max = ZERO
+            do qx = px-1,px+1
+            do qy = py-1,py+1
+            do qz = pz-1,pz+1
   
                n = n + 1
                
                if (n==14) then
                      
                   ! Central point has d==0
-                  if (ZERO >= Grad_max) then
-                     pt(1)  = ix
-                     pt(2)  = iy
-                     pt(3)  = iz
-                     Grad_max = ZERO
+                  if (ZERO >= EG_max) then
+                     pt(1)  = qx
+                     pt(2)  = qy
+                     pt(3)  = qz
+                     EG_max = ZERO
                   end if
 
                else
 
-                  ! Calculatre Grad
-                  ED_i = ED(ix,iy,iz)
+                  ! Calculate Grad
+                  ED_q = ED(qx,qy,qz)
                  
-                  d = (((ix-px)*gridlength(1))**2 &
-                    +  ((iy-py)*gridlength(2))**2 &
-                    +  ((iz-pz)*gridlength(3))**2 )
-                  d = sqrt(d)
-
-                  Grad = (ED_i-ED_p)/d
+                  dx   = qx - px
+                  dy   = qy - py
+                  dz   = qz - pz
+                  d    = dx*dx + dy*dy + dz*dz
+                  d    = sqrt(d)
+                  Grad = (ED_q-ED_p)/d
                      
                   ! Bigger Grad found?
-                  if (Grad <= Grad_max) cycle
+                  if (Grad <= EG_max) cycle
                  
-                  pt(1)  = ix
-                  pt(2)  = iy
-                  pt(3)  = iz
-                  ED_max = ED_i
-                  Grad_max = Grad
+                  pt(1)  = qx
+                  pt(2)  = qy
+                  pt(3)  = qz
+                  ED_max = ED_q
+                  EG_max = Grad
 
                end
 
@@ -5561,7 +5566,7 @@ contains
          end if
 
          path.destroy
-         Grad_max = HUGE(ONE)
+         EG_max = HUGE(ONE)
 
       end do
       end do
@@ -5570,12 +5575,6 @@ contains
       call cpu_time(t2)
       stdout.show("Elapsed time for gradient search",t2-t1)
   
-      ! Cross product for the volume (or so I am told)
-      ! Divide by total number of points! Move to plot grid
-      ! Corrects dv with the gridsize
-      dv = abs(gridvector.determinant)
-      dv = dv/(nx-1)/(ny-1)/(nz-1) * product(gridlength)
-
       ! Output
       .:put_Bader_region_info(ED,basin,n_basin,dv)
       
@@ -5589,7 +5588,7 @@ contains
 
    end
 
-   put_Bader_region_info(ED,CP,n_regions,dv) ::: leaky
+   put_Bader_basin_info(ED,CP,n_basin,dv) ::: leaky
    ! Print out Bade4r info
       self :: IN
       CP :: MAT3{INT}, IN
@@ -5623,20 +5622,20 @@ contains
       end do
       end do
 
-      stdout.text("=====================")
-      stdout.text("Bader region analysis")
-      stdout.text("=====================")
+      stdout.text("====================")
+      stdout.text("Bader basin analysis")
+      stdout.text("====================")
 
       stdout.flush
       stdout.text("This method uses the Henkelman (2007) method")
       stdout.flush
-      stdout.show("No. of regions found = ", n_regions)
-      stdout.show("Voxel volume         = ", dv)
-      stdout.show("Volume of grid       = ", sum(VOL))
-      stdout.show("No. of electrons     = ", sum(EDS))
+      stdout.show("No. of basins found = ", n_regions)
+      stdout.show("Voxel volume        = ", dv)
+      stdout.show("Volume of grid      = ", sum(VOL))
+      stdout.show("No. of electrons    = ", sum(EDS))
 
       stdout.flush
-      stdout.text("Data for each Bader region:")
+      stdout.text("Data for each Bader basin:")
 
       ! Make table
       table.create(2)
