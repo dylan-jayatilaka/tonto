@@ -26,11 +26,13 @@ program run_DC
    command_line :: COMMAND_LINE*
    message,name :: STR
    m :: MOLECULE*
-   c2,phase :: REAL
    n_refl,u,k :: INT
+   c2,c3,c4,phase :: REAL
    II,anom,val :: CPX
    r,x,kv :: VEC{REAL}(3)
    adp2 :: MAT{REAL}(3,3)
+   adp3 :: MAT3{REAL}(3,3,3)
+   adp4 :: MAT4{REAL}(3,3,3,3)
    k_pt :: MAT{REAL}@
    F_anom :: VEC{CPX}@
 
@@ -93,6 +95,7 @@ program run_DC
    ! Make the k points
    m.crystal.data.reflections.make_k_pts(k_pt,m.crystal.unit_cell)
 
+   stdout.flush
    stdout.text("k_pts:")
    stdout.put(k_pt)
 
@@ -110,11 +113,22 @@ program run_DC
       x = r
       m.crystal.unit_cell.change_into_fractional(x)
 
-      ! Get ADP tensor
-      m.crystal.unit_cell_atom(u).put_ADP2_vector_to(adp2)
-
       ! (f',f'')
       anom = m.crystal.unit_cell_atom(u).dispersion_correction
+
+      ! Get ADP2 tensor
+      adp2 = ZERO
+      m.crystal.unit_cell_atom(u).put_ADP2_vector_to(adp2)
+
+      ! Anharmonic part
+      adp3 = ZERO
+      adp4 = ZERO
+      if (m.crystal.unit_cell_atom(u).has_ADP3s) then
+          m.crystal.unit_cell_atom(u).put_ADP3_vector_to(adp3)
+      end
+      if (m.crystal.unit_cell_atom(u).has_ADP4s) then
+          m.crystal.unit_cell_atom(u).put_ADP4_vector_to(adp4)
+      end
 
       ! Check
       stdout.text("=====")
@@ -125,7 +139,12 @@ program run_DC
       stdout.show("f'  (real)       = ",RE(anom))
       stdout.show("f'' (imag)       = ",IM(anom))
       stdout.text("adp2:")
-      stdout.put(adp2)
+      stdout.put(adp2*(ANGSTROM_PER_BOHR)**2)
+      stdout.text("adp3:")
+      stdout.put(adp3*(ANGSTROM_PER_BOHR)**3)
+      stdout.text("adp4:")
+      stdout.put(adp4*(ANGSTROM_PER_BOHR)**4)
+
 
       ! Add contribution for u-th atom
       ! For all atoms u ...
@@ -133,11 +152,15 @@ program run_DC
 
          ! ADP tensor contracted with k vector
          kv = k_pt(k,:)
-         c2 = adp2.contract_with(kv)*HALF
 
-         ! SF contribution (harmonic!)
+         ! Temp factor exponent part - same as tonto
+         c2 = adp2.contract_with(kv)*HALF
+         c3 = adp3.contract_with(kv)*SIXTH
+         c4 = adp4.contract_with(kv)*SIXTH*QUARTER
+
+         ! SF contribution (quartic anharmonic!)
          phase = kv(1)*r(1) + kv(2)*r(2) + kv(3)*r(3) ! k.r
-         val   = anom * exp(II*phase) * exp(-c2)
+         val   = anom * exp(II*phase) * exp(-c2) * (ONE - II*c3 + c4)
 
          ! Add contribution
          F_anom(k) = F_anom(k) + val
@@ -147,6 +170,7 @@ program run_DC
    end
 
    ! Print result
+   stdout.flush
    stdout.text("F_anom:")
    stdout.put(F_anom)
 
