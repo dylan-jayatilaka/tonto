@@ -1058,6 +1058,198 @@ contains
 
    end
 
+   cubify_Bader(ED,basin,n_basin) ::: leaky, private
+   ! Make a Bader isosurface using the standard marching cube algorithm
+   ! *without* any recursion, and assuming that a whole grid is
+   ! available in memory as "ED" with each grid point assigned a
+   ! "basin" index..
+      self :: INOUT
+      ED :: MAT3{REAL}, IN
+      basin :: MAT3{INT}, IN
+      n_basin :: INT, IN
+
+      x,y,z, capping_number, face_number, r, b :: INT
+      cube :: MARCHINGCUBE
+      cap_square :: CAPPING_SQUARE
+      info :: MAT3{VEC_{INT}}*
+      x_cap_info, y_cap_info, z_cap_info :: MAT3{VEC_{INT}}*
+      func_slab :: MAT3{REAL}*
+      point_slab :: MAT4{REAL}*
+      oblique, do_capping :: BIN
+
+      ! Set isosurface info defaults
+      .set_isosurface_info_arrays
+
+      ! .cube contains the isovalue and size/axes of grid
+      cube = .cube
+      cap_square = .cap_square
+
+      oblique = .plot_grid.use_unit_cell_as_bbox
+      if (oblique) cube.set_axes(.plot_grid.box_axes)
+
+      ! Make the 4-slab of data
+      point_slab.create(3,.plot_grid.n_x,.plot_grid.n_y,4) ! slab of points
+      func_slab.create(.plot_grid.n_x,.plot_grid.n_y,4)    ! function values
+
+      info.create(.plot_grid.n_x,.plot_grid.n_y,2,[0,11])  ! Saved vertex index info
+      info.zero
+
+      x_cap_info.create(.plot_grid.n_y,.plot_grid.n_z,2,[0,7])
+      x_cap_info.zero
+      y_cap_info.create(.plot_grid.n_x,.plot_grid.n_z,2,[0,7])
+      y_cap_info.zero
+      z_cap_info.create(.plot_grid.n_x,.plot_grid.n_y,2,[0,7])
+      z_cap_info.zero
+
+      do r = 1,n_basin
+
+         ! Find all the marching cubes. Loop bottom to top.
+         ! Do two layers at a time. End points are not looped,
+         ! they are only to get the normals and curvatures.
+         do z = 2,.plot_grid.n_z-2
+   
+            ! Get a new z-slab of function values
+            .update_4_slab(point_slab, func_slab, z, ED)
+   
+            ! Save previous edge info; zero current
+            info(:,:,1:1).set_to(info(:,:,2:2))
+            info(:,:,2:2).zero
+   
+            ! Loop over the slab;
+            ! x = left,  right
+            ! y = front, back
+            do y = 2,.plot_grid.n_y-2
+            do x = 2,.plot_grid.n_x-2
+   
+               ! Set cube points and function values
+               cube.set_vertex_info( &
+                  point_slab(:,x:x+1,y:y+1,2:3), &
+                  func_slab(x:x+1,y:y+1,2:3), &
+                  basin(x+1:x+2,y+1:y+2,z+1:z+2) )
+   
+               ! Set cube edge intersections
+               cube.set_case_info(r)
+   
+               ! If not on surface, do next cube except if we are on the boundary and doing caps
+               do_capping = (.cap_ends /= 0) AND .on_boundary(x,y,z)
+               if (NOT (cube.is_on_surface OR do_capping)) cycle
+   
+               ! Set up cube edge triangulation
+               cube.set_triangulation_info
+   
+               ! Use previous edge info, if available.
+               ! left = previous cube in x-direction
+               ! front = previous cube in y-direction
+               ! bottom - previous cube in z-direction
+               if (x>2) cube.set_left_info(left  =info(x-1,y  ,2).element)
+               if (y>2) cube.set_front_info(front=info(x  ,y-1,2).element)
+               if (z>2) cube.set_below_info(below=info(x  ,y  ,1).element)
+   
+               ! Get gradients
+               cube.set_gradient_info( func_slab(x-1:x+2,y-1:y+2,1:4) )
+   
+               ! Now do the interpolation
+               if (oblique) then; cube.interpolate_oblique_faces
+               else;              cube.interpolate_faces ! <<<<<<< What to do here?
+               end
+   
+               ! Store surface info
+               .append_new_face_info(cube)
+   
+               ! Determine which caps to add
+               if (do_capping) then
+   
+                  capping_number = .capping_number(x,y,z)
+   
+                  ! Six possible faces to test
+                  do b = 0,5
+   
+                     ! Find which faces to do (up to three)
+                     if (NOT BIT_SET_AT_POS_IN(capping_number,b)) cycle 
+   
+                     ! face_number starts at 1 not 0
+                     face_number = b + 1 
+   
+                     ! initialize the capping square from the corresponding marching cube
+                     cube.set_capping_square(face_number,cap_square)
+                     .set_edge_vertices(cap_square) ! Get vertices created for the cube
+                     cap_square.set_n_pt(.n_pt)
+   
+                     ! Depending on the face we are on, we initialize the cap to use vertices
+                     ! already generated for other surface caps. We do this by using the capping
+                     ! square to the "left" and the capping square "below" the capping square
+                     ! we are currently working on.
+                     ! The tricky part is the final argument to set_left_info or set_bottom_info - this
+                     ! boolean determines whether we need to flip the capping square.
+                     ! set_left_info(...,TRUE) flips the left and right edges
+                     ! set_bottom_info(...,TRUE) flips the top and bottom edges
+                     ! The capping square of 3 of the plotgrids faces always need flipping
+                     ! Because of the (complicated) interplay between the cubes coordinate system and that
+                     ! of the capping square, it turns out we need to flip...
+                     ! (i) bottom-top mapping for z=0 faces (b==0)
+                     ! (ii) left-right mapping for x=0 faces (b==2)
+                     ! (iii) left-right mapping for +y faces (b==5)
+                     if (b == 0 OR b ==1) then ! 0,+z faces
+                        if (x>2) cap_square.set_left_info(z_cap_info(x-1,y,b+1).element, FALSE)
+                        if (y>2) cap_square.set_bottom_info(z_cap_info(x,y-1,b+1).element, b==0)
+                     else if (b == 2 OR b == 3) then ! 0,+x faces
+                        if (y>2) cap_square.set_left_info(x_cap_info(y-1,z,b-1).element, b==2)
+                        if (z>2) cap_square.set_bottom_info(x_cap_info(y,z-1,b-1).element, FALSE)
+                     else if (b == 4 OR b == 5) then ! 0,+y faces
+                        if (x>2) cap_square.set_left_info(y_cap_info(x-1,z,b-3).element, b==5)
+                        if (z>2) cap_square.set_bottom_info(y_cap_info(x,z-1,b-3).element, FALSE)
+                     end
+   
+                     cap_square.triangulate
+                     .append_new_cap_info(cap_square)
+   
+                     if (b == 0 OR b == 1) then ! 0,+z faces
+                        z_cap_info(x,y,b+1)[4:7] = cap_square.edge_vertex_index(4:7)
+                     else if (b == 2 OR b == 3) then ! 0,+x faces
+                        x_cap_info(y,z,b-1)[4:7] = cap_square.edge_vertex_index(4:7)
+                     else ! 0 (b=4), +y (b=5) faces
+                        y_cap_info(x,z,b-3)[4:7] = cap_square.edge_vertex_index(4:7)
+                     end
+   
+                     cap_square.reset
+                  end
+   
+               end
+   
+               ! Keep interpolated vertex indices
+               info(x,y,2)[:] = cube.edge_vertex_index
+   
+               ! Reset cube, reset # of points
+               cube.reset
+               cube.set_n_pt(.n_pt)
+   
+            end
+            end
+   
+         end
+      end
+
+      ! Clean
+      info.destroy
+      point_slab.destroy
+      func_slab.destroy
+      x_cap_info.destroy
+      y_cap_info.destroy
+      z_cap_info.destroy
+
+      ! Compactify
+      .point.shrink_columns(.n_pt)
+      .point_gradient.shrink_columns(.n_pt)
+      .point_mean_curvature.shrink(.n_pt)
+      .point_gaussian_curvature.shrink(.n_pt)
+      .face.shrink_columns(.n_face)
+      .cap.shrink_columns(.n_cap)
+
+      ! Rotate
+      .rotate_gradients
+
+   end
+
    set_edge_vertices(cap_square)
    ! copy the edge vertex positions for the marching cube into the capping square
      cap_square :: CAPPING_SQUARE, INOUT
@@ -1846,15 +2038,16 @@ contains
    end
 
    update_4_slab(p,f,slice,func) ::: private
-   ! Make or update a "slice" of an array "f", a 4-slab of "func" function
-   ! values which are evaluated at the slab points "p".  The slab involves .plot_grid
-   ! points whose z values are in the range slice-1:slice+2.  The "p" points and
-   ! the function values f(:,:,2:3) correspond to the bottom and top of the
-   ! slice.  The other slabs f(:,:,1) and f(:,:,4) are used for finite
-   ! differences to get vertex gradients.
+   ! Make or update a "slice" of an array "f", a 4-slab of "func"
+   ! function values which are evaluated at the slab points "p".  The
+   ! slab involves .plot_grid points whose z values are in the range
+   ! slice-1:slice+2.  The "p" points and the function values
+   ! f(:,:,2:3) correspond to the bottom and top of the slice.  The
+   ! other slabs f(:,:,1) and f(:,:,4) are used for finite differences
+   ! to get vertex gradients.
       p :: MAT4{REAL}, INOUT
       f :: MAT3{REAL}, INOUT
-      slice :: INT
+      slice :: INT, IN
       interface
          func(values,pt)
             values :: VEC{REAL}, OUT
@@ -1909,6 +2102,71 @@ contains
 
       pt.destroy
       values.destroy
+
+   end
+
+   update_4_slab(p,f,slice,ED) ::: private
+   ! Make or update a "slice" of an array "f", a 4-slab of "func"
+   ! function values which are evaluated at the slab points "p".  The
+   ! slab involves .plot_grid points whose z values are in the range
+   ! slice-1:slice+2.  The "p" points and the function values
+   ! f(:,:,2:3) correspond to the bottom and top of the slice.  The
+   ! other slabs f(:,:,1) and f(:,:,4) are used for finite differences
+   ! to get vertex gradients.
+      p :: MAT4{REAL}, INOUT
+      f :: MAT3{REAL}, INOUT
+      ED :: MAT3{REAL}, IN
+      slice :: INT, IN
+
+   ENSURE(slice>=2 AND slice<=.plot_grid.n_z-2,"slice out f range")
+   ENSURE(p.dim1==3,"p must have dim1=3")
+   ENSURE(p.dim2==.plot_grid.n_x,"wrong size, p")
+   ENSURE(p.dim3==.plot_grid.n_y,"wrong size, p")
+   ENSURE(p.dim4==4,"p must have 4 slabs")
+   ENSURE(f.dim1==.plot_grid.n_x,"wrong size, f")
+   ENSURE(f.dim2==.plot_grid.n_y,"wrong size, f")
+   ENSURE(f.dim3==4,"f must have 4 slabs")
+   ENSURE(ED.dim1==.plot_grid.n_x+2,"wrong dim1, ED")
+   ENSURE(ED.dim2==.plot_grid.n_y+2,"wrong dim2, ED")
+   ENSURE(ED.dim3==.plot_grid.n_z+2,"wrong dim3, ED")
+
+      fz,lz,n_pt, n_x,n_y, i,x,y,z :: INT
+      pt :: MAT{REAL}@
+
+      ! Get slab ranges
+      if (slice == 2) then
+         ! These are the first 4 slices
+         fz = 1; lz = 4
+      else
+         ! In between: only calculate one slice
+         p(:,:,:,1:3) = p(:,:,:,2:4)
+         f(:,:,1:3) = f(:,:,2:4)
+         fz = 4; lz = 4
+      end
+
+      ! Now calculate the slab between the right limits
+      n_x  = .plot_grid.n_x
+      n_y  = .plot_grid.n_y
+      n_pt = n_x*n_y*(lz-fz+1)
+      pt.create(n_pt,3)
+
+      ! Set the slab of points & transfer ED values
+      .plot_grid.make_points(pt,1,n_x,1,n_y,slice-2+fz,slice-2+lz)
+      f(:,:,fz:lz) = ED(2:n_x+1,2:n_y+1,fz+1:lz+1)
+
+      ! Copy the points
+      ! Reshape & transpose
+      i = 0
+      do z = fz,lz
+      do y = 1 ,n_y
+      do x = 1 ,n_x
+         i = i + 1
+         p(:,x,y,z) = pt(i,:)
+      end
+      end
+      end
+
+      pt.destroy
 
    end
 
