@@ -20,7 +20,7 @@ macro(subdirlist result curdir)
 endmacro()
 
 if(WITH_MPI)
-    set(MPI_FLAG "-m" CACHE STRING "Flag for test.py" FORCE)
+    set(MPI_FLAG "--mpi" CACHE STRING "Flag for test.py" FORCE)
 endif()
 
 function(add_all_tests)

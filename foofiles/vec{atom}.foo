@@ -1794,25 +1794,14 @@ contains
    ! Read information from a Crystallographic Information File whose
    ! name is read from "stdin".
       self :: PTR
-      cif :: CIF*
-      found :: BIN
+
       name :: STR
 
-      ! Read name frxd_geo_220K.cifom stdin
+      ! Read name cif name from stdin
       stdin.read(name)
 
-      ! Create CIF and find data
-      cif.create(name)
-      cif.open
-      cif.find_crystal_data_block(found)
-      ENSURE(found,"no crystal data block found")
-
-      ! Read
-      .read_CIF_atoms(cif)
-      .read_CIF_ADPs(cif)
-
-      ! Clean
-      cif.destroy
+      ! Read CIF
+      .read_CIF(name)
 
    end
 
@@ -1831,8 +1820,7 @@ contains
       ENSURE(found,"no crystal data block found")
 
       ! Read
-      .read_CIF_atoms(cif)
-      .read_CIF_ADPs(cif)
+      .read_CIF(cif)
 
       ! Clean
       cif.destroy
@@ -1847,6 +1835,7 @@ contains
       ! Read
       .read_CIF_atoms(cif)
       .read_CIF_ADPs(cif)
+      VEC{ATOM}::read_CIF_dispersion(cif)
 
    end
 
@@ -1986,7 +1975,7 @@ contains
       ! Destroy the old atom list (if there)
       .destroy
 
-      ! Create the new atom list
+      ! Create new atom list & read labels
       if (symbols.associated) then
          .create(symbols.dim)
          .set_atom_data_from_labels(symbols)     ! For Z's
@@ -1995,6 +1984,7 @@ contains
          .create(labels.dim)
          .set_atom_data_from_labels(labels)      ! This may not work
       end
+
       labels.destroy
       symbols.destroy
 
@@ -2046,7 +2036,6 @@ contains
       end
 
       ! Clean
-      if (fl) labels.destroy
       IDs.destroy
 
       ! Update?
@@ -2340,6 +2329,7 @@ contains
 
       cif.read_looped_item(trim(cif.GC3_label)//"label",labels,fl)
 
+      ! Any ADP3's to read?
       f3 = fl
       if (NOT fl) return
 
@@ -2476,6 +2466,7 @@ contains
 
       cif.read_looped_item(trim(cif.GC4_label)//"label",labels,fl)
 
+      ! Any ADP4's to read?
       f4 = fl
       if (NOT fl) return
 
@@ -2565,6 +2556,53 @@ contains
        U.destroy
       dU.destroy
       labels.destroy
+
+   end
+
+   read_CIF_dispersion(cif) ::: selfless, leaky
+   ! Read the anomalous dispersion coefficients (if present)
+   ! from the "cif" file.
+      cif :: CIF, INOUT
+
+      IDs :: VEC{STR}*
+      f_real,f_imag :: VEC{REAL}*
+      fs,fr,fi :: BIN
+      a,Z :: INT
+
+      ! Read CIF
+      nullify(IDs)
+      nullify(f_real)
+      nullify(f_imag)
+
+      cif.read_looped_item("_atom_type_symbol",IDs,found=fs)
+      cif.read_looped_item("_atom_type_scat_dispersion_real",f_real,found=fr)
+      cif.read_looped_item("_atom_type_scat_dispersion_imag",f_imag,found=fi)
+
+      ! Are they there?
+      if (fs AND fr AND fi) then
+
+         do a = 1,IDs.dim
+
+            ! Get the atomic number Z
+            Z = ATOM:atomic_number_from_label(IDs(a))
+
+            ! Skip unrecognised element label
+            if (Z==0) then
+               WARN("atom_type_symbol "//trim(IDs(a))//" unrecognised for anamalous dispersion")
+               cycle
+            end
+
+            ! Set them in the table
+            ATOM:set_dispersion_coefficients(Z,f_real(a),f_imag(a))
+
+         end
+
+      end
+
+      ! Clean
+      if (fi) f_imag.destroy
+      if (fr) f_real.destroy
+      if (fs) IDs.destroy
 
    end
 
@@ -8977,10 +9015,11 @@ contains
     ! rs18=2.8830
 
       ! b3lyp
-      s6 = 1.0 
-      rs6 =0.3981
-      s18 =1.9889
-      rs18=4.4211
+      s6   = 1.0 
+      rs6  = 0.3981
+      s18  = 1.9889
+      rs18 = 4.4211
+      alp  = ZERO ! Remove warning
 
       call dftd3_set_params(calc, [s6, rs6, s18, rs18, alp], version)
 
