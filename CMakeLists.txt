@@ -43,6 +43,11 @@ project(tonto
     VERSION ${TONTO_VERSION})
 
 # LAPACK
+find_package(LAPACK)
+if(${LAPACK_FOUND})
+else()
+    set(COMPILE_LAPACK "ON")
+endif() 
 if(COMPILE_LAPACK)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
     set(LAPACK_LIBRARIES 
@@ -50,8 +55,6 @@ if(COMPILE_LAPACK)
         ${PROJECT_BINARY_DIR}/external/lapack-release/lib/libblas.a
     )
     message(STATUS "Compiling lapack: ${LAPACK_LIBRARIES}")
-else()
-    find_package(LAPACK REQUIRED)
 endif()
 
 if(MPI)
@@ -413,6 +416,7 @@ set(RUNFILE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runfiles)
 set(RUN_SRC 
     ${RUNFILE_DIR}/run_molecule.foo
     ${RUNFILE_DIR}/run_buffer.foo
+    ${RUNFILE_DIR}/run_dc.foo
     ${RUNFILE_DIR}/run_dispersion.foo
     ${RUNFILE_DIR}/run_gaussian_data.foo
     ${RUNFILE_DIR}/run_har.foo
@@ -474,6 +478,7 @@ target_include_directories(tonto PUBLIC ${SBF_MODULE_DIRECTORY} ${DFTD3_MODULE_D
 # Standard executables
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
 add_executable(run_buffer        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_buffer.F90)
+add_executable(run_dc            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dc.F90)
 add_executable(run_dispersion    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dispersion.F90)
 add_executable(run_gaussian_data EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
 add_executable(run_har           ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
@@ -491,6 +496,7 @@ add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 # Link exectables
 target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_dc            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
