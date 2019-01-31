@@ -1507,6 +1507,123 @@ contains
 !  Triangulation: this is the main thing
 !  =====================================
 
+   interpolate_Bader_faces(basin) 
+   ! This routine interpolates the triangle coordinates that result from the
+   ! intersection of this cube with the isosurface. Any previously obtained
+   ! information abount adjoining cubes to the left, infront, or below this cube
+   ! should have already been set, e.g. using .set_left_info. This routine
+   ! assumes that cubes are generated in an order from left to right (along the
+   ! x-axis), front-to back (along the y-axis), and bottom to top (along the
+   ! z-axis). NOTE: the .case number must already have been set.
+      basin :: INT, IN
+      .interpolate_Bader_edge_info(basin)                   ! Skip some edges
+      .set_triangle_vertex_info
+   end
+
+   interpolate_Bader_edge_info(basin) ::: private
+   ! This routine interpolates edge_vertex_pos, edge_vertex_gradient,
+   ! edge_vertex_hessian, edge_mean_curvature, edge_gaussian_curvature.
+   ! The edge vertex positions are later to become the triangle vertices.
+      basin :: INT, IN
+
+      e,v1,v2 :: INT
+      f1,f2 :: INT
+      del,bot, L :: REAL
+      p1,p2,P,g1,g2,G,n,u,v :: VEC{REAL}(3)
+      h1,h2,H :: MAT{REAL}(3,3)
+      S  :: MAT{REAL}(2,2)
+      UV :: MAT{REAL}(3,2)
+
+      .n_active_edge = 0
+
+      do e = 0,11
+
+         ! Skip?
+         if (NOT BIT_SET_AT_POS_IN(.edge_bit_string,e)) cycle ! this edge does not intersect
+         if (    BIT_SET_AT_POS_IN(.skip_bit_string,e)) cycle ! this edge is explicitly skipped
+
+         .n_active_edge = .n_active_edge + 1
+
+         ! Vertices
+         v1 = vertex_1_of_edge(e)
+         v2 = vertex_2_of_edge(e)
+
+         f1 = 0
+         f2 = 0
+
+         ! Values at vertices
+         if(.basin_at_vertex(v1) == basin) f1 = 1 
+         if(.basin_at_vertex(v2) == basin) f2 = 1 
+
+         L = abs(f1-f2)
+
+         ! Oops ...
+         if (.iso_value>L) then
+
+            stdout.text("edge_bit_string:")
+            do v1 = 0,11
+               if (BIT_SET_AT_POS_IN(.edge_bit_string,e)) then; stdout.put("1")
+               else;                                     stdout.put("0")
+               end
+            end
+            stdout.flush
+            stdout.show("e         =",e)
+            stdout.show("iso_value =",.iso_value)
+            stdout.show("e         =",e)
+            stdout.show("f1        =",f1)
+            stdout.show("f2        =",f2)
+
+         end
+         !ENSURE(.iso_value<=L,"iso value GT endpoint values, "//trim(L.to_str))
+
+         ! Edge values
+         p1 = .vertex_positions(:,v1)
+         p2 = .vertex_positions(:,v2)
+         g1 = .vertex_gradient(:,v1)   ! The gradient and hessian are calculated
+         g2 = .vertex_gradient(:,v2)   ! w.r.t. the canonical box axes, NOT the
+         h1 = .vertex_hessian(:,:,v1)  ! true xyz axes.
+         h2 = .vertex_hessian(:,:,v2)
+
+         ! Isovalue difference
+         del = .iso_value-f1
+
+         ! Get del
+         bot = f2-f1
+         if (bot/=ZERO) then; del = del/bot
+         else;                del = ZERO
+         end
+
+         ! Interpolate
+         P = p1 + del*(p2-p1)          ! Interpolate true P
+         G = g1 + del*(g2-g1)
+         H = h1 + del*(h2-h1)          ! Interpolate hessian values
+
+         .edge_vertex_positions(:,e) = P
+         .edge_vertex_gradient(:,e)  = G
+         .edge_vertex_hessian(:,:,e) = H
+
+         L = G.norm
+         DIE_IF(L==ZERO,"zero gradient, edge: "//e.to_str.trim)
+         n = G/L
+
+         ! Evaluate surface tangents u,v
+         u = [ n(2),-n(1), ZERO]
+         if (u.is_zero) u = [-n(3), ZERO, n(1)]
+         u.normalise
+         v = n.cross(u)                ! If we have reversed the normal, v should
+         UV(:,1) = u                   ! be reversed ... since otherwise we would
+         UV(:,2) = v                   ! have a left handed system
+         S = -matmul(transpose(UV),matmul(H,UV))/L
+
+         ! Set curvatures
+         .edge_mean_curvature(e)     = HALF*(S(1,1)+S(2,2))
+         .edge_gaussian_curvature(e) = S(1,1)*S(2,2)-S(1,2)*S(1,2)
+
+      end
+
+   end
+
+
    interpolate_faces
    ! This routine interpolates the triangle coordinates that result from the
    ! intersection of this cube with the isosurface. Any previously obtained
@@ -2210,6 +2327,7 @@ contains
    case_number result (res) ::: private, PURE
    ! From the vertex values on the cube evaluate and return the case number
    ! telling us which vertices are larger than the .iso_value.
+      self :: IN
       res :: INT
       res = 0
 
@@ -2227,6 +2345,7 @@ contains
    case_number(r) result (res) ::: private, PURE
    ! Return the Bader case number: vertex bits which are not equal to
    ! region index "r" are set.
+      self :: IN
       r :: INT, IN
       res :: INT
 
