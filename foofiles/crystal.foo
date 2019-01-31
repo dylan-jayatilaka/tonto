@@ -3506,6 +3506,17 @@ contains
 
    end
 
+   remove_dispersion_from_F_exp result (res) ::: PURE
+   ! True if dispersion is to be removed from F_exp
+      self :: IN
+      res :: BIN
+
+   ENSURE(.data_exists,"no diffraction data")
+
+      res = .data.remove_dispersion_from_F_exp
+
+   end
+
    wavelength result (res) ::: PURE
    ! Experimental wavelength
       self :: IN
@@ -3596,7 +3607,8 @@ contains
 
    make_F_predicted_from(sf_e)
    ! Make and set the predicted structure factors, F_pred, from
-   ! "sf_e", the unique symmetry-generated structure factors.
+   ! "sf_e", the aspherical temperature-independent form factors for
+   ! every symmetry-generated structure factor.
       self :: INOUT
       sf_e :: VEC{CPX}, IN
 
@@ -3622,7 +3634,7 @@ contains
 
    end
 
-   make_F_calc_from(sf_n,Fc) ! ::: PURE
+   make_F_calc_from(sf_n,Fc) ::: PURE
    ! Make the calculated structure factors "Fc", where "sf_n" are
    ! the unique *fragment* atom structure factors for the symmetry
    ! generated related k points
@@ -3656,10 +3668,10 @@ contains
 
    end
 
-   make_F_calc_from(sf_e,Fc) ! ::: PURE
-   ! Make the calculated structure factors "Fc", by summing "sf_e",
-   ! the unique symmetry-generated structure factors. Also add the
-   ! dispersion corrections, if requested.
+   make_F_calc_from(sf_e,Fc) ::: PURE
+   ! Make the calculated structure factors "Fc", by summing the
+   ! *temperature/ADP-dependent* "sf_e", the unique symmetry-generated
+   ! structure factors. Add the dispersion corrections, if requested.
       self :: INOUT
       sf_e :: VEC{CPX}, IN
       Fc :: VEC{CPX}, OUT
@@ -3667,12 +3679,27 @@ contains
    ENSURE(sf_e.dim1==.n_unique_SF_k_pts, "wrong size, sf_e")
    ENSURE(Fc.dim==.n_refl, "wrong size, Fc")
 
+      Fa :: VEC{CPX}@
+
       ! Sum the symmetry-generated SF's to get
       ! the actual structure factors Fc
       .spacegroup.sum_unique_sf(Fc,sf_e,.data.reflections)
 
-      ! Add dispersion correction
-      if (.correct_dispersion) .add_dispersion_correction(Fc)
+      ! Include dispersion?
+      if (.correct_dispersion) then
+
+         ! Get dispersion correction
+         Fa.create(.n_refl)
+         .get_dispersion_correction(Fa)
+      !! stdout.text("Fa:")
+      !! stdout.put("Fa:")
+      !! stop
+
+         ! Add in and store anomalous.
+         .data.reflections.add_F_disp(Fa)
+         Fa.destroy
+
+      end
 
    end
 
@@ -3704,35 +3731,36 @@ contains
       sf_d.create(n_k,n_p) ! Symmetry generated SF derivatives
       sf_e.create(n_k)     ! Symmetry generated SF's
 
-      ! Make the symmetry-generated structure factors
-      ! and their derivatives
+      ! Make the symmetry-generated structure factors and their
+      ! derivatives including ADPs but no dispersion.
       .make_unique_sf_derivs(sf_e,sf_d,sf_n)
 
-    ! stdout.text("sf_n:")
-    ! stdout.put(sf_n)
-    ! stdout.text("sf_e:")
-    ! stdout.put(sf_e)
-    ! stdout.text("sf_d:")
-    ! stdout.put(sf_d)
-    ! stop
-
-   
-      ! Make and set F_pred
+      ! Make and set F_pred with scale & extinction.
+      ! NOW including dispersion
       .make_F_predicted_from(sf_e)
-
       sf_e.destroy
+
+      ! Remove dispersion from F_calc, and F_exp to make F_corr?
+      ! Remember to reset scale_factor ...
+      if (.correct_dispersion) then
+      if (.remove_dispersion_from_F_exp) then
+         .remove_anom_from_F_exp_and_F_calc 
+         .data.make_F_predicted(update_n_param=FALSE)
+      end
+      end
 
       ! Sum the symmetry-generated SF's to get
       ! the derivative structure factors dFc
       .spacegroup.sum_unique_sf_derivs(dFc,sf_d,.data.reflections)
-
-    ! stdout.text("dFc:")
-    ! stdout.put(dFc)
-
       sf_d.destroy
 
       ! Add derivative of anomalous contribution to |SF|, dFc
-      if (.correct_dispersion) .add_D_dispersion_correction(dFc)
+      ! Only if F_calc has anomalous dispersion added into it.
+      if (.correct_dispersion) then
+      if (NOT .remove_dispersion_from_F_exp) then
+         .add_D_dispersion_correction(dFc)
+      end
+      end
 
    end
 
@@ -3998,15 +4026,50 @@ contains
       ! Make F_predicted, F_calc & derivatives
       .:make_F_calc_derivs_from(sf_n,dFc)
 
-      ! Get the derivative absolute SF's,
+      ! Get the derivative absolute SF's, F_abs = |F_calc|
       .d_F_abs_dX(dFa,dFc)
-
       dFc.destroy
 
       ! Get the unique atom shifts, dX (leaky)
       .solve_normal_equations(dFa)
 
       dFa.destroy
+
+   end
+
+   get_dispersion_correction(Fa) ::: PURE
+   ! Get the anomalous dispersion correction in "Fa" for the set of
+   ! symmetry-unique atoms - do not add the contribution into anything.
+   ! 1/2/18 
+      self :: IN
+      Fa :: VEC{CPX}, OUT
+
+   ENSURE(.data.associated,"no diffraction data!")
+
+      Fu :: VEC{CPX}@
+      k_pts :: MAT{REAL}@
+      n_k, u,f :: INT
+      rf :: REAL
+
+      n_k = .n_symop_generated_SF_k_pts
+
+      k_pts.create(n_k,3)
+      Fu.create(n_k)
+
+      ! The full list of symmetry-generated k points
+      .data.reflections.make_symop_generated_SF_k_pts(k_pts,.spacegroup,.unit_cell)
+
+      ! Note: each atom contribution scales by a site-symmetry factor
+      Fu = ZERO
+      do u = 1,.n_unique_frag_atoms
+         f  = .unique_frag_atom(u)
+         rf = .frag_atom_sym_factor(f)
+         if (rf.is_zero) cycle
+         .fragment_atom(f).add_dispersion(Fu,k_pts,rf)
+      end
+
+      ! Add together symmetry contributions from Fu into Fa
+      .spacegroup.get_full_sd(Fa,Fu,.data.reflections)
 
    end
 
@@ -4052,6 +4115,27 @@ contains
       .spacegroup.add_full_sd(Fc,Fu,.data.reflections)
 
    end
+
+   remove_anom_from_F_exp_and_F_calc ::: PURE
+   ! Remove the dispersion correction from the F_exp and F_calc
+   ! values, assuming the phases come from F_calc. Only used when
+   ! using the "XD" method.
+      self :: INOUT
+
+   ENSURE(.correct_dispersion,"you must ask to correct dispersion!")
+   ENSURE(.remove_dispersion_from_F_exp,"you did't ask to subtract dispersion from F_exp")
+   ENSURE(.data.associated,"no diffraction data!")
+   ENSURE(.data.associated,"no diffraction data!")
+   ENSURE(.data.scale_factors.associated,"does not work with groups of scales")
+
+      ! Get F_corr
+      .data.reflections.remove_anom_from_F_exp(.data.scale_factor)
+
+      ! Remove F_disp from F_calc
+      .data.reflections.remove_anom_from_F_calc
+
+   end
+
 
    add_D_dispersion_correction(dFc)
    ! Add the anomalous dispersion correction in "Fc" for the set of
@@ -4805,9 +4889,9 @@ contains
 !  Structure factors only
 
    make_unique_sf(sf_e,sf_n) ::: private, PURE
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! corresponding to the unique_SF_k_pts from the given set of atom
-   ! parameters in .fragment_atom.
+   ! Make the *temperature dependent* unique structure factors and
+   ! their derivatives "sf_e" corresponding to the unique_SF_k_pts
+   ! from the given set of atom parameters in .fragment_atom.
       self :: IN
       sf_e :: VEC{CPX}, OUT
       sf_n :: MAT{CPX}, IN
@@ -4876,9 +4960,10 @@ contains
 !  SF derivatives 
 
    make_unique_sf_derivs(sf_e,sf_d,sf_n)
-   ! Make "sf_e" and "sf_d", the symmetry-related thermally-smeared
-   ! structure factors and their derivatives, from "sf_n" the *unique*
-   ! .fragment_atom structure factors and the ".fragment_atom.ADP_tensor".
+   ! Make "sf_e" and "sf_d", the symmetry-related thermally-damped
+   ! structure factors and their derivatives, from "sf_n" the
+   ! temperature *independent* and *unique* .fragment_atom structure
+   ! factors and the ".fragment_atom.ADP_tensor".
       self :: IN
       sf_e :: VEC{CPX}, OUT
       sf_d :: MAT{CPX}, OUT
@@ -5352,10 +5437,10 @@ contains
 
 
    d_F_abs_dX(res,dFdX)
-   ! Evaluate "res", the derivative of the F_abs with respect to some
-   ! parameters X (e.g. thermal parameters) given "dFdX", the
-   ! derivatives of the complex structure factors  w.r.t. the X
-   ! parameters.
+   ! Evaluate "res", the derivative of the F_abs = |F_calc| with
+   ! respect to some parameters X (e.g. thermal parameters) given
+   ! "dFdX", the derivatives of the complex structure factors  w.r.t.
+   ! the X parameters.
       res :: MAT{REAL}, OUT
       dFdX :: MAT{CPX}, IN
 

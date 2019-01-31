@@ -835,6 +835,7 @@ contains
          case ("refine_positions_only=        "); .read_refine_positions_only
          case ("refine_u_iso_for_atoms=       "); .read_refine_U_iso_for_atoms
          case ("reflection_data=              "); .read_reflection_data
+         case ("remove_dispersion_from_f_exp= "); .read_remove_disp_from_F_exp
          case ("restart_har_with_promolecule= "); .read_restart_with_promolecule
          case ("revert                        "); .revert
 
@@ -1373,6 +1374,15 @@ contains
       if (.reflections.associated) .reflections.destroy
 
       .reflections.read_list_keywords
+
+   end
+
+   read_remove_disp_from_F_exp ::: leaky, private
+   ! Read in whether to remove anomalous dispersion from the F_exp
+   ! values. This is only active if correct_dispersion is set TRUE.
+      self :: INOUT
+
+      stdin.read(.remove_dispersion_from_F_exp)
 
    end
 
@@ -2452,15 +2462,17 @@ contains
 !  Scale & extinction factor optimisation
 !  ======================================
 
-   make_F_predicted
+   make_F_predicted(update_n_param)
    ! Make the predicted magnitude of the structure factors, including
    ! possibly an overall scale factor and extinction correction.
       self :: INOUT
+      update_n_param :: BIN, optional, IN
 
    DIE_IF(NOT .reflections.associated,"no reflection data")
 
       F_pred :: VEC{REAL}*
       n_r,n_p :: INT
+      update :: BIN
 
       if (NOT .reflections.have_F_exp) then
 
@@ -2477,8 +2489,9 @@ contains
       else
 
          ! Experimental data exists ...
-         ! Add parameters for scale/extinction
-         .update_n_param
+         update = TRUE
+         if (present(update_n_param)) update = update_n_param
+         if (update) .update_n_param
    
          ! Get optimum scale factors, extinction, etc.
          if (.optimize_extinction OR .optimize_scale) .get_F_optimum_parameters
@@ -2622,9 +2635,9 @@ contains
    end
 
    get_F_optimum_parameters ::: private
-   ! Get the scale factors, extinction parameters, etc, which minimise the chi2.
-   ! (To get the corrections cooresponding to these parameters see routine
-   ! .extinction_correction)
+   ! Get the scale factors, extinction parameters, etc, which minimise
+   ! the chi2.  (To get the corrections cooresponding to these
+   ! parameters see routine .extinction_correction)
 
       if (.optimize_extinction) then
 
@@ -3861,7 +3874,7 @@ contains
       dF.create(n_refl,n_p)
       sig.create(n_refl)
 
-      ! Make derivatives of F_pred
+      ! Make derivatives of Delta F
       .d_F_pred_dX(dF,sig,del,dFdX)
 
       ! Checked using FD, setting optimize extinction
@@ -4289,7 +4302,7 @@ contains
          extn   = ext(n)
          ref    = .reflections(n)
 
-         F_exp  = ref.F_exp
+         F_exp  = ref.F_corr
          F_sig  = ref.F_sigma
          F_abs  = abs(ref.F_calc)
          F_til  = extn*F_abs
@@ -4319,30 +4332,6 @@ contains
 
       angle_bit.destroy
       ext.destroy
-
-    ! stdout.text("db:")
-    ! stdout.put(db)
-
-    ! stdout.text("dt:")
-    ! stdout.put(dt)
-
-    ! stdout.text("Ft:")
-    ! stdout.put(Ft)
-
-    ! stdout.text("Fx:")
-    ! stdout.put(Fx)
-
-    ! stdout.text("sig:")
-    ! stdout.put(sig)
-
-    ! stdout.text("del:")
-    ! stdout.put(del)
-
-    ! stdout.show("top = ",top)
-    ! stdout.show("bot = ",bot)
-
-    ! stdout.text("dFdX:")
-    ! stdout.put(dFdX)
 
       ! Derivative of the scale factor
       d_scale.create(n_p)
@@ -4504,12 +4493,14 @@ contains
       F_con.create(n_refl)
       F_abi.create(n_refl)
 
+      ! Setup
       do n = 1,n_refl
          F_cal    = .reflections(n).F_calc
          F_con(n) = conjg(F_cal)
          F_abi(n) = ONE/abs(F_cal)
       end
 
+      ! Derivative of (d F_calc/d p)
       do p = 1,n_p
       do n = 1,n_refl
          res(n,p) = F_abi(n) * REALIFY(F_con(n) * dFdX(n,p))
@@ -4717,6 +4708,7 @@ contains
       stdout.show("Refine multiple scales      =",.use_multiple_scale_factors)
       stdout.show("Refine extinction parameter =",.optimize_extinction)
       stdout.show("Use dispersion correction   =",.correct_dispersion)
+      stdout.show("Remove dispersion frm F_exp =",.remove_dispersion_from_F_exp)
    
       stdout.flush
       stdout.show("Max allowed parameter shift =",.max_allowed_param_shift)
