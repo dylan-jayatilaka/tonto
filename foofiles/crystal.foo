@@ -3336,7 +3336,7 @@ contains
 
       Fc :: VEC{CPX}*
 
-      if (.correct_dispersion) then
+      if (.add_dispersion_to_F_calc) then
 
          ! Get dispersion correction
          Fc.create(.data.reflections.dim)
@@ -3495,14 +3495,14 @@ contains
 
    end
 
-   correct_dispersion result (res) ::: PURE
+   add_dispersion_to_F_calc result (res) ::: PURE
    ! True if dispersion is to be corrected
       self :: IN
       res :: BIN
 
    ENSURE(.data_exists,"no diffraction data")
 
-      res = .data.correct_dispersion
+      res = .data.add_dispersion_to_F_calc
 
    end
 
@@ -3615,13 +3615,28 @@ contains
    ENSURE(sf_e.dim1==.n_unique_SF_k_pts, "wrong size, sf_e")
    ENSURE(.fragment_info_made,"no fragment info")
 
-      Fc :: VEC{CPX}*
+      Fc,Fa :: VEC{CPX}*
 
       Fc.create(.n_refl)
 
       ! Sum the symmetry-generated SF's to get
       ! the actual structure factors Fc
-      .make_F_calc_from(sf_e,Fc)
+      .spacegroup.sum_unique_sf(Fc,sf_e,.data.reflections)
+
+      ! Include dispersion?
+      if (.data.correct_dispersion) then
+
+         ! Get dispersion correction
+         Fa.create(.n_refl)
+         .get_dispersion_correction(Fa)
+         .data.reflections.set_F_disp(Fa)
+
+         ! Add dispersion into Fc
+         Fc = Fc + Fa
+
+         Fa.destroy
+
+      end
 
       ! Set the calculated SF's
       ENSURE(all(abs(Fc)>TOL(10)),"there are zero F_calc's; prune them to continue")
@@ -3645,7 +3660,7 @@ contains
    ENSURE(sf_n.dim1==.n_unique_SF_k_pts, "sf_n: wrong dim1")
    ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim, "sf_n: wrong dim2")
    ENSURE(Fc.dim==.n_refl, "wrong size, Fc")
-   ENSURE(.data.associated,   "no data")
+   ENSURE(.data_exists,   "no data")
    ENSURE(.fragment_info_made,"no fragment info")
 
       sf_e :: VEC{CPX}*
@@ -3662,48 +3677,9 @@ contains
 
       ! Sum the symmetry-generated SF's to get
       ! the actual structure factors Fc
-      .make_F_calc_from(sf_e,Fc)
-
-      sf_e.destroy
-
-   end
-
-   make_F_calc_from(sf_e,Fc) ::: PURE
-   ! Make the calculated structure factors "Fc", by summing the
-   ! *temperature/ADP-dependent* "sf_e", the unique symmetry-generated
-   ! structure factors. Add the dispersion corrections, if requested.
-      self :: INOUT
-      sf_e :: VEC{CPX}, IN
-      Fc :: VEC{CPX}, OUT
-
-   ENSURE(sf_e.dim1==.n_unique_SF_k_pts, "wrong size, sf_e")
-   ENSURE(Fc.dim==.n_refl, "wrong size, Fc")
-
-      Fa :: VEC{CPX}@
-
-      ! Sum the symmetry-generated SF's to get
-      ! the actual structure factors Fc
       .spacegroup.sum_unique_sf(Fc,sf_e,.data.reflections)
 
-      ! Include dispersion?
-      if (.correct_dispersion) then
-
-         ! Get dispersion correction
-         Fa.create(.n_refl)
-         .get_dispersion_correction(Fa)
-      !! stdout.text("Fa:")
-      !! stdout.put("Fa:")
-      !! stop
-
-         ! Add in and store anomalous.
-         .data.reflections.set_F_disp(Fa)
-
-         ! Add into Fc as well
-         Fc = Fc + Fa
-
-         Fa.destroy
-
-      end
+      sf_e.destroy
 
    end
 
@@ -3740,18 +3716,23 @@ contains
       .make_unique_sf_derivs(sf_e,sf_d,sf_n)
 
       ! Make and set F_pred with scale & extinction.
-      ! NOW including dispersion
-      .make_F_predicted_from(sf_e)
+      .data.reflections.reset_F_corr_to_F_exp ! We fit to F_corr
+      .make_F_predicted_from(sf_e)            ! Always includes dispersion
+  ! stdout.show("1st scale factor = ",.data.scale_factor)
+  ! .data.reflections(1:20).put_F_all_data
       sf_e.destroy
 
       ! Remove dispersion from F_calc, and F_exp to make F_corr?
-      ! Remember to reset scale_factor ...
-      if (.correct_dispersion) then
       if (.remove_dispersion_from_F_exp) then
-         .remove_anom_from_F_exp_and_F_calc 
-         .data.make_F_predicted(update_n_param=FALSE)
+         .data.reflections.remove_anom_from_F_exp(.data.scale_factor)
+         .data.reflections.remove_anom_from_F_calc
+  ! stdout.text("Removed dispersion from F_exp to get F_corr")
+  ! .data.reflections(1:20).put_F_all_data
+         .data.make_F_predicted(update_n_param=FALSE) ! new scale
+  ! stdout.show("2nd scale factor = ",.data.scale_factor)
       end
-      end
+
+  ! stop
 
       ! Sum the symmetry-generated SF's to get
       ! the derivative structure factors dFc
@@ -3760,10 +3741,8 @@ contains
 
       ! Add derivative of anomalous contribution to |SF|, dFc
       ! Only if F_calc has anomalous dispersion added into it.
-      if (.correct_dispersion) then
-      if (NOT .remove_dispersion_from_F_exp) then
+      if (.add_dispersion_to_F_calc) then
          .add_D_dispersion_correction(dFc)
-      end
       end
 
    end
@@ -4117,26 +4096,6 @@ contains
 
       ! Add together symmetry contributions
       .spacegroup.add_full_sd(Fc,Fu,.data.reflections)
-
-   end
-
-   remove_anom_from_F_exp_and_F_calc ::: PURE
-   ! Remove the dispersion correction from the F_exp and F_calc
-   ! values, assuming the phases come from F_calc. Only used when
-   ! using the "XD" method.
-      self :: INOUT
-
-   ENSURE(.correct_dispersion,"you must ask to correct dispersion!")
-   ENSURE(.remove_dispersion_from_F_exp,"you did't ask to subtract dispersion from F_exp")
-   ENSURE(.data.associated,"no diffraction data!")
-   ENSURE(.data.associated,"no diffraction data!")
-   ENSURE(.data.scale_factors.associated,"does not work with groups of scales")
-
-      ! Get F_corr
-      .data.reflections.remove_anom_from_F_exp(.data.scale_factor)
-
-      ! Remove F_disp from F_calc
-      .data.reflections.remove_anom_from_F_calc
 
    end
 
@@ -6679,13 +6638,13 @@ contains
       allocate(F_cr(n_refl))
       allocate(F_ci(n_refl))
       F_p     = .data.F_pred_complex
-      F_ph    = REFLECTION:F_phase_in_degrees(.data.reflections(:))
+      F_ph    = REFLECTION:F_phase_angle_in_degrees(.data.reflections(:))
       F_exp   = .F_exp_scaled_corrected
       fac     = F_exp/.data.reflections.F_exp
       F_pred  = abs(F_p) * fac
       F_cr    = RE((F_p * fac))
       F_ci    = IM((F_p * fac))
-      F_sigma = .data.reflections.F_sigma*fac*sqrt(TWO) !very suspicious!!! (this is Lorraine)
+      F_sigma = .data.reflections.F_sigma*fac
       F_z     = REFLECTION:F_z(.data.reflections(:))
 
       ! Make table
@@ -6800,7 +6759,7 @@ contains
             stdout.put(.data.reflections(i).l,width=4)
             stdout.put(F_corr(i),                              width=10,precision=2)
             stdout.put(.data.reflections(i).F_calc_abs,        width=10,precision=2)
-            stdout.put(.data.reflections(i).F_phase_in_degrees,width= 7,precision=2)
+            stdout.put(.data.reflections(i).F_phase_angle_in_degrees,width= 7,precision=2)
             stdout.flush
          end
 
@@ -6884,7 +6843,7 @@ contains
             stdout.put(F2_cor(i))
             stdout.put(.data.reflections(i).F2_sigma*factor(i))
             stdout.put(.data.reflections(i).F2_calc_abs       )
-            stdout.put(.data.reflections(i).F_phase_in_degrees)
+            stdout.put(.data.reflections(i).F_phase_angle_in_degrees)
             stdout.flush
          end
 
