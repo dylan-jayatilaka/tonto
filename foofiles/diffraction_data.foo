@@ -225,7 +225,8 @@ contains
       .exp_scale_factor       = DIFFRACTION_DATA_EXP_SCALE_FACTOR
       .optimize_extinction    = DIFFRACTION_DATA_OPTIMIZE_EXTINCTION
       .extinction_factor      = DIFFRACTION_DATA_EXTINCTION_FACTOR
-      .correct_dispersion     = DIFFRACTION_DATA_CORRECT_DISPERSION
+      .add_dispersion_to_F_calc = FALSE
+      .remove_dispersion_from_F_exp = FALSE
 
       ! Agreement statistics
       .n_param                  = 0
@@ -534,12 +535,25 @@ contains
 
    end
 
-   set_correct_dispersion(val) ::: pure
-   ! Set whether to correct dispersion in the refinement
+   set_add_dispersion_to_F_calc(val) ::: pure
+   ! Set whether to correct dispersion in the refinement by adding the
+   ! anomalous dispersion into F_calc and calculating the derivatives
+   ! of the dispersion correction.
       self :: INOUT
       val :: BIN, IN
 
-      .correct_dispersion = val
+      .add_dispersion_to_F_calc = val
+
+   end
+
+   set_remove_disp_from_F_exp(val) ::: pure
+   ! Set whether to correct dispersion in the refinement by removing
+   ! the anomalous dispersion from F_exp. This is an "XD_style"
+   ! dispersion correction.
+      self :: INOUT
+      val :: BIN, IN
+
+      .remove_dispersion_from_F_exp = val
 
    end
 
@@ -763,10 +777,10 @@ contains
 
          case ("}                             ")  ! exit read_loop
 
-         case ("stop_after_dispersion=        "); .read_stop_after_dispersion
-         case ("use_real_dispersion=          "); .read_use_real_dispersion
 
-         case ("correct_dispersion=           "); .read_correct_dispersion
+         case ("add_dispersion_to_f_calc=     "); .read_add_dispersion_to_F_calc
+
+         case ("correct_dispersion=           "); .read_add_dispersion_to_F_calc
 
          case ("d_low_cutoff=                 "); .read_d_low_cutoff
          case ("debug_off                     "); .read_debug_off
@@ -848,6 +862,7 @@ contains
          case ("stl_high_cutoff=              "); .read_stl_high_cutoff
          case ("stl_limit=                    "); .read_stl_limit
          case ("stl_low_cutoff=               "); .read_stl_low_cutoff
+         case ("stop_after_dispersion=        "); .read_stop_after_dispersion
          case ("synthesize_sigma_i=           "); .read_synthesize_sigma_I
 
          case ("thermal_smearing_model=       "); .read_thermal_smearing_model
@@ -859,6 +874,7 @@ contains
          case ("use_iam_density=              "); .read_use_IAM_density
          case ("use_iam_itc_ffs=              "); .read_use_IAM_ITC_FFs
          case ("use_km_atoms=                 "); .read_use_KM_atoms
+         case ("use_real_dispersion=          "); .read_use_real_dispersion
          case ("use_voronoi_atoms=            "); .read_use_Voronoi_atoms
          case ("use_zero_overlap=             "); .read_use_zero_overlap
 
@@ -1191,16 +1207,31 @@ contains
 
    end
 
-   read_correct_dispersion ::: private
-   ! Read the switch whether to correct dispersion or not, according to the
-   ! atomic dispersion factors
+   read_add_dispersion_to_F_calc ::: private
+   ! Read whether to add dispersion to F_calc.
       self :: INOUT
 
       val :: BIN
 
       stdin.read(val)
 
-      .set_correct_dispersion(val)
+      .set_add_dispersion_to_F_calc(val)
+
+   DIE_IF(.remove_dispersion_from_F_exp,"you already asked to remove dispersion from F_exp!")
+
+   end
+
+   read_remove_disp_from_F_exp ::: private
+   ! Read whether to add dispersion to F_calc.
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read(val)
+
+      .set_remove_disp_from_F_exp(val)
+
+   DIE_IF(.add_dispersion_to_F_calc,"you already asked to add dispersion to F_calc!")
 
    end
 
@@ -1374,15 +1405,6 @@ contains
       if (.reflections.associated) .reflections.destroy
 
       .reflections.read_list_keywords
-
-   end
-
-   read_remove_disp_from_F_exp ::: leaky, private
-   ! Read in whether to remove anomalous dispersion from the F_exp
-   ! values. This is only active if correct_dispersion is set TRUE.
-      self :: INOUT
-
-      stdin.read(.remove_dispersion_from_F_exp)
 
    end
 
@@ -2488,15 +2510,16 @@ contains
       
       else
 
-         ! Experimental data exists ...
          update = TRUE
          if (present(update_n_param)) update = update_n_param
+
+         ! Experimental data exists ...
          if (update) .update_n_param
    
          ! Get optimum scale factors, extinction, etc.
          if (.optimize_extinction OR .optimize_scale) .get_F_optimum_parameters
    
-         ! Make F_predicted
+         ! Make F_predicted; scale_factor multiplies F_calc
          F_pred.create(.reflections.n_refl)
          if (.data_kind=="pnd") then; F_pred = REALIFY(.reflections.F_calc) * .F_extinction_correction
          else;                        F_pred =     abs(.reflections.F_calc) * .F_extinction_correction
@@ -2866,9 +2889,10 @@ contains
    end
 
    optimize_F_scale_factor ::: private
-   ! Determine the structure factor scale factor to scale the calculated
-   ! structure factors .F_calc by in order to minimise the chi2. (But it does
-   ! not do any scaling; see .extinction_correction routine for that)
+   ! Determine the structure factor scale factor to scale the
+   ! calculated structure factors .F_calc by in order to minimise the
+   ! chi2 against F_corr, normally F_exp. (But it does not do any
+   ! scaling; see .extinction_correction routine for that)
       self :: INOUT
 
    DIE_IF(NOT .reflections.associated,"no reflection data")
@@ -2876,7 +2900,7 @@ contains
    DIE_IF(NOT .reflections.have_F_exp, "no experimental structure factors")
    DIE_IF(NOT .reflections.have_F_sigma, "no structure factor errors")
 
-      top,bot,sg2,F_pred :: REAL
+      top,bot,sg2,F_calc :: REAL
       n,n_refl :: INT
       ref :: REFLECTION*
 
@@ -2885,22 +2909,33 @@ contains
       top = ZERO
       bot = ZERO
 
+    ! stdout.text("Inside optimize_F_scale_factor:")
+
       do n = 1,n_refl
 
          ref => .reflections(n)
 
-         if (.data_kind=="pnd") then; F_pred = REALIFY(ref.F_calc)
-         else;                        F_pred = abs(ref.F_calc)
+         if (.data_kind=="pnd") then; F_calc = REALIFY(ref.F_calc)
+         else;                        F_calc = abs(ref.F_calc)
          end
          ENSURE(ref.F_sigma/=ZERO,"Structure factor has zero error!")
 
+       ! if (n>=1 AND n<=6) then
+       ! stdout.show("reflection n = ",n)
+       ! stdout.show(" F_calc  n = ",ref.F_calc)
+       ! stdout.show("|F_calc| n = ",F_calc)
+       ! stdout.show("F_corr     = ",ref.F_corr)
+       ! end
+
          sg2 = ONE / (ref.F_sigma * ref.F_sigma)
-         top = top + F_pred * ref.F_exp * sg2
-         bot = bot + F_pred * F_pred * sg2
+         top = top + F_calc * ref.F_corr * sg2
+         bot = bot + F_calc * F_calc * sg2
 
       end
 
       .scale_factor = top/bot
+
+    ! stdout.show("scale factor = ",.scale_factor)
 
    end
 
@@ -2954,7 +2989,7 @@ contains
    DIE_IF(NOT .reflections.have_F_sigma, "no structure factor errors")
    DIE_IF(NOT .use_multiple_scale_factors, "no reflection group numbers")
 
-      top,bot,F_pred :: REAL
+      top,bot,F_calc :: REAL
       g,n,n_refl,n_group :: INT
       ref :: REFLECTION*
 
@@ -2975,14 +3010,14 @@ contains
 
             if (ref.group/=g) cycle
 
-            if (.data_kind=="pnd") then; F_pred = REALIFY(ref.F_calc)
-            else;                        F_pred = abs(ref.F_calc)
+            if (.data_kind=="pnd") then; F_calc = REALIFY(ref.F_calc)
+            else;                        F_calc = abs(ref.F_calc)
             end
 
             ENSURE(ref.F_sigma/=ZERO,"Structure factor has zero error!")
 
-            top = top + F_pred * ref.F_exp  / (ref.F_sigma * ref.F_sigma)
-            bot = bot + F_pred * F_pred / (ref.F_sigma * ref.F_sigma)
+            top = top + F_calc * ref.F_corr / (ref.F_sigma * ref.F_sigma)
+            bot = bot + F_calc * F_calc / (ref.F_sigma * ref.F_sigma)
 
          end
 
@@ -3114,7 +3149,7 @@ contains
       tmp = ZERO
       do n=1,n_refl
        ref => .reflections(n)
-       tmp1 = (abs(ref.F_calc) * ext(n) - ref.F_exp) / ref.F_sigma
+       tmp1 = (abs(ref.F_calc) * ext(n) - ref.F_corr) / ref.F_sigma
        tmp = tmp + tmp1 * tmp1
       end
       res = tmp / max(n_refl-.n_param,1)
@@ -3218,7 +3253,7 @@ contains
       do n=1,n_refl
        ref => .reflections(n)
        F_pred = abs(ref.F_calc) * ext(n)
-       tmp = tmp + F_pred * (F_pred - ref.F_exp) / (ref.F_sigma*ref.F_sigma)
+       tmp = tmp + F_pred * (F_pred - ref.F_corr) / (ref.F_sigma*ref.F_sigma)
       end
       res = TWO*tmp/(p(1)*max(n_refl-.n_param,1))
 
@@ -3289,7 +3324,7 @@ contains
       do n = 1,n_refl
        ref => .reflections(n)
        extn = ext(n)
-       tmp = tmp + (p1 * abs(ref.F_calc) * extn - ref.F_exp) * &
+       tmp = tmp + (p1 * abs(ref.F_calc) * extn - ref.F_corr) * &
            extn*extn*extn*extn*extn* &
            REALIFY(ref.F_calc*ref.F_calc*ref.F_calc) * &
            angle_bit(n) / (ref.F_sigma * ref.F_sigma)
@@ -3312,243 +3347,6 @@ contains
       res = ZERO * p(1)
 
    end
-
-
-!   d_chi2_dX(res,dFdX) ::: private
-!   ! Evaluate "res", the derivative of the chi^2 with respect to some
-!   ! parameters X (e.g. thermal parameters) given "dFdX", the
-!   ! derivatives of the complex structure factors w.r.t. the X
-!   ! parameters.  NOTE: this routine assumes the .extinction_factor
-!   ! is fixed.
-!      self :: INOUT
-!      res :: VEC{REAL}, OUT
-!      dFdX :: MAT{CPX}, IN
-!
-!   ENSURE(.reflections.associated,"no reflection data")
-!   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
-!   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
-!   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
-!   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dF")
-!   ENSURE(dFdX.dim2==res.dim, "incompatible dFdX and res")
-!
-!      Fcd_conjgFcalc :: VEC{CPX}*
-!      ref :: REFLECTION*
-!      ext,angle_bit,d_scale :: VEC{REAL}*
-!      Fcd,Fca,fac,extn,ext5,sg2,sdk,nrinv :: REAL
-!      n_refl,n_p,p,n :: INT
-!
-!      n_refl = .reflections.n_refl
-!      n_p = dFdX.dim2
-!
-!      Fcd_conjgFcalc.create(n_refl)
-!
-!      ext.create(n_refl)
-!      ext = .F_extinction_correction(ONE,.extinction_factor)
-!
-!      angle_bit.create(n_refl)
-!      angle_bit = .extinction_angle_part
-!
-!      sdk = ZERO
-!      do n = 1,n_refl
-!         ref => .reflections(n)
-!         extn = ext(n)
-!         ext5 = extn*extn*extn*extn*extn*.extinction_factor
-!         Fca = abs(ref.F_calc)
-!         sg2 = ONE/(ref.F_sigma*ref.F_sigma)
-!         fac = (.scale_factor*extn*Fca - ref.F_exp)*sg2
-!         Fcd = fac * (extn/Fca - HALF*ext5*angle_bit(n))
-!         Fcd_conjgFcalc(n) = Fcd * conjg(ref.F_calc)
-!         sdk = sdk + fac*extn*Fca
-!      end
-!
-!      angle_bit.destroy
-!      ext.destroy
-!
-!      d_scale.create(n_p)
-!      .d_scale_dX(d_scale,dFdX)
-!
-!      nrinv = ONE/max(n_refl-.n_param,1)
-!      sdk = TWO*nrinv*sdk
-!      fac = TWO*.scale_factor*nrinv
-!
-!      do p = 1,n_p
-!         res(p) = sdk*d_scale(p) + fac * VEC{REAL}:sum_elements( REALIFY(Fcd_conjgFcalc * dFdX(:,p)) )
-!      end
-!      d_scale.destroy
-!      Fcd_conjgFcalc.destroy
-!
-!   end
-
-!   d_chi2I_dX(res,dIdX) ::: private
-!   ! Evaluate "res", the derivative of the chi^2 with respect to some
-!   ! parameters X (e.g. thermal parameters) given "dIdX", the
-!   ! derivatives of the square structure factors w.r.t. the X
-!   ! parameters.  NOTE: this routine assumes the .extinction_factor
-!   ! is fixed.
-!      self :: INOUT
-!      res :: VEC{REAL}, OUT
-!      dIdX :: MAT{CPX}, IN
-!
-!   DIE("Sorry...")
-!
-!      self = self
-!      res = ZERO*RE(dIdX(1,1))
-!
-!   end
-
-!   d_chi2_dX_plus_se(res,dFdX) ::: private
-!   ! Evaluate "res", the derivative of the chi^2 with respect to some
-!   ! parameters X (e.g. thermal parameters) given "dFdX", the
-!   ! derivatives of the complex structure factors w.r.t. the X
-!   ! parameters. Two extra derivatives are included, w.r.t. the
-!   ! extinction parameter and the scale factor.
-!      res :: VEC{REAL}, OUT
-!      dFdX :: MAT{CPX}, IN
-!
-!   ENSURE(.reflections.associated,"no reflection data")
-!   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
-!   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
-!   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
-!   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dF")
-!   ENSURE(dFdX.dim2==res.dim-2, "incompatible dFdX and res")
-!
-!      Fcd_conjgFcalc :: VEC{CPX}*
-!      ref :: REFLECTION*
-!      ext,angle_bit :: VEC{REAL}*
-!      Fcd,Fca,fac,extn,ext5,extf, Fe,Fs :: REAL
-!      n_refl,n_p,p,n :: INT
-!
-!      ! Constants
-!      n_refl = .reflections.n_refl
-!      n_p = dFdX.dim2
-!
-!      ! Temporaries
-!      angle_bit.create(n_refl)
-!      ext.create(n_refl)
-!      Fcd_conjgFcalc.create(n_refl)
-!
-!      ! Different parts of the extinction
-!      angle_bit = .extinction_angle_part
-!      ext = .F_extinction_correction(ONE,.extinction_factor)
-!
-!      ! Make parameter prefactor derivative
-!      Fe = ZERO
-!      Fs = ZERO
-!      do n = 1,n_refl
-!         ref => .reflections(n)
-!         extn = ext(n)
-!         ext5 = extn*extn*extn*extn*extn
-!         extf = ext5*.extinction_factor
-!         Fca = abs(ref.F_calc)
-!         fac = (.scale_factor*extn*Fca - ref.F_exp)/(ref.F_sigma*ref.F_sigma)
-!         Fcd = fac * (extn/Fca - HALF*extf*angle_bit(n))
-!         Fcd_conjgFcalc(n) = Fcd * conjg(ref.F_calc)
-!         ! Extinction part
-!         Fe = Fe - fac*QUARTER*.scale_factor*ext5*Fca*Fca*Fca*angle_bit(n)
-!         ! Scale part
-!         Fs = Fs + fac*extn*Fca
-!      end
-!
-!      ! Parameter derivatives
-!      fac = TWO*.scale_factor/max(n_refl-.n_param,1)
-!      do p = 1,n_p
-!         res(p) = fac * VEC{REAL}:sum_elements( REALIFY(Fcd_conjgFcalc * dFdX(:,p)) )
-!      end
-!
-!      ! Extinction and scale derivatives
-!      res(n_p+1) = fac*Fe
-!      res(n_p+2) = fac*Fs
-!
-!      ! Cleanup
-!      Fcd_conjgFcalc.destroy
-!      ext.destroy
-!      angle_bit.destroy
-!
-!   end
-
-!   d_chi2I_dX_plus_se(res,dIdX) ::: private
-!   ! Evaluate "res", the derivative of the chi^2 with respect to some
-!   ! parameters X (e.g. thermal parameters) given "dIdX", the
-!   ! derivatives of the complex structure factors w.r.t. the X
-!   ! parameters. Two extra derivatives are included, w.r.t. the
-!   ! extinction parameter and the scale factor.
-!      res :: VEC{REAL}, OUT
-!      dIdX :: MAT{CPX}, IN
-!
-!   DIE("Sorry...")
-!
-!      self = self
-!      res = ZERO*RE(dIdX(1,1))
-!
-!   end
-
-!   d_scale_dX(res,dFdX) ::: private
-!   ! Return "res" the derivative of the scale factor with respect to
-!   ! parameters X, where the *complex* structure factor parameter
-!   ! derivatives are given in "dFdX". This takes into account an
-!   ! existing extinction factor.
-!      res :: VEC{REAL}, OUT
-!      dFdX :: MAT{CPX}, IN
-!
-!   DIE_IF(NOT .reflections.associated,"no reflection data")
-!   DIE_IF(NOT .reflections.have_F_calc, "no calculated structure factors")
-!   DIE_IF(NOT .reflections.have_F_exp, "no experimental structure factors")
-!   DIE_IF(NOT .reflections.have_F_sigma, "no structure factor errors")
-!   ENSURE(.data_kind=="x-ray","only valie for X-ray data, so far")
-!   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dFdX")
-!   ENSURE(dFdX.dim2==res.dim, "incompatible res, dFdX")
-!   ENSURE(all(.reflections(:).F_sigma/=ZERO),"A structure factor has zero error F_sigma!")
-!
-!      top,bot,fac,sg2,F_abs,F_exp,F_sig,extn,val1,val2 :: REAL
-!      dt,db :: VEC{CPX}*
-!      ext   :: VEC{REAL}*
-!      F_cal,dF :: CPX
-!      n,n_refl,p :: INT
-!      ref :: REFLECTION*
-!
-!      n_refl = .reflections.n_refl
-!
-!      dt.create(n_refl)
-!      db.create(n_refl)
-!
-!      ext.create(n_refl)
-!      ext = .F_extinction_correction(ONE,.extinction_factor)
-!
-!      top = ZERO
-!      bot = ZERO
-!      do n = 1,n_refl
-!       ref => .reflections(n)
-!       extn = ext(n)
-!       F_cal = extn*conjg(ref.F_calc)
-!       F_abs = abs(F_cal)
-!       F_exp = abs(ref.F_exp)
-!       F_sig = ref.F_sigma
-!       sg2 = ONE / (F_sig * F_sig)
-!       dt(n) = extn * F_exp * sg2 * F_cal / F_abs
-!       db(n) = extn * sg2 * F_cal
-!       F_abs = extn * F_abs
-!       top = top + F_abs * F_exp * sg2
-!       bot = bot + F_abs * F_abs * sg2
-!      end
-!      ext.destroy
-!
-!      bot = ONE/bot
-!      fac = -TWO*top*bot*bot
-!      do p = 1,dFdX.dim2
-!         val1 = ZERO
-!         val2 = ZERO
-!         do n = 1,n_refl
-!            dF = dFdX(n,p)
-!            val1 = val1 + REALIFY(dt(n)*dF)
-!            val2 = val2 + REALIFY(db(n)*dF)
-!         end
-!         res(p) = bot*val1 + fac*val2
-!      end
-!
-!      db.destroy
-!      dt.destroy
-!
-!   end
 
 
 !  ===============================================
@@ -3574,14 +3372,14 @@ contains
       ext.create(n_refl)
 
       ! Phases should not include dispersion (if added)
-      phase = .reflections.F_calc/abs(.reflections.F_calc)
+      phase = REFLECTION:F_phase(.reflections)
 
       ! These are the scale factors & extinction
       ext   = .F_extinction_correction
 
       ! Subtract the predicted value (which includes dispersion)
       ! Also, place F_exp on an absolute scale
-      dF = (.reflections.F_exp - .reflections.F_pred) * phase / ext
+      dF = (.reflections.F_corr - .reflections.F_pred) * phase / ext
 
       ext.destroy
       phase.destroy
@@ -3607,7 +3405,7 @@ contains
       ext.create(n_refl)
 
       ! Phases should not include dispersion (if added)
-      phase = .reflections.F_calc/abs(.reflections.F_calc)
+      phase = REFLECTION:F_phase(.reflections)
 
       ! These are the scale factors & extinction
       ext   = .F_extinction_correction
@@ -3622,7 +3420,7 @@ contains
          k = .reflections(r).k
          l = .reflections(r).l
 
-         dF(h,k,l) = (.reflections(r).F_exp - .reflections(r).F_pred) * phase(r) / ext(r)
+         dF(h,k,l) = (.reflections(r).F_corr - .reflections(r).F_pred) * phase(r) / ext(r)
 
       end
       
@@ -3636,6 +3434,16 @@ contains
 !  ====================
 !  Structure refinement
 !  ====================
+
+   correct_dispersion result (res) ::: PURE
+   ! Are we correcting for dispersion by some method?
+      self :: IN
+      res :: BIN
+
+      res = .add_dispersion_to_F_calc &
+         OR .remove_dispersion_from_F_exp
+
+   end
 
    refine_positions_and_ADPs result (res) ::: PURE
    ! A refinement of all positions and ADP's
@@ -4302,7 +4110,7 @@ contains
          extn   = ext(n)
          ref    = .reflections(n)
 
-         F_exp  = ref.F_corr
+         F_exp  = ref.F_corr ! NOTE
          F_sig  = ref.F_sigma
          F_abs  = abs(ref.F_calc)
          F_til  = extn*F_abs
@@ -4500,7 +4308,7 @@ contains
          F_abi(n) = ONE/abs(F_cal)
       end
 
-      ! Derivative of (d F_calc/d p)
+      ! Derivative of (d |F_calc|/d p)
       do p = 1,n_p
       do n = 1,n_refl
          res(n,p) = F_abi(n) * REALIFY(F_con(n) * dFdX(n,p))
@@ -4707,8 +4515,11 @@ contains
       stdout.show("Refine scale factor         =",.optimize_scale)
       stdout.show("Refine multiple scales      =",.use_multiple_scale_factors)
       stdout.show("Refine extinction parameter =",.optimize_extinction)
-      stdout.show("Use dispersion correction   =",.correct_dispersion)
+      stdout.show("Correct dispersion?         =",.correct_dispersion)
+      if (.correct_dispersion) then
+      stdout.show("Add dispersion into F_calc  =",.add_dispersion_to_F_calc)
       stdout.show("Remove dispersion frm F_exp =",.remove_dispersion_from_F_exp)
+      end
    
       stdout.flush
       stdout.show("Max allowed parameter shift =",.max_allowed_param_shift)
@@ -4927,7 +4738,11 @@ contains
       stdout.show("scale_factor                  =",.scale_factor)
       stdout.show("optimize_extinction?          =",.optimize_extinction)
       stdout.show("extinction_factor             =",.extinction_factor)
-      stdout.show("correct_dispersion?           =",.correct_dispersion)
+      stdout.show("Correct dispersion?           =",.correct_dispersion)
+      if (.correct_dispersion) then
+      stdout.show("Add dispersion into F_calc    =",.add_dispersion_to_F_calc)
+      stdout.show("Remove dispersion frm F_exp   =",.remove_dispersion_from_F_exp)
+      end
       stdout.flush
       stdout.show("n_param                       =",.n_param)
       stdout.show("n_param_manually_set?         =",.n_param_manually_set)
@@ -5093,7 +4908,11 @@ contains
       stdout.show("Using extinction               =", .optimize_extinction)
       stdout.show("Thermal smearing model         =", .thermal_smearing_model)
       stdout.show("Fragment partition model       =", .partition_model)
-      stdout.show("Correct dispersion?            =", .correct_dispersion)
+      stdout.show("Correct dispersion?            =",.correct_dispersion)
+      if (.correct_dispersion) then
+      stdout.show("Add dispersion into F_calc     =",.add_dispersion_to_F_calc)
+      stdout.show("Remove dispersion frm F_exp    =",.remove_dispersion_from_F_exp)
+      end
 
       if (.optimize_extinction) then;
       stdout.show("Optimize extinction            =", TRUE)
@@ -5741,7 +5560,7 @@ contains
       stdout.flush
 
       do n = 1,n_refl
-         stdout.put(.reflections(n).F_exp)
+         stdout.put(.reflections(n).F_corr)
          stdout.put(.reflections(n).F_z)
          stdout.flush
       end
@@ -6087,6 +5906,18 @@ contains
    ENSURE(.reflection_data_exists,"no reflection data")
 
       res = .reflections.F_exp
+
+   end
+
+   F_corr result (res) ::: PURE
+   ! The dispersion-corrected experimental structure factors
+   ! (Only if refining by removing dispersion from F_exp)
+      self :: IN
+      res :: VEC{REAL}(size(.reflections))
+
+   ENSURE(.reflection_data_exists,"no reflection data")
+
+      res = .reflections.F_corr
 
    end
 
