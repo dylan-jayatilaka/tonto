@@ -529,6 +529,7 @@ contains
       case ("put_bond_info_with_errors     "); .put_bond_info_with_errors
       case ("put_bond_info_with_errors_to  "); .put_bond_info_with_errors_to
       case ("put_data_analysis             "); .put_data_analysis
+      case ("put_all_reflection_data       "); .put_all_reflection_data
       case ("put_reflection_data           "); .put_reflection_data
       case ("put_reflection_intensities    "); .put_reflection_intensities
       case ("put_reflection_intensities_xd "); .put_reflection_intensities_XD
@@ -2609,8 +2610,8 @@ contains
          n = n + 1
 
          reflections(n) = .data.reflections(i)
-         reflections(n).F_exp   = .data.reflections(list(i)[:]).F_exp.mean
-         reflections(n).F_sigma = .data.reflections(list(i)[:]).F_sigma.mean
+         reflections(n).set_F_exp(.data.reflections(list(i)[:]).F_exp.mean)
+         reflections(n).set_F_sigma(.data.reflections(list(i)[:]).F_sigma.mean)
 
       end
 
@@ -2712,8 +2713,8 @@ contains
 
          n = n + 1
          reflections(n) = .data.reflections(i)
-         reflections(n).F_exp   = .data.reflections(list(i)[:]).F_exp.mean
-         reflections(n).F_sigma = .data.reflections(list(i)[:]).F_exp.standard_deviation
+         reflections(n).set_F_exp(.data.reflections(list(i)[:]).F_exp.mean)
+         reflections(n).set_F_sigma(.data.reflections(list(i)[:]).F_exp.standard_deviation)
 
       end
 
@@ -2772,9 +2773,7 @@ contains
               n = n + 1
               DIE_IF(n>n_max,"more than expected number of reflections")
               reflections(n) = .data.reflections(i)
-              reflections(n).h = r(1)
-              reflections(n).k = r(2)
-              reflections(n).l = r(3)
+              reflections(n).set_hkl(r)
            end
         end
       end
@@ -3587,6 +3586,24 @@ contains
    ENSURE(.data.associated,   "no data")
    ENSURE(.fragment_info_made,"no fragment info")
 
+      ! Make F_predicted, F_calc & derivatives
+      .:set_F_calc_from(sf_n)
+
+      ! Optimise scale, extinction & set chi2(F)
+      .data.make_F_predicted
+
+   end
+
+   set_F_calc_from(sf_n)
+   ! Set the predicted structure factors, F_pred, from "sf_n", the
+   ! unique *fragment* atom structure factors for the
+   ! symmetry-generated related k points
+      self :: INOUT
+      sf_n :: MAT{CPX}, IN
+
+   ENSURE(.data.associated,   "no data")
+   ENSURE(.fragment_info_made,"no fragment info")
+
       Fc :: VEC{CPX}*
 
       Fc.create(.n_refl)
@@ -3600,10 +3617,41 @@ contains
 
       Fc.destroy
 
-      ! Optimise scale, extinction & set chi2(F)
-      .data.make_F_predicted
+   end
+
+   make_F_calc_from(sf_n,Fc)
+   ! Make the calculated structure factors "Fc", where "sf_n" are
+   ! the unique *fragment* atom structure factors for the symmetry
+   ! generated related k points
+      self :: INOUT
+      sf_n :: MAT{CPX}, IN
+      Fc :: VEC{CPX}, OUT
+
+   ENSURE(sf_n.dim1==.n_unique_SF_k_pts, "sf_n: wrong dim1")
+   ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim, "sf_n: wrong dim2")
+   ENSURE(Fc.dim==.n_refl, "wrong size, Fc")
+   ENSURE(.data_exists,   "no data")
+   ENSURE(.fragment_info_made,"no fragment info")
+
+      sf_e :: VEC{CPX}*
+      n_k :: INT
+
+      n_k = sf_n.dim1
+
+      ! Symmetry-generated T-indepedent structure factors
+      sf_e.create(n_k)
+
+      ! Make them
+      .make_unique_sf(sf_e,sf_n)
+
+      ! Sum the symmetry-generated SF's to get
+      ! the actual structure factors Fc
+      .make_F_calc_from(sf_e,Fc)
+
+      sf_e.destroy
 
    end
+
 
    make_F_predicted_from(sf_e)
    ! Make and set the predicted structure factors, F_pred, from
@@ -3618,6 +3666,53 @@ contains
       Fc,Fa :: VEC{CPX}*
 
       Fc.create(.n_refl)
+
+      ! Make the calculated SF's
+      .make_F_calc_from(sf_e,Fc)
+
+      ! Set the calculated SF's
+      ENSURE(all(abs(Fc)>TOL(10)),"there are zero F_calc's; prune them to continue")
+      .data.reflections.set_F_calc(Fc)
+
+      Fc.destroy
+
+      ! Optimise scale, extinction & set chi2(F)
+      .data.make_F_predicted
+
+   end
+
+   set_F_calc_from(sf_e)
+   ! Set the predicted structure factors, F_pred, from "sf_e", the
+   ! aspherical temperature-independent form factors for every
+   ! symmetry-generated structure factor.
+      self :: INOUT
+      sf_e :: VEC{CPX}, IN
+
+   ENSURE(sf_e.dim1==.n_unique_SF_k_pts, "wrong size, sf_e")
+   ENSURE(.fragment_info_made,"no fragment info")
+
+      Fc,Fa :: VEC{CPX}*
+
+      Fc.create(.n_refl)
+
+      .make_F_calc_from(sf_e,Fc)
+
+      Fc.destroy
+
+   end
+
+   make_F_calc_from(sf_e,Fc)
+   ! Make and set the predicted structure factors, F_pred, from
+   ! "sf_e", the aspherical temperature-independent form factors for
+   ! every symmetry-generated structure factor.
+      self :: INOUT
+      sf_e :: VEC{CPX}, IN
+      Fc :: VEC{CPX}, OUT
+
+   ENSURE(sf_e.dim1==.n_unique_SF_k_pts, "wrong size, sf_e")
+   ENSURE(.fragment_info_made,"no fragment info")
+
+      Fa :: VEC{CPX}*
 
       ! Sum the symmetry-generated SF's to get
       ! the actual structure factors Fc
@@ -3642,46 +3737,8 @@ contains
       ENSURE(all(abs(Fc)>TOL(10)),"there are zero F_calc's; prune them to continue")
       .data.reflections.set_F_calc(Fc)
 
-      Fc.destroy
-
-      ! Optimise scale, extinction & set chi2(F)
-      .data.make_F_predicted
-
    end
 
-   make_F_calc_from(sf_n,Fc) ::: PURE
-   ! Make the calculated structure factors "Fc", where "sf_n" are
-   ! the unique *fragment* atom structure factors for the symmetry
-   ! generated related k points
-      self :: INOUT
-      sf_n :: MAT{CPX}, IN
-      Fc :: VEC{CPX}, OUT
-
-   ENSURE(sf_n.dim1==.n_unique_SF_k_pts, "sf_n: wrong dim1")
-   ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim, "sf_n: wrong dim2")
-   ENSURE(Fc.dim==.n_refl, "wrong size, Fc")
-   ENSURE(.data_exists,   "no data")
-   ENSURE(.fragment_info_made,"no fragment info")
-
-      sf_e :: VEC{CPX}*
-      n_k :: INT
-
-      n_k = sf_n.dim1
-
-      ! Symmetry generated structure factors
-      sf_e.create(n_k)
-
-      ! Make the symmetry-generated structure factors
-      ! and their derivatives
-      .make_unique_sf(sf_e,sf_n)
-
-      ! Sum the symmetry-generated SF's to get
-      ! the actual structure factors Fc
-      .spacegroup.sum_unique_sf(Fc,sf_e,.data.reflections)
-
-      sf_e.destroy
-
-   end
 
    make_F_calc_derivs_from(sf_n,dFc)
    ! Make "dFc", the derivatives of the calculated structure factors
@@ -3718,7 +3775,7 @@ contains
       ! Make and set F_pred with scale & extinction.
       .data.reflections.reset_F_corr_to_F_exp ! We fit to F_corr
       .make_F_predicted_from(sf_e)            ! Always includes dispersion
-  ! stdout.show("1st scale factor = ",.data.scale_factor)
+    stdout.show("1st scale factor = ",.data.scale_factor)
   ! .data.reflections(1:20).put_F_all_data
       sf_e.destroy
 
@@ -3729,7 +3786,7 @@ contains
   ! stdout.text("Removed dispersion from F_exp to get F_corr")
   ! .data.reflections(1:20).put_F_all_data
          .data.make_F_predicted(update_n_param=FALSE) ! new scale
-  ! stdout.show("2nd scale factor = ",.data.scale_factor)
+    stdout.show("2nd scale factor = ",.data.scale_factor)
       end
 
   ! stop
@@ -7450,6 +7507,24 @@ contains
       if (.pnd_data.associated) then
       if (.pnd_data.reflections.associated) then
          .pnd_data.put_reflections
+      end
+      end
+
+   end
+
+   put_all_reflection_data
+   ! Put out all the X-ray reflection data.
+      self :: IN
+
+      if (.xray_data.associated) then
+      if (.xray_data.reflections.associated) then
+         .xray_data.reflections.put_F_all_data
+      end
+      end
+
+      if (.xray_r_free_data.associated) then
+      if (.xray_r_free_data.reflections.associated) then
+         .xray_r_free_data.reflections.put_F_all_data
       end
       end
 
