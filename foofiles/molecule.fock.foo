@@ -60,7 +60,11 @@ contains
 
         case ("rhf","xray_rhf","embedded_rhf")
 
-           .:make_r_fock(P,F,direct,core,r12)
+           if (.scfdata.use_ELMO_01 OR .scfdata.use_ELMO_11)then
+              .:make_ELMO_r_fock(P,F,core,r12)
+           else
+              .:make_r_fock(P,F,direct,core,r12)
+           end if
 
         case ("rks","xray_rks")
 
@@ -155,6 +159,75 @@ contains
             end
          else;                             .:make_r_JK_disk(J,K,P.restricted)
          end
+
+         fm= .scfdata.use_Fermi_Amaldi
+         ad = .scfdata.ee_adiabatic_constant
+
+         ! Checked with AG 11/06/16
+         if (ad.equals(ONE)) then
+            F.restricted = J - HALF*K
+         else
+            if (fm) then
+               F.restricted = REALIFY(.n_e-1+ad)/REALIFY(.n_e)*J - ad*HALF*K
+            else
+               F.restricted = ad*J - ad*HALF*K
+            end
+         end
+
+         K.destroy
+         J.destroy
+
+         .BASE:put_debug(F.restricted,"make_r_fock: 2e F")
+
+      else
+
+         F.restricted = ZERO
+
+      end
+
+      ! Add core
+      if (add_core) .:add_core_hamiltonian(F)
+
+      .BASE:put_debug(F.restricted,"make_r_fock: F")
+
+   end
+
+   make_ELMO_r_fock(P,F,direct,core,r12) ::: leaky
+   ! Make a new restricted Fock matrix "F" from the density matrix "P".
+   ! If present and TRUE , "direct" means calculate integrals on the fly
+   ! If present and FALSE, "core" removes the core matrix contribution
+   ! If present and FALSE, "r12"  removes the two electron contribution
+      direct,core,r12 :: BIN, optional
+      P,F :: OPMATRIX*
+
+   ENSURE(P.associated,"no density matrix")
+   ENSURE(F.associated,"no fock matrix")
+   ENSURE(F.n_bf==.n_bf, "Fock matrix dimensions wrong")
+   ENSURE(P.n_bf==.n_bf, "Density matrix dimensions wrong")
+   ENSURE(P.restricted.associated, "no density matrix")
+
+      J,K :: MAT{REAL}*
+      do_direct,add_core,add_r12 :: BIN
+      ad :: REAL
+      fm :: BIN
+
+      ! Recreate
+      F.destroy("restricted")
+      F.create("restricted")
+
+      do_direct= TRUE
+      add_core = TRUE
+      add_r12  = TRUE
+      if (present(direct)) do_direct = direct
+      if (present(core))   add_core = core
+      if (present(r12))    add_r12  = r12
+
+      if (add_r12) then
+
+         J.create(.n_bf,.n_bf)
+         K.create(.n_bf,.n_bf)
+
+         .:make_ELMO_r_JK_direct(J,K,P.restricted)
 
          fm= .scfdata.use_Fermi_Amaldi
          ad = .scfdata.ee_adiabatic_constant
@@ -955,6 +1028,191 @@ contains
       ! Debug
       .BASE:put_debug(J,"make_r_JK_direct: J")
       .BASE:put_debug(K,"make_r_JK_direct: K")
+
+   end
+
+   make_ELMO_r_JK_direct(J,K,P)
+   ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from a
+   ! symmetric density matrix "P" directly.
+      J,K :: MAT{REAL}, OUT
+      P :: MAT{REAL}, IN
+
+   ENSURE(.precomputed_basis_shellpair.associated,"no precomputed shell pair information")
+
+      I,max_P :: VEC{REAL}*
+      sh4s,sh4n :: SHELL1QUARTET
+      ab,cd,aa,bb,cc,dd,fa,fb,fc,fd,la,lb,lc,ld,na,nb,nc,nd :: INT
+      atom_a,atom_b,atom_c,atom_d,a,b,c,d,abcd :: INT
+      factor,cutoff,P_max,IP_max,I_abcd :: REAL
+      skip,any_same,no_max_I :: BIN
+      ab_same,ac_same,ad_same,bc_same,bd_same,cd_same :: BIN
+      ab_con,ac_con,ad_con :: BIN
+
+      J = ZERO
+      K = ZERO
+
+      cutoff = .scfdata.eri_schwarz_cutoff
+
+      no_max_I = FALSE
+      if (.max_I.disassociated) no_max_I = TRUE
+      if (no_max_I) .:initialize_max_I
+
+      max_P.create(.n_shell_pairs)
+
+      .:make_max_density_elements(max_P,P)
+      P_max  = maxval(max_P)
+      IP_max = maxval(.max_I) * P_max
+
+      parallel do ab = 1,.n_shell_pairs
+
+         if (.max_I(ab)*IP_max < cutoff) cycle
+
+         .BASE:get_shell_pair_indices(ab,aa,bb,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         ab_same = atom_a==atom_b
+         ab_con = .BASE:connected_or_identical(atom_a,atom_b)
+
+         .BASE:set_new_shell_quartet_ab(sh4s,aa,bb,skip=TRUE)
+         .BASE:set_new_shell_quartet_ab(sh4n,aa,bb,skip=FALSE)
+
+         do cd = 1,ab
+
+            if (.max_I(ab)*.max_I(cd)*P_max < cutoff) cycle
+
+            .BASE:get_shell_pair_indices(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d)
+
+            ! Atom tests
+            ac_same = atom_a==atom_c
+            ad_same = atom_a==atom_d
+            bc_same = atom_b==atom_c
+            bd_same = atom_b==atom_d
+            cd_same = atom_c==atom_d
+            ac_con  = .BASE:connected_or_identical(atom_a,atom_c)
+            ad_con  = .BASE:connected_or_identical(atom_a,atom_d)
+
+            skip = ::schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+            if (skip) cycle
+
+            factor = ONE
+            if (aa==bb) factor = HALF
+            if (cc==dd) factor = HALF * factor
+            if (aa==cc AND bb==dd) factor = HALF * factor
+
+            any_same = ab_same OR cd_same OR &
+                       atom_a==atom_c OR atom_a==atom_d OR &
+                       atom_b==atom_c OR atom_b==atom_d
+
+            if (any_same) then
+
+               .BASE:set_new_shell_quartet_cd(sh4n,cc,dd,skip=FALSE)
+               I.create(sh4n.ab_n_bf_pairs*sh4n.cd_n_bf_pairs)
+               SHELL1QUARTET::make_ERI(sh4n,I)
+               sh4n.destroy_cd
+
+            else
+
+               .BASE:set_new_shell_quartet_cd(sh4s,cc,dd,skip=TRUE)
+               I.create(sh4s.ab_n_bf_pairs*sh4s.cd_n_bf_pairs)
+               SHELL1QUARTET::make_ERI(sh4s,I)
+               sh4s.destroy_cd
+
+            end
+
+            
+            if(ab_same AND cd_same AND ac_con)then
+            
+               abcd = 0
+               
+               do d = fd,ld
+               do c = fc,lc
+               do b = fb,lb
+               do a = fa,la
+                  abcd = abcd + 1
+                  
+                  I_abcd = factor * I(abcd)
+                  
+                  J(a,b) = J(a,b) + I_abcd*P(d,c)
+                  J(c,d) = J(c,d) + I_abcd*P(b,a)
+               
+               end
+               end
+               end
+               end
+
+            end
+
+            if(ac_same AND bd_same AND ad_con)then
+            
+               abcd = 0
+               
+               do d = fd,ld
+               do c = fc,lc
+               do b = fb,lb
+               do a = fa,la
+                  
+                  abcd = abcd + 1
+                  
+                  I_abcd = factor * I(abcd)
+                  
+                  K(a,c) = K(a,c) + I_abcd*P(d,b)
+                  K(b,d) = K(b,d) + I_abcd*P(c,a)
+               
+               end
+               end
+               end
+               end
+
+            end
+            
+            if(ad_same AND bc_same AND ab_con)then
+            
+               abcd = 0
+               
+               do d = fd,ld
+               do c = fc,lc
+               do b = fb,lb
+               do a = fa,la
+                  
+                  abcd = abcd + 1
+                  
+                  I_abcd = factor * I(abcd)
+                  
+                  K(a,d) = K(a,d) + I_abcd*P(c,b)
+                  K(b,c) = K(b,c) + I_abcd*P(d,a)
+               
+               end
+               end
+               end
+               end
+
+            end
+            
+            I.destroy
+
+         end
+
+         sh4n.destroy_ab
+         sh4s.destroy_ab
+      end
+
+      max_P.destroy
+      if (no_max_I) .max_I.destroy
+
+      .:weight_diagonal_blocks(J,TWO)
+      .:blockwise_symmetric_fold(K)
+
+      J = TWO*J
+      if (DO_IN_PARALLEL) then
+        PARALLEL_SYMMETRIC_SUM(J)
+        PARALLEL_SYMMETRIC_SUM(K)
+      else
+        J.symmetric_reflect
+        K.symmetric_reflect
+      end
+
+      ! Debug
+      .BASE:put_debug(J,"make_ELMO_r_JK_direct: J")
+      .BASE:put_debug(K,"make_ELMO_r_JK_direct: K")
 
    end
 
