@@ -188,6 +188,7 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.base.foo
     ${FOO_DIR}/molecule.ce.foo
     ${FOO_DIR}/molecule.cp.foo
+    ${FOO_DIR}/molecule.nomo.foo
     ${FOO_DIR}/molecule.fock.foo
     ${FOO_DIR}/molecule.gem.foo
     ${FOO_DIR}/molecule.grid.foo
@@ -336,6 +337,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.base.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.nomo.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.fock.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.gem.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
