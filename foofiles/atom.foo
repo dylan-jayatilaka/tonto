@@ -7348,6 +7348,47 @@ contains
 
    end
 
+   make_general_density_grid_r(density_grid,pt,occ) ::: PURE
+   ! Make the "density_grid" for the supplied points "pt" from general real
+   ! natural orbitals
+      self :: IN
+      density_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      occ :: REAL, optional, IN
+
+   ENSURE(pt.dim2==3,"wrong dimension for points array")
+   ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
+   ENSURE(.natural_orbitals.is_associated_with_genre("general"),"no general NO's")
+   ENSURE(.occupation_numbers.is_associated_with_genre("general"),"no occupation numbers")
+
+      NO :: VEC{REAL}*
+      n_occ,n :: INT
+      do_occ :: BIN
+
+      ! Do occupation factor?
+      do_occ = FALSE
+      if (present(occ)) then
+      if (NOT occ.equals(ONE)) then
+        do_occ = TRUE
+      end
+      end
+
+      density_grid = ZERO ! set to zero
+
+      NO.create(pt.dim1)
+      n_occ = .no_of_occupied_NOs
+
+      do n = 1,n_occ
+         .make_general_orbital_grid_r(NO,.natural_orbitals.general(:,n),pt,.position)
+         density_grid = density_grid + .occupation_numbers.general(n)*NO*NO
+      end
+
+      if (do_occ) density_grid = occ*density_grid
+
+      NO.destroy
+
+   end
+
    add_density_grid_r(density_grid,pt,occ) ::: PURE
    ! Add the "density_grid" for the supplied points "pt" from restricted real
    ! natural orbitals
@@ -7672,7 +7713,7 @@ contains
       square :: BIN, optional, IN
 
    ENSURE(.basis.associated,"no basis set")
-   ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
+   ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect size, orb")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
       sq :: BIN
@@ -7705,6 +7746,60 @@ contains
 
       end
 
+      if (sq) g = g*g
+
+   end
+
+   make_general_orbital_grid_r(g,orb,pt,pos,square) ::: PURE
+   ! Evaluate the orbital density grid "g" for *one* AO-basis coefficient
+   ! orbital vector "orb" on a set of grid points "pt" for an atom at position
+   ! "pos". If "square" is present and TRUE, the square of the orbital density
+   ! is returned.
+      self :: IN
+      g :: VEC{REAL}, OUT
+      orb :: VEC{REAL}, IN
+      pt :: MAT{REAL}, IN
+      pos :: VEC{REAL}(3), IN
+      square :: BIN, optional, IN
+
+   ENSURE(.basis.associated,"no basis set")
+   ENSURE(2*.basis.no_of_basis_functions==orb.dim,"incorrect size, orb")
+   ENSURE(pt.dim2==3,"wrong size, pt")
+
+      sq :: BIN
+      sh :: SHELL1*
+      sh_grid :: MAT{REAL}*
+      n_pt,n_shell,f,l,s :: INT
+
+      sq = FALSE
+      if (present(square)) sq = square
+
+      n_pt = pt.dim1
+      n_shell = .basis.no_of_shells
+
+      g = ZERO
+      l = 0
+
+      do s = 1,n_shell
+
+         sh.create_copy(.basis.shell(s),pos)
+
+         f = l + 1
+         l = f + sh.n_bf - 1
+         sh_grid.create(n_pt,2*sh.n_bf)
+
+         sh.make_grid(sh_grid,pt)
+         !alpha part
+         g.plus_product_of(sh_grid(:,1:sh.n_bf),orb(f:l))
+         
+         !beta part
+         g.plus_product_of(sh_grid(:,sh.n_bf+1:2*sh.n_bf),orb(l+1:l+sh.n_bf))
+
+         sh_grid.destroy
+         sh.destroy
+
+      end
+      
       if (sq) g = g*g
 
    end
@@ -7854,6 +7949,42 @@ contains
 
    end
 
+   general_density_at_radius(R) result (res) ::: PURE
+   ! Work out the electron at radius "R", using general spinorbitals.
+      self :: IN
+      R :: REAL, IN
+      res :: REAL
+
+      density_grid :: VEC{REAL}(1)
+      pt :: MAT{REAL}(1,3)
+
+      res = ZERO
+
+      select case (.basis_kind)
+
+      case ("gaussian")
+         ENSURE(.basis.associated,"no basis")
+         pt(1,:) = .position + [R,ZERO,ZERO]
+         if (.natural_orbitals.number_kind == "real") then;
+         .make_general_density_grid_r(density_grid,pt)
+         else;                                              .make_density_grid_c(density_grid,pt)
+         end
+         res = density_grid(1)
+
+      case ("slater")
+         ENSURE(.slaterbasis.associated,"no slaterbasis")
+         ENSURE(.slaterbasis.shell.associated,"no slaterbasis shells")
+         res = .slaterbasis.density_at_radius(R)
+
+      case ("coppens")
+         ENSURE(.coppensbasis.associated,"no coppensbasis")
+         ENSURE(.coppensbasis.orbital.associated,"no coppensbasis orbital")
+         res = .coppensbasis.density_at_radius(R)
+
+      end
+
+   end
+
    density_value_at_radius(R) result (res) ::: selfless, public, PURE
    ! Return the density values at the radial value "R".
    ! This assumes that the atomic density is spherical!
@@ -7861,6 +7992,17 @@ contains
       res :: REAL
 
       res = saved_self.density_at_radius(R)
+
+   end
+
+   general_density_value_at_radius(R) result (res) ::: selfless, public, PURE
+   ! Return the density values at the radial value "R".
+   ! NOTE:: this uses general orbitals.
+   ! This assumes that the atomic density is spherical!
+      R :: REAL, IN
+      res :: REAL
+
+      res = saved_self.general_density_at_radius(R)
 
    end
 
@@ -7895,6 +8037,37 @@ contains
       ! Set the interpolation table
       .set_saved_self ! Used by ATOM: function below
       .interpolator.set_even_spaced_data(ATOM::density_value_at_radius)
+
+   end
+
+   make_general_interpolator(interpolator) ::: leaky
+   ! Make the .interpolator for the atom density. If present,
+   ! "interpolator" is used as a template to get the settings needed.
+   ! NOTE: This is for a gaussian basis set, using general
+   ! spinorbitals; for slater or coppens
+   ! bases use the interpolators stored in those bases.
+      self :: INOUT
+      interpolator :: INTERPOLATOR*, optional
+
+   ENSURE(.basis_kind=="gaussian","interpolation must be for a gaussian basis")
+
+      ! Create a copy of the template if it exists
+      if (present(interpolator)) then
+      if (interpolator.associated) then
+         .interpolator.destroy
+         .interpolator.create_copy(interpolator)
+      end
+      end
+
+      ! If no template, create a default interpolator
+      if (.interpolator.disassociated) .interpolator.create
+
+      ! Set domain scale factor. May not be required.
+      .interpolator.set_domain_scale_factor(.bragg_slater_radius*BOHR_PER_ANGSTROM)
+
+      ! Set the interpolation table
+      .set_saved_self ! Used by ATOM: function below
+      .interpolator.set_even_spaced_general_data(ATOM::general_density_value_at_radius)
 
    end
 
