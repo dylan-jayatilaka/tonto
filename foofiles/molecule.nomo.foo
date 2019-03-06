@@ -101,14 +101,16 @@ contains
 
       ! Is it already there?
       if (.core_matrix.associated) then
-      if (.core_matrix.is_associated_with_genre("restricted")) then
-         return
-      end
+         if (.core_matrix.is_associated_with_genre("restricted")) then
+            return
+         end
+      else
+         .core_matrix.create(.n_bf)
       end
 
       ! Allocate core matrix
-      .core_matrix.destroy
-      .core_matrix.create(.n_bf)
+      !.core_matrix.destroy
+      !.core_matrix.create(.n_bf)
       .core_matrix.create("restricted")
 
       ! === ALIAS ===
@@ -222,12 +224,12 @@ contains
          return
       end
 
-  !    ! Allocate core matrix
-  !    if (.core_matrix.disassociated) then; .core_matrix.create(.n_bf)
-  !    else;                             .core_matrix.set(.n_bf)
-  !    end
-  !    .core_matrix.create("general")
-  !    .core_matrix.general = ZERO
+      ! Allocate core matrix
+      if (.core_matrix.disassociated) then; .core_matrix.create(.n_bf)
+      else;                             .core_matrix.set(.n_bf)
+      end
+      .core_matrix.create("general")
+      .core_matrix.general = ZERO
 
       ! Add the lower half in ... depending on the method
       ! NOTE: there may be some failures here ...
@@ -277,12 +279,12 @@ contains
 
       ! Diagonal part
       .:make_r_core_matrix
-      ! Allocate core matrix
-      if (.core_matrix.disassociated) then; .core_matrix.create(.n_bf)
-      else;                             .core_matrix.set(.n_bf)
-      end
-      .core_matrix.create("general")
-      .core_matrix.general = ZERO
+!      ! Allocate core matrix
+!      if (.core_matrix.disassociated) then; .core_matrix.create(.n_bf)
+!      else;                             .core_matrix.set(.n_bf)
+!      end
+!      .core_matrix.create("general")
+!      .core_matrix.general = ZERO
 
 
       ! === ALIAS ===
@@ -313,6 +315,83 @@ contains
 
    end
 
+!  ====================
+!  Fock matrix routines
+!  ====================
+
+   make_fock_matrix(core,r12) ::: leaky
+   ! If r12  is present and FALSE, the r12 part is not computed.
+      core,r12 :: BIN, optional
+
+   ENSURE(.scfdata.associated,"no scfdata")
+   ENSURE(.density_matrix.associated,"no density matrix")
+   ENSURE(.density_matrix.is_associated_with_genre(.scfdata.spinorbital_kind),"incompatible density")
+
+      dF :: OPMATRIX*
+      delta_build,add_core :: BIN
+
+      ! Use a delta fock matrix build?
+      delta_build = .scfdata.do_delta_build &
+                AND .delta_density_matrix.associated &
+                AND .fock_2e_matrix.associated
+
+      ! Make the 2e fock matrix from density
+      if (NOT delta_build) then
+
+         .fock_2e_matrix.destroy
+         .fock_2e_matrix.create(.n_bf)
+
+         .FOCK:make_fock_matrix(.density_matrix,.fock_2e_matrix,core=FALSE,r12=r12,xc=FALSE)
+
+      ! Make the 2e fock matrix from delta density
+      else
+
+        ! Uncompress 2e fock matrix
+        .fock_2e_matrix.uncompress
+
+        ! Make delta fock. Skip exchange correlation part.
+        dF.create(.n_bf)
+        .FOCK:make_fock_matrix(.delta_density_matrix,dF,core=FALSE,r12=r12,xc=FALSE)
+
+        ! Add delta to previous 2e fock matrix
+        .fock_2e_matrix.plus(dF)
+
+        ! Clean
+        dF.destroy
+
+      end
+
+      ! Set fock matrix & save space
+      .fock_matrix.destroy
+      .fock_matrix.create_copy(.fock_2e_matrix)
+      .fock_2e_matrix.compress
+
+      ! Now do the XC part if needed
+      if (.scfdata.is_DFT_calculation) .FOCK:add_XC_matrix_KS(.fock_matrix)
+
+      ! Force update of 1e hamiltonian if required
+      if (.scfdata.using_SC_cluster_charges OR .scfdata.using_SC_Lorentz_fields) then
+         .core_matrix.destroy
+         .Hirshfeld_atom_info_made = FALSE
+      end
+
+      ! Add one electron part?
+      add_core = TRUE
+      if (present(core)) add_core = core
+
+
+      ! Add core. Make sure it is there.
+      if (add_core) then
+         .:make_core_matrix(.scfdata.spinorbital_kind)
+         .:make_core_matrix(.scfdata.molecular_orbital_kind)
+         .FOCK:add_core_hamiltonian(.fock_matrix)
+      end
+
+      ! Debug: fock matrix
+      .BASE:put_debug(.fock_matrix,"make_fock_matrix: fock matrix")
+
+   end
+
 !  ===
 !  SCF
 !  ===
@@ -337,7 +416,11 @@ contains
          .SCF:group_scf
 
       case ("no_ghf")
-        .:NO_ghf
+         if(.scfdata.use_ELMO) then
+            .:ELMO
+         else
+            .:NO_ghf
+         end
 
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
@@ -413,7 +496,7 @@ contains
    ! procedure, and an associated .density_matrix.
 
    ENSURE(.scfdata.associated,"no scfdata")
-   ENSURE(.scfdata.spinorbital_kind=="generasl","need an initial fock matrix")
+   ENSURE(.scfdata.spinorbital_kind=="general","need an initial fock matrix")
    ENSURE(.fock_matrix.is_associated_with_genre("general"),"need a general initial fock matrix")
 
       e, SMOE :: VEC{REAL}*
@@ -515,7 +598,7 @@ contains
 
       ! Get back to AO basis
       H.to_product_of(S,MO)
-      MO = H
+      MO = H(:,:.n_e)
 
       ! Make the (spinorbital_kind) density matrix
       D => .density_matrix.general
@@ -537,9 +620,9 @@ contains
    ENSURE(.atom.created,   "no atom list")
    ENSURE(.scfdata.created,"no scfdata")
 
-    !  if(.scfdata.use_ELMO_01) then
     !     .scfdata.set_use_ELMO_01(FALSE)
-         .SCF:initialize_scf
+    !if(.scfdata.use_ELMO) .BASE:make_elmo_connection_table
+    .SCF:initialize_scf
     !     .scfdata.set_use_ELMO_01(TRUE)
     !  else
     !     .:initialize_scf
@@ -557,7 +640,7 @@ contains
 
          .BASE:make_scf_density_matrix
 
-         .SCF:make_fock_matrix
+         .:make_fock_matrix
 
          .SCF:update_scfdata
          .SCF:update_scfdata_error
@@ -572,7 +655,7 @@ contains
          .scfdata.set_use_ELMO(FALSE)
          .BASE:make_scf_density_matrix
 
-         .SCF:make_fock_matrix
+         .:make_fock_matrix
 
          .SCF:update_scfdata
          .SCF:update_scfdata_error
@@ -662,27 +745,27 @@ contains
    ENSURE(.overlap_matrix.created,"no overlap matrix")
    DIE_IF(NOT fock_matrix.is_symmetric, "fock_matrix not symmetric!  WTF?!")
 
-      S :: MAT{REAL}*
+      R,S :: MAT{REAL}*
       H :: MAT{REAL}*
 
-      !R.create(2*.n_bf,2*.n_bf)
-      S.create(2*.n_bf,2*.n_bf)
+      R.create(2*.n_bf,2*.n_bf)
+      S.create(.n_bf,.n_bf)
 
       ! S = S^-1/2, R = big inverse S
       .INTS:make_r_overlap_inverse_sqrt(S)
 
       ! R = big inverse S
-      !R = ZERO
-      !R.alpha_alpha_set_to(S)
-      !R.beta_beta_set_to(S)
-      !S.destroy
+      R = ZERO
+      R.alpha_alpha_set_to(S)
+      R.beta_beta_set_to(S)
+      S.destroy
 
       ! H = Fock matrix
       H.create(2*.n_bf,2*.n_bf)
       H = fock_matrix
 
       ! H = S^-1/2 F S^-1/2
-      H.change_basis_using(S)
+      H.change_basis_using(R)
       
       .BASE:zero_ELMO_g_mx(H)
 
@@ -690,25 +773,16 @@ contains
       H.solve_symmetric_eigenproblem(MO_energies,MO)
 
       !  c  = S^-1/2 c~
-      .BASE:zero_ELMO_g_mx(S)
-      H.to_product_of(S,MO)
+      .BASE:zero_ELMO_g_mx(R)
+      H.to_product_of(R,MO)
       MO = H
-
-      stdout.text("MO_energies:")
-      stdout.put(MO_energies)
-      stdout.text("MO:")
-      stdout.put(MO)
-      stdout.show("bf", .n_bf)
 
       .INTS:reorder_ELMO_g_mx(MO)
       !.INTS:zero_ELMO_grad_mx(MO)
 
-      stdout.text("MO after reorder:")
-      stdout.put(MO)
-
       ! Clean
       H.destroy
-      S.destroy
+      R.destroy
 
    end
 
@@ -1746,7 +1820,7 @@ contains
 
       ! ELMO desnity
       .BASE:make_NOMO_density_matrix_g(P.general,MO) 
-      !.BASE:zero_ELMO_g_mx(P.general)
+      .BASE:zero_ELMO_g_mx(P.general)
 
       ! Make two electron Fock matrix 
       .FOCK:make_ELMO_g_fock(P,F)
@@ -2209,9 +2283,15 @@ contains
       .INTS:make_overlap_matrix
 
       ! Get initial MO's
-      .:make_ELMO_promolecule_density ! Fix for general ANOs
-      .SCF:make_fock_matrix         ! should be OK, ELMO is used to make F
-      .:make_g_ELMO_guess          ! should be OK, atom-atom blocks are zeroed
+      .SCF:make_promolecule_density ! Fix for general ANOs
+
+      !.:make_ELMO_promolecule_density ! Fix for general ANOs
+      .:make_fock_matrix         ! should be OK, ELMO is used to make F
+      !.SCF:make_fock_guess         ! should be OK, ELMO is used to make F
+      
+      .orbital_energies.create(.n_bf, "general")
+      .molecular_orbitals.create(.n_bf, "general")
+      .:make_g_fock_guess(.orbital_energies.general,.molecular_orbitals.general,.fock_matrix.general)
       !!!!!!!!! FIX !!!!!!!!!!!
       
       ! Core matrix: both kinds
@@ -2220,7 +2300,7 @@ contains
       .:make_core_matrix(.scfdata.molecular_orbital_kind)
       
       ! Make fock
-      .SCF:make_fock_matrix
+      .:make_fock_matrix
 
 
       ! Reset all SCF data (except DFT parts)
@@ -2229,7 +2309,7 @@ contains
       .:update_scfdata_energies
 
       ! Add constraint to F?
-      .SCF:update_scfdata_error
+      if (.scfdata.using_diis) .SCF:update_scfdata_error
 
       ! Initialise Schwarz inequality integrals (leaky)
       .FOCK:initialize_max_I
@@ -2259,7 +2339,7 @@ contains
       .BASE:make_scf_density_matrix
    
       ! Remake the "full" Fock matrix
-      .SCF:make_fock_matrix
+      .:make_fock_matrix
    
       .SCF:update_scfdata
       .SCF:update_scfdata_error
@@ -2325,7 +2405,9 @@ contains
       ! Uncomment below, and within routine for characterisation of key properties
       datafile :: DATAFILE
       MOv :: VEC{REAL}*
+      gm,ge :: MAT{REAL}*
       MO,F,P :: MAT{REAL}*
+      E :: REAL
       i :: INT
    
       do
@@ -2340,23 +2422,23 @@ contains
 
          ! BFGS
          nomo_self => self
-       !        if (.scfdata.iteration==3) then
-       !           gm.create(2*.n_bf,.n_e)
-       !           gm=ZERO
-       !           .:make_ELMO_gradient_g(MO,E,gm)
-       !           ge.create(2*.n_bf,.n_e)
-       !           ge = gm
-       !           stdout.text("Equation Gradient: ")
-       !           stdout.put(ge)
-       !           
-       !           gm = ZERO
-       !           .:make_ELMO_gradient_g_fd(MO,E,gm)
-       !           stdout.text("FD Gradient: ")
-       !           stdout.put(gm)
+               if (.scfdata.iteration==3) then
+                  gm.create(2*.n_bf,.n_e)
+                  gm=ZERO
+                  .:make_ELMO_gradient_g(MO,E,gm)
+                  ge.create(2*.n_bf,.n_e)
+                  ge = gm
+                  stdout.text("Equation Gradient: ")
+                  stdout.put(ge)
+                  
+                  gm = ZERO
+                  .:make_ELMO_gradient_g_fd(MO,E,gm)
+                  stdout.text("FD Gradient: ")
+                  stdout.put(gm)
 
-       !           stdout.show("Difference is: ", norm2(gm-ge))
-       !           stop
-       !        end
+                  stdout.show("Difference is: ", norm2(gm-ge))
+                  stop
+               end
          .scfdata.bfgs.minimize_L_BFGS(::ELMO_gradient_g,MOv)
 
          ! Back to matrix
@@ -2366,10 +2448,10 @@ contains
             MO(:,i) = MO(:,i)/(MO(:,i).norm)
          end do
 
-         .:update_scfdata
-         .:update_scfdata_error
+         .SCF:update_scfdata
+         .SCF:update_scfdata_error
       
-         .:put_scf_table_body
+         .SCF:put_scf_table_body
          
          ! Uncomment below for characterisation of key properties
          datafile.open("fock_matrix.sbf")
