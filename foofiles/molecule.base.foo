@@ -5274,45 +5274,6 @@ contains
 
    end
 
-   make_elmo_connection_table ::: leaky
-   ! Construct the elmo connection table
-      self :: INOUT
-      i, j :: INT
-      .elmo_connection_table.create(.n_atom,.n_atom)
-
-      ! set default connection to something huge
-      ! to signify not connected
-      ! divide by 2 to prevent overflow errors
-      .elmo_connection_table = (huge(i) - 1) / 2
-
-      ! initialize same atom connections
-      do i = 1, .n_atom
-         .elmo_connection_table(i,i) = 0
-      end do
-
-      do i = 1, .n_atom
-         do j = 1, .atoms_bonded_to_atom(i).element.dim
-            .elmo_connection_table(i, .atoms_bonded_to_atom(i).element(j)) = 1
-         end do
-      end do
-      .elmo_connection_table = .elmo_connection_table.floyd_warshall
-      stdout.text("ELMO connection table")
-      stdout.put(.elmo_connection_table)
-
-   end
-
-   elmo_connected(a,b, degree) result(res) ::: pure
-   ! Return TRUE if the atoms with indices "a" and "b" are
-   ! ELMO-connected
-      self :: IN
-      a, b, degree :: INT, IN
-      res :: BIN
-
-      res = (.elmo_connection_table(a,b) <= degree)
-
-   end 
-
-
 !  =================
 !  Atom pair indices
 !  =================
@@ -6360,7 +6321,7 @@ contains
 
       T :: REAL
       damping,do_archive,do_delta_density :: BIN
-      use_NOMO,use_ELMO,use_pFON,use_FON :: BIN
+      use_pFON,use_FON :: BIN
       MO,D,MOa,MOb,Da,Db,F,Fa,Fb :: MAT{REAL}*
       CMO,CD,CMOa,CMOb,CDa,CDb :: MAT{CPX}*
       EV,Ea,Eb :: VEC{REAL}*
@@ -6386,14 +6347,6 @@ contains
       if      (present(damp)) then;       damping = damping AND damp
       else if (.scfdata.associated) then; damping = damping AND .scfdata.apply_damping
       end
-
-      ! Determine if NOMO should be used
-      use_NOMO = FALSE
-      if (.scfdata.associated) use_NOMO = .scfdata.use_NOMO
-
-      ! Determine if ELMO should be used
-      use_ELMO = FALSE
-      if (.scfdata.associated) use_ELMO = .scfdata.use_ELMO
 
       ! Determine if pFON should be used
       use_pFON = FALSE
@@ -6457,13 +6410,6 @@ contains
             ::make_finite_T_DM_r(D,.scfdata.E_Fermi,MO,EV,T,.n_a)
             D  = TWO*D
 
-         else if (.scfdata.use_NOMO) then
-           
-            D  => .density_matrix.restricted
-            MO => .molecular_orbitals.restricted
-
-            .:make_NOMO_density_matrix_r(D,MO)
-         
          else
 
             MO => .molecular_orbitals.restricted(:,1:.n_a)
@@ -6513,15 +6459,6 @@ contains
             T = .scfdata.temperature
             ::make_finite_T_DM_u(Da,Db,.scfdata.E_Fermi,MOa,MOb,Ea,Eb,T,.n_a,.n_b)
 
-         else if (.scfdata.use_NOMO) then
-           
-            MOa => .molecular_orbitals.alpha(:,1:.n_a)
-            MOb => .molecular_orbitals.beta(:,1:.n_b)
-            Da  => .density_matrix.alpha
-            Db  => .density_matrix.beta
-
-            .:make_NOMO_density_matrix_u(Da,Db,MOa,MOb)
-         
          else
 
             MOa => .molecular_orbitals.alpha(:,1:.n_a)
@@ -6539,21 +6476,9 @@ contains
          !WTF!!!? Should this be here?
          !ENSURE(.spin_multiplicity==1,"this is not a singlet state")
 
-         if (.scfdata.use_NOMO) then
-            
-            D  => .density_matrix.general
-            MO => .molecular_orbitals.general(:,1:.n_e)
-
-            .:make_NOMO_density_matrix_g(D,MO)
-         
-         else
-
-
             MO => .molecular_orbitals.general(:,1:.n_e)
             D  => .density_matrix.general
             D.to_product_of(MO,MO,transpose_b=TRUE)
-         
-         end if
 
       case ("rchf")
 
@@ -6613,81 +6538,6 @@ contains
 
    end
 
-   make_NOMO_density_matrix_g(D,MO)
-   ! Make the inverse of the occupied-coccupied block of the MO
-   ! overlap matrix.
-      self :: IN
-      D :: MAT{REAL}, OUT
-      MO :: MAT{REAL}, IN
-
-      S_inv :: MAT{REAL}@
-
-      ! Make (S^MO){-1} in MO basis & back transform
-      S_inv.create(.n_e,.n_e)
-      S_inv = ZERO
-      .:make_NOMO_S_inv_g(S_inv,MO)
-
-      ! Back transform -> D
-      S_inv.back_transform_to(D,MO)
-      S_inv.destroy
-
-      if(.scfdata.use_ELMO) .:zero_ELMO_g_mx(D)
-
-   end
-   
-   make_NOMO_density_matrix_r(D,MO)
-   ! Make the inverse of the occupied-coccupied block of the MO
-   ! overlap matrix.
-      self :: IN
-      D :: MAT{REAL}, OUT
-      MO :: MAT{REAL}, IN
-
-      S_inv :: MAT{REAL}@
-
-      ! Make (S^MO){-1} in MO basis & back transform
-      S_inv.create(.n_a,.n_a)
-      .:make_NOMO_S_inv_r(S_inv,MO)
-
-      ! Back transform -> D
-      S_inv.back_transform_to(D,MO(:,1:.n_a))
-      S_inv.destroy
-
-      ! Factor 2 for RHF
-      D = TWO*D
-
-   end
-   
-   make_NOMO_density_matrix_u(Da,Db,MOa,MOb)
-   ! Make the inverse of the occupied-coccupied block of the MO
-   ! overlap matrix.
-      self :: IN
-      
-      Da,Db :: MAT{REAL}, OUT
-      MOa,MOb :: MAT{REAL}, IN
-
-      S_inv :: MAT{REAL}@
-
-      ! alpha
-      ! Make (S^MO){-1} in MO basis & back transform
-      S_inv.create(.n_a,.n_a)
-      .:make_NOMO_S_inv_u_a(S_inv,MOa)
-
-      ! Back transform -> Da
-      S_inv.back_transform_to(Da,MOa)
-      S_inv.destroy
-
-
-      ! beta
-      ! Make (S^MO){-1} in MO basis & back transform
-      S_inv.create(.n_b,.n_b)
-      .:make_NOMO_S_inv_u_b(S_inv,MOb)
-
-      ! Back transform -> Db
-      S_inv.back_transform_to(Db,MOb)
-      S_inv.destroy
-
-   end
-
 !   make_S_g(S)
 !   ! Make the 2x.n_bf sizes AO overlap matrix
 !      self :: IN
@@ -6700,236 +6550,6 @@ contains
 !      ! Make S in the SAO asis 
 !      S.alpha_alpha_set_to(.overlap_matrix)
 !        S.beta_beta_set_to(.overlap_matrix)
-!
-!   end
-
-!   make_ELMO_S_g(Smo,MO)
-!   ! Make the ELMO "Smo" matrix which is .n_e x .n_e and "MO" is blocked.
-!   ! NOTE: the .n_e_on_atom array must have been made.
-!      self :: IN
-!      Smo :: MAT{REAL}, OUT
-!      MO :: MAT{REAL}, IN
-!
-!   ENSURE(.overlap_matrix.created, "No overlap_matrix!")
-!   ENSURE(.n_e_on_atom.created, "No n_e_on_atom array!")
-!   ENSURE(MO.dim2==.n_e, "Wrong no. of cols on MO")
-!   ENSURE(MO.dim1==2*.n_bf, "Wrong no. of rows on MO")
-!
-!      S :: MAT{REAL}*
-!      V :: MAT{REAL}*
-!
-!      ! Make S in the SAO asis 
-!      !S.create(2*.n_bf, 2*.n_bf)
-!      BASE::make_S_g(S)
-!
-!      ! Make Smo = c^T S c in the occupied MO basis 
-!      S.change_basis_to(Smo,MO)
-!      
-!      ! Cleanup
-!      S.destroy
-!
-!   end
-
-!   zero_ELMO_Smo(Smo)
-!   ! Zeroes the non-localised portion of the molecular orbitals.
-!      self :: IN
-!      MO :: MAT{REAL}, INOUT
-!
-!   !ENSURE(.basis_info_made, "no basis info")
-!   !ENSURE(.atom.associated,  "no atom list")
-!   !ENSURE(.n_e_on_atom.associated, "no e inf")
-!
-!      inc,a,b,i,n,fa,la,fb,lb :: INT
-!
-!
-!      ! Restricted dimension
-!      n = MO.dim1/2
-!      f = 1
-!
-!      ! Occupied orbitals for all atoms
-!      do a = 1,.n_atom
-!
-!         n = .n_e_on_atom(a)
-!         l = f + n - 1
-!         
-!         if(f>1) then
-!         Smo(f:l,1:f-1) = ZERO
-!         end
-!         if(l < .n_e) then
-!         Smo(f:l,l+1:.n_e) = ZERO
-!         end if
-!         f = f + n
-!
-!     end
-!
-!   end
-
-   make_NOMO_S_inv_g(S_inv,MO)
-   ! Make the inverse of the occupied-occupied block of the
-   ! general MO overlap matrix.
-      self :: IN
-      S_inv :: MAT{REAL}, OUT
-      MO :: MAT{REAL}, IN
-
-   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
-
-      S :: MAT{REAL}*
-      V :: MAT{REAL}*
-
-      V.create(2*.n_bf, 2*.n_bf)
-
-      ! Make S in the SAO asis 
-      V = ZERO
-      V.alpha_alpha_set_to(.overlap_matrix)
-        V.beta_beta_set_to(.overlap_matrix)
-
-      ! Make S in the occupied MO basis 
-      S.create(.n_e,.n_e)
-      V.change_basis_to(S,MO(:,1:.n_e))
-      
-      ! Make S^{-1} (IMPURE)
-      S_inv.to_inverse_of(S)
-
-      ! Cleanup
-      S.destroy
-      V.destroy
-
-   end
-
-   make_NOMO_S_inv_r(S_inv,MO)
-   ! Make the inverse of the occupied-occupied block of the MO
-   ! overlap matrix.
-      self :: IN
-      S_inv :: MAT{REAL}, OUT
-      MO :: MAT{REAL}, IN
-
-   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
-
-      S :: MAT{REAL}*
-
-      ! Make S in the occupied MO basis 
-      S.create(.n_a,.n_a)
-      .overlap_matrix.change_basis_to(S,MO(:,1:.n_a))
-      
-      ! Make S^{-1} (IMPURE)
-      S_inv.to_inverse_of(S)
-
-      ! Cleanup
-      S.destroy
-
-   end
-
-   make_NOMO_S_inv_u_a(S_inv,MO)
-   ! Make the inverse of the occupied-coccupied block of the MO
-   ! overlap matrix.
-      self :: IN
-      S_inv :: MAT{REAL}, OUT
-      MO :: MAT{REAL}, IN
-
-   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
-
-      S :: MAT{REAL}*
-
-      ! Make S in the occupied MO basis 
-      S.create(.n_a,.n_a)
-      .overlap_matrix.change_basis_to(S,MO)
-      
-      ! Make S^{-1} (IMPURE)
-      S_inv.to_inverse_of(S)
-
-      ! Cleanup
-      S.destroy
-
-   end
-
-   make_NOMO_S_inv_u_b(S_inv,MO)
-   ! Make the inverse of the occupied-coccupied block of the MO
-   ! overlap matrix.
-      self :: IN
-      S_inv :: MAT{REAL}, OUT
-      MO :: MAT{REAL}, IN
-
-   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
-
-      S :: MAT{REAL}*
-
-      ! Make S in the occupied MO basis 
-      S.create(.n_b,.n_b)
-      .overlap_matrix.change_basis_to(S,MO)
-      
-      ! Make S^{-1} (IMPURE)
-      S_inv.to_inverse_of(S)
-
-      ! Cleanup
-      S.destroy
-
-   end
-   
-   zero_ELMO_g_mx(T)
-   ! Zero an ELMO operator matrix
-      self :: IN
-      T :: MAT{REAL}, INOUT
-
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.associated,  "no atom list")
-
-      n, atom_a,atom_b,q,fa,la,na,fb,lb,nb :: INT
-      sh :: SHELL2
-
-
-      ! Restricted dimension
-      n = T.dim1/2
-
-      do q = 1,.n_shell_pairs
-
-        .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
-
-        ! For ELMO(B,P) we only want basis functions on atom_a connected atom_b
-        if (NOT .BASE:elmo_connected(atom_a,atom_b,.scfdata.elmo_b)) then
-
-           ! a-a part
-           T(fa:la,fb:lb) = ZERO
-
-           ! b-b part
-           fa = fa + n
-           la = la + n
-           fb = fb + n
-           lb = lb + n
-           T(fa:la,fb:lb) = ZERO
-
-        end
-
-        sh.destroy_ptr_part
-
-      end
-
-      if (DO_IN_PARALLEL) then
-         PARALLEL_SYMMETRIC_SUM(T)
-      else
-         T.symmetric_reflect
-      end
-
-
-   end
-
-!   make_ELMO_S_S_inv_r(S,S_inv,MO) ::: PURE
-!   ! Make "S", the occupied-occupied block of the MO overlap matrix
-!   ! and it's inverse "S_inv".
-!      self :: IN
-!      S,S_inv :: MAT{REAL}, OUT
-!      MO :: MAT{REAL}, IN
-!
-!   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
-!   ENSURE(S.dim1==.n_a, "wrong size, S")
-!   ENSURE(S.is_square, "S is not square")
-!   ENSURE(S_inv.dim1==.n_a, "wrong size, S_inv")
-!   ENSURE(S_inv.is_square, "S_inv is not square")
-!
-!      ! Make S in the occupied MO basis 
-!      .overlap_matrix.change_basis_to(S,MO(:,1:.n_a))
-!      
-!      ! Make S^{-1} 
-!      S_inv.to_inverse_of(S)
 !
 !   end
 
