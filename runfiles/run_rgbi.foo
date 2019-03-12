@@ -26,7 +26,8 @@ program run_RGBI
    implicit none
 
    command_line :: COMMAND_LINE*
-   message,name :: STR
+   analysis,message,name :: STR
+   groups :: VEC{VEC_{INT}}*
    m :: MOLECULE*
 
    ! Macro to create Tonto system object
@@ -43,20 +44,15 @@ program run_RGBI
    stdin.create_stdin
    stdout.create_stdout
 
-   ! Banner
-   stdout.flush
-   stdout.text("=============================")
-   stdout.text("Roby-Gould bond index program")
-   stdout.text("=============================")
-   stdout.flush
-   stdout.text("Usage:")
-   stdout.flush
-   stdout.text("run_rgbi <FChk-file>")
-   stdout.flush
+   ! Default option values
+   analysis = "atom_bond_analysis"
+   nullify(groups)
 
-   ! Get the command line
+   ! Get command line !!!!!!!!!
    command_line.create
+   command_line.set_defaults
    command_line.process_options
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
    ! Sanity check
    message = "argument list: read the info above!"
@@ -65,11 +61,262 @@ program run_RGBI
    DIE_IF(NOT command_line.n_args==1 ,trim(message))
 
    ! Get cif file name
-   name = command_line.arg(1)
+   
+   if (NOT command_line.has_option("help")) then
 
-   ! Echo 
-   stdout.show("FChk file name = ",name)
+      if  (NOT command_line.has_arguments OR command_line.n_args>1) then
+
+            ! No arguments
+            stdout.text("Supply at least a Gaussian <FChk-file>.")
+            stdout.text("Type 'run_rgbi -help' for additional help.")
+            stop
+
+      else
+
+         ! First argument
+         name = command_line.arg(1)
+
+      end
+      
+      ! Preprocess main arguments
+      if (job==" ") job = trim(cif.filename_head)
+      if (out==" ") out = trim(job)//".out"
+      if (err==" ") err = trim(job)//".err"
+     
+      ! Set stderr properly
+      nullify(stderr)
+      stderr.create_stderr
+      stderr.set_name(err)
+      stderr.open_for("write")
+
+   end ! -- NOT help
+
+   ! Analyze command line options
+   do i = 1,command_line.n_options
+
+      ! Get options
+      option = command_line.option(i)
+      value  = command_line.option_value(i)
+
+      ! Analyze options
+      select case (option)
+
+      case ("groups        ");  basis      = value
+           
+      case ("help")
+
+         stdout.text("SYNOPSIS")
+         stdout.flush
+         stdout.text("    run_rgbi [ options ] <FChk-file>")
+         stdout.flush
+         stdout.text("    Obtaining Roby-Gould bond indices from a gaussian <FChk-file>.")
+         stdout.flush
+         stdout.flush
+         stdout.text("EXPLANATION")
+         stdout.flush
+         stdout.text("    The Roby-Gould method uses projection operator techniques to produce")
+         stdout.text("    chemically sensible bond indices from a wavefunction. It can do this")
+         stdout.text("    from any kind of wavefunction, although this program is limited to")
+         stdout.text("    wavefunctions expanded in cartesian gaussian basis sets produced from")
+         stdout.text("    the Gaussian program. Therefore the '6d 10f' option must be used.")
+         stdout.flush
+         stdout.text("    The Roby-Gould method has several advantageas over other bond index")
+         stdout.text("    methods, including:")
+         stdout.flush
+         stdout.text("    . The method converges with basis set size")
+         stdout.flush
+         stdout.text("    . An ionic bond indices may be defined alongside (but separate to) ")
+         stdout.text("      covalent bond indices, so that the concept of bonding has two ")
+         stdout.text("      components and indeed, is treated as a two-dimensional vector.")
+         stdout.flush
+         stdout.text("    . The expressions for the indices are obtained as expectation values")
+         stdout.text("      of Hermitian operators")
+         stdout.flush
+         stdout.text("    . The bond indices may be calculated between groups of atoms")
+         stdout.flush
+         stdout.text("    . The formalism is geometric in nature, depending on projection")
+         stdout.text("      and involves a generalisation of the idea of Coulson's idea")
+         stdout.text("      of bond order being half the number of electrons in bonding")
+         stdout.text("      orbitals minus the number of electrons in antibonding orbitals")
+         stdout.flush
+         stdout.flush
+         stdout.text("REFERENCES")
+         stdout.flush
+         stdout.text("   . M.D. Gould et al (2008) Theor. Chem. Acc. 199 p119-270")
+         stdout.flush
+         stdout.text("   . K. Alhameedi et al (2018) Int. J. Quantum Chem. e25603")
+         stdout.flush
+         stdout.text("   . M. Woinska et al (2016) Sci. Adv. 2 e1600192")
+         stdout.flush
+         stdout.flush
+         stdout.text("OPTIONS")
+         stdout.flush
+         stdout.text("   -groups '{ { <group-A-atom-indices> } { <group-B-atom-indices } }'")
+         stdout.flush    
+         stdout.text("       Specify the indices of the atoms in two groups A and B between which")
+         stdout.text("       the Roby-Gould indices are calculated.")
+         stdout.flush
+         stdout.text("       Default: Do an RGBI analysis between all individual atoms which are")
+         stdout.text("       close enough to be regarded as bonded according to the CSD criteria.")
+         stdout.flush    
+         stdout.text("       Example: -groups '{ { 1 4 6 } { 2 3 5 } }'")
+         stdout.text("       Here a RG bond analysis is done between atoms with indices 1, 4, 6")
+         stdout.text("       (in group A) and between atoms 2, 3, 5 (in group B)")
+         stdout.flush    
+         stdout.text("   -help")
+         stdout.flush    
+         stdout.text("       Print this documentation")
+         stdout.flush    
+
+         stop
+
+      case default
+         stdout.text("Type 'run_rgbi -help' for help.")
+         stdout.flush
+         UNKNOWN(option)
+         stop
+
+      end
+
+   end
+
+
+   ! Initialize output file
+   stdout.destroy
+   stdout.create
+   stdout.set_name(out)
+   stdout.open_for("write")
+   tonto.set_stdout_unit(stdout.unit)
+
+   ! Report
    stdout.flush
+   stdout.text("=============================")
+   stdout.text("Roby-Gould bond index program")
+   stdout.text("=============================")
+   stdout.flush
+   stdout.text("This is a command line program for obataining Roby-Gould")
+   stdout.text("bond indices from a gaussian FChk file")
+   stdout.flush
+   stdout.text("For detailed help, run the command:")
+   stdout.flush
+   stdout.text("   run_rgbi -help")
+   stdout.flush
+   stdout.text("Basic usage:")
+   stdout.flush
+   stdout.text("run_rgbi <FChk-file>")
+   stdout.flush
+   stdout.text("If you publish any of the results from this program please")
+   stdout.text("cite the following original scientific publications:")
+   stdout.flush
+   stdout.text("   M.D. Gould et al (2008) Theor. Chem. Acc. 199 p119-270")
+   stdout.text("   K. Alhameedi et al (2018) Int. J. Quantum Chem. e25603")
+   stdout.text("   M. Woinska et al (2016) Sci. Adv. 2 e1600192")
+
+   stdout.flush
+   stdout.flush
+   stdout.text("===============")
+   stdout.text("Program options")
+   stdout.text("===============")
+   stdout.flush
+   stdout.text("You have run hart with the following options:")
+   command_line.put_command_optarg
+
+   stdout.flush
+   stdout.text("The run_rgbi program version is:")
+   stdout.text("                                                               ")
+   stdout.text("Version: "//TONTO_VERSION//" v. "//GIT_VERSION)
+   stdout.text("Platform: "//TONTO_PLATFORM)
+   stdout.text("Build-date: "//TONTO_BUILD_DATE)
+
+   stdout.flush
+   stdout.flush
+   stdout.text("=======")
+   stdout.text("WARNING")
+   stdout.text("=======")
+
+   stdout.flush
+   stdout.text("This software is always under heavy development and many")
+   stdout.text("authors release codes before they are fully tested. Do not")
+   stdout.text("use codes which have not been tested if they have not been")
+   stdout.text("published in the literature. Contact original authors, who")
+   stdout.text("will generally be interested to obtain help with testing,")
+   stdout.text("validation, and publication.")
+
+   stdout.flush
+   stdout.flush
+   stdout.text("=======")
+   stdout.text("License")
+   stdout.text("=======")
+
+   stdout.flush
+   stdout.text("This program is distributed under the terms of the GNU")
+   stdout.text("Lesser General Public License (LGPL) version 3, the full")
+   stdout.text("text of which is available at:")
+   stdout.flush
+   stdout.text("  www.gnu.org/licenses/lgpl-3.0.en.html")
+
+   stdout.flush
+   stdout.flush
+   stdout.text("============")
+   stdout.text("Contributors")
+   stdout.text("============")
+
+   stdout.flush
+   stdout.text("Tonto & the hart program has been brought to you with the work")
+   stdout.text("of the following groups and companies:")
+   stdout.flush
+   stdout.text(". The University of Western Australia (Jayatilaka)")
+   stdout.text(". The University of Bremen (Grabowsky)")
+
+   stdout.flush
+   stdout.text("Important relevant individual contributions are listed below")
+   stdout.text("in roughly chronological order:")
+   stdout.flush
+   stdout.text(". D. Jayatilaka     - System design & conception.  Help.")
+   stdout.text("                      Hirshfeld atom refinement (HAR)")
+   stdout.text("                      X-ray constrained wavefunctions (XCW)")
+   stdout.flush                     
+   stdout.text(". S. Wolff          - DFT, integration grids, isosurfaces")
+   stdout.text("                      Roby bond indices")
+   stdout.flush                     
+   stdout.text(". C. Taylor         - Roby bond indices")
+   stdout.flush                     
+   stdout.text(". M. Susli          - gnuplot picture output")
+   stdout.flush                     
+   stdout.text(". S. Grabowsky      - X-ray wavefunction refinement (XWR)")
+   stdout.text("                      ELI-D and bonding tools")
+   stdout.flush                     
+   stdout.text(". K. Abdalhussein   - Bond indices, bond energies,")
+   stdout.text("                      finite temperature SCF")
+   stdout.flush                     
+   stdout.text("Did I forget anyone? Sorry & let me know.")
+
+   stdout.flush
+   stdout.flush
+   stdout.text("Tonto library methods will now be called ...")
+   stdout.flush
+   stdout.flush
+
+   ! Clean
+   command_line.destroy_ptr_part
+
+   ! Start timer !!!!!!!
+   std_time.start_timing
+   !!!!!!!!!!!!!!!!!!!!!
+
+   ! Post-processing
+ ! DIE_IF(shx_f2==" " AND shx_f==" " AND std_f2==" " AND std_f==" ", "no .hkl file supplied")
+   DIE_IF(NOT basdir.filename_head=="basis_sets", "-basis-dir must end in 'basis_sets'")
+   DIE_IF(NOT basis.is_one_of(allowed_bases), "unknown basis: "//trim(basis))
+   DIE_IF(     dtol <TOL(5), "dtol is too small: "//trim(dtol.to_str))
+   DIE_IF(     dtol >TOL(1), "dtol is too large: "//trim(dtol.to_str))
+ ! DIE_IF(NOT ldtol <TOL(5), "ldtol is too small: "//trim(ldtol.to_str))
+   DIE_IF(       fos<ZERO, "fos ratio must be positive")
+   DIE_IF(    radius<ZERO, "radius must be positive")
+   DIE_IF(    radius>ten,  "radius must be less than 10 angstrom")
+   DIE_IF(NOT gracc.is_one_of(grid_levels), "unknown grid accuracy: "//trim(gracc))
+   DIE_IF(NOT guess.is_one_of(["mos    ","density"]),"unknown initial guess: "//trim(guess))
+   DIE_IF(NOT   scf.is_one_of(["rhf ","rks "]),"unknown scf: "//trim(scf))
 
    ! Create molecule
    m.MAIN:setup
