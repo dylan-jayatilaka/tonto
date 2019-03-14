@@ -26,8 +26,12 @@ program run_RGBI
    implicit none
 
    command_line :: COMMAND_LINE*
-   analysis,message,name :: STR
+   analysis,fchk :: STR
+   option,value :: STR
+   job,out,err :: STR
+   grpstr :: VEC{STR}*
    groups :: VEC{VEC_{INT}}*
+   i :: INT
    m :: MOLECULE*
 
    ! Macro to create Tonto system object
@@ -36,13 +40,7 @@ program run_RGBI
 
    ! Set stdout & stderr to screen
    stdout.create_stdout
-   stderr => stdout 
-
-   ! Open input files
    stderr.create_stderr
-   stderr.open_for("write")
-   stdin.create_stdin
-   stdout.create_stdout
 
    ! Default option values
    analysis = "atom_bond_analysis"
@@ -55,40 +53,16 @@ program run_RGBI
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
    ! Sanity check
-   message = "argument list: read the info above!"
-   DIE_IF(NOT command_line.has_arguments,trim(message))
-   DIE_IF(    command_line.has_options  ,trim(message))
-   DIE_IF(NOT command_line.n_args==1 ,trim(message))
-
-   ! Get cif file name
-   
    if (NOT command_line.has_option("help")) then
-
-      if  (NOT command_line.has_arguments OR command_line.n_args>1) then
-
-            ! No arguments
-            stdout.text("Supply at least a Gaussian <FChk-file>.")
-            stdout.text("Type 'run_rgbi -help' for additional help.")
-            stop
-
-      else
-
-         ! First argument
-         name = command_line.arg(1)
-
-      end
-      
-      ! Preprocess main arguments
-      if (job==" ") job = trim(cif.filename_head)
-      if (out==" ") out = trim(job)//".out"
-      if (err==" ") err = trim(job)//".err"
-     
-      ! Set stderr properly
-      nullify(stderr)
-      stderr.create_stderr
-      stderr.set_name(err)
-      stderr.open_for("write")
-
+   if  (NOT command_line.has_arguments OR command_line.n_args>1) then
+      ! No arguments
+      stdout.text("Supply at least a Gaussian <FChk-file>.")
+      stdout.text("Type 'run_rgbi -help' for additional help.")
+      stop
+   else
+      ! First argument
+      fchk = command_line.arg(1)
+   end
    end ! -- NOT help
 
    ! Analyze command line options
@@ -101,7 +75,15 @@ program run_RGBI
       ! Analyze options
       select case (option)
 
-      case ("groups        ");  basis      = value
+      case ("groups")
+         grpstr.create(1)
+         grpstr(1) = value
+         stdin.create_stdin
+         stdin.redirect(grpstr)
+         stdin.read_ptr(groups)
+         stdin.revert
+         stdin.destroy
+         grpstr.destroy
            
       case ("help")
 
@@ -111,33 +93,42 @@ program run_RGBI
          stdout.flush
          stdout.text("    Obtaining Roby-Gould bond indices from a gaussian <FChk-file>.")
          stdout.flush
+         stdout.text("    NOTE: The FChk file must be produced with the '6d 10f' option.")
+         stdout.text("          Also, analysis with g functions or higher is not allowed.")
+         stdout.flush
          stdout.flush
          stdout.text("EXPLANATION")
          stdout.flush
          stdout.text("    The Roby-Gould method uses projection operator techniques to produce")
          stdout.text("    chemically sensible bond indices from a wavefunction. It can do this")
-         stdout.text("    from any kind of wavefunction, although this program is limited to")
-         stdout.text("    wavefunctions expanded in cartesian gaussian basis sets produced from")
-         stdout.text("    the Gaussian program. Therefore the '6d 10f' option must be used.")
+         stdout.text("    from any kind of wavefunction, but this program is limited to wave-")
+         stdout.text("    functions expanded in cartesian gaussian basis sets produced from the")
+         stdout.text("    Gaussian program. Therefore the '6d 10f' option must be used.")
          stdout.flush
          stdout.text("    The Roby-Gould method has several advantageas over other bond index")
-         stdout.text("    methods, including:")
+         stdout.text("    methods, including, in no particular order:")
          stdout.flush
          stdout.text("    . The method converges with basis set size")
          stdout.flush
-         stdout.text("    . An ionic bond indices may be defined alongside (but separate to) ")
-         stdout.text("      covalent bond indices, so that the concept of bonding has two ")
+         stdout.text("    . An ionic bond index is defined alongside (but separate to) a")
+         stdout.text("      covalent bond index, so that the concept of bonding comprises two")
          stdout.text("      components and indeed, is treated as a two-dimensional vector.")
+         stdout.text("      It is the only method which treats covalency and ionicity on an")
+         stdout.text("      equal theoretical footing.")
          stdout.flush
-         stdout.text("    . The expressions for the indices are obtained as expectation values")
-         stdout.text("      of Hermitian operators")
+         stdout.text("    . The bond indices are calculated as a sum over individual orbital")
+         stdout.text("      contributions, each contribution being equal to half the number of")
+         stdout.text("      electrons in bonding orbitals minus half the the number of electrons")
+         stdout.text("      in antibonding orbitals. The individual vector contributions to the")
+         stdout.text("      may conveniently be viewed using a 'dial diagram' graphic.")
+         stdout.flush
+         stdout.text("    . The expressions for the indices may also be obtained as expectation")
+         stdout.text("      values of Hermitian operators, like any other QM observable.")
          stdout.flush
          stdout.text("    . The bond indices may be calculated between groups of atoms")
          stdout.flush
          stdout.text("    . The formalism is geometric in nature, depending on projection")
-         stdout.text("      and involves a generalisation of the idea of Coulson's idea")
-         stdout.text("      of bond order being half the number of electrons in bonding")
-         stdout.text("      orbitals minus the number of electrons in antibonding orbitals")
+         stdout.text("      operators, and it is not related to any Hamiltonian.")
          stdout.flush
          stdout.flush
          stdout.text("REFERENCES")
@@ -157,11 +148,12 @@ program run_RGBI
          stdout.text("       the Roby-Gould indices are calculated.")
          stdout.flush
          stdout.text("       Default: Do an RGBI analysis between all individual atoms which are")
-         stdout.text("       close enough to be regarded as bonded according to the CSD criteria.")
+         stdout.text("       close enough to be regarded as bonded according to the Cambridge")
+         stdout.text("       structural database criteria.")
          stdout.flush    
          stdout.text("       Example: -groups '{ { 1 4 6 } { 2 3 5 } }'")
-         stdout.text("       Here a RG bond analysis is done between atoms with indices 1, 4, 6")
-         stdout.text("       (in group A) and between atoms 2, 3, 5 (in group B)")
+         stdout.text("       Perform a RG bond analysis is done between atoms with indices 1,4,6")
+         stdout.text("       (in group A) and between atoms 2,3,5 (in group B)")
          stdout.flush    
          stdout.text("   -help")
          stdout.flush    
@@ -180,11 +172,16 @@ program run_RGBI
 
    end
 
+   ! Create molecule
+   m.MAIN:setup
+
+   ! Process the FChk file
+   m.BASE:read_g09_FChk_file(fchk)
 
    ! Initialize output file
    stdout.destroy
    stdout.create
-   stdout.set_name(out)
+   stdout.set_name("stdout")
    stdout.open_for("write")
    tonto.set_stdout_unit(stdout.unit)
 
@@ -299,32 +296,9 @@ program run_RGBI
 
    ! Clean
    command_line.destroy_ptr_part
-
-   ! Start timer !!!!!!!
-   std_time.start_timing
-   !!!!!!!!!!!!!!!!!!!!!
-
-   ! Post-processing
- ! DIE_IF(shx_f2==" " AND shx_f==" " AND std_f2==" " AND std_f==" ", "no .hkl file supplied")
-   DIE_IF(NOT basdir.filename_head=="basis_sets", "-basis-dir must end in 'basis_sets'")
-   DIE_IF(NOT basis.is_one_of(allowed_bases), "unknown basis: "//trim(basis))
-   DIE_IF(     dtol <TOL(5), "dtol is too small: "//trim(dtol.to_str))
-   DIE_IF(     dtol >TOL(1), "dtol is too large: "//trim(dtol.to_str))
- ! DIE_IF(NOT ldtol <TOL(5), "ldtol is too small: "//trim(ldtol.to_str))
-   DIE_IF(       fos<ZERO, "fos ratio must be positive")
-   DIE_IF(    radius<ZERO, "radius must be positive")
-   DIE_IF(    radius>ten,  "radius must be less than 10 angstrom")
-   DIE_IF(NOT gracc.is_one_of(grid_levels), "unknown grid accuracy: "//trim(gracc))
-   DIE_IF(NOT guess.is_one_of(["mos    ","density"]),"unknown initial guess: "//trim(guess))
-   DIE_IF(NOT   scf.is_one_of(["rhf ","rks "]),"unknown scf: "//trim(scf))
-
-   ! Create molecule
-   m.MAIN:setup
-
-   ! Process the FChk file
-   m.BASE:read_g09_FChk_file(name)
-
+      
    ! Print out
+   m.MAIN:put_banner
    m.BASE:put
 
    ! Set roby object
@@ -337,6 +311,10 @@ program run_RGBI
    ! Set up kind of Roby analysis
    m.roby.create(m)
    m.roby.set_roby_kind("atom_bond_analysis")
+   if (groups.created) then
+      m.roby.set_roby_kind("group_bond_analysis")
+      m.roby.atom_group => groups
+   end
    m.PROP:roby_analysis
 
    ! Clean-up tonto system
