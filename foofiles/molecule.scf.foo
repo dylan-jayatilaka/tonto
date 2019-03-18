@@ -1536,23 +1536,23 @@ contains
       ! No cluster charges for SCF guess
       if (.scfdata.is_guess)  return
 
-      ! Add cluster charges if needed
-      ! NOTE: includes the self-consisten case
       if (.scfdata.using_cluster_charges) then
 
+         ! Add cluster charges if needed
+         ! NOTE: includes the self-consistent case
          if (NOT .Hirshfeld_atom_info_made) then
             ENSURE(.crystal.associated,"no crystal")
             .:make_Hirshfeld_inputs
             .:make_Hirshfeld_atom_info(output=FALSE)
          end
          Z.create(.n_bf,.n_bf)
-         .:make_pt_charge_matrix(Z) ! leaky
+         .:make_cluster_charge_mx(Z) ! leaky
          H = H + Z
          Z.destroy
 
-      ! Add Lorentz fields if needed
       else if (.scfdata.using_SC_Lorentz_fields) then
 
+         ! Add Lorentz fields if needed
          if (NOT .Hirshfeld_atom_info_made) then
             ENSURE(.crystal.associated,"no crystal")
             .:make_Hirshfeld_inputs
@@ -1981,11 +1981,70 @@ contains
    end
 
 
-   make_pt_charge_matrix(Z) ::: leaky
+   make_cluster_charges ::: leaky
    ! Make the point charge matrix "Z" from the point charges in .atom
    ! and the positions derived from ".scfdata.cluster".
    ! WARNING: the crystal asym unit charges must be defined.
-      Z :: MAT{REAL}
+      self :: INOUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.crystal.associated,"no crystal data")
+   ENSURE(.scfdata.associated,"no scfdata")
+   ENSURE(.Hirshfeld_atom_info_made, "no Hirshfeld atom info")
+
+      pos :: MAT{REAL}*
+      charge :: VEC{REAL}*
+      n_charges :: INT
+
+      ! Set up the cluster ... leaky
+      .scfdata.cluster.destroy
+      .scfdata.cluster.create(.crystal)
+
+      ! Make the cluster
+      .scfdata.cluster.set_generation_method("within_radius")
+      if (.scfdata.defragment) then
+         .scfdata.cluster.defragment= TRUE
+      else
+         .scfdata.cluster.defragment= FALSE
+      end
+      .scfdata.cluster.radius = .scfdata.cluster_radius
+      .scfdata.cluster.make_info ! leaky
+
+      ! Make the cluster charges
+      n_charges = .scfdata.cluster.n_atoms - .scfdata.cluster.n_fragment_atoms
+
+      if (NOT .scfdata.using_qq_cluster_charges) then
+         n_charges = 3*n_charges
+         charge.create(n_charges)
+         pos.create(3,n_charges)
+         .scfdata.cluster.make_non_fragment_mu_charges(pos,charge)
+      else
+         n_charges = 9*n_charges
+         charge.create(n_charges)
+         pos.create(3,n_charges)
+         .scfdata.cluster.make_non_fragment_qq_charges(pos,charge)
+      end
+
+      ! Save the information
+      .scfdata.cluster_charges.destroy
+      .scfdata.cluster_charge_positions.destroy
+      .scfdata.cluster_charges => charge
+      .scfdata.cluster_charge_positions => pos
+
+      ! Write
+      stdout.redirect(trim(.name)//".cluster_charges")
+      .scfdata.put_cluster_charges
+      stdout.revert
+
+   end
+
+   make_cluster_charge_mx(Z) ::: leaky
+   ! Make the point charge matrix "Z" from the point charges in .atom
+   ! and the positions derived from ".scfdata.cluster".
+   ! WARNING: the crystal asym unit charges must be defined.
+      self :: INOUT
+      Z :: MAT{REAL}, OUT
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.associated,"no atom list")
@@ -2003,11 +2062,6 @@ contains
       .scfdata.cluster.destroy
       .scfdata.cluster.create(.crystal)
 
-      if (.BASE:debugging("make_pt_charge_matrix")) then
-      stdout.text("crystal unit cell:")
-      .scfdata.cluster.crystal.put_unit_cell_geometry
-      end
-
       ! Make the cluster
       .scfdata.cluster.set_generation_method("within_radius")
       if (.scfdata.defragment) then
@@ -2017,11 +2071,6 @@ contains
       end
       .scfdata.cluster.radius = .scfdata.cluster_radius
       .scfdata.cluster.make_info ! leaky
-
-      if (.BASE:debugging("cluster charges")) then
-      stdout.text("cluster information:")
-      .scfdata.cluster.put
-      end
 
       ! Make the cluster charges
       n_charges = .scfdata.cluster.n_atoms - .scfdata.cluster.n_fragment_atoms
@@ -2036,13 +2085,6 @@ contains
          charge.create(n_charges)
          pos.create(3,n_charges)
          .scfdata.cluster.make_non_fragment_qq_charges(pos,charge)
-      end
-
-      if (.BASE:debugging("cluster charges")) then
-      stdout.text("Cluster point charges:")
-      stdout.put(charge)
-      stdout.text("Cluster point charge positions:")
-      stdout.put(transpose(pos))
       end
 
       ! Make the charge contribution to one electron Hamiltonian
@@ -2070,8 +2112,6 @@ contains
       else
          Z.symmetric_reflect
       end
-      .BASE:put_debug(Z,"make_pt_charge_matrix: Z")
-
 
       if (.scfdata.save_cluster_charges) then
          .scfdata.cluster_charges.destroy
