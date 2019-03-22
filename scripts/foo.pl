@@ -837,8 +837,8 @@ sub analyse_variable_declaration {
 
             # String results must be declared separately.
             if (%info && $one_var_is_res && (
-                 $info{type_name} =~ '^STR({.*})?' ||
-                ($info{is_array_type} && $info{type_arg}{1} =~ '^STR({.*})?'))) {
+                 $info{type_name} =~ '^STR([{].*[}])?' ||
+                ($info{is_array_type} && $info{type_arg}{1} =~ '^STR([{].*[}])?'))) {
                &report_error("declare STR-based function result separate" .
                       " from other variables:\n\n$X");
             }
@@ -1133,12 +1133,12 @@ sub analyse_type_name {
 
 sub is_intrinsic_scalar_type_name {
    my  $type_name = $_[0];
-   if ($type_name =~ /^STR\b({.*})?/  ||
-       $type_name =~ /^BIN\b({.*})?/  ||
-       $type_name =~ /^INT\b({.*})?/  ||
-       $type_name =~ /^REAL\b({.*})?/ ||
-       $type_name =~ /^CPX\b({.*})?/  )   { return 1; }
-   else                                 { return 0; }
+   if ($type_name =~ /^STR\b([{].*[}])?/  ||
+       $type_name =~ /^BIN\b([{].*[}])?/  ||
+       $type_name =~ /^INT\b([{].*[}])?/  ||
+       $type_name =~ /^REAL\b([{].*[}])?/ ||
+       $type_name =~ /^CPX\b([{].*[}])?/  )   { return 1; }
+   else                                    { return 0; }
 }
 
 ######################################################
@@ -3712,11 +3712,11 @@ sub make_scalar_fortran_types {
    $kind = "";
 
    # Is this an kinded INTRINSIC{8} type?
-   if ($type_name =~ "^(STR)({.*})? *\$"  ||  # For INTRINSIC types
-       $type_name =~ "^(BIN)({.*})? *\$"  ||  # Kind is specified in curlies
-       $type_name =~ "^(INT)({.*})? *\$"  ||
-       $type_name =~ "^(REAL)({.*})? *\$" ||
-       $type_name =~ "^(CPX)({.*})? *\$"  ) {
+   if ($type_name =~ "^(STR)([{].*[}])? *\$"  ||  # For INTRINSIC types
+       $type_name =~ "^(BIN)([{].*[}])? *\$"  ||  # Kind is specified in curlies
+       $type_name =~ "^(INT)([{].*[}])? *\$"  ||
+       $type_name =~ "^(REAL)([{].*[}])? *\$" ||
+       $type_name =~ "^(CPX)([{].*[}])? *\$"  ) {
       $fortran_type_decl = $1;
       if ($2 && $2 ne '') {
          $kind = $2;
