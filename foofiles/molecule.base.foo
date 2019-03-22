@@ -4149,6 +4149,7 @@ contains
 
    end
 
+
 !   create_from_molecule(parent,name,ind,charge,multiplicity) ::: leaky
 !   ! Create a molecule "self" from a "parent" molecule; set the
 !   ! "name", "charge" and "multiplicity"; use only the atoms with
@@ -4329,6 +4330,98 @@ contains
 
    end
 
+!  ============
+!  MFCC methods
+!  ============
+
+   make_MFCC_fragments_from_self ::: private, leaky
+   ! Make the MFCC fragment groups from "self".
+   ! This routine will add extra cap atoms!
+      self :: INOUT
+
+   DIE_IF(NOT .atom_group.associated,"no atom groups!")
+
+      mol :: MOLECULE*
+      g :: INT
+
+      ! Create each group from "self"
+      do g = 1,.atom_group.dim
+
+         mol.:create
+
+         ! Do MFCC here
+         self.:make_fragment_from_compound_id(g,mol)
+
+         ! Assign new molecule
+         .atom_group(g).mol => mol
+
+      end
+
+      ! Set ANOs, SCF defaults
+      .:update_group_info
+
+   end
+
+   make_fragment_from_compound_id(n,mol) ::: leaky
+   ! Make a capped fragment "mol" from the atopms with compound_id "n"
+   ! ready for MFCC calculation. THis routine will add extra atoms.
+      self :: IN
+      n :: INT, IN
+      mol :: MOLECULE, OUT
+
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+ ! DIE_IF(all(.atom(:).compound_sequence_id>0),"there are zero compound_id's")
+   DIE_IF(n>.atom_group.dim,"group number n too big")
+   DIE_IF(n<1,"group number n less than 1!")
+
+      ! Clear the pointer part
+      mol.:nullify_ptr_part
+
+      ! Do your algorithm here what you showed
+      ! You can do
+
+      ! Create the initial atoms and their pointers
+      mol.atom.create_copy(.atom(.atom_group(n).atom_index))
+
+      ! Set internal connections
+      VEC{ATOM}:assign_connection_table(.atoms_bonded_to_atom)
+
+      ! Here add extra cap atoms!
+      ! You can call has = .atom.has_connection(i,j)
+
+      ! Clear connections
+      VEC{ATOM}:nullify_connection_table
+
+      ! From here no changes ...
+
+      ! Set default molecule e.g. the name, atom_info
+      ! and default multiplicity ...
+      mol.:set_defaults
+
+      ! Reset .name after .set_defaults
+      mol.name              = .atom(.atom_group(n).atom_index(1)).compound_id_str
+      mol.charge            = .atom_group(n).charge
+      mol.spin_multiplicity = mol.:default_spin_multiplicity
+      mol.atom_info_made    = FALSE
+      mol.:set_atom_info
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol !
+      mol.:set_basis_data_from(self)
+
+      ! Don't remake ANO data if there
+      mol.:set_ANOs_from_sublist_of(self,.atom_group(n).atom_index)
+
+      ! Assign the crystal
+      ! WARNING: dont destroy ...
+      if (.crystal.associated) mol.crystal => .crystal
+
+      ! Set guess-type SCF defaults
+      mol.:set_scf_guess_defaults_from(.scfdata)
+
+   end
+
 !  ================
 !  Atoms group info
 !  ================
@@ -4337,7 +4430,7 @@ contains
    ! Finalize the .atom_group information
       self :: INOUT
 
-      g :: INT
+      n_comp,g :: INT
 
       ! Last attempt to find groups
     ! if (NOT .atom.has_groups) then
@@ -4355,10 +4448,31 @@ contains
          else;          DIE("Can't finalize atom groups")
          end
 
+      else if (.atom.associated AND .:from_mmCIF) then
+
+         n_comp = .atom.no_of_compounds
+         .atom_group.create(n_comp)
+
+         ! Make groups from compound_id's
+         do g = 1,n_comp
+            .atom_group(g).atom_index => .atom(:).compound_sequence_id.indices_of_elements_matching(g)
+            .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
+         end
+
+       ! if (.atom_group_charges.associated) then
+       !    DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
+       !    do g = 1,.atom_group.dim
+       !       .atom_group(g).set_charge(.atom_group_charges(g))
+       !    end
+       ! end
+
+         .:make_MFCC_fragments_from_self
+
       else if (.atom.associated AND .atom.has_groups) then
 
          .atom_group.create(.atom.no_of_groups)
 
+         ! Make groups from group index
          do g = 1,.atom_group.dim
             .atom_group(g).atom_index => .atom(:).group.indices_of_elements_matching(g)
             .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
@@ -5225,30 +5339,31 @@ contains
    end
 
    make_elmo_connection_table ::: leaky
-      self :: INOUT
    ! construct the elmo connection table
-      i, j :: INT
-      .elmo_connection_table.create(.n_atom,.n_atom)
+     self :: INOUT
+     i, j :: INT
+     .elmo_connection_table.create(.n_atom,.n_atom)
 
-      ! set default connection to something huge
-      ! to signify not connected
-      ! divide by 2 to prevent overflow errors
-      .elmo_connection_table = (huge(i) - 1) / 2
+     ! set default connection to something huge
+     ! to signify not connected
+     ! divide by 2 to prevent overflow errors
+     .elmo_connection_table = (huge(i) - 1) / 2
 
-      ! initialize same atom connections
-      do i = 1, .n_atom
-         .elmo_connection_table(i,i) = 0
-      end do
+     ! initialize same atom connections
+     do i = 1, .n_atom
+        .elmo_connection_table(i,i) = 0
+     end do
 
-      do i = 1, .n_atom
-         do j = 1, .atoms_bonded_to_atom(i).element.dim
-            .elmo_connection_table(i, .atoms_bonded_to_atom(i).element(j)) = 1
-         end do
-      end do
-      .elmo_connection_table = .elmo_connection_table.floyd_warshall
+     do i = 1, .n_atom
+        do j = 1, .atoms_bonded_to_atom(i).element.dim
+           .elmo_connection_table(i, .atoms_bonded_to_atom(i).element(j)) = 1
+        end do
+     end do
+     .elmo_connection_table = .elmo_connection_table.floyd_warshall
    end
 
    elmo_connected(a,b, degree) result(res) ::: pure
+   ! Test ELMO atom connections
       self :: IN
       a, b, degree :: INT, IN
       res :: BIN
@@ -9313,8 +9428,9 @@ contains
       end
       end
 
-      ! List of atoms
+      ! List of atoms & groups
       if (.atom.associated) .:put_atoms
+      if (.atom_group.associated)  .:atom_group.put
 
       ! Stop here for proteins
       if (.:from_mmCIF) then
@@ -9323,7 +9439,6 @@ contains
       end
       end
 
-      if (.atom_group.associated)  .:atom_group.put
       if (.pointgroup.associated)  .:put_pointgroup
       if (.crystal.associated)     .:put_crystal
       if (.cluster.associated)     .:put_cluster
