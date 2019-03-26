@@ -4149,6 +4149,62 @@ contains
 
    end
 
+   make_molecule_from_compound_id(n,mol) ::: leaky
+   ! Make a molecule "mol" from the compound_id, assumed
+   ! in atom_group "n".
+      n :: INT
+      mol :: MOLECULE
+
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+   DIE_IF(n>.atom_group.dim,"group number n too big")
+   DIE_IF(n<1,"group number n less than 1!")
+
+      ! Clear the pointer part
+      mol.:nullify_ptr_part
+
+      ! Create the single atom and copy its pointers
+      ! WARNING: dont destroy ptr parts of mol.atom
+      mol.atom.create_copy(.atom(.atom_group(n).atom_index))
+
+      ! Set default molecule e.g. the name, atom_info
+      ! and default multiplicity ...
+      mol.:set_defaults
+
+      ! Reset .name after .set_defaults
+      mol.name              = .atom(.atom_group(n).atom_index(1)).compound_id_str
+      mol.charge            = .atom_group(n).charge
+      mol.spin_multiplicity = mol.:default_spin_multiplicity
+      mol.atom_info_made    = FALSE
+      mol.:set_atom_info
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol !
+      mol.:set_basis_data_from(self)
+
+      ! Don't remake ANO data if there
+      mol.:set_ANOs_from_sublist_of(self,.atom_group(n).atom_index)
+
+      ! Assign the crystal
+      ! WARNING: dont destroy ...
+      if (.crystal.associated) mol.crystal => .crystal
+
+      ! Set guess-type SCF defaults
+      mol.:set_scf_guess_defaults_from(.scfdata)
+
+      ! Set density matrix from parent?
+      ! Restricted only. Do not clobber
+      if (.density_matrix.associated) then
+      if (.density_matrix.restricted.associated) then
+      if (mol.density_matrix.disassociated) then
+         mol.density_matrix.create(mol.n_bf,"restricted")
+         .:put_group_density_to(mol.density_matrix.restricted,n,mol)
+      end
+      end
+      end
+
+   end
+
 
 !   create_from_molecule(parent,name,ind,charge,multiplicity) ::: leaky
 !   ! Create a molecule "self" from a "parent" molecule; set the
@@ -4341,22 +4397,13 @@ contains
 
    DIE_IF(NOT .atom_group.associated,"no atom groups!")
 
-      mol :: MOLECULE*
       g :: INT
 
       ! Create each group from "self"
       do g = 1,.atom_group.dim
         
-
-         mol.:create
-
-        print *, g  !print out counter
-         
          ! Do MFCC here
-         self.:make_fragment_from_compound_id(g,mol)
-
-         ! Assign new molecule
-         .atom_group(g).mol => mol
+         self.:make_fragment_from_compound_id(g)
 
       end
 
@@ -4365,12 +4412,12 @@ contains
 
    end
 
-   make_fragment_from_compound_id(n,mol) ::: leaky
-   ! Make a capped fragment "mol" from the atopms with compound_id "n"
-   ! ready for MFCC calculation. THis routine will add extra atoms.
+   make_fragment_from_compound_id(n) ::: leaky
+   ! Make a capped fragment for molecule the atom_group(n).mol with
+   ! compound_id "n" ready for MFCC calculation. This routine will add
+   ! extra atoms.
       self :: IN
       n :: INT, IN
-      mol :: MOLECULE, OUT
 
    DIE_IF(.atom.disassociated,"no atom info")
    DIE_IF(.atom_group.disassociated,"no atom_group info")
@@ -4382,12 +4429,6 @@ contains
       i,j,a,b,l,l_p :: INT
       cap_atom_N,cap_atom_C,cap_atom_N_m1,cap_atom_C_m1,cap_atom_N_p1,cap_atom_C_p1  :: INT
       L1_cap_atom,L2_cap_atom,L1_p_cap_atom,L2_p_cap_atom :: VEC{INT}*
-
-      ! Clear the pointer part
-      mol.:nullify_ptr_part
-
-      ! Create the initial atoms and their pointers
-      mol.atom.create_copy(.atom(.atom_group(n).atom_index))
 
       ! Set internal connections
       VEC{ATOM}:assign_connection_table(.atoms_bonded_to_atom)
@@ -4403,291 +4444,216 @@ contains
 
          if (n==1) then
 
-            ! Find connected atom in residue 2
-            residue1: do i = 1,.atom_group(n).atom_index.dim
-               a = .atom_group(n).atom_index(i)
-               residue2: do j = 1,.atom_group(n+1).atom_index.dim
-                  b = .atom_group(n+1).atom_index(j)
-                  if (.atom.has_a_connection(a,b)) then
-                     cap_atom_C = a ! This is the atom in residue1
-                     cap_atom_N = b ! This is the atom in residue n+1
-                                    !(cap atom 1)
-                     exit residue1
-                  end if
-               end do residue2
-            end do residue1
-
-            ! Add N cap atom on C terminal end (cap atom 1 in residue
-            ! n+1)
-            .atom_group(n).mol.atom.append(.atom(cap_atom_N))
-            l = .atom_group(n).mol.atom.dim
-            .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-
-            ! Find connections to C terminal guy (list with all atoms
-            ! bonded to cap atom 1) (includes cap atoms 2)
-            ! (-cap1-(cap2_1)-cap2_2-....)
-            L1_cap_atom => .atoms_bonded_to_atom(cap_atom_N).element
-        
-            ! Find connections to next-neighbours
-            do i = 2,L1_cap_atom.dim
-
-               a = L1_cap_atom(i) !in thsi case cap atom 2)
-
-               ! Already found
-               if (a==cap_atom_C) cycle !(atom in residue n)
-
-               ! Append new cap atom
-               .atom_group(n).mol.atom.append(.atom(a))
-               l = .atom_group(n).mol.atom.dim
-               .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-
-               if (.atom(a).atomic_number>1) then
-
-                  ! Add caps for all non-H atom ... should be 3
-                  ! (serging for cap atom 3)
-                  L2_cap_atom => .atoms_bonded_to_atom(a).element
-                  !atom a is cap atom 2)
-                  do j = 1,L2_cap_atom.dim
-
-                     b = L2_cap_atom(j)
-
-                     ! Already found
-                     if (b==cap_atom_N) cycle !( cap atom 1)
-
-                     ! Append new cap atom
-                     .atom_group(n).mol.atom.append(.atom(b))
-
-                     ! Correct atomic number
-                     l = .atom_group(n).mol.atom.dim
-                     .atom_group(n).mol.atom(l).set_label("H")
-                     .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-                     .atom_group(n).mol.atom.set_bond_lengths(b,l,CIF_CH_BOND_LENGTH)
-
-                  end
-
-               end
-
-            end
-
-       ! else if (n<.atom_group.dim) then
-
-       !    ! Find connected atom in residue 2
-       !    residue1: do i = 1,.atom_group(n).atom_index.dim
-       !       a = .atom_group(n).atom_index(i)
-       !       residue2: do j = 1,.atom_group(n+1).atom_index.dim
-       !          b = .atom_group(n+1).atom_index(j)
-       !          if (.atom.has_a_connection(a,b) then
-       !             cap_atom_N = b
-       !             exit residue1
-       !          end if
-       !       end
-       !    end
-
-       ! else 
-        
-!        end  !(ends if statment)
-
-
-!!!!!!!!!!!!!!!!!!!!!!!
-! begin residue n (1<n<.atom_group.dim)
-!!!!!!!!!!!!!!!!!!!!!!!
-    else if (1 < n AND n < .atom_group.dim) then
-
-            ! Find connected atom 
-            residue_n: do i = 1,.atom_group(n).atom_index.dim
-               a = .atom_group(n).atom_index(i)
-               ! Find connected atom in residue n-1
-               residue_n_m1: do j = 1,.atom_group(n-1).atom_index.dim
-                  b = .atom_group(n-1).atom_index(j)
-                  if (.atom.has_a_connection(a,b)) then
-                     cap_atom_C_m1 = a ! This is the atom in residue_n
-                     cap_atom_N_m1 = b ! This is the atom in residue n-1
-                                    !(cap atom 1)
-                     exit residue_n
-                  end if
-               end do residue_n_m1
-               ! Find connected atom in residue n+1
-               residue_n_p1: do j = 1,.atom_group(n+1).atom_index.dim
-                  b = .atom_group(n+1).atom_index(j)
-                  if (.atom.has_a_connection(a,b)) then
-                     cap_atom_C_p1 = a ! This is the atom in residue_n
-                     cap_atom_N_p1 = b ! This is the atom in residue n+1
-                                    !(cap atom 1)
-                     exit residue_n
-                  end if
-               end do residue_n_p1
-            end do residue_n
-
-
-
-
-
-
-
-            ! Add c cap at residue -1
-            .atom_group(n).mol.atom.append(.atom(cap_atom_N_m1))
-            l = .atom_group(n).mol.atom.dim
-            .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-
-            ! Find connections to N terminal guy
-            L1_cap_atom => .atoms_bonded_to_atom(cap_atom_N_m1).element
-
-            ! Find connections to next-neighbours
-            do i = 2,L1_cap_atom.dim
-
-               a = L1_cap_atom(i)
-
-               ! Already found
-               if (a==cap_atom_C_m1) cycle
-
-               ! Append new cap atom
-               .atom_group(n).mol.atom.append(.atom(a))
-               l = .atom_group(n).mol.atom.dim
-               .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-
-               if (.atom(a).atomic_number==6) then
-
-                  ! Add caps for all non-H atom ... should be 3
-                  L2_cap_atom => .atoms_bonded_to_atom(a).element
-                  do j = 1,L2_cap_atom.dim
-
-                     b = L2_cap_atom(j)
-
-                     ! Already found
-                     if (b==cap_atom_N_m1) cycle
-
-                     ! Append new cap atom
-                     .atom_group(n).mol.atom.append(.atom(b))
-                    ! Correct atomic number 
-                     l = .atom_group(n).mol.atom.dim
-                     .atom_group(n).mol.atom(l).set_label("H")
-                     .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-                     .atom_group(n).mol.atom.set_bond_lengths(b,l,CIF_CH_BOND_LENGTH)
-                  end
-               end
-            end
-
-
-
-               ! Add c cap atom on residue n+1
-            .atom_group(n).mol.atom.append(.atom(cap_atom_N_p1))
-            l_p = .atom_group(n).mol.atom.dim
-            .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-
-            ! Find connections to C terminal guy
-            L1_p_cap_atom => .atoms_bonded_to_atom(cap_atom_N_p1).element
-
-            ! Find connections to next-neighbours
-            do i = 2,L1_p_cap_atom.dim
-
-               a = L1_p_cap_atom(i)
-
-               ! Already found
-               if (a==cap_atom_C_p1) cycle
-
-               ! Append new cap atom
-               .atom_group(n).mol.atom.append(.atom(a))
-               l = .atom_group(n).mol.atom.dim
-               .atom_group(n).mol.atom(l_p).set_cap_atom(TRUE)
-
-               if (.atom(a).atomic_number==6) then
-
-                  ! Add caps for all non-H atom ... should be 3
-                  L2_p_cap_atom => .atoms_bonded_to_atom(a).element
-                  do j = 1,L2_p_cap_atom.dim
-
-                     b = L2_p_cap_atom(j)
-
-                     ! Already found
-                     if (b==cap_atom_N_p1) cycle
-
-                     ! Append new cap atom
-                     .atom_group(n).mol.atom.append(.atom(b))
-                    ! Correct atomic number 
-                     l_p = .atom_group(n).mol.atom.dim
-                     .atom_group(n).mol.atom(l_p).set_label("H")
-                     .atom_group(n).mol.atom(l_p).set_cap_atom(TRUE)
-                     .atom_group(n).mol.atom.set_bond_lengths(b,l_p,CIF_CH_BOND_LENGTH)
-                  end
-               end
-            end
-
-
-
-
-
-
-
-!!!!!!!!!!!!!!!!!!!!!!!
-! end residue n
-!!!!!!!!!!!!!!!!!!!!!!!
-
-!!!!!!!!!!!!!!!!!!!!!!!
-!residue last begin
-!!!!!!!!!!!!!!!!!!!!!!!
-
-    else if (n==.atom_group.dim) then
-
-            ! Find connected atom in residue 2
-            residue_last: do i = 1,.atom_group(n).atom_index.dim
-               a = .atom_group(n).atom_index(i)
-               residue_last_m1: do j = 1,.atom_group(n-1).atom_index.dim
-                  b = .atom_group(n-1).atom_index(j)
-                  if (.atom.has_a_connection(a,b)) then
-                   cap_atom_C = a ! This is the atom in residue last
-                   cap_atom_N = b ! This is the atom in residue last -1
-                                    !(cap atom 1)
-
-                     exit residue_last
-                  end if
-               end do residue_last_m1
-            end do residue_last
-
-            ! Add N cap atom on C terminal end
-            .atom_group(n).mol.atom.append(.atom(cap_atom_N))
-            l = .atom_group(n).mol.atom.dim
-            .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-
-            ! Find connections to C terminal guy
-            L1_cap_atom => .atoms_bonded_to_atom(cap_atom_N).element
-
-            ! Find connections to next-neighbours
-            do i = 2,L1_cap_atom.dim
-
-               a = L1_cap_atom(i)
-
-               ! Already found
-               if (a==cap_atom_C) cycle
-
-               ! Append new cap atom
-               .atom_group(n).mol.atom.append(.atom(a))
-               l = .atom_group(n).mol.atom.dim
-               .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-
-               if (.atom(a).atomic_number==6) then
-
-                  ! Add caps for all non-H atom ... should be 3
-                  L2_cap_atom => .atoms_bonded_to_atom(a).element
-                  do j = 1,L2_cap_atom.dim
-
-                     b = L2_cap_atom(j)
-
-                     ! Already found
-                     if (b==cap_atom_N) cycle
-
-                     ! Append new cap atom
-                     .atom_group(n).mol.atom.append(.atom(b))
-                    ! Correct atomic number 
-                     l = .atom_group(n).mol.atom.dim
-                     .atom_group(n).mol.atom(l).set_label("H")
-                     .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
-                     .atom_group(n).mol.atom.set_bond_lengths(b,l,CIF_CH_BOND_LENGTH)
-
-
-                  end
-               end
-            end
-          end 
+            stdout.show("n = ",n)
+
+            .:add_MFCC_cap(1,2)
+
+            stdout.text("First residue info:")
+            .atom_group(1).mol.atom.put_coordinate_info
+
+            stop
+
+!     !!!!!!!!!!!!!!!!!!!!!!!
+!     ! begin residue n (1<n<.atom_group.dim)
+!     !!!!!!!!!!!!!!!!!!!!!!!
+!     else if (1 < n AND n < .atom_group.dim) then
+! 
+!             ! Find connected atom 
+!             residue_n: do i = 1,.atom_group(n).atom_index.dim
+!                a = .atom_group(n).atom_index(i)
+!                ! Find connected atom in residue n-1
+!                residue_n_m1: do j = 1,.atom_group(n-1).atom_index.dim
+!                   b = .atom_group(n-1).atom_index(j)
+!                   if (.atom.has_a_connection(a,b)) then
+!                      cap_atom_C_m1 = a ! This is the atom in residue_n
+!                      cap_atom_N_m1 = b ! This is the atom in residue n-1
+!                                     !(cap atom 1)
+!                      exit residue_n
+!                   end if
+!                end do residue_n_m1
+!                ! Find connected atom in residue n+1
+!                residue_n_p1: do j = 1,.atom_group(n+1).atom_index.dim
+!                   b = .atom_group(n+1).atom_index(j)
+!                   if (.atom.has_a_connection(a,b)) then
+!                      cap_atom_C_p1 = a ! This is the atom in residue_n
+!                      cap_atom_N_p1 = b ! This is the atom in residue n+1
+!                                     !(cap atom 1)
+!                      exit residue_n
+!                   end if
+!                end do residue_n_p1
+!             end do residue_n
+! 
+! 
+! 
+! 
+! 
+! 
+! 
+!             ! Add c cap at residue -1
+!             .atom_group(n).mol.atom.append(.atom(cap_atom_N_m1))
+!             l = .atom_group(n).mol.atom.dim
+!             .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
+! 
+!             ! Find connections to N terminal guy
+!             L1_cap_atom => .atoms_bonded_to_atom(cap_atom_N_m1).element
+! 
+!             ! Find connections to next-neighbours
+!             do i = 2,L1_cap_atom.dim
+! 
+!                a = L1_cap_atom(i)
+! 
+!                ! Already found
+!                if (a==cap_atom_C_m1) cycle
+! 
+!                ! Append new cap atom
+!                .atom_group(n).mol.atom.append(.atom(a))
+!                l = .atom_group(n).mol.atom.dim
+!                .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
+! 
+!                if (.atom(a).atomic_number==6) then
+! 
+!                   ! Add caps for all non-H atom ... should be 3
+!                   L2_cap_atom => .atoms_bonded_to_atom(a).element
+!                   do j = 1,L2_cap_atom.dim
+! 
+!                      b = L2_cap_atom(j)
+! 
+!                      ! Already found
+!                      if (b==cap_atom_N_m1) cycle
+! 
+!                      ! Append new cap atom
+!                      .atom_group(n).mol.atom.append(.atom(b))
+!                     ! Correct atomic number 
+!                      l = .atom_group(n).mol.atom.dim
+!                      .atom_group(n).mol.atom(l).set_label("H")
+!                      .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
+!                      .atom_group(n).mol.atom.set_bond_lengths(b,l,CIF_CH_BOND_LENGTH)
+!                   end
+!                end
+!             end
+! 
+! 
+! 
+!                ! Add c cap atom on residue n+1
+!             .atom_group(n).mol.atom.append(.atom(cap_atom_N_p1))
+!             l_p = .atom_group(n).mol.atom.dim
+!             .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
+! 
+!             ! Find connections to C terminal guy
+!             L1_p_cap_atom => .atoms_bonded_to_atom(cap_atom_N_p1).element
+! 
+!             ! Find connections to next-neighbours
+!             do i = 2,L1_p_cap_atom.dim
+! 
+!                a = L1_p_cap_atom(i)
+! 
+!                ! Already found
+!                if (a==cap_atom_C_p1) cycle
+! 
+!                ! Append new cap atom
+!                .atom_group(n).mol.atom.append(.atom(a))
+!                l = .atom_group(n).mol.atom.dim
+!                .atom_group(n).mol.atom(l_p).set_cap_atom(TRUE)
+! 
+!                if (.atom(a).atomic_number==6) then
+! 
+!                   ! Add caps for all non-H atom ... should be 3
+!                   L2_p_cap_atom => .atoms_bonded_to_atom(a).element
+!                   do j = 1,L2_p_cap_atom.dim
+! 
+!                      b = L2_p_cap_atom(j)
+! 
+!                      ! Already found
+!                      if (b==cap_atom_N_p1) cycle
+! 
+!                      ! Append new cap atom
+!                      .atom_group(n).mol.atom.append(.atom(b))
+!                     ! Correct atomic number 
+!                      l_p = .atom_group(n).mol.atom.dim
+!                      .atom_group(n).mol.atom(l_p).set_label("H")
+!                      .atom_group(n).mol.atom(l_p).set_cap_atom(TRUE)
+!                      .atom_group(n).mol.atom.set_bond_lengths(b,l_p,CIF_CH_BOND_LENGTH)
+!                   end
+!                end
+!             end
+! 
+! 
+! 
+! 
+! 
+! 
+! 
+! !!!!!!!!!!!!!!!!!!!!!!!
+! ! end residue n
+! !!!!!!!!!!!!!!!!!!!!!!!
+! 
+! !!!!!!!!!!!!!!!!!!!!!!!
+! !residue last begin
+! !!!!!!!!!!!!!!!!!!!!!!!
+! 
+!     else if (n==.atom_group.dim) then
+! 
+!             ! Find connected atom in residue 2
+!             residue_last: do i = 1,.atom_group(n).atom_index.dim
+!                a = .atom_group(n).atom_index(i)
+!                residue_last_m1: do j = 1,.atom_group(n-1).atom_index.dim
+!                   b = .atom_group(n-1).atom_index(j)
+!                   if (.atom.has_a_connection(a,b)) then
+!                    cap_atom_C = a ! This is the atom in residue last
+!                    cap_atom_N = b ! This is the atom in residue last -1
+!                                     !(cap atom 1)
+! 
+!                      exit residue_last
+!                   end if
+!                end do residue_last_m1
+!             end do residue_last
+! 
+!             ! Add N cap atom on C terminal end
+!             .atom_group(n).mol.atom.append(.atom(cap_atom_N))
+!             l = .atom_group(n).mol.atom.dim
+!             .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
+! 
+!             ! Find connections to C terminal guy
+!             L1_cap_atom => .atoms_bonded_to_atom(cap_atom_N).element
+! 
+!             ! Find connections to next-neighbours
+!             do i = 2,L1_cap_atom.dim
+! 
+!                a = L1_cap_atom(i)
+! 
+!                ! Already found
+!                if (a==cap_atom_C) cycle
+! 
+!                ! Append new cap atom
+!                .atom_group(n).mol.atom.append(.atom(a))
+!                l = .atom_group(n).mol.atom.dim
+!                .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
+! 
+!                if (.atom(a).atomic_number==6) then
+! 
+!                   ! Add caps for all non-H atom ... should be 3
+!                   L2_cap_atom => .atoms_bonded_to_atom(a).element
+!                   do j = 1,L2_cap_atom.dim
+! 
+!                      b = L2_cap_atom(j)
+! 
+!                      ! Already found
+!                      if (b==cap_atom_N) cycle
+! 
+!                      ! Append new cap atom
+!                      .atom_group(n).mol.atom.append(.atom(b))
+!                     ! Correct atomic number 
+!                      l = .atom_group(n).mol.atom.dim
+!                      .atom_group(n).mol.atom(l).set_label("H")
+!                      .atom_group(n).mol.atom(l).set_cap_atom(TRUE)
+!                      .atom_group(n).mol.atom.set_bond_lengths(b,l,CIF_CH_BOND_LENGTH)
+! 
+! 
+!                   end
+!                end
+!             end
+
+            end 
 
 !!!!!!!!!!!!!!!!!!!!!!!
 !residue last end
@@ -4703,32 +4669,133 @@ contains
       ! Clear connections
       VEC{ATOM}:nullify_connection_table
 
-      ! From here no changes ...
+   !  ! From here no changes ...
 
-      ! Set default molecule e.g. the name, atom_info
-      ! and default multiplicity ...
-      mol.:set_defaults
+   !  ! Set default molecule e.g. the name, atom_info
+   !  ! and default multiplicity ...
+   !  mol.:set_defaults
 
-      ! Reset .name after .set_defaults
-      mol.name              = .atom(.atom_group(n).atom_index(1)).compound_id_str
-      mol.charge            = .atom_group(n).charge
-      mol.spin_multiplicity = mol.:default_spin_multiplicity
-      mol.atom_info_made    = FALSE
-      mol.:set_atom_info
+   !  ! Reset .name after .set_defaults
+   !  mol.name              = .atom(.atom_group(n).atom_index(1)).compound_id_str
+   !  mol.charge            = .atom_group(n).charge
+   !  mol.spin_multiplicity = mol.:default_spin_multiplicity
+   !  mol.atom_info_made    = FALSE
+   !  mol.:set_atom_info
 
-      ! Copy the basis set and set the basis info
-      ! WARNING: dont destroy basis of mol !
-      mol.:set_basis_data_from(self)
+   !  ! Copy the basis set and set the basis info
+   !  ! WARNING: dont destroy basis of mol !
+   !  mol.:set_basis_data_from(self)
 
-      ! Don't remake ANO data if there
-      mol.:set_ANOs_from_sublist_of(self,.atom_group(n).atom_index)
+   !  ! Don't remake ANO data if there
+   !  mol.:set_ANOs_from_sublist_of(self,.atom_group(n).atom_index)
 
-      ! Assign the crystal
-      ! WARNING: dont destroy ...
-      if (.crystal.associated) mol.crystal => .crystal
+   !  ! Assign the crystal
+   !  ! WARNING: dont destroy ...
+   !  if (.crystal.associated) mol.crystal => .crystal
 
-      ! Set guess-type SCF defaults
-      mol.:set_scf_guess_defaults_from(.scfdata)
+   !  ! Set guess-type SCF defaults
+   !  mol.:set_scf_guess_defaults_from(.scfdata)
+
+   end
+
+   add_MFCC_cap(g1,g2) ::: leaky
+   ! Make a capped fragment "mol" from the atom_group "g2" adding caps
+   ! towards atom_group "g2", ready for MFCC calculation.  This
+   ! routine will add extra atoms.
+      self :: IN
+      g1,g2 :: INT, IN
+
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+ ! DIE_IF(n.in_range([1,.atom_group.dim]),"group number n incorrect")
+ ! DIE_IF(m.in_range([1,.atom_group.dim]),"group number m incorrect")
+   DIE_IF(g2/=(g1+1) AND g2/=(g1-1),"add caps for neighbour residues only")
+ ! DIE_IF(all(.atom(:).compound_sequence_id>0),"there are zero compound_id's")
+
+      i,j,a,b,l,l_p :: INT
+      cap_atom_N,cap_atom_C,cap_atom_N_m1,cap_atom_C_m1,cap_atom_N_p1,cap_atom_C_p1  :: INT
+      L1_cap_atom,L2_cap_atom,L1_p_cap_atom,L2_p_cap_atom :: VEC{INT}*
+
+      ! Find connected atom in residue 2
+      cap_atom_C = 0
+      cap_atom_N = 0
+
+      residue1: do i = 1,.atom_group(g1).atom_index.dim
+
+         a = .atom_group(g1).atom_index(i)
+
+         residue2: do j = 1,.atom_group(g2).atom_index.dim
+
+            b = .atom_group(g2).atom_index(j)
+
+            if (.atom.has_a_connection(a,b)) then
+               cap_atom_C = a ! This is the atom in residue1
+               cap_atom_N = b ! This is the atom in residue n+1 (cap atom 1)
+               exit residue1
+            end if
+
+         end do residue2
+
+      end do residue1
+
+      DIE_IF(cap_atom_C<=0,"cap_atom_C is zero!")
+      DIE_IF(cap_atom_N<=0,"cap_atom_N is zero!")
+
+      ! Add N cap atom on C terminal end (cap atom 1 in residue n+1)
+      .atom_group(g1).mol.atom.append(.atom(cap_atom_N))
+      l = .atom_group(g1).mol.atom.dim
+      .atom_group(g1).mol.atom(l).set_cap_atom(TRUE)
+
+      ! Find connections to C terminal guy (list with all atoms
+      ! bonded to cap atom 1) (includes cap atoms 2)
+      ! (-cap1-(cap2_1)-cap2_2-....)
+      L1_cap_atom => .atoms_bonded_to_atom(cap_atom_N).element
+      
+      ! Find connections to next-neighbours
+      do i = 2,L1_cap_atom.dim
+
+         a = L1_cap_atom(i) !in thsi case cap atom 2)
+
+         ! Already found
+         if (a==cap_atom_C) cycle !(atom in residue g1)
+
+         ! Append new cap atom
+         .atom_group(g1).mol.atom.append(.atom(a))
+         l = .atom_group(g1).mol.atom.dim
+         .atom_group(g1).mol.atom(l).set_cap_atom(TRUE)
+
+         if (.atom(a).atomic_number>1) then
+
+            ! Add caps for all non-H atom ... should be 3
+            ! (serging for cap atom 3)
+            L2_cap_atom => .atoms_bonded_to_atom(a).element
+            !atom a is cap atom 2)
+            do j = 1,L2_cap_atom.dim
+
+               b = L2_cap_atom(j)
+
+               ! Already found
+               if (b==cap_atom_N) cycle !( cap atom 1)
+
+               ! Append new cap atom
+               .atom_group(g1).mol.atom.append(.atom(b))
+
+               ! Correct atomic number
+               l = .atom_group(g1).mol.atom.dim
+               .atom_group(g1).mol.atom(l).set_label("H")
+               .atom_group(g1).mol.atom(l).set_cap_atom(TRUE)
+               .atom_group(g1).mol.atom.set_bond_lengths(b,l,CIF_CH_BOND_LENGTH)
+
+            end
+
+         end
+
+      end
+
+
+      stdout.text("First residue info:")
+      .atom_group(g1).mol.atom.put_coordinate_info
+
+      stop
 
    end
 
@@ -4742,20 +4809,11 @@ contains
 
       n_comp,g :: INT
 
-      ! Last attempt to find groups
-    ! if (NOT .atom.has_groups) then
-    ! if (.crystal.molecule_for_atom.associated) then
-    ! if (.crystal.molecule_for_atom.dim==.atom.dim) then
-    !    .atom(:).group = .crystal.molecule_for_atom(:)
-    ! end
-    ! end
-    ! end
-
       if (.atom_group.associated) then
 
          if (.atom_group.has_wavefunction_files) then; .:make_groups_from_wavefunction_files
          else if (.atom_group.has_atom_indices)  then; .:make_groups_from_self
-         else;          DIE("Can't finalize atom groups")
+         else;                                         DIE("Can't finalize atom groups")
          end
 
       else if (.atom.associated AND .:from_mmCIF) then
@@ -4769,14 +4827,16 @@ contains
             .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
          end
 
-       ! if (.atom_group_charges.associated) then
-       !    DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
-       !    do g = 1,.atom_group.dim
-       !       .atom_group(g).set_charge(.atom_group_charges(g))
-       !    end
-       ! end
+         if (.atom_group_charges.associated) then
+            DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
+            do g = 1,.atom_group.dim
+               .atom_group(g).set_charge(.atom_group_charges(g))
+            end
+         end
 
-         .:make_MFCC_fragments_from_self
+         .:make_groups_from_self
+
+         if (.:do_MFCC) .:make_MFCC_fragments_from_self
 
       else if (.atom.associated AND .atom.has_groups) then
 
@@ -5413,6 +5473,19 @@ contains
       res = FALSE
       if (.cif.associated) then
          res = .cif.is_mmCIF
+      end
+
+   end
+
+   do_MFCC result (res) ::: PURE
+   ! Returns TRUE if the there is a cif and it was an mmCIF
+   ! and we want to make MFCC fragments.
+      self :: IN
+      res :: BIN
+
+      res = FALSE
+      if (.cif.associated) then
+         res = .cif.is_mmCIF AND .cif.use_MFCC
       end
 
    end
