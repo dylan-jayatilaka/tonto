@@ -27,8 +27,11 @@ module VEC{ATOM}
 
    implicit none
 
-   ! Atom connection table, to save work
+   ! Atom connection table
    connections_for :: VEC{VEC_{INT}}*, private DEFAULT_NULL
+
+   ! Atom group connection table, to save work
+   group_connections_for :: VEC{VEC_{INT}}*, private DEFAULT_NULL
 
 contains
 
@@ -7095,7 +7098,8 @@ contains
    ! Make the atom connection table "connections_for".  If
    ! "skip_hydrogen" is present and TRUE, connections are not made to
    ! any hydrogen atom.
-      skip_hydrogen :: BIN, optional
+      self :: IN
+      skip_hydrogen :: BIN, optional, IN
 
       r :: REAL
 
@@ -7164,9 +7168,8 @@ contains
 
    end
 
-   assign_connection_table(connections) ::: selfless
-   ! Returns TRUE if the atom with index "X" is connected to the atom
-   ! with index "W".
+   assign_connection_table(connections) ::: leaky, selfless
+   ! Assign the atom connection connection_table to "connections".
       connections :: VEC{VEC_{INT}}*
 
    ENSURE(connections.associated,"no connection table")
@@ -7175,13 +7178,90 @@ contains
 
    end
 
-   nullify_connection_table ::: selfless
-   ! Returns TRUE if the atom with index "X" is connected to the atom
-   ! with index "W".
+   destroy_connection_table ::: leaky, selfless
+   ! Clean the "connection_for" atom connection table
 
    ENSURE(connections_for.associated,"no connection table")
 
-      nullify(connections_for)
+      connections_for.destroy
+
+   end
+
+
+   make_group_connection_table ::: leaky
+   ! Make the atom group connection table "connections_for". 
+      self :: IN
+
+      r :: REAL
+
+      if (group_connections_for.associated) return
+
+      r = 0.5d0
+      r.convert_from("angstrom")
+      ATOM:set_atom_bonded_range_factor(r)
+      .make_group_connection_table(group_connections_for)
+
+   end
+
+   make_group_connection_table(connections_for,skip_self) ::: leaky, PURE
+   ! Make the atom group connection table "connections_for".
+      self :: IN
+      connections_for :: VEC{VEC_{INT}}*
+      skip_self     :: BIN, optional, IN
+
+      n_group, i,j,k :: INT
+      skip_s :: BIN
+
+      ! Skip atom itself in the connections?
+      skip_s = TRUE
+      if (present(skip_self)) skip_s = skip_self
+
+      ! No. of groups
+      n_group =  .no_of_groups
+
+      ! Create connection table
+      connections_for.create(n_group,0)
+
+      ! Loop all groups "i"
+      do i = 1,n_group
+
+        ! If skipping atom "i" look at next atom
+        if (skip_s) then; k = i + 1
+        else;             k = i
+        end
+
+        ! Loop possible connected atoms "k"
+        do j = k,n_group
+
+           ! Add connected atom?
+           if (.bonded_groups(i,j) OR j==i) then
+              connections_for(i).element.append(j)
+              connections_for(j).element.append(i)
+           end
+
+        end
+
+      end
+
+   end
+
+   assign_group_connection_table(connections) ::: selfless
+   ! Assign the group connection table "group_connections_for" to
+   ! "connections".
+      connections :: VEC{VEC_{INT}}*
+
+   ENSURE(connections.associated,"no connection table")
+
+      group_connections_for => connections
+
+   end
+
+   destroy_group_connection_table ::: leaky, selfless
+   ! Clean the "group_connections_for"
+
+   ENSURE(group_connections_for.associated,"no connection table")
+
+      group_connections_for.destroy
 
    end
 
@@ -8288,38 +8368,133 @@ contains
    end
 
 
-   bonded_to(group,range_factor) result (res) ::: pure
-   ! Return true if any of the atoms in "self" are connected to anyt
-   ! of the atoms in "group".  If present, "range_factor" is used to
-   ! determine the distance range in which the atoms are regarded as
-   ! bonded.
+   bonded_groups(g1,g2) result (res) ::: pure
+   ! Return true if any of the atoms in group "g1" are bonded to any
+   ! in group "g2".
       self :: IN
-      group :: VEC{ATOM}, IN
-      range_factor :: REAL, IN, optional
+      g1,g2 :: INT, IN
       res :: BIN
 
-      res = .no_of_bonds_to(group,range_factor) > 1
+      res = .no_of_bonds_between_groups(g1,g2) > 0
 
    end
 
-   no_of_bonds_to(group,range_factor) result (res) ::: pure
-   ! Return the number of bonds from the atoms in "self" to those
-   ! atoms in "group".  If present, "range_factor" is used to
-   ! determine the distance range in which the atoms are regarded as
-   ! bonded.
+   no_of_bonds_between_groups(g1,g2) result (res) ::: pure
+   ! Return true if group "g1" is bonded to group "g2". 
+      self :: IN
+      g1,g2 :: INT, IN
+      res :: INT
+
+      n_group, a,b :: INT
+
+      n_group = .no_of_groups
+
+      res = 0
+
+      group_A: do a = 1,n_group
+
+         if (self(a).group/=g1) cycle
+
+         group_B: do b = 1,n_group
+
+           if (self(b).group/=g1) cycle
+           if (NOT self(a).is_bonded_to(self(b))) cycle
+
+           res = res + 1
+
+         end do group_B
+
+      end do group_A
+
+   end
+
+   list_of_bonds_between_groups(g1,g2) result (res) ::: pure
+   ! Return the list of pairs of atom indices between group "g1" and
+   ! group "g2" which are bonded.
+      self :: IN
+      g1,g2 :: INT, IN
+      res :: MAT{INT}(.no_of_bonds_between_groups(g1,g2),2)
+
+      n_group,n, a,b :: INT
+
+      n_group = .no_of_groups
+
+      n = 0
+
+      group_A: do a = 1,n_group
+
+         if (self(a).group/=g1) cycle
+
+         group_B: do b = 1,n_group
+
+           if (self(b).group/=g1) cycle
+           if (NOT self(a).is_bonded_to(self(b))) cycle
+
+           n = n + 1
+           res(n,1) = a
+           res(n,2) = b
+
+         end do group_B
+
+      end do group_A
+
+   end
+
+
+   bonded_to(group) result (res) ::: pure
+   ! Return true if any of the atoms in "self" are bonded to any of
+   ! the atoms in "group". 
       self :: IN
       group :: VEC{ATOM}, IN
-      range_factor :: REAL, IN, optional
+      res :: BIN
+
+      res = .no_of_bonds_to(group) > 0
+
+   end
+
+   no_of_bonds_to(group) result (res) ::: pure
+   ! Return the number of bonds from the atoms in "self" to those
+   ! atoms in "group". 
+      self :: IN
+      group :: VEC{ATOM}, IN
       res :: INT
 
       a,b :: INT
 
       res = 0
+
       group_A: do a = 1,.dim
       group_B: do b = 1,group.dim
-        if (self(a).is_bonded_to(group(b),range_factor)) then
-           res = res + 1
-        end
+
+        if (NOT self(a).is_bonded_to(self(b))) cycle
+
+        res = res + 1
+
+      end do group_B
+      end do group_A
+
+   end
+
+   list_of_bonds_to(group) result (res) ::: pure
+   ! Return the list of pairs of atom indices between group "g1" and
+   ! group "g2" which are bonded.
+      self :: IN
+      group :: VEC{ATOM}, IN
+      res :: MAT{INT}(.no_of_bonds_to(group),2)
+
+      n, a,b :: INT
+
+      n = 0
+
+      group_A: do a = 1,.dim
+      group_B: do b = 1,group.dim
+
+           if (NOT self(a).is_bonded_to(self(b))) cycle
+
+           n = n + 1
+           res(n,1) = a
+           res(n,2) = b
+
       end do group_B
       end do group_A
 
