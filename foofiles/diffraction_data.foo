@@ -850,7 +850,7 @@ contains
          case ("refine_positions_only=        "); .read_refine_positions_only
          case ("refine_u_iso_for_atoms=       "); .read_refine_U_iso_for_atoms
          case ("reflection_data=              "); .read_reflection_data
-       ! case ("remove_dispersion_from_f_exp= "); .read_remove_disp_from_F_exp
+         case ("remove_dispersion_from_f_exp= "); .read_remove_disp_from_F_exp
          case ("restart_har_with_promolecule= "); .read_restart_with_promolecule
          case ("revert                        "); .revert
 
@@ -871,13 +871,6 @@ contains
          case ("tolerance_near_0=             "); .read_tol_near_0
          case ("tol_for_shift_on_esd=         "); .read_tol_for_shift_on_esd
 
-         case ("units=                        "); .read_units
-         case ("use_iam_density=              "); .read_use_IAM_density
-         case ("use_iam_itc_ffs=              "); .read_use_IAM_ITC_FFs
-         case ("use_km_atoms=                 "); .read_use_KM_atoms
-         case ("use_real_dispersion=          "); .read_use_real_dispersion
-         case ("use_voronoi_atoms=            "); .read_use_Voronoi_atoms
-         case ("use_zero_overlap=             "); .read_use_zero_overlap
 
          case ("wavelength=                   "); .read_wavelength
 
@@ -889,9 +882,9 @@ contains
 
 ! Reading
 
-   read_units ::: get_from(OBJECT), private
-   ! Read a string which describes the units to be used
-   end
+!   read_units ::: get_from(OBJECT), private
+!   ! Read a string which describes the units to be used
+!   end
 
    read_junk ::: get_from(OBJECT), private
    ! Read in a junk string, useful for ignoring a field
@@ -1195,6 +1188,7 @@ contains
 
    end
 
+
    read_optimize_extinction ::: private
    ! Read the switch whether to correct extinction or not, according to the
    ! Larson formula
@@ -1233,15 +1227,6 @@ contains
       .set_remove_disp_from_F_exp(val)
 
    DIE_IF(.add_dispersion_to_F_calc,"you already asked to add dispersion to F_calc!")
-
-   end
-
-   read_use_real_dispersion ::: private
-   ! Read the switch whether to correct real dispersion or not,
-   ! according to the atomic dispersion factors
-      self :: INOUT
-
-      stdin.read(.use_real_dispersion)
 
    end
 
@@ -1646,7 +1631,7 @@ contains
       ! Create and open the CIF
       cif.create(name)
       cif.open
-      cif.find_crystal_data_block(found)
+      cif.find_data_block(found)
       ENSURE(found,"no crystal data block found")
 
       ! Read
@@ -1661,11 +1646,26 @@ contains
    ! Read information from a Crystallographic Information File "cif".
       self :: INOUT
       cif :: CIF, INOUT
+       
+      if (NOT cif.is_mmCIF) then
+         .read_smCIF(cif)
+      else
+         .read_mmCIF(cif)
+      end
+
+   end
+
+   read_smCIF(cif) ::: leaky
+   ! Read information from a small-molecule Crystallographic
+   ! Information File "cif".
+      self :: INOUT
+      cif :: CIF, INOUT
 
       there :: BIN
       sval :: STR
       ival :: INT
       rval :: REAL
+
 
       ! Read reflections
       .reflections.read_CIF(cif)
@@ -1715,6 +1715,45 @@ contains
       if (sval=="lambda*chi2") .set_XCW(TRUE)
       end
 
+
+   end
+
+   read_mmCIF(cif) ::: leaky
+   ! Read information from a macromolecular Crystallographic
+   ! Information File "cif".
+      self :: INOUT
+      cif :: CIF, INOUT
+
+      there :: BIN
+      rval :: REAL
+
+
+      ! Read reflections
+      .reflections.read_CIF(cif)
+
+      ! First prune I's and define F's
+      if (.have_I_exp) then
+         DIE_IF(NOT .have_I_sigma,"I_exp present but no I_sigma?")
+         .prune_small_I_sigmas
+         .reflections.reset_I_exp_I_sigma
+      end
+
+      ! Next prune F's
+      if (.have_F_exp) then
+         DIE_IF(NOT .have_F_sigma,"F_exp present but no F_sigma?")
+         .prune_small_F_sigmas
+         .reflections.reset_F_exp_F_sigma
+      end
+
+      ! Is there a wavelength in the CIF?
+      cif.find_item("_diffrn.radiation_wavelength",there)
+
+      ! If there, read wavelength and override existing
+      if (there) then
+      cif.read_item("_diffrn.radiation_wavelength",rval)
+      rval = rval*BOHR_PER_ANGSTROM
+      .set_wavelength(rval)
+      end
 
    end
 
@@ -5123,25 +5162,26 @@ contains
    end
 
 
-   put_qq_plot
+!   put_qq_plot
+!   ! Output a qq plot to stdout.
+!   ! It is a plot of the experimental quantile vs expected quantile.
+!      self :: IN
+!
+!   ENSURE(.reflections.associated, "no reflection data")
+!
+!      .reflections.put_F_qq_plot
+!
+!   end
+
+   put_labelled_qq_plot(tag)
    ! Output a qq plot to stdout.
    ! It is a plot of the experimental quantile vs expected quantile.
       self :: IN
+      tag :: STR, optional, IN
 
    ENSURE(.reflections.associated, "no reflection data")
 
-      .reflections.put_F_qq_plot
-
-   end
-
-   put_labelled_qq_plot
-   ! Output a qq plot to stdout.
-   ! It is a plot of the experimental quantile vs expected quantile.
-      self :: IN
-
-   ENSURE(.reflections.associated, "no reflection data")
-
-      .reflections.put_labelled_F_qq_plot
+      .reflections.put_labelled_F_qq_plot(tag)
 
    end
 
@@ -5543,19 +5583,29 @@ contains
 
    end
 
-   put_fcalc_plots
+   put_fcalc_plots(tag)
    ! Output some different plots about the calculated structure factors.
       self :: IN
+      tag :: STR, optional, IN
 
       ext :: VEC{REAL}*
       ext_refs :: VEC{REFLECTION}*
       n,n_refl :: INT
       y,w :: REAL
+      name :: STR
+
+      name = " "
+      if (present(tag)) name = tag
 
       n_refl = .reflections.n_refl
 
-      stdout.flush
-      stdout.text("Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs sin(theta)/lambda :")
+      stdout.redirect("stdout."//trim(name)//"_F_z_vs_stl")
+
+      stdout.text("# Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs sin(theta)/lambda :")
+      stdout.text("# 1st column: sin(theta)/lambda")
+      stdout.text("# 2nd column: (F_exp-F_pred)/F_sigma")
+      stdout.text("# Note: F_exp & F_pred may have dispersion removed")
+      stdout.text("# Note: Fpred may include extinction correction")
       stdout.flush
 
       do n = 1,n_refl
@@ -5564,8 +5614,16 @@ contains
          stdout.flush
       end
 
+      stdout.revert
+
+      stdout.redirect("stdout."//trim(name)//"_Delta_F_vs_stl")
+
+      stdout.text("# Scatter plot of Delta F = (F_exp-F_pred) vs sin(theta)/lambda :")
+      stdout.text("# 1st column: sin(theta)/lambda")
+      stdout.text("# 2nd column: Delta F = (F_exp-F_pred)")
+      stdout.text("# Note: F_exp & F_pred may have dispersion removed")
+      stdout.text("# Note: F_pred may include extinction correction")
       stdout.flush
-      stdout.text("Scatter plot of Delta F = (Fexp-Fpred) vs sin(theta)/lambda :")
       stdout.flush
 
       do n = 1,n_refl
@@ -5574,8 +5632,15 @@ contains
          stdout.flush
       end
 
-      stdout.flush
-      stdout.text("Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs Fexp :")
+      stdout.revert
+
+      stdout.redirect("stdout."//trim(name)//"_F_z_vs_F_exp")
+
+      stdout.text("# Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs F_exp :")
+      stdout.text("# 1st column: Fexp")
+      stdout.text("# 2nd column: (Fexp-Fpred)/F_sigma")
+      stdout.text("# Note: F_exp & F_pred may have dispersion removed")
+      stdout.text("# Note: F_pred may include extinction correction")
       stdout.flush
 
       do n = 1,n_refl
@@ -5584,58 +5649,64 @@ contains
          stdout.flush
       end
 
+      stdout.revert
 
-      if (.optimize_extinction) then
+      if (NOT .optimize_extinction) return
 
+      ! Only do this if extinction was used
       ext_refs.create(n_refl)
       ext.create(n_refl)
       ext = .F_extinction_correction
-      ext_refs.set_F_exp(.reflections.F_pred)
-      ext_refs.set_F_pred(.reflections.F_pred * ext)
+      ext_refs.set_F_corr(.reflections.F_pred/ext)
+      ext_refs.set_F_pred(.reflections.F_pred)
       ext_refs.set_F_sigma(.reflections.F_sigma)
       ext.destroy
 
-      stdout.flush
-      stdout.text("The effects of extinction:")
-      stdout.flush
-
       w = ZERO
       y = ZERO
-      do n=1,n_refl
+      do n = 1,n_refl
        y = y + abs(ext_refs(n).F_z)
        w = w + abs(ext_refs(n).F_r)
       end
       y = y / n_refl
       w = w / n_refl
-      stdout.show("Average value of abs[Fcalc(with ext)-Fcalc(without ext)]/F_sigma is ",y)
-      stdout.show("Average value of abs(extinction correction) is ",w)
-      stdout.flush
 
-      stdout.flush
-      stdout.text("The effects of intensity on extinction:")
-      stdout.flush
+      stdout.redirect("stdout."//trim(name)//"Delta_F_pred_z_vs_F_pred")
 
-      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs F_pred:")
-      do n=1,n_refl
-       stdout.put(ext_refs(n).F_pred)
-       stdout.put(ext_refs(n).F_z)
-       stdout.flush
+      stdout.text("# The effects of intensity on extinction:")
+      stdout.text("# ")
+      stdout.text("# Plot of [F_pred(without ext)-F_pred(with ext)]/F_sigma vs F_pred(without ext):")
+      stdout.text("# 1st column: F_pred(without extinction")
+      stdout.text("# 2nd column: [F_pred(without ext)-F_pred(with ext)]/F_sigma")
+      stdout.text("# Note: Fexp & F_pred may have dispersion removed")
+      stdout.text("# ")
+      stdout.show("# Average value of abs[Fpred(without ext)-Fcalc(with ext)]/F_sigma  = ",y)
+      stdout.show("# Average value of abs(extinction correction)                       = ",w)
+      do n = 1,n_refl
+         stdout.put(ext_refs(n).F_pred)
+         stdout.put(ext_refs(n).F_z)
+         stdout.flush
       end
 
-      stdout.flush
-      stdout.text("The effects of scattering angle on extinction:")
-      stdout.flush
+      stdout.revert
 
-      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs sin(theta)/lambda:")
+      stdout.redirect("stdout."//trim(name)//"Delta_F_pred_z_vs_stl")
+
+      stdout.text("# The effects of scattering angle on extinction:")
+      stdout.text("# ")
+      stdout.text("# Plot of [Fpred(without ext)-Fpred(with ext)]/F_sigma vs sin(theta)/lambda:")
+      stdout.text("# 1st column: sin(theta)/lambda")
+      stdout.text("# 2nd column: [F_pred(without ext)-F_pred(with ext)]/F_sigma")
+      stdout.text("# Note: F_exp & F_pred may have dispersion removed")
       do n = 1,n_refl
          stdout.put(.reflections(n).stl)
          stdout.put(ext_refs(n).F_z)
          stdout.flush
       end
 
-      ext_refs.destroy
+      stdout.revert
 
-      end
+      ext_refs.destroy
 
    end
 
