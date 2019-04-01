@@ -465,6 +465,7 @@ contains
          fb = fa + n
          lb = la + n
          .n_e_on_atom.append(0)
+         .n_e_on_atom(a) = .atom(a).atomic_number 
 
          ! Find occupied MO's with non-zero elements
          ! on atom "a" ...
@@ -479,7 +480,7 @@ contains
 
                ! Found
                ind.append(i)
-               .n_e_on_atom(a) = .n_e_on_atom(a) + 1
+               !.n_e_on_atom(a) = .n_e_on_atom(a) + 1
 
           !  end
 
@@ -608,8 +609,8 @@ contains
    ENSURE(.atom.associated,  "no atom list")
 
       atom :: ATOM*
-      Z_c,X,MX,M :: MAT{REAL}*
-      atom_a,atom_b,q,n,c,fa,la,na,fb,lb,nb :: INT
+      Z_c :: MAT{REAL}*
+      atom_a,atom_b,q,c,fa,la,na,fb,lb,nb :: INT
       sh :: SHELL2
 
       Z = ZERO
@@ -655,8 +656,8 @@ contains
    ENSURE(.atom.associated,  "no atom list")
 
       atom :: ATOM*
-      Z_c,X,MX,M :: MAT{REAL}*
-      atom_a,atom_b,q,n,c,fa,la,na,fb,lb,nb :: INT
+      Z_c :: MAT{REAL}*
+      atom_a,atom_b,q,c,fa,la,na,fb,lb,nb :: INT
       sh :: SHELL2
       test :: BIN
       Z = ZERO
@@ -706,10 +707,9 @@ contains
    ENSURE(.atom.associated,  "no atom list")
 
       atom :: ATOM*
-      Z_c,X,MX,M :: MAT{REAL}*
-      atom_a,atom_b,q,n,c,fa,la,na,fb,lb,nb :: INT
+      Z_c :: MAT{REAL}*
+      atom_a,atom_b,q,c,fa,la,na,fb,lb,nb :: INT
       sh :: SHELL2
-      test :: BIN
       Z = ZERO
 
       parallel do q = 1,.n_shell_pairs
@@ -3293,23 +3293,23 @@ contains
    ENSURE(.scfdata.associated,"no scfdata provided")
 
       select case (.scfdata.scf_kind)
-
-   !  case ("embedded_rhf")
-   !     .embedded_scf
-
-   !  case ("crystal_rhf")
-   !     .crystal_scf
-
+      
       case ("group")
-         .SCF:group_scf
+         
+         .:group_scf
 
       case ("no_ghf")
+         
          if(.scfdata.use_ELMO) then
             .:ELMO
          else
             .:NO_ghf
          end
 
+      case ("ghf")
+
+         .:ALO
+      
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
          .SCF:constrained_scf
@@ -3322,8 +3322,350 @@ contains
    end
 
 !  =========
+!  Group SCF
+!  =========
+
+   group_scf ::: leaky
+   ! Reads a progroup .density_matrix from the archive, otherwise
+   ! makes it. Then convert it to the right kind for an SCF calc.
+      arch :: ARCHIVE
+
+      arch.set(.name,"group_density_matrix", genre="restricted")
+
+      if (arch.exists) then
+
+         ! Read
+         .density_matrix.destroy
+         .density_matrix.create(.n_bf,"restricted")
+         arch.read(.density_matrix)
+
+      else
+
+         ! Make
+         .:do_group_SCF
+
+      end
+
+      ! Convert
+      .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
+
+   end
+
+   make_progroup_density_matrix ::: leaky
+   ! Make the density matrix which is a sum of density matrices for
+   ! each group specified in the molecule in the atom_group array.
+   ! This will destroy any existing restricted density matrix archive.
+
+      archive :: ARCHIVE
+      P :: OPMATRIX*
+
+      ! Leaky
+      .:do_group_SCF
+
+      ! Archive as the density_matrix
+      P.create(.n_bf)
+      archive.set_defaults
+      archive.set(.name,"group_density_matrix", genre="restricted")
+      archive.read(P, genre="restricted")
+      archive.set(.name,"density_matrix", genre="restricted")
+      archive.write(P, genre="restricted")
+      P.destroy
+
+   end
+
+   do_group_SCF(MOs,output) ::: leaky
+   ! Make a ".density matrix" from the sum of atom_group densities.
+   ! If "MOs" is present and true, make ".molecular_orbitals" which
+   ! are the columns of orbitals from each group and also make the
+   ! ".occupation_numbers" vector set to 2 for the occupied group
+   ! MO's.  If output is FALSE, the density matrix is not archived
+      self :: INOUT
+      MOs :: BIN, optional
+      output :: BIN, optional
+
+   ENSURE(.atom_group.associated,"no atom_group info")
+   ENSURE(.scfdata.associated,"no scfdata")
+
+      do_output,do_MOs :: BIN
+      mol :: MOLECULE*
+      arch :: ARCHIVE
+      g :: INT
+
+      ! Optional switches
+      do_output=TRUE
+      if (present(output)) do_output=output
+
+      do_MOs=FALSE
+      if (present(MOs)) do_MOs=MOs
+
+      ! Destroy this density matrix
+      DIE_IF(.scfdata.spinorbital_kind/="restricted","only for restricted DM so far")
+      .density_matrix.destroy
+      .density_matrix.create(.n_bf,.scfdata.spinorbital_kind)
+      .density_matrix.restricted = ZERO
+
+      ! Destroy the MO's if requested
+      if (do_MOs) then
+      .molecular_orbitals.destroy
+      .molecular_orbitals.create(.n_bf,"restricted")
+      .molecular_orbitals.restricted = ZERO
+      .occupation_numbers.destroy
+      .occupation_numbers.create(.n_bf,"restricted")
+      .occupation_numbers.restricted = ZERO
+      end
+
+      ! Make the ANOs: atom groups need it (leaky)
+      .SCF:make_ANO_data
+
+      ! Update ANOs in atom_group(:).mol's
+      .BASE:update_group_info
+
+      ! Loop over atom group "g"
+      do g = 1,.atom_group.dim
+
+         ! Set up a molecule for this group of atoms
+         mol => .atom_group(g).mol
+         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
+
+         ! Skip SCF for atoms without electrons
+         if (mol.BASE:no_of_electrons < 1) cycle
+
+         ! Set SCF options
+       ! if (.atom_group(g).n_atoms>1) then
+       !    genre = mol.scfdata.spinorbital_kind
+       !    if (mol.BASE:archive_exists("molecular_orbitals",genre)) then;
+       !       mol.scfdata.set_initial_MOs(genre)
+       !    else
+       !       mol.scfdata.set_initial_density("promolecule")
+       !    end
+       ! end
+
+         ! Output details?
+         if (do_output) mol.BASE:put_basics
+
+         ! Do the SCF !!!!!!!!!!!!!!!!!!!!!
+         mol.scfdata.set_level_shift(100d0)
+         mol.SCF:scf
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+         ! Make the AO density matrix for this group
+         if (.atom_group(g).n_MOs>0) then;
+            stdout.show("using fewer MOs =",.atom_group(g).n_MOs)
+            stdout.text("normal P:")
+            mol.BASE:make_ao_density_matrix
+            stdout.put(mol.density_matrix.restricted)
+            stdout.text("reduced P:")
+            mol.:make_scf_density_matrix(method="group",n_a=.atom_group(g).n_MOs)
+            stdout.put(mol.density_matrix.restricted)
+         else
+            mol.BASE:make_ao_density_matrix
+         end
+
+         ! Copy this group density matrix
+         .BASE:set_group_density(g,mol)
+
+         if (.BASE:debugging("do_group_SCF")) then
+            stdout.flush
+            stdout.text("Group "//trim(g.to_str)//" density_matrix:")
+            stdout.put(mol.density_matrix.restricted)
+         end
+
+         ! Copy this group's MO's and occupations
+         if (do_MOs) then
+
+            DIE_IF(mol.molecular_orbitals.disassociated,"no MOs")
+            DIE_IF(mol.molecular_orbitals.restricted.disassociated,"no restricted MOs")
+
+            .BASE:set_group_MOs(g,mol)
+
+            if (.BASE:debugging("do_group_SCF")) then
+               stdout.flush
+               stdout.text("Group "//trim(g.to_str)//" MO's:")
+               stdout.put(mol.molecular_orbitals.restricted)
+            end
+
+         end
+
+         ! Clean up files
+         mol.SCF:cleanup_scf
+
+      end
+
+      if (do_output) then
+         arch.set(.name,"group_density_matrix", genre="restricted")
+         arch.write(.density_matrix, genre="restricted")
+         if (.BASE:debugging("do_group_SCF")) then
+            stdout.flush
+            stdout.text("Group density:")
+            stdout.put(.density_matrix.restricted)
+         end
+      end
+
+      if (do_output AND do_MOs) then
+         arch.set(.name,"group_molecular_orbitals", genre="restricted")
+         arch.write(.molecular_orbitals, genre="restricted")
+         if (.BASE:debugging("do_group_SCF")) then
+            stdout.flush
+            stdout.text("Group occupations:")
+            stdout.put(.occupation_numbers.restricted)
+            stdout.flush
+            stdout.text("Group MO's:")
+            stdout.put(.molecular_orbitals.restricted)
+         end
+      end
+
+   end
+
+!  =========
 !  Usual SCF
 !  =========
+   
+   ALO_atom_scf(g) ::: leaky
+   ! Do an SCF calculation. The .molecular_orbitals,
+   ! .orbital_energies, and .density_matrix are produced as results.
+      g :: INT, IN 
+   
+   
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.associated,   "no atom list")
+   ENSURE(.scfdata.associated,"no scfdata")
+
+      er :: VEC{REAL}*
+      Fg,MOg,sMO :: MAT{REAL}*
+      fb,lb,i :: INT
+      
+      .atom_group(g).mol.:ALO_initialize_scf
+
+      !.SCF:put_scf_banner_and_options
+      !.SCF:put_scf_table_header
+
+      ! Full p-region
+      .atom_group(g).mol.SCF:extrapolate_fock_matrix !<<< This is fine!
+
+      er  => .atom_group(g).mol.orbital_energies.general
+      MOg => .atom_group(g).mol.molecular_orbitals.general
+      Fg  => .atom_group(g).mol.fock_matrix.general
+
+      stdout.put(Fg)
+      stdout.put(MOg)
+      !.:reorder_ELMO_g_mx(MOg)
+      .atom_group(g).mol.n_e_on_atom.append(.atom_group(g).mol.atom(1).atomic_number)
+
+      ! b-region (new code)
+      .atom_group(g).mol.:ALO_eigen_update(er,MOg,Fg,sMO)
+
+      ! exit here
+      MOg.destroy
+      fb = .first_basis_fn_for_atom(g)
+      lb = .last_basis_fn_for_atom(g)
+      i = .n_e_on_atom(g)
+      MOg.create(sMO.dim1,sMO.dim2)
+      MOg = sMO
+      sMO.destroy
+   
+   end
+   
+   ALO_initialize_scf ::: leaky
+   ! Initialize any molecular SCF procedure
+      self :: INOUT
+
+   ENSURE(.scfdata.associated,"no scfdata")
+
+      ! Overlap matrix
+      .INTS:make_overlap_matrix
+
+      ! Integration grids
+      if (.scfdata.is_DFT_calculation) .BASE:initialize_DFT_grids
+
+      ! Get initial guess
+      .:ALO_core_guess
+
+      stdout.text("Molecular Orbitals")
+      stdout.put(.molecular_orbitals.general)
+      ! Core matrix: both kinds
+      .core_matrix.destroy
+      .:make_core_matrix(.scfdata.spinorbital_kind)
+      .:make_core_matrix(.scfdata.molecular_orbital_kind)
+         
+      ! Get Fock matrix
+      .:make_fock_matrix
+
+      ! Initialise Schwarz inequality integrals (leaky)
+      .FOCK:initialize_max_I
+
+      ! Initialise SCF table (leaky)
+      .scfdata.set_table
+
+   end
+
+   ALO_core_guess ::: leaky
+   ! Do a core scf for the ".density_matrix", ".molecular_orbitals" and
+   ! ".orbital_energies". Also makes the restricted ".core_matrix".
+      self :: INOUT
+
+   ENSURE(.scfdata.associated,"no scfdata")
+
+      R,S,SH :: MAT{REAL}*
+      H :: MAT{REAL}*
+      n_e,n_bf :: INT
+
+      ! Sizes
+      n_e = .atom(1).atomic_number
+      n_bf = .atom(1).basis.no_of_basis_functions
+
+      ! Recreate and initialize (leaky)
+      .orbital_energies.destroy
+      .orbital_energies.create(n_e,"general")
+
+      .molecular_orbitals.destroy
+      .molecular_orbitals.create(n_bf,n_e,"general")
+      
+      ! Get restricted core and overlap matrices (leaky)
+      .:make_g_core_matrix
+
+      ! Make small overlap
+      .INTS:make_overlap_matrix
+      S.create(n_bf,n_bf)
+      S = .overlap_matrix(1:n_bf,1:n_bf)
+
+      ! Get the guess orbitals - 
+      SH.create(n_bf,n_bf)
+      SH.to_inverse_sqrt_of(S)
+
+      ! R = general S^{-1/2}
+      R.create(2*n_bf,2*n_bf)
+      R = ZERO
+      R.alpha_alpha_set_to(SH)
+      R.beta_beta_set_to(SH)
+
+      ! H = Fock matrix
+      ! Big into small Fock
+      H.create(2*n_bf,2*n_bf)
+      H = ZERO
+      H.alpha_alpha_set_to(.core_matrix.general(1:n_bf,1:n_bf))
+      H.alpha_beta_set_to(.core_matrix.general(1:n_bf,1+.n_bf:n_bf+.n_bf))
+      H.beta_alpha_set_to(.core_matrix.general(.n_bf+1:.n_bf+n_bf,1:n_bf))
+      H.beta_beta_set_to(.core_matrix.general(.n_bf+1:.n_bf+n_bf,.n_bf+1:.n_bf+n_bf))
+
+      ! H = S^-1/2 F S^-1/2
+      H.change_basis_using(R)
+      
+      !  Solve for c~
+      H.solve_symmetric_eigenproblem(.orbital_energies.general,.molecular_orbitals.general)
+
+      !  c  = S^-1/2 c~
+      .molecular_orbitals.general = matmul(R,.molecular_orbitals.general)
+
+      !.:reorder_ELMO_g_mx(MO)
+      !.:zero_ELMO_grad_mx(MO)
+
+
+      ! Clean
+      SH.destroy
+      H.destroy
+      R.destroy
+
+   end
 
    update_scfdata_energies ::: private
    ! Update SCF energies
@@ -3621,55 +3963,8 @@ contains
    ! orbitals.
    ENSURE(.scfdata.associated,"no scfdata")
 
-      if      (.scfdata.use_NOMO) then;                 .:NOMO_update
+      if      (.scfdata.use_ELMO) then;                 .:NOMO_update
       else;                                             .:MO_gradient_update
-      end
-
-   end
-
-   MO_gradient_update
-   ! Update the molecular orbitals using the gradient. Requires a set of old
-   ! molecular orbitals. The new molecular orbitals "c" are found by
-   ! incrementing a little along the gradient: (FDS - SDFDS)c and then
-   ! reorthogonalising c.  NOTE: the normal Fock matrix DIIS update is turned
-   ! off if this routine executes.
-      self :: INOUT
-
-   ENSURE(.scfdata.using_MO_gradient_update,"not allowed")
-   ENSURE(.fock_matrix.associated,"no fock_matrix")
-   ENSURE(.fock_matrix.has_any_genre,"no fock_matrix")
-   ENSURE(.density_matrix.associated,"no density_matrix")
-   ENSURE(.density_matrix.has_any_genre,"no density_matrix")
-   ENSURE(.molecular_orbitals.associated,"no MO's")
-   ENSURE(.molecular_orbitals.has_any_genre,"no MO's")
-
-      orb_kind :: STR
-      MOv :: VEC{REAL}*
-      MO,F,P :: MAT{REAL}*
-
-      orb_kind = .scfdata.scf_kind
-
-      select case (orb_kind)
-
-      case ("rhf     ", &
-            "rks     ", &
-            "xray_rhf", &
-            "xray_rks", &
-            "noninteracting-group-rhf")
-
-         F  => .fock_matrix.restricted
-         P  => .density_matrix.restricted
-         MO => .molecular_orbitals.restricted(:,1:.n_a)
-
-         MOv.create(size(MO))
-         MOv = reshape(MO,[size(MO)])
-         .scfdata.bfgs.minimize_L_BFGS(::NOMO_gradient_r,MOv)
-
-         MO = reshape(MOv,[.n_bf,.n_a])
-
-      case default
-         DIE("SCF kind "//trim(orb_kind)//" not implemented")
-
       end
 
    end
@@ -3724,6 +4019,110 @@ contains
       ! Clean
       H.destroy
       R.destroy
+
+   end
+   
+   MO_gradient_update
+   ! Update the molecular orbitals using the gradient. Requires a set of old
+   ! molecular orbitals. The new molecular orbitals "c" are found by
+   ! incrementing a little along the gradient: (FDS - SDFDS)c and then
+   ! reorthogonalising c.  NOTE: the normal Fock matrix DIIS update is turned
+   ! off if this routine executes.
+      self :: INOUT
+
+   ENSURE(.scfdata.using_MO_gradient_update,"not allowed")
+   ENSURE(.fock_matrix.associated,"no fock_matrix")
+   ENSURE(.fock_matrix.has_any_genre,"no fock_matrix")
+   ENSURE(.density_matrix.associated,"no density_matrix")
+   ENSURE(.density_matrix.has_any_genre,"no density_matrix")
+   ENSURE(.molecular_orbitals.associated,"no MO's")
+   ENSURE(.molecular_orbitals.has_any_genre,"no MO's")
+
+      orb_kind :: STR
+      MOv :: VEC{REAL}*
+      MO,F,P :: MAT{REAL}*
+
+      orb_kind = .scfdata.scf_kind
+
+      select case (orb_kind)
+
+      case ("rhf     ", &
+            "rks     ", &
+            "xray_rhf", &
+            "xray_rks", &
+            "noninteracting-group-rhf")
+
+         F  => .fock_matrix.restricted
+         P  => .density_matrix.restricted
+         MO => .molecular_orbitals.restricted(:,1:.n_a)
+
+         MOv.create(size(MO))
+         MOv = reshape(MO,[size(MO)])
+         .scfdata.bfgs.minimize_L_BFGS(::NOMO_gradient_r,MOv)
+
+         MO = reshape(MOv,[.n_bf,.n_a])
+
+      case default
+         DIE("SCF kind "//trim(orb_kind)//" not implemented")
+
+      end
+
+   end
+
+   ALO_eigen_update(MO_energies,MO,F,sMO)
+   ! Solve for the new molecular orbital energies "MO_energies" and the new
+   ! molecular orbitals "MO", given an initial old set (in "MO") and a fock
+   ! matrix "F".
+   ! The new molecular orbitals "MO*U" are found from the old MOs "MO" by
+   ! solving (c^T F c)U = c^T S c U E ...... where U is an orthogonal matrix.
+      MO_energies :: VEC{REAL}, INOUT
+      MO,F :: MAT{REAL}, IN
+      sMO :: MAT{REAL}*, OUT
+
+   DIE_IF(NOT F.is_symmetric,"F is not symmetric! WTF?!")
+
+      G,U,sF :: MAT{REAL}*
+      i,fb,lb :: INT
+
+      ! Change F into old MO basis --> G
+      fb = .first_basis_fn_for_atom(1)
+      lb = .last_basis_fn_for_atom(1)
+      i = .n_e_on_atom(1)
+      
+      ! Setup small orbitals
+      sMO.create(2*(lb-fb+1),i)
+      sMO = ZERO
+      sMO(fb:lb,:) = MO(fb:lb,1:i)
+      sMO(fb+lb:lb+lb,:) = MO(fb+.n_bf:lb+.n_bf,1:i)
+      
+      ! Big into small Fock
+      sF.create(2*(lb-fb+1),2*(lb-fb+1))
+      sF = ZERO
+      sF.alpha_alpha_set_to(F(fb:lb,fb:lb))
+      sF.alpha_beta_set_to(F(fb:lb,fb+.n_bf:lb+.n_bf))
+      sF.beta_alpha_set_to(F(fb+.n_bf:lb+.n_bf,fb:lb))
+      sF.beta_beta_set_to(F(fb+.n_bf:lb+.n_bf,fb+.n_bf:lb+.n_bf))
+      
+      G.create(i,i)
+      
+      ! Change basis
+      sF.change_basis_to(G,sMO)
+
+      ! Get rotation U from old to new MO's
+      U.create(i,i)
+      G.symmetrize
+      G.diagonalize_by_jacobi(MO_energies(1:i),U)
+
+      ! Lock orbitals in place, if requested
+      !if (.scfdata.using_orbital_locking) U.make_diagonally_dominant
+
+      ! Update orbitals
+      sMO = matmul(sMO,U)
+
+      ! Clean up
+      sF.destroy
+      U.destroy
+      G.destroy
 
    end
 
@@ -5418,6 +5817,279 @@ contains
 
    end
 
+!  =======================
+!  Atom Group Localisation
+!  =======================
+
+   ALO ::: leaky
+   ! Do non-orthogonal SCF calculation, localised to atomic group
+   ! regions. Bespoke.
+      self :: INOUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,   "no atom list")
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.scfdata.use_NOMO,"must be a NOMO calculation")
+   DIE_IF(NOT .scfdata.spinorbital_kind=="general","not general SCF")
+   !ENSURE(.scfdata.use_ELMO,"must be a ELMO calculation")
+
+      mol :: MOLECULE*
+      g,fb,lb,ne :: INT
+      i :: INT
+
+      ! Connections
+      .:make_elmo_connection_table
+
+      ! Make atom groups for each atom
+      .:set_ELMO_atom_groups
+      do i = 1, .atom_group.dim
+         stdout.show("Atom group", i)
+         stdout.put(.atom_group(i).atom_index)
+      end do
+
+      ! Whole molecule DM
+      .density_matrix.destroy
+      .density_matrix.create(.n_bf,.scfdata.spinorbital_kind)
+      .density_matrix.general = ZERO
+
+      ! Destroy the MO's if requested
+      .molecular_orbitals.destroy
+      .molecular_orbitals.create(.n_bf,"general")
+      .molecular_orbitals.general = ZERO
+      .occupation_numbers.destroy
+      .occupation_numbers.create(.n_bf,"general")
+      .occupation_numbers.general = ZERO
+
+      ! Make the ANOs: atom groups need it (leaky)
+      .SCF:make_ANO_data
+
+      ! Update ANOs in atom_group(:).mol's
+      .BASE:update_group_info
+
+      ne = 1
+      
+      ! Loop over atom group "g"
+      do g = 1,.atom_group.dim
+
+         ! Set up a molecule for this group of atoms
+         mol => .atom_group(g).mol
+         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
+
+         ! Skip SCF for atoms without electrons
+         if (mol.BASE:no_of_electrons < 1) cycle
+
+         ! Do the SCF !!!!!!!!!!!!!!!!!!!!!
+         mol.scfdata.set_level_shift(100d0)
+         mol.scfdata.set_scf_kind(.scfdata.spinorbital_kind)
+         .:ALO_atom_scf(g)
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+         ! Copy orbitals back
+         fb = .first_basis_fn_for_atom(.atom_group(g).atom_index(1))
+         lb = .last_basis_fn_for_atom(.atom_group(g).atom_index(1))
+         .molecular_orbitals.general(fb:lb,ne:ne+mol.n_e_on_atom(1)-1)=mol.molecular_orbitals.general(fb:lb,1:mol.n_e_on_atom(1))
+         .molecular_orbitals.general(fb+.n_bf:lb+.n_bf,ne:ne+mol.n_e_on_atom(1)-1)=mol.molecular_orbitals.general(fb+lb:lb+lb,1:mol.n_e_on_atom(1))
+         ne = ne + mol.n_e_on_atom(1)
+
+         stdout.text("MO")
+         stdout.put(mol.molecular_orbitals.general)
+         ! end cycle.
+
+         !stdout.show("Orbitals", g)
+         !stdout.put(mol.molecular_orbitals.general)
+
+         ! Make the AO density matrix for this group
+         !mol.BASE:make_ao_density_matrix
+
+         ! Clean up files
+         !mol.:cleanup_scf
+
+      end
+   
+      stdout.text("MO")
+      stdout.put(.molecular_orbitals.general)
+      
+      do i = 1, .atom_group.dim
+         stdout.show("Atom group density", i)
+         stdout.put(.atom_group(i).mol.density_matrix.general)
+         stdout.text("MOs")
+         stdout.put(.atom_group(i).mol.molecular_orbitals.general)
+      end do
+     
+      stop
+      
+
+      ! Overlap matrix
+      .INTS:make_overlap_matrix
+
+      ! Get initial MO's
+      .SCF:make_promolecule_density ! Fix for general ANOs
+
+      !.:make_ELMO_promolecule_density ! Fix for general ANOs
+      .:make_fock_matrix         ! should be OK, ELMO is used to make F
+      !.SCF:make_fock_guess         ! should be OK, ELMO is used to make F
+      
+      ! Clean
+      .molecular_orbitals.destroy
+      .orbital_energies.destroy
+
+      ! Get core and overlap
+      .INTS:make_overlap_matrix
+      
+      .orbital_energies.create(.n_bf, "general")
+      .molecular_orbitals.create(.n_bf, "general")
+      .:make_g_fock_guess(.orbital_energies.general,.molecular_orbitals.general,.fock_matrix.general)
+      .:make_scf_density_matrix
+      !!!!!!!!! FIX !!!!!!!!!!!
+      
+      ! Core matrix: both kinds
+      .core_matrix.destroy
+      .:make_core_matrix(.scfdata.spinorbital_kind)
+      .:make_core_matrix(.scfdata.molecular_orbital_kind)
+      
+      ! Make fock
+      .:make_fock_matrix
+
+
+      ! Reset all SCF data (except DFT parts)
+      .scfdata.reset
+      .scfdata.set_crystal(.crystal)
+      .:update_scfdata_energies
+
+      ! Add constraint to F?
+      if (.scfdata.using_diis) .:update_scfdata_error
+
+      ! Initialise Schwarz inequality integrals (leaky)
+      .FOCK:initialize_max_I
+
+      ! Initialise SCF table (leaky)
+      .scfdata.set_table
+      .SCF:put_scf_banner_and_options
+      .SCF:put_scf_table_header
+
+      ! Solve for ELMOs
+      .:do_ELMO
+      !!!!!!!!!!!!!!!!!
+            
+      ! Print out the correct "full energy"
+      .scfdata.set_use_ELMO(FALSE)
+      .scfdata.set_ELMO_B(1000)
+      .scfdata.set_ELMO_P(1000)
+      
+      ! Create the full core matrix
+      .kinetic_energy_matrix.destroy
+      .nuclear_attraction_matrix.destroy
+      .core_matrix.destroy
+      .:make_core_matrix(.scfdata.spinorbital_kind)
+      .:make_core_matrix(.scfdata.molecular_orbital_kind)
+      
+      ! Remake the "full" density matrix
+      .:make_scf_density_matrix
+   
+      ! Remake the "full" Fock matrix
+      .:make_fock_matrix
+   
+      .SCF:update_scfdata
+      .:update_scfdata_error
+   
+   
+      .SCF:put_scf_results
+
+      .SCF:archive_scf_results
+   
+      .SCF:cleanup_scf
+
+   end
+
+   set_ELMO_atom_groups ::: leaky
+   ! Set up ELMO .atom_group information
+     self :: INOUT   
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.elmo_connection_table.created,"no ELMO connection table")
+   ENSURE(.atom_group.destroyed,"atom_group's already exist!")
+   ENSURE(.atom.created,"no atoms")
+      a,b,p :: INT
+      
+      p = .scfdata.elmo_p
+      .atom_group.create(.atom.dim)
+      
+      do a = 1,.atom.dim
+         
+         ! Add first atom to its own group
+         .atom_group(a).atom_index.create(1)
+         .atom_group(a).atom_index(1) = a
+         
+         ! Find p-connected atoms
+         do b = 1,.atom.dim
+            ! Avoid unecessary appending
+            if (a == b) cycle 
+            
+            if (.:elmo_connected(a,b,p)) then
+               .atom_group(a).atom_index.append(b)
+            end
+
+         end
+         
+         .atom_group(a).n_atoms = .atom_group(a).atom_index.dim
+     
+      end
+        
+      .:make_groups_from_self
+      
+   end
+
+   make_groups_from_self ::: private, leaky
+   ! Make the atom groups from "self"
+      self :: INOUT
+
+   DIE_IF(NOT .atom_group.associated,"no atom groups!")
+
+      mol :: MOLECULE*
+      g :: INT
+
+      ! Check is indices are sensible
+      !.atom_group.finalize(.atom)
+
+      ! Create each group from "self"
+      do g = 1,.atom_group.dim
+
+         ! Create mol & define it
+         mol.BASE:create
+         self.BASE:make_molecule_from_atom_group(g,mol)
+
+         ! Read the MOs & make the density
+         ! This won't work until Tonto can read in its own dump
+         if (.atom_group(g).MO_file_name/=" ") then
+             mol.BASE:read_archive("molecular_orbitals","restricted")
+             mol.:make_scf_density_matrix
+         end
+
+         ! Rotate and translate mol
+         if (.atom_group(g).transform_group) then
+            mol.BASE:rotate_by(.atom_group(g).rotation_matrix)
+            mol.atom.translate_by(.atom_group(g).shift)
+         end
+         mol.atom.set_group_to(g)
+
+         ! Add it to atom_group
+         ! PRS 23/04/2017
+         ! This appears to be a bug, I don't think it's necessary
+         ! to destroy this and it definitely can destroy things
+         ! that are still in use
+         ! .atom_group(g).mol.BASE:destroy
+         .atom_group(g).mol => mol
+
+      end
+
+      ! Define .atom list
+    ! .:merge_atom_groups
+
+      ! Update group infor from self
+      ! Is the below needed????
+      .BASE:update_group_info
+
+   end
+
 !  ==========================
 !  DIIS/Orbital extrapolation
 !  ==========================
@@ -5549,6 +6221,30 @@ contains
       ! Get error length
       .:make_ELMO_gradient_g(.molecular_orbitals.general(:,1:.n_e),E,.nomo_gradient)
       length = norm2(.nomo_gradient)
+
+      ! Set the length
+      .scfdata.diis.set_error_length(length)
+      .scfdata.set_diis_error(length)
+
+   end
+   
+   make_error_length(length) ::: leaky
+   ! Make the SCF error vector from the current fock_matrix and
+   ! density_matrix, and return the error "length".  Useful for reporting the
+   ! error length.
+      self :: INOUT
+      length :: REAL, OUT
+
+   ENSURE(.fock_matrix.associated,"no fock matrix")
+   ENSURE(.fock_matrix.has_any_genre,"no fock matrix")
+   ENSURE(.density_matrix.associated,"no density matrix")
+   ENSURE(.density_matrix.has_any_genre,"no density matrix")
+
+      ! Get overlap matrix (leaky)
+      .INTS:make_overlap_matrix
+
+      ! Get error length
+      length = MOLECULE.SCF:diis_error_length(.fock_matrix,.density_matrix,.overlap_matrix)
 
       ! Set the length
       .scfdata.diis.set_error_length(length)
