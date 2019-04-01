@@ -552,6 +552,7 @@ contains
 
    set_defaults ::: leaky
    ! Set up a default molecule
+      self :: INOUT
 
       .name                = "unknown"
       .charge              = 0
@@ -605,6 +606,7 @@ contains
 
    set_scf_guess_defaults_from(scfdata) ::: leaky
    ! Set scf  data options for a guess-type SCF defaults
+      self :: INOUT
       scfdata :: SCFDATA*
 
       ! Set the SCF defaults (leaky)
@@ -4399,6 +4401,8 @@ contains
 
       g :: INT
 
+      if (NOT .:do_MFCC) return
+
       ! Create each group from "self"
       do g = 1,.atom_group.dim
         
@@ -4407,54 +4411,68 @@ contains
 
       end
 
-      ! Set ANOs, SCF defaults
-      .:update_group_info
-
    end
 
-   make_fragment_from_compound_id(n) ::: leaky
+   make_fragment_from_compound_id(g) ::: leaky
    ! Make a capped fragment for molecule the atom_group(n).mol with
-   ! compound_id "n" ready for MFCC calculation. This routine will add
+   ! compound_id "g" ready for MFCC calculation. This routine will add
    ! extra atoms.
       self :: INOUT
-      n :: INT, IN
+      g :: INT, IN
 
    DIE_IF(.atom.disassociated,"no atom info")
    DIE_IF(.atom_group.disassociated,"no atom_group info")
- ! DIE_IF(all(.atom(:).compound_sequence_id>0),"there are zero compound_id's")
-   DIE_IF(n>.atom_group.dim,"group number n too big")
-   DIE_IF(n<1,"group number n less than 1!")
+   DIE_IF(g>.atom_group.dim,"group number g too big")
+   DIE_IF(g<1,"group number g less than 1!")
+
+      ! Add cap atoms
+      .:add_MFCC_cap(g)
+
+      ! Set defaults for this cap fragment
+      .:set_MFCC_info_for_compound_id(g)
+
+   end
+
+   add_MFCC_cap(g) ::: leaky
+   ! Make a capped fragment for molecule the atom_group(n).mol with
+   ! compound_id "g" ready for MFCC calculation. This routine will add
+   ! extra atoms.
+      self :: INOUT
+      g :: INT, IN
+
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+   DIE_IF(g>.atom_group.dim,"group number g too big")
+   DIE_IF(g<1,"group number g less than 1!")
 
       in_residue :: BIN
-      name :: STR
+
+      ! Cap made?
+      if (.atom_group(g).MFCC_made) return
 
       ! Set internal connections
       VEC{ATOM}:assign_connection_table(.atoms_bonded_to_atom)
 
-      ! Here add extra cap atoms!
-      ! You can call has = .atom.has_connection(i,j)
-
-      ! create smaler fragments to generate the caped fragment for
-      ! each aminoa cide
-      in_residue = .atom(.atom_group(n).atom_index(1)).is_in_a_residue
+      ! Residue atom?
+      in_residue = .atom(.atom_group(g).atom_index(1)).is_in_a_residue
 
       if (in_residue) then
 
-         if (n==1) then
+         if (g==1) then
 
             ! First residue
             .:add_MFCC_cap(1,2)
  
-         else if (n==.atom_group.dim) then
+         else if (g==.atom_group.dim) then
 
             ! Last residue
-            .:add_MFCC_cap(n,n-1)
+            .:add_MFCC_cap(g,g-1)
 
          else 
          
             ! Middle residue
-            .:add_MFCC_cap(n,n-1)
-            .:add_MFCC_cap(n,n+1)
+            .:add_MFCC_cap(g,g-1)
+            .:add_MFCC_cap(g,g+1)
  
          end
 
@@ -4463,37 +4481,8 @@ contains
       ! Clear connections
       VEC{ATOM}:nullify_connection_table
 
-      ! Set default molecule e.g. the name, atom_info
-      ! and default multiplicity ...
-      .atom_group(n).mol.:set_defaults
-
-      ! Reset .name after .set_defaults
-      .atom_group(n).mol.name              = .atom(.atom_group(n).atom_index(1)).id_compound_str
-      .atom_group(n).mol.charge            = .atom_group(n).charge
-      .atom_group(n).mol.spin_multiplicity = .atom_group(n).mol.:default_spin_multiplicity
-      .atom_group(n).mol.atom_info_made    = FALSE
-      .atom_group(n).mol.atom.set_group_to(0)
-      .atom_group(n).mol.:set_atom_info
-
-      ! Copy the basis set and set the basis info
-      ! WARNING: dont destroy basis of mol !
-      .atom_group(n).mol.:set_basis_data_from(self)
-
-      ! Don't remake ANO data if there
-      .atom_group(n).mol.:set_ANOs_from_sublist_of(self,.atom_group(n).atom_index)
-
-      ! Assign the crystal
-      ! WARNING: dont destroy ...
-      if (.crystal.associated) .atom_group(n).mol.crystal => .crystal
-
-      ! Set guess-type SCF defaults
-      .atom_group(n).mol.:set_scf_guess_defaults_from(.scfdata)
-
-      ! Output fragment info
-      name = "stdout." // trim(.atom_group(n).mol.name)
-      stdout.redirect(name)
-      .atom_group(n).mol.atom.put_coordinate_info
-      stdout.revert
+      ! Caps made?
+      .atom_group(g).MFCC_made = TRUE
 
    end
 
@@ -4509,10 +4498,7 @@ contains
       g1,g2 :: INT, IN
 
    DIE_IF(.atom_group.disassociated,"no atom_group info")
- ! DIE_IF(n.in_range([1,.atom_group.dim]),"group number n incorrect")
- ! DIE_IF(m.in_range([1,.atom_group.dim]),"group number m incorrect")
    DIE_IF(g2/=(g1+1) AND g2/=(g1-1),"add caps for neighbour residues only")
- ! DIE_IF(all(.atom(:).compound_sequence_id>0),"there are zero compound_id's")
 
       i,j, ap,bp,cp,cf,dp,last :: INT
       bp_bonds,cp_bonds :: VEC{INT}*
@@ -4537,13 +4523,13 @@ contains
       ! Any bond to cut?
       if (NOT bonded) return
 
-      stdout.text("=================")
-      stdout.show("residue g1  = ",g1)
-      stdout.show("residue g2  = ",g2)
-      stdout.show("bond atom A = ",ap)
-      stdout.show("bond atom A = ",.atom(ap).label)
-      stdout.show("bond atom B = ",bp)
-      stdout.show("bond atom B = ",.atom(bp).label)
+    ! stdout.text("=================")
+    ! stdout.show("residue g1  = ",g1)
+    ! stdout.show("residue g2  = ",g2)
+    ! stdout.show("bond atom A = ",ap)
+    ! stdout.show("bond atom A = ",.atom(ap).label)
+    ! stdout.show("bond atom B = ",bp)
+    ! stdout.show("bond atom B = ",.atom(bp).label)
 
       ! To residue 1, connected atom bp in residue 2
       .atom_group(g1).mol.atom.append(.atom(bp))
@@ -4554,10 +4540,10 @@ contains
       ! -ap-res1 - bp-res2(cp_1-res2)(cp_2-res2) ...
       bp_bonds => .atoms_bonded_to_atom(bp).element
 
-      stdout.text("bp bond atoms:")
-      stdout.put(bp_bonds)
-      stdout.text("bp bond atoms:")
-      stdout.put(.atom(bp_bonds).label)
+    ! stdout.text("bp bond atoms:")
+    ! stdout.put(bp_bonds)
+    ! stdout.text("bp bond atoms:")
+    ! stdout.put(.atom(bp_bonds).label)
 
       ! Find connections to bp
       do i = 1,bp_bonds.dim
@@ -4568,9 +4554,9 @@ contains
          ! Already found atom in residue g1
          if (cp==ap) cycle 
 
-      stdout.show("Looking at non-H atoms connected to atom = ",cp)
-      stdout.show("**Matches to this atom is residue 2**    = ",cf)
-      stdout.show("Looking at non-H atoms connected to atom = ",.atom(cp).label)
+    ! stdout.show("Looking at non-H atoms connected to atom = ",cp)
+    ! stdout.show("**Matches to this atom is residue 2**    = ",cf)
+    ! stdout.show("Looking at non-H atoms connected to atom = ",.atom(cp).label)
 
          ! Append new cap atom 2
          .atom_group(g1).mol.atom.append(.atom(cp))
@@ -4587,10 +4573,10 @@ contains
             cf = last
 
 
-      stdout.text("cp bond atoms:")
-      stdout.put(cp_bonds)
-      stdout.text("cp bond atoms:")
-      stdout.put(.atom(cp_bonds).label)
+    ! stdout.text("cp bond atoms:")
+    ! stdout.put(cp_bonds)
+    ! stdout.text("cp bond atoms:")
+    ! stdout.put(.atom(cp_bonds).label)
 
             ! Find connections to cp
             do j = 1,cp_bonds.dim
@@ -4600,8 +4586,8 @@ contains
                ! Already found atom bp
                if (dp==bp) cycle 
 
-      stdout.show("Looking at atom = ",dp)
-      stdout.show("Looking at atom = ",.atom(dp).label)
+    ! stdout.show("Looking at atom = ",dp)
+    ! stdout.show("Looking at atom = ",.atom(dp).label)
 
                ! Append new cap atom, keep its index
                .atom_group(g1).mol.atom.append(.atom(dp))
@@ -4612,16 +4598,16 @@ contains
                ! WARNING: AN has to be set after setting unique label
                label = "H-" // trim(.atom(dp).atom_sequence_id.to_str) // "-"
                label = trim(label) // trim(.atom(dp).compound_id_str)
-      stdout.show("Residue 1 # of atoms   = ",last)
-      stdout.show("This is it's new label = ",label)
+    ! stdout.show("Residue 1 # of atoms   = ",last)
+    ! stdout.show("This is it's new label = ",label)
                .atom_group(g1).mol.atom(last).set_label(label,skip_mass=TRUE)
                .atom_group(g1).mol.atom(last).set_atomic_number_and_mass("H ")
                .atom_group(g1).mol.atom(last).set_cap_atom(TRUE)
 
                ! Reset bond length to last added atom
                length = CIF_CH_BOND_LENGTH*BOHR_PER_ANGSTROM
-      stdout.show("We reset bond length for these atom indices = ",cf)
-      stdout.show("We reset bond length for these atom indices = ",last)
+    ! stdout.show("We reset bond length for these atom indices = ",cf)
+    ! stdout.show("We reset bond length for these atom indices = ",last)
                .atom_group(g1).mol.atom.set_bond_length(cf,last,length)
 
             end
@@ -4629,6 +4615,58 @@ contains
          end
 
       end
+
+   end
+
+   set_MFCC_info_for_compound_id(g)
+   ! Set the MFCC charge, mnultiplicity, basis set and scf guess
+   ! defaults for group "g"
+      self :: INOUT
+      g :: INT, IN
+
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+   DIE_IF(g>.atom_group.dim,"group number g too big")
+   DIE_IF(g<1,"group number g less than 1!")
+
+      mult :: INT
+
+      ! Reset .name
+      .atom_group(g).mol.name = .atom(.atom_group(g).atom_index(1)).id_compound_str
+
+      ! Set charge & multiplicity
+      .atom_group(g).mol.:set_charge(.atom_group(g).charge)
+      if (.atom_group(g).spin_multiplicity_set) then
+         mult = .atom_group(g).spin_multiplicity
+      else
+         mult = .atom_group(g).mol.:default_spin_multiplicity
+      end
+      .atom_group(g).mol.:set_spin_multiplicity(mult)
+
+      ! Reset atom group info
+      .atom_group(g).mol.atom_info_made    = FALSE
+      .atom_group(g).mol.atom.set_group_to(0)
+      .atom_group(g).mol.:set_atom_info
+
+    ! stdout.text("#1")
+    ! .atom_group(g).mol.:put_basics_and_atoms
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol !
+      .atom_group(g).mol.:set_basis_data_from(self)
+
+      ! Don't remake ANO data if there
+      .atom_group(g).mol.:set_ANOs_from_sublist_of(self,.atom_group(g).atom_index)
+
+      ! Assign the crystal
+      ! WARNING: dont destroy ...
+      if (.crystal.associated) .atom_group(g).mol.crystal => .crystal
+
+      ! Set guess-type SCF defaults
+      .atom_group(g).mol.:set_scf_guess_defaults_from(.scfdata)
+
+    ! stdout.text("#2")
+    ! .atom_group(g).mol.:put_basics_and_atoms
 
    end
 
@@ -4640,19 +4678,14 @@ contains
    ! Finalize the .atom_group information
       self :: INOUT
 
-      n_comp,g :: INT
+      n_comp,n_group, g :: INT
 
-      if (.atom_group.associated) then
+      if (.atom.disassociated) return
 
-         if (.atom_group.has_wavefunction_files) then; .:make_groups_from_wavefunction_files
-         else if (.atom_group.has_atom_indices)  then; .:make_groups_from_self
-         else;                                         DIE("Can't finalize atom groups")
-         end
-
-      else if (.atom.associated AND .:from_mmCIF) then
+      if (.:from_mmCIF) then
 
          n_comp = .atom.no_of_compounds
-         .atom_group.create(n_comp)
+         if (.atom_group.disassociated) .atom_group.create(n_comp)
 
          ! Make groups from compound_id's
          do g = 1,n_comp
@@ -4660,20 +4693,16 @@ contains
             .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
          end
 
-         if (.atom_group_charges.associated) then
-            DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
-            do g = 1,.atom_group.dim
-               .atom_group(g).set_charge(.atom_group_charges(g))
-            end
-         end
-
+         ! Make group as usual
          .:make_groups_from_self
 
-         if (.:do_MFCC) .:make_MFCC_fragments_from_self
+         ! But add MFCC caps, reset charges, multiplicity
+         .:make_MFCC_fragments_from_self
 
-      else if (.atom.associated AND .atom.has_groups) then
+      else if (.atom.has_groups) then
 
-         .atom_group.create(.atom.no_of_groups)
+         n_group = .atom.no_of_groups
+         if (.atom_group.disassociated) .atom_group.create(n_group)
 
          ! Make groups from group index
          do g = 1,.atom_group.dim
@@ -4681,6 +4710,7 @@ contains
             .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
          end
 
+         ! Set charges
          if (.atom_group_charges.associated) then
             DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
             do g = 1,.atom_group.dim
@@ -4689,6 +4719,18 @@ contains
          end
 
          .:make_groups_from_self
+
+      else if (.atom_group.has_wavefunction_files) then
+      
+         .:make_groups_from_wavefunction_files
+
+      else if (.atom_group.has_atom_indices) then
+      
+         .:make_groups_from_self
+
+      else
+      
+         DIE("Can't finalize atom groups")
 
       end
 
@@ -4710,15 +4752,20 @@ contains
 
    make_groups_from_wavefunction_files ::: private, leaky
    ! Make the atom groups by read in Gaussian Fchk files in they are defined for the groups
+      self :: INOUT
+
    DIE_IF(.atom.associated,"atoms already exists!")
    DIE_IF(.atom_group.disassociated,"no atom groups")
    DIE_IF(NOT .atom_group.has_wavefunction_files,"no wavefunction files")
 
       mol :: MOLECULE*
       g :: INT
+
       do g = 1,.atom_group.dim
+
          ! Create the mol & define it from FChk file
          mol.:create
+
          ! Read in either the fchk or sbf_file
          if(.atom_group(g).wavefunction_file_name.ends_in("fchk", case_sensitive=FALSE)) then
             mol.:read_g09_FChk_file(.atom_group(g).wavefunction_file_name)
@@ -4733,6 +4780,7 @@ contains
             end
             .scfdata.set_scf_kind("uhf")
          end
+
          ! Rotate and translate it
          mol.:rotate_by(.atom_group(g).rotation_matrix)
          mol.atom.translate_by(.atom_group(g).shift)
@@ -4755,13 +4803,16 @@ contains
 
 
    make_groups_from_self ::: private, leaky
-   ! Make the atom groups from "self"
+   ! Make the atom groups from the .group indices in "self"
       self :: INOUT
 
    DIE_IF(NOT .atom_group.associated,"no atom groups!")
 
       mol :: MOLECULE*
       g :: INT
+
+      ! Is mol there?
+      if (.atom_group.has_all_mols) return
 
       ! Check is indices are sensible
       .atom_group.finalize(.atom)
@@ -4800,7 +4851,7 @@ contains
       ! Define .atom list
     ! .:merge_atom_groups
 
-      ! Update group infor from self
+      ! Update group info from self
       ! Is the below needed????
       .:update_group_info
 
@@ -4834,7 +4885,9 @@ contains
          if (.crystal.associated) mol.crystal => .crystal
 
          ! Set guess-type SCF defaults
-         mol.:set_scf_guess_defaults_from(.scfdata)
+         if (NOT .atom_group(g).spin_multiplicity_set) then 
+            mol.:set_scf_guess_defaults_from(.scfdata)
+         end
 
       end
 
@@ -9644,9 +9697,11 @@ contains
       end
       end
 
-      ! List of atoms & groups
+      ! Atoms coordinates, basis sets
       if (.atom.associated) .:put_atoms
-      if (.atom_group.associated)  .:atom_group.put
+
+      ! Atom groups
+      if (.atom_group.associated) .:put_atom_groups
 
       ! Stop here for proteins
       if (.:from_mmCIF) then
@@ -9726,6 +9781,17 @@ contains
     ! if (.slaterbasis.associated)  .put_slaterbases
 
     ! .atom.put_ADPs
+
+   end
+
+   put_basics_and_atoms
+   ! Output minimal atom info without crystal info.
+      self :: IN
+
+   ENSURE(.atom.associated,"no atom list")
+
+      .:put_basics
+      .:put_atoms
 
    end
 
@@ -9962,7 +10028,24 @@ contains
 
    ENSURE(.atom_group.associated,"no atom group information")
 
-      .atom_group.put
+      name :: STR
+      g :: INT
+
+      .:atom_group.put
+      
+      ! Output fragment info
+      do g = 1,.atom_group.dim
+      
+         ! Minimal stdout for fragment
+         name = "stdout." // trim(.atom_group(g).mol.name)
+         stdout.redirect(name)
+         .atom_group(g).mol.:put_basics_and_atoms
+         stdout.revert
+      
+         ! Even more minimal xyz for plotting
+         .atom_group(g).mol.atom.put_xyz_file(name)
+      
+      end
 
    end
 
