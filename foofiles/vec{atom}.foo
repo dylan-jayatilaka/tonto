@@ -108,9 +108,9 @@ contains
       .nullify_bases
 
       ! Destroy unique ptr parts (made outside of this module)
-      if (.has_all_ANOs_made)           .destroy_ANOs
-      if (.has_all_ANO_interpolators)   .destroy_ANO_interpolators
-      if (.has_all_shell_info)          .destroy_shell_info
+      if (.has_all_ANO_matrices)  .destroy_ANO_matrices
+      if (.has_all_interpolators) .destroy_interpolators
+      if (.has_all_shell_info)    .destroy_shell_info
 
       ! Destroy non-unique ptr parts (made outside of this module)
       ! Each atom has a non-aliased object
@@ -124,26 +124,38 @@ contains
 
    end
 
-   destroy_ANOs ::: leaky, PURE
+   destroy_NAO_matrices ::: leaky, PURE
+   ! Destroy the (unique-atom) NAOs
+      self :: INOUT
+
+      a :: INT
+
+      do a = 1,.dim
+         self(a).destroy_NAO_matrices
+      end
+
+   end
+
+   destroy_ANO_matrices ::: leaky, PURE
    ! Destroy the (unique-atom) ANOs
       self :: INOUT
 
       a :: INT
 
       do a = 1,.dim
-         self(a).destroy_ANOs
+         self(a).destroy_ANO_matrices
       end
 
    end
 
-   destroy_ANO_interpolators ::: leaky, PURE
+   destroy_interpolators ::: leaky, PURE
    ! Destroy the (unique-atom) ANO interpolators
       self :: INOUT
 
       a :: INT
 
       do a = 1,.dim
-         self(a).destroy_ANO_interpolators
+         self(a).destroy_interpolators
       end
 
    end
@@ -168,18 +180,6 @@ contains
 
       do a = 1,.dim
          self(a).destroy_spherical_atom_data
-      end
-
-   end
-
-   destroy_interpolators ::: leaky, PURE
-   ! Destroy (non-unique) interpolator parts
-      self :: INOUT
-
-      a :: INT
-
-      do a = 1,.dim
-         self(a).interpolator.destroy
       end
 
    end
@@ -483,23 +483,7 @@ contains
 !  Set whether data/info made
 !  ===========================
 
-   set_ANOs_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>self%ANOs_made)
-   ! Generic set
-   end
-
    set_spherical_atom_data_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>self%spherical_atom_data_made)
-   ! Generic set
-   end
-
-   set_ANO_interpolators_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>self%ANO_interpolators_made)
-   ! Generic set
-   end
-
-   set_interpolators_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>self%interpolators_made)
-   ! Generic set
-   end
-
-   set_shell_info_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>self%shell_info_made)
    ! Generic set
    end
 
@@ -4820,7 +4804,9 @@ contains
       self :: IN
       has :: BIN
 
-      has = .has_all_slater_bases OR .has_all_coppens_bases OR .has_all_ANOs_made
+      has = .has_all_slater_bases &
+         OR .has_all_coppens_bases &
+         OR .has_all_ANO_matrices
 
    end
 
@@ -4829,7 +4815,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = all(self(:).shell_info_made)
+      res = all(ATOM:has_shell_info(self))
 
    end
 
@@ -4923,24 +4909,6 @@ contains
 !  ANOs and interpolators
 !  ======================
 
-   has_all_NAOs_made result (res) ::: pure
-   ! Return TRUE if the NAO data is made for every atom.
-      self :: IN
-      res :: BIN
-
-      res = all(self(:).NAOs_made)
-
-   end
-
-   has_all_ANOs_made result (res) ::: pure
-   ! Return TRUE if the ANO data is made for every atom.
-      self :: IN
-      res :: BIN
-
-      res = all(self(:).ANOs_made)
-
-   end
-
    has_all_NAO_matrices result (res) ::: pure
    ! Return TRUE if the NAOs are made for every atom.
       self :: IN
@@ -4973,6 +4941,7 @@ contains
 
    has_all_spherical_atom_data result (res) ::: pure
    ! Return TRUE if the per-atom interpolators are made for every atom.
+   ! WARNING: bad ... remove this later
       self :: IN
       res :: BIN
 
@@ -4983,15 +4952,6 @@ contains
 !  =============
 !  Interpolators
 !  =============
-
-   has_all_ANO_interpolators result (res) ::: pure
-   ! Return TRUE if the ANO interpolators are made for every atom.
-      self :: IN
-      res :: BIN
-
-      res = all(self(:).ANO_interpolators_made)
-
-   end
 
    has_all_slater_interpolators result(has) ::: pure
    ! Return TRUE if all atoms have slaterbases which have interpolators.
@@ -5034,28 +4994,19 @@ contains
 
    end
 
-   has_all_interpolators result (res) ::: pure
-   ! Return TRUE if the per-atom interpolators are made for every atom.
-      self :: IN
-      res :: BIN
-
-      res = all(self(:).interpolators_made)
-
-   end
-
    has_interpolators_any_kind result(has) ::: pure
    ! Return TRUE if all atoms have slaterbases which have interpolators, or all
    ! atoms have coppensbases with interpolators.
       self :: IN
       has :: BIN
 
-      has = .has_all_atom_interpolators   &
+      has = .has_all_interpolators   &
          OR .has_all_slater_interpolators &
          OR .has_all_coppens_interpolators
 
    end
 
-   has_all_atom_interpolators result(has) ::: pure
+   has_all_interpolators result(has) ::: pure
    ! Return TRUE if all atoms have interpolators.
       self :: IN
       has :: BIN
@@ -5106,7 +5057,7 @@ contains
          end
 
       case ("gaussian")
-         ENSURE(.has_all_ANOs_made,"missing atom ANOs")
+         ENSURE(.has_all_ANO_matrices,"missing atom ANOs")
          do i = 1,.dim
             last = self(i).interpolator_table_length(tol)
             res  = max(res,last)
@@ -8397,7 +8348,8 @@ contains
 
          group_B: do b = 1,n_group
 
-           if (self(b).group/=g1) cycle
+           if (self(b).group/=g2) cycle
+
            if (NOT self(a).is_bonded_to(self(b))) cycle
 
            res = res + 1
