@@ -546,7 +546,7 @@ contains
          .atom_group(g).mol.BASE:initialize_DFT_grids
 
          ! Assign previously made ANOs
-         .atom_group(g).mol.BASE:set_ANOs_from(self,.atom_group(g).atom_index)
+         .atom_group(g).mol.BASE:set_ANOs_from(self)
 
          ! Write the SFs for each fragment to disk
          .atom_group(g).mol.SCF:get_unique_Hirshfeld_atom_SFs(spin_density)
@@ -7448,59 +7448,56 @@ contains
 
    add_ANO_densities ::: leaky
    ! Add the ANO densities to make the total density matrix
+      self :: INOUT
 
    ENSURE(.atom.associated,"no atoms")
-   ENSURE(.BASE:has_all_ANOs_made,"no ANOs")
+   ENSURE(.BASE:has_all_ANO_matrices,"no ANOs")
 
       asym :: REAL
       k,a,b,f,l :: INT
-      atom_a,atom_b :: ATOM*
-      D,DD :: MAT{REAL}*
+      done :: VEC{BIN}*
 
       ! Recreate the density
       .density_matrix.destroy
       .density_matrix.create(.n_bf,"restricted")
 
       ! Set to zero
-      D => .density_matrix.restricted
-      D = ZERO
+      .density_matrix.restricted = ZERO
+
+      done.create(.n_atom)
+      done = FALSE
 
       ! Add 'em up
       do a = 1,.n_atom
 
-         atom_a => .atom(a)
-
          ! Unique atom?
-         if (NOT atom_a.is_unique_kind) cycle
-         k = atom_a.kind
-
-         ! Unique atom DM
-         DD => atom_a.density_matrix.restricted
+         if (done(a)) cycle
 
          ! Transfer non-unique atoms
-         do b = a,.n_atom
+         do b = 1,.n_atom
 
-            atom_b => .atom(b)
-
-            if (atom_b.kind/=k) cycle
+            if (done(a)) cycle
+            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
 
             f = .first_basis_fn_for_atom(b)
             l =  .last_basis_fn_for_atom(b)
-            D(f:l,f:l) =  DD
+            .density_matrix.restricted(f:l,f:l) = .atom(a).density_matrix.restricted
 
          end
 
       end
 
+      done.destroy
+
       ! Check for asymmetry
-      if (NOT D.is_symmetric) then
-        asym = maxval(abs(D-transpose(D)))
-        WARN("promolecule density is not symmetric")
-        WARN("Maximum asymmetry = "//trim(asym.to_str("e10.3")))
-      end
+    ! if (NOT D.is_symmetric) then
+    !   asym = maxval(abs(D-transpose(D)))
+    !   WARN("promolecule density is not symmetric")
+    !   WARN("Maximum asymmetry = "//trim(asym.to_str("e10.3")))
+    ! end
 
       ! Symmetrize
-      D.symmetric_reflect
+      .density_matrix.restricted.symmetric_reflect
 
    end
 
@@ -8564,32 +8561,37 @@ contains
    ENSURE(.basis_info_made,"no basis_set info")
    ENSURE(.n_atom_kind>0,"no atom kinds set")
 
-      kind,a,b :: INT
+      a,b :: INT
+      done :: VEC{BIN}*
 
       .atom.set_basis_kind("gaussian")
 
-      if (.BASE:has_all_ANOs_made) return
+      if (.BASE:has_all_ANO_matrices) return
 
       stdout.flush
       stdout.text("Making gaussian ANO data ...")
 
+      done.create(.n_atom)
+      done = FALSE
+
       do a = 1,.n_atom
 
          ! ANOs made?
+         if (done(a)) cycle
          if (.atom(a).has_ANO_matrices) cycle
-         if (.atom(a).is_cap_atom) cycle
 
          !!!!!!!!!!!!!!!!!!!!!!!
-         kind = .atom(a).kind
          .:make_ANOs_for_atom(a)
+         done(a) = TRUE
          !!!!!!!!!!!!!!!!!!!!!!!
 
 
          ! Set atoms of same kind
-         do b = a+1,.n_atom
+         do b = 1,.n_atom
 
             ! Right kind?
-            if (.atom(b).kind/=kind) cycle
+            if (done(b)) cycle
+            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
 
             .atom(b).set_is_unique_kind(FALSE)
 
@@ -8600,13 +8602,15 @@ contains
 
             .atom(b).set_energy(.atom(a).energy)
 
-            .atom(b).set_ANOs_made(TRUE)
+            done(b) = TRUE
 
          end
 
       end
 
-    ! DIE_IF(NOT .BASE:has_all_ANOs_made,"ANO's were not made!")
+      done.destroy
+
+      DIE_IF(NOT .BASE:has_all_ANO_matrices,"ANO's were not made!")
 
    end
 
@@ -8661,9 +8665,6 @@ contains
       .atom(a).atomic_orbitals    => mol.molecular_orbitals
       .atom(a).set_energy(mol.scfdata.energy)
 
-      ! Done
-      .atom(a).set_ANOs_made(TRUE)
-
       ! Debugging
       if (.BASE:debugging("make_ANOs_for_atom")) then
          stdout.show("atom =",a)
@@ -8703,7 +8704,7 @@ contains
 
       .BASE:make_ao_density_matrix
       
-      if (.BASE:has_all_NAOs_made) return
+      if (.BASE:has_all_NAO_matrices) return
 
       do a = 1,.n_atom
          .:make_NAOs_for_atom(a)

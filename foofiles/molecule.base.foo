@@ -443,30 +443,30 @@ contains
 !  Specific cleanup
 !  ================
 
-   destroy_ANOs ::: leaky
+   destroy_NAO_matrices ::: leaky
+   ! Destroy the NAO's for all atoms in the molecule.
+
+   ENSURE(.atom.associated,"no atoms")
+
+      if (NOT .:has_all_NAO_matrices) return
+
+      .atom.destroy_NAO_matrices
+
+   end
+
+   destroy_ANO_matrices ::: leaky
    ! Destroy the ANO's for all atoms in the molecule.
 
    ENSURE(.atom.associated,"no atoms")
 
-      if (NOT .:has_all_ANOs_made) return
+      if (NOT .:has_all_ANO_matrices) return
 
-      .atom.destroy_ANOs
-
-   end
-
-   destroy_ANO_interpolators ::: leaky
-   ! Destroy the (non-unique) ANO interpolators
-
-   ENSURE(.atom.associated,"no atoms")
-
-      if (NOT .:has_all_ANO_interpolators) return
-
-      .atom.destroy_ANO_interpolators
+      .atom.destroy_ANO_matrices
 
    end
 
    destroy_interpolators ::: leaky
-   ! Destroy the (unique) interpolators (*not* ANO interpolators)
+   ! Destroy the (non-unique) interpolators
 
    ENSURE(.atom.associated,"no atoms")
 
@@ -493,7 +493,7 @@ contains
 
    ENSURE(.atom.associated,"no atoms")
 
-      if (NOT .:has_all_atom_shell_info) return
+      if (NOT .:has_all_shell_info) return
 
       .atom.destroy_shell_info
 
@@ -4153,62 +4153,6 @@ contains
 
    end
 
-   make_molecule_from_compound_id(n,mol) ::: leaky
-   ! Make a molecule "mol" from the compound_id, assumed
-   ! in atom_group "n".
-      n :: INT
-      mol :: MOLECULE
-
-   DIE_IF(.atom.disassociated,"no atom info")
-   DIE_IF(.atom_group.disassociated,"no atom_group info")
-   DIE_IF(n>.atom_group.dim,"group number n too big")
-   DIE_IF(n<1,"group number n less than 1!")
-
-      ! Clear the pointer part
-      mol.:nullify_ptr_part
-
-      ! Create the single atom and copy its pointers
-      ! WARNING: dont destroy ptr parts of mol.atom
-      mol.atom.create_copy(.atom(.atom_group(n).atom_index))
-
-      ! Set default molecule e.g. the name, atom_info
-      ! and default multiplicity ...
-      mol.:set_defaults
-
-      ! Reset .name after .set_defaults
-      mol.name              = .atom(.atom_group(n).atom_index(1)).compound_id_str
-      mol.charge            = .atom_group(n).charge
-      mol.spin_multiplicity = mol.:default_spin_multiplicity
-      mol.atom_info_made    = FALSE
-      mol.:set_atom_info
-
-      ! Copy the basis set and set the basis info
-      ! WARNING: dont destroy basis of mol !
-      mol.:set_basis_data_from(self)
-
-      ! Don't remake ANO data if there
-      mol.:set_ANOs_from(self,.atom_group(n).atom_index)
-
-      ! Assign the crystal
-      ! WARNING: dont destroy ...
-      if (.crystal.associated) mol.crystal => .crystal
-
-      ! Set guess-type SCF defaults
-      mol.:set_scf_guess_defaults_from(.scfdata)
-
-      ! Set density matrix from parent?
-      ! Restricted only. Do not clobber
-      if (.density_matrix.associated) then
-      if (.density_matrix.restricted.associated) then
-      if (mol.density_matrix.disassociated) then
-         mol.density_matrix.create(mol.n_bf,"restricted")
-         .:put_group_density_to(mol.density_matrix.restricted,n,mol)
-      end
-      end
-      end
-
-   end
-
 
    set_basis_data_from(mol) ::: leaky
    ! Set the basis data from molecule "mol"
@@ -4238,14 +4182,13 @@ contains
    ENSURE(.n_atom_kind>0,"atoms not finalized")
    ENSURE(mol.atom.associated,"mol has no atoms")
    ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
- ! ENSURE(list.dim==.atom.dim,"inconsistent list length")
+   ENSURE(list.dim==.atom.dim,"inconsistent list length")
 
-      a,b :: INT
       made_ANO,made_int,made_shl :: BIN
+      a,b :: INT
 
       ! Assign ANO orbitals
-      made_ANO = mol.:has_all_ANOs_made
-      .atom.set_ANOs_made(made_ANO)
+      made_ANO =  mol.:has_all_ANO_matrices
       if (made_ANO) then
          do a = 1,list.dim
             b = list(a)
@@ -4258,11 +4201,8 @@ contains
       end
 
       ! Assign ANO interpolators
-      made_ANO = mol.:has_all_ANO_interpolators
       made_int = mol.:has_all_interpolators
-      .atom.set_ANO_interpolators_made(made_ANO)
-      .atom.set_interpolators_made(made_int)
-      if (made_ANO OR made_int) then
+      if (made_int) then
          do a = 1,list.dim
             b = list(a)
             .atom(a).interpolator => mol.atom(b).interpolator
@@ -4270,8 +4210,7 @@ contains
       end
 
       ! Assign atom shell info
-      made_shl = mol.:has_all_atom_shell_info
-      .atom.set_shell_info_made(made_shl)
+      made_shl = mol.:has_all_shell_info
       if (made_shl) then
          do a = 1,list.dim
             b = list(a)
@@ -4279,6 +4218,62 @@ contains
             .atom(a).last_basis_fn_for_shell     => mol.atom(b).last_basis_fn_for_shell
             .atom(a).precomputed_basis_shellpair => mol.atom(b).precomputed_basis_shellpair
          end
+      end
+
+      ! Since all are ptr assigned, no atom is unique
+      ! and all ptrs must be nullified
+      .atom.set_is_unique_kind(FALSE)
+
+   end
+
+   set_ANOs_from(mol)
+   ! Set ANO data and atom shell info from molecule "mol" by comparing
+   ! the atom kinds directly. Make sure none of the assigned ANO data
+   ! is destroyed!
+      self :: INOUT
+      mol  :: MOLECULE, IN
+
+   ENSURE(.atom.associated,"no atoms")
+   ENSURE(.n_atom_kind>0,"atoms not finalized")
+   ENSURE(mol.atom.associated,"mol has no atoms")
+   ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
+
+      a,b :: INT
+
+      ! Assign ANO orbitals
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+            .atom(a).density_matrix     => mol.atom(b).density_matrix
+            .atom(a).natural_orbitals   => mol.atom(b).natural_orbitals
+            .atom(a).occupation_numbers => mol.atom(b).occupation_numbers
+            .atom(a).atomic_orbitals    => mol.atom(b).atomic_orbitals
+            .atom(a).set_energy(mol.atom(b).energy)
+            exit ! next atom "a"
+         end
+      end
+      end
+
+      ! Assign ANO interpolators
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+            .atom(a).interpolator => mol.atom(b).interpolator
+            exit ! next atom "a"
+         end
+      end
+      end
+
+      ! Assign atom shell info
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+            .atom(a).first_basis_fn_for_shell    => mol.atom(b).first_basis_fn_for_shell
+            .atom(a).last_basis_fn_for_shell     => mol.atom(b).last_basis_fn_for_shell
+            .atom(a).precomputed_basis_shellpair => mol.atom(b).precomputed_basis_shellpair
+            exit ! next atom "a"
+         end
+      end
       end
 
       ! Since all are ptr assigned, no atom is unique
@@ -4555,7 +4550,7 @@ contains
       .atom_group(g).mol.:set_basis_data_from(self)
 
       ! Don't remake ANO data if there
-      .atom_group(g).mol.:set_ANOs_from(self,.atom_group(g).atom_index)
+      .atom_group(g).mol.:set_ANOs_from(self)
 
       ! Assign the crystal
       ! WARNING: dont destroy ...
@@ -4773,7 +4768,7 @@ contains
          ENSURE(mol.associated,"atom_group molecule "//trim(g.to_str)//" does not exist")
 
          ! Don't remake ANO data if there
-         mol.:set_ANOs_from(self,.atom_group(g).atom_index)
+         mol.:set_ANOs_from(self)
 
          ! Assign the crystal
          ! WARNING: dont destroy ...
@@ -5031,7 +5026,7 @@ contains
 !  Inquiry methods
 !  ===============
 
-   has_all_NAOs_made result (res) ::: PURE
+   has_all_NAO_matrices result (res) ::: PURE
    ! Return TRUE if the NAOs are made for every atom.
       self :: IN
       res :: BIN
@@ -5041,7 +5036,7 @@ contains
 
    end
 
-   has_all_ANOs_made result (res) ::: PURE
+   has_all_ANO_matrices result (res) ::: PURE
    ! Return TRUE if the ANO data is made for every atom.
       self :: IN
       res :: BIN
@@ -5052,43 +5047,36 @@ contains
 
    end
 
-   has_all_ANO_interpolators result (res) ::: PURE
-   ! Return TRUE if the ANO interpolators are made for every atom.
-      self :: IN
-      res :: BIN
-
-      res = .atom.associated
-
-      if (res) res = .atom.has_all_ANO_interpolators
-
-   end
-
    has_all_interpolators result (res) ::: PURE
    ! Return TRUE if the per-atom interpolators are made for every atom.
       self :: IN
       res :: BIN
 
       res = .atom.associated
+
       if (res) res = .atom.has_all_interpolators
 
    end
 
    has_all_spherical_atom_data result (res) ::: PURE
    ! Return TRUE if the per-atom interpolators are made for every atom.
+   ! WARNING: bad ... remove this later
       self :: IN
       res :: BIN
 
       res = .atom.associated
+
       if (res) res = .atom.has_all_spherical_atom_data
 
    end
 
-   has_all_atom_shell_info result (res) ::: PURE
+   has_all_shell_info result (res) ::: PURE
    ! Return TRUE if the per-atom interpolators are made for every atom.
       self :: IN
       res :: BIN
 
       res = .atom.associated
+
       if (res) res = .atom.has_all_shell_info
 
    end
@@ -5225,10 +5213,8 @@ contains
       res :: BIN
 
       res =  .:DFT_grid_info_made &
-         AND .:has_all_ANOs_made &
-         AND ( .:has_all_ANO_interpolators &
-         OR    .:has_all_interpolators &
-         OR    .:has_all_spherical_atom_data )
+         AND .:has_all_ANO_matrices &
+         AND ( .:has_all_interpolators OR .:has_all_spherical_atom_data )
 
    end
 
@@ -6314,36 +6300,44 @@ contains
    ENSURE(.n_atom_kind>0,"no atom kinds set")
 
       a,b :: INT
+      done :: VEC{BIN}*
 
-      if (.:has_all_atom_shell_info) return
+      if (.:has_all_shell_info) return
 
       ! Destroy ...  in case .ANO_data_made
       ! was deliberately set FALSE
       .:destroy_atom_shell_info
 
+      done.create(.n_atom)
+      done = FALSE
+
       do a = 1,.n_atom
 
          ! Unique atom?
-         if (NOT .atom(a).is_unique_kind) cycle
-         if (NOT .atom(a).is_cap_atom) cycle
+         if (done(a)) cycle
 
          ! Make the shell info
          .atom(a).make_shell_info
+         done(a) = TRUE
 
          ! Copy it to non-unique atoms
-         do b = a+1,.n_atom
+         do b = 1,.n_atom
 
-            if (.atom(b).kind/=.atom(a).kind) cycle
+            ! Skip?
+            if (done(b)) cycle
+            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
 
             .atom(b).first_basis_fn_for_shell    => .atom(a).first_basis_fn_for_shell
             .atom(b).last_basis_fn_for_shell     => .atom(a).last_basis_fn_for_shell
             .atom(b).precomputed_basis_shellpair => .atom(a).precomputed_basis_shellpair
 
+            done(b) = TRUE
+
          end
 
       end
 
-      .atom.set_shell_info_made(TRUE)
+      done.destroy
 
    end
 
@@ -7815,11 +7809,11 @@ contains
       genre :: STR
       a :: INT
 
-      if (.:has_all_ANOs_made) .:destroy_ANOs
+      if (.:has_all_ANO_matrices) .:destroy_ANO_matrices
 
       ! Determine (or guess) the genre of density matrix to be made
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .molecular_orbitals.spinorbital_kind
+      else;                          genre = .molecular_orbitals.spinorbital_kind
       end
 
       ! Copy existing density matrix
@@ -7883,11 +7877,11 @@ contains
 
       if (.:has_all_spherical_atom_data) return
 
-      if (.:has_all_ANOs_made) .:destroy_ANOs
+      if (.:has_all_ANO_matrices) .:destroy_ANO_matrices
 
       ! Determine (or guess) the genre of density matrix to be made
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .molecular_orbitals.spinorbital_kind
+      else;                          genre = .molecular_orbitals.spinorbital_kind
       end
 
       ! Copy existing density matrix
@@ -10168,7 +10162,7 @@ contains
       k,a,b :: INT
       list :: STR
 
-      if (NOT .:has_all_ANOs_made) return
+      if (NOT .:has_all_ANO_matrices) return
 
       if (.n_atom_kind<=0) return
 
