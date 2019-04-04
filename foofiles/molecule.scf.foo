@@ -533,7 +533,7 @@ contains
    ENSURE(.cif.is_mmCIF,"you must use an mmCIF for input!")
    ENSURE(.cif.use_MFCC,"you must set use_MFCC= in the cif= section!")
 
-      g :: INT
+      g, n_group :: INT
 
       ! Make ANO's & interpolators for parent
       ! WARNING: dies if no ANOs or interpolators
@@ -549,7 +549,8 @@ contains
          .atom_group(g).mol.BASE:set_ANOs_from(self)
 
          ! Write the SFs for each fragment to disk
-         .atom_group(g).mol.SCF:get_unique_Hirshfeld_atom_SFs(spin_density)
+         n_group = .atom_group(g).atom_index.dim
+         .atom_group(g).mol.SCF:get_unique_Hirshfeld_atom_SFs(n_group,spin_density)
 
       end
 
@@ -558,7 +559,6 @@ contains
    get_unique_Hirshfeld_atom_SFs(sf_n,spin_density) ::: leaky
    ! Get "sf_n", the static structure factors for the symmetry related
    ! K points with *no* thermal smearing, for every unique atom.
-   ! NOTE: call .:make_Hirshfeld_inputs(skip_NOs=TRUE) beforehand!
    ! NOTE: "sf_n" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
    ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
    ! without the thermal smearing factor.
@@ -892,15 +892,18 @@ contains
 
    end
 
-   get_unique_Hirshfeld_atom_SFs(spin_density) ::: leaky
+   get_unique_Hirshfeld_atom_SFs(n_last,spin_density) ::: leaky
    ! Write out the static structure factors for the symmetry related
    ! K points with *no* thermal smearing, for every unique atom.
-   ! NOTE: call .:make_Hirshfeld_inputs(skip_NOs=TRUE) beforehand!
-   ! NOTE: "sf_u" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
-   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
-   ! without the thermal smearing factor.
+   ! If "n_last" is present only do unique atoms up to this atom,
+   ! which is useful to eliminate capping atoms in a fragment.
+   ! If "spin_densityy" is present the spinb density SFs are made.
+   ! NOTE: The integrals "sf_u" written  are the FT rho_a(r), eqn (3)
+   ! in Jayatilaka 2008, Acta Cryst A 64 p. 383-393. It is also f_a(q)
+   ! in eqn (11) except without the thermal smearing factor.
       self :: INOUT
       spin_density :: BIN, optional, IN
+      n_last :: INT, optional, IN
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.associated,"no atom list")
@@ -928,8 +931,12 @@ contains
       sa,fa,la,na, as :: INT
       sb,fb,lb,nb :: INT
       a,b,i,j,k,n,p :: INT
+      n_unique :: INT
       spin :: BIN
       file :: FILE*
+
+      n_unique = .crystal.n_unique_frag_atoms
+      if (present(n_last)) n_unique = n_last
 
       ! Make sure HA stuff is there
       .:make_Hirshfeld_inputs(skip_NOs=TRUE)
@@ -974,14 +981,12 @@ contains
       skipab.create(n_pt)
 
       ! Loop over integration atoms "c"
-      parallel do u = 1,.crystal.n_unique_frag_atoms
+      parallel do u = 1,n_unique
 
          sf_u = ZERO
 
          c  = .crystal.unique_frag_atom(u)
          rc = .atom(c).position
-
-         if (.atom(c).is_cap_atom) cycle
 
          ! Repetition factor for this atom
          sc = .crystal.frag_atom_sym_factor(c)
@@ -8563,31 +8568,38 @@ contains
 
       a,b :: INT
       done :: VEC{BIN}*
+      first :: BIN
 
       .atom.set_basis_kind("gaussian")
 
       if (.BASE:has_all_ANO_matrices) return
 
-      stdout.flush
-      stdout.text("Making gaussian ANO data ...")
-
       done.create(.n_atom)
       done = FALSE
+      first = TRUE
 
       do a = 1,.n_atom
 
          ! ANOs made?
          if (done(a)) cycle
-         if (.atom(a).has_ANO_matrices) cycle
 
-         !!!!!!!!!!!!!!!!!!!!!!!
-         .:make_ANOs_for_atom(a)
+         if (NOT .atom(a).has_ANO_matrices) then
+
+            .:make_ANOs_for_atom(a)
+
+            if (first) then
+               stdout.flush
+               stdout.text("Making gaussian ANO data ...")
+               first = FALSE
+            end
+
+         end
+
          done(a) = TRUE
-         !!!!!!!!!!!!!!!!!!!!!!!
 
 
          ! Set atoms of same kind
-         do b = 1,.n_atom
+         do b = a+1,.n_atom
 
             ! Right kind?
             if (done(b)) cycle
