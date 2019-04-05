@@ -4343,7 +4343,59 @@ contains
 
    end
 
-   add_MFCC_cap(g) ::: leaky
+   set_MFCC_info_for_compound_id(g)
+   ! Set the MFCC charge, mnultiplicity, basis set and scf guess
+   ! defaults for group "g"
+      self :: INOUT
+      g :: INT, IN
+
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+   DIE_IF(g>.atom_group.dim,"group number g too big")
+   DIE_IF(g<1,"group number g less than 1!")
+
+      mult :: INT
+
+      ! Reset .name
+      .atom_group(g).mol.name = .atom(.atom_group(g).atom_index(1)).id_compound_str
+
+      ! Set charge & multiplicity
+      .atom_group(g).mol.:set_charge(.atom_group(g).charge)
+      if (.atom_group(g).spin_multiplicity_set) then
+         mult = .atom_group(g).spin_multiplicity
+      else
+         mult = .atom_group(g).mol.:default_spin_multiplicity
+      end
+      .atom_group(g).mol.:set_spin_multiplicity(mult)
+
+      ! Reset atom group info
+      .atom_group(g).mol.atom_info_made    = FALSE
+      .atom_group(g).mol.atom.set_group_to(0)
+      .atom_group(g).mol.:set_atom_info
+
+    ! stdout.text("#1")
+    ! .atom_group(g).mol.:put_basics_and_atoms
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol !
+      .atom_group(g).mol.:set_basis_data_from(self)
+
+      ! Don't remake ANO data if there
+      .atom_group(g).mol.:set_ANOs_from(self)
+
+      ! Assign the crystal
+      ! WARNING: dont destroy ...
+      if (.crystal.associated) .atom_group(g).mol.crystal => .crystal
+
+      ! Set guess-type SCF defaults
+      .atom_group(g).mol.:set_scf_guess_defaults_from(.scfdata)
+
+    ! stdout.text("#2")
+    ! .atom_group(g).mol.:put_basics_and_atoms
+
+   end
+
+   add_MFCC_cap(g) ::: private, leaky
    ! Make a capped fragment for molecule the atom_group(n).mol with
    ! compound_id "g" ready for MFCC calculation. This routine will add
    ! extra atoms.
@@ -4356,6 +4408,8 @@ contains
    DIE_IF(g<1,"group number g less than 1!")
 
       in_residue :: BIN
+      bonded_atom :: MAT{INT}@
+      n_bonds, g2,b,ap,bp :: INT
 
       ! Cap made?
       if (.atom_group(g).MFCC_made) return
@@ -4368,24 +4422,36 @@ contains
 
       if (in_residue) then
 
-         if (g==1) then
+            do g2 = 1,.atom_group.dim
 
-            ! First residue
-            .:add_MFCC_cap(1,2)
+               ! Skip group "g" itself
+               if (g2==g) cycle
+
+               ! No. of bonds to atom_group "g2"
+               n_bonds = .:n_bonds_between_atom_groups(g,g2)
+
+               ! Any bonds?
+               if (n_bonds<=0) cycle
+
+               ! Cap each connected group
+               bonded_atom = .:bonded_atoms_between_groups(g,g2)
+
+               do b = 1,n_bonds
+
+                  ! Get atoms from each group
+                  ap = bonded_atom(1,b)
+                  bp = bonded_atom(2,b)
+
+                  ! Use them to start the MFCC cap
+                  .:add_MFCC_cap(g,g2,ap,bp)
+
+               end
+
+               ! Clean
+               bonded_atom.destroy
+
+            end
  
-         else if (g==.atom_group.dim) then
-
-            ! Last residue
-            .:add_MFCC_cap(g,g-1)
-
-         else 
-         
-            ! Middle residue
-            .:add_MFCC_cap(g,g-1)
-            .:add_MFCC_cap(g,g+1)
- 
-         end
-
       end if ! in_residue
 
       ! Clear connections
@@ -4396,42 +4462,26 @@ contains
 
    end
 
-   add_MFCC_cap(g1,g2) ::: leaky
+   add_MFCC_cap(g1,g2,ap,bp) ::: private, leaky
    ! Cap residue "g1" in atom_group(g1) and make its molecule "mol"
-   ! from the residue "g2" in atom_group(g2) adding caps ready for
-   ! MFCC HAR rrefinement calculation. 
+   ! from the residue "g2" in atom_group(g2), adding caps starting
+   ! from atom "ap" in group "g1" which is connected to atom "bp" in
+   ! group "g2", ready for MFCC HAR rrefinement calculation. 
    ! WARNING: This will add extra atoms to atom_group(g1).mol.atom 
    ! but it will not add extra indices into atom_index!
    ! Zhang, D. W. & Zhang, J. Z. H. (2003). J. Chem. Phys., 119(7), 3599-3605.
    ! Soederhjelm, P.& Ryde, U. (2008). J. Phys. Chem. A, 113(3), 617-627
       self :: INOUT
       g1,g2 :: INT, IN
+      ap,bp :: INT, IN
 
    DIE_IF(.atom_group.disassociated,"no atom_group info")
    DIE_IF(g2/=(g1+1) AND g2/=(g1-1),"add caps for neighbour residues only")
 
-      i,j, ap,bp,cp,cf,dp,last :: INT
+      i,j, cp,cf,dp,last :: INT
       bp_bonds,cp_bonds :: VEC{INT}*
-      bonded :: BIN
       length :: REAL
       label :: STR
-
-      ! Find first connected atom in residue 2
-      ! Residue 1 -> g1, Residue 2 -> g2 = n-1 or n+1
-      ! NOTE: we use ap & bp to indicate atom indices 
-      !       on the parent protein
-      bonded = FALSE
-      residue1: do i = 1,.atom_group(g1).atom_index.dim
-         ap = .atom_group(g1).atom_index(i)
-         residue2: do j = 1,.atom_group(g2).atom_index.dim
-            bp = .atom_group(g2).atom_index(j)
-            bonded = .atom.has_a_connection(ap,bp)
-            if (bonded) exit residue1
-         end do residue2
-      end do residue1
-
-      ! Any bond to cut?
-      if (NOT bonded) return
 
     ! stdout.text("=================")
     ! stdout.show("residue g1  = ",g1)
@@ -4528,55 +4578,81 @@ contains
 
    end
 
-   set_MFCC_info_for_compound_id(g)
-   ! Set the MFCC charge, mnultiplicity, basis set and scf guess
-   ! defaults for group "g"
-      self :: INOUT
-      g :: INT, IN
+   bonded_atom_groups(g1,g2) result (res) ::: pure
+   ! Return true if any of the atoms in atom_group "g1" are bonded to
+   ! any in group "g2".
+      self :: IN
+      g1,g2 :: INT, IN
+      res :: BIN
 
-   DIE_IF(.atom.disassociated,"no atom info")
-   DIE_IF(.atom_group.disassociated,"no atom_group info")
-   DIE_IF(g>.atom_group.dim,"group number g too big")
-   DIE_IF(g<1,"group number g less than 1!")
+      res = .:n_bonds_between_atom_groups(g1,g2) > 0
 
-      mult :: INT
+   end
 
-      ! Reset .name
-      .atom_group(g).mol.name = .atom(.atom_group(g).atom_index(1)).id_compound_str
+   n_bonds_between_atom_groups(g1,g2) result (res) ::: pure
+   ! Return the number of connections between ".atom_group(g1)" and
+   ! ".atom_group(g2)". 
+      self :: IN
+      g1,g2 :: INT, IN
+      res :: INT
 
-      ! Set charge & multiplicity
-      .atom_group(g).mol.:set_charge(.atom_group(g).charge)
-      if (.atom_group(g).spin_multiplicity_set) then
-         mult = .atom_group(g).spin_multiplicity
-      else
-         mult = .atom_group(g).mol.:default_spin_multiplicity
-      end
-      .atom_group(g).mol.:set_spin_multiplicity(mult)
+      i,j,a,b :: INT
+      bonded :: BIN
 
-      ! Reset atom group info
-      .atom_group(g).mol.atom_info_made    = FALSE
-      .atom_group(g).mol.atom.set_group_to(0)
-      .atom_group(g).mol.:set_atom_info
+      res = 0
 
-    ! stdout.text("#1")
-    ! .atom_group(g).mol.:put_basics_and_atoms
+      residue1: do i = 1,.atom_group(g1).atom_index.dim
 
-      ! Copy the basis set and set the basis info
-      ! WARNING: dont destroy basis of mol !
-      .atom_group(g).mol.:set_basis_data_from(self)
+         a = .atom_group(g1).atom_index(i)
 
-      ! Don't remake ANO data if there
-      .atom_group(g).mol.:set_ANOs_from(self)
+         residue2: do j = 1,.atom_group(g2).atom_index.dim
 
-      ! Assign the crystal
-      ! WARNING: dont destroy ...
-      if (.crystal.associated) .atom_group(g).mol.crystal => .crystal
+            b = .atom_group(g2).atom_index(j)
 
-      ! Set guess-type SCF defaults
-      .atom_group(g).mol.:set_scf_guess_defaults_from(.scfdata)
+            bonded = VEC{ATOM}:has_a_connection(a,b)
+            if (bonded) then
+               res = res + 1
+            end
 
-    ! stdout.text("#2")
-    ! .atom_group(g).mol.:put_basics_and_atoms
+         end do residue2
+
+      end do residue1
+
+   end
+
+   bonded_atoms_between_groups(g1,g2) result (res) ::: pure
+   ! Return the number of connections between ".atom_group(g1)" and
+   ! ".atom_group(g2)" in a table "res(1:2,n_bonds)". 
+      self :: IN
+      g1,g2 :: INT, IN
+      res :: MAT{INT}(2,.:n_bonds_between_atom_groups(g1,g2))
+
+      n, i,j,a,b :: INT
+      bonded :: BIN
+
+      n = 0
+
+      residue1: do i = 1,.atom_group(g1).atom_index.dim
+
+         a = .atom_group(g1).atom_index(i)
+
+         residue2: do j = 1,.atom_group(g2).atom_index.dim
+
+            b = .atom_group(g2).atom_index(j)
+
+            ! Are a & b bonded?
+            bonded = VEC{ATOM}:has_a_connection(a,b)
+
+            ! Store pair of bonded atoms
+            if (bonded) then
+               n = n + 1
+               res(1,n) = a
+               res(2,n) = b
+            end
+
+         end do residue2
+
+      end do residue1
 
    end
 
