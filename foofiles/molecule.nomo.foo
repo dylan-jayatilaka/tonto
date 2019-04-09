@@ -2975,6 +2975,36 @@ contains
 
    end
 
+   make_ALO_density_matrix_g(D,MO)
+   ! Make the inverse of the occupied-coccupied block of the MO
+   ! overlap matrix.
+      self :: IN
+      D :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+      n_e :: INT
+      S_inv :: MAT{REAL}@
+
+      ! Make (S^MO){-1} in MO basis & back transform
+      n_e = .atom(1).atomic_number
+      S_inv.create(n_e,n_e)
+      S_inv = ZERO
+      .:make_ALO_S_inv_g(S_inv,MO)
+
+      ! Back transform -> D
+      stdout.show("S_inv",S_inv.dim1)
+      stdout.show("S_inv",S_inv.dim2)
+      stdout.show("D",D.dim1)
+      stdout.show("D",D.dim2)
+      stdout.show("MO",MO.dim1)
+      stdout.show("MO",MO.dim2)
+      S_inv.back_transform_to(D,MO)
+      S_inv.destroy
+
+      !if(.scfdata.use_ELMO) .:zero_ELMO_g_mx(D)
+
+   end
+   
    make_NOMO_density_matrix_g(D,MO)
    ! Make the inverse of the occupied-coccupied block of the MO
    ! overlap matrix.
@@ -3190,6 +3220,41 @@ contains
 
    end
 
+   make_ALO_S_inv_g(S_inv,MO)
+   ! Make the inverse of the occupied-occupied block of the
+   ! general MO overlap matrix.
+      self :: IN
+      S_inv :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+
+   ENSURE(.overlap_matrix.created, "NO overlap_matrix!")
+
+      S :: MAT{REAL}*
+      V :: MAT{REAL}*
+      n_e,n_bf :: INT
+
+      n_e = .atom(1).atomic_number
+      n_bf = .atom(1).basis.no_of_basis_functions
+      V.create(2*n_bf, 2*n_bf)
+
+      ! Make S in the SAO asis 
+      V = ZERO
+      V.alpha_alpha_set_to(.overlap_matrix)
+        V.beta_beta_set_to(.overlap_matrix)
+
+      ! Make S in the occupied MO basis 
+      S.create(n_e,n_e)
+      V.change_basis_to(S,MO(:,1:n_e))
+      
+      ! Make S^{-1} (IMPURE)
+      S_inv.to_inverse_of(S)
+
+      ! Cleanup
+      S.destroy
+      V.destroy
+
+   end
+
    make_NOMO_S_inv_r(S_inv,MO)
    ! Make the inverse of the occupied-occupied block of the MO
    ! overlap matrix.
@@ -3308,7 +3373,7 @@ contains
 
       case ("ghf")
 
-         .:ALO
+         .:ALO_scf
       
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
@@ -3517,7 +3582,7 @@ contains
    end
 
 !  =========
-!  Usual SCF
+
 !  =========
    
    ALO_atom_scf(g) ::: leaky
@@ -3532,15 +3597,13 @@ contains
 
       er :: VEC{REAL}*
       Fg,MOg,sMO :: MAT{REAL}*
-      fb,lb,i :: INT
       
-      .atom_group(g).mol.:ALO_initialize_scf
 
       !.SCF:put_scf_banner_and_options
       !.SCF:put_scf_table_header
 
       ! Full p-region
-      .atom_group(g).mol.SCF:extrapolate_fock_matrix !<<< This is fine!
+      !.atom_group(g).mol.SCF:extrapolate_fock_matrix !<<< This is fine!
 
       er  => .atom_group(g).mol.orbital_energies.general
       MOg => .atom_group(g).mol.molecular_orbitals.general
@@ -3556,9 +3619,6 @@ contains
 
       ! exit here
       MOg.destroy
-      fb = .first_basis_fn_for_atom(g)
-      lb = .last_basis_fn_for_atom(g)
-      i = .n_e_on_atom(g)
       MOg.create(sMO.dim1,sMO.dim2)
       MOg = sMO
       sMO.destroy
@@ -3580,21 +3640,19 @@ contains
       ! Get initial guess
       .:ALO_core_guess
 
-      stdout.text("Molecular Orbitals")
-      stdout.put(.molecular_orbitals.general)
-      ! Core matrix: both kinds
-      .core_matrix.destroy
-      .:make_core_matrix(.scfdata.spinorbital_kind)
-      .:make_core_matrix(.scfdata.molecular_orbital_kind)
-         
-      ! Get Fock matrix
-      .:make_fock_matrix
+     ! ! Core matrix: both kinds
+     ! .core_matrix.destroy
+     ! .:make_core_matrix(.scfdata.spinorbital_kind)
+     ! .:make_core_matrix(.scfdata.molecular_orbital_kind)
+     !    
+     ! ! Get Fock matrix
+     ! .:make_fock_matrix
 
-      ! Initialise Schwarz inequality integrals (leaky)
-      .FOCK:initialize_max_I
+     ! ! Initialise Schwarz inequality integrals (leaky)
+     ! .FOCK:initialize_max_I
 
-      ! Initialise SCF table (leaky)
-      .scfdata.set_table
+     ! ! Initialise SCF table (leaky)
+     ! .scfdata.set_table
 
    end
 
@@ -3606,9 +3664,9 @@ contains
    ENSURE(.scfdata.associated,"no scfdata")
 
       R,S,SH :: MAT{REAL}*
-      H :: MAT{REAL}*
+      H,MO :: MAT{REAL}*
       n_e,n_bf :: INT
-
+   
       ! Sizes
       n_e = .atom(1).atomic_number
       n_bf = .atom(1).basis.no_of_basis_functions
@@ -3627,6 +3685,9 @@ contains
       .INTS:make_overlap_matrix
       S.create(n_bf,n_bf)
       S = .overlap_matrix(1:n_bf,1:n_bf)
+      .overlap_matrix.destroy
+      .overlap_matrix.create(n_bf,n_bf)
+      .overlap_matrix = S
 
       ! Get the guess orbitals - 
       SH.create(n_bf,n_bf)
@@ -3651,10 +3712,12 @@ contains
       H.change_basis_using(R)
       
       !  Solve for c~
-      H.solve_symmetric_eigenproblem(.orbital_energies.general,.molecular_orbitals.general)
-
+      MO.create(2*n_bf,2*n_bf)
+      MO = ZERO
+      H.solve_symmetric_eigenproblem(.orbital_energies.general,MO)
+      
       !  c  = S^-1/2 c~
-      .molecular_orbitals.general = matmul(R,.molecular_orbitals.general)
+      .molecular_orbitals.general = matmul(R,MO(:,:n_e))
 
       !.:reorder_ELMO_g_mx(MO)
       !.:zero_ELMO_grad_mx(MO)
@@ -3664,6 +3727,7 @@ contains
       SH.destroy
       H.destroy
       R.destroy
+
 
    end
 
@@ -5821,7 +5885,7 @@ contains
 !  Atom Group Localisation
 !  =======================
 
-   ALO ::: leaky
+   ALO_scf ::: leaky
    ! Do non-orthogonal SCF calculation, localised to atomic group
    ! regions. Bespoke.
       self :: INOUT
@@ -5834,7 +5898,7 @@ contains
    !ENSURE(.scfdata.use_ELMO,"must be a ELMO calculation")
 
       mol :: MOLECULE*
-      g,fb,lb,ne :: INT
+      g,fb,lb,ne,nb,n_bf :: INT
       i :: INT
 
       ! Connections
@@ -5868,31 +5932,94 @@ contains
 
       ne = 1
       
+      ! Initialise data in the groups
+      do g = 1,.atom_group.dim
+         mol => .atom_group(g).mol
+         mol.:ALO_initialize_scf
+         n_bf = mol.atom(1).basis.no_of_basis_functions
+         ! Create density guess
+         mol.density_matrix.destroy
+         mol.density_matrix.create(n_bf,"general")
+         mol.:make_ALO_density_matrix_g(.atom_group(g).mol.density_matrix.general,.atom_group(g).mol.molecular_orbitals.general)
+      end do 
+
       ! Loop over atom group "g"
       do g = 1,.atom_group.dim
 
-         ! Set up a molecule for this group of atoms
          mol => .atom_group(g).mol
-         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
-
-         ! Skip SCF for atoms without electrons
-         if (mol.BASE:no_of_electrons < 1) cycle
-
-         ! Do the SCF !!!!!!!!!!!!!!!!!!!!!
-         mol.scfdata.set_level_shift(100d0)
-         mol.scfdata.set_scf_kind(.scfdata.spinorbital_kind)
-         .:ALO_atom_scf(g)
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
          ! Copy orbitals back
          fb = .first_basis_fn_for_atom(.atom_group(g).atom_index(1))
          lb = .last_basis_fn_for_atom(.atom_group(g).atom_index(1))
-         .molecular_orbitals.general(fb:lb,ne:ne+mol.n_e_on_atom(1)-1)=mol.molecular_orbitals.general(fb:lb,1:mol.n_e_on_atom(1))
-         .molecular_orbitals.general(fb+.n_bf:lb+.n_bf,ne:ne+mol.n_e_on_atom(1)-1)=mol.molecular_orbitals.general(fb+lb:lb+lb,1:mol.n_e_on_atom(1))
-         ne = ne + mol.n_e_on_atom(1)
+         n_bf = mol.n_bf
+         .molecular_orbitals.general(fb:lb,ne:ne+mol.atom(1).atomic_number-1)=mol.molecular_orbitals.general(1:lb-fb+1,1:mol.atom(1).atomic_number)
+         .molecular_orbitals.general(fb+.n_bf:lb+.n_bf,ne:ne+mol.atom(1).atomic_number-1)=mol.molecular_orbitals.general(lb-fb+2:2*(lb-fb)+2,1:mol.atom(1).atomic_number)
+         ne = ne + mol.atom(1).atomic_number
 
-         stdout.text("MO")
-         stdout.put(mol.molecular_orbitals.general)
+      end do
+      
+      ! Make the density matrices for each group p-sized
+      do g = 1,.atom_group.dim
+         mol => .atom_group(g).mol
+         n_bf = mol.n_bf
+         
+         ! Create density guess
+         mol.density_matrix.destroy
+         mol.density_matrix.create(n_bf,"general")
+         mol.density_matrix.general = ZERO
+         mol.molecular_orbitals.destroy
+         mol.molecular_orbitals.create(n_bf,"general")
+         mol.molecular_orbitals.general = ZERO
+      end do 
+      
+      ! Make big overlap matrix,
+      .INTS:make_overlap_matrix
+      
+      ! make big density matrix
+      .:make_scf_density_matrix
+     
+      ne = 1
+      nb = 1
+
+      do g = 1,.atom_group.dim
+         
+         ! Set up a molecule for this group of atoms
+         mol => .atom_group(g).mol
+         nb = 1
+         do i = 1,.atom_group(g).atom_index.dim
+
+            ! Copy orbitals back
+            fb = .first_basis_fn_for_atom(.atom_group(g).atom_index(i))
+            lb = .last_basis_fn_for_atom(.atom_group(g).atom_index(i))
+            n_bf = mol.n_bf
+            stdout.show("fb",fb)
+            stdout.show("lb",lb)
+            stdout.show("nb",nb)
+            mol.density_matrix.general(nb:nb+lb-fb,nb:nb+lb-fb) = .density_matrix.general(fb:lb,fb:lb)
+            mol.density_matrix.general(nb+n_bf:nb+lb-fb+n_bf,nb:nb+lb-fb) = .density_matrix.general(fb+.n_bf:lb+.n_bf,fb:lb)
+            mol.density_matrix.general(nb:nb+lb-fb,nb+n_bf:nb+lb-fb+n_bf) = .density_matrix.general(fb:lb,fb+.n_bf:lb+.n_bf)
+            mol.molecular_orbitals.general(nb+n_bf:nb+lb-fb+n_bf,nb+n_bf:nb+lb-fb+n_bf) = .molecular_orbitals.general(fb+.n_bf:lb+.n_bf,fb+.n_bf:lb+.n_bf)
+            mol.molecular_orbitals.general(nb:nb+lb-fb,nb:nb+lb-fb) = .molecular_orbitals.general(fb:lb,fb:lb)
+            mol.molecular_orbitals.general(nb+n_bf:nb+lb-fb+n_bf,nb:nb+lb-fb) = .molecular_orbitals.general(fb+.n_bf:lb+.n_bf,fb:lb)
+            mol.molecular_orbitals.general(nb:nb+lb-fb,nb+n_bf:nb+lb-fb+n_bf) = .molecular_orbitals.general(fb:lb,fb+.n_bf:lb+.n_bf)
+            mol.molecular_orbitals.general(nb+n_bf:nb+lb-fb+n_bf,nb+n_bf:nb+lb-fb+n_bf) = .molecular_orbitals.general(fb+.n_bf:lb+.n_bf,fb+.n_bf:lb+.n_bf)
+            nb = nb + lb - fb + 1
+         end do
+         
+         ! Get Fock matrix
+         
+         mol.scfdata.set_scf_kind(.scfdata.spinorbital_kind)
+         mol.:make_fock_matrix
+
+         ! Skip SCF for atoms without electrons
+         !if (mol.BASE:no_of_electrons < 1) cycle
+
+         ! Do the SCF !!!!!!!!!!!!!!!!!!!!!
+         !mol.scfdata.set_level_shift(100d0)
+         .:ALO_atom_scf(g)
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+         !ne = ne + mol.atom(1).atomic_number
          ! end cycle.
 
          !stdout.show("Orbitals", g)
