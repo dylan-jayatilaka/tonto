@@ -3,27 +3,44 @@ module PARALLEL
 #ifdef MPI
 !  Note the capital USE, below which prevents the 
 !  preprocessor from making the module a dependent
+
+!  MPI datatypes  
    USE mpi, only: MPI_CHARACTER
    USE mpi, only: MPI_LOGICAL
    USE mpi, only: MPI_INTEGER
    USE mpi, only: MPI_DOUBLE_PRECISION
    USE mpi, only: MPI_DOUBLE_COMPLEX
+! MPI communicator routines  
    USE mpi, only: MPI_COMM_WORLD
-   USE mpi, only: MPI_SUM
-   USE mpi, only: MPI_LOR
-   USE mpi, only: MPI_STATUS_SIZE
-   USE mpi, only: MPI_INIT
    USE mpi, only: MPI_COMM_DUP
    USE mpi, only: MPI_COMM_SIZE
    USE mpi, only: MPI_COMM_RANK
-   USE mpi, only: MPI_FINALIZE
+! MPI gather functions   
+   USE mpi, only: MPI_SUM
+   USE mpi, only: MPI_LOR
    USE mpi, only: MPI_ALLREDUCE
-   USE mpi, only: MPI_BARRIER
    USE mpi, only: MPI_BCAST
+   USE mpi, only: MPI_IBCAST
+   USE mpi, only: MPI_GATHER
+   USE mpi, only: MPI_ALLGATHER
+   USE mpi, only: MPI_IALLGATHER
+   USE mpi, only: MPI_ALLTOALL
+   USE mpi, only: MPI_IALLTOALL
+! MPI status   
+   USE mpi, only: MPI_STATUS_SIZE
+! MPI initialise and finalise   
+   USE mpi, only: MPI_INIT
+   USE mpi, only: MPI_FINALIZE
+! MPI Barrier   
+   USE mpi, only: MPI_BARRIER
+   USE mpi, only: MPI_WAIT
+!   USE mpi, only: MPI_WAITALL
+! MPI Send and receives   
    USE mpi, only: MPI_SEND
    USE mpi, only: MPI_RECV
    USE mpi, only: MPI_ISEND
    USE mpi, only: MPI_IRECV
+   USE mpi, only: MPI_SENDRECV
 #endif
 
   implicit none
@@ -568,13 +585,13 @@ contains
    ENSURE(.is_parallel,"must be in a parallel environment")
       
 #ifdef MPI
-      status :: VEC{INT}*
-      ALLOCATE(status(MPI_STATUS_SIZE))
+      status :: VEC{INT}(6)
+      !ALLOCATE(status(MPI_STATUS_SIZE))
 #endif      
       
 #ifdef MPI
       call MPI_WAIT(request,status,.mpi_error)
-      DEALLOCATE(status)
+      !DEALLOCATE(status)
 #else
       DIE("wtf?")
       self = self
@@ -585,22 +602,71 @@ contains
    waitall(count,requests) ::: template 
    ! Stalls all processors until all requests are complete.
       count :: INT, IN
-      requests :: VEC{INT}, IN
+      requests :: VEC{INT}*, INOUT
    ENSURE(.is_parallel,"must be in a parallel environment")
       
+#ifdef MPI
+     ! status :: VEC{INT}*
+      i :: INT
+      statuses :: VEC{INT}*
+     ! ALLOCATE(status(MPI_STATUS_SIZE))
+      ALLOCATE(statuses(6*requests.dim))
+     ! do i = 1,requests.dim
+     !    ALLOCATE(statuses(i).element(MPI_STATUS_SIZE))
+     ! end do
+    !  ALLOCATE(statuses(:).element(MPI_STATUS_SIZE))
+
+#endif      
+      
+#ifdef MPI
+      call MPI_WAITALL(count,requests,statuses,i)
+      !DEALLOCATE(statuses)
+#else
+      requests(1) = count
+      DIE("wtf?")
+      self = self
+#endif
+
+   end
+
+   waitany(count,requests) ::: template 
+   ! Stalls all processors until any specified request is complete.
+      count :: INT, IN
+      requests :: VEC{INT}, INOUT
+   ENSURE(.is_parallel,"must be in a parallel environment")
 #ifdef MPI
       status :: VEC{INT}*
       ALLOCATE(status(MPI_STATUS_SIZE))
 #endif      
       
 #ifdef MPI
-      call MPI_WAITALL(count,requests,status,.mpi_error)
+      call MPI_WAITANY(count,requests,status,.mpi_error)
       DEALLOCATE(status)
 #else
+      requests(1) = count
       DIE("wtf?")
       self = self
 #endif
 
+   end
+
+! ======
+! Cancel
+! ======
+
+   cancel(request) ::: template 
+   ! Cancels a communication request
+      request :: INT, INOUT
+   ENSURE(.is_parallel,"must be in a parallel environment")
+      
+#ifdef MPI
+      call MPI_CANCEL(request,.mpi_error)
+      !DEALLOCATE(status)
+#else
+      DIE("wtf?")
+      self = self
+      request = request
+#endif
    end
 
 ! ==============================================
@@ -618,7 +684,6 @@ contains
 
       request,proc,mtag :: INT
 
-      if (FALSE) self = self
 
       mtag = processor
       proc = processor
@@ -629,6 +694,7 @@ contains
       MPI_COMM_WORLD,request,.mpi_error)
       if (present(req)) req = request
 #else
+      if (FALSE) self = self
       DIE("wtf?")
       proc = proc
       req = req
@@ -1380,6 +1446,744 @@ contains
    ! would be required to do this for the individual types.
    end
 
+! ======
+! Gather
+! ======
+
+   gather(vars,scount,varr,root) ::: template
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+      vars :: VAR_TYPE, INOUT
+      scount :: INT, IN
+      varr :: VAR_TYPE, OUT, optional
+      root :: INT, IN, optional
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      proc :: INT
+
+#ifdef MPI
+      call MPI_GATHER(vars,scount,MPI_TYPE,varr,LEN,MPI_TYPE,root,MPI_COMM_WORLD,.mpi_error)
+#else
+      if (FALSE) self = self
+      vars = vars
+      proc = scount
+
+      proc = 0
+      if (present(varr)) varr = vars
+      if (present(root)) proc = root
+
+      DIE("wtf?")
+      proc = proc
+#endif
+
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors at the root
+   ! processor, in buffer varr
+   end
+
+! =========
+! Allgather
+! =========
+
+   allgather(vars,scount,varr) ::: template
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+      vars :: VAR_TYPE, INOUT
+      scount :: INT, IN
+      varr :: VAR_TYPE, OUT
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      proc :: INT
+
+#ifdef MPI
+      call MPI_ALLGATHER(vars,scount,MPI_TYPE,varr,LEN,MPI_TYPE,MPI_COMM_WORLD,.mpi_error)
+#else
+      if (FALSE) self = self
+      vars = vars
+      proc = scount
+
+      proc = 0
+      varr = vars
+
+      DIE("wtf?")
+      proc = proc
+#endif
+
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors
+   end
+
+! ======================
+! Asynchronous Allgather
+! ======================
+
+   iallgather(vars,scount,varr,req) ::: template
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+      vars :: VAR_TYPE, INOUT
+      scount :: INT, IN
+      varr :: VAR_TYPE, OUT
+      req :: INT, OUT, optional
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      request,proc :: INT
+
+#ifdef MPI
+      call MPI_IALLGATHER(vars,scount,MPI_TYPE,varr,LEN,MPI_TYPE,MPI_COMM_WORLD,request,.mpi_error)
+      if(present(req)) req = request
+#else
+      if (FALSE) self = self
+      request = 1
+      if(present(req)) req = request
+      vars = vars
+      proc = scount
+      request = proc
+
+      proc = 0
+      varr = vars
+
+      DIE("wtf?")
+      proc = proc
+#endif
+
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
+   ! Gather together values from a group of processors in buffer varr
+   ! at all processors asynchronously
+   end
+
+! ==========
+! All-to-all
+! ==========
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: template
+   ! Sends data from all to all processes
+      sendbuf :: VAR_TYPE, INOUT
+      sendcount :: INT, IN
+      recvbuf :: VAR_TYPE, OUT
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      proc :: INT
+
+#ifdef MPI
+      call MPI_ALLTOALL(sendbuf,sendcount,MPI_TYPE,recvbuf,LEN,MPI_TYPE,MPI_COMM_WORLD,.mpi_error)
+#else
+      if (FALSE) self = self
+      sendbuf = sendbuf
+      proc = sendcount
+
+      proc = 0
+      recvbuf = sendbuf
+
+      DIE("wtf?")
+      proc = proc
+#endif
+
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Sends data from all to all processes
+   end
+
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+   alltoall(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes
+   end
+
+! =======================
+! Non-blocking all-to-all
+! =======================
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: template
+   ! Sends data from all to all processes in a non-blocking way
+      sendbuf :: VAR_TYPE, INOUT
+      sendcount :: INT, IN
+      recvbuf :: VAR_TYPE, OUT
+      request :: INT, OUT, optional
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      req :: INT
+
+#ifdef MPI
+      call MPI_IALLTOALL(sendbuf,sendcount,MPI_TYPE,recvbuf,LEN,MPI_TYPE,MPI_COMM_WORLD,req,.mpi_error)
+      if(present(request)) request = req
+#else
+      if (FALSE) self = self
+      sendbuf = sendbuf
+      req = sendcount
+      if(present(request)) request = req
+
+      recvbuf = sendbuf
+
+      DIE("wtf?")
+#endif
+
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
+   ialltoall(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Sends data from all to all processes in a non-blocking way
+   end
+
 ! =====================================
 ! Broadcast variables to all processors
 ! =====================================
@@ -1393,15 +2197,17 @@ contains
 
       proc :: INT
 
+
+#ifdef MPI
+      proc = 0
+      if (present(processor)) proc = processor
+      call MPI_BCAST(var,LEN,MPI_TYPE,proc,MPI_COMM_WORLD,.mpi_error)
+#else
       if (FALSE) self = self
       var = var
 
       proc = 0
       if (present(processor)) proc = processor
-
-#ifdef MPI
-      call MPI_BCAST(var,LEN,MPI_TYPE,proc,MPI_COMM_WORLD,.mpi_error)
-#else
       DIE("wtf?")
       proc = proc
 #endif
@@ -1507,6 +2313,141 @@ contains
 
    broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
    ! Broadcast variable "var" from "processor" to all the others.
+   end
+
+! ==================================================
+! Asynchronous Broadcast variables to all processors
+! ==================================================
+
+   ibroadcast(var,processor,req) ::: template
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+      var :: VAR_TYPE
+      processor :: INT, IN, optional
+      req :: INT, OUT, optional
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      request,proc :: INT
+
+
+#ifdef MPI
+      proc = 0
+      if (present(processor)) proc = processor
+      call MPI_IBCAST(var,LEN,MPI_TYPE,proc,MPI_COMM_WORLD,request,.mpi_error)
+      if (present(req)) req = request
+#else
+      if (FALSE) self = self
+      var = var
+
+      proc = 0
+      if (present(processor)) proc = processor
+      request = 0
+      if (present(req)) req = request
+      DIE("wtf?")
+      proc = proc
+#endif
+
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   end
+
+   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Asynchronously broadcast variable "var" from "processor" to all the others.
    end
 
 ! Comment: there may be problems implementing higher order array
