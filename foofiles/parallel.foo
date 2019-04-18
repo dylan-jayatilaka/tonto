@@ -22,24 +22,37 @@ module PARALLEL
    USE mpi, only: MPI_BCAST
    USE mpi, only: MPI_IBCAST
    USE mpi, only: MPI_GATHER
+   USE mpi, only: MPI_IGATHER
    USE mpi, only: MPI_ALLGATHER
    USE mpi, only: MPI_IALLGATHER
    USE mpi, only: MPI_ALLTOALL
    USE mpi, only: MPI_IALLTOALL
+! MPI scatter functions   
+   USE mpi, only: MPI_SCATTER
+   USE mpi, only: MPI_ISCATTER
 ! MPI status   
    USE mpi, only: MPI_STATUS_SIZE
+   USE mpi, only: MPI_PROBE
+   USE mpi, only: MPI_IPROBE
+   USE mpi, only: MPI_TEST
+   USE mpi, only: MPI_TESTANY
+   USE mpi, only: MPI_TEST_CANCELLED
 ! MPI initialise and finalise   
    USE mpi, only: MPI_INIT
    USE mpi, only: MPI_FINALIZE
 ! MPI Barrier   
    USE mpi, only: MPI_BARRIER
+   USE mpi, only: MPI_IBARRIER
    USE mpi, only: MPI_WAIT
+   USE mpi, only: MPI_WAITANY
 !   USE mpi, only: MPI_WAITALL
 ! MPI Send and receives   
    USE mpi, only: MPI_SEND
    USE mpi, only: MPI_RECV
    USE mpi, only: MPI_ISEND
    USE mpi, only: MPI_IRECV
+   USE mpi, only: MPI_SSEND
+   USE mpi, only: MPI_ISSEND
    USE mpi, only: MPI_SENDRECV
 #endif
 
@@ -560,12 +573,12 @@ contains
 
    end
 
-! =======================
-! Barrier Synchronization
-! =======================
+! =======
+! Barrier
+! =======
 
    barrier ::: template 
-   ! Sets up a barrier for some communicator.
+   ! Blocks until all processes in the communicator have reached this routine.
    self :: INOUT
    ENSURE(.is_parallel,"must be in a parallel environment")
       
@@ -579,19 +592,40 @@ contains
 
    end
 
+   ibarrier(request) ::: template 
+   ! Notifies the process that it has reached the barrier and returns immediately
+   self :: INOUT
+   request :: INT, OUT, optional
+   ENSURE(.is_parallel,"must be in a parallel environment")
+   req :: INT   
+      
+#ifdef MPI
+      call MPI_IBARRIER(MPI_COMM_WORLD,req,.mpi_error)
+      if(present(request)) request = req
+#else
+      req = 0
+      if(present(request)) request = req
+      DIE("wtf?")
+      self = self
+#endif
+
+   end
+
+! ====
+! Wait
+! ====
+
    parallel_wait(request) ::: template 
-   ! Stalls a processor until a request is complete.
+   ! Waits for an MPI request to complete
       request :: INT, INOUT
    ENSURE(.is_parallel,"must be in a parallel environment")
       
 #ifdef MPI
       status :: VEC{INT}(6)
-      !ALLOCATE(status(MPI_STATUS_SIZE))
 #endif      
       
 #ifdef MPI
       call MPI_WAIT(request,status,.mpi_error)
-      !DEALLOCATE(status)
 #else
       DIE("wtf?")
       self = self
@@ -599,19 +633,16 @@ contains
 #endif
    end
 
-   waitall(count,requests) ::: template 
-   ! Stalls all processors until all requests are complete.
-      count :: INT, IN
-      requests :: VEC{INT}*, INOUT
+   waitall(count,array_of_requests) ::: template 
+   ! Waits for all given MPI Requests to complete
+      count :: INT, INOUT
+      array_of_requests :: VEC{INT}*, INOUT
    ENSURE(.is_parallel,"must be in a parallel environment")
       
 #ifdef MPI
      ! status :: VEC{INT}*
-      i :: INT
-      statuses :: VEC{INT}*
-     ! ALLOCATE(status(MPI_STATUS_SIZE))
-      ALLOCATE(statuses(6*requests.dim))
-     ! do i = 1,requests.dim
+      statuses :: VEC{INT}(6*array_of_requests.dim)
+     ! do i = 1,array_of_requests.dim
      !    ALLOCATE(statuses(i).element(MPI_STATUS_SIZE))
      ! end do
     !  ALLOCATE(statuses(:).element(MPI_STATUS_SIZE))
@@ -619,35 +650,153 @@ contains
 #endif      
       
 #ifdef MPI
-      call MPI_WAITALL(count,requests,statuses,i)
+      call MPI_WAITALL(count,array_of_requests,statuses,.mpi_error)
       !DEALLOCATE(statuses)
 #else
-      requests(1) = count
+      array_of_requests(1) = count
       DIE("wtf?")
       self = self
 #endif
 
    end
 
-   waitany(count,requests) ::: template 
-   ! Stalls all processors until any specified request is complete.
+   waitany(count,array_of_requests,indx) ::: template 
+   ! Waits for any specified MPI Request to complete
       count :: INT, IN
-      requests :: VEC{INT}, INOUT
+      array_of_requests :: VEC{INT}, INOUT
+      indx :: INT, OUT, optional
    ENSURE(.is_parallel,"must be in a parallel environment")
 #ifdef MPI
+      index :: INT
       status :: VEC{INT}*
       ALLOCATE(status(MPI_STATUS_SIZE))
 #endif      
       
 #ifdef MPI
-      call MPI_WAITANY(count,requests,status,.mpi_error)
+      call MPI_WAITANY(count,array_of_requests,index,status,.mpi_error)
+      if(present(indx)) indx = index
       DEALLOCATE(status)
 #else
-      requests(1) = count
+      array_of_requests(1) = count
+      if(present(indx)) indx = count
       DIE("wtf?")
       self = self
 #endif
 
+   end
+
+! =====
+! Probe
+! =====
+
+   probe(source,tag,status) ::: template 
+   ! Blocking test for a message
+      source :: INT, IN
+      tag :: INT, IN, optional
+#ifdef MPI
+      status :: VEC{INT}(MPI_STATUS_SIZE), OUT
+#else
+      status :: VEC{INT}(6), OUT
+#endif
+   ENSURE(.is_parallel,"must be in a parallel environment")
+      mtag :: INT
+      mtag = 1
+      if(present(tag)) mtag = tag
+#ifdef MPI
+      call MPI_PROBE(source,mtag,MPI_COMM_WORLD,status,.mpi_error)
+#else
+      status(1)=source
+#endif
+   end
+
+   iprobe(source,tag,flag,status) ::: template 
+   ! Nonblocking test for a message
+      source :: INT, IN
+      tag :: INT, IN, optional
+      flag :: BIN, OUT
+#ifdef MPI
+      status :: VEC{INT}(MPI_STATUS_SIZE), OUT, optional
+#else
+      status :: VEC{INT}(6), OUT
+#endif
+   ENSURE(.is_parallel,"must be in a parallel environment")
+      mtag :: INT
+      mtag = 1
+      if(present(tag)) mtag = tag
+#ifdef MPI
+      call MPI_IPROBE(source,mtag,MPI_COMM_WORLD,flag,status,.mpi_error)
+#else
+      flag = TRUE
+      status(1)=source
+#endif
+   end
+
+! ====
+! Test
+! ====
+
+   test(request,flag) ::: template 
+   ! Tests for the completion of a request
+      request :: INT, INOUT
+      flag :: BIN, OUT
+   ENSURE(.is_parallel,"must be in a parallel environment")
+      
+#ifdef MPI
+      status :: VEC{INT}(MPI_STATUS_SIZE)
+#endif      
+      
+#ifdef MPI
+      call MPI_TEST(request,flag,status,.mpi_error)
+#else
+      DIE("wtf?")
+      flag = TRUE
+      self = self
+      request = request
+#endif
+   end
+
+   testany(count,array_of_requests,indx,flag) ::: template 
+   ! Tests for the completion of any previously initiated array_of_requests
+      count :: INT, IN
+      array_of_requests :: VEC{INT}, INOUT
+      indx :: INT, OUT
+      flag :: BIN, OUT
+   ENSURE(.is_parallel,"must be in a parallel environment")
+      
+#ifdef MPI
+      status :: VEC{INT}(MPI_STATUS_SIZE)
+#endif      
+      
+#ifdef MPI
+      call MPI_TESTANY(count,array_of_requests,indx,flag,status,.mpi_error)
+#else
+      DIE("wtf?")
+      flag = TRUE
+      indx = count
+      self = self
+      array_of_requests = array_of_requests
+#endif
+   end
+
+   test_cancelled(status,flag) ::: template 
+   ! Tests to see if a request was cancelled
+      flag :: BIN, OUT
+   ENSURE(.is_parallel,"must be in a parallel environment")
+#ifdef MPI
+      status :: VEC{INT}(MPI_STATUS_SIZE), IN
+#else
+      status :: VEC{INT}(6), IN
+      i :: INT
+#endif      
+      
+#ifdef MPI
+      call MPI_TEST_CANCELLED(status,flag,.mpi_error)
+#else
+      DIE("wtf?")
+      flag = TRUE
+      self = self
+      i = status(1)
+#endif
    end
 
 ! ======
@@ -669,293 +818,14 @@ contains
 #endif
    end
 
-! ==============================================
-! Non-blocking send variable to other processors
-! ==============================================
-
-   isend(var,processor,tag,req) ::: template
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-      var :: VAR_TYPE, INOUT
-      processor :: INT, IN
-      tag :: INT, IN, optional
-      req :: INT, OUT, optional
-
-   ENSURE(.is_parallel,"must be in a parallel environment")
-
-      request,proc,mtag :: INT
-
-
-      mtag = processor
-      proc = processor
-
-#ifdef MPI
-      if(present(tag)) mtag = tag
-      call MPI_ISEND(var,LEN,MPI_TYPE,proc,mtag, &
-      MPI_COMM_WORLD,request,.mpi_error)
-      if (present(req)) req = request
-#else
-      if (FALSE) self = self
-      DIE("wtf?")
-      proc = proc
-      req = req
-      self = self
-      request =1 
-      var = var
-      if(present(tag)) mtag = tag
-      if (present(req)) req = request
-#endif
-
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-   isend(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronous send variable "var" from "processor" to some other processor.
-   end
-
-! ===================================================
-! Non-blocking receive variable from other processors
-! ===================================================
-
-   irecv(var,processor,tag,req) ::: template
-   ! Asynchronously receive variable "var" from "processor".
-      var :: VAR_TYPE, INOUT
-      processor :: INT, IN
-      tag :: INT, IN, optional
-      req :: INT, OUT, optional
-
-   ENSURE(.is_parallel,"must be in a parallel environment")
-
-      request,proc,mtag :: INT
-
-      if (FALSE) self = self
-
-      mtag = processor
-      proc = processor
-
-#ifdef MPI
-      if(present(tag)) mtag = tag
-      call MPI_IRECV(var,LEN,MPI_TYPE,proc,mtag,MPI_COMM_WORLD, &
-      request,.mpi_error)
-      if(present(req)) req = request
-#else
-      DIE("wtf?")
-      var = var
-      proc = proc
-      req = req
-      self = self
-      request = 1
-      mtag = mtag
-      if(present(tag)) mtag = tag
-      if (present(req)) req = request
-#endif
-
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-!   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-   irecv(var,processor,tag,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously receive variable "var" from "processor".
-   end
-
-! ==========================================
-! Blocking send variable to other processors
-! ==========================================
-
-   send(var,processor,tag) ::: template
-   ! Send "var" from this processor to some other "processor".
-      var :: VAR_TYPE, INOUT
-      processor :: INT, IN
+! =============
+! Blocking send
+! =============
+
+   send(buf,dest,tag) ::: template
+   ! Performs a blocking send
+      buf :: VAR_TYPE, INOUT
+      dest :: INT, IN
       tag :: INT, IN, optional
 
 
@@ -966,133 +836,133 @@ contains
       if (FALSE) self = self
 
       mtag = 1
-      proc = processor
+      proc = dest
       
 
 #ifdef MPI
       if(present(tag)) mtag = tag
-      call MPI_SSEND(var,LEN,MPI_TYPE,proc,mtag,MPI_COMM_WORLD,.mpi_error)
+      call MPI_SEND(buf,LEN,MPI_TYPE,proc,mtag,MPI_COMM_WORLD,.mpi_error)
 #else
       DIE("wtf?")
       proc = proc
       self = self
       mtag = mtag
       if(present(tag)) mtag = tag
-      var = var
+      buf = buf
 #endif
 
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(buf))
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
-   ! Send "var" from this processor to some other "processor".
-   end
-
-
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Send "var" from this processor to some other "processor".
-   end
-
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
-   end
-
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
-   end
-
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
-   end
-
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Performs a blocking send
    end
 
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
-   end
-
-
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
-   end
-
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
-   end
-
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
-   end
-
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Performs a blocking send
    end
 
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Performs a blocking send
+   end
+
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Performs a blocking send
+   end
+
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Performs a blocking send
    end
 
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Performs a blocking send
    end
 
-   send(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Send "var" from this processor to some other "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Performs a blocking send
    end
 
-! ===============================================
-! Blocking receive variable from other processors
-! ===============================================
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Performs a blocking send
+   end
 
-   recv(var,processor,tag) ::: template
-   ! Receive variable "var" from "processor".
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Performs a blocking send
+   end
+
+
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Performs a blocking send
+   end
+
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Performs a blocking send
+   end
+
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Performs a blocking send
+   end
+
+
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Performs a blocking send
+   end
+
+   send(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Performs a blocking send
+   end
+
+! ================
+! Blocking receive
+! ================
+
+   recv(buf,source,tag) ::: template
+   ! Blocking receive for a message
       self :: INOUT
-      var :: VAR_TYPE, OUT
-      processor :: INT, IN
+      buf :: VAR_TYPE, OUT
+      source :: INT, IN
       tag :: INT, IN, optional
 
 
@@ -1106,16 +976,16 @@ contains
       if (FALSE) self = self
 
       mtag = 1
-      proc = processor
+      proc = source
 
 #ifdef MPI
       if(present(tag)) mtag = tag
-      call MPI_RECV(var,LEN,MPI_TYPE,proc,mtag, &
+      call MPI_RECV(buf,LEN,MPI_TYPE,proc,mtag, &
       MPI_COMM_WORLD,status,.mpi_error)
       DEALLOCATE(status)
 #else
       DIE("wtf?")
-      var = var
+      buf = buf
       proc = proc
       self = self
       mtag = mtag
@@ -1124,122 +994,672 @@ contains
 
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(buf))
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
-   ! Receive variable "var" from "processor".
-   end
-
-
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Receive variable "var" from "processor".
-   end
-
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Receive variable "var" from "processor".
-   end
-
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Receive variable "var" from "processor".
-   end
-
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Receive variable "var" from "processor".
-   end
-
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Blocking receive for a message
    end
 
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Receive variable "var" from "processor".
-   end
-
-
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Receive variable "var" from "processor".
-   end
-
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Receive variable "var" from "processor".
-   end
-
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Receive variable "var" from "processor".
-   end
-
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking receive for a message
    end
 
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking receive for a message
    end
 
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Blocking receive for a message
    end
 
-   recv(var,processor,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Receive variable "var" from "processor".
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+   recv(buf,source,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking receive for a message
+   end
+
+! =================
+! Non-blocking send
+! =================
+
+   isend(buf,dest,tag,request) ::: template
+   ! Begins a nonblocking send
+      buf :: VAR_TYPE, INOUT
+      dest :: INT, IN
+      tag :: INT, IN, optional
+      request :: INT, OUT, optional
+
+   ENSURE(.is_parallel,"must be in a parallel environment")
+
+      req,proc,mtag :: INT
+
+
+      mtag = dest
+      proc = dest
+
+#ifdef MPI
+      if(present(tag)) mtag = tag
+      call MPI_ISEND(buf,LEN,MPI_TYPE,proc,mtag, &
+      MPI_COMM_WORLD,req,.mpi_error)
+      if (present(request)) request = req
+#else
+      if (FALSE) self = self
+      DIE("wtf?")
+      proc = proc
+      self = self
+      req =1 
+      buf = buf
+      if(present(tag)) mtag = tag
+      if (present(request)) request = req
+#endif
+
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Begins a nonblocking send
+   end
+
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+   isend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking send
+   end
+
+! ====================
+! Non-blocking receive
+! ====================
+
+   irecv(buf,source,tag,request) ::: template
+   ! Begins a nonblocking receive
+      buf :: VAR_TYPE, INOUT
+      source :: INT, IN
+      tag :: INT, IN, optional
+      request :: INT, OUT, optional
+
+   ENSURE(.is_parallel,"must be in a parallel environment")
+
+      requestuest,proc,mtag :: INT
+
+      if (FALSE) self = self
+
+      mtag = source
+      proc = source
+
+#ifdef MPI
+      if(present(tag)) mtag = tag
+      call MPI_IRECV(buf,LEN,MPI_TYPE,proc,mtag,MPI_COMM_WORLD, &
+      requestuest,.mpi_error)
+      if(present(request)) request = requestuest
+#else
+      DIE("wtf?")
+      buf = buf
+      proc = proc
+      request = request
+      self = self
+      requestuest = 1
+      mtag = mtag
+      if(present(tag)) mtag = tag
+      if (present(request)) request = requestuest
+#endif
+
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Begins a nonblocking receive
+   end
+
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+!   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+   irecv(buf,source,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Begins a nonblocking receive
+   end
+
+! =========================
+! Blocking synchronous send
+! =========================
+
+   ssend(buf,dest,tag) ::: template
+   ! Blocking synchronous send
+      buf :: VAR_TYPE, INOUT
+      dest :: INT, IN
+      tag :: INT, IN, optional
+
+
+   ENSURE(.is_parallel,"must be in a parallel environment")
+
+      proc,mtag :: INT
+
+      if (FALSE) self = self
+
+      mtag = 1
+      proc = dest
+      
+
+#ifdef MPI
+      if(present(tag)) mtag = tag
+      call MPI_SSEND(buf,LEN,MPI_TYPE,proc,mtag,MPI_COMM_WORLD,.mpi_error)
+#else
+      DIE("wtf?")
+      proc = proc
+      self = self
+      mtag = mtag
+      if(present(tag)) mtag = tag
+      buf = buf
+#endif
+
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Blocking synchronous send
+   end
+
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+   ssend(buf,dest,tag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Blocking synchronous send
+   end
+
+! =============================
+! Non-blocking synchronous send
+! =============================
+
+   issend(buf,dest,tag,request) ::: template
+   ! Starts a nonblocking synchronous send
+      buf :: VAR_TYPE, INOUT
+      dest :: INT, IN
+      tag :: INT, IN, optional
+      request :: INT, OUT, optional
+
+   ENSURE(.is_parallel,"must be in a parallel environment")
+
+      requestuest,proc,mtag :: INT
+
+
+      mtag = dest
+      proc = dest
+
+#ifdef MPI
+      if(present(tag)) mtag = tag
+      call MPI_ISEND(buf,LEN,MPI_TYPE,proc,mtag, &
+      MPI_COMM_WORLD,requestuest,.mpi_error)
+      if (present(request)) request = requestuest
+#else
+      if (FALSE) self = self
+      DIE("wtf?")
+      proc = proc
+      request = request
+      self = self
+      requestuest =1 
+      buf = buf
+      if(present(tag)) mtag = tag
+      if (present(request)) request = requestuest
+#endif
+
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Starts a nonblocking synchronous send
+   end
+
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buf)*len(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
+   end
+
+   issend(buf,dest,tag,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buf))
+   ! Starts a nonblocking synchronous send
    end
 
 ! =====================
 ! Blocking send/receive
 ! =====================
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: template
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: template
+   ! Sends and receives a message
       self :: INOUT
-      vars :: VAR_TYPE, IN
-      varr :: VAR_TYPE, INOUT
-      processor :: INT, IN
-      processorr :: INT, IN, optional
-      tags,tagr :: INT, IN, optional
+      sendbuf :: VAR_TYPE, IN
+      recvbuf :: VAR_TYPE, INOUT
+      dest :: INT, IN
+      source :: INT, IN, optional
+      sendtag,recvtag :: INT, IN, optional
 
 
    ENSURE(.is_parallel,"must be in a parallel environment")
@@ -1253,209 +1673,136 @@ contains
 
       mtag1 = 1
       mtag2 = 1
-      proc1 = processor
-      proc2 = processor
+      proc1 = dest
+      proc2 = dest
 
 #ifdef MPI
-      if(present(tags)) mtag1 = tags
-      if(present(tagr)) mtag2 = tagr
-      if(present(processorr)) proc2 = processorr
-      call MPI_SENDRECV(vars,LEN1,MPI_TYPE,proc1,mtag1,varr,LEN2,MPI_TYPE,proc2,mtag2,MPI_COMM_WORLD,status,.mpi_error)
+      if(present(sendtag)) mtag1 = sendtag
+      if(present(recvtag)) mtag2 = recvtag
+      if(present(source)) proc2 = source
+      call MPI_SENDRECV(sendbuf,LEN1,MPI_TYPE,proc1,mtag1,recvbuf,LEN2,MPI_TYPE,proc2,mtag2,MPI_COMM_WORLD,status,.mpi_error)
       DEALLOCATE(status)
 #else
       DIE("wtf?")
       self = self
-      varr = vars
-      if(present(tags)) mtag1 = tags
-      if(present(tagr)) mtag2 = tagr
-      if(present(processorr)) proc2 = processorr
+      recvbuf = sendbuf
+      if(present(sendtag)) mtag1 = sendtag
+      if(present(recvtag)) mtag2 = recvtag
+      if(present(source)) proc2 = source
 #endif
 
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN1=>len(vars)), LEN2=>len(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN1=>len(sendbuf)), LEN2=>len(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN1=>1, LEN2=>1)
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN1=>1, LEN2=>1)
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN1=>1, LEN2=>1)
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN1=>1, LEN2=>1)
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>1, LEN2=>1)
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>1, LEN2=>1)
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>1, LEN2=>1)
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>1, LEN2=>1)
+   ! Sends and receives a message
    end
 
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(vars)*len(vars)), LEN2=>size(varr)*len(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(sendbuf)*len(sendbuf)), LEN2=>size(recvbuf)*len(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(vars)*len(vars)), LEN2=>size(varr)*len(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(sendbuf)*len(sendbuf)), LEN2=>size(recvbuf)*len(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
-   sendrecv(vars,varr,processor,tags,processorr,tagr) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(vars)), LEN2=>size(varr))
-   ! Send a variable to a processor and receives a different variable
-   ! form the same or different processor. Note: this only works for
-   ! variables of the same type, as astronomical amounts of code 
-   ! would be required to do this for the individual types.
+   sendrecv(sendbuf,recvbuf,dest,sendtag,source,recvtag) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends and receives a message
    end
 
 ! ======
 ! Gather
 ! ======
 
-   gather(vars,scount,varr,root) ::: template
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
-      vars :: VAR_TYPE, INOUT
-      scount :: INT, IN
-      varr :: VAR_TYPE, OUT, optional
+   gather(sendbuf,sendcount,recvbuf,root) ::: template
+   ! Gather together values from a group of processes
+      sendbuf :: VAR_TYPE, INOUT
+      sendcount :: INT, IN
+      recvbuf :: VAR_TYPE, OUT, optional
       root :: INT, IN, optional
 
    ENSURE(.is_parallel,"must be in a parallel enviornoment")
@@ -1463,14 +1810,14 @@ contains
       proc :: INT
 
 #ifdef MPI
-      call MPI_GATHER(vars,scount,MPI_TYPE,varr,LEN,MPI_TYPE,root,MPI_COMM_WORLD,.mpi_error)
+      call MPI_GATHER(sendbuf,sendcount,MPI_TYPE,recvbuf,LEN,MPI_TYPE,root,MPI_COMM_WORLD,.mpi_error)
 #else
       if (FALSE) self = self
-      vars = vars
-      proc = scount
+      sendbuf = sendbuf
+      proc = sendcount
 
       proc = 0
-      if (present(varr)) varr = vars
+      if (present(recvbuf)) recvbuf = sendbuf
       if (present(root)) proc = root
 
       DIE("wtf?")
@@ -1479,155 +1826,130 @@ contains
 
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Gather together values from a group of processes
    end
 
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-   gather(vars,scount,varr,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors at the root
-   ! processor, in buffer varr
+   gather(sendbuf,sendcount,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes
    end
 
-! =========
-! Allgather
-! =========
+! =======
+! Scatter
+! =======
 
-   allgather(vars,scount,varr) ::: template
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
-      vars :: VAR_TYPE, INOUT
-      scount :: INT, IN
-      varr :: VAR_TYPE, OUT
+   scatter(sendbuf,recvbuf,root) ::: template
+   ! Sends data from one process to all other processes in a communicator
+      sendbuf :: VAR_TYPE, INOUT
+      recvbuf :: VAR_TYPE, OUT
+      root :: INT, IN
 
    ENSURE(.is_parallel,"must be in a parallel enviornoment")
 
       proc :: INT
 
 #ifdef MPI
-      call MPI_ALLGATHER(vars,scount,MPI_TYPE,varr,LEN,MPI_TYPE,MPI_COMM_WORLD,.mpi_error)
+      call MPI_SCATTER(sendbuf,LEN1,MPI_TYPE,recvbuf,LEN2,MPI_TYPE,root,MPI_COMM_WORLD,.mpi_error)
 #else
       if (FALSE) self = self
-      vars = vars
-      proc = scount
+      sendbuf = sendbuf
+      proc = root
 
       proc = 0
-      varr = vars
+      recvbuf = sendbuf
 
       DIE("wtf?")
       proc = proc
@@ -1635,160 +1957,135 @@ contains
 
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN1=>len(sendbuf)), LEN2=>len(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN1=>1, LEN2=>1)
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN1=>1, LEN2=>1)
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>1, LEN2=>1)
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>1, LEN2=>1)
+   ! Sends data from one process to all other processes in a communicator
    end
 
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(sendbuf)*len(sendbuf)), LEN2=>size(recvbuf)*len(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(sendbuf)*len(sendbuf)), LEN2=>size(recvbuf)*len(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-   allgather(vars,scount,varr) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors
+   scatter(sendbuf,recvbuf,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a communicator
    end
 
-! ======================
-! Asynchronous Allgather
-! ======================
+! ====================
+! Non-blocking scatter
+! ====================
 
-   iallgather(vars,scount,varr,req) ::: template
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-      vars :: VAR_TYPE, INOUT
-      scount :: INT, IN
-      varr :: VAR_TYPE, OUT
-      req :: INT, OUT, optional
+   iscatter(sendbuf,recvbuf,root,request) ::: template
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+      sendbuf :: VAR_TYPE, INOUT
+      recvbuf :: VAR_TYPE, OUT
+      root :: INT, IN
+      request :: INT, OUT, optional
 
    ENSURE(.is_parallel,"must be in a parallel enviornoment")
 
-      request,proc :: INT
+      req,proc :: INT
 
 #ifdef MPI
-      call MPI_IALLGATHER(vars,scount,MPI_TYPE,varr,LEN,MPI_TYPE,MPI_COMM_WORLD,request,.mpi_error)
-      if(present(req)) req = request
+      call MPI_ISCATTER(sendbuf,LEN1,MPI_TYPE,recvbuf,LEN2,MPI_TYPE,root,MPI_COMM_WORLD,req,.mpi_error)
+      if (present(request)) request = req
 #else
       if (FALSE) self = self
-      request = 1
-      if(present(req)) req = request
-      vars = vars
-      proc = scount
-      request = proc
+      sendbuf = sendbuf
+      proc = root
+      req = root
 
+      if (present(request)) request = req
       proc = 0
-      varr = vars
+      recvbuf = sendbuf
 
       DIE("wtf?")
       proc = proc
@@ -1796,129 +2093,558 @@ contains
 
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN1=>len(sendbuf)), LEN2=>len(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN1=>1, LEN2=>1)
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN1=>1, LEN2=>1)
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>1, LEN2=>1)
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-   end
-
-
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-   end
-
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-   end
-
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-   end
-
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-   end
-
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>1, LEN2=>1)
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(varr)*len(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(sendbuf)*len(sendbuf)), LEN2=>size(recvbuf)*len(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-   end
-
-
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-   end
-
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-   end
-
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
-   end
-
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN1=>size(sendbuf)*len(sendbuf)), LEN2=>size(recvbuf)*len(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
    end
 
-   iallgather(vars,scount,varr,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(varr))
-   ! Gather together values from a group of processors in buffer varr
-   ! at all processors asynchronously
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+   iscatter(sendbuf,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN1=>size(sendbuf)), LEN2=>size(recvbuf))
+   ! Sends data from one process to all other processes in a
+   ! communicator in a nonblocking way
+   end
+
+! ===================
+! Non-blocking gather
+! ===================
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: template
+   ! Gather together values from a group of processes in a nonblocking way
+      sendbuf :: VAR_TYPE, INOUT
+      sendcount :: INT, IN
+      recvbuf :: VAR_TYPE, OUT, optional
+      root :: INT, IN, optional
+      request :: INT, OUT, optional
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      proc,req :: INT
+
+#ifdef MPI
+      call MPI_IGATHER(sendbuf,sendcount,MPI_TYPE,recvbuf,LEN,MPI_TYPE,root,MPI_COMM_WORLD,req,.mpi_error)
+      if (present(request)) request = req
+#else
+      if (FALSE) self = self
+      sendbuf = sendbuf
+      proc = sendcount
+
+      proc = 0
+      req = 0
+      if (present(request)) request = req
+      if (present(recvbuf)) recvbuf = sendbuf
+      if (present(root)) proc = root
+
+      DIE("wtf?")
+      proc = proc
+#endif
+
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+   igather(sendbuf,sendcount,recvbuf,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gather together values from a group of processes in a nonblocking way
+   end
+
+! =========
+! Allgather
+! =========
+
+   allgather(sendbuf,sendcount,recvbuf) ::: template
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+      sendbuf :: VAR_TYPE, INOUT
+      sendcount :: INT, IN
+      recvbuf :: VAR_TYPE, OUT
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      proc :: INT
+
+#ifdef MPI
+      call MPI_ALLGATHER(sendbuf,sendcount,MPI_TYPE,recvbuf,LEN,MPI_TYPE,MPI_COMM_WORLD,.mpi_error)
+#else
+      if (FALSE) self = self
+      sendbuf = sendbuf
+      proc = sendcount
+
+      proc = 0
+      recvbuf = sendbuf
+
+      DIE("wtf?")
+      proc = proc
+#endif
+
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+   allgather(sendbuf,sendcount,recvbuf) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to all tasks
+   end
+
+! ======================
+! Non-blocking Allgather
+! ======================
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: template
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+      sendbuf :: VAR_TYPE, INOUT
+      sendcount :: INT, IN
+      recvbuf :: VAR_TYPE, OUT
+      request :: INT, OUT, optional
+
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+
+      req,proc :: INT
+
+#ifdef MPI
+      call MPI_IALLGATHER(sendbuf,sendcount,MPI_TYPE,recvbuf,LEN,MPI_TYPE,MPI_COMM_WORLD,req,.mpi_error)
+      if(present(request)) request = req
+#else
+      if (FALSE) self = self
+      req = 1
+      if(present(request)) request = req
+      sendbuf = sendbuf
+      proc = sendcount
+      request = proc
+
+      proc = 0
+      recvbuf = sendbuf
+
+      DIE("wtf?")
+      proc = proc
+#endif
+
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(recvbuf)*len(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
+   end
+
+   iallgather(sendbuf,sendcount,recvbuf,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(recvbuf))
+   ! Gathers data from all tasks and distribute the combined data to
+   ! all tasks in a nonblocking way
    end
 
 ! ==========
@@ -2184,14 +2910,15 @@ contains
    ! Sends data from all to all processes in a non-blocking way
    end
 
-! =====================================
-! Broadcast variables to all processors
-! =====================================
+! =========
+! Broadcast
+! =========
 
-   broadcast(var,processor) ::: template
-   ! Broadcast variable "var" from "processor" to all the others.
-      var :: VAR_TYPE
-      processor :: INT, IN, optional
+   broadcast(buffer,root) ::: template
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+      buffer :: VAR_TYPE
+      root :: INT, IN, optional
 
    ENSURE(.is_parallel,"must be in a parallel enviornoment")
 
@@ -2200,254 +2927,303 @@ contains
 
 #ifdef MPI
       proc = 0
-      if (present(processor)) proc = processor
-      call MPI_BCAST(var,LEN,MPI_TYPE,proc,MPI_COMM_WORLD,.mpi_error)
+      if (present(root)) proc = root
+      call MPI_BCAST(buffer,LEN,MPI_TYPE,proc,MPI_COMM_WORLD,.mpi_error)
 #else
       if (FALSE) self = self
-      var = var
+      buffer = buffer
 
       proc = 0
-      if (present(processor)) proc = processor
+      if (present(root)) proc = root
       DIE("wtf?")
       proc = proc
 #endif
 
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
-   ! Broadcast variable "var" from "processor" to all the others.
-   end
-
-
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Broadcast variable "var" from "processor" to all the others.
-   end
-
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
-   end
-
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
-   end
-
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
-   end
-
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buffer)*len(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
-   end
-
-
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
-   end
-
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
-   end
-
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
-   end
-
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buffer)*len(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+   end
+
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+   end
+
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Broadcast variable "var" from "processor" to all the others.
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
    end
 
-! ==================================================
-! Asynchronous Broadcast variables to all processors
-! ==================================================
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+   end
 
-   ibroadcast(var,processor,req) ::: template
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-      var :: VAR_TYPE
-      processor :: INT, IN, optional
-      req :: INT, OUT, optional
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+   end
+
+
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+   end
+
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+   end
+
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+   end
+
+
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+   end
+
+   broadcast(buffer,root) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator
+   end
+
+! ======================
+! Non-blocking Broadcast
+! ======================
+
+   ibroadcast(buffer,root,request) ::: template
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+      buffer :: VAR_TYPE
+      root :: INT, IN, optional
+      request :: INT, OUT, optional
 
    ENSURE(.is_parallel,"must be in a parallel enviornoment")
 
-      request,proc :: INT
+      req,proc :: INT
 
 
 #ifdef MPI
       proc = 0
-      if (present(processor)) proc = processor
-      call MPI_IBCAST(var,LEN,MPI_TYPE,proc,MPI_COMM_WORLD,request,.mpi_error)
-      if (present(req)) req = request
+      if (present(root)) proc = root
+      call MPI_IBCAST(buffer,LEN,MPI_TYPE,proc,MPI_COMM_WORLD,req,.mpi_error)
+      if (present(request)) request = req
 #else
       if (FALSE) self = self
-      var = var
+      buffer = buffer
 
       proc = 0
-      if (present(processor)) proc = processor
-      request = 0
-      if (present(req)) req = request
+      if (present(root)) proc = root
+      req = 0
+      if (present(request)) request = req
       DIE("wtf?")
       proc = proc
 #endif
 
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-   end
-
-
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-   end
-
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-   end
-
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-   end
-
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-   end
-
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buffer)*len(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-   end
-
-
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-   end
-
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-   end
-
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
-   end
-
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(buffer)*len(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+   end
+
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+   end
+
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
-   ibroadcast(var,processor,req) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
-   ! Asynchronously broadcast variable "var" from "processor" to all the others.
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+   end
+
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+   end
+
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+   end
+
+
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+   end
+
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+   end
+
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+   end
+
+
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
+   end
+
+   ibroadcast(buffer,root,request) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(buffer))
+   ! Broadcasts a message from the process with rank "root" to all
+   ! other processes of the communicator in a nonblocking way
    end
 
 ! Comment: there may be problems implementing higher order array
