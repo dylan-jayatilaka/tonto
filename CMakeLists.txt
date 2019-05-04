@@ -43,11 +43,10 @@ project(tonto
     VERSION ${TONTO_VERSION})
 
 # LAPACK
-find_package(LAPACK)
-if(${LAPACK_FOUND})
-else()
-    set(COMPILE_LAPACK "ON")
-endif() 
+string(TOUPPER "${CMAKE_BUILD_TYPE}" TEMP) 
+if(TEMP STREQUAL "RELEASE-STATIC")
+  set(COMPILE_LAPACK "ON")
+endif()
 if(COMPILE_LAPACK)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
     set(LAPACK_LIBRARIES 
@@ -55,6 +54,18 @@ if(COMPILE_LAPACK)
         ${PROJECT_BINARY_DIR}/external/lapack-release/lib/libblas.a
     )
     message(STATUS "Compiling lapack: ${LAPACK_LIBRARIES}")
+else()
+  find_package(LAPACK)
+  if(${LAPACK_FOUND})
+  else()
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
+    set(LAPACK_LIBRARIES 
+        ${PROJECT_BINARY_DIR}/external/lapack-release/lib/liblapack.a
+        ${PROJECT_BINARY_DIR}/external/lapack-release/lib/libblas.a
+    )
+    message(STATUS "Compiling lapack: ${LAPACK_LIBRARIES}")
+    set(COMPILE_LAPACK "ON")
+  endif() 
 endif()
 
 if(MPI)
@@ -431,6 +442,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_rgbi.foo
     ${RUNFILE_DIR}/run_least_squares.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
+    ${RUNFILE_DIR}/run_sfs.foo
 )
 
 
@@ -468,7 +480,7 @@ add_library(tonto
 if(COMPILE_LAPACK)
 	target_link_libraries(tonto sbf_fortran dftd3 lapack blas ${MPI_Fortran_LIBRARIES})
 else()
-	target_link_libraries(tonto sbf_fortran dftd3 ${MPI_Fortran_LIBRARIES})
+	target_link_libraries(tonto sbf_fortran dftd3 blas ${MPI_Fortran_LIBRARIES})
 endif()	
 
 # Build directory
@@ -492,6 +504,7 @@ add_executable(run_mpi_pi        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
+add_executable(run_sfs           ${CMAKE_CURRENT_BINARY_DIR}/run_sfs.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
 
@@ -513,17 +526,20 @@ target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_sfs           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 
 # Make non-standard-named executables
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
 set_target_properties(run_har      PROPERTIES OUTPUT_NAME hart)
+set_target_properties(run_sfs      PROPERTIES OUTPUT_NAME HA_sfs)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 install(TARGETS run_molecule DESTINATION bin)
 install(TARGETS run_har      DESTINATION bin)
 install(TARGETS run_rgbi     DESTINATION bin)
+install(TARGETS run_sfs      DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
