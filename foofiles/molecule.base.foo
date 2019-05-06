@@ -608,7 +608,7 @@ contains
       if (.atom.associated) then
          .name              = .:chemical_formula
          .spin_multiplicity = .:default_spin_multiplicity
-         .:set_atom_info
+         .:finalize_atoms
       end
 
    end
@@ -764,17 +764,58 @@ contains
 
    end
 
-! Bases
+! Atoms
 
-   set_atom_info ::: leaky
+   finalize_atoms ::: leaky
+   ! Finalize the atom list information
+      self :: INOUT
+
+      ! Finalize atom info/basis sets
+      ! Avoid calling these private routine directly
+      ! NOTE: finalize_atom_groups might be called recursively
+      .BASE:set_atom_info
+      .BASE:finalize_atom_groups 
+      .BASE:resolve_basis_info
+
+      ! Finalize crystal
+      if (associated(.crystal)) then
+         .BASE:resolve_axis_system
+         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+      end
+
+      ! Destroy stored atoms here
+      .isosurface.destroy
+
+   end
+
+   finalize_atoms_no_groups ::: leaky
+   ! Finalize the atom list information
+      self :: INOUT
+
+      ! Finalize atom info/basis sets
+      ! Avoid calling these private routine directly
+      .BASE:set_atom_info
+      .BASE:resolve_basis_info
+
+      ! Finalize crystal
+      if (associated(.crystal)) then
+         .BASE:resolve_axis_system
+         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+      end
+
+      ! Destroy stored atoms here
+      .isosurface.destroy
+
+   end
+
+   set_atom_info ::: leaky, private
    ! Set the associated atom information
    ! . Atom tags and kind indices
    ! . The spin multiplicity
    ! . The number of alpha and beta electrons.
      self :: INOUT
 
-   ENSURE(.atom.associated,"no atom info")
-
+      if (.atom.disassociated) return
       if (.atom_info_made) return
 
       ! Finalize 
@@ -805,7 +846,9 @@ contains
 
    end
 
-   resolve_basis_info ::: leaky
+! Bases
+
+   resolve_basis_info ::: leaky, private
    ! Match the basis set labels for every atom with the actual atomic basis set.
    ! Also perform any finalization procedures to fully define all objects.
    ! This version is supposed to work for multiple bases.
@@ -1017,7 +1060,7 @@ contains
 
    end
 
-   make_basis_info ::: leaky
+   make_basis_info ::: leaky, private
    ! Make the basis set information
       self :: INOUT
 
@@ -1629,10 +1672,8 @@ contains
       ! Set multiplicity
       .spin_multiplicity = .:default_spin_multiplicity
 
-      ! Finally: set atom info & basis info
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
+      ! Finalize atom info/basis sets
+      .:finalize_atoms
 
       .atom.put
 
@@ -1959,10 +2000,9 @@ contains
       ! Set multiplicity
       .spin_multiplicity = .:default_spin_multiplicity
 
-      ! Finally: set atom info & basis info (leaky)
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
+
+      ! Finalize atom info/basis sets
+      .:finalize_atoms
 
       ! Create MO arrays (leaky)
       .density_matrix.destroy
@@ -2551,10 +2591,8 @@ contains
       n_prim_for_shell.destroy
       shell_l.destroy
 
-      ! .basis.unnormalise ! NOTE this
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
+      ! Finalize atom info/basis sets
+      .:finalize_atoms
 
       ! Read in orbital energies.
       orb_energy.create(n_independent)
@@ -2582,705 +2620,6 @@ contains
 
       ! Read in molecular orbitals.
       temp_mat.create(n_independent,.n_bf)
-      chkfile.look_for("Alpha MO",from=1)
-      chkfile.read_line
-      chkfile.read(temp_mat)
-
-      .molecular_orbitals.destroy
-      if (trim(chkfile.next_str)=="Beta") then
-         .molecular_orbitals.create(.n_bf,"unrestricted")
-         .molecular_orbitals.alpha = ZERO
-         .molecular_orbitals.alpha(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         chkfile.read_line; chkfile.read(temp_mat)
-         .molecular_orbitals.beta = ZERO
-         .molecular_orbitals.beta(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         temp_mat.destroy
-         .:swap_from_g94_orbital_order(.molecular_orbitals.alpha,"row")
-         .:swap_from_g94_orbital_order(.molecular_orbitals.beta, "row")
-      else
-         .molecular_orbitals.create(.n_bf,"restricted")
-         .molecular_orbitals.restricted = ZERO
-         .molecular_orbitals.restricted(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         temp_mat.destroy
-         .:swap_from_g94_orbital_order(.molecular_orbitals.restricted,"row")
-      end
-
-      ! Read in density matrix.
-      .:read_gX_SCF_dm(chkfile,restricted,.density_matrix)
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         if (.molecular_orbitals.associated) then
-         if (.molecular_orbitals.restricted.associated) then
-            MO => .molecular_orbitals.restricted(:,1:.n_a)
-            DD.create(.n_bf,.n_bf)
-            DD.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
-            DD = abs(DD - .density_matrix.restricted)
-            stdout.text("Diff density matrix:")
-            stdout.put(DD)
-            stdout.show("max diff between MO reconstructed density =",maxval(DD))
-            DD.destroy
-         end
-         end
-
-      end
-
-      ! Extract MP2 density matrix to file.  UHF untested
-      .:read_gX_MP2_dm(chkfile,restricted,.density_matrix)
-
-      ! Extract MP3 density matrix to file.  UHF untested
-      .:read_gX_MP3_dm(chkfile,restricted,.density_matrix)
-
-      ! Extract CC density matrix to file.  UHF untested
-      .:read_gX_CC_dm(chkfile,restricted,.density_matrix)
-
-      ! Close chkfile
-      chkfile.close; chkfile.destroy
-
-      ! Save data in archiveive files
-      archive.set_defaults
-      archive.set(.name,"density_matrix")
-      archive.write(.density_matrix)
-      archive.set(.name,"molecular_orbitals")
-      archive.write(.molecular_orbitals)
-      archive.set(.name,"orbital_energies")
-      archive.write(.orbital_energies)
-
-      if (associated(.crystal)) then
-         .:resolve_axis_system
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-      end
-
-   end
-
-   read_g03_FChk_file(name) ::: leaky
-   ! Read a g09 checkpoint file (after fchk conversion to ASCII) into TONTO
-      name :: STR, optional
-
-   ENSURE(NOT .use_spherical_basis,"not implemented")
-
-      fchk :: STR
-      chkfile :: TEXTFILE*
-      shell_l,n_prim_for_shell,atom_for_shell,atom_p :: VEC{INT}*
-      G_n_prim_for_shell,G_atom_for_shell,G_shell_type :: VEC{INT}*
-      G_ex,G_cc,G_cp, ex,cc,orb_energy, fc :: VEC{REAL}*
-      temp_mat,DD,MO :: MAT{REAL}*
-      pos :: VEC{REAL}(3)
-      Z, a,s,t, f,l,g,h, n3n,ntr :: INT
-      n_prim_shells,n_shell,n_prim,n_independent :: INT
-      restricted :: BIN
-      archive :: ARCHIVE
-      Nc :: REAL
-
-      ! Destroy existing basis, and atom list
-      if (.basis.associated) .basis.destroy
-      if (.atom.associated)  .atom.destroy
-
-      ! Create scfdata
-      .scfdata.destroy
-      .scfdata.create
-
-      ! Get FChk file name
-      if (present(name)) then;                 fchk = name
-      else
-         if (NOT stdin.buffer_exhausted) then; stdin.read(fchk) ! specified on stdin
-         else;                                 fchk = .name
-         end
-      end
-
-      ! Open FChk file
-      chkfile.create(fchk)
-      chkfile.open_for("read")
-      chkfile.move_to_line(1)
-
-      ! Read in basic stuff.
-      chkfile.look_for("Number of atoms",from=1)
-      chkfile.move_to_line_item(5); chkfile.read(.n_atom)
-
-      chkfile.look_for("Charge",from=1)
-      chkfile.move_to_line_item(3); chkfile.read(.charge)
-
-      chkfile.look_for("Multiplicity",from=1)
-      chkfile.move_to_line_item(3); chkfile.read(.spin_multiplicity)
-
-      chkfile.look_for("Number of electrons",from=1)
-      chkfile.move_to_line_item(5); chkfile.read(.n_e)
-
-      chkfile.look_for("Number of alpha electrons",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_a)
-
-      chkfile.look_for("Number of beta electrons",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_b)
-
-      chkfile.look_for("Number of basis functions",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_bf)
-
-      n_independent = .n_bf
-      chkfile.look_for("Number of independant functions",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_independent)
-      WARN_IF(.n_bf/=n_independent,"No. of basis fns /= no. of independent fns")
-      WARN_IF(.n_bf/=n_independent,"MO's are wrong, but density matrix is correct")
-
-      chkfile.look_for("Number of contracted shells",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_shell)
-
-      chkfile.look_for("Number of primitive shells",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_prim_shells)
-
-      chkfile.look_for("Total Energy",from=1)
-      chkfile.move_to_line_item(4); chkfile.read(.scfdata.energy)
-
-      ! Read in atoms
-      chkfile.look_for("Atomic numbers",from=1); chkfile.read_line
-      .atom.create(.n_atom)
-      do a = 1,.n_atom
-         chkfile.read(Z)
-         .atom(a).set_atomic_number(Z)
-      end
-
-      ! Read in nuclear charges
-      chkfile.look_for("Nuclear charges",from=1); chkfile.read_line
-      do a = 1,.n_atom
-         chkfile.read(Nc)
-         .atom(a).set_nuclear_charge(Nc)
-      end
-
-      ! Read in coordinates
-      chkfile.look_for("Current cartesian coordinates",from=1)
-      chkfile.read_line
-      do a = 1,.n_atom
-         chkfile.read(pos)
-         .atom(a).set_position(pos)
-      end
-
-      ! Read gaussian shell info.
-      G_shell_type.create(n_shell)
-      G_n_prim_for_shell.create(n_shell)
-      G_atom_for_shell.create(n_shell)
-      G_ex.create(n_prim_shells)
-      G_cc.create(n_prim_shells)
-
-      chkfile.look_for("Shell types",from=1); chkfile.read_line
-      chkfile.read(G_shell_type)
-      DIE_IF(any(G_shell_type<-1),"unknown shell types exist")
-
-      chkfile.look_for("Number of primitives per shell",from=1); chkfile.read_line
-      chkfile.read(G_n_prim_for_shell)
-
-      chkfile.look_for("Shell to atom map",from=1); chkfile.read_line
-      chkfile.read(G_atom_for_shell)
-
-      chkfile.look_for("Primitive exponents",from=1); chkfile.read_line
-      chkfile.read(G_ex)
-
-      chkfile.look_for("Contraction coefficients",from=1); chkfile.read_line
-      chkfile.read(G_cc)
-
-      ! SP type shells
-      G_cp.create(n_prim_shells); G_cp = 0
-      atom_p.create(.n_atom);     atom_p = 0
-      if (any(G_shell_type==-1)) then
-        do s = 1,n_shell
-           if (G_shell_type(s)/=-1) cycle
-           a = G_atom_for_shell(s)
-           atom_p(a) = atom_p(a) + 1
-           n_prim_shells = n_prim_shells + G_n_prim_for_shell(s)
-        end
-        chkfile.look_for("P(S=P)",from=1); chkfile.read_line
-        chkfile.read(G_cp)
-      end
-
-      ! Get correct number of shells
-      .n_shell = n_shell + atom_p.sum_elements
-      atom_p.destroy
-
-      ! Create basis set arrays
-      shell_l.create(.n_shell)
-      n_prim_for_shell.create(.n_shell)
-      atom_for_shell.create(.n_shell)
-      ex.create(n_prim_shells)
-      cc.create(n_prim_shells)
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         stdout.show(" n_shell =", n_shell)
-         stdout.show(".n_shell =",.n_shell)
-
-         stdout.text("Shell types:")
-         stdout.put(G_shell_type)
-
-         stdout.text("Number of prims for:")
-         stdout.put(G_n_prim_for_shell)
-
-         stdout.text("Atom for shell:")
-         stdout.put(G_atom_for_shell)
-
-         stdout.text("Primitive exponents:")
-         stdout.put(G_ex)
-
-         stdout.text("Contractions:")
-         stdout.put(G_cc)
-
-         stdout.text("P(SP) contractions:")
-         stdout.put(G_cp)
-
-      end
-
-      ! Copy the basis. Expand out L shells.
-      t = 0
-      l = 0; h = 0
-
-      do s = 1,n_shell
-
-        t = t + 1
-        n_prim = G_n_prim_for_shell(s)
-        f = l + 1; l = l + n_prim
-        g = h + 1; h = h + n_prim
-
-        if (G_shell_type(s)==-1) then
-
-           shell_l(t) = 0                    ! S part of L shell
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cc(g:h)
-
-           t = t + 1
-           f = l + 1
-           l = l + n_prim
-           shell_l(t) = 1                    ! P part of L shell
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cp(g:h)
-
-        else
-
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cc(g:h)
-           shell_l(t) = abs(G_shell_type(s)) ! WARNING: sometimes this can be -2
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-
-        end
-
-      end
-
-      G_cp.destroy
-      G_shell_type.destroy
-      G_atom_for_shell.destroy
-      G_n_prim_for_shell.destroy
-      G_ex.destroy; G_cc.destroy
-
-      ENSURE(.n_shell==t,"wrong number of shells")
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         stdout.text("ex:")
-         stdout.put(ex)
-
-         stdout.text("cc:")
-         stdout.put(cc)
-
-      end
-
-      ! Set basis
-      .:set_basis_from_gX_data(shell_l,n_prim_for_shell,atom_for_shell,ex,cc)
-
-      cc.destroy
-      ex.destroy
-      atom_for_shell.destroy
-      n_prim_for_shell.destroy
-      shell_l.destroy
-
-      ! Set atom/basis info
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
-
-      ! Read in orbital energies.
-      orb_energy.create(n_independent)
-      chkfile.look_for("Alpha Orbital Energies",from=1)
-      chkfile.read_line; chkfile.read(orb_energy)
-      .orbital_energies.destroy
-      if (trim(chkfile.next_str)=="Beta") then
-         restricted = FALSE
-         .scfdata.set_scf_kind("uhf")
-         .orbital_energies.create(.n_bf,"unrestricted")
-         .orbital_energies.alpha = ZERO
-         .orbital_energies.alpha(1:n_independent) = orb_energy
-         chkfile.read_line; chkfile.read(orb_energy)
-         .orbital_energies.beta = ZERO
-         .orbital_energies.beta(1:n_independent) = orb_energy
-         orb_energy.destroy
-      else
-         restricted = TRUE
-         .scfdata.set_scf_kind("rhf")
-         .orbital_energies.create(.n_bf,"restricted")
-         .orbital_energies.restricted = ZERO
-         .orbital_energies.restricted(1:n_independent) = orb_energy
-         orb_energy.destroy
-      end
-
-      ! Read in molecular orbitals.
-      temp_mat.create(.n_bf,n_independent)
-      chkfile.look_for("Alpha MO",from=1)
-      chkfile.read_line
-      chkfile.read(temp_mat)
-
-      .molecular_orbitals.destroy
-      if (trim(chkfile.next_str)=="Beta") then
-         .molecular_orbitals.create(.n_bf,"unrestricted")
-         .molecular_orbitals.alpha = ZERO
-         .molecular_orbitals.alpha(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         chkfile.read_line; chkfile.read(temp_mat)
-         .molecular_orbitals.beta = ZERO
-         .molecular_orbitals.beta(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         temp_mat.destroy
-         .:swap_from_g94_orbital_order(.molecular_orbitals.alpha,"row")
-         .:swap_from_g94_orbital_order(.molecular_orbitals.beta, "row")
-      else
-         .molecular_orbitals.create(.n_bf,"restricted")
-         .molecular_orbitals.restricted = ZERO
-         .molecular_orbitals.restricted(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         temp_mat.destroy
-         .:swap_from_g94_orbital_order(.molecular_orbitals.restricted,"row")
-      end
-
-      ! Read in density matrix.
-      .:read_gX_SCF_dm(chkfile,restricted,.density_matrix)
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         if (.molecular_orbitals.associated) then
-         if (.molecular_orbitals.restricted.associated) then
-            MO => .molecular_orbitals.restricted(:,1:.n_a)
-            DD.create(.n_bf,.n_bf)
-            DD.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
-            DD = abs(DD - .density_matrix.restricted)
-            stdout.text("Diff density matrix:")
-            stdout.put(DD)
-            stdout.show("max diff between MO reconstructed density =",maxval(DD))
-            DD.destroy
-         end
-         end
-
-      end
-
-      ! Extract MP2 density matrix to file.  UHF untested
-      .:read_gX_MP2_dm(chkfile,restricted,.density_matrix)
-
-      ! Extract MP3 density matrix to file.  UHF untested
-      .:read_gX_MP3_dm(chkfile,restricted,.density_matrix)
-
-      ! Extract CC density matrix to file.  UHF untested
-      .:read_gX_CC_dm(chkfile,restricted,.density_matrix)
-
-      ! Read in force constants
-      if (chkfile.has_string("Cartesian Force Constants")) then
-         n3n = 3*.atom.dim
-         ntr = n3n.triangle_number
-         .force_constants.create(n3n,n3n)
-         fc.create(ntr)
-         chkfile.look_for("Cartesian Force Constants",from=1)
-         chkfile.read_line
-         chkfile.read(fc)
-         .force_constants.symmetric_unzip_triangle(fc)
-         fc.destroy
-      end
-
-      ! Close chkfile
-      chkfile.close
-      chkfile.destroy
-
-      ! Save data in archives
-      archive.set_defaults
-      archive.set(.name,"density_matrix")
-      archive.write(.density_matrix)
-      archive.set(.name,"molecular_orbitals")
-      archive.write(.molecular_orbitals)
-      archive.set(.name,"orbital_energies")
-      archive.write(.orbital_energies)
-
-      if (associated(.crystal)) then
-         .:resolve_axis_system
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-      end
-
-   end
-
-   read_g94_FChk_file(name) ::: leaky
-   ! Read a g94 checkpoint file (after fchk conversion to ASCII) into TONTO
-      name :: STR, optional
-
-   ENSURE(NOT .use_spherical_basis,"not implemented")
-
-      fchk :: STR
-      chkfile :: TEXTFILE*
-      shell_l,n_prim_for_shell,atom_for_shell,atom_p :: VEC{INT}*
-      G_n_prim_for_shell,G_atom_for_shell,G_shell_type :: VEC{INT}*
-      G_ex,G_cc,G_cp, ex,cc,orb_energy :: VEC{REAL}*
-      pos :: VEC{REAL}(3)
-      temp_mat,DD,MO :: MAT{REAL}*
-      Z, a,s,t, f,l,g,h :: INT
-      n_prim_shells,n_shell,n_prim,n_independent :: INT
-      restricted :: BIN
-      archive :: ARCHIVE
-
-      ! Destroy existing basis, and atom list
-      if (.basis.associated) .basis.destroy
-      if (.atom.associated)  .atom.destroy
-
-      ! Create scfdata
-      .scfdata.destroy
-      .scfdata.create
-
-      ! Get FChk file name
-      if (present(name)) then;                 fchk = name
-      else
-         if (NOT stdin.buffer_exhausted) then; stdin.read(fchk) ! specified on stdin
-         else;                                 fchk = .name
-         end
-      end
-
-      ! Open FChk file
-      chkfile.create(fchk)
-      chkfile.open_for("read")
-      chkfile.move_to_line(1)
-
-      ! Read in basic stuff.
-      chkfile.look_for("Number of atoms",from=1)
-      chkfile.move_to_line_item(5); chkfile.read(.n_atom)
-
-      chkfile.look_for("Charge",from=1)
-      chkfile.move_to_line_item(3); chkfile.read(.charge)
-
-      chkfile.look_for("Multiplicity",from=1)
-      chkfile.move_to_line_item(3); chkfile.read(.spin_multiplicity)
-
-      chkfile.look_for("Number of electrons",from=1)
-      chkfile.move_to_line_item(5); chkfile.read(.n_e)
-
-      chkfile.look_for("Number of alpha electrons",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_a)
-
-      chkfile.look_for("Number of beta electrons",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_b)
-
-      chkfile.look_for("Number of basis functions",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_bf)
-
-      n_independent = .n_bf
-      chkfile.look_for("Number of independant functions",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_independent)
-      WARN_IF(.n_bf/=n_independent,"No. of basis fns /= no. of independent fns")
-      WARN_IF(.n_bf/=n_independent,"MO's are wrong, but density matrix is correct")
-
-      chkfile.look_for("Number of contracted shells",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_shell)
-
-      chkfile.look_for("Number of primitive shells",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_prim_shells)
-
-      chkfile.look_for("Total Energy",from=1)
-      chkfile.move_to_line_item(4); chkfile.read(.scfdata.energy)
-
-      ! Read in atoms
-      chkfile.look_for("Atomic numbers",from=1); chkfile.read_line
-      .atom.create(.n_atom)
-      do a = 1,.n_atom
-         chkfile.read(Z)
-         .atom(a).set_atomic_number(Z)
-      end
-
-      ! Read in coordinates
-      chkfile.look_for("Current cartesian coordinates",from=1)
-      chkfile.read_line
-      do a = 1,.n_atom
-         chkfile.read(pos)
-         .atom(a).set_position(pos)
-      end
-
-      ! Read gaussian shell info.
-      G_shell_type.create(n_shell)
-      G_n_prim_for_shell.create(n_shell)
-      G_atom_for_shell.create(n_shell)
-      G_ex.create(n_prim_shells)
-      G_cc.create(n_prim_shells)
-
-      chkfile.look_for("Shell types",from=1); chkfile.read_line
-      chkfile.read(G_shell_type)
-      DIE_IF(any(G_shell_type<-1),"unknown shell types exist")
-
-      chkfile.look_for("Number of primitives per shell",from=1); chkfile.read_line
-      chkfile.read(G_n_prim_for_shell)
-
-      chkfile.look_for("Shell to atom map",from=1); chkfile.read_line
-      chkfile.read(G_atom_for_shell)
-
-      chkfile.look_for("Primitive exponents",from=1); chkfile.read_line
-      chkfile.read(G_ex)
-
-      chkfile.look_for("Contraction coefficients",from=1); chkfile.read_line
-      chkfile.read(G_cc)
-
-      ! SP type shells
-      G_cp.create(n_prim_shells); G_cp = 0
-      atom_p.create(.n_atom);     atom_p = 0
-      if (any(G_shell_type==-1)) then
-        do s = 1,n_shell
-           if (G_shell_type(s)/=-1) cycle
-           a = G_atom_for_shell(s)
-           atom_p(a) = atom_p(a) + 1
-           n_prim_shells = n_prim_shells + G_n_prim_for_shell(s)
-        end
-        chkfile.look_for("P(S=P)",from=1); chkfile.read_line
-        chkfile.read(G_cp)
-      end
-
-      ! Get correct number of shells
-      .n_shell = n_shell + atom_p.sum_elements
-      atom_p.destroy
-
-      ! Create basis set arrays
-      shell_l.create(.n_shell)
-      n_prim_for_shell.create(.n_shell)
-      atom_for_shell.create(.n_shell)
-      ex.create(n_prim_shells)
-      cc.create(n_prim_shells)
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         stdout.show(" n_shell =", n_shell)
-         stdout.show(".n_shell =",.n_shell)
-
-         stdout.text("Shell types:")
-         stdout.put(G_shell_type)
-
-         stdout.text("Number of prims for:")
-         stdout.put(G_n_prim_for_shell)
-
-         stdout.text("Atom for shell:")
-         stdout.put(G_atom_for_shell)
-
-         stdout.text("Primitive exponents:")
-         stdout.put(G_ex)
-
-         stdout.text("Contractions:")
-         stdout.put(G_cc)
-
-         stdout.text("P(SP) contractions:")
-         stdout.put(G_cp)
-
-      end
-
-      ! Copy the basis.
-      t = 0
-      l = 0; h = 0
-
-      do s = 1,n_shell
-
-        t = t + 1
-        n_prim = G_n_prim_for_shell(s)
-        f = l + 1; l = l + n_prim
-        g = h + 1; h = h + n_prim
-
-        ! Expand out L shell
-        if (G_shell_type(s)==-1) then
-
-           shell_l(t) = 0                    ! S part of L shell
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cc(g:h)
-
-           t = t + 1
-           f = l + 1
-           l = l + n_prim
-           shell_l(t) = 1                    ! P part of L shell
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cp(g:h)
-
-        ! Normal shell
-        else
-
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cc(g:h)
-           shell_l(t) = abs(G_shell_type(s)) ! WARNING: sometimes this can be -2
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-
-        end
-
-      end
-
-      G_cp.destroy
-      G_shell_type.destroy
-      G_atom_for_shell.destroy
-      G_n_prim_for_shell.destroy
-      G_ex.destroy
-      G_cc.destroy
-
-      ENSURE(.n_shell==t,"wrong number of shells")
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         stdout.text("ex:")
-         stdout.put(ex)
-
-         stdout.text("cc:")
-         stdout.put(cc)
-
-      end
-
-      ! Set basis
-      .:set_basis_from_gX_data(shell_l,n_prim_for_shell,atom_for_shell,ex,cc)
-
-      cc.destroy
-      ex.destroy
-      atom_for_shell.destroy
-      n_prim_for_shell.destroy
-      shell_l.destroy
-
-      ! .basis.unnormalise ! NOTE this
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
-
-      ! Read in orbital energies.
-      orb_energy.create(n_independent)
-      chkfile.look_for("Alpha Orbital Energies",from=1)
-      chkfile.read_line; chkfile.read(orb_energy)
-      .orbital_energies.destroy
-      if (trim(chkfile.next_str)=="Beta") then
-         restricted = FALSE
-         .scfdata.set_scf_kind("uhf")
-         .orbital_energies.create(.n_bf,"unrestricted")
-         .orbital_energies.alpha = ZERO
-         .orbital_energies.alpha(1:n_independent) = orb_energy
-         chkfile.read_line; chkfile.read(orb_energy)
-         .orbital_energies.beta = ZERO
-         .orbital_energies.beta(1:n_independent) = orb_energy
-         orb_energy.destroy
-      else
-         restricted = TRUE
-         .scfdata.set_scf_kind("rhf")
-         .orbital_energies.create(.n_bf,"restricted")
-         .orbital_energies.restricted = ZERO
-         .orbital_energies.restricted(1:n_independent) = orb_energy
-         orb_energy.destroy
-      end
-
-      ! Read in molecular orbitals.
-      temp_mat.create(.n_bf,n_independent)
       chkfile.look_for("Alpha MO",from=1)
       chkfile.read_line
       chkfile.read(temp_mat)
@@ -3568,7 +2907,7 @@ contains
       swap :: STR
 
       s,f,l,ls,fg,lg,i,j :: INT
-      fac :: VEC{REAL}*
+      fac :: VEC{REAL}@
       ff :: VEC{INT}(10) = [ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 ]
       gg :: VEC{INT}(15) = [15, 5, 1, 14, 13, 9, 4, 6, 2, 12, 10, 3, 11, 8, 7]
 
@@ -3595,7 +2934,7 @@ contains
                lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
                fg = lg + 1
                lg = lg + GAUSSIAN_DATA:n_comp(ls)
-               fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
                do i = f,l
                   X(i,:) = X(i,:)*fac(i-f+1)
                end
@@ -3629,7 +2968,7 @@ contains
                lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
                fg = lg + 1
                lg = lg + GAUSSIAN_DATA:n_comp(ls)
-               fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
                do j = f,l
                   X(:,j) = X(:,j)*fac(j-f+1)
                end
@@ -3653,7 +2992,7 @@ contains
       swap :: STR
 
       s,f,l,ls,fg,lg,i,j :: INT
-      fac :: VEC{REAL}*
+      fac :: VEC{REAL}@
       ff :: VEC{INT}(10) = [ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 ]
       gg :: VEC{INT}(15) = [15, 5, 1, 14, 13, 9, 4, 6, 2, 12, 10, 3, 11, 8, 7]
 
@@ -3674,7 +3013,7 @@ contains
                lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
                fg = lg + 1
                lg = lg + GAUSSIAN_DATA:n_comp(ls)
-               fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
                do i = f,l
                   X(i,:) = X(i,:)/fac(i-f+1)
                end
@@ -3703,7 +3042,7 @@ contains
                lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
                fg = lg + 1
                lg = lg + GAUSSIAN_DATA:n_comp(ls)
-               fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
                do j = f,l
                   X(:,j) = X(:,j)/fac(j-f+1)
                end
@@ -4154,8 +3493,6 @@ contains
       mol.name              = .atom_group(n).name
       mol.charge            = .atom_group(n).charge
       mol.spin_multiplicity = mol.:default_spin_multiplicity
-      mol.atom_info_made    = FALSE
-      mol.:set_atom_info
 
       ! Copy the basis set and set the basis info
       ! WARNING: dont destroy basis of mol !
@@ -4167,6 +3504,10 @@ contains
       ! Assign the crystal
       ! WARNING: dont destroy ...
       if (.crystal.associated) mol.crystal => .crystal
+
+      ! Make atom info
+      mol.atom_info_made = FALSE
+      mol.:finalize_atoms_no_groups
 
       ! Set guess-type SCF defaults
       mol.:set_scf_guess_defaults_from(.scfdata)
@@ -4388,9 +3729,10 @@ contains
       mol.atom.create_copy(.atom(.atom_group(g).atom_index))
 
       ! Make atom info - this will set multiplicity!
-      mol.atom_info_made = FALSE
-      mol.atom.set_group_to(g)
-      mol.:set_atom_info
+      ! Need below?
+    ! mol.atom_info_made = FALSE
+    ! mol.atom.set_group_to(g)
+    ! mol.:set_atom_info
 
       ! Add cap atoms !!!!!!!!!!!!!!!
       .:add_MFCC_cap_for_group(g,mol)
@@ -4402,8 +3744,7 @@ contains
       ! Make atom info
       mol.atom_info_made = FALSE
       mol.atom.set_group_to(g)
-      mol.:set_atom_info
-      mol.atom.set_group_to(g)
+      mol.:finalize_atoms
 
       ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
       if (.atom_group(g).spin_multiplicity_set) then
@@ -4887,7 +4228,7 @@ contains
 
    end
 
-   merge_atom_groups ::: private, leaky
+   merge_atom_groups ::: leaky, private
    ! Delete any existing .atom and .basis and set to the concatenation
    ! of the molecules in .atom_group
       self :: INOUT
@@ -4944,8 +4285,9 @@ contains
 !      endif
       .:set_charge(charge)
       .:set_spin_multiplicity(unpaired_electrons + 1)
-      .:set_atom_info
-      .:resolve_basis_info
+
+      ! Finalise atom info
+      .:finalize_atoms
 
    end
 
@@ -11188,10 +10530,8 @@ contains
           .:set_spin_multiplicity(charge_multiplicity(2))
       endif
 
-
-      .BASE:set_atom_info
-      .BASE:finalize_atom_groups ! Take care - can be called recursively - Dylan
-      .BASE:resolve_basis_info
+      ! Finalize atom info/basis sets
+      .:finalize_atoms
 
       call datafile%sbf%get("scf_kind", tmp_str, err)
 
