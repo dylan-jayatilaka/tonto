@@ -636,7 +636,7 @@ contains
       skipab.create(n_pt)
 
       ! Loop over integration atoms "c"
-      parallel do u = 1,.crystal.n_unique_frag_atoms
+      do u = 1,.crystal.n_unique_frag_atoms
 
          c  = .crystal.unique_frag_atom(u)
          rc = .atom(c).position
@@ -8458,7 +8458,7 @@ contains
       .BASE:put_atom_group_mols
 
       ! Loop over atom group "g"
-      do g = 1,.atom_group.dim
+      parallel do g = 1,.atom_group.dim
 
          ! Set up a molecule for this group of atoms
          mol => .atom_group(g).mol
@@ -8471,6 +8471,63 @@ contains
 
          ! Do the SCF !!!!!!!!!!!!!!!!!!!!!
          name = "stdout." // trim(mol.name)
+         tonto.IO_is_allowed = TRUE
+         stdout.redirect(name)
+         stdout.move_to_end
+         mol.scfdata.set_output(TRUE)
+         if (present(initial_density)) &
+            mol.scfdata.set_initial_density(initial_density)
+         mol.:scf
+         stdout.revert
+         tonto.IO_is_allowed = FALSE
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      
+      end
+
+   end
+
+   MFCC_SCF_plus_SFs(initial_density,spin_density) ::: leaky
+   ! Do an MFCC SCF calculation on each of the .atom_group.mol
+   ! molecules and calculate the structure factors.
+      self :: INOUT
+      initial_density :: STR, optional, IN
+      spin_density :: BIN, optional, IN
+
+   ENSURE(.atom_group.associated,"no atom_group info")
+   ENSURE(.scfdata.associated,"no scfdata")
+   ENSURE(.crystal.associated,"no crystal")
+   ENSURE(.cif.associated,"no cif specified")
+   ENSURE(.cif.is_mmCIF,"you must use an mmCIF for input!")
+   ENSURE(.cif.use_MFCC,"you must set use_MFCC= in the cif= section!")
+
+      name :: STR
+      mol :: MOLECULE*
+      n_group,g :: INT
+
+      ! Output details?
+      ! TO DO: add SCF to stdout.residue file?
+      .BASE:put_atom_group_mols
+
+      ! Make ANO's & interpolators for parent
+      ! WARNING: dies if no ANOs or interpolators
+      .:make_ANO_data
+
+      ! Loop over atom group "g"
+      parallel do g = 1,.atom_group.dim
+
+         ! Set up a molecule for this group of atoms
+         mol => .atom_group(g).mol
+         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
+
+         ! Skip SCF for atoms without electrons
+         if (mol.BASE:no_of_electrons < 1) cycle
+
+         mol.crystal => .crystal
+
+         ! Do the SCF !!!!!!!!!!!!!!!!!!!!!
+         name = "stdout." // trim(mol.name)
+         tonto.IO_is_allowed = TRUE
          stdout.redirect(name)
          stdout.move_to_end
          mol.scfdata.set_output(TRUE)
@@ -8480,7 +8537,20 @@ contains
          stdout.revert
          !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+         ! NOTE: change DFT -> becke
+         .atom_group(g).mol.BASE:initialize_DFT_grids
+
+         ! Assign previously made ANOs
+         .atom_group(g).mol.BASE:set_ANOs_from(self)
+
+         ! Write the SFs for each fragment to disk
+         n_group = .atom_group(g).atom_index.dim
+         .atom_group(g).mol.SCF:get_unique_Hirshfeld_atom_SFs(n_group,spin_density)
+         tonto.IO_is_allowed = FALSE
+      
       end
+
+      tonto.barrier
 
    end
 
