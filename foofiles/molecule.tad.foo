@@ -33,6 +33,137 @@ contains
 !  Hirshfeld atom refinement
 !  =========================
 
+   MFCC_HAR_refinement ::: leaky
+   ! Do an MFCC fragmentation HAR.
+      self :: INOUT
+
+   DIE_IF(NOT .atom.associated, "no atoms to fit")
+   DIE_IF(NOT .atom_group.associated, "no atom_group's")
+   DIE_IF(NOT .scfdata.associated,"no scfdata")
+   DIE_IF(NOT .crystal.associated, "no crystal")
+   DIE_IF(NOT .crystal.data.associated,"no crystal data")
+   DIE_IF(NOT .crystal.xray_data.associated,"no crystal xray data")
+   DIE_IF(NOT .cif.associated,"no cif")
+   DIE_IF(NOT .cif.is_mmCIF,"no mm cif")
+   DIE_IF(NOT .cif.use_MFCC,"no MFCC set for cif")
+
+      results,output :: BIN
+
+      ! Use disk SFs for now ...
+      .crystal.data.set_use_disk_SFs(TRUE)
+
+      ! Output options
+      results = .crystal.data.show_refinement_results
+      output  = .crystal.data.show_refinement_output
+
+      ! ANO's and interpolators?
+      .SCF:make_Hirshfeld_inputs
+
+      ! Always use initial_density for stability
+      .scfdata.set_initial_density(.scfdata.spinorbital_kind)
+
+      ! Initial F_calc's for pruning
+      if (NOT .crystal.data.reflections.have_F_pred) then
+         if (output) then
+            stdout.flush
+            stdout.text("Making F_pred ...")
+         end
+         .SCF:MFCC_SCF_plus_SFs
+         .crystal.make_F_predicted
+      end
+
+      ! Initialize message
+      if (output) then
+         stdout.flush
+         stdout.text("Starting refinement ...")
+      end
+      .crystal.initialize_refinement_data
+
+      ! Turn off unwanted printing ...
+      .crystal.data.set_refine_structure(TRUE)
+      .crystal.data.set_fit_structure(FALSE)
+      .scfdata.set_output(FALSE)
+
+      ! Banner, options/switches, initial parameters,
+      ! start banner, and iteration table header
+      if (output) then
+         .crystal.put_refinement_header_info
+      end
+
+      do
+
+         ! Remake fragments & do SCF
+         if (.crystal.data.ref_iteration>0) then
+            .BASE:make_MFCC_fragments
+            .SCF:MFCC_SCF_plus_SFs(initial_density="restricted")
+         end
+         
+         !!!!!!!!!!!!!!!!!!!!!!
+         .:LS_fit_MFCC_HAs_disk
+         !!!!!!!!!!!!!!!!!!!!!!
+         
+         
+         ! Update geometry & errors
+         .crystal.update_refinement_parameters
+         .crystal.update_refinement_ESDs
+
+         ! Put the iteration results
+         if (output) then
+            .crystal.data.put_refinement_table_body
+         end
+
+         ! Finished?
+         if (.crystal.refinement_finished) exit
+
+      end
+      
+      ! Table footer
+      if (output) then
+         .crystal.data.ref_table.put_footer
+      end
+
+      ! Final results
+      if (results) then
+         .crystal.put_refinement_results
+      end
+
+      ! Final bond lengths, angles, torsions, with errors
+      if (output) then
+         .crystal.put_bond_info_with_errors
+      end
+
+      ! SCF @ final geometry
+      .SCF:MFCC_SCF
+      .scfdata.set_output(TRUE) ! put back
+
+      ! Do/put analysis info ...
+      .crystal.put_data_analysis(output)
+      .SCF:get_minmax_residual_density(output)
+
+      ! Put final CIF after residuals
+      .BASE:put_CIFs(with_ESDs=TRUE)
+
+      ! Do standatd plots and properties
+      if (.crystal.data.do_standard_plots) then
+      end
+
+   end
+
+   LS_fit_MFCC_HAs_disk ::: leaky
+   ! LS fit the Hirshfeld atoms to the calculated structure factors.
+   ! Disk version
+      self :: INOUT
+
+      ! Do a least squares
+      .TAD:LS_fit(.crystal.data.show_fit_output,.crystal.data.show_fit_results)
+
+
+      ! Put final CIF after residuals
+      .BASE:put_CIFs(with_ESDs=TRUE)
+        
+   end
+
+
    HAR_refinement ::: leaky
    ! Do an iterative X-ray structure refinement, alternating scf and
    ! fitting, until appropriately converged, normally to 0.001\sigma
@@ -77,7 +208,7 @@ contains
             stdout.flush
             stdout.text("Making F_pred ...")
          end
-         .SCF:make_X_structure_factors
+         .SCF:make_X_SFs
       end
 
       ! Prune?
@@ -111,6 +242,9 @@ contains
          .crystal.put_refinement_header_info
       end
 
+      !!!!!!!!!!!!!
+      ! HAR cycle !
+      !!!!!!!!!!!!!
       do
 
          ! SCF
@@ -219,6 +353,8 @@ contains
       sf_n :: MAT{CPX}*
 
       ! Hirshfeld-atom structure factors
+      ! NOTE: in iteration 0, these were already calculated
+      ! as part of make_X_SFs ... double work!
       .SCF:get_unique_Hirshfeld_atom_SFs(sf_n)
 
       ! Do a least squares
@@ -369,8 +505,12 @@ contains
          .BASE:destroy_scf_results(keep_MOs=TRUE)
          .BASE:destroy_scf_integrals
 
+         if (.scfdata.associated) then
+         if (NOT .scfdata.scf_kind=="mfcc") then
          ! Orthonormalize MO's at new geometry
          .SCF:symmetrically_orthonormalise(.molecular_orbitals)
+         end
+         end
 
       end
 
@@ -610,7 +750,7 @@ contains
       end
 
       ! Reset ANO interpolators
-      .BASE:destroy_ANO_interpolators
+      .BASE:destroy_interpolators
       .SCF:make_Hirshfeld_inputs
 
       ! Copy ANO interpolators (which become IHA's)
@@ -622,14 +762,13 @@ contains
 
       ! Reassign fresh (non-ANO) interpolator copy;
       ! Create averaged rho; set extrapolator.
-      .BASE:destroy_ANOs
+      .BASE:destroy_ANO_matrices
       rho_av.create(.n_atom)
       do a = 1,.n_atom
          .atom(a).interpolator => interpolator(a)
          rho_av(a).element.create(interpolator(a).n_data)
       end
       .atom.set_is_unique_kind(FALSE)
-      .atom.set_interpolators_made(TRUE)
 
       ! Banner
       stdout.flush
@@ -716,7 +855,7 @@ contains
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.associated,"no atom list")
-   ENSURE(.atom(1).interpolators_made,"No interpolators")
+   ENSURE(.atom.has_all_interpolators,"No interpolators")
    ENSURE(rho_av.dim==interpolator.n_data,"wrong size, rho_av")
    ENSURE(a.is_in_range([1,.n_atom]),"a out of range")
    ENSURE(.overlapping_atoms_for_atom.associated,"no overlapping_atoms")
@@ -845,11 +984,8 @@ contains
       end
 
       ! Destroy atom ANO data and interpolators. Leaky.
-      .BASE:destroy_ANOs
+      .BASE:destroy_ANO_matrices
       .BASE:destroy_interpolators
-
-      ! Set this switch
-      .atom.set_interpolators_made(TRUE)
 
       ! The list of new atomic radial densities
       rho_av.create(.n_atom)
@@ -935,7 +1071,7 @@ contains
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.associated,"no atom list")
-   ENSURE(.atom(1).interpolators_made,"No interpolators")
+   ENSURE(.atom.has_all_interpolators,"No interpolators")
    ENSURE(rho_av.dim==interpolator.n_data,"wrong size, rho_av")
    ENSURE(a.is_in_range([1,.n_atom]),"a out of range")
 
