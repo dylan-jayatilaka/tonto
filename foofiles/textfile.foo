@@ -155,22 +155,10 @@ contains
    end
 
 
-!   assign_stdout_to(file) ::: selfless
-!   ! Assign stdout to "file" in case the latter was explicitly named.
-!   ! and opened ..
-!      file :: TEXTFILE*
-!
-!   DIE_IF(stdout.associated,"stdout is already created")
-!
-!      stdout => file
-!
-!   end
-
-
    create(name) ::: leaky
    ! Create a textfile, and optionally set the name. Does not open the file.
       self :: PTR
-      name :: STR, optional
+      name :: STR, optional, IN
 
       ! Allocate and nullify
       allocate(self)
@@ -182,11 +170,8 @@ contains
       ! Set the name if present
       if (present(name)) .set_name(name)
 
-      ! Get a unique unit number
-      UNIT_NUMBER:get_available_unit_number(.unit)
-
       ! Get ready to write
-      .clear_and_put_margin
+      .clear_and_put_margin ! <<< IMPURE
 
    end
 
@@ -213,7 +198,7 @@ contains
       .internal = internal
 
       ! Get ready to read
-      .read_line
+      .read_line ! <<< IMPURE
 
    end
 
@@ -227,8 +212,6 @@ contains
       .destroy_ptr_part
 
       if (.is_open) .close
-
-      UNIT_NUMBER:free_the_used_unit_number(.unit)
 
       deallocate(self)
 
@@ -250,16 +233,22 @@ contains
    destroy_ptr_part ::: leaky
    ! Destroy the pointer parts of "self", including any saved parts,
    ! which are destroyed recursively.
+      self :: INOUT
+
       .buffer.destroy_ptr_part
       .replacement_list.destroy
       .internal.destroy
       .saved.destroy
+
    end
 
-   destroy_replacement_list ::: leaky
+   destroy_replacement_list ::: leaky, PURE
    ! Destroy the .replacement_list; needed if set_replacement_list is used
+      self :: INOUT
+
       .replacement_list.destroy
       .buffer.replacement_list.destroy
+
    end
 
 !  ====
@@ -274,9 +263,6 @@ contains
       ! Create fresh file, with no name
       .create
 
-      ! Free nameless file unit
-      UNIT_NUMBER:free_the_used_unit_number(.unit)
-
       ! Copy the file, unit and all
       .copy(file)
 
@@ -285,8 +271,9 @@ contains
    copy(file,copy_saved) ::: recursive, leaky
    ! Make a copy of this textfile. If "saved" is TRUE, recursively
    ! copy the .saved component. Default is *not* to recursively copy.
-      file :: TEXTFILE
-      copy_saved :: BIN, optional
+      self :: INOUT
+      file :: TEXTFILE, IN
+      copy_saved :: BIN, optional, IN
 
       ! Non pointer (simple) copy
       self = file
@@ -300,7 +287,9 @@ contains
       ! Copy saved only if requested (recursive)
       if (present(copy_saved)) then
       if (copy_saved) then
-      if (file.saved.associated)            .saved.create_copy(file.saved)
+      if (file.saved.associated) then
+         .saved.create_copy(file.saved)
+      end
       end
       end
 
@@ -443,7 +432,6 @@ contains
          .buffer.destroy_ptr_part
          .replacement_list.destroy
          .close
-         UNIT_NUMBER:free_the_used_unit_number(.unit)
       end
       deallocate(self)
 
@@ -468,7 +456,6 @@ contains
       .real_width              = saved.real_width
       .real_precision          = saved.real_precision
       .real_style              = saved.real_style
-      .line_format             = saved.line_format
       .margin_width            = saved.margin_width
       .using_array_labels      = saved.using_array_labels
       .default_units           = saved.default_units
@@ -492,49 +479,41 @@ contains
      action :: STR, IN
 
      select case (action)
-        case("read      ","reading   ","read-only ") ; .open_for_read
-        case("write     ","writing   ","write-only") ; .open_for_write
-        case default; UNKNOWN(action)
+     case("read      ","reading   ","read-only ") ; .open_for_read
+     case("write     ","writing   ","write-only") ; .open_for_write
+     case default; UNKNOWN(action)
      end
 
    end
 
    open_for_read ::: private
-   ! Open the input file. The input file object must already be created
-   ! The file is positioned at the first line.
+   ! Open the input file. The input file object must already be
+   ! created. The file is positioned at the first line.
       self :: INOUT
 
+   DIE_IF(NOT .exists, "not an existing file!")
    ENSURE(.internal.disassociated,"no need to open an internal file")
 
-      unit,fail :: INT
-      name :: STR
-
       .action = "read"
+
+      ! Open the file & set unit number
       .io_status = 0
-
-      unit = .unit
-      name = .name
-      fail = 0
-
-      if (.exists) then
-         .set_no_of_lines
-      else
-         DIE("the file "//trim(name)//" does not exist!")
-      end
-
       if (IO_IS_ALLOWED) then
-
-         open(unit=unit,           &
-              file=trim(name),     &
+         open(file=trim(.name),    &
+              newunit=.unit,       &
               status="old",        &
               access="sequential", &
               form="formatted",    &
-              iostat=fail)
+              iostat=.io_status)
       end
-      PARALLEL_BROADCAST(fail,0)
 
-      DIE_IF(fail/=0,"error opening old file for reading: "//trim(name))
-      .io_status = fail
+      ! Broadcast & check for fail
+      PARALLEL_BROADCAST(.unit,tonto.master_processor)
+      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      DIE_IF(.io_status/=0,"error opening old file: "//trim(.name))
+
+      ! Set no of lines in the file & rewind
+      .set_no_of_lines
 
    end
 
@@ -554,36 +533,26 @@ contains
    ! Open an old output file for writing
       self :: INOUT
 
+   DIE_IF(NOT .exists, "not an existing file!")
    ENSURE(.internal.disassociated,"no need to open an internal file")
-   ENSURE(.exists, "not an existing file!")
-
-      unit,fail :: INT
-      name :: STR
 
       .action = "write"
+
+      ! Open the file & set unit number
       .io_status = 0
-
-      unit = .unit
-      name = .name
-      fail = 0
-      
-
-      if (tonto.is_master_processor) then
       if (IO_IS_ALLOWED) then
-
-         open(unit=unit,           &
-              file=trim(name),     &
+         open(file=trim(.name),    &
+              newunit=.unit,       &
               status="old",        &
               access="sequential", &
               form="formatted",    &
-              iostat=fail)
+              iostat=.io_status)
       end if
 
-      .io_status = fail
-
-      end if
+      ! Broadcast & check for fail
+      PARALLEL_BROADCAST(.unit,tonto.master_processor)
       PARALLEL_BROADCAST(.io_status,tonto.master_processor)
-      DIE_IF(.io_status/=0,"error opening old file: "//trim(name))
+      DIE_IF(.io_status/=0,"error opening old file: "//trim(.name))
 
       .clear_and_put_margin
 
@@ -593,50 +562,52 @@ contains
    ! Open an new output file for writing
       self :: INOUT
 
+   DIE_IF(.exists, "output file exists!")
    ENSURE(.internal.disassociated,"no need to open an internal file")
-   ENSURE(NOT .exists, "output file exists!")
-
-      unit,fail :: INT
-      name :: STR
 
       .action = "write"
+
+      ! Open the file & set unit number
       .io_status = 0
-
-      unit = .unit
-      name = .name
-      fail = 0
-
-      if (tonto.is_master_processor) then
       if (IO_IS_ALLOWED) then
-
-         open(unit=unit,           &
-              file=trim(name) ,    &
+         open(file=trim(.name) ,   &
+              newunit=.unit,       &
               status="new",        &
               access="sequential", &
               form="formatted",    &
-              iostat=fail)
+              iostat=.io_status)
       end if
 
-      .io_status = fail
-
-      end if
-
+      ! Broadcast & check for fail
+      PARALLEL_BROADCAST(.unit,tonto.master_processor)
       PARALLEL_BROADCAST(.io_status,tonto.master_processor)
-      DIE_IF(.io_status/=0,"error opening new file "//trim(name))
+      DIE_IF(.io_status/=0,"error opening new file "//trim(.name))
 
    end
 
    close
-   ! Close the input file
+   ! Close the input file, if opened.
       self :: INOUT
+
+   DIE_IF(NOT .exists, "not an existing file!")
 
       opened :: BIN
 
+      ! Check if unit is opened
+      .io_status = 0
       if (IO_IS_ALLOWED) then
-         inquire(unit=.unit,opened=opened)
-         if (opened) then
-            close(unit=.unit)
-         end
+         inquire(unit=.unit,iostat=.io_status,opened=opened)
+      end
+
+      ! Failure?
+      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      DIE_IF(.io_status/=0,"error opening new file "//trim(.name))
+
+      ! Close the file
+      if (IO_IS_ALLOWED) then
+      if (opened) then
+         close(unit=.unit)
+      end
       end
 
    end
@@ -645,9 +616,17 @@ contains
    ! Close the input file and delete it from the file system
       self :: INOUT
 
+   DIE_IF(NOT .exists, "not an existing file!")
+
+      ! Close & delete the file
+      .io_status = 0
       if (IO_IS_ALLOWED) then
-         close(unit=.unit,status="delete")
+         close(unit=.unit,iostat=.io_status,status="delete")
       end
+
+      ! Failure?
+      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      DIE_IF(.io_status/=0,"error opening new file "//trim(.name))
 
    end
 
@@ -655,6 +634,7 @@ contains
    ! Delete the input file from the file system
       self :: INOUT
 
+      ! Open file: is this needed?
       if (NOT .is_open) .open_for("read")
 
       .close_and_delete
@@ -702,7 +682,6 @@ contains
       .real_width         = TEXTFILE_REAL_WIDTH
       .real_precision     = TEXTFILE_REAL_PRECISION
       .real_style         = TEXTFILE_REAL_STYLE
-      .line_format        = " "
       .margin_width       = TEXTFILE_MARGIN_WIDTH
       .using_array_labels = TEXTFILE_USE_ARRAY_LABELS
 
@@ -710,65 +689,59 @@ contains
 
    set_no_of_lines ::: private
    ! Set the number of lines in the file
+      self :: INOUT
 
-   ENSURE(.exists, "not an existing file!")
-   ENSURE(.action=="read","not a readable file")
+   DIE_IF(NOT .exists,  "file " //trim(.name) //" does not exist!")
+   DIE_IF(NOT .is_open, "file " //trim(.name) //" does not exist!")
+   DIE_IF(.action/="read","has not been opened for reading")
 
-      unit,fail,l :: INT
-      name :: STR
+      l :: INT
       line :: STR(len=8)
 
-      unit = .unit
-      name = .name
-      fail = 0
-
       ! Open the file
-      if (IO_IS_ALLOWED) then
+    ! .io_status = 0
+    ! if (IO_IS_ALLOWED) then
+    !    open(file=trim(.name),    &
+    !         newunit=.unit,       &
+    !         status="unknown",    &
+    !         access="sequential", &
+    !         form="formatted",    &
+    !         iostat=.io_status)
+    ! end
 
-         open(unit=unit,           &
-              file=trim(name),     &
-              status="old",        &
-              access="sequential", &
-              form="formatted",    &
-              iostat=fail)
-      end
-      PARALLEL_BROADCAST(fail,0)
+    ! PARALLEL_BROADCAST(.unit,tonto.master_processor)
+    ! PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+    ! DIE_IF(.io_status/=0,"error opening file "//trim(.name))
 
-      DIE_IF(fail/=0,"error opening old file for reading: "//trim(name))
-      .io_status = fail
-
-      ! Read the lines until done
+      ! Read the lines until done i.e. failed
+      .io_status = 0
       if (IO_IS_ALLOWED) then
          l = 0
          do
             line = " "
-            line = line
-            read(unit,fmt="(a)",iostat=fail) line
+            read(.unit,fmt="(a)",iostat=.io_status) line
             l = l + 1
-            if (fail/=0) exit
+            if (.io_status/=0) exit
          end
       end
+
+      ! Broadcast - but don't check .io_status!
       PARALLEL_BROADCAST(l,0)
 
       ! Set the number of lines.
       ! WARNING: this assumes the fail happens after
-      ! the stop record, so we have to move befor that.
+      ! the stop record, so we have to move before that.
       .no_of_lines = l - 1
 
-      ! Rewind
-      if (IO_IS_ALLOWED) then
-         close(unit,iostat=fail)
-      end
-      PARALLEL_BROADCAST(fail,0)
-
-      DIE_IF(fail/=0,"error closing file for reading: "//trim(name))
-      .io_status = fail
+      ! Rewind the file
+      .rewind
 
    end
 
    set_name(name)
    ! Set the file name
-      name :: STR
+      self :: INOUT
+      name :: STR, IN
 
    DIE_IF(name==" ","name is blank!")
 
@@ -776,9 +749,12 @@ contains
 
    end
 
-   reset_io_status
+   reset_io_status ::: pure
    ! Reset manually the io_status if it is safe to do so.
+      self :: INOUT
+
       .io_status = 0
+
    end
 
 !  =========================================
@@ -941,18 +917,18 @@ contains
       tmp = adjustl(fmt)
       tmp.get_next_item_position(f,l)
       DIE_IF(l==0, "fmt is blank")
-      tmp = tmp(:l)
+      tmp = tmp(1:l)
 
       ! Get the number of columns
       s = tmp.index_of_character_not_in("0123456789")
       DIE_IF(s==0, "fmt has no # of fields")
-      .set_no_of_fields_per_line(tmp(:s-1).to_int)
+      .set_no_of_fields_per_line(tmp(1:s-1).to_int)
 
       ! Get the style
       tmp = tmp(s:)
       s = tmp.index_of_character_in("0123456789")
       DIE_IF(s==0, "fmt has no real style")
-      .set_real_style(tmp(:s-1))
+      .set_real_style(tmp(1:s-1))
 
       ! Get the width
       tmp = tmp(s:)
@@ -960,7 +936,7 @@ contains
       DIE_IF(s==0, "fmt has no width")
       DIE_IF(tmp(s:s)/=".", "fmt has no dot before precision")
       .set_real_precision(0)
-      .set_real_width(tmp(:s-1).to_int)
+      .set_real_width(tmp(1:s-1).to_int)
 
       ! Get the precision
       tmp = tmp(s+1:)
@@ -1023,6 +999,75 @@ contains
 
    end
 
+   real_format(n_fields,style,width,precision,with_parenthesis) result (fmt) ::: PURE
+   ! Return real "<n_fields><style><width>.<precision>" fortran format
+   ! string, like "5f10.3", for use in writing real quantities.
+      self :: IN
+      n_fields :: INT, optional, IN
+      style :: STR, optional, IN
+      width :: INT, optional, IN
+      precision :: INT, optional, IN
+      with_parenthesis :: BIN, optional, IN
+      fmt :: STR
+
+      n,w,p :: INT
+      s :: STR
+
+      n = .n_fields_per_line
+      if (present(n_fields)) n = n_fields
+
+      s = .real_style
+      if (present(style)) s = style
+
+      w = .real_width
+      if (present(width)) w = width
+
+      p = .real_precision
+      if (present(precision)) p = precision
+
+      fmt = trim(n.to_str)
+      fmt = trim(fmt) // trim(s)
+      fmt = trim(fmt) // trim(w.to_str)
+      fmt = trim(fmt) // "."
+      fmt = trim(fmt) // trim(p.to_str)
+
+      if (present(with_parenthesis)) then
+      if (with_parenthesis) then
+      fmt = "(" // trim(fmt) // ")"
+      end
+      end
+
+   end
+
+   int_format(n_fields,width,with_parenthesis) result (fmt) ::: PURE
+   ! Return integer "<n_fields>i<width>" fortran format string, like
+   ! "5i10", for use in writing integer quantities.
+      self :: IN
+      n_fields :: INT, optional, IN
+      width :: INT, optional, IN
+      with_parenthesis :: BIN, optional, IN
+      fmt :: STR
+
+      n,w :: INT
+
+      n = .n_fields_per_line
+      if (present(n_fields)) n = n_fields
+
+      w = .int_width
+      if (present(width)) w = width
+
+      fmt = trim(n.to_str)
+      fmt = trim(fmt) // "i"
+      fmt = trim(fmt) // trim(w.to_str)
+
+      if (present(with_parenthesis)) then
+      if (with_parenthesis) then
+      fmt = "(" // trim(fmt) // ")"
+      end
+      end
+
+   end
+
 !  ===================
 !  Read format options
 !  ===================
@@ -1069,18 +1114,18 @@ contains
       word.to_lower_case
 
       select case (word)
-         case ("int_width=              "); input.read(val); .set_int_width(val)
-         case ("line_format=            "); input.read(sty); .set_line_format(sty)
-         case ("margin_width=           "); input.read(val); .set_margin_width(val)
-         case ("no_of_fields_per_line=  "); input.read(val); .set_no_of_fields_per_line(val)
-         case ("precision=              "); input.read(val); .set_real_precision(val)
-         case ("real_precision=         "); input.read(val); .set_real_precision(val)
-         case ("real_style=             "); input.read(sty); .set_real_style(sty)
-         case ("real_width=             "); input.read(val); .set_real_width(val)
-         case ("use_array_labels=       "); input.read(bin); .set_using_array_labels(bin)
-         case ("using_fields=           "); input.read(bin); .set_using_fields(bin)
-         case ("using_array_labels=     "); input.read(bin); .set_using_array_labels(bin)
-         case default;                  UNKNOWN(word)
+      case ("int_width=            "); input.read(val); .set_int_width(val)
+      case ("line_format=          "); input.read(sty); .set_line_format(sty)
+      case ("margin_width=         "); input.read(val); .set_margin_width(val)
+      case ("no_of_fields_per_line="); input.read(val); .set_no_of_fields_per_line(val)
+      case ("precision=            "); input.read(val); .set_real_precision(val)
+      case ("real_precision=       "); input.read(val); .set_real_precision(val)
+      case ("real_style=           "); input.read(sty); .set_real_style(sty)
+      case ("real_width=           "); input.read(val); .set_real_width(val)
+      case ("use_array_labels=     "); input.read(bin); .set_using_array_labels(bin)
+      case ("using_fields=         "); input.read(bin); .set_using_fields(bin)
+      case ("using_array_labels=   "); input.read(bin); .set_using_array_labels(bin)
+      case default;                  UNKNOWN(word)
       end
 
    end
@@ -1207,7 +1252,7 @@ contains
       self :: INOUT
 
       if (.internal.associated) then; .read_line_internal
-      else;                        .read_line_external
+      else;                           .read_line_external
       end
 
    end
@@ -1231,7 +1276,7 @@ contains
 
       if (.record<size(.internal)) then
 
-          ! No errors.
+         ! No errors.
          .io_status = 0
          .record = .record + 1
          string = .internal(.record)
@@ -1273,59 +1318,54 @@ contains
       self :: INOUT
 
    ENSURE(.is_open,"file is not open")
-   ENSURE(.action=="read","file does not have read action!")
 
       string :: STR(len=BSTR_SIZE)
-      unit,fail :: INT
 
       ! Update
       .update_system_info
 
       ! Read a line
+      .io_status = 0
       if (IO_IS_ALLOWED) then
-         unit = .unit
-         fail = 0
          string = " "
-         read(unit=unit,fmt="(a)",iostat=fail) string
+         read(unit=.unit,iostat=.io_status,fmt="(a)") string
       end
-      PARALLEL_BROADCAST(string,0)
-      PARALLEL_BROADCAST(fail,0)
 
-      ! Set IO status
-      .io_status = fail
+      ! Broadcast
+      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      PARALLEL_BROADCAST(string,0)
 
       ! Is the read OK?
       select case (.io_status)
 
-         case (0)
+      case (0)
 
-               !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-               ! No errors. Analyze the line !
-               .buffer.set_and_analyze(string)
-               .record = .record + 1
-               !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            ! No errors. Analyze the line
+            .buffer.set_and_analyze(string)
+            .record = .record + 1
 
-         case (TEXTFILE_IOSTAT_EOF)
+      case (TEXTFILE_IOSTAT_EOF)
 
-            if (.ignore_end_of_file) then
+         if (.ignore_end_of_file) then
 
-               ! Explicit backspace
-               ! Status still indicates EOF
-               if (IO_IS_ALLOWED) then
-                  backspace(unit=.unit,iostat=fail)
-               end
-
-            else
-
-               ! Unexpected EOF
-               .read_line_bad_eof
-
+            ! Status still indicates EOF
+            ! Do an explicit backspace
+            ! No need to (and don't) check .io_status
+            if (IO_IS_ALLOWED) then
+               backspace(unit=.unit)
             end
 
-         case default
+         else
 
-            ! Some error, but not end of file.
-            DIE("read error")
+            ! Unexpected EOF
+            .read_line_bad_eof
+
+         end
+
+      case default
+
+         ! Some error, but not end of file.
+         DIE("read error")
 
       end
 
@@ -1393,60 +1433,74 @@ contains
 
    rewind
    ! Rewind the input file, reading the first line for read-only files.
+      self :: INOUT
+
       if (.internal.associated) then; .rewind_internal
-      else;                        .rewind_external
+      else;                           .rewind_external
       end
+
       select case (.action)
-         case("read      ","reading   ","read-only "); .read_line
-         case("write     ","writing   ","write-only")
-         case default; UNKNOWN(.action)
+      case("read      ","reading   ","read-only "); .read_line
+      case("write     ","writing   ","write-only")
+      case default; UNKNOWN(.action)
       end
+
    end
 
-   rewind_internal ::: private
+   rewind_internal ::: private, PURE
    ! Rewind the input file, but do not read a line.
+      self :: INOUT
+
       .record = 0
       .io_status = 0
+
    end
 
    rewind_external ::: private
    ! Rewind the input file, but do not read a line.
-
-      fail :: INT
+      self :: INOUT
 
       ! Update
       .update_system_info
 
-      fail = 0
+      ! Rewind
+      .io_status = 0
       if (IO_IS_ALLOWED) then
-         rewind(unit=.unit,iostat=fail)
+         rewind(unit=.unit,iostat=.io_status)
       end
-      PARALLEL_BROADCAST(fail,0)
 
-      DIE_IF(fail>0,"rewind error")
-      .io_status = fail
+      ! Failure?
+      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      DIE_IF(.io_status/=0,"error opening new file "//trim(.name))
 
+      ! All good: set line no.
       .record = 0
 
    end
 
    move_to_end
    ! Move to the end of the input file
+      self :: INOUT
+
       if (.internal.associated) then; .move_to_end_internal
-      else;                        .move_to_end_external
+      else;                           .move_to_end_external
       end
+
    end
 
    move_to_end_internal ::: private
    ! Move to the end of the input file
+      self :: INOUT
+
       .record = size(.internal)-1
+
       .read_line
+
    end
 
    move_to_end_external ::: private
    ! Move to the end of the input file
-
-      fail :: INT
+      self :: INOUT
 
       ! Update
       .update_system_info
@@ -1454,27 +1508,28 @@ contains
       ! Read till failure
       do
 
-         fail = 0
+         ! Read a line
+         .io_status = 0
          if (IO_IS_ALLOWED) then
-            read(unit=.unit, fmt="()", iostat=fail)
+            read(unit=.unit, iostat=.io_status, fmt="()")
          end
-         PARALLEL_BROADCAST(fail,0)
+         PARALLEL_BROADCAST(.io_status,0)
 
-         if (fail/=0) exit
+         ! Failed?
+         if (.io_status/=0) exit
 
+         ! Increment line no.
          .record = .record + 1
 
       end
 
-      ! Backspace twice
+      ! At the EOF: backspace twice
+      .io_status = 0
       if (IO_IS_ALLOWED) then
-         backspace(unit=.unit,iostat=fail)
-         backspace(unit=.unit,iostat=fail)
+         backspace(unit=.unit,iostat=.io_status)
+         backspace(unit=.unit,iostat=.io_status)
       end
-      PARALLEL_BROADCAST(fail,0)
-
-      ! Set the IO status
-      .io_status = fail
+      PARALLEL_BROADCAST(.io_status,0)
 
       ! Set the record
       .record = max(0,.record-1)
@@ -1590,17 +1645,14 @@ contains
    ! Backspace a record. Skip system info update.
       self :: INOUT
 
-      fail :: INT
-
-      fail = 0
-
+      .io_status = 0
       if (IO_IS_ALLOWED) then
-         backspace(unit=.unit,iostat=fail)
+         backspace(unit=.unit,iostat=.io_status)
       end
-      PARALLEL_BROADCAST(fail,0)
 
-      DIE_IF(fail>0,"backspace error")
-      .io_status = fail
+      ! Failure?
+      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      DIE_IF(.io_status/=0,"error opening new file "//trim(.name))
 
       ! Next record
       .record = .record - 1
@@ -1611,26 +1663,36 @@ contains
    ! Forward space a record. Skip system info update.
       self :: INOUT
 
-      fail :: INT
-
-      fail = 0
-
+      ! Read a line
+      .io_status = 0
       if (IO_IS_ALLOWED) then
-         read(unit=.unit,fmt="()",iostat=fail)
+         read(unit=.unit,fmt="()",iostat=.io_status)
       end
-      PARALLEL_BROADCAST(fail,0)
 
-      DIE_IF(fail>0,"read error")
-       .io_status = fail
+      ! Failure?
+      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      DIE_IF(.io_status/=0,"error opening new file "//trim(.name))
 
       ! Next record
       .record = .record + 1
 
    end
 
+   increment_record ::: private
+   ! Increment the .record counter for the file
+      self :: INOUT
+
+      record :: INT
+
+      record = .record + 1
+
+   end
+
 !  ===========
 !  Line search
 !  ===========
+
+!  Consider slurping whole file into memory?
 
    look_for_item(item,from,until,end_tokens,exact_match,head_match,return_cursor,found)
    ! Scan through the file for an "item". If present:
@@ -2584,6 +2646,53 @@ contains
 
    end
 
+!  These routines avoid the buffer.string and read directly from the file.
+
+   parallel_read(v)
+   ! Parallel read a VEC{INT} "v" directly from the file.
+      self :: INOUT
+      v :: VEC{INT}, OUT
+
+      i :: INT
+
+      ! Read the array
+      do i = 1,v.dim
+         read(unit=.unit,fmt=*) v(i)
+         .increment_record
+      end
+
+   end
+
+   parallel_read(v)
+   ! Parallel read a VEC{REAL} "v" directly from the file.
+      self :: INOUT
+      v :: VEC{REAL}, OUT
+
+      i :: INT
+
+      ! Read the array
+      do i = 1,v.dim
+         read(unit=.unit,fmt=*) v(i)
+         .increment_record
+      end
+
+   end
+
+   parallel_read(v)
+   ! Parallel read a VEC{CPX} "v" directly from the file.
+      self :: INOUT
+      v :: VEC{CPX}, OUT
+
+      i :: INT
+
+      ! Read the array
+      do i = 1,v.dim
+         read(unit=.unit,fmt=*) v(i)
+         .increment_record
+      end
+
+   end
+
 !  =========================
 !  Read VEC{TYPE} quantities
 !  =========================
@@ -3020,6 +3129,59 @@ contains
    read(mx,by_column) ::: get_from(TEXTFILE, MX?=>MAT{CPX})
    ! Read in matrix "mx" by row. If "by_column" is present and TRUE it
    ! is read in sequentially by column. Line breaks not significant.
+   end
+
+!  These routines avoid the buffer.string and read directly from the file.
+
+   parallel_read(mx)
+   ! Parallel read a MAT{INT} "mx" directly from the file.
+      self :: INOUT
+      mx :: MAT{INT}, OUT
+
+      i,j :: INT
+
+      ! Read the array
+      do j = 1,mx.dim2
+      do i = 1,mx.dim1
+         read(unit=.unit,fmt=*) mx(i,j)
+         .increment_record
+      end
+      end
+
+   end
+
+   parallel_read(mx)
+   ! Parallel read a MAT{REAL} "mx" directly from the file.
+      self :: INOUT
+      mx :: MAT{REAL}, OUT
+
+      i,j :: INT
+
+      ! Read the array
+      do j = 1,mx.dim2
+      do i = 1,mx.dim1
+         read(unit=.unit,fmt=*) mx(i,j)
+         .increment_record
+      end
+      end
+
+   end
+
+   parallel_read(mx)
+   ! Parallel read a MAT{CPX} "mx" directly from the file.
+      self :: INOUT
+      mx :: MAT{CPX}, OUT
+
+      i,j :: INT
+
+      ! Read the array
+      do j = 1,mx.dim2
+      do i = 1,mx.dim1
+         read(unit=.unit,fmt=*) mx(i,j)
+         .increment_record
+      end
+      end
+
    end
 
 !  ===============
@@ -3556,7 +3718,7 @@ contains
 !  Output routines
 !  ===============
 
-! Clearing, flushing, tabbing, dashing & plain text line
+!  Clearing, flushing, tabbing, dashing & plain text line
 
    clear_and_put_margin ::: PURE
    ! Clear the buffer and put a margin in
@@ -3571,37 +3733,32 @@ contains
 
    end
 
+!  This important routine actually writes to the file
+
    flush
    ! Flush the buffer to the output file
       self :: INOUT
 
    ENSURE(.action=="write","file does not have write action!")
 
-      fail :: INT
-
-      fail = 0
-      
-      if (tonto.is_master_processor) then
+      ! Write the buffer.string
+      .io_status = 0
       if (IO_IS_ALLOWED) then
          ENSURE(.is_open,"file "//trim(.name)//" is not open!")
-       ! if (len_trim(.buffer.string)==0) then
-       ! write(unit=.unit,iostat=fail,fmt="(a)") " "
-       ! else
-         write(unit=.unit,iostat=fail,fmt="(a)") trim(.buffer.string)
-       ! end
-      end if
-      
-      .io_status = fail
+         write(unit=.unit,iostat=.io_status,fmt="(a)") trim(.buffer.string)
+      end
 
-      end if
+      ! Failure?
       PARALLEL_BROADCAST(.io_status,tonto.master_processor)
-      DIE_IF(.io_status>0,"read error")
+      DIE_IF(.io_status>0,"flush error")
 
       ! Flush - seems to cause problems with MPI
-      UNIT_NUMBER:flush_buffer_for_unit_number(.unit)
+      TONTO_FLUSH_BUFFER(.unit)
 
+      ! Write margin
       .clear_and_put_margin
 
+      ! Increment line no.
       .record = .record + 1
 
    end
@@ -3667,10 +3824,10 @@ contains
    ! Put text into the output buffer as is and flush, unless
    ! flush is present and FALSE. You can specify widths too.
       self :: INOUT
-      string :: STR
-      real_width :: BIN, optional
-      int_width :: BIN, optional
-      flush :: BIN, optional
+      string :: STR, IN
+      real_width :: BIN, optional, IN
+      int_width :: BIN, optional, IN
+      flush :: BIN, optional, IN
 
       int_string :: STR(len=.int_width)
       real_string :: STR(len=.real_width)
@@ -3703,6 +3860,9 @@ contains
 !  Put TYPE methods (no flush)
 !  ===========================
 
+!  Most everything is converted to a string and put into the buffer,
+!  so comes through the important routine below, which is quite slow.
+
    put(string,left,center,int_width,width)
    ! Put a "string" into the output buffer; if it is too big, put as is.
    ! NOTE: Head space is never altered, but trailing spaces are trimmed.
@@ -3712,10 +3872,10 @@ contains
    ! . "width" ....... sets field width in chars     (overrides "int_width")
       self :: INOUT
       string :: STR, IN
-      left :: BIN, IN, optional
-      center :: BIN, IN, optional
-      int_width :: BIN, IN, optional
-      width :: INT, IN, optional
+      left :: BIN, optional, IN
+      center :: BIN, optional, IN
+      int_width :: BIN, optional, IN
+      width :: INT, optional, IN
 
       tmpcpy :: STR
       wid,len :: INT
@@ -3987,12 +4147,13 @@ contains
 
    put(v,by_row,by_column,left,width,auto_width) ::: template
    ! Put VEC{TYPE} into the output buffer
+      self :: INOUT
       v :: V?, IN
-      by_row :: BIN, IN, optional
-      by_column :: BIN, IN, optional
-      left :: BIN, IN, optional
-      width :: INT, IN, optional
-      auto_width :: BIN, IN, optional
+      by_row :: BIN, optional, IN
+      by_column :: BIN, optional, IN
+      left :: BIN, optional, IN
+      width :: INT, optional, IN
+      auto_width :: BIN, optional, IN
 
    ENSURE(NOT (present(by_row) AND present(by_column)),"row and column options present!")
 
@@ -4107,6 +4268,7 @@ contains
    put(v,row_label,col_label,left) ::: template
    ! Put VEC{TYPE} into output as column, with "row_labels" and a
    ! single "col_label".
+      self :: INOUT
       v :: V?, IN
       row_label :: VEC{STR}, IN
       col_label :: STR, IN
@@ -4139,6 +4301,73 @@ contains
    put(v,row_label,col_label,left) ::: get_from(TEXTFILE), V?=>VEC{REAL})
    ! Put VEC{TYPE} into output as column, with "row_labels" and a
    ! single "col_label".
+   end
+
+!  These routines avoid the buffer.string and output directly to the file.
+
+   parallel_put(v)
+   ! Parallel put VEC{INT} "v" directly into the output file.
+      self :: INOUT
+      v :: VEC{INT}, IN
+
+      i :: INT
+      fmt :: STR
+
+      ! One element per line
+      fmt = .int_format(n_fields=1 &
+                       ,width=2*.int_width &
+                       ,with_parenthesis=TRUE)
+
+      ! Write the array
+      do i = 1,v.dim
+         write(unit=.unit,fmt=fmt) v(i)
+         .increment_record
+      end
+
+   end
+
+   parallel_put(v)
+   ! Parallel put VEC{INT} "v" directly into the output file.
+      self :: INOUT
+      v :: VEC{REAL}, IN
+
+      i :: INT
+      fmt :: STR
+
+      ! One element per line
+      fmt = .real_format(n_fields=1 &
+                        ,width=2*.real_width &
+                        ,precision=2*.real_precision &
+                        ,with_parenthesis=TRUE)
+
+      ! Write the array
+      do i = 1,v.dim
+         write(unit=.unit,fmt=fmt) v(i)
+         .increment_record
+      end
+
+   end
+
+   parallel_put(v)
+   ! Parallel put VEC{INT} "v" directly into the output file.
+      self :: INOUT
+      v :: VEC{CPX}, IN
+
+      i :: INT
+      fmt :: STR
+
+      ! One element per line
+      fmt = .real_format(n_fields=2 &
+                        ,width=2*.real_width &
+                        ,precision=2*.real_precision &
+                        ,with_parenthesis=TRUE)
+
+      ! Write the array
+      do i = 1,v.dim
+         write(unit=.unit,fmt=fmt) v(i)
+         .increment_record
+      end
+
    end
 
 !  =============
@@ -4422,6 +4651,82 @@ contains
 
    put(mx,row_label,col_label,left) ::: get_from(TEXTFILE, MX?=>MAT{REAL})
    ! Put MAT{TYPE} into output with "row_labels" and "column_labels"
+   end
+
+!  These routines avoid the buffer.string and output directly to the file.
+
+   parallel_put(mx)
+   ! Parallel put MAT{INT} "mx" directly into the output file.
+   ! Column order assumed.
+      self :: INOUT
+      mx :: MAT{INT}, IN
+
+      i,j :: INT
+      fmt :: STR
+
+      ! One element per line
+      fmt = .int_format(n_fields=1 &
+                       ,width=2*.int_width &
+                       ,with_parenthesis=TRUE)
+
+      ! Write the array
+      do j = 1,mx.dim2
+      do i = 1,mx.dim1
+         write(unit=.unit,fmt=fmt) mx(i,j)
+         .increment_record
+      end
+      end
+
+   end
+
+   parallel_put(mx)
+   ! Parallel put MAT{REAL} "mx" directly into the output file.
+   ! Column order assumed.
+      self :: INOUT
+      mx :: MAT{REAL}, IN
+
+      i,j :: INT
+      fmt :: STR
+
+      ! One element per line
+      fmt = .real_format(n_fields=1 &
+                        ,width=2*.real_width &
+                        ,precision=2*.real_precision &
+                        ,with_parenthesis=TRUE)
+
+      ! Write the array
+      do j = 1,mx.dim2
+      do i = 1,mx.dim1
+         write(unit=.unit,fmt=fmt) mx(i,j)
+         .increment_record
+      end
+      end
+
+   end
+
+   parallel_put(mx)
+   ! Parallel put MAT{CPX} "mx" directly into the output file.
+   ! Column order assumed.
+      self :: INOUT
+      mx :: MAT{CPX}, IN
+
+      i,j :: INT
+      fmt :: STR
+
+      ! One element per line
+      fmt = .real_format(n_fields=2 &
+                        ,width=2*.real_width &
+                        ,precision=2*.real_precision &
+                        ,with_parenthesis=TRUE)
+
+      ! Write the array
+      do j = 1,mx.dim2
+      do i = 1,mx.dim1
+         write(unit=.unit,fmt=fmt) mx(i,j)
+         .increment_record
+      end
+      end
+
    end
 
 !  ==============
@@ -5602,16 +5907,21 @@ contains
 
    put
    ! Put some information on file "stdout"
+      self :: IN
+
       stdout.show("Name       =",.name)
       stdout.show("I/O action =",.action)
       stdout.show("Unit       =",.unit)
       stdout.show("Line       =",.record)
       stdout.show("Buffer     =",trim(.buffer.string))
       stdout.show("Cursor pos =",trim(.buffer.cursor_pointer))
+
    end
 
    put_output_format
    ! Put more information on file "stdout"
+      self :: IN
+
       stdout.show("Name               =",.name)
       stdout.show("I/O action         =",.action)
       stdout.show("Unit               =",.unit)
@@ -5623,6 +5933,7 @@ contains
       stdout.show("real_precision     =",.real_precision)
       stdout.show("using_array_labels =",.using_array_labels)
       stdout.show("using_fields       =",.using_fields)
+
    end
 
 !  ===============
@@ -5630,8 +5941,8 @@ contains
 !  ===============
 
    update_system_info ::: private
-   ! Let the tonto system know info about the file being read, in case
-   ! of error.
+   ! Let the tonto system know info about the file being read,
+   ! in case of error.
      self :: target
 
 #ifndef NO_TONTO_SYSTEM_CALLS
