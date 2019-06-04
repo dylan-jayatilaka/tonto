@@ -284,6 +284,16 @@ contains
 
    end
 
+   set_use_NAOs(val)
+   ! Set whether to use NAOs as atomic projectors instead of ANOs as
+   ! in the original 2008 paper.
+      self :: INOUT
+      val :: BIN, IN
+
+      .use_NAOs = val
+
+   end
+
    set_output_ci_latex_labels(val)
    ! Set whether to output c & i labels above latex structure in 
    ! RGBI plots
@@ -327,6 +337,7 @@ contains
       case ("kind=                  "); .read_kind
 
       case ("occupied_ano_cutoff=   "); .read_occupied_ano_cutoff
+      case ("output_ci_latex_labels="); .read_output_ci_labels 
       case ("output_theta_info=     "); .read_output_theta_info
 
       case ("put_core_matrix        "); stdout.put(.core_matrix)
@@ -401,6 +412,19 @@ contains
 
    end
 
+   read_output_ci_labels
+   ! Read whether to output c/i labels above/below the bond line in
+   ! the latex structure figures - for use with make-rgbi-pic script.
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read(val)
+
+      .set_output_ci_latex_labels(val)
+
+   end
+
    read_output_theta_info
    ! Read in a switch which tells whether to output detailed
    ! theta-subspace bond information
@@ -435,8 +459,8 @@ contains
    end
 
    read_use_NAOs
-   ! Read whether to use NAOs as atomic projectors instead
-   ! of ANOs as in the original 2008 paper.
+   ! Read whether to use NAOs as atomic projectors instead of ANOs as
+   ! in the original 2008 paper.
       self :: INOUT
 
       stdin.read(.use_NAOs)
@@ -751,7 +775,7 @@ contains
 
    ENSURE(.atom_group.associated,"no atom group defined")
 
-      n_group,a,b,num :: INT
+      n_group,a,b,n_bond_do_H,n_bond_no_H :: INT
       ind,cov,ion,pccp,pcca :: REAL
       dial :: TEXTFILE*
 
@@ -776,7 +800,8 @@ contains
       end
 
       ! Make bonds for pairs of group
-      num = 0
+      n_bond_do_H = 0
+      n_bond_no_H = 0
       do a = 1,n_group
       do b = a+1,n_group
 
@@ -810,21 +835,30 @@ contains
          .percent_covalency_A(b,a) =  pcca
 
          if (.output_theta_info) then
+
             .put_theta_info
             .put_theta_BI_info
-            num = num + 1
-            .put_dial_BI_info(a,b,dial,num)
-          ! num = num + 1
-          ! .put_dial_BI_info(a,b,dial,num,reverse=TRUE)
-          ! .put_theta_AB_pops
+
+            n_bond_do_H = n_bond_do_H + 1
+            .put_dial_BI_info_do_H(a,b,dial,n_bond_do_H)
+
+            if (.atom(a).is_not_a_H_atom) then
+            if (.atom(b).is_not_a_H_atom) then
+            n_bond_no_H  = n_bond_no_H  + 1
+            ! Keep original atom label
+            .put_dial_BI_info_no_H(a,b,dial,n_bond_do_H)
+            end
+            end
+
          end
 
       end
       end
 
       if (.output_theta_info) then
-         dial.close
-         ::put_dial_table(num)
+         dial.close_and_delete
+         .put_dial_table_do_H(n_bond_do_H)
+         .put_dial_table_no_H(n_bond_no_H)
       end
 
    end
@@ -3112,8 +3146,8 @@ contains
          .put_bond_indices_sortd
 
          ! LaTeX tables
-         .put_bond_indices_H
-         .put_bond_indices_H_vdw
+         .put_bond_indices_do_H
+         .put_bond_indices_do_H_vdw
          .put_bond_indices_no_H
          .put_bond_indices_CC
 
@@ -3851,7 +3885,7 @@ contains
    end
 
 
-   put_bond_indices_H
+   put_bond_indices_do_H
    ! Output bond indices including H's in LaTeX "rgbi-bondtable+H.tex".
       self :: IN
 
@@ -3987,7 +4021,7 @@ contains
 
    end
 
-   put_bond_indices_H_vdw
+   put_bond_indices_do_H_vdw
    ! Output bond indices including H's and shortest vdw bond in LaTeX
    ! script "rgbi-bondtable+H+vdw.tex".
       self :: IN
@@ -4169,7 +4203,6 @@ contains
 
       ! Anything to do?
       if (.atom.dim<2) return
-
 
       no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
       if (no_of_bonds<1) return
@@ -5495,7 +5528,7 @@ contains
 
    end
 
-   put_dial_BI_info(a,b,file,num,reverse)
+   put_dial_BI_info_do_H(a,b,file,num,reverse)
    ! Output the dial diagram tex script.
    ! "num" in the incrementing number of dial diagrams.
    ! "reverse" is set true to reverse the atom order.
@@ -5592,17 +5625,123 @@ contains
       dial = trim(dial) // "{2}"
       file.text(trim(dial))
 
-      ! Individual dial file
-      filename = adjustl(num.to_str) // ".tex"
+      ! Individual dial file ... +H case
+      filename = adjustl(num.to_str) // "+H.tex"
       stdout.redirect(filename)
       stdout.text(trim(dial))
       stdout.revert
 
    end
 
-   put_dial_table(n_bonds) ::: selfless
-   ! Output the latex code for tabular dial diagram,
-   ! where "n_bonds" is the number of bonds.
+   put_dial_BI_info_no_H(a,b,file,num,reverse)
+   ! Output the dial diagram tex script.
+   ! "num" in the incrementing number of dial diagrams.
+   ! "reverse" is set true to reverse the atom order.
+   ! Note: the radius of the dial is normalized to unity.
+      self :: IN
+      a,b,num :: INT, IN
+      file :: TEXTFILE, INOUT
+      reverse :: BIN, optional, IN
+
+      n,i,j,k :: INT
+      space :: STR(len=1)
+      ind :: VEC{INT}*
+      filename,atom_a,atom_b,ci_list,dial :: STR
+      tau,cov,ion, bc,bi, zero_cutoff :: REAL
+      swap :: BIN
+
+      ! Get indices
+      tau = .bond_index(a,b)
+      cov =  .cov_index(a,b)
+      ion =  .ion_index(a,b)
+
+      ! Swap?
+      swap = FALSE
+      if (present(reverse)) swap = reverse
+      if (ion<-0.1) swap = TRUE
+
+      if (swap) ion = -ion
+
+      ! Columns
+      n = .eigen_I.dim
+      zero_cutoff = .zero_angle_cutoff.to_units("degree")
+
+      ! Sort decreasing covalent index
+      ind.create(n)
+      .theta_cov_index.quick_sort(ind,decreasing_order=TRUE)
+
+      ! Make the list part of the dial diagram
+      j = 0
+      space = " "
+      ci_list = " "
+      do k = 1,n
+
+         i = ind(k)
+
+         if (.theta_angle(i)<       zero_cutoff) cycle
+         if (.theta_angle(i)>90.0d0-zero_cutoff) cycle
+         if (.pair(i)<1) cycle
+         if (.eigen_I(i)<.eigen_I(.pair(i))) cycle
+
+         j = j + 1
+
+         ! Theta bond indices; make bi +ve
+         bc = .theta_cov_index(i)/tau
+         bi = .theta_ion_index(i)/tau
+         if (swap) bi = -bi
+
+         ! List part of dial diagram
+         if (j>1)  then
+            ci_list = trim(ci_list) // space &
+                   // trim(bc.to_str("f7.3",left_justify=TRUE)) &
+                   // "/" &
+                   // trim(bi.to_str("f7.3",left_justify=TRUE)) &
+                   // ","
+         else
+            ci_list = trim(ci_list) &
+                   // trim(bc.to_str("f7.3",left_justify=TRUE)) &
+                   // "/" &
+                   // trim(bi.to_str("f7.3",left_justify=TRUE)) &
+                   // ","
+         end
+
+      end
+      ci_list = ci_list(1:len_trim(ci_list)-1)
+
+      ind.destroy
+
+      ! Atom tags
+      if (NOT swap) then
+         atom_a = .numbered_tag(.atom_a)
+         atom_b = .numbered_tag(.atom_b)
+      else
+         atom_b = .numbered_tag(.atom_a)
+         atom_a = .numbered_tag(.atom_b)
+      end
+
+      ! Write the dial diagram
+      dial = "\dialdiagram"
+      dial = trim(dial) // "{" // trim(atom_a) // "}"
+      dial = trim(dial) // "{" // trim(atom_b) // "}"
+      dial = trim(dial) // "{" // trim(tau.to_str("f7.2",left_justify=TRUE)) // "}"
+      dial = trim(dial) // "{" // trim(cov.to_str("f7.2",left_justify=TRUE)) // "}"
+      dial = trim(dial) // "{" // trim(ion.to_str("f7.2",left_justify=TRUE)) // "}"
+      dial = trim(dial) // "{" // trim(ci_list) // "}"
+      dial = trim(dial) // "{2}"
+      file.text(trim(dial))
+
+      ! Individual dial file ... +H case
+      filename = adjustl(num.to_str) // "-H.tex"
+      stdout.redirect(filename)
+      stdout.text(trim(dial))
+      stdout.revert
+
+   end
+
+   put_dial_table_do_H(n_bonds)
+   ! Output the latex code for tabular dial diagram, where "n_bonds"
+   ! is the number of bonds.
+      self :: IN
       n_bonds :: INT, IN
 
       n_rows,r,c,f,l :: INT
@@ -5611,7 +5750,7 @@ contains
       n_rows = ceiling(0.25d0*n_bonds)
 
       ! Redirect
-      stdout.redirect("rgbi-dial-table.tex")
+      stdout.redirect("rgbi-dial-table+H.tex")
 
       ! Header
       stdout.text("\input{rgbi-dial-header}")
@@ -5630,11 +5769,71 @@ contains
          ! Write col contents
          do c = f,l
             if (c<l) then
-               stdout.put("\input{"//trim(c.to_str)//"} &")
+               stdout.put("\input{"//trim(c.to_str)//"+H} &")
             else if (r<n_rows) then
-               stdout.put("\input{"//trim(c.to_str)//"} \\")
+               stdout.put("\input{"//trim(c.to_str)//"+H} \\")
             else
-               stdout.put("\input{"//trim(c.to_str)//"}")
+               stdout.put("\input{"//trim(c.to_str)//"+H}")
+            end
+         end
+
+         ! New line
+         stdout.flush
+
+      end
+
+      ! Footer
+      stdout.text("\end{longtable}")
+      stdout.text("\end{center}")
+      stdout.text("\end{document}")
+
+      ! Go back
+      stdout.revert
+
+   end
+
+   put_dial_table_no_H(n_bonds)
+   ! Output the latex code for tabular dial diagram, where "n_bonds"
+   ! is the number of non-hydrogen bonds.
+      self :: IN
+      n_bonds :: INT, IN
+
+      n_rows,r,c,f,l,n :: INT
+      non_H_atom_for_atom :: VEC{INT}@
+
+
+      ! No of rows in table
+      n_rows = ceiling(0.25d0*n_bonds)
+
+      ! Redirect
+      stdout.redirect("rgbi-dial-table-H.tex")
+
+      ! Non-H atom indices - openbabel renumbers indices
+      non_H_atom_for_atom = .atom.indices_of_non_H_atom_for_atom
+
+      ! Header
+      stdout.text("\input{rgbi-dial-header}")
+      stdout.text("\begin{document}")
+      stdout.text("\begin{center}")
+      stdout.text("\begin{longtable}{cccc}")
+
+      ! Tabular part
+      l = 0
+      do r = 1,n_rows
+
+         ! Col limits
+         f = l + 1
+         l = min(l+4,n_bonds)
+
+         ! Write col contents
+         do c = f,l
+            n = non_H_atom_for_atom(c)
+            if (c<l) then
+               stdout.put("\input{"//trim(n.to_str)//"-H} &")
+            else if (r<n_rows) then
+               stdout.put("\input{"//trim(n.to_str)//"-H} \\")
+            else
+               stdout.put("\input{"//trim(n.to_str)//"-H}")
             end
          end
 
