@@ -767,35 +767,24 @@ contains
 
 ! Atoms
 
-   finalize_atoms ::: leaky
+   finalize_atoms(do_groups) ::: leaky
    ! Finalize the atom list information
       self :: INOUT
+      do_groups :: BIN, optional, IN
 
-      ! Finalize atom info/basis sets
-      ! Avoid calling these private routine directly
-      ! NOTE: finalize_atom_groups might be called recursively
+      groups :: BIN
+
+      groups = TRUE
+      if (present(do_groups)) groups = do_groups
+
+      ! Set tags, multiplicity, and no of alpha/beta electrons
       .BASE:set_atom_info
+
+      ! Avoid calling finalize_atom_groups recursively
+      if (groups) &
       .BASE:finalize_atom_groups 
-      .BASE:resolve_basis_info
 
-      ! Finalize crystal
-      if (associated(.crystal)) then
-         .BASE:resolve_axis_system
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-      end
-
-      ! Destroy stored atoms here
-      .isosurface.destroy
-
-   end
-
-   finalize_atoms_no_groups ::: leaky
-   ! Finalize the atom list information
-      self :: INOUT
-
-      ! Finalize atom info/basis sets
-      ! Avoid calling these private routine directly
-      .BASE:set_atom_info
+      ! Get basis sets
       .BASE:resolve_basis_info
 
       ! Finalize crystal
@@ -2336,9 +2325,11 @@ contains
 
 ! Can thesed be condensed into one?
 
-   read_g09_FChk_file(name) ::: leaky
+   read_g09_FChk_file(name,do_groups) ::: leaky
    ! Read a g09 checkpoint file (after fchk conversion to ASCII) into TONTO
-      name :: STR, optional
+      self :: INOUT
+      name :: STR, optional, IN
+      do_groups :: BIN, optional, IN
 
    DIE_IF(.use_spherical_basis,"spherical basis not implemented")
 
@@ -2593,7 +2584,7 @@ contains
       shell_l.destroy
 
       ! Finalize atom info/basis sets
-      .:finalize_atoms
+      .:finalize_atoms(do_groups)
 
       ! Read in orbital energies.
       orb_energy.create(n_independent)
@@ -3521,7 +3512,7 @@ contains
 
       ! Make atom info
       mol.atom_info_made = FALSE
-      mol.:finalize_atoms_no_groups
+      mol.:finalize_atoms(do_groups=FALSE)
 
       ! Set guess-type SCF defaults
       mol.:set_scf_guess_defaults_from(.scfdata)
@@ -3758,7 +3749,7 @@ contains
       ! Make atom info; groups should not contain subgroups!
       mol.atom_info_made = FALSE
       mol.atom.set_group_to(g)
-      mol.:finalize_atoms_no_groups
+      mol.:finalize_atoms(do_groups=FALSE)
 
       ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
       if (.atom_group(g).spin_multiplicity_set) then
@@ -4008,7 +3999,7 @@ contains
         
          ! Make .atom()'s and .atom_group().mol's from files
          if (.atom_group.has_wavefunction_files_ptr) then
-            .:make_groups_from_wavefunction_files
+            .:make_groups_from_wfn_files
          end
 
       else
@@ -4052,21 +4043,24 @@ contains
 
    end
 
-   read_wavefunction_file(filename) ::: leaky
-   ! Open and read a given "filename", either a gaussian .fchk file or
-   ! an .sbf file.
-      self :: PTR
-      filename :: STR
+   read_wfn_file(filename,do_groups) ::: leaky
+   ! Open and read a file named "name", either a gaussian .FChk file
+   ! or an .sbf file.
+      self :: INOUT
+      filename :: STR, IN
+      do_groups :: BIN, optional, IN
 
-      if(filename.ends_in("fchk", case_sensitive=FALSE)) then
-        .:read_g09_FChk_file(filename)
+      if (filename.ends_in("fchk", case_sensitive=FALSE)) then
+         .:read_g09_FChk_file(filename,do_groups)
+      else if (filename.ends_in("sbf", case_sensitive=FALSE)) then
+         .:deserialize(filename,do_groups)
       else
-        .:deserialize(filename)
-      end if
+         DIE("unknown file format for file '"//trim(filename)//"'")
+      end
 
    end
 
-   make_groups_from_wavefunction_files ::: private, leaky
+   make_groups_from_wfn_files ::: private, leaky
    ! Make the atom groups by read in Gaussian Fchk files in they are defined for the groups
       self :: INOUT
 
@@ -4075,6 +4069,7 @@ contains
    DIE_IF(NOT .atom_group.has_wavefunction_files,"no wavefunction files")
 
       mol :: MOLECULE*
+      wavefunction_file :: STR
       g :: INT
 
       do g = 1,.atom_group.dim
@@ -4083,12 +4078,11 @@ contains
          mol.:create
 
          ! Define mol from FChk or sbf file
-         if(.atom_group(g).wavefunction_file_name.ends_in("fchk", case_sensitive=FALSE)) then
-            mol.:read_g09_FChk_file(.atom_group(g).wavefunction_file_name)
-         else
-            mol.:deserialize(.atom_group(g).wavefunction_file_name)
-         end
+         wavefunction_file = .atom_group(g).wavefunction_file_name
+         mol.:read_wfn_file(wavefunction_file,do_groups=FALSE)
 
+         ! Set kind of SCF
+         ! DJ ... this seems always to be UHF?
          if (mol.scfdata.is_unrestricted) then
             if(.scfdata.disassociated) then
                .scfdata.create
@@ -4103,13 +4097,12 @@ contains
          mol.atom.set_group_to(g)
 
          ! Add it to atom_group
-       ! .atom_group(g).mol.:destroy
          .atom_group(g).mol => mol
 
       end
 
       ! Define .atom list
-      .:merge_atom_groups
+      .:join_atom_groups
 
       ! Update group info from self
       if (.atom_group.has_all_mols) then
@@ -4234,7 +4227,8 @@ contains
       .atom_group(2).set_atom(mol_B.atom)
       .atom_group(2).atom_index.create_copy([ (i, i=n_A + 1,n_A + n_B) ])
       .atom_group(2).mol => mol_B
-      .:merge_atom_groups
+
+      .:join_atom_groups
 
       if (.atom_group.has_all_mols) then
          .:update_group_info
@@ -4242,7 +4236,7 @@ contains
 
    end
 
-   merge_atom_groups ::: leaky, private
+   join_atom_groups ::: leaky, private
    ! Delete any existing .atom and .basis and set to the concatenation
    ! of the molecules in .atom_group
       self :: INOUT
@@ -4293,15 +4287,11 @@ contains
       .basis.remove_repetitions
 
       ! Finally: set atom info & basis info (leaky)
-      ! NOTE: multiplicity not set - assume singlet
-!      if(.scfdata.disassociated) then
-!          WARN("No SCF data set, assuming singlet state, rhf")
-!      endif
       .:set_charge(charge)
       .:set_spin_multiplicity(unpaired_electrons + 1)
 
       ! Finalise atom info
-      .:finalize_atoms
+      .:finalize_atoms(do_groups=FALSE)
 
    end
 
@@ -7792,16 +7782,16 @@ contains
 
       select case (genre)
 
-         case("restricted")
-            .:rotate_density_matrix_r(.density_matrix.restricted,R)
+      case("restricted")
+         .:rotate_density_matrix_r(.density_matrix.restricted,R)
 
-         case("unrestricted")
-            .:rotate_density_matrix_r(.density_matrix.alpha,R)
-            .:rotate_density_matrix_r(.density_matrix.beta,R)
+      case("unrestricted")
+         .:rotate_density_matrix_r(.density_matrix.alpha,R)
+         .:rotate_density_matrix_r(.density_matrix.beta,R)
 
 
-         case default
-            DIE("unknown kind, "//trim(genre))
+      case default
+         DIE("unknown kind, "//trim(genre))
 
       end
 
@@ -7860,12 +7850,17 @@ contains
       genre = .fock_matrix.spinorbital_kind
 
       select case (genre)
-         case("restricted")
-            .:rotate_fock_matrix_r(.fock_matrix.restricted,R)
-         case("unrestricted")
-            .:rotate_fock_matrix_r(.fock_matrix.alpha,R)
-            .:rotate_fock_matrix_r(.fock_matrix.beta,R)
-         case default;   DIE("unknown kind, "//trim(genre))
+
+      case("restricted")
+         .:rotate_fock_matrix_r(.fock_matrix.restricted,R)
+
+      case("unrestricted")
+         .:rotate_fock_matrix_r(.fock_matrix.alpha,R)
+         .:rotate_fock_matrix_r(.fock_matrix.beta,R)
+
+      case default
+         DIE("unknown kind, "//trim(genre))
+
       end
 
    end
@@ -10487,10 +10482,12 @@ contains
 
    end 
 
-   deserialize(filename)
+   deserialize(filename,do_groups)
    ! Read in data from sbf file
-      self :: PTR
-      filename :: STR
+      self :: INOUT
+      filename :: STR, IN
+      do_groups :: BIN, optional, IN
+
       datafile :: DATAFILE
       tmp_str :: STR(len=:)@
       atomic_labels :: STR(len=1), dimension(:,:), allocatable
@@ -10502,7 +10499,7 @@ contains
       i, err :: INT
       success = 1 :: INT
 
-      .:create
+    ! .:create
 
       datafile.open(filename)
 
@@ -10545,7 +10542,7 @@ contains
       endif
 
       ! Finalize atom info/basis sets
-      .:finalize_atoms
+      .:finalize_atoms(do_groups)
 
       call datafile%sbf%get("scf_kind", tmp_str, err)
 
