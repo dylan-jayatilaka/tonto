@@ -3472,31 +3472,37 @@ contains
 
    end
 
-   make_molecule_from_atom_group(n,mol) ::: leaky
-   ! Make a fully fledged molecule "mol" from group "n" of atoms
-   ! specified in .atom_group(n).element(:), ready fro an SCF calculation.
-      n :: INT
-      mol :: MOLECULE
+   make_molecule_from_atom_group(g,mol) ::: leaky
+   ! Make a fully fledged molecule "mol" from group "g" of atoms
+   ! specified in .atom_group(g).element(:), ready fro an SCF calculation.
+      self :: IN
+      g :: INT, IN
+      mol :: MOLECULE, OUT
 
    DIE_IF(.atom.disassociated,"no atom info")
    DIE_IF(.atom_group.disassociated,"no atom_group info")
-   DIE_IF(n>.atom_group.dim,"group number n too big")
-   DIE_IF(n<1,"group number n less than 1!")
+   DIE_IF(g>.atom_group.dim,"group number g too big")
+   DIE_IF(g<1,"group number g less than 1!")
+
+      name :: STR
 
       ! Clear the pointer part
       mol.:nullify_ptr_part
 
       ! Create the single atom and copy its pointers
       ! WARNING: dont destroy ptr parts of mol.atom
-      mol.atom.create_copy(.atom(.atom_group(n).atom_index))
+      mol.atom.create_copy(.atom(.atom_group(g).atom_index))
 
       ! Set default molecule e.g. the name, atom_info
       ! and default multiplicity ...
       mol.:set_defaults
 
       ! Reset .name after .set_defaults
-      mol.name              = .atom_group(n).name
-      mol.charge            = .atom_group(n).charge
+      name = "group-"//trim(g.to_str)//"-"
+      name = trim(name)//trim(mol.atom.chemical_formula(with_spaces=FALSE))
+      mol.:set_name(name)
+      .atom_group(g).set_name(name)
+      mol.charge            = .atom_group(g).charge
       mol.spin_multiplicity = mol.:default_spin_multiplicity
 
       ! Copy the basis set and set the basis info
@@ -3504,7 +3510,7 @@ contains
       mol.:set_basis_data_from(self)
 
       ! Don't remake ANO data if there
-      mol.:set_ANOs_from(self,.atom_group(n).atom_index)
+      mol.:set_ANOs_from(self,.atom_group(g).atom_index)
 
       ! Assign the crystal
       ! WARNING: dont destroy ...
@@ -3523,7 +3529,7 @@ contains
       if (.density_matrix.restricted.associated) then
       if (mol.density_matrix.disassociated) then
          mol.density_matrix.create(mol.n_bf,"restricted")
-         .:put_group_density_to(mol.density_matrix.restricted,n,mol)
+         .:put_group_density_to(mol.density_matrix.restricted,g,mol)
       end
       end
       end
@@ -3714,7 +3720,7 @@ contains
    end
 
    make_MFCC_fragment_for_group(g) ::: leaky
-   ! Make a capped fragment for molecule "mol, the atom_group(n).mol
+   ! Make a capped fragment for molecule "mol, the atom_group(g).mol
    ! with compound_id "g", ready for MFCC calculation. This routine
    ! will add extra atoms.
       self :: INOUT
@@ -3779,7 +3785,7 @@ contains
    end
 
    add_MFCC_cap_for_group(g,mol) ::: private, leaky
-   ! Make a capped fragment for molecule the atom_group(n).mol with
+   ! Make a capped fragment for molecule the atom_group(g).mol with
    ! compound_id "g" ready for MFCC calculation. This routine will add
    ! extra atoms.
       self :: INOUT
@@ -4356,13 +4362,17 @@ contains
       res = .atom.nuclear_dipole_moment
    end
 
-   chemical_formula(with_spaces) result (res)
+   chemical_formula(with_spaces) result (res) ::: PURE
    ! Return the chemical formula for the molecule, as a string, in alphabetical
    ! order of elements
-      with_spaces :: BIN, optional
+      self :: IN
+      with_spaces :: BIN, optional, IN
       res :: STR
+
    ENSURE(.atom.associated,"atom list required")
+
       res = .atom.chemical_formula(with_spaces)
+
    end
 
    center_of_mass result(center)
@@ -8410,23 +8420,54 @@ contains
 !  Natural orbital assignment
 !  ==========================
 
-   assign_NOs_to_MOs ::: leaky
+   assign_NOs_to_MOs ::: leaky, PURE
    ! Assign the natural orbitals to be the molecular_orbitals
+      self :: INOUT
+
    ENSURE(.molecular_orbitals.associated, "no molecular orbitals")
    ENSURE(.molecular_orbitals.has_any_genre, "no molecular orbitals")
 
-      NO_kind :: STR
+      MO_kind :: STR
+      mol :: MOLECULE*
+      g :: INT
 
-      .natural_orbitals.destroy
-      .natural_orbitals.create_copy(.molecular_orbitals)
+      if (.molecular_orbitals.associated) then
 
-      NO_kind = .natural_orbitals.spinorbital_kind
+         .natural_orbitals.destroy
+         .natural_orbitals.create_copy(.molecular_orbitals)
 
-      .occupation_numbers.destroy
-      .occupation_numbers.create(.n_bf,NO_kind)
+         MO_kind = .molecular_orbitals.spinorbital_kind
+         .occupation_numbers.destroy
+         .occupation_numbers.create(.n_bf,MO_kind)
 
-      .occupation_numbers.set_to_zero
-      .:set_scf_occupations(NO_kind)
+         .occupation_numbers.set_to_zero
+         .:set_scf_occupations(MO_kind)
+
+      end
+
+      if (.atom_group.associated) then
+      if (.atom_group(1).mol.associated) then
+         
+         do g = 1,.atom_group.dim
+
+            mol => .atom_group(g).mol
+
+            if (mol.molecular_orbitals.disassociated) cycle
+
+            mol.natural_orbitals.destroy
+            mol.natural_orbitals.create_copy(mol.molecular_orbitals)
+           
+            MO_kind = mol.molecular_orbitals.spinorbital_kind
+            mol.occupation_numbers.destroy
+            mol.occupation_numbers.create(.n_bf,MO_kind)
+           
+            mol.occupation_numbers.set_to_zero
+            mol.:set_scf_occupations(MO_kind)
+
+         end
+
+      end
+      end
 
    end
 
