@@ -8442,16 +8442,16 @@ contains
 
    end
 
-   MFCC_SCF(initial_density) ::: leaky
+   MFCC_SCF(restart) ::: leaky
    ! Do an MFCC SCF calculation on each of the .atom_group.mol
    ! molecules.
       self :: INOUT
-      initial_density :: STR, optional, IN
+      restart :: BIN, optional, IN
 
    ENSURE(.atom_group.associated,"no atom_group info")
    ENSURE(.scfdata.associated,"no scfdata")
 
-      name :: STR
+      name,guess :: STR
       mol :: MOLECULE*
       g :: INT
 
@@ -8469,16 +8469,19 @@ contains
          ! Skip SCF for atoms without electrons
          if (mol.BASE:no_of_electrons < 1) cycle
 
+         ! Assign crystal
          if (.crystal.associated) &
             mol.crystal => .crystal
 
          ! Set up SCF options
+         mol.BASE:set_scf_guess_defaults_from(.scfdata)
          mol.scfdata.set_output(TRUE)
-         if (present(initial_density)) then
-            if (mol.n_atom==1) then
+         if (present(restart)) then
+            if (mol.atom.dim==1) then
                mol.scfdata.set_initial_density("core")
-            else
-               mol.scfdata.set_initial_density(initial_density)
+            else if (restart) then
+               guess = mol.scfdata.spinorbital_kind
+               mol.scfdata.set_initial_density(guess)
             end
          end
 
@@ -8500,11 +8503,11 @@ contains
 
    end
 
-   MFCC_SCF_plus_SFs(initial_density,spin_density) ::: leaky
+   MFCC_SCF_plus_SFs(restart,spin_density) ::: leaky
    ! Do an MFCC SCF calculation on each of the .atom_group.mol
    ! molecules and calculate the structure factors.
       self :: INOUT
-      initial_density :: STR, optional, IN
+      restart :: BIN, optional, IN
       spin_density :: BIN, optional, IN
 
    ENSURE(.atom_group.associated,"no atom_group info")
@@ -8514,7 +8517,7 @@ contains
    ENSURE(.cif.is_mmCIF,"you must use an mmCIF for input!")
    ENSURE(.cif.use_MFCC,"you must set use_MFCC= in the cif= section!")
 
-      name :: STR
+      name,guess :: STR
       mol :: MOLECULE*
       n_group,g :: INT
 
@@ -8536,24 +8539,31 @@ contains
          ! Skip SCF for atoms without electrons
          if (mol.BASE:no_of_electrons < 1) cycle
 
-         mol.crystal => .crystal
+         ! Assign crystal
+         if (.crystal.associated) &
+            mol.crystal => .crystal
 
-         ! Do the SCF !!!!!!!!!!!!!!!!!!!!!
-         name = "stdout." // trim(mol.name)
-         tonto.parallel_IO_allowed = TRUE
-         stdout.redirect(name)
-         stdout.move_to_end
+         ! Set up SCF options
+         mol.BASE:set_scf_guess_defaults_from(.scfdata)
          mol.scfdata.set_output(TRUE)
-         if (present(initial_density)) then
-            if (mol.n_atom==1) then
+         if (present(restart)) then
+            if (mol.atom.dim==1) then
                mol.scfdata.set_initial_density("core")
-            else
-               mol.scfdata.set_initial_density(initial_density)
+            else if (restart) then
+               guess = mol.scfdata.spinorbital_kind
+               mol.scfdata.set_initial_density(guess)
             end
          end
-         mol.:scf
+
+         ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         name = "stdout." // trim(mol.name)
+         stdout.redirect(name)
+         stdout.move_to_end
+         tonto.parallel_IO_allowed = TRUE
+         mol.:scf ! <<<
          stdout.revert
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         tonto.parallel_IO_allowed = FALSE
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
          ! NOTE: change DFT -> becke
          .atom_group(g).mol.BASE:initialize_DFT_grids
@@ -8561,8 +8571,9 @@ contains
          ! Assign previously made ANOs
          .atom_group(g).mol.BASE:set_ANOs_from(self)
 
-         ! Write the SFs for each fragment to disk
+         ! Write SFs for each fragment to disk - in parallel
          n_group = .atom_group(g).atom_index.dim
+         tonto.parallel_IO_allowed = TRUE
          .atom_group(g).mol.SCF:get_unique_Hirshfeld_atom_SFs(n_group,spin_density)
          tonto.parallel_IO_allowed = FALSE
       
