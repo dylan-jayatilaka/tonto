@@ -70,6 +70,7 @@ module PARALLEL
    USE mpi, only: MPI_WIN_LOCK
    USE mpi, only: MPI_WIN_UNLOCK
    USE mpi, only: MPI_LOCK_EXCLUSIVE
+   USE mpi, only: MPI_LOCK_SHARED
    USE mpi, only: MPI_PUT
    USE mpi, only: MPI_GET
    USE mpi, only: MPI_ACCUMULATE
@@ -3255,29 +3256,17 @@ contains
    ! Create an MPI Window object for one-sided communication
       self :: INOUT
       base :: VAR_TYPE, IN
-!#ifdef MPI
-!      siz :: MPI_ADDRESS, IN, optional
-!#else
-!      siz :: INT, IN, optional
-!#endif
       disp_unit,info :: INT, IN, optional
       win :: INT, OUT, optional
 
    ENSURE(.is_parallel,"must be in a parallel enviornoment")
 
-#ifdef MPI
-      s :: MPI_ADDRESS 
-#else
-      s :: INT
-#endif
       d,i,w :: INT
 
 
 #ifdef MPI
       d = 1
       i = 0
-            s = LEN
-            s = sizeof(base)
       if (present(disp_unit)) d = disp_unit
       if (present(info)) i = info
       call MPI_WIN_CREATE(base,sizeof(base),d,i,MPI_COMM_WORLD,w,.mpi_error)
@@ -3458,11 +3447,6 @@ contains
 #ifdef MPI
       d = 0
       i = 0
-      if (present(siz))  then
-         s = siz
-      else
-         s = 0
-      end if
       if (present(disp_unit)) d = disp_unit
       if (present(info)) i = info
       call MPI_WIN_ALLOCATE(s,d,i,MPI_COMM_WORLD,base,w,.mpi_error)
@@ -3560,21 +3544,43 @@ contains
 ! Window Lock/Unlock
 ! ==================
 
-   win_lock(rank,win) ::: template 
+   win_lock_exclusive(rank,win) ::: template 
    ! Begin an RMA access epoch at the target process. 
       rank,win :: INT, IN
    ENSURE(.is_parallel,"must be in a parallel environment")
       
 #ifdef MPI
-      status :: VEC{INT}(6)
-#endif      
-      
-#ifdef MPI
-      call MPI_WIN_UNLOCK(MPI_LOCK_EXCLUSIVE,status,.mpi_error)
+      call MPI_WIN_LOCK(MPI_LOCK_EXCLUSIVE,rank,0,win,.mpi_error)
 #else
+      if (win == rank) DIE("wtf?")
       DIE("wtf?")
       self = self
-      request = request
+#endif
+   end
+
+   win_lock_shared(rank,win) ::: template 
+   ! Begin an RMA access epoch at the target process. 
+      rank,win :: INT, IN
+   ENSURE(.is_parallel,"must be in a parallel environment")
+      
+#ifdef MPI
+      call MPI_WIN_LOCK(MPI_LOCK_SHARED,rank,0,win,.mpi_error)
+#else
+      if (win == rank) DIE("wtf?")
+      self = self
+#endif
+   end
+
+   win_unlock(rank,win) ::: template 
+   ! Completes an RMA access epoch at the target process. 
+      rank,win :: INT, IN
+   ENSURE(.is_parallel,"must be in a parallel environment")
+      
+#ifdef MPI
+      call MPI_WIN_UNLOCK(rank,win,.mpi_error)
+#else
+      if (win == rank) DIE("wtf?")
+      self = self
 #endif
    end
 
@@ -4946,7 +4952,7 @@ contains
       origin_addr,result_addr :: VAR_TYPE, INOUT
       target_rank :: INT, IN
 #ifdef MPI
-      target_disp :: MPI_ADDRESS, IN, optional
+      target_disp :: INT, IN, optional
 #else
       target_disp :: INT, IN, optional
 #endif
