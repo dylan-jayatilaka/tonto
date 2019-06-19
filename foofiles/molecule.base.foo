@@ -251,11 +251,22 @@ contains
 
    destroy_atom_group ::: recursive, leaky
    ! Destroy the pointer parts of a molecule object
+      self :: INOUT
+
+      if (.atom_group.disassociated) return
+
+      .:destroy_atom_group_mols
+
+      .atom_group.destroy
+
+   end
+
+   destroy_atom_group_mols ::: recursive, leaky
+   ! Destroy the atom_group.mol molecules
+      self :: INOUT
 
       g :: INT
       mol :: MOLECULE*
-
-      if (.atom_group.disassociated) return
 
       do g = 1,.atom_group.dim
 
@@ -272,8 +283,6 @@ contains
          mol.:destroy
 
       end
-
-      .atom_group.destroy
 
    end
 
@@ -443,30 +452,30 @@ contains
 !  Specific cleanup
 !  ================
 
-   destroy_ANOs ::: leaky
+   destroy_NAO_matrices ::: leaky
+   ! Destroy the NAO's for all atoms in the molecule.
+
+   ENSURE(.atom.associated,"no atoms")
+
+      if (NOT .:has_all_NAO_matrices) return
+
+      .atom.destroy_NAO_matrices
+
+   end
+
+   destroy_ANO_matrices ::: leaky
    ! Destroy the ANO's for all atoms in the molecule.
 
    ENSURE(.atom.associated,"no atoms")
 
-      if (NOT .:has_all_ANOs_made) return
+      if (NOT .:has_all_ANO_matrices) return
 
-      .atom.destroy_ANOs
-
-   end
-
-   destroy_ANO_interpolators ::: leaky
-   ! Destroy the (non-unique) ANO interpolators
-
-   ENSURE(.atom.associated,"no atoms")
-
-      if (NOT .:has_all_ANO_interpolators) return
-
-      .atom.destroy_ANO_interpolators
+      .atom.destroy_ANO_matrices
 
    end
 
    destroy_interpolators ::: leaky
-   ! Destroy the (unique) interpolators (*not* ANO interpolators)
+   ! Destroy the (non-unique) interpolators
 
    ENSURE(.atom.associated,"no atoms")
 
@@ -493,7 +502,7 @@ contains
 
    ENSURE(.atom.associated,"no atoms")
 
-      if (NOT .:has_all_atom_shell_info) return
+      if (NOT .:has_all_shell_info) return
 
       .atom.destroy_shell_info
 
@@ -552,6 +561,7 @@ contains
 
    set_defaults ::: leaky
    ! Set up a default molecule
+      self :: INOUT
 
       .name                = "unknown"
       .charge              = 0
@@ -599,28 +609,38 @@ contains
          .name              = .:chemical_formula
          .spin_multiplicity = .:default_spin_multiplicity
          .:set_atom_info
+         .:resolve_basis_info
       end
 
    end
 
    set_scf_guess_defaults_from(scfdata) ::: leaky
    ! Set scf  data options for a guess-type SCF defaults
+      self :: INOUT
       scfdata :: SCFDATA*
 
       ! Set the SCF defaults (leaky)
       if (scfdata.disassociated) then
+
          .:set_scf_defaults
          .scfdata.set_output(FALSE)
-      else if (scfdata.use_default_guess_options) then
-         .:set_scf_defaults
-         .scfdata.set_output(FALSE)
-      else
+
+      else if (scfdata.scf_kind=="mfcc" OR NOT scfdata.use_default_guess_options) then
+
          .:set_scf_defaults(scfdata) ! leaky
+
+      else 
+
+         .:set_scf_defaults
+         .scfdata.set_output(FALSE)
+
       end
 
       ! Reset some defaults from scfdata, if it is there
       if (scfdata.associated) then
          .scfdata.set_output(scfdata.guess_output)
+         if (scfdata.initial_mos/="--using density--")  .scfdata.set_initial_MOs(scfdata.initial_mos)
+         if (scfdata.initial_density/="--using MO's--") .scfdata.set_initial_density(scfdata.initial_density)
          .scfdata.set_convergence(scfdata.convergence)
          .scfdata.diis.set_convergence_tolerance(scfdata.diis.convergence_tolerance)
          .scfdata.set_relativity_kind(scfdata.relativity_kind)
@@ -669,10 +689,11 @@ contains
 
    set_scf_defaults(scfdata) ::: leaky
    ! Set up scf defaults for molecule
-      scfdata :: SCFDATA*, optional
+      self :: INOUT
+      scfdata :: SCFDATA*, optional, IN
 
       if (.scfdata.disassociated) then; .scfdata.create
-      else;                         .scfdata.set_defaults
+      else;                             .scfdata.set_defaults
       end
 
       ! Restricted?
@@ -680,6 +701,7 @@ contains
       if (.spin_multiplicity/=1) .scfdata.set_scf_kind("uhf")
 
       if (present(scfdata)) then
+      if (scfdata.associated) then
 
          ! Set defaults from scfdata
          .scfdata = scfdata
@@ -707,6 +729,7 @@ contains
 
          end
 
+      end
       end
 
       .scfdata.nuclear_repulsion_energy = .:nuclear_repulsion_energy
@@ -760,7 +783,7 @@ contains
    end
 
    set_spin_multiplicity(val)
-   ! Set the spin multiplicity
+   ! Set the spin multiplicity and no. of alpha & beta electrons
       self :: INOUT
       val :: INT, IN
 
@@ -775,17 +798,58 @@ contains
 
    end
 
-! Bases
+! Atoms
 
-   set_atom_info ::: leaky
+   finalize_atoms ::: leaky
+   ! Finalize the atom list information
+      self :: INOUT
+
+      ! Finalize atom info/basis sets
+      ! Avoid calling these private routine directly
+      ! NOTE: finalize_atom_groups might be called recursively
+      .BASE:set_atom_info
+      .BASE:finalize_atom_groups 
+      .BASE:resolve_basis_info
+
+      ! Finalize crystal
+      if (associated(.crystal)) then
+         .BASE:resolve_axis_system
+         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+      end
+
+      ! Destroy stored atoms here
+      .isosurface.destroy
+
+   end
+
+   finalize_atoms_no_groups ::: leaky
+   ! Finalize the atom list information
+      self :: INOUT
+
+      ! Finalize atom info/basis sets
+      ! Avoid calling these private routine directly
+      .BASE:set_atom_info
+      .BASE:resolve_basis_info
+
+      ! Finalize crystal
+      if (associated(.crystal)) then
+         .BASE:resolve_axis_system
+         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+      end
+
+      ! Destroy stored atoms here
+      .isosurface.destroy
+
+   end
+
+   set_atom_info ::: leaky, private
    ! Set the associated atom information
    ! . Atom tags and kind indices
    ! . The spin multiplicity
    ! . The number of alpha and beta electrons.
      self :: INOUT
 
-   ENSURE(.atom.associated,"no atom info")
-
+      if (.atom.disassociated) return
       if (.atom_info_made) return
 
       ! Finalize 
@@ -816,7 +880,9 @@ contains
 
    end
 
-   resolve_basis_info ::: leaky
+! Bases
+
+   resolve_basis_info ::: leaky, private
    ! Match the basis set labels for every atom with the actual atomic basis set.
    ! Also perform any finalization procedures to fully define all objects.
    ! This version is supposed to work for multiple bases.
@@ -1028,7 +1094,7 @@ contains
 
    end
 
-   make_basis_info ::: leaky
+   make_basis_info ::: leaky, private
    ! Make the basis set information
       self :: INOUT
 
@@ -1640,10 +1706,8 @@ contains
       ! Set multiplicity
       .spin_multiplicity = .:default_spin_multiplicity
 
-      ! Finally: set atom info & basis info
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
+      ! Finalize atom info/basis sets
+      .:finalize_atoms
 
       .atom.put
 
@@ -1970,10 +2034,9 @@ contains
       ! Set multiplicity
       .spin_multiplicity = .:default_spin_multiplicity
 
-      ! Finally: set atom info & basis info (leaky)
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
+
+      ! Finalize atom info/basis sets
+      .:finalize_atoms
 
       ! Create MO arrays (leaky)
       .density_matrix.destroy
@@ -2157,66 +2220,66 @@ contains
 
       select case (swap)
 
-         case("row","1")
-            do s = 1,.n_shell
-               f  = .first_basis_fn_for_shell(s)
-               l  = .last_basis_fn_for_shell(s)
-               ls = .angular_moment_for_shell(s)
-               if(.atom(.atom_for_shell(s)).basis.is_spherical) then
-                  ! do spherical test
-                  sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
-                  stdout.show("Reordering: ", sph_reorder)
-                  if (ls>=1) then ! swap f functions
-                     X(f:l,:) = X(f-1+sph_reorder,:)
-                  end
-                  if (ls>1) then  ! normalisation factors
-                     lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                     fg = lg + 1
-                     lg = lg + GAUSSIAN_DATA:n_comp(ls)
-                     fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                     do i = f,l
-                        X(i,:) = X(i,:)*fac(i-f+1)
-                     end
-                  end
-               else
-                  ENSURE(ls<=4,"cannot yet convert order for h shells")
-                  if (ls==3) then ! swap f functions
-                     X(f:l,:) = X(f-1+ff,:)
-                  end
-                  if (ls>1) then  ! normalisation factors
-                     lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                     fg = lg + 1
-                     lg = lg + GAUSSIAN_DATA:n_comp(ls)
-                     fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                     do i = f,l
-                        X(i,:) = X(i,:)*fac(i-f+1)
-                     end
-                  end
-               end
-            end
-
-         case("column","2")
-            do s = 1,.n_shell
-               f  = .first_basis_fn_for_shell(s)
-               l  = .last_basis_fn_for_shell(s)
-               ls = .angular_moment_for_shell(s)
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
-               if (ls==3) then ! swap f functions
-                  X(:,f:l) = X(:,f-1+ff)
+      case("row","1")
+         do s = 1,.n_shell
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+            if(.atom(.atom_for_shell(s)).basis.is_spherical) then
+               ! do spherical test
+               sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
+               stdout.show("Reordering: ", sph_reorder)
+               if (ls>=1) then ! swap f functions
+                  X(f:l,:) = X(f-1+sph_reorder,:)
                end
                if (ls>1) then  ! normalisation factors
                   lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
                   fg = lg + 1
                   lg = lg + GAUSSIAN_DATA:n_comp(ls)
                   fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do j = f,l
-                     X(:,j) = X(:,j)*fac(j-f+1)
+                  do i = f,l
+                     X(i,:) = X(i,:)*fac(i-f+1)
+                  end
+               end
+            else
+               ENSURE(ls<=4,"cannot yet convert order for h shells")
+               if (ls==3) then ! swap f functions
+                  X(f:l,:) = X(f-1+ff,:)
+               end
+               if (ls>1) then  ! normalisation factors
+                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                  fg = lg + 1
+                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
+                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+                  do i = f,l
+                     X(i,:) = X(i,:)*fac(i-f+1)
                   end
                end
             end
+         end
 
-         case default
-            DIE("unknown swap kind, "//trim(swap))
+      case("column","2")
+         do s = 1,.n_shell
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
+            if (ls==3) then ! swap f functions
+               X(:,f:l) = X(:,f-1+ff)
+            end
+            if (ls>1) then  ! normalisation factors
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do j = f,l
+                  X(:,j) = X(:,j)*fac(j-f+1)
+               end
+            end
+         end
+
+      case default
+         DIE("unknown swap kind, "//trim(swap))
 
       end
 
@@ -2316,10 +2379,10 @@ contains
       chkfile :: TEXTFILE*
       shell_l,n_prim_for_shell,atom_for_shell,atom_p :: VEC{INT}*
       G_n_prim_for_shell,G_atom_for_shell,G_shell_type :: VEC{INT}*
-      G_ex,G_cc,G_cp, ex,cc,orb_energy :: VEC{REAL}*
+      G_ex,G_cc,G_cp, ex,cc,orb_energy,fc :: VEC{REAL}*
       pos :: VEC{REAL}(3)
       temp_mat,DD,MO :: MAT{REAL}*
-      Z, a,s,t, f,l,g,h :: INT
+      Z, a,s,t, f,l,g,h,n3n,ntr :: INT
       n_prim_shells,n_shell,n_prim,n_independent :: INT
       restricted :: BIN
       archive :: ARCHIVE
@@ -2562,10 +2625,8 @@ contains
       n_prim_for_shell.destroy
       shell_l.destroy
 
-      ! .basis.unnormalise ! NOTE this
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
+      ! Finalize atom info/basis sets
+      .:finalize_atoms
 
       ! Read in orbital energies.
       orb_energy.create(n_independent)
@@ -2646,351 +2707,6 @@ contains
       ! Extract CC density matrix to file.  UHF untested
       .:read_gX_CC_dm(chkfile,restricted,.density_matrix)
 
-      ! Close chkfile
-      chkfile.close; chkfile.destroy
-
-      ! Save data in archiveive files
-      archive.set_defaults
-      archive.set(.name,"density_matrix")
-      archive.write(.density_matrix)
-      archive.set(.name,"molecular_orbitals")
-      archive.write(.molecular_orbitals)
-      archive.set(.name,"orbital_energies")
-      archive.write(.orbital_energies)
-
-      if (associated(.crystal)) then
-         .:resolve_axis_system
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-      end
-
-   end
-
-   read_g03_FChk_file(name) ::: leaky
-   ! Read a g09 checkpoint file (after fchk conversion to ASCII) into TONTO
-      name :: STR, optional
-
-   ENSURE(NOT .use_spherical_basis,"not implemented")
-
-      fchk :: STR
-      chkfile :: TEXTFILE*
-      shell_l,n_prim_for_shell,atom_for_shell,atom_p :: VEC{INT}*
-      G_n_prim_for_shell,G_atom_for_shell,G_shell_type :: VEC{INT}*
-      G_ex,G_cc,G_cp, ex,cc,orb_energy, fc :: VEC{REAL}*
-      temp_mat,DD,MO :: MAT{REAL}*
-      pos :: VEC{REAL}(3)
-      Z, a,s,t, f,l,g,h, n3n,ntr :: INT
-      n_prim_shells,n_shell,n_prim,n_independent :: INT
-      restricted :: BIN
-      archive :: ARCHIVE
-      Nc :: REAL
-
-      ! Destroy existing basis, and atom list
-      if (.basis.associated) .basis.destroy
-      if (.atom.associated)  .atom.destroy
-
-      ! Create scfdata
-      .scfdata.destroy
-      .scfdata.create
-
-      ! Get FChk file name
-      if (present(name)) then;                 fchk = name
-      else
-         if (NOT stdin.buffer_exhausted) then; stdin.read(fchk) ! specified on stdin
-         else;                                 fchk = .name
-         end
-      end
-
-      ! Open FChk file
-      chkfile.create(fchk)
-      chkfile.open_for("read")
-      chkfile.move_to_line(1)
-
-      ! Read in basic stuff.
-      chkfile.look_for("Number of atoms",from=1)
-      chkfile.move_to_line_item(5); chkfile.read(.n_atom)
-
-      chkfile.look_for("Charge",from=1)
-      chkfile.move_to_line_item(3); chkfile.read(.charge)
-
-      chkfile.look_for("Multiplicity",from=1)
-      chkfile.move_to_line_item(3); chkfile.read(.spin_multiplicity)
-
-      chkfile.look_for("Number of electrons",from=1)
-      chkfile.move_to_line_item(5); chkfile.read(.n_e)
-
-      chkfile.look_for("Number of alpha electrons",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_a)
-
-      chkfile.look_for("Number of beta electrons",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_b)
-
-      chkfile.look_for("Number of basis functions",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_bf)
-
-      n_independent = .n_bf
-      chkfile.look_for("Number of independant functions",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_independent)
-      WARN_IF(.n_bf/=n_independent,"No. of basis fns /= no. of independent fns")
-      WARN_IF(.n_bf/=n_independent,"MO's are wrong, but density matrix is correct")
-
-      chkfile.look_for("Number of contracted shells",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_shell)
-
-      chkfile.look_for("Number of primitive shells",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_prim_shells)
-
-      chkfile.look_for("Total Energy",from=1)
-      chkfile.move_to_line_item(4); chkfile.read(.scfdata.energy)
-
-      ! Read in atoms
-      chkfile.look_for("Atomic numbers",from=1); chkfile.read_line
-      .atom.create(.n_atom)
-      do a = 1,.n_atom
-         chkfile.read(Z)
-         .atom(a).set_atomic_number(Z)
-      end
-
-      ! Read in nuclear charges
-      chkfile.look_for("Nuclear charges",from=1); chkfile.read_line
-      do a = 1,.n_atom
-         chkfile.read(Nc)
-         .atom(a).set_nuclear_charge(Nc)
-      end
-
-      ! Read in coordinates
-      chkfile.look_for("Current cartesian coordinates",from=1)
-      chkfile.read_line
-      do a = 1,.n_atom
-         chkfile.read(pos)
-         .atom(a).set_position(pos)
-      end
-
-      ! Read gaussian shell info.
-      G_shell_type.create(n_shell)
-      G_n_prim_for_shell.create(n_shell)
-      G_atom_for_shell.create(n_shell)
-      G_ex.create(n_prim_shells)
-      G_cc.create(n_prim_shells)
-
-      chkfile.look_for("Shell types",from=1); chkfile.read_line
-      chkfile.read(G_shell_type)
-      DIE_IF(any(G_shell_type<-1),"unknown shell types exist")
-
-      chkfile.look_for("Number of primitives per shell",from=1); chkfile.read_line
-      chkfile.read(G_n_prim_for_shell)
-
-      chkfile.look_for("Shell to atom map",from=1); chkfile.read_line
-      chkfile.read(G_atom_for_shell)
-
-      chkfile.look_for("Primitive exponents",from=1); chkfile.read_line
-      chkfile.read(G_ex)
-
-      chkfile.look_for("Contraction coefficients",from=1); chkfile.read_line
-      chkfile.read(G_cc)
-
-      ! SP type shells
-      G_cp.create(n_prim_shells); G_cp = 0
-      atom_p.create(.n_atom);     atom_p = 0
-      if (any(G_shell_type==-1)) then
-        do s = 1,n_shell
-           if (G_shell_type(s)/=-1) cycle
-           a = G_atom_for_shell(s)
-           atom_p(a) = atom_p(a) + 1
-           n_prim_shells = n_prim_shells + G_n_prim_for_shell(s)
-        end
-        chkfile.look_for("P(S=P)",from=1); chkfile.read_line
-        chkfile.read(G_cp)
-      end
-
-      ! Get correct number of shells
-      .n_shell = n_shell + atom_p.sum_elements
-      atom_p.destroy
-
-      ! Create basis set arrays
-      shell_l.create(.n_shell)
-      n_prim_for_shell.create(.n_shell)
-      atom_for_shell.create(.n_shell)
-      ex.create(n_prim_shells)
-      cc.create(n_prim_shells)
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         stdout.show(" n_shell =", n_shell)
-         stdout.show(".n_shell =",.n_shell)
-
-         stdout.text("Shell types:")
-         stdout.put(G_shell_type)
-
-         stdout.text("Number of prims for:")
-         stdout.put(G_n_prim_for_shell)
-
-         stdout.text("Atom for shell:")
-         stdout.put(G_atom_for_shell)
-
-         stdout.text("Primitive exponents:")
-         stdout.put(G_ex)
-
-         stdout.text("Contractions:")
-         stdout.put(G_cc)
-
-         stdout.text("P(SP) contractions:")
-         stdout.put(G_cp)
-
-      end
-
-      ! Copy the basis. Expand out L shells.
-      t = 0
-      l = 0; h = 0
-
-      do s = 1,n_shell
-
-        t = t + 1
-        n_prim = G_n_prim_for_shell(s)
-        f = l + 1; l = l + n_prim
-        g = h + 1; h = h + n_prim
-
-        if (G_shell_type(s)==-1) then
-
-           shell_l(t) = 0                    ! S part of L shell
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cc(g:h)
-
-           t = t + 1
-           f = l + 1
-           l = l + n_prim
-           shell_l(t) = 1                    ! P part of L shell
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cp(g:h)
-
-        else
-
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cc(g:h)
-           shell_l(t) = abs(G_shell_type(s)) ! WARNING: sometimes this can be -2
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-
-        end
-
-      end
-
-      G_cp.destroy
-      G_shell_type.destroy
-      G_atom_for_shell.destroy
-      G_n_prim_for_shell.destroy
-      G_ex.destroy; G_cc.destroy
-
-      ENSURE(.n_shell==t,"wrong number of shells")
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         stdout.text("ex:")
-         stdout.put(ex)
-
-         stdout.text("cc:")
-         stdout.put(cc)
-
-      end
-
-      ! Set basis
-      .:set_basis_from_gX_data(shell_l,n_prim_for_shell,atom_for_shell,ex,cc)
-
-      cc.destroy
-      ex.destroy
-      atom_for_shell.destroy
-      n_prim_for_shell.destroy
-      shell_l.destroy
-
-      ! Set atom/basis info
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
-
-      ! Read in orbital energies.
-      orb_energy.create(n_independent)
-      chkfile.look_for("Alpha Orbital Energies",from=1)
-      chkfile.read_line; chkfile.read(orb_energy)
-      .orbital_energies.destroy
-      if (trim(chkfile.next_str)=="Beta") then
-         restricted = FALSE
-         .scfdata.set_scf_kind("uhf")
-         .orbital_energies.create(.n_bf,"unrestricted")
-         .orbital_energies.alpha = ZERO
-         .orbital_energies.alpha(1:n_independent) = orb_energy
-         chkfile.read_line; chkfile.read(orb_energy)
-         .orbital_energies.beta = ZERO
-         .orbital_energies.beta(1:n_independent) = orb_energy
-         orb_energy.destroy
-      else
-         restricted = TRUE
-         .scfdata.set_scf_kind("rhf")
-         .orbital_energies.create(.n_bf,"restricted")
-         .orbital_energies.restricted = ZERO
-         .orbital_energies.restricted(1:n_independent) = orb_energy
-         orb_energy.destroy
-      end
-
-      ! Read in molecular orbitals.
-      temp_mat.create(.n_bf,n_independent)
-      chkfile.look_for("Alpha MO",from=1)
-      chkfile.read_line
-      chkfile.read(temp_mat)
-
-      .molecular_orbitals.destroy
-      if (trim(chkfile.next_str)=="Beta") then
-         .molecular_orbitals.create(.n_bf,"unrestricted")
-         .molecular_orbitals.alpha = ZERO
-         .molecular_orbitals.alpha(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         chkfile.read_line; chkfile.read(temp_mat)
-         .molecular_orbitals.beta = ZERO
-         .molecular_orbitals.beta(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         temp_mat.destroy
-         .:swap_from_g94_orbital_order(.molecular_orbitals.alpha,"row")
-         .:swap_from_g94_orbital_order(.molecular_orbitals.beta, "row")
-      else
-         .molecular_orbitals.create(.n_bf,"restricted")
-         .molecular_orbitals.restricted = ZERO
-         .molecular_orbitals.restricted(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         temp_mat.destroy
-         .:swap_from_g94_orbital_order(.molecular_orbitals.restricted,"row")
-      end
-
-      ! Read in density matrix.
-      .:read_gX_SCF_dm(chkfile,restricted,.density_matrix)
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         if (.molecular_orbitals.associated) then
-         if (.molecular_orbitals.restricted.associated) then
-            MO => .molecular_orbitals.restricted(:,1:.n_a)
-            DD.create(.n_bf,.n_bf)
-            DD.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
-            DD = abs(DD - .density_matrix.restricted)
-            stdout.text("Diff density matrix:")
-            stdout.put(DD)
-            stdout.show("max diff between MO reconstructed density =",maxval(DD))
-            DD.destroy
-         end
-         end
-
-      end
-
-      ! Extract MP2 density matrix to file.  UHF untested
-      .:read_gX_MP2_dm(chkfile,restricted,.density_matrix)
-
-      ! Extract MP3 density matrix to file.  UHF untested
-      .:read_gX_MP3_dm(chkfile,restricted,.density_matrix)
-
-      ! Extract CC density matrix to file.  UHF untested
-      .:read_gX_CC_dm(chkfile,restricted,.density_matrix)
-
       ! Read in force constants
       if (chkfile.has_string("Cartesian Force Constants")) then
          n3n = 3*.atom.dim
@@ -3003,347 +2719,6 @@ contains
          .force_constants.symmetric_unzip_triangle(fc)
          fc.destroy
       end
-
-      ! Close chkfile
-      chkfile.close
-      chkfile.destroy
-
-      ! Save data in archives
-      archive.set_defaults
-      archive.set(.name,"density_matrix")
-      archive.write(.density_matrix)
-      archive.set(.name,"molecular_orbitals")
-      archive.write(.molecular_orbitals)
-      archive.set(.name,"orbital_energies")
-      archive.write(.orbital_energies)
-
-      if (associated(.crystal)) then
-         .:resolve_axis_system
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-      end
-
-   end
-
-   read_g94_FChk_file(name) ::: leaky
-   ! Read a g94 checkpoint file (after fchk conversion to ASCII) into TONTO
-      name :: STR, optional
-
-   ENSURE(NOT .use_spherical_basis,"not implemented")
-
-      fchk :: STR
-      chkfile :: TEXTFILE*
-      shell_l,n_prim_for_shell,atom_for_shell,atom_p :: VEC{INT}*
-      G_n_prim_for_shell,G_atom_for_shell,G_shell_type :: VEC{INT}*
-      G_ex,G_cc,G_cp, ex,cc,orb_energy :: VEC{REAL}*
-      pos :: VEC{REAL}(3)
-      temp_mat,DD,MO :: MAT{REAL}*
-      Z, a,s,t, f,l,g,h :: INT
-      n_prim_shells,n_shell,n_prim,n_independent :: INT
-      restricted :: BIN
-      archive :: ARCHIVE
-
-      ! Destroy existing basis, and atom list
-      if (.basis.associated) .basis.destroy
-      if (.atom.associated)  .atom.destroy
-
-      ! Create scfdata
-      .scfdata.destroy
-      .scfdata.create
-
-      ! Get FChk file name
-      if (present(name)) then;                 fchk = name
-      else
-         if (NOT stdin.buffer_exhausted) then; stdin.read(fchk) ! specified on stdin
-         else;                                 fchk = .name
-         end
-      end
-
-      ! Open FChk file
-      chkfile.create(fchk)
-      chkfile.open_for("read")
-      chkfile.move_to_line(1)
-
-      ! Read in basic stuff.
-      chkfile.look_for("Number of atoms",from=1)
-      chkfile.move_to_line_item(5); chkfile.read(.n_atom)
-
-      chkfile.look_for("Charge",from=1)
-      chkfile.move_to_line_item(3); chkfile.read(.charge)
-
-      chkfile.look_for("Multiplicity",from=1)
-      chkfile.move_to_line_item(3); chkfile.read(.spin_multiplicity)
-
-      chkfile.look_for("Number of electrons",from=1)
-      chkfile.move_to_line_item(5); chkfile.read(.n_e)
-
-      chkfile.look_for("Number of alpha electrons",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_a)
-
-      chkfile.look_for("Number of beta electrons",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_b)
-
-      chkfile.look_for("Number of basis functions",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(.n_bf)
-
-      n_independent = .n_bf
-      chkfile.look_for("Number of independant functions",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_independent)
-      WARN_IF(.n_bf/=n_independent,"No. of basis fns /= no. of independent fns")
-      WARN_IF(.n_bf/=n_independent,"MO's are wrong, but density matrix is correct")
-
-      chkfile.look_for("Number of contracted shells",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_shell)
-
-      chkfile.look_for("Number of primitive shells",from=1)
-      chkfile.move_to_line_item(6); chkfile.read(n_prim_shells)
-
-      chkfile.look_for("Total Energy",from=1)
-      chkfile.move_to_line_item(4); chkfile.read(.scfdata.energy)
-
-      ! Read in atoms
-      chkfile.look_for("Atomic numbers",from=1); chkfile.read_line
-      .atom.create(.n_atom)
-      do a = 1,.n_atom
-         chkfile.read(Z)
-         .atom(a).set_atomic_number(Z)
-      end
-
-      ! Read in coordinates
-      chkfile.look_for("Current cartesian coordinates",from=1)
-      chkfile.read_line
-      do a = 1,.n_atom
-         chkfile.read(pos)
-         .atom(a).set_position(pos)
-      end
-
-      ! Read gaussian shell info.
-      G_shell_type.create(n_shell)
-      G_n_prim_for_shell.create(n_shell)
-      G_atom_for_shell.create(n_shell)
-      G_ex.create(n_prim_shells)
-      G_cc.create(n_prim_shells)
-
-      chkfile.look_for("Shell types",from=1); chkfile.read_line
-      chkfile.read(G_shell_type)
-      DIE_IF(any(G_shell_type<-1),"unknown shell types exist")
-
-      chkfile.look_for("Number of primitives per shell",from=1); chkfile.read_line
-      chkfile.read(G_n_prim_for_shell)
-
-      chkfile.look_for("Shell to atom map",from=1); chkfile.read_line
-      chkfile.read(G_atom_for_shell)
-
-      chkfile.look_for("Primitive exponents",from=1); chkfile.read_line
-      chkfile.read(G_ex)
-
-      chkfile.look_for("Contraction coefficients",from=1); chkfile.read_line
-      chkfile.read(G_cc)
-
-      ! SP type shells
-      G_cp.create(n_prim_shells); G_cp = 0
-      atom_p.create(.n_atom);     atom_p = 0
-      if (any(G_shell_type==-1)) then
-        do s = 1,n_shell
-           if (G_shell_type(s)/=-1) cycle
-           a = G_atom_for_shell(s)
-           atom_p(a) = atom_p(a) + 1
-           n_prim_shells = n_prim_shells + G_n_prim_for_shell(s)
-        end
-        chkfile.look_for("P(S=P)",from=1); chkfile.read_line
-        chkfile.read(G_cp)
-      end
-
-      ! Get correct number of shells
-      .n_shell = n_shell + atom_p.sum_elements
-      atom_p.destroy
-
-      ! Create basis set arrays
-      shell_l.create(.n_shell)
-      n_prim_for_shell.create(.n_shell)
-      atom_for_shell.create(.n_shell)
-      ex.create(n_prim_shells)
-      cc.create(n_prim_shells)
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         stdout.show(" n_shell =", n_shell)
-         stdout.show(".n_shell =",.n_shell)
-
-         stdout.text("Shell types:")
-         stdout.put(G_shell_type)
-
-         stdout.text("Number of prims for:")
-         stdout.put(G_n_prim_for_shell)
-
-         stdout.text("Atom for shell:")
-         stdout.put(G_atom_for_shell)
-
-         stdout.text("Primitive exponents:")
-         stdout.put(G_ex)
-
-         stdout.text("Contractions:")
-         stdout.put(G_cc)
-
-         stdout.text("P(SP) contractions:")
-         stdout.put(G_cp)
-
-      end
-
-      ! Copy the basis.
-      t = 0
-      l = 0; h = 0
-
-      do s = 1,n_shell
-
-        t = t + 1
-        n_prim = G_n_prim_for_shell(s)
-        f = l + 1; l = l + n_prim
-        g = h + 1; h = h + n_prim
-
-        ! Expand out L shell
-        if (G_shell_type(s)==-1) then
-
-           shell_l(t) = 0                    ! S part of L shell
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cc(g:h)
-
-           t = t + 1
-           f = l + 1
-           l = l + n_prim
-           shell_l(t) = 1                    ! P part of L shell
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cp(g:h)
-
-        ! Normal shell
-        else
-
-           ex(f:l) = G_ex(g:h)
-           cc(f:l) = G_cc(g:h)
-           shell_l(t) = abs(G_shell_type(s)) ! WARNING: sometimes this can be -2
-           n_prim_for_shell(t) = n_prim
-           atom_for_shell(t) = G_atom_for_shell(s)
-
-        end
-
-      end
-
-      G_cp.destroy
-      G_shell_type.destroy
-      G_atom_for_shell.destroy
-      G_n_prim_for_shell.destroy
-      G_ex.destroy
-      G_cc.destroy
-
-      ENSURE(.n_shell==t,"wrong number of shells")
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         stdout.text("ex:")
-         stdout.put(ex)
-
-         stdout.text("cc:")
-         stdout.put(cc)
-
-      end
-
-      ! Set basis
-      .:set_basis_from_gX_data(shell_l,n_prim_for_shell,atom_for_shell,ex,cc)
-
-      cc.destroy
-      ex.destroy
-      atom_for_shell.destroy
-      n_prim_for_shell.destroy
-      shell_l.destroy
-
-      ! .basis.unnormalise ! NOTE this
-      .:set_atom_info
-      .:finalize_atom_groups
-      .:resolve_basis_info
-
-      ! Read in orbital energies.
-      orb_energy.create(n_independent)
-      chkfile.look_for("Alpha Orbital Energies",from=1)
-      chkfile.read_line; chkfile.read(orb_energy)
-      .orbital_energies.destroy
-      if (trim(chkfile.next_str)=="Beta") then
-         restricted = FALSE
-         .scfdata.set_scf_kind("uhf")
-         .orbital_energies.create(.n_bf,"unrestricted")
-         .orbital_energies.alpha = ZERO
-         .orbital_energies.alpha(1:n_independent) = orb_energy
-         chkfile.read_line; chkfile.read(orb_energy)
-         .orbital_energies.beta = ZERO
-         .orbital_energies.beta(1:n_independent) = orb_energy
-         orb_energy.destroy
-      else
-         restricted = TRUE
-         .scfdata.set_scf_kind("rhf")
-         .orbital_energies.create(.n_bf,"restricted")
-         .orbital_energies.restricted = ZERO
-         .orbital_energies.restricted(1:n_independent) = orb_energy
-         orb_energy.destroy
-      end
-
-      ! Read in molecular orbitals.
-      temp_mat.create(.n_bf,n_independent)
-      chkfile.look_for("Alpha MO",from=1)
-      chkfile.read_line
-      chkfile.read(temp_mat)
-
-      .molecular_orbitals.destroy
-      if (trim(chkfile.next_str)=="Beta") then
-         .molecular_orbitals.create(.n_bf,"unrestricted")
-         .molecular_orbitals.alpha = ZERO
-         .molecular_orbitals.alpha(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         chkfile.read_line; chkfile.read(temp_mat)
-         .molecular_orbitals.beta = ZERO
-         .molecular_orbitals.beta(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         temp_mat.destroy
-         .:swap_from_g94_orbital_order(.molecular_orbitals.alpha,"row")
-         .:swap_from_g94_orbital_order(.molecular_orbitals.beta, "row")
-      else
-         .molecular_orbitals.create(.n_bf,"restricted")
-         .molecular_orbitals.restricted = ZERO
-         .molecular_orbitals.restricted(1:.n_bf,1:n_independent) = transpose(temp_mat)
-         temp_mat.destroy
-         .:swap_from_g94_orbital_order(.molecular_orbitals.restricted,"row")
-      end
-
-      ! Read in density matrix.
-      .:read_gX_SCF_dm(chkfile,restricted,.density_matrix)
-
-      ! Debug
-      if (.:debugging("read_gaussian_FChk_file")) then
-
-         if (.molecular_orbitals.associated) then
-         if (.molecular_orbitals.restricted.associated) then
-            MO => .molecular_orbitals.restricted(:,1:.n_a)
-            DD.create(.n_bf,.n_bf)
-            DD.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
-            DD = abs(DD - .density_matrix.restricted)
-            stdout.text("Diff density matrix:")
-            stdout.put(DD)
-            stdout.show("max diff between MO reconstructed density =",maxval(DD))
-            DD.destroy
-         end
-         end
-
-      end
-
-      ! Extract MP2 density matrix to file.  UHF untested
-      .:read_gX_MP2_dm(chkfile,restricted,.density_matrix)
-
-      ! Extract MP3 density matrix to file.  UHF untested
-      .:read_gX_MP3_dm(chkfile,restricted,.density_matrix)
-
-      ! Extract CC density matrix to file.  UHF untested
-      .:read_gX_CC_dm(chkfile,restricted,.density_matrix)
 
       ! Close chkfile
       chkfile.close; chkfile.destroy
@@ -3568,6 +2943,7 @@ contains
    ! If "dm" is present it is created to be the density matrix.
    end
 
+! Should go into GAUSIAN_DATA?
 
    swap_from_g94_orbital_order(X,swap)
    ! Swap the order of f orbitals on matrix "X" after reading a
@@ -3578,68 +2954,77 @@ contains
       swap :: STR
 
       s,f,l,ls,fg,lg,i,j :: INT
-      fac :: VEC{REAL}*
+      fac :: VEC{REAL}@
       ff :: VEC{INT}(10) = [ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 ]
+      gg :: VEC{INT}(15) = [15, 5, 1, 14, 13, 9, 4, 6, 2, 12, 10, 3, 11, 8, 7]
 
       select case (swap)
 
-         case("row","1")
+      case("row","1")
 
-            do s = 1,.n_shell
+         do s = 1,.n_shell
 
-               f  = .first_basis_fn_for_shell(s)
-               l  = .last_basis_fn_for_shell(s)
-               ls = .angular_moment_for_shell(s)
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
 
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
-               ! Swap f functions; g functions - no change
-               if (ls==3) then
-                  X(f:l,:) = X(f-1+ff,:)
-               end
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
 
-               ! Normalisation factors
-               if (ls>1) then  
-                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                  fg = lg + 1
-                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
-                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do i = f,l
-                     X(i,:) = X(i,:)*fac(i-f+1)
-                  end
-               end
-
+            ! Swap f & g functions
+            select case (ls)
+            case (3); X(f:l,:) = X(f-1+ff,:)
+            case (4); X(f:l,:) = X(f-1+gg,:)
             end
 
-         case("column","2")
-
-            do s = 1,.n_shell
-
-               f  = .first_basis_fn_for_shell(s)
-               l  = .last_basis_fn_for_shell(s)
-               ls = .angular_moment_for_shell(s)
-
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
-
-               ! Swap f functions; g functions - no change
-               if (ls==3) then
-                  X(:,f:l) = X(:,f-1+ff)
+            ! Normalisation factors
+            if (ls>1) then  
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do i = f,l
+                  X(i,:) = X(i,:)*fac(i-f+1)
                end
-
-               ! Normalisation factors
-               if (ls>1) then  
-                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                  fg = lg + 1
-                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
-                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do j = f,l
-                     X(:,j) = X(:,j)*fac(j-f+1)
-                  end
-               end
-
             end
 
-         case default
-            DIE("unknown swap kind, "//trim(swap))
+         end
+
+      case("column","2")
+
+         do s = 1,.n_shell
+
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
+
+            ! Swap f functions; g functions - no change
+            if (ls==3) then
+               X(:,f:l) = X(:,f-1+ff)
+            end
+
+            ! Swap f & g functions
+            select case (ls)
+            case (3); X(:,f:l) = X(:,f-1+ff)
+            case (4); X(:,f:l) = X(:,f-1+gg)
+            end
+
+            ! Normalisation factors
+            if (ls>1) then  
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do j = f,l
+                  X(:,j) = X(:,j)*fac(j-f+1)
+               end
+            end
+
+         end
+
+      case default
+         DIE("unknown swap kind, "//trim(swap))
 
       end
 
@@ -3654,69 +3039,72 @@ contains
       swap :: STR
 
       s,f,l,ls,fg,lg,i,j :: INT
-      fac :: VEC{REAL}*
+      fac :: VEC{REAL}@
       ff :: VEC{INT}(10) = [ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 ]
+      gg :: VEC{INT}(15) = [15, 5, 1, 14, 13, 9, 4, 6, 2, 12, 10, 3, 11, 8, 7]
 
       select case (swap)
 
-         case("row","1")
+      case("row","1")
 
-            do s = 1,.n_shell
+         do s = 1,.n_shell
 
-               f  = .first_basis_fn_for_shell(s)
-               l  = .last_basis_fn_for_shell(s)
-               ls = .angular_moment_for_shell(s)
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
 
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
 
-               ! Normalisation factors
-               if (ls>1) then  
-                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                  fg = lg + 1
-                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
-                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do i = f,l
-                     X(i,:) = X(i,:)/fac(i-f+1)
-                  end
+            ! Normalisation factors
+            if (ls>1) then  
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do i = f,l
+                  X(i,:) = X(i,:)/fac(i-f+1)
                end
-
-               ! Swap f functions; g functions - no change
-               if (ls==3) then
-                  X(f-1+ff,:) = X(f-1+ff,:)
-               end
-
             end
 
-         case("column","2")
-
-            do s = 1,.n_shell
-
-               f  = .first_basis_fn_for_shell(s)
-               l  = .last_basis_fn_for_shell(s)
-               ls = .angular_moment_for_shell(s)
-
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
-
-               ! Normalisation factors
-               if (ls>1) then  
-                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                  fg = lg + 1
-                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
-                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do j = f,l
-                     X(:,j) = X(:,j)/fac(j-f+1)
-                  end
-               end
-
-               ! Swap f functions; g functions - no change
-               if (ls==3) then
-                  X(:,f-1+ff) = X(:,f:l)
-               end
-
+            ! Swap f functions; g functions - no change
+            select case (ls)
+            case (3); X(f-1+ff,:) = X(f:l,:)
+            case (4); X(f-1+gg,:) = X(f:l,:)
             end
 
-         case default
-            DIE("unknown swap kind, "//trim(swap))
+         end
+
+      case("column","2")
+
+         do s = 1,.n_shell
+
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
+
+            ! Normalisation factors
+            if (ls>1) then  
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do j = f,l
+                  X(:,j) = X(:,j)/fac(j-f+1)
+               end
+            end
+
+            ! Swap f functions; g functions - no change
+            select case (ls)
+            case (3); X(:,f-1+ff) = X(:,f:l)
+            case (4); X(:,f-1+gg) = X(:,f:l)
+            end
+
+         end
+
+      case default
+         DIE("unknown swap kind, "//trim(swap))
 
       end
 
@@ -4112,7 +3500,7 @@ contains
 
       ! Don't remake ANO data if there
       i = 0
-      mol.:set_ANOs_from_sublist_of(self,[(i,i=n,n)])
+      mol.:set_ANOs_from(self,[(i,i=n,n)])
 
       ! Set guess-type SCF defaults
       mol.:set_scf_guess_defaults_from(.scfdata)
@@ -4123,43 +3511,6 @@ contains
          mol.:set_charge(.scfdata.initial_atomic_states(k,1))
          mol.:set_spin_multiplicity(.scfdata.initial_atomic_states(k,2))
       end
-
-   end
-
-   make_molecule_from_general_atom(n,mol) ::: leaky
-   ! Make a fully fledged molecule "mol" from a single atom "n" in self
-   ! The new molecule is ready for an SCF calculation.
-   ! DANGER: see warnings below
-      n :: INT, IN
-      mol :: MOLECULE
-
-   ENSURE(.atom.associated,"no atom info")
-   ENSURE(n<=.n_atom,"atom number n too big")
-
-      i :: INT
-
-      ! Clear the pointer part
-      mol.:nullify_ptr_part
-
-      ! Create the single atom and copy its pointers
-      ! WARNING: dont destroy ptr parts of mol.atom
-      mol.atom.create_copy(.atom(n:n))
-      mol.atom(1).set_position([ZERO,ZERO,ZERO])
-
-      ! Set default molecule e.g. the name, atom_info
-      ! and default multiplicity ...
-      mol.:set_defaults
-
-      ! Copy the basis set and set the basis info
-      ! WARNING: dont destroy basis of mol
-      mol.:set_basis_data_from(self)
-
-      ! Don't remake ANO data if there
-      i = 0
-      mol.:set_ANOs_from_sublist_of(self,[(i,i=n,n)])
-
-      ! Set guess-type SCF defaults
-      mol.:set_general_scf_guess_defaults_from(.scfdata)
 
    end
 
@@ -4189,19 +3540,21 @@ contains
       mol.name              = .atom_group(n).name
       mol.charge            = .atom_group(n).charge
       mol.spin_multiplicity = mol.:default_spin_multiplicity
-      mol.atom_info_made    = FALSE
-      mol.:set_atom_info
 
       ! Copy the basis set and set the basis info
       ! WARNING: dont destroy basis of mol !
       mol.:set_basis_data_from(self)
 
       ! Don't remake ANO data if there
-      mol.:set_ANOs_from_sublist_of(self,.atom_group(n).atom_index)
+      mol.:set_ANOs_from(self,.atom_group(n).atom_index)
 
       ! Assign the crystal
       ! WARNING: dont destroy ...
       if (.crystal.associated) mol.crystal => .crystal
+
+      ! Make atom info
+      mol.atom_info_made = FALSE
+      mol.:finalize_atoms_no_groups
 
       ! Set guess-type SCF defaults
       mol.:set_scf_guess_defaults_from(.scfdata)
@@ -4219,108 +3572,6 @@ contains
 
    end
 
-!   create_from_molecule(parent,name,ind,charge,multiplicity) ::: leaky
-!   ! Create a molecule "self" from a "parent" molecule; set the
-!   ! "name", "charge" and "multiplicity"; use only the atoms with
-!   ! indices "ind" in the parent atom list. Make the molecule ready
-!   ! for an SCF calculation using intelligent guesses from the
-!   ! "parent" molecule.
-!      self :: PTR
-!      parent :: MOLECULE, IN
-!      name :: STR, IN
-!      ind :: VEC{INT}, IN
-!      charge :: INT, optional, IN
-!      multiplicity :: INT, optional, IN
-!
-!   ENSURE(parent.atom_info_made,     "parent: no atom info")
-!   ENSURE(ind.dim    <=parent.n_atom,"ind: array too large")
-!   ENSURE(maxval(ind)<=parent.n_atom,"ind: element is too large")
-!   ENSURE(minval(ind)>0,             "ind: element is too small")
-!   ENSURE(NOT ind.has_repetitions,  "ind: has repeated elements")
-!
-!      ! Create
-!      .:create
-!
-!      ! Create the single atom and copy its pointers
-!      ! WARNING: dont destroy ptr parts of .atom
-!      .atom.create_copy(parent.atom(ind))
-!
-!      ! Set default molecule e.g. the name, atom_info
-!      ! and default multiplicity ...
-!      .:set_defaults
-!
-!      ! Set details & re-make atom info
-!      .name = name
-!      if (present(charge)) .charge = charge
-!      if (present(multiplicity)) .spin_multiplicity = multiplicity
-!
-!      ! re-make atom info
-!      .atom_info_made    = FALSE
-!      .:set_atom_info
-!
-!      ! Copy the basis set and set the basis info
-!      ! WARNING: dont destroy basis of mol !
-!      .:set_basis_data_from(parent)
-!
-!      ! Don't remake ANO data if there
-!      .:set_ANOs_from_sublist_of(parent,ind)
-!
-!      ! Assign the crystal
-!      ! WARNING: dont destroy ...
-!      if (parent.crystal.associated) .crystal => parent.crystal
-!
-!      ! Set guess-type SCF defaults
-!      .:set_scf_guess_defaults_from(parent.scfdata)
-!
-!   end
-
-!   make_scfdata_cluster_molecule(n,mol) ::: leaky
-!   ! Make a fully fledged molecule "mol" from the cluster stored
-!   ! in the .scfdata.cluster "n".
-!      n :: INT
-!      mol :: MOLECULE
-!
-!   ENSURE(.scfdata.associated,"no scfdata")
-!   ENSURE(.scfdata.cluster.associated,"no scfdata cluster")
-!   ENSURE(.atom_group.associated,"no atom_group info")
-!   ENSURE(n<=.scfdata.cluster.n_molecules," n too big")
-!
-!      ! Clear the pointer part
-!      mol.nullify_ptr_part
-!
-!      ! Create the single atom and copy its pointers
-!      ! WARNING: dont destroy ptr parts of mol.atom
-!      mol.atom.create(.atom_group(n).n_atoms)
-!      mol.atom = .atom(.atom_group(n).atom_index)
-!
-!      ! Reset the .atom list to the cluster fragment
-!      .cluster.create_fragment_atom_list(mol.atom)
-!      mol.set_atom_info
-!      mol.resolve_basis_info
-!      mol.set_basis_info
-!
-!      ! The name for the new cluster
-!      mol.name = trim(.name) // "_" // trim(n.to_str)
-!
-!      ! If a CIF exists, copy that
-!      if (.saved.cif.associated) .cif.create_copy(.saved.cif)
-!
-!      ! We want the saved crystal
-!      ! It should be consistent with the cluster.
-!      mol.crystal.create_copy(.crystal)
-!
-!      ! Set up basis sets
-!      if (.atom.associated) .atom.nullify_bases
-!      if (mol.basis.associated)               mol.basis.create_copy(.basis)
-!      if (.saved.slaterbasis.associated)   mol.slaterbasis.create_copy(.slaterbasis)
-!      if (.saved.coppensbasis.associated)  mol.coppensbasis.create_copy(.coppensbasis)
-!      mol.basis_name        = .saved.basis_name
-!      mol.slaterbasis_name  = .saved.slaterbasis_name
-!      mol.coppensbasis_name = .saved.coppensbasis_name
-!      .resolve_basis_info
-!      .set_basis_info
-!
-!   end
 
    set_basis_data_from(mol) ::: leaky
    ! Set the basis data from molecule "mol"
@@ -4339,7 +3590,7 @@ contains
 
    end
 
-   set_ANOs_from_sublist_of(mol,list) ::: private
+   set_ANOs_from(mol,list)
    ! Set ANO data and atom shell info from molecule "mol" from the
    ! sublist "list". Make sure none of these are destroyed!
    ! NOTE: No point to assign unique data, all data is non-unique
@@ -4352,12 +3603,11 @@ contains
    ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
    ENSURE(list.dim==.atom.dim,"inconsistent list length")
 
-      a,b :: INT
       made_ANO,made_int,made_shl :: BIN
+      a,b :: INT
 
       ! Assign ANO orbitals
-      made_ANO = mol.:has_all_ANOs_made
-      .atom.set_ANOs_made(made_ANO)
+      made_ANO =  mol.:has_all_ANO_matrices
       if (made_ANO) then
          do a = 1,list.dim
             b = list(a)
@@ -4370,11 +3620,8 @@ contains
       end
 
       ! Assign ANO interpolators
-      made_ANO = mol.:has_all_ANO_interpolators
       made_int = mol.:has_all_interpolators
-      .atom.set_ANO_interpolators_made(made_ANO)
-      .atom.set_interpolators_made(made_int)
-      if (made_ANO OR made_int) then
+      if (made_int) then
          do a = 1,list.dim
             b = list(a)
             .atom(a).interpolator => mol.atom(b).interpolator
@@ -4382,8 +3629,7 @@ contains
       end
 
       ! Assign atom shell info
-      made_shl = mol.:has_all_atom_shell_info
-      .atom.set_shell_info_made(made_shl)
+      made_shl = mol.:has_all_shell_info
       if (made_shl) then
          do a = 1,list.dim
             b = list(a)
@@ -4399,6 +3645,388 @@ contains
 
    end
 
+   set_ANOs_from(mol)
+   ! Set ANO data and atom shell info from molecule "mol" by comparing
+   ! the atom kinds directly. Make sure none of the assigned ANO data
+   ! is destroyed!
+      self :: INOUT
+      mol  :: MOLECULE, IN
+
+   ENSURE(.atom.associated,"no atoms")
+   ENSURE(.n_atom_kind>0,"atoms not finalized")
+   ENSURE(mol.atom.associated,"mol has no atoms")
+   ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
+
+      a,b :: INT
+
+      ! Assign ANO orbitals
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+         if (mol.atom(b).has_ANO_matrices) then
+            .atom(a).density_matrix     => mol.atom(b).density_matrix
+            .atom(a).natural_orbitals   => mol.atom(b).natural_orbitals
+            .atom(a).occupation_numbers => mol.atom(b).occupation_numbers
+            .atom(a).atomic_orbitals    => mol.atom(b).atomic_orbitals
+            .atom(a).set_energy(mol.atom(b).energy)
+            exit ! next atom "a"
+         end
+         end
+      end
+      end
+
+      ! Assign ANO interpolators
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+         if (mol.atom(b).interpolator.associated) then
+            .atom(a).interpolator => mol.atom(b).interpolator
+            exit ! next atom "a"
+         end
+         end
+      end
+      end
+
+      ! Assign atom shell info
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+         if (mol.atom(b).has_shell_info) then
+            .atom(a).first_basis_fn_for_shell    => mol.atom(b).first_basis_fn_for_shell
+            .atom(a).last_basis_fn_for_shell     => mol.atom(b).last_basis_fn_for_shell
+            .atom(a).precomputed_basis_shellpair => mol.atom(b).precomputed_basis_shellpair
+            exit ! next atom "a"
+         end
+         end
+      end
+      end
+
+      ! Since all are ptr assigned, no atom is unique
+      ! and all ptrs must be nullified
+      .atom.set_is_unique_kind(FALSE)
+
+   end
+
+!  ============
+!  MFCC methods
+!  ============
+
+   make_MFCC_fragments ::: leaky
+   ! Make the MFCC fragment groups
+   ! This routine will add extra cap atoms!
+      self :: INOUT
+
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atoms_bonded_to_atom.disassociated,"no connection table")
+
+      n_comp, g :: INT
+
+      if (NOT .:do_MFCC) return
+
+      ! Assign connections
+      VEC{ATOM}:assign_connection_table(.atoms_bonded_to_atom)
+
+      n_comp = .atom.no_of_compounds
+
+      if (.atom_group.disassociated) then
+      
+         ! Make groups from compound_id's
+         .atom_group.create(n_comp)
+         do g = 1,n_comp
+            .atom_group(g).atom_index => .atom(:).compound_sequence_id.indices_of_elements_matching(g)
+            .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
+         end
+
+      end
+
+      ! Check indices are sensible
+      .atom_group.finalize(.atom)
+
+      ! Create each MFCC fragment
+      do g = 1,.atom_group.dim
+        
+         ! Do MFCC here
+         self.:make_MFCC_fragment_for_group(g)
+
+      end
+
+      ! Clear connections
+      VEC{ATOM}:nullify_connection_table
+
+   end
+
+   make_MFCC_fragment_for_group(g) ::: leaky
+   ! Make a capped fragment for molecule "mol, the atom_group(n).mol
+   ! with compound_id "g", ready for MFCC calculation. This routine
+   ! will add extra atoms.
+      self :: INOUT
+      g :: INT, IN
+
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+   DIE_IF(g>.atom_group.dim,"group number g too big")
+   DIE_IF(g<1,"group number g less than 1!")
+
+      mol :: MOLECULE*
+      
+      ! This is atom_group(g).mol
+      mol.:create
+
+      ! Start with *uncapped* .atom_group(g) atom indices ...
+      mol.atom.create_copy(.atom(.atom_group(g).atom_index))
+
+      ! Make atom info - this will set multiplicity!
+      ! Need below?
+    ! mol.atom_info_made = FALSE
+    ! mol.atom.set_group_to(g)
+    ! mol.:set_atom_info
+
+      ! Add cap atoms !!!!!!!!!!!!!!!
+      .:add_MFCC_cap_for_group(g,mol)
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Set charge
+      mol.:set_charge(.atom_group(g).charge)
+
+      ! Make atom info; groups should not contain subgroups!
+      mol.atom_info_made = FALSE
+      mol.atom.set_group_to(g)
+      mol.:finalize_atoms_no_groups
+
+      ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
+      if (.atom_group(g).spin_multiplicity_set) then
+         mol.:set_spin_multiplicity(.atom_group(g).spin_multiplicity)
+      end
+
+      ! Set guess-type SCF defaults: no output
+      ! Will reset scf_kind based on multiplicity
+      mol.:set_scf_guess_defaults_from(.scfdata)
+
+      ! Set .name
+      mol.:set_name(.atom(.atom_group(g).atom_index(1)).id_compound_str)
+
+      ! Assign basis set -- don't destroy!
+      mol.:set_basis_data_from(self)
+
+      ! Assign the crystal -- don't destroy!
+      if (.crystal.associated) mol.crystal => .crystal
+      
+      ! Don't remake ANO data if there
+      mol.:set_ANOs_from(self)
+
+      ! Add capped molecule to atom_group
+    ! .atom_group(g).mol.:destroy
+      .atom_group(g).mol => mol
+
+   end
+
+   add_MFCC_cap_for_group(g,mol) ::: private, leaky
+   ! Make a capped fragment for molecule the atom_group(n).mol with
+   ! compound_id "g" ready for MFCC calculation. This routine will add
+   ! extra atoms.
+      self :: INOUT
+      g :: INT, IN
+      mol :: MOLECULE, INOUT
+
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+   DIE_IF(g>.atom_group.dim,"group number g too big")
+   DIE_IF(g<1,"group number g less than 1!")
+
+      in_residue :: BIN
+      bonded_atom :: MAT{INT}@
+      n_bonds, g2,b,ap,bp :: INT
+
+      ! Residue atom?
+      in_residue = .atom(.atom_group(g).atom_index(1)).is_in_a_residue
+
+      if (NOT in_residue) return
+
+      do g2 = 1,.atom_group.dim
+      
+         ! Skip group "g" itself
+         if (g2==g) cycle
+      
+         ! No. of bonds to atom_group "g2"
+         n_bonds = .:n_bonds_between_atom_groups(g,g2)
+      
+         ! Any bonds?
+         if (n_bonds<=0) cycle
+      
+         ! Cap each connected group
+         bonded_atom = .:bonded_atoms_between_groups(g,g2)
+      
+         do b = 1,n_bonds
+      
+            ! Get atoms from each group
+            ap = bonded_atom(1,b)
+            bp = bonded_atom(2,b)
+      
+            ! Use them to start the MFCC cap
+            .:add_MFCC_cap_from_atoms(ap,bp,mol)
+
+         end
+      
+         ! Clean
+         bonded_atom.destroy
+      
+      end
+ 
+   end
+
+   add_MFCC_cap_from_atoms(ap,bp,mol) ::: private, leaky
+   ! Cap residue molecule "mol" starting from atom "ap" in that
+   ! residue, which is connected to atom "bp" in another group.
+   ! WARNING: This will add extra atoms to atom_group(g1).mol.atom but
+   ! it will not add extra indices into atom_index!
+   ! Zhang, D. W. & Zhang, J. Z. H. (2003). J. Chem. Phys., 119(7), 3599-3605.
+   ! Soederhjelm, P.& Ryde, U. (2008). J. Phys. Chem. A, 113(3), 617-627
+      self :: INOUT
+      ap,bp :: INT, IN
+      mol :: MOLECULE, INOUT
+
+   DIE_IF(.atom_group.disassociated,"no atom_group info")
+   ENSURE(.atoms_bonded_to_atom.created,"no connection table")
+
+      i,j, cp,cf,dp,last :: INT
+      bp_bonds,cp_bonds :: VEC{INT}*
+      length :: REAL
+      label :: STR
+
+      ! Append connected atom bp in atom_group(g2)
+      mol.atom.append(.atom(bp))
+      last = mol.atom.dim
+      mol.atom(last).set_cap_atom(TRUE)
+
+      ! Find connections to atom bp ... in SMILES:
+      ! -ap-res1 - bp-res2(cp_1-res2)(cp_2-res2) ...
+      bp_bonds => .atoms_bonded_to_atom(bp).element
+
+      ! Find connections to bp
+      do i = 1,bp_bonds.dim
+
+         ! This case cap atom 2
+         cp = bp_bonds(i) 
+
+         ! Already found atom in residue g
+         if (cp==ap) cycle 
+
+         ! Append new cap atom 2
+         mol.atom.append(.atom(cp))
+         last = mol.atom.dim
+         mol.atom(last).set_cap_atom(TRUE)
+
+         if (.atom(ap).atomic_number>1) then
+
+            ! Add caps for all non-H atom ... should be 3
+            ! (serging for cap atom 3)
+            cp_bonds => .atoms_bonded_to_atom(cp).element
+
+            ! Index of cp in atom_group(g) fragment
+            cf = last
+
+            ! Find connections to cp
+            do j = 1,cp_bonds.dim
+
+               dp = cp_bonds(j)
+
+               ! Already found atom bp
+               if (dp==bp) cycle 
+
+               ! Append new cap atom, keep its index
+               mol.atom.append(.atom(dp))
+               last = mol.atom.dim
+               mol.atom(last).set_cap_atom(TRUE)
+
+               ! Correct label & atomic number for last added atom
+               ! WARNING: AN has to be set after setting unique label
+               label = "H-" // trim(.atom(dp).atom_sequence_id.to_str) // "-"
+               label = trim(label) // trim(.atom(dp).compound_id_str)
+               mol.atom(last).set_label(label,skip_mass=TRUE)
+               mol.atom(last).set_atomic_number_and_mass("H ")
+               mol.atom(last).set_cap_atom(TRUE)
+
+               ! Reset bond length to last added atom
+               length = CIF_CH_BOND_LENGTH*BOHR_PER_ANGSTROM
+               mol.atom.set_bond_length(cf,last,length)
+
+            end
+
+         end
+
+      end
+
+   end
+
+   n_bonds_between_atom_groups(g1,g2) result (res) ::: pure
+   ! Return the number of connections between ".atom_group(g1)" and
+   ! ".atom_group(g2)". 
+      self :: IN
+      g1,g2 :: INT, IN
+      res :: INT
+
+      i,j,a,b :: INT
+      bonded :: BIN
+
+      res = 0
+
+      residue1: do i = 1,.atom_group(g1).atom_index.dim
+
+         a = .atom_group(g1).atom_index(i)
+
+         residue2: do j = 1,.atom_group(g2).atom_index.dim
+
+            b = .atom_group(g2).atom_index(j)
+
+            bonded = VEC{ATOM}:has_a_connection(a,b)
+            if (bonded) then
+               res = res + 1
+            end
+
+         end do residue2
+
+      end do residue1
+
+   end
+
+   bonded_atoms_between_groups(g1,g2) result (res) ::: pure
+   ! Return the number of connections between ".atom_group(g1)" and
+   ! ".atom_group(g2)" in a table "res(1:2,n_bonds)". 
+      self :: IN
+      g1,g2 :: INT, IN
+      res :: MAT{INT}(2,.:n_bonds_between_atom_groups(g1,g2))
+
+      n :: INT
+      i,j :: INT
+      a,b :: INT
+      bonded :: BIN
+
+      n = 0
+
+      residue1: do i = 1,.atom_group(g1).atom_index.dim
+
+         a = .atom_group(g1).atom_index(i)
+
+         residue2: do j = 1,.atom_group(g2).atom_index.dim
+
+            b = .atom_group(g2).atom_index(j)
+
+            ! Are a & b bonded?
+            bonded = VEC{ATOM}:has_a_connection(a,b)
+
+            ! Store pair of bonded atoms
+            if (bonded) then
+               n = n + 1
+               res(1,n) = a
+               res(2,n) = b
+            end
+
+         end do residue2
+
+      end do residue1
+
+   end
+
 !  ================
 !  Atoms group info
 !  ================
@@ -4407,41 +4035,51 @@ contains
    ! Finalize the .atom_group information
       self :: INOUT
 
-      g :: INT
+      n_group, g :: INT
 
-      ! Last attempt to find groups
-    ! if (NOT .atom.has_groups) then
-    ! if (.crystal.molecule_for_atom.associated) then
-    ! if (.crystal.molecule_for_atom.dim==.atom.dim) then
-    !    .atom(:).group = .crystal.molecule_for_atom(:)
-    ! end
-    ! end
-    ! end
-
-      if (.atom_group.associated) then
-
-         if (.atom_group.has_wavefunction_files) then; .:make_groups_from_wavefunction_files
-         else if (.atom_group.has_atom_indices)  then; .:make_groups_from_self
-         else;          DIE("Can't finalize atom groups")
+      if (.atom.disassociated) then
+        
+         ! Make .atom()'s and .atom_group().mol's from files
+         if (.atom_group.has_wavefunction_files_ptr) then
+            .:make_groups_from_wavefunction_files
          end
 
-      else if (.atom.associated AND .atom.has_groups) then
+      else
 
-         .atom_group.create(.atom.no_of_groups)
-
-         do g = 1,.atom_group.dim
-            .atom_group(g).atom_index => .atom(:).group.indices_of_elements_matching(g)
-            .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
-         end
-
-         if (.atom_group_charges.associated) then
-            DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
+         ! We have .atom()'s
+         if (.:from_mmCIF) then
+        
+            ! Add Ulf Ryde's MFCC caps
+            .:make_MFCC_fragments
+        
+         else if (.atom_group.has_atom_indices_ptr) then
+         
+            ! We have atom_indices for each atom_group 
+            .:make_atom_group_mols
+        
+         else if (.atom.has_groups) then
+        
+            ! Each .atom() had a .group index
+            n_group = .atom.no_of_groups
+            if (.atom_group.disassociated) .atom_group.create(n_group)
+        
+            ! Make groups from group index
             do g = 1,.atom_group.dim
-               .atom_group(g).set_charge(.atom_group_charges(g))
+               .atom_group(g).atom_index => .atom(:).group.indices_of_elements_matching(g)
+               .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
             end
-         end
+        
+            ! Set charges
+            if (.atom_group_charges.associated) then
+               DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
+               do g = 1,.atom_group.dim
+                  .atom_group(g).set_charge(.atom_group_charges(g))
+               end
+            end
+        
+            .:make_atom_group_mols
 
-         .:make_groups_from_self
+         end
 
       end
 
@@ -4463,21 +4101,26 @@ contains
 
    make_groups_from_wavefunction_files ::: private, leaky
    ! Make the atom groups by read in Gaussian Fchk files in they are defined for the groups
+      self :: INOUT
+
    DIE_IF(.atom.associated,"atoms already exists!")
    DIE_IF(.atom_group.disassociated,"no atom groups")
    DIE_IF(NOT .atom_group.has_wavefunction_files,"no wavefunction files")
 
       mol :: MOLECULE*
       g :: INT
+
       do g = 1,.atom_group.dim
-         ! Create the mol & define it from FChk file
+
+         ! Create the mol
          mol.:create
-         ! Read in either the fchk or sbf_file
+
+         ! Define mol from FChk or sbf file
          if(.atom_group(g).wavefunction_file_name.ends_in("fchk", case_sensitive=FALSE)) then
             mol.:read_g09_FChk_file(.atom_group(g).wavefunction_file_name)
          else
             mol.:deserialize(.atom_group(g).wavefunction_file_name)
-         end if
+         end
 
          if (mol.scfdata.is_unrestricted) then
             if(.scfdata.disassociated) then
@@ -4486,12 +4129,14 @@ contains
             end
             .scfdata.set_scf_kind("uhf")
          end
+
          ! Rotate and translate it
          mol.:rotate_by(.atom_group(g).rotation_matrix)
          mol.atom.translate_by(.atom_group(g).shift)
          mol.atom.set_group_to(g)
 
          ! Add it to atom_group
+       ! .atom_group(g).mol.:destroy
          .atom_group(g).mol => mol
 
       end
@@ -4506,54 +4151,55 @@ contains
 
    end
 
-   make_groups_from_self ::: private, leaky
-   ! Make the atom groups from "self"
+   make_atom_group_mols ::: private, leaky
+   ! Make the ".atom_group.mol" molecules
       self :: INOUT
 
-   DIE_IF(NOT .atom_group.associated,"no atom groups!")
+   DIE_IF(.atom.disassociated,"no atoms!")
+   DIE_IF(.atom_group.disassociated,"no atom groups!")
 
       mol :: MOLECULE*
       g :: INT
 
+      ! Regenerate molecules
+      .:destroy_atom_group_mols
+
       ! Check is indices are sensible
       .atom_group.finalize(.atom)
-
+      
       ! Create each group from "self"
       do g = 1,.atom_group.dim
-
+      
          ! Create mol & define it
          mol.:create
          self.:make_molecule_from_atom_group(g,mol)
-
+      
          ! Read the MOs & make the density
          ! This won't work until Tonto can read in its own dump
          if (.atom_group(g).MO_file_name/=" ") then
              mol.:read_archive("molecular_orbitals","restricted")
              mol.:make_scf_density_matrix
          end
-
+      
          ! Rotate and translate mol
          if (.atom_group(g).transform_group) then
             mol.:rotate_by(.atom_group(g).rotation_matrix)
             mol.atom.translate_by(.atom_group(g).shift)
          end
          mol.atom.set_group_to(g)
-
+      
          ! Add it to atom_group
          ! PRS 23/04/2017
          ! This appears to be a bug, I don't think it's necessary
          ! to destroy this and it definitely can destroy things
          ! that are still in use
          ! .atom_group(g).mol.BASE:destroy
+       ! .atom_group(g).mol.:destroy
          .atom_group(g).mol => mol
-
+      
       end
 
-      ! Define .atom list
-    ! .:merge_atom_groups
-
-      ! Update group infor from self
-      ! Is the below needed????
+      ! Update group info from self
       .:update_group_info
 
    end
@@ -4579,14 +4225,16 @@ contains
          ENSURE(mol.associated,"atom_group molecule "//trim(g.to_str)//" does not exist")
 
          ! Don't remake ANO data if there
-         mol.:set_ANOs_from_sublist_of(self,.atom_group(g).atom_index)
+         mol.:set_ANOs_from(self)
 
          ! Assign the crystal
          ! WARNING: dont destroy ...
          if (.crystal.associated) mol.crystal => .crystal
 
          ! Set guess-type SCF defaults
-         mol.:set_scf_guess_defaults_from(.scfdata)
+         if (NOT .atom_group(g).spin_multiplicity_set) then 
+            mol.:set_scf_guess_defaults_from(.scfdata)
+         end
 
       end
 
@@ -4626,7 +4274,7 @@ contains
 
    end
 
-   merge_atom_groups ::: private, leaky
+   merge_atom_groups ::: leaky, private
    ! Delete any existing .atom and .basis and set to the concatenation
    ! of the molecules in .atom_group
       self :: INOUT
@@ -4683,8 +4331,9 @@ contains
 !      endif
       .:set_charge(charge)
       .:set_spin_multiplicity(unpaired_electrons + 1)
-      .:set_atom_info
-      .:resolve_basis_info
+
+      ! Finalise atom info
+      .:finalize_atoms
 
    end
 
@@ -4835,7 +4484,7 @@ contains
 !  Inquiry methods
 !  ===============
 
-   has_all_NAOs_made result (res) ::: PURE
+   has_all_NAO_matrices result (res) ::: PURE
    ! Return TRUE if the NAOs are made for every atom.
       self :: IN
       res :: BIN
@@ -4845,7 +4494,7 @@ contains
 
    end
 
-   has_all_ANOs_made result (res) ::: PURE
+   has_all_ANO_matrices result (res) ::: PURE
    ! Return TRUE if the ANO data is made for every atom.
       self :: IN
       res :: BIN
@@ -4856,43 +4505,36 @@ contains
 
    end
 
-   has_all_ANO_interpolators result (res) ::: PURE
-   ! Return TRUE if the ANO interpolators are made for every atom.
-      self :: IN
-      res :: BIN
-
-      res = .atom.associated
-
-      if (res) res = .atom.has_all_ANO_interpolators
-
-   end
-
    has_all_interpolators result (res) ::: PURE
    ! Return TRUE if the per-atom interpolators are made for every atom.
       self :: IN
       res :: BIN
 
       res = .atom.associated
+
       if (res) res = .atom.has_all_interpolators
 
    end
 
    has_all_spherical_atom_data result (res) ::: PURE
    ! Return TRUE if the per-atom interpolators are made for every atom.
+   ! WARNING: bad ... remove this later
       self :: IN
       res :: BIN
 
       res = .atom.associated
+
       if (res) res = .atom.has_all_spherical_atom_data
 
    end
 
-   has_all_atom_shell_info result (res) ::: PURE
+   has_all_shell_info result (res) ::: PURE
    ! Return TRUE if the per-atom interpolators are made for every atom.
       self :: IN
       res :: BIN
 
       res = .atom.associated
+
       if (res) res = .atom.has_all_shell_info
 
    end
@@ -5029,10 +4671,8 @@ contains
       res :: BIN
 
       res =  .:DFT_grid_info_made &
-         AND .:has_all_ANOs_made &
-         AND ( .:has_all_ANO_interpolators &
-         OR    .:has_all_interpolators &
-         OR    .:has_all_spherical_atom_data )
+         AND .:has_all_ANO_matrices &
+         AND ( .:has_all_interpolators OR .:has_all_spherical_atom_data )
 
    end
 
@@ -5058,6 +4698,19 @@ contains
       res = FALSE
       if (.cif.associated) then
          res = .cif.is_mmCIF
+      end
+
+   end
+
+   do_MFCC result (res) ::: PURE
+   ! Returns TRUE if the there is a cif and it was an mmCIF
+   ! and we want to make MFCC fragments.
+      self :: IN
+      res :: BIN
+
+      res = FALSE
+      if (.cif.associated) then
+         res = .cif.is_mmCIF AND .cif.use_MFCC
       end
 
    end
@@ -6072,35 +5725,49 @@ contains
    ENSURE(.n_atom_kind>0,"no atom kinds set")
 
       a,b :: INT
+      done :: VEC{BIN}*
+      first :: BIN
 
-      if (.:has_all_atom_shell_info) return
+      if (.:has_all_shell_info) return
 
-      ! Destroy ...  in case .ANO_data_made
-      ! was deliberately set FALSE
-      .:destroy_atom_shell_info
+      done.create(.n_atom)
+      done = FALSE
+      first = TRUE
 
       do a = 1,.n_atom
 
          ! Unique atom?
-         if (NOT .atom(a).is_unique_kind) cycle
+         if (done(a)) cycle
 
          ! Make the shell info
          .atom(a).make_shell_info
 
+         if (first) then
+            stdout.flush
+            stdout.text("Making atom shell info ...")
+            first = FALSE
+         end
+
+         done(a) = TRUE
+
          ! Copy it to non-unique atoms
          do b = a+1,.n_atom
 
-            if (.atom(b).kind/=.atom(a).kind) cycle
+            ! Skip?
+            if (done(b)) cycle
+            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
 
             .atom(b).first_basis_fn_for_shell    => .atom(a).first_basis_fn_for_shell
             .atom(b).last_basis_fn_for_shell     => .atom(a).last_basis_fn_for_shell
             .atom(b).precomputed_basis_shellpair => .atom(a).precomputed_basis_shellpair
 
+            done(b) = TRUE
+
          end
 
       end
 
-      .atom.set_shell_info_made(TRUE)
+      done.destroy
 
    end
 
@@ -7358,11 +7025,11 @@ contains
       genre :: STR
       a :: INT
 
-      if (.:has_all_ANOs_made) .:destroy_ANOs
+      if (.:has_all_ANO_matrices) .:destroy_ANO_matrices
 
       ! Determine (or guess) the genre of density matrix to be made
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .molecular_orbitals.spinorbital_kind
+      else;                          genre = .molecular_orbitals.spinorbital_kind
       end
 
       ! Copy existing density matrix
@@ -7426,11 +7093,11 @@ contains
 
       if (.:has_all_spherical_atom_data) return
 
-      if (.:has_all_ANOs_made) .:destroy_ANOs
+      if (.:has_all_ANO_matrices) .:destroy_ANO_matrices
 
       ! Determine (or guess) the genre of density matrix to be made
       if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
-      else;                       genre = .molecular_orbitals.spinorbital_kind
+      else;                          genre = .molecular_orbitals.spinorbital_kind
       end
 
       ! Copy existing density matrix
@@ -8143,18 +7810,24 @@ contains
       n :: INT, IN
       shift  :: REAL, IN
 
+   ENSURE(F.is_square,"F is not square")
+
+      d :: INT
+
       ! Return if no vectores to shift/decouple
       if (n<=0) return
+
+      d = F.dim1
 
       ! Change to the eigenvector basis
       F.change_basis_using(evec)
 
       ! Decouple the vectors
-      F(:n,n+1:) = ZERO
-      F(n+1:,:n) = ZERO
+      F(  1:n,n+1:d) = ZERO
+      F(n+1:d,  1:n) = ZERO
 
       ! Shift the first n eigenvectors
-      F(:n,:n).set_diagonal_to(shift)
+      F(1:n,1:n).set_diagonal_to(shift)
 
       ! Revert from the eigenvector basis
       F.back_transform_using(evec)
@@ -9045,7 +8718,7 @@ contains
    delete_scf_archives(keep_MOs,keep_DM) ::: recursive
    ! Delete any SCF-procedure generated archives stored on disk.
       self :: IN
-      keep_MOs,keep_DM :: BIN, optional
+      keep_MOs,keep_DM :: BIN, optional, IN
 
       archive :: ARCHIVE
       delete_MOs,delete_DM :: BIN
@@ -9087,7 +8760,7 @@ contains
 
       ! WARNING: These two below are recursive
       .:delete_atom_scf_archives
-      .:delete_group_scf_archives
+      .:delete_group_scf_archives(keep_MOs,keep_DM)
 
       .:delete_lambda_scf_archives(keep_MOs)
 
@@ -9147,16 +8820,21 @@ contains
 
    end
 
-   delete_group_scf_archives ::: recursive, private
+   delete_group_scf_archives(keep_MOs,keep_DM) ::: recursive, private
    ! Delete any group type SCF archives.
       self :: IN
+      keep_MOs,keep_DM :: BIN, optional
+
       g :: INT
 
       if (.atom_group.disassociated) return
 
       do g = 1,.atom_group.dim
+
          if (.atom_group(g).mol.disassociated) cycle
-         .atom_group(g).mol.:delete_scf_archives
+
+         .atom_group(g).mol.:delete_scf_archives(keep_MOs,keep_DM)
+
       end
 
    end
@@ -9188,8 +8866,11 @@ contains
       end
       end
 
-      ! List of atoms
+      ! Atoms coordinates, basis sets
       if (.atom.associated) .:put_atoms
+
+      ! Atom groups
+      if (.atom_group.associated) .:put_atom_groups
 
       ! Stop here for proteins
       if (.:from_mmCIF) then
@@ -9198,7 +8879,6 @@ contains
       end
       end
 
-      if (.atom_group.associated)  .:atom_group.put
       if (.pointgroup.associated)  .:put_pointgroup
       if (.crystal.associated)     .:put_crystal
       if (.cluster.associated)     .:put_cluster
@@ -9270,6 +8950,18 @@ contains
     ! if (.slaterbasis.associated)  .put_slaterbases
 
     ! .atom.put_ADPs
+
+   end
+
+   put_basics_and_atoms
+   ! Output minimal atom info without crystal info.
+      self :: IN
+
+   ENSURE(.atom.associated,"no atom list")
+
+      .:put_basics
+      .:put_atoms
+      .:put_bases
 
    end
 
@@ -9501,12 +9193,43 @@ contains
 !   end
 
    put_atom_groups
-   ! Out out the .atom_group info array
+   ! Output the .atom_group info array
       self :: IN
 
    ENSURE(.atom_group.associated,"no atom group information")
 
       .atom_group.put
+
+      .:put_atom_group_mols
+      
+   end
+
+   put_atom_group_mols
+   ! Output each .atom_group.mol info
+      self :: IN
+
+   ENSURE(.atom_group.associated,"no atom group information")
+
+      name :: STR
+      g :: INT
+
+      ! Output fragment info
+      do g = 1,.atom_group.dim
+      
+         if (.atom_group(g).mol.associated) then
+
+            ! Minimal stdout for fragment
+            name = "stdout." // trim(.atom_group(g).mol.name)
+            stdout.redirect(name)
+            .atom_group(g).mol.:put_basics_and_atoms
+            stdout.revert
+           
+            ! Even more minimal xyz for plotting
+            .atom_group(g).mol.atom.put_xyz_file(name)
+
+         end
+      
+      end
 
    end
 
@@ -9733,7 +9456,7 @@ contains
       k,a,b :: INT
       list :: STR
 
-      if (NOT .:has_all_ANOs_made) return
+      if (NOT .:has_all_ANO_matrices) return
 
       if (.n_atom_kind<=0) return
 
@@ -10677,11 +10400,8 @@ contains
           .:set_spin_multiplicity(charge_multiplicity(2))
       endif
 
-
-
-      .BASE:set_atom_info
-      .BASE:finalize_atom_groups
-      .BASE:resolve_basis_info
+      ! Finalize atom info/basis sets
+      .:finalize_atoms
 
       call datafile%sbf%get("scf_kind", tmp_str, err)
 
@@ -10861,7 +10581,7 @@ contains
          else
 
             if(only_disconnected) then
-               if (.atom.has_a_connection(atom_a,atom_b)) cycle
+               if (VEC{ATOM}:has_a_connection(atom_a,atom_b)) cycle
             end
 
             ! Partition factors
@@ -11083,7 +10803,7 @@ contains
          else
 
             if(only_disconnected) then
-               if (.atom.has_a_connection(atom_a,atom_b)) cycle
+               if (VEC{ATOM}:has_a_connection(atom_a,atom_b)) cycle
             end
 
             ! Partition factors
