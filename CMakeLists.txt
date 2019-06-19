@@ -43,18 +43,29 @@ project(tonto
     VERSION ${TONTO_VERSION})
 
 # LAPACK
-find_package(LAPACK)
-if(${LAPACK_FOUND})
-else()
-    set(COMPILE_LAPACK "ON")
-endif() 
+string(TOUPPER "${CMAKE_BUILD_TYPE}" TEMP)
+if(TEMP STREQUAL "RELEASE-STATIC")
+  set(COMPILE_LAPACK "ON")
+endif()
 if(COMPILE_LAPACK)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
-    set(LAPACK_LIBRARIES 
+    set(LAPACK_LIBRARIES
         ${PROJECT_BINARY_DIR}/external/lapack-release/lib/liblapack.a
         ${PROJECT_BINARY_DIR}/external/lapack-release/lib/libblas.a
     )
     message(STATUS "Compiling lapack: ${LAPACK_LIBRARIES}")
+else()
+  find_package(LAPACK)
+  if(${LAPACK_FOUND})
+  else()
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
+    set(LAPACK_LIBRARIES
+        ${PROJECT_BINARY_DIR}/external/lapack-release/lib/liblapack.a
+        ${PROJECT_BINARY_DIR}/external/lapack-release/lib/libblas.a
+    )
+    message(STATUS "Compiling lapack: ${LAPACK_LIBRARIES}")
+    set(COMPILE_LAPACK "ON")
+  endif()
 endif()
 
 if(MPI)
