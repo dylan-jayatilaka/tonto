@@ -3918,7 +3918,7 @@ sub module_colon_to_fortran {
     return $X;
   }
 
- # NON-GENERIC procedures ...
+ # NON-GENERIC :: procedures ...
 
   while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+)?::(\w+)/g) { # A function
      my $pre = $PREMATCH.$1;
@@ -3997,10 +3997,11 @@ sub module_colon_to_fortran {
      }
   }
 
- # GENERIC procedures ...
+ # GENERIC : procedures ...
 
-  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function - must be fully
-     my $pre = $PREMATCH.$1;                                    # module-dismabiguated
+  # A function - must be fully module-dismabiguated
+  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+)?:(\w+)/g) { 
+     my $pre = $PREMATCH.$1;                                    
      next if ($pre =~ /"$/); # skip quoted calls
      my $last = $pre; $last = chop($last);
      if ($last eq '.') { next };
@@ -4010,6 +4011,7 @@ sub module_colon_to_fortran {
      my $rout_type = $2;
      my $rout = $3;
      my $post = $POSTMATCH;
+   # if (! $2) { $rout_type = $module_full_name; }
      my %info = &analyse_type_name($rout_type);
      &analyse_type_name($rout_type);
 #print "X = $X";
@@ -4036,13 +4038,14 @@ sub module_colon_to_fortran {
      }
   }
 
-  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/) {  # Routine call, anywhere not a function
+  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+)?:(\w+)/) {  # Routine call, anywhere not a function
      my $pre = $PREMATCH.$1;                             # and starting from a new line
      my $rout_type = $2;                                 # Must be fully disambiguated
      my $rout = $3;
      my $post = $POSTMATCH;
      my %info = &analyse_type_name($rout_type);
      &analyse_type_name($rout_type);
+   # if (! $2) { $rout_type = $module_full_name; }
      $rout_type = $info{type_name}; # reset to generic type
      if (! $tonto_type_info{$rout_type}) {
        &report_error("type \"$rout_type\" in explicit module call was not declared in \"$typesfile\".");
