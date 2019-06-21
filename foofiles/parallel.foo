@@ -3249,6 +3249,62 @@ contains
    end
 
 ! =============
+! Window p_loop
+! =============
+
+   setup_p_loop(w,lb,ub) ::: template
+   ! Set up locks and windows, return actual window index "w"
+      self :: INOUT
+      w :: INT, OUT
+      lb,ub :: INT,optional, IN 
+
+      ! Lock inner loops
+      .lock_parallel_do("no")
+
+      ! Set loop bounds
+      .p_loop_lbound = lb
+      .p_loop_ubound = ub
+
+      ! Initialize start
+      .p_loop_index = lb
+      .win_create(.p_loop_index,1,0,w)
+
+   end
+
+   exit_p_loop result (res) ::: pure, template
+   ! Return whether the p_loop should exit; this happens by
+   ! convention if the loop index is set below its allowed
+   ! lower bound.
+      self :: INOUT, IN
+      res :: BIN
+
+      res = .p_loop_index > .p_loop_ubound 
+
+   end
+
+   next_p_loop_index(w) result (g) ::: template
+   ! Return the next loop index in a parallel loop for window "w".
+      self :: INOUT
+      w :: INT, IN
+      g :: OUT
+
+      ! Master has last say over window "w"
+      ! This is a barrier to the first other than master.
+      .win_lock_exclusive(.master_rank,w)
+
+      if (NOT .is_master_processor) then
+         .get_accumulate_sum(1,.p_loop_index,.master_rank,0,w)
+      end
+
+      ! Release window "w" for next processor.
+      .win_unlock(.master_rank,w)
+
+      ! Master and salve get the same "g"
+      g = .p_loop_list(.p_loop_index)
+
+   end
+
+! =============
 ! Window Create
 ! =============
 
@@ -4949,13 +5005,10 @@ contains
 
    get_accumulate_sum(origin_addr,result_addr,target_rank,target_disp,win) ::: template
    ! Perform an atomic, one-sided read-and-accumulate operation.
+      self :: IN
       origin_addr,result_addr :: VAR_TYPE, INOUT
       target_rank :: INT, IN
-#ifdef MPI
       target_disp :: INT, IN, optional
-#else
-      target_disp :: INT, IN, optional
-#endif
       win :: INT, IN, optional
 
 
@@ -4967,20 +5020,24 @@ contains
       d :: INT
 #endif
       w :: INT
+
       d = 0
       w = 0
 
-
 #ifdef MPI
+
       if(present(target_disp)) d = target_disp
       if(present(win)) w = win
       call MPI_GET_ACCUMULATE(origin_addr,LEN1,MPI_TYPE,result_addr,LEN2,MPI_TYPE,target_rank,d,LEN1,MPI_TYPE,MPI_SUM,w,.mpi_error)
+
 #else
+
       if (w == 1) print*, origin_addr, result_addr
       w = target_rank
       if(present(target_disp)) d = target_disp
       if(present(win)) w = win
       DIE("wtf?")
+
 #endif
 
    end
