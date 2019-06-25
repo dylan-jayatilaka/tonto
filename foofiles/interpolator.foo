@@ -644,6 +644,35 @@ contains
 
    end
 
+   set_even_spaced_general_data(func,tol,length) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from
+   ! ".table_origin", with a given ".table_spacing", and with
+   ! ".data_value" to be the corresponding values evaluated using
+   ! monotonically decreasing function "func". The number of data
+   ! values and the ".table_length" is either worked out from where
+   ! function "func" is just smaller than "tol", with maximum length
+   ! ".table_length"; or from the supplied "length".
+      self :: INOUT
+      tol,length :: REAL, optional, IN
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(NOT (present(tol) AND present(length)),"can't supply both tol and length")
+
+      if (present(tol)) then
+         .set_even_spaced_general_data(.table_origin,.table_spacing,.table_length,func,tol)
+      else if (present(length)) then
+         .set_even_spaced_general_data(.table_origin,.table_spacing,length,func)
+      else
+         .set_even_spaced_general_data(.table_origin,.table_spacing,.table_length,func,.table_eps)
+      end
+
+   end
+
 !   set_even_spaced_data(first,spacing,length,func,tol) ::: leaky, PURE
 !   ! Set ".data_point" to be even-spaced, starting from the "first" value, with
 !   ! a given "spacing", extending until "length", and with ".data_value"
@@ -841,7 +870,127 @@ contains
 
       ! Warn if the tolerance was not reached
       if (present(tol)) then
-      ENSURE(val<tol,"data table not large enough")
+         ENSURE(val<tol, "data table not large enough")
+      end
+
+      ! Reset the table size
+      .n_data = n
+      if (present(tol)) then
+         .data_value.shrink(.n_data)
+         .data_point.shrink(.n_data)
+      end
+
+      ! Reset the table length
+      .table_length = .data_point(.n_data) 
+
+      ! Generate spline data
+      if (.interpolation_is_spline) then
+
+         ! Get approximate LHS derivative
+         p = first + spacing*HALF 
+         if      (.domain_is_sqrt)      then; p = sqrt(p)
+         else if (.domain_is_sqrt_x1x)  then; p = .domain_scale_factor*sqrt(p/(ONE-p))
+         end
+         val = func(p)
+         if (.range_is_logarithmic) val = log(val)
+         .y1_initial = TWO*(val-.data_value(1))/spacing
+
+         ! Get approximate RHS derivative
+         p = .data_point(.n_data) - spacing*HALF 
+         if      (.domain_is_sqrt)      then; p = sqrt(p)
+         else if (.domain_is_sqrt_x1x)  then; p = .domain_scale_factor*sqrt(p/(ONE-p))
+         end
+         val = func(p)
+         if (.range_is_logarithmic) val = log(val)
+         .y1_final = TWO*(.data_value(.n_data)-val)/spacing
+
+         ! Set the spline second derivatives
+         .set_spline_2nd_derivatives
+
+      end
+
+      .finalized = TRUE
+
+   end
+
+   set_even_spaced_general_data(first,spacing,length,func,tol) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from the "first" value, with
+   ! a given "spacing", extending until "length", and with ".data_value"
+   ! to be the corresponding values evaluated using monotonically decreasing
+   ! function "func". The number of data values is worked out from where
+   ! function "func" is only just smaller than "tol". 
+      self :: INOUT
+      spacing,first,length :: REAL, IN
+      tol :: REAL, optional, IN
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(.n_data==0,"there is already data")
+   ENSURE(.data_value.disassociated,"there are already data_values")
+   ENSURE(.data_point.disassociated,"there are already data_points")
+   ENSURE(spacing>ZERO,"spacing must be +ve")
+
+      max_data :: INT
+      i,n :: INT
+      p,val :: REAL
+
+      ! Set table spacing
+      .table_spacing = spacing
+
+      ! Get the maximum amount of data
+      max_data = ceiling((length-first)/spacing) + 1
+
+      ! Create the table
+      .data_point.destroy
+      .data_value.destroy
+      .data_point.create(max_data)
+      .data_value.create(max_data)
+
+      ! Assign the table; exit if tolerance is reached
+      val = ONE
+      n = 0
+      do i = 1,max_data
+
+         n = n + 1
+
+         ! for numerical accuracy
+         p = first + (i-1)*spacing 
+
+         ! Assign table point
+         .data_point(n) = p
+
+         ! Domain remapping. Warning: user may need to do remapping
+         ! before using the table. In all cases below, p^2 must be given
+         if      (.domain_is_sqrt)      then; p = sqrt(p)
+         else if (.domain_is_sqrt_x1x)  then; p = .domain_scale_factor*sqrt(p/(ONE-p))
+         end
+
+         ! Call the function
+         val = func(p)
+
+         ! Range mapping
+         if (.range_is_logarithmic) then
+            ENSURE(val>ZERO,"-ve func cant be used with log interpolation")
+            val = log(val)
+         end
+
+         ! Assign table value
+         .data_value(n) = val
+
+         ! If too small?
+         if (present(tol)) then
+            if (val<tol) exit
+         end
+
+      end
+
+      ! Warn if the tolerance was not reached
+      if (present(tol)) then
+         stdout.text("data table not large enough")
       end
 
       ! Reset the table size
