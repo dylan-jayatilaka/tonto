@@ -253,6 +253,7 @@ $function_res_type{"REAL_to_str"} = 'STR';
     'INT{2}',
     'INT{4}',
     'INT{8}',
+    'MPI_ADDRESS',
     'REAL',
     'REAL{4}',
     'REAL{8}',
@@ -1135,6 +1136,7 @@ sub is_intrinsic_scalar_type_name {
    my  $type_name = $_[0];
    if ($type_name =~ /^STR\b([{].*[}])?/  ||
        $type_name =~ /^BIN\b([{].*[}])?/  ||
+       $type_name =~ /^MPI_ADDRESS\b([{].*[}])?/  ||
        $type_name =~ /^INT\b([{].*[}])?/  ||
        $type_name =~ /^REAL\b([{].*[}])?/ ||
        $type_name =~ /^CPX\b([{].*[}])?/  )   { return 1; }
@@ -3715,6 +3717,7 @@ sub make_scalar_fortran_types {
    if ($type_name =~ "^(STR)([{].*[}])? *\$"  ||  # For INTRINSIC types
        $type_name =~ "^(BIN)([{].*[}])? *\$"  ||  # Kind is specified in curlies
        $type_name =~ "^(INT)([{].*[}])? *\$"  ||
+       $type_name =~ "^(MPI_ADDRESS)([{].*[}])? *\$"  ||
        $type_name =~ "^(REAL)([{].*[}])? *\$" ||
        $type_name =~ "^(CPX)([{].*[}])? *\$"  ) {
       $fortran_type_decl = $1;
