@@ -199,6 +199,7 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.base.foo
     ${FOO_DIR}/molecule.ce.foo
     ${FOO_DIR}/molecule.cp.foo
+    ${FOO_DIR}/molecule.nomo.foo
     ${FOO_DIR}/molecule.fock.foo
     ${FOO_DIR}/molecule.gem.foo
     ${FOO_DIR}/molecule.grid.foo
@@ -346,6 +347,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.base.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.nomo.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.fock.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.gem.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
@@ -439,6 +441,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_rgbi.foo
     ${RUNFILE_DIR}/run_least_squares.foo
+    ${RUNFILE_DIR}/run_mpi_test.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
 
@@ -503,6 +506,7 @@ add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
+add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
 
 # Link exectables
 target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -521,6 +525,7 @@ target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 
@@ -533,6 +538,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 install(TARGETS run_molecule DESTINATION bin)
 install(TARGETS run_har      DESTINATION bin)
 install(TARGETS run_rgbi     DESTINATION bin)
+install(TARGETS run_mpi_test DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
