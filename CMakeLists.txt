@@ -226,7 +226,6 @@ set(FOO_SRC
     ${FOO_DIR}/rms_indices.foo
     ${FOO_DIR}/roby.foo
     ${FOO_DIR}/rys.foo
-    ${FOO_DIR}/sasaki_form_factors.foo
     ${FOO_DIR}/scfdata.foo
     ${FOO_DIR}/shell.foo
     ${FOO_DIR}/shell1.foo
@@ -372,7 +371,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/roby.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rys.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/sasaki_form_factors.F90
     ${CMAKE_CURRENT_BINARY_DIR}/scfdata.F90
     ${CMAKE_CURRENT_BINARY_DIR}/shell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/shell1.F90
