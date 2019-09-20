@@ -408,7 +408,7 @@ contains
       dFa,dFb :: MAT{CPX}*
       d_Fa :: MAT{REAL}*
       k_pts :: MAT{REAL}*
-      n_k,n_p, u,f,base :: INT
+      n_k,n_p,n_p_atom, u,f,base :: INT
       rf :: REAL
       X :: VEC{REAL}*
       labels, refine_U3,refine_U4 :: VEC{STR}*
@@ -457,28 +457,124 @@ contains
       refine_ADPs,refine_ADP4s,refine_ADP3s :: BIN
       II,sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
       tag :: STR
+      aa :: INT
 
+      ! Constants
+      II  = IMAGIFY(ONE)
+      n_p = .crystal.asymmetric_unit_atom.no_of_pADPs
+      n_f = .crystal.fragment_atom.no_of_pADPs
 !
 !      ! Begin rigid-atom fit loop
 !!     do
 !
 !      ! Loop over integration atoms "c"
-!    ! do u = 1,n_unique
 !
-         ! Hirshfeld-atom structure factors
+      ! Hirshfeld-atom structure factors
       n_unique = .crystal.n_unique_frag_atoms
       ! Make sure HA stuff is there
       .:make_Hirshfeld_inputs(skip_NOs=TRUE)
 
-      ! Asymmetric unit atoms
-      n_atom = .crystal.asymmetric_unit_atom.dim
+      ! Create refinement arrays & initialize (leaky)
+      ! - asymmetric atom and fragment atom pADPs are set.
+      ! Create space for asymmetric unit atom pADPs (leaky)
+      refine_U3 => .crystal.data.refine_3rd_order_for_atom
+      refine_U4 => .crystal.data.refine_4th_order_for_atom
+      .crystal.asymmetric_unit_atom.reset_pADPs_and_errors(refine_U3,refine_U4)
 
-      ! Symmetry generated K points and SF's
-      n_k = .crystal.n_unique_SF_k_pts
+      ! Create space for the fragment_atom pADPs (leaky)
+      do f = 1,.crystal.n_fragment_atoms
+         a = .crystal.asym_atom_for_frag_atom(f)
+         atom_a => .crystal.asymmetric_unit_atom(a)
+         atom_f =>        .crystal.fragment_atom(f)
+         atom_f.reset_pADPs_and_errors(atom_a.no_of_pADPs)
+      end
+
+      ! Set fragment_atom pADPs from asymmetric unit atom pADPs
+      .crystal.set_frag_from_ap 
+
+      ! Get labels (leaky)
+      labels => .crystal.asymmetric_unit_atom.tag_pADP_labels
+
+      ! Is there a nothing list?
+      has_skip = .crystal.data.refine_nothing_for_atom.associated
+      if (has_skip) then
+         tags = .crystal.fragment_atom.tag
+         list = .crystal.data.refine_nothing_for_atom
+         DIE_IF(NOT list.has_all_elements_common_with(tags), "you try to refine nothing for an atom that is not in your list")
+      end
+
+      ! Are there atoms to be refined isotropically?
+      has_Uiso = .crystal.data.refine_U_iso_for_atom.associated
+      if (has_Uiso) then
+         tags = .crystal.fragment_atom.tag
+         list = .crystal.data.refine_U_iso_for_atom
+         DIE_IF(NOT list.has_all_elements_common_with(tags), "you try to refine an atom isotropically that is not in your list")
+      end
+
+     refine_ADPs_only = .crystal.data.refine_ADPs_only
+     refine_positions_only = .crystal.data.refine_positions_only
+
+     ! Defaults per atom
+     if (NOT refine_ADPs_only) then 
+        refine_positions = TRUE 
+     else
+        refine_positions = FALSE
+     end
+
+     if (NOT refine_positions_only) then 
+        refine_ADPs      = TRUE
+     else
+        refine_ADPs      = FALSE
+     end
+     refine_Uiso      = FALSE
+     refine_ADP4s     = .crystal.fragment_atom(f).has_only_ADP4s_and_errors
+     refine_ADP3s     = .crystal.fragment_atom(f).has_only_ADP3s_and_errors
+
+     ! Special cases for H atom
+     is_H_atom = .crystal.fragment_atom(f).atomic_number==1
+     if (is_H_atom) then
+        refine_positions = .crystal.data.refine_H_positions
+        refine_ADPs      = .crystal.data.refine_H_ADPs
+        refine_Uiso      = .crystal.data.refine_H_U_iso
+     end
+
+     ! Final check to do U_iso this atom?
+     if (NOT refine_Uiso) then
+     if (has_Uiso) then
+     if (any(.crystal.data.refine_U_iso_for_atom==tag)) then
+        refine_Uiso = TRUE
+     end
+     end
+     end
+
+     ! Skip derivatives for this atom?
+     if (has_skip) then
+     if (any(.crystal.data.refine_nothing_for_atom==tag)) then
+        refine_positions = FALSE
+        refine_ADPs      = FALSE
+     end
+     end
+
+     ! Sanity check
+     DIE_IF(refine_Uiso AND refine_ADP4s,"can't refine isotropic ADPs & ADP4s for "//trim(tag))
+     DIE_IF(refine_Uiso AND refine_ADP3s,"can't refine isotropic ADPs & ADP3s for "//trim(tag))
+      ! Create refinement arrays & initialize (leaky)
+      .crystal.data.initialize_fit_data(n_p,n_f,labels)
+
+      ! Clean
+      labels.destroy
 
       ! Allocate structure factor array (leaky)
       ! For pne atom
+      dFc.create(.crystal.n_refl,n_p)
       sf_u.create(n_k)
+
+      do u = 1,n_unique
+      ! Asymmetric unit atoms
+      !n_atom = 1 !.crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
 
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
@@ -508,9 +604,8 @@ contains
       a2.create(n_pt)
       skipa0.create(n_pt)
       skipab.create(n_pt)
-
       ! Loop over integration atoms "c"
-      parallel do u = 1,n_unique
+      !parallel do u = 1,n_unique
 
          sf_u = ZERO
 
@@ -733,11 +828,11 @@ contains
             sf_u(k) = sf * s2
          end
 
-         ! Write out sf_u
-         arch.create(trim(.atom(c).tag)//"-SFs")
-         if (.crystal.data.use_text_SFs) arch.set_format("ascii")
-         arch.parallel_write(sf_u)
-         arch.destroy
+       !  ! Write out sf_u
+       !  arch.create(trim(.atom(c).tag)//"-SFs")
+       !  if (.crystal.data.use_text_SFs) arch.set_format("ascii")
+       !  arch.parallel_write(sf_u)
+       !  arch.destroy
 
          ! Clean up atom "c" stuff
          rho.destroy
@@ -747,10 +842,9 @@ contains
          wt.destroy
          pt.destroy
 
-      end ! -- loop over atom "c"
+      !end ! -- loop over atom "c"
 
       ! Clean up
-      sf_u.destroy
       skipab.destroy
       skipa0.destroy
       a2.destroy
@@ -763,51 +857,6 @@ contains
 !         ! Do a least squares
 
       ! Do the fit 
-
-      ! Create refinement arrays & initialize (leaky)
-      ! - asymmetric atom and fragment atom pADPs are set.
-      ! Create space for asymmetric unit atom pADPs (leaky)
-      refine_U3 => .crystal.data.refine_3rd_order_for_atom
-      refine_U4 => .crystal.data.refine_4th_order_for_atom
-      .crystal.asymmetric_unit_atom.reset_pADPs_and_errors(refine_U3,refine_U4)
-
-      if (.crystal.debugging("initialize_fit_data")) then
-         n_p = .crystal.asymmetric_unit_atom.no_of_pADPs
-         fac = STR:conversion_factor("angstrom")
-         X.create(n_p)
-         stdout.text(">>initialize_fit_data:")
-         stdout.text("asymmetric_unit_atom.pADP_vector (before):")
-         .crystal.asymmetric_unit_atom.put_pADP_vector_to(X,fac)
-         stdout.put(X,by_column=TRUE)
-         X.destroy
-         stdout.text("fragment_atom (before):")
-         .crystal.fragment_atom.put_coordinates
-      end
-
-      ! Create space for the fragment_atom pADPs (leaky)
-      do f = 1,.crystal.n_fragment_atoms
-         a = .crystal.asym_atom_for_frag_atom(f)
-         atom_a => .crystal.asymmetric_unit_atom(a)
-         atom_f =>        .crystal.fragment_atom(f)
-         n_p = atom_a.no_of_pADPs
-         atom_f.reset_pADPs_and_errors(n_p)
-      end
-
-      ! Set fragment_atom pADPs from asymmetric unit atom pADPs
-      .crystal.set_frag_from_ap 
-
-      ! Get labels (leaky)
-      labels => .crystal.asymmetric_unit_atom.tag_pADP_labels
-
-      ! Set the no. of parameters
-      n_p = .crystal.asymmetric_unit_atom.no_of_pADPs
-      n_f = .crystal.fragment_atom.no_of_pADPs
-
-      ! Create refinement arrays & initialize (leaky)
-      .crystal.data.initialize_fit_data(n_p,n_f,labels)
-
-      ! Clean
-      labels.destroy
 
       ! Place asym atom position/ADPs in vector .data.X_fit
       ! - asymmetric_unit_atom keeps the pADPs
@@ -823,58 +872,23 @@ contains
       end
 
       ! Begin rigid-atom fit loop
-      do
-
-         ! Set asym atom positions/ADPs from param vector
-       ! .asymmetric_unit_atom.set_pADP_vector_to(.data.X_fit)
-
-         ! Get unique *fragment* atom shifts in .data.dX ...
-      ! Constants
-      n_k = .crystal.n_unique_SF_k_pts
-      n_p = .crystal.asymmetric_unit_atom.no_of_pADPs
-
-      dFc.create(.crystal.n_refl,n_p)
-
-      ! Make F_predicted, F_calc & derivatives
+      ! NEEDS TO GO OUTSIDE
+      !do
 
       ! Constants
-      n_k = .crystal.n_unique_SF_k_pts
-      n_p = .crystal.asymmetric_unit_atom.no_of_pADPs
+      ! Fragment atom
+      f   = .crystal.unique_frag_atom(u)
+      a   = .crystal.asym_atom_for_frag_atom(f) ! declare
+      n_p_atom = .crystal.asymmetric_unit_atom(a).no_of_pADPs
 
-      ! Symmetry generated structure factors
-      sf_d.create(n_k,n_p) ! Symmetry generated SF derivatives
+
+      ! Per u-atom Symmetry generated structure factors
+      sf_d.create(n_k,n_p_atom) ! Symmetry generated SF derivatives
       sf_e.create(n_k)     ! Symmetry generated SF's
 
-      ! Make the symmetry-generated structure factors and their
-      ! derivatives including ADPs but no dispersion.
-
-
-
-
-      ! Is there a nothing list?
-      has_skip = .crystal.data.refine_nothing_for_atom.associated
-      if (has_skip) then
-         tags = .crystal.fragment_atom(:).tag
-         list = .crystal.data.refine_nothing_for_atom
-         DIE_IF(NOT list.has_all_elements_common_with(tags), "you try to refine nothing for an atom that is not in your list")
-      end
-      
-
-      ! Are there atoms to be refined isotropically?
-      has_Uiso = .crystal.data.refine_U_iso_for_atom.associated
-      if (has_Uiso) then
-         tags = .crystal.fragment_atom(:).tag
-         list = .crystal.data.refine_U_iso_for_atom
-         DIE_IF(NOT list.has_all_elements_common_with(tags), "you try to refine an atom isotropically that is not in your list")
-      end
-
-
-      ! Constants
-      II  = IMAGIFY(ONE)
-      n_k = .crystal.n_unique_SF_k_pts
-
       ! Aspherical temperature independent SFs
-      sf_u.create(n_k)
+      !sf_u = ZERO
+      ! HERE
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -891,78 +905,27 @@ contains
 
 
       ! Make the structure factors and derivatives
-      do u = 1,.crystal.n_unique_frag_atoms
+   !   do u = 1,.crystal.n_unique_frag_atoms
 
-         ! Fragment atom
-         f = .crystal.unique_frag_atom(u)
 
          ! This atom's label
          tag = .crystal.fragment_atom(f).tag
 
 
          ! Read stored SFS !!!!!!!!!!!!
-         arch.create(trim(tag)//"-SFs")
-         if (.crystal.data.use_text_SFs) arch.set_format("ascii")
-         arch.read(sf_u)
-         arch.destroy
+    !      arch.create(trim(tag)//"-SFs")
+    !      if (.crystal.data.use_text_SFs) arch.set_format("ascii")
+    !      arch.read(sf_u)
+    !      arch.destroy
          !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-         ! Base index for unique frag atom
-         base = .crystal.fragment_atom(.crystal.unique_frag_atom).no_of_pADPs_up_to_atom(u)
 
-         refine_ADPs_only = .crystal.data.refine_ADPs_only
-         refine_positions_only = .crystal.data.refine_positions_only
-
-         ! Defaults per atom
-         if (NOT refine_ADPs_only) then 
-            refine_positions = TRUE 
-         else
-            refine_positions = FALSE
-         end
-
-         if (NOT refine_positions_only) then 
-            refine_ADPs      = TRUE
-         else
-            refine_ADPs      = FALSE
-         end
-         refine_Uiso      = FALSE
-         refine_ADP4s     = .crystal.fragment_atom(f).has_only_ADP4s_and_errors
-         refine_ADP3s     = .crystal.fragment_atom(f).has_only_ADP3s_and_errors
-
-         ! Special cases for H atom
-         is_H_atom = .crystal.fragment_atom(f).atomic_number==1
-         if (is_H_atom) then
-            refine_positions = .crystal.data.refine_H_positions
-            refine_ADPs      = .crystal.data.refine_H_ADPs
-            refine_Uiso      = .crystal.data.refine_H_U_iso
-         end
-
-         ! Final check to do U_iso this atom?
-         if (NOT refine_Uiso) then
-         if (has_Uiso) then
-         if (any(.crystal.data.refine_U_iso_for_atom==tag)) then
-            refine_Uiso = TRUE
-         end
-         end
-         end
-
-         ! Skip derivatives for this atom?
-         if (has_skip) then
-         if (any(.crystal.data.refine_nothing_for_atom==tag)) then
-            refine_positions = FALSE
-            refine_ADPs      = FALSE
-         end
-         end
-
-
+         DIE_IF(NOT adp2.equals(.crystal.fragment_atom(f).ADP_tensor),"ADP2 not equal to ADP_tensor")
+         
          ! Get ADP2s
          .crystal.fragment_atom(f).put_ADP2_vector_to(adp2)
 
-         ! Sanity check
-         DIE_IF(refine_Uiso AND refine_ADP4s,"can't refine isotropic ADPs & ADP4s for "//trim(tag))
-         DIE_IF(refine_Uiso AND refine_ADP3s,"can't refine isotropic ADPs & ADP3s for "//trim(tag))
-         DIE_IF(NOT adp2.equals(.crystal.fragment_atom(f).ADP_tensor),"ADP2 not equal to ADP_tensor")
 
          ! ADP4's !!!!!!!!!!!!!
          if (refine_ADP4s) then
@@ -1007,20 +970,20 @@ contains
                sf_e(k) = sf_e(k) + sf1
 
                if (refine_positions) then 
-                  sf_d(k,base+ 1) =  II*k1*sf1
-                  sf_d(k,base+ 2) =  II*k2*sf1
-                  sf_d(k,base+ 3) =  II*k3*sf1
+                  sf_d(k, 1) =  II*k1*sf1
+                  sf_d(k, 2) =  II*k2*sf1
+                  sf_d(k, 3) =  II*k3*sf1
                end
 
                if (refine_ADPs) then
 
                   ! U2 derivatives
-                  sf_d(k,base+ 4) = -k1_k1*sf2
-                  sf_d(k,base+ 5) = -k2_k2*sf2
-                  sf_d(k,base+ 6) = -k3_k3*sf2
-                  sf_d(k,base+ 7) = -k1_k2*sf1
-                  sf_d(k,base+ 8) = -k1_k3*sf1
-                  sf_d(k,base+ 9) = -k2_k3*sf1
+                  sf_d(k, 4) = -k1_k1*sf2
+                  sf_d(k, 5) = -k2_k2*sf2
+                  sf_d(k, 6) = -k3_k3*sf2
+                  sf_d(k, 7) = -k1_k2*sf1
+                  sf_d(k, 8) = -k1_k3*sf1
+                  sf_d(k, 9) = -k2_k3*sf1
                  
                   ! Structure factor (harmonic)
                   sf1  = sfh
@@ -1032,33 +995,33 @@ contains
                   sf24 = sf1 * SIXTH*QUARTER
                  
                   ! U3 derivatives
-                  sf_d(k,base+10) = -II*k1_k1*k1*sf6*zero3
-                  sf_d(k,base+11) = -II*k2_k2*k2*sf6*zero3
-                  sf_d(k,base+12) = -II*k3_k3*k3*sf6*zero3
-                  sf_d(k,base+13) = -II*k1_k1*k2*sf2*zero3
-                  sf_d(k,base+14) = -II*k1_k1*k3*sf2*zero3
-                  sf_d(k,base+15) = -II*k2_k2*k1*sf2*zero3
-                  sf_d(k,base+16) = -II*k2_k2*k3*sf2*zero3
-                  sf_d(k,base+17) = -II*k3_k3*k1*sf2*zero3
-                  sf_d(k,base+18) = -II*k3_k3*k2*sf2*zero3
-                  sf_d(k,base+19) = -II*k1*k2*k3*sf1*zero3
+                  sf_d(k,10) = -II*k1_k1*k1*sf6*zero3
+                  sf_d(k,11) = -II*k2_k2*k2*sf6*zero3
+                  sf_d(k,12) = -II*k3_k3*k3*sf6*zero3
+                  sf_d(k,13) = -II*k1_k1*k2*sf2*zero3
+                  sf_d(k,14) = -II*k1_k1*k3*sf2*zero3
+                  sf_d(k,15) = -II*k2_k2*k1*sf2*zero3
+                  sf_d(k,16) = -II*k2_k2*k3*sf2*zero3
+                  sf_d(k,17) = -II*k3_k3*k1*sf2*zero3
+                  sf_d(k,18) = -II*k3_k3*k2*sf2*zero3
+                  sf_d(k,19) = -II*k1*k2*k3*sf1*zero3
                  
                   ! U4 derivatives
-                  sf_d(k,base+20) = k1_k1*k1_k1*sf24
-                  sf_d(k,base+21) = k2_k2*k2_k2*sf24
-                  sf_d(k,base+22) = k3_k3*k3_k3*sf24
-                  sf_d(k,base+23) = k1_k1*k1_k2*sf6
-                  sf_d(k,base+24) = k1_k1*k1_k3*sf6
-                  sf_d(k,base+25) = k2_k2*k1_k2*sf6
-                  sf_d(k,base+26) = k2_k2*k2_k3*sf6
-                  sf_d(k,base+27) = k3_k3*k1_k3*sf6
-                  sf_d(k,base+28) = k3_k3*k2_k3*sf6
-                  sf_d(k,base+29) = k1_k1*k2_k2*sf4
-                  sf_d(k,base+30) = k1_k1*k3_k3*sf4
-                  sf_d(k,base+31) = k2_k2*k3_k3*sf4
-                  sf_d(k,base+32) = k1_k1*k2_k3*sf2
-                  sf_d(k,base+33) = k2_k2*k1_k3*sf2
-                  sf_d(k,base+34) = k3_k3*k1_k2*sf2
+                  sf_d(k,20) = k1_k1*k1_k1*sf24
+                  sf_d(k,21) = k2_k2*k2_k2*sf24
+                  sf_d(k,22) = k3_k3*k3_k3*sf24
+                  sf_d(k,23) = k1_k1*k1_k2*sf6
+                  sf_d(k,24) = k1_k1*k1_k3*sf6
+                  sf_d(k,25) = k2_k2*k1_k2*sf6
+                  sf_d(k,26) = k2_k2*k2_k3*sf6
+                  sf_d(k,27) = k3_k3*k1_k3*sf6
+                  sf_d(k,28) = k3_k3*k2_k3*sf6
+                  sf_d(k,29) = k1_k1*k2_k2*sf4
+                  sf_d(k,30) = k1_k1*k3_k3*sf4
+                  sf_d(k,31) = k2_k2*k3_k3*sf4
+                  sf_d(k,32) = k1_k1*k2_k3*sf2
+                  sf_d(k,33) = k2_k2*k1_k3*sf2
+                  sf_d(k,34) = k3_k3*k1_k2*sf2
 
                end
 
@@ -1110,21 +1073,21 @@ contains
                if (refine_positions) then
 
                   ! Pos derivatives
-                  sf_d(k,base+ 1) =  II*k1*sf1
-                  sf_d(k,base+ 2) =  II*k2*sf1
-                  sf_d(k,base+ 3) =  II*k3*sf1
+                  sf_d(k, 1) =  II*k1*sf1
+                  sf_d(k, 2) =  II*k2*sf1
+                  sf_d(k, 3) =  II*k3*sf1
 
                end
 
                if (refine_ADPs) then
 
                   ! U2 derivatives
-                  sf_d(k,base+ 4) = -k1_k1*sf2
-                  sf_d(k,base+ 5) = -k2_k2*sf2
-                  sf_d(k,base+ 6) = -k3_k3*sf2
-                  sf_d(k,base+ 7) = -k1_k2*sf1
-                  sf_d(k,base+ 8) = -k1_k3*sf1
-                  sf_d(k,base+ 9) = -k2_k3*sf1
+                  sf_d(k, 4) = -k1_k1*sf2
+                  sf_d(k, 5) = -k2_k2*sf2
+                  sf_d(k, 6) = -k3_k3*sf2
+                  sf_d(k, 7) = -k1_k2*sf1
+                  sf_d(k, 8) = -k1_k3*sf1
+                  sf_d(k, 9) = -k2_k3*sf1
                  
                   ! Structure factor (harmonic!)
                   sf1  = sfh
@@ -1134,16 +1097,16 @@ contains
                   sf6  = sf1 * SIXTH
                  
                   ! U3 derivatives
-                  sf_d(k,base+10) = -II*k1_k1*k1*sf6
-                  sf_d(k,base+11) = -II*k2_k2*k2*sf6
-                  sf_d(k,base+12) = -II*k3_k3*k3*sf6
-                  sf_d(k,base+13) = -II*k1_k1*k2*sf2
-                  sf_d(k,base+14) = -II*k1_k1*k3*sf2
-                  sf_d(k,base+15) = -II*k2_k2*k1*sf2
-                  sf_d(k,base+16) = -II*k2_k2*k3*sf2
-                  sf_d(k,base+17) = -II*k3_k3*k1*sf2
-                  sf_d(k,base+18) = -II*k3_k3*k2*sf2
-                  sf_d(k,base+19) = -II*k1*k2*k3*sf1
+                  sf_d(k,10) = -II*k1_k1*k1*sf6
+                  sf_d(k,11) = -II*k2_k2*k2*sf6
+                  sf_d(k,12) = -II*k3_k3*k3*sf6
+                  sf_d(k,13) = -II*k1_k1*k2*sf2
+                  sf_d(k,14) = -II*k1_k1*k3*sf2
+                  sf_d(k,15) = -II*k2_k2*k1*sf2
+                  sf_d(k,16) = -II*k2_k2*k3*sf2
+                  sf_d(k,17) = -II*k3_k3*k1*sf2
+                  sf_d(k,18) = -II*k3_k3*k2*sf2
+                  sf_d(k,19) = -II*k1*k2*k3*sf1
 
                end
 
@@ -1192,21 +1155,21 @@ contains
                   if (refine_positions) then
    
                      ! Pos derivatives
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
+                     sf_d(k, 1) =  II*k1*sf1
+                     sf_d(k, 2) =  II*k2*sf1
+                     sf_d(k, 3) =  II*k3*sf1
    
                   end
    
                   if (refine_ADPs) then
    
                      ! U_iso derivatives
-                     sf_d(k,base+ 4) = -sf2
-                     sf_d(k,base+ 5) = -sf2
-                     sf_d(k,base+ 6) = -sf2
-                     sf_d(k,base+ 7) = ZERO
-                     sf_d(k,base+ 8) = ZERO
-                     sf_d(k,base+ 9) = ZERO
+                     sf_d(k, 4) = -sf2
+                     sf_d(k, 5) = -sf2
+                     sf_d(k, 6) = -sf2
+                     sf_d(k, 7) = ZERO
+                     sf_d(k, 8) = ZERO
+                     sf_d(k, 9) = ZERO
    
                   end
    
@@ -1249,21 +1212,21 @@ contains
                   if (refine_positions) then
    
                      ! Pos derivatives
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
+                     sf_d(k, 1) =  II*k1*sf1
+                     sf_d(k, 2) =  II*k2*sf1
+                     sf_d(k, 3) =  II*k3*sf1
    
                   end
    
                   if (refine_ADPs) then
    
                      ! U2 derivatives
-                     sf_d(k,base+ 4) = -k1_k1*sf2
-                     sf_d(k,base+ 5) = -k2_k2*sf2
-                     sf_d(k,base+ 6) = -k3_k3*sf2
-                     sf_d(k,base+ 7) = -k1_k2*sf1
-                     sf_d(k,base+ 8) = -k1_k3*sf1
-                     sf_d(k,base+ 9) = -k2_k3*sf1
+                     sf_d(k, 4) = -k1_k1*sf2
+                     sf_d(k, 5) = -k2_k2*sf2
+                     sf_d(k, 6) = -k3_k3*sf2
+                     sf_d(k, 7) = -k1_k2*sf1
+                     sf_d(k, 8) = -k1_k3*sf1
+                     sf_d(k, 9) = -k2_k3*sf1
    
                   end
    
@@ -1277,7 +1240,14 @@ contains
       end
 
       ! Clean
-      k_pt.destroy
+      k_pt.destroy ! KEEP
+      ! WRITE SF_U TO DISK HERE TO SAVE TIME
+      ! Write out sf_u
+      arch.create(trim(.atom(c).tag)//"-SFs")
+      if (.crystal.data.use_text_SFs) arch.set_format("ascii")
+      arch.parallel_write(sf_u)
+      arch.destroy
+
       sf_u.destroy
 
       
@@ -1295,59 +1265,66 @@ contains
          .crystal.data.make_F_predicted(update_n_param=FALSE) ! new scale
       end
 
+      ! Base index for unique frag atom
+      base = .crystal.fragment_atom(.crystal.unique_frag_atom).no_of_pADPs_up_to_atom(u)
+
       ! Sum the symmetry-generated SF's to get
       ! the derivative structure factors dFc
-      .crystal.spacegroup.sum_unique_sf_derivs(dFc,sf_d,.crystal.data.reflections)
+      dFc_atom.create(n_k,n_p_atom)
+      .crystal.spacegroup.sum_unique_sf_derivs(dFc_atom,sf_d,.crystal.data.reflections) ! Check dimensions in here
       sf_d.destroy
 
       ! Add derivative of anomalous contribution to |SF|, dFc
       ! Only if F_calc has anomalous dispersion added into it.
       if (.crystal.add_dispersion_to_F_calc) then
-      ! Size of symmetry generated k points
-      n_k = .crystal.n_symop_generated_SF_k_pts
-      k_pts.create(n_k,3)
 
-      ! Size of anamalous Jacobian
-      n_p = .crystal.asymmetric_unit_atom.no_of_pADPs
-      dFa.create(n_k,n_p)
-      dFb.create(.crystal.data.reflections.dim,n_p)
-
-      ! The full list of symmetry-generated k points
-      .crystal.data.reflections.make_symop_generated_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
-
-      ! Note: each atom contribution scales by a site-symmetry factor
-      dFa = ZERO
-
-      do u = 1,.crystal.n_unique_frag_atoms
-         f  = .crystal.unique_frag_atom(u)
+         ! Size of symmetry generated k points
+         ! WARNING: new k_pt array
+         n_k = .crystal.n_symop_generated_SF_k_pts
+         k_pts.create(n_k,3) ! NEW
+       
+         ! Size of anamalous Jacobian
+         dFa_atom.create(n_k,n_p_atom)
+         dFb_atom.create(.crystal.data.reflections.dim,n_p)
+       
+         ! The full list of symmetry-generated k points
+         .crystal.data.reflections.make_symop_generated_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+       
+         ! Note: each atom contribution scales by a site-symmetry factor
+         dFa_atom = ZERO
+       
          rf = .crystal.frag_atom_sym_factor(f)
-         if (rf.is_zero) cycle
-         base = .crystal.fragment_atom(.crystal.unique_frag_atom).no_of_pADPs_up_to_atom(u)
-         .crystal.fragment_atom(f).add_derivative_dispn(dFa,base,k_pts,rf)
+         if (NOT rf.is_zero) then
+            base = .crystal.fragment_atom(.crystal.unique_frag_atom).no_of_pADPs_up_to_atom(u)
+            .crystal.fragment_atom(f).add_derivative_dispn(dFa_atom,base,k_pts,rf) ! Get rid of base here
+         end
+       
+         ! Add together symmetry contributions
+         dFb_atom = ZERO
+         .crystal.spacegroup.add_full_sf_derivs_d(dFb_atom,dFa_atom,.crystal.data.reflections)
+       
+         dFc_atom = dFc_atom + dFb_atom
+
+         ! Clean
+         dFb_atom.destroy
+         dFa_atom.destroy
+         k_pts.destroy
+
       end
 
-      ! Add together symmetry contributions
-      dFb = ZERO
-      .crystal.spacegroup.add_full_sf_derivs_d(dFb,dFa,.crystal.data.reflections)
+      ! Cope & clean
+      dFc(:,base+1:base+n_p_atom) = dFc_atom
+      dFc_atom.destroy
 
-    ! stdout.text("dFc S contribution before:")
-    ! stdout.put(dFc(:,18+1:18+9))
-
-    ! stdout.text("Anomalous dFb S contribution:")
-    ! stdout.put(dFb)
-
-      dFc = dFc + dFb
-
-      ! Clean
-      dFb.destroy
-      dFa.destroy
-      k_pts.destroy
-      end
 
       ! Get the derivative absolute SF's, F_abs = |F_calc|
       d_Fa.create(.crystal.n_refl,n_p)
       .crystal.d_F_abs_dX(d_Fa,dFc)
       dFc.destroy
+
+      end
+
+      ! SPLIT THIS ROUTINE HERE!!!
 
       ! Get the unique atom shifts, dX (leaky)
       .crystal.solve_normal_equations(d_Fa)
