@@ -117,12 +117,16 @@ contains
    mol_name :: STR, IN
    nuclear_repulsion_energy :: REAL, IN
    nn, dif :: INT
+   ms :: INT
      
      ! set nuclear_repulsion_energy
      .nuclear_repulsion_energy=nuclear_repulsion_energy
      ! set n_geminals
      .n_geminals = (n_el+1)/2
-     ! set n_blocks 
+     ! set n_gem_singlet
+     ms = .spin_multi
+     .n_gem_singlet = (n_el-ms+1)/2 
+     ! set n_blocks
      .n_blocks = .n_geminals+(n_bf-.n_geminals+1)/2
      ! set mat_size (PBT size)
      nn = (n_el/2)*2
@@ -131,14 +135,25 @@ contains
      else
         .mat_size = n_bf
      end
+!     ! set n_1D_blocks (number of 1-orthogonal blocks in each PBT)
+!     dif = n_bf-.n_geminals
+!     nn = (dif/2)*2
+!     if (nn /= dif) then
+!       .n_1D_blocks = .n_geminals+1
+!     else
+!       .n_1D_blocks = .n_geminals
+!     end
+     !
      ! set n_1D_blocks (number of 1-orthogonal blocks in each PBT)
-     dif = n_bf-.n_geminals
+     dif = .mat_size-.n_gem_singlet
      nn = (dif/2)*2
-     if (nn /= dif) then  
-       .n_1D_blocks = .n_geminals+1
+     if (nn /= dif) then
+       .n_1D_blocks = .n_gem_singlet+1
      else
-       .n_1D_blocks = .n_geminals
+       .n_1D_blocks = .n_gem_singlet
      end
+     !
+     .n_2D_blocks = .n_blocks-.n_1D_blocks
      .n_2D_3typ_blocks = 0
      .n_2D_4typ_blocks = .n_blocks-.n_1D_blocks
      .first_block=0
@@ -201,6 +216,7 @@ contains
  !      case ("n_1D_blocks=            "); .read_n_1D_blocks
  !      case ("n_2D_3typ_blocks=       "); .read_n_2D_3typ_blocks
  !      case ("n_2D_4typ_blocks=       "); .read_n_2D_4typ_blocks
+       case ("n_singlet_geminals=     "); .read_n_singlet_geminals
        ! These are only for making custom tables for the list type
        case ("-- Options for tables --")
        case  default ;      UNKNOWN(word)
@@ -241,8 +257,11 @@ contains
      coeffs.create(.n_blocks)
      allocate(.bra_set.vec(.n_geminals))
      .bra_set.set_size=.n_geminals
+     .bra_set.set_size_sing=.n_gem_singlet
      .bra_set.n_blocks=.n_blocks
      .bra_set.n_1D_blocks=.n_1D_blocks
+     .bra_set.n_2D_blocks=.n_2D_blocks
+     .bra_set.spin_restricted=.spin_restricted
      do i=1,.n_geminals
        stdin.read(blocks)
        stdin.read(coeffs)
@@ -279,8 +298,11 @@ contains
      coeffs.create(.n_blocks)
      allocate(.ket_set.vec(.n_geminals))
      .ket_set.set_size=.n_geminals
+     .ket_set.set_size_sing=.n_gem_singlet
      .ket_set.n_blocks=.n_blocks
      .ket_set.n_1D_blocks=.n_1D_blocks
+     .ket_set.n_2D_blocks=.n_2D_blocks
+     .ket_set.spin_restricted=.spin_restricted
      do i=1,.n_geminals
        stdin.read(blocks)
        stdin.read(coeffs)
@@ -363,8 +385,17 @@ contains
    ! Read TRUE if the spin-restricted approach is selected, else read FALSE
    !  self :: PTR
      spin_restricted :: BIN
+
      stdin.read(spin_restricted)
      .spin_restricted=spin_restricted
+
+     ! in case of a spin unrestricted calculation,
+     ! set to zero the (default) value for the number of
+     ! spin restricted geminals
+     if (NOT spin_restricted) then
+        .n_gem_singlet = 0
+     end
+
    end 
 
    read_block_partition ::: leaky
@@ -435,6 +466,14 @@ contains
 !     .n_2D_4typ_blocks=n_2D_4typ_blocks
 !
 !   end 
+
+   read_n_singlet_geminals
+   ! Read number of singlet geminals
+   !  self :: PTR
+     n_singlet_geminals :: INT
+     stdin.read(n_singlet_geminals)
+     .n_gem_singlet=n_singlet_geminals
+   end
 
 !  ===============
 !  other Routines
@@ -591,7 +630,9 @@ contains
 ! coefficients. The current .n_bf-dimensional matrix used corresponds
 ! to a symmetrical or antisymmetrical (triplet) linear combination of
 ! the off-diagonal blocks
-       stop
+        stop
+     else
+        .spin_multi = spin_multiplicity 
      end
 
    end
@@ -1138,6 +1179,13 @@ contains
    !debug stdout.text(" ")
    !debug stdout.text("Normalization of bra set of geminals")
    !debug stdout.text("Normalized geminals - coefficients:")
+     !
+     !!!!!
+     stdout.text(" ")
+     stdout.text("Normalization of bra set of geminals")
+     stdout.text("Normalized geminals - coefficients:")
+     !!!!!
+     !
      .norm_gem(.bra_set,.n_blocks)
      if (NOT .bra_is_ket) then
      !debug stdout.text(" ")
@@ -1154,6 +1202,9 @@ contains
    i :: INT
      do i=1,.n_geminals
      !debug stdout.show("geminal", i)
+     !!!!!
+       stdout.show("geminal", i)
+     !!!!!
        .norm_gem(pbt_set.vec(i),nb)
      end
    end
@@ -1180,6 +1231,9 @@ contains
      norm = sqrt(norm)
      pbt.coef = pbt.coef/norm
    !debug stdout.put(pbt.coef)
+     !!!!!!!
+     stdout.put(pbt.coef)
+     !!!!!!!
    end
 ! de
 
@@ -1253,23 +1307,23 @@ contains
    end
 
 ! davide: 09-11-2018
- prep_nonzero_coef_ind
- ! prepare lists of block indices with nonzero coefficients
- ! (one list for each geminal)
-  i, siz, j :: INT
-   .nonzero_coef_ind.create(.n_geminals)
- !debug stdout.text(" ")
- !debug stdout.text("Indices of blocks with nonzero coefficient:")
-   do i=1,.n_geminals
-     siz = size(.bra_set.vec(i).nonzero_coef_ind)
-     .nonzero_coef_ind(i).element.create(siz)
-     .nonzero_coef_ind(i).element = .bra_set.vec(i).nonzero_coef_ind
-   !debug stdout.show("bra and ket geminals", i)
-     do j=1,siz
-     !debug stdout.show(" ",.nonzero_coef_ind(i).element(j))
+   prep_nonzero_coef_ind
+   ! prepare lists of block indices with nonzero coefficients
+   ! (one list for each geminal)
+    i, siz, j :: INT
+     .nonzero_coef_ind.create(.n_geminals)
+   !debug stdout.text(" ")
+   !debug stdout.text("Indices of blocks with nonzero coefficient:")
+     do i=1,.n_geminals
+       siz = size(.bra_set.vec(i).nonzero_coef_ind)
+       .nonzero_coef_ind(i).element.create(siz)
+       .nonzero_coef_ind(i).element = .bra_set.vec(i).nonzero_coef_ind
+     !debug stdout.show("bra and ket geminals", i)
+       do j=1,siz
+       !debug stdout.show(" ",.nonzero_coef_ind(i).element(j))
+       end
      end
    end
- end
 ! de
 
    prep_nonzero_coef
@@ -1359,7 +1413,6 @@ contains
      end
 
    end
-
 ! de
 
 ! davide: 11-11-2018/12-11-2018
@@ -1507,7 +1560,6 @@ contains
      end
   
    end
-
 ! de
 
 ! davide: 19-11-2018
@@ -2031,8 +2083,8 @@ contains
    end
 
 
-  calc_2rdm_one_1_ortho(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
-  !
+   calc_2rdm_one_1_ortho(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
+   !
      i, i_a, i_b :: INT
      ng_1, ng_2 :: INT
      red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
@@ -2194,7 +2246,7 @@ contains
                !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
                !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
                  i = i+1
-
+                 !
                  .rdm_2_ab(i).same_block = FALSE
                  .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
                  .rdm_2_ab(i).indices = (/ r,r,ind_2,ind_2 /)
@@ -2204,7 +2256,7 @@ contains
                !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
                !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
                  i = i+1
-
+                 !
                  .rdm_2_ab(i).same_block = FALSE
                  .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
                  .rdm_2_ab(i).indices = (/ ind_1,ind_1,r,r /)
@@ -2218,7 +2270,7 @@ contains
                !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
                !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
                  i = i+1
-
+                 !
                  .rdm_2_ab(i).same_block = FALSE
                  .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
                  .rdm_2_ab(i).indices = (/ ind_2,ind_2,r,r /)
@@ -2387,11 +2439,12 @@ contains
            end
         end
      end
+
    end
 
 
-  calc_2rdm_one_pauli(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
-  !
+   calc_2rdm_one_pauli(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
+   !
      i, i_a, i_b :: INT
      ng_1, ng_2 :: INT
      red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
@@ -7184,25 +7237,67 @@ contains
    end
 ! de
 
-! davide: 20-11-2018
+! RANDOM GENARATOR OF SET OF GEMINALS
+
+! davide: 20-11-2018 / 01-10-2019
    random_geminals_generator ::: leaky
    ! generate random geminals which satisfy 
    ! the constraints of the model
-   i :: INT
 
-   !debug stdout.text(" ")
-   !debug stdout.text("Randomly generated bra set:")
-     .make_1ortho_space(.bra_set)
-     .make_pauli_space(.bra_set)
+   !!!!!!!!
+   ! debug
+   stdout.show("spin_restricted =",.spin_restricted)
+   !!!!!!!!
 
-     do i=1,.n_geminals
-      !debug stdout.text(" ")
-      !debug stdout.show("geminal",i)
-      !debug stdout.text("block structure:")
-      !debug stdout.put(.bra_set.vec(i).block_type)
-      !debug stdout.text("coefficients:")
-      !debug stdout.put(.bra_set.vec(i).coef)
+     if (.spin_restricted) then
+        .guess_geminals_restricted
+     else
+        .guess_geminals_unrestricted
      end
+
+   end
+
+! spin restricted
+
+! davide: 20-11-2018 / 01-10-2019
+   guess_geminals_restricted ::: leaky
+   ! generate guess set of geminals in the 
+   ! spin restricted case
+     i :: INT
+
+     !.bra_set.n_1D_blocks = .n_1D_blocks
+     !.bra_set.n_2D_blocks = .n_blocks - .n_1D_blocks
+   !debug 
+     stdout.text(" ")
+   !debug 
+     stdout.text("Randomly generated bra set:")
+     !.make_1ortho_space(.bra_set)
+     !.make_pauli_space(.bra_set)
+     .make_1D_blocks(.bra_set)
+     .make_2D_blocks_restricted(.bra_set)
+
+    !!!!!!!!!!
+    ! debug
+     stdout.text(" ")
+     stdout.show("# 1D blocks =",.bra_set.n_1D_blocks)
+     stdout.show("# 2D blocks =",.bra_set.n_2D_blocks)
+     stdout.show("# 2D 3type blocks =",.bra_set.n_2D_3typ_blocks)
+     stdout.show("# 2D 4type blocks =",.bra_set.n_2D_4typ_blocks)
+     stdout.text(" ")
+     do i=1,.n_geminals
+        stdout.text(" ")
+        stdout.show("geminal",i)
+        stdout.text("block structure:")
+        stdout.put(.bra_set.vec(i).block_type)
+        stdout.text("coefficients:")
+        stdout.put(.bra_set.vec(i).coef)
+     end
+     if (.bra_set.n_2D_3typ_blocks > 0) then
+        stdout.text(" ")
+        stdout.text("GD2 info vector:")
+        stdout.put(.GD2_info)
+     end
+    !!!!!!!!!!
 
      if (.bra_is_ket) then
      ! we should make sure that no memory is lost
@@ -7223,58 +7318,174 @@ contains
 
    end
 
-   make_1ortho_space(pbt_set)
+   make_1D_blocks(pbt_set)
    ! make the block structure and generate the coefficients 
-   ! for the 1-orthogonal block space of each geminal 
+   ! for the blocks of size 1 (of each geminal)
      pbt_set :: PAULI_BLOCK_TENSOR_SET
      i, j, set_size, n_1D_blocks :: INT
      num :: REAL
 
-     set_size = pbt_set.set_size  ! set_size = n_geminals
-     n_1D_blocks = pbt_set.n_1D_blocks  ! n_1D_blocks = number of 1-orthogonal blocks
-     do i=1,set_size 
-        ! assign block type ID1 to each "n_1D_blocks" block
+     set_size = pbt_set.set_size  ! number of geminals
+     n_1D_blocks = pbt_set.n_1D_blocks  ! number of blocks of size 1 (1D)
+     !
+     ! in case of spin restricted, if a doublet or triplet state
+     ! is selected, build the 1D block structure for the last geminal
+     ! (zero coefficient for each 1D block), and decrement "set_size" by 1
+     if (.spin_restricted AND .spin_multi>1) then
+        pbt_set.vec(set_size).block_type(1:n_1D_blocks) = "ID1"
+        pbt_set.vec(set_size).coef(1:n_1D_blocks) = ZERO
+        set_size = set_size-1
+     end
+     !
+     do i=1,set_size
+        ! assign block type ID1 to each 1D block
         pbt_set.vec(i).block_type(1:n_1D_blocks) = "ID1"
-        ! generate coefficients for the first "n_geminals" 1-orthogonal blocks
+        ! generate coefficients for the first "set_size" 1D blocks
         pbt_set.vec(i).coef(1:n_1D_blocks) = ZERO
         call random_number(num)
         pbt_set.vec(i).coef(i) = (num - HALF)*TWO
      end
      ! generate coefficients for the last 
-     ! (n_1D_blocks-n_geminals) 1-orthogonal blocks
-     ! (if n_1D_blocks > n_geminals)
+     ! (n_1D_blocks-set_size) 1D blocks
+     ! (if n_1D_blocks > set_size)
      do i=set_size+1,n_1D_blocks
         call random_number(num)
         j = int(num*set_size)+1  ! selection of the j-th geminal
         call random_number(num)                    ! generation of the coefficient for
-        pbt_set.vec(j).coef(i) = (num - HALF)*TWO  ! the i-th 1-ortho. block of geminal j
+        pbt_set.vec(j).coef(i) = (num - HALF)*TWO  ! the i-th 1D block of geminal j
      end
 
    end
 
-   make_pauli_space(pbt_set)
+   make_2D_blocks_restricted(pbt_set)
    ! make the block structure and generate the coefficients 
-   ! for the Pauli block space of each geminal 
+   ! for the blocks of size 2 (2D) of each geminal 
      pbt_set :: PAULI_BLOCK_TENSOR_SET
      i, j, k, set_size, n_1D_blocks, n_blocks :: INT
      set_size_minus_1, set_size_minus_2 :: INT
      gem :: VEC{INT}(3)
-     b_typ :: VEC{STR}(3)
      num :: REAL
+     n_2D_3typ_blocks :: INT
+     n_2D_4typ_blocks :: INT
+     b_3typ :: VEC{STR}(2)
+     b_4typ :: VEC{STR}(3)
+     n_2D_blocks :: INT
+!     set_size_sing :: INT
+!     set_size_sing_minus_1 :: INT
+!     set_size_sing_minus_2 :: INT
+     n_2D_blocks_plus_1 :: INT
 
-     set_size = pbt_set.set_size ! set_size = n_geminals
-     n_1D_blocks = pbt_set.n_1D_blocks ! n_1D_blocks = number of 1-orthogonal blocks
-     n_blocks = pbt_set.n_blocks ! n_blocks = total number of blocks
+     set_size = pbt_set.set_size ! number of geminals
+!     set_size_sing = pbt_set.set_size_sing ! number of spin singlet geminals
+     n_blocks = pbt_set.n_blocks ! number of blocks
+     n_1D_blocks = pbt_set.n_1D_blocks ! number of blocks of size 1 (1D)
+     n_2D_blocks = pbt_set.n_2D_blocks ! number of blocks of size 2 (2D)
+
+     ! if a doublet or a triplet state is selected,
+     ! build the 2D block structure for the last geminal
+     ! (and decrement "set_size" by 1)
+     if (.spin_multi == 2) then
+        ! doublet state:
+        ! nonzero coefficient only for the last 2D block,
+        ! the one with one orbital at infinity
+        pbt_set.vec(set_size).block_type(n_1D_blocks+1:n_blocks-1) = "ID2"
+        pbt_set.vec(set_size).block_type(n_blocks) = "SX"
+        call random_number(num)
+        pbt_set.vec(set_size).coef(n_blocks) = (num - HALF)*TWO
+        set_size = set_size-1
+     else if (.spin_multi == 3) then
+        ! triplet state:
+        ! all 2D blocks of type "ISY", each with a nonzero coefficient
+        do i=n_1D_blocks+1,n_blocks
+           pbt_set.vec(set_size).block_type(i) = "ISY"
+           call random_number(num)
+           pbt_set.vec(set_size).coef(i) = (num - HALF)*TWO
+           set_size = set_size-1
+        end
+     end
 
      do i=1,set_size
         pbt_set.vec(i).coef(n_1D_blocks+1:n_blocks) = ZERO
         pbt_set.vec(i).block_type(n_1D_blocks+1:n_blocks) = "ID2"
      end
 
+     ! decide the number of 2D blocks with at most 3 types (3typ)
+     ! and the one with at most 4 types (4typ)
+     n_2D_blocks_plus_1 = n_2D_blocks+1
+     call random_number(num)
+     n_2D_3typ_blocks = int(num*n_2D_blocks_plus_1)
+     n_2D_4typ_blocks = n_2D_blocks-n_2D_3typ_blocks
+!     if (num < HALF) then
+!        n_2D_3typ_blocks = int(num*n_2D_blocks)+1
+!        n_2D_4typ_blocks = n_2D_blocks-n_2D_3typ_blocks
+!     else
+!        n_2D_4typ_blocks = int(num*n_2D_blocks)+1
+!        n_2D_3typ_blocks = n_2D_blocks-n_2D_4typ_blocks
+!     end if
+     ! total number of 2D 3typ blocks 
+     pbt_set.n_2D_3typ_blocks = n_2D_3typ_blocks
+     .n_2D_3typ_blocks = n_2D_3typ_blocks
+!     stdout.show("# 2D 3typ blocks =", n_2D_3typ_blocks)
+     ! prepare vector of angles for 3typ blocks
+     if (.GD2_info.created) then
+        .GD2_info.destroy
+        .GD2_info.create(n_2D_3typ_blocks)
+!        .GD2_info.resize(n_2D_3typ_blocks)
+     else
+        .GD2_info.create(n_2D_3typ_blocks)
+     end
+!     if (allocated(.GD2_info)) then
+!        deallocate(.GD2_info)
+!        allocate(.GD2_info(n_2D_3typ_blocks))
+!     end
+     ! total number of 2D 4typ blocks 
+     pbt_set.n_2D_4typ_blocks = n_2D_4typ_blocks
+     .n_2D_4typ_blocks = n_2D_4typ_blocks
+!     stdout.show("# 2D 4typ blocks =", n_2D_4typ_blocks)
+
      set_size_minus_1 = set_size-1
      set_size_minus_2 = set_size-2
-     do i=n_1D_blocks+1,n_blocks ! loop over the Pauli blocks
-        ! select 3 geminals with a nonzero coefficient
+     !
+     ! loop over the 2D 3TYP BLOCKS
+     !
+     do i=n_1D_blocks+1,n_1D_blocks+n_2D_3typ_blocks
+        ! select 2 singlet geminals with a nonzero coefficient
+          ! 1st geminal
+        call random_number(num)
+        gem(1) = int(num*set_size)+1
+        if (set_size > 1) then
+             ! 2nd geminal
+           call random_number(num)
+           j = int(num*set_size_minus_1)+1
+           if (j >= gem(1)) then
+              gem(2) = j+1
+           else
+              gem(2) = j
+           end
+        end
+        ! assign a type of Pauli block (type3) and a coefficient
+        ! to each of the 2 selected geminals
+        call random_number(num)
+        j = int(num*2)
+        b_3typ = .select_block_2D_3typ_res(j)
+        do k=1,min(2,set_size)
+           pbt_set.vec(gem(k)).block_type(i) = b_3typ(k)
+           call random_number(num)
+           pbt_set.vec(gem(k)).coef(i) = (num - HALF)*TWO
+        end
+        ! assign an angle (between 0 and Pi, Pi excluded)
+        call random_number(num)
+        j = i-n_1D_blocks
+        .GD2_info(j) = num*PI 
+!        stdout.show("Random Num. =", num)
+!        stdout.show("Pi =", PI)
+!        stdout.show("GD2_info =", .GD2_info(j))
+     end
+     !
+     ! loop over the 2D 4TYP BLOCKS
+     !
+     do i=n_1D_blocks+n_2D_3typ_blocks+1,n_blocks
+        ! select 3 spin singlet geminals with a nonzero coefficient
           ! 1st geminal
         call random_number(num)
         gem(1) = int(num*set_size)+1
@@ -7300,23 +7511,65 @@ contains
               end
            end
         end
-        ! assign a type of Pauli block and a coefficient
+        ! assign a type of Pauli block (type4) and a coefficient
         ! to each of the 3 selected geminals
         call random_number(num)
         j = int(num*6)
-        b_typ = .select_block_types(j)
+        b_4typ = .select_block_2D_4typ_res(j)
         do k=1,min(3,set_size)
-           pbt_set.vec(gem(k)).block_type(i) = b_typ(k)
+           pbt_set.vec(gem(k)).block_type(i) = b_4typ(k)
            call random_number(num)
            pbt_set.vec(gem(k)).coef(i) = (num - HALF)*TWO
         end
      end
 
+!     ! in case of a spin restricted calculation, 
+!     ! if a doublet or a triplet state is selected,
+!     ! build the 2D block structure for the last geminal
+!     if (.spin_multi == 2) then
+!        ! doublet state:
+!        ! nonzero coefficient only for the last 2D block,
+!        ! the one with one orbital at infinity
+!        pbt_set.vec(set_size).block_type(n_1D_blocks+1:n_blocks-1) = "ID2"
+!        pbt_set.vec(set_size).block_type(n_blocks) = "SX"
+!        call random_number(num)
+!        pbt_set.vec(set_size).coef(n_blocks) = (num - HALF)*TWO
+!        !pbt_set.vec(set_size).coef(n_blocks) = ONE
+!     else if (.spin_multi == 3) then
+!        ! triplet state:
+!        ! all 2D blocks of type "ISY", each with a nonzero coefficient
+!        do i=n_1D_blocks+1,n_blocks
+!           pbt_set.vec(set_size).block_type(i) = "ISY"
+!           call random_number(num)
+!           pbt_set.vec(set_size).coef(i) = (num - HALF)*TWO
+!        end
+!     end
+
    end
 
-   select_block_types(integ) result (b_types)
+   select_block_2D_3typ_res(integ) result (b_types)
    ! assign to the integer "integ" a permutation
-   ! of the 3 pauli block types (ID2, SX, SZ)
+   ! of the block types (GD2, SX)
+     integ :: INT, IN
+     b_types :: VEC{STR}(2)
+
+     select case (integ)
+        case(0)
+           b_types(1) = "GD2"
+           b_types(2) = "SX"
+        case(1)
+           b_types(1) = "SX"
+           b_types(2) = "GD2"
+        case default   
+         !debug stdout.text("unrecognized block type code")
+           stop
+     end
+
+   end
+
+   select_block_2D_4typ_res(integ) result (b_types)
+   ! assign to the integer "integ" a permutation
+   ! of the pauli block types (ID2, SX, SZ)
      integ :: INT, IN
      b_types :: VEC{STR}(3)
 
@@ -7352,6 +7605,416 @@ contains
 
    end
 ! de
+
+! spin unrestricted
+
+! davide 01-10-2019
+   guess_geminals_unrestricted ::: leaky
+   ! generate guess set of geminals in the 
+   ! spin unrestricted case
+     i :: INT
+
+     !.bra_set.n_1D_blocks = .n_1D_blocks
+     !.bra_set.n_2D_blocks = .n_blocks - .n_1D_blocks
+   !debug stdout.text(" ")
+   !debug stdout.text("Randomly generated bra set:")
+     !.make_1ortho_space(.bra_set)
+     !.make_pauli_space(.bra_set)
+     !
+     ! make 1D block structure
+     .make_1D_blocks(.bra_set)
+     ! make 2D block structure
+     .make_2D_blocks_unrestricted(.bra_set)
+     !
+!     if (.n_gem_singlet > 0) then
+!        ! make the subset of spin restricted geminals 
+!        ! (spin singlet)
+!        .make_2D_blocks_restricted(.bra_set)
+!        ! make the subset of spin unrestricted geminals 
+!        .make_2D_blocks_unrestricted(.bra_set)
+!     else
+!        ! all geminals are spin unrestricted
+!        .make_2D_blocks_unrestricted(.bra_set)
+!     end
+
+
+    !!!!!!!!!!
+    ! debug
+     stdout.text(" ")
+     stdout.show("n_1D_blocks =",.bra_set.n_1D_blocks)
+     stdout.show("n_2D_blocks =",.bra_set.n_2D_blocks)
+     stdout.show("n_2D_3typ_blocks =",.bra_set.n_2D_3typ_blocks)
+     stdout.show("n_2D_4typ_blocks =",.bra_set.n_2D_4typ_blocks)
+     stdout.text(" ")
+     do i=1,.n_geminals
+       stdout.text(" ")
+       stdout.show("geminal",i)
+       stdout.text("block structure:")
+       stdout.put(.bra_set.vec(i).block_type)
+       stdout.text("coefficients:")
+       stdout.put(.bra_set.vec(i).coef)
+     end
+    !!!!!!!!!!
+
+     if (.bra_is_ket) then
+     ! we should make sure that no memory is lost
+        .ket_set.set_size=.n_geminals
+        .ket_set.vec=>.bra_set.vec
+       ! stdout.text(" ")
+       ! stdout.text("Randomly generated ket set:")
+       ! 
+       ! do i=1,.n_geminals
+       !  !debug stdout.text(" ")
+       !  !debug stdout.show("geminal",i)
+       !  !debug stdout.text("block structure:")
+       !  !debug stdout.put(.ket_set.vec(i).block_type)
+       !  !debug stdout.text("coefficients:")
+       !  !debug stdout.put(.ket_set.vec(i).coef)
+       ! end
+     end
+
+   end
+
+   make_2D_blocks_unrestricted(pbt_set)
+   ! make the block structure and generate the coefficients 
+   ! for the blocks of size 2 (2D) of each geminal 
+   ! in the spin unrestricted case
+     pbt_set :: PAULI_BLOCK_TENSOR_SET
+     i, j, k, set_size, n_1D_blocks, n_blocks :: INT
+     set_size_minus_1, set_size_minus_2 :: INT
+     set_size_minus_3 :: INT
+     gem :: VEC{INT}(4)
+     num :: REAL
+     n_2D_3typ_blocks :: INT
+     n_2D_4typ_blocks :: INT
+     b_3typ :: VEC{STR}(3)
+     b_4typ :: VEC{STR}(4)
+     n_2D_blocks :: INT
+     n_2D_blocks_plus_1 :: INT
+     !
+     l, n, dum :: INT
+     w :: VEC{INT}(3)
+     !
+
+     set_size = pbt_set.set_size ! set_size = n_geminals
+     n_blocks = pbt_set.n_blocks ! n_blocks = total number of blocks
+     n_1D_blocks = pbt_set.n_1D_blocks ! n_1D_blocks = number of blocks of size 1
+     n_2D_blocks = pbt_set.n_2D_blocks ! n_2D_blocks = number of blocks of size 2
+
+     do i=1,set_size
+        pbt_set.vec(i).coef(n_1D_blocks+1:n_blocks) = ZERO
+        pbt_set.vec(i).block_type(n_1D_blocks+1:n_blocks) = "ID2"
+     end
+
+     ! decide the number of 2D blocks with at most 3 types (3typ)
+     ! and the one with at most 4 types (4typ)
+     n_2D_blocks_plus_1 = n_2D_blocks+1
+     call random_number(num)
+     n_2D_3typ_blocks = int(num*n_2D_blocks_plus_1)
+     n_2D_4typ_blocks = n_2D_blocks-n_2D_3typ_blocks
+     ! total number of 2D 3typ blocks 
+     pbt_set.n_2D_3typ_blocks = n_2D_3typ_blocks
+     ! total number of 2D 4typ blocks 
+     pbt_set.n_2D_4typ_blocks = n_2D_4typ_blocks
+
+     set_size_minus_1 = set_size-1
+     set_size_minus_2 = set_size-2
+     set_size_minus_3 = set_size-3
+     !
+     ! loop over the 2D 3TYP BLOCKS
+     !
+     do i=n_1D_blocks+1,n_1D_blocks+n_2D_3typ_blocks
+        ! select 3 geminals with a nonzero coefficient
+          ! 1st geminal
+        call random_number(num)
+        gem(1) = int(num*set_size)+1
+        if (set_size > 1) then
+             ! 2nd geminal
+           call random_number(num)
+           j = int(num*set_size_minus_1)+1
+           if (j >= gem(1)) then
+              gem(2) = j+1
+           else
+              gem(2) = j
+           end
+           if (set_size > 2) then
+                ! 3rd geminal
+              call random_number(num)
+              j = int(num*set_size_minus_2)+1
+              if ( j < min(gem(1),gem(2)) ) then
+                 gem(3) = j
+              else if ( j >= (max(gem(1),gem(2))-1) ) then
+                 gem(3) = j+2
+              else
+                 gem(3) = j+1
+              end
+           end
+        end
+        ! assign a type of Pauli block (type3) and a coefficient
+        ! to each of the 2 selected geminals
+        call random_number(num)
+        j = int(num*6)
+        b_3typ = .select_block_2D_3typ_unres(j)
+        do k=1,min(3,set_size)
+           pbt_set.vec(gem(k)).block_type(i) = b_3typ(k)
+           call random_number(num)
+           pbt_set.vec(gem(k)).coef(i) = (num - HALF)*TWO
+        end
+     end
+     !
+     ! loop over the 2D 4TYP BLOCKS
+     !
+     do i=n_1D_blocks+n_2D_3typ_blocks+1,n_blocks
+        ! select 4 geminals with a nonzero coefficient
+          ! 1st geminal
+        call random_number(num)
+        gem(1) = int(num*set_size)+1
+        if (set_size > 1) then
+             ! 2nd geminal
+           call random_number(num)
+           j = int(num*set_size_minus_1)+1
+           if (j >= gem(1)) then
+              gem(2) = j+1
+           else
+              gem(2) = j
+           end
+           if (set_size > 2) then
+                ! 3rd geminal
+              call random_number(num)
+              j = int(num*set_size_minus_2)+1
+              if ( j < min(gem(1),gem(2)) ) then
+                 gem(3) = j
+              else if ( j >= (max(gem(1),gem(2))-1) ) then
+                 gem(3) = j+2
+              else
+                 gem(3) = j+1
+              end
+              if (set_size > 3) then
+                   ! 4th geminal
+                 call random_number(num)
+                 j = int(num*set_size_minus_3)+1
+                 !!!!!!!!!!
+                 ! sort indices of the 3 previously selected 
+                 ! geminals in increasing order (and store 
+                 ! them in working array "w")
+                 n = 3
+                 do k=1,n
+                    w(k) = gem(k)
+                 end
+                 do k=1,n-1
+                    do l=k+1,n
+                       if (w(k) > w(l)) then
+                          ! swap w(k) and w(l)
+                          dum = w(l)
+                          w(l) = w(k)
+                          w(k) = dum
+                       end
+                    end
+                 end
+                 !!!!!!!!!!
+                 if ( j < w(1) ) then
+                    gem(4) = j
+                 else if ( j >= w(3)-2 ) then
+                    gem(4) = j+3
+                 else if ( j >= w(1) AND j < w(2)-1 ) then 
+                    gem(4) = j+1
+                 else
+                    ! if ( j >= w(2)-1 AND j < w(3)-2 )
+                    gem(4) = j+2
+                 end
+              end
+           end
+        end
+        ! assign a type of Pauli block (type4) and a coefficient
+        ! to each of the 4 selected geminals
+        call random_number(num)
+        j = int(num*24)
+        b_4typ = .select_block_2D_4typ_unres(j)
+        do k=1,min(4,set_size)
+           pbt_set.vec(gem(k)).block_type(i) = b_4typ(k)
+           call random_number(num)
+           pbt_set.vec(gem(k)).coef(i) = (num - HALF)*TWO
+        end
+     end
+
+   end
+
+   select_block_2D_3typ_unres(integ) result (b_types)
+   ! assign to the integer "integ" a permutation
+   ! of the block types (GD2, SX, ISY)
+     integ :: INT, IN
+     b_types :: VEC{STR}(3)
+
+     select case (integ)
+        case(0)
+           b_types(1) = "GD2"
+           b_types(2) = "SX"
+           b_types(3) = "ISY"
+        case(1)
+           b_types(1) = "GD2"
+           b_types(2) = "ISY"
+           b_types(3) = "SX"
+        case(2)
+           b_types(1) = "SX"
+           b_types(2) = "GD2"
+           b_types(3) = "ISY"
+        case(3)
+           b_types(1) = "SX"
+           b_types(2) = "ISY"
+           b_types(3) = "GD2"
+        case(4)
+           b_types(1) = "ISY"
+           b_types(2) = "GD2"
+           b_types(3) = "SX"
+        case(5)
+           b_types(1) = "ISY"
+           b_types(2) = "SX"
+           b_types(3) = "GD2"
+        case default   
+         !debug stdout.text("unrecognized block type code")
+           stop
+      end
+
+   end
+
+   select_block_2D_4typ_unres(integ) result (b_types)
+   ! assign to the integer "integ" a permutation
+   ! of the 4 pauli block types (ID2, SX, SZ, ISY)
+     integ :: INT, IN
+     b_types :: VEC{STR}(4)
+
+     select case (integ)
+        case(0)
+           b_types(1) = "ID2"
+           b_types(2) = "SX"
+           b_types(3) = "SZ"
+           b_types(4) = "ISY"
+        case(1)
+           b_types(1) = "ID2"
+           b_types(2) = "SX"
+           b_types(3) = "ISY"
+           b_types(4) = "SZ"
+        case(2)
+           b_types(1) = "ID2"
+           b_types(2) = "SZ"
+           b_types(3) = "SX"
+           b_types(4) = "ISY"
+        case(3)
+           b_types(1) = "ID2"
+           b_types(2) = "SZ"
+           b_types(3) = "ISY"
+           b_types(4) = "SX"
+        case(4)
+           b_types(1) = "ID2"
+           b_types(2) = "ISY"
+           b_types(3) = "SX"
+           b_types(4) = "SZ"
+        case(5)
+           b_types(1) = "ID2"
+           b_types(2) = "ISY"
+           b_types(3) = "SZ"
+           b_types(4) = "SX"
+        !
+        case(6)
+           b_types(1) = "SX"
+           b_types(2) = "ID2"
+           b_types(3) = "SZ"
+           b_types(4) = "ISY"
+        case(7)
+           b_types(1) = "SX"
+           b_types(2) = "ID2"
+           b_types(3) = "ISY"
+           b_types(4) = "SZ"
+        case(8)
+           b_types(1) = "SX"
+           b_types(2) = "SZ"
+           b_types(3) = "ID2"
+           b_types(4) = "ISY"
+        case(9)
+           b_types(1) = "SX"
+           b_types(2) = "SZ"
+           b_types(3) = "ISY"
+           b_types(4) = "ID2"
+        case(10)
+           b_types(1) = "SX"
+           b_types(2) = "ISY"
+           b_types(3) = "ID2"
+           b_types(4) = "SZ"
+        case(11)
+           b_types(1) = "SX"
+           b_types(2) = "ISY"
+           b_types(3) = "SZ"
+           b_types(4) = "ID2"
+        !
+        case(12)
+           b_types(1) = "SZ"
+           b_types(2) = "ID2"
+           b_types(3) = "SX"
+           b_types(4) = "ISY"
+        case(13)
+           b_types(1) = "SZ"
+           b_types(2) = "ID2"
+           b_types(3) = "ISY"
+           b_types(4) = "SX"
+        case(14)
+           b_types(1) = "SZ"
+           b_types(2) = "SX"
+           b_types(3) = "ID2"
+           b_types(4) = "ISY"
+        case(15)
+           b_types(1) = "SZ"
+           b_types(2) = "SX"
+           b_types(3) = "ISY"
+           b_types(4) = "ID2"
+        case(16)
+           b_types(1) = "SZ"
+           b_types(2) = "ISY"
+           b_types(3) = "ID2"
+           b_types(4) = "SX"
+        case(17)
+           b_types(1) = "SZ"
+           b_types(2) = "ISY"
+           b_types(3) = "SX"
+           b_types(4) = "ID2"
+        !
+        case(18)
+           b_types(1) = "ISY"
+           b_types(2) = "ID2"
+           b_types(3) = "SX"
+           b_types(4) = "SZ"
+        case(19)
+           b_types(1) = "ISY"
+           b_types(2) = "ID2"
+           b_types(3) = "SZ"
+           b_types(4) = "SX"
+        case(20)
+           b_types(1) = "ISY"
+           b_types(2) = "SX"
+           b_types(3) = "ID2"
+           b_types(4) = "SZ"
+        case(21)
+           b_types(1) = "ISY"
+           b_types(2) = "SX"
+           b_types(3) = "SZ"
+           b_types(4) = "ID2"
+        case(22)
+           b_types(1) = "ISY"
+           b_types(2) = "SZ"
+           b_types(3) = "ID2"
+           b_types(4) = "SX"
+        case(23)
+           b_types(1) = "ISY"
+           b_types(2) = "SZ"
+           b_types(3) = "SX"
+           b_types(4) = "ID2"
+        case default   
+         !debug stdout.text("unrecognized block type code")
+           stop
+      end
+
+   end
+! de
+
 
 !  ====================
 !  Key related routines
@@ -7553,8 +8216,17 @@ contains
      end
 
      v.destroy
-   !debug stdout.show("Electronic energy",ham)
-   !debug stdout.show("Total energy",ham+.nuclear_repulsion_energy)
+
+     stdout.text(" ")
+     !
+   !debug 
+     stdout.show("Electronic energy",ham)
+   !debug 
+     stdout.show("Nuclear repulsion energy",.nuclear_repulsion_energy)
+   !debug 
+     stdout.show("Total energy",ham+.nuclear_repulsion_energy)
+     !
+     stdout.text(" ")
 
    end
 
