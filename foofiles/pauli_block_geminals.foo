@@ -121,6 +121,10 @@ contains
      
      ! set nuclear_repulsion_energy
      .nuclear_repulsion_energy=nuclear_repulsion_energy
+     ! set number of electrons
+     .n_el = n_el
+     ! set number of basis functions
+     .n_bf = n_bf
      ! set n_geminals
      .n_geminals = (n_el+1)/2
      ! set n_gem_singlet
@@ -156,7 +160,15 @@ contains
      .n_2D_blocks = .n_blocks-.n_1D_blocks
      .n_2D_3typ_blocks = 0
      .n_2D_4typ_blocks = .n_blocks-.n_1D_blocks
-     .first_block=0
+     !
+     ! set first_block
+!     .first_block=0
+     if (.n_1D_blocks > 0) then
+       .first_block = 0
+     else
+       .first_block = 1
+     end
+     !
      .gen_block=FALSE
      ! set bra_is_ket (if bra set is equal to ket set)
      .bra_is_ket = TRUE
@@ -434,11 +446,22 @@ contains
    ! and 2-dimensional blocks with 4 matrix types in each geminal
    !  self :: PTR
      block_partition :: VEC{INT}(3)
+     calc_size :: INT
 
      stdin.read(block_partition)
      .n_1D_blocks=block_partition(1)
      .n_2D_3typ_blocks=block_partition(2)
      .n_2D_4typ_blocks=block_partition(3)
+
+     ! check if the block partition is consistent
+     ! with mat_size 
+     calc_size = block_partition(1) 
+     calc_size = calc_size + sum(block_partition(2:3))*2 
+     if (calc_size /= .mat_size) then
+        stdout.text("The input block partition is not consistent")
+        stdout.text("with the size of the Pauli Block Tensors")
+        stop
+     end
 
      if(.n_1D_blocks>0) then
        .first_block=0
@@ -7296,29 +7319,58 @@ contains
      bra_not_created, ket_not_created :: BIN
      !bra_not_alloc, ket_not_alloc :: BIN
 
+     ! if guess_type is "hf-random", set block partition;
+     ! else the block partition defined in routine "set_defaults"
+     ! or in the input (keyword "block_partition=") will be employed
+     if (.guess_type == "hf-random") then
+       .set_block_partition_hf
+     end
+
      ! check if the bra and ket sets are already created;
      ! if not, create them
      bra_not_created = NOT .bra_set.vec(1).coef.created
-     ket_not_created = NOT .ket_set.vec(1).coef.created
+!     ket_not_created = NOT .ket_set.vec(1).coef.created
 !     stdout.show("bra_not_created =",bra_not_created)
-!     stdout.show("ket_not_created =",ket_not_created)
 !     stdout.text(" ")
-     if (.bra_is_ket) then
-        ! if bra and ket sets are the same
-        if (bra_not_created) then 
-           .create_pbt_set(.bra_set)
-        end
+     if (bra_not_created) then 
+        .create_pbt_set(.bra_set)
      else
-        ! if bra and ket sets are different
-        if (bra_not_created AND ket_not_created) then 
-           .create_pbt_set(.bra_set)
+        .destroy_pbt_set(.bra_set)
+        .create_pbt_set(.bra_set)
+     end
+     !
+     if (NOT .bra_is_ket) then
+        ket_not_created = NOT .ket_set.vec(1).coef.created
+!        stdout.show("ket_not_created =",ket_not_created)
+!        stdout.text(" ")
+        if (ket_not_created) then 
            .create_pbt_set(.ket_set)
-        else if (bra_not_created) then 
-           .create_pbt_set(.bra_set)
-        else if (ket_not_created) then 
+        else
+           .destroy_pbt_set(.ket_set)
            .create_pbt_set(.ket_set)
         end
      end
+!
+!     if (.bra_is_ket) then
+!        ! if bra and ket sets are the same
+!        if (bra_not_created) then 
+!           .create_pbt_set(.bra_set)
+!        else
+!           .destroy_pbt_set(.bra_set)
+!           .create_pbt_set(.bra_set)
+!        end
+!     else
+!        ! if bra and ket sets are different
+!        if (bra_not_created AND ket_not_created) then 
+!           .create_pbt_set(.bra_set)
+!           .create_pbt_set(.ket_set)
+!        else if (bra_not_created) then 
+!           .create_pbt_set(.bra_set)
+!        else if (ket_not_created) then 
+!           .create_pbt_set(.ket_set)
+!        end
+!     end
+!
 !     ! check if the bra and ket sets are already created;
 !     ! if not, create them
 !     bra_not_alloc = NOT allocated(.bra_set.vec)
@@ -7366,6 +7418,8 @@ contains
      pbt_set.n_blocks=.n_blocks
      pbt_set.n_1D_blocks=.n_1D_blocks
      pbt_set.n_2D_blocks=.n_2D_blocks
+     pbt_set.n_2D_3typ_blocks=.n_2D_3typ_blocks
+     pbt_set.n_2D_4typ_blocks=.n_2D_4typ_blocks
      pbt_set.spin_restricted=.spin_restricted
 
      n_1D_blocks_plus_1 = .n_1D_blocks+1
@@ -7390,6 +7444,80 @@ contains
 
    end
 
+   destroy_pbt_set(pbt_set) ::: leaky
+   ! destroy a set of geminals (i.e. Pauli Block Tensors) 
+     pbt_set :: PAULI_BLOCK_TENSOR_SET
+     i, set_size, n_blocks :: INT
+
+!     stdout.text(" ")
+!     stdout.text("destruction of a set of geminals")
+
+     ! destroy the set of geminals
+     set_size = pbt_set.set_size
+     do i=1,set_size
+        ! create the vectors of block types,
+        ! block dimensions and coefficients
+        pbt_set.vec(i).block_type.destroy
+        pbt_set.vec(i).block_dim.destroy
+        pbt_set.vec(i).coef.destroy
+     end
+     ! deallocate a set of Pauli Block Tensors (PBT) 
+     deallocate(pbt_set.vec)
+
+     ! destroy the vector of numbers of block types
+     ! for each block
+     if(pbt_set.type_nb.created) then
+        n_blocks = pbt_set.type_nb.dim
+        do i=1,n_blocks
+          pbt_set.type_nb(i).element.destroy
+        end
+        pbt_set.type_nb.destroy
+     end
+
+   end
+
+   set_block_partition_hf
+   ! set block partition in case of HF or 
+   ! HF-random set of geminals
+     ms, dif, nn :: INT
+
+     ! set number of geminals
+     .n_geminals = (.n_el+1)/2
+     !
+     ! set number of spin singlet geminals
+     ms = .spin_multi
+     .n_gem_singlet = (.n_el-ms+1)/2 
+     !
+     ! set number of blocks
+     .n_blocks = .n_geminals+(.n_bf-.n_geminals+1)/2
+     !
+     ! set number of blocks of size 1 in each PBT
+     dif = .mat_size-.n_gem_singlet
+     nn = (dif/2)*2
+     if (nn /= dif) then
+       .n_1D_blocks = .n_gem_singlet+1
+     else
+       .n_1D_blocks = .n_gem_singlet
+     end
+     ! set first_block
+     if (.n_1D_blocks > 0) then
+       .first_block = 0
+     else
+       .first_block = 1
+     end
+     !
+     ! set number of blocks of size 2 in each PBT
+     .n_2D_blocks = .n_blocks-.n_1D_blocks
+     .n_2D_3typ_blocks = 0
+     .gen_block=FALSE
+     .n_2D_4typ_blocks = .n_blocks-.n_1D_blocks
+     !
+     if (.GD2_info.created) then 
+       .GD2_info.destroy
+     end
+
+   end
+
 ! spin restricted
 
 ! davide: 20-11-2018 / 01-10-2019
@@ -7404,7 +7532,7 @@ contains
      if (.guess_type == "hf-random") then
         !stdout.text("Mixed HF-random guess set:")
         stdout.text(" ")
-        stdout.show("random-scaling =",.random_scaling)
+        stdout.show("random_scaling =",.random_scaling)
 !     else
 !        stdout.text("Random guess set:")
      end
@@ -7815,7 +7943,7 @@ contains
      if (.guess_type == "hf-random") then
 !        stdout.text("Mixed HF-random guess bra set:")
         stdout.text(" ")
-        stdout.show("random-scaling =",.random_scaling)
+        stdout.show("random_scaling =",.random_scaling)
 !     else
 !        stdout.text("Random guess bra set:")
      end
@@ -8287,33 +8415,69 @@ contains
      i :: INT
      bra_not_created, ket_not_created :: BIN
 
+     ! set block partition;
+     .set_block_partition_hf
+
      ! check if the bra and ket sets are already created;
      ! if not, create them
      bra_not_created = NOT .bra_set.vec(1).coef.created
-     ket_not_created = NOT .ket_set.vec(1).coef.created
+!     ket_not_created = NOT .ket_set.vec(1).coef.created
 !     stdout.show("bra_not_created =",bra_not_created)
-!     stdout.show("ket_not_created =",ket_not_created)
 !     stdout.text(" ")
-     if (.bra_is_ket) then
-        ! if bra and ket sets are the same
-        if (bra_not_created) then 
-           .create_pbt_set(.bra_set)
-        end
+     if (bra_not_created) then 
+        .create_pbt_set(.bra_set)
      else
-        ! if bra and ket sets are different
-        if (bra_not_created AND ket_not_created) then 
-           .create_pbt_set(.bra_set)
+        .destroy_pbt_set(.bra_set)
+        .create_pbt_set(.bra_set)
+     end
+     !
+     if (NOT .bra_is_ket) then
+        ket_not_created = NOT .ket_set.vec(1).coef.created
+!        stdout.show("ket_not_created =",ket_not_created)
+!        stdout.text(" ")
+        if (ket_not_created) then 
            .create_pbt_set(.ket_set)
-        else if (bra_not_created) then 
-           .create_pbt_set(.bra_set)
-        else if (ket_not_created) then 
+        else
+           .destroy_pbt_set(.ket_set)
            .create_pbt_set(.ket_set)
         end
      end
+
+!     ! check if the bra and ket sets are already created;
+!     ! if not, create them
+!     bra_not_created = NOT .bra_set.vec(1).coef.created
+!     ket_not_created = NOT .ket_set.vec(1).coef.created
+!!     stdout.show("bra_not_created =",bra_not_created)
+!!     stdout.show("ket_not_created =",ket_not_created)
+!!     stdout.text(" ")
+!     if (.bra_is_ket) then
+!        ! if bra and ket sets are the same
+!        if (bra_not_created) then 
+!           .create_pbt_set(.bra_set)
+!        end
+!     else
+!        ! if bra and ket sets are different
+!        if (bra_not_created AND ket_not_created) then 
+!           .create_pbt_set(.bra_set)
+!           .create_pbt_set(.ket_set)
+!        else if (bra_not_created) then 
+!           .create_pbt_set(.bra_set)
+!        else if (ket_not_created) then 
+!           .create_pbt_set(.ket_set)
+!        end
+!     end
      
      stdout.text("Hartree-Fock guess bra set:")
      ! make the block structure of the set
      .make_blocks_hf(.bra_set)
+     !!!!!!!!!!
+     ! debug
+     stdout.text(" ")
+     stdout.show("# 1D blocks =",.bra_set.n_1D_blocks)
+     stdout.show("# 2D blocks =",.bra_set.n_2D_blocks)
+     stdout.show("# 2D 3type blocks =",.bra_set.n_2D_3typ_blocks)
+     stdout.show("# 2D 4type blocks =",.bra_set.n_2D_4typ_blocks)
+     stdout.text(" ")
      !
      do i=1,.n_geminals
         stdout.text(" ")
