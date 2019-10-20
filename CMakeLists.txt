@@ -427,6 +427,7 @@ set(RUNFILE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runfiles)
 set(RUN_SRC 
     ${RUNFILE_DIR}/run_molecule.foo
     ${RUNFILE_DIR}/run_mp2.foo
+    ${RUNFILE_DIR}/run_exercise.foo
     #${RUNFILE_DIR}/run_buffer.foo
     #${RUNFILE_DIR}/run_dc.foo
     #${RUNFILE_DIR}/run_dispersion.foo
@@ -492,6 +493,7 @@ target_include_directories(tonto PUBLIC ${SBF_MODULE_DIRECTORY} ${DFTD3_MODULE_D
 # Standard executables
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
 add_executable(run_mp2           ${CMAKE_CURRENT_BINARY_DIR}/run_mp2.F90)
+add_executable(run_exercise      ${CMAKE_CURRENT_BINARY_DIR}/run_exercise.F90)
 #add_executable(run_buffer        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_buffer.F90)
 #add_executable(run_dc            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dc.F90)
 #add_executable(run_dispersion    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dispersion.F90)
@@ -513,6 +515,7 @@ add_executable(run_mp2           ${CMAKE_CURRENT_BINARY_DIR}/run_mp2.F90)
 # Link exectables
 target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_exercise      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 #target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 #target_link_libraries(run_dc            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 #target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -539,7 +542,6 @@ set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 install(TARGETS run_molecule DESTINATION bin)
-install(TARGETS run_mp2      DESTINATION bin)
 #install(TARGETS run_har      DESTINATION bin)
 #install(TARGETS run_rgbi     DESTINATION bin)
 #install(TARGETS run_mpi_test DESTINATION bin)
