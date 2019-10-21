@@ -62,6 +62,15 @@ contains
 
    end
 
+   create(gradient,n) ::: leaky
+   ! Create a vector of energy gradient elements
+     gradient :: VEC{ENERGY_GRADIENT_ELT}*
+     n :: INT
+
+     nullify(gradient)
+     allocate(gradient(n))
+
+   end
 
    created result (res) ::: get_from(OBJECT), inlined_by_foo
    ! Returns true if self has been created
@@ -234,6 +243,7 @@ contains
  !      case ("n_2D_4typ_blocks=       "); .read_n_2D_4typ_blocks
        case ("n_singlet_geminals=     "); .read_n_singlet_geminals
        case ("random_scaling=         "); .read_random_scaling
+       case ("calc_gradient=          "); .read_calc_gradient
        ! These are only for making custom tables for the list type
        case ("-- Options for tables --")
        case  default ;      UNKNOWN(word)
@@ -536,6 +546,17 @@ contains
      random_scaling :: REAL
      stdin.read(random_scaling)
      .random_scaling = random_scaling
+   end
+
+   read_calc_gradient
+   ! Read TRUE if the energy gradient with respect to the block
+   ! coefficients has to be computed, else read FALSE
+   !  self :: PTR
+     calc_gradient :: BIN
+
+     stdin.read(calc_gradient)
+     .calc_gradient = calc_gradient
+
    end
 
 !  ===============
@@ -1368,10 +1389,10 @@ contains
      pbt.nonzero_coef_ind.shrink(counter)
      pbt.red_coef.resize(counter)
 
-     do i=1,counter
-      !debug stdout.show( "index =", pbt.nonzero_coef_ind(i) )
-      !debug stdout.show( "coef. =", pbt.red_coef(i) )
-     end
+     !debug do i=1,counter
+     !debug    stdout.show( "index =", pbt.nonzero_coef_ind(i) )
+     !debug    stdout.show( "coef. =", pbt.red_coef(i) )
+     !debug end
    end
 
 ! davide: 09-11-2018
@@ -1379,6 +1400,7 @@ contains
    ! prepare lists of block indices with nonzero coefficients
    ! (one list for each geminal)
     i, siz, j :: INT
+
      .nonzero_coef_ind.create(.n_geminals)
    !debug stdout.text(" ")
    !debug stdout.text("Indices of blocks with nonzero coefficient:")
@@ -1387,10 +1409,11 @@ contains
        .nonzero_coef_ind(i).element.create(siz)
        .nonzero_coef_ind(i).element = .bra_set.vec(i).nonzero_coef_ind
      !debug stdout.show("bra and ket geminals", i)
-       do j=1,siz
+       !debug do j=1,siz
        !debug stdout.show(" ",.nonzero_coef_ind(i).element(j))
-       end
+       !debug end
      end
+
    end
 ! de
 
@@ -1676,6 +1699,1279 @@ contains
    end
 ! de
 
+! davide: 19-10-2019
+   calc_energy_gradient
+   ! compute the energy gradient with respect to the block
+   ! coefficients
+     siz, g, b, i, j :: INT
+     integrals :: MAT4{REAL}*
+     eri_archive :: ARCHIVE
+
+     ! check if the bra set is equal to the ket set;
+     ! if not, stop the program execution
+     if (NOT .bra_is_ket) then
+        stdout.text("Bra is not equal to ket:")
+        stdout.text("calculation of the energy gradient")
+        stdout.text("not implemented yet, for this case.")
+        stop
+     end
+
+     ! store and read in the 2-el. integrals
+     eri_archive.set(.name,"h_integrals")
+     integrals.create(.mat_size,.mat_size,.mat_size,.mat_size)
+     eri_archive.read(integrals)
+
+     ! set the maximum size of the energy gradient vector
+     ! (according to the model constraints)
+     siz = .n_1D_blocks+3*.n_2D_3typ_blocks+4*.n_2D_4typ_blocks
+     ! create energy gradient vector
+     .create(.energy_gradient, siz)
+     !
+     ! compute the energy gradient
+     ! ("i" is the index of the gradient element)
+     i = 0
+     ! 1-orthogonal blocks
+     do b=1,.n_1D_blocks
+        g = .nonzero_1ortho_ind(b)
+        if (g == 0) cycle
+        ! compute the energy derivative with respect to the coefficient of
+        ! geminal "g" associated with 1-orthogonal block "b"
+        .calc_energy_grad_elt_1ortho(g,b,i,integrals)
+        i = i+1
+     end
+     ! pauli blocks with at most 3 types (SX, ISY, GD2)
+     do b=1,.n_2D_3typ_blocks
+        do j=3,5 ! loop over geminals with nonzero coef. for block "b"
+           g = .block_types(b).element(j)
+           if (g == 0) cycle
+           ! compute the energy derivative with respect to the coefficient of
+           ! geminal "g" associated with pauli block "b"
+           .calc_energy_grad_elt_pauli(g,b,i,integrals)
+           i = i+1
+        end
+     end
+     ! pauli blocks with at most 4 types (ID2, SZ, SX, ISY)
+     do b=.n_2D_3typ_blocks+1,.n_2D_blocks
+        do j=1,4 ! loop over geminals with nonzero coef. for block "b"
+           g = .block_types(b).element(j)
+           if (g == 0) cycle
+           ! compute the energy derivative with respect to the coefficient of
+           ! geminal "g" associated with pauli block "b"
+           .calc_energy_grad_elt_pauli(g,b,i,integrals)
+           i = i+1
+        end
+     end
+
+     ! destroy matrix of 2-el. integrals
+     integrals.destroy
+
+     ! write results
+     stdout.text(" ")
+     stdout.text("Energy gradient:")
+     siz = i
+     do i=1,siz
+        stdout.text(" ")
+        stdout.text("element indices")
+        stdout.put(.energy_gradient(i).indices)
+        stdout.text("element value")
+        stdout.put(.energy_gradient(i).elt)
+     end
+
+   end
+
+   calc_energy_grad_elt_1ortho(g, b, i, integrals)
+   ! compute the derivative of the energy with respect to the
+   ! coefficient of geminal "g" associated with 1-orthogonal block "b"
+   ! (i.e. element "i" of the energy gradient with respect to the
+   ! block coefficients)
+     g, b, i :: INT, IN
+     integrals :: MAT4{REAL}, IN
+     j, k, nt :: INT
+     g_in_ex_gem :: BIN
+     ex_blk_created :: BIN
+     right_indices :: BIN
+     right_ex_blk_size :: BIN
+     ex_blk_size :: INT
+     ene_deriv :: REAL
+     rdm2_deriv :: REAL 
+     coef, cpr, rov :: REAL
+     i1, j1, i2, j2 :: INT
+     cond :: VEC{BIN}(4)
+
+     coef = .bra_set.vec(g).coef(b)
+     ! check if the block coefficient "coef" (for which the derivative 
+     ! has to be computed) is nonzero; if it is zero or very small,
+     ! set the energy derivative to zero and exit the subroutine
+     if (coef < TOL(15)) then
+        ! store the value of the energy derivative
+        .energy_gradient(i).elt = ZERO
+        ! store the indices of the gradient element
+        .energy_gradient(i).indices(1) = g
+        .energy_gradient(i).indices(2) = b
+        return
+     end
+     ene_deriv = ZERO
+     !
+     ! compute contribution (to the energy derivative) from the 2RDM alpha/beta
+     !
+     do j=1,.nonzero_terms_ab
+        ! check indices of the 2RDM matrix element
+        i1 = .rdm_2_ab(j).indices(1)
+        j1 = .rdm_2_ab(j).indices(2)
+        i2 = .rdm_2_ab(j).indices(3)
+        j2 = .rdm_2_ab(j).indices(4)
+        cond(1) = (b==i1 AND b==j1)
+        cond(2) = (b==i2 AND b==j2)
+        cond(3) = (b==i1 AND b==i2)
+        cond(4) = (b==j1 AND b==j2)
+        right_indices = any(cond EQV TRUE) 
+        ! compute the derivative of one element of the 2RDM
+        rdm2_deriv = ZERO
+        ex_blk_created = .rdm_2_ab(j).grad_info.ex_blk_created
+        right_ex_blk_size = (NOT ex_blk_created)
+        nt = .rdm_2_ab(j).grad_info.nb_terms
+        do k=1,nt
+           ! check if geminal "g" is present in vector "ex_gem(k)"
+           g_in_ex_gem = any(.rdm_2_ab(j).grad_info.ex_gem(k).element == g)
+           ! check size of vector "ex_blk(k)" and set "right_ex_blk_size"; 
+           ! "right_ex_blk_size" will be TRUE if: (i) "ex_blk(k)" has not
+           ! been created before or (ii) it has been created and its
+           ! size is equal to 1, i.e.
+           ! right_ex_blk_size = ((NOT ex_blk_created) OR (ex_blk_size == 1))
+           if (ex_blk_created) then
+              ex_blk_size = size(.rdm_2_ab(j).grad_info.ex_blk(k).element) 
+              right_ex_blk_size = (ex_blk_size == 1)
+           end
+           ! compute one term of the derivative
+           if (g_in_ex_gem AND right_ex_blk_size AND right_indices) then
+              !
+              ! case A 
+              !
+              ! product of coefficients
+              cpr = .rdm_2_ab(j).grad_info.coef_prod(k) 
+              ! reduced overlap
+              rov = .rdm_2_ab(j).grad_info.red_ov(k)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr/coef
+           else if (NOT g_in_ex_gem) then
+              !
+              ! case B
+              !
+              ! product of coefficients
+              cpr = .rdm_2_ab(j).grad_info.coef_prod(k) 
+              ! compute the new reduced overlap ("rov")
+              .calc_new_red_overlap(irdm2=j, rdm2_type="ab", iterm=k, gem=g, blk=0, red_overlap=rov)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr*coef
+           end
+        end
+        ! compute the contribution to the energy gradient element
+        ! (using the appropriate 2-el. integral)
+        ene_deriv = ene_deriv + rdm2_deriv*integrals(i1,j1,i2,j2)
+     end
+     !
+     ! compute contribution (to the energy derivative) from the 2RDM alpha/alpha
+     !
+     do j=1,.nonzero_terms_aa
+        ! check indices of the 2RDM matrix element
+        i1 = .rdm_2_aa(j).indices(1)
+        j1 = .rdm_2_aa(j).indices(2)
+        i2 = .rdm_2_aa(j).indices(3)
+        j2 = .rdm_2_aa(j).indices(4)
+        cond(1) = (b==i1 AND b==j1)
+        cond(2) = (b==i2 AND b==j2)
+        cond(3) = (b==i1 AND b==i2)
+        cond(4) = (b==j1 AND b==j2)
+        right_indices = any(cond EQV TRUE) 
+        ! compute the derivative of one element of the 2RDM
+        rdm2_deriv = ZERO
+        ex_blk_created = .rdm_2_aa(j).grad_info.ex_blk_created
+        right_ex_blk_size = (NOT ex_blk_created)
+        nt = .rdm_2_aa(j).grad_info.nb_terms
+        do k=1,nt
+           ! check if geminal "g" is present in vector "ex_gem(k)"
+           g_in_ex_gem = any(.rdm_2_aa(j).grad_info.ex_gem(k).element == g)
+           ! check size of vector "ex_blk(k)" and set "right_ex_blk_size"; 
+           ! "right_ex_blk_size" will be TRUE if: (i) "ex_blk(k)" has not
+           ! been created before or (ii) it has been created and its
+           ! size is equal to 1, i.e.
+           ! right_ex_blk_size = ((NOT ex_blk_created) OR (ex_blk_size == 1))
+           if (ex_blk_created) then
+              ex_blk_size = size(.rdm_2_aa(j).grad_info.ex_blk(k).element) 
+              right_ex_blk_size = (ex_blk_size == 1)
+           end
+           ! compute one term of the derivative
+           if (g_in_ex_gem AND right_ex_blk_size AND right_indices) then
+              !
+              ! case A 
+              !
+              ! product of coefficients
+              cpr = .rdm_2_aa(j).grad_info.coef_prod(k) 
+              ! reduced overlap
+              rov = .rdm_2_aa(j).grad_info.red_ov(k)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr/coef
+           else if (NOT g_in_ex_gem) then
+              !
+              ! case B
+              !
+              ! product of coefficients
+              cpr = .rdm_2_aa(j).grad_info.coef_prod(k) 
+              ! compute the new reduced overlap ("rov")
+              .calc_new_red_overlap(irdm2=j, rdm2_type="aa", iterm=k, gem=g, blk=0, red_overlap=rov)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr*coef
+           end
+        end
+        ! compute the contribution to the energy gradient element
+        ! (using the appropriate 2-el. integral)
+        ene_deriv = ene_deriv + rdm2_deriv*(integrals(i1,j1,i2,j2)-integrals(i1,j1,j2,i2))
+     end
+     !
+     ! compute contribution (to the energy derivative) from the 2RDM beta/beta
+     !
+     do j=1,.nonzero_terms_bb
+        ! check indices of the 2RDM matrix element
+        i1 = .rdm_2_bb(j).indices(1)
+        j1 = .rdm_2_bb(j).indices(2)
+        i2 = .rdm_2_bb(j).indices(3)
+        j2 = .rdm_2_bb(j).indices(4)
+        cond(1) = (b==i1 AND b==j1)
+        cond(2) = (b==i2 AND b==j2)
+        cond(3) = (b==i1 AND b==i2)
+        cond(4) = (b==j1 AND b==j2)
+        right_indices = any(cond EQV TRUE) 
+        ! compute the derivative of one element of the 2RDM
+        rdm2_deriv = ZERO
+        ex_blk_created = .rdm_2_bb(j).grad_info.ex_blk_created
+        right_ex_blk_size = (NOT ex_blk_created)
+        nt = .rdm_2_bb(j).grad_info.nb_terms
+        do k=1,nt
+           ! check if geminal "g" is present in vector "ex_gem(k)"
+           g_in_ex_gem = any(.rdm_2_bb(j).grad_info.ex_gem(k).element == g)
+           ! check size of vector "ex_blk(k)" and set "right_ex_blk_size"; 
+           ! "right_ex_blk_size" will be TRUE if: (i) "ex_blk(k)" has not
+           ! been created before or (ii) it has been created and its
+           ! size is equal to 1, i.e.
+           ! right_ex_blk_size = ((NOT ex_blk_created) OR (ex_blk_size == 1))
+           if (ex_blk_created) then
+              ex_blk_size = size(.rdm_2_bb(j).grad_info.ex_blk(k).element) 
+              right_ex_blk_size = (ex_blk_size == 1)
+           end
+           ! compute one term of the derivative
+           if (g_in_ex_gem AND right_ex_blk_size AND right_indices) then
+              !
+              ! case A 
+              !
+              ! product of coefficients
+              cpr = .rdm_2_bb(j).grad_info.coef_prod(k) 
+              ! reduced overlap
+              rov = .rdm_2_bb(j).grad_info.red_ov(k)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr/coef
+           else if (NOT g_in_ex_gem) then
+              !
+              ! case B
+              !
+              ! product of coefficients
+              cpr = .rdm_2_bb(j).grad_info.coef_prod(k) 
+              ! compute the new reduced overlap ("rov")
+              .calc_new_red_overlap(irdm2=j, rdm2_type="bb", iterm=k, gem=g, blk=0, red_overlap=rov)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr*coef
+           end
+        end
+        ! compute the contribution to the energy gradient element
+        ! (using the appropriate 2-el. integral)
+        ene_deriv = ene_deriv + rdm2_deriv*(integrals(i1,j1,i2,j2)-integrals(i1,j1,j2,i2))
+     end
+
+     ! store the value of the energy derivative
+     .energy_gradient(i).elt = ene_deriv
+     ! store the indices of the gradient element
+     .energy_gradient(i).indices(1) = g
+     .energy_gradient(i).indices(2) = b
+      
+   end
+
+   calc_energy_grad_elt_pauli(g, b, i, integrals)
+   ! compute the derivative of the energy with respect to the
+   ! coefficient of geminal "g" associated with pauli block "b"
+   ! (i.e. element "i" of the energy gradient with respect to the
+   ! block coefficients)
+     g, b, i :: INT, IN
+     integrals :: MAT4{REAL}, IN
+     j, k, nt :: INT
+     g_in_ex_gem, b_in_ex_blk :: BIN
+     ex_blk_created :: BIN
+     ene_deriv :: REAL
+     rdm2_deriv :: REAL 
+     coef, cpr, rov :: REAL
+     problem :: BIN
+     i1, j1, i2, j2 :: INT
+
+     coef = .bra_set.vec(g).coef(b)
+     ! check if the block coefficient "coef" (for which the derivative 
+     ! has to be computed) is nonzero; if it is zero or very small,
+     ! set the energy derivative to zero and exit the subroutine
+     if (coef < TOL(15)) then
+        ! store the value of the energy derivative
+        .energy_gradient(i).elt = ZERO
+        ! store the indices of the gradient element
+        .energy_gradient(i).indices(1) = g
+        .energy_gradient(i).indices(2) = b
+        return
+     end
+     ene_deriv = ZERO
+     !
+     ! compute contribution (to the energy derivative) from the 2RDM alpha/beta
+     !
+     do j=1,.nonzero_terms_ab
+        nt = .rdm_2_ab(j).grad_info.nb_terms
+        ! compute the derivative of one element of the 2RDM
+        rdm2_deriv = ZERO
+        ex_blk_created = .rdm_2_ab(j).grad_info.ex_blk_created
+        do k=1,nt
+           ! check if geminal "g" is present in vector "ex_gem(k)"
+           g_in_ex_gem = any(.rdm_2_ab(j).grad_info.ex_gem(k).element == g)
+           ! check if block "b" is present in vector "ex_blk(k)"
+           if (ex_blk_created) then
+              b_in_ex_blk = any(.rdm_2_ab(j).grad_info.ex_blk(k).element == b)
+           else
+              b_in_ex_blk = FALSE
+           end
+           ! compute one term of the derivative
+           if (g_in_ex_gem AND b_in_ex_blk) then
+              !
+              ! case A 
+              !
+              ! product of coefficients
+              cpr = .rdm_2_ab(j).grad_info.coef_prod(k) 
+              ! reduced overlap
+              rov = .rdm_2_ab(j).grad_info.red_ov(k)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr/coef
+           else if (NOT g_in_ex_gem AND NOT b_in_ex_blk) then
+              !
+              ! case B
+              !
+              ! product of coefficients
+              cpr = .rdm_2_ab(j).grad_info.coef_prod(k) 
+              ! compute the new reduced overlap ("rov")
+              .calc_new_red_overlap(irdm2=j, rdm2_type="ab", iterm=k, gem=g, blk=b, red_overlap=rov)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr*coef*TWO
+           end
+        end
+        ! compute the contribution to the energy gradient element
+        ! (using the appropriate 2-el. integral)
+        i1 = .rdm_2_ab(j).indices(1)
+        j1 = .rdm_2_ab(j).indices(2)
+        i2 = .rdm_2_ab(j).indices(3)
+        j2 = .rdm_2_ab(j).indices(4)
+        ene_deriv = ene_deriv + rdm2_deriv*integrals(i1,j1,i2,j2)
+     end
+     !
+     ! compute contribution (to the energy derivative) from the 2RDM alpha/alpha
+     !
+     do j=1,.nonzero_terms_aa
+        nt = .rdm_2_aa(j).grad_info.nb_terms
+        ! compute the derivative of one element of the 2RDM
+        rdm2_deriv = ZERO
+        ex_blk_created = .rdm_2_aa(j).grad_info.ex_blk_created
+        do k=1,nt
+           ! check if geminal "g" is present in vector "ex_gem(k)"
+           g_in_ex_gem = any(.rdm_2_aa(j).grad_info.ex_gem(k).element == g)
+           ! check if block "b" is present in vector "ex_blk(k)"
+           if (ex_blk_created) then
+              b_in_ex_blk = any(.rdm_2_aa(j).grad_info.ex_blk(k).element == b)
+           else
+              b_in_ex_blk = FALSE
+           end
+           ! compute one term of the derivative
+           if (g_in_ex_gem AND b_in_ex_blk) then
+              !
+              ! case A 
+              !
+              ! product of coefficients
+              cpr = .rdm_2_aa(j).grad_info.coef_prod(k) 
+              ! reduced overlap
+              rov = .rdm_2_aa(j).grad_info.red_ov(k)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr/coef
+           else if (NOT g_in_ex_gem AND NOT b_in_ex_blk) then
+              !
+              ! case B
+              !
+              ! product of coefficients
+              cpr = .rdm_2_aa(j).grad_info.coef_prod(k) 
+              ! compute the new reduced overlap ("rov")
+              .calc_new_red_overlap(irdm2=j, rdm2_type="aa", iterm=k, gem=g, blk=b, red_overlap=rov)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr*coef*TWO
+           end
+        end
+        ! compute the contribution to the energy gradient element
+        ! (using the appropriate 2-el. integral)
+        i1 = .rdm_2_aa(j).indices(1)
+        j1 = .rdm_2_aa(j).indices(2)
+        i2 = .rdm_2_aa(j).indices(3)
+        j2 = .rdm_2_aa(j).indices(4)
+        ene_deriv = ene_deriv + rdm2_deriv*(integrals(i1,j1,i2,j2)-integrals(i1,j1,j2,i2))
+     end
+     !
+     ! compute contribution (to the energy derivative) from the 2RDM beta/beta
+     !
+     do j=1,.nonzero_terms_bb
+        nt = .rdm_2_bb(j).grad_info.nb_terms
+        ! compute the derivative of one element of the 2RDM
+        rdm2_deriv = ZERO
+        ex_blk_created = .rdm_2_bb(j).grad_info.ex_blk_created
+        do k=1,nt
+           ! check if geminal "g" is present in vector "ex_gem(k)"
+           g_in_ex_gem = any(.rdm_2_bb(j).grad_info.ex_gem(k).element == g)
+           ! check if block "b" is present in vector "ex_blk(k)"
+           if (ex_blk_created) then
+              b_in_ex_blk = any(.rdm_2_bb(j).grad_info.ex_blk(k).element == b)
+           else
+              b_in_ex_blk = FALSE
+           end
+           ! compute one term of the derivative
+           if (g_in_ex_gem AND b_in_ex_blk) then
+              !
+              ! case A 
+              !
+              ! product of coefficients
+              cpr = .rdm_2_bb(j).grad_info.coef_prod(k) 
+              ! reduced overlap
+              rov = .rdm_2_bb(j).grad_info.red_ov(k)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr/coef
+           else if (NOT g_in_ex_gem AND NOT b_in_ex_blk) then
+              !
+              ! case B
+              !
+              coef = .bra_set.vec(g).coef(b)
+              ! product of coefficients
+              cpr = .rdm_2_bb(j).grad_info.coef_prod(k) 
+              ! compute the new reduced overlap ("rov")
+              .calc_new_red_overlap(irdm2=j, rdm2_type="bb", iterm=k, gem=g, blk=b, red_overlap=rov)
+              ! compute the contribution to the element of the 2RDM derivative
+              rdm2_deriv = rdm2_deriv + rov*cpr*coef*TWO
+           end
+        end
+        ! compute the contribution to the energy gradient element
+        ! (using the appropriate 2-el. integral)
+        i1 = .rdm_2_bb(j).indices(1)
+        j1 = .rdm_2_bb(j).indices(2)
+        i2 = .rdm_2_bb(j).indices(3)
+        j2 = .rdm_2_bb(j).indices(4)
+        ene_deriv = ene_deriv + rdm2_deriv*(integrals(i1,j1,i2,j2)-integrals(i1,j1,j2,i2))
+     end
+
+     ! store the value of the energy derivative
+     .energy_gradient(i).elt = ene_deriv
+     ! store the indices of the gradient element
+     .energy_gradient(i).indices(1) = g
+     .energy_gradient(i).indices(2) = b
+
+   end
+
+   calc_new_red_overlap(irdm2,rdm2_type,iterm,gem,blk,red_overlap)
+   ! compute a new reduced overlap, where geminal "gem" and
+   ! Pauli block "blk" (if "blk">0) are excluded, in addition to 
+   ! the geminals and blocks already excluded in the calculation 
+   ! of term "iterm" of element "irdm2" of the 2RDM part "rdm2_type" 
+   ! (i.e. "ab"=alpha/beta, "aa"=alpha/alpha or "bb"=beta/beta)
+     irdm2, iterm, gem, blk :: INT, IN
+     rdm2_type :: STR, IN
+     red_overlap :: REAL, INOUT
+     n_ex_gem, n_ex_blk :: INT
+     ng, nb :: INT
+     gg, bb :: VEC{INT}(3)
+     ex_blk_created, ex_gem_created :: BIN
+     check_nb_gem, problem :: BIN
+     red_pbg :: PAULI_BLOCK_GEMINALS
+
+     select case (rdm2_type)
+     case("ab") ! 2RDM part alpha/beta
+        ! prepare geminal indices to be excluded
+        n_ex_gem = 0
+        ex_gem_created = .rdm_2_ab(irdm2).grad_info.ex_gem_created
+        if (ex_gem_created) then
+           n_ex_gem = size(.rdm_2_ab(irdm2).grad_info.ex_gem(iterm).element)
+           gg(1:n_ex_gem) = .rdm_2_ab(irdm2).grad_info.ex_gem(iterm).element
+        end
+        n_ex_gem = n_ex_gem+1
+        gg(n_ex_gem) = gem
+          ! n_ex_gem = number of geminals to be excluded
+          ! ng = number of geminals in the reduced PBG
+        ng = .n_geminals-n_ex_gem
+        if (ng < 0) then
+           stdout.text("Error in calc_new_red_overlap:")
+           stdout.text("the number of geminals to be excluded") 
+           stdout.text("is larger than the size of the PBT set.")
+           stop
+        end
+        check_nb_gem = (ng /= 0)
+        ! prepare block indices to be excluded
+        n_ex_blk = 0
+        ex_blk_created = .rdm_2_ab(irdm2).grad_info.ex_blk_created
+        if (ex_blk_created) then
+           n_ex_blk = size(.rdm_2_ab(irdm2).grad_info.ex_blk(iterm).element)
+           bb(1:n_ex_blk) = .rdm_2_ab(irdm2).grad_info.ex_blk(iterm).element
+        end
+        if (blk > 0) then
+           n_ex_blk = n_ex_blk+1
+           bb(n_ex_blk) = blk
+        end
+          ! n_ex_blk = number of 2D blocks to be excluded
+          ! nb = number of 2D blocks in the reduced PBG
+        nb = .n_blocks-n_ex_blk
+        ! compute the reduced overlap
+        if (check_nb_gem AND n_ex_blk > 0) then
+           ! prepare the reduced PBG and compute the reduced overlap
+           .prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem)
+           if ((NOT problem) AND ((.first_block == 0) OR (nb >= ng))) then
+              red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!              red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+              red_pbg.calc_overlap_integral(red_overlap,FALSE)
+           else
+              red_overlap = ZERO
+           end
+        else if (check_nb_gem) then
+           ! prepare the reduced PBG and compute the reduced overlap
+           .prep_red_pbg_gg(red_pbg, gg, n_ex_gem)
+           red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!           red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+           red_pbg.calc_overlap_integral(red_overlap,FALSE)
+        else
+           red_overlap = ONE
+        end
+     case("aa") ! 2RDM part alpha/alpha
+        ! prepare geminal indices to be excluded
+        n_ex_gem = 0
+        ex_gem_created = .rdm_2_aa(irdm2).grad_info.ex_gem_created
+        if (ex_gem_created) then
+           n_ex_gem = size(.rdm_2_aa(irdm2).grad_info.ex_gem(iterm).element)
+           gg(1:n_ex_gem) = .rdm_2_aa(irdm2).grad_info.ex_gem(iterm).element
+        end
+        n_ex_gem = n_ex_gem+1
+        gg(n_ex_gem) = gem
+          ! n_ex_gem = number of geminals to be excluded
+          ! ng = number of geminals in the reduced PBG
+        ng = .n_geminals-n_ex_gem
+        if (ng < 0) then
+           stdout.text("Error in calc_new_red_overlap:")
+           stdout.text("the number of geminals to be excluded") 
+           stdout.text("is larger than the size of the PBT set.")
+           stop
+        end
+        check_nb_gem = (ng /= 0)
+        ! prepare block indices to be excluded
+        n_ex_blk = 0
+        ex_blk_created = .rdm_2_aa(irdm2).grad_info.ex_blk_created
+        if (ex_blk_created) then
+           n_ex_blk = size(.rdm_2_aa(irdm2).grad_info.ex_blk(iterm).element)
+           bb(1:n_ex_blk) = .rdm_2_aa(irdm2).grad_info.ex_blk(iterm).element
+        end
+        if (blk > 0) then
+           n_ex_blk = n_ex_blk+1
+           bb(n_ex_blk) = blk
+        end
+          ! n_ex_blk = number of 2D blocks to be excluded
+          ! nb = number of 2D blocks in the reduced PBG
+        nb = .n_blocks-n_ex_blk
+        ! compute the reduced overlap
+        if (check_nb_gem AND n_ex_blk > 0) then
+           ! prepare the reduced PBG and compute the reduced overlap
+           .prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem)
+           if ((NOT problem) AND ((.first_block == 0) OR (nb >= ng))) then
+              red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!              red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+              red_pbg.calc_overlap_integral(red_overlap,FALSE)
+           else
+              red_overlap = ZERO
+           end
+        else if (check_nb_gem) then
+           ! prepare the reduced PBG and compute the reduced overlap
+           .prep_red_pbg_gg(red_pbg, gg, n_ex_gem)
+           red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!           red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+           red_pbg.calc_overlap_integral(red_overlap,FALSE)
+        else
+           red_overlap = ONE
+        end
+     case("bb") ! 2RDM part beta/beta
+        ! prepare geminal indices to be excluded
+        n_ex_gem = 0
+        ex_gem_created = .rdm_2_bb(irdm2).grad_info.ex_gem_created
+        if (ex_gem_created) then
+           n_ex_gem = size(.rdm_2_bb(irdm2).grad_info.ex_gem(iterm).element)
+           gg(1:n_ex_gem) = .rdm_2_bb(irdm2).grad_info.ex_gem(iterm).element
+        end
+        n_ex_gem = n_ex_gem+1
+        gg(n_ex_gem) = gem
+          ! n_ex_gem = number of geminals to be excluded
+          ! ng = number of geminals in the reduced PBG
+        ng = .n_geminals-n_ex_gem
+        if (ng < 0) then
+           stdout.text("Error in calc_new_red_overlap:")
+           stdout.text("the number of geminals to be excluded") 
+           stdout.text("is larger than the size of the PBT set.")
+           stop
+        end
+        check_nb_gem = (ng /= 0)
+        ! prepare block indices to be excluded
+        n_ex_blk = 0
+        ex_blk_created = .rdm_2_bb(irdm2).grad_info.ex_blk_created
+        if (ex_blk_created) then
+           n_ex_blk = size(.rdm_2_bb(irdm2).grad_info.ex_blk(iterm).element)
+           bb(1:n_ex_blk) = .rdm_2_bb(irdm2).grad_info.ex_blk(iterm).element
+        end
+        if (blk > 0) then
+           n_ex_blk = n_ex_blk+1
+           bb(n_ex_blk) = blk
+        end
+          ! n_ex_blk = number of 2D blocks to be excluded
+          ! nb = number of 2D blocks in the reduced PBG
+        nb = .n_blocks-n_ex_blk
+        ! compute the reduced overlap
+        if (check_nb_gem AND n_ex_blk > 0) then
+           ! prepare the reduced PBG and compute the reduced overlap
+           .prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem)
+           if ((NOT problem) AND ((.first_block == 0) OR (nb >= ng))) then
+              red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!              red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+              red_pbg.calc_overlap_integral(red_overlap,FALSE)
+           else
+              red_overlap = ZERO
+           end
+        else if (check_nb_gem) then
+           ! prepare the reduced PBG and compute the reduced overlap
+           .prep_red_pbg_gg(red_pbg, gg, n_ex_gem)
+           red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!           red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+           red_pbg.calc_overlap_integral(red_overlap,FALSE)
+        else
+           red_overlap = ONE
+        end
+     case default 
+        stdout.text("Error in routine calc_new_red_overlap:")
+        stdout.text("unknown string to select the 2RDM part.")
+        stop
+     end
+     
+   end
+
+!   calc_new_red_overlap(irdm2,rdm2_type,iterm,gem,blk,red_overlap)
+!   ! compute a new reduced overlap, where geminal "gem" and
+!   ! Pauli block "blk" are excluded, in addition to the geminals and
+!   ! blocks already excluded in the calculation of term "iterm" of
+!   ! element "irdm2" of the 2RDM part "rdm2_type" (i.e. alpha/beta,
+!   ! alpha/alpha or beta/beta)
+!     irdm2, iterm, gem, blk :: INT, IN
+!     rdm2_type :: STR, IN
+!     red_overlap :: REAL, INOUT
+!     n_ex_gem, n_ex_blk :: INT
+!     ng, nb :: INT
+!     gg, bb :: VEC{INT}(3)
+!     ex_blk_created, check_nb_gem, problem :: BIN
+!     red_pbg :: PAULI_BLOCK_GEMINALS
+!
+!     select case (rdm2_type)
+!     case("ab") ! 2RDM part alpha/beta
+!        n_ex_gem = size(.rdm_2_ab(irdm2).grad_info.ex_gem(iterm).element)
+!        gg(1:n_ex_gem) = .rdm_2_ab(irdm2).grad_info.ex_gem(iterm).element
+!        n_ex_gem = n_ex_gem+1
+!        gg(n_ex_gem) = gem
+!        ! n_ex_gem = number of geminals to be excluded
+!        ! ng = number of geminals in the reduced PBG
+!        ng = .n_geminals-n_ex_gem
+!        if (ng < 0) then
+!           stdout.text("Error in calc_new_red_overlap:")
+!           stdout.text("the number of geminals to be excluded") 
+!           stdout.text("is larger than the size of the PBT set.")
+!           stop
+!        end
+!        check_nb_gem = (ng /= 0)
+!        ex_blk_created = .rdm_2_ab(irdm2).grad_info.ex_blk_created
+!        if (ex_blk_created AND check_nb_gem) then
+!           n_ex_blk = size(.rdm_2_ab(irdm2).grad_info.ex_blk(iterm).element)
+!           bb(1:n_ex_blk) = .rdm_2_ab(irdm2).grad_info.ex_blk(iterm).element
+!           n_ex_blk = n_ex_blk+1
+!           bb(n_ex_blk) = blk
+!           ! n_ex_blk = number of 2D blocks to be excluded
+!           ! nb = number of 2D blocks in the reduced PBG
+!           nb = .n_blocks-n_ex_blk
+!           ! prepare the reduced PBG and compute the reduced overlap
+!           .prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem)
+!           if ((NOT problem) AND ((.first_block == 0) OR (nb >= ng))) then
+!              red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!!              red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+!              red_pbg.calc_overlap_integral(red_overlap,FALSE)
+!           else
+!              red_overlap = ZERO
+!           end
+!        else if (check_nb_gem) then
+!           ! prepare the reduced PBG and compute the reduced overlap
+!           .prep_red_pbg_gg(red_pbg, gg, n_ex_gem)
+!           red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!!           red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+!           red_pbg.calc_overlap_integral(red_overlap,FALSE)
+!        else
+!           red_overlap = ONE
+!        end
+!     case("aa") ! 2RDM part alpha/alpha
+!        n_ex_gem = size(.rdm_2_aa(irdm2).grad_info.ex_gem(iterm).element)
+!        gg(1:n_ex_gem) = .rdm_2_aa(irdm2).grad_info.ex_gem(iterm).element
+!        n_ex_gem = n_ex_gem+1
+!        gg(n_ex_gem) = gem
+!        ! n_ex_gem = number of geminals to be excluded
+!        ! ng = number of geminals in the reduced PBG
+!        ng = .n_geminals-n_ex_gem
+!        if (ng < 0) then
+!           stdout.text("Error in calc_new_red_overlap:")
+!           stdout.text("the number of geminals to be excluded") 
+!           stdout.text("is larger than the size of the PBT set.")
+!           stop
+!        end
+!        check_nb_gem = (ng /= 0)
+!        ex_blk_created = .rdm_2_aa(irdm2).grad_info.ex_blk_created
+!        if (ex_blk_created AND check_nb_gem) then
+!           n_ex_blk = size(.rdm_2_aa(irdm2).grad_info.ex_blk(iterm).element)
+!           bb(1:n_ex_blk) = .rdm_2_aa(irdm2).grad_info.ex_blk(iterm).element
+!           n_ex_blk = n_ex_blk+1
+!           bb(n_ex_blk) = blk
+!           ! n_ex_blk = number of 2D blocks to be excluded
+!           ! nb = number of 2D blocks in the reduced PBG
+!           nb = .n_blocks-n_ex_blk
+!           ! prepare the reduced PBG and compute the reduced overlap
+!           .prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem)
+!           if ((NOT problem) AND ((.first_block == 0) OR (nb >= ng))) then
+!              red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!!              red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+!              red_pbg.calc_overlap_integral(red_overlap,FALSE)
+!           else
+!              red_overlap = ZERO
+!           end
+!        else if (check_nb_gem) then
+!           ! prepare the reduced PBG and compute the reduced overlap
+!           .prep_red_pbg_gg(red_pbg, gg, n_ex_gem)
+!           red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!!           red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+!           red_pbg.calc_overlap_integral(red_overlap,FALSE)
+!        else
+!           red_overlap = ONE
+!        end
+!     case("bb") ! 2RDM part beta/beta
+!        n_ex_gem = size(.rdm_2_bb(irdm2).grad_info.ex_gem(iterm).element)
+!        gg(1:n_ex_gem) = .rdm_2_bb(irdm2).grad_info.ex_gem(iterm).element
+!        n_ex_gem = n_ex_gem+1
+!        gg(n_ex_gem) = gem
+!        ! n_ex_gem = number of geminals to be excluded
+!        ! ng = number of geminals in the reduced PBG
+!        ng = .n_geminals-n_ex_gem
+!        if (ng < 0) then
+!           stdout.text("Error in calc_new_red_overlap:")
+!           stdout.text("the number of geminals to be excluded") 
+!           stdout.text("is larger than the size of the PBT set.")
+!           stop
+!        end
+!        check_nb_gem = (ng /= 0)
+!        ex_blk_created = .rdm_2_bb(irdm2).grad_info.ex_blk_created
+!        if (ex_blk_created AND check_nb_gem) then
+!           n_ex_blk = size(.rdm_2_bb(irdm2).grad_info.ex_blk(iterm).element)
+!           bb(1:n_ex_blk) = .rdm_2_bb(irdm2).grad_info.ex_blk(iterm).element
+!           n_ex_blk = n_ex_blk+1
+!           bb(n_ex_blk) = blk
+!           ! n_ex_blk = number of 2D blocks to be excluded
+!           ! nb = number of 2D blocks in the reduced PBG
+!           nb = .n_blocks-n_ex_blk
+!           ! prepare the reduced PBG and compute the reduced overlap
+!           .prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem)
+!           if ((NOT problem) AND ((.first_block == 0) OR (nb >= ng))) then
+!              red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!!              red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+!              red_pbg.calc_overlap_integral(red_overlap,FALSE)
+!           else
+!              red_overlap = ZERO
+!           end
+!        else if (check_nb_gem) then
+!           ! prepare the reduced PBG and compute the reduced overlap
+!           .prep_red_pbg_gg(red_pbg, gg, n_ex_gem)
+!           red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+!!           red_pbg.make_int_term_list(FALSE,FALSE,TRUE)
+!           red_pbg.calc_overlap_integral(red_overlap,FALSE)
+!        else
+!           red_overlap = ONE
+!        end
+!     case default 
+!        stdout.text("Error in routine calc_new_red_overlap:")
+!        stdout.text("unknown string to select the 2RDM part.")
+!        stop
+!     end
+!     
+!   end
+! de
+
+! davide: 18-10-2019
+   prep_red_pbg_gg(red_pbg, gg, n_ex_gem) ::: leaky
+   ! prepare a new pauli_block_geminal (PBG), excluding geminals "gg";
+   ! this new PBG will be used to compute an element of the 1RDM or 2RDM,
+   ! or an element of the derivative of the 2RDM with respect to a given 
+   ! block coefficient
+   ! --------------------------------------------------------------------
+   ! red_pbg = new PBG
+   ! gg = indices of the geminals to be excluded
+   ! n_ex_gem = total number of geminals to be excluded
+     red_pbg :: PAULI_BLOCK_GEMINALS
+     gg :: VEC{INT}, IN
+     n_ex_gem :: INT, IN
+     pbg_created, exclude_gem :: BIN
+     i, j, siz, count_ex_gem, ng :: INT
+
+     ! check if PBG has been already created and, 
+     ! if already created, check its size
+     ! (actually, here we check only if the vector of vectors
+     ! ".nonzero_coef_ind" has been already created)
+     pbg_created = red_pbg.nonzero_coef_ind.created
+     ng = .n_geminals-n_ex_gem
+     if (pbg_created) then
+        if (ng /= red_pbg.n_geminals) then
+           red_pbg.nonzero_coef_ind.destroy
+           red_pbg.nonzero_coef_prod.destroy
+           red_pbg.n_geminals = ng
+           red_pbg.nonzero_coef_ind.create(ng)
+           red_pbg.nonzero_coef_prod.create(ng)
+           red_pbg.first_block=.first_block
+        end
+     else
+        red_pbg.n_geminals = ng
+        red_pbg.nonzero_coef_ind.create(ng)
+        red_pbg.nonzero_coef_prod.create(ng)
+        red_pbg.first_block=.first_block
+     end
+
+     ! prepare information to compute the reduced 
+     ! overlap, excluding geminals "gg"
+     count_ex_gem = 0
+     do i=1,.n_geminals
+        exclude_gem = any(gg(1:n_ex_gem) == i)
+        if (exclude_gem) then
+           count_ex_gem = count_ex_gem+1
+           cycle
+        else
+           j = i-count_ex_gem
+           ! create a new vector of nonzero block indices
+           ! (after destroying the one already created)
+           red_pbg.nonzero_coef_ind(j).element.destroy
+           siz = size(.nonzero_coef_ind(i).element)
+           red_pbg.nonzero_coef_ind(j).element.create(siz)
+           red_pbg.nonzero_coef_ind(j).element = .nonzero_coef_ind(i).element
+         !debug stdout.show("block indices, geminal", i)
+         !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
+           ! create a new vector of nonzero products of coefficients
+           ! (after destroying the one already created)
+           red_pbg.nonzero_coef_prod(j).element.destroy
+           siz = size(.nonzero_coef_prod(i).element)
+           red_pbg.nonzero_coef_prod(j).element.create(siz)
+           red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
+         !debug stdout.show("coefficient products, geminal", i)
+         !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
+        end
+     end
+
+   end
+
+   prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem) ::: leaky
+   ! prepare a new pauli_block_geminal (PBG), excluding geminals "gg"
+   ! and 2D blocks "bb"; this new PBG will be used to compute an element 
+   ! of the 1RDM or 2RDM, or an element of the derivative of the 2RDM
+   ! with respect to a given block coefficient
+   ! --------------------------------------------------------------------
+   ! red_pbg = new PBG
+   ! gg = indices of the geminals to be excluded
+   ! n_ex_gem = total number of geminals to be excluded
+   ! bb = indices of the 2D blocks to be excluded
+   ! n_ex_blk = total number of 2D blocks to be excluded
+     red_pbg :: PAULI_BLOCK_GEMINALS
+     gg, bb :: VEC{INT}, IN
+     n_ex_gem, n_ex_blk :: INT, IN
+     problem :: BIN, INOUT
+     pbg_created, exclude_gem, exclude_blk :: BIN
+     i, j, k, l :: INT
+     siz, count_ex_gem, ng :: INT
+     count_ex_blk, nb, ib, nz_blk :: INT
+
+     ! check if PBG has been created before and, 
+     ! if already created, check its size
+     ! (actually, here we check only if the vector of vectors
+     ! ".nonzero_coef_ind" has been already created)
+     pbg_created = red_pbg.nonzero_coef_ind.created
+     ng = .n_geminals-n_ex_gem
+     if (pbg_created) then
+        if (ng /= red_pbg.n_geminals) then
+           red_pbg.nonzero_coef_ind.destroy
+           red_pbg.nonzero_coef_prod.destroy
+           red_pbg.n_geminals = ng
+           red_pbg.nonzero_coef_ind.create(ng)
+           red_pbg.nonzero_coef_prod.create(ng)
+           red_pbg.first_block=.first_block
+        end
+     else
+        red_pbg.n_geminals = ng
+        red_pbg.nonzero_coef_ind.create(ng)
+        red_pbg.nonzero_coef_prod.create(ng)
+        red_pbg.first_block=.first_block
+     end
+
+     ! prepare information to compute the reduced overlap, 
+     ! excluding geminals "gg" and blocks "bb"
+     problem = FALSE
+     count_ex_gem = 0
+     do i=1,.n_geminals
+        exclude_gem = any(gg(1:n_ex_gem) == i)
+        if (exclude_gem) then
+           count_ex_gem = count_ex_gem+1
+           cycle
+        else
+           j = i-count_ex_gem
+           ! create a new vector of nonzero block indices
+           ! (after destroying the one already created)
+           red_pbg.nonzero_coef_ind(j).element.destroy
+           nz_blk = size(.nonzero_coef_ind(i).element)
+           red_pbg.nonzero_coef_ind(j).element.create(nz_blk)
+           ! construct "nonzero_coef_ind" excluding blocks "bb" 
+           ! (if present among the nonzero blocks)
+           count_ex_blk = 0
+           do k=1,nz_blk
+              ib = .nonzero_coef_ind(i).element(k)
+              exclude_blk = any(bb(1:n_ex_blk) == ib)
+              if (exclude_blk) then
+                 count_ex_blk = count_ex_blk+1
+                 cycle
+              else
+                 l = k-count_ex_blk
+                 red_pbg.nonzero_coef_ind(j).element(l) = .nonzero_coef_ind(i).element(k)
+              end
+           end
+           !!!
+           if (nz_blk <= 1 AND count_ex_blk /= 0) then
+              problem = TRUE
+              return
+           end
+           !!!
+           nb = nz_blk-count_ex_blk
+           red_pbg.nonzero_coef_ind(j).element.shrink(nb)
+         !debug stdout.show("block indices, geminal", i)
+         !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
+           ! create a new vector of nonzero products of coefficients
+           ! (after destroying the one already created)
+           red_pbg.nonzero_coef_prod(j).element.destroy
+           siz = size(.nonzero_coef_prod(i).element)
+           red_pbg.nonzero_coef_prod(j).element.create(siz)
+           red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
+         !debug stdout.show("coefficient products, geminal", i)
+         !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
+        end
+     end
+
+   end
+! de
+
+   create_2rdm_grad_info_tmp(nb_terms)
+   ! create temporary object employed to save the information, about
+   ! the 2RDM elements, required to compute the energy gradient with
+   ! respect to the lambda coefficients
+     nb_terms :: INT, IN
+     n_gem, n_blk, i :: INT
+
+     ! maximum number of geminals and 2D blocks excluded in the
+     ! calculation of the reduced overlap for a given term of a 
+     ! 2RDM element
+     n_gem = 2
+     n_blk = 2
+
+     ! set number of terms
+     .grad_info_tmp.nb_terms = nb_terms
+     ! create vectors
+     .grad_info_tmp.coef_prod.create(nb_terms)
+     .grad_info_tmp.red_ov.create(nb_terms)
+     ! create vectors of vectors of indices
+     .grad_info_tmp.ex_gem.create(nb_terms)
+     .grad_info_tmp.ex_blk.create(nb_terms)
+     do i=1,nb_terms
+        .grad_info_tmp.ex_gem(i).element.create(n_gem)
+        .grad_info_tmp.ex_blk(i).element.create(n_blk)
+     end
+
+   end
+
+!! davide 15-10-2019
+!   save_2rdm_ab_info(rdm2_el, t, nt, coef_prod, overlap, geminals, blocks)
+!   ! save information about the term "t" employed to compute the 2rdm element "i"
+!   ! (this info. will be used in the calculation of the energy gradient)
+!   !------------------------------------------------------------------------------- 
+!     ! definition of the variables in argument:
+!!     ! i = index of the 2rdm (alpha-beta) element
+!     ! rdm2_el = 2rdm element (see type "PAULI_BLOCK_2RDM_ELT")
+!     ! t = index of the term
+!     ! coef_prod = product of coefficients
+!     ! overlap = reduced overlap
+!     ! geminals = indices of the geminals skipped to compute "overlap"
+!     ! blocks = indices of the blocks skipped to compute "overlap"
+!!     ! blk_skip = TRUE if one or more blocks are skipped, else FALSE 
+!!     !            (in the latter case, "block" is not used)
+!     rdm2_el :: PAULI_BLOCK_2RDM_ELT
+!!     i, t, nt, signe :: INT, IN
+!     t, nt :: INT, IN
+!     coef_prod, overlap :: REAL, IN
+!     geminals :: VEC{INT}, IN
+!!     blk_skip :: BIN, IN
+!     blocks :: VEC{INT}, IN
+!     !
+!     ng, nb :: INT
+!
+!     if (t == 1) then 
+!        ! set number of terms
+!        rdm2_el.n_terms = nt
+!        ! create vectors
+!        rdm2_el.c_prod.create(nt)
+!        rdm2_el.r_overlap.create(nt)
+!        rdm2_el.gem_skipped.create(nt)
+!!        if (blk_skip) then
+!!           rdm2_el.blk_skipped.create(nt)
+!!        end
+!        rdm2_el.blk_skipped.create(nt)
+!     end
+!     ! store information
+!     rdm2_el.c_prod(t) = coef_prod
+!     rdm2_el.r_overlap(t) = overlap
+!     ! create additional vectors and store info.      
+!     ng = size(geminals) ! number of geminalas skipped
+!     rdm2_el.gem_skipped(t).element.create(ng)
+!     rdm2_el.gem_skipped(t).element = geminals
+!     nb = size(blocks) ! number of blocks skipped
+!     rdm2_el.blk_skipped(t).element.create(nb)
+!     rdm2_el.blk_skipped(t).element = blocks
+!
+!   end
+
+!   save_2rdm_grad_info(rdm2_type, irdm, ng, nb)
+!   ! save information about the 2rdm element "irdm"
+!   ! (this info. will be used in the calculation 
+!   ! of the energy gradient)
+!     rdm2_type :: STR, IN
+!     irdm, ng, nb :: INT, IN
+!     nt, j :: INT
+!     ! DEBUGG
+!     stdout.text(" ")
+!     stdout.text("Enter subroutine save_2rdm_grad_info")
+!     stdout.text(" ")
+!     !!!
+!
+!     nt = .grad_info_tmp.nb_terms
+!
+!     select case (rdm2_type)
+!     case("ab")
+!        ! set number of terms
+!        .rdm_2_ab(irdm).grad_info.nb_terms = nt
+!        ! create vectors and transfer info.
+!        .rdm_2_ab(irdm).grad_info.coef_prod.create(nt)
+!        .rdm_2_ab(irdm).grad_info.red_ov.create(nt)
+!        .rdm_2_ab(irdm).grad_info.coef_prod = .grad_info_tmp.coef_prod(1:nt)
+!        .rdm_2_ab(irdm).grad_info.red_ov = .grad_info_tmp.red_ov(1:nt)
+!        ! create vectors of vectors and transfer info.
+!        if (ng > 0) then
+!           .rdm_2_ab(irdm).grad_info.ex_gem.create(nt)
+!           do j=1,nt
+!              .rdm_2_ab(irdm).grad_info.ex_gem(j).element.create(ng)
+!              .rdm_2_ab(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(j).element(1:ng)
+!           end
+!           .rdm_2_ab(irdm).grad_info.ex_gem_created = TRUE
+!        end
+!        if (nb > 0) then
+!           .rdm_2_ab(irdm).grad_info.ex_blk.create(nt)
+!           do j=1,nt
+!              .rdm_2_ab(irdm).grad_info.ex_blk(j).element.create(nb)
+!              .rdm_2_ab(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(j).element(1:nb)
+!           end
+!           .rdm_2_ab(irdm).grad_info.ex_blk_created = TRUE
+!        end
+!     case("aa")
+!        ! set number of terms
+!        .rdm_2_aa(irdm).grad_info.nb_terms = nt
+!        ! create vectors and transfer info.
+!        .rdm_2_aa(irdm).grad_info.coef_prod.create(nt)
+!        .rdm_2_aa(irdm).grad_info.red_ov.create(nt)
+!        .rdm_2_aa(irdm).grad_info.coef_prod = .grad_info_tmp.coef_prod(1:nt)
+!        .rdm_2_aa(irdm).grad_info.red_ov = .grad_info_tmp.red_ov(1:nt)
+!        ! create vectors of vectors and transfer info.
+!        if (ng > 0) then
+!           .rdm_2_aa(irdm).grad_info.ex_gem.create(nt)
+!           do j=1,nt
+!              .rdm_2_aa(irdm).grad_info.ex_gem(j).element.create(ng)
+!              .rdm_2_aa(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(j).element(1:ng)
+!           end
+!           .rdm_2_aa(irdm).grad_info.ex_gem_created = TRUE
+!        end
+!        if (nb > 0) then
+!           .rdm_2_aa(irdm).grad_info.ex_blk.create(nt)
+!           do j=1,nt
+!              .rdm_2_aa(irdm).grad_info.ex_blk(j).element.create(nb)
+!              .rdm_2_aa(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(j).element(1:nb)
+!           end
+!           .rdm_2_aa(irdm).grad_info.ex_blk_created = TRUE
+!        end
+!     case("bb")
+!        ! set number of terms
+!        .rdm_2_bb(irdm).grad_info.nb_terms = nt
+!        ! create vectors and transfer info.
+!        .rdm_2_bb(irdm).grad_info.coef_prod.create(nt)
+!        .rdm_2_bb(irdm).grad_info.red_ov.create(nt)
+!        .rdm_2_bb(irdm).grad_info.coef_prod = .grad_info_tmp.coef_prod(1:nt)
+!        .rdm_2_bb(irdm).grad_info.red_ov = .grad_info_tmp.red_ov(1:nt)
+!        ! create vectors of vectors and transfer info.
+!        if (ng > 0) then
+!           .rdm_2_bb(irdm).grad_info.ex_gem.create(nt)
+!           do j=1,nt
+!              .rdm_2_bb(irdm).grad_info.ex_gem(j).element.create(ng)
+!              .rdm_2_bb(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(j).element(1:ng)
+!           end
+!           .rdm_2_bb(irdm).grad_info.ex_gem_created = TRUE
+!        end
+!        if (nb > 0) then
+!           .rdm_2_bb(irdm).grad_info.ex_blk.create(nt)
+!           do j=1,nt
+!              .rdm_2_bb(irdm).grad_info.ex_blk(j).element.create(nb)
+!              .rdm_2_bb(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(j).element(1:nb)
+!           end
+!           .rdm_2_bb(irdm).grad_info.ex_blk_created = TRUE
+!        end
+!     case default
+!        stdout.text("Error in routine save_2rdm_grad_info:") 
+!        stdout.text("unknown string to select the 2RDM part.")
+!        stop
+!     end
+!
+!   end
+!! de
+
+   save_2rdm_grad_info(rdm2_type, irdm, ng, nb, nt, terms)
+   ! save information about the 2rdm element "irdm"
+   ! (this info. will be used in the calculation 
+   ! of the energy gradient)
+     rdm2_type :: STR, IN
+     irdm, ng, nb, nt :: INT, IN
+     terms :: VEC{INT}, IN
+     j, k :: INT
+
+     !!! DEBUG
+     stdout.text(" ")
+     stdout.text("Enter subroutine save_2rdm_grad_info")
+     stdout.text(" ")
+     !!!
+
+     select case (rdm2_type)
+     case("ab")
+        ! set number of terms
+        .rdm_2_ab(irdm).grad_info.nb_terms = nt
+        ! create vectors and transfer info.
+        .rdm_2_ab(irdm).grad_info.coef_prod.create(nt)
+        .rdm_2_ab(irdm).grad_info.red_ov.create(nt)
+        do j=1,nt
+           k = terms(j)
+           .rdm_2_ab(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+           .rdm_2_ab(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+        end
+        ! create vectors of vectors and transfer info.
+        if (ng > 0) then
+           .rdm_2_ab(irdm).grad_info.ex_gem.create(nt)
+           do j=1,nt
+              .rdm_2_ab(irdm).grad_info.ex_gem(j).element.create(ng)
+              k = terms(j)
+              .rdm_2_ab(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ng)
+           end
+           .rdm_2_ab(irdm).grad_info.ex_gem_created = TRUE
+        end
+        if (nb > 0) then
+           .rdm_2_ab(irdm).grad_info.ex_blk.create(nt)
+           do j=1,nt
+              .rdm_2_ab(irdm).grad_info.ex_blk(j).element.create(nb)
+              k = terms(j)
+              .rdm_2_ab(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:nb)
+           end
+           .rdm_2_ab(irdm).grad_info.ex_blk_created = TRUE
+        end
+     case("aa")
+        ! set number of terms
+        .rdm_2_aa(irdm).grad_info.nb_terms = nt
+        ! create vectors and transfer info.
+        .rdm_2_aa(irdm).grad_info.coef_prod.create(nt)
+        .rdm_2_aa(irdm).grad_info.red_ov.create(nt)
+        do j=1,nt
+           k = terms(j)
+           .rdm_2_aa(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+           .rdm_2_aa(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+        end
+        ! create vectors of vectors and transfer info.
+        if (ng > 0) then
+           .rdm_2_aa(irdm).grad_info.ex_gem.create(nt)
+           do j=1,nt
+              .rdm_2_aa(irdm).grad_info.ex_gem(j).element.create(ng)
+              k = terms(j)
+              .rdm_2_aa(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ng)
+           end
+           .rdm_2_aa(irdm).grad_info.ex_gem_created = TRUE
+        end
+        if (nb > 0) then
+           .rdm_2_aa(irdm).grad_info.ex_blk.create(nt)
+           do j=1,nt
+              .rdm_2_aa(irdm).grad_info.ex_blk(j).element.create(nb)
+              k = terms(j)
+              .rdm_2_aa(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:nb)
+           end
+           .rdm_2_aa(irdm).grad_info.ex_blk_created = TRUE
+        end
+     case("bb")
+        ! set number of terms
+        .rdm_2_bb(irdm).grad_info.nb_terms = nt
+        ! create vectors and transfer info.
+        .rdm_2_bb(irdm).grad_info.coef_prod.create(nt)
+        .rdm_2_bb(irdm).grad_info.red_ov.create(nt)
+        do j=1,nt
+           k = terms(j)
+           .rdm_2_bb(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+           .rdm_2_bb(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+        end
+        ! create vectors of vectors and transfer info.
+        if (ng > 0) then
+           .rdm_2_bb(irdm).grad_info.ex_gem.create(nt)
+           do j=1,nt
+              .rdm_2_bb(irdm).grad_info.ex_gem(j).element.create(ng)
+              k = terms(j)
+              .rdm_2_bb(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ng)
+           end
+           .rdm_2_bb(irdm).grad_info.ex_gem_created = TRUE
+        end
+        if (nb > 0) then
+           .rdm_2_bb(irdm).grad_info.ex_blk.create(nt)
+           do j=1,nt
+              .rdm_2_bb(irdm).grad_info.ex_blk(j).element.create(nb)
+              k = terms(j)
+              .rdm_2_bb(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:nb)
+           end
+           .rdm_2_bb(irdm).grad_info.ex_blk_created = TRUE
+        end
+     case default
+        stdout.text("Error in routine save_2rdm_grad_info:") 
+        stdout.text("unknown string to select the 2RDM part.")
+        stop
+     end
+
+   end
+
 ! davide: 28-11-2018
    calc_1rdm
    ! compute the 1-reduced density matrix
@@ -1832,6 +3128,7 @@ contains
      end
 
    end
+! de
 
    calc_2rdm
    ! compute the 2-reduced density matrix
@@ -2039,14 +3336,14 @@ contains
      .create(.rdm_2_bb,size_aa)     
 
      !!!
-     ! maximum number of terms in a given 2RDM element
-     max_terms = 4
-     ! create object to store temporary information for the
-     ! calculation of the energy gradient with respect to 
-     ! the lambda coefficients
-     if (NOT .grad_info_tmp.coef_prod.created) then
-        .create_2rdm_grad_info_tmp(max_terms)
-     end
+!     ! maximum number of terms in a given 2RDM element
+!     max_terms = 4
+!     ! create object to store temporary information for the
+!     ! calculation of the energy gradient with respect to 
+!     ! the lambda coefficients
+!     if (NOT .grad_info_tmp.coef_prod.created) then
+!        .create_2rdm_grad_info_tmp(max_terms)
+!     end
      !!!
 
      ng_1 = .n_geminals-1
@@ -2192,177 +3489,6 @@ contains
         red_pbg_2.destroy_ptr_part
      end
    
-   end
-
-   create_2rdm_grad_info_tmp(nb_terms)
-   ! create temporary object employed to save the information, about
-   ! the 2RDM elements, required to compute the energy gradient with
-   ! respect to the lambda coefficients
-     nb_terms :: INT, IN
-     n_gem, n_blk, i :: INT
-
-     ! maximum number of geminals and 2D blocks excluded in the
-     ! calculation of the reduced overlap for a given term of a 
-     ! 2RDM element
-     n_gem = 2
-     n_blk = 2
-
-     ! set number of terms
-     .grad_info_tmp.nb_terms = nb_terms
-     ! create vectors
-     .grad_info_tmp.coef_prod.create(nb_terms)
-     .grad_info_tmp.red_ov.create(nb_terms)
-     ! create vectors of vectors of indices
-     .grad_info_tmp.ex_gem.create(nb_terms)
-     .grad_info_tmp.ex_blk.create(nb_terms)
-     do i=1,nb_terms
-        .grad_info_tmp.ex_gem(i).element.create(n_gem)
-        .grad_info_tmp.ex_blk(i).element.create(n_blk)
-     end
-
-   end
-
-!! davide 15-10-2019
-!   save_2rdm_ab_info(rdm2_el, t, nt, coef_prod, overlap, geminals, blocks)
-!   ! save information about the term "t" employed to compute the 2rdm element "i"
-!   ! (this info. will be used in the calculation of the energy gradient)
-!   !------------------------------------------------------------------------------- 
-!     ! definition of the variables in argument:
-!!     ! i = index of the 2rdm (alpha-beta) element
-!     ! rdm2_el = 2rdm element (see type "PAULI_BLOCK_2RDM_ELT")
-!     ! t = index of the term
-!     ! coef_prod = product of coefficients
-!     ! overlap = reduced overlap
-!     ! geminals = indices of the geminals skipped to compute "overlap"
-!     ! blocks = indices of the blocks skipped to compute "overlap"
-!!     ! blk_skip = TRUE if one or more blocks are skipped, else FALSE 
-!!     !            (in the latter case, "block" is not used)
-!     rdm2_el :: PAULI_BLOCK_2RDM_ELT
-!!     i, t, nt, signe :: INT, IN
-!     t, nt :: INT, IN
-!     coef_prod, overlap :: REAL, IN
-!     geminals :: VEC{INT}, IN
-!!     blk_skip :: BIN, IN
-!     blocks :: VEC{INT}, IN
-!     !
-!     ng, nb :: INT
-!
-!     if (t == 1) then 
-!        ! set number of terms
-!        rdm2_el.n_terms = nt
-!        ! create vectors
-!        rdm2_el.c_prod.create(nt)
-!        rdm2_el.r_overlap.create(nt)
-!        rdm2_el.gem_skipped.create(nt)
-!!        if (blk_skip) then
-!!           rdm2_el.blk_skipped.create(nt)
-!!        end
-!        rdm2_el.blk_skipped.create(nt)
-!     end
-!     ! store information
-!     rdm2_el.c_prod(t) = coef_prod
-!     rdm2_el.r_overlap(t) = overlap
-!     ! create additional vectors and store info.      
-!     ng = size(geminals) ! number of geminalas skipped
-!     rdm2_el.gem_skipped(t).element.create(ng)
-!     rdm2_el.gem_skipped(t).element = geminals
-!     nb = size(blocks) ! number of blocks skipped
-!     rdm2_el.blk_skipped(t).element.create(nb)
-!     rdm2_el.blk_skipped(t).element = blocks
-!
-!   end
-!! de 
-
-   save_2rdm_grad_info(rdm2_type, i, ng, nb)
-   ! save information about the 2rdm element "i"
-   ! (this info. will be used in the calculation 
-   ! of the energy gradient)
-     rdm2_type :: STR, IN
-     i, ng, nb :: INT, IN
-     nt, j :: INT
-
-     nt = .grad_info_tmp.nb_terms
-
-     select case (rdm2_type)
-     case("ab")
-        ! set number of terms
-        .rdm_2_ab(i).grad_info.nb_terms = nt
-        ! create vectors and transfer info.
-        .rdm_2_ab(i).grad_info.coef_prod.create(nt)
-        .rdm_2_ab(i).grad_info.red_ov.create(nt)
-        .rdm_2_ab(i).grad_info.coef_prod = .grad_info_tmp.coef_prod(1:nt)
-        .rdm_2_ab(i).grad_info.red_ov = .grad_info_tmp.red_ov(1:nt)
-        ! create vectors of vectors and transfer info.
-        if (ng > 0) then
-           .rdm_2_ab(i).grad_info.ex_gem.create(nt)
-           do j=1,nt
-              .rdm_2_ab(i).grad_info.ex_gem(j).element.create(ng)
-              .rdm_2_ab(i).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(j).element(1:ng)
-           end
-           .rdm_2_ab(i).grad_info.ex_gem_created = TRUE
-        end
-        if (nb > 0) then
-           .rdm_2_ab(i).grad_info.ex_blk.create(nt)
-           do j=1,nt
-              .rdm_2_ab(i).grad_info.ex_blk(j).element.create(nb)
-              .rdm_2_ab(i).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(j).element(1:nb)
-           end
-           .rdm_2_ab(i).grad_info.ex_blk_created = TRUE
-        end
-     case("aa")
-        ! set number of terms
-        .rdm_2_aa(i).grad_info.nb_terms = nt
-        ! create vectors and transfer info.
-        .rdm_2_aa(i).grad_info.coef_prod.create(nt)
-        .rdm_2_aa(i).grad_info.red_ov.create(nt)
-        .rdm_2_aa(i).grad_info.coef_prod = .grad_info_tmp.coef_prod(1:nt)
-        .rdm_2_aa(i).grad_info.red_ov = .grad_info_tmp.red_ov(1:nt)
-        ! create vectors of vectors and transfer info.
-        if (ng > 0) then
-           .rdm_2_aa(i).grad_info.ex_gem.create(nt)
-           do j=1,nt
-              .rdm_2_aa(i).grad_info.ex_gem(j).element.create(ng)
-              .rdm_2_aa(i).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(j).element(1:ng)
-           end
-           .rdm_2_aa(i).grad_info.ex_gem_created = TRUE
-        end
-        if (nb > 0) then
-           .rdm_2_aa(i).grad_info.ex_blk.create(nt)
-           do j=1,nt
-              .rdm_2_aa(i).grad_info.ex_blk(j).element.create(nb)
-              .rdm_2_aa(i).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(j).element(1:nb)
-           end
-           .rdm_2_aa(i).grad_info.ex_blk_created = TRUE
-        end
-     case("bb")
-        ! set number of terms
-        .rdm_2_bb(i).grad_info.nb_terms = nt
-        ! create vectors and transfer info.
-        .rdm_2_bb(i).grad_info.coef_prod.create(nt)
-        .rdm_2_bb(i).grad_info.red_ov.create(nt)
-        .rdm_2_bb(i).grad_info.coef_prod = .grad_info_tmp.coef_prod(1:nt)
-        .rdm_2_bb(i).grad_info.red_ov = .grad_info_tmp.red_ov(1:nt)
-        ! create vectors of vectors and transfer info.
-        if (ng > 0) then
-           .rdm_2_bb(i).grad_info.ex_gem.create(nt)
-           do j=1,nt
-              .rdm_2_bb(i).grad_info.ex_gem(j).element.create(ng)
-              .rdm_2_bb(i).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(j).element(1:ng)
-           end
-           .rdm_2_bb(i).grad_info.ex_gem_created = TRUE
-        end
-        if (nb > 0) then
-           .rdm_2_bb(i).grad_info.ex_blk.create(nt)
-           do j=1,nt
-              .rdm_2_bb(i).grad_info.ex_blk(j).element.create(nb)
-              .rdm_2_bb(i).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(j).element(1:nb)
-           end
-           .rdm_2_bb(i).grad_info.ex_blk_created = TRUE
-        end
-     case default
-        stop
-     end
-
    end
 
 
@@ -2538,6 +3664,13 @@ contains
      term :: VEC{REAL}(4)
      overlap :: REAL
      problem :: BIN
+     !!!
+     gg, bb :: VEC{INT}(2)
+     ! DEBUGG
+     stdout.text(" ")
+     stdout.text("Enter subroutine calc_2rdm_same_block_grd")
+     stdout.text(" ")
+     !!!
 
      do b=1,.n_1D_blocks
         g = .nonzero_1ortho_ind(b)
@@ -2550,7 +3683,11 @@ contains
            coef_prod = coef_1*coef_2
         end
         if (ng_1 /= 0) then
-           .prep_red_pbg(red_pbg_1,g)
+           !!!
+           gg(1) = g
+           .prep_red_pbg_gg(red_pbg_1, gg, 1)
+           !!!
+           !.prep_red_pbg(red_pbg_1,g)
            red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
            red_pbg_1.calc_overlap_integral(overlap,FALSE)
         else
@@ -2563,20 +3700,17 @@ contains
         .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
         .rdm_2_ab(i).coefficient = coef_prod*overlap/.overlap
         !!!
-        .grad_info_tmp.nb_terms = 1
-        .grad_info_tmp.coef_prod(1) = coef_prod
-        .grad_info_tmp.red_ov(1) = overlap
-        .grad_info_tmp.ex_gem(1).element(1) = g
-        .save_2rdm_grad_info("ab", i, 1, 0)
+!        .grad_info_tmp.nb_terms = 1
+!        .grad_info_tmp.coef_prod(1) = coef_prod
+!        .grad_info_tmp.red_ov(1) = overlap
+!        .grad_info_tmp.ex_gem(1).element(1) = g
+!        .save_2rdm_grad_info("ab", i, 1, 0)
         !.save_2rdm_grad_info(rdm2_type, i, ng, nb)
         !!!
 !
-!        !debug 
-!        stdout.text(" ")
-!        !debug 
-!        stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-!        !debug 
-!        stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+!        !debug stdout.text(" ")
+!        !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+!        !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
 !!        !!!
 !        stdout.show("Number of terms to compute the element", .rdm_2_ab(i).n_terms)
 !        do kk=1,.rdm_2_ab(i).n_terms 
@@ -2600,7 +3734,12 @@ contains
            if (geminal /= 0) then
               coef_prod = .nonzero_coef_prod(geminal).element(block-.first_block+1)/TWO
               if (ng_1 /= 0) then
-                 .prep_red_pbg(red_pbg_1, geminal, block, problem)
+                 !!!
+                 gg(1) = geminal
+                 bb(1) = block
+                 .prep_red_pbg_gg_bb(red_pbg_1, gg, 1, bb, 1, problem)
+                 !!!
+                 !.prep_red_pbg(red_pbg_1, geminal, block, problem)
                  if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= .n_geminals))) then
                     red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
                     red_pbg_1.calc_overlap_integral(overlap,FALSE)
@@ -2623,9 +3762,12 @@ contains
            .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_1,ind_1 /)
            .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
            .rdm_2_ab(i).coefficient = (term(1)+term(2))/.overlap
-         !debug stdout.text(" ")
-         !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-         !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+         !debug 
+         stdout.text(" ")
+         !debug 
+         stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+         !debug 
+         stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
 !!          !!!
 !           stdout.show("Number of terms to compute the element", .rdm_2_ab(i).n_terms)
 !           do kk=1,.rdm_2_ab(i).n_terms 
@@ -2645,9 +3787,12 @@ contains
            .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_2,ind_2 /)
            .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
            .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-         !debug stdout.text(" ")
-         !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-         !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+         !debug 
+         stdout.text(" ")
+         !debug 
+         stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+         !debug 
+         stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
         end
         if (abs(term(3)+term(4)) > TOL(15)) then
 
@@ -2657,9 +3802,12 @@ contains
            .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_1,ind_2 /)
            .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
            .rdm_2_ab(i).coefficient = (term(3)+term(4))/.overlap
-         !debug stdout.text(" ")
-         !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-         !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+         !debug 
+         stdout.text(" ")
+         !debug 
+         stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+         !debug 
+         stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
 
            i = i+1
            .rdm_2_ab(i).same_block = TRUE
@@ -2667,9 +3815,12 @@ contains
            .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_2,ind_1 /)
            .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
            .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-         !debug stdout.text(" ")
-         !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-         !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+         !debug 
+         stdout.text(" ")
+         !debug 
+         stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+         !debug 
+         stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
         end
         if (abs(term(1)-term(2)) > TOL(15)) then
 
@@ -2679,9 +3830,12 @@ contains
            .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_2,ind_2 /)
            .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
            .rdm_2_ab(i).coefficient = (term(1)-term(2))/.overlap
-         !debug stdout.text(" ")
-         !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-         !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+         !debug 
+         stdout.text(" ")
+         !debug 
+         stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+         !debug 
+         stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
 
            i = i+1
            .rdm_2_ab(i).same_block = TRUE
@@ -2689,9 +3843,12 @@ contains
            .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_1,ind_1 /)
            .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
            .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-         !debug stdout.text(" ")
-         !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-         !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+         !debug 
+         stdout.text(" ")
+         !debug 
+         stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+         !debug 
+         stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
         end
         if (abs(term(3)-term(4)) > TOL(15)) then
 
@@ -2701,9 +3858,12 @@ contains
            .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_2,ind_1 /)
            .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
            .rdm_2_ab(i).coefficient = (term(3)-term(4))/.overlap
-         !debug stdout.text(" ")
-         !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-         !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+         !debug 
+         stdout.text(" ")
+         !debug 
+         stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+         !debug 
+         stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
 
            i = i+1
            .rdm_2_ab(i).same_block = TRUE
@@ -2711,9 +3871,12 @@ contains
            .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_1,ind_2 /)
            .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
            .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-         !debug stdout.text(" ")
-         !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-         !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+         !debug 
+         stdout.text(" ")
+         !debug 
+         stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+         !debug 
+         stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
         end
      end
    end
@@ -4754,6 +5917,7 @@ contains
      g :: INT, IN
      i, j, siz :: INT
      siz_prod :: INT
+
 
      ! prepare information to compute the overlap, excluding geminal g
      do i=1,.n_geminals
@@ -9399,7 +10563,6 @@ contains
      
    end
 
-
    calc_1rdm_element_gen(row,col)
    ! compute element (row,col) of the 1-reduced 
    ! density matrix (1-RDM) for a set of PBT
@@ -9597,6 +10760,217 @@ contains
 !     timer.start_timing
 !     !
      .calc_2rdm_one_pauli_gen(i, i_a, i_b, ng_1, red_pbg_1, ng_2, red_pbg_2)
+!     !
+!     timer.stop_timing
+!     stdout.show("-) Time taken (in sec) 2rdm_one_pauli_gen: ",timer.elapsed_time_s,14)
+
+     .nonzero_terms_ab = i-1
+     .nonzero_terms_aa = i_a-1
+     .nonzero_terms_bb = i_b-1
+     
+     !!!!!!!!!!!!!!!!!!!!
+     ! debug
+!     trace = ZERO
+!     mat_ab.create(.mat_size*.mat_size,.mat_size*.mat_size)
+!     eigenval_ab.create(.mat_size*.mat_size)
+!     nonzero_eigenval_ab.create(.mat_size*.mat_size)
+!     eigenvec_ab.create(.mat_size*.mat_size,.mat_size*.mat_size)
+!     mat_aa.create(.mat_size*(.mat_size-1)*2,.mat_size*(.mat_size-1)*2)
+!     eigenval_aa.create(.mat_size*(.mat_size-1)*2)
+!     nonzero_eigenval_aa.create(.mat_size*(.mat_size-1)*2)
+!     eigenvec_aa.create(.mat_size*(.mat_size-1)*2,.mat_size*(.mat_size-1)*2)
+!     mat_bb.create(.mat_size*(.mat_size-1)*2,.mat_size*(.mat_size-1)*2)
+!     eigenval_bb.create(.mat_size*(.mat_size-1)*2)
+!     nonzero_eigenval_bb.create(.mat_size*(.mat_size-1)*2)
+!     eigenvec_bb.create(.mat_size*(.mat_size-1)*2,.mat_size*(.mat_size-1)*2)
+!     mat_ab = ZERO
+!     mat_aa = ZERO
+!     mat_bb = ZERO
+!
+!     do r=1,.nonzero_terms_ab
+!        j_1 = (.rdm_2_ab(r).indices(1)-1)*.mat_size+.rdm_2_ab(r).indices(2)
+!        j_2 = (.rdm_2_ab(r).indices(3)-1)*.mat_size+.rdm_2_ab(r).indices(4)
+!        mat_ab(j_1,j_2) = .rdm_2_ab(r).coefficient
+!        if (.rdm_2_ab(r).indices(1) == .rdm_2_ab(r).indices(3) AND .rdm_2_ab(r).indices(2) == .rdm_2_ab(r).indices(4)) then
+!           trace = trace + .rdm_2_ab(r).coefficient
+!        end
+!     end
+!     mat_ab.solve_symmetric_eigenproblem(eigenval_ab,eigenvec_ab) 
+!     s = 0
+!     do r=1,.mat_size*.mat_size
+!        if (abs(eigenval_ab(r)) > TOL(15)) then
+!           s = s+1
+!           nonzero_eigenval_ab(s) = eigenval_ab(r)
+!        end
+!     end
+!     s_ab = s
+!
+!     do r=1,.nonzero_terms_aa
+!        j_1 = (.rdm_2_aa(r).indices(1)-1)*.mat_size+.rdm_2_aa(r).indices(2)
+!        j_2 = (.rdm_2_aa(r).indices(3)-1)*.mat_size+.rdm_2_aa(r).indices(4)
+!        mat_aa(j_1,j_2) = .rdm_2_aa(r).coefficient
+!        if (.rdm_2_aa(r).indices(1) == .rdm_2_aa(r).indices(3) AND .rdm_2_aa(r).indices(2) == .rdm_2_aa(r).indices(4)) then
+!           trace = trace + .rdm_2_aa(r).coefficient
+!        end
+!     end
+!     mat_aa.solve_symmetric_eigenproblem(eigenval_aa,eigenvec_aa) 
+!     s = 0
+!     do r=1,.mat_size*(.mat_size-1)*2
+!        if (abs(eigenval_aa(r)) > TOL(15)) then
+!           s = s+1
+!           nonzero_eigenval_aa(s) = eigenval_aa(r)
+!        end
+!     end
+!     s_aa = s
+!
+!     do r=1,.nonzero_terms_bb
+!        j_1 = (.rdm_2_bb(r).indices(1)-1)*.mat_size+.rdm_2_bb(r).indices(2)
+!        j_2 = (.rdm_2_bb(r).indices(3)-1)*.mat_size+.rdm_2_bb(r).indices(4)
+!        mat_bb(j_1,j_2) = .rdm_2_bb(r).coefficient
+!        if (.rdm_2_bb(r).indices(1) == .rdm_2_bb(r).indices(3) AND .rdm_2_bb(r).indices(2) == .rdm_2_bb(r).indices(4)) then
+!           trace = trace + .rdm_2_bb(r).coefficient
+!        end
+!     end
+!     mat_bb.solve_symmetric_eigenproblem(eigenval_bb,eigenvec_bb) 
+!     s = 0
+!     do r=1,.mat_size*(.mat_size-1)*2
+!        if (abs(eigenval_bb(r))> TOL(15)) then
+!           s = s+1
+!           nonzero_eigenval_bb(s) = eigenval_aa(r)
+!        end
+!     end
+!     s_bb = s
+     !!!!!!!!!!!!!!!!!!!!
+
+   !debug stdout.text(" ")
+   !debug stdout.show("Number of nonzero coefficients of the 2-RDM alpha-beta matrix", .nonzero_terms_ab)
+   !debug stdout.show("Number of nonzero eigenvalues of the 2-RDM alpha-beta matrix", s_ab)
+   !debug stdout.text("Nonzero eigenvalues of the 2-RDM alpha-beta matrix")
+   !debug stdout.put(nonzero_eigenval_ab(1:s_ab))
+   !debug stdout.text(" ")
+   !debug stdout.show("Number of nonzero coefficients of the 2-RDM alpha-alpha matrix", .nonzero_terms_aa)
+   !debug stdout.show("Number of nonzero eigenvalues of the 2-RDM alpha-alpha matrix", s_aa)
+   !debug stdout.text("Nonzero eigenvalues of the 2-RDM alpha-alpha matrix")
+   !debug stdout.put(nonzero_eigenval_aa(1:s_aa))
+   !debug stdout.text(" ")
+   !debug stdout.show("Number of nonzero coefficients of the 2-RDM beta-beta matrix", .nonzero_terms_bb)
+   !debug stdout.show("Number of nonzero eigenvalues of the 2-RDM beta-beta matrix", s_bb)
+   !debug stdout.text("Nonzero eigenvalues of the 2-RDM beta-beta matrix")
+   !debug stdout.put(nonzero_eigenval_bb(1:s_bb))
+   !debug stdout.text(" ")
+   !debug stdout.show("Trace of the total 2-RDM matrix", trace)  
+   !debug stdout.show("Sum of eigenvalues", sum(nonzero_eigenval_ab(1:s_ab))+sum(nonzero_eigenval_aa(1:s_aa))+sum(nonzero_eigenval_bb(1:s_bb)))   
+
+     if (ng_1 /= 0) then
+        red_pbg_1.destroy_ptr_part
+     end
+     if (ng_2 > 0) then
+        red_pbg_2.destroy_ptr_part
+     end
+   
+   end
+
+   calc_2rdm_gen_grd
+   ! compute the 2-reduced density matrix
+   ! for a set of PBT   
+     ng_1, ng_2 :: INT
+     size_ab, size_aa :: INT
+     i, i_a, i_b :: INT
+     r, s :: INT
+     red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
+     trace :: REAL
+     mat_ab, mat_aa, mat_bb :: MAT{REAL}*
+     eigenval_ab, eigenval_aa, eigenval_bb :: VEC{REAL}*
+     nonzero_eigenval_ab, nonzero_eigenval_aa, nonzero_eigenval_bb :: VEC{REAL}*
+     s_ab, s_aa, s_bb :: INT
+     eigenvec_ab, eigenvec_aa, eigenvec_bb :: MAT{REAL}*
+     j_1, j_2 :: INT
+     !
+     timer :: TIME
+     !!!
+     nb_terms :: INT
+     !!!
+
+   !debug stdout.text(" ")
+   !debug stdout.text("Calculation of the 2-reduced density matrix")
+
+     .prep_orbital_block_mapping
+     .prep_block_types
+     
+     size_ab = 4*.mat_size*.mat_size
+     size_aa = .mat_size*(.mat_size-1)*2
+     
+     .create(.rdm_2_ab,size_ab)
+     .create(.rdm_2_aa,size_aa)
+     .create(.rdm_2_bb,size_aa)     
+
+     !!!
+     ! number of terms in ".grad_info_tmp"
+     nb_terms = 5
+     ! create object to store temporary information for the
+     ! calculation of the energy gradient with respect to 
+     ! the block coefficients
+     if (NOT .grad_info_tmp.coef_prod.created) then
+        .create_2rdm_grad_info_tmp(nb_terms)
+     end
+     !!!
+
+     ng_1 = .n_geminals-1
+     if (ng_1 /= 0) then
+        red_pbg_1.n_geminals = ng_1
+        red_pbg_1.nonzero_coef_ind.create(ng_1)
+        red_pbg_1.nonzero_coef_prod.create(ng_1)
+        red_pbg_1.first_block=.first_block
+     end
+
+     ng_2 = .n_geminals-2
+     if (ng_2 > 0) then
+        red_pbg_2.n_geminals = ng_2
+        red_pbg_2.nonzero_coef_ind.create(ng_2)
+        red_pbg_2.nonzero_coef_prod.create(ng_2)
+        red_pbg_2.first_block=.first_block
+     end
+
+     ! same_block = TRUE
+
+     i = 0
+
+!     timer.start_timing
+!     !
+     !!!
+     .calc_2rdm_same_block_gen_grd(i, ng_1, red_pbg_1)
+     !!!
+     !.calc_2rdm_same_block_gen(i, ng_1, red_pbg_1)
+!     !
+!     timer.stop_timing
+!     stdout.show("-) Time taken (in sec) 2rdm_same_block_gen: ",timer.elapsed_time_s,14)
+
+     ! same_block = FALSE
+
+     ! cases where we "skip" at least one 1-orthogonal block 
+
+     i = i+1
+     i_a = 1
+     i_b = 1
+
+!     timer.start_timing
+!     !
+     !!!
+     .calc_2rdm_one_1_ortho_gen_grd(i, i_a, i_b, ng_1, red_pbg_1, ng_2, red_pbg_2)
+     !!!
+     !.calc_2rdm_one_1_ortho_gen(i, i_a, i_b, ng_1, red_pbg_1, ng_2, red_pbg_2)
+!     !
+!     timer.stop_timing
+!     stdout.show("-) Time taken (in sec) 2rdm_one_1_ortho_gen: ",timer.elapsed_time_s,14)
+    
+     ! cases where we have at least one Pauli Block
+
+!     timer.start_timing
+!     !
+     !!!
+     .calc_2rdm_one_pauli_gen_grd(i, i_a, i_b, ng_1, red_pbg_1, ng_2, red_pbg_2)
+     !!!
+     !.calc_2rdm_one_pauli_gen(i, i_a, i_b, ng_1, red_pbg_1, ng_2, red_pbg_2)
 !     !
 !     timer.stop_timing
 !     stdout.show("-) Time taken (in sec) 2rdm_one_pauli_gen: ",timer.elapsed_time_s,14)
@@ -9985,9 +11359,434 @@ contains
 
    end
 
+   calc_2rdm_same_block_gen_grd(i,ng_1,red_pbg_1)
+   !
+     i :: INT
+     ng_1 :: INT
+     red_pbg_1 :: PAULI_BLOCK_GEMINALS
+     j, m :: INT
+     g, b :: INT
+     block, geminal, siz :: INT
+     ind_1, ind_2 :: INT
+     coef_1, coef_2 :: REAL
+     coef_prod :: REAL
+     term :: VEC{REAL}(5)
+     overlap :: REAL
+     problem :: BIN
+     !!!
+     tt :: VEC{INT}(2)
+     cpr_saved :: REAL
+     !!!
+     !gg, bb :: VEC{INT}(2)
+     stdout.text(" ")
+     stdout.text("Enter subroutine calc_2rdm_same_block_gen_grd")
+     stdout.text(" ")
+     !!!
 
-  calc_2rdm_one_1_ortho_gen(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
-  !
+     do b=1,.n_1D_blocks
+        g = .nonzero_1ortho_ind(b)
+        if (g == 0) cycle
+        coef_1 = .bra_set.vec(g).coef(b)
+        if (.bra_is_ket) then
+           coef_prod = coef_1*coef_1
+        else
+           coef_2 = .ket_set.vec(g).coef(b)
+           coef_prod = coef_1*coef_2
+        end
+        if (ng_1 /= 0) then
+           .prep_red_pbg(red_pbg_1,g)
+           red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
+           red_pbg_1.calc_overlap_integral(overlap,FALSE)
+        else
+           overlap = ONE
+        end
+        i = i+1
+        .rdm_2_ab(i).same_block = TRUE
+        .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
+        .rdm_2_ab(i).indices = (/ b,b,b,b /)
+        .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+        .rdm_2_ab(i).coefficient = coef_prod*overlap/.overlap
+        !!! save gradient information
+        !.grad_info_tmp.nb_terms = 1
+        .grad_info_tmp.coef_prod(1) = coef_prod
+        .grad_info_tmp.red_ov(1) = overlap
+        .grad_info_tmp.ex_gem(1).element(1) = g
+        tt(1) = 1
+        .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=0, nt=1, terms=tt)
+        !.save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=0)
+        !!!
+      !debug stdout.text(" ")
+      !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+      !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+     end
+
+     m = .n_1D_blocks+.n_2D_3typ_blocks     
+
+     if (.n_2D_3typ_blocks /= 0) then
+        do b=.n_1D_blocks+1,m
+           block = b - .n_1D_blocks
+           ind_1 = .n_1D_blocks+2*(block-1)+1
+           ind_2 = .n_1D_blocks+2*(block-1)+2
+           do j=3,5 ! geminal with SX, ISY or GD2 in block "block" are skipped
+              geminal = .block_types(block).element(j) 
+              if (geminal /= 0) then
+                 coef_prod = .nonzero_coef_prod(geminal).element(block-.first_block+1)/TWO
+                 if (ng_1 /= 0) then
+                    .prep_red_pbg(red_pbg_1, geminal, block, problem)
+                    if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= .n_geminals))) then
+                       red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
+                       red_pbg_1.calc_overlap_integral(overlap,FALSE)
+                       term(j) = coef_prod*overlap
+                    else
+                       !!!
+                       overlap = ZERO
+                       !!!
+                       term(j) = ZERO
+                    end
+                 else
+                    !!!
+                    overlap = ONE
+                    !!!
+                    term(j) = coef_prod
+                 end
+              else
+                 !!!
+                 coef_prod = ZERO
+                 overlap = ZERO
+                 !!!
+                 term(j) = ZERO
+              end
+              !!!
+              .grad_info_tmp.coef_prod(j) = coef_prod
+              .grad_info_tmp.red_ov(j) = overlap
+              .grad_info_tmp.ex_gem(j).element(1) = geminal
+              .grad_info_tmp.ex_blk(j).element(1) = block
+              !!!
+           end
+!           if (abs(term(5)) > TOL(15)) then
+              !!!
+              tt(1) = 5
+              cpr_saved = .grad_info_tmp.coef_prod(5) 
+              !!!
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_1,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = term(5)*.first_GD2_elt(block)*.first_GD2_elt(block)/.overlap
+              !!! save gradient information
+              .grad_info_tmp.coef_prod(5) = cpr_saved*(.first_GD2_elt(block)**2)
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=1, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_2,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+              .rdm_2_ab(i).coefficient = term(5)*.second_GD2_elt(block)*.second_GD2_elt(block)/.overlap
+              !!! save gradient information
+              .grad_info_tmp.coef_prod(5) = cpr_saved*(.second_GD2_elt(block)**2)
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=1, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_2,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+              .rdm_2_ab(i).coefficient = term(5)*.first_GD2_elt(block)*.second_GD2_elt(block)/.overlap
+              !!! save gradient information
+              .grad_info_tmp.coef_prod(5) = cpr_saved*.first_GD2_elt(block)*.second_GD2_elt(block)
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=1, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_1,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+              !!! save gradient information
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=1, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+              !!!
+              .grad_info_tmp.coef_prod(5) = cpr_saved
+              !!!
+!           end
+!           if (abs(term(3)+term(4)) > TOL(15)) then
+              tt(1) = 3
+              tt(2) = 4
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_1,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+              .rdm_2_ab(i).coefficient = (term(3)+term(4))/.overlap
+              !!! save gradient information
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_2,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+              !!! save gradient information
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+!           end
+!           if (abs(term(3)-term(4)) > TOL(15)) then
+              !!!
+              tt(1) = 3
+              tt(2) = 4
+              cpr_saved = .grad_info_tmp.coef_prod(4) 
+              !!!
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_2,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+              .rdm_2_ab(i).coefficient = (term(3)-term(4))/.overlap
+              !!!
+              .grad_info_tmp.coef_prod(4) = -cpr_saved 
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_1,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+              !!!
+              !.grad_info_tmp.coef_prod(4) = -cpr_saved
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+              !!!
+              .grad_info_tmp.coef_prod(4) = cpr_saved 
+              !!!
+!           end
+        end
+     end
+
+     if (.n_2D_4typ_blocks /= 0) then
+        do b=m+1,.n_blocks
+           block = b - .n_1D_blocks
+           ind_1 = .n_1D_blocks+2*(block-1)+1
+           ind_2 = .n_1D_blocks+2*(block-1)+2
+           do j=1,4 ! geminal with ID2, SZ, SX or ISY in block "block" are skipped
+              geminal = .block_types(block).element(j) 
+              if (geminal /= 0) then
+                 coef_prod = .nonzero_coef_prod(geminal).element(block-.first_block+1)/TWO
+                 if (ng_1 /= 0) then
+                    .prep_red_pbg(red_pbg_1, geminal, block, problem)
+                    if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= .n_geminals))) then
+                       red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
+                       red_pbg_1.calc_overlap_integral(overlap,FALSE)
+                       term(j) = coef_prod*overlap
+                    else
+                       !!!
+                       overlap = ZERO
+                       !!!
+                       term(j) = ZERO
+                    end
+                 else
+                    !!!
+                    overlap = ONE
+                    !!!
+                    term(j) = coef_prod
+                 end
+              else
+                 !!!
+                 coef_prod = ZERO
+                 overlap = ONE
+                 !!!
+                 term(j) = ZERO
+              end
+              !!!
+              .grad_info_tmp.coef_prod(j) = coef_prod
+              .grad_info_tmp.red_ov(j) = overlap
+              .grad_info_tmp.ex_gem(j).element(1) = geminal
+              .grad_info_tmp.ex_blk(j).element(1) = block
+              !!!
+           end
+!           if (abs(term(1)+term(2)) > TOL(15)) then
+              !!!
+              tt(1) = 1
+              tt(2) = 2
+              !!!
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_1,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = (term(1)+term(2))/.overlap
+              !!! save gradient information
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_2,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+              !!! save gradient information
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+!           end
+!           if (abs(term(3)+term(4)) > TOL(15)) then
+              !!!
+              tt(1) = 3
+              tt(2) = 4
+              !!!
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_1,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+              .rdm_2_ab(i).coefficient = (term(3)+term(4))/.overlap
+              !!! save gradient information
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_2,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+              !!! save gradient information
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+!           end
+!           if (abs(term(1)-term(2)) > TOL(15)) then
+              !!!
+              tt(1) = 1
+              tt(2) = 2
+              cpr_saved = .grad_info_tmp.coef_prod(2) 
+              !!!
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_2,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+              .rdm_2_ab(i).coefficient = (term(1)-term(2))/.overlap
+              !!! save gradient information
+              .grad_info_tmp.coef_prod(2) = -cpr_saved 
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_1,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+              !!! save gradient information
+              !.grad_info_tmp.coef_prod(2) = -cpr_saved 
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+              !!!
+              .grad_info_tmp.coef_prod(2) = cpr_saved 
+              !!!
+!           end
+!           if (abs(term(3)-term(4)) > TOL(15)) then
+              !!!
+              tt(1) = 3
+              tt(2) = 4
+              cpr_saved = .grad_info_tmp.coef_prod(4) 
+              !!!
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_2,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+              .rdm_2_ab(i).coefficient = (term(3)-term(4))/.overlap
+              !!! save gradient information
+              .grad_info_tmp.coef_prod(4) = -cpr_saved 
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+        
+              i = i+1
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ block,block,block,block /)
+              .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_1,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+              !!! save gradient information
+              !.grad_info_tmp.coef_prod(4) = -cpr_saved 
+              .save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=1, nt=2, terms=tt)
+              !!!
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+              !!!
+              .grad_info_tmp.coef_prod(4) = cpr_saved 
+              !!!
+!           end
+        end
+     end
+
+   end
+
+
+   calc_2rdm_one_1_ortho_gen(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
+   !
      i, i_a, i_b :: INT
      ng_1, ng_2 :: INT
      red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
@@ -10401,11 +12200,445 @@ contains
            end
         end
      end
+
+   end
+
+   calc_2rdm_one_1_ortho_gen_grd(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
+   !
+     i, i_a, i_b :: INT
+     ng_1, ng_2 :: INT
+     red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
+     j :: INT
+     r, s :: INT
+     g, b :: INT
+     block, geminal, siz :: INT
+     ind_1, ind_2 :: INT
+     coef_1, coef_2, coef_3, coef_4 :: REAL
+     coef_prod :: REAL
+     term :: VEC{REAL}(4)
+     overlap :: REAL
+     problem :: BIN
+     !!!
+     gg, bb :: VEC{INT}(2)
+     stdout.text(" ")
+     stdout.text("Enter subroutine calc_2rdm_one_1_ortho_gen_grd")
+     stdout.text(" ")
+     !!!
+
+     do r=1,.n_1D_blocks-1
+        geminal = .nonzero_1ortho_ind(r)
+        if (geminal == 0) cycle
+        coef_1 = .bra_set.vec(geminal).coef(r)
+        if (NOT .bra_is_ket) then
+           coef_2 = .ket_set.vec(geminal).coef(r)
+        end 
+        do b=r+1,.n_1D_blocks
+           g = .nonzero_1ortho_ind(b)
+           if (g == 0) cycle
+           if (g == geminal) then
+              coef_3 = .bra_set.vec(g).coef(b)
+              if (NOT .bra_is_ket) then
+                 coef_4 = .ket_set.vec(g).coef(b)
+              end
+              if (ng_1 /= 0) then
+                 !!!
+                 gg(1) = g
+                 .prep_red_pbg_gg(red_pbg_1, gg, 1)
+                 !!!
+                 !.prep_red_pbg(red_pbg_1,g)
+                 red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
+                 red_pbg_1.calc_overlap_integral(overlap,FALSE)
+              else
+                 overlap = ONE
+              end
+
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
+              .rdm_2_ab(i).indices = (/ r,r,b,b /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              if (.bra_is_ket) then
+                 .rdm_2_ab(i).coefficient = coef_1*coef_3*overlap/.overlap
+              else
+                 .rdm_2_ab(i).coefficient = coef_1*coef_4*overlap/.overlap
+              end            
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              i = i+1
+
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
+              .rdm_2_ab(i).indices = (/ b,b,r,r /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              if (.bra_is_ket) then
+                 .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+              else
+                 .rdm_2_ab(i).coefficient = coef_2*coef_3*overlap/.overlap
+              end  
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              i = i+1
+           else if (g /= geminal) then
+              coef_3 = .bra_set.vec(g).coef(b)
+              if (.bra_is_ket) then
+                 coef_prod = coef_1*coef_1*coef_3*coef_3
+              else
+                 coef_4 = .ket_set.vec(g).coef(b)
+                 coef_prod = coef_1*coef_2*coef_3*coef_4
+              end
+              if (ng_2 > 0) then
+                 .prep_red_pbg_g(red_pbg_2,geminal,g)
+                 red_pbg_2.make_int_term_list(FALSE,FALSE,TRUE)
+                 red_pbg_2.calc_overlap_integral(overlap,FALSE)
+              else
+                 overlap = ONE
+              end
+
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
+              .rdm_2_ab(i).indices = (/ r,b,r,b /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = coef_prod*overlap/.overlap
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              .rdm_2_aa(i_a)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-alpha element indices (i1, j1, i2, j2)", .rdm_2_aa(i_a).indices)
+            !debug stdout.show("2-RDM alpha-alpha element value", .rdm_2_aa(i_a).coefficient) 
+              .rdm_2_bb(i_b)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM beta-beta element indices (i1, j1, i2, j2)", .rdm_2_bb(i_b).indices)
+            !debug stdout.show("2-RDM beta-beta element value", .rdm_2_bb(i_b).coefficient) 
+              i = i+1
+              i_a = i_a+1
+              i_b = i_b+1
+
+              .rdm_2_ab(i).same_block = TRUE
+              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
+              .rdm_2_ab(i).indices = (/ b,r,b,r /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              i = i+1
+           end
+        end
+     end
+
+     do r=1,.n_1D_blocks
+        geminal = .nonzero_1ortho_ind(r)
+        if (geminal == 0) cycle
+        coef_1 = .bra_set.vec(geminal).coef(r)
+        if (NOT .bra_is_ket) then
+           coef_2 = .ket_set.vec(geminal).coef(r)
+        end  
+        siz = size(.nonzero_coef_ind(geminal).element)
+        do s=2,siz
+           block = .nonzero_coef_ind(geminal).element(s)
+           b = block + .n_1D_blocks
+           ind_1 = .n_1D_blocks+2*(block-1)+1
+           ind_2 = .n_1D_blocks+2*(block-1)+2
+           if (ng_1 /= 0) then
+              !!!
+              gg(1) = geminal
+              bb(1) = block
+              .prep_red_pbg_gg_bb(red_pbg_1, gg, 1, bb, 1, problem)
+              !!!
+              !.prep_red_pbg(red_pbg_1, geminal, block, problem)
+              if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= .n_geminals))) then
+                 red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
+                 red_pbg_1.calc_overlap_integral(overlap,FALSE)
+                 coef_3 = .bra_set.vec(geminal).coef(b)
+                 if (NOT .bra_is_ket) then
+                    coef_4 = .ket_set.vec(geminal).coef(b)
+                 end
+              end
+           else
+              overlap = ONE
+              coef_3 = .bra_set.vec(geminal).coef(b)
+              if (NOT .bra_is_ket) then
+                 coef_4 = .ket_set.vec(geminal).coef(b)
+              end
+           end
+
+           if (((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= .n_geminals))) OR (ng_1 == 0)) then
+
+              if (geminal == .block_types(block).element(1)) then 
+          
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_1,ind_1 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_1*coef_3*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_1*coef_4*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_2,ind_2 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+                 .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_1,ind_1,r,r /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_3*coef_1*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_3*coef_2*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_2,ind_2,r,r /)
+                 .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+                 .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+              end
+
+              if (geminal == .block_types(block).element(2)) then 
+          
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_1,ind_1 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_1*coef_3*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_1*coef_4*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_2,ind_2 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+                 .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_1,ind_1,r,r /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_3*coef_1*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_3*coef_2*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_2,ind_2,r,r /)
+                 .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+                 .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+              end
+
+              if (geminal == .block_types(block).element(3)) then 
+          
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_1,ind_2 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_1*coef_3*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_1*coef_4*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_2,ind_1 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+                 .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_1,ind_2,r,r /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_3*coef_1*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_3*coef_2*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_2,ind_1,r,r /)
+                 .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+                 .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+              end
+
+              if (geminal == .block_types(block).element(4)) then 
+          
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_1,ind_2 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_1*coef_3*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_1*coef_4*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_2,ind_1 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+                 .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_1,ind_2,r,r /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_3*coef_1*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_3*coef_2*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_2,ind_1,r,r /)
+                 .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+                 .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+              end
+
+              if (geminal == .block_types(block).element(5)) then 
+          
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_1,ind_1 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_1*coef_3*.first_GD2_elt(block)*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_1*coef_4*.first_GD2_elt(block)*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ 0,0,block,block /)
+                 .rdm_2_ab(i).indices = (/ r,r,ind_2,ind_2 /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_1*coef_3*.second_GD2_elt(block)*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_1*coef_4*.second_GD2_elt(block)*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_1,ind_1,r,r /)
+                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_3*coef_1*.first_GD2_elt(block)*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_3*coef_2*.first_GD2_elt(block)*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+
+                 .rdm_2_ab(i).same_block = FALSE
+                 .rdm_2_ab(i).block_numbers = (/ block,block,0,0 /)
+                 .rdm_2_ab(i).indices = (/ ind_2,ind_2,r,r /)
+                 .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+                 if (.bra_is_ket) then
+                    .rdm_2_ab(i).coefficient = coef_3*coef_1*.second_GD2_elt(block)*overlap/.overlap
+                 else
+                    .rdm_2_ab(i).coefficient = coef_3*coef_2*.second_GD2_elt(block)*overlap/.overlap
+                 end
+               !debug stdout.text(" ")
+               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                 i = i+1
+              end
+           end
+        end
+     end
+
    end
 
 
-  calc_2rdm_one_pauli_gen(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
-  !
+   calc_2rdm_one_pauli_gen(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
+   !
      i, i_a, i_b :: INT
      ng_1, ng_2 :: INT
      red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
@@ -10645,7 +12878,269 @@ contains
 
    end
 
+   calc_2rdm_one_pauli_gen_grd(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2)
+   !
+     i, i_a, i_b :: INT
+     ng_1, ng_2 :: INT
+     red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
+     j, m :: INT
+     b1, b2 :: INT
+     block_1, block_2 :: INT
+     geminal_1, geminal_2 :: INT
+     ind_1, ind_2 :: INT
+     coef_1, coef_2 :: REAL
+     coef_prod :: REAL
+     term :: VEC{REAL}(5)
+     overlap :: REAL
+     problem :: BIN
+     t_1, t_2 :: REAL
+     !!!
+     gg, bb :: VEC{INT}(2)
+     stdout.text(" ")
+     stdout.text("Enter subroutine calc_2rdm_one_pauli_gen_grd")
+     stdout.text(" ")
+     !!!
+
+     term = ZERO
+     m = .n_1D_blocks+.n_2D_3typ_blocks
+
+     if (.n_2D_3typ_blocks /= 0) then
+     do b1=.n_1D_blocks+1,m
+        block_1 = b1 - .n_1D_blocks
+        ind_1 = .n_1D_blocks+2*(block_1-1)+1
+        ind_2 = .n_1D_blocks+2*(block_1-1)+2
+        do b2=1,.n_1D_blocks
+           geminal_2 = .nonzero_1ortho_ind(b2)
+           if (geminal_2 == 0) cycle
+           coef_1 = .bra_set.vec(geminal_2).coef(b2)
+           if (NOT .bra_is_ket) then
+              coef_2 = .ket_set.vec(geminal_2).coef(b2)
+           end
+           do j=3,5 ! geminal with SX, ISY or GD2 in block "block_1" are skipped
+              geminal_1 = .block_types(block_1).element(j) 
+              if (geminal_1 /= 0 AND geminal_1 /= geminal_2) then
+                 if (.bra_is_ket) then
+                    coef_prod = coef_1*coef_1*.nonzero_coef_prod(geminal_1).element(block_1-.first_block+1)/TWO
+                 else
+                    coef_prod = coef_1*coef_2*.nonzero_coef_prod(geminal_1).element(block_1-.first_block+1)/TWO
+                 end
+                 if (ng_2 > 0) then
+                    !!!
+                    gg(1) = geminal_1
+                    gg(2) = geminal_2
+                    bb(1) = block_1
+                    .prep_red_pbg_gg_bb(red_pbg_2, gg, 2, bb, 1, problem)
+                    !!!
+                    !.prep_red_pbg_g(red_pbg_2, geminal_1, geminal_2, block_1, problem)
+                    if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= ng_1))) then
+                       red_pbg_2.make_int_term_list(FALSE,FALSE,TRUE)
+                       red_pbg_2.calc_overlap_integral(overlap,FALSE)
+                       term(j) = coef_prod*overlap
+                    end
+                 else
+                    term(j) = coef_prod
+                 end
+              end
+           end
+
+           t_1 = ZERO
+           t_2 = ZERO
+           if (abs(term(5)) > TOL(15)) then
+              t_1 = term(5)*.first_GD2_elt(block_1)*.first_GD2_elt(block_1)
+              t_2 = term(5)*.second_GD2_elt(block_1)*.second_GD2_elt(block_1)
+           end
+
+           if (abs(t_1+term(3)+term(4)) > TOL(15)) then
+              .rdm_2_ab(i).same_block = FALSE
+              .rdm_2_ab(i).block_numbers = (/ 0,block_1,0,block_1 /)
+              .rdm_2_ab(i).indices = (/ b2,ind_1,b2,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = (t_1+term(3)+term(4))/.overlap
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              .rdm_2_aa(i_a)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-alpha element indices (i1, j1, i2, j2)", .rdm_2_aa(i_a).indices)
+            !debug stdout.show("2-RDM alpha-alpha element value", .rdm_2_aa(i_a).coefficient) 
+              .rdm_2_bb(i_b)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM beta-beta element indices (i1, j1, i2, j2)", .rdm_2_bb(i_b).indices)
+            !debug stdout.show("2-RDM beta-beta element value", .rdm_2_bb(i_b).coefficient) 
+              i = i+1
+              i_a = i_a+1
+              i_b = i_b+1
+
+              .rdm_2_ab(i).same_block = FALSE
+              .rdm_2_ab(i).block_numbers = (/ block_1,0,block_1,0 /)
+              .rdm_2_ab(i).indices = (/ ind_1,b2,ind_1,b2 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              i = i+1
+           end
+           if (abs(t_2+term(3)+term(4)) > TOL(15)) then
+              .rdm_2_ab(i).same_block = FALSE
+              .rdm_2_ab(i).block_numbers = (/ 0,block_1,0,block_1 /)
+              .rdm_2_ab(i).indices = (/ b2,ind_2,b2,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+              .rdm_2_ab(i).coefficient = (t_2+term(3)+term(4))/.overlap
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              .rdm_2_aa(i_a)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-alpha element indices (i1, j1, i2, j2)", .rdm_2_aa(i_a).indices)
+            !debug stdout.show("2-RDM alpha-alpha element value", .rdm_2_aa(i_a).coefficient) 
+              .rdm_2_bb(i_b)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM beta-beta element indices (i1, j1, i2, j2)", .rdm_2_bb(i_b).indices)
+            !debug stdout.show("2-RDM beta-beta element value", .rdm_2_bb(i_b).coefficient) 
+              i = i+1
+              i_a = i_a+1
+              i_b = i_b+1
+
+              .rdm_2_ab(i).same_block = FALSE
+              .rdm_2_ab(i).block_numbers = (/ block_1,0,block_1,0 /)
+              .rdm_2_ab(i).indices = (/ ind_2,b2,ind_2,b2 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              i = i+1
+           end
+        end
+     end
+     end
+
+     if (.n_2D_4typ_blocks /= 0) then
+     do b1=m+1,.n_blocks
+        block_1 = b1 - .n_1D_blocks
+        ind_1 = .n_1D_blocks+2*(block_1-1)+1
+        ind_2 = .n_1D_blocks+2*(block_1-1)+2
+        do b2=1,.n_1D_blocks
+           geminal_2 = .nonzero_1ortho_ind(b2)
+           if (geminal_2 == 0) cycle
+           coef_1 = .bra_set.vec(geminal_2).coef(b2)
+           if (NOT .bra_is_ket) then
+              coef_2 = .ket_set.vec(geminal_2).coef(b2)
+           end
+           do j=1,4 ! geminal with ID2, SZ, SX or ISY in block "block_1" are skipped
+              geminal_1 = .block_types(block_1).element(j) 
+              if (geminal_1 /= 0 AND geminal_1 /= geminal_2) then
+                 if (.bra_is_ket) then
+                    coef_prod = coef_1*coef_1*.nonzero_coef_prod(geminal_1).element(block_1-.first_block+1)/TWO
+                 else
+                    coef_prod = coef_1*coef_2*.nonzero_coef_prod(geminal_1).element(block_1-.first_block+1)/TWO
+                 end
+                 if (ng_2 > 0) then
+                    !!!
+                    gg(1) = geminal_1
+                    gg(2) = geminal_2
+                    bb(1) = block_1
+                    .prep_red_pbg_gg_bb(red_pbg_2, gg, 2, bb, 1, problem)
+                    !!!
+                    !.prep_red_pbg_g(red_pbg_2, geminal_1, geminal_2, block_1, problem)
+                    if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= ng_1))) then
+                       red_pbg_2.make_int_term_list(FALSE,FALSE,TRUE)
+                       red_pbg_2.calc_overlap_integral(overlap,FALSE)
+                       term(j) = coef_prod*overlap
+                    else
+                       term(j) = ZERO
+                    end
+                 else
+                    term(j) = coef_prod  
+                 end  
+              else
+                 term(j) = ZERO
+              end
+           end
+           if (abs(sum(term)) > TOL(15)) then
+
+              .rdm_2_ab(i).same_block = FALSE
+              .rdm_2_ab(i).block_numbers = (/ 0,block_1,0,block_1 /)
+              .rdm_2_ab(i).indices = (/ b2,ind_1,b2,ind_1 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = sum(term)/.overlap
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              .rdm_2_aa(i_a)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-alpha element indices (i1, j1, i2, j2)", .rdm_2_aa(i_a).indices)
+            !debug stdout.show("2-RDM alpha-alpha element value", .rdm_2_aa(i_a).coefficient) 
+              .rdm_2_bb(i_b)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM beta-beta element indices (i1, j1, i2, j2)", .rdm_2_bb(i_b).indices)
+            !debug stdout.show("2-RDM beta-beta element value", .rdm_2_bb(i_b).coefficient) 
+              i = i+1
+              i_a = i_a+1
+              i_b = i_b+1
+
+              .rdm_2_ab(i).same_block = FALSE
+              .rdm_2_ab(i).block_numbers = (/ 0,block_1,0,block_1 /)
+              .rdm_2_ab(i).indices = (/ b2,ind_2,b2,ind_2 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              .rdm_2_aa(i_a)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-alpha element indices (i1, j1, i2, j2)", .rdm_2_aa(i_a).indices)
+            !debug stdout.show("2-RDM alpha-alpha element value", .rdm_2_aa(i_a).coefficient) 
+              .rdm_2_bb(i_b)=.rdm_2_ab(i)
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM beta-beta element indices (i1, j1, i2, j2)", .rdm_2_bb(i_b).indices)
+            !debug stdout.show("2-RDM beta-beta element value", .rdm_2_bb(i_b).coefficient) 
+              i = i+1
+              i_a = i_a+1
+              i_b = i_b+1
+
+              .rdm_2_ab(i).same_block = FALSE
+              .rdm_2_ab(i).block_numbers = (/ block_1,0,block_1,0 /)
+              .rdm_2_ab(i).indices = (/ ind_1,b2,ind_1,b2 /)
+              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              i = i+1
+
+              .rdm_2_ab(i).same_block = FALSE
+              .rdm_2_ab(i).block_numbers = (/ block_1,0,block_1,0 /)
+              .rdm_2_ab(i).indices = (/ ind_2,b2,ind_2,b2 /)
+              .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+              .rdm_2_ab(i).coefficient = .rdm_2_ab(i-3).coefficient
+            !debug stdout.text(" ")
+            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
+              i = i+1
+
+           end
+        end
+     end
+     end
+
+     if (.n_2D_3typ_blocks >= 2) then
+        !!!
+        .cas_3typ_3typ_grd(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,m)
+        !!!
+        !.cas_3typ_3typ(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,m)
+     end
+     if (.n_2D_3typ_blocks >= 1 AND .n_2D_4typ_blocks >= 1) then
+        .cas_3typ_4typ(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,m)
+     end
+     if (.n_2D_4typ_blocks >= 2) then
+        .cas_4typ_4typ(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,m)
+     end
+
+   end
    
+
    cas_3typ_3typ(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,m)
    !
      i, i_a, i_b :: INT
@@ -11460,6 +13955,852 @@ contains
         end
      end
    end
+
+   cas_3typ_3typ_grd(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,m)
+   !
+     i, i_a, i_b :: INT
+     ng_1, ng_2 :: INT
+     red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
+     m :: INT
+     j, r, s :: INT
+     b1, b2 :: INT
+     block_1, block_2 :: INT
+     geminal :: INT
+     ind_1, ind_2 :: INT
+     ind_3, ind_4 :: INT
+     coef_1, coef_2 :: REAL
+     overlap :: REAL
+     problem :: BIN
+     !!!
+     gg, bb :: VEC{INT}(2)
+     stdout.text(" ")
+     stdout.text("Enter subroutine cas_3typ_3typ_grd")
+     stdout.text(" ")
+     !!!
+
+     do b1=.n_1D_blocks+1,m-1
+        block_1 = b1 - .n_1D_blocks
+        ind_1 = .n_1D_blocks+2*(block_1-1)+1
+        ind_2 = .n_1D_blocks+2*(block_1-1)+2
+
+        do b2=b1+1,m
+           block_2 = b2 - .n_1D_blocks
+           ind_3 = .n_1D_blocks+2*(block_2-1)+1
+           ind_4 = .n_1D_blocks+2*(block_2-1)+2
+
+           ! case "i1 = j1 and i2 = j2"          
+           r=5
+           if (.block_types(block_1).element(r) /= 0) then
+              s=5
+              if (.block_types(block_1).element(r) == .block_types(block_2).element(s)) then
+                 geminal = .block_types(block_1).element(r)
+                 if (.n_blocks > 2) then
+                    !!!
+                    gg(1) = geminal
+                    bb(1) = block_1
+                    bb(2) = block_2
+                    .prep_red_pbg_gg_bb(red_pbg_1, gg, 1, bb, 2, problem)
+                    !!!
+                    !.prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
+                    if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks-1 >= .n_geminals))) then
+                       red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
+                       red_pbg_1.calc_overlap_integral(overlap,FALSE)
+                       if (.bra_is_ket) then
+                          coef_1 = .bra_set.vec(geminal).coef(b1)*.bra_set.vec(geminal).coef(b2)
+                          coef_2 = .bra_set.vec(geminal).coef(b2)*.bra_set.vec(geminal).coef(b1)
+                       else
+                          coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
+                          coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
+                       end
+                    end
+                 else
+                    if (.bra_is_ket) then
+                       coef_1 = .bra_set.vec(geminal).coef(b1)*.bra_set.vec(geminal).coef(b2)
+                       coef_2 = .bra_set.vec(geminal).coef(b2)*.bra_set.vec(geminal).coef(b1)
+                    else
+                       coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
+                       coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
+                    end
+                    overlap = ONE
+                 end
+
+                 if (((NOT problem) AND ((.first_block == 0) OR (.n_blocks-1 >= .n_geminals))) OR (.n_blocks <= 2)) then
+
+                    .rdm_2_ab(i).same_block = FALSE
+                    .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                    .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_3,ind_3 /)
+                    .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+                    .rdm_2_ab(i).coefficient = coef_1*.first_GD2_elt(block_1)*.first_GD2_elt(block_2)*overlap/.overlap
+                  !debug stdout.text(" ")
+                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                    i = i+1
+
+                    .rdm_2_ab(i).same_block = FALSE
+                    .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                    .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_4,ind_4 /)
+                    .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+                    .rdm_2_ab(i).coefficient = coef_1*.first_GD2_elt(block_1)*.second_GD2_elt(block_2)*overlap/.overlap
+                  !debug stdout.text(" ")
+                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                    i = i+1
+
+                    .rdm_2_ab(i).same_block = FALSE
+                    .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                    .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_3,ind_3 /)
+                    .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+                    .rdm_2_ab(i).coefficient = coef_1*.second_GD2_elt(block_1)*.first_GD2_elt(block_2)*overlap/.overlap
+                  !debug stdout.text(" ")
+                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                    i = i+1
+
+                    .rdm_2_ab(i).same_block = FALSE
+                    .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                    .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_4,ind_4 /)
+                    .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+                    .rdm_2_ab(i).coefficient = coef_1*.second_GD2_elt(block_1)*.second_GD2_elt(block_2)*overlap/.overlap
+                  !debug stdout.text(" ")
+                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                    i = i+1
+
+                    .rdm_2_ab(i).same_block = FALSE
+                    .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                    .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_1,ind_1 /)
+                    .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+                    .rdm_2_ab(i).coefficient = coef_2*.first_GD2_elt(block_2)*.first_GD2_elt(block_1)*overlap/.overlap
+                  !debug stdout.text(" ")
+                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                    i = i+1
+
+                    .rdm_2_ab(i).same_block = FALSE
+                    .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                    .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_2,ind_2 /)
+                    .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+                    .rdm_2_ab(i).coefficient = coef_2*.first_GD2_elt(block_2)*.second_GD2_elt(block_1)*overlap/.overlap
+                  !debug stdout.text(" ")
+                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                    i = i+1
+
+                    .rdm_2_ab(i).same_block = FALSE
+                    .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                    .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_1,ind_1 /)
+                    .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+                    .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_2)*.first_GD2_elt(block_1)*overlap/.overlap
+                  !debug stdout.text(" ")
+                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                    i = i+1
+
+                    .rdm_2_ab(i).same_block = FALSE
+                    .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                    .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_2,ind_2 /)
+                    .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+                    .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_2)*.second_GD2_elt(block_1)*overlap/.overlap
+                  !debug stdout.text(" ")
+                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                    i = i+1
+                 end
+              end
+           end          
+
+           ! case "i1 /= j1 and i2 /= j2"
+         
+           do r=3,4
+              if (.block_types(block_1).element(r) /= 0) then
+                 do s=3,4
+                    if (.block_types(block_1).element(r) == .block_types(block_2).element(s)) then
+                       geminal = .block_types(block_1).element(r)
+                       if (.n_blocks > 2) then
+                          !!!
+                          gg(1) = geminal
+                          bb(1) = block_1
+                          bb(2) = block_2
+                          .prep_red_pbg_gg_bb(red_pbg_1, gg, 1, bb, 2, problem)
+                          !!!
+                          !.prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
+                          if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks-1 >= .n_geminals))) then
+                             red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
+                             red_pbg_1.calc_overlap_integral(overlap,FALSE)
+                             if (.bra_is_ket) then
+                                coef_1 = .bra_set.vec(geminal).coef(b1)*.bra_set.vec(geminal).coef(b2)
+                                coef_2 = .bra_set.vec(geminal).coef(b2)*.bra_set.vec(geminal).coef(b1)
+                             else
+                                coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
+                                coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
+                             end
+                          end
+                       else
+                          if (.bra_is_ket) then
+                             coef_1 = .bra_set.vec(geminal).coef(b1)*.bra_set.vec(geminal).coef(b2)
+                             coef_2 = .bra_set.vec(geminal).coef(b2)*.bra_set.vec(geminal).coef(b1)
+                          else
+                             coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
+                             coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
+                          end
+                          overlap = ONE
+                      end
+
+                      if (((NOT problem) AND ((.first_block == 0) OR (.n_blocks-1 >= .n_geminals))) OR (.n_blocks <= 2)) then
+
+                          .rdm_2_ab(i).same_block = FALSE
+                          .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                          .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_3,ind_4 /)
+                          .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+                          .rdm_2_ab(i).coefficient = coef_1*overlap/.overlap
+                        !debug stdout.text(" ")
+                        !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                        !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                          i = i+1
+
+                          .rdm_2_ab(i).same_block = FALSE
+                          .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                          .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_4,ind_3 /)
+                          .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+                          if (s == 4) then
+                             .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+                          else
+                             .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+                          end
+                        !debug stdout.text(" ")
+                        !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                        !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                          i = i+1
+
+                          .rdm_2_ab(i).same_block = FALSE
+                          .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                          .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_3,ind_4 /)
+                          .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+                          if (r == 4) then
+                             .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
+                          else
+                             .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
+                          end
+                        !debug stdout.text(" ")
+                        !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                        !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                          i = i+1
+
+                          .rdm_2_ab(i).same_block = FALSE
+                          .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                          .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_4,ind_3 /)
+                          .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+                          if (r /= s) then
+                             .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-3).coefficient
+                          else
+                             .rdm_2_ab(i).coefficient = .rdm_2_ab(i-3).coefficient
+                          end
+                        !debug stdout.text(" ")
+                        !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                        !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                          i = i+1
+
+                          .rdm_2_ab(i).same_block = FALSE
+                          .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                          .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_1,ind_2 /)
+                          .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+                          .rdm_2_ab(i).coefficient = coef_2*overlap/.overlap
+                        !debug stdout.text(" ")
+                        !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                        !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                          i = i+1
+
+                          .rdm_2_ab(i).same_block = FALSE
+                          .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                          .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_2,ind_1 /)
+                          .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+                          if (r == 4) then
+                             .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+                          else
+                             .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+                          end
+                        !debug stdout.text(" ")
+                        !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                        !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                          i = i+1
+
+                          .rdm_2_ab(i).same_block = FALSE
+                          .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                          .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_1,ind_2 /)
+                          .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+                          if (s == 4) then
+                             .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
+                          else
+                             .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
+                          end
+                        !debug stdout.text(" ")
+                        !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                        !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                          i = i+1
+
+                          .rdm_2_ab(i).same_block = FALSE
+                          .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                          .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_2,ind_1 /)
+                          .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+                          if (r /= s) then
+                             .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-3).coefficient
+                          else
+                             .rdm_2_ab(i).coefficient = .rdm_2_ab(i-3).coefficient
+                          end
+                        !debug stdout.text(" ")
+                        !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                        !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                          i = i+1
+                       end
+                    end
+                 end
+              end
+           end     
+
+           ! cases "i1 = j1 and i2 /= j2" + "i1 /= j1 and i2 = j2"
+
+           r=5
+           if (.block_types(block_1).element(r) /= 0) then
+              do s=3,4
+                 if (.block_types(block_1).element(r) == .block_types(block_2).element(s)) then
+                    geminal = .block_types(block_1).element(r)
+                    if (.n_blocks > 2) then
+                       !!!
+                       gg(1) = geminal
+                       bb(1) = block_1
+                       bb(2) = block_2
+                       .prep_red_pbg_gg_bb(red_pbg_1, gg, 1, bb, 2, problem)
+                       !!!
+                       !.prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
+                       if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks-1 >= .n_geminals))) then
+                          red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
+                          red_pbg_1.calc_overlap_integral(overlap,FALSE)
+                          if (.bra_is_ket) then
+                             coef_1 = .bra_set.vec(geminal).coef(b1)*.bra_set.vec(geminal).coef(b2)
+                             coef_2 = .bra_set.vec(geminal).coef(b2)*.bra_set.vec(geminal).coef(b1)
+                          else
+                             coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
+                             coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
+                          end
+                       end
+                    else
+                       if (.bra_is_ket) then
+                          coef_1 = .bra_set.vec(geminal).coef(b1)*.bra_set.vec(geminal).coef(b2)
+                          coef_2 = .bra_set.vec(geminal).coef(b2)*.bra_set.vec(geminal).coef(b1)
+                       else
+                          coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
+                          coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
+                       end
+                       overlap = ONE
+                    end
+
+                    if (((NOT problem) AND ((.first_block == 0) OR (.n_blocks-1 >= .n_geminals))) OR (.n_blocks <= 2)) then
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                       .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_3,ind_4 /)
+                       .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+                       .rdm_2_ab(i).coefficient = coef_1*.first_GD2_elt(block_1)*overlap/.overlap
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                       .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_4,ind_3 /)
+                       .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+                       if (s == 4) then
+                          .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+                       else
+                          .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+                       end
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                       .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_3,ind_4 /)
+                       .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
+                       .rdm_2_ab(i).coefficient = coef_1*.second_GD2_elt(block_1)*overlap/.overlap
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                       .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_4,ind_3 /)
+                       .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
+                       if (s == 4) then
+                          .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+                       else
+                          .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+                       end
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                       .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_1,ind_1 /)
+                       .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+                       .rdm_2_ab(i).coefficient = coef_2*.first_GD2_elt(block_1)*overlap/.overlap
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                       .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_2,ind_2 /)
+                       .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
+                       .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_1)*overlap/.overlap
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                       .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_1,ind_1 /)
+                       .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+                       if (s == 4) then
+                          .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
+                       else
+                          .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
+                       end
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                       .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_2,ind_2 /)
+                       .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
+                       if (s == 4) then
+                          .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
+                       else
+                          .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
+                       end
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+                    end
+                 end
+              end
+           end 
+
+           do r=3,4
+              if (.block_types(block_1).element(r) /= 0) then
+                 s=5
+                 if (.block_types(block_1).element(r) == .block_types(block_2).element(s)) then
+                    geminal = .block_types(block_1).element(r)
+                    if (.n_blocks > 2) then
+                       !!!
+                       gg(1) = geminal
+                       bb(1) = block_1
+                       bb(2) = block_2
+                       .prep_red_pbg_gg_bb(red_pbg_1, gg, 1, bb, 2, problem)
+                       !!!
+                       !.prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
+                       if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks-1 >= .n_geminals))) then
+                          red_pbg_1.make_int_term_list(FALSE,FALSE,TRUE)
+                          red_pbg_1.calc_overlap_integral(overlap,FALSE)
+                          if (.bra_is_ket) then
+                             coef_1 = .bra_set.vec(geminal).coef(b1)*.bra_set.vec(geminal).coef(b2)
+                             coef_2 = .bra_set.vec(geminal).coef(b2)*.bra_set.vec(geminal).coef(b1)
+                          else
+                             coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
+                             coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
+                          end
+                       end
+                    else
+                       if (.bra_is_ket) then
+                          coef_1 = .bra_set.vec(geminal).coef(b1)*.bra_set.vec(geminal).coef(b2)
+                          coef_2 = .bra_set.vec(geminal).coef(b2)*.bra_set.vec(geminal).coef(b1)
+                       else
+                          coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
+                          coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
+                       end
+                       overlap = ONE
+                    end
+
+                    if (((NOT problem) AND ((.first_block == 0) OR (.n_blocks-1 >= .n_geminals))) OR (.n_blocks <= 2)) then
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                       .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_3,ind_3 /)
+                       .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+                       .rdm_2_ab(i).coefficient = coef_1*.first_GD2_elt(block_2)*overlap/.overlap
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                       .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_4,ind_4 /)
+                       .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
+                       .rdm_2_ab(i).coefficient = coef_1*.second_GD2_elt(block_2)*overlap/.overlap
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                       .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_3,ind_3 /)
+                       .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+                       if (r == 4) then
+                          .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
+                       else
+                          .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
+                       end
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+                       .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_4,ind_4 /)
+                       .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
+                       if (r == 4) then
+                          .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
+                       else
+                          .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
+                       end
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                       .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_1,ind_2 /)
+                       .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+                       .rdm_2_ab(i).coefficient = coef_2*.first_GD2_elt(block_2)*overlap/.overlap
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                       .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_2,ind_1 /)
+                       .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+                       if (r == 4) then
+                          .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+                       else
+                          .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+                       end
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                       .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_1,ind_2 /)
+                       .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
+                       .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_2)*overlap/.overlap
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+
+                       .rdm_2_ab(i).same_block = FALSE
+                       .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+                       .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_2,ind_1 /)
+                       .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
+                       if (r == 4) then
+                          .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
+                       else
+                          .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
+                       end
+                     !debug stdout.text(" ")
+                     !debug stdout.show("2-RDM element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
+                     !debug stdout.show("2-RDM element value", .rdm_2_ab(i).coefficient)
+                       i = i+1
+                    end
+                 end
+              end
+           end
+
+           ! case "i1 = i2 and j1 /= j2"
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_1,ind_4 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+           
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_1,ind_3 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_2,ind_4 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_2,ind_3 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_3,ind_2 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_3,ind_1 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_4,ind_2 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_4,ind_1 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
+           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           ! case "i1 /= i2 and j1 = j2"
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_2,ind_3 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_2,ind_4 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_1,ind_3 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_1,ind_4 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_4,ind_1 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_4,ind_2 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_3,ind_1 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_3,ind_2 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
+           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           ! case "i1 /= i2 and j1 /= j2"
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_2,ind_4 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_2,ind_3 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_1,ind_4 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_1,ind_3 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_4,ind_2 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_4,ind_1 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_3,ind_2 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_3,ind_1 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           ! case "i1 = i2 and j1 = j2"
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_1,ind_3 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_1,ind_4 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_2,ind_3 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_2,ind_4 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_3,ind_1 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_3,ind_2 /)
+           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_4,ind_1 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+           .rdm_2_ab(i).same_block = FALSE
+           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_4,ind_2 /)
+           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+
+        end
+     end
+   end
+
 
    cas_3typ_4typ(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,m)
    !
