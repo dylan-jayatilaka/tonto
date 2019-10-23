@@ -58,7 +58,7 @@ program run_SFs
    file :: TEXTFILE*
    anharm,disperse,tags :: VEC{STR}*
    c,i,n,charge,mult :: INT
-   do_4_only,extinct,h_ADPs,h_iso,h_pos,radius_is_0,defragment,hart :: BIN
+   do_4_only,extinct,h_ADPs,h_iso,h_pos,radius_is_0,defragment,hart,use_dkh :: BIN
    disk_sfs,included_in_tags,wfn :: BIN
 
    ! Macro to create Tonto system object
@@ -108,6 +108,7 @@ program run_SFs
    ten        = TEN*BOHR_PER_ANGSTROM 
  ! wavelength = -ONE
    wfn        = TRUE
+   use_dkh    = FALSE
 
    ! Get command line !!!!!!!!!
    command_line.set_defaults
@@ -202,6 +203,7 @@ program run_SFs
          case ("complete-mol  ");  defragment = value.to_bin
          case ("dispersion    ");  disperse  => value.split
        ! case ("disk-sfs      ");  disk_sfs   = value.to_bin
+         case ("dkh           ");  use_dkh    = value.to_bin
          case ("dtol          ");  dtol       = value.to_real
          case ("extinction    ");  extinct    = value.to_bin
          case ("fos           ");  fos        = value.to_real
@@ -363,6 +365,12 @@ program run_SFs
          !  stdout.flush    
          !  stdout.text("       Default: f")
          !  stdout.flush    
+            stdout.text("   -dkh [t|f]")
+            stdout.flush    
+            stdout.text("       Whether to use DKH relativistic Hamiltonian.")
+            stdout.flush    
+            stdout.text("       Default: f")
+            stdout.flush    
             stdout.text("   -dtol <dtol>")
             stdout.flush    
             stdout.text("       Convergence tolerance <dtol> for the DIIS extrapolation procedure.")
@@ -782,7 +790,6 @@ program run_SFs
       m.BASE:put
       !!!!!!!!!!
  
- 
       ! Initial SCF
       if(fchk==" ") then
          ! Set Becke grid
@@ -792,19 +799,16 @@ program run_SFs
          m.becke_grid.set_grid_data
  
          m.scfdata.create
-         m.scfdata.set_scf_kind("rhf")
-         m.scfdata.set_initial_density("promolecule")
-         m.scfdata.set_convergence(dtol*0.1)
-         m.scfdata.diis.set_convergence_tolerance(dtol)
-         m.scfdata.set_linear_dependence_tol(ldtol)
-         m.scfdata.finalize
- 
-         ! First SCF
-         m.SCF:scf
- 
-         ! Cluster/ED SCF settings
+         if (mult == 1) then
+            m.scfdata.set_scf_kind(scf)
+         else
+            if (scf == "rhf") then
+               m.scfdata.set_scf_kind("uhf")
+            else
+               m.scfdata.set_scf_kind("uks")
+            end
+         end
          spinorbitals = m.scfdata.spinorbital_kind
-         m.scfdata.set_scf_kind(scf)
          if (scf == "rks") then
             m.scfdata.set_exchange_functional("b3lypgx")
             m.scfdata.set_correlation_functional("b3lypgc")
@@ -815,27 +819,46 @@ program run_SFs
          m.scfdata.set_convergence(dtol*0.1)
          m.scfdata.diis.set_convergence_tolerance(dtol)
          m.scfdata.set_linear_dependence_tol(ldtol)
+         if (use_dkh) then
+            m.scfdata.set_relativity_kind("dkh")
+            m.scfdata.set_using_DK1(TRUE)
+            m.scfdata.set_using_DK2(TRUE)
+            m.scfdata.set_using_DK3(FALSE)
+            m.scfdata.set_using_SO_FDFF_method(FALSE)
+            m.scfdata.set_using_PCE_correction(TRUE)
+            m.scfdata.set_using_DK1_PCE(TRUE)
+            m.scfdata.set_using_DK2_PCE(TRUE)
+         end
+         m.scfdata.set_initial_density("promolecule")
  
          ! Use cluster-charges?
          radius_is_0 = abs(radius) < TOL(2)
          if (NOT radius_is_0) then
+            m.scfdata.finalize
+            m.SCF:scf
+            spinorbitals = m.scfdata.spinorbital_kind
+            if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
+            else;                   m.scfdata.set_initial_density(spinorbitals)
+            end
             m.scfdata.set_using_SC_cluster_charges(TRUE)
             m.scfdata.set_cluster_radius(radius)
             m.scfdata.set_defragment(defragment)              
+            m.scfdata.set_initial_density("promolecule")
          else
             m.scfdata.set_using_SC_cluster_charges(FALSE)      
          end
  
-         m.scfdata.finalize
+!         m.scfdata.finalize
  
-         ! Do cluster/RKS SCF?
-         if (scf=="rks" OR abs(radius) > TOL(2)) &
-            m.SCF:scf
+         ! DO the SCF
+         m.SCF:scf
 
          if (wfn) then
             m.BASE:write_aim2000_wfn_file(job)
             m.BASE:write_florian_wfn_file(job)
          end
+         stdout.flush
+         stdout.text("Finished calculation of wavefunction..")
       else
          ! Read fchk
          m.BASE:read_g09_FChk_file(fchk)
@@ -858,7 +881,6 @@ program run_SFs
       stdout.flush
       stdout.text("Wavefunction is there.")
       stdout.flush
-      stdout.flush
       stdout.text("Making scattering factors...")
       stdout.flush
  
@@ -871,6 +893,7 @@ program run_SFs
       !!!!!!!!!!!!!!!!!!!!
  
       tags.destroy
+
    else ! normal HARt
 
       disk_sfs = FALSE
@@ -985,7 +1008,7 @@ program run_SFs
  
       ! Initial SCF
       m.scfdata.create
-      m.scfdata.set_scf_kind("rhf")
+      m.scfdata.set_scf_kind(scf)
       m.scfdata.set_initial_density("promolecule")
       m.scfdata.set_convergence(TOL(3))
       m.scfdata.diis.set_convergence_tolerance(TOL(2))
@@ -995,7 +1018,6 @@ program run_SFs
  
       ! Cluster/ED SCF settings
       spinorbitals = m.scfdata.spinorbital_kind
-      m.scfdata.set_scf_kind(scf)
       if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
       else;                   m.scfdata.set_initial_density(spinorbitals)
       end
@@ -1006,18 +1028,18 @@ program run_SFs
       ! Use cluster-charges?
       radius_is_0 = abs(radius) < TOL(2)
       if (NOT radius_is_0) then
-            m.scfdata.set_using_SC_cluster_charges(TRUE)
-            m.scfdata.set_cluster_radius(radius)
-            m.scfdata.set_defragment(defragment)               !test Lorraine defrag
+         m.scfdata.set_using_SC_cluster_charges(TRUE)
+         m.scfdata.set_cluster_radius(radius)
+         m.scfdata.set_defragment(defragment)               !test Lorraine defrag
+         m.scfdata.finalize
+         m.SCF:scf
       else
-            m.scfdata.set_using_SC_cluster_charges(FALSE)      !test Lorraine, need scf using initial MOs!!!
+         m.scfdata.set_using_SC_cluster_charges(FALSE)      !test Lorraine, need scf using initial MOs!!!
       end
  
-      m.scfdata.finalize
  
       ! Do initial cluster/RKS SCF?
 !!    if (scf=="rks" OR NOT radius_is_0) &    ! test Lorraine, ALWAYS do the scf from initial MOs!!!
-         m.SCF:scf
  
       ! HAR !!!!!!!!!!!!!!
       m.TAD:HAR_refinement
