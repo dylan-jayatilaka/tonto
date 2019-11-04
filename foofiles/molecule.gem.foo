@@ -276,6 +276,13 @@ contains
    !
    random_guess, hf_guess :: BIN
 
+     stdout.text(" ")
+     stdout.text(" ")
+     stdout.text("================================")
+     stdout.text("Pauli block geminals calculation")
+     stdout.text("================================")
+!     stdout.text(" ")
+
      .pauli_block_geminals.create
      .pauli_block_geminals.check_spin_multiplicity(.spin_multiplicity)
  !    .pauli_block_geminals.set_defaults(n_geminals=.n_a,n_blocks=.n_a+(.n_bf-.n_a+1)/2,mat_size=.n_bf,mol_name=.name,bra_is_ket=TRUE)
@@ -341,7 +348,8 @@ contains
    end
 
    do_PBG_energy ::: leaky 
-   ! perform a geminal mean field calculation
+   ! compute the electronic energy for a set of Pauli block geminals
+   ! (PBG)
 
    ENSURE(.pauli_block_geminals.created,"no pauli_block_geminals info")
    ENSURE(.atom.created,"no atom info")
@@ -362,7 +370,14 @@ contains
      timer_1rdm :: TIME
      timer_2rdm :: TIME
      timer_ham :: TIME
+     timer_grad :: TIME
+     calc_gradient :: BIN
+     nonzero_only_1ortho :: BIN
 
+     stdout.text(" ")
+     stdout.text("==================")
+     stdout.text("Energy calculation")
+     stdout.text("==================")
 
      n_bf = .n_bf
 
@@ -378,6 +393,7 @@ contains
      make_integrals =.pauli_block_geminals.make_integrals
      readin_mos     =.pauli_block_geminals.readin_mos
 
+
      if (make_integrals) then
 
        ! First create the MO integrals on disk
@@ -392,6 +408,7 @@ contains
 
        if (readin_mos) then
 
+         stdout.text(" ")
          if (new_n_bf==n_bf)then
             .FOCK:make_read_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core,S_new=S_mat)
 !            if (do_electric_dipole) .FOCK:make_read_MO_EDM_integrals
@@ -399,8 +416,6 @@ contains
             .FOCK:make_read_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core,new_n_bf=new_n_bf,S_new=S_mat)
 !            if (do_electric_dipole) .FOCK:make_read_MO_EDM_integrals(new_n_bf=new_n_bf)
          end
-
-
 
        else
 
@@ -428,140 +443,352 @@ contains
 
      end
 
-! davide: 19-11-2018
+
+! davide: 04-11-2019
 
      timer.start_timing
      
-     !.pauli_block_geminals.calc_overlap_integral
      timer_ov.start_timing
-     ! step 1
+     !
+     ! step 1: calculation of the wavefunction squared norm
+     !
      .pauli_block_geminals.calc_overlap_integral(overlap)
      !
      timer_ov.stop_timing
      stdout.show("Time taken (in sec) ov: ",timer_ov.elapsed_time_s,14)
      .pauli_block_geminals.overlap = overlap
      !
-!     if (NOT .pauli_block_geminals.gen_block) then
-!     timer_1rdm.start_timing
-!        ! step 2
-!        .pauli_block_geminals.calc_1rdm
-!        !
-!     timer_1rdm.stop_timing
-!     stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
-!     timer_2rdm.start_timing
-!        ! step 3
-!        .pauli_block_geminals.calc_2rdm
-!        !
-!     timer_2rdm.stop_timing
-!     stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
-!     else
-!        ! steps 2 and 3
-!        .pauli_block_geminals.calc_1rdm_gen
-!        .pauli_block_geminals.calc_2rdm_gen
-!        !
-!     end
+!    !!!
+     timer_1rdm.start_timing
+!    !!!
      !
+     ! step 2: calculation of the 1-electron density matrix (1RDM)
+     !         (the 1RDM is not used in the calculation of the energy)
      !
-     if (.pauli_block_geminals.gen_block) then
-!       !!!
-        timer_1rdm.start_timing
-!       !!!
-        ! step 2
-        .pauli_block_geminals.calc_1rdm_gen
-        !
-!       !!!
-        timer_1rdm.stop_timing
-        stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
-        timer_2rdm.start_timing
-!       !!!
-        ! step 3
-        .pauli_block_geminals.calc_2rdm_gen
-!        !!!
-!        stdout.text(" ")
-!        stdout.show("calc_gradient =",.pauli_block_geminals.calc_gradient)
-!        stdout.text(" ")
-!        if (.pauli_block_geminals.calc_gradient) then
-!           .pauli_block_geminals.calc_2rdm_gen_grd
-!        else
-!           .pauli_block_geminals.calc_2rdm_gen
-!        end
-!        !!!
-        !
-!       !!!
-        timer_2rdm.stop_timing
-        stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
-!       !!!
-     else
-!       !!!
-        timer_1rdm.start_timing
-!       !!!
-        ! step 2
-        .pauli_block_geminals.calc_1rdm
-        !
-!       !!!
-        timer_1rdm.stop_timing
-        stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
-        timer_2rdm.start_timing
-!       !!!
-        ! step 3
-        .pauli_block_geminals.calc_2rdm
-!        !!!
-!        stdout.text(" ")
-!        stdout.show("calc_gradient =",.pauli_block_geminals.calc_gradient)
-!        stdout.text(" ")
-!        if (.pauli_block_geminals.calc_gradient) then
-!           .pauli_block_geminals.calc_2rdm_grd
-!        else
-!           .pauli_block_geminals.calc_2rdm
-!        end
-!        !!!
-        !
-!       !!!
-        timer_2rdm.stop_timing
-        stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
-!       !!!
+     .pauli_block_geminals.calc_1rdm_gen
+     !
+!    !!!
+     timer_1rdm.stop_timing
+     stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
+     timer_2rdm.start_timing
+     !!!
+     ! check if the calculation of the gradient is requested
+     calc_gradient = FALSE
+     if (.pauli_block_geminals.calc_gradient) then
+        .pauli_block_geminals.check_if_nonzero_only_1ortho(nonzero_only_1ortho)
+        if (nonzero_only_1ortho) then
+        !if (.pauli_block_geminals.n_2D_blocks == 0) then
+           calc_gradient = TRUE
+           stdout.text(" ")
+           stdout.text("Calculation of the energy gradient will be performed")
+           stdout.text(" ")
+        else
+           stdout.text(" ")
+           stdout.text("Calculation of the energy derivatives with respect to")
+           stdout.text("the 2D-block coefficients is not implemented yet:")
+           stdout.text("the energy gradient will not be computed")
+           stdout.text(" ")
+        end
      end
      !
+     ! step 3: calculation of the 2-electron density matrix (2RDM)
+     !
+     if (calc_gradient) then
+        ! if the calculation of the gradient is requested
+        ! (in addition to the energy)
+        .pauli_block_geminals.calc_2rdm_gen_grd
+     else
+        ! if only the energy has to be computed
+        .pauli_block_geminals.calc_2rdm_gen
+     end
+     !
+!    !!!
+     timer_2rdm.stop_timing
+     stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
+!    !!!
+     !
      timer_ham.start_timing
-     ! step 4
+     !
+     ! step 4: calculation of the electronic energy
+     !
      .pauli_block_geminals.make_hamiltonian(ham) 
      !
      timer_ham.stop_timing
      stdout.show("Time taken (in sec) ham: ",timer_ham.elapsed_time_s,14)
+     !
+     ! step 5: calculation of the energy gradient WRT the block
+     !         coefficients (if requested)
+     !
+     if (calc_gradient) then
+        !!!
+        timer_grad.start_timing
+        !!!
+        .pauli_block_geminals.calc_energy_gradient
+        !!!
+        timer_grad.stop_timing
+        stdout.show("Time taken (in sec) grad: ",timer_grad.elapsed_time_s,14)
+        !!!
+     end
+     !
      timer.stop_timing
      stdout.text(" ")
      stdout.show("Time taken (in sec) : ",timer.elapsed_time_s,14)
      stdout.show("Time taken : ",timer.elapsed_time5,8)
      stdout.text(" ")
-     stop  
-
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!     ! generation of a second set of geminals
-!     .pauli_block_geminals.destroy_nonzero_coef
-!     !
-!     .pauli_block_geminals.random_geminals_generator
-!     .pauli_block_geminals.norm_gem
-!     !
-!     stop  
-!     .pauli_block_geminals.set_matrix_form
-!     .pauli_block_geminals.find_nonzero_coef
-!     .pauli_block_geminals.make_int_term_list
-!     !.pauli_block_geminals.calc_overlap_integral
-!
-!     .pauli_block_geminals.calc_overlap_integral(overlap)
-!     .pauli_block_geminals.overlap = overlap
-!     .pauli_block_geminals.calc_1rdm
-!     .pauli_block_geminals.calc_2rdm   
-!     .pauli_block_geminals.make_hamiltonian(ham)  
-!
-!     !stop
-!! de
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+! de
 
    end
+
+!   do_PBG_energy ::: leaky 
+!   ! perform a geminal mean field calculation
+!
+!   ENSURE(.pauli_block_geminals.created,"no pauli_block_geminals info")
+!   ENSURE(.atom.created,"no atom info")
+!   ENSURE(.basis_info_made,"no basis info")
+!
+!     v :: MAT4{REAL}*
+!     eri_archive :: ARCHIVE
+!     make_integrals, readin_mos :: BIN
+!     n_bf, new_n_bf :: INT
+!     overlap :: REAL
+!     ham :: REAL
+!     nb_pauli_blocks,i :: INT
+!     S_mat :: MAT{REAL}*
+!!     do_electric_dipole :: BIN
+!     norm :: REAL
+!     timer :: TIME
+!     timer_ov :: TIME
+!     timer_1rdm :: TIME
+!     timer_2rdm :: TIME
+!     timer_ham :: TIME
+!     gen_routines :: BIN
+!     calc_gradient :: BIN
+!
+!     ! starting calculation of the (electronic) energy
+!     stdout.text(" ")
+!     stdout.text("==================")
+!     stdout.text("Energy calculation")
+!     stdout.text("==================")
+!
+!     n_bf = .n_bf
+!
+!     ! Ensure 1-electron integrals
+!     .INTS:make_overlap_matrix
+!     .SCF:make_core_matrix
+!
+!!     do_electric_dipole = any(.pauli_block_geminals.do_electric_dipole)
+!!     if (do_electric_dipole) then
+!!        .pauli_block_geminals.spectrum.nuclear_electric_dipole = .BASE:nuclear_dipole_moment
+!!     end
+!
+!     make_integrals =.pauli_block_geminals.make_integrals
+!     readin_mos     =.pauli_block_geminals.readin_mos
+!
+!
+!     if (make_integrals) then
+!
+!       ! First create the MO integrals on disk
+!       v.create(n_bf,n_bf,n_bf,n_bf)
+!       .FOCK:make_ERI_integrals(v)
+!       .pauli_block_geminals.add_core = TRUE
+!
+!       new_n_bf = .pauli_block_geminals.mat_size
+!       DIE_IF(new_n_bf>n_bf OR new_n_bf<0,"invalid orbital number")
+!
+!       eri_archive.set(.name,"h_integrals")
+!
+!       if (readin_mos) then
+!
+!         stdout.text(" ")
+!         if (new_n_bf==n_bf)then
+!            .FOCK:make_read_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core,S_new=S_mat)
+!!            if (do_electric_dipole) .FOCK:make_read_MO_EDM_integrals
+!         else
+!            .FOCK:make_read_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core,new_n_bf=new_n_bf,S_new=S_mat)
+!!            if (do_electric_dipole) .FOCK:make_read_MO_EDM_integrals(new_n_bf=new_n_bf)
+!         end
+!
+!       else
+!
+!         if (new_n_bf==n_bf)then
+!            .FOCK:make_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core)
+!!            if(do_electric_dipole) .FOCK:make_MO_EDM_integrals
+!         else
+!            .FOCK:make_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core,new_n_bf=new_n_bf)
+!!            if(do_electric_dipole) .FOCK:make_MO_EDM_integrals(new_n_bf=new_n_bf)
+!         end
+!
+!       end
+!
+!       v.destroy      
+!
+!       stdout.text(" ")
+!       stdout.text("an integral file has been saved on disk")
+!       stdout.text(" ")
+!
+!     else
+!
+!       stdout.text(" ")
+!       stdout.text("using old integral file")
+!       stdout.text(" ")
+!
+!     end
+!
+!
+!! davide: 19-11-2018
+!
+!     timer.start_timing
+!     
+!     timer_ov.start_timing
+!     ! step 1
+!     .pauli_block_geminals.calc_overlap_integral(overlap)
+!     !
+!     timer_ov.stop_timing
+!     stdout.show("Time taken (in sec) ov: ",timer_ov.elapsed_time_s,14)
+!     .pauli_block_geminals.overlap = overlap
+!     !
+!!     if (NOT .pauli_block_geminals.gen_block) then
+!!     timer_1rdm.start_timing
+!!        ! step 2
+!!        .pauli_block_geminals.calc_1rdm
+!!        !
+!!     timer_1rdm.stop_timing
+!!     stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
+!!     timer_2rdm.start_timing
+!!        ! step 3
+!!        .pauli_block_geminals.calc_2rdm
+!!        !
+!!     timer_2rdm.stop_timing
+!!     stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
+!!     else
+!!        ! steps 2 and 3
+!!        .pauli_block_geminals.calc_1rdm_gen
+!!        .pauli_block_geminals.calc_2rdm_gen
+!!        !
+!!     end
+!     !
+!     !
+!     gen_routines = (.pauli_block_geminals.gen_block OR .pauli_block_geminals.calc_gradient)
+!!     if (.pauli_block_geminals.gen_block) then
+!     if (gen_routines) then
+!        !
+!        ! if 2D-3typ blocks are present or the calculation of the
+!        ! gradient is requested (in addition to the energy)
+!        !
+!!       !!!
+!        timer_1rdm.start_timing
+!!       !!!
+!        ! step 2
+!        .pauli_block_geminals.calc_1rdm_gen
+!        !
+!!       !!!
+!        timer_1rdm.stop_timing
+!        stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
+!        timer_2rdm.start_timing
+!!       !!!
+!        ! step 3
+!!!!        .pauli_block_geminals.calc_2rdm_gen
+!        !!!
+!        calc_gradient = FALSE
+!        if (.pauli_block_geminals.calc_gradient) then
+!           if (.pauli_block_geminals.n_2D_blocks == 0) then
+!              calc_gradient = TRUE
+!              stdout.text(" ")
+!              stdout.text("Calculation of the energy gradient will be performed")
+!              stdout.text(" ")
+!           else
+!              stdout.text(" ")
+!              stdout.text("Calculation of the energy derivatives with respect to")
+!              stdout.text("the 2D-block coefficients is not implemented yet:")
+!              stdout.text("the energy gradient will not be computed")
+!              stdout.text(" ")
+!           end
+!        end
+!        !
+!        if (calc_gradient) then
+!           .pauli_block_geminals.calc_2rdm_gen_grd
+!        else
+!           .pauli_block_geminals.calc_2rdm_gen
+!        end
+!        !!!
+!        !
+!!       !!!
+!        timer_2rdm.stop_timing
+!        stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
+!!       !!!
+!     else
+!        !
+!        ! if only 2D-4typ blocks are present (in addition to the
+!        ! 1D blocks), and the calculation of the gradient is not
+!        ! requested
+!        !
+!!       !!!
+!        timer_1rdm.start_timing
+!!       !!!
+!        ! step 2
+!        .pauli_block_geminals.calc_1rdm
+!        !
+!!       !!!
+!        timer_1rdm.stop_timing
+!        stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
+!        timer_2rdm.start_timing
+!!       !!!
+!        ! step 3
+!        .pauli_block_geminals.calc_2rdm
+!        !
+!!       !!!
+!        timer_2rdm.stop_timing
+!        stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
+!!       !!!
+!     end
+!     !
+!     timer_ham.start_timing
+!     ! step 4
+!     .pauli_block_geminals.make_hamiltonian(ham) 
+!     !
+!     timer_ham.stop_timing
+!     stdout.show("Time taken (in sec) ham: ",timer_ham.elapsed_time_s,14)
+!     timer.stop_timing
+!     stdout.text(" ")
+!     stdout.show("Time taken (in sec) : ",timer.elapsed_time_s,14)
+!     stdout.show("Time taken : ",timer.elapsed_time5,8)
+!     stdout.text(" ")
+!     !!!
+!!     if (.pauli_block_geminals.calc_gradient) then
+!     if (calc_gradient) then
+!        .pauli_block_geminals.calc_energy_gradient
+!     end
+!     !!!
+!!     stop  
+!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!     ! generation of a second set of geminals
+!!     .pauli_block_geminals.destroy_nonzero_coef
+!!     !
+!!     .pauli_block_geminals.random_geminals_generator
+!!     .pauli_block_geminals.norm_gem
+!!     !
+!!     stop  
+!!     .pauli_block_geminals.set_matrix_form
+!!     .pauli_block_geminals.find_nonzero_coef
+!!     .pauli_block_geminals.make_int_term_list
+!!     !.pauli_block_geminals.calc_overlap_integral
+!!
+!!     .pauli_block_geminals.calc_overlap_integral(overlap)
+!!     .pauli_block_geminals.overlap = overlap
+!!     .pauli_block_geminals.calc_1rdm
+!!     .pauli_block_geminals.calc_2rdm   
+!!     .pauli_block_geminals.make_hamiltonian(ham)  
+!!
+!!     !stop
+!!! de
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!
+!   end
 
    do_PBG_optimization ::: leaky 
-   ! perform a geminal mean field calculation
+   ! perform the optimization of the block coefficients 
+   ! of the Pauli block geminals
 
    ENSURE(.pauli_block_geminals.created,"no pauli_block_geminals info")
    ENSURE(.atom.created,"no atom info")
@@ -583,6 +810,11 @@ contains
      timer_2rdm :: TIME
      timer_ham :: TIME
 
+     ! starting optimization of block coefficients
+     stdout.text(" ")
+     stdout.text("==================================")
+     stdout.text("Optimization of block coefficients")
+     stdout.text("==================================")
 
      n_bf = .n_bf
 
@@ -611,7 +843,7 @@ contains
        eri_archive.set(.name,"h_integrals")
 
        if (readin_mos) then
-
+         stdout.text(" ")
          if (new_n_bf==n_bf)then
             .FOCK:make_read_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core,S_new=S_mat)
 !            if (do_electric_dipole) .FOCK:make_read_MO_EDM_integrals
@@ -619,11 +851,7 @@ contains
             .FOCK:make_read_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core,new_n_bf=new_n_bf,S_new=S_mat)
 !            if (do_electric_dipole) .FOCK:make_read_MO_EDM_integrals(new_n_bf=new_n_bf)
          end
-
-
-
        else
-
          if (new_n_bf==n_bf)then
             .FOCK:make_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core)
 !            if(do_electric_dipole) .FOCK:make_MO_EDM_integrals
@@ -631,7 +859,6 @@ contains
             .FOCK:make_MO_ERI_integrals(v,eri_archive,add_core=.pauli_block_geminals.add_core,new_n_bf=new_n_bf)
 !            if(do_electric_dipole) .FOCK:make_MO_EDM_integrals(new_n_bf=new_n_bf)
          end
-
        end
 
        v.destroy      
@@ -648,135 +875,14 @@ contains
 
      end
 
-! davide: 19-11-2018
 
-     timer.start_timing
-     
-     !.pauli_block_geminals.calc_overlap_integral
-     timer_ov.start_timing
-     ! step 1
-     .pauli_block_geminals.calc_overlap_integral(overlap)
+! davide: 03-11-2019
      !
-     timer_ov.stop_timing
-     stdout.show("Time taken (in sec) ov: ",timer_ov.elapsed_time_s,14)
-     .pauli_block_geminals.overlap = overlap
+     ! call the routine for optimization of block coefficients
      !
-!     if (NOT .pauli_block_geminals.gen_block) then
-!     timer_1rdm.start_timing
-!        ! step 2
-!        .pauli_block_geminals.calc_1rdm
-!        !
-!     timer_1rdm.stop_timing
-!     stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
-!     timer_2rdm.start_timing
-!        ! step 3
-!        .pauli_block_geminals.calc_2rdm
-!        !
-!     timer_2rdm.stop_timing
-!     stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
-!     else
-!        ! steps 2 and 3
-!        .pauli_block_geminals.calc_1rdm_gen
-!        .pauli_block_geminals.calc_2rdm_gen
-!        !
-!     end
-     !
-     !
-     if (.pauli_block_geminals.gen_block) then
-!       !!!
-        timer_1rdm.start_timing
-!       !!!
-        ! step 2
-        .pauli_block_geminals.calc_1rdm_gen
-        !
-!       !!!
-        timer_1rdm.stop_timing
-        stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
-        timer_2rdm.start_timing
-!       !!!
-        ! step 3
-        .pauli_block_geminals.calc_2rdm_gen
-!        !!!
-!        stdout.text(" ")
-!        stdout.show("calc_gradient =",.pauli_block_geminals.calc_gradient)
-!        stdout.text(" ")
-!        if (.pauli_block_geminals.calc_gradient) then
-!           .pauli_block_geminals.calc_2rdm_gen_grd
-!        else
-!           .pauli_block_geminals.calc_2rdm_gen
-!        end
-!        !!!
-        !
-!       !!!
-        timer_2rdm.stop_timing
-        stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
-!       !!!
-     else
-!       !!!
-        timer_1rdm.start_timing
-!       !!!
-        ! step 2
-        .pauli_block_geminals.calc_1rdm
-        !
-!       !!!
-        timer_1rdm.stop_timing
-        stdout.show("Time taken (in sec) 1rdm: ",timer_1rdm.elapsed_time_s,14)
-        timer_2rdm.start_timing
-!       !!!
-        ! step 3
-        .pauli_block_geminals.calc_2rdm
-!        !!!
-!        stdout.text(" ")
-!        stdout.show("calc_gradient =",.pauli_block_geminals.calc_gradient)
-!        stdout.text(" ")
-!        if (.pauli_block_geminals.calc_gradient) then
-!           .pauli_block_geminals.calc_2rdm_grd
-!        else
-!           .pauli_block_geminals.calc_2rdm
-!        end
-!        !!!
-        !
-!       !!!
-        timer_2rdm.stop_timing
-        stdout.show("Time taken (in sec) 2rdm: ",timer_2rdm.elapsed_time_s,14)
-!       !!!
-     end
-     !
-     timer_ham.start_timing
-     ! step 4
-     .pauli_block_geminals.make_hamiltonian(ham) 
-     !
-     timer_ham.stop_timing
-     stdout.show("Time taken (in sec) ham: ",timer_ham.elapsed_time_s,14)
-     timer.stop_timing
-     stdout.text(" ")
-     stdout.show("Time taken (in sec) : ",timer.elapsed_time_s,14)
-     stdout.show("Time taken : ",timer.elapsed_time5,8)
-     stdout.text(" ")
-     stop  
-
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!     ! generation of a second set of geminals
-!     .pauli_block_geminals.destroy_nonzero_coef
-!     !
-!     .pauli_block_geminals.random_geminals_generator
-!     .pauli_block_geminals.norm_gem
-!     !
-!     stop  
-!     .pauli_block_geminals.set_matrix_form
-!     .pauli_block_geminals.find_nonzero_coef
-!     .pauli_block_geminals.make_int_term_list
-!     !.pauli_block_geminals.calc_overlap_integral
-!
-!     .pauli_block_geminals.calc_overlap_integral(overlap)
-!     .pauli_block_geminals.overlap = overlap
-!     .pauli_block_geminals.calc_1rdm
-!     .pauli_block_geminals.calc_2rdm   
-!     .pauli_block_geminals.make_hamiltonian(ham)  
-!
-!     !stop
-!! de
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     .pauli_block_geminals.optimize_coef
+! de
 
    end
+
 end
