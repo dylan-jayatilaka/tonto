@@ -24,7 +24,7 @@ program run_SFs
 
    implicit none
 
-   allowed_bases :: VEC{STR}(len=11,9)
+   allowed_bases :: VEC{STR}(len=11,11)
 
    data allowed_bases/ &
       "STO-3G     ", &
@@ -33,8 +33,10 @@ program run_SFs
       "def2-TZVPP ", &
       "cc-pVDZ    ", &
       "cc-pVTZ    ", &
-      "x2c-SVPall ", &
-      "x2c-TZVPall", &
+      "x2c-SVP    ", &
+      "x2c-TZVP   ", &
+      "x2c-TZVPP  ", &
+      "6-311G(d,p)", &
       "cc-pVQZ    "  /
 
    grid_levels :: VEC{STR}(len=9,6)
@@ -58,7 +60,7 @@ program run_SFs
    file :: TEXTFILE*
    anharm,disperse,tags :: VEC{STR}*
    c,i,n,charge,mult,nr_el :: INT
-   do_4_only,extinct,h_ADPs,h_iso,h_pos,radius_is_0,defragment,hart,use_dkh :: BIN
+   do_4_only,extinct,h_ADPs,h_iso,h_pos,radius_is_0,defragment,hart,use_dkh,restart_scf :: BIN
    disk_sfs,included_in_tags,wfn :: BIN
 
    ! Macro to create Tonto system object
@@ -99,6 +101,7 @@ program run_SFs
    out        = " "
  ! radius     = EIGHT*BOHR_PER_ANGSTROM 
    radius     = ZERO
+   restart_scf= FALSE
    defragment = TRUE
    shx_f2     = " "
    std_f2     = " "
@@ -217,6 +220,7 @@ program run_SFs
          case ("job           ") ! already dealt with above
        ! case ("ldtol         ");  ldtol      = value.to_real
          case ("mult          ");  mult       = value.to_int
+         case ("restart-scf   ");  restart_scf= value.to_bin
          case ("shelx-f       ");  shx_f      = value
          case ("shelx-f2      ");  shx_f2     = value
          case ("std-f         ");  std_f      = value
@@ -308,12 +312,13 @@ program run_SFs
             stdout.flush    
             stdout.text("       Other allowed values for <basis> are:")
             stdout.flush
-            stdout.text("       Testing    Adequate    Excellent     Benchmark    Availability")
-            stdout.text("       ______________________________________________________________")
+            stdout.text("       Testing    Adequate    Excellent     Benchmark    Availability    ")
+            stdout.text("       __________________________________________________________________")
             stdout.flush                              
-            stdout.text("       STO-3G     def2-SVP    def2-TZVP    def2-TZVPP    H--Kr       ")
-            stdout.text("                   cc-pVDZ      cc-pVTZ       cc-pVQZ    H--Kr (No K)")
-            stdout.text("       ______________________________________________________________")
+            stdout.text("       STO-3G     def2-SVP    def2-TZVP    def2-TZVPP    H--Kr           ")
+            stdout.text("                   cc-pVDZ      cc-pVTZ       cc-pVQZ    H--Kr (No K)    ")
+            stdout.text("                   x2c-SVP     x2c-TZVP     x2c-TZVPP    H--Rn (Use DKH!)")
+            stdout.text("       __________________________________________________________________")
             stdout.flush                               
             stdout.text("       Additional bases may be added into the <basis-dir> folder from the EMSL")
             stdout.text("       basis-set library, if required. See examples in the <basis-dir> folder.")
@@ -389,6 +394,14 @@ program run_SFs
           ! stdout.text("       Refine only the 4th order Gram-Charlier coefficients, leave any")
           ! stdout.text("       3rd order coefficients unchanged. If not specified in the CIF")
           ! stdout.text("       initial coeffiicents are assumed to be zero.")
+            stdout.flush
+            stdout.text("   -fchk <FChk file>")
+            stdout.flush    
+            stdout.text("       The FChk file to be used as the wavefunction for SF calculation.")
+            stdout.text("       The scf switch needs to be of matching type used in the")
+            stdout.text("       wavefunction calculation.")
+            stdout.flush    
+            stdout.text("       <*.fchk> path or filename of the FChk in the current directory.")
             stdout.flush    
             stdout.text("   -fos <ratio>")
             stdout.flush    
@@ -459,6 +472,12 @@ program run_SFs
             stdout.text("       The multiplicity of the <wavefunction> i.e. <m>=2S+1 where S is the total spin.")
             stdout.text("       Default: 1.")
             stdout.flush    
+            stdout.text("   -restart-scf [t|f]")
+            stdout.flush    
+            stdout.text("       Enabling the read-in of a previously calculated wavefunctio by ',restricted' files.")
+            stdout.text("       These files need to be present in the working directory")
+            stdout.text("       Default: f")
+            stdout.flush    
             stdout.text("   -scf <wavefunction>")
             stdout.flush    
             stdout.text("       The scf <wavefunction> to be used. Allowed options:")
@@ -471,15 +490,6 @@ program run_SFs
           ! stdout.text("       uks     unrestricted Kohn-Sham/BLYP")
           ! stdout.text("       gchf    general-complex (relativistic) Hartree-Fock")
           ! stdout.flush    
-            stdout.flush
-            stdout.text("   -fchk <FChk file>")
-            stdout.flush    
-            stdout.text("       The FChk file to be used as the wavefunction for SF calculation.")
-            stdout.text("       The scf switch needs to be of matching type used in the")
-            stdout.text("       wavefunction calculation.")
-            stdout.flush    
-            stdout.text("       <*.fchk> path or filename of the FChk in the current directory.")
-            stdout.flush    
           ! stdout.text("   -scf-guess [mos|density]")
           ! stdout.flush    
           ! stdout.text("       Initial guess for SCF <wavefunction> method.")
@@ -730,6 +740,7 @@ program run_SFs
          stdout.flush
          stdout.text("Fragment atom and corresponding unique atom: (* marks atoms that are not symmetry generated)")
          stdout.flush
+         tags = " "
          n = ZERO
          do i=1,m.crystal.fragment_atom.size
             c = m.crystal.unique_atom_for_frag_atom(i)
@@ -750,6 +761,8 @@ program run_SFs
       do i=1,m.crystal.fragment_atom.size
          nr_el = nr_el + m.crystal.fragment_atom(i).atomic_number
       end
+
+      nr_el = nr_el - charge
  
       ! Set job name
       m.BASE:set_name(job)
@@ -834,9 +847,9 @@ program run_SFs
             m.scfdata.set_exchange_functional("b3lypgx")
             m.scfdata.set_correlation_functional("b3lypgc")
          end
-         if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
-         else;                   m.scfdata.set_initial_density(spinorbitals)
-         end
+         !if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
+         !else;                   m.scfdata.set_initial_density(spinorbitals)
+         !end
          m.scfdata.set_convergence(dtol*0.1)
          m.scfdata.diis.set_convergence_tolerance(dtol)
          m.scfdata.set_linear_dependence_tol(ldtol)
@@ -850,21 +863,29 @@ program run_SFs
             m.scfdata.set_using_DK1_PCE(TRUE)
             m.scfdata.set_using_DK2_PCE(TRUE)
          end
-         m.scfdata.set_initial_density("promolecule")
+         if (restart_scf) then
+            m.scfdata.set_initial_density("restricted")
+!            m.scfdata.set_initial_MOs(spinorbitals)
+         else
+            m.scfdata.set_initial_density("promolecule")
+         end if
+
  
          ! Use cluster-charges?
          radius_is_0 = abs(radius) < TOL(2)
          if (NOT radius_is_0) then
-            m.scfdata.finalize
-            m.SCF:scf
-            spinorbitals = m.scfdata.spinorbital_kind
-            if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
-            else;                   m.scfdata.set_initial_density(spinorbitals)
-            end
+            !m.scfdata.finalize
+            if (NOT restart_scf) then
+               m.SCF:scf
+               m.scfdata.set_initial_density("restricted")
+            end if
+            !spinorbitals = m.scfdata.spinorbital_kind
+            !if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
+            !else;                   m.scfdata.set_initial_density(spinorbitals)
+            !end
             m.scfdata.set_using_SC_cluster_charges(TRUE)
             m.scfdata.set_cluster_radius(radius)
             m.scfdata.set_defragment(defragment)              
-            m.scfdata.set_initial_density("promolecule")
          else
             m.scfdata.set_using_SC_cluster_charges(FALSE)      
          end
