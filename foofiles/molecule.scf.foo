@@ -7396,7 +7396,7 @@ contains
    end
 
    fragment_SCF_MPI(restart,spin_density,do_SFs) ::: leaky
-   ! Do an fragment SCF calculation on each of the .atom_group.mol
+   ! Do an MFCC SCF calculation on each of the .atom_group.mol
    ! molecules and calculate the structure factors.
       self :: INOUT
       restart :: BIN, optional, IN
@@ -7414,8 +7414,13 @@ contains
       mol :: MOLECULE*
       n_group,g :: INT
       SFs :: BIN
+#ifdef MPI      
       x,w :: INT
       n_bf :: VEC{INT}@
+#endif
+
+      print*, "SCF 1"
+      call EXECUTE_COMMAND_LINE("ps  -C tonto-3g -o pmem")
 
       ! Do structure factors?
       SFs = FALSE
@@ -7428,24 +7433,33 @@ contains
       ! Output details?
       .BASE:put_atom_group_mols
 
+      print*, "SCF 2"
+      call EXECUTE_COMMAND_LINE("ps  -C tonto-3g -o pmem")
+
+#ifdef MPI      
+
+      if (tonto.p_loop_list.deallocated) then
+
+         tonto.p_loop_list.destroy
+         tonto.p_loop_list.create(.atom_group.dim)
+         n_bf.create(.atom_group.dim)
+         do x = 1, .atom_group.dim
+            n_bf(x) = .atom_group(x).mol.n_bf
+         end
+         n_bf.quick_sort(tonto.p_loop_list,decreasing_order=TRUE)
+         n_bf.destroy
+
+       ! stdout.text("Number of basis functions:")
+       ! stdout.put(n_bf)
+       ! stdout.text("Indices of fragments sorted:")
+       ! stdout.put(tonto.p_loop_list)
+
+      end
+      
       ! Loop over atom group "g"
       if (tonto.n_processors > 2) then
          
-         if (tonto.p_loop_list.deallocated) then
-
-            tonto.p_loop_list.destroy
-            tonto.p_loop_list.create(.atom_group.dim)
-            n_bf.create(.atom_group.dim)
-            do x = 1, .atom_group.dim
-               n_bf(x) = .atom_group(x).mol.n_bf
-            end
-            n_bf.quick_sort(tonto.p_loop_list,decreasing_order=TRUE)
-            n_bf.destroy
-
-         end
-      
          tonto.setup_p_loop(w,lb=1,ub=.atom_group.dim)
-
          do
 
             ! NOTE: call this before exit conditions
@@ -7468,6 +7482,7 @@ contains
                mol.crystal => .crystal
 
             ! Set up SCF options
+            mol.BASE:set_scf_guess_defaults_from(.scfdata)
             mol.scfdata.set_output(TRUE)
             if (present(restart)) then
                if (mol.atom.dim==1) then
@@ -7483,7 +7498,7 @@ contains
             name = "stdout." // trim(mol.name)
             stdout.redirect(name)
             stdout.move_to_end
-            mol.:usual_scf ! <<<
+            mol.:scf ! <<<
             stdout.revert
             tonto.parallel_IO_allowed = FALSE
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -7524,6 +7539,7 @@ contains
                mol.crystal => .crystal
 
             ! Set up SCF options
+            mol.BASE:set_scf_guess_defaults_from(.scfdata)
             mol.scfdata.set_output(TRUE)
             if (present(restart)) then
                if (mol.atom.dim==1) then
@@ -7539,7 +7555,7 @@ contains
             name = "stdout." // trim(mol.name)
             stdout.redirect(name)
             stdout.move_to_end
-            mol.:usual_scf ! <<<
+            mol.:scf ! <<<
             stdout.revert
             tonto.parallel_IO_allowed = FALSE
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -7564,7 +7580,76 @@ contains
       
       end if 
 
+#else
+
+      parallel do g = 1,.atom_group.dim
+
+      print*, "SCF 3"
+      call EXECUTE_COMMAND_LINE("ps  -C tonto-3g -o pmem")
+
+         ! Set up a molecule for this group of atoms
+         mol => .atom_group(g).mol
+         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
+
+         ! Skip SCF for atoms without electrons
+         if (mol.BASE:no_of_electrons < 1) cycle
+
+         ! Assign crystal
+         if (.crystal.associated) &
+            mol.crystal => .crystal
+
+         ! Set up SCF options
+         mol.BASE:set_scf_guess_defaults_from(.scfdata)
+         mol.scfdata.set_output(TRUE)
+         if (present(restart)) then
+            if (mol.atom.dim==1) then
+               mol.scfdata.set_initial_density("core")
+            else if (restart) then
+               guess = mol.scfdata.spinorbital_kind
+               mol.scfdata.set_initial_density(guess)
+            end
+         end
+
+         ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         tonto.parallel_IO_allowed = TRUE
+         name = "stdout." // trim(mol.name)
+         stdout.redirect(name)
+         stdout.move_to_end
+         mol.:scf ! <<<
+         stdout.revert
+         tonto.parallel_IO_allowed = FALSE
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+         if (SFs) then
+
+            ! NOTE: change DFT -> becke
+            .atom_group(g).mol.BASE:initialize_DFT_grids
+           
+            ! Assign previously made ANOs
+            .atom_group(g).mol.BASE:set_ANOs_from(self)
+           
+            ! Write SFs for each fragment to disk - in parallel
+            n_group = .atom_group(g).atom_index.dim
+            tonto.parallel_IO_allowed = TRUE
+      print*, "SCF 4"
+      call EXECUTE_COMMAND_LINE("ps  -C tonto-3g -o pmem")
+            .atom_group(g).mol.SCF:get_unique_Hirshfeld_atom_SFs(n_group,spin_density)
+      print*, "SCF 5"
+      call EXECUTE_COMMAND_LINE("ps  -C tonto-3g -o pmem")
+            tonto.parallel_IO_allowed = FALSE
+
+         end
+      
+      end
+
+      print*, "SCF 6"
+      call EXECUTE_COMMAND_LINE("ps  -C tonto-3g -o pmem")
+
+#endif
+
+#ifdef MPI
       tonto.barrier
+#endif
 
    end
 
