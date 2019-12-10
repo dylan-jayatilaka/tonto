@@ -624,7 +624,11 @@ contains
          .:set_scf_defaults
          .scfdata.set_output(FALSE)
 
-      else if (scfdata.scf_kind=="mfcc" OR NOT scfdata.use_default_guess_options) then
+      else if (scfdata.scf_kind(1:7)=="fraghar") then
+
+         .:set_scf_defaults(scfdata) ! leaky
+
+      else if (NOT scfdata.use_default_guess_options) then
 
          .:set_scf_defaults(scfdata) ! leaky
 
@@ -655,6 +659,7 @@ contains
 
    set_general_scf_guess_defaults_from(scfdata) ::: leaky
    ! Set scf  data options for a guess-type SCF defaults
+      self :: INOUT
       scfdata :: SCFDATA*
 
       ! Set the SCF defaults (leaky)
@@ -739,6 +744,8 @@ contains
 
    initialize_DFT_grids ::: leaky
    ! Initialise DFT grids, if not already done so.
+      self :: INOUT
+
    ENSURE(.scfdata.associated,"no scfdata")
 
       if (.becke_grid.disassociated) then
@@ -3458,6 +3465,7 @@ contains
    ! Make a fully fledged molecule "mol" from a single atom "n" in self
    ! The new molecule is ready for an SCF calculation.
    ! DANGER: see warnings below
+      self :: IN
       n :: INT, IN
       mol :: MOLECULE
 
@@ -3554,6 +3562,13 @@ contains
       ! Set guess-type SCF defaults
       mol.:set_scf_guess_defaults_from(.scfdata)
 
+      ! Reset scf_kind for fraghar calculations
+      if (.scfdata.associated) then
+      if (.scfdata.scf_kind(1:8)=="fraghar-") then
+         mol.scfdata.set_scf_kind(.scfdata.scf_kind(9:11))
+      end
+      end
+
       ! Set density matrix from parent?
       ! Restricted only. Do not clobber
       if (.density_matrix.associated) then
@@ -3571,7 +3586,8 @@ contains
    set_basis_data_from(mol) ::: leaky
    ! Set the basis data from molecule "mol"
    ! Make sure none of these bases are destroyed.
-      mol :: MOLECULE, IN
+      self :: INOUT
+      mol :: MOLECULE, target, IN
 
       ! Copy the basis set and set the basis info
       ! WARNING: dont destroy basis of mol
@@ -3652,54 +3668,54 @@ contains
 
       ! Assign ANO orbitals
       do a = 1,.atom.dim
-      do b = 1,mol.atom.dim
-         if (.atom(a).is_same_kind_as(mol.atom(b))) then
-         if (mol.atom(b).has_ANO_matrices) then
-            .atom(a).density_matrix     => mol.atom(b).density_matrix
-            .atom(a).natural_orbitals   => mol.atom(b).natural_orbitals
-            .atom(a).occupation_numbers => mol.atom(b).occupation_numbers
-            .atom(a).atomic_orbitals    => mol.atom(b).atomic_orbitals
-            .atom(a).set_energy(mol.atom(b).energy)
-            exit ! next atom "a"
+         do b = 1,mol.atom.dim
+            if (.atom(a).is_same_kind_as(mol.atom(b))) then
+            if (mol.atom(b).has_ANO_matrices) then
+               .atom(a).density_matrix     => mol.atom(b).density_matrix
+               .atom(a).natural_orbitals   => mol.atom(b).natural_orbitals
+               .atom(a).occupation_numbers => mol.atom(b).occupation_numbers
+               .atom(a).atomic_orbitals    => mol.atom(b).atomic_orbitals
+               .atom(a).set_energy(mol.atom(b).energy)
+               exit ! next atom "a"
+            end
+            end
          end
-         end
-      end
       end
 
       ! Assign ANO interpolators
       do a = 1,.atom.dim
-      do b = 1,mol.atom.dim
-         if (.atom(a).is_same_kind_as(mol.atom(b))) then
-         if (mol.atom(b).interpolator.allocated) then
-            .atom(a).interpolator = mol.atom(b).interpolator
-            exit ! next atom "a"
+         do b = 1,mol.atom.dim
+            if (.atom(a).is_same_kind_as(mol.atom(b))) then
+            if (mol.atom(b).interpolator.allocated) then
+               .atom(a).interpolator = mol.atom(b).interpolator
+               exit ! next atom "a"
+            end
+            end
          end
-         end
-      end
       end
 
       ! Assign atom shell info
       do a = 1,.atom.dim
-      do b = 1,mol.atom.dim
-         if (.atom(a).is_same_kind_as(mol.atom(b))) then
-         if (mol.atom(b).has_shell_info) then
-            .atom(a).first_basis_fn_for_shell    => mol.atom(b).first_basis_fn_for_shell
-            .atom(a).last_basis_fn_for_shell     => mol.atom(b).last_basis_fn_for_shell
-            .atom(a).precomputed_basis_shellpair => mol.atom(b).precomputed_basis_shellpair
-            exit ! next atom "a"
+         do b = 1,mol.atom.dim
+            if (.atom(a).is_same_kind_as(mol.atom(b))) then
+            if (mol.atom(b).has_shell_info) then
+               .atom(a).first_basis_fn_for_shell    => mol.atom(b).first_basis_fn_for_shell
+               .atom(a).last_basis_fn_for_shell     => mol.atom(b).last_basis_fn_for_shell
+               .atom(a).precomputed_basis_shellpair => mol.atom(b).precomputed_basis_shellpair
+               exit ! next atom "a"
+            end
+            end
          end
-         end
-      end
       end
 
    end
 
-!  ============
-!  MFCC methods
-!  ============
+!  ================
+!  Fragment methods
+!  ================
 
-   make_MFCC_fragments ::: leaky
-   ! Make the MFCC fragment groups
+   make_fragHAR_groups ::: leaky
+   ! Make the fragHAR groups
    ! This routine will add extra cap atoms!
       self :: INOUT
 
@@ -3712,7 +3728,7 @@ contains
       print*, "Frag 1"
       call EXECUTE_COMMAND_LINE("ps  -C tonto-3g -o pmem")
 
-      if (NOT .:do_MFCC) return
+      if (NOT .:do_fragHAR) return
 
       ! Assign connections
       VEC{ATOM}:assign_connection_table(.atoms_bonded_to_atom)
@@ -3755,12 +3771,9 @@ contains
 
       end
 
-      ! Create each MFCC fragment
+      ! Create each fragHAR capped group
       do g = 1,.atom_group.dim
-        
-         ! Do MFCC here
-         self.:make_MFCC_fragment_for_group(g)
-
+         self.:make_fragHAR_group(g)
       end
 
       ! Clear connections
@@ -3771,9 +3784,9 @@ contains
 
    end
 
-   make_MFCC_fragment_for_group(g) ::: leaky
+   make_fragHAR_group(g) ::: leaky
    ! Make a capped fragment for molecule "mol, the atom_group(g).mol
-   ! with compound_id "g", ready for MFCC calculation. This routine
+   ! with compound_id "g", ready for fragHAR calculation. This routine
    ! will add extra atoms.
       self :: INOUT
       g :: INT, IN
@@ -3799,7 +3812,7 @@ contains
     ! mol.:set_atom_info
 
       ! Add cap atoms !!!!!!!!!!!!!!!
-      .:add_MFCC_cap_for_group(g,mol)
+      .:add_fragHAR_cap_for_group(g,mol)
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       ! Set charge
@@ -3829,7 +3842,9 @@ contains
       .atom_group(g).set_name(name)
 
       ! Assign basis set -- don't destroy!
-      mol.:set_basis_data_from(self)
+      mol.atom.nullify_bases
+      mol.:set_basis_name(.basis_name)
+    ! mol.:set_basis_data_from(self)
 
       ! Assign the crystal -- don't destroy!
       if (.crystal.associated) mol.crystal => .crystal
@@ -3843,9 +3858,9 @@ contains
 
    end
 
-   add_MFCC_cap_for_group(g,mol) ::: private, leaky
+   add_fragHAR_cap_for_group(g,mol) ::: private, leaky
    ! Make a capped fragment for molecule the atom_group(g).mol with
-   ! compound_id "g" ready for MFCC calculation. This routine will add
+   ! compound_id "g" ready for fragHAR calculation. This routine will add
    ! extra atoms.
       self :: INOUT
       g :: INT, IN
@@ -3885,8 +3900,8 @@ contains
             ap = bonded_atom(1,b)
             bp = bonded_atom(2,b)
       
-            ! Use them to start the MFCC cap
-            .:add_MFCC_cap_from_atoms(ap,bp,mol)
+            ! Use them to start the fragHAR cap
+            .:add_fragHAR_cap_from_atoms(ap,bp,mol)
 
          end
       
@@ -3897,7 +3912,7 @@ contains
  
    end
 
-   add_MFCC_cap_from_atoms(ap,bp,mol) ::: private, leaky
+   add_fragHAR_cap_from_atoms(ap,bp,mol) ::: private, leaky
    ! Cap residue molecule "mol" starting from atom "ap" in that
    ! residue, which is connected to atom "bp" in another group.
    ! WARNING: This will add extra atoms to atom_group(g1).mol.atom but
@@ -4072,8 +4087,8 @@ contains
          ! We have .atom()'s
          if (.:from_mmCIF) then
         
-            ! Add Ulf Ryde's MFCC caps
-            .:make_MFCC_fragments
+            ! Add Ulf Ryde's fragHAR capped residues
+            .:make_fragHAR_groups
         
          else if (.atom_group.has_atom_indices_ptr) then
          
@@ -4716,21 +4731,19 @@ contains
       res :: BIN
 
       res = FALSE
-      if (.cif.associated) then
-         res = .cif.is_mmCIF
-      end
+      if (.cif.associated) res = .cif.is_mmCIF
 
    end
 
-   do_MFCC result (res) ::: PURE
+   do_fragHAR result (res) ::: PURE
    ! Returns TRUE if the there is a cif and it was an mmCIF
-   ! and we want to make MFCC fragments.
+   ! and we want to make fragHAR fragments.
       self :: IN
       res :: BIN
 
       res = FALSE
       if (.cif.associated) then
-         res = .cif.is_mmCIF AND .cif.use_MFCC
+         res = .cif.is_mmCIF AND .cif.use_fragments
       end
 
    end
@@ -4852,7 +4865,6 @@ contains
    ! Make the list of overlapping atoms
       self :: INOUT
 
-   ENSURE(.basis_info_made,"no basis set")
    ENSURE(.becke_grid.associated,"no becke_grid")
 
       r_max :: VEC{REAL}*
@@ -9153,6 +9165,10 @@ contains
       self :: IN
 
       if (NOT .basis.associated) return
+
+
+      ! Put atom basis tags
+      .atom.put_bases
 
       stdout.flush
       stdout.flush
