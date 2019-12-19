@@ -1749,12 +1749,24 @@ contains
    ENSURE(.fock_matrix.associated,"no fock_matrix!")
    ENSURE(.fock_matrix.restricted.associated,"no restricted fock_matrix!")
 
+      X,Y,Sm1 :: MAT{REAL}*
       n_bf :: INT
 
       ! Make E_matrix
       n_bf = .core_matrix.n_bf
       .E_matrix.create(n_bf,n_bf)
       .E_matrix = HALF*(.core_matrix.restricted + .fock_matrix.restricted)
+
+      ! S-1 transform it
+      Y.create(n_bf,n_bf)
+      X.create(n_bf,n_bf)
+      Sm1.create(n_bf,n_bf)
+      Sm1.to_pseudo_inverse_of(.overlap_matrix,TOL(5))
+      Y = .E_matrix
+      Y.back_transform_to(.E_matrix,Sm1)
+      Sm1.destroy
+      X.destroy
+      Y.destroy
 
 !     !!!!!!!!!!!!!!!!!!!!!!!!
 !     .E_matrix.to_unit_matrix
@@ -2037,7 +2049,7 @@ contains
          .atom_a => .atom_group(a).element
 
          .E1(a) = .atom_energy(.atom_a)
-       ! .E1(a) = .E1(a) + .atom.nuclear_repulsion_for_atoms(.atom_a)
+         .E1(a) = .E1(a) + .atom.nuclear_repulsion_for_atoms(.atom_a)
 
          nullify(.atom_a)
 
@@ -2077,7 +2089,7 @@ contains
          !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
          E2 = .atom_energy(.atom_ab)
-        !E2 = E2 + .atom.nuclear_repulsion_for_atoms(.atom_ab)
+         E2 = E2 + .atom.nuclear_repulsion_for_atoms(.atom_ab)
 
          .E2(a,b) = E2
          .E2(b,a) = E2
@@ -2111,7 +2123,7 @@ contains
       .make_projection_matrix(P,group,ANO)
 
       ! Evaluate
-      res = .expectation(P,group)
+      res = .E_expectation(P,group)
 
       ! Clean
       P.destroy
@@ -2775,6 +2787,36 @@ contains
 
    end
 
+   E_expectation(P,group) result (res) ::: private
+   ! Get the expectation value of the projection operator matrix "P"
+   ! over a certain "group" of atoms, i.e:
+   !    res = Trace ( S(:,group) P S(group,:) rho )
+   ! Note that "group" are the indices of the atoms whose basis functions
+   ! are used to define the matrix "P".
+      self :: IN
+      P :: MAT{REAL}, IN
+      group :: VEC{INT}, IN
+      res :: REAL
+
+   ENSURE(P.dim1==.n_bf(group),"wrong P dimension")
+   ENSURE(P.is_square,"P is not square")
+
+      W :: MAT{REAL}*
+      n_bf :: INT
+
+      n_bf = .n_bf
+
+      ! Make W = S P S
+      W.create(n_bf,n_bf)
+      .overlap_transform(P,W,group)
+
+      ! Make Tr ( rho_E S P S )
+      res = .E_matrix.trace_product_with(W)
+
+      W.destroy
+
+   end
+
    expectation(P,group,rho) result (res) ::: private
    ! Get the expectation value of the projection operator matrix "P"
    ! over a certain "group" of atoms, i.e:
@@ -2804,19 +2846,11 @@ contains
       .overlap_transform(P,W,group)
 
       ! Make Tr ( S P S rho)
-      if (.roby_kind=="atom_bond_analysis") then
-
-         if (.spin_multiplicity/=1) then
-            res = density.alpha.trace_product_with(W) &
-                + density.beta.trace_product_with(W)
-         else
-            res = density.restricted.trace_product_with(W)
-         end
-
-      else if (.roby_kind=="atom_energy_bond_analysis") then
-
-         res = .E_matrix.trace_product_with(W)
-
+      if (.spin_multiplicity/=1) then
+         res = density.alpha.trace_product_with(W) &
+             + density.beta.trace_product_with(W)
+      else
+         res = density.restricted.trace_product_with(W)
       end
 
       W.destroy
@@ -4606,8 +4640,9 @@ contains
       table :: VEC{TABLE_COLUMN}*
       symbols :: VEC{STR}*
       labels :: VEC{INT}*
-      e_scf,e_tot :: REAL
-      f :: INT
+      e_scf,e_tot,e_prj :: REAL
+      P :: MAT{REAL}*
+      f,n_gr :: INT
 
 
       stdout.flush
@@ -4624,8 +4659,19 @@ contains
       e_scf = .E_expectation
       e_tot = e_scf + .atom.nuclear_repulsion_energy
 
-      stdout.show("SCF electronic energy = ",e_scf)
-      stdout.show("Total SCF energy      = ",e_tot)
+      ! Make small P matrix
+      f = 1
+      labels => f.sequence_up_to(.n_group)
+      n_gr = .n_bf(labels)
+      P.create(n_gr,n_gr)
+      .make_projection_matrix(P,labels)
+      e_prj = .E_expectation(P,labels)
+      labels.destroy
+      P.destroy
+
+      stdout.show("Total SCF energy         = ",e_tot)
+      stdout.show("SCF electronic energy    = ",e_scf)
+      stdout.show("SCF electronic energy v2 = ",e_prj)
       stdout.flush
 
       ! Create table
