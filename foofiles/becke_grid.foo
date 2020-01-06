@@ -685,8 +685,6 @@ contains
       word = keyword
       word.to_lower_case
 
-      .finalized = FALSE
-
       select case (word)
       case ("}                         ")  ! exit case
       case ("accuracy=                 "); .read_accuracy
@@ -703,6 +701,7 @@ contains
       case ("partition_scaling_scheme= "); .read_partition_scaling_scheme
       case ("pruning_scheme=           "); .read_pruning_scheme
       case ("put                       "); .put
+      case ("put_basics                "); .put_basics
       case ("put_atom_info             "); .put_atom_info
       case ("put_radial_angular_grids  "); .put_radial_angular_grids
       case ("put_unique_atom_grids     "); .put_unique_atom_grids
@@ -1164,12 +1163,12 @@ contains
    ! Make the list of unique_atoms, and a map array to the unique list of atoms.
       self :: INOUT
 
-      an :: VEC{INT}*
+   ENSURE(.atom.associated,"no atom array")
 
-      an.create(.atom.dim)
+      an :: VEC{INT}@
+
       an = .atom(:).atomic_number
       an.make_unique_element_maps(.unique_atom,.unique_atom_for) 
-      an.destroy
 
       .n_unique_atoms = .unique_atom.dim
 
@@ -1254,6 +1253,7 @@ contains
    ENSURE(.atom_points.associated,"no atom_points array")
 
       u,a,np,nb :: INT
+      pos :: VEC{REAL}(3)
 
       .atom_grid0.destroy
       .atom_grid1.destroy
@@ -1271,9 +1271,12 @@ contains
          .atom_grid1(u).element.create(np,nb,3)
 
          ! Now make the atom BF grids
+         pos = .atom(a).position                    
          .atom(a).set_position([ZERO,ZERO,ZERO]) ! Reset atom to origin temporarily
-         .atom(a).make_nabla_bf_grid(.atom_grid1(u).element,.atom_grid0(u).element,.atom_points(u).element)
-         .atom(a).set_position(.atom(a).position)
+         .atom(a).make_nabla_bf_grid(.atom_grid1(u).element &
+                                    ,.atom_grid0(u).element &
+                                    ,.atom_points(u).element)
+         .atom(a).set_position(pos)
 
       end
 
@@ -2307,6 +2310,7 @@ contains
    ! for the "atom_a". Weights "wt" incorporate grid integration
    ! weights and the SS partition weight for "overlapping_atoms" 
    ! Return also the basis function grid "f0" for "atom_a".
+      self :: IN
       pt, f0 :: MAT{REAL}*
       wt :: VEC{REAL}*
       atom_a :: INT, IN
@@ -2323,6 +2327,7 @@ contains
    ! weights and the SS partition weight for "overlapping_atoms" 
    ! Return also the basis function grid "f0" and the basis function
    ! derivatives "gx", "gy", "gz" for "atom_a"
+      self :: IN
       pt, f0,gx,gy,gz :: MAT{REAL}*
       wt :: VEC{REAL}*
       atom_a :: INT, IN
@@ -2338,6 +2343,7 @@ contains
    ! for the "atom_a". Weights "wt" incorporate grid integration
    ! weights and the SS partition weight for "overlapping_atoms" 
    ! Return also the basis function grid "f0" for "atom_a".
+      self :: IN
       pt, f0 :: MAT{REAL}*
       wt :: VEC{REAL}*
       atom_a :: INT, IN
@@ -2433,7 +2439,7 @@ contains
          n_pt = wt.dim
          ww.create(n1_SS+1,n_pt)
          .make_SS_weight(ww,dist,atom_a,overlapping_atom)
-   
+
          ! Incorporate SS weights into grid weights
          wt(n1_SS+1:) = ww(n1_SS+1:) * wt(n1_SS+1:)
          ww.destroy
@@ -2658,8 +2664,8 @@ contains
       atom_a :: INT, IN
       overlapping_atom :: VEC{INT}, IN
 
-      ws,wb, ra,rb :: VEC{REAL}*
-      zero :: VEC{BIN}*
+      ws,wb, ra,rb :: VEC{REAL}@
+      zero :: VEC{BIN}@
       n_pt,n1_SS,n_ov, n,a,b,oa,ob :: INT
       a1,a2,a3,b1,b2,b3,x,y,z,r :: REAL
       aa,c5,c21,c35,mu,mu1,mu2,mu3,mu5,mu7 :: REAL
@@ -2676,14 +2682,14 @@ contains
       c35 = SEVEN*FIVE
 
       ! Partition weights sum ws 
-      ws.create(n1_SS+1,n_pt)
+      ws.create([n1_SS+1,n_pt])
       ws = ZERO
 
       ! Unnormalised weight for atom "b"
-      wb.create(n1_SS+1,n_pt)
+      wb.create([n1_SS+1,n_pt])
 
       ! Zero weights for atom a
-      zero.create(n1_SS+1,n_pt)
+      zero.create([n1_SS+1,n_pt])
 
       ! Make "wb" the SS weight for atom "b" and
       ! make "ws" the sum of the SS weights for each atom
@@ -2699,7 +2705,7 @@ contains
          ! Set unit weights
          wb = ONE
 
-         rb => dist(:,b)
+         rb = dist(:,b)
 
          ! Initially, no weight wb is zero
          zero = FALSE
@@ -2720,13 +2726,17 @@ contains
             z = b3 - a3
             r = sqrt(x*x+y*y+z*z)
 
-            ra => dist(:,a)
+            ra = dist(:,a)
 
             ! Make the mu and SS weight for atom b
             do n = n1_SS+1,n_pt
+
                if (zero(n)) cycle
+
                mu = (rb(n)-ra(n))/r
+
                if (mu<=-aa) cycle
+
                if (mu>= aa) then
                   wb(n) = ZERO
                   zero(n) = TRUE
@@ -2739,6 +2749,7 @@ contains
                   z   = SIXTEENTH*(c35*mu1-c35*mu3+c21*mu5-c5*mu7)
                   wb(n) = wb(n) * HALF*(ONE - z)
                end
+
             end 
 
          end 
@@ -3841,6 +3852,17 @@ contains
    ! Put out to file "out"
       self :: IN
 
+      .put_basics
+      .put_atom_info
+      .put_radial_angular_grids
+      .put_unique_atom_grids
+
+   end
+
+   put_basics
+   ! Put out to file "out"
+      self :: IN
+
       stdout.flush
       stdout.text("======================")
       stdout.text("Becke integration grid")
@@ -3879,8 +3901,8 @@ contains
    ! Put out the atom info to file "out"
       self :: IN
 
-   ENSURE(.finalized,"not finalized")
    ENSURE(.atom.associated,"no atom list")
+   ENSURE(.finalized,"not finalized")
 
       i,Z,np :: INT
       fields :: INT
