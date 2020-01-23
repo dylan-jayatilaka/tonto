@@ -44,11 +44,9 @@ contains
    DIE_IF(NOT .crystal.data.associated,"no crystal data")
    DIE_IF(NOT .crystal.xray_data.associated,"no crystal xray data")
    DIE_IF(NOT .crystal.data.reflections.associated,"no reflections")
-   DIE_IF(NOT .cif.associated,"no cif")
+ ! DIE_IF(NOT .cif.associated,"no cif")
 
       results,output :: BIN
-      do_ASFs :: BIN
-      i,j :: INT
 
       ! Use disk SFs for now ...
       .crystal.data.set_use_disk_SFs(TRUE)
@@ -329,8 +327,7 @@ contains
    !   transformed back into asymmetric unit.
       self :: INOUT
 
-      if (.crystal.data.use_disk_SFs) then; .:low_mem_HA !make_LS_matrix
-      !if (.crystal.data.use_disk_SFs) then; .:LS_fit_HAs_disk
+      if (.crystal.data.use_disk_SFs) then; .:low_mem_HA 
       else;                                 .:LS_fit_HAs_memory
       end
 
@@ -383,41 +380,34 @@ contains
    ! LS fit the Hirshfeld atoms to the calculated structure factors.
    ! Low memory version.
       self :: INOUT
-      output,results :: BIN
 
       d_Fa :: MAT{REAL}*
 
       do
+
          d_Fa.create(.crystal.n_refl,.crystal.asymmetric_unit_atom.no_of_pADPs)
          .:make_LS_matrix(d_Fa)
          .:do_LS_refinement(d_Fa)
          d_Fa.destroy
-         ! Put the iteration results
-         if (output) then
-            .crystal.data.put_fit_table_body
-         end
+
+         .crystal.data.put_fit_table_body
 
          ! Finished?
          if (.crystal.fit_finished) exit
+
       end
 
       ! Table footer
-      if (output) then
-         .crystal.data.fit_table.put_footer
-      end
+      .crystal.data.fit_table.put_footer
 
       ! Final results
-      if (results) then
-         .crystal.put_fit_results
-      end
+      .crystal.put_fit_results
 
       ! Set the fragment covariances from cov matrix
       .crystal.set_fragment_esds
 
       ! Print out bond length, angle, torsion tables with errors
-      if (output) then
-         .crystal.put_bond_info_with_errors
-      end
+      .crystal.put_bond_info_with_errors
 
       ! Finally: remake .asymmetric_unit_atom/unit_cell geometry from
       ! .fragment_atom, which *must* be assigned since it must point
@@ -464,59 +454,43 @@ contains
    ENSURE(.atom.associated,"no atom list")
    ENSURE(.density_matrix.allocated, "no density matrix")
 
-      dFc,dFc_atom :: MAT{CPX}*
-      dFa,dFa_atom,dFb,dFb_atom :: MAT{CPX}*
-      k_pts :: MAT{REAL}*
-      n_k,n_p,n_p_atom, u,f,base :: INT
-      rf :: REAL
-      X :: VEC{REAL}*
       labels, refine_U3,refine_U4 :: VEC{STR}*
       atom_a,atom_f :: ATOM*
-      a,n_f :: INT
-      fac :: REAL
-      spin_density :: BIN
-      output,results :: BIN
       sf_d :: MAT{CPX}*
-      sf_e :: VEC{CPX}*
-      dF :: MAT{REAL}*
-      sf_u :: VEC{CPX}*
+      sf_e, sf_u :: VEC{CPX}*
       rc,ra :: VEC{REAL}(3)
       Wc,wt, xa,ya,za,a2, rho, ga,gb :: VEC{REAL}*
       overlapping_atom, pi,pj,pn :: VEC{INT}*
       skipa0,skipab,skipa,skipb :: VEC{BIN}*
       pt,grida,gridb,bf_save :: MAT{REAL}*
+      arch :: ARCHIVE*
       sha :: SHELL1
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
-      sf  :: CPX
-      cutoff,sc,s2,kr, Dab, val :: REAL
-      n_atom,n_pt,n_keep :: INT
-      c,ca,cb :: INT
+      n_keep,n_unique, n_k,n_p,n_p_atom, u,f,base :: INT
+      a,n_f,n_pt, c,ca,cb, b,i,j,k,n,p :: INT
       oa,fsa,lsa,fba :: INT
       ob,fsb,lsb :: INT
       sa,fa,la,na, as :: INT
       sb,fb,lb,nb :: INT
-      b,i,j,k,n,p :: INT
-      n_unique :: INT
-      spin :: BIN
-      arch :: ARCHIVE*
       list :: VEC{STR}@
       tags :: VEC{STR}@
       kv   :: VEC{REAL}(3)
-      k_pt :: MAT{REAL}*
+      k_pts, k_pt :: MAT{REAL}*
       adp2 :: MAT{REAL}(3,3)
       adp3 :: MAT3{REAL}(3,3,3)
       adp4 :: MAT4{REAL}(3,3,3,3)
+      dFc,dFc_atom, dFa_atom,dFb_atom :: MAT{CPX}*
+      rf, cutoff,sc,s2,kr, Dab, val :: REAL
       k1,k2,k3, c2,c3,c4 :: REAL
       k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
-      zero3 :: REAL
-      has_skip,has_Uiso,is_H_atom :: BIN
+      fac,zero3 :: REAL
+      spin, has_skip,has_Uiso,is_H_atom :: BIN
       refine_positions,refine_Uiso :: BIN
       refine_positions_only,refine_ADPs_only :: BIN
       refine_ADPs,refine_ADP4s,refine_ADP3s :: BIN
-      II,sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
+      II, sf,sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
       tag :: STR
-      aa :: INT
 
       ! Constants
       II  = IMAGIFY(ONE)
@@ -524,11 +498,6 @@ contains
       n_f = .crystal.fragment_atom.no_of_pADPs
       n_k = .crystal.n_unique_SF_k_pts
       
-!      ! Begin rigid-atom fit loop
-!!     do
-!
-!      ! Loop over integration atoms "c"
-!
       ! Hirshfeld-atom structure factors
       n_unique = .crystal.n_unique_frag_atoms
       ! Make sure HA stuff is there
@@ -588,6 +557,7 @@ contains
      end
      
      ! Final check to do U_iso this atom?
+     refine_Uiso = FALSE
      if (NOT refine_Uiso) then
      if (has_Uiso) then
      if (any(.crystal.data.refine_U_iso_for_atom==tag)) then
@@ -605,8 +575,6 @@ contains
      end
 
      ! Sanity check
-     DIE_IF(refine_Uiso AND refine_ADP4s,"can't refine isotropic ADPs & ADP4s for "//trim(tag))
-     DIE_IF(refine_Uiso AND refine_ADP3s,"can't refine isotropic ADPs & ADP3s for "//trim(tag))
       ! Create refinement arrays & initialize (leaky)
       .crystal.data.initialize_fit_data(n_p,n_f,labels)
 
@@ -645,7 +613,6 @@ contains
     
           ! X-ray or PND?
           spin = FALSE
-          !if (present(spin_density)) spin = spin_density
     
           ! Density matrix (leaky)
           if (NOT spin) then; .BASE:make_ao_density_matrix
@@ -930,13 +897,7 @@ contains
   
         ! Banner, options/switches, initial parameters,
         ! start banner, and iteration table header.
-        if (output) then
-           .crystal.put_fit_header
-        end
-  
-        ! Begin rigid-atom fit loop
-        ! NEEDS TO GO OUTSIDE
-        !do
+        .crystal.put_fit_header
   
         ! Constants
         ! Fragment atom
@@ -1426,96 +1387,6 @@ contains
       dF.destroy
 
       end
-
-      !!! This needs to go in the regular iteration loop.
-!
-!      ! Create refinement arrays & initialize (leaky)
-!      ! - asymmetric atom and fragment atom pADPs are set.
-!      .initialize_fit_data
-!
-!      ! Place asym atom position/ADPs in vector .data.X_fit
-!      ! - asymmetric_unit_atom keeps the pADPs
-!      .asymmetric_unit_atom.put_pADP_vector_to(.data.X_fit)
-!
-!      ! If refining, store a copy of the pADPs in .data.X_ref
-!      if (.data.refine_structure) .data.X_ref = .data.X_fit
-!
-!      ! Banner, options/switches, initial parameters,
-!      ! start banner, and iteration table header.
-!      if (output) then
-!         .put_fit_header_info
-!      end
-!
-!         ! Set asym atom positions/ADPs from param vector
-!       ! .asymmetric_unit_atom.set_pADP_vector_to(.data.X_fit)
-!
-!         ! Get unique *fragment* atom shifts in .data.dX ...
-!       ! .get_parameter_shifts(sf_u) ! .data
-!
-!       ADD sf_u AND into ABOVE
-!
-!       ! dFc :: MAT{CPX}*
-!       ! dFa  :: MAT{REAL}*
-!       ! n_k,n_p :: INT
-!   
-!       ! ! Constants
-!       ! n_k = sf_n.dim1
-!       ! n_p = .asymmetric_unit_atom(u).no_of_pADPs
-!       ! NOTE CHANGE for u in ABOVE
-!   
-!       ! KEEP THESE GUYS AS FULL MEMORY FOR NOW
-!       ! n_p is just for one atom U
-!
-!       ! dFa.create(.n_refl,n_p)
-!       ! dFc.create(.n_refl,n_p)
-!   
-!       ! ! Make F_predicted, F_calc & derivatives
-!       ! .:make_F_calc_derivs(dFc,sf_n)
-!
-!       ! INSERT THIS ONE with sf_u
-!   
-!       ! ! Get the derivative absolute SF's, F_abs = |F_calc|
-!       ! .d_F_abs_dX(dFa,dFc)
-!       ! dFc.destroy
-!
-!       ! HERE WE GET THE LSM MATRIX
-!
-!       ! HERE Finish the u loop and we have the LSM
-!
-!    ! end do
-!   
-!       ! ! Get the unique atom shifts, dX (leaky)
-!       ! .solve_normal_equations(dFa)
-!   
-!       ! dFa.destroy
-!   
-!       ! ! Set geometry type
-!       ! .crystal.asymmetric_unit_source = "tonto-refinement"
-!   
-!       ! if (NOT .crystal.data.use_IAM_density) then
-!   
-!       !    ! Delete stored matrices
-!       !    .BASE:delete_scf_archives(keep_DM=TRUE)
-!       !    .BASE:destroy_scf_results(keep_MOs=TRUE)
-!       !    .BASE:destroy_scf_integrals
-!   
-!       !    if (.scfdata.associated) then
-!       !    if (NOT .scfdata.scf_kind=="mfcc") then
-!       !    ! Orthonormalize MO's at new geometry
-!       !    .SCF:symmetrically_orthonormalise(.molecular_orbitals)
-!       !    end
-!       !    end
-!   
-!       ! end
-!
-!       SECOND loop to update sf_u's on disk
-!
-!       .crystal.shift_update_sf_n(dF) ::: private
-!
-      ! Put final CIF after residuals
-!      .BASE:put_CIFs(with_ESDs=TRUE)
-        
-!   end
 
 !  ==============
 !  IAM refinement
