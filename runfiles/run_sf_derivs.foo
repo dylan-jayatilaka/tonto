@@ -1,0 +1,828 @@
+! ==================================================================
+!
+! Stand-alone Hirshfeld-atom refinement program
+!
+! Copyright (C) Dylan Jayatilaka, 2015
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+! ==================================================================
+
+program run_SF_DERIVS
+
+   implicit none
+
+   allowed_bases :: VEC{STR}(len=10,7)
+
+   data allowed_bases/ &
+      "STO-3G    ", &
+      "def2-SVP  ", &
+      "def2-TZVP ", &
+      "def2-TZVPP", &
+      "cc-pVDZ   ", &
+      "cc-pVTZ   ", &
+      "cc-pVQZ   "  /
+
+   grid_levels :: VEC{STR}(len=9,6)
+
+   data grid_levels/ &
+      "very_low ", &
+      "low      ", &
+      "medium   ", &
+      "high     ", &
+      "very_high", &
+      "extreme  "  /
+
+   m :: MOLECULE*
+   command_line :: COMMAND_LINE
+   option,value :: STR
+   spinorbitals :: STR
+   mess,etime,ctime :: STR
+   basis,basdir,basnam,gracc,cif,guess,job,out,err,scf :: STR
+   dtol,fos,fzcut,ldtol,radius,ten :: REAL
+   file :: TEXTFILE*
+   anharm,disperse :: VEC{STR}*
+   i, charge,mult :: INT
+   do_4_only,extinct,h_ADPs,h_iso,h_pos,radius_is_0,tmetal,defragment :: BIN
+   disk_sfs :: BIN
+
+   ! Finite difference variables
+   n_refl,n_p :: INT
+   a,f, p,s, u,k :: INT
+   fac, step,stepu, step1,step2,step3,step4 :: REAL
+   adp2 :: MAT{REAL}(3,3)
+   adp3 :: MAT3{REAL}(3,3,3)
+   adp4 :: MAT4{REAL}(3,3,3,3)
+   k_pt :: MAT{REAL}@
+   par0,pard :: VEC{REAL}@
+   SF :: VEC{CPX}@ ! Structure factors (temporary)
+   SD :: MAT{CPX}@ ! Finite diff. structure factor derivs.
+
+   ! Macro to create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Set stdout & stderr to screen
+   stdout.create_stdout
+   stderr => stdout 
+
+   ! Nullify
+   nullify(m)
+   nullify(anharm)
+   nullify(disperse)
+
+   ! Default option values
+   basis      = "def2-SVP"
+   basdir     = "./basis_sets"
+   charge     = 0
+   cif        = "urea.cif"
+   disk_sfs   = FALSE
+   dtol       = TOL(2)
+   do_4_only  = FALSE
+   err        = " "
+   extinct    = FALSE
+   fos        = THREE
+   fzcut      = -ONE
+   gracc      = "low"
+   guess      = "mos"
+   h_ADPs     = TRUE
+   h_iso      = FALSE
+   h_pos      = TRUE
+   job        = " "
+   ldtol      = TOL(5)
+   mult       = 1
+   out        = " "
+ ! radius     = EIGHT*BOHR_PER_ANGSTROM 
+   radius     = ZERO
+   defragment = TRUE
+   scf        = "rhf"
+   ten        = TEN*BOHR_PER_ANGSTROM 
+ ! wavelength = -ONE
+
+   ! Get command line !!!!!!!!!
+   command_line.set_defaults
+   command_line.process_options
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   
+   if (NOT command_line.has_option("help")) then
+
+      if  (NOT command_line.has_arguments) then
+
+            ! No arguments
+            stdout.text("Supply at least a <cif-file> argument and a <hkl> file.")
+            stdout.text("Type 'run_sf_derivs -help' for additional help.")
+            stop
+
+      else if (command_line.n_args>1) then
+
+            ! Too many arguments
+            stdout.text("Supply a <cif-file> with reflections in it.")
+            stdout.text("Type 'run_sf_derivs -help' for additional help.")
+            stop
+
+      else
+
+         ! First argument
+         cif = command_line.arg(1)
+
+         ! No .cif extension
+         if (cif.filename_tail/="cif") then
+            stdout.text("Supply a cif file with a '.cif' extension!")
+            stdout.text("Type 'run_sf_derivs -help' for additional help.")
+            stop
+         end
+         
+      end
+      
+      ! Get the <job>
+      if (command_line.has_option("job")) then
+         job = command_line.value_for_option("job")
+      end
+     
+      ! Preprocess main arguments
+      if (job==" ") job = trim(cif.filename_head)
+      if (out==" ") out = trim(job)//".out"
+      if (err==" ") err = trim(job)//".err"
+     
+      ! Set stderr properly
+      nullify(stderr)
+      stderr.create_stderr
+      stderr.set_name(err)
+      stderr.open_for("write")
+
+   end ! -- NOT help
+
+   ! Analyze command line options
+   do i = 1,command_line.n_options
+
+      ! Get options
+      option = command_line.option(i)
+      value  = command_line.option_value(i)
+
+      ! Analyze options
+      select case (option)
+
+         case ("asymm-atom    ");  a          = value.to_int
+         case ("anharm        ");  anharm    => value.split
+         case ("4th-order-only");  do_4_only  = value.to_bin
+         case ("basis         ");  basis      = value
+         case ("basis-dir     ");  basdir     = value
+         case ("charge        ");  charge     = value.to_int
+         case ("cluster-radius");  radius     = value.to_real*BOHR_PER_ANGSTROM
+         case ("complete-mol  ");  defragment = value.to_bin !test defrag Lorraine
+         case ("dispersion    ");  disperse  => value.split
+         case ("disk-sfs      ");  disk_sfs   = value.to_bin
+         case ("dtol          ");  dtol       = value.to_real
+         case ("fos           ");  fos        = value.to_real
+         case ("fzcut         ");  fzcut      = value.to_real
+         case ("grid-accuracy ");  gracc      = value
+         case ("h-iso         ");  h_iso      = value.to_bin
+         case ("job           ") ! already dealt with above
+       ! case ("ldtol         ");  ldtol      = value.to_real
+         case ("mult          ");  mult       = value.to_int
+         case ("s1            "); step1  = value.to_real
+         case ("s2            "); step2  = value.to_real
+         case ("s3            "); step3  = value.to_real
+         case ("s4            "); step4  = value.to_real
+         case ("scf           ");  scf        = value
+       ! case ("complete-mol  ");  defragment = value.to_bin !test defrag Lorraine
+       ! case ("scf-guess     ");  guess      = value
+       ! case ("wavelength    ");  wavelength = value.to_real
+
+
+              
+         case ("help")
+
+            stdout.text("SYNOPSIS")
+            stdout.flush
+            stdout.text("    run_sf_derivs [options] <cif-file>")
+            stdout.flush     
+            stdout.text("    . Calculate *derivative* Hirshfeld-atom structure factors by finite")
+            stdout.text("      difference on the crystal structure in the <cif-file>.")
+            stdout.flush     
+            stdout.text("    . Different stepsizes may be used for positions and ADPs (see below).")
+            stdout.flush     
+            stdout.text("    . Cartesian axes and angstrom units assumed.")
+            stdout.flush     
+            stdout.text("    . X-ray Miller indices must be supplied in the <cif-file>.")
+            stdout.flush
+            stdout.text("EXPLANATION")
+            stdout.flush
+            stdout.text("    . The ED is calculated from a gaussian <basis> set single determinant SCF")
+            stdout.text("      <wavefunction> - either SCF or DFT - for a fragment of the crystal") 
+            stdout.text("      optionally embedded in an electrostatic crystal field of point charges") 
+            stdout.flush
+            stdout.text("    . The crystal field comprises atom-centered charges and dipoles placed on")
+            stdout.text("      whole molecules surrounding the central fragment out to a desired <radius>.")
+            stdout.text("      Charges and dipoles on surrrouding molecules are themselves calculated from")
+            stdout.text("      the atoms on the central fragment, so they are calcuated iteratively")
+            stdout.flush
+            stdout.text("    . The fragment structure is chosen so that the leading symmetry-unique atoms")
+            stdout.text("      are in a 'realistic' chemical environment i.e. ideally the fragment is as")
+            stdout.text("      large as practically possible. Use of a GUI is helpful.")
+            stdout.flush
+            stdout.flush
+            stdout.text("RESTRICTIONS")
+            stdout.flush
+            stdout.text("    . The fragment must have zero overall charge")
+            stdout.flush
+            stdout.text("    . The fragment must have an even number of electrons i.e. be closed shell")
+            stdout.flush
+            stdout.text("    . All symmetry-unique atoms and molecules must appear in the fragment")
+            stdout.flush
+            stdout.text("    . Disordered structures may not be refined")
+            stdout.flush
+            stdout.flush
+            stdout.text("REFERENCES")
+            stdout.flush
+            stdout.text("    . 'Hirshfeld atom refinement'")
+            stdout.text("      S.C. Capelli, H.-B. Buergi, B. Dittrich, S. Grabowsky, D. Jayatilaka")
+            stdout.text("      (2014) IUCrJ 1 pp 361-379")
+            stdout.flush
+            stdout.text("    . 'X-ray structure refinement using aspherical atomic density functions obtained")
+            stdout.text("      from quantum-mechanical calculations'")
+            stdout.text("      D. Jayatilaka and B. Dittrich,")
+            stdout.text("      (2008) Acta Cryst. A 64, 383–393")
+            stdout.flush
+            stdout.flush
+            stdout.text("OPTIONS")
+            stdout.flush
+            stdout.text("   -asymm-atom <asymm-atom-index>")
+            stdout.flush
+            stdout.text("       Supply the index of the asymmetric unit atom for which the finite differece")
+            stdout.text("       derivatives are required")
+          ! stdout.flush    
+          ! stdout.text("   -anharm '<atom-label-list>'")
+          ! stdout.flush    
+          ! stdout.text("       Refine the listed atoms anharmonically using a 4th or Gram-Charlier expansion.")
+          ! stdout.text("       The <atom-label-list> must correspond to the *unique* labels in the <cif-file>")
+          ! stdout.text("       and must be separated by spaces e.g. 'S1 Cl'")
+            stdout.flush
+            stdout.text("   -basis <basis>")
+            stdout.flush    
+            stdout.text("       The gaussian atomic <basis> set to use. A file with the bases, also called")
+            stdout.text("       <basis>, must reside in the <basis-dir> folder (see -basis-dir option)")
+            stdout.flush
+            stdout.text("       Default: def2-SVP")
+            stdout.flush    
+            stdout.text("       Other allowed values for <basis> are:")
+            stdout.flush
+            stdout.text("       Testing    Adequate    Excellent     Benchmark    Availability")
+            stdout.text("       ______________________________________________________________")
+            stdout.flush                              
+            stdout.text("       STO-3G     def2-SVP    def2-TZVP    def2-TZVPP    H--Kr       ")
+            stdout.text("                   cc-pVDZ      cc-pVTZ       cc-pVQZ    H--Kr (No K)")
+            stdout.text("       ______________________________________________________________")
+            stdout.flush                               
+            stdout.text("       Additional bases may be added into the <basis-dir> folder from the EMSL")
+            stdout.text("       basis-set library, if required. See examples in the <basis-dir> folder.")
+            stdout.flush    
+            stdout.text("   -basis-dir <basis-dir>")
+            stdout.flush    
+            stdout.text("       The location of the <basis-set> library files. See -basis option above.")
+            stdout.flush    
+            stdout.text("       Default: './basis_sets'")
+          ! stdout.flush    
+          ! stdout.text("   -charge <q>")
+          ! stdout.flush    
+          ! stdout.text("       Set the (integer) charge of the molecule in au. Default: 0.")
+            stdout.flush    
+            stdout.text("   -cluster-radius <radius>")
+            stdout.flush    
+            stdout.text("       The electric potential from whole molecules within <radius> Angstrom of")
+            stdout.text("       the fragment is modeled by Hirshfeld charges and dipoles placed at each")
+            stdout.text("       atom site.")
+            stdout.flush    
+            stdout.text("       Default:  0")
+            stdout.text("       Maximum: 10")
+            stdout.flush    
+            stdout.text("   -dispersion '<dispersion-coefficient-list>'")
+            stdout.flush    
+            stdout.text("       Enter dispersion coefficients to be used in the refinement as a quoted")
+            stdout.text("       space-separated list of the element-symbol, f' and f'', repeated. Values")
+            stdout.text("       for elements which are not specified are assumed to be zero.")
+            stdout.flush    
+            stdout.text("       Example: -dispersion 'S 0.04370 0.04026  Cl 0.05457 0.05224'")
+            stdout.flush    
+            stdout.text("       Default: No dispersion used")
+            stdout.flush    
+            stdout.text("   -disk-sfs [t|f]")
+            stdout.flush    
+            stdout.text("       Whether to write aspherical atomic structure factors to disk.")
+            stdout.text("       With this information, write your own HAR refinement program!")
+            stdout.flush    
+            stdout.text("       Default: f")
+            stdout.flush    
+            stdout.text("   -dtol <dtol>")
+            stdout.flush    
+            stdout.text("       Convergence tolerance <dtol> for the DIIS extrapolation procedure.")
+            stdout.flush    
+            stdout.text("       Default: 0.01")
+            stdout.text("       Minimum: 0.00001")
+            stdout.flush    
+            stdout.text("   -fzcut <F_z>")
+            stdout.flush    
+            stdout.text("       If <cif-file> is from a previous HAR and has F_pred values, then remove")
+            stdout.text("       reflections which have a z-score greater than F_z=(F_pred-F_expt)/sigma.")
+            stdout.text("       Use this option with care only after an initial refinement to remove")
+            stdout.text("       outliers. By default no reflections are pruned.")
+            stdout.flush    
+            stdout.text("   -grid-accuracy [very_low|low|medium|high|very_high]")
+            stdout.flush    
+            stdout.text("       Accuracy needed for DFT integrations.")
+            stdout.flush    
+            stdout.text("       Default: low")
+            stdout.flush    
+            stdout.text("   -h-iso [t|f] ")
+            stdout.flush    
+            stdout.text("       Set isotropic H-atom ADPs.")
+            stdout.flush    
+            stdout.text("       Default: f")
+            stdout.flush    
+            stdout.text("   -help")
+            stdout.flush    
+            stdout.text("       Print this documentation")
+            stdout.flush    
+            stdout.text("   -job <job>")
+            stdout.flush    
+            stdout.text("       The name of the job; used to name the output file and other intermediates.")
+            stdout.flush    
+            stdout.text("       Default: The head of <cif-file> e.g. 'urea' if <cif-file> is 'urea.cif'.")
+            stdout.text("                The name of the output-file will then be <job>.out")
+          ! stdout.flush    
+          ! stdout.text("   -ldtol <ldtol>")
+          ! stdout.flush    
+          ! stdout.text("       Eliminate linear dependent basis functions i.e. eigenfunctions of the overlap")
+          ! stdout.text("       matrix, with eigenvalue less that <tol>.  Default: 0.00001.")
+          ! stdout.flush    
+            stdout.text("   -mult <m>")
+            stdout.flush    
+            stdout.text("       The multiplicity of the <wavefunction> i.e. <m>=2S+1 where S is the total spin.")
+            stdout.text("       Default: 1.")
+            stdout.flush
+            stdout.text("   -s1 <size>")
+            stdout.flush
+            stdout.text("       Set the stepsize for position finite difference to <size>")
+            stdout.text("       These are parameters 1 to 3 in the list. Default: 0.0001.")
+            stdout.flush
+            stdout.text("   -s2 <size>")
+            stdout.flush
+            stdout.text("       Set the stepsize for ADP2 finite difference to <size>")
+            stdout.text("       These are parameters 4 to 9. Default: 0.0001")
+            stdout.flush
+            stdout.text("   -s3 <size>")
+            stdout.flush
+            stdout.text("       Set the stepsize for ADP3 finite difference to <size>")
+            stdout.text("       Parameters 10 to 19, if present. Default: 0.0001.")
+            stdout.flush
+            stdout.text("   -s4 <size>")
+            stdout.flush
+            stdout.text("       Set the stepsize for ADP4 finite difference to <size>")
+            stdout.text("       Parameters 20 to 34, if present. Default: 0.0001.")
+            stdout.flush
+            stdout.flush    
+            stdout.text("   -scf <wavefunction>")
+            stdout.flush    
+            stdout.text("       The scf <wavefunction> to be used. Allowed options:")
+            stdout.flush    
+            stdout.text("       rhf     restricted Hartree-Fock")
+            stdout.text("       rks     restricted Kohn-Sham/BLYP")
+            stdout.flush    
+            stdout.text("       Default: rhf")
+          ! stdout.text("       uhf     unrestricted Hartree-Fock")
+          ! stdout.text("       uks     unrestricted Kohn-Sham/BLYP")
+          ! stdout.text("       gchf    general-complex (relativistic) Hartree-Fock")
+          ! stdout.flush    
+          ! stdout.text("   -scf-guess [mos|density]")
+          ! stdout.flush    
+          ! stdout.text("       Initial guess for SCF <wavefunction> method.")
+          ! stdout.flush    
+          ! stdout.text("   -wavelength <wavelength>")
+          ! stdout.flush    
+          ! stdout.text("       The <wavelength> of the X-radiation.  Default: '0.7139 angstrom'.")
+          ! stdout.text("       Used for e.g. dispersion correction, and defining sin(theta)/lambda.")
+          ! stdout.flush    
+            stdout.flush    
+            stdout.text("   -complete-mol [t|f] ")
+            stdout.flush    
+            stdout.text("       Set whatever to complete molecules for SC cluster point charges.")
+            stdout.text("       Should be false in case of network compounds.")
+            stdout.flush    
+            stdout.text("       Default: TRUE")
+
+            stop
+
+         case default
+            stdout.text("Type 'run_sf_derivs -help' for help.")
+            stdout.flush
+            UNKNOWN(option)
+            stop
+
+      end
+
+   end
+
+
+   ! Initialize output file
+   stdout.set_name(out)
+   stdout.open_for("write")
+   tonto.set_stdout_unit(stdout.unit)
+
+   ! Report
+   stdout.text("==========================================")
+   stdout.text("Calculate Hirshfeld atom structure factors")
+   stdout.text("==========================================")
+
+   stdout.flush
+   stdout.text("This is a command line program for calculating *derivate*")
+   stdout.text("Hirshfeld atom structure factors on the molecule in a CIF.")
+   stdout.flush
+   stdout.text("For detailed help, run the command:")
+   stdout.flush
+   stdout.text("   run_sf_derivs -help")
+   stdout.flush
+   stdout.text("If you publish any of the results from this program please")
+   stdout.text("cite the following original scientific publications:")
+   stdout.flush
+   stdout.text("   D. Jayatilaka & B. Dittrich (2008) Acta Cryst. A 64 p. 383")
+   stdout.text("   S. Capelli et al (2014) IUCrJ 1 p. 361")
+   stdout.text("   M. Woinska et al (2016) Sci. Adv. 2 e1600192")
+
+   stdout.flush
+   stdout.flush
+   stdout.text("===============")
+   stdout.text("Program options")
+   stdout.text("===============")
+   stdout.flush
+   stdout.text("You have run run_sf_derivs with the following options:")
+   command_line.put_command_optarg
+
+   stdout.flush
+   stdout.text("The run_sf_derivs program version is:")
+   stdout.text("                                                               ")
+   stdout.text("Version: "//TONTO_VERSION//" v. "//GIT_VERSION)
+   stdout.text("Platform: "//TONTO_PLATFORM)
+   stdout.text("Build-date: "//TONTO_BUILD_DATE)
+
+   stdout.flush
+   stdout.flush
+   stdout.text("=======")
+   stdout.text("WARNING")
+   stdout.text("=======")
+
+   stdout.flush
+   stdout.text("This software is always under heavy development and many")
+   stdout.text("authors release codes before they are fully tested. Do not")
+   stdout.text("use codes which have not been tested if they have not been")
+   stdout.text("published in the literature. Contact original authors, who")
+   stdout.text("will generally be interested to obtain help with testing,")
+   stdout.text("validation, and publication.")
+
+   stdout.flush
+   stdout.flush
+   stdout.text("=======")
+   stdout.text("License")
+   stdout.text("=======")
+
+   stdout.flush
+   stdout.text("This program is distributed under the terms of the GNU")
+   stdout.text("Lesser General Public License (LGPL) version 3, the full")
+   stdout.text("text of which is available at:")
+   stdout.flush
+   stdout.text("  www.gnu.org/licenses/lgpl-3.0.en.html")
+
+   stdout.flush
+   stdout.flush
+   stdout.text("============")
+   stdout.text("Contributors")
+   stdout.text("============")
+
+   stdout.flush
+   stdout.text("Tonto & the run_sf_derivs program has been brought to you with the work")
+   stdout.text("of the following groups and companies:")
+   stdout.flush
+   stdout.text(". The University of Western Australia (Jayatilaka)")
+   stdout.text(". The University of Bremen (Grabowsky)")
+   stdout.text(". The Slovak University of Technology (Bucinsky)")
+   stdout.text(". The University of Warsaw (Dominiak, Wozniak)")
+   stdout.text(". Olex2 @ Durham University (Puschmann, Dolomanov)")
+
+   stdout.flush
+   stdout.text("Important individual contributions are listed below")
+   stdout.text("in roughly chronological order:")
+   stdout.flush
+   stdout.text(". D. Jayatilaka     - System design & conception.  Help.")
+   stdout.text("                      Hirshfeld atom refinement (HAR)")
+   stdout.text("                      X-ray constrained wavefunctions (XCW)")
+   stdout.flush                     
+   stdout.text(". D. Grimwood       - System design, integrals, XCW")
+   stdout.flush                     
+   stdout.text(". S. Wolff          - DFT, integration grids, isosurfaces")
+   stdout.text("                      Roby bond indices")
+   stdout.flush                     
+   stdout.text(". C. Taylor         - Roby bond indices")
+   stdout.flush                     
+   stdout.text(". A. Whitton        - Joint X-ray/PND fitting")
+   stdout.text("  M. Hudak")        
+   stdout.flush                     
+   stdout.text(". A. Whitten        - Sum-over-states (SOS) polarisabilities")
+   stdout.text("  M. Spackman         in-crystal refractive indices")
+   stdout.flush                     
+   stdout.text(". M. Turner         - CPHF, Polarisabilities, energies")
+   stdout.text("                      isosurface face capping,")
+   stdout.text("                      CrystalkExplorer interface")
+   stdout.flush                     
+   stdout.text(". L. Bucinsky       - Relativistic methods")
+   stdout.flush                     
+   stdout.text(". B. Dittrich       - Original HAR method, dipersion")
+   stdout.flush                     
+   stdout.text(". M. Susli          - gnuplot picture output")
+   stdout.flush                     
+   stdout.text(". S. Grabowsky      - X-ray wavefunction refinement (XWR)")
+   stdout.text("                      ELI-D and bonding tools")
+   stdout.flush
+   stdout.text(". J. Kreszczakovska - Anharmonicity & babies")
+   stdout.text("  (nee Bak)")
+   stdout.flush
+   stdout.text(". H.-B. Buergi      - HAR validation & anharmonicity")
+   stdout.text("  S. Capelli")
+   stdout.text("  L. Malaspina")
+   stdout.flush                     
+   stdout.text(". M. Woinska        - H atom positions & ADPs; F2 refinement")
+   stdout.flush                     
+   stdout.text(". P. Cassam-Chenai  - Geminal/CI methods")
+   stdout.flush                     
+   stdout.text(". P. Spackman       - Build system, Travis test integration")
+   stdout.text("                      B3LYP, spherical harmonics, multipoles")
+   stdout.text("                      isosurface informatics")
+   stdout.text("                      CrystalExplorer interface")
+   stdout.flush                     
+   stdout.text(". K. Abdalhussein   - Bond indices, bond energies,")
+   stdout.text("                      finite temperature SCF")
+   stdout.flush                     
+   stdout.text(". M. Davidson       - Nonorthogonal SCF & ELMO")
+   stdout.flush                     
+   stdout.text("Did I forget anyone? Let me know.")
+
+   stdout.flush
+   stdout.flush
+   stdout.text("Tonto library methods will now be called ...")
+   stdout.flush
+   stdout.flush
+
+   ! Clean
+   command_line.destroy_ptr_part
+
+   ! Start timer !!!!!!!
+   std_time.start_timing
+   !!!!!!!!!!!!!!!!!!!!!
+
+   ! Post-processing
+   DIE_IF(NOT basdir.filename_head=="basis_sets", "-basis-dir must end in 'basis_sets'")
+   DIE_IF(NOT basis.is_one_of(allowed_bases), "unknown basis: "//trim(basis))
+   DIE_IF(     dtol <TOL(5), "dtol is too small: "//trim(dtol.to_str))
+   DIE_IF(     dtol >TOL(1), "dtol is too large: "//trim(dtol.to_str))
+ ! DIE_IF(NOT ldtol <TOL(5), "ldtol is too small: "//trim(ldtol.to_str))
+   DIE_IF(    radius<ZERO, "radius must be positive")
+   DIE_IF(    radius>ten,  "radius must be less than 10 angstrom")
+   DIE_IF(NOT gracc.is_one_of(grid_levels), "unknown grid accuracy: "//trim(gracc))
+   DIE_IF(NOT guess.is_one_of(["mos    ","density"]),"unknown initial guess: "//trim(guess))
+   DIE_IF(NOT   scf.is_one_of(["rhf ","rks "]),"unknown scf: "//trim(scf))
+
+   ! Basis exists?
+   basnam = trim(basdir)//"/"//trim(basis)
+   file.create(basnam)
+   DIE_IF(NOT file.exists,"basis set does not exist: "//trim(basnam))
+   file.destroy
+
+   ! Initialize molecule
+   m.BASE:create
+   GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
+   MOLECULE.MAIN:put_banner
+   m.BASE:set_name(job)
+   m.BASE:set_basis_directory(basdir)
+   m.BASE:set_basis_name(basis)
+   m.BASE:set_charge(charge)
+   m.BASE:set_spin_multiplicity(mult)
+
+   ! Read CIF
+   m.cif.create
+   m.cif.set_file_name(cif)
+   m.CE:process_CIF
+   m.cif.finalize
+
+   ! Set job name
+   m.BASE:set_name(job)
+
+   ! More checks
+   DIE_IF(m.crystal.destroyed,          "no crystal information available!")
+   DIE_IF(m.crystal.xray_data.destroyed,"no x-ray F structure factors supplied!")
+   DIE_IF(m.atom.disassociated,         "no atoms specified")
+   DIE_IF(any(m.atom.atomic_number>36), "run_sf_derivs is not routinely available for heavy atoms, Z>36")
+   tmetal = any(m.atom.atomic_number>=21 AND m.atom.atomic_number<=30)
+   DIE_IF(tmetal,                       "run_sf_derivs is not routinely available for transition metals")
+
+   ! Isotropic H ADPs? Set them.
+   if (h_iso) then
+      m.atom.set_isotropic_H_ADP
+   end
+
+   ! Diffraction data info !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   m.crystal.xray_data.data_kind = "x-ray"
+   m.crystal.xray_data.set_thermal_smearing_model("hirshfeld")
+   m.crystal.xray_data.set_partition_model("         ")
+   m.crystal.xray_data.set_optimize_extinction(extinct)
+   m.crystal.xray_data.set_use_text_SFs(disk_sfs)
+
+   ! Dispersion
+   if (disperse.created) then
+      ATOM:set_dispersion_coefficients(disperse)
+      m.atom.set_tabular_dispersion
+      m.crystal.xray_data.set_add_dispersion_to_F_calc(TRUE)
+   end
+
+   ! Anharmonicity
+   if (anharm.created) then
+      m.crystal.xray_data.set_refine_4th_order(anharm)
+      m.crystal.xray_data.set_refine_4th_order_only(do_4_only)
+   end
+
+   ! Refine isotropic H ADPs?
+   if (h_iso) then
+      m.crystal.xray_data.set_refine_H_U_iso(TRUE)
+   end
+
+   ! Finalize data, and do data pruning
+   if (fzcut>ZERO) &
+   m.crystal.xray_data.set_F_z_cutoff(fzcut)
+   m.crystal.xray_data.update(m.crystal.unit_cell,m.crystal.spacegroup)
+   m.crystal.assign_xray
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+   !!!!!!!!!!
+   m.BASE:put
+   !!!!!!!!!!
+
+
+   ! Set Becke grid
+   m.becke_grid.create
+   m.becke_grid.set_atom_info(m.atom)
+   m.becke_grid.set_accuracy(gracc)
+   m.becke_grid.set_grid_data
+
+   ! Initial SCF
+   m.scfdata.create
+   m.scfdata.set_scf_kind("rhf")
+   m.scfdata.set_initial_density("promolecule")
+   m.scfdata.set_convergence(TOL(3))
+   m.scfdata.diis.set_convergence_tolerance(TOL(2))
+   m.scfdata.set_linear_dependence_tol(ldtol)
+   m.scfdata.finalize
+   m.SCF:scf
+
+   ! Cluster/ED SCF settings
+   spinorbitals = m.scfdata.spinorbital_kind
+   m.scfdata.set_scf_kind(scf)
+   if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
+   else;                   m.scfdata.set_initial_density(spinorbitals)
+   end
+   m.scfdata.set_convergence(TOL(3))
+   m.scfdata.diis.set_convergence_tolerance(dtol)
+   m.scfdata.set_linear_dependence_tol(ldtol)
+
+   ! Use cluster-charges?
+   radius_is_0 = abs(radius) < TOL(2)
+   if (NOT radius_is_0) then
+         m.scfdata.set_using_SC_cluster_charges(TRUE)
+         m.scfdata.set_cluster_radius(radius)
+         m.scfdata.set_defragment(defragment)               !test Lorraine defrag
+   else
+         m.scfdata.set_using_SC_cluster_charges(FALSE)      !test Lorraine, need scf using initial MOs!!! 
+   end
+
+   m.scfdata.finalize
+
+   !!!!!!!!!
+   m.SCF:scf
+   !!!!!!!!!
+
+   ! Sizes
+   n_refl = m.crystal.data.reflections.dim
+
+   ! Structure factors
+   SF.create(n_refl)
+
+   ! No. of parameters for atom "a"
+   n_p = m.crystal.asymmetric_unit_atom(a).no_of_pADPs
+
+   ! Fragment atom corresponding to a
+   f = m.crystal.frag_atom_for_asym_atom(a)
+
+   ! Saved pADP parameters for atom a/f
+   par0 = m.atom(f).pADP_vector
+
+   stdout.text("#####")
+   stdout.show("Asymmetric unit atom a    = ",a)
+   stdout.show("Fragment atom f           = ",f)
+   stdout.show("No of parameters          = ",n_p)
+   stdout.text("par0:")
+   stdout.put(par0)
+
+   SD.create(n_refl,n_p)
+   SD = ZERO
+
+   do p = 1,n_p   ! Loop over parameter p
+
+      ! Get step
+      step = ZERO
+      select case (p)
+      case ( 1: 3); step = step1* BOHR_PER_ANGSTROM;     stepu = step1
+      case ( 4: 9); step = step2*(BOHR_PER_ANGSTROM)**2; stepu = step2
+      case (10:19); step = step3*(BOHR_PER_ANGSTROM)**3; stepu = step3
+      case (20:34); step = step4*(BOHR_PER_ANGSTROM)**4; stepu = step4
+      end
+
+      ! Loop over -/+ step
+      do s = -1,1,2  
+
+         ! Displace pADP parameter "p" on atom f
+         pard    = par0
+         pard(p) = par0(p) + s*step         ! Displace only param p
+         m.atom(f).set_pADP_vector_to(pard)
+
+         ! Regenerate unit cell atoms
+         ! WARNING: THis WONT WORK for atoms on special positions
+         m.atom_info_made = FALSE
+         m.BASE:finalize_atoms
+         m.crystal.destroy_asymmetric_unit
+         m.crystal.make_fragment_data(m.atom,assign_atom=TRUE)
+
+         ! Get divisor 1/(2*step)
+         fac = ONE/(TWO*step)
+   
+         ! Make the SFs !!
+         m.SCF:make_X_SFs
+       ! m.PROP:put_X_SFs
+         !!!!!!!!!!!!!!!!!
+          
+         ! Get absolute value for F_calc
+         SF = abs(m.crystal.xray_data.reflections(:).F_calc)
+
+         stdout.flush
+         stdout.text("SF:")
+         stdout.put(SF)
+      
+         ! Finite difference formula
+         SD(:,p) = SD(:,p) + s*fac*SF(:)
+
+         ! Undo displacement s on "p" 
+         m.atom(f).set_pADP_vector_to(par0)
+
+         ! Regenerate unit cell atoms
+         ! WARNING: This WONT WORK for atoms on special positions
+         m.atom_info_made = FALSE
+         m.BASE:finalize_atoms
+         m.crystal.destroy_asymmetric_unit
+         m.crystal.make_fragment_data(m.atom,assign_atom=TRUE)
+     
+      end ! +/- step s of p
+   end    ! parameter type p of asymm atom a
+
+   stdout.flush
+   stdout.text("SF derivatives for this atom:")
+   stdout.put(SD)
+   SD.destroy
+
+   ! Job timing
+   stdout.flush
+   mess  = "job "//'"'// trim(m.name) //'"'
+   ctime = std_time.elapsed_time_message(mess)
+   etime = std_time.elapsed_cpu_time_message(mess)
+   stdout.text(etime)
+   stdout.text(ctime)
+
+   ! Clean-up
+   m.MAIN:cleanup
+
+   ! Clean-up files
+   TEXTFILE:destroy(stderr)
+   TEXTFILE:destroy(stdout)
+ ! TEXTFILE:destroy(stdin)
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end
