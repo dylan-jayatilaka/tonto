@@ -60,12 +60,8 @@ program run_SF_DERIVS
 
    ! Finite difference variables
    n_refl,n_p :: INT
-   a,f, p,s, u,k :: INT
+   a,f, p,s :: INT
    fac, step,stepu, step1,step2,step3,step4 :: REAL
-   adp2 :: MAT{REAL}(3,3)
-   adp3 :: MAT3{REAL}(3,3,3)
-   adp4 :: MAT4{REAL}(3,3,3,3)
-   k_pt :: MAT{REAL}@
    par0,pard :: VEC{REAL}@
    SF :: VEC{CPX}@ ! Structure factors (temporary)
    SD :: MAT{CPX}@ ! Finite diff. structure factor derivs.
@@ -96,7 +92,7 @@ program run_SF_DERIVS
    fos        = THREE
    fzcut      = -ONE
    gracc      = "low"
-   guess      = "mos"
+   guess      = " "
    h_ADPs     = TRUE
    h_iso      = FALSE
    h_pos      = TRUE
@@ -110,6 +106,11 @@ program run_SF_DERIVS
    scf        = "rhf"
    ten        = TEN*BOHR_PER_ANGSTROM 
  ! wavelength = -ONE
+
+   step1 = 0.0001
+   step2 = 0.0001
+   step3 = 0.0001
+   step4 = 0.0001
 
    ! Get command line !!!!!!!!!
    command_line.set_defaults
@@ -198,7 +199,7 @@ program run_SF_DERIVS
          case ("s4            "); step4  = value.to_real
          case ("scf           ");  scf        = value
        ! case ("complete-mol  ");  defragment = value.to_bin !test defrag Lorraine
-       ! case ("scf-guess     ");  guess      = value
+         case ("scf-guess     ");  guess      = value
        ! case ("wavelength    ");  wavelength = value.to_real
 
 
@@ -404,11 +405,13 @@ program run_SF_DERIVS
           ! stdout.text("       uhf     unrestricted Hartree-Fock")
           ! stdout.text("       uks     unrestricted Kohn-Sham/BLYP")
           ! stdout.text("       gchf    general-complex (relativistic) Hartree-Fock")
-          ! stdout.flush    
-          ! stdout.text("   -scf-guess [mos|density]")
-          ! stdout.flush    
-          ! stdout.text("       Initial guess for SCF <wavefunction> method.")
-          ! stdout.flush    
+            stdout.flush    
+            stdout.text("   -scf-guess [mos|density]")
+            stdout.flush    
+            stdout.text("       Initial guess for SCF <wavefunction> method.")
+            stdout.flush    
+            stdout.text("       Default: mos")
+            stdout.flush    
           ! stdout.text("   -wavelength <wavelength>")
           ! stdout.flush    
           ! stdout.text("       The <wavelength> of the X-radiation.  Default: '0.7139 angstrom'.")
@@ -598,7 +601,7 @@ program run_SF_DERIVS
    DIE_IF(    radius<ZERO, "radius must be positive")
    DIE_IF(    radius>ten,  "radius must be less than 10 angstrom")
    DIE_IF(NOT gracc.is_one_of(grid_levels), "unknown grid accuracy: "//trim(gracc))
-   DIE_IF(NOT guess.is_one_of(["mos    ","density"]),"unknown initial guess: "//trim(guess))
+   DIE_IF(NOT guess.is_one_of(["       ","mos    ","density"]),"unknown initial guess: "//trim(guess))
    DIE_IF(NOT   scf.is_one_of(["rhf ","rks "]),"unknown scf: "//trim(scf))
 
    ! Basis exists?
@@ -676,48 +679,39 @@ program run_SF_DERIVS
    m.BASE:put
    !!!!!!!!!!
 
-
    ! Set Becke grid
    m.becke_grid.create
    m.becke_grid.set_atom_info(m.atom)
    m.becke_grid.set_accuracy(gracc)
    m.becke_grid.set_grid_data
 
-   ! Initial SCF
+   ! Initial SCF - only if using cluster charges
    m.scfdata.create
-   m.scfdata.set_scf_kind("rhf")
+   m.scfdata.set_scf_kind(scf)
+   spinorbitals = m.scfdata.spinorbital_kind
    m.scfdata.set_initial_density("promolecule")
+   select case (guess)
+   case ("density"); m.scfdata.set_initial_MOs(spinorbitals)
+   case ("mos    "); m.scfdata.set_initial_density(spinorbitals)
+   end
    m.scfdata.set_convergence(TOL(3))
    m.scfdata.diis.set_convergence_tolerance(TOL(2))
    m.scfdata.set_linear_dependence_tol(ldtol)
    m.scfdata.finalize
+
+   !!!!!!!!!
    m.SCF:scf
+   !!!!!!!!!
 
    ! Cluster/ED SCF settings
-   spinorbitals = m.scfdata.spinorbital_kind
-   m.scfdata.set_scf_kind(scf)
-   if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
-   else;                   m.scfdata.set_initial_density(spinorbitals)
-   end
-   m.scfdata.set_convergence(TOL(3))
-   m.scfdata.diis.set_convergence_tolerance(dtol)
-   m.scfdata.set_linear_dependence_tol(ldtol)
-
-   ! Use cluster-charges?
    radius_is_0 = abs(radius) < TOL(2)
    if (NOT radius_is_0) then
-         m.scfdata.set_using_SC_cluster_charges(TRUE)
-         m.scfdata.set_cluster_radius(radius)
-         m.scfdata.set_defragment(defragment)               !test Lorraine defrag
-   else
-         m.scfdata.set_using_SC_cluster_charges(FALSE)      !test Lorraine, need scf using initial MOs!!! 
+      m.scfdata.set_using_SC_cluster_charges(TRUE)
+      m.scfdata.set_cluster_radius(radius)
+      m.scfdata.set_defragment(defragment)
+      m.scfdata.finalize
+      m.SCF:scf ! Cluster charge SCF here
    end
-
-   m.scfdata.finalize
-
-   !!!!!!!!!
-   m.SCF:scf
-   !!!!!!!!!
 
    ! Sizes
    n_refl = m.crystal.data.reflections.dim
