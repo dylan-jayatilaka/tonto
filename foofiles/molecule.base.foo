@@ -266,7 +266,7 @@ contains
          nullify(mol.basis)        ! do not destroy this
          nullify(mol.slaterbasis)  ! do not destroy this
          nullify(mol.coppensbasis) ! do not destroy this
-         nullify(mol.crystal)      ! do not destroy this
+       ! nullify(mol.crystal)      ! do destroy this
 
          mol.:destroy
 
@@ -3540,13 +3540,13 @@ contains
       ! Don't remake ANO data if there
       mol.:set_ANOs_from(self,.atom_group(g).atom_index)
 
-      ! Make atom info
+      ! Make atom info. No recursive groups. Yet?
       mol.atom_info_made = FALSE
-      mol.:finalize_atoms(do_groups=FALSE)
+      mol.:finalize_atoms(do_groups=FALSE) 
 
-      ! Assign the crystal
-      ! WARNING: dont destroy ...
-      if (mol.crystal.associated) then
+      ! Assign the crystal & gegenerate unit cell atoms
+      if (.crystal.associated) then
+         mol.crystal.create_minimal_copy(.crystal)
          mol.crystal.make_fragment_data(mol.atom,assign_atom=FALSE)
       end
 
@@ -3737,23 +3737,10 @@ contains
       ! Check indices are sensible
       .atom_group.finalize(.atom)
 
-      do g = 1,.atom_group.dim
+      ! Destroy the groups
+      .:destroy_atom_group_mols
 
-         mol => .atom_group(g).mol
-
-         if (mol.:destroyed) cycle
-
-         mol.atom.nullify_ptr_part ! do not destroy these
-         nullify(mol.basis)        ! do not destroy this
-         nullify(mol.slaterbasis)  ! do not destroy this
-         nullify(mol.coppensbasis) ! do not destroy this
-         nullify(mol.crystal)      ! do not destroy this
-
-         mol.:destroy
-
-      end
-
-      ! Create each fragHAR capped group
+      ! Now remake fragHAR capped group
       do g = 1,.atom_group.dim
          self.:make_fragHAR_group(g)
       end
@@ -3784,15 +3771,9 @@ contains
       ! Start with *uncapped* .atom_group(g) atom indices ...
       mol.atom.create_copy(.atom,.atom_group(g).atom_index)
 
-      ! Make atom info - this will set multiplicity!
-      ! Need below?
-    ! mol.atom_info_made = FALSE
-    ! mol.atom.set_group_to(g)
-    ! mol.:set_atom_info
-
-      ! Add cap atoms !!!!!!!!!!!!!!!
+      ! Add cap atoms !!!!!!!!!!!!!!!!!!
       .:add_fragHAR_cap_for_group(g,mol)
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       ! Set charge
       mol.:set_charge(.atom_group(g).charge)
@@ -3823,10 +3804,13 @@ contains
       ! Assign basis set -- don't destroy!
       mol.atom.nullify_bases
       mol.:set_basis_name(.basis_name)
-    ! mol.:set_basis_data_from(self)
 
-      ! Assign the crystal -- don't destroy!
-      if (.crystal.associated) mol.crystal => .crystal
+      ! Copy the crystal -- destroy it!
+      ! Make separate asymm unit with only mol in it later ...
+      if (.crystal.associated) then
+         mol.crystal.create_minimal_copy(.crystal)
+         mol.crystal.make_fragment_data(mol.atom,assign_atom=FALSE)
+      end
       
       ! Don't remake ANO data if there
       mol.:set_ANOs_from(self)
@@ -4067,6 +4051,7 @@ contains
          if (.:from_mmCIF) then
         
             ! Add Ulf Ryde's fragHAR capped residues
+            ! We need a switch to add cap atoms, not this ... !
             .:make_fragHAR_groups
         
          else if (.atom_group.has_atom_indices_ptr) then
@@ -4148,7 +4133,7 @@ contains
          mol.:read_wfn_file(wavefunction_file,do_groups=FALSE)
 
          ! Set kind of SCF
-         ! DJ ... this seems always to be UHF?
+         ! ... this seems always to be UHF?
          if (mol.scfdata.is_unrestricted) then
             if(.scfdata.disassociated) then
                .scfdata.create
@@ -4197,6 +4182,7 @@ contains
       do g = 1,.atom_group.dim
       
          ! Create mol & define it
+         ! ... including mol.crystal part
          mol.:create
          self.:make_molecule_from_atom_group(g,mol)
       
@@ -4250,9 +4236,11 @@ contains
          ! Don't remake ANO data if there
          mol.:set_ANOs_from(self)
 
-         ! Assign the crystal
-         ! WARNING: dont destroy ...
-         if (.crystal.associated) mol.crystal => .crystal
+         ! Assign the crystal & gegenerate unit cell atoms
+         if (.crystal.associated) then
+            mol.crystal.create_minimal_copy(.crystal)
+            mol.crystal.make_fragment_data(mol.atom,assign_atom=FALSE)
+         end
 
          ! Set guess-type SCF defaults
          if (NOT .atom_group(g).spin_multiplicity_set) then 
@@ -4725,8 +4713,7 @@ contains
    end
 
    do_fragHAR result (res) ::: PURE
-   ! Returns TRUE if the there is a cif and it was an mmCIF
-   ! and we want to make fragHAR fragments.
+   ! Returns TRUE if we are refining fragments.
       self :: IN
       res :: BIN
 
@@ -9212,7 +9199,8 @@ contains
             ! Minimal stdout for fragment
             name = trim(.atom_group(g).name)
             stdout.redirect(name)
-            .atom_group(g).mol.:put_basics_and_atoms
+          ! .atom_group(g).mol.:put_basics_and_atoms
+            .atom_group(g).mol.:put
             stdout.revert
            
             ! Even more minimal xyz for plotting
