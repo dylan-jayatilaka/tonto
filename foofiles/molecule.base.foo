@@ -3702,13 +3702,14 @@ contains
 
    end
 
-!  ================
-!  Fragment methods
-!  ================
+!  =====================
+!  Ryde fragment capping
+!  =====================
 
-   make_fragHAR_groups ::: leaky
-   ! Make the fragHAR groups
-   ! This routine will add extra cap atoms!
+   make_Ryde_capped_groups ::: leaky
+   ! Make Ulf Ryde's atom capped groups
+   ! The strategy is to make them from the compound_sequence_id's
+   ! which are found in an mmCIF, normally ....
       self :: INOUT
 
    DIE_IF(.atom.disassociated,"no atom info")
@@ -3716,8 +3717,9 @@ contains
 
       n_comp, g :: INT
       mol :: MOLECULE*
+      IDs :: VEC{INT}@
 
-      if (NOT .:do_fragHAR) return
+      if (NOT .crystal.use_Ryde_capping) return
 
       ! Assign connections
       VEC{ATOM}:assign_connection_table(.atoms_bonded_to_atom)
@@ -3729,7 +3731,8 @@ contains
          ! Make groups from compound_id's
          .atom_group.create(n_comp)
          do g = 1,n_comp
-            .atom_group(g).atom_index => .atom(:).compound_sequence_id.indices_of_elements_matching(g)
+            IDs = .atom(:).compound_sequence_id
+            .atom_group(g).atom_index => IDs.indices_of_elements_matching(g)
             .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
          end
 
@@ -3741,9 +3744,10 @@ contains
       ! Destroy the groups
       .:destroy_atom_group_mols
 
-      ! Now remake fragHAR capped group
+      ! Now make Ryde's molecular caps
+      ! ... in .atom_group(g).mol
       do g = 1,.atom_group.dim
-         self.:make_fragHAR_group(g)
+         self.:make_Ryde_cap_for_group(g)
       end
 
       ! Clear connections
@@ -3751,7 +3755,7 @@ contains
 
    end
 
-   make_fragHAR_group(g) ::: leaky
+   make_Ryde_cap_for_group(g) ::: leaky
    ! Make a capped fragment for molecule "mol, the atom_group(g).mol
    ! with compound_id "g", ready for fragHAR calculation. This routine
    ! will add extra atoms.
@@ -3772,9 +3776,9 @@ contains
       ! Start with *uncapped* .atom_group(g) atom indices ...
       mol.atom.create_copy(.atom,.atom_group(g).atom_index)
 
-      ! Add cap atoms !!!!!!!!!!!!!!!!!!
-      .:add_fragHAR_cap_for_group(g,mol)
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! Add cap atoms !!!!!!!!!!!!!!!
+      .:add_Ryde_cap_for_group(g,mol)
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       ! Set charge
       mol.:set_charge(.atom_group(g).charge)
@@ -3782,7 +3786,7 @@ contains
       ! Make atom info; groups should not contain subgroups!
       mol.atom_info_made = FALSE
       mol.atom.set_group_to(g)
-      mol.:finalize_atoms(do_groups=FALSE)
+      mol.:finalize_atoms(do_groups=FALSE) ! no recursion
 
       ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
       if (.atom_group(g).spin_multiplicity_set) then
@@ -3819,13 +3823,11 @@ contains
       ! Add capped molecule to atom_group
       .atom_group(g).mol => mol
 
-
    end
 
-   add_fragHAR_cap_for_group(g,mol) ::: private, leaky
-   ! Make a capped fragment for molecule the atom_group(g).mol with
-   ! compound_id "g" ready for fragHAR calculation. This routine will add
-   ! extra atoms.
+   add_Ryde_cap_for_group(g,mol) ::: private, leaky
+   ! Add Ryde' caps fragment for molecule the atom_group(g).mol with
+   ! compound_id "g".
       self :: INOUT
       g :: INT, IN
       mol :: MOLECULE, INOUT
@@ -3864,8 +3866,8 @@ contains
             ap = bonded_atom(1,b)
             bp = bonded_atom(2,b)
       
-            ! Use them to start the fragHAR cap
-            .:add_fragHAR_cap_from_atoms(ap,bp,mol)
+            ! Use them to start the Ryde cap
+            .:add_Ryde_cap_from_atoms(ap,bp,mol)
 
          end
       
@@ -3876,11 +3878,11 @@ contains
  
    end
 
-   add_fragHAR_cap_from_atoms(ap,bp,mol) ::: private, leaky
+   add_Ryde_cap_from_atoms(ap,bp,mol) ::: private, leaky
    ! Cap residue molecule "mol" starting from atom "ap" in that
    ! residue, which is connected to atom "bp" in another group.
-   ! WARNING: This will add extra atoms to atom_group(g1).mol.atom but
-   ! it will not add extra indices into atom_index!
+   ! WARNING: This will add extra atoms to atom_group(g1).mol.atom 
+   ! but it won't add extra indices into atom_index!
    ! Zhang, D. W. & Zhang, J. Z. H. (2003). J. Chem. Phys., 119(7), 3599-3605.
    ! Soederhjelm, P.& Ryde, U. (2008). J. Phys. Chem. A, 113(3), 617-627
       self :: INOUT
@@ -4029,9 +4031,9 @@ contains
 
    end
 
-!  ================
-!  Atoms group info
-!  ================
+!  ===============
+!  Atom group info
+!  ===============
 
    finalize_atom_groups ::: leaky
    ! Finalize the .atom_group information
@@ -4046,51 +4048,191 @@ contains
             .:make_groups_from_wfn_files
          end
 
-      else
+      else if (.atom.has_cartesian_axes) then
 
          ! We have .atom()'s
-         if (.:from_mmCIF) then
+         if (.crystal.use_Ryde_capping) then
         
-            ! Add Ulf Ryde's fragHAR capped residues
-            ! We need a switch to add cap atoms, not this ... !
-            .:make_fragHAR_groups
+            ! Ulf Ryde's capped residues
+            ! WARNING: .atom_groups list only (parent) uncapped atoms
+            .:make_Ryde_capped_groups
         
          else if (.atom_group.has_atom_indices_ptr) then
          
-            ! We have atom_indices for each atom_group 
+            ! User set atom_indices for each atom_group 
             .:make_atom_group_mols
         
          else 
 
-            ! Set group indices, if possible
-            .atom.set_connected_groups
-         
-            if (.atom.has_groups) then
-        
-               ! Each .atom() had a .group index
-               n_group = .atom.no_of_groups
-               if (.atom_group.disassociated) .atom_group.create(n_group)
-           
-               ! Make groups from group index
-               do g = 1,.atom_group.dim
-                  .atom_group(g).atom_index => .atom(:).group.indices_of_elements_matching(g)
-                  .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
-               end
-           
-               ! Set charges
-               if (.atom_group_charges.associated) then
-                  DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
-                  do g = 1,.atom_group.dim
-                     .atom_group(g).set_charge(.atom_group_charges(g))
-                  end
-               end
-           
-               .:make_atom_group_mols
-
-            end
+            ! Make .atom_group's from connection table
+            .:make_connected_atom_groups
+            .:make_atom_group_mols
 
          end
 
+      end
+
+   end
+
+   make_connected_atom_groups ::: leaky
+   ! Make .atom_group's from the connection table.
+      self :: INOUT
+
+      n_group,g :: INT
+
+      ! Set group indices, if possible
+      .atom.set_connected_groups
+      
+      if (.atom.has_groups) then
+      
+         ! Each .atom() had a .group index
+         n_group = .atom.no_of_groups
+         if (.atom_group.disassociated) then
+            .atom_group.create(n_group)
+         else
+            DIE_IF(n_group/=.atom_group.dim,"inconsistent .atom_group size")
+         end
+      
+         ! Make groups from group index
+         do g = 1,.atom_group.dim
+            .atom_group(g).atom_index => .atom(:).group.indices_of_elements_matching(g)
+            .atom_group(g).n_atoms     = .atom_group(g).atom_index.dim
+         end
+      
+         ! Set charges
+         if (.atom_group_charges.associated) then
+            DIE_IF(.atom_group_charges.dim/=.atom_group.dim,"Wrong size, .atom_group_charges")
+            do g = 1,.atom_group.dim
+               .atom_group(g).set_charge(.atom_group_charges(g))
+            end
+         end
+
+      end
+
+   end
+
+   make_atom_group_mols ::: private, leaky
+   ! Make the ".atom_group.mol" molecules
+      self :: INOUT
+
+   DIE_IF(.atom.disassociated,"no atoms!")
+
+      mol :: MOLECULE*
+      g :: INT
+
+      if (.atom_group.disassociated) return
+
+      ! Regenerate molecules
+      .:destroy_atom_group_mols
+
+      ! Check is indices are sensible
+      .atom_group.finalize(.atom)
+      
+      ! Create each group from "self"
+      do g = 1,.atom_group.dim
+      
+         ! Create mol & define it
+         ! ... including mol.crystal part
+         mol.:create
+         self.:make_molecule_from_atom_group(g,mol)
+      
+         ! Read the MOs & make the density
+         ! This won't work until Tonto can read in its own dump
+         if (.atom_group(g).MO_file_name/=" ") then
+             mol.:read_archive("molecular_orbitals","restricted")
+             mol.:make_scf_density_matrix
+         end
+      
+         ! Rotate and translate mol
+         if (.atom_group(g).transform_group) then
+            mol.:rotate_by(.atom_group(g).rotation_matrix)
+            mol.atom.translate_by(.atom_group(g).shift)
+         end
+         mol.atom.set_group_to(g)
+         mol.name = .atom_group(g).name
+      
+         ! Add it to atom_group
+         .atom_group(g).mol => mol
+      
+      end
+
+      ! Update group info from self
+      .:update_group_info
+
+   end
+
+   update_group_info ::: leaky
+   ! Update .atom_group information (ANOs, crystal, SCF guess ...)
+   ! WARNING: atom_group(:).mol.crystal's are clones of .crystal
+      self :: INOUT
+
+   ENSURE(.atom.associated,"atom groups must be defined after atoms=")
+   ENSURE(.atom_group.has_all_mols,"atom_group has missing mols")
+
+      mol :: MOLECULE*
+      g :: INT
+
+      if (.scfdata.disassociated) then
+         .:set_scf_defaults
+         .scfdata.set_output(FALSE)
+      end
+
+      do g = 1,.atom_group.dim
+
+         mol => .atom_group(g).mol
+         ENSURE(mol.associated,"atom_group molecule "//trim(g.to_str)//" does not exist")
+
+         ! Don't remake ANO data if there
+         mol.:set_ANOs_from(self)
+
+         ! Assign the crystal & gegenerate unit cell atoms
+         if (.crystal.associated) then
+            mol.crystal.create_minimal_copy(.crystal)
+            mol.crystal.make_fragment_data(mol.atom,assign_atom=FALSE)
+         end
+
+         ! Set guess-type SCF defaults
+         if (NOT .atom_group(g).spin_multiplicity_set) then 
+            mol.:set_scf_guess_defaults_from(.scfdata)
+         end
+
+      end
+
+   end
+
+! WFN file stuff
+
+   create_from_mols(mol_A, mol_B) ::: leaky
+   ! Create a molecule by merging "mol_A" and "mol_B"
+      self :: PTR
+      mol_A, mol_B :: MOLECULE*
+
+      i, n_A, n_B :: INT
+
+      .:create
+      .:set_defaults
+
+      mol_A.:make_scf_density_matrix
+      mol_B.:make_scf_density_matrix
+
+      n_A = mol_A.atom.dim
+      n_B = mol_B.atom.dim
+
+      .atom.create_copy(mol_A.atom)
+      .atom.append(mol_B.atom)
+      .atom_group.create(2)
+      .atom_group(1).set_atom(mol_A.atom)
+      .atom_group(1).atom_index.create_copy([ (i, i=1,n_A) ])
+      .atom_group(1).mol => mol_A
+
+      .atom_group(2).set_atom(mol_B.atom)
+      .atom_group(2).atom_index.create_copy([ (i, i=n_A + 1,n_A + n_B) ])
+      .atom_group(2).mol => mol_B
+
+      .:join_atom_groups
+
+      if (.atom_group.has_all_mols) then
+         .:update_group_info
       end
 
    end
@@ -4157,130 +4299,6 @@ contains
       .:join_atom_groups
 
       ! Update group info from self
-      if (.atom_group.has_all_mols) then
-         .:update_group_info
-      end
-
-   end
-
-   make_atom_group_mols ::: private, leaky
-   ! Make the ".atom_group.mol" molecules
-      self :: INOUT
-
-   DIE_IF(.atom.disassociated,"no atoms!")
-   DIE_IF(.atom_group.disassociated,"no atom groups!")
-
-      mol :: MOLECULE*
-      g :: INT
-
-      ! Regenerate molecules
-      .:destroy_atom_group_mols
-
-      ! Check is indices are sensible
-      .atom_group.finalize(.atom)
-      
-      ! Create each group from "self"
-      do g = 1,.atom_group.dim
-      
-         ! Create mol & define it
-         ! ... including mol.crystal part
-         mol.:create
-         self.:make_molecule_from_atom_group(g,mol)
-      
-         ! Read the MOs & make the density
-         ! This won't work until Tonto can read in its own dump
-         if (.atom_group(g).MO_file_name/=" ") then
-             mol.:read_archive("molecular_orbitals","restricted")
-             mol.:make_scf_density_matrix
-         end
-      
-         ! Rotate and translate mol
-         if (.atom_group(g).transform_group) then
-            mol.:rotate_by(.atom_group(g).rotation_matrix)
-            mol.atom.translate_by(.atom_group(g).shift)
-         end
-         mol.atom.set_group_to(g)
-         mol.name = .atom_group(g).name
-      
-         ! Add it to atom_group
-         .atom_group(g).mol => mol
-      
-      end
-      
-
-
-      ! Update group info from self
-      .:update_group_info
-
-   end
-
-   update_group_info ::: leaky
-   ! Update .atom_group information (ANOs, crystal, SCF guess ...)
-      self :: INOUT
-
-   ENSURE(.atom.associated,"atom groups must be defined after atoms=")
-   ENSURE(.atom_group.has_all_mols,"atom_group has missing mols")
-
-      mol :: MOLECULE*
-      g :: INT
-
-      if (.scfdata.disassociated) then
-         .:set_scf_defaults
-         .scfdata.set_output(FALSE)
-      end
-
-      do g = 1,.atom_group.dim
-
-         mol => .atom_group(g).mol
-         ENSURE(mol.associated,"atom_group molecule "//trim(g.to_str)//" does not exist")
-
-         ! Don't remake ANO data if there
-         mol.:set_ANOs_from(self)
-
-         ! Assign the crystal & gegenerate unit cell atoms
-         if (.crystal.associated) then
-            mol.crystal.create_minimal_copy(.crystal)
-            mol.crystal.make_fragment_data(mol.atom,assign_atom=FALSE)
-         end
-
-         ! Set guess-type SCF defaults
-         if (NOT .atom_group(g).spin_multiplicity_set) then 
-            mol.:set_scf_guess_defaults_from(.scfdata)
-         end
-
-      end
-
-   end
-
-   create_from_mols(mol_A, mol_B) ::: leaky
-   ! Create a molecule by merging "mol_A" and "mol_B"
-      self :: PTR
-      mol_A, mol_B :: MOLECULE*
-
-      i, n_A, n_B :: INT
-
-      .:create
-      .:set_defaults
-
-      mol_A.:make_scf_density_matrix
-      mol_B.:make_scf_density_matrix
-
-      n_A = mol_A.atom.dim
-      n_B = mol_B.atom.dim
-
-      .atom.create_copy(mol_A.atom)
-      .atom.append(mol_B.atom)
-      .atom_group.create(2)
-      .atom_group(1).set_atom(mol_A.atom)
-      .atom_group(1).atom_index.create_copy([ (i, i=1,n_A) ])
-      .atom_group(1).mol => mol_A
-
-      .atom_group(2).set_atom(mol_B.atom)
-      .atom_group(2).atom_index.create_copy([ (i, i=n_A + 1,n_A + n_B) ])
-      .atom_group(2).mol => mol_B
-
-      .:join_atom_groups
-
       if (.atom_group.has_all_mols) then
          .:update_group_info
       end
@@ -4427,11 +4445,19 @@ contains
       center = .atom.center_of_mass
    end
 
+!  ============================
+!  Axis change and origin shift
+!  ============================
+
    change_to_principal_axes
    ! Move the origin to the center of mass and change to the principal axis
    ! coordinate system
+      self :: INOUT
+
    ENSURE(.atom.associated,"atom list required")
+
       .atom.change_to_principal_axes
+
    end
 
    change_to_principal_top_axes
@@ -4698,31 +4724,6 @@ contains
       if      (.scfdata.associated) then;            res = .scfdata.scf_kind
       else if (.molecular_orbitals.allocated) then; res = .molecular_orbitals.guess_scf_kind
       else;                                       DIE("no way to  guess!")
-      end
-
-   end
-
-   from_mmCIF result (res) ::: PURE
-   ! Returns TRUE if the there is a cif and it was an mmCIF
-   ! i.e. this molecule is a big protein (?)
-      self :: IN
-      res :: BIN
-
-      res = FALSE
-      if (.cif.associated) res = .cif.is_mmCIF
-
-   end
-
-   do_fragHAR result (res) ::: PURE
-   ! Returns TRUE if we are refining fragments.
-      self :: IN
-      res :: BIN
-
-      res = FALSE
-      if (.crystal.associated) then
-      if (.crystal.data.associated) then
-         res = .crystal.data.refine_fragments
-      end
       end
 
    end
@@ -8851,7 +8852,7 @@ contains
       if (.atom_group.associated) .:put_atom_groups
 
       ! Stop here for proteins
-      if (.:from_mmCIF) then
+      if (.crystal.use_Ryde_capping) then
       if (.atom.associated) then
          if (.atom.dim>100) return
       end
