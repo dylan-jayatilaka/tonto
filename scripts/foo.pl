@@ -347,6 +347,7 @@ push(@all_known_type_names,$array_type);
 %{$global_var_info{stdout}}   = &analyse_type_name('TEXTFILE');
 %{$global_var_info{stderr}}   = &analyse_type_name('TEXTFILE');
 %{$global_var_info{std_time}} = &analyse_type_name('TIME');
+%{$global_var_info{std_table_column}} = &analyse_type_name('TABLE_COLUMN');
 %{$global_var_info{tonto_parallel}} = &analyse_type_name('PARALLEL');
 
 %{$global_var_info{spherical_harmonics_for}} = &analyse_type_name('VEC{MAT_{REAL}}');
@@ -4189,6 +4190,11 @@ sub convert_dots_to_fortran {
                 $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
                 $called_routines{TIME}{std_time}{module_data}  = 1;
              }
+             elsif ($arg eq 'std_table_column') {
+                $called_routines{TABLE_COLUMN}{std_table_column}{fortran_mod_name}  = 'TABLE_COLUMN';
+                $called_routines{TABLE_COLUMN}{std_table_column}{fortran_type_name} = 'TABLE_COLUMN';
+                $called_routines{TABLE_COLUMN}{std_table_column}{module_data}  = 1;
+             }
 
           # The $rout must be a routine call on object $arg
           } else {
@@ -4303,6 +4309,11 @@ sub convert_dots_to_fortran {
                     $called_routines{TIME}{std_time}{fortran_mod_name}  = 'TIME';
                     $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
                     $called_routines{TIME}{std_time}{module_data}  = 1;
+                 }
+                 elsif ($arg eq 'std_table_column') {
+                    $called_routines{TABLE_COLUMN}{std_table_column}{fortran_mod_name}  = 'TABLE_COLUMN';
+                    $called_routines{TABLE_COLUMN}{std_table_column}{fortran_type_name} = 'TABLE_COLUMN';
+                    $called_routines{TABLE_COLUMN}{std_table_column}{module_data}  = 1;
                  }
 
                  # Add called routines
