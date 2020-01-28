@@ -37,14 +37,17 @@ contains
       self :: PTR
 
       if (.cif.disassociated) .cif.create
+
       .cif.read_keywords
+
       .cif.finalize
 
    end
 
    read_CIF_atoms_raw(cif) ::: leaky
    ! Read atom info from a "cif". Do not reset bond lengths.
-      cif :: CIF
+      self :: INOUT
+      cif :: CIF, INOUT
 
    ENSURE(cif.start_of_data>0,"no start of data in CIF")
    ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
@@ -63,24 +66,24 @@ contains
       .spin_multiplicity = .BASE:default_spin_multiplicity
 
       ! Finalize
-      .BASE:set_atom_info
-      .BASE:resolve_basis_info
-      .BASE:finalize_atom_groups
+      .BASE:finalize_atoms
 
    end
 
    read_CIF_atoms(cif) ::: leaky
    ! Read atom info from a "cif" and make crystal cell info
-   ! if the crystal info is there.
-      cif :: CIF
+   ! if the crystal info is there. Bond lengths may be reset.
+      self :: INOUT
+      cif :: CIF, INOUT
 
    ENSURE(cif.start_of_data>0,"no start of data in CIF")
    ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
 
-      ! Read in the atoms raw
+      ! Read in the atoms raw. No bond length reset.
       .:read_CIF_atoms_raw(cif)
 
-      ! Set atom and crystal info. Including bond length reset
+      ! Set cartesian atom and crystal info. 
+      ! Bond lengths may be reset in here.
       .:make_CIF_atoms_and_crystal(cif)
 
    end
@@ -89,7 +92,8 @@ contains
    ! Read crystal unit cell and spacegroup information (but NOT atom
    ! positions) from a CIF file called "cif", but do not change axis
    ! system or produce any information arrays.
-      cif :: CIF
+      self :: INOUT
+      cif :: CIF, INOUT
 
    ENSURE(cif.start_of_data>0,"no start of data in CIF")
    ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
@@ -112,7 +116,8 @@ contains
    ! atom and crystal informational arrays.
    ! NOTE: only to be called after reading .atom's from the CIF,
    !       see the routine below.
-      cif :: CIF
+      self :: INOUT
+      cif :: CIF, INOUT
 
    ENSURE(cif.start_of_data>0,"no start of data in CIF")
    ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
@@ -123,10 +128,11 @@ contains
       ! Only continue if there are some atoms ...
       if (NOT associated(.atom)) return
 
-      ! Set atom and crystal info. Including bond length reset
+      ! Set cartesian atom and crystal info. 
+      ! Bond lengths may be reset in here.
       .:make_CIF_atoms_and_crystal(cif)
 
-      ! Read covariances
+      ! Read covariances from refinement
       if (NOT cif.apply_bond_length) then
          .:read_CIF_crystal_esds(cif)
       end
@@ -135,7 +141,8 @@ contains
 
    read_CIF_crystal_esds(cif) ::: private, leaky
    ! Read the CIF covariances and set pADP esds.
-      cif :: CIF
+      self :: INOUT
+      cif :: CIF, INOUT
 
    ENSURE(.atom.associated,"no atoms")
    ENSURE(.crystal.associated,"no crystal")
@@ -207,12 +214,11 @@ contains
 
    end
 
-! mmCIF
-
    make_CIF_atoms_and_crystal(cif) ::: private, leaky
    ! Set the atom and crystal fragment information when processing the
    ! CIF. If requested in cif, reset H atom bond lengths.
-      cif :: CIF
+      self :: INOUT
+      cif :: CIF, IN
 
    ENSURE(.atom.associated,"no atoms")
 
@@ -274,6 +280,9 @@ contains
 
       end
 
+      ! Finalize atoms & groups as well
+      .BASE:finalize_atoms
+
    end
 
 !  ===========================
@@ -311,9 +320,7 @@ contains
 
       ! Finalize basis on new .atom list
       .atom_info_made = FALSE
-      .BASE:set_atom_info
-      .BASE:resolve_basis_info
-      .BASE:finalize_atom_groups
+      .BASE:finalize_atoms
       .crystal.make_fragment_data(.atom,assign_atom=TRUE)
 
       ! Message
@@ -337,10 +344,6 @@ contains
       ! Don't make a new cluster, let the user do it.
       .saved.cluster.create_atom_list(.atom)
 
-      ! Finalize atom info
-      .BASE:set_atom_info
-      .BASE:finalize_atom_groups
-
       ! Create basis sets
       if (.saved.basis.associated)               .basis.create_copy(.saved.basis)
       if (.saved.slaterbasis.associated)   .slaterbasis.create_copy(.saved.slaterbasis)
@@ -349,13 +352,13 @@ contains
       .slaterbasis_name  = .saved.slaterbasis_name
       .coppensbasis_name = .saved.coppensbasis_name
 
-      ! Finalize basis sets
+      ! Finalize atom info
       if (.atom.associated) .atom.nullify_bases
-      .BASE:resolve_basis_info
-      .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+      .atom_info_made = FALSE
+      .BASE:finalize_atoms
 
-      ! Set basis info
-      .BASE:set_basis_info
+      ! Redo crystal.atoms
+      .crystal.make_fragment_data(.atom,assign_atom=TRUE)
 
    end
 
@@ -378,8 +381,8 @@ contains
    create_cluster_mol(m, mol) ::: leaky, public
    ! Create a new "self" by generating a real molecular cluster from
    ! information stored in .cluster information object.  The original
-   ! molecule replaced by the defragmented cluster,
-   ! while the m-th molecular fragment in the .cluster is in mol
+   ! molecule replaced by the defragmented cluster, while the m-th
+   ! molecular fragment in the .cluster is in mol
       self :: PTR
       mol :: MOLECULE
       m :: INT, IN
@@ -399,9 +402,7 @@ contains
       .cluster.create_atom_list(.atom)
 
       ! Finalize basis on new .atom list
-      .BASE:set_atom_info
-      .BASE:resolve_basis_info
-      .BASE:finalize_atom_groups
+      .BASE:finalize_atoms
 
       ! Make new crystal mapping info for this fragment
       .crystal.make_fragment_data(.atom, assign_atom=TRUE)
@@ -478,12 +479,7 @@ contains
 
       ! Finalize atom info
       .atom.nullify_bases
-      .BASE:set_atom_info
-      .BASE:resolve_basis_info
-      .BASE:finalize_atom_groups
-
-      ! Set basis info
-      .BASE:set_basis_info
+      .BASE:finalize_atoms
 
    end
 
@@ -1842,8 +1838,8 @@ contains
       g :: CPX
       m_out :: MAT{INT}*
       GG,ft_hkl,buco :: MAT{CPX}*
-      MM,YU,S,R,Z,PZP,PPZPP :: MAT{REAL}*
-      P2,Ap,Ep :: VEC{REAL}*
+      MM,S,R :: MAT{REAL}*
+   !  P2,Ap,Ep :: VEC{REAL}*
 
       k_max = size(k_pts,1)
 
@@ -1891,20 +1887,20 @@ contains
       buco.destroy
 
       ! unfortunatelly the PCE corrected orbitals lose phase :(
-      if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp)then
-         PPZPP.destroy
-      end if
+   !  if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp)then
+   !     PPZPP.destroy
+   !  end if
 
       .BASE:put_debug(ft_hkl,"ft_hkl mx")
 
       S.destroy
-      Z.destroy
-      PZP.destroy
+ !    Z.destroy
+ !    PZP.destroy
       GG.destroy
-      YU.destroy
-      Ap.destroy
-      Ep.destroy
-      P2.destroy
+ !    YU.destroy
+ !    Ap.destroy
+ !    Ep.destroy
+ !    P2.destroy
       m_out.destroy
       ft_hkl.destroy
 

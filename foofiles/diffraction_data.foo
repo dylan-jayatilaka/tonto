@@ -435,9 +435,13 @@ contains
       self :: INOUT
       val :: BIN
 
-      .use_text_SFs = TRUE
-      .use_disk_SFs = TRUE
+      .use_text_SFs = val
+      .use_disk_SFs = val
 
+   end
+
+   set_use_Ryde_capping(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_Ryde_capping), pure
+   ! Generic set
    end
 
 
@@ -507,6 +511,18 @@ contains
       val :: BIN, IN
 
       .refine_structure = val
+
+      ! If refining you can't be fitting
+      if (val) .fit_structure = NOT val
+
+   end
+
+   set_refine_fragments(val) ::: pure
+   ! Set whether to refine fragments
+      self :: INOUT
+      val :: BIN, IN
+
+      .refine_fragments = val
 
       ! If refining you can't be fitting
       if (val) .fit_structure = NOT val
@@ -886,6 +902,7 @@ contains
       case ("tol_for_shift_on_esd=         "); .read_tol_for_shift_on_esd
 
       case ("use_disk_sfs=                 "); .read_use_disk_SFs
+      case ("use_ryde_capping=             "); .read_use_Ryde_capping
       case ("use_text_sfs=                 "); .read_use_text_SFs
 
       case ("wavelength=                   "); .read_wavelength
@@ -1528,6 +1545,20 @@ contains
 
    end
 
+   read_use_Ryde_capping ::: leaky, private
+   ! Read whether to use Ulf Ryde's capping method to split and cap
+   ! polypeptides to make wavefunction and atomic structure factor
+   ! calculations for proteins quicker.
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read(val)
+
+      .set_use_Ryde_capping(val)
+
+   end
+
    read_use_Voronoi_atoms
    ! Read whether to use Voronoi atoms in refinement
       self :: INOUT
@@ -1870,17 +1901,19 @@ contains
       val = .tol_near_0.to_str("e9.1")
       stdout.text("_refine_ls_SVD_threshold            "//trim(val))
       stdout.text("_refine_ls_coordinate_system        cartesian")
-      stdout.text("_refine_ls_structure_factor_coeff   F")
+      stdout.text("_refine_ls_structure_factor_coef    F")
       stdout.text("_refine_ls_matrix_type              full")
 
       R   = .F_r_factor
       val = R.to_str("f10.4")
       stdout.text("_refine_ls_R_factor_gt              "//trim(val))
+      stdout.text("_refine_ls_R_factor_ref             "//trim(val))
       stdout.text("_refine_ls_R_factor_all             "//trim(val))
 
       R   = .F_weighted_r_factor
       val = R.to_str("f10.4")
       stdout.text("_refine_ls_wR_factor_gt             "//trim(R.to_str("f10.4")))
+      stdout.text("_refine_ls_wR_factor_ref            "//trim(R.to_str("f10.4")))
       stdout.text("_refine_ls_wR_factor_all            "//trim(R.to_str("f10.4")))
 
       R   = .F2_r_factor
@@ -1890,6 +1923,7 @@ contains
       R   = sqrt(.chi2)
       val = R.to_str("f10.4")
       stdout.text("_refine_ls_goodness_of_fit_gt       "//trim(val))
+      stdout.text("_refine_ls_goodness_of_fit_ref      "//trim(val))
       stdout.text("_refine_ls_goodness_of_fit_all      "//trim(val))
     ! stdout.text("_refine_ls_restrained_S_all             "//trim(val))
       n   = .reflections.dim
@@ -1927,6 +1961,7 @@ contains
       stdout.text("_refine_ls_extinction_method        none")
       end
 
+      if (.do_residual_cube) then
       stdout.flush
       val = adjustl(.max_residual.to_str("f10.4"))
       stdout.text("_refine_diff_density_max            "//trim(val))
@@ -1942,6 +1977,7 @@ contains
       stdout.text("_refine_diff_density_min_atom_tag   "//trim(.min_atom_residual_tag))
       val = (.rms_atom_residual.to_str("f10.4"))
       stdout.text("_refine_diff_density_rms_atom       "//trim(val))
+      end
 
       stdout.flush
       stdout.text("_refine_special_details")
@@ -4872,6 +4908,9 @@ contains
       stdout.show("max_refshift_on_esd_par       =",.max_refshift_on_esd_par)
       stdout.show("refinement_converged?         =",.refinement_converged)
       stdout.show("too_many_ref_iterations?      =",.too_many_ref_iterations)
+
+      if (.do_residual_cube) then
+      stdout.flush
       stdout.show("max_residual                  =",.max_residual)
       stdout.show("min_residual                  =",.min_residual)
       stdout.show("rms_residual                  =",.rms_residual)
@@ -4879,6 +4918,9 @@ contains
       stdout.show("min_atom_residual             =",.min_atom_residual)
       stdout.show("min_atom_residual_tag         =",.min_atom_residual_tag)
       stdout.show("rms_atom_residual             =",.rms_atom_residual)
+      end
+      
+      stdout.flush
       stdout.show("n_0                           =",.n_0)
       stdout.show("n_near_0                      =",.n_near_0)
 
@@ -4952,13 +4994,15 @@ contains
       end
 
       ! Optimize scale
-      if (.optimize_scale) then
-      if (.use_multiple_scale_factors) then
+      if (.optimize_scale AND .use_multiple_scale_factors) then
+      stdout.show("Optimize extinction            =", TRUE)
       stdout.show("Scale factors                  =", .scale_factors)
+      else if (.optimize_scale) then
+      stdout.show("Using single scale factor      =", TRUE)
       else
+      stdout.show("Using single scale factor      =", FALSE)
+      end
       stdout.show("Scale factor                   =", .scale_factor)
-      end
-      end
 
    end
 
@@ -5001,19 +5045,15 @@ contains
       stdout.show("Optimize extinction            =", FALSE)
       end
 
-      if (.optimize_scale) then
-
-        if (.use_multiple_scale_factors) then
+      if (.optimize_scale  AND .use_multiple_scale_factors) then
       stdout.show("Using multiple scale factors   =", TRUE)
       stdout.show("Scale factors                  =", .scale_factors)
-        else
+      else if (.optimize_scale) then
       stdout.show("Using single scale factor      =", TRUE)
-      stdout.show("Scale factor                   =", .scale_factor)
-        end
-
       else
-      stdout.show("Optimize scale factor          =", FALSE)
+      stdout.show("Using single scale factor      =", FALSE)
       end
+      stdout.show("Scale factor                   =", .scale_factor)
 
    end
 
@@ -5621,7 +5661,7 @@ contains
 
       n_refl = .reflections.n_refl
 
-      stdout.redirect("stdout."//trim(name)//"_F_z_vs_stl")
+      stdout.redirect("stdout.F_z_vs_stl")
 
       stdout.text("# Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs sin(theta)/lambda :")
       stdout.text("# 1st column: sin(theta)/lambda")
@@ -5638,7 +5678,7 @@ contains
 
       stdout.revert
 
-      stdout.redirect("stdout."//trim(name)//"_Delta_F_vs_stl")
+      stdout.redirect("stdout.Delta_F_vs_stl")
 
       stdout.text("# Scatter plot of Delta F = (F_exp-F_pred) vs sin(theta)/lambda :")
       stdout.text("# 1st column: sin(theta)/lambda")
@@ -5656,7 +5696,7 @@ contains
 
       stdout.revert
 
-      stdout.redirect("stdout."//trim(name)//"_F_z_vs_F_exp")
+      stdout.redirect("stdout.F_z_vs_F_exp")
 
       stdout.text("# Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs F_exp :")
       stdout.text("# 1st column: Fexp")
@@ -5693,7 +5733,7 @@ contains
       y = y / n_refl
       w = w / n_refl
 
-      stdout.redirect("stdout."//trim(name)//"Delta_F_pred_z_vs_F_pred")
+      stdout.redirect("stdout.Delta_F_pred_z_vs_F_pred")
 
       stdout.text("# The effects of intensity on extinction:")
       stdout.text("# ")
@@ -5712,7 +5752,7 @@ contains
 
       stdout.revert
 
-      stdout.redirect("stdout."//trim(name)//"Delta_F_pred_z_vs_stl")
+      stdout.redirect("stdout.Delta_F_pred_z_vs_stl")
 
       stdout.text("# The effects of scattering angle on extinction:")
       stdout.text("# ")

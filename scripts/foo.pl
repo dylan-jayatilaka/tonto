@@ -253,6 +253,7 @@ $function_res_type{"REAL_to_str"} = 'STR';
     'INT{2}',
     'INT{4}',
     'INT{8}',
+    'MPI_ADDRESS',
     'REAL',
     'REAL{4}',
     'REAL{8}',
@@ -347,6 +348,7 @@ push(@all_known_type_names,$array_type);
 %{$global_var_info{stdout}}   = &analyse_type_name('TEXTFILE');
 %{$global_var_info{stderr}}   = &analyse_type_name('TEXTFILE');
 %{$global_var_info{std_time}} = &analyse_type_name('TIME');
+%{$global_var_info{std_table_column}} = &analyse_type_name('TABLE_COLUMN');
 %{$global_var_info{tonto_parallel}} = &analyse_type_name('PARALLEL');
 
 %{$global_var_info{spherical_harmonics_for}} = &analyse_type_name('VEC{MAT_{REAL}}');
@@ -837,8 +839,8 @@ sub analyse_variable_declaration {
 
             # String results must be declared separately.
             if (%info && $one_var_is_res && (
-                 $info{type_name} =~ '^STR({.*})?' ||
-                ($info{is_array_type} && $info{type_arg}{1} =~ '^STR({.*})?'))) {
+                 $info{type_name} =~ '^STR([{].*[}])?' ||
+                ($info{is_array_type} && $info{type_arg}{1} =~ '^STR([{].*[}])?'))) {
                &report_error("declare STR-based function result separate" .
                       " from other variables:\n\n$X");
             }
@@ -1133,12 +1135,13 @@ sub analyse_type_name {
 
 sub is_intrinsic_scalar_type_name {
    my  $type_name = $_[0];
-   if ($type_name =~ /^STR\b({.*})?/  ||
-       $type_name =~ /^BIN\b({.*})?/  ||
-       $type_name =~ /^INT\b({.*})?/  ||
-       $type_name =~ /^REAL\b({.*})?/ ||
-       $type_name =~ /^CPX\b({.*})?/  )   { return 1; }
-   else                                 { return 0; }
+   if ($type_name =~ /^STR\b([{].*[}])?/  ||
+       $type_name =~ /^BIN\b([{].*[}])?/  ||
+       $type_name =~ /^MPI_ADDRESS\b([{].*[}])?/  ||
+       $type_name =~ /^INT\b([{].*[}])?/  ||
+       $type_name =~ /^REAL\b([{].*[}])?/ ||
+       $type_name =~ /^CPX\b([{].*[}])?/  )   { return 1; }
+   else                                       { return 0; }
 }
 
 ######################################################
@@ -3712,11 +3715,12 @@ sub make_scalar_fortran_types {
    $kind = "";
 
    # Is this an kinded INTRINSIC{8} type?
-   if ($type_name =~ "^(STR)({.*})? *\$"  ||  # For INTRINSIC types
-       $type_name =~ "^(BIN)({.*})? *\$"  ||  # Kind is specified in curlies
-       $type_name =~ "^(INT)({.*})? *\$"  ||
-       $type_name =~ "^(REAL)({.*})? *\$" ||
-       $type_name =~ "^(CPX)({.*})? *\$"  ) {
+   if ($type_name =~ "^(STR)([{].*[}])? *\$"  ||  # For INTRINSIC types
+       $type_name =~ "^(BIN)([{].*[}])? *\$"  ||  # Kind is specified in curlies
+       $type_name =~ "^(INT)([{].*[}])? *\$"  ||
+       $type_name =~ "^(MPI_ADDRESS)([{].*[}])? *\$"  ||
+       $type_name =~ "^(REAL)([{].*[}])? *\$" ||
+       $type_name =~ "^(CPX)([{].*[}])? *\$"  ) {
       $fortran_type_decl = $1;
       if ($2 && $2 ne '') {
          $kind = $2;
@@ -4192,6 +4196,11 @@ sub convert_dots_to_fortran {
                 $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
                 $called_routines{TIME}{std_time}{module_data}  = 1;
              }
+             elsif ($arg eq 'std_table_column') {
+                $called_routines{TABLE_COLUMN}{std_table_column}{fortran_mod_name}  = 'TABLE_COLUMN';
+                $called_routines{TABLE_COLUMN}{std_table_column}{fortran_type_name} = 'TABLE_COLUMN';
+                $called_routines{TABLE_COLUMN}{std_table_column}{module_data}  = 1;
+             }
 
           # The $rout must be a routine call on object $arg
           } else {
@@ -4306,6 +4315,11 @@ sub convert_dots_to_fortran {
                     $called_routines{TIME}{std_time}{fortran_mod_name}  = 'TIME';
                     $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
                     $called_routines{TIME}{std_time}{module_data}  = 1;
+                 }
+                 elsif ($arg eq 'std_table_column') {
+                    $called_routines{TABLE_COLUMN}{std_table_column}{fortran_mod_name}  = 'TABLE_COLUMN';
+                    $called_routines{TABLE_COLUMN}{std_table_column}{fortran_type_name} = 'TABLE_COLUMN';
+                    $called_routines{TABLE_COLUMN}{std_table_column}{module_data}  = 1;
                  }
 
                  # Add called routines
