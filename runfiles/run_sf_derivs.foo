@@ -59,12 +59,15 @@ program run_SF_DERIVS
    skip_scf,disk_sfs :: BIN
 
    ! Finite difference variables
-   n_refl,n_p,n_asymm :: INT
+   n_refl,n_p,n_asymm, n_k :: INT
    a,f, p,s :: INT
-   fac, step,stepu, step1,step2,step3,step4 :: REAL
+   fac, step,stepA, step1,step2,step3,step4 :: REAL
    par0,pard :: VEC{REAL}@
    SF :: VEC{CPX}@ ! Structure factors (temporary)
    SD :: MAT{CPX}@ ! Finite diff. structure factor derivs.
+   sf_n,sf_d :: MAT{CPX}*
+   k_pt :: MAT{REAL}*
+   II :: CPX
 
    ! Macro to create Tonto system object
    ! Initialise MPI parallel stuff too.
@@ -175,273 +178,272 @@ program run_SF_DERIVS
 
       ! Analyze options
       select case (option)
+      case ("anharm        ");  anharm    => value.split
+      case ("asymm-atom    ");  a          = value.to_int
+      case ("4th-order-only");  do_4_only  = value.to_bin
+      case ("basis         ");  basis      = value
+      case ("basis-dir     ");  basdir     = value
+      case ("charge        ");  charge     = value.to_int
+      case ("cluster-radius");  radius     = value.to_real*BOHR_PER_ANGSTROM
+      case ("complete-mol  ");  defragment = value.to_bin !test defrag Lorraine
+      case ("dispersion    ");  disperse  => value.split
+      case ("disk-sfs      ");  disk_sfs   = value.to_bin
+      case ("dtol          ");  dtol       = value.to_real
+      case ("fos           ");  fos        = value.to_real
+      case ("fzcut         ");  fzcut      = value.to_real
+      case ("grid-accuracy ");  gracc      = value
+      case ("h-iso         ");  h_iso      = value.to_bin
+      case ("job           ") ! already dealt with above
+    ! case ("ldtol         ");  ldtol      = value.to_real
+      case ("mult          ");  mult       = value.to_int
+      case ("s1            ");  step1      = value.to_real
+      case ("s2            ");  step2      = value.to_real
+      case ("s3            ");  step3      = value.to_real
+      case ("s4            ");  step4      = value.to_real
+      case ("scf           ");  scf        = value
+      case ("skip-scf      ");  skip_scf   = value.to_bin
+    ! case ("complete-mol  ");  defragment = value.to_bin !test defrag Lorraine
+      case ("scf-guess     ");  guess      = value
+    ! case ("wavelength    ");  wavelength = value.to_real
 
-         case ("asymm-atom    ");  a          = value.to_int
-         case ("anharm        ");  anharm    => value.split
-         case ("4th-order-only");  do_4_only  = value.to_bin
-         case ("basis         ");  basis      = value
-         case ("basis-dir     ");  basdir     = value
-         case ("charge        ");  charge     = value.to_int
-         case ("cluster-radius");  radius     = value.to_real*BOHR_PER_ANGSTROM
-         case ("complete-mol  ");  defragment = value.to_bin !test defrag Lorraine
-         case ("dispersion    ");  disperse  => value.split
-         case ("disk-sfs      ");  disk_sfs   = value.to_bin
-         case ("dtol          ");  dtol       = value.to_real
-         case ("fos           ");  fos        = value.to_real
-         case ("fzcut         ");  fzcut      = value.to_real
-         case ("grid-accuracy ");  gracc      = value
-         case ("h-iso         ");  h_iso      = value.to_bin
-         case ("job           ") ! already dealt with above
-       ! case ("ldtol         ");  ldtol      = value.to_real
-         case ("mult          ");  mult       = value.to_int
-         case ("s1            "); step1  = value.to_real
-         case ("s2            "); step2  = value.to_real
-         case ("s3            "); step3  = value.to_real
-         case ("s4            "); step4  = value.to_real
-         case ("scf           ");  scf        = value
-         case ("skip-scf      ");  skip_scf   = value.to_bin
-       ! case ("complete-mol  ");  defragment = value.to_bin !test defrag Lorraine
-         case ("scf-guess     ");  guess      = value
-       ! case ("wavelength    ");  wavelength = value.to_real
 
+           
+      case ("help")
 
-              
-         case ("help")
+         stdout.text("SYNOPSIS")
+         stdout.flush
+         stdout.text("    run_sf_derivs [options] <cif-file>")
+         stdout.flush     
+         stdout.text("    . Calculate *derivative* Hirshfeld-atom structure factors by finite")
+         stdout.text("      difference on the crystal structure in the <cif-file>.")
+         stdout.flush     
+         stdout.text("    . Different stepsizes may be used for positions and ADPs (see below).")
+         stdout.flush     
+         stdout.text("    . Cartesian axes and angstrom units assumed.")
+         stdout.flush     
+         stdout.text("    . X-ray Miller indices must be supplied in the <cif-file>.")
+         stdout.flush
+         stdout.text("EXPLANATION")
+         stdout.flush
+         stdout.text("    . The ED is calculated from a gaussian <basis> set single determinant SCF")
+         stdout.text("      <wavefunction> - either SCF or DFT - for a fragment of the crystal") 
+         stdout.text("      optionally embedded in an electrostatic crystal field of point charges") 
+         stdout.flush
+         stdout.text("    . The crystal field comprises atom-centered charges and dipoles placed on")
+         stdout.text("      whole molecules surrounding the central fragment out to a desired <radius>.")
+         stdout.text("      Charges and dipoles on surrrouding molecules are themselves calculated from")
+         stdout.text("      the atoms on the central fragment, so they are calcuated iteratively")
+         stdout.flush
+         stdout.text("    . The fragment structure is chosen so that the leading symmetry-unique atoms")
+         stdout.text("      are in a 'realistic' chemical environment i.e. ideally the fragment is as")
+         stdout.text("      large as practically possible. Use of a GUI is helpful.")
+         stdout.flush
+         stdout.flush
+         stdout.text("RESTRICTIONS")
+         stdout.flush
+         stdout.text("    . The fragment must have zero overall charge")
+         stdout.flush
+         stdout.text("    . The fragment must have an even number of electrons i.e. be closed shell")
+         stdout.flush
+         stdout.text("    . All symmetry-unique atoms and molecules must appear in the fragment")
+         stdout.flush
+         stdout.text("    . Disordered structures may not be refined")
+         stdout.flush
+         stdout.flush
+         stdout.text("REFERENCES")
+         stdout.flush
+         stdout.text("    . 'Hirshfeld atom refinement'")
+         stdout.text("      S.C. Capelli, H.-B. Buergi, B. Dittrich, S. Grabowsky, D. Jayatilaka")
+         stdout.text("      (2014) IUCrJ 1 pp 361-379")
+         stdout.flush
+         stdout.text("    . 'X-ray structure refinement using aspherical atomic density functions obtained")
+         stdout.text("      from quantum-mechanical calculations'")
+         stdout.text("      D. Jayatilaka and B. Dittrich,")
+         stdout.text("      (2008) Acta Cryst. A 64, 383–393")
+         stdout.flush
+         stdout.flush
+         stdout.text("OPTIONS")
+         stdout.flush    
+         stdout.text("   -anharm '<atom-label-list>'")
+         stdout.flush    
+         stdout.text("       Refine the listed atoms anharmonically using a 4th or Gram-Charlier expansion.")
+         stdout.text("       The <atom-label-list> must correspond to the *unique* labels in the <cif-file>")
+         stdout.text("       and must be separated by spaces e.g. 'S1 Cl'")
+         stdout.flush
+         stdout.text("   -asymm-atom <asymm-atom-index>")
+         stdout.flush
+         stdout.text("       Supply the index of the asymmetric unit atom for which the finite differece")
+         stdout.text("       derivatives are required")
+         stdout.flush
+         stdout.text("   -basis <basis>")
+         stdout.flush    
+         stdout.text("       The gaussian atomic <basis> set to use. A file with the bases, also called")
+         stdout.text("       <basis>, must reside in the <basis-dir> folder (see -basis-dir option)")
+         stdout.flush
+         stdout.text("       Default: def2-SVP")
+         stdout.flush    
+         stdout.text("       Other allowed values for <basis> are:")
+         stdout.flush
+         stdout.text("       Testing    Adequate    Excellent     Benchmark    Availability")
+         stdout.text("       ______________________________________________________________")
+         stdout.flush                              
+         stdout.text("       STO-3G     def2-SVP    def2-TZVP    def2-TZVPP    H--Kr       ")
+         stdout.text("                   cc-pVDZ      cc-pVTZ       cc-pVQZ    H--Kr (No K)")
+         stdout.text("       ______________________________________________________________")
+         stdout.flush                               
+         stdout.text("       Additional bases may be added into the <basis-dir> folder from the EMSL")
+         stdout.text("       basis-set library, if required. See examples in the <basis-dir> folder.")
+         stdout.flush    
+         stdout.text("   -basis-dir <basis-dir>")
+         stdout.flush    
+         stdout.text("       The location of the <basis-set> library files. See -basis option above.")
+         stdout.flush    
+         stdout.text("       Default: './basis_sets'")
+       ! stdout.flush    
+       ! stdout.text("   -charge <q>")
+       ! stdout.flush    
+       ! stdout.text("       Set the (integer) charge of the molecule in au. Default: 0.")
+         stdout.flush    
+         stdout.text("   -cluster-radius <radius>")
+         stdout.flush    
+         stdout.text("       The electric potential from whole molecules within <radius> Angstrom of")
+         stdout.text("       the fragment is modeled by Hirshfeld charges and dipoles placed at each")
+         stdout.text("       atom site.")
+         stdout.flush    
+         stdout.text("       Default:  0")
+         stdout.text("       Maximum: 10")
+         stdout.flush    
+         stdout.text("   -dispersion '<dispersion-coefficient-list>'")
+         stdout.flush    
+         stdout.text("       Enter dispersion coefficients to be used in the refinement as a quoted")
+         stdout.text("       space-separated list of the element-symbol, f' and f'', repeated. Values")
+         stdout.text("       for elements which are not specified are assumed to be zero.")
+         stdout.flush    
+         stdout.text("       Example: -dispersion 'S 0.04370 0.04026  Cl 0.05457 0.05224'")
+         stdout.flush    
+         stdout.text("       Default: No dispersion used")
+         stdout.flush    
+         stdout.text("   -disk-sfs [t|f]")
+         stdout.flush    
+         stdout.text("       Whether to write aspherical atomic structure factors to disk.")
+         stdout.text("       With this information, write your own HAR refinement program!")
+         stdout.flush    
+         stdout.text("       Default: f")
+         stdout.flush    
+         stdout.text("   -dtol <dtol>")
+         stdout.flush    
+         stdout.text("       Convergence tolerance <dtol> for the DIIS extrapolation procedure.")
+         stdout.flush    
+         stdout.text("       Default: 0.01")
+         stdout.text("       Minimum: 0.00001")
+         stdout.flush    
+         stdout.text("   -fzcut <F_z>")
+         stdout.flush    
+         stdout.text("       If <cif-file> is from a previous HAR and has F_pred values, then remove")
+         stdout.text("       reflections which have a z-score greater than F_z=(F_pred-F_expt)/sigma.")
+         stdout.text("       Use this option with care only after an initial refinement to remove")
+         stdout.text("       outliers. By default no reflections are pruned.")
+         stdout.flush    
+         stdout.text("   -grid-accuracy [very_low|low|medium|high|very_high]")
+         stdout.flush    
+         stdout.text("       Accuracy needed for DFT integrations.")
+         stdout.flush    
+         stdout.text("       Default: low")
+         stdout.flush    
+         stdout.text("   -h-iso [t|f] ")
+         stdout.flush    
+         stdout.text("       Set isotropic H-atom ADPs.")
+         stdout.flush    
+         stdout.text("       Default: f")
+         stdout.flush    
+         stdout.text("   -help")
+         stdout.flush    
+         stdout.text("       Print this documentation")
+         stdout.flush    
+         stdout.text("   -job <job>")
+         stdout.flush    
+         stdout.text("       The name of the job; used to name the output file and other intermediates.")
+         stdout.flush    
+         stdout.text("       Default: The head of <cif-file> e.g. 'urea' if <cif-file> is 'urea.cif'.")
+         stdout.text("                The name of the output-file will then be <job>.out")
+       ! stdout.flush    
+       ! stdout.text("   -ldtol <ldtol>")
+       ! stdout.flush    
+       ! stdout.text("       Eliminate linear dependent basis functions i.e. eigenfunctions of the overlap")
+       ! stdout.text("       matrix, with eigenvalue less that <tol>.  Default: 0.00001.")
+       ! stdout.flush    
+         stdout.text("   -mult <m>")
+         stdout.flush    
+         stdout.text("       The multiplicity of the <wavefunction> i.e. <m>=2S+1 where S is the total spin.")
+         stdout.text("       Default: 1.")
+         stdout.flush
+         stdout.text("   -s1 <size>")
+         stdout.flush
+         stdout.text("       Set the stepsize for position finite difference to <size>")
+         stdout.text("       These are parameters 1 to 3 in the list. Default: 0.0001.")
+         stdout.flush
+         stdout.text("   -s2 <size>")
+         stdout.flush
+         stdout.text("       Set the stepsize for ADP2 finite difference to <size>")
+         stdout.text("       These are parameters 4 to 9. Default: 0.0001")
+         stdout.flush
+         stdout.text("   -s3 <size>")
+         stdout.flush
+         stdout.text("       Set the stepsize for ADP3 finite difference to <size>")
+         stdout.text("       Parameters 10 to 19, if present. Default: 0.0001.")
+         stdout.flush
+         stdout.text("   -s4 <size>")
+         stdout.flush
+         stdout.text("       Set the stepsize for ADP4 finite difference to <size>")
+         stdout.text("       Parameters 20 to 34, if present. Default: 0.0001.")
+         stdout.flush
+         stdout.flush    
+         stdout.text("   -scf <wavefunction>")
+         stdout.flush    
+         stdout.text("       The scf <wavefunction> to be used. Allowed options:")
+         stdout.flush    
+         stdout.text("       rhf     restricted Hartree-Fock")
+         stdout.text("       rks     restricted Kohn-Sham/BLYP")
+         stdout.flush    
+         stdout.text("       Default: rhf")
+       ! stdout.text("       uhf     unrestricted Hartree-Fock")
+       ! stdout.text("       uks     unrestricted Kohn-Sham/BLYP")
+       ! stdout.text("       gchf    general-complex (relativistic) Hartree-Fock")
+         stdout.flush    
+         stdout.text("   -scf-guess [mos|density]")
+         stdout.flush    
+         stdout.text("       Initial guess for SCF <wavefunction> method.")
+         stdout.flush    
+         stdout.text("       Default: mos")
+         stdout.flush    
+         stdout.text("   -skip-scf [t|f]")
+         stdout.flush    
+         stdout.text("       If TRUE then the initial SCF calculation is skipped.")
+         stdout.text("       Then, it is assumed previous MOs and density are available")
+         stdout.text("       and stored in the current folder from a previous run.")
+         stdout.flush    
+         stdout.text("       Default: FALSE")
+         stdout.flush    
+       ! stdout.text("   -wavelength <wavelength>")
+       ! stdout.flush    
+       ! stdout.text("       The <wavelength> of the X-radiation.  Default: '0.7139 angstrom'.")
+       ! stdout.text("       Used for e.g. dispersion correction, and defining sin(theta)/lambda.")
+       ! stdout.flush    
+         stdout.flush    
+         stdout.text("   -complete-mol [t|f] ")
+         stdout.flush    
+         stdout.text("       Set whatever to complete molecules for SC cluster point charges.")
+         stdout.text("       Should be false in case of network compounds.")
+         stdout.flush    
+         stdout.text("       Default: TRUE")
 
-            stdout.text("SYNOPSIS")
-            stdout.flush
-            stdout.text("    run_sf_derivs [options] <cif-file>")
-            stdout.flush     
-            stdout.text("    . Calculate *derivative* Hirshfeld-atom structure factors by finite")
-            stdout.text("      difference on the crystal structure in the <cif-file>.")
-            stdout.flush     
-            stdout.text("    . Different stepsizes may be used for positions and ADPs (see below).")
-            stdout.flush     
-            stdout.text("    . Cartesian axes and angstrom units assumed.")
-            stdout.flush     
-            stdout.text("    . X-ray Miller indices must be supplied in the <cif-file>.")
-            stdout.flush
-            stdout.text("EXPLANATION")
-            stdout.flush
-            stdout.text("    . The ED is calculated from a gaussian <basis> set single determinant SCF")
-            stdout.text("      <wavefunction> - either SCF or DFT - for a fragment of the crystal") 
-            stdout.text("      optionally embedded in an electrostatic crystal field of point charges") 
-            stdout.flush
-            stdout.text("    . The crystal field comprises atom-centered charges and dipoles placed on")
-            stdout.text("      whole molecules surrounding the central fragment out to a desired <radius>.")
-            stdout.text("      Charges and dipoles on surrrouding molecules are themselves calculated from")
-            stdout.text("      the atoms on the central fragment, so they are calcuated iteratively")
-            stdout.flush
-            stdout.text("    . The fragment structure is chosen so that the leading symmetry-unique atoms")
-            stdout.text("      are in a 'realistic' chemical environment i.e. ideally the fragment is as")
-            stdout.text("      large as practically possible. Use of a GUI is helpful.")
-            stdout.flush
-            stdout.flush
-            stdout.text("RESTRICTIONS")
-            stdout.flush
-            stdout.text("    . The fragment must have zero overall charge")
-            stdout.flush
-            stdout.text("    . The fragment must have an even number of electrons i.e. be closed shell")
-            stdout.flush
-            stdout.text("    . All symmetry-unique atoms and molecules must appear in the fragment")
-            stdout.flush
-            stdout.text("    . Disordered structures may not be refined")
-            stdout.flush
-            stdout.flush
-            stdout.text("REFERENCES")
-            stdout.flush
-            stdout.text("    . 'Hirshfeld atom refinement'")
-            stdout.text("      S.C. Capelli, H.-B. Buergi, B. Dittrich, S. Grabowsky, D. Jayatilaka")
-            stdout.text("      (2014) IUCrJ 1 pp 361-379")
-            stdout.flush
-            stdout.text("    . 'X-ray structure refinement using aspherical atomic density functions obtained")
-            stdout.text("      from quantum-mechanical calculations'")
-            stdout.text("      D. Jayatilaka and B. Dittrich,")
-            stdout.text("      (2008) Acta Cryst. A 64, 383–393")
-            stdout.flush
-            stdout.flush
-            stdout.text("OPTIONS")
-            stdout.flush
-            stdout.text("   -asymm-atom <asymm-atom-index>")
-            stdout.flush
-            stdout.text("       Supply the index of the asymmetric unit atom for which the finite differece")
-            stdout.text("       derivatives are required")
-          ! stdout.flush    
-          ! stdout.text("   -anharm '<atom-label-list>'")
-          ! stdout.flush    
-          ! stdout.text("       Refine the listed atoms anharmonically using a 4th or Gram-Charlier expansion.")
-          ! stdout.text("       The <atom-label-list> must correspond to the *unique* labels in the <cif-file>")
-          ! stdout.text("       and must be separated by spaces e.g. 'S1 Cl'")
-            stdout.flush
-            stdout.text("   -basis <basis>")
-            stdout.flush    
-            stdout.text("       The gaussian atomic <basis> set to use. A file with the bases, also called")
-            stdout.text("       <basis>, must reside in the <basis-dir> folder (see -basis-dir option)")
-            stdout.flush
-            stdout.text("       Default: def2-SVP")
-            stdout.flush    
-            stdout.text("       Other allowed values for <basis> are:")
-            stdout.flush
-            stdout.text("       Testing    Adequate    Excellent     Benchmark    Availability")
-            stdout.text("       ______________________________________________________________")
-            stdout.flush                              
-            stdout.text("       STO-3G     def2-SVP    def2-TZVP    def2-TZVPP    H--Kr       ")
-            stdout.text("                   cc-pVDZ      cc-pVTZ       cc-pVQZ    H--Kr (No K)")
-            stdout.text("       ______________________________________________________________")
-            stdout.flush                               
-            stdout.text("       Additional bases may be added into the <basis-dir> folder from the EMSL")
-            stdout.text("       basis-set library, if required. See examples in the <basis-dir> folder.")
-            stdout.flush    
-            stdout.text("   -basis-dir <basis-dir>")
-            stdout.flush    
-            stdout.text("       The location of the <basis-set> library files. See -basis option above.")
-            stdout.flush    
-            stdout.text("       Default: './basis_sets'")
-          ! stdout.flush    
-          ! stdout.text("   -charge <q>")
-          ! stdout.flush    
-          ! stdout.text("       Set the (integer) charge of the molecule in au. Default: 0.")
-            stdout.flush    
-            stdout.text("   -cluster-radius <radius>")
-            stdout.flush    
-            stdout.text("       The electric potential from whole molecules within <radius> Angstrom of")
-            stdout.text("       the fragment is modeled by Hirshfeld charges and dipoles placed at each")
-            stdout.text("       atom site.")
-            stdout.flush    
-            stdout.text("       Default:  0")
-            stdout.text("       Maximum: 10")
-            stdout.flush    
-            stdout.text("   -dispersion '<dispersion-coefficient-list>'")
-            stdout.flush    
-            stdout.text("       Enter dispersion coefficients to be used in the refinement as a quoted")
-            stdout.text("       space-separated list of the element-symbol, f' and f'', repeated. Values")
-            stdout.text("       for elements which are not specified are assumed to be zero.")
-            stdout.flush    
-            stdout.text("       Example: -dispersion 'S 0.04370 0.04026  Cl 0.05457 0.05224'")
-            stdout.flush    
-            stdout.text("       Default: No dispersion used")
-            stdout.flush    
-            stdout.text("   -disk-sfs [t|f]")
-            stdout.flush    
-            stdout.text("       Whether to write aspherical atomic structure factors to disk.")
-            stdout.text("       With this information, write your own HAR refinement program!")
-            stdout.flush    
-            stdout.text("       Default: f")
-            stdout.flush    
-            stdout.text("   -dtol <dtol>")
-            stdout.flush    
-            stdout.text("       Convergence tolerance <dtol> for the DIIS extrapolation procedure.")
-            stdout.flush    
-            stdout.text("       Default: 0.01")
-            stdout.text("       Minimum: 0.00001")
-            stdout.flush    
-            stdout.text("   -fzcut <F_z>")
-            stdout.flush    
-            stdout.text("       If <cif-file> is from a previous HAR and has F_pred values, then remove")
-            stdout.text("       reflections which have a z-score greater than F_z=(F_pred-F_expt)/sigma.")
-            stdout.text("       Use this option with care only after an initial refinement to remove")
-            stdout.text("       outliers. By default no reflections are pruned.")
-            stdout.flush    
-            stdout.text("   -grid-accuracy [very_low|low|medium|high|very_high]")
-            stdout.flush    
-            stdout.text("       Accuracy needed for DFT integrations.")
-            stdout.flush    
-            stdout.text("       Default: low")
-            stdout.flush    
-            stdout.text("   -h-iso [t|f] ")
-            stdout.flush    
-            stdout.text("       Set isotropic H-atom ADPs.")
-            stdout.flush    
-            stdout.text("       Default: f")
-            stdout.flush    
-            stdout.text("   -help")
-            stdout.flush    
-            stdout.text("       Print this documentation")
-            stdout.flush    
-            stdout.text("   -job <job>")
-            stdout.flush    
-            stdout.text("       The name of the job; used to name the output file and other intermediates.")
-            stdout.flush    
-            stdout.text("       Default: The head of <cif-file> e.g. 'urea' if <cif-file> is 'urea.cif'.")
-            stdout.text("                The name of the output-file will then be <job>.out")
-          ! stdout.flush    
-          ! stdout.text("   -ldtol <ldtol>")
-          ! stdout.flush    
-          ! stdout.text("       Eliminate linear dependent basis functions i.e. eigenfunctions of the overlap")
-          ! stdout.text("       matrix, with eigenvalue less that <tol>.  Default: 0.00001.")
-          ! stdout.flush    
-            stdout.text("   -mult <m>")
-            stdout.flush    
-            stdout.text("       The multiplicity of the <wavefunction> i.e. <m>=2S+1 where S is the total spin.")
-            stdout.text("       Default: 1.")
-            stdout.flush
-            stdout.text("   -s1 <size>")
-            stdout.flush
-            stdout.text("       Set the stepsize for position finite difference to <size>")
-            stdout.text("       These are parameters 1 to 3 in the list. Default: 0.0001.")
-            stdout.flush
-            stdout.text("   -s2 <size>")
-            stdout.flush
-            stdout.text("       Set the stepsize for ADP2 finite difference to <size>")
-            stdout.text("       These are parameters 4 to 9. Default: 0.0001")
-            stdout.flush
-            stdout.text("   -s3 <size>")
-            stdout.flush
-            stdout.text("       Set the stepsize for ADP3 finite difference to <size>")
-            stdout.text("       Parameters 10 to 19, if present. Default: 0.0001.")
-            stdout.flush
-            stdout.text("   -s4 <size>")
-            stdout.flush
-            stdout.text("       Set the stepsize for ADP4 finite difference to <size>")
-            stdout.text("       Parameters 20 to 34, if present. Default: 0.0001.")
-            stdout.flush
-            stdout.flush    
-            stdout.text("   -scf <wavefunction>")
-            stdout.flush    
-            stdout.text("       The scf <wavefunction> to be used. Allowed options:")
-            stdout.flush    
-            stdout.text("       rhf     restricted Hartree-Fock")
-            stdout.text("       rks     restricted Kohn-Sham/BLYP")
-            stdout.flush    
-            stdout.text("       Default: rhf")
-          ! stdout.text("       uhf     unrestricted Hartree-Fock")
-          ! stdout.text("       uks     unrestricted Kohn-Sham/BLYP")
-          ! stdout.text("       gchf    general-complex (relativistic) Hartree-Fock")
-            stdout.flush    
-            stdout.text("   -scf-guess [mos|density]")
-            stdout.flush    
-            stdout.text("       Initial guess for SCF <wavefunction> method.")
-            stdout.flush    
-            stdout.text("       Default: mos")
-            stdout.flush    
-            stdout.text("   -skip-scf [t|f]")
-            stdout.flush    
-            stdout.text("       If TRUE then the initial SCF calculation is skipped.")
-            stdout.text("       Then, it is assumed previous MOs and density are available")
-            stdout.text("       and stored in the current folder from a previous run.")
-            stdout.flush    
-            stdout.text("       Default: FALSE")
-            stdout.flush    
-          ! stdout.text("   -wavelength <wavelength>")
-          ! stdout.flush    
-          ! stdout.text("       The <wavelength> of the X-radiation.  Default: '0.7139 angstrom'.")
-          ! stdout.text("       Used for e.g. dispersion correction, and defining sin(theta)/lambda.")
-          ! stdout.flush    
-            stdout.flush    
-            stdout.text("   -complete-mol [t|f] ")
-            stdout.flush    
-            stdout.text("       Set whatever to complete molecules for SC cluster point charges.")
-            stdout.text("       Should be false in case of network compounds.")
-            stdout.flush    
-            stdout.text("       Default: TRUE")
+         stop
 
-            stop
-
-         case default
-            stdout.text("Type 'run_sf_derivs -help' for help.")
-            stdout.flush
-            UNKNOWN(option)
-            stop
+      case default
+         stdout.text("Type 'run_sf_derivs -help' for help.")
+         stdout.flush
+         UNKNOWN(option)
+         stop
 
       end
 
@@ -713,8 +715,10 @@ program run_SF_DERIVS
    m.scfdata.finalize
 
    !!!!!!!!!
-   m.SCF:scf
+ ! m.SCF:scf
    !!!!!!!!!
+
+   m.BASE:read_archive("density_matrix","restricted")
 
    ! Cluster/ED SCF settings
    radius_is_0 = abs(radius) < TOL(2)
@@ -726,21 +730,36 @@ program run_SF_DERIVS
       m.SCF:scf ! Cluster charge SCF here
    end
 
-   ! Sizes
-   n_refl = m.crystal.data.reflections.dim
-
-   ! Structure factors
-   SF.create(n_refl)
-
    ! No. of parameters for atom "a"
    n_p = m.crystal.asymmetric_unit_atom(a).no_of_pADPs
+   n_refl = m.crystal.data.reflections.dim
+
+   ! Structure factors & derivatives
+   SD.create(n_refl,n_p)
+   SF.create(n_refl)
+
+   ! Get analytical result !!!!!!!!!!!!!!!!!!
+   m.TAD:get_derivative_F_calc_for_atom(a,SD)
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+   ! Output
+   stdout.text("Derivative structure factors, dFc:")
+   stdout.put(SD)
+
+   ! Get atomic form factors at original geomnetry
+   m.SCF:get_unique_Hirshfeld_atom_SFs(sf_n)
+   sf_d.create(sf_n.dim1,sf_n.dim2)
+
+   ! Get k points
+   II = IMAGIFY(ONE)
+   n_k = m.crystal.n_unique_SF_k_pts
+   k_pt.create(n_k,3)
+   m.crystal.data.reflections.make_unique_SF_k_pts(k_pt,m.crystal.spacegroup,m.crystal.unit_cell)
 
    ! Fragment atom corresponding to a
    f = m.crystal.frag_atom_for_asym_atom(a)
 
-   ! Saved pADP parameters for atom a/f
-   par0 = m.atom(f).pADP_vector
-
+   ! Get finite difference results
    stdout.text("#####")
    stdout.show("Asymmetric unit atom a    = ",a)
    stdout.show("Fragment atom f           = ",f)
@@ -748,7 +767,9 @@ program run_SF_DERIVS
    stdout.text("par0:")
    stdout.put(par0)
 
-   SD.create(n_refl,n_p)
+   ! Saved pADP parameters for atom a/f
+   par0 = m.atom(f).pADP_vector
+
    SD = ZERO
 
    do p = 1,n_p   ! Loop over parameter p
@@ -756,10 +777,10 @@ program run_SF_DERIVS
       ! Get step
       step = ZERO
       select case (p)
-      case ( 1: 3); step = step1* BOHR_PER_ANGSTROM;     stepu = step1
-      case ( 4: 9); step = step2*(BOHR_PER_ANGSTROM)**2; stepu = step2
-      case (10:19); step = step3*(BOHR_PER_ANGSTROM)**3; stepu = step3
-      case (20:34); step = step4*(BOHR_PER_ANGSTROM)**4; stepu = step4
+      case ( 1: 3); stepA = step1* ANGSTROM_PER_BOHR;     step = step1
+      case ( 4: 9); stepA = step2*(ANGSTROM_PER_BOHR)**2; step = step2
+      case (10:19); stepA = step3*(ANGSTROM_PER_BOHR)**3; step = step3
+      case (20:34); stepA = step4*(ANGSTROM_PER_BOHR)**4; step = step4
       end
 
       ! Loop over -/+ step
@@ -777,30 +798,36 @@ program run_SF_DERIVS
          m.crystal.destroy_asymmetric_unit
          m.crystal.make_fragment_data(m.atom,assign_atom=TRUE)
 
-         ! Get divisor 1/(2*step)
-         fac = ONE/(TWO*step)
-
          stdout.text("#####")
          stdout.show("Asymmetric unit atom a = ",a)
          stdout.show("Fragment atom f        = ",f)
          stdout.show("No. of parameters      = ",n_p)
          stdout.show("Parameter p            = ",p)
          stdout.show("Step sign s            = ",s)
-         stdout.show("Stepsize/Angstrom      = ",stepu)
+         stdout.show("Stepsize/Bohr          = ",step)
+         stdout.show("Stepsize/Angstrom      = ",stepA)
          stdout.text("Displaced parameter vector:")
          stdout.put(pard)
    
-         ! Make the SFs !!
-         m.SCF:make_X_SFs
-       ! m.PROP:put_X_SFs
-         !!!!!!!!!!!!!!!!!
-          
+         ! Add phase *shift* into atomic form factor
+         sf_d = sf_n
+         if (p.is_in_range([1,3])) then
+            sf_d(:,a) = sf_n(:,a) * exp(+II*k_pt(:,p)*s*step)
+         end
+
+         ! Make the SFs with unchanged form factors!!
+         m.crystal.make_F_predicted(sf_d)
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
          ! Get absolute value for F_calc
-         SF = abs(m.crystal.xray_data.reflections(:).F_calc)
+         SF = m.crystal.xray_data.reflections(:).F_calc
 
          stdout.flush
          stdout.text("SF:")
          stdout.put(SF)
+
+         ! Get divisor 1/(2*step)
+         fac = ONE/(TWO*step)
       
          ! Finite difference formula
          SD(:,p) = SD(:,p) + s*fac*SF(:)
@@ -816,12 +843,13 @@ program run_SF_DERIVS
          m.crystal.make_fragment_data(m.atom,assign_atom=TRUE)
      
       end ! +/- step s of p
+
    end    ! parameter type p of asymm atom a
 
+   ! Print FD result
    stdout.flush
-   stdout.text("SF derivatives for this atom:")
+   stdout.text("Finite difference derivative structure factors, dFc:")
    stdout.put(SD)
-   SD.destroy
 
    ! Job timing
    stdout.flush
@@ -832,6 +860,11 @@ program run_SF_DERIVS
    stdout.text(ctime)
 
    ! Clean-up
+   sf_n.destroy
+   sf_d.destroy
+   k_pt.destroy
+   SF.destroy
+   SD.destroy
    m.MAIN:cleanup
 
    ! Clean-up files
