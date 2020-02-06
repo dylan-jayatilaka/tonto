@@ -184,7 +184,7 @@ contains
 !  ==========================
 
    create ::: get_from(OBJECT), leaky, PURE
-   ! Allocate an object
+   ! Allocate an object and set defaults
    end
 
    destroy ::: get_from(OBJECT), leaky, PURE
@@ -327,12 +327,17 @@ contains
 !  Set routines
 !  ============
 
-   set_defaults ::: leaky
+   set_defaults ::: leaky, PURE
    ! Set up a default dftgrid object
       self :: INOUT
 
-      .set_kind(BECKE_GRID_KIND) ! leaky, because of .set_zeta
+      ! Leaky, because of .set_zeta
+      .set_kind(BECKE_GRID_KIND) 
+
+      ! Set default no. of points, etc.
       .set_accuracy(BECKE_GRID_ACCURACY)
+
+      ! Below are not really necessary?
       .pruning_scheme             = BECKE_GRID_PRUNING_SCHEME
       .basis_function_cutoff      = BECKE_GRID_BASIS_FUNCTION_CUTOFF
       .basis_function_pair_cutoff = BECKE_GRID_RHO_CUTOFF
@@ -350,10 +355,16 @@ contains
 
    end
 
-   set_kind(kind) ::: leaky
+   set_finalized(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.finalized), pure
+   ! Generic set
+   end
+
+   set_kind(kind) ::: leaky, PURE
    ! Set the kind of interpolation to use.
       self :: INOUT
       kind :: STR, IN
+
+   ENSURE(kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     "]),"unknown grid kind")
 
       .kind = kind
 
@@ -363,18 +374,19 @@ contains
       case ("becke                    ")                
       case ("treutler_ahlrichs        ")                
       case ("mura_knowles             ")                
-      case default; UNKNOWN(.kind)
       end
 
       .set_zeta ! leaky here
 
    end
 
-   set_partition_scheme(scheme)
+   set_partition_scheme(scheme) ::: PURE
    ! THis option describes how the masking function to be used to partition the
    ! density-like function into separate "atomic" regions.
       self :: INOUT
       scheme :: STR, IN
+
+   ENSURE(scheme.is_one_of(["delley            ","becke             ","stratmann_scuseria"]),"unknown partition scheme")
 
       .partition_scheme = scheme
       .partition_scheme.to_lower_case
@@ -384,24 +396,23 @@ contains
       case ("becke             ")
 
       case ("delley            ")
-         WARN("setting partition scaling scheme to `none'")
+         ! Not yet implemented
          .set_partition_scaling_scheme("none")
 
       case ("stratmann_scuseria")
-         WARN("setting partition scaling scheme to `none'")
          .set_partition_scaling_scheme("none")
       
-      case default; UNKNOWN(.partition_scheme)
-
       end
 
    end
 
-   set_partition_scaling_scheme(scheme)
+   set_partition_scaling_scheme(scheme) ::: PURE
    ! This chooses the precise method to scale the sizes of the "atoms" generated
    ! by the atomic partition function scheme.
       self :: INOUT
       scheme :: STR, IN
+
+   ENSURE(scheme.is_one_of(["none             ","becke            ","truetler_ahlrichs"]),"unknown partition scaling scheme")
 
       .partition_scaling_scheme = scheme
       .partition_scaling_scheme.to_lower_case
@@ -410,16 +421,17 @@ contains
       case ("none             ")
       case ("becke            ")
       case ("treutler_ahlrichs")
-      case default; UNKNOWN(.partition_scaling_scheme)
       end
 
    end
 
-   set_pruning_scheme(scheme)
+   set_pruning_scheme(scheme) ::: PURE
    ! Set the pruning scheme to reduce angular momentum of the angular grids near
    ! atomic centers. 
       self :: INOUT
       scheme :: STR, IN
+
+   ENSURE(scheme.is_one_of(["none             ","jayatilaka0      ","jayatilaka1      ","jayatilaka2      ","truetler_ahlrichs"]),"unknown pruning scheme")
 
       .pruning_scheme = scheme
       .pruning_scheme.to_lower_case
@@ -430,15 +442,16 @@ contains
       case ("jayatilaka1      ")
       case ("jayatilaka2      ")
       case ("treutler_ahlrichs")
-      case default; UNKNOWN(.pruning_scheme)
       end
 
    end
 
-   set_zeta ::: leaky
+   set_zeta ::: leaky, PURE
    ! Set the atom_zeta scaling parameters. We store them in case they need to be
    ! manually changed ...
       self :: INOUT
+
+   ENSURE(.kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     "]),"unknown grid kind")
 
       fac :: REAL
 
@@ -464,9 +477,6 @@ contains
          case ("mura_knowles             ")                
             .atom_zeta = MK_zeta
 
-         case default
-            UNKNOWN(.kind)
-
          end
 
       else
@@ -478,11 +488,12 @@ contains
 
    end
 
-   set_zeta(i,zeta) ::: leaky
+   set_zeta(i,zeta) ::: leaky, PURE
    ! Set the zeta value for element "i" to be "zeta".
    ! NOTE: This is ain atomic units
-      i :: INT
-      zeta :: REAL
+      self :: INOUT
+      i :: INT, IN
+      zeta :: REAL, IN
 
    ENSURE(.atom_zeta.allocated,"no atom_zeta array, set atom positions first")
    ENSURE(i.is_in_range([1,89]),"i is not in the allowed range")
@@ -491,57 +502,68 @@ contains
 
    end
 
-   set_accuracy(acc)
+   set_accuracy(acc) ::: PURE
    ! Set the accuracy. NOTE: the actual integration accuracy is affected not
    ! only by this keyword, but also by the switch .reduce_H_angular_grid. It
    ! will also depend on .n_extra_points_per_shell.
       self :: INOUT
       acc :: STR, IN
 
+   ENSURE(acc.is_one_of(["very_low ","low      ","medium   ","high     ","very_high","extreme  ","best     ","sg-1     "]),"unknown accuracy")
+
       .accuracy = acc
       .accuracy.to_lower_case
 
       select case (.accuracy)
-         case ("very_low")             ! These are Treutler-Ahlrichs settings
-            .set_l_H_angular_grid(11)
-            .set_l_angular_grid(17)
-            .set_n_radial_points(20)
-         case ("sg-1");
-            .set_l_H_angular_grid(15)
-            .set_l_angular_grid(23)
-            .set_n_radial_points(25)
-          ! .set_pruning_scheme("sg-1")
-         case ("low");
-            .set_l_H_angular_grid(17)
-            .set_l_angular_grid(23)
-            .set_n_radial_points(25)
-         case ("medium")
-            .set_l_H_angular_grid(23)
-            .set_l_angular_grid(29)
-            .set_n_radial_points(30)
-         case ("high")
-            .set_l_H_angular_grid(29)
-            .set_l_angular_grid(35)
-            .set_n_radial_points(35)
-         case ("very_high")
-            .set_l_H_angular_grid(35)
-            .set_l_angular_grid(47)
-            .set_n_radial_points(45)
-         case ("extreme")             ! These are better than the Mura-Knowles settings
-            .set_l_H_angular_grid(47)
-            .set_l_angular_grid(59)
-            .set_n_radial_points(55)
-         case ("best")
-            .set_l_H_angular_grid(59)
-            .set_l_angular_grid(71)
-            .set_n_radial_points(65)
-         case default
-            UNKNOWN(.accuracy)
+
+      case ("very_low")             
+         ! These are Treutler-Ahlrichs settings
+         .set_l_H_angular_grid(11)
+         .set_l_angular_grid(17)
+         .set_n_radial_points(20)
+
+      case ("sg-1");
+         .set_l_H_angular_grid(15)
+         .set_l_angular_grid(23)
+         .set_n_radial_points(25)
+       ! .set_pruning_scheme("sg-1")
+
+      case ("low");
+         .set_l_H_angular_grid(17)
+         .set_l_angular_grid(23)
+         .set_n_radial_points(25)
+
+      case ("medium")
+         .set_l_H_angular_grid(23)
+         .set_l_angular_grid(29)
+         .set_n_radial_points(30)
+
+      case ("high")
+         .set_l_H_angular_grid(29)
+         .set_l_angular_grid(35)
+         .set_n_radial_points(35)
+
+      case ("very_high")
+         .set_l_H_angular_grid(35)
+         .set_l_angular_grid(47)
+         .set_n_radial_points(45)
+
+      case ("extreme")             
+         ! These are better than the Mura-Knowles settings
+         .set_l_H_angular_grid(47)
+         .set_l_angular_grid(59)
+         .set_n_radial_points(55)
+
+      case ("best")
+         .set_l_H_angular_grid(59)
+         .set_l_angular_grid(71)
+         .set_n_radial_points(65)
+
       end
 
    end
 
-   set_atom_info(atom) ::: leaky
+   set_atom_info(atom) ::: leaky, PURE
    ! Set the list of "atoms" ... used e.g. to estimate when grid
    ! points too far away from an atom become insignificant
       self :: INOUT
@@ -549,26 +571,27 @@ contains
 
    ENSURE(.kind/=" ","must set kind of quadrature first")
 
+      if (atom.disassociated) return
+
       .destroy_atom_info
 
       .atom => atom
 
    end
 
-   set_basis_function_cutoff(cutoff)
-   ! Set .basis_function_cutoff, the value below which function values are
-   ! assumed to be zero, so as to eliminate *atom* grid points.
+   set_basis_function_cutoff(cutoff) ::: PURE
+   ! Set .basis_function_cutoff, the value below which function values
+   ! are assumed to be zero, so as to eliminate *atom* grid points.
       self :: INOUT
       cutoff :: REAL, IN
 
    ENSURE(cutoff>=ZERO,"cutoff must be non-negative")
-   WARN_IF(cutoff>TOL(4),"cutoff may be too large")
 
       .basis_function_cutoff = cutoff
 
    end
 
-   set_partition_cutoff(cutoff)
+   set_partition_cutoff(cutoff) ::: PURE
    ! Set .partition_cutoff, the value below which the partition function values
    ! are assumed to be zero, so as to eliminate (full) grid points *after*
    ! partitioning.
@@ -576,7 +599,6 @@ contains
       cutoff :: REAL, IN
 
    ENSURE(cutoff>=ZERO,"cutoff must be non-negative")
-   WARN_IF(cutoff>TOL(15),"cutoff may be too large")
 
       .partition_cutoff = cutoff
 
@@ -619,33 +641,30 @@ contains
 
    end
 
-   set_l_angular_grid(l)
-   ! Set the angular quantum number "l" which is to be integrated exactly by the
-   ! angular grid.
+   set_l_angular_grid(l) ::: PURE
+   ! Set the angular quantum number "l" which is to be integrated
+   ! exactly by the angular grid.
       self :: INOUT
       l :: INT, IN
-
-   WARN_IF(l<11,"l recommended greater than 11")
 
       .l_angular_grid = l
 
    end
 
-   set_l_H_angular_grid(l)
-   ! Set the angular quantum number "l" which is to be integrated exactly by the
-   ! angular grid for the Hydrogen and Helium atoms only.
+   set_l_H_angular_grid(l) ::: PURE
+   ! Set the angular quantum number "l" which is to be integrated
+   ! exactly by the angular grid for the Hydrogen and Helium atoms
+   ! only.
       self :: INOUT
       l :: INT, IN
-
-   WARN_IF(l<11,"l recommended greater than 11")
 
       .l_H_angular_grid = l
 
    end
 
    set_reduce_H_angular_grid(reduce) ::: PURE
-   ! If set TRUE the order of the angular grid for Hydrogen and Helium are
-   ! reduced to .l_H_angular_grid.
+   ! If set TRUE the order of the angular grid for Hydrogen and Helium
+   ! are reduced to .l_H_angular_grid.
       self :: INOUT
       reduce :: BIN, IN
 
@@ -653,10 +672,11 @@ contains
 
    end
 
-   set_scale_atomic_grids(scale) ::: leaky 
+   set_scale_atomic_grids(scale) ::: leaky, PURE
    ! If set TRUE, the atomic grids are scaled according to the authors
-   ! recommended scaling factors. This does *not* mean that the partition
-   ! function is also scaled to account for varying atomic sizes.
+   ! recommended scaling factors. This does *not* mean that the
+   ! partition function is also scaled to account for varying atomic
+   ! sizes.
       self :: INOUT
       scale :: BIN, IN
 
@@ -689,6 +709,7 @@ contains
       case ("}                         ")  ! exit case
       case ("accuracy=                 "); .read_accuracy
       case ("basis_function_cutoff=    "); .read_basis_function_cutoff
+      case ("finalize                  "); .set_grid_data
       case ("kind=                     "); .read_kind
       case ("l_angular_grid=           "); .read_l_angular_grid
       case ("l_h_angular_grid=         "); .read_l_H_angular_grid
@@ -908,14 +929,12 @@ contains
 
 !  This is the main finalization ...
 
-   set_grid_data(atom) ::: leaky
+   finalize ::: leaky
    ! Set all the radial and angular grid data required to construct the product
    ! grids for any atom in the periodic table. Then define the unique atomic
    ! grids for the current set of atoms.
       self :: INOUT
-      atom :: VEC{ATOM}*
 
-      .set_atom_info(atom)
       .set_grid_data
 
    end
@@ -925,6 +944,8 @@ contains
    ! grids for any atom in the periodic table. Then define the unique atomic
    ! grids for the current set of atoms.
       self :: INOUT
+
+      if (.atom.disassociated) return
 
       ! Radial and angular grids come first
       .set_radial_grids       
@@ -2797,6 +2818,7 @@ contains
       select case (.partition_scheme)
 
       case ("becke            ")
+
          select case (.partition_scaling_scheme)
          case ("none             "); .partition_B_no_adj(wt,pt,a,atoms,weight_is_0)
          case ("becke            "); .partition_B_B_adj(wt,pt,a,atoms,weight_is_0)
@@ -2805,12 +2827,14 @@ contains
          end
 
       case ("delley           ")
+
          select case (.partition_scaling_scheme)
          case ("none"); .partition_D(wt,pt,a,atoms,weight_is_0)
          case default;  UNKNOWN(.partition_scaling_scheme)
          end
 
       case ("stratmann_scuseria")
+
          select case (.partition_scaling_scheme)
          case ("none"); .partition_SS(wt,pt,a,atoms,weight_is_0)
          case default;  UNKNOWN(.partition_scaling_scheme)
@@ -3850,7 +3874,16 @@ contains
 !  Output methods
 !  ==============
 
+
    put
+   ! Put out to file "out"
+      self :: IN
+
+      .put_basics
+
+   end
+
+   put_all
    ! Put out to file "out"
       self :: IN
 
@@ -3904,10 +3937,11 @@ contains
       self :: IN
 
    ENSURE(.atom.associated,"no atom list")
-   ENSURE(.finalized,"not finalized")
 
       i,Z,np :: INT
       fields :: INT
+
+      if (NOT .finalized) return
 
       fields = 5
 
@@ -3959,9 +3993,9 @@ contains
    ! Put out the radial and angular grid info to file "out"
       self :: IN
 
-   ENSURE(.finalized,"not finalized")
-
       i,p :: INT
+
+      if (NOT .finalized) return
 
       do p = 1,1
       stdout.flush
@@ -4008,12 +4042,13 @@ contains
    ! Put out the unique atom grid info to file "out"
       self :: IN
 
-   ENSURE(.finalized,"not finalized")
    ENSURE(.unique_atom.allocated,"no .unique_atom")
    ENSURE(.atom_points.associated,"no .atom_points")
    ENSURE(.atom_weights.associated,"no .atom_weights")
 
       u,a,p,np :: INT
+
+      if (NOT .finalized) return
 
       stdout.flush
       stdout.text("Atom grids:")

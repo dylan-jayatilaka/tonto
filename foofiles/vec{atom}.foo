@@ -1616,7 +1616,7 @@ contains
       if (any(self(:).group==0)) .set_connected_groups
 
       ! Set any dispersion coefficients
-      if (self(1).xray_dispersion_entered) .set_tabular_dispersion
+      if (ATOM:xray_dispersion_entered()) .set_tabular_dispersion
 
    end
 
@@ -2835,10 +2835,15 @@ contains
       cif.read_looped_item("_atom_site.id",ind,fl)
 
       fail = NOT fl 
-      if (fail) return
+      if (fail) then
+         ind.destroy
+         return
+      end
+
+      ! Success: id's are there
+      n_atoms = ind.dim
 
       ! Destroy the old atom list (if there)
-      n_atoms = ind.dim
       .destroy
 
       ! Create the new atom list
@@ -2854,13 +2859,17 @@ contains
          "_atom_site.label_asym_id  ", &
          "_atom_site.label_entity_id"  &
          ]
+      nullify(labels)
       cif.read_looped_items(IDs,labels,found=fc)
       IDs.destroy
 
       fail = NOT fc 
-      if (fail) return
+      if (fail) then
+         labels.destroy
+         return
+      end
 
-      ! Replace .'s with #
+      ! Success: Replace .'s with #
       where (labels==".") labels = "#"
 
       ! Set the atom labels 
@@ -2871,6 +2880,7 @@ contains
          self(i).set_compound_id(labels(3,i))
          val = labels(4,i).to_int
          self(i).set_compound_sequence_id(val)
+         self(i).set_group(val)
          self(i).set_asym_id(labels(5,i))
          self(i).set_entity_id(labels(6,i))
 
@@ -2994,7 +3004,7 @@ contains
       IDs.create(6)
       do i = 1,6
          lab = ATOM:ADP_label(i,form="123-repeated-square-braces")
-         IDs(i) = "_atom_site_anisotrop.U"//trim(lab)
+         IDs(i) = "_atom_site_anisotrop.U_"//trim(lab)
       end
       cif.read_looped_items(IDs,U,found=fu)
       IDs.destroy
@@ -3005,7 +3015,7 @@ contains
          IDs.create(6)
          do i = 1,6
             lab = ATOM:ADP_label(i,form="123-repeated-square-braces")
-            IDs(i) = "_atom_site_anisotrop.B"//trim(lab)
+            IDs(i) = "_atom_site_anisotrop.B_"//trim(lab)
          end
          cif.read_looped_items(IDs,U,found=fu)
          IDs.destroy
@@ -3619,6 +3629,26 @@ contains
       res = 0
       do b = 1,a-1
          n = self(b).no_of_pADPs
+         res = res + n
+      end
+
+   end
+
+   no_of_pADPs_up_to_atom(a,list) result (res) ::: PURE
+   ! Return the no. of the pADPs up to but *not* including atom "a".
+      self :: IN
+      a :: INT, IN
+      list :: VEC{INT}, IN
+      res :: INT
+
+   ENSURE(a>0,"a must be +ve")
+   ENSURE(a<=list.dim,"a too large")
+
+      b,n :: INT
+
+      res = 0
+      do b = 1,a-1
+         n = self(list(b)).no_of_pADPs
          res = res + n
       end
 
@@ -4815,7 +4845,7 @@ contains
          dum.create(n)
          dum = .nondummy_atoms
          unique_labels = NOT self(dum).label.has_repetitions
-         unique_x_kind =     self(dum).has_unique_xtal_kinds
+         unique_x_kind =     self.has_unique_xtal_kinds(dum)
          has = unique_labels AND unique_x_kind
          dum.destroy
 
@@ -4898,6 +4928,29 @@ contains
       do b = 1,a-1
 
          if (NOT self(a).is_xtal_identical_to(self(b))) cycle
+
+         unq = FALSE
+         return
+
+      end
+      end
+
+   end
+
+   has_unique_xtal_kinds(list) result (unq) ::: pure
+   ! Return TRUE if all atoms have unique *xtal* kinds
+      self :: IN
+      list :: VEC{INT}, IN
+      unq :: BIN
+
+      a,b :: INT
+
+      unq = TRUE
+
+      do a = 2,list.dim
+      do b = 1,a-1
+
+         if (NOT self(list(a)).is_xtal_identical_to(self(list(b)))) cycle
 
          unq = FALSE
          return
@@ -5752,7 +5805,7 @@ contains
    end
 
    has_groups result (res) ::: pure
-   ! Return TRUE if any atom groups have been defined
+   ! Return TRUE if more than one atom group has been defined.
    ! This only counts if there is more than one group!
       self :: IN
       res :: BIN
@@ -5780,7 +5833,8 @@ contains
 
       atoms_bonded_to_atom :: VEC{VEC_{INT}}*
       group_for :: VEC{INT}*
-      a,b,c,n, ga,gb :: INT
+      n_atoms, a,b,c,n, ga,gb :: INT
+      n_group, g :: INT
 
       ! Can only proceed in cartesian axes
       if (NOT all(ATOM:is_in_cartesian_system(self))) return
@@ -5788,38 +5842,44 @@ contains
       ! Make the bond list
       .make_connection_table(atoms_bonded_to_atom)
 
-      ! List of groups
-      group_for.create(.dim)
-      group_for = 0
+      ! Assume every atom it's own molecule
+      n_atoms = .dim
+      group_for.to_sequence(1,n_atoms)
 
-      ! Loop over atoms
-      do a = 1,.dim
+      ! Loop on all atoms "a"
+      do a = 1,n_atoms
 
-         ! Get group for a
+         ! Group "ga" foratom "a" 
          ga = group_for(a)
-         if (ga==0) then ! next group
-            ga = maxval(group_for) + 1
-            group_for(a) = ga
-         end
+
+         ! No of atoms bonded to atom "a"
+         n = atoms_bonded_to_atom(a).element.dim
 
          ! Loop over bonded atoms
-         n = atoms_bonded_to_atom(a).element.dim
          do c = 1,n
 
             b  = atoms_bonded_to_atom(a)[c]
             gb = group_for(b)
 
-            if (gb==0) then
-               group_for(b) = ga
-            else if (gb>ga) then
+            if      (gb>ga) then
                where (group_for==gb) group_for = ga
             else if (gb<ga) then
                where (group_for==ga) group_for = gb
-               ga = gb ! NOTE
             end
 
          end
 
+      end
+
+      ! Make groups consecutive
+      n = maxval(group_for)
+      group_for = -group_for
+      n_group = 0
+      do g = -1,-n,-1
+         if (any(group_for==g)) then
+            n_group = n_group + 1
+            where (group_for==g) group_for = n_group
+         end
       end
 
       ! Assign
@@ -10249,7 +10309,30 @@ contains
 
    ENSURE(.dim>0,"zero size atom list")
 
-      res = VEC{INT}:sum_elements(self(:).atomic_number)
+      res = sum(self(:).atomic_number)
+
+   end
+
+   no_of_electrons(list) result (res) ::: PURE
+   ! If the atom list is *not* a single explicit "El" electron:
+   ! . Return the number of electrons in the atom list assuming
+   !   that it is *neutrally charged*. Any explicit "El" electrons
+   !   are ignored i.e. they have no electrons.
+   ! . Else return 1 ... the explicit "El" electron is assumed to be
+   !   surrounded by one (beta) electron. This ensures a good initial
+   !   guess is obtained for promolecule guess SCF calculations.
+      self :: IN
+      list :: VEC{INT}, IN
+      res :: INT
+
+   ENSURE(.dim>0,"zero size atom list")
+
+      i :: INT
+
+      res = 0
+      do i = 1,list.dim
+         res = res + self(list(i)).atomic_number
+      end
 
    end
 
@@ -10670,7 +10753,7 @@ contains
 
       if (.has_nonzero_ADP_tensors) .put_ADPs
 
-      if (self(1).xray_dispersion_entered) .put_dispersion_factors
+      if (ATOM:xray_dispersion_entered()) .put_dispersion_factors
 
       .put_bond_length_table
       .put_bond_angle_table
@@ -11277,6 +11360,7 @@ contains
 
       ! Make the table
       table.put
+      table.destroy
 
    end
 
@@ -11804,7 +11888,7 @@ contains
 
       ! Set table headings & data
       table.create(10)
-      table.set_spacing(2)
+      table.set_column_spacing(2)
 
       if (NOT .has_nonzero_pADP2_errors) then
 
@@ -11904,7 +11988,7 @@ contains
 
       ! Set table headings & data
       table.create(11)
-      table.set_spacing(2)
+      table.set_column_spacing(2)
 
       if (NOT .has_nonzero_ADP3_errors) then
 
@@ -11991,7 +12075,7 @@ contains
 
       ! Set table headings & data
       table.create(16)
-      table.set_spacing(2)
+      table.set_column_spacing(2)
 
       if (NOT .has_nonzero_ADP4_errors) then
 
@@ -12206,7 +12290,7 @@ contains
       table(1).set_heading("A")
       table(1).set_width_from(self.chemical_symbols)
 
-      table(2).set_spacing(0)
+      table(2).set_column_spacing(0)
       table(2).set_heading("--")
       table(2).set_width(2)
 
@@ -12217,7 +12301,7 @@ contains
       table(4).set_heading("A")
       table(4).set_width_from(self.tag)
 
-      table(5).set_spacing(0)
+      table(5).set_column_spacing(0)
       table(5).set_heading("--")
       table(5).set_width(2)
 
@@ -12367,7 +12451,7 @@ contains
       table(1).set_heading("A")
       table(1).set_width_from(self.chemical_symbols)
 
-      table(2).set_spacing(0)
+      table(2).set_column_spacing(0)
       table(2).set_heading("--")
       table(2).set_width(2)
 
@@ -12378,7 +12462,7 @@ contains
       table(4).set_heading("A")
       table(4).set_width_from(self.tag)
 
-      table(5).set_spacing(0)
+      table(5).set_column_spacing(0)
       table(5).set_heading("--")
       table(5).set_width(2)
 
@@ -12724,19 +12808,19 @@ contains
       table(1).set_heading("A")
       table(1).set_width_from(.chemical_symbols)
 
-      table(2).set_spacing(0)
+      table(2).set_column_spacing(0)
       table(2).set_heading("--")
       table(2).set_width(2)
 
-      table(3).set_spacing(0)
+      table(3).set_column_spacing(0)
       table(3).set_heading("B")
       table(3).set_width_from(.chemical_symbols)
 
-      table(4).set_spacing(0)
+      table(4).set_column_spacing(0)
       table(4).set_heading("--")
       table(4).set_width(2)
 
-      table(5).set_spacing(0)
+      table(5).set_column_spacing(0)
       table(5).set_heading("C")
       table(5).set_width(table(2).width)
       table(5).set_left_justify(TRUE)
@@ -12744,11 +12828,11 @@ contains
       table(6).set_heading("A")
       table(6).set_width_from(self(.angle_outer_atoms).tag)
 
-      table(7).set_spacing(0)
+      table(7).set_column_spacing(0)
       table(7).set_heading("--")
       table(7).set_width(2)
 
-      table(8).set_spacing(0)
+      table(8).set_column_spacing(0)
       table(8).set_heading("B")
       table(8).set_width_from(self(.angle_center_atoms).tag)
       w = table(8).width
@@ -12757,11 +12841,11 @@ contains
       val(1:w).replace_all(" ","-")
       table(8).set_heading(val(1:w))
 
-      table(9).set_spacing(0)
+      table(9).set_column_spacing(0)
       table(9).set_heading("--")
       table(9).set_width(2)
 
-      table(10).set_spacing(0)
+      table(10).set_column_spacing(0)
       table(10).set_heading("C")
       table(10).set_width_from(self(.angle_outer_atoms).tag)
       table(10).set_left_justify(TRUE)
@@ -12921,19 +13005,19 @@ contains
       table(1).set_heading("A")
       table(1).set_width_from(.chemical_symbols)
 
-      table(2).set_spacing(0)
+      table(2).set_column_spacing(0)
       table(2).set_heading("--")
       table(2).set_width(2)
 
-      table(3).set_spacing(0)
+      table(3).set_column_spacing(0)
       table(3).set_heading("B")
       table(3).set_width_from(.chemical_symbols)
 
-      table(4).set_spacing(0)
+      table(4).set_column_spacing(0)
       table(4).set_heading("--")
       table(4).set_width(2)
 
-      table(5).set_spacing(0)
+      table(5).set_column_spacing(0)
       table(5).set_heading("C")
       table(5).set_width(table(2).width)
       table(5).set_left_justify(TRUE)
@@ -12941,11 +13025,11 @@ contains
       table(6).set_heading("A")
       table(6).set_width_from(self(.angle_outer_atoms).tag)
 
-      table(7).set_spacing(0)
+      table(7).set_column_spacing(0)
       table(7).set_heading("--")
       table(7).set_width(2)
 
-      table(8).set_spacing(0)
+      table(8).set_column_spacing(0)
       table(8).set_heading("B")
       table(8).set_width_from(self(.angle_center_atoms).tag)
       w = table(8).width
@@ -12954,11 +13038,11 @@ contains
       val(1:w).replace_all(" ","-")
       table(8).set_heading(val(1:w))
 
-      table(9).set_spacing(0)
+      table(9).set_column_spacing(0)
       table(9).set_heading("--")
       table(9).set_width(2)
 
-      table(10).set_spacing(0)
+      table(10).set_column_spacing(0)
       table(10).set_heading("C")
       table(10).set_width_from(self(.angle_outer_atoms).tag)
       table(10).set_left_justify(TRUE)
@@ -13338,27 +13422,27 @@ contains
       table(1).set_heading("A")
       table(1).set_width_from(.chemical_symbols)
 
-      table(2).set_spacing(0)
+      table(2).set_column_spacing(0)
       table(2).set_heading("--")
       table(2).set_width(2)
 
-      table(3).set_spacing(0)
+      table(3).set_column_spacing(0)
       table(3).set_heading("B")
       table(3).set_width_from(.chemical_symbols)
 
-      table(4).set_spacing(0)
+      table(4).set_column_spacing(0)
       table(4).set_heading("--")
       table(4).set_width(2)
 
-      table(5).set_spacing(0)
+      table(5).set_column_spacing(0)
       table(5).set_heading("C")
       table(5).set_width_from(.chemical_symbols)
 
-      table(6).set_spacing(0)
+      table(6).set_column_spacing(0)
       table(6).set_heading("--")
       table(6).set_width(2)
 
-      table(7).set_spacing(0)
+      table(7).set_column_spacing(0)
       table(7).set_heading("D")
       table(7).set_width(table(2).width)
       table(7).set_left_justify(TRUE)
@@ -13366,11 +13450,11 @@ contains
       table(8).set_heading("A")
       table(8).set_width_from(self(.torsion_angle_1st_atoms).tag)
 
-      table(9).set_spacing(0)
+      table(9).set_column_spacing(0)
       table(9).set_heading("--")
       table(9).set_width(2)
 
-      table(10).set_spacing(0)
+      table(10).set_column_spacing(0)
       table(10).set_heading("B")
       table(10).set_width_from(self(.torsion_angle_2nd_atoms).tag)
       w = table(10).width
@@ -13379,11 +13463,11 @@ contains
       val(1:w).replace_all(" ","-")
       table(10).set_heading(val(1:w))
 
-      table(11).set_spacing(0)
+      table(11).set_column_spacing(0)
       table(11).set_heading("--")
       table(11).set_width(2)
 
-      table(12).set_spacing(0)
+      table(12).set_column_spacing(0)
       table(12).set_heading("C")
       table(12).set_width_from(self(.torsion_angle_3rd_atoms).tag)
       w = table(12).width
@@ -13392,11 +13476,11 @@ contains
       val(1:w).replace_all(" ","-")
       table(12).set_heading(val(1:w))
 
-      table(13).set_spacing(0)
+      table(13).set_column_spacing(0)
       table(13).set_heading("--")
       table(13).set_width(2)
 
-      table(14).set_spacing(0)
+      table(14).set_column_spacing(0)
       table(14).set_heading("D")
       table(14).set_width_from(self(.torsion_angle_4th_atoms).tag)
       table(14).set_left_justify(TRUE)
@@ -13570,27 +13654,27 @@ contains
       table(1).set_heading("A")
       table(1).set_width_from(.chemical_symbols)
 
-      table(2).set_spacing(0)
+      table(2).set_column_spacing(0)
       table(2).set_heading("--")
       table(2).set_width(2)
 
-      table(3).set_spacing(0)
+      table(3).set_column_spacing(0)
       table(3).set_heading("B")
       table(3).set_width_from(.chemical_symbols)
 
-      table(4).set_spacing(0)
+      table(4).set_column_spacing(0)
       table(4).set_heading("--")
       table(4).set_width(2)
 
-      table(5).set_spacing(0)
+      table(5).set_column_spacing(0)
       table(5).set_heading("C")
       table(5).set_width_from(.chemical_symbols)
 
-      table(6).set_spacing(0)
+      table(6).set_column_spacing(0)
       table(6).set_heading("--")
       table(6).set_width(2)
 
-      table(7).set_spacing(0)
+      table(7).set_column_spacing(0)
       table(7).set_heading("D")
       table(7).set_width(table(2).width)
       table(7).set_left_justify(TRUE)
@@ -13598,11 +13682,11 @@ contains
       table(8).set_heading("A")
       table(8).set_width_from(self(.torsion_angle_1st_atoms).tag)
 
-      table(9).set_spacing(0)
+      table(9).set_column_spacing(0)
       table(9).set_heading("--")
       table(9).set_width(2)
 
-      table(10).set_spacing(0)
+      table(10).set_column_spacing(0)
       table(10).set_heading("B")
       table(10).set_width_from(self(.torsion_angle_2nd_atoms).tag)
       w = table(10).width
@@ -13611,11 +13695,11 @@ contains
       val(1:w).replace_all(" ","-")
       table(10).set_heading(val(1:w))
 
-      table(11).set_spacing(0)
+      table(11).set_column_spacing(0)
       table(11).set_heading("--")
       table(11).set_width(2)
 
-      table(12).set_spacing(0)
+      table(12).set_column_spacing(0)
       table(12).set_heading("C")
       table(12).set_width_from(self(.torsion_angle_3rd_atoms).tag)
       w = table(12).width
@@ -13624,11 +13708,11 @@ contains
       val(1:w).replace_all(" ","-")
       table(12).set_heading(val(1:w))
 
-      table(13).set_spacing(0)
+      table(13).set_column_spacing(0)
       table(13).set_heading("--")
       table(13).set_width(2)
 
-      table(14).set_spacing(0)
+      table(14).set_column_spacing(0)
       table(14).set_heading("D")
       table(14).set_width_from(self(.torsion_angle_4th_atoms).tag)
       table(14).set_left_justify(TRUE)
@@ -14911,11 +14995,11 @@ contains
       stdout.text("loop_")
       stdout.text("_atom_site_Cartn_ADP2_U_label")
       do i = 1,6
-      lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+      lab = ATOM:ADP2_index_label(i,form="123-repeated")
       stdout.text("_atom_site_Cartn_ADP2_U_"//trim(lab))
       end
       do i = 1,6
-      lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+      lab = ATOM:ADP2_index_label(i,form="123-repeated")
       stdout.text("_atom_site_Cartn_ADP2_U_"//trim(lab)//"_esu")
       end
 
@@ -15028,11 +15112,11 @@ contains
       stdout.text("loop_")
       stdout.text("_atom_site_Cryst_ADP2_U_label")
       do i = 1,6
-      lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+      lab = ATOM:ADP2_index_label(i,form="123-repeated")
       stdout.text("_atom_site_Cryst_ADP2_U_"//trim(lab))
       end
       do i = 1,6
-      lab = ATOM:ADP2_index_label(i,form="underscore-123-repeated")
+      lab = ATOM:ADP2_index_label(i,form="123-repeated")
       stdout.text("_atom_site_Cryst_ADP2_U_"//trim(lab)//"_esu")
       end
 
@@ -15108,7 +15192,7 @@ contains
       stdout.text("loop_")
       stdout.text("_atom_site_aniso_label")
       do i = 1,6
-      lab = ATOM:ADP_label(i,form="underscore-123-repeated")
+      lab = ATOM:ADP_label(i,form="123-repeated")
       stdout.text("_atom_site_aniso_"//trim(lab))
       end
 
@@ -15213,7 +15297,7 @@ contains
          stdout.text(trim(ADPn_label)//"label")
 
          do i = 1,10
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
        
@@ -15281,7 +15365,7 @@ contains
          stdout.text(trim(ADPn_label)//"label")
 
          do i = 1,15
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
         
@@ -15380,43 +15464,43 @@ contains
          stdout.text(trim(ADPn_label)//"label")
 
          do i = 1,3
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 1,3
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
 
          do i = 4,5
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 4,5
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
 
          do i = 6,7
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 6,7
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
 
          do i = 8,9
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 8,9
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
 
          do i = 10,10
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
@@ -15506,56 +15590,56 @@ contains
          stdout.text(trim(ADPn_label)//"label")
 
          do i = 1,3
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 1,3
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
 
          do i = 4,5
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 4,5
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
 
          do i = 6,7
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 6,7
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
 
          do i = 8,9
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 8,9
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
 
          do i = 10,12
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 10,12
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
 
          do i = 13,15
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          do i = 13,15
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
         
@@ -15671,7 +15755,7 @@ contains
          stdout.text(trim(ADPn_label)//"label")
 
          do i = 1,10
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
        
@@ -15735,7 +15819,7 @@ contains
          stdout.text(trim(ADPn_label)//"label")
 
          do i = 1,15
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
         
@@ -15823,7 +15907,7 @@ contains
          stdout.text(trim(ADPn_label)//"label")
 
          do i = 1,10
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
@@ -15889,7 +15973,7 @@ contains
          stdout.text("loop_")
          stdout.text(trim(ADPn_label)//"label")
          do i = 1,10
-         lab = ATOM:ADP3_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP3_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          
@@ -15962,7 +16046,7 @@ contains
          stdout.text("loop_")
          stdout.text(trim(ADPn_label)//"label")
          do i = 1,15
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          stdout.text(trim(ADPn_label)//trim(lab)//"_esu")
          end
@@ -16038,7 +16122,7 @@ contains
          stdout.text("loop_")
          stdout.text(trim(ADPn_label)//"label")
          do i = 1,15
-         lab = ATOM:ADP4_index_label(i,form="underscore-123-repeated")
+         lab = ATOM:ADP4_index_label(i,form="123-repeated")
          stdout.text(trim(ADPn_label)//trim(lab))
          end
          
