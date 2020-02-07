@@ -57,6 +57,7 @@ program run_HAR
    anharm,disperse :: VEC{STR}*
    i, charge,mult :: INT
    do_4_only,extinct,h_ADPs,h_iso,h_pos,radius_is_0,tmetal,defragment :: BIN
+   disk_sfs :: BIN
 
    ! Macro to create Tonto system object
    ! Initialise MPI parallel stuff too.
@@ -76,6 +77,7 @@ program run_HAR
    basdir     = "./basis_sets"
    charge     = 0
    cif        = "urea.cif"
+   disk_sfs   = FALSE
    dtol       = TOL(2)
    do_4_only  = FALSE
    err        = " "
@@ -135,26 +137,6 @@ program run_HAR
             stop
          end
          
-         ! Non existent
-       ! if (file.exists(cif)) then
-       !    stdout.text("Supply a <cif-file> which exists as an argument!")
-       !    stdout.text("type 'run_har.exe -help' for additional help.")
-       !    stop
-       ! end
-
-       ! if (command_line.n_args==2) then
-
-       !    shxfile = command_line.arg(2)
-       !   
-       !    ! No .hkl extension
-       !    if (hkl_file.filename_tail/="hkl") then
-       !       stdout.text("Supply a <shelx-hkl-file> with a '.hkl' as 2nd argument!")
-       !       stdout.text("type 'run_har.exe -help' for additional help.")
-       !       stop
-       !    end
-
-       ! end
-
       end
       
       ! Get the <job>
@@ -193,6 +175,7 @@ program run_HAR
          case ("cluster-radius");  radius     = value.to_real*BOHR_PER_ANGSTROM
          case ("complete-mol  ");  defragment = value.to_bin !test defrag Lorraine
          case ("dispersion    ");  disperse  => value.split
+         case ("disk-sfs      ");  disk_sfs   = value.to_bin
          case ("dtol          ");  dtol       = value.to_real
          case ("extinction    ");  extinct    = value.to_bin
          case ("fos           ");  fos        = value.to_real
@@ -344,6 +327,13 @@ program run_HAR
             stdout.text("       Example: -dispersion 'S 0.04370 0.04026  Cl 0.05457 0.05224'")
             stdout.flush    
             stdout.text("       Default: No dispersion used")
+            stdout.flush    
+            stdout.text("   -disk-sfs [t|f]")
+            stdout.flush    
+            stdout.text("       Whether to write aspherical atomic structure factors to disk.")
+            stdout.text("       With this information, write your own HAR refinement program!")
+            stdout.flush    
+            stdout.text("       Default: f")
             stdout.flush    
             stdout.text("   -dtol <dtol>")
             stdout.flush    
@@ -649,7 +639,7 @@ program run_HAR
    ! Initialize molecule
    m.BASE:create
    GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
-   m.MAIN:put_banner
+   MOLECULE.MAIN:put_banner
    m.BASE:set_name(job)
    m.BASE:set_basis_directory(basdir)
    m.BASE:set_basis_name(basis)
@@ -682,6 +672,7 @@ program run_HAR
    m.crystal.xray_data.set_thermal_smearing_model("hirshfeld")
    m.crystal.xray_data.set_partition_model("         ")
    m.crystal.xray_data.set_optimize_extinction(extinct)
+   m.crystal.xray_data.set_use_text_SFs(disk_sfs)
 
    ! Dispersion
    if (disperse.created) then
@@ -742,48 +733,40 @@ program run_HAR
    m.BASE:put
    !!!!!!!!!!
 
-
    ! Set Becke grid
    m.becke_grid.create
    m.becke_grid.set_atom_info(m.atom)
    m.becke_grid.set_accuracy(gracc)
    m.becke_grid.set_grid_data
 
-   ! Initial SCF
+   ! Initial SCF - only if using cluster charges
    m.scfdata.create
-   m.scfdata.set_scf_kind("rhf")
+   m.scfdata.set_scf_kind(scf)
+   spinorbitals = m.scfdata.spinorbital_kind
    m.scfdata.set_initial_density("promolecule")
+   select case (guess)
+   case ("density"); m.scfdata.set_initial_MOs(spinorbitals)
+   case ("mos    "); m.scfdata.set_initial_density(spinorbitals)
+   end
    m.scfdata.set_convergence(TOL(3))
    m.scfdata.diis.set_convergence_tolerance(TOL(2))
    m.scfdata.set_linear_dependence_tol(ldtol)
    m.scfdata.finalize
+
+   !!!!!!!!!
    m.SCF:scf
+   !!!!!!!!!
 
    ! Cluster/ED SCF settings
-   spinorbitals = m.scfdata.spinorbital_kind
-   m.scfdata.set_scf_kind(scf)
-   if (guess=="mos") then; m.scfdata.set_initial_MOs(spinorbitals)
-   else;                   m.scfdata.set_initial_density(spinorbitals)
-   end
-   m.scfdata.set_convergence(TOL(3))
-   m.scfdata.diis.set_convergence_tolerance(dtol)
-   m.scfdata.set_linear_dependence_tol(ldtol)
-
-   ! Use cluster-charges?
    radius_is_0 = abs(radius) < TOL(2)
    if (NOT radius_is_0) then
-         m.scfdata.set_using_SC_cluster_charges(TRUE)
-         m.scfdata.set_cluster_radius(radius)
-         m.scfdata.set_defragment(defragment)               !test Lorraine defrag
-   else
-         m.scfdata.set_using_SC_cluster_charges(FALSE)      !test Lorraine, need scf using initial MOs!!! 
+      m.scfdata.set_using_SC_cluster_charges(TRUE)
+      m.scfdata.set_cluster_radius(radius)
+      m.scfdata.set_defragment(defragment)
+      m.scfdata.finalize
+      m.SCF:scf ! Cluster charge SCF here
    end
 
-   m.scfdata.finalize
-
-   ! Do initial cluster/RKS SCF?
-!  if (scf=="rks" OR NOT radius_is_0) &    ! test Lorraine, ALWAYS do the scf from initial MOs!!!
-      m.SCF:scf
 
    ! HAR !!!!!!!!!!!!!!
    m.TAD:HAR_refinement

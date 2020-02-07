@@ -886,6 +886,34 @@ module ATOM
    117, 292,  292.2075500000d0, -1.00000000d0, &
    118, 294, -294.0000000000d0, -1.00000000d0  /
 
+   !  Protein stuff
+
+   !  Protein letter protein codes -- middle is charge
+   protein_letter_codes :: MAT{STR}(len=3,3,20), public
+
+   data protein_letter_codes/ &
+       "A  ", "0  ", "ALA", &
+       "R  ", "1  ", "ARG", &
+       "N  ", "0  ", "ASN", &
+       "D  ", "-1 ", "ASP", &
+       "C  ", "0  ", "CYS", &
+       "E  ", "-1 ", "GLU", &
+       "Q  ", "0  ", "GLN", &
+       "G  ", "0  ", "GLY", &
+       "H  ", "0  ", "HIS", &
+       "I  ", "0  ", "ILE", &
+       "L  ", "0  ", "LEU", &
+       "K  ", "1  ", "LYS", &
+       "M  ", "0  ", "MET", &
+       "F  ", "0  ", "PHE", &
+       "P  ", "0  ", "PRO", &
+       "S  ", "0  ", "SER", &
+       "T  ", "0  ", "THR", &
+       "W  ", "0  ", "TRP", &
+       "Y  ", "0  ", "TYR", &
+       "V  ", "0  ", "VAL"/ 
+
+
    saved_self :: ATOM*, private  DEFAULT_NULL
 
 contains
@@ -917,28 +945,17 @@ contains
       nullify(.pADP_vector)
       nullify(.pADP_errors)
 
-      nullify(.atomic_orbitals)
-      nullify(.density_matrix)
-      nullify(.natural_orbitals)
       nullify(.occupation_numbers)
       nullify(.NAOs)
       nullify(.NAO_occupations)
 
       .kind = 0
-      .ANOs_made                = FALSE
-      .NAOs_made                = FALSE
-      .spherical_atom_data_made = FALSE
+      .atom_data_made = FALSE ! Bad
 
-      nullify(.interpolator)
-
-      .interpolators_made       = FALSE
-      .ANO_interpolators_made   = FALSE
 
       nullify(.first_basis_fn_for_shell)
       nullify(.last_basis_fn_for_shell)
       nullify(.precomputed_basis_shellpair)
-
-      .shell_info_made          = FALSE
 
    end
 
@@ -960,12 +977,8 @@ contains
       ! The destroy should be done outside of this module
       if (.kind==0 OR .is_unique_kind) then
 
-         .atomic_orbitals.destroy
-         .density_matrix.destroy
-         .natural_orbitals.destroy
          .occupation_numbers.destroy
 
-         .interpolator.destroy
 
          .first_basis_fn_for_shell.destroy
          .last_basis_fn_for_shell.destroy
@@ -973,12 +986,8 @@ contains
 
       else
 
-         nullify(.atomic_orbitals)
-         nullify(.density_matrix)
-         nullify(.natural_orbitals)
          nullify(.occupation_numbers)
 
-         nullify(.interpolator)
 
          nullify(.first_basis_fn_for_shell)
          nullify(.last_basis_fn_for_shell)
@@ -986,8 +995,13 @@ contains
 
       end
 
+      .atomic_orbitals.destroy
+      .density_matrix.destroy
+      .natural_orbitals.destroy
+      .interpolator.destroy
+
       ! Destroy NAOs - can always do this
-      .destroy_NAOs
+      .destroy_NAO_matrices
 
       ! Do always destroy these
       .pADP_vector.destroy
@@ -995,69 +1009,55 @@ contains
 
    end
 
-   destroy_NAOs ::: leaky, PURE
+   destroy_NAO_matrices ::: leaky, PURE
    ! Destroy the NAO pointer parts
       self :: INOUT
 
-      if (NOT .NAOs_made) return
+      if (NOT .has_NAO_matrices) return
 
       .NAOs.destroy
       .NAO_occupations.destroy
 
-      .NAOs_made = FALSE
-
    end
 
-   destroy_ANOs ::: leaky, PURE
+   destroy_ANO_matrices ::: leaky, PURE
    ! Destroy the (unique-atom) ANO pointer parts
    ! (and related info)
       self :: INOUT
 
-   ENSURE(.ANOs_made EQV .kind/=0,"The kind has not been set")
-
-      if (NOT .ANOs_made) return
+      if (NOT .has_ANO_matrices) return
 
       if (.is_unique_kind) then
 
-         .atomic_orbitals.destroy
-         .density_matrix.destroy
-         .natural_orbitals.destroy
          .occupation_numbers.destroy
 
       else
 
-         nullify(.atomic_orbitals)
-         nullify(.density_matrix)
-         nullify(.natural_orbitals)
          nullify(.occupation_numbers)
 
       end
-
-      .ANOs_made = FALSE
+         
+      .atomic_orbitals.destroy
+      .density_matrix.destroy
+      .natural_orbitals.destroy
 
    end
 
-   destroy_ANO_interpolators ::: leaky, PURE
+   destroy_interpolators ::: leaky, PURE
    ! Destroy the (unique-atom) ANO interpolators
       self :: INOUT
 
-   ENSURE(.ANO_interpolators_made EQV .kind/=0,"The kind has not been set")
+      if (.interpolator.deallocated) return
 
-      if (NOT .ANO_interpolators_made) return
-
-      if (.is_unique_kind) then; .interpolator.destroy
-      else;                      nullify(.interpolator)
-      end
-
-      .ANO_interpolators_made = FALSE
+      if (.is_unique_kind)  .interpolator.destroy
 
    end
 
-   destroy_spherical_atom_data ::: leaky, PURE
+   destroy_atom_data ::: leaky, PURE
    ! Destroy the (non-unique) ANO pointer parts
       self :: INOUT
 
-      if (NOT .spherical_atom_data_made) return
+      if (NOT .atom_data_made) return
 
       .atomic_orbitals.destroy
       .density_matrix.destroy
@@ -1066,19 +1066,7 @@ contains
 
       .interpolator.destroy
 
-      .spherical_atom_data_made = FALSE
-
-   end
-
-   destroy_interpolators ::: leaky, PURE
-   ! Destroy the (non-unique) interpolators
-      self :: INOUT
-
-      if (NOT .interpolators_made) return
-
-      .interpolator.destroy
-
-      .interpolators_made = FALSE
+      .atom_data_made = FALSE
 
    end
 
@@ -1086,9 +1074,7 @@ contains
    ! Destroy the (unique-atom) shell info
       self :: INOUT
 
-   ENSURE(.shell_info_made EQV .kind/=0,"The kind has not been set")
-
-      if (NOT .shell_info_made) return
+      if (NOT .has_shell_info) return
 
       if (.is_unique_kind) then
 
@@ -1103,8 +1089,6 @@ contains
          nullify(.precomputed_basis_shellpair)
 
       end
-
-      .shell_info_made = FALSE
 
    end
 
@@ -1142,7 +1126,7 @@ contains
       .copy_shell_info(atom)
 
       ! Re-assign unique-atom ANO data
-      .copy_spherical_atom_data(atom)
+      .copy_atom_data(atom)
       .copy_interpolators(atom)
 
       ! Always safely copy NAOs
@@ -1158,12 +1142,10 @@ contains
    ! Copy the NAO pointer parts (and related info)
       atom :: ATOM, IN
 
-      if (NOT atom.NAOs_made) return
+      if (NOT atom.has_NAO_matrices) return
 
       .NAOs.create_copy(atom.NAOs)
       .NAO_occupations.create_copy(atom.NAO_occupations)
-
-      .NAOs_made = TRUE
 
    end
 
@@ -1171,26 +1153,21 @@ contains
    ! Copy the (unique-atom) ANO pointer parts (and related info)
       atom :: ATOM, IN
 
-      if (NOT atom.ANOs_made) return
+      if (NOT atom.has_ANO_matrices) return
 
       if (.kind==0 OR .is_unique_kind) then
 
-         .atomic_orbitals.create_copy(atom.atomic_orbitals)
-         .density_matrix.create_copy(atom.density_matrix)
-         .natural_orbitals.create_copy(atom.natural_orbitals)
          .occupation_numbers.create_copy(atom.occupation_numbers)
 
       else
 
-         .atomic_orbitals    => atom.atomic_orbitals
-         .density_matrix     => atom.density_matrix
-         .natural_orbitals   => atom.natural_orbitals
          .occupation_numbers => atom.occupation_numbers
 
       end
-
-      ! Kinds may not be sequential
-      .ANOs_made = TRUE
+         
+      .atomic_orbitals    = atom.atomic_orbitals
+      .density_matrix     = atom.density_matrix
+      .natural_orbitals   = atom.natural_orbitals
 
    end
 
@@ -1198,30 +1175,17 @@ contains
    ! Copy the (unique-atom) ANO interpolators
       atom :: ATOM, IN
 
-      if (NOT atom.ANO_interpolators_made) return
+      if (atom.interpolator.deallocated) return
 
-      if (.kind==0 OR .is_unique_kind) then
-
-         .interpolator.destroy
-         .interpolator.create_copy(atom.interpolator)
-
-      else
-
-         nullify(.interpolator)
-         .interpolator => atom.interpolator
-
-      end
-
-      ! Kinds may not be sequential
-      .ANO_interpolators_made = TRUE
-
+      .interpolator = atom.interpolator
+   
    end
 
    copy_shell_info(atom) ::: leaky
    ! Destroy the (unique-atom) shell info
       atom :: ATOM, IN
 
-      if (NOT atom.shell_info_made) return
+      if (NOT atom.has_shell_info) return
 
       if (.kind==0 OR .is_unique_kind) then
 
@@ -1245,32 +1209,29 @@ contains
 
       end
 
-      ! Kinds may not be sequential
-      .shell_info_made = TRUE
-
    end
 
-   copy_spherical_atom_data(atom) ::: leaky
+   copy_atom_data(atom) ::: leaky
    ! Copy the (non-unique) ANO pointer parts
       atom :: ATOM, IN
 
-      if (NOT atom.spherical_atom_data_made) return
+      if (NOT atom.atom_data_made) return
 
       .atomic_orbitals.destroy
       .density_matrix.destroy
       .natural_orbitals.destroy
       .occupation_numbers.destroy
 
-      .atomic_orbitals.create_copy(atom.atomic_orbitals)
-      .density_matrix.create_copy(atom.density_matrix)
-      .natural_orbitals.create_copy(atom.natural_orbitals)
+      .atomic_orbitals  = atom.atomic_orbitals
+      .density_matrix   = atom.density_matrix
+      .natural_orbitals = atom.natural_orbitals
       .occupation_numbers.create_copy(atom.occupation_numbers)
 
       .interpolator.destroy
-      .interpolator.create_copy(atom.interpolator)
+      .interpolator =  atom.interpolator
 
       ! Kinds may not be sequential
-      .spherical_atom_data_made = TRUE
+      .atom_data_made = TRUE
 
    end
 
@@ -1278,13 +1239,10 @@ contains
    ! Destroy the (non-unique) interpolators
       atom :: ATOM
 
-      if (NOT atom.interpolators_made) return
+      if (atom.interpolator.deallocated) return
 
       .interpolator.destroy
-      .interpolator.create_copy(atom.interpolator)
-
-      ! Kinds may not be sequential
-      .interpolators_made = TRUE
+      .interpolator =  atom.interpolator
 
    end
 
@@ -1343,26 +1301,16 @@ contains
 
       ! ANO
       .energy                   = ZERO
-      .ANOs_made                = FALSE
-      .spherical_atom_data_made = FALSE
-      .NAOs_made                = FALSE
+      .atom_data_made           = FALSE
 
       ! Interpolator
       .use_interpolator         = TRUE
-      .ANO_interpolators_made   = FALSE
-      .interpolators_made       = FALSE
 
       ! IAM SF's
-      .use_IAM_ITC_FFs        = TRUE
+      .use_IAM_ITC_FFs          = TRUE
 
-      .shell_info_made = FALSE
-
-      ! Protien defaults
-      .invariom_label          = " "
-      .protein_strand          = 0
-      .residue_atom_code       = " "
-      .residue_code            = " "
-      .residue_sequence_number = 0
+      ! Invariom
+      .invariom_label           = " "
 
       ! MM
       .mm_forcefield_name         = " "
@@ -1408,10 +1356,11 @@ contains
 
    end
 
-   set_label(label) ::: private
+   set_label(label,skip_mass)
    ! Set the atom "label" and related variables
       self :: INOUT
-      label :: STR
+      label :: STR, IN
+      skip_mass :: BIN, optional, IN
 
    DIE_IF(NOT label(1:1).is_alphabetical,"unacceptable atom symbol: "// trim(label))
 
@@ -1421,11 +1370,32 @@ contains
       .tag   = label
       .label = label
 
+      ! Skip next bit if requested
+      if (present(skip_mass)) then
+      if (skip_mass) then
+         return
+      end
+      end
+
       ! Set atomic number and mass from symbol
       chemical_symbol = ATOM:element_symbol_from_label(label)
-      .set_mass(chemical_symbol)
+      .set_atomic_number_and_mass(chemical_symbol)
 
    end
+
+!   set_mm_label(label,Z)
+!   ! Set a macromolecular atom "label" and related variables
+!      self :: INOUT
+!      label :: STR, IN
+!      Z :: INT, IN
+!
+!      ! Set the tag - may not be unique
+!      .tag   = label
+!      .label = label
+!
+!      .set_atomic_number_and_mass(Z)
+!
+!   end
 
    element_symbol_from_label(label) result (symbol) ::: selfless, private
    ! Return a normalised element symbol from an atom "label"
@@ -1455,19 +1425,31 @@ contains
 
    end
 
-   set_mass(chemical_symbol) ::: private
+   set_atomic_number_and_mass
    ! Set the atomic mass from the .label and .mass_number
       self :: INOUT
-      chemical_symbol :: STR, optional, IN
 
    ENSURE(.label/="?" AND .label/=" ","label not set")
 
-      symbol :: STR
-      Z :: INT
+      .set_AN_and_M_helper(.label)
 
-      if (present(chemical_symbol)) then; symbol = chemical_symbol
-      else;                               symbol = .label
-      end
+   end
+
+   set_atomic_number_and_mass(chemical_symbol)
+   ! Set the atomic mass from the .label and .mass_number
+      self :: INOUT
+      chemical_symbol :: STR, IN
+
+      .set_AN_and_M_helper(chemical_symbol)
+
+   end
+
+   set_AN_and_M_helper(symbol) ::: private
+   ! Set the atomic mass from the .label and .mass_number
+      self :: INOUT
+      symbol :: STR, IN
+
+      Z :: INT
 
       ! Assign atomic number from symbol
       select case (symbol(1:2))
@@ -1505,6 +1487,26 @@ contains
 
    end
 
+   set_atomic_number_and_mass(Z)
+   ! Set the atomic mass from the .label and .mass_number
+      self :: INOUT
+      Z :: INT, IN
+
+      .set_AN_and_M_helper(Z)
+
+   end
+
+   set_AN_and_M_helper(Z) ::: private
+   ! Set the atomic mass from the .label and .mass_number
+      self :: INOUT
+      Z :: INT, IN
+
+      .atomic_number  = Z
+      .nuclear_charge = Z*ONE
+      .mass           = ATOM::mass(self)
+
+   end
+
    set_dummy_charge(label)
    ! Set a dummy charge (integer) and related variables
       label :: STR
@@ -1527,7 +1529,7 @@ contains
       .nuclear_charge = val
       .label          = .chemical_symbol
 
-      .set_mass
+      .set_atomic_number_and_mass
 
    end
 
@@ -1563,6 +1565,30 @@ contains
    end
 
    set_oxidation_state(val) ::: get_from(OBJECT:set, VAL?=>INT, ARG?=>.oxidation_state)
+   ! Generic set
+   end
+
+   set_atom_sequence_id(val) ::: get_from(OBJECT:set, VAL?=>INT, ARG?=>.atom_sequence_id)
+   ! Generic set
+   end
+
+   set_compound_sequence_id(val) ::: get_from(OBJECT:set, VAL?=>INT, ARG?=>.compound_sequence_id)
+   ! Generic set
+   end
+
+   set_compound_id(val) ::: get_from(OBJECT:set, VAL?=>STR, ARG?=>.compound_id)
+   ! Generic set
+   end
+
+   set_asym_id(val) ::: get_from(OBJECT:set, VAL?=>STR, ARG?=>.asym_id)
+   ! Generic set
+   end
+
+   set_entity_id(val) ::: get_from(OBJECT:set, VAL?=>STR, ARG?=>.entity_id)
+   ! Generic set
+   end
+
+   set_cap_atom(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.is_cap_atom)
    ! Generic set
    end
 
@@ -2740,52 +2766,56 @@ contains
 
    end
 
-   put_pADP_labels_to(lab) ::: selfless, PURE
+   put_pADP_labels_to(lab,form) ::: selfless, PURE
    ! Set positional-ADP labels for parameter with index "par_index"
       self :: IN
       lab :: VEC{STR}, OUT
+      form :: STR, optional, IN
 
       i :: INT
 
       do i = 1,lab.dim
-         lab(i) = "U_"//trim(::pADP_index_label(i))
+         lab(i) = trim(::pADP_label(i,form))
       end
 
    end
 
-   put_ADP2_labels_to(lab) ::: selfless, PURE
+   put_ADP2_labels_to(lab,form) ::: selfless, PURE
    ! Set the second order ADP labels for parameter with
    ! index "par_index"
       lab :: VEC{STR}(6), OUT
+      form :: STR, optional, IN
 
       i :: INT
 
       do i = 1,6
-         lab(i) = ::ADP_label(i)
+         lab(i) = ::ADP_label(i,form)
       end
 
    end
 
-   put_ADP3_labels_to(lab) ::: selfless, PURE
+   put_ADP3_labels_to(lab,form) ::: selfless, PURE
    ! Set the ADP3 labels for parameter with index "par_index"
       lab :: VEC{STR}(10), OUT
+      form :: STR, optional, IN
 
       i :: INT
 
       do i = 1,10
-         lab(i) = ::ADP3_label(i)
+         lab(i) = ::ADP3_label(i,form)
       end
 
    end
 
-   put_ADP4_labels_to(lab) ::: selfless, PURE
+   put_ADP4_labels_to(lab,form) ::: selfless, PURE
    ! Set the ADP4 labels for parameter with index "par_index"
       lab :: VEC{STR}(15), OUT
+      form :: STR, optional, IN
 
       i :: INT
 
       do i = 1,15
-         lab(i) = ::ADP4_label(i)
+         lab(i) = ::ADP4_label(i,form)
       end
 
    end
@@ -3030,19 +3060,7 @@ contains
 !  Set ANO data and shell info made
 !  ================================
 
-   set_NAOs_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.NAOs_made), pure
-   ! Generic set
-   end
-
-   set_ANOs_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.ANOs_made), pure
-   ! Generic set
-   end
-
-   set_spherical_atom_data_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.spherical_atom_data_made), pure
-   ! Generic set
-   end
-
-   set_shell_info_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.shell_info_made), pure
+   set_atom_data_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.atom_data_made), pure
    ! Generic set
    end
 
@@ -3051,14 +3069,6 @@ contains
 !  =======================
 
    set_use_interpolator(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.use_interpolator), pure
-   ! Generic set
-   end
-
-   set_ANO_interpolators_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.ANO_interpolators_made), pure
-   ! Generic set
-   end
-
-   set_interpolators_made(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.interpolators_made), pure
    ! Generic set
    end
 
@@ -3139,16 +3149,14 @@ contains
       case ("mm_forcefield_name=          "); .read_mm_forcefield_name
       case ("nuclear_charge=              "); .read_nuclear_charge
       case ("oxidation_state=             "); .read_oxidation_state
-      case ("pdb_input_line=              "); .read_pdb_input_line
+    ! case ("pdb_input_line=              "); .read_pdb_input_line
       case ("pos=                         "); .read_position ! deprecated
       case ("position=                    "); .read_position
       case ("put                          "); .put
       case ("put_interpolator             "); .put_interpolator
-      case ("residue_atom_code=           "); .read_residue_atom_code
-      case ("residue_code=                "); .read_residue_code
       case ("restraining_position=        "); .read_restraining_position
       case ("restraining_force_constant=  "); .read_restraining_force
-      case ("residue_sequence_number=     "); .read_residue_sequence_number
+    ! case ("residue_sequence_number=     "); .read_residue_sequence_number
       case ("set_covalent_radii_ccdc      "); ::set_covalent_radii_ccdc
       case ("set_vdw_radii_ccdc           "); ::set_vdw_radii_ccdc
       case ("site_disorder_group=         "); .read_site_disorder_group
@@ -3288,50 +3296,25 @@ contains
 
    end
 
-   read_residue_atom_code
-   ! Read the atom code describing where in the residue this atom
-   ! resides (case sensitive).
-      self :: INOUT
-
-      stdin.read(.residue_atom_code)
-
-   end
-
-   read_residue_code
-   ! Read the residue name that this atom belongs to.
-      self :: INOUT
-
-      stdin.read(.residue_code)
-
-   end
-
-   read_pdb_input_line
-   ! Read a line in the PDB input style
-      self :: INOUT
-
-      word :: STR
-
-      stdin.read(word)
-      word.to_lower_case
-      ENSURE(word=="atom","PDB line does not begin with 'atom'")
-
-      .read_residue_atom_code
-      .read_residue_code
-      .read_residue_sequence_number
-      .read_position
-      .read_junk
-      .read_junk
-      .read_label
-
-   end
-
-   read_residue_sequence_number
-   ! Read the residue sequence number of the atom in the molecule
-      self :: INOUT
-
-      stdin.read(.residue_sequence_number)
-
-   end
+!   read_pdb_input_line
+!   ! Read a line in the PDB input style
+!      self :: INOUT
+!
+!      word :: STR
+!
+!      stdin.read(word)
+!      word.to_lower_case
+!      ENSURE(word=="atom","PDB line does not begin with 'atom'")
+!
+!      .read_residue_atom_code
+!      .read_residue_code
+!      .read_residue_sequence_number
+!      .read_position
+!      .read_junk
+!      .read_junk
+!      .read_label
+!
+!   end
 
    read_mm_atom_type
    ! Read the atom type potential, used to define the force field potential
@@ -3989,6 +3972,7 @@ contains
    ! . If that fails, try to matching using only the chemical symbol
    !   e.g. if the basis was obtained from reading an external
    !   program, like gaussian.
+      self :: INOUT
       basis :: VEC{BASIS?}*
       suffix :: STR, optional
       found :: BIN, optional
@@ -4087,7 +4071,9 @@ contains
    ! with basis set or not)
       self :: IN
       res :: BIN
+
       res = .label==ATOM_DUMMY_CHARGE_LABEL
+
    end
 
    is_a_dummy_atom result (res) ::: elemental
@@ -4211,11 +4197,24 @@ contains
 !  Basis inquiry methods
 !  =====================
 
+   has_shell_info result (res) ::: elemental
+   ! Return TRUE if the shell info is made
+      self :: IN
+      res :: BIN
+
+      res = .first_basis_fn_for_shell.associated &
+        AND .last_basis_fn_for_shell.associated &
+        AND .precomputed_basis_shellpair.associated
+
+   end
+
    has_basis result (res) ::: elemental
    ! Return TRUE if this is a pseudo atom without integral charge
       self :: IN
       res :: BIN
+
       res = .basis.associated AND .basis.is_resolved
+
    end
 
    basis_descriptor result (res) ::: template
@@ -4785,9 +4784,9 @@ contains
 
          ! First three periods
          select case (col)
-         case (2,8);   mult = 1
+         case (8);     mult = 1
          case (1,3,7); mult = 2
-         case (4,6);   mult = 3
+         case (2,4,6); mult = 3
          case (5);     mult = 4
          end
 
@@ -4838,6 +4837,53 @@ contains
          charge = abs(charge)
          if (charge/=1) res = trim(charge.to_str)//trim(res)
       end
+   end
+
+!  =======================
+!  Protien related inquiry
+!  =======================
+
+   compound_id_str result (res) ::: PURE
+   ! Return the unique compound id string.
+      self :: IN
+      res :: STR
+
+      res = trim(.compound_id) // "-" // trim(.compound_sequence_id.to_str) 
+   end
+
+   id_compound_str result (res) ::: PURE
+   ! Return the unique compound id string - this is reverse relative
+   ! to the above routine which is better for ordering file names.
+      self :: IN
+      res :: STR
+
+      res = trim(.compound_sequence_id.to_str) // "-" // trim(.compound_id) 
+
+   end
+
+   is_in_a_residue result (res) ::: PURE
+   ! Return TRUE if the atom belongs to a protein residue as
+   ! determined by the compound_id
+      self :: IN
+      res :: BIN
+
+      res = any(.compound_id(1:3)==protein_letter_codes(3,:))
+
+   end
+
+   std_protein_residue_charge result (res) ::: PURE
+   ! Return the standard charge of the residue to which
+   ! the atom belongs to.
+      self :: IN
+      res :: INT
+
+   ENSURE(.is_in_a_residue,"not in a residue")
+
+      ind :: INT
+
+      ind = protein_letter_codes(3,:).index_of(.compound_id(1:3))
+      res = protein_letter_codes(2,ind).to_int
+
    end
 
 !  =========================
@@ -5002,9 +5048,8 @@ contains
 !
 !   end
 
-   xray_dispersion_entered result (res) ::: PURE
+   xray_dispersion_entered result (res) ::: selfless, PURE
    ! Return whether xray_dispersion table was entered.
-      self :: IN
       res :: BIN
 
       res = xray_dispersion_set
@@ -5986,7 +6031,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = .natural_orbitals.associated AND .occupation_numbers.associated
+      res = .natural_orbitals.allocated AND .occupation_numbers.associated
 
    end
 
@@ -6155,7 +6200,7 @@ contains
       res :: REAL
 
       if (.basis.disassociated) then; res = ZERO
-      else;                       res = .basis.r_max(cutoff)
+      else;                           res = .basis.r_max(cutoff)
       end
 
    end
@@ -6523,12 +6568,11 @@ contains
    end
 
    pADP_label(par_index,form) result (res) ::: selfless, PURE
-   ! Return the ADP label for parameter with index
-   ! "par_index". The specific "form" of the ADP's may be given;
-   ! the default is "xyz-repeated" e.g. "xxyy. For other forms see
-   ! the code below.
+   ! Return the ADP label for parameter with index "par_index". The
+   ! specific "form" of the ADP's may be given; the default is
+   ! "xyz-repeated" e.g. "xxyy. For other forms see the code below.
       par_index :: INT, IN
-      form :: STR, IN, optional
+      form :: STR, optional, IN
       res :: STR
 
    ENSURE(par_index.is_in_range([1,34]),"par_index out of range")
@@ -6542,18 +6586,19 @@ contains
 
       else
 
-         fmt = "xyz-repeated"
+         fmt = "underscore-xyz-repeated"
          if (present(form)) fmt = form
 
          res = " "
 
          select case (fmt)
-            case ("underscore-123-repeated"); res = "U_"//trim(GAUSSIAN_DATA::p123_rep(par_index+1))
-            case ("underscore-xyz-repeated"); res = "U_"//trim(GAUSSIAN_DATA::pxyz_rep(par_index+1))
-            case ("underscore-xyz-power   "); res = "U_"//trim(GAUSSIAN_DATA::pxyz_pow(par_index+1))
-            case ("123-repeated           "); res = "U" //trim(GAUSSIAN_DATA::p123_rep(par_index+1))
-            case ("xyz-repeated           "); res = "U" //trim(GAUSSIAN_DATA::pxyz_rep(par_index+1))
-            case ("xyz-power              "); res = "U" //trim(GAUSSIAN_DATA::pxyz_pow(par_index+1))
+         case ("underscore-123-repeated   "); res = "U_"//trim(GAUSSIAN_DATA::p123_rep(par_index+1))
+         case ("underscore-xyz-repeated   "); res = "U_"//trim(GAUSSIAN_DATA::pxyz_rep(par_index+1))
+         case ("underscore-xyz-power      "); res = "U_"//trim(GAUSSIAN_DATA::pxyz_pow(par_index+1))
+         case ("123-repeated-square-braces"); res = "U" //trim(GAUSSIAN_DATA::b123_rep(par_index+1))
+         case ("123-repeated              "); res = "U" //trim(GAUSSIAN_DATA::p123_rep(par_index+1))
+         case ("xyz-repeated              "); res = "U" //trim(GAUSSIAN_DATA::pxyz_rep(par_index+1))
+         case ("xyz-power                 "); res = "U" //trim(GAUSSIAN_DATA::pxyz_pow(par_index+1))
          end
 
       end
@@ -6561,12 +6606,11 @@ contains
    end
 
    pADP_index_label(par_index,form) result (res) ::: selfless, PURE
-   ! Return the ADP index label for parameter with index
-   ! "par_index". The specific "form" of the ADP's may be given;
-   ! the default is "xyz-repeated" e.g. "xxyy. For other forms see
-   ! the code below.
+   ! Return the ADP index label for parameter with index "par_index".
+   ! The specific "form" of the ADP's may be given; the default is
+   ! "xyz-repeated" e.g. "xxyy. For other forms see the code below.
       par_index :: INT, IN
-      form :: STR, IN, optional
+      form :: STR, optional, IN
       res :: STR
 
    ENSURE(par_index.is_in_range([1,34]),"par_index out of range")
@@ -6586,12 +6630,13 @@ contains
          res = " "
 
          select case (fmt)
-            case ("underscore-123-repeated"); res = trim(GAUSSIAN_DATA::p123_rep(par_index+1))
-            case ("underscore-xyz-repeated"); res = trim(GAUSSIAN_DATA::pxyz_rep(par_index+1))
-            case ("underscore-xyz-power   "); res = trim(GAUSSIAN_DATA::pxyz_pow(par_index+1))
-            case ("123-repeated           "); res = trim(GAUSSIAN_DATA::p123_rep(par_index+1))
-            case ("xyz-repeated           "); res = trim(GAUSSIAN_DATA::pxyz_rep(par_index+1))
-            case ("xyz-power              "); res = trim(GAUSSIAN_DATA::pxyz_pow(par_index+1))
+         case ("underscore-123-repeated   "); res = "_"//trim(GAUSSIAN_DATA::p123_rep(par_index+1))
+         case ("underscore-xyz-repeated   "); res = "_"//trim(GAUSSIAN_DATA::pxyz_rep(par_index+1))
+         case ("underscore-xyz-power      "); res = "_"//trim(GAUSSIAN_DATA::pxyz_pow(par_index+1))
+         case ("123-repeated-square-braces"); res =      trim(GAUSSIAN_DATA::b123_rep(par_index+1))
+         case ("123-repeated              "); res =      trim(GAUSSIAN_DATA::p123_rep(par_index+1))
+         case ("xyz-repeated              "); res =      trim(GAUSSIAN_DATA::pxyz_rep(par_index+1))
+         case ("xyz-power                 "); res =      trim(GAUSSIAN_DATA::pxyz_pow(par_index+1))
          end
 
       end
@@ -6600,7 +6645,6 @@ contains
 
    ADP2_index_label(par_index,form) result (res) ::: selfless, PURE
    ! Return the ADP2 index label for parameter with index "par_index"
-      self :: IN
       par_index :: INT, IN
       form :: STR, IN, optional
       res :: STR
@@ -6613,7 +6657,6 @@ contains
 
    ADP3_index_label(par_index,form) result (res) ::: selfless, PURE
    ! Return the ADP3 index label for parameter with index "par_index"
-      self :: IN
       par_index :: INT, IN
       form :: STR, IN, optional
       res :: STR
@@ -6626,7 +6669,6 @@ contains
 
    ADP4_index_label(par_index,form) result (res) ::: selfless, PURE
    ! Return the ADP4 index label for parameter with index "par_index"
-      self :: IN
       par_index :: INT, IN
       form :: STR, IN, optional
       res :: STR
@@ -6641,40 +6683,37 @@ contains
    ! Return the ADP label for parameter with index "par_index".
    ! Higher order indices can be obtained assuming they follow on in
    ! the usual pADP/gaussian lexical order.
-      self :: IN
       par_index :: INT, IN
       form :: STR, IN, optional
       res :: STR
 
    ENSURE(par_index.is_in_range([1,31]),"par_index out of range")
 
-      res = "U_"//trim(::pADP_index_label(par_index+3,form))
+      res = trim(::pADP_label(par_index+3,form))
 
    end
 
    ADP3_label(par_index,form) result (res) ::: selfless, PURE
    ! Return the ADP3 label for parameter with index "par_index"
-      self :: IN
       par_index :: INT, IN
       form :: STR, IN, optional
       res :: STR
 
    ENSURE(par_index.is_in_range([1,10]),"par_index out of range")
 
-      res = "U"//trim(::pADP_index_label(par_index+9,form))
+      res = trim(::pADP_label(par_index+9,form))
 
    end
 
    ADP4_label(par_index,form) result (res) ::: selfless, PURE
    ! Return the ADP4 label for parameter with index "par_index"
-      self :: IN
       par_index :: INT, IN
       form :: STR, IN, optional
       res :: STR
 
    ENSURE(par_index.is_in_range([1,15]),"par_index out of range")
 
-      res = "U"//trim(::pADP_index_label(par_index+19,form))
+      res = trim(::pADP_label(par_index+19,form))
 
    end
 
@@ -7250,11 +7289,11 @@ contains
       select case (.basis_kind)
 
       case ("gaussian")
-         if (.use_interpolator AND .interpolator.associated) then
+         if (.use_interpolator AND .interpolator.allocated) then
             .make_interpolated_density(density_grid,pt,occ)
          else
             ENSURE(.basis.associated,"no basis")
-            ENSURE(.natural_orbitals.associated,"no natural_orbitals")
+            ENSURE(.natural_orbitals.allocated,"no natural_orbitals")
             if (.natural_orbitals.number_kind=="real") then; .make_density_grid_r(density_grid,pt,occ)
             else;                                            .make_density_grid_c(density_grid,pt,occ)
             end
@@ -7286,11 +7325,11 @@ contains
       select case (.basis_kind)
 
       case ("gaussian")
-         if (.use_interpolator AND .interpolator.associated) then
+         if (.use_interpolator AND .interpolator.allocated) then
             .add_interpolated_density(density_grid,pt,occ)
          else
             ENSURE(.basis.associated,"no basis")
-            ENSURE(.natural_orbitals.associated,"no natural orbitals")
+            ENSURE(.natural_orbitals.allocated,"no natural orbitals")
             if (.natural_orbitals.number_kind=="real") then; .add_density_grid_r(density_grid,pt,occ)
             else;                                            .add_density_grid_c(density_grid,pt,occ)
             end
@@ -7318,7 +7357,7 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"),"no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"),"no restricted NO's")
    ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
 
       NO :: VEC{REAL}*
@@ -7349,6 +7388,47 @@ contains
 
    end
 
+   make_general_density_grid_r(density_grid,pt,occ) ::: PURE
+   ! Make the "density_grid" for the supplied points "pt" from general real
+   ! natural orbitals
+      self :: IN
+      density_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      occ :: REAL, optional, IN
+
+   ENSURE(pt.dim2==3,"wrong dimension for points array")
+   ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("general"),"no general NO's")
+   ENSURE(.occupation_numbers.is_associated_with_genre("general"),"no occupation numbers")
+
+      NO :: VEC{REAL}*
+      n_occ,n :: INT
+      do_occ :: BIN
+
+      ! Do occupation factor?
+      do_occ = FALSE
+      if (present(occ)) then
+      if (NOT occ.equals(ONE)) then
+        do_occ = TRUE
+      end
+      end
+
+      density_grid = ZERO ! set to zero
+
+      NO.create(pt.dim1)
+      n_occ = .no_of_occupied_NOs
+
+      do n = 1,n_occ
+         .make_general_orbital_grid_r(NO,.natural_orbitals.general(:,n),pt,.position)
+         density_grid = density_grid + .occupation_numbers.general(n)*NO*NO
+      end
+
+      if (do_occ) density_grid = occ*density_grid
+
+      NO.destroy
+
+   end
+
    add_density_grid_r(density_grid,pt,occ) ::: PURE
    ! Add the "density_grid" for the supplied points "pt" from restricted real
    ! natural orbitals
@@ -7359,7 +7439,7 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"),"no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"),"no restricted NO's")
    ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
 
       NO :: VEC{REAL}*
@@ -7403,7 +7483,7 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted_complex"),"no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted_complex"),"no restricted NO's")
    ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
 
       NO :: VEC{CPX}*
@@ -7444,7 +7524,7 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted_complex"),"no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted_complex"),"no restricted NO's")
    ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
 
       NO :: VEC{CPX}*
@@ -7673,7 +7753,7 @@ contains
       square :: BIN, optional, IN
 
    ENSURE(.basis.associated,"no basis set")
-   ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
+   ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect size, orb")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
       sq :: BIN
@@ -7706,6 +7786,60 @@ contains
 
       end
 
+      if (sq) g = g*g
+
+   end
+
+   make_general_orbital_grid_r(g,orb,pt,pos,square) ::: PURE
+   ! Evaluate the orbital density grid "g" for *one* AO-basis coefficient
+   ! orbital vector "orb" on a set of grid points "pt" for an atom at position
+   ! "pos". If "square" is present and TRUE, the square of the orbital density
+   ! is returned.
+      self :: IN
+      g :: VEC{REAL}, OUT
+      orb :: VEC{REAL}, IN
+      pt :: MAT{REAL}, IN
+      pos :: VEC{REAL}(3), IN
+      square :: BIN, optional, IN
+
+   ENSURE(.basis.associated,"no basis set")
+   ENSURE(2*.basis.no_of_basis_functions==orb.dim,"incorrect size, orb")
+   ENSURE(pt.dim2==3,"wrong size, pt")
+
+      sq :: BIN
+      sh :: SHELL1*
+      sh_grid :: MAT{REAL}*
+      n_pt,n_shell,f,l,s :: INT
+
+      sq = FALSE
+      if (present(square)) sq = square
+
+      n_pt = pt.dim1
+      n_shell = .basis.no_of_shells
+
+      g = ZERO
+      l = 0
+
+      do s = 1,n_shell
+
+         sh.create_copy(.basis.shell(s),pos)
+
+         f = l + 1
+         l = f + sh.n_bf - 1
+         sh_grid.create(n_pt,2*sh.n_bf)
+
+         sh.make_grid(sh_grid,pt)
+         !alpha part
+         g.plus_product_of(sh_grid(:,1:sh.n_bf),orb(f:l))
+         
+         !beta part
+         g.plus_product_of(sh_grid(:,sh.n_bf+1:2*sh.n_bf),orb(l+1:l+sh.n_bf))
+
+         sh_grid.destroy
+         sh.destroy
+
+      end
+      
       if (sq) g = g*g
 
    end
@@ -7855,6 +7989,42 @@ contains
 
    end
 
+   general_density_at_radius(R) result (res) ::: PURE
+   ! Work out the electron at radius "R", using general spinorbitals.
+      self :: IN
+      R :: REAL, IN
+      res :: REAL
+
+      density_grid :: VEC{REAL}(1)
+      pt :: MAT{REAL}(1,3)
+
+      res = ZERO
+
+      select case (.basis_kind)
+
+      case ("gaussian")
+         ENSURE(.basis.associated,"no basis")
+         pt(1,:) = .position + [R,ZERO,ZERO]
+         if (.natural_orbitals.number_kind == "real") then;
+         .make_general_density_grid_r(density_grid,pt)
+         else;                                              .make_density_grid_c(density_grid,pt)
+         end
+         res = density_grid(1)
+
+      case ("slater")
+         ENSURE(.slaterbasis.associated,"no slaterbasis")
+         ENSURE(.slaterbasis.shell.associated,"no slaterbasis shells")
+         res = .slaterbasis.density_at_radius(R)
+
+      case ("coppens")
+         ENSURE(.coppensbasis.associated,"no coppensbasis")
+         ENSURE(.coppensbasis.orbital.associated,"no coppensbasis orbital")
+         res = .coppensbasis.density_at_radius(R)
+
+      end
+
+   end
+
    density_value_at_radius(R) result (res) ::: selfless, public, PURE
    ! Return the density values at the radial value "R".
    ! This assumes that the atomic density is spherical!
@@ -7865,9 +8035,29 @@ contains
 
    end
 
+   general_density_value_at_radius(R) result (res) ::: selfless, public, PURE
+   ! Return the density values at the radial value "R".
+   ! NOTE:: this uses general orbitals.
+   ! This assumes that the atomic density is spherical!
+      R :: REAL, IN
+      res :: REAL
+
+      res = saved_self.general_density_at_radius(R)
+
+   end
+
 !  ============
 !  Interpolator
 !  ============
+
+   has_interpolator result (res) ::: pure
+   ! Return TRUE if interplator is there
+      self :: IN
+      res :: BIN
+
+      res = .interpolator.allocated
+
+   end
 
    make_interpolator(interpolator) ::: leaky
    ! Make the .interpolator for the atom density. If present,
@@ -7875,20 +8065,20 @@ contains
    ! NOTE: This is for a gaussian basis set; for slater or coppens
    ! bases use the interpolators stored in those bases.
       self :: INOUT
-      interpolator :: INTERPOLATOR*, optional
+      interpolator :: INTERPOLATOR@, optional
 
    ENSURE(.basis_kind=="gaussian","interpolation must be for a gaussian basis")
 
       ! Create a copy of the template if it exists
       if (present(interpolator)) then
-      if (interpolator.associated) then
+      if (interpolator.allocated) then
          .interpolator.destroy
-         .interpolator.create_copy(interpolator)
+         .interpolator =  interpolator
       end
       end
 
       ! If no template, create a default interpolator
-      if (.interpolator.disassociated) .interpolator.create
+      if (.interpolator.deallocated) .interpolator.create
 
       ! Set domain scale factor. May not be required.
       .interpolator.set_domain_scale_factor(.bragg_slater_radius*BOHR_PER_ANGSTROM)
@@ -7899,6 +8089,37 @@ contains
 
    end
 
+   make_general_interpolator(interpolator) ::: leaky
+   ! Make the .interpolator for the atom density. If present,
+   ! "interpolator" is used as a template to get the settings needed.
+   ! NOTE: This is for a gaussian basis set, using general
+   ! spinorbitals; for slater or coppens
+   ! bases use the interpolators stored in those bases.
+      self :: INOUT
+      interpolator :: INTERPOLATOR@, optional
+
+   ENSURE(.basis_kind=="gaussian","interpolation must be for a gaussian basis")
+
+      ! Create a copy of the template if it exists
+      if (present(interpolator)) then
+      if (interpolator.allocated) then
+         .interpolator.destroy
+         .interpolator = interpolator
+      end
+      end
+
+      ! If no template, create a default interpolator
+      if (.interpolator.deallocated) .interpolator.create
+
+      ! Set domain scale factor. May not be required.
+      .interpolator.set_domain_scale_factor(.bragg_slater_radius*BOHR_PER_ANGSTROM)
+
+      ! Set the interpolation table
+      .set_saved_self ! Used by ATOM: function below
+      .interpolator.set_even_spaced_general_data(ATOM::general_density_value_at_radius)
+
+   end
+
    interpolator_table_length(tol) result (length)
    ! Return the interpolator table "length" for a given tolerance "tol" for the
    ! atom density. The interpolator is a default one.
@@ -7906,7 +8127,7 @@ contains
       tol :: REAL, IN
       length :: REAL
 
-      interpolator :: INTERPOLATOR*
+      interpolator :: INTERPOLATOR@
 
       interpolator.create
       .set_saved_self   ! Used by function below
@@ -7925,7 +8146,7 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.interpolator.associated,"no interpolator defined!")
+   ENSURE(.interpolator.allocated,"no interpolator defined!")
    ENSURE(.interpolator.domain_mapping(1:4)=="sqrt","must using sqrt-like mapping")
 
       R2 :: VEC{REAL}*
@@ -7962,7 +8183,7 @@ contains
 
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.interpolator.associated,"no interpolator defined!")
+   ENSURE(.interpolator.allocated,"no interpolator defined!")
    ENSURE(.interpolator.domain_mapping(1:4)=="sqrt","must using sqrt-like mapping")
 
       R2 :: VEC{REAL}*
@@ -8030,8 +8251,8 @@ contains
    ENSURE(pts.dim2==3,"wrong dimension for points array")
    ENSURE(nabla_grid.dim1==pts.dim1,"wrong 1st dimension for nabla_grid array")
    ENSURE(nabla_grid.dim2==3,"wrong 2nd dimension for nabla_grid array")
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
    ENSURE(.occupation_numbers.associated, "no occupation numbers")
    ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
 
@@ -8074,8 +8295,8 @@ contains
    ENSURE(nabla_grid.dim2==3,  "wrong dimension for nabla_grid array")
    ENSURE(nabla_grid.dim1==pts.dim1,"wrong dimension for nabla_grid array")
    ENSURE(grid.dim==pts.dim1,"wrong dimension for grid array")
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
    ENSURE(.occupation_numbers.associated, "no occupation numbers")
    ENSURE(.occupation_numbers.is_associated_with_genre("restricted"),"no occupation numbers")
 
@@ -8177,7 +8398,7 @@ contains
       laplacian_grid :: VEC{REAL}
       pt :: MAT{REAL}
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind == "real") then
@@ -8195,7 +8416,7 @@ contains
       pt :: MAT{REAL}
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
    ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
 
       NO :: VEC{REAL}*
@@ -8302,7 +8523,7 @@ contains
       laplacian_grid :: VEC{REAL}
       pt :: MAT{REAL}
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind == "real") then
@@ -8320,7 +8541,7 @@ contains
       pt :: MAT{REAL}
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
    ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
 
       rho,NO :: VEC{REAL}*
@@ -8485,7 +8706,7 @@ contains
       G_grid :: VEC{REAL}
       pt :: MAT{REAL}
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind=="real") then
@@ -8503,7 +8724,7 @@ contains
       pt :: MAT{REAL}
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
    ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
 
       NO :: VEC{REAL}*
@@ -8538,7 +8759,7 @@ contains
       G_grid :: VEC{REAL}
       pt :: MAT{REAL}
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind=="real") then
@@ -8556,7 +8777,7 @@ contains
       pt :: MAT{REAL}
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
    ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
 
       rho,NO :: VEC{REAL}*
@@ -8594,7 +8815,7 @@ contains
       G_grid :: VEC{REAL}
       pt :: MAT{REAL}
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind=="real") then
@@ -8612,7 +8833,7 @@ contains
       pt :: MAT{REAL}
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
    ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
 
       NO,rho,nab_ro2,lap_rho :: VEC{REAL}*
@@ -8667,7 +8888,7 @@ contains
       K_grid :: VEC{REAL}
       pt :: MAT{REAL}
 
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
 
       if (.natural_orbitals.number_kind=="real") then
@@ -8685,7 +8906,7 @@ contains
       pt :: MAT{REAL}
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
    ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
 
       NO :: VEC{REAL}*
@@ -8720,7 +8941,7 @@ contains
    ! using ".natural orbitals" and  the ".occupation_numbers" vector.
       K_grid :: VEC{REAL}
       pt :: MAT{REAL}
-   ENSURE(.natural_orbitals.associated, "no natural orbitals")
+   ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
       if (.natural_orbitals.number_kind=="real") then
         .make_rK_kinetic_energy_grid_r(K_grid,pt)
@@ -8736,7 +8957,7 @@ contains
       pt :: MAT{REAL}
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
-   ENSURE(.natural_orbitals.is_associated_with_genre("restricted"), "no restricted NO's")
+   ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
    ENSURE(.occupation_numbers.restricted.associated, "no occupation #'s")
 
       rho,NO :: VEC{REAL}*
@@ -8818,8 +9039,8 @@ contains
       pt :: MAT{REAL}
       exchange,correlation :: STR
 
-   ENSURE(.density_matrix.associated, "no density matrix")
-   ENSURE(.density_matrix.restricted.associated, "no restricted density matrix")
+   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_matrix.restricted.allocated, "no restricted density matrix")
 
       Ve,rho :: VEC{REAL}*
       dft :: DFT_FUNCTIONAL
@@ -8864,8 +9085,8 @@ contains
       pot_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
 
-   ENSURE(.density_matrix.associated, "no density matrix")
-   ENSURE(.density_matrix.restricted.associated, "no restricted density matrix")
+   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_matrix.restricted.allocated, "no restricted density matrix")
 
       if (.density_matrix.number_kind == "real") then
          .make_electric_potential_grid_r(pot_grid,pt,.density_matrix.restricted)
@@ -9703,8 +9924,8 @@ contains
       res :: VEC{CPX}, OUT
       k_pts :: MAT{REAL}, IN
 
-   ENSURE(.density_matrix.associated, "no .density_matrix")
-   ENSURE(.density_matrix.restricted.associated, "only works for restricted .density_matrix")
+   ENSURE(.density_matrix.allocated, "no .density_matrix")
+   ENSURE(.density_matrix.restricted.allocated, "only works for restricted .density_matrix")
    ENSURE(.precomputed_basis_shellpair.associated, "no precomputed_basis_shellpair info")
 
       n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
@@ -9759,8 +9980,8 @@ contains
       res :: VEC{CPX}, OUT
       k_z :: VEC{REAL}, IN
 
-   ENSURE(.density_matrix.associated, "no .density_matrix")
-   ENSURE(.density_matrix.restricted.associated, "only works for restricted .density_matrix")
+   ENSURE(.density_matrix.allocated, "no .density_matrix")
+   ENSURE(.density_matrix.restricted.allocated, "only works for restricted .density_matrix")
    ENSURE(.precomputed_basis_shellpair.associated,"no precomputed basis shellpair data")
 
       n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
@@ -9877,7 +10098,7 @@ contains
       self :: IN
       length,spacing :: REAL, IN
 
-      interpolator :: INTERPOLATOR*
+      interpolator :: INTERPOLATOR@
     ! points :: VEC{REAL}*
      
       ! Used below to make interpolator
@@ -9986,7 +10207,7 @@ contains
       self :: IN
       length,spacing :: REAL, IN
 
-      interpolator :: INTERPOLATOR*
+      interpolator :: INTERPOLATOR@
      
       ! Set the interpolation table
       .set_saved_self ! Used below
@@ -10049,29 +10270,20 @@ contains
       stdout.dump("is_unique_kind",.is_unique_kind)
 
       stdout.dump("energy",.energy)
-      stdout.dmpp("atomic_orbitals",.atomic_orbitals)
-      stdout.dmpp("density_matrix",.density_matrix)
-      stdout.dmpp("natural_orbitals",.natural_orbitals)
+      stdout.dump("atomic_orbitals",.atomic_orbitals)
+      stdout.dump("density_matrix",.density_matrix)
+      stdout.dump("natural_orbitals",.natural_orbitals)
       stdout.dmpp("occupation_numbers",.occupation_numbers)
-      stdout.dump("ANOs_made",.ANOs_made)
-      stdout.dump("spherical_atom_data_made",.spherical_atom_data_made)
-      stdout.dump("NAOs_made",.NAOs_made)
+      stdout.dump("atom_data_made",.atom_data_made)
 
       stdout.dump("use_interpolator",.use_interpolator)
-      .interpolator.dmpp("interpolator")
-      stdout.dump("ANO_interpolators_made",.ANO_interpolators_made)
-      stdout.dump("interpolators_made",.interpolators_made)
+      .interpolator.dump("interpolator")
 
       stdout.dmpp("first_basis_fn_for_shell",.first_basis_fn_for_shell)
       stdout.dmpp("last_basis_fn_for_shell",.last_basis_fn_for_shell)
       .precomputed_basis_shellpair.dmpp("precomputed_basis_shellpair",lower_triangle=TRUE)
-      stdout.dump("shell_info_made",.shell_info_made)
 
       stdout.dump("invariom_label",.invariom_label)
-      stdout.dump("protein_strand",.protein_strand)
-      stdout.dump("residue_atom_code",.residue_atom_code)
-      stdout.dump("residue_code",.residue_code)
-      stdout.dump("residue_sequence_number",.residue_sequence_number)
 
       stdout.dump("mm_forcefield_name",.mm_forcefield_name)
       stdout.dump("mm_atom_type",.mm_atom_type)
@@ -10099,7 +10311,7 @@ contains
 
       .put_short
 
-      if (.residue_sequence_number/=0) .put_mm_info
+    ! if (.residue_sequence_number/=0) .put_mm_info
 
       if (.basis.associated)              .basis.put
       if (.slaterbasis.associated)        .slaterbasis.put
@@ -10132,21 +10344,21 @@ contains
 
       stdout.flush
 
-      if (.atomic_orbitals.associated) then
+      if (.atomic_orbitals.allocated) then
          stdout.flush
          stdout.text("Atomic orbitals:")
          stdout.flush
          stdout.put(.atomic_orbitals)
       end
 
-      if (.density_matrix.associated) then
+      if (.density_matrix.allocated) then
          stdout.flush
          stdout.text("Density matrix:")
          stdout.flush
-         stdout.put(.atomic_orbitals)
+         stdout.put(.density_matrix)
       end
 
-      if (.natural_orbitals.associated) then
+      if (.natural_orbitals.allocated) then
          stdout.flush
          stdout.text("Natural occupations and orbitals:")
          stdout.flush
@@ -10157,27 +10369,27 @@ contains
 
    end
 
-   put_mm_info
-   ! Put out the MM/protien part of the atom information to file "stdout"
-      self :: IN
-
-      stdout.flush
-      stdout.show("Residue atom code       =",trim(.residue_atom_code))
-      stdout.show("Residue code            =",trim(.residue_code))
-      stdout.show("Residue sequence number =",.residue_sequence_number)
-      stdout.show("MM forcefield name      =",.mm_forcefield_name)
-      stdout.show("MM atom type            =",.mm_atom_type)
-      stdout.show("MM charge               =",.mm_charge)
-      stdout.show("Restraining position    =",.restraining_position)
-      stdout.show("Restraining force       =",.restraining_force_constant)
-
-   end
+!   put_mm_info
+!   ! Put out the MM/protien part of the atom information to file "stdout"
+!      self :: IN
+!
+!      stdout.flush
+!      stdout.show("Residue atom code       =",trim(.residue_atom_code))
+!      stdout.show("Residue code            =",trim(.residue_code))
+!      stdout.show("Residue sequence number =",.residue_sequence_number)
+!      stdout.show("MM forcefield name      =",.mm_forcefield_name)
+!      stdout.show("MM atom type            =",.mm_atom_type)
+!      stdout.show("MM charge               =",.mm_charge)
+!      stdout.show("Restraining position    =",.restraining_position)
+!      stdout.show("Restraining force       =",.restraining_force_constant)
+!
+!   end
 
    put_natural_orbitals
    ! Put out the current associated molecular orbitals to file "out"
       self :: IN
 
-   ENSURE(.natural_orbitals.associated,"no natural orbitals")
+   ENSURE(.natural_orbitals.allocated,"no natural orbitals")
    ENSURE(.occupation_numbers.associated,"no natural orbital occupations")
 
       stdout.flush

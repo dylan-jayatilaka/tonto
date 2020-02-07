@@ -253,6 +253,7 @@ $function_res_type{"REAL_to_str"} = 'STR';
     'INT{2}',
     'INT{4}',
     'INT{8}',
+    'MPI_ADDRESS',
     'REAL',
     'REAL{4}',
     'REAL{8}',
@@ -1082,25 +1083,26 @@ sub analyse_type_name {
                                           $is_intrinsic_type,
                                           $is_array_type);
 
-#  print "----IN analyse_type_name---------------";
-#  print "type_name         =",$type_name;
-#  print "full_type_name    =",$full_type_name;
-#  print "type_name         =",$type_name;
-#  print "sub_type_name     =",$sub_type_name;
-#  print "fortran_type_name =",$fortran_type_name;
-#  print "fortran_type_decl =",$fortran_type_decl;
-#  print "fortran_mod_name  =",$fortran_mod_name;
-#  print "fortran_self_decl =",$fortran_self_decl;
-#  print "type_head_name    =",$type_head_name;
-#  print "type_arg_part     =",$type_arg_part;
-#  print "n_type_args       =",$n_type_args;
-#  print "type_args         =",@type_arg;
-#  print "type_array_part   =",$type_array_part;
-#  print "type_size_part    =",$type_size_part;
-#  print "type_ptr_part     =",$type_ptr_part;
-#  print "is_intrinsic_type =",$is_intrinsic_type;
-#  print "is_array_type     =",$is_array_type;
-#  print "----end analyse_type_name---------------";
+ # print "----IN analyse_type_name---------------";
+ # print "line              =",$input_line;
+ # print "type_name         =",$type_name;
+ # print "full_type_name    =",$full_type_name;
+ # print "type_name         =",$type_name;
+ # print "sub_type_name     =",$sub_type_name;
+ # print "fortran_type_name =",$fortran_type_name;
+ # print "fortran_type_decl =",$fortran_type_decl;
+ # print "fortran_mod_name  =",$fortran_mod_name;
+ # print "fortran_self_decl =",$fortran_self_decl;
+ # print "type_head_name    =",$type_head_name;
+ # print "type_arg_part     =",$type_arg_part;
+ # print "n_type_args       =",$n_type_args;
+ # print "type_args         =",@type_arg;
+ # print "type_array_part   =",$type_array_part;
+ # print "type_size_part    =",$type_size_part;
+ # print "type_ptr_part     =",$type_ptr_part;
+ # print "is_intrinsic_type =",$is_intrinsic_type;
+ # print "is_array_type     =",$is_array_type;
+ # print "----end analyse_type_name---------------";
 
   $current_type_name = $full_type_name;
 
@@ -1136,10 +1138,11 @@ sub is_intrinsic_scalar_type_name {
    my  $type_name = $_[0];
    if ($type_name =~ /^STR\b([{].*[}])?/  ||
        $type_name =~ /^BIN\b([{].*[}])?/  ||
+       $type_name =~ /^MPI_ADDRESS\b([{].*[}])?/  ||
        $type_name =~ /^INT\b([{].*[}])?/  ||
        $type_name =~ /^REAL\b([{].*[}])?/ ||
        $type_name =~ /^CPX\b([{].*[}])?/  )   { return 1; }
-   else                                 { return 0; }
+   else                                       { return 0; }
 }
 
 ######################################################
@@ -3716,6 +3719,7 @@ sub make_scalar_fortran_types {
    if ($type_name =~ "^(STR)([{].*[}])? *\$"  ||  # For INTRINSIC types
        $type_name =~ "^(BIN)([{].*[}])? *\$"  ||  # Kind is specified in curlies
        $type_name =~ "^(INT)([{].*[}])? *\$"  ||
+       $type_name =~ "^(MPI_ADDRESS)([{].*[}])? *\$"  ||
        $type_name =~ "^(REAL)([{].*[}])? *\$" ||
        $type_name =~ "^(CPX)([{].*[}])? *\$"  ) {
       $fortran_type_decl = $1;
@@ -3767,6 +3771,8 @@ sub make_scalar_fortran_types {
       else                                { $kind_length_part = "(${kind}len=STR_SIZE)"; }
 
       $self_kind_length_part = "(${kind}len=*)";
+
+      # Get
 
    }
 
@@ -3916,7 +3922,7 @@ sub module_colon_to_fortran {
     return $X;
   }
 
- # NON-GENERIC procedures ...
+ # NON-GENERIC :: procedures ...
 
   while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+)?::(\w+)/g) { # A function
      my $pre = $PREMATCH.$1;
@@ -3995,10 +4001,11 @@ sub module_colon_to_fortran {
      }
   }
 
- # GENERIC procedures ...
+ # GENERIC : procedures ...
 
-  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function - must be fully
-     my $pre = $PREMATCH.$1;                                    # module-dismabiguated
+  # A function - must be fully module-dismabiguated
+  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+)?:(\w+)/g) { 
+     my $pre = $PREMATCH.$1;                                    
      next if ($pre =~ /"$/); # skip quoted calls
      my $last = $pre; $last = chop($last);
      if ($last eq '.') { next };
@@ -4008,6 +4015,7 @@ sub module_colon_to_fortran {
      my $rout_type = $2;
      my $rout = $3;
      my $post = $POSTMATCH;
+   # if (! $2) { $rout_type = $module_full_name; }
      my %info = &analyse_type_name($rout_type);
      &analyse_type_name($rout_type);
 #print "X = $X";
@@ -4034,13 +4042,14 @@ sub module_colon_to_fortran {
      }
   }
 
-  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/) {  # Routine call, anywhere not a function
+  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+)?:(\w+)/) {  # Routine call, anywhere not a function
      my $pre = $PREMATCH.$1;                             # and starting from a new line
      my $rout_type = $2;                                 # Must be fully disambiguated
      my $rout = $3;
      my $post = $POSTMATCH;
      my %info = &analyse_type_name($rout_type);
      &analyse_type_name($rout_type);
+   # if (! $2) { $rout_type = $module_full_name; }
      $rout_type = $info{type_name}; # reset to generic type
      if (! $tonto_type_info{$rout_type}) {
        &report_error("type \"$rout_type\" in explicit module call was not declared in \"$typesfile\".");

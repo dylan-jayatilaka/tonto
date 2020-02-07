@@ -56,15 +56,19 @@ contains
 
    ENSURE(dim>=0, "array dimension is -ve, dim = "//trim(INT:to_str(dim)))
 
+#ifdef USE_PRECONDITIONS
       status :: INT
+#endif
 
       nullify(self)
 
+#ifdef USE_PRECONDITIONS
       allocate(self(dim),STAT=status)
-
       ENSURE(status==0,"error in allocating memory")
-      status = status
-      status = 0
+      if (status/=0) stop
+#else
+      allocate(self(dim))
+#endif
 
    end
 
@@ -73,15 +77,19 @@ contains
       self :: PTR
       lb,ub :: INT, IN
 
+#ifdef USE_PRECONDITIONS
       status :: INT
+#endif
 
       nullify(self)
 
+#ifdef USE_PRECONDITIONS
       allocate(self(lb:ub),STAT=status)
-
       ENSURE(status==0,"error in allocating memory")
-      status = status
-      status = 0
+      if (status/=0) stop
+#else
+      allocate(self(lb:ub))
+#endif
 
    end
 
@@ -94,20 +102,9 @@ contains
    
    end
 
-   destroy ::: leaky
-   ! Destroy space for object
-      self :: PTR
 
-      status :: INT
-
-      if (.disassociated) return
-
-      deallocate(self,stat=status)
-
-      ENSURE(status==0,"error in allocating memory")
-      status = status
-      status = 0
-
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object. This version does not destroy pointer parts.
    end
 
 !  ====
@@ -996,6 +993,280 @@ contains
 
    remove_repetitions ::: leaky, PURE
    ! Remove repeated elements which come later in the list. 
+   ! NOTE: allocatable
+   ! NOTE: the vector may shrink. 
+   ! NOTE: this version for bin, str, int
+      self :: allocatable, INOUT
+
+   ENSURE(.allocated,"no vector")
+
+      unique :: VEC{INTRINSIC}(len=len(self(1)))@
+      i,j,n :: INT
+      found :: BIN
+
+      if (.dim==1) return
+
+      unique.create(.dim)
+
+      n = 1
+      unique(1) = self(1)
+
+      do i = 2,.dim
+
+         found = FALSE
+         do j = 1,n
+            if (self(i)/=unique(j)) cycle
+            found = TRUE
+         end
+         if (found) cycle
+
+         n = n + 1
+         unique(n) = self(i)
+
+      end
+
+      self = unique(1:n)
+
+      unique.destroy
+
+   end
+
+   remove_repetitions ::: leaky, PURE
+   ! Remove repeated elements which come later in the list. 
+   ! NOTE: allocatable
+   ! NOTE: the vector may shrink. 
+   ! NOTE: this version for reals & complex
+      self :: allocatable, INOUT
+
+   ENSURE(.allocated,"no vector")
+
+      unique :: VEC{INTRINSIC}*
+      i,j,n :: INT
+      found :: BIN
+
+      if (.dim==1) return
+
+      unique.create(.dim)
+
+      n = 1
+      unique(1) = self(1)
+
+      do i = 2,.dim
+
+         found = FALSE
+         do j = 1,n
+            if (NOT self(i).same_as(unique(j))) cycle
+            found = TRUE
+         end
+         if (found) cycle
+
+         n = n + 1
+         unique(n) = self(i)
+
+      end
+
+      .destroy
+      .create(n)
+      self = unique(1:n)
+
+      unique.destroy
+
+   end
+
+   has_repetitions result (res) ::: pure
+   ! Return TRUE if self has at least one repeated element.
+   ! NOTE: this version for bin, str, int
+      self :: IN
+      res :: BIN
+
+      i,j :: INT
+
+      res = FALSE
+
+      if (.dim==1) return
+
+      do i = 2,.dim
+      do j = 1,i-1
+         if (self(i)/=self(j)) cycle
+         res = TRUE
+         return
+      end
+      end
+
+   end
+
+   has_repetitions(list) result (res) ::: pure
+   ! Return TRUE if self has at least one repeated element.
+   ! NOTE: this version for bin, str, int
+      self :: IN
+      list :: VEC{INTRINSIC}, IN
+      res :: BIN
+
+      i,j :: INT
+
+      res = FALSE
+
+      if (list.dim==1) return
+
+      do i = 2,list.dim
+      do j = 1,i-1
+         if (self(list(i))/=self(list(j))) cycle
+         res = TRUE
+         return
+      end
+      end
+
+   end
+
+   no_of_unique_elements result (res) ::: pure
+   ! Return the number of unique elements in the vector.
+   ! NOTE: this version for bin, str, int
+      self :: IN
+      res :: INT
+
+      n,i :: INT
+      same :: BIN
+
+      res = 1
+
+      do n = 2,.dim
+
+         same = FALSE
+         do i = 1,n-1
+            if (self(n)/=self(i)) cycle
+            same = TRUE
+            exit
+         end
+
+         if (NOT same) res = res + 1
+
+      end
+
+   end
+
+   to_unique_elements_of(X) ::: leaky, PURE
+   ! Set self to the unique elements of "X".
+   ! NOTE: allocatable
+      self :: allocatable, OUT
+      X :: VEC{INTRINSIC}, IN
+
+   ENSURE(X.dim>0,"no zero-size vector")
+
+      i,j,n :: INT
+      found :: BIN
+
+      self.create(X.dim)
+      self(1) = X(1)
+
+      if (X.dim==1) return
+
+      ! No. of unique elements
+      n = 1 
+
+      do i = 2,.dim
+
+         found = FALSE
+         do j = 1,n
+            if (X(i)/=self(j)) cycle
+            found = TRUE
+         end
+
+         if (found) cycle
+
+         n = n + 1
+         self(n) = X(i)
+
+      end
+
+      self.shrink(n)
+
+   end
+
+   make_repetition_count(cnt,n_kind) ::: leaky, PURE
+   ! Create "cnt" where each element cnt(i) is a count of the number
+   ! times that self(i) is repeated in self(:). Later elements of
+   ! "cnt" which are repetitions of earlier ones are assigned a count
+   ! of zero. The number of different kinds is returned in "n_kind".
+   ! NOTE: allocatable
+   ! NOTE: this version for bin, str, int
+      self :: IN
+      cnt :: VEC{INT}@, OUT
+      n_kind :: INT, OUT
+
+      n,l :: INT
+
+      cnt.create(.dim)
+
+      cnt = 1
+
+      do n = 1,.dim
+
+         if (cnt(n)==0) cycle
+
+         do l = n+1,.dim
+
+            if (cnt(l)==0) cycle
+            if (self(l)/=self(n)) cycle
+
+            cnt(n) = cnt(n)+1
+            cnt(l) = 0
+
+         end
+
+      end
+
+      n_kind = .dim - count(cnt==0)
+
+   end
+
+   make_unique_element_maps(unique_element,unique_element_for) ::: leaky, PURE
+   ! Make a map of unique_element's, and the inverse map
+   ! unique_element_for a given non-unique element in the list.
+   ! NOTE: allocatable
+      self :: IN
+      unique_element,unique_element_for :: VEC{INT}@, OUT
+
+      n,k,i :: INT
+
+      unique_element_for.create(.dim)
+      unique_element.create(.dim)
+
+      if (.dim==0) return
+
+      unique_element_for(1) = 1
+      unique_element(1) = 1
+
+      if (.dim==1) return
+
+      k = 1
+      do n = 2,.dim
+
+         i = self(1:n).index_of_value(self(n))
+
+         if (i==n) then 
+
+            ! It's unique
+            k = k + 1
+            unique_element(k) = n
+            unique_element_for(n) = k
+
+         else           
+
+            ! Bah. It's not unique
+            unique_element_for(n) = unique_element_for(i)
+
+         end
+
+      end
+
+      unique_element.shrink(k)
+
+   end
+
+! Old
+
+   remove_repetitions ::: leaky, PURE
+   ! Remove repeated elements which come later in the list. 
    ! NOTE: the vector may shrink. 
    ! NOTE: this version for bin, str, int
       self :: PTR
@@ -1075,90 +1346,6 @@ contains
 
    end
 
-   has_repetitions result (res) ::: pure
-   ! Return TRUE if self has at least one repeated element.
-   ! NOTE: this version for bin, str, int
-      self :: IN
-      res :: BIN
-
-      i,j :: INT
-
-      res = FALSE
-
-      if (.dim==1) return
-
-      do i = 2,.dim
-      do j = 1,i-1
-         if (self(i)/=self(j)) cycle
-         res = TRUE
-         return
-      end
-      end
-
-   end
-
-   no_of_unique_elements result (res) ::: pure
-   ! Return the number of unique elements in the vector.
-   ! NOTE: this version for bin, str, int
-      self :: IN
-      res :: INT
-
-      n,i :: INT
-      same :: BIN
-
-      res = 1
-
-      do n = 2,.dim
-
-         same = FALSE
-         do i = 1,n-1
-            if (self(n)/=self(i)) cycle
-            same = TRUE
-            exit
-         end
-
-         if (NOT same) res = res + 1
-
-      end
-
-   end
-
-   unique_elements result(unique) ::: leaky, PURE
-   ! Sort through the vector and return the unique elements
-   ! NOTE: this version for bin, str, int
-      self :: IN
-      unique :: VEC{INTRINSIC}(len=len(self(1)))*
-
-   ENSURE(.dim>0,"no zero-size vector")
-
-      i,j,n :: INT
-      found :: BIN
-
-      unique.create(.dim)
-      unique(1) = self(1)
-
-      if (.dim==1) return
-
-      n = 1
-      do i = 2,.dim
-
-         found = FALSE
-         do j = 1,n
-            if (self(i)/=unique(j)) cycle
-            found = TRUE
-         end
-
-         if (found) cycle
-
-         n = n + 1
-         unique(n) = self(i)
-
-      end
-
-      unique.shrink(n)
-
-   end
-
    to_unique_elements_of(X) ::: leaky, PURE
    ! set self to the unique elements of "X".
       self :: PTR
@@ -1232,48 +1419,10 @@ contains
 
    end
 
-   indices_of_unique_elements result(unique) ::: leaky, PURE
-   ! Sort through the vector and return the indices of the unique elements
-   ! NOTE: this version for bin, str, int
-      self :: PTR
-      unique :: VEC{INT}*
-
-   ENSURE(.associated,"no vector")
-   ENSURE(.dim>0,"no zero-size vector")
-
-      i,j,n :: INT
-      found :: BIN
-
-      unique.create(.dim)
-
-      unique(1) = 1
-
-      if (.dim==1) return
-
-      n = 1
-
-      do i = 2,.dim
-
-         found = FALSE
-         do j = 1,n
-            if (self(i)/=self(unique(j))) cycle
-            found = TRUE
-         end
-
-         if (found) cycle
-
-         n = n + 1
-         unique(n) = i
-
-      end
-
-      unique.shrink(n)
-
-   end
-
    make_unique_element_maps(unique_element,unique_element_for) ::: leaky, PURE
    ! Make a map of unique_element's, and the inverse map
    ! unique_element_for a given non-unique element in the list.
+   ! NOTE: pointer
       self :: IN
       unique_element,unique_element_for :: VEC{INT}*
 
