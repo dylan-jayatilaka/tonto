@@ -1083,25 +1083,26 @@ sub analyse_type_name {
                                           $is_intrinsic_type,
                                           $is_array_type);
 
-#  print "----IN analyse_type_name---------------";
-#  print "type_name         =",$type_name;
-#  print "full_type_name    =",$full_type_name;
-#  print "type_name         =",$type_name;
-#  print "sub_type_name     =",$sub_type_name;
-#  print "fortran_type_name =",$fortran_type_name;
-#  print "fortran_type_decl =",$fortran_type_decl;
-#  print "fortran_mod_name  =",$fortran_mod_name;
-#  print "fortran_self_decl =",$fortran_self_decl;
-#  print "type_head_name    =",$type_head_name;
-#  print "type_arg_part     =",$type_arg_part;
-#  print "n_type_args       =",$n_type_args;
-#  print "type_args         =",@type_arg;
-#  print "type_array_part   =",$type_array_part;
-#  print "type_size_part    =",$type_size_part;
-#  print "type_ptr_part     =",$type_ptr_part;
-#  print "is_intrinsic_type =",$is_intrinsic_type;
-#  print "is_array_type     =",$is_array_type;
-#  print "----end analyse_type_name---------------";
+ # print "----IN analyse_type_name---------------";
+ # print "line              =",$input_line;
+ # print "type_name         =",$type_name;
+ # print "full_type_name    =",$full_type_name;
+ # print "type_name         =",$type_name;
+ # print "sub_type_name     =",$sub_type_name;
+ # print "fortran_type_name =",$fortran_type_name;
+ # print "fortran_type_decl =",$fortran_type_decl;
+ # print "fortran_mod_name  =",$fortran_mod_name;
+ # print "fortran_self_decl =",$fortran_self_decl;
+ # print "type_head_name    =",$type_head_name;
+ # print "type_arg_part     =",$type_arg_part;
+ # print "n_type_args       =",$n_type_args;
+ # print "type_args         =",@type_arg;
+ # print "type_array_part   =",$type_array_part;
+ # print "type_size_part    =",$type_size_part;
+ # print "type_ptr_part     =",$type_ptr_part;
+ # print "is_intrinsic_type =",$is_intrinsic_type;
+ # print "is_array_type     =",$is_array_type;
+ # print "----end analyse_type_name---------------";
 
   $current_type_name = $full_type_name;
 
@@ -3770,6 +3771,8 @@ sub make_scalar_fortran_types {
       else                                { $kind_length_part = "(${kind}len=STR_SIZE)"; }
 
       $self_kind_length_part = "(${kind}len=*)";
+
+      # Get
 
    }
 

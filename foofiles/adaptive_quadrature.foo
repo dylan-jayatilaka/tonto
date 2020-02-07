@@ -39,6 +39,15 @@ module ADAPTIVE_QUADRATURE
 
    implicit none
 
+   allowed_kinds :: VEC{STR}(len=25,5), private
+
+   data allowed_kinds/ &
+      "adaptive_ewing_41        ", &
+      "adaptive_genz_malik_80   ", &
+      "adaptive_hammer_stroud_58", &
+      "adaptive_trapezoid       ", &
+      "adaptive_tyler_53        ", /
+
    ! Points of a 3x3x3 cube in standard order
    cube3 :: MAT{INT}(3,27), private
    data cube3(1:3,1:27)/            &
@@ -153,192 +162,229 @@ module ADAPTIVE_QUADRATURE
 
 contains
 
-   create ::: get_from(OBJECT), leaky
-   ! Create an object
+!  ==========
+!  Allocation
+!  ==========
+
+   create ::: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
    end
 
-   destroy ::: get_from(OBJECT), leaky
-   ! Destroy an object
-   end
-
-   nullify_ptr_part
-   ! Nullify the pointer parts
-      nullify(.point)
-      nullify(.weight)
-      nullify(.embedded_weight)
-   end
-
-   destroy_ptr_part ::: leaky
-   ! Destroy the pointer parts
-      .point.destroy
-      .weight.destroy
-      .embedded_weight.destroy
+   destroy ::: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
    end
 
 !  ===========
 !  Set methods
 !  ===========
 
-   set_defaults ::: PURE
-   ! Set up a defaults
-      self :: INOUT
-
-      .algorithm = " "
-      .accuracy = ADAPTIVE_QUADRATURE_ACCURACY
-      .n_points = 0
-      .lower_limit = -ONE
-      .upper_limit = ONE
-
-   end
-
-   set_accuracy(accuracy)
+   set_accuracy(accuracy) ::: PURE
    ! Set the accuracy of integration. Used only for adaptive integration methods.
-      accuracy :: REAL
+      self :: INOUT
+      accuracy :: REAL, IN
+
    ENSURE(accuracy>ZERO,"must have +ve accuracy")
+
       .accuracy = accuracy
+
    end
 
-   set_algorithm(alg)
+   set_algorithm(alg) ::: PURE
    ! Set the kind of algorithm to use.
-      alg :: STR
-      .algorithm = alg
+      self :: INOUT
+      alg :: STR, IN
+
+   ENSURE(alg.is_one_of(allowed_kinds),"unknown algorithm, "//trim(alg))
+
+      .algorithm = alg.lower_cased
+
       select case (.algorithm)
-         case ("adaptive_ewing_41        ")
-         case ("adaptive_genz_malik_80   ")
-         case ("adaptive_hammer_stroud_58")
-         case ("adaptive_trapezoid       ")
-         case ("adaptive_tyler_53        ")
-         case default
-            print *, "Unknown algorithm, "//trim(alg)
+      case ("adaptive_ewing_41        ")
+      case ("adaptive_genz_malik_80   ")
+      case ("adaptive_hammer_stroud_58")
+      case ("adaptive_trapezoid       ")
+      case ("adaptive_tyler_53        ")
       end
+
    end
 
-   set_limits(limits)
+   set_limits(limits) ::: PURE
    ! Read in the limits of integration
-      limits :: VEC{REAL}(2)
+      self :: INOUT
+      limits :: VEC{REAL}(2), IN
+
    ENSURE(limits(1)<=limits(2),"lower limit must be smaller than upper limit")
+
       .lower_limit = limits(1)
       .upper_limit = limits(2)
+
    end
 
-   set_lower_limit(limit)
+   set_lower_limit(limit) ::: PURE
    ! Set the lower limit of integration
-      limit :: REAL
+      self :: INOUT
+      limit :: REAL, IN
+
    ENSURE(limit<=.lower_limit,"lower limit must be smaller than upper")
+
       .lower_limit = limit
+
    end
 
-   set_upper_limit(limit)
+   set_upper_limit(limit) ::: PURE
    ! Set the upper limit of integration
-      limit :: REAL
+      self :: INOUT
+      limit :: REAL, IN
+
    ENSURE(limit>=.lower_limit,"upper limit must be bigger than lower")
+
       .upper_limit = limit
+
    end
 
 !  ===========================
 !  Cubature points and weights
 !  ===========================
 
-   set_T53 ::: leaky, private
+   set_T53 ::: leaky, private, PURE
    ! Set the Tyler cubature and weights.
    ! Data taken from the free HIntLib of Rudolf Schurer.
    ! Original ref: G.W. Tyler (1953), Numerical Integration of functions of
    ! several variables, Can. J. Math. 5, p. 393
+      self :: INOUT
+
       i,n_pt,n,m :: INT
       n_pt = e1_fs.dim2
-      if (.point.associated) .point.destroy
+
       .point.create(3,n_pt)
-      if (.weight.associated) .weight.destroy
       .weight.create(n_pt)
+
       n = 0
       m = e1_fs.dim2
-      .point(:,n+1:n+m) = ONE*e1_fs            ! e1_fs points
+
+      ! e1_fs points
+      .point(:,n+1:n+m) = ONE*e1_fs            
       .weight(n+1:n+m)  = SIXTH
+
    end
 
-   set_HS58 ::: leaky, private
+   set_HS58 ::: leaky, private, PURE
    ! Set the Hammer-Stroud cubature points and weights.
    ! Data taken from the free HIntLib of Rudolf Schurer.
    ! Original ref: P.C. Hammer and A.H. Stroud (1958), Mathematical Tables and
    ! Other Aids to Computation 12, p. 272
+      self :: INOUT
+
       i,d,n_pt,n,m :: INT
       w0,w1,w2, l1,l2 :: REAL
-      d = 3                                     ! The dimension
+
+      ! The dimension
+      d = 3                                     
+
       w0 = ONE*(25*d*d - 115*d + 162)/162
       w1 = ONE*(70 - 25*d)/162
       w2 = ONE*(25)/324
-      l1 = sqrt(ONE*(3)/5)                     ! Point scales
+
+      ! Point scales
+      l1 = sqrt(ONE*(3)/5)                     
       l2 = sqrt(ONE*(3)/5)
+
       n_pt = 1 + e1_fs.dim2 + e2_fs.dim2
-      if (.point.associated) .point.destroy
+
       .point.create(3,n_pt)
-      if (.weight.associated) .weight.destroy
       .weight.create(n_pt)
+
+      ! Origin
       n = 0
       m = 1
-      .point(:,n+1) = ONE*e0                    ! Origin
+      .point(:,n+1) = ONE*e0                    
       .weight(n+1)  = w0
+
+      ! e1_fs points
       n = n + m
       m = e1_fs.dim2
-      .point(:,n+1:n+m) = l1*e1_fs              ! e1_fs points
+      .point(:,n+1:n+m) = l1*e1_fs              
       .weight(n+1:n+m)  = w1
+
+      ! e2_fs points
       n = n + m
       m = e2_fs.dim2
-      .point(:,n+1:n+m) = l2*e2_fs              ! e2_fs points
+      .point(:,n+1:n+m) = l2*e2_fs              
       .weight(n+1:n+m)  = w2
+
    end
 
-   set_GM80 ::: leaky, private
+   set_GM80 ::: leaky, private, PURE
    ! Set the Genz-Malik cubature points and weights.
    ! Data taken from the free HIntLib of Rudolf Schurer.
    ! Original ref: A.C. Genz and A.A. Malik (1980) J. Comp. App. Math. 6 p. 295-302
+      self :: INOUT
+
       i,d,n_pt,n,m :: INT
       w1,w2,w3,w4,w5, e1,e2,e3,e4, l2,l3,l4,l5 :: REAL
-      d = 3                                     ! The dimension
-      w1 = ONE*(12824 - 9120*d + 400*d*d)/19683 ! The 7th order weights
+
+      ! The dimension
+      d = 3                                     
+
+      ! The 7th order weights
+      w1 = ONE*(12824 - 9120*d + 400*d*d)/19683 
       w2 = ONE*(980)/6561
       w3 = ONE*( 1820 -  400*d)/19683
       w4 = ONE*(200)/19683
       w5 = ONE*( 6859)/19683/EIGHT
-      e1 = ONE*(  729 -  950*d +  50*d*d)/729   ! Embedded 5th order weights
+
+      ! Embedded 5th order weights
+      e1 = ONE*(  729 -  950*d +  50*d*d)/729   
       e2 = ONE*(245)/486
       e3 = ONE*(  265 -  100*d)/1458
       e4 = ONE*(25)/729
-      l2 = sqrt(ONE*(9)/70)                     ! Point scales
+
+      ! Point scales
+      l2 = sqrt(ONE*(9)/70)                     
       l3 = sqrt(ONE*(9)/10)
       l4 = sqrt(ONE*(9)/10)
       l5 = sqrt(ONE*(9)/19)
+
       n_pt = 1 + 2*e1_fs.dim2 + e2_fs.dim2 + e3_fs.dim2
-      if (.point.associated) .point.destroy;
+
       .point.create(3,n_pt)
-      if (.weight.associated) .weight.destroy
       .weight.create(n_pt)
-      if (.embedded_weight.associated) .embedded_weight.destroy
       .embedded_weight.create(n_pt-e3_fs.dim2)
+
+      ! Origin
       n = 0
       m = 1
-      .point(:,n+1) = ONE*e0                    ! Origin
+      .point(:,n+1) = ONE*e0                    
       .weight(n+1)  = w1
       .embedded_weight(n+1) = e1
+
+      ! e1_fs points
       n = n + m
       m = e1_fs.dim2
-      .point(:,n+1:n+m) = l2*e1_fs              ! e1_fs points
+      .point(:,n+1:n+m) = l2*e1_fs              
       .weight(n+1:n+m)  = w2
       .embedded_weight(n+1:n+m) = e2
+
+      ! e1_fs points
       n = n + m
       m = e1_fs.dim2
-      .point(:,n+1:n+m) = l3*e1_fs              ! e1_fs points
+      .point(:,n+1:n+m) = l3*e1_fs              
       .weight(n+1:n+m)  = w3
       .embedded_weight(n+1:n+m) = e3
+
+      ! e2_fs points
       n = n + m
       m = e2_fs.dim2
-      .point(:,n+1:n+m) = l4*e2_fs              ! e2_fs points
+      .point(:,n+1:n+m) = l4*e2_fs              
       .weight(n+1:n+m)  = w4
       .embedded_weight(n+1:n+m) = e4
+
+      ! e3_fs points
       n = n + m
       m = e3_fs.dim2
-      .point(:,n+1:n+m) = l5*e3_fs              ! e3_fs points
+      .point(:,n+1:n+m) = l5*e3_fs              
       .weight(n+1:n+m)  = w5
+
    end
 
 !  ===================
@@ -354,12 +400,16 @@ contains
          end
       end
       res :: REAL
+
+   ENSURE(.algorithm.is_one_of(allowed_kinds),"unknown algorithm, "//trim(alg))
+
       select case (.algorithm)
-         case ("adaptive_trapezoid"); res = .adaptive_trapezoid_integrate(func)
-         case ("adaptive_simpson  "); res = .adaptive_simpson_integrate(func)
-         case default
-            print *, "Unknown algorithm, "//trim(.algorithm)
+      case ("adaptive_trapezoid"); res = .adaptive_trapezoid_integrate(func)
+      case ("adaptive_simpson  "); res = .adaptive_simpson_integrate(func)
+      case default
+         print *, "Unknown algorithm, "//trim(.algorithm)
       end
+
    end
 
    adaptive_trapezoid_integrate(func) result (res) ::: private
@@ -372,13 +422,18 @@ contains
          end
       end
       res :: REAL
+
       a,b,fa,fb,trap :: REAL
+
       a  = .lower_limit
       b  = .upper_limit
+
       fa = func(a)
       fb = func(b)
       trap = HALF*(b-a)*(fa+fb)
+
       res = .adaptive_trapezoid_integrate(func,a,b,fa,fb,trap,.accuracy)
+
    end
 
    adaptive_trapezoid_integrate(func,a,b,fa,fb,trap,accuracy) result (res) ::: recursive, private
@@ -395,15 +450,20 @@ contains
       end
       a,b,fa,fb,trap,accuracy :: REAL, IN
       res :: REAL
+
       h,h4,m,fm,trap1,trap2,trapL,trapR,left,right,acc2 :: REAL
-      m = HALF*(a+b)
+
+      m  = HALF*(a+b)
       fm = func(m)
+
       h  = b-a
       h4 = QUARTER*h
+
       trap1 = trap
       trapL = h4*(fa+fm)
       trapR = h4*(fm+fb)
       trap2 = trapL + trapR
+
       if (abs(trap1-trap2)<THREE*accuracy) then
          res = (FOUR*trap2 - trap1)/THREE
       else
@@ -412,6 +472,7 @@ contains
          right = .adaptive_trapezoid_integrate(func,m,b,fm,fb,trapR,acc2)
          res = left + right
       end
+
    end
 
    adaptive_simpson_integrate(func) result (res) ::: private
@@ -424,16 +485,22 @@ contains
          end
       end
       res :: REAL
+
       a,m,b,h,fa,fm,fb,simp :: REAL
+
       a  = .lower_limit
       b  = .upper_limit
       m  = HALF*(a+b)
       h  = (b-a)
+
       fa = func(a)
       fm = func(m)
       fb = func(b)
+
       simp = THIRD*h*(fa+FOUR*fm+fb)
+
       res = .adaptive_simpson_integrate(func,a,m,b,fa,fm,fb,simp,.accuracy)
+
    end
 
    adaptive_simpson_integrate(func,a,m,b,fa,fm,fb,simp,accuracy) result (res) ::: recursive, private
@@ -450,7 +517,9 @@ contains
       end
       a,m,b,fa,fm,fb,simp,accuracy :: REAL, IN
       res :: REAL
+
       h,h6,m0,m1,m2,m3,m4,f0,f1,f2,f3,f4,s1,sl,sr,s2,left,right,acc2 :: REAL
+
       h  = HALF*(b-a)
       h6 = SIXTH*h
       m0 = a
@@ -458,15 +527,18 @@ contains
       m2 = m
       m3 = HALF*(m+b)
       m4 = b
+
       f0 = fa
       f1 = func(m1)
       f2 = fm
       f3 = func(m3)
       f4 = fb
+
       s1 = simp
       sl = h6*(f0+FOUR*f1+f2)
       sr = h6*(f2+FOUR*f3+f4)
       s2 = sl + sr
+
       if (abs(s1-s2)<15.0d0*accuracy) then
          res = (16.0d0*s2 - s1)/15.0d0
       else
@@ -475,6 +547,7 @@ contains
          right = .adaptive_simpson_integrate(func,m2,m3,m4,f2,f3,f4,sr,acc2)
          res = left + right
       end
+
    end
 
 !  =================
@@ -490,15 +563,17 @@ contains
          end
       end
       res :: REAL
+
+   ENSURE(.algorithm.is_one_of(allowed_kinds),"unknown algorithm, "//trim(alg))
+
       select case (.algorithm)
-         case ("adaptive_ewing_41        "); res = .adaptive_E41_integrate(func)
-         case ("adaptive_genz_malik_80   "); res = .adaptive_GM80_integrate(func)
-         case ("adaptive_hammer_stroud_58"); res = .adaptive_HS58_integrate(func)
-         case ("adaptive_trapezoid       "); res = .adaptive_trapezoid_integrate(func)
-         case ("adaptive_tyler_53        "); res = .adaptive_T53_integrate(func)
-         case default
-            print *, "Unknown algorithm, "//trim(.algorithm)
+      case ("adaptive_ewing_41        "); res = .adaptive_E41_integrate(func)
+      case ("adaptive_genz_malik_80   "); res = .adaptive_GM80_integrate(func)
+      case ("adaptive_hammer_stroud_58"); res = .adaptive_HS58_integrate(func)
+      case ("adaptive_trapezoid       "); res = .adaptive_trapezoid_integrate(func)
+      case ("adaptive_tyler_53        "); res = .adaptive_T53_integrate(func)
       end
+
    end
 
    adaptive_trapezoid_integrate(func) result (res) ::: private
@@ -1013,47 +1088,60 @@ contains
 !  Test functions
 !  ==============
 
-   test_sin(x) result (res) ::: selfless, public
+   test_sin(x) result (res) ::: selfless, public, pure
    ! Sine function for integrating
       x :: REAL, IN
       res :: REAL
+
       res = sin(x)
+
    end
 
-   test_x2(x) result (res) ::: selfless, public
-   ! Sine function for integrating
+   test_x2(x) result (res) ::: selfless, public, pure
+   ! x^2 function for integrating
       x :: REAL, IN
       res :: REAL
+
       res = x*x
+
    end
 
-   test_x3(x) result (res) ::: selfless, public
+   test_x3(x) result (res) ::: selfless, public, pure
+   ! x^3 function for integrating
+      x :: REAL, IN
+      res :: REAL
+
+      res = x*x*x
+
+   end
+
+   test_x4(x) result (res) ::: selfless, public, pure
    ! Sine function for integrating
       x :: REAL, IN
       res :: REAL
-      res = x*x*X
-   end
 
-   test_x4(x) result (res) ::: selfless, public
-   ! Sine function for integrating
-      x :: REAL, IN
-      res :: REAL
       res = x*x*x*x
+
    end
 
-   test_gauss(x,res) ::: selfless, public
+   test_gauss(x,res) ::: selfless, public, PURE
    ! Sine function for integrating
+      self :: IN
       x :: MAT{REAL}, IN
       res :: VEC{REAL}, OUT
+
    ENSURE(x.dim2==res.dim,"incompatible arrays")
+
       v :: VEC{REAL}(3)
       r :: REAL
       i :: INT
+
       do i = 1,res.dim
          v = x(:,i)
          r = sqrt(dot_product(v,v))
          res(i) = exp(-r*r*r)
       end
+
    end
 
 end
