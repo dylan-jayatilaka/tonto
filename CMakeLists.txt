@@ -148,8 +148,6 @@ set(FOO_SRC
     ${FOO_DIR}/gaussian2.foo
     ${FOO_DIR}/gaussian4.foo
     ${FOO_DIR}/gaussian_data.foo
-    ${FOO_DIR}/geminal_mf_scheme.foo
-    ${FOO_DIR}/geminal_mf_spectrum.foo
     ${FOO_DIR}/int.foo
     ${FOO_DIR}/interpolator.foo
     ${FOO_DIR}/intrinsic.foo
@@ -199,8 +197,8 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.base.foo
     ${FOO_DIR}/molecule.ce.foo
     ${FOO_DIR}/molecule.cp.foo
+    ${FOO_DIR}/molecule.nomo.foo
     ${FOO_DIR}/molecule.fock.foo
-    ${FOO_DIR}/molecule.gem.foo
     ${FOO_DIR}/molecule.grid.foo
     ${FOO_DIR}/molecule.ints.foo
     ${FOO_DIR}/molecule.main.foo
@@ -225,7 +223,6 @@ set(FOO_SRC
     ${FOO_DIR}/rms_indices.foo
     ${FOO_DIR}/roby.foo
     ${FOO_DIR}/rys.foo
-    ${FOO_DIR}/sasaki_form_factors.foo
     ${FOO_DIR}/scfdata.foo
     ${FOO_DIR}/shell.foo
     ${FOO_DIR}/shell1.foo
@@ -246,7 +243,6 @@ set(FOO_SRC
     ${FOO_DIR}/types.foo
     ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/unit_cell.foo
-    ${FOO_DIR}/unit_number.foo
     ${FOO_DIR}/vec{atom_group}.foo
     ${FOO_DIR}/vec{atom}.foo
     ${FOO_DIR}/vec{basis}.foo
@@ -315,8 +311,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian2.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian4.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian_data.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/geminal_mf_scheme.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/geminal_mf_spectrum.F90
     ${CMAKE_CURRENT_BINARY_DIR}/int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/interpolator.F90
     ${CMAKE_CURRENT_BINARY_DIR}/irrep.F90
@@ -347,8 +341,8 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.base.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.nomo.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.fock.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.gem.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.ints.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
@@ -371,7 +365,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/roby.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rys.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/sasaki_form_factors.F90
     ${CMAKE_CURRENT_BINARY_DIR}/scfdata.F90
     ${CMAKE_CURRENT_BINARY_DIR}/shell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/shell1.F90
@@ -391,7 +384,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/types.F90
     ${CMAKE_CURRENT_BINARY_DIR}/t_tensor.F90
     ${CMAKE_CURRENT_BINARY_DIR}/unit_cell.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/unit_number.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_atom_group.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_atom.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_basis.F90
@@ -428,6 +420,9 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_molecule.foo
     ${RUNFILE_DIR}/run_buffer.foo
     ${RUNFILE_DIR}/run_dc.foo
+    ${RUNFILE_DIR}/run_dc_derivs.foo
+    ${RUNFILE_DIR}/run_sf.foo
+    ${RUNFILE_DIR}/run_sf_derivs.foo
     ${RUNFILE_DIR}/run_dispersion.foo
     ${RUNFILE_DIR}/run_gaussian_data.foo
     ${RUNFILE_DIR}/run_har.foo
@@ -440,7 +435,9 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
+    ${RUNFILE_DIR}/run_rgbi.foo
     ${RUNFILE_DIR}/run_least_squares.foo
+    ${RUNFILE_DIR}/run_mpi_test.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
 
@@ -491,6 +488,9 @@ target_include_directories(tonto PUBLIC ${SBF_MODULE_DIRECTORY} ${DFTD3_MODULE_D
 add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
 add_executable(run_buffer        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_buffer.F90)
 add_executable(run_dc            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dc.F90)
+add_executable(run_dc_derivs     EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dc_derivs.F90)
+add_executable(run_sf            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_sf.F90)
+add_executable(run_sf_derivs     EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_sf_derivs.F90)
 add_executable(run_dispersion    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dispersion.F90)
 add_executable(run_gaussian_data EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
 add_executable(run_har           ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
@@ -503,13 +503,18 @@ add_executable(run_mpi_matmul    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_mpi_pi        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
+add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
+add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
 
 # Link exectables
 target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_dc            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_dc_derivs     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_sf            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_sf_derivs     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -521,8 +526,10 @@ target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_mpi_pi        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 
@@ -534,6 +541,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 install(TARGETS run_molecule DESTINATION bin)
 install(TARGETS run_har      DESTINATION bin)
+install(TARGETS run_rgbi     DESTINATION bin)
+install(TARGETS run_mpi_test DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
