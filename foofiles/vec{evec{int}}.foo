@@ -1,0 +1,266 @@
+!---------------------------------------------------------------------------
+!
+! VEC{EVEC{INT}} : a matrix where each column is (possibly) a different length
+!
+! Copyright (C) Dylan Jayatilaka, 2020
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!---------------------------------------------------------------------------
+
+module VEC{EVEC{INT}}
+
+   implicit none
+
+contains
+
+!  ==========
+!  Allocation
+!  ==========
+
+   create(dim) ::: get_from(VEC{OBJECT}), leaky, PURE
+   ! Allocate vector
+   end
+
+   create(bounds) ::: get_from(VEC{OBJECT}), leaky, PURE
+   ! Allocate the vector with lower and upper bounds in "bounds"
+   end
+
+   destroy ::: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
+   end
+
+   create(dim,dimv) ::: get_from(VEC{EVEC{INTRINSIC}}), leaky, PURE
+   ! Allocate vector of vectors
+   end
+
+   create(bounds1,bounds2) ::: get_from(VEC{EVEC{INTRINSIC}}), leaky, PURE
+   ! Create space for a vector of vectors
+   end
+
+   create_vec(bounds) ::: get_from(VEC{EVEC{INTRINSIC}}), leaky, PURE
+   ! Allocate the vector parts of "self"
+   end
+
+!  ==================
+!  Size-of operations
+!  ==================
+
+   size result (res) ::: get_from(VEC{INTRINSIC}), inlined_by_foo
+   ! Return the size of the array
+   end
+
+   dim result (res) ::: get_from(VEC{INTRINSIC}), inlined_by_foo
+   ! Return the size of the 1st dimension
+   end
+
+   max_element_dim result (res) ::: get_from(VEC{EVEC{INTRINSIC}}), pure
+   ! Return the maximum element dimension
+   end
+
+!  =======================
+!  Shrinking and expansion
+!  =======================
+
+   shrink(dim,chop_start) ::: get_from(VEC{OBJECT}), leaky, PURE
+   ! Shrink allocatable "self" to dimension "dim" from the end.
+   ! Contents are retained. If "chop_start" is present and TRUE,
+   ! "self" is chopped from the start, and the contents from the end
+   ! are retained.
+   end
+
+   expand(dim,grow_start) ::: get_from(VEC{OBJECT}, INIT?=>0), leaky, PURE
+   ! Expand allocatable "self" to dimension "dim" adding to the end.
+   ! If "grow_start" is present and TRUE, then "self" is expanded from
+   ! the start, keeping the same lower bound.
+   end
+
+   append(v) ::: get_from(VEC{OBJECT}), leaky, pure
+   ! Append the contents of vector "v" to allocatable "self".
+   end
+
+   append(value) ::: get_from(VEC{OBJECT}), leaky, pure
+   ! Appends the scalar "value" onto the end of allocatable "self".
+   end
+
+   append_fifo(value,length) ::: get_from(VEC{EVEC{INTRINSIC}}), leaky, PURE
+   ! Expands self and insert "value"; if equal to "length", push the
+   ! first/oldest vectors down/up the list
+   end
+
+   append_listed_to(res,list) ::: get_from(VEC{EVEC{INTRINSIC}}), leaky, PURE
+   ! Append together (i.e. concatenate) the vectors in self whose
+   ! indices are listed in "list".
+   end
+
+
+   repetitions_in(list) ::: leaky, PURE
+   ! Sort through "list" and return the indices of the repeated elements,
+   ! including elements which are repeated only once (i.e. not repeated). The
+   ! result "self" is a list of lists of the repeated elements (or, for unique
+   ! elements, a list comprising only the unique element).
+      self :: allocatable, OUT
+      list :: VEC{STR}, IN
+
+   ENSURE(.deallocated,"self is allocated")
+
+      n,n_rep,i,j,k :: INT
+      mask :: VEC{BIN}@
+
+      self.create(0)
+
+      mask.create(list.dim)
+      mask = TRUE
+
+      n = 0
+
+      do i = 1,list.dim
+
+         if (NOT mask(i)) cycle
+
+         ! Don't count previous elements
+         n_rep = count(list(i)==list AND mask) 
+         n = n + 1
+
+         self.expand(n)
+         self(n).element.create(n_rep)
+         self(n)[1] = i
+         mask(i) = FALSE 
+
+         k = 1
+         do j = i+1,list.dim
+
+            if (NOT mask(j))      cycle
+            if (list(i)/=list(j)) cycle
+
+            k = k + 1
+            self(n)[k] = j
+            mask(j) = FALSE 
+
+         end
+
+      end
+
+      ! Clean
+      mask.destroy
+
+   end
+
+   repetitions_in(list,unique) ::: leaky, PURE
+   ! Sort through "list" and return the indices of the repeated elements. The
+   ! result "self" is a list of lists of the repeated elements (including the
+   ! first element). AT the same time, "unique" is set to the indices of the
+   ! non-repeatred elements. NOTE: this is not the same as the list of unique
+   ! elements.
+      self :: allocatable, OUT
+      list :: VEC{STR}, IN
+      unique :: VEC{INT}*
+
+   ENSURE(.deallocated,"self is allocated")
+
+      u,n,n_rep,i,j,k :: INT
+      mask :: VEC{BIN}@
+
+
+      self.create(0)
+      unique.create(0)
+
+      n = 0
+      u = 0
+
+      mask.create(list.dim)
+      mask = TRUE
+
+      do i = 1,list.dim
+
+         if (NOT mask(i)) cycle
+
+         ! Don't count the element itself
+         mask(i) = FALSE                       
+
+         ! Count repeated (but not previously processed) elements
+         n_rep = count(list(i)==list AND mask) 
+
+         if (n_rep==0) then                    
+         
+            ! Not repeated
+            u = u + 1
+            unique.expand(u)
+            unique(u) = i
+
+         else                                  
+         
+            ! Repeated
+            n = n + 1
+            self.expand(n)
+            self(n).element.create(n_rep+1)
+            self(n)[1] = i
+
+            k = 1
+            do j = i+1,list.dim
+               if (list(i)/=list(j)) cycle
+               k = k + 1
+               self(n)[k] = j
+               mask(j) = FALSE 
+            end
+
+         end
+
+      end
+
+      mask.destroy
+
+   end
+
+!  =======
+!  Strings
+!  =======
+   
+   item_str_length result (res) ::: pure
+   ! Returns the max string length (not including spaces) over all
+   ! elements.  
+      self :: IN
+      res :: INT 
+
+      i,j :: INT
+
+      ! Get the maximum element width
+      res = 0
+      do i = 1,.dim
+      do j = 1,self(i).element.dim
+         res = max(res,self(i).element(j).str_length)
+      end
+      end
+
+   end 
+   
+   list_str_length(spaces) result (res) ::: pure
+   ! Returns the max of the concatenated list lengths, including any
+   ! extra "spaces" if desired.
+      self :: IN
+      spaces :: INT, optional, IN
+      res :: INT 
+
+      wid :: INT
+
+      wid = .item_str_length
+      if (present(spaces)) wid = wid + spaces
+
+      res = wid * .max_element_dim
+
+   end 
+
+end
