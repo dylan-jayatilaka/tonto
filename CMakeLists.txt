@@ -204,6 +204,7 @@ set(FOO_SRC
     ${FOO_DIR}/json.foo
     ${FOO_DIR}/file.foo
     ${FOO_DIR}/archive.foo
+    ${FOO_DIR}/cif.foo
     ${FOO_DIR}/cluster.foo
     ${FOO_DIR}/colour.foo
     ${FOO_DIR}/colour_function.foo
