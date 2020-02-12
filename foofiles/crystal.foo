@@ -710,6 +710,7 @@ contains
 
    read_pnd_data ::: leaky
    ! Read in the pnd diffraction data
+      self :: INOUT
 
       DIE_IF(NOT .unit_cell.info_made,"enter unit cell information before pnd_data= !")
       DIE_IF(NOT .spacegroup.analyzed,"enter spacegroup information before xray_data= !")
@@ -731,6 +732,7 @@ contains
    read_use_manual_rep_factors ::: leaky, private
    ! Read whether to use manually entered repetition factors.
    ! If set set FALSE, the repetition factors will be destroyed.
+      self :: INOUT
 
       stdin.read(.use_manual_repetition_factors)
 
@@ -743,9 +745,14 @@ contains
    read_repetition_factors ::: leaky, private
    ! Read in the crystal fragment repetition factors. Useful to get structure
    ! factor contributions from a small portion of the fragment.
+      self :: INOUT
+
       .repetition_factor.destroy
+
       stdin.read_ptr(.repetition_factor)
+
       .use_manual_repetition_factors = TRUE
+
    end
 
    read_prune_asymmetric_unit ::: private
@@ -756,12 +763,16 @@ contains
    ! position. For Hirshfeld surface plots, which can cope with disorder, you
    ! probably do not want to prune the asymmetric atom list, but for crystal
    ! calculations you must do so.
+      self :: INOUT
+
       stdin.read(.prune_asymmetric_unit)
+
    end
 
    read_CIF ::: leaky
    ! Read information from a Crystallographic Information File object, with
    ! the "name" taken from stdin.
+      self :: INOUT
 
       name :: STR
       found :: BIN
@@ -788,7 +799,8 @@ contains
    read_CIF(cif,skip_atoms) ::: leaky
    ! Read information from "cif".  If "skip_atoms" is TRUE,
    ! the fragment_atom coordinates are not processed.
-      cif :: CIF
+      self :: INOUT
+      cif :: CIF, INOUT
       skip_atoms :: BIN, optional, IN
 
       skip,found :: BIN
@@ -836,6 +848,7 @@ contains
    ! Read in the asymmetric unit geometry in crystal coordinates.
    ! The coordinates are read in as a single vector ordered as x,y,z
    ! incrementing fastest, for the first to the last atom.
+      self :: INOUT
       geometry :: VEC{REAL}*
 
    WARN_IF(.asymmetric_unit_geometry.associated,"asymmetric_unit_geometry exists!")
@@ -3679,35 +3692,39 @@ contains
 
    end
 
-   make_F_predicted
+   make_F_predicted(prune)
    ! Make and set the predicted structure factors, F_pred, reading the
    ! temperature independent aspherical atomic form factors from disk.
       self :: INOUT
+      prune :: BIN, optional, IN
 
    ENSURE(.data.associated,   "no data")
    ENSURE(.fragment_info_made,"no fragment info")
 
       ! Make F_predicted, F_calc & derivatives
-      .:set_F_calc_from
+      .:set_F_calc_from(prune)
 
       ! Optimise scale, extinction & set chi2(F)
       .data.make_F_predicted
 
-
-
    end
 
-   set_F_calc_from(sf_n)
+   set_F_calc_from(sf_n,prune)
    ! Set the predicted structure factors, F_pred, from "sf_n", the
    ! unique *fragment* atom structure factors for the
    ! symmetry-generated related k points
       self :: INOUT
       sf_n :: MAT{CPX}, IN
+      prune :: BIN, optional, IN
 
    ENSURE(.data.associated,   "no data")
    ENSURE(.fragment_info_made,"no fragment info")
 
-      Fc :: VEC{CPX}*
+      Fc :: VEC{CPX}@
+      do_prune,has_zeros,show :: BIN
+
+      do_prune = FALSE
+      if (present(prune)) do_prune = prune
 
       Fc.create(.n_refl)
 
@@ -3715,36 +3732,55 @@ contains
       .:make_F_calc(Fc,sf_n)
 
       ! Set the calculated SF's
-      ENSURE(all(abs(Fc)>TOL(10)),"there are zero F_calc's; prune them to continue")
+      has_zeros = any(abs(Fc)<=.data.F_calc_cutoff)
       .data.reflections.set_F_calc(Fc)
 
       Fc.destroy
 
+      if (do_prune AND has_zeros) then
+         WARN("zero or small F_calc's are being pruned")
+         show = .data.show_rejects
+         .data.set_show_rejects(TRUE)
+         .data.prune_zero_F_calcs
+         .data.set_show_rejects(show)
+      end
+
    end
 
-   set_F_calc_from
+   set_F_calc_from(prune)
    ! Set the predicted structure factors, F_pred, reading the
    ! temperature independent structure factors from disk.
       self :: INOUT
+      prune :: BIN, optional, IN
 
    ENSURE(.data.associated,   "no data")
    ENSURE(.fragment_info_made,"no fragment info")
 
-      Fc :: VEC{CPX}*
+      Fc :: VEC{CPX}@
+      do_prune,has_zeros,show :: BIN
+
+      do_prune = FALSE
+      if (present(prune)) do_prune = prune
 
       Fc.create(.n_refl)
-
-
 
       ! Make F_predicted, F_calc & derivatives
       .:make_F_calc(Fc)
 
       ! Set the calculated SF's
-      ENSURE(all(abs(Fc)>TOL(10)),"there are zero F_calc's; prune them to continue")
+      has_zeros = any(abs(Fc)<=.data.F_calc_cutoff)
       .data.reflections.set_F_calc(Fc)
-
-
+      
       Fc.destroy
+
+      if (do_prune AND has_zeros) then
+         WARN("zero or small F_calc's are being pruned")
+         show = .data.show_rejects
+         .data.set_show_rejects(TRUE)
+         .data.prune_zero_F_calcs
+         .data.set_show_rejects(show)
+      end
+
 
    end
 
@@ -3776,7 +3812,6 @@ contains
       ! Sum the symmetry-generated SF's to get
       ! the actual structure factors Fc
       .make_F_calc_from(sf_e,Fc)
-
 
       sf_e.destroy
 
@@ -3823,7 +3858,7 @@ contains
    ENSURE(sf_e.dim1==.n_unique_SF_k_pts, "wrong size, sf_e")
    ENSURE(.fragment_info_made,"no fragment info")
 
-      Fc :: VEC{CPX}*
+      Fc :: VEC{CPX}@
 
       Fc.create(.n_refl)
 
@@ -3831,7 +3866,6 @@ contains
       .make_F_calc_from(sf_e,Fc)
 
       ! Set the calculated SF's
-      ENSURE(all(abs(Fc)>TOL(10)),"there are zero F_calc's; prune them to continue")
       .data.reflections.set_F_calc(Fc)
 
       Fc.destroy
@@ -3874,7 +3908,8 @@ contains
    ENSURE(sf_e.dim1==.n_unique_SF_k_pts, "wrong size, sf_e")
    ENSURE(.fragment_info_made,"no fragment info")
 
-      Fa :: VEC{CPX}*
+      Fa :: VEC{CPX}@
+      has_zeros :: BIN
 
       ! Sum the symmetry-generated SF's to get
       ! the actual structure factors Fc
@@ -3896,7 +3931,8 @@ contains
       end
 
       ! Set the calculated SF's
-      ENSURE(all(abs(Fc)>TOL(10)),"there are zero F_calc's; prune them to continue")
+      has_zeros = any(abs(Fc)<=.data.F_calc_cutoff)
+      WARN_IF(has_zeros,"there are zero or small F_calc's; do you need to prune them?")
       .data.reflections.set_F_calc(Fc)
 
    end
@@ -4155,6 +4191,11 @@ contains
 
          ! Finished?
          if (.fit_finished) exit
+
+         ! Prune?
+         if (.data.is_F_calc_prunable) then
+            .data.prune_reflections
+         end
 
       end
 
@@ -5461,6 +5502,19 @@ contains
    ENSURE(.data_exists,"no diffraction data")
 
       res = .data.refinement_finished
+
+   end
+
+!  Refinement: prunable?
+
+   is_prunable result (res)
+   ! Return whether we should prune reflections
+      self :: IN
+      res :: BIN
+
+   ENSURE(.data_exists,"no diffraction data")
+
+      res = .data.is_prunable
 
    end
 
