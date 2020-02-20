@@ -5737,6 +5737,43 @@ contains
 
    end
 
+   make_atom_Z_list(Z_list) ::: leaky, PURE
+   ! Make the atom Z list ... Z_list(k).element(c) is the c-th atom of
+   ! the same atomic number (atomic numbers in decreasing order).
+      self :: IN
+      Z_list :: VEC{EVEC{INT}}@, OUT
+
+      n_kind, n,k,Z_n :: INT
+      Z,unique_Z :: VEC{INT}*
+
+      ! Atomic numbers
+      Z.create(.dim)
+      Z = self(:).atomic_number
+
+      ! Sorted unique atomic numvers
+      unique_Z.to_unique_elements_of(Z)
+      unique_Z.quick_sort(decreasing_order=TRUE)
+
+      ! Assign each atom to its kind in
+      ! decreasing order
+      n_kind = unique_Z.dim
+      Z_list.create(n_kind,0)
+      do n = 1,.dim
+         Z_n = self(n).atomic_number
+         do k = 1,n_kind
+            if (Z_n==unique_Z(k)) then
+                Z_list(k).element.append(n)
+                exit
+            end
+         end
+      end
+
+      ! Clean up
+      unique_Z.destroy
+      Z.destroy
+
+   end
+
    make_atom_kind_list(atom_kind,n_kind) ::: PURE
    ! Make the atom=kind list ... atom_kind(k) is the kind index of
    ! the k-th atom, as determined by .same_kind_of_atoms(k,l)
@@ -8983,15 +9020,69 @@ contains
       angstrom :: BIN, optional, IN
       res :: REAL
 
-      rab :: VEC{REAL}(3)
+      rab,rab2 :: VEC{REAL}(3)
       change :: BIN
 
-      rab = self(b).position - self(a).position
-      res = sqrt(rab(1)*rab(1) + rab(2)*rab(2) + rab(3)*rab(3))
+      rab  = self(b).position - self(a).position
+      rab2 = rab*rab
+      res = sqrt(rab2(1) + rab2(2) + rab2(3))
 
       change = FALSE
       if (present (angstrom)) change = angstrom
       if (change) res = res * ANGSTROM_PER_BOHR
+
+   end
+
+   bond_distance(a,b,covariance,angstrom) result (res) ::: PURE
+   ! Return the Hirshfeld test (and error) between atoms "a" and "b".
+   ! The test is the first value, the error the second in res(:).
+      self :: IN
+      a,b :: INT, IN
+      covariance :: MAT{REAL}, IN
+      angstrom :: BIN, optional, IN
+      res :: VEC{REAL}(2)
+
+      rab,rab2 :: VEC{REAL}(3)
+      der :: VEC{REAL}(6)
+      cov :: MAT{REAL}(6,6)
+      change :: BIN
+
+      ! Bond length
+      rab  = self(b).position - self(a).position
+      rab2 = rab*rab
+      res(1) = sqrt(rab2(1) + rab2(2) + rab2(3))
+
+      ! Covariance
+      covariance.put_blocks_to(cov,block_dim=3,block_list=[a,b])
+
+      ! Bond length error
+      .bond_distance_deriv(a,b,der)
+      res(2) = sqrt(cov.dot(der,der))
+
+      change = FALSE
+      if (present (angstrom)) change = angstrom
+      if (change) res = res * ANGSTROM_PER_BOHR
+
+   end
+
+   bond_distance_deriv(a,b,deriv) ::: PURE
+   ! Return the bond distance derivatives "deriv" wrt cartesian
+   ! positions between atoms "a" and "b". The bond vector is rb - ra
+      self :: IN
+      a,b :: INT, IN
+      deriv :: VEC{REAL}(6), OUT
+
+      rab :: VEC{REAL}(3)
+      dab :: REAL
+
+      ! Vector rab and (inverse) length
+      rab = self(b).position - self(a).position
+      dab = sqrt(rab(1)*rab(1) + rab(2)*rab(2) + rab(3)*rab(3))
+      dab = ONE/dab
+
+      ! Derivative
+      deriv(1:3) = -rab*dab ! wrt a
+      deriv(4:6) =  rab*dab ! wrt b
 
    end
 
@@ -10182,26 +10273,6 @@ contains
 !  ================================================
 !  Position derivatives of bonds, distances, angles
 !  ================================================
-
-   bond_distance_deriv(a,b,deriv)
-   ! Return the bond distance derivatives "deriv" wrt cartesian
-   ! positions between atoms "a" and "b". The bond vector is rb - ra
-      a,b :: INT, IN
-      deriv :: VEC{REAL}(6)
-
-      rab :: VEC{REAL}(3)
-      dab :: REAL
-
-      ! Vector rab and (inverse) length
-      rab = self(b).position - self(a).position
-      dab = sqrt(rab(1)*rab(1) + rab(2)*rab(2) + rab(3)*rab(3))
-      dab = ONE/dab
-
-      ! Derivative
-      deriv(1:3) = -rab*dab ! wrt a
-      deriv(4:6) =  rab*dab ! wrt b
-
-   end
 
    bond_angle_deriv(a,b,c,deriv,abc_colinear)
    ! Return the bond angle derivatives "deriv" between atoms "a" , "b"
@@ -12185,7 +12256,6 @@ contains
 
    end
 
-
    put_dispersion_factors
    ! Output the anamalous dispersion coefficients for every unique
    ! element in the molecule. 
@@ -12663,7 +12733,7 @@ contains
       dist,esds :: VEC{REAL}*
       Z_list :: VEC{VEC_{INT}}, IN
       k1,k2 :: INT, IN
-      covariance :: MAT{REAL}
+      covariance :: MAT{REAL}, IN
       H_bonded :: BIN, IN, optional
 
    ENSURE(k1<=k2,"k2 is smaller than k1")
@@ -12671,9 +12741,7 @@ contains
    ENSURE(covariance.dim1==3*.dim,"covariance: wrong size")
 
       i1,i2,a1,a2, n :: INT
-      err :: REAL
-      der :: VEC{REAL}(6)
-      cov :: MAT{REAL}(6,6)
+      d :: VEC{REAL}(2)
 
       ! How many pairs, n, are there?
       n = 0
@@ -12708,20 +12776,15 @@ contains
             if (k1==k2 AND a2<=a1) cycle
             if (NOT .bonded(a1,a2,H_bonded=H_bonded)) cycle
 
-            ! Extract covariances for atom a, b positions
-            covariance.put_blocks_to(cov,block_dim=3,block_list=[a1,a2])
-
-            ! Make error
-            .bond_distance_deriv(a1,a2,der)
-            err = cov.dot(der,der)
-            err = sqrt(err)
+            ! Get bond distance & error
+            d = .bond_distance(a1,a2,covariance)
 
             ! Add the data
             n = n + 1
             pair(n,1) = a1
             pair(n,2) = a2
-            dist(n)   = .bond_distance(a1,a2)
-            esds(n)   = err
+            dist(n)   = d(1)
+            esds(n)   = d(2)
 
          end
       end
@@ -12733,28 +12796,16 @@ contains
    ! The "covariance" matrix is for *all* atomn.
       self :: IN
       a1,a2 :: INT, IN
-      covariance :: MAT{REAL}
+      covariance :: MAT{REAL}, IN
 
    ENSURE(self(1).pos_axis_system=="cartesian","axis system must be cartesian")
    ENSURE(covariance.is_square,"covariance: not square")
    ENSURE(covariance.dim1==3*.dim,"covariance: wrong size")
 
-      err,dist :: REAL
-      der :: VEC{REAL}(6)
-      cov :: MAT{REAL}(6,6)
-
-      ! Extract position covariances for atom a1, a2
-      covariance.put_blocks_to(cov,block_dim=3,block_list=[a1,a2])
-
-      ! Make error
-      .bond_distance_deriv(a1,a2,der)
-      err = cov.dot(der,der)
-      err = sqrt(err)
-      err.convert_to("angstrom")
+      d :: VEC{REAL}(2)
 
       ! Add the data
-      dist   = .bond_distance(a1,a2)
-      dist.convert_to("angstrom")
+      d = .bond_distance(a1,a2,covariance,angstrom=TRUE)
 
       ! Output
       stdout.flush
@@ -12763,8 +12814,777 @@ contains
       stdout.text("======================")
       stdout.show("Atom 1        =",self(a1).tag)
       stdout.show("Atom 2        =",self(a2).tag)
-      stdout.show("Bond length   =",dist)
-      stdout.show("Error         =",err)
+      stdout.show("Bond length   =",d(1))
+      stdout.show("Error         =",d(2))
+
+   end
+
+!  ===============
+!  Hirshfelds test
+!  ===============
+
+   Hirshfeld_test(a,b,angstrom) result (res) ::: PURE
+   ! Return the Hirshfeld test between atoms "a" and "b"
+      self :: IN
+      a,b :: INT, IN
+      angstrom :: BIN, optional, IN
+      res :: REAL
+
+      n :: VEC{REAL}(3)
+      dU :: MAT{REAL}(3,3)
+      change :: BIN
+
+      ! Unit vector
+      n = self(a).position - self(b).position
+      n.normalise
+
+      ! Difference in ADPs
+      dU = self(a).ADP_tensor - self(b).ADP_tensor
+
+      ! H test value
+      res = dot_product(n,matmul(dU,n))
+
+      change = FALSE
+      if (present (angstrom)) change = angstrom
+      if (change) res = res * ANGSTROM_PER_BOHR*ANGSTROM_PER_BOHR
+
+   end
+
+   Hirshfeld_test(a,b,covariance,angstrom) result (res) ::: PURE
+   ! Return the Hirshfeld test (and error) between atoms "a" and "b".
+   ! The test is the first value, the error the second in res(:).
+      self :: IN
+      a,b :: INT, IN
+      covariance :: MAT{REAL}, IN
+      angstrom :: BIN, optional, IN
+      res :: VEC{REAL}(2)
+
+   ENSURE(a/=b,"Atom indices are equal!")
+
+      n  :: VEC{REAL}(3)
+      delU :: MAT{REAL}(3,3)
+      der :: VEC{REAL}(18)
+      cov :: MAT{REAL}(18,18)
+      change :: BIN
+
+      ! Unit vector
+      n = self(a).position - self(b).position
+      n.normalise
+
+      ! Difference in ADPs
+      delU = self(a).ADP_tensor - self(b).ADP_tensor
+
+      ! H test value
+      res(1) = dot_product(n,matmul(delU,n))
+
+      ! Covariance
+      covariance.put_blocks_to(cov,block_dim=9,block_list=[a,b])
+
+      ! Make bond distance error
+      .Hirshfeld_test_deriv(a,b,der)
+      res(2) = sqrt(dot_product(der,matmul(cov,der)))
+
+      ! Change units?
+      change = FALSE
+      if (present (angstrom)) change = angstrom
+      if (change) res = res * ANGSTROM_PER_BOHR*ANGSTROM_PER_BOHR
+
+   end
+
+   Hirshfeld_test_deriv(a,b,deriv) ::: PURE
+   ! Return the Hirshfeld test derivatives "deriv" wrt all nine pADPs
+   ! atoms "A" and "B" as a 2*9=18 vector in pADP order.
+      self :: IN
+      a,b :: INT, IN
+      deriv :: VEC{REAL}(18), OUT
+
+      n :: VEC{REAL}(3)
+      dr :: VEC{REAL}(6)
+      delU :: MAT{REAL}(3,3)
+      dn :: MAT{REAL}(3,6)
+      dU :: VEC{REAL}(12)
+      i,j,k :: INT
+
+      ! Derivatives of n wrt pos & U wrt U^{A,B}
+      .Hirshfeld_test_n_deriv(a,b,n,dn)
+      .Hirshfeld_test_U_deriv(a,b,dU)
+
+      ! Delta U matrix
+      delU = self(a).ADP_tensor - self(b).ADP_tensor
+
+      ! Derivative of Hirshfeld test wrt positions
+      dr = ZERO
+      do i = 1,3
+      do j = 1,3
+      do k = 1,6
+         dr(k) = dr(k) + delU(i,j)* (dn(i,k)*n(j) + n(i)*dn(j,k))
+      end
+      end
+      end
+
+      ! Full derivative
+      deriv( 1: 3) = dr( 1: 3)
+      deriv( 4: 9) = dU( 1: 6)
+      deriv(10:12) = dr( 4: 6)
+      deriv(13:18) = dU( 7:12)
+
+   end
+
+   Hirshfeld_test_n_deriv(a,b,n,dn) ::: private, PURE
+   ! Return the normalised vector "n" from atoms B to A, and derivs of
+   ! each component "dn" wrt position coordinates on atoms A and B as
+   ! a 3+3=6 vector in the second index of "dn".
+      self :: IN
+      a,b :: INT, IN
+      n :: VEC{REAL}(3), OUT
+      dn :: MAT{REAL}(3,6), OUT
+
+      rab,rab2 :: VEC{REAL}(3)
+      dab,dab3 :: REAL
+      i,j :: INT
+
+      ! Vector rab 
+      rab  = self(a).position - self(b).position
+
+      ! Normalised vector
+      n = rab
+      n.normalise
+
+      ! Intermediates
+      rab2 = rab*rab
+      dab  = sqrt(rab2(1) + rab2(2) + rab2(3))
+      dab  = ONE/dab
+      dab3 = dab*dab*dab
+
+      ! Derivative wrt r_A
+      dn = ZERO
+      do i = 1,3
+         dn(i,i) = dab
+         do j = 1,3
+            dn(i,j) = dn(i,j) - rab(i)*rab(j)*dab3
+         end
+      end
+
+      ! Derivative wrt tor_B 
+      dn(:,4:6) = -dn(:,1:3)
+
+   end
+
+   Hirshfeld_test_U_deriv(a,b,dU) ::: private, PURE
+   ! Return the Hirshfeld test derivatives "dU" wrt all nine ADPs
+   ! U^A and U^B on atoms "A" and "B" as a 6+6=12 vector in the usual
+   ! order xx, yy, zz, xy, xz,yz.
+      self :: IN
+      a,b :: INT, IN
+      dU :: VEC{REAL}(12), OUT
+
+      n :: VEC{REAL}(3)
+
+      ! Normalised vector 
+      n = self(a).position - self(b).position
+      n.normalise
+
+      ! Derivative wrt U^A
+      dU(1) = n(1)*n(1) 
+      dU(2) = n(2)*n(2) 
+      dU(3) = n(3)*n(3) 
+      dU(4) = n(1)*n(2) 
+      dU(5) = n(1)*n(3) 
+      dU(6) = n(2)*n(3) 
+
+      ! Derivative wrt to U^B
+      dU(7:12) = -dU(1:6)
+
+   end
+
+   put_Hirshfeld_test
+   ! Output the Hirshfeld test for all atom pairs.
+      self :: IN
+
+   DIE_IF(any(self(:).ADP_axis_system/="cartesian"),"ADP axis system must be cartesian")
+   DIE_IF(self(1).has_zero_ADP_tensor,"An ADP tensor is zero!")
+
+      IDa,IDb :: VEC{STR}@
+      tab :: MAT{REAL}@
+      table :: VEC{TABLE_COLUMN}*
+      n :: VEC{REAL}(3)
+      con :: VEC{BIN}@
+      hab :: VEC{REAL}@
+      dU :: MAT{REAL}(3,3)
+      fac,test :: REAL
+      dim1,dim2, a,b,i :: INT
+
+      ! Unit conversion for ADP's: A^2!
+      fac = ANGSTROM_PER_BOHR
+      fac = fac*fac
+
+      ! CIF ADP header
+      stdout.flush
+      stdout.text("# ==============")
+      stdout.text("# Hirshfeld test")
+      stdout.text("# ==============")
+      stdout.flush
+      stdout.text(". Values are printed out for all atom pairs")
+      stdout.flush
+      stdout.text(". Units are in Angstrom^2")
+      stdout.flush
+      stdout.text(". The test prints:")
+      stdout.flush
+      stdout.text("     h_AB = n^T_AB (U^A - U^B) n_AB")
+      stdout.text("     where n = r_A - r_B/|r_A - r_B|")
+      stdout.flush
+      stdout.text("  is the unit vector from B to A")
+      stdout.flush
+
+      ! Make the Hirshfeld test matrix (lower triangle only)
+      dim1 = .dim
+      dim2 = dim1*(dim1-1)/2
+
+      tab.create(dim1,dim1)
+      tab = ZERO
+
+      IDa.create(dim2)
+      IDb.create(dim2)
+      hab.create(dim2)
+      con.create(dim2)
+
+      i = 0
+      do a = 2,.dim
+      do b = 1,a-1
+
+         ! Unit vector
+         n = self(a).position - self(b).position
+         n.normalise
+
+         ! Difference in ADPs
+         dU = self(a).ADP_tensor - self(b).ADP_tensor
+
+         ! H test value
+         test = dot_product(n,matmul(dU,n)) * fac
+
+         ! Store labels & H test value
+         i = i + 1
+         IDa(i) = self(a).tag
+         IDb(i) = self(b).tag
+         con(i) = .bonded(a,b)
+         hab(i) = test
+         tab(a,b) = test
+
+      end
+      end
+
+      ! Table
+      table.create(4)
+
+      ! Headings
+      table(1).set_heading("Atom")
+      table(1).set_subhead("A")
+      table(2).set_heading("Atom")
+      table(2).set_subhead("B")
+      table(3).set_heading("Bonded?")
+      table(4).set_heading("H. Test")
+      table(4).set_subhead("  /A^2")
+
+      ! Set data
+      table(1).set_values(IDa)
+      table(2).set_values(IDb)
+      table(3).set_values(con)
+      table(4).set_values(hab)
+
+      ! Put tables
+      table.put
+
+      ! Clean
+      table.destroy
+      hab.destroy
+      con.destroy
+      IDb.destroy
+      IDa.destroy
+
+      ! Full triangle
+      stdout.flush
+      stdout.text("Full triangle of Hirshfeld test values:")
+      stdout.flush
+      stdout.put(tab)
+
+      ! Clean
+      tab.destroy
+
+   end
+
+!   put_Hirshfeld_test
+!   ! Output the bond length table.
+!      self :: IN
+!
+!   DIE_IF(self(1).pos_axis_system/="cartesian","axis system must be cartesian")
+!   DIE_IF(any(self(:).ADP_axis_system/="cartesian"),"ADP axis system must be cartesian")
+!   DIE_IF(self(1).has_zero_ADP_tensor,"An ADP tensor is zero!")
+!
+!      table :: VEC{TABLE_COLUMN}*
+!      Z_list :: VEC{EVEC{INT}}@
+!      no_of_bonds, n_kind,k1,k2,n_bonds :: INT
+!      symbols,labels :: MAT{STR}@
+!      dash,dsh1 :: VEC{STR}@
+!      dist,test :: VEC{REAL}@
+!      pair :: MAT{INT}@
+!      has_unique_labels :: BIN
+!
+!      ! Anything to do?
+!      if (.dim<2) return
+!
+!      no_of_bonds = .no_of_bonds
+!      if (no_of_bonds<1) return
+!
+!      ! Has unique labels?
+!      has_unique_labels = .has_unique_labels
+!
+!      ! Title
+!      stdout.flush
+!      stdout.flush
+!      stdout.text("==============")
+!      stdout.text("Hirshfeld test")
+!      stdout.text("==============")
+!      stdout.flush
+!      stdout.flush
+!      stdout.text(". This table shows Hirshfeld test values:")
+!      stdout.flush
+!      stdout.text("     h_AB = n^T_AB (U^A - U^B) n_AB")
+!      stdout.flush
+!      stdout.text("  for all bonded atom pairs A--B, where n = r_A-r_B/|r_A-r_B|")
+!      stdout.text("  is the unit vector from B to A.")
+!      stdout.flush
+!      stdout.text(". The bond-detection criteria is the same as used")
+!      stdout.text("  by the Cambridge Structural Database (CSD).")
+!      stdout.flush
+!      stdout.text(". The units are Angstrom^2.")
+!      stdout.flush
+!      stdout.show("No. of bonds =",no_of_bonds)
+!
+!      if (no_of_bonds>VEC_ATOM_MAX_BONDS_IN_TABLE) then
+!      stdout.flush
+!      stdout.text("There are too many bonds to display in a table.")
+!      return
+!      end
+!      stdout.flush
+!
+!      ! Get Z list
+!      .make_atom_Z_list(Z_list)
+!
+!      ! Skip dummy atoms
+!      n_kind = Z_list.dim
+!      if (self(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+!
+!      ! Create table
+!      table.create(8)
+!
+!      ! Set the table headings
+!      table(1).set_heading("A")
+!      table(1).set_width_from(self.chemical_symbols)
+!
+!      table(2).set_column_spacing(0)
+!      table(2).set_heading("--")
+!      table(2).set_width(2)
+!
+!      table(3).set_heading("B")
+!      table(3).set_width(table(1).width)
+!      table(3).set_left_justify(TRUE)
+!
+!      table(4).set_heading("A")
+!      table(4).set_width_from(self.tag)
+!
+!      table(5).set_column_spacing(0)
+!      table(5).set_heading("--")
+!      table(5).set_width(2)
+!
+!      table(6).set_heading("B")
+!      table(6).set_width(table(4).width)
+!      table(6).set_left_justify(TRUE)
+!
+!      table(7).set_heading("R(A--B)")
+!      table(7).set_subheading("/A")
+!      table(7).set_width_from(ONE)
+!
+!      table(8).set_heading("Hirshfeld")
+!      table(8).set_subhead("Test /A^2")
+!
+!      ! Put out the headings
+!      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+!
+!      ! Loop over atom kind classes
+!      do k1 = 1,n_kind
+!      do k2 = k1,n_kind
+!
+!         ! Get the bonded atoms per kind
+!         .get_bonded_Hirshfeld_test(pair,dist,test,Z_list,k1,k2,angstrom=TRUE)
+!
+!         ! No of bonds in this class
+!         n_bonds = dist.dim
+!         if (n_bonds==0) then
+!            test.destroy
+!            dist.destroy
+!            pair.destroy
+!            cycle
+!         end
+!
+!         ! Element symbols
+!         symbols.create(n_bonds,2)
+!         symbols = " "
+!         symbols(1,1) = self(Z_list(k1)[1]).chemical_symbol
+!         symbols(1,2) = self(Z_list(k2)[1]).chemical_symbol
+!
+!         ! Labels
+!         labels.create(n_bonds,2)
+!         labels(:,1) = self(pair(:,1)).tag
+!         labels(:,2) = self(pair(:,2)).tag
+!
+!         ! Dashes
+!         dash.create(n_bonds)
+!         dsh1.create(n_bonds)
+!         dash    = "--"
+!         dsh1    = "  "
+!         dsh1(1) = "--"
+!
+!         ! Set table data
+!         table(1).set_values(symbols(:,1))
+!         table(2).set_values(dsh1)
+!         table(3).set_values(symbols(:,2))
+!         table(4).set_values(labels(:,1))
+!         table(5).set_values(dash)
+!         table(6).set_values(labels(:,2))
+!         table(7).set_values(dist)
+!         table(7).set_values(test)
+!
+!         ! Put body
+!         stdout.flush
+!         table.put_body(label_rows=FALSE)
+!
+!         ! Clean
+!         table.clear_columns
+!         dsh1.destroy
+!         dash.destroy
+!         labels.destroy
+!         symbols.destroy
+!         test.destroy
+!         dist.destroy
+!         pair.destroy
+!
+!      end
+!      end
+!
+!      ! Table footer
+!      table.put_footer(label_rows=FALSE)
+!
+!      ! Clean
+!      table.clear_columns
+!      table.destroy
+!      Z_list.destroy
+!
+!   end
+
+   put_bonds_and_Hirshfeld_test(covariance)
+   ! Output the Hirshfeld test table with errors, given the
+   ! "covariance" matrix between all atomic positions. Set
+   ! "paretheses" FALSE if you want errors without them.
+      self :: IN
+      covariance :: MAT{REAL}, IN
+
+   DIE_IF(self(1).pos_axis_system/="cartesian","axis system must be cartesian")
+   DIE_IF(any(self(:).ADP_axis_system/="cartesian"),"ADP axis system must be cartesian")
+   DIE_IF(self(1).has_zero_ADP_tensor,"An ADP tensor is zero!")
+
+      table :: VEC{TABLE_COLUMN}*
+      Z_list :: VEC{EVEC{INT}}@
+      no_of_bonds, n_kind,k1,k2,n_bonds :: INT
+      symbols,labels :: MAT{STR}@
+      dash,dsh1 :: VEC{STR}@
+      dist,derr,test,terr :: VEC{REAL}@
+      pair :: MAT{INT}@
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.dim<2) return
+
+      no_of_bonds = .no_of_bonds
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .has_unique_labels
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("=============================")
+      stdout.text("Bond lengths & Hirshfeld test")
+      stdout.text("=============================")
+      stdout.flush
+      stdout.text(". The bond-detection criteria is the same as used")
+      stdout.text("  by the Cambridge Structural Database (CSD).")
+      if (NOT has_unique_labels) then
+      stdout.flush
+      stdout.text(". Unique atom labels were not set for each atom.")
+      stdout.text("  Therefore, unique symbol-number tags are used.")
+      end
+      stdout.flush
+      stdout.text(". Hirshfeld test values are defined by:")
+      stdout.flush
+      stdout.text("     h_AB = n^T_AB (U^A - U^B) n_AB")
+      stdout.flush
+      stdout.text("  for all bonded atom pairs A--B, where n = r_A-r_B/|r_A-r_B|")
+      stdout.text("  is the unit vector from B to A. The units are Angstrom^2.")
+      stdout.flush
+      stdout.show("No. of bonds =",no_of_bonds)
+
+      if (no_of_bonds>VEC_ATOM_MAX_BONDS_IN_TABLE) then
+      stdout.flush
+      stdout.text("There are too many bonds to display in a table.")
+      return
+      end
+      stdout.flush
+
+      ! Get Z list
+      .make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (self(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(8)
+
+      ! Set the table headings
+      table(1).set_heading("A")
+      table(1).set_width_from(self.chemical_symbols)
+
+      table(2).set_column_spacing(0)
+      table(2).set_heading("--")
+      table(2).set_width(2)
+
+      table(3).set_heading("B")
+      table(3).set_width(table(1).width)
+      table(3).set_left_justify(TRUE)
+
+      table(4).set_heading("A")
+      table(4).set_width_from(self.tag)
+
+      table(5).set_column_spacing(0)
+      table(5).set_heading("--")
+      table(5).set_width(2)
+
+      table(6).set_heading("B")
+      table(6).set_width(table(4).width)
+      table(6).set_left_justify(TRUE)
+
+      table(7).set_heading("R(A--B)")
+      table(7).set_subheading("/A")
+      table(7).set_width_from(ONE)
+
+      table(8).set_heading("Hirshfeld")
+      table(8).set_subhead("Test /A^2")
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         .get_bonded_Hirshfeld_test(pair,dist,derr,test,terr,Z_list,k1,k2,covariance,angstrom=TRUE)
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            terr.destroy
+            test.destroy
+            derr.destroy
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Element symbols
+         symbols.create(n_bonds,2)
+         symbols = " "
+         symbols(1,1) = self(Z_list(k1)[1]).chemical_symbol
+         symbols(1,2) = self(Z_list(k2)[1]).chemical_symbol
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = self(pair(:,1)).tag
+         labels(:,2) = self(pair(:,2)).tag
+
+         ! Dashes
+         dash.create(n_bonds)
+         dsh1.create(n_bonds)
+         dash    = "--"
+         dsh1    = "  "
+         dsh1(1) = "--"
+
+         ! Set table data
+         table(1).set_values(symbols(:,1))
+         table(2).set_values(dsh1)
+         table(3).set_values(symbols(:,2))
+         table(4).set_values(labels(:,1))
+         table(5).set_values(dash)
+         table(6).set_values(labels(:,2))
+         table(7).set_real_precision(stdout.real_precision) ! Must do, for every block
+         table(7).set_values_and_errors(dist,derr)
+         table(8).set_values_and_errors(test,terr)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+         dsh1.destroy
+         dash.destroy
+         labels.destroy
+         symbols.destroy
+         test.destroy
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Z_list.destroy
+
+   end
+
+   get_bonded_Hirshfeld_test(pair,dist,test,Z_list,k1,k2,angstrom,range_factor)
+   ! Get the Nx2 bonded-atom "pair"s, and the distances "dist" between
+   ! them. The pair have "Z_list" groups "k1" and "k2", respectively.
+      self :: IN
+      pair :: MAT{INT}@, OUT
+      dist,test :: VEC{REAL}@, OUT
+      Z_list :: VEC{EVEC{INT}}, IN
+      k1,k2 :: INT, IN
+      angstrom :: BIN, optional, IN
+      range_factor :: REAL, optional, IN
+
+   ENSURE(k1<=k2,"k2 is smaller than k1")
+
+      i1,i2,a1,a2, n :: INT
+
+      ! How many pairs, n, are there?
+      n = 0
+      do i1 = 1,Z_list(k1).element.dim
+         a1 = Z_list(k1)[i1]
+
+         do i2 = 1,Z_list(k2).element.dim
+            a2 = Z_list(k2)[i2]
+
+            if (k1==k2 AND a2<=a1) cycle
+            if (NOT .bonded(a1,a2,range_factor)) cycle
+
+            ! Count
+            n = n + 1
+
+         end
+      end
+
+      ! Allocate
+      pair.create(n,2)
+      dist.create(n)
+      test.create(n)
+
+      ! Make the list
+      n = 0
+      do i1 = 1,Z_list(k1).element.dim
+         a1 = Z_list(k1)[i1]
+
+         do i2 = 1,Z_list(k2).element.dim
+            a2 = Z_list(k2)[i2]
+
+            if (k1==k2 AND a2<=a1) cycle
+            if (NOT .bonded(a1,a2,range_factor)) cycle
+
+            ! Add the data
+            n = n + 1
+            pair(n,1) = a1
+            pair(n,2) = a2
+            dist(n)   =  .bond_distance(a1,a2,angstrom)
+            test(n)   = .Hirshfeld_test(a1,a2,angstrom)
+
+         end
+      end
+
+   end
+
+   get_bonded_Hirshfeld_test(pair,dist,derr,test,terr,Z_list,k1,k2,covariance,angstrom,range_factor)
+   ! Get the Nx2 bonded-atom "pair"s, and the distances "dist" between
+   ! them. The pair have "Z_list" groups "k1" and "k2", respectively.
+      self :: IN
+      pair :: MAT{INT}@, OUT
+      dist,derr,test,terr :: VEC{REAL}@, OUT
+      Z_list :: VEC{EVEC{INT}}, IN
+      k1,k2 :: INT, IN
+      covariance :: MAT{REAL}, IN
+      angstrom :: BIN, optional, IN
+      range_factor :: REAL, optional, IN
+
+   ENSURE(k1<=k2,"k2 is smaller than k1")
+
+      i1,i2,a1,a2, n :: INT
+      d,t :: VEC{REAL}(2)
+
+      ! How many pairs, n, are there?
+      n = 0
+      do i1 = 1,Z_list(k1).element.dim
+         a1 = Z_list(k1)[i1]
+
+         do i2 = 1,Z_list(k2).element.dim
+            a2 = Z_list(k2)[i2]
+
+            if (k1==k2 AND a2<=a1) cycle
+            if (NOT .bonded(a1,a2,range_factor)) cycle
+
+            ! Count
+            n = n + 1
+
+         end
+      end
+
+      ! Allocate
+      pair.create(n,2)
+      dist.create(n)
+      derr.create(n)
+      test.create(n)
+      terr.create(n)
+
+      ! Make the list
+      n = 0
+      do i1 = 1,Z_list(k1).element.dim
+         a1 = Z_list(k1)[i1]
+
+         do i2 = 1,Z_list(k2).element.dim
+            a2 = Z_list(k2)[i2]
+
+            if (k1==k2 AND a2<=a1) cycle
+            if (NOT .bonded(a1,a2,range_factor)) cycle
+
+            ! Get values
+            d =  .bond_distance(a1,a2,covariance,angstrom)
+            t = .Hirshfeld_test(a1,a2,covariance,angstrom)
+
+            ! Add the data
+            n = n + 1
+            pair(n,1) = a1
+            pair(n,2) = a2
+            dist(n) = d(1)
+            derr(n) = d(2)
+            test(n) = t(1)
+            terr(n) = t(2)
+
+         end
+      end
 
    end
 
@@ -16206,6 +17026,7 @@ contains
       end ! =========
 
    end
+
 
 
    put_CIF_bond_length_table(covariance)
