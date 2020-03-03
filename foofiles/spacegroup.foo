@@ -1611,8 +1611,17 @@ contains
 !  Spacegroup construction
 !  =======================
 
+   finalize ::: leaky
+   ! Analyze the spacegroup symbol
+      self :: INOUT
+
+      .analyze
+
+   end
+
    analyze ::: leaky
    ! Analyze the spacegroup symbol
+      self :: INOUT
 
       ! Do we need to anlayze it?
       if (.analyzed) return
@@ -1650,6 +1659,7 @@ contains
 
    decode_Hall_symbol
    ! Decode the Hall notation symbol for the spacegroup
+      self :: INOUT
 
       buffer :: BUFFER
       symbol,lattice,generator :: STR
@@ -1718,6 +1728,7 @@ contains
 
    decode_Hall_generator_symbol(generator,g)
    ! Decode the "g"-th Hall symbol "generator" which has form N^A_T
+      self :: INOUT
       generator :: STR, IN
       g :: INT, IN
 
@@ -1835,6 +1846,7 @@ contains
    set_default_axis_directions(g)
    ! Set the default axis directions for generator "g".
    ! NOTE: this only works if the rotation axis order is up to date.
+      self :: INOUT
       g :: INT, IN
 
    DIE_IF(NOT g.is_in_range([1,4]),"g must be in range [1,4]")
@@ -1883,6 +1895,7 @@ contains
 
    decode_Hall_lattice_symbol(lattice) 
    ! Decode the Hall "lattice" symbol
+      self :: INOUT
       lattice :: STR, IN
 
       latt  :: STR
@@ -1928,6 +1941,8 @@ contains
 
    set_spacegroup_order
    ! Work out the spacegroup orders.
+      self :: INOUT
+
    ENSURE(.lattice_symbol_index.is_in_range([1,8]),"wrong lattice index")
 
       g :: INT
@@ -1949,6 +1964,7 @@ contains
 
    form_L_seitz
    ! Form the seitz generators corresponding to the lattice symbol L
+      self :: INOUT
 
       n,v :: INT
 
@@ -1975,6 +1991,7 @@ contains
 
    form_S_seitz
    ! Add the rotational seitz matrices to the generator list
+      self :: INOUT
 
       t :: VEC{REAL}(3)
       fac :: REAL
@@ -2120,6 +2137,8 @@ contains
 
    generate_seitz
    ! Generate all the Seitz matrices from the minimal generating set.
+      self :: INOUT
+
    ENSURE(.nG>0,"number of generators must be positive")
 
       m,i,j,k :: INT
@@ -2177,6 +2196,8 @@ contains
 
    make_multiplication_table
    ! Make the multiplication table
+      self :: INOUT
+
    ENSURE(.n_seitz>0,"no seitz matrices")
 
       i,j,k :: INT
@@ -2234,6 +2255,7 @@ contains
 
    shift_origin
    ! Shift the origin of the Seitz matrices, by doing a similarity transform
+      self :: INOUT
 
       V :: MAT{REAL}(4,4)
       t :: VEC{REAL}(3)
@@ -3202,12 +3224,6 @@ contains
 
       PARALLEL_SUM(s_t)
 
-      ! Pure anomalous contribution to (hkl)'s ...
-    ! stdout.flush
-    ! stdout.text("Anomalous contribution:")
-    ! stdout.put(s_t)
-    ! stop
-
       sf = sf + s_t
 
       s_t.destroy
@@ -3260,6 +3276,7 @@ contains
 
    end
 
+
    sum_unique_sf_derivs(sf_d,unique_sf_d,refl) ::: PURE
    ! Form the structure factor derivatives "sf_d" from a sum of the
    ! list of unique-symop-generated structure factor derivatives
@@ -3305,6 +3322,99 @@ contains
       t_phase.destroy
 
    end
+
+   sum_unique_sf_derivs(sf_d,unique_sf_d,refl) ::: PURE
+   ! Form the structure factor derivatives "sf_d" from a sum of the
+   ! list of unique-symop-generated structure factor derivatives
+   ! "unique_sf_d".
+      self :: IN
+      sf_d :: VEC{CPX}, OUT
+      unique_sf_d :: VEC{CPX}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,          "spacegroup not analyzed")
+   ENSURE(sf_d.dim1==refl.dim,"sf_d: wrong dim1")
+   ENSURE(unique_sf_d.dim1==.n_unique_SF_symops*refl.dim,"unique_sf_d: wrong dim1")
+
+      t_phase :: VEC{CPX}*
+      u,uf,n,n_refl :: INT
+
+      n_refl = refl.dim
+      t_phase.create(n_refl)
+
+      sf_d = ZERO
+      parallel do u = 1,.n_unique_SF_symops
+
+         uf = n_refl*(u-1)
+
+         ! Add up translated symop contribution
+         .make_phases_for_symop(u,t_phase,.translated_symop,refl)
+         do n = 1,n_refl
+            sf_d(n) = sf_d(n) + t_phase(n)*unique_sf_d(uf+n)
+         end
+
+         ! Add up inverted symop contribution, if any
+         if (NOT .is_inverted_unique_SF_symop(u)) cycle
+
+         .make_phases_for_symop(u,t_phase,.inverted_symop,refl)
+         do n = 1,n_refl
+            sf_d(n) = sf_d(n) + t_phase(n)*conjg(unique_sf_d(uf+n))
+         end
+
+      end
+
+      PARALLEL_SUM(sf_d)
+
+      t_phase.destroy
+
+   end
+
+   sum_unique_sf_derivs_atom(sf_d,unique_sf_d,refl) ::: PURE
+   ! Form the structure factor derivatives "sf_d" from a sum of the
+   ! list of unique-symop-generated structure factor derivatives
+   ! "unique_sf_d".
+      self :: IN
+      sf_d :: MAT{CPX}, OUT
+      unique_sf_d :: MAT{CPX}, IN
+      refl :: VEC{REFLECTION}, IN
+
+   ENSURE(.analyzed,          "spacegroup not analyzed")
+   ENSURE(sf_d.dim1==refl.dim,"sf_d: wrong dim1")
+   ENSURE(unique_sf_d.dim1==.n_unique_SF_symops*refl.dim,"unique_sf_d: wrong dim1")
+
+      t_phase :: VEC{CPX}*
+      u,uf,n,n_refl :: INT
+
+      n_refl = refl.dim
+      t_phase.create(n_refl)
+
+      sf_d = ZERO
+      parallel do u = 1,.n_unique_SF_symops
+
+         uf = n_refl*(u-1)
+
+         ! Add up translated symop contribution
+         .make_phases_for_symop(u,t_phase,.translated_symop,refl)
+         do n = 1,n_refl
+            sf_d(n,:) = sf_d(n,:) + t_phase(n)*unique_sf_d(uf+n,:)
+         end
+
+         ! Add up inverted symop contribution, if any
+         if (NOT .is_inverted_unique_SF_symop(u)) cycle
+
+         .make_phases_for_symop(u,t_phase,.inverted_symop,refl)
+         do n = 1,n_refl
+            sf_d(n,:) = sf_d(n,:) + t_phase(n)*conjg(unique_sf_d(uf+n,:))
+         end
+
+      end
+
+      PARALLEL_SUM(sf_d)
+
+      t_phase.destroy
+
+   end
+
 
    add_full_sf_derivs_d(sf_d,full_sf_d,refl) ::: PURE
    ! *Add* the *anomalous* structure factor *derivatives* into "sf_d"
@@ -3656,27 +3766,18 @@ contains
             if (s /= us) cycle
 
             ns = ns + 1
-          ! stdout.show("s  = ",s)
-          ! stdout.show("ns = ",ns)
        
             ! Translated symop contribution
             .make_phase_for_symop(s,t_phase,refl)
 
             ! Are the t_phases always 1? 
-            ! DJ: They are not, for urea!
+            !8 ... They are not, for urea!
             if (.is_translated_symop(s)) then
                average = average + t_phase*sf(f:l)
-          !    stdout.show("is_inverted = ",FALSE)
             else 
                average = average + t_phase*conjg(sf(f:l))
-          !    stdout.show("is_inverted = ",TRUE)
             end
 
-          ! stdout.text("t_phase:")
-          ! stdout.put(t_phase)
-          ! stdout.text("average:")
-          ! stdout.put(average)
-        
          end
 
       end
@@ -3685,19 +3786,13 @@ contains
       PARALLEL_SUM(ns)
 
       ! Average here
-    ! fac = ONE/ns
-    ! average = fac*average
       average = average/ns
-
-    ! stdout.text("avsf:")
-    ! stdout.put(average)
 
       ! Copy back out; get diff^2
       absdiff = ZERO
       res_sf  = ZERO
 
       parallel do u = 1,.n_unique_SF_symops
-    ! do u = 1,.n_unique_SF_symops
          
          us = .unique_SF_symop(u)
          f  = n_refl*(u-1)+1
@@ -3731,18 +3826,11 @@ contains
       PARALLEL_SUM(absdiff)
       PARALLEL_SUM(res_sf)
 
-    ! stdout.text("absdiff:")
-    ! stdout.put(absdiff)
-    ! stdout.text("res_sf:")
-    ! stdout.put(res_sf)
-
       ! Report
       do n=1,sf.dim
          if(res_sf(n) /= 0) sf(n) = res_sf(n)
       end
       diff = sqrt(sum(absdiff))
-
-    ! stdout.show("diff = ",diff)
 
       ! Clean
       af.destroy
@@ -3806,7 +3894,7 @@ contains
    ! Put out the spacegroup information
       self :: IN
 
-   ENSURE(.analyzed,"no info")
+   ENSURE(.analyzed,"not yet analyzed")
 
       stdout.flush
       stdout.flush
@@ -3891,7 +3979,7 @@ contains
 
       ! Table
       table.create(1)
-      table(1).set_spacing(4)
+      table(1).set_column_spacing(4)
       table(1).set_heading("Symop")
       table(1).set_center(TRUE)
       table(1).set_values(jf)

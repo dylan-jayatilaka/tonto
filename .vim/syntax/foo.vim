@@ -407,8 +407,9 @@ syn keyword fortranType COMMAND_LINE
 " Intrinsic types and arrays
 
 syn keyword fortranType STR BSTR BIN INT REAL CPX
-syn keyword fortranType VEC  MAT  MAT3  MAT4  MAT5  MAT6  MAT7
-syn keyword fortranType VEC_ MAT_ MAT3_ MAT4_ MAT5_ MAT6_ MAT7_
+syn keyword fortranType  VEC  MAT  MAT3  MAT4  MAT5  MAT6  MAT7
+syn keyword fortranType  VEC_ MAT_ MAT3_ MAT4_ MAT5_ MAT6_ MAT7_
+syn keyword fortranType EVEC EMAT EMAT3 EMAT4 EMAT5 EMAT6 EMAT7_
 syn keyword fortranType OPVECTOR OPMATRIX
 
 " Files & IO
