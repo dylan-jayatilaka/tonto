@@ -2631,53 +2631,6 @@ contains
 
    end
 
-!  These routines avoid the buffer.string and read directly from the file.
-
-!   parallel_read(v)
-!   ! Parallel read a VEC{INT} "v" directly from the file.
-!      self :: INOUT
-!      v :: VEC{INT}, OUT
-!
-!      i :: INT
-!
-!      ! Read the array
-!      do i = 1,v.dim
-!         read(unit=.unit,fmt=*) v(i)
-!         .increment_record
-!      end
-!
-!   end
-!
-!   parallel_read(v)
-!   ! Parallel read a VEC{REAL} "v" directly from the file.
-!      self :: INOUT
-!      v :: VEC{REAL}, OUT
-!
-!      i :: INT
-!
-!      ! Read the array
-!      do i = 1,v.dim
-!         read(unit=.unit,fmt=*) v(i)
-!         .increment_record
-!      end
-!
-!   end
-!
-!   parallel_read(v)
-!   ! Parallel read a VEC{CPX} "v" directly from the file.
-!      self :: INOUT
-!      v :: VEC{CPX}, OUT
-!
-!      i :: INT
-!
-!      ! Read the array
-!      do i = 1,v.dim
-!         read(unit=.unit,fmt=*) v(i)
-!         .increment_record
-!      end
-!
-!   end
-
 !  =========================
 !  Read VEC{TYPE} quantities
 !  =========================
@@ -2790,6 +2743,7 @@ contains
    ! Return the size of the list, by reading the input after an
    ! initial opening bracket "{" until a *matching* end bracket "}"
    ! token is found. Line breaks are not significant.
+      self :: INOUT
       res :: INT
 
       line,item, n :: INT
@@ -2819,6 +2773,7 @@ contains
       .move_to_line_item(item)
 
    end
+
 
    read_ptr(v) ::: template
    ! Read in a vector pointer "v" sequentially. Line breaks are not
@@ -2918,6 +2873,110 @@ contains
    ! significant. The "v" vector pointer is created.
    end
 
+!  ===============
+!  Read VEC{TYPE}@
+!  ===============
+
+   read_all(v) ::: template, leaky
+   ! Read in an allocatable vector "v" sequentially. Line breaks are
+   ! not significant. "v" is created.
+      self :: INOUT
+      v :: V?@, OUT
+
+      dim :: INT
+      word :: STR
+
+      ! Find out the list length
+      dim = .list_length
+      v.create(dim)
+
+      ! Read opening brace
+      .read(word)
+      ENSURE(word=="{","list does not begin with a {")
+
+      ! Read vector
+      .read(v)
+
+      ! Read closing brace
+      .read(word)
+      ENSURE(word=="}","list does not end with a }")
+
+   end
+
+   read_all(v) ::: get_from(TEXTFILE, V?=>VEC{STR}), leaky
+   ! Read in an allocatable vector "v" sequentially. Line breaks are
+   ! not significant. "v" is created.
+   end
+
+   read_all(v) ::: get_from(TEXTFILE, V?=>VEC{BIN}), leaky
+   ! Read in an allocatable vector "v" sequentially. Line breaks are
+   ! not significant. "v" is created.
+   end
+
+   read_all(v) ::: leaky
+   ! Read in a fancy allocatable vector "v" sequentially. Fancy
+   ! because a looping construct in understood. Line breaks are not
+   ! significant. "v" is created.
+      self :: INOUT
+      v :: VEC{INT}@, OUT
+
+      dim,f,l,i :: INT
+      word,first,second :: STR
+
+      ! Read opening brace and first two items
+      .read(word)
+      ENSURE(word=="{","list does not begin with a {")
+      .read(first)
+      .read(second)
+
+      ! If second item is looping construct ..
+      if (second=="...") then
+
+         ! Read last index & create "v"
+         .read(l)
+         f = first.to_int
+         dim = l - f + 1
+         v.create(abs(dim))
+
+         ! Define sequental "v"
+         if (dim>0) then; v = [ (i, i=f,l)    ]
+         else           ; v = [ (i, i=f,l,-1) ]
+         end
+
+         ! Read closing brace
+         .read(word)
+         ENSURE(word=="}","list does not end with a {")
+
+      ! Plain old VEC{INT}*
+      else
+
+         ! Backtrack before "{"
+         .move_to_previous_item
+         .move_to_previous_item
+         .move_to_previous_item
+
+         ! Read "v" in
+         .read_all_helper(v)
+
+      end
+
+   end
+
+   read_all_helper(v) ::: get_from(TEXTFILE:read_all, V?=>VEC{INT}), leaky, private
+   ! Read in an allocatable vector "v" sequentially. Line breaks are
+   ! not significant. "v" is created.
+   end
+
+   read_all(v) ::: get_from(TEXTFILE, V?=>VEC{REAL}), leaky
+   ! Read in an allocatable vector "v" sequentially. Line breaks are
+   ! not significant. "v" is created.
+   end
+
+   read_all(v) ::: get_from(TEXTFILE, V?=>VEC{CPX}), leaky
+   ! Read in an allocatable vector "v" sequentially. Line breaks are
+   ! not significant. "v" is created.
+   end
+
 !  ========================
 !  Read VEC{TYPE}* quantity
 !  ========================
@@ -2964,6 +3023,58 @@ contains
 
    read_ptr_quantity(v) ::: get_from(TEXTFILE, V?=>VEC{REAL}), leaky
    ! Read in a vector pointer quantity (with units) sequentially.
+   ! Line breaks are not significant.  WARNING: You must *not* be at
+   ! the end of file to use this routine, since it will try to read
+   end
+
+!  ========================
+!  Read VEC{TYPE}@ quantity
+!  ========================
+
+   read_all_quantity(v) ::: template
+   ! Read in an allocatable vector quantity (with units) sequentially.
+   ! Line breaks are not significant.  WARNING: You must *not* be at
+   ! the end of file to use this routine, since it will try to read
+   ! the next token after the vector as a units specifier.
+      self :: INOUT
+      v :: V?@, OUT
+
+      units :: STR
+      known_unit :: BIN
+
+      ! Read the vector pointer
+      .read_all(v)
+
+      ! Convert from assumed default units
+      if (.default_units/=" ") then
+         v.convert_from(.default_units)
+      end
+
+      ! Check for explicit units
+      if (NOT .at_end_of_file) then
+
+        ! Is there a known unit next?
+        .read(units)
+        known_unit = units.is_known_unit
+
+        ! Has conversion already been done?
+        DIE_IF(known_unit AND .default_units/=" ","two units specified!")
+
+        ! Convert from known units if we can ...
+        ! Or move back to where we were
+        if (known_unit) then; v.convert_from(units)
+        else;                 .move_to_previous_item
+        end
+
+      end
+
+      ! Reset default units
+      .default_units = " "
+
+   end
+
+   read_all_quantity(v) ::: get_from(TEXTFILE, V?=>VEC{REAL}), leaky
+   ! Read in an allocatable vector quantity (with units) sequentially.
    ! Line breaks are not significant.  WARNING: You must *not* be at
    ! the end of file to use this routine, since it will try to read
    end
@@ -3116,59 +3227,6 @@ contains
    ! is read in sequentially by column. Line breaks not significant.
    end
 
-!  These routines avoid the buffer.string and read directly from the file.
-
-!   parallel_read(mx)
-!   ! Parallel read a MAT{INT} "mx" directly from the file.
-!      self :: INOUT
-!      mx :: MAT{INT}, OUT
-!
-!      i,j :: INT
-!
-!      ! Read the array
-!      do j = 1,mx.dim2
-!      do i = 1,mx.dim1
-!         read(unit=.unit,fmt=*) mx(i,j)
-!         .increment_record
-!      end
-!      end
-!
-!   end
-!
-!   parallel_read(mx)
-!   ! Parallel read a MAT{REAL} "mx" directly from the file.
-!      self :: INOUT
-!      mx :: MAT{REAL}, OUT
-!
-!      i,j :: INT
-!
-!      ! Read the array
-!      do j = 1,mx.dim2
-!      do i = 1,mx.dim1
-!         read(unit=.unit,fmt=*) mx(i,j)
-!         .increment_record
-!      end
-!      end
-!
-!   end
-!
-!   parallel_read(mx)
-!   ! Parallel read a MAT{CPX} "mx" directly from the file.
-!      self :: INOUT
-!      mx :: MAT{CPX}, OUT
-!
-!      i,j :: INT
-!
-!      ! Read the array
-!      do j = 1,mx.dim2
-!      do i = 1,mx.dim1
-!         read(unit=.unit,fmt=*) mx(i,j)
-!         .increment_record
-!      end
-!      end
-!
-!   end
-
 !  ===============
 !  Read MAT{TYPE}*
 !  ===============
@@ -3178,7 +3236,8 @@ contains
    ! dim(2) as the number of items per line between an opening and
    ! closing brace. It is an error if there are a different number of
    ! items per line on every non-blank line.
-      dim :: VEC{INT}(2)
+      self :: INOUT
+      dim :: VEC{INT}(2), OUT
 
       line,item,first_line :: INT
       word :: STR
@@ -3251,9 +3310,11 @@ contains
 
    end
 
+
    read_ptr(mx) ::: template
    ! Read in a matrix pointer "mx" sequentially. The shape is
    ! induced from the formatting. Line breaks are significant!
+      self :: INOUT
       mx :: MX?*
 
       word :: STR
@@ -3301,13 +3362,69 @@ contains
    ! induced from the formatting. Line breaks are significant!
    end
 
-!  ====================
-!  Read VEC{VEC_{TYPE}}
-!  ====================
+!  ===============
+!  Read MAT{TYPE}@
+!  ===============
+
+   read_all(mx) ::: template
+   ! Read in a allocatable matrix "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+      self :: INOUT
+      mx :: MX?@, OUT
+
+      word :: STR
+      dim :: VEC{INT}(2)
+
+      ! Get the shape
+      .get_matrix_shape(dim)
+
+      ! Opening brace
+      .read(word)
+      ENSURE(word=="{","matrix does not begin with a {")
+
+      ! Read the matrix
+      mx.create(dim(1),dim(2))
+      .read(mx)
+
+      ! Closing brace
+      .read(word)
+      ENSURE(word=="}","expecting close bracket symbol: }")
+
+   end
+
+   read_all(mx) ::: get_from(TEXTFILE, MX?=>MAT{STR}), leaky
+   ! Read in a allocatable matrix "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+   read_all(mx) ::: get_from(TEXTFILE, MX?=>MAT{BIN}), leaky
+   ! Read in a allocatable matrix "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+   read_all(mx) ::: get_from(TEXTFILE, MX?=>MAT{INT}), leaky
+   ! Read in a allocatable matrix "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+   read_all(mx) ::: get_from(TEXTFILE, MX?=>MAT{REAL}), leaky
+   ! Read in a allocatable matrix "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+   read_all(mx) ::: get_from(TEXTFILE, MX?=>MAT{CPX}), leaky
+   ! Read in a allocatable matrix "mx" sequentially. The shape is
+   ! induced from the formatting. Line breaks are significant!
+   end
+
+!  =====================
+!  Read VEC{VEC_{TYPE}}*
+!  =====================
 
    read(v) ::: template
    ! Read in an VEC{VEC_{TYPE}} "v" sequentially. Line breaks are not
    ! significant. The "v" is created.
+      self :: INOUT
       v :: V?, OUT
 
       i :: INT
@@ -3328,14 +3445,12 @@ contains
    ! significant. The "v" is created.
    end
 
-!  =====================
-!  Read VEC{VEC_{TYPE}}*
-!  =====================
 
-   list_list_length result (res) ::: leaky, private
+   list_list_length_ptr result (res) ::: leaky, private
    ! Return the size of an VEC{VEC_{INT}} list, by reading the input
    ! until an end bracket "}" token is found. Line breaks are not
    ! significant.
+      self :: INOUT
       res :: INT
 
       line,item :: INT
@@ -3367,16 +3482,18 @@ contains
 
    end
 
+
    read_ptr(v) ::: template
    ! Read in a VEC{VEC_{TYPE}}* "v" sequentially. Line breaks are not
    ! significant. The "v" is created.
+      self :: INOUT
       v :: V?*
 
       word :: STR
       dim :: INT
 
       ! Find out the list length
-      dim = .list_list_length
+      dim = .list_list_length_ptr
       v.create(dim)
 
       ! Read opening brace
@@ -3399,6 +3516,108 @@ contains
 
    read_ptr(v) ::: get_from(TEXTFILE, V?=>VEC{VEC_{REAL}}), leaky
    ! Read in a VEC{VEC_{TYPE}}* "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+!  =====================
+!  Read VEC{EVEC{TYPE}}@
+!  =====================
+
+   read(v) ::: template
+   ! Read in an VEC{EVEC{TYPE}} "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+      self :: INOUT
+      v :: V?, OUT
+
+      i :: INT
+
+      do i = 1,v.dim
+         .read_all(v(i).element)
+      end
+
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{EVEC{INT}}), leaky
+   ! Read in an VEC{EVEC{TYPE}} "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+   read(v) ::: get_from(TEXTFILE, V?=>VEC{EVEC{REAL}}), leaky
+   ! Read in an VEC{EVEC{TYPE}} "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+
+   list_list_length_all result (res) ::: leaky, private
+   ! Return the size of an VEC{VEC_{INT}} list, by reading the input
+   ! until an end bracket "}" token is found. Line breaks are not
+   ! significant.
+      self :: INOUT
+      res :: INT
+
+      line,item :: INT
+      word :: STR
+      v :: VEC{STR}@
+
+      ! Store original pos
+      line = .line_number
+      item = .next_line_item
+
+      ! Read opening brace
+      .read(word)
+      ENSURE(word=="{","list does not begin with {")
+
+      ! Count enclosed lists
+      res = 0
+      do
+         .read(word)
+         if (word=="}") exit
+         .move_to_previous_item
+         .read_all(v)
+         v.destroy
+         res = res + 1
+      end
+
+      ! Reinstate original position
+      .move_to_line(line)
+      .move_to_line_item(item)
+
+   end
+
+
+   read_all(v) ::: template
+   ! Read in a VEC{EVEC{TYPE}}@ "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+      self :: INOUT
+      v :: V?@, OUT
+
+      word :: STR
+      dim :: INT
+
+      ! Find out the list length
+      dim = .list_list_length_all
+      v.create(dim)
+
+      ! Read opening brace
+      .read(word)
+      ENSURE(word=="{","list does not begin with a {")
+
+      ! Read vector
+      .read(v)
+
+      ! Read closing brace
+      .read(word)
+      ENSURE(word=="}","list does not end with a {")
+
+   end
+
+   read_all(v) ::: get_from(TEXTFILE, V?=>VEC{EVEC{INT}}), leaky
+   ! Read in a VEC{EVEC{TYPE}}@ "v" sequentially. Line breaks are not
+   ! significant. The "v" is created.
+   end
+
+   read_all(v) ::: get_from(TEXTFILE, V?=>VEC{EVEC{REAL}}), leaky
+   ! Read in a VEC{EVEC{TYPE}}@ "v" sequentially. Line breaks are not
    ! significant. The "v" is created.
    end
 
@@ -3545,9 +3764,10 @@ contains
 !  ==========================
 
    read(v,genre) ::: leaky
-   ! Read OPVECTOR "v"e
+   ! Read OPVECTOR "v"
+      self :: INOUT
       v :: OPVECTOR, INOUT
-      genre :: STR, IN, optional
+      genre :: STR, optional, IN
 
       vgenre :: STR
 
@@ -3557,46 +3777,46 @@ contains
 
       select case (vgenre)
 
-         case ("restricted")
-            v.destroy("restricted")
-            v.create("restricted")
-            .look_for("Restricted part:",from=1)
-            .read_line
-            .read(v.restricted)
+      case ("restricted")
+         v.destroy("restricted")
+         v.create("restricted")
+         .look_for("Restricted part:",from=1)
+         .read_line
+         .read(v.restricted)
 
-         case ("unrestricted")
-            v.destroy("unrestricted")
-            v.create("unrestricted")
-            .look_for("Alpha part:",from=1)
-            .read_line
-            .read(v.alpha)
-            .look_for("Beta part:",from=1)
-            .read_line
-            .read(v.beta)
+      case ("unrestricted")
+         v.destroy("unrestricted")
+         v.create("unrestricted")
+         .look_for("Alpha part:",from=1)
+         .read_line
+         .read(v.alpha)
+         .look_for("Beta part:",from=1)
+         .read_line
+         .read(v.beta)
 
-         case ("alpha")
-            v.destroy("alpha")
-            v.create("alpha")
-            .look_for("Alpha part:",from=1)
-            .read_line
-            .read(v.alpha)
+      case ("alpha")
+         v.destroy("alpha")
+         v.create("alpha")
+         .look_for("Alpha part:",from=1)
+         .read_line
+         .read(v.alpha)
 
-         case ("beta")
-            v.destroy("beta")
-            v.create("beta")
-            .look_for("Beta part:",from=1)
-            .read_line
-            .read(v.beta)
+      case ("beta")
+         v.destroy("beta")
+         v.create("beta")
+         .look_for("Beta part:",from=1)
+         .read_line
+         .read(v.beta)
 
-         case ("general")
-            v.destroy("general")
-            v.create("general")
-            .look_for("General part:",from=1)
-            .read_line
-            .read(v.general)
+      case ("general")
+         v.destroy("general")
+         v.create("general")
+         .look_for("General part:",from=1)
+         .read_line
+         .read(v.general)
 
-         case default
-            DIE("unknown genre, "//trim(vgenre))
+      case default
+         DIE("unknown genre, "//trim(vgenre))
 
       end
 
@@ -3604,9 +3824,10 @@ contains
 
    read(mx,genre,by_column) ::: leaky
    ! Read OPMATRIX "mx".
+      self :: INOUT
       mx :: OPMATRIX, INOUT
-      genre :: STR, IN, optional
-      by_column :: BIN, IN, optional
+      genre :: STR, optional, IN
+      by_column :: BIN, optional, IN
 
       mxgenre :: STR
 
@@ -3616,84 +3837,84 @@ contains
 
       select case (mxgenre)
 
-         case ("restricted")
-            mx.destroy("restricted")
-            mx.create("restricted")
-            .look_for("Restricted part:")
-            .read_line
-            .read(mx.restricted,by_column)
+      case ("restricted")
+         mx.destroy("restricted")
+         mx.create("restricted")
+         .look_for("Restricted part:")
+         .read_line
+         .read(mx.restricted,by_column)
 
-         case ("unrestricted")
-            mx.destroy("unrestricted")
-            mx.create("unrestricted")
-            .look_for("Alpha part:")
-            .read_line
-            .read(mx.alpha,by_column)
-            .look_for("Beta part:")
-            .read_line
-            .read(mx.beta, by_column)
+      case ("unrestricted")
+         mx.destroy("unrestricted")
+         mx.create("unrestricted")
+         .look_for("Alpha part:")
+         .read_line
+         .read(mx.alpha,by_column)
+         .look_for("Beta part:")
+         .read_line
+         .read(mx.beta, by_column)
 
-         case ("alpha")
-            mx.destroy("alpha")
-            mx.create("alpha")
-            .look_for("Alpha part:")
-            .read_line
-            .read(mx.alpha,by_column)
+      case ("alpha")
+         mx.destroy("alpha")
+         mx.create("alpha")
+         .look_for("Alpha part:")
+         .read_line
+         .read(mx.alpha,by_column)
 
-         case ("beta")
-            mx.destroy("beta")
-            mx.create("beta")
-            .look_for("Beta part:")
-            .read_line
-            .read(mx.beta,by_column)
+      case ("beta")
+         mx.destroy("beta")
+         mx.create("beta")
+         .look_for("Beta part:")
+         .read_line
+         .read(mx.beta,by_column)
 
-         case ("general")
-            mx.destroy("general")
-            mx.create("general")
-            .look_for("General part:")
-            .read_line
-            .read(mx.general,by_column)
+      case ("general")
+         mx.destroy("general")
+         mx.create("general")
+         .look_for("General part:")
+         .read_line
+         .read(mx.general,by_column)
 
-         case ("restricted_complex")
-            mx.destroy("restricted_complex")
-            mx.create("restricted_complex")
-            .look_for("Restricted complex part:")
-            .read_line
-            .read(mx.restricted_complex,by_column)
+      case ("restricted_complex")
+         mx.destroy("restricted_complex")
+         mx.create("restricted_complex")
+         .look_for("Restricted complex part:")
+         .read_line
+         .read(mx.restricted_complex,by_column)
 
-         case ("unrestricted_complex")
-            mx.destroy("unrestricted_complex")
-            mx.create("unrestricted_complex")
-            .look_for("Alpha complex part:")
-            .read_line
-            .read(mx.alpha_complex,by_column)
-            .look_for("Beta complex part:")
-            .read_line
-            .read(mx.beta_complex, by_column)
+      case ("unrestricted_complex")
+         mx.destroy("unrestricted_complex")
+         mx.create("unrestricted_complex")
+         .look_for("Alpha complex part:")
+         .read_line
+         .read(mx.alpha_complex,by_column)
+         .look_for("Beta complex part:")
+         .read_line
+         .read(mx.beta_complex, by_column)
 
-         case ("alpha_complex")
-            mx.destroy("alpha_complex")
-            mx.create("alpha_complex")
-            .look_for("Alpha complex part:")
-            .read_line
-            .read( mx.alpha_complex,by_column)
+      case ("alpha_complex")
+         mx.destroy("alpha_complex")
+         mx.create("alpha_complex")
+         .look_for("Alpha complex part:")
+         .read_line
+         .read( mx.alpha_complex,by_column)
 
-         case ("beta_complex","complex_beta")
-            mx.destroy("beta_complex")
-            mx.create("beta_complex")
-            .look_for("Beta complex part:")
-            .read_line
-            .read(mx.beta_complex,by_column)
+      case ("beta_complex","complex_beta")
+         mx.destroy("beta_complex")
+         mx.create("beta_complex")
+         .look_for("Beta complex part:")
+         .read_line
+         .read(mx.beta_complex,by_column)
 
-         case ("general_complex","complex_general")
-            mx.destroy("general_complex")
-            mx.create("general_complex")
-            .look_for("General complex part:")
-            .read_line
-            .read(mx.general_complex,by_column)
+      case ("general_complex","complex_general")
+         mx.destroy("general_complex")
+         mx.create("general_complex")
+         .look_for("General complex part:")
+         .read_line
+         .read(mx.general_complex,by_column)
 
-         case default
-            DIE("unknown genre, "//trim(mxgenre))
+      case default
+         DIE("unknown genre, "//trim(mxgenre))
 
       end
 
@@ -3848,23 +4069,25 @@ contains
 !  Most everything is converted to a string and put into the buffer,
 !  so comes through the important routine below, which is quite slow.
 
-   put(string,left,center,int_width,width)
+   put(string,left,center,int_width,width,blank)
    ! Put a "string" into the output buffer; if it is too big, put as is.
    ! NOTE: Head space is never altered, but trailing spaces are trimmed.
    ! . "left" ........ left justifies output         (default: right justified)
    ! . "center" ...... centers the output            (overrides "left")
    ! . "int_width" ... field width set to .int_width (default: .real_width)
    ! . "width" ....... sets field width in chars     (overrides "int_width")
+   ! . "blank" ....... sets the field to be blank    (overrides everything)
       self :: INOUT
       string :: STR, IN
       left :: BIN, optional, IN
       center :: BIN, optional, IN
       int_width :: BIN, optional, IN
       width :: INT, optional, IN
+      blank :: BIN, optional, IN
 
       tmpcpy :: STR
       wid,len :: INT
-      leftify,centrify :: BIN
+      leftify,centrify,blnk :: BIN
 
       if (NOT .using_fields) then
 
@@ -3893,13 +4116,26 @@ contains
          centrify = FALSE
          if (present(center)) centrify = center
 
+         ! Blank?
+         blnk = FALSE
+         if (present(blank)) then
+         if (blank) then
+            blnk = blank
+         end
+         end
+
          ! Sanity check
          DIE_IF(leftify AND centrify,"too many justifications")
 
          ! The actual string lenth
          len = len_trim(string)
 
-         if (len>wid) then
+         if (blnk) then
+
+            ! Fill the field with a blank of withd "width"
+            .buffer.put(repeat(" ",wid))
+
+         else if (len>wid) then
 
             ! If string too long, just put it in, with a space in
             ! front (unless it is the first item).
@@ -3942,19 +4178,21 @@ contains
 
    end
 
-   put(value,left,center,real_width,width) ::: template
+   put(value,left,center,real_width,width,blank) ::: template
    ! Put a "value" into the output buffer. If present and TRUE:
    ! . "left" will left justify the string (default is right justified)
    ! . "center" will center the string (overrides left-justification)
    ! . "real_width" sets width to .real_width (default width is .int_width)
    ! If present:
    ! . "width" sets the field_width (default width is .int_width)
+   ! . "blank" ....... sets the field to be blank  (overrides everything)
       self :: INOUT
       value :: VALUE?, IN
-      left :: BIN, IN, optional
-      center :: BIN, IN, optional
-      real_width :: BIN, IN, optional
-      width :: INT, IN, optional
+      left :: BIN, optional, IN
+      center :: BIN, optional, IN
+      real_width :: BIN, optional, IN
+      width :: INT, optional, IN
+      blank :: BIN, optional, IN
 
       int_width :: BIN
 
@@ -3962,44 +4200,48 @@ contains
       if (present(real_width)) int_width = NOT real_width
 
       ! Change to string, and put it out
-      .put(value.to_str,left,center,int_width,width)
+      .put(value.to_str,left,center,int_width,width,blank)
 
    end
 
-   put(value,left,center,real_width,width) ::: get_from(TEXTFILE:put, VALUE?=>BIN)
+   put(value,left,center,real_width,width,blank) ::: get_from(TEXTFILE:put, VALUE?=>BIN)
    ! Put a "value" into the output buffer. If present and TRUE:
    ! . "left" will left justify the string (default is right justified)
    ! . "center" will center the string (overrides left-justification)
    ! . "real_width" sets width to .real_width (default width is .int_width)
    ! If present:
    ! . "width" sets the field_width (default width is .int_width)
+   ! . "blank" ....... sets the field to be blank  (overrides everything)
    end
 
-   put(value,left,center,real_width,width) ::: get_from(TEXTFILE:put, VALUE?=>INT)
+   put(value,left,center,real_width,width,blank) ::: get_from(TEXTFILE:put, VALUE?=>INT)
    ! Put a "value" into the output buffer. If present and TRUE:
    ! . "left" will left justify the string (default is right justified)
    ! . "center" will center the string (overrides left-justification)
    ! . "real_width" sets width to .real_width (default width is .int_width)
    ! If present:
    ! . "width" sets the field_width (default width is .int_width)
+   ! . "blank" ....... sets the field to be blank  (overrides everything)
    end
 
-   put_bit_string(value,left,center,int_width,width)
+   put_bit_string(value,left,center,int_width,width,blank)
    ! Put a "value" into the output buffer. If present and TRUE:
    ! . "int_width" sets width to .int_width (default width is .real_width)
    ! . "left" will left justify the string (default is right justified)
    ! . "center" will center the string (overrides left-justification)
    ! If present:
    ! . "width" sets the field_width (default width is .int_width)
+   ! . "blank" ....... sets the field to be blank  (overrides everything)
       self :: INOUT
       value :: INT, IN
       left :: BIN, IN, optional
       center :: BIN, IN, optional
       int_width :: BIN, IN, optional
       width :: INT, IN, optional
+      blank :: BIN, optional, IN
 
       ! Change to string, and put it out
-      .put(value.to_bit_string,left,center,int_width,width)
+      .put(value.to_bit_string,left,center,int_width,width,blank)
 
    end
 
@@ -4088,7 +4330,7 @@ contains
 !  Put imprecise REAL(WITH_ERROR)
 !  ==============================
 
-   put(value,error,int_width,width,precision,max_cb)
+   put(value,error,int_width,width,precision,max_cb,two_digit_error)
    ! Put a real "value" into the output buffer which has "error".
    ! You can specify the "width" (defualt .real_width) or the
    ! maximum "precision". The decimal points are lined up.
@@ -4096,10 +4338,11 @@ contains
       self  :: INOUT
       value :: REAL, IN
       error :: REAL, IN
-      int_width :: BIN, IN, optional
-      width :: INT, IN, optional
-      precision :: INT, IN, optional
-      max_cb :: INT, IN, optional
+      int_width :: BIN, optional, IN
+      width :: INT, optional, IN
+      precision :: INT, optional, IN
+      max_cb :: INT, optional, IN
+      two_digit_error :: BIN, optional, IN
 
       wid,pre :: INT
       valstr :: STR
@@ -4121,7 +4364,7 @@ contains
       if (present(precision)) pre = precision
 
       ! Change to string, put out like 1.002(19)
-      value.get_str(valstr(1:wid),error,wid,pre,max_cb) ! aligned
+      value.get_str(valstr(1:wid),error,wid,pre,max_cb,two_digit_error) ! aligned
       .buffer.put(valstr(1:wid))
 
    end
@@ -5027,54 +5270,54 @@ contains
      by_row :: BIN, IN, optional
      by_column :: BIN, IN, optional
 
-     if (mx.restricted.associated) then
+     if (mx.restricted.allocated) then
        .flush
        .text("Restricted part:")
        .flush(2)
        .put(mx.restricted,by_row,by_column)
      end
 
-     if (mx.alpha.associated) then
+     if (mx.alpha.allocated) then
        .flush
        .text("Alpha part:")
        .flush(2)
        .put(mx.alpha,by_row,by_column)
      end
 
-     if (mx.beta.associated) then
+     if (mx.beta.allocated) then
        .flush
        .text("Beta part:")
        .flush(2)
        .put(mx.beta,by_row,by_column)
      end
 
-     if (mx.general.associated) then
+     if (mx.general.allocated) then
        .flush
        .text("General part:")
        .flush(2)
        .put(mx.general,by_row,by_column)
      end
 
-     if (mx.restricted_complex.associated) then
+     if (mx.restricted_complex.allocated) then
        .flush
        .text("Restricted complex part:")
        .put(mx.restricted_complex,by_row,by_column)
      end
 
-     if (mx.alpha_complex.associated) then
+     if (mx.alpha_complex.allocated) then
        .flush
        .text("Alpha complex part:")
        .flush(2)
        .put(mx.alpha_complex,by_row,by_column)
      end
 
-     if (mx.beta_complex.associated) then
+     if (mx.beta_complex.allocated) then
        .flush
        .text("Beta complex part:")
        .put(mx.beta_complex,by_row,by_column)
      end
 
-     if (mx.general_complex.associated) then
+     if (mx.general_complex.allocated) then
        .flush
        .text("General complex part:")
        .flush(2)
@@ -5864,26 +6107,22 @@ contains
 
       ! Dump
       .dump("n_bf",mx.n_bf)
-      .dmpp("restricted"        ,mx.restricted)
-      .dmpp("alpha"             ,mx.alpha)
-      .dmpp("beta"              ,mx.beta)
-      .dmpp("general"           ,mx.general)
-      .dmpp("restricted_complex",mx.restricted_complex)
-      .dmpp("alpha_complex"     ,mx.alpha_complex)
-      .dmpp("beta_complex"      ,mx.beta_complex)
-      .dmpp("general_complex"   ,mx.general_complex)
-      .dmpp("triangle"          ,mx.triangle)
-      .dmpp("square"            ,mx.square)
+      .dump("restricted"        ,mx.restricted)
+      .dump("alpha"             ,mx.alpha)
+      .dump("beta"              ,mx.beta)
+      .dump("general"           ,mx.general)
+      .dump("restricted_complex",mx.restricted_complex)
+      .dump("alpha_complex"     ,mx.alpha_complex)
+      .dump("beta_complex"      ,mx.beta_complex)
+      .dump("general_complex"   ,mx.general_complex)
+      .dump("triangle"          ,mx.triangle)
+      .dump("square"            ,mx.square)
 
       .increment_margin_width(-1)
       .flush
 
       .text("}")
 
-   end
-
-   dmpp(varname,value) ::: get_from(TEXTFILE, VALUE?=>OPMATRIX)
-   ! Dump a pointer "value" with variable name "varname".
    end
 
 !  ================

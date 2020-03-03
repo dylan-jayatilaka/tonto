@@ -348,6 +348,7 @@ push(@all_known_type_names,$array_type);
 %{$global_var_info{stdout}}   = &analyse_type_name('TEXTFILE');
 %{$global_var_info{stderr}}   = &analyse_type_name('TEXTFILE');
 %{$global_var_info{std_time}} = &analyse_type_name('TIME');
+%{$global_var_info{std_table_column}} = &analyse_type_name('TABLE_COLUMN');
 %{$global_var_info{tonto_parallel}} = &analyse_type_name('PARALLEL');
 
 %{$global_var_info{spherical_harmonics_for}} = &analyse_type_name('VEC{MAT_{REAL}}');
@@ -1082,25 +1083,26 @@ sub analyse_type_name {
                                           $is_intrinsic_type,
                                           $is_array_type);
 
-#  print "----IN analyse_type_name---------------";
-#  print "type_name         =",$type_name;
-#  print "full_type_name    =",$full_type_name;
-#  print "type_name         =",$type_name;
-#  print "sub_type_name     =",$sub_type_name;
-#  print "fortran_type_name =",$fortran_type_name;
-#  print "fortran_type_decl =",$fortran_type_decl;
-#  print "fortran_mod_name  =",$fortran_mod_name;
-#  print "fortran_self_decl =",$fortran_self_decl;
-#  print "type_head_name    =",$type_head_name;
-#  print "type_arg_part     =",$type_arg_part;
-#  print "n_type_args       =",$n_type_args;
-#  print "type_args         =",@type_arg;
-#  print "type_array_part   =",$type_array_part;
-#  print "type_size_part    =",$type_size_part;
-#  print "type_ptr_part     =",$type_ptr_part;
-#  print "is_intrinsic_type =",$is_intrinsic_type;
-#  print "is_array_type     =",$is_array_type;
-#  print "----end analyse_type_name---------------";
+ # print "----IN analyse_type_name---------------";
+ # print "line              =",$input_line;
+ # print "type_name         =",$type_name;
+ # print "full_type_name    =",$full_type_name;
+ # print "type_name         =",$type_name;
+ # print "sub_type_name     =",$sub_type_name;
+ # print "fortran_type_name =",$fortran_type_name;
+ # print "fortran_type_decl =",$fortran_type_decl;
+ # print "fortran_mod_name  =",$fortran_mod_name;
+ # print "fortran_self_decl =",$fortran_self_decl;
+ # print "type_head_name    =",$type_head_name;
+ # print "type_arg_part     =",$type_arg_part;
+ # print "n_type_args       =",$n_type_args;
+ # print "type_args         =",@type_arg;
+ # print "type_array_part   =",$type_array_part;
+ # print "type_size_part    =",$type_size_part;
+ # print "type_ptr_part     =",$type_ptr_part;
+ # print "is_intrinsic_type =",$is_intrinsic_type;
+ # print "is_array_type     =",$is_array_type;
+ # print "----end analyse_type_name---------------";
 
   $current_type_name = $full_type_name;
 
@@ -1140,7 +1142,7 @@ sub is_intrinsic_scalar_type_name {
        $type_name =~ /^INT\b([{].*[}])?/  ||
        $type_name =~ /^REAL\b([{].*[}])?/ ||
        $type_name =~ /^CPX\b([{].*[}])?/  )   { return 1; }
-   else                                    { return 0; }
+   else                                       { return 0; }
 }
 
 ######################################################
@@ -3770,6 +3772,8 @@ sub make_scalar_fortran_types {
 
       $self_kind_length_part = "(${kind}len=*)";
 
+      # Get
+
    }
 
    # If there is a len= declaration, and its not a STR, this must
@@ -4195,6 +4199,11 @@ sub convert_dots_to_fortran {
                 $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
                 $called_routines{TIME}{std_time}{module_data}  = 1;
              }
+             elsif ($arg eq 'std_table_column') {
+                $called_routines{TABLE_COLUMN}{std_table_column}{fortran_mod_name}  = 'TABLE_COLUMN';
+                $called_routines{TABLE_COLUMN}{std_table_column}{fortran_type_name} = 'TABLE_COLUMN';
+                $called_routines{TABLE_COLUMN}{std_table_column}{module_data}  = 1;
+             }
 
           # The $rout must be a routine call on object $arg
           } else {
@@ -4309,6 +4318,11 @@ sub convert_dots_to_fortran {
                     $called_routines{TIME}{std_time}{fortran_mod_name}  = 'TIME';
                     $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
                     $called_routines{TIME}{std_time}{module_data}  = 1;
+                 }
+                 elsif ($arg eq 'std_table_column') {
+                    $called_routines{TABLE_COLUMN}{std_table_column}{fortran_mod_name}  = 'TABLE_COLUMN';
+                    $called_routines{TABLE_COLUMN}{std_table_column}{fortran_type_name} = 'TABLE_COLUMN';
+                    $called_routines{TABLE_COLUMN}{std_table_column}{module_data}  = 1;
                  }
 
                  # Add called routines

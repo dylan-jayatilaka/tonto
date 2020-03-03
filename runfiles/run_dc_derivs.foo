@@ -1,0 +1,385 @@
+! This program calculates the derivatives anomalous dispersion
+! correction for the structure and list of reflections in a given CIF
+!
+! Copyright (C) Dylan Jayatilaka, 20202
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+
+program run_DC_DERIVS
+
+   implicit none
+
+   command_line :: COMMAND_LINE*
+   option,value :: STR
+   message,name :: STR
+   m :: MOLECULE*
+   n_refl,n_pADP,n_p :: INT
+   i, a,f, d,p,s, u,k :: INT
+   fac, c2,c3,c4,phase :: REAL
+   step,stepu, step1,step2,step3,step4 :: REAL
+   II,anom,val :: CPX
+   r,x,kv :: VEC{REAL}(3)
+   adp2 :: MAT{REAL}(3,3)
+   adp3 :: MAT3{REAL}(3,3,3)
+   adp4 :: MAT4{REAL}(3,3,3,3)
+   k_pt :: MAT{REAL}@
+   par0,pard :: VEC{REAL}@
+   F_anom :: VEC{CPX}@
+   F_dnom :: MAT{CPX}@
+
+   ! Macro to create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Open input files
+   stderr.create_stderr
+   stderr.open_for("write")
+   stdin.create_stdin
+
+   ! Set stdout & stderr to screen
+   stdout.create_stdout
+   stdout.set_real_width(20)
+   stdout.set_real_precision(10)
+
+   ! Clone stdout to stderr
+   stderr => stdout 
+
+   ! Get the command line
+   command_line.create
+   command_line.process_options
+
+   ! Default option values
+   step1 = 0.0001
+   step2 = 0.0001
+   step3 = 0.0001
+   step4 = 0.0001
+
+   ! Analyze command line options
+   do i = 1,command_line.n_options
+
+      ! Get options
+      option = command_line.option(i)
+      value  = command_line.option_value(i)
+
+      ! Analyze options
+      select case (option)
+
+      case("a")
+         a = value.to_int
+
+      case("s1")
+         step1  = value.to_real
+
+      case("s2")
+         step2  = value.to_real
+
+      case("s3")
+         step3  = value.to_real
+
+      case("s4")
+         step4  = value.to_real
+
+      case("h","-help")
+         stdout.text("Usage:")
+         stdout.flush
+         stdout.text("  run_dc_derivs [-s1 <size>] [-s2 <size>] [-s3 <size>] [-s4 <size>]")
+         stdout.text("                [-h,--help] -a <asymm-atom-index> <cif-file>")
+         stdout.flush
+         stdout.text("where <size> are parameter stepsizes and 'n' in -sn are the different")
+         stdout.text("different parameters. Cartesian axes and angstrom units assumed.")
+         stdout.flush
+         stdout.text("Optional arguments:")
+         stdout.flush
+         stdout.text("-a <asymm-atom-index>")
+         stdout.flush
+         stdout.text("  Supply the index of the asymmetric unit atom for which")
+         stdout.text("  the finite difference derivsatives are required")
+         stdout.flush
+         stdout.text("-h, --help")
+         stdout.flush
+         stdout.text("  Show this help message and exit")
+         stdout.flush
+         stdout.text("-s1 <size>")
+         stdout.flush
+         stdout.text("  Set the stepsize for position finite difference to <size>")
+         stdout.text("  These are parameters 1 to 3 in the list. Default: 0.0001.")
+         stdout.flush
+         stdout.text("-s2 <size>")
+         stdout.flush
+         stdout.text("  Set the stepsize for ADP2 finite difference to <size>")
+         stdout.text("  These are parameters 4 to 9. Default: 0.0001")
+         stdout.flush
+         stdout.text("-s3 <size>")
+         stdout.flush
+         stdout.text("  Set the stepsize for ADP3 finite difference to <size>")
+         stdout.text("  Parameters 10 to 19, if present. Default: 0.0001.")
+         stdout.flush
+         stdout.text("-s4 <size>")
+         stdout.flush
+         stdout.text("  Set the stepsize for ADP4 finite difference to <size>")
+         stdout.text("  Parameters 20 to 34, if present. Default: 0.0001.")
+         stdout.flush
+
+      case default
+         DIE("unknown option: "//trim(option))
+
+      end
+
+   end
+
+   ! Get cif file name
+ ! message = "argument list: read the info above!"
+ ! DIE_IF(NOT command_line.has_arguments,trim(message))
+ ! DIE_IF(NOT command_line.n_args==1 ,trim(message))
+   name = command_line.arg(1)
+
+   stdout.open_for("write")
+
+   ! Banner
+   stdout.flush
+   stdout.text("===========================================")
+   stdout.text("Derivative anomalous dispersion corrections")
+   stdout.text("===========================================")
+   stdout.flush
+   stdout.text("Print the derivatives of the complex anomalous dispersion")
+   stdout.text("corrections with respect to positional or ADP parameters,")
+   stdout.text("obtained by finite differences.")
+   stdout.flush
+   stdout.text("Usage:")
+   stdout.flush
+   stdout.text("  run_dc_derivs [-h] [-s1 <size>] [-s2 <size> [-s3 <size>] [-s4 <size>] <cif-file>")
+   stdout.flush
+   stdout.text("NOTE: dispersion coefficienmts must appear in the CIF")
+   stdout.flush
+   stdout.show("CIF name    = ",name)
+   stdout.show("step1       = ",step1)
+   stdout.show("step2       = ",step2)
+   stdout.show("step3       = ",step3)
+   stdout.show("step4       = ",step4)
+   stdout.flush
+
+   ! ========================
+   ! Create molecule
+   m.MAIN:setup
+
+   ! Process the cif file
+   m.cif.create(name)
+   m.CE:process_CIF
+
+   ! Print out
+   m.BASE:put
+
+   ! Sizes
+   n_refl = m.crystal.data.reflections.dim
+   n_pADP = m.crystal.asymmetric_unit_atom.no_of_pADPs
+
+   ! Arrays
+   k_pt.create(n_refl,3)
+   F_anom.create(n_refl)
+
+            stdout.text("#####")
+   stdout.show("n_refl        = ",n_refl)
+   stdout.show("n_pADP        = ",n_pADP)
+   stdout.flush
+
+   ! Make the k points
+   m.crystal.data.reflections.make_k_pts(k_pt,m.crystal.unit_cell)
+
+   stdout.set_no_of_fields_per_line(3)
+   stdout.flush
+   stdout.text("k_pts:")
+   stdout.put(k_pt)
+
+   ! Initialize
+   II = IMAGIFY(ONE)
+   d  = 0 ! derivatiove index
+
+   ! Asymm. unit cell atom a
+   do a = 1,m.crystal.asymmetric_unit_atom.dim
+
+      ! No. of parameters for atom a
+      n_p = m.crystal.asymmetric_unit_atom(a).no_of_pADPs
+
+      ! Fragment atom corresponding to a
+      f = m.crystal.frag_atom_for_asym_atom(a)
+
+      ! (f',f'')
+      anom = m.crystal.asymmetric_unit_atom(a).dispersion_correction
+
+      if (anom.is_zero) cycle
+
+      ! Save pADP parameters for atom a or f
+      par0 = m.atom(f).pADP_vector
+
+            stdout.text("#####")
+            stdout.show("Asymmetric unit atom a    = ",a)
+            stdout.show("Fragment atom f           = ",f)
+            stdout.show("No of parameters          = ",n_p)
+            stdout.text("par0:")
+            stdout.put(par0)
+
+      F_dnom.create(n_refl,n_p)
+      F_dnom = ZERO
+
+      do p = 1,n_p   ! Loop over parameter p
+
+         d = d + 1
+
+         ! Get step
+         step = ZERO
+         select case (p)
+         case ( 1: 3); step = step1* BOHR_PER_ANGSTROM;     stepu = step1
+         case ( 4: 9); step = step2*(BOHR_PER_ANGSTROM)**2; stepu = step2
+         case (10:19); step = step3*(BOHR_PER_ANGSTROM)**3; stepu = step3
+         case (20:34); step = step4*(BOHR_PER_ANGSTROM)**4; stepu = step4
+         end
+
+         ! Loop over -/+ step
+         do s = -1,1,2  
+
+            ! Displace pADP parameter "p" on atom f
+            pard    = par0
+            pard(p) = par0(p) + s*step         ! Displace only param p
+            m.atom(f).set_pADP_vector_to(pard)
+
+            ! Regenerate unit cell atoms
+            ! WARNING: THis WONT WORK for atoms on special positions
+            m.atom_info_made = FALSE
+            m.BASE:finalize_atoms
+            m.crystal.destroy_asymmetric_unit
+            m.crystal.make_fragment_data(m.atom,assign_atom=TRUE)
+
+            ! CHECK: print out geometry etc
+          ! stdout.text("#####")
+          ! stdout.show("Asymmetric unit atom a    = ",a)
+          ! stdout.show("Fragment atom f           = ",f)
+          ! stdout.show("Parameter p               = ",p)
+          ! stdout.show("s                         = ",s)
+          ! stdout.show("Stepsize step/Angstrom    = ",stepu)
+          ! stdout.text("pard:")
+          ! stdout.put(pard)
+          ! m.atom.put
+          ! m.crystal.put_unit_cell_geometry
+          ! m.crystal.unit_cell_atom.put
+
+            ! Get divisor 1/(2*step)
+            fac = ONE/(TWO*step)
+      
+            ! Reset F_anom
+            F_anom = ZERO
+      
+            ! Get anopmoalous contribution]
+            ! By looping over all unit cell atoms u
+            do u = 1,m.crystal.n_unit_cell_atoms
+
+               ! (f',f'')
+               anom = m.crystal.unit_cell_atom(u).dispersion_correction
+
+               if (anom.is_zero) cycle
+     
+               ! Cartesian position
+               r = m.crystal.unit_cell_atom(u).position
+
+          ! stdout.text("#####")
+             ! stdout.show("a      = ",a)
+             ! stdout.show("Atom a = ",m.crystal.asymmetric_unit_atom(a).tag)
+               stdout.show("Atom a = ",a)
+               stdout.show("p      = ",p)
+               stdout.show("s      = ",s)
+             ! stdout.show("u      = ",u)
+             ! stdout.show("r      = ",r)
+             ! stdout.show("k(:,1) = ",k_pt(1,:))
+             ! stdout.show("anom   = ",anom)
+        
+               ! Get ADP2 tensor
+               adp2 = ZERO
+               m.crystal.unit_cell_atom(u).put_ADP2_vector_to(adp2)
+           
+               ! Anharmonic part
+               adp3 = ZERO
+               if (m.crystal.unit_cell_atom(u).has_ADP3s) then
+                   m.crystal.unit_cell_atom(u).put_ADP3_vector_to(adp3)
+               end
+
+               adp4 = ZERO
+               if (m.crystal.unit_cell_atom(u).has_ADP4s) then
+                   m.crystal.unit_cell_atom(u).put_ADP4_vector_to(adp4)
+               end
+      
+               ! Add contribution for u-th atom
+               ! For all atoms u ...
+               do k = 1,n_refl
+           
+                  ! ADP tensor contracted with k vector
+                  kv = k_pt(k,:)
+           
+                  ! Temp factor exponent part - same as tonto
+                  c2 = adp2.contract_with(kv)*HALF
+                  c3 = adp3.contract_with(kv)*SIXTH
+                  c4 = adp4.contract_with(kv)*SIXTH*QUARTER
+
+               stdout.show("c4     = ",c4)
+           
+                  ! SF contribution (quartic anharmonic!)
+                  phase = kv(1)*r(1) + kv(2)*r(2) + kv(3)*r(3) ! k.r
+                  val   = anom * exp(II*phase) * exp(-c2) * (ONE - II*c3 + c4)
+
+               stdout.show("phase  = ",phase)
+               stdout.show("val    = ",val)
+           
+                  ! Add contribution
+                  F_anom(k) = F_anom(k) + val
+           
+               end ! reflection k
+            end    ! unit cell atoms u
+
+            stdout.flush
+            stdout.text("F_anom:")
+            stdout.put(F_anom)
+      
+            ! Finite difference formula
+            F_dnom(:,p) = F_dnom(:,p) + s*fac*F_anom(:)
+
+            ! Undo displacement s on "p" 
+            m.atom(f).set_pADP_vector_to(par0)
+
+            ! Regenerate unit cell atoms
+            ! WARNING: THis WONT WORK for atoms on special positions
+            m.atom_info_made = FALSE
+            m.BASE:finalize_atoms
+            m.crystal.destroy_asymmetric_unit
+            m.crystal.make_fragment_data(m.atom,assign_atom=TRUE)
+     
+         end ! +/- step s of p
+      end    ! parameter type p of asymm atom a
+
+      stdout.flush
+      stdout.text("F_dnom for this atom")
+      stdout.put(F_dnom)
+
+      F_dnom.destroy
+   
+   end       ! asymm atom 
+
+   ! Clean
+   F_anom.destroy
+   k_pt.destroy
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end
