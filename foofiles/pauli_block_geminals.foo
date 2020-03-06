@@ -248,6 +248,8 @@ contains
        case ("readin_mos=             "); .read_readin_mos
        case ("guess_type=             "); .read_guess_type
        case ("gd2_info=               "); .read_GD2_info
+       case ("make_integrals=         "); .read_make_integrals
+       case ("add_core=               "); .read_add_core
  !      case ("gen_block=              "); .read_gen_block
        case ("set_matrix_form         "); .set_matrix_form
        case ("spin_restricted=        "); .read_spin_restricted
@@ -270,6 +272,16 @@ contains
 
    read_junk ::: get_from(OBJECT), private
    ! Read in a junk string, useful for ignoring a field
+   end
+
+   read_make_integrals
+   ! Read  make_integrals flag
+     stdin.read(.make_integrals)
+   end
+
+   read_add_core
+   ! Read  add_core flag
+     stdin.read(.add_core)
    end
 
    read_n_geminals
@@ -1559,7 +1571,7 @@ contains
 !   end
 ! de
 
-   prep_nonzero_coef
+   prep_nonzero_coef ::: leaky
    ! prepare indices and products of coefficients
    ! of nonzero blocks for the calculation of integral formulas
    ! (overlap and matrix elements between PBT sets)
@@ -1651,7 +1663,7 @@ contains
 ! de
 
 ! davide: 11-11-2018/12-11-2018
-   make_int_term_list(check_arg,prep_arg,write_arg)
+   make_int_term_list(check_arg,prep_arg,write_arg) ::: leaky
    ! make the list of non zero block indices combinations for integral
    ! formula relevant to the standard PBT model
      check_arg :: BIN, optional
@@ -1704,7 +1716,15 @@ contains
      if (prep) then
         .prep_nonzero_coef
      end
-  
+   !  destroy former list if present 
+     new_item=>.int_term_ind
+     do
+       if (NOT associated(new_item)) exit
+       .int_term_ind.item.destroy
+       new_item=>.int_term_ind.next
+       deallocate(.int_term_ind)
+       .int_term_ind=>new_item
+     end
      ! initialize combinations with geminal 1 nonzero coef
      nullify(current_list)
      nullify(new_item)
@@ -4914,180 +4934,6 @@ contains
 !   end
 ! de
 
-! davide: 18-10-2019
-   prep_red_pbg_gg(red_pbg, gg, n_ex_gem) ::: leaky
-   ! prepare a new pauli_block_geminal (PBG), excluding geminals "gg";
-   ! this new PBG will be used to compute an element of the 1RDM or 2RDM,
-   ! or an element of the derivative of the 2RDM with respect to a given 
-   ! block coefficient
-   ! --------------------------------------------------------------------
-   ! red_pbg = new PBG
-   ! gg = indices of the geminals to be excluded
-   ! n_ex_gem = total number of geminals to be excluded
-     red_pbg :: PAULI_BLOCK_GEMINALS
-     gg :: VEC{INT}, IN
-     n_ex_gem :: INT, IN
-     pbg_created, exclude_gem :: BIN
-     i, j, siz, count_ex_gem, ng :: INT
-
-     ! set and check the number of geminals in the PBG 
-     ! to be prepared
-     ng = .n_geminals-n_ex_gem
-     if (ng <= 0) then
-        stdout.text("Error in prep_red_pbg_gg:")
-        stdout.text("the number of geminals to be excluded is equal to") 
-        stdout.text("or exceeds the total number of geminals.")
-        stop
-     end
-
-     ! check if PBG has been already created and, 
-     ! if already created, check its size
-     ! (actually, here we check only if the vector of vectors
-     ! ".nonzero_coef_ind" has been already created)
-     pbg_created = red_pbg.nonzero_coef_ind.created
-     if (pbg_created) then
-        if (ng /= red_pbg.n_geminals) then
-           red_pbg.nonzero_coef_ind.destroy
-           red_pbg.nonzero_coef_prod.destroy
-           red_pbg.n_geminals = ng
-           red_pbg.nonzero_coef_ind.create(ng)
-           red_pbg.nonzero_coef_prod.create(ng)
-           red_pbg.first_block=.first_block
-        end
-     else
-        red_pbg.n_geminals = ng
-        red_pbg.nonzero_coef_ind.create(ng)
-        red_pbg.nonzero_coef_prod.create(ng)
-        red_pbg.first_block=.first_block
-     end
-
-     ! prepare information to compute the reduced 
-     ! overlap, excluding geminals "gg"
-     count_ex_gem = 0
-     do i=1,.n_geminals
-        exclude_gem = any(gg(1:n_ex_gem) == i)
-        if (exclude_gem) then
-           count_ex_gem = count_ex_gem+1
-           cycle
-        else
-           j = i-count_ex_gem
-           ! create a new vector of nonzero block indices
-           ! (after destroying the one already created)
-           red_pbg.nonzero_coef_ind(j).element.destroy
-           siz = size(.nonzero_coef_ind(i).element)
-           red_pbg.nonzero_coef_ind(j).element.create(siz)
-           red_pbg.nonzero_coef_ind(j).element = .nonzero_coef_ind(i).element
-         !debug stdout.show("block indices, geminal", i)
-         !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
-           ! create a new vector of nonzero products of coefficients
-           ! (after destroying the one already created)
-           red_pbg.nonzero_coef_prod(j).element.destroy
-           siz = size(.nonzero_coef_prod(i).element)
-           red_pbg.nonzero_coef_prod(j).element.create(siz)
-           red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
-         !debug stdout.show("coefficient products, geminal", i)
-         !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
-        end
-     end
-
-   end
-
-   prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem) ::: leaky
-   ! prepare a new pauli_block_geminal (PBG), excluding geminals "gg"
-   ! and 2D blocks "bb"; this new PBG will be used to compute an element 
-   ! of the 1RDM or 2RDM, or an element of the derivative of the 2RDM
-   ! with respect to a given block coefficient
-   ! --------------------------------------------------------------------
-   ! red_pbg = new PBG
-   ! gg = indices of the geminals to be excluded
-   ! n_ex_gem = total number of geminals to be excluded
-   ! bb = indices of the 2D blocks to be excluded
-   ! n_ex_blk = total number of 2D blocks to be excluded
-     red_pbg :: PAULI_BLOCK_GEMINALS
-     gg, bb :: VEC{INT}, IN
-     n_ex_gem, n_ex_blk :: INT, IN
-     problem :: BIN, INOUT
-     pbg_created, exclude_gem, exclude_blk :: BIN
-     i, j, k, l :: INT
-     siz, count_ex_gem, ng :: INT
-     count_ex_blk, nb, ib, nz_blk :: INT
-
-     ! check if PBG has been created before and, 
-     ! if already created, check its size
-     ! (actually, here we check only if the vector of vectors
-     ! ".nonzero_coef_ind" has been already created)
-     pbg_created = red_pbg.nonzero_coef_ind.created
-     ng = .n_geminals-n_ex_gem
-     if (pbg_created) then
-        if (ng /= red_pbg.n_geminals) then
-           red_pbg.nonzero_coef_ind.destroy
-           red_pbg.nonzero_coef_prod.destroy
-           red_pbg.n_geminals = ng
-           red_pbg.nonzero_coef_ind.create(ng)
-           red_pbg.nonzero_coef_prod.create(ng)
-           red_pbg.first_block=.first_block
-        end
-     else
-        red_pbg.n_geminals = ng
-        red_pbg.nonzero_coef_ind.create(ng)
-        red_pbg.nonzero_coef_prod.create(ng)
-        red_pbg.first_block=.first_block
-     end
-
-     ! prepare information to compute the reduced overlap, 
-     ! excluding geminals "gg" and blocks "bb"
-     problem = FALSE
-     count_ex_gem = 0
-     do i=1,.n_geminals
-        exclude_gem = any(gg(1:n_ex_gem) == i)
-        if (exclude_gem) then
-           count_ex_gem = count_ex_gem+1
-           cycle
-        else
-           j = i-count_ex_gem
-           ! create a new vector of nonzero block indices
-           ! (after destroying the one already created)
-           red_pbg.nonzero_coef_ind(j).element.destroy
-           nz_blk = size(.nonzero_coef_ind(i).element)
-           red_pbg.nonzero_coef_ind(j).element.create(nz_blk)
-           ! construct "nonzero_coef_ind" excluding blocks "bb" 
-           ! (if present among the nonzero blocks)
-           count_ex_blk = 0
-           do k=1,nz_blk
-              ib = .nonzero_coef_ind(i).element(k)
-              exclude_blk = any(bb(1:n_ex_blk) == ib)
-              if (exclude_blk) then
-                 count_ex_blk = count_ex_blk+1
-                 cycle
-              else
-                 l = k-count_ex_blk
-                 red_pbg.nonzero_coef_ind(j).element(l) = .nonzero_coef_ind(i).element(k)
-              end
-           end
-           !!!
-           if (nz_blk <= 1 AND count_ex_blk /= 0) then
-              problem = TRUE
-              return
-           end
-           !!!
-           nb = nz_blk-count_ex_blk
-           red_pbg.nonzero_coef_ind(j).element.shrink(nb)
-         !debug stdout.show("block indices, geminal", i)
-         !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
-           ! create a new vector of nonzero products of coefficients
-           ! (after destroying the one already created)
-           red_pbg.nonzero_coef_prod(j).element.destroy
-           siz = size(.nonzero_coef_prod(i).element)
-           red_pbg.nonzero_coef_prod(j).element.create(siz)
-           red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
-         !debug stdout.show("coefficient products, geminal", i)
-         !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
-        end
-     end
-
-   end
-! de
-
    create_2rdm_grad_info_tmp(nb_terms) ::: leaky
    ! create temporary object employed to save the information, about
    ! the 2RDM elements, required to compute the energy gradient with
@@ -5451,7 +5297,7 @@ contains
 !
 !   end
 
-   save_2rdm_grad_info(rdm2_type, irdm, nt, terms, allpairs_arg)
+   save_2rdm_grad_info(rdm2_type, irdm, nt, terms, allpairs_arg) ::: leaky
    ! save information about the 2rdm element "irdm"
    ! (this info. will be used in the calculation 
    ! of the energy gradient)
@@ -6050,7 +5896,7 @@ contains
 !   end
 
 ! davide: 28-11-2018
-   calc_1rdm
+   calc_1rdm ::: leaky
    ! compute the 1-reduced density matrix
    ! for a set of PBT
      i, j :: INT
@@ -6207,7 +6053,7 @@ contains
    end
 ! de
 
-   calc_2rdm
+   calc_2rdm ::: leaky
    ! compute the 2-reduced density matrix
    ! for a set of PBT   
      ng_1, ng_2 :: INT
@@ -6378,7 +6224,7 @@ contains
    
    end
 
-   calc_2rdm_grd
+   calc_2rdm_grd ::: leaky
    ! compute the 2-reduced density matrix
    ! for a set of PBT, in case of optimization of the block
    ! coefficients (storing information for gradient calculation
@@ -10184,6 +10030,7 @@ contains
         if (i < g) then
            ! create vector of nonzero block indices
            siz = size(.nonzero_coef_ind(i).element)
+           red_pbg.nonzero_coef_ind(i).element.destroy
            red_pbg.nonzero_coef_ind(i).element.create(siz)
            red_pbg.nonzero_coef_ind(i).element = .nonzero_coef_ind(i).element
          !debug stdout.show("block indices, geminal", i)
@@ -10199,6 +10046,7 @@ contains
            j = i-1
            ! create vector of nonzero block indices
            siz = size(.nonzero_coef_ind(i).element)
+           red_pbg.nonzero_coef_ind(j).element.destroy
            red_pbg.nonzero_coef_ind(j).element.create(siz)
            red_pbg.nonzero_coef_ind(j).element = .nonzero_coef_ind(i).element
          !debug stdout.show("block indices, geminal", i)
@@ -10240,6 +10088,7 @@ contains
         siz = size(.nonzero_coef_ind(i).element)
         if (i < t) then
            ! create vector of nonzero block indices
+           red_pbg.nonzero_coef_ind(i).element.destroy
            red_pbg.nonzero_coef_ind(i).element.create(siz)
            red_pbg.nonzero_coef_ind(i).element = .nonzero_coef_ind(i).element
          !debug stdout.show("block indices, geminal", i)
@@ -10254,6 +10103,7 @@ contains
          else if (i > t AND i < tt) then ! to skip geminal t and shift the following geminals i<tt by -1
            j = i-1
            ! create vector of nonzero block indices
+           red_pbg.nonzero_coef_ind(j).element.destroy
            red_pbg.nonzero_coef_ind(j).element.create(siz)
            red_pbg.nonzero_coef_ind(j).element = .nonzero_coef_ind(i).element
          !debug stdout.show("block indices, geminal", i)
@@ -10268,6 +10118,7 @@ contains
         else if (i > tt) then  ! to skip the two geminals and shift the following ones by -2
            k = i-2
            ! create vector of nonzero block indices
+           red_pbg.nonzero_coef_ind(k).element.destroy
            red_pbg.nonzero_coef_ind(k).element.create(siz)
            red_pbg.nonzero_coef_ind(k).element = .nonzero_coef_ind(i).element
          !debug stdout.show("block indices, geminal", i)
@@ -10313,6 +10164,7 @@ contains
         if (i < g) then
            if (presence AND (siz>1)) then ! to skip block b, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz-1)
               red_pbg.nonzero_coef_ind(i).element(1:ind-1) = .nonzero_coef_ind(i).element(1:ind-1)
               red_pbg.nonzero_coef_ind(i).element(ind:siz-1) = .nonzero_coef_ind(i).element(ind+1:siz)
@@ -10320,18 +10172,21 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_ind(i).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(i).element.destroy
               red_pbg.nonzero_coef_prod(i).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(i).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_prod(i).element)
            else if (NOT presence) then
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz)
               red_pbg.nonzero_coef_ind(i).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_ind(i).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(i).element.destroy
               red_pbg.nonzero_coef_prod(i).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(i).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
@@ -10344,6 +10199,7 @@ contains
            j = i-1
            if (presence AND (siz>1)) then ! to skip block b, if present
               ! create vectors of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz-1)
               red_pbg.nonzero_coef_ind(j).element(1:ind-1) = .nonzero_coef_ind(i).element(1:ind-1)
               red_pbg.nonzero_coef_ind(j).element(ind:siz-1) = .nonzero_coef_ind(i).element(ind+1:siz)
@@ -10351,18 +10207,21 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
               ! create list of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(j).element.destroy
               red_pbg.nonzero_coef_prod(j).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
            else if (NOT presence) then
               ! create vectors of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz)
               red_pbg.nonzero_coef_ind(j).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
               ! create list of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(j).element.destroy
               red_pbg.nonzero_coef_prod(j).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
@@ -10422,6 +10281,7 @@ contains
         if (i < g) then
            if (presence1 AND (NOT presence2) AND (siz>1)) then ! to skip block b1, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz-1)
               red_pbg.nonzero_coef_ind(i).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(i).element(ind1:siz-1) = .nonzero_coef_ind(i).element(ind1+1:siz)
@@ -10429,12 +10289,14 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_ind(i).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(i).element.destroy
               red_pbg.nonzero_coef_prod(i).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(i).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_prod(i).element)
            else if ((NOT presence1) AND presence2 AND (siz>1)) then ! to skip block b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz-1)
               red_pbg.nonzero_coef_ind(i).element(1:ind2-1) = .nonzero_coef_ind(i).element(1:ind2-1)
               red_pbg.nonzero_coef_ind(i).element(ind2:siz-1) = .nonzero_coef_ind(i).element(ind2+1:siz)
@@ -10442,12 +10304,14 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_ind(i).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(i).element.destroy
               red_pbg.nonzero_coef_prod(i).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(i).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_prod(i).element)
            else if (presence1 AND presence2 AND (siz>2)) then ! to skip blocks b1 and b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz-2)
               red_pbg.nonzero_coef_ind(i).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(i).element(ind1:ind2-2) = .nonzero_coef_ind(i).element(ind1+1:ind2-1)
@@ -10456,18 +10320,21 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_ind(i).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(i).element.destroy
               red_pbg.nonzero_coef_prod(i).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(i).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_prod(i).element)
            else if ((NOT presence1) AND (NOT presence2)) then
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz)
               red_pbg.nonzero_coef_ind(i).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_ind(i).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(i).element.destroy
               red_pbg.nonzero_coef_prod(i).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(i).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
@@ -10480,6 +10347,7 @@ contains
            j = i-1
            if (presence1 AND (NOT presence2) AND (siz>1)) then ! to skip block b1, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz-1)
               red_pbg.nonzero_coef_ind(j).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(j).element(ind1:siz-1) = .nonzero_coef_ind(i).element(ind1+1:siz)
@@ -10487,12 +10355,14 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(j).element.destroy
               red_pbg.nonzero_coef_prod(j).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
            else if ((NOT presence1) AND presence2 AND (siz>1)) then ! to skip block b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz-1)
               red_pbg.nonzero_coef_ind(j).element(1:ind2-1) = .nonzero_coef_ind(i).element(1:ind2-1)
               red_pbg.nonzero_coef_ind(j).element(ind2:siz-1) = .nonzero_coef_ind(i).element(ind2+1:siz)
@@ -10500,12 +10370,14 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(j).element.destroy
               red_pbg.nonzero_coef_prod(j).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
            else if (presence1 AND presence2 AND (siz>2)) then ! to skip blocks b1 and b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz-2)
               red_pbg.nonzero_coef_ind(j).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(j).element(ind1:ind2-2) = .nonzero_coef_ind(i).element(ind1+1:ind2-1)
@@ -10514,18 +10386,21 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(j).element.destroy
               red_pbg.nonzero_coef_prod(j).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
            else if ((NOT presence1) AND (NOT presence2)) then
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz)
               red_pbg.nonzero_coef_ind(j).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
             !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
               ! create vector of nonzero products of coefficients
               siz_prod = size(.nonzero_coef_prod(i).element)
+              red_pbg.nonzero_coef_prod(j).element.destroy
               red_pbg.nonzero_coef_prod(j).element.create(siz_prod)
               red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
             !debug stdout.show("coefficient products, geminal", i)
@@ -10578,6 +10453,7 @@ contains
         if (i < t) then
            if (presence AND (siz>1)) then ! to skip block b, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz-1)
               red_pbg.nonzero_coef_ind(i).element(1:ind-1) = .nonzero_coef_ind(i).element(1:ind-1)
               red_pbg.nonzero_coef_ind(i).element(ind:siz-1) = .nonzero_coef_ind(i).element(ind+1:siz)
@@ -10592,6 +10468,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(i).element)
            else if (NOT presence) then
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz)
               red_pbg.nonzero_coef_ind(i).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
@@ -10611,6 +10488,7 @@ contains
            j = i-1
            if (presence AND (siz>1)) then ! to skip block b, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz-1)
               red_pbg.nonzero_coef_ind(j).element(1:ind-1) = .nonzero_coef_ind(i).element(1:ind-1)
               red_pbg.nonzero_coef_ind(j).element(ind:siz-1) = .nonzero_coef_ind(i).element(ind+1:siz)
@@ -10625,6 +10503,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
            else if (NOT presence) then
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz)
               red_pbg.nonzero_coef_ind(j).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
@@ -10644,6 +10523,7 @@ contains
            k = i-2
            if (presence AND (siz>1)) then ! to skip block b, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(k).element.destroy
               red_pbg.nonzero_coef_ind(k).element.create(siz-1)
               red_pbg.nonzero_coef_ind(k).element(1:ind-1) = .nonzero_coef_ind(i).element(1:ind-1)
               red_pbg.nonzero_coef_ind(k).element(ind:siz-1) = .nonzero_coef_ind(i).element(ind+1:siz)
@@ -10658,6 +10538,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(k).element)
            else if (NOT presence) then
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(k).element.destroy
               red_pbg.nonzero_coef_ind(k).element.create(siz)
               red_pbg.nonzero_coef_ind(k).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
@@ -10731,6 +10612,7 @@ contains
         if (i < t) then
            if (presence1 AND (NOT presence2) AND (siz>1)) then ! to skip block b1, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz-1)
               red_pbg.nonzero_coef_ind(i).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(i).element(ind1:siz-1) = .nonzero_coef_ind(i).element(ind1+1:siz)
@@ -10745,6 +10627,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(i).element)
            else if ((NOT presence1) AND presence2 AND (siz>1)) then ! to skip block b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz-1)
               red_pbg.nonzero_coef_ind(i).element(1:ind2-1) = .nonzero_coef_ind(i).element(1:ind2-1)
               red_pbg.nonzero_coef_ind(i).element(ind2:siz-1) = .nonzero_coef_ind(i).element(ind2+1:siz)
@@ -10759,6 +10642,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(i).element)
            else if (presence1 AND presence2 AND (siz>2)) then ! to skip blocks b1 and b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz-2)
               red_pbg.nonzero_coef_ind(i).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(i).element(ind1:ind2-2) = .nonzero_coef_ind(i).element(ind1+1:ind2-1)
@@ -10774,6 +10658,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(i).element)
            else if ((NOT presence1) AND (NOT presence2)) then
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(i).element.destroy
               red_pbg.nonzero_coef_ind(i).element.create(siz)
               red_pbg.nonzero_coef_ind(i).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
@@ -10793,6 +10678,7 @@ contains
            j = i-1
            if (presence1 AND (NOT presence2) AND (siz>1)) then ! to skip block b1, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz-1)
               red_pbg.nonzero_coef_ind(j).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(j).element(ind1:siz-1) = .nonzero_coef_ind(i).element(ind1+1:siz)
@@ -10807,6 +10693,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
            else if ((NOT presence1) AND presence2 AND (siz>1)) then ! to skip block b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz-1)
               red_pbg.nonzero_coef_ind(j).element(1:ind2-1) = .nonzero_coef_ind(i).element(1:ind2-1)
               red_pbg.nonzero_coef_ind(j).element(ind2:siz-1) = .nonzero_coef_ind(i).element(ind2+1:siz)
@@ -10821,6 +10708,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
            else if (presence1 AND presence2 AND (siz>2)) then ! to skip blocks b1 and b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz-2)
               red_pbg.nonzero_coef_ind(j).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(j).element(ind1:ind2-2) = .nonzero_coef_ind(i).element(ind1+1:ind2-1)
@@ -10836,6 +10724,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
            else if ((NOT presence1) AND (NOT presence2)) then
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(j).element.destroy
               red_pbg.nonzero_coef_ind(j).element.create(siz)
               red_pbg.nonzero_coef_ind(j).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
@@ -10855,6 +10744,7 @@ contains
            k = i-2
            if (presence1 AND (NOT presence2) AND (siz>1)) then ! to skip block b1, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(k).element.destroy
               red_pbg.nonzero_coef_ind(k).element.create(siz-1)
               red_pbg.nonzero_coef_ind(k).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(k).element(ind1:siz-1) = .nonzero_coef_ind(i).element(ind1+1:siz)
@@ -10869,6 +10759,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(k).element)
            else if ((NOT presence1) AND presence2 AND (siz>1)) then ! to skip block b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(k).element.destroy
               red_pbg.nonzero_coef_ind(k).element.create(siz-1)
               red_pbg.nonzero_coef_ind(k).element(1:ind2-1) = .nonzero_coef_ind(i).element(1:ind2-1)
               red_pbg.nonzero_coef_ind(k).element(ind2:siz-1) = .nonzero_coef_ind(i).element(ind2+1:siz)
@@ -10883,6 +10774,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(k).element)
            else if (presence1 AND presence2 AND (siz>2)) then ! to skip blocks b1 and b2, if present
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(k).element.destroy
               red_pbg.nonzero_coef_ind(k).element.create(siz-2)
               red_pbg.nonzero_coef_ind(k).element(1:ind1-1) = .nonzero_coef_ind(i).element(1:ind1-1)
               red_pbg.nonzero_coef_ind(k).element(ind1:ind2-2) = .nonzero_coef_ind(i).element(ind1+1:ind2-1)
@@ -10898,6 +10790,7 @@ contains
             !debug stdout.put(red_pbg.nonzero_coef_prod(k).element)
            else if ((NOT presence1) AND (NOT presence2)) then
               ! create vector of nonzero block indices
+              red_pbg.nonzero_coef_ind(k).element.destroy
               red_pbg.nonzero_coef_ind(k).element.create(siz)
               red_pbg.nonzero_coef_ind(k).element = .nonzero_coef_ind(i).element
             !debug stdout.show("block indices, geminal", i)
@@ -10916,6 +10809,181 @@ contains
         end
      end
    end
+
+
+! davide: 18-10-2019
+   prep_red_pbg_gg(red_pbg, gg, n_ex_gem) ::: leaky
+   ! prepare a new pauli_block_geminal (PBG), excluding geminals "gg";
+   ! this new PBG will be used to compute an element of the 1RDM or 2RDM,
+   ! or an element of the derivative of the 2RDM with respect to a given 
+   ! block coefficient
+   ! --------------------------------------------------------------------
+   ! red_pbg = new PBG
+   ! gg = indices of the geminals to be excluded
+   ! n_ex_gem = total number of geminals to be excluded
+     red_pbg :: PAULI_BLOCK_GEMINALS
+     gg :: VEC{INT}, IN
+     n_ex_gem :: INT, IN
+     pbg_created, exclude_gem :: BIN
+     i, j, siz, count_ex_gem, ng :: INT
+
+     ! set and check the number of geminals in the PBG 
+     ! to be prepared
+     ng = .n_geminals-n_ex_gem
+     if (ng <= 0) then
+        stdout.text("Error in prep_red_pbg_gg:")
+        stdout.text("the number of geminals to be excluded is equal to") 
+        stdout.text("or exceeds the total number of geminals.")
+        stop
+     end
+
+     ! check if PBG has been already created and, 
+     ! if already created, check its size
+     ! (actually, here we check only if the vector of vectors
+     ! ".nonzero_coef_ind" has been already created)
+     pbg_created = red_pbg.nonzero_coef_ind.created
+     if (pbg_created) then
+        if (ng /= red_pbg.n_geminals) then
+           red_pbg.nonzero_coef_ind.destroy
+           red_pbg.nonzero_coef_prod.destroy
+           red_pbg.n_geminals = ng
+           red_pbg.nonzero_coef_ind.create(ng)
+           red_pbg.nonzero_coef_prod.create(ng)
+           red_pbg.first_block=.first_block
+        end
+     else
+        red_pbg.n_geminals = ng
+        red_pbg.nonzero_coef_ind.create(ng)
+        red_pbg.nonzero_coef_prod.create(ng)
+        red_pbg.first_block=.first_block
+     end
+
+     ! prepare information to compute the reduced 
+     ! overlap, excluding geminals "gg"
+     count_ex_gem = 0
+     do i=1,.n_geminals
+        exclude_gem = any(gg(1:n_ex_gem) == i)
+        if (exclude_gem) then
+           count_ex_gem = count_ex_gem+1
+           cycle
+        else
+           j = i-count_ex_gem
+           ! create a new vector of nonzero block indices
+           ! (after destroying the one already created)
+           red_pbg.nonzero_coef_ind(j).element.destroy
+           siz = size(.nonzero_coef_ind(i).element)
+           red_pbg.nonzero_coef_ind(j).element.create(siz)
+           red_pbg.nonzero_coef_ind(j).element = .nonzero_coef_ind(i).element
+         !debug stdout.show("block indices, geminal", i)
+         !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
+           ! create a new vector of nonzero products of coefficients
+           ! (after destroying the one already created)
+           red_pbg.nonzero_coef_prod(j).element.destroy
+           siz = size(.nonzero_coef_prod(i).element)
+           red_pbg.nonzero_coef_prod(j).element.create(siz)
+           red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
+         !debug stdout.show("coefficient products, geminal", i)
+         !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
+        end
+     end
+
+   end
+
+   prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem) ::: leaky
+   ! prepare a new pauli_block_geminal (PBG), excluding geminals "gg"
+   ! and 2D blocks "bb"; this new PBG will be used to compute an element 
+   ! of the 1RDM or 2RDM, or an element of the derivative of the 2RDM
+   ! with respect to a given block coefficient
+   ! --------------------------------------------------------------------
+   ! red_pbg = new PBG
+   ! gg = indices of the geminals to be excluded
+   ! n_ex_gem = total number of geminals to be excluded
+   ! bb = indices of the 2D blocks to be excluded
+   ! n_ex_blk = total number of 2D blocks to be excluded
+     red_pbg :: PAULI_BLOCK_GEMINALS
+     gg, bb :: VEC{INT}, IN
+     n_ex_gem, n_ex_blk :: INT, IN
+     problem :: BIN, INOUT
+     pbg_created, exclude_gem, exclude_blk :: BIN
+     i, j, k, l :: INT
+     siz, count_ex_gem, ng :: INT
+     count_ex_blk, nb, ib, nz_blk :: INT
+
+     ! check if PBG has been created before and, 
+     ! if already created, check its size
+     ! (actually, here we check only if the vector of vectors
+     ! ".nonzero_coef_ind" has been already created)
+     pbg_created = red_pbg.nonzero_coef_ind.created
+     ng = .n_geminals-n_ex_gem
+     if (pbg_created) then
+        if (ng /= red_pbg.n_geminals) then
+           red_pbg.nonzero_coef_ind.destroy
+           red_pbg.nonzero_coef_prod.destroy
+           red_pbg.n_geminals = ng
+           red_pbg.nonzero_coef_ind.create(ng)
+           red_pbg.nonzero_coef_prod.create(ng)
+           red_pbg.first_block=.first_block
+        end
+     else
+        red_pbg.n_geminals = ng
+        red_pbg.nonzero_coef_ind.create(ng)
+        red_pbg.nonzero_coef_prod.create(ng)
+        red_pbg.first_block=.first_block
+     end
+
+     ! prepare information to compute the reduced overlap, 
+     ! excluding geminals "gg" and blocks "bb"
+     problem = FALSE
+     count_ex_gem = 0
+     do i=1,.n_geminals
+        exclude_gem = any(gg(1:n_ex_gem) == i)
+        if (exclude_gem) then
+           count_ex_gem = count_ex_gem+1
+           cycle
+        else
+           j = i-count_ex_gem
+           ! create a new vector of nonzero block indices
+           ! (after destroying the one already created)
+           red_pbg.nonzero_coef_ind(j).element.destroy
+           nz_blk = size(.nonzero_coef_ind(i).element)
+           red_pbg.nonzero_coef_ind(j).element.create(nz_blk)
+           ! construct "nonzero_coef_ind" excluding blocks "bb" 
+           ! (if present among the nonzero blocks)
+           count_ex_blk = 0
+           do k=1,nz_blk
+              ib = .nonzero_coef_ind(i).element(k)
+              exclude_blk = any(bb(1:n_ex_blk) == ib)
+              if (exclude_blk) then
+                 count_ex_blk = count_ex_blk+1
+                 cycle
+              else
+                 l = k-count_ex_blk
+                 red_pbg.nonzero_coef_ind(j).element(l) = .nonzero_coef_ind(i).element(k)
+              end
+           end
+           !!!
+           if (nz_blk <= 1 AND count_ex_blk /= 0) then
+              problem = TRUE
+              return
+           end
+           !!!
+           nb = nz_blk-count_ex_blk
+           red_pbg.nonzero_coef_ind(j).element.shrink(nb)
+         !debug stdout.show("block indices, geminal", i)
+         !debug stdout.put(red_pbg.nonzero_coef_ind(j).element)
+           ! create a new vector of nonzero products of coefficients
+           ! (after destroying the one already created)
+           red_pbg.nonzero_coef_prod(j).element.destroy
+           siz = size(.nonzero_coef_prod(i).element)
+           red_pbg.nonzero_coef_prod(j).element.create(siz)
+           red_pbg.nonzero_coef_prod(j).element = .nonzero_coef_prod(i).element
+         !debug stdout.show("coefficient products, geminal", i)
+         !debug stdout.put(red_pbg.nonzero_coef_prod(j).element)
+        end
+     end
+
+   end
+! de
 
 ! davide: 27-11-2018
    prep_orbital_block_mapping
