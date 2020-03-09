@@ -1830,12 +1830,12 @@ contains
    ENSURE(.fock_matrix.associated, "no fock matrix")
    ENSURE(.fock_matrix.has_any_genre, "no fock matrix")
 
-      MO,D,MOa,MOb,Da,Db,F,Fa,Fb :: MAT{REAL}*
+      MO,D,MOa,MOb,Da,Db,F,Fa,Fb :: MAT{REAL}@
       scf_method,genre :: STR
 
       ! Ensure we have this
-      if (NOT .core_matrix.created) then
-         .make_core_matrix
+      if (.core_matrix.deallocated) then
+         .:make_core_matrix
       end
 
       ! Determine (or guess) the kind of SCF method to be used.
@@ -1849,13 +1849,8 @@ contains
       else;                          genre = .molecular_orbitals.spinorbital_kind
       end
 
-      ! Create the density matrix (leaky)
-      if (.Edensity_matrix.disassociated) .E_density_matrix.create(.n_bf)
-      .E_density_matrix.destroy(genre)
-      .E_density_matrix.create(genre)
-
       ! Make the Krogel matrix
-      .E_density_matrix.create_copy(.fock_matrix)
+      .E_density_matrix = .fock_matrix
       .E_density_matrix.plus(.core_matrix)
       .E_density_matrix.scale_by(HALF)
 
@@ -1868,35 +1863,30 @@ contains
 
       case ("rhf","rks","xray_rks","xray_rhf","noninteracting-group-rhf")
 
-         ENSURE(.E_natural_orbitals.is_associated_with_genre("restricted"),"no MO's")
+         ENSURE(.E_natural_orbitals.is_allocated_with_genre("restricted"),"no MO's")
          ENSURE(.spin_multiplicity==1,"Not a singlet state: "//trim(.BASE:chemical_formula)//", mult="//trim(.spin_multiplicity.to_str))
 
-         MO => .E_natural_orbitals.restricted(:,1:.n_a)
-         D  => .E_density_matrix.restricted
-         D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
+         MO = .E_natural_orbitals.restricted(:,1:.n_a)
+         .E_density_matrix.restricted.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
 
       case ("rohf")
 
-         ENSURE(.molecular_orbitals.is_associated_with_genre("restricted"),"no MO's")
+         ENSURE(.molecular_orbitals.is_allocated_with_genre("restricted"),"no MO's")
 
-         Da  => .density_matrix.alpha
-         Db  => .density_matrix.beta
-         MOa => .molecular_orbitals.restricted(:,1:.n_a)
-         MOb => .molecular_orbitals.restricted(:,1:.n_b)
-         Da.to_product_of(MOa,MOa,transpose_b=TRUE)
-         Db.to_product_of(MOb,MOb,transpose_b=TRUE)
+         MOa = .molecular_orbitals.restricted(:,1:.n_a)
+         MOb = .molecular_orbitals.restricted(:,1:.n_b)
+         .density_matrix.alpha.to_product_of(MOa,MOa,transpose_b=TRUE)
+         .density_matrix.beta.to_product_of(MOb,MOb,transpose_b=TRUE)
 
       case ("uhf","uks","xray_uhf","xray_uks", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
 
-         ENSURE(.molecular_orbitals.is_associated_with_genre("unrestricted"),"no MO's")
+         ENSURE(.molecular_orbitals.is_allocated_with_genre("unrestricted"),"no MO's")
 
-            MOa => .molecular_orbitals.alpha(:,1:.n_a)
-            MOb => .molecular_orbitals.beta(:,1:.n_b)
-            Da  => .density_matrix.alpha
-            Db  => .density_matrix.beta
-            Da.to_product_of(MOa,MOa,transpose_b=TRUE)
-            Db.to_product_of(MOb,MOb,transpose_b=TRUE)
+            MOa = .molecular_orbitals.alpha(:,1:.n_a)
+            MOb = .molecular_orbitals.beta(:,1:.n_b)
+            .density_matrix.alpha.to_product_of(MOa,MOa,transpose_b=TRUE)
+            .density_matrix.beta.to_product_of(MOb,MOb,transpose_b=TRUE)
 
       case default
 
@@ -6819,6 +6809,87 @@ contains
 
    end
 
+   make_gc_fock_guess(MO_energies,MO,fock_matrix)
+   ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
+   ! a given complex general "fock_matrix".
+      self :: INOUT
+      MO_energies :: VEC{REAL}, OUT
+      MO :: MAT{CPX}, OUT
+      fock_matrix :: MAT{CPX}, IN
+
+   DIE_IF(NOT fock_matrix.is_hermitian,"fock_matrix not hermitian!  WTF?!")
+   ENSURE(.overlap_matrix.associated,"no overlap matrix")
+
+      S,R :: MAT{REAL}*
+      H :: MAT{CPX}*
+
+      R.create(2*.n_bf,2*.n_bf)
+      S.create(.n_bf,.n_bf)
+
+      ! S = S^-1/2, R = big inverse S
+      .INTS:make_r_overlap_inverse_sqrt(S)
+
+      ! R = big inverse S
+      R = ZERO
+      R.alpha_alpha_set_to(S)
+      R.beta_beta_set_to(S)
+      S.destroy
+
+      ! H = Fock matrix
+      H.create(2*.n_bf,2*.n_bf)
+      H = fock_matrix
+
+      ! H = S^-1/2 F S^-1/2
+      H.change_basis_using(R)
+
+      H.diagonalize_by_jacobi(MO_energies,MO)
+
+      !  c  = S^-1/2 c~
+      H.to_product_of(R,MO)
+      MO = H
+
+      ! Clean
+      H.destroy
+      R.destroy
+
+   end
+
+   make_r_guess_from(fock_matrix,MO_energies,MO) ::: private
+   ! Make initial "MO's" and "MO_energies" from a given "fock_matrix"
+   ! ... for cartesian basis functions
+      fock_matrix :: MAT{REAL}, IN
+      MO :: MAT{REAL}, OUT
+      MO_energies :: VEC{REAL}, OUT
+
+   DIE_IF(NOT fock_matrix.is_symmetric,"fock_matrix not symmetric!  WTF?!")
+
+      F,R :: MAT{REAL}* DEFAULT_NULL
+
+      F.create(.n_bf,.n_bf)
+      R.create(.n_bf,.n_bf)
+
+      !  Get S^{-1/2 }
+      .INTS:make_r_overlap_inverse_sqrt(R)
+
+      !  H~ = S^-1/2 H S^-1/2
+      fock_matrix.change_basis_to(F,R)
+
+      ! Remove linear dependence
+      if (.scfdata.associated) .BASE:shift_dependence_from_r(F)
+
+      !  Solve for c~
+      F.solve_symmetric_eigenproblem(MO_energies,MO)
+
+      ! Back transform: c = S^{-1/2} c~
+      F.to_product_of(R,MO)
+      MO = F
+
+      ! Clean
+      R.destroy
+      F.destroy
+
+   end
+
 
    diagonalize_r_matrix(H,eigenvalues,eigenvectors) ::: private
    ! Diagonalize a restricted one-electron AO operator matrix "H",
@@ -6826,6 +6897,7 @@ contains
       self :: INOUT
       H :: MAT{REAL}, IN
       eigenvalues :: VEC{REAL}, OUT
+      eigenvectors :: MAT{REAL}, OUT
 
    DIE_IF(NOT H.is_symmetric,"H not symmetric!  WTF?!")
 
@@ -6843,7 +6915,7 @@ contains
       ! Remove linear dependence
       if (.scfdata.associated) .BASE:shift_dependence_from_r(F)
 
-      !  Solve for c~
+      !  Solve for cO~
       F.solve_symmetric_eigenproblem(eigenvalues,eigenvectors)
 
       ! Back transform: c = S^{-1/2} c~
@@ -6856,62 +6928,62 @@ contains
 
    end
 
-!   diagonalize_gen_matrix(H,eigenvalues,eigenvectors) ::: template
-!   ! Diagonalize a general (complex) one-electron AO operator matrix
-!   ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
-!   ! the basis.
-!      self :: INOUT
-!      H :: TYPE?, IN
-!      eigenvalues :: VEC{REAL}, OUT
-!      eigenvectors :: TYPE?, OUT
-!
-! ! DIE_IF(NOT H.is_hermitian,"fock_matrix not hermitian!  WTF?!")
-!
-!      S,R :: MAT{REAL}*
-!      F :: MAT{CPX}*
-!
-!      R.create(2*.n_bf,2*.n_bf)
-!      S.create(.n_bf,.n_bf)
-!
-!      ! S = S^-1/2, R = big inverse S
-!      .INTS:make_r_overlap_inverse_sqrt(S)
-!
-!      ! R = big inverse S
-!      R = ZERO
-!      R.alpha_alpha_set_to(S)
-!      R.beta_beta_set_to(S)
-!      S.destroy
-!
-!      ! H = Fock matrix
-!      F.create(2*.n_bf,2*.n_bf)
-!      F = H
-!
-!      ! H = S^-1/2 F S^-1/2
-!      F.change_basis_using(R)
-!
-!      F.diagonalize_by_jacobi(eigenvalues,eigenvectors)
-!
-!      !  c  = S^-1/2 c~
-!      F.to_product_of(R,MO)
-!      eigenvectors = F
-!
-!      ! Clean
-!      F.destroy
-!      R.destroy
-!
-!   end
-!
-!   diagonalize_g_matrix(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_matrix, TYPE? => MAT{REAL})
-!   ! Diagonalize a general (complex) one-electron AO operator matrix
-!   ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
-!   ! the basis.
-!   end
-!
-!   diagonalize_gc_matrix(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_matrix, TYPE? => MAT{CPX})
-!   ! Diagonalize a general (complex) one-electron AO operator matrix
-!   ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
-!   ! the basis.
-!   end
+   diagonalize_gen_matrix(H,eigenvalues,eigenvectors) ::: template
+   ! Diagonalize a general (complex) one-electron AO operator matrix
+   ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
+   ! the basis.
+      self :: INOUT
+      H :: TYPE?, IN
+      eigenvalues :: VEC{REAL}, OUT
+      eigenvectors :: TYPE?, OUT
+
+ ! DIE_IF(NOT H.is_hermitian,"fock_matrix not hermitian!  WTF?!")
+
+      S,R :: MAT{REAL}*
+      F :: TYPE?*
+
+      R.create(2*.n_bf,2*.n_bf)
+      S.create(.n_bf,.n_bf)
+
+      ! S = S^-1/2, R = big inverse S
+      .INTS:make_r_overlap_inverse_sqrt(S)
+
+      ! R = big inverse S
+      R = ZERO
+      R.alpha_alpha_set_to(S)
+      R.beta_beta_set_to(S)
+      S.destroy
+
+      ! H = Fock matrix
+      F.create(2*.n_bf,2*.n_bf)
+      F = H
+
+      ! H = S^-1/2 F S^-1/2
+      F.change_basis_using(R)
+
+      F.diagonalize_by_jacobi(eigenvalues,eigenvectors)
+
+      !  c  = S^-1/2 c~
+      F.to_product_of(R,eigenvectors)
+      eigenvectors = F
+
+      ! Clean
+      F.destroy
+      R.destroy
+
+   end
+
+   diagonalize_g_matrix(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_matrix, TYPE?=>MAT{REAL})
+   ! Diagonalize a general (complex) one-electron AO operator matrix
+   ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
+   ! the basis.
+   end
+
+   diagonalize_gc_matrix(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_matrix, TYPE?=>MAT{CPX})
+   ! Diagonalize a general (complex) one-electron AO operator matrix
+   ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
+   ! the basis.
+   end
 
 !  =============
 !  Group density
