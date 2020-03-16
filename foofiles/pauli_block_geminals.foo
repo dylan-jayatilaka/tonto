@@ -67,6 +67,17 @@ contains
 
    end
 
+   create(vec,n) ::: leaky
+   ! Create a vector of objects with information to compute the
+   ! derivative of the 2RDM
+     vec :: VEC{PAULI_BLOCK_2RDM_GRAD_INFO}*
+     n :: INT
+
+     nullify(vec)
+     allocate(vec(n))
+
+   end
+
    create(gradient,n) ::: leaky
    ! Create a vector of energy gradient elements
      gradient :: VEC{ENERGY_GRADIENT_ELT}*
@@ -203,6 +214,8 @@ contains
      .guess_type = "hf"
      ! set random_scaling
      .random_scaling = 0.01d0
+     !
+     .only_4typ = FALSE
 
    end
 ! de
@@ -260,6 +273,9 @@ contains
        case ("n_singlet_geminals=     "); .read_n_singlet_geminals
        case ("random_scaling=         "); .read_random_scaling
        case ("calc_gradient=          "); .read_calc_gradient
+       !!!
+       case ("only_4typ=              "); .read_only_4typ
+       !!!
        ! These are only for making custom tables for the list type
        case ("-- Options for tables --")
        case  default ;      UNKNOWN(word)
@@ -624,6 +640,15 @@ contains
      .calc_gradient = calc_gradient
 
    end
+
+   read_only_4typ
+   ! Read TRUE if only 4-type blocks have to be included in the 2D
+   ! part of geminals
+   !  self :: PTR
+     only_4typ :: BIN
+     stdin.read(only_4typ)
+     .only_4typ = only_4typ
+   end 
 
 !  ===============
 !  other Routines
@@ -1923,8 +1948,7 @@ contains
    ! electronic energy, for a given block structure)
      self :: target
      coef :: VEC{REAL}*
-     siz :: INT
-     i, ifirst, ilast :: INT
+     i, j, k, siz, n_nonzero_coef :: INT
      el_energy, coef_tol, grad_tol, step :: REAL
      max_it, n_col :: INT
      iter :: VEC{INT}(1)
@@ -1932,46 +1956,29 @@ contains
      grad :: VEC{REAL}*
      nonzero_only_1ortho, reset_n_2D_blocks :: BIN
      n_2D_blocks, n_2D_3typ_blocks, n_2D_4typ_blocks :: INT
+
+!!!!!!!!!!!!!!!!!!!!!!!
 !     !
 !     ! check if the set of geminals has nonzero coefficients only for
 !     ! the 1D-blocks, i.e. if only 1D-blocks are present or if all 
-!     ! the coefficients of the 2D-blocks are zero
-!     ! (the optimization of the 2D-block coefficients is not
-!     ! implemented yet)
+!     ! the coefficients of the 2D-blocks are zero; if this is the
+!     ! case, the number of 2D (3type and 4type) blocks is set to zero 
 !     !
-!     .check_if_nonzero_only_1ortho(nonzero_only_1ortho)
-!     if (NOT nonzero_only_1ortho) then
-!        stdout.text("The input set of geminals is not strongly orthogonal:")
-!        stdout.text("optimization of the block coefficients")
-!        stdout.text("not implemented yet, for this case.")
-!        stop
+!     if (.n_2D_3typ_blocks == 0 AND .n_2D_4typ_blocks == 0) then
+!        reset_n_2D_blocks = FALSE
+!     else
+!        .check_if_nonzero_only_1ortho(nonzero_only_1ortho)
+!        reset_n_2D_blocks = nonzero_only_1ortho
+!     end if
+!     if (reset_n_2D_blocks) then
+!        ! set the number of 2D blocks to zero
+!        n_2D_blocks = .n_2D_blocks 
+!        .n_2D_blocks = 0
+!        n_2D_3typ_blocks = .n_2D_3typ_blocks
+!        .n_2D_3typ_blocks = 0
+!        n_2D_4typ_blocks = .n_2D_4typ_blocks
+!        .n_2D_4typ_blocks = 0
 !     end
-!!!!!!!!!!!!!!!!!!!!!!
-     !
-     ! check if the set of geminals has nonzero coefficients only for
-     ! the 1D-blocks, i.e. if only 1D-blocks are present or if all 
-     ! the coefficients of the 2D-blocks are zero; if this is the
-     ! case, the number of 2D (3type and 4type) blocks is set to zero 
-     !
-     if (.n_2D_3typ_blocks /= 0 AND .n_2D_4typ_blocks /= 0) then
-        .check_if_nonzero_only_1ortho(nonzero_only_1ortho)
-        reset_n_2D_blocks = nonzero_only_1ortho
-     else
-        reset_n_2D_blocks = FALSE
-     end
-!     stdout.text(" ")
-!     stdout.show("reset_n_2D_blocks =", reset_n_2D_blocks)
-!     !stdout.show("nonzero_only_1ortho =", nonzero_only_1ortho)
-     if (reset_n_2D_blocks) then
-     !if (nonzero_only_1ortho) then
-        ! set the number of 2D blocks to zero
-        n_2D_blocks = .n_2D_blocks 
-        .n_2D_blocks = 0
-        n_2D_3typ_blocks = .n_2D_3typ_blocks
-        .n_2D_3typ_blocks = 0
-        n_2D_4typ_blocks = .n_2D_4typ_blocks
-        .n_2D_4typ_blocks = 0
-     end
 !!!!!!!!!!!!!!!!!!!!!!
      !
      ! check if the bra set is equal to the ket set;
@@ -1997,37 +2004,20 @@ contains
         stdout.text(" ")
         stdout.show("geminal",i)
         stdout.show("block indices",.bra_set.vec(i).new_nonzero_coef_ind)
-        !!! debug
-!        stdout.show("block indices (new) :",.bra_set.vec(i).new_nonzero_coef_ind)
-!        stdout.show("block indices (old) :",.bra_set.vec(i).nonzero_coef_ind)
-!        stdout.show("block indices (old2):",.nonzero_coef_ind(i).element)
-        !!!
      end
-     !!! debug
-!     stdout.text(" ")
-!     stdout.text("Geminal indices for 1D blocks")
-!     stdout.show(".nonzero_1ortho_ind:", .nonzero_1ortho_ind)
-     !!!
-     !!! debug
-!     stdout.text(" ")
-!     stdout.text("Pauli block types vectors:")
-!     do i=1,.n_blocks-.n_1D_blocks
-!        stdout.text(" ")
-!        stdout.show("Pauli block",i)
-!        stdout.show("geminal indices",.block_types(i).element)
-!     end
-     !!!
      !
      ! build the "coef" array of block coefficients to be optimized
      !
      coef.create(siz)
      siz = 0
      do i=1,.n_geminals
-        ifirst = siz + 1
-        ilast = siz + size(.bra_set.vec(i).red_coef)
-        coef(ifirst:ilast) = .bra_set.vec(i).red_coef
-        siz = ilast
-     end
+        n_nonzero_coef = size(.bra_set.vec(i).new_nonzero_coef_ind)
+        do j=1,n_nonzero_coef
+           k = .bra_set.vec(i).new_nonzero_coef_ind(j)
+           siz = siz + 1
+           coef(siz) = .bra_set.vec(i).coef(k)
+        end do
+     end do
      coef.resize(siz)
      !
      ! write the intial set of nonzero block coefficients
@@ -2054,7 +2044,7 @@ contains
      .coef_opt_info.table.create(n_col)
      .coef_opt_info.table(1).set_heading("Iter")
      .coef_opt_info.table(1).force_width(6)
-     !.coef_opt_info.table(1).set_width_from(max_it)
+!     .coef_opt_info.table(1).set_width_from(max_it)
      .coef_opt_info.table(2).set_heading("Energy")
      .coef_opt_info.table(2).set_subhead("E/au")
      .coef_opt_info.table(2).set_width_from(el_energy)
@@ -2138,19 +2128,287 @@ contains
      coef.destroy
      nullify(pbg_saved)
 !!!!!!!!!!!!!!!!!!!!!!
-     !
-     ! restore the initial number of 2D blocks
-     ! (if only nonzero 1D blocks are present)
-     !
-     if (reset_n_2D_blocks) then
-     !if (nonzero_only_1ortho) then
-        .n_2D_blocks = n_2D_blocks 
-        .n_2D_3typ_blocks = n_2D_3typ_blocks
-        .n_2D_4typ_blocks = n_2D_4typ_blocks
-     end
+!     !
+!     ! restore the initial number of 2D blocks
+!     ! (if only nonzero 1D blocks are present)
+!     !
+!     if (reset_n_2D_blocks) then
+!     !if (nonzero_only_1ortho) then
+!        .n_2D_blocks = n_2D_blocks 
+!        .n_2D_3typ_blocks = n_2D_3typ_blocks
+!        .n_2D_4typ_blocks = n_2D_4typ_blocks
+!     end
 !!!!!!!!!!!!!!!!!!!!!!
 
    end
+! this is for debug
+!   optimize_coef
+!   ! perform the optimization of the block coefficients 
+!   ! (i.e. find the set of block coefficients which minimize the
+!   ! electronic energy, for a given block structure)
+!     self :: target
+!     coef :: VEC{REAL}*
+!!     siz :: INT
+!!     i, ifirst, ilast :: INT
+!     i, j, k, siz, n_nonzero_coef :: INT
+!     el_energy, coef_tol, grad_tol, step :: REAL
+!     max_it, n_col :: INT
+!     iter :: VEC{INT}(1)
+!     energy_min, delta_ene, grd_norm :: VEC{REAL}(1)
+!     grad :: VEC{REAL}*
+!     nonzero_only_1ortho, reset_n_2D_blocks :: BIN
+!     n_2D_blocks, n_2D_3typ_blocks, n_2D_4typ_blocks :: INT
+!!     !
+!!     ! check if the set of geminals has nonzero coefficients only for
+!!     ! the 1D-blocks, i.e. if only 1D-blocks are present or if all 
+!!     ! the coefficients of the 2D-blocks are zero
+!!     ! (the optimization of the 2D-block coefficients is not
+!!     ! implemented yet)
+!!     !
+!!     .check_if_nonzero_only_1ortho(nonzero_only_1ortho)
+!!     if (NOT nonzero_only_1ortho) then
+!!        stdout.text("The input set of geminals is not strongly orthogonal:")
+!!        stdout.text("optimization of the block coefficients")
+!!        stdout.text("not implemented yet, for this case.")
+!!        stop
+!!     end
+!!!!!!!!!!!!!!!!!!!!!!!
+!     !
+!     ! check if the set of geminals has nonzero coefficients only for
+!     ! the 1D-blocks, i.e. if only 1D-blocks are present or if all 
+!     ! the coefficients of the 2D-blocks are zero; if this is the
+!     ! case, the number of 2D (3type and 4type) blocks is set to zero 
+!     !
+!     if (.n_2D_3typ_blocks == 0 AND .n_2D_4typ_blocks == 0) then
+!        reset_n_2D_blocks = FALSE
+!     else
+!        .check_if_nonzero_only_1ortho(nonzero_only_1ortho)
+!        reset_n_2D_blocks = nonzero_only_1ortho
+!     end if
+!     !!!
+!!     if (.n_2D_3typ_blocks /= 0 AND .n_2D_4typ_blocks /= 0) then
+!!        .check_if_nonzero_only_1ortho(nonzero_only_1ortho)
+!!        reset_n_2D_blocks = nonzero_only_1ortho
+!!     else
+!!        reset_n_2D_blocks = FALSE
+!!     end
+!     !!!
+!!     stdout.text(" ")
+!!     stdout.show("reset_n_2D_blocks =", reset_n_2D_blocks)
+!!     !stdout.show("nonzero_only_1ortho =", nonzero_only_1ortho)
+!     if (reset_n_2D_blocks) then
+!     !if (nonzero_only_1ortho) then
+!        ! set the number of 2D blocks to zero
+!        n_2D_blocks = .n_2D_blocks 
+!        .n_2D_blocks = 0
+!        n_2D_3typ_blocks = .n_2D_3typ_blocks
+!        .n_2D_3typ_blocks = 0
+!        n_2D_4typ_blocks = .n_2D_4typ_blocks
+!        .n_2D_4typ_blocks = 0
+!     end
+!!!!!!!!!!!!!!!!!!!!!!!
+!     !
+!     ! check if the bra set is equal to the ket set;
+!     ! if not, stop the program execution
+!     !
+!     if (NOT .bra_is_ket) then
+!        stdout.text("Bra is not equal to ket:")
+!        stdout.text("optimization of the block coefficients")
+!        stdout.text("not implemented yet, for this case.")
+!        stop
+!     end
+!     !
+!     ! set the maximum size of nonzero coefficients
+!     ! (according to the model constraints)
+!     !
+!     siz = .n_1D_blocks+3*.n_2D_3typ_blocks+4*.n_2D_4typ_blocks
+!     !
+!     ! write information about the set of block coefficients to be optimized
+!     !
+!     stdout.text(" ")
+!     stdout.text("Indices of blocks with nonzero coefficient:")
+!     do i=1,.n_geminals 
+!        stdout.text(" ")
+!        stdout.show("geminal",i)
+!        stdout.show("block indices",.bra_set.vec(i).new_nonzero_coef_ind)
+!        !!! debug
+!!        stdout.show("block indices (new) :",.bra_set.vec(i).new_nonzero_coef_ind)
+!!        stdout.show("block indices (old) :",.bra_set.vec(i).nonzero_coef_ind)
+!!        stdout.show("block indices (old2):",.nonzero_coef_ind(i).element)
+!        !!!
+!     end
+!     !!! debug
+!!     stdout.text(" ")
+!!     stdout.text("Geminal indices for 1D blocks")
+!!     stdout.show(".nonzero_1ortho_ind:", .nonzero_1ortho_ind)
+!     !!!
+!     !!! debug
+!!     stdout.text(" ")
+!!     stdout.text("Pauli block types vectors:")
+!!     do i=1,.n_blocks-.n_1D_blocks
+!!        stdout.text(" ")
+!!        stdout.show("Pauli block",i)
+!!        stdout.show("geminal indices",.block_types(i).element)
+!!     end
+!     !!!
+!     !
+!     ! build the "coef" array of block coefficients to be optimized
+!     !
+!     coef.create(siz)
+!     siz = 0
+!     !!!
+!     stdout.text(" ")
+!     stdout.text("Preparing initial vector of nonzero coefficients:")
+!     !!!
+!     do i=1,.n_geminals
+!        !!!
+!        stdout.text(" ")
+!        !!!
+!        n_nonzero_coef = size(.bra_set.vec(i).new_nonzero_coef_ind)
+!        do j=1,n_nonzero_coef
+!           k = .bra_set.vec(i).new_nonzero_coef_ind(j)
+!           siz = siz + 1
+!           coef(siz) = .bra_set.vec(i).coef(k)
+!           !!!
+!           stdout.show("geminal",i)
+!           stdout.show("block",k)
+!           stdout.show("coef",coef(siz))
+!           !!!
+!        end do
+!     end do
+!     coef.resize(siz)
+!!     coef.create(siz)
+!!     siz = 0
+!!     do i=1,.n_geminals
+!!        ifirst = siz + 1
+!!        ilast = siz + size(.bra_set.vec(i).red_coef)
+!!        coef(ifirst:ilast) = .bra_set.vec(i).red_coef
+!!        siz = ilast
+!!     end
+!!     coef.resize(siz)
+!     !
+!     ! write the intial set of nonzero block coefficients
+!     !
+!     stdout.text(" ")
+!     stdout.show("Total number of nonzero coefficient =",siz)
+!     stdout.text(" ")
+!     stdout.text("Initial nonzero coefficients:")
+!     stdout.put(coef)
+!     !
+!     ! perform the minimization of the energy WRT the block coefficients 
+!     !
+!     stdout.text(" ")
+!     stdout.text("* * * Starting BFGS minimization * * *")
+!     ! initialize variable for writing info.
+!     ! about the optimization to the output
+!     .coef_opt_info.iter = 0
+!     .coef_opt_info.new_iter = FALSE
+!     .coef_opt_info.energy_min_curr = ZERO
+!     .coef_opt_info.energy_min_prev = ZERO
+!     el_energy = ZERO
+!     ! create a table (for info. about the coef. optimization)
+!     n_col = 4
+!     .coef_opt_info.table.create(n_col)
+!     .coef_opt_info.table(1).set_heading("Iter")
+!     .coef_opt_info.table(1).force_width(6)
+!     !.coef_opt_info.table(1).set_width_from(max_it)
+!     .coef_opt_info.table(2).set_heading("Energy")
+!     .coef_opt_info.table(2).set_subhead("E/au")
+!     .coef_opt_info.table(2).set_width_from(el_energy)
+!     .coef_opt_info.table(3).set_heading("Delta")
+!     .coef_opt_info.table(3).set_subhead("E")
+!     .coef_opt_info.table(3).set_width_from(el_energy)
+!     .coef_opt_info.table(4).set_heading("Gradient")
+!     .coef_opt_info.table(4).set_subhead("Norm")
+!     .coef_opt_info.table(4).set_width_from(el_energy)
+!     .coef_opt_info.table.put_headings
+!     ! call the routine for energy minimization 
+!     coef_tol = TOL(4)
+!     grad_tol = TOL(4)
+!     step = TOL(2)
+!     max_it = 200
+!     nullify(pbg_saved)
+!     pbg_saved => self
+!     VEC{REAL}:minimize_BFGS(::energy_gem,::gradient_gem, coef, el_energy, coef_tol, grad_tol, step, max_it)
+!     ! store results of the last iteration
+!     .electronic_energy = el_energy
+!     energy_min = el_energy
+!     iter = .coef_opt_info.iter
+!     delta_ene = el_energy-.coef_opt_info.energy_min_prev
+!     ! compute the gradient norm at the final energy point
+!     siz = size(coef)
+!     grad.create(siz)
+!     nullify(pbg_saved)
+!     pbg_saved => self
+!     grad = ::gradient_gem(coef)
+!     grd_norm = grad.norm
+!     grad.destroy
+!     ! write final results of the optimization to the output
+!     .coef_opt_info.table(1).set_values(iter)
+!     .coef_opt_info.table(2).set_values(energy_min)
+!     .coef_opt_info.table(3).set_values(delta_ene)
+!     .coef_opt_info.table(4).set_values(grd_norm)
+!     .coef_opt_info.table.put_body
+!     !
+!     .coef_opt_info.table.put_footer
+!     .coef_opt_info.table.destroy
+!     !
+!     stdout.text(" ")
+!     stdout.text("* * * Optimization completed * * *")
+!     stdout.text(" ")
+!     !
+!     ! write optimized energies and set of geminals to the output
+!     !
+!     stdout.text(" ")
+!     stdout.text("============================")
+!     stdout.text("Pauli block geminals results")
+!     stdout.text("============================")
+!     ! write optimized energies
+!     stdout.text(" ")
+!     stdout.text("Optimized energies (in a.u.):")
+!     stdout.text(" ")
+!     stdout.show("Electronic energy =",.electronic_energy)
+!     stdout.show("Nuclear repulsion energy =",.nuclear_repulsion_energy)
+!     stdout.show("Total energy =",.electronic_energy+.nuclear_repulsion_energy)
+!     stdout.text(" ")
+!     ! write optimized "bra_set" of geminals
+!     stdout.text("Optimized geminals:")
+!     do i=1,.n_geminals
+!        stdout.text(" ")
+!        stdout.show("geminal",i)
+!        stdout.text("block structure:")
+!        stdout.put(.bra_set.vec(i).block_type)
+!        stdout.text("coefficients:")
+!        stdout.put(.bra_set.vec(i).coef)
+!     end
+!     if (.bra_set.n_2D_3typ_blocks > 0) then
+!        stdout.text(" ")
+!        stdout.text("Angles defining GD2 matrices:")
+!        !stdout.text("GD2 info vector:")
+!        stdout.put(.GD2_info)
+!     end
+!     stdout.text(" ")
+!     !
+!     ! destroy previously created arrays
+!     ! and nullify pointers
+!     !
+!     coef.destroy
+!     nullify(pbg_saved)
+!!!!!!!!!!!!!!!!!!!!!!!
+!     !
+!     ! restore the initial number of 2D blocks
+!     ! (if only nonzero 1D blocks are present)
+!     !
+!     if (reset_n_2D_blocks) then
+!     !if (nonzero_only_1ortho) then
+!        .n_2D_blocks = n_2D_blocks 
+!        .n_2D_3typ_blocks = n_2D_3typ_blocks
+!        .n_2D_4typ_blocks = n_2D_4typ_blocks
+!     end
+!!!!!!!!!!!!!!!!!!!!!!!
+!
+!   end
+!!!!!!!!!!!!!!!!!!!!!!
 ! de
 
    check_if_nonzero_only_1ortho(nonzero_only_1ortho)
@@ -2325,9 +2583,9 @@ contains
            k = .bra_set.vec(i).new_nonzero_coef_ind(j)
            counter = counter+1
            .bra_set.vec(i).coef(k) = new_coef(counter)
-        end
+        end !do
 !        stdout.put(.bra_set.vec(i).coef)
-     end
+     end !do
 
      ! normalize geminals
      ! ("bra_set.vec(:).coef" will be changed)
@@ -2381,22 +2639,12 @@ contains
      self :: PAULI_BLOCK_GEMINALS*
      overlap :: REAL
      update :: BIN
-     !
-     !!!
-!     counter :: INT, save = 1
-!     stdout.text(" ")
-!     stdout.show("Entering function gradient_gem(coef)",counter)
-!     counter = counter+1
-!     !stdout.text("Entering function gradient(coef)")
-!     stdout.text(" ")
-     !!!
 
      self => pbg_saved
 
      ! check if "coef" and (nonzero) ".bra_set.vec(:).coef" 
-     ! differ or not
+     ! differ or not; if they differ, update=TRUE
      .check_coef(coef, update)
-
      if (update) then
         !
         ! update objects used to compute the energy
@@ -2405,70 +2653,142 @@ contains
         ! compute the squared norm of the wavefunction
         .calc_overlap_integral(overlap)
         .overlap = overlap
-!        !
-!        ! compute the 2RDM
-!        .calc_2rdm_gen_grd
-     end
+     end !if
      
      ! compute the 2RDM
      ! (and save info. to compute the energy gradient)
-     !!! debug
-!     stdout.text("before calling calc_2rdm_gen_grd")
-     !!!
      .calc_2rdm_gen_grd
-     !!! debug
-!     stdout.text("after calling calc_2rdm_gen_grd")
-     !!!
-
-     !!! debug
-!     stdout.text("coef array before new calculation:")
-!     stdout.show("size =", size(coef))
-!     stdout.show("elements =", coef)
-!     stdout.flush
-!     stdout.text("gradient array before new calculation:")
-!     stdout.show("size =", size(grad))
-!     stdout.show("elements =", grad)
-!     stdout.flush
-     !!!
 
      ! compute the energy gradient
-     !!! debug
-!     stdout.text("calling calc_energy_gradient")
-!     stdout.text(" ")
-!     stdout.text("gradient array before new calculation:")
-!     stdout.flush
-!     stdout.show("size =", size(grad))
-!     stdout.show("elements =", grad)
-!     stdout.flush
-     !!!
      .calc_energy_gradient(grad=grad, wrt_arg=FALSE)
-!     .calc_energy_gradient(grad)
-     !!! debug
-!     stdout.text("gradient array after new calculation:")
-!     stdout.show("size =", size(grad))
-!     stdout.show("elements =", grad)
-     !!!
 
      ! compute the gradient norm
-     !!! debug
-!     stdout.text("computing gradient norm")
-     !!!
      .coef_opt_info.grd_norm = grad.norm
-
-!     ! ".coef_opt_info.iter" indicates the number of the current
-!     ! iteration
-!     .coef_opt_info.iter = .coef_opt_info.iter+1
 
      ! ".coef_opt_info.new_iter" indicates when a new iteration
      ! of the optimization has started
      .coef_opt_info.new_iter = TRUE
 
-     !!! debug
-!     stdout.text("exiting function gradient_gem") 
-     !!!
-
    end
-
+! this is for debug
+!   gradient_gem(coef) result(grad) ::: selfless
+!   ! compute the energy gradient with respec to the block
+!   ! coefficients "coef"
+!     coef :: VEC{REAL}, IN
+!     grad :: VEC{REAL}(size(coef))
+!     !
+!     self :: PAULI_BLOCK_GEMINALS*
+!     overlap :: REAL
+!     update :: BIN
+!     !
+!     !!!
+!     counter :: INT, save = 0
+!     stdout.text(" ")
+!     counter = counter+1
+!     stdout.show("Entering function gradient_gem(coef)",counter)
+!     !stdout.text("Entering function gradient(coef)")
+!     stdout.text(" ")
+!     stdout.flush
+!     !!!
+!!     if (counter == 5) stop 
+!     !!!
+!
+!     self => pbg_saved
+!
+!     ! check if "coef" and (nonzero) ".bra_set.vec(:).coef" 
+!     ! differ or not
+!     .check_coef(coef, update)
+!
+!     if (update) then
+!        !
+!        ! update objects used to compute the energy
+!        .update_coef(coef)
+!        !
+!        ! compute the squared norm of the wavefunction
+!        .calc_overlap_integral(overlap)
+!        .overlap = overlap
+!!        !
+!!        ! compute the 2RDM
+!!        .calc_2rdm_gen_grd
+!     end
+!     
+!     ! compute the 2RDM
+!     ! (and save info. to compute the energy gradient)
+!     !!! debug
+!!     stdout.text("before calling calc_2rdm_gen_grd")
+!     stdout.text("call calc_2rdm_gen_grd")
+!     stdout.flush
+!     !!!
+!     .calc_2rdm_gen_grd
+!     !!! debug
+!!     stdout.text("after calling calc_2rdm_gen_grd")
+!     stdout.text("call calc_2rdm_gen_grd, completed")
+!     stdout.flush
+!!     stop
+!     !!!
+!
+!     !!! debug
+!!     stdout.text("coef array before new calculation:")
+!!     stdout.show("size =", size(coef))
+!!     stdout.show("elements =", coef)
+!!     stdout.flush
+!!     stdout.text("gradient array before new calculation:")
+!!     stdout.show("size =", size(grad))
+!!     stdout.show("elements =", grad)
+!!     stdout.flush
+!     !!!
+!
+!     ! compute the energy gradient
+!     !!! debug
+!!     stdout.text("calling calc_energy_gradient")
+!     stdout.text("call calc_energy_gradient")
+!     stdout.flush
+!!     stdout.text(" ")
+!!     stdout.text("gradient array before new calculation:")
+!!     stdout.flush
+!!     stdout.show("size =", size(grad))
+!!     stdout.show("elements =", grad)
+!!     stdout.flush
+!     !!!
+!     .calc_energy_gradient(grad=grad, wrt_arg=FALSE)
+!!     .calc_energy_gradient(grad)
+!     !!! debug
+!!     stdout.text("gradient array after new calculation:")
+!     stdout.text("call calc_energy_gradient, completed")
+!     stdout.flush
+!!     stop
+!!     stdout.show("size =", size(grad))
+!!     stdout.show("elements =", grad)
+!     !!!
+!
+!     ! compute the gradient norm
+!     !!! debug
+!!     stdout.text("computing gradient norm")
+!     stdout.text("compute gradient norm")
+!     stdout.flush
+!     !!!
+!     .coef_opt_info.grd_norm = grad.norm
+!     !!! debug
+!     stdout.text("compute gradient norm, completed")
+!     stdout.flush
+!     !!!
+!
+!!     ! ".coef_opt_info.iter" indicates the number of the current
+!!     ! iteration
+!!     .coef_opt_info.iter = .coef_opt_info.iter+1
+!
+!     ! ".coef_opt_info.new_iter" indicates when a new iteration
+!     ! of the optimization has started
+!     .coef_opt_info.new_iter = TRUE
+!
+!     !!! debug
+!!     stdout.text("exiting function gradient_gem") 
+!     stdout.text("exit function gradient_gem") 
+!     !!!
+!!     stop
+!
+!   end
+!!!!!!!!!!!!!!!!!!!!!!
    check_coef(coef, differ_coef)
    ! check if "coef" and nonzero coefficients in "bra_set.vec(:).coef"
    ! are the same; if not, set "differ_coef" to TRUE
@@ -2861,6 +3181,7 @@ contains
      integrals :: MAT4{REAL}*
      eri_archive :: ARCHIVE
      wrt :: BIN
+     n_nonzero_coef :: INT
      ! DEBUGG
      i1, j1, i2, j2 :: INT
      nt , k :: INT
@@ -2955,86 +3276,97 @@ contains
         !!!
 !        stdout.text(" ")
 !        stdout.text("Created energy gradient array")
-!        stdout.show("associated",associated(.energy_gradient))
+!        stdout.show("size(.energy_gradient) =",siz)
+!        !stdout.show("associated",associated(.energy_gradient))
         !!!
      else if (size(.energy_gradient) /= siz) then
         .destroy(.energy_gradient)
         .create(.energy_gradient, siz)
-     end
+     end !if
      !
      ! compute the energy gradient
      ! ("i" is the index of the gradient element)
      !
      i = 1
-     !
-     ! 1-orthogonal blocks
-     !
-     !!!
+     do g=1,.n_geminals
+        n_nonzero_coef = size(.bra_set.vec(g).new_nonzero_coef_ind)
+        do j=1,n_nonzero_coef
+           b = .bra_set.vec(g).new_nonzero_coef_ind(j)
+           ! compute the energy derivative with respect to the coefficient of
+           ! geminal "g" associated with block "b"
+           .calc_energy_grad_elt(g,b,i,integrals)
+           i = i+1
+        end !do
+     end !do
+!     !
+!     ! 1-orthogonal blocks
+!     !
+!     !!!
 !     if (.n_1D_blocks > 0) then
 !        stdout.text(" ")
 !        stdout.text("Loop over nonzero coefficients of 1D blocks")
 !        stdout.text(" ")
 !     end
-     !!!
-     do b=1,.n_1D_blocks
-        g = .nonzero_1ortho_ind(b)
-        if (g == 0) cycle
-        ! compute the energy derivative with respect to the coefficient of
-        ! geminal "g" associated with 1-orthogonal block "b"
-        .calc_energy_grad_elt(g,b,i,integrals)
-        i = i+1
-     end
-     !
-     ! pauli blocks with at most 3 types (SX, ISY, GD2)
-     !
-     !!!
+!     !!!
+!     do b=1,.n_1D_blocks
+!        g = .nonzero_1ortho_ind(b)
+!        if (g == 0) cycle
+!        ! compute the energy derivative with respect to the coefficient of
+!        ! geminal "g" associated with 1-orthogonal block "b"
+!        .calc_energy_grad_elt(g,b,i,integrals)
+!        i = i+1
+!     end
+!     !
+!     ! pauli blocks with at most 3 types (SX, ISY, GD2)
+!     !
+!     !!!
 !     if (.n_2D_3typ_blocks > 0) then
 !        stdout.text(" ")
 !        stdout.text("Loop over nonzero coefficients of 2D-3type blocks")
 !        stdout.text(" ")
 !     end
-     !!!
-     do b=.n_1D_blocks+1,.n_1D_blocks+.n_2D_3typ_blocks
-        do j=3,5 ! loop over geminals with nonzero coef. for block "b"
-           block = b - .n_1D_blocks
-           g = .block_types(block).element(j)
-           !g = .block_types(b).element(j)
-           if (g == 0) cycle
-           ! compute the energy derivative with respect to the coefficient of
-           ! geminal "g" associated with pauli block "b"
-           .calc_energy_grad_elt(g,b,i,integrals)
-           i = i+1
-        end
-     end
-     !
-     ! pauli blocks with at most 4 types (ID2, SZ, SX, ISY)
-     !
-     !!!
+!     !!!
+!     do b=.n_1D_blocks+1,.n_1D_blocks+.n_2D_3typ_blocks
+!        do j=3,5 ! loop over geminals with nonzero coef. for block "b"
+!           block = b - .n_1D_blocks
+!           g = .block_types(block).element(j)
+!           !g = .block_types(b).element(j)
+!           if (g == 0) cycle
+!           ! compute the energy derivative with respect to the coefficient of
+!           ! geminal "g" associated with pauli block "b"
+!           .calc_energy_grad_elt(g,b,i,integrals)
+!           i = i+1
+!        end
+!     end
+!     !
+!     ! pauli blocks with at most 4 types (ID2, SZ, SX, ISY)
+!     !
+!     !!!
 !     if (.n_2D_4typ_blocks > 0) then
 !        stdout.text(" ")
 !        stdout.text("Loop over nonzero coefficients of 2D-4type blocks")
 !        stdout.text(" ")
 !     end
-     !!!
-!     i1 = .n_1D_blocks+.n_2D_3typ_blocks+1
-!     i2 = .n_1D_blocks+.n_2D_blocks
-!     stdout.show("i1 =",i1)
-!     stdout.show("i2 =",i2)
-     !!!
-     do b=.n_1D_blocks+.n_2D_3typ_blocks+1,.n_1D_blocks+.n_2D_blocks
-     !do b=i1,i2
-     !do b=.n_1D_blocks+.n_2D_3typ_blocks+1,.n_2D_blocks
-        do j=1,4 ! loop over geminals with nonzero coef. for block "b"
-           block = b - .n_1D_blocks
-           g = .block_types(block).element(j)
-           !g = .block_types(b).element(j)
-           if (g == 0) cycle
-           ! compute the energy derivative with respect to the coefficient of
-           ! geminal "g" associated with pauli block "b"
-           .calc_energy_grad_elt(g,b,i,integrals)
-           i = i+1
-        end
-     end
+!     !!!
+!!     i1 = .n_1D_blocks+.n_2D_3typ_blocks+1
+!!     i2 = .n_1D_blocks+.n_2D_blocks
+!!     stdout.show("i1 =",i1)
+!!     stdout.show("i2 =",i2)
+!     !!!
+!     do b=.n_1D_blocks+.n_2D_3typ_blocks+1,.n_1D_blocks+.n_2D_blocks
+!     !do b=i1,i2
+!     !do b=.n_1D_blocks+.n_2D_3typ_blocks+1,.n_2D_blocks
+!        do j=1,4 ! loop over geminals with nonzero coef. for block "b"
+!           block = b - .n_1D_blocks
+!           g = .block_types(block).element(j)
+!           !g = .block_types(b).element(j)
+!           if (g == 0) cycle
+!           ! compute the energy derivative with respect to the coefficient of
+!           ! geminal "g" associated with pauli block "b"
+!           .calc_energy_grad_elt(g,b,i,integrals)
+!           i = i+1
+!        end
+!     end
 
      ! destroy matrix of integrals
      integrals.destroy
@@ -3047,7 +3379,6 @@ contains
      if (wrt) then
         stdout.text(" ")
         stdout.text("Energy gradient:")
-!        siz = i-1
         if (present(grad)) then
            do j=1,siz
               stdout.text(" ")
@@ -3063,17 +3394,11 @@ contains
            end
         end
         stdout.text(" ")
-!     else if (present(grad)) then
-!        siz = i-1
-!        do j=1,siz
-!           grad(j) = .energy_gradient(j).elt
-!        end
      end
 
      ! copy energy gradient to array "grad"
      ! (if the latter is provided as argument)
      if (present(grad)) then
-!        siz = i-1
         do j=1,siz
            grad(j) = .energy_gradient(j).elt
         end
@@ -4070,6 +4395,107 @@ contains
 !
 !   end
 
+!   copy_2rdm_grad_info(irdm, rdm2_type, rdm2_ind)
+!   ! copy gradient information of the 2RDM element "irdm", 
+!   ! type "rdm2_type" to the temporary ".grad_info_tmp";
+!   ! copy indices of the 2RDM element "irdm" to "rdm2_ind" 
+!     irdm :: INT, IN
+!     rdm2_type :: STR, IN
+!     rdm2_ind :: VEC{INT}(4), INOUT
+!     nt, j :: INT
+!     !!! debug
+!!     stdout.text(" ")
+!!     stdout.text("Entering subroutine copy_2rdm_grad_info")
+!!     stdout.text(" ")
+!     !!!
+!
+!     select case (rdm2_type)
+!     case("ab")
+!        ! set number of terms
+!        nt = .rdm_2_ab(irdm).grad_info.nb_terms
+!        .grad_info_tmp.nb_terms = nt
+!        do j=1,nt
+!           ! product of coefficients
+!           .grad_info_tmp.coef_prod(j) = .rdm_2_ab(irdm).grad_info.coef_prod(j)
+!           ! reduced overlap
+!           .grad_info_tmp.red_ov(j) = .rdm_2_ab(irdm).grad_info.red_ov(j)
+!           ! indices of excluded geminals
+!           .grad_info_tmp.ex_gem(j).element = .rdm_2_ab(irdm).grad_info.ex_gem(j).element
+!           ! indices of excluded blocks
+!           .grad_info_tmp.ex_blk(j).element = .rdm_2_ab(irdm).grad_info.ex_blk(j).element
+!           ! multiplication factors
+!           .grad_info_tmp.factor(j).element = .rdm_2_ab(irdm).grad_info.factor(j).element
+!        end
+!        ! indices of the 2RMD element (i1,j1,i2,j2)
+!        rdm2_ind = .rdm_2_ab(irdm).indices
+!        ! additional info. about the product of coefficients
+!        if (.rdm_2_ab(irdm).grad_info.all_pairs.created) then
+!           do j=1,nt
+!              .grad_info_tmp.all_pairs(j) = .rdm_2_ab(irdm).grad_info.all_pairs(j)
+!           end
+!        else
+!           .grad_info_tmp.all_pairs = FALSE
+!        end
+!     case("aa")
+!        ! set number of terms
+!        nt = .rdm_2_aa(irdm).grad_info.nb_terms
+!        .grad_info_tmp.nb_terms = nt
+!        do j=1,nt
+!           ! product of coefficients
+!           .grad_info_tmp.coef_prod(j) = .rdm_2_aa(irdm).grad_info.coef_prod(j)
+!           ! reduced overlap
+!           .grad_info_tmp.red_ov(j) = .rdm_2_aa(irdm).grad_info.red_ov(j)
+!           ! indices of excluded geminals
+!           .grad_info_tmp.ex_gem(j).element = .rdm_2_aa(irdm).grad_info.ex_gem(j).element
+!           ! indices of excluded blocks
+!           .grad_info_tmp.ex_blk(j).element = .rdm_2_aa(irdm).grad_info.ex_blk(j).element
+!           ! multiplication factors
+!           .grad_info_tmp.factor(j).element = .rdm_2_aa(irdm).grad_info.factor(j).element
+!        end
+!        ! indices of the 2RMD element (i1,j1,i2,j2)
+!        rdm2_ind = .rdm_2_aa(irdm).indices
+!        ! additional info. about the product of coefficients
+!        if (.rdm_2_aa(irdm).grad_info.all_pairs.created) then
+!           do j=1,nt
+!              .grad_info_tmp.all_pairs(j) = .rdm_2_aa(irdm).grad_info.all_pairs(j)
+!           end
+!        else
+!           .grad_info_tmp.all_pairs = FALSE
+!        end
+!     case("bb")
+!        ! set number of terms
+!        nt = .rdm_2_bb(irdm).grad_info.nb_terms
+!        .grad_info_tmp.nb_terms = nt
+!        do j=1,nt
+!           ! product of coefficients
+!           .grad_info_tmp.coef_prod(j) = .rdm_2_bb(irdm).grad_info.coef_prod(j)
+!           ! reduced overlap
+!           .grad_info_tmp.red_ov(j) = .rdm_2_bb(irdm).grad_info.red_ov(j)
+!           ! indices of excluded geminals
+!           .grad_info_tmp.ex_gem(j).element = .rdm_2_bb(irdm).grad_info.ex_gem(j).element
+!           ! indices of excluded blocks
+!           .grad_info_tmp.ex_blk(j).element = .rdm_2_bb(irdm).grad_info.ex_blk(j).element
+!           ! multiplication factors
+!           .grad_info_tmp.factor(j).element = .rdm_2_bb(irdm).grad_info.factor(j).element
+!        end
+!        ! indices of the 2RMD element (i1,j1,i2,j2)
+!        rdm2_ind = .rdm_2_bb(irdm).indices
+!        ! additional info. about the product of coefficients
+!        if (.rdm_2_bb(irdm).grad_info.all_pairs.created) then
+!           do j=1,nt
+!              .grad_info_tmp.all_pairs(j) = .rdm_2_bb(irdm).grad_info.all_pairs(j)
+!           end
+!        else
+!           .grad_info_tmp.all_pairs = FALSE
+!        end
+!     case default
+!        stdout.text("Error in routine copy_2rdm_grad_info:")
+!        stdout.text("unknown string to select the 2RDM part.")
+!       stop
+!     end
+!
+!   end
+! davide - 11/03/2020
    copy_2rdm_grad_info(irdm, rdm2_type, rdm2_ind)
    ! copy gradient information of the 2RDM element "irdm", 
    ! type "rdm2_type" to the temporary ".grad_info_tmp";
@@ -4078,6 +4504,7 @@ contains
      rdm2_type :: STR, IN
      rdm2_ind :: VEC{INT}(4), INOUT
      nt, j :: INT
+     siz :: INT
      !!! debug
 !     stdout.text(" ")
 !     stdout.text("Entering subroutine copy_2rdm_grad_info")
@@ -4087,90 +4514,99 @@ contains
      select case (rdm2_type)
      case("ab")
         ! set number of terms
-        nt = .rdm_2_ab(irdm).grad_info.nb_terms
+        nt = .rdm_2_ab_grad_info(irdm).nb_terms
         .grad_info_tmp.nb_terms = nt
         do j=1,nt
            ! product of coefficients
-           .grad_info_tmp.coef_prod(j) = .rdm_2_ab(irdm).grad_info.coef_prod(j)
+           .grad_info_tmp.coef_prod(j) = .rdm_2_ab_grad_info(irdm).coef_prod(j)
            ! reduced overlap
-           .grad_info_tmp.red_ov(j) = .rdm_2_ab(irdm).grad_info.red_ov(j)
+           .grad_info_tmp.red_ov(j) = .rdm_2_ab_grad_info(irdm).red_ov(j)
            ! indices of excluded geminals
-           .grad_info_tmp.ex_gem(j).element = .rdm_2_ab(irdm).grad_info.ex_gem(j).element
+           siz = size(.rdm_2_ab_grad_info(irdm).ex_gem(j).element)
+           .grad_info_tmp.ex_gem(j).element(1:siz) = .rdm_2_ab_grad_info(irdm).ex_gem(j).element(1:siz)
            ! indices of excluded blocks
-           .grad_info_tmp.ex_blk(j).element = .rdm_2_ab(irdm).grad_info.ex_blk(j).element
+           siz = size(.rdm_2_ab_grad_info(irdm).ex_blk(j).element)
+           .grad_info_tmp.ex_blk(j).element(1:siz) = .rdm_2_ab_grad_info(irdm).ex_blk(j).element(1:siz)
            ! multiplication factors
-           .grad_info_tmp.factor(j).element = .rdm_2_ab(irdm).grad_info.factor(j).element
-        end
+           siz = size(.rdm_2_ab_grad_info(irdm).factor(j).element)
+           .grad_info_tmp.factor(j).element(1:siz) = .rdm_2_ab_grad_info(irdm).factor(j).element(1:siz)
+        end do
         ! indices of the 2RMD element (i1,j1,i2,j2)
         rdm2_ind = .rdm_2_ab(irdm).indices
         ! additional info. about the product of coefficients
-        if (.rdm_2_ab(irdm).grad_info.all_pairs.created) then
+        if (.rdm_2_ab_grad_info(irdm).all_pairs.created) then
            do j=1,nt
-              .grad_info_tmp.all_pairs(j) = .rdm_2_ab(irdm).grad_info.all_pairs(j)
-           end
+              .grad_info_tmp.all_pairs(j) = .rdm_2_ab_grad_info(irdm).all_pairs(j)
+           end !do
         else
            .grad_info_tmp.all_pairs = FALSE
-        end
+        end !if
      case("aa")
         ! set number of terms
-        nt = .rdm_2_aa(irdm).grad_info.nb_terms
+        nt = .rdm_2_aa_grad_info(irdm).nb_terms
         .grad_info_tmp.nb_terms = nt
         do j=1,nt
            ! product of coefficients
-           .grad_info_tmp.coef_prod(j) = .rdm_2_aa(irdm).grad_info.coef_prod(j)
+           .grad_info_tmp.coef_prod(j) = .rdm_2_aa_grad_info(irdm).coef_prod(j)
            ! reduced overlap
-           .grad_info_tmp.red_ov(j) = .rdm_2_aa(irdm).grad_info.red_ov(j)
+           .grad_info_tmp.red_ov(j) = .rdm_2_aa_grad_info(irdm).red_ov(j)
            ! indices of excluded geminals
-           .grad_info_tmp.ex_gem(j).element = .rdm_2_aa(irdm).grad_info.ex_gem(j).element
+           siz = size(.rdm_2_aa_grad_info(irdm).ex_gem(j).element)
+           .grad_info_tmp.ex_gem(j).element(1:siz) = .rdm_2_aa_grad_info(irdm).ex_gem(j).element(1:siz)
            ! indices of excluded blocks
-           .grad_info_tmp.ex_blk(j).element = .rdm_2_aa(irdm).grad_info.ex_blk(j).element
+           siz = size(.rdm_2_aa_grad_info(irdm).ex_blk(j).element)
+           .grad_info_tmp.ex_blk(j).element(1:siz) = .rdm_2_aa_grad_info(irdm).ex_blk(j).element(1:siz)
            ! multiplication factors
-           .grad_info_tmp.factor(j).element = .rdm_2_aa(irdm).grad_info.factor(j).element
-        end
+           siz = size(.rdm_2_aa_grad_info(irdm).factor(j).element)
+           .grad_info_tmp.factor(j).element(1:siz) = .rdm_2_aa_grad_info(irdm).factor(j).element(1:siz)
+        end do
         ! indices of the 2RMD element (i1,j1,i2,j2)
         rdm2_ind = .rdm_2_aa(irdm).indices
         ! additional info. about the product of coefficients
-        if (.rdm_2_aa(irdm).grad_info.all_pairs.created) then
+        if (.rdm_2_aa_grad_info(irdm).all_pairs.created) then
            do j=1,nt
-              .grad_info_tmp.all_pairs(j) = .rdm_2_aa(irdm).grad_info.all_pairs(j)
-           end
+              .grad_info_tmp.all_pairs(j) = .rdm_2_aa_grad_info(irdm).all_pairs(j)
+           end !do
         else
            .grad_info_tmp.all_pairs = FALSE
-        end
+        end !if
      case("bb")
         ! set number of terms
-        nt = .rdm_2_bb(irdm).grad_info.nb_terms
+        nt = .rdm_2_bb_grad_info(irdm).nb_terms
         .grad_info_tmp.nb_terms = nt
         do j=1,nt
            ! product of coefficients
-           .grad_info_tmp.coef_prod(j) = .rdm_2_bb(irdm).grad_info.coef_prod(j)
+           .grad_info_tmp.coef_prod(j) = .rdm_2_bb_grad_info(irdm).coef_prod(j)
            ! reduced overlap
-           .grad_info_tmp.red_ov(j) = .rdm_2_bb(irdm).grad_info.red_ov(j)
+           .grad_info_tmp.red_ov(j) = .rdm_2_bb_grad_info(irdm).red_ov(j)
            ! indices of excluded geminals
-           .grad_info_tmp.ex_gem(j).element = .rdm_2_bb(irdm).grad_info.ex_gem(j).element
+           siz = size(.rdm_2_bb_grad_info(irdm).ex_gem(j).element)
+           .grad_info_tmp.ex_gem(j).element(1:siz) = .rdm_2_bb_grad_info(irdm).ex_gem(j).element(1:siz)
            ! indices of excluded blocks
-           .grad_info_tmp.ex_blk(j).element = .rdm_2_bb(irdm).grad_info.ex_blk(j).element
+           siz = size(.rdm_2_bb_grad_info(irdm).ex_blk(j).element)
+           .grad_info_tmp.ex_blk(j).element(1:siz) = .rdm_2_bb_grad_info(irdm).ex_blk(j).element(1:siz)
            ! multiplication factors
-           .grad_info_tmp.factor(j).element = .rdm_2_bb(irdm).grad_info.factor(j).element
-        end
+           siz = size(.rdm_2_bb_grad_info(irdm).factor(j).element)
+           .grad_info_tmp.factor(j).element(1:siz) = .rdm_2_bb_grad_info(irdm).factor(j).element(1:siz)
+        end do
         ! indices of the 2RMD element (i1,j1,i2,j2)
         rdm2_ind = .rdm_2_bb(irdm).indices
         ! additional info. about the product of coefficients
-        if (.rdm_2_bb(irdm).grad_info.all_pairs.created) then
+        if (.rdm_2_bb_grad_info(irdm).all_pairs.created) then
            do j=1,nt
-              .grad_info_tmp.all_pairs(j) = .rdm_2_bb(irdm).grad_info.all_pairs(j)
-           end
+              .grad_info_tmp.all_pairs(j) = .rdm_2_bb_grad_info(irdm).all_pairs(j)
+           end !do
         else
            .grad_info_tmp.all_pairs = FALSE
-        end
+        end !if
      case default
         stdout.text("Error in routine copy_2rdm_grad_info:")
         stdout.text("unknown string to select the 2RDM part.")
        stop
-     end
+     end select
 
    end
-
+! de
    calc_new_red_overlap(iterm, gem, blk, red_overlap)
    ! compute a new reduced overlap, where geminal "gem" and 2D
    ! block "blk" (if "blk" is present) are excluded, in addition to 
@@ -4203,7 +4639,8 @@ contains
      else
         n_ex_gem = 1
      end
-     gg(1:n_ex_gem) = .grad_info_tmp.ex_gem(iterm).element
+!     gg(1:n_ex_gem) = .grad_info_tmp.ex_gem(iterm).element
+     gg(1:n_ex_gem) = .grad_info_tmp.ex_gem(iterm).element(1:n_ex_gem)
      n_ex_gem = n_ex_gem+1
      gg(n_ex_gem) = gem
      ! n_ex_gem = number of geminals to be excluded
@@ -4962,14 +5399,20 @@ contains
      ! create vectors of vectors of indices
      ! of excluded geminals, excluded blocks
      ! and multiplication factors
-     .grad_info_tmp.ex_gem.create(nb_terms)
-     .grad_info_tmp.ex_blk.create(nb_terms)
-     .grad_info_tmp.factor.create(nb_terms)
-     do i=1,nb_terms
-        .grad_info_tmp.ex_gem(i).element.create(n_gb)
-        .grad_info_tmp.ex_blk(i).element.create(n_gb)
-        .grad_info_tmp.factor(i).element.create(n_gb)
-     end
+     .grad_info_tmp.ex_gem.create(nb_terms,n_gb)
+     .grad_info_tmp.ex_blk.create(nb_terms,n_gb)
+     .grad_info_tmp.factor.create(nb_terms,n_gb)
+     !!!
+     ! old version
+!     .grad_info_tmp.ex_gem.create(nb_terms)
+!     .grad_info_tmp.ex_blk.create(nb_terms)
+!     .grad_info_tmp.factor.create(nb_terms)
+!     do i=1,nb_terms
+!        .grad_info_tmp.ex_gem(i).element.create(n_gb)
+!        .grad_info_tmp.ex_blk(i).element.create(n_gb)
+!        .grad_info_tmp.factor(i).element.create(n_gb)
+!     end
+     !!!
 
    end
 
@@ -5297,6 +5740,969 @@ contains
 !
 !   end
 
+!   save_2rdm_grad_info(rdm2_type, irdm, nt, terms, allpairs_arg) ::: leaky
+!   ! save information about the 2rdm element "irdm"
+!   ! (this info. will be used in the calculation 
+!   ! of the energy gradient)
+!     rdm2_type :: STR, IN
+!     irdm, nt :: INT, IN
+!     terms :: VEC{INT}, IN
+!     allpairs_arg :: BIN, IN, optional
+!     allpairs :: BIN
+!     ngbf :: INT
+!     j, k :: INT
+!     !!! debug
+!     stdout.text(" ")
+!     stdout.text("Entering subroutine save_2rdm_grad_info")
+!     stdout.text("Argument variables:")
+!     stdout.show("rdm2_type =", rdm2_type)
+!     stdout.show("irdm      =", irdm)
+!     stdout.show("nt        =", nt)
+!     stdout.show("terms     =", terms(1:nt))
+!     stdout.show("allpairs_arg =", allpairs_arg)
+!     !!!
+!
+!     ! this is for the possible creation of array "all_pairs"
+!     allpairs = FALSE
+!     if (present(allpairs_arg)) then
+!        allpairs = allpairs_arg
+!     end
+!
+!     ! dimension of vectors "ex_gem(:).element",
+!     ! "ex_blk(:).element" and "factor(:).element"
+!     ngbf = 2
+!
+!     select case (rdm2_type)
+!     case("ab")
+!        ! set number of terms
+!        .rdm_2_ab(irdm).grad_info.nb_terms = nt
+!        ! create vectors and save information
+!        ! (after destroying, if already created)
+!        .rdm_2_ab(irdm).grad_info.coef_prod.destroy
+!        .rdm_2_ab(irdm).grad_info.coef_prod.create(nt)
+!        .rdm_2_ab(irdm).grad_info.red_ov.destroy
+!        .rdm_2_ab(irdm).grad_info.red_ov.create(nt)
+!        .rdm_2_ab(irdm).grad_info.ex_gem.destroy
+!        .rdm_2_ab(irdm).grad_info.ex_gem.create(nt)
+!        .rdm_2_ab(irdm).grad_info.ex_blk.destroy
+!        .rdm_2_ab(irdm).grad_info.ex_blk.create(nt)
+!        .rdm_2_ab(irdm).grad_info.factor.destroy
+!        .rdm_2_ab(irdm).grad_info.factor.create(nt)
+!!        if (allpairs) then
+!!           .rdm_2_ab(irdm).grad_info.all_pairs.destroy
+!!           .rdm_2_ab(irdm).grad_info.all_pairs.create(nt)
+!!        end
+!        do j=1,nt
+!           k = terms(j)
+!           ! product of coefficients
+!           .rdm_2_ab(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+!           ! reduced overlap
+!           .rdm_2_ab(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+!           ! indices of excluded geminals
+!           .rdm_2_ab(irdm).grad_info.ex_gem(j).element.destroy
+!           .rdm_2_ab(irdm).grad_info.ex_gem(j).element.create(ngbf)
+!           .rdm_2_ab(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+!           ! indices of excluded blocks
+!           .rdm_2_ab(irdm).grad_info.ex_blk(j).element.destroy
+!           .rdm_2_ab(irdm).grad_info.ex_blk(j).element.create(ngbf)
+!           .rdm_2_ab(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+!           ! multiplication factors
+!           .rdm_2_ab(irdm).grad_info.factor(j).element.destroy
+!           .rdm_2_ab(irdm).grad_info.factor(j).element.create(ngbf)
+!           .rdm_2_ab(irdm).grad_info.factor(j).element = .grad_info_tmp.factor(k).element(1:ngbf)
+!!           ! binaries with additional info. about the product of coefficients
+!!           if (allpairs) then
+!!              .rdm_2_ab(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!!           end
+!        end
+!        ! binaries with additional info. about the product of coefficients
+!        ! (creation and storing)
+!        .rdm_2_ab(irdm).grad_info.all_pairs.destroy
+!        if (allpairs) then
+!           .rdm_2_ab(irdm).grad_info.all_pairs.create(nt)
+!           do j=1,nt
+!              k = terms(j)
+!              .rdm_2_ab(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!           end
+!        end
+!        !!! DEBUG
+!!        stdout.text("2RDM alpha/beta")
+!!        stdout.show("element",irdm)
+!!        stdout.show("indices",.rdm_2_ab(irdm).indices)
+!!        stdout.show("number of terms =",nt)
+!!        stdout.show("coef_prod",.rdm_2_ab(irdm).grad_info.coef_prod)
+!!        stdout.show("red_overlap",.rdm_2_ab(irdm).grad_info.red_ov)
+!!        stdout.text("excluded geminals")
+!!        do j=1,nt
+!!           stdout.show("geminals",.rdm_2_ab(irdm).grad_info.ex_gem(j).element)
+!!        end
+!!        stdout.text("excluded blocks")
+!!        do j=1,nt
+!!           stdout.show("blocks",.rdm_2_ab(irdm).grad_info.ex_blk(j).element)
+!!        end
+!!        stdout.text("multiplication factors")
+!!        do j=1,nt
+!!           stdout.show("factors",.rdm_2_ab(irdm).grad_info.factor(j).element)
+!!        end
+!!        stdout.text(" ")
+!        !!!
+!     case("aa")
+!        ! set number of terms
+!        .rdm_2_aa(irdm).grad_info.nb_terms = nt
+!        ! create vectors and save information
+!        ! (after destroying, if already created)
+!        .rdm_2_aa(irdm).grad_info.coef_prod.destroy
+!        .rdm_2_aa(irdm).grad_info.coef_prod.create(nt)
+!        .rdm_2_aa(irdm).grad_info.red_ov.destroy
+!        .rdm_2_aa(irdm).grad_info.red_ov.create(nt)
+!        .rdm_2_aa(irdm).grad_info.ex_gem.destroy
+!        .rdm_2_aa(irdm).grad_info.ex_gem.create(nt)
+!        .rdm_2_aa(irdm).grad_info.ex_blk.destroy
+!        .rdm_2_aa(irdm).grad_info.ex_blk.create(nt)
+!        .rdm_2_aa(irdm).grad_info.factor.destroy
+!        .rdm_2_aa(irdm).grad_info.factor.create(nt)
+!        do j=1,nt
+!           k = terms(j)
+!           ! product of coefficients
+!           .rdm_2_aa(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+!           ! reduced overlap
+!           .rdm_2_aa(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+!           ! indices of excluded geminals
+!           .rdm_2_aa(irdm).grad_info.ex_gem(j).element.destroy
+!           .rdm_2_aa(irdm).grad_info.ex_gem(j).element.create(ngbf)
+!           .rdm_2_aa(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+!           ! indices of excluded blocks
+!           .rdm_2_aa(irdm).grad_info.ex_blk(j).element.destroy
+!           .rdm_2_aa(irdm).grad_info.ex_blk(j).element.create(ngbf)
+!           .rdm_2_aa(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+!           ! multiplication factors
+!           .rdm_2_aa(irdm).grad_info.factor(j).element.destroy
+!           .rdm_2_aa(irdm).grad_info.factor(j).element.create(ngbf)
+!           .rdm_2_aa(irdm).grad_info.factor(j).element = .grad_info_tmp.factor(k).element(1:ngbf)
+!        end
+!        ! binaries with additional info. about the product of coefficients
+!        ! (creation and storing)
+!        .rdm_2_aa(irdm).grad_info.all_pairs.destroy
+!        if (allpairs) then
+!           .rdm_2_aa(irdm).grad_info.all_pairs.create(nt)
+!           do j=1,nt
+!              k = terms(j)
+!              .rdm_2_aa(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!           end
+!        end
+!        !!! DEBUG
+!!        stdout.text("2RDM alpha/alpha")
+!!        stdout.show("element",irdm)
+!!        stdout.show("indices",.rdm_2_aa(irdm).indices)
+!!        stdout.show("number of terms =",nt)
+!!        stdout.show("coef_prod",.rdm_2_aa(irdm).grad_info.coef_prod)
+!!        stdout.show("red_overlap",.rdm_2_aa(irdm).grad_info.red_ov)
+!!        stdout.text("excluded geminals")
+!!        do j=1,nt
+!!           stdout.show("geminals",.rdm_2_aa(irdm).grad_info.ex_gem(j).element)
+!!        end
+!!        stdout.text("excluded blocks")
+!!        do j=1,nt
+!!           stdout.show("blocks",.rdm_2_aa(irdm).grad_info.ex_blk(j).element)
+!!        end
+!!        stdout.text("multiplication factors")
+!!        do j=1,nt
+!!           stdout.show("factors",.rdm_2_aa(irdm).grad_info.factor(j).element)
+!!        end
+!!        stdout.text(" ")
+!        !!!
+!     case("bb")
+!        ! set number of terms
+!        .rdm_2_bb(irdm).grad_info.nb_terms = nt
+!        ! create vectors and save information
+!        ! (after destroying, if already created)
+!        .rdm_2_bb(irdm).grad_info.coef_prod.destroy
+!        .rdm_2_bb(irdm).grad_info.coef_prod.create(nt)
+!        .rdm_2_bb(irdm).grad_info.red_ov.destroy
+!        .rdm_2_bb(irdm).grad_info.red_ov.create(nt)
+!        .rdm_2_bb(irdm).grad_info.ex_gem.destroy
+!        .rdm_2_bb(irdm).grad_info.ex_gem.create(nt)
+!        .rdm_2_bb(irdm).grad_info.ex_blk.destroy
+!        .rdm_2_bb(irdm).grad_info.ex_blk.create(nt)
+!        .rdm_2_bb(irdm).grad_info.factor.destroy
+!        .rdm_2_bb(irdm).grad_info.factor.create(nt)
+!        do j=1,nt
+!           k = terms(j)
+!           ! product of coefficients
+!           .rdm_2_bb(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+!           ! reduced overlap
+!           .rdm_2_bb(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+!           ! indices of excluded geminals
+!           .rdm_2_bb(irdm).grad_info.ex_gem(j).element.destroy
+!           .rdm_2_bb(irdm).grad_info.ex_gem(j).element.create(ngbf)
+!           .rdm_2_bb(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+!           ! indices of excluded blocks
+!           .rdm_2_bb(irdm).grad_info.ex_blk(j).element.destroy
+!           .rdm_2_bb(irdm).grad_info.ex_blk(j).element.create(ngbf)
+!           .rdm_2_bb(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+!           ! multiplication factors
+!           .rdm_2_bb(irdm).grad_info.factor(j).element.destroy
+!           .rdm_2_bb(irdm).grad_info.factor(j).element.create(ngbf)
+!           .rdm_2_bb(irdm).grad_info.factor(j).element = .grad_info_tmp.factor(k).element(1:ngbf)
+!        end
+!        ! binaries with additional info. about the product of coefficients
+!        ! (creation and storing)
+!        .rdm_2_bb(irdm).grad_info.all_pairs.destroy
+!        if (allpairs) then
+!           .rdm_2_bb(irdm).grad_info.all_pairs.create(nt)
+!           do j=1,nt
+!              k = terms(j)
+!              .rdm_2_bb(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!           end
+!        end
+!        !!! DEBUG
+!        stdout.text("2RDM beta/beta")
+!        stdout.show("element",irdm)
+!        stdout.show("indices",.rdm_2_bb(irdm).indices)
+!        stdout.show("number of terms =",nt)
+!        stdout.show("coef_prod",.rdm_2_bb(irdm).grad_info.coef_prod)
+!        stdout.show("red_overlap",.rdm_2_bb(irdm).grad_info.red_ov)
+!        stdout.text("excluded geminals")
+!        do j=1,nt
+!           stdout.show("geminals",.rdm_2_bb(irdm).grad_info.ex_gem(j).element)
+!        end
+!        stdout.text("excluded blocks")
+!        do j=1,nt
+!           stdout.show("blocks",.rdm_2_bb(irdm).grad_info.ex_blk(j).element)
+!        end
+!        stdout.text("multiplication factors")
+!        do j=1,nt
+!           stdout.show("factors",.rdm_2_bb(irdm).grad_info.factor(j).element)
+!        end
+!        stdout.text(" ")
+!        !!!
+!     case default
+!        stdout.text("Error in routine save_2rdm_grad_info:") 
+!        stdout.text("unknown string to select the 2RDM part.")
+!        stop
+!     end
+!
+!   end
+
+! davide - 10/03/2020
+!   save_2rdm_grad_info(rdm2_type, irdm, nt, terms, allpairs_arg) ::: leaky
+!   ! save information about the 2rdm element "irdm"
+!   ! (this info. will be used in the calculation 
+!   ! of the energy gradient)
+!     rdm2_type :: STR, IN
+!     irdm, nt :: INT, IN
+!     terms :: VEC{INT}, IN
+!     allpairs_arg :: BIN, IN, optional
+!     allpairs :: BIN
+!     ngbf :: INT
+!!     j, k :: INT
+!     j, k, siz :: INT
+!     !!! debug
+!!     i_first :: INT, save = 1
+!     ldum :: BIN
+!     stdout.text(" ")
+!     stdout.text("Entering subroutine save_2rdm_grad_info")
+!!     stdout.text("Argument variables:")
+!!     stdout.show("rdm2_type =", rdm2_type)
+!!     stdout.show("irdm      =", irdm)
+!!     stdout.show("nt        =", nt)
+!!     stdout.show("terms     =", terms(1:nt))
+!!     stdout.show("allpairs_arg =", allpairs_arg)
+!     !!!
+!
+!     ! this is for the possible creation of array "all_pairs"
+!     allpairs = FALSE
+!     if (present(allpairs_arg)) then
+!        allpairs = allpairs_arg
+!     end
+!
+!     ! dimension of vectors "ex_gem(:).element",
+!     ! "ex_blk(:).element" and "factor(:).element"
+!     ngbf = 2
+!
+!     select case (rdm2_type)
+!     case("ab")
+!        ! set number of terms
+!        .rdm_2_ab(irdm).grad_info.nb_terms = nt
+!        ! create vectors and save information
+!        ! (after destroying, if already created)
+!        !!!
+!        if (.rdm_2_ab(irdm).grad_info.coef_prod.created) then
+!           .rdm_2_ab(irdm).grad_info.coef_prod.destroy
+!           .rdm_2_ab(irdm).grad_info.coef_prod.create(nt)
+!        else
+!           .rdm_2_ab(irdm).grad_info.coef_prod.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_ab(irdm).grad_info.red_ov.created) then
+!           .rdm_2_ab(irdm).grad_info.red_ov.destroy
+!           .rdm_2_ab(irdm).grad_info.red_ov.create(nt)
+!        else
+!           .rdm_2_ab(irdm).grad_info.red_ov.create(nt)
+!        end if
+!        !
+!        !!!!!!!!!
+!        ldum = .rdm_2_ab(irdm).grad_info.ex_gem.created 
+!        stdout.show(".rdm_2_ab(irdm).grad_info.ex_gem.created =",ldum)
+!        if (NOT ldum) then
+!           stdout.text("create .rdm_2_ab(irdm).grad_info.ex_gem")
+!           .rdm_2_ab(irdm).grad_info.ex_gem.create(nt)
+!           ldum = .rdm_2_ab(irdm).grad_info.ex_gem(1).element.created 
+!           stdout.show(".rdm_2_ab(irdm).grad_info.ex_gem(1).element.created =",ldum)
+!           if (NOT ldum) then
+!              do j=1,nt 
+!                 stdout.text("create .rdm_2_ab(irdm).grad_info.ex_gem(j).element")
+!                 .rdm_2_ab(irdm).grad_info.ex_gem(j).element.create(2)
+!              end do
+!!              stdout.text("create .rdm_2_ab(irdm).grad_info.ex_gem(1).element")
+!!              .rdm_2_ab(irdm).grad_info.ex_gem(1).element.create(2)
+!           end if
+!        end if
+!        stdout.text("destroy .rdm_2_ab(irdm).grad_info.ex_gem")
+!        .rdm_2_ab(irdm).grad_info.ex_gem.destroy
+!        stdout.text("destroyed .rdm_2_ab(irdm).grad_info.ex_gem")
+!        stop
+!        ldum = .rdm_2_ab(irdm).grad_info.ex_gem(1).element.created 
+!        stdout.show(".rdm_2_ab(irdm).grad_info.ex_gem(1).element.created =",ldum)
+!        stop
+!        !!!!!!!!!
+!        if (.rdm_2_ab(irdm).grad_info.ex_gem.created) then
+!           siz = size(.rdm_2_ab(irdm).grad_info.ex_gem)
+!           !!! debug
+!           stdout.text("Destroy .grad_info.ex_gem")
+!           stdout.show("size =", siz)
+!           !!!
+!           do j=1,siz
+!              .rdm_2_ab(irdm).grad_info.ex_gem(j).element.destroy
+!           end do
+!           .rdm_2_ab(irdm).grad_info.ex_gem.destroy
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_gem")
+!           !!!
+!           .rdm_2_ab(irdm).grad_info.ex_gem.create(nt)
+!        else
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_gem")
+!           !!!
+!           .rdm_2_ab(irdm).grad_info.ex_gem.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_ab(irdm).grad_info.ex_blk.created) then
+!           siz = size(.rdm_2_ab(irdm).grad_info.ex_blk)
+!           !!! debug
+!           stdout.text("Destroy .grad_info.ex_blk")
+!           stdout.show("size =", siz)
+!           !!!
+!           do j=1,siz
+!              .rdm_2_ab(irdm).grad_info.ex_blk(j).element.destroy
+!           end do
+!           .rdm_2_ab(irdm).grad_info.ex_blk.destroy
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_blk")
+!           !!!
+!           .rdm_2_ab(irdm).grad_info.ex_blk.create(nt)
+!        else
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_blk")
+!           !!!
+!           .rdm_2_ab(irdm).grad_info.ex_blk.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_ab(irdm).grad_info.factor.created) then
+!           siz = size(.rdm_2_ab(irdm).grad_info.factor)
+!           !!! debug
+!           stdout.text("Destroy .grad_info.factor")
+!           stdout.show("size =", siz)
+!           !!!
+!           do j=1,siz
+!              .rdm_2_ab(irdm).grad_info.factor(j).element.destroy
+!           end do
+!           .rdm_2_ab(irdm).grad_info.factor.destroy
+!           !!! debug
+!           stdout.text("Create .grad_info.factor")
+!           !!!
+!           .rdm_2_ab(irdm).grad_info.factor.create(nt)
+!        else
+!           !!! debug
+!           stdout.text("Create .grad_info.factor")
+!           !!!
+!           .rdm_2_ab(irdm).grad_info.factor.create(nt)
+!        end if
+!        !!!
+!        do j=1,nt
+!           k = terms(j)
+!           ! product of coefficients
+!           .rdm_2_ab(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+!           ! reduced overlap
+!           .rdm_2_ab(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+!           ! indices of excluded geminals
+!           .rdm_2_ab(irdm).grad_info.ex_gem(j).element.create(ngbf)
+!           .rdm_2_ab(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+!           ! indices of excluded blocks
+!           .rdm_2_ab(irdm).grad_info.ex_blk(j).element.create(ngbf)
+!           .rdm_2_ab(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+!           ! multiplication factors
+!           .rdm_2_ab(irdm).grad_info.factor(j).element.create(ngbf)
+!           .rdm_2_ab(irdm).grad_info.factor(j).element = .grad_info_tmp.factor(k).element(1:ngbf)
+!        end do
+!        ! binaries with additional info. about the product of coefficients
+!        ! (creation and storing)
+!        if (.rdm_2_ab(irdm).grad_info.all_pairs.created) then
+!           .rdm_2_ab(irdm).grad_info.all_pairs.destroy
+!        end if
+!        if (allpairs) then
+!           .rdm_2_ab(irdm).grad_info.all_pairs.create(nt)
+!           do j=1,nt
+!              k = terms(j)
+!              .rdm_2_ab(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!           end do
+!        end if
+!        !!! DEBUG
+!!        stdout.text("2RDM alpha/beta")
+!!        stdout.show("element",irdm)
+!!        stdout.show("indices",.rdm_2_ab(irdm).indices)
+!!        stdout.show("number of terms =",nt)
+!!        stdout.show("coef_prod",.rdm_2_ab(irdm).grad_info.coef_prod)
+!!        stdout.show("red_overlap",.rdm_2_ab(irdm).grad_info.red_ov)
+!!        stdout.text("excluded geminals")
+!!        do j=1,nt
+!!           stdout.show("geminals",.rdm_2_ab(irdm).grad_info.ex_gem(j).element)
+!!        end
+!!        stdout.text("excluded blocks")
+!!        do j=1,nt
+!!           stdout.show("blocks",.rdm_2_ab(irdm).grad_info.ex_blk(j).element)
+!!        end
+!!        stdout.text("multiplication factors")
+!!        do j=1,nt
+!!           stdout.show("factors",.rdm_2_ab(irdm).grad_info.factor(j).element)
+!!        end
+!!        stdout.text(" ")
+!        !!!
+!     case("aa")
+!        ! set number of terms
+!        .rdm_2_aa(irdm).grad_info.nb_terms = nt
+!        ! create vectors and save information
+!        ! (after destroying, if already created)
+!        !!!
+!        if (.rdm_2_aa(irdm).grad_info.coef_prod.created) then
+!           .rdm_2_aa(irdm).grad_info.coef_prod.destroy
+!           .rdm_2_aa(irdm).grad_info.coef_prod.create(nt)
+!        else
+!           .rdm_2_aa(irdm).grad_info.coef_prod.create(nt)
+!        end if
+!        stdout.text("After creation of .rdm_2_aa(irdm).grad_info.coef_prod")
+!        ldum = .rdm_2_aa(irdm).grad_info.ex_gem.created
+!        stdout.show(".rdm_2_aa(irdm).grad_info.ex_gem.created =",ldum)
+!        siz = size(.rdm_2_aa(irdm).grad_info.ex_gem)
+!        stdout.show("size(.rdm_2_aa(irdm).grad_info.ex_gem) =",siz)
+!        !
+!        .rdm_2_aa(irdm).grad_info.ex_gem.destroy
+!        stdout.text("After destroy of .rdm_2_aa(irdm).grad_info.ex_gem")
+!        ldum = .rdm_2_aa(irdm).grad_info.coef_prod.created
+!        stdout.show(".rdm_2_aa(irdm).grad_info.coef_prod.created =",ldum)
+!        ldum = .rdm_2_aa(irdm).grad_info.ex_gem.created
+!        stdout.show(".rdm_2_aa(irdm).grad_info.ex_gem.created =",ldum)
+!        siz = size(.rdm_2_aa(irdm).grad_info.ex_gem)
+!        stdout.show("size(.rdm_2_aa(irdm).grad_info.ex_gem) =",siz)
+!        stop
+!        !
+!        if (.rdm_2_aa(irdm).grad_info.red_ov.created) then
+!           .rdm_2_aa(irdm).grad_info.red_ov.destroy
+!           .rdm_2_aa(irdm).grad_info.red_ov.create(nt)
+!        else
+!           .rdm_2_aa(irdm).grad_info.red_ov.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_aa(irdm).grad_info.ex_gem.created) then
+!           siz = size(.rdm_2_aa(irdm).grad_info.ex_gem)
+!           !!! debug
+!           stdout.text("Destroy .grad_info.ex_gem")
+!           stdout.show("size =", siz)
+!           !!!
+!           do j=1,siz
+!              .rdm_2_aa(irdm).grad_info.ex_gem(j).element.destroy
+!           end do
+!           .rdm_2_aa(irdm).grad_info.ex_gem.destroy
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_gem")
+!           !!!
+!           .rdm_2_aa(irdm).grad_info.ex_gem.create(nt)
+!        else
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_gem")
+!           !!!
+!           .rdm_2_aa(irdm).grad_info.ex_gem.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_aa(irdm).grad_info.ex_blk.created) then
+!           siz = size(.rdm_2_aa(irdm).grad_info.ex_blk)
+!           !!! debug
+!           stdout.text("Destroy .grad_info.ex_blk")
+!           stdout.show("size =", siz)
+!           !!!
+!           do j=1,siz
+!              .rdm_2_aa(irdm).grad_info.ex_blk(j).element.destroy
+!           end do
+!           .rdm_2_aa(irdm).grad_info.ex_blk.destroy
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_blk")
+!           !!!
+!           .rdm_2_aa(irdm).grad_info.ex_blk.create(nt)
+!        else
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_blk")
+!           !!!
+!           .rdm_2_aa(irdm).grad_info.ex_blk.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_aa(irdm).grad_info.factor.created) then
+!           siz = size(.rdm_2_aa(irdm).grad_info.factor)
+!           !!! debug
+!           stdout.text("Destroy .grad_info.factor")
+!           stdout.show("size =", siz)
+!           !!!
+!           do j=1,siz
+!              .rdm_2_aa(irdm).grad_info.factor(j).element.destroy
+!           end do
+!           .rdm_2_aa(irdm).grad_info.factor.destroy
+!           !!! debug
+!           stdout.text("Create .grad_info.factor")
+!           !!!
+!           .rdm_2_aa(irdm).grad_info.factor.create(nt)
+!        else
+!           !!! debug
+!           stdout.text("Create .grad_info.factor")
+!           !!!
+!           .rdm_2_aa(irdm).grad_info.factor.create(nt)
+!        end if
+!        !!!
+!        do j=1,nt
+!           k = terms(j)
+!           ! product of coefficients
+!           .rdm_2_aa(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+!           ! reduced overlap
+!           .rdm_2_aa(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+!           ! indices of excluded geminals
+!           .rdm_2_aa(irdm).grad_info.ex_gem(j).element.create(ngbf)
+!           .rdm_2_aa(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+!           ! indices of excluded blocks
+!           .rdm_2_aa(irdm).grad_info.ex_blk(j).element.create(ngbf)
+!           .rdm_2_aa(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+!           ! multiplication factors
+!           .rdm_2_aa(irdm).grad_info.factor(j).element.create(ngbf)
+!           .rdm_2_aa(irdm).grad_info.factor(j).element = .grad_info_tmp.factor(k).element(1:ngbf)
+!        end do
+!        ! binaries with additional info. about the product of coefficients
+!        ! (creation and storing)
+!        if (.rdm_2_aa(irdm).grad_info.all_pairs.created) then
+!           .rdm_2_aa(irdm).grad_info.all_pairs.destroy
+!        end if
+!        if (allpairs) then
+!           .rdm_2_aa(irdm).grad_info.all_pairs.create(nt)
+!           do j=1,nt
+!              k = terms(j)
+!              .rdm_2_aa(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!           end do
+!        end if
+!        !!! DEBUG
+!!        stdout.text("2RDM alpha/alpha")
+!!        stdout.show("element",irdm)
+!!        stdout.show("indices",.rdm_2_aa(irdm).indices)
+!!        stdout.show("number of terms =",nt)
+!!        stdout.show("coef_prod",.rdm_2_aa(irdm).grad_info.coef_prod)
+!!        stdout.show("red_overlap",.rdm_2_aa(irdm).grad_info.red_ov)
+!!        stdout.text("excluded geminals")
+!!        do j=1,nt
+!!           stdout.show("geminals",.rdm_2_aa(irdm).grad_info.ex_gem(j).element)
+!!        end
+!!        stdout.text("excluded blocks")
+!!        do j=1,nt
+!!           stdout.show("blocks",.rdm_2_aa(irdm).grad_info.ex_blk(j).element)
+!!        end
+!!        stdout.text("multiplication factors")
+!!        do j=1,nt
+!!           stdout.show("factors",.rdm_2_aa(irdm).grad_info.factor(j).element)
+!!        end
+!!        stdout.text(" ")
+!        !!!
+!     case("bb")
+!        ! set number of terms
+!        .rdm_2_bb(irdm).grad_info.nb_terms = nt
+!        ! create vectors and save information
+!        ! (after destroying, if already created)
+!        !!!
+!        if (.rdm_2_bb(irdm).grad_info.coef_prod.created) then
+!           .rdm_2_bb(irdm).grad_info.coef_prod.destroy
+!           .rdm_2_bb(irdm).grad_info.coef_prod.create(nt)
+!        else
+!           .rdm_2_bb(irdm).grad_info.coef_prod.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_bb(irdm).grad_info.red_ov.created) then
+!           .rdm_2_bb(irdm).grad_info.red_ov.destroy
+!           .rdm_2_bb(irdm).grad_info.red_ov.create(nt)
+!        else
+!           .rdm_2_bb(irdm).grad_info.red_ov.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_bb(irdm).grad_info.ex_gem.created) then
+!           siz = size(.rdm_2_bb(irdm).grad_info.ex_gem)
+!           !!! debug
+!           stdout.text("Destroy .grad_info.ex_gem")
+!           stdout.show("size =", siz)
+!           !!!
+!           do j=1,siz
+!              .rdm_2_bb(irdm).grad_info.ex_gem(j).element.destroy
+!           end do
+!           .rdm_2_bb(irdm).grad_info.ex_gem.destroy
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_gem")
+!           !!!
+!           .rdm_2_bb(irdm).grad_info.ex_gem.create(nt)
+!        else
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_gem")
+!           !!!
+!           .rdm_2_bb(irdm).grad_info.ex_gem.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_bb(irdm).grad_info.ex_blk.created) then
+!           siz = size(.rdm_2_bb(irdm).grad_info.ex_blk)
+!           !!! debug
+!           stdout.text("Destroy .grad_info.ex_blk")
+!           stdout.show("size =", siz)
+!           !!!
+!           do j=1,siz
+!              .rdm_2_bb(irdm).grad_info.ex_blk(j).element.destroy
+!           end do
+!           .rdm_2_bb(irdm).grad_info.ex_blk.destroy
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_blk")
+!           !!!
+!           .rdm_2_bb(irdm).grad_info.ex_blk.create(nt)
+!        else
+!           !!! debug
+!           stdout.text("Create .grad_info.ex_blk")
+!           !!!
+!           .rdm_2_bb(irdm).grad_info.ex_blk.create(nt)
+!        end if
+!        !
+!        if (.rdm_2_bb(irdm).grad_info.factor.created) then
+!           siz = size(.rdm_2_bb(irdm).grad_info.factor)
+!           !!! debug
+!           stdout.text("Destroy .grad_info.factor")
+!           stdout.show("size =", siz)
+!           !!!
+!           do j=1,siz
+!              .rdm_2_bb(irdm).grad_info.factor(j).element.destroy
+!           end do
+!           .rdm_2_bb(irdm).grad_info.factor.destroy
+!           !!! debug
+!           stdout.text("Create .grad_info.factor")
+!           !!!
+!           .rdm_2_bb(irdm).grad_info.factor.create(nt)
+!        else
+!           !!! debug
+!           stdout.text("Create .grad_info.factor")
+!           !!!
+!           .rdm_2_bb(irdm).grad_info.factor.create(nt)
+!        end if
+!        !!!
+!        do j=1,nt
+!           k = terms(j)
+!           ! product of coefficients
+!           .rdm_2_bb(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+!           ! reduced overlap
+!           .rdm_2_bb(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+!           ! indices of excluded geminals
+!           .rdm_2_bb(irdm).grad_info.ex_gem(j).element.create(ngbf)
+!           .rdm_2_bb(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+!           ! indices of excluded blocks
+!           .rdm_2_bb(irdm).grad_info.ex_blk(j).element.create(ngbf)
+!           .rdm_2_bb(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+!           ! multiplication factors
+!           .rdm_2_bb(irdm).grad_info.factor(j).element.create(ngbf)
+!           .rdm_2_bb(irdm).grad_info.factor(j).element = .grad_info_tmp.factor(k).element(1:ngbf)
+!        end do
+!        ! binaries with additional info. about the product of coefficients
+!        ! (creation and storing)
+!        if (.rdm_2_bb(irdm).grad_info.all_pairs.created) then
+!           .rdm_2_bb(irdm).grad_info.all_pairs.destroy
+!        end if
+!        if (allpairs) then
+!           .rdm_2_bb(irdm).grad_info.all_pairs.create(nt)
+!           do j=1,nt
+!              k = terms(j)
+!              .rdm_2_bb(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!           end do
+!        end if
+!        !!! DEBUG
+!!        stdout.text("2RDM beta/beta")
+!!        stdout.show("element",irdm)
+!!        stdout.show("indices",.rdm_2_bb(irdm).indices)
+!!        stdout.show("number of terms =",nt)
+!!        stdout.show("coef_prod",.rdm_2_bb(irdm).grad_info.coef_prod)
+!!        stdout.show("red_overlap",.rdm_2_bb(irdm).grad_info.red_ov)
+!!        stdout.text("excluded geminals")
+!!        do j=1,nt
+!!           stdout.show("geminals",.rdm_2_bb(irdm).grad_info.ex_gem(j).element)
+!!        end
+!!        stdout.text("excluded blocks")
+!!        do j=1,nt
+!!           stdout.show("blocks",.rdm_2_bb(irdm).grad_info.ex_blk(j).element)
+!!        end
+!!        stdout.text("multiplication factors")
+!!        do j=1,nt
+!!           stdout.show("factors",.rdm_2_bb(irdm).grad_info.factor(j).element)
+!!        end
+!!        stdout.text(" ")
+!        !!!
+!     case default
+!        stdout.text("Error in routine save_2rdm_grad_info:") 
+!        stdout.text("unknown string to select the 2RDM part.")
+!        stop
+!     end select
+!
+!     !!! debug
+!     stdout.show("irdm =", irdm)
+!     !
+!     ldum = .rdm_2_ab(irdm).grad_info.coef_prod.created
+!     stdout.show(".rdm_2_ab(irdm).grad_info.coef_prod.created =",ldum)
+!     ldum = .rdm_2_ab(irdm).grad_info.ex_gem.created
+!     stdout.show(".rdm_2_ab(irdm).grad_info.ex_gem.created =",ldum)
+!     !
+!     ldum = .rdm_2_aa(1).grad_info.coef_prod.created
+!     stdout.show(".rdm_2_aa(1).grad_info.coef_prod.created =",ldum)
+!     ldum = .rdm_2_aa(1).grad_info.ex_gem.created
+!     stdout.show(".rdm_2_aa(1).grad_info.ex_gem.created =",ldum)
+!     !
+!     ldum = .rdm_2_bb(1).grad_info.coef_prod.created
+!     stdout.show(".rdm_2_bb(1).grad_info.coef_prod.created =",ldum)
+!     ldum = .rdm_2_bb(1).grad_info.ex_gem.created
+!     stdout.show(".rdm_2_bb(1).grad_info.ex_gem.created =",ldum)
+!     !!!
+!     !stop
+!
+!   end
+
+!   save_2rdm_grad_info(rdm2_type, irdm, nt, terms, allpairs_arg) ::: leaky
+!   ! save information about the 2rdm element "irdm"
+!   ! (this info. will be used in the calculation 
+!   ! of the energy gradient)
+!     rdm2_type :: STR, IN
+!     irdm, nt :: INT, IN
+!     terms :: VEC{INT}, IN
+!     allpairs_arg :: BIN, IN, optional
+!     allpairs :: BIN
+!     ngbf :: INT
+!     j, k :: INT
+!     !!! debug
+!     stdout.text(" ")
+!     stdout.text("Entering subroutine save_2rdm_grad_info")
+!     stdout.text("Argument variables:")
+!     stdout.show("rdm2_type =", rdm2_type)
+!     stdout.show("irdm      =", irdm)
+!     stdout.show("nt        =", nt)
+!     stdout.show("terms     =", terms(1:nt))
+!     stdout.show("allpairs_arg =", allpairs_arg)
+!     !!!
+!
+!     ! this is for the possible creation of array "all_pairs"
+!     allpairs = FALSE
+!     if (present(allpairs_arg)) then
+!        allpairs = allpairs_arg
+!     end
+!
+!     ! dimension of vectors "ex_gem(:).element",
+!     ! "ex_blk(:).element" and "factor(:).element"
+!     ngbf = 2
+!
+!     select case (rdm2_type)
+!     case("ab")
+!        ! set number of terms
+!        .rdm_2_ab(irdm).grad_info.nb_terms = nt
+!        ! destroy vectors (if already created)
+!        .rdm_2_ab(irdm).grad_info.coef_prod.destroy
+!        .rdm_2_ab(irdm).grad_info.red_ov.destroy
+!        .rdm_2_ab(irdm).grad_info.ex_gem.destroy
+!        .rdm_2_ab(irdm).grad_info.ex_blk.destroy
+!        .rdm_2_ab(irdm).grad_info.factor.destroy
+!        ! create vectors and save information
+!        .rdm_2_ab(irdm).grad_info.coef_prod.create(nt)
+!        .rdm_2_ab(irdm).grad_info.red_ov.create(nt)
+!        .rdm_2_ab(irdm).grad_info.ex_gem.create(nt,ngbf)
+!        .rdm_2_ab(irdm).grad_info.ex_blk.create(nt,ngbf)
+!        .rdm_2_ab(irdm).grad_info.factor.create(nt,ngbf)
+!        do j=1,nt
+!           k = terms(j)
+!           ! product of coefficients
+!           .rdm_2_ab(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+!           ! reduced overlap
+!           .rdm_2_ab(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+!           ! indices of excluded geminals
+!           .rdm_2_ab(irdm).grad_info.ex_gem(j).element(1:ngbf) = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+!           ! indices of excluded blocks
+!           .rdm_2_ab(irdm).grad_info.ex_blk(j).element(1:ngbf) = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+!           ! multiplication factors
+!           .rdm_2_ab(irdm).grad_info.factor(j).element(1:ngbf) = .grad_info_tmp.factor(k).element(1:ngbf)
+!        end
+!        ! binaries with additional info. about the product of coefficients
+!        ! (creation and storing)
+!        .rdm_2_ab(irdm).grad_info.all_pairs.destroy
+!        if (allpairs) then
+!           .rdm_2_ab(irdm).grad_info.all_pairs.create(nt)
+!           do j=1,nt
+!              k = terms(j)
+!              .rdm_2_ab(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!           end
+!        end
+!        !!! DEBUG
+!!        stdout.text("2RDM alpha/beta")
+!!        stdout.show("element",irdm)
+!!        stdout.show("indices",.rdm_2_ab(irdm).indices)
+!!        stdout.show("number of terms =",nt)
+!!        stdout.show("coef_prod",.rdm_2_ab(irdm).grad_info.coef_prod)
+!!        stdout.show("red_overlap",.rdm_2_ab(irdm).grad_info.red_ov)
+!!        stdout.text("excluded geminals")
+!!        do j=1,nt
+!!           stdout.show("geminals",.rdm_2_ab(irdm).grad_info.ex_gem(j).element)
+!!        end
+!!        stdout.text("excluded blocks")
+!!        do j=1,nt
+!!           stdout.show("blocks",.rdm_2_ab(irdm).grad_info.ex_blk(j).element)
+!!        end
+!!        stdout.text("multiplication factors")
+!!        do j=1,nt
+!!           stdout.show("factors",.rdm_2_ab(irdm).grad_info.factor(j).element)
+!!        end
+!!        stdout.text(" ")
+!        !!!
+!     case("aa")
+!        ! set number of terms
+!        .rdm_2_aa(irdm).grad_info.nb_terms = nt
+!        ! destroy vectors (if already created)
+!        .rdm_2_aa(irdm).grad_info.coef_prod.destroy
+!        .rdm_2_aa(irdm).grad_info.red_ov.destroy
+!        .rdm_2_aa(irdm).grad_info.ex_gem.destroy
+!        .rdm_2_aa(irdm).grad_info.ex_blk.destroy
+!        .rdm_2_aa(irdm).grad_info.factor.destroy
+!        ! create vectors and save information
+!        .rdm_2_aa(irdm).grad_info.coef_prod.create(nt)
+!        .rdm_2_aa(irdm).grad_info.red_ov.create(nt)
+!        .rdm_2_aa(irdm).grad_info.ex_gem.create(nt,ngbf)
+!        .rdm_2_aa(irdm).grad_info.ex_blk.create(nt,ngbf)
+!        .rdm_2_aa(irdm).grad_info.factor.create(nt,ngbf)
+!        do j=1,nt
+!           k = terms(j)
+!           ! product of coefficients
+!           .rdm_2_aa(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+!           ! reduced overlap
+!           .rdm_2_aa(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+!           ! indices of excluded geminals
+!           .rdm_2_aa(irdm).grad_info.ex_gem(j).element(1:ngbf) = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+!           ! indices of excluded blocks
+!           .rdm_2_aa(irdm).grad_info.ex_blk(j).element(1:ngbf) = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+!           ! multiplication factors
+!           .rdm_2_aa(irdm).grad_info.factor(j).element(1:ngbf) = .grad_info_tmp.factor(k).element(1:ngbf)
+!        end
+!        ! binaries with additional info. about the product of coefficients
+!        ! (creation and storing)
+!        .rdm_2_aa(irdm).grad_info.all_pairs.destroy
+!        if (allpairs) then
+!           .rdm_2_aa(irdm).grad_info.all_pairs.create(nt)
+!           do j=1,nt
+!              k = terms(j)
+!              .rdm_2_aa(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!           end
+!        end
+!        !!! DEBUG
+!!        stdout.text("2RDM alpha/alpha")
+!!        stdout.show("element",irdm)
+!!        stdout.show("indices",.rdm_2_aa(irdm).indices)
+!!        stdout.show("number of terms =",nt)
+!!        stdout.show("coef_prod",.rdm_2_aa(irdm).grad_info.coef_prod)
+!!        stdout.show("red_overlap",.rdm_2_aa(irdm).grad_info.red_ov)
+!!        stdout.text("excluded geminals")
+!!        do j=1,nt
+!!           stdout.show("geminals",.rdm_2_aa(irdm).grad_info.ex_gem(j).element)
+!!        end
+!!        stdout.text("excluded blocks")
+!!        do j=1,nt
+!!           stdout.show("blocks",.rdm_2_aa(irdm).grad_info.ex_blk(j).element)
+!!        end
+!!        stdout.text("multiplication factors")
+!!        do j=1,nt
+!!           stdout.show("factors",.rdm_2_aa(irdm).grad_info.factor(j).element)
+!!        end
+!!        stdout.text(" ")
+!        !!!
+!     case("bb")
+!        ! set number of terms
+!        .rdm_2_bb(irdm).grad_info.nb_terms = nt
+!        ! destroy vectors (if already created)
+!        .rdm_2_bb(irdm).grad_info.coef_prod.destroy
+!        .rdm_2_bb(irdm).grad_info.red_ov.destroy
+!        .rdm_2_bb(irdm).grad_info.ex_gem.destroy
+!        .rdm_2_bb(irdm).grad_info.ex_blk.destroy
+!        .rdm_2_bb(irdm).grad_info.factor.destroy
+!        ! create vectors and save information
+!        .rdm_2_bb(irdm).grad_info.coef_prod.create(nt)
+!        .rdm_2_bb(irdm).grad_info.red_ov.create(nt)
+!        .rdm_2_bb(irdm).grad_info.ex_gem.create(nt,ngbf)
+!        .rdm_2_bb(irdm).grad_info.ex_blk.create(nt,ngbf)
+!        .rdm_2_bb(irdm).grad_info.factor.create(nt,ngbf)
+!        do j=1,nt
+!           k = terms(j)
+!           ! product of coefficients
+!           .rdm_2_bb(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+!           ! reduced overlap
+!           .rdm_2_bb(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+!           ! indices of excluded geminals
+!           .rdm_2_bb(irdm).grad_info.ex_gem(j).element(1:ngbf) = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+!           ! indices of excluded blocks
+!           .rdm_2_bb(irdm).grad_info.ex_blk(j).element(1:ngbf) = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+!           ! multiplication factors
+!           .rdm_2_bb(irdm).grad_info.factor(j).element(1:ngbf) = .grad_info_tmp.factor(k).element(1:ngbf)
+!        end
+!        ! binaries with additional info. about the product of coefficients
+!        ! (creation and storing)
+!        .rdm_2_bb(irdm).grad_info.all_pairs.destroy
+!        if (allpairs) then
+!           .rdm_2_bb(irdm).grad_info.all_pairs.create(nt)
+!           do j=1,nt
+!              k = terms(j)
+!              .rdm_2_bb(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+!           end
+!        end
+!        !!! DEBUG
+!!        stdout.text("2RDM beta/beta")
+!!        stdout.show("element",irdm)
+!!        stdout.show("indices",.rdm_2_bb(irdm).indices)
+!!        stdout.show("number of terms =",nt)
+!!        stdout.show("coef_prod",.rdm_2_bb(irdm).grad_info.coef_prod)
+!!        stdout.show("red_overlap",.rdm_2_bb(irdm).grad_info.red_ov)
+!!        stdout.text("excluded geminals")
+!!        do j=1,nt
+!!           stdout.show("geminals",.rdm_2_bb(irdm).grad_info.ex_gem(j).element)
+!!        end
+!!        stdout.text("excluded blocks")
+!!        do j=1,nt
+!!           stdout.show("blocks",.rdm_2_bb(irdm).grad_info.ex_blk(j).element)
+!!        end
+!!        stdout.text("multiplication factors")
+!!        do j=1,nt
+!!           stdout.show("factors",.rdm_2_bb(irdm).grad_info.factor(j).element)
+!!        end
+!!        stdout.text(" ")
+!        !!!
+!     case default
+!        stdout.text("Error in routine save_2rdm_grad_info:") 
+!        stdout.text("unknown string to select the 2RDM part.")
+!        stop
+!     end select
+!
+!   end
+
    save_2rdm_grad_info(rdm2_type, irdm, nt, terms, allpairs_arg) ::: leaky
    ! save information about the 2rdm element "irdm"
    ! (this info. will be used in the calculation 
@@ -5311,6 +6717,12 @@ contains
      !!! debug
 !     stdout.text(" ")
 !     stdout.text("Entering subroutine save_2rdm_grad_info")
+!     stdout.text("Argument variables:")
+!     stdout.show("rdm2_type =", rdm2_type)
+!     stdout.show("irdm      =", irdm)
+!     stdout.show("nt        =", nt)
+!     stdout.show("terms     =", terms(1:nt))
+!     stdout.show("allpairs_arg =", allpairs_arg)
      !!!
 
      ! this is for the possible creation of array "all_pairs"
@@ -5326,54 +6738,40 @@ contains
      select case (rdm2_type)
      case("ab")
         ! set number of terms
-        .rdm_2_ab(irdm).grad_info.nb_terms = nt
+        .rdm_2_ab_grad_info(irdm).nb_terms = nt
+        ! destroy vectors (if already created)
+        .rdm_2_ab_grad_info(irdm).coef_prod.destroy
+        .rdm_2_ab_grad_info(irdm).red_ov.destroy
+        .rdm_2_ab_grad_info(irdm).ex_gem.destroy
+        .rdm_2_ab_grad_info(irdm).ex_blk.destroy
+        .rdm_2_ab_grad_info(irdm).factor.destroy
         ! create vectors and save information
-        ! (after destroying, if already created)
-        .rdm_2_ab(irdm).grad_info.coef_prod.destroy
-        .rdm_2_ab(irdm).grad_info.coef_prod.create(nt)
-        .rdm_2_ab(irdm).grad_info.red_ov.destroy
-        .rdm_2_ab(irdm).grad_info.red_ov.create(nt)
-        .rdm_2_ab(irdm).grad_info.ex_gem.destroy
-        .rdm_2_ab(irdm).grad_info.ex_gem.create(nt)
-        .rdm_2_ab(irdm).grad_info.ex_blk.destroy
-        .rdm_2_ab(irdm).grad_info.ex_blk.create(nt)
-        .rdm_2_ab(irdm).grad_info.factor.destroy
-        .rdm_2_ab(irdm).grad_info.factor.create(nt)
-!        if (allpairs) then
-!           .rdm_2_ab(irdm).grad_info.all_pairs.destroy
-!           .rdm_2_ab(irdm).grad_info.all_pairs.create(nt)
-!        end
+        .rdm_2_ab_grad_info(irdm).coef_prod.create(nt)
+        .rdm_2_ab_grad_info(irdm).red_ov.create(nt)
+        .rdm_2_ab_grad_info(irdm).ex_gem.create(nt,ngbf)
+        .rdm_2_ab_grad_info(irdm).ex_blk.create(nt,ngbf)
+        .rdm_2_ab_grad_info(irdm).factor.create(nt,ngbf)
         do j=1,nt
            k = terms(j)
            ! product of coefficients
-           .rdm_2_ab(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+           .rdm_2_ab_grad_info(irdm).coef_prod(j) = .grad_info_tmp.coef_prod(k)
            ! reduced overlap
-           .rdm_2_ab(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+           .rdm_2_ab_grad_info(irdm).red_ov(j) = .grad_info_tmp.red_ov(k)
            ! indices of excluded geminals
-           .rdm_2_ab(irdm).grad_info.ex_gem(j).element.destroy
-           .rdm_2_ab(irdm).grad_info.ex_gem(j).element.create(ngbf)
-           .rdm_2_ab(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+           .rdm_2_ab_grad_info(irdm).ex_gem(j).element(1:ngbf) = .grad_info_tmp.ex_gem(k).element(1:ngbf)
            ! indices of excluded blocks
-           .rdm_2_ab(irdm).grad_info.ex_blk(j).element.destroy
-           .rdm_2_ab(irdm).grad_info.ex_blk(j).element.create(ngbf)
-           .rdm_2_ab(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+           .rdm_2_ab_grad_info(irdm).ex_blk(j).element(1:ngbf) = .grad_info_tmp.ex_blk(k).element(1:ngbf)
            ! multiplication factors
-           .rdm_2_ab(irdm).grad_info.factor(j).element.destroy
-           .rdm_2_ab(irdm).grad_info.factor(j).element.create(ngbf)
-           .rdm_2_ab(irdm).grad_info.factor(j).element = .grad_info_tmp.factor(k).element(1:ngbf)
-!           ! binaries with additional info. about the product of coefficients
-!           if (allpairs) then
-!              .rdm_2_ab(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
-!           end
+           .rdm_2_ab_grad_info(irdm).factor(j).element(1:ngbf) = .grad_info_tmp.factor(k).element(1:ngbf)
         end
         ! binaries with additional info. about the product of coefficients
         ! (creation and storing)
-        .rdm_2_ab(irdm).grad_info.all_pairs.destroy
+        .rdm_2_ab_grad_info(irdm).all_pairs.destroy
         if (allpairs) then
-           .rdm_2_ab(irdm).grad_info.all_pairs.create(nt)
+           .rdm_2_ab_grad_info(irdm).all_pairs.create(nt)
            do j=1,nt
               k = terms(j)
-              .rdm_2_ab(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+              .rdm_2_ab_grad_info(irdm).all_pairs(j) = .grad_info_tmp.all_pairs(k)
            end
         end
         !!! DEBUG
@@ -5399,46 +6797,40 @@ contains
         !!!
      case("aa")
         ! set number of terms
-        .rdm_2_aa(irdm).grad_info.nb_terms = nt
+        .rdm_2_aa_grad_info(irdm).nb_terms = nt
+        ! destroy vectors (if already created)
+        .rdm_2_aa_grad_info(irdm).coef_prod.destroy
+        .rdm_2_aa_grad_info(irdm).red_ov.destroy
+        .rdm_2_aa_grad_info(irdm).ex_gem.destroy
+        .rdm_2_aa_grad_info(irdm).ex_blk.destroy
+        .rdm_2_aa_grad_info(irdm).factor.destroy
         ! create vectors and save information
-        ! (after destroying, if already created)
-        .rdm_2_aa(irdm).grad_info.coef_prod.destroy
-        .rdm_2_aa(irdm).grad_info.coef_prod.create(nt)
-        .rdm_2_aa(irdm).grad_info.red_ov.destroy
-        .rdm_2_aa(irdm).grad_info.red_ov.create(nt)
-        .rdm_2_aa(irdm).grad_info.ex_gem.destroy
-        .rdm_2_aa(irdm).grad_info.ex_gem.create(nt)
-        .rdm_2_aa(irdm).grad_info.ex_blk.destroy
-        .rdm_2_aa(irdm).grad_info.ex_blk.create(nt)
-        .rdm_2_aa(irdm).grad_info.factor.destroy
-        .rdm_2_aa(irdm).grad_info.factor.create(nt)
+        .rdm_2_aa_grad_info(irdm).coef_prod.create(nt)
+        .rdm_2_aa_grad_info(irdm).red_ov.create(nt)
+        .rdm_2_aa_grad_info(irdm).ex_gem.create(nt,ngbf)
+        .rdm_2_aa_grad_info(irdm).ex_blk.create(nt,ngbf)
+        .rdm_2_aa_grad_info(irdm).factor.create(nt,ngbf)
         do j=1,nt
            k = terms(j)
            ! product of coefficients
-           .rdm_2_aa(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+           .rdm_2_aa_grad_info(irdm).coef_prod(j) = .grad_info_tmp.coef_prod(k)
            ! reduced overlap
-           .rdm_2_aa(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+           .rdm_2_aa_grad_info(irdm).red_ov(j) = .grad_info_tmp.red_ov(k)
            ! indices of excluded geminals
-           .rdm_2_aa(irdm).grad_info.ex_gem(j).element.destroy
-           .rdm_2_aa(irdm).grad_info.ex_gem(j).element.create(ngbf)
-           .rdm_2_aa(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+           .rdm_2_aa_grad_info(irdm).ex_gem(j).element(1:ngbf) = .grad_info_tmp.ex_gem(k).element(1:ngbf)
            ! indices of excluded blocks
-           .rdm_2_aa(irdm).grad_info.ex_blk(j).element.destroy
-           .rdm_2_aa(irdm).grad_info.ex_blk(j).element.create(ngbf)
-           .rdm_2_aa(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+           .rdm_2_aa_grad_info(irdm).ex_blk(j).element(1:ngbf) = .grad_info_tmp.ex_blk(k).element(1:ngbf)
            ! multiplication factors
-           .rdm_2_aa(irdm).grad_info.factor(j).element.destroy
-           .rdm_2_aa(irdm).grad_info.factor(j).element.create(ngbf)
-           .rdm_2_aa(irdm).grad_info.factor(j).element = .grad_info_tmp.factor(k).element(1:ngbf)
+           .rdm_2_aa_grad_info(irdm).factor(j).element(1:ngbf) = .grad_info_tmp.factor(k).element(1:ngbf)
         end
         ! binaries with additional info. about the product of coefficients
         ! (creation and storing)
-        .rdm_2_aa(irdm).grad_info.all_pairs.destroy
+        .rdm_2_aa_grad_info(irdm).all_pairs.destroy
         if (allpairs) then
-           .rdm_2_aa(irdm).grad_info.all_pairs.create(nt)
+           .rdm_2_aa_grad_info(irdm).all_pairs.create(nt)
            do j=1,nt
               k = terms(j)
-              .rdm_2_aa(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+              .rdm_2_aa_grad_info(irdm).all_pairs(j) = .grad_info_tmp.all_pairs(k)
            end
         end
         !!! DEBUG
@@ -5464,46 +6856,40 @@ contains
         !!!
      case("bb")
         ! set number of terms
-        .rdm_2_bb(irdm).grad_info.nb_terms = nt
+        .rdm_2_bb_grad_info(irdm).nb_terms = nt
+        ! destroy vectors (if already created)
+        .rdm_2_bb_grad_info(irdm).coef_prod.destroy
+        .rdm_2_bb_grad_info(irdm).red_ov.destroy
+        .rdm_2_bb_grad_info(irdm).ex_gem.destroy
+        .rdm_2_bb_grad_info(irdm).ex_blk.destroy
+        .rdm_2_bb_grad_info(irdm).factor.destroy
         ! create vectors and save information
-        ! (after destroying, if already created)
-        .rdm_2_bb(irdm).grad_info.coef_prod.destroy
-        .rdm_2_bb(irdm).grad_info.coef_prod.create(nt)
-        .rdm_2_bb(irdm).grad_info.red_ov.destroy
-        .rdm_2_bb(irdm).grad_info.red_ov.create(nt)
-        .rdm_2_bb(irdm).grad_info.ex_gem.destroy
-        .rdm_2_bb(irdm).grad_info.ex_gem.create(nt)
-        .rdm_2_bb(irdm).grad_info.ex_blk.destroy
-        .rdm_2_bb(irdm).grad_info.ex_blk.create(nt)
-        .rdm_2_bb(irdm).grad_info.factor.destroy
-        .rdm_2_bb(irdm).grad_info.factor.create(nt)
+        .rdm_2_bb_grad_info(irdm).coef_prod.create(nt)
+        .rdm_2_bb_grad_info(irdm).red_ov.create(nt)
+        .rdm_2_bb_grad_info(irdm).ex_gem.create(nt,ngbf)
+        .rdm_2_bb_grad_info(irdm).ex_blk.create(nt,ngbf)
+        .rdm_2_bb_grad_info(irdm).factor.create(nt,ngbf)
         do j=1,nt
            k = terms(j)
            ! product of coefficients
-           .rdm_2_bb(irdm).grad_info.coef_prod(j) = .grad_info_tmp.coef_prod(k)
+           .rdm_2_bb_grad_info(irdm).coef_prod(j) = .grad_info_tmp.coef_prod(k)
            ! reduced overlap
-           .rdm_2_bb(irdm).grad_info.red_ov(j) = .grad_info_tmp.red_ov(k)
+           .rdm_2_bb_grad_info(irdm).red_ov(j) = .grad_info_tmp.red_ov(k)
            ! indices of excluded geminals
-           .rdm_2_bb(irdm).grad_info.ex_gem(j).element.destroy
-           .rdm_2_bb(irdm).grad_info.ex_gem(j).element.create(ngbf)
-           .rdm_2_bb(irdm).grad_info.ex_gem(j).element = .grad_info_tmp.ex_gem(k).element(1:ngbf)
+           .rdm_2_bb_grad_info(irdm).ex_gem(j).element(1:ngbf) = .grad_info_tmp.ex_gem(k).element(1:ngbf)
            ! indices of excluded blocks
-           .rdm_2_bb(irdm).grad_info.ex_blk(j).element.destroy
-           .rdm_2_bb(irdm).grad_info.ex_blk(j).element.create(ngbf)
-           .rdm_2_bb(irdm).grad_info.ex_blk(j).element = .grad_info_tmp.ex_blk(k).element(1:ngbf)
+           .rdm_2_bb_grad_info(irdm).ex_blk(j).element(1:ngbf) = .grad_info_tmp.ex_blk(k).element(1:ngbf)
            ! multiplication factors
-           .rdm_2_bb(irdm).grad_info.factor(j).element.destroy
-           .rdm_2_bb(irdm).grad_info.factor(j).element.create(ngbf)
-           .rdm_2_bb(irdm).grad_info.factor(j).element = .grad_info_tmp.factor(k).element(1:ngbf)
+           .rdm_2_bb_grad_info(irdm).factor(j).element(1:ngbf) = .grad_info_tmp.factor(k).element(1:ngbf)
         end
         ! binaries with additional info. about the product of coefficients
         ! (creation and storing)
-        .rdm_2_bb(irdm).grad_info.all_pairs.destroy
+        .rdm_2_bb_grad_info(irdm).all_pairs.destroy
         if (allpairs) then
-           .rdm_2_bb(irdm).grad_info.all_pairs.create(nt)
+           .rdm_2_bb_grad_info(irdm).all_pairs.create(nt)
            do j=1,nt
               k = terms(j)
-              .rdm_2_bb(irdm).grad_info.all_pairs(j) = .grad_info_tmp.all_pairs(k)
+              .rdm_2_bb_grad_info(irdm).all_pairs(j) = .grad_info_tmp.all_pairs(k)
            end
         end
         !!! DEBUG
@@ -5531,9 +6917,10 @@ contains
         stdout.text("Error in routine save_2rdm_grad_info:") 
         stdout.text("unknown string to select the 2RDM part.")
         stop
-     end
+     end select
 
    end
+! de
 
 !   save_2rdm_grad_info(rdm2_type, irdm, nt, terms)
 !   ! save information about the 2rdm element "irdm"
@@ -5895,52 +7282,52 @@ contains
 !
 !   end
 
-!deprecated! davide: 28-11-2018
-!deprecated   calc_1rdm ::: leaky
-!deprecated   ! compute the 1-reduced density matrix
-!deprecated   ! for a set of PBT
-!deprecated     i, j :: INT
-!deprecated     trace :: REAL
-!deprecated
-!deprecated     allocate(.rdm_1(.mat_size,.mat_size))
-!deprecated     .rdm_1 = ZERO
-!deprecated
-!deprecated     .prep_orbital_block_mapping
-!deprecated     .prep_block_types
-!deprecated
-!deprecated   !debug stdout.text(" ")
-!deprecated   !debug stdout.text("Calculation of the 1-reduced density matrix")
-!deprecated
-!deprecated     ! 1-orthogonal blocks space
-!deprecated     do i=1,.n_1D_blocks
-!deprecated        .calc_1rdm_element(i,i)
-!deprecated     end
-!deprecated
-!deprecated     ! Pauli blocks space
-!deprecated     do i=.n_1D_blocks+1,.mat_size-1,2
-!deprecated        .calc_1rdm_element(i,i)
-!deprecated        j = i+1
-!deprecated        .rdm_1(j,j) = .rdm_1(i,i)
-!deprecated     end
-!deprecated
-!deprecated     ! write 1-RDM
-!deprecated   !debug stdout.text(" ")
-!deprecated   !debug stdout.text("1-reduced density alpha-(or beta-)matrix:")
-!deprecated   !debug stdout.text(" ")
-!deprecated   !debug stdout.put(.rdm_1)
-!deprecated
-!deprecated   !debug  ! compute 1-RDM trace
-!deprecated   !debug  trace = ZERO
-!deprecated   !debug  do i=1,.mat_size
-!deprecated   !debug     trace = trace + .rdm_1(i,i)
-!deprecated   !debug  end
-!deprecated   !debug stdout.text(" ")
-!deprecated   !debug stdout.show("Trace of the 1-RDM alpha-(or beta-)matrix", trace)
-!deprecated   !debug stdout.text(" ")
-!deprecated   !debug stdout.show("Trace of the total 1-RDM matrix", trace+trace)
-!deprecated     
-!deprecated   end
-!deprecated
+! davide: 28-11-2018
+   calc_1rdm ::: leaky
+   ! compute the 1-reduced density matrix
+   ! for a set of PBT
+     i, j :: INT
+     trace :: REAL
+
+     allocate(.rdm_1(.mat_size,.mat_size))
+     .rdm_1 = ZERO
+
+     .prep_orbital_block_mapping
+     .prep_block_types
+
+   !debug stdout.text(" ")
+   !debug stdout.text("Calculation of the 1-reduced density matrix")
+
+     ! 1-orthogonal blocks space
+     do i=1,.n_1D_blocks
+        .calc_1rdm_element(i,i)
+     end
+
+     ! Pauli blocks space
+     do i=.n_1D_blocks+1,.mat_size-1,2
+        .calc_1rdm_element(i,i)
+        j = i+1
+        .rdm_1(j,j) = .rdm_1(i,i)
+     end
+
+     ! write 1-RDM
+   !debug stdout.text(" ")
+   !debug stdout.text("1-reduced density alpha-(or beta-)matrix:")
+   !debug stdout.text(" ")
+   !debug stdout.put(.rdm_1)
+
+   !debug  ! compute 1-RDM trace
+   !debug  trace = ZERO
+   !debug  do i=1,.mat_size
+   !debug     trace = trace + .rdm_1(i,i)
+   !debug  end
+   !debug stdout.text(" ")
+   !debug stdout.show("Trace of the 1-RDM alpha-(or beta-)matrix", trace)
+   !debug stdout.text(" ")
+   !debug stdout.show("Trace of the total 1-RDM matrix", trace+trace)
+     
+   end
+
    calc_1rdm_element(row,col) 
    ! compute element (row,col) of the 1-reduced 
    ! density matrix (1-RDM) for a set of PBT
@@ -6052,7 +7439,7 @@ contains
 
    end
 ! de
-
+!deprecated
 !deprecated   calc_2rdm ::: leaky
 !deprecated   ! compute the 2-reduced density matrix
 !deprecated   ! for a set of PBT   
@@ -6196,18 +7583,18 @@ contains
 !deprecated!     s_bb = s
 !deprecated     !!!!!!!!!!!!!!!!!!!!!
 !deprecated
-!deprecated   stdout.text(" ")
-!deprecated   stdout.show("Number of nonzero coefficients of the 2-RDM alpha-beta matrix", .nonzero_terms_ab)
+!deprecated   !debug stdout.text(" ")
+!deprecated   !debug stdout.show("Number of nonzero coefficients of the 2-RDM alpha-beta matrix", .nonzero_terms_ab)
 !deprecated   !debug stdout.show("Number of nonzero eigenvalues of the 2-RDM alpha-beta matrix", s_ab)
 !deprecated   !debug stdout.text("Nonzero eigenvalues of the 2-RDM alpha-beta matrix")
 !deprecated   !debug stdout.put(nonzero_eigenval_ab(1:s_ab))
-!deprecated   stdout.text(" ")
-!deprecated   stdout.show("Number of nonzero coefficients of the 2-RDM alpha-alpha matrix", .nonzero_terms_aa)
+!deprecated   !debug stdout.text(" ")
+!deprecated   !debug stdout.show("Number of nonzero coefficients of the 2-RDM alpha-alpha matrix", .nonzero_terms_aa)
 !deprecated   !debug stdout.show("Number of nonzero eigenvalues of the 2-RDM alpha-alpha matrix", s_aa)
 !deprecated   !debug stdout.text("Nonzero eigenvalues of the 2-RDM alpha-alpha matrix")
 !deprecated   !debug stdout.put(nonzero_eigenval_aa(1:s_aa))
-!deprecated   stdout.text(" ")
-!deprecated   stdout.show("Number of nonzero coefficients of the 2-RDM beta-beta matrix", .nonzero_terms_bb)
+!deprecated   !debug stdout.text(" ")
+!deprecated   !debug stdout.show("Number of nonzero coefficients of the 2-RDM beta-beta matrix", .nonzero_terms_bb)
 !deprecated   !debug stdout.show("Number of nonzero eigenvalues of the 2-RDM beta-beta matrix", s_bb)
 !deprecated   !debug stdout.text("Nonzero eigenvalues of the 2-RDM beta-beta matrix")
 !deprecated   !debug stdout.put(nonzero_eigenval_bb(1:s_bb))
@@ -6223,7 +7610,7 @@ contains
 !deprecated     end
 !deprecated   
 !deprecated   end
-!deprecated
+!deprecated!deprecated
 !deprecated   calc_2rdm_grd ::: leaky
 !deprecated   ! compute the 2-reduced density matrix
 !deprecated   ! for a set of PBT, in case of optimization of the block
@@ -10015,7 +11402,6 @@ contains
    end
 ! de
 
-
    prep_red_pbg(red_pbg,g) ::: leaky
    ! prepare a new pauli_block_geminal (PBG), excluding geminal g;
    ! this new PBG will be used to compute an element of the 1RDM or 2RDM,
@@ -13752,7 +15138,7 @@ contains
      b_3typ :: VEC{STR}(2)
      b_4typ :: VEC{STR}(3)
      n_2D_blocks :: INT
-     n_2D_blocks_plus_1 :: INT
+!     n_2D_blocks_plus_1 :: INT
      mixed_hf_random :: BIN
 
      set_size = pbt_set.set_size ! number of geminals
@@ -13764,6 +15150,10 @@ contains
      ! or (ii) random
      mixed_hf_random = FALSE
      if (.guess_type == "hf-random")  mixed_hf_random = TRUE
+
+!     !!!!
+!     ! check if only 4-type blocks have to be included in the 2D part 
+!     !!!!
 
      ! if a doublet or a triplet state is selected,
      ! build the 2D block structure for the last geminal
@@ -13807,11 +15197,21 @@ contains
      end
      ! decide the number of 2D blocks with at most 3 types (3typ)
      ! and the one with at most 4 types (4typ)
-     n_2D_blocks_plus_1 = n_2D_blocks+1
-     call random_number(num)
-     n_2D_3typ_blocks = int(num*n_2D_blocks_plus_1)
-     n_2D_4typ_blocks = n_2D_blocks-n_2D_3typ_blocks
-     ! total number of 2D 3typ blocks 
+     !!!!
+     if (.only_4typ) then
+        n_2D_3typ_blocks = 0
+        n_2D_4typ_blocks = n_2D_blocks
+     else
+        call random_number(num)
+        n_2D_3typ_blocks = int(num*(n_2D_blocks+1))
+        n_2D_4typ_blocks = n_2D_blocks-n_2D_3typ_blocks
+     end if
+!     n_2D_blocks_plus_1 = n_2D_blocks+1
+!     call random_number(num)
+!     n_2D_3typ_blocks = int(num*n_2D_blocks_plus_1)
+!     n_2D_4typ_blocks = n_2D_blocks-n_2D_3typ_blocks
+     !!!!
+     ! total number of 2D 3typ blocks
      pbt_set.n_2D_3typ_blocks = n_2D_3typ_blocks
      .n_2D_3typ_blocks = n_2D_3typ_blocks
 !     stdout.show("# 2D 3typ blocks =", n_2D_3typ_blocks)
@@ -13828,14 +15228,7 @@ contains
      else
         .gen_block = FALSE
      end
-!     ! prepare vector of angles for 3typ blocks
-!     if (.GD2_info.created) then
-!        .GD2_info.destroy
-!        .GD2_info.create(n_2D_3typ_blocks)
-!     else
-!        .GD2_info.create(n_2D_3typ_blocks)
-!     end
-     ! total number of 2D 4typ blocks 
+     ! total number of 2D 4typ blocks
      pbt_set.n_2D_4typ_blocks = n_2D_4typ_blocks
      .n_2D_4typ_blocks = n_2D_4typ_blocks
 !     stdout.show("# 2D 4typ blocks =", n_2D_4typ_blocks)
@@ -15109,9 +16502,48 @@ contains
      size_ab = 4*.mat_size*.mat_size
      size_aa = .mat_size*(.mat_size-1)*2
      
-     .create(.rdm_2_ab,size_ab)
-     .create(.rdm_2_aa,size_aa)
-     .create(.rdm_2_bb,size_aa)     
+!     .create(.rdm_2_ab,size_ab)
+!     .create(.rdm_2_aa,size_aa)
+!     .create(.rdm_2_bb,size_aa)     
+
+     !!!
+     if (NOT .rdm_2_ab.created) then
+!        stdout.text("create .rdm_2_ab")
+!        stdout.show("size(.rdm_2_ab) =",size_ab)
+        .create(.rdm_2_ab,size_ab)
+     end if
+!     if (.rdm_2_ab(1).grad_info.coef_prod.created) then
+!        stdout.text(".rdm_2_ab(1).grad_info.coef_prod already created")
+!     end if
+!     if (.rdm_2_ab(1).grad_info.ex_gem.created) then
+!        stdout.text(".rdm_2_ab(1).grad_info.ex_gem already created")
+!     end if
+     !
+     if (NOT .rdm_2_aa.created) then
+!        stdout.text("create .rdm_2_aa")
+!        stdout.show("size(.rdm_2_aa) =",size_aa)
+        .create(.rdm_2_aa,size_aa)
+     end if
+!     if (.rdm_2_aa(1).grad_info.coef_prod.created) then
+!        stdout.text(".rdm_2_aa(1).grad_info.coef_prod already created")
+!     end if
+!     if (.rdm_2_aa(1).grad_info.ex_gem.created) then
+!        stdout.text(".rdm_2_aa(1).grad_info.ex_gem already created")
+!     end if
+     !
+     if (NOT .rdm_2_bb.created) then
+!        stdout.text("create .rdm_2_bb")
+!        stdout.show("size(.rdm_2_bb) =",size_aa)
+        .create(.rdm_2_bb,size_aa)
+     end if
+!     if (.rdm_2_bb(1).grad_info.coef_prod.created) then
+!        stdout.text(".rdm_2_bb(1).grad_info.coef_prod already created")
+!     end if
+!     if (.rdm_2_bb(1).grad_info.ex_gem.created) then
+!        stdout.text(".rdm_2_bb(1).grad_info.ex_gem already created")
+!     end if
+     !!!
+!     stop
 
      ng_1 = .n_geminals-1
      if (ng_1 /= 0) then
@@ -15242,18 +16674,18 @@ contains
 !     s_bb = s
      !!!!!!!!!!!!!!!!!!!!
 
-   stdout.text(" ")
-   stdout.show("Number of nonzero coefficients of the 2-RDM alpha-beta matrix", .nonzero_terms_ab)
+   !debug stdout.text(" ")
+   !debug stdout.show("Number of nonzero coefficients of the 2-RDM alpha-beta matrix", .nonzero_terms_ab)
    !debug stdout.show("Number of nonzero eigenvalues of the 2-RDM alpha-beta matrix", s_ab)
    !debug stdout.text("Nonzero eigenvalues of the 2-RDM alpha-beta matrix")
    !debug stdout.put(nonzero_eigenval_ab(1:s_ab))
-   stdout.text(" ")
-   stdout.show("Number of nonzero coefficients of the 2-RDM alpha-alpha matrix", .nonzero_terms_aa)
+   !debug stdout.text(" ")
+   !debug stdout.show("Number of nonzero coefficients of the 2-RDM alpha-alpha matrix", .nonzero_terms_aa)
    !debug stdout.show("Number of nonzero eigenvalues of the 2-RDM alpha-alpha matrix", s_aa)
    !debug stdout.text("Nonzero eigenvalues of the 2-RDM alpha-alpha matrix")
    !debug stdout.put(nonzero_eigenval_aa(1:s_aa))
-   stdout.text(" ")
-   stdout.show("Number of nonzero coefficients of the 2-RDM beta-beta matrix", .nonzero_terms_bb)
+   !debug stdout.text(" ")
+   !debug stdout.show("Number of nonzero coefficients of the 2-RDM beta-beta matrix", .nonzero_terms_bb)
    !debug stdout.show("Number of nonzero eigenvalues of the 2-RDM beta-beta matrix", s_bb)
    !debug stdout.text("Nonzero eigenvalues of the 2-RDM beta-beta matrix")
    !debug stdout.put(nonzero_eigenval_bb(1:s_bb))
@@ -15287,7 +16719,7 @@ contains
      s_ab, s_aa, s_bb :: INT
      eigenvec_ab, eigenvec_aa, eigenvec_bb :: MAT{REAL}*
 !     j_1, j_2 :: INT
-     i_first :: INT, save = 1
+!     i_first :: INT, save = 1
      !
      timer :: TIME
      !!!
@@ -15296,6 +16728,7 @@ contains
 !     stdout.text(" ")
 !     stdout.text("Entering subroutine calc_2rdm_gen_grd")
 !     stdout.text(" ")
+!     stdout.flush
      !!!
 
    !debug stdout.text(" ")
@@ -15307,18 +16740,47 @@ contains
      size_ab = 4*.mat_size*.mat_size
      size_aa = .mat_size*(.mat_size-1)*2
      
-     !!!
-     if (i_first == 1) then
-        i_first = 2
-!        stdout.text(" ")
-!        stdout.text("Creation of the 2RDM objects")
-     !!!
+     ! allocate vectors of 2RDM elements
+     ! (if not created yet)
+     if (NOT .rdm_2_ab.created) then
+!        stdout.text("create .rdm_2_ab")
+!        stdout.show("size(.rdm_2_ab) =",size_ab)
         .create(.rdm_2_ab,size_ab)
+     end !if
+     !
+     if (NOT .rdm_2_aa.created) then
+!        stdout.text("create .rdm_2_aa")
+!        stdout.show("size(.rdm_2_aa) =",size_aa)
         .create(.rdm_2_aa,size_aa)
+     end !if
+     !
+     if (NOT .rdm_2_bb.created) then
+!        stdout.text("create .rdm_2_bb")
+!        stdout.show("size(.rdm_2_bb) =",size_aa)
         .create(.rdm_2_bb,size_aa)     
-     !!!
-     end
-     !!!
+     end !if
+
+     ! allocate vectors of objects containing information 
+     ! needed to compute the energy gradient
+     ! (if not created yet)
+     if (NOT .rdm_2_ab_grad_info.created) then
+!        stdout.text("create .rdm_2_ab_grad_info")
+!        stdout.show("size(.rdm_2_ab_grad_info) =",size_ab)
+        .create(.rdm_2_ab_grad_info,size_ab)
+     end !if
+     !
+     if (NOT .rdm_2_aa_grad_info.created) then
+!        stdout.text("create .rdm_2_aa_grad_info")
+!        stdout.show("size(.rdm_2_aa_grad_info) =",size_aa)
+        .create(.rdm_2_aa_grad_info,size_aa)
+     end !if
+     !
+     if (NOT .rdm_2_bb_grad_info.created) then
+!        stdout.text("create .rdm_2_bb_grad_info")
+!        stdout.show("size(.rdm_2_bb_grad_info) =",size_aa)
+        .create(.rdm_2_bb_grad_info,size_aa)     
+     end !if
+     
 
      !!!
      ! number of terms in ".grad_info_tmp"
@@ -15359,6 +16821,11 @@ contains
 
 !     timer.start_timing
 !     !
+     !!! debug
+!     stdout.text(" ")
+!     stdout.text("call calc_2rdm_same_block_gen_grd")
+!     stdout.text(" ")
+!     stdout.flush
      !!!
      .calc_2rdm_same_block_gen_grd(i, ng_1, red_pbg_1)
      !!!
@@ -15377,6 +16844,12 @@ contains
 
 !     timer.start_timing
 !     !
+     !!! debug
+!     stdout.text(" ")
+!     stdout.text("call calc_2rdm_one_1_ortho_gen_grd")
+!     stdout.text(" ")
+!     stdout.flush
+     !!!
      !!!
      .calc_2rdm_one_1_ortho_gen_grd(i, i_a, i_b, ng_1, red_pbg_1, ng_2, red_pbg_2)
      !!!
@@ -15389,6 +16862,12 @@ contains
 
 !     timer.start_timing
 !     !
+     !!! debug
+!     stdout.text(" ")
+!     stdout.text("call calc_2rdm_one_pauli_gen_grd")
+!     stdout.text(" ")
+!     stdout.flush
+     !!!
      !!!
      .calc_2rdm_one_pauli_gen_grd(i, i_a, i_b, ng_1, red_pbg_1, ng_2, red_pbg_2)
      !!!
@@ -15401,6 +16880,8 @@ contains
      .nonzero_terms_aa = i_a-1
      .nonzero_terms_bb = i_b-1
      
+!     stdout.text("stop execution after calculation of 2RDM")
+!     stop
      !!!!!!!!!!!!!!!!!!!!
      ! debug
 !     trace = ZERO
@@ -15805,8 +17286,8 @@ contains
 !     stdout.text("Entering subroutine calc_2rdm_same_block_gen_grd")
 !     stdout.text(" ")
      !!!
-     stdout.text(" ")
-     backspace(stdout.unit)
+!     stdout.text(" ")
+!     backspace(stdout.unit)
 
      ! start 1D blocks !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
      do b=1,.n_1D_blocks
@@ -16764,12 +18245,19 @@ contains
      overlap :: REAL
      problem :: BIN
      tt :: VEC{INT}(2)
-     !!!
+     !!! debug
 !     stdout.text(" ")
 !     stdout.text("Entering subroutine calc_2rdm_one_1_ortho_gen_grd")
 !     stdout.text(" ")
+!     stdout.flush
      !!!
 
+     !!! debug
+!     stdout.text(" ")
+!     stdout.text("Routine calc_2rdm_one_1_ortho_gen_grd")
+!     stdout.text("1D block - 1D block")
+!     stdout.flush
+     !!!
      ! 1D block - 1D block !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
      do r=1,.n_1D_blocks-1
         geminal = .nonzero_1ortho_ind(r)
@@ -16816,6 +18304,10 @@ contains
               .grad_info_tmp.ex_blk(1).element(2) = b
               .grad_info_tmp.factor(1).element = 1
               tt(1) = 1
+              !!! debug
+!              stdout.text("save_2rdm_grad_info   1 ab")
+!              stdout.flush
+              !!!
               .save_2rdm_grad_info(rdm2_type="ab", irdm=i, nt=1, terms=tt)
               !.save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=0, nt=1, terms=tt)
               !!!
@@ -16837,6 +18329,10 @@ contains
               end  
               !!! save gradient information
               .grad_info_tmp.coef_prod(1) = coef_prod
+              !!! debug
+!              stdout.text("save_2rdm_grad_info   2 ab")
+!              stdout.flush
+              !!!
               .save_2rdm_grad_info(rdm2_type="ab", irdm=i, nt=1, terms=tt)
               !.save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=1, nb=0, nt=1, terms=tt)
               !!!
@@ -16874,6 +18370,10 @@ contains
               .grad_info_tmp.ex_blk(1).element(2) = b
               .grad_info_tmp.factor(1).element = 2
               tt(1) = 1
+              !!! debug
+!              stdout.text("save_2rdm_grad_info   3 ab")
+!              stdout.flush
+              !!!
               .save_2rdm_grad_info(rdm2_type="ab", irdm=i, nt=1, terms=tt)
               !.save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=2, nb=0, nt=1, terms=tt)
               !!!
@@ -16882,6 +18382,10 @@ contains
             !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient) 
               .rdm_2_aa(i_a)=.rdm_2_ab(i)
               !!! save gradient information
+              !!! debug
+!              stdout.text("save_2rdm_grad_info   1 aa")
+!              stdout.flush
+              !!!
               .save_2rdm_grad_info(rdm2_type="aa", irdm=i_a, nt=1, terms=tt)
               !.save_2rdm_grad_info(rdm2_type="aa", irdm=i_a, ng=2, nb=0, nt=1, terms=tt)
               !!!
@@ -16890,6 +18394,10 @@ contains
             !debug stdout.show("2-RDM alpha-alpha element value", .rdm_2_aa(i_a).coefficient) 
               .rdm_2_bb(i_b)=.rdm_2_ab(i)
               !!! save gradient information
+              !!! debug
+!              stdout.text("save_2rdm_grad_info   1 bb")
+!              stdout.flush
+              !!!
               .save_2rdm_grad_info(rdm2_type="bb", irdm=i_b, nt=1, terms=tt)
               !.save_2rdm_grad_info(rdm2_type="bb", irdm=i_b, ng=2, nb=0, nt=1, terms=tt)
               !!!
@@ -16906,6 +18414,10 @@ contains
               .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
               .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
               !!! save gradient information
+              !!! debug
+!              stdout.text("save_2rdm_grad_info   4 ab")
+!              stdout.flush
+              !!!
               .save_2rdm_grad_info(rdm2_type="ab", irdm=i, nt=1, terms=tt)
               !.save_2rdm_grad_info(rdm2_type="ab", irdm=i, ng=2, nb=0, nt=1, terms=tt)
               !!!
@@ -16918,6 +18430,10 @@ contains
      end
      ! end 1D block - 1D block !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+     !!! debug
+!     stdout.text("1D block - 2D block")
+!     stdout.flush
+     !!!
      ! 1D block - 2D block !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
      do r=1,.n_1D_blocks
         geminal = .nonzero_1ortho_ind(r)
@@ -17373,6 +18889,13 @@ contains
         end
      end
      ! end 1D block - 2D block !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+     !!! debug
+!     stdout.text(" ")
+!     stdout.text("Exit routine calc_2rdm_one_1_ortho_gen_grd")
+!     stdout.text(" ")
+!     stdout.flush
+     !!!
 
    end
 ! de
