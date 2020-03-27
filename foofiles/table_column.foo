@@ -111,14 +111,7 @@ contains
       .subheading     = " "
       .sb3heading     = " "
 
-      ! Set some defaults from stdout
-      if (stdout.associated) then
-         .width          = stdout.real_width
-         .real_precision = stdout.real_precision
-      else
-         .width          = TABLE_COLUMN_WIDTH
-         .real_precision = TABLE_COLUMN_REAL_PRECISION
-      end
+      .set_default_width_and_DPs
 
       .max_cp            = TABLE_COLUMN_REAL_PRECISION
 
@@ -141,6 +134,22 @@ contains
          .e_under_r         = std_table_column.e_under_r
          .two_digit_error   = std_table_column.two_digit_error
 
+      end
+
+   end
+
+   set_default_width_and_DPs ::: PURE
+   ! Set up defaults
+      self :: INOUT
+
+      if (stdout.associated) then
+         ! Set some defaults from stdout
+         .width          = stdout.real_width
+         .real_precision = stdout.real_precision
+      else
+         ! Use object defaults
+         .width          = TABLE_COLUMN_WIDTH
+         .real_precision = TABLE_COLUMN_REAL_PRECISION
       end
 
    end
@@ -442,13 +451,24 @@ contains
       r,e :: REAL, IN
 
       wid,dp, de,le,pad :: INT
+      coltyp :: STR
 
-      ! Get width & precision
-      r.get_str_length_align(e,wid,dp,de,le,pad,.real_precision)
+      coltyp = .values_set_as_str
 
-      ! Set width & precision
-      .set_width(wid+.column_spacing)
-      .set_real_precision(dp)
+      if (coltyp=="real-over") then
+
+         .set_default_width_and_DPs
+
+      else
+
+         ! Get width & precision
+         r.get_str_length_align(e,wid,dp,de,le,pad,.real_precision)
+        
+         ! Set width & precision
+         .set_width(wid+.column_spacing)
+         .set_real_precision(dp)
+
+      end
 
    end
 
@@ -461,15 +481,26 @@ contains
       r,e :: VEC{REAL}, IN
 
       msl,mdp,mcb,mcc :: INT
+      coltyp :: STR
 
-      ! Get max width & precision & closing bracket
-      r.get_max_str_length(msl,mdp,mcc,e,.real_precision)
-      r.get_max_str_length(msl,mdp,mcb,e,.real_precision,max_cb=mcc,two_digit_error=.two_digit_error)
+      coltyp = .values_set_as_str
 
-      ! Set 
-      .set_width(msl+.column_spacing)
-      .set_real_precision(mdp)
-      .set_max_cp(mcb)
+      if (coltyp=="real-over") then
+
+         .set_default_width_and_DPs
+
+      else
+
+         ! Get max width & precision & closing bracket
+         r.get_max_str_length(msl,mdp,mcc,e,.real_precision)
+         r.get_max_str_length(msl,mdp,mcb,e,.real_precision,max_cb=mcc,two_digit_error=.two_digit_error)
+        
+         ! Set 
+         .set_width(msl+.column_spacing)
+         .set_real_precision(mdp)
+         .set_max_cp(mcb)
+
+      end
 
    end
 
@@ -645,43 +676,71 @@ contains
 
 ! This is very important
 
-   values_set_as_str result (res) ::: pure
+   values_set_as_str(valtype) result (res) ::: PURE
    ! Return a string value describing the type of column set.
+   ! If "valtype" is present it must equal "real" or "error".
       self :: IN
+      valtype :: STR, optional, IN
       res :: STR
 
       res = "none"
 
-           if (.b_values.associated)  then; res = "bin"
+      if (present(valtype)) then
+         ENSURE(valtype=="error","valtype is not 'error'")
+         if (.may_be_e_under_column)  then; res = "error-under"
+         else;                              res = "blank"
+         end
+
+      else if (.b_values.associated)  then; res = "bin"
+
       else if (.i_values.associated)  then; res = "int"
-      else if (.r_values.associated AND .e_values.disassociated) then
-                                            res = "real"
-      else if (.r_values.associated AND .e_values.associated) then
-           if (.e_under_r)            then; res = "real"        ! 1st row is real
-           else;                            res = "real(error)" ! default
-           end
+
+      else if (.may_be_an_re_column)  then; res = "real(error)"
+
+      else if (.may_be_r_over_column) then; res = "real-over"
+
+      else if (.r_values.associated)  then; res = "real"
+
       else if (.s_values.associated)  then; res = "str"
+
       else if (.iv_values.associated) then; res = "int-list"
+
       else if (.sv_values.associated) then; res = "str-list"
+
       end
 
    end
 
-   is_a_real_error_column result (res) ::: pure
-   ! Return TRUE if the column has r_values and e_values.
+   may_be_an_re_column result (res) ::: pure
+   ! Return TRUE if it has r_values, e_values and
+   ! e_under_r is NOT TRUE. It definitely is an R(E)
+   ! column if the caller does NOT pass in "valtype".
       self :: IN
       res :: BIN
 
-      res = .r_values.associated AND .e_values.associated
+      res = .r_values.associated AND .e_values.associated AND NOT .e_under_r
 
    end
 
-   is_e_under_r_column result (res) ::: pure
-   ! Return TRUE if the column has r_values and e_values.
+   may_be_r_over_column result (res) ::: pure
+   ! Return TRUE if it has r_values and e_under_r set TRUE.
+   ! It definitely is an r-over column if the caller does
+   ! NOT pass in "valtype. See calling routine.
       self :: IN
       res :: BIN
 
-      res = .r_values.associated AND .e_values.associated AND .e_under_r
+      res = .r_values.associated AND .e_under_r
+
+   end
+
+   may_be_e_under_column result (res) ::: pure
+   ! Return TRUE if it has e_values and e_under_r set TRUE.
+   ! It definitely is an e-under-r column if the caller passes in
+   ! "valtype".  See calling routine.
+      self :: IN
+      res :: BIN
+
+      res = .e_values.associated AND .e_under_r
 
    end
 
@@ -853,27 +912,19 @@ contains
       if (.spacer/=" ") stdout.put(trim(.spacer))
 
       ! Column value type
-      coltyp = .values_set_as_str
-
-      ! Is called with valtype="error"?
-      if (present(valtype)) then
-         DIE_IF(valtype/="error","if used, valtype must be 'error'")
-         if (.e_under_r AND coltyp=="real" AND .e_values.associated) then
-            coltyp = "error" ! Safe: reset to "error"
-         else
-            coltyp = "blank" ! Column is "blank"
-         end
-      end
+      coltyp = .values_set_as_str(valtype)
 
       ! Cases
       select case (coltyp)
 
-      case ("blank      "); stdout.put(" ",width=w,blank=TRUE)                           ! Output a blank
+      case ("blank      "); stdout.put(" ",width=w,blank=TRUE)       ! Output a blank
       case ("bin        "); stdout.put(.b_values(i),left=l,center=c,width=w)
       case ("int        "); stdout.put(.i_values(i),left=l,center=c,width=w)
-      case ("real(error)"); stdout.put(.r_values(i),.e_values(i),width=w,precision=p,max_cb=.max_cp,two_digit_error=.two_digit_error) ! Default
-      case ("real       "); stdout.put(.r_values(i),left=l,center=c,width=w,precision=p) ! Handle outside
-      case ("error      "); stdout.put(.e_values(i),left=l,center=c,width=w,precision=p) ! with valtype
+      case ("real(error)"); stdout.put(.r_values(i),.e_values(i),width=w,precision=p &
+                            ,max_cb=.max_cp,two_digit_error=.two_digit_error) ! Default
+      case ("real       "); stdout.put(.r_values(i),left=l,center=c,width=w,precision=p) 
+      case ("real-over  "); stdout.put(.r_values(i),left=l,center=c) ! Handle outside
+      case ("error-under"); stdout.put(.e_values(i),left=l,center=c) ! with valtype
       case ("str        "); stdout.put(.s_values(i),left=l,center=c,width=w)
 
       case ("int-list   ")
