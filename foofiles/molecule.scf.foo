@@ -8313,13 +8313,35 @@ contains
    ENSURE(.density_matrix.allocated,"no basis_set info")
 
       a :: INT
-
-      .BASE:make_ao_density_matrix
+      do_NAOs :: BIN
       
       if (.BASE:has_all_NAO_matrices) return
 
-      do a = 1,.n_atom
-         .:make_NAOs_for_atom(a)
+      ! Get restricted DM
+      .BASE:make_ao_density_matrix
+
+      ! NAOs or projected NAOs?
+      do_NAOs = TRUE
+      if (.roby.created) then
+      if (.roby.use_projected_NAOs) then
+         do_NAOs = FALSE
+      end
+      end
+
+      if (do_NAOs) then
+
+         ! NBO stype NAOs
+         do a = 1,.n_atom
+            .:make_NAOs_for_atom(a)
+         end
+
+      else
+
+         ! Projected NAOs from P_A \rho P_A, P_A = atomic projector
+         do a = 1,.n_atom
+            .:make_pNAOs_for_atom(a)
+         end
+
       end
 
    end
@@ -8361,11 +8383,34 @@ contains
       P.create(n_bf,n_bf)
       .BASE:AO_subspace_set(P,.density_matrix.restricted,group,group)
 
-      stdout.show("Atom:",.atom(a).tag)
-      stdout.text("DM:")
-      stdout.put(.density_matrix.restricted)
-      stdout.text("P:")
-      stdout.put(P)
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.show("Atom = ",.atom(a).tag)
+         stdout.text("S:")
+         stdout.put(S)
+         stdout.text("P:")
+         stdout.put(P)
+      end
+      end
+
+      if (.roby.associated) then
+      if (.roby.use_spherical_averaging) then
+
+         ! Symmetrize P
+         .pointgroup.destroy
+         .pointgroup.create("oh",.use_spherical_basis)
+         .atom(a).symmetrize(P,.pointgroup)
+         .pointgroup.destroy
+
+      end
+      end
+        
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.text("P after symmetrization:")
+         stdout.put(P)
+      end
+      end
 
       ! Transform P -> S^(1/2) P S^(1/2)
       X.create(n_bf,n_bf)
@@ -8390,10 +8435,138 @@ contains
       occupation = occupation(n_bf:1:-1)
       NAO        =      NAO(:,n_bf:1:-1)
 
-      stdout.text("NAO occupation:")
-      stdout.put(occupation)
-      stdout.text("NAO:")
-      stdout.put(NAO)
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.text("NAO occupation:")
+         stdout.put(occupation)
+         stdout.text("NAO:")
+         stdout.put(NAO)
+      end
+      end
+
+      ! Assign
+      .atom(a).NAOs            => NAO
+      .atom(a).NAO_occupations => occupation
+
+   end
+
+   make_pNAOs_for_atom(a) ::: leaky, private
+   ! Make the projected restricted natural atomic orbitals (pNAOs).
+      self :: INOUT
+      a :: INT, IN
+
+   ENSURE(.atom(a).NAOs.disassociated,           "NAO's exist! Atom "//trim(a.to_str))
+   ENSURE(.atom(a).NAO_occupations.disassociated,"NAO occs exist! Atom "//trim(a.to_str))
+   ENSURE(.overlap_matrix.associated,"no overlap matrix")
+   ENSURE(.density_matrix.allocated,"no density matrix")
+   ENSURE(.density_matrix.restricted.allocated,"no restricted density matrix")
+
+      NAO, S,Smh,P,Q :: MAT{REAL}*
+      occupation :: VEC{REAL}*
+      group :: VEC{INT}(1)
+      n_bf :: INT
+
+      ! No. of basis functions in the group
+      n_bf  = .atom(a).basis.n_bf
+      group = [ a ]
+
+      ! Create the (full) NAO and occupation matrix
+      NAO.create(n_bf,n_bf)
+      occupation.create(n_bf)
+
+      ! Density matrices (see below)
+      Q.create(n_bf,n_bf)
+      P.create(n_bf,n_bf)
+
+      ! S = S(:,a), overlap matrix for all,atom A
+      S.create(.n_bf,n_bf)
+      .BASE:AO_subspace_set(S,.overlap_matrix,col_atom=group)
+
+      ! Transform density matrix D -> P = S^T D S
+      .density_matrix.restricted.change_basis_to(P,S)
+
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.show("Atom = ",.atom(a).tag)
+         stdout.text("S:")
+         stdout.put(S)
+         stdout.text("P:")
+         stdout.put(P)
+      end
+      end
+
+      ! S_A = overlap matrix atom a
+      S.destroy
+      Smh.create(n_bf,n_bf)
+      S.create(n_bf,n_bf)
+      .BASE:AO_subspace_set(S,.overlap_matrix,group,group)
+
+      ! Get (S_A)^-1
+      Smh.to_inverse_of(S)
+
+      ! Transform density P -> Q = (S_A)^-1 P (S_A)^-1
+      P.change_basis_to(Q,Smh)
+
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.put(S)
+         stdout.text("Q:")
+         stdout.put(Q)
+      end
+      end
+
+      if (.roby.associated) then
+      if (.roby.use_spherical_averaging) then
+
+         ! Symmetrize P
+         .pointgroup.destroy
+         .pointgroup.create("oh",.use_spherical_basis)
+         .atom(a).symmetrize(Q,.pointgroup)
+         .pointgroup.destroy
+
+      end
+      end
+
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.text("Q after symmetrization:")
+         stdout.put(Q)
+      end
+      end
+
+      ! Get (S_A)^1/2
+      Smh.to_sqrt_of(S)
+
+      ! Transform density Q -> Q = (S_A)^1/2 Q (S_A)^1/2
+      Q.change_basis_to(P,Smh)
+
+      ! Diagonalize; now Q = eigenvectors
+      P.solve_symmetric_eigenproblem(occupation,Q)
+
+      ! Get (S_A)^-1/2
+      Smh.to_inverse_sqrt_of(S)
+
+      ! Back transform
+      NAO.to_product_of(Smh,Q)
+
+      ! Clean
+      S.destroy
+      Smh.destroy
+      P.destroy
+      Q.destroy
+
+      ! Reverse order
+      occupation = occupation(n_bf:1:-1)
+      NAO        =      NAO(:,n_bf:1:-1)
+
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.text("NAO occupation:")
+         stdout.put(occupation)
+         stdout.text("NAO:")
+         stdout.put(NAO)
+      end
+      end
 
       ! Assign
       .atom(a).NAOs            => NAO
