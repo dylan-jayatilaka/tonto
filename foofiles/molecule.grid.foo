@@ -129,6 +129,10 @@ contains
 
    ENSURE(.plot_grid.associated, "no grid")
 
+      ! NOTE: Some of these were commented out during a major change
+      ! and need to be reinstated using the new calling method
+      ! pattern.
+
       ! Do the plot
       select case (.plot_grid.plot_kind)
       case("adp                                 "); .:make_ADP_grid(grid,pt)
@@ -166,9 +170,9 @@ contains
       case("dft_xc_potential                    "); .:make_dft_xc_pot_grid(grid,pt)
     ! case("div_jp                              "); .:make_div_jp_grid(grid,pt)
       case("e_field_magnitude                   "); .:make_E_field_magnitude(grid,pt)
-      case("electric_potential                  "); .:make_electric_potential_grid(grid,pt)
-    ! case("electric_polarisation_density       "); .:make_e_polarization_grid(grid,pt)
-    ! case("electric_polarization_density       "); .:make_e_polarization_grid(grid,pt)
+      case("electric_potential                  "); .:make_EP_grid(grid,pt)
+      case("electric_polarisation_density       "); .:make_E_polarization_grid(grid,pt)
+      case("electric_polarization_density       "); .:make_E_polarization_grid(grid,pt)
       case("electron_density                    "); .:make_ED_grid(grid,pt)
       case("elf                                 "); .:make_ELF_grid(grid,pt)
       case("e_hf_density_from_rho               "); .:make_E_hf_dens_from_rho_grid(grid,pt)
@@ -192,8 +196,6 @@ contains
     ! case("jp_solenoidal                       "); .:make_solenoidal_jp_grid(grid,pt)
     ! case("jayatilaka_atom_grid                "); .:make_Jayatilaka_atom_grid(grid,pt)
       case("k_kinetic_energy                    "); .:make_K_kinetic_energy_grid(grid,pt)
-    ! case("kramers_spin_density                "); .:make_ku_spin_density_grid(grid,pt)
-    ! cannot be used here I need stuff from higher modules(grid,pt)
       case("laplacian                           "); .:make_laplacian_grid(grid,pt)
       case("local_ionisation_energy             "); .:make_local_ionisation_grid(grid,pt)
       case("local_virial_ratio                  "); .:make_local_virial_ratio_grid(grid,pt)
@@ -362,7 +364,7 @@ contains
 
    def_grid(grid,pt) ::: template
    ! Make a Gnuplot ascii file containing the deformation density grid.
-      self :: INOUT
+      self :: IN
       grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
 
@@ -388,7 +390,7 @@ contains
 
    int_grid(grid,pt) ::: template
    ! Make the interaction density grid.
-      self :: INOUT
+      self :: IN
       grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
 
@@ -477,6 +479,39 @@ contains
 
       ! Clean
       grid.destroy
+
+   end
+
+   field_grid(grid,pt) ::: template
+   ! Work out the field density on ".plot_grid" and dump output
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(.plot_grid.associated, "no grid")
+
+      field :: MAT{REAL}@
+      name :: STR
+
+      ! Make space for the field and grid points
+      field.create(.plot_grid.n_pt,3)
+
+      ! Make the grid of field values
+      .FIELD(field,pt)
+
+      ! Print out components as well
+      name = .plot_grid.plot_file_name(.n_a)
+      .:dump_plot_grid(field(:,1),trim(name)//".x")
+      .:dump_plot_grid(field(:,2),trim(name)//".y")
+      .:dump_plot_grid(field(:,3),trim(name)//".z")
+
+      ! Get the magnitude
+      grid = sqrt( field(:,1)*field(:,1) &
+                 + field(:,2)*field(:,2) &
+                 + field(:,3)*field(:,3) )
+
+      ! Clean up
+      field.destroy
 
    end
 
@@ -9267,7 +9302,7 @@ contains
    make_laplacian_grid(laplacian_grid,pt)
    ! Work out the electron "laplacian_grid" on "pt" using ".natural orbitals"
    ! and  the ".occupation_numbers" vector.
-      self :: INOUT
+      self :: IN
       laplacian_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
 
@@ -10162,9 +10197,9 @@ contains
    ! Make the "LOL_grid" for the supplied points
    ! "pt" from restricted real natural orbitals.
    ! See Schmider & Becke (2000) J. Mol. STruct 527 p. 51-61.
-      self :: INOUT
-      LOL_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      LOL_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(pt.dim2==3, "wrong dimension for pt array")
    ENSURE(.natural_orbitals.is_allocated_with_genre("restricted"), "no restricted NO's")
@@ -10511,50 +10546,55 @@ contains
 !  Electric potential
 !  ==================
 
-   make_electric_potential_grid(pot_grid,pt)
+   make_EP_grid(pot_grid,pt)
    ! Make the electric potential "pot_grid" on a series of points "pt"
-      pot_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      pot_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(.basis_info_made, "no basis info")
+
       method :: STR
+
       method = "exact"
-    ! avoid crashing if we are making an isosurface and .plot_grid is not created
-    ! .isosurface.plot_grid will be automatically created if we are doing an
-    ! isosurface. This is an ugly hack, hopefully temporary
+
+      ! avoid crashing if we are making an isosurface and .plot_grid is not created
+      ! .isosurface.plot_grid will be automatically created if we are doing an
+      ! isosurface. This is an ugly hack, hopefully temporary
       if(.isosurface.associated) then
          method = .isosurface.plot_grid.electric_potential_method
-      else if(.plot_grid.associated) then
+      else if (.plot_grid.associated) then
          method = .plot_grid.electric_potential_method
       end if
 
-      select case(method)
+      select case (method)
+
       case("exact");
-         .BASE:make_ao_density_matrix
          if (trim(.density_matrix.number_kind)=="real") then
-            .:make_electric_potential_grid_r(pot_grid,pt,.density_matrix.restricted)
+            .:make_EP_grid_r(pot_grid,pt,.density_matrix.restricted)
          else
-            .:make_electric_potential_grid_c(pot_grid,pt,.density_matrix.restricted_complex)
+            .:make_EP_grid_c(pot_grid,pt,.density_matrix.restricted_complex)
          end
 
       case("multipole")
-         .:make_multipole_electric_potential_grid(pot_grid,pt)
+         .:make_multipole_EP_grid(pot_grid,pt)
 
       case("mixed")
-         .:make_mixed_electric_potential_grid(pot_grid,pt)
+         .:make_mixed_EP_grid(pot_grid,pt)
 
       case("scm")
-         .:make_scm_electric_potential_grid(pot_grid,pt)
+         .:make_scm_EP_grid(pot_grid,pt)
 
-      case default;  UNKNOWN(.plot_grid.electric_potential_method)
+      case default
+         UNKNOWN(.plot_grid.electric_potential_method)
 
       end
 
    end
 
-   make_multipole_electric_potential_grid(pot_grid,pt)
+   make_multipole_EP_grid(pot_grid,pt)
    ! Make the electric potential "pot_grid" on a series of points "pt"
-      self :: INOUT
+      self :: IN
       pot_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
 
@@ -10563,8 +10603,6 @@ contains
       ESP_grid :: VEC{REAL}*
 
       ESP_grid.create(pot_grid.dim)
-
-      .BASE:make_ao_density_matrix
 
       .:nuclear_potential(pot_grid,pt)
       .:make_multipole_ESP_grid_r(ESP_grid,pt)
@@ -10575,9 +10613,9 @@ contains
 
    end
 
-   make_mixed_electric_potential_grid(grid,pt)
+   make_mixed_EP_grid(grid,pt)
    ! Make the electric potential "pot_grid" on a series of points "pt"
-      self :: INOUT
+      self :: IN
       grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
 
@@ -10590,7 +10628,6 @@ contains
 
       ESP_grid.create(grid.dim)
 
-      .BASE:make_ao_density_matrix
       .:nuclear_potential(grid,pt)
       .:make_mixed_ESP_grid_r(ESP_grid,pt,.density_matrix.restricted)
 
@@ -10600,7 +10637,7 @@ contains
 
    end
 
-   make_scm_electric_potential_grid(grid,pt)
+   make_scm_EP_grid(grid,pt)
    ! Make the electric potential "grid" on a series of points "pt"
       grid :: VEC{REAL}
       pt :: MAT{REAL}
@@ -10615,8 +10652,6 @@ contains
       ESP_grid.create(grid.dim)
 
       .:nuclear_potential(grid,pt)
-
-      .BASE:make_ao_density_matrix
       .:make_scm_ESP_grid_r(ESP_grid,pt,.density_matrix.restricted)
 
       grid = grid + ESP_grid
@@ -10626,7 +10661,7 @@ contains
    end
 
 
-   make_electric_potential_grid_r(grid,pt,dens)
+   make_EP_grid_r(grid,pt,dens)
    ! Make the total electric potential "grid" on a series of grid points
    ! "pt" using AO density matrix "dens"
       self :: IN
@@ -10647,7 +10682,7 @@ contains
 
    end
 
-   make_electric_potential_grid_c(pot_grid,pt,dens)
+   make_EP_grid_c(pot_grid,pt,dens)
    ! Make the total electric potential "pot_grid" on a series of grid points
    ! "pt" using AO density matrix "dens"
       pot_grid :: VEC{REAL}
@@ -10674,7 +10709,7 @@ contains
       self :: MOLECULE*
 
       .BASE:set_from_saved_self
-      .:make_electric_potential_grid(g,pt)
+      .:make_EP_grid(g,pt)
 
    end
 
@@ -10682,24 +10717,28 @@ contains
    ! Make the electric potential grid "g" on a series of points "pt"
       g  :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
+
       self :: MOLECULE*
 
       .BASE:set_from_saved_self
-      .:make_multipole_electric_potential_grid(g,pt)
+
+      .:make_multipole_EP_grid(g,pt)
 
    end
 
 
+!  This is written twice!
+!  As make_EP_grid
+
    make_electronic_pot_grid(pot_grid,pt)
    ! Make the electronic potential "pot_grid" on a series of points "pt"
-      pot_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      pot_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.allocated, "no density matrix")
    ENSURE(.density_matrix.has_any_genre, "no density matrix")
-
-      .BASE:make_ao_density_matrix
 
       if (trim(.density_matrix.number_kind)=="real") then
          .:make_electronic_pot_grid_r(pot_grid,pt,.density_matrix.restricted)
@@ -10712,6 +10751,7 @@ contains
    make_electronic_pot_grid_r(grid,pt,dens)
    ! Make the electronic potential "grid" on a series of grid points "pt"
    ! using AO density matrix "dens"
+      self :: IN
       grid :: VEC{REAL}, INOUT
       pt :: MAT{REAL}, IN
       dens :: MAT{REAL}, target, IN
@@ -10765,8 +10805,9 @@ contains
    make_electronic_pot_grid_c(pot_grid,pt,dens)
    ! Make the electronic potential "pot_grid" on a series of grid points "pt"
    ! using AO density matrix "dens"
-      pot_grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      pot_grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
       dens :: MAT{CPX}, target
 
    ENSURE(.basis_info_made, "no basis info")
@@ -10810,7 +10851,7 @@ contains
    ! Make the multipole ESP grid 
    ! potential "grid" on a series of grid points "pt" using AO density
    ! matrix "dens"
-      self :: INOUT
+      self :: IN
       grid :: VEC{REAL}, INOUT
       pt :: MAT{REAL}, IN
 
@@ -10842,6 +10883,7 @@ contains
    ! Make the multipole ESP grid (off diagonal) using the exact for
    ! the one center terms potential "grid" on a series of grid points
    ! "pt" using AO density matrix "dens"
+      self :: IN
       grid :: VEC{REAL}, INOUT
       pt :: MAT{REAL}, IN
       dens :: MAT{REAL}, target, IN
@@ -10921,6 +10963,7 @@ contains
    ! for the one center terms
    ! potential "grid" on a series of grid points "pt" using AO density
    ! matrix "dens"
+      self :: IN
       grid :: VEC{REAL}, INOUT
       pt :: MAT{REAL}, IN
       dens :: MAT{REAL}, target, IN
@@ -10994,6 +11037,7 @@ contains
    ! Make the multipole ESP grid (off diagonal) using the exact for
    ! the one center terms potential "grid" on a series of grid points
    ! "pt" using AO density matrix "P"
+      self :: IN
       grid :: VEC{REAL}, INOUT
       pt :: MAT{REAL}, IN
       P :: MAT{REAL}, IN
@@ -11095,6 +11139,7 @@ contains
    ! Make "V" the diagonal block nuclear attraction integrals 
    ! (a| |r_k - r|^-1 |a) over a shell q, a in q, for each 
    ! point r_k = "pt(k,1:3)".
+      self :: IN
       V :: VEC{MAT3_{REAL}}*, OUT
       pt :: MAT{REAL}, IN
 
@@ -11129,11 +11174,11 @@ contains
 
 
 
-   make_def_e_pot_grid(grid,pt) ::: get_from(def_grid, GRID=>:make_electric_potential_grid, PRO=>:make_pro_e_pot_grid)
+   make_def_e_pot_grid(grid,pt) ::: get_from(def_grid, GRID=>:make_EP_grid, PRO=>:make_pro_e_pot_grid)
    ! Make a Gnuplot ascii file containing the deformation density grid.
    end
 
-   make_pro_e_pot_grid(density_grid,pt) ::: get_from(pro_grid, GRID=>make_electric_potential_grid)
+   make_pro_e_pot_grid(density_grid,pt) ::: get_from(pro_grid, GRID=>make_EP_grid)
    ! Work out the promolecule "density_grid" from the supplied points "pt".
    end
 
@@ -11167,20 +11212,19 @@ contains
    make_the_center_ESP_grid_r(grid,pt)
    ! Make the central neighboring-molecule ESP "grid",
    ! i.e. for atom groups>1, on a series of points "pt".
-      grid :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(.atom_group.associated,"no atom group information")
    ENSURE(.atom_group.dim>=2 ,"must have more than 2 groups")
    ENSURE(.atom_group(1).mol.density_matrix.allocated ,"no mol 1 DM!")
    ENSURE(.atom_group(2).mol.density_matrix.allocated ,"no mol 2 DM!")
 
-      mol :: MOLECULE*
-
-      mol => .atom_group(1).mol
+    ! mol :: MOLECULE*
 
       ! ESP for central molecule
-      mol.:make_electric_potential_grid(grid,pt)
+      .atom_group(1).mol.:make_EP_grid(grid,pt)
 
    end
 
@@ -11236,7 +11280,7 @@ contains
 
          ! Make ESP for molecule m
          mol => .atom_group(m).mol
-         mol.:make_electric_potential_grid(ESP,pt)
+         mol.:make_EP_grid(ESP,pt)
 
          grid = grid + ESP
 
@@ -11299,7 +11343,7 @@ contains
 
          ! Make ESP for molecule m
          mol => .atom_group(m).mol
-         mol.:make_electric_potential_grid(ESP,pt)
+         mol.:make_EP_grid(ESP,pt)
 
          grid = grid + ESP
 
@@ -11307,7 +11351,7 @@ contains
 
       ! Central molecule ESP
       mol => .atom_group(1).mol
-      mol.:make_electric_potential_grid(ESP,pt)
+      mol.:make_EP_grid(ESP,pt)
 
       ! Make product
       grid = grid*ESP
@@ -11381,7 +11425,7 @@ contains
          ! Make ESP on patch g for molecule m
          allocate(ESP(list(g).element.dim))
          mol => .atom_group(g).mol
-         mol.:make_electric_potential_grid(ESP,ptg)
+         mol.:make_EP_grid(ESP,ptg)
          grid(list(g)[:]) = ESP
 
          ! Clean
@@ -11393,7 +11437,7 @@ contains
       ! Central molecule ESP; use all points pt
       allocate(ESP(pt.dim))
       mol => .atom_group(1).mol
-      mol.:make_electric_potential_grid(ESP,pt)
+      mol.:make_EP_grid(ESP,pt)
 
       ! Make product
       grid = grid*ESP
@@ -11681,7 +11725,7 @@ contains
 
       rho.create(V.dim)
 
-      .:make_electric_potential_grid(V,pt)
+      .:make_EP_grid(V,pt)
       .:make_ED_grid(rho,pt)
 
       dft.set_defaults
@@ -11729,8 +11773,9 @@ contains
    make_dft_energy_grid(V,pt)
    ! Work out the Slater DFT energy "V" (i.e. the Slater potential times the
    ! density plus the classical electric energy) on a grid of points "pt".
-      V :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      V :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(.scfdata.associated,"no scf data, for DFT functional")
    ENSURE(.scfdata.is_DFT_calculation,"so far, must be a DFT calculation")
@@ -13484,45 +13529,7 @@ contains
 !  Electric Field
 !  ==============
 
-   field_grid ::: template
-   ! Work out the field density on ".plot_grid" and dump output
-
-   ENSURE(.plot_grid.associated, "no grid")
-
-      field :: MAT{REAL}*
-      fx,fy,fz :: VEC{REAL}*
-      pt :: MAT{REAL}*
-
-      ! Make space for the field and grid points
-      field.create(.plot_grid.n_pt,3)
-      pt.create(.plot_grid.n_pt,3)
-
-      ! Make the grid points
-      .plot_grid.make_points(pt)
-
-      ! Make the grid of field values
-      .FIELD(field,pt)
-
-      ! Assign field components
-      fx => field(:,1)
-      fy => field(:,2)
-      fz => field(:,3)
-
-      ! Print out
-      .:dump_plot_grid(fx,LABEL//".x")
-      .:dump_plot_grid(fy,LABEL//".y")
-      .:dump_plot_grid(fz,LABEL//".z")
-
-      ! Get the magnitude
-      fx = sqrt(fx*fx+fy*fy+fz*fz)
-
-      ! Clean up
-      pt.destroy
-      field.destroy
-
-   end
-
-   make_E_field_grid ::: get_from(field_grid, FIELD=>:make_E_field_grid, LABEL=>"E_field")
+   make_E_field_grid(grid,pt) ::: get_from(field_grid, FIELD=>:make_E_field_grid, LABEL=>"E_field")
    ! Work out the field density on ".plot_grid" and dump output
    end
 
@@ -13547,7 +13554,6 @@ contains
 
       ! The imaginary part of AO density matrix
       D.create(.n_bf,.n_bf)
-      .BASE:make_ao_density_matrix(D)
 
       ! Initialize
       E = ZERO
@@ -13555,41 +13561,41 @@ contains
       ! Loop over integral blocks
       parallel do q = 1,.n_shell_pairs
 
-        ! Get shell indices (leaky)
-        .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
-
-        ! Get the density matrix
-        Dba.create(nb,na)
-        Dba = D(fb:lb,fa:lb)
-
-        ! Electric field integrals
-        Ex.create(na,nb)
-        Ey.create(na,nb)
-        Ez.create(na,nb)
-
-        ! Loop over points
-        do p = 1,n_pt
-
-           sh.make_E_field_ints(Ex,Ey,Ez,pt(p,:))
-
-           fac = TWO
-           if (fa==fb) FAC = ONE
-
-           E(p,1) = E(p,1) + Ex.trace_product_with(Dba)
-           E(p,2) = E(p,2) + Ey.trace_product_with(Dba)
-           E(p,3) = E(p,3) + Ez.trace_product_with(Dba)
-
-        end
-
-        ! Add nuclear contribution
-        .atom.add_nuclear_E_field_at_points_to(E,pt)
-
-        ! Clean
-        Ez.destroy
-        Ey.destroy
-        Ex.destroy
-        Dba.destroy
-        sh.destroy_ptr_part
+         ! Get shell indices (leaky)
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+        
+         ! Get the density matrix
+         Dba.create(nb,na)
+         Dba = D(fb:lb,fa:lb)
+        
+         ! Electric field integrals
+         Ex.create(na,nb)
+         Ey.create(na,nb)
+         Ez.create(na,nb)
+        
+         ! Loop over points
+         do p = 1,n_pt
+        
+            sh.make_E_field_ints(Ex,Ey,Ez,pt(p,:))
+        
+            fac = TWO
+            if (fa==fb) FAC = ONE
+        
+            E(p,1) = E(p,1) + Ex.trace_product_with(Dba)
+            E(p,2) = E(p,2) + Ey.trace_product_with(Dba)
+            E(p,3) = E(p,3) + Ez.trace_product_with(Dba)
+        
+         end
+        
+         ! Add nuclear contribution
+         .atom.add_nuclear_E_field_at_points_to(E,pt)
+        
+         ! Clean
+         Ez.destroy
+         Ey.destroy
+         Ex.destroy
+         Dba.destroy
+         sh.destroy_ptr_part
 
       end
 
@@ -13603,11 +13609,11 @@ contains
    end
 
 
-   make_E_field_magnitude(f,pt)
+   make_E_field_magnitude(grid,pt)
    ! Evaluate the E field magnitude on a set of grid points "pt". 
    ! Includes the atom nuclear charge contribution.
       self :: IN
-      f :: VEC{REAL}, OUT
+      grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
 
       field :: MAT{REAL}@
@@ -13623,24 +13629,23 @@ contains
       fz = field(:,3)
 
       ! Get the magnitude
-      f = sqrt(fx*fx+fy*fy+fz*fz)
-
-      ! Print out
-      .:dump_plot_grid(fx,"E_field.magnitude")
+      grid = sqrt(fx*fx+fy*fy+fz*fz)
 
       ! Clean up
       field.destroy
 
    end
 
-   E_field_magnitude(g,pt) ::: selfless
+   E_field_magnitude(grid,pt) ::: selfless
    ! Evaluate the E field magnitude on a set of grid points "pt". 
-      g  :: VEC{REAL}, OUT
+      grid  :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
+
       self :: MOLECULE*
 
       .BASE:set_from_saved_self
-      .:make_E_field_magnitude(g,pt)
+
+      .:make_E_field_magnitude(grid,pt)
 
    end
 
@@ -13650,6 +13655,8 @@ contains
 
    make_B_field_grid
    ! Work out the field density on ".plot_grid" and dump output
+      self :: IN
+
    ENSURE(.plot_grid.associated, "no grid")
 
       B_L,B_S :: MAT{REAL}*
@@ -13841,13 +13848,14 @@ contains
 !
 !   end
 
-   make_B_L_field_grid ::: get_from(field_grid, FIELD=>:make_B_L_field_grid, LABEL=>"B_L_field")
+   make_B_L_field_grid(grid,pt) ::: get_from(field_grid, FIELD=>:make_B_L_field_grid, LABEL=>"B_L_field")
    ! Work out the field density on ".plot_grid" and dump output
    end
 
    make_B_L_field_grid(B,pt)
    ! Make the magnetic field "B" field due to the linear current on a
    ! series of points "pt"
+      self :: IN
       B :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
 
@@ -14035,13 +14043,15 @@ contains
 !
 !   end
 
-   make_B_S_field_grid ::: get_from(field_grid, FIELD=>:make_B_S_field_grid, LABEL=>"B_S_field")
+
+   make_B_S_field_grid(grid,pt) ::: get_from(field_grid, FIELD=>:make_B_S_field_grid, LABEL=>"B_S_field")
    ! Work out the field density on ".plot_grid" and dump output
    end
 
    make_B_S_field_grid(B,pt)
    ! Make the magnetic field "B" field due to the linear current on a
    ! series of points "pt"
+      self :: IN
       B :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
 
@@ -14050,7 +14060,7 @@ contains
 
       ! Not the most efficient, but should work ...
       if (.density_matrix.alpha.allocated) then; .:make_B_S_field_grid_u(B,pt)
-      else;                                    .:make_B_S_field_grid_gc(B,pt)
+      else;                                      .:make_B_S_field_grid_gc(B,pt)
       end
 
    end
@@ -14173,6 +14183,7 @@ contains
    make_B_S_field_grid_gc(B,pt)
    ! Make the magnetic field "B" field due to the linear current on a
    ! series of points "pt"
+      self :: IN
       B :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
 
@@ -14342,9 +14353,11 @@ contains
   !   stdout.put(B)
    end
 
+
    make_B_L_matrices(Bx,By,Bz,c)
    ! Make the magnetic field "B" field due to the linear current on a
    ! series of points "pt"
+      self :: IN
       Bx,By,Bz :: MAT{REAL}, OUT
       c :: VEC{REAL}(3), IN
 
@@ -14506,96 +14519,93 @@ contains
 !  Polarizability density
 !  ======================
 
-!   make_e_polarization_grid
-!   ! Work out the electric polarization grid, either along a
-!   ! projection or all three directions and magnitude.
-!
-!   ENSURE(.plot_grid.associated, "no grid")
-!
-!      if (.plot_grid.projection_direction.is_zero) then
-!         .:make_e_polarization_vgrid
-!      else
-!         .:make_e_polarization_pgrid
-!      end
-!
-!   end
+   make_E_polarization_grid(grid,pt)
+   ! Work out the electric polarization grid, either along a
+   ! projection or all three directions and magnitude.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
-!   make_e_polarization_vgrid ::: get_from(field_grid, FIELD=>:make_e_polarization_vgrid, LABEL=>"electric_polarization_density")
-!   ! Work out the field density on ".plot_grid" and dump output
-!   end
+   ENSURE(.plot_grid.associated, "no grid")
 
-!   make_e_polarization_vgrid(E,pt)
-!   ! Make the (vector as opposed to projected) electric polarization
-!   ! density "E" on a series of grid points "pt"
-!      E :: MAT{REAL}, OUT
-!      pt :: MAT{REAL}, IN
-!
-!   ENSURE(.basis_info_made, "no basis set")
-!   ENSURE(.molecular_orbitals.allocated,"no MO's")
-!   ENSURE(.U_electric_dipole.associated,"no U matrices?")
-!   ENSURE(E.dim1==pt.dim1, "E and pt: inconsistent no. of points")
-!   ENSURE(E.dim2==3      , "E : wrong dim2")
-!
-!      D :: MAT3{REAL}*
-!      MO :: MAT{REAL}@
-!      n_occ, i :: INT
-!
-!      ! Dimensions
-!      n_occ = .n_a
-!
-!      ! Get derivative density matrices (restricted only)
-!      D.create(.n_bf,.n_bf,3)
-!      MO = .molecular_orbitals.restricted
-!      do i = 1,3 ! x,y,z electric fields
-!         .U_electric_dipole(:,:,1).back_transform_to(D(:,:,1),MO(:,n_occ+1:),MO(:,1:n_occ))
-!         D(:,:,i).symmetrize
-!      end
-!      D = FOUR*D
-!
-!      ! Debug
-!      if (.BASE:debugging("make_e_polarization_grid")) then
-!         stdout.flush
-!         stdout.text("Derivative density matrices")
-!         stdout.put(D)
-!      end
-!
-!      ! Make the derivative rho grid
-!      .:make_derivative_rho_grid(E,pt,D)
-!
-!      ! Clean
-!      D.destroy
-!
-!   end
+      if (.plot_grid.projection_direction.is_zero) then
+         .:make_E_polarization_vgrid(grid,pt)
+      else
+         .:make_E_polarization_pgrid(grid,pt)
+      end
 
-!   make_e_polarization_pgrid(grid,pt)
-!   ! Make the (vector as opposed to projected) electric polarization
-!   ! density "E" on a series of grid points "pt"
-!      grid :: VEC{REAL}
-!      pt :: MAT{REAL}, IN
-!
-!   ENSURE(grid.dim==pt.dim1, "grid and pt: inconsistent no. of points")
-!
-!      E :: MAT{REAL}*
-!      n_pt :: INT
-!
-!      ! Dimensions
-!      n_pt  = pt.dim1
-!
-!      ! Space
-!      E.create(n_pt,3)
-!
-!      ! Make electric polarization density
-!      .:make_e_polarization_vgrid(E,pt)
-!
-!      ! Do the projection
-!      grid = E(:,1)*.plot_grid.projection_direction(1) &
-!           + E(:,2)*.plot_grid.projection_direction(2) &
-!           + E(:,3)*.plot_grid.projection_direction(3)
-!
-!      ! Clean
-!      E.destroy
-!
-!   end
+   end
+
+   make_E_polarization_vgrid(grid,pt) ::: get_from(field_grid, FIELD=>:make_E_polarization_vgrid, LABEL=>"E_polarization_density")
+   ! Work out the field density on ".plot_grid" and dump output
+   end
+
+   make_E_polarization_vgrid(E,pt)
+   ! Make the (vector as opposed to projected) electric polarization
+   ! density "E" on a series of grid points "pt"
+      E :: MAT{REAL}, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis set")
+   ENSURE(.molecular_orbitals.allocated,"no MO's")
+   ENSURE(.U_electric_dipole.associated,"no U matrices?")
+   ENSURE(E.dim1==pt.dim1, "E and pt: inconsistent no. of points")
+   ENSURE(E.dim2==3      , "E : wrong dim2")
+
+      D :: MAT3{REAL}*
+      MO :: MAT{REAL}@
+      n_occ, i :: INT
+
+      ! Dimensions
+      n_occ = .n_a
+
+      ! Get derivative density matrices (restricted only)
+      D.create(.n_bf,.n_bf,3)
+      MO = .molecular_orbitals.restricted
+      do i = 1,3 ! x,y,z electric fields
+         .U_electric_dipole(:,:,1).back_transform_to(D(:,:,1),MO(:,n_occ+1:),MO(:,1:n_occ))
+         D(:,:,i).symmetrize
+      end
+      D = FOUR*D
+
+      ! Make the derivative rho grid
+      .:make_derivative_rho_grid(E,pt,D)
+
+      ! Clean
+      D.destroy
+
+   end
+
+   make_E_polarization_pgrid(grid,pt)
+   ! Make the (vector as opposed to projected) electric polarization
+   ! density "E" on a series of grid points "pt"
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt  :: MAT{REAL}, IN
+
+   ENSURE(grid.dim==pt.dim1, "grid and pt: inconsistent no. of points")
+
+      E :: MAT{REAL}*
+      n :: VEC{REAL}(3)
+      n_pt :: INT
+
+      ! Dimensions
+      n_pt  = pt.dim1
+
+      ! Space
+      E.create(n_pt,3)
+
+      ! Make electric polarization density
+      .:make_e_polarization_vgrid(E,pt)
+
+      ! Do the projection
+      n = .plot_grid.projection_direction
+      grid = E(:,1)*n(1) + E(:,2)*n(2) + E(:,3)*n(3)
+
+      ! Clean
+      E.destroy
+
+   end
 
 !  ======================
 !  Set interpolator grids
