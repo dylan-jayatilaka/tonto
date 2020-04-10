@@ -56,11 +56,64 @@ contains
       .plot_grid.put
 
       ! Do the plot
-      .GRID:do_plot
+      .:do_plot
 
    end
 
-   fragment_plot
+   plots ::: leaky
+   ! Do one of the many kinds of plot calculations
+      self :: INOUT
+
+   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.plot_grid.plot_kinds.associated, "no multiple plot_kinds!")
+
+      i :: INT
+
+      ! Loop over plots and do each one
+      do i = 1,.plot_grid.plot_kinds.dim
+         .plot_grid.set_plot_kind( .plot_grid.plot_kinds(i))
+         .plot_grid.set_plot_units(.plot_grid.plot_kinds_units(i))
+         .:plot
+      end
+
+      ! Reset to blank
+      .plot_grid.set_plot_kind(" ")
+      .plot_grid.set_plot_units(" ")
+
+   end
+
+   do_plot ::: leaky
+   ! Do one of the many kinds of plot calculations. These are usually
+   ! 2D plots but they can be rectilinear volumetric plots, depending
+   ! on how .plot_grid was defined by the user.
+      self :: INOUT
+
+   ENSURE(.plot_grid.associated, "no grid")
+
+      name :: STR
+      grid :: VEC{REAL}@
+      pt :: MAT{REAL}@
+
+      ! Make the grid points
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Make the property values.
+      grid.create(.plot_grid.n_pt)
+      .GRID:make_prop_values(grid,pt)
+
+      ! Print out
+      name = .plot_grid.plot_file_name(.n_a)
+      .GRID:dump_plot_grid(grid,name)
+
+      ! Clean up
+      pt.destroy
+      grid.destroy
+
+   end
+
+
+   plot_fragments
    ! Do the summed-fragment property density on ".plot_grid".
       self :: INOUT
 
@@ -79,28 +132,65 @@ contains
       .plot_grid.put
 
       ! Do the plot
-      .GRID:do_fragment_plot
+      .:do_fragment_plot
 
    end
 
+   do_fragment_plot
+   ! Do the summed-fragmened  property density on ".plot_grid" using
+   ! the molecules in .atom_group(:).mol.
+      self :: INOUT
 
-   plots ::: leaky
-   ! Do one of the many kinds of plot calculations
    ENSURE(.plot_grid.associated, "no grid")
-   ENSURE(.plot_grid.plot_kinds.associated, "no multiple plot_kinds!")
+   ENSURE(.atom_group.associated,"no atom_group info")
+   ENSURE(.crystal.associated,"no crystal")
 
-      i :: INT
+      mol :: MOLECULE*
+      name :: STR
+      grid, frag :: VEC{REAL}@
+      pt :: MAT{REAL}@
+      g :: INT
 
-      ! Loop over plots and do each one
-      do i = 1,.plot_grid.plot_kinds.dim
-         .plot_grid.set_plot_kind( .plot_grid.plot_kinds(i))
-         .plot_grid.set_plot_units(.plot_grid.plot_kinds_units(i))
-         .:plot
+      ! Make the grid points
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Make space for grid values and grid points
+      grid.create(.plot_grid.n_pt)
+      frag.create(.plot_grid.n_pt)
+
+      ! Initialise
+      grid = ZERO
+
+      do g = 1,.atom_group.dim
+
+         ! Set up a molecule for this group of atoms
+         mol => .atom_group(g).mol
+         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
+
+         ! Skip SCF for atoms without electrons
+         ! Question: any plots which work with no electrons?
+         if (mol.BASE:no_of_electrons < 1) cycle
+
+         ! Do the plot for this fragment
+         ! Use the parent .plot_grid
+         mol.plot_grid => .plot_grid
+         mol.:set_up_for_plot(mol.plot_grid.plot_kind)
+         mol.GRID:make_prop_values(frag,pt)
+         nullify(mol.plot_grid)
+
+         ! Add up this contribution
+         grid = grid + frag
+
       end
 
-      ! Reset to blank
-      .plot_grid.set_plot_kind(" ")
-      .plot_grid.set_plot_units(" ")
+      ! Print out
+      name = .plot_grid.plot_file_name(.n_a)
+      .GRID:dump_plot_grid(grid,name)
+
+      ! Clean up
+      pt.destroy
+      grid.destroy
 
    end
 
@@ -233,11 +323,7 @@ contains
       .:set_group_densities_for_plot(plot_kind)
 
       ! Assign natural orbitals
-      if (.natural_orbitals.deallocated) then
-      if (.molecular_orbitals.allocated) then
-         .BASE:assign_NOs_to_MOs
-      end
-      end
+      .BASE:assign_NOs_to_MOs
 
    end
 
@@ -545,52 +631,6 @@ contains
          case default
            DIE(" only unrestricted or gchf spin density is available !")
       end
-
-   end
-
-!  ============================
-!  Standard ED refinement plots
-!  ============================
-
-   put_ED_refinement_plots
-   ! Evaluate the min and max residual density from the
-   ! fitted structure factors, evaluated on a grid 0.1 A
-   ! per side. Also evaluate the residuals at the atom
-   ! centers and report the worst one.
-      self :: INOUT
-
-   DIE_IF(NOT .atom.associated, "no atoms to fit")
-   DIE_IF(NOT .crystal.associated, "no crystal")
-   DIE_IF(NOT .crystal.fragment_info_made, "no crystal fragment info")
-   DIE_IF(NOT .crystal.data.associated,"no crystal data")
-   DIE_IF(NOT .crystal.xray_data.associated,"no crystal xray data")
-
-      map :: VEC{REAL}*
-      pt  :: MAT{REAL}*
-      n_pt :: INT
-
-      ! Set up
-      if (.plot_grid.disassociated) .plot_grid.create
-
-      ! Use unit cell as bbox if requested
-      .plot_grid.set_box_scale_factor(ONE)
-      if (.plot_grid.desired_separation.is_zero) &
-      .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
-      .plot_grid.set_center_to_center_of(.atom)
-      .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell,recenter=FALSE)
-
-      ! Make the residual map
-      n_pt = .plot_grid.n_pt
-      map.create(n_pt)
-      .plot_grid.set_plot_kind("residual_density_map")
-      .plot_grid.make_points(pt)
-      .GRID:make_residual_density_cell(map)
-
-      ! Write cube file
-      .GRID:dump_plot_grid(map,"residual_density_map",form="gaussian.cube")
-
-      ! Clean
-      map.destroy
 
    end
 
