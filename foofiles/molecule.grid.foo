@@ -1,6 +1,6 @@
 !===============================================================================
 !
-! MOLECULE.PLOT: An object representation of a molecule, plotting procedures.
+! MOLECULE.GRID: An object representation of a molecule, plotting procedures.
 !
 ! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996-2012
 ! Copyright (C) Dylan Jayatilaka 2012-
@@ -27,96 +27,6 @@ module MOLECULE.GRID
    implicit none
 
 contains
-
-!  ========
-!  Do plots
-!  ========
-
-!  2D
-
-   do_plot ::: leaky
-   ! Do one of the many kinds of plot calculations. These are usually
-   ! 2D plots but they can be rectilinear volumetric plots, depending
-   ! on how .plot_grid was defined by the user.
-      self :: INOUT
-
-   ENSURE(.plot_grid.associated, "no grid")
-
-      name :: STR
-      grid :: VEC{REAL}@
-      pt :: MAT{REAL}@
-
-      ! Make the grid points
-      pt.create(.plot_grid.n_pt,3)
-      .plot_grid.make_points(pt)
-
-      ! Make the property values.
-      grid.create(.plot_grid.n_pt)
-      .:make_prop_values(grid,pt)
-
-      ! Print out
-      name = .plot_grid.plot_file_name(.n_a)
-      .:dump_plot_grid(grid,name)
-
-      ! Clean up
-      pt.destroy
-      grid.destroy
-
-   end
-
-   do_fragment_plot
-   ! Do the summed-fragmened  property density on ".plot_grid" using
-   ! the molecules in .atom_group(:).mol.
-      self :: INOUT
-
-   ENSURE(.plot_grid.associated, "no grid")
-   ENSURE(.atom_group.associated,"no atom_group info")
-   ENSURE(.crystal.associated,"no crystal")
-
-      mol :: MOLECULE*
-      name :: STR
-      grid, frag :: VEC{REAL}@
-      pt :: MAT{REAL}@
-      g :: INT
-
-      ! Make the grid points
-      pt.create(.plot_grid.n_pt,3)
-      .plot_grid.make_points(pt)
-
-      ! Make space for grid values and grid points
-      grid.create(.plot_grid.n_pt)
-      frag.create(.plot_grid.n_pt)
-
-      ! Initialise
-      grid = ZERO
-
-      do g = 1,.atom_group.dim
-
-         ! Set up a molecule for this group of atoms
-         mol => .atom_group(g).mol
-         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
-
-         ! Skip SCF for atoms without electrons
-         ! Question: any plots which work with no electrons?
-         if (mol.BASE:no_of_electrons < 1) cycle
-
-         ! Do the plot for this fragment
-         mol.:make_prop_values(frag,pt)
-
-         ! Add up this contribution
-         grid = grid + frag
-
-      end
-
-      ! Print out
-      name = .plot_grid.plot_file_name(.n_a)
-      .:dump_plot_grid(grid,name)
-
-      ! Clean up
-      pt.destroy
-      grid.destroy
-
-   end
 
    make_prop_values(grid,pt) ::: leaky
    ! Make the plot values in "grid" for a given set of points "pt" for
@@ -234,7 +144,6 @@ contains
 
    end
 
-!  Isosurface
 
    do_isosurface_plot
    ! Do one of the many kinds of isosurface plot calculations
@@ -357,6 +266,53 @@ contains
       end
 
    end
+
+!  ============================
+!  Standard ED refinement plots
+!  ============================
+
+   put_ED_refinement_plots
+   ! Evaluate the min and max residual density from the
+   ! fitted structure factors, evaluated on a grid 0.1 A
+   ! per side. Also evaluate the residuals at the atom
+   ! centers and report the worst one.
+      self :: INOUT
+
+   DIE_IF(NOT .atom.associated, "no atoms to fit")
+   DIE_IF(NOT .crystal.associated, "no crystal")
+   DIE_IF(NOT .crystal.fragment_info_made, "no crystal fragment info")
+   DIE_IF(NOT .crystal.data.associated,"no crystal data")
+   DIE_IF(NOT .crystal.xray_data.associated,"no crystal xray data")
+
+      map :: VEC{REAL}*
+      pt  :: MAT{REAL}*
+      n_pt :: INT
+
+      ! Set up
+      if (.plot_grid.disassociated) .plot_grid.create
+
+      ! Use unit cell as bbox if requested
+      .plot_grid.set_box_scale_factor(ONE)
+      if (.plot_grid.desired_separation.is_zero) &
+      .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
+      .plot_grid.set_center_to_center_of(.atom)
+      .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell,recenter=FALSE)
+
+      ! Make the residual map
+      n_pt = .plot_grid.n_pt
+      map.create(n_pt)
+      .plot_grid.set_plot_kind("residual_density_map")
+      .plot_grid.make_points(pt)
+      .:make_residual_density_cell(map)
+
+      ! Write cube file
+      .:dump_plot_grid(map,"residual_density_map",form="gaussian.cube")
+
+      ! Clean
+      map.destroy
+
+   end
+
 
 !  ===================================
 !  Property/plot densities (templates)
@@ -13416,8 +13372,9 @@ contains
    ! "pt" using ".natural orbitals" and the ".occupation_numbers" vector. The
    ! true function differs from that above in that the kinetic energy density is
    ! evaluated exactly.
-      f :: VEC{REAL}
-      pt :: MAT{REAL}
+      self :: IN
+      f :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
 
    ENSURE(.natural_orbitals.allocated, "no natural orbitals")
    ENSURE(.natural_orbitals.has_any_genre, "no natural orbitals")
@@ -13435,6 +13392,7 @@ contains
    ! "pt".  The true function differs from that above in that the kinetic energy
    ! density is evaluated exactly.
    ! NOTE: this routine is only valid for single determinant wavefunctions.
+      self :: IN
       f :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
 
@@ -13521,8 +13479,11 @@ contains
       g  :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
       self :: MOLECULE*
+
       .BASE:set_from_saved_self
+
       .:make_true_fermi_mobility_grid(g,pt)
+
    end
 
 !  ==============
@@ -15207,7 +15168,7 @@ contains
       ! Loop over NO's
       do n = 1,n_occ
 
-         .GRID:make_nabla_orbital_grid_c(P,D,.natural_orbitals.restricted_complex(:,n), pt)
+         .:make_nabla_orbital_grid_c(P,D,.natural_orbitals.restricted_complex(:,n), pt)
 
          occ = .occupation_numbers.restricted(n)
 
@@ -15281,7 +15242,7 @@ contains
       div_jp = ZERO
 
       do n = 1,n_occ
-         .GRID:make_laplacian_orbital_grid_c(L,P,D,.natural_orbitals.restricted_complex(:,n), pt)
+         .:make_laplacian_orbital_grid_c(L,P,D,.natural_orbitals.restricted_complex(:,n), pt)
          occ = .occupation_numbers.restricted(n)
          div_jp = div_jp - occ*aimag(conjg(D(:))*(L(:,1)+L(:,2)+L(:,3)))
       end
