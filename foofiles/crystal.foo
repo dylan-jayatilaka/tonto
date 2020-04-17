@@ -10230,6 +10230,7 @@ contains
             ! Shift relative to recentered unit cell
             h = h + .fragment_offset
 
+            ! Check if we can store these h's in a bit string
             ENSURE(all(h>=-CLUSTER_H_MAX),"frag too wide, h = "//trim(h.to_concatenated_str))
             ENSURE(all(h<= CLUSTER_H_MAX),"frag too wide, h = "//trim(h.to_concatenated_str))
 
@@ -10410,6 +10411,127 @@ contains
 
       end
 
+   end
+
+   make_plot_info(pt) ::: leaky
+   ! Make ".occupation_list" i.e. the CLUSTER_AT_CODE(h1,h2,h3,u)'s
+   ! for the list of atoms in the crystal within a distance ".radius"
+   ! of the set of points in "pt" (usually generated from "plot_grid"
+   ! via the "make_points(pt)" routine, but not necessarily.
+   ! NOTE: Also make the ".molecule_for_atom" list which tells which
+   ! molecule the atom belongs to.
+      self :: INOUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(.unit_cell_geometry.associated,"no crystal unit cell")
+   ENSURE(.fragment_geometry.associated,"no fragment_geometry")
+   ENSURE(.fragment_info_made,"no crystal fragment info")
+   ENSURE(.unit_cell_atom_for_frag_atom.associated,"no cell-frag_atom array")
+   ENSURE(.unit_cell_shft_for_frag_atom.associated,"no cell-frag_atom array")
+
+
+      h :: VEC{INT}(3)
+      vdw,d2 :: REAL
+      dcm :: MAT{REAL}(3,3)
+      pos,shift :: VEC{REAL}(3)
+      vdw_radius :: VEC{REAL}*
+      p, i,j,k,u, code :: INT
+      ucc,fragment_geometry :: MAT{REAL}*
+
+      ! Create occupation list
+      .occupation_list.destroy
+      .occupation_list.create(0)
+
+      ! Set up the van der Waals radii, for the limits of
+      ! interaction.
+      vdw_radius.create(.n_unit_cell_atoms)
+      .unit_cell_atom.get_vdw_radii_ccdc(vdw_radius)
+      
+      ! Have a cartesian unit cell, and add the unit cell length to
+      ! each direction before each iteration.
+      dcm = .unit_cell.direct_matrix
+      ucc.create(shape(.unit_cell_geometry))
+      ucc = matmul(dcm,.unit_cell_geometry) ! This is (3 x N)
+
+      ! Loop over 27 unit cells
+      do k = -1,1
+      do j = -1,1
+      do i = -1,1
+         
+         ! Shift the unit cell geometry to a different unit cell
+         ! This should shift the atomic cartesian coordinates to
+         ! the relevant unit cell
+         h = [i,j,k]
+         shift = matmul(dcm,h)
+         do u = 1, ucc.dim2
+            ucc(:,u) = ucc(:,u) + shift
+         end do
+         
+         ! Cycle through every coordinate in the cartesian unit
+         ! cell
+         do u = 1, ucc.dim2
+
+            vdw = vdw_radius(u)
+            pos = ucc(:,u)
+
+            ! Cycle through every point in the plot grid
+            do p = 1, pt.dim1 
+               
+               ! Cycle if it is outside the range of the point
+               if (abs(pos(1) - pt(p,1)) > vdw) cycle 
+               if (abs(pos(2) - pt(p,2)) > vdw) cycle 
+               if (abs(pos(3) - pt(p,3)) > vdw) cycle 
+          
+               ! Final check - actual distance
+               d2 = (pos(3)-pt(p,3))**2 + (pos(2)-pt(p,2))**2 + (pos(1)-pt(p,1))**2
+               if (d2 > vdw*vdw) cycle 
+            
+               ! If you reach this point, your point should be added
+               ! to the occupation list. Must first convert back to
+               ! bitwise h code.  h(1) = i, h(2) = j and h(3) = k.
+               ! NOTE: u should be the atom code, but it is possible
+               ! this will be incorrect
+            
+            
+               ! Get occ code ...
+               code = CLUSTER_AT_CODE(i,j,k,u)
+               .occupation_list.append(code)
+          
+               ! If it is in the occupation list, then it is done, and
+               ! the next atom can be checked
+               exit
+          
+            end do
+         
+         end do
+         
+         ! Undoes the unit cell geometry to a different unit cell
+         ! This should shift the atomic cartesian coordinates back
+         ! to the initial unit cell coordinates
+         do u = 1, ucc.dim2
+            ucc(:,u) = ucc(:,u) - shift
+         end do
+         
+
+      end do
+      end do
+      end do
+
+      ucc.destroy
+      vdw_radius.destroy
+
+      ! Defragment & find molecules
+      .do_defragment
+
+      ! Extract cordinates from occupation list
+      .extract_geometry
+
+      ! Finished ...
+      .cluster_info_made = TRUE
+
+      ! See?
+      .put_cluster_info   
+   
    end
 
    make_HS_radius
@@ -10678,8 +10800,8 @@ contains
    end
 
    do_defragment ::: leaky
-   ! Defragment the generated cluster and find the connected molecules using the
-   ! .unit_cell_connection table.
+   ! Defragment the generated cluster and find the connected molecules
+   ! using the .unit_cell_connection table.
       self :: INOUT
 
    ENSURE(.occupation_list.associated,"no occupation_list")
@@ -11186,7 +11308,7 @@ contains
              h3 = CLUSTER_H3_FROM_CODE(code)
              u  = CLUSTER_UA_FROM_CODE(code)
 
-             ! Get the cluster atom coordinate
+             ! Get the cluster atom coordinate !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
              .geometry(:,i) = .unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
 
              ! Set flag if fragment atom
@@ -11213,7 +11335,6 @@ contains
          m = .molecule_for_atom(a)
          .molecule(m).element.append(a)
       end
-
 
       ! Reorder connection table
       atom_connection.create(.n_atoms)
