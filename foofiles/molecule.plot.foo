@@ -145,28 +145,83 @@ contains
    ENSURE(.atom_group.associated,"no atom_group info")
    ENSURE(.crystal.associated,"no crystal")
 
-      mol :: MOLECULE*
-      name :: STR
+      seitz :: MAT3{REAL}*
+      shift :: MAT{INT}@
+      pt, dcm :: MAT{REAL}@
+      mx,coords :: MAT{REAL}@
       grid, frag :: VEC{REAL}@
-      pt :: MAT{REAL}@
-      g :: INT
+      trans :: VEC{REAL}(3)
+      parent,symop :: VEC{INT}@
+      s,n_mols, p,g :: INT
+      name :: STR
+      mol :: MOLECULE*
+      same :: BIN
 
       ! Make the grid points
       pt.create(.plot_grid.n_pt,3)
       .plot_grid.make_points(pt)
 
+      .crystal.make_plot_info(pt,parent,symop,shift) 
+      
+      DIE_IF(parent.deallocated,"no molecules inthe plot!")
+
+      ! No. of molecules near the plot grid
+      n_mols = parent.dim
+
+      ! Cartesian rotation matrices
+      seitz => .crystal.xyz_seitz_matrices
+
+      ! Direct space unit cell matrix
+      dcm = .crystal.unit_cell.direct_matrix
+
       ! Make space for grid values and grid points
       grid.create(.plot_grid.n_pt)
       frag.create(.plot_grid.n_pt)
+      coords.create(3,0)
 
       ! Initialise
       grid = ZERO
 
-      do g = 1,.atom_group.dim
+      do p = 1,n_mols
+      
+         ! Which group does p belong to?
+         g = .atom_group.group_for_atom(p)
 
-         ! Set up a molecule for this group of atoms
-         mol => .atom_group(g).mol
-         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
+         ! Clone molecule
+         mol.BASE:create
+         .BASE:make_molecule_from_atom_group(g,mol,FALSE)
+
+         ! Set to be group name (for reading archive)
+         mol.BASE:set_name(.atom_group(g).name)
+
+         ! Set up plot - maybe read archive for MO's?
+         mol.plot_grid => .plot_grid
+         mol.:set_up_for_fragment_plot(.plot_grid.plot_kind)
+      
+         ! Rotate it
+         s = symop(p)
+         mol.BASE:rotate_by(seitz(1:3,1:3,s))
+
+         ! Translate it
+         trans = matmul(dcm,shift(:,p))
+         mol.atom.translate_by(trans)
+
+         ! CHeck here if the atoms are in the same space NOTE this may
+         ! not work for disordered molecules
+         same = FALSE
+         mx.create(3,mol.atom.dim)
+         mol.atom.put_coordinates_to(mx,positions_as_rows=FALSE)
+         
+         same = mx.has_any_column_from(coords)
+         
+         ! If it isn't the same, add it to the list
+         if (NOT same) coords.append_column(mx(:,1))
+         
+         ! Clean up in each iteration
+         mx.destroy
+         
+         ! Don't proceed if molecule is already plotted
+         if (same) cycle
 
          ! Skip SCF for atoms without electrons
          ! Question: any plots which work with no electrons?
@@ -174,13 +229,18 @@ contains
 
          ! Do the plot for this fragment
          ! Use the parent .plot_grid
-         mol.plot_grid => .plot_grid
-         mol.:set_up_for_plot(mol.plot_grid.plot_kind)
          mol.GRID:make_prop_values(frag,pt)
          nullify(mol.plot_grid)
 
          ! Add up this contribution
          grid = grid + frag
+
+         ! Clean up mol
+         mol.atom.nullify_ptr_part ! do not destroy these
+         nullify(mol.basis)        ! do not destroy this
+         nullify(mol.slaterbasis)  ! do not destroy this
+         nullify(mol.coppensbasis) ! do not destroy this
+         mol.BASE:destroy
 
       end
 
@@ -191,6 +251,50 @@ contains
       ! Clean up
       pt.destroy
       grid.destroy
+      seitz.destroy
+
+   end
+
+   test_plot_info
+   ! Test tlot the unit cell density
+     self :: INOUT
+
+   ENSURE(.atom.associated,"no atom info")
+   ENSURE(.crystal.associated,"no crystal info")
+   ENSURE(NOT .crystal.cluster_info_made,"cluster info already made!")
+
+      pt :: MAT{REAL}@
+      shift :: MAT{INT}@
+      parent, symop :: VEC{INT}@
+      i,p,g :: INT
+
+   ! .crystal.destroy_fragment_data
+   ! .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+
+   ! .crystal.set_generation_method("for_unit_cell_density") 
+
+     pt.create(.plot_grid.n_pt,3)
+     .plot_grid.make_points(pt)
+
+     .plot_grid.put
+
+     .crystal.set_atom_density_cutoff(1.0d-3) 
+     .crystal.make_plot_info(pt,parent,symop,shift)
+
+     if (parent.allocated) then
+
+        do i = 1, parent.dim
+            p = parent(i)
+            g = .atom_group.group_for_atom(p)
+            stdout.text("The group for atom "//trim(p.to_str)//" is "//trim(g.to_str))
+            stdout.show("parent     =",p)
+            stdout.show("symop      =",symop(i))
+            stdout.show("With shift =",shift(:,i))
+        end
+
+     end
+
+   ! .crystal.put_cluster_info
 
    end
 
@@ -324,6 +428,32 @@ contains
 
       ! Assign natural orbitals
       .BASE:assign_NOs_to_MOs
+
+   end
+
+   set_up_for_fragment_plot(plot_kind) ::: leaky
+   ! Do plot-specific initialization
+      self :: INOUT
+      plot_kind :: STR, IN
+
+      ! Make the becke grids & overlapping atoms
+      .:set_becke_grid_for_plot(plot_kind)
+
+      ! Set atom plot info for deformation densities
+      .:set_ANOs_for_plot(plot_kind)
+
+      ! Set interpolators for stockholder or promolecule plots
+      .:set_interpolators_for_plot(plot_kind)
+
+      ! Set up densities & integrals for plot
+      .:set_integrals_for_plot(plot_kind)
+
+      ! Make sure group densities & MOs are there
+      ! Warining: not for summed fragments plots
+      .:set_group_densities_for_plot(plot_kind)
+
+      ! Assign natural orbitals
+      .BASE:read_scf_archives ! Note may cause issues, but probably not
 
    end
 

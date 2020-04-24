@@ -1551,7 +1551,8 @@ contains
         unit_cell_mol_for_atom(i) = i
       end
 
-      ! Define a new connected atom: its index and 3-element shift
+      ! Define a new connected atom: its 3-element shift and index
+      ! This is just an expanded version of CLUSTER_UA_CODE
       new.create(1)
       new(1).element.create(4)
 
@@ -7633,7 +7634,7 @@ contains
 
       ID :: VEC{STR}*
       is_asym :: VEC{BIN}*
-      asym_atom,asym_symp,frag_atom,frag_parn :: VEC{INT}*
+      asym_atom,asym_symp,frag_atom,frag_parn,uc_mol :: VEC{INT}*
       table :: VEC{TABLE_COLUMN}*
 
       ! Data
@@ -7643,6 +7644,7 @@ contains
       is_asym   => .is_asym_unit_cell_atom
       frag_atom => .frag_atom_for_unit_cell_atom
       frag_parn => .frag_parent_for_cell_atom
+      uc_mol    => .unit_cell_mol_for_atom
 
       ! Header
       stdout.flush
@@ -7668,7 +7670,7 @@ contains
       stdout.flush
 
       ! Table
-      table.create(9)
+      table.create(10)
 
       table(1).set_heading("ID");        table(1).set_values(ID)
 
@@ -7697,6 +7699,10 @@ contains
       table(9).set_heading("Made by a"); table(9).set_values(frag_parn)
       table(9).set_subhead("symop frm")
       table(9).set_sb3head("frag atom")
+
+      table(10).set_heading("Unit"); table(10).set_values(uc_mol)
+      table(10).set_subhead("cell")
+      table(10).set_sb3head("Mol #")
 
       table.put
 
@@ -10413,7 +10419,7 @@ contains
 
    end
 
-   make_plot_info(pt) ::: leaky
+   make_plot_info(pt,parent,symop,shifts) ::: leaky
    ! Make ".occupation_list" i.e. the CLUSTER_AT_CODE(h1,h2,h3,u)'s
    ! for the list of atoms in the crystal within a distance ".radius"
    ! of the set of points in "pt" (usually generated from "plot_grid"
@@ -10422,6 +10428,9 @@ contains
    ! molecule the atom belongs to.
       self :: INOUT
       pt :: MAT{REAL}, IN
+      parent :: VEC{INT}@, OUT
+      symop  :: VEC{INT}@, OUT
+      shifts  :: MAT{INT}@, OUT
 
    ENSURE(.unit_cell_geometry.associated,"no crystal unit cell")
    ENSURE(.fragment_geometry.associated,"no fragment_geometry")
@@ -10430,13 +10439,15 @@ contains
    ENSURE(.unit_cell_shft_for_frag_atom.associated,"no cell-frag_atom array")
 
 
-      h :: VEC{INT}(3)
-      vdw,d2 :: REAL
       dcm :: MAT{REAL}(3,3)
+      ucc :: MAT{REAL}@
+      h :: VEC{INT}(3)
+      uc_mol :: VEC{INT}@
       pos,shift :: VEC{REAL}(3)
-      vdw_radius :: VEC{REAL}*
-      p, i,j,k,u, code :: INT
-      ucc,fragment_geometry :: MAT{REAL}*
+      vdw_radius :: VEC{REAL}@
+      vdw,d2 :: REAL
+      p, i,j,k,u, code, s,f :: INT
+      found :: BIN
 
       ! Create occupation list
       .occupation_list.destroy
@@ -10450,18 +10461,37 @@ contains
       ! Have a cartesian unit cell, and add the unit cell length to
       ! each direction before each iteration.
       dcm = .unit_cell.direct_matrix
-      ucc.create(shape(.unit_cell_geometry))
       ucc = matmul(dcm,.unit_cell_geometry) ! This is (3 x N)
+
+      !stdout.text("===================")
+      !stdout.text("Position of Grid")
+      !stdout.text("===================")
+      !stdout.put(pt)
+      !stdout.flush
 
       ! Loop over 27 unit cells
       do k = -1,1
       do j = -1,1
       do i = -1,1
          
+         h = [i,j,k]
+
+       ! stdout.text("=================")
+       ! stdout.text("Neighbouring cell")
+       ! stdout.text("=================")
+       ! stdout.flush
+       ! stdout.show("i = ",i)
+       ! stdout.show("j = ",j)
+       ! stdout.show("k = ",k)
+       ! stdout.show("h = ",h)
+
+         ! Create the unit cell molecule list for this shift
+         uc_mol.create(0)
+         uc_mol = ZERO
+
          ! Shift the unit cell geometry to a different unit cell
          ! This should shift the atomic cartesian coordinates to
          ! the relevant unit cell
-         h = [i,j,k]
          shift = matmul(dcm,h)
          do u = 1, ucc.dim2
             ucc(:,u) = ucc(:,u) + shift
@@ -10471,10 +10501,29 @@ contains
          ! cell
          do u = 1, ucc.dim2
 
+            f = .frag_parent_for_cell_atom(u)
+
+            ! Check to see if that point has already been found
+            found = FALSE
+
+            if(any(.unit_cell_mol_for_atom(u) == uc_mol)) then
+                  stdout.text("======================================")
+                  stdout.show("Fragment parent for u         = ",f)
+                  stdout.show("Unit cell molecule for atom u = ",.unit_cell_mol_for_atom(u))
+                  stdout.text("======================================")
+                  found = TRUE
+                  exit
+            end if
+            if (found) cycle
+
             vdw = vdw_radius(u)
             pos = ucc(:,u)
 
-            ! Cycle through every point in the plot grid
+          ! stdout.text("==============")
+          ! stdout.text("Unit cell atom")
+          ! stdout.text("==============")
+          ! stdout.show("u = ",u)
+
             do p = 1, pt.dim1 
                
                ! Cycle if it is outside the range of the point
@@ -10496,13 +10545,39 @@ contains
                ! Get occ code ...
                code = CLUSTER_AT_CODE(i,j,k,u)
                .occupation_list.append(code)
-          
+
                ! If it is in the occupation list, then it is done, and
                ! the next atom can be checked
+               found = TRUE
+
+               stdout.text("FOUND in loop, exitiing!")
+               stdout.show("distance = ", sqrt(d2)*ANGSTROM_PER_BOHR)
+               stdout.show("vdw      = ", vdw*ANGSTROM_PER_BOHR)
+
                exit
           
             end do
-         
+
+            if (found) then
+                stdout.text("This atom is close to the grid!")
+                stdout.show("Unit cell molecule for atom u = ",.unit_cell_mol_for_atom(u))
+                f = .frag_parent_for_cell_atom(u)
+                stdout.show("Fragment parent for u         = ",f)
+                stdout.show("Fragment atom   for u         = ",.frag_atom_for_unit_cell_atom(u))
+                stdout.show("Asymmetric atom for u         = ",.asym_atom_for_unit_cell_atom(u))
+                s = .asym_symop_for_unit_cell_atom(u)
+                stdout.show("Asymmetric symo 4   u         = ",s)
+                stdout.show("Inverse symop                 = ",.spacegroup.inverse_of_symops(s))
+                stdout.show("Asymmetric shift for u        = ",.asym_shift_for_unit_cell_atom(:,u))
+                stdout.show("Shift h                       = ",h)
+
+                ! Symop type info here? Somehow?
+                parent.append(f)
+                symop.append(s)
+                shifts.append_column(h)
+                uc_mol.append(.unit_cell_mol_for_atom(u))
+            end
+             
          end do
          
          ! Undoes the unit cell geometry to a different unit cell
@@ -10511,6 +10586,10 @@ contains
          do u = 1, ucc.dim2
             ucc(:,u) = ucc(:,u) - shift
          end do
+
+         ! Destroy the unit cell molecules, so a fresh list is
+         ! available for the next cell
+         uc_mol.destroy
          
 
       end do
@@ -10520,17 +10599,24 @@ contains
       ucc.destroy
       vdw_radius.destroy
 
+      stdout.text("parent:")
+      stdout.put(parent)
+      stdout.text("symop:")
+      stdout.put(symop)
+      stdout.text("shifts:")
+      stdout.put(transpose(shifts))
+
       ! Defragment & find molecules
-      .do_defragment
+   !   .do_defragment
 
       ! Extract cordinates from occupation list
-      .extract_geometry
+   !   .extract_geometry
 
       ! Finished ...
-      .cluster_info_made = TRUE
+   !.cluster_info_made = TRUE
 
       ! See?
-      .put_cluster_info   
+   !   .put_cluster_info   
    
    end
 
@@ -14293,6 +14379,7 @@ contains
    ENSURE(.asym_shift_for_unit_cell_atom.associated,"no asym_shift_for_unit_cell_atom")
 
       ua,aa, h1,h2,h3, sy,s1,s2,s3,ac,ao :: VEC{INT}*
+      ut,at :: VEC{STR}@
       r1,r2,r3 :: VEC{REAL}*
       table :: VEC{TABLE_COLUMN}*
       n :: INT
@@ -14341,7 +14428,9 @@ contains
       n = .occupation_list.dim
 
       ua.create(n)
+      ut.create(n)
       aa.create(n)
+      at.create(n)
       h1.create(n); h2.create(n); h3.create(n)
       sy.create(n)
       s1.create(n); s2.create(n); s3.create(n)
@@ -14350,7 +14439,9 @@ contains
       ao.create(n)
 
       ua = CLUSTER_UA_FROM_CODE(.occupation_list)
+      ut = .unit_cell_atom(ua).tag
       aa = .asym_atom_for_unit_cell_atom(ua)
+      at = .asymmetric_unit_atom(aa).tag
 
       h1 = CLUSTER_H1_FROM_CODE(.occupation_list) + .fragment_offset(1)
       h2 = CLUSTER_H2_FROM_CODE(.occupation_list) + .fragment_offset(2)
@@ -14374,56 +14465,64 @@ contains
       ao = sy + ao
 
       ! Table
-      table.create(15)
+      table.create(17)
 
       table( 1).set_heading(" UA")
       table( 1).set_values(ua)
 
-      table( 2).set_heading("Mol")
-      table( 2).set_values(.molecule_for_atom)
+      table( 2).set_heading(" UA")
+      table( 2).set_subhead("Tag")
+      table( 2).set_values(ut)
 
-      table( 4).set_heading("(xyz)")
+      table( 3).set_heading("Mol")
+      table( 3).set_values(.molecule_for_atom)
 
-      table( 3).set_subhead("- x -")
-      table( 4).set_subhead("- y -")
-      table( 5).set_subhead("- z -")
+      table( 5).set_heading("(xyz)")
 
-      table( 3).set_values(r1)
-      table( 4).set_values(r2)
-      table( 5).set_values(r3)
+      table( 4).set_subhead("- x -")
+      table( 5).set_subhead("- y -")
+      table( 6).set_subhead("- z -")
 
-      table( 7).set_heading("US")
+      table( 4).set_values(r1)
+      table( 5).set_values(r2)
+      table( 6).set_values(r3)
 
-      table( 6).set_subhead("h1")
-      table( 7).set_subhead("h2")
-      table( 8).set_subhead("h3")
+      table( 8).set_heading("US")
 
-      table( 6).set_values(h1)
-      table( 7).set_values(h2)
-      table( 8).set_values(h3)
+      table( 7).set_subhead("h1")
+      table( 8).set_subhead("h2")
+      table( 9).set_subhead("h3")
 
-      table( 9).set_heading("AA")
-      table( 9).set_values(aa)
+      table( 7).set_values(h1)
+      table( 8).set_values(h2)
+      table( 9).set_values(h3)
 
-      table(10).set_heading("Op")
-      table(12).set_heading("AS")
+      table(10).set_heading("AA")
+      table(10).set_values(aa)
 
-      table(11).set_subhead("s1")
-      table(12).set_subhead("s2")
-      table(13).set_subhead("s3")
+      table(11).set_heading(" AA")
+      table(11).set_subhead("Tag")
+      table(11).set_values(at)
 
-      table(10).set_values(sy)
-      table(11).set_values(s1)
-      table(12).set_values(s2)
-      table(13).set_values(s3)
+      table(12).set_heading("Op")
+      table(14).set_heading("AS")
+
+      table(13).set_subhead("s1")
+      table(14).set_subhead("s2")
+      table(15).set_subhead("s3")
+
+      table(12).set_values(sy)
+      table(13).set_values(s1)
+      table(14).set_values(s2)
+      table(15).set_values(s3)
              
-      table(14).set_heading(" AA ")
-      table(14).set_subhead("code")
-      table(14).set_values(ac)
+      table(16).set_heading(" AA ")
+      table(16).set_subhead("code")
+      table(16).set_values(ac)
              
-      table(15).set_heading(" AO ")
-      table(15).set_subhead("code")
-      table(15).set_values(ao)
+      table(17).set_heading(" AO ")
+      table(17).set_subhead("code")
+      table(17).set_values(ao)
              
       table.put
 
@@ -14437,7 +14536,9 @@ contains
       s3.destroy; s2.destroy; s1.destroy
       sy.destroy
       h3.destroy; h2.destroy; h1.destroy
+      at.destroy
       aa.destroy
+      ut.destroy
       ua.destroy
 
    end
