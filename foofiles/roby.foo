@@ -107,7 +107,6 @@ contains
       nullify(.proportion_a)
       nullify(.pair)
 
-      nullify(.overlap_matrix)
       nullify(.atom)
 
    end
@@ -117,9 +116,7 @@ contains
    ! this module, so that this data is *not* accidentally destroyed
       self :: INOUT
 
-      deallocate(.rho)
       nullify(.atom)
-      nullify(.overlap_matrix)
 
    end
 
@@ -168,7 +165,6 @@ contains
 
       ! Never destroy these.
       nullify(.atom)
-      nullify(.overlap_matrix)
 
    end
 
@@ -240,8 +236,8 @@ contains
 
    end
 
-   set_defaults(mol) 
-   ! Set default SCF data values
+   set_defaults(mol)
+   ! Set only the defaults derivable from molecule "mol"
       self :: INOUT
       mol :: MOLECULE, target, IN
 
@@ -249,16 +245,18 @@ contains
    ENSURE(mol.density_matrix.allocated,"no density matrix")
    ENSURE(mol.overlap_matrix.associated,"no overlap matrix")
 
-      .set_defaults
-
       .charge            =  mol.charge
       .spin_multiplicity =  mol.spin_multiplicity
 
+      ! Note: pointer assignment
       .atom              => mol.atom
-      .rho               =  mol.density_matrix
-      .overlap_matrix    => mol.overlap_matrix
-      .core_matrix       =  mol.core_matrix
-    ! .fock_matrix       =  mol.fock_matrix
+
+      .density_matrix =  mol.density_matrix
+      .overlap_matrix =  mol.overlap_matrix
+      .core_matrix    =  mol.core_matrix
+
+      if (mol.fock_matrix.allocated) &
+      .fock_matrix    =  mol.fock_matrix
 
    end
 
@@ -383,8 +381,9 @@ contains
       case ("output_theta_info=      "); .read_output_theta_info
 
       case ("put_core_matrix         "); stdout.put(.core_matrix)
-      case ("put_density_matrix      "); stdout.put(.rho)
+      case ("put_density_matrix      "); stdout.put(.density_matrix)
       case ("put_fock_matrix         "); stdout.put(.fock_matrix)
+      case ("put_overlap_matrix      "); stdout.put(.overlap_matrix)
 
       case ("show_calcs=             "); .read_show_calcs
 
@@ -623,7 +622,7 @@ contains
       res :: INT
 
    ENSURE(.atom.associated,"No atom information")
-   ENSURE(.overlap_matrix.associated,"No overlap matrix")
+   ENSURE(.overlap_matrix.allocated,"No overlap matrix")
 
       if (present(group)) then; res = .atom(group).no_of_basis_functions
       else;                     res = .overlap_matrix.dim1
@@ -1035,11 +1034,11 @@ contains
 
    make_populations ::: leaky, private
    ! Make the Roby populations for the defined atom groups, for a
-   ! given density matrix "rho"
+   ! given .density_matrix 
       self :: INOUT
 
    ENSURE(.atom_group.associated,"no atom groups")
-   ENSURE(.rho.allocated,"no rho matrix")
+   ENSURE(.density_matrix.allocated,"no rho matrix")
 
       a :: INT
 
@@ -1110,18 +1109,17 @@ contains
    population(group,ANO,reverse) result (res) ::: private
    ! Return the total population for the projector P associated with
    ! the group of atoms whose indices are in "group", i.e
-   !   res = Tr (P_{group;ANO} rho)
-   ! where "rho" is the density matrix for a molecule. If present, the
-   ! columns of the "ANO" matrix are used to define the Roby projector
-   ! instead of the atomic natural orbitals.
+   !   res = Tr (P_{group;ANO} density_matrix )
+   ! If present, the columns of the "ANO" matrix are used to define
+   ! the Roby projector instead of the atomic natural orbitals.
       self :: INOUT
       group :: VEC{INT}, IN
       ANO :: MAT{REAL}, optional, IN
       reverse :: BIN, optional, IN
       res :: REAL
 
-   ENSURE(.rho.allocated,"no rho matrix")
-   ENSURE(.overlap_matrix.associated,"no overlap matrix")
+   ENSURE(.density_matrix.allocated,"no density matrix")
+   ENSURE(.overlap_matrix.allocated,"no overlap matrix")
 
       P :: MAT{REAL}*
       gr :: VEC{INT}*
@@ -1160,7 +1158,8 @@ contains
    ! Return the Roby subpopulation for the subgroup of atoms whose
    ! indices are given in "subgroup", in the whole group of atoms
    ! whose indices are are given in "group", i.e
-   !    res = Tr ( P_{subgroup} P_{group;ANO} P_{subgroup} rho )
+   !    res = Tr ( P_{subgroup} P_{group;ANO} P_{subgroup} 
+   !               density_matrix)
    ! If present, the columns of the "ANO" matrix are used to define
    ! the middle Roby projector instead of the atomic natural orbitals.
    ! Note that the real atomic natural orbitals are always used for
@@ -1172,8 +1171,8 @@ contains
       ANO :: MAT{REAL}, optional, IN
       res :: REAL
 
-   ENSURE(.rho.allocated,"no rho matrix")
-   ENSURE(.overlap_matrix.associated,"no overlap matrix")
+   ENSURE(.density_matrix.allocated,"no density matrix")
+   ENSURE(.overlap_matrix.allocated,"no overlap matrix")
 
       P,X,P_sub :: MAT{REAL}*
       n_gr,n_sub :: INT
@@ -1855,25 +1854,24 @@ contains
       X,Y,Sm1 :: MAT{REAL}*
       n_bf :: INT
 
-      ! Make E_matrix
-      n_bf = .core_matrix.n_bf
-      .E_matrix.create(n_bf,n_bf)
-      .E_matrix = HALF*(.core_matrix.restricted + .fock_matrix.restricted)
+      ! Make unprojected E_matrix
+      .E_matrix = .fock_matrix
+      .E_matrix.plus(.core_matrix)
+      .E_matrix.scale_by(HALF)
 
-      ! S-1 transform it
-      Y.create(n_bf,n_bf)
-      X.create(n_bf,n_bf)
-      Sm1.create(n_bf,n_bf)
-      Sm1.to_pseudo_inverse_of(.overlap_matrix,TOL(5))
-      Y = .E_matrix
-      Y.back_transform_to(.E_matrix,Sm1)
-      Sm1.destroy
-      X.destroy
-      Y.destroy
+      ! Make S-1 
+    ! n_bf = .core_matrix.n_bf
+    ! Y.create(n_bf,n_bf)
+    ! X.create(n_bf,n_bf)
+    ! Sm1.create(n_bf,n_bf)
+    ! Sm1.to_pseudo_inverse_of(.overlap_matrix,TOL(5))
 
-!     !!!!!!!!!!!!!!!!!!!!!!!!
-!     .E_matrix.to_unit_matrix
-!     !!!!!!!!!!!!!!!!!!!!!!!!
+    ! ! S-1 transform E_matrix
+    ! Y = .E_matrix
+    ! Y.back_transform_to(.E_matrix,Sm1)
+    ! Sm1.destroy
+    ! X.destroy
+    ! Y.destroy
 
       ! Each atom is a Roby subspace
       .make_single_atom_groups
@@ -2139,8 +2137,8 @@ contains
       self :: INOUT
 
    ENSURE(.atom_group.associated,"no atom groups")
-   ENSURE(.rho.allocated,"no rho matrix")
-   ENSURE(.E_matrix.associated,"no rho matrix")
+   ENSURE(.density_matrix.allocated,"no density matrix")
+   ENSURE(.E_matrix.allocated,"no density matrix")
 
       a :: INT
 
@@ -2165,8 +2163,8 @@ contains
       self :: INOUT
 
    ENSURE(.atom_group.associated,"no atom groups")
-   ENSURE(.rho.allocated,"no rho matrix")
-   ENSURE(.E_matrix.associated,"no rho matrix")
+   ENSURE(.density_matrix.allocated,"no density matrix")
+   ENSURE(.E_matrix.allocated,"no density matrix")
 
       n_group,a,b :: INT
       E2 :: REAL
@@ -2206,34 +2204,43 @@ contains
    end
 
    atom_energy(group,ANO) result (res) ::: private
-   ! Return the total Roby energy for the group of atoms whose
-   ! indices are given in "group", i.e Tr (P_{group;ANO} (E_matrix) rho),
-   ! where "rho" is the density matrix for a molecule. If present, the
-   ! columns of the "ANO" matrix are used to define the Roby projector
-   ! instead of the atomic natural orbitals.
-      self :: INOUT
-      group :: VEC{INT}, IN
+   ! Return the total Roby energy for the group of atoms whose indices
+   ! are given in "group", i.e 
+   !   res = Tr (P_{group;ANO} (E_matrix) density_matrix),
+   ! If present, the columns of the "ANO" matrix are used to define
+   ! the Roby projector instead of the atomic natural orbitals.
+      self :: IN
+      group :: VEC{INT}, optional, IN
       ANO :: MAT{REAL}, optional, IN
       res :: REAL
 
-   ENSURE(.rho.allocated,"no rho matrix")
-   ENSURE(.E_matrix.associated,"no rho matrix")
-   ENSURE(.overlap_matrix.associated,"no overlap matrix")
+   ENSURE(.density_matrix.allocated,"no density_matrix matrix")
+   ENSURE(.E_matrix.allocated,"no density matrix")
+   ENSURE(.overlap_matrix.allocated,"no overlap matrix")
 
-      P :: MAT{REAL}*
-      n_gr :: INT
+      P :: MAT{REAL}@
+      grp :: VEC{INT}@
+      n_bf :: INT
 
-      n_gr = .n_bf(group)
+      ! Make all groups?
+      if (present(group)) then; grp = group
+      else;                     grp.to_sequence(1,.n_group)
+      end
+
+      ! No. of groups
+      n_bf = .n_bf(grp)
 
       ! Make small P matrix
-      P.create(n_gr,n_gr)
-      .make_projection_matrix(P,group,ANO)
+      P.create(n_bf,n_bf)
+      .make_projection_matrix(P,grp,ANO)
 
       ! Evaluate
-      res = .E_expectation(P,group)
+      ! Warning: restricted case only
+      res = .expectation(P,grp,rho=.E_matrix)
 
       ! Clean
       P.destroy
+      grp.destroy
 
    end
 
@@ -2572,17 +2579,18 @@ contains
 
 !   make_NAO_matrix(NAO,occupation,group,tol) ::: leaky
 !   ! Make the natural atomic orbitals "NAO" and their "occupation"
-!   ! numbers for a "group" of atoms, from the density matrix ".rho"
-!   ! "tol" is used to decide when an NAO is occupied or not.
+!   ! numbers for a "group" of atoms, from the density matrix 
+!   ! ".density_matrix"; "tol" is used to decide when an NAO is
+!   ! occupied or not.
 !      self :: IN
 !      NAO :: MAT{REAL}*
 !      occupation :: VEC{REAL}*
 !      group :: VEC{INT}, IN
 !      tol :: REAL, optional, IN
 !
-!   ENSURE(.overlap_matrix.associated,"no overlap matrix")
-!   ENSURE(.rho.associated,"no rho")
-!   ENSURE(.rho.restricted.associated,"no rho restricted")
+!   ENSURE(.overlap_matrix.allocated,"no overlap matrix")
+!   ENSURE(.density_matrix.allocated,"no density_matrix")
+!   ENSURE(.density_matrix.restricted.allocated,"no density_matrix.restricted")
 !
 !      S,V,X,P :: MAT{REAL}*
 !      n_bf,n_occ :: INT
@@ -2605,7 +2613,7 @@ contains
 !
 !      ! Diagonal part of P matrix
 !      P.create(n_bf,n_bf)
-!      .AO_subspace_set(P,.rho.restricted,B_row_atom=group,B_col_atom=group)
+!      .AO_subspace_set(P,.density_matrix.restricted,B_row_atom=group,B_col_atom=group)
 !
 !      ! Transform P -> S^(1/2) P S^(1/2)
 !      X.create(n_bf,n_bf)
@@ -2889,49 +2897,65 @@ contains
       self :: IN
       res :: REAL
 
-      res = .E_matrix.trace_product_with(.rho.restricted)
+      E_matrix :: MAT{REAL}@
+
+      ! Make unprojected E_matrix
+      ! Warning: restricted case only
+      E_matrix = HALF*(.core_matrix.restricted + .fock_matrix.restricted)
+
+      ! Do it
+      res = .density_matrix.restricted.trace_product_with(E_matrix)
 
    end
 
-   E_expectation(P,group) result (res) ::: private
-   ! Get the expectation value of the projection operator matrix "P"
-   ! over a certain "group" of atoms, i.e:
-   !    res = Trace ( S(:,group) P S(group,:) rho )
-   ! Note that "group" are the indices of the atoms whose basis functions
-   ! are used to define the matrix "P".
-      self :: IN
-      P :: MAT{REAL}, IN
-      group :: VEC{INT}, IN
-      res :: REAL
-
-   ENSURE(P.dim1==.n_bf(group),"wrong P dimension")
-   ENSURE(P.is_square,"P is not square")
-
-      W :: MAT{REAL}*
-      n_bf :: INT
-
-      n_bf = .n_bf
-
-      ! Make W = S P S
-      W.create(n_bf,n_bf)
-      .overlap_transform(P,W,group)
-
-      ! Make Tr ( rho_E S P S )
-      res = .E_matrix.trace_product_with(W)
-
-      W.destroy
-
-   end
+!   E_expectation(P,group) result (res) ::: private
+!   ! Get the expectation value of the projection operator matrix "P"
+!   ! over a certain "group" of atoms, i.e:
+!   !    res = Trace ( S(:,group) P S(group,:) . density_matrix )
+!   ! Note that "group" are the indices of the atoms whose basis functions
+!   ! are used to define the matrix "P".
+!      self :: IN
+!      P :: MAT{REAL}, IN
+!      group :: VEC{INT}, optional, IN
+!      res :: REAL
+!
+!   ENSURE(P.dim1==.n_bf(group),"wrong P dimension")
+!   ENSURE(P.is_square,"P is not square")
+!
+!      W :: MAT{REAL}*
+!      grp :: VEC{INT}@
+!      n_bf :: INT
+!
+!      n_bf = .n_bf
+!
+!      if (present(group)) then; grp = group
+!      else;                     grp.to_sequence(1,n_group)
+!      end
+!
+!      ! Make W = S P S
+!      W.create(n_bf,n_bf)
+!      .overlap_transform(P,W,grp)
+!
+!      ! Make Tr ( rho . S P S )
+!      ! Warning: restricted case only so far
+!      res = .density_matrix.restricted.trace_product_with(W)
+!
+!      ! Clean
+!      W.destroy
+!      grp.destroy
+!
+!   end
 
    expectation(P,group,rho) result (res) ::: private
    ! Get the expectation value of the projection operator matrix "P"
    ! over a certain "group" of atoms, i.e:
    !    res = Trace ( S(:,group) P S(group,:) rho )
-   ! Note that "group" are the indices of the atoms whose basis functions
-   ! are used to define the matrix "P".
+   ! where "rho" is by default the .density_matrix. Note that "group"
+   ! are the indices of the atoms whose basis functions are used to
+   ! define the matrix "P".
       self :: IN
       P :: MAT{REAL}, IN
-      group :: VEC{INT}, IN
+      group :: VEC{INT}, optional, IN
       rho :: OPMATRIX@, optional, IN
       res :: REAL
 
@@ -2939,17 +2963,23 @@ contains
    ENSURE(P.is_square,"P is not square")
 
       density :: OPMATRIX@
+      grp :: VEC{INT}@
       W :: MAT{REAL}*
       n_bf :: INT
 
-      density = .rho
+      n_bf = .n_bf
+
+      density = .density_matrix
       if (present(rho)) density = rho
 
-      n_bf = .n_bf
+      ! Make all groups?
+      if (present(group)) then; grp = group
+      else;                     grp.to_sequence(1,.n_group)
+      end
 
       ! Make W = S P S
       W.create(n_bf,n_bf)
-      .overlap_transform(P,W,group)
+      .overlap_transform(P,W,grp)
 
       ! Make Tr ( S P S rho)
       if (.spin_multiplicity/=1) then
@@ -2960,6 +2990,7 @@ contains
       end
 
       W.destroy
+      grp.destroy
 
    end
 
@@ -3046,7 +3077,7 @@ contains
       SS :: MAT{REAL}, OUT
       row_atom,col_atom :: VEC{INT}, optional, IN
 
-   ENSURE(.overlap_matrix.associated,"no overlap matrix")
+   ENSURE(.overlap_matrix.allocated,"no overlap matrix")
    ENSURE(SS.dim1==.n_bf(row_atom),"wrong shape, SS")
    ENSURE(SS.dim2==.n_bf(col_atom),"wrong shape, SS")
 
@@ -4749,7 +4780,7 @@ contains
       table :: VEC{TABLE_COLUMN}*
       symbols :: VEC{STR}*
       labels :: VEC{INT}*
-      e_scf,e_tot,e_prj :: REAL
+      e_scf,e_nuc,e_tot,e_prj :: REAL
       P :: MAT{REAL}*
       f,n_gr :: INT
 
@@ -4765,22 +4796,27 @@ contains
       stdout.text(". Energies are in atomic units")
       stdout.flush
 
+      ! Get SCF energy from Krogel E_matrix without projection
+      ! WARNING: restricted case only so far
       e_scf = .E_expectation
-      e_tot = e_scf + .atom.nuclear_repulsion_energy
+      e_prj = .atom_energy
+      e_nuc = .atom.nuclear_repulsion_energy
+      e_tot = e_scf + e_nuc
 
       ! Make small P matrix
-      f = 1
-      labels => f.sequence_up_to(.n_group)
-      n_gr = .n_bf(labels)
-      P.create(n_gr,n_gr)
-      .make_projection_matrix(P,labels)
-      e_prj = .E_expectation(P,labels)
-      labels.destroy
-      P.destroy
+    ! f = 1
+    ! labels => f.sequence_up_to(.n_group)
+    ! n_gr = .n_bf(labels)
+    ! P.create(n_gr,n_gr)
+    ! .make_projection_matrix(P,labels)
+    ! e_prj = .E_expectation(P,labels)
+    ! labels.destroy
+    ! P.destroy
 
-      stdout.show("Total SCF energy         = ",e_tot)
-      stdout.show("SCF electronic energy    = ",e_scf)
-      stdout.show("SCF electronic energy v2 = ",e_prj)
+    ! stdout.show("Total SCF energy          = ",e_tot)
+      stdout.show("SCF electronic energy       = ",e_scf)
+      stdout.show("Projected electronic energy = ",e_prj)
+      stdout.show("Nuclear repulsion energy    = ",e_nuc)
       stdout.flush
 
       ! Create table
