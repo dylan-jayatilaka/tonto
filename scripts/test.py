@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import logging
 from tempfile import gettempdir
+import getpass
+from getpass import getuser
 import os
 from os.path import abspath, join
 from itertools import zip_longest
@@ -144,9 +146,8 @@ class working_directory:
         os.chdir(self.old_directory)
 
 def temp_test_dir(testname, subdir='tonto-tests'):
-    d = join(gettempdir(), subdir)
-    timestamp = datetime.datetime.now().strftime('-%y.%m.%d_%H:%M')
-    name = join(d, testname + timestamp)
+    d = join(gettempdir(), subdir + '-' + getpass.getuser())
+    name = join(d, testname)
     log.debug('temp_test_dir = %s', name)
     return name
 
