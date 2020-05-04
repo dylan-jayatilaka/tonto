@@ -38,6 +38,8 @@ contains
 
    plot ::: leaky
    ! Do one of the many kinds of plot calculations
+      self :: INOUT
+
    ENSURE(.plot_grid.associated, "no grid")
 
       ! Set up
@@ -54,12 +56,14 @@ contains
       .plot_grid.put
 
       ! Do the plot
-      .GRID:do_plot
+      .:do_plot
 
    end
 
    plots ::: leaky
    ! Do one of the many kinds of plot calculations
+      self :: INOUT
+
    ENSURE(.plot_grid.associated, "no grid")
    ENSURE(.plot_grid.plot_kinds.associated, "no multiple plot_kinds!")
 
@@ -75,6 +79,222 @@ contains
       ! Reset to blank
       .plot_grid.set_plot_kind(" ")
       .plot_grid.set_plot_units(" ")
+
+   end
+
+   do_plot ::: leaky
+   ! Do one of the many kinds of plot calculations. These are usually
+   ! 2D plots but they can be rectilinear volumetric plots, depending
+   ! on how .plot_grid was defined by the user.
+      self :: INOUT
+
+   ENSURE(.plot_grid.associated, "no grid")
+
+      name :: STR
+      grid :: VEC{REAL}@
+      pt :: MAT{REAL}@
+
+      ! Make the grid points
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Make the property values.
+      grid.create(.plot_grid.n_pt)
+      .GRID:make_prop_values(grid,pt)
+
+      ! Print out
+      name = .plot_grid.plot_file_name(.n_a)
+      .GRID:dump_plot_grid(grid,name)
+
+      ! Clean up
+      pt.destroy
+      grid.destroy
+
+   end
+
+
+   plot_fragments
+   ! Do the summed-fragment property density on ".plot_grid".
+      self :: INOUT
+
+   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.atom_group.associated,"no atom_group info")
+   ENSURE(.crystal.associated,"no crystal")
+
+      ! Use unit cell as bbox if requested
+      if (.plot_grid.use_unit_cell_as_bbox) then
+         WARN("resetting plot axes, plot widths from unit cell")
+         ENSURE(.crystal.associated,"no crystal or unit cell for plot!")
+         .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell)
+      end
+
+      ! See plot_grid parameters
+      .plot_grid.put
+
+      ! Do the plot
+      .:do_fragment_plot
+
+   end
+
+   do_fragment_plot
+   ! Do the summed-fragmened  property density on ".plot_grid" using
+   ! the molecules in .atom_group(:).mol.
+      self :: INOUT
+
+   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.atom_group.associated,"no atom_group info")
+   ENSURE(.crystal.associated,"no crystal")
+
+      seitz :: MAT3{REAL}*
+      shift :: MAT{INT}@
+      pt, dcm :: MAT{REAL}@
+      mx,coords :: MAT{REAL}@
+      grid, frag :: VEC{REAL}@
+      trans :: VEC{REAL}(3)
+      parent,symop :: VEC{INT}@
+      s,n_mols, p,g :: INT
+      name :: STR
+      mol :: MOLECULE*
+      same :: BIN
+
+      ! Make the grid points
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      .crystal.make_plot_info(pt,parent,symop,shift) 
+      
+      DIE_IF(parent.deallocated,"no molecules inthe plot!")
+
+      ! No. of molecules near the plot grid
+      n_mols = parent.dim
+
+      ! Cartesian rotation matrices
+      seitz => .crystal.xyz_seitz_matrices
+
+      ! Direct space unit cell matrix
+      dcm = .crystal.unit_cell.direct_matrix
+
+      ! Make space for grid values and grid points
+      grid.create(.plot_grid.n_pt)
+      frag.create(.plot_grid.n_pt)
+      coords.create(3,0)
+
+      ! Initialise
+      grid = ZERO
+
+      do p = 1,n_mols
+      
+         ! Which group does p belong to?
+         g = .atom_group.group_for_atom(p)
+
+         ! Clone molecule
+         mol.BASE:create
+         .BASE:make_molecule_from_atom_group(g,mol,FALSE)
+
+         ! Set to be group name (for reading archive)
+         mol.BASE:set_name(.atom_group(g).name)
+
+         ! Set up plot - maybe read archive for MO's?
+         mol.plot_grid => .plot_grid
+         mol.:set_up_for_fragment_plot(.plot_grid.plot_kind)
+      
+         ! Rotate it
+         s = symop(p)
+         mol.BASE:rotate_by(seitz(1:3,1:3,s))
+
+         ! Translate it
+         trans = matmul(dcm,shift(:,p))
+         mol.atom.translate_by(trans)
+
+         ! CHeck here if the atoms are in the same space NOTE this may
+         ! not work for disordered molecules
+         same = FALSE
+         mx.create(3,mol.atom.dim)
+         mol.atom.put_coordinates_to(mx,positions_as_rows=FALSE)
+         
+         same = mx.has_any_column_from(coords)
+         
+         ! If it isn't the same, add it to the list
+         if (NOT same) coords.append_column(mx(:,1))
+         
+         ! Clean up in each iteration
+         mx.destroy
+         
+         ! Don't proceed if molecule is already plotted
+         if (same) cycle
+
+         ! Skip SCF for atoms without electrons
+         ! Question: any plots which work with no electrons?
+         if (mol.BASE:no_of_electrons < 1) cycle
+
+         ! Do the plot for this fragment
+         ! Use the parent .plot_grid
+         mol.GRID:make_prop_values(frag,pt)
+         nullify(mol.plot_grid)
+
+         ! Add up this contribution
+         grid = grid + frag
+
+         ! Clean up mol
+         mol.atom.nullify_ptr_part ! do not destroy these
+         nullify(mol.basis)        ! do not destroy this
+         nullify(mol.slaterbasis)  ! do not destroy this
+         nullify(mol.coppensbasis) ! do not destroy this
+         mol.BASE:destroy
+
+      end
+
+      ! Print out
+      name = .plot_grid.plot_file_name(.n_a)
+      .GRID:dump_plot_grid(grid,name)
+
+      ! Clean up
+      pt.destroy
+      grid.destroy
+      seitz.destroy
+
+   end
+
+   test_plot_info
+   ! Test tlot the unit cell density
+     self :: INOUT
+
+   ENSURE(.atom.associated,"no atom info")
+   ENSURE(.crystal.associated,"no crystal info")
+   ENSURE(NOT .crystal.cluster_info_made,"cluster info already made!")
+
+      pt :: MAT{REAL}@
+      shift :: MAT{INT}@
+      parent, symop :: VEC{INT}@
+      i,p,g :: INT
+
+   ! .crystal.destroy_fragment_data
+   ! .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+
+   ! .crystal.set_generation_method("for_unit_cell_density") 
+
+     pt.create(.plot_grid.n_pt,3)
+     .plot_grid.make_points(pt)
+
+     .plot_grid.put
+
+     .crystal.set_atom_density_cutoff(1.0d-3) 
+     .crystal.make_plot_info(pt,parent,symop,shift)
+
+     if (parent.allocated) then
+
+        do i = 1, parent.dim
+            p = parent(i)
+            g = .atom_group.group_for_atom(p)
+            stdout.text("The group for atom "//trim(p.to_str)//" is "//trim(g.to_str))
+            stdout.show("parent     =",p)
+            stdout.show("symop      =",symop(i))
+            stdout.show("With shift =",shift(:,i))
+        end
+
+     end
+
+   ! .crystal.put_cluster_info
 
    end
 
@@ -199,18 +419,41 @@ contains
       ! Set interpolators for stockholder or promolecule plots
       .:set_interpolators_for_plot(plot_kind)
 
-      ! Set up any required integrals in memory
+      ! Set up densities & integrals for plot
       .:set_integrals_for_plot(plot_kind)
 
       ! Make sure group densities & MOs are there
+      ! Warining: not for summed fragments plots
       .:set_group_densities_for_plot(plot_kind)
 
       ! Assign natural orbitals
-      if (.natural_orbitals.deallocated) then
-      if (.molecular_orbitals.allocated) then
-         .BASE:assign_NOs_to_MOs
-      end
-      end
+      .BASE:assign_NOs_to_MOs
+
+   end
+
+   set_up_for_fragment_plot(plot_kind) ::: leaky
+   ! Do plot-specific initialization
+      self :: INOUT
+      plot_kind :: STR, IN
+
+      ! Make the becke grids & overlapping atoms
+      .:set_becke_grid_for_plot(plot_kind)
+
+      ! Set atom plot info for deformation densities
+      .:set_ANOs_for_plot(plot_kind)
+
+      ! Set interpolators for stockholder or promolecule plots
+      .:set_interpolators_for_plot(plot_kind)
+
+      ! Set up densities & integrals for plot
+      .:set_integrals_for_plot(plot_kind)
+
+      ! Make sure group densities & MOs are there
+      ! Warining: not for summed fragments plots
+      .:set_group_densities_for_plot(plot_kind)
+
+      ! Assign natural orbitals
+      .BASE:read_scf_archives ! Note may cause issues, but probably not
 
    end
 
@@ -409,13 +652,19 @@ contains
          .BASE:make_ao_density_matrix
          ENSURE(.density_matrix.is_allocated_with_genre("restricted_complex"),"no restrtd cmplx DM")
 
+      case ("electric_potential" &
+           ,"e_field_magnitude " &
+           ,"deformation_electric_potential")
+         .BASE:make_ao_density_matrix
+
       end
 
 
    end
 
    set_group_densities_for_plot(plot_kind) ::: private, leaky
-   ! Set the group densities for the plot.
+   ! Set the fragment group densities for the plot.
+   ! This does an SCF for each fragment - expensive!
       self :: INOUT
       plot_kind :: STR, IN
 
@@ -512,52 +761,6 @@ contains
          case default
            DIE(" only unrestricted or gchf spin density is available !")
       end
-
-   end
-
-!  ============================
-!  Standard ED refinement plots
-!  ============================
-
-   put_ED_refinement_plots
-   ! Evaluate the min and max residual density from the
-   ! fitted structure factors, evaluated on a grid 0.1 A
-   ! per side. Also evaluate the residuals at the atom
-   ! centers and report the worst one.
-      self :: INOUT
-
-   DIE_IF(NOT .atom.associated, "no atoms to fit")
-   DIE_IF(NOT .crystal.associated, "no crystal")
-   DIE_IF(NOT .crystal.fragment_info_made, "no crystal fragment info")
-   DIE_IF(NOT .crystal.data.associated,"no crystal data")
-   DIE_IF(NOT .crystal.xray_data.associated,"no crystal xray data")
-
-      map :: VEC{REAL}*
-      pt  :: MAT{REAL}*
-      n_pt :: INT
-
-      ! Set up
-      if (.plot_grid.disassociated) .plot_grid.create
-
-      ! Use unit cell as bbox if requested
-      .plot_grid.set_box_scale_factor(ONE)
-      if (.plot_grid.desired_separation.is_zero) &
-      .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
-      .plot_grid.set_center_to_center_of(.atom)
-      .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell,recenter=FALSE)
-
-      ! Make the residual map
-      n_pt = .plot_grid.n_pt
-      map.create(n_pt)
-      .plot_grid.set_plot_kind("residual_density_map")
-      .plot_grid.make_points(pt)
-      .GRID:make_residual_density_cell(map)
-
-      ! Write cube file
-      .GRID:dump_plot_grid(map,"residual_density_map",form="gaussian.cube")
-
-      ! Clean
-      map.destroy
 
    end
 
