@@ -3385,6 +3385,9 @@ contains
          .put_bond_indices_atoms
          .put_bond_indices_sortd
 
+         ! Separate data tables
+         .put_file_indices_atoms
+
          ! LaTeX tables
          .put_bond_indices_do_H
          .put_bond_indices_do_H_vdw
@@ -4120,6 +4123,216 @@ contains
 
       ! Revert & unsave
       stdout.revert
+      stdout.unsave
+
+   end
+
+   put_file_indices_atoms
+   ! Output bond indices in separate files "rgbi-A-B" where A and B
+   ! are the elemnt labels.
+      self :: IN
+
+   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+
+      table :: VEC{TABLE_COLUMN}*
+      Z_list :: VEC{VEC_{INT}}*
+      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+      pair :: MAT{INT}*
+      symbols,labels :: MAT{STR}*
+      dash,dsh1 :: VEC{STR}*
+      dist,n_A,n_B,nAB,sAB,cAB,iAB,tAB,pAB,aAB :: VEC{REAL}*
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.atom.dim<2) return
+
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Redo decimal places
+      stdout.save
+      stdout.set_real_precision(2)
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(14)
+
+      ! Set the table headings
+      table( 1).set_heading("A")
+      table( 1).set_width_from(.atom.chemical_symbols)
+
+      table( 2).set_heading("B")
+      table( 2).set_width(table(1).width)
+
+      table( 3).set_heading("A")
+      table( 3).set_width_from(.atom(:).tag)
+
+      table( 4).set_heading("B")
+      table( 4).set_width(table(3).width)
+
+      table( 5).set_heading("R(A--B)")
+      table( 5).set_subheading("/Angs.")
+      table( 5).set_width_from(ONE)
+
+      table( 6).set_heading("n_A")
+      table( 6).set_width_from(TEN)
+
+      table( 7).set_heading("n_B")
+      table( 7).set_width_from(TEN)
+
+      table( 8).set_heading("n_AB")
+      table( 8).set_width_from(TEN)
+
+      table( 9).set_heading("s_AB")
+      table( 9).set_width_from(TEN)
+
+      table(10).set_heading(" Cov.")
+      table(10).set_subhead("index")
+      table(10).set_width_from(-TEN)
+
+      table(11).set_heading("Ionic")
+      table(11).set_subhead("index")
+      table(11).set_width_from(-TEN)
+
+      table(12).set_heading(" Bond")
+      table(12).set_subhead("index")
+      table(12).set_width_from(ONE)
+
+      table(13).set_heading("% Cov")
+      table(13).set_subhead("Pythag.")
+      table(13).set_width_from(100d0)
+
+      table(14).set_heading("% Cov")
+      table(14).set_subhead("Araki")
+      table(14).set_width_from(100d0)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         if (.analyze_vdw_atom_pairs) then
+         .atom.get_vdw_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         else
+         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+         end
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Element symbols
+         symbols.create(n_bonds,2)
+         symbols(:,1) = .atom(Z_list(k1)[1]).chemical_symbol
+         symbols(:,2) = .atom(Z_list(k2)[1]).chemical_symbol
+
+         ! Dashes
+         dash.create(n_bonds)
+         dsh1.create(n_bonds)
+         dash    = "--"
+         dsh1    = "  "
+         dsh1(1) = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         n_A.create(n_bonds)
+         n_B.create(n_bonds)
+         nAB.create(n_bonds)
+         sAB.create(n_bonds)
+         cAB.create(n_bonds)
+         iAB.create(n_bonds)
+         tAB.create(n_bonds)
+         pAB.create(n_bonds)
+         aAB.create(n_bonds)
+
+         n_A = .n1(pair(:,1))
+         n_B = .n1(pair(:,2))
+         forall (i=1:n_bonds)
+         nAB(i) = .n2(pair(i,1),pair(i,2))
+         sAB(i) = n_A(i) + n_B(i) - nAB(i)
+         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
+         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         pAB(i) = .percent_covalency_P(pair(i,1),pair(i,2))
+         aAB(i) = .percent_covalency_A(pair(i,1),pair(i,2))
+         end
+
+         ! Set table data
+         table( 1).set_values(symbols(:,1))
+         table( 2).set_values(symbols(:,2))
+         table( 3).set_values(labels(:,1))
+         table( 4).set_values(labels(:,2))
+         table( 5).set_values(dist)
+         table( 6).set_values(n_A)
+         table( 7).set_values(n_B)
+         table( 8).set_values(nAB)
+         table( 9).set_values(sAB)
+         table(10).set_values(cAB)
+         table(11).set_values(iAB)
+         table(12).set_values(tAB)
+         table(13).set_values(pAB)
+         table(14).set_values(aAB)
+
+         ! Put body
+         stdout.flush
+         stdout.redirect("rgbi-data-"//trim(symbols(1,1))//"-"//trim(symbols(1,2)))
+         table.put_body(label_rows=FALSE)
+         stdout.revert
+
+         ! Clean
+         table.clear_columns
+
+         aAB.destroy
+         pAB.destroy
+         tAB.destroy
+         iAB.destroy
+         cAB.destroy
+         sAB.destroy
+         nAB.destroy
+         n_B.destroy
+         n_A.destroy
+         labels.destroy
+         dsh1.destroy
+         dash.destroy
+         symbols.destroy
+
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+    ! table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Z_list.destroy
+
+      ! Unsave
       stdout.unsave
 
    end
