@@ -7246,14 +7246,39 @@ contains
       atom :: VEC{ATOM}, IN
       covariance :: MAT{REAL}, IN
 
-      cm :: MAT{REAL}@
+      cx :: MAT{REAL}@
+
+      ! Get the pos covariance matrices
+      cx.create(3*atom.dim,3*atom.dim)
+      CRYSTAL:make_pos_covariance_matrix(cx,atom,covariance)
 
       ! Print out the *CIF* tables with errors
-      cm.create(3*atom.dim,3*atom.dim)
-      CRYSTAL:make_pos_covariance_matrix(cm,atom,covariance)
-      atom.put_CIF_bond_length_table(cm)
-      atom.put_CIF_bond_angle_table(cm)
+      atom.put_CIF_bond_length_table(cx)
+      atom.put_CIF_bond_angle_table(cx)
+
+      cx.destroy
+
+   end
+
+   put_CIF_bond_Hirshfeld_tables(atom,covariance_matrix) ::: selfless
+   ! Put out the CIF bond lengths for an "atom" list with an
+   ! associated "covariance_matrix"
+      atom :: VEC{ATOM}, IN
+      covariance_matrix :: MAT{REAL}, IN
+      cx,cm :: MAT{REAL}@
+
+      ! Get the pos (cx) and pADP (cm) covariance matrices
+      cx.create(3*atom.dim,3*atom.dim)
+      CRYSTAL:make_pos_covariance_matrix(cx,atom,covariance_matrix)
+      cm.create(9*atom.dim,9*atom.dim)
+      CRYSTAL:make_pADP2_covariance_matrix(cm,atom,covariance_matrix)
+
+      ! Print out the *CIF* tables with errors
+      atom.put_CIF_bond_Hirshfeld_table(cx,cm)
+      atom.put_CIF_bond_angle_table(cx)
+
       cm.destroy
+      cx.destroy
 
    end
 
@@ -7788,6 +7813,23 @@ contains
 
    end
 
+   put_fragment_CIF_minimal(cif)
+   ! Put out a fragment_atom "cif" file
+      self :: INOUT
+      cif :: CIF, IN
+
+   ENSURE(.fragment_atom.associated,"no fragment_atom list")
+
+      has_covariances :: BIN
+
+      has_covariances = .has_fragment_covariance_matrix
+
+      if (has_covariances) then
+         .:put_CIF_minimal(cif,.fragment_atom,.data.fragment_covariance_matrix)
+      end
+
+   end
+
    put_asymm_unit_CIF_bond_info 
    ! Put out an asymmetric-unit "cif" file, bond info only
       self :: INOUT
@@ -7991,6 +8033,58 @@ contains
        ! .put_xd_fco
       end
       end
+
+   end
+
+   put_CIF_minimal(cif,atom,covariance_matrix) ::: private
+   ! Put a *molecular fragment* cif file with errors, using "atom"
+   ! list.  ESDs are produced from .data.fragment_covariance_matrix
+   ! and NOTE: must have the correct units on entry.
+      self :: INOUT
+      cif  :: CIF, IN
+      atom :: VEC{ATOM}, IN
+      covariance_matrix :: MAT{REAL}, IN
+
+   ENSURE(.data.associated,"no diffraction data!")
+
+      n_pADPs :: INT
+      thresh :: STR
+      cart,har :: BIN
+      esd :: VEC{REAL}*
+
+      ! Placeholders
+      ::put_CIF_crystal_data
+
+      ! Spacegroup information
+      .spacegroup.put_CIF
+
+      ! Unit cell information; INOUT
+      cart = atom(1).pos_axis_system == "cartesian"
+      har  = FALSE
+      if (.data.associated) har = .data.refine_structure OR .data.fit_structure
+      .unit_cell.put_CIF(.Z,cart,har)
+
+      ! Put refinement special info
+      .data.put_CIF_refinement
+
+      ! Errors
+      n_pADPs = atom.no_of_pADPs
+      esd.create(n_pADPs)
+      .::make_CIF_esds(atom,covariance_matrix,esd)
+      esd = sqrt(esd)
+
+      ! Put the info
+      atom.put_CIF_coords(.data.refine_H_U_iso,esd)
+      atom.put_CIF_ADP2(.data.refine_H_U_iso,esd)
+      atom.put_CIF_ADPn(cif,esd)
+
+      ! Put bond & angle info
+      if (atom(1).pos_axis_system=="cartesian") then
+      ::put_CIF_bond_Hirshfeld_tables(atom,covariance_matrix)
+      end
+
+      ! Clean
+      esd.destroy
 
    end
 
