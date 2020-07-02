@@ -8287,8 +8287,10 @@ contains
 
    assign_NOs_to_MOs ::: leaky
    ! Copy the natural orbitals to be the molecular_orbitals.
-   ! If thw MO's are not there, try and read them from disk.
+   ! If the MO's are not there, try and read them from disk.
    ! The occupation numbers are the MO ones.
+   ! This routine also tried to read & set Mol.molecular_orbitals
+   ! from the disk if they are there.
       self :: INOUT
 
       ON_kind :: STR
@@ -8307,12 +8309,17 @@ contains
 
          ! Does it exist as an archive on disk?
          ! If so read the MO's ...
-         arch.set(.name,"molecular_orbitals",genre=ON_kind)
-         if (arch.exists) then
-            .molecular_orbitals.create(.n_bf)
-            arch.read(.molecular_orbitals)
-            .molecular_orbitals.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-            arch.close
+         if (NOT .molecular_orbitals.has_any_genre) then
+            arch.set(.name,"molecular_orbitals",genre=ON_kind)
+            if (arch.exists) then
+               .molecular_orbitals.create(.n_bf)
+               arch.read(.molecular_orbitals)
+               .molecular_orbitals.unnormalise("1" &
+                  ,.first_basis_fn_for_shell &
+                  ,.last_basis_fn_for_shell  &
+                  ,.angular_moment_for_shell)
+               arch.close
+            end
          end
 
       end
@@ -8338,19 +8345,39 @@ contains
 
             mol => .atom_group(g).mol
 
+            ON_kind = .scfdata.spinorbital_kind
+   
+            ! Does it exist as an archive on disk?
+            ! If so read the MO's ...
+            if (NOT mol.molecular_orbitals.has_any_genre) then
+               arch.set(mol.name,"molecular_orbitals",genre=ON_kind)
+               if (arch.exists) then
+                  mol.molecular_orbitals.create(mol.n_bf)
+                  arch.read(mol.molecular_orbitals)
+                  mol.molecular_orbitals.unnormalise("1" &
+                     ,mol.first_basis_fn_for_shell &
+                     ,mol.last_basis_fn_for_shell &
+                     ,mol.angular_moment_for_shell)
+                  arch.close
+               end
+            end
+
             ! Should be generalised to read archives like above ...
-            if (NOT mol.molecular_orbitals.has_any_genre) cycle
+            if (mol.molecular_orbitals.has_any_genre) then
 
-            ON_kind = mol.molecular_orbitals.occupation_spinorbital_kind
+               ON_kind = mol.molecular_orbitals.occupation_spinorbital_kind
+              
+               mol.natural_orbitals.destroy
+               mol.natural_orbitals = mol.molecular_orbitals
 
-            mol.natural_orbitals.destroy
-            mol.natural_orbitals = mol.molecular_orbitals
-           
-            mol.occupation_numbers.destroy
-            mol.occupation_numbers.create(mol.n_bf,ON_kind)
-           
-            mol.occupation_numbers.set_to_zero
-            mol.:set_scf_occupations(ON_kind)
+               ! Do occupation_numbers as well
+               mol.occupation_numbers.destroy
+               mol.occupation_numbers.create(mol.n_bf,ON_kind)
+              
+               mol.occupation_numbers.set_to_zero
+               mol.:set_scf_occupations(ON_kind)
+
+            end
 
          end
 
@@ -8844,7 +8871,7 @@ contains
       arch :: ARCHIVE
       g :: INT
 
-      ! Ensure MO's are allocated & get the kind of MO's
+      ! Ensure molecular_orbitals is there if possible
       if (.molecular_orbitals.has_any_genre) then
 
          ON_kind = .molecular_orbitals.occupation_spinorbital_kind
@@ -8855,18 +8882,51 @@ contains
 
          ! Does it exist as an archive on disk?
          ! If so read the MO's ...
-         arch.set(.name,"molecular_orbitals",genre=ON_kind)
-         if (arch.exists) then
-            .molecular_orbitals.create(.n_bf)
-            arch.read(.molecular_orbitals)
-            .molecular_orbitals.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-            arch.close
+         if (NOT .molecular_orbitals.has_any_genre) then
+            arch.set(.name,"molecular_orbitals",genre=ON_kind)
+            if (arch.exists) then
+               .molecular_orbitals.create(.n_bf)
+               arch.read(.molecular_orbitals)
+               .molecular_orbitals.unnormalise("1" &
+                  ,.first_basis_fn_for_shell &
+                  ,.last_basis_fn_for_shell  &
+                  ,.angular_moment_for_shell)
+               arch.close
+            end
+         end
+      end
+
+      if (.atom_group.associated) then
+      if (.atom_group(1).mol.associated) then
+         
+         do g = 1,.atom_group.dim
+   
+            mol => .atom_group(g).mol
+   
+            ON_kind = .scfdata.spinorbital_kind
+      
+            ! Does it exist as an archive on disk?
+            ! If so read the MO's ...
+            if (NOT mol.molecular_orbitals.has_any_genre) then
+               arch.set(mol.name,"molecular_orbitals",genre=ON_kind)
+               if (arch.exists) then
+                  mol.molecular_orbitals.create(mol.n_bf)
+                  arch.read(mol.molecular_orbitals)
+                  mol.molecular_orbitals.unnormalise("1" &
+                     ,mol.first_basis_fn_for_shell &
+                     ,mol.last_basis_fn_for_shell &
+                     ,mol.angular_moment_for_shell)
+                  arch.close
+               end
+            end
+   
          end
 
       end
+      end
+
       
-      ! Ensure density matrix is allocated & get the kind of the
-      ! density matrixs
+      ! Ensure density_matrix is there if possible
       if (.density_matrix.has_any_genre) then
 
          ON_kind = .density_matrix.occupation_spinorbital_kind
@@ -8877,34 +8937,90 @@ contains
 
          ! Does it exist as an archive on disk?
          ! If so read the MO's ...
-         arch.set(.name,"density_matrix",genre=ON_kind)
-         if (arch.exists) then
-            .density_matrix.create(.n_bf)
-            arch.read(.density_matrix)
-            .density_matrix.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-            arch.close
-         end
-
-      end
-
-      ! Ensure orbital energies are allocated
-      if (.orbital_energies.disassociated) then
-         .orbital_energies.create(.n_bf)
-         if (.scfdata.associated) then
-            
-            ON_kind = .scfdata.spinorbital_kind
-            
-            ! Does it exist as an archive on disk?
-            ! If so read the MO's ...
-            arch.set(.name,"orbital_energies",genre=ON_kind)
+         if (NOT .density_matrix.has_any_genre) then
+            arch.set(.name,"density_matrix",genre=ON_kind)
             if (arch.exists) then
-               arch.read(.orbital_energies)
+               .density_matrix.create(.n_bf)
+               arch.read(.density_matrix)
+               .density_matrix.unnormalise(.first_basis_fn_for_shell &
+                                          ,.last_basis_fn_for_shell  &
+                                          ,.angular_moment_for_shell)
                arch.close
             end
-
          end
-   
       end
+
+      if (.atom_group.associated) then
+      if (.atom_group(1).mol.associated) then
+         
+         do g = 1,.atom_group.dim
+   
+            mol => .atom_group(g).mol
+   
+            ON_kind = .scfdata.spinorbital_kind
+      
+            ! Does it exist as an archive on disk?
+            ! If so read the MO's ...
+            if (NOT mol.molecular_orbitals.has_any_genre) then
+               arch.set(mol.name,"density_matrix",genre=ON_kind)
+               if (arch.exists) then
+                  mol.density_matrix.create(.n_bf)
+                  arch.read(mol.density_matrix)
+                  mol.density_matrix.unnormalise(mol.first_basis_fn_for_shell &
+                                                ,mol.last_basis_fn_for_shell  &
+                                                ,mol.angular_moment_for_shell)
+                  arch.close
+               end
+            end
+   
+         end
+
+      end
+      end
+
+
+      ! Ensure orbital_energies are allocated
+      if (.orbital_energies.associated) then
+
+         ON_kind = .orbital_energies.spinorbital_kind
+
+      else if (.scfdata.associated) then
+            
+         ON_kind = .scfdata.spinorbital_kind
+            
+         ! Does it exist as an archive on disk?
+         ! If so read the MO's ...
+         arch.set(.name,"orbital_energies",genre=ON_kind)
+         if (arch.exists) then
+            arch.read(.orbital_energies)
+            arch.close
+         end
+      end
+
+      if (.atom_group.associated) then
+      if (.atom_group(1).mol.associated) then
+         
+         do g = 1,.atom_group.dim
+   
+            mol => .atom_group(g).mol
+   
+            ON_kind = .scfdata.spinorbital_kind
+      
+            ! Does it exist as an archive on disk?
+            ! If so read the MO's ...
+            if (NOT mol.molecular_orbitals.has_any_genre) then
+               arch.set(mol.name,"density_matrix",genre=ON_kind)
+               if (arch.exists) then
+                  arch.read(mol.orbital_energies)
+                  arch.close
+               end
+            end
+   
+         end
+
+      end
+      end
+
       
       
       ! Assign (actually clone, now) the MO's
@@ -8918,6 +9034,29 @@ contains
 
          .occupation_numbers.set_to_zero
          .:set_scf_occupations(ON_kind)
+
+         if (.atom_group.associated) then
+         if (.atom_group(1).mol.associated) then
+         
+            do g = 1,.atom_group.dim
+           
+               mol => .atom_group(g).mol
+           
+               ON_kind = .scfdata.spinorbital_kind
+           
+               mol.natural_orbitals.destroy
+               mol.natural_orbitals = mol.molecular_orbitals
+               
+               mol.occupation_numbers.destroy
+               mol.occupation_numbers.create(mol.n_bf,ON_kind)
+               
+               mol.occupation_numbers.set_to_zero
+               mol.:set_scf_occupations(ON_kind)
+           
+            end
+
+         end
+         end
 
       end
 
