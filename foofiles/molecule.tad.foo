@@ -149,6 +149,9 @@ contains
       if (.crystal.data.do_standard_plots) &
          .crystal.put_data_analysis(output=TRUE)
 
+      ! Final results
+      .crystal.put_correlations(name=trim(.name)//".correlation-coefficients")
+
       ! Put residuals ...
       if (.crystal.data.do_residual_cube) &
          .SCF:get_minmax_residual_density(output=TRUE)
@@ -333,26 +336,10 @@ contains
    !   transformed back into asymmetric unit.
       self :: INOUT
 
-      if (.crystal.data.use_disk_SFs) then; .:low_mem_HA 
+      if (.crystal.data.use_disk_SFs) then; .:LS_fit_HAs_disk
       else;                                 .:LS_fit_HAs_memory
       end
 
-   end
-
-   LS_fit_HAs_disk ::: leaky
-   ! LS fit the Hirshfeld atoms to the calculated structure factors.
-   ! Disk version
-      self :: INOUT
-
-      ! Hirshfeld-atom structure factors
-      .SCF:get_unique_Hirshfeld_atom_SFs
-
-      ! Do a least squares
-      .TAD:LS_fit(.crystal.data.show_fit_output,.crystal.data.show_fit_results)
-
-      ! Put final CIF after residuals
-      .BASE:put_CIFs(with_ESDs=TRUE)
-        
    end
 
    LS_fit_HAs_memory ::: leaky
@@ -370,6 +357,9 @@ contains
       ! Do a least squares
       .TAD:LS_fit(sf_n,.crystal.data.show_fit_output,.crystal.data.show_fit_results)
 
+      ! Final results
+      .crystal.put_correlations(name=trim(.name)//".correlation-coefficients")
+
       ! Put final CIF after residuals
       .BASE:put_CIFs(with_ESDs=TRUE)
 
@@ -378,6 +368,89 @@ contains
 
    end
 
+!   LS_fit_HAs_disk ::: leaky
+!   ! LS fit the Hirshfeld atoms to the calculated structure factors.
+!   ! Disk version
+!      self :: INOUT
+!
+!      ! Hirshfeld-atom structure factors
+!      .SCF:get_unique_Hirshfeld_atom_SFs
+!
+!      ! Do a least squares
+!      .TAD:LS_fit(.crystal.data.show_fit_output,.crystal.data.show_fit_results)
+!
+!      ! Put final CIF after residuals
+!      .BASE:put_CIFs(with_ESDs=TRUE)
+!        
+!   end
+
+!  Strategy: insert calls, separate out sf_u.
+!  End result: one shift update of parameters
+!  Then this goes in the normal LSQ cycle in LS_fit
+
+   LS_fit_HAs_disk ::: leaky
+   ! LS fit the Hirshfeld atoms to the calculated structure factors.
+   ! Low memory version.
+      self :: INOUT
+
+      d_Fa :: MAT{REAL}*
+
+      do
+
+         d_Fa.create(.crystal.n_refl,.crystal.asymmetric_unit_atom.no_of_pADPs)
+         .:make_LS_matrix(d_Fa)
+         .:do_LS_refinement(d_Fa)
+         d_Fa.destroy
+
+         .crystal.data.put_fit_table_body
+
+         ! Finished?
+         if (.crystal.fit_finished) exit
+
+      end
+
+      ! Table footer
+      .crystal.data.fit_table.put_footer
+
+      ! Set the fragment covariances from cov matrix
+      .crystal.set_fragment_esds
+
+      ! Print out bond length, angle, torsion tables with errors
+      .crystal.put_bond_info_with_errors
+
+      ! Finally: remake .asymmetric_unit_atom/unit_cell geometry from
+      ! .fragment_atom, which *must* be assigned since it must point
+      ! to molecule.atom
+      .crystal.asymmetric_unit_atom.destroy
+      .crystal.asymmetric_unit_geometry.destroy
+      .crystal.asymmetric_unit_source = "tonto-ls-structure-fit"
+      .crystal.make_fragment_data(.crystal.fragment_atom,assign_atom=TRUE,warnings=FALSE)
+
+      ! Set geometry type
+      .crystal.asymmetric_unit_source = "tonto-refinement"
+
+      ! Final results
+      .crystal.put_correlations(name=trim(.name)//".correlation-coefficients")
+
+      ! Put final CIF after residuals
+      .BASE:put_CIFs(with_ESDs=TRUE)
+
+      if (NOT .crystal.data.use_IAM_density) then
+
+         ! Delete stored matrices
+         .BASE:delete_scf_archives(keep_DM=TRUE)
+         .BASE:destroy_scf_results(keep_MOs=TRUE)
+         .BASE:destroy_scf_integrals
+
+         if (.scfdata.associated) then
+         if (NOT .scfdata.scf_kind=="mfcc") then
+         ! Orthonormalize MO's at new geometry
+         .SCF:symmetrically_orthonormalise(.molecular_orbitals)
+         end
+         end
+
+      end
+   end
 
    get_derivative_F_calc_for_atom(a,dFc) ::: leaky
    ! Get "dFc", the derivatives of the complex F_calcs for the
@@ -405,72 +478,6 @@ contains
       sf_n.destroy
 
    end
-
-!  Strategy: insert calls, separate out sf_u.
-!  End result: one shift update of parameters
-!  Then this goes in the normal LSQ cycle in LS_fit
-
-   low_mem_HA ::: leaky
-   ! LS fit the Hirshfeld atoms to the calculated structure factors.
-   ! Low memory version.
-      self :: INOUT
-
-      d_Fa :: MAT{REAL}*
-
-      do
-
-         d_Fa.create(.crystal.n_refl,.crystal.asymmetric_unit_atom.no_of_pADPs)
-         .:make_LS_matrix(d_Fa)
-         .:do_LS_refinement(d_Fa)
-         d_Fa.destroy
-
-         .crystal.data.put_fit_table_body
-
-         ! Finished?
-         if (.crystal.fit_finished) exit
-
-      end
-
-      ! Table footer
-      .crystal.data.fit_table.put_footer
-
-      ! Final results
-      .crystal.put_fit_results
-
-      ! Set the fragment covariances from cov matrix
-      .crystal.set_fragment_esds
-
-      ! Print out bond length, angle, torsion tables with errors
-      .crystal.put_bond_info_with_errors
-
-      ! Finally: remake .asymmetric_unit_atom/unit_cell geometry from
-      ! .fragment_atom, which *must* be assigned since it must point
-      ! to molecule.atom
-      .crystal.asymmetric_unit_atom.destroy
-      .crystal.asymmetric_unit_geometry.destroy
-      .crystal.asymmetric_unit_source = "tonto-ls-structure-fit"
-      .crystal.make_fragment_data(.crystal.fragment_atom,assign_atom=TRUE,warnings=FALSE)
-
-      ! Set geometry type
-      .crystal.asymmetric_unit_source = "tonto-refinement"
-
-      if (NOT .crystal.data.use_IAM_density) then
-
-         ! Delete stored matrices
-         .BASE:delete_scf_archives(keep_DM=TRUE)
-         .BASE:destroy_scf_results(keep_MOs=TRUE)
-         .BASE:destroy_scf_integrals
-
-         if (.scfdata.associated) then
-         if (NOT .scfdata.scf_kind=="mfcc") then
-         ! Orthonormalize MO's at new geometry
-         .SCF:symmetrically_orthonormalise(.molecular_orbitals)
-         end
-         end
-
-      end
-   end
-   
    
    make_LS_matrix(d_Fa) ::: leaky
    ! Calculate the LS matrix Low memory version.
@@ -1456,6 +1463,9 @@ contains
       ! Put analysis info ...
       if (.crystal.data.do_standard_plots) &
          .crystal.put_data_analysis(output=TRUE)
+
+      ! Correlations
+      .crystal.put_correlations(name=trim(.name)//".correlation-coefficients")
 
       ! Put residuals ...
       if (.crystal.data.do_residual_cube) &
