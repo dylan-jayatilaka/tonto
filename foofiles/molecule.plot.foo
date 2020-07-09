@@ -290,67 +290,60 @@ contains
    ! Do the summed-fragmened  property density on ".plot_grid" using
    ! the molecules in .atom_group(:).mol.
       self :: INOUT
-      a,g,i,j,k,p,s,u :: INT
-      d2,vdw :: REAL
-      h :: VEC{INT}(3)
-      pos :: VEC{REAL}(3)
-      groups :: VEC{INT}@
+
       mol :: MOLECULE*
       seitz :: MAT3{REAL}*
-      coords,mx,pt :: MAT{REAL}@
-      same,found :: BIN
+      first_coords,mol_coords,pt :: MAT{REAL}@
       grid,frag, vdw_radius :: VEC{REAL}@
+      pos :: VEC{REAL}(3)
+      h :: VEC{INT}(3)
+      groups_done :: VEC{INT}@
+      d2,vdw :: REAL
+      n_pt, a,g,i,j,k,p,s,u :: INT
+      checked,new_mol,found :: BIN
       name :: STR
       
+      ! No. of grid points
+      n_pt = .plot_grid.n_pt
+
       ! Make the grid points
-      pt.create(.plot_grid.n_pt,3)
+      pt.create(n_pt,3)
       .plot_grid.make_points(pt)
             
       ! Make space for grid values and grid points
-      grid.create(.plot_grid.n_pt)
-      frag.create(.plot_grid.n_pt)
+      grid.create(n_pt)
+      frag.create(n_pt)
       
-      !Initialise
-      groups.create(0)
-      coords.create(3,0)
+      ! Initialise
+      groups_done.create(0)
+      first_coords.create(3,0)
       grid = ZERO
       frag = ZERO
       found = FALSE
       
       ! Cartesian rotation matrices
       seitz => .crystal.xyz_seitz_matrices
-
       
-      ! cycle through the asym atoms
-      do g = 1,.crystal.n_asymmetric_unit_atoms 
+      ! Cycle through the asym atoms
+      do a = 1,.crystal.n_asymmetric_unit_atoms 
              
-         ! Has this group already been checked?
-         if (any(groups == .crystal.asymmetric_unit_atom(g).group)) cycle
-         
-         ! This is the atom we are dealing with
-         !.crystal.asymmetric_unit_atom(g)
+         ! Group for asym atom a
+         g = .crystal.asymmetric_unit_atom(a).group
 
-         ! Clone molecule from this atom, as we need to apply the same
-         ! transformations across the whole molecule
-         mol.BASE:create
-         stdout.show("Group Index:", .crystal.asymmetric_unit_atom(g).group)
-         .BASE:make_molecule_from_atom_group(.crystal.asymmetric_unit_atom(g).group,mol,TRUE)
-         
-         ! Assign the properties to the molecule.
-         mol.molecular_orbitals=.atom_group(.crystal.asymmetric_unit_atom(g).group).mol.molecular_orbitals
-         mol.density_matrix=.atom_group(.crystal.asymmetric_unit_atom(g).group).mol.density_matrix
-         mol.natural_orbitals=.atom_group(.crystal.asymmetric_unit_atom(g).group).mol.natural_orbitals
-         mol.:set_up_for_fragment_plot(.plot_grid.plot_kind)
+         ! Skip if already checked
+         checked = any(groups_done == g)
+         if (checked) cycle
 
-         ! Set up the van der Waals radii, for the limits of
-         ! interaction.
+         ! Add "g" to groups_done
+         groups_done.append(g)
+
+         ! Make "mol" by defragmenting atom "a"
+         .:make_plot_mol_from_asymmetric_atom(a,mol)
+         
+         ! Set van der Waals radii, for the limits of interaction.
          vdw_radius.create(mol.atom.dim)
          mol.atom.get_vdw_radii_ccdc(vdw_radius)
       
-         ! Convert into cartesian coordinates of the molecule for ease
-         ! of use.
-         mol.atom.change_axis_system_to("cartesian",.crystal.unit_cell,FALSE)
-
          ! Cycle through the symops
          do s = 1,seitz.dim3
 
@@ -361,28 +354,21 @@ contains
             pos = seitz(1:3,4,s)
             mol.atom.translate_by(pos)
 
-            ! Check to see if this molecule has been generated before
-            ! (symmetry equivalent)
+            ! Is this a new unique "mol"?
+            mol_coords.create(3,mol.atom.dim)
+            mol.atom.put_coordinates_to(mol_coords,positions_as_rows=FALSE)
+            new_mol = NOT mol_coords.has_any_column_from(first_coords)
+
+            if (new_mol) then
+
+               ! If "mol" is new, store it's first atom coordinates
+               first_coords.append_column(mol_coords(:,1))
+               mol_coords.destroy
             
-            ! CHeck here if the atoms are in the same space NOTE this may
-            ! not work for disordered molecules
-            same = FALSE
-            mx.create(3,mol.atom.dim)
-            mol.atom.put_coordinates_to(mx,positions_as_rows=FALSE)
-            
-            same = mx.has_any_column_from(coords)
-            
-            ! If it isn't the same, add it to the list
-            if (NOT same) coords.append_column(mx(:,1))
-            
-            ! Clean up in each iteration
-            mx.destroy
-            
-            ! Don't proceed if molecule is already plotted
-            if (same) then
+            else
                
-               !Revert atom positions
-               ! Reverse the translation of this symop
+               ! Don't proceed if molecule is already plotted.
+               ! Undo translation of this symop on "mol"
                pos = -seitz(1:3,4,s)
                mol.atom.translate_by(pos)
 
@@ -395,7 +381,7 @@ contains
 
             ! This may be necessary, but currently I am under the
             ! assumption we are starting in the [0,0,0] unit cell
-            !put_to_unit_cell(g) ::: PURE
+            ! put_to_unit_cell(g) ::: PURE
 
             ! Cycle through the unit cells
             do k = -1,1
@@ -408,10 +394,8 @@ contains
                ! cells.
                mol.atom.change_axis_system_to("crystal",.crystal.unit_cell,FALSE)
                
-               !Update atom positions
-               do a = 1,mol.atom.dim
-                  mol.atom(a).set_position(mol.atom(a).position + h)
-               end do
+               ! Update atom positions
+               mol.atom.translate_by(REALIFY(h))
 
                ! Convert to cartesian for grid checking 
                mol.atom.change_axis_system_to("cartesian",.crystal.unit_cell,FALSE)
@@ -470,10 +454,8 @@ contains
                ! cells.
                mol.atom.change_axis_system_to("crystal",.crystal.unit_cell,FALSE)
                
-               !Revert atom positions
-               do a = 1,mol.atom.dim
-                  mol.atom(a).set_position(mol.atom(a).position - h)
-               end do
+               ! Revert atom positions
+               mol.atom.translate_by(-REALIFY(h))
 
             end do
             end do
@@ -492,7 +474,6 @@ contains
 
          end do !end of symops loop
          
-         groups.append(.crystal.asymmetric_unit_atom(g).group)
          
          vdw_radius.destroy
          mol.atom.nullify_ptr_part ! do not destroy these
@@ -506,11 +487,44 @@ contains
       name = .plot_grid.plot_file_name(.n_a)
       .GRID:dump_plot_grid(grid,name)
 
+      ! Clean up
       pt.destroy
       grid.destroy
       frag.destroy
-      groups.destroy
+      first_coords.destroy
+      groups_done.destroy
       seitz.destroy
+
+   end
+
+   make_plot_mol_from_asymmetric_atom(a,mol) ::: leaky, private
+   ! Make a molecule "mol" used for plotting from the the group of
+   ! atoms that asymmetric unit atom "a" belongs to i.e. defragment
+   ! atom "a" into "mol".
+      self :: INOUT
+      a :: INT, IN
+      mol :: MOLECULE*
+
+      g :: INT
+             
+      ! Group for asym atom a
+      g = .crystal.asymmetric_unit_atom(a).group
+
+      ! Clone molecule from this atom, as we need to apply the same
+      ! transformations across the whole molecule
+      mol.BASE:create
+      .BASE:make_molecule_from_atom_group(g,mol,TRUE)
+      
+      ! Assign the properties to the molecule.
+      mol.molecular_orbitals = .atom_group(g).mol.molecular_orbitals
+      mol.density_matrix     = .atom_group(g).mol.density_matrix
+      mol.natural_orbitals   = .atom_group(g).mol.natural_orbitals
+
+      ! Set up "mol" for plot
+      mol.:set_up_for_fragment_plot(.plot_grid.plot_kind)
+      
+      ! Ensure "mol" in cartesian coordinates
+      mol.atom.change_axis_system_to("cartesian",.crystal.unit_cell,FALSE)
 
    end
 
