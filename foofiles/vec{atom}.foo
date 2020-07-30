@@ -12160,7 +12160,7 @@ contains
       U  :: MAT{REAL}, INOUT
       dU :: MAT{REAL}, optional, INOUT
 
-   ENSURE(U.dim1==.dim,"U dim1 is not equal to no. of atoms")
+   ENSURE(U.dim1==.no_of_ADP3_atoms,"U dim1 not equal to no. of atoms with ADP3s")
    ENSURE(U.dim2==10  ,"U dim2 is not equal to 10")
 
       Uc :: VEC{STR}*
@@ -12180,7 +12180,7 @@ contains
       n = .no_of_ADP3_atoms
 
       ! Use angstroms/angstrom^2
-      fac  = STR:conversion_factor("angstrom")
+      fac  = STR:conversion_factor("angstrom^3")
 
       ! Create columns
       list.create(n)
@@ -12236,6 +12236,135 @@ contains
       Uc.destroy
       ID.destroy
       list.destroy
+
+   end
+
+   put_ADP_principal_axis_ADP3s(cov) ::: private
+   ! Rotate the ADP3s for each atom into the principal axis frame of
+   ! each atom, where "cov" is the covariance matrix for all the
+   ! parameters in the concatenated pADP vectors. 
+      self :: IN
+      cov :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      newcov, U,dU :: MAT{REAL}@
+      adp3,new3 :: MAT3{REAL}(3,3,3)
+      v3,w3 :: VEC{REAL}(10)
+      eval :: VEC{REAL}(3)
+      R :: MAT{REAL}(3,3)
+      a,n,np :: INT
+
+      if (NOT .has_any_ADP3s_and_errors) return
+
+      ! Rotated covariance matrix
+      newcov.create(cov.dim1,cov.dim2)
+
+      ! Create columns
+      n = .no_of_ADP3_atoms
+       U.create(n,10)
+      dU.create(n,10)
+
+      ! ADP3 atom index
+      n  = 0
+
+      ! Loop over atoms
+      do a = 1,.dim
+
+         if (NOT self(a).has_ADP3s_and_errors) cycle
+
+         ! ADP3 atom index
+         n = n + 1
+
+         ! Get ADP2 principal axes into "R"
+         self(a).ADP_tensor.solve_symmetric_eigenproblem(eval,R)
+
+         ! Change ADP3s to new coord system
+         self(a).put_ADP3_vector_to(adp3)
+         adp3.back_transform_to(new3,R)
+         new3.compress_to_pyramid(v3)
+         GAUSSIAN_DATA:lower_pyramid_to_lexical_3(v3,w3)
+         U(n,1:10) = w3
+
+         ! Rotate whole covariance matrix by "R"
+         .rotate_cov_mx_using(R,cov,newcov)
+
+         ! Extract diagonal elements as errors
+         np = .no_of_pADPs_up_to_atom(a)
+         newcov(np+10:np+19,np+10:np+19).put_diagonal_to(dU(n,1:10))
+
+      end
+
+      ! Square root sigma^2
+      dU = sqrt(dU)
+
+      ! Finally ... print table
+      ! This routine scales the U & dU
+      .put_ADP3s(U,dU)
+
+      ! Clean
+      dU.destroy
+       U.destroy
+      newcov.destroy
+
+   end
+
+   rotate_cov_mx_using(R,old,new)
+   ! Rotate the frag molecule's atom covariance matrix "old" with
+   ! rotation matrix "R", and place the result in new matrix "new".
+      self :: IN
+      R   :: MAT{REAL}(3,3), IN
+      old :: MAT{REAL}, IN
+      new :: MAT{REAL}, OUT
+
+   ENSURE(R.dim1==3,"wrong dim1, R")
+   ENSURE(R.dim2==3,"wrong dim2, R")
+   ENSURE(old.is_same_shape_as(new),"incompatible covariance matrices")
+
+      a1,n1, a1b,a1f,a1l :: INT
+      a2,n2, a2b,a2f,a2l :: INT
+      T1,T2 :: MAT{REAL}@
+
+      ! Loop over pairs of atom's pADP blocks
+      a1b = 0
+      do a1 = 1,.dim
+
+         ! Block limits
+         n1 = .no_of_pADPs_up_to_atom(a1)
+         a1f = a1b +  1
+         a1l = a1b + n1
+
+         ! Transformation matrix
+         T1.create(n1,n1)
+         GAUSSIAN_DATA:symmetric_tensor_product_mx(T1,R)
+
+         a2b = 0
+         do a2 = 1,.dim
+
+            ! Block limits
+            n2 = .no_of_pADPs_up_to_atom(a2)
+            a2f = a2b +  1
+            a2l = a2b + n2
+
+            ! Transformation matrix
+            T2.create(n2,n2)
+            GAUSSIAN_DATA:symmetric_tensor_product_mx(T2,R)
+
+            ! Transform the whole lot of pADPs at once
+            old(a1f:a1l,a2f:a2l).back_transform_to(new(a1f:a1l,a2f:a2l),T1,T2)
+
+            ! Clean, increment
+            T2.destroy
+            a2b = a2b + n2
+
+         end
+
+         ! Clean, increment
+         T1.destroy
+         a1b = a1b + n1
+
+      end
 
    end
 
