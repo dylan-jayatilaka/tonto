@@ -12371,6 +12371,38 @@ contains
    put_ADP4s ::: private
    ! Output the ADP4 information. Always comes after the ADP
    ! information. Use Angstroms.
+      self :: IN
+
+      U,dU :: MAT{REAL}*
+      n :: INT
+
+      if (NOT .has_any_ADP4s_and_errors) return
+
+      ! No. of atoms with ADP3s
+      n = .no_of_ADP4_atoms
+
+      ! Create columns
+      U.create(n,15)
+      dU.create(n,15)
+
+      ! Get U4's and scale to Angstrom
+      .put_ADP4_vector_to(U)
+
+      ! Get error column data
+      .put_ADP4_errors_to(dU)
+
+      ! Print table
+      .put_ADP4s(U,dU)
+
+      ! Clean
+      dU.destroy
+      U.destroy
+
+   end
+
+   put_ADP4s_old ::: private
+   ! Output the ADP4 information. Always comes after the ADP
+   ! information. Use Angstroms.
 
       U,dU :: MAT{REAL}*
       Uc :: VEC{STR}*
@@ -12452,6 +12484,163 @@ contains
       Uc.destroy
       ID.destroy
       list.destroy
+
+   end
+
+   put_ADP4s(U,dU) ::: private
+   ! Output the ADP4s U(N,15) and errors dU(N,15) (if present).
+   ! N is thge number of atoms. U and dU in Bohr as usual.
+      self :: IN 
+      U  :: MAT{REAL}, INOUT
+      dU :: MAT{REAL}, optional, INOUT
+
+   ENSURE(U.dim1==.no_of_ADP4_atoms,"U dim1 not equal to no. of atoms with ADP4s")
+   ENSURE(U.dim2==15  ,"U dim2 is not equal to 15")
+
+      Uc :: VEC{STR}*
+      ID :: VEC{STR}*
+      list :: VEC{INT}*
+      table :: VEC{TABLE_COLUMN}*
+      fac,sfac :: REAL
+      i,n :: INT
+
+      ! Scale factor
+      sfac = CIF_GC4_SCALE_FACTOR
+      stdout.flush
+      stdout.text(". The cartesian ADP4s below have been scaled")
+      stdout.show("  scale factor =",sfac)
+
+      ! No. of atoms with ADP3s
+      n = .no_of_ADP4_atoms
+
+      ! Use angstroms/angstrom^2
+      fac  = STR:conversion_factor("angstrom^4")
+
+      ! Create columns
+      list.create(n)
+      ID.create(n)
+      Uc.create(15)
+
+      ! Get columns
+      .put_ADP4_atom_list_to(list)
+      ID = self(list).tag
+      ATOM:put_ADP4_labels_to(Uc)
+
+      ! Scale & change to Angstrom
+      U = sfac*fac*U
+
+      ! Set table headings & data
+      table.create(16)
+      table.set_column_spacing(2)
+
+      if (NOT present(dU)) then
+
+         ! Set table
+         table(1).set_heading("ID")
+         table(1).set_values(ID)
+         do i = 1,15
+         table(i+1).set_heading(Uc(i))
+         table(i+1).set_values(U(:,i))
+         end
+
+      else ! have position/ADP errors
+
+         ! Scale errors
+         dU = sfac*fac*dU
+
+         ! Set table
+         table(1).set_heading("ID")
+         table(1).set_values(ID)
+         do i = 1,15
+         table(i+1).set_heading(Uc(i))
+         table(i+1).set_values_and_errors(U(:,i),dU(:,i))
+         end
+
+      end
+
+      ! Units headings
+      table(6).set_subhead(trim("/A^4"))
+
+      ! Make the table
+      table.put
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Uc.destroy
+      ID.destroy
+      list.destroy
+
+   end
+
+   put_ADP_principal_axis_ADP4s(cov) ::: private
+   ! Rotate the ADP4s for each atom into the principal axis frame of
+   ! each atom, where "cov" is the covariance matrix for all the
+   ! parameters in the concatenated pADP vectors. 
+      self :: IN
+      cov :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      newcov, U,dU :: MAT{REAL}@
+      adp4,new4 :: MAT4{REAL}(3,3,3,3)
+      v4,w4 :: VEC{REAL}(15)
+      eval :: VEC{REAL}(3)
+      R :: MAT{REAL}(3,3)
+      a,n,np :: INT
+
+      if (NOT .has_any_ADP4s_and_errors) return
+
+      ! Rotated covariance matrix
+      newcov.create(cov.dim1,cov.dim2)
+
+      ! Create columns
+      n = .no_of_ADP4_atoms
+       U.create(n,15)
+      dU.create(n,15)
+
+      ! ADP4 atom index
+      n  = 0
+
+      ! Loop over atoms
+      do a = 1,.dim
+
+         if (NOT self(a).has_ADP4s_and_errors) cycle
+
+         ! ADP4 atom index
+         n = n + 1
+
+         ! Get ADP2 principal axes into "R"
+         self(a).ADP_tensor.solve_symmetric_eigenproblem(eval,R)
+
+         ! Change ADP4s to new coord system
+         self(a).put_ADP4_vector_to(adp4)
+         adp4.back_transform_to(new4,R)
+         new4.compress_to_pyramid(v4)
+         GAUSSIAN_DATA:lower_pyramid_to_lexical_4(v4,w4)
+         U(n,1:15) = w4
+
+         ! Rotate whole covariance matrix by "R"
+         .rotate_cov_mx_using(R,cov,newcov)
+
+         ! Extract diagonal elements as errors
+         np = .no_of_pADPs_up_to_atom(a)
+         newcov(np+15:np+24,np+15:np+24).put_diagonal_to(dU(n,1:15))
+
+      end
+
+      ! Square root sigma^2
+      dU = sqrt(dU)
+
+      ! Finally ... print table
+      ! This routine scales the U & dU
+      .put_ADP4s(U,dU)
+
+      ! Clean
+      dU.destroy
+       U.destroy
+      newcov.destroy
 
    end
 
@@ -15851,8 +16040,6 @@ contains
       stdout.text("_atom_site_Cartn_y_esu")
       stdout.text("_atom_site_Cartn_z")
       stdout.text("_atom_site_Cartn_z_esu")
-      stdout.text("_atom_site_Cartn_U_iso_or_equiv")
-      stdout.text("_atom_site_Cartn_U_iso_or_equiv_esu")
 
       ! Table column data
       ID.create(.dim)
@@ -15898,18 +16085,31 @@ contains
       tabl3(2).set_width(tabl1(2).width)
       tabl3(3).set_width(tabl1(3).width)
 
+      ! Put tables
+      tabl1.put_body(tabl1,tabl2,tabl3)
+
+      ! CIF Ueq or Uiso header
+      stdout.flush
+      stdout.text("# =====================")
+      stdout.text("# Ueq or Uiso          ")
+      stdout.text("# =====================")
+      stdout.flush
+      stdout.text("# . These precise data use non-standard CIF tags")
+      stdout.text("# . Please keep for a better refinement restart")
+      stdout.text("# . Units are in Angstrom^2")
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("_atom_site_Cartn_U_iso_or_equiv")
+      stdout.text("_atom_site_Cartn_U_iso_or_equiv_esu")
+
       ! Table 4
       tabl4.create(3)
-      tabl4(1).set_values(blnk)
+      tabl4(1).set_values(ID)
       tabl4(2).set_values(Uiso)
       tabl4(3).set_values(Uerr)
 
-      tabl4(1).set_width(tabl1(1).width)
-      tabl4(2).set_width(tabl1(2).width)
-      tabl4(3).set_width(tabl1(3).width)
-
       ! Put tables
-      tabl1.put_body(tabl1,tabl2,tabl3,tabl4)
+      tabl4.put_body
 
       ! Clean
       tabl4.destroy
