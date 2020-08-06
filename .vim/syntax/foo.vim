@@ -521,6 +521,10 @@ syn keyword fortranType MOLECULE.SCF
 syn keyword fortranType MOLECULE.TAD
 syn keyword fortranType MOLECULE.XTAL
 
+" Pair energies
+
+syn keyword fortranType PAIR_ENERGY
+
 " Xtal
 
 syn keyword fortranType XTAL 
