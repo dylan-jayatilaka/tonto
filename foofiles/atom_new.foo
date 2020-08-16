@@ -12128,15 +12128,17 @@ contains
    ENSURE(cov.is_square,"covariance matrix is not square!")
    ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
 
-      U,dU :: MAT{REAL}@
+      newcov, U,dU :: MAT{REAL}@
       adp3,new3 :: MAT3{REAL}(3,3,3)
-      vec3,lex3 :: VEC{REAL}(10)
+      v3,w3 :: VEC{REAL}(10)
       eval :: VEC{REAL}(3)
-      R   :: MAT{REAL}(3,3)
-      rcm :: MAT{REAL}(10,10)
-      a,n :: INT
+      R :: MAT{REAL}(3,3)
+      a,n,np :: INT
 
       if (NOT .has_any_ADP3s_and_errors) return
+
+      ! Rotated covariance matrix
+      newcov.create(cov.dim1,cov.dim2)
 
       ! Create columns
       n = .no_of_ADP3_atoms
@@ -12160,28 +12162,21 @@ contains
          ! Change ADP3s to new coord system
          self(a).put_ADP3_vector_to(adp3)
          adp3.back_transform_to(new3,R)
-         new3.compress_to_pyramid(vec3)
-         GAUSSIAN_DATA:lower_pyramid_to_lexical_3(vec3,lex3)
-         U(n,1:10) = lex3
+         new3.compress_to_pyramid(v3)
+         GAUSSIAN_DATA:lower_pyramid_to_lexical_3(v3,w3)
+         U(n,1:10) = w3
 
          ! Rotate whole covariance matrix by "R"
-         rcm = .rotated_U3_covariance_mx_for_atom(a,R,cov)
+         .rotate_cov_mx_using(R,cov,newcov)
 
          ! Extract diagonal elements as errors
-         rcm.put_diagonal_to(dU(n,1:10))
+         np = .no_of_pADPs_up_to_atom(a)
+         newcov(np+10:np+19,np+10:np+19).put_diagonal_to(dU(n,1:10))
 
       end
 
       ! Square root sigma^2
       dU = sqrt(dU)
-
-      ! Title
-      stdout.flush
-      stdout.text("==================================")
-      stdout.text("ADP3s in ADP2 principle axis frame")
-      stdout.text("==================================")
-      stdout.flush
-      stdout.text(". ADPs are referred to cartesian axes.")
 
       ! Finally ... print table
       ! This routine scales the U & dU
@@ -12190,40 +12185,65 @@ contains
       ! Clean
       dU.destroy
        U.destroy
+      newcov.destroy
 
    end
 
-   rotated_U3_covariance_mx_for_atom(a,R,fcm) result(rcm) ::: PURE
-   ! Given index of atom "a", and given a 3x3 rotation matrix "R" and
-   ! given the *full* covariance matrix "fcm", return in "rcm" the U3
-   ! covariance matrix for atom "a" rotated by matrix "R".
+   rotate_cov_mx_using(R,old,new)
+   ! Rotate the frag molecule's atom covariance matrix "old" with
+   ! rotation matrix "R", and place the result in new matrix "new".
       self :: IN
-      a   :: INT, IN
       R   :: MAT{REAL}(3,3), IN
-      fcm :: MAT{REAL}, IN
-      rcm :: MAT{REAL}(10,10)
+      old :: MAT{REAL}, IN
+      new :: MAT{REAL}, OUT
 
    ENSURE(R.dim1==3,"wrong dim1, R")
    ENSURE(R.dim2==3,"wrong dim2, R")
-   ENSURE(fcm.is_square,"full covariance matrix is not square")
-   ENSURE(fcm.dim1==.no_of_pADPs,"wrong dimension, fcm")
+   ENSURE(old.is_same_shape_as(new),"incompatible covariance matrices")
 
-      old,RR :: MAT{REAL}(10,10)
-      off,f,l :: INT
+      a1,n1, a1b,a1f,a1l :: INT
+      a2,n2, a2b,a2f,a2l :: INT
+      T1,T2 :: MAT{REAL}@
 
-      ! Offset into diagonal block
-      off = .no_of_pADPs_up_to_atom(a) + 9
-      f   = off + 1
-      l   = off + 10
+      ! Loop over pairs of atom's pADP blocks
+      a1b = 0
+      do a1 = 1,.dim
 
-      ! Get the cov. matrix block
-      old = fcm(f:l,f:l)
+         ! Block limits
+         n1 = .no_of_pADPs_up_to_atom(a1)
+         a1f = a1b +  1
+         a1l = a1b + n1
 
-      ! Get transformation matrix "RR"
-      GAUSSIAN_DATA:symmetric_tensor_3_product_mx(RR,R)
+         ! Transformation matrix
+         T1.create(n1,n1)
+         GAUSSIAN_DATA:symmetric_tensor_product_mx(T1,R)
 
-      ! Get the rotated U3 covariance matrix
-      old.back_transform_to(rcm,RR)
+         a2b = 0
+         do a2 = 1,.dim
+
+            ! Block limits
+            n2 = .no_of_pADPs_up_to_atom(a2)
+            a2f = a2b +  1
+            a2l = a2b + n2
+
+            ! Transformation matrix
+            T2.create(n2,n2)
+            GAUSSIAN_DATA:symmetric_tensor_product_mx(T2,R)
+
+            ! Transform the whole lot of pADPs at once
+            old(a1f:a1l,a2f:a2l).back_transform_to(new(a1f:a1l,a2f:a2l),T1,T2)
+
+            ! Clean, increment
+            T2.destroy
+            a2b = a2b + n2
+
+         end
+
+         ! Clean, increment
+         T1.destroy
+         a1b = a1b + n1
+
+      end
 
    end
 
@@ -12374,6 +12394,91 @@ contains
 
    end
 
+   put_ADP4s_old ::: private
+   ! Output the ADP4 information. Always comes after the ADP
+   ! information. Use Angstroms.
+
+      U,dU :: MAT{REAL}@
+      ID,Uc :: VEC{STR}@
+      list :: VEC{INT}@
+      table :: VEC{TABLE_COLUMN}@
+      fac,sfac :: REAL
+      i,n :: INT
+
+      if (NOT .has_any_ADP4s_and_errors) return
+
+      ! Use angstroms/angstrom^2
+      fac  = STR:conversion_factor("angstrom")
+
+      ! Scale factor
+      sfac = CIF_GC4_SCALE_FACTOR
+      stdout.flush
+      stdout.text(". The cartesian ADP4s below have been scaled")
+      stdout.show("  scale factor =",sfac)
+
+      ! No. of atoms with ADP4
+      n = .no_of_ADP4_atoms
+
+      ! Create columns
+      list.create(n)
+      ID.create(n)
+      Uc.create(15)
+      U.create(n,15)
+      dU.create(n,15)
+
+      ! Get columns
+      .put_ADP4_atom_list_to(list)
+      ID = self(list).tag
+      ATOM:put_ADP4_labels_to(Uc)
+      .put_ADP4_vector_to(U,fac)
+      U = sfac*U
+
+      ! Set table headings & data
+      table.create(16)
+      table.set_column_spacing(2)
+
+      ! Set table
+      table(1).set_heading("ID")
+      table(1).set_values(ID)
+
+      if (NOT .has_nonzero_ADP4_errors) then
+
+         ! Set table
+         do i = 1,15
+         table(i+1).set_heading(Uc(i))
+         table(i+1).set_values(U(:,i))
+         end
+
+      else ! have position/ADP errors
+
+         ! Get error column data
+         .put_ADP4_errors_to(dU,fac)
+         dU = sfac*dU
+
+         ! Set table
+         do i = 1,15
+         table(i+1).set_heading(Uc(i))
+         table(i+1).set_values_and_errors(U(:,i),dU(:,i))
+         end
+
+      end
+
+      ! Units headings
+      table(8).set_subhead(trim("/A^4"))
+
+      ! Make the table
+      table.put
+
+      ! Clean
+      table.destroy
+      dU.destroy
+      U.destroy
+      Uc.destroy
+      ID.destroy
+      list.destroy
+
+   end
+
    put_ADP4s(U,dU) ::: private
    ! Output the ADP4s U(N,15) and errors dU(N,15) (if present).
    ! N is thge number of atoms. U and dU in Bohr as usual.
@@ -12459,7 +12564,7 @@ contains
    end
 
    put_ADP_principal_axis_ADP4s(cov)
-   ! Rotate the ADP3s for each atom into the principal axis frame of
+   ! Rotate the ADP4s for each atom into the principal axis frame of
    ! each atom, where "cov" is the covariance matrix for all the
    ! parameters in the concatenated pADP vectors. 
       self :: IN
@@ -12468,22 +12573,24 @@ contains
    ENSURE(cov.is_square,"covariance matrix is not square!")
    ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
 
-      U,dU :: MAT{REAL}@
+      newcov, U,dU :: MAT{REAL}@
       adp4,new4 :: MAT4{REAL}(3,3,3,3)
-      vec4,lex4 :: VEC{REAL}(15)
+      v4,w4 :: VEC{REAL}(15)
       eval :: VEC{REAL}(3)
-      R   :: MAT{REAL}(3,3)
-      rcm :: MAT{REAL}(15,15)
-      a,n :: INT
+      R :: MAT{REAL}(3,3)
+      a,n,np :: INT
 
       if (NOT .has_any_ADP4s_and_errors) return
 
+      ! Rotated covariance matrix
+      newcov.create(cov.dim1,cov.dim2)
+
       ! Create columns
-      n = .no_of_ADP3_atoms
+      n = .no_of_ADP4_atoms
        U.create(n,15)
       dU.create(n,15)
 
-      ! ADP3 atom index
+      ! ADP4 atom index
       n  = 0
 
       ! Loop over atoms
@@ -12491,37 +12598,30 @@ contains
 
          if (NOT self(a).has_ADP4s_and_errors) cycle
 
-         ! ADP3 atom index
+         ! ADP4 atom index
          n = n + 1
 
          ! Get ADP2 principal axes into "R"
          self(a).ADP_tensor.solve_symmetric_eigenproblem(eval,R)
 
-         ! Change ADP3s to new coord system
+         ! Change ADP4s to new coord system
          self(a).put_ADP4_vector_to(adp4)
          adp4.back_transform_to(new4,R)
-         new4.compress_to_pyramid(vec4)
-         GAUSSIAN_DATA:lower_pyramid_to_lexical_4(vec4,lex4)
-         U(n,1:15) = lex4
+         new4.compress_to_pyramid(v4)
+         GAUSSIAN_DATA:lower_pyramid_to_lexical_4(v4,w4)
+         U(n,1:15) = w4
 
          ! Rotate whole covariance matrix by "R"
-         rcm = .rotated_U4_covariance_mx_for_atom(a,R,cov)
+         .rotate_cov_mx_using(R,cov,newcov)
 
          ! Extract diagonal elements as errors
-         rcm.put_diagonal_to(dU(n,1:15))
+         np = .no_of_pADPs_up_to_atom(a)
+         newcov(np+15:np+24,np+15:np+24).put_diagonal_to(dU(n,1:15))
 
       end
 
       ! Square root sigma^2
       dU = sqrt(dU)
-
-      ! Title
-      stdout.flush
-      stdout.text("==================================")
-      stdout.text("ADP4s in ADP2 principle axis frame")
-      stdout.text("==================================")
-      stdout.flush
-      stdout.text(". ADPs are referred to cartesian axes.")
 
       ! Finally ... print table
       ! This routine scales the U & dU
@@ -12530,40 +12630,7 @@ contains
       ! Clean
       dU.destroy
        U.destroy
-
-   end
-
-   rotated_U4_covariance_mx_for_atom(a,R,fcm) result(rcm) ::: PURE
-   ! Given index of atom "a", and given a 3x3 rotation matrix "R" and
-   ! given the *full* covariance matrix "fcm", return in "rcm" the U3
-   ! covariance matrix for atom "a" rotated by matrix "R".
-      self :: IN
-      a   :: INT, IN
-      R   :: MAT{REAL}(3,3), IN
-      fcm :: MAT{REAL}, IN
-      rcm :: MAT{REAL}(15,15)
-
-   ENSURE(R.dim1==3,"wrong dim1, R")
-   ENSURE(R.dim2==3,"wrong dim2, R")
-   ENSURE(fcm.is_square,"full covariance matrix is not square")
-   ENSURE(fcm.dim1==.no_of_pADPs,"wrong dimension, fcm")
-
-      old,RR :: MAT{REAL}(15,15)
-      off,f,l :: INT
-
-      ! Offset into diagonal block
-      off = .no_of_pADPs_up_to_atom(a) + 19
-      f   = off + 1
-      l   = off + 15
-
-      ! Get the cov. matrix block
-      old = fcm(f:l,f:l)
-
-      ! Get transformation matrix "RR"
-      GAUSSIAN_DATA:symmetric_tensor_4_product_mx(RR,R)
-
-      ! Get the rotated U3 covariance matrix
-      old.back_transform_to(rcm,RR)
+      newcov.destroy
 
    end
 
