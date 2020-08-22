@@ -1895,310 +1895,310 @@ contains
 
    end
 
-   read_molden_NOs(file_name) ::: leaky
-   ! Read a Molden natural orbitals file.
-   ! Here the occupation numbers are not integers.
-      file_name :: STR, optional
-
-   ENSURE(NOT .use_spherical_basis,"not implemented")
-
-      molden_file,save :: TEXTFILE*
-      archive :: ARCHIVE
-      pos :: VEC{REAL}(3)
-      orb :: VEC{REAL}*
-      fac,n_e,val,energy,occ :: REAL
-      name,units,item,label,spin :: STR
-      op,cl :: STR(len=1)
-      found,is_unrestricted :: BIN
-      line, a,i,f,Z :: INT
-
-      ! Get file name
-      if (present(file_name)) then;              name = file_name
-      else if (NOT stdin.buffer_exhausted) then; stdin.read(name)
-      else;                                      name = .name
-      end
-
-      ! Constants
-      op = achar(91)
-      cl = achar(93)
-
-      ! Open Molden file
-      molden_file.create(name)
-      molden_file.open_for("read")
-
-      ! Find [ATOMS] block
-      molden_file.look_for(op//"ATOMS"//cl,found=found)
-      DIE_IF(NOT found, "No ATOMS line")
-      DIE_IF(molden_file.n_line_items/=2, "Expecting two items on ATOMS line")
-
-      ! Read units
-      molden_file.read(units)
-      fac = ONE
-      if (units=="Angs") fac = BOHR_PER_ANGSTROM
-
-      ! Store start of atoms list
-      molden_file.read_line
-      line = molden_file.line_number
-
-      ! Get no. of atoms ...
-      .n_atom = 0
-      do
-         molden_file.read(item)
-         if (item==op//"Molden") exit
-         DIE_IF(molden_file.end_of_file,"file ended unexpectedly")
-         .n_atom = .n_atom + 1
-         molden_file.read_line
-      end
-
-      ! Create atom list (leaky)
-      if (.atom.associated)  .atom.destroy
-      .atom.create(.n_atom)
-
-      ! Create basis -- Different one for every atom (leaky)
-      if (.basis.associated) .basis.destroy
-      .basis.create(.n_atom)
-
-      ! Move back to atoms line
-      molden_file.move_to_line(line)
-
-      ! For each atom a: read label, Z, coordinates
-      do a = 1,.n_atom
-
-         ! Read label
-         molden_file.read(label)
-
-         ! Read Z
-         molden_file.skip_next_item
-         molden_file.read(Z)
-
-         ! Set
-         .atom(a).set_atomic_number(Z)
-         .atom(a).set_atom_data_from_label(label)
-
-         ! Read position, change units
-         molden_file.read(pos)
-         pos = fac*pos
-         .atom(a).set_position(pos)
-
-         ! Set basis label
-         .atom(a).set_basis_label("molden-"//trim(.atom(a).generic_chemical_symbol))
-
-      end
-
-      ! Read basis set
-      molden_file.look_for(op//"GTO"//cl,found=found)
-      DIE_IF(NOT found, "No GTO line")
-      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on GTO line")
-      molden_file.read_line
-
-      ! Read basis
-      save => stdin
-      stdin => molden_file
-      do a = 1,.n_atom
-         .basis(a).read_molden
-         .basis(a).put
-         .basis(a).set_label(.atom(a).basis_label)
-      end
-      stdin => save
-
-      ! Find [MO] tag
-      molden_file.look_for(op//"MO"//cl,found=found)
-      DIE_IF(NOT found, "No MO line")
-      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on MO line")
-      line = molden_file.line_number + 1
-
-      ! Any Beta tag?
-      molden_file.look_for("Beta",found=is_unrestricted)
-
-      ! Move back to [MO]'s
-      molden_file.move_to_line(line)
-
-      ! Get no. of electrons
-      n_e = ZERO
-      do
-         molden_file.look_for("Occup=",found=found)
-         if (NOT found) exit
-         molden_file.move_to_line_item(2)
-         molden_file.read(val)
-         molden_file.read_line
-         n_e = n_e + val
-      end
-
-      ! Now set charge
-      .charge = .atom.no_of_electrons - nint(n_e)
-
-      ! Set multiplicity
-      .spin_multiplicity = .:default_spin_multiplicity
-
-
-      ! Finalize atom info/basis sets
-      .:finalize_atoms
-
-      ! Create MO arrays (leaky)
-      .density_matrix.destroy
-      .occupation_numbers.destroy
-      .natural_orbitals.destroy
-
-      if (is_unrestricted) then
-
-         .occupation_numbers.create(.n_bf,"unrestricted")
-         .occupation_numbers.alpha = ZERO
-         .occupation_numbers.beta = ZERO
-
-         .density_matrix.create(.n_bf,"unrestricted")
-         .natural_orbitals.create(.n_bf,"unrestricted")
-         .natural_orbitals.alpha = ZERO
-         .natural_orbitals.beta = ZERO
-
-      else
-
-         .occupation_numbers.create(.n_bf,"restricted")
-         .occupation_numbers.restricted = ZERO
-
-         .density_matrix.create(.n_bf,"unrestricted")
-         .natural_orbitals.create(.n_bf,"restricted")
-         .natural_orbitals.restricted = ZERO
-
-      end
-
-      ! Move back to [MO]'s
-      molden_file.move_to_line(line)
-      orb.create(.n_bf)
-
-      ! Read in orbitals and energies.
-      i = 0
-      do
-
-         molden_file.look_for("Ene=",found=found)
-
-         if (NOT found) exit
-
-         ! Read energy
-         molden_file.skip_next_item
-         molden_file.read(energy)
-
-         ! Read spin
-         molden_file.skip_next_item
-         molden_file.read(spin)
-
-         ! Read occupation
-         molden_file.skip_next_item
-         molden_file.read(occ)
-
-         ! Read orbital
-         do f = 1,.n_bf
-            molden_file.skip_next_item
-            molden_file.read(orb(f))
-         end
-
-         ! Increment orbital
-         if (spin=="Alpha") i = i + 1
-         DIE_IF(i>.n_bf,"too many orbitals specified")
-
-         ! Assign MO's
-         if (is_unrestricted) then
-
-            select case (spin)
-
-            case ("Alpha")
-               .occupation_numbers.alpha(i) = occ
-               .natural_orbitals.alpha(:,i) = orb
-
-            case ("Beta")
-               .occupation_numbers.beta(i) = occ
-               .natural_orbitals.beta(:,i) = orb
-
-            case default
-               DIE("unknown spin: "//trim(spin))
-
-            end
-
-         else
-
-            select case (spin)
-
-            case ("Alpha")
-               .occupation_numbers.restricted(i) = occ
-               .natural_orbitals.restricted(:,i) = orb
-
-            case default
-               DIE("unexpected spin: "//trim(spin))
-
-            end
-
-         end
-
-      end
-
-      ! Clean
-      orb.destroy
-
-      ! Swap orbital order
-      if (is_unrestricted) then
-         .:swap_molden_orbital_order(.natural_orbitals.alpha,"row")
-         .:swap_molden_orbital_order(.natural_orbitals.beta,"row")
-      else
-         .:swap_molden_orbital_order(.natural_orbitals.restricted,"row")
-      end
-
-
-      ! Make density matrix
-      if (is_unrestricted) then
-         .:make_density_matrix_from(.natural_orbitals,.occupation_numbers,"unrestricted")
-      else
-         .:make_density_matrix_from(.natural_orbitals,.occupation_numbers,"restricted")
-      end
-
-      ! Print out data
-      stdout.flush
-      stdout.text("===========")
-      stdout.text("Molden data")
-      stdout.text("===========")
-      stdout.flush
-      stdout.text("Below are the data read from the molden file:")
-      stdout.text(". Atom coordinates and bases")
-      stdout.text(". Natural orbitals and their occupancies")
-      stdout.flush
-      if (is_unrestricted) then; stdout.text("The data is for *restricted* orbitals")
-      else;                      stdout.text("The data is for *unrestricted* orbitals")
-      end
-
-      stdout.flush
-      stdout.text("Molden atom coordinates and bases:")
-      .:put_atoms
-
-      stdout.flush
-      stdout.text("Occupation numbers:")
-      stdout.flush
-      stdout.put(.occupation_numbers)
-
-      stdout.flush
-      stdout.text("Natural orbitals:")
-      stdout.flush
-      stdout.put(.natural_orbitals)
-
-      ! Save data in archive files
-      archive.set_defaults
-
-      archive.set(.name,"density_matrix")
-      archive.write(.density_matrix)
-
-      archive.set(.name,"natural_orbitals")
-      archive.write(.natural_orbitals)
-
-      archive.set(.name,"occupation_numbers")
-      archive.write(.occupation_numbers)
-
-      ! Set crystal data
-      if (associated(.crystal)) then
-         .:resolve_axis_system
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-      end
-
-      ! Clean
-      molden_file.destroy
-
-   end
+!   read_molden_NOs(file_name) ::: leaky
+!   ! Read a Molden natural orbitals file.
+!   ! Here the occupation numbers are not integers.
+!      file_name :: STR, optional
+!
+!   ENSURE(NOT .use_spherical_basis,"not implemented")
+!
+!      molden_file,save :: TEXTFILE*
+!      archive :: ARCHIVE
+!      pos :: VEC{REAL}(3)
+!      orb :: VEC{REAL}*
+!      fac,n_e,val,energy,occ :: REAL
+!      name,units,item,label,spin :: STR
+!      op,cl :: STR(len=1)
+!      found,is_unrestricted :: BIN
+!      line, a,i,f,Z :: INT
+!
+!      ! Get file name
+!      if (present(file_name)) then;              name = file_name
+!      else if (NOT stdin.buffer_exhausted) then; stdin.read(name)
+!      else;                                      name = .name
+!      end
+!
+!      ! Constants
+!      op = achar(91)
+!      cl = achar(93)
+!
+!      ! Open Molden file
+!      molden_file.create(name)
+!      molden_file.open_for("read")
+!
+!      ! Find [ATOMS] block
+!      molden_file.look_for(op//"ATOMS"//cl,found=found)
+!      DIE_IF(NOT found, "No ATOMS line")
+!      DIE_IF(molden_file.n_line_items/=2, "Expecting two items on ATOMS line")
+!
+!      ! Read units
+!      molden_file.read(units)
+!      fac = ONE
+!      if (units=="Angs") fac = BOHR_PER_ANGSTROM
+!
+!      ! Store start of atoms list
+!      molden_file.read_line
+!      line = molden_file.line_number
+!
+!      ! Get no. of atoms ...
+!      .n_atom = 0
+!      do
+!         molden_file.read(item)
+!         if (item==op//"Molden") exit
+!         DIE_IF(molden_file.end_of_file,"file ended unexpectedly")
+!         .n_atom = .n_atom + 1
+!         molden_file.read_line
+!      end
+!
+!      ! Create atom list (leaky)
+!      if (.atom.associated)  .atom.destroy
+!      .atom.create(.n_atom)
+!
+!      ! Create basis -- Different one for every atom (leaky)
+!      if (.basis.associated) .basis.destroy
+!      .basis.create(.n_atom)
+!
+!      ! Move back to atoms line
+!      molden_file.move_to_line(line)
+!
+!      ! For each atom a: read label, Z, coordinates
+!      do a = 1,.n_atom
+!
+!         ! Read label
+!         molden_file.read(label)
+!
+!         ! Read Z
+!         molden_file.skip_next_item
+!         molden_file.read(Z)
+!
+!         ! Set
+!         .atom(a).set_atomic_number(Z)
+!         .atom(a).set_atom_data_from_label(label)
+!
+!         ! Read position, change units
+!         molden_file.read(pos)
+!         pos = fac*pos
+!         .atom(a).set_position(pos)
+!
+!         ! Set basis label
+!         .atom(a).set_basis_label("molden-"//trim(.atom(a).generic_chemical_symbol))
+!
+!      end
+!
+!      ! Read basis set
+!      molden_file.look_for(op//"GTO"//cl,found=found)
+!      DIE_IF(NOT found, "No GTO line")
+!      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on GTO line")
+!      molden_file.read_line
+!
+!      ! Read basis
+!      save => stdin
+!      stdin => molden_file
+!      do a = 1,.n_atom
+!         .basis(a).read_molden
+!         .basis(a).put
+!         .basis(a).set_label(.atom(a).basis_label)
+!      end
+!      stdin => save
+!
+!      ! Find [MO] tag
+!      molden_file.look_for(op//"MO"//cl,found=found)
+!      DIE_IF(NOT found, "No MO line")
+!      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on MO line")
+!      line = molden_file.line_number + 1
+!
+!      ! Any Beta tag?
+!      molden_file.look_for("Beta",found=is_unrestricted)
+!
+!      ! Move back to [MO]'s
+!      molden_file.move_to_line(line)
+!
+!      ! Get no. of electrons
+!      n_e = ZERO
+!      do
+!         molden_file.look_for("Occup=",found=found)
+!         if (NOT found) exit
+!         molden_file.move_to_line_item(2)
+!         molden_file.read(val)
+!         molden_file.read_line
+!         n_e = n_e + val
+!      end
+!
+!      ! Now set charge
+!      .charge = .atom.no_of_electrons - nint(n_e)
+!
+!      ! Set multiplicity
+!      .spin_multiplicity = .:default_spin_multiplicity
+!
+!
+!      ! Finalize atom info/basis sets
+!      .:finalize_atoms
+!
+!      ! Create MO arrays (leaky)
+!      .density_matrix.destroy
+!      .occupation_numbers.destroy
+!      .natural_orbitals.destroy
+!
+!      if (is_unrestricted) then
+!
+!         .occupation_numbers.create(.n_bf,"unrestricted")
+!         .occupation_numbers.alpha = ZERO
+!         .occupation_numbers.beta = ZERO
+!
+!         .density_matrix.create(.n_bf,"unrestricted")
+!         .natural_orbitals.create(.n_bf,"unrestricted")
+!         .natural_orbitals.alpha = ZERO
+!         .natural_orbitals.beta = ZERO
+!
+!      else
+!
+!         .occupation_numbers.create(.n_bf,"restricted")
+!         .occupation_numbers.restricted = ZERO
+!
+!         .density_matrix.create(.n_bf,"unrestricted")
+!         .natural_orbitals.create(.n_bf,"restricted")
+!         .natural_orbitals.restricted = ZERO
+!
+!      end
+!
+!      ! Move back to [MO]'s
+!      molden_file.move_to_line(line)
+!      orb.create(.n_bf)
+!
+!      ! Read in orbitals and energies.
+!      i = 0
+!      do
+!
+!         molden_file.look_for("Ene=",found=found)
+!
+!         if (NOT found) exit
+!
+!         ! Read energy
+!         molden_file.skip_next_item
+!         molden_file.read(energy)
+!
+!         ! Read spin
+!         molden_file.skip_next_item
+!         molden_file.read(spin)
+!
+!         ! Read occupation
+!         molden_file.skip_next_item
+!         molden_file.read(occ)
+!
+!         ! Read orbital
+!         do f = 1,.n_bf
+!            molden_file.skip_next_item
+!            molden_file.read(orb(f))
+!         end
+!
+!         ! Increment orbital
+!         if (spin=="Alpha") i = i + 1
+!         DIE_IF(i>.n_bf,"too many orbitals specified")
+!
+!         ! Assign MO's
+!         if (is_unrestricted) then
+!
+!            select case (spin)
+!
+!            case ("Alpha")
+!               .occupation_numbers.alpha(i) = occ
+!               .natural_orbitals.alpha(:,i) = orb
+!
+!            case ("Beta")
+!               .occupation_numbers.beta(i) = occ
+!               .natural_orbitals.beta(:,i) = orb
+!
+!            case default
+!               DIE("unknown spin: "//trim(spin))
+!
+!            end
+!
+!         else
+!
+!            select case (spin)
+!
+!            case ("Alpha")
+!               .occupation_numbers.restricted(i) = occ
+!               .natural_orbitals.restricted(:,i) = orb
+!
+!            case default
+!               DIE("unexpected spin: "//trim(spin))
+!
+!            end
+!
+!         end
+!
+!      end
+!
+!      ! Clean
+!      orb.destroy
+!
+!      ! Swap orbital order
+!      if (is_unrestricted) then
+!         .:swap_molden_orbital_order(.natural_orbitals.alpha,"row")
+!         .:swap_molden_orbital_order(.natural_orbitals.beta,"row")
+!      else
+!         .:swap_molden_orbital_order(.natural_orbitals.restricted,"row")
+!      end
+!
+!
+!      ! Make density matrix
+!      if (is_unrestricted) then
+!         .:make_density_matrix_from(.natural_orbitals,.occupation_numbers,"unrestricted")
+!      else
+!         .:make_density_matrix_from(.natural_orbitals,.occupation_numbers,"restricted")
+!      end
+!
+!      ! Print out data
+!      stdout.flush
+!      stdout.text("===========")
+!      stdout.text("Molden data")
+!      stdout.text("===========")
+!      stdout.flush
+!      stdout.text("Below are the data read from the molden file:")
+!      stdout.text(". Atom coordinates and bases")
+!      stdout.text(". Natural orbitals and their occupancies")
+!      stdout.flush
+!      if (is_unrestricted) then; stdout.text("The data is for *restricted* orbitals")
+!      else;                      stdout.text("The data is for *unrestricted* orbitals")
+!      end
+!
+!      stdout.flush
+!      stdout.text("Molden atom coordinates and bases:")
+!      .:put_atoms
+!
+!      stdout.flush
+!      stdout.text("Occupation numbers:")
+!      stdout.flush
+!      stdout.put(.occupation_numbers)
+!
+!      stdout.flush
+!      stdout.text("Natural orbitals:")
+!      stdout.flush
+!      stdout.put(.natural_orbitals)
+!
+!      ! Save data in archive files
+!      archive.set_defaults
+!
+!      archive.set(.name,"density_matrix")
+!      archive.write(.density_matrix)
+!
+!      archive.set(.name,"natural_orbitals")
+!      archive.write(.natural_orbitals)
+!
+!      archive.set(.name,"occupation_numbers")
+!      archive.write(.occupation_numbers)
+!
+!      ! Set crystal data
+!      if (associated(.crystal)) then
+!         .:resolve_axis_system
+!         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+!      end
+!
+!      ! Clean
+!      molden_file.destroy
+!
+!   end
 
    swap_molden_orbital_order(X,swap)
    ! Swap the order of orbitals on matrix "X" after reading a
