@@ -201,7 +201,7 @@ contains
 
       ! Set the fragment geometry in fractionals & offset from the supplied crystal
       .fragment_geometry => crystal.fragment_geometry
-      .n_fragment_atoms = crystal.n_fragment_atoms
+      .n_fragment_atoms = .fragment_geometry.dim2
       .fragment_offset  = int(crystal.fragment_geometry.mean_column_vector)
 
    end
@@ -222,7 +222,7 @@ contains
 
       ! Point to crystal fragment geometry
       .fragment_geometry => .crystal.fragment_geometry
-      .n_fragment_atoms  =  .crystal.n_fragment_atoms
+      .n_fragment_atoms  =  .fragment_geometry.dim2
 
       ! Set fragment offset (center) from the supplied crystal
       .fragment_offset   = int(.crystal.fragment_geometry.mean_column_vector)
@@ -518,7 +518,6 @@ contains
 
    ENSURE(.crystal.associated,"no crystal")
    ENSURE(.crystal.unit_cell_geometry.associated,"no crystal unit cell")
-   ENSURE(.fragment_geometry.associated,"no fragment_geometry")
 
       h :: VEC{INT}(3)
       radius,two_angstrom :: REAL
@@ -528,208 +527,211 @@ contains
 
       select case (.generation_method)
 
-         case ("within_radius","for_hirshfeld_surface","fragment")
+      case ("within_radius","for_hirshfeld_surface","fragment")
 
-            ENSURE(.fragment_geometry.associated,"no fragment_geometry")
-            ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
-            ENSURE(.crystal.unit_cell_atom_for_frag_atom.associated,"no cell-frag_atom array")
-            ENSURE(.crystal.unit_cell_shft_for_frag_atom.associated,"no cell-frag_atom array")
+         ENSURE(.fragment_geometry.associated,"no fragment_geometry")
+         ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
+         ENSURE(.crystal.unit_cell_atom_for_frag_atom.associated,"no cell-frag_atom array")
+         ENSURE(.crystal.unit_cell_shft_for_frag_atom.associated,"no cell-frag_atom array")
 
-            ! Get fragment offset i.e. center
-            pos = .fragment_geometry.mean_column_vector
-            .fragment_offset = int(pos)
+         ! Get fragment offset i.e. center
+         pos = .fragment_geometry.mean_column_vector
+         .fragment_offset = int(pos)
 
-            ! Create occupation list
-            .occupation_list.destroy
-            .occupation_list.create(.n_fragment_atoms)
+         ! Create occupation list
+         .occupation_list.destroy
+         .occupation_list.create(.fragment_geometry.dim2)
 
-            ! Loop on fragment atom
-            do f = 1,.n_fragment_atoms
+         ! Loop on fragment atom
+         do f = 1,.fragment_geometry.dim2
 
-               ! Get unit cell atom & shift
-               u = .crystal.unit_cell_atom_for_frag_atom(f)
-               h = .crystal.unit_cell_shft_for_frag_atom(:,f)
+            ! Get unit cell atom & shift
+            u = .crystal.unit_cell_atom_for_frag_atom(f)
+            h = .crystal.unit_cell_shft_for_frag_atom(:,f)
 
-               ! Shift relative to recentered unit cell
-               h = h + .fragment_offset
+            ! Shift relative to recentered unit cell
+            h = h + .fragment_offset
 
-               DIE_IF(any(h<-CLUSTER_H_MAX),"frag too wide, h = "//trim(h.to_concatenated_str))
-               DIE_IF(any(h> CLUSTER_H_MAX),"frag too wide, h = "//trim(h.to_concatenated_str))
+            DIE_IF(any(h<-CLUSTER_H_MAX),"frag too wide, h = "//trim(h.to_concatenated_str))
+            DIE_IF(any(h> CLUSTER_H_MAX),"frag too wide, h = "//trim(h.to_concatenated_str))
 
-               ! Sanity check
-               if (u==0) then
-                  WARN("position of fragment atom "//f.to_str.trim//" not found in unit cell")
-                  stdout.show("fragment pos =",pos)
-                  stdout.text("unit cell geometry:")
-                  stdout.put(transpose(.crystal.unit_cell_geometry))
-                  DIE("position of fragment atom "//f.to_str.trim//" not found in unit cell")
-               end
-
-               ! Offset h to apply to "u" to get frag atom "f".
-               ! Must reverse h. See above.
-               h = -h
-
-               ! Get occ code ...
-               .occupation_list(f) = CLUSTER_AT_CODE(h(1),h(2),h(3),u)
-
+            ! Sanity check
+            if (u==0) then
+               WARN("position of fragment atom "//f.to_str.trim//" not found in unit cell")
+               stdout.show("fragment pos =",pos)
+               stdout.text("unit cell geometry:")
+               stdout.put(transpose(.crystal.unit_cell_geometry))
+               DIE("position of fragment atom "//f.to_str.trim//" not found in unit cell")
             end
 
-         case ("unit_cell")
+            ! Offset h to apply to "u" to get frag atom "f".
+            ! Must reverse h. See above.
+            h = -h
 
-            ! Create occupation list
-            .occupation_list.destroy
-            .occupation_list.create(.crystal.n_unit_cell_atoms)
+            ! Get occ code ...
+            .occupation_list(f) = CLUSTER_AT_CODE(h(1),h(2),h(3),u)
 
-            ! Temporary
-            fragment_geometry.create(3,.crystal.n_unit_cell_atoms)
+         end
+
+      case ("unit_cell")
+
+         ! Create occupation list
+         .occupation_list.destroy
+         .occupation_list.create(.crystal.n_unit_cell_atoms)
+
+         ! Temporary
+         fragment_geometry.destroy
+         fragment_geometry.create(3,.crystal.n_unit_cell_atoms)
+
+         ! Set central cell
+         h000 = CLUSTER_H_CODE(0,0,0)
+
+         do u = 1,.crystal.n_unit_cell_atoms
+
+            ! Encode central cell
+            .occupation_list(u) = h000 + CLUSTER_UA_CODE(u)
+
+            ! Set fragment to unit cell
+            pos = .crystal.unit_cell_geometry(:,u)
+            fragment_geometry(:,u) = pos
+
+         end
+
+         ! Set fragment and make sure there is no offset
+         .set_fragment_geometry(fragment_geometry)
+         .fragment_offset = 0
+
+         ! Clean
+         fragment_geometry.destroy
+
+      case ("unit_cell_plus","for_unit_cell_density")
+
+         ! Create occupation list
+         .occupation_list.destroy
+         .occupation_list.create(.crystal.n_unit_cell_atoms)
+
+         ! Temporary
+         fragment_geometry.destroy
+         fragment_geometry.create(3,.crystal.n_unit_cell_atoms)
+
+         ! Set central cell
+         h000 = CLUSTER_H_CODE(0,0,0)
+
+         do u = 1,.crystal.n_unit_cell_atoms
+
+            ! Encode central cell
+            .occupation_list(u) = h000 + CLUSTER_UA_CODE(u)
+
+            ! Set fragment to unit cell
+            pos = .crystal.unit_cell_geometry(:,u)
+            fragment_geometry(:,u) = pos
+
+         end
+
+         ! Set fragment and make sure there is no offset
+         .set_fragment_geometry(fragment_geometry)
+         .fragment_offset = 0
+
+         ! Clean
+         fragment_geometry.destroy
+
+         ! Go two angstrom from unit cell edges for unit cell densities
+         ! if the setting is "for_unit_cell_density"
+         two_angstrom = TWO
+         two_angstrom = two_angstrom.from_units("angstrom")
+         if (.generation_method=="unit_cell_plus") then; radius = .radius
+         else;                                           radius = max(TWO,.radius)
+         end
+
+         ! Fractions "b" along cell axes; and complements "t"
+         b = radius/.crystal.unit_cell.length
+         DIE_IF(any(b>ONE),"radius around unit cell exceeds at least one cell dimension")
+         t = ONE - b
+
+         ! Unit cell code
+         uc = 0
+
+         do u = 1,.crystal.n_unit_cell_atoms
+
+            pos = .crystal.unit_cell_geometry(:,u)
+
+            uc = CLUSTER_UA_CODE(u)
+
+            ! FIX h1
+            if (pos(1)<b(1)) .occupation_list.append(CLUSTER_H_CODE( 1, 0, 0)+uc)
+            if (pos(2)<b(2)) .occupation_list.append(CLUSTER_H_CODE( 0, 1, 0)+uc)
+            if (pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 0, 0, 1)+uc)
+            if (pos(1)>t(1)) .occupation_list.append(CLUSTER_H_CODE(-1, 0, 0)+uc)
+            if (pos(2)>t(2)) .occupation_list.append(CLUSTER_H_CODE( 0,-1, 0)+uc)
+            if (pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 0, 0,-1)+uc)
+
+            if (pos(1)<b(1) AND pos(2)<b(2)) .occupation_list.append(CLUSTER_H_CODE( 1, 1, 0)+uc)
+            if (pos(1)<b(1) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 1, 0, 1)+uc)
+            if (pos(2)<b(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 0, 1, 1)+uc)
+            if (pos(1)>t(1) AND pos(2)<b(2)) .occupation_list.append(CLUSTER_H_CODE(-1, 1, 0)+uc)
+            if (pos(1)>t(1) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE(-1, 0, 1)+uc)
+            if (pos(2)>t(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 0,-1, 1)+uc)
+            if (pos(1)<b(1) AND pos(2)>t(2)) .occupation_list.append(CLUSTER_H_CODE( 1,-1, 0)+uc)
+            if (pos(1)<b(1) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 1, 0,-1)+uc)
+            if (pos(2)<b(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 0, 1,-1)+uc)
+            if (pos(1)>t(1) AND pos(2)>t(2)) .occupation_list.append(CLUSTER_H_CODE(-1,-1, 0)+uc)
+            if (pos(1)>t(1) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE(-1, 0,-1)+uc)
+            if (pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 0,-1,-1)+uc)
+
+            if (pos(1)<b(1) AND pos(2)<b(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 1, 1, 1)+uc)
+            if (pos(1)>t(1) AND pos(2)<b(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE(-1, 1, 1)+uc)
+            if (pos(1)<b(1) AND pos(2)>t(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 1,-1, 1)+uc)
+            if (pos(1)>t(1) AND pos(2)>t(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE(-1,-1, 1)+uc)
+            if (pos(1)<b(1) AND pos(2)<b(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 1, 1,-1)+uc)
+            if (pos(1)>t(1) AND pos(2)<b(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE(-1, 1,-1)+uc)
+            if (pos(1)<b(1) AND pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 1,-1,-1)+uc)
+            if (pos(1)>t(1) AND pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE(-1,-1,-1)+uc)
+
+         end
+
+      case ("offset_unit_cell","offset_unit_cell_density")
+
+         ! Create occupation list
+         .occupation_list.destroy
+         .occupation_list.create(.crystal.n_unit_cell_atoms)
+
+         ! Temporary
+         fragment_geometry.destroy
+         fragment_geometry.create(3,.crystal.n_unit_cell_atoms)
+
+         do u = 1,.crystal.n_unit_cell_atoms
+
+            ! Unit cell position
+            pos = .crystal.unit_cell_geometry(:,u)
 
             ! Set central cell
-            h000 = CLUSTER_H_CODE(0,0,0)
+            h = 0
 
-            do u = 1,.crystal.n_unit_cell_atoms
+            ! Apply the offset
+            if (pos(1)<    .unit_cell_offset(1)) h(1) = +1
+            if (pos(2)<    .unit_cell_offset(2)) h(2) = +1
+            if (pos(3)<    .unit_cell_offset(3)) h(3) = +1
+            if (pos(1)>ONE+.unit_cell_offset(1)) h(1) = -1
+            if (pos(2)>ONE+.unit_cell_offset(2)) h(2) = -1
+            if (pos(3)>ONE+.unit_cell_offset(3)) h(3) = -1
 
-               ! Encode central cell
-               .occupation_list(u) = h000 + CLUSTER_UA_CODE(u)
+            ! Get occ code ...
+            .occupation_list(u) = CLUSTER_AT_CODE(h(1),h(2),h(3),u)
 
-               ! Set fragment to unit cell
-               pos = .crystal.unit_cell_geometry(:,u)
-               fragment_geometry(:,u) = pos
+            ! Set frag geometry with offset
+            fragment_geometry(:,u) = pos + h
 
-            end
+         end
 
-            ! Set fragment and make sure there is no offset
-            .set_fragment_geometry(fragment_geometry)
-            .fragment_offset = 0
+         ! Set fragment and make sure there is no offset
+         .set_fragment_geometry(fragment_geometry)
+         .fragment_offset = 0
 
-            ! Clean
-            fragment_geometry.destroy
+         ! Clean
+         fragment_geometry.destroy
 
-         case ("unit_cell_plus","for_unit_cell_density")
-
-            ! Create occupation list
-            .occupation_list.destroy
-            .occupation_list.create(.crystal.n_unit_cell_atoms)
-
-            ! Temporary
-            fragment_geometry.create(3,.crystal.n_unit_cell_atoms)
-
-            ! Set central cell
-            h000 = CLUSTER_H_CODE(0,0,0)
-
-            do u = 1,.crystal.n_unit_cell_atoms
-
-               ! Encode central cell
-               .occupation_list(u) = h000 + CLUSTER_UA_CODE(u)
-
-               ! Set fragment to unit cell
-               pos = .crystal.unit_cell_geometry(:,u)
-               fragment_geometry(:,u) = pos
-
-            end
-
-            ! Set fragment and make sure there is no offset
-            .set_fragment_geometry(fragment_geometry)
-            .fragment_offset = 0
-
-            ! Clean
-            fragment_geometry.destroy
-
-            ! Go two angstrom from unit cell edges for unit cell densities
-            ! if the setting is "for_unit_cell_density"
-            two_angstrom = TWO
-            two_angstrom = two_angstrom.from_units("angstrom")
-            if (.generation_method=="unit_cell_plus") then; radius = .radius
-            else;                                           radius = max(TWO,.radius)
-            end
-
-            ! Fractions "b" along cell axes; and complements "t"
-            b = radius/.crystal.unit_cell.length
-            DIE_IF(any(b>ONE),"radius around unit cell exceeds at least one cell dimension")
-            t = ONE - b
-
-            ! Unit cell code
-            uc = 0
-
-            do u = 1,.crystal.n_unit_cell_atoms
-
-               pos = .crystal.unit_cell_geometry(:,u)
-
-               uc = CLUSTER_UA_CODE(u)
-
-               ! FIX h1
-               if (pos(1)<b(1)) .occupation_list.append(CLUSTER_H_CODE( 1, 0, 0)+uc)
-               if (pos(2)<b(2)) .occupation_list.append(CLUSTER_H_CODE( 0, 1, 0)+uc)
-               if (pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 0, 0, 1)+uc)
-               if (pos(1)>t(1)) .occupation_list.append(CLUSTER_H_CODE(-1, 0, 0)+uc)
-               if (pos(2)>t(2)) .occupation_list.append(CLUSTER_H_CODE( 0,-1, 0)+uc)
-               if (pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 0, 0,-1)+uc)
-
-               if (pos(1)<b(1) AND pos(2)<b(2)) .occupation_list.append(CLUSTER_H_CODE( 1, 1, 0)+uc)
-               if (pos(1)<b(1) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 1, 0, 1)+uc)
-               if (pos(2)<b(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 0, 1, 1)+uc)
-               if (pos(1)>t(1) AND pos(2)<b(2)) .occupation_list.append(CLUSTER_H_CODE(-1, 1, 0)+uc)
-               if (pos(1)>t(1) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE(-1, 0, 1)+uc)
-               if (pos(2)>t(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 0,-1, 1)+uc)
-               if (pos(1)<b(1) AND pos(2)>t(2)) .occupation_list.append(CLUSTER_H_CODE( 1,-1, 0)+uc)
-               if (pos(1)<b(1) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 1, 0,-1)+uc)
-               if (pos(2)<b(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 0, 1,-1)+uc)
-               if (pos(1)>t(1) AND pos(2)>t(2)) .occupation_list.append(CLUSTER_H_CODE(-1,-1, 0)+uc)
-               if (pos(1)>t(1) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE(-1, 0,-1)+uc)
-               if (pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 0,-1,-1)+uc)
-
-               if (pos(1)<b(1) AND pos(2)<b(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 1, 1, 1)+uc)
-               if (pos(1)>t(1) AND pos(2)<b(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE(-1, 1, 1)+uc)
-               if (pos(1)<b(1) AND pos(2)>t(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE( 1,-1, 1)+uc)
-               if (pos(1)>t(1) AND pos(2)>t(2) AND pos(3)<b(3)) .occupation_list.append(CLUSTER_H_CODE(-1,-1, 1)+uc)
-               if (pos(1)<b(1) AND pos(2)<b(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 1, 1,-1)+uc)
-               if (pos(1)>t(1) AND pos(2)<b(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE(-1, 1,-1)+uc)
-               if (pos(1)<b(1) AND pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE( 1,-1,-1)+uc)
-               if (pos(1)>t(1) AND pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(CLUSTER_H_CODE(-1,-1,-1)+uc)
-
-            end
-
-         case ("offset_unit_cell","offset_unit_cell_density")
-
-            ! Create occupation list
-            .occupation_list.destroy
-            .occupation_list.create(.crystal.n_unit_cell_atoms)
-
-            ! Temporary
-            fragment_geometry.create(3,.crystal.n_unit_cell_atoms)
-
-            do u = 1,.crystal.n_unit_cell_atoms
-
-               ! Unit cell position
-               pos = .crystal.unit_cell_geometry(:,u)
-
-               ! Set central cell
-               h = 0
-
-               ! Apply the offset
-               if (pos(1)<    .unit_cell_offset(1)) h(1) = +1
-               if (pos(2)<    .unit_cell_offset(2)) h(2) = +1
-               if (pos(3)<    .unit_cell_offset(3)) h(3) = +1
-               if (pos(1)>ONE+.unit_cell_offset(1)) h(1) = -1
-               if (pos(2)>ONE+.unit_cell_offset(2)) h(2) = -1
-               if (pos(3)>ONE+.unit_cell_offset(3)) h(3) = -1
-
-               ! Get occ code ...
-               .occupation_list(u) = CLUSTER_AT_CODE(h(1),h(2),h(3),u)
-
-               ! Set frag geometry with offset
-               fragment_geometry(:,u) = pos + h
-
-            end
-
-            ! Set fragment and make sure there is no offset
-            .set_fragment_geometry(fragment_geometry)
-            .fragment_offset = 0
-
-            ! Clean
-            fragment_geometry.destroy
-
-         case default
-            UNKNOWN(.generation_method)
+      case default
+         UNKNOWN(.generation_method)
 
       end
 
@@ -780,7 +782,7 @@ contains
       if (has_atoms_to_suppress) has_atoms_to_suppress = .unit_cell_atoms_to_suppress.dim > 0
 
       ! Cartesian fragment geometry
-      frag.create(3,.n_fragment_atoms)
+      frag.create(3,.fragment_geometry.dim2)
       frag.to_product_of(rcm,.fragment_geometry)
 
       ! Calculate offset to fragment
@@ -811,12 +813,12 @@ contains
       geom0 = geom0 + spread(off,2,n_unit_cell_atoms)
 
       ! Cells which fragment occupies
-      match.create(.n_fragment_atoms)
-      hlist.create(.n_fragment_atoms)
+      match.create(.fragment_geometry.dim2)
+      hlist.create(.fragment_geometry.dim2)
       hlist = CLUSTER_HC_FROM_CODE(.occupation_list)
 
       ! Unit cell atoms which correspond to the fragment atoms
-      ulist.create(.n_fragment_atoms)
+      ulist.create(.fragment_geometry.dim2)
       ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
 
       ! Skip fragment atoms in a particular unit cell
@@ -862,7 +864,7 @@ contains
 
             ! Test if this atom pos is within .radius
             within_radius = FALSE
-            do k = 1,.n_fragment_atoms
+            do k = 1,.fragment_geometry.dim2
 
                d = frag(:,k) - pos
 
@@ -1636,8 +1638,8 @@ contains
              .geometry(:,i) = .crystal.unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
 
              ! Set flag if fragment atom
-             if (i<=.n_fragment_atoms) then; .is_fragment_atom(i) = TRUE
-             else;                           .is_fragment_atom(i) = FALSE
+             if (i<=.fragment_geometry.dim2) then; .is_fragment_atom(i) = TRUE
+             else;                                 .is_fragment_atom(i) = FALSE
              end
 
           end
@@ -1960,11 +1962,11 @@ contains
    ! Create the "fragment_atom" list.
       fragment_atom :: VEC{ATOM}*
 
-   ENSURE(.n_fragment_atoms>0,"no fragment atoms")
+   ENSURE(.fragment_geometry.associated,"no fragment atoms")
    ENSURE(.is_fragment_atom.associated,"no fragment atoms")
    ENSURE(.crystal.associated,"no crystal info")
 
-      fragment_atom.create(.n_fragment_atoms)
+      fragment_atom.create(.fragment_geometry.dim2)
 
       .make_fragment_atom_list(fragment_atom)
 
@@ -1978,9 +1980,9 @@ contains
       fragment_atom :: VEC{ATOM}, target, OUT
 
    ENSURE(.n_atoms>0,"no atoms")
-   ENSURE(.n_fragment_atoms>0,"no fragment atoms")
+   ENSURE(.fragment_geometry.associated,"no fragment atoms")
    ENSURE(.is_fragment_atom.associated,"no is_fragment_atom")
-   ENSURE(count(.is_fragment_atom)==.n_fragment_atoms,"inconsistent is_fragment_atom")
+   ENSURE(count(.is_fragment_atom)==.fragment_geometry.dim2,"inconsistent is_fragment_atom")
    ENSURE(.geometry.associated,"no geometry")
    ENSURE(.occupation_list.associated,"no occupation_list")
    ENSURE(.asymmetric_unit_atom.associated,"no asymmetric_cell_atom")
@@ -2125,9 +2127,8 @@ contains
    fragment_atom_indices result (res) ::: public, PURE
    ! Return the indices of the fragment atoms in the cluster.
       self :: IN
-      res :: VEC{INT}(.n_fragment_atoms)
+      res :: VEC{INT}(.fragment_geometry.dim2)
 
-   ENSURE(.n_fragment_atoms>0,"no fragment atoms")
    ENSURE(.is_fragment_atom.associated,"no fragment atoms")
 
       a,f :: INT
@@ -2151,9 +2152,9 @@ contains
    nonfragment_atom_indices result (res) ::: public, PURE
    ! Return the indices of the nonfragment atoms in the cluster.
       self :: IN
-      res :: VEC{INT}(.n_atoms-.n_fragment_atoms)
+      res :: VEC{INT}(.n_atoms-.fragment_geometry.dim2)
 
-   ENSURE(.n_atoms>=.n_fragment_atoms,"no nonfragment atoms")
+   ENSURE(.n_atoms>=.fragment_geometry.dim2,"no nonfragment atoms")
    ENSURE(.is_fragment_atom.associated,"no fragment atoms")
 
       a,f :: INT
@@ -2178,9 +2179,9 @@ contains
    ! Return the indices of the crystal asymmetric unit cell atoms
    ! corresponding to the fragment atoms of the *cluster*.
       self :: IN
-      res :: VEC{INT}(.n_fragment_atoms)
+      res :: VEC{INT}(.fragment_geometry.dim2)
 
-   ENSURE(.n_fragment_atoms>0,      "no fragment atoms")
+   ENSURE(.fragment_geometry.dim2>0,   "no fragment atoms")
    ENSURE(.is_fragment_atom.associated,"no is_fragment_atom")
    ENSURE(.occupation_list.associated, "no occupation_list")
    ENSURE(.crystal.associated        , "no crystal")
@@ -2209,9 +2210,8 @@ contains
    ! Return the *crystal* fragment atom indices of the fragment atoms
    ! in the *cluster* (the two are not necessarily the same!)
       self :: IN
-      res :: VEC{INT}(.n_fragment_atoms)
+      res :: VEC{INT}(.fragment_geometry.dim2)
 
-   ENSURE(.n_fragment_atoms>0,      "no fragment atoms")
    ENSURE(.is_fragment_atom.associated,"no is_fragment_atom")
    ENSURE(.occupation_list.associated, "no occupation_list")
    ENSURE(.crystal.associated        , "no crystal")
@@ -2394,7 +2394,7 @@ contains
       charge :: VEC{REAL}, OUT
 
    ENSURE(.n_atoms>0,"no atoms in cluster")
-   ENSURE(pos.dim2==3*(.n_atoms-.n_fragment_atoms),"wrong dim2, pos")
+   ENSURE(pos.dim2==3*(.n_atoms-.fragment_geometry.dim2),"wrong dim2, pos")
    ENSURE(charge.dim==pos.dim2,"wrong dim, charge")
    ENSURE(.occupation_list.associated,"no occupation_list")
    ENSURE(.crystal.associated, "no crystal data")
@@ -2468,7 +2468,7 @@ contains
       charge :: VEC{REAL}, OUT
 
    ENSURE(.n_atoms>0,"no atoms in cluster")
-   ENSURE(pos.dim2==9*(.n_atoms-.n_fragment_atoms),"wrong dim2, pos")
+   ENSURE(pos.dim2==9*(.n_atoms-.fragment_geometry.dim2),"wrong dim2, pos")
    ENSURE(charge.dim==pos.dim2,"wrong dim, charge")
    ENSURE(.occupation_list.associated,"no occupation_list")
    ENSURE(.crystal.associated, "no crystal data")
@@ -4469,7 +4469,7 @@ contains
       L1 = fac*L1
 
       ! Assign electric fields
-      do a = 1,.n_fragment_atoms
+      do a = 1,.fragment_geometry.dim2
          u = frag_atom.index_of_value(a) ! map to unit cell atom
          DIE_IF(u==0,"fragment atom "//trim(a.to_str)//" not found in cell")
          lu = 3*(u-1)
@@ -4534,7 +4534,7 @@ contains
 
       ! Assign charge and dipole interactions
       ! Needs a minus sign when combined
-      do a = 1,.n_fragment_atoms
+      do a = 1,.fragment_geometry.dim2
          u = frag_atom.index_of_value(a) ! map to unit cell atom
          DIE_IF(u==0,"fragment atom "//trim(a.to_str)//" not found in cell")
          lu = 3*(u-1)
@@ -4972,7 +4972,6 @@ contains
       stdout.dmpp("geometry",.geometry)
       .crystal.dmpp("crystal")
       .asymmetric_unit_atom.dmpp("asymmetric_unit_atom")
-      stdout.dump("n_fragment_atoms",.n_fragment_atoms)
       stdout.dmpp("fragment_geometry",.fragment_geometry)
       stdout.dump("fragment_offset",.fragment_offset)
       stdout.dump("unit_cell_offset",.unit_cell_offset)
@@ -5008,6 +5007,7 @@ contains
 
    put
    ! Put the list of vertices for the object
+      self :: IN
 
    DIE_IF(NOT .info_made,"call make_info first")
    DIE_IF(tonto.disassociated,"no tonto variable")
@@ -5023,7 +5023,7 @@ contains
       stdout.show("Radius of cluster               =",.radius)
       stdout.show("No. of molecules                =",.n_molecules)
       stdout.show("No. of atoms                    =",.n_atoms)
-      stdout.show("No. of fragment atoms           =",.n_fragment_atoms)
+      stdout.show("No. of fragment atoms           =",.fragment_geometry.dim2)
       stdout.show("Fragment offset                 =",.fragment_offset)
       stdout.show("Minimum cell shift for search   =",.h_min)
       stdout.show("Maximum cell shift for search   =",.h_max)
@@ -5043,6 +5043,7 @@ contains
 
    put_fragment_geometry
    ! Put the initial fragment geometry information
+      self :: IN
 
    ENSURE(.crystal.associated,"no crystal")
    ENSURE(.fragment_geometry.associated,"no fragment_geometry")
@@ -5057,7 +5058,7 @@ contains
       stdout.text("=======================================")
 
       stdout.flush
-      stdout.show("No. of fragment atoms           =",.n_fragment_atoms)
+      stdout.show("No. of fragment atoms           =",.fragment_geometry.dim2)
       stdout.flush
 
       ! Unique ID tags
@@ -5108,7 +5109,7 @@ contains
       stdout.show("Radius of cluster               =",.radius)
       stdout.show("No. of molecules                =",.n_molecules)
       stdout.show("No. of atoms                    =",.n_atoms)
-      stdout.show("No. of fragment atoms           =",.n_fragment_atoms)
+      stdout.show("No. of fragment atoms           =",.fragment_geometry.dim2)
       stdout.show("Fragment offset                 =",.fragment_offset)
       stdout.show("Minimum cell shift for search   =",.h_min)
       stdout.show("Maximum cell shift for search   =",.h_max)
@@ -5271,6 +5272,8 @@ contains
    ! Outputs the tonto input file for the cluster, given additionally the list
    ! of atoms which was used to generate the fragment_geometry in crystal.
    ! (See routine make_fragment_data).
+      self :: IN
+
    ENSURE(.info_made,"call make_info first")
    ENSURE(.occupation_list.associated,"no occupation_list")
    ENSURE(.asymmetric_unit_atom.associated,"no atom data")
@@ -5451,15 +5454,18 @@ contains
    ! surface with their unit cell index and offset, for the Crystal
    ! Explorer program. Should be called only when there is a saved
    ! surface.
+      self :: IN
       inside, outside :: MAT{INT}*, OUT
+
    ENSURE(.occupation_list.associated,"no occupation_list")
-   ENSURE(.n_atoms>=.n_fragment_atoms,"no atoms outside the surface!")
+   ENSURE(.n_atoms>=.fragment_geometry.dim2,"no atoms outside the surface!")
    ENSURE(.asymmetric_unit_atom.associated,"no atom data")
+
       a,i,code,u,h1,h2,h3 :: INT
 
       ! Print out atoms and shifts for atoms inside surface
-      inside.create(.n_fragment_atoms, 4)
-      do a = 1,.n_fragment_atoms
+      inside.create(.fragment_geometry.dim2, 4)
+      do a = 1,.fragment_geometry.dim2
 
          ! Occupation code
          code = .occupation_list(a)
@@ -5482,11 +5488,13 @@ contains
       end
 
       ! Print out atoms and shifts for atoms outside surface
-      if ((.n_atoms - .n_fragment_atoms) == 0) return
+      if ((.n_atoms - .fragment_geometry.dim2) == 0) return
 
-      outside.create(.n_atoms - .n_fragment_atoms, 4)
-      do a = .n_fragment_atoms+1,.n_atoms
-         i = a - .n_fragment_atoms
+      outside.create(.n_atoms - .fragment_geometry.dim2, 4)
+      do a = .fragment_geometry.dim2+1,.n_atoms
+
+         i = a - .fragment_geometry.dim2
+
          ! Occupation code
          code = .occupation_list(a)
 
@@ -5514,17 +5522,18 @@ contains
    ! surface with their unit cell index and offset, for the Crystal
    ! Explorer program. Should be called only when there is a saved
    ! surface.
+      self :: IN
 
    ENSURE(.occupation_list.associated,"no occupation_list")
-   ENSURE(.n_atoms>=.n_fragment_atoms,"no atoms outside the surface!")
+   ENSURE(.n_atoms>=.fragment_geometry.dim2,"no atoms outside the surface!")
    ENSURE(.asymmetric_unit_atom.associated,"no atom data")
 
       a,code,u,h1,h2,h3 :: INT
 
       ! Print out atoms and shifts for atoms inside surface
       stdout.flush
-      stdout.show("begin atoms_inside_surface",.n_fragment_atoms,dots=FALSE)
-      do a = 1,.n_fragment_atoms
+      stdout.show("begin atoms_inside_surface",.fragment_geometry.dim2,dots=FALSE)
+      do a = 1,.fragment_geometry.dim2
 
          ! Occupation code
          code = .occupation_list(a)
@@ -5551,8 +5560,8 @@ contains
 
       ! Print out atoms and shifts for atoms outside surface
       stdout.flush
-      stdout.show("begin atoms_outside_surface",.n_atoms-.n_fragment_atoms,dots=FALSE)
-      do a = .n_fragment_atoms+1,.n_atoms
+      stdout.show("begin atoms_outside_surface",.n_atoms-.fragment_geometry.dim2,dots=FALSE)
+      do a = .fragment_geometry.dim2+1,.n_atoms
 
          ! Occupation code
          code = .occupation_list(a)
