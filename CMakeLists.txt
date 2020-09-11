@@ -1,5 +1,5 @@
 # CMake
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.9.0)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Install where?
@@ -17,6 +17,7 @@ set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets
     CACHE PATH "Basis sets directory")
 
 option(MPI "Use MPI" OFF)
+option(OPENMP "Use OPENMP" OFF)
 option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
 
 # Perl
@@ -96,6 +97,15 @@ if(MPI)
     endif()
 endif()
 
+set(OPENMP_LIBRARIES "")
+if(OPENMP)
+    message(STATUS "Using OpenMP")
+    find_package(OpenMP)
+    if(OpenMP_Fortran_FOUND)
+        message(STATUS "Found OpenMP")
+        set(OPENMP_LIBRARIES OpenMP::OpenMP_Fortran)
+    endif()
+endif()
 
 # If desirable we can use .F03/.f03 by appending to the below variable
 # message(STATUS "Allowed fortran suffixes: ${CMAKE_Fortran_SOURCE_FILE_EXTENSIONS}")
@@ -522,28 +532,28 @@ add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
 
 # Link exectables
-target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_dc            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_dc_derivs     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_sf            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_sf_derivs     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mpi_pi        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_dc            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_dc_derivs     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_sf            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_sf_derivs     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_mpi_pi        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
+target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES} ${OPENMP_LIBRARIES})
 
 
 # Make non-standard-named executables
