@@ -262,6 +262,7 @@ set(FOO_SRC
     ${FOO_DIR}/vec{interpolator}.foo
     ${FOO_DIR}/vec{irrep}.foo
     ${FOO_DIR}/vec{pair_energy}.foo
+    ${FOO_DIR}/vec{quadrature}.foo
    #${FOO_DIR}/vec{rys}.foo
     ${FOO_DIR}/vec{reflection}.foo
     ${FOO_DIR}/vec{shell}.foo
@@ -405,6 +406,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_mat3_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_mat_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_pair_energy.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_real.F90
     #${CMAKE_CURRENT_BINARY_DIR}/vec_rys.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_reflection.F90
