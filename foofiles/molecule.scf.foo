@@ -1803,6 +1803,99 @@ contains
 
    end
 
+!  ===============================
+!  Energy density matrix of Krogel
+!  ===============================
+
+   make_E_scf_density_matrix(method) ::: leaky
+   ! Make the density matrix from the molecular orbitals.
+   ! . If "damp" is present use it to damp the updated density matrix.
+   !   An .old_density_matrix must exist for this to work.
+   ! . If "n_a" is present it is used as the number of alpha electrons
+   !   in embedded scf calculations.
+   ! . If "method" is present it is used as the kind of density matrix
+   !   to make, otherwise taken from .scfdata.scf_kind, or guessed
+   !   from the spinorbital_kind of the MO's.
+   ! NOTE:
+   ! . If .scfdata.do_delta_build is set and a a .delta_density_matrix
+   !   is created, then a delta density is made.
+   ! . If .scfdata.apply_pFON a finite temperature density matrix is
+   !   made with temperature .scfdata.temperature_for_pFON (untested)
+      self :: INOUT
+      method :: STR, optional, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.molecular_orbitals.allocated, "no molecular orbitals")
+   ENSURE(.molecular_orbitals.has_any_genre, "no molecular orbitals")
+   ENSURE(.fock_matrix.allocated, "no fock matrix")
+   ENSURE(.fock_matrix.has_any_genre, "no fock matrix")
+
+      MO,D,MOa,MOb,Da,Db,F,Fa,Fb :: MAT{REAL}@
+      scf_method,genre :: STR
+
+      ! Ensure we have this
+      if (.core_matrix.deallocated) then
+         .:make_core_matrix
+      end
+
+      ! Determine (or guess) the kind of SCF method to be used.
+      if      (present(method))     then; scf_method = method
+      else if (.scfdata.associated) then; scf_method = .scfdata.scf_kind
+      else;                               scf_method = .molecular_orbitals.guess_scf_kind
+      end
+
+      ! Determine (or guess) the genre of density matrix to be made
+      if (.scfdata.associated) then; genre = .scfdata.spinorbital_kind
+      else;                          genre = .molecular_orbitals.spinorbital_kind
+      end
+
+      ! Make the Krogel matrix
+      .E_density_matrix = .fock_matrix
+      .E_density_matrix.plus(.core_matrix)
+      .E_density_matrix.scale_by(HALF)
+
+      ! Make the E natural orbitals
+      .BASE:make_E_natural_orbitals
+
+      ! Make the E density matrix
+      ! Not complete
+      select case (scf_method)
+
+      case ("rhf","rks","xray_rks","xray_rhf","noninteracting-group-rhf")
+
+         ENSURE(.E_natural_orbitals.is_allocated_with_genre("restricted"),"no MO's")
+         ENSURE(.spin_multiplicity==1,"Not a singlet state: "//trim(.BASE:chemical_formula)//", mult="//trim(.spin_multiplicity.to_str))
+
+         MO = .E_natural_orbitals.restricted(:,1:.n_a)
+         .E_density_matrix.restricted.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
+
+      case ("rohf")
+
+         ENSURE(.molecular_orbitals.is_allocated_with_genre("restricted"),"no MO's")
+
+         MOa = .molecular_orbitals.restricted(:,1:.n_a)
+         MOb = .molecular_orbitals.restricted(:,1:.n_b)
+         .density_matrix.alpha.to_product_of(MOa,MOa,transpose_b=TRUE)
+         .density_matrix.beta.to_product_of(MOb,MOb,transpose_b=TRUE)
+
+      case ("uhf","uks","xray_uhf","xray_uks", &
+            "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+
+         ENSURE(.molecular_orbitals.is_allocated_with_genre("unrestricted"),"no MO's")
+
+            MOa = .molecular_orbitals.alpha(:,1:.n_a)
+            MOb = .molecular_orbitals.beta(:,1:.n_b)
+            .density_matrix.alpha.to_product_of(MOa,MOa,transpose_b=TRUE)
+            .density_matrix.beta.to_product_of(MOb,MOb,transpose_b=TRUE)
+
+      case default
+
+         DIE("unknown SCF kind, "//trim(scf_method))
+
+      end
+
+   end
+
 !  ===========
 !  Core matrix
 !  ===========
@@ -6253,7 +6346,7 @@ contains
       .BASE:put_debug(.overlap_matrix,"make_r_core_guess: overlap_matrix")
 
       ! Get the guess orbitals
-      .:make_r_guess_from(.core_matrix.restricted, &
+      .:diagonalize_r_matrix(.core_matrix.restricted, &
                            .orbital_energies.restricted, &
                            .molecular_orbitals.restricted)
 
@@ -6301,7 +6394,7 @@ contains
       .BASE:put_debug(.overlap_matrix,"make_r_core_guess: overlap_matrix")
 
       ! Get the guess orbitals
-      .:make_g_guess_from(.core_matrix.general, &
+      .:diagonalize_g_matrix(.core_matrix.general, &
                            .orbital_energies.general, &
                            .molecular_orbitals.general)
 
@@ -6321,93 +6414,6 @@ contains
       ! Get a reasonable set of starting MO's
       .:make_fock_matrix
       .:make_fock_guess
-
-   end
-
-   make_r_guess_from(fock_matrix,MO_energies,MO) ::: private
-   ! Make initial "MO's" and "MO_energies" from a given "fock_matrix"
-   ! ... for cartesian basis functions
-      fock_matrix :: MAT{REAL}, IN
-      MO :: MAT{REAL}, OUT
-      MO_energies :: VEC{REAL}, OUT
-
-   DIE_IF(NOT fock_matrix.is_symmetric,"fock_matrix not symmetric!  WTF?!")
-
-      F,R :: MAT{REAL}* DEFAULT_NULL
-
-      F.create(.n_bf,.n_bf)
-      R.create(.n_bf,.n_bf)
-
-      !  Get S^{-1/2 }
-      .INTS:make_r_overlap_inverse_sqrt(R)
-
-      !  H~ = S^-1/2 H S^-1/2
-      fock_matrix.change_basis_to(F,R)
-
-      ! Remove linear dependence
-      if (.scfdata.associated) .BASE:shift_dependence_from_r(F)
-
-      !  Solve for c~
-      F.solve_symmetric_eigenproblem(MO_energies,MO)
-
-      ! Debug
-      .BASE:put_debug(MO,"make_r_guess_from: fock_matrix")
-      .BASE:put_debug(MO,"make_r_guess_from: R")
-      .BASE:put_debug(MO,"make_r_guess_from: F")
-      .BASE:put_debug(MO,"make_r_guess_from: MO")
-      .BASE:put_debug(MO_energies,"make_r_guess_from: MO_energies")
-
-      ! Back transform: c = S^{-1/2} c~
-      F.to_product_of(R,MO)
-      MO = F
-
-      ! Clean
-      R.destroy
-      F.destroy
-
-   end
-
-   make_g_guess_from(fock_matrix,MO_energies,MO) ::: private
-   ! Make initial general "MO's" and "MO_energies" from a given "fock_matrix"
-   ! ... for cartesian basis functions
-      self :: INOUT
-      fock_matrix :: MAT{REAL}, IN
-      MO :: MAT{REAL}, OUT
-      MO_energies :: VEC{REAL}, OUT
-
-   DIE_IF(NOT fock_matrix.is_symmetric,"fock_matrix not symmetric!  WTF?!")
-
-      F,R :: MAT{REAL}* DEFAULT_NULL
-
-      F.create(2*.n_bf,2*.n_bf)
-      R.create(2*.n_bf,2*.n_bf)
-
-      !  Get S^{-1/2 }
-      .INTS:make_r_overlap_inverse_sqrt(R)
-
-      !  H~ = S^-1/2 H S^-1/2
-      fock_matrix.change_basis_to(F,R)
-
-      ! Remove linear dependence
-      if (.scfdata.associated) .BASE:shift_dependence_from_r(F)
-
-      !  Solve for c~
-      F.solve_symmetric_eigenproblem(MO_energies,MO)
-
-      ! Debug
-      .BASE:put_debug(MO,"make_r_guess_from: fock_matrix")
-      .BASE:put_debug(MO,"make_r_guess_from: R")
-      .BASE:put_debug(MO,"make_r_guess_from: F")
-      .BASE:put_debug(MO,"make_r_guess_from: MO")
-      .BASE:put_debug(MO_energies,"make_r_guess_from: MO_energies")
-
-      ! Back transform: c = S^{-1/2} c~
-      F.to_product_of(R,MO)
-      MO = F
-
-      ! Clean
-      R.destroy
-      F.destroy
 
    end
 
@@ -6772,10 +6778,9 @@ contains
    ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
    ! a given complex general "fock_matrix".
       self :: INOUT
-
+      fock_matrix :: MAT{REAL}, IN
       MO_energies :: VEC{REAL}, OUT
       MO :: MAT{REAL}, OUT
-      fock_matrix :: MAT{REAL}, IN
 
    DIE_IF(NOT fock_matrix.is_symmetric, "fock_matrix not symmetric!  WTF?!")
    ENSURE(.overlap_matrix.created,"no overlap matrix")
@@ -6858,6 +6863,137 @@ contains
       H.destroy
       R.destroy
 
+   end
+
+   make_r_guess_from(fock_matrix,MO_energies,MO) ::: private
+   ! Make initial "MO's" and "MO_energies" from a given "fock_matrix"
+   ! ... for cartesian basis functions
+      fock_matrix :: MAT{REAL}, IN
+      MO :: MAT{REAL}, OUT
+      MO_energies :: VEC{REAL}, OUT
+
+   DIE_IF(NOT fock_matrix.is_symmetric,"fock_matrix not symmetric!  WTF?!")
+
+      F,R :: MAT{REAL}* DEFAULT_NULL
+
+      F.create(.n_bf,.n_bf)
+      R.create(.n_bf,.n_bf)
+
+      !  Get S^{-1/2 }
+      .INTS:make_r_overlap_inverse_sqrt(R)
+
+      !  H~ = S^-1/2 H S^-1/2
+      fock_matrix.change_basis_to(F,R)
+
+      ! Remove linear dependence
+      if (.scfdata.associated) .BASE:shift_dependence_from_r(F)
+
+      !  Solve for c~
+      F.solve_symmetric_eigenproblem(MO_energies,MO)
+
+      ! Back transform: c = S^{-1/2} c~
+      F.to_product_of(R,MO)
+      MO = F
+
+      ! Clean
+      R.destroy
+      F.destroy
+
+   end
+
+
+   diagonalize_r_matrix(H,eigenvalues,eigenvectors) ::: private
+   ! Diagonalize a restricted one-electron AO operator matrix "H",
+   ! return the "eigenvalues" and "eigenvector" coefficients.
+      self :: INOUT
+      H :: MAT{REAL}, IN
+      eigenvalues :: VEC{REAL}, OUT
+      eigenvectors :: MAT{REAL}, OUT
+
+   DIE_IF(NOT H.is_symmetric,"H not symmetric!  WTF?!")
+
+      F,R :: MAT{REAL}* DEFAULT_NULL
+
+      F.create(.n_bf,.n_bf)
+      R.create(.n_bf,.n_bf)
+
+      !  Get S^{-1/2 }
+      .INTS:make_r_overlap_inverse_sqrt(R)
+
+      !  H~ = S^-1/2 H S^-1/2
+      H.change_basis_to(F,R)
+
+      ! Remove linear dependence
+      if (.scfdata.associated) .BASE:shift_dependence_from_r(F)
+
+      !  Solve for cO~
+      F.solve_symmetric_eigenproblem(eigenvalues,eigenvectors)
+
+      ! Back transform: c = S^{-1/2} c~
+      F.to_product_of(R,eigenvectors)
+      eigenvectors = F
+
+      ! Clean
+      R.destroy
+      F.destroy
+
+   end
+
+   diagonalize_gen_matrix(H,eigenvalues,eigenvectors) ::: template
+   ! Diagonalize a general (complex) one-electron AO operator matrix
+   ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
+   ! the basis.
+      self :: INOUT
+      H :: TYPE?, IN
+      eigenvalues :: VEC{REAL}, OUT
+      eigenvectors :: TYPE?, OUT
+
+ ! DIE_IF(NOT H.is_hermitian,"fock_matrix not hermitian!  WTF?!")
+
+      S,R :: MAT{REAL}*
+      F :: TYPE?*
+
+      R.create(2*.n_bf,2*.n_bf)
+      S.create(.n_bf,.n_bf)
+
+      ! S = S^-1/2, R = big inverse S
+      .INTS:make_r_overlap_inverse_sqrt(S)
+
+      ! R = big inverse S
+      R = ZERO
+      R.alpha_alpha_set_to(S)
+      R.beta_beta_set_to(S)
+      S.destroy
+
+      ! H = Fock matrix
+      F.create(2*.n_bf,2*.n_bf)
+      F = H
+
+      ! H = S^-1/2 F S^-1/2
+      F.change_basis_using(R)
+
+      F.diagonalize_by_jacobi(eigenvalues,eigenvectors)
+
+      !  c  = S^-1/2 c~
+      F.to_product_of(R,eigenvectors)
+      eigenvectors = F
+
+      ! Clean
+      F.destroy
+      R.destroy
+
+   end
+
+   diagonalize_g_matrix(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_matrix, TYPE?=>MAT{REAL})
+   ! Diagonalize a general (complex) one-electron AO operator matrix
+   ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
+   ! the basis.
+   end
+
+   diagonalize_gc_matrix(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_matrix, TYPE?=>MAT{CPX})
+   ! Diagonalize a general (complex) one-electron AO operator matrix
+   ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
+   ! the basis.
    end
 
 !  =============
@@ -8175,13 +8311,35 @@ contains
    ENSURE(.density_matrix.allocated,"no basis_set info")
 
       a :: INT
-
-      .BASE:make_ao_density_matrix
+      do_NAOs :: BIN
       
       if (.BASE:has_all_NAO_matrices) return
 
-      do a = 1,.n_atom
-         .:make_NAOs_for_atom(a)
+      ! Get restricted DM
+      .BASE:make_ao_density_matrix
+
+      ! NAOs or projected NAOs?
+      do_NAOs = TRUE
+      if (.roby.created) then
+      if (.roby.use_projected_NAOs) then
+         do_NAOs = FALSE
+      end
+      end
+
+      if (do_NAOs) then
+
+         ! NBO stype NAOs
+         do a = 1,.n_atom
+            .:make_NAOs_for_atom(a)
+         end
+
+      else
+
+         ! Projected NAOs from P_A \rho P_A, P_A = atomic projector
+         do a = 1,.n_atom
+            .:make_pNAOs_for_atom(a)
+         end
+
       end
 
    end
@@ -8223,6 +8381,35 @@ contains
       P.create(n_bf,n_bf)
       .BASE:AO_subspace_set(P,.density_matrix.restricted,group,group)
 
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.show("Atom = ",.atom(a).tag)
+         stdout.text("S:")
+         stdout.put(S)
+         stdout.text("P:")
+         stdout.put(P)
+      end
+      end
+
+      if (.roby.associated) then
+      if (.roby.use_spherical_averaging) then
+
+         ! Symmetrize P
+         .pointgroup.destroy
+         .pointgroup.create("oh",.use_spherical_basis)
+         .atom(a).symmetrize(P,.pointgroup)
+         .pointgroup.destroy
+
+      end
+      end
+        
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.text("P after symmetrization:")
+         stdout.put(P)
+      end
+      end
+
       ! Transform P -> S^(1/2) P S^(1/2)
       X.create(n_bf,n_bf)
       P.change_basis_to(X,V)
@@ -8245,6 +8432,139 @@ contains
       ! Reverse order
       occupation = occupation(n_bf:1:-1)
       NAO        =      NAO(:,n_bf:1:-1)
+
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.text("NAO occupation:")
+         stdout.put(occupation)
+         stdout.text("NAO:")
+         stdout.put(NAO)
+      end
+      end
+
+      ! Assign
+      .atom(a).NAOs            => NAO
+      .atom(a).NAO_occupations => occupation
+
+   end
+
+   make_pNAOs_for_atom(a) ::: leaky, private
+   ! Make the projected restricted natural atomic orbitals (pNAOs).
+      self :: INOUT
+      a :: INT, IN
+
+   ENSURE(.atom(a).NAOs.disassociated,           "NAO's exist! Atom "//trim(a.to_str))
+   ENSURE(.atom(a).NAO_occupations.disassociated,"NAO occs exist! Atom "//trim(a.to_str))
+   ENSURE(.overlap_matrix.associated,"no overlap matrix")
+   ENSURE(.density_matrix.allocated,"no density matrix")
+   ENSURE(.density_matrix.restricted.allocated,"no restricted density matrix")
+
+      NAO, S,Smh,P,Q :: MAT{REAL}*
+      occupation :: VEC{REAL}*
+      group :: VEC{INT}(1)
+      n_bf :: INT
+
+      ! No. of basis functions in the group
+      n_bf  = .atom(a).basis.n_bf
+      group = [ a ]
+
+      ! Create the (full) NAO and occupation matrix
+      NAO.create(n_bf,n_bf)
+      occupation.create(n_bf)
+
+      ! Density matrices (see below)
+      Q.create(n_bf,n_bf)
+      P.create(n_bf,n_bf)
+
+      ! S = S(:,a), overlap matrix for all,atom A
+      S.create(.n_bf,n_bf)
+      .BASE:AO_subspace_set(S,.overlap_matrix,col_atom=group)
+
+      ! Transform density matrix D -> P = S^T D S
+      .density_matrix.restricted.change_basis_to(P,S)
+
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.show("Atom = ",.atom(a).tag)
+         stdout.text("S:")
+         stdout.put(S)
+         stdout.text("P:")
+         stdout.put(P)
+      end
+      end
+
+      ! S_A = overlap matrix atom a
+      S.destroy
+      Smh.create(n_bf,n_bf)
+      S.create(n_bf,n_bf)
+      .BASE:AO_subspace_set(S,.overlap_matrix,group,group)
+
+      ! Get (S_A)^-1
+      Smh.to_inverse_of(S)
+
+      ! Transform density P -> Q = (S_A)^-1 P (S_A)^-1
+      P.change_basis_to(Q,Smh)
+
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.put(S)
+         stdout.text("Q:")
+         stdout.put(Q)
+      end
+      end
+
+      if (.roby.associated) then
+      if (.roby.use_spherical_averaging) then
+
+         ! Symmetrize P
+         .pointgroup.destroy
+         .pointgroup.create("oh",.use_spherical_basis)
+         .atom(a).symmetrize(Q,.pointgroup)
+         .pointgroup.destroy
+
+      end
+      end
+
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.text("Q after symmetrization:")
+         stdout.put(Q)
+      end
+      end
+
+      ! Get (S_A)^1/2
+      Smh.to_sqrt_of(S)
+
+      ! Transform density Q -> Q = (S_A)^1/2 Q (S_A)^1/2
+      Q.change_basis_to(P,Smh)
+
+      ! Diagonalize; now Q = eigenvectors
+      P.solve_symmetric_eigenproblem(occupation,Q)
+
+      ! Get (S_A)^-1/2
+      Smh.to_inverse_sqrt_of(S)
+
+      ! Back transform
+      NAO.to_product_of(Smh,Q)
+
+      ! Clean
+      S.destroy
+      Smh.destroy
+      P.destroy
+      Q.destroy
+
+      ! Reverse order
+      occupation = occupation(n_bf:1:-1)
+      NAO        =      NAO(:,n_bf:1:-1)
+
+      if (.roby.associated) then
+      if (.roby.show_calcs) then
+         stdout.text("NAO occupation:")
+         stdout.put(occupation)
+         stdout.text("NAO:")
+         stdout.put(NAO)
+      end
+      end
 
       ! Assign
       .atom(a).NAOs            => NAO
