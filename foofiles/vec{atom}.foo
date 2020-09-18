@@ -4105,11 +4105,15 @@ contains
    change_to_principal_axes
    ! Move the origin to the center of mass and change the coordinates to be with
    ! respect to the principal axes
+      self :: INOUT
+
       pm :: VEC{REAL}(3)
       pa :: MAT{REAL}(3,3)
+
       .translate_by(-.center_of_mass)
       .make_principal_moments(pm,pa)
       .change_coordinate_axes(pa)
+
    end
 
    change_to_principal_top_axes
@@ -4131,11 +4135,15 @@ contains
    change_coordinate_axes(axes)
    ! Change the coordinates of the atoms to be with respect to the columns of
    ! "axes", which must be an orthogonal matrix.
+      self :: INOUT
       axes :: MAT{REAL}(3,3)
+
       a :: INT
+
       do a = 1,.dim
          self(a).change_coordinate_axes(axes)
       end
+
    end
 
    displacement_mass_vector result (res) ::: pure
@@ -4211,6 +4219,17 @@ contains
          m.increment_diagonal_by(trace)
          it = it + m
       end
+
+   end
+
+   make_inertial_axes(axes) ::: PURE
+   ! Make the inertial "axes".
+      self :: IN
+      axes :: MAT{REAL}(3,3), OUT
+
+      pm :: VEC{REAL}(3)
+
+      .make_principal_moments(pm,axes)
 
    end
 
@@ -11931,13 +11950,19 @@ contains
       ! Show ADP3's if present
       if (.has_any_ADP3s_and_errors) then
          .put_ADP3s
-         if (present(covariance)) .put_ADP3s_in_ADP2_principal_axes(covariance)
+         if (present(covariance)) then
+         .put_ADP4s_in_inertial_axes(covariance)
+         .put_ADP3s_in_ADP2_principal_axes(covariance)
+         end
       end
 
       ! Show ADP4's if present
       if (.has_any_ADP4s_and_errors) then
          .put_ADP4s
-         if (present(covariance)) .put_ADP4s_in_ADP2_principal_axes(covariance)
+         if (present(covariance)) then
+         .put_ADP4s_in_inertial_axes(covariance)
+         .put_ADP4s_in_ADP2_principal_axes(covariance)
+         end
       end
 
    end
@@ -12087,6 +12112,98 @@ contains
       ! Clean
       dU.destroy
       U.destroy
+
+   end
+
+   get_ADP3s_in_new_axes_in(U,dU,axes,cov) ::: leaky
+   ! Rotate the ADP3s for each atom into the principal axis frame of
+   ! each atom, where "cov" is the covariance matrix for all the
+   ! parameters in the concatenated pADP vectors. 
+      self :: IN
+       U   :: MAT{REAL}@, OUT
+      dU   :: MAT{REAL}@, OUT
+      axes :: MAT{REAL}(3,3), IN
+      cov  :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      adp3,new3 :: MAT3{REAL}(3,3,3)
+      vec3,lex3 :: VEC{REAL}(10)
+      rcm :: MAT{REAL}(10,10)
+      a,n :: INT
+
+      if (NOT .has_any_ADP3s_and_errors) return
+
+      ! Create columns
+      n = .no_of_ADP3_atoms
+       U.create(n,10)
+      dU.create(n,10)
+
+      ! ADP3 atom index
+      n  = 0
+
+      ! Loop over atoms
+      do a = 1,.dim
+
+         if (NOT self(a).has_ADP3s_and_errors) cycle
+
+         ! ADP3 atom index
+         n = n + 1
+
+         ! Change ADP3s to new coord system
+         self(a).put_ADP3_vector_to(adp3)
+         adp3.back_transform_to(new3,axes)
+         new3.compress_to_pyramid(vec3)
+         GAUSSIAN_DATA:lower_pyramid_to_lexical_3(vec3,lex3)
+         U(n,1:10) = lex3
+
+         ! Rotate whole covariance matrix by "axes"
+         rcm = .rotated_U3_covariance_mx_for_atom(a,axes,cov)
+
+         ! Extract diagonal elements as errors
+         rcm.put_diagonal_to(dU(n,1:10))
+
+      end
+
+      ! Square root sigma^2
+      dU = sqrt(dU)
+
+   end
+
+   put_ADP3s_in_inertial_axes(cov)
+   ! Rotate the ADP3s for each atom into the inertial axis frame,
+   ! where "cov" is the covariance matrix for all the parameters in
+   ! the concatenated pADP vectors. 
+      self :: IN
+      cov  :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      U,dU :: MAT{REAL}@
+      axes :: MAT{REAL}(3,3)
+
+      if (NOT .has_any_ADP3s_and_errors) return
+
+      .make_inertial_axes(axes)
+      .get_ADP3s_in_new_axes_in(U,dU,axes,cov) 
+
+      ! Title
+      stdout.flush
+      stdout.text("=============================")
+      stdout.text("ADP3s in inertial axis system")
+      stdout.text("=============================")
+      stdout.flush
+      stdout.text(". ADPs are referred to cartesian axes.")
+
+      ! Finally ... print table
+      ! This routine scales the U & dU
+      .put_ADP3s(U,dU)
+
+      ! Clean
+      dU.destroy
+       U.destroy
 
    end
 
@@ -12446,6 +12563,98 @@ contains
       ! Clean
       dU.destroy
       U.destroy
+
+   end
+
+   get_ADP4s_in_new_axes_in(U,dU,axes,cov) ::: leaky
+   ! Rotate the ADP3s for each atom into the principal axis frame of
+   ! each atom, where "cov" is the covariance matrix for all the
+   ! parameters in the concatenated pADP vectors. 
+      self :: IN
+       U   :: MAT{REAL}@, OUT
+      dU   :: MAT{REAL}@, OUT
+      axes :: MAT{REAL}(3,3)
+      cov  :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      adp4,new4 :: MAT4{REAL}(3,3,3,3)
+      vec4,lex4 :: VEC{REAL}(15)
+      rcm :: MAT{REAL}(15,15)
+      a,n :: INT
+
+      if (NOT .has_any_ADP4s_and_errors) return
+
+      ! Create columns
+      n = .no_of_ADP3_atoms
+       U.create(n,15)
+      dU.create(n,15)
+
+      ! ADP3 atom index
+      n  = 0
+
+      ! Loop over atoms
+      do a = 1,.dim
+
+         if (NOT self(a).has_ADP4s_and_errors) cycle
+
+         ! ADP3 atom index
+         n = n + 1
+
+         ! Change ADP3s to new coord system
+         self(a).put_ADP4_vector_to(adp4)
+         adp4.back_transform_to(new4,axes)
+         new4.compress_to_pyramid(vec4)
+         GAUSSIAN_DATA:lower_pyramid_to_lexical_4(vec4,lex4)
+         U(n,1:15) = lex4
+
+         ! Rotate whole covariance matrix by "axes"
+         rcm = .rotated_U4_covariance_mx_for_atom(a,axes,cov)
+
+         ! Extract diagonal elements as errors
+         rcm.put_diagonal_to(dU(n,1:15))
+
+      end
+
+      ! Square root sigma^2
+      dU = sqrt(dU)
+
+   end
+
+   put_ADP4s_in_inertial_axes(cov)
+   ! Rotate the ADP3s for each atom into the principal axis frame of
+   ! each atom, where "cov" is the covariance matrix for all the
+   ! parameters in the concatenated pADP vectors. 
+      self :: IN
+      cov :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      U,dU :: MAT{REAL}@
+      axes :: MAT{REAL}(3,3)
+
+      if (NOT .has_any_ADP4s_and_errors) return
+
+      .make_inertial_axes(axes)
+      .get_ADP4s_in_new_axes_in(U,dU,axes,cov)
+
+      ! Title
+      stdout.flush
+      stdout.text("=============================")
+      stdout.text("ADP4s in inertial axis system")
+      stdout.text("=============================")
+      stdout.flush
+      stdout.text(". ADPs are referred to cartesian axes.")
+
+      ! Finally ... print table
+      ! This routine scales the U & dU
+      .put_ADP4s(U,dU)
+
+      ! Clean
+      dU.destroy
+       U.destroy
 
    end
 
@@ -18131,6 +18340,121 @@ contains
 
    end
 
+   put_CIF_ADP3_in_inertial_axes_cartn_HBB(cif,cov)
+   ! Output cartesian anharmonic ADPs in the ADP2 principal axis
+   ! frame, in CIF format to "stdout".
+      self :: IN
+      cif :: CIF, IN
+      cov :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      lab,ADPn_label :: STR
+      ADP3v,ADP3s :: VEC{REAL}(10)
+      fac1,fac2,fac3 :: REAL
+      U,dU :: MAT{REAL}@
+      axes :: MAT{REAL}(3,3)
+      i,n :: INT
+
+      ! Unit conversion for ADP's
+      fac1 = ANGSTROM_PER_BOHR
+      fac2 = fac1*fac1
+      fac3 = fac2*fac1
+
+      ! Get the quntities
+      .make_inertial_axes(axes)
+      .get_ADP3s_in_new_axes_in(U,dU,axes,cov) 
+
+      ! Put the ADP3's
+      if (.has_any_ADP3s_and_errors) then
+
+         ADPn_label = "_atom_site_Cartn_ADP3_U_"
+
+         stdout.flush
+         stdout.text("# ============================================")
+         stdout.text("# Cartesian ADP3s in ADP2 principal axis frame")
+         stdout.text("# ============================================")
+         stdout.flush
+         stdout.text("# . These precise data use non-standard CIF tags")
+         stdout.text("# . Please keep for a better refinement restart")
+         stdout.text("# . Units are in Angstrom^3 but are scaled")
+
+         stdout.flush
+         stdout.text(trim(ADPn_label)//"scale_factor "//trim(cif.GC3_scale_factor.to_str))
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text(trim(ADPn_label)//"label")
+
+         do i = 1,10
+            lab = ATOM:ADP3_index_label(i,form="123-repeated")
+            stdout.put(trim(trim(ADPn_label)//trim(lab)),left=TRUE)
+            stdout.put(trim(trim(ADPn_label)//trim(lab)//trim("_esu")),left=TRUE)
+            stdout.flush
+         end
+       
+         n = 0
+
+         do i = 1,.dim
+       
+            if (NOT self(i).has_ADP3s_and_errors) cycle
+
+            ! ADP3 atom index
+            n = n + 1
+       
+            stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+            stdout.flush
+       
+            ! Units !!!!!!!!!!!!
+            ADP3v = fac3 *  U(n,1:10)
+            ADP3s = fac3 * dU(n,1:10)
+
+            ! Scale factor
+            ADP3v = cif.GC3_scale_factor*ADP3v
+            ADP3s = cif.GC3_scale_factor*ADP3s
+       
+            ! Print ADP3
+            stdout.put(ADP3v( 1))
+            stdout.put(ADP3s( 1))
+            stdout.flush
+            stdout.put(ADP3v( 2))
+            stdout.put(ADP3s( 2))
+            stdout.flush
+            stdout.put(ADP3v( 3))
+            stdout.put(ADP3s( 3))
+            stdout.flush
+            stdout.put(ADP3v( 4))
+            stdout.put(ADP3s( 4))
+            stdout.flush
+            stdout.put(ADP3v( 5))
+            stdout.put(ADP3s( 5))
+            stdout.flush
+            stdout.put(ADP3v( 6))
+            stdout.put(ADP3s( 6))
+            stdout.flush
+            stdout.put(ADP3v( 7))
+            stdout.put(ADP3s( 7))
+            stdout.flush
+            stdout.put(ADP3v( 8))
+            stdout.put(ADP3s( 8))
+            stdout.flush
+            stdout.put(ADP3v( 9))
+            stdout.put(ADP3s( 9))
+            stdout.flush
+            stdout.put(ADP3v(10))
+            stdout.put(ADP3s(10))
+            stdout.flush
+       
+         end
+
+      end
+
+      ! Clean
+      dU.destroy
+       U.destroy
+
+   end
+
    put_CIF_ADP3_in_ADP2_principal_axes_cartn_HBB(cif,cov)
    ! Output cartesian anharmonic ADPs in the ADP2 principal axis
    ! frame, in CIF format to "stdout".
@@ -18366,6 +18690,141 @@ contains
          end
 
       end ! =========
+
+   end
+
+   put_CIF_ADP4_in_inertial_axes_cartn_HBB(cif,cov)
+   ! Output cartesian anharmonic ADPs in the ADP2 principal axis
+   ! frame, in CIF format to "stdout".
+      self :: IN
+      cif :: CIF, IN
+      cov :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      lab,ADPn_label :: STR
+      ADP4v,ADP4s :: VEC{REAL}(15)
+      fac1,fac2 :: REAL
+      fac3,fac4 :: REAL
+      U,dU :: MAT{REAL}@
+      axes :: MAT{REAL}(3,3)
+      i,n :: INT
+
+      ! Unit conversion for ADP's
+      fac1 = ANGSTROM_PER_BOHR
+      fac2 = fac1*fac1
+      fac3 = fac2*fac1
+      fac4 = fac2*fac2
+
+      ! Get the quntities
+      .make_inertial_axes(axes)
+      .get_ADP4s_in_new_axes_in(U,dU,axes,cov) 
+
+      ! Put the ADP4's
+      if (.has_any_ADP4s_and_errors) then
+
+         ADPn_label = "_atom_site_Cartn_ADP4_U_"
+
+         stdout.flush
+         stdout.text("# ============================================")
+         stdout.text("# Cartesian ADP4s in ADP2 principal axis frame")
+         stdout.text("# ============================================")
+         stdout.flush
+         stdout.text("# . These precise data use non-standard CIF tags")
+         stdout.text("# . Please keep for a better refinement restart")
+         stdout.text("# . Units are in Angstrom^4 but may be scaled")
+
+         stdout.flush
+         stdout.text(trim(ADPn_label)//"scale_factor "//trim(cif.GC4_scale_factor.to_str))
+         stdout.flush
+         stdout.text("loop_")
+         stdout.text(trim(ADPn_label)//"label")
+
+         do i = 1,15
+            lab = ATOM:ADP4_index_label(i,form="123-repeated")
+            stdout.put(trim(trim(ADPn_label)//trim(lab)),left=TRUE)
+            stdout.put(trim(trim(ADPn_label)//trim(lab)//trim("_esu")),left=TRUE)
+            stdout.flush
+         end
+
+         n = 0
+        
+         do i = 1,.dim
+        
+            if (NOT self(i).has_ADP4s_and_errors) cycle
+
+            ! ADP3 atom index
+            n = n + 1
+        
+            stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+            stdout.flush
+        
+            ! Get values
+            self(i).put_ADP4_vector_to(ADP4v)
+
+            ! Units !!!!!!!!!!
+            ADP4v = fac4 *  U(n,1:15)
+            ADP4s = fac4 * dU(n,1:15)
+
+            ! Scale factor
+            ADP4v = cif.GC4_scale_factor*ADP4v
+            ADP4s = cif.GC4_scale_factor*ADP4s
+        
+            ! Print ADP4
+            stdout.put(ADP4v( 1))
+            stdout.put(ADP4s( 1))
+            stdout.flush
+            stdout.put(ADP4v( 2))
+            stdout.put(ADP4s( 2))
+            stdout.flush
+            stdout.put(ADP4v( 3))
+            stdout.put(ADP4s( 3))
+            stdout.flush
+            stdout.put(ADP4v( 4))
+            stdout.put(ADP4s( 4))
+            stdout.flush
+            stdout.put(ADP4v( 5))
+            stdout.put(ADP4s( 5))
+            stdout.flush
+            stdout.put(ADP4v( 6))
+            stdout.put(ADP4s( 6))
+            stdout.flush
+            stdout.put(ADP4v( 7))
+            stdout.put(ADP4s( 7))
+            stdout.flush
+            stdout.put(ADP4v( 8))
+            stdout.put(ADP4s( 8))
+            stdout.flush
+            stdout.put(ADP4v( 9))
+            stdout.put(ADP4s( 9))
+            stdout.flush
+            stdout.put(ADP4v(10))
+            stdout.put(ADP4s(10))
+            stdout.flush
+            stdout.put(ADP4v(11))
+            stdout.put(ADP4s(11))
+            stdout.flush
+            stdout.put(ADP4v(12))
+            stdout.put(ADP4s(12))
+            stdout.flush
+            stdout.put(ADP4v(13))
+            stdout.put(ADP4s(13))
+            stdout.flush
+            stdout.put(ADP4v(14))
+            stdout.put(ADP4s(14))
+            stdout.flush
+            stdout.put(ADP4v(15))
+            stdout.put(ADP4s(15))
+            stdout.flush
+        
+         end
+
+      end
+
+      ! Clean
+      dU.destroy
+       U.destroy
 
    end
 
