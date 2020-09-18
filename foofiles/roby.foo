@@ -161,13 +161,12 @@ contains
       .theta_pop_C.destroy
 
       ! Theta energy indiced
-    ! .theta_E_ion.destroy
-    ! .theta_E_cov.destroy
-    ! .theta_E_bond.destroy
-    ! .theta_E_B.destroy
-    ! .theta_E_A.destroy
-    ! .theta_E_I.destroy
-    ! .theta_E_C.destroy
+      .theta_E_I_B.destroy
+      .theta_E_I_A.destroy
+      .theta_E_I.destroy
+      .theta_E_C_B.destroy
+      .theta_E_C_A.destroy
+      .theta_E_C.destroy
 
       ! Theta eigenstates
       .eigen_I.destroy
@@ -1146,7 +1145,7 @@ contains
 
    end
 
-   subpopulation(subgroup,group,ANO) result (res) ::: private
+   subpopulation(subgroup,group,ANO,rho) result (res) ::: private
    ! Return the Roby subpopulation for the subgroup of atoms whose
    ! indices are given in "subgroup", in the whole group of atoms
    ! whose indices are are given in "group", i.e
@@ -1161,6 +1160,7 @@ contains
       subgroup :: VEC{INT}, IN
       group :: VEC{INT}, IN
       ANO :: MAT{REAL}, optional, IN
+      rho :: OPMATRIX@, optional, IN
       res :: REAL
 
    ENSURE(.density_matrix.allocated,"no density matrix")
@@ -1183,7 +1183,7 @@ contains
       P_sub.destroy
       P.destroy
 
-      res = .expectation(X,subgroup)
+      res = .expectation(X,subgroup,rho)
 
       X.destroy
 
@@ -1829,6 +1829,146 @@ contains
 
    end
 
+   make_theta_E1_Krogel_info ::: leaky, private
+   ! Calculates the Roby-Gould theta subspace information for atom
+   ! groups ".atom_a" and ".atom_b", including theta subspace
+   ! energies and subenergies via the Krogel approach.
+      self :: INOUT
+
+   ENSURE(.atom_a.associated,"no atom A group")
+   ENSURE(.atom_b.associated,"no atom B group")
+   ENSURE(.atom_ab.associated,"no atom AB group")
+
+      I :: MAT{REAL}*
+      theta_I :: MAT{REAL}*
+      eigen_I :: VEC{REAL}*
+      ind :: VEC{INT}*
+      n_a,n_b,n_ab, n0 :: INT
+
+      n_a  = .n_bf_a
+      n_b  = .n_bf_b
+      n_ab = n_a + n_b
+
+      ! Make the ionic operator & ionic states
+      theta_I.create(n_ab,n_ab)
+      eigen_I.create(n_ab)
+
+      ! Make I
+      I.create(n_ab,n_ab)
+      .make_ionic_operator(I)
+
+      ! Diagonalize I
+      .diagonalize_V_AB_operator(I,theta_I,eigen_I)
+
+      if (.show_calcs) then
+         stdout.text("I:")
+         stdout.put(I)
+         stdout.text("eigen_I:")
+         stdout.put(eigen_I)
+         stdout.text("theta_I:")
+         stdout.put(theta_I)
+      end
+
+      I.destroy
+
+      ! Prune zero eigenvalues
+      n0 = eigen_I.no_of_abs_vals_larger_than(.zero_angle_cutoff)
+
+      if (.show_calcs) then
+         stdout.show("No of non-zero eigenvalues, n0 = ",n0)
+      end
+
+      ind.create(n0)
+      ind = eigen_I.indices_of_abs_vals_larger_than(.zero_angle_cutoff)
+
+      if (.show_calcs) then
+         stdout.text("ind")
+         stdout.put(ind)
+      end
+
+      .theta_I.create(n_ab,n0)
+      .eigen_I.create(n0)
+
+      .theta_I = theta_I(:,ind)
+      .eigen_I = eigen_I(ind)
+
+      ind.destroy
+      eigen_I.destroy
+      theta_I.destroy
+
+      ! Find +/- ionic pairs
+      .pair.create(n0)
+      .eigen_I.find_non_unit_pairs(.pair,ROBY::match_pair,tol=TOL(8))
+
+      ! Make theta angles
+      .theta_angle.create(n0)
+      .make_theta_angles
+
+      if (.show_calcs) then
+         stdout.text("theta_angle from I:")
+         stdout.put(.theta_angle)
+      end
+
+      ! Clean up |ion> states
+      .make_gould_ionic_orbitals
+
+      ! Make |cov> pairs from |ion> pairs
+      .theta_C.create(n_ab,n0)
+      .eigen_C.create(n0)
+      .make_cov_from_ion_orbitals
+
+      if (.show_calcs) then
+         stdout.text("pair array:")
+         stdout.put(.pair)
+         stdout.show("n_bf_a = ",.n_bf_a)
+         stdout.show("n_bf_b = ",.n_bf_b)
+         stdout.text("eigen_C:")
+         stdout.put(.eigen_C)
+         stdout.text("eigen_I:")
+         stdout.put(.eigen_I)
+         stdout.text("theta_C:")
+         stdout.put(.theta_C)
+         stdout.text("theta_I:")
+         stdout.put(.theta_I)
+      end
+
+      ! Covalent theta populations
+      .theta_E_C.create(n0)
+      .theta_E_C_A.create(n0)
+      .theta_E_C_B.create(n0)
+      .make_theta_E1_Krogel_Es(.theta_E_C,.theta_E_C_A,.theta_E_C_B,.theta_C)
+
+      ! Ionic theta populations
+      .theta_E_I.create(n0)
+      .theta_E_I_A.create(n0)
+      .theta_E_I_B.create(n0)
+      .make_theta_E1_Krogel_Es(.theta_E_I,.theta_E_I_A,.theta_E_I_B,.theta_I)
+
+   end
+
+   make_theta_E1_Krogel_Es(E,Ea,Eb,theta) ::: private
+   ! Make "pop", an array of "theta" populations for a pair of Roby
+   ! atoms defined by indices in ".atom_a" and ".atom_b". "theta"
+   ! itself is a matrix whose columns are orbital coefficients on
+   ! V_AB corresponding to an ionic or covalent or some other state.
+      self :: INOUT
+      E,Ea,Eb :: VEC{REAL}, OUT
+      theta :: MAT{REAL}, IN
+
+   ENSURE(.atom_ab.associated,"No roby atom group AB")
+   ENSURE(.E_matrix.allocated,"No Krogel E matrix")
+   ENSURE(E.dim==theta.dim2,"wrong size, pop")
+
+      i :: INT
+
+      do i = 1,theta.dim2
+          E(i)  =    .population(       .atom_ab,ANO=theta(:,i:i),rho=.E_matrix)
+         Ea(i) = .subpopulation(.atom_a,.atom_ab,ANO=theta(:,i:i),rho=.E_matrix)
+         Eb(i) = .subpopulation(.atom_b,.atom_ab,ANO=theta(:,i:i),rho=.E_matrix)
+      end
+
+   end
+
 ! =================
 ! Energy bond index
 ! =================
@@ -1888,14 +2028,14 @@ contains
          .atom_ab.destroy
          .atom_ab.append(.atom_a,.atom_b)
 
+         ! Make theta-subspace energies
          .destroy_theta_info
+         .make_theta_E1_Krogel_info
 
-       ! .make_theta_energy_info
-         
-       ! if (.output_theta_info) then
-       !    .put_theta_info
-       !    .put_theta_BI_info
-       ! end
+         if (.output_theta_info) then
+            .put_theta_info
+          ! .put_theta_E_info
+         end
 
          nullify(.atom_a)
          nullify(.atom_b)
@@ -2038,6 +2178,7 @@ contains
       end
 
    end
+
 
    atom_E1_exact_analysis ::: leaky
    ! Do a Roby energy-bond and Gould charge analysis.
@@ -2505,6 +2646,323 @@ contains
       stdout.unsave
 
    end   
+
+!   put_theta_E_info
+!   ! Output theta-space E bond energy information
+!      self :: IN
+!
+!   ENSURE(.atom_a.associated, "No Roby atom A data")
+!   ENSURE(.atom_b.associated, "No Roby atom B data")
+!   ENSURE(.atom_ab.associated,"No Roby atom AB data")
+!
+!      n,i,j,p :: INT
+!      cst,snt,ang :: VEC{REAL}@
+!      ect,eca,ecb :: VEC{REAL}@
+!      eit,eia,eib :: VEC{REAL}@
+!      emt :: VEC{REAL}@
+!      evn,par :: VEC{INT}@
+!      table :: VEC{TABLE_COLUMN}@
+!
+!      stdout.flush
+!      stdout.text("===========================================")
+!      stdout.text("Roby-Gould theta (bond) eigenspace energies")
+!      stdout.text("===========================================")
+!
+!      stdout.flush
+!      if (NOT .is_hyper_analysis) then
+!      stdout.text(". Analysis is for atoms:")
+!      stdout.flush
+!      .put_unique_tags(.atom_a,"(A)")
+!      .put_unique_tags(.atom_b,"(B)")
+!      else
+!      stdout.text(". This is a hypervalent analysis")
+!      stdout.flush
+!      stdout.text(". Analysis is for transfer into atom A from everything not in M")
+!      stdout.flush
+!      .put_unique_tags(.atom_a,"(A)")
+!      .put_unique_tags(.atom_b,"(M)")
+!      end
+!
+!      stdout.flush
+!      if (NOT .is_hyper_analysis) then
+!      stdout.text(". States come in bonding-antibonding pairs classified by an angle.")
+!      stdout.text("  Negative high covalency have high overlap and low angle.")
+!      stdout.text("  States of high ionicity have low overlap and high angle.")
+!      else
+!      stdout.text(". There are no covalent states, only pure ionic")
+!      end
+!
+!      stdout.flush
+!      stdout.text(". For more on this bonding analysis please cite:")
+!      stdout.text("  M.D. Gould et al. (2008) Theor. Chem. Acc. 119 pp. 275-290")
+!
+!      n = .eigen_I.dim
+!      stdout.flush
+!      stdout.show("No. of states =",n)
+!
+!      ! Columns
+!      evn.create(n)
+!      par.create(n)
+!      ang.create(n); cst.create(n); snt.create(n)
+!      ect.create(n); eca.create(n); ecb.create(n)
+!      eit.create(n); eia.create(n); eib.create(n)
+!      emt.create(n)
+!
+!      ! Set column data
+!      j = 0
+!      do i = 1,n
+!
+!         if (.pair(i)<1) cycle
+!         if (.eigen_I(i)<.eigen_I(.pair(i))) cycle
+!
+!         ! Index of the paired orbital
+!         p = .pair(i)
+!
+!         j = j + 1
+!         evn(j) = i
+!         par(j) = p
+!         cst(j) = .eigen_C(i)
+!         snt(j) = .eigen_I(i)
+!         ang(j) = atan2(.eigen_I(i),.eigen_C(i))*DEGREE_PER_RADIAN
+!
+!         eat(j) = .E_A(i)
+!
+!      end
+!
+!      n = j
+!
+!      stdout.flush
+!      stdout.flush
+!      stdout.text("=====================")
+!      stdout.text("Araki angle subspaces")
+!      stdout.text("=====================")
+!      stdout.flush
+!
+!      ! Do table
+!      table.create(12)
+!
+!      table( 1).set_heading("Bond")
+!      table( 1).set_subhead("orb.")
+!      table( 1).set_values(evn(1:n))
+!
+!      table( 2).set_heading("Anti")
+!      table( 2).set_subhead("bond")
+!      table( 2).set_values(par(1:n))
+!
+!      table( 3).set_heading("theta")
+!      table( 3).set_subhead(" /deg")
+!      table( 3).set_values(ang(1:n))
+!
+!      table( 4).set_heading("  cos")
+!      table( 4).set_subhead("theta")
+!      table( 4).set_values(cst(1:n))
+!
+!      table( 5).set_heading("  sin")
+!      table( 5).set_subhead("theta")
+!      table( 5).set_values(snt(1:n))
+!
+!      table( 6).set_heading("E_C")
+!      table( 6).set_values(ect(1:n))
+!
+!      table( 7).set_heading("E_C")
+!      table( 7).set_subhead("A")
+!      table( 7).set_values(eca(1:n))
+!
+!      table( 8).set_heading("E_C")
+!      table( 8).set_subhead("B")
+!      table( 8).set_values(ecb(1:n))
+!
+!      table( 9).set_heading("E_I")
+!      table( 9).set_values(eit(1:n))
+!
+!      table(10).set_heading("E_I")
+!      table(10).set_subhead("A")
+!      table(10).set_values(eia(1:n))
+!
+!      table(11).set_heading("E_I")
+!      table(11).set_subhead("B")
+!      table(11).set_values(eib(1:n))
+!
+!      table(12).set_heading("|E|")
+!      table(12).set_values(emt(1:n))
+!
+!      ! Put table out
+!      table.put(label_rows=FALSE)
+!
+!      ! Clean
+!      table.destroy
+!      emt.destroy
+!      ecb.destroy; eca.destroy; ect.destroy
+!      eib.destroy; eia.destroy; eit.destroy
+!      snt.destroy; cst.destroy; ang.destroy
+!      par.destroy; evn.destroy
+!
+!   end
+
+!   put_theta_E_info
+!   ! Output theta-space bond index information
+!      self :: IN
+!
+!      n,i,j,k,p :: INT
+!      par :: VEC{STR}@
+!      ind :: VEC{INT}@
+!      ect_p,ect_m,eca_p,eca_m,ecb_p,ecb_m :: VEC{REAL}@
+!      eit_p,eit_m,eia_p,eia_m,eib_p,eib_m :: VEC{REAL}@
+!      ang,emt_p,emt_m :: VEC{REAL}@
+!      table :: VEC{TABLE_COLUMN}@
+!
+!      ! Columns
+!      n = .eigen_I.dim
+!
+!      par.create(n); ang.create(n)
+!      c_p.create(n)
+!      c_m.create(n)
+!      cov.create(n)
+!      i_p.create(n)
+!      i_m.create(n)
+!      ion.create(n)
+!       bi.create(n)
+!
+!      ! Sort decreasing covalent index
+!      ind.create(n)
+!      .theta_cov_index.quick_sort(ind,decreasing_order=TRUE)
+!
+!      ! Set column data
+!      j = 0
+!      do k = 1,n
+!
+!         ! Reordered index and its pair
+!         i = ind(k)
+!         p = .pair(i)
+!
+!         if (p<1) cycle
+!         if (.eigen_I(i)<.eigen_I(p)) cycle
+!
+!         j = j + 1
+!
+!         if (p/=i) then
+!               par(j) = "("//i.to_str.trim//","//p.to_str.trim//")"
+!               i_p(j) = .theta_pop_I(i)
+!               i_m(j) = .theta_pop_I(p)
+!         else
+!               par(j) = "("//i.to_str.trim//")"
+!            if      (.eigen_I(i)>ZERO) then
+!               i_p(j) = .theta_pop_I(i)
+!               i_m(j) = ZERO
+!            else if (.eigen_I(i)<ZERO) then
+!               i_p(j) = ZERO
+!               i_m(j) = .theta_pop_I(i)
+!            end
+!         end
+!
+!         c_p(j) = .theta_pop_C(i)
+!         c_m(j) = .theta_pop_C(p))
+!         cov(j) = .theta_cov_index(i)
+!         ion(j) = .theta_ion_index(i)
+!       ! ang(j) = .theta_angle(i)
+!         ang(j) = atan2(.eigen_I(i),.eigen_C(i))*DEGREE_PER_RADIAN
+!
+!          bi(j) = sqrt(cov(j)*cov(j)+ion(j)*ion(j))
+!
+!      end
+!
+!      n = j
+!
+!      ! Change decimal places
+!      stdout.save
+!      stdout.set_real_precision(3)
+!
+!      stdout.flush
+!      stdout.flush
+!      stdout.text("========================================")
+!      stdout.text("Covalent/ionic bond indices per subspace")
+!      stdout.text("========================================")
+!      stdout.flush
+!      stdout.text(". The +/- represents bonding/antibonding orbitals.")
+!      stdout.text("  The C/I represents covalent/ionic Roby-Gould orbitals.")
+!      stdout.text("  Thus I- represents an ionic antibonding orbital.")
+!      stdout.flush
+!      stdout.text(". The angles here are for the individual bond vectors")
+!      stdout.text("  used in the dial diagram. They are *not* the Araki")
+!      stdout.text("  subspace angles.")
+!      stdout.flush
+!
+!      ! Do table
+!      table.create(9)
+!
+!      table(1).set_heading("Paired")
+!      table(1).set_subhead(" space")
+!      table(1).set_values(par(1:n))
+!
+!      table(2).set_heading("Bond")
+!      table(2).set_subhead("angle")
+!      table(2).set_sb3head(" /deg")
+!      table(2).set_values(ang(1:n))
+!
+!      table(3).set_heading(" C+")
+!      table(3).set_subhead("pop")
+!      table(3).set_values(c_p(1:n))
+!
+!      table(4).set_heading(" C-")
+!      table(4).set_subhead("pop")
+!      table(4).set_values(c_m(1:n))
+!
+!      table(5).set_heading(" Cov.")
+!      table(5).set_subhead("index")
+!      table(5).set_values(cov(1:n))
+!
+!      table(6).set_heading(" I+")
+!      table(6).set_subhead("pop")
+!      table(6).set_values(i_p(1:n))
+!
+!      table(7).set_heading(" I-")
+!      table(7).set_subhead("pop")
+!      table(7).set_values(i_m(1:n))
+!
+!      table(8).set_heading(" Ion.")
+!      table(8).set_subhead("index")
+!      table(8).set_values(ion(1:n))
+!
+!      table(9).set_heading("Bond")
+!      table(9).set_subhead("index")
+!      table(9).set_values(bi(1:n))
+!
+!      table.put(label_rows=FALSE)
+!
+!      ! Clean
+!      table.destroy
+!      ind.destroy
+!       bi.destroy
+!      ion.destroy
+!      i_m.destroy
+!      i_p.destroy
+!      cov.destroy
+!      c_m.destroy
+!      c_p.destroy
+!      ang.destroy
+!      par.destroy
+!
+!      ! Print theta_C if only two groups e.g. for plots
+!    ! if (.n_group==2) then
+!
+!    !    stdout.flush
+!    !    stdout.flush
+!    !    stdout.text("Roby-Gould covalent orbitals:")
+!    !    stdout.flush
+!    !    .atom(.atom_ab).put_orbitals(.theta_C(:,[1,.pair(1)]),pair=TRUE)
+!    !
+!    !    stdout.flush
+!    !    stdout.flush
+!    !    stdout.text("Roby-Gould ionic orbitals:")
+!    !    stdout.flush
+!    !    .atom(.atom_ab).put_orbitals(.theta_I(:,[1,.pair(1)]),pair=TRUE)
+!
+!    ! end
+!
+!      ! Change decimal places
+!      stdout.unsave
+!
+!   end
 
 
 ! ===================================
