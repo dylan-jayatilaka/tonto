@@ -11947,11 +11947,15 @@ contains
       ! made beforehand and stored in pADP_errors.
       .put_ADP2s(no_header)
 
+      if (present(covariance)) then
+         .put_ADP2s_in_ADP2_principal_axes(covariance)
+      end
+
       ! Show ADP3's if present
       if (.has_any_ADP3s_and_errors) then
          .put_ADP3s
          if (present(covariance)) then
-         .put_ADP4s_in_inertial_axes(covariance)
+         .put_ADP3s_in_inertial_axes(covariance)
          .put_ADP3s_in_ADP2_principal_axes(covariance)
          end
       end
@@ -11968,92 +11972,185 @@ contains
    end
 
 
-   put_ADP2s(no_header)
-   ! Output the ADP information
-   ! Output position and ADP errors if there.
-   ! Always use Angstrom units for display.
+   get_ADP2s_in_ADP2_principal_axes_in(U,dU,cov) ::: leaky
+   ! Rotate the ADP2s for each atom into the principal axis frame of
+   ! each atoms ADP2, where "cov" is the covariance matrix for all the
+   ! parameters in the concatenated pADP vectors. 
       self :: IN
-      no_header :: BIN, IN, optional
+       U   :: MAT{REAL}@, OUT
+      dU   :: MAT{REAL}@, OUT
+      cov  :: MAT{REAL}, IN
 
-      Uc :: VEC{STR}@
-      U,dU :: MAT{REAL}@
-      is_flat,is_npd :: VEC{BIN}@
-      ratio :: VEC{REAL}@
-      table :: VEC{TABLE_COLUMN}@
-      fac :: REAL
-      i :: INT
-      cartesian,header :: BIN
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
 
-      header = TRUE
-      if (present(no_header)) header = NOT no_header
-
-      ! Axis system
-      cartesian = self(1).pos_axis_system=="cartesian"
-
-      ! Use angstroms/angstrom^2
-      if (cartesian) then
-         fac = STR:conversion_factor("angstrom")
-      else
-         fac = ONE
-      end
+      adp2,new2 :: MAT{REAL}(3,3)
+      vec2,lex2 :: VEC{REAL}(6)
+      eval :: VEC{REAL}(3)
+      R   :: MAT{REAL}(3,3)
+      rcm :: MAT{REAL}(6,6)
+      a,n :: INT
 
       ! Create columns
-      Uc.create(6)
-      U.create(.dim,6)
-      dU.create(.dim,6)
+      n = .dim
+       U.create(n,6)
+      dU.create(n,6)
 
-      ! Get columns
-      ATOM:put_ADP2_labels_to(Uc)
-      .put_ADP2_vector_to(U,fac)
-      is_flat = self(:).has_flat_ADP
-      is_npd  = self(:).has_NPD_ADP
-      ratio   = self(:).ADP_principal_axis_ratio
+      ! ADP3 atom index
+      n  = 0
+
+      ! Loop over atoms
+      do a = 1,.dim
+
+         ! ADP2 atom index
+         n = n + 1
+
+         ! Get ADP2 principal axes into "R"
+         self(a).ADP_tensor.solve_symmetric_eigenproblem(eval,R)
+
+         ! Change ADP3s to new coord system
+         self(a).put_ADP2_vector_to(adp2)
+         adp2.back_transform_to(new2,R)
+         new2.zip_lower_triangle_to(vec2)
+         GAUSSIAN_DATA:lower_pyramid_to_lexical_2(vec2,lex2)
+         U(n,1:6) = lex2
+
+         ! Rotate whole covariance matrix by "R"
+         rcm = .rotated_U2_covariance_mx_for_atom(a,R,cov)
+
+         ! Extract diagonal elements as errors
+         rcm.put_diagonal_to(dU(n,1:6))
+
+      end
+
+      ! Square root sigma^2
+      dU = sqrt(dU)
+
+   end
+
+   put_ADP2s_in_ADP2_principal_axes(cov)
+   ! Rotate the ADP2s for each atom into the principal axis frame of
+   ! each atom, where "cov" is the covariance matrix for all the
+   ! parameters in the concatenated pADP vectors. 
+      self :: IN
+      cov :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      U,dU :: MAT{REAL}@
+
+      .get_ADP2s_in_ADP2_principal_axes_in(U,dU,cov) 
 
       ! Title
-      if (header) then
       stdout.flush
-      stdout.text("=====================================")
-      stdout.text("Atomic displacement parameters (ADPs)")
-      stdout.text("=====================================")
+      stdout.text("==================================")
+      stdout.text("ADP2s in ADP2 principle axis frame")
+      stdout.text("==================================")
       stdout.flush
-      if (cartesian) then
-      stdout.text(". The ADPs are referred to cartesian axes.")
-      else
-      stdout.text(". The ADPs are referred to unit cell axes.")
-      end
-      stdout.text(". The length units are in Angstrom.")
-      stdout.text(". An ADP is deemed bad if the max-on-min axis ratio")
-      stdout.text("  - is greater than 4 (i.e. flat)")
-      stdout.text("  - or is non-positive-definite (i.e. NPD)")
-      stdout.flush
-      stdout.show("No. of NPD  ADPs =",.no_of_NPD_ADPs)
-      stdout.show("No. of Flat ADPs =",.no_of_flat_ADPs)
-      stdout.flush
-      end
+      stdout.text(". ADPs are referred to cartesian axes.")
+
+      ! Finally ... print table
+      ! This routine scales the U & dU
+      .put_ADP2s_helper(U,dU)
+
+      ! Clean
+      dU.destroy
+       U.destroy
+
+   end
+
+   rotated_U2_covariance_mx_for_atom(a,R,fcm) result(rcm) ::: PURE
+   ! Given index of atom "a", and given a 3x3 rotation matrix "R" and
+   ! given the *full* covariance matrix "fcm", return in "rcm" the U2
+   ! covariance matrix for atom "a" rotated by matrix "R".
+      self :: IN
+      a   :: INT, IN
+      R   :: MAT{REAL}(3,3), IN
+      fcm :: MAT{REAL}, IN
+      rcm :: MAT{REAL}(6,6)
+
+   ENSURE(R.dim1==3,"wrong dim1, R")
+   ENSURE(R.dim2==3,"wrong dim2, R")
+   ENSURE(fcm.is_square,"full covariance matrix is not square")
+   ENSURE(fcm.dim1==.no_of_pADPs,"wrong dimension, fcm")
+
+      old,RR :: MAT{REAL}(6,6)
+      off,f,l :: INT
+
+      ! Offset into diagonal block
+      off = .no_of_pADPs_up_to_atom(a) + 3
+      f   = off + 1
+      l   = off + 6
+
+      ! Get the cov. matrix block
+      old = fcm(f:l,f:l)
+
+      ! Get transformation matrix "RR"
+      GAUSSIAN_DATA:symmetric_tensor_2_product_mx(RR,R)
+
+      ! Get the rotated U3 covariance matrix
+      old.back_transform_to(rcm,RR)
+
+   end
+
+   put_ADP2s_helper(U,dU) ::: private
+   ! Output the ADP2s U(N,6) and errors dU(N,6) (if present).
+   ! N is tge number of atoms. U and dU in Bohr as usual.
+      self :: IN 
+      U  :: MAT{REAL}, INOUT
+      dU :: MAT{REAL}, optional, INOUT
+
+   ENSURE(U.dim1==.dim,"U dim1 not equal to no. of atoms with ADP3s")
+   ENSURE(U.dim2==6   ,"U dim2 is not equal to 10")
+
+      ID,Uc :: VEC{STR}@
+      list :: VEC{INT}@
+      table :: VEC{TABLE_COLUMN}@
+      fac,sfac :: REAL
+      i,n :: INT
+
+      ! No. of atoms with ADP3s
+      n = .dim
+
+      ! Use angstroms/angstrom^2
+      fac  = STR:conversion_factor("angstrom^2")
+
+      ! Create columns
+      list.create(n)
+      ID.create(n)
+      Uc.create(6)
+
+      ! Get columns
+      ID = self(:).tag
+      ATOM:put_ADP3_labels_to(Uc)
+
+      ! Scale & change to Angstrom
+      U = fac*U
 
       ! Set table headings & data
-      table.create(10)
+      table.create(11)
       table.set_column_spacing(2)
 
       ! Set table
       table(1).set_heading("ID")
-      table(1).set_values(self(:).tag)
+      table(1).set_values(ID)
 
-      if (NOT .has_nonzero_pADP2_errors) then
+      if (NOT present(dU)) then
 
          ! Set table
-         do i = 1,6
+         do i = 1,10
          table(i+1).set_heading(Uc(i))
          table(i+1).set_values(U(:,i))
          end
 
       else ! have position/ADP errors
 
-         ! Get error column data
-         .put_ADP2_errors_to(dU,fac)
+         ! Scale errors
+         dU = fac*dU
 
          ! Set table
-         do i = 1,6
+         do i = 1,10
          table(i+1).set_heading(Uc(i))
          table(i+1).set_values_and_errors(U(:,i),dU(:,i))
          end
@@ -12061,24 +12158,15 @@ contains
       end
 
       ! Units headings
-      table(4).set_subhead(trim("/A^2"))
-
-      ! ADP diagonistics
-      table( 8).set_heading("NPD")
-      table( 8).set_subhead("  ?")
-      table( 8).set_values(is_npd)
-      table( 9).set_heading("Flat")
-      table( 9).set_subhead("   ?")
-      table( 9).set_values(is_flat)
-      table(10).set_heading(" Axis")
-      table(10).set_subhead("ratio")
-      table(10).set_values(ratio)
+      table(6).set_subhead(trim("/A^2"))
 
       ! Make the table
       table.put
 
       ! Clean
       table.destroy
+      Uc.destroy
+      ID.destroy
 
    end
 
