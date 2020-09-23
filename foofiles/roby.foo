@@ -257,6 +257,7 @@ contains
       case("atom_hyper_analysis      ")
       case("group_bond_analysis      ")
       case("group_hyper_analysis     ")
+      case("shared_population        ")
       case default;  UNKNOWN(.roby_kind)
       end
 
@@ -367,6 +368,7 @@ contains
       case ("put_fock_matrix         "); stdout.put(.fock_matrix)
       case ("put_overlap_matrix      "); stdout.put(.overlap_matrix)
 
+      case ("shared_population       "); .make_shared_population
       case ("show_calcs=             "); .read_show_calcs
 
       case ("use_naos=               "); .read_use_NAOs
@@ -1193,106 +1195,148 @@ contains
 ! Roby multiple shared populations
 ! ================================
 
-!   make_shared_population ::: leaky, private
-!   ! Evaluate the Roby shared population
-!
-!   ENSURE(.atom_group.associated,"no atom group supplied")
-!
-!      n_group,i :: INT
-!
-!      n_group = .n_group
-!
-!      .subgroup_pop.destroy
-!      .subgroup_pop.create(n_group)
-!
-!      i = 0
-!      .n_shared = .shared_population([(i,i=1,n_group)], .subgroup_pop)
-!
-!   end
+   make_shared_population ::: leaky
+   ! Evaluate the Roby shared population
+      self :: INOUT
 
-!   shared_population(group_list,pop_groups) result (res) ::: private
-!   ! Returns the Roby shared population of the group of .atom_groups whose
-!   ! indices are in "group". If "pop_groups" is present, the total
-!   ! sub-group populations of every size from 1 to size(group) is returned
-!      group_list :: VEC{INT}
-!      pop_groups :: VEC{REAL}, optional
-!      res :: REAL
-!
-!   ENSURE(.atom_group.associated,"no atom groups")
-!
-!      pop_k :: REAL
-!      m, k, n_k, n :: INT
-!      comb_mat :: MAT{INT}*
-!      pop_group :: VEC{REAL}*
-!
-!      n = size(group_list)
-!
-!      pop_group.create(n)
-!
-!      res = ZERO
-!      do k = 1,n
-!
-!         n_k = int(n.choose(k))
-!
-!         ! Make "comb_mat", the matrix of all combinations of the groups
-!         ! of size k, where the groups are taken from .atom_group
-!         comb_mat.create(k,n_k)
-!         group_list.make_combinations_of_length(k,comb_mat)
-!
-!         pop_k = 0
-!         do m = 1,n_k
-!            .atom_group.append_listed_to(.atom_ab,list=comb_mat(:,m))
-!            pop_k = pop_k + .population(.atom_ab)
-!            .atom_ab.destroy
-!         end
-!         pop_group(k) = pop_k
-!
-!         comb_mat.destroy
-!
-!         res = res - ((-1)**k)*pop_k
-!
-!      end
-!
-!      if (present(pop_groups)) pop_groups = pop_group
-!
-!      pop_group.destroy
-!
-!   end
+      n_atom, i,n,n_c, k,m,n_k :: INT
+      group_list :: VEC{INT}@
+      symbols :: VEC{STR}@
+      table :: VEC{TABLE_COLUMN}@
 
-!   make_summed_pair_pops ::: leaky, private
-!   ! Evaluate the SUMMED Roby shared populations for groups of 2 atoms.
-!   ! On return, .summed_n2(a) = \sum_{b} s_{ab}, where s_{ab} is the pairwise
-!   ! shared population for atoms a, b.
-!
-!   ENSURE(.n1.associated,"no group populations")
-!   ENSURE(.n2.associated,"no group pair populations")
-!
-!      shared_population :: REAL
-!      n_group,a,b :: INT
-!
-!      n_group = .n_group
-!      .summed_n2.create(n_group)
-!
-!      .summed_n2 = ZERO
-!
-!      do a = 1,n_group
-!      do b = a+1,n_group
-!         shared_population = .n1(a) + .n1(b) - .n2(a,b)
-!         .summed_n2(a)     = .summed_n2(a) + shared_population
-!         .summed_n2(b)     = .summed_n2(b) + shared_population
-!      end
-!      end
-!
-!   end
+      ! Make atom list if it doesn't exist
+      if (.atom_list.disassociated) then
+         n_atom = .atom.dim
+         .atom_list.create(n_atom)
+         .atom_list = [ (i, i=1,n_atom) ]
+      end
+
+      ! Here, each atom is a group
+      .make_single_atom_groups
+
+      ! Make no of combinations
+      n   = .n_group
+      n_c = 2**n - 1
+
+      ! Make the combinations
+      group_list = [ (i, i=1,n) ]
+      .combinations.create(n)
+      .pop_for_combination.create(n)
+
+      do k = 1,n
+
+         ! No. of combinations
+         n_k = int(n.choose(k))
+
+         ! Make the combinations of length k
+         .combinations(k).element.create(k,n_k)
+         group_list.make_combinations_of_length(k,.combinations(k)[:,:])
+
+         stdout.show("k = ",k)
+         stdout.text("combinations(k) :")
+         stdout.put(.combinations(k)[:,:])
+
+         ! Make array to store the populations
+         .pop_for_combination(k).element.create(n_k)
+
+         ! Make "comb_mat", the matrix of all combinations of the groups
+
+         do m = 1,n_k
+
+            ! Make the specific combination of atoms groups
+            .atom_group.append_listed_to(.atom_ab,list=.combinations(k)[:,m])
+
+            ! Store its population
+            .pop_for_combination(k)[m] = .population(.atom_ab)
+
+            ! Clean
+            .atom_ab.destroy
+
+         end
+
+      end
+
+      ! Clean up
+      group_list.destroy
+
+      stdout.flush
+      stdout.text("===============================")
+      stdout.text("Roby combined group populations")
+      stdout.text("===============================")
+
+      stdout.flush
+      stdout.show("No. of groups             =",.n_group)
+
+      table.create(2)
+
+      table(1).set_heading("Atoms")
+      table(2).set_heading("Population")
+
+      ! Loop over combinations of length k
+      do k = 1,n
+
+         ! Get concatenated atom labels for each combination
+         n_k = int(n.choose(k))
+         symbols.create(n_k)
+         do m = 1,n_k
+            symbols(m) = .atom.concatenated_tags(.combinations(k)[:,m])
+         end
+
+         ! Set table values
+         table(1).set_values(symbols)
+         table(2).set_values(.pop_for_combination(k)[:])
+
+         ! Print table
+         stdout.flush
+         stdout.text("Populations for atom groups of length "//trim(k.to_str))
+         stdout.flush
+         table.put
+
+         ! Clean
+         table.clear_columns
+         
+      end
+
+      ! Clean
+      table.destroy
+
+   end
+
+   make_summed_pair_pops ::: leaky, private
+   ! Evaluate the SUMMED Roby shared populations for groups of 2 atoms.
+   ! On return, .summed_n2(a) = \sum_{b} s_{ab}, where s_{ab} is the pairwise
+   ! shared population for atoms a, b.
+
+   ENSURE(.n1.allocated,"no group populations")
+   ENSURE(.n2.allocated,"no group pair populations")
+
+      shared_population :: REAL
+      n_group,a,b :: INT
+
+      n_group = .n_group
+      .summed_n2.create(n_group)
+
+      .summed_n2 = ZERO
+
+      do a = 1,n_group
+      do b = a+1,n_group
+         shared_population = .n1(a) + .n1(b) - .n2(a,b)
+         .summed_n2(a)     = .summed_n2(a) + shared_population
+         .summed_n2(b)     = .summed_n2(b) + shared_population
+      end
+      end
+
+   end
 
 !   make_summed_triple_pops ::: leaky, private
 !   ! Evaluate the SUMMED Roby shared populations for groups of 3 atoms.
 !   ! On return, .summed_n3(a) = \sum_{bc} s_{abc}, where s_{abc} is the triple
 !   ! shared population for atoms a, b, and c.
+!      self :: INOUT
 !
 !      shared_population :: REAL
 !      n_group,a,b,c :: INT
-!
+!      
 !      n_group = .n_group
 !      .summed_n3.create(n_group)
 !
@@ -7310,31 +7354,37 @@ contains
    ENSURE(.subgroup_pop.allocated,"no subgroup population totals exist")
    ENSURE(.atom.associated,"no atom data")
    ENSURE(.atom_group.associated,"no atom group data")
+   ENSURE(.atom_list.associated,"no atom_list")
 
       a :: INT
-      symbol :: VEC{STR}*
+    ! symbol :: VEC{STR}@
 
       stdout.flush
       stdout.text("===============================")
       stdout.text("Roby multiple shared population")
       stdout.text("===============================")
       stdout.flush
-      stdout.show("Multiple shared population =",.n_shared)
+    ! symbol = .atom.unique_tags(.atom_list)
+    ! stdout.show("Atom list                 =",symbol)
+    ! stdout.show("No. of atoms              =",symbol.dim)
+      stdout.show("No. of groups             =",.n_group)
+    ! stdout.show("Group population, n_group =",.n_group)
+      stdout.flush
       stdout.text("Contributions by subgroup size:")
       stdout.flush
-      stdout.dash(int_fields=1,real_fields=1)
-      stdout.put("Subgrp size",int_width=TRUE)
+      stdout.dash(real_fields=2)
+      stdout.put("Subgrp size")
       stdout.put("Subgrp Pop.")
       stdout.flush
-      stdout.dash(int_fields=1,real_fields=1)
-      do a = 1,.n_group
-         stdout.put(symbol(a),int_width=TRUE)
+      stdout.dash(real_fields=2)
+      do a = 1,.subgroup_pop.dim
+         stdout.put(a)
          stdout.put(.subgroup_pop(a))
          stdout.flush
       end
-      stdout.dash(int_fields=1,real_fields=1)
+      stdout.dash(real_fields=2)
 
-      symbol.destroy
+    ! symbol.destroy
 
    end
 
