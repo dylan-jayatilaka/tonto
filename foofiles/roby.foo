@@ -1199,10 +1199,12 @@ contains
    ! Evaluate the Roby shared population
       self :: INOUT
 
-      n_atom, i,n,n_c, k,m,n_k :: INT
-      group_list :: VEC{INT}@
+      n_atom, i,n,n_c, k,m,n_k, p,q,n_p,indx :: INT
+      group_list,comb,term,perm :: VEC{INT}@
       symbols :: VEC{STR}@
+      shared  :: VEC{REAL}@
       table :: VEC{TABLE_COLUMN}@
+      kip :: REAL
 
       ! Make atom list if it doesn't exist
       if (.atom_list.disassociated) then
@@ -1238,9 +1240,9 @@ contains
 
          ! Make array to store the populations
          .pop_for_combination(k).element.create(n_k)
+         .kip_for_combination(k).element.create(n_k)
 
-         ! Make "comb_mat", the matrix of all combinations of the groups
-
+         ! Make tcomb_mat", the matrix of all combinations of the groups
          do m = 1,n_k
 
             ! Make the specific combination of atoms groups
@@ -1259,6 +1261,69 @@ contains
       ! Clean up
       group_list.destroy
 
+      ! Make all kernel interaction terms
+      do k = 1,n
+
+         ! No. of combinations
+         n_k = int(n.choose(k))
+
+         ! Loop over all m-tuples
+         do m = 1,n_k
+
+            ! k-body term P_comb
+            kip = .pop_for_combination(k)[m] 
+
+            ! The index combination comb of interest
+            comb = .combinations(k)[:,m]
+
+            stdout.flush
+            stdout.show("k = ",k)
+            stdout.text("comb:")
+            stdout.put(comb)
+            stdout.show("kip contr       = ",kip)
+
+            ! Loop over all n-body terms < k
+            do p = 1,n-1
+
+               n_p = int(n.choose(p))
+
+               do q = 1,n_p
+
+                  ! Get the permutation term of comb
+                  term = .combinations(p)[:,q]
+
+                  ! Apply permutation to comb
+                  perm = comb(term)
+
+                  ! Get index j of particular (term) permutation of comb
+                  indx = .combinations(p)[:,:].index_for_column(perm)
+
+            stdout.flush
+            stdout.show("p-body terms, p = ",p)
+            stdout.show("q-th term, q    = ",q)
+            stdout.text("term:")
+            stdout.put(term)
+            stdout.text("perm:")
+            stdout.put(perm)
+            stdout.show("Index of perm   = ",indx)
+            stdout.show("kip contr       = ",.kip_for_combination(p)[indx])
+
+                  ! Subtract off Delta E_term = Delta E_j
+                  kip  = kip - .kip_for_combination(p)[indx] 
+
+               end
+
+            end
+
+            ! Store the value
+            .kip_for_combination(k)[m] = kip
+
+         end
+
+      end
+
+      stop
+
       stdout.flush
       stdout.text("===============================")
       stdout.text("Roby combined group populations")
@@ -1266,11 +1331,6 @@ contains
 
       stdout.flush
       stdout.show("No. of groups             =",.n_group)
-
-      table.create(2)
-
-      table(1).set_heading("Atoms")
-      table(2).set_heading("Population")
 
       ! Loop over combinations of length k
       do k = 1,n
@@ -1282,23 +1342,39 @@ contains
             symbols(m) = .atom.concatenated_tags(.combinations(k)[:,m])
          end
 
+         ! Create table
+         if (k==1) then
+            table.create(2)
+         else
+            table.create(3)
+         end
+
+         table(1).set_heading("Atoms")
+         table(2).set_heading("Population")
+         if (k>1) then
+         table(3).set_heading("Shared")
+         table(3).set_subhead("Population")
+         end
+
          ! Set table values
          table(1).set_values(symbols)
          table(2).set_values(.pop_for_combination(k)[:])
+         if (k>1) then
+            table(3).set_values(.kip_for_combination(k)[:])
+         end
 
          ! Print table
+         stdout.flush
          stdout.flush
          stdout.text("Populations for atom groups of length "//trim(k.to_str))
          stdout.flush
          table.put
 
          ! Clean
-         table.clear_columns
+         table.destroy
+         symbols.destroy
          
       end
-
-      ! Clean
-      table.destroy
 
    end
 
