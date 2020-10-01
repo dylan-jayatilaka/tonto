@@ -133,8 +133,13 @@ contains
 
       ! Energies
 
-      .E1.destroy
+      .w_DE.destroy
+      .E2_DE.destroy
       .E2.destroy
+
+      .w_NA.destroy
+      .E1_DE.destroy
+      .E1.destroy
 
       .E1_cov.destroy
       .E1_ion.destroy
@@ -240,6 +245,48 @@ contains
 
    end
 
+   set_DE_weight_method(val) ::: PURE
+   ! Set the method of weighting E^def to assign to each atom in bond
+   ! energy calculations.
+      self :: INOUT
+      val :: STR, IN
+
+      .DE_weight_method = val
+
+      .DE_weight_method.to_lower_case
+
+   ENSURE(.DE_weight_method.is_one_of(["v_nn"]),"unknown method")
+
+   end
+
+   set_E1_method(val) ::: PURE
+   ! Set the method used to generate the first-order reduced energy
+   ! density matrix.
+      self :: INOUT
+      val :: STR, IN
+
+      .E1_method = val
+
+      .E1_method.to_lower_case
+
+   ENSURE(.E1_method.is_one_of(["exact ","krogel"]),"unknown method")
+
+   end
+
+   set_NA_weight_method(val) ::: PURE
+   ! Set the method of weighting E^NA to assign to each atom in bond
+   ! energy calculations.
+      self :: INOUT
+      val :: STR, IN
+
+      .NA_weight_method = val
+
+      .NA_weight_method.to_lower_case
+
+   ENSURE(.NA_weight_method.is_one_of(["e_a^0","z_a  "]),"unknown method")
+
+   end
+
    set_roby_kind(val)
    ! Set default SCF data values
       self :: INOUT
@@ -251,9 +298,7 @@ contains
 
       select case (.roby_kind)
       case("atom_bond_analysis       ")
-      case("atom_e1_exact_analysis   ")
-      case("atom_e1_krogel_analysis  ")
-    ! case("atom_energy_bond_analysis")
+      case("atom_e1_analysis         ")
       case("atom_hyper_analysis      ")
       case("group_bond_analysis      ")
       case("group_hyper_analysis     ")
@@ -356,10 +401,16 @@ contains
       case ("atom_list=              "); .read_atom_list
 
       case ("bond_scale_factors=     "); .read_bond_scale_factor
+
+      case ("de_weight_method=       "); .read_DE_weight_method
+
+      case ("e1_method=              "); .read_E1_method
  
       case ("kind=                   "); .read_kind
 
-      case ("occupied_ano_cutoff=    "); .read_occupied_ano_cutoff
+      case ("na_weight_method=       "); .read_NA_weight_method
+
+      case ("occupied_ano_cutoff=    "); .read_occupied_ANO_cutoff
       case ("output_ci_latex_labels= "); .read_output_ci_labels 
       case ("output_theta_info=      "); .read_output_theta_info
 
@@ -422,6 +473,45 @@ contains
       self :: INOUT
 
       stdin.read_ptr(.atom_group)
+
+   end
+
+   read_E1_method
+   ! Read the method used to generate the first-order reduced energy
+   ! density matrix.
+      self :: INOUT
+
+      method :: STR
+
+      stdin.read(method)
+
+      .set_E1_method(method)
+
+   end
+
+   read_DE_weight_method
+   ! Read the method of weighting E^def to assign to each atom in bond
+   ! energy calculations.
+      self :: INOUT
+
+      method :: STR
+
+      stdin.read(method)
+
+      .set_DE_weight_method(method)
+
+   end
+
+   read_NA_weight_method
+   ! Read the method of weighting E^NA to assign to each atom in bond
+   ! energy calculations.
+      self :: INOUT
+
+      method :: STR
+
+      stdin.read(method)
+
+      .set_NA_weight_method(method)
 
    end
 
@@ -1091,6 +1181,55 @@ contains
 
    end
 
+   make_triple_populations ::: leaky, private
+   ! Make the triple Roby populations
+      self :: INOUT
+
+      n_group,a,b,c :: INT
+      pop :: REAL
+
+      n_group = .n_group
+
+      ! Clean
+      .n3.destroy
+      .n3.create(n_group,n_group,n_group)
+      .n3 = ZERO
+
+      ! Make pair populations
+      do a = 1,n_group
+      do b = a+1,n_group
+      do c = b+1,n_group
+
+         .atom_a => .atom_group(a).element
+         .atom_b => .atom_group(b).element
+         .atom_c => .atom_group(c).element
+
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         .atom_abc.destroy
+         .atom_abc.append(.atom_a)
+         .atom_abc.append(.atom_b)
+         .atom_abc.append(.atom_c)
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+         pop = .population(.atom_abc)
+
+         .n3(a,b,c) = pop
+         .n3(b,a,c) = pop
+         .n3(c,a,b) = pop
+         .n3(c,b,a) = pop
+         .n3(a,c,b) = pop
+         .n3(b,c,a) = pop
+
+         nullify(.atom_a)
+         nullify(.atom_b)
+         nullify(.atom_c)
+
+      end
+      end
+      end
+
+   end
+
    population(group,ANO,reverse,rho) result (res) ::: private
    ! Return the total population for the projector P associated with
    ! the group of atoms whose indices are in "group", i.e
@@ -1224,11 +1363,12 @@ contains
       group_list = [ (i, i=1,n) ]
       .combinations.create(n)
       .pop_for_combination.create(n)
+      .kip_for_combination.create(n)
 
       do k = 1,n
 
          ! No. of combinations
-         n_k = int(n.choose(k))
+         n_k = nint(n.choose(k))
 
          ! Make the combinations of length k
          .combinations(k).element.create(k,n_k)
@@ -1242,7 +1382,7 @@ contains
          .pop_for_combination(k).element.create(n_k)
          .kip_for_combination(k).element.create(n_k)
 
-         ! Make tcomb_mat", the matrix of all combinations of the groups
+         ! Make comb_mat", the matrix of all combinations of the groups
          do m = 1,n_k
 
             ! Make the specific combination of atoms groups
@@ -1262,16 +1402,13 @@ contains
       group_list.destroy
 
       ! Make all kernel interaction terms
-      do k = 1,n
+      do k = n,1,-1
 
          ! No. of combinations
-         n_k = int(n.choose(k))
+         n_k = nint(n.choose(k))
 
          ! Loop over all m-tuples
          do m = 1,n_k
-
-            ! k-body term P_comb
-            kip = .pop_for_combination(k)[m] 
 
             ! The index combination comb of interest
             comb = .combinations(k)[:,m]
@@ -1280,36 +1417,44 @@ contains
             stdout.show("k = ",k)
             stdout.text("comb:")
             stdout.put(comb)
+
+            ! k-body term P_comb
+            kip = .pop_for_combination(k)[m] 
+
             stdout.show("kip contr       = ",kip)
 
             ! Loop over all n-body terms < k
             do p = 1,n-1
 
-               n_p = int(n.choose(p))
+               n_p = nint(n.choose(p))
 
                do q = 1,n_p
 
                   ! Get the permutation term of comb
                   term = .combinations(p)[:,q]
 
-                  ! Apply permutation to comb
-                  perm = comb(term)
-
-                  ! Get index j of particular (term) permutation of comb
-                  indx = .combinations(p)[:,:].index_for_column(perm)
-
             stdout.flush
             stdout.show("p-body terms, p = ",p)
             stdout.show("q-th term, q    = ",q)
             stdout.text("term:")
             stdout.put(term)
+
+                  ! Apply permutation to comb
+                  perm = comb(term)
             stdout.text("perm:")
             stdout.put(perm)
+
+                  ! Get index j of particular (term) permutation of comb
+                  indx = .combinations(p)[:,:].index_for_column(perm)
             stdout.show("Index of perm   = ",indx)
             stdout.show("kip contr       = ",.kip_for_combination(p)[indx])
 
                   ! Subtract off Delta E_term = Delta E_j
-                  kip  = kip - .kip_for_combination(p)[indx] 
+                  if (p==1) then
+                     kip  = kip - .pop_for_combination(p)[indx] 
+                  else
+                     kip  = kip - .kip_for_combination(p)[indx] 
+                  end
 
                end
 
@@ -1378,10 +1523,69 @@ contains
 
    end
 
+   make_pairwise_shared_pop ::: leaky, private
+   ! Evaluate the Roby shared populations for all pairwise atom groups.
+      self :: INOUT
+
+   ENSURE(.n1.allocated,"no group populations")
+   ENSURE(.n2.allocated,"no group pair populations")
+
+      shared_population :: REAL
+      n_atom,a,b,k,n_k :: INT
+
+      n_atom = .atom.dim
+      n_k = nint(n_atom.choose(2))
+      .pairwise_shared_pop.create(n_k)
+
+      .pairwise_shared_pop = ZERO
+      k = ZERO
+
+      do a = 1,n_atom
+      do b = a+1,n_atom
+         k = k + 1
+         shared_population = .n1(a) + .n1(b) - .n2(a,b)
+         .pairwise_shared_pop(k) = shared_population
+      end
+      end
+
+   end
+
+   make_triple_shared_pops ::: leaky, private
+   ! Evaluate the triple Roby shared populations s_{abc} for groups of 3 atoms.
+      self :: INOUT
+ 
+   ENSURE(.n1.allocated,"no group populations")
+   ENSURE(.n2.allocated,"no group pair populations")
+   ENSURE(.n3.allocated,"no group triple populations")
+
+       shared_population :: REAL
+       n_atom,a,b,c,k,n_k :: INT
+       
+       n_atom = .atom.dim
+       n_k = int(n_atom.choose(3))
+       .triple_shared_pop.create(n_k)
+ 
+       .triple_shared_pop = ZERO
+
+       k = 0
+       do a = 1  ,n_atom
+       do b = a+1,n_atom
+       do c = b+1,n_atom
+          k = k + 1
+          shared_population = .n1(a) + .n1(b) + .n1(c) &
+             - .n2(a,b) - .n2(a,c) - .n2(b,c) + .n3(a,b,c)
+          .triple_shared_pop(k) = shared_population
+       end
+       end
+       end
+ 
+   end
+
    make_summed_pair_pops ::: leaky, private
    ! Evaluate the SUMMED Roby shared populations for groups of 2 atoms.
    ! On return, .summed_n2(a) = \sum_{b} s_{ab}, where s_{ab} is the pairwise
    ! shared population for atoms a, b.
+      self :: INOUT
 
    ENSURE(.n1.allocated,"no group populations")
    ENSURE(.n2.allocated,"no group pair populations")
@@ -2093,7 +2297,7 @@ contains
 ! Energy bond index
 ! =================
 
-   atom_E1_Krogel_analysis ::: leaky
+   atom_E1_analysis ::: leaky
    ! Do a E^1_Krogel energy-bond analysis.
    ! Only works for RHF case for now.
       self :: INOUT
@@ -2118,16 +2322,19 @@ contains
       ! Each atom is a Roby subspace
       .make_single_atom_groups
 
-      ! Make E_matrix, E_scf, E_non_atomic
-      .make_E1_Krogel_matrix 
+      ! Make E_matrix, E_scf, E_atomic, E_NA
+      .make_E1_matrix 
+
+      ! Make weights
+      .make_E1_weights
 
       ! Each atom is a Roby subspace
       .make_single_atom_groups
       n_group = .n_group
 
       ! Get group energies
-      .make_E1_Krogel_A
-      .make_E1_Krogel_AB
+      .make_E1_A  ! ... and E1_DE
+      .make_E1_AB ! ... and E2_DE
 
       ! Clean
       .destroy_bond_info
@@ -2167,6 +2374,28 @@ contains
       .put_basics
       .put_E_As
       .put_E_ABs
+      .put_E_ABs_Li
+
+   end
+
+   make_E1_matrix ::: leaky
+   ! Make the E^1_matrix & E_NA
+      self :: INOUT
+
+      all_atoms :: VEC{INT}@
+      a,n_bf :: INT
+
+      select case (.E1_method)
+      case ("krogel"); .make_E1_Krogel_matrix
+      end
+
+      ! Non-atomic energy, E_{na}
+      all_atoms = [ (a, a=1,.atom.dim) ]
+      .E_atomic = .population(all_atoms,rho=.E_matrix)
+      .E_NA     = .E_scf - .E_atomic
+
+      ! Clean
+      all_atoms.destroy
 
    end
 
@@ -2176,6 +2405,7 @@ contains
    ! Only works for UHF/RHF cases for now.
       self :: INOUT
 
+   ENSURE(.atom_group.associated,"no atom_group")
    ENSURE(.core_matrix.allocated,"no core_matrix!")
    ENSURE(.core_matrix.restricted.allocated,"no restricted core_matrix!")
    ENSURE(.fock_matrix.allocated,"no fock_matrix!")
@@ -2184,7 +2414,7 @@ contains
       tmp :: OPMATRIX@
       Sm1 :: MAT{REAL}@
       all_atoms :: VEC{INT}@
-      i,n_bf :: INT
+      a,n_bf :: INT
        
       ! Make E_matrix without S^-1 prefactor
       .E_matrix = .fock_matrix
@@ -2204,11 +2434,6 @@ contains
       tmp.to_product_of(Sm1,.E_matrix)
       .E_matrix.to_product_of(X=tmp,Y=.density_matrix)
 
-      ! Non-atomic energy, E_{na}
-      all_atoms = [ (i, i=1,.atom.dim) ]
-      .E_atomic     = .population(all_atoms,rho=.E_matrix)
-      .E_non_atomic = .E_scf - .E_atomic
-
       ! Clean
       all_atoms.destroy
       tmp.destroy
@@ -2216,8 +2441,73 @@ contains
 
    end
 
-   make_E1_Krogel_A ::: leaky, private
-   ! Make the Krogel atom energies for the defined atom groups.
+   make_E1_weights ::: leaky
+   ! Make the E^1_matrix .
+      self :: INOUT
+
+      select case (.NA_weight_method)
+      case ("e_a^0"); .make_NA_EA0_weights
+      case ("z_a  "); .make_NA_ZA_weights
+      end
+
+      select case (.DE_weight_method)
+      case ("v_nn "); .make_DE_V_nn_weights
+      end
+
+   end
+
+   make_NA_EA0_weights ::: leaky 
+   ! Partition the E^NA term according to E_A^0 atom energies
+      self :: INOUT
+
+   ENSURE(.n_group==.atom.dim,"No. of groups is not equal to no. of atoms")
+
+      base :: REAL
+
+      base = sum(.atom(:).energy)
+      .w_NA = .atom(:).energy/base
+
+   end
+
+   make_NA_ZA_weights ::: leaky 
+   ! Partition the E^NA term according to Z_A^0 atom energies
+      self :: INOUT
+
+   ENSURE(.n_group==.atom.dim,"No. of groups is not equal to no. of atoms")
+
+      base :: REAL
+
+      base = sum(.atom(:).nuclear_charge)
+      .w_NA = .atom(:).nuclear_charge/base
+
+   end
+
+   make_DE_V_nn_weights ::: leaky 
+   ! Partition the E^de term according to V_nn(A,B) nuclear charges.
+      self :: INOUT
+
+   ENSURE(.n_group==.atom.dim,"No. of groups is not equal to no. of atoms")
+
+      norm, V_ab :: REAL
+      n,a,b :: INT
+
+      n = .atom.dim
+
+      .w_DE.destroy
+      .w_DE.create(n,n)
+
+      do a = 1,n
+         norm = ONE/.atom(:).nuclear_repulsion_for_atom(a)
+         do b = 1,n
+            V_ab = .atom(:).nuclear_repulsion_for_atoms(a,b)
+            .w_DE(a,b) = V_ab * norm
+         end
+      end
+
+   end
+
+   make_E1_A ::: leaky, private
+   ! Make the atom energies for the defined atom groups.
       self :: INOUT
 
    ENSURE(.atom_group.associated,"no atom groups")
@@ -2226,11 +2516,14 @@ contains
 
       a :: INT
 
+      .n1.destroy
+      .n1.create(.n_group)
+
       .E1.destroy
       .E1.create(.n_group)
 
-      .n1.destroy
-      .n1.create(.n_group)
+      .E1_DE.destroy
+      .E1_DE.create(.n_group)
 
       do a = 1,.n_group
 
@@ -2239,14 +2532,16 @@ contains
          .n1(a) =  .population(.atom_a)
          .E1(a) =  .population(.atom_a,rho=.E_matrix)
 
+         .E1_DE(a) = .E1(a) - .atom(a).energy + .w_NA(a)*.E_NA
+
          nullify(.atom_a)
 
       end
 
    end
 
-   make_E1_Krogel_AB ::: leaky, private
-   ! Make the Krogel atom pair energies for the defined atom groups.
+   make_E1_AB ::: leaky, private
+   ! Make the atom pair energies for the defined atom groups.
       self :: INOUT
 
    ENSURE(.atom_group.associated,"no atom groups")
@@ -2268,6 +2563,10 @@ contains
       .E2.create(n_group,n_group)
       .E2 = ZERO
 
+      .E2_DE.destroy
+      .E2_DE.create(n_group,n_group)
+      .E2_DE = ZERO
+
       do a = 1,n_group
       do b = a+1,n_group
 
@@ -2281,15 +2580,19 @@ contains
          .atom_ab.append(.atom_a,.atom_b)
          !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+         ! Populations n_AB
          val = .population(.atom_ab)
-        
          .n2(a,b) = val
          .n2(b,a) = val
 
+          ! Raw pair energies E_AB
           val = .population(.atom_ab,rho=.E_matrix)
-
          .E2(a,b) = val
          .E2(b,a) = val
+
+          ! Partitioned E1_A(B)
+         .E2_DE(a,b) = .w_DE(a,b) * .E1_DE(a)
+         .E2_DE(b,a) = .w_DE(b,a) * .E1_DE(b)
 
          nullify(.atom_a)
          nullify(.atom_b)
@@ -2621,7 +2924,7 @@ contains
       stdout.flush
 
       stdout.show("E_scf                   =",.E_scf)
-      stdout.show("E_non_atomic            =",.E_non_atomic)
+      stdout.show("E_non_atomic            =",.E_NA)
       stdout.flush
 
       ! Get atom Z list
@@ -2767,6 +3070,196 @@ contains
 
    end   
 
+   put_E_ABs_Li
+   ! Output pair and Li pairwise energy decopisition.
+      self :: IN
+
+   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+
+      table :: VEC{TABLE_COLUMN}@
+      Z_list :: VEC{EVEC{INT}}@
+      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+      pair :: MAT{INT}@
+      symbols,labels :: MAT{STR}@
+      dash,dsh1 :: VEC{STR}@
+      dist,n_A,n_B,nAB,sAB,E_A,E_B,EAB,V_nn :: VEC{REAL}@
+      has_unique_labels :: BIN
+
+      ! Any atoms to do?
+      if (.atom.dim<2) return
+
+      ! Any bonded atoms to do?
+      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+      if (no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .atom.has_unique_labels
+      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+
+      ! Redo decimal places
+      stdout.save
+      stdout.set_real_precision(4)
+
+      ! Title
+      stdout.flush
+      stdout.text("===========================================")
+      stdout.text("Roby-Gould bond energies: W.Li v1 partition")
+      stdout.text("===========================================")
+
+      stdout.flush
+      stdout.text("Indices appear only for atom pairs which are connected")
+      stdout.text("according to the Cambridge Structural Database (CSD)")
+      stdout.text("AND if they are within a minimum bond_range_factor")
+      stdout.flush
+      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
+      stdout.show("No. of 'bonds'          =",no_of_bonds)
+
+      stdout.flush
+      stdout.show("E_scf                   =",.E_scf)
+      stdout.show("E_non_atomic            =",.E_NA)
+      stdout.flush
+
+      ! Get atom Z list
+      .atom.make_atom_Z_list(Z_list)
+
+      ! Skip dummy atoms
+      n_kind = Z_list.dim
+      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(12)
+
+      ! Set the table headings
+      table( 1).set_heading("A")
+      table( 1).set_width_from(.atom.chemical_symbols)
+
+      table( 2).set_column_spacing(0)
+      table( 2).set_heading("--")
+      table( 2).set_width(2)
+
+      table( 3).set_heading("B")
+      table( 3).set_width(table(1).width)
+      table( 3).set_left_justify(TRUE)
+
+      table( 4).set_heading("A")
+      table( 4).set_width_from(.atom(:).tag)
+
+      table( 5).set_column_spacing(0)
+      table( 5).set_heading("--")
+      table( 5).set_width(2)
+
+      table( 6).set_heading("B")
+      table( 6).set_width(table(4).width)
+      table( 6).set_left_justify(TRUE)
+
+      table( 7).set_heading("R(A--B)")
+      table( 7).set_subheading("/Angs.")
+
+      table( 8).set_heading("E_A")
+      table( 9).set_heading("E_B")
+      table(10).set_heading("E_AB")
+      table(11).set_heading("E_AB")
+      table(11).set_subhead("(shared)")
+      table(12).set_heading("V^nn_AB")
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         .atom.get_bonded_with_v_nn(pair,dist,V_nn,Z_list,k1,k2,.bond_range_factor)
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
+         end
+
+         ! Element symbols
+         symbols.create(n_bonds,2)
+         symbols = " "
+         symbols(1,1) = .atom(Z_list(k1)[1]).chemical_symbol
+         symbols(1,2) = .atom(Z_list(k2)[1]).chemical_symbol
+
+         ! Dashes
+         dash.create(n_bonds)
+         dsh1.create(n_bonds)
+         dash    = "--"
+         dsh1    = "  "
+         dsh1(1) = "--"
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = .atom(pair(:,1)).tag
+         labels(:,2) = .atom(pair(:,2)).tag
+
+         ! Populations & indices
+         E_A.create(n_bonds)
+         E_B.create(n_bonds)
+         EAB.create(n_bonds)
+         sAB.create(n_bonds)
+
+         E_A = .E1(pair(:,1))
+         E_B = .E1(pair(:,2))
+         forall (i=1:n_bonds)
+         EAB(i) = .E2(pair(i,1),pair(i,2))
+         sAB(i) = E_A(i) + E_B(i) - EAB(i)
+         end
+
+         ! Set table data
+         table( 1).set_values(symbols(:,1))
+         table( 2).set_values(dsh1)
+         table( 3).set_values(symbols(:,2))
+         table( 4).set_values(labels(:,1))
+         table( 5).set_values(dash)
+         table( 6).set_values(labels(:,2))
+         table( 7).set_values(dist)
+         table( 8).set_values(E_A)
+         table( 9).set_values(E_B)
+         table(10).set_values(EAB)
+         table(11).set_values(sAB)
+         table(12).set_values(V_nn)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+
+         sAB.destroy
+         E_A.destroy
+         E_B.destroy
+         EAB.destroy
+         labels.destroy
+         dsh1.destroy
+         dash.destroy
+         symbols.destroy
+
+         V_nn.destroy
+         dist.destroy
+         pair.destroy
+
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.destroy
+      Z_list.destroy
+
+      ! Unsave settings
+      stdout.unsave
+
+   end   
 
    put_theta_E_info
    ! Output theta-space bond index information
