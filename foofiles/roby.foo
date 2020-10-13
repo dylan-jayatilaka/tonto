@@ -420,7 +420,7 @@ contains
       case ("put_fock_matrix         "); stdout.put(.fock_matrix)
       case ("put_overlap_matrix      "); stdout.put(.overlap_matrix)
 
-      case ("shared_population       "); .make_shared_population
+      case ("shared_population       "); .make_triple_shared_pops
       case ("show_calcs=             "); .read_show_calcs
 
       case ("use_naos=               "); .read_use_NAOs
@@ -1152,8 +1152,11 @@ contains
 
       ! Clean
       .n2.destroy
+      .n2_s.destroy
       .n2.create(n_group,n_group)
+      .n2_s.create(n_group,n_group)
       .n2 = ZERO
+      .n2_s = ZERO
 
       ! Make pair populations
       do a = 1,n_group
@@ -1168,11 +1171,18 @@ contains
          .atom_ab.destroy
          .atom_ab.append(.atom_a,.atom_b)
          !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
+         
+         ! Pair populations
          pop = .population(.atom_ab)
 
          .n2(a,b) = pop
          .n2(b,a) = pop
+
+         ! Shared populations
+         pop = .n1(a) + .n1(b) - .n2(a,b)
+
+         .n2_s(a,b) = pop
+         .n2_s(b,a) = pop
 
          nullify(.atom_a)
          nullify(.atom_b)
@@ -1334,6 +1344,7 @@ contains
 ! ================================
 ! Roby multiple shared populations
 ! ================================
+
 
    make_shared_population ::: leaky
    ! Evaluate the Roby shared population
@@ -1551,36 +1562,39 @@ contains
 
    end
 
-!   make_triple_shared_pops ::: leaky, private
-!   ! Evaluate the triple Roby shared populations s_{abc} for groups of 3 atoms.
-!      self :: INOUT
-! 
-!   ENSURE(.n1.allocated,"no group populations")
-!   ENSURE(.n2.allocated,"no group pair populations")
-!   ENSURE(.n3.allocated,"no group triple populations")
-!
-!       shared_population :: REAL
-!       n_atom,a,b,c,k,n_k :: INT
-!       
-!       n_atom = .atom.dim
-!       n_k = int(n_atom.choose(3))
-!       .triple_shared_pop.create(n_k)
-! 
-!       .triple_shared_pop = ZERO
-!
-!       k = 0
-!       do a = 1  ,n_atom
-!       do b = a+1,n_atom
-!       do c = b+1,n_atom
-!          k = k + 1
-!          shared_population = .n1(a) + .n1(b) + .n1(c) &
-!             - .n2(a,b) - .n2(a,c) - .n2(b,c) + .n3(a,b,c)
-!          .triple_shared_pop(k) = shared_population
-!       end
-!       end
-!       end
-! 
-!   end
+   make_triple_shared_pops ::: leaky, private
+   ! Evaluate the triple Roby shared populations s_{abc} for groups of 3 atoms.
+      self :: INOUT
+ 
+   ENSURE(.n1.allocated,"no group populations")
+   ENSURE(.n2.allocated,"no group pair populations")
+   ENSURE(.n3.allocated,"no group triple populations")
+
+       shared_population :: REAL
+       n_atom,a,b,c,k,n_k :: INT
+       
+       n_atom = .atom.dim
+       n_k = int(n_atom.choose(3))
+       .triple_shared_pop.create(n_k)
+ 
+       .triple_shared_pop = ZERO
+
+       stdout.text("Shared populations:")
+
+       k = 0
+       do a = 1  ,n_atom
+       do b = a+1,n_atom
+       do c = b+1,n_atom
+
+          k = k + 1
+          shared_population = .n3(a,b,c) - .n1(a) - .n1(b) - .n1(c) &
+          + .n2_s(a,b) + .n2_s(a,c) + .n2_s(b,c) 
+          .triple_shared_pop(k) = shared_population
+       end
+       end
+       end
+
+   end
 
 !   make_summed_pair_pops ::: leaky, private
 !   ! Evaluate the SUMMED Roby shared populations for groups of 2 atoms.
@@ -2333,11 +2347,37 @@ contains
       ! Make NA weights and E1's
       .make_NA_weights
       .make_E1_A  ! ... and E1_DE
+      .make_populations
 
       ! Make DE weights and E2's
       .make_E1_AB 
       .make_DE_weights
+      .make_pairwise_shared_Es
       .make_E2_DE ! ... and E2_DE
+      .make_pair_populations
+
+      ! Make E3s and triple shared energies/populations
+      if (n_atom > 2) then
+         .make_E1_ABC
+         .make_triple_shared_Es
+         .make_triple_populations
+         .make_triple_shared_pops
+      end
+
+      ! Make E4s and quad shared energies
+      if (n_atom > 3) then
+         .make_E1_ABCD
+         .make_quad_shared_Es
+      end
+
+      ! Make lumped fifth/highe order energies
+      if (n_atom > 4) then
+         .make_Ems
+      end
+
+      ! Make higher order energies E^m and
+      ! distribute multicenter terms
+      .make_distributed_Ems
 
       ! Clean
       .destroy_bond_info
@@ -2378,6 +2418,18 @@ contains
       .put_E_As
     ! .put_E_ABs
       .put_E_ABs_Li
+
+      ! Print triple shared populations
+      stdout.text("Triple shared populations: ")
+      do a = 1,.triple_shared_pop.dim
+         stdout.put(.triple_shared_pop(a))
+      end
+
+      ! Print triple shared energies
+      stdout.text("Triple shared energies:    ")
+      do a = 1,.triple_shared_Es.dim
+         stdout.put(.triple_shared_Es(a))
+      end 
 
    end
 
@@ -2672,6 +2724,296 @@ contains
 
    end
 
+   make_E1_ABC ::: leaky, private
+   ! Make the triple Roby energies
+      self :: INOUT
+
+      n_group,a,b,c :: INT
+      val :: REAL
+
+      n_group = .n_group
+
+      ! Clean
+      .E3.destroy
+      .E3_s.destroy
+      .E3.create(n_group,n_group,n_group)
+      .E3_s.create(n_group,n_group,n_group)
+      .E3 = ZERO
+      .E3_s = ZERO
+
+      ! Make pair populations
+      do a = 1,n_group
+      do b = a+1,n_group
+      do c = b+1,n_group
+
+         .atom_a => .atom_group(a).element
+         .atom_b => .atom_group(b).element
+         .atom_c => .atom_group(c).element
+
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         .atom_abc.destroy
+         .atom_abc.append(.atom_a)
+         .atom_abc.append(.atom_b)
+         .atom_abc.append(.atom_c)
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+         ! Raw triple energies E_ABC
+         val = .population(.atom_abc,rho=.E_matrix)
+
+         .E3(a,b,c) = val
+         .E3(b,a,c) = val
+         .E3(c,a,b) = val
+         .E3(c,b,a) = val
+         .E3(a,c,b) = val
+         .E3(b,c,a) = val
+
+         ! Shared energies E^s_ABC
+         
+          val = .E3(a,b,c) - .E1(a) - .E1(b) - .E1(c) &
+          + .E2_s(a,b) + .E2_s(a,c) + .E2_s(b,c) 
+
+         .E3_s(a,b,c) = val
+         .E3_s(b,a,c) = val
+         .E3_s(c,a,b) = val
+         .E3_s(c,b,a) = val
+         .E3_s(a,c,b) = val
+         .E3_s(b,c,a) = val
+
+         nullify(.atom_a)
+         nullify(.atom_b)
+         nullify(.atom_c)
+
+      end
+      end
+      end
+
+   end
+
+   make_E1_ABCD ::: leaky, private
+   ! Make the quadriple Roby energies
+      self :: INOUT
+
+      n_group,a,b,c,d :: INT
+      val :: REAL
+
+      n_group = .n_group
+
+      ! Clean
+      .E4.destroy
+      .E4_s.destroy
+      .E4.create(n_group,n_group,n_group,n_group)
+      .E4_s.create(n_group,n_group,n_group,n_group)
+      .E4 = ZERO
+      .E4_s = ZERO
+
+      ! Make pair populations
+      do a = 1,n_group
+      do b = a+1,n_group
+      do c = b+1,n_group
+      do d = c+1,n_group
+
+         .atom_a => .atom_group(a).element
+         .atom_b => .atom_group(b).element
+         .atom_c => .atom_group(c).element
+         .atom_d => .atom_group(d).element
+
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         .atom_abcd.destroy
+         .atom_abcd.append(.atom_a)
+         .atom_abcd.append(.atom_b)
+         .atom_abcd.append(.atom_c)
+         .atom_abcd.append(.atom_d)
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         
+         ! Raw quadruple energies E_ABCD
+         val = .population(.atom_abcd,rho=.E_matrix)
+         .E4(a,b,c,d) = val
+         .E4(a,b,d,c) = val
+         .E4(a,c,b,d) = val
+         .E4(a,c,d,b) = val
+         .E4(a,d,b,c) = val
+         .E4(a,d,c,b) = val
+                                  
+         .E4(b,a,c,d) = val
+         .E4(b,a,d,c) = val
+         .E4(b,c,a,d) = val
+         .E4(b,c,d,a) = val
+         .E4(b,d,a,c) = val
+         .E4(b,d,c,a) = val
+                                 
+         .E4(c,a,b,d) = val
+         .E4(c,a,d,b) = val
+         .E4(c,b,a,d) = val
+         .E4(c,b,d,a) = val
+         .E4(c,d,a,b) = val
+         .E4(c,d,b,a) = val
+                                  
+         .E4(d,a,b,c) = val
+         .E4(d,a,c,b) = val
+         .E4(d,b,a,c) = val
+         .E4(d,b,c,a) = val
+         .E4(d,c,a,b) = val
+         .E4(d,c,a,b) = val
+
+
+         ! Quadruple shared energies E^s_ABCD
+         val = .E1(a) + .E1(b) + .E1(c) +.E1(d) &
+         - .E2_s(a,b) - .E2_s(a,c) - .E2_s(a,d) &
+         - .E2_s(b,c) - .E2_s(b,d) - .E2_s(c,d) &
+         + .E3_s(a,b,c) + .E3_s(a,b,d) + .E3_s(a,c,d) + .E3_s(b,c,d) &
+         - .E4(a,b,c,d)
+
+         .E4_s(a,b,c,d) = val 
+         .E4_s(a,b,d,c) = val
+         .E4_s(a,c,b,d) = val
+         .E4_s(a,c,d,b) = val
+         .E4_s(a,d,b,c) = val
+         .E4_s(a,d,c,b) = val
+                                  
+         .E4_s(b,a,c,d) = val
+         .E4_s(b,a,d,c) = val
+         .E4_s(b,c,a,d) = val
+         .E4_s(b,c,d,a) = val
+         .E4_s(b,d,a,c) = val
+         .E4_s(b,d,c,a) = val
+                                 
+         .E4_s(c,a,b,d) = val
+         .E4_s(c,a,d,b) = val
+         .E4_s(c,b,a,d) = val
+         .E4_s(c,b,d,a) = val
+         .E4_s(c,d,a,b) = val
+         .E4_s(c,d,b,a) = val
+                                  
+         .E4_s(d,a,b,c) = val
+         .E4_s(d,a,c,b) = val
+         .E4_s(d,b,a,c) = val
+         .E4_s(d,b,c,a) = val
+         .E4_s(d,c,a,b) = val
+         .E4_s(d,c,a,b) = val
+
+
+         nullify(.atom_a)
+         nullify(.atom_b)
+         nullify(.atom_c)
+         nullify(.atom_d)
+
+      end
+      end
+      end
+      end
+
+   end
+
+   make_pairwise_shared_Es ::: leaky, private
+   ! Evaluate the Roby shared populations for all pairwise atom groups.
+      self :: INOUT
+
+   ENSURE(.E1.allocated,"no group energies")
+   ENSURE(.E2.allocated,"no group pair energies")
+
+      shared_energy :: REAL
+      n_atom,a,b,k,n_k :: INT
+
+      n_atom = .atom.dim
+      n_k = nint(n_atom.choose(2))
+      .pairwise_shared_Es.create(n_k)
+
+      .pairwise_shared_Es = ZERO
+      k = ZERO
+
+      do a = 1,n_atom
+      do b = a+1,n_atom
+         
+         k = k + 1
+         shared_energy = .E1(a) + .E1(b) - .E2(a,b)
+         .pairwise_shared_Es(k) = shared_energy
+
+      end
+      end
+
+   end
+
+   make_triple_shared_Es ::: leaky
+   ! Evaluate the triple shared energies Es_{abc} for groups of 3 atoms.
+      self :: INOUT
+ 
+   ENSURE(.E1.allocated,"no group energies")
+   ENSURE(.E2.allocated,"no group pair energies")
+   ENSURE(.E3.allocated,"no group triple energies")
+
+       shared_energies :: REAL
+       n_atom,a,b,c,k,n_k :: INT
+       
+       n_atom = .atom.dim
+       n_k = nint(n_atom.choose(3))
+       .triple_shared_Es.create(n_k)
+       .triple_shared_Es = ZERO
+
+       k = 0
+       do a = 1  ,n_atom
+       do b = a+1,n_atom
+       do c = b+1,n_atom
+          k = k + 1
+          shared_energies = .E3(a,b,c) - .E1(a) - .E1(b) - .E1(c) &
+          + .E2_s(a,b) + .E2_s(a,c) + .E2_s(b,c) 
+          .triple_shared_Es(k) = shared_energies
+       end
+       end
+       end
+
+   end
+
+   make_quad_shared_Es ::: leaky
+   ! Evaluate the quadruple shared energies Es_{abcd} for groups of 4 atoms.
+      self :: INOUT
+ 
+   ENSURE(.E1.allocated,"no group energies")
+   ENSURE(.E2.allocated,"no group pair energies")
+   ENSURE(.E3.allocated,"no group triple energies")
+   ENSURE(.E4.allocated,"no group quadriple energies")
+
+       shared_energies :: REAL
+       n_atom,a,b,c,d,k,n_k :: INT
+       
+       n_atom = .atom.dim
+       n_k = nint(n_atom.choose(4))
+       .quad_shared_Es.create(n_k)
+       .quad_shared_Es = ZERO
+
+       k = 0
+       do a = 1  ,n_atom
+       do b = a+1,n_atom
+       do c = b+1,n_atom
+       do d = c+1,n_atom
+
+          k = k + 1
+
+          shared_energies = .E1(a) + .E1(b) + .E1(c) +.E1(d) &
+             - .E2_s(a,b) - .E2_s(a,c) - .E2_s(a,d) &
+             - .E2_s(b,c) - .E2_s(b,d) - .E2_s(c,d) &
+             + .E3_s(a,b,c) + .E3_s(a,b,d) + .E3_s(a,c,d) + .E3_s(b,c,d) &
+             - .E4(a,b,c,d)
+
+          .quad_shared_Es(k) = shared_energies
+
+       end
+       end
+       end
+       end
+
+   end
+
+   make_Ems ::: private
+   ! Evaluate the higher order energy terms E^m using inclusion
+   ! exclusion principle
+      
+      self :: INOUT
+
+      .E_ms = .E_atomic - sum(.E1(:)) + sum(.pairwise_shared_Es(:)) &
+      - sum(.triple_shared_Es(:)) + sum(.quad_shared_Es(:))
+
+   end
+
    make_E2_DE ::: leaky, private
    ! Make the partitioned E^DE atomic deformation energy things.
       self :: INOUT
@@ -2696,6 +3038,62 @@ contains
           ! Partitioned E1_A(B)
          .E2_DE(a,b) = .w_DE(a,b) * .E1_DE(a)
          .E2_DE(b,a) = .w_DE(b,a) * .E1_DE(b)
+
+      end
+      end
+
+   end
+
+   make_distributed_Ems ::: leaky, private
+   ! Distribute the third, fourth and higher order terms accordingly
+   ! to the pairwise atomic interactions.
+
+      self :: INOUT
+
+   ENSURE(.atom_group.associated,"no atom groups")
+
+      n_group,a,b,c,d,n_k :: INT
+      val :: REAL
+      mat :: MAT{REAL}@
+
+      n_group = .n_group
+      n_k = nint(n_group.choose(2))
+
+      .BE_higher_terms.destroy
+      .BE_higher_terms.create(n_group,n_group)
+      mat.create(n_group,n_group)
+      .BE_higher_terms = ZERO
+      val = ZERO
+
+      do a = 1,n_group
+      do b = a+1,n_group
+
+         if (.skip_pair(a,b)) cycle
+
+         ! Partitioned E1_A(B):
+         ! n = 3:
+         if (n_group > 2) then
+           
+            val = ONE/THREE * sum(.E3_s(a,b,:))
+
+         end
+        
+         ! n = 4:
+         if (n_group > 3) then
+            
+            mat = .E4_s(a,b,:,:)
+            val = val - ONE/TWELVE * sum(mat)
+
+         end
+         
+         ! n > 4: 
+         if (n_group > 4) then
+            val = val + ONE/n_k * .E_ms
+         end
+
+         ! Set value
+         .BE_higher_terms(a,b) = val
+         .BE_higher_terms(b,a) = val
 
       end
       end
@@ -3163,7 +3561,7 @@ contains
    end   
 
    put_E_ABs_Li
-   ! Output pair and Li pairwise energy decopisition.
+   ! Output pair and Li pairwise energy decomposition.
       self :: IN
 
    ENSURE(NOT .is_homoleptic,"job is homoleptic")
@@ -3174,7 +3572,7 @@ contains
       pair :: MAT{INT}@
       symbols,labels :: MAT{STR}@
       dash,dsh1 :: VEC{STR}@
-      dist,n_A,n_B,nAB,sAB,EA,EB,EdA,EdB,EAB,V_nn,tAB :: VEC{REAL}@
+      dist,n_A,n_B,nAB,sAB,EA,EB,EdA,EdB,EAB,V_nn,mAB,tAB :: VEC{REAL}@
       has_unique_labels :: BIN
 
       ! Any atoms to do?
@@ -3298,6 +3696,7 @@ contains
          sAB.create(n_bonds)
          EdA.create(n_bonds)
          EdB.create(n_bonds)
+         mAB.create(n_bonds)
          tAB.create(n_bonds)
          forall (i=1:n_bonds)
          EA(i)  = .E1(pair(i,1)) 
@@ -3305,8 +3704,9 @@ contains
          EAB(i) = .E2(pair(i,1),pair(i,2))
          sAB(i) = EA(i) + EB(i) - EAB(i)
          EdA(i) = .E2_DE(pair(i,1),pair(i,2)) 
-         EdB(i) = .E2_DE(pair(i,2),pair(i,1)) 
-         tAB(i) = -sAB(i) + V_nn(i) + EdA(i) + EdB(i)
+         EdB(i) = .E2_DE(pair(i,2),pair(i,1))
+         mAB(i) = .BE_higher_terms(pair(i,1),pair(i,2))
+         tAB(i) = -sAB(i) + V_nn(i) + EdA(i) + EdB(i) + mAB(i)
          end
 
          ! Set table data
@@ -3336,6 +3736,7 @@ contains
          table.clear_columns
 
          tAB.destroy
+         mAB.destroy
          EdB.destroy
          EdA.destroy
          sAB.destroy
@@ -5610,7 +6011,6 @@ contains
       stdout.unsave
 
    end
-
 
    put_bond_indices_do_H
    ! Output bond indices including H's in LaTeX "rgbi-bondtable+H.tex".
@@ -8060,3 +8460,4 @@ contains
    end
 
 end
+
