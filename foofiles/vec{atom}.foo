@@ -11948,6 +11948,7 @@ contains
       .put_ADP2s(no_header)
 
       if (present(covariance)) then
+         .put_ADP2s_in_inertial_axes(covariance)
          .put_ADP2s_in_ADP2_principal_axes(covariance)
       end
 
@@ -12086,6 +12087,90 @@ contains
 
    end
 
+   get_ADP2s_in_new_axes_in(U,dU,axes,cov) ::: leaky
+   ! Rotate the ADP2s for each atom into the principal axis frame of
+   ! each atom, where "cov" is the covariance matrix for all the
+   ! parameters in the concatenated pADP vectors. 
+      self :: IN
+       U   :: MAT{REAL}@, OUT
+      dU   :: MAT{REAL}@, OUT
+      axes :: MAT{REAL}(3,3), IN
+      cov  :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      adp2,new2 :: MAT{REAL}(3,3)
+      vec2,lex2 :: VEC{REAL}(6)
+      rcm :: MAT{REAL}(6,6)
+      a,n :: INT
+
+      ! Create columns
+      n = .dim
+       U.create(n,6)
+      dU.create(n,6)
+
+      ! Loop over atoms
+      do a = 1,.dim
+
+         ! Change ADP2s to new coord system
+         adp2 = self(a).ADP_tensor
+         adp2.change_basis_to(new2,axes)
+         new2.zip_lower_triangle_to(vec2)
+         GAUSSIAN_DATA:lower_pyramid_to_lexical_2(vec2,lex2)
+         U(a,1:6) = lex2
+
+         ! Rotate whole covariance matrix by "axes"
+         rcm = .rotated_U2_covariance_mx_for_atom(a,axes,cov)
+
+         ! Extract diagonal elements as errors
+         rcm.put_diagonal_to(dU(n,1:6))
+
+      end
+
+      ! Square root sigma^2
+      dU = sqrt(dU)
+
+   end
+
+   put_ADP2s_in_inertial_axes(cov)
+   ! Rotate the ADP2s for each atom into the inertial axis frame,
+   ! where "cov" is the covariance matrix for all the parameters in
+   ! the concatenated pADP vectors. 
+      self :: IN
+      cov  :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      U,dU :: MAT{REAL}@
+      axes :: MAT{REAL}(3,3)
+
+      .make_inertial_axes(axes)
+      .get_ADP2s_in_new_axes_in(U,dU,axes,cov) 
+
+      ! Title
+      stdout.flush
+      stdout.text("=============================")
+      stdout.text("ADP2s in inertial axis system")
+      stdout.text("=============================")
+      stdout.flush
+      stdout.text(". ADPs are referred to cartesian axes.")
+
+      stdout.flush
+      stdout.text("Inertial axes in the cartesian system:")
+      stdout.put(axes)
+
+      ! Finally ... print table
+      ! This routine scales the U & dU
+      .put_ADP2s_helper(U,dU)
+
+      ! Clean
+      dU.destroy
+       U.destroy
+
+   end
+
    get_ADP2s_in_ADP2_principal_axes_in(U,dU,cov) ::: leaky
    ! Rotate the ADP2s for each atom into the principal axis frame of
    ! each atoms ADP2, where "cov" is the covariance matrix for all the
@@ -12122,7 +12207,7 @@ contains
          ! Get ADP2 principal axes into "R"
          self(a).ADP_tensor.solve_symmetric_eigenproblem(eval,R)
 
-         ! Change ADP3s to new coord system
+         ! Change ADP2s to new coord system
          adp2 = self(a).ADP_tensor
          adp2.change_basis_to(new2,R)
          new2.zip_lower_triangle_to(vec2)
@@ -12159,7 +12244,7 @@ contains
       ! Title
       stdout.flush
       stdout.text("==================================")
-      stdout.text("ADP2s in ADP2 principle axis frame")
+      stdout.text("ADP2s in ADP2 principal axis frame")
       stdout.text("==================================")
       stdout.flush
       stdout.text(". ADPs are referred to cartesian axes.")
@@ -12225,7 +12310,7 @@ contains
       fac :: REAL
       i,n :: INT
 
-      ! No. of atoms with ADP3s
+      ! No. of atoms with ADP2s
       n = .dim
 
       ! Use angstroms/angstrom^2
@@ -12493,7 +12578,7 @@ contains
       ! Title
       stdout.flush
       stdout.text("==================================")
-      stdout.text("ADP3s in ADP2 principle axis frame")
+      stdout.text("ADP3s in ADP2 principal axis frame")
       stdout.text("==================================")
       stdout.flush
       stdout.text(". ADPs are referred to cartesian axes.")
@@ -12948,7 +13033,7 @@ contains
       ! Title
       stdout.flush
       stdout.text("==================================")
-      stdout.text("ADP4s in ADP2 principle axis frame")
+      stdout.text("ADP4s in ADP2 principal axis frame")
       stdout.text("==================================")
       stdout.flush
       stdout.text(". ADPs are referred to cartesian axes.")
@@ -15992,7 +16077,7 @@ contains
 
    put_CIF_coords(refine_H_U_iso)
    ! Output the atoms and ADP's in CIF format to "stdout" in an
-   ! axis system.
+   ! axis system, with (optionally) errors "esd" provided externally.
       self :: IN
       refine_H_U_iso :: BIN, IN
 
@@ -16022,7 +16107,6 @@ contains
       end
 
    end
-
 
    put_CIF_coords_cartn(refine_H_U_iso) ::: private
    ! Output the atoms and ADP's in CIF format to "stdout" in the
@@ -16218,7 +16302,7 @@ contains
       self :: IN
       refine_H_U_iso :: BIN, IN
 
-      ADP_type :: VEC{STR}@
+      ADP_type,symbols :: VEC{STR}@
       Uiso :: VEC{REAL}@
       xyz :: MAT{REAL}*
       err :: MAT{REAL}*
@@ -16230,6 +16314,7 @@ contains
       err.create(.dim,3)
       Uiso.create(.dim)
       ADP_type.create(.dim)
+      symbols.create(.dim)
 
       ! Unit conversion
       fac  = ANGSTROM_PER_BOHR
@@ -16238,6 +16323,7 @@ contains
       ! Get table column data
       Uiso     = self.U_iso*fac2
       ADP_type = .ADP_type(refine_H_U_iso)
+      symbols  = ATOM:chemical_symbol(self(:))
 
       ! CIF coordinate header
       stdout.flush
@@ -16247,6 +16333,7 @@ contains
       stdout.flush
       stdout.text("loop_")
       stdout.text("_atom_site_label")
+      stdout.text("_atom_site_type_symbol")
       stdout.text("_atom_site_fract_x")
       stdout.text("_atom_site_fract_y")
       stdout.text("_atom_site_fract_z")
@@ -16260,21 +16347,27 @@ contains
       .put_pos_errors_to(err)
 
       ! Table 1
-      table.create(8)
+      table.create(9)
       table(1).set_values(self(:).tag)
-      table(2).set_values_and_errors(xyz(:,1),err(:,1))
-      table(3).set_values_and_errors(xyz(:,2),err(:,2))
-      table(4).set_values_and_errors(xyz(:,3),err(:,3))
-      table(5).set_values(Uiso)
-      table(6).set_values(ADP_type)
-      table(7).set_values(self(:).site_occupancy)
-      table(8).set_values(self(:).site_disorder_group)
+      table(2).set_values(symbols)
+      table(3).set_values_and_errors(xyz(:,1),err(:,1))
+      table(4).set_values_and_errors(xyz(:,2),err(:,2))
+      table(5).set_values_and_errors(xyz(:,3),err(:,3))
+      table(6).set_values(Uiso)
+      table(7).set_values(ADP_type)
+      table(8).set_values(self(:).site_occupancy)
+      table(9).set_values(self(:).site_disorder_group)
 
       ! Put tables
       table.put_body
 
       ! Clean
       table.destroy
+      symbols.destroy
+      ADP_type.destroy
+      Uiso.destroy
+      err.destroy
+      xyz.destroy
 
    end
 
@@ -16677,37 +16770,29 @@ contains
    end
 
 
-   put_CIF_ADPn(cif)
-   ! Output anharmonic ADPs in CIF format to "stdout".
-   ! This version does not produce errors. See below.
-   ! Can handle any .ADP_axis_system.
-      self :: IN
-      cif :: CIF, IN
-
-      is_cartn :: BIN
-
-      is_cartn = self(1).ADP_axis_system=="cartesian"
-
-      if (is_cartn) then; .put_CIF_ADPn_cartn(cif)
-      else;               .put_CIF_ADPn_cryst(cif)
-      end
-
-   end
-
    put_CIF_ADPn(cif,esd)
-   ! Output anharmonic ADPs in CIF format to "stdout".
-   ! This version produces errors, stored in "esd".
-   ! Can handle any .ADP_axis_system.
+   ! Output anharmonic ADPs in CIF format to "stdout".  optionally
+   ! with errors, stored in "esd". Can handle any .ADP_axis_system.
       self :: IN
       cif :: CIF, IN
-      esd :: VEC{REAL}, IN
+      esd :: VEC{REAL}, optional, IN
 
       is_cartn :: BIN
 
       is_cartn = self(1).ADP_axis_system=="cartesian"
 
-      if (is_cartn) then; .put_CIF_ADPn_cartn(cif,esd)
-      else;               .put_CIF_ADPn_cryst(cif,esd)
+      if (NOT present(esd)) then
+
+         if (is_cartn) then; .put_CIF_ADPn_cartn(cif)
+         else;               .put_CIF_ADPn_cryst(cif)
+         end
+
+      else
+
+         if (is_cartn) then; .put_CIF_ADPn_cartn(cif,esd)
+         else;               .put_CIF_ADPn_cryst(cif,esd)
+         end
+
       end
 
    end
@@ -17770,7 +17855,7 @@ contains
       Z_list :: VEC{EVEC{INT}}@
       n_kind,k1,k2,n_bonds :: INT
       labels :: MAT{STR}@
-      dash,dsh1 :: VEC{STR}@
+      dash :: VEC{STR}@
       dist,derr,test,terr :: VEC{REAL}@
       pair :: MAT{INT}@
 
@@ -17791,7 +17876,6 @@ contains
       stdout.text(" _geom_bond_distance_esu")
       stdout.text(" _geom_bond_Hirshfeld_test")
       stdout.text(" _geom_bond_Hirshfeld_test_esu")
-      stdout.text(" _geom_bond_publ_flag")
 
       ! Get Z list
       .make_atom_Z_list(Z_list)
@@ -17801,7 +17885,7 @@ contains
       if (self(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
 
       ! Create table
-      table.create(9)
+      table.create(8)
 
       ! Set the table headings
       table(1).set_heading("A")
@@ -17820,8 +17904,6 @@ contains
       table(7).set_width_from(ONE)
       table(8).set_heading("Hirshfeld test esu")
       table(8).set_width_from(ONE)
-      table(9).set_heading("yes")
-      table(9).set_width(3)
 
 
       ! Loop over atom Z classes, Z(k1) >= Z(k2)
@@ -17849,9 +17931,7 @@ contains
 
          ! Dashes
          dash.create(n_bonds)
-         dsh1.create(n_bonds)
          dash    = "."
-         dsh1    = "yes"
 
          ! Set table data
          table(1).set_values(labels(:,1))
@@ -17862,14 +17942,12 @@ contains
          table(6).set_values(derr)
          table(7).set_values(test)
          table(8).set_values(terr)
-         table(9).set_values(dsh1)
 
          ! Put body
          table.put_body(label_rows=FALSE)
 
          ! Clean
          table.clear_columns
-         dsh1.destroy
          dash.destroy
          labels.destroy
          terr.destroy
@@ -18026,7 +18104,7 @@ contains
       table :: VEC{TABLE_COLUMN}@
       Z_list :: VEC{EVEC{INT}}@
       symbols,labels :: MAT{STR}@
-      dash,dsh1 :: VEC{STR}@
+      dash :: VEC{STR}@
       angle,esds :: VEC{REAL}@
       quad :: MAT{INT}@
       no_of_torsions, n_kind,k1,k2,k3,k4,n_angles :: INT
@@ -18060,7 +18138,6 @@ contains
       stdout.text(" _geom_torsion_site_symmetry_4")
       stdout.text(" _geom_torsion")
       stdout.text(" _geom_torsion_esu")
-      stdout.text(" _geom_angle_publ_flag")
 
       ! Get Z list
       .make_atom_Z_list(Z_list)
@@ -18070,8 +18147,8 @@ contains
       if (self(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
 
       ! Create table
-      if (use_brackets) then; table.create(10)
-      else;                   table.create(11)
+      if (use_brackets) then; table.create(9)
+      else;                   table.create(10)
       end
 
       ! Set the table headings
@@ -18093,14 +18170,9 @@ contains
       table(8).set_width(1)
       table(9).set_heading("Torsion(A--B--C--D)")
       table(9).set_width_from(ONE)
-      if (use_brackets) then
-      table(10).set_heading("yes")
-      table(10).set_width(3)
-      else
+      if (NOT use_brackets) then
       table(10).set_heading("Torsion(A--B--C--D) esu")
       table(10).set_width_from(ONE)
-      table(11).set_heading("yes")
-      table(11).set_width(3)
       end
 
       ! Loop over atom kind classes
@@ -18140,9 +18212,7 @@ contains
 
          ! Dashes
          dash.create(n_angles)
-         dsh1.create(n_angles)
          dash    = "."
-         dsh1    = "yes"
 
          ! Set table data
          table( 1).set_values(labels(:,1))
@@ -18156,11 +18226,9 @@ contains
          if (use_brackets) then
          table( 9).set_real_precision(stdout.real_precision) ! Must do, for every block
          table( 9).set_values_and_errors(angle,esds)
-         table(10).set_values(dsh1)
          else
          table( 9).set_values(angle)
          table(10).set_values(esds)
-         table(11).set_values(dsh1)
          end
 
          ! Put body
@@ -18168,7 +18236,6 @@ contains
 
          ! Clean
          table.clear_columns
-         dsh1.destroy
          dash.destroy
          symbols.destroy
          esds.destroy
@@ -18305,7 +18372,7 @@ contains
    put_CIF_ADP2_cartn_HBB(refine_H_U_iso,esd)
    ! Output the ADP2's in CIF format to "stdout" in cartesian axis system.
    ! If present and TRUE "refine_H_U_iso" removed H ADP printing.
-   ! If present and TRUE "esd" array for whole atom list overrides ! errors.
+   ! If present and TRUE "esd" array for whole atom list overrides errors.
       self :: IN
       refine_H_U_iso :: BIN, optional, IN
       esd :: VEC{REAL}, optional, IN
@@ -18443,6 +18510,89 @@ contains
 
    end
 
+   put_CIF_ADP2_in_inertial_axes_cartn_HBB(cif,cov)
+   ! Output cartesian ADP2s in the inertial axis frame, 
+   ! in CIF format to "stdout".
+      self :: IN
+      cif :: CIF, IN
+      cov :: MAT{REAL}, IN
+
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
+
+      lab,ADP2_label :: STR
+      ADP2v,ADP2s :: VEC{REAL}(6)
+      fac1,fac2 :: REAL
+      U,dU :: MAT{REAL}@
+      axes :: MAT{REAL}(3,3)
+      i :: INT
+
+      ! Unit conversion for ADP's
+      fac1 = ANGSTROM_PER_BOHR
+      fac2 = fac1*fac1
+
+      ! Get the quntities
+      .make_inertial_axes(axes)
+      .get_ADP2s_in_new_axes_in(U,dU,axes,cov) 
+
+      ! Put the ADP2's
+      ADP2_label = "_atom_site_ADP2_in_inertial_U_"
+
+      stdout.flush
+      stdout.text("# ===================================")
+      stdout.text("# Cartesian ADP2s inertial axis frame")
+      stdout.text("# ===================================")
+      stdout.flush
+      stdout.text("# . These precise data use non-standard CIF tags")
+      stdout.text("# . Units are in Angstrom^2")
+
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text(trim(ADP2_label)//"label")
+
+      do i = 1,6
+         lab = ATOM:ADP2_index_label(i,form="123-repeated")
+         stdout.put(trim(trim(ADP2_label)//trim(lab)),left=TRUE)
+         stdout.put(trim(trim(ADP2_label)//trim(lab)//trim("_esu")),left=TRUE)
+         stdout.flush
+      end
+      
+      do i = 1,.dim
+      
+         stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
+      
+         ! Units !!!!!!!!!!!!
+         ADP2v = fac2 *  U(i,1:6)
+         ADP2s = fac2 * dU(i,1:6)
+
+         ! Print ADP3
+         stdout.put(ADP2v(1))
+         stdout.put(ADP2s(1))
+         stdout.flush
+         stdout.put(ADP2v(2))
+         stdout.put(ADP2s(2))
+         stdout.flush
+         stdout.put(ADP2v(3))
+         stdout.put(ADP2s(3))
+         stdout.flush
+         stdout.put(ADP2v(4))
+         stdout.put(ADP2s(4))
+         stdout.flush
+         stdout.put(ADP2v(5))
+         stdout.put(ADP2s(5))
+         stdout.flush
+         stdout.put(ADP2v(6))
+         stdout.put(ADP2s(6))
+         stdout.flush
+      
+      end
+
+      ! Clean
+      dU.destroy
+       U.destroy
+
+   end
+
    put_CIF_ADP2_in_ADP2_principal_axes_cartn_HBB(cov)
    ! Output cartesian ADP2s in the ADP2 principal axis frame (for
    ! checking) in CIF format to "stdout".
@@ -18468,7 +18618,7 @@ contains
       ! Put the ADP3's
       if (.has_any_ADP3s_and_errors) then
 
-         ADPn_label = "_atom_site_Cartn_ADP2_U_"
+         ADPn_label = "_atom_site_ADP2_in_principal_U_"
 
          stdout.flush
          stdout.text("# ============================================")
@@ -18498,7 +18648,7 @@ contains
             n = n + 1
        
             stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-            stdout.flush
+!           stdout.flush
        
             ! Units !!!!!!!!!!!!
             ADP2v = fac2 *  U(n,1:6)
@@ -18588,7 +18738,7 @@ contains
             if (NOT self(i).has_ADP3s_and_errors) cycle
         
             stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-            stdout.flush
+!            stdout.flush
         
             ! Get values and errors
             self(i).put_ADP3_vector_to(ADP(1:10))
@@ -18671,7 +18821,7 @@ contains
       ! Put the ADP3's
       if (.has_any_ADP3s_and_errors) then
 
-         ADPn_label = "_atom_site_Cartn_ADP3_U_"
+         ADPn_label = "_atom_site_ADP3_in_inertial_U_"
 
          stdout.flush
          stdout.text("# ===========================================")
@@ -18705,7 +18855,7 @@ contains
             n = n + 1
        
             stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-            stdout.flush
+!           stdout.flush
        
             ! Units !!!!!!!!!!!!
             ADP3v = fac3 *  U(n,1:10)
@@ -18784,7 +18934,7 @@ contains
       ! Put the ADP3's
       if (.has_any_ADP3s_and_errors) then
 
-         ADPn_label = "_atom_site_Cartn_ADP3_U_"
+         ADPn_label = "_atom_site_ADP3_in_principal_U_"
 
          stdout.flush
          stdout.text("# ============================================")
@@ -18818,7 +18968,7 @@ contains
             n = n + 1
        
             stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-            stdout.flush
+!           stdout.flush
        
             ! Units !!!!!!!!!!!!
             ADP3v = fac3 *  U(n,1:10)
@@ -18926,7 +19076,7 @@ contains
             if (NOT self(i).has_ADP4s_and_errors) cycle
         
             stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-            stdout.flush
+!           stdout.flush
         
             ! Get values and errors (dimensionless)
             self(i).put_ADP4_vector_to(ADP(1:15))
@@ -19026,7 +19176,7 @@ contains
       ! Put the ADP4's
       if (.has_any_ADP4s_and_errors) then
 
-         ADPn_label = "_atom_site_Cartn_ADP4_U_"
+         ADPn_label = "_atom_site_ADP3_in_inertial_U_"
 
          stdout.flush
          stdout.text("# ===========================================")
@@ -19060,7 +19210,7 @@ contains
             n = n + 1
         
             stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-            stdout.flush
+!           stdout.flush
         
             ! Get values
             self(i).put_ADP4_vector_to(ADP4v)
@@ -19159,7 +19309,7 @@ contains
       ! Put the ADP4's
       if (.has_any_ADP4s_and_errors) then
 
-         ADPn_label = "_atom_site_Cartn_ADP4_U_"
+         ADPn_label = "_atom_site_ADP3_in_principal_U_"
 
          stdout.flush
          stdout.text("# ============================================")
@@ -19193,7 +19343,7 @@ contains
             n = n + 1
         
             stdout.put(self(i).tag.trim,width=len_trim(self(i).tag),left=TRUE)
-            stdout.flush
+!           stdout.flush
         
             ! Get values
             self(i).put_ADP4_vector_to(ADP4v)
@@ -19275,7 +19425,7 @@ contains
       Z_list :: VEC{EVEC{INT}}@
       n_kind,k1,k2,k3,n_angles :: INT
       symbols   :: MAT{STR}@
-      dash,dsh1 :: VEC{STR}@
+      dash :: VEC{STR}@
       angle,esds :: VEC{REAL}@
       triple :: MAT{INT}@
 
@@ -19296,7 +19446,6 @@ contains
       stdout.text(" _geom_angle_site_symmetry_3")
       stdout.text(" _geom_angle")
       stdout.text(" _geom_angle_esu")
-      stdout.text(" _geom_angle_publ_flag")
 
       ! Get Z list
       .make_atom_Z_list(Z_list)
@@ -19306,7 +19455,7 @@ contains
       if (self(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
 
       ! Create table
-      table.create(9)
+      table.create(8)
 
       ! Set the table headings
       table(1).set_heading("A")
@@ -19325,8 +19474,6 @@ contains
       table(7).set_width_from(ONE)
       table(8).set_heading("Angle(A--B--C) esu")
       table(8).set_width_from(ONE)
-      table(9).set_heading("yes")
-      table(9).set_width(3)
 
       ! Loop over atom kind classes
       do k1 = 1,n_kind
@@ -19356,9 +19503,7 @@ contains
 
          ! Dashes
          dash.create(n_angles)
-         dsh1.create(n_angles)
          dash    = "."
-         dsh1    = "yes"
 
          ! Set table data
          table(1).set_values(symbols(:,1))
@@ -19369,14 +19514,12 @@ contains
          table(6).set_values(dash)
          table(7).set_values(angle)
          table(8).set_values(esds)
-         table(9).set_values(dsh1)
 
          ! Put body
          table.put_body(label_rows=FALSE)
 
          ! Clean
          table.clear_columns
-         dsh1.destroy
          dash.destroy
          symbols.destroy
          esds.destroy
