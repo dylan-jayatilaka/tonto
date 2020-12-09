@@ -553,23 +553,28 @@ contains
    ENSURE(.crystal.xray_data.associated, "no x-ray reflection data")
    ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
 
+      overlapping_atom :: VEC{INT}*
       rc,ra :: VEC{REAL}(3)
-      Wc,wt, xa,ya,za,a2, rho, ga,gb :: VEC{REAL}*
-      overlapping_atom, pi,pj,pn :: VEC{INT}*
-      skipa0,skipab,skipa,skipb :: VEC{BIN}*
-      k_pts,pt,grida,gridb,bf_save :: MAT{REAL}*
+      pt,pt0 :: MAT{REAL}@
+      wt,wt0, Wc  :: VEC{REAL}@
+      xa,ya,za,a2 :: VEC{REAL}@
+      rho, ga,gb  :: VEC{REAL}@
+      pi,pj,pn    :: VEC{INT}@
+      skipa0,skipab :: VEC{BIN}@
+      skipa,skipb   :: VEC{BIN}@
+      k_pts,grida,gridb :: MAT{REAL}@
       sha :: SHELL1
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
       sf :: CPX
       cutoff,sc,s2, k1,k2,k3,kr, Dab, fac, val :: REAL
-      n_atom,n_k,n_pt,n_keep :: INT
+      n_atom,n_k,n_pt,max_n_pt,max_n_ss,n_keep :: INT
       u,c,ca,cb :: INT
-      oa,fsa,lsa,fba :: INT
-      ob,fsb,lsb :: INT
+      oa,fsa,lsa,fba  :: INT
+      ob,fsb,lsb      :: INT
       sa,fa,la,na, as :: INT
-      sb,fb,lb,nb :: INT
-      a,b,i,j,k,n,p :: INT
+      sb,fb,lb,nb     :: INT
+      a,b,i,j,k,n,p    :: INT
       spin :: BIN
 
       ! Make sure HA stuff is there
@@ -606,7 +611,8 @@ contains
       ! Max no of becke grid points per atom
       n_pt = .becke_grid.max_no_of_points_per_atom
 
-      ! Atom "a" displaced points and skip switches
+      ! Atom "a" displaced numerical integration grid points 
+      ! and skip switches
       xa.create(n_pt)
       ya.create(n_pt)
       za.create(n_pt)
@@ -614,7 +620,7 @@ contains
       skipa0.create(n_pt)
       skipab.create(n_pt)
 
-      ! Loop over integration atoms "c"
+      ! Loop over integration asymmetric/unique atoms "c"
       parallel do u = 1,.crystal.n_unique_frag_atoms
 
          c  = .crystal.unique_frag_atom(u)
@@ -629,8 +635,9 @@ contains
          ! Overlapping atoms
          overlapping_atom => .overlapping_atoms_for_atom(c).element
 
-         ! Get the Becke grid for atom "c" (leaky)
-         .becke_grid.make_grid(pt,wt,bf_save,c)
+         ! Get the unsymmetrised  Becke grid for atom "c" (leaky)
+         .becke_grid.make_grid(pt,wt,c)
+       ! .becke_grid.make_grid(pt0,wt0,bf_save,c)
          n_pt = pt.dim1
 
          ! Make stockholder weight function "Wc" for atom "c"
@@ -649,8 +656,12 @@ contains
 
          ! Prune the grid with new "wt", get saved bf grid bf_save,
          ! and new no of points, n_pt (leaky)
-         .becke_grid.prune_grid(pt,wt,bf_save)
+         .becke_grid.prune_grid(pt,wt)
+       ! .becke_grid.prune_grid(pt,wt,bf_save)
+
+         ! *New* points
          n_pt = pt.dim1
+         !!!!!!!!!!!!!!
 
          ! Basis function grid and skip list
          bf_skip.create(.n_shell)
@@ -696,26 +707,15 @@ contains
                end
 
                ! Assign the "sa" skipa list
-               bf_skip(sa).element => skipa
+               bf_skip(sa).element.create(skipa.dim)
+               bf_skip(sa).element = skipa
 
                ! Make/copy the "sa" basis function grida
                ! This must be copied since skipa could be TRUE
                grida.create(n_keep,na)
-               if (oa/=c) then
-                  ! Calculate grid if necessary
-                  sha.make_skip_grid(grida,n_keep,xa,ya,za,a2,skipa,n_pt)
-               else
-                  ! Extract grid values from saved grid values
-                  do a = 1,na
-                     i = 0
-                     do n = 1,n_pt
-                        if (skipa(n)) cycle
-                        i = i + 1
-                        grida(i,a) = bf_save(n,a+fa-fba)
-                     end
-                  end
-               end
-               bf_grid(sa).element => grida
+               sha.make_skip_grid(grida,n_keep,xa,ya,za,a2,skipa,n_pt)
+               bf_grid(sa).element.create(n_keep,na)
+               bf_grid(sa).element = grida
 
                ! Loop c-overlapping atoms b
                do cb = 1,ca
@@ -736,8 +736,8 @@ contains
                      nb = lb - fb + 1
 
                      ! Set the "sb" basis function grid
-                     skipb => bf_skip(sb).element
-                     gridb => bf_grid(sb).element
+                     skipb = bf_skip(sb).element
+                     gridb = bf_grid(sb).element
 
                      ! How many points in common? Save time?
                      skipab(1:n_pt) = skipa OR skipb
@@ -753,8 +753,8 @@ contains
                      if (na*nb==1) then ! s.s product
 
                         ! Add density contribution to rho
-                        ga => grida(:,1)
-                        gb => gridb(:,1)
+                        ga = grida(:,1)
+                        gb = gridb(:,1)
                         Dab = fac*.density_matrix.restricted(fa,fb)
                         i = 0; j = 0
                         do n = 1,n_pt
@@ -765,6 +765,9 @@ contains
                            rho(n) = rho(n) + val
                         end
 
+                        ga.destroy
+                        gb.destroy
+
                      else              ! not s.s product
 
                         ! Create space for gathered index info
@@ -773,7 +776,9 @@ contains
                         pn.create(n_keep)
 
                         ! Make mapper arrays
-                        p = 0; i = 0; j = 0
+                        p = 0
+                        i = 0
+                        j = 0
                         do n = 1,n_pt
                            if (NOT skipa(n)) i = i + 1
                            if (NOT skipb(n)) j = j + 1
@@ -786,9 +791,9 @@ contains
 
                         ! Add density contribution to rho
                         do a = 1,na
-                           ga => grida(:,a)
+                           ga = grida(:,a)
                            do b = 1,nb
-                              gb  => gridb(:,b)
+                              gb = gridb(:,b)
                               Dab = fac*.density_matrix.restricted(fa+a-1,fb+b-1)
                               do p = 1,n_keep
                                  i = pi(p)
@@ -801,11 +806,16 @@ contains
                         end
 
                         ! Clean up
+                        ga.destroy
+                        gb.destroy
                         pn.destroy
                         pj.destroy
                         pi.destroy
 
                      end
+
+                     gridb.destroy
+                     skipb.destroy
 
                   end
                end
@@ -815,7 +825,23 @@ contains
          ! Weight the atom "c" density
          rho = rho*wt
 
+
+       ! ! Maximum no. of site symmetry operators
+       ! max_n_ss = maxval(.crystal.frag_atom_sym_factor)
+       ! max_n_pt = n_pt*max_n_ss
+
+       ! ! Make symmetrised pruned becke grid
+       ! if (sc==1) then
+       !    pt = pt0
+       !    wt = wt0
+       ! else
+       !    ! Generate site-symmetry equivalent grid points
+       !    ! No. of pt's and wt's now are multiplied by no. of site symops
+       !    .crystal.make_symmetry_equivalents_from(pt0,wt0,c,pt,wt)
+       ! end
+
          ! Make the (unique) structure factors
+         ! Fourier transform, yay!
          do k = 1,n_k
             k1 = k_pts(k,1)
             k2 = k_pts(k,2)
@@ -832,7 +858,6 @@ contains
          rho.destroy
          bf_grid.destroy
          bf_skip.destroy
-         bf_save.destroy
          wt.destroy
          pt.destroy
 
