@@ -3170,90 +3170,91 @@ contains
 
       name = .name
       if (NOT stdin.buffer_exhausted) stdin.read(name)
+      if (IO_IS_ALLOWED) then
 
-      wfnfile.create(trim(name)//".wfn")
-      wfnfile.open_for("write")
-
-      if (mod(.n_e, 2)==0) then
-         n_orbitals = .n_e / 2
-      else
-         n_orbitals = (.n_e + 1) / 2
+         wfnfile.create(trim(name)//".wfn")
+         wfnfile.open_for("write")
+       
+         if (mod(.n_e, 2)==0) then
+            n_orbitals = .n_e / 2
+         else
+            n_orbitals = (.n_e + 1) / 2
+         end
+       
+         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
+         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
+       
+         pcount = 1
+         lvec.create(.n_prim)
+         evec.create(.n_prim)
+         do a = 1, .n_shell
+           atomn  = .atom_for_shell(a)
+           shelln = .atom_shell_for_shell(a)
+           sh => .atom(atomn).basis.shell(shelln)
+           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+           do j = 1, sh.n_cc
+             if (sh.l==3) then
+               lvec(pcount  ) = l + 1
+               lvec(pcount+1) = l + 2
+               lvec(pcount+2) = l + 3
+               lvec(pcount+3) = l + 4
+               lvec(pcount+4) = l + 5
+               lvec(pcount+5) = l + 7
+               lvec(pcount+6) = l + 6
+               lvec(pcount+7) = l + 8
+               lvec(pcount+8) = l + 9
+               lvec(pcount+9) = l + 10
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 pcount = pcount + 1
+               end
+             else
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 lvec(pcount) = l + i
+                 pcount = pcount + 1
+               end
+             end
+           end
+         end
+       
+         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
+         write(unit = wfnfile.unit, fmt = exponent_format) evec
+       
+         lvec.destroy
+         evec.destroy
+       
+         dmatrix.create(.n_prim, .n_bf)
+         cc.create(.n_prim, .n_bf)
+       
+         .:make_contraction_matrix(cc)
+       
+         dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
+       
+         do i = 1, n_orbitals
+            write(unit = wfnfile.unit, fmt = mol_title_format) &
+               "MO  ", i, &
+               "OCC NO = ", .occupation_numbers.restricted(i), &
+               " ORB. ENERGY = ", .orbital_energies.restricted(i)
+            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+         end
+       
+         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
+         if (.scfdata.associated) then
+         write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, TWO
+         else
+         write(unit = wfnfile.unit, fmt = e_v_format) ZERO, TWO
+         end
+       
+         ! Clean
+         cc.destroy
+         dmatrix.destroy
+         wfnfile.close
+         wfnfile.destroy
       end
-
-      write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-      write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
-      write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-         .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
-      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
-
-      pcount = 1
-      lvec.create(.n_prim)
-      evec.create(.n_prim)
-      do a = 1, .n_shell
-        atomn  = .atom_for_shell(a)
-        shelln = .atom_shell_for_shell(a)
-        sh => .atom(atomn).basis.shell(shelln)
-        l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
-        do j = 1, sh.n_cc
-          if (sh.l==3) then
-            lvec(pcount  ) = l + 1
-            lvec(pcount+1) = l + 2
-            lvec(pcount+2) = l + 3
-            lvec(pcount+3) = l + 4
-            lvec(pcount+4) = l + 5
-            lvec(pcount+5) = l + 7
-            lvec(pcount+6) = l + 6
-            lvec(pcount+7) = l + 8
-            lvec(pcount+8) = l + 9
-            lvec(pcount+9) = l + 10
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              pcount = pcount + 1
-            end
-          else
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              lvec(pcount) = l + i
-              pcount = pcount + 1
-            end
-          end
-        end
-      end
-
-      write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
-      write(unit = wfnfile.unit, fmt = exponent_format) evec
-
-      lvec.destroy
-      evec.destroy
-
-      dmatrix.create(.n_prim, .n_bf)
-      cc.create(.n_prim, .n_bf)
-
-      .:make_contraction_matrix(cc)
-
-      dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
-
-      do i = 1, n_orbitals
-         write(unit = wfnfile.unit, fmt = mol_title_format) &
-            "MO  ", i, &
-            "OCC NO = ", .occupation_numbers.restricted(i), &
-            " ORB. ENERGY = ", .orbital_energies.restricted(i)
-         write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
-      end
-
-      write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
-      if (.scfdata.associated) then
-      write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, TWO
-      else
-      write(unit = wfnfile.unit, fmt = e_v_format) ZERO, TWO
-      end
-
-      ! Clean
-      cc.destroy
-      dmatrix.destroy
-      wfnfile.close
-      wfnfile.destroy
-
    end
 
    write_aim2000_wfn_file ::: leaky
@@ -3280,90 +3281,91 @@ contains
 
       name = .name
       if (NOT stdin.buffer_exhausted) stdin.read(name)
+      if (IO_IS_ALLOWED) then
 
-      wfnfile.create(trim(name)//".wfn")
-      wfnfile.open_for("write")
-
-      if (mod(.n_e, 2)==0) then
-         n_orbitals = .n_e / 2
-      else
-         n_orbitals = (.n_e + 1) / 2
+         wfnfile.create(trim(name)//".wfn")
+         wfnfile.open_for("write")
+       
+         if (mod(.n_e, 2)==0) then
+            n_orbitals = .n_e / 2
+         else
+            n_orbitals = (.n_e + 1) / 2
+         end
+       
+         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
+         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
+       
+         pcount = 1
+         lvec.create(.n_prim)
+         evec.create(.n_prim)
+         do a = 1, .n_shell
+           atomn  = .atom_for_shell(a)
+           shelln = .atom_shell_for_shell(a)
+           sh => .atom(atomn).basis.shell(shelln)
+           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+           do j = 1, sh.n_cc
+             if (sh.l==3) then
+               lvec(pcount  ) = l + 1
+               lvec(pcount+1) = l + 2
+               lvec(pcount+2) = l + 3
+               lvec(pcount+3) = l + 4
+               lvec(pcount+4) = l + 5
+               lvec(pcount+5) = l + 7
+               lvec(pcount+6) = l + 6
+               lvec(pcount+7) = l + 8
+               lvec(pcount+8) = l + 9
+               lvec(pcount+9) = l + 10
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 pcount = pcount + 1
+               end
+             else
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 lvec(pcount) = l + i
+                 pcount = pcount + 1
+               end
+             end
+           end
+         end
+       
+         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
+         write(unit = wfnfile.unit, fmt = exponent_format) evec
+       
+         lvec.destroy
+         evec.destroy
+       
+         dmatrix.create(.n_prim, .n_bf)
+         cc.create(.n_prim, .n_bf)
+       
+         .:make_contraction_matrix(cc)
+       
+         dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
+       
+         do i = 1, n_orbitals
+            occ = ZERO
+            if (i<=.n_a) occ = TWO
+            write(unit=wfnfile.unit, fmt=mol_title_format) &
+               i, occ, .orbital_energies.restricted(i)
+            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+         end
+       
+         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
+         if (.scfdata.associated) then
+         write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, 2.0D00
+         else
+         write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
+         end
+       
+         ! Clean
+         cc.destroy
+         dmatrix.destroy
+         wfnfile.close
+         wfnfile.destroy
       end
-
-      write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-      write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
-      write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-         .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
-      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
-
-      pcount = 1
-      lvec.create(.n_prim)
-      evec.create(.n_prim)
-      do a = 1, .n_shell
-        atomn  = .atom_for_shell(a)
-        shelln = .atom_shell_for_shell(a)
-        sh => .atom(atomn).basis.shell(shelln)
-        l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
-        do j = 1, sh.n_cc
-          if (sh.l==3) then
-            lvec(pcount  ) = l + 1
-            lvec(pcount+1) = l + 2
-            lvec(pcount+2) = l + 3
-            lvec(pcount+3) = l + 4
-            lvec(pcount+4) = l + 5
-            lvec(pcount+5) = l + 7
-            lvec(pcount+6) = l + 6
-            lvec(pcount+7) = l + 8
-            lvec(pcount+8) = l + 9
-            lvec(pcount+9) = l + 10
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              pcount = pcount + 1
-            end
-          else
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              lvec(pcount) = l + i
-              pcount = pcount + 1
-            end
-          end
-        end
-      end
-
-      write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
-      write(unit = wfnfile.unit, fmt = exponent_format) evec
-
-      lvec.destroy
-      evec.destroy
-
-      dmatrix.create(.n_prim, .n_bf)
-      cc.create(.n_prim, .n_bf)
-
-      .:make_contraction_matrix(cc)
-
-      dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
-
-      do i = 1, n_orbitals
-         occ = ZERO
-         if (i<=.n_a) occ = TWO
-         write(unit=wfnfile.unit, fmt=mol_title_format) &
-            i, occ, .orbital_energies.restricted(i)
-         write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
-      end
-
-      write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
-      if (.scfdata.associated) then
-      write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, 2.0D00
-      else
-      write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
-      end
-
-      ! Clean
-      cc.destroy
-      dmatrix.destroy
-      wfnfile.close
-      wfnfile.destroy
-
    end
 
    write_florian_wfn_file(with_lambda)
@@ -3398,87 +3400,89 @@ contains
 
       name = .name
       if (NOT stdin.buffer_exhausted) stdin.read(name)
+      if (IO_IS_ALLOWED) then
 
-      if (avec_lambda) then
-        wfnfile.create(trim(name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".ffn")
-      else
-        wfnfile.create(trim(name)//".ffn")
+         if (avec_lambda) then
+           wfnfile.create(trim(name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".ffn")
+         else
+           wfnfile.create(trim(name)//".ffn")
+         end
+       
+         wfnfile.open_for("write")
+         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", .n_bf, .n_prim, .n_atom
+         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
+
+         pcount = 1
+         lvec.create(.n_prim)
+         evec.create(.n_prim)
+         do a = 1, .n_shell
+           atomn  = .atom_for_shell(a)
+           shelln = .atom_shell_for_shell(a)
+           sh => .atom(atomn).basis.shell(shelln)
+           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+           do j = 1, sh.n_cc
+             if (sh.l==3) then
+               lvec(pcount  ) = l + 1
+               lvec(pcount+1) = l + 2
+               lvec(pcount+2) = l + 3
+               lvec(pcount+3) = l + 4
+               lvec(pcount+4) = l + 5
+               lvec(pcount+5) = l + 7
+               lvec(pcount+6) = l + 6
+               lvec(pcount+7) = l + 8
+               lvec(pcount+8) = l + 9
+               lvec(pcount+9) = l + 10
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 pcount = pcount + 1
+               end
+             else
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 lvec(pcount) = l + i
+                 pcount = pcount + 1
+               end
+             end
+           end
+         end
+       
+         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
+         write(unit = wfnfile.unit, fmt = exponent_format) evec
+       
+         lvec.destroy
+         evec.destroy
+       
+         dmatrix.create(.n_prim, .n_bf)
+         cc.create(.n_prim, .n_bf)
+       
+         .:make_contraction_matrix(cc)
+       
+         dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
+       
+         do i = 1, .n_bf
+            occ = ZERO
+            if (i<=.n_a) occ = TWO
+            write(unit=wfnfile.unit, fmt=mol_title_format) &
+               i, occ, .orbital_energies.restricted(i)
+            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+         end
+       
+         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
+         if (.scfdata.associated) then
+            write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, 2.0D00
+         else
+            write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
+         end
+       
+         ! Clean
+         cc.destroy
+         dmatrix.destroy
+         wfnfile.close
+         wfnfile.destroy
       end
-
-      wfnfile.open_for("write")
-      write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-      write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", .n_bf, .n_prim, .n_atom
-      write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-         .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
-      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
-
-      pcount = 1
-      lvec.create(.n_prim)
-      evec.create(.n_prim)
-      do a = 1, .n_shell
-        atomn  = .atom_for_shell(a)
-        shelln = .atom_shell_for_shell(a)
-        sh => .atom(atomn).basis.shell(shelln)
-        l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
-        do j = 1, sh.n_cc
-          if (sh.l==3) then
-            lvec(pcount  ) = l + 1
-            lvec(pcount+1) = l + 2
-            lvec(pcount+2) = l + 3
-            lvec(pcount+3) = l + 4
-            lvec(pcount+4) = l + 5
-            lvec(pcount+5) = l + 7
-            lvec(pcount+6) = l + 6
-            lvec(pcount+7) = l + 8
-            lvec(pcount+8) = l + 9
-            lvec(pcount+9) = l + 10
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              pcount = pcount + 1
-            end
-          else
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              lvec(pcount) = l + i
-              pcount = pcount + 1
-            end
-          end
-        end
-      end
-
-      write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
-      write(unit = wfnfile.unit, fmt = exponent_format) evec
-
-      lvec.destroy
-      evec.destroy
-
-      dmatrix.create(.n_prim, .n_bf)
-      cc.create(.n_prim, .n_bf)
-
-      .:make_contraction_matrix(cc)
-
-      dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
-
-      do i = 1, .n_bf
-         occ = ZERO
-         if (i<=.n_a) occ = TWO
-         write(unit=wfnfile.unit, fmt=mol_title_format) &
-            i, occ, .orbital_energies.restricted(i)
-         write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
-      end
-
-      write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
-      if (.scfdata.associated) then
-         write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, 2.0D00
-      else
-         write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
-      end
-
-      ! Clean
-      cc.destroy
-      dmatrix.destroy
-      wfnfile.close
-      wfnfile.destroy
 
    end
 
