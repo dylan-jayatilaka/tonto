@@ -2251,6 +2251,56 @@ contains
       res = int(g.sum_column_vectors/g.dim2)
    end
 
+! For integration grids
+
+   make_symmetry_equivalents_from(pt0,wt0,site_index,pt,wt) ::: PURE, leaky
+   ! Transform *cartesian* 3D points "pt0" and correspoding 1D weights
+   ! "wt0" from an integration grid by the symmetry operators whose
+   ! indices are in "site_symops" and return them in "pt" and "wt"
+      self :: IN
+      pt0 :: MAT{REAL}, IN
+      wt0 :: VEC{REAL}, IN
+      site_index :: INT, IN
+      pt :: MAT{REAL}@, OUT
+      wt :: VEC{REAL}@, OUT
+
+   ENSURE(.spacegroup.seitz.associated,"Seitz matrices not initialized")
+   ENSURE(.frag_atom_stabilizer.allocated,"No site symmetry operators!")
+   ENSURE(site_index>0,     "operator index out of bounds")
+
+     seitz :: MAT3{REAL}@
+     g,s,ss, n_ss,n_pt :: INT
+
+     n_pt = wt0.dim
+     n_ss = .frag_atom_stabilizer(site_index).element.dim
+
+     ! Rotated points & cloned weights (leaky)
+     pt.create(n_pt*n_ss,3)              
+     wt.create(n_pt*n_ss)
+ 
+     ! Cartesian seitz matrices
+     seitz = .transposed_xyz_seitz_matrices 
+
+     s = 0
+     do ss = 1,n_ss
+
+        ! Site symop index
+        g = .frag_atom_stabilizer(site_index).element(ss)
+
+        ! Do the rotation
+        pt(s+1:s+n_pt,:) = matmul(pt0,seitz(:,:,g))
+        wt(s+1:s+n_pt  ) = wt0
+
+        ! Space for next block of pointsd
+        s = s + n_pt
+
+     end
+
+     ! Average by the no. of site symops
+     wt = wt/n_ss
+
+   end
+
 !  ===============
 !  Fragment widths
 !  ===============
@@ -2301,7 +2351,9 @@ contains
 
       i :: INT
 
-      res.create(3,3,.spacegroup.n_seitz) ! leaky
+      ! leaky
+      res.create(3,3,.spacegroup.n_seitz) 
+
       do i = 1,.spacegroup.n_seitz
          res(:,:,i) = matmul(.unit_cell.direct_matrix, &
                       matmul(.spacegroup.seitz(1:3,1:3,i),.unit_cell.inverse_matrix))
@@ -3419,7 +3471,7 @@ contains
 
    end
 
-   F_exp_scaled_corrected result (res) ! ::: PURE
+   F_exp_scaled_corrected result (res) 
    ! The experimental structure factors F_exp on an absolute scale,
    ! and corrected for dispersion (if any).
    ! Method follows XD (2015) manual p. 45.
@@ -4568,7 +4620,7 @@ contains
 
    end
 
-   add_dispersion_correction(Fc) ! ::: PURE
+   add_dispersion_correction(Fc) 
    ! Add the anomalous dispersion correction in "Fc" for the set of
    ! symmetry-unique atoms.
    ! 1/2/18 
@@ -7265,12 +7317,12 @@ contains
       cm.create(9*.n_fragment_atoms,9*.n_fragment_atoms)
       CRYSTAL:make_pADP2_covariance_matrix(cm,.fragment_atom,.data.fragment_covariance_matrix)
 
-      ! ADP3s in principle axis frame
+      ! ADP3s in principal axis frame
       if (.fragment_atom.has_any_ADP3s_and_errors) then
           .fragment_atom.put_ADP3s_in_ADP2_principal_axes(.data.fragment_covariance_matrix)
       end
 
-      ! ADP4s in principle axis frame
+      ! ADP4s in principal axis frame
       if (.fragment_atom.has_any_ADP4s_and_errors) then
           .fragment_atom.put_ADP4s_in_ADP2_principal_axes(.data.fragment_covariance_matrix)
       end
@@ -8103,7 +8155,8 @@ contains
       ! Put the info
       atom.put_CIF_coords_cartn_HBB(.data.refine_H_U_iso,esd)
       atom.put_CIF_ADP2_cartn_HBB(.data.refine_H_U_iso,esd)
-      atom.put_CIF_ADP2_in_ADP2_principal_axes_cartn_HBB(covariance_matrix)
+      atom.put_CIF_ADP2_in_inertial_axes_cartn_HBB(cif,covariance_matrix,.data.refine_H_U_iso)
+      atom.put_CIF_ADP2_in_ADP2_principal_axes_cartn_HBB(covariance_matrix,.data.refine_H_U_iso)
       atom.put_CIF_ADP3_cartn_HBB(cif,esd)
       atom.put_CIF_ADP3_in_inertial_axes_cartn_HBB(cif,covariance_matrix)
       atom.put_CIF_ADP3_in_ADP2_principal_axes_cartn_HBB(cif,covariance_matrix)
@@ -8320,8 +8373,8 @@ contains
       F_p     = .data.F_pred_complex
       F_ph    = REFLECTION:F_phase_angle_in_degrees(.data.reflections(:))
       F_exp   = .F_exp_scaled_corrected
-      fac     = F_exp/.data.reflections.F_exp
-      F_pred  = abs(F_p) * fac
+      fac     = ONE/.data.F_scale_and_extn_correction
+      F_pred  = abs(F_p) * fac  ! Warning ... this may include dispersion !
       F_cr    = RE((F_p * fac))
       F_ci    = IM((F_p * fac))
       F_sigma = .data.reflections.F_sigma*fac
@@ -8539,7 +8592,7 @@ contains
 
       F000,F2_cal,F2_exp,F2_sig,factor :: REAL
       F_p :: VEC{CPX}@
-      F_exp :: VEC{REAL}@
+      F_exp,fac :: VEC{REAL}@
       d_max,d_min :: REAL
       h_max,h_min :: VEC{INT}(3)
       ref :: REFLECTION
@@ -8610,9 +8663,9 @@ contains
          stdout.text("    _refln_F_squared_sigma")
          stdout.text("    _refln_observed_status")
 
-         F_exp = .data.F_exp_on_absolute_scale
-         allocate(F_p(n_refl))
-         F_p   = .data.F_pred_complex 
+         F_exp = .data.F_exp_on_absolute_scale ! We can just multiply F_exp b y fac below!
+         F_p = .data.F_pred_complex 
+         fac = ONE/.data.F_scale_and_extn_correction
         
          do i = 1,.data.reflections.dim
 
@@ -8620,11 +8673,11 @@ contains
             ref = .data.reflections(i)
 
             ! The numbers
-!           F2_cal = ref.F2_calc_abs
+          ! F2_cal = ref.F2_calc_abs
             F2_exp = F_exp(i)*F_exp(i)
-            factor = F_exp(i)/ref.F_exp ! scale factor
-            F2_sig = factor * F_exp(i) * ref.F_sigma * TWO ! Lorraine, CHECK !!!!
-            F_p(i) = F_p(i) * factor
+          ! factor = F_exp(i)/ref.F_exp ! scale factor
+            F2_sig = fac(i)*fac(i) * F_exp(i) * ref.F_sigma * TWO ! Lorraine, CHECK !!!!
+            F_p(i) = F_p(i) * fac(i)
             F2_cal = RE(F_p(i)) * RE(F_p(i)) + IM(F_p(i)) * IM(F_p(i)) 
 
             if(IO_IS_ALLOWED) then
@@ -8948,7 +9001,6 @@ contains
 
    ENSURE(.fragment_info_made,"no fragment info")
 
-      rf :: VEC{INT}@
       table :: VEC{TABLE_COLUMN}@
 
       stdout.flush
@@ -8956,16 +9008,13 @@ contains
       stdout.text("QM fragment geometry:")
       stdout.flush
 
-      ! Data
-      rf = int(.repetition_factor)
-
       ! Table
       table.create(13)
 
       table( 1).set_heading("ID");     table(1).set_values(.fragment_atom.tag)
 
       table( 2).set_column_spacing(2)
-      table( 2).set_heading("Rep");    table(2).set_values(rf)
+      table( 2).set_heading("Rep");    table(2).set_values(int(.repetition_factor))
       table( 2).set_subhead("fac")
       table( 2).set_sb3head("tor")
 
@@ -9015,7 +9064,6 @@ contains
 
       ! Clean
       table.destroy
-      rf.destroy
 
    end
 
