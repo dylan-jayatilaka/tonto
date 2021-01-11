@@ -522,7 +522,7 @@ contains
       self :: INOUT
 
    ENSURE(.internal.disassociated,"no need to open an internal file")
-
+      
       if (.exists) then; .open_old_file_for_write
       else;              .open_new_file_for_write
       end
@@ -692,7 +692,7 @@ contains
       self :: INOUT
 
    DIE_IF(NOT .exists,  "file " //trim(.name) //" does not exist!")
-   DIE_IF(NOT .is_open, "file " //trim(.name) //" does not exist!")
+   DIE_IF(NOT .is_open, "file " //trim(.name) //" is not opened!")
    DIE_IF(.action/="read","has not been opened for reading")
 
       l :: INT
@@ -711,7 +711,7 @@ contains
       end
 
       ! Broadcast - but don't check .io_status!
-      PARALLEL_BROADCAST(l,0)
+      PARALLEL_BROADCAST(l,tonto.master_processor)
 
       ! Set the number of lines.
       ! WARNING: this assumes the fail happens after
@@ -1131,14 +1131,14 @@ contains
          if (IO_IS_ALLOWED) then
             inquire(file=trim(name),exist=res)
          end
-         PARALLEL_BROADCAST(res,0)
+         PARALLEL_BROADCAST(res,tonto.master_processor)
 
       else
 
          if (IO_IS_ALLOWED) then
             inquire(file=trim(.name),exist=res)
          end
-         PARALLEL_BROADCAST(res,0)
+         PARALLEL_BROADCAST(res,tonto.master_processor)
 
       end
 
@@ -1159,7 +1159,27 @@ contains
            inquire(file=.name,opened=res)
          ! inquire(unit=.unit,opened=res)
         end
-        PARALLEL_BROADCAST(res,0)
+
+      end
+      PARALLEL_BROADCAST(res,tonto.master_processor)
+
+   end
+
+   is_open_io result (res)
+   ! Returns true if the file has been opened
+      self :: IN
+      res :: BIN
+
+      if (.unit==TEXTFILE_STDIN_UNIT OR .unit==TEXTFILE_STDOUT_UNIT) then
+
+         res = TRUE ! not needed for stdin, stdout
+
+      else
+
+        if (IO_IS_ALLOWED) then
+           inquire(file=.name,opened=res)
+         ! inquire(unit=.unit,opened=res)
+        end
 
       end
 
@@ -1173,7 +1193,7 @@ contains
       if (IO_IS_ALLOWED) then
         inquire(unit=.unit,opened=res)
       end
-      PARALLEL_BROADCAST(res,0)
+      PARALLEL_BROADCAST(res,tonto.master_processor)
 
    end
 
@@ -1311,14 +1331,14 @@ contains
 
       ! Read a line
       .io_status = 0
+      string = " "
       if (IO_IS_ALLOWED) then
-         string = " "
          read(unit=.unit,iostat=.io_status,fmt="(a)") string
       end
 
       ! Broadcast
       PARALLEL_BROADCAST(.io_status,tonto.master_processor)
-      PARALLEL_BROADCAST(string,0)
+      PARALLEL_BROADCAST(string,tonto.master_processor)
 
       ! Is the read OK?
       select case (.io_status)
@@ -1498,7 +1518,7 @@ contains
          if (IO_IS_ALLOWED) then
             read(unit=.unit, iostat=.io_status, fmt="()")
          end
-         PARALLEL_BROADCAST(.io_status,0)
+         PARALLEL_BROADCAST(.io_status,tonto.master_processor)
 
          ! Failed?
          if (.io_status/=0) exit
@@ -1514,7 +1534,7 @@ contains
          backspace(unit=.unit,iostat=.io_status)
          backspace(unit=.unit,iostat=.io_status)
       end
-      PARALLEL_BROADCAST(.io_status,0)
+      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
 
       ! Set the record
       .record = max(0,.record-1)
@@ -3962,22 +3982,27 @@ contains
       ! Write the buffer.string
       .io_status = 0
       if (IO_IS_ALLOWED) then
-         ENSURE(.is_open,"file "//trim(.name)//" is not open!")
+         ENSURE(.is_open_io,"file "//trim(.name)//" is not open!")
          write(unit=.unit,iostat=.io_status,fmt="(a)") trim(.buffer.string)
+         DIE_IF(.io_status>0,"flush error")
+         TONTO_FLUSH_BUFFER(.unit)
+         .clear_and_put_margin
+         .record = .record + 1
       end
 
       ! Failure?
       PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      PARALLEL_BROADCAST(.record,tonto.master_processor)
       DIE_IF(.io_status>0,"flush error")
 
       ! Flush - seems to cause problems with MPI
-      TONTO_FLUSH_BUFFER(.unit)
+   !  TONTO_FLUSH_BUFFER(.unit)
 
       ! Write margin
       .clear_and_put_margin
 
       ! Increment line no.
-      .record = .record + 1
+   !  .record = .record + 1
 
    end
 
