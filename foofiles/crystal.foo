@@ -448,7 +448,7 @@ contains
       if (tonto.is_master_processor) then
          call random_number(harvest)
       end
-      PARALLEL_BROADCAST(harvest,0)
+      PARALLEL_BROADCAST(harvest,tonto.master_processor)
 
       ! Reflections for r_free have p<percentage
       ! Otherwise, they are kept and used for fitting
@@ -8286,8 +8286,8 @@ contains
       table :: VEC{TABLE_COLUMN}@
       stl,d,fac :: VEC{REAL}@
       F_p :: VEC{CPX}@
-      F_cr,F_ci,F_ph :: VEC{REAL}@
-      F_pred,F_exp,F_sigma,F_z :: VEC{REAL}@
+      F_cr,F_ci,F_ph :: VEC{REAL}*
+      F_pred,F_exp,F_sigma,F_z :: VEC{REAL}*
       n_refl :: INT
 
       lambda :: REAL
@@ -8371,12 +8371,21 @@ contains
       stl     = .data.reflections(:).stl*BOHR_PER_ANGSTROM
       d       = .data.reflections(:).d  *ANGSTROM_PER_BOHR
       F_p     = .data.F_pred_complex
+      F_ph.create(n_refl)
+      F_exp.create(n_refl)
+      F_pred.create(n_refl)
+      F_cr.create(n_refl)
+      F_ci.create(n_refl)
+      F_z.create(n_refl)
+      F_sigma.create(n_refl)
       F_ph    = REFLECTION:F_phase_angle_in_degrees(.data.reflections(:))
       F_exp   = .F_exp_scaled_corrected
       fac     = ONE/.data.F_scale_and_extn_correction
       F_pred  = abs(F_p) * fac  ! Warning ... this may include dispersion !
-      F_cr    = RE((F_p * fac))
-      F_ci    = IM((F_p * fac))
+      F_cr    = RE(.data.F_pred_complex)
+      F_cr    = F_cr * fac
+      F_ci    = IM(F_p)
+      F_ci    = F_ci * fac
       F_sigma = .data.reflections.F_sigma*fac
       F_z     = REFLECTION:F_z(.data.reflections(:))
 
@@ -8401,6 +8410,173 @@ contains
 
       ! Clean
       table.destroy
+      F_ph.destroy
+      F_exp.destroy
+      F_pred.destroy
+      F_cr.destroy
+      F_ci.destroy
+      F_z.destroy
+      F_sigma.destroy
+
+   end
+
+   put_olex_fcf
+   ! Put reflection information in CIF format *on an absolute scale*
+      self :: IN
+
+   ENSURE(.data.associated,"no diffraction data!")
+
+      table :: VEC{TABLE_COLUMN}@
+      stl,d,fac :: VEC{REAL}@
+      F_p :: VEC{CPX}@
+      F_cr,F_ci,F_ph,F2m,F2s,F2c :: VEC{REAL}*
+      F_pred,F_exp,F_sigma,F_z :: VEC{REAL}*
+      n_refl :: INT
+
+      lambda :: REAL
+      thmax  :: REAL
+
+      ! Constants
+      n_refl = .data.reflections.dim
+
+      stdout.flush
+      stdout.text("# ================")
+      stdout.text("# Diffraction data")
+      stdout.text("# ================")
+
+      lambda = REFLECTION:wavelength()
+      lambda.convert_to("angstrom")
+
+      stdout.flush
+      stdout.show("_diffrn_radiation_type             ","?"                     ,dots=FALSE)
+      stdout.show("_diffrn_radiation_wavelength       ",lambda                  ,dots=FALSE)
+
+      stdout.flush
+      stdout.show("_diffrn_measurement_method         ","?"                     ,dots=FALSE)
+      stdout.show("_diffrn_measurement_device_type    ","?"                     ,dots=FALSE)
+
+      thmax = maxval(abs(.data.reflections(:).theta))*DEGREE_PER_RADIAN
+
+      stdout.flush
+      stdout.show("_diffrn_reflns_number              ","?"                     ,dots=FALSE)
+      stdout.show("_diffrn_reflns_theta_max           ",thmax                   ,dots=FALSE)
+
+      stdout.flush
+      stdout.text("# ===========")
+      stdout.text("# Reflections")
+      stdout.text("# ===========")
+
+      stdout.flush
+      stdout.show("_reflns_d_resolution_high          ",.data.reflections(:).d_min*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_d_resolution_low           ",.data.reflections(:).d_max*ANGSTROM_PER_BOHR,dots=FALSE)
+      stdout.show("_reflns_limit_h_max                ",maxval(.data.reflections(:).h),dots=FALSE)
+      stdout.show("_reflns_limit_h_min                ",minval(.data.reflections(:).h),dots=FALSE)
+      stdout.show("_reflns_limit_k_max                ",maxval(.data.reflections(:).k),dots=FALSE)
+      stdout.show("_reflns_limit_k_min                ",minval(.data.reflections(:).k),dots=FALSE)
+      stdout.show("_reflns_limit_l_max                ",maxval(.data.reflections(:).l),dots=FALSE)
+      stdout.show("_reflns_limit_l_min                ",minval(.data.reflections(:).l),dots=FALSE)
+      stdout.show("_reflns_number_gt                  ",n_refl                   ,dots=FALSE)
+      stdout.show("_reflns_number_total               ",n_refl                   ,dots=FALSE)
+
+      stdout.flush
+      stdout.text("_reflns_special_details            ")
+      stdout.text(";")
+      stdout.text("* Specify symmetry and Friedel pair averaging *")
+
+      stdout.flush
+      stdout.text(". Only.data reflections which satisfy the threshold expression")
+      stdout.text("  are listed below, and only they are considered observed,")
+      stdout.text("  thus the *_gt, *_all, & *_total data are always the same")
+      stdout.text(";")
+
+    ! fcmax = maxval(abs(.data.reflections(:).F_calc))
+    ! stdout.flush
+    ! stdout.show("_shelx_F_calc_maximum              ", fcmax,dots=FALSE)
+
+      stdout.flush
+      stdout.text("loop_")
+      stdout.text("    _refln_index_h")
+      stdout.text("    _refln_index_k")
+      stdout.text("    _refln_index_l")
+      stdout.text("    _refln_index_group")
+      stdout.text("    _refln_stl")
+      stdout.text("    _refln_d_spacing")
+      stdout.text("    _refln_A_calc")
+      stdout.text("    _refln_B_calc")
+      stdout.text("    _refln_phase_calc")
+      stdout.text("    _refln_F_calc")
+      stdout.text("    _refln_F_meas")
+      stdout.text("    _refln_F_sigma")
+      stdout.text("    _refln_delta_F_on_sigma")
+      stdout.text("    _refln_F_squared_meas")
+      stdout.text("    _refln_F_squared_sigma")
+      stdout.text("    _refln_F_squared_calc")
+
+      ! Get data
+      stl     = .data.reflections(:).stl*BOHR_PER_ANGSTROM
+      d       = .data.reflections(:).d  *ANGSTROM_PER_BOHR
+      F_p     = .data.F_pred_complex
+      F_ph.create(n_refl)
+      F2m.create(n_refl)
+      F2c.create(n_refl)
+      F2s.create(n_refl)
+      F_exp.create(n_refl)
+      F_pred.create(n_refl)
+      F_cr.create(n_refl)
+      F_ci.create(n_refl)
+      F_z.create(n_refl)
+      F_sigma.create(n_refl)
+
+      F2m = .F2_exp_scaled_corrected
+      fac = F2m/.data.F2_exp
+      F2s = .data.reflections(:).F2_sigma*fac
+      F2c = .data.reflections(:).F2_calc_abs
+
+      F_ph    = REFLECTION:F_phase_angle_in_degrees(.data.reflections(:))
+      F_exp   = .F_exp_scaled_corrected
+      fac     = ONE/.data.F_scale_and_extn_correction
+      F_pred  = abs(F_p) * fac  ! Warning ... this may include dispersion !
+      F_cr    = RE(.data.F_pred_complex)
+      F_cr    = F_cr * fac
+      F_ci    = IM(F_p)
+      F_ci    = F_ci * fac
+      F_sigma = .data.reflections.F_sigma*fac
+      F_z     = REFLECTION:F_z(.data.reflections(:))
+
+      ! Make table
+      table.create(16)
+       table(1).set_values(.data.reflections(:).h)
+       table(2).set_values(.data.reflections(:).k)
+       table(3).set_values(.data.reflections(:).l)
+       table(4).set_values(.data.reflections(:).group)
+       table(5).set_values(stl)
+       table(6).set_values(d)
+       table(7).set_values(F_cr)
+       table(8).set_values(F_ci)
+       table(9).set_values(F_ph)
+      table(10).set_values(F_pred)
+      table(11).set_values(F_exp)
+      table(12).set_values(F_sigma)
+      table(13).set_values(F_z)
+      table(14).set_values(F2m)
+      table(15).set_values(F2s)
+      table(16).set_values(F2c)
+
+      ! Body
+      table.put_body
+
+      ! Clean
+      table.destroy
+      F_ph.destroy
+      F_exp.destroy
+      F_pred.destroy
+      F_cr.destroy
+      F_ci.destroy
+      F_z.destroy
+      F_sigma.destroy
+      F2m.destroy
+      F2c.destroy
+      F2s.destroy
 
    end
 
@@ -8590,7 +8766,7 @@ contains
    ! Put XD fco reflection file
       self :: INOUT
 
-      F000,F2_cal,F2_exp,F2_sig,factor :: REAL
+      F000,F2_cal,F2_exp,F2_sig :: REAL
       F_p :: VEC{CPX}@
       F_exp,fac :: VEC{REAL}@
       d_max,d_min :: REAL
