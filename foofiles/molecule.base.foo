@@ -1605,9 +1605,11 @@ contains
 !  Molden interface
 !  ================
 
-   read_molden_MOs(file_name) ::: leaky
+   read_molden_MOs(file_name, do_groups, print_output) ::: leaky
    ! Read a Molden MOs file
-      file_name :: STR, optional
+      file_name :: STR, optional, IN
+      do_groups    :: BIN, optional, IN
+      print_output :: BIN, optional, IN
 
       molden_file,save :: TEXTFILE*
       archive :: ARCHIVE
@@ -1616,7 +1618,7 @@ contains
       fac,n_e,val,energy,occ :: REAL
       name,units,item,label,spin :: STR
       op,cl :: STR(len=1)
-      found,is_unrestricted :: BIN
+      output,found,is_unrestricted :: BIN
       line, a,i,f,Z :: INT
 
       ! Get file name
@@ -1624,6 +1626,11 @@ contains
       else if (NOT stdin.buffer_exhausted) then; stdin.read(name)
       else;                                      name = .name
       end
+
+      if (present(print_output)) then; output = print_output
+      else;                            output = FALSE
+      endif
+      output = TRUE
 
       ! Constants
       op = achar(91)
@@ -1668,11 +1675,12 @@ contains
       ! Create atom list (leaky)
       if (.atom.associated)  .atom.destroy
       .atom.create(.n_atom)
+      .atom_info_made = FALSE
 
       ! Create basis -- Different one for every atom (leaky)
       if (.basis.associated) .basis.destroy
       .basis.create(.n_atom)
-      if (.use_spherical_basis) .basis.set_spherical(TRUE)
+      if(.use_spherical_basis) .basis.set_spherical(TRUE)
 
       ! Move back to atoms line
       molden_file.move_to_line(line)
@@ -1697,7 +1705,7 @@ contains
          .atom(a).set_position(pos)
 
          ! Set basis label
-         .atom(a).set_basis_label("molden-"//trim(.atom(a).generic_chemical_symbol))
+         .atom(a).set_basis_label(trim(.atom(a).generic_chemical_symbol)//":molden")
 
       end
 
@@ -1717,7 +1725,11 @@ contains
       stdin => save
 
       ! Remove repetitions
-    ! .basis.remove_repetitions
+      .basis.remove_repetitions
+
+      if (output) then
+         .:put_bases
+      end 
 
       ! Find [MO] tag
       molden_file.look_for(op//"MO"//cl,found=found)
@@ -1749,13 +1761,16 @@ contains
       .spin_multiplicity = .:default_spin_multiplicity
 
       ! Finalize atom info/basis sets
-      .:finalize_atoms
+      .:finalize_atoms(do_groups)
 
-      .atom.put
+      if (output) then
+         .atom.put
+      end if
 
       ! Create scfdata (leaky)
       .scfdata.destroy
       .scfdata.create
+      .scfdata.set_output(output)
 
       ! Create MO arrays (leaky)
       .orbital_energies.destroy
@@ -1865,7 +1880,9 @@ contains
       orb.destroy
 
       ! Swap orbital order
-      stdout.text("Reordering basis functions into tonto order")
+      if (output) then
+         stdout.text("Reordering basis functions into tonto order")
+      endif
       if (is_unrestricted) then
          .:swap_molden_orbital_order(.molecular_orbitals.alpha,"row")
          .:swap_molden_orbital_order(.molecular_orbitals.beta,"row")
@@ -1876,47 +1893,55 @@ contains
 
       ! Make density matrix (leaky)
       .:make_scf_density_matrix
-      stdout.text("Occupation")
-      stdout.put(.occupation_numbers)
-      !if(NOT .natural_orbitals.associated) .:make_natural_orbitals
 
-      ! Print out data
-      stdout.flush
-      stdout.text("===========")
-      stdout.text("Molden data")
-      stdout.text("===========")
-      stdout.flush
-      stdout.text("Below are the molden:")
-      stdout.text(". Atom coordinates and bases")
-      stdout.text(". Molecular orbitals and their occupancies")
-      stdout.flush
-      if (is_unrestricted) then; stdout.text("The data is for *unrestricted* orbitals")
-      else;                      stdout.text("The data is for *restricted* orbitals")
-      end
+      ! Echo what was read
+      if (output) then
 
-      stdout.flush
-      stdout.text("Molden atom coordinates and bases:")
-      .:put_atoms
+         stdout.text("Occupation")
+         stdout.put(.occupation_numbers)
+         !if(NOT .natural_orbitals.associated) .:make_natural_orbitals
 
-      stdout.flush
-      stdout.text("Occupation numbers:")
-      stdout.flush
-      stdout.put(.occupation_numbers)
+         ! Print out data
+         stdout.flush
+         stdout.text("===========")
+         stdout.text("Molden data")
+         stdout.text("===========")
+         stdout.flush
+         stdout.text("Below are the molden:")
+         stdout.text(". Atom coordinates and bases")
+         stdout.text(". Molecular orbitals and their occupancies")
+         stdout.flush
+         if (is_unrestricted) then; stdout.text("The data is for *unrestricted* orbitals")
+         else;                      stdout.text("The data is for *restricted* orbitals")
+         end
 
-      stdout.flush
-      stdout.text("Orbital energies:")
-      stdout.flush
-      stdout.put(.orbital_energies)
+         stdout.flush
+         stdout.text("Molden atom coordinates and bases:")
+         .:put_atoms
 
-      stdout.flush
-      stdout.text("Density matrix:")
-      stdout.flush
-      stdout.put(.density_matrix)
+         stdout.flush
+         stdout.text("Occupation numbers:")
+         stdout.flush
+         stdout.put(.occupation_numbers)
 
-      stdout.flush
-      !.SCF:make_fock_matrix
-      !.SCF:put_scf_energy
-      stdout.flush
+         stdout.flush
+         stdout.text("Orbital energies:")
+         stdout.flush
+         stdout.put(.orbital_energies)
+
+         stdout.flush
+         stdout.text("MOs:")
+         stdout.flush
+         stdout.put(.molecular_orbitals)
+
+         stdout.flush
+         stdout.text("Density matrix:")
+         stdout.flush
+         stdout.put(.density_matrix)
+
+         stdout.flush
+
+      endif
 
      !stdout.flush
      !stdout.text("Natural orbitals:")
@@ -1948,315 +1973,315 @@ contains
 
    end
 
-!   read_molden_NOs(file_name) ::: leaky
-!   ! Read a Molden natural orbitals file.
-!   ! Here the occupation numbers are not integers.
-!      file_name :: STR, optional
-!
-!   ENSURE(NOT .use_spherical_basis,"not implemented")
-!
-!      molden_file,save :: TEXTFILE*
-!      archive :: ARCHIVE
-!      pos :: VEC{REAL}(3)
-!      orb :: VEC{REAL}*
-!      fac,n_e,val,energy,occ :: REAL
-!      name,units,item,label,spin :: STR
-!      op,cl :: STR(len=1)
-!      found,is_unrestricted :: BIN
-!      line, a,i,f,Z :: INT
-!
-!      ! Get file name
-!      if (present(file_name)) then;              name = file_name
-!      else if (NOT stdin.buffer_exhausted) then; stdin.read(name)
-!      else;                                      name = .name
-!      end
-!
-!      ! Constants
-!      op = achar(91)
-!      cl = achar(93)
-!
-!      ! Open Molden file
-!      molden_file.create(name)
-!      molden_file.open_for("read")
-!
-!      ! Find [ATOMS] block
-!      molden_file.look_for(op//"ATOMS"//cl,found=found)
-!      DIE_IF(NOT found, "No ATOMS line")
-!      DIE_IF(molden_file.n_line_items/=2, "Expecting two items on ATOMS line")
-!
-!      ! Read units
-!      molden_file.read(units)
-!      fac = ONE
-!      if (units=="Angs") fac = BOHR_PER_ANGSTROM
-!
-!      ! Store start of atoms list
-!      molden_file.read_line
-!      line = molden_file.line_number
-!
-!      ! Get no. of atoms ...
-!      .n_atom = 0
-!      do
-!         molden_file.read(item)
-!         if (item==op//"Molden") exit
-!         DIE_IF(molden_file.end_of_file,"file ended unexpectedly")
-!         .n_atom = .n_atom + 1
-!         molden_file.read_line
-!      end
-!
-!      ! Create atom list (leaky)
-!      if (.atom.associated)  .atom.destroy
-!      .atom.create(.n_atom)
-!
-!      ! Create basis -- Different one for every atom (leaky)
-!      if (.basis.associated) .basis.destroy
-!      .basis.create(.n_atom)
-!
-!      ! Move back to atoms line
-!      molden_file.move_to_line(line)
-!
-!      ! For each atom a: read label, Z, coordinates
-!      do a = 1,.n_atom
-!
-!         ! Read label
-!         molden_file.read(label)
-!
-!         ! Read Z
-!         molden_file.skip_next_item
-!         molden_file.read(Z)
-!
-!         ! Set
-!         .atom(a).set_atomic_number(Z)
-!         .atom(a).set_atom_data_from_label(label)
-!
-!         ! Read position, change units
-!         molden_file.read(pos)
-!         pos = fac*pos
-!         .atom(a).set_position(pos)
-!
-!         ! Set basis label
-!         .atom(a).set_basis_label("molden-"//trim(.atom(a).generic_chemical_symbol))
-!
-!      end
-!
-!      ! Read basis set
-!      molden_file.look_for(op//"GTO"//cl,found=found)
-!      DIE_IF(NOT found, "No GTO line")
-!      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on GTO line")
-!      molden_file.read_line
-!
-!      ! Read basis
-!      save => stdin
-!      stdin => molden_file
-!      do a = 1,.n_atom
-!         .basis(a).read_molden
-!         .basis(a).put
-!         .basis(a).set_label(.atom(a).basis_label)
-!      end
-!      stdin => save
-!
-!      ! Find [MO] tag
-!      molden_file.look_for(op//"MO"//cl,found=found)
-!      DIE_IF(NOT found, "No MO line")
-!      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on MO line")
-!      line = molden_file.line_number + 1
-!
-!      ! Any Beta tag?
-!      molden_file.look_for("Beta",found=is_unrestricted)
-!
-!      ! Move back to [MO]'s
-!      molden_file.move_to_line(line)
-!
-!      ! Get no. of electrons
-!      n_e = ZERO
-!      do
-!         molden_file.look_for("Occup=",found=found)
-!         if (NOT found) exit
-!         molden_file.move_to_line_item(2)
-!         molden_file.read(val)
-!         molden_file.read_line
-!         n_e = n_e + val
-!      end
-!
-!      ! Now set charge
-!      .charge = .atom.no_of_electrons - nint(n_e)
-!
-!      ! Set multiplicity
-!      .spin_multiplicity = .:default_spin_multiplicity
-!
-!
-!      ! Finalize atom info/basis sets
-!      .:finalize_atoms
-!
-!      ! Create MO arrays (leaky)
-!      .density_matrix.destroy
-!      .occupation_numbers.destroy
-!      .natural_orbitals.destroy
-!
-!      if (is_unrestricted) then
-!
-!         .occupation_numbers.create(.n_bf,"unrestricted")
-!         .occupation_numbers.alpha = ZERO
-!         .occupation_numbers.beta = ZERO
-!
-!         .density_matrix.create(.n_bf,"unrestricted")
-!         .natural_orbitals.create(.n_bf,"unrestricted")
-!         .natural_orbitals.alpha = ZERO
-!         .natural_orbitals.beta = ZERO
-!
-!      else
-!
-!         .occupation_numbers.create(.n_bf,"restricted")
-!         .occupation_numbers.restricted = ZERO
-!
-!         .density_matrix.create(.n_bf,"unrestricted")
-!         .natural_orbitals.create(.n_bf,"restricted")
-!         .natural_orbitals.restricted = ZERO
-!
-!      end
-!
-!      ! Move back to [MO]'s
-!      molden_file.move_to_line(line)
-!      orb.create(.n_bf)
-!
-!      ! Read in orbitals and energies.
-!      i = 0
-!      do
-!
-!         molden_file.look_for("Ene=",found=found)
-!
-!         if (NOT found) exit
-!
-!         ! Read energy
-!         molden_file.skip_next_item
-!         molden_file.read(energy)
-!
-!         ! Read spin
-!         molden_file.skip_next_item
-!         molden_file.read(spin)
-!
-!         ! Read occupation
-!         molden_file.skip_next_item
-!         molden_file.read(occ)
-!
-!         ! Read orbital
-!         do f = 1,.n_bf
-!            molden_file.skip_next_item
-!            molden_file.read(orb(f))
-!         end
-!
-!         ! Increment orbital
-!         if (spin=="Alpha") i = i + 1
-!         DIE_IF(i>.n_bf,"too many orbitals specified")
-!
-!         ! Assign MO's
-!         if (is_unrestricted) then
-!
-!            select case (spin)
-!
-!            case ("Alpha")
-!               .occupation_numbers.alpha(i) = occ
-!               .natural_orbitals.alpha(:,i) = orb
-!
-!            case ("Beta")
-!               .occupation_numbers.beta(i) = occ
-!               .natural_orbitals.beta(:,i) = orb
-!
-!            case default
-!               DIE("unknown spin: "//trim(spin))
-!
-!            end
-!
-!         else
-!
-!            select case (spin)
-!
-!            case ("Alpha")
-!               .occupation_numbers.restricted(i) = occ
-!               .natural_orbitals.restricted(:,i) = orb
-!
-!            case default
-!               DIE("unexpected spin: "//trim(spin))
-!
-!            end
-!
-!         end
-!
-!      end
-!
-!      ! Clean
-!      orb.destroy
-!
-!      ! Swap orbital order
-!      if (is_unrestricted) then
-!         .:swap_molden_orbital_order(.natural_orbitals.alpha,"row")
-!         .:swap_molden_orbital_order(.natural_orbitals.beta,"row")
-!      else
-!         .:swap_molden_orbital_order(.natural_orbitals.restricted,"row")
-!      end
-!
-!
-!      ! Make density matrix
-!      if (is_unrestricted) then
-!         .:make_density_matrix_from(.natural_orbitals,.occupation_numbers,"unrestricted")
-!      else
-!         .:make_density_matrix_from(.natural_orbitals,.occupation_numbers,"restricted")
-!      end
-!
-!      ! Print out data
-!      stdout.flush
-!      stdout.text("===========")
-!      stdout.text("Molden data")
-!      stdout.text("===========")
-!      stdout.flush
-!      stdout.text("Below are the data read from the molden file:")
-!      stdout.text(". Atom coordinates and bases")
-!      stdout.text(". Natural orbitals and their occupancies")
-!      stdout.flush
-!      if (is_unrestricted) then; stdout.text("The data is for *restricted* orbitals")
-!      else;                      stdout.text("The data is for *unrestricted* orbitals")
-!      end
-!
-!      stdout.flush
-!      stdout.text("Molden atom coordinates and bases:")
-!      .:put_atoms
-!
-!      stdout.flush
-!      stdout.text("Occupation numbers:")
-!      stdout.flush
-!      stdout.put(.occupation_numbers)
-!
-!      stdout.flush
-!      stdout.text("Natural orbitals:")
-!      stdout.flush
-!      stdout.put(.natural_orbitals)
-!
-!      ! Save data in archive files
-!      archive.set_defaults
-!
-!      archive.set(.name,"density_matrix")
-!      archive.write(.density_matrix)
-!
-!      archive.set(.name,"natural_orbitals")
-!      archive.write(.natural_orbitals)
-!
-!      archive.set(.name,"occupation_numbers")
-!      archive.write(.occupation_numbers)
-!
-!      ! Set crystal data
-!      if (associated(.crystal)) then
-!         .:resolve_axis_system
-!         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-!      end
-!
-!      ! Clean
-!      molden_file.destroy
-!
-!   end
+   read_molden_NOs(file_name) ::: leaky
+   ! Read a Molden natural orbitals file.
+   ! Here the occupation numbers are not integers.
+      file_name :: STR, optional
+
+   ENSURE(NOT .use_spherical_basis,"not implemented")
+
+      molden_file,save :: TEXTFILE*
+      archive :: ARCHIVE
+      pos :: VEC{REAL}(3)
+      orb :: VEC{REAL}*
+      fac,n_e,val,energy,occ :: REAL
+      name,units,item,label,spin :: STR
+      op,cl :: STR(len=1)
+      found,is_unrestricted :: BIN
+      line, a,i,f,Z :: INT
+
+      ! Get file name
+      if (present(file_name)) then;              name = file_name
+      else if (NOT stdin.buffer_exhausted) then; stdin.read(name)
+      else;                                      name = .name
+      end
+
+      ! Constants
+      op = achar(91)
+      cl = achar(93)
+
+      ! Open Molden file
+      molden_file.create(name)
+      molden_file.open_for("read")
+
+      ! Find [ATOMS] block
+      molden_file.look_for(op//"ATOMS"//cl,found=found)
+      DIE_IF(NOT found, "No ATOMS line")
+      DIE_IF(molden_file.n_line_items/=2, "Expecting two items on ATOMS line")
+
+      ! Read units
+      molden_file.read(units)
+      fac = ONE
+      if (units=="Angs") fac = BOHR_PER_ANGSTROM
+
+      ! Store start of atoms list
+      molden_file.read_line
+      line = molden_file.line_number
+
+      ! Get no. of atoms ...
+      .n_atom = 0
+      do
+         molden_file.read(item)
+         if (item==op//"Molden") exit
+         DIE_IF(molden_file.end_of_file,"file ended unexpectedly")
+         .n_atom = .n_atom + 1
+         molden_file.read_line
+      end
+
+      ! Create atom list (leaky)
+      if (.atom.associated)  .atom.destroy
+      .atom.create(.n_atom)
+      .atom_info_made = FALSE
+
+      ! Create basis -- Different one for every atom (leaky)
+      if (.basis.associated) .basis.destroy
+      .basis.create(.n_atom)
+
+      ! Move back to atoms line
+      molden_file.move_to_line(line)
+
+      ! For each atom a: read label, Z, coordinates
+      do a = 1,.n_atom
+
+         ! Read label
+         molden_file.read(label)
+
+         ! Read Z
+         molden_file.skip_next_item
+         molden_file.read(Z)
+
+         ! Set
+         .atom(a).set_atomic_number(Z)
+         .atom(a).set_atom_data_from_label(label)
+
+         ! Read position, change units
+         molden_file.read(pos)
+         pos = fac*pos
+         .atom(a).set_position(pos)
+
+         ! Set basis label
+         .atom(a).set_basis_label("molden-"//trim(.atom(a).generic_chemical_symbol))
+
+      end
+
+      ! Read basis set
+      molden_file.look_for(op//"GTO"//cl,found=found)
+      DIE_IF(NOT found, "No GTO line")
+      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on GTO line")
+      molden_file.read_line
+
+      ! Read basis
+      save => stdin
+      stdin => molden_file
+      do a = 1,.n_atom
+         .basis(a).read_molden
+         .basis(a).put
+         .basis(a).set_label(.atom(a).basis_label)
+      end
+      stdin => save
+
+      ! Find [MO] tag
+      molden_file.look_for(op//"MO"//cl,found=found)
+      DIE_IF(NOT found, "No MO line")
+      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on MO line")
+      line = molden_file.line_number + 1
+
+      ! Any Beta tag?
+      molden_file.look_for("Beta",found=is_unrestricted)
+
+      ! Move back to [MO]'s
+      molden_file.move_to_line(line)
+
+      ! Get no. of electrons
+      n_e = ZERO
+      do
+         molden_file.look_for("Occup=",found=found)
+         if (NOT found) exit
+         molden_file.move_to_line_item(2)
+         molden_file.read(val)
+         molden_file.read_line
+         n_e = n_e + val
+      end
+
+      ! Now set charge
+      .charge = .atom.no_of_electrons - nint(n_e)
+
+      ! Set multiplicity
+      .spin_multiplicity = .:default_spin_multiplicity
+
+      ! Finalize atom info/basis sets
+      .:finalize_atoms
+
+      ! Create MO arrays (leaky)
+      .density_matrix.destroy
+      .occupation_numbers.destroy
+      .natural_orbitals.destroy
+
+      if (is_unrestricted) then
+
+         .occupation_numbers.create(.n_bf,"unrestricted")
+         .occupation_numbers.alpha = ZERO
+         .occupation_numbers.beta = ZERO
+
+         .density_matrix.create(.n_bf,"unrestricted")
+         .natural_orbitals.create(.n_bf,"unrestricted")
+         .natural_orbitals.alpha = ZERO
+         .natural_orbitals.beta = ZERO
+
+      else
+
+         .occupation_numbers.create(.n_bf,"restricted")
+         .occupation_numbers.restricted = ZERO
+
+         .density_matrix.create(.n_bf,"unrestricted")
+         .natural_orbitals.create(.n_bf,"restricted")
+         .natural_orbitals.restricted = ZERO
+
+      end
+
+      ! Move back to [MO]'s
+      molden_file.move_to_line(line)
+      orb.create(.n_bf)
+
+      ! Read in orbitals and energies.
+      i = 0
+      do
+
+         molden_file.look_for("Ene=",found=found)
+
+         if (NOT found) exit
+
+         ! Read energy
+         molden_file.skip_next_item
+         molden_file.read(energy)
+
+         ! Read spin
+         molden_file.skip_next_item
+         molden_file.read(spin)
+
+         ! Read occupation
+         molden_file.skip_next_item
+         molden_file.read(occ)
+
+         ! Read orbital
+         do f = 1,.n_bf
+            molden_file.skip_next_item
+            molden_file.read(orb(f))
+         end
+
+         ! Increment orbital
+         if (spin=="Alpha") i = i + 1
+         DIE_IF(i>.n_bf,"too many orbitals specified")
+
+         ! Assign MO's
+         if (is_unrestricted) then
+
+            select case (spin)
+
+            case ("Alpha")
+               .occupation_numbers.alpha(i) = occ
+               .natural_orbitals.alpha(:,i) = orb
+
+            case ("Beta")
+               .occupation_numbers.beta(i) = occ
+               .natural_orbitals.beta(:,i) = orb
+
+            case default
+               DIE("unknown spin: "//trim(spin))
+
+            end
+
+         else
+
+            select case (spin)
+
+            case ("Alpha")
+               .occupation_numbers.restricted(i) = occ
+               .natural_orbitals.restricted(:,i) = orb
+
+            case default
+               DIE("unexpected spin: "//trim(spin))
+
+            end
+
+         end
+
+      end
+
+      ! Clean
+      orb.destroy
+
+      ! Swap orbital order
+      if (is_unrestricted) then
+         .:swap_molden_orbital_order(.natural_orbitals.alpha,"row")
+         .:swap_molden_orbital_order(.natural_orbitals.beta,"row")
+      else
+         .:swap_molden_orbital_order(.natural_orbitals.restricted,"row")
+      end
+
+
+      ! Make density matrix
+      if (is_unrestricted) then
+         .:make_density_matrix_from(.natural_orbitals,.occupation_numbers,"unrestricted")
+      else
+         .:make_density_matrix_from(.natural_orbitals,.occupation_numbers,"restricted")
+      end
+
+      ! Print out data
+      stdout.flush
+      stdout.text("===========")
+      stdout.text("Molden data")
+      stdout.text("===========")
+      stdout.flush
+      stdout.text("Below are the data read from the molden file:")
+      stdout.text(". Atom coordinates and bases")
+      stdout.text(". Natural orbitals and their occupancies")
+      stdout.flush
+      if (is_unrestricted) then; stdout.text("The data is for *restricted* orbitals")
+      else;                      stdout.text("The data is for *unrestricted* orbitals")
+      end
+
+      stdout.flush
+      stdout.text("Molden atom coordinates and bases:")
+      .:put_atoms
+
+      stdout.flush
+      stdout.text("Occupation numbers:")
+      stdout.flush
+      stdout.put(.occupation_numbers)
+
+      stdout.flush
+      stdout.text("Natural orbitals:")
+      stdout.flush
+      stdout.put(.natural_orbitals)
+
+      ! Save data in archive files
+      archive.set_defaults
+
+      archive.set(.name,"density_matrix")
+      archive.write(.density_matrix)
+
+      archive.set(.name,"natural_orbitals")
+      archive.write(.natural_orbitals)
+
+      archive.set(.name,"occupation_numbers")
+      archive.write(.occupation_numbers)
+
+      ! Set crystal data
+      if (associated(.crystal)) then
+         .:resolve_axis_system
+         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+      end
+
+      ! Clean
+      molden_file.destroy
+
+   end
 
    swap_molden_orbital_order(X,swap)
    ! Swap the order of orbitals on matrix "X" after reading a
    ! molden input file, for "swap" equal to "row" or "1", or
-   ! "column" or "2".  This is nearly the same as gaussian.
+   ! "coloumn" or "2".  This is nearly the same as gaussian.
    !
    ! The molden orderring is as follows:
    !  5D: D 0, D+1, D-1, D+2, D-2
@@ -2273,41 +2298,22 @@ contains
       fac :: VEC{REAL}*
       ff :: VEC{INT}(10) = (/ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 /)
       sph_reorder :: VEC{INT}@
-      spherical :: BIN
 
       select case (swap)
 
       case("row","1")
-
          do s = 1,.n_shell
-
             f  = .first_basis_fn_for_shell(s)
             l  = .last_basis_fn_for_shell(s)
             ls = .angular_moment_for_shell(s)
-
-            spherical = .atom(.atom_for_shell(s)).basis.is_spherical
-
-            if (spherical) then
-
-               ! Get reordering array
+            if(.atom(.atom_for_shell(s)).basis.is_spherical) then
+               ! do spherical test
                sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
-
-               ! Swap sphericals
-               if (ls>=1) then 
+               stdout.show("Reordering: ", sph_reorder)
+               if (ls>=1) then ! swap f functions
                   X(f:l,:) = X(f-1+sph_reorder,:)
                end
-
-            else
-
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
-
-               ! Swap f functions
-               if (ls==3) then 
-                  X(f:l,:) = X(f-1+ff,:)
-               end
-
-               ! Normalisation factors
-               if (ls>1) then  
+               if (ls>1) then  ! normalisation factors
                   lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
                   fg = lg + 1
                   lg = lg + GAUSSIAN_DATA:n_comp(ls)
@@ -2316,53 +2322,41 @@ contains
                      X(i,:) = X(i,:)*fac(i-f+1)
                   end
                end
-
-            end
-
-         end
-
-      case("column","2")
-
-         do s = 1,.n_shell
-
-            f  = .first_basis_fn_for_shell(s)
-            l  = .last_basis_fn_for_shell(s)
-            ls = .angular_moment_for_shell(s)
-
-            spherical = .atom(.atom_for_shell(s)).basis.is_spherical
-
-            if (spherical) then
-
-               ! Get reordering array
-               sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
-
-               ! Swap sphericals
-               if (ls>=1) then 
-                  X(:,f:l) = X(:,f-1+sph_reorder)
-               end
-
             else
-
                ENSURE(ls<=4,"cannot yet convert order for h shells")
-               
-               ! Swap f functions
-               if (ls==3) then 
-                  X(:,f:l) = X(:,f-1+ff)
+               if (ls==3) then ! swap f functions
+                  X(f:l,:) = X(f-1+ff,:)
                end
-               
-               ! Normalisation factors
-               if (ls>1) then  
+               if (ls>1) then  ! normalisation factors
                   lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
                   fg = lg + 1
                   lg = lg + GAUSSIAN_DATA:n_comp(ls)
                   fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do j = f,l
-                     X(:,j) = X(:,j)*fac(j-f+1)
+                  do i = f,l
+                     X(i,:) = X(i,:)*fac(i-f+1)
                   end
                end
-
             end
+         end
 
+      case("column","2")
+         do s = 1,.n_shell
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
+            if (ls==3) then ! swap f functions
+               X(:,f:l) = X(:,f-1+ff)
+            end
+            if (ls>1) then  ! normalisation factors
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do j = f,l
+                  X(:,j) = X(:,j)*fac(j-f+1)
+               end
+            end
          end
 
       case default
@@ -3229,90 +3223,91 @@ contains
 
       name = .name
       if (NOT stdin.buffer_exhausted) stdin.read(name)
+      if (IO_IS_ALLOWED) then
 
-      wfnfile.create(trim(name)//".wfn")
-      wfnfile.open_for("write")
-
-      if (mod(.n_e, 2)==0) then
-         n_orbitals = .n_e / 2
-      else
-         n_orbitals = (.n_e + 1) / 2
+         wfnfile.create(trim(name)//".wfn")
+         wfnfile.open_for("write")
+       
+         if (mod(.n_e, 2)==0) then
+            n_orbitals = .n_e / 2
+         else
+            n_orbitals = (.n_e + 1) / 2
+         end
+       
+         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
+         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
+       
+         pcount = 1
+         lvec.create(.n_prim)
+         evec.create(.n_prim)
+         do a = 1, .n_shell
+           atomn  = .atom_for_shell(a)
+           shelln = .atom_shell_for_shell(a)
+           sh => .atom(atomn).basis.shell(shelln)
+           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+           do j = 1, sh.n_cc
+             if (sh.l==3) then
+               lvec(pcount  ) = l + 1
+               lvec(pcount+1) = l + 2
+               lvec(pcount+2) = l + 3
+               lvec(pcount+3) = l + 4
+               lvec(pcount+4) = l + 5
+               lvec(pcount+5) = l + 7
+               lvec(pcount+6) = l + 6
+               lvec(pcount+7) = l + 8
+               lvec(pcount+8) = l + 9
+               lvec(pcount+9) = l + 10
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 pcount = pcount + 1
+               end
+             else
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 lvec(pcount) = l + i
+                 pcount = pcount + 1
+               end
+             end
+           end
+         end
+       
+         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
+         write(unit = wfnfile.unit, fmt = exponent_format) evec
+       
+         lvec.destroy
+         evec.destroy
+       
+         dmatrix.create(.n_prim, .n_bf)
+         cc.create(.n_prim, .n_bf)
+       
+         .:make_contraction_matrix(cc)
+       
+         dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
+       
+         do i = 1, n_orbitals
+            write(unit = wfnfile.unit, fmt = mol_title_format) &
+               "MO  ", i, &
+               "OCC NO = ", .occupation_numbers.restricted(i), &
+               " ORB. ENERGY = ", .orbital_energies.restricted(i)
+            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+         end
+       
+         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
+         if (.scfdata.associated) then
+         write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, TWO
+         else
+         write(unit = wfnfile.unit, fmt = e_v_format) ZERO, TWO
+         end
+       
+         ! Clean
+         cc.destroy
+         dmatrix.destroy
+         wfnfile.close
+         wfnfile.destroy
       end
-
-      write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-      write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
-      write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-         .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
-      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
-
-      pcount = 1
-      lvec.create(.n_prim)
-      evec.create(.n_prim)
-      do a = 1, .n_shell
-        atomn  = .atom_for_shell(a)
-        shelln = .atom_shell_for_shell(a)
-        sh => .atom(atomn).basis.shell(shelln)
-        l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
-        do j = 1, sh.n_cc
-          if (sh.l==3) then
-            lvec(pcount  ) = l + 1
-            lvec(pcount+1) = l + 2
-            lvec(pcount+2) = l + 3
-            lvec(pcount+3) = l + 4
-            lvec(pcount+4) = l + 5
-            lvec(pcount+5) = l + 7
-            lvec(pcount+6) = l + 6
-            lvec(pcount+7) = l + 8
-            lvec(pcount+8) = l + 9
-            lvec(pcount+9) = l + 10
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              pcount = pcount + 1
-            end
-          else
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              lvec(pcount) = l + i
-              pcount = pcount + 1
-            end
-          end
-        end
-      end
-
-      write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
-      write(unit = wfnfile.unit, fmt = exponent_format) evec
-
-      lvec.destroy
-      evec.destroy
-
-      dmatrix.create(.n_prim, .n_bf)
-      cc.create(.n_prim, .n_bf)
-
-      .:make_contraction_matrix(cc)
-
-      dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
-
-      do i = 1, n_orbitals
-         write(unit = wfnfile.unit, fmt = mol_title_format) &
-            "MO  ", i, &
-            "OCC NO = ", .occupation_numbers.restricted(i), &
-            " ORB. ENERGY = ", .orbital_energies.restricted(i)
-         write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
-      end
-
-      write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
-      if (.scfdata.associated) then
-      write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, TWO
-      else
-      write(unit = wfnfile.unit, fmt = e_v_format) ZERO, TWO
-      end
-
-      ! Clean
-      cc.destroy
-      dmatrix.destroy
-      wfnfile.close
-      wfnfile.destroy
-
    end
 
    write_aim2000_wfn_file ::: leaky
@@ -3339,90 +3334,91 @@ contains
 
       name = .name
       if (NOT stdin.buffer_exhausted) stdin.read(name)
+      if (IO_IS_ALLOWED) then
 
-      wfnfile.create(trim(name)//".wfn")
-      wfnfile.open_for("write")
-
-      if (mod(.n_e, 2)==0) then
-         n_orbitals = .n_e / 2
-      else
-         n_orbitals = (.n_e + 1) / 2
+         wfnfile.create(trim(name)//".wfn")
+         wfnfile.open_for("write")
+       
+         if (mod(.n_e, 2)==0) then
+            n_orbitals = .n_e / 2
+         else
+            n_orbitals = (.n_e + 1) / 2
+         end
+       
+         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
+         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
+       
+         pcount = 1
+         lvec.create(.n_prim)
+         evec.create(.n_prim)
+         do a = 1, .n_shell
+           atomn  = .atom_for_shell(a)
+           shelln = .atom_shell_for_shell(a)
+           sh => .atom(atomn).basis.shell(shelln)
+           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+           do j = 1, sh.n_cc
+             if (sh.l==3) then
+               lvec(pcount  ) = l + 1
+               lvec(pcount+1) = l + 2
+               lvec(pcount+2) = l + 3
+               lvec(pcount+3) = l + 4
+               lvec(pcount+4) = l + 5
+               lvec(pcount+5) = l + 7
+               lvec(pcount+6) = l + 6
+               lvec(pcount+7) = l + 8
+               lvec(pcount+8) = l + 9
+               lvec(pcount+9) = l + 10
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 pcount = pcount + 1
+               end
+             else
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 lvec(pcount) = l + i
+                 pcount = pcount + 1
+               end
+             end
+           end
+         end
+       
+         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
+         write(unit = wfnfile.unit, fmt = exponent_format) evec
+       
+         lvec.destroy
+         evec.destroy
+       
+         dmatrix.create(.n_prim, .n_bf)
+         cc.create(.n_prim, .n_bf)
+       
+         .:make_contraction_matrix(cc)
+       
+         dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
+       
+         do i = 1, n_orbitals
+            occ = ZERO
+            if (i<=.n_a) occ = TWO
+            write(unit=wfnfile.unit, fmt=mol_title_format) &
+               i, occ, .orbital_energies.restricted(i)
+            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+         end
+       
+         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
+         if (.scfdata.associated) then
+         write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, 2.0D00
+         else
+         write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
+         end
+       
+         ! Clean
+         cc.destroy
+         dmatrix.destroy
+         wfnfile.close
+         wfnfile.destroy
       end
-
-      write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-      write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
-      write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-         .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
-      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
-
-      pcount = 1
-      lvec.create(.n_prim)
-      evec.create(.n_prim)
-      do a = 1, .n_shell
-        atomn  = .atom_for_shell(a)
-        shelln = .atom_shell_for_shell(a)
-        sh => .atom(atomn).basis.shell(shelln)
-        l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
-        do j = 1, sh.n_cc
-          if (sh.l==3) then
-            lvec(pcount  ) = l + 1
-            lvec(pcount+1) = l + 2
-            lvec(pcount+2) = l + 3
-            lvec(pcount+3) = l + 4
-            lvec(pcount+4) = l + 5
-            lvec(pcount+5) = l + 7
-            lvec(pcount+6) = l + 6
-            lvec(pcount+7) = l + 8
-            lvec(pcount+8) = l + 9
-            lvec(pcount+9) = l + 10
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              pcount = pcount + 1
-            end
-          else
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              lvec(pcount) = l + i
-              pcount = pcount + 1
-            end
-          end
-        end
-      end
-
-      write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
-      write(unit = wfnfile.unit, fmt = exponent_format) evec
-
-      lvec.destroy
-      evec.destroy
-
-      dmatrix.create(.n_prim, .n_bf)
-      cc.create(.n_prim, .n_bf)
-
-      .:make_contraction_matrix(cc)
-
-      dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
-
-      do i = 1, n_orbitals
-         occ = ZERO
-         if (i<=.n_a) occ = TWO
-         write(unit=wfnfile.unit, fmt=mol_title_format) &
-            i, occ, .orbital_energies.restricted(i)
-         write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
-      end
-
-      write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
-      if (.scfdata.associated) then
-      write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, 2.0D00
-      else
-      write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
-      end
-
-      ! Clean
-      cc.destroy
-      dmatrix.destroy
-      wfnfile.close
-      wfnfile.destroy
-
    end
 
    write_florian_wfn_file(with_lambda)
@@ -3457,87 +3453,89 @@ contains
 
       name = .name
       if (NOT stdin.buffer_exhausted) stdin.read(name)
+      if (IO_IS_ALLOWED) then
 
-      if (avec_lambda) then
-        wfnfile.create(trim(name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".ffn")
-      else
-        wfnfile.create(trim(name)//".ffn")
+         if (avec_lambda) then
+           wfnfile.create(trim(name)//",lambda="//trim(.scfdata.lambda.to_str("f9.6"))//".ffn")
+         else
+           wfnfile.create(trim(name)//".ffn")
+         end
+       
+         wfnfile.open_for("write")
+         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", .n_bf, .n_prim, .n_atom
+         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
+
+         pcount = 1
+         lvec.create(.n_prim)
+         evec.create(.n_prim)
+         do a = 1, .n_shell
+           atomn  = .atom_for_shell(a)
+           shelln = .atom_shell_for_shell(a)
+           sh => .atom(atomn).basis.shell(shelln)
+           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+           do j = 1, sh.n_cc
+             if (sh.l==3) then
+               lvec(pcount  ) = l + 1
+               lvec(pcount+1) = l + 2
+               lvec(pcount+2) = l + 3
+               lvec(pcount+3) = l + 4
+               lvec(pcount+4) = l + 5
+               lvec(pcount+5) = l + 7
+               lvec(pcount+6) = l + 6
+               lvec(pcount+7) = l + 8
+               lvec(pcount+8) = l + 9
+               lvec(pcount+9) = l + 10
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 pcount = pcount + 1
+               end
+             else
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 lvec(pcount) = l + i
+                 pcount = pcount + 1
+               end
+             end
+           end
+         end
+       
+         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
+         write(unit = wfnfile.unit, fmt = exponent_format) evec
+       
+         lvec.destroy
+         evec.destroy
+       
+         dmatrix.create(.n_prim, .n_bf)
+         cc.create(.n_prim, .n_bf)
+       
+         .:make_contraction_matrix(cc)
+       
+         dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
+       
+         do i = 1, .n_bf
+            occ = ZERO
+            if (i<=.n_a) occ = TWO
+            write(unit=wfnfile.unit, fmt=mol_title_format) &
+               i, occ, .orbital_energies.restricted(i)
+            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+         end
+       
+         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
+         if (.scfdata.associated) then
+            write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, 2.0D00
+         else
+            write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
+         end
+       
+         ! Clean
+         cc.destroy
+         dmatrix.destroy
+         wfnfile.close
+         wfnfile.destroy
       end
-
-      wfnfile.open_for("write")
-      write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-      write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", .n_bf, .n_prim, .n_atom
-      write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-         .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
-      write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
-
-      pcount = 1
-      lvec.create(.n_prim)
-      evec.create(.n_prim)
-      do a = 1, .n_shell
-        atomn  = .atom_for_shell(a)
-        shelln = .atom_shell_for_shell(a)
-        sh => .atom(atomn).basis.shell(shelln)
-        l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
-        do j = 1, sh.n_cc
-          if (sh.l==3) then
-            lvec(pcount  ) = l + 1
-            lvec(pcount+1) = l + 2
-            lvec(pcount+2) = l + 3
-            lvec(pcount+3) = l + 4
-            lvec(pcount+4) = l + 5
-            lvec(pcount+5) = l + 7
-            lvec(pcount+6) = l + 6
-            lvec(pcount+7) = l + 8
-            lvec(pcount+8) = l + 9
-            lvec(pcount+9) = l + 10
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              pcount = pcount + 1
-            end
-          else
-            do i = 1, sh.n_comp
-              evec(pcount) = sh.exponent(j)
-              lvec(pcount) = l + i
-              pcount = pcount + 1
-            end
-          end
-        end
-      end
-
-      write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
-      write(unit = wfnfile.unit, fmt = exponent_format) evec
-
-      lvec.destroy
-      evec.destroy
-
-      dmatrix.create(.n_prim, .n_bf)
-      cc.create(.n_prim, .n_bf)
-
-      .:make_contraction_matrix(cc)
-
-      dmatrix.to_product_of(cc,.molecular_orbitals.restricted)
-
-      do i = 1, .n_bf
-         occ = ZERO
-         if (i<=.n_a) occ = TWO
-         write(unit=wfnfile.unit, fmt=mol_title_format) &
-            i, occ, .orbital_energies.restricted(i)
-         write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
-      end
-
-      write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
-      if (.scfdata.associated) then
-         write(unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, 2.0D00
-      else
-         write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
-      end
-
-      ! Clean
-      cc.destroy
-      dmatrix.destroy
-      wfnfile.close
-      wfnfile.destroy
 
    end
 
@@ -4387,6 +4385,8 @@ contains
          .:read_g09_FChk_file(filename,do_groups)
       else if (filename.ends_in("sbf", case_sensitive=FALSE)) then
          .:deserialize(filename,do_groups)
+      else if (filename.ends_in("molden", case_sensitive=FALSE)) then
+         .:read_molden_MOs(filename,do_groups)
       else
          DIE("unknown file format for file '"//trim(filename)//"'")
       end
