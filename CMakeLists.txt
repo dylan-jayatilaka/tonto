@@ -167,8 +167,10 @@ set(FOO_SRC
     ${FOO_DIR}/vec{evec{int}}.foo
     ${FOO_DIR}/vec{evec{real}}.foo
     ${FOO_DIR}/vec{evec{str}}.foo
-    ${FOO_DIR}/vec{mat_{intrinsic}}.foo
-    ${FOO_DIR}/vec{mat_{real}}.foo
+    ${FOO_DIR}/vec{emat{intrinsic}}.foo
+    ${FOO_DIR}/vec{emat{bin}}.foo
+    ${FOO_DIR}/vec{emat{int}}.foo
+    ${FOO_DIR}/vec{emat{real}}.foo
     ${FOO_DIR}/vec{emat3{intrinsic}}.foo
     ${FOO_DIR}/vec{emat3{real}}.foo
     ${FOO_DIR}/vec{emat4{intrinsic}}.foo
@@ -179,9 +181,6 @@ set(FOO_SRC
     ${FOO_DIR}/mat3{vec_{intrinsic}}.foo
     ${FOO_DIR}/mat3{vec_{int}}.foo
     ${FOO_DIR}/mat3{vec_{real}}.foo
-    ${FOO_DIR}/vec{vec_{vec_{intrinsic}}}.foo
-    ${FOO_DIR}/vec{vec_{vec_{int}}}.foo
-    ${FOO_DIR}/vec{vec_{vec_{real}}}.foo
     ${FOO_DIR}/vec{evec{evec{intrinsic}}}.foo
     ${FOO_DIR}/vec{evec{evec{int}}}.foo
     ${FOO_DIR}/vec{evec{evec{real}}}.foo
@@ -403,8 +402,10 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_interpolator.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_irrep.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_emat_bin.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_emat_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/vec_emat_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_emat3_real.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/vec_mat_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_pair_energy.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_real.F90
@@ -423,7 +424,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_str.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_vec_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_evec_int.F90
 )
 
