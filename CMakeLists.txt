@@ -157,11 +157,6 @@ set(FOO_SRC
     ${FOO_DIR}/mat5{int}.foo
     ${FOO_DIR}/mat5{real}.foo
     ${FOO_DIR}/mat5{cpx}.foo
-    ${FOO_DIR}/vec{vec_{intrinsic}}.foo
-    ${FOO_DIR}/vec{vec_{bin}}.foo
-    ${FOO_DIR}/vec{vec_{int}}.foo
-    ${FOO_DIR}/vec{vec_{real}}.foo
-    ${FOO_DIR}/vec{vec_{str}}.foo
     ${FOO_DIR}/vec{evec{intrinsic}}.foo
     ${FOO_DIR}/vec{evec{bin}}.foo
     ${FOO_DIR}/vec{evec{int}}.foo
@@ -414,10 +409,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_slatershell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_table_column.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_bin.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_int.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_real.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/vec_vec_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_bin.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_real.F90

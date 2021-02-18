@@ -3,6 +3,7 @@
 ! L_BFGS: Low memory BFGS minimiser routine.
 !
 ! Copyright (C) Max Davidson, 2017
+! Copyright (C) Dylan Jayatilaka, 2021
 !
 !
 ! This library is free software; you can redistribute it and/or
@@ -28,25 +29,16 @@ module L_BFGS
 
 contains
 
-! =================
-! Memory allocation
-! =================
+! ==========
+! Allocation
+! ==========
 
    create ::: get_from(OBJECT), leaky, PURE
-   ! Create an object
+   ! Allocate an object
    end
 
    destroy ::: get_from(OBJECT), leaky, PURE
-   ! Destroy an object
-   end
-
-   nullify_ptr_part ::: pure
-   ! Nullify the pointer parts of self
-      self :: INOUT
-
-      nullify(.par)
-      nullify(.grd)
-
+   ! Deallocate "self"
    end
 
    destroy_ptr_part ::: leaky, PURE
@@ -80,11 +72,12 @@ contains
 
    end
 
-   reset_iteration_defaults ::: leaky
+   reset_iteration_defaults ::: leaky, PURE
    ! Reset defaults without changing user settings
       self :: INOUT
 
-      .iteration  = -1 ! The first time called it is iteration 0
+      ! The first time called it is iteration 0
+      .iteration  = -1 
 
       ! Clean up old stuff (leaky)
       .destroy_ptr_part
@@ -116,12 +109,12 @@ contains
 
    end
 
-   set_keep(keep)
+   set_keep(keep) ::: PURE
    ! Set the number of parameter/error vectors to keep 
       self :: INOUT
       keep :: INT, IN
 
-   DIE_IF(keep<4,"no. to keep must be more than 4")
+   ENSURE(keep>=4,"no. to keep must be more than 4")
 
       .keep = keep
 
@@ -157,7 +150,8 @@ contains
    ! Process a command "keyword". Data is inputted from "stdin", unless
    ! "word" is a sequence of blank separated strings. In this case,
    ! the sequence is processed as if it were a separate file.
-      keyword :: STR
+      self :: INOUT
+      keyword :: STR, IN
 
       word :: STR
 
@@ -241,10 +235,9 @@ contains
       ! Size of the kept vectors
       m = .par.dim1 ! Note self
 
-      ! Converged?
+      ! Converged? Cleanup
       .grd_norm = q.norm
       if(.is_converged) then
-         ! Cleanup
          q.destroy
          return
       end if
@@ -804,130 +797,6 @@ contains
       q.destroy
 
    end
-   
-!   minimize_L_BFGS(func,grad,par)
-!   ! Use the limited memory Broyden-Fletcher-Goldfarb-Shanno method to
-!   ! minimise the molecular orbitals with gradient function from
-!   ! Stoll(1980). This code is all per Nocedal & Wright
-!   ! NOTE: set saved_self before calling self & dself
-!      interface
-!         func(x,res)
-!            x :: VEC{REAL}, IN
-!            res :: REAL, OUT
-!         end
-!      end
-!      interface
-!         grad(x,res)
-!            x :: VEC{REAL}, IN
-!            res :: VEC{REAL}, OUT
-!         end
-!      end
-!      par :: VEC{REAL}, INOUT
-!      
-!      j,n,m :: INT
-!      
-!      ! alpha, c1 and c2 are used in the line search algorithm and
-!      ! beta, gamma and rho are used in the Hessian approximation
-!      alpha,beta,gamma,rho,c1,c2 :: REAL
-!      
-!      ! a is used to store the various alpha values in the two loop
-!      ! recursion, p,q and r are used as generic vectors, and as part
-!      ! of the two loop recursion process
-!      a,q,s,y :: VEC{REAL}*
-!      
-!      .iteration = .iteration + 1
-!      n =  par.dim1
-!      m = .par.dim1 ! Note self
-!
-!      ! Gradient 
-!      q.create(n)
-!      call grad(par,q)
-!
-!      ! Store the parameter & gradient
-!      ! NOTE: you should reset if you change
-!      ! any of the par vectors outside of here ...
-!      .par.append_fifo(par,.keep)
-!      .grd.append_fifo(q  ,.keep)
-!
-!      ! Converged?
-!      .grd_norm = q.norm
-!      if(.is_converged) then
-!         ! Cleanup
-!         q.destroy
-!         return
-!      end if
-!   
-!      ! Workspace
-!      s.create(n)
-!      y.create(n)
-!      a.create(m)
-!      a = ZERO
-!
-!      ! The values used for line search algorithms. These values are
-!      ! the ones which usually work.
-!      c1 = 10d-4
-!      c2 = 9d-1
-!
-!      
-!      ! Initialises the values used in the two-loop recursion.
-!      rho = 1
-!      if (m>1) then   
-!         s = .par(m).element - .par(m-1).element
-!         y = .grd(m).element - .grd(m-1).element
-!         gamma = dot_product(s,y)/dot_product(y,y)
-!      else
-!         gamma = 1 
-!      end if
-!      
-!      ! Will cause the program to exit if a suitable step can not be
-!      ! determined 
-!      alpha = ZERO
-!      
-!
-!      ! The two loop recursion process approximates the Hessian by
-!      ! using stored values of delta x and delta grad, as well as a
-!      ! pre-scaling, gamma, to allow for a stepping at alpha = 1, to
-!      ! be suitable 
-!         
-!      ! H^0 is approximated by I   
-!         
-!         if (m > 1) then
-!            do j = m,2,-1
-!               s = .par(j).element - .par(j-1).element
-!               y = .grd(j).element - .grd(j-1).element
-!               rho = 1/(dot_product(y,s))
-!               a(j) = rho*dot_product(s,q)
-!               q = q - a(j)*y
-!            end do
-!         end if
-!
-!         q = gamma*q
-!
-!         do j = 2,m
-!            s = .par(j).element - .par(j-1).element
-!            y = .grd(j).element - .grd(j-1).element
-!            rho = 1/dot_product(y,s)
-!            beta = rho*dot_product(y,q) 
-!            q = q + (a(j) - beta)*s
-!         end do
-!
-!      ! This is the step toward the minimum
-!         q = -q
-!
-!      ! Fines the ideal multiple of the step to take (usually 1)
-!      ! and stores that in alpha
-!      VEC{REAL}::line_search(func,grad,10d0,par,q,c1,c2,alpha)
-!         
-!      ! Performs the step (and stores the previous x value)
-!      par = par + alpha*q
-!         
-!      ! Cleanup
-!      q.destroy
-!      s.destroy
-!      y.destroy
-!      a.destroy     
-!
-!   end
 
 !  ===========
 !  Line Search
@@ -937,8 +806,6 @@ contains
    ! Given a real vector, x, function f, gradient function
    ! df, calculaes the ideal stepping scale alpha, given
    ! stepping p and constants c1, c2.
-      
-   ! Interface for vector functions   
       interface
          func(x,res,g)
             x :: VEC{REAL}, IN
@@ -984,6 +851,7 @@ contains
       ! Initialise alpha0, phi0, dphi0, phi1, j and converged
       alpha0 = 0
       call func(x,phi0,temp)
+
       dphi0 = dot_product(temp,p)
       phi1=0
       j = 1
@@ -993,43 +861,52 @@ contains
       ! failed
       do while ((converged EQV FALSE) AND (j < iter)) 
          
-      ! calculates phi for this iteration
+         ! calculates phi for this iteration
          call func(x+alpha*p,phi,temp)
 
-      ! The interval alpha0, alpha will contain ideal step lengths if
-      ! any of the if conditionals below are violated
+         ! The interval alpha0, alpha will contain ideal step lengths if
+         ! any of the if conditionals below are violated
          if (phi > phi0 + c1*alpha*dphi0) then
       
-      ! Sends the interval off to find an ideal step and stores it in
-      ! b
+            ! Sends interval off to find an ideal step and stores it
+            ! in b
             call zoom(func,alpha0,alpha,x,p,c1,c2,b,converged)
+
          else if (phi >= phi1 AND j > 1) then
       
-      ! Sends the interval off to find an ideal step and stores it in
-      ! b
+            ! Sends interval off to find an ideal step and stores it
+            ! in b
             call zoom(func,alpha0,alpha,x,p,c1,c2,b,converged)
+
          end if
       
-      ! Ensures that if alpha has converged, the value does not
-      ! change   
+         ! Ensures that if alpha has converged, the value does not
+         ! change   
          if (converged EQV FALSE) then
-      ! calculates dphi for this iteration      
+
+            ! calculates dphi for this iteration      
             dphi = dot_product(temp,p)
-      ! If the second wolfe condition holds, this has converged      
+
+            ! If the second wolfe condition holds, this has converged      
             if (abs(dphi) <= -c2*dphi0) then
+
+               ! Stores the ideal stepping in b         
                converged = TRUE
-      ! Stores the ideal stepping in b         
                b = alpha
+
             else if (dphi >= 0) then
-      ! Sends the interval off to find an ideal step and stores it in
-      ! b
+
+               ! Sends the interval off to find an ideal step and stores it in
+               ! b
                call zoom(func,alpha,alpha0,x,p,c1,c2,b,converged)
+
             end if
-      ! Ensures that if alpha has converged, the value does not
-      ! change   
+
+            ! Ensures that if alpha has converged, the value does not
+            ! change   
             if (converged EQV FALSE) then
-      ! Stores the values from this iteration, and proceeds to the
-      ! next iteration         
+               ! Stores the values from this iteration, and proceeds to the
+               ! next iteration         
                phi1 = phi
                dphi1 = dphi
                j = j + 1
@@ -1042,6 +919,7 @@ contains
      
      ! Cleanup
      temp.destroy
+
    end
 
    zoom(func,low,high,x,p,c1,c2,alpha,converged) ::: selfless 
@@ -1049,8 +927,6 @@ contains
    ! df, calculaes the ideal stepping scale alpha, given
    ! stepping p and constants c1, c2. An ideal stepping must also
    ! reside between low and high.
-      
-      ! Interface for vector functions   
       interface
          func(x,res,g)
             x :: VEC{REAL}, IN

@@ -3,6 +3,7 @@
 ! DIIS: Simple in-core DIIS extrapolation technique for vectors
 !
 ! Copyright (C) Dylan Jayatilaka, 2011
+! Copyright (C) Dylan Jayatilaka, 2021
 !
 ! This is a memory-hungry in-core DIIS routine. Only the simple DIIS
 ! procedure is used. Since all parameter and error vectors are stored
@@ -47,31 +48,16 @@ module DIIS
 
 contains
 
-! =================
-! Memory allocation
-! =================
+! ==========
+! Allocation
+! ==========
 
    create ::: get_from(OBJECT), leaky, PURE
-   ! Create an object
+   ! Allocate an object
    end
 
    destroy ::: get_from(OBJECT), leaky, PURE
-   ! Destroy an object
-   end
-
-   nullify_ptr_part ::: pure
-   ! Nullify the pointer parts of self
-      self :: INOUT
-
-      nullify(.oldest)
-      nullify(.iter_4)
-      nullify(.itor_4)
-      nullify(.param)
-      nullify(.error)
-      nullify(.lhs)
-      nullify(.rhs)
-      nullify(.coeff)
-
+   ! Deallocate "self"
    end
 
    destroy_ptr_part ::: leaky, PURE
@@ -86,34 +72,6 @@ contains
       .lhs.destroy
       .rhs.destroy
       .coeff.destroy
-
-   end
-
-
-!  ====
-!  Copy
-!  ====
-
-   create_copy(object) ::: get_from(OBJECT)
-   ! Create a copy of object
-   end
-
-   copy(object) ::: leaky
-   ! Copy the "object"
-      object :: DIIS
-
-      self = object
-
-      .nullify_ptr_part
-
-      if (object.oldest.associated)   .oldest.create_copy(object.oldest)
-      if (object.iter_4.associated)   .iter_4.create_copy(object.iter_4)
-      if (object.itor_4.associated)   .itor_4.create_copy(object.itor_4)
-      if (object.param.associated)    .param.create_copy(object.param)
-      if (object.error.associated)    .error.create_copy(object.error)
-      if (object.lhs.associated)      .lhs.create_copy(object.lhs)
-      if (object.rhs.associated)      .rhs.create_copy(object.rhs)
-      if (object.coeff.associated)    .coeff.create_copy(object.coeff)
 
    end
 
@@ -143,7 +101,7 @@ contains
 
    end
 
-   set_to(val)
+   set_to(val) ::: PURE
    ! Set "self" to "val"
       self :: INOUT
       val :: DIIS, IN
@@ -152,7 +110,7 @@ contains
 
    end
 
-   reset_iteration_defaults ::: leaky
+   reset_iteration_defaults ::: leaky, PURE
    ! Reset defaults without changing user settings
       self :: INOUT
 
@@ -191,12 +149,12 @@ contains
 
    end
 
-   set_keep(keep)
+   set_keep(keep) ::: PURE
    ! Set the number of parameter/error vectors to keep 
       self :: INOUT
       keep :: INT, IN
 
-   DIE_IF(keep<4,"no. to keep must be more than 4")
+   ENSURE(keep>=4,"no. to keep must be more than 4")
 
       .keep = keep
 
@@ -220,20 +178,16 @@ contains
 
    end
 
-   set_replacement_method(method)
+   set_replacement_method(method) ::: PURE
    ! Set the method to use for replaceing vectors, when the subspace
    ! become saturated.
       self :: INOUT
       method :: STR, IN
 
+   ENSURE(method.is_one_of(["oldest","worst "]),"unknown method")
+
       .replacement_method = method
       .replacement_method.to_lower_case
-
-      select case (.replacement_method)
-         case ("oldest")
-         case ("worst")
-         case default; UNKNOWN(method)
-      end
 
    end
 
@@ -260,7 +214,8 @@ contains
    ! Process a command "keyword". Data is inputted from "stdin", unless
    ! "word" is a sequence of blank separated strings. In this case,
    ! the sequence is processed as if it were a separate file.
-      keyword :: STR
+      self :: INOUT
+      keyword :: STR, IN
 
       word :: STR
 
@@ -344,7 +299,7 @@ contains
 
    end
 
-   dimension result (res) ::: pure, private 
+   dimension result (res) ::: private, pure
    ! Return the dimension of the DIIS matrix. 
    ! . If .use_errors is TRUE  it never exceeds .kept+1
    ! . If .use_errors is FALSE it never exceeds .kept because the
@@ -415,6 +370,7 @@ contains
    ! * NOTE: .kept is *not* to be updated until *after* this routine
    !   is called (see .update_kept)
    ! * NOTE: do not call this more than once per cycle.
+      self :: INOUT
       new :: INT
 
       best :: INT
@@ -435,9 +391,8 @@ contains
          ! Return the item to be replaced:
          ! either the worst or oldest one.
          select case(.replacement_method)
-            case("oldest"); new = .oldest_item
-            case("worst");  new = .worst_item
-            case default;   UNKNOWN(.replacement_method)
+         case("oldest"); new = .oldest_item
+         case("worst");  new = .worst_item
          end
 
          ! Move history up, store youngest at end
@@ -449,11 +404,6 @@ contains
       ! Save actual iteration no's
       .itor_4      = .iter_4
       .iter_4(new) = .iteration
-
-      ! stdout.text("oldest:")
-      ! stdout.put(.oldest,by_column=TRUE)
-      ! stdout.text("itor_4:")
-      ! stdout.put(.itor_4,by_column=TRUE)
 
       ! Is it stuck?
       if (.is_stuck_or_oscillating) then
@@ -492,7 +442,7 @@ contains
 
    end
 
-   oldest_item result (res) ::: PURE, private
+   oldest_item result (res) ::: private, PURE
    ! Return the index of the current item (if it is less than or equal
    ! to the number of vectors to be kept), otherwise return the index
    ! of the oldest item. 
@@ -500,7 +450,7 @@ contains
       res :: INT
 
    ENSURE(.kept>0,"must have some kept vectors")
-   ENSURE(.oldest.associated,"oldest list not created")
+   ENSURE(.oldest.allocated,"oldest list not created")
 
       res = .oldest(1)
 
@@ -509,16 +459,16 @@ contains
 
    end
 
-   worst_item result (res) ::: PURE, private
+   worst_item result (res) ::: private, PURE
    ! Return the index of the worst item which should be replaced
    ! (when there is no more space i.e. when ".keep" limit reached)
       self :: IN
       res :: INT
 
    ENSURE(.kept>0,"no stored vectors")
-   ENSURE(.lhs.associated,"no LHS")
+   ENSURE(.lhs.allocated,"no LHS")
 
-      diag :: VEC{REAL}*
+      diag :: VEC{REAL}@
       d :: INT
 
       ! Get the diagonal
@@ -539,16 +489,16 @@ contains
 
    end
 
-   best_item result (res) ::: PURE, private
+   best_item result (res) ::: private, PURE
    ! Return the index of the best item which should be kept,
    ! when the procedure is reset.
       self :: IN
       res :: INT
 
    ENSURE(.kept>0,"no stored vectors")
-   ENSURE(.lhs.associated,"no LHS")
+   ENSURE(.lhs.allocated,"no LHS")
 
-      diag :: VEC{REAL}*
+      diag :: VEC{REAL}@
       d :: INT
 
       ! Get the diagonal
@@ -588,7 +538,6 @@ contains
       dim :: INT, IN
       par :: VEC{REAL}(dim), INOUT
 
-      err :: VEC{REAL}*
       ind :: INT
 
       ! Increment iteration
@@ -620,11 +569,10 @@ contains
 
       ! Define error for *previous* param vector
       ind =  .oldest(.kept-1)
-      err => .error(ind).element
-      err = par - .param(ind)[:] 
+      .error(ind)[:] = par - .param(ind)[:] 
 
       ! Set the error length
-      .error_length = err.norm
+      .error_length = .error(ind).element.norm
 
       ! Make sure .dimension is one smaller
       .use_errors = FALSE ! <<<
@@ -678,14 +626,13 @@ contains
 
    end
 
-   do_extrapolate(par,dim) ::: leaky, private
+   do_extrapolate(par,dim) ::: private, leaky
    ! Do a generic extrapolation on vector "par".
       self :: INOUT
       dim :: INT, IN
       par :: VEC{REAL}(dim), INOUT
 
       d,i,j :: INT
-      ei,ej :: VEC{REAL}*
       fac :: REAL
 
       ! Size of the equations
@@ -712,9 +659,7 @@ contains
          if (i==.new) fac = fac + 0.02d0 
 
          ! Define lower half of LHS
-         ei => .error(i).element
-         ej => .error(j).element
-         .lhs(i,j) = fac*dot_product(ei,ej)
+         .lhs(i,j) = fac * dot_product(.error(i).element,.error(j).element)
 
       end
       end
@@ -741,10 +686,13 @@ contains
 
    end
 
-   is_converged result (res)
+   is_converged result (res) ::: pure
    ! Return TRUE if the procedure is converged
+      self :: IN
       res :: BIN
-      res = .error_length<.convergence_tolerance
+
+      res = .error_length < .convergence_tolerance
+
    end
 
 !  ======
@@ -753,10 +701,12 @@ contains
 
    put(matrices)
    ! Print out the data to stdout
+      self :: IN
       matrices :: BIN, IN, optional
 
       stdout.flush
       stdout.text("DIIS options: ")
+
       stdout.flush
       stdout.set_real_style("e")
       stdout.show("Convergence on max(abs(error)) =",.convergence_tolerance)
@@ -769,17 +719,17 @@ contains
       if (NOT present(matrices)) return
       if (NOT matrices) return
 
-      if (.lhs.associated) then
+      if (.lhs.allocated) then
       stdout.text("LHS:")
       stdout.put(.lhs,auto_width=TRUE)
       end
 
-      if (.rhs.associated) then
+      if (.rhs.allocated) then
       stdout.text("RHS:")
       stdout.put(.rhs,by_column=TRUE,auto_width=TRUE)
       end
 
-      if (.coeff.associated) then
+      if (.coeff.allocated) then
       stdout.text("coeff:")
       stdout.put(.coeff,by_column=TRUE,auto_width=TRUE)
       end
