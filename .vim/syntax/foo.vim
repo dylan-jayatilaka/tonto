@@ -459,6 +459,9 @@ syn keyword fortranType SPACEGROUP
 syn keyword fortranType POINTGROUP
 syn keyword fortranType IRREP
 
+" Data
+syn keyword fortranType SASAKI_FORM_FACTORS
+
 " Crystals, unit cells and reflection data
 
 syn keyword fortranType CRYSTAL
