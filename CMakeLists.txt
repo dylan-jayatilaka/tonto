@@ -170,9 +170,6 @@ set(FOO_SRC
     ${FOO_DIR}/vec{emat3{real}}.foo
     ${FOO_DIR}/vec{emat4{intrinsic}}.foo
     ${FOO_DIR}/vec{emat4{real}}.foo
-    ${FOO_DIR}/mat{mat_{intrinsic}}.foo
-    ${FOO_DIR}/mat{mat_{real}}.foo
-    ${FOO_DIR}/mat3{evec{intrinsic}}.foo
     ${FOO_DIR}/mat3{evec{int}}.foo
     ${FOO_DIR}/vec{evec{evec{intrinsic}}}.foo
     ${FOO_DIR}/vec{evec{evec{int}}}.foo
