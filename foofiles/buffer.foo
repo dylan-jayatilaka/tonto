@@ -25,6 +25,7 @@
 !  STR_SIZE.
 !
 ! Copyright (C) Dylan Jayatilaka, 1998
+! Copyright (C) Dylan Jayatilaka, 2021
 !
 ! This library is free software; you can redistribute it and/or
 ! modify it under the terms of the GNU Library General Public
@@ -64,44 +65,23 @@ module BUFFER
 
 contains
 
-!  =========================
-!  Initialisation operations
-!  =========================
+! ==========
+! Allocation
+! ==========
 
-   create ::: get_from(OBJECT), leaky
-   ! Create an object
+   create ::: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
    end
 
-   destroy ::: get_from(OBJECT), leaky
-   ! Destroy an object
+   destroy ::: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
    end
 
-   nullify_ptr_part ::: pure
-   ! Nullify the pointer parts
+   destroy_ptr_part ::: leaky, PURE
+   ! Destroy the pointer parts
       self :: INOUT
 
-      nullify(.replacement_list)
-
-   end
-
-   destroy_ptr_part ::: leaky
-   ! Destroy the pointer parts
       .replacement_list.destroy
-   end
-
-   create_copy(object) ::: get_from(OBJECT), leaky
-   ! Create a copy of object
-   end
-
-   copy(b)
-   ! Copy a buffer "b"
-      b :: BUFFER
-
-      self = b
-
-      .nullify_ptr_part
-
-      if (b.replacement_list.associated) .replacement_list.create_copy(b.replacement_list)
 
    end
 
@@ -128,7 +108,7 @@ contains
 
    end
 
-   set_and_analyze(string)
+   set_and_analyze(string) ::: PURE
    ! Set the buffer .string to "string", analyze it.
       self :: INOUT
       string :: STR, IN
@@ -142,8 +122,8 @@ contains
 
       .set_string(string)
 
-      if (.eliminate_specials)       .eliminate_special_chars
-      if (.replacement_list.associated) .replace_list(.replacement_list)
+      if (.eliminate_specials)         .eliminate_special_chars
+      if (.replacement_list.allocated) .replace_list(.replacement_list)
 
       .analyze
 
@@ -198,12 +178,11 @@ contains
    ! Define a "replacement_list" which replaces certain strings before
    ! the buffer is analyzed.
       self :: INOUT
-      replacement_list :: MAT{STR}*
+      replacement_list :: MAT{STR}@, IN
 
-   ENSURE(replacement_list.associated,"replacement_list destroyed")
+   ENSURE(replacement_list.allocated,"replacement_list destroyed")
 
-      .replacement_list.destroy
-      .replacement_list.create_copy(replacement_list)
+      .replacement_list = replacement_list
 
    end
 
@@ -630,32 +609,22 @@ contains
 !  Inquiry methods
 !  ===============
 
-   next_item_number result (res) ::: pure
-   ! Return the number of the item which the cursor lies *before*,
-   ! i.e. the next item to be processed.
-      self :: IN
-      res :: INT
-
-      res = .item_index + 1
-
-   end
-
-   next_item result (res)
+   get_next_item(res) ::: PURE
    ! Return the actual item which the cursor lies *before*, i.e. the
    ! next item to be processed. The cursor is positioned after the end
    ! of this item when the routine concludes.
       self :: INOUT
-      res :: STR
+      res :: STR, OUT
 
       .get_item(res)
 
    end
 
-   previous_item result (res) ::: pure
+   get_previous_item(res) ::: pure
    ! Return the item which the cursor lies *after*, i.e. the previous item
    ! to be processed. The cursor remains unchanged after this routine.
       self :: IN
-      res :: STR
+      res :: STR, OUT
 
       if (.item_start>0) then
          res = .string(.item_start:.item_end)
@@ -665,10 +634,10 @@ contains
 
    end
 
-   all_items result (res)
+   get_all_items(res) ::: PURE
    ! Return all items as a vector
       self :: INOUT
-      res :: VEC{STR}(.n_items)
+      res :: VEC{STR}(.n_items), OUT
    
    ENSURE(.analyzed,"must be analyzed first")
    ENSURE(.n_items>=1,"must have at least one item")
@@ -683,10 +652,10 @@ contains
 
    end
 
-   all_remaining_items result (res)
+   get_all_remaining_items(res) ::: PURE
    ! Return all remaining items in the buffer as a vector
       self :: INOUT
-      res :: VEC{STR}(.n_items-.item_index)
+      res :: VEC{STR}(.n_items-.item_index), OUT
 
    ENSURE(.analyzed,"must be analyzed first")
    ENSURE(.n_items-.item_index>=0,"must have some remaining items")
@@ -703,14 +672,54 @@ contains
 
    end
 
-   n_items result (res)
+   get_n_items(res) ::: PURE
    ! Return the number of items in the buffer string
       self :: INOUT
-      res :: INT
+      res :: INT, OUT
 
       if (NOT .analyzed) .analyze
 
       res = .n_items
+
+   end
+
+   includes(item,res) ::: PURE
+   ! Return TRUE if the buffer contains "item" as a separate entity
+      self :: INOUT
+      item :: STR, IN
+      res :: BIN, OUT
+
+      word :: STR
+
+      .move_to_item(1)
+
+      res = FALSE
+
+      search: do
+
+         .get_str(word)
+
+         ! Is it there?
+         if (word==item) then
+            res = TRUE
+            exit search
+         end
+         
+         ! Anything left?
+         if (.exhausted) exit
+
+      end do search
+
+   end
+
+
+   next_item_number result (res) ::: pure
+   ! Return the number of the item which the cursor lies *before*,
+   ! i.e. the next item to be processed.
+      self :: IN
+      res :: INT
+
+      res = .item_index + 1
 
    end
 
@@ -770,35 +779,6 @@ contains
       res :: BIN
 
       res = .n_items==0
-
-   end
-
-   includes(item) result (res)
-   ! Return TRUE if the buffer contains "item" as a separate entity
-      self :: INOUT
-      item :: STR, IN
-      res :: BIN
-
-      word :: STR
-
-      .move_to_item(1)
-
-      res = FALSE
-
-      search: do
-
-         .get_str(word)
-
-         ! Is it there?
-         if (word==item) then
-            res = TRUE
-            exit search
-         end
-         
-         ! Anything left?
-         if (.exhausted) exit
-
-      end do search
 
    end
 
