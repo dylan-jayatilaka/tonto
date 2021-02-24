@@ -328,12 +328,12 @@ $scalar_type = 'TYPES';
 %{$tonto_type_info{$scalar_type}} = &analyse_type_name($scalar_type);
 
 # What is this below ????
-$array_type = 'VEC{VEC{REAL}}';
-%{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
+#$array_type = 'VEC{EVEC{REAL}}';
+#%{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
 
-$array_type = 'MAT_{REAL}';
+$array_type = 'EMAT{REAL}';
 %{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
-$array_type = 'VEC{MAT_{REAL}}';
+$array_type = 'VEC{EMAT{REAL}}';
 %{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
 
 push(@all_known_type_names,$array_type);
@@ -351,7 +351,7 @@ push(@all_known_type_names,$array_type);
 %{$global_var_info{std_table_column}} = &analyse_type_name('TABLE_COLUMN');
 %{$global_var_info{tonto_parallel}} = &analyse_type_name('PARALLEL');
 
-%{$global_var_info{spherical_harmonics_for}} = &analyse_type_name('VEC{MAT_{REAL}}');
+%{$global_var_info{spherical_harmonics_for}} = &analyse_type_name('VEC{EMAT{REAL}}');
 
 %local_var_info = %global_var_info;
 
