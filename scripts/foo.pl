@@ -328,8 +328,8 @@ $scalar_type = 'TYPES';
 %{$tonto_type_info{$scalar_type}} = &analyse_type_name($scalar_type);
 
 # What is this below ????
-#$array_type = 'VEC{EVEC{REAL}}';
-#%{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
+$array_type = 'VEC{VEC{REAL}}';
+%{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
 
 $array_type = 'EMAT{REAL}';
 %{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
