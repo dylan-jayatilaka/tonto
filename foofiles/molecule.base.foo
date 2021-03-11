@@ -8654,8 +8654,9 @@ contains
    symmetrize(mat,orb_kind)
    ! Symmetrize an opmatrix matrix "mat" and of spinorbital_kind
    ! "orb_kind" (if specified)
-      mat :: OPMATRIX
-      orb_kind :: STR, optional
+      self :: IN
+      mat :: OPMATRIX, INOUT
+      orb_kind :: STR, optional, IN
 
       itemkind :: STR
 
@@ -8663,27 +8664,29 @@ contains
       if (present(orb_kind)) itemkind = orb_kind
 
       select case (itemkind)
-         case ("restricted");           .:symmetrize(mat.restricted)
-         case ("unrestricted");         .:symmetrize(mat.alpha)
-                                        .:symmetrize(mat.beta)
-         case ("general");              .:symmetrize(mat.general.alpha_alpha)
-                                        .:symmetrize(mat.general.beta_beta)
-                                        .:symmetrize(mat.general.alpha_beta)
-                                        .:symmetrize(mat.general.beta_alpha)
-         case ("restricted_complex");   .:symmetrize(mat.restricted_complex)
-         case ("unrestricted_complex"); .:symmetrize(mat.alpha_complex)
-                                        .:symmetrize(mat.beta_complex)
-         case ("general_complex");      .:symmetrize(mat.general_complex.alpha_alpha)
-                                        .:symmetrize(mat.general_complex.beta_beta)
-                                        .:symmetrize(mat.general_complex.alpha_beta)
-                                        .:symmetrize(mat.general_complex.beta_alpha)
-         case default;   DIE("unknown kind, "//trim(orb_kind))
+      case ("restricted");           .:symmetrize(mat.restricted)
+      case ("unrestricted");         .:symmetrize(mat.alpha)
+                                     .:symmetrize(mat.beta)
+      case ("general");              .:symmetrize(mat.general.alpha_alpha)
+                                     .:symmetrize(mat.general.beta_beta)
+                                     .:symmetrize(mat.general.alpha_beta)
+                                     .:symmetrize(mat.general.beta_alpha)
+      case ("restricted_complex");   .:symmetrize(mat.restricted_complex)
+      case ("unrestricted_complex"); .:symmetrize(mat.alpha_complex)
+                                     .:symmetrize(mat.beta_complex)
+      case ("general_complex");      .:symmetrize(mat.general_complex.alpha_alpha)
+                                     .:symmetrize(mat.general_complex.beta_beta)
+                                     .:symmetrize(mat.general_complex.alpha_beta)
+                                     .:symmetrize(mat.general_complex.beta_alpha)
+      case default;   DIE("unknown kind, "//trim(orb_kind))
       end
 
    end
 
+
    symmetrize(mat) ::: template
    ! Symmetrize a matrix
+      self :: IN
       mat :: MAT{TYPE}
 
    ENSURE(.basis_info_made, "no basis info")
@@ -8752,6 +8755,179 @@ contains
    ! Symmetrize a matrix
    end
 
+
+   symmetrize_DM_like_mx(DM,symops) ::: template, PURE
+   ! Symmetrize a density matrix-like object "DM". "symops" holds the
+   ! set of 3x3 rotation matrices for the being symmetrized over.
+      self :: IN
+      DM :: MAT{TYPE}, INOUT
+      symops :: MAT3{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.pointgroup.associated, "no pointgroup")
+   ENSURE(DM.is_square,"non-square matrix")
+   ENSURE(DM.dim1==.n_bf,"incorrectly dimensioned matrix")
+   ENSURE(symops.dim1==symops.dim2,"symops not square in dim1 & dim2")
+   ENSURE(symops.dim1==3,"symops is not 3x3 in first two dimensions")
+
+      R  :: MAT{REAL}(3,3)
+      tr :: VEC{EMAT{REAL}}@
+      sym,W :: MAT{TYPE}@
+      tra,trb :: MAT{REAL}@
+      g,a,b,i,j,na,nb :: INT
+      fa,fb,fi,fj,la,lb,li,lj :: INT
+      image :: MAT{INT}@
+
+      ! Make image shell map
+      image.create(.n_shell, symops.dim3)
+      .:make_image_of_shell(image,symops)
+
+      ! Rotated and accumulated SM coeffcients
+      sym.create(.n_bf,.n_bf)
+      sym = ZERO
+
+      do g = 1,symops.dim3
+
+         R = symops(:,:,g)
+         GAUSSIAN_DATA:make_gaussian_xyz_matrices(tr,R)
+
+         do a = 1,.n_shell
+
+            tra = tr(.angular_moment_for_shell(a))[:,:]
+
+            i  = image(a,g)
+            fa = .first_basis_fn_for_shell(a)
+            fi = .first_basis_fn_for_shell(i)
+            la = .last_basis_fn_for_shell(a)
+            li = .last_basis_fn_for_shell(i)
+            na = la - fa + 1
+
+            do b = 1,.n_shell
+
+               tra = tr(.angular_moment_for_shell(b))[:,:]
+
+               j  = image(b,g)
+               fb = .first_basis_fn_for_shell(b)
+               fj = .first_basis_fn_for_shell(j)
+               lb = .last_basis_fn_for_shell(b)
+               lj = .last_basis_fn_for_shell(j)
+               nb = lb - fb + 1
+
+               W.create(na,nb)
+               W.to_product_of(tra,DM(fa:la,fb:lb))
+               sym(fi:li,fj:lj).plus_product_of(W,trb,transpose_b=TRUE)
+               W.destroy
+
+            end
+
+         end
+
+         tr.destroy
+
+      end
+
+      DM = sym/REALIFY(symops.dim3)
+
+      sym.destroy
+      image.destroy
+
+   end
+
+   symmetrize_DM_like_mx(DM,symops) ::: get_from(symmetrize_DM_like_mx, TYPE=>REAL), PURE
+   ! Symmetrize a density matrix-like object "DM". "symops" holds the
+   ! set of 3x3 rotation matrices for the being symmetrized over.
+   end
+
+   symmetrize_DM_like_mx(DM,symops) ::: get_from(symmetrize_DM_like_mx, TYPE=>CPX), PURE
+   ! Symmetrize a density matrix-like object "DM". "symops" holds the
+   ! set of 3x3 rotation matrices for the being symmetrized over.
+   end
+
+
+   symmetrize_MO_like_mx(MO,symops) ::: template
+   ! Symmetrize an "MO"-like matrix with basis functions on the first
+   ! index. "symops" holds the set of 3x3 rotation matrices for the
+   ! group being symmetrized over.
+      self :: IN
+      MO :: MAT{TYPE}, INOUT
+      symops :: MAT3{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.pointgroup.associated, "no pointgroup")
+   ENSURE(MO.is_square,"non-square matrix")
+   ENSURE(MO.dim1==.n_bf,"incorrectly dimensioned matrix")
+   ENSURE(symops.dim1==symops.dim2,"symops not square in dim1 & dim2")
+   ENSURE(symops.dim1==3,"symops is not 3x3 in first two dimensions")
+
+      sym :: MAT{TYPE}@
+      R  :: MAT{REAL}(3,3)
+      tr :: VEC{EMAT{REAL}}@
+      g,a,i,L :: INT
+      fa,la,fi,li :: INT
+      image :: MAT{INT}@
+
+      ! Make image shell map
+      image.create(.n_shell, symops.dim3)
+      .:make_image_of_shell(image,symops)
+
+      ! Rotated and accumulated MO coeffcients
+      sym.create(.n_bf,.n_bf)
+      sym = ZERO
+
+      ! Get symmetrized MOs "sym"
+      do g = 1,symops.dim3
+
+         R = symops(:,:,g)
+         GAUSSIAN_DATA:make_gaussian_xyz_matrices(tr,R)
+          
+         do a = 1,.n_shell
+
+            ! Is there an image shell?
+            i  = image(a,g)
+            if (i==0) cycle
+
+            ! Get shell limits
+            fa = .first_basis_fn_for_shell(a)
+            la = .last_basis_fn_for_shell(a)
+
+            ! Get image shell limits
+            fi = .first_basis_fn_for_shell(i)
+            li = .last_basis_fn_for_shell(i)
+
+            L  = .angular_moment_for_shell(a)
+
+            sym(fi:li,:) = sym(fi:li,:) + matmul(tr(L)[:,:],MO(fa:la,:))
+
+         end
+
+         tr.destroy
+
+      end
+
+      ! Symmetrize
+      MO = sym/REALIFY(symops.dim3)
+
+      ! Clean
+      sym.destroy
+      image.destroy
+
+   end
+
+   symmetrize_MO_like_mx(MO,symops) ::: get_from(symmetrize_MO_like_mx, TYPE=>REAL), PURE
+   ! Symmetrize an "MO"-like matrix with basis functions on the first
+   ! index. "symops" holds the set of 3x3 rotation matrices for the
+   ! group being symmetrized over.
+   end
+
+   symmetrize_MO_like_mx(MO,symops) ::: get_from(symmetrize_MO_like_mx, TYPE=>CPX), PURE
+   ! Symmetrize an "MO"-like matrix with basis functions on the first
+   ! index. "symops" holds the set of 3x3 rotation matrices for the
+   ! group being symmetrized over.
+   end
+
+
    make_image_of_shell(res) ::: PURE
    ! Return an array "res(a,n)" which is the image of shell "a" under
    ! pointgroup operation "n"
@@ -8784,10 +8960,54 @@ contains
 
    end
 
+   make_image_of_shell(res,symops) ::: PURE
+   ! Return an array "res(a,n)" which is the image of shell "a" under
+   ! a 3x3 rotation operation "symop(:,:,n)"
+   ! Size of "res" is [.n_shell,symop.dim3]
+      self :: IN
+      res  :: MAT{INT}, OUT
+      symops :: MAT3{REAL}, IN
+
+   ENSURE(symops.dim1==symops.dim2,"symops not square in dim1 & dim2")
+   ENSURE(symops.dim1==3,"symops is not 3x3 in first two dimensions")
+   ENSURE(res.dim1==.n_shell,   "wrong dim2, res")
+   ENSURE(res.dim2==symop.dim3, "wrong dim2, res")
+
+      new_pos :: VEC{REAL}(3)
+      g,a,aa,as,new_atom,fs :: INT
+
+      res = ZERO
+
+      do g = 1, symops.dim3
+      do a = 1,.n_shell
+
+         aa = .atom_for_shell(a)
+         as = .atom_shell_for_shell(a)
+
+         ! Get rotated atom position
+         new_pos = matmul(symops(:,:,g),.atom(aa).position)
+
+         ! Get index of rotated atom by its position
+         new_atom = .atom.atom_index_from_position(new_pos)
+
+         ! Assign
+         if (new_atom==0) then
+            res(a,g) = 0
+         else
+            fs = .first_shell_for_atom(new_atom)
+            res(a,g) = fs + as - 1
+         end
+
+      end
+      end
+
+   end
+
 
    stabilize(mat) ::: template
    ! Stabilize a matrix
-      mat :: MAT{TYPE}
+      self :: IN
+      mat :: MAT{TYPE}, INOUT
 
    ENSURE(NOT .use_spherical_basis,"not implemented")
    ENSURE(.basis_info_made, "no basis info")
@@ -10730,12 +10950,15 @@ contains
 
    serialize(filename)
    ! Write out data from sbf file
-      filename :: STR
+      self :: IN 
+      filename :: STR, IN
       datafile :: DATAFILE
       labels :: STR(len=1), dimension(:,:), allocatable
-      i, label_length = 1 :: INT
+      i, label_length :: INT
 
-    if (tonto.is_master_processor) then
+      label_length = 1
+
+      if (tonto.is_master_processor) then
 
       ! how long is the longest label
       do i = 1, .atom.size
@@ -10794,7 +11017,7 @@ contains
 
       datafile.close
        
-    end if 
+      end if 
 
    end 
 
