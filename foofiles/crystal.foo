@@ -159,7 +159,9 @@ contains
       .unique_atom_for_frag_atom.destroy
       .unique_symop_for_frag_atom.destroy
       .asym_symop_for_frag_atom.destroy
-      .asym_shift_for_frag_atom.destroy
+      .asym_symops_for_frag_atom.destroy
+    ! .frag_pair_for_asym_atom_pair.destroy
+    ! .asym_pair_for_frag_atom_pair.destroy
 
       if (NOT .use_manual_repetition_factors) .repetition_factor.destroy
       .asym_atom_sym_factor.destroy
@@ -977,6 +979,8 @@ contains
 !  Fragment data, unique operators, Z number
 !  =========================================
 
+!  This is the initialisation
+
    make_fragment_data(atom,assign_atom,warnings) ::: leaky
    ! This routine sets the ".fragment_atom" from the "atom" list.
    ! If "assign_atom" is TRUE, ".fragment_atom" is pointed to "atom".
@@ -1046,15 +1050,22 @@ contains
       .unit_cell.change_into_fractional(.fragment_geometry)
       .fragment_offset   = int(.fragment_geometry.mean_column_vector)
 
-      ! From fragment geometry make:
-      !  .asymmetric_unit_geometry
-      !  .unit_cell_geometry
-      !  .asymmetric_unit_atoms
-      !  .unit_cell_atom
+      ! Make asymmetric_unit_geometry only if it does not already
+      ! exist e.g. from having been ready previously from a CIF
       if (.asymmetric_unit_geometry.disassociated) then
+
+         ! From fragment geometry make:
+         !  .asymmetric_unit_geometry
+         !  .unit_cell_geometry
+         !  .asymmetric_unit_atoms
+         !  .unit_cell_atom
+         !  .asym_atom_for_unit_cell_atom.destroy
+         !  .asym_symop_for_unit_cell_atom.destroy
+         !  .asym_shift_for_unit_cell_atom.destroy
          .make_asymmetric_unit(.prune_asymmetric_unit,warnings)
          if (.asymmetric_unit_source=="?") &
              .asymmetric_unit_source = "from-fragment"
+
       end
 
       ! Sanity check
@@ -1065,6 +1076,10 @@ contains
 
       ! Make unique fragment atoms
       .make_unique_frag_atoms
+
+      ! Make unique fragment atom-pairs
+    ! .make_unique_frag_atom_pairs
+!      .make_asym_symops_for_frag_atom
 
       ! Make the unit cell connection table
       .make_unit_cell_connections
@@ -1186,7 +1201,8 @@ contains
                   ! Actual atom index to prune
                   b = col + a
 
-                  ! If already there, are the atoms at the two sites distinct?
+                  ! If already there, are the atoms at the two sites
+                  ! crystallographically distinct?
                   unique = .fragment_atom.are_distinct(list(a),list(b))
                   if (unique) exit
 
@@ -1387,16 +1403,6 @@ contains
             ! Is unit cell atom u the fragment atom f?
             found = pu.same_as(pf,tol)
             ident = .fragment_atom(f).is_xtal_identical_kind_to(.asymmetric_unit_atom(a))
-
-            if (.debugging("make_frag_atom_for_cell_atom")) then
-               stdout.show("same pos?                 =",found)
-               stdout.show("xtal identical            =",ident)
-               if (found) &
-               stdout.text("SAME POS")
-               stdout.text("===========================")
-               stdout.text("===========================")
-            end
-
             found = found AND ident
 
             ! Cycle if not the same
@@ -1504,6 +1510,115 @@ contains
       end
 
    end
+
+   make_asym_symops_for_frag_atom ::: leaky, private
+   ! Make all symops which generate a fragment atom (up to
+   ! translation equivalence) from a given asymmetric unit atom.
+   ! These are only a given symop which does the mapping multiplied by
+   ! the asym atoms stabilizer group, but it is convenient for
+   ! symmetrisation.
+      self :: INOUT
+
+   ENSURE(.asym_atom_for_frag_atom.associated, "no .asym_atom_for_frag_atom")
+   ENSURE(.asymmetric_unit_geometry.associated, "no .asym_atom_for_frag_atom")
+
+      pa,pf :: VEC{REAL}(3)
+      same  :: BIN
+      s,f,a :: INT
+      tol   :: REAL
+      same  :: BIN
+
+      tol = CRYSTAL_SAME_ATOM_TOL
+
+      ! Create
+      .asym_symops_for_frag_atom.destroy
+      .asym_symops_for_frag_atom.create(.n_fragment_atoms)
+
+      ! Loop over symops
+      do s = 1,.spacegroup.n_seitz
+
+         ! Loop over the fragment atoms
+         do f = 1,.n_fragment_atoms
+
+            ! Asym atom for this fragment atom
+            a = .asym_atom_for_frag_atom(f)
+
+            ! Put asym atom into unit cell.
+            pa = .asymmetric_unit_geometry(:,a)
+            .transform_position(pa,1,to_unit_cell=TRUE)
+
+            ! Transform asym unit atom with symop "s"
+            pa = asymmetric_unit_geometry(:,a)
+            .transform_position(pa,s,to_unit_cell=TRUE)
+
+            ! Put fragment atom to unit cell
+            pf = .fragment_geometry(:,f)
+            .put_to_unit_cell(pf)
+
+            ! If same add the symop to the list
+            same = pa.same_as(pf,tol) 
+            if (same) then
+               .asym_symops_for_frag_atom(f).element.appen(s)
+            end
+
+         end
+
+      end
+
+   end
+
+!   make_unique_frag_atom_pairs ::: leaky, private
+!   ! Make the unique fragment atom pairs (these are those
+!   ! corresponding to the asymmetric unit atom pairs).
+!   ! Pairs are stored as a triangle number tr(a,b) where a>b.
+!      self :: INOUT
+!
+!   ENSURE(.asym_atom_for_frag_atom.associated, "no .asym_atom_for_frag_atom")
+!   ENSURE(.unit_cell_atom_for_frag_atom.associated, "no .unit_cell_atom_for_frag_atom")
+!   ENSURE(.asym_symop_for_unit_cell_atom.associated,"no .asym_symop_for_cell_atom")
+!
+!      f1,f2,fp,n_fp :: INT
+!      a1,a2,ap,n_ap :: INT
+!      m1,m2    :: INT
+!
+!      ! Create the arrays we want
+!      .asym_pair_for_frag_atom_pair.destroy
+!      .frag_pair_for_asym_atom_pair.destroy
+!
+!      ! Create the arrays we want
+!      n_fp = .n_fragment_atoms + 1
+!      n_fp = n_fp.triangle_number 
+!      .asym_pair_for_frag_atom_pair.create(n_fp)
+!
+!      n_ap = .n_asymmetric_unit_atoms + 1
+!      n_ap = n_ap.triangle_number 
+!      .asym_pair_for_frag_atom_pair.create(n_ap)
+!
+!      ! Loop over the fragment atoms
+!      do f1 = 1,.n_fragment_atoms
+!      do f2 = 1,f1
+!
+!         ! Pair indices
+!         fp =  f1.triangle_number + f2
+!
+!         ! Asym atom for this fragment atom
+!         a1 = .unique_atom_for_frag_atom(f1)
+!         a2 = .unique_atom_for_frag_atom(f2)
+!
+!         ! Get mapped triangle number
+!         m1 = max(a1,a2)
+!         m2 = min(a1,a2)
+!         ap = m1.triangle_number + m2
+!
+!         ! Make the informational arrays
+!         ! The actual pair needs to be extracted!
+!         .asym_pair_for_frag_atom_pair(fp) = ap
+!         .frag_pair_for_asym_atom_pair(ap).element.append(fp)
+!
+!      end
+!      end
+!
+!   end
 
    make_unit_cell_connections ::: leaky
    ! From the .asymmetric_unit_atom list make the .unit_cell_connection
