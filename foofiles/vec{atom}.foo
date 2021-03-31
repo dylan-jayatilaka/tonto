@@ -1,8 +1,9 @@
-!---------------------------------------------------------------------------
+!===========================================================================
 !
 ! VEC{ATOM}: ATOM vectors
 !
 ! Copyright (C) Dylan Jayatilaka, 1998
+! Copyright (C) Dylan Jayatilaka, 2021
 !
 ! This library is free software; you can redistribute it and/or
 ! modify it under the terms of the GNU Library General Public
@@ -19,7 +20,7 @@
 ! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 ! Boston, MA  02111-1307, USA.
 !
-!---------------------------------------------------------------------------
+!===========================================================================
 
 module VEC{ATOM}
 
@@ -35,64 +36,65 @@ module VEC{ATOM}
 
 contains
 
-!  ==================
-!  Allocation methods
-!  ==================
+!  ==========
+!  Allocation
+!  ==========
 
    create(dim) ::: get_from(VEC{OBJECT}), leaky, PURE
-   ! Create space for object
+   ! Allocate vector
+   end
+
+   create(lb,ub) ::: get_from(VEC{OBJECT}), leaky, PURE
+   ! Allocate the vector with lower bound "lb", upper bound "ub"
    end
 
    destroy ::: get_from(VEC{OBJECT}), leaky, PURE
-   ! Destroy space for object
+   ! Deallocate the vector
    end
 
-   nullify_ptr_part ::: get_from(VEC{OBJECT}), PURE
-   ! Nullify the pointer parts of self
-   end
 
-   nullify_bases ::: PURE
+   destroy_bases ::: PURE
    ! Nullify all the bases
       self :: INOUT
 
-      .nullify_basis_part
-      .nullify_slaterbasis_part
-      .nullify_coppensbasis_part
+      .destroy_gaussian_bases
+      .destroy_slaterbases
+      .destroy_coppensbases
 
    end
 
-   nullify_basis_part ::: PURE
-   ! Nullify the basis parts of self
+   destroy_gaussian_bases ::: PURE
+   ! Destroy the basis parts of self
       self :: INOUT
 
       a :: INT
 
       do a = 1,.dim
-         nullify(self(a).basis)
+         self(a).basis.destroy
       end
 
    end
 
-   nullify_slaterbasis_part ::: PURE
-   ! Nullify the slaterbasis parts of self
+   destroy_slaterbases ::: PURE
+   ! Destroy the slaterbasis parts of self
       self :: INOUT
 
       a :: INT
 
       do a = 1,.dim
-         nullify(self(a).slaterbasis)
+         self(a).slaterbasis.destroy
       end
 
    end
 
-   nullify_coppensbasis_part ::: PURE
-   ! Nullify the coppensbasis parts of self
+   destroy_coppensbases ::: PURE
+   ! Destroy the coppensbasis parts of self
       self :: INOUT
 
       a :: INT
 
       do a = 1,.dim
-         nullify(self(a).coppensbasis)
+         self(a).coppensbasis.destroy
       end
 
    end
@@ -103,19 +105,17 @@ contains
 
       a :: INT
 
-      ! Bases are never destroyed, they are always resolved externally
-      ! to this module. (You just have to know that).
-      .nullify_bases
+      .destroy_bases
 
       ! Destroy unique ptr parts (made outside of this module)
-      if (.has_all_ANO_matrices)  .destroy_ANO_matrices
-      if (.has_all_interpolators) .destroy_interpolators
-      if (.has_all_shell_info)    .destroy_shell_info
+      .destroy_ANO_matrices
+      .destroy_interpolators
+      .destroy_shell_info
 
       ! Destroy non-unique ptr parts (made outside of this module)
       ! Each atom has a non-aliased object
-      if (.has_all_atom_data)     .destroy_atom_data
-      if (.has_all_interpolators) .destroy_interpolators
+      .destroy_atom_data
+      .destroy_interpolators
 
       ! Now safe to destroy ...
       do a = 1,.dim
@@ -184,57 +184,23 @@ contains
 
    end
 
-   created result (res) ::: get_from(OBJECT), inlined_by_foo
-   ! Returns true if self has been created
-   end
-
-   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
-   ! Returns true if self has *not* been created
-   end
-
 !  ====
 !  Copy
 !  ====
 
-   create_copy(vec) ::: get_from(VEC{OBJECT}), leaky
-   ! Create a replica copy of "vec".
-   end
-
-   create_copy(vec,list) ::: get_from(VEC{OBJECT}), leaky
-   ! Create a copy of "vec" for the elements in "list".
-   end
-
-   copy(vec) ::: leaky
-   ! Copy "vec".
-      vec :: VEC{ATOM}
-
-   ENSURE(.dim==vec.dim,"vec size does not match")
-
-      a :: INT
-
-      ! Copy
-      do a = 1,vec.dim
-         self(a).copy(vec(a))
-      end
-
-      ! Update unique atoms
-      .update
-
-   end
-
    copy(vec,list) ::: leaky
    ! Copy "vec" for the elements in "list".
+      self :: INOUT
       vec  :: VEC{ATOM}, IN
       list :: VEC{INT}, IN
 
    ENSURE(.dim==list.dim,"wrong size, list")
 
-      a,b :: INT
+      a :: INT
 
       ! Copy
       do a = 1,list.dim
-         b = list(a)
-         self(a).copy(vec(b))
+         self(a) = vec(list(a))
       end
 
       ! Update unique atoms
@@ -246,40 +212,30 @@ contains
 !  Shrink, expand, append
 !  ======================
 
-   shrink(dim)
-   ! Shrink the atomvec to dimension "dim", retaining contents.
-      self :: PTR
-      dim :: INT, IN
-      ENSURE(.associated,"no self array")
-      ENSURE(dim<=.dim,"dim too large")
-      old :: VEC{ATOM}*
-      n :: INT
-      if (dim==.dim) return
-      old => self
-      nullify(self)
-      self.create(dim)
-      do n=1,dim
-       self(n).copy(old(n))
-      end
-      old.nullify_basis_part
-      old.destroy
+   shrink(dim,chop_start) ::: get_from(VEC{OBJECT}), leaky, PURE
+   ! Shrink allocatable "self" to dimension "dim" from the end.
+   ! Contents are retained. If "chop_start" is present and TRUE,
+   ! "self" is chopped from the start, and the contents from the end
+   ! are retained.
    end
 
-   expand(dim) ::: get_from(VEC{OBJECT}), leaky
-   ! Expand the vector "self" to "dim". New slots are left undefined.
+   expand(dim,grow_start) ::: get_from(VEC{OBJECT}), leaky, PURE
+   ! Expand allocatable "self" to dimension "dim" adding to the end.
+   ! If "grow_start" is present and TRUE, then "self" is expanded from
+   ! the start, keeping the same lower bound.
    end
 
-   append(v) ::: get_from(VEC{OBJECT}), leaky
-   ! Expands self and appends the contents of vector "v".
+   append(v) ::: get_from(VEC{OBJECT}), leaky, pure
+   ! Append the contents of vector "v" to allocatable "self".
    end
 
-   append(value) ::: get_from(VEC{OBJECT}), leaky
-   ! Expands self by 1, and appends the single scalar "value" onto the end.
+   append(value) ::: get_from(VEC{OBJECT}), leaky, pure
+   ! Appends the scalar "value" onto the end of allocatable "self".
    end
 
    prune_element(k) ::: get_from(VEC{OBJECT}), leaky
-   ! Removes the single element at position "k" from the vector.
-   ! The order of the elements is unchanged.
+   ! Removes the element at position "k" from allocatable "self".
+   ! Elements after that position are moved downward.
    end
 
 !  ===
@@ -317,19 +273,6 @@ contains
 
       self%label = labels
 
-   end
-
-   set_recognised_labels(list) ::: leaky
-   ! Set "list" to be the list of recognised labels. If all labels are
-   ! recognised then "list" is not created.
-      list :: VEC{INT}*
-      n :: INT
-      nullify(list)
-      do n = 1,.dim
-         if (NOT self(n).has_recognised_label) cycle
-         list.append(n)
-      end
-      if (list.dim==.dim) list.destroy
    end
 
    set_use_interpolators(use_interp)
@@ -735,15 +678,15 @@ contains
    reset_pADPs_and_errors(anharm3_tags,anharm4_tags) ::: leaky
    ! Allocate the positional-ADP parameters based on the given tags.
    ! NOTE: assigning 4th order tags implies 3rd order.
-      self :: PTR
-      anharm3_tags,anharm4_tags :: VEC{STR}*
+      self :: allocatable, INOUT 
+      anharm3_tags,anharm4_tags :: VEC{STR}@
 
       t,a :: INT
       tag :: STR
 
       ! Find the 4th-order tags, resize pADP_vector, and set to 0
       ! If the atoms are already fourth order do nothing.
-      if (anharm4_tags.associated) then
+      if (anharm4_tags.allocated) then
 
          do t = 1,anharm4_tags.dim
             tag = anharm4_tags(t)
@@ -756,7 +699,7 @@ contains
 
       ! Find the 3rd-order tags, resize pADP_vector, and set to 0
       ! If they were already 3rd or 4th order, do nothing
-      if (anharm3_tags.associated) then
+      if (anharm3_tags.allocated) then
 
          do t = 1,anharm3_tags.dim
             tag = anharm3_tags(t)
@@ -1472,11 +1415,11 @@ contains
 !  Coordinate info
 !  ===============
 
-   coordinates_ptr(skip_dummies) result (res) ::: leaky
+   coordinates_all(skip_dummies) result (res) ::: leaky
    ! Create the 3 x .dim coordinate matrix pointer
       self :: IN
-      skip_dummies :: BIN, IN, optional
-      res :: MAT{REAL}*
+      skip_dummies :: BIN, optional, IN
+      res :: MAT{REAL}@
 
       n_atom :: INT
       skip :: BIN
@@ -1828,28 +1771,40 @@ contains
 !  List-based I/O Routines
 !  =======================
 
-   read_list_keywords ::: get_from(VEC{OBJECT}), recursive, leaky
+   read_list_keywords ::: recursive, leaky, get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
    ! Read in and process list-based keywords from "stdin". List-based keywords
    ! are those that are intended to apply to each individual element of the list
    ! through a list of "keys" stored in the associated list-element type module.
    ! NOTE: this routine will create the list, if required.
    end
 
-   process_list_keyword(keyword) ::: get_from(VEC{OBJECT}), leaky
+   process_list_keyword(keyword) ::: leaky, get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
    ! Process a list-type "keyword", common to all list-type objects.
    end
 
-   read_data ::: get_from(VEC{OBJECT}), leaky
-   ! Repeatedly process the "keys" to read in the data list.
+   read_data ::: leaky, get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
+   ! Repeatedly process the "keys" to read in the data list. 
    ! Opening and closing braces are needed.
    end
 
-   read_data_sans_braces ::: get_from(VEC{OBJECT}), leaky
-   ! Repeatedly process the "keys" to read in the data list.
+   read_data_sans_braces ::: leaky, get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
+   ! Repeatedly process the "keys" to read in the data list. 
    ! Opening and closing braces are not needed.
    end
 
+   read_data_BL_terminated ::: leaky, get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
+   ! Repeatedly process the "keys" to read in the data list. Opening
+   ! braces are not needed, but a blank line (BL) is used as an
+   ! end-of-list terminator.
+   end
+
    data_length result (length) ::: get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
    ! Read ahead in stdin to get the "length" of the data list, i.e. the number
    ! of data items in the list. The data must begin with the first data item,
    ! *not* a "{" symbol.  The order of data items comprising the list is given
@@ -1857,41 +1812,105 @@ contains
    ! must be terminated by a "}" symbol.
    end
 
+   data_length_BL_terminated result (length) ::: get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
+   ! Read ahead in stdin to get the "length" of the data list. The
+   ! data list begins with the first data item, *not* a "{" symbol.
+   ! The data list must be terminated by a blank line (BL).
+   end
+
    read_altered_data ::: get_from(VEC{OBJECT}), leaky
+   ! This version is for allocatable arrays.
    ! Read in a sublist of the complete list, and alter the data for that
    ! sublist.  The order of the data items in the sublist is given by the "keys"
    ! defined in the associated list-element type module.
    end
 
    read_append_data ::: get_from(VEC{OBJECT}), leaky
+   ! This version is for allocatable arrays.
    ! Read in a set of data to append to an existing set.
    end
 
-   process_keys ::: get_from(VEC{OBJECT}), leaky
+!  ====================
+!  Key related routines
+!  ====================
+
+   read_keys ::: leaky, get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
+   ! Read a new set of keys
+   end
+
+   process_keys ::: leaky, get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
    ! Process the "keys" on each element of the list.
    end
 
-   process_keys_once ::: get_from(VEC{OBJECT})
+   process_keys_once  ::: get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
    ! Process the "keys" just once on an anonymous object. This is useful if the
    ! "keys" set global variables in the list module (e.g. the default order of
    ! lists *within* the list data) as opposed to being keys pertaining to each
    ! element of the list.
    end
 
-   keys_created result (res) ::: get_from(VEC{OBJECT})
+   keys_allocated result (res) ::: get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
    ! Return TRUE if the list-element keys are created.
    end
 
    set_keys(the_keys) ::: get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
    ! This is for setting the "keys" externally.
    end
 
-   clear_keys ::: get_from(VEC{OBJECT}), leaky
+   clear_keys ::: leaky, get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
    ! This is for destroying the "keys" externally.
    end
 
-   read_keys ::: get_from(VEC{OBJECT}), leaky
-   ! Read a new set of keys
+!  ===========================
+!  Non-list based I/O routines
+!  ===========================
+
+   read_keywords ::: recursive, leaky, get_from(VEC{OBJECT})
+   ! This version is for allocatable arrays.
+   ! Read in and process normal (non list-type) keywords from "stdin".
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process a normal (non list-type) "keyword".
+      self :: allocatable, INOUT
+      keyword :: STR
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+      case("}") ! do nothing.
+      case("dump                          "); .dump("atoms")
+      case("find_n_terminal_atoms         "); .find_N_terminal_atoms
+      case("find_protein_backbone         "); .find_protein_backbone
+      case("put                           "); .put
+      case("put_bond_angle_table          "); .put_bond_angle_table
+      case("put_bond_length_table         "); .put_bond_length_table
+      case("put_coordinates               "); .put_coordinates
+      case("put_coordinates_and_charges   "); .put_coordinates_and_charges
+      case("put_invariom_labels           "); .put_invariom_labels
+      case("put_smiles_invariom_labels    "); .put_smiles_invariom_labels
+    ! case("put_mm_info                   "); .put_mm_info
+      case("put_torsion_angle_table       "); .put_torsion_angle_table
+    ! case("put_protein_sequence          "); .put_protein_sequence
+    ! case("put_restraint_atoms           "); .put_restraint_atoms
+      case("read_cif                      "); .read_CIF
+      case("redirect                      "); .redirect
+      case("revert                        "); .revert
+      case("set_covalent_radii_ccdc       "); ATOM:set_covalent_radii_ccdc
+      case("use_interpolators=            "); .read_use_interpolators
+      case default;               UNKNOWN(word)
+      end
+
    end
 
    redirect ::: get_from(OBJECT), leaky
@@ -1902,55 +1921,12 @@ contains
    ! Revert back to previous stdin file
    end
 
-!  ===========================
-!  Non-list based I/O routines
-!  ===========================
-
-   read_keywords ::: get_from(VEC{OBJECT}), recursive, leaky
-   ! Read in and process normal (non list-type) keywords from "stdin".
-   end
-
-   process_keyword(keyword) ::: leaky
-   ! Process a normal (non list-type) "keyword".
-      self :: PTR
-      keyword :: STR
-
-      word :: STR
-
-      word = keyword
-      word.to_lower_case
-      select case (word)
-       case("}") ! do nothing.
-       case("dump                          "); .dump("atoms")
-       case("find_n_terminal_atoms         "); .find_N_terminal_atoms
-       case("find_protein_backbone         "); .find_protein_backbone
-       case("put                           "); .put
-       case("put_bond_angle_table          "); .put_bond_angle_table
-       case("put_bond_length_table         "); .put_bond_length_table
-       case("put_coordinates               "); .put_coordinates
-       case("put_coordinates_and_charges   "); .put_coordinates_and_charges
-       case("put_invariom_labels           "); .put_invariom_labels
-       case("put_smiles_invariom_labels    "); .put_smiles_invariom_labels
-     ! case("put_mm_info                   "); .put_mm_info
-       case("put_torsion_angle_table       "); .put_torsion_angle_table
-     ! case("put_protein_sequence          "); .put_protein_sequence
-     ! case("put_restraint_atoms           "); .put_restraint_atoms
-       case("read_cif                      "); .read_CIF
-       case("redirect                      "); .redirect
-       case("revert                        "); .revert
-       case("set_covalent_radii_ccdc       "); ATOM:set_covalent_radii_ccdc
-       case("use_interpolators=            "); .read_use_interpolators
-       case default;               UNKNOWN(word)
-      end
-
-   end
-
 ! CIF
 
    read_CIF ::: leaky
    ! Read information from a Crystallographic Information File whose
    ! name is read from "stdin".
-      self :: PTR
+      self :: allocatable, INOUT
 
       name :: STR
 
@@ -1964,10 +1940,10 @@ contains
 
    read_CIF(name) ::: leaky
    ! Read information from a Crystallographic Information File "name"
-      self :: PTR
+      self :: allocatable, INOUT
       name :: STR, IN
 
-      cif :: CIF*
+      cif :: CIF@
       found :: BIN
 
       ! Create the CIF and find data
@@ -1986,7 +1962,7 @@ contains
 
    read_CIF(cif) ::: leaky
    ! Read information from a Crystallographic Information File "name"
-      self :: PTR
+      self :: allocatable, INOUT
       cif :: CIF, INOUT
 
       if (NOT cif.is_mmCIF) then
@@ -1999,7 +1975,7 @@ contains
 
    read_CIF_ADPs(cif) ::: leaky
    ! Read ADP information from the "cif" file.
-      self :: PTR
+      self :: allocatable, INOUT
       cif :: CIF, INOUT
 
       fail :: BIN
@@ -2017,7 +1993,7 @@ contains
    read_smCIF(cif) ::: leaky
    ! Read information from a small-molecule Crystallographic
    ! Information File "name"
-      self :: PTR
+      self :: allocatable, INOUT
       cif :: CIF, INOUT
 
       ! Read atom positions
@@ -2034,7 +2010,7 @@ contains
    read_smCIF_atoms(cif) ::: leaky
    ! Read information from a small-molecule Crystallographic
    ! Information File, "cif".
-      self :: PTR
+      self :: allocatable, INOUT
       cif :: CIF, INOUT
 
       fail :: BIN
@@ -2044,7 +2020,6 @@ contains
 
       if (NOT fail) return
 
-      .destroy
       fail = FALSE
       .read_smCIF_atoms_xtal(cif,fail)
 
@@ -2056,17 +2031,16 @@ contains
    ! Read Tonto information from a small-molecule "cif".  Cartesian
    ! format extends existing items in the standard CIF dictionary.
    ! NOTE: self is destroyed and created from this file!
-      self :: PTR
+      self :: allocatable, INOUT
       cif :: CIF, INOUT
       fail :: BIN, OUT
 
       fl,fc,fe,fo :: BIN
-      IDs,labels :: VEC{STR}*
-      pos,err :: MAT{REAL}*
+      IDs,labels :: VEC{STR}@
+      pos,err :: MAT{REAL}@
 
       ! Read the site labels FIRST because these seem to correlate with
       ! the anisotropic U's.
-      nullify(labels)
       cif.read_looped_item("_atom_site_Cartn_label",labels,fl)
 
       fail = NOT fl 
@@ -2145,22 +2119,16 @@ contains
    ! coordinates in the file.  It is NOT an error if the ADP (thermal)
    ! tensors are missing.
    ! NOTE: self is destroyed and created from this file!
-      self :: PTR
+      self :: allocatable, INOUT
       cif :: CIF, INOUT
       fail :: BIN, OUT
 
       fl,fc,fs,fd,fo :: BIN
-      IDs,labels,symbols :: VEC{STR}*
-      disorder_group :: MAT{STR}*
-      pos,err :: MAT{REAL}*
+      IDs,labels,symbols :: VEC{STR}@
+      disorder_group :: MAT{STR}@
+      pos,err :: MAT{REAL}@
       dg :: STR
       i :: INT
-
-      ! Read the site labels FIRST because these seem to correlate with
-      ! the anisotropic U's.
-      nullify(symbols)
-      nullify(labels)
-
 
       ! Find atom labels somehow
       cif.read_looped_item("_atom_site_label",labels,fl)                    ! Std
@@ -2173,13 +2141,13 @@ contains
       .destroy
 
       ! Create new atom list & read labels
-      if (labels.associated) then
+      if (labels.allocated) then
          .create(labels.dim)
          .set_atom_data_from_labels(labels)      ! This may not work
-      else if (symbols.associated) then
+      else if (symbols.allocated) then
          .create(symbols.dim)
          .set_atom_data_from_labels(symbols)     ! For Z's
-         if (labels.associated) .set_labels(labels) ! For U's
+         if (labels.allocated) .set_labels(labels) ! For U's
       end
 
       labels.destroy
@@ -2286,16 +2254,14 @@ contains
    DIE_IF(self(:).label.no_of_unique_elements/=.dim,"not all ADP site symbols are unique!")
 
       fi,fd,fu,fl :: BIN
-      IDs,esd,labels :: VEC{STR}*
+      IDs,esd,labels :: VEC{STR}@
       i,ind :: INT
-      U,dU :: MAT{REAL}*
-      U_iso,d_U_iso :: VEC{REAL}*
+      U,dU :: MAT{REAL}@
+      U_iso,d_U_iso :: VEC{REAL}@
       lab :: STR
 
       
       ! Read Cartn U_iso values
-      nullify(  U_iso)
-      nullify(d_U_iso)
       cif.read_looped_item("_atom_site_Cartn_U_iso_or_equiv",      U_iso,found=fi)
       cif.read_looped_item("_atom_site_Cartn_U_iso_or_equiv_esu",d_U_iso,found=fd)
 
@@ -2320,9 +2286,6 @@ contains
       end
 
       ! Read Cartn ADP2 tensor
-      nullify(labels)
-      nullify(U)
-      nullify(dU)
       IDs.create(6)
       esd.create(6)
       do i = 1,6
@@ -2384,16 +2347,14 @@ contains
    DIE_IF(self(:).label.no_of_unique_elements/=.dim,"not all ADP site symbols are unique!")
 
       fi,fu,fl :: BIN
-      IDs,labels :: VEC{STR}*
+      IDs,labels :: VEC{STR}@
       i,ind :: INT
-      U,dU :: MAT{REAL}*
-      U_iso,d_U_iso :: VEC{REAL}*
+      U,dU :: MAT{REAL}@
+      U_iso,d_U_iso :: VEC{REAL}@
       fac :: REAL
       lab :: STR
 
       ! Read U_iso values
-      nullify(  U_iso)
-      nullify(d_U_iso)
       cif.read_looped_item("_atom_site_U_iso_or_equiv",U_iso,d_U_iso,found=fi)
 
       ! Are they there?
@@ -2418,7 +2379,7 @@ contains
          U_iso.destroy
 
          ! Set errors
-         if (d_U_iso.associated) then
+         if (d_U_iso.allocated) then
             d_U_iso.convert_from("angstrom^2")
             .set_U_iso_error(d_U_iso)
             d_U_iso.destroy
@@ -2518,8 +2479,8 @@ contains
 
    ENSURE(cif.GC_format.is_one_of(["u","g"]),"incorrect fmt")
 
-      labels,IDs,esd :: VEC{STR}*
-      U,dU :: MAT{REAL}*
+      labels,IDs,esd :: VEC{STR}@
+      U,dU :: MAT{REAL}@
       fl,fu,fd :: BIN
       fac :: REAL
       lab :: STR
@@ -2656,8 +2617,8 @@ contains
 
    ENSURE(cif.GC_format.is_one_of(["u","g"]),"incorrect fmt")
 
-      labels,IDs,esd :: VEC{STR}*
-      U,dU :: MAT{REAL}*
+      labels,IDs,esd :: VEC{STR}@
+      U,dU :: MAT{REAL}@
       fl,fu,fd :: BIN
       lab :: STR
       fac :: REAL
@@ -2764,16 +2725,12 @@ contains
    ! from the small-molecule "cif" file.
       cif :: CIF, INOUT
 
-      IDs :: VEC{STR}*
-      f_real,f_imag :: VEC{REAL}*
+      IDs :: VEC{STR}@
+      f_real,f_imag :: VEC{REAL}@
       fs,fr,fi :: BIN
       a,Z :: INT
 
       ! Read CIF
-      nullify(IDs)
-      nullify(f_real)
-      nullify(f_imag)
-
       cif.read_looped_item("_atom_type_symbol",IDs,found=fs)
       cif.read_looped_item("_atom_type_scat_dispersion_real",f_real,found=fr)
       cif.read_looped_item("_atom_type_scat_dispersion_imag",f_imag,found=fi)
@@ -2811,7 +2768,7 @@ contains
    read_mmCIF(cif) ::: leaky
    ! Read information from a macromolwcular Crystallographic
    ! Information File "name"
-      self :: PTR
+      self :: allocatable, INOUT
       cif :: CIF, INOUT
 
       fail :: BIN
@@ -2830,20 +2787,19 @@ contains
    read_mmCIF_atoms(cif,fail) ::: leaky
    ! Read Tonto information from a macromolecular "cif".  Cartesian
    ! NOTE: self is destroyed and created from this file!
-      self :: PTR
+      self :: allocatable, INOUT
       cif :: CIF, INOUT
       fail :: BIN, OUT
 
       n_atoms,i, val :: INT
       fl,fc :: BIN
-      ind :: VEC{INT}*
-      IDs :: VEC{STR}*
-      labels :: MAT{STR}*
-      data :: MAT{REAL}*
+      ind :: VEC{INT}@
+      IDs :: VEC{STR}@
+      labels :: MAT{STR}@
+      data :: MAT{REAL}@
       lab :: STR
 
       ! Read the site id's FIRST.
-      nullify(ind)
       cif.read_looped_item("_atom_site.id",ind,fl)
 
       fail = NOT fl 
@@ -2871,7 +2827,6 @@ contains
          "_atom_site.label_asym_id  ", &
          "_atom_site.label_entity_id"  &
          ]
-      nullify(labels)
       cif.read_looped_items(IDs,labels,found=fc)
       IDs.destroy
 
@@ -2973,23 +2928,21 @@ contains
       fail :: BIN, OUT
 
       fi,fu :: BIN
-      IDs :: VEC{STR}*
+      IDs :: VEC{STR}@
       a,i :: INT
-      U :: MAT{REAL}*
-      U_iso :: VEC{REAL}*
-      ind :: VEC{INT}*
+      U :: MAT{REAL}@
+      U_iso :: VEC{REAL}@
+      ind :: VEC{INT}@
       fac :: REAL
       lab :: STR
 
       ! Read the site id's
-      nullify(ind)
       cif.read_looped_item("_atom_site_anisotrop.id",ind,fi)
 
       fail = NOT fi 
       if (fail) return
 
       ! Read U_iso values
-      nullify(U_iso)
       cif.read_looped_item("_atom_site.U_iso_or_equiv",U_iso,found=fi)
 
       ! Read B_iso values if U_iso's are not there ...
@@ -3080,16 +3033,12 @@ contains
    ! from the small-molecule "cif" file.
       cif :: CIF, INOUT
 
-      IDs :: VEC{STR}*
-      f_real,f_imag :: VEC{REAL}*
+      IDs :: VEC{STR}@
+      f_real,f_imag :: VEC{REAL}@
       fs,fr,fi :: BIN
       a,Z :: INT
 
       ! Read CIF
-      nullify(IDs)
-      nullify(f_real)
-      nullify(f_imag)
-
       cif.read_looped_item("_atom_type.symbol",IDs,found=fs)
       cif.read_looped_item("_atom_type.scat_dispersion_real",f_real,found=fr)
       cif.read_looped_item("_atom_type.scat_dispersion_imag",f_imag,found=fi)
@@ -3125,13 +3074,13 @@ contains
 
    read_use_interpolators
    ! Read whether to use interpolators for spherical atom densities
-      self :: PTR
+      self :: allocatable, INOUT
+
       use_interp :: BIN
 
+      if (.deallocated) return
+
       stdin.read(use_interp)
-
-      if (.disassociated) return
-
       .set_use_interpolators(use_interp)
 
    end
@@ -3145,8 +3094,9 @@ contains
    ! the element in "basis" which matches either the atoms .basis_label, or else
    ! matches a label constructed in a standard way, by joining the atom chemical
    ! symbol with the ":suffix" string.
-      basis :: VEC{BASIS?}*
-      suffix :: STR, optional
+      self :: INOUT
+      basis :: VEC{BASIS?}@, IN
+      suffix :: STR, optional, IN
 
       a :: INT
 
@@ -3400,7 +3350,7 @@ contains
 
       a, na :: INT
       spaces :: BIN
-      symbol :: VEC{STR}*
+      symbol :: VEC{STR}@
 
       ! Do we want spaces between the elements?
       spaces = FALSE
@@ -3585,10 +3535,10 @@ contains
 
    end
 
-   non_H_atom_tags result (tags) ::: leaky
+   non_H_atom_tags result (tags) ::: leaky, PURE
    ! Return the list of non-H atom tags
       self :: IN
-      tags :: VEC{STR}*
+      tags :: VEC{STR}@
 
       list :: VEC{INT}@
       n :: INT
@@ -4951,7 +4901,7 @@ contains
 
 
       unique_labels,unique_x_kind :: BIN
-      dum :: VEC{INT}*
+      dum :: VEC{INT}@
       n :: INT
 
       n = .no_of_nondummy_atoms
@@ -4979,7 +4929,7 @@ contains
       self :: IN
       li,lj :: INT, OUT
 
-      dum :: VEC{INT}*
+      dum :: VEC{INT}@
       n :: INT
 
       n = .no_of_nondummy_atoms
@@ -5006,7 +4956,7 @@ contains
       self :: IN
       has :: BIN
 
-      dum :: VEC{INT}*
+      dum :: VEC{INT}@
       n :: INT
 
       n = .no_of_nondummy_atoms
@@ -5123,7 +5073,7 @@ contains
 
       has = TRUE
       do a = 1,.dim
-         has = self(a).basis.associated
+         has = self(a).basis.allocated
          if (NOT has) exit
       end
 
@@ -5138,7 +5088,7 @@ contains
 
       has = TRUE
       do a = 1,.dim
-         has = self(a).slaterbasis.associated
+         has = self(a).slaterbasis.allocated
          if (NOT has) exit
       end
 
@@ -5153,7 +5103,7 @@ contains
 
       has = TRUE
       do a = 1,.dim
-         has = self(a).coppensbasis.associated
+         has = self(a).coppensbasis.allocated
          if (NOT has) exit
       end
 
@@ -5226,7 +5176,7 @@ contains
    basis_labels result (labels) ::: leaky
    ! Return a list of basis set "labels". Missing labels are returned blank.
       self :: IN
-      labels :: VEC{STR}*
+      labels :: VEC{STR}@
 
       i :: INT
 
@@ -5240,31 +5190,38 @@ contains
 
    end
 
-   library_basis_labels(suffix) result (labels) ::: leaky
+   library_basis_labels(suffix) result (labels) ::: leaky, PURE
    ! Return a list of library basis set labels, the atoms element name with
    ! ":suffix" appended to it. Only a unique list of basis labels is returned.
-      suffix :: STR
-      labels :: VEC{STR}*
+      self :: IN
+      suffix :: STR, IN
+      labels :: VEC{STR}@
+
       i :: INT
+
       labels.create(.dim)
       do i = 1,.dim
          labels(i) = self(i).library_basis_label(suffix)
       end
       labels.remove_repetitions
+
    end
 
-   library_basis_labels(Z_max,suffix) result (labels) ::: selfless, leaky
+   library_basis_labels(Z_max,suffix) result (labels) ::: selfless, leaky, PURE
    ! Return a list of library basis set labels, for the atoms with
    ! atomic numbers up to "Z_max", with ":suffix" appended to it. Only
    ! a unique list of basis labels is returned.
-      Z_max :: INT
-      suffix :: STR
-      labels :: VEC{STR}*
+      Z_max :: INT, IN
+      suffix :: STR, IN
+      labels :: VEC{STR}@
+
       Z :: INT
+
       labels.create(Z_max)
       do Z = 1,Z_max
          labels(Z) = ATOM:library_basis_label(Z,suffix)
       end
+
    end
 
 !  ======================
@@ -5325,7 +5282,7 @@ contains
 
       do a = 1,.dim
 
-         has = self(a).slaterbasis.associated
+         has = self(a).slaterbasis.allocated
          if (NOT has) exit
 
          has = self(a).slaterbasis.interpolator.allocated
@@ -5345,7 +5302,7 @@ contains
       has = TRUE
       do a = 1,.dim
 
-         has = self(a).coppensbasis.associated
+         has = self(a).coppensbasis.allocated
          if (NOT has) exit
 
          has = self(a).coppensbasis.interpolator.allocated
@@ -5864,7 +5821,7 @@ contains
       Z_list :: VEC{EVEC{INT}}@, OUT
 
       n_kind, n,k,Z_n :: INT
-      Z,unique_Z :: VEC{INT}*
+      Z,unique_Z :: VEC{INT}@
 
       ! Atomic numbers
       Z.create(.dim)
@@ -6014,7 +5971,7 @@ contains
       self :: INOUT
 
       atoms_bonded_to_atom :: VEC{EVEC{INT}}@
-      group_for :: VEC{INT}*
+      group_for :: VEC{INT}@
       n_atoms, a,b,c,n, ga,gb :: INT
       n_group, g :: INT
 
@@ -7693,7 +7650,7 @@ contains
 !   ! "connections".
 !      connections :: VEC{EVEC{INT}}@
 !
-!   ENSURE(connections.associated,"no connection table")
+!   ENSURE(connections.allocated,"no connection table")
 !
 !      group_connections_for => connections
 !
@@ -9296,7 +9253,7 @@ contains
       res :: INT
 
       n,a,b,c :: INT
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
 
       n = .dim
 
@@ -9335,7 +9292,7 @@ contains
       res :: VEC{INT}(.no_of_angle_center_atoms)
 
       n,a,b,c :: INT
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
 
       n = .dim
 
@@ -9373,7 +9330,7 @@ contains
       res :: INT
 
       n,a,b,c :: INT
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
 
       n = .dim
 
@@ -9412,7 +9369,7 @@ contains
       res :: VEC{INT}(.no_of_angle_outer_atoms)
 
       n,a,b,c :: INT
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
 
       n = .dim
 
@@ -9600,7 +9557,7 @@ contains
       self :: IN
       res :: INT
 
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
       a1,a2,a3,a4, n :: INT
 
       ! Length
@@ -9646,7 +9603,7 @@ contains
       self :: IN
       res :: VEC{INT}(.no_of_torsion_angle_1st_atoms)
 
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
       a1,a2,a3,a4, n :: INT
 
       ! Length
@@ -9692,7 +9649,7 @@ contains
       self :: IN
       res :: INT
 
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
       a1,a2,a3,a4, n :: INT
 
       ! Length
@@ -9738,7 +9695,7 @@ contains
       self :: IN
       res :: VEC{INT}(.no_of_torsion_angle_2nd_atoms)
 
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
       a1,a2,a3,a4, n :: INT
 
       ! Length
@@ -9784,7 +9741,7 @@ contains
       self :: IN
       res :: INT
 
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
       a1,a2,a3,a4, n :: INT
 
       ! Length
@@ -9830,7 +9787,7 @@ contains
       self :: IN
       res :: VEC{INT}(.no_of_torsion_angle_3rd_atoms)
 
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
       a1,a2,a3,a4, n :: INT
 
       ! Length
@@ -9876,7 +9833,7 @@ contains
       self :: IN
       res :: INT
 
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
       a1,a2,a3,a4, n :: INT
 
       ! Length
@@ -9922,7 +9879,7 @@ contains
       self :: IN
       res :: VEC{INT}(.no_of_torsion_angle_4th_atoms)
 
-      cnt :: VEC{BIN}*
+      cnt :: VEC{BIN}@
       a1,a2,a3,a4, n :: INT
 
       ! Length
@@ -10329,7 +10286,7 @@ contains
 !      res :: BIN
 !
 !      n_kind,u :: INT
-!      ulist :: VEC{INT}*
+!      ulist :: VEC{INT}@
 !
 !      ! Unique atom list
 !      n_kind = maxval(self(:).kind)
@@ -10355,7 +10312,7 @@ contains
 !      res :: BIN
 !
 !      n_kind,u :: INT
-!      ulist :: VEC{INT}*
+!      ulist :: VEC{INT}@
 !
 !      ! Unique atom list
 !      n_kind = maxval(self(:).kind)
@@ -10583,7 +10540,7 @@ contains
       tol :: REAL, optional, IN
       res :: INT
 
-   ENSURE(self(1).NAO_occupations.associated,"no ANO occupations")
+   ENSURE(self(1).NAO_occupations.allocated,"no ANO occupations")
 
       a :: INT
 
@@ -11176,10 +11133,10 @@ contains
       no_header :: BIN, IN, optional
 
       fac :: REAL
-      xyz :: MAT{REAL}*
-      Z,occ  :: VEC{REAL}*
-      lab,ID :: VEC{STR}*
-      grp :: VEC{INT}*
+      xyz :: MAT{REAL}@
+      Z,occ  :: VEC{REAL}@
+      lab,ID :: VEC{STR}@
+      grp :: VEC{INT}@
       table :: VEC{TABLE_COLUMN}@
       la,lb,ka,kb :: INT
       cartesian,header,has_unique_labels :: BIN
@@ -12408,7 +12365,7 @@ contains
    ! information. Use Angstroms.
       self :: IN
 
-      U,dU :: MAT{REAL}*
+      U,dU :: MAT{REAL}@
       n :: INT
 
       if (NOT .has_any_ADP3s_and_errors) return
@@ -12748,7 +12705,7 @@ contains
 !   ! information. Use Angstroms.
 !      self :: IN
 !
-!      U,dU :: MAT{REAL}*
+!      U,dU :: MAT{REAL}@
 !      n :: INT
 !
 !      if (NOT .has_any_ADP3s_and_errors) return
@@ -12863,7 +12820,7 @@ contains
    ! information. Use Angstroms.
       self :: IN
 
-      U,dU :: MAT{REAL}*
+      U,dU :: MAT{REAL}@
       n :: INT
 
       if (NOT .has_any_ADP4s_and_errors) return
@@ -16336,8 +16293,8 @@ contains
 
       ADP_type,symbols :: VEC{STR}@
       Uiso :: VEC{REAL}@
-      xyz :: MAT{REAL}*
-      err :: MAT{REAL}*
+      xyz :: MAT{REAL}@
+      err :: MAT{REAL}@
       table :: VEC{TABLE_COLUMN}@
       fac,fac2 :: REAL
 
@@ -16413,8 +16370,8 @@ contains
    ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
    ENSURE(self(1).pos_axis_system=="crystal","not crystal axis system!")
 
-      blnk,ADP_type :: VEC{STR}*
-      Uiso,Uerr :: VEC{REAL}*
+      blnk,ADP_type :: VEC{STR}@
+      Uiso,Uerr :: VEC{REAL}@
       xyz,err :: MAT{REAL}@
       tabl1,tabl2 :: VEC{TABLE_COLUMN}@
       fac,fac2 :: REAL

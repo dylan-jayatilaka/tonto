@@ -1,9 +1,12 @@
-!-------------------------------------------------------------------------------
+!===============================================================================
 !
-! ATOM: can be a quantum mechanical atom, with a basis set
-!       or a molecular mechanical atom with a force field potential
+! ATOM: 
+!
+! A quantum mechanical atom, with a basis set or a molecular
+! mechanical atom with a force field potential
 !
 ! Copyright (C) Dylan Jayatilaka, 1997
+! Copyright (C) Dylan Jayatilaka, 2021
 !
 ! This library is free software; you can redistribute it and/or
 ! modify it under the terms of the GNU Library General Public
@@ -20,14 +23,13 @@
 ! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 ! Boston, MA  02111-1307, USA.
 !
-! $Id: atom.foo 4409 2014-06-10 03:32:55Z durhammike $
-!-------------------------------------------------------------------------------
+!===============================================================================
 
 module ATOM
 
    implicit none
 
-   keys :: VEC{STR}*, private DEFAULT_NULL
+   keys :: VEC{STR}@, private 
 
 !  ===============
 !  Data statements
@@ -918,45 +920,16 @@ module ATOM
 
 contains
 
-!  ==================
-!  Allocation methods
-!  ==================
+!  ==========
+!  Allocation
+!  ==========
 
    create ::: get_from(OBJECT), leaky, PURE
-   ! Create an object
+   ! Allocate an object
    end
 
    destroy ::: get_from(OBJECT), leaky, PURE
-   ! Destroy an object
-   end
-
-   nullify_ptr_part ::: PURE
-   ! Nullify the pointer parts of the atom
-   ! WARNING: all of these are usually pointer assigned in MOLECULE
-   ! when defining the (spherically averaged) atomic natural orbitals.
-   ! Therefore, the appropriate MOLECULE destructor should be called
-   ! before using this routine.
-      self :: INOUT
-
-      nullify(.basis)
-      nullify(.slaterbasis)
-      nullify(.coppensbasis)
-
-      nullify(.pADP_vector)
-      nullify(.pADP_errors)
-
-      nullify(.NAOs)
-      nullify(.NAO_occupations)
-
-      .kind = 0
-      .atom_data_made = FALSE ! Bad
-
-
-    ! nullify(.first_basis_fn_for_shell)
-    ! nullify(.last_basis_fn_for_shell)
-    ! nullify(.angular_moment_for_shell)
-      nullify(.precomputed_basis_shellpair)
-
+   ! Deallocate "self"
    end
 
    destroy_ptr_part ::: leaky, PURE
@@ -967,11 +940,9 @@ contains
    ! were created.
       self :: INOUT
 
-      ! Never destroy these ... they are always
-      ! resolved outside the atom object.
-      nullify(.basis)
-      nullify(.slaterbasis)
-      nullify(.coppensbasis)
+      .basis.destroy
+      .slaterbasis.destroy
+      .coppensbasis.destroy
 
       ! WARNING: this may not be correct
       ! The destroy should be done outside of this module
@@ -979,11 +950,7 @@ contains
       .last_basis_fn_for_shell.destroy
       .angular_moment_for_shell.destroy
 
-      if (.kind==0 OR .is_unique_kind) then
-         .precomputed_basis_shellpair.destroy
-      else
-         nullify(.precomputed_basis_shellpair)
-      end
+      .precomputed_basis_shellpair.destroy
 
       .atomic_orbitals.destroy
       .density_matrix.destroy
@@ -1000,11 +967,11 @@ contains
 
    end
 
+!  Destroy subparts
+
    destroy_NAO_matrices ::: leaky, PURE
    ! Destroy the NAO pointer parts
       self :: INOUT
-
-      if (NOT .has_NAO_matrices) return
 
       .NAOs.destroy
       .NAO_occupations.destroy
@@ -1016,8 +983,6 @@ contains
    ! (and related info)
       self :: INOUT
 
-      if (NOT .has_ANO_matrices) return
-         
       .atomic_orbitals.destroy
       .density_matrix.destroy
       .natural_orbitals.destroy
@@ -1029,9 +994,7 @@ contains
    ! Destroy the (unique-atom) ANO interpolators
       self :: INOUT
 
-      if (.interpolator.deallocated) return
-
-      if (.is_unique_kind)  .interpolator.destroy
+      .interpolator.destroy
 
    end
 
@@ -1056,151 +1019,11 @@ contains
    ! Destroy the (unique-atom) shell info
       self :: INOUT
 
-      if (NOT .has_shell_info) return
-
       .first_basis_fn_for_shell.destroy
       .last_basis_fn_for_shell.destroy
       .angular_moment_for_shell.destroy
 
-      if (.is_unique_kind) then
-         .precomputed_basis_shellpair.destroy
-      else
-         nullify(.precomputed_basis_shellpair)
-      end
-
-   end
-
-!  ====
-!  Copy
-!  ====
-
-   create_copy(object) ::: get_from(OBJECT), leaky
-   ! Create a copy of object
-   end
-
-   copy(atom) ::: leaky
-   ! Make self to be a copy of atom.
-   ! WARNING: This method only nullifies pointer parts. It is your
-   ! responsibility to destroy pointer parts (if you want to) before
-   ! calling this method.
-      atom :: ATOM, IN
-
-      self = atom
-
-      .nullify_ptr_part
-
-      ! Copy the pADP data
-      if (atom.pADP_vector.associated)     .pADP_vector.create_copy(atom.pADP_vector)
-      if (atom.pADP_errors.associated)     .pADP_errors.create_copy(atom.pADP_errors)
-
-      ! Re-assign bases
-      if (atom.basis.associated)           .basis        => atom.basis
-      if (atom.slaterbasis.associated)     .slaterbasis  => atom.slaterbasis
-      if (atom.coppensbasis.associated)    .coppensbasis => atom.coppensbasis
-
-      ! Re-assign unique-atom ANO data
-      .copy_ANOs(atom)
-      .copy_ANO_interpolators(atom)
-      .copy_shell_info(atom)
-
-      ! Re-assign unique-atom ANO data
-      .copy_atom_data(atom)
-      .copy_interpolators(atom)
-
-      ! Always safely copy NAOs
-      .copy_NAOs(atom)
-
-      ! Set kind via VEC{ATOM}:update?
-      ! Do it yourself if you want to
-    ! .kind = 0
-
-   end
-
-   copy_NAOs(atom) ::: leaky
-   ! Copy the NAO pointer parts (and related info)
-      atom :: ATOM, IN
-
-      if (NOT atom.has_NAO_matrices) return
-
-      .NAOs.create_copy(atom.NAOs)
-      .NAO_occupations.create_copy(atom.NAO_occupations)
-
-   end
-
-   copy_ANOs(atom) ::: leaky
-   ! Copy the (unique-atom) ANO pointer parts (and related info)
-      atom :: ATOM, IN
-
-      if (NOT atom.has_ANO_matrices) return
-
-      .atomic_orbitals    = atom.atomic_orbitals
-      .density_matrix     = atom.density_matrix
-      .natural_orbitals   = atom.natural_orbitals
-      .occupation_numbers = atom.occupation_numbers
-
-   end
-
-   copy_ANO_interpolators(atom) ::: leaky
-   ! Copy the (unique-atom) ANO interpolators
-      atom :: ATOM, IN
-
-      if (atom.interpolator.deallocated) return
-
-      .interpolator = atom.interpolator
-   
-   end
-
-   copy_shell_info(atom) ::: leaky
-   ! Destroy the (unique-atom) shell info
-      atom :: ATOM, IN
-
-      if (NOT atom.has_shell_info) return
-
-      .first_basis_fn_for_shell = atom.first_basis_fn_for_shell
-      .last_basis_fn_for_shell  = atom.last_basis_fn_for_shell
-      .angular_moment_for_shell = atom.angular_moment_for_shell
-
-      if (.kind==0 OR .is_unique_kind) then
-         .precomputed_basis_shellpair.destroy
-         .precomputed_basis_shellpair.create_copy(atom.precomputed_basis_shellpair)
-      else
-         nullify(.precomputed_basis_shellpair)
-      end
-
-   end
-
-   copy_atom_data(atom) ::: leaky
-   ! Copy the (non-unique) ANO pointer parts
-      atom :: ATOM, IN
-
-      if (NOT atom.atom_data_made) return
-
-      .atomic_orbitals.destroy
-      .density_matrix.destroy
-      .natural_orbitals.destroy
-      .occupation_numbers.destroy
-
-      .atomic_orbitals  = atom.atomic_orbitals
-      .density_matrix   = atom.density_matrix
-      .natural_orbitals = atom.natural_orbitals
-      .occupation_numbers.create_copy(atom.occupation_numbers)
-
-      .interpolator.destroy
-      .interpolator =  atom.interpolator
-
-      ! Kinds may not be sequential
-      .atom_data_made = TRUE
-
-   end
-
-   copy_interpolators(atom) ::: leaky
-   ! Destroy the (non-unique) interpolators
-      atom :: ATOM
-
-      if (atom.interpolator.deallocated) return
-
-      .interpolator.destroy
-      .interpolator =  atom.interpolator
+      .precomputed_basis_shellpair.destroy
 
    end
 
@@ -1340,20 +1163,6 @@ contains
       .set_atomic_number_and_mass(chemical_symbol)
 
    end
-
-!   set_mm_label(label,Z)
-!   ! Set a macromolecular atom "label" and related variables
-!      self :: INOUT
-!      label :: STR, IN
-!      Z :: INT, IN
-!
-!      ! Set the tag - may not be unique
-!      .tag   = label
-!      .label = label
-!
-!      .set_atomic_number_and_mass(Z)
-!
-!   end
 
    element_symbol_from_label(label) result (symbol) ::: selfless, private
    ! Return a normalised element symbol from an atom "label"
@@ -1562,7 +1371,7 @@ contains
 
       .position = val
 
-      if (.pADP_vector.disassociated) then
+      if (.pADP_vector.deallocated) then
          .pADP_vector.create(9)
          .pADP_vector(1:9) = ZERO
       end
@@ -1577,11 +1386,11 @@ contains
       self :: INOUT
       val :: VEC{REAL}(3), IN
 
-   ENSURE(.pADP_vector.associated,"pADP_vector destroyed")
+   ENSURE(.pADP_vector.allocated,"pADP_vector destroyed")
 
       .position_error = val
 
-      if (.pADP_errors.disassociated) then
+      if (.pADP_errors.deallocated) then
          .pADP_errors.create(9)
          .pADP_errors(1:9) = ZERO
       end
@@ -1594,7 +1403,7 @@ contains
    ! Check if the .position and .pADP vector are consistent
       self :: IN
 
-      if (.pADP_vector.associated) then
+      if (.pADP_vector.allocated) then
          DIE_IF(NOT .pADP_vector(1:3).equals(.position),"pADP_vector /= position")
       end
 
@@ -1647,7 +1456,7 @@ contains
       self :: INOUT
       val :: REAL, IN
 
-   ENSURE(.pADP_vector.associated,"pADP_vector destroyed")
+   ENSURE(.pADP_vector.allocated,"pADP_vector destroyed")
 
       .ADP_tensor = val
 
@@ -1695,7 +1504,7 @@ contains
       self :: INOUT
       mx :: MAT{REAL}(3,3), IN
 
-   ENSURE(.pADP_vector.associated,"pADP_vector destroyed")
+   ENSURE(.pADP_vector.allocated,"pADP_vector destroyed")
 
       tmp :: REAL
 
@@ -1715,7 +1524,7 @@ contains
       self :: INOUT
       mx :: MAT{REAL}(3,3), IN
 
-   ENSURE(.pADP_vector.associated,"pADP_vector destroyed")
+   ENSURE(.pADP_vector.allocated,"pADP_vector destroyed")
 
       ! Set tensor
       .ADP_tensor = mx
@@ -1798,7 +1607,7 @@ contains
       adp2 :: MAT{REAL}(3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=9,"pADP_vector too small")
 
       fac2 :: REAL
@@ -1826,7 +1635,7 @@ contains
       adp3 :: MAT3{REAL}(3,3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=19,"pADP_vector too small")
 
       fac3 :: REAL
@@ -1853,7 +1662,7 @@ contains
       adp4 :: MAT4{REAL}(3,3,3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=34,"pADP_vector too small")
 
       fac4 :: REAL
@@ -1880,7 +1689,7 @@ contains
       adp2_errors :: MAT{REAL}(3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"pADP_errors too small")
 
       fac2 :: REAL
@@ -1908,7 +1717,7 @@ contains
       adp3_errors :: MAT3{REAL}(3,3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"pADP_errors too small")
 
       fac3 :: REAL
@@ -1935,7 +1744,7 @@ contains
       adp4_errors :: MAT4{REAL}(3,3,3,3), OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=34,"pADP_errors too small")
 
       fac4 :: REAL
@@ -1967,7 +1776,7 @@ contains
       n :: INT
 
       ! Create pADPs, and set to existing pADPs
-      if (.pADP_vector.disassociated OR .pADP_errors.disassociated) then
+      if (.pADP_vector.deallocated OR .pADP_errors.deallocated) then
 
          ! Space for X, dX
          n = .no_of_pADPs
@@ -2014,7 +1823,7 @@ contains
       X :: VEC{REAL}, IN
 
    ENSURE(X.dim>=9,"X too small")
-   ENSURE(.pADP_vector.associated,"no PADP_vector")
+   ENSURE(.pADP_vector.allocated,"no PADP_vector")
    ENSURE(.pADP_vector.dim==X.dim,"wrong size, X")
 
       val :: REAL
@@ -2051,7 +1860,7 @@ contains
       self :: INOUT
       U :: VEC{REAL}, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=9,"pADP_vector: wrong size")
    ENSURE(U.dim==6,"wrong size, U")
 
@@ -2072,7 +1881,7 @@ contains
       self :: INOUT
       U :: VEC{REAL}, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=19,"pADP_vector: wrong size")
    ENSURE(U.dim==10,"wrong size, U")
 
@@ -2085,7 +1894,7 @@ contains
       self :: INOUT
       U :: VEC{REAL}, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=34,"pADP_vector: wrong size")
    ENSURE(U.dim==15,"wrong size, U")
 
@@ -2100,7 +1909,7 @@ contains
       self :: INOUT
       adp3 :: MAT3{REAL}(3,3,3), OUT
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=19,"pADP_vector too small")
 
       v3,w3 :: VEC{REAL}(10)
@@ -2121,7 +1930,7 @@ contains
       self :: INOUT
       adp4 :: MAT4{REAL}(3,3,3,3), OUT
 
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
    ENSURE(.pADP_vector.dim>=19,"pADP_vector too small")
 
       v4,w4 :: VEC{REAL}(15)
@@ -2142,7 +1951,7 @@ contains
       self :: INOUT
       adp3 :: MAT3{REAL}(3,3,3), OUT
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"pADP_errors too small")
 
       v3,w3 :: VEC{REAL}(10)
@@ -2163,7 +1972,7 @@ contains
       self :: INOUT
       adp4 :: MAT4{REAL}(3,3,3,3), OUT
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"pADP_errors too small")
 
       v4,w4 :: VEC{REAL}(15)
@@ -2186,7 +1995,7 @@ contains
    ! NOTE: Do you need to set the axis system too?
       self :: INOUT
 
-   ENSURE(.pADP_errors.associated,"pADP_errors destroyed")
+   ENSURE(.pADP_errors.allocated,"pADP_errors destroyed")
 
       dX :: VEC{REAL}(9)
 
@@ -2203,7 +2012,7 @@ contains
       self :: INOUT
       dX :: VEC{REAL}, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim==dX.dim,"wrong size, dX")
 
       .position_error = dX(1:3)
@@ -2220,7 +2029,7 @@ contains
       dX :: VEC{REAL}, IN
       H_U_iso :: BIN, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim==dX.dim,"wrong size, dX")
 
       val :: REAL
@@ -2245,7 +2054,7 @@ contains
       self :: INOUT
       dU :: VEC{REAL}, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
    ENSURE(dU.dim==6,"wrong size, dU")
 
@@ -2260,7 +2069,7 @@ contains
       dU :: VEC{REAL}, IN
       H_U_iso :: BIN, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
    ENSURE(dU.dim==6,"wrong size, dU")
 
@@ -2288,7 +2097,7 @@ contains
       self :: INOUT
       dU :: MAT{REAL}(3,3), IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
 
       .pADP_errors(4) = dU(1,1)
@@ -2307,7 +2116,7 @@ contains
       dU :: MAT{REAL}(3,3), IN
       H_U_iso :: BIN, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
 
       val :: REAL
@@ -2334,7 +2143,7 @@ contains
       self :: INOUT
       dU :: VEC{REAL}, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"wrong size, pADP_errors")
    ENSURE(dU.dim==10,"wrong size, dU")
 
@@ -2347,7 +2156,7 @@ contains
       self :: INOUT
       dU :: VEC{REAL}, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=34,"wrong size, pADP_errors")
    ENSURE(dU.dim==15,"wrong size, dU")
 
@@ -2392,7 +2201,7 @@ contains
       fac :: REAL, optional, IN
 
    ENSURE(X.dim>=.no_of_pADPs,"wrong size, X")
-   ENSURE(.pADP_vector.associated,"no pADP_vector")
+   ENSURE(.pADP_vector.allocated,"no pADP_vector")
 
       fac2,fac3,fac4 :: REAL
 
@@ -2547,7 +2356,7 @@ contains
       U :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=19,"no pADP3s")
    ENSURE(U.dim==10,"wrong size, U")
 
@@ -2577,7 +2386,7 @@ contains
       U :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_vector.associated,"no pADPs")
+   ENSURE(.pADP_vector.allocated,"no pADPs")
    ENSURE(.pADP_vector.dim>=34,"no pADP3s")
    ENSURE(U.dim==15,"wrong size, U")
 
@@ -2615,7 +2424,7 @@ contains
       dX = ZERO
 
       ! Return if there are no errors
-      if (.pADP_errors.disassociated) return
+      if (.pADP_errors.deallocated) return
 
       ! In atomic units
       if (NOT present(fac)) then
@@ -2639,7 +2448,7 @@ contains
       dX :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim==dX.dim,"wrong size, dX")
 
       fac2,fac3,fac4 :: REAL
@@ -2671,7 +2480,7 @@ contains
       dX :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
    ENSURE(dX.dim==9,"wrong size, dX")
 
@@ -2704,7 +2513,7 @@ contains
       dU :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=9,"wrong size, pADP_errors")
    ENSURE(dU.dim==6,"wrong size, dU")
 
@@ -2733,7 +2542,7 @@ contains
       dU :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=19,"wrong size, pADP_errors")
    ENSURE(dU.dim==10,"wrong size, dU")
 
@@ -2764,7 +2573,7 @@ contains
       dU :: VEC{REAL}, OUT
       fac :: REAL, optional, IN
 
-   ENSURE(.pADP_errors.associated,"no pADP_errors")
+   ENSURE(.pADP_errors.allocated,"no pADP_errors")
    ENSURE(.pADP_errors.dim>=34,"wrong size, pADP_errors")
    ENSURE(dU.dim==15,"wrong size, dU")
 
@@ -2875,7 +2684,7 @@ contains
       X.create(.no_of_pADPs)
 
       ! Transform position
-      if (.pADP_vector.associated) then
+      if (.pADP_vector.allocated) then
          ENSURE(.pADP_vector(1:3).equals(.position),"pADP_vector /= position")
       end
       X(1:3).to_product_of(R,.position)
@@ -2890,7 +2699,7 @@ contains
       W.destroy
 
       ! Transform ADP3's
-      if (.pADP_vector.associated) then
+      if (.pADP_vector.allocated) then
       if (.pADP_vector.dim>=19) then
       W.create(10,10)
       GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,R)
@@ -2900,7 +2709,7 @@ contains
       end
 
       ! Transform ADP4's
-      if (.pADP_vector.associated) then
+      if (.pADP_vector.allocated) then
       if (.pADP_vector.dim>=34) then
       W.create(15,15)
       GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,R)
@@ -2948,7 +2757,7 @@ contains
       .set_ADP_tensor(ADP(:,:))
 
       ! Now set the errors
-      if (.pADP_errors.associated) then
+      if (.pADP_errors.allocated) then
 
          ! The averaged trace of errors
          val = THIRD * (.pADP_errors(4)+.pADP_errors(5)+.pADP_errors(6))
@@ -3568,23 +3377,23 @@ contains
 !  ====================
 
    read_keys ::: get_from(OBJECT), leaky
-   ! Read the "keys".
+   ! Read the allocatable "keys".
    end
 
    process_keys ::: get_from(OBJECT), leaky
-   ! Process each of the words in the "keys" list.
+   ! Process each word in allocatable "keys" list.
    end
 
-   keys_created result (res) ::: get_from(OBJECT)
-   ! Return TRUE if the list-element keys are created.
+   keys_allocated result (res) ::: get_from(OBJECT)
+   ! Return TRUE keys are allocated and have elements
    end
 
-   set_keys(the_keys) ::: get_from(OBJECT)
-   ! This is for setting the "keys" externally.
+   set_keys(the_keys) ::: get_from(OBJECT), leaky
+   ! Set allocatable "keys" externally.
    end
 
    clear_keys ::: get_from(OBJECT), leaky
-   ! This is for destroying the "keys" externally.
+   ! Destroy allocatable "keys" externally.
    end
 
 !  ===================
@@ -3722,7 +3531,7 @@ contains
 
          ! Change errors?
          if (change_err) then
-         if (.pADP_errors.associated) then
+         if (.pADP_errors.allocated) then
          if (.pADP_errors.dim>=9) then
          if (NOT .pADP_errors(4:9).is_zero) then
             .put_ADP2_errors_to(ADP)
@@ -3754,7 +3563,7 @@ contains
 
          ! Change errors?
          if (change_err) then
-         if (.pADP_errors.associated) then
+         if (.pADP_errors.allocated) then
          if (.pADP_errors.dim>=9) then
          if (NOT .pADP_errors(4:9).is_zero) then
             .put_ADP2_errors_to(ADP)
@@ -3811,7 +3620,7 @@ contains
 !
 !            ! Transform errors to cartesian?
 !            if (change_ESDs) then
-!            if (.pADP_errors.associated) then
+!            if (.pADP_errors.allocated) then
 !            if (.pADP_errors.dim>=19) then
 !            if (NOT .pADP_errors(10:19).is_zero) then
 !               pADP.to_product_of(W,.pADP_errors(10:19))
@@ -3835,7 +3644,7 @@ contains
 !
 !            ! Transform errors to cartesian?
 !            if (change_ESDs) then
-!            if (.pADP_errors.associated) then
+!            if (.pADP_errors.allocatedd) then
 !            if (.pADP_errors.dim>=34) then
 !            if (NOT .pADP_errors(20:34).is_zero) then
 !               pADP.to_product_of(W,.pADP_errors(20:34))
@@ -3918,7 +3727,7 @@ contains
 
          ! Transform errors to cartesian?
          if (change_err) then
-         if (.pADP_errors.associated) then
+         if (.pADP_errors.allocated) then
          if (.pADP_errors.dim>=19) then
          if (NOT .pADP_errors(10:19).is_zero) then
          .put_ADP3_errors_to(adp3)
@@ -3937,7 +3746,7 @@ contains
 
          ! Transform errors to cartesian?
          if (change_err) then
-         if (.pADP_errors.associated) then
+         if (.pADP_errors.allocated) then
          if (.pADP_errors.dim>=34) then
          if (NOT .pADP_errors(20:34).is_zero) then
          .put_ADP4_errors_to(adp4)
@@ -4011,11 +3820,11 @@ contains
    !   e.g. if the basis was obtained from reading an external
    !   program, like gaussian.
       self :: INOUT
-      basis :: VEC{BASIS?}*
-      suffix :: STR, optional
-      found :: BIN, optional
+      basis :: VEC{BASIS?}@, IN
+      suffix :: STR, optional, IN
+      found :: BIN, optional, OUT
 
-   DIE_IF(basis.disassociated,"no basis")
+   DIE_IF(basis.deallocated,"no basis")
 
       library_label, symbol :: STR
       fnd :: BIN
@@ -4119,7 +3928,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = .has_a_dummy_label AND .nuclear_charge==ZERO AND .basis.disassociated
+      res = .has_a_dummy_label AND .nuclear_charge==ZERO AND .basis.deallocated
 
    end
 
@@ -4128,7 +3937,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = NOT .has_a_dummy_label OR .nuclear_charge/=ZERO OR .basis.associated
+      res = NOT .has_a_dummy_label OR .nuclear_charge/=ZERO OR .basis.allocated
 
    end
 
@@ -4143,7 +3952,7 @@ contains
    ! Return TRUE if this is a point-charge (no basis set)
       self :: IN
       res :: BIN
-      res = .has_a_dummy_label AND .nuclear_charge>ZERO AND .basis.disassociated
+      res = .has_a_dummy_label AND .nuclear_charge>ZERO AND .basis.deallocated
    end
 
    is_a_pseudo_atom result (res) ::: elemental
@@ -4167,14 +3976,14 @@ contains
       mixed :: BIN
 
       ! Which kind of bases created?
-      bases_created     = .basis.associated        AND atom.basis.associated
-      coppens_created   = .coppensbasis.associated AND atom.coppensbasis.associated
-      slater_created    = .slaterbasis.associated  AND atom.slaterbasis.associated
+      bases_created     = .basis.allocated        AND atom.basis.allocated
+      coppens_created   = .coppensbasis.allocated AND atom.coppensbasis.allocated
+      slater_created    = .slaterbasis.allocated  AND atom.slaterbasis.allocated
 
       ! Which kind of bases destroyed?
-      bases_destroyed   = .basis.disassociated        AND atom.basis.disassociated
-      coppens_destroyed = .coppensbasis.disassociated AND atom.coppensbasis.disassociated
-      slater_destroyed  = .slaterbasis.disassociated  AND atom.slaterbasis.disassociated
+      bases_destroyed   = .basis.deallocated        AND atom.basis.deallocated
+      coppens_destroyed = .coppensbasis.deallocated AND atom.coppensbasis.deallocated
+      slater_destroyed  = .slaterbasis.deallocated  AND atom.slaterbasis.deallocated
 
       ! Mixed bases?
       mixed = NOT (bases_created   OR bases_destroyed)   OR &
@@ -4243,7 +4052,7 @@ contains
       res = .first_basis_fn_for_shell.allocated &
         AND  .last_basis_fn_for_shell.allocated &
         AND .angular_moment_for_shell.allocated &
-        AND .precomputed_basis_shellpair.associated
+        AND .precomputed_basis_shellpair.allocated
 
    end
 
@@ -4252,7 +4061,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = .basis.associated AND .basis.is_resolved
+      res = .basis.allocated AND .basis.is_resolved
 
    end
 
@@ -4262,7 +4071,7 @@ contains
       self :: IN
       res :: STR
 
-      if (.ARG?.associated) then
+      if (.ARG?.allocated) then
          res = .ARG?.label
          if (.is_a_ghost_atom) then
             res = trim(res)//" (ghost atom)"
@@ -4294,10 +4103,11 @@ contains
    ! atom is a dummy or a ghost.
    end
 
-   library_basis_label(suffix) result (label)
+   library_basis_label(suffix) result (label) ::: PURE
    ! Return a library basis set label by appending "suffix" to the
    ! chemical symbol.
-      suffix :: STR
+      self :: IN
+      suffix :: STR, IN
 
       label :: STR
       symbol :: STR
@@ -4306,40 +4116,36 @@ contains
 
       select case (suffix)
 
-         case ("Coppens","Clementi-Roetti")
+      case ("Coppens","Clementi-Roetti")
+         ! Replace bases for high atomic numbers
+         ! where bases do not exist
+         if (.atomic_number>55) then
 
-            ! Replace bases for high atomic numbers
-            ! where bases do not exist
-            if (.atomic_number>55) then
-
-               select case (.atomic_number)
-                  case (56);     symbol = "Sr"
-                  case (57:71);  symbol = "Y"
-                  case (72:86);  symbol = ATOM:generic_chemical_symbol(.atomic_number-32)
-                  case (87);     symbol = "Rb"
-                  case (88);     symbol = "Sr"
-                  case (89:103); symbol = "Y"
-               end
-
-               WARN("Atom "//trim(.generic_chemical_symbol)//" basis is now "//trim(symbol))
-
+            select case (.atomic_number)
+            case (56);     symbol = "Sr"
+            case (57:71);  symbol = "Y"
+            case (72:86);  symbol = ATOM:generic_chemical_symbol(.atomic_number-32)
+            case (87);     symbol = "Rb"
+            case (88);     symbol = "Sr"
+            case (89:103); symbol = "Y"
             end
+          ! WARN("Atom "//trim(.generic_chemical_symbol)//" basis is now "//trim(symbol))
 
-            label = trim(symbol)//trim(.oxidation_state_str)//":"//trim(suffix)
+         end
+         label = trim(symbol)//trim(.oxidation_state_str)//":"//trim(suffix)
 
-         case default
-
-            label = trim(symbol)//":"//trim(suffix)
+      case default
+         label = trim(symbol)//":"//trim(suffix)
 
       end
 
    end
 
-   library_basis_label(Z,suffix) result (label) ::: selfless, leaky
+   library_basis_label(Z,suffix) result (label) ::: selfless, leaky, PURE
    ! Return a library basis set label for the atom with atomic number
    ! "Z", by appending "suffix" to the chemical symbol.
       Z :: INT, IN
-      suffix :: STR
+      suffix :: STR, IN
 
    ENSURE(Z>=1 AND Z<=118,"Z out of range")
 
@@ -4348,20 +4154,23 @@ contains
 
       symbol = element_symbols(Z)
       select case (suffix)
-         case ("Coppens","Thakkar","Clementi-Roetti")
-            if (Z>55) then
-               select case (Z)
-                  case (56);     symbol = "Sr"
-                  case (57:71);  symbol = "Y"
-                  case (72:86);  symbol = element_symbols(Z-32)
-                  case (87);     symbol = "Rb"
-                  case (88);     symbol = "Sr"
-                  case (89:103); symbol = "Y"
-               end
+
+      case ("Coppens","Thakkar","Clementi-Roetti")
+         if (Z>55) then
+            select case (Z)
+            case (56);     symbol = "Sr"
+            case (57:71);  symbol = "Y"
+            case (72:86);  symbol = element_symbols(Z-32)
+            case (87);     symbol = "Rb"
+            case (88);     symbol = "Sr"
+            case (89:103); symbol = "Y"
             end
-            label = trim(symbol)//":"//trim(suffix)
-         case default
-            label = trim(symbol)//":"//trim(suffix)
+         end
+         label = trim(symbol)//":"//trim(suffix)
+
+      case default
+         label = trim(symbol)//":"//trim(suffix)
+
       end
 
    end
@@ -4859,14 +4668,18 @@ contains
 
    end
 
-   oxidation_state_str result (res)
+   oxidation_state_str result (res) ::: PURE
    ! Return the oxidation state string, i.e. if the oxidation state is +3, then
    ! the returned string is "3+"; or if the oxidation state is -1 then the
    ! returned string is "-". This is useful for resolving certain library basis
    ! labels.
+      self :: IN
       res :: STR
+
       charge :: INT
+
       charge = .oxidation_state
+
       if (charge==0) then
          res = " "
       else
@@ -4876,6 +4689,7 @@ contains
          charge = abs(charge)
          if (charge/=1) res = trim(charge.to_str)//trim(res)
       end
+
    end
 
 !  =======================
@@ -6033,7 +5847,7 @@ contains
       tol :: REAL, optional, IN
       res :: INT
 
-   ENSURE(.NAO_occupations.associated,"no NAO occupations")
+   ENSURE(.NAO_occupations.allocated,"no NAO occupations")
 
       eps :: REAL
 
@@ -6063,7 +5877,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = .NAOs.associated AND .NAO_occupations.associated
+      res = .NAOs.allocated AND .NAO_occupations.allocated
 
    end
 
@@ -6345,9 +6159,9 @@ contains
 
       res = ZERO
 
-      if (.coppensbasis.associated)     then; res = .coppensbasis.min_exponent
-      else if (.slaterbasis.associated) then; res = .slaterbasis.min_exponent
-      else if (.basis.associated)       then; res = .basis.min_exponent
+      if (.coppensbasis.allocated)     then; res = .coppensbasis.min_exponent
+      else if (.slaterbasis.allocated) then; res = .slaterbasis.min_exponent
+      else if (.basis.allocated)       then; res = .basis.min_exponent
       end
 
    end
@@ -6359,8 +6173,8 @@ contains
       cutoff :: REAL, IN
       res :: REAL
 
-      if (.basis.disassociated) then; res = ZERO
-      else;                           res = .basis.r_max(cutoff)
+      if (.basis.deallocated) then; res = ZERO
+      else;                         res = .basis.r_max(cutoff)
       end
 
    end
@@ -6372,8 +6186,8 @@ contains
       cutoff :: REAL, IN
       res :: REAL
 
-      if (.basis.disassociated) then; res = ZERO
-      else;                       res = .basis.r2_max(cutoff)
+      if (.basis.deallocated) then; res = ZERO
+      else;                         res = .basis.r2_max(cutoff)
       end
 
    end
@@ -6638,7 +6452,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = .pADP_vector.associated
+      res = .pADP_vector.allocated
 
    end
 
@@ -6673,7 +6487,7 @@ contains
       self :: IN
       res :: BIN
 
-      res = .pADP_vector.associated AND .pADP_errors.associated
+      res = .pADP_vector.allocated AND .pADP_errors.allocated
       if (NOT res) return
 
       res = .pADP_vector.dim==.pADP_errors.dim
@@ -6746,7 +6560,7 @@ contains
       self :: IN
       res :: INT
 
-      if (.pADP_vector.associated) then; res = .pADP_vector.dim
+      if (.pADP_vector.allocated) then; res = .pADP_vector.dim
       else;                              res = 9
       end
 
@@ -7495,7 +7309,7 @@ contains
          if (.use_interpolator AND .interpolator.allocated) then
             .make_interpolated_density(density_grid,pt,occ)
          else
-            ENSURE(.basis.associated,"no basis")
+            ENSURE(.basis.allocated,"no basis")
             ENSURE(.natural_orbitals.allocated,"no natural_orbitals")
             if (.natural_orbitals.number_kind=="real") then; .make_density_grid_r(density_grid,pt,occ)
             else;                                            .make_density_grid_c(density_grid,pt,occ)
@@ -7503,11 +7317,11 @@ contains
          end
 
       case ("slater")
-         ENSURE(.slaterbasis.associated,"no slaterbasis")
+         ENSURE(.slaterbasis.allocated,"no slaterbasis")
          .slaterbasis.make_ED_grid(density_grid,pt,.position,occ)
 
       case ("coppens")
-         ENSURE(.coppensbasis.associated,"no coppensbasis")
+         ENSURE(.coppensbasis.allocated,"no coppensbasis")
          .coppensbasis.make_ED_grid(density_grid,pt,.position,occ)
 
       end
@@ -7531,7 +7345,7 @@ contains
          if (.use_interpolator AND .interpolator.allocated) then
             .add_interpolated_density(density_grid,pt,occ)
          else
-            ENSURE(.basis.associated,"no basis")
+            ENSURE(.basis.allocated,"no basis")
             ENSURE(.natural_orbitals.allocated,"no natural orbitals")
             if (.natural_orbitals.number_kind=="real") then; .add_density_grid_r(density_grid,pt,occ)
             else;                                            .add_density_grid_c(density_grid,pt,occ)
@@ -7539,11 +7353,11 @@ contains
          end
 
       case ("slater")
-         ENSURE(.slaterbasis.associated,"no slaterbasis")
+         ENSURE(.slaterbasis.allocated,"no slaterbasis")
          .slaterbasis.add_ED_grid(density_grid,pt,.position,occ)
 
       case ("coppens")
-         ENSURE(.coppensbasis.associated,"no coppensbasis")
+         ENSURE(.coppensbasis.allocated,"no coppensbasis")
          .coppensbasis.add_ED_grid(density_grid,pt,.position,occ)
 
       end
@@ -7875,7 +7689,7 @@ contains
 !         case ("gaussian")
 !            DIE("gaussian case, use different routines")
 !         case ("slater")
-!            ENSURE(.slaterbasis.associated,"no slaterbasis")
+!            ENSURE(.slaterbasis.allocated,"no slaterbasis")
 !            .slaterbasis.make_d_density_grid(d0_density,d1_density,d2_density,pt,.position)
 !         case ("coppens")
 !            DIE("not implemented yet")
@@ -7901,12 +7715,12 @@ contains
       pt :: MAT{REAL}, IN
       pos :: VEC{REAL}(3), IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim1==g.dim1,"pt and g, incompatible")
    ENSURE(.basis.no_of_basis_functions==g.dim2,"pt and g, incompatible")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
-      sh :: SHELL1*
+      sh :: SHELL1
       n_shell,f,l,s :: INT
 
       n_shell = .basis.no_of_shells
@@ -7915,14 +7729,12 @@ contains
 
       do s = 1,n_shell
 
-         sh.create_copy(.basis.shell(s),pos)
+         sh.set(.basis.shell(s),pos)
 
          f = l + 1
          l = f + sh.n_bf - 1
 
          sh.make_grid(g(:,f:l),pt)
-
-         sh.destroy
 
       end
 
@@ -7955,13 +7767,13 @@ contains
       pos :: VEC{REAL}(3), IN
       square :: BIN, optional, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect size, orb")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
       sq :: BIN
-      sh :: SHELL1*
-      sh_grid :: MAT{REAL}*
+      sh :: SHELL1
+      sh_grid :: MAT{REAL}@
       n_pt,n_shell,f,l,s :: INT
 
       sq = FALSE
@@ -7975,7 +7787,7 @@ contains
 
       do s = 1,n_shell
 
-         sh.create_copy(.basis.shell(s),pos)
+         sh.set(.basis.shell(s),pos)
 
          f = l + 1
          l = f + sh.n_bf - 1
@@ -7985,7 +7797,6 @@ contains
          g.plus_product_of(sh_grid,orb(f:l))
 
          sh_grid.destroy
-         sh.destroy
 
       end
 
@@ -8005,13 +7816,13 @@ contains
       pos :: VEC{REAL}(3), IN
       square :: BIN, optional, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(2*.basis.no_of_basis_functions==orb.dim,"incorrect size, orb")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
       sq :: BIN
-      sh :: SHELL1*
-      sh_grid :: MAT{REAL}*
+      sh :: SHELL1
+      sh_grid :: MAT{REAL}@
       n_pt,n_shell,f,l,s :: INT
 
       sq = FALSE
@@ -8025,7 +7836,7 @@ contains
 
       do s = 1,n_shell
 
-         sh.create_copy(.basis.shell(s),pos)
+         sh.set(.basis.shell(s),pos)
 
          f = l + 1
          l = f + sh.n_bf - 1
@@ -8039,7 +7850,6 @@ contains
          g.plus_product_of(sh_grid(:,sh.n_bf+1:2*sh.n_bf),orb(l+1:l+sh.n_bf))
 
          sh_grid.destroy
-         sh.destroy
 
       end
       
@@ -8059,13 +7869,13 @@ contains
       pos :: VEC{REAL}(3), IN
       square :: BIN, optional, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
    ENSURE(pt.dim2==3,"wrong size, pt")
 
       sq :: BIN
-      sh :: SHELL1*
-      sh_grid :: MAT{REAL}*
+      sh :: SHELL1
+      sh_grid :: MAT{REAL}@
       n_pt,n_shell,f,l,s :: INT
 
       sq = FALSE
@@ -8079,7 +7889,7 @@ contains
 
       do s = 1,n_shell
 
-         sh.create_copy(.basis.shell(s),pos)
+         sh.set(.basis.shell(s),pos)
 
          f = l + 1
          l = f + sh.n_bf - 1
@@ -8089,7 +7899,6 @@ contains
          g.plus_product_of(sh_grid,orb(f:l))
 
          sh_grid.destroy
-         sh.destroy
 
       end
 
@@ -8171,7 +7980,7 @@ contains
       select case (.basis_kind)
 
       case ("gaussian")
-         ENSURE(.basis.associated,"no basis")
+         ENSURE(.basis.allocated,"no basis")
          pt(1,:) = .position + [R,ZERO,ZERO]
          if (.natural_orbitals.number_kind == "real") then; .make_density_grid_r(density_grid,pt)
          else;                                              .make_density_grid_c(density_grid,pt)
@@ -8179,13 +7988,13 @@ contains
          res = density_grid(1)
 
       case ("slater")
-         ENSURE(.slaterbasis.associated,"no slaterbasis")
-         ENSURE(.slaterbasis.shell.associated,"no slaterbasis shells")
+         ENSURE(.slaterbasis.allocated,"no slaterbasis")
+         ENSURE(.slaterbasis.shell.allocated,"no slaterbasis shells")
          res = .slaterbasis.density_at_radius(R)
 
       case ("coppens")
-         ENSURE(.coppensbasis.associated,"no coppensbasis")
-         ENSURE(.coppensbasis.orbital.associated,"no coppensbasis orbital")
+         ENSURE(.coppensbasis.allocated,"no coppensbasis")
+         ENSURE(.coppensbasis.orbital.allocated,"no coppensbasis orbital")
          res = .coppensbasis.density_at_radius(R)
 
       end
@@ -8206,7 +8015,7 @@ contains
       select case (.basis_kind)
 
       case ("gaussian")
-         ENSURE(.basis.associated,"no basis")
+         ENSURE(.basis.allocated,"no basis")
          pt(1,:) = .position + [R,ZERO,ZERO]
          if (.natural_orbitals.number_kind == "real") then;
          .make_general_density_grid_r(density_grid,pt)
@@ -8215,13 +8024,13 @@ contains
          res = density_grid(1)
 
       case ("slater")
-         ENSURE(.slaterbasis.associated,"no slaterbasis")
-         ENSURE(.slaterbasis.shell.associated,"no slaterbasis shells")
+         ENSURE(.slaterbasis.allocated,"no slaterbasis")
+         ENSURE(.slaterbasis.shell.allocated,"no slaterbasis shells")
          res = .slaterbasis.density_at_radius(R)
 
       case ("coppens")
-         ENSURE(.coppensbasis.associated,"no coppensbasis")
-         ENSURE(.coppensbasis.orbital.associated,"no coppensbasis orbital")
+         ENSURE(.coppensbasis.allocated,"no coppensbasis")
+         ENSURE(.coppensbasis.orbital.allocated,"no coppensbasis orbital")
          res = .coppensbasis.density_at_radius(R)
 
       end
@@ -8540,7 +8349,7 @@ contains
       orb :: VEC{REAL}, IN, target
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
    ENSURE(g.dim1==pt.dim1,"grid array has wrong 1st dimension")
    ENSURE(g.dim2==3,"grid array has wrong 2nd dimension")
@@ -8548,8 +8357,8 @@ contains
 
       orb_a :: VEC{REAL}*
       sh :: SHELL1
-      sh_grid :: MAT3{REAL}*
-      sh_grid0 :: MAT{REAL}*
+      sh_grid :: MAT3{REAL}@
+      sh_grid0 :: MAT{REAL}@
       n_shell,n_pt,f,l,a :: INT
 
       n_pt = pt.dim1
@@ -8663,7 +8472,7 @@ contains
       orb :: VEC{REAL}, IN
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
    ENSURE(g.dim1==pt.dim1, "grid array has wrong 1st dimension")
    ENSURE(g.dim2==3,        "grid array has wrong 2nd dimension")
@@ -9336,9 +9145,10 @@ contains
       pt :: MAT{REAL}, IN
       dens :: MAT{REAL}, target, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
-      Vab,Dba :: MAT{REAL}*
+      Vab :: MAT{REAL}@
+      Dba :: MAT{REAL}*
       sh :: SHELL2
       n_pt,n_shell_pairs,q,fa,fb,la,lb,k :: INT
 
@@ -9419,7 +9229,7 @@ contains
       grid :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(grid.dim1==pt.dim1,"incompatible grid and pt arrays")
    ENSURE(grid.dim2==.basis.no_of_basis_functions,"wrong size, grid array")
@@ -9454,7 +9264,7 @@ contains
       nabla_grid :: MAT3{REAL}, OUT
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(nabla_grid.dim1==pt.dim1,"incompatible nabla_grid and pt arrays")
    ENSURE(nabla_grid.dim2==.basis.no_of_basis_functions,"wrong size, nabla_grid array")
@@ -9482,7 +9292,7 @@ contains
       grid :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(nabla_grid.dim1==pt.dim1,"incompatible nabla_grid and pt arrays")
    ENSURE(nabla_grid.dim2==.basis.no_of_basis_functions,"wrong size, nabla_grid array")
@@ -9497,14 +9307,18 @@ contains
 
       l = 0
       do s = 1,n_shell
+
          sh.set(.basis.shell(s),.position)
+
          f = l + 1
-         if (sh.is_spherical)then
-           l = l + sh.n_sph  ! LBXXX
+         if (sh.is_spherical) then
+            l = l + sh.n_sph  ! LBXXX
          else
-           l = l + sh.n_comp
+            l = l + sh.n_comp
          end if
+
          sh.make_nabla_grid(nabla_grid(:,f:l,1),nabla_grid(:,f:l,2),nabla_grid(:,f:l,3),grid(:,f:l),pt)
+
       end
 
    end
@@ -9518,12 +9332,12 @@ contains
       pt :: MAT{REAL}, IN
       cutoff :: REAL
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(grid0.dim1==pt.dim1,"incompatible grid0 and pt arrays")
    ENSURE(grid0.dim2==.basis.no_of_basis_functions,"wrong size, grid0 array")
 
-      x,y,z,r2 :: VEC{REAL}*
+      x,y,z,r2 :: VEC{REAL}@
       sh :: SHELL1
       n_pt,s,f,l,n_shell :: INT
 
@@ -9540,14 +9354,17 @@ contains
 
       l = 0
       do s = 1,n_shell
+
          sh.set(.basis.shell(s),.position)
+
          f = l + 1
          if (sh.is_spherical)then
-           l = l + sh.n_sph
+            l = l + sh.n_sph
          else
-           l = l + sh.n_comp
+            l = l + sh.n_comp
          end if
          sh.make_grid(grid0(:,f:l),x,y,z,r2,cutoff)
+
       end
 
       r2.destroy
@@ -9565,13 +9382,13 @@ contains
       pt :: MAT{REAL}, IN
       cutoff :: REAL
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(grid1.dim1==pt.dim1,"incompatible grid1 and pt arrays")
    ENSURE(grid1.dim2==.basis.no_of_basis_functions,"wrong size, grid1 array")
    ENSURE(grid1.dim3==3,"wrong size, grid1 array")
 
-      x,y,z,r2 :: VEC{REAL}*
+      x,y,z,r2 :: VEC{REAL}@
       sh :: SHELL1
       n_pt,s,n_shell :: INT
 
@@ -9608,7 +9425,7 @@ contains
       pt :: MAT{REAL}, IN
       cutoff :: REAL
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(pt.dim2==3,"wrong dimension for pt array")
    ENSURE(grid1.dim1==pt.dim1,"incompatible grid1 and pt arrays")
    ENSURE(grid1.dim2==.basis.no_of_basis_functions,"wrong size, grid1 array")
@@ -9618,7 +9435,7 @@ contains
 
       sh :: SHELL1
       n_pt,s,f,l,n_shell :: INT
-      x,y,z,r2 :: VEC{REAL}*
+      x,y,z,r2 :: VEC{REAL}@
 
       n_pt = pt.dim1
 
@@ -9632,15 +9449,20 @@ contains
       n_shell = .basis.no_of_shells
 
       l = 0
+
       do s = 1,n_shell
+
          sh.set(.basis.shell(s),.position)
+
          f = l + 1
          if (sh.is_spherical)then
-           l = l + sh.n_sph
+            l = l + sh.n_sph
          else
-           l = l + sh.n_comp
+            l = l + sh.n_comp
          end if
+
          sh.make_nabla_grid(grid1(:,f:l,1),grid1(:,f:l,2),grid1(:,f:l,3),grid0(:,f:l),x,y,z,r2,cutoff)
+
       end
 
       r2.destroy
@@ -9663,7 +9485,7 @@ contains
       logval :: VEC{INT}(n_pt), OUT
       r2 :: VEC{REAL}(n_pt), IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       rr,ex :: REAL
       n :: INT
@@ -9688,7 +9510,7 @@ contains
       pt :: MAT{REAL}, IN
       n_pt :: INT, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(dx.dim ==n_pt,"wrong size, dx")
    ENSURE(dy.dim ==n_pt,"wrong size, dy")
    ENSURE(dz.dim ==n_pt,"wrong size, dy")
@@ -9729,7 +9551,7 @@ contains
       n_pt :: INT, IN
       cutoff :: REAL, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
    ENSURE(dx.dim >=n_pt,"wrong size, dx")
    ENSURE(dy.dim >=n_pt,"wrong size, dy")
    ENSURE(dz.dim >=n_pt,"wrong size, dy")
@@ -9774,7 +9596,7 @@ contains
       pt :: MAT{REAL}, IN
       cutoff :: REAL, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       px,py,pz,xx,yy,zz,rr, r2_max :: REAL
       n_pt,n,k :: INT
@@ -9830,7 +9652,7 @@ contains
       pt :: MAT{REAL}, IN
       cutoff :: REAL, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       px,py,pz,xx,yy,zz,rr, r2_max :: REAL
       n_pt,n,k :: INT
@@ -9894,7 +9716,7 @@ contains
       skip2 :: VEC{BIN}, IN
       cutoff :: REAL, IN
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       xx,yy,zz,rr, r2_max :: REAL
       n_pt,n,k :: INT
@@ -9949,7 +9771,7 @@ contains
    ! corresponding to the molecule basis set shell number
       self :: INOUT
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       .first_basis_fn_for_shell.destroy
       .last_basis_fn_for_shell.destroy
@@ -9997,7 +9819,7 @@ contains
    ! NOTE for later: precomputed_basis_shellpair should be a MAT{REAL} type
       self :: INOUT
 
-   ENSURE(.basis.associated,"no basis set")
+   ENSURE(.basis.allocated,"no basis set")
 
       n,a,b :: INT
 
@@ -10008,8 +9830,8 @@ contains
 
       do a = 1,n
       do b = 1,n
-         .precomputed_basis_shellpair(a,b).copy_a(.basis.shell(a))
-         .precomputed_basis_shellpair(a,b).copy_b(.basis.shell(b))
+         .precomputed_basis_shellpair(a,b).a.set(.basis.shell(a))
+         .precomputed_basis_shellpair(a,b).b.set(.basis.shell(b))
          .precomputed_basis_shellpair(a,b).make_precalculated_data
       end
       end
@@ -10024,7 +9846,7 @@ contains
       q :: INT, IN
       fa,la,fb,lb :: INT, OUT
 
-   ENSURE(.precomputed_basis_shellpair.associated,"no precomputed basis shellpair data")
+   ENSURE(.precomputed_basis_shellpair.allocated,"no precomputed basis shellpair data")
    ENSURE(.first_basis_fn_for_shell.allocated,"no first_basis_fn data")
    ENSURE(.last_basis_fn_for_shell.allocated,"no last_basis_fn data")
 
@@ -10039,7 +9861,7 @@ contains
       lb = .last_basis_fn_for_shell(b)
 
       shell.set_and_precompute_from(.precomputed_basis_shellpair(a,b) &
-         ,.position,.position,same_center=TRUE,skip=FALSE)
+         ,.position,.position,same_center=TRUE)
 
    end
 
@@ -10052,7 +9874,7 @@ contains
       q :: INT, IN
       fa,la,fb,lb :: INT, OUT
 
-   ENSURE(.precomputed_basis_shellpair.associated,"no precomputed basis shellpair data")
+   ENSURE(.precomputed_basis_shellpair.allocated,"no precomputed basis shellpair data")
    ENSURE(.first_basis_fn_for_shell.allocated,"no first_basis_fn data")
    ENSURE(.last_basis_fn_for_shell.allocated,"no last_basis_fn data")
 
@@ -10069,8 +9891,7 @@ contains
       la = .last_basis_fn_for_shell(a)
       lb = .last_basis_fn_for_shell(b)
 
-      shell.set_and_precompute_from(.precomputed_basis_shellpair(a,b) &
-         ,zv,zv,same_center=TRUE,skip=FALSE)
+      shell.set_and_precompute_from(.precomputed_basis_shellpair(a,b),zv,zv,same_center=TRUE)
 
    end
 
@@ -10147,7 +9968,7 @@ contains
 
    ENSURE(.density_matrix.allocated, "no .density_matrix")
    ENSURE(.density_matrix.restricted.allocated, "only works for restricted .density_matrix")
-   ENSURE(.precomputed_basis_shellpair.associated, "no precomputed_basis_shellpair info")
+   ENSURE(.precomputed_basis_shellpair.allocated, "no precomputed_basis_shellpair info")
 
       n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
       FT :: MAT3{CPX}*
@@ -10203,7 +10024,7 @@ contains
 
    ENSURE(.density_matrix.allocated, "no .density_matrix")
    ENSURE(.density_matrix.restricted.allocated, "only works for restricted .density_matrix")
-   ENSURE(.precomputed_basis_shellpair.associated,"no precomputed basis shellpair data")
+   ENSURE(.precomputed_basis_shellpair.allocated,"no precomputed basis shellpair data")
 
       n_shell_pairs,q,fa,fb,la,lb, k_max,k :: INT
       k_x,k_y :: VEC{REAL}*
@@ -10449,7 +10270,7 @@ contains
 
    do_dump ::: private
    ! Dump object data as text
-      self :: INOUT
+      self :: IN
 
       stdout.dump("label",.label)
       stdout.dump("tag",.tag)
@@ -10515,12 +10336,12 @@ contains
 
    end
 
-   dump(object_name,ptr) ::: get_from(OBJECT, TYPE?=>ATOM)
-   ! Dump object data as text
+   dump(object_name,all) ::: get_from(OBJECT, TYPE?=>ATOM)
+   ! Dump allocatable object data as text
    end
 
    dmpp(object_name) ::: get_from(OBJECT, TYPE?=>ATOM)
-   ! Dump pointer object data as text
+   ! Dump allocatable object data as text
    end
 
 !  ==============
@@ -10535,9 +10356,9 @@ contains
 
     ! if (.residue_sequence_number/=0) .put_mm_info
 
-      if (.basis.associated)              .basis.put
-      if (.slaterbasis.associated)        .slaterbasis.put
-      if (.coppensbasis.associated)       .coppensbasis.put
+      if (.basis.allocated)              .basis.put
+      if (.slaterbasis.allocated)        .slaterbasis.put
+      if (.coppensbasis.allocated)       .coppensbasis.put
 
       .put_ANOs
 
@@ -10630,13 +10451,13 @@ contains
       select case (.basis_kind)
 
          case ("slater")
-            ENSURE(.slaterbasis.associated,"no slaterbasis")
+            ENSURE(.slaterbasis.allocated,"no slaterbasis")
             stdout.flush
             stdout.text("Atom slaterbasis info:")
             .slaterbasis.interpolator.put
 
          case ("coppens")
-            ENSURE(.coppensbasis.associated,"no coppensbasis")
+            ENSURE(.coppensbasis.allocated,"no coppensbasis")
             stdout.flush
             stdout.text("Atom coppensbasis info:")
             .coppensbasis.interpolator.put

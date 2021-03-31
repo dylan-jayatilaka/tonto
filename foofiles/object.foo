@@ -25,7 +25,7 @@ virtual module OBJECT
 
    implicit none
 
-   keys :: VEC{STR}*, private DEFAULT_NULL
+   keys :: VEC{STR}@, private
 
 contains
 
@@ -293,11 +293,9 @@ contains
 
    redirect ::: leaky
    ! Redirect input
-      self :: PTR
+      self :: IN
 
       filename :: STR
-
-      if (FALSE) self = self
 
       filename = stdin.next_str
 
@@ -307,9 +305,7 @@ contains
 
    revert ::: leaky
    ! Revert back to previous stdin file
-      self :: PTR
-
-      if (FALSE) self = self
+      self :: IN
 
       stdin.revert
 
@@ -317,11 +313,9 @@ contains
 
    redirect ::: leaky
    ! Redirect input. (This code is for non-pointer self objects).
-      self :: INOUT
+      self :: IN
 
       filename :: STR
-
-      if (FALSE) self = self
 
       filename = stdin.next_str
 
@@ -332,9 +326,7 @@ contains
    revert ::: leaky
    ! Revert back to previous stdin file. (This code is for non-pointer self
    ! objects).
-      self :: INOUT
-
-      if (FALSE) self = self
+      self :: IN
 
       stdin.revert
 
@@ -439,8 +431,7 @@ contains
 
    read_units
    ! Read a string which describes the units to be used
-
-      if (FALSE) self = self
+      self :: IN
 
       stdin.set_default_units(stdin.next_str)
 
@@ -448,8 +439,7 @@ contains
 
    read_junk
    ! Read in a junk string, useful for ignoring a field
-
-      if (FALSE) self = self
+      self :: IN
 
       stdin.skip_next_item
 
@@ -457,6 +447,7 @@ contains
 
    read_and_set
    ! Generic read and set
+      self :: INOUT
       val :: VAL?
 
       stdin.read(val)
@@ -467,6 +458,7 @@ contains
 
    read_and_set
    ! Generic read and set a quantity with units
+      self :: INOUT
       val :: VAL?
 
       stdin.read_quantity(val)
@@ -479,8 +471,117 @@ contains
 !  Input key related routines
 !  ==========================
 
+! New
+
+   read_keys ::: leaky
+   ! Read the allocatable "keys".
+      self :: INOUT
+
+      if (FALSE) self = self
+
+      keys.destroy
+      stdin.read_all(keys)
+
+   end
+
+   process_keys ::: leaky
+   ! Process each word in allocatable "keys" list.
+      self :: INOUT
+
+   ENSURE(keys.allocated,"no keys")
+
+      k,l,n_key :: INT
+      keyword :: STR
+      keyword_echo :: BIN
+      internal :: VEC{STR}@
+
+      ! The number of keys
+      n_key = keys.dim
+
+      ! Keyword counter
+      k = 0
+
+      do ! Loop over keywords in "keys"
+
+         ! Get the next keyword
+         k = k + 1
+         keyword = keys(k)
+
+         ! Exit if close brace
+         if (keyword=="}") exit
+
+         if (keyword=="{") then ! embedded keyword
+
+            ! Turn off keyword echo
+            keyword_echo = tonto.keyword_echo
+            tonto.keyword_echo = FALSE
+
+            ! Find closing brace of embedded section
+            l = keys(k:).index_of_matching_bracket("{")
+            DIE_IF(l==0,"no matching closing brace in embedded keyword")
+
+            ! Set internal array
+            internal = keys(k:k+l-1)
+
+            ! Process internalized keywords
+            stdin.redirect(internal)
+            .:read_keywords
+            stdin.revert
+
+            ! Reset key counter
+            k = k + l - 1
+
+            ! Reset keyword echo
+            tonto.keyword_echo = keyword_echo
+
+         else ! plain-old keyword
+
+            ! Process plain-old keyword
+            .:process_keyword(keyword)
+
+         end
+
+         ! Exit if no keys left
+         if (k==n_key) exit
+
+      end
+
+   end
+
+   keys_allocated result (res)
+   ! Return TRUE keys are allocated and have elements
+      self :: IN
+      res :: BIN
+
+      res = keys.allocated
+      if (res) res = keys.dim>0
+
+   end
+
+   set_keys(the_keys) ::: leaky
+   ! Set allocatable "keys" externally.
+      self :: IN
+      the_keys :: VEC{STR}, IN
+
+      keys = the_keys
+
+   end
+
+   clear_keys ::: leaky
+   ! Destroy allocatable "keys" externally.
+      self :: INOUT
+
+      keys.destroy
+      keys.create(0)
+
+   end
+
+! Old
+
    read_keys ::: leaky
    ! Read the "keys".
+      self :: INOUT
+
       if (FALSE) self = self
 
       keys.destroy
@@ -490,6 +591,8 @@ contains
 
    process_keys ::: leaky
    ! Process each of the words in the "keys" list.
+      self :: INOUT
+
    ENSURE(keys.associated,"no keys")
 
       k,l,n_key :: INT
@@ -552,6 +655,7 @@ contains
 
    keys_created result (res)
    ! Return TRUE if the list-element keys are created.
+      self :: IN
       res :: BIN
 
       if (FALSE) self = self
@@ -563,7 +667,8 @@ contains
 
    set_keys(the_keys) ::: leaky
    ! This is for setting the "keys" externally.
-      the_keys :: VEC{STR}
+      self :: IN
+      the_keys :: VEC{STR}, IN
 
       if (FALSE) self = self
 
@@ -574,6 +679,7 @@ contains
 
    clear_keys ::: leaky
    ! This is for destroying the "keys" externally.
+      self :: INOUT
 
       if (FALSE) self = self
 
@@ -588,8 +694,9 @@ contains
 
    dump(object_name,ptr) 
    ! Dump object data as text
-      object_name :: STR
-      ptr :: BIN, optional
+      self :: IN
+      object_name :: STR, IN
+      ptr :: BIN, optional, IN
 
       is_ptr :: BIN
 
@@ -601,11 +708,30 @@ contains
       end
 
       stdout.increment_margin_width(1)
-
       .do_dump
-
       stdout.increment_margin_width(-1)
+      stdout.text("}")
 
+   end
+
+   dump(object_name,all) 
+   ! Dump allocatable object data as text
+      self :: IN
+      object_name :: STR, IN
+      all :: BIN, optional, IN
+
+      is_all :: BIN
+
+      is_all = FALSE
+      if (present(all)) is_all = all
+
+      if (is_all) then; stdout.text(trim(object_name)//":TYPE?@ = { ")
+      else;             stdout.text(trim(object_name)//":TYPE? = { ")
+      end
+
+      stdout.increment_margin_width(1)
+      .do_dump
+      stdout.increment_margin_width(-1)
       stdout.text("}")
 
    end
@@ -616,13 +742,22 @@ contains
       object_name :: STR, IN
 
       if (.disassociated) then
-
-         stdout.text(trim(object_name)//":TYPE* = null")
-
+         stdout.text(trim(object_name)//":TYPE?* = null")
       else
-
          .dump(trim(object_name),ptr=TRUE)
+      end
 
+   end
+
+   dmpp(object_name)
+   ! Dump allocatable object data as text
+      self :: allocatable, IN
+      object_name :: STR, IN
+
+      if (.deallocated) then
+         stdout.text(trim(object_name)//":TYPE?@ = null")
+      else
+         .dump(trim(object_name),all=TRUE)
       end
 
    end
