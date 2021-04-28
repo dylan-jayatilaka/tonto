@@ -799,24 +799,29 @@ contains
 
    end
 
-   set_pADP_errors_to(dX,H_U_iso)
+   set_pADP_errors_to(cov,H_U_iso)
    ! Set the pADP errors from vector "dX".
-      dX :: VEC{REAL}, IN
+      cov :: MAT{REAL}, IN
       H_U_iso :: BIN, IN
 
-   DIE_IF(dX.dim/=.no_of_pADPs,"wrong size, dX")
+   DIE_IF(cov.dim1/=.no_of_pADPs,"wrong size, dX")
 
-      a,f,l :: INT
+      acov :: MAT{REAL}@
+      a,f,l,n :: INT
 
       l = 0
       do a = 1,.dim
 
          ! Limits
+         n = self(a).no_of_pADPs
          f = l + 1
-         l = l + self(a).no_of_pADPs
+         l = l + n
+
+         ! Get atom block of covariance
+         acov = cov(f:l,f:l)
 
          ! Not leaky
-         self(a).set_pADP_errors_to(dX(f:l),H_U_iso)
+         self(a).set_pADP_errors_to(acov,H_U_iso)
 
       end
 
@@ -12023,8 +12028,10 @@ contains
       U,dU :: MAT{REAL}@
       is_flat,is_npd :: VEC{BIN}@
       ratio :: VEC{REAL}@
+      U_iso,U_iso_e :: VEC{REAL}@
+      M_ani,M_ani_e :: VEC{REAL}@
       table :: VEC{TABLE_COLUMN}@
-      fac :: REAL
+      fac,fac2 :: REAL
       i :: INT
       cartesian,header :: BIN
 
@@ -12035,11 +12042,12 @@ contains
       cartesian = self(1).pos_axis_system=="cartesian"
 
       ! Use angstroms/angstrom^2
-      if (cartesian) then
+      if (cartesian) then;
          fac = STR:conversion_factor("angstrom")
       else
          fac = ONE
       end
+      fac2 = fac*fac
 
       ! Create columns
       Uc.create(6)
@@ -12052,6 +12060,10 @@ contains
       is_flat = self(:).has_flat_ADP
       is_npd  = self(:).has_NPD_ADP
       ratio   = self(:).ADP_principal_axis_ratio
+      U_iso   = self(:).U_iso*fac2
+      U_iso_e = self(:).U_iso_error*fac2
+      M_ani   = sqrt(self(:).U_aniso)*fac2
+      M_ani_e = HALF*self(:).U_aniso_error/M_ani*fac2
 
       ! Title
       if (header) then
@@ -12069,6 +12081,8 @@ contains
       stdout.text(". An ADP is deemed bad if the max-on-min axis ratio")
       stdout.text("  - is greater than 4 (i.e. flat)")
       stdout.text("  - or is non-positive-definite (i.e. NPD)")
+      stdout.text(". M_aniso is the square root of the usual anistropy")
+      stdout.text("  in a 2nd order tensor. It has units Angstrom^2.")
       stdout.flush
       stdout.show("No. of NPD  ADPs =",.no_of_NPD_ADPs)
       stdout.show("No. of Flat ADPs =",.no_of_flat_ADPs)
@@ -12076,7 +12090,7 @@ contains
       end
 
       ! Set table headings & data
-      table.create(10)
+      table.create(12)
       table.set_column_spacing(2)
 
       ! Set table
@@ -12085,38 +12099,48 @@ contains
 
       if (NOT .has_nonzero_pADP2_errors) then
 
-         ! Set table
+         ! Set table no errors
          do i = 1,6
          table(i+1).set_heading(Uc(i))
          table(i+1).set_values(U(:,i))
          end
+         table( 8).set_heading("U_iso")
+         table( 8).set_values(U_iso)
+         table( 9).set_heading("M_ani")
+         table( 9).set_values(M_ani)
 
       else ! have position/ADP errors
 
          ! Get error column data
          .put_ADP2_errors_to(dU,fac)
 
-         ! Set table
+         ! Set table with (errors)
          do i = 1,6
          table(i+1).set_heading(Uc(i))
          table(i+1).set_values_and_errors(U(:,i),dU(:,i))
          end
+         table( 8).set_heading("U_iso")
+         table( 8).set_values_and_errors(U_iso,U_iso_e)
+         table( 9).set_heading("M_ani")
+         table( 9).set_values_and_errors(M_ani,M_ani_e)
 
       end
 
       ! Units headings
       table(4).set_subhead(trim("/A^2"))
+      table(8).set_subhead(trim("/A^2"))
+      table(9).set_subhead(trim("/A^2"))
 
       ! ADP diagonistics
-      table( 8).set_heading("NPD")
-      table( 8).set_subhead("  ?")
-      table( 8).set_values(is_npd)
-      table( 9).set_heading("Flat")
-      table( 9).set_subhead("   ?")
-      table( 9).set_values(is_flat)
-      table(10).set_heading(" Axis")
-      table(10).set_subhead("ratio")
-      table(10).set_values(ratio)
+      table(10).set_heading("NPD")
+      table(10).set_subhead("  ?")
+      table(10).set_values(is_npd)
+      table(11).set_heading("Flat")
+      table(11).set_subhead("   ?")
+      table(11).set_values(is_flat)
+      table(12).set_heading(" Axis")
+      table(12).set_subhead("ratio")
+      table(12).set_values(ratio)
 
       ! Make the table
       table.put
