@@ -55,12 +55,24 @@ contains
       ! Open the CIF
       if (NOT cif.file.is_open) cif.open
 
-      ! Read the atoms from the CIF
+      ! Clean up any old atoms
       if (.atom.associated) then
          .atom.nullify_basis_part
          .atom.destroy
       end
+
+      ! Read the atoms from the CIF & set covariances
       .atom.read_CIF(cif)
+
+      ! Read the atom covariances (for errors)
+      ! This is for cartesian cif2 only
+      if (.crystal.associated) then
+      if (.crystal.data.associated) then
+      if (.crystal.data.fragment_covariance_matrix.allocated) then
+         .atom.set_pADP_errors_to(.crystal.data.fragment_covariance_matrix,FALSE)
+      end
+      end
+      end
 
       ! Set defaults and bases
       .spin_multiplicity = .BASE:default_spin_multiplicity
@@ -79,6 +91,9 @@ contains
    ENSURE(cif.start_of_data>0,"no start of data in CIF")
    ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
 
+      ! Read covariances from refinement?
+      .:read_CIF_crystal_covariances(cif)
+
       ! Read in the atoms raw. No bond length reset.
       .:read_CIF_atoms_raw(cif)
 
@@ -89,9 +104,10 @@ contains
    end
 
    read_CIF_crystal_raw(cif) ::: leaky
-   ! Read crystal unit cell and spacegroup information (but NOT atom
-   ! positions) from a CIF file called "cif", but do not change axis
-   ! system or produce any information arrays.
+   ! Read crystal unit cell and spacegroup information (but *NOT* atom
+   ! positions, they shou;d have been read just beforehand) from a CIF
+   ! file called "cif", but do not change axis system or produce any
+   ! information arrays.
       self :: INOUT
       cif :: CIF, INOUT
 
@@ -125,6 +141,9 @@ contains
       ! Read in the raw crystal information
       .:read_CIF_crystal_raw(cif)
 
+      ! Read covariances from refinement?
+      .:read_CIF_crystal_covariances(cif)
+
       ! Only continue if there are some atoms ...
       if (NOT associated(.atom)) return
 
@@ -132,9 +151,73 @@ contains
       ! Bond lengths may be reset in here.
       .:make_CIF_atoms_and_crystal(cif)
 
-      ! Read covariances from refinement?
-      if (NOT cif.apply_bond_length) then
-         .:read_CIF_crystal_esds(cif)
+      ! Make the esds (if covariances were read)
+      .:read_CIF_crystal_esds(cif)
+
+   end
+
+   read_CIF_crystal_covariances(cif) ::: private, leaky
+   ! Read the CIF covariances and set pADP esds.
+   ! This routine gets the no. of pADPs from the (square root) of the
+   ! length of the covariance matrices.
+      self :: INOUT
+      cif :: CIF, INOUT
+
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      n_pADPs :: INT
+      label :: STR
+      fcov_made :: BIN
+      fcov_there,fcov_inputted :: BIN
+      acov_there,acov_inputted :: BIN
+
+      ! If covariances already there, assume they are OK
+      if (.crystal.disassociated) return
+      if (.crystal.data.disassociated) return
+      acov_there = .crystal.data.covariance_matrix.allocated
+      fcov_there = .crystal.data.fragment_covariance_matrix.allocated
+      if (acov_there AND fcov_there) return
+
+      ! Open the CIF if needed
+      if (NOT cif.file.is_open) cif.open
+
+      ! Below needs to be modified to remove duplicate looped
+      ! item search when blank-labelled covariance is not needed
+
+      ! Asymmetric covariance there?
+      label = "_asym_unit"
+      cif.find_item(trim(label)//"_covariance_matrix",acov_there)
+
+      acov_inputted = FALSE
+
+      if (acov_there) then
+
+         ! Should we be creating x_ray_data?
+         if (.crystal.data.disassociated) .crystal.data.create
+
+         ! Read it
+         cif.read_CIF_covariance(trim(label),.crystal.data.covariance_matrix)
+
+         acov_inputted = TRUE
+
+      end
+
+      ! Fragment covariance there?
+      label = "_fragment"
+      cif.find_looped_item(trim(label)//"_covariance_matrix",fcov_there)
+
+      fcov_inputted = FALSE
+
+      if (fcov_there) then
+
+         if (.crystal.data.disassociated) .crystal.data.create
+
+         ! Read it
+         cif.read_CIF_covariance(trim(label),.crystal.data.fragment_covariance_matrix)
+
+         fcov_inputted = TRUE
+
       end
 
    end
@@ -151,97 +234,27 @@ contains
 
       n_pADPs :: INT
       label :: STR
-      fcov_made :: BIN
-      fcov_there,fcov_inputted :: BIN
-      acov_there,acov_inputted :: BIN
+      fcov_there :: BIN
+      acov_there :: BIN
 
       ! Open the CIF if needed
       if (NOT cif.file.is_open) cif.open
 
-      ! Below needs to be modified to remove duplicate looped
-      ! item search when blank-labelled covariance is not needed
+      acov_there = .crystal.data.covariance_matrix.allocated
+      fcov_there = .crystal.data.fragment_covariance_matrix.allocated
 
-      ! Asymmetric covariance there?
-      label = "_asym_unit"
-      cif.find_item(trim(label)//"_covariance_matrix",acov_there)
-
-      acov_inputted = FALSE
-
-      if (acov_there) then
-      if (.crystal.asymmetric_unit_atom.associated) then
-
-         ! Should we be creating x_ray_data?
-         if (.crystal.data.disassociated) .crystal.data.create
-
-         n_pADPs = .crystal.asymmetric_unit_atom.no_of_pADPs
-
-         .crystal.data.covariance_matrix.destroy
-         .crystal.data.covariance_matrix.create(n_pADPs,n_pADPs)
-
-         ! Read it
-         cif.read_CIF_covariance(trim(label),.crystal.data.covariance_matrix)
-
-         acov_inputted = TRUE
-
-      end
-      end
-
-      ! Fragment covariance there?
-      label = "_fragment"
-      cif.find_looped_item(trim(label)//"_covariance_matrix",fcov_there)
-
-      fcov_inputted = FALSE
 
       if (fcov_there) then
+      if (acov_there) then
       if (.crystal.fragment_atom.associated) then
 
-         if (.crystal.data.disassociated) .crystal.data.create
-
-         n_pADPs = .crystal.fragment_atom.no_of_pADPs
-
-         .crystal.data.fragment_covariance_matrix.destroy
-         .crystal.data.fragment_covariance_matrix.create(n_pADPs,n_pADPs)
-
-         ! Read it
-         cif.read_CIF_covariance(trim(label),.crystal.data.fragment_covariance_matrix)
-
-         fcov_inputted = TRUE
-
-      end
-      end
-
-
-      ! Make fragment covariances
-      fcov_made = FALSE
-
-      if (NOT fcov_inputted) then
-      if (    acov_inputted) then
-      if (.crystal.fragment_atom.associated) then
-
-         if (.crystal.data.disassociated) .crystal.data.create
-
-         n_pADPs = .crystal.fragment_atom.no_of_pADPs
-
-         .crystal.data.fragment_covariance_matrix.destroy
-         .crystal.data.fragment_covariance_matrix.create(n_pADPs,n_pADPs)
-
-         ! Make fragment from asymmetric cov mx
-         .crystal.set_frag_from_asym_cov_mx
-
-         fcov_made = TRUE
+       ! .crystal.set_frag_from_asym_cov_mx
+         .crystal.set_fragment_esds(.crystal.fragment_atom)
+         .crystal.set_fragment_esds(.atom) 
 
       end
       end
       end
-
-      ! The ESDs are numerically more precise 
-      ! if obtained from the covariance matrix
-      ! NOTE: .fragment_atom and .atom must be the same
-      if (fcov_inputted OR fcov_made) then
-         .crystal.set_fragment_esds 
-         .crystal.set_fragment_esds(.atom) ! ?
-      end
-      
 
    end
 
