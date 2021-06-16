@@ -799,26 +799,26 @@ contains
 
    end
 
-   set_pADP_errors_to(cov,H_U_iso)
+   set_pADP_errors_to(covariance_mx,H_U_iso)
    ! Set the pADP errors from vector "dX".
       self :: INOUT
-      cov :: MAT{REAL}, IN
+      covariance_mx :: MAT{REAL}, IN
       H_U_iso :: BIN, IN
 
-   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, cov")
+   ENSURE(covariance_mx.dim1==.no_of_pADPs,"wrong size, cov")
 
       a,f,l,n :: INT
 
       l = 0
       do a = 1,.dim
 
-         ! Limits
+         ! Limits; make sure we have refinement setting correct!
          n = self(a).no_of_pADPs
          f = l + 1
          l = l + n
 
          ! Not leaky
-         self(a).set_pADP_errors_to(cov(f:l,f:l),H_U_iso)
+         self(a).set_pADP_errors_to(covariance_mx(f:l,f:l),H_U_iso)
 
       end
 
@@ -1999,20 +1999,20 @@ contains
 
    end
 
-   read_CIF_ADPs(cif) ::: leaky
-   ! Read ADP information from the "cif" file.
-      self :: PTR
-      cif :: CIF, INOUT
-
-      fail :: BIN
-
-      if (NOT cif.is_mmCIF) then
-         .read_smCIF_ADPs(cif)
-      else
-         .read_mmCIF_ADP2(cif,fail)
-      end
-
-   end
+!   read_CIF_ADPs(cif) ::: leaky
+!   ! Read ADP information from the "cif" file.
+!      self :: PTR
+!      cif :: CIF, INOUT
+!
+!      fail :: BIN
+!
+!      if (NOT cif.is_mmCIF) then
+!         .read_smCIF_ADPs(cif)
+!      else
+!         .read_mmCIF_ADP2(cif,fail)
+!      end
+!
+!   end
 
 ! smCIF
 
@@ -2066,6 +2066,8 @@ contains
       IDs,labels :: VEC{STR}*
       pos,err :: MAT{REAL}*
 
+    ! if (NOT .has_covariance_mxs) return
+
       ! Read the site labels FIRST because these seem to correlate with
       ! the anisotropic U's.
       nullify(labels)
@@ -2093,12 +2095,18 @@ contains
       fail = NOT fc
       if (fail) return
 
-      ! Set the positions
+      ! Set the positions & space for errors
       .set_pos_axis_system_to("cartesian")
       .reset_pADPs_and_errors(9)
       pos.convert_from("angstrom")
       .set_positions_to(pos)
       pos.destroy
+
+      ! Set the pADP_errors. This even does APD errors,
+      ! not just positions.
+      ! ERROR: change and merge with ADP setting
+    ! .set_pADP_errors_to
+
 
       ! Read errors
       IDs.create(3)
@@ -2269,6 +2277,8 @@ contains
 
       fail :: BIN
 
+      fail = FALSE
+      
       ! Read cartesian 2nd order ADPs
       .read_smCIF_ADP2_cart(cif,fail)
 
@@ -2358,7 +2368,11 @@ contains
             ! Assign ADP
             self(ind).reset_pADPs_and_errors(9)
             self(ind).set_ADP_tensor(U(:,i))
-            self(ind).set_ADP2_errors_to(dU(:,i),FALSE)
+            if (self(ind).covariance_mx.allocated) then
+               self(ind).set_pADP_errors_to(self(ind).covariance_mx,FALSE)
+            else
+               self(ind).set_ADP2_errors_to(dU)
+            end
 
          end
    
@@ -2465,7 +2479,7 @@ contains
             ! Assign ADP
             self(ind).reset_pADPs_and_errors(9)
             self(ind).set_ADP_tensor(U(:,i))
-            self(ind).set_ADP2_errors_to(dU(:,i),FALSE)
+            self(ind).set_ADP2_errors_to(dU(:,i))
    
          end
    
@@ -4647,6 +4661,31 @@ contains
       res :: BIN
 
       res = any(self.atom_sequence_id > 1)
+
+   end
+
+   has_covariance_mxs result (res) ::: PURE
+   ! Return TRUE if all atom have covariance_mx's defined.
+      self :: PTR
+      res :: BIN
+
+      i :: INT
+
+      if (.disassociated) then
+
+         res = FALSE
+        
+      else
+
+         res = TRUE
+         do i = 1,.dim
+            if (self(i).covariance_mx.deallocated) then
+               res = FALSE
+               exit
+            end
+         end
+
+      end
 
    end
 
@@ -12055,16 +12094,13 @@ contains
       ATOM:put_ADP2_labels_to(Uc)
       .put_ADP2_vector_to(U,fac)
       
-      stdout.text("M_ani_err: ")
-      stdout.put(self(:).U_aniso_error)
-
       is_flat = self(:).has_flat_ADP
       is_npd  = self(:).has_NPD_ADP
       ratio   = self(:).ADP_principal_axis_ratio
       U_iso   = self(:).U_iso*fac2
       U_iso_e = self(:).U_iso_error*fac2
-      M_ani   = sqrt(self(:).U_aniso)*fac2
-      M_ani_e = sqrt(self(:).U_aniso_error)*fac2
+      M_ani   = self(:).M_ani*fac2
+      M_ani_e = self(:).M_ani_error*fac2
 
       ! Title
       if (header) then
@@ -12082,8 +12118,11 @@ contains
       stdout.text(". An ADP is deemed bad if the max-on-min axis ratio")
       stdout.text("  - is greater than 4 (i.e. flat)")
       stdout.text("  - or is non-positive-definite (i.e. NPD)")
-      stdout.text(". M_aniso is the square root of the usual anistropy")
+      stdout.text(". M_ani is the square root of the usual anistropy")
       stdout.text("  in a 2nd order tensor. It has units Angstrom^2.")
+      stdout.text(". NOTE: If the su in U_iso or M_ani is zero, it may")
+      stdout.text("  mean that there is no covariance matrix was available")
+      stdout.text("  there to calculate it e.g. if you used a non-CIF2 file.")
       stdout.flush
       stdout.show("No. of NPD  ADPs =",.no_of_NPD_ADPs)
       stdout.show("No. of Flat ADPs =",.no_of_flat_ADPs)
