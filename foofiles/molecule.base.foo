@@ -768,6 +768,21 @@ contains
 
    end
 
+   set_n_a_n_b_and_multiplicity(n_a,n_b)
+   ! Set the no. of alpha and beta electrons, and then the spin
+   ! multiplicity. This is needed only for Molden files!
+      self :: INOUT
+      n_a :: INT, IN
+      n_b :: INT, IN
+
+   ENSURE(n_a>=n_b,"n_a can't be smaller than n_b")
+
+      .n_a = n_a
+      .n_b = n_b
+      .spin_multiplicity = (n_a - n_b) + 1
+
+   end
+
 ! Atoms
 
    finalize_atoms(do_groups) ::: leaky
@@ -1618,7 +1633,7 @@ contains
       archive :: ARCHIVE
       pos :: VEC{REAL}(3)
       orb :: VEC{REAL}*
-      fac,n_e,val,energy,occ :: REAL
+      fac,n_e,n_a,n_b,val,energy,occ :: REAL
       name,units,item,label,spin :: STR
       op,cl :: STR(len=1)
       output,found,is_unrestricted :: BIN
@@ -1743,9 +1758,8 @@ contains
       molden_file.look_for("Beta",found=is_unrestricted)
 
       ! Move back to [MO]'s
-      molden_file.move_to_line(line)
-
       ! Get no. of electrons
+      molden_file.move_to_line(line)
       n_e = ZERO
       do
          molden_file.look_for("Occup=",found=found)
@@ -1757,17 +1771,44 @@ contains
       end
 
       ! Now set charge
-      .charge = .atom.no_of_electrons - nint(n_e)
+      .n_e    = nint(n_e)
+      .charge = .atom.no_of_electrons - .n_e
 
-      ! Set multiplicity
-      .spin_multiplicity = .:default_spin_multiplicity
+      if (is_unrestricted) then
+
+         ! Now find no. of alpha electrons (assuming unrestricted)
+         molden_file.move_to_line(line)
+         n_a = ZERO
+         do
+            molden_file.look_for("Alpha",found=found)
+            if (NOT found) exit
+            molden_file.look_for("Occup=",found=found)
+            if (NOT found) exit
+            molden_file.move_to_line_item(2)
+            molden_file.read(val)
+            molden_file.read_line
+            n_a = n_a + val
+         end
+        
+         ! Set no. of beta electrons
+         n_b = n_e - n_a
+        
+         ! Set multiplicity
+         .:set_n_a_n_b_and_multiplicity(nint(n_a),nint(n_b))
+
+      else
+
+         ! Restricted
+         .spin_multiplicity = .:default_spin_multiplicity
+
+      end
 
       ! Finalize atom info/basis sets
       .:finalize_atoms(do_groups)
 
       if (output) then
          .atom.put
-      end if
+      end
 
       ! Create scfdata (leaky)
       .scfdata.destroy
@@ -1781,11 +1822,9 @@ contains
       if (is_unrestricted) then
 
          .scfdata.set_scf_kind("uhf")
-
          .orbital_energies.create(.n_bf,"unrestricted")
          .orbital_energies.alpha = ZERO
          .orbital_energies.beta = ZERO
-
          .molecular_orbitals.create(.n_bf,"unrestricted")
          .molecular_orbitals.alpha = ZERO
          .molecular_orbitals.beta = ZERO
@@ -1793,10 +1832,8 @@ contains
       else
 
          .scfdata.set_scf_kind("rhf")
-
          .orbital_energies.create(.n_bf,"restricted")
          .orbital_energies.restricted = ZERO
-
          .molecular_orbitals.create(.n_bf,"restricted")
          .molecular_orbitals.restricted = ZERO
 
@@ -1840,38 +1877,32 @@ contains
          end
 
          ! Increment orbital
-         if (spin=="Alpha") i = i + 1
-         DIE_IF(i>.n_bf,"too many orbitals specified")
+         i = i + 1
 
          ! Assign MO's
          if (is_unrestricted) then
 
+            DIE_IF(i>2*.n_bf,"too many orbitals specified")
             select case (spin)
-
             case ("Alpha")
                .orbital_energies.alpha(i) = energy
                .molecular_orbitals.alpha(:,i) = orb
-
             case ("Beta")
-               .orbital_energies.beta(i) = energy
-               .molecular_orbitals.beta(:,i) = orb
-
+               .orbital_energies.beta(i-.n_bf) = energy
+               .molecular_orbitals.beta(:,i-.n_bf) = orb
             case default
                DIE("unknown spin: "//trim(spin))
-
             end
 
          else
 
+            DIE_IF(i>.n_bf,"too many orbitals specified")
             select case (spin)
-
             case ("Alpha")
                .orbital_energies.restricted(i) = energy
                .molecular_orbitals.restricted(:,i) = orb
-
             case default
                DIE("unexpected spin: "//trim(spin))
-
             end
 
          end
@@ -1884,7 +1915,8 @@ contains
       ! Swap orbital order
       if (output) then
          stdout.text("Reordering basis functions into tonto order")
-      endif
+      end
+
       if (is_unrestricted) then
          .:swap_molden_orbital_order(.molecular_orbitals.alpha,"row")
          .:swap_molden_orbital_order(.molecular_orbitals.beta,"row")
@@ -1901,7 +1933,6 @@ contains
 
          stdout.text("Occupation")
          stdout.put(.occupation_numbers)
-         !if(NOT .natural_orbitals.associated) .:make_natural_orbitals
 
          ! Print out data
          stdout.flush
@@ -1944,11 +1975,6 @@ contains
          stdout.flush
 
       endif
-
-     !stdout.flush
-     !stdout.text("Natural orbitals:")
-     !stdout.flush
-     !stdout.put(.natural_orbitals)
 
       ! Save data in archive files
       archive.set_defaults
