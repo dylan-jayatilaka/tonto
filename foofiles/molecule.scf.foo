@@ -502,6 +502,151 @@ contains
 
    end
 
+
+   get_unique_Tanaka_atom_SFs(sf_n,spin_density) ::: leaky
+   ! Get "sf_n", the Tanaka static atomic form factors for the
+   ! symmetry related K points for every unique atom.
+   ! NOTE: "sf_n" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      self :: INOUT
+      sf_n :: MAT{CPX}@, OUT
+      spin_density :: BIN, optional, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.crystal.associated, "no crystal")
+   ENSURE(.crystal.data.associated, "no reflection data")
+   ENSURE(.crystal.xray_data.associated, "no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      t :: MAT3{REAL}@
+      ft_ab :: MAT3{CPX}@
+      k_pts, DM, pf :: MAT{REAL}@
+      sh :: SHELL2
+      fbf_4_shell, lbf_4_shell :: VEC{INT}@
+      atm_4_shell, bsh_4_shell :: VEC{INT}@
+      n_atom,n_shell, n_k,k :: INT
+      sa,fa,la,na,a ,as :: INT
+      sb,fb,lb,nb,b ,bs :: INT
+      pa,pb   :: VEC{REAL}(3)
+      ssa,ssb :: REAL
+      is_zero, spin :: BIN
+
+      ! Asymmetric unit atoms
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_n.create(n_k,n_atom)
+      sf_n = ZERO
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+
+      ! X-ray or PND?
+      spin = FALSE
+      if (present(spin_density)) spin = spin_density
+
+      ! Density matrix (leaky)
+      if (NOT spin) then; .BASE:make_ao_density_matrix
+      else;               .BASE:make_ao_sz_density_matrix
+      end
+      ENSURE(.density_matrix.restricted.allocated, "no restricted DM")
+
+      ! Store density matrix
+      DM.create(.n_bf,.n_bf)
+      DM = .density_matrix.restricted
+
+      ! Make atom for shell index array
+      .crystal.asymmetric_unit_atom.make_atom_for_shell(atm_4_shell)
+
+      ! Make bf limits for shell index arrays
+      .crystal.asymmetric_unit_atom.make_shell_limits(fbf_4_shell,lbf_4_shell)
+      n_shell = fbf_4_shell.dim
+
+      ! Shell pointer into flattened .basis vector
+      .crystal.asymmetric_unit_atom.make_basis_shell_for_shell(bsh_4_shell,.basis)
+
+      ! Loop over asymmetric/unique atoms "c"
+      do sa = 1,n_shell
+
+         fa = fbf_4_shell(sa)
+         la = lbf_4_shell(sa)
+         na = la - fa + 1
+         a  = atm_4_shell(sa)
+         pa = .crystal.asymmetric_unit_atom(a).position
+         as = bsh_4_shell(sa)
+
+         do sb = 1,sa
+
+            fb = fbf_4_shell(sb)
+            lb = lbf_4_shell(sb)
+            nb = lb - fb + 1
+            b  = atm_4_shell(sb)
+            pb = .crystal.asymmetric_unit_atom(b).position
+            bs = bsh_4_shell(sb)
+
+            ! Set the SHELL2 shell pair object
+            sh.set_and_precompute_from(.precomputed_basis_shellpair(sa,sb),pa,pb,a==b,FALSE)
+
+          ! ! FT-pair integral block
+          ! ft_ab.create(n_k,na,nb)
+
+          ! ! Site-symmetry factors
+          ! ssa = .crystal.frag_atom_sym_factor(a)
+          ! ssb = .crystal.frag_atom_sym_factor(b)
+          ! 
+          ! ! Tanaka partition factors "pf"
+          ! pf.create(sh.a.n_cc,sh.b.n_cc)
+          ! .XTAL:make_partition_factors(pf,sh,ssa,ssb,is_zero)
+          ! 
+          ! if (NOT is_zero) then
+          ! 
+          !    ! Get thermal smearing factors "t"
+          !    t.create(n_k,sh.a.n_cc,sh.b.n_cc)
+          !    .XTAL:thermal_smearing_correction(t,k_pts,a,b,sh)
+          ! 
+          !    ! Do thermal *and* partition factor
+          !    sh.make_ft(ft_ab,k_pts,t,pf)
+          ! 
+          !    t.destroy
+          ! 
+          ! else
+          ! 
+          !    ft_ab = ZERO
+          ! 
+          ! end
+          ! 
+          ! pf.destroy
+          ! 
+          ! ! Trace and get atomic F.F. for this pair
+          ! do k = 1,n_k
+          !    sf_n(k,u) = sf_n(k,u) &
+          !              + sum(ft_ab(k,:,:)*DM(fa:la,fb:lb))
+          ! end
+              
+
+         end
+
+      end ! -- asym. atoms "u"
+
+      ! Clean up
+      fbf_4_shell.destroy
+      lbf_4_shell.destroy
+      atm_4_shell.destroy
+      bsh_4_shell.destroy
+      k_pts.destroy
+      DM.destroy
+
+   end
+
+
    get_unique_fragHAR_SFs(spin_density) ::: leaky
    ! Write out the fragHAR static structure factors for each
    ! .atom_group.mol molecule.
@@ -541,7 +686,7 @@ contains
    ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
    ! without the thermal smearing factor.
       self :: target, INOUT
-      sf_n :: MAT{CPX}*
+      sf_n :: MAT{CPX}@, OUT
       spin_density :: BIN, optional, IN
 
    ENSURE(.basis_info_made,"no basis info")
@@ -561,7 +706,6 @@ contains
       skipa0,skipab :: VEC{BIN}@
       skipa,skipb   :: VEC{BIN}@
       pt, k_pts, DM :: MAT{REAL}@
-    ! DM :: MAT{REAL}*
       sha :: SHELL1
       bf_skip :: VEC{EVEC{BIN}}@
       bf_grid :: VEC{EMAT{REAL}}@
@@ -619,11 +763,6 @@ contains
       DM.create(.n_bf,.n_bf)
       DM = .density_matrix.restricted
     ! .BASE:symmetrize_DM_like_mx(DM)
-
-    ! stdout.text("DM:")
-    ! stdout.put(.density_matrix.restricted)
-    ! stdout.put(DM)
-    ! stdout.put(.density_matrix.restricted)
 
       ! Atom "a" displaced numerical integration grid points 
       ! and skip switches
@@ -1541,15 +1680,38 @@ contains
 
 !  X-ray
 
-   make_X_SFs
+   make_X_SFs(output)
    ! Make the X-ray structure factors for this molecule.
       self :: INOUT
+      output :: BIN, optional, IN
 
    ENSURE(.crystal.associated, "no crystal")
    ENSURE(.crystal.xray_data.associated, "no x-ray reflection data")
 
+      out :: BIN
+
       ! Assign data
       .crystal.assign_xray
+
+      ! Output
+      out = FALSE
+      if (present(output)) out = output
+
+      if (out) then
+
+      stdout.flush
+      stdout.text("============================")
+      stdout.text("Make X-ray structure factors")
+      stdout.text("============================")
+
+      stdout.flush
+      stdout.show("Number of reflections     = ",.crystal.data.reflections.dim)
+      stdout.show("Thermal smearing model    = ",.crystal.thermal_smearing_model)
+      stdout.show("Basis fn. partition model = ",trim(.crystal.partition_model))
+      stdout.show("Use disk SF data          = ",.crystal.data.use_disk_SFs)
+      stdout.flush
+
+      end
 
       ! Make the SF's
       if (.crystal.thermal_smearing_model=="hirshfeld") then
@@ -1621,7 +1783,7 @@ contains
    ENSURE(.crystal.associated, "no crystal")
    ENSURE(.crystal.data.associated, "no reflection data")
 
-      sf_n :: MAT{CPX}*
+      sf_n :: MAT{CPX}@
 
       ! Get atomic form factors
       .:get_unique_Hirshfeld_atom_SFs(sf_n)
@@ -1635,13 +1797,23 @@ contains
 
    make_X_SFs_p ::: private
    ! Make basis-fn pair structure factors for this molecule.
-   ! WARNING: this does not seem to include the temperature factor
+   ! NOTE: includes the temperature factor/ADPs
       self :: INOUT
 
    ENSURE(.crystal.associated, "no crystal")
    ENSURE(.crystal.data.associated, "no reflection data")
    ENSURE(.density_matrix.allocated, "no density matrix")
    ENSURE(.scfdata.associated, "no scfdata")
+
+    ! sf_n :: MAT{CPX}@
+
+    ! ! Get atomic form factors
+    ! .:get_unique_Tanaka_atom_SFs(sf_n)
+
+    ! ! Make F_pred & chi2
+    ! .crystal.make_F_predicted(sf_n)
+
+    ! sf_n.destroy
 
       sf_eq,Fc :: VEC{CPX}@
       k_pts :: MAT{REAL}@
@@ -1772,7 +1944,7 @@ contains
    ENSURE(.density_matrix.allocated, "no density matrix")
    ENSURE(.scfdata.associated, "no scfdata")
 
-      sf_n :: MAT{CPX}*
+      sf_n :: MAT{CPX}@
 
       ! Get atomic spin form factors
       .:get_unique_Hirshfeld_atom_SFs(sf_n,spin_density=TRUE)
