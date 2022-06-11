@@ -5,6 +5,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # Install where?
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
+# Allow arbitrary characters in test names
+cmake_policy(SET CMP0110 NEW)
+
 # Tonto version info and build date
 string(TIMESTAMP VERSION_MAJOR "%y")
 string(TIMESTAMP VERSION_MINOR "%m")
