@@ -537,14 +537,14 @@ contains
 
    end
 
-!  ==========================
-!  Structure factor integrals
-!  ==========================
+!  ===========================
+!  Fourier transform integrals
+!  ===========================
 
    make_ft(res,dens,k_pts)
    ! Return "res", the Fourier transform of a density described by an
    ! AO density matrix "dens" evaluated at some reflections "k_pts".
-   ! NOTE: Includes temperature factors hidden in here
+   ! NOTE: Includes *temperature* and *partition* factors in here.
       self :: IN
       res :: VEC{CPX}, OUT
       dens :: MAT{REAL}, IN
@@ -555,42 +555,48 @@ contains
    ENSURE(res.dim==k_pts.dim1,  "res and k_pts, incomptabile")
 
       k_max,k,fa,fb,la,lb,na,nb,q,atom_a,atom_b :: INT
-      ft_ab :: MAT3{CPX}*
+      ft_ab :: MAT3{CPX}@
       cutoff :: REAL
       sh :: SHELL2
 
-      k_max = size(k_pts,1)
-      cutoff = TOL(10) / .n_shell_pairs
+      k_max = k_pts.dim1
+      cutoff = TOL(10)/.n_shell_pairs
 
       res = ZERO
 
       parallel do q = 1,.n_shell_pairs
 
+         ! Get shell pairs
          .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
          if (sh.skip_ft(cutoff)) then
-           sh.destroy_ptr_part
-           cycle
+
+            ! Too small
+            sh.destroy_ptr_part
+
+         else 
+
+            ! Make the FT - includes thermal smearing
+            ft_ab.create(k_max,na,nb)
+            .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+           
+            ! Trace with density matrix
+            ! Count off-diagonals twice
+            if (fa/=fb) then 
+              do k = 1,k_max
+                 res(k) = res(k) + TWO*sum(ft_ab(k,:,:)*dens(fa:la,fb:lb))
+              end
+            else
+              do k = 1,k_max
+                 res(k) = res(k) +     sum(ft_ab(k,:,:)*dens(fa:la,fb:lb))
+              end
+            end
+           
+            ! Clean
+            ft_ab.destroy
+            sh.destroy_ptr_part
+
          end
-
-         ! Make the FT - includes thermal smearing
-         ft_ab.create(k_max,na,nb)
-         .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
-
-         ! Trace with density matrix
-         ! Count off-diagonals twice
-         if (fa/=fb) then 
-           do k = 1,k_max
-              res(k) = res(k) + TWO*sum(ft_ab(k,:,:)*dens(fa:la,fb:lb))
-           end
-         else
-           do k = 1,k_max
-              res(k) = res(k) +     sum(ft_ab(k,:,:)*dens(fa:la,fb:lb))
-           end
-         end
-
-         ft_ab.destroy
-         sh.destroy_ptr_part
 
       end
 
@@ -599,56 +605,63 @@ contains
    end
 
    make_ft(res,dens,k_pts)
-   ! Fourier transform of a density described by AO density matrix dens
-   ! evaluated at a series of reciprocal space points k_pts
-   ! Size of res is [size(k_pts,1)].
-      dens :: MAT{CPX}, target
-      k_pts :: MAT{REAL}
-      res :: VEC{CPX}
+   ! Return "res", the Fourier transform of a density described by an
+   ! AO density matrix "dens" evaluated at some reflections "k_pts".
+   ! NOTE: Includes temperature factors hidden in here
+      self :: IN
+      res :: VEC{CPX}, OUT
+      dens :: MAT{CPX}, IN
+      k_pts :: MAT{REAL}, IN
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.associated,  "no atom list")
+   ENSURE(res.dim==k_pts.dim1,  "res and k_pts, incomptabile")
 
-      k_max,q,k,fa,la,fb,lb,na,nb,atom_a,atom_b :: INT
-      ft_ab :: MAT3{CPX}*
-      dens_ba :: MAT{CPX}*
+      k_max,k,fa,fb,la,lb,na,nb,q,atom_a,atom_b :: INT
+      ft_ab :: MAT3{CPX}@
       cutoff :: REAL
       sh :: SHELL2
 
-      k_max = size(k_pts,1)
-      cutoff = TOL(10) / .n_shell_pairs
+      k_max = k_pts.dim1
+      cutoff = TOL(10)/.n_shell_pairs
 
       res = ZERO
 
-      parallel do q = 1,.n_shell_pairs
+      do q = 1,.n_shell_pairs
 
+         ! Get shell pairs
          .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
          if (sh.skip_ft(cutoff)) then
-           sh.destroy_ptr_part
-           cycle
+
+            ! Too small
+            sh.destroy_ptr_part
+
+         else 
+
+            ! Make the FT - includes thermal smearing
+            ft_ab.create(k_max,na,nb)
+            .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+           
+            ! Trace with density matrix
+            ! Count off-diagonals twice
+            if (fa/=fb) then 
+               do k = 1,k_max
+                  res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens(fb:lb,fa:la))
+               end
+            else
+               do k = 1,k_max
+                  res(k) = res(k) +     ft_ab(k,:,:).trace_product_with(dens(fb:lb,fa:la))
+               end
+            end
+           
+            ! Clean
+            ft_ab.destroy
+            sh.destroy_ptr_part
+
          end
-
-         ft_ab.create(k_max,na,nb)
-         .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
-
-         dens_ba => dens(fb:lb,fa:la)
-         if (fa/=fb) then ! count off-diagonals twice.
-           do k = 1,k_max
-              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba)
-           end
-         else
-           do k = 1,k_max
-              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba)
-           end
-         end
-
-         ft_ab.destroy
-         sh.destroy_ptr_part
 
       end
-
-      PARALLEL_SUM(res)
 
    end
 
@@ -656,54 +669,62 @@ contains
    ! Fourier transform of a density described by AO density matrix dens
    ! evaluated at a series of reciprocal space points k_pts
    ! Size of res is [size(k_pts,1)].
-      dens :: MAT{CPX}, target
-      k_pts :: MAT{REAL}
-      res :: VEC{CPX}
+      self :: IN
+      res :: VEC{CPX}, OUT
+      dens :: MAT{CPX}, IN
+      k_pts :: MAT{REAL}, IN
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.associated,  "no atom list")
 
-      k_max,q,k,fa,la,fb,lb,na,nb,atom_a,atom_b :: INT
-      ft_ab :: MAT3{CPX}*
-      dens_ba_aa,dens_ba_ab,dens_ba_ba,dens_ba_bb :: MAT{CPX}*
+      k_max,q,k,n_bf :: INT
+      ft_ab :: MAT3{CPX}@
+      fa,la,na,atom_a :: INT
+      fb,lb,nb,atom_b :: INT
+      dens_ba_aa,dens_ba_bb :: MAT{CPX}@
+      dens_ba_ab,dens_ba_ba :: MAT{CPX}@
       cutoff :: REAL
       sh :: SHELL2
 
-      k_max = size(k_pts,1)
+      n_bf   = .n_bf
+      k_max  = size(k_pts,1)
       cutoff = TOL(10) / .n_shell_pairs
 
       res = ZERO
 
-      parallel do q = 1,.n_shell_pairs
+      do q = 1,.n_shell_pairs
 
          .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
          if (sh.skip_ft(cutoff)) then
-           sh.destroy_ptr_part
-           cycle
+            sh.destroy_ptr_part
+            cycle
          end
 
+         ! FT integrals
          ft_ab.create(k_max,na,nb)
          .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
 
-         dens_ba_aa => dens(fb:lb,fa:la)
-         dens_ba_ab => dens(fb:lb,fa+.n_bf:la+.n_bf)
-         dens_ba_ba => dens(fb+.n_bf:lb+.n_bf,fa:la)
-         dens_ba_bb => dens(fb+.n_bf:lb+.n_bf,fa+.n_bf:la+.n_bf)
+         ! DM blocks
+         dens_ba_aa = dens(fb     :lb     ,fa     :la     )
+         dens_ba_ab = dens(fb     :lb     ,fa+n_bf:la+n_bf)
+         dens_ba_ba = dens(fb+n_bf:lb+n_bf,fa     :la     )
+         dens_ba_bb = dens(fb+n_bf:lb+n_bf,fa+n_bf:la+n_bf)
+
          if (fa/=fb) then ! count off-diagonals twice.
-           do k = 1,k_max
-              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_aa)
-              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_ab)
-              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_ba)
-              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_bb)
-           end
+            do k = 1,k_max
+               res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_aa)
+               res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_ab)
+               res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_ba)
+               res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba_bb)
+            end
          else
-           do k = 1,k_max
-              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_aa)
-              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_ab)
-              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_ba)
-              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_bb)
-           end
+            do k = 1,k_max
+               res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_aa)
+               res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_ab)
+               res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_ba)
+               res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba_bb)
+            end
          end
 
          ft_ab.destroy
@@ -711,9 +732,8 @@ contains
 
       end
 
-      PARALLEL_SUM(res)
-
    end
+
 
    make_ft_deriv_U(res,dens,k_pts)
    ! Fourier transform of a density described by AO density matrix dens
@@ -740,87 +760,85 @@ contains
 
       res = ZERO
 
-      parallel do q = 1,.n_shell_pairs
+      do q = 1,.n_shell_pairs
 
-       .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
-
-       if (sh.skip_ft(cutoff)) then
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+         
+         if (sh.skip_ft(cutoff)) then
+            sh.destroy_ptr_part
+            cycle
+         end
+         
+         ft_ab.create(k_max,na,nb)
+         .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+         
+         dens_ba => dens(fb:lb,fa:la)
+         
+         if (fa/=fb) ft_ab = TWO * ft_ab ! count off-diagonals twice.
+         
+         diff = .atom(atom_a).position-.atom(atom_b).position
+         separation = diff.norm
+         g = HALF
+         if (separation > 2.5d0) g=QUARTER
+         g = g * (-HALF) ! k_pts is 2pi * Bh so formula was divided by 4pi^2.
+         
+         basea = (atom_a-1) * 6
+         
+         if (atom_a==atom_b) then
+         
+            delta = TWO * g
+            do k = 1,k_max
+               ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * delta
+               x = k_pts(k,1)           ! SBh_x
+               y = k_pts(k,2)           ! SBh_y
+               z = k_pts(k,3)           ! SBh_z
+               tmp1 = ft_ab2 * x
+               tmp2 = ft_ab2 * y
+               z2 = TWO * z
+               res(basea+1,k) = res(basea+1,k) + tmp1 * x
+               res(basea+2,k) = res(basea+2,k) + tmp1 * y * TWO
+               res(basea+3,k) = res(basea+3,k) + tmp1 * z2
+               res(basea+4,k) = res(basea+4,k) + tmp2 * y
+               res(basea+5,k) = res(basea+5,k) + tmp2 * z2
+               res(basea+6,k) = res(basea+6,k) + ft_ab2 * z * z
+            end
+         
+         else
+         
+            baseb = (atom_b-1) * 6
+            do k = 1,k_max
+               ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * g
+               x = k_pts(k,1)           ! SBh_x
+               y = k_pts(k,2)           ! SBh_y
+               z = k_pts(k,3)           ! SBh_z
+               tmp1 = ft_ab2 * x
+               tmp2 = ft_ab2 * y
+               z2 = TWO * z
+               tmpa1 = tmp1 * x
+               tmpa2 = tmp1 * y * TWO
+               tmpa3 = tmp1 * z2
+               tmpa4 = tmp2 * y
+               tmpa5 = tmp2 * z2
+               tmpa6 = ft_ab2 * z * z
+               res(basea+1,k) = res(basea+1,k) + tmpa1
+               res(basea+2,k) = res(basea+2,k) + tmpa2
+               res(basea+3,k) = res(basea+3,k) + tmpa3
+               res(basea+4,k) = res(basea+4,k) + tmpa4
+               res(basea+5,k) = res(basea+5,k) + tmpa5
+               res(basea+6,k) = res(basea+6,k) + tmpa6
+               res(baseb+1,k) = res(baseb+1,k) + tmpa1
+               res(baseb+2,k) = res(baseb+2,k) + tmpa2
+               res(baseb+3,k) = res(baseb+3,k) + tmpa3
+               res(baseb+4,k) = res(baseb+4,k) + tmpa4
+               res(baseb+5,k) = res(baseb+5,k) + tmpa5
+               res(baseb+6,k) = res(baseb+6,k) + tmpa6
+            end
+         end
+         
+         ft_ab.destroy
          sh.destroy_ptr_part
-         cycle
-       end
-
-       ft_ab.create(k_max,na,nb)
-       .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
-
-       dens_ba => dens(fb:lb,fa:la)
-
-       if (fa/=fb) ft_ab = TWO * ft_ab ! count off-diagonals twice.
-
-       diff = .atom(atom_a).position-.atom(atom_b).position
-       separation = diff.norm
-       g = HALF
-       if (separation > 2.5d0) g=QUARTER
-       g = g * (-HALF) ! k_pts is 2pi * Bh so formula was divided by 4pi^2.
-
-       basea = (atom_a-1) * 6
-
-       if (atom_a==atom_b) then
-
-         delta = TWO * g
-         do k = 1,k_max
-           ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * delta
-           x = k_pts(k,1)           ! SBh_x
-           y = k_pts(k,2)           ! SBh_y
-           z = k_pts(k,3)           ! SBh_z
-           tmp1 = ft_ab2 * x
-           tmp2 = ft_ab2 * y
-           z2 = TWO * z
-           res(basea+1,k) = res(basea+1,k) + tmp1 * x
-           res(basea+2,k) = res(basea+2,k) + tmp1 * y * TWO
-           res(basea+3,k) = res(basea+3,k) + tmp1 * z2
-           res(basea+4,k) = res(basea+4,k) + tmp2 * y
-           res(basea+5,k) = res(basea+5,k) + tmp2 * z2
-           res(basea+6,k) = res(basea+6,k) + ft_ab2 * z * z
-         end
-
-       else
-
-         baseb = (atom_b-1) * 6
-         do k = 1,k_max
-           ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * g
-           x = k_pts(k,1)           ! SBh_x
-           y = k_pts(k,2)           ! SBh_y
-           z = k_pts(k,3)           ! SBh_z
-           tmp1 = ft_ab2 * x
-           tmp2 = ft_ab2 * y
-           z2 = TWO * z
-           tmpa1 = tmp1 * x
-           tmpa2 = tmp1 * y * TWO
-           tmpa3 = tmp1 * z2
-           tmpa4 = tmp2 * y
-           tmpa5 = tmp2 * z2
-           tmpa6 = ft_ab2 * z * z
-           res(basea+1,k) = res(basea+1,k) + tmpa1
-           res(basea+2,k) = res(basea+2,k) + tmpa2
-           res(basea+3,k) = res(basea+3,k) + tmpa3
-           res(basea+4,k) = res(basea+4,k) + tmpa4
-           res(basea+5,k) = res(basea+5,k) + tmpa5
-           res(basea+6,k) = res(basea+6,k) + tmpa6
-           res(baseb+1,k) = res(baseb+1,k) + tmpa1
-           res(baseb+2,k) = res(baseb+2,k) + tmpa2
-           res(baseb+3,k) = res(baseb+3,k) + tmpa3
-           res(baseb+4,k) = res(baseb+4,k) + tmpa4
-           res(baseb+5,k) = res(baseb+5,k) + tmpa5
-           res(baseb+6,k) = res(baseb+6,k) + tmpa6
-         end
-       end
-
-       ft_ab.destroy
-       sh.destroy_ptr_part
 
       end
-
-      PARALLEL_SUM(res)
 
    end
 
@@ -849,84 +867,82 @@ contains
 
       res = ZERO
 
-      parallel do q = 1, .n_shell_pairs
+      do q = 1, .n_shell_pairs
 
-       .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
-
-       if (sh.skip_ft(cutoff)) then
+         .BASE:get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb,atom_a,atom_b)
+         
+         if (sh.skip_ft(cutoff)) then
+            sh.destroy_ptr_part
+            cycle
+         end
+         
+         ft_ab.create(k_max,na,nb)
+         .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+         
+         dens_ba => dens(fb:lb,fa:la)
+         if (fa/=fb) ft_ab = TWO * ft_ab ! count off-diagonals twice.
+         
+         diff = .atom(atom_a).position-.atom(atom_b).position
+         separation = diff.norm
+         g = HALF
+         if (separation > 2.5d0) g=QUARTER
+         g = g * (-HALF) ! k_pts is 2pi * Bh so formula was divided by 4pi^2.
+         
+         basea = (atom_a-1) * 6
+         if (atom_a==atom_b) then
+         
+            delta = TWO * g
+            do k = 1,k_max
+               ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * delta
+               x = k_pts(k,1)           ! SBh_x
+               y = k_pts(k,2)           ! SBh_y
+               z = k_pts(k,3)           ! SBh_z
+               tmp1 = ft_ab2 * x
+               tmp2 = ft_ab2 * y
+               res(basea+1,k) = res(basea+1,k) + tmp1 * x
+               res(basea+2,k) = res(basea+2,k) + tmp1 * y
+               res(basea+3,k) = res(basea+3,k) + tmp1 * z
+               res(basea+4,k) = res(basea+4,k) + tmp2 * y
+               res(basea+5,k) = res(basea+5,k) + tmp2 * z
+               res(basea+6,k) = res(basea+6,k) + ft_ab2 * z * z
+            end
+         
+         else
+         
+            baseb = (atom_b-1) * 6
+            do k = 1,k_max
+               ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * g
+               x = k_pts(k,1)           ! SBh_x
+               y = k_pts(k,2)           ! SBh_y
+               z = k_pts(k,3)           ! SBh_z
+               tmp1 = ft_ab2 * x
+               tmp2 = ft_ab2 * y
+               res(basea+1,k) = res(basea+1,k) + tmp1 * x
+               res(basea+2,k) = res(basea+2,k) + tmp1 * y
+               res(basea+3,k) = res(basea+3,k) + tmp1 * z
+               res(basea+4,k) = res(basea+4,k) + tmp2 * y
+               res(basea+5,k) = res(basea+5,k) + tmp2 * z
+               res(basea+6,k) = res(basea+6,k) + ft_ab2 * z * z
+               res(baseb+1,k) = res(baseb+1,k) + tmp1 * x
+               res(baseb+2,k) = res(baseb+2,k) + tmp1 * y
+               res(baseb+3,k) = res(baseb+3,k) + tmp1 * z
+               res(baseb+4,k) = res(baseb+4,k) + tmp2 * y
+               res(baseb+5,k) = res(baseb+5,k) + tmp2 * z
+               res(baseb+6,k) = res(baseb+6,k) + ft_ab2 * z * z
+            end
+         end
+         
+         ft_ab.destroy
          sh.destroy_ptr_part
-         cycle
-       end
-
-       ft_ab.create(k_max,na,nb)
-       .:make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
-
-       dens_ba => dens(fb:lb,fa:la)
-       if (fa/=fb) ft_ab = TWO * ft_ab ! count off-diagonals twice.
-
-       diff = .atom(atom_a).position-.atom(atom_b).position
-       separation = diff.norm
-       g=HALF
-       if (separation > 2.5d0) g=QUARTER
-       g = g * (-HALF) ! k_pts is 2pi * Bh so formula was divided by 4pi^2.
-
-       basea = (atom_a-1) * 6
-       if (atom_a==atom_b) then
-
-         delta = TWO * g
-         do k = 1,k_max
-           ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * delta
-           x = k_pts(k,1)           ! SBh_x
-           y = k_pts(k,2)           ! SBh_y
-           z = k_pts(k,3)           ! SBh_z
-           tmp1 = ft_ab2 * x
-           tmp2 = ft_ab2 * y
-           res(basea+1,k) = res(basea+1,k) + tmp1 * x
-           res(basea+2,k) = res(basea+2,k) + tmp1 * y
-           res(basea+3,k) = res(basea+3,k) + tmp1 * z
-           res(basea+4,k) = res(basea+4,k) + tmp2 * y
-           res(basea+5,k) = res(basea+5,k) + tmp2 * z
-           res(basea+6,k) = res(basea+6,k) + ft_ab2 * z * z
-         end
-
-       else
-
-         baseb = (atom_b-1) * 6
-         do k = 1,k_max
-           ft_ab2 = ft_ab(k,:,:).trace_product_with(dens_ba) * g
-           x = k_pts(k,1)           ! SBh_x
-           y = k_pts(k,2)           ! SBh_y
-           z = k_pts(k,3)           ! SBh_z
-           tmp1 = ft_ab2 * x
-           tmp2 = ft_ab2 * y
-           res(basea+1,k) = res(basea+1,k) + tmp1 * x
-           res(basea+2,k) = res(basea+2,k) + tmp1 * y
-           res(basea+3,k) = res(basea+3,k) + tmp1 * z
-           res(basea+4,k) = res(basea+4,k) + tmp2 * y
-           res(basea+5,k) = res(basea+5,k) + tmp2 * z
-           res(basea+6,k) = res(basea+6,k) + ft_ab2 * z * z
-           res(baseb+1,k) = res(baseb+1,k) + tmp1 * x
-           res(baseb+2,k) = res(baseb+2,k) + tmp1 * y
-           res(baseb+3,k) = res(baseb+3,k) + tmp1 * z
-           res(baseb+4,k) = res(baseb+4,k) + tmp2 * y
-           res(baseb+5,k) = res(baseb+5,k) + tmp2 * z
-           res(baseb+6,k) = res(baseb+6,k) + ft_ab2 * z * z
-         end
-       end
-
-       ft_ab.destroy
-       sh.destroy_ptr_part
 
       end
-
-      PARALLEL_SUM(res)
 
    end
 
 
-   make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+   make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b) ::: PURE
    ! Make the FT for one pair of gaussians.
-   ! Includes partitioning and thermal smearing.
+   ! Includes *partitioning and *temperature factors*.
       self :: IN
       ft_ab :: MAT3{CPX}, OUT
       k_pts :: MAT{REAL}, IN
@@ -936,26 +952,27 @@ contains
    ENSURE(.crystal.associated,"no crystal data")
 
       is_zero :: BIN
-      t :: MAT3{REAL}@
-      p :: MAT{REAL}@
-      k_max :: INT
-
-      k_max = k_pts.dim1
+      TF :: MAT3{REAL}@
+      part, Ua,Ub :: MAT{REAL}@
+      model :: STR
 
       ! Partition factors
-      p.create(sh.a.n_cc,sh.b.n_cc)
-      .:make_partition_factors(p,sh,atom_a,atom_b,is_zero)
+      part.create(sh.a.n_cc,sh.b.n_cc)
+      .:make_partition_factors(part,sh,atom_a,atom_b,is_zero)
 
       if (NOT is_zero) then
 
-         ! Get thermal smearing factors
-         t.create(k_max,sh.a.n_cc,sh.b.n_cc)
-         .:thermal_smearing_correction(t,k_pts,atom_a,atom_b,sh)
+         ! Get thermal factors "TF"
+         TF.create(k_pts.dim1,sh.a.n_cc,sh.b.n_cc)
+         Ua = .atom(atom_a).ADP_tensor
+         Ub = .atom(atom_b).ADP_tensor
+         model = .crystal.temperature_factor_model
+         sh.make_temperature_factors(TF,model,k_pts,Ua,Ub)
 
          ! Do thermal *and* partition factor
-         sh.make_ft(ft_ab,k_pts,t,p)
+         sh.make_ft(ft_ab,k_pts,TF,part)
 
-         t.destroy
+         TF.destroy
 
       else
 
@@ -963,7 +980,7 @@ contains
 
       end
 
-      p.destroy
+      part.destroy
 
    end
 
@@ -1002,17 +1019,18 @@ contains
 !  Partitioning
 !  ============
 
-   make_partition_factors(p,sh,atom_a,atom_b,is_zero) ::: PURE
-   ! Make the partitition factors "p" over the contractions in a
-   ! SHELL2 "sh" with atom centers "atom_a" and "atom_b" and for a
-   ! particular thermal ".crystal.partition_model",.
+   make_partition_factors(part,sh,atom_a,atom_b,is_zero) ::: PURE
+   ! Make the partitition factors "part" over the contractions in a
+   ! SHELL2 "sh" on centers "atom_a" and "atom_b" and for a particular
+   ! thermal ".crystal.data.partition_model",.
       self :: IN
-      p :: MAT{REAL}, OUT
+      part :: MAT{REAL}, OUT
       sh :: SHELL2, IN
       atom_a,atom_b :: INT, IN
       is_zero :: BIN, optional, OUT
 
    ENSURE(.crystal.associated,"no crystal data")
+   ENSURE(.crystal.data.associated,"no crystal data")
 
       ra,rb,fa,fb :: REAL
 
@@ -1040,20 +1058,20 @@ contains
       else;           fb = ONE/rb
       end
 
-      select case (trim(.crystal.partition_model))
-      case (" ","none"); p = ONE
-      case ("mulliken"); p = HALF * (fa + fb)
-      case ("gaussian"); sh.make_gaussian_partition(p,fa,fb)
+      select case (trim(.crystal.data.partition_model))
+      case ("none       "); part = ONE
+      case ("tc-mulliken"); part = HALF * (fa + fb)
+      case ("tc-tanaka  "); sh.make_Tanaka_partition(part,fa,fb)
       end
 
    end
 
-   make_partition_factors(p,sh,ra,rb,is_zero) ::: PURE
-   ! Make the partitition factors "p" over the contractions in a
+   make_partition_factors(part,sh,ra,rb,is_zero) ::: PURE
+   ! Make the partitition factors "part" over the contractions in a
    ! SHELL2 "sh" with repetition or site symmetry factors "ra" 
    ! and "rb".
       self :: IN
-      p :: MAT{REAL}, OUT
+      part :: MAT{REAL}, OUT
       sh :: SHELL2, IN
       ra,rb :: REAL, IN
       is_zero :: BIN, optional, OUT
@@ -1082,7 +1100,7 @@ contains
       end
 
       ! Tanaka method only for now ...
-      sh.make_gaussian_partition(p,fa,fb)
+      sh.make_Tanaka_partition(part,fa,fb)
 
    end
 
@@ -1090,221 +1108,144 @@ contains
 !  Thermal smearing
 !  ================
 
-   thermal_smearing_correction(res,k_pts,a,b,sh) ::: pure
-   ! Makes the thermal smearing correction term "res" over the
-   ! contraction coefficients.  Dimensions of "res" are
-   ! [k_max,.a.n_cc,.b.n_cc].
-      self :: IN
-      res :: MAT3{REAL}, OUT
-      k_pts :: MAT{REAL}, IN
-      a,b :: INT, IN
-      sh :: SHELL2, IN
+!   make_temperature_factors(TF,k_pts,a,b,sh) ::: PURE
+!   ! Makes the temperature factors "TF" for every pair of the
+!   ! contraction coefficients.  Dimensions of "res" are
+!   ! [k_max,.a.n_cc,.b.n_cc].
+!      self :: IN
+!      TF :: MAT3{REAL}, OUT
+!      k_pts :: MAT{REAL}, IN
+!      a,b :: INT, IN
+!      sh :: SHELL2, IN
+!
+!   ENSURE(NOT .crystal.data.associated,"no crystal.data")
+!
+!      Ua,Ub,Uab :: MAT{REAL}(3,3)
+!      S,US,diff :: VEC{REAL}(3)
+!      separation,bondlength,Ta,Tb,g :: REAL
+!      k :: INT
+!
+!      select case (trim(.crystal.temperature_factor_model))
+!
+!      case ("none      ")
+!
+!         TF = ONE
+!
+!      case ("tc-coppens") 
+!      
+!         ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
+!         Ua = -HALF * .atom(a).ADP_tensor
+!         Ub = -HALF * .atom(b).ADP_tensor
+!
+!         do k = 1,k_pts.dim1
+!            S = k_pts(k,:)
+!            US = matmul(Ua,S)
+!            Ta = dot_product(S,US)
+!            US = matmul(Ub,S)
+!            Tb = dot_product(S,US)
+!            TF(k,:,:) = HALF*(exp(Ta)+exp(Tb))
+!         end
+!
+!      case ("tc-stewart") 
+!      
+!         ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
+!         Ua   = .atom(a).ADP_tensor
+!         Ub   = .atom(b).ADP_tensor
+!         Uab  = Ua + Ub
+!         diff = .atom(a).position-.atom(b).position
+!
+!         bondlength = 2.5
+!         separation = diff.norm
+!         g = HALF
+!         if (separation > bondlength) g = QUARTER
+!
+!         Uab = -HALF * g * Uab    
+!
+!         do k = 1,k_pts.dim1
+!            S = k_pts(k,:)
+!            US = matmul(Uab,S)
+!            Ta = dot_product(S,US)
+!            TF(k,:,:) = exp(Ta)
+!         end
+!
+!      case ("tc-tanaka ") 
+!      
+!         ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+!         Ua = .atom(a).ADP_tensor
+!         Ub = .atom(b).ADP_tensor
+!         sh.make_Tanaka_temperature_factors(TF,k_pts,Ua,Ub)
+!
+!      end
+!
+!   end
 
-      Ua,Ub,Uab :: MAT{REAL}(3,3)
-      S,US :: VEC{REAL}(3)
-      k_max,k :: INT
-      separation,bondlength,Ta,Tb,g :: REAL
-      diff :: VEC{REAL}(3)
-
-      k_max = k_pts.dim1
-
-      select case (trim(.crystal.thermal_smearing_model))
-
-       case (" ","none")
-
-          res = ONE
-
-       case ("coppens") 
-       
-          ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
-          Ua = -HALF * .atom(a).ADP_tensor
-          Ub = -HALF * .atom(b).ADP_tensor
-
-          do k = 1,k_max
-             S = k_pts(k,:)
-             US = matmul(Ua,S)
-             Ta = dot_product(S,US)
-             US = matmul(Ub,S)
-             Tb = dot_product(S,US)
-             res(k,:,:) = HALF*(exp(Ta)+exp(Tb))
-          end
-
-       case ("stewart") 
-       
-          ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
-          Ua   = .atom(a).ADP_tensor
-          Ub   = .atom(b).ADP_tensor
-          Uab  = Ua + Ub
-          diff = .atom(a).position-.atom(b).position
-
-          bondlength = 2.5
-          separation = diff.norm
-          g = HALF
-          if (separation > bondlength) g = QUARTER
-
-          Uab = -HALF * g * Uab    
-
-          do k = 1,k_max
-             S = k_pts(k,:)
-             US = matmul(Uab,S)
-             Ta = dot_product(S,US)
-             res(k,:,:) = exp(Ta)
-          end
-
-       case ("tanaka") 
-       
-          ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
-          Ua = .atom(a).ADP_tensor
-          Ub = .atom(b).ADP_tensor
-          sh.make_tanaka_thermal_smearing(res,k_pts,Ua,Ub)
-
-      end
-
-   end
-
-   thermal_smearing_correction(res,k1,k2,k3,a,b) ::: pure
-   ! Makes the thermal smearing correction term "res" over the
-   ! contraction coefficients.  Dimensions of "res" are
-   ! [k_max,.a.n_cc,.b.n_cc].
-      self :: IN
-      res :: MAT3{REAL}, OUT
-      k1,k2,k3 :: VEC{REAL}, IN
-      a,b :: INT, IN
-
-      Ua,Ub,Uab :: MAT{REAL}(3,3)
-      S,US :: VEC{REAL}(3)
-      k_max,k :: INT
-      separation,bondlength,Ta,Tb,g :: REAL
-      diff :: VEC{REAL}(3)
-
-      k_max = k1.dim1
-
-      select case (trim(.crystal.thermal_smearing_model))
-
-       case (" ","none")
-
-          res = ONE
-
-       case ("coppens") 
-       
-          ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
-          Ua = -HALF * .atom(a).ADP_tensor
-          Ub = -HALF * .atom(b).ADP_tensor
-
-          do k = 1,k_max
-
-             S(1) = k1(k)
-             S(2) = k2(k)
-             S(3) = k3(k)
-
-             US = matmul(Ua,S)
-             Ta = dot_product(S,US)
-             US = matmul(Ub,S)
-             Tb = dot_product(S,US)
-
-             res(k,:,:) = HALF*(exp(Ta)+exp(Tb))
-
-          end
-
-       case ("stewart") 
-       
-          ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
-          Ua   = .atom(a).ADP_tensor
-          Ub   = .atom(b).ADP_tensor
-          Uab  = Ua + Ub
-          diff = .atom(a).position-.atom(b).position
-
-          bondlength = 2.5
-          separation = diff.norm
-          g = HALF
-          if (separation > bondlength) g = QUARTER
-
-          Uab = -HALF * g * Uab    
-
-          do k = 1,k_max
-
-             S(1) = k1(k)
-             S(2) = k2(k)
-             S(3) = k3(k)
-
-             US = matmul(Uab,S)
-             Ta = dot_product(S,US)
-
-             res(k,:,:) = exp(Ta)
-
-          end
-
-      end
-
-   end
-
-   ft_thermally_smear(ft_ab,k_pts,a,b)
-   ! Thermally smear the fourier transform integrals "ft_ab" evaluated
-   ! on "k_pts" for shell pair (ab) centered on atoms "a" and "b" .
-      self :: IN
-      ft_ab :: MAT3{CPX}, INOUT
-      k_pts :: MAT{REAL}, IN
-      a,b :: INT, IN
-
-      Ua,Ub,Uab :: MAT{REAL}(3,3)
-      S,US,diff :: VEC{REAL}(3)
-      separation,bondlength,Ta,Tb,g :: REAL
-      k,k_max :: INT
-
-      k_max = k_pts.dim1
-
-      select case (trim(.crystal.thermal_smearing_model))
-
-         case (" ","none")
-
-         case ("coppens") 
-         
-            ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
-            Ua = -HALF * .atom(a).ADP_tensor
-            Ub = -HALF * .atom(b).ADP_tensor
-
-            do k = 1,k_max
-               S = k_pts(k,:)
-               US = matmul(Ua,S)
-               Ta = dot_product(S,US)
-               US = matmul(Ub,S)
-               Tb = dot_product(S,US)
-               ft_ab(k,:,:) = ft_ab(k,:,:) * HALF*(exp(Ta)+exp(Tb))
-            end
-
-         case ("stewart") 
-         
-            ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4
-            Ua = .atom(a).ADP_tensor
-            Ub = .atom(b).ADP_tensor
-            Uab = Ua + Ub
-            diff = .atom(a).position-.atom(b).position
-
-            bondlength = 2.5e0
-            separation = diff.norm
-            g = HALF
-            if (separation > bondlength) g=QUARTER
-
-            Uab = -HALF * g * Uab
-
-            do k = 1,k_max
-               S = k_pts(k,:)
-               US = matmul(Uab,S)
-               Ta = dot_product(S,US)
-               ft_ab(k,:,:) = exp(Ta)*ft_ab(k,:,:)
-            end
-
-         case ("tanaka") 
-         
-            ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
-            DIE("cannot thermally smear at contracted level.")
-
-         case default
-            DIE("unknown model, "//trim(.crystal.thermal_smearing_model))
-
-      end
-
-   end
+!   ft_thermally_smear(ft_ab,k_pts,a,b)
+!   ! Thermally smear the fourier transform integrals "ft_ab" evaluated
+!   ! on "k_pts" for shell pair (ab) centered on atoms "a" and "b" .
+!      self :: IN
+!      ft_ab :: MAT3{CPX}, INOUT
+!      k_pts :: MAT{REAL}, IN
+!      a,b :: INT, IN
+!
+!      Ua,Ub,Uab :: MAT{REAL}(3,3)
+!      S,US,diff :: VEC{REAL}(3)
+!      separation,bondlength,Ta,Tb,g :: REAL
+!      k,k_max :: INT
+!
+!      k_max = k_pts.dim1
+!
+!      select case (trim(.crystal.temperature_factor_model))
+!
+!      case ("none      ")
+!
+!      case ("tc-coppens") 
+!      
+!         ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
+!         Ua = -HALF * .atom(a).ADP_tensor
+!         Ub = -HALF * .atom(b).ADP_tensor
+!
+!         do k = 1,k_max
+!            S = k_pts(k,:)
+!            US = matmul(Ua,S)
+!            Ta = dot_product(S,US)
+!            US = matmul(Ub,S)
+!            Tb = dot_product(S,US)
+!            ft_ab(k,:,:) = ft_ab(k,:,:) * HALF*(exp(Ta)+exp(Tb))
+!         end
+!
+!      case ("tc-stewart") 
+!      
+!         ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4
+!         Ua = .atom(a).ADP_tensor
+!         Ub = .atom(b).ADP_tensor
+!         Uab = Ua + Ub
+!         diff = .atom(a).position-.atom(b).position
+!
+!         bondlength = 2.5e0
+!         separation = diff.norm
+!         g = HALF
+!         if (separation > bondlength) g=QUARTER
+!
+!         Uab = -HALF * g * Uab
+!
+!         do k = 1,k_max
+!            S = k_pts(k,:)
+!            US = matmul(Uab,S)
+!            Ta = dot_product(S,US)
+!            ft_ab(k,:,:) = exp(Ta)*ft_ab(k,:,:)
+!         end
+!
+!      case ("tc-tanaka") 
+!      
+!         ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+!         DIE("cannot thermally smear at contracted level.")
+!
+!      case default
+!         DIE("unknown model, "//trim(.crystal.temperature_factor_model))
+!
+!      end
+!
+!   end
 
 !  ==================
 !  Archived integrals
@@ -1654,7 +1595,7 @@ contains
 !      k_max :: INT
 !      k_max = size(k_pts,1)
 !      t.create(k_max,sh.a.n_cc,sh.b.n_cc)
-!      .thermal_smearing_correction(t,k_pts,atom_a,atom_b,sh)
+!      .make_temperature_factors(t,k_pts,atom_a,atom_b,sh)
 !      p.create(sh.a.n_cc,sh.b.n_cc)
 !      .make_partition_factors(p,sh,atom_a,atom_b)
 !      sh.make_ft_nabla(ft_ab,k_pts,t,p)
@@ -2882,30 +2823,35 @@ contains
 
            ! partitioning and thermal smearing
            ! part=gaussian / thermal=tanaka are done here
-           select case (trim(.crystal.thermal_smearing_model))
-             case ("tanaka") ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
-               k_vec(1)=h1;k_vec(2)=h2;k_vec(3)=h3
-               .:thermal_tanaka(p,G,k_vec,a,b)
-             case default
-               p = ONE
+           select case (trim(.crystal.temperature_factor_model))
+
+           case ("none     ")
+              p = ONE
+
+           case ("tc-tanaka") 
+              ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
+              k_vec(1)=h1;k_vec(2)=h2;k_vec(3)=h3
+              .:thermal_tanaka(p,G,k_vec,a,b)
+
            end
 
-             t = ONE
+           t = ONE
 
            ft_ab.create(la-fa+1,lb-fb+1)
            ft_ab = (ZERO,ZERO)
 
-            if ( (fa-la)==0 AND (fb-lb)==0 ) then
-               G.make_normalised_ft_00(ft_ab,h1,h2,h3)
-            else
-               G.make_normalised_ft_v2(ft_ab,h1,h2,h3,.use_spherical_basis) ! cleaner newer version
-            end if
+           if ( (fa-la)==0 AND (fb-lb)==0 ) then
+              G.make_normalised_ft_00(ft_ab,h1,h2,h3)
+           else
+              ! cleaner newer version
+              G.make_normalised_ft_v2(ft_ab,h1,h2,h3,.use_spherical_basis) 
+           end if
 
-            ! perhaps the thermal smearing should come after building
-            ! the whole sf-matrix
-            ft(fa:la,fb:lb) = ft_ab*p*t
+           ! perhaps the thermal smearing should come after building
+           ! the whole sf-matrix
+           ft(fa:la,fb:lb) = ft_ab*p*t
 
-            ft_ab.destroy
+           ft_ab.destroy
 
         end
 
@@ -3021,7 +2967,7 @@ contains
          .:make_partition_factors(p,sh,atom_a,atom_b,is_zero)
 
          t.create(la-fa+1,lb-fb+1)
-         .:thermal_smearing_correction_pce(t,k_vec,atom_a,atom_b)
+         .:make_temperature_factors_pce(t,k_vec,atom_a,atom_b)
 
          do bg = 1,lb-fb+1
          do ag = 1,la-fa+1
@@ -3040,7 +2986,7 @@ contains
 
    end
 
-   thermal_smearing_correction_pce(res,k_vec,a,b)
+   make_temperature_factors_pce(res,k_vec,a,b)
    ! Makes the thermal smearing correction term.  Note that res is
    ! done over the contraction coefficients. Dimensions of "res"
    ! are [.a.n_cc,.b.n_cc].
@@ -3054,12 +3000,12 @@ contains
       separation,bondlength,Ta,Tb,g :: REAL
       diff :: VEC{REAL}(3)
 
-      select case (trim(.crystal.thermal_smearing_model))
+      select case (trim(.crystal.temperature_factor_model))
 
-      case (" ","none")
+      case ("none      ")
          res = ONE
 
-      case ("coppens") ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
+      case ("tc-coppens") ! tf=HALF[exp(-(1/2)S(Ua)S)+exp(-(1/2)S(Ub)S)]
          Ua = -HALF * .atom(a).ADP_tensor
          Ub = -HALF * .atom(b).ADP_tensor
          S  = k_vec(:)
@@ -3067,8 +3013,8 @@ contains
          US.to_product_of(Ub,S); Tb = S.dot(US)
          res = HALF*(exp(Ta)+exp(Tb))
 
-      case ("stewart") ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
-         bondlength=2.5
+      case ("tc-stewart") ! tf=exp[-HALF Sg(Ua+Ub)S], g=1/2,1/4]
+         bondlength = 2.5
          Ua = .atom(a).ADP_tensor
          Ub = .atom(b).ADP_tensor
          Uab = Ua + Ub
@@ -3083,7 +3029,7 @@ contains
          res = exp(Ta)
 
       case default
-         DIE("unknown model:"//trim(.crystal.thermal_smearing_model))
+         DIE("unknown model:"//trim(.crystal.temperature_factor_model))
 
       end
 
@@ -3106,33 +3052,32 @@ contains
 
       !!  WARN("tanaka model is going in the ordinary way, not sure about any PCE in it !!!")
       !!  stdout.flush
-         Ua = .atom(a).ADP_tensor
-         Ub = .atom(b).ADP_tensor
+      Ua = .atom(a).ADP_tensor
+      Ub = .atom(b).ADP_tensor
 
-       ! it is currently a problem without atom_data
-       !  ea = G.a.set_exponent(ex(a))
-         ea = G.a.exponent
-         Ua_ea = ea * Ua
+      ! it is currently a problem without atom_data
+      !  ea = G.a.set_exponent(ex(a))
+      ea = G.a.exponent
+      Ua_ea = ea * Ua
 
-         eb = G.b.exponent
-         Ub_eb = eb * Ub
+      eb = G.b.exponent
+      Ub_eb = eb * Ub
 
-            U = - HALF * (Ua_ea + Ub_eb) / (ea + eb)
+      U = - HALF * (Ua_ea + Ub_eb) / (ea + eb)
 
-            U11    = U(1,1)
-            U22    = U(2,2)
-            U33    = U(3,3)
-            U21_12 = U(2,1) + U(1,2)
-            U31_13 = U(3,1) + U(1,3)
-            U32_23 = U(3,2) + U(2,3)
+      U11    = U(1,1)
+      U22    = U(2,2)
+      U33    = U(3,3)
+      U21_12 = U(2,1) + U(1,2)
+      U31_13 = U(3,1) + U(1,3)
+      U32_23 = U(3,2) + U(2,3)
 
+      S1 = k_vec(1)
+      S2 = k_vec(2)
+      S3 = k_vec(3)
 
-               S1 = k_vec(1)
-               S2 = k_vec(2)
-               S3 = k_vec(3)
-
-               ! S.U.S has been expanded to save multiplies and array accesses.
-               res = exp(S1*(S1*U11+S2*U21_12+S3*U31_13)+S2*(S2*U22+S3*U32_23)+S3*S3*U33)
+      ! S.U.S has been expanded to save multiplies and array accesses.
+      res = exp(S1*(S1*U11+S2*U21_12+S3*U31_13)+S2*(S2*U22+S3*U32_23)+S3*S3*U33)
 
    end
 
