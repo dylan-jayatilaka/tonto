@@ -1406,7 +1406,7 @@ contains
 
    end
 
-   prep_geminal_sets
+   prep_geminal_sets ::: leaky
    ! prepare the diagonal and non-diagonal sets of geminals for each 2D-block
      ENSURE(.n_2D_blocks>0,"no 2D-block")
      ENSURE(.block_types(1).element.created,"block_types(1).element does not exist")
@@ -1451,22 +1451,37 @@ contains
          counter=counter+1
          .non_diag_set(i).element(counter)=geminal_set(4)
        end
-       stdout.show("2D block", i)
-       stdout.show("diag_set dimension", .diag_set(i).element.dim)
-       stdout.show("non_diag_set dimension", .non_diag_set(i).element.dim)
+!debug      stdout.show("2D block", i)
+!debug      stdout.show("diag_set dimension", .diag_set(i).element.dim)
+!debug      stdout.show("non_diag_set dimension", .non_diag_set(i).element.dim)
      end
 
-     ! prepare "block_types"
-        .prep_block_types(.bra_set.vec(i),i)
+   end
 
-     ! write "block_types"
-   !debug stdout.text(" ")
-   !debug stdout.text("Block types vectors:")
-!     do i=1,n_pauli_blocks
-!      !debug stdout.text(" ")
-!      !debug stdout.show("2D block", i)
-!      !debug stdout.put(.block_types(i).element)
-!     end
+   make_set_intersection(set_1,set_2,set_3) ::: leaky
+   ! make a vector which contains the common values of two vectors of integers
+     set_1,set_2 :: VEC{INT}*, IN
+     set_3 :: VEC{INT}*, OUT
+     i,counter :: INT
+     
+     if(set_1.dim==0 OR set_2.dim==0) then
+       set_3.create(0)
+       return
+     end
+
+     counter=0
+     do i=1,set_1.dim
+       if ( any(set_2 == set_1(i)) ) counter=counter+1
+     end
+     set_3.create(counter)
+
+     counter=0
+     do i=1,set_1.dim
+       if ( any(set_2 == set_1(i)) ) then
+         counter=counter+1
+         set_3(counter)=set_1(i)
+       end
+     end
 
    end
 
@@ -1504,7 +1519,7 @@ contains
         case("GD2") 
            n = 5
         case default   
-         !debug stdout.text("unrecognized block type")
+           stdout.text("unrecognized block type")
            stop
      end
 
@@ -4776,6 +4791,7 @@ contains
 
      .prep_orbital_block_mapping
      .prep_block_types
+     .prep_geminal_sets
      
      size_ab = 4*.mat_size*.mat_size
      size_aa = .mat_size*(.mat_size-1)*2
@@ -5840,7 +5856,7 @@ contains
      ind_1, ind_2, ind_3, ind_4 :: INT
      two_rdm_elt :: PAULI_BLOCK_2RDM_ELT
 
-     m=.n_2D_3typ_blocks
+     m=.n_2D_blocks
      do block_1=1,m-1
         b1 = block_1 + .n_1D_blocks
         !orbital indices for block_1
@@ -5858,30 +5874,32 @@ contains
            two_rdm_elt.block_2D_numbers = (/ block_1,block_2,block_1,block_2 /)
            two_rdm_elt.indices = (/ ind_1,ind_2,ind_3,ind_4 /)
            two_rdm_elt.subindices = (/ TRUE,FALSE,TRUE,FALSE /)
-           .case_3typ_3typ(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,two_rdm_elt)
+
+           .comp_2rtm_two_2D_blocks_2a_epi2o(i,red_pbg_1,two_rdm_elt)
+        !   .comp_2rtm_two_2D_blocks_1d_epi2o(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,two_rdm_elt)
         end
       end
    end
 
-   case_3typ_3typ(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,two_rdm_elt)
+   comp_2rtm_two_2D_blocks_2a_epi2o(i,red_pbg_1,two_rdm_elt)
    ! calculation of the 2RTM elements when two 2D-3typ blocks. Case 1d (2 distinct geminals) 
    ! and case 2a (only one geminal has the 2 blocks) of the paper
-     i, i_a, i_b :: INT
-     ng_1, ng_2 :: INT
-     red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
+     i  :: INT
+     red_pbg_1 :: PAULI_BLOCK_GEMINALS
      two_rdm_elt :: PAULI_BLOCK_2RDM_ELT
      overlap :: REAL
+     diag_diag,diag_ndiag,ndiag_diag,ndiag_ndiag :: VEC{INT}* DEFAULT_NULL
      m :: INT
-     j, r, s :: INT
+     j, r :: INT
      b1, b2 :: INT
      block_1, block_2 :: INT
-     geminal_1,geminal_2 :: INT
      geminal :: INT
      ind_1, ind_2, ind_3, ind_4 :: INT
-     coef_1_prod_1, coef_1_prod_2, coef_1_prod_3, coef_1_prod_4 :: REAL
-     coef_2_prod_1, coef_2_prod_2, coef_2_prod_3, coef_2_prod_4 :: REAL
-     term :: REAL
-     coef_1, coef_2, coef_3, coef_4 :: REAL
+     terms :: VEC{REAL}(8)
+     el11_bra, el11_ket :: REAL DEFAULT(ZERO)
+     el22_bra, el22_ket :: REAL DEFAULT(ZERO)
+     el12_bra, el12_ket :: REAL DEFAULT(ZERO)
+     el21_bra, el21_ket :: REAL DEFAULT(ZERO)
      problem :: BIN
 
      b1 =  two_rdm_elt.block_numbers(1)
@@ -5893,766 +5911,861 @@ contains
      ind_3 = two_rdm_elt.indices(3) 
      ind_4 = two_rdm_elt.indices(4)
 
-     r=5
-     geminal_1 = .block_types(block_1).element(r)
-     if (geminal_1 /= 0) then
-        s=5
-        !2 diagonal block matrices i.e. 2 GD2 
-        geminal_2 = .block_types(block_2).element(s)
-        if (geminal_1 == geminal_2) then
-     ! in paper case 2a, in the thesis: first case
-     ! r=s=5: diag implies "i1 = j1 and i2 = j2" 
-           geminal=geminal_1
-           .prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
-           if (NOT problem) then
-              red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
-              red_pbg_1.calc_overlap_integral(overlap,FALSE)
-              !debug .red_overlap_calc_2rdm=.red_overlap_calc_2rdm+1
-              coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
-              coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
+     .make_set_intersection(.diag_set(block_1).element,.diag_set(block_2).element,diag_diag)
+     .make_set_intersection(.diag_set(block_1).element,.non_diag_set(block_2).element,diag_ndiag)
+     .make_set_intersection(.non_diag_set(block_1).element,.diag_set(block_2).element,ndiag_diag)
+     .make_set_intersection(.non_diag_set(block_1).element,.non_diag_set(block_2).element,ndiag_ndiag)
+     
+     !2 diagonal block matrices
+     terms=ZERO
+     do r=1,diag_diag.dim
+        geminal = diag_diag(r)
+        select case (.bra_set.vec(geminal).block_type(b1))
+           case("ID2") 
+              el11_bra = .bra_set.vec(geminal).coef(b1)
+              el22_bra = el11_bra
+           case("SZ") 
+              el11_bra = .bra_set.vec(geminal).coef(b1)
+              el22_bra = -el11_bra
+           case("GD2") 
+              el11_bra = .bra_set.vec(geminal).coef(b1)*.first_GD2_elt(block_1)
+              el22_bra = .bra_set.vec(geminal).coef(b1)*.second_GD2_elt(block_1)
+           case default   
+              stdout.text("unexpected block type")
+              stop
+        end
+        select case (.ket_set.vec(geminal).block_type(b2))
+           case("ID2") 
+              el11_ket = .ket_set.vec(geminal).coef(b2)
+              el22_ket = el11_ket
+           case("SZ") 
+              el11_ket = .ket_set.vec(geminal).coef(b2)
+              el22_ket = -el11_ket
+           case("GD2") 
+              el11_ket = .ket_set.vec(geminal).coef(b2)*.first_GD2_elt(block_2)
+              el22_ket = .ket_set.vec(geminal).coef(b2)*.second_GD2_elt(block_2)
+           case default   
+              stdout.text("unexpected block type")
+              stop
+        end
+        ! diagonal submatrices implies "i1 = j1 and i2 = j2" 
+        ! four possible sub-cases, 
+        ! when we swap bra and ket 4 other terms are obtained by complex conjugation of the coefs
+        ! which amounts to complex conjugation of the whole terms since the submatrices are real
+        ! so which have the same 4 2RTM coefficients when the lambda-coef are real
+        .prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
+        if (NOT problem) then
+           red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
+           red_pbg_1.calc_overlap_integral(overlap,FALSE)
+           el11_ket = el11_ket*overlap
+           el22_ket = el22_ket*overlap
 
-              .rdm_2_ab(i).same_block = FALSE
-              .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-              .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_3,ind_3 /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = coef_1*.first_GD2_elt(block_1)*.first_GD2_elt(block_2)*overlap/.overlap
-            !debug stdout.text(" ")
-            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-              i = i+1
+           terms(1) = terms(1) + el11_bra*el11_ket
+           terms(2) = terms(2) + el11_bra*el22_ket
+           terms(3) = terms(3) + el22_bra*el11_ket
+           terms(4) = terms(4) + el22_bra*el22_ket
 
-              .rdm_2_ab(i).same_block = FALSE
-              .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-              .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_4,ind_4 /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
-              .rdm_2_ab(i).coefficient = coef_1*.first_GD2_elt(block_1)*.second_GD2_elt(block_2)*overlap/.overlap
-            !debug stdout.text(" ")
-            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-              i = i+1
-
-              .rdm_2_ab(i).same_block = FALSE
-              .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-              .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_3,ind_3 /)
-              .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = coef_1*.second_GD2_elt(block_1)*.first_GD2_elt(block_2)*overlap/.overlap
-            !debug stdout.text(" ")
-            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-              i = i+1
-
-              .rdm_2_ab(i).same_block = FALSE
-              .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-              .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_4,ind_4 /)
-              .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
-              .rdm_2_ab(i).coefficient = coef_1*.second_GD2_elt(block_1)*.second_GD2_elt(block_2)*overlap/.overlap
-            !debug stdout.text(" ")
-            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-              i = i+1
-
-              .rdm_2_ab(i).same_block = FALSE
-              .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-              .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_1,ind_1 /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = coef_2*.first_GD2_elt(block_2)*.first_GD2_elt(block_1)*overlap/.overlap
-            !debug stdout.text(" ")
-            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-              i = i+1
-
-              .rdm_2_ab(i).same_block = FALSE
-              .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-              .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_2,ind_2 /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
-              .rdm_2_ab(i).coefficient = coef_2*.first_GD2_elt(block_2)*.second_GD2_elt(block_1)*overlap/.overlap
-            !debug stdout.text(" ")
-            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-              i = i+1
-
-              .rdm_2_ab(i).same_block = FALSE
-              .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-              .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_1,ind_1 /)
-              .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_2)*.first_GD2_elt(block_1)*overlap/.overlap
-            !debug stdout.text(" ")
-            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-              i = i+1
-
-              .rdm_2_ab(i).same_block = FALSE
-              .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-              .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_2,ind_2 /)
-              .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
-              .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_2)*.second_GD2_elt(block_1)*overlap/.overlap
-            !debug stdout.text(" ")
-            !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-            !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-              i = i+1
-
-           end
-        else  
-     ! in paper case 1d, in the thesis: second case
-           coef_1_prod_1 = .bra_set.vec(geminal_1).coef(b1)*.ket_set.vec(geminal_1).coef(b1)
-           coef_1_prod_2 = .bra_set.vec(geminal_1).coef(b2)*.ket_set.vec(geminal_1).coef(b2)
-           coef_1_prod_3 = .bra_set.vec(geminal_1).coef(b1)*.ket_set.vec(geminal_1).coef(b2)
-           coef_1_prod_4 = .bra_set.vec(geminal_1).coef(b2)*.ket_set.vec(geminal_1).coef(b1)                
-           coef_2_prod_1 = .bra_set.vec(geminal_2).coef(b1)*.ket_set.vec(geminal_2).coef(b1)
-           coef_2_prod_2 = .bra_set.vec(geminal_2).coef(b2)*.ket_set.vec(geminal_2).coef(b2)
-           coef_2_prod_3 = .bra_set.vec(geminal_2).coef(b1)*.ket_set.vec(geminal_2).coef(b2)
-           coef_2_prod_4 = .bra_set.vec(geminal_2).coef(b2)*.ket_set.vec(geminal_2).coef(b1)                
-           if (.n_geminals > 2) then
-              .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
-              if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= .n_geminals))) then
-                 red_pbg_2.make_int_term_list(FALSE,FALSE,FALSE)
-                 red_pbg_2.calc_overlap_integral(overlap,FALSE)
-              end
-           else
-              overlap=ONE
-           end
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_1,ind_3 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-           coef_1=coef_1_prod_1*coef_2_prod_2*.first_GD2_elt(block_1)**2*.first_GD2_elt(block_2)**2
-           coef_2=coef_1_prod_2*coef_2_prod_1*.first_GD2_elt(block_1)**2*.first_GD2_elt(block_2)**2
-           .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_2)*.second_GD2_elt(block_1)*overlap/.overlap
-
-           if (abs(term) > TOL(15)) then
-              if (two_rdm_elt.subindices(4)) then
-                 two_rdm_elt.coefficient = term*.first_GD2_elt(block_2)/.overlap
-              else
-                 two_rdm_elt.coefficient = term*.second_GD2_elt(block_2)/.overlap
-              end
-              i = i+1
-           end
         end
      end          
+     terms=terms/.overlap
 
-     ! when "i1 /= j1 and i2 /= j2" (first case)
-     
-     do r=3,4
-        if (.block_types(block_1).element(r) /= 0) then
-           do s=3,4
-              if (.block_types(block_1).element(r) == .block_types(block_2).element(s)) then
-                 geminal = .block_types(block_1).element(r)
-                 .prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
-                 if (NOT problem) then
-                    red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
-                    red_pbg_1.calc_overlap_integral(overlap,FALSE)
-                    !debug .red_overlap_calc_2rdm=.red_overlap_calc_2rdm+1
-                    coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
-                    coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
-
-                    .rdm_2_ab(i).same_block = FALSE
-                    .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                    .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_3,ind_4 /)
-                    .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
-                    .rdm_2_ab(i).coefficient = coef_1*overlap/.overlap
-                  !debug stdout.text(" ")
-                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                    i = i+1
-
-                    .rdm_2_ab(i).same_block = FALSE
-                    .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                    .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_4,ind_3 /)
-                    .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
-                    if (s == 4) then
-                       .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
-                    else
-                       .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-                    end
-                  !debug stdout.text(" ")
-                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                    i = i+1
-
-                    .rdm_2_ab(i).same_block = FALSE
-                    .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                    .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_3,ind_4 /)
-                    .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
-                    if (r == 4) then
-                       .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
-                    else
-                       .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
-                    end
-                  !debug stdout.text(" ")
-                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                    i = i+1
-
-                    .rdm_2_ab(i).same_block = FALSE
-                    .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                    .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_4,ind_3 /)
-                    .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
-                    if (r /= s) then
-                       .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-3).coefficient
-                    else
-                       .rdm_2_ab(i).coefficient = .rdm_2_ab(i-3).coefficient
-                    end
-                  !debug stdout.text(" ")
-                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                    i = i+1
-
-                    .rdm_2_ab(i).same_block = FALSE
-                    .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                    .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_1,ind_2 /)
-                    .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
-                    .rdm_2_ab(i).coefficient = coef_2*overlap/.overlap
-                  !debug stdout.text(" ")
-                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                    i = i+1
-
-                    .rdm_2_ab(i).same_block = FALSE
-                    .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                    .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_2,ind_1 /)
-                    .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
-                    if (r == 4) then
-                       .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
-                    else
-                       .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-                    end
-                  !debug stdout.text(" ")
-                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                    i = i+1
-
-                    .rdm_2_ab(i).same_block = FALSE
-                    .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                    .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_1,ind_2 /)
-                    .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
-                    if (s == 4) then
-                       .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
-                    else
-                       .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
-                    end
-                  !debug stdout.text(" ")
-                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                    i = i+1
-
-                    .rdm_2_ab(i).same_block = FALSE
-                    .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                    .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_2,ind_1 /)
-                    .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
-                    if (r /= s) then
-                       .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-3).coefficient
-                    else
-                       .rdm_2_ab(i).coefficient = .rdm_2_ab(i-3).coefficient
-                    end
-                  !debug stdout.text(" ")
-                  !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-                  !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                    i = i+1
-
-                 end
-              end
-           end
-        end
-     end     
-
-     ! when "i1 = j1 and i2 /= j2" or "i1 /= j1 and i2 = j2" (first case)
-
-     r=5
-     if (.block_types(block_1).element(r) /= 0) then
-        do s=3,4
-           if (.block_types(block_1).element(r) == .block_types(block_2).element(s)) then
-              geminal = .block_types(block_1).element(r)
-              .prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
-              if (NOT problem) then
-                 red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
-                 red_pbg_1.calc_overlap_integral(overlap,FALSE)
-                    !debug .red_overlap_calc_2rdm=.red_overlap_calc_2rdm+1
-                 coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
-                 coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                 .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_3,ind_4 /)
-                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
-                 .rdm_2_ab(i).coefficient = coef_1*.first_GD2_elt(block_1)*overlap/.overlap
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                 .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_4,ind_3 /)
-                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
-                 if (s == 4) then
-                    .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
-                 else
-                    .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-                 end
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                 .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_3,ind_4 /)
-                 .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
-                 .rdm_2_ab(i).coefficient = coef_1*.second_GD2_elt(block_1)*overlap/.overlap
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                 .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_4,ind_3 /)
-                 .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
-                 if (s == 4) then
-                    .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
-                 else
-                    .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-                 end
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                 .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_1,ind_1 /)
-                 .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
-                 .rdm_2_ab(i).coefficient = coef_2*.first_GD2_elt(block_1)*overlap/.overlap
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                 .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_2,ind_2 /)
-                 .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
-                 .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_1)*overlap/.overlap
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                 .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_1,ind_1 /)
-                 .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
-                 if (s == 4) then
-                    .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
-                 else
-                    .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
-                 end
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                 .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_2,ind_2 /)
-                 .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
-                 if (s == 4) then
-                    .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
-                 else
-                    .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
-                 end
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-              end
-           end
-        end
-     end 
-
-     do r=3,4
-        if (.block_types(block_1).element(r) /= 0) then
-           s=5
-           if (.block_types(block_1).element(r) == .block_types(block_2).element(s)) then
-              geminal = .block_types(block_1).element(r)
-              .prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
-              if (NOT problem) then
-                 red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
-                 red_pbg_1.calc_overlap_integral(overlap,FALSE)
-                   !debug .red_overlap_calc_2rdm=.red_overlap_calc_2rdm+1
-                 coef_1 = .bra_set.vec(geminal).coef(b1)*.ket_set.vec(geminal).coef(b2)
-                 coef_2 = .bra_set.vec(geminal).coef(b2)*.ket_set.vec(geminal).coef(b1)
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                 .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_3,ind_3 /)
-                 .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
-                 .rdm_2_ab(i).coefficient = coef_1*.first_GD2_elt(block_2)*overlap/.overlap
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                 .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_4,ind_4 /)
-                 .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
-                 .rdm_2_ab(i).coefficient = coef_1*.second_GD2_elt(block_2)*overlap/.overlap
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                 .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_3,ind_3 /)
-                 .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
-                 if (r == 4) then
-                    .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
-                 else
-                    .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
-                 end
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
-                 .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_4,ind_4 /)
-                 .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
-                 if (r == 4) then
-                    .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-2).coefficient
-                 else
-                    .rdm_2_ab(i).coefficient = .rdm_2_ab(i-2).coefficient
-                 end
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                 .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_1,ind_2 /)
-                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
-                 .rdm_2_ab(i).coefficient = coef_2*.first_GD2_elt(block_2)*overlap/.overlap
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                 .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_2,ind_1 /)
-                 .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
-                 if (r == 4) then
-                    .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
-                 else
-                    .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-                 end
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                 .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_1,ind_2 /)
-                 .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
-                 .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_2)*overlap/.overlap
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-                 .rdm_2_ab(i).same_block = FALSE
-                 .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
-                 .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_2,ind_1 /)
-                 .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
-                 if (r == 4) then
-                    .rdm_2_ab(i).coefficient = -.rdm_2_ab(i-1).coefficient
-                 else
-                    .rdm_2_ab(i).coefficient = .rdm_2_ab(i-1).coefficient
-                 end
-               !debug stdout.text(" ")
-               !debug stdout.show("2-RDM element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-               !debug stdout.show("2-RDM element value", .rdm_2_ab(i).coefficient)
-                 i = i+1
-
-              end 
-           end
-        end
+     if (abs(terms(1)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_3,ind_3 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(1)
+        i=i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_1,ind_1 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(1)
+        i = i+1
+     end
+     if (abs(terms(2)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_4,ind_4 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(2)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_1,ind_1 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(2)
+        i = i+1
+     end
+     if (abs(terms(3)) > TOL(15)) then
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_3,ind_3 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(3)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_2,ind_2 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(3)
+        i = i+1
+     end
+     if (abs(terms(4)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_4,ind_4 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(4)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_2,ind_2 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(4)
+        i = i+1
      end
 
-           ! in the thesis, second case
-           ! in the paper case 1d
+     !2 non diagonal block matrices
+     terms=ZERO
+     do r=1,ndiag_ndiag.dim
+        geminal = ndiag_ndiag(r)
+        select case (.bra_set.vec(geminal).block_type(b1))
+           case("SX") 
+              el12_bra = .bra_set.vec(geminal).coef(b1)
+              el21_bra = el12_bra
+           case("ISY") 
+              el12_bra = .bra_set.vec(geminal).coef(b1)
+              el21_bra = -el12_bra
+           case default   
+              stdout.text("unexpected block type")
+              stop
+        end
+        select case (.ket_set.vec(geminal).block_type(b2))
+           case("SX") 
+              el12_ket = .ket_set.vec(geminal).coef(b2)
+              el21_ket = el12_ket
+           case("ISY") 
+              el12_ket = .ket_set.vec(geminal).coef(b2)
+              el21_ket = -el12_ket
+           case default   
+              stdout.text("unexpected block type")
+              stop
+        end
+        ! non diagonal submatrices implies "i1 /= j1" and "i2 /= j2" 
+        ! four possible sub-cases, 
+        ! when we swap bra and ket 4 other terms are obtained by complex conjugation of the coefs
+        ! which amounts to complex conjugation of the whole terms since the submatrices are real
+        ! so which have the same 4 2RTM coefficients when the lambda-coef are real
+        .prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
+        if (NOT problem) then
+           red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
+           red_pbg_1.calc_overlap_integral(overlap,FALSE)
+           el12_ket = el12_ket*overlap
+           el21_ket = el21_ket*overlap
 
-           ! when "i1 = i2 and j1 /= j2" (second case, first possibility, first formula)
+           terms(1) = terms(1) + el12_bra*el12_ket
+           terms(2) = terms(2) + el12_bra*el21_ket
+           terms(3) = terms(3) + el21_bra*el12_ket
+           terms(4) = terms(4) + el21_bra*el21_ket
+        end
+     end          
+     terms=terms/.overlap
 
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_1,ind_4 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-           
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_1,ind_3 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+     if (abs(terms(1)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_3,ind_4 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(1)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_1,ind_2 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(1)
+        i = i+1
+     end
+     if (abs(terms(2)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_4,ind_3 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(2)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_1,ind_2 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(2)
+        i = i+1
+     end
+     if (abs(terms(3)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_3,ind_4 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(3)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_2,ind_1 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(3)
+        i = i+1
+     end
+     if (abs(terms(4)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_4,ind_3 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(4)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_2,ind_1 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(4)
+        i = i+1
+     end
+     
 
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_2,ind_4 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+     !diagonal on block_1 non diagonal on block_2 
+     terms=ZERO
+     do r=1,diag_ndiag.dim
+        geminal = diag_ndiag(r)
+        select case (.bra_set.vec(geminal).block_type(b1))
+           case("ID2") 
+              el11_bra = .bra_set.vec(geminal).coef(b1)
+              el22_bra = el11_bra
+           case("SZ") 
+              el11_bra = .bra_set.vec(geminal).coef(b1)
+              el22_bra = -el11_bra
+           case("GD2") 
+              el11_bra = .bra_set.vec(geminal).coef(b1)*.first_GD2_elt(block_1)
+              el22_bra = .bra_set.vec(geminal).coef(b1)*.second_GD2_elt(block_1)
+           case default   
+              stdout.text("unexpected block type")
+              stop
+        end
+        select case (.ket_set.vec(geminal).block_type(b2))
+           case("SX") 
+              el12_ket = .ket_set.vec(geminal).coef(b2)
+              el21_ket = el12_ket
+           case("ISY") 
+              el12_ket = .ket_set.vec(geminal).coef(b2)
+              el21_ket = -el12_ket
+           case default   
+              stdout.text("unexpected block type")
+              stop
+        end
+        ! diagonal submatrices implies "i1 = j1" 
+        ! non diagonal submatrices implies "i2 /= j2" 
+        ! four possible sub-cases, 
+        ! when we swap bra and ket 4 other terms are obtained by complex conjugation of the coefs
+        ! which amounts to complex conjugation of the whole terms since the submatrices are real
+        ! so which have the same 4 2RTM coefficients when the lambda-coef are real
+        ! they correspond to cases "non diagonal - diagonal"
+        .prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
+        if (NOT problem) then
+           red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
+           red_pbg_1.calc_overlap_integral(overlap,FALSE)
+           el12_ket = el12_ket*overlap
+           el21_ket = el21_ket*overlap
 
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_2,ind_3 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+           terms(1) = terms(1) + el11_bra*el12_ket
+           terms(2) = terms(2) + el11_bra*el21_ket
+           terms(3) = terms(3) + el22_bra*el12_ket
+           terms(4) = terms(4) + el22_bra*el21_ket
+        end
+     end          
+     terms=terms/.overlap
 
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_3,ind_2 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_3,ind_1 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+     if (abs(terms(1)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_3,ind_4 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(1)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_1,ind_1 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(1)
+        i = i+1
+     end
+     if (abs(terms(2)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_1,ind_1,ind_4,ind_3 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(2)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_1,ind_1 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(2)
+        i = i+1
+     end
+     if (abs(terms(3)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_3,ind_4 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(3)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_3,ind_4,ind_2,ind_2 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(3)
+        i = i+1
+     end
+     if (abs(terms(4)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_2,ind_2,ind_4,ind_3 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(4)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_4,ind_3,ind_2,ind_2 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(4)
+        i = i+1
+     end
 
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_4,ind_2 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
 
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_4,ind_1 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
-           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+     !non diagonal on block_1 diagonal on block_2 
+     terms=ZERO
+     do r=1,ndiag_diag.dim
+        geminal = ndiag_diag(r)
+        select case (.bra_set.vec(geminal).block_type(b1))
+           case("SX") 
+              el12_bra = .bra_set.vec(geminal).coef(b1)
+              el21_bra = el12_bra
+           case("ISY") 
+              el12_bra = .bra_set.vec(geminal).coef(b1)
+              el21_bra = -el12_bra
+           case default   
+              stdout.text("unexpected block type")
+              stop
+        end
+        select case (.ket_set.vec(geminal).block_type(b2))
+           case("ID2") 
+              el11_ket = .ket_set.vec(geminal).coef(b2)
+              el22_ket = el11_ket
+           case("SZ") 
+              el11_ket = .ket_set.vec(geminal).coef(b2)
+              el22_ket = -el11_ket
+           case("GD2") 
+              el11_ket = .ket_set.vec(geminal).coef(b2)*.first_GD2_elt(block_2)
+              el22_ket = .ket_set.vec(geminal).coef(b2)*.second_GD2_elt(block_2)
+           case default   
+              stdout.text("unexpected block type")
+              stop
+        end
+        ! non diagonal submatrices implies "i1 /= j1" 
+        ! diagonal submatrices implies "i2 = j2" 
+        ! four possible sub-cases, 
+        ! when we swap bra and ket 4 other terms are obtained by complex conjugation of the coefs
+        ! which amounts to complex conjugation of the whole terms since the submatrices are real
+        ! so which have the same 4 2RTM coefficients when the lambda-coef are real
+        ! they correspond to cases "diagonal - non diagonal"
+        .prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
+        if (NOT problem) then
+           red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
+           red_pbg_1.calc_overlap_integral(overlap,FALSE)
+           el11_ket = el11_ket*overlap
+           el22_ket = el22_ket*overlap
 
-           ! when "i1 /= i2 and j1 = j2" (second case, first possibility, second formula)
+           terms(1) = terms(1) + el12_bra*el11_ket
+           terms(2) = terms(2) + el12_bra*el22_ket
+           terms(3) = terms(3) + el21_bra*el11_ket
+           terms(4) = terms(4) + el21_bra*el22_ket
+        end
+     end          
+     terms=terms/.overlap
 
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_2,ind_3 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_2,ind_4 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_1,ind_3 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_1,ind_4 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_4,ind_1 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_4,ind_2 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_3,ind_1 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_3,ind_2 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
-           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           ! when "i1 /= i2 and j1 /= j2" (second case, first possibility, third formula)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_2,ind_4 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_2,ind_3 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_1,ind_4 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_1,ind_3 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_4,ind_2 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_4,ind_1 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_3,ind_2 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_3,ind_1 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
-           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           ! when "i1 = i2 and j1 = j2" (second case, second possibility)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_1,ind_3 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_1,ind_4 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_2,ind_3 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
-           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_2,ind_4 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
-           .rdm_2_aa(i_a)=.rdm_2_ab(i)
-           .rdm_2_bb(i_b)=.rdm_2_ab(i)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_3,ind_1 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_3,ind_2 /)
-           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_4,ind_1 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
-
-           .rdm_2_ab(i).same_block = FALSE
-           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
-           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_4,ind_2 /)
-           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
-           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+     if (abs(terms(1)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_3,ind_3 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(1)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_1,ind_2 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(1)
+        i = i+1
+     end
+     if (abs(terms(2)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_1,ind_2,ind_4,ind_4 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(2)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_1,ind_2 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(2)
+        i = i+1
+     end
+     if (abs(terms(3)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_3,ind_3 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(3)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_3,ind_3,ind_2,ind_1 /)
+        .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(3)
+        i = i+1
+     end
+     if (abs(terms(4)) > TOL(15)) then
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_1,block_1,block_2,block_2 /)
+        .rdm_2_ab(i).indices = (/ ind_2,ind_1,ind_4,ind_4 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
+        .rdm_2_ab(i).coefficient = terms(4)
+        i = i+1
+        .rdm_2_ab(i).same_block = FALSE
+        .rdm_2_ab(i).block_numbers = (/ block_2,block_2,block_1,block_1 /)
+        .rdm_2_ab(i).indices = (/ ind_4,ind_4,ind_2,ind_1 /)
+        .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
+        .rdm_2_ab(i).coefficient = terms(4)
+        i = i+1
+     end
 
    end
+
+!pcc_tmp   comp_2rtm_two_2D_blocks_epi2o_1d_(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,two_rdm_elt)
+!pcc_tmp   ! calculation of the 2RTM elements when two 2D-3typ blocks. Case 1d (2 distinct geminals) 
+!pcc_tmp   ! and case 2a (only one geminal has the 2 blocks) of the paper
+!pcc_tmp     i, i_a, i_b :: INT
+!pcc_tmp     ng_1, ng_2 :: INT
+!pcc_tmp     red_pbg_1, red_pbg_2 :: PAULI_BLOCK_GEMINALS
+!pcc_tmp     two_rdm_elt :: PAULI_BLOCK_2RDM_ELT
+!pcc_tmp     overlap :: REAL
+!pcc_tmp     diag_diag,diag_ndiag,ndiag_diag,ndiag_ndiag :: VEC{INT}* DEFAULT_NULL
+!pcc_tmp     m :: INT
+!pcc_tmp     j, r, s :: INT
+!pcc_tmp     b1, b2 :: INT
+!pcc_tmp     block_1, block_2 :: INT
+!pcc_tmp     geminal_1,geminal_2 :: INT
+!pcc_tmp     geminal :: INT
+!pcc_tmp     ind_1, ind_2, ind_3, ind_4 :: INT
+!pcc_tmp     coef_1_prod_1, coef_1_prod_2, coef_1_prod_3, coef_1_prod_4 :: REAL DEFAULT(ZERO)
+!pcc_tmp     coef_2_prod_1, coef_2_prod_2, coef_2_prod_3, coef_2_prod_4 :: REAL DEFAULT(ZERO)
+!pcc_tmp     terms :: VEC{REAL}(8)
+!pcc_tmp     coef_1, coef_2, coef_3, coef_4 :: REAL DEFAULT(ZERO)
+!pcc_tmp     el11_bra, el11_ket :: REAL DEFAULT(ZERO)
+!pcc_tmp     el22_bra, el22_ket :: REAL DEFAULT(ZERO)
+!pcc_tmp     el12_bra, el12_ket :: REAL DEFAULT(ZERO)
+!pcc_tmp     el21_bra, el21_ket :: REAL DEFAULT(ZERO)
+!pcc_tmp     problem :: BIN
+!pcc_tmp
+!pcc_tmp     b1 =  two_rdm_elt.block_numbers(1)
+!pcc_tmp     block_1 = two_rdm_elt.block_2D_numbers(1)
+!pcc_tmp     ind_1 = two_rdm_elt.indices(1) 
+!pcc_tmp     ind_2 = two_rdm_elt.indices(2) 
+!pcc_tmp     b2 =  two_rdm_elt.block_numbers(2)
+!pcc_tmp     block_2 = two_rdm_elt.block_2D_numbers(2)
+!pcc_tmp     ind_3 = two_rdm_elt.indices(3) 
+!pcc_tmp     ind_4 = two_rdm_elt.indices(4)
+!pcc_tmp
+!pcc_tmp     .make_set_intersection(diag_set(block_1).element,diag_set(block_2).element,diag_diag)
+!pcc_tmp     .make_set_intersection(diag_set(block_1).element,non_diag_set(block_2).element,diag_ndiag)
+!pcc_tmp     .make_set_intersection(non_diag_set(block_1).element,diag_set(block_2).element,ndiag_diag)
+!pcc_tmp     .make_set_intersection(non_diag_set(block_1).element,non_diag_set(block_2).element,ndiag_ndiag)
+!pcc_tmp     
+!pcc_tmp     !2 diagonal block matrices
+!pcc_tmp     terms=ZERO
+!pcc_tmp     do r=1,.diag_diag.element.dim
+!pcc_tmp        geminal_1 = .diag_set(block_1).element(r)
+!pcc_tmp        select case (.bra_set.vec(geminal_1).block_type(b1))
+!pcc_tmp           case("ID2") 
+!pcc_tmp              el11_bra = .bra_set.vec(geminal_1).coef(b1)
+!pcc_tmp              el22_bra = el11_bra
+!pcc_tmp           case("SZ") 
+!pcc_tmp              el11_bra = .bra_set.vec(geminal_1).coef(b1)
+!pcc_tmp              el22_bra = -el11_bra
+!pcc_tmp           case("GD2") 
+!pcc_tmp              el11_bra = .bra_set.vec(geminal_1).coef(b1)*.first_GD2_elt(block_1)
+!pcc_tmp              el22_bra = .bra_set.vec(geminal_1).coef(b1)*.second_GD2_elt(block_1)
+!pcc_tmp           case default   
+!pcc_tmp              stdout.text("unexpected block type")
+!pcc_tmp              stop
+!pcc_tmp        end
+!pcc_tmp        do s=1,.diag_set(block_2).element.dim
+!pcc_tmp           geminal_2 = .diag_set(block_2).element(s)
+!pcc_tmp           select case (.ket_set.vec(geminal_2).block_type(b2))
+!pcc_tmp              case("ID2") 
+!pcc_tmp                 el11_ket = .ket_set.vec(geminal_2).coef(b2)
+!pcc_tmp                 el22_ket = el11_ket
+!pcc_tmp              case("SZ") 
+!pcc_tmp                 el11_ket = .ket_set.vec(geminal_2).coef(b2)
+!pcc_tmp                 el22_ket = -el11_ket
+!pcc_tmp              case("GD2") 
+!pcc_tmp                 el11_ket = .ket_set.vec(geminal_2).coef(b2)*.first_GD2_elt(block_2)
+!pcc_tmp                 el22_ket = .ket_set.vec(geminal_2).coef(b2)*.second_GD2_elt(block_2)
+!pcc_tmp              case default   
+!pcc_tmp                 stdout.text("unexpected block type")
+!pcc_tmp                 stop
+!pcc_tmp           end
+!pcc_tmp           if (geminal_1 == geminal_2) then
+!pcc_tmp           ! in paper case 2a, in the thesis: first case
+!pcc_tmp           ! diagonal submatrices implies "i1 = j1 and i2 = j2" 
+!pcc_tmp           ! four possible sub-cases, 
+!pcc_tmp           ! when we swap bra and ket the 4 terms are obtained by complex conjugation of the coefs
+!pcc_tmp           ! which amounts to complex conjugation of the whole terms since the submatrices are real
+!pcc_tmp           ! which amounts to the same 4 terms when the lambda-coef are real
+!pcc_tmp              geminal=geminal_1
+!pcc_tmp              .prep_red_pbg(red_pbg_1, geminal, block_1, block_2, problem)
+!pcc_tmp              if (NOT problem) then
+!pcc_tmp                 red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
+!pcc_tmp                 red_pbg_1.calc_overlap_integral(overlap,FALSE)
+!pcc_tmp                 el11_ket = el11_ket*overlap
+!pcc_tmp                 el22_ket = el22_ket*overlap
+!pcc_tmp
+!pcc_tmp                 terms(1) = terms(1) + el11_bra*el11_ket
+!pcc_tmp
+!pcc_tmp                 terms(2) = terms(2) + el11_bra*el22_ket
+!pcc_tmp
+!pcc_tmp                 terms(3) = terms(3) + el22_bra*el11_ket
+!pcc_tmp
+!pcc_tmp                 terms(4) = terms(4) + el22_bra*el22_ket
+!pcc_tmp
+!pcc_tmp!                 terms(5) = terms(5) + 
+!pcc_tmp
+!pcc_tmp !                terms(6) = terms(6) + 
+!pcc_tmp
+!pcc_tmp  !               terms(7) = terms(7) + 
+!pcc_tmp
+!pcc_tmp   !              terms(8) = terms(8) + 
+!pcc_tmp
+!pcc_tmp              end
+!pcc_tmp           else  
+!pcc_tmp           ! in paper case 1d, in the thesis: second case
+!pcc_tmp!             coef_1_prod_1 = .bra_set.vec(geminal_1).coef(b1)*.ket_set.vec(geminal_1).coef(b1)
+!pcc_tmp!             coef_1_prod_2 = .bra_set.vec(geminal_1).coef(b2)*.ket_set.vec(geminal_1).coef(b2)
+!pcc_tmp!             coef_1_prod_3 = .bra_set.vec(geminal_1).coef(b1)*.ket_set.vec(geminal_1).coef(b2)
+!pcc_tmp!             coef_1_prod_4 = .bra_set.vec(geminal_1).coef(b2)*.ket_set.vec(geminal_1).coef(b1)                
+!pcc_tmp!             coef_2_prod_1 = .bra_set.vec(geminal_2).coef(b1)*.ket_set.vec(geminal_2).coef(b1)
+!pcc_tmp!             coef_2_prod_2 = .bra_set.vec(geminal_2).coef(b2)*.ket_set.vec(geminal_2).coef(b2)
+!pcc_tmp!             coef_2_prod_3 = .bra_set.vec(geminal_2).coef(b1)*.ket_set.vec(geminal_2).coef(b2)
+!pcc_tmp!             coef_2_prod_4 = .bra_set.vec(geminal_2).coef(b2)*.ket_set.vec(geminal_2).coef(b1)                
+!pcc_tmp              if (.n_geminals > 2) then
+!pcc_tmp                 .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
+!pcc_tmp                 if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= .n_geminals))) then
+!pcc_tmp                    red_pbg_2.make_int_term_list(FALSE,FALSE,FALSE)
+!pcc_tmp                    red_pbg_2.calc_overlap_integral(overlap,FALSE)
+!pcc_tmp                 end
+!pcc_tmp              else
+!pcc_tmp                 overlap=ONE
+!pcc_tmp              end
+!pcc_tmp              el11_ket = el11_ket*overlap
+!pcc_tmp              el22_ket = el22_ket*overlap
+!pcc_tmp              .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp              .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp              .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_1,ind_3 /)
+!pcc_tmp              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+!pcc_tmp              coef_1=coef_1_prod_1*coef_2_prod_2*.first_GD2_elt(block_1)**2*.first_GD2_elt(block_2)**2
+!pcc_tmp              coef_2=coef_1_prod_2*coef_2_prod_1*.first_GD2_elt(block_1)**2*.first_GD2_elt(block_2)**2
+!pcc_tmp              .rdm_2_ab(i).coefficient = coef_2*.second_GD2_elt(block_2)*.second_GD2_elt(block_1)*overlap/.overlap
+!pcc_tmp
+!pcc_tmp              if (abs(term) > TOL(15)) then
+!pcc_tmp                 if (two_rdm_elt.subindices(4)) then
+!pcc_tmp                    two_rdm_elt.coefficient = term*.first_GD2_elt(block_2)/.overlap
+!pcc_tmp                 else
+!pcc_tmp                    two_rdm_elt.coefficient = term*.second_GD2_elt(block_2)/.overlap
+!pcc_tmp                 end
+!pcc_tmp                 i = i+1
+!pcc_tmp              end
+!pcc_tmp           end
+!pcc_tmp        end          
+!pcc_tmp     end          
+!pcc_tmp     terms=terms/.overlap
+!pcc_tmp
+!pcc_tmp           ! in the thesis, second case
+!pcc_tmp           ! in the paper case 1d
+!pcc_tmp
+!pcc_tmp           ! when "i1 = i2 and j1 /= j2" (second case, first possibility, first formula)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_1,ind_4 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp           
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_1,ind_3 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_2,ind_4 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_2,ind_3 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_3,ind_2 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,FALSE /)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_3,ind_1 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,TRUE /)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_4,ind_2 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,FALSE /)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_4,ind_1 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,TRUE /)
+!pcc_tmp           .calc_2rdm_elt_i_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           ! when "i1 /= i2 and j1 = j2" (second case, first possibility, second formula)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_2,ind_3 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_2,ind_4 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_1,ind_3 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_1,ind_4 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_4,ind_1 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,TRUE /)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_4,ind_2 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,FALSE /)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_3,ind_1 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,TRUE /)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_3,ind_2 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,FALSE /)
+!pcc_tmp           .calc_2rdm_elt_ii_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           ! when "i1 /= i2 and j1 /= j2" (second case, first possibility, third formula)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_2,ind_4 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_2,ind_3 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_1,ind_4 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_1,ind_3 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_4,ind_2 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,FALSE,FALSE /)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_4,ind_1 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,FALSE,TRUE /)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_3,ind_2 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,TRUE,FALSE /)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_3,ind_1 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,TRUE,TRUE /)
+!pcc_tmp           .calc_2rdm_elt_ii_jj_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           ! when "i1 = i2 and j1 = j2" (second case, second possibility)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_1,ind_3,ind_1,ind_3 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_1,ind_4,ind_1,ind_4 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_2,ind_3,ind_2,ind_3 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_1,block_2,block_1,block_2 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_2,ind_4,ind_2,ind_4 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+!pcc_tmp           .rdm_2_aa(i_a)=.rdm_2_ab(i)
+!pcc_tmp           .rdm_2_bb(i_b)=.rdm_2_ab(i)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_aa(i_a),i_a,2)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_bb(i_b),i_b,3)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_3,ind_1,ind_3,ind_1 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_3,ind_2,ind_3,ind_2 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ TRUE,FALSE,TRUE,FALSE /)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_4,ind_1,ind_4,ind_1 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,TRUE,FALSE,TRUE /)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp           .rdm_2_ab(i).same_block = FALSE
+!pcc_tmp           .rdm_2_ab(i).block_numbers = (/ block_2,block_1,block_2,block_1 /)
+!pcc_tmp           .rdm_2_ab(i).indices = (/ ind_4,ind_2,ind_4,ind_2 /)
+!pcc_tmp           .rdm_2_ab(i).subindices = (/ FALSE,FALSE,FALSE,FALSE /)
+!pcc_tmp           .calc_2rdm_elt_i_j_gen(red_pbg_2,.rdm_2_ab(i),i,1)
+!pcc_tmp
+!pcc_tmp   end
 
    case_3typ_4typ(i,i_a,i_b,ng_1,red_pbg_1,ng_2,red_pbg_2,m)
    ! computation of the 2RDM elements when both the blocks are 2-ortho 
