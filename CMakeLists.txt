@@ -278,6 +278,7 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.scf.foo
     ${FOO_DIR}/molecule.tad.foo
     ${FOO_DIR}/molecule.xtal.foo
+    ${FOO_DIR}/test_parallel.foo
 )
 
 # Fortran source files used by run_molecule/run_har
@@ -411,6 +412,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_evec_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/test_parallel.F90
 )
 
 # Set up run files
@@ -438,6 +440,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_rgbi.foo
     ${RUNFILE_DIR}/run_least_squares.foo
     ${RUNFILE_DIR}/run_mpi_test.foo
+    ${RUNFILE_DIR}/run_mpi_test_complete.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
 
@@ -508,6 +511,7 @@ add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
 add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
+add_executable(run_mpi_test_complete ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test_complete.F90)
 
 # Link exectables
 target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -532,6 +536,7 @@ target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mpi_test_complete tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 
@@ -545,6 +550,7 @@ install(TARGETS run_molecule DESTINATION bin)
 install(TARGETS run_har      DESTINATION bin)
 install(TARGETS run_rgbi     DESTINATION bin)
 install(TARGETS run_mpi_test DESTINATION bin)
+install(TARGETS run_mpi_test_complete DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
