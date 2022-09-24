@@ -46,6 +46,16 @@ contains
    !   .nullify_ptr_part
    end
 
+   create(vec,n) ::: leaky
+   ! Create a vector of PAULI_BLOCK_GEMINALS
+     vec :: VEC{PAULI_BLOCK_GEMINALS}*
+     n :: INT
+
+     nullify(vec)
+     allocate(vec(n))
+
+   end
+
    create(vec,n_geminals) ::: leaky
    ! Create a set of PBT
      vec :: VEC{PAULI_BLOCK_TENSOR}*
@@ -55,7 +65,6 @@ contains
      allocate(vec(n_geminals))
 
    end
-
 
    create(vec,n) ::: leaky
    ! Create a vector of 2RDM non zero elements
@@ -88,12 +97,42 @@ contains
 
    end
 
+!   create_ptr_part(grad_info,nterms,ngem) ::: selfless, leaky
+   create_ptr_part(grad_info,nterms,ngem) ::: leaky
+   ! Create the pointer parts of a PAULI_BLOCK_2RDM_GRAD_INFO object
+     grad_info :: PAULI_BLOCK_2RDM_GRAD_INFO
+     nterms,ngem :: INT
+
+     grad_info.nb_terms = nterms
+     grad_info.ex_gem.create(nterms,ngem)
+     grad_info.ex_blk.create(nterms,ngem)
+     grad_info.all_pairs.create(nterms)
+     grad_info.coef_prod.create(nterms)
+     .create(grad_info.pbg,nterms)
+!     grad_info_tmp.red_ov.create(1)
+
+   end
+
    destroy(gradient) ::: leaky
    ! Destroy a vector of energy gradient elements
      gradient :: VEC{ENERGY_GRADIENT_ELT}*
 
      deallocate(gradient)
      nullify(gradient)
+
+   end
+
+   destroy(vec) ::: leaky
+   ! Destroy a vector of PAULI_BLOCK_GEMINALS
+     vec :: VEC{PAULI_BLOCK_GEMINALS}*
+     i,n :: INT
+
+     n=size(vec)
+     do i=1,n
+       vec(i).destroy_ptr_part
+     end
+     deallocate(vec)
+     nullify(vec)
 
    end
 
@@ -106,23 +145,10 @@ contains
      grad_info.ex_blk.destroy
      grad_info.all_pairs.destroy
      grad_info.coef_prod.destroy
+     .destroy(grad_info.pbg)
 
    end
 
-!   create_ptr_part(grad_info,nterms,ngem) ::: selfless, leaky
-   create_ptr_part(grad_info,nterms,ngem) ::: leaky
-   ! Create the pointer parts of a PAULI_BLOCK_2RDM_GRAD_INFO object
-     grad_info :: PAULI_BLOCK_2RDM_GRAD_INFO
-     nterms,ngem :: INT
-
-     grad_info.nb_terms = nterms
-     grad_info.ex_gem.create(nterms,ngem)
-     grad_info.ex_blk.create(nterms,ngem)
-     grad_info.all_pairs.create(nterms)
-     grad_info.coef_prod.create(nterms)
-!     grad_info_tmp.red_ov.create(1)
-
-   end
 
    created result (res) ::: get_from(OBJECT), inlined_by_foo
    ! Returns true if self has been created
@@ -5070,7 +5096,7 @@ contains
    ! or to case 2b in the paper
      ng_1 :: INT
      red_pbg_1 :: PAULI_BLOCK_GEMINALS
-     i, g, b :: INT
+     g, b :: INT
      coef_prod :: REAL
      overlap :: REAL
 
@@ -5090,19 +5116,9 @@ contains
         coef_prod = coef_prod*overlap/.overlap
         if (abs(coef_prod) > NON_ZERO_2RTM_TOL ) then
            ! increments the number of non zero elements in the \alpha\beta 2RTM
-           i=.nonzero_terms_ab+1
-           .nonzero_terms_ab = i
-           .rdm_2_ab(i).same_block = TRUE
-           .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-           .rdm_2_ab(i).indices = (/ b,b,b,b /)
-           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-           .rdm_2_ab(i).coefficient = coef_prod
-     !debug    stdout.text(" ")
-     !debug    stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-     !debug    stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
+           .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ b,b,b,b /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
         end
      end
-
    end
 
    comp_2rtm_two_1D_blocks_2b_epi2o_grd(ng_1,red_pbg_1) ::: leaky
@@ -5111,22 +5127,24 @@ contains
    ! or to case 2b in the paper
      ng_1 :: INT
      red_pbg_1 :: PAULI_BLOCK_GEMINALS
-     i, g, b :: INT
+     ng :: INT
+     red_pbg :: PAULI_BLOCK_GEMINALS
+     g, b :: INT
      k,l, gg, bb :: INT
      coef_prod :: REAL
      overlap :: REAL
      grad_info_tmp :: PAULI_BLOCK_2RDM_GRAD_INFO
-     gg_in_ex_gem, bb_in_ex_blk :: BIN
+     gg_in_ex_gem, bb_in_ex_blk, problem :: BIN
 
+     grad_info_tmp.nb_terms=1
+     .create_ptr_part(grad_info_tmp,1,1)
+!    grad_info_tmp.all_pairs(1) = FALSE
      ! 1-orthogonal case
      do b=1,.n_1D_blocks
         g = .nonzero_1ortho_ind(b)
         if (g == 0) cycle
-!        grad_info_tmp.create_ptr_part(nb_terms,1)
-        .create_ptr_part(grad_info_tmp,1,1)
         grad_info_tmp.ex_gem(1).element(1)=g
         grad_info_tmp.ex_blk(1).element(1)=b
-        grad_info_tmp.all_pairs(1) = FALSE
 
         coef_prod = .bra_set.vec(g).coef(b) * .ket_set.vec(g).coef(b)
         grad_info_tmp.coef_prod(1)=coef_prod
@@ -5134,83 +5152,91 @@ contains
            .prep_red_pbg(red_pbg_1,g)
            red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
            red_pbg_1.calc_overlap_integral(overlap,FALSE)
+           grad_info_tmp.pbg(1)=red_pbg_1
         else
            overlap = ONE
            !provided the geminals have been properly normalized
         end
         coef_prod = coef_prod*overlap/.overlap
-!pcc        grad_info_tmp.red_ov(1)=overlap
         if (abs(coef_prod) > NON_ZERO_2RTM_TOL ) then
-           ! increments the number of non zero elements in the \alpha\beta 2RTM
-           .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ b,b,b,b /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
-!pcc           i=.nonzero_terms_ab+1
-!pcc           .nonzero_terms_ab = i
-!pcc           .rdm_2_ab(i).same_block = TRUE
-!pcc           .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-!pcc           .rdm_2_ab(i).indices = (/ b,b,b,b /)
-!pcc           .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-!pcc           .rdm_2_ab(i).coefficient = coef_prod
-!pcc     !debug    stdout.text(" ")
-!pcc     !debug    stdout.show("2-RDM alpha-beta element indices (i1, j1, i2, j2)", .rdm_2_ab(i).indices)
-!pcc     !debug    stdout.show("2-RDM alpha-beta element value", .rdm_2_ab(i).coefficient)
-           .rdm_2_ab(i).grad.create(.nb_grad_elt)
-           do l=1,.nb_grad_elt
-             gg=.energy_gradient(l).indices(1)
-             bb=.energy_gradient(l).indices(2)
-             do k=1,grad_info_tmp.nb_terms
-              ! check if geminal "g" is present in vector "ex_gem(k)"
-               gg_in_ex_gem = any(grad_info_tmp.ex_gem(k).element == gg)
-              ! check if block "b" is present in vector "ex_blk(k)"
-               bb_in_ex_blk = any(grad_info_tmp.ex_blk(k).element == bb)
-              ! select the case (A or B), else the term is zero
-               if (gg_in_ex_gem AND bb_in_ex_blk) then
-                 !!! debug
-!                 stdout.text("Selected case A: coef is present in the product of coefficients")
-                 !!!
-                 !
-                 ! case A: "coef" is present in the product of coefficients
-                 !
-                 .rdm_2_ab(i).grad(l)=coef_prod*(.bra_set.vec(gg).coef(bb) + .ket_set.vec(gg).coef(bb))/grad_info_tmp.coef_prod(k)
-               else 
-                 !!! debug
-!                 stdout.text("Selected case B: coef is in the reduced overlap")
-                 !!!
-                 !
-                 ! case B: "coef" is in the reduced overlap
-                 !
-                 ! product of coefficients
-!                 cpr = .grad_info_tmp.coef_prod(k) 
-                 ! two subcases (depending on the block size)
-                 if (bb <= .n_1D_blocks) then 
-                    !
-                    ! block "bb" is of size 1
-                    !
-                    ! compute the new reduced overlap ("rov")
-!                    .calc_new_red_overlap(iterm=1, gem=gg, red_overlap=rov)
-                    !!! debug
-!                    stdout.show("New reduced overlap =", rov)
-                    !!!
-                    ! compute the contribution to the element of the 2RDM derivative
-!                    rdm2_deriv = rdm2_deriv + TWO*rov*cpr*coef
-                 else
-                    !
-                    ! block "b" is of size 2
-                    !
-                    ! compute the new reduced overlap ("rov")
-!                    .calc_new_red_overlap(iterm=1, gem=gg, blk=bb, red_overlap=rov)
-                    !!! debug
-!                    stdout.show("New reduced overlap =", rov)
-                    !!!
-                    ! compute the contribution to the element of the 2RDM derivative
-!                    rdm2_deriv = rdm2_deriv + FOUR*rov*cpr*coef
-                 end
-               end
-             end
-           end
+          ! increments the number of non zero elements in the \alpha\beta 2RTM
+          .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ b,b,b,b /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+          do l=1,.nb_grad_elt
+            gg=.energy_gradient(l).indices(1)
+            bb=.energy_gradient(l).indices(2)
+            do k=1,grad_info_tmp.nb_terms
+             ! check if geminal "g" is present in vector "ex_gem(k)"
+              gg_in_ex_gem = any(grad_info_tmp.ex_gem(k).element == gg)
+             ! check if block "b" is present in vector "ex_blk(k)"
+              bb_in_ex_blk = any(grad_info_tmp.ex_blk(k).element == bb)
+             ! select the case (A or B), else the term is zero
+              if (gg_in_ex_gem AND bb_in_ex_blk) then
+                !!! debug
+!                stdout.text("Selected case A: coef is present in the product of coefficients")
+                !!!
+                !
+                ! case A: "coef" is present in the product of coefficients
+                !
+                ! we suppose .bra_set.vec(gg).coef(bb)=.ket_set.vec(gg).coef(bb) hence the facto TWO
+                .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l) &
+                +coef_prod/.bra_set.vec(gg).coef(bb)*TWO
+              else 
+                !!! debug
+!                stdout.text("Selected case B: coef is in the reduced overlap")
+                !!!
+                !
+                ! case B: "coef" is in the reduced overlap
+                !
+                ng = ng_1-1
+                red_pbg.n_geminals = ng
+                red_pbg.nonzero_coef_ind.create(ng)
+                red_pbg.nonzero_coef_prod.create(ng)
+                ! two subcases (depending on the block size)
+                if (bb <= .n_1D_blocks) then 
+                   !
+                   ! block "bb" is of size 1
+                   !
+                   ! compute the new reduced overlap 
+                  if (ng > 0) then
+                     grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,gg)
+                     red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+                     red_pbg.calc_overlap_integral(overlap,FALSE)
+                  else
+                     overlap = ONE
+                  end
+                   !!! debug
+!                   stdout.show("New reduced overlap =", overlap)
+                   !!!
+                   ! we suppose .bra_set.vec(gg).coef(bb)=.ket_set.vec(gg).coef(bb) hence the facto TWO
+                  .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l) &
+                  +grad_info_tmp.coef_prod(k)*TWO*.bra_set.vec(gg).coef(bb)*overlap/.overlap
+                else
+                   !
+                   ! block "bb" is of size 2
+                   !
+                   ! compute the new reduced overlap 
+                  if (ng > 0) then
+                     grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,gg,bb,problem)
+  if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= grad_info_tmp.pbg(k).n_geminals))) then
+                        red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+                        red_pbg.calc_overlap_integral(overlap,FALSE)
+                     else 
+                        cycle
+                     end
+                  else
+                     overlap = ONE
+                  end
+                  .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l) &
+                  +grad_info_tmp.coef_prod(k)*FOUR*.bra_set.vec(gg).coef(bb)*overlap/.overlap
+                end
+                red_pbg.destroy_ptr_part
+              end
+            end
+          end
         end
      end
      .destroy_ptr_part(grad_info_tmp)
-
    end
 
    comp_2rtm_two_1D_blocks_2a_epi2o(ng_1,red_pbg_1)
@@ -5218,7 +5244,7 @@ contains
    ! case 2a of the paper
      ng_1 :: INT
      red_pbg_1 :: PAULI_BLOCK_GEMINALS
-     i, r, b :: INT
+     r, b :: INT
      block_1, block_2 :: INT
      non_zero_1D, g  :: INT
      coef_1, coef_2, coef_3, coef_4 :: REAL
@@ -5251,23 +5277,11 @@ contains
             terms(1)=coef_1*coef_4
             terms(2)=coef_2*coef_3
             if (abs(terms(1)) > NON_ZERO_2RTM_TOL ) then
-              i=.nonzero_terms_ab+1
-              .nonzero_terms_ab = i
-              .rdm_2_ab(i).same_block = TRUE
-              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-              .rdm_2_ab(i).indices = (/ block_1,block_1,block_2,block_2 /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = terms(1)
+              .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ block_1,block_1,block_2,block_2 /),(/ TRUE,TRUE,TRUE,TRUE /),terms(1))
             end  
 
             if (abs(terms(2)) > NON_ZERO_2RTM_TOL ) then
-              i=.nonzero_terms_ab+1
-              .nonzero_terms_ab = i
-              .rdm_2_ab(i).same_block = TRUE
-              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-              .rdm_2_ab(i).indices = (/ block_2,block_2,block_1,block_1 /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = terms(2)
+              .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ block_2,block_2,block_1,block_1 /),(/ TRUE,TRUE,TRUE,TRUE /),terms(2))
             end  
           end
         end
@@ -5280,30 +5294,40 @@ contains
    ! case 2a of the paper
      ng_1 :: INT
      red_pbg_1 :: PAULI_BLOCK_GEMINALS
-     i, r, b :: INT
+     ng :: INT
+     red_pbg :: PAULI_BLOCK_GEMINALS
+     k, l, r, b :: INT
+     gg,bb  :: INT
      block_1, block_2 :: INT
      non_zero_1D, g  :: INT
      coef_1, coef_2, coef_3, coef_4 :: REAL
      overlap :: REAL
      terms :: VEC{REAL}(2)
+     grad_info_tmp :: PAULI_BLOCK_2RDM_GRAD_INFO
+     gg_in_ex_gem, bb_in_ex_blk,problem :: BIN
 
-     ! same_block = FALSE
      terms = ZERO
+     grad_info_tmp.nb_terms=1
+     .create_ptr_part(grad_info_tmp,1,2)
+!     grad_info_tmp.all_pairs(1) = FALSE
      ! here we consider two different 1D blocks 
      do g=1,.n_geminals
         !nb of non zero coef of geminal g for 1D blocks
         non_zero_1D=.bra_set.vec(g).n_nonzero_1ortho
         if (non_zero_1D < 2) cycle
+        grad_info_tmp.ex_gem(1).element=g
         if (ng_1 /= 0) then
            .prep_red_pbg(red_pbg_1,g)
            red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
            red_pbg_1.calc_overlap_integral(overlap,FALSE)
+           grad_info_tmp.pbg(1)=red_pbg_1
         else
            overlap = ONE
         end
         overlap=overlap/.overlap
         do r=1,non_zero_1D-1
           block_1=.bra_set.vec(g).new_nonzero_coef_ind(r)
+          grad_info_tmp.ex_blk(1).element(1)=block_1
           coef_1 = .bra_set.vec(g).coef(block_1)*overlap
           coef_2 = .ket_set.vec(g).coef(block_1)*overlap
           do b=r+1,non_zero_1D
@@ -5312,28 +5336,163 @@ contains
             coef_4 = .ket_set.vec(g).coef(block_2)
             terms(1)=coef_1*coef_4
             terms(2)=coef_2*coef_3
+
+            grad_info_tmp.ex_blk(1).element(2)=block_2
+            grad_info_tmp.coef_prod(1)=.bra_set.vec(g).coef(block_1) * .ket_set.vec(g).coef(block_2)
+
             if (abs(terms(1)) > NON_ZERO_2RTM_TOL ) then
-              i=.nonzero_terms_ab+1
-              .nonzero_terms_ab = i
-              .rdm_2_ab(i).same_block = TRUE
-              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-              .rdm_2_ab(i).indices = (/ block_1,block_1,block_2,block_2 /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = terms(1)
+              .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ block_1,block_1,block_2,block_2 /),(/ TRUE,TRUE,TRUE,TRUE /),terms(1))
+              .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+              do l=1,.nb_grad_elt
+                gg=.energy_gradient(l).indices(1)
+                bb=.energy_gradient(l).indices(2)
+                do k=1,grad_info_tmp.nb_terms
+                 ! check if geminal "g" is present in vector "ex_gem(k)"
+                  gg_in_ex_gem = any(grad_info_tmp.ex_gem(k).element == gg)
+                 ! check if block "b" is present in vector "ex_blk(k)"
+                  bb_in_ex_blk = any(grad_info_tmp.ex_blk(k).element == bb)
+                 ! select the case (A or B), else the term is zero
+                  if (gg_in_ex_gem AND bb_in_ex_blk) then
+                    !!! debug
+!                    stdout.text("Selected case A: coef is present in the product of coefficients")
+                    !!!
+                    !
+                    ! case A: "coef" is present in the product of coefficients
+                    !
+                    .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l)+terms(1)/.bra_set.vec(gg).coef(bb)
+                  else 
+                    !!! debug
+!                    stdout.text("Selected case B: coef is in the reduced overlap")
+                    !!!
+                    !
+                    ! case B: "coef" is in the reduced overlap
+                    !
+                    ng = ng_1-1
+                    red_pbg.n_geminals = ng
+                    red_pbg.nonzero_coef_ind.create(ng)
+                    red_pbg.nonzero_coef_prod.create(ng)
+                    ! two subcases (depending on the block size)
+                    if (bb <= .n_1D_blocks) then 
+                       !
+                       ! block "bb" is of size 1
+                       !
+                       ! compute the new reduced overlap 
+                      if (ng > 0) then
+                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,gg)
+                         red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+                         red_pbg.calc_overlap_integral(overlap,FALSE)
+                      else
+                         overlap = ONE
+                      end
+                       !!! debug
+!                       stdout.show("New reduced overlap =", overlap)
+                       !!!
+                       ! we suppose .bra_set.vec(gg).coef(bb)=.ket_set.vec(gg).coef(bb) hence the facto TWO
+                      .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l) &
+                      +grad_info_tmp.coef_prod(k)*TWO*.bra_set.vec(gg).coef(bb)*overlap/.overlap
+                    else
+                       !
+                       ! block "bb" is of size 2
+                       !
+                       ! compute the new reduced overlap 
+                      if (ng > 0) then
+                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,gg,bb,problem)
+   if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= grad_info_tmp.pbg(k).n_geminals))) then
+                            red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+                            red_pbg.calc_overlap_integral(overlap,FALSE)
+                         else 
+                            cycle
+                         end
+                      else
+                         overlap = ONE
+                      end
+                      .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l) &
+                      +grad_info_tmp.coef_prod(k)*FOUR*.bra_set.vec(gg).coef(bb)*overlap/.overlap
+                    end
+                    red_pbg.destroy_ptr_part
+                  end
+                end
+              end
             end  
 
             if (abs(terms(2)) > NON_ZERO_2RTM_TOL ) then
-              i=.nonzero_terms_ab+1
-              .nonzero_terms_ab = i
-              .rdm_2_ab(i).same_block = TRUE
-              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-              .rdm_2_ab(i).indices = (/ block_2,block_2,block_1,block_1 /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = terms(2)
+              .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ block_2,block_2,block_1,block_1 /),(/ TRUE,TRUE,TRUE,TRUE /),terms(2))
+              .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+              do l=1,.nb_grad_elt
+                gg=.energy_gradient(l).indices(1)
+                bb=.energy_gradient(l).indices(2)
+                do k=1,grad_info_tmp.nb_terms
+                 ! check if geminal "g" is present in vector "ex_gem(k)"
+                  gg_in_ex_gem = any(grad_info_tmp.ex_gem(k).element == gg)
+                 ! check if block "b" is present in vector "ex_blk(k)"
+                  bb_in_ex_blk = any(grad_info_tmp.ex_blk(k).element == bb)
+                 ! select the case (A or B), else the term is zero
+                  if (gg_in_ex_gem AND bb_in_ex_blk) then
+                    !!! debug
+!                    stdout.text("Selected case A: coef is present in the product of coefficients")
+                    !!!
+                    !
+                    ! case A: "coef" is present in the product of coefficients
+                    !
+                    .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l)+terms(2)/.bra_set.vec(gg).coef(bb)
+                  else 
+                    !!! debug
+!                    stdout.text("Selected case B: coef is in the reduced overlap")
+                    !!!
+                    !
+                    ! case B: "coef" is in the reduced overlap
+                    !
+                    ng = ng_1-1
+                    red_pbg.n_geminals = ng
+                    red_pbg.nonzero_coef_ind.create(ng)
+                    red_pbg.nonzero_coef_prod.create(ng)
+                    ! two subcases (depending on the block size)
+                    if (bb <= .n_1D_blocks) then 
+                       !
+                       ! block "bb" is of size 1
+                       !
+                       ! compute the new reduced overlap 
+                      if (ng > 0) then
+                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,gg)
+                         red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+                         red_pbg.calc_overlap_integral(overlap,FALSE)
+                      else
+                         overlap = ONE
+                      end
+                       !!! debug
+!                       stdout.show("New reduced overlap =", overlap)
+                       !!!
+                       ! we suppose .bra_set.vec(gg).coef(bb)=.ket_set.vec(gg).coef(bb) hence the facto TWO
+                      .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l) &
+                      +grad_info_tmp.coef_prod(k)*TWO*.bra_set.vec(gg).coef(bb)*overlap/.overlap
+                    else
+                       !
+                       ! block "bb" is of size 2
+                       !
+                       ! compute the new reduced overlap 
+                      if (ng > 0) then
+                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,gg,bb,problem)
+     if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= grad_info_tmp.pbg(k).n_geminals))) then
+                            red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+                            red_pbg.calc_overlap_integral(overlap,FALSE)
+                         else 
+                            cycle
+                         end
+                      else
+                         overlap = ONE
+                      end
+                      .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l) &
+                      +grad_info_tmp.coef_prod(k)*FOUR*.bra_set.vec(gg).coef(bb)*overlap/.overlap
+                    end
+                    red_pbg.destroy_ptr_part
+                  end
+                end
+              end
             end  
           end
         end
      end
+     .destroy_ptr_part(grad_info_tmp)
 
    end
 
@@ -5343,7 +5502,6 @@ contains
      ng_2 :: INT
      red_pbg_2 :: PAULI_BLOCK_GEMINALS
      r, b :: INT
-     i, i_a, i_b :: INT
      geminal, g  :: INT
      coef, coef_prod :: REAL
      overlap :: REAL
@@ -5369,27 +5527,10 @@ contains
            end
            coef_prod = coef_prod*overlap
            if (abs(coef_prod) > NON_ZERO_2RTM_TOL ) then
-              i=.nonzero_terms_ab+1
-              .nonzero_terms_ab = i
-              .rdm_2_ab(i).same_block = TRUE
-              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-              .rdm_2_ab(i).indices = (/ r,b,r,b /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = coef_prod
-              i_a = .nonzero_terms_aa+1
-              .nonzero_terms_aa = i_a
-              .rdm_2_aa(i_a)=.rdm_2_ab(i)
-              i_b = .nonzero_terms_bb+1
-              .nonzero_terms_bb = i_b
-              .rdm_2_bb(i_b)=.rdm_2_ab(i)
-
-              i=.nonzero_terms_ab+1
-              .nonzero_terms_ab = i
-              .rdm_2_ab(i).same_block = TRUE
-              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-              .rdm_2_ab(i).indices = (/ b,r,b,r /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = coef_prod
+              .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ r,b,r,b /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
+              .add_2rtm_aa_elt(TRUE,(/ 0,0,0,0 /),(/ r,b,r,b /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
+              .add_2rtm_bb_elt(TRUE,(/ 0,0,0,0 /),(/ r,b,r,b /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
+              .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ b,r,b,r /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
            end
         end
      end
@@ -5401,57 +5542,129 @@ contains
    ! case 1a of the paper
      ng_2 :: INT
      red_pbg_2 :: PAULI_BLOCK_GEMINALS
-     r, b :: INT
-     i, i_a, i_b :: INT
+     ng :: INT
+     red_pbg :: PAULI_BLOCK_GEMINALS
+     k, l, r, b :: INT
      geminal, g  :: INT
+     gg,bb  :: INT
      coef, coef_prod :: REAL
      overlap :: REAL
+     grad_info_tmp :: PAULI_BLOCK_2RDM_GRAD_INFO
+     gg_bb_in_1, gg_bb_in_2,problem :: BIN
 
 
      ! here we consider two different 1D blocks 
+     grad_info_tmp.nb_terms=1
+     .create_ptr_part(grad_info_tmp,1,2)
+!     grad_info_tmp.all_pairs(1) = FALSE
      do r=1,.n_1D_blocks-1
         geminal = .nonzero_1ortho_ind(r)
         if (geminal == 0) cycle
+        grad_info_tmp.ex_gem(1).element(1)=geminal
+        grad_info_tmp.ex_blk(1).element(1)=r
         coef = .bra_set.vec(geminal).coef(r)*.ket_set.vec(geminal).coef(r)/.overlap
         do b=r+1,.n_1D_blocks
            g = .nonzero_1ortho_ind(b)
            if (g == 0) cycle
            if (g == geminal) cycle
+           grad_info_tmp.ex_gem(1).element(2)=g
+           grad_info_tmp.ex_blk(1).element(2)=b
            ! in the paper case 1a
            coef_prod = coef*.bra_set.vec(g).coef(b)*.ket_set.vec(g).coef(b)
+           grad_info_tmp.coef_prod(1)=coef_prod
            if (ng_2 > 0) then
               .prep_red_pbg_g(red_pbg_2,geminal,g)
               red_pbg_2.make_int_term_list(FALSE,FALSE,FALSE)
               red_pbg_2.calc_overlap_integral(overlap,FALSE)
+              grad_info_tmp.pbg(1)=red_pbg_2
            else
               overlap = ONE
            end
            coef_prod = coef_prod*overlap
            if (abs(coef_prod) > NON_ZERO_2RTM_TOL ) then
-              i=.nonzero_terms_ab+1
-              .nonzero_terms_ab = i
-              .rdm_2_ab(i).same_block = TRUE
-              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-              .rdm_2_ab(i).indices = (/ r,b,r,b /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = coef_prod
-              i_a = .nonzero_terms_aa+1
-              .nonzero_terms_aa = i_a
-              .rdm_2_aa(i_a)=.rdm_2_ab(i)
-              i_b = .nonzero_terms_bb+1
-              .nonzero_terms_bb = i_b
-              .rdm_2_bb(i_b)=.rdm_2_ab(i)
-
-              i=.nonzero_terms_ab+1
-              .nonzero_terms_ab = i
-              .rdm_2_ab(i).same_block = TRUE
-              .rdm_2_ab(i).block_numbers = (/ 0,0,0,0 /)
-              .rdm_2_ab(i).indices = (/ b,r,b,r /)
-              .rdm_2_ab(i).subindices = (/ TRUE,TRUE,TRUE,TRUE /)
-              .rdm_2_ab(i).coefficient = coef_prod
+              .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ r,b,r,b /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
+              .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+              do l=1,.nb_grad_elt
+                gg=.energy_gradient(l).indices(1)
+                bb=.energy_gradient(l).indices(2)
+                do k=1,grad_info_tmp.nb_terms
+                 ! check if geminal "gg" and block "bb "are present in elt 1
+                  gg_bb_in_1 = (grad_info_tmp.ex_gem(k).element(1) == gg AND grad_info_tmp.ex_blk(k).element(1) == bb) 
+                 ! check if geminal "gg" and block "bb "are present in elt 2
+                  gg_bb_in_2 = (grad_info_tmp.ex_gem(k).element(2) == gg AND grad_info_tmp.ex_blk(k).element(2) == bb)
+                 ! select the case (A or B), else the term is zero
+                  if (gg_bb_in_1 OR gg_bb_in_2) then
+                    !!! debug
+!                    stdout.text("Selected case A: coef is present in the product of coefficients")
+                    !!!
+                    !
+                    ! case A: "coef" is present in the product of coefficients
+                    !
+                    .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l)+coef_prod*TWO/.bra_set.vec(gg).coef(bb)
+                  else 
+                    !!! debug
+!                    stdout.text("Selected case B: coef is in the reduced overlap")
+                    !!!
+                    !
+                    ! case B: "coef" is in the reduced overlap
+                    !
+                    ng = ng_2-1
+                    red_pbg.n_geminals = ng
+                    red_pbg.nonzero_coef_ind.create(ng)
+                    red_pbg.nonzero_coef_prod.create(ng)
+                    ! two subcases (depending on the block size)
+                    if (bb <= .n_1D_blocks) then 
+                       !
+                       ! block "bb" is of size 1
+                       !
+                       ! compute the new reduced overlap 
+                      if (ng > 0) then
+                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,gg)
+                         red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+                         red_pbg.calc_overlap_integral(overlap,FALSE)
+                      else
+                         overlap = ONE
+                      end
+                       !!! debug
+!                       stdout.show("New reduced overlap =", overlap)
+                       !!!
+                       ! we suppose .bra_set.vec(gg).coef(bb)=.ket_set.vec(gg).coef(bb) hence the facto TWO
+                      .rdm_2_ab(.nonzero_terms_ab).grad(l)=.rdm_2_ab(.nonzero_terms_ab).grad(l) &
+                      +grad_info_tmp.coef_prod(k)*TWO*.bra_set.vec(gg).coef(bb)*overlap/.overlap
+                    else
+                       !
+                       ! block "bb" is of size 2
+                       !
+                       ! compute the new reduced overlap 
+                      if (ng > 0) then
+                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,gg,bb,problem)
+  if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= grad_info_tmp.pbg(k).n_geminals))) then
+                            red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
+                            red_pbg.calc_overlap_integral(overlap,FALSE)
+                         else 
+                            cycle
+                         end
+                      else
+                         overlap = ONE
+                      end
+                    end
+                    red_pbg.destroy_ptr_part
+                  end
+                end
+              end
+              .add_2rtm_aa_elt(TRUE,(/ 0,0,0,0 /),(/ r,b,r,b /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
+              .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+              .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
+              .add_2rtm_bb_elt(TRUE,(/ 0,0,0,0 /),(/ r,b,r,b /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
+              .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+              .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
+              .add_2rtm_ab_elt(TRUE,(/ 0,0,0,0 /),(/ b,r,b,r /),(/ TRUE,TRUE,TRUE,TRUE /),coef_prod)
+              .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+              .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
            end
         end
      end
+     .destroy_ptr_part(grad_info_tmp)
 
    end
 
