@@ -97,19 +97,16 @@ contains
 
    end
 
-!   create_ptr_part(grad_info,nterms,ngem) ::: selfless, leaky
-   create_ptr_part(grad_info,nterms,ngem) ::: leaky
+   create_ptr_part(grad_info,nterms,ngem,nblk) ::: leaky
    ! Create the pointer parts of a PAULI_BLOCK_2RDM_GRAD_INFO object
      grad_info :: PAULI_BLOCK_2RDM_GRAD_INFO
-     nterms,ngem :: INT
+     nterms, ngem, nblk :: INT
 
      grad_info.nb_terms = nterms
      grad_info.ex_gem.create(nterms,ngem)
-     grad_info.ex_blk.create(nterms,ngem)
+     grad_info.ex_blk.create(nterms,nblk)
      grad_info.all_pairs.create(nterms)
      grad_info.coef_prod.create(nterms)
-     .create(grad_info.pbg,nterms)
-!     grad_info_tmp.red_ov.create(1)
 
    end
 
@@ -126,21 +123,15 @@ contains
    ! Destroy a vector of PAULI_BLOCK_GEMINALS
      vec :: VEC{PAULI_BLOCK_GEMINALS}*
      i,n :: INT
-! this part is commented to avoid pbs when destroying grad_info_tmp
-! however, a better solution should be found.
-! the pb is in the assignment of red_pbg_1 to grad_info_tmp.pbg(i)
-! after destroy_ptr_part the memory of red_pbg_1 allocated to pointers 
-! is not accessible anymore
-   ! n=size(vec)
-   ! do i=1,n
-   !   vec(i).destroy_ptr_part
-   ! end
+     n=size(vec)
+     do i=1,n
+       vec(i).destroy_ptr_part
+     end
      deallocate(vec)
      nullify(vec)
 
    end
 
-!   destroy_ptr_part(grad_info) ::: selfless, leaky
    destroy_ptr_part(grad_info) ::: leaky
    ! Destroy the pointer parts of a PAULI_BLOCK_2RDM_GRAD_INFO object
      grad_info :: PAULI_BLOCK_2RDM_GRAD_INFO
@@ -149,7 +140,6 @@ contains
      grad_info.ex_blk.destroy
      grad_info.all_pairs.destroy
      grad_info.coef_prod.destroy
-     .destroy(grad_info.pbg)
 
    end
 
@@ -402,7 +392,6 @@ contains
      end
    end
 
-
    prep_red_pbg(red_pbg,g) ::: leaky
    ! prepare a new pauli_block_geminal (PBG), excluding geminal g;
    ! this new PBG will be used to compute an element of the 1RDM or 2RDM,
@@ -450,7 +439,7 @@ contains
      end
    end
 
-   prep_red_pbg_g(red_pbg,g,gg) ::: leaky
+   prep_red_pbg(red_pbg,g,gg) ::: leaky
    ! prepare a new pauli_block_geminal (PBG), excluding geminals g and gg;
    ! this new PBG will be used to compute an element of the 2RDM,
    ! belonging to the 1-orthogonal blocks space
@@ -1206,8 +1195,7 @@ contains
      end
    end
 
-! davide: 18-10-2019
-   prep_red_pbg_gg(red_pbg, gg, n_ex_gem) ::: leaky
+   prep_red_pbg(red_pbg, gg) ::: leaky
    ! prepare a new pauli_block_geminal (PBG), excluding geminals "gg";
    ! this new PBG will be used to compute an element of the 1RDM or 2RDM,
    ! or an element of the derivative of the 2RDM with respect to a given 
@@ -1218,15 +1206,17 @@ contains
    ! n_ex_gem = total number of geminals to be excluded
      red_pbg :: PAULI_BLOCK_GEMINALS
      gg :: VEC{INT}, IN
-     n_ex_gem :: INT, IN
+ !    n_ex_gem :: INT, IN
+     n_ex_gem :: INT
      pbg_created, exclude_gem :: BIN
      i, j, siz, count_ex_gem, ng :: INT
 
      ! set and check the number of geminals in the PBG 
      ! to be prepared
+     n_ex_gem = gg.dim
      ng = .n_geminals-n_ex_gem
      if (ng <= 0) then
-        stdout.text("Error in prep_red_pbg_gg:")
+        stdout.text("Error in prep_red_pbg gg:")
         stdout.text("the number of geminals to be excluded is equal to") 
         stdout.text("or exceeds the total number of geminals.")
         stop
@@ -1284,7 +1274,7 @@ contains
 
    end
 
-   prep_red_pbg_gg_bb(red_pbg, gg, n_ex_gem, bb, n_ex_blk, problem) ::: leaky
+   prep_red_pbg(red_pbg, gg, bb, problem) ::: leaky
    ! prepare a new pauli_block_geminal (PBG), excluding geminals "gg"
    ! and 2D blocks "bb"; this new PBG will be used to compute an element 
    ! of the 1RDM or 2RDM, or an element of the derivative of the 2RDM
@@ -1297,8 +1287,9 @@ contains
    ! n_ex_blk = total number of 2D blocks to be excluded
      red_pbg :: PAULI_BLOCK_GEMINALS
      gg, bb :: VEC{INT}, IN
-     n_ex_gem, n_ex_blk :: INT, IN
+     !n_ex_gem, n_ex_blk :: INT, IN
      problem :: BIN, INOUT
+     n_ex_gem, n_ex_blk :: INT
      pbg_created, exclude_gem, exclude_blk :: BIN
      i, j, k, l :: INT
      siz, count_ex_gem, ng :: INT
@@ -1311,6 +1302,8 @@ contains
      ! if already created, check its size
      ! (actually, here we check only if the vector of vectors
      ! ".nonzero_coef_ind" has been already created)
+     n_ex_gem=gg.dim
+     n_ex_blk=bb.dim
      pbg_created = red_pbg.nonzero_coef_ind.created
      ng = .n_geminals-n_ex_gem
      if (pbg_created) then
@@ -1408,7 +1401,6 @@ contains
      end
 
    end
-! de
 
 ! davide: 27-11-2018
    prep_orbital_block_mapping
@@ -5096,15 +5088,16 @@ contains
      ng_1 :: INT
      ng :: INT
      g, b :: INT
-     k,l, gg, bb, new_gg_ind :: INT
+     k,l, gg, bb, siz :: INT
      coef_prod :: REAL
      overlap :: REAL
      grad_info_tmp :: PAULI_BLOCK_2RDM_GRAD_INFO
      gg_in_ex_gem, bb_in_ex_blk, problem :: BIN
+     ex_gem,ex_blk :: VEC{INT}*
 
      ng_1=red_pbg_1.n_geminals
      grad_info_tmp.nb_terms=1
-     .create_ptr_part(grad_info_tmp,1,1)
+     .create_ptr_part(grad_info_tmp,1,1,1)
 !    grad_info_tmp.all_pairs(1) = FALSE
      ! 1-orthogonal case
      do b=1,.n_1D_blocks
@@ -5119,7 +5112,6 @@ contains
            .prep_red_pbg(red_pbg_1,g)
            red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
            red_pbg_1.calc_overlap_integral(overlap,FALSE)
-           grad_info_tmp.pbg(1)=red_pbg_1
         else
            overlap = ONE
            !provided the geminals have been properly normalized
@@ -5162,16 +5154,10 @@ contains
                 !
                 ! case B: "coef" is in the reduced overlap
                 !
-                ng = grad_info_tmp.pbg(k).n_geminals-1
+                ng = ng_1-1
                 red_pbg.n_geminals = ng
                 red_pbg.nonzero_coef_ind.create(ng)
                 red_pbg.nonzero_coef_prod.create(ng)
-                !set new index of gg in grad_info_tmp.pbg(k)
-                if(grad_info_tmp.ex_gem(k).element(1)<gg)then
-                  new_gg_ind=gg-1
-                else
-                  new_gg_ind=gg
-                end
                 ! two subcases (depending on the block size)
                 if (bb <= .n_1D_blocks) then 
                    !
@@ -5179,7 +5165,12 @@ contains
                    !
                    ! compute the new reduced overlap 
                   if (ng > 0) then
-                     grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,new_gg_ind)
+                     siz=grad_info_tmp.ex_gem(k).element.dim
+                     ex_gem.create(siz+1)
+                     ex_gem(1:siz)=grad_info_tmp.ex_gem(k).element
+                     ex_gem(siz+1)=gg
+                     .prep_red_pbg(red_pbg,ex_gem)
+                     ex_gem.destroy
                      red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
                      red_pbg.calc_overlap_integral(overlap,FALSE)
                   else
@@ -5197,8 +5188,19 @@ contains
                    !
                    ! compute the new reduced overlap 
                   if (ng > 0) then
-                     grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,new_gg_ind,bb,problem)
-  if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= grad_info_tmp.pbg(k).n_geminals))) then
+                     siz=grad_info_tmp.ex_gem(k).element.dim
+                     ex_gem.create(siz+1)
+                     ex_gem(1:siz)=grad_info_tmp.ex_gem(k).element
+                     ex_gem(siz+1)=gg
+                 !    siz=grad_info_tmp.ex_blk(k).element.dim 
+                 ! since grad_info_tmp.ex_blk(k).element.dim=grad_info_tmp.ex_gem(k).element.dim
+                     ex_blk.create(siz+1)
+                     ex_blk(1:siz)=grad_info_tmp.ex_blk(k).element
+                     ex_blk(siz+1)=bb
+                     .prep_red_pbg(red_pbg,ex_gem,ex_blk,problem)
+                     ex_gem.destroy
+                     ex_blk.destroy
+                     if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= ng_1))) then
                         red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
                         red_pbg.calc_overlap_integral(overlap,FALSE)
                      else 
@@ -5278,7 +5280,7 @@ contains
      ng_1 :: INT
      ng :: INT
      k, l, r, b :: INT
-     gg,bb,new_gg_ind  :: INT
+     gg, bb, siz  :: INT
      block_1, block_2 :: INT
      non_zero_1D, g  :: INT
      coef_1, coef_2, coef_3, coef_4 :: REAL
@@ -5286,11 +5288,12 @@ contains
      terms :: VEC{REAL}(2)
      grad_info_tmp :: PAULI_BLOCK_2RDM_GRAD_INFO
      gg_in_ex_gem, bb_in_ex_blk,problem :: BIN
+     ex_gem, ex_blk :: VEC{INT}*
 
      ng_1=red_pbg_1.n_geminals
      terms = ZERO
      grad_info_tmp.nb_terms=1
-     .create_ptr_part(grad_info_tmp,1,2)
+     .create_ptr_part(grad_info_tmp,1,1,2)
 !     grad_info_tmp.all_pairs(1) = FALSE
      ! here we consider two different 1D blocks 
      do g=1,.n_geminals
@@ -5302,7 +5305,6 @@ contains
            .prep_red_pbg(red_pbg_1,g)
            red_pbg_1.make_int_term_list(FALSE,FALSE,FALSE)
            red_pbg_1.calc_overlap_integral(overlap,FALSE)
-           grad_info_tmp.pbg(1)=red_pbg_1
         else
            overlap = ONE
         end
@@ -5352,16 +5354,10 @@ contains
                     !
                     ! case B: "coef" is in the reduced overlap
                     !
-                    ng = grad_info_tmp.pbg(k).n_geminals-1
+                    ng = ng_1-1
                     red_pbg.n_geminals = ng
                     red_pbg.nonzero_coef_ind.create(ng)
                     red_pbg.nonzero_coef_prod.create(ng)
-                    !set new index of gg in grad_info_tmp.pbg(k)
-                    if(grad_info_tmp.ex_gem(k).element(1)<gg)then
-                      new_gg_ind=gg-1
-                    else
-                      new_gg_ind=gg
-                    end
                     ! two subcases (depending on the block size)
                     if (bb <= .n_1D_blocks) then 
                        !
@@ -5369,7 +5365,12 @@ contains
                        !
                        ! compute the new reduced overlap 
                       if (ng > 0) then
-                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,new_gg_ind)
+                         siz=grad_info_tmp.ex_gem(k).element.dim
+                         ex_gem.create(siz+1)
+                         ex_gem(1:siz)=grad_info_tmp.ex_gem(k).element
+                         ex_gem(siz+1)=gg
+                         .prep_red_pbg(red_pbg,ex_gem)
+                         ex_gem.destroy
                          red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
                          red_pbg.calc_overlap_integral(overlap,FALSE)
                       else
@@ -5387,8 +5388,18 @@ contains
                        !
                        ! compute the new reduced overlap 
                       if (ng > 0) then
-                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,new_gg_ind,bb,problem)
-   if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= grad_info_tmp.pbg(k).n_geminals))) then
+                         siz=grad_info_tmp.ex_gem(k).element.dim
+                         ex_gem.create(siz+1)
+                         ex_gem(1:siz)=grad_info_tmp.ex_gem(k).element
+                         ex_gem(siz+1)=gg
+                         siz=grad_info_tmp.ex_blk(k).element.dim 
+                         ex_blk.create(siz+1)
+                         ex_blk(1:siz)=grad_info_tmp.ex_blk(k).element
+                         ex_blk(siz+1)=bb
+                         .prep_red_pbg(red_pbg,ex_gem,ex_blk,problem)
+                         ex_gem.destroy
+                         ex_blk.destroy
+                         if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= ng_1))) then
                             red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
                             red_pbg.calc_overlap_integral(overlap,FALSE)
                          else 
@@ -5436,16 +5447,10 @@ contains
                     !
                     ! case B: "coef" is in the reduced overlap
                     !
-                    ng = grad_info_tmp.pbg(k).n_geminals-1
+                    ng = ng_1-1
                     red_pbg.n_geminals = ng
                     red_pbg.nonzero_coef_ind.create(ng)
                     red_pbg.nonzero_coef_prod.create(ng)
-                    !set new index of gg in grad_info_tmp.pbg(k)
-                    if(grad_info_tmp.ex_gem(k).element(1)<gg)then
-                      new_gg_ind=gg-1
-                    else
-                      new_gg_ind=gg
-                    end
                     ! two subcases (depending on the block size)
                     if (bb <= .n_1D_blocks) then 
                        !
@@ -5453,7 +5458,12 @@ contains
                        !
                        ! compute the new reduced overlap 
                       if (ng > 0) then
-                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,new_gg_ind)
+                         siz=grad_info_tmp.ex_gem(k).element.dim
+                         ex_gem.create(siz+1)
+                         ex_gem(1:siz)=grad_info_tmp.ex_gem(k).element
+                         ex_gem(siz+1)=gg
+                         .prep_red_pbg(red_pbg,ex_gem)
+                         ex_gem.destroy
                          red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
                          red_pbg.calc_overlap_integral(overlap,FALSE)
                       else
@@ -5471,8 +5481,19 @@ contains
                        !
                        ! compute the new reduced overlap 
                       if (ng > 0) then
-                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,new_gg_ind,bb,problem)
-     if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= grad_info_tmp.pbg(k).n_geminals))) then
+                         siz=grad_info_tmp.ex_gem(k).element.dim
+                         ex_gem.create(siz+1)
+                         ex_gem(1:siz)=grad_info_tmp.ex_gem(k).element
+                         ex_gem(siz+1)=gg
+                     !    siz=grad_info_tmp.ex_blk(k).element.dim 
+                     ! since grad_info_tmp.ex_blk(k).element.dim=grad_info_tmp.ex_gem(k).element.dim
+                         ex_blk.create(siz+1)
+                         ex_blk(1:siz)=grad_info_tmp.ex_blk(k).element
+                         ex_blk(siz+1)=bb
+                         .prep_red_pbg(red_pbg,ex_gem,ex_blk,problem)
+                         ex_gem.destroy
+                         ex_blk.destroy
+                         if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= ng_1))) then
                             red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
                             red_pbg.calc_overlap_integral(overlap,FALSE)
                          else 
@@ -5520,7 +5541,7 @@ contains
            ! in the paper case 1a
            coef_prod = coef*.bra_set.vec(g).coef(b)*.ket_set.vec(g).coef(b)
            if (ng_2 > 0) then
-              .prep_red_pbg_g(red_pbg_2,geminal,g)
+              .prep_red_pbg(red_pbg_2,geminal,g)
               red_pbg_2.make_int_term_list(FALSE,FALSE,FALSE)
               red_pbg_2.calc_overlap_integral(overlap,FALSE)
            else
@@ -5544,7 +5565,7 @@ contains
      red_pbg_2 :: PAULI_BLOCK_GEMINALS
      red_pbg :: PAULI_BLOCK_GEMINALS
      ng_2 :: INT
-     ng, new_gg_ind :: INT
+     ng, siz :: INT
      i, k, l, r, b :: INT
      geminal, g  :: INT
      gg,bb  :: INT
@@ -5552,11 +5573,12 @@ contains
      overlap :: REAL
      grad_info_tmp :: PAULI_BLOCK_2RDM_GRAD_INFO
      gg_bb_in_1, gg_bb_in_2,problem :: BIN
+     ex_gem, ex_blk :: VEC{INT}*
 
      ng_2=red_pbg_2.n_geminals
      ! here we consider two different 1D blocks 
      grad_info_tmp.nb_terms=1
-     .create_ptr_part(grad_info_tmp,1,2)
+     .create_ptr_part(grad_info_tmp,1,2,2)
 !     grad_info_tmp.all_pairs(1) = FALSE
      do r=1,.n_1D_blocks-1
         geminal = .nonzero_1ortho_ind(r)
@@ -5574,10 +5596,9 @@ contains
            coef_prod = coef*.bra_set.vec(g).coef(b)*.ket_set.vec(g).coef(b)
            grad_info_tmp.coef_prod(1)=coef_prod
            if (ng_2 > 0) then
-              .prep_red_pbg_g(red_pbg_2,geminal,g)
+              .prep_red_pbg(red_pbg_2,geminal,g)
               red_pbg_2.make_int_term_list(FALSE,FALSE,FALSE)
               red_pbg_2.calc_overlap_integral(overlap,FALSE)
-              grad_info_tmp.pbg(1)=red_pbg_2
            else
               overlap = ONE
            end
@@ -5612,15 +5633,10 @@ contains
                     !
                     ! case B: "coef" is in the reduced overlap
                     !
-                    ng = grad_info_tmp.pbg(k).n_geminals-1
+                    ng = ng_2-1
                     red_pbg.n_geminals = ng
                     red_pbg.nonzero_coef_ind.create(ng)
                     red_pbg.nonzero_coef_prod.create(ng)
-                    !find new value of geminal index
-                    new_gg_ind=gg
-                    do i=1,2
-                      if(grad_info_tmp.ex_gem(k).element(i)<gg) new_gg_ind=new_gg_ind-1
-                    end
                     ! two subcases (depending on the block size)
                     if (bb <= .n_1D_blocks) then 
                        !
@@ -5628,7 +5644,12 @@ contains
                        !
                        ! compute the new reduced overlap 
                       if (ng > 0) then
-                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,new_gg_ind)
+                         siz=grad_info_tmp.ex_gem(k).element.dim
+                         ex_gem.create(siz+1)
+                         ex_gem(1:siz)=grad_info_tmp.ex_gem(k).element
+                         ex_gem(siz+1)=gg
+                         .prep_red_pbg(red_pbg,ex_gem)
+                         ex_gem.destroy
                          red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
                          red_pbg.calc_overlap_integral(overlap,FALSE)
                       else
@@ -5646,8 +5667,19 @@ contains
                        !
                        ! compute the new reduced overlap 
                       if (ng > 0) then
-                         grad_info_tmp.pbg(k).prep_red_pbg(red_pbg,new_gg_ind,bb,problem)
-  if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= grad_info_tmp.pbg(k).n_geminals))) then
+                         siz=grad_info_tmp.ex_gem(k).element.dim
+                         ex_gem.create(siz+1)
+                         ex_gem(1:siz)=grad_info_tmp.ex_gem(k).element
+                         ex_gem(siz+1)=gg
+                     !    siz=grad_info_tmp.ex_blk(k).element.dim 
+                     ! since grad_info_tmp.ex_blk(k).element.dim=grad_info_tmp.ex_gem(k).element.dim
+                         ex_blk.create(siz+1)
+                         ex_blk(1:siz)=grad_info_tmp.ex_blk(k).element
+                         ex_blk(siz+1)=bb
+                         .prep_red_pbg(red_pbg,ex_gem,ex_blk,problem)
+                         ex_gem.destroy
+                         ex_blk.destroy
+                         if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= ng_2))) then
                             red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
                             red_pbg.calc_overlap_integral(overlap,FALSE)
                          else 
@@ -13962,7 +13994,7 @@ contains
            ! "b" is a 1D block:
            ! compute the reduced overlap, 
            ! excluding geminal "g"
-           .prep_red_pbg_gg(red_pbg, gg, 1)
+           .prep_red_pbg(red_pbg, gg)
            red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
            red_pbg.calc_overlap_integral(rov,FALSE)
            ove_deriv = TWO*coef*rov
@@ -13971,7 +14003,7 @@ contains
            ! compute the reduced overlap, 
            ! excluding geminal "g" and block "b"
            bb(1) = b
-           .prep_red_pbg_gg_bb(red_pbg, gg, 1, bb, 1, problem)
+           .prep_red_pbg(red_pbg, gg, bb, problem)
            if ((NOT problem) AND ((.first_block == 0) OR (.n_blocks >= .n_geminals))) then
               red_pbg.make_int_term_list(FALSE,FALSE,FALSE)
               red_pbg.calc_overlap_integral(rov,FALSE)
