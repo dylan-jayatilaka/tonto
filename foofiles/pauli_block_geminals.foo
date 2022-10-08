@@ -99,14 +99,19 @@ contains
 
    create_ptr_part(grad_info,nterms,ngem,nblk) ::: leaky
    ! Create the pointer parts of a PAULI_BLOCK_2RDM_GRAD_INFO object
-     grad_info :: PAULI_BLOCK_2RDM_GRAD_INFO
-     nterms, ngem, nblk :: INT
+     grad_info :: PAULI_BLOCK_2RDM_GRAD_INFO, IN
+     nterms, ngem, nblk :: INT, IN
+     i :: INT
 
      grad_info.ex_gem.create(nterms,ngem)
      grad_info.ex_blk.create(nterms,nblk)
      grad_info.term.create(nterms)
      grad_info.factor.create(nterms)
      grad_info.any_pairs.create(nterms)
+     grad_info.GD2_factors.create(nterms)
+     do i=1,nterms
+       grad_info.GD2_factors(i).element.create(.n_2D_3typ_blocks)
+     end 
      grad_info.coef_prod.create(nterms)
 
    end
@@ -135,13 +140,14 @@ contains
 
    destroy_ptr_part(grad_info) ::: leaky
    ! Destroy the pointer parts of a PAULI_BLOCK_2RDM_GRAD_INFO object
-     grad_info :: PAULI_BLOCK_2RDM_GRAD_INFO
+     grad_info :: PAULI_BLOCK_2RDM_GRAD_INFO, IN
 
      grad_info.ex_gem.destroy
      grad_info.ex_blk.destroy
      grad_info.term.destroy
      grad_info.factor.destroy
      grad_info.any_pairs.destroy
+     grad_info.GD2_factors.destroy
      grad_info.coef_prod.destroy
 
    end
@@ -279,10 +285,37 @@ contains
      if (NOT .second_GD2_elt.created) then
         .second_GD2_elt.create(.n_2D_3typ_blocks)
      end
+     if (NOT .GD2_factor.created) then
+        .GD2_factor.create(.n_2D_3typ_blocks)
+        do i=1,.n_2D_3typ_blocks
+           .GD2_factor(i).element.create(5)
+           .GD2_factor(i).element= ZERO
+        end
+     else
+        do i=1,.n_2D_3typ_blocks
+           if (NOT .GD2_factor(i).element.created) then
+              .GD2_factor(i).element.create(5)
+              .GD2_factor(i).element= ZERO
+           end
+        end
+     end
+
      ! compute GD2 diagonal elements
      do i=1,.n_2D_3typ_blocks
        .first_GD2_elt(i) = sin(.GD2_info(i))*SQRT_2
        .second_GD2_elt(i) = cos(.GD2_info(i))*SQRT_2
+     end
+     
+     if (.opt_GD2_angles) then
+        do i=1,.n_2D_3typ_blocks
+           WARN_IF(.first_GD2_elt(i)<TOL(15),"angle too close to k.Pi")
+           WARN_IF(.second_GD2_elt(i)<TOL(15),"angle too close to (2k+1)Pi/2")
+           .GD2_factor(i).element(1)=.second_GD2_elt(i)/.first_GD2_elt(i)
+           .GD2_factor(i).element(2)=-.first_GD2_elt(i)/.second_GD2_elt(i)
+           .GD2_factor(i).element(3)=TWO*.GD2_factor(i).element(1)
+           .GD2_factor(i).element(4)=TWO*.GD2_factor(i).element(2)
+           .GD2_factor(i).element(5)=.GD2_factor(i).element(1) + .GD2_factor(i).element(2)
+        end
      end
 
    end
@@ -8248,6 +8281,7 @@ contains
      grad_info_tmp.nb_terms=1
      .create_ptr_part(grad_info_tmp,1,1,1)
      grad_info_tmp.factor=TWO
+     grad_info_tmp.GD2_factors(1).element=ZERO
      grad_info_tmp.any_pairs(1) = TRUE
      ! 1-orthogonal case
      do b=1,.n_1D_blocks
@@ -8298,6 +8332,8 @@ contains
      .create_ptr_part(grad_info_tmp_2,1,1,2)
      grad_info_tmp_1.factor=ONE
      grad_info_tmp_2.factor=ONE
+     grad_info_tmp_1.GD2_factors(1).element=ZERO
+     grad_info_tmp_2.GD2_factors(1).element=ZERO
      grad_info_tmp_1.any_pairs(1) = TRUE
      grad_info_tmp_2.any_pairs(1) = TRUE
 !     grad_info_tmp.all_pairs(1) = FALSE
@@ -8369,6 +8405,7 @@ contains
      grad_info_tmp.nb_terms=1
      .create_ptr_part(grad_info_tmp,1,2,2)
      grad_info_tmp.factor=TWO
+     grad_info_tmp.GD2_factors(1).element=ZERO
      grad_info_tmp.any_pairs(1) = FALSE
      ! here we consider two different 1D blocks 
      do r=1,.n_1D_blocks-1
@@ -8467,6 +8504,7 @@ contains
            grad_info_tmp.ex_gem(1).element(1)=geminal
            grad_info_tmp.ex_blk(1).element(1)=r
            grad_info_tmp.ex_blk(1).element(2)=block+.n_1D_blocks
+           grad_info_tmp.GD2_factors(1).element=ZERO
            if (geminal == .block_types(block).element(1)) then
            ! 2D block matrix is ID2
               grad_info_tmp.coef_prod(1) = coef_1*coef_4
@@ -8566,6 +8604,7 @@ contains
               if (abs(term) > NON_ZERO_2RTM_TOL) then
                  .add_2rtm_ab_elt((/ r,r,ind_1,ind_1 /),term)
                  grad_info_tmp.term(1)=term
+                 grad_info_tmp.GD2_factors(1).element(block)=.GD2_factor(block).element(1)
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
               end
                  
@@ -8574,6 +8613,7 @@ contains
               if (abs(term) > NON_ZERO_2RTM_TOL) then
                  .add_2rtm_ab_elt((/ r,r,ind_2,ind_2 /),term)
                  grad_info_tmp.term(1)=term
+                 grad_info_tmp.GD2_factors(1).element(block)=.GD2_factor(block).element(2)
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
               end
                  
@@ -8582,6 +8622,7 @@ contains
               if (abs(term) > NON_ZERO_2RTM_TOL) then
                  .add_2rtm_ab_elt((/ ind_1,ind_1,r,r /),term)
                  grad_info_tmp.term(1)=term
+                 grad_info_tmp.GD2_factors(1).element(block)=.GD2_factor(block).element(1)
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
               end
                  
@@ -8590,6 +8631,7 @@ contains
               if (abs(term) > NON_ZERO_2RTM_TOL) then
                  .add_2rtm_ab_elt((/ ind_2,ind_2,r,r /),term)
                  grad_info_tmp.term(1)=term
+                 grad_info_tmp.GD2_factors(1).element(block)=.GD2_factor(block).element(2)
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
               end
            else 
@@ -8672,8 +8714,12 @@ contains
              if (abs(sum_term) > NON_ZERO_2RTM_TOL) then
                .add_2rtm_ab_elt((/ b2,ind_1,b2,ind_1 /),sum_term)
                grad_info_tmp.term(1)=term(3)
+               grad_info_tmp.GD2_factors(1).element=ZERO
                grad_info_tmp.term(2)=term(4)
+               grad_info_tmp.GD2_factors(2).element=ZERO
                grad_info_tmp.term(3)=t_1
+               grad_info_tmp.GD2_factors(3).element=ZERO
+               grad_info_tmp.GD2_factors(3).element(block_1)=.GD2_factor(block_1).element(3)
                .calc_2rtm_ab_coef_grad(grad_info_tmp)
                .add_2rtm_aa_elt((/ b2,ind_1,b2,ind_1 /),sum_term)
                .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
@@ -8690,8 +8736,12 @@ contains
              if (abs(sum_term) > NON_ZERO_2RTM_TOL) then
                .add_2rtm_ab_elt((/ b2,ind_2,b2,ind_2 /),sum_term)
                grad_info_tmp.term(1)=term(3)
+               grad_info_tmp.GD2_factors(1).element=ZERO
                grad_info_tmp.term(2)=term(4)
+               grad_info_tmp.GD2_factors(2).element=ZERO
                grad_info_tmp.term(3)=t_2
+               grad_info_tmp.GD2_factors(3).element=ZERO
+               grad_info_tmp.GD2_factors(3).element(block_1)=.GD2_factor(block_1).element(4)
                .calc_2rtm_ab_coef_grad(grad_info_tmp)
                .add_2rtm_aa_elt((/ b2,ind_2,b2,ind_2 /),sum_term)
                .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
@@ -8726,6 +8776,7 @@ contains
              term = ZERO
              do j=1,4 ! geminal with ID2, SZ, SX or ISY in block "block_1" are considered
                 geminal_1 = .block_types(block_1).element(j) 
+                grad_info_tmp.GD2_factors(j).element=ZERO
                 if (geminal_1 /= 0 AND geminal_1 /= geminal_2) then
                    grad_info_tmp.ex_blk(j).element(1)=b1
                    grad_info_tmp.ex_blk(j).element(2)=b2
@@ -8838,6 +8889,7 @@ contains
              end
           end
 
+
           element_coef = term(5)*.first_GD2_elt(block)*.first_GD2_elt(block)
           if (abs(element_coef) > NON_ZERO_2RTM_TOL) then
              .add_2rtm_ab_elt((/ ind_1,ind_1,ind_1,ind_1 /),element_coef)
@@ -8849,6 +8901,8 @@ contains
              grad_info_tmp.ex_gem(1).element(1)=ex_gem(5)
              grad_info_tmp.coef_prod(1)=coef_prod(5)*.first_GD2_elt(block)*.first_GD2_elt(block)
              grad_info_tmp.term(1)=element_coef
+             grad_info_tmp.GD2_factors(1).element=ZERO
+             grad_info_tmp.GD2_factors(1).element(block)=.GD2_factor(block).element(3)
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
           end
@@ -8864,6 +8918,8 @@ contains
              grad_info_tmp.ex_gem(1).element(1)=ex_gem(5)
              grad_info_tmp.coef_prod(1)=coef_prod(5)*.second_GD2_elt(block)*.second_GD2_elt(block)
              grad_info_tmp.term(1)=element_coef
+             grad_info_tmp.GD2_factors(1).element=ZERO
+             grad_info_tmp.GD2_factors(1).element(block)=.GD2_factor(block).element(4)
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
           end
@@ -8879,6 +8935,8 @@ contains
              grad_info_tmp.ex_gem(1).element(1)=ex_gem(5)
              grad_info_tmp.coef_prod(1)=coef_prod(5)*.first_GD2_elt(block)*.second_GD2_elt(block)
              grad_info_tmp.term(1)=element_coef
+             grad_info_tmp.GD2_factors(1).element=ZERO
+             grad_info_tmp.GD2_factors(1).element(block)=.GD2_factor(block).element(5)
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_2,ind_1,ind_1 /),element_coef)
@@ -8898,10 +8956,12 @@ contains
              grad_info_tmp.ex_gem(1).element(1)=ex_gem(3)
              grad_info_tmp.coef_prod(1)=coef_prod(3)
              grad_info_tmp.term(1)=term(3)
+             grad_info_tmp.GD2_factors(1).element=ZERO
              grad_info_tmp.ex_blk(2).element(1)=ex_blk(4)
              grad_info_tmp.ex_gem(2).element(1)=ex_gem(4)
              grad_info_tmp.coef_prod(2)=coef_prod(4)
              grad_info_tmp.term(2)=term(4)
+             grad_info_tmp.GD2_factors(2).element=ZERO
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_1,ind_2,ind_1 /),element_coef)
@@ -8920,10 +8980,12 @@ contains
              grad_info_tmp.ex_gem(1).element(1)=ex_gem(3)
              grad_info_tmp.coef_prod(1)=coef_prod(3)
              grad_info_tmp.term(1)=term(3)
+             grad_info_tmp.GD2_factors(1).element=ZERO
              grad_info_tmp.ex_blk(2).element(1)=ex_blk(4)
              grad_info_tmp.ex_gem(2).element(1)=ex_gem(4)
              grad_info_tmp.coef_prod(2)=-coef_prod(4)
              grad_info_tmp.term(2)=-term(4)
+             grad_info_tmp.GD2_factors(2).element=ZERO
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_1,ind_1,ind_2 /),element_coef)
@@ -8975,10 +9037,12 @@ contains
              grad_info_tmp.ex_gem(1).element(1)=ex_gem(1)
              grad_info_tmp.coef_prod(1)=coef_prod(1)
              grad_info_tmp.term(1)=term(1)
+             grad_info_tmp.GD2_factors(1).element=ZERO
              grad_info_tmp.ex_blk(2).element(1)=ex_blk(2)
              grad_info_tmp.ex_gem(2).element(1)=ex_gem(2)
              grad_info_tmp.coef_prod(2)=coef_prod(2)
              grad_info_tmp.term(2)=term(2)
+             grad_info_tmp.GD2_factors(2).element=ZERO
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_2,ind_2,ind_2 /),element_coef)
@@ -8996,10 +9060,12 @@ contains
              grad_info_tmp.ex_gem(1).element(1)=ex_gem(3)
              grad_info_tmp.coef_prod(1)=coef_prod(3)
              grad_info_tmp.term(1)=term(3)
+             grad_info_tmp.GD2_factors(1).element=ZERO
              grad_info_tmp.ex_blk(2).element(1)=ex_blk(4)
              grad_info_tmp.ex_gem(2).element(1)=ex_gem(4)
              grad_info_tmp.coef_prod(2)=coef_prod(4)
              grad_info_tmp.term(2)=term(4)
+             grad_info_tmp.GD2_factors(2).element=ZERO
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_1,ind_2,ind_1 /),element_coef)
@@ -9017,10 +9083,12 @@ contains
              grad_info_tmp.ex_gem(1).element(1)=ex_gem(1)
              grad_info_tmp.coef_prod(1)=coef_prod(1)
              grad_info_tmp.term(1)=term(1)
+             grad_info_tmp.GD2_factors(1).element=ZERO
              grad_info_tmp.ex_blk(2).element(1)=ex_blk(2)
              grad_info_tmp.ex_gem(2).element(1)=ex_gem(2)
              grad_info_tmp.coef_prod(2)=-coef_prod(2)
              grad_info_tmp.term(2)=-term(2)
+             grad_info_tmp.GD2_factors(2).element=ZERO
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_2,ind_1,ind_1 /),element_coef)
@@ -9038,10 +9106,12 @@ contains
              grad_info_tmp.ex_gem(1).element(1)=ex_gem(3)
              grad_info_tmp.coef_prod(1)=coef_prod(3)
              grad_info_tmp.term(1)=term(3)
+             grad_info_tmp.GD2_factors(1).element=ZERO
              grad_info_tmp.ex_blk(2).element(1)=ex_blk(4)
              grad_info_tmp.ex_gem(2).element(1)=ex_gem(4)
              grad_info_tmp.coef_prod(2)=-coef_prod(4)
              grad_info_tmp.term(2)=-term(4)
+             grad_info_tmp.GD2_factors(2).element=ZERO
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_1,ind_1,ind_2 /),element_coef)
@@ -9101,6 +9171,7 @@ contains
           !important to initialize term in case overlap is zero 
           !to skip the corresponding term in calc_2rtm_ab_coef_grad
           grad_info_tmp(j).term(r) = ZERO
+          grad_info_tmp(j).GD2_factors(r).element=ZERO
         end
         select case (.bra_set.vec(geminal).block_type(b1))
            case("ID2") 
@@ -9112,6 +9183,10 @@ contains
            case("GD2") 
               el11_bra = .bra_set.vec(geminal).coef(b1)*.first_GD2_elt(block_1)
               el22_bra = .bra_set.vec(geminal).coef(b1)*.second_GD2_elt(block_1)
+              grad_info_tmp(1).GD2_factors(r).element(block_1)=.GD2_factor(block_1).element(1)
+              grad_info_tmp(2).GD2_factors(r).element(block_1)=.GD2_factor(block_1).element(1)
+              grad_info_tmp(3).GD2_factors(r).element(block_1)=.GD2_factor(block_1).element(2)
+              grad_info_tmp(4).GD2_factors(r).element(block_1)=.GD2_factor(block_1).element(2)
            case default   
               stdout.text("unexpected block type")
               stop
@@ -9126,6 +9201,10 @@ contains
            case("GD2") 
               el11_ket = .ket_set.vec(geminal).coef(b2)*.first_GD2_elt(block_2)
               el22_ket = .ket_set.vec(geminal).coef(b2)*.second_GD2_elt(block_2)
+              grad_info_tmp(1).GD2_factors(r).element(block_2)=.GD2_factor(block_2).element(1)
+              grad_info_tmp(2).GD2_factors(r).element(block_2)=.GD2_factor(block_2).element(2)
+              grad_info_tmp(3).GD2_factors(r).element(block_2)=.GD2_factor(block_2).element(1)
+              grad_info_tmp(4).GD2_factors(r).element(block_2)=.GD2_factor(block_2).element(2)
            case default   
               stdout.text("unexpected block type")
               stop
@@ -9214,6 +9293,7 @@ contains
           !important to initialize term in case overlap is zero 
           !to skip the corresponding term in calc_2rtm_ab_coef_grad
           grad_info_tmp(j).term(r) = ZERO
+          grad_info_tmp(j).GD2_factors(r).element=ZERO
         end
         select case (.bra_set.vec(geminal).block_type(b1))
            case("SX") 
@@ -9320,6 +9400,7 @@ contains
           !important to initialize term in case overlap is zero 
           !to skip the corresponding term in calc_2rtm_ab_coef_grad
           grad_info_tmp(j).term(r) = ZERO
+          grad_info_tmp(j).GD2_factors(r).element=ZERO
         end
         select case (.bra_set.vec(geminal).block_type(b1))
            case("ID2") 
@@ -9331,6 +9412,10 @@ contains
            case("GD2") 
               el11_bra = .bra_set.vec(geminal).coef(b1)*.first_GD2_elt(block_1)
               el22_bra = .bra_set.vec(geminal).coef(b1)*.second_GD2_elt(block_1)
+              grad_info_tmp(1).GD2_factors(r).element(block_1)=.GD2_factor(block_1).element(1)
+              grad_info_tmp(2).GD2_factors(r).element(block_1)=.GD2_factor(block_1).element(1)
+              grad_info_tmp(3).GD2_factors(r).element(block_1)=.GD2_factor(block_1).element(2)
+              grad_info_tmp(4).GD2_factors(r).element(block_1)=.GD2_factor(block_1).element(2)
            case default   
               stdout.text("unexpected block type")
               stop
@@ -9431,6 +9516,7 @@ contains
           !important to initialize term in case overlap is zero 
           !to skip the corresponding term in calc_2rtm_ab_coef_grad
           grad_info_tmp(j).term(r) = ZERO
+          grad_info_tmp(j).GD2_factors(r).element=ZERO
         end
         select case (.bra_set.vec(geminal).block_type(b1))
            case("SX") 
@@ -9453,6 +9539,10 @@ contains
            case("GD2") 
               el11_ket = .ket_set.vec(geminal).coef(b2)*.first_GD2_elt(block_2)
               el22_ket = .ket_set.vec(geminal).coef(b2)*.second_GD2_elt(block_2)
+              grad_info_tmp(1).GD2_factors(r).element(block_2)=.GD2_factor(block_2).element(1)
+              grad_info_tmp(2).GD2_factors(r).element(block_2)=.GD2_factor(block_2).element(2)
+              grad_info_tmp(3).GD2_factors(r).element(block_2)=.GD2_factor(block_2).element(1)
+              grad_info_tmp(4).GD2_factors(r).element(block_2)=.GD2_factor(block_2).element(2)
            case default   
               stdout.text("unexpected block type")
               stop
@@ -9557,7 +9647,7 @@ contains
      terms :: VEC{REAL}(4)
      problem :: BIN
      grad_info_tmp :: VEC{PAULI_BLOCK_2RDM_GRAD_INFO}(4)
-     j,siz, counter :: INT
+     j,siz, counter, counterm1, counterm2, counterm3 :: INT
 
      ng_2 = red_pbg_2.n_geminals
      b1 = .n_1D_blocks + block_1 
@@ -9648,6 +9738,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -9693,6 +9784,18 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+           end
+           if(.ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -9718,6 +9821,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -9759,6 +9863,12 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -9814,6 +9924,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -9861,6 +9972,18 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+           end
+           if(.ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -9879,6 +10002,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -9919,6 +10043,12 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -9989,6 +10119,7 @@ contains
         do s=r+1,diag_diag.dim
            geminal_2 = diag_diag(s)
            counter=counter+1
+           counterm3=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -9997,8 +10128,10 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
+           counterm2=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b2
              grad_info_tmp(j).ex_blk(counter).element(2)=b1
@@ -10007,6 +10140,19 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
+           end
+           counter=counter+1
+           counterm1=counter
+           do j=1,4
+             grad_info_tmp(j).ex_blk(counter).element(1)=b1
+             grad_info_tmp(j).ex_blk(counter).element(2)=b2
+             grad_info_tmp(j).ex_gem(counter).element(1)=geminal_1
+             grad_info_tmp(j).ex_gem(counter).element(2)=geminal_2
+             !important to initialize term in case overlap is zero 
+             !to skip the corresponding term in calc_2rtm_ab_coef_grad
+             grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -10017,16 +10163,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
-           end
-           counter=counter+1
-           do j=1,4
-             grad_info_tmp(j).ex_blk(counter).element(1)=b1
-             grad_info_tmp(j).ex_blk(counter).element(2)=b2
-             grad_info_tmp(j).ex_gem(counter).element(1)=geminal_1
-             grad_info_tmp(j).ex_gem(counter).element(2)=geminal_2
-             !important to initialize term in case overlap is zero 
-             !to skip the corresponding term in calc_2rtm_ab_coef_grad
-             grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -10084,51 +10221,97 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-3)= coef_1 * el11_bra_2*el11_ket_2
-           grad_info_tmp(2).coef_prod(counter-3)= coef_1 * el22_bra_2*el22_ket_2
-           grad_info_tmp(3).coef_prod(counter-3)= coef_4 * el11_bra_2*el11_ket_2
-           grad_info_tmp(4).coef_prod(counter-3)= coef_4 * el22_bra_2*el22_ket_2
-           grad_info_tmp(1).term(counter-3)=grad_info_tmp(1).coef_prod(counter-3) * overlap
-           grad_info_tmp(2).term(counter-3)=grad_info_tmp(2).coef_prod(counter-3) * overlap
-           grad_info_tmp(3).term(counter-3)=grad_info_tmp(3).coef_prod(counter-3) * overlap
-           grad_info_tmp(4).term(counter-3)=grad_info_tmp(4).coef_prod(counter-3) * overlap
+           grad_info_tmp(1).coef_prod(counterm3)= coef_1 * el11_bra_2*el11_ket_2
+           grad_info_tmp(2).coef_prod(counterm3)= coef_1 * el22_bra_2*el22_ket_2
+           grad_info_tmp(3).coef_prod(counterm3)= coef_4 * el11_bra_2*el11_ket_2
+           grad_info_tmp(4).coef_prod(counterm3)= coef_4 * el22_bra_2*el22_ket_2
+           grad_info_tmp(1).term(counterm3)=grad_info_tmp(1).coef_prod(counterm3) * overlap
+           grad_info_tmp(2).term(counterm3)=grad_info_tmp(2).coef_prod(counterm3) * overlap
+           grad_info_tmp(3).term(counterm3)=grad_info_tmp(3).coef_prod(counterm3) * overlap
+           grad_info_tmp(4).term(counterm3)=grad_info_tmp(4).coef_prod(counterm3) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm3).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm3).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm3).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm3).element(block_1) = .GD2_factor(block_1).element(4)
+           end
+           if(.ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm3).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counterm3).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counterm3).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counterm3).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-3)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-3)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-3)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-3)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm3)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm3)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm3)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm3)
 
-           grad_info_tmp(1).coef_prod(counter-2)= coef_13 * el11_bra_4*el11_ket_4
-           grad_info_tmp(2).coef_prod(counter-2)= coef_16 * el11_bra_4*el11_ket_4
-           grad_info_tmp(3).coef_prod(counter-2)= coef_13 * el22_bra_4*el22_ket_4
-           grad_info_tmp(4).coef_prod(counter-2)= coef_16 * el22_bra_4*el22_ket_4
-           grad_info_tmp(1).term(counter-2)=grad_info_tmp(1).coef_prod(counter-2) * overlap
-           grad_info_tmp(2).term(counter-2)=grad_info_tmp(2).coef_prod(counter-2) * overlap
-           grad_info_tmp(3).term(counter-2)=grad_info_tmp(3).coef_prod(counter-2) * overlap
-           grad_info_tmp(4).term(counter-2)=grad_info_tmp(4).coef_prod(counter-2) * overlap
+           grad_info_tmp(1).coef_prod(counterm2)= coef_13 * el11_bra_4*el11_ket_4
+           grad_info_tmp(2).coef_prod(counterm2)= coef_16 * el11_bra_4*el11_ket_4
+           grad_info_tmp(3).coef_prod(counterm2)= coef_13 * el22_bra_4*el22_ket_4
+           grad_info_tmp(4).coef_prod(counterm2)= coef_16 * el22_bra_4*el22_ket_4
+           grad_info_tmp(1).term(counterm2)=grad_info_tmp(1).coef_prod(counterm2) * overlap
+           grad_info_tmp(2).term(counterm2)=grad_info_tmp(2).coef_prod(counterm2) * overlap
+           grad_info_tmp(3).term(counterm2)=grad_info_tmp(3).coef_prod(counterm2) * overlap
+           grad_info_tmp(4).term(counterm2)=grad_info_tmp(4).coef_prod(counterm2) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm2).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counterm2).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counterm2).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counterm2).element(block_2) = .GD2_factor(block_2).element(4)
+           end
+           if(.ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm2).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm2).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm2).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm2).element(block_1) = .GD2_factor(block_1).element(4)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-2)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-2)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-2)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-2)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm2)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm2)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm2)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm2)
 
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_5 * el11_bra_2*el11_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_6 * el22_bra_2*el11_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_7 * el11_bra_2*el22_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_8 * el22_bra_2*el22_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_5 * el11_bra_2*el11_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_6 * el22_bra_2*el11_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_7 * el11_bra_2*el22_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_8 * el22_bra_2*el22_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2" AND .ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+           else if(.bra_set.vec(geminal_1).block_type(b1)=="GD2" OR .ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(1)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(1)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(2)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(2)
+           end
+           if(.bra_set.vec(geminal_1).block_type(b2)=="GD2" AND .ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+           else if(.bra_set.vec(geminal_1).block_type(b2)=="GD2" OR .ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(1)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(2)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(1)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(2)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -10142,6 +10325,28 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.ket_set.vec(geminal_1).block_type(b1)=="GD2" AND .bra_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+           else if(.ket_set.vec(geminal_1).block_type(b1)=="GD2" OR .bra_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(1)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(1)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(2)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(2)
+           end
+           if(.ket_set.vec(geminal_1).block_type(b2)=="GD2" AND .bra_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+           else if(.ket_set.vec(geminal_1).block_type(b2)=="GD2" OR .bra_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(1)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(2)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(1)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(2)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -10152,6 +10357,7 @@ contains
         do s=1,ndiag_ndiag.dim
            geminal_2 = ndiag_ndiag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -10160,6 +10366,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -10170,6 +10377,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -10215,19 +10423,25 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-1)= coef_1 * el21_bra_2*el21_ket_2
-           grad_info_tmp(2).coef_prod(counter-1)= coef_1 * el12_bra_2*el12_ket_2
-           grad_info_tmp(3).coef_prod(counter-1)= coef_4 * el21_bra_2*el21_ket_2
-           grad_info_tmp(4).coef_prod(counter-1)= coef_4 * el12_bra_2*el12_ket_2
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_1 * el21_bra_2*el21_ket_2
+           grad_info_tmp(2).coef_prod(counterm1)= coef_1 * el12_bra_2*el12_ket_2
+           grad_info_tmp(3).coef_prod(counterm1)= coef_4 * el21_bra_2*el21_ket_2
+           grad_info_tmp(4).coef_prod(counterm1)= coef_4 * el12_bra_2*el12_ket_2
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            grad_info_tmp(1).coef_prod(counter)= coef_13 * el12_bra_4*el12_ket_4
            grad_info_tmp(2).coef_prod(counter)= coef_16 * el12_bra_4*el12_ket_4
@@ -10237,6 +10451,12 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -10247,6 +10467,7 @@ contains
         do s=1,diag_ndiag.dim
            geminal_2 = diag_ndiag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -10255,6 +10476,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -10265,6 +10487,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -10316,19 +10539,25 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-1)= coef_1 * el21_bra_2*el21_ket_2
-           grad_info_tmp(2).coef_prod(counter-1)= coef_1 * el12_bra_2*el12_ket_2
-           grad_info_tmp(3).coef_prod(counter-1)= coef_4 * el21_bra_2*el21_ket_2
-           grad_info_tmp(4).coef_prod(counter-1)= coef_4 * el12_bra_2*el12_ket_2
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_1 * el21_bra_2*el21_ket_2
+           grad_info_tmp(2).coef_prod(counterm1)= coef_1 * el12_bra_2*el12_ket_2
+           grad_info_tmp(3).coef_prod(counterm1)= coef_4 * el21_bra_2*el21_ket_2
+           grad_info_tmp(4).coef_prod(counterm1)= coef_4 * el12_bra_2*el12_ket_2
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            grad_info_tmp(1).coef_prod(counter)= coef_13 * el11_bra_4*el11_ket_4
            grad_info_tmp(2).coef_prod(counter)= coef_16 * el11_bra_4*el11_ket_4
@@ -10338,6 +10567,18 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+           end
+           if(.bra_set.vec(geminal_1).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -10348,6 +10589,7 @@ contains
         do s=1,ndiag_diag.dim
            geminal_2 = ndiag_diag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -10356,6 +10598,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -10366,6 +10609,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -10417,19 +10661,31 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-1)= coef_1 * el11_bra_2*el11_ket_2
-           grad_info_tmp(2).coef_prod(counter-1)= coef_1 * el22_bra_2*el22_ket_2
-           grad_info_tmp(3).coef_prod(counter-1)= coef_4 * el11_bra_2*el11_ket_2
-           grad_info_tmp(4).coef_prod(counter-1)= coef_4 * el22_bra_2*el22_ket_2
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_1 * el11_bra_2*el11_ket_2
+           grad_info_tmp(2).coef_prod(counterm1)= coef_1 * el22_bra_2*el22_ket_2
+           grad_info_tmp(3).coef_prod(counterm1)= coef_4 * el11_bra_2*el11_ket_2
+           grad_info_tmp(4).coef_prod(counterm1)= coef_4 * el22_bra_2*el22_ket_2
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+           end
+           if(.ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            grad_info_tmp(1).coef_prod(counter)= coef_13 * el12_bra_4*el12_ket_4
            grad_info_tmp(2).coef_prod(counter)= coef_16 * el12_bra_4*el12_ket_4
@@ -10439,6 +10695,12 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -10479,6 +10741,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -10525,6 +10788,12 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -10543,6 +10812,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -10634,6 +10904,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -10681,6 +10952,12 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -10699,6 +10976,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -10799,6 +11077,7 @@ contains
         do s=r+1,ndiag_ndiag.dim
            geminal_2 = ndiag_ndiag(s)
            counter=counter+1
+           counterm3=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -10807,8 +11086,10 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
+           counterm2=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b2
              grad_info_tmp(j).ex_blk(counter).element(2)=b1
@@ -10817,6 +11098,19 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
+           end
+           counter=counter+1
+           counterm1=counter
+           do j=1,4
+             grad_info_tmp(j).ex_blk(counter).element(1)=b1
+             grad_info_tmp(j).ex_blk(counter).element(2)=b2
+             grad_info_tmp(j).ex_gem(counter).element(1)=geminal_1
+             grad_info_tmp(j).ex_gem(counter).element(2)=geminal_2
+             !important to initialize term in case overlap is zero 
+             !to skip the corresponding term in calc_2rtm_ab_coef_grad
+             grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -10827,16 +11121,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
-           end
-           counter=counter+1
-           do j=1,4
-             grad_info_tmp(j).ex_blk(counter).element(1)=b1
-             grad_info_tmp(j).ex_blk(counter).element(2)=b2
-             grad_info_tmp(j).ex_gem(counter).element(1)=geminal_1
-             grad_info_tmp(j).ex_gem(counter).element(2)=geminal_2
-             !important to initialize term in case overlap is zero 
-             !to skip the corresponding term in calc_2rtm_ab_coef_grad
-             grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -10882,51 +11167,51 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-3)= coef_1 * el12_bra_2*el12_ket_2
-           grad_info_tmp(2).coef_prod(counter-3)= coef_1 * el21_bra_2*el21_ket_2
-           grad_info_tmp(3).coef_prod(counter-3)= coef_4 * el12_bra_2*el12_ket_2
-           grad_info_tmp(4).coef_prod(counter-3)= coef_4 * el21_bra_2*el21_ket_2
-           grad_info_tmp(1).term(counter-3)=grad_info_tmp(1).coef_prod(counter-3) * overlap
-           grad_info_tmp(2).term(counter-3)=grad_info_tmp(2).coef_prod(counter-3) * overlap
-           grad_info_tmp(3).term(counter-3)=grad_info_tmp(3).coef_prod(counter-3) * overlap
-           grad_info_tmp(4).term(counter-3)=grad_info_tmp(4).coef_prod(counter-3) * overlap
+           grad_info_tmp(1).coef_prod(counterm3)= coef_1 * el12_bra_2*el12_ket_2
+           grad_info_tmp(2).coef_prod(counterm3)= coef_1 * el21_bra_2*el21_ket_2
+           grad_info_tmp(3).coef_prod(counterm3)= coef_4 * el12_bra_2*el12_ket_2
+           grad_info_tmp(4).coef_prod(counterm3)= coef_4 * el21_bra_2*el21_ket_2
+           grad_info_tmp(1).term(counterm3)=grad_info_tmp(1).coef_prod(counterm3) * overlap
+           grad_info_tmp(2).term(counterm3)=grad_info_tmp(2).coef_prod(counterm3) * overlap
+           grad_info_tmp(3).term(counterm3)=grad_info_tmp(3).coef_prod(counterm3) * overlap
+           grad_info_tmp(4).term(counterm3)=grad_info_tmp(4).coef_prod(counterm3) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-3)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-3)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-3)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-3)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm3)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm3)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm3)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm3)
 
-           grad_info_tmp(1).coef_prod(counter-2)= coef_16 * el12_bra_4*el12_ket_4
-           grad_info_tmp(2).coef_prod(counter-2)= coef_13 * el12_bra_4*el12_ket_4
-           grad_info_tmp(3).coef_prod(counter-2)= coef_16 * el21_bra_4*el21_ket_4
-           grad_info_tmp(4).coef_prod(counter-2)= coef_13 * el21_bra_4*el21_ket_4
-           grad_info_tmp(1).term(counter-2)=grad_info_tmp(1).coef_prod(counter-2) * overlap
-           grad_info_tmp(2).term(counter-2)=grad_info_tmp(2).coef_prod(counter-2) * overlap
-           grad_info_tmp(3).term(counter-2)=grad_info_tmp(3).coef_prod(counter-2) * overlap
-           grad_info_tmp(4).term(counter-2)=grad_info_tmp(4).coef_prod(counter-2) * overlap
+           grad_info_tmp(1).coef_prod(counterm2)= coef_16 * el12_bra_4*el12_ket_4
+           grad_info_tmp(2).coef_prod(counterm2)= coef_13 * el12_bra_4*el12_ket_4
+           grad_info_tmp(3).coef_prod(counterm2)= coef_16 * el21_bra_4*el21_ket_4
+           grad_info_tmp(4).coef_prod(counterm2)= coef_13 * el21_bra_4*el21_ket_4
+           grad_info_tmp(1).term(counterm2)=grad_info_tmp(1).coef_prod(counterm2) * overlap
+           grad_info_tmp(2).term(counterm2)=grad_info_tmp(2).coef_prod(counterm2) * overlap
+           grad_info_tmp(3).term(counterm2)=grad_info_tmp(3).coef_prod(counterm2) * overlap
+           grad_info_tmp(4).term(counterm2)=grad_info_tmp(4).coef_prod(counterm2) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-2)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-2)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-2)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-2)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm2)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm2)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm2)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm2)
 
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_6 * el21_bra_2*el12_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_5 * el12_bra_2*el12_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_8 * el21_bra_2*el21_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_7 * el12_bra_2*el21_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_6 * el21_bra_2*el12_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_5 * el12_bra_2*el12_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_8 * el21_bra_2*el21_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_7 * el12_bra_2*el21_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -10950,6 +11235,7 @@ contains
         do s=1,diag_ndiag.dim
            geminal_2 = diag_ndiag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -10958,6 +11244,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -10968,6 +11255,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -11019,19 +11307,19 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-1)= coef_1 * el12_bra_2*el12_ket_2
-           grad_info_tmp(2).coef_prod(counter-1)= coef_1 * el21_bra_2*el21_ket_2
-           grad_info_tmp(3).coef_prod(counter-1)= coef_4 * el12_bra_2*el12_ket_2
-           grad_info_tmp(4).coef_prod(counter-1)= coef_4 * el21_bra_2*el21_ket_2
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_1 * el12_bra_2*el12_ket_2
+           grad_info_tmp(2).coef_prod(counterm1)= coef_1 * el21_bra_2*el21_ket_2
+           grad_info_tmp(3).coef_prod(counterm1)= coef_4 * el12_bra_2*el12_ket_2
+           grad_info_tmp(4).coef_prod(counterm1)= coef_4 * el21_bra_2*el21_ket_2
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            grad_info_tmp(1).coef_prod(counter)= coef_16 * el11_bra_4*el11_ket_4
            grad_info_tmp(2).coef_prod(counter)= coef_13 * el11_bra_4*el11_ket_4
@@ -11041,6 +11329,12 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -11051,6 +11345,7 @@ contains
         do s=1,ndiag_diag.dim
            geminal_2 = ndiag_diag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -11059,6 +11354,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -11069,6 +11365,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -11120,19 +11417,25 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-1)= coef_1 * el11_bra_2*el11_ket_2
-           grad_info_tmp(2).coef_prod(counter-1)= coef_1 * el22_bra_2*el22_ket_2
-           grad_info_tmp(3).coef_prod(counter-1)= coef_4 * el11_bra_2*el11_ket_2
-           grad_info_tmp(4).coef_prod(counter-1)= coef_4 * el22_bra_2*el22_ket_2
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_1 * el11_bra_2*el11_ket_2
+           grad_info_tmp(2).coef_prod(counterm1)= coef_1 * el22_bra_2*el22_ket_2
+           grad_info_tmp(3).coef_prod(counterm1)= coef_4 * el11_bra_2*el11_ket_2
+           grad_info_tmp(4).coef_prod(counterm1)= coef_4 * el22_bra_2*el22_ket_2
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
+           if(.ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            grad_info_tmp(1).coef_prod(counter)= coef_16 * el12_bra_4*el12_ket_4
            grad_info_tmp(2).coef_prod(counter)= coef_13 * el12_bra_4*el12_ket_4
@@ -11207,6 +11510,7 @@ contains
         do s=r+1,diag_ndiag.dim
            geminal_2 = diag_ndiag(s)
            counter=counter+1
+           counterm3=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -11215,8 +11519,10 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
+           counterm2=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b2
              grad_info_tmp(j).ex_blk(counter).element(2)=b1
@@ -11225,6 +11531,19 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
+           end
+           counter=counter+1
+           counterm1=counter
+           do j=1,4
+             grad_info_tmp(j).ex_blk(counter).element(1)=b1
+             grad_info_tmp(j).ex_blk(counter).element(2)=b2
+             grad_info_tmp(j).ex_gem(counter).element(1)=geminal_1
+             grad_info_tmp(j).ex_gem(counter).element(2)=geminal_2
+             !important to initialize term in case overlap is zero 
+             !to skip the corresponding term in calc_2rtm_ab_coef_grad
+             grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -11235,16 +11554,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
-           end
-           counter=counter+1
-           do j=1,4
-             grad_info_tmp(j).ex_blk(counter).element(1)=b1
-             grad_info_tmp(j).ex_blk(counter).element(2)=b2
-             grad_info_tmp(j).ex_gem(counter).element(1)=geminal_1
-             grad_info_tmp(j).ex_gem(counter).element(2)=geminal_2
-             !important to initialize term in case overlap is zero 
-             !to skip the corresponding term in calc_2rtm_ab_coef_grad
-             grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -11296,51 +11606,74 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-3)= coef_1 * el12_bra_2*el12_ket_2
-           grad_info_tmp(2).coef_prod(counter-3)= coef_1 * el21_bra_2*el21_ket_2
-           grad_info_tmp(3).coef_prod(counter-3)= coef_4 * el12_bra_2*el12_ket_2
-           grad_info_tmp(4).coef_prod(counter-3)= coef_4 * el21_bra_2*el21_ket_2
-           grad_info_tmp(1).term(counter-3)=grad_info_tmp(1).coef_prod(counter-3) * overlap
-           grad_info_tmp(2).term(counter-3)=grad_info_tmp(2).coef_prod(counter-3) * overlap
-           grad_info_tmp(3).term(counter-3)=grad_info_tmp(3).coef_prod(counter-3) * overlap
-           grad_info_tmp(4).term(counter-3)=grad_info_tmp(4).coef_prod(counter-3) * overlap
+           grad_info_tmp(1).coef_prod(counterm3)= coef_1 * el12_bra_2*el12_ket_2
+           grad_info_tmp(2).coef_prod(counterm3)= coef_1 * el21_bra_2*el21_ket_2
+           grad_info_tmp(3).coef_prod(counterm3)= coef_4 * el12_bra_2*el12_ket_2
+           grad_info_tmp(4).coef_prod(counterm3)= coef_4 * el21_bra_2*el21_ket_2
+           grad_info_tmp(1).term(counterm3)=grad_info_tmp(1).coef_prod(counterm3) * overlap
+           grad_info_tmp(2).term(counterm3)=grad_info_tmp(2).coef_prod(counterm3) * overlap
+           grad_info_tmp(3).term(counterm3)=grad_info_tmp(3).coef_prod(counterm3) * overlap
+           grad_info_tmp(4).term(counterm3)=grad_info_tmp(4).coef_prod(counterm3) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm3).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm3).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm3).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm3).element(block_1) = .GD2_factor(block_1).element(4)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-3)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-3)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-3)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-3)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm3)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm3)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm3)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm3)
 
-           grad_info_tmp(1).coef_prod(counter-2)= coef_16 * el11_bra_4*el11_ket_4
-           grad_info_tmp(2).coef_prod(counter-2)= coef_13 * el11_bra_4*el11_ket_4
-           grad_info_tmp(3).coef_prod(counter-2)= coef_16 * el22_bra_4*el22_ket_4
-           grad_info_tmp(4).coef_prod(counter-2)= coef_13 * el22_bra_4*el22_ket_4
-           grad_info_tmp(1).term(counter-2)=grad_info_tmp(1).coef_prod(counter-2) * overlap
-           grad_info_tmp(2).term(counter-2)=grad_info_tmp(2).coef_prod(counter-2) * overlap
-           grad_info_tmp(3).term(counter-2)=grad_info_tmp(3).coef_prod(counter-2) * overlap
-           grad_info_tmp(4).term(counter-2)=grad_info_tmp(4).coef_prod(counter-2) * overlap
+           grad_info_tmp(1).coef_prod(counterm2)= coef_16 * el11_bra_4*el11_ket_4
+           grad_info_tmp(2).coef_prod(counterm2)= coef_13 * el11_bra_4*el11_ket_4
+           grad_info_tmp(3).coef_prod(counterm2)= coef_16 * el22_bra_4*el22_ket_4
+           grad_info_tmp(4).coef_prod(counterm2)= coef_13 * el22_bra_4*el22_ket_4
+           grad_info_tmp(1).term(counterm2)=grad_info_tmp(1).coef_prod(counterm2) * overlap
+           grad_info_tmp(2).term(counterm2)=grad_info_tmp(2).coef_prod(counterm2) * overlap
+           grad_info_tmp(3).term(counterm2)=grad_info_tmp(3).coef_prod(counterm2) * overlap
+           grad_info_tmp(4).term(counterm2)=grad_info_tmp(4).coef_prod(counterm2) * overlap
+           if(.ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm2).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm2).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm2).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm2).element(block_1) = .GD2_factor(block_1).element(4)
+           end
 
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-2)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-2)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-2)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-2)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm2)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm2)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm2)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm2)
     
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_6 * el21_bra_2*el11_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_5 * el12_bra_2*el11_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_8 * el21_bra_2*el22_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_7 * el12_bra_2*el22_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_6 * el21_bra_2*el11_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_5 * el12_bra_2*el11_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_8 * el21_bra_2*el22_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_7 * el12_bra_2*el22_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2" AND .ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+           else if(.bra_set.vec(geminal_1).block_type(b1)=="GD2" OR .ket_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(1)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(1)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(2)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(2)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -11354,6 +11687,17 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.ket_set.vec(geminal_1).block_type(b1)=="GD2" AND .bra_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(4)
+           else if(.ket_set.vec(geminal_1).block_type(b1)=="GD2" OR .bra_set.vec(geminal_2).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(1)
+             grad_info_tmp(2).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(1)
+             grad_info_tmp(3).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(2)
+             grad_info_tmp(4).GD2_factors(counter).element(block_1) = .GD2_factor(block_1).element(2)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -11364,6 +11708,7 @@ contains
         do s=1,ndiag_diag.dim
            geminal_2 = ndiag_diag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -11372,6 +11717,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -11382,6 +11728,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -11433,19 +11780,31 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-1)= coef_1 * el11_bra_2*el11_ket_2
-           grad_info_tmp(2).coef_prod(counter-1)= coef_1 * el22_bra_2*el22_ket_2
-           grad_info_tmp(3).coef_prod(counter-1)= coef_4 * el11_bra_2*el11_ket_2
-           grad_info_tmp(4).coef_prod(counter-1)= coef_4 * el22_bra_2*el22_ket_2
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_1 * el11_bra_2*el11_ket_2
+           grad_info_tmp(2).coef_prod(counterm1)= coef_1 * el22_bra_2*el22_ket_2
+           grad_info_tmp(3).coef_prod(counterm1)= coef_4 * el11_bra_2*el11_ket_2
+           grad_info_tmp(4).coef_prod(counterm1)= coef_4 * el22_bra_2*el22_ket_2
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b1)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(3)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_1) = .GD2_factor(block_1).element(4)
+           end
+           if(.ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            grad_info_tmp(1).coef_prod(counter)= coef_16 * el12_bra_4*el12_ket_4
            grad_info_tmp(2).coef_prod(counter)= coef_13 * el12_bra_4*el12_ket_4
@@ -11520,6 +11879,7 @@ contains
         do s=r+1,ndiag_diag.dim
            geminal_2 = ndiag_diag(s)
            counter=counter+1
+           counterm3=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -11528,8 +11888,10 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
+           counterm2=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b2
              grad_info_tmp(j).ex_blk(counter).element(2)=b1
@@ -11538,6 +11900,19 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
+           end
+           counter=counter+1
+           counterm1=counter
+           do j=1,4
+             grad_info_tmp(j).ex_blk(counter).element(1)=b1
+             grad_info_tmp(j).ex_blk(counter).element(2)=b2
+             grad_info_tmp(j).ex_gem(counter).element(1)=geminal_1
+             grad_info_tmp(j).ex_gem(counter).element(2)=geminal_2
+             !important to initialize term in case overlap is zero 
+             !to skip the corresponding term in calc_2rtm_ab_coef_grad
+             grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -11548,16 +11923,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
-           end
-           counter=counter+1
-           do j=1,4
-             grad_info_tmp(j).ex_blk(counter).element(1)=b1
-             grad_info_tmp(j).ex_blk(counter).element(2)=b2
-             grad_info_tmp(j).ex_gem(counter).element(1)=geminal_1
-             grad_info_tmp(j).ex_gem(counter).element(2)=geminal_2
-             !important to initialize term in case overlap is zero 
-             !to skip the corresponding term in calc_2rtm_ab_coef_grad
-             grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -11609,51 +11975,74 @@ contains
                  stop
            end
 
-           grad_info_tmp(1).coef_prod(counter-3)= coef_1 * el11_bra_2*el11_ket_2
-           grad_info_tmp(2).coef_prod(counter-3)= coef_1 * el22_bra_2*el22_ket_2
-           grad_info_tmp(3).coef_prod(counter-3)= coef_4 * el11_bra_2*el11_ket_2
-           grad_info_tmp(4).coef_prod(counter-3)= coef_4 * el22_bra_2*el22_ket_2
-           grad_info_tmp(1).term(counter-3)=grad_info_tmp(1).coef_prod(counter-3) * overlap
-           grad_info_tmp(2).term(counter-3)=grad_info_tmp(2).coef_prod(counter-3) * overlap
-           grad_info_tmp(3).term(counter-3)=grad_info_tmp(3).coef_prod(counter-3) * overlap
-           grad_info_tmp(4).term(counter-3)=grad_info_tmp(4).coef_prod(counter-3) * overlap
+           grad_info_tmp(1).coef_prod(counterm3)= coef_1 * el11_bra_2*el11_ket_2
+           grad_info_tmp(2).coef_prod(counterm3)= coef_1 * el22_bra_2*el22_ket_2
+           grad_info_tmp(3).coef_prod(counterm3)= coef_4 * el11_bra_2*el11_ket_2
+           grad_info_tmp(4).coef_prod(counterm3)= coef_4 * el22_bra_2*el22_ket_2
+           grad_info_tmp(1).term(counterm3)=grad_info_tmp(1).coef_prod(counterm3) * overlap
+           grad_info_tmp(2).term(counterm3)=grad_info_tmp(2).coef_prod(counterm3) * overlap
+           grad_info_tmp(3).term(counterm3)=grad_info_tmp(3).coef_prod(counterm3) * overlap
+           grad_info_tmp(4).term(counterm3)=grad_info_tmp(4).coef_prod(counterm3) * overlap
+           if(.ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm3).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counterm3).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counterm3).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counterm3).element(block_2) = .GD2_factor(block_2).element(4)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-3)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-3)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-3)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-3)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm3)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm3)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm3)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm3)
 
-           grad_info_tmp(1).coef_prod(counter-2)= coef_13 * el12_bra_4*el12_ket_4
-           grad_info_tmp(2).coef_prod(counter-2)= coef_16 * el12_bra_4*el12_ket_4
-           grad_info_tmp(3).coef_prod(counter-2)= coef_13 * el21_bra_4*el21_ket_4
-           grad_info_tmp(4).coef_prod(counter-2)= coef_16 * el21_bra_4*el21_ket_4
-           grad_info_tmp(1).term(counter-2)=grad_info_tmp(1).coef_prod(counter-2) * overlap
-           grad_info_tmp(2).term(counter-2)=grad_info_tmp(2).coef_prod(counter-2) * overlap
-           grad_info_tmp(3).term(counter-2)=grad_info_tmp(3).coef_prod(counter-2) * overlap
-           grad_info_tmp(4).term(counter-2)=grad_info_tmp(4).coef_prod(counter-2) * overlap
+           grad_info_tmp(1).coef_prod(counterm2)= coef_13 * el12_bra_4*el12_ket_4
+           grad_info_tmp(2).coef_prod(counterm2)= coef_16 * el12_bra_4*el12_ket_4
+           grad_info_tmp(3).coef_prod(counterm2)= coef_13 * el21_bra_4*el21_ket_4
+           grad_info_tmp(4).coef_prod(counterm2)= coef_16 * el21_bra_4*el21_ket_4
+           grad_info_tmp(1).term(counterm2)=grad_info_tmp(1).coef_prod(counterm2) * overlap
+           grad_info_tmp(2).term(counterm2)=grad_info_tmp(2).coef_prod(counterm2) * overlap
+           grad_info_tmp(3).term(counterm2)=grad_info_tmp(3).coef_prod(counterm2) * overlap
+           grad_info_tmp(4).term(counterm2)=grad_info_tmp(4).coef_prod(counterm2) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm2).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counterm2).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counterm2).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counterm2).element(block_2) = .GD2_factor(block_2).element(4)
+           end
 
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-2)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-2)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-2)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-2)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm2)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm2)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm2)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm2)
     
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_5 * el11_bra_2*el12_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_6 * el22_bra_2*el12_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_7 * el11_bra_2*el21_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_8 * el22_bra_2*el21_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_5 * el11_bra_2*el12_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_6 * el22_bra_2*el12_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_7 * el11_bra_2*el21_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_8 * el22_bra_2*el21_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
+           if(.ket_set.vec(geminal_1).block_type(b2)=="GD2" AND .bra_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(4)
+           else if(.ket_set.vec(geminal_1).block_type(b2)=="GD2" OR .bra_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(1)
+             grad_info_tmp(2).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(2)
+             grad_info_tmp(3).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(1)
+             grad_info_tmp(4).GD2_factors(counterm1).element(block_2) = .GD2_factor(block_2).element(2)
+           end
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -11667,6 +12056,17 @@ contains
            grad_info_tmp(2).term(counter)=grad_info_tmp(2).coef_prod(counter) * overlap
            grad_info_tmp(3).term(counter)=grad_info_tmp(3).coef_prod(counter) * overlap
            grad_info_tmp(4).term(counter)=grad_info_tmp(4).coef_prod(counter) * overlap
+           if(.bra_set.vec(geminal_1).block_type(b2)=="GD2" AND .ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(3)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(4)
+           else if(.bra_set.vec(geminal_1).block_type(b2)=="GD2" OR .ket_set.vec(geminal_2).block_type(b2)=="GD2") then
+             grad_info_tmp(1).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(1)
+             grad_info_tmp(2).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(2)
+             grad_info_tmp(3).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(1)
+             grad_info_tmp(4).GD2_factors(counter).element(block_2) = .GD2_factor(block_2).element(2)
+           end
     
            terms(1) = terms(1) + grad_info_tmp(1).term(counter)
            terms(2) = terms(2) + grad_info_tmp(2).term(counter)
@@ -11807,6 +12207,7 @@ contains
         do s=1,ndiag_ndiag.dim
            geminal_2 = ndiag_ndiag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -11815,6 +12216,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -11825,6 +12227,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -11871,22 +12274,22 @@ contains
            end
 
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_6 * el21_bra_2*el21_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_5 * el12_bra_2*el21_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_8 * el21_bra_2*el12_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_7 * el12_bra_2*el12_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_6 * el21_bra_2*el21_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_5 * el12_bra_2*el21_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_8 * el21_bra_2*el12_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_7 * el12_bra_2*el12_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -11965,6 +12368,7 @@ contains
         do s=1,ndiag_diag.dim
            geminal_2 = ndiag_diag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -11973,6 +12377,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -11983,6 +12388,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -12035,22 +12441,22 @@ contains
            end
 
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_5 * el11_bra_2*el21_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_6 * el22_bra_2*el21_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_7 * el11_bra_2*el12_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_8 * el22_bra_2*el12_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_5 * el11_bra_2*el21_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_6 * el22_bra_2*el21_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_7 * el11_bra_2*el12_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_8 * el22_bra_2*el12_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -12205,6 +12611,7 @@ contains
         do s=1,diag_ndiag.dim
            geminal_2 = diag_ndiag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -12213,6 +12620,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -12223,6 +12631,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -12275,22 +12684,22 @@ contains
            end
 
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_6 * el21_bra_2*el11_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_5 * el12_bra_2*el11_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_8 * el21_bra_2*el22_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_7 * el12_bra_2*el22_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_6 * el21_bra_2*el11_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_5 * el12_bra_2*el11_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_8 * el21_bra_2*el22_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_7 * el12_bra_2*el22_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -12364,6 +12773,7 @@ contains
         do s=1,ndiag_diag.dim
            geminal_2 = ndiag_diag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -12372,6 +12782,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -12382,6 +12793,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -12434,22 +12846,22 @@ contains
            end
 
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_5 * el11_bra_2*el12_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_6 * el22_bra_2*el12_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_7 * el11_bra_2*el21_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_8 * el22_bra_2*el21_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_5 * el11_bra_2*el12_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_6 * el22_bra_2*el12_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_7 * el11_bra_2*el21_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_8 * el22_bra_2*el21_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -12605,6 +13017,7 @@ contains
         do s=1,ndiag_diag.dim
            geminal_2 = ndiag_diag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -12613,6 +13026,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -12623,6 +13037,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -12675,22 +13090,22 @@ contains
            end
 
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_5 * el11_bra_2*el21_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_6 * el22_bra_2*el21_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_7 * el11_bra_2*el12_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_8 * el22_bra_2*el12_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_5 * el11_bra_2*el21_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_6 * el22_bra_2*el21_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_7 * el11_bra_2*el12_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_8 * el22_bra_2*el12_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -12765,6 +13180,7 @@ contains
         do s=1,diag_ndiag.dim
            geminal_2 = diag_ndiag(s)
            counter=counter+1
+           counterm1=counter
            do j=1,4
              grad_info_tmp(j).ex_blk(counter).element(1)=b1
              grad_info_tmp(j).ex_blk(counter).element(2)=b2
@@ -12773,6 +13189,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            counter=counter+1
            do j=1,4
@@ -12783,6 +13200,7 @@ contains
              !important to initialize term in case overlap is zero 
              !to skip the corresponding term in calc_2rtm_ab_coef_grad
              grad_info_tmp(j).term(counter) = ZERO
+             grad_info_tmp(j).GD2_factors(counter).element = ZERO
            end
            if (.n_geminals > 2) then
               .prep_red_pbg(red_pbg_2, geminal_1, geminal_2, block_1, block_2, problem)
@@ -12835,22 +13253,22 @@ contains
            end
 
            do j=1,4
-             grad_info_tmp(j).factor(counter-1)=ONE
-             grad_info_tmp(j).any_pairs(counter-1)=TRUE
+             grad_info_tmp(j).factor(counterm1)=ONE
+             grad_info_tmp(j).any_pairs(counterm1)=TRUE
            end
-           grad_info_tmp(1).coef_prod(counter-1)= coef_6 * el21_bra_2*el22_ket_4
-           grad_info_tmp(2).coef_prod(counter-1)= coef_5 * el12_bra_2*el22_ket_4
-           grad_info_tmp(3).coef_prod(counter-1)= coef_8 * el21_bra_2*el11_ket_4
-           grad_info_tmp(4).coef_prod(counter-1)= coef_7 * el12_bra_2*el11_ket_4
-           grad_info_tmp(1).term(counter-1)=grad_info_tmp(1).coef_prod(counter-1) * overlap
-           grad_info_tmp(2).term(counter-1)=grad_info_tmp(2).coef_prod(counter-1) * overlap
-           grad_info_tmp(3).term(counter-1)=grad_info_tmp(3).coef_prod(counter-1) * overlap
-           grad_info_tmp(4).term(counter-1)=grad_info_tmp(4).coef_prod(counter-1) * overlap
+           grad_info_tmp(1).coef_prod(counterm1)= coef_6 * el21_bra_2*el22_ket_4
+           grad_info_tmp(2).coef_prod(counterm1)= coef_5 * el12_bra_2*el22_ket_4
+           grad_info_tmp(3).coef_prod(counterm1)= coef_8 * el21_bra_2*el11_ket_4
+           grad_info_tmp(4).coef_prod(counterm1)= coef_7 * el12_bra_2*el11_ket_4
+           grad_info_tmp(1).term(counterm1)=grad_info_tmp(1).coef_prod(counterm1) * overlap
+           grad_info_tmp(2).term(counterm1)=grad_info_tmp(2).coef_prod(counterm1) * overlap
+           grad_info_tmp(3).term(counterm1)=grad_info_tmp(3).coef_prod(counterm1) * overlap
+           grad_info_tmp(4).term(counterm1)=grad_info_tmp(4).coef_prod(counterm1) * overlap
     
-           terms(1) = terms(1) + grad_info_tmp(1).term(counter-1)
-           terms(2) = terms(2) + grad_info_tmp(2).term(counter-1)
-           terms(3) = terms(3) + grad_info_tmp(3).term(counter-1)
-           terms(4) = terms(4) + grad_info_tmp(4).term(counter-1)
+           terms(1) = terms(1) + grad_info_tmp(1).term(counterm1)
+           terms(2) = terms(2) + grad_info_tmp(2).term(counterm1)
+           terms(3) = terms(3) + grad_info_tmp(3).term(counterm1)
+           terms(4) = terms(4) + grad_info_tmp(4).term(counterm1)
 
            do j=1,4
              grad_info_tmp(j).factor(counter)=ONE
@@ -13069,7 +13487,7 @@ contains
 !  COEFFICIENT OPTIMIZATION RELATED ROUTINES
 !  =========================================
 
-   optimize_coef
+   optimize_coef ::: leaky
    ! perform the optimization of the block coefficients 
    ! (i.e. find the set of block coefficients which minimize the
    ! electronic energy, for a given block structure)
