@@ -38,6 +38,10 @@ contains
 !                             Create and Destroy Routines
 !===============================================================================
 
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
    create ::: leaky
    ! Create a pauli_block_geminals
       self :: PTR
@@ -318,6 +322,51 @@ contains
         end
      end
 
+   end
+
+   initialize_energy_gradient ::: leaky
+     ! create and initialize the energy gradient vector
+   siz, g, j, b :: INT
+     ! (if not created yet or if the size of 
+     ! the existing one is different from "siz")
+     ! set the size of the energy gradient vector
+
+     siz=0
+     do g=1,.n_geminals
+        siz = siz + size(.bra_set.vec(g).new_nonzero_coef_ind)
+     end
+     .nb_grad_wrt_coef=siz
+     if (.opt_GD2_angles) siz = siz +.n_2D_3typ_blocks
+     .nb_grad_elt=siz
+
+     if (.energy_gradient.created) then
+       if (size(.energy_gradient) /= siz) .destroy(.energy_gradient)
+     end
+     if (NOT .energy_gradient.created) .create(.energy_gradient,siz)
+
+     siz = 0
+     ! nonzero block coefficients
+     do g=1,.n_geminals
+        do j=1,size(.bra_set.vec(g).new_nonzero_coef_ind)
+           b = .bra_set.vec(g).new_nonzero_coef_ind(j)
+           siz = siz + 1
+           ! save the geminal and block indices of the gradient element
+           .energy_gradient(siz).indices(1) = g
+           .energy_gradient(siz).indices(2) = b
+           .energy_gradient(siz).elt = ZERO
+        end do
+     end do
+
+     if (.opt_GD2_angles) then
+        ! GD2 angles
+        do b=1,.n_2D_3typ_blocks
+           siz = siz + 1
+           ! save the block index of the gradient element
+           .energy_gradient(siz).indices(1) = 0
+           .energy_gradient(siz).indices(2) = b
+           .energy_gradient(siz).elt = ZERO
+        end
+     end
    end
 
    make_matrix_form(mat_set)
@@ -13495,6 +13544,8 @@ contains
    calc_2rtm_ab_coef_grad(grad_info_tmp) ::: leaky
    !calculate the gradient with respect to lambda coefficients of the 2rtm_ab  
    ! case 1a, 1b, 1c, 1d
+      ENSURE(.energy_gradient.created,".energy_gradient not created")
+      ENSURE(.nb_grad_wrt_coef <= .nb_grad_elt,".nb_grad_wrt_coef greater than .nb_grad_elt")
       grad_info_tmp :: PAULI_BLOCK_2RDM_GRAD_INFO
       red_pbg :: PAULI_BLOCK_GEMINALS
       overlap :: REAL
@@ -13685,8 +13736,10 @@ contains
      .nb_grad_elt = siz
      coef.create(siz)
      ! initialize the energy derivative
-     .create(.energy_gradient,siz)
-     .energy_gradient(siz).elt = ZERO
+     if (.energy_gradient.created) then
+       if (size(.energy_gradient) /= siz) .destroy(.energy_gradient)
+     end
+     if (NOT .energy_gradient.created) .create(.energy_gradient,siz)
 
      siz = 0
      ! nonzero block coefficients
@@ -13698,6 +13751,7 @@ contains
            ! save the geminal and block indices of the gradient element
            .energy_gradient(siz).indices(1) = i
            .energy_gradient(siz).indices(2) = k
+           .energy_gradient(siz).elt = ZERO
         end do
      end do
      ! write the intial set of nonzero block coefficients
@@ -13715,6 +13769,7 @@ contains
            ! save the block index of the gradient element
            .energy_gradient(siz).indices(1) = 0
            .energy_gradient(siz).indices(2) = i
+           .energy_gradient(siz).elt = ZERO
         end
         ! write the initial set of GD2 angles to be optimized
         stdout.text(" ")
@@ -14073,12 +14128,14 @@ contains
    calc_energy_gradient(grad, wrt_arg)
    ! compute the energy gradient with respect to the block
    ! coefficients
+     ENSURE(.energy_gradient.created,".energy_gradient not created")
+     ENSURE(.nb_grad_wrt_coef <= .nb_grad_elt,".nb_grad_wrt_coef greater than .nb_grad_elt")
      grad :: VEC{REAL}, INOUT, optional
      !to transfer results to this vector
      wrt_arg :: BIN, IN, optional
      !to print results
      !
-     siz, g, i, j, b :: INT
+     siz, j, b :: INT
      integrals :: MAT4{REAL}*
      eri_archive :: ARCHIVE
      wrt :: BIN
@@ -14109,37 +14166,18 @@ contains
      integrals.create(.mat_size,.mat_size,.mat_size,.mat_size)
      eri_archive.read(integrals)
 
-     ! set the size of the energy gradient vector
-     if (.nb_grad_elt > 0) then
-       siz=.nb_grad_elt
-     else
-       siz=0
-       do g=1,.n_geminals
-          siz = siz + size(.bra_set.vec(g).new_nonzero_coef_ind)
-       end
-       .nb_grad_wrt_coef=siz
-       if (.opt_GD2_angles) siz = siz +.n_2D_3typ_blocks
-       .nb_grad_elt=siz
-     end
+     !.initialize_energy_gradient
+     siz = .nb_grad_elt
 
-     ! create energy gradient vector
-     ! (if not created yet or the size of 
-     ! the existing one is different from "siz")
-     if (NOT .energy_gradient.created) then
-        .create(.energy_gradient, siz)
-     else if (size(.energy_gradient) /= siz) then
-        .destroy(.energy_gradient)
-        .create(.energy_gradient, siz)
-     end
      !
      ! compute the energy gradient
      ! elements w.r.t. the block coefficients
-     ! ("i" is the index of the gradient element)
+     ! ("j" is the index of the gradient element)
      !
-     do i = 1,.nb_grad_wrt_coef
+     do j = 1,.nb_grad_wrt_coef
      ! compute the energy derivative with respect to the coefficient of
      ! geminal ".energy_gradient(i).indices(1)" and block ".energy_gradient(i).indices(2)"
-       .calc_energy_grad_elt(i,integrals)
+       .calc_energy_grad_elt(j,integrals)
      end
      !
      ! compute the energy gradient
@@ -14147,12 +14185,12 @@ contains
      ! (if requested)
      !
      if (.opt_GD2_angles) then
-        i=.nb_grad_wrt_coef 
+        j=.nb_grad_wrt_coef 
         do b=1,.n_2D_3typ_blocks
-           i = i+1
+           j = j+1
            ! compute the energy derivative with respect 
            ! to the GD2 angle of 3-type block "b"
-           .calc_energy_grad_elt_gd2(i,integrals)
+           .calc_energy_grad_elt_gd2(j,integrals)
         end
      end
 
