@@ -325,11 +325,10 @@ contains
    end
 
    initialize_energy_gradient ::: leaky
-     ! create and initialize the energy gradient vector
-   siz, g, j, b :: INT
-     ! (if not created yet or if the size of 
-     ! the existing one is different from "siz")
-     ! set the size of the energy gradient vector
+   ! create and initialize the energy gradient vector if not created yet 
+   ! or if the size of the existing one is different from nb_grad_elt
+   ! set the size of the energy gradient vector
+     siz, g, j, b :: INT
 
      siz=0
      do g=1,.n_geminals
@@ -366,6 +365,63 @@ contains
            .energy_gradient(siz).indices(2) = b
            .energy_gradient(siz).elt = ZERO
         end
+     end
+
+   end
+
+   initialize_energy_gradient(coef) ::: leaky
+   ! create and initialize the energy gradient vector and prepare initial coefficients
+   ! if not created yet or if the size of the existing one is different from nb_grad_elt
+     ENSURE(.nb_grad_elt>0,"no gradient element")
+     coef :: VEC{REAL}, OUT
+     siz, g, j, b :: INT
+     n_nonzero_coef :: INT
+     
+     siz=.nb_grad_elt
+     if (.energy_gradient.created) then
+       if (size(.energy_gradient) /= siz) .destroy(.energy_gradient)
+     end
+     if (NOT .energy_gradient.created) .create(.energy_gradient,siz)
+
+     siz = 0
+     ! nonzero block coefficients
+     do g=1,.n_geminals
+        do j=1,size(.bra_set.vec(g).new_nonzero_coef_ind)
+           b = .bra_set.vec(g).new_nonzero_coef_ind(j)
+           siz = siz + 1
+           coef(siz) = .bra_set.vec(g).coef(b)
+           ! save the geminal and block indices of the gradient element
+           .energy_gradient(siz).indices(1) = g
+           .energy_gradient(siz).indices(2) = b
+           .energy_gradient(siz).elt = ZERO
+        end do
+     end do
+     ! write the intial set of nonzero block coefficients
+     n_nonzero_coef=.nb_grad_wrt_coef
+     stdout.text(" ")
+     stdout.show("Total number of nonzero coefficient =",n_nonzero_coef)
+     stdout.text(" ")
+     stdout.text("Initial nonzero coefficients:")
+     stdout.put(coef(1:n_nonzero_coef))
+
+     if (.opt_GD2_angles AND .n_2D_3typ_blocks > 0) then
+        ! GD2 angles
+        do b=1,.n_2D_3typ_blocks
+           siz = siz + 1
+           coef(siz) = .GD2_info(b) 
+           ! save the block index of the gradient element
+           .energy_gradient(siz).indices(1) = 0
+           .energy_gradient(siz).indices(2) = b
+           .energy_gradient(siz).elt = ZERO
+        end
+        ! write the initial set of GD2 angles to be optimized
+        stdout.text(" ")
+        stdout.text("Optimization of GD2 angles will be performed as well")
+        stdout.text(" ")
+        stdout.show("Total number of GD2 angles =",.n_2D_3typ_blocks)
+        stdout.text(" ")
+        stdout.text("Initial GD2 angles:")
+        stdout.put(coef(n_nonzero_coef+1:siz))
      end
    end
 
@@ -13713,6 +13769,8 @@ contains
         stdout.text("not implemented yet, for this case.")
         stop
      end
+
+
      !
      ! write information about the set of block coefficients to be optimized
      ! and calculate nb of nonzero block coefficients
@@ -13728,58 +13786,15 @@ contains
      end
      n_nonzero_coef = siz
      .nb_grad_wrt_coef = siz
+     if (.opt_GD2_angles AND .n_2D_3typ_blocks > 0) siz=siz+.n_2D_3typ_blocks
+     .nb_grad_elt = siz
      !
+     ! initialize the energy derivative and 
      ! prepare initial set of coefficients 
      ! (and angles) to be optimized
      !
-     if (.opt_GD2_angles AND .n_2D_3typ_blocks > 0) siz=siz+.n_2D_3typ_blocks
-     .nb_grad_elt = siz
      coef.create(siz)
-     ! initialize the energy derivative
-     if (.energy_gradient.created) then
-       if (size(.energy_gradient) /= siz) .destroy(.energy_gradient)
-     end
-     if (NOT .energy_gradient.created) .create(.energy_gradient,siz)
-
-     siz = 0
-     ! nonzero block coefficients
-     do i=1,.n_geminals
-        do j=1,size(.bra_set.vec(i).new_nonzero_coef_ind)
-           k = .bra_set.vec(i).new_nonzero_coef_ind(j)
-           siz = siz + 1
-           coef(siz) = .bra_set.vec(i).coef(k)
-           ! save the geminal and block indices of the gradient element
-           .energy_gradient(siz).indices(1) = i
-           .energy_gradient(siz).indices(2) = k
-           .energy_gradient(siz).elt = ZERO
-        end do
-     end do
-     ! write the intial set of nonzero block coefficients
-     stdout.text(" ")
-     stdout.show("Total number of nonzero coefficient =",n_nonzero_coef)
-     stdout.text(" ")
-     stdout.text("Initial nonzero coefficients:")
-     stdout.put(coef(1:n_nonzero_coef))
-
-     if (.opt_GD2_angles AND .n_2D_3typ_blocks > 0) then
-        ! GD2 angles
-        do i=1,.n_2D_3typ_blocks
-           siz = siz + 1
-           coef(siz) = .GD2_info(i) 
-           ! save the block index of the gradient element
-           .energy_gradient(siz).indices(1) = 0
-           .energy_gradient(siz).indices(2) = i
-           .energy_gradient(siz).elt = ZERO
-        end
-        ! write the initial set of GD2 angles to be optimized
-        stdout.text(" ")
-        stdout.text("Optimization of GD2 angles will be performed as well")
-        stdout.text(" ")
-        stdout.show("Total number of GD2 angles =",.n_2D_3typ_blocks)
-        stdout.text(" ")
-        stdout.text("Initial GD2 angles:")
-        stdout.put(coef(n_nonzero_coef+1:siz))
-     end
+     .initialize_energy_gradient(coef)
      !
      ! perform the minimization of the energy WRT the block coefficients 
      !
@@ -14158,7 +14173,6 @@ contains
         stop
      end
 
-     !.initialize_energy_gradient
      siz = .nb_grad_elt
 
      !
