@@ -449,7 +449,7 @@ contains
       ! Asymmetric unit atoms;
       ! Symmetry generated K points and SF's
       n_atom = .crystal.asymmetric_unit_atom.dim
-      n_k    = .crystal.n_unique_SF_k_pts
+      n_k    = .crystal.n_unique_sym_generated_k_pts
 
       ! Allocate structure factor array (leaky)
       sf_n.create(n_k,n_atom)
@@ -457,7 +457,7 @@ contains
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
       k_pts.create(n_k,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! Make the SF's
       sf_n = ZERO
@@ -502,6 +502,7 @@ contains
 
    end
 
+
    get_Tanaka_atom_FFs(ff_n,spin_density) ::: leaky
    ! Get "ff_n", the Tanaka *static* atomic form factors for the
    ! symmetry related K points for every unique atom.
@@ -536,7 +537,7 @@ contains
       n_atom = .crystal.asymmetric_unit_atom.dim
 
       ! Symmetry generated K points and SF's
-      n_k = .crystal.n_unique_SF_k_pts
+      n_k = .crystal.n_unique_sym_generated_k_pts
 
       ! Form factor array (no temp factor) (leaky)
       ff_n.create(n_k,n_atom)
@@ -546,7 +547,7 @@ contains
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
       k_pts.create(n_k,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! X-ray or PND?
       spin = FALSE
@@ -703,15 +704,17 @@ contains
       bf_skip :: VEC{EVEC{BIN}}@
       bf_grid :: VEC{EMAT{REAL}}@
       sf :: CPX
-      cutoff,ss,sc,s2, k1,k2,k3,kr, Dab, fac, val :: REAL
-      n_atom,n_k,n_pt,n_keep :: INT
+      cutoff,ss,sc,s2, kr, Dab, fac, val :: REAL
+      k1,k2,k3 :: REAL
+      l1,l2,l3 :: REAL
+      n_atom,n_refl,n_k,n_pt,n_keep :: INT
     ! max_n_pt,max_n_ss :: INT
       u,c,ca,cb :: INT
       oa,fsa,lsa,fba  :: INT
       ob,fsb,lsb      :: INT
       sa,fa,la,na, as :: INT
       sb,fb,lb,nb     :: INT
-      a,b,i,j,k,n,p    :: INT
+      a,b,i,j,k,l,n,p    :: INT
       seitz :: MAT3{REAL}@
       spin :: BIN
 
@@ -725,7 +728,8 @@ contains
       seitz = .crystal.xyz_seitz_matrices 
 
       ! Symmetry generated K points and SF's
-      n_k = .crystal.n_unique_SF_k_pts
+      n_k    = .crystal.n_unique_sym_generated_k_pts
+      n_refl = .crystal.n_refl
 
       ! Allocate structure factor array (leaky)
       sf_n.create(n_k,n_atom)
@@ -734,7 +738,7 @@ contains
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
       k_pts.create(n_k,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! X-ray or PND?
       spin = FALSE
@@ -807,7 +811,7 @@ contains
          .becke_grid.prune_grid(pt,wt)
        ! .becke_grid.prune_grid(pt,wt,bf_save)
 
-         ! *New* points
+         ! *New* pruned no. of points
          n_pt = pt.dim1
          !!!!!!!!!!!!!!
 
@@ -828,7 +832,8 @@ contains
             fba = .first_basis_fn_for_atom(oa)
             ra  = .atom(oa).position
 
-            ! Make the displaced points for atom "a"
+            ! Make the integration points displaced from atom "a"
+            ! to be used in evaluating atom "a" basis functions.
             .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
 
             ! Loop shells on atom a
@@ -996,10 +1001,21 @@ contains
             k3 = k_pts(k,3)
             sf = IMAGIFY(ZERO)
             do i = 1,n_pt
-               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
+               kr =      k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
                sf = sf + rho(i)*exp(IMAGIFY(kr))
             end
-            sf_n(k,u) = sf * s2 * .atom(c).site_occupancy ! <-----
+
+            ! Position phase
+            l  = mod(k,n_refl)
+            if (l == 0) l = n_refl  ! k_pt(0) should be k_pt(n_refl)
+            l1 = k_pts(l,1)
+            l2 = k_pts(l,2)
+            l3 = k_pts(l,3)
+            kr = l1*rc(1)+l2*rc(2)+l3*rc(3) 
+
+            ! Do it
+            sf_n(k,u) = exp(IMAGIFY(-kr)) * sf * s2 * .atom(c).site_occupancy ! <-----
+
          end
 
          ! Clean up atom "c" stuff
@@ -1025,55 +1041,6 @@ contains
       xa.destroy
       k_pts.destroy
       DM.destroy
-
-   end
-
-   
-   delete_Hirshfeld_atom_FFs
-   ! Delete all the asymmetric unit form factor (FF) files
-   ! before they are (re)generated.
-      self :: IN
-
-      arch :: ARCHIVE*
-      a :: INT
-
-      do a = 1,.crystal.n_asymmetric_unit_atoms
-         arch.create(trim(.crystal.asymmetric_unit_atom(a).label)//"-SFs")
-         arch.delete
-         arch.destroy
-      end 
-
-   end
-
-   get_unique_fragHAR_SFs(spin_density) ::: leaky
-   ! Write out the fragHAR static structure factors for each
-   ! .atom_group.mol molecule.
-      self :: INOUT
-      spin_density :: BIN, optional, IN
-
-   ENSURE(.atom_group.allocated,"no atom_group's")
-   ENSURE(.cif.associated,"no cif specified")
-
-      g, n_group :: INT
-
-      ! Make ANO's & interpolators for parent
-      ! WARNING: dies if no ANOs or interpolators
-      .:make_ANO_data
-
-      ! Make sutructure factors for each residue
-      do g = 1,.atom_group.dim
-
-         ! NOTE: change DFT -> becke
-         .atom_group(g).mol.BASE:initialize_DFT_grids
-
-         ! Assign previously made ANOs
-         .atom_group(g).mol.BASE:set_ANOs_from(self)
-
-         ! Write the SFs for each fragment to disk
-         n_group = .atom_group(g).atom_index.dim
-         .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
-
-      end
 
    end
 
@@ -1131,7 +1098,7 @@ contains
       n_atom = .crystal.asymmetric_unit_atom.dim
 
       ! Symmetry generated K points and SF's
-      n_k = .crystal.n_unique_SF_k_pts
+      n_k = .crystal.n_unique_sym_generated_k_pts
 
       ! Allocate structure factor array (leaky)
       ! For pne atom
@@ -1140,7 +1107,7 @@ contains
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
       k_pts.create(n_k,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! X-ray or PND?
       spin = FALSE
@@ -1422,6 +1389,55 @@ contains
 
    end
 
+   delete_Hirshfeld_atom_FFs
+   ! Delete all the asymmetric unit form factor (FF) files
+   ! before they are (re)generated.
+      self :: IN
+
+      arch :: ARCHIVE*
+      a :: INT
+
+      do a = 1,.crystal.n_asymmetric_unit_atoms
+         arch.create(trim(.crystal.asymmetric_unit_atom(a).label)//"-SFs")
+         arch.delete
+         arch.destroy
+      end 
+
+   end
+
+
+   get_unique_fragHAR_SFs(spin_density) ::: leaky
+   ! Write out the fragHAR static structure factors for each
+   ! .atom_group.mol molecule.
+      self :: INOUT
+      spin_density :: BIN, optional, IN
+
+   ENSURE(.atom_group.allocated,"no atom_group's")
+   ENSURE(.cif.associated,"no cif specified")
+
+      g, n_group :: INT
+
+      ! Make ANO's & interpolators for parent
+      ! WARNING: dies if no ANOs or interpolators
+      .:make_ANO_data
+
+      ! Make sutructure factors for each residue
+      do g = 1,.atom_group.dim
+
+         ! NOTE: change DFT -> becke
+         .atom_group(g).mol.BASE:initialize_DFT_grids
+
+         ! Assign previously made ANOs
+         .atom_group(g).mol.BASE:set_ANOs_from(self)
+
+         ! Write the SFs for each fragment to disk
+         n_group = .atom_group(g).atom_index.dim
+         .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
+
+      end
+
+   end
+
 
    get_Hirshfeld_atom_FFs_for_atom(u,sf_n,spin_density) ::: leaky
    ! Get "sf_n", the static Hirshfeld atom form factors for the
@@ -1467,7 +1483,7 @@ contains
       .:make_Hirshfeld_inputs(skip_NOs=TRUE)
 
       ! Symmetry generated K points and SF's
-      n_k = .crystal.n_unique_SF_k_pts
+      n_k = .crystal.n_unique_sym_generated_k_pts
 
       ! Allocate structure factor array (leaky)
       sf_n.create(n_k)
@@ -1476,7 +1492,7 @@ contains
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
       k_pts.create(n_k,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! X-ray or PND?
       spin = FALSE
@@ -1834,8 +1850,8 @@ contains
       Fc.create(.crystal.n_refl)
 
       ! Make k points
-      k_pts.create(.crystal.n_unique_SF_k_pts,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      k_pts.create(.crystal.n_unique_sym_generated_k_pts,3)
+      .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! Make density matrix
       .BASE:make_ao_density_matrix
@@ -2074,8 +2090,8 @@ contains
       Fc.create(.crystal.n_refl)
 
       ! Make unique k points
-      k_pts.create(.crystal.n_unique_SF_k_pts,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      k_pts.create(.crystal.n_unique_sym_generated_k_pts,3)
+      .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! Make S_z density matrix
       .BASE:make_ao_sz_density_matrix
@@ -4020,7 +4036,7 @@ contains
      q,fa,la,fb,lb,na,nb,i,j,n_refl,n_unique,atom_a,atom_b :: INT
      sh :: SHELL2
 
-     n_unique = .crystal.n_unique_SF_k_pts
+     n_unique = .crystal.n_unique_sym_generated_k_pts
      n_refl = .crystal.n_refl
      fac = TWO/max(n_refl - .crystal.n_param,1)
 
@@ -4053,7 +4069,7 @@ contains
      Fc.destroy
 
      k_pts.create(n_unique,3)
-     .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+     .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
      cutoff = TOL(10) / .n_shell_pairs
 
@@ -4119,7 +4135,7 @@ contains
      q,fa,la,fb,lb,na,nb,i,j,n_refl,n_unique,atom_a,atom_b :: INT
      sh :: SHELL2
 
-     n_unique = .crystal.n_unique_SF_k_pts
+     n_unique = .crystal.n_unique_sym_generated_k_pts
      n_refl = .crystal.n_refl
      fac = TWO/max(n_refl - .crystal.n_param,1)
 
@@ -4152,7 +4168,7 @@ contains
      Fc.destroy
 
      k_pts.create(n_unique,3)
-     .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+     .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
      cutoff = TOL(10) / .n_shell_pairs
 
@@ -4273,12 +4289,12 @@ contains
       Fc.destroy
 
       ! Symmetry generated K points and SF's
-      n_k = .crystal.n_unique_SF_k_pts
+      n_k = .crystal.n_unique_sym_generated_k_pts
       k_pts.create(n_k,3)
 
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 
       ! Basis function cutoff
       cutoff = .becke_grid.basis_function_cutoff
@@ -4580,7 +4596,7 @@ contains
       sh :: SHELL2
 
 
-      n_unique = .crystal.n_unique_SF_k_pts
+      n_unique = .crystal.n_unique_sym_generated_k_pts
       n_refl   = .crystal.n_refl
       fac      = -G_FACTOR/(TWO*max(n_refl - .crystal.n_param,1))
 
@@ -4602,7 +4618,7 @@ contains
       Fc.destroy
 
       k_pts.create(n_unique,3)
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+      .crystal.data.reflections.make_symop_generated_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
       cutoff = TOL(10) / .n_shell_pairs
 
       C = ZERO
