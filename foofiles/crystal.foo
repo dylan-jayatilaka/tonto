@@ -6382,8 +6382,6 @@ contains
 
          ! Complex conjugate?
          s = (k-1)/n_refl + 1
-         sfh = IMAGIFY(ZERO)
-         sfi = IMAGIFY(ZERO)
          .add_inv_t_phases_for_symop(s,sf_u(k),sfi,qv)
          .add_trn_t_phases_for_symop(s,sf_u(k),sfh,qv)
 
@@ -6555,7 +6553,7 @@ contains
       k1_k1,k2_k2,k3_k3 :: REAL
       k1_k2,k1_k3,k2_k3 :: REAL
       f,k,q,n_k,n_refl,base, s :: INT
-      II, sfh,sfh2, sfi,sfi2 :: CPX
+      II, sft, sfh,sfh2, sfi,sfi2 :: CPX
 
       ! Constants
       II  = IMAGIFY(ONE)
@@ -6594,16 +6592,15 @@ contains
          q3 = k_pt(q,3)
          qv = [q1,q2,q3]
 
-         ! Complex conjugate?
-         s = (k-1)/n_refl + 1
-         .add_trn_t_phases_for_symop(s,sf_u(k),sfh,qv)
-         .add_inv_t_phases_for_symop(s,sf_u(k),sfi,qv)
-
          ! Temperature factor (24)
          c2 = adp2.contract_with(kv)*HALF
-         sfh = sfh * exp(-c2)
-         sfi = sfi * exp(-c2)
-   
+         sft = sf_u(k) * exp(-c2)
+
+         ! T-phase
+         s = (k-1)/n_refl + 1
+         .add_inv_t_phases_for_symop(s,sft,sfi,qv)
+         .add_trn_t_phases_for_symop(s,sft,sfh,qv)
+
          ! Structure factor (harmonic)
          Fc(q) = Fc(q) + sfh + sfi
    
@@ -6640,6 +6637,29 @@ contains
 
    end
 
+   add_inv_t_phases_for_symop(k,tpi) ::: PURE
+   ! For each reflection in "refl", return in "t_phase" the sum of the
+   ! *exponentiated* screw/glide phase shifts from each glide vector
+   ! for all symops which are equivalent to the "k"-th unique
+   ! by inversion symmetry. 
+      self :: IN
+      k   :: INT, IN
+      tpi :: VEC{REAL}(3), OUT
+
+      trn :: VEC{REAL}(3)
+      m,l :: INT
+
+      ! Inv Symops equivalent to k
+      tpi = IMAGIFY(ZERO)
+      do m = 1,.spacegroup.inv_symop(k).element.dim
+         l = .spacegroup.inv_symop(k)[m]
+         trn = .spacegroup.seitz(1:3,4,l)
+         .unit_cell.change_from_fractional(trn)
+         tpi = tpi + trn
+      end
+
+   end
+
    add_inv_t_phases_for_symop(k,sfu,sfi,qv) ::: PURE
    ! For each reflection in "refl", return in "t_phase" the sum of the
    ! *exponentiated* screw/glide phase shifts from each glide vector
@@ -6651,18 +6671,47 @@ contains
       sfi :: CPX, OUT
       qv  :: VEC{REAL}(3), IN
 
-      t_l :: VEC{REAL}(3)
+      trn :: VEC{REAL}(3)
       tph :: CPX
       m,l :: INT
 
       ! Inv Symops equivalent to k
-      sfi = IMAGIFY(ZERO)
+      tph = IMAGIFY(ZERO)
       do m = 1,.spacegroup.inv_symop(k).element.dim
          l = .spacegroup.inv_symop(k)[m]
-         t_l = .spacegroup.seitz(1:3,4,l)
-         .unit_cell.change_from_fractional(t_l)
-         tph =  exp(IMAGIFY(dot_product(qv,t_l)))
-         sfi = sfi + tph*conjg(sfu)
+         trn = .spacegroup.seitz(1:3,4,l)
+         .unit_cell.change_from_fractional(trn)
+         tph = tph + exp(IMAGIFY(dot_product(qv,trn)))
+      end
+
+      sfi = tph*conjg(sfu)
+
+   end
+
+   add_trn_t_phases_for_symop(k,tph) ::: PURE
+   ! For each reflection in "refl", return in "t_phase" the sum of the
+   ! *exponentiated* screw/glide phase shifts from each glide vector
+   ! for all symops which are equivalent to the "k"-th unique
+   ! by translation symmetry. *Includes the k-th opertator itself*.
+      self :: IN
+      k   :: INT, IN
+      tph :: VEC{REAL}(3), OUT
+
+      trn :: VEC{REAL}(3)
+      m,l :: INT
+
+      ! Add the "self" term
+      l   = .spacegroup.unq_symop(k)
+      trn = .spacegroup.seitz(1:3,4,l)
+      .unit_cell.change_from_fractional(trn)
+      tph = trn
+
+      ! Trn symops equivalent to k
+      do m = 1,.spacegroup.trn_symop(k).element.dim
+         l   = .spacegroup.trn_symop(k)[m]
+         trn = .spacegroup.seitz(1:3,4,l)
+         .unit_cell.change_from_fractional(trn)
+         tph = tph + trn
       end
 
    end
@@ -6678,25 +6727,25 @@ contains
       sfh :: CPX, OUT
       qv  :: VEC{REAL}(3), IN
 
-      t_l :: VEC{REAL}(3)
+      trn :: VEC{REAL}(3)
       tph :: CPX
       m,l :: INT
 
       ! Add the "self" term
-      l = .spacegroup.unq_symop(k)
-      t_l = .spacegroup.seitz(1:3,4,l)
-      .unit_cell.change_from_fractional(t_l)
-      tph =  exp(IMAGIFY(dot_product(qv,t_l)))
-      sfh = tph*sfu  
+      l   = .spacegroup.unq_symop(k)
+      trn = .spacegroup.seitz(1:3,4,l)
+      .unit_cell.change_from_fractional(trn)
+      tph = exp(IMAGIFY(dot_product(qv,trn)))
 
       ! Trn symops equivalent to k
       do m = 1,.spacegroup.trn_symop(k).element.dim
-         l = .spacegroup.trn_symop(k)[m]
-         t_l = .spacegroup.seitz(1:3,4,l)
-         .unit_cell.change_from_fractional(t_l)
-         tph =  exp(IMAGIFY(dot_product(qv,t_l)))
-         sfh = sfh + tph*sfu    ! NOTE: sfu does not update
+         l   = .spacegroup.trn_symop(k)[m]
+         trn = .spacegroup.seitz(1:3,4,l)
+         .unit_cell.change_from_fractional(trn)
+         tph = tph + exp(IMAGIFY(dot_product(qv,trn)))
       end
+
+      sfh = tph*sfu   
 
    end
 
@@ -7494,8 +7543,11 @@ contains
    put_fit_header ::: public
    ! Put out the fit header
       self :: IN
+
    ENSURE(.data_exists,"no diffraction data")
+
       .put_fit_header_info
+
    end
 
    put_fit_header_info ::: private
@@ -7512,7 +7564,15 @@ contains
 
       ! Put the initial parameters
       stdout.flush(2)
-      stdout.text("Initial parameter values:")
+      stdout.text("Initial positions (fractional) :")
+      stdout.flush
+      .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell)
+      .asymmetric_unit_atom.put_coordinates(no_header=TRUE)
+      .asymmetric_unit_atom.change_axis_system_to("cartesian",.unit_cell)
+
+      ! Put the initial parameters
+      stdout.flush(2)
+      stdout.text("Initial parameter values (cartesian) :")
       stdout.flush
       .put_parameters
 
@@ -7758,6 +7818,14 @@ contains
 
       ! Iteration footer
       .data.put_fit_results
+
+      ! Put the initial parameters
+      stdout.flush(2)
+      stdout.text("Final positions (fractional) :")
+      stdout.flush
+      .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell)
+      .asymmetric_unit_atom.put_coordinates(no_header=TRUE)
+      .asymmetric_unit_atom.change_axis_system_to("cartesian",.unit_cell)
 
       ! Put the parameters
       stdout.flush(2)
