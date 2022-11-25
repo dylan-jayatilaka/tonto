@@ -4588,12 +4588,12 @@ contains
       ! derivatives including ADPs but no dispersion.
       .make_F_calc_and_derivs(Fc,dFc,sf_n)
       .data.reflections.set_F_calc(Fc)
-    ! stdout.text("Fc:")
-    ! stdout.put(Fc)
-    ! stdout.text("dFc:")
-    ! stdout.put(dFc)
-    ! Fc.destroy
-    ! stop
+      !stdout.text("Fc:")
+      !stdout.put(Fc)
+      !stdout.text("dFc:")
+      !stdout.put(dFc)
+      !stop
+      Fc.destroy
 
       ! Optimise scale, extinction & set chi2(F)
       .data.reflections.reset_F_corr_to_F_exp ! We fit to F_corr
@@ -6308,11 +6308,9 @@ contains
 
          ! Make structure factor (and derivative) contributions
          if      (refine_ADP4s) then
-            !.make_FF_ADP4_for_atom(u,q_pt,do_pos,do_ADP,sf_u,sf_e,sf_d)
+            .make_Fc_ADP4_for_atom(u,Fc,sf_u)
          else if (refine_ADP3s) then
-            !.make_FF_ADP3_for_atom(u,q_pt,do_pos,do_ADP,sf_u,sf_e,sf_d)
-         !else if (refine_Uiso) then ! For istoropic
-         !   .make_FF_Uiso_for_atom(u,q_pt,do_pos,do_ADP,sf_u,sf_e,sf_d)
+            .make_Fc_ADP3_for_atom(u,Fc,sf_u)
          else                       ! For ADP2s (ISOTROPIC SAME AS
                                     ! ANISOTROPIC FOR Fc???
             .make_Fc_ADP2_for_atom(u,Fc,sf_u)
@@ -6343,7 +6341,7 @@ contains
       k1,k2,k3 :: REAL
       q1,q2,q3 :: REAL
       f,k,q,n_k,n_refl, s :: INT
-      II, sfi,sfh, t_phase :: CPX
+      II, sfi,sfh,sfu,t_phase :: CPX
 
       ! Constants
       II  = IMAGIFY(ONE)
@@ -6379,18 +6377,184 @@ contains
          q3 = k_pt(q,3)
          qv = [q1,q2,q3]
 
+         ! Temperature factor (24)
+         c2 = adp2.contract_with(kv)*HALF
+         sfu = sf_u(k)*exp(-c2)
+
          ! Complex conjugate?
          s = (k-1)/n_refl + 1
-         .add_inv_t_phases_for_symop(s,sf_u(k),sfi,qv)
-         .add_trn_t_phases_for_symop(s,sf_u(k),sfh,qv)
+         .add_inv_t_phases_for_symop(s,sfu,sfi,qv)
+         .add_trn_t_phases_for_symop(s,sfu,sfh,qv)
+
+         ! Structure factor (harmonic)
+         Fc(q) = Fc(q) + sfh + sfi
+   
+      end
+
+      k_pt.destroy
+
+   end
+
+   make_Fc_ADP3_for_atom(u,Fc,sf_u) ::: private
+   ! For unique atom "u" of the fragment, make "Fc", the contribution
+   ! to the *dynamic* structure factors, from from "sf_u" the *static*
+   ! atomic form factors for the unique symmetry-generated symops.
+      self :: IN
+      u :: INT, IN
+      Fc   :: VEC{CPX}, INOUT
+      sf_u :: VEC{CPX}, IN
+
+      kv   :: VEC{REAL}(3)
+      qv   :: VEC{REAL}(3)
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      k_pt :: MAT{REAL}@
+      c2,c3    :: REAL
+      k1,k2,k3 :: REAL
+      q1,q2,q3 :: REAL
+      f,k,q,n_k,n_refl, s :: INT
+      II,sftia,sftha,sfia,sfha,sf,t_phase :: CPX
+
+      ! Constants
+      II  = IMAGIFY(ONE)
+      n_refl = .data.reflections.dim
+      n_k    = .n_unique_sym_generated_k_pts
+
+      ! Fragment atom
+      f = .unique_frag_atom(u)
+
+      ! Get pADPs
+      .fragment_atom(f).put_ADP2_vector_to(adp2)
+      .fragment_atom(f).put_ADP3_vector_to(adp3)
+
+      ! Sanity check
+      DIE_IF(NOT adp2.equals(.fragment_atom(f).ADP_tensor),"ADP2 not equal to ADP_tensor")
+
+      ! Symmetry-generated scattering vectors
+      k_pt.create(n_k,3)
+      .data.reflections.make_unique_sym_generated_k_pts(k_pt,.spacegroup,.unit_cell)
+
+      ! Loop sym-generated k points
+      do k = 1,n_k
+
+         ! Sym-generated q_k vector (25)
+         k1 = k_pt(k,1)
+         k2 = k_pt(k,2)
+         k3 = k_pt(k,3)
+         kv = [k1,k2,k3]
+
+         ! Scattering vector
+         q  = mod(k-1,n_refl)+1
+         q1 = k_pt(q,1)
+         q2 = k_pt(q,2)
+         q3 = k_pt(q,3)
+         qv = [q1,q2,q3]
 
          ! Temperature factor (24)
          c2 = adp2.contract_with(kv)*HALF
-         sfh = sfh * exp(-c2)
-         sfi = sfi * exp(-c2)
+         c3 = adp3.contract_with(kv)*SIXTH
+         
+         sf = sf_u(k) * exp(-c2)
+         
+         ! Multiples of *anharmonic* structure factor
+         sftha = sf * (ONE - II*c3)
+         sftia = sf * (ONE + II*c3)
+
+         
+         ! T-phase
+         s = (k-1)/n_refl + 1
+         
+         ! Anharmonic t factors
+         .add_inv_t_phases_for_symop(s,sftia,sfia,qv)
+         .add_trn_t_phases_for_symop(s,sftha,sfha,qv)
+
+         ! Structure factor anharmonic
+         Fc(q) = Fc(q) + sfha + sfia
    
-         ! Structure factor (harmonic)
-         Fc(q) = Fc(q) + sfh + sfi
+      end
+
+      k_pt.destroy
+
+   end
+
+   make_Fc_ADP4_for_atom(u,Fc,sf_u) ::: private
+   ! For unique atom "u" of the fragment, make "Fc", the contribution
+   ! to the *dynamic* structure factors, from from "sf_u" the *static*
+   ! atomic form factors for the unique symmetry-generated symops.
+      self :: IN
+      u :: INT, IN
+      Fc   :: VEC{CPX}, INOUT
+      sf_u :: VEC{CPX}, IN
+
+      kv   :: VEC{REAL}(3)
+      qv   :: VEC{REAL}(3)
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      k_pt :: MAT{REAL}@
+      c2,c3,c4 :: REAL
+      k1,k2,k3 :: REAL
+      q1,q2,q3 :: REAL
+      f,k,q,n_k,n_refl, s :: INT
+      II,sftia,sftha,sfia,sfha,sf,t_phase :: CPX
+
+      ! Constants
+      II  = IMAGIFY(ONE)
+      n_refl = .data.reflections.dim
+      n_k    = .n_unique_sym_generated_k_pts
+
+      ! Fragment atom
+      f = .unique_frag_atom(u)
+
+      ! Get pADPs
+      .fragment_atom(f).put_ADP2_vector_to(adp2)
+      .fragment_atom(f).put_ADP3_vector_to(adp3)
+      .fragment_atom(f).put_ADP4_vector_to(adp4)
+
+      ! Sanity check
+      DIE_IF(NOT adp2.equals(.fragment_atom(f).ADP_tensor),"ADP2 not equal to ADP_tensor")
+
+      ! Symmetry-generated scattering vectors
+      k_pt.create(n_k,3)
+      .data.reflections.make_unique_sym_generated_k_pts(k_pt,.spacegroup,.unit_cell)
+
+      ! Loop sym-generated k points
+      do k = 1,n_k
+
+         ! Sym-generated q_k vector (25)
+         k1 = k_pt(k,1)
+         k2 = k_pt(k,2)
+         k3 = k_pt(k,3)
+         kv = [k1,k2,k3]
+
+         ! Scattering vector
+         q  = mod(k-1,n_refl)+1
+         q1 = k_pt(q,1)
+         q2 = k_pt(q,2)
+         q3 = k_pt(q,3)
+         qv = [q1,q2,q3]
+
+         ! Temperature factor (24)
+         c2 = adp2.contract_with(kv)*HALF
+         c3 = adp3.contract_with(kv)*SIXTH
+         c3 = adp4.contract_with(kv)*SIXTH*QUARTER
+         
+         sf = sf_u(k) * exp(-c2)
+         
+         ! Multiples of *anharmonic* structure factor
+         sftha = sf * (ONE - II*c3 + c4)
+         sftia = sf * (ONE + II*c3 + c4)
+
+         
+         ! T-phase
+         s = (k-1)/n_refl + 1
+         
+         ! Anharmonic t factors
+         .add_inv_t_phases_for_symop(s,sftia,sfia,qv)
+         .add_trn_t_phases_for_symop(s,sftha,sfha,qv)
+
+         ! Structure factor anharmonic
+         Fc(q) = Fc(q) + sfha + sfia
    
       end
 
@@ -6425,7 +6589,6 @@ contains
       list :: VEC{STR}@
       tags :: VEC{STR}@
       sf_u :: VEC{CPX}@
-      zero3 :: REAL
       has_skip  :: BIN
       has_Uiso  :: BIN
       is_H_atom :: BIN
@@ -6452,10 +6615,6 @@ contains
          list = .data.refine_U_iso_for_atom
          DIE_IF(NOT list.has_all_elements_common_with(tags), "you try to refine an atom isotropically that is not in your list")
       end
-
-      ! Refine only 4th's?
-      zero3 = ONE
-      if (.data.refine_4th_order_only) zero3 = ZERO
 
       ! Initialize
       Fc  = ZERO
@@ -6511,9 +6670,9 @@ contains
 
          ! Make structure factor (and derivative) contributions
          if      (refine_ADP4s) then
-            !.make_FF_ADP4_for_atom(u,q_pt,do_pos,do_ADP,sf_u,sf_e,sf_d)
+            .make_dFc_ADP4_for_atom(u,Fc,dFc,sf_u,do_pos,do_ADP)
          else if (refine_ADP3s) then
-            !.make_FF_ADP3_for_atom(u,q_pt,do_pos,do_ADP,sf_u,sf_e,sf_d)
+            .make_dFc_ADP3_for_atom(u,Fc,dFc,sf_u,do_pos,do_ADP)
          else if (refine_Uiso) then ! For istoropic
             .make_dFc_U_iso_ADP2_for_atom(u,Fc,dFc,sf_u,do_pos,do_ADP)
          else                       ! For ADP2s 
@@ -6735,6 +6894,321 @@ contains
             dFc(q,base+ 7) = dFc(q,base+ 7) - k1_k2*sfh  - k1_k2*sfi
             dFc(q,base+ 8) = dFc(q,base+ 8) - k1_k3*sfh  - k1_k3*sfi
             dFc(q,base+ 9) = dFc(q,base+ 9) - k2_k3*sfh  - k2_k3*sfi
+         end
+   
+      end
+
+      k_pt.destroy
+
+   end
+
+   make_dFc_ADP3_for_atom(u,Fc,dFc,sf_u,do_pos,do_ADP) ::: private
+   ! For unique atom "u" of the fragment, make "Fc", the contribution
+   ! to the *dynamic* structure factors, and "dFc", the derivatives of
+   ! these WRT positions and ADP3s, from "sf_u" the *static* atomic
+   ! form factors for the unique symmetry-generated symops.
+      self :: IN
+      u :: INT, IN
+      Fc   :: VEC{CPX}, INOUT
+      dFc  :: MAT{CPX}, INOUT
+      sf_u :: VEC{CPX}, IN
+      do_pos :: BIN, IN
+      do_ADP :: BIN, IN
+
+      kv   :: VEC{REAL}(3)
+      qv   :: VEC{REAL}(3)
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      k_pt :: MAT{REAL}@
+      c2,c3       :: REAL
+      k1,k2,k3 :: REAL
+      q1,q2,q3 :: REAL
+      k1_k1,k2_k2,k3_k3 :: REAL
+      k1_k2,k1_k3,k2_k3 :: REAL
+      f,k,q,n_k,n_refl,base, s :: INT
+      II,sftha,sftia,sfthh,sftih,sf :: CPX
+      sfha,sfia,sfhh,sfih,sfh2,sfh6,sfi,sfi2,sfi6 :: CPX
+
+      ! Constants
+      II  = IMAGIFY(ONE)
+      n_refl = .data.reflections.dim
+      n_k    = .n_unique_sym_generated_k_pts
+
+      ! Fragment atom
+      f = .unique_frag_atom(u)
+
+      ! Base index for unique frag atom
+      base = .fragment_atom.no_of_pADPs_up_to_atom(u,.unique_frag_atom)
+
+      ! Get pADPs
+      .fragment_atom(f).put_ADP2_vector_to(adp2)
+      .fragment_atom(f).put_ADP3_vector_to(adp3)
+
+      ! Sanity check
+      DIE_IF(NOT adp2.equals(.fragment_atom(f).ADP_tensor),"ADP2 not equal to ADP_tensor")
+
+      ! Symmetry-generated scattering vectors
+      k_pt.create(n_k,3)
+      .data.reflections.make_unique_sym_generated_k_pts(k_pt,.spacegroup,.unit_cell)
+
+      ! Loop sym-generated k points
+      do k = 1,n_k
+
+         ! Sym-generated q_k vector (25)
+         k1 = k_pt(k,1)
+         k2 = k_pt(k,2)
+         k3 = k_pt(k,3)
+         kv = [k1,k2,k3]
+
+         ! Original scattering vector
+         q  = mod(k-1,n_refl)+1
+         q1 = k_pt(q,1)
+         q2 = k_pt(q,2)
+         q3 = k_pt(q,3)
+         qv = [q1,q2,q3]
+
+         ! Temperature factor (24)
+         c2 = adp2.contract_with(kv)*HALF
+         c3 = adp3.contract_with(kv)*SIXTH
+         
+         sf = sf_u(k) * exp(-c2)
+         
+         ! Multiples of *anharmonic* structure factor
+         sftha = sf * (ONE - II*c3)
+         sftia = sf * (ONE + II*c3)
+
+         
+         ! T-phase
+         s = (k-1)/n_refl + 1
+         
+         ! Harmonic t factors
+         .add_inv_t_phases_for_symop(s,sf,sfih,qv)
+         .add_trn_t_phases_for_symop(s,sf,sfhh,qv)
+
+         ! Anharmonic t factors
+         .add_inv_t_phases_for_symop(s,sftia,sfia,qv)
+         .add_trn_t_phases_for_symop(s,sftha,sfha,qv)
+
+         ! Structure factor anharmonic
+         Fc(q) = Fc(q) + sfha + sfia
+   
+         ! Positional derivative (anharmonic)
+         if (do_pos) then 
+            dFc(q,base+ 1) = dFc(q,base+ 1) + II*k1*sfha - II*k1*sfia 
+            dFc(q,base+ 2) = dFc(q,base+ 2) + II*k2*sfha - II*k2*sfia
+            dFc(q,base+ 3) = dFc(q,base+ 3) + II*k3*sfha - II*k3*sfia
+         end
+   
+         ! U2 derivatives (anharmonic)
+         if (do_ADP) then 
+            sfh2 = sfha * HALF
+            sfi2 = sfia * HALF
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+            
+            ! U2 derivatives
+            dFc(q,base+ 4) = dFc(q,base+ 4) - k1_k1*sfh2 - k1_k1*sfi2 
+            dFc(q,base+ 5) = dFc(q,base+ 5) - k2_k2*sfh2 - k2_k2*sfi2
+            dFc(q,base+ 6) = dFc(q,base+ 6) - k3_k3*sfh2 - k3_k3*sfi2
+            dFc(q,base+ 7) = dFc(q,base+ 7) - k1_k2*sfha - k1_k2*sfia
+            dFc(q,base+ 8) = dFc(q,base+ 8) - k1_k3*sfha - k1_k3*sfia
+            dFc(q,base+ 9) = dFc(q,base+ 9) - k2_k3*sfha - k2_k3*sfia
+
+            ! Structure factor (harmonic!)
+            sfh2 = sfhh * HALF
+            sfi2 = sfih * HALF
+            sfh6 = sfhh * SIXTH
+            sfi6 = sfih * SIXTH
+            
+            ! U3 derivatives
+            dFc(q,base+10) = dFc(q,base+10) - II*k1_k1*k1*sfh6 + II*k1_k1*k1*sfi6
+            dFc(q,base+11) = dFc(q,base+11) - II*k2_k2*k2*sfh6 + II*k2_k2*k2*sfi6
+            dFc(q,base+12) = dFc(q,base+12) - II*k3_k3*k3*sfh6 + II*k3_k3*k3*sfi6
+            dFc(q,base+13) = dFc(q,base+13) - II*k1_k1*k2*sfh2 + II*k1_k1*k2*sfi2
+            dFc(q,base+14) = dFc(q,base+14) - II*k1_k1*k3*sfh2 + II*k1_k1*k3*sfi2
+            dFc(q,base+15) = dFc(q,base+15) - II*k2_k2*k1*sfh2 + II*k2_k2*k1*sfi2
+            dFc(q,base+16) = dFc(q,base+16) - II*k2_k2*k3*sfh2 + II*k2_k2*k3*sfi2
+            dFc(q,base+17) = dFc(q,base+17) - II*k3_k3*k1*sfh2 + II*k3_k3*k1*sfi2
+            dFc(q,base+18) = dFc(q,base+18) - II*k3_k3*k2*sfh2 + II*k3_k3*k2*sfi2
+            dFc(q,base+19) = dFc(q,base+19) - II*k1*k2*k3*sfhh + II*k1*k2*k3*sfih
+
+         end
+   
+      end
+
+      k_pt.destroy
+
+   end
+
+   make_dFc_ADP4_for_atom(u,Fc,dFc,sf_u,do_pos,do_ADP) ::: private
+   ! For unique atom "u" of the fragment, make "Fc", the contribution
+   ! to the *dynamic* structure factors, and "dFc", the derivatives of
+   ! these WRT positions and ADP4s, from "sf_u" the *static* atomic
+   ! form factors for the unique symmetry-generated symops.
+      self :: IN
+      u :: INT, IN
+      Fc   :: VEC{CPX}, INOUT
+      dFc  :: MAT{CPX}, INOUT
+      sf_u :: VEC{CPX}, IN
+      do_pos :: BIN, IN
+      do_ADP :: BIN, IN
+
+      kv   :: VEC{REAL}(3)
+      qv   :: VEC{REAL}(3)
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      k_pt :: MAT{REAL}@
+      zero3 :: REAL
+      c2,c3,c4 :: REAL
+      k1,k2,k3 :: REAL
+      q1,q2,q3 :: REAL
+      k1_k1,k2_k2,k3_k3 :: REAL
+      k1_k2,k1_k3,k2_k3 :: REAL
+      f,k,q,n_k,n_refl,base, s :: INT
+      II,sftha,sftia,sfthh,sftih,sf,sfi4,sfh4 :: CPX
+      sfha,sfia,sfhh,sfih,sfh2,sfh6,sfi,sfi2,sfi6,sfh24,sfi24 :: CPX
+
+      ! Constants
+      II  = IMAGIFY(ONE)
+      n_refl = .data.reflections.dim
+      n_k    = .n_unique_sym_generated_k_pts
+
+      ! Fragment atom
+      f = .unique_frag_atom(u)
+
+      ! Base index for unique frag atom
+      base = .fragment_atom.no_of_pADPs_up_to_atom(u,.unique_frag_atom)
+
+      ! Get pADPs
+      .fragment_atom(f).put_ADP2_vector_to(adp2)
+      .fragment_atom(f).put_ADP3_vector_to(adp3)
+      .fragment_atom(f).put_ADP4_vector_to(adp4)
+
+      ! Sanity check
+      DIE_IF(NOT adp2.equals(.fragment_atom(f).ADP_tensor),"ADP2 not equal to ADP_tensor")
+
+      ! Refine only 4th's?
+      zero3 = ONE
+      if (.data.refine_4th_order_only) zero3 = ZERO
+
+      ! Symmetry-generated scattering vectors
+      k_pt.create(n_k,3)
+      .data.reflections.make_unique_sym_generated_k_pts(k_pt,.spacegroup,.unit_cell)
+
+      ! Loop sym-generated k points
+      do k = 1,n_k
+
+         ! Sym-generated q_k vector (25)
+         k1 = k_pt(k,1)
+         k2 = k_pt(k,2)
+         k3 = k_pt(k,3)
+         kv = [k1,k2,k3]
+
+         ! Original scattering vector
+         q  = mod(k-1,n_refl)+1
+         q1 = k_pt(q,1)
+         q2 = k_pt(q,2)
+         q3 = k_pt(q,3)
+         qv = [q1,q2,q3]
+
+         ! Temperature factor (24)
+         c2 = adp2.contract_with(kv)*HALF
+         c3 = adp3.contract_with(kv)*SIXTH
+         c4 = adp4.contract_with(kv)*SIXTH*QUARTER
+         
+         sf = sf_u(k) * exp(-c2)
+         
+         ! Multiples of *anharmonic* structure factor
+         sftha = sf * (ONE - II*c3 + c4)
+         sftia = sf * (ONE + II*c3 + c4)
+
+         
+         ! T-phase
+         s = (k-1)/n_refl + 1
+         
+         ! Harmonic t factors
+         .add_inv_t_phases_for_symop(s,sf,sfih,qv)
+         .add_trn_t_phases_for_symop(s,sf,sfhh,qv)
+
+         ! Anharmonic t factors
+         .add_inv_t_phases_for_symop(s,sftia,sfia,qv)
+         .add_trn_t_phases_for_symop(s,sftha,sfha,qv)
+
+         ! Structure factor anharmonic
+         Fc(q) = Fc(q) + sfha + sfia
+   
+         ! Positional derivative (anharmonic)
+         if (do_pos) then 
+            dFc(q,base+ 1) = dFc(q,base+ 1) + II*k1*sfha - II*k1*sfia 
+            dFc(q,base+ 2) = dFc(q,base+ 2) + II*k2*sfha - II*k2*sfia
+            dFc(q,base+ 3) = dFc(q,base+ 3) + II*k3*sfha - II*k3*sfia
+         end
+   
+         ! U2 derivatives (anharmonic)
+         if (do_ADP) then 
+            sfh2 = sfha * HALF
+            sfi2 = sfia * HALF
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+            
+            ! U2 derivatives
+            dFc(q,base+ 4) = dFc(q,base+ 4) - k1_k1*sfh2 - k1_k1*sfi2 
+            dFc(q,base+ 5) = dFc(q,base+ 5) - k2_k2*sfh2 - k2_k2*sfi2
+            dFc(q,base+ 6) = dFc(q,base+ 6) - k3_k3*sfh2 - k3_k3*sfi2
+            dFc(q,base+ 7) = dFc(q,base+ 7) - k1_k2*sfha - k1_k2*sfia
+            dFc(q,base+ 8) = dFc(q,base+ 8) - k1_k3*sfha - k1_k3*sfia
+            dFc(q,base+ 9) = dFc(q,base+ 9) - k2_k3*sfha - k2_k3*sfia
+
+            ! Structure factor (harmonic!)
+            sfh2 = sfhh * HALF
+            sfi2 = sfih * HALF
+            sfh6 = sfhh * SIXTH
+            sfi6 = sfih * SIXTH
+            
+            ! U3 derivatives
+            dFc(q,base+10) = zero3*(dFc(q,base+10) - II*k1_k1*k1*sfh6 + II*k1_k1*k1*sfi6) 
+            dFc(q,base+11) = zero3*(dFc(q,base+11) - II*k2_k2*k2*sfh6 + II*k2_k2*k2*sfi6)
+            dFc(q,base+12) = zero3*(dFc(q,base+12) - II*k3_k3*k3*sfh6 + II*k3_k3*k3*sfi6)
+            dFc(q,base+13) = zero3*(dFc(q,base+13) - II*k1_k1*k2*sfh2 + II*k1_k1*k2*sfi2)
+            dFc(q,base+14) = zero3*(dFc(q,base+14) - II*k1_k1*k3*sfh2 + II*k1_k1*k3*sfi2)
+            dFc(q,base+15) = zero3*(dFc(q,base+15) - II*k2_k2*k1*sfh2 + II*k2_k2*k1*sfi2)
+            dFc(q,base+16) = zero3*(dFc(q,base+16) - II*k2_k2*k3*sfh2 + II*k2_k2*k3*sfi2) 
+            dFc(q,base+17) = zero3*(dFc(q,base+17) - II*k3_k3*k1*sfh2 + II*k3_k3*k1*sfi2)
+            dFc(q,base+18) = zero3*(dFc(q,base+18) - II*k3_k3*k2*sfh2 + II*k3_k3*k2*sfi2)
+            dFc(q,base+19) = zero3*(dFc(q,base+19) - II*k1*k2*k3*sfhh + II*k1*k2*k3*sfih) 
+
+            ! Multiples of *harmonic* sf
+            sfh4 = sfhh * QUARTER
+            sfi4 = sfih * QUARTER
+            sfh24 = sfhh * QUARTER * SIXTH
+            sfi24 = sfih * QUARTER * SIXTH
+                 
+            ! U4 derivatives
+            dFc(q,base+20) = dFc(q,base+20) + k1_k1*k1_k1*sfh24 + k1_k1*k1_k1*sfi24 
+            dFc(q,base+21) = dFc(q,base+21) + k2_k2*k2_k2*sfh24 + k2_k2*k2_k2*sfi24
+            dFc(q,base+22) = dFc(q,base+22) + k3_k3*k3_k3*sfh24 + k3_k3*k3_k3*sfi24
+            dFc(q,base+23) = dFc(q,base+23) + k1_k1*k1_k2*sfh6  + k1_k1*k1_k2*sfi6
+            dFc(q,base+24) = dFc(q,base+24) + k1_k1*k1_k3*sfh6  + k1_k1*k1_k3*sfi6
+            dFc(q,base+25) = dFc(q,base+25) + k2_k2*k1_k2*sfh6  + k2_k2*k1_k2*sfi6
+            dFc(q,base+26) = dFc(q,base+26) + k2_k2*k2_k3*sfh6  + k2_k2*k2_k3*sfi6
+            dFc(q,base+27) = dFc(q,base+27) + k3_k3*k1_k3*sfh6  + k3_k3*k1_k3*sfi6
+            dFc(q,base+28) = dFc(q,base+28) + k3_k3*k2_k3*sfh6  + k3_k3*k2_k3*sfi6
+            dFc(q,base+29) = dFc(q,base+29) + k1_k1*k2_k2*sfh4  + k1_k1*k2_k2*sfi4
+            dFc(q,base+30) = dFc(q,base+30) + k1_k1*k3_k3*sfh4  + k1_k1*k3_k3*sfi4
+            dFc(q,base+31) = dFc(q,base+31) + k2_k2*k3_k3*sfh4  + k2_k2*k3_k3*sfi4
+            dFc(q,base+32) = dFc(q,base+32) + k1_k1*k2_k3*sfh2  + k1_k1*k2_k3*sfi2
+            dFc(q,base+33) = dFc(q,base+33) + k2_k2*k1_k3*sfh2  + k2_k2*k1_k3*sfi2
+            dFc(q,base+34) = dFc(q,base+34) + k3_k3*k1_k2*sfh2  + k3_k3*k1_k2*sfi2
+         
          end
    
       end
