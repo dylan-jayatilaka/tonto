@@ -1044,6 +1044,7 @@ contains
       ! Symops which leave fragment_geometry unchanged
       .make_stabilizer_symops
       .make_stabilizer_xyz_matrices
+      .make_frag_atom_stab_map
 
       .fragment_info_made = TRUE
 
@@ -2411,6 +2412,46 @@ contains
 
    end
 
+   xyz_BF_rep_matrix(s,l_ang) result (res) ::: leaky, PURE
+   ! Return basis function representation matrix for the stabilizer
+   ! symop "s" for a gaussian shell with angular momentum "l_ang".
+      self :: IN
+      s :: INT, IN 
+      l_ang :: INT, IN
+      res :: MAT{REAL}@
+
+   ENSURE(.spacegroup.seitz.allocated,"no Seitz matrices")
+
+      DCM, SZ, R :: MAT{REAL}(3,3)
+      op :: INT
+
+
+      if (l_ang==0) then
+       
+         res.create(1,1)
+         res(1,1) = ONE
+
+      else
+      
+         ! Do the transformation
+         DCM = .unit_cell.direct_matrix
+         op  = .stabilizer_symop(s)          ! <<< stabilizer "s"
+         SZ  = .spacegroup.seitz(1:3,1:3,op) ! fractional seitz
+         R   = matmul(DCM, matmul(SZ,DCM) )  ! Back transform
+
+         ! Do the direct product
+         ! WARNING: not for spherical basis functions yet
+         select case (l_ang)
+         case(1); res = R
+         case(2); res = GAUSSIAN_DATA:d_xyz_rep_matrix_for(R)
+         case(3); res = GAUSSIAN_DATA:f_xyz_rep_matrix_for(R)
+         case(4); res = GAUSSIAN_DATA:g_xyz_rep_matrix_for(R)
+         end
+
+      end
+
+   end
+
 !  ===========
 !  Stabilizers
 !  ===========
@@ -2445,53 +2486,71 @@ contains
 
    end
 
-   is_same_geometry(geom_i,geom_j) result (res) ::: selfless, private, PURE
-   ! Return TRUE if the geometries "geom_i" and "geom_j" in fractional
-   ! coordinates are the same, exactly.
-      geom_i :: MAT{REAL}, IN
-      geom_j :: MAT{REAL}, IN
-      res :: BIN
-
-   ENSURE(geom_i.dim1==3,"incorrect size for array geom_i")
-   ENSURE(geom_j.dim1==3,"incorrect size for array geom_j")
-   ENSURE(geom_i.dim2==geom_j.dim2,"incompatible sizes for geom_i, geom_j")
-
-      i,j,n_atom :: INT
-      skip :: VEC{BIN}@
-      diff :: VEC{REAL}(3)
-      same :: BIN
-      tol :: REAL
-
-      tol = CRYSTAL_SAME_ATOM_TOL
-
-      n_atom = geom_i.dim2
-
-      skip.create(n_atom)
-      skip = FALSE
-
-      do i = 1,n_atom
-      do j = 1,n_atom
-
-       ! same = geom_i(:,i).same_as(geom_j(:,j),tol)
-
-         diff = geom_i(:,i) - geom_j(:,j)
-         diff = abs(diff)
-         diff = modulo(diff,ONE)
-         same = diff.is_zero(tol)
-
-         if (NOT same OR skip(j)) cycle
-
-         skip(j) = TRUE
-         exit
-
-      end
-      end
-
-      res = all(skip) ! True if all atoms in i were matched (skipped) in j
-
-      skip.destroy
-
-   end
+!   is_same_geometry(geom_i,geom_j,to_unit_cell) result (res) ::: selfless, private, PURE
+!   ! Return TRUE if the geometries "geom_i" and "geom_j" in fractional
+!   ! coordinates are the same, exactly.
+!      geom_i :: MAT{REAL}, IN
+!      geom_j :: MAT{REAL}, IN
+!      to_unit_cell :: BIN, optional, IN
+!      res :: BIN
+!
+!   ENSURE(geom_i.dim1==3,"incorrect size for array geom_i")
+!   ENSURE(geom_j.dim1==3,"incorrect size for array geom_j")
+!   ENSURE(geom_i.dim2==geom_j.dim2,"incompatible sizes for geom_i, geom_j")
+!
+!      i,j,n_atom :: INT
+!      gi, gj :: MAT{REAL}@
+!      to_unit :: BIN
+!      skip :: VEC{BIN}@
+!      diff :: VEC{REAL}(3)
+!      same :: BIN
+!      tol :: REAL
+!
+!      to_unit = TRUE
+!      if (present(to_unit_cell)) to_unit = to_unit_cell
+!       
+!      tol = CRYSTAL_SAME_ATOM_TOL
+!
+!      n_atom = geom_i.dim2
+!
+!      ! Make copies
+!      gi = geom_i
+!      gj = geom_j
+!      if (to_unit) then
+!         .put_to_unit_cell(gi)
+!         .put_to_unit_cell(gj)
+!      end
+!
+!      ! Match array
+!      skip.create(n_atom)
+!      skip = FALSE
+!
+!      do i = 1,n_atom
+!      do j = 1,n_atom
+!
+!         diff = abs(gi(:,i) - gj(:,j))
+!         diff = modulo(diff,ONE)
+!         same = diff.is_zero(tol)
+!
+!         if (NOT same OR skip(j)) cycle
+!
+!         ! Match found
+!         skip(j) = TRUE
+!         exit
+!
+!      end
+!      end
+!
+!      ! True if all atoms in i were matched in j
+!      ! once and only once.
+!      res = all(skip) 
+!
+!      ! Clean
+!      skip.destroy
+!      gj.destroy
+!      gi.destroy
+!
+!   end
 
    xyz_stabilizer_matrices result (res) ::: leaky, PURE
    ! Create and return a list of the 3x3 part of the seitz matrices
@@ -2551,6 +2610,50 @@ contains
       case(3); res = .ftr(:,:,n)
       case(4); res = .gtr(:,:,n)
       case default; DIE("not implemented beyond l=4")
+      end
+
+   end
+
+   make_frag_atom_stab_map ::: leaky, private
+   ! Make the image of the fragment atom indices under the
+   ! stabilizer symops. Note that this may generate atoms which are
+   ! not contained in the fragment, which we think means that the
+   ! fragment is no a valid one for generating the whole unit cell
+   ! electron density with the correct spacegrou symmetry. Whew!
+      self :: INOUT
+
+   ENSURE(.stabilizer_symop.allocated,"No stabilizer_symop")
+   ENSURE(.fragment_geometry.associated,"No fragment_geometry")
+
+      old, new :: VEC{REAL}(3)
+      s, f, g, op :: INT
+      same :: BIN
+      tol :: REAL
+
+      tol = CRYSTAL_SAME_ATOM_TOL
+
+      ! Make this map array
+      .frag_atom_stab_map.create(.n_fragment_atoms,.n_stabilizer_symops)
+      .frag_atom_stab_map = 0
+
+      do s = 1,.n_stabilizer_symops
+      do f = 1,.n_fragment_atoms
+
+         new = .fragment_geometry(:,f)
+         op  = .stabilizer_symop(s)
+         .transform_position(new,op,to_unit_cell=TRUE)
+
+         do g = 1,.n_fragment_atoms
+            old = .fragment_geometry(:,g)
+            same = new.same_as(old,tol) 
+            if (NOT same) cycle
+            .frag_atom_stab_map(f,s) = g
+            exit
+         end
+
+       ! DIE_IF(NOT same,"fragment atom "//trim(f.to_str)//" not found in itself")
+
+      end
       end
 
    end
@@ -8767,8 +8870,10 @@ contains
       end
       end
 
-      if (.fragment_geometry.associated)        .put_fragment_data
-      if (.unit_cell_geometry.associated)       .put_unit_cell_geometry
+      if (.fragment_geometry.associated)  .put_fragment_data
+      if (.unit_cell_geometry.associated) .put_unit_cell_geometry
+
+      if (.frag_atom_stab_map.allocated)  .put_frag_atom_stab_map
 
     ! if (.unit_cell_connection.allocated)     .put_uc_connection_table
     ! if (.uc_vdw_connection.allocated)        .put_uc_vdw_connection_table
@@ -8916,6 +9021,46 @@ contains
 
       ! Clean
       table.destroy
+
+   end
+
+   put_frag_atom_stab_map
+   ! Like it says
+      self :: IN
+
+      n, s :: INT
+      table :: VEC{TABLE_COLUMN}@
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("============================================")
+      stdout.text("Image of fragment atoms under the stabilizer")
+      stdout.text("============================================")
+
+      stdout.flush
+
+      n = .n_stabilizer_symops
+
+      if (n>32) then
+
+         stdout.flush
+         stdout.text("The multiplication table is too large to print.")
+
+      else
+
+         ! Table
+         table.create(n)
+         do s = 1,n
+            table(s).set_heading(trim(s.to_str))
+            table(s).set_values(.frag_atom_stab_map(:,s))
+         end
+         table.put
+   
+         ! Clean
+         table.destroy
+
+      end
 
    end
 

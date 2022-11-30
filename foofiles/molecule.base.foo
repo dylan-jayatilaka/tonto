@@ -7433,6 +7433,7 @@ contains
 
         ga  = .atom_group(g).atom_index(a)
         gb  = .atom_group(g).atom_index(b)
+
         fga =    .first_basis_fn_for_atom(ga)
         lga =     .last_basis_fn_for_atom(ga)
         fgb =    .first_basis_fn_for_atom(gb)
@@ -7440,7 +7441,6 @@ contains
 
         fa  = mol.first_basis_fn_for_atom(a)
         la  =  mol.last_basis_fn_for_atom(a)
-
         fb  = mol.first_basis_fn_for_atom(b)
         lb  =  mol.last_basis_fn_for_atom(b)
 
@@ -8756,6 +8756,104 @@ contains
    end
 
 
+   SG_symmetrize(mat) ::: template
+   ! Symmetrize a matrix using the spacegroup stabilizer group for the
+   ! fragment i.e. the .atom list
+      self :: IN
+      mat :: MAT{TYPE}
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.associated,"no atom list")
+   ENSURE(mat.is_square,"non-square matrix")
+   ENSURE(mat.dim1==.n_bf,"incorrectly dimensioned matrix")
+
+      sym,W :: MAT{TYPE}@
+      tra,trb :: MAT{REAL}@
+      s, a,b, i,j, na,nb :: INT
+      fa,fb, fi,fj, la,lb, li,lj :: INT
+      image :: MAT{INT}@
+
+      ! Shell images under stab symops
+      image = ::make_SG_image_of_shell
+
+      ! Syymetrized DM-like object
+      sym.create(.n_bf,.n_bf)
+      sym = ZERO
+
+      do s = 1,.crystal.n_stabilizer_symops
+
+         do a = 1,.n_shell
+
+            tra = .crystal.xyz_BF_rep_matrix(s,.angular_moment_for_shell(a))
+            i  = image(a,s)
+            fa = .first_basis_fn_for_shell(a)
+            fi = .first_basis_fn_for_shell(i)
+            la = .last_basis_fn_for_shell(a)
+            li = .last_basis_fn_for_shell(i)
+            na = la - fa + 1
+
+            do b = 1,.n_shell
+
+               trb = .crystal.xyz_BF_rep_matrix(s,.angular_moment_for_shell(b))
+               j  = image(b,s)
+               fb = .first_basis_fn_for_shell(b)
+               fj = .first_basis_fn_for_shell(j)
+               lb = .last_basis_fn_for_shell(b)
+               lj = .last_basis_fn_for_shell(j)
+               nb = lb - fb + 1
+
+               W.create(na,nb)
+               W.to_product_of(tra,mat(fa:la,fb:lb))
+               sym(fi:li,fj:lj).plus_product_of(W,trb,transpose_b=TRUE)
+               W.destroy
+
+            end
+
+         end
+
+      end
+
+      ! Average
+      mat = sym/REALIFY(.crystal.n_stabilizer_symops)
+
+      ! Clean
+      sym.destroy
+      image.destroy
+
+   end
+
+   make_SG_image_of_shell result(res) ::: PURE
+   ! Return an array "res(a,n)" which is the image of shell "a" under
+   ! spacegroup stabilizer operation "n"
+      self :: IN
+      res :: MAT{INT}@
+
+      n_stab, g, s, oa,os, na,ns :: INT
+
+      n_stab = .crystal.n_stabilizer_symops
+
+      res.create(.n_shell,n_stab)
+
+      do g = 1,n_stab
+      do s = 1,.n_shell
+
+         ! Original atom & its atom-shell offset
+         oa = .atom_for_shell(s)       ! Old atom
+         os = .atom_shell_for_shell(s) ! Old atom shell-offset
+
+         ! Image atom under s, and its first shell
+         na = .crystal.frag_atom_stab_map(oa,g)
+         ns = .first_shell_for_atom(na)
+
+         ! Image shell of
+         res(s,g) = ns + os - 1
+
+      end
+      end
+
+   end
+
+
    symmetrize_DM_like_mx(DM) ::: template
    ! Symmetrize a density matrix-like object "DM" using the crystal
    ! seitz operators. 
@@ -9028,15 +9126,57 @@ contains
 
    end
 
-   symmetrize_DM_like_mx(DM) ::: get_from(symmetrize_DM_like_mx, TYPE=>REAL)
-   ! Symmetrize a density matrix-like object "DM" using the crystal
-   ! seitz operators. 
-   end
+!   symmetrize_DM_like_mx(DM) ::: get_from(symmetrize_DM_like_mx, TYPE=>REAL)
+!   ! Symmetrize a density matrix-like object "DM" using the crystal
+!   ! seitz operators. 
+!   end
 
-   symmetrize_DM_like_mx(DM) ::: get_from(symmetrize_DM_like_mx, TYPE=>CPX)
-   ! Symmetrize a density matrix-like object "DM" using the crystal
-   ! seitz operators. 
-   end
+!   symmetrize_DM_like_mx(DM) ::: get_from(symmetrize_DM_like_mx, TYPE=>CPX)
+!   ! Symmetrize a density matrix-like object "DM" using the crystal
+!   ! seitz operators. 
+!   end
+
+!   make_sg_image_of_shell(res) ::: PURE
+!   ! Return an array "res(s,g)" which is the image of shell "s" under
+!   ! *spacegroup* operation "g" ignoring whole cell translations.
+!   ! Size of "res" is [.n_shell,.crystal.spacegroup.n_seitz]
+!      self :: IN
+!      res  :: MAT{INT}, OUT
+!
+!   ENSURE(.crystal.associated, "no crystal")
+!   ENSURE(.crystal.spacegroup.analyzed, "crystal spacegroup not analyzed")
+!   ENSURE(res.dim1==.n_shell, "wrong dim2, res")
+!   ENSURE(res.dim2==.crystal.spacegroup.n_seitz, "wrong dim2, res")
+!
+!      pg :: VEC{REAL}(3)
+!      g,s,as,sa,ag,fg :: INT
+!
+!      res = ZERO
+!
+!      do g = 1,.crystal.spacegroup.n_seitz
+!      do s = 1,.n_shell
+!
+!         ! Get transformed atom position
+!         as = .atom_for_shell(s)
+!         pg = .atom(as).position
+!         .crystal.transform_xyz_position(pg,g,to_unit_cell=TRUE)
+!
+!         ! Get index of rotated atom by its position
+!         ag = .atom.atom_index_from_position(pg)
+!
+!         ! Assign
+!         if (ag==0) then
+!            res(s,g) = 0
+!         else
+!            fg = .first_shell_for_atom(ag)
+!            sa = .atom_shell_for_shell(s)
+!            res(s,g) = fg + sa - 1
+!         end
+!
+!      end
+!      end
+!
+!   end
 
 
 !   symmetrize_MO_like_mx(MO,symops) ::: template
@@ -9120,48 +9260,6 @@ contains
 !   ! group being symmetrized over.
 !   end
 
-
-   make_sg_image_of_shell(res) ::: PURE
-   ! Return an array "res(s,g)" which is the image of shell "s" under
-   ! *spacegroup* operation "g" ignoring whole cell translations.
-   ! Size of "res" is [.n_shell,.crystal.spacegroup.n_seitz]
-      self :: IN
-      res  :: MAT{INT}, OUT
-
-   ENSURE(.crystal.associated, "no crystal")
-   ENSURE(.crystal.spacegroup.analyzed, "crystal spacegroup not analyzed")
-   ENSURE(res.dim1==.n_shell, "wrong dim2, res")
-   ENSURE(res.dim2==.crystal.spacegroup.n_seitz, "wrong dim2, res")
-
-      pg :: VEC{REAL}(3)
-      g,s,as,sa,ag,fg :: INT
-
-      res = ZERO
-
-      do g = 1,.crystal.spacegroup.n_seitz
-      do s = 1,.n_shell
-
-         ! Get transformed atom position
-         as = .atom_for_shell(s)
-         pg = .atom(as).position
-         .crystal.transform_xyz_position(pg,g,to_unit_cell=TRUE)
-
-         ! Get index of rotated atom by its position
-         ag = .atom.atom_index_from_position(pg)
-
-         ! Assign
-         if (ag==0) then
-            res(s,g) = 0
-         else
-            fg = .first_shell_for_atom(ag)
-            sa = .atom_shell_for_shell(s)
-            res(s,g) = fg + sa - 1
-         end
-
-      end
-      end
-
-   end
 
 
    stabilize(mat) ::: template
