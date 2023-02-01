@@ -300,6 +300,7 @@ contains
       case ("fractional_fragment=          "); .read_fractional_fragment
       case ("generation_method=            "); .read_generation_method
       case ("make_info                     "); .make_info
+!      case ("make_nn_info                  "); .make_NN_info
       case ("unit_cell_atoms_to_suppress=  "); .read_unit_cell_atoms_to_suppress
       case ("unit_cell_offset=             "); .read_unit_cell_offset
       case ("put                           "); .put
@@ -501,6 +502,75 @@ contains
 
       ! Finished ...
       .info_made = TRUE
+
+   end
+
+!   make_NN_info ::: leaky
+!   ! Make all the cluster information from an arbitrary
+!   ! .fragment_geometry for a periodic network solid.
+!   ! NOTE: .set_defaults must be called before this.
+!      self :: INOUT
+!
+!
+!   ENSURE(.crystal.associated,"no crystal")
+!   ENSURE(.crystal.unit_cell_connection.allocated,"no unit cell connection table")
+!   ENSURE(.fragment_geometry.associated,"no fragment_geometry")
+!      
+!      H_n :: INT
+!
+!      if (.info_made) return
+!
+!      ! Depending on the generation_method, make starting cluster.
+!      ! Should be one for each atom.
+!      .make_occupation_list
+!
+!      ! Defragment/find molecules in the cluster
+!      .do_NN_defragment(.occupation_list,1,H_n)
+!
+!      ! Extract cordinates from occupation list
+!      stdout.show("Number of first hydrogen: ",H_n)
+!      .put_occupation_list
+!      stop
+!      .extract_geometry
+!
+!      ! Finished ...
+!      .info_made = TRUE
+!
+!   end
+!
+   make_asym_occupation_list(a) ::: leaky
+   ! Codify which atoms in the crystal are fragment atoms i.e. make
+   ! the ".occupation_list". If atom "u" in the unit cell "(h1,h2,h3)"
+   ! is occupied then the macro CLUSTER_AT_CODE(h1,h2,h3,u) appears in
+   ! the array "list". The maximum value allowed for any h is
+   ! CLUSTER_H_MAX i.e. we can't consider fragments atoms which lie in
+   ! cells outside this range. This list allows easy comparison of
+   ! which atoms are in the fragment by an integer equality test.
+   ! NOTE: Also make the ".molecule_for_atom" list which tells which
+   ! molecule the atom belongs to.
+      self :: INOUT
+      a :: INT, IN
+
+   ENSURE(.crystal.associated,"no crystal")
+   ENSURE(.crystal.unit_cell_geometry.associated,"no crystal unit cell")
+
+      f,u,h000 :: INT
+         
+      ! Create occupation list
+      .occupation_list.destroy
+      .occupation_list.create(1)
+
+
+      ! Set central cell
+      h000 = CLUSTER_H_CODE(0,0,0)
+
+      f = .crystal.frag_atom_for_asym_atom(a)
+      u = .crystal.unit_cell_atom_for_frag_atom(f)
+
+      ! Encode central cell
+      .occupation_list(u) = h000 + CLUSTER_UA_CODE(u)
+
+
 
    end
 
@@ -1166,6 +1236,96 @@ contains
          end
 
       end
+
+   end
+
+   do_NN_defragment(occupation_list,level,nc_atoms) ::: leaky
+   ! Defragment the "occupation_list" for each atom, modelling nearest
+   ! "level" neighbours with atoms, and the next layer with hydrogen
+   ! atoms, nc_atoms is the number of non-hydrogenic capping atoms.
+      self :: INOUT
+      occupation_list :: VEC{INT}*, INOUT
+      level :: INT, IN
+      nc_atoms :: INT, OUT
+
+   ENSURE(occupation_list.associated,"no occupation_list")
+   ENSURE(.crystal.associated,"no crystal")
+   ENSURE(.crystal.unit_cell_connection.allocated,"no unit cell connection table")
+
+      n_cluster_atoms,n_atoms,a,i,c,code,h1,h2,h3,u,l,k1,k2,k3,t,old :: INT
+      con,h_num :: VEC{INT}@
+      atom_occ_list :: VEC{EVEC{INT}}@
+
+      ! Initial no. of atoms
+      nc_atoms = 1
+      n_cluster_atoms = 1
+
+      ! Loop on all atoms "i"
+      i = 0
+      l = 0
+
+      do
+
+         i = i + 1
+
+         ! Loop for atoms and nearest "l" atoms.
+         if (i <= nc_atoms) then
+         
+            ! Info for atom "i"
+            code = occupation_list(i)          ! Occupation code
+            u    = CLUSTER_UA_FROM_CODE(code)  ! Unit cell atom
+
+            ! No connections to this atom? next ...
+            if (.crystal.unit_cell_connection(u).element.dim==0) cycle
+
+            ! Get unit cell atom offset "h"
+            h1 = CLUSTER_H1_FROM_CODE(code)
+            h2 = CLUSTER_H2_FROM_CODE(code)
+            h3 = CLUSTER_H3_FROM_CODE(code)
+
+            ! Loop on atoms "c" connected to "u"
+            do c = 1,.crystal.unit_cell_connection(u).element.dim
+
+               ! List of connections
+               con = .crystal.unit_cell_connection(u)[c].element
+
+               ! Get code for connected atom
+               k1 = h1 + con(1)
+               k2 = h2 + con(2)
+               k3 = h3 + con(3)
+               t  =      con(4)
+               code = CLUSTER_AT_CODE(k1,k2,k3,t)
+
+               ! Is it new in the occupation list?
+               old = occupation_list.index_of_value(code)
+
+               if (old>0) cycle ! if old
+
+               ! This is a new atom. Increment no. of atoms,
+               ! store in the occ list.
+               occupation_list.append(code)
+            
+            end
+
+            if (i >= nc_atoms) then
+               
+               l = l + 1
+               !check if "level" atom level has been reached
+               if (l <= level) then
+                  nc_atoms = occupation_list.dim
+               else 
+                  nc_atoms = nc_atoms + 1
+                  exit
+               end if
+            
+            end if
+
+         end if
+         
+      
+      end      
+      
+      .n_atoms = occupation_list.dim
 
    end
 

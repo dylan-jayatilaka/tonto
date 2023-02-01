@@ -3932,6 +3932,88 @@ contains
 
    end
 
+   make_NN_capped_groups ::: leaky
+   ! Make atom capped groupsi for periodic network molecule.
+      self :: INOUT
+
+   DIE_IF(.atom.disassociated,"no atom info")
+   DIE_IF(.atoms_bonded_to_atom.deallocated,"no connection table")
+   DIE_IF(.crystal.disassociated, "no crystal info")
+
+      name,label :: STR
+      n_comp,nc_atoms,a :: INT
+      atom :: VEC{ATOM}*
+      mol :: MOLECULE*
+
+      n_comp = .crystal.n_asymmetric_unit_atoms 
+
+      if (.atom_group.deallocated) then
+      
+         ! Make groups from asym atoms
+         .atom_group.create(n_comp)
+         
+         do a = 1,n_comp
+            .cluster.make_asym_occupation_list(a)
+            .cluster.do_NN_defragment(.cluster.occupation_list,1,nc_atoms)
+            .cluster.create_atom_list(atom) 
+            .atom_group(a).atom_index = [ a ]
+            .atom_group(a).n_atoms    = .cluster.n_atoms
+            
+            ! This is atom_group(a).mol
+            mol.:create
+            mol.atom => atom
+            
+            mol.atom(2:).is_cap_atom = TRUE
+
+            ! Correct label & atomic number for last added atom
+            ! WARNING: AN has to be set after setting unique label
+            label = "H-cap"
+            ATOM:set_label(mol.atom(nc_atoms+1:),label,skip_mass=TRUE)
+            ATOM:set_atomic_number_and_mass(mol.atom(nc_atoms+1:),"H ")
+            
+            ! Set charge
+            mol.:set_charge(.atom_group(a).charge)
+
+            ! Make atom info; groups should not contain subgroups!
+            mol.atom_info_made = FALSE
+            mol.atom.set_group_to(a)
+            mol.:finalize_atoms(do_groups=FALSE) ! no recursion
+
+            ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
+            if (.atom_group(a).spin_multiplicity_set) then
+               mol.:set_spin_multiplicity(.atom_group(a).spin_multiplicity)
+            end
+
+            ! Set guess-type SCF defaults: no output
+            ! Will reset scf_kind based on multiplicity
+            mol.:set_scf_guess_defaults_from(.scfdata)
+
+            ! Set .name
+            name = "group-"//trim(a.to_str)//"-"
+            name = trim(name)//trim(mol.atom.chemical_formula(with_spaces=FALSE))
+            mol.:set_name(name)
+            .atom_group(a).set_name(name)
+
+            ! Assign basis set -- don't destroy!
+            mol.atom.nullify_bases
+            mol.:set_basis_name(.basis_name)
+
+            ! Copy the crystal -- destroy it!
+            ! Make separate asymm unit with only mol in it later ...
+            !mol.crystal.create_minimal_copy(.crystal)
+            !mol.crystal.make_fragment_data(mol.atom,assign_atom=FALSE)
+               
+            ! Don't remake ANO data if there
+            mol.:set_ANOs_from(self)
+
+            ! Add capped molecule to atom_group
+            .atom_group(a).mol => mol
+        end
+            
+      end
+
+   end
+
    make_Ryde_cap_for_group(g) ::: leaky
    ! Make a capped fragment for molecule "mol, the atom_group(g).mol
    ! with compound_sequence_id "g", ready for fragHAR calculation.
