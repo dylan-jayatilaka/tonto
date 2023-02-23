@@ -588,10 +588,10 @@ contains
          .:set_scf_defaults
          .scfdata.set_output(FALSE)
 
-      else if (scfdata.scf_kind(1:7)=="fraghar") then
+      else if (scfdata.scf_kind(1:8)=="fragment") then
 
          .:set_scf_defaults(scfdata) ! leaky
-
+      
       else if (NOT scfdata.use_default_guess_options) then
 
          .:set_scf_defaults(scfdata) ! leaky
@@ -3932,7 +3932,7 @@ contains
 
    end
 
-   make_NN_capped_groups ::: leaky
+   make_NN_groups ::: leaky
    ! Make atom capped groups for periodic network molecule.
       self :: INOUT
 
@@ -3970,7 +3970,11 @@ contains
          .cluster.destroy 
          .cluster.create(mol.crystal) 
          .cluster.make_asym_occupation_list(a)
-         .cluster.do_NN_defragment(.cluster.occupation_list,.crystal.NN_level,nc_atoms)
+         if (.crystal.use_NN_capping) then
+            .cluster.do_NN_defragment(.cluster.occupation_list,.crystal.NN_level,nc_atoms)
+         else
+            .cluster.do_NN_defragment(.cluster.occupation_list,.crystal.NN_level-1,nc_atoms)
+         end
          .cluster.extract_geometry(.cluster.occupation_list,.cluster.geometry)
          .cluster.create_atom_list(atom) 
          .atom_group(a).atom_index = [ a ]
@@ -3979,20 +3983,32 @@ contains
          mol.atom => atom
          
          mol.atom(2:).is_cap_atom = TRUE
+         do i = 2, mol.atom.dim
+            ! NOTE ERRORS SHOULD ALSO BE SET TO ZERO HERE, BUT I AM
+            ! LAZY MD 10/02/2023
+            mol.atom(i).set_ADP_tensor(ZERO)
+         end
          mol.atom.make_connection_table(connections_for) 
          h_length = ATOM::covalent_radii_ccdc(1)*BOHR_PER_ANGSTROM
 
 
          ! Correct label & atomic number for last added atom
          ! WARNING: AN has to be set after setting unique label
-         do i=1,(mol.atom.dim-nc_atoms)
-            label = "H-cap"//trim(i.to_str)
-            ATOM:set_label(mol.atom(nc_atoms+i),label,skip_mass=TRUE)
-            ATOM:set_atomic_number_and_mass(mol.atom(nc_atoms+i),"H ")
-            connected_atom = connections_for(nc_atoms+i).element(1)
-            length = mol.atom(connected_atom).covalent_radius_ccdc + h_length
-            mol.atom.set_bond_length(connected_atom,nc_atoms+i,length)
-         end do
+         if (mol.atom(1).label.index_of_digit == 0) then
+            label = trim(mol.atom(1).label)//"1"
+            ATOM:set_label(mol.atom(1),label,skip_mass=TRUE)
+         end if
+         
+         if (.crystal.use_NN_capping) then
+            do i=1,(mol.atom.dim-nc_atoms)
+               label = "H-cap"//trim(i.to_str)
+               ATOM:set_label(mol.atom(nc_atoms+i),label,skip_mass=TRUE)
+               ATOM:set_atomic_number_and_mass(mol.atom(nc_atoms+i),"H ")
+               connected_atom = connections_for(nc_atoms+i).element(1)
+               length = mol.atom(connected_atom).covalent_radius_ccdc + h_length
+               mol.atom.set_bond_length(connected_atom,nc_atoms+i,length)
+            end do
+         end
          
          ! Set charge
          mol.:set_charge(.atom_group(a).charge)
@@ -4015,10 +4031,12 @@ contains
             mol.:set_spin_multiplicity(.atom_group(a).spin_multiplicity)
          end
 
+         
+         
          ! Set guess-type SCF defaults: no output
          ! Will reset scf_kind based on multiplicity
          mol.:set_scf_guess_defaults_from(.scfdata)
-
+         
          ! Set .name
          name = "group-"//trim(a.to_str)//"-"
          name = trim(name)//trim(mol.atom.chemical_formula(with_spaces=FALSE))
@@ -4339,10 +4357,10 @@ contains
             ! WARNING: .atom_groups list only (parent) uncapped atoms
             .:make_Ryde_capped_groups
          
-         else if (.crystal.use_NN_capping) then
+         else if (.crystal.use_NN) then
         
             ! Invariom type capping for periodic network solids.
-            .:make_NN_capped_groups
+            .:make_NN_groups
         
          else if (.atom_group.has_atom_indices) then
          
