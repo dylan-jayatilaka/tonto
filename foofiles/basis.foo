@@ -27,24 +27,16 @@ module BASIS
 
 contains
 
-!  =================
-!  Memory allocation
-!  =================
+!  ==================
+!  Allocation methods
+!  ==================
 
    create ::: get_from(OBJECT), leaky, PURE
-   ! Create an object
+   ! Allocate an object
    end
 
    destroy ::: get_from(OBJECT), leaky, PURE
-   ! Destroy an object
-   end
-
-   nullify_ptr_part ::: pure
-   ! Nullify the shell parts of self
-      self :: INOUT
-
-      nullify(.shell)
-
+   ! Deallocate "self"
    end
 
    destroy_ptr_part ::: leaky, PURE
@@ -55,38 +47,9 @@ contains
 
    end
 
-!  ====
-!  Copy
-!  ====
-
-   create_copy(object) ::: get_from(OBJECT), leaky
-   ! Create a copy of object
-   end
-
-   copy(b) ::: leaky
-   ! Copy a basis "b" to "self". Make sure pointer parts are first
-   ! destroyed or nullified, as you want.
-      b :: BASIS, IN
-      self = b
-      .nullify_ptr_part
-      if (b.shell.associated) .shell.create_copy(b.shell)
-   end
-
 !  ===========
 !  Set methods
 !  ===========
-
-   set_defaults ::: pure
-   ! Create and set up a default basis set
-      self :: INOUT
-
-      .label        = " "
-      .is_spherical = FALSE
-      .n_shell      = 0
-      .n_bf         = 0
-      .n_prim       = 0
-
-   end
 
    set_spherical(val) ::: pure
    ! Set sphericals to "val" defaults
@@ -95,7 +58,7 @@ contains
 
       .is_spherical = val
 
-      if (.shell.associated) .shell.set_spherical(val)
+      if (.shell.allocated) .shell.set_spherical(val)
 
       .update
 
@@ -105,7 +68,7 @@ contains
    ! Update the shell data, if it exists
       self :: INOUT
 
-      if (.shell.disassociated) return
+      if (.shell.deallocated) return
 
       .n_shell = .no_of_shells
       .n_bf    = .no_of_basis_functions
@@ -115,8 +78,11 @@ contains
 
    set_label(label)
    ! Set the basis label
-      label :: STR
+      self :: INOUT
+      label :: STR, IN
+
       .label = label
+
    end
 
 !  ============
@@ -270,7 +236,7 @@ contains
 !  Methods
 !  =======
 
-   resolve_by_label(label,basis,clobber,minmatch,found)
+   resolve_by_label(label,basis,clobber,minmatch,found) ::: PURE
    ! Resolve "self" by *pointer* assigning it to the element in
    ! "basis" which has a label which matches "label". 
    ! . If "clobber" is present and FALSE, and if "self" is already
@@ -284,15 +250,17 @@ contains
    !   was already resolved if clobber was set FALSE). Otherwise it is
    !   set FALSE. If "found" is not present, and a match has not been
    !   found, the routine dies.
-      self :: PTR
-      label :: STR
-      basis :: VEC{BASIS}*
-      clobber,minmatch,found :: BIN, optional
+      self :: allocatable, INOUT
+      label :: STR, IN
+      basis :: VEC{BASIS}@, IN
+      clobber :: BIN, optional, IN
+      minmatch :: BIN, optional, IN
+      found :: BIN, optional, OUT
 
-   DIE_IF(basis.disassociated,"no basis set")
+   ENSURE(basis.allocated,"no basis set")
 
       b :: INT
-      check :: VEC{BIN}*
+      check :: VEC{BIN}@
       bash,fnd,minmtch :: BIN
 
       bash = TRUE
@@ -301,7 +269,7 @@ contains
       ! If we don't clobber and the basis is created and it has a
       ! label, then it is already resolved ... so return.
       if (NOT bash) then
-      if (.associated) then
+      if (.allocated) then
       if (.label/=" ") then
          if (present(found)) found = TRUE
          return
@@ -324,13 +292,11 @@ contains
       ! If there was a match, pointer assign the basis
       ! otherwise clobber/nullify it.
       fnd = b>0
-      if (fnd) then; self => basis(b) 
-      else;          nullify(self)
-      end
+      if (fnd) self = basis(b) 
 
       ! Assign "found" or die
       if (present(found)) then; found = fnd
-      else; DIE_IF(NOT fnd,"unknown basis label, "// trim(label))
+      else; ENSURE(fnd,"unknown basis label, "// trim(label))
       end
 
    end
@@ -339,18 +305,14 @@ contains
    ! Take the normalisation factors out of the primitives, assuming
    ! that the contraction coeff's refer to normalised basis functions
       self :: INOUT
-
-      if (.shell.associated) .shell.unnormalise
-
+      if (.shell.allocated) .shell.unnormalise
    end
 
    renormalise ::: PURE
    ! Put back in the normalisation factors of the primitives, assuming
    ! that the contraction coeff's refer to unnormalised basis functions
       self :: INOUT
-
-      if (.shell.associated) .shell.renormalise
-
+      if (.shell.allocated) .shell.renormalise
    end
 
    get_lc_bf_ex_cc(lc,bf,ex,cc) ::: PURE
@@ -508,27 +470,27 @@ contains
       self :: IN
       res :: BIN
 
-      res = .shell.associated
+      res = .shell.allocated
 
    end
 
    is_created_and_resolved result (res) ::: pure
    ! Return TRUE if self is resolved
-      self :: PTR
+      self :: allocatable, IN
       res :: BIN
 
-      res = .associated
-      if (res) res = .shell.associated
+      res = .allocated
+      if (res) res = .shell.allocated
 
    end
 
    is_created_and_has_label result (res) ::: pure
    ! Return TRUE if self has a non-blank label
-      self :: PTR
+      self :: allocatable, IN
       res :: BIN
 
-      res = .associated
-      if (res) res = .label /=  " "
+      res = .allocated
+      if (res) res = .label /= " "
 
    end
 
@@ -537,7 +499,7 @@ contains
       self :: IN
       res :: INT
 
-   ENSURE(.shell.associated,"no shells")
+   ENSURE(.shell.allocated,"no shells")
 
       res = .shell.dim
 
@@ -548,7 +510,7 @@ contains
       self :: IN
       res :: INT
 
-   ENSURE(.shell.associated,"no shells")
+   ENSURE(.shell.allocated,"no shells")
 
       res = .shell.no_of_primitive_shells
 
@@ -559,7 +521,7 @@ contains
       self :: IN
       res :: INT
 
-   ENSURE(.shell.associated,"no shells")
+   ENSURE(.shell.allocated,"no shells")
 
       res = .shell.no_of_basis_functions
 
@@ -570,7 +532,7 @@ contains
       self :: IN
       res :: INT
 
-   ENSURE(.shell.associated,"no shells")
+   ENSURE(.shell.allocated,"no shells")
 
       res = .shell.no_of_sph_basis_functions
 
@@ -581,7 +543,7 @@ contains
       self :: IN
       res :: INT
 
-   ENSURE(.shell.associated,"no shells")
+   ENSURE(.shell.allocated,"no shells")
 
       res = .shell.no_of_primitives
 
@@ -592,7 +554,7 @@ contains
       self :: IN
       res :: INT
 
-   ENSURE(.shell.associated,"no shells")
+   ENSURE(.shell.allocated,"no shells")
 
       res = .shell.no_of_sph_primitives
 
@@ -605,19 +567,16 @@ contains
       res :: VEC{STR}(no_of_basis_functions(self))
 
    ENSURE(NOT .is_spherical,"not yet available for sphericals")
-   ENSURE(.shell.created,"no shells")
+   ENSURE(.shell.allocated,"no shells")
 
       s,f,l :: INT
 
       l = 0
 
       do s = 1,.shell.dim
-
          f = l + 1
          l = l + .shell(s).n_comp
-
          res(f:l) = .shell(s).xyz_basis_fn_part
-
       end
 
    end
@@ -626,16 +585,16 @@ contains
 !  Exponents and cutoff distances
 !  ==============================
 
-   min_exponent result (res) ::: pure
-   ! Return the minimum exponent in the basis.
-      self :: IN
-      res :: REAL
-
-   ENSURE(.shell.associated,"no shells")
-
-      res = .shell.min_exponent
-
-   end
+!   min_exponent result (res) ::: PURE
+!   ! Return the minimum exponent in the basis.
+!      self :: IN
+!      res :: REAL
+!
+!   ENSURE(.shell.allocated,"no shells")
+!
+!      res = .shell.min_exponent
+!
+!   end
 
    r_max(cutoff) result (res) ::: pure
    ! Return the radius where all basis functions becomes smaller than "cutoff".
@@ -663,6 +622,7 @@ contains
 
    do_dump ::: private
    ! Dump object data as text
+      self :: IN
 
       stdout.dump("label",.label)
       stdout.dump("is_spherical",.is_spherical)
@@ -678,7 +638,7 @@ contains
    end
 
    dmpp(object_name) ::: get_from(OBJECT, TYPE?=>BASIS)
-   ! Dump pointer object data as text
+   ! Dump allocatable object data as text
    end
 
 !  ===

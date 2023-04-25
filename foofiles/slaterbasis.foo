@@ -33,89 +33,45 @@ contains
 !  ==========
 
    create ::: get_from(OBJECT), leaky, PURE
-   ! Create an object
-      self :: PTR
+   ! Allocate an object
    end
 
    destroy ::: get_from(OBJECT), leaky, PURE
-   ! Destroy an object
-   end
-
-   nullify_ptr_part ::: pure
-   ! Nullify the shell parts of self
-      self :: INOUT
-      
-      nullify(.shell)
-
+   ! Deallocate "self"
    end
 
    destroy_ptr_part  ::: leaky, PURE
    ! Destroy the shell parts of self
       self :: INOUT
-
       .shell.destroy
       .interpolator.destroy
       .d1_interpolator.destroy
       .d2_interpolator.destroy
-
-   end
-
-!  ====
-!  Copy
-!  ====
-
-   create_copy(b) ::: leaky
-   ! Create a copy of the basis "b".
-      self :: PTR
-      b :: SLATERBASIS, IN
-
-      .create
-      .copy(b)
-
-   end
-
-   copy(b) ::: leaky
-   ! Copy a basis "b" to "self". Make sure pointer parts are first
-   ! destroyed or nullified, as you want.
-      b :: SLATERBASIS, IN
-      self = b
-      .nullify_ptr_part
-      if (b.shell.associated) .shell.create_copy(b.shell)
-      if (b.interpolator.allocated) .interpolator = b.interpolator
-      if (b.d1_interpolator.allocated) .d1_interpolator = b.d1_interpolator
-      if (b.d2_interpolator.allocated) .d2_interpolator = b.d2_interpolator
    end
 
 !  ===========
 !  Set methods
 !  ===========
 
-   set_defaults ::: pure
-   ! Create and set up a default basis set
-      self :: INOUT
-
-      .label   = " "
-      .n_shell = 0
-      .n_bf    = 0
-      .n_prim  = 0
-      .use_interpolator = TRUE
-
-   end
-
    update ::: get_from(BASIS), pure
    ! Update the shell data, if it exists
    end
 
-   set_label(label) ::: pure
-   ! Set the basis label
+   set_label(val) ::: pure
+   ! Set the basis label to "val"
       self :: INOUT
-      label :: STR, IN
-
-      .label = label
-
+      val :: STR, IN
+      .label = val
    end
 
-   resolve_by_label(label,basis,clobber,minmatch,found) ::: get_from(BASIS, BASIS=>SLATERBASIS)
+   set_use_interpolators(val) ::: pure
+   ! Set whether to use interpolation table to speed up evaulation.
+      self :: INOUT
+      val :: BIN, IN
+      .use_interpolator = val
+   end
+
+   resolve_by_label(label,basis,clobber,minmatch,found) ::: get_from(BASIS, BASIS=>SLATERBASIS), PURE
    ! Resolve "self" by *pointer* assigning it to the element in
    ! "basis" which has a label which matches "label". 
    ! . If "clobber" is present and FALSE, and if "self" is already
@@ -142,6 +98,7 @@ contains
    process_keyword(keyword) ::: leaky
    ! Process command "keyword". Any required data needed by the "keyword" is
    ! inputted from "stdin".
+      self :: INOUT
       keyword :: STR, IN
 
       word :: STR
@@ -150,23 +107,23 @@ contains
       word.to_lower_case
 
       select case (word)
-         case ("-- Regular options --   ")
-         case ("}                       "); ! exit surrounding loop
-         case ("analyze_configuration   "); .analyze_configuration
-         case ("configuration=          "); .read_configuration
-         case ("label=                  "); .read_label
-         case ("put                     "); .put
-         case ("shells=                 "); .read_shell
-         case ("tonto-style=            "); .read_tonto_style
-         case ("units=                  "); .read_units
-         ! These are only for making custom tables for the list type
-         case ("-- Options for tables --")
-         case ("flush                   "); stdout.flush
-         case ("put_label               "); stdout.put(.label,int_width=TRUE)
-         case ("put_n_shells            "); stdout.put(.n_shell)
-         case ("put_n_bf                "); stdout.put(.n_bf)
-         case ("put_n_prim              "); stdout.put(.n_prim)
-         case  default ;      UNKNOWN(word)
+      case ("-- Regular options --   ")
+      case ("}                       "); ! exit surrounding loop
+      case ("analyze_configuration   "); .analyze_configuration
+      case ("configuration=          "); .read_configuration
+      case ("label=                  "); .read_label
+      case ("put                     "); .put
+      case ("shells=                 "); .read_shell
+      case ("tonto-style=            "); .read_tonto_style
+      case ("units=                  "); .read_units
+      ! These are only for making custom tables for the list type
+      case ("-- Options for tables --")
+      case ("flush                   "); stdout.flush
+      case ("put_label               "); stdout.put(.label,int_width=TRUE)
+      case ("put_n_shells            "); stdout.put(.n_shell)
+      case ("put_n_bf                "); stdout.put(.n_bf)
+      case ("put_n_prim              "); stdout.put(.n_prim)
+      case  default ;      UNKNOWN(word)
       end
 
    end
@@ -185,15 +142,20 @@ contains
 
    read_configuration
    ! Read in the configuration string
+      self :: INOUT
       stdin.read(.configuration)
    end
 
    read_interpolator ::: leaky
    ! Read the interpolator
-   ENSURE(.shell.associated,"no shells defined!")
+      self :: INOUT
+
+   ENSURE(.shell.allocated,"no shells defined!")
+
       .interpolator.destroy
       .interpolator.create
       .interpolator.read_keywords
+
    end
 
    read_tonto_style ::: leaky
@@ -204,23 +166,21 @@ contains
 
       .read_label
       .read_configuration
-
       the_keys = ("l_chr= kind= n,z,c*=").split
       .shell.set_keys(the_keys)
       the_keys.destroy
-
       .shell.read_data
 
       .update
 
    end
 
-   analyze_configuration 
+   analyze_configuration ::: PURE
    ! Analyze the orbital configuration and set the shell occupancies
       self :: INOUT
 
    ENSURE(.configuration/=" ","no configuration")
-   ENSURE(.shell.associated,"no shells")
+   ENSURE(.shell.allocated,"no shells")
    ENSURE(.shell_kinds_created,"not all orbital kinds are there")
 
       configuration,conf_kind :: STR
@@ -282,14 +242,14 @@ contains
                   ind = match.index_of_first_true_element
                   match.destroy
 
-                  ENSURE(.shell(s).occupancy.associated,"no occupancies")
+                  ENSURE(.shell(s).occupancy.allocated,"no occupancies")
                   .shell(s).occupancy(ind) = occ
                   found = TRUE
                   exit
 
                end
 
-               DIE_IF(NOT found,"orbital kind "//conf_kind.trim//" not found")
+               ENSURE(found,"orbital kind "//conf_kind.trim//" not found")
 
             end
 
@@ -334,19 +294,7 @@ contains
 !  Inquiry methods
 !  ===============
 
-   is_resolved result (res) ::: get_from(BASIS), pure
-   ! Return TRUE if self is resolved i.e. has shells
-   end
-
-   is_created_and_resolved result (res) ::: get_from(BASIS)
-   ! Return TRUE if self is resolved
-   end
-
-   is_created_and_has_label result (res) ::: get_from(BASIS)
-   ! Return TRUE if self has a non-blank label
-   end
-
-   same_as(b) result (res) ::: get_from(BASIS)
+   same_as(b) result (res) ::: get_from(BASIS), pure
    ! Return TRUE if the basis set "self" is the same as "b". Only the
    ! shell vector is compared to see if they are "really" the same.
       self :: IN
@@ -354,7 +302,19 @@ contains
       res :: BIN
    end
 
-   max_n_orb result (res) 
+   is_resolved result (res) ::: get_from(BASIS), pure
+   ! Return TRUE if self is resolved i.e. has shells
+   end
+
+   is_created_and_resolved result (res) ::: get_from(BASIS), pure
+   ! Return TRUE if self is resolved
+   end
+
+   is_created_and_has_label result (res) ::: get_from(BASIS), pure
+   ! Return TRUE if self has a non-blank label
+   end
+
+   max_n_orb result (res) ::: pure
    ! Return the maximum number of contracted orbitals in any one shell.
       self :: IN
       res :: INT
@@ -363,43 +323,38 @@ contains
 
    no_of_shells result (res) ::: get_from(BASIS), pure
    ! Work out and return the number of shells in the basis set
-      self :: IN
-      res :: INT
    end
 
    no_of_basis_functions result (res) ::: get_from(BASIS), pure
    ! Work out and return the number of basis functions in the basis set
-      self :: IN
-      res :: INT
    end
 
    no_of_primitives result (res) ::: get_from(BASIS), pure
    ! Work out and return the number of primitives in the basis set
-      self :: IN
-      res :: INT
    end
 
-   min_exponent result (res) ::: get_from(BASIS), pure
-   ! Return the minimum exponent in the basis.
-      self :: IN
-      res :: REAL
-   end
+!   min_exponent result (res) ::: get_from(BASIS), pure
+!   ! Return the minimum exponent in the basis.
+!   end
 
-   shell_kinds_created result (res) 
+   shell_kinds_created result (res) ::: pure
    ! Return TRUE if all the .shell.orb_kind vectors are there.
       self :: IN
       res :: BIN
+
       i :: INT
-      if (.shell.disassociated) then
+
+      if (.shell.deallocated) then
          res = FALSE
       else
          res = TRUE
          do i = 1,.shell.dim
-            if (.shell(i).orb_kind.associated) cycle
+            if (.shell(i).orb_kind.allocated) cycle
             res = FALSE
             exit
          end
       end
+
    end
 
 !  ==================
@@ -476,7 +431,7 @@ contains
 
  ! ENSURE(pt.dim2==3,"wrong dimension for points array")
  ! ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
- ! ENSURE(.shell.associated,"no shell vector")
+ ! ENSURE(.shell.allocated,"no shell vector")
 
       R :: VEC{REAL}*
       n_pt,n :: INT
@@ -522,7 +477,7 @@ contains
 
  ! ENSURE(pt.dim2==3,"wrong dimension for points array")
  ! ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
- ! ENSURE(.shell.associated,"no shell vector")
+ ! ENSURE(.shell.allocated,"no shell vector")
 
       R :: VEC{REAL}*
       n_pt,n :: INT
@@ -567,7 +522,7 @@ contains
 
  ! ENSURE(pt.dim2==3,"wrong dimension for points array")
  ! ENSURE(density.dim==pt.dim1,"inconsistent number of points")
- ! ENSURE(.interpolator.associated,"no interpolator defined!")
+ ! ENSURE(.interpolator.allocated,"no interpolator defined!")
 
       R2 :: VEC{REAL}*
       n_pt,n :: INT
@@ -642,7 +597,7 @@ contains
 
  ! ENSURE(pt.dim2==3,"wrong dimension for points array")
  ! ENSURE(density.dim==pt.dim1,"inconsistent number of points")
- ! ENSURE(.interpolator.associated,"no interpolator defined!")
+ ! ENSURE(.interpolator.allocated,"no interpolator defined!")
 
       R2 :: VEC{REAL}*
       n_pt,n :: INT
@@ -705,13 +660,15 @@ contains
 !      d2_density :: MAT3{REAL}, OUT
 !      pt :: MAT{REAL}, IN
 !      pos :: VEC{REAL}(3), IN
+!
 !   ENSURE(density.dim==pt.dim1,"inconsistent number of points")
 !   ENSURE(d1_density.dim2==pt.dim1,"inconsistent number of points")
 !   ENSURE(d2_density.dim3==pt.dim1,"inconsistent number of points")
 !   ENSURE(d1_density.dim1==3,"wrong dim1 for d_density")
 !   ENSURE(d2_density.dim1==3,"wrong dim1 for d2_density")
 !   ENSURE(d2_density.dim2==3,"wrong dim1 for d2_density")
-!      if (.interpolator.associated) then
+!
+!      if (.interpolator.allocated) then
 !         .interpolated_d_density(density,d1_density,d2_density,pt,pos)
 !      else
 !         DIE("not implemented yet")
@@ -729,9 +686,11 @@ contains
 !     d2_density :: MAT3{REAL}, OUT
 !     pt :: MAT{REAL}, IN
 !     pos :: VEC{REAL}(3), IN
+!
 !   ! ENSURE(pt.dim2==3,"wrong dimension for points array")
 !   ! ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-!   ! ENSURE(.interpolator.associated,"no interpolator defined!")
+!   ! ENSURE(.interpolator.allocated,"no interpolator defined!")
+!
 !     R,D1,D2 :: VEC{REAL}*
 !     n_pt,n :: INT
 !     x,y,z,r1,r2,r3,xx,yy,zz,xy,xz,yz, fac1,fac2,val :: REAL
@@ -784,9 +743,10 @@ contains
    make_interpolator(interpolator) ::: leaky
    ! Make the interpolator for the slater atom density. If present,
    ! "interpolator" is used as a template to get the settings needed. 
-      interpolator :: INTERPOLATOR@, optional
+      self :: INOUT
+      interpolator :: INTERPOLATOR@, optional, IN
 
-   ENSURE(.shell.associated,"no slater orbitals defined!")
+   ENSURE(.shell.allocated,"no slater orbitals defined!")
 
       ! Create a copy of the template if it exists
       if (present(interpolator)) then
@@ -812,7 +772,7 @@ contains
       tol :: REAL, IN
       length :: REAL
 
-   ENSURE(.shell.associated,"no slater orbitals defined!")
+   ENSURE(.shell.allocated,"no slater orbitals defined!")
 
       interpolator :: INTERPOLATOR@
 
@@ -827,12 +787,15 @@ contains
 !   ! Make the DERIVATIVE interpolators as well for the slater atom density. If
 !   ! present, "interpolator" is used as a template to get the settings needed.
 !   ! Otherwise a default interpolator is used.
-!     interpolator :: INTERPOLATOR*, optional
-!     tol :: REAL, optional
-!   ENSURE(.shell.associated,"no slater orbitals defined!")
-!     len :: REAL
+!      interpolator :: INTERPOLATOR*, optional
+!      tol :: REAL, optional
+!
+!   ENSURE(.shell.allocated,"no slater orbitals defined!")
+!
+!      len :: REAL
+!
 !      if (present(interpolator)) then
-!      if (interpolator.associated) then
+!      if (interpolator.allocated) then
 !         .interpolator.destroy
 !         .interpolator.create_copy(interpolator)
 !         .d1_interpolator.destroy
@@ -841,16 +804,19 @@ contains
 !         .d2_interpolator.create_copy(interpolator)
 !      end
 !      end
-!      if (.interpolator.disassociated) then
+!
+!      if (.interpolator.deallocated) then
 !         .interpolator.create
 !         .d1_interpolator.create
 !         .d2_interpolator.create
 !      end
+!
 !      .shell.set_saved_self ! Used by function below
 !      .interpolator.set_even_spaced_data(VEC{SLATERSHELL}::density_value_at_radius,tol=tol)
 !      len = .interpolator.table_length
 !      .d1_interpolator.set_even_spaced_data(VEC{SLATERSHELL}::density_d1_value_at_radius,length=len)
 !      .d2_interpolator.set_even_spaced_data(VEC{SLATERSHELL}::density_d2_value_at_radius,length=len)
+!
 !   end
 
 !  =============
@@ -862,7 +828,7 @@ contains
    ! Slater functions -- assuming they are normalised. This saves computation.
       self :: INOUT
 
-      if (.shell.associated) .shell.unnormalise
+      if (.shell.allocated) .shell.unnormalise
 
    end
 
@@ -871,7 +837,7 @@ contains
    ! Slater functions --- assuming they are w.r.t. unnormalised functions. 
       self :: INOUT
 
-      if (.shell.associated) .shell.renormalise
+      if (.shell.allocated) .shell.renormalise
 
    end
 
@@ -881,6 +847,7 @@ contains
 
    do_dump ::: private
    ! Dump object data as text
+      self :: IN
 
       stdout.dump("label",.label)
       stdout.dump("configuration",.configuration)
@@ -900,7 +867,7 @@ contains
    end
 
    dmpp(object_name) ::: get_from(OBJECT)
-   ! Dump pointer object data as text
+   ! Dump allocatable object data as text
    end
 
 !  ==============
@@ -909,6 +876,8 @@ contains
 
    put
    ! Put out the basis information to file "stdout"
+      self :: IN
+
       stdout.flush
       stdout.show("Slater basis set : ",trim(.label))
       stdout.flush
@@ -916,7 +885,8 @@ contains
       stdout.show("No. of shells          =",.n_shell)
       stdout.show("No. of basis functions =",.n_bf)
       stdout.show("No. of primitives      =",.n_prim)
-      if (.shell.associated) .shell.put
+      if (.shell.allocated) .shell.put
+
    end
 
 end

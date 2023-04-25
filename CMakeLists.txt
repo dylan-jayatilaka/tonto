@@ -269,15 +269,15 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.base.foo
     ${FOO_DIR}/molecule.ce.foo
     ${FOO_DIR}/molecule.cp.foo
-    ${FOO_DIR}/molecule.nomo.foo
+#   ${FOO_DIR}/molecule.nomo.foo ! for now
     ${FOO_DIR}/molecule.fock.foo
     ${FOO_DIR}/molecule.grid.foo
     ${FOO_DIR}/molecule.ints.foo
     ${FOO_DIR}/molecule.main.foo
-    ${FOO_DIR}/molecule.misc.foo
+#   ${FOO_DIR}/molecule.misc.foo ! for now
     ${FOO_DIR}/molecule.plot.foo
     ${FOO_DIR}/molecule.prop.foo
-    ${FOO_DIR}/molecule.rel.foo
+#   ${FOO_DIR}/molecule.rel.foo ! for now
     ${FOO_DIR}/molecule.scf.foo
     ${FOO_DIR}/molecule.tad.foo
     ${FOO_DIR}/molecule.xtal.foo
@@ -341,15 +341,15 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.base.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.nomo.F90
+ #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.nomo.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.fock.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.ints.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
+ #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.plot.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.prop.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.rel.F90
+ #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.rel.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.scf.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.tad.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.xtal.F90
