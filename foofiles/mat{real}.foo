@@ -281,7 +281,7 @@ contains
       eps :: REAL, optional, IN
       res :: BIN
 
-      W :: MAT{REAL}*
+      W :: MAT{REAL}@
 
       ! W = S^T S
       W.create(.dim1,.dim2)
@@ -1344,63 +1344,68 @@ contains
    ! noticed when Schmidt orthogonalising is used, starting from column 1.
    end
 
-   schmidt_orthonormalise(lambda)
+   schmidt_orthonormalise(lambda) ::: PURE
    ! Schmidt orthonormalise the column vectors in "self".
    ! If the eigenvalue (lambda) of a vector is less than a cutoff, then that
    ! vector is chosen to be an orthonormal component.
    ! Eigenvalues must be sorted largest to smallest.
-     self :: target
+     self :: INOUT
      lambda :: VEC{REAL}, IN
+
    ENSURE(size(lambda)>=.dim2,"not enough eigenvalues")
    ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
-     new,old :: VEC{REAL}*
-     fac,norm :: REAL
-     dim1,dim2,n,k,x,y,j :: INT
-     dim1 = .dim1
-     dim2 = .dim2
 
-     ! y is set to the first vanishing eigenvalue.
-     y = dim2 + 1   
-
-     do x = 1,dim2
-       if (lambda(x)<TOL(10)) then
-         y = x
-         exit
-       end
-     end
-
-     ! Schmidt orthogonalisation.
-     do n = 1,y-1
-        new => self(:,n)
-        do k = 1,n-1
-           old => self(:,k)
-           fac = dot_product(old,new)
-           new = new - fac*old
+      fac,norm :: REAL
+      dim1,dim2,n,k,x,y,j :: INT
+      dim1 = .dim1
+      dim2 = .dim2
+      
+      ! y is set to the first vanishing eigenvalue.
+      y = dim2 + 1   
+      
+      do x = 1,dim2
+        if (lambda(x)<TOL(10)) then
+          y = x
+          exit
         end
-        norm = dot_product(new,new)
-        ENSURE(norm>TOL(10),"linear dependence, vector " // n.to_str)
-        new = new * (ONE/sqrt(norm))
-     end
+      end
+      
+      ! Schmidt orthogonalisation.
+      do n = 1,y-1
 
-     do n = y,dim2                ! Make up some orthogonal vectors for
-       do j = 1,dim1              ! the vanishing eigenvalues.
-         new => self(:,n)
-         new = ZERO
-         new(j) = ONE
          do k = 1,n-1
-            old => self(:,k)
-            fac = dot_product(old,new)
-            new = new - fac*old
+            fac = dot_product(self(:,k),self(:,n))
+            self(:,n) = self(:,n) - fac*self(:,k)
          end
-         norm = dot_product(new,new)
-         if (norm>TOL(10)) then   ! We have found an orthogonal vector
-           new = new * (ONE/sqrt(norm))
-           exit
-         else                     ! Try another
-           DIE_IF(j==dim1,"cannot find an orthogonal vector")
+
+         norm = dot_product(self(:,n),self(:,n))
+         ENSURE(norm>TOL(10),"linear dependence, vector " // n.to_str)
+         self(:,n) = self(:,n) * (ONE/sqrt(norm))
+
+      end
+      
+      ! Make up some orthogonal vectors for
+      ! the vanishing eigenvalues.
+      do n = y,dim2
+      do j = 1,dim1              
+
+         self(:,n) = ZERO
+         self(j,n) = ONE
+
+         do k = 1,n-1
+            fac = dot_product(self(:,k),self(:,n))
+            self(:,n) = self(:,n) - fac*self(:,k)
          end
-       end
-     end
+
+         norm = dot_product(self(:,n),self(:,n))
+         if (norm>TOL(10)) then 
+            ! Found an orthogonal vector
+            self(:,n) = self(:,n) * (ONE/sqrt(norm))
+         end
+
+      end
+      end
+
    end
 
    classical_gram_schmidt_qr(Q,R) ::: PURE
@@ -2035,7 +2040,7 @@ contains
    ! "S" as the metric, which must be real and positive definite.
    end
 
-   make_diagonally_dominant(permutation) ::: get_from(MAT{INTRINSIC})
+   make_diagonally_dominant(permutation) ::: get_from(MAT{INTRINSIC}), PURE
    ! Rearrange the order of the columns of self so that the largest magnitude
    ! elements in each column occur along the diagonal. If "permutation" is
    ! present, it is the array which achieves this ordering, i.e. at the end of
@@ -3153,7 +3158,7 @@ contains
    end
 
 
-   to_sqrt_of(R,tol)
+   to_sqrt_of(R,tol) ::: PURE
    ! Set self to the sqrt(R). Cannot have R=self. Negative eigenvalues
    ! are zeroed.
       self :: OUT
@@ -3163,8 +3168,8 @@ contains
  ! Looks like compiler problem for gfortran on 3/3/09
  ! ENSURE(.is_symmetric,"not symmetric")
 
-      evec :: MAT{REAL}* DEFAULT_NULL
-      eval :: VEC{REAL}* DEFAULT_NULL
+      evec :: MAT{REAL}@ 
+      eval :: VEC{REAL}@
       d,i,j,k :: INT
       eps,temp :: REAL
 
@@ -3176,7 +3181,8 @@ contains
       eval.create(d)
       evec.create(d,d)
 
-      R.solve_symmetric_eigenproblem(eval,evec)
+    ! R.solve_symmetric_eigenproblem(eval,evec)
+      R.diagonalize_by_jacobi(eval,evec)
 
       do i = 1,d
          temp = abs(eval(i))
@@ -3203,15 +3209,15 @@ contains
 
    end
 
-   to_sqrt_of(R_eval,R_evec,tol)
+   to_sqrt_of(R_eval,R_evec,tol) ::: PURE
    ! self = sqrt(R), but supplied are the R eigenvalues "R_eval"
    ! and the R eigenvectors "R_evec".
       self :: OUT
       R_eval :: VEC{REAL}, IN
-      R_evec :: MAT{REAL}, target, IN
+      R_evec :: MAT{REAL}, IN
       tol :: REAL, optional, IN
 
-      eval :: VEC{REAL}* DEFAULT_NULL
+      eval :: VEC{REAL}@ 
       d,i,j,k :: INT
       val :: STR
       eps,temp :: REAL
@@ -3227,14 +3233,14 @@ contains
 
          temp = R_eval(i)
 
-         if (temp<-eps) then
-            val = temp.to_str("e15.8")
-            DIE("non-positive eigenvalue, "// trim(val))
-         else if (temp<=eps) then
-            val = temp.to_str("e15.8")
-            WARN("small eigenvalue, "// trim(val))
+       ! if (temp<-eps) then
+       !    val = temp.to_str("e15.8")
+       !    DIE("non-positive eigenvalue, "// trim(val))
+       ! else if (temp<=eps) then
+       !    val = temp.to_str("e15.8")
+       !    WARN("small eigenvalue, "// trim(val))
             temp = abs(temp)
-         end
+       ! end
 
          if (temp<=eps) then; eval(i) = ZERO
          else;                eval(i) = sqrt(temp)
@@ -3257,7 +3263,7 @@ contains
    end
 
 
-   to_inverse_sqrt_of(R,tol,n_small,n_negative,shift)
+   to_inverse_sqrt_of(R,tol,n_small,n_negative,shift) ::: PURE
    ! Set self = sqrt(R)^(-1). Cannot have R = self.
    ! If "tol" is present use that to decide on zero eigenvalues.
    ! If "n_small" return the number of small eigenvalues.
@@ -3272,8 +3278,8 @@ contains
  ! Looks like compiler problem for gfortran on 3/3/09
  ! ENSURE(.is_symmetric,"not symmetric")
 
-      evec :: MAT{REAL}*
-      eval :: VEC{REAL}*
+      evec :: MAT{REAL}@
+      eval :: VEC{REAL}@
       d,i,j,k,n_n,n_s :: INT
       eps,sh,temp,val_n,val_s :: REAL
 
@@ -3291,7 +3297,8 @@ contains
       eval.create(d)
       evec.create(d,d)
 
-      R.solve_symmetric_eigenproblem(eval,evec)
+    ! R.solve_symmetric_eigenproblem(eval,evec)
+      R.diagonalize_by_jacobi(eval,evec)
 
       ! Inverse sqrt eigenvalues
       n_n   = 0
@@ -3360,7 +3367,7 @@ contains
       n_negative :: INT, optional, OUT
       shift :: REAL, optional, IN
 
-      eval :: VEC{REAL}*
+      eval :: VEC{REAL}@
       d,i,j,k,n_n,n_s :: INT
       eps,sh,temp,val_n,val_s :: REAL
 
@@ -3430,7 +3437,7 @@ contains
    end
 
 
-   to_eigenfilter_of(R_eval,R_evec,tol,n_small,n_negative) ::: PURE
+   eigenfilter_using(R_eval,R_evec,tol,n_small,n_negative) ::: PURE
    ! self = filter(self), where small eigenvalues less than "tol" are
    ! removed from its spectrum. Supplied are the R eigenvalues "R_eval"
    ! and the R eigenvectors "R_evec". If "tol" is present use that to
@@ -3506,7 +3513,7 @@ contains
    end
 
 
-   to_power_series_inverse_of(S,tol,max_it) ::: get_from(MAT{INTRINSIC})
+   to_power_series_inverse_of(S,tol,max_it) ::: get_from(MAT{INTRINSIC}), PURE
    ! Set self to the power series inverse square root of "S".
    ! If "tol" is present, make sure that the maximum deviation from the exact
    ! answer is less than "tol" times the smallest element of "S". If "max_it"
@@ -3514,7 +3521,7 @@ contains
    ! before termination with an error.
    end
 
-   to_power_series_inv_sqrt_of(S,tol,prefactor,max_it) ::: get_from(MAT{INTRINSIC})
+   to_power_series_inv_sqrt_of(S,tol,prefactor,max_it) ::: get_from(MAT{INTRINSIC}), PURE
    ! Set self to the inverse square root of "S", a matrix which is required to
    ! have a unit diagonal. The method uses a binomial power series expansion.
    ! If "tol" is present, make sure that the maximum deviation from the exact
@@ -3523,7 +3530,7 @@ contains
    ! before termination with an error.
    end
 
-   to_power_product_inverse_of(S,tol,prefactor,max_it)
+   to_power_product_inverse_of(S,tol,prefactor,max_it) ::: PURE
    ! Set self to the inverse of "S".  If "tol" is present, it is
    ! used to establish the maximum deviation from the unit matrix, in the matrix
    ! product self*S*self. If "prefactor" is present, matrix "S" is multiplied by
@@ -3534,21 +3541,27 @@ contains
    ! transformed by the approximate square root until the result in the unit
    ! matrix, within tolerance "tol" (if present). Finally, to form the inverse,
    ! the inverse square root is squared.
-      S :: MAT{REAL}
-      tol,prefactor :: REAL, optional
-      max_it :: INT, optional
+      self :: OUT
+      S :: MAT{REAL}, IN
+      tol       :: REAL, optional, IN
+      prefactor :: REAL, optional, IN
+      max_it    :: INT,  optional, IN
+
    ENSURE(S.is_square,"S not square")
    ENSURE(.is_same_shape_as(S),"wrong shape")
-      n :: INT
-      W :: MAT{REAL}*
+
+      W :: MAT{REAL}@
+
       .to_power_product_inv_sqrt_of(S,tol,prefactor,max_it)
-      n = S.dim1
-      W.create(n,n); W = self
-      .to_product_of(W,W)
+
+      W = self
+      self = matmul(W,W)
+
       W.destroy
+
    end
 
-   to_power_product_inv_sqrt_of(S,tol,prefactor,max_it)
+   to_power_product_inv_sqrt_of(S,tol,prefactor,max_it) ::: PURE
    ! Set self to the inverse square root of "S".  If "tol" is present, it is
    ! used to establish the maximum deviation from the unit matrix, in the matrix
    ! product self*S*self. If "prefactor" is present, matrix "S" is multiplied by
@@ -3558,21 +3571,25 @@ contains
    ! approximately S^-1/2 = (1 - 1/2 D + ...). The matrix "S" is iteratively
    ! transformed into a new basis using the approximate square root, until the
    ! result is the unit matrix within tolerance "tol" (if present).
-      S :: MAT{REAL}
-      tol,prefactor :: REAL, optional
-      max_it :: INT, optional
+      self :: OUT
+      S :: MAT{REAL}, IN
+      tol       :: REAL, optional, IN
+      prefactor :: REAL, optional, IN
+      max_it :: INT, optional, IN
 
    ENSURE(S.is_square,"S not square")
    ENSURE(.is_same_shape_as(S),"wrong shape")
 
-      D,X :: MAT{REAL}*
+      D,X :: MAT{REAL}@
       max_iter,n,k :: INT
       eps,prefac :: REAL
 
       eps = TOL(9)
       if (present(tol)) eps = tol
+
       max_iter = 100
       if (present(max_it)) max_iter = max_it
+
       prefac = ONE/FOUR
       if (present(prefactor)) prefac = prefactor
 
@@ -3588,12 +3605,15 @@ contains
          k = k + 1
          D = self
          self = (THREE/TWO)*D
-         .plus_scaled_product_of(X,D,fac=-HALF)
+         self = self - HALF*matmul(X,D)
          S.change_basis_to(X,self)
          X = prefac*X
+
          if (X.has_unit_diagonal(eps)) exit
-         DIE_IF(k>max_iter,"power series too long")
+         ENSURE(k<=max_iter,"power series too long")
+
       end
+
       self = sqrt(prefac)*self
 
       D.destroy
@@ -3602,7 +3622,7 @@ contains
    end
 
 
-   to_exponential_of(X,tol) ::: get_from(MAT{INTRINSIC})
+   to_exponential_of(X,tol) ::: get_from(MAT{INTRINSIC}), PURE
    ! Exponentiate the matrix "X" using a power series expansion, self = exp(X),
    end
 
@@ -3612,7 +3632,7 @@ contains
    ! if present.
    end
 
-   antisymmetric_exponential_to(U,eval,evec) ::: get_from(MAT{INTRINSIC}, EIGEN?=>solve_symmetric_eigenproblem)
+   antisymmetric_exponential_to(U,eval,evec) ::: get_from(MAT{INTRINSIC}, EIGEN?=>diagonalize_by_jacobi), PURE
    ! Make unitary matrix U = exp(self) where "self" must be antisymmetric.
    ! Uses the formula:  exp A = V (cos P) V^t + V (sin P)/P V^t A
    !                        P = sqrt diag(eig(A^t A))
@@ -3624,16 +3644,19 @@ contains
    ! Returns the rotation matrix which matches coordinates "reference"
    ! to "actual" in a least squares sense.  actual = U x reference.
    ! Return the mean fitting error "L" or else "fail"  for failure.
+      self :: OUT
       reference :: MAT{REAL}, target, IN
       actual :: MAT{REAL}, IN
-      L :: REAL
-      fail :: BIN
+      L    :: REAL, OUT
+      fail :: BIN, OUT
+
    ENSURE(.is_square,"self must be square")
    ENSURE(.dim1==actual.dim1,"self incompatible with actual")
    ENSURE(reference.dim2==actual.dim2,"reference incompatible with actual")
 
-      U,X,Rd :: MAT{REAL}*
-      X0,Xv :: VEC{REAL}*
+      Rd :: MAT{REAL}@, target
+      U,X,Xd :: MAT{REAL}@
+      X0, Xv :: VEC{REAL}@
       d,iteration :: INT
       big :: REAL
 
@@ -3690,7 +3713,11 @@ contains
       end
 
       ! Clean up
-      Rd.destroy; U.destroy; Xv.destroy; X0.destroy; X.destroy
+      Rd.destroy
+      U.destroy
+      Xv.destroy
+      X0.destroy
+      X.destroy
 
    end
 
@@ -3701,7 +3728,8 @@ contains
       Xv :: VEC{REAL}, IN
       L :: REAL, OUT
       dL :: VEC{REAL}, optional, OUT
-      X,U,Rd :: MAT{REAL}*
+
+      X,U,Rd :: MAT{REAL}@
       d,n,p,q,pq,i :: INT
       val :: REAL
 
@@ -3726,19 +3754,22 @@ contains
          Rd = Rd + saved_reference
          pq = 0
          do p = 1,d
-            do q = 1,p
-               pq = pq + 1
-               val = ZERO
-               do i = 1,n
-                  val = val + Rd(p,i)*saved_reference(q,i) - Rd(q,i)*saved_reference(p,i)
-               end
-               dL(pq) = -TWO*val
+         do q = 1,p
+            pq = pq + 1
+            val = ZERO
+            do i = 1,n
+               val = val + Rd(p,i)*saved_reference(q,i) - Rd(q,i)*saved_reference(p,i)
             end
+            dL(pq) = -TWO*val
+         end
          end
       end
 
       ! Clean up
-      Rd.destroy; U.destroy; X.destroy
+      Rd.destroy
+      U.destroy
+      X.destroy
+
    end
 
 !  =============
