@@ -32,7 +32,7 @@ contains
 !  Hirshfeld atoms
 !  ===============
 
-   make_Hirshfeld_inputs(skip_NOs) ::: leaky
+   make_HA_inputs(skip_NOs) ::: leaky
    ! Set up the quanitites for a Hirshfeld calculation:
    ! (1) DFT grid information
    ! (2) ANO's and ANOP interpolators grid information
@@ -65,58 +65,41 @@ contains
 
 !  Needed for core-matrix-cluster-of-charges method
 
-   make_Hirshfeld_atom_info(output) ::: leaky
+   make_r_HA_info(spin,output) ::: leaky, PURE
    ! Make the Hirshfeld atom properties
       self :: INOUT
+      spin   :: BIN, optional, IN
       output :: BIN, optional, IN
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
-   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_Hirshfeld_inputs?")
+   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_HA_inputs?")
+   ENSURE(.density_mx.allocated,"no density matrix")
 
       pt,D :: MAT{REAL}@
       wt,N0,r1,r2,r3 :: VEC{REAL}@
       q,n_e,c1,c2,c3 :: REAL
       dipole :: VEC{REAL}(3)
-      quadrupole :: MAT{REAL}(3,3)
+      quadru :: MAT{REAL}(3,3)
+      spn,out :: BIN
       c :: INT
-      archive :: ARCHIVE
-      genre :: STR
-      out :: BIN
+
+      spn = FALSE
+      if (present(spin)) spn = spin
 
       out = TRUE
       if (present(output)) out = output
 
       ! If no density in memory get from disk
-      if (.density_matrix.deallocated) then
-
-         ! Create density
-         WARN("no density matrix, trying to read from file")
-         .density_matrix.create(.n_bf)
-
-         ! Get genre
-         if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
-         else;                        genre = "restricted"
-         end
-
-         ! Read density or make it from MO's
-         archive.set_defaults
-         archive.set(.name,"density_matrix",genre)
-         if (archive.exists) then
-            archive.read(.density_matrix)
-         else
-            .molecular_orbitals.destroy
-            .molecular_orbitals.create(.n_bf)
-            archive.set(.name,"molecular_orbitals",genre)
-            archive.read(.molecular_orbitals)
-            .BASE:make_SCF_density_matrix
-         end
-
-      end
+    ! if (.density_mx.deallocated) then
+    !    .:read_or_make_SCF_DM
+    ! end
 
       ! Make the AO density matrix
       D.create(.n_bf,.n_bf)
-      .BASE:make_ao_density_matrix(D)
+      if (spn) then; .BASE:make_ao_density_mx(D)
+      else;          .BASE:make_ao_sz_density_mx(D)
+      end
 
       ! Total no of electrons (check)
       n_e = ZERO
@@ -140,34 +123,33 @@ contains
          c3 = .atom(c).position(3)
 
          ! Make moments
-         q               = VEC{REAL}:sum_elements(N0)
-         n_e             = n_e + q
+         q   = sum(N0)
+         n_e = n_e + q
 
-         dipole(1)       = VEC{REAL}:sum_elements(N0*(r1-c1))
-         dipole(2)       = VEC{REAL}:sum_elements(N0*(r2-c2))
-         dipole(3)       = VEC{REAL}:sum_elements(N0*(r3-c3))
+         dipole(1) = sum(N0*(r1-c1))
+         dipole(2) = sum(N0*(r2-c2))
+         dipole(3) = sum(N0*(r3-c3))
 
-         quadrupole(1,1) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r1-c1))
-         quadrupole(2,2) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r2-c2))
-         quadrupole(3,3) = VEC{REAL}:sum_elements(N0*(r3-c3)*(r3-c3))
-         quadrupole(1,2) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r2-c2))
-         quadrupole(1,3) = VEC{REAL}:sum_elements(N0*(r1-c1)*(r3-c3))
-         quadrupole(2,3) = VEC{REAL}:sum_elements(N0*(r2-c2)*(r3-c3))
-
-         quadrupole(2,1) = quadrupole(1,2)
-         quadrupole(3,1) = quadrupole(1,3)
-         quadrupole(3,2) = quadrupole(2,3)
+         quadru(1,1) = sum(N0*(r1-c1)*(r1-c1))
+         quadru(2,2) = sum(N0*(r2-c2)*(r2-c2))
+         quadru(3,3) = sum(N0*(r3-c3)*(r3-c3))
+         quadru(1,2) = sum(N0*(r1-c1)*(r2-c2))
+         quadru(1,3) = sum(N0*(r1-c1)*(r3-c3))
+         quadru(2,3) = sum(N0*(r2-c2)*(r3-c3))
+         quadru(2,1) = quadru(1,2)
+         quadru(3,1) = quadru(1,3)
+         quadru(3,2) = quadru(2,3)
 
 
          ! charges and moments
-         q          = -q + .atom(c).atomic_number
-         dipole     = -dipole
-         quadrupole = -quadrupole
+         q      = -q + .atom(c).atomic_number
+         dipole = -dipole
+         quadru = -quadru
 
          ! Assign the charges and moments
          .atom(c).set_charge(q)
          .atom(c).set_dipole(dipole)
-         .atom(c).set_quadrupole(quadrupole)
+         .atom(c).set_quadrupole(quadru)
 
          ! Clean up
          wt.destroy; pt.destroy
@@ -179,12 +161,12 @@ contains
       D.destroy
 
       ! Check integration accuracy
-      if (out) then
-      stdout.flush
-      stdout.text("Making Hirshfeld atom info ...")
-      stdout.flush
-      stdout.show("Check: no. of electrons =",n_e)
-      end
+    ! if (out) then
+    ! stdout.flush
+    ! stdout.text("Making Hirshfeld atom info ...")
+    ! stdout.flush
+    ! stdout.show("Check: no. of electrons =",n_e)
+    ! end
 
       ! Put charges to asymmetric unit
       if (.crystal.allocated) then
@@ -196,229 +178,37 @@ contains
 
    end
 
-   make_uHirshfeld_atom_info(output) ::: leaky
-   ! Make the H structure factors efficiently
-      self :: INOUT
-      output :: BIN, IN, optional
-
-   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_Hirshfeld_inputs?")
-   ENSURE(.density_matrix.allocated,"no density matrix")
-
-      wt, xa,ya,za,a2 :: VEC{REAL}@
-      r1,r2,r3 :: VEC{REAL}@
-      ga,gb :: VEC{REAL}@
-      ra,dipole :: VEC{REAL}(3)
-      overlapping_atom :: VEC{INT}@
-      skipa0,skipab, skipa,skipb :: VEC{BIN}@
-      D,pt,bf_save :: MAT{REAL}@
-      sha :: SHELL1
-      bf_skip :: VEC{EVEC{BIN}}@
-      bf_grid :: VEC{EMAT{REAL}}@
-      cutoff, n_e,q,c1,c2,c3, Dab, fac,val :: REAL
-      n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
-      sa,fa,la,na,ba, sb,fb,lb, a,b,i,j,n :: INT
-      out :: BIN
-
-      out = TRUE
-      if (present(output)) out = output
-
-      ! Make the AO density matrix
-      D.create(.n_bf,.n_bf)
-      .BASE:make_ao_sz_density_matrix(D)
-
-      ! Basis function cutoff
-      cutoff = .becke_grid.basis_function_cutoff
-
-      ! Max no of becke grid points per atom
-      n_pt = .becke_grid.max_no_of_points_per_atom
-
-      ! Atom "a" displaced points and skip switches
-      xa.create(n_pt); ya.create(n_pt); za.create(n_pt)
-      a2.create(n_pt)
-      skipa0.create(n_pt)
-      skipab.create(n_pt)
-
-      ! Total no of electrons
-      n_e = ZERO
-
-      ! Loop over integration atoms "c"
-      do c = 1,.n_atom
-
-         ! Get the Becke grid for atom "c"
-         .becke_grid.make_grid(pt,wt,bf_save,c)
-         n_pt = pt.dim1
-
-         ! Overlapping atoms
-         overlapping_atom = .overlapping_atoms_for_atom(c).element
-
-         ! Make stockholder weight function "Wc" for atom "c"
-         .GRID:apply_stockholder_atom_weight(wt,c,pt)
-
-         ! Prune the grid with new "wt", get saved bf grid bf_save,
-         ! and new no of points, n_pt -- leaky
-         .becke_grid.prune_grid(pt,wt,bf_save)
-         n_pt = pt.dim1
-
-         ! Integration points
-         r1 = pt(:,1)
-         r2 = pt(:,2)
-         r3 = pt(:,3)
-
-         ! Basis function grid and skip list
-         bf_skip.create(.n_shell)
-         bf_grid.create(.n_shell)
-
-         ! Atom c position
-         c1 = .atom(c).position(1)
-         c2 = .atom(c).position(2)
-         c3 = .atom(c).position(3)
-
-         ! Charges and dipoles
-         q  = ZERO
-         dipole = ZERO
-
-         ! Loop c-overlapping atoms "oa"
-         do ca = 1,overlapping_atom.dim
-
-            oa  = overlapping_atom(ca)
-            fsa = .first_shell_for_atom(oa)
-            lsa =  .last_shell_for_atom(oa)
-            fba = .first_basis_fn_for_atom(oa)
-            ra  = .atom(oa).position
-
-            ! Make the displaced points for atom "oa"
-            .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
-
-            ! Loop shells on atom a
-            do sa = fsa,lsa
-
-               fa = .first_basis_fn_for_shell(sa)
-               la =  .last_basis_fn_for_shell(sa)
-               na = la - fa + 1
-               ba = .basis_shell_for_shell(sa)
-
-               ! Set shell "sa"
-               sha = .basis_shell1pair(ba,1).a
-               sha.position = ra
-
-               ! Make shell "sa" skipa list
-               skipa.create(n_pt)
-               sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
-
-               ! Next shell "sa" if no sig. points
-               if (n_keep==0) then
-                  skipa.destroy
-                  cycle
-               end
-
-               ! Assign the "sa" skipa list
-               bf_skip(sa).element = skipa
-
-               ! Make/copy the "sa" basis function grid
-               ! This must be copied since skipa could be TRUE
-               bf_grid(sa).element.create(n_keep,na)
-               if (oa==c) then
-                  do a = 1,na
-                     i = 0
-                     do n = 1,n_pt
-                        if (skipa(n)) cycle
-                        i = i + 1
-                        bf_grid(sa)[i,a] = bf_save(n,a+fa-fba)
-                     end
-                  end
-               else
-                  sha.make_skip_grid(bf_grid(sa).element,n_keep,xa,ya,za,a2,skipa,n_pt)
-               end
-
-               ! Loop c-overlapping atoms b
-               do cb = 1,ca
-
-                  ob  = overlapping_atom(cb)
-                  fsb = .first_shell_for_atom(ob)
-                  lsb =  .last_shell_for_atom(ob)
-
-                  ! Loop shells on atom b
-                  do sb = fsb,min(lsb,sa)
-
-                     if (bf_skip(sb).element.deallocated) cycle
-
-                     fb = .first_basis_fn_for_shell(sb)
-                     lb = .last_basis_fn_for_shell(sb)
-
-                     ! Set the "sb" basis function grid
-                     skipb = bf_skip(sb).element
-
-                     ! How many points in common?
-                     skipab(1:n_pt) = skipa OR skipb
-                     n_keep = count(NOT skipab(1:n_pt))
-                     if (n_keep==0) cycle
-
-                     ! Factor
-                     fac = TWO
-                     if (sa==sb) fac = ONE
-
-                     ! Make the ab bf product
-                     do a = fa,la
-                        ga = bf_grid(sa)[:,a-fa+1]
-                        do b = fb,lb
-                           gb = bf_grid(sb)[:,b-fb+1]
-                           Dab = fac*D(a,b)
-                           i = 0; j = 0
-                           do n = 1,n_pt
-                              if (NOT skipa(n)) i = i + 1
-                              if (NOT skipb(n)) j = j + 1
-                              if (skipab(n)) cycle
-                              val = ga(i)*gb(j)*wt(n)*Dab
-                              n_e = n_e + val
-                              q   = q   + val
-                              dipole(1) = dipole(1) + val * (r1(n)-c1)
-                              dipole(2) = dipole(2) + val * (r2(n)-c2)
-                              dipole(3) = dipole(3) + val * (r3(n)-c3)
-                           end
-                        end
-                     end
-
-                  end ! -- loops sa,sb
-               end
-            end       ! -- lops ca,cb
-         end
-
-         ! Assign the charges and d[poles
-         .atom(c).set_spin(q)
-         .atom(c).set_spin_dipole(dipole)
-
-         ! Clean up
-         bf_save.destroy
-         bf_grid.destroy
-         bf_skip.destroy
-         wt.destroy
-         pt.destroy
-
-      end ! -- integration atom c
-
-      ! Clean up
-      skipab.destroy
-      skipa0.destroy
-      a2.destroy
-      za.destroy
-      ya.destroy
-      xa.destroy
-      D.destroy
-
-      ! Put back the AO density matrix
-      .BASE:make_ao_density_matrix
-
-      ! Check integration accuracy
-      if (out) then
-      stdout.flush
-      stdout.text("Making unpaired Hirshfeld atom info ...")
-      stdout.flush
-      stdout.show("Check: no. of unpaired electrons =",n_e)
-      end
-
-      .uHirshfeld_atom_info_made = TRUE
-
-   end
+!   read_or_make_SCF_DM ::: leaky, private
+!   ! Read of make an SCF density matrix if it is not there
+!      self :: INOUT
+!
+!   ENSURE(.basis_info_made, "no basis info")
+!
+!      archive :: ARCHIVE
+!      genre :: STR
+!
+!      .density_mx.destroy
+!      .density_mx.create(.n_bf)
+!
+!      ! Get genre
+!      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+!      else;                         genre = "restricted"
+!      end
+!
+!      ! Read density or make it from MO's
+!      archive.set_defaults
+!      archive.set(.name,"density_mx",genre)
+!      if (archive.exists) then
+!         archive.read(.density_mx)
+!      else
+!         .molecular_orbitals.destroy
+!         .molecular_orbitals.create(.n_bf)
+!         archive.set(.name,"molecular_orbitals",genre)
+!         archive.read(.molecular_orbitals)
+!         .BASE:make_SCF_density_mx
+!      end
+!
+!   end
 
 !  ============
 !  Form factors
@@ -516,7 +306,7 @@ contains
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.allocated,"no atom list")
-   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_mx.allocated, "no density matrix")
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
    ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
@@ -556,14 +346,14 @@ contains
       if (present(spin_density)) spin = spin_density
 
       ! Density matrix (leaky)
-      if (NOT spin) then; .BASE:make_ao_density_matrix
-      else;               .BASE:make_ao_sz_density_matrix
+      if (NOT spin) then; .BASE:make_ao_density_mx
+      else;               .BASE:make_ao_sz_density_mx
       end
-      ENSURE(.density_matrix.restricted.allocated, "no restricted DM")
+      ENSURE(.density_mx.restricted.allocated, "no restricted DM")
 
       ! Store density matrix
       DM.create(.n_bf,.n_bf)
-      DM = .density_matrix.restricted
+      DM = .density_mx.restricted
 
       ! Too small threshhold
       cutoff = TOL(10)/.n_shell_pairs
@@ -687,7 +477,7 @@ contains
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.allocated,"no atom list")
-   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_mx.allocated, "no density matrix")
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
    ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
@@ -710,16 +500,16 @@ contains
       n_atom,n_k,n_pt,n_keep :: INT
     ! max_n_pt,max_n_ss :: INT
       u,c,ca,cb :: INT
-      oa,fsa,lsa,fba  :: INT
-      ob,fsb,lsb      :: INT
-      sa,fa,la,na, as :: INT
-      sb,fb,lb,nb     :: INT
-      a,b,i,j,k,n,p    :: INT
+      oa,fsa,lsa,fba :: INT
+      ob,fsb,lsb, as :: INT
+      sa,fa,la,na    :: INT
+      sb,fb,lb,nb    :: INT
+      a,b,i,j,k,n,p  :: INT
       seitz :: MAT3{REAL}@
       spin :: BIN
 
       ! Make sure HA stuff is there
-      .:make_Hirshfeld_inputs(skip_NOs=TRUE)
+      .:make_HA_inputs(skip_NOs=TRUE)
 
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
@@ -744,10 +534,10 @@ contains
       if (present(spin_density)) spin = spin_density
 
       ! Density matrix (leaky)
-      if (NOT spin) then; .BASE:make_ao_density_matrix
-      else;               .BASE:make_ao_sz_density_matrix
+      if (NOT spin) then; .BASE:make_ao_density_mx
+      else;               .BASE:make_ao_sz_density_mx
       end
-      ENSURE(.density_matrix.restricted.allocated, "no restricted DM")
+      ENSURE(.density_mx.restricted.allocated, "no restricted DM")
 
       ! Basis function cutoff
       cutoff = .becke_grid.basis_function_cutoff
@@ -757,7 +547,7 @@ contains
 
       ! Symmetrization via site-symmetery operations
       DM.create(.n_bf,.n_bf)
-      DM = .density_matrix.restricted
+      DM = .density_mx.restricted
     ! .BASE:symmetrize_DM_like_mx(DM)
 
       ! Atom "a" displaced numerical integration grid points 
@@ -905,7 +695,7 @@ contains
                         ga = bf_grid(sa)[:,1]
                         gb = bf_grid(sb)[:,1]
                         Dab = fac*DM(fa,fb)
-                      ! Dab = fac*.density_matrix.restricted(fa,fb)
+                      ! Dab = fac*.density_mx.restricted(fa,fb)
                         i = 0; j = 0
                         do n = 1,n_pt
                            if (NOT skipa(n)) i = i + 1
@@ -945,7 +735,7 @@ contains
                            do b = 1,nb
                               gb = bf_grid(sb)[:,b]
                               Dab = fac*DM(fa+a-1,fb+b-1)
-                            ! Dab = fac*.density_matrix.restricted(fa+a-1,fb+b-1)
+                            ! Dab = fac*.density_mx.restricted(fa+a-1,fb+b-1)
                               do p = 1,n_keep
                                  i = pi(p)
                                  j = pj(p)
@@ -1036,13 +826,12 @@ contains
    ! before they are (re)generated.
       self :: IN
 
-      arch :: ARCHIVE*
+      arch :: ARCHIVE
       a :: INT
 
       do a = 1,.crystal.n_asymmetric_unit_atoms
-         arch.create(trim(.crystal.asymmetric_unit_atom(a).label)//"-SFs")
+         arch.set(trim(.crystal.asymmetric_unit_atom(a).label)//"-SFs")
          arch.delete
-         arch.destroy
       end 
 
    end
@@ -1094,7 +883,7 @@ contains
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.allocated,"no atom list")
-   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_mx.allocated, "no density matrix")
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
    ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
@@ -1128,7 +917,7 @@ contains
       if (present(n_last)) n_unique = n_last
 
       ! Make sure HA stuff is there
-      .:make_Hirshfeld_inputs(skip_NOs=TRUE)
+      .:make_HA_inputs(skip_NOs=TRUE)
 
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
@@ -1150,10 +939,10 @@ contains
       if (present(spin_density)) spin = spin_density
 
       ! Density matrix (leaky)
-      if (NOT spin) then; .BASE:make_ao_density_matrix
-      else;               .BASE:make_ao_sz_density_matrix
+      if (NOT spin) then; .BASE:make_ao_density_mx
+      else;               .BASE:make_ao_sz_density_mx
       end
-      ENSURE(.density_matrix.restricted.allocated, "no restricted DM")
+      ENSURE(.density_mx.restricted.allocated, "no restricted DM")
 
       ! Basis function cutoff
       cutoff = .becke_grid.basis_function_cutoff
@@ -1316,7 +1105,7 @@ contains
                         ! Add density contribution to rho
                         ga = bf_grid(sa)[:,1]
                         gb = bf_grid(sb)[:,1]
-                        Dab = fac*.density_matrix.restricted(fa,fb)
+                        Dab = fac*.density_mx.restricted(fa,fb)
                         i = 0; j = 0
                         do n = 1,n_pt
                            if (NOT skipa(n)) i = i + 1
@@ -1350,7 +1139,7 @@ contains
                            ga = bf_grid(sa)[:,a]
                            do b = 1,nb
                               gb = bf_grid(sb)[:,b]
-                              Dab = fac*.density_matrix.restricted(fa+a-1,fb+b-1)
+                              Dab = fac*.density_mx.restricted(fa+a-1,fb+b-1)
                               do p = 1,n_keep
                                  i = pi(p)
                                  j = pj(p)
@@ -1425,7 +1214,6 @@ contains
 
    end
 
-
    get_Hirshfeld_atom_FFs_for_atom(u,sf_n,spin_density) ::: leaky
    ! Get "sf_n", the static Hirshfeld atom form factors for the
    ! symmetry related K points with *no* thermal smearing, for every
@@ -1440,7 +1228,7 @@ contains
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.allocated,"no atom list")
-   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_mx.allocated, "no density matrix")
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
    ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
@@ -1467,7 +1255,7 @@ contains
       spin :: BIN
 
       ! Make sure HA stuff is there
-      .:make_Hirshfeld_inputs(skip_NOs=TRUE)
+      .:make_HA_inputs(skip_NOs=TRUE)
 
       ! Symmetry generated K points and SF's
       n_k = .crystal.n_unique_SF_k_pts
@@ -1486,10 +1274,10 @@ contains
       if (present(spin_density)) spin = spin_density
 
       ! Density matrix (leaky)
-      if (NOT spin) then; .BASE:make_ao_density_matrix
-      else;               .BASE:make_ao_sz_density_matrix
+      if (NOT spin) then; .BASE:make_ao_density_mx
+      else;               .BASE:make_ao_sz_density_mx
       end
-      ENSURE(.density_matrix.restricted.allocated, "no restricted DM")
+      ENSURE(.density_mx.restricted.allocated, "no restricted DM")
 
       ! Basis function cutoff
       cutoff = .becke_grid.basis_function_cutoff
@@ -1642,7 +1430,7 @@ contains
                         ! Add density contribution to rho
                         ga = bf_grid(sa)[:,1]
                         gb = bf_grid(sb)[:,1]
-                        Dab = fac*.density_matrix.restricted(fa,fb)
+                        Dab = fac*.density_mx.restricted(fa,fb)
                         i = 0; j = 0
                         do n = 1,n_pt
                            if (NOT skipa(n)) i = i + 1
@@ -1676,7 +1464,7 @@ contains
                            ga = bf_grid(sa)[:,a]
                            do b = 1,nb
                               gb = bf_grid(sb)[:,b]
-                              Dab = fac*.density_matrix.restricted(fa+a-1,fb+b-1)
+                              Dab = fac*.density_mx.restricted(fa+a-1,fb+b-1)
                               do p = 1,n_keep
                                  i = pi(p)
                                  j = pj(p)
@@ -1816,14 +1604,14 @@ contains
 
 !  X-ray helpers
 
-   make_X_SFs_RF ::: private
+   make_X_SFs_RF ::: private, PURE
    ! Make basis-fn pair structure factors for this molecule.
    ! NOTE: includes the temperature factor/ADPs
       self :: INOUT
 
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
-   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_mx.allocated, "no density matrix")
    ENSURE(.scfdata.allocated, "no scfdata")
 
       sf_eq,Fc :: VEC{CPX}@
@@ -1842,7 +1630,7 @@ contains
       .crystal.make_unique_X_SF_k_pts(k_pts)
 
       ! Make density matrix
-      .BASE:make_ao_density_matrix
+      .BASE:make_ao_density_mx
 
       ! Symmetry-generated SF'd
       sf_eq.create(n_k)
@@ -1853,18 +1641,18 @@ contains
       if (genre.includes("complex")) then
 
          if (.scfdata.spinorbital_kind=="general_complex") then
-            .XTAL:make_ft_gc(sf_eq,.density_matrix.general_complex,k_pts)
+            .XTAL:make_FT_gc(sf_eq,.density_mx.general_complex,k_pts)
          else
-            .XTAL:make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
+            .XTAL:make_ft(sf_eq,.density_mx.restricted_complex,k_pts)
          end
 
       else
 
-         .XTAL:make_ft(sf_eq,.density_matrix.restricted,k_pts)
+         .XTAL:make_ft(sf_eq,.density_mx.restricted,k_pts)
 
          if (.scfdata.allocated) then
          if (.scfdata.spinorbital_kind=="unrestricted") then
-            .density_matrix.destroy("restricted")
+            .density_mx.destroy("restricted")
          end
          end
 
@@ -1884,7 +1672,7 @@ contains
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
 
       if (.crystal.xray_data.use_disk_SFs) then; .:make_X_SFs_HAR_disk
-      else;                                 .:make_X_SFs_HAR_memory
+      else;                                      .:make_X_SFs_HAR_memory
       end
 
    end
@@ -1932,7 +1720,7 @@ contains
 
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
-   ENSURE(.density_matrix.allocated, "no density matrix")
+   ENSURE(.density_mx.allocated, "no density matrix")
    ENSURE(.scfdata.allocated, "no scfdata")
 
       sf_n :: MAT{CPX}@
@@ -1957,7 +1745,7 @@ contains
    ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
 
       ! Make the SF's
-      .crystal.make_F_predicted
+      .crystal.make_F_predicted ! NOT PURE
 
    end
 
@@ -2020,7 +1808,7 @@ contains
 !
 !   ENSURE(.crystal.allocated, "no crystal")
 !   ENSURE(.crystal.xray_data.allocated, "no reflection data")
-!   ENSURE(.density_matrix.allocated, "no density matrix")
+!   ENSURE(.density_mx.allocated, "no density matrix")
 !   ENSURE(.scfdata.allocated, "no scfdata")
 !
 !      sf_n :: MAT{CPX}@
@@ -2042,7 +1830,7 @@ contains
 !
 !   ENSURE(.crystal.allocated, "no crystal")
 !   ENSURE(.crystal.xray_data.allocated, "no reflection data")
-!   ENSURE(.density_matrix.allocated, "no density matrix")
+!   ENSURE(.density_mx.allocated, "no density matrix")
 !   ENSURE(.scfdata.allocated, "no scfdata")
 !
 !      ! Get atomic spin form factors
@@ -2078,19 +1866,19 @@ contains
 !      .crystal.make_unique_X_SF_k_pts(k_pts)
 !
 !      ! Make S_z density matrix
-!      .BASE:make_ao_sz_density_matrix
+!      .BASE:make_ao_sz_density_mx
 !
 !      ! Make the symmetry-generated SF's
 !      sf_eq.create(n_k)
-!      genre = .density_matrix.spinorbital_kind
+!      genre = .density_mx.spinorbital_kind
 !      complx = genre.includes("complex")
-!      if (complx) then; .XTAL:make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
-!      else;             .XTAL:make_ft(sf_eq,.density_matrix.restricted,k_pts)
+!      if (complx) then; .XTAL:make_ft(sf_eq,.density_mx.restricted_complex,k_pts)
+!      else;             .XTAL:make_ft(sf_eq,.density_mx.restricted,k_pts)
 !      end
 !
 !      ! Destroy the S_z density matrix
-!      if (complx) then; .density_matrix.destroy("restricted_complex")
-!      else;             .density_matrix.destroy("restricted")
+!      if (complx) then; .density_mx.destroy("restricted_complex")
+!      else;             .density_mx.destroy("restricted")
 !      end
 !
 !      ! Make the predicted SF's
@@ -2102,17 +1890,17 @@ contains
 !  Energy density matrix of Krogel
 !  ===============================
 
-   make_E_SCF_density_matrix(method) ::: leaky
+   make_E_SCF_density_mx(method) ::: leaky, PURE
    ! Make the density matrix from the molecular orbitals.
    ! . If "damp" is present use it to damp the updated density matrix.
-   !   An .old_density_matrix must exist for this to work.
+   !   An .old_density_mx must exist for this to work.
    ! . If "n_a" is present it is used as the number of alpha electrons
    !   in embedded scf calculations.
    ! . If "method" is present it is used as the kind of density matrix
    !   to make, otherwise taken from .scfdata.SCF_kind, or guessed
    !   from the spinorbital_kind of the MO's.
    ! NOTE:
-   ! . If .scfdata.do_delta_build is set and a a .delta_density_matrix
+   ! . If .scfdata.do_delta_build is set and a a .delta_density_mx
    !   is created, then a delta density is made.
    ! . If .scfdata.apply_pFON a finite temperature density matrix is
    !   made with temperature .scfdata.temperature_for_pFON (untested)
@@ -2122,32 +1910,33 @@ contains
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.molecular_orbitals.allocated, "no molecular orbitals")
    ENSURE(.molecular_orbitals.has_any_genre, "no molecular orbitals")
-   ENSURE(.fock_matrix.allocated, "no fock matrix")
-   ENSURE(.fock_matrix.has_any_genre, "no fock matrix")
+   ENSURE(.fock_mx.allocated, "no fock matrix")
+   ENSURE(.fock_mx.has_any_genre, "no fock matrix")
+   ENSURE(.core_mx.allocated, "no core matrix")
 
       MO,MOa,MOb :: MAT{REAL}@
       scf_method,genre :: STR
 
       ! Ensure we have this
-      if (.core_matrix.deallocated) then
-         .:make_core_matrix
-      end
+    ! if (.core_mx.deallocated) then
+    !    .:make_core_mx
+    ! end
 
       ! Determine (or guess) the kind of SCF method to be used.
-      if      (present(method))     then; scf_method = method
+      if      (present(method))    then; scf_method = method
       else if (.scfdata.allocated) then; scf_method = .scfdata.SCF_kind
-      else;                               scf_method = .molecular_orbitals.guess_SCF_kind
+      else;                              scf_method = .molecular_orbitals.guess_SCF_kind
       end
 
       ! Determine (or guess) the genre of density matrix to be made
       if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
-      else;                          genre = .molecular_orbitals.spinorbital_kind
+      else;                         genre = .molecular_orbitals.spinorbital_kind
       end
 
       ! Make the Krogel matrix
-      .E_density_matrix = .fock_matrix
-      .E_density_matrix.plus(.core_matrix)
-      .E_density_matrix.scale_by(HALF)
+      .E_density_mx = .fock_mx
+      .E_density_mx.plus(.core_mx)
+      .E_density_mx.scale_by(HALF)
 
       ! Make the E natural orbitals
       .BASE:make_E_natural_orbitals
@@ -2157,35 +1946,28 @@ contains
       select case (scf_method)
 
       case ("rhf","rks","xray_rks","xray_rhf","noninteracting-group-rhf")
-
-         ENSURE(.E_natural_orbitals.is_allocated_with_genre("restricted"),"no MO's")
+         ENSURE(.E_natural_orbitals.is_allocated_with_genre("restricted"),"no energy NO's")
          ENSURE(.spin_multiplicity==1,"Not a singlet state: "//trim(.atom.chemical_formula)//", mult="//trim(.spin_multiplicity.to_str))
-
          MO = .E_natural_orbitals.restricted(:,1:.n_a)
-         .E_density_matrix.restricted.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
+         .E_density_mx.restricted.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
 
       case ("rohf")
-
          ENSURE(.molecular_orbitals.is_allocated_with_genre("restricted"),"no MO's")
-
          MOa = .molecular_orbitals.restricted(:,1:.n_a)
          MOb = .molecular_orbitals.restricted(:,1:.n_b)
-         .density_matrix.alpha.to_product_of(MOa,MOa,transpose_b=TRUE)
-         .density_matrix.beta.to_product_of(MOb,MOb,transpose_b=TRUE)
+         .density_mx.alpha.to_product_of(MOa,MOa,transpose_b=TRUE)
+          .density_mx.beta.to_product_of(MOb,MOb,transpose_b=TRUE)
 
       case ("uhf","uks","xray_uhf","xray_uks", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
-
          ENSURE(.molecular_orbitals.is_allocated_with_genre("unrestricted"),"no MO's")
+         MOa = .molecular_orbitals.alpha(:,1:.n_a)
+         MOb = .molecular_orbitals.beta(:,1:.n_b)
+         .density_mx.alpha.to_product_of(MOa,MOa,transpose_b=TRUE)
+          .density_mx.beta.to_product_of(MOb,MOb,transpose_b=TRUE)
 
-            MOa = .molecular_orbitals.alpha(:,1:.n_a)
-            MOb = .molecular_orbitals.beta(:,1:.n_b)
-            .density_matrix.alpha.to_product_of(MOa,MOa,transpose_b=TRUE)
-            .density_matrix.beta.to_product_of(MOb,MOb,transpose_b=TRUE)
-
-      case default
-
-         DIE("unknown SCF kind, "//trim(scf_method))
+    ! case default
+    !    DIE("unknown SCF kind, "//trim(scf_method))
 
       end
 
@@ -2195,11 +1977,15 @@ contains
 !  Core matrix
 !  ===========
 
-   make_core_matrix(genre) ::: leaky
+!  These could go in the ATOM module if the atomic_SCF and 
+!  ANOs could be factored out.
+
+   make_core_mx(genre) ::: leaky
    ! Get the core hamiltonian matrix.
-   ! If already in memory, do nothing. Otherwise make it.
+   ! If possible the kind is made from the kind of scfdata.
+   ! If its already in memory, do nothing; otherwise make it.
       self :: INOUT
-      genre :: STR, optional
+      genre :: STR, optional, IN
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -2207,22 +1993,26 @@ contains
       genus :: STR
 
       if (.scfdata.deallocated) then
-
-         ! No scfdata ==> make restricted core_matrix
-         .core_matrix.destroy
-         .core_matrix.create(.n_bf,"restricted") ! leaky
-         .:make_r_core_matrix
-
+         ! No scfdata ==> make restricted core_mx
+         if (.core_mx.allocated) then
+         if (.core_mx.has_genre("restricted")) then
+            return
+         else
+            .core_mx.create(.n_bf,"restricted") ! leaky
+           .:make_r_core_mx
+         end
+         end
       else
-
          ! Has scfdata ==> make scfdata.spinorbital_kind core matrix
          genus = .scfdata.spinorbital_kind
          if (present(genre)) genus = genre
-
          ! Already there?
-         if (.core_matrix.allocated) then
-         if (.core_matrix.is_allocated_with_genre(genus)) then
+         if (.core_mx.allocated) then
+         if (.core_mx.has_genre(genus)) then
             return
+         else if (NOT .core_mx.has_genre("restricted")) then
+            .core_mx.create(.n_bf,"restricted") ! leaky
+            .:make_r_core_mx
          end
          end
 
@@ -2230,17 +2020,16 @@ contains
          select case (genus)
 
          case ("general")
-            .:make_g_core_matrix
+            .:make_g_core_mx
 
          case ("general_complex")
-            .:make_gc_core_matrix
+            .:make_gc_core_mx
 
          case ("restricted")
-            .:make_r_core_matrix
+            ! Already there
 
          case default
-            .:make_r_core_matrix
-            .core_matrix.convert_to(genus,destroy_original=FALSE) ! leaky
+            .core_mx.convert_to(genus,destroy_original=FALSE)
 
          end
 
@@ -2248,10 +2037,10 @@ contains
 
    end
 
-
-   make_r_core_matrix ::: leaky
+   make_r_core_mx ::: leaky
    ! Make the *restricted* core hamiltonian matrix appropriate for the
    ! current scf calculation. If already in memory, do nothing.
+   ! If it isn't, burn everything and start again from scratch.
       self :: INOUT
 
    ENSURE(.basis_info_made, "no basis info")
@@ -2261,175 +2050,162 @@ contains
       Z :: MAT{REAL}@
 
       ! Is it already there?
-      if (.core_matrix.allocated) then
-      if (.core_matrix.is_allocated_with_genre("restricted")) then
+      if (.core_mx.allocated) then
+      if (.core_mx.has_genre("restricted")) then
          return
       end
       end
 
       ! Allocate core matrix
-      .core_matrix.destroy
-      .core_matrix.create(.n_bf)
-      .core_matrix.create("restricted")
+      .core_mx.destroy
+      .core_mx.create(.n_bf)
+      .core_mx.create("restricted")
 
       ! Make the core matrix here (relativistic vs non-rel)
       select case (.scfdata.relativity_kind)
-    ! case ("douglas-kroll-hess","dkh");     .REL:make_r_DKH1_core_matrix(.core_matrix.restricted)
-    ! case ("douglas-kroll-hess-2","dkh-2"); .REL:make_r_DKH2_core_matrix(.core_matrix.restricted)
-    ! case ("iotc");                         .REL:make_r_IOTC_core_matrix(.core_matrix.restricted)
-      case default;                          .:make_r_NREL_core_matrix(.core_matrix.restricted)
+    ! case ("douglas-kroll-hess","dkh");     .REL:make_r_DKH1_core_mx(.core_mx.restricted)
+    ! case ("douglas-kroll-hess-2","dkh-2"); .REL:make_r_DKH2_core_mx(.core_mx.restricted)
+    ! case ("iotc");                         .REL:make_r_IOTC_core_mx(.core_mx.restricted)
+      case default;                          .:make_r_NREL_core_mx(.core_mx.restricted)
       end
 
       ! No cluster charges for SCF guess
       if (.scfdata.is_guess)  return
 
       if (.scfdata.using_cluster_charges) then
-
          ! Add cluster charges if needed
          ! NOTE: includes the self-consistent case
          if (NOT .Hirshfeld_atom_info_made) then
             ENSURE(.crystal.allocated,"no crystal")
-            .:make_Hirshfeld_inputs
-            .:make_Hirshfeld_atom_info(output=FALSE)
+            .:make_HA_inputs
+            .:make_r_HA_info(output=FALSE)
          end
          Z.create(.n_bf,.n_bf)
          .:make_cluster_charge_mx(Z) ! leaky
-         .core_matrix.restricted = .core_matrix.restricted + Z
+         .core_mx.restricted = .core_mx.restricted + Z
          Z.destroy
-
       else if (.scfdata.using_SC_Lorentz_fields) then
-
          ! Add Lorentz fields if needed
          if (NOT .Hirshfeld_atom_info_made) then
             ENSURE(.crystal.allocated,"no crystal")
-            .:make_Hirshfeld_inputs
-            .:make_Hirshfeld_atom_info(output=FALSE)
+            .:make_HA_inputs ! NOT PURE
+            .:make_r_HA_info(output=FALSE)
          end
          Z.create(.n_bf,.n_bf)
          .:make_Lorentz_core(Z)
-         .core_matrix.restricted = .core_matrix.restricted + Z
+         .core_mx.restricted = .core_mx.restricted + Z
          Z.destroy
-
       end
-
 
    end
 
-   make_r_NREL_core_matrix(H) ::: leaky
+   make_r_NREL_core_mx(H) ::: leaky, PURE
    ! Make the non-relativistic core hamiltonian (T+NA) matrix "H".
-      H :: MAT{REAL}
+      self :: INOUT
+      H :: MAT{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
 
-      Dx,Dy,Dz :: MAT{REAL}*
+      Dx,Dy,Dz :: MAT{REAL}@
 
       ! Get kinetic matrix (leaky)
       .INTS:make_kinetic_energy_mx
-      .kinetic_energy_matrix.uncompress
+      .kinetic_energy_mx.uncompress
 
       ! Get nuclear matrix (leaky)
       .INTS:make_nuclear_attraction_mx
-      
-      .nuclear_attraction_matrix.uncompress
+      .nuclear_attraction_mx.uncompress
 
       ! Make core matrix
-      H = .kinetic_energy_matrix.restricted  &
-        + .nuclear_attraction_matrix.restricted
+      H = .kinetic_energy_mx.restricted  &
+        + .nuclear_attraction_mx.restricted
       
-      ! Add finite-electric-field contribution
       if (NOT .E_field.is_zero) then
-
-         ! Get dipole integrals
+         ! Finite-electric-field contribution
          Dx.create(.n_bf,.n_bf)
          Dy.create(.n_bf,.n_bf)
          Dz.create(.n_bf,.n_bf)
          .INTS:make_dipole_matrices(Dx,Dy,Dz)
-
-         ! Get dipole contribution
-         H =  H + Dx*.E_field(1) + Dy*.E_field(2) + Dz*.E_field(3)
-
-         ! Clean
+         H = H &
+           + Dx*.E_field(1) &
+           + Dy*.E_field(2) &
+           + Dz*.E_field(3)
          Dz.destroy
          Dy.destroy
          Dx.destroy
-
       end
 
       ! Compress (leaky)
-      .kinetic_energy_matrix.compress
-      .nuclear_attraction_matrix.compress
+      .kinetic_energy_mx.compress
+      .nuclear_attraction_mx.compress
 
    end
 
-   make_g_core_matrix ::: leaky
+   make_g_core_mx ::: leaky, PURE
    ! Make the general core hamiltonian matrix.
    ! If already in memory, do nothing.
+      self :: INOUT
+
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
-   ENSURE(.scfdata.allocated,  "no scfdata")
+   ENSURE(.core_mx.allocated,"no core matrix")
+   ENSURE(.core_mx.has_genre("restricted"),"no restricted core matrix")
 
       ! Return if core matrix already there
-      if (.core_matrix.is_allocated_with_genre("general")) then
-         return
-      end
+      if (.core_mx.has_genre("general")) return
 
-  !    ! Allocate core matrix
-  !    if (.core_matrix.deallocated) then; .core_matrix.create(.n_bf)
-  !    else;                             .core_matrix.set(.n_bf)
-  !    end
-  !    .core_matrix.create("general")
-  !    .core_matrix.general = ZERO
+      ! Allocate core matrix
+      .core_mx.create("general")
+      .core_mx.general = ZERO
 
       ! Add the lower half in ... depending on the method
       ! NOTE: there may be some failures here ...
-      .:add_g_core_matrix
+      .:add_g_core_mx 
 
       ! Make it symmetrical 
-      .core_matrix.general.symmetrize
+      .core_mx.general.symmetrize
 
    end
 
-   make_gc_core_matrix ::: leaky
+   make_gc_core_mx ::: leaky, PURE
    ! Make the general complex core hamiltonian matrix.
    ! If already in memory, do nothing.
+      self :: INOUT
+
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
-   ENSURE(.scfdata.allocated,  "no scfdata")
+   ENSURE(.core_mx.allocated,"no core matrix")
+   ENSURE(.core_mx.has_genre("restricted"),"no restricted core matrix")
 
       ! Return if core matrix already there
-      if (.core_matrix.is_allocated_with_genre("general_complex")) then
-         return
-      end
+      if (.core_mx.has_genre("general_complex")) return
 
       ! Allocate core matrix
-      if (.core_matrix.deallocated) then; .core_matrix.create(.n_bf)
-      else;                             .core_matrix.set(.n_bf)
-      end
-      .core_matrix.create("general_complex")
-      .core_matrix.general_complex = (ZERO,ZERO)
+      .core_mx.create("general_complex")
+      .core_mx.general_complex = (ZERO,ZERO)
 
       ! Add the lower half in ... depending on the method
       ! NOTE: there may be some failures here ...
       select case (.scfdata.relativity_kind)
-         case ("douglas-kroll-hess"); .:add_gc_DKH_core_matrix
-         case ("dkh");                .:add_gc_DKH_core_matrix
-         case ("zora");               .:add_gc_ZORA_core_matrix
-         case ("iotc");               .:set_gc_IOTC_core_matrix
-         case ("pauli");              .:add_gc_Pauli_core_matrix
-         case ("none");               .:add_gc_core_matrix
+    ! case ("douglas-kroll-hess"); .:add_gc_DKH_core_mx
+    ! case ("dkh");                .:add_gc_DKH_core_mx
+    ! case ("zora");               .:add_gc_ZORA_core_mx
+    ! case ("iotc");               .:set_gc_IOTC_core_mx
+      case ("pauli");              .:add_gc_Pauli_core_mx
+      case ("none");               .:add_gc_core_mx
       end
 
       ! Make it Hermitian
-      .core_matrix.general_complex.make_hermitian
+      .core_mx.general_complex.make_hermitian
 
    end
 
-!   add_gc_DKH_core_matrix
+!   add_gc_DKH_core_mx
 !   ! Add the DKH core hamiltonian
 !   ! NOTE: only lower half is made
 !   ENSURE(.scfdata.allocated,"no scfdata")
-!   ENSURE(.core_matrix.is_allocated_with_genre("general_complex"),"no core matrix")
+!   ENSURE(.core_mx.is_allocated_with_genre("general_complex"),"no core matrix")
 !
 !      T,Lx,Ly,Lz :: MAT{REAL}*
 !      fac :: REAL
@@ -2444,14 +2220,14 @@ contains
 !
 !      .REL:make_DKH_matrices(T,Lx,Ly,Lz)
 !
-!      .core_matrix.general_complex.aa_block_plus(T)
-!      .core_matrix.general_complex.bb_block_plus(T)
+!      .core_mx.general_complex.aa_block_plus(T)
+!      .core_mx.general_complex.bb_block_plus(T)
 !
 !      fac= ONE
-!      .core_matrix.general_complex.ba_block_plus(Lx,fac*I)
-!      .core_matrix.general_complex.ba_block_plus(Ly,-fac)
-!      .core_matrix.general_complex.aa_block_plus(Lz,fac*I)
-!      .core_matrix.general_complex.bb_block_plus(Lz,-fac*I)
+!      .core_mx.general_complex.ba_block_plus(Lx,fac*I)
+!      .core_mx.general_complex.ba_block_plus(Ly,-fac)
+!      .core_mx.general_complex.aa_block_plus(Lz,fac*I)
+!      .core_mx.general_complex.bb_block_plus(Lz,-fac*I)
 !
 !      T.destroy
 !      Lz.destroy
@@ -2460,12 +2236,12 @@ contains
 !
 !   end
 
-!   add_gc_ZORA_core_matrix
+!   add_gc_ZORA_core_mx
 !   ! Add the core hamiltonain to a general complex "F"
 !   ! NOTE: only lower half is made
 !   ENSURE(.scfdata.allocated,"no scfdata")
 !   ENSURE(.scfdata.using_1e_zora_term," no Pauli?")
-!   ENSURE(.core_matrix.is_allocated_with_genre("general_complex"),"no core matrix")
+!   ENSURE(.core_mx.is_allocated_with_genre("general_complex"),"no core matrix")
 !
 !      T,Lx,Ly,Lz :: MAT{REAL}*
 !      fac :: REAL
@@ -2479,15 +2255,15 @@ contains
 !      Lz.create(.n_bf,.n_bf)
 !      .INTS:make_1e_ZORA_matrices(T,Lx,Ly,Lz)
 !
-!      .core_matrix.general_complex.aa_block_plus(T)
-!      .core_matrix.general_complex.bb_block_plus(T)
+!      .core_mx.general_complex.aa_block_plus(T)
+!      .core_mx.general_complex.bb_block_plus(T)
 !
 !      fac = G_FACTOR/TWO
 !      fac = fac * .scfdata.sl_1e_factor
-!      .core_matrix.general_complex.ba_block_plus(Lx,-fac*I)
-!      .core_matrix.general_complex.ba_block_plus(Ly,fac)
-!      .core_matrix.general_complex.aa_block_plus(Lz,-fac*I)
-!      .core_matrix.general_complex.bb_block_plus(Lz,fac*I)
+!      .core_mx.general_complex.ba_block_plus(Lx,-fac*I)
+!      .core_mx.general_complex.ba_block_plus(Ly,fac)
+!      .core_mx.general_complex.aa_block_plus(Lz,-fac*I)
+!      .core_mx.general_complex.bb_block_plus(Lz,fac*I)
 !      
 !      T.destroy
 !      Lz.destroy
@@ -2496,217 +2272,197 @@ contains
 !
 !   end
 
-!   set_gc_IOTC_core_matrix
+!   set_gc_IOTC_core_mx
 !   ! Add the core hamiltonain to a general complex "F"
 !   ! NOTE: only lower half is made
 !   ENSURE(.scfdata.allocated,"no scfdata")
-!   ENSURE(.core_matrix.is_allocated_with_genre("general_complex"),"no core matrix")
+!   ENSURE(.core_mx.is_allocated_with_genre("general_complex"),"no core matrix")
 !
-!      .REL:make_gc_IOTC_core_matrix(.core_matrix.general_complex)
+!      .REL:make_gc_IOTC_core_mx(.core_mx.general_complex)
 !
 !   end
 
-   add_gc_Pauli_core_matrix
+   add_gc_Pauli_core_mx ::: PURE
    ! Add the Pauli core hamiltonian ... including B-field terms
    ! NOTE: only lower half is made
       self :: INOUT
 
    ENSURE(.scfdata.allocated,"no scfdata")
-   ENSURE(.core_matrix.is_allocated_with_genre("general_complex"),"no core matrix")
+   ENSURE(.core_mx.allocated,"no core matrix")
+   ENSURE(.core_mx.has_genre("restricted"),     "no R core matrix")
+   ENSURE(.core_mx.has_genre("general_complex"),"no GC core matrix")
 
-      T,xx,yy,zz,xy,xz,yz,Lx,Ly,Lz :: MAT{REAL}*
-      BB :: MAT{REAL}(3,3)
+      T, Lx,Ly,Lz :: MAT{REAL}@
+      xx,yy,zz,xy,xz,yz :: MAT{REAL}@
+      BB  :: MAT{REAL}(3,3)
       k,l :: INT
       fac :: REAL
-      I :: CPX
+      I   :: CPX
 
       I = (ZERO,ONE)
 
-      ! Diagonal part
-      .:make_r_core_matrix
+      .core_mx.general_complex.aa_block_plus(.core_mx.restricted)
+      .core_mx.general_complex.bb_block_plus(.core_mx.restricted)
 
-      .core_matrix.general_complex.aa_block_plus(.core_matrix.restricted)
-      .core_matrix.general_complex.bb_block_plus(.core_matrix.restricted)
-
-      ! The Pauli terms below are not normally active if Douglas-Kroll
-      ! has been used
+      ! The Pauli terms below are not normally active
+      ! if Douglas-Kroll has been used ...
       if (.scfdata.using_1e_sl_term) then
-
             Lx.create(.n_bf,.n_bf)
             Ly.create(.n_bf,.n_bf)
             Lz.create(.n_bf,.n_bf)
-
             .INTS:make_spin_orbit_matrices(Lx,Ly,Lz)
-
             fac = G_FACTOR/(EIGHT*SPEED_OF_LIGHT_AU**2)
             fac = fac * .scfdata.sl_1e_factor
-            .core_matrix.general_complex.ba_block_plus(Lx,-fac*I)
-            .core_matrix.general_complex.ba_block_plus(Ly,fac)
-            .core_matrix.general_complex.aa_block_plus(Lz,-fac*I)
-            .core_matrix.general_complex.bb_block_plus(Lz,fac*I)
-
+            .core_mx.general_complex.ba_block_plus(Lx,-fac*I)
+            .core_mx.general_complex.ba_block_plus(Ly,fac)
+            .core_mx.general_complex.aa_block_plus(Lz,-fac*I)
+            .core_mx.general_complex.bb_block_plus(Lz,fac*I)
             Lz.destroy
             Ly.destroy
             Lx.destroy
-
       end
 
       if (NOT .B_field.is_zero) then
 
          if (.scfdata.using_bs_term) then
-            .INTS:make_overlap_matrix
+            .INTS:make_overlap_mx
             fac = G_FACTOR/FOUR
-            .core_matrix.general_complex.aa_block_plus(.overlap_matrix,fac*.B_field(3))
-            .core_matrix.general_complex.bb_block_plus(.overlap_matrix,-fac*.B_field(3))
-            .core_matrix.general_complex.ba_block_plus(.overlap_matrix,fac*.B_field(1))
-            .core_matrix.general_complex.ba_block_plus(.overlap_matrix,fac*.B_field(2)*I)
+            .core_mx.general_complex.aa_block_plus(.overlap_mx, fac*.B_field(3))
+            .core_mx.general_complex.bb_block_plus(.overlap_mx,-fac*.B_field(3))
+            .core_mx.general_complex.ba_block_plus(.overlap_mx, fac*.B_field(1))
+            .core_mx.general_complex.ba_block_plus(.overlap_mx, fac*.B_field(2)*I)
          end
 
          if (.scfdata.using_bs_t_term) then
             T.create(.n_bf,.n_bf)
             .INTS:make_kinetic_energy_mx(T)
             fac = -G_FACTOR/(FOUR*SPEED_OF_LIGHT_AU**2)
-            .core_matrix.general_complex.aa_block_plus(T,fac*.B_field(3))
-            .core_matrix.general_complex.bb_block_plus(T,-fac*.B_field(3))
-            .core_matrix.general_complex.ba_block_plus(T,fac*.B_field(1))
-            .core_matrix.general_complex.ba_block_plus(T,fac*.B_field(2)*I)
+            .core_mx.general_complex.aa_block_plus(T, fac*.B_field(3))
+            .core_mx.general_complex.bb_block_plus(T,-fac*.B_field(3))
+            .core_mx.general_complex.ba_block_plus(T, fac*.B_field(1))
+            .core_mx.general_complex.ba_block_plus(T, fac*.B_field(2)*I)
             T.destroy
          end
 
          if (.scfdata.using_bl_term) then
-
             Lx.create(.n_bf,.n_bf)
             Ly.create(.n_bf,.n_bf)
             Lz.create(.n_bf,.n_bf)
-
             .INTS:make_L_matrices(Lx,Ly,Lz)
             Lx = Lx*.B_field(1) &
                + Ly*.B_field(2) &
                + Lz*.B_field(3)
-
             fac = HALF
-            .core_matrix.general_complex.aa_block_plus(Lx,fac*I)
-            .core_matrix.general_complex.bb_block_plus(Lx,fac*I)
-
-            ! Clean
+            .core_mx.general_complex.aa_block_plus(Lx,fac*I)
+            .core_mx.general_complex.bb_block_plus(Lx,fac*I)
             Lz.destroy
             Ly.destroy
             Lx.destroy
-
          end
 
          if (.scfdata.using_aa_term) then
-
            xx.create(.n_bf,.n_bf)
            yy.create(.n_bf,.n_bf)
            zz.create(.n_bf,.n_bf)
            xy.create(.n_bf,.n_bf)
            xz.create(.n_bf,.n_bf)
            yz.create(.n_bf,.n_bf)
-
            .INTS:make_quadrupole_matrices(xx,yy,zz,xy,xz,yz)
-
            fac = ONE/EIGHT
            do k = 1,3
               BB(k,k) = .B_field.dot(.B_field) - .B_field(k)*.B_field(k)
            end
-           do k = 1,3
+           do k =   1,3
            do l = k+1,3
               BB(k,l) = -TWO*.B_field(k)*.B_field(l)
            end
            end
            BB = fac*BB
-
            xx =      BB(1,1)*xx
            xx = xx + BB(2,2)*yy
            xx = xx + BB(3,3)*zz
            xx = xx + BB(1,2)*xy
            xx = xx + BB(1,3)*xz
            xx = xx + BB(2,3)*yz
-
-           .core_matrix.general_complex.aa_block_plus(xx)
-           .core_matrix.general_complex.bb_block_plus(xx)
-
-           ! Clean
+           .core_mx.general_complex.aa_block_plus(xx)
+           .core_mx.general_complex.bb_block_plus(xx)
            yz.destroy
            xz.destroy
            xy.destroy
            zz.destroy
            yy.destroy
            xx.destroy
-
          end
 
          if (.scfdata.using_1e_srxa_term) then
-
             Lx.create(.n_bf,.n_bf)
             Ly.create(.n_bf,.n_bf)
             Lz.create(.n_bf,.n_bf)
-
             .INTS:make_spin_orbit_B_matrices(Lx,Ly,Lz)
-
             fac = G_FACTOR/(TWO*EIGHT*(SPEED_OF_LIGHT_AU)**2)
-            .core_matrix.general_complex.ba_block_plus(Lx,fac)
-            .core_matrix.general_complex.ba_block_plus(Ly,fac*I)
-            .core_matrix.general_complex.aa_block_plus(Lz,fac)
-            .core_matrix.general_complex.bb_block_plus(Lz,-fac)
-
-            ! Clean
+            .core_mx.general_complex.ba_block_plus(Lx, fac)
+            .core_mx.general_complex.ba_block_plus(Ly, fac*I)
+            .core_mx.general_complex.aa_block_plus(Lz, fac)
+            .core_mx.general_complex.bb_block_plus(Lz,-fac)
             Lz.destroy
             Ly.destroy
             Lx.destroy
-
          end
 
       end
 
    end
 
-   add_g_core_matrix ::: leaky
+   add_g_core_mx ::: private, PURE
    ! Add the Pauli core hamiltonian ... including B-field terms
    ! NOTE: only lower half is made
       self :: INOUT
 
-   ENSURE(.scfdata.allocated,"no scfdata")
- ! ENSURE(.scfdata.using_pauli_terms," no Pauli?")
- ! ENSURE(.core_matrix.is_allocated_with_genre("general"),"no core matrix")
+   ENSURE(.core_mx.allocated,"no core matrix")
+   ENSURE(.core_mx.has_genre("restricted"),"no R core matrix")
+   ENSURE(.core_mx.has_genre("general"),   "no G core matrix")
 
-      ! Diagonal part
-      .:make_r_core_matrix
-
-      ! Allocate core matrix
-      if (.core_matrix.deallocated) then; .core_matrix.create(.n_bf)
-      else;                             .core_matrix.set(.n_bf)
-      end
-      .core_matrix.create("general")
-      .core_matrix.general = ZERO
-
-      ! Define the genetral parts
-      .core_matrix.general.aa_block_plus(.core_matrix.restricted)
-      .core_matrix.general.bb_block_plus(.core_matrix.restricted)
+      ! Define the general parts
+      .core_mx.general.aa_block_plus(.core_mx.restricted)
+      .core_mx.general.bb_block_plus(.core_mx.restricted)
 
    end
 
-   add_gc_core_matrix
+   add_gc_core_mx ::: private, PURE
    ! Add the Pauli core hamiltonian ... including B-field terms
    ! NOTE: only lower half is made
       self :: INOUT
 
    ENSURE(.scfdata.allocated,"no scfdata")
- ! ENSURE(.scfdata.using_pauli_terms," no Pauli?")
-   ENSURE(.core_matrix.is_allocated_with_genre("general_complex"),"no core matrix")
-
-      ! Diagonal part
-      .:make_r_core_matrix
+   ENSURE(.core_mx.allocated,"no core matrix")
+   ENSURE(.core_mx.has_genre("restricted"),"no R core matrix")
+   ENSURE(.core_mx.has_genre("general_complex"),"no GC core matrix")
 
       ! Define the gc parts
-      .core_matrix.general_complex.aa_block_plus(.core_matrix.restricted)
-      .core_matrix.general_complex.bb_block_plus(.core_matrix.restricted)
+      .core_mx.general_complex.aa_block_plus(.core_mx.restricted)
+      .core_mx.general_complex.bb_block_plus(.core_mx.restricted)
 
    end
 
 
-   make_cluster_charges ::: leaky
+   put_cluster_charges ::: leaky
+   ! Make the point charge matrix "Z" from the point charges in .atom
+   ! and the positions derived from ".scfdata.cluster".
+   ! WARNING: the crystal asym unit charges must be defined.
+      self :: INOUT
+
+      name :: STR
+
+      ! Make it
+      .:make_cluster_charges
+
+      ! Write
+      name = trim(.name) // ".gaussian-point-charges"
+      .scfdata.put_cluster_charges(name)
+
+   end
+
+   make_cluster_charges ::: leaky, PURE
    ! Make the point charge matrix "Z" from the point charges in .atom
    ! and the positions derived from ".scfdata.cluster".
    ! WARNING: the crystal asym unit charges must be defined.
@@ -2721,10 +2477,9 @@ contains
       pos :: MAT{REAL}@
       charge :: VEC{REAL}@
       n_charges :: INT
-      name :: STR
 
       ! Make Hirshfeld charges
-      .:make_Hirshfeld_atom_info
+      .:make_r_HA_info
 
       ! Set up the cluster ... leaky
       .scfdata.cluster.destroy
@@ -2761,13 +2516,9 @@ contains
       .scfdata.cluster_charges          = charge
       .scfdata.cluster_charge_positions = pos
 
-      ! Write
-      name = trim(.name) // ".gaussian-point-charges"
-      .scfdata.put_cluster_charges(name)
-
    end
 
-   make_cluster_charge_mx(Z) ::: leaky
+   make_cluster_charge_mx(Z) ::: leaky, PURE
    ! Make the point charge matrix "Z" from the point charges in .atom
    ! and the positions derived from ".scfdata.cluster".
    ! WARNING: the crystal asym unit charges must be defined.
@@ -2802,7 +2553,8 @@ contains
       .scfdata.cluster.update_info ! leaky
 
       ! Make the cluster charges
-      n_charges = .scfdata.cluster.n_atoms - .scfdata.cluster.n_fragment_atoms
+      n_charges = .scfdata.cluster.n_atoms &
+                - .scfdata.cluster.n_fragment_atoms
 
       if (NOT .scfdata.using_qq_cluster_charges) then
          n_charges = 3*n_charges
@@ -2837,7 +2589,7 @@ contains
       end
 
       if (DO_IN_PARALLEL) then
-        PARALLEL_SYMMETRIC_SUM(Z)
+         PARALLEL_SYMMETRIC_SUM(Z)
       else
          Z.symmetric_reflect
       end
@@ -2852,31 +2604,36 @@ contains
 
    end
 
-   make_Lorentz_core(Z) ::: leaky
+   make_Lorentz_core(Z) ::: PURE
    ! Add the local electric fields "F"  to the core matrix, made from
    ! the Lorentz factor tensors
       self :: INOUT
-      Z :: MAT{REAL}, target
+      Z :: MAT{REAL}, OUT
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(.crystal.allocated,"no crystal")
    ENSURE(.Hirshfeld_atom_info_made,"no Hirshfeld charges and dipoles")
 
-      wt, xa,ya,za,a2 :: VEC{REAL}@
       rF, pF,ww :: VEC{REAL}@
-      ga,gb :: VEC{REAL}@
-      ra :: VEC{REAL}(3)
-      overlapping_atom, pi,pj :: VEC{INT}@
-      skipa0,skipab, skipa,skipb :: VEC{BIN}@
+      ra, ga,gb :: VEC{REAL}@
+      wt, xa,ya,za,a2  :: VEC{REAL}@
+      near_atom, pi,pj :: VEC{INT}@
+      skipa0,skipa :: VEC{BIN}@
+      skipab,skipb :: VEC{BIN}@
       F,pt,bf_save :: MAT{REAL}@
-      ZZ :: MAT{REAL}*
-      sha :: SHELL1
+      ZZ :: MAT{REAL}@
       bf_skip :: VEC{EVEC{BIN}}@
       bf_grid :: VEC{EMAT{REAL}}@
       cutoff, fac,val :: REAL
-      n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
-      sa,fa,la,na, sb,fb,lb,nb, as, a,b,i,j,n,p :: INT
+      n_pt,n_keep    :: INT
+      c,ca,cb        :: INT
+      oa,fsa,lsa,fba :: INT
+      ob,fsb,lsb, as :: INT
+      sa,fa,la,na    :: INT
+      sb,fb,lb,nb    :: INT
+      a,b,i,j,n,p    :: INT
+      sha :: SHELL1
 
       ! Make the local Lorentz fields at every atom
       F.create(3,.n_atom)
@@ -2905,7 +2662,7 @@ contains
          n_pt = pt.dim1
 
          ! Overlapping atoms
-         overlapping_atom = .overlapping_atoms_for_atom(c).element
+         near_atom = .overlapping_atoms_for_atom(c).element
 
          ! Make stockholder weight function "Wc" for atom "c"
          ! If using interpolatators, then on overlapping atoms
@@ -2926,9 +2683,9 @@ contains
          bf_grid.create(.n_shell)
 
          ! Loop c-overlapping atoms "oa"
-         do ca = 1,overlapping_atom.dim
+         do ca = 1,near_atom.dim
 
-            oa  = overlapping_atom(ca)
+            oa  = near_atom(ca)
             fsa = .first_shell_for_atom(oa)
             lsa =  .last_shell_for_atom(oa)
             fba = .first_basis_fn_for_atom(oa)
@@ -2981,7 +2738,7 @@ contains
                ! Loop c-overlapping atoms b
                do cb = 1,ca
 
-                  ob  = overlapping_atom(cb)
+                  ob  = near_atom(cb)
                   fsb = .first_shell_for_atom(ob)
                   lsb =  .last_shell_for_atom(ob)
 
@@ -3004,7 +2761,7 @@ contains
                      if (n_keep==0) cycle
 
                      ! Density block
-                     ZZ => Z(fa:la,fb:lb)
+                     ZZ = Z(fa:la,fb:lb)
 
                      if (na*nb==1) then
 
@@ -3091,14 +2848,14 @@ contains
 
       ! Parallel
       if (DO_IN_PARALLEL) then
-        PARALLEL_SYMMETRIC_SUM(Z)
+         PARALLEL_SYMMETRIC_SUM(Z)
       else
          Z.symmetric_reflect
       end
 
    end
 
-   make_Lorentz_fields(F)
+   make_Lorentz_fields(F) ::: PURE
    ! Make the local Lorentz electric fields "F" at each atom site due
    ! to the crystal environment calculated from the charges and
    ! dipoles on each atom (so the Hirshfeld or other charges and
@@ -3132,11 +2889,12 @@ contains
 
    end
 
-   make_Lorentz_interactions(I0,I1)
+   make_Lorentz_interactions(I0,I1) ::: PURE
    ! Make the local Lorentz interactions terms with charges and
    ! dipoles due to dipoles ONLY on the atoms in the crystal
    ! environment (so the Hirshfeld or other charges and dipoles need
    ! to be made).  A minus sign is neede when combined.
+      self :: IN
       I0 :: VEC{REAL}
       I1 :: MAT{REAL}
 
@@ -3172,62 +2930,50 @@ contains
 !  Fock matrix routines
 !  ====================
 
-   make_Fock_matrix(core,r12) ::: leaky
+   make_Fock_mx(core,r12) ::: leaky
    ! If r12  is present and FALSE, the r12 part is not computed.
       self :: INOUT
       core,r12 :: BIN, optional, IN
 
    ENSURE(.scfdata.allocated,"no scfdata")
-   ENSURE(.density_matrix.allocated,"no density matrix")
-   ENSURE(.density_matrix.is_allocated_with_genre(.scfdata.spinorbital_kind),"incompatible density")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.density_mx.has_genre(.scfdata.spinorbital_kind),"incompatible density")
 
       dF :: OPMATRIX@
       delta_build,add_core :: BIN
 
       ! Use a delta fock matrix build?
       delta_build = .scfdata.do_delta_build &
-                AND .delta_density_matrix.allocated &
-                AND .fock_2e_matrix.allocated
+                AND .delta_density_mx.allocated &
+                AND .fock_2e_mx.allocated
 
-      ! Make the 2e fock matrix from density
       if (NOT delta_build) then
-
-         .fock_2e_matrix.destroy
-         .fock_2e_matrix.create(.n_bf)
-
-         .FOCK:make_Fock_matrix(.density_matrix,.fock_2e_matrix,core=FALSE,r12=r12,xc=FALSE)
-
-      ! Make the 2e fock matrix from delta density
+         ! Make the 2e fock matrix from density
+         .fock_2e_mx.destroy
+         .fock_2e_mx.create(.n_bf)
+         .FOCK:make_Fock_mx(.density_mx,.fock_2e_mx,core=FALSE,r12=r12,xc=FALSE)
       else
-
-        ! Uncompress 2e fock matrix
-        .fock_2e_matrix.uncompress
-
-        ! Make delta fock. Skip exchange correlation part.
+        ! Make the 2e fock matrix from delta density
+        .fock_2e_mx.uncompress
         dF.create(.n_bf)
-        .FOCK:make_Fock_matrix(.delta_density_matrix,dF,core=FALSE,r12=r12,xc=FALSE)
-
-        ! Add delta to previous 2e fock matrix
-        .fock_2e_matrix.plus(dF)
-
-        ! Clean
+        .FOCK:make_Fock_mx(.delta_density_mx,dF,core=FALSE,r12=r12,xc=FALSE)
+        .fock_2e_mx.plus(dF) ! Add Delta F
         dF.destroy
-
       end
 
       ! Set fock matrix & save space
-      .fock_matrix.destroy
-      .fock_matrix = .fock_2e_matrix
-      .fock_2e_matrix.compress
+      .fock_mx.destroy
+      .fock_mx = .fock_2e_mx
+      .fock_2e_mx.compress
 
       ! Now do the XC part if needed
       if (.scfdata.is_DFT_calculation) then
-         .FOCK:add_XC_matrix_KS(.fock_matrix)
+         .FOCK:add_XC_mx_KS(.fock_mx)
       end
 
       ! Force update of 1e hamiltonian if required
       if (.scfdata.using_SC_cluster_charges OR .scfdata.using_SC_Lorentz_fields) then
-         .core_matrix.destroy
+         .core_mx.destroy
          .Hirshfeld_atom_info_made = FALSE
       end
 
@@ -3235,12 +2981,11 @@ contains
       add_core = TRUE
       if (present(core)) add_core = core
 
-
       ! Add core. Make sure it is there.
       if (add_core) then
-         .:make_core_matrix(.scfdata.spinorbital_kind)
-         .:make_core_matrix(.scfdata.molecular_orbital_kind)
-         .fock_matrix.plus(.core_matrix)
+         .:make_core_mx(.scfdata.spinorbital_kind) ! NOT PURE
+         .:make_core_mx(.scfdata.molecular_orbital_kind)
+         .fock_mx.plus(.core_mx)
       end
 
    end
@@ -3249,9 +2994,9 @@ contains
 !  SCF
 !  ===
 
-   scf ::: leaky
+   SCF ::: leaky
    ! Do an SCF calculation. The following :
-   !   .molecular_orbitals, .orbital_energies, .density_matrix
+   !   .molecular_orbitals, .orbital_energies, .density_mx
    ! are produced as results.
       self :: INOUT
 
@@ -3266,7 +3011,7 @@ contains
    !     .crystal_scf
 
       case ("group")
-         .:group_scf
+         .:group_SCF
 
       !case ("ghf","no_ghf")
       !  .:NO_ghf
@@ -3276,16 +3021,16 @@ contains
 
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf", &
             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
-         .:constrained_scf
+         .:constrained_SCF
 
       case default
-         .:usual_scf
+         .:usual_SCF
 
       end
 
    end
 
-   promolecule_scf
+   promolecule_SCF
    ! Do an initial promolecule SCF.
       self :: INOUT
 
@@ -3300,7 +3045,7 @@ contains
       .scfdata.set_using_cluster_charges(FALSE)
 
       !!!!!!!!
-      .SCF:scf
+      .SCF:SCF
       !!!!!!!!
 
       ! Set guess back
@@ -3314,33 +3059,27 @@ contains
 !  Usual SCF
 !  =========
 
-   usual_scf ::: leaky
+   usual_SCF ::: leaky
    ! Do an SCF calculation. The .molecular_orbitals,
-   ! .orbital_energies, and .density_matrix are produced as results.
+   ! .orbital_energies, and .density_mx are produced as results.
       self :: INOUT
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.allocated,   "no atom list")
    ENSURE(.scfdata.allocated,"no scfdata")
 
-      .:initialize_scf
-
+      .:initialize_SCF
       .:put_SCF_banner_and_options
       .:put_SCF_table_header
 
       do
 
-         .:extrapolate_Fock_matrix
-
+         .:extrapolate_Fock_mx
          .:update_MOs
-
-         .BASE:make_SCF_density_matrix
-
-         .:make_Fock_matrix
-
+         .BASE:make_SCF_density_mx
+         .:make_Fock_mx
          .:update_scfdata
          .:update_scfdata_error
-
          .:put_SCF_table_body
 
          if (.scfdata.scf_done) exit
@@ -3348,17 +3087,15 @@ contains
       end
 
       .:put_SCF_results
-
       .:archive_SCF_results
-
       .:cleanup_scf
 
    end
 
-   atomic_scf ::: leaky
-   ! Do an atomic SCF calculation. This is mor initial guesses.
+   atomic_SCF ::: leaky
+   ! Do an atomic SCF calculation; this is for initial guesses.
    ! The molecule comprises a single atom. The .molecular_orbitals,
-   ! .orbital_energies, and .density_matrix are produced as results.
+   ! .orbital_energies, and .density_mx are produced as results.
       self :: INOUT
 
    ENSURE(.atom.allocated,   "no atom list")
@@ -3366,24 +3103,18 @@ contains
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.scfdata.allocated,"no scfdata")
 
-      .:initialize_atomic_scf
-
+      .:initialize_atomic_SCF
       .:put_SCF_banner_and_options
       .:put_SCF_table_header
 
       do
 
-         .:extrapolate_Fock_matrix
-
+         .:extrapolate_Fock_mx
          .:update_MOs
-
-         .BASE:make_SCF_density_matrix
-
-         .:make_Fock_matrix
-
+         .BASE:make_SCF_density_mx
+         .:make_Fock_mx
          .:update_scfdata
          .:update_scfdata_error
-
          .:put_SCF_table_body
 
          if (.scfdata.scf_done) exit
@@ -3391,17 +3122,15 @@ contains
       end
 
       .:put_SCF_results
-
       .:archive_SCF_results
-
       .:cleanup_scf
 
    end
 
-   general_atomic_scf ::: leaky
+   general_atomic_SCF ::: leaky
    ! Do an atomic SCF calculation. This is mor initial guesses.
    ! The molecule comprises a single atom. The .molecular_orbitals,
-   ! .orbital_energies, and .density_matrix are produced as results.
+   ! .orbital_energies, and .density_mx are produced as results.
       self :: INOUT
 
    ENSURE(.atom.allocated,   "no atom list")
@@ -3410,23 +3139,17 @@ contains
    ENSURE(.scfdata.allocated,"no scfdata")
 
       .:initialize_general_atomic_scf
-
       .:put_SCF_banner_and_options
       .:put_SCF_table_header
 
       do
 
-         !.:extrapolate_g_Fock_matrix
-
+         !.:extrapolate_g_Fock_mx
          .:update_MOs
-
-         .BASE:make_SCF_density_matrix
-
-         .:make_Fock_matrix
-
+         .BASE:make_SCF_density_mx
+         .:make_Fock_mx
          .:update_scfdata
          .:update_scfdata_error
-
          .:put_SCF_table_body
 
          if (.scfdata.scf_done) exit
@@ -3434,21 +3157,19 @@ contains
       end
 
       .:put_SCF_results
-
       .:archive_SCF_results
-
       .:cleanup_scf
 
    end
    
-   initialize_scf ::: leaky
+   initialize_SCF ::: leaky
    ! Initialize any molecular SCF procedure
       self :: INOUT
 
    ENSURE(.scfdata.allocated,"no scfdata")
 
       ! Overlap matrix
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! Integration grids
       if (.scfdata.is_DFT_calculation) .BASE:initialize_DFT_grids
@@ -3457,12 +3178,12 @@ contains
       .:get_initial_guess
 
       ! Core matrix: both kinds
-      .core_matrix.destroy
-      .:make_core_matrix(.scfdata.spinorbital_kind)
-      .:make_core_matrix(.scfdata.molecular_orbital_kind)
+      .core_mx.destroy
+      .:make_core_mx(.scfdata.spinorbital_kind)
+      .:make_core_mx(.scfdata.molecular_orbital_kind)
          
       ! Get Fock matrix
-      .:make_Fock_matrix
+      .:make_Fock_mx
 
       ! Make structure factors?
       if (.scfdata.fitting) then
@@ -3477,9 +3198,9 @@ contains
       .:update_scfdata_energies
 
       ! Add constraint to F?
-      if (.scfdata.fitting) .:add_constraint_to_Fock_matrix
+      if (.scfdata.fitting) .:add_constraint_to_Fock_mx
 
-      if (.scfdata.using_diis) then
+      if (.scfdata.using_DIIS) then
          ! Initialise DIIS error
          .:update_scfdata_error
       end if
@@ -3492,7 +3213,7 @@ contains
 
    end
 
-   initialize_atomic_scf ::: leaky
+   initialize_atomic_SCF ::: leaky
    ! Initialize an atomic SCF procedure
    ! The guess must be core. There is not fitting.
       self :: INOUT
@@ -3501,22 +3222,22 @@ contains
    ENSURE(NOT .scfdata.fitting,"fitting not allowed")
 
       ! Overlap matrix
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! Integration grids
       if (.scfdata.is_DFT_calculation) .BASE:initialize_DFT_grids
 
       ! Get core guess -- different
       .scfdata.set_is_guess(TRUE)
-      .:make_core_guess
+      .:make_core_mx_guess_MOs
 
       ! Core matrix: both kinds
-      .core_matrix.destroy
-      .:make_core_matrix(.scfdata.spinorbital_kind)
-      .:make_core_matrix(.scfdata.molecular_orbital_kind)
+      .core_mx.destroy
+      .:make_core_mx(.scfdata.spinorbital_kind)
+      .:make_core_mx(.scfdata.molecular_orbital_kind)
 
       ! Get Fock matrix
-      .:make_Fock_matrix
+      .:make_Fock_mx
 
       ! Reset all SCF data (except DFT parts)
       .scfdata.reset
@@ -3533,7 +3254,7 @@ contains
 
    end
 
-   initialize_general_atomic_scf ::: leaky
+   initialize_general_atomic_SCF ::: leaky
    ! Initialize an atomic SCF procedure
    ! The guess must be core. There is not fitting.
       self :: INOUT
@@ -3542,7 +3263,7 @@ contains
    ENSURE(NOT .scfdata.fitting,"fitting not allowed")
 
       ! Overlap matrix
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! Integration grids
       if (.scfdata.is_DFT_calculation) .BASE:initialize_DFT_grids
@@ -3552,12 +3273,12 @@ contains
       .:make_g_core_guess
 
       ! Core matrix: both kinds
-      .core_matrix.destroy
-      .:make_core_matrix(.scfdata.spinorbital_kind)
-      .:make_core_matrix(.scfdata.molecular_orbital_kind)
+      .core_mx.destroy
+      .:make_core_mx(.scfdata.spinorbital_kind)
+      .:make_core_mx(.scfdata.molecular_orbital_kind)
 
       ! Get Fock matrix
-      .:make_Fock_matrix
+      .:make_Fock_mx
 
       ! Reset all SCF data (except DFT parts)
       .scfdata.reset
@@ -3590,7 +3311,7 @@ contains
       .scfdata.kinetic_energy            = .:kinetic_energy
 
       ! Total SCF energy [including V(nuc) repulsion] and penalty
-      e = .:scf_energy
+      e = .:SCF_energy
 
       ! Update
       .scfdata.update_energy(e)
@@ -3621,13 +3342,13 @@ contains
 
    update_scfdata_error
    ! Update the scfdata gradient of the SCF energy with respect to
-   ! orbital rotations, otherwise known as the "diis error". This is
+   ! orbital rotations, otherwise known as the "DIIS error". This is
    ! used to check for SCF convergence.
       self :: INOUT
 
-      diis_error :: REAL
+      DIIS_error :: REAL
 
-      .:make_diis_error_length(diis_error)
+      .:make_DIIS_error_length(DIIS_error)
 
    end
 
@@ -3731,7 +3452,7 @@ contains
 
       .BASE:archive(.molecular_orbitals,"molecular_orbitals",with_lambda=TRUE)
       .BASE:archive(.orbital_energies,"orbital_energies",with_lambda=TRUE)
-      .BASE:archive(.density_matrix,"density_matrix",with_lambda=TRUE)
+      .BASE:archive(.density_mx,"density_mx",with_lambda=TRUE)
 
       ! Put out cluster charges
       if (.scfdata.cluster_charges.allocated) then
@@ -3768,10 +3489,10 @@ contains
 !  Constrained SCF
 !  ===============
 
-   constrained_scf ::: leaky
+   constrained_SCF ::: leaky
    ! Do a constrained SCF calculation.
    ! The following objects are produced as results:
-   !   .molecular_orbitals, .orbital_energies, .density_matrix
+   !   .molecular_orbitals, .orbital_energies, .density_mx
       self :: INOUT
 
    ENSURE(.basis_info_made,"no basis info")
@@ -3788,19 +3509,19 @@ contains
 
          do ! scf loop
 
-            .:extrapolate_Fock_matrix
+            .:extrapolate_Fock_mx
 
             .:update_MOs
 
-            .BASE:make_SCF_density_matrix
+            .BASE:make_SCF_density_mx
 
-            .:make_Fock_matrix
+            .:make_Fock_mx
 
             .:make_constraint_data
 
             .:update_scfdata
 
-            .:add_constraint_to_Fock_matrix
+            .:add_constraint_to_Fock_mx
             .:update_scfdata_error
 
             .:put_SCF_table_body(flush=TRUE)
@@ -3862,7 +3583,7 @@ contains
       select case (scf_kind)
 
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf");
-         if (.crystal.uses_Hirshfeld_atoms) .:make_Hirshfeld_inputs(skip_NOs=TRUE)
+         if (.crystal.uses_Hirshfeld_atoms) .:make_HA_inputs(skip_NOs=TRUE)
          .:make_X_SFs
     !    if (.crystal.xray_r_free_data.allocated) .:make_X_free_SFs
 
@@ -3871,7 +3592,7 @@ contains
     !    if (.crystal.pnd_r_free_data.allocated)  .:make_N_free_SFs
 
     ! case ("xray_pnd_uhf","xray_pnd_uks");
-    !    if (.crystal.uses_Hirshfeld_atoms) .:make_Hirshfeld_inputs(skip_NOs=TRUE)
+    !    if (.crystal.uses_Hirshfeld_atoms) .:make_HA_inputs(skip_NOs=TRUE)
     !    .:make_X_SFs
     !    .:make_N_SFs
     !    if (.crystal.xray_r_free_data.allocated) .:make_X_free_SFs
@@ -3884,14 +3605,14 @@ contains
 
    end
 
-   add_constraint_to_Fock_matrix
+   add_constraint_to_Fock_mx
    ! Make the constraint matrix for wavefunction fitting and add it to the fock
    ! matrix to obtain the effective fock matrix.
       self :: INOUT
 
       ENSURE(.scfdata.allocated,"no scf data")
-      ENSURE(.fock_matrix.allocated,"no fock matrix")
-      ENSURE(.fock_matrix.has_any_genre,"no fock matrix")
+      ENSURE(.fock_mx.allocated,"no fock matrix")
+      ENSURE(.fock_mx.has_any_genre,"no fock matrix")
 
       C :: OPMATRIX@
 
@@ -3906,7 +3627,7 @@ contains
 
          ! Make the constraint term
          .:make_X_constraint(C)
-         .fock_matrix.plus_scaled(C,.scfdata.lambda)
+         .fock_mx.plus_scaled(C,.scfdata.lambda)
 
       end
 
@@ -4047,7 +3768,7 @@ contains
  
          ft_ab.create([1,n_refl],[fa,la],[fb,lb])
          ft_ab_eq.create(n_k,na,nb)
-         .XTAL:make_ft_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
+         .XTAL:make_FT_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
          .crystal.spacegroup.sum_unique_sf_ints(ft_ab,ft_ab_eq,.crystal.xray_data.reflections)
          ft_ab_eq.destroy
  
@@ -4148,7 +3869,7 @@ contains
      
          ft_ab.create([1,n_refl],[fa,la],[fb,lb])
          ft_ab_eq.create(n_k,na,nb)
-         .XTAL:make_ft_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
+         .XTAL:make_FT_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
          .crystal.spacegroup.sum_unique_sf_ints(ft_ab,ft_ab_eq,.crystal.xray_data.reflections)
          ft_ab_eq.destroy
      
@@ -4191,9 +3912,9 @@ contains
       self :: INOUT
       constraint :: MAT{REAL}, target
 
-   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_Hirshfeld_inputs?")
-   ENSURE(.density_matrix.allocated,"no density matrix")
-   ENSURE(.density_matrix.restricted.allocated,"no restricted density matrix")
+   ENSURE(.BASE:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_HA_inputs?")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.density_mx.restricted.allocated,"no restricted density matrix")
    ENSURE(.scfdata.allocated,"no scf data")
    ENSURE(.crystal.allocated,"no crystal info")
    ENSURE(.basis_info_made,"no basis info")
@@ -4599,7 +4320,7 @@ contains
 
          ft_ab.create([1,n_refl],[fa,la],[fb,lb])
          ft_ab_eq.create(n_k,na,nb)
-         .XTAL:make_ft_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
+         .XTAL:make_FT_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
          .crystal.spacegroup.sum_unique_sf_ints(ft_ab,ft_ab_eq,.crystal.xray_data.reflections)
          ft_ab_eq.destroy
 
@@ -4630,7 +4351,7 @@ contains
    ! Also reset the fock matrices on disk.
       self :: INOUT
 
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
       .scfdata.reset_for_next_lambda
 
    end
@@ -4665,7 +4386,6 @@ contains
    end
 
    get_minmax_residual_density_p(minp,maxp,rmsp,output) ::: private
-!  get_minmax_residual_density_p(minp,maxp,rmsp,minpa,maxpa,rmspa,minat,maxat,output) ::: private
    ! Evaluate the min and max residual density from the
    ! fitted structure factors, evaluated on a grid 0.1 A
    ! per side. Also evaluate the residuals at the atom
@@ -4814,7 +4534,7 @@ contains
 !   embedded_scf ::: leaky
 !   ! Do an SCF calculation for a molecular fragment embedded in a crystal
 !   ! generated cluster. The .molecular_orbitals and .orbital_energies are
-!   ! obtained for the embedded fragment. The .density_matrix is obtained for the
+!   ! obtained for the embedded fragment. The .density_mx is obtained for the
 !   ! whole cluster. There must be a pre-existing cluster, and self must be the
 !   ! same as this cluster. Also, there must be a .saved molecule representing
 !   ! the embedded fragment whose orbitals are obtained.
@@ -4827,8 +4547,8 @@ contains
 !     .put_SCF_results
 !     do
 !       if (.scfdata.scf_done) exit
-!       .add_cluster_projector(.fock_matrix,.molecular_orbitals)
-!       .accelerate_Fock_matrix
+!       .add_cluster_projector(.fock_mx,.molecular_orbitals)
+!       .accelerate_Fock_mx
 !       ! Get back the fragment MO's
 !       .unarchive_molecular_orbitals
 !       .update_MOs
@@ -4836,11 +4556,11 @@ contains
 !       ! This stuffs up the fragment MO's.
 !       .transform_embedded_orbitals(.molecular_orbitals,do_virtual=FALSE)
 !       ! This is the cluster density matrix
-!       .BASE:make_SCF_density_matrix(n_a=.saved.n_a*.cluster.n_fragment_symop)
+!       .BASE:make_SCF_density_mx(n_a=.saved.n_a*.cluster.n_fragment_symop)
 !       ! This is the cluster fock matrix
-!       .:make_Fock_matrix
+!       .:make_Fock_mx
 !       ! Now make the fragment density matrix, and update info
-!       .BASE:make_SCF_density_matrix(n_a=.saved.n_a,damp=FALSE)
+!       .BASE:make_SCF_density_mx(n_a=.saved.n_a,damp=FALSE)
 !       .update_scfdata
 !       .update_scfdata_error
 !       .put_SCF_results
@@ -4863,11 +4583,11 @@ contains
 !      .transform_embedded_orbitals(.molecular_orbitals,do_virtual=TRUE)
 !      .BASE:archive(.molecular_orbitals,"molecular_orbitals",with_lambda=TRUE)
 !      ! This is the cluster density matrix
-!      .BASE:make_SCF_density_matrix(n_a=.saved.n_a*.cluster.n_fragment_symop,damp=FALSE)
+!      .BASE:make_SCF_density_mx(n_a=.saved.n_a*.cluster.n_fragment_symop,damp=FALSE)
 !      ! This is the cluster fock matrix
-!      .:make_Fock_matrix
+!      .:make_Fock_mx
 !      ! Now we have back the fragment density matrix
-!      .BASE:make_SCF_density_matrix(n_a=.saved.n_a,damp=FALSE)
+!      .BASE:make_SCF_density_mx(n_a=.saved.n_a,damp=FALSE)
 !      .initialize_scfdata
 !      .initialize_scfdata_error
 !      .scfdata.diis.cleanup
@@ -5007,10 +4727,10 @@ contains
 !           k = .saved.n_a + 1
 !           l = .saved.n_a*.cluster.n_fragment_symop
 !           P.create(.n_bf,.n_bf)
-!           S.create(.n_bf,.n_bf); .make_r_overlap_matrix(S)
+!           S.create(.n_bf,.n_bf); .make_r_overlap_mx(S)
 !           P.to_product_of(MO.restricted(:,k:l),MO.restricted(:,k:l),transpose_b=TRUE)
 !           P.change_basis_using(S)
-!           .fock_matrix.restricted = .fock_matrix.restricted + .scfdata.kappa*P
+!           .fock_mx.restricted = .fock_mx.restricted + .scfdata.kappa*P
 !           S.destroy
 !           P.destroy
 !        case default
@@ -5090,7 +4810,7 @@ contains
 !   crystal_scf ::: leaky
 !   ! Do an SCF calculation for a molecular fragment embedded in a crystal
 !   ! generated cluster. The .molecular_orbitals and .orbital_energies are
-!   ! obtained for the embedded fragment. The .density_matrix is obtained for the
+!   ! obtained for the embedded fragment. The .density_mx is obtained for the
 !   ! whole cluster. There must be a pre-existing cluster, and self must be the
 !   ! same as this cluster. Also, there must be a .saved molecule representing the
 !   ! embedded fragment whose orbitals are obtained.
@@ -5103,8 +4823,8 @@ contains
 !     .put_SCF_results
 !     do
 !       if (.scfdata.scf_done) exit
-!       .add_cluster_projector(.fock_matrix,.molecular_orbitals)
-!       .accelerate_Fock_matrix
+!       .add_cluster_projector(.fock_mx,.molecular_orbitals)
+!       .accelerate_Fock_mx
 !       ! Get back the fragment MO's
 !       .unarchive_molecular_orbitals
 !       .update_MOs
@@ -5112,11 +4832,11 @@ contains
 !       ! This stuffs up the fragment MO's.
 !       .transform_embedded_orbitals(.molecular_orbitals,do_virtual=FALSE)
 !       ! This is the cluster density matrix
-!       .BASE:make_SCF_density_matrix(n_a=.saved.n_a*.cluster.n_fragment_symop)
+!       .BASE:make_SCF_density_mx(n_a=.saved.n_a*.cluster.n_fragment_symop)
 !       ! This is the cluster fock matrix
-!       .:make_Fock_matrix
+!       .:make_Fock_mx
 !       ! Now make the fragment density matrix, and update info
-!       .BASE:make_SCF_density_matrix(n_a=.saved.n_a,damp=FALSE)
+!       .BASE:make_SCF_density_mx(n_a=.saved.n_a,damp=FALSE)
 !       .update_scfdata
 !       .update_scfdata_error
 !       .put_SCF_results
@@ -5137,11 +4857,11 @@ contains
 !      .transform_embedded_orbitals(.molecular_orbitals,do_virtual=TRUE)
 !      .BASE:archive(.molecular_orbitals,"molecular_orbitals",with_lambda=TRUE)
 !      ! This is the cluster density matrix
-!      .BASE:make_SCF_density_matrix(n_a=.saved.n_a*.cluster.n_fragment_symop,damp=FALSE)
+!      .BASE:make_SCF_density_mx(n_a=.saved.n_a*.cluster.n_fragment_symop,damp=FALSE)
 !      ! This is the cluster fock matrix
-!      .:make_Fock_matrix
+!      .:make_Fock_mx
 !      ! Now we have back the fragment density matrix
-!      .BASE:make_SCF_density_matrix(n_a=.saved.n_a,damp=FALSE)
+!      .BASE:make_SCF_density_mx(n_a=.saved.n_a,damp=FALSE)
 !      .initialize_scfdata
 !      .initialize_scfdata_error
 !      .scfdata.diis.cleanup
@@ -5486,8 +5206,8 @@ contains
    ! Schmidt orthonormalise the molecular orbitals, "MO"
       MO :: OPMATRIX
       scale :: REAL, optional
-      .INTS:make_overlap_matrix
-      MO.schmidt_orthonormalise(.overlap_matrix,scale)
+      .INTS:make_overlap_mx
+      MO.schmidt_orthonormalise(.overlap_mx,scale)
    end
 
    symmetrically_orthonormalise(MO) ::: leaky
@@ -5495,8 +5215,8 @@ contains
       self :: INOUT
       MO :: OPMATRIX, INOUT
 
-      .INTS:make_overlap_matrix
-      MO.symmetrically_orthonormalise(.overlap_matrix)
+      .INTS:make_overlap_mx
+      MO.symmetrically_orthonormalise(.overlap_mx)
 
    end
 
@@ -5539,7 +5259,7 @@ contains
 
          .:MO_r_eigen_update(.orbital_energies.restricted &
                             ,.molecular_orbitals.restricted &
-                            ,.fock_matrix.restricted)
+                            ,.fock_mx.restricted)
 
       case ("uhf         ", &
             "uks         ", &
@@ -5553,12 +5273,12 @@ contains
 
          .:MO_r_eigen_update(.orbital_energies.alpha &
                             ,.molecular_orbitals.alpha &
-                            ,.fock_matrix.alpha)
+                            ,.fock_mx.alpha)
 
 
          .:MO_r_eigen_update(.orbital_energies.beta &
                             ,.molecular_orbitals.beta &
-                            ,.fock_matrix.beta)
+                            ,.fock_mx.beta)
 
 
       case ("gchf","xray_gchf")
@@ -5566,14 +5286,14 @@ contains
 
          .:MO_gc_eigen_update(.orbital_energies.general &
                              ,.molecular_orbitals.general_complex &
-                             ,.fock_matrix.general_complex)
+                             ,.fock_mx.general_complex)
 
       case ("ghf","no_ghf")
 
 
          .:MO_g_eigen_update(.orbital_energies.general &
                             ,.molecular_orbitals.general &
-                            ,.fock_matrix.general)
+                            ,.fock_mx.general)
       
       case default
          DIE("unknown scf kind, "//scf_kind.trim)
@@ -5594,7 +5314,7 @@ contains
       F :: MAT{REAL}, IN
 
    ENSURE(.scfdata.allocated,"no scfdata")
-   ENSURE(.overlap_matrix.allocated,"no overlap_matrix")
+   ENSURE(.overlap_mx.allocated,"no overlap_mx")
    ENSURE(.overlap_eigenvectors.allocated,"no overlap_eigenvectors")
    ENSURE(.overlap_eigenvalues.allocated,"no overlap_eigenvalues")
 
@@ -5645,7 +5365,7 @@ contains
 !      MO :: MAT{REAL}
 !
 !   ENSURE(.scfdata.allocated,"no scfdata")
-!   ENSURE(.overlap_matrix.allocated,"no overlap_matrix")
+!   ENSURE(.overlap_mx.allocated,"no overlap_mx")
 !   ENSURE(.overlap_eigenvectors.allocated,"no overlap_eigenvectors")
 !   ENSURE(.overlap_eigenvalues.allocated,"no overlap_eigenvalues")
 !   ENSURE(MO.is_square,"MO not square")
@@ -5662,7 +5382,7 @@ contains
 !
 !      ! Set the projector
 !      P.create(.n_bf,.n_bf)
-!      P.to_unit_matrix
+!      P.to_unit_mx
 !      do i = 1,n-1
 !         P.plus_outer_product_of(.overlap_eigenvectors(:,i),-ONE)
 !      end
@@ -5867,118 +5587,26 @@ contains
    ! Output the scf energy.
       self :: IN
 
-      stdout.show("The SCF energy is ",              .:scf_energy)
+      stdout.show("The SCF energy is ",              .:SCF_energy)
       stdout.show("The kinetic energy is ",          .:kinetic_energy)
       if (.scfdata.is_DFT_calculation) &
       stdout.show("The Kohn-Sham DFT XC energy is ", .scfdata.DFT_energy_correction)
 
    end
 
-   kinetic_energy result (res)
-   ! Evaluates the SCF kinetic energy as a trace of ".density_matrix"
+   kinetic_energy result (res) ::: PURE
+   ! Evaluates the SCF kinetic energy as a trace of ".density_mx"
    ! with the ".kinetic matrix".
       self :: IN
       res :: REAL
 
    ENSURE(.scfdata.allocated,           "no scfdata")
-   ENSURE(.density_matrix.allocated,    "no density matrix")
-   ENSURE(.density_matrix.has_any_genre,"no density matrix")
+   ENSURE(.density_mx.allocated,    "no density matrix")
+   ENSURE(.density_mx.has_any_genre,"no density matrix")
 
-      scf_kind :: STR
-      H,H2 :: MAT{REAL}@
-      HH :: MAT{CPX}*
-
-      res = ZERO
-
-      scf_kind = .scfdata.SCF_kind
-
-      select case (scf_kind)
-
-      case ("rhf     ", &
-            "rks     ", &
-            "xray_rhf", &
-            "xray_rks", &
-            "noninteracting-group-rhf")
-
-         H.create(.n_bf,.n_bf)
-
-         .INTS:make_kinetic_energy_mx(H)
-
-         res = .density_matrix.restricted.trace_product_with(H)
-
-         H.destroy
-
-      case ("uhf         ", &
-            "uks         ", &
-            "xray_uhf    ", &
-            "xray_uks    ", &
-            "rohf        ", &
-            "pnd_uhf     ", &
-            "pnd_uks     ", &
-            "xray_pnd_uhf", &
-            "xray_pnd_uks")
-
-         H.create(.n_bf,.n_bf)
-
-         .INTS:make_kinetic_energy_mx(H)
-
-         res = .density_matrix.alpha.trace_product_with(H)
-         res = .density_matrix.beta.trace_product_with(H) + res
-
-         H.destroy
-
-      case ("ghf","no_ghf")
-
-         H2.create(2*.n_bf,2*.n_bf)
-         H.create(.n_bf,.n_bf)
-
-         .INTS:make_kinetic_energy_mx(H)
-
-         H2 = ZERO
-         H2.set_aa_block_to(H)
-         H2.set_bb_block_to(H)
-
-         res = .density_matrix.general.trace_product_with(H2)
-
-         H.destroy
-         H2.destroy
-
-      case ("gchf","xray_gchf")
-
-         HH.create(2*.n_bf,2*.n_bf)
-         H.create(.n_bf,.n_bf)
-
-         .INTS:make_kinetic_energy_mx(H)
-
-         HH = ZERO
-         HH.set_aa_block_to(H)
-         HH.set_bb_block_to(H)
-
-         res = RE(.density_matrix.general_complex.trace_product_with(HH))
-
-         H.destroy
-         HH.destroy
-
-    ! case default
-    !    DIE("unknown scf kind, "//trim(scf_kind))
-
-      end
-
-   end
-
-   nuclear_attraction_energy result (res)
-   ! Evaluates the SCF electron-nuclear attraction energy as a trace
-   ! of ".density_matrix"
-      self :: IN
-      res :: REAL
-
-   ENSURE(.scfdata.allocated,           "no scfdata")
-   ENSURE(.density_matrix.allocated,    "no density matrix")
-   ENSURE(.density_matrix.has_any_genre,"no density matrix")
-
-      scf_kind :: STR
-      H,H2 :: MAT{REAL}@
       HH :: MAT{CPX}@
+      H,H2 :: MAT{REAL}@
+      scf_kind :: STR
 
       res = ZERO
 
@@ -5993,11 +5621,8 @@ contains
             "noninteracting-group-rhf")
 
          H.create(.n_bf,.n_bf)
-
-         .INTS:make_nuclear_attraction_mx(H)
-
-         res = .density_matrix.restricted.trace_product_with(H)
-
+         .INTS:make_kinetic_energy_mx(H)
+         res = .density_mx.restricted.trace_product_with(H)
          H.destroy
 
       case ("uhf         ", &
@@ -6011,27 +5636,20 @@ contains
             "xray_pnd_uks")
 
          H.create(.n_bf,.n_bf)
-
-         .INTS:make_nuclear_attraction_mx(H)
-
-         res = .density_matrix.alpha.trace_product_with(H)
-         res = .density_matrix.beta.trace_product_with(H) + res
-
+         .INTS:make_kinetic_energy_mx(H)
+         res = .density_mx.alpha.trace_product_with(H)
+         res = .density_mx.beta.trace_product_with(H) + res
          H.destroy
 
       case ("ghf","no_ghf")
 
          H2.create(2*.n_bf,2*.n_bf)
          H.create(.n_bf,.n_bf)
-      
-         .INTS:make_nuclear_attraction_mx(H)
-
+         .INTS:make_kinetic_energy_mx(H)
          H2 = ZERO
          H2.set_aa_block_to(H)
          H2.set_bb_block_to(H)
-
-         res = .density_matrix.general.trace_product_with(H2)
-
+         res = .density_mx.general.trace_product_with(H2)
          H.destroy
          H2.destroy
 
@@ -6039,15 +5657,11 @@ contains
 
          HH.create(2*.n_bf,2*.n_bf)
          H.create(.n_bf,.n_bf)
-
-         .INTS:make_nuclear_attraction_mx(H)
-
+         .INTS:make_kinetic_energy_mx(H)
          HH = ZERO
          HH.set_aa_block_to(H)
          HH.set_bb_block_to(H)
-
-         res = RE(.density_matrix.general_complex.trace_product_with(HH))
-
+         res = RE(.density_mx.general_complex.trace_product_with(HH))
          H.destroy
          HH.destroy
 
@@ -6058,21 +5672,20 @@ contains
 
    end
 
-   charge_attraction_energy result (res)
-   ! Evaluates the point-charge attraction energy as a trace of
-   ! ".density_matrix" with the ".kinetic matrix".
+   nuclear_attraction_energy result (res) ::: PURE
+   ! Evaluates the SCF electron-nuclear attraction energy as a trace
+   ! of ".density_mx"
+      self :: IN
       res :: REAL
 
    ENSURE(.scfdata.allocated,           "no scfdata")
-   ENSURE(.density_matrix.allocated,    "no density matrix")
-   ENSURE(.density_matrix.has_any_genre,"no density matrix")
+   ENSURE(.density_mx.allocated,    "no density matrix")
+   ENSURE(.density_mx.has_any_genre,"no density matrix")
+   ENSURE(.nuclear_attraction_mx.allocated,"no nuclear_attraction_mx")
 
+      HH :: MAT{CPX}@
+      H,H2 :: MAT{REAL}@
       scf_kind :: STR
-      H,T,H2 :: MAT{REAL}*
-      HH :: MAT{CPX}*
-
-      ! Make sure .core_matrix is there
-      .:make_core_matrix
 
       res = ZERO
 
@@ -6080,113 +5693,181 @@ contains
 
       select case (scf_kind)
 
-        case ("rhf     ", &
-              "rks     ", &
-              "xray_rhf", &
-              "xray_rks", &
-              "noninteracting-group-rhf")
+      case ("rhf     ", &
+            "rks     ", &
+            "xray_rhf", &
+            "xray_rks", &
+            "noninteracting-group-rhf")
 
-           H.create(.n_bf,.n_bf)
-           T.create(.n_bf,.n_bf)
+         H.create(.n_bf,.n_bf)
+         .INTS:make_nuclear_attraction_mx(H)
+         res = .density_mx.restricted.trace_product_with(H)
+         H.destroy
 
-           .INTS:make_nuclear_attraction_mx(H)
-           .INTS:make_kinetic_energy_mx(T)
+      case ("uhf         ", &
+            "uks         ", &
+            "xray_uhf    ", &
+            "xray_uks    ", &
+            "rohf        ", &
+            "pnd_uhf     ", &
+            "pnd_uks     ", &
+            "xray_pnd_uhf", &
+            "xray_pnd_uks")
 
-           H   = .core_matrix.restricted - H - T
-           res = .density_matrix.restricted.trace_product_with(H)
+         H.create(.n_bf,.n_bf)
+         .INTS:make_nuclear_attraction_mx(H)
+         res = .density_mx.alpha.trace_product_with(H)
+         res =  .density_mx.beta.trace_product_with(H) + res
 
-           T.destroy
-           H.destroy
+         H.destroy
 
-        case ("uhf         ", &
-              "uks         ", &
-              "xray_uhf    ", &
-              "xray_uks    ", &
-              "rohf        ", &
-              "pnd_uhf     ", &
-              "pnd_uks     ", &
-              "xray_pnd_uhf", &
-              "xray_pnd_uks")
+      case ("ghf","no_ghf")
 
-           H.create(.n_bf,.n_bf)
-           T.create(.n_bf,.n_bf)
+         H2.create(2*.n_bf,2*.n_bf)
+         H.create(.n_bf,.n_bf)
+         .INTS:make_nuclear_attraction_mx(H)
+         H2 = ZERO
+         H2.set_aa_block_to(H)
+         H2.set_bb_block_to(H)
+         res = .density_mx.general.trace_product_with(H2)
+         H.destroy
+         H2.destroy
 
-           .INTS:make_nuclear_attraction_mx(H)
-           .INTS:make_kinetic_energy_mx(T)
+      case ("gchf","xray_gchf")
 
-           H   = .core_matrix.alpha - H - T
+         HH.create(2*.n_bf,2*.n_bf)
+         H.create(.n_bf,.n_bf)
+         .INTS:make_nuclear_attraction_mx(H)
+         HH = ZERO
+         HH.set_aa_block_to(H)
+         HH.set_bb_block_to(H)
+         res = RE(.density_mx.general_complex.trace_product_with(HH))
+         H.destroy
+         HH.destroy
 
-           res = .density_matrix.alpha.trace_product_with(H)
-           res = .density_matrix.beta.trace_product_with(H) + res
-
-           T.destroy
-           H.destroy
-
-        case ("ghf","no_ghf")
-
-           H2.create(2*.n_bf,2*.n_bf)
-           H.create(.n_bf,.n_bf)
-           T.create(.n_bf,.n_bf)
-
-           .INTS:make_nuclear_attraction_mx(H)
-           .INTS:make_kinetic_energy_mx(T)
-
-           H2 = ZERO
-           H  = H + T
-           H2.set_aa_block_to(H)
-           H2.set_bb_block_to(H)
-           H2 = .core_matrix.general - H2
-
-           res = .density_matrix.general.trace_product_with(H2)
-
-           T.destroy
-           H.destroy
-           H2.destroy
-
-        case ("gchf","xray_gchf")
-
-           HH.create(2*.n_bf,2*.n_bf)
-           H.create(.n_bf,.n_bf)
-           T.create(.n_bf,.n_bf)
-
-           .INTS:make_nuclear_attraction_mx(H)
-           .INTS:make_kinetic_energy_mx(T)
-
-           HH = ZERO
-           H  = H + T
-           HH.set_aa_block_to(H)
-           HH.set_bb_block_to(H)
-           HH = .core_matrix.general_complex - HH
-
-           res = RE(.density_matrix.general_complex.trace_product_with(HH))
-
-           T.destroy
-           H.destroy
-           HH.destroy
-
-        case default
-           DIE("unknown scf kind, "//trim(scf_kind))
+    ! case default
+    !    DIE("unknown scf kind, "//trim(scf_kind))
 
       end
 
    end
 
-   scf_energy result (res)
-   ! Evaluates the total SCF energy (including nuclear) as a trace of
-   ! ".density_matrix" with the ".fock matrix".
+   charge_attraction_energy result (res) ::: PURE
+   ! Evaluates the point-charge attraction energy as a trace of
+   ! ".density_mx" with the ".kinetic matrix".
       self :: IN
       res :: REAL
 
-   ENSURE(.density_matrix.allocated,    "no density matrix")
-   ENSURE(.density_matrix.has_any_genre,"no density matrix")
-   ENSURE(.fock_matrix.allocated,    "no fock matrix")
-   ENSURE(.fock_matrix.has_any_genre,"no fock matrix")
+   ENSURE(.scfdata.allocated,"no scfdata")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.density_mx.has_any_genre,"no density matrix")
+   ENSURE(.core_mx.allocated,"no core matrix")
 
-      res = .:scf_energy(.density_matrix,.fock_matrix)
+      HH :: MAT{CPX}@
+      H,T,H2 :: MAT{REAL}@
+      scf_kind :: STR
+
+      res = ZERO
+
+      scf_kind = .scfdata.SCF_kind
+
+      select case (scf_kind)
+
+      case ("rhf     ", &
+            "rks     ", &
+            "xray_rhf", &
+            "xray_rks", &
+            "noninteracting-group-rhf")
+
+         H.create(.n_bf,.n_bf)
+         T.create(.n_bf,.n_bf)
+
+         .INTS:make_nuclear_attraction_mx(H)
+         .INTS:make_kinetic_energy_mx(T)
+
+         H   = .core_mx.restricted - H - T
+         res = .density_mx.restricted.trace_product_with(H)
+
+         T.destroy
+         H.destroy
+
+      case ("uhf         ", &
+            "uks         ", &
+            "xray_uhf    ", &
+            "xray_uks    ", &
+            "rohf        ", &
+            "pnd_uhf     ", &
+            "pnd_uks     ", &
+            "xray_pnd_uhf", &
+            "xray_pnd_uks")
+
+         H.create(.n_bf,.n_bf)
+         T.create(.n_bf,.n_bf)
+         .INTS:make_kinetic_energy_mx(T)
+         .INTS:make_nuclear_attraction_mx(H)
+         H   = .core_mx.alpha - H - T
+         res = .density_mx.alpha.trace_product_with(H)
+         res =  .density_mx.beta.trace_product_with(H) + res
+         T.destroy
+         H.destroy
+
+      case ("ghf","no_ghf")
+
+         H2.create(2*.n_bf,2*.n_bf)
+         H.create(.n_bf,.n_bf)
+         T.create(.n_bf,.n_bf)
+         .INTS:make_kinetic_energy_mx(T)
+         .INTS:make_nuclear_attraction_mx(H)
+         H2 = ZERO
+         H  = H + T
+         H2.set_aa_block_to(H)
+         H2.set_bb_block_to(H)
+         H2 = .core_mx.general - H2
+         res = .density_mx.general.trace_product_with(H2)
+         T.destroy
+         H.destroy
+         H2.destroy
+
+      case ("gchf","xray_gchf")
+
+         HH.create(2*.n_bf,2*.n_bf)
+         H.create(.n_bf,.n_bf)
+         T.create(.n_bf,.n_bf)
+         .INTS:make_kinetic_energy_mx(T)
+         .INTS:make_nuclear_attraction_mx(H)
+         HH = ZERO
+         H  = H + T
+         HH.set_aa_block_to(H)
+         HH.set_bb_block_to(H)
+         HH = .core_mx.general_complex - HH
+         res = RE(.density_mx.general_complex.trace_product_with(HH))
+         T.destroy
+         H.destroy
+         HH.destroy
+
+    ! case default
+    !    DIE("unknown scf kind, "//trim(scf_kind))
+
+      end
 
    end
 
-   scf_energy(P,F) result (res)
+   SCF_energy result (res) ::: PURE
+   ! Evaluates the total SCF energy (including nuclear) as a trace of
+   ! ".density_mx" with the ".fock matrix".
+      self :: IN
+      res :: REAL
+
+   ENSURE(.density_mx.allocated,    "no density matrix")
+   ENSURE(.density_mx.has_any_genre,"no density matrix")
+   ENSURE(.fock_mx.allocated,    "no fock matrix")
+   ENSURE(.fock_mx.has_any_genre,"no fock matrix")
+
+      res = .:SCF_energy(.density_mx,.fock_mx)
+
+   end
+
+   SCF_energy(P,F) result (res) ::: PURE
    ! Evaluates the total SCF energy (including nuclear) as a trace of
    ! "P" with the fock matrix "F".
       self :: IN
@@ -6206,14 +5887,15 @@ contains
       ! Electronic + nuclear energy
       select case  (.scfdata.SCF_kind)
 
-        case ("noninteracting-group-rhf")
-           res = .:scf_electronic_energy(P,F)
-           do g = 1,.atom_group.dim
-              res = res + .atom(.atom_group(g).atom_index).nuclear_repulsion_energy
-           end
+      case ("noninteracting-group-rhf")
+         res = .:scf_electronic_energy(P,F)
+         do g = 1,.atom_group.dim
+            res = res + .atom(.atom_group(g).atom_index).nuclear_repulsion_energy
+         end
 
-        case default
-           res = .:scf_electronic_energy(P,F) + .BASE:nuclear_repulsion_energy
+      case default
+         res = .:scf_electronic_energy(P,F) &
+             + .BASE:nuclear_repulsion_energy
 
       end
 
@@ -6227,41 +5909,36 @@ contains
       ! Only dipole contributions are done
       ! The charge-charge terms are missing
       if (.scfdata.using_SC_Lorentz_fields) then
-
          I0.create(.n_atom)
          I1.create(3,.n_atom)
-
          .:make_Lorentz_interactions(I0,I1)
-
          do a = 1,.n_atom
             res = res - .atom(a).charge*I0(a)
             res = res - I1(:,a).dot(.atom(a).dipole)
          end
-
          I1.destroy
          I0.destroy
-
       end
 
    end
 
-   scf_electronic_energy(P,core) result (res)
+   SCF_electronic_energy(P,core) result (res) ::: PURE
    ! Evaluates the SCF electronic energy as a trace of density "P"
-   ! with ".fock_matrix". If "core" is present and FALSE, the core
+   ! with ".fock_mx". If "core" is present and FALSE, the core
    ! contribution is not added.
       self :: IN
-      P :: OPMATRIX, IN
+      P    :: OPMATRIX, IN
       core :: BIN, optional, IN 
       res :: REAL
 
-   ENSURE(.fock_matrix.allocated,    "no fock matrix")
-   ENSURE(.fock_matrix.has_any_genre,"no fock matrix")
+   ENSURE(.fock_mx.allocated,    "no fock matrix")
+   ENSURE(.fock_mx.has_any_genre,"no fock matrix")
 
-      res = .:scf_electronic_energy(P,.fock_matrix,core)
+      res = .:SCF_electronic_energy(P,.fock_mx,core)
 
    end
 
-   scf_electronic_energy(P,F,core) result (res)
+   SCF_electronic_energy(P,F,core) result (res) ::: PURE
    ! Evaluates the SCF electronic energy as a trace of density "P"
    ! with fock matrix "F". If "core" is present and FALSE, the core
    ! contribution is not added.  NOTE: this includes the DFT
@@ -6269,12 +5946,13 @@ contains
    ! contributions were calculated at the time of the formation of "F"
    ! from "P", and that they were stored in .scfdata.
       self :: IN
-      P,F :: OPMATRIX, IN
+      P, F :: OPMATRIX, IN
       core :: BIN, optional, IN
-      res :: REAL
+      res  :: REAL
 
    ENSURE(.scfdata.allocated,"no scfdata")
-   ENSURE(.core_matrix.is_allocated_with_genre(.scfdata.spinorbital_kind),"core_matrix missing")
+   ENSURE(.core_mx.allocated,"core_mx missing")
+   ENSURE(.core_mx.has_genre(.scfdata.spinorbital_kind),"core_mx missing")
 
       add_core :: BIN
       W :: OPMATRIX@
@@ -6284,7 +5962,7 @@ contains
 
       ! W = F + h
       W = F
-      if (add_core) W.plus(.core_matrix,.scfdata.spinorbital_kind)
+      if (add_core) W.plus(.core_mx,.scfdata.spinorbital_kind)
 
       res = ZERO
 
@@ -6313,8 +5991,8 @@ contains
       case ("gchf","xray_gchf")
          res = HALF * RE(P.general_complex.trace_product_with(W.general_complex))
 
-      case default
-         DIE("unknown scf kind, "//trim(.scfdata.SCF_kind))
+    ! case default
+    !    DIE("unknown scf kind, "//trim(.scfdata.SCF_kind))
 
       end
 
@@ -6323,31 +6001,29 @@ contains
 
    end
 
-   scf_electronic_energies result (res) ::: leaky, PURE
+   SCF_electronic_energies result (res) ::: PURE
    ! Evaluates the SCF electronic energies as a trace of density "P" with
    ! fock matrix "F". In the case of UHF the energies are the E^alpha and E^beta
    ! energies. NOTE: this includes the DFT energy contributions.
       self :: IN
       res :: VEC{REAL}@
-      res = .:scf_electronic_energies(.density_matrix,.fock_matrix)
+      res = .:SCF_electronic_energies(.density_mx,.fock_mx)
    end
 
-   scf_electronic_energies(P,F) result (res) ::: leaky, PURE
+   SCF_electronic_energies(P,F) result (res) ::: PURE
    ! Evaluates the SCF electronic energies as a trace of density "P" with
    ! fock matrix "F". In the case of UHF the energies are the E^alpha and E^beta
    ! energies. NOTE: this includes the DFT electronic energies, and it assumes
    ! that these energy contributions were calculated at the time of the
    ! formation of "F" from "P", and that they were stored in .scfdata.
       self :: IN
-      P,F :: OPMATRIX, IN
-      res :: VEC{REAL}@
+      P,F  :: OPMATRIX, IN
+      res  :: VEC{REAL}@
 
    ENSURE(.scfdata.allocated,"no scfdata")
-   ENSURE(.core_matrix.allocated,"no core_matrix")
+   ENSURE(.core_mx.allocated,"no core_mx")
 
       W :: OPMATRIX@
-
-    ! .:make_core_matrix
 
       W = F
 
@@ -6355,35 +6031,35 @@ contains
 
       case ("rhf","xray_rhf","noninteracting-group-rhf")
          res.create(1)
-         W.plus(.core_matrix)
+         W.plus(.core_mx)
          res(1) = HALF * P.restricted.trace_product_with(W.restricted)
 
       case ("rks","xray_rks")
          res.create(1)
-         W.plus(.core_matrix)
+         W.plus(.core_mx)
          res(1) = HALF * P.restricted.trace_product_with(W.restricted) &
                 + .scfdata.DFT_energy_correction
 
       case ("uhf","xray_uhf","rohf","pnd_uhf","xray_pnd_uhf")
          res.create(2)
-         W.plus(.core_matrix)
+         W.plus(.core_mx)
          res(1) = HALF * P.alpha.trace_product_with(W.alpha)
          res(2) = HALF *  P.beta.trace_product_with(W.beta)
 
       case ("uks","xray_uks","pnd_uks","xray_pnd_uks")
          res.create(2)
-         W.plus(.core_matrix)
+         W.plus(.core_mx)
          res(1) = HALF * P.alpha.trace_product_with(W.alpha) + .scfdata.DFT_alpha_energy_correction
          res(2) = HALF *  P.beta.trace_product_with(W.beta)   + .scfdata.DFT_beta_energy_correction
 
       case ("ghf","no_ghf")
          res.create(1)
-         W.plus(.core_matrix)
+         W.plus(.core_mx)
          res(1) = HALF * P.general.trace_product_with(W.general)
 
       case ("gchf","xray_gchf")
          res.create(1)
-         W.plus(.core_matrix)
+         W.plus(.core_mx)
          res(1) = HALF * RE(P.general_complex.trace_product_with(W.general_complex))
 
     ! case default
@@ -6401,7 +6077,7 @@ contains
 !  ==============================
 
    get_initial_guess ::: leaky
-   ! Get the initial guess for the ".density_matrix" and the
+   ! Get the initial guess for the ".density_mx" and the
    ! ".molecular_orbitals". If .scfdata.initial_MOs is set, it
    ! overides .initial_density.
       self :: INOUT
@@ -6466,7 +6142,7 @@ contains
     ! end
 
       ! Make the density matrix
-      .BASE:make_SCF_density_matrix
+      .BASE:make_SCF_density_mx
 
    end
 
@@ -6474,20 +6150,20 @@ contains
    ! Get the initial guess for the .molecular_orbitals by getting the highest
    ! occupied restricted natural orbitals from the sum of atomic densities guess
    ! for the density matrix. Convert these .molecular_orbitals, if neccesary.
-   ! Also make the SCF .density_matrix from these .molecular_orbitals.
+   ! Also make the SCF .density_mx from these .molecular_orbitals.
       self :: INOUT
 
       orb_kind :: STR
       arch :: ARCHIVE
 
       ! Make promolecule density
-      .:make_promolecule_density
+      .:make_promolecule_density_mx
 
       ! What is this?
-      if (.density_matrix.spinorbital_kind/="restricted") then
-         arch.set(.name,"promolecule_density_matrix", genre="restricted")
-         .density_matrix.destroy("restricted")
-         arch.read(.density_matrix)
+      if (.density_mx.spinorbital_kind/="restricted") then
+         arch.set(.name,"promolecule_density_mx", genre="restricted")
+         .density_mx.destroy("restricted")
+         arch.read(.density_mx)
       end
 
       .BASE:make_natural_orbitals
@@ -6503,13 +6179,13 @@ contains
       .orbital_energies.create(genre=.scfdata.orbital_energies_kind)
 
       ! Make density matrix
-      .BASE:make_SCF_density_matrix
+      .BASE:make_SCF_density_mx
 
 
    end
 
    make_initial_density ::: leaky
-   ! Get the initial guess for the ".density_matrix"
+   ! Get the initial guess for the ".density_mx"
       self :: INOUT
 
    ENSURE(.scfdata.allocated,"no scfdata")
@@ -6517,11 +6193,11 @@ contains
       .scfdata.set_is_guess(TRUE)
 
       select case (.scfdata.initial_density)
-      case("core                "); .:make_core_guess
-      case("fock                "); .:make_Fock_guess
-      case("group               "); .:make_group_guess
-      case("promolecule         "); .:make_promolecule_guess
-      ! Different types of saved .density_matrix
+      case("core                "); .:make_core_mx_guess_MOs
+      case("fock                "); .:make_Fock_mx_guess_MOs
+      case("group               "); .:make_atom_group_guess_MOs
+      case("promolecule         "); .:make_promol_guess_MOs
+      ! Different types of saved .density_mx
       case("restricted          "); .:read_density_guess
       case("unrestricted        "); .:read_density_guess
       case("general             "); .:read_density_guess
@@ -6538,35 +6214,35 @@ contains
    end
 
    read_density_guess ::: leaky
-   ! Read an old .density_matrix of type "initial_guess" and use it to
+   ! Read an old .density_mx of type "initial_guess" and use it to
    ! make initial .molecular_orbitals to start an scf calculation.
-   ! Convert the .density_matrix, if neccesary.
+   ! Convert the .density_mx, if neccesary.
       self :: INOUT
 
       arch :: ARCHIVE
 
       ! Destroy & create
-      .density_matrix.destroy
-      .density_matrix.create(.n_bf,.scfdata.initial_density)
+      .density_mx.destroy
+      .density_mx.create(.n_bf,.scfdata.initial_density)
 
       ! Read
-      arch.set(.name,"density_matrix")
-      arch.read(.density_matrix,genre=.scfdata.initial_density)
+      arch.set(.name,"density_mx")
+      arch.read(.density_mx,genre=.scfdata.initial_density)
 
       ! Convert
-      .density_matrix.convert_to(newkind = .scfdata.spinorbital_kind)
+      .density_mx.convert_to(newkind = .scfdata.spinorbital_kind)
 
       ! Make a fock matrix
-      .:make_Fock_matrix
+      .:make_Fock_mx
 
       ! Get a reasonable set of starting MO's
-      .:make_Fock_guess
+      .:make_Fock_mx_guess_MOs
 
    end
 
-   make_core_guess ::: leaky
-   ! Do a core scf for the ".density_matrix", ".molecular_orbitals" and
-   ! ".orbital_energies". Also makes the restricted ".core_matrix".
+   make_core_mx_guess_MOs ::: leaky
+   ! Do a core scf for the ".density_mx", ".molecular_orbitals" and
+   ! ".orbital_energies". Also makes the restricted ".core_mx".
       self :: INOUT
 
    ENSURE(.scfdata.allocated,"no scfdata")
@@ -6581,11 +6257,11 @@ contains
       .molecular_orbitals.create(.n_bf,"restricted")
 
       ! Get restricted core and overlap matrices (leaky)
-      .:make_r_core_matrix
-      .INTS:make_overlap_matrix
+      .:make_r_core_mx
+      .INTS:make_overlap_mx
 
       ! Get the guess orbitals
-      .:diagonalize_r_matrix(.core_matrix.restricted, &
+      .:diagonalize_r_mx(.core_mx.restricted, &
                            .orbital_energies.restricted, &
                            .molecular_orbitals.restricted)
 
@@ -6596,17 +6272,17 @@ contains
       .molecular_orbitals.convert_to(orb_kind,.n_a,.n_b,.scfdata.quantization_axis)
 
       ! Make the densityy matrix
-      .BASE:make_SCF_density_matrix
+      .BASE:make_SCF_density_mx
 
       ! Get a reasonable set of starting MO's
-      .:make_Fock_matrix
-      .:make_Fock_guess
+      .:make_Fock_mx
+      .:make_Fock_mx_guess_MOs
 
    end
 
    make_g_core_guess ::: leaky
-   ! Do a core scf for the ".density_matrix", ".molecular_orbitals" and
-   ! ".orbital_energies". Also makes the restricted ".core_matrix".
+   ! Do a core scf for the ".density_mx", ".molecular_orbitals" and
+   ! ".orbital_energies". Also makes the restricted ".core_mx".
       self :: INOUT
 
    ENSURE(.scfdata.allocated,"no scfdata")
@@ -6621,11 +6297,11 @@ contains
       .molecular_orbitals.create(.n_bf,"general")
 
       ! Get restricted core and overlap matrices (leaky)
-      .:make_g_core_matrix
-      .INTS:make_overlap_matrix
+      .:make_g_core_mx
+      .INTS:make_overlap_mx
 
       ! Get the guess orbitals
-      .:diagonalize_g_matrix(.core_matrix.general, &
+      .:diagonalize_g_mx(.core_mx.general, &
                            .orbital_energies.general, &
                            .molecular_orbitals.general)
 
@@ -6636,15 +6312,15 @@ contains
       .molecular_orbitals.convert_to(orb_kind,.n_a,.n_b,.scfdata.quantization_axis)
 
       ! Make the densityy matrix
-      .BASE:make_SCF_density_matrix
+      .BASE:make_SCF_density_mx
 
       ! Get a reasonable set of starting MO's
-      .:make_Fock_matrix
-      .:make_Fock_guess
+      .:make_Fock_mx
+      .:make_Fock_mx_guess_MOs
 
    end
 
-   make_promolecule_guess ::: leaky
+   make_promol_guess_MOs ::: leaky
    ! Make a ".density matrix" and fock matrix from the sum of atomic
    ! densities.  Then get initial orbitals from this fock matrix, and
    ! make the density corresponding to these initial orbitals.
@@ -6654,14 +6330,14 @@ contains
 
       ! Get initial MO's
       if (.scfdata.SCF_kind=="rohf") then; .:make_promolecule_guess_rohf
-      else;                                .:make_promolecule_density
+      else;                                .:make_promolecule_density_mx
       end
 
       ! Get a starting fock matrix from this density
-      .:make_Fock_matrix
+      .:make_Fock_mx
 
       ! Make the MO's 
-      .:make_Fock_guess
+      .:make_Fock_mx_guess_MOs
 
    end
 
@@ -6691,11 +6367,11 @@ contains
     ! .BASE:set_atom_info
 
       ! Make promolecule density
-      .:make_promolecule_density
+      .:make_promolecule_density_mx
 
       ! Get a starting MO's from this density
-      .:make_Fock_matrix
-      .:make_Fock_guess
+      .:make_Fock_mx
+      .:make_Fock_mx_guess_MOs
 
       ! Change back to original state
       .charge            = charge
@@ -6706,11 +6382,11 @@ contains
     ! .BASE:set_atom_info
 
       ! Make (uhf) density matrix from (rhf) MO's
-      .BASE:make_SCF_density_matrix
+      .BASE:make_SCF_density_mx
 
    end
 
-   make_promolecule_density ::: leaky
+   make_promolecule_density_mx ::: leaky
    ! Make the ANO densities and add them together.
       self :: INOUT
 
@@ -6721,10 +6397,10 @@ contains
       .:add_ANO_densities
 
       ! Convert
-      .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
+      .density_mx.convert_to(.scfdata.spinorbital_kind,factor=HALF)
 
       ! Save this
-      .BASE:archive(.density_matrix,"density_matrix")
+      .BASE:archive(.density_mx,"density_mx")
 
    end
 
@@ -6738,11 +6414,11 @@ contains
       a,b,f,l :: INT
 
       ! Recreate the density
-      .density_matrix.destroy
-      .density_matrix.create(.n_bf,"restricted")
+      .density_mx.destroy
+      .density_mx.create(.n_bf,"restricted")
 
       ! Set to zero
-      .density_matrix.restricted = ZERO
+      .density_mx.restricted = ZERO
 
       ! Add 'em up
       do a = 1,.n_atom
@@ -6754,14 +6430,14 @@ contains
 
             f = .first_basis_fn_for_atom(b)
             l =  .last_basis_fn_for_atom(b)
-            .density_matrix.restricted(f:l,f:l) = .atom(a).density_matrix.restricted
+            .density_mx.restricted(f:l,f:l) = .atom(a).density_mx.restricted
 
          end
 
       end
 
       ! Symmetrize
-      .density_matrix.restricted.symmetric_reflect
+      .density_mx.restricted.symmetric_reflect
 
    end
 
@@ -6776,11 +6452,11 @@ contains
 
       stdout.show("bf", .n_bf)
       ! Recreate the density
-      .density_matrix.destroy
-      .density_matrix.create(.n_bf,"general")
+      .density_mx.destroy
+      .density_mx.create(.n_bf,"general")
 
       ! Set to zero
-      .density_matrix.general = ZERO
+      .density_mx.general = ZERO
 
       ! Add 'em up
       do a = 1,.n_atom
@@ -6798,32 +6474,32 @@ contains
             l =  .last_basis_fn_for_atom(b)
 
             ! alpha-alpha part
-            .density_matrix.general(f:l,f:l) = &
-               .atom(a).density_matrix.general(1:l-f+1,1:l-f+1)
+            .density_mx.general(f:l,f:l) = &
+               .atom(a).density_mx.general(1:l-f+1,1:l-f+1)
 
             ! beta-beta Part
-            .density_matrix.general(f+.n_bf:l+.n_bf,f+.n_bf:l+.n_bf) = &
-               .atom(a).density_matrix.general(l-f+2:2*l-2*f+2,l-f+2:2*l-2*f+2)
+            .density_mx.general(f+.n_bf:l+.n_bf,f+.n_bf:l+.n_bf) = &
+               .atom(a).density_mx.general(l-f+2:2*l-2*f+2,l-f+2:2*l-2*f+2)
 
          end
 
       end
 
       ! Check for asymmetry
-      if (NOT .density_matrix.general.is_symmetric) then
-        asym = maxval(abs(.density_matrix.general-transpose(.density_matrix.general)))
+      if (NOT .density_mx.general.is_symmetric) then
+        asym = maxval(abs(.density_mx.general-transpose(.density_mx.general)))
         WARN("promolecule density is not symmetric")
         WARN("Maximum asymmetry = "//trim(asym.to_str("e10.3")))
       end
 
       ! Symmetrize
-      .density_matrix.general.symmetric_reflect
-      .density_matrix.general = .density_matrix.general
+      .density_mx.general.symmetric_reflect
+      .density_mx.general = .density_mx.general
 
    end
 
-   make_group_guess ::: leaky
-   ! Make a .density matrix and .fock_matrix from the sum of noninteracting
+   make_atom_group_guess_MOs ::: leaky
+   ! Make a .density matrix and .fock_mx from the sum of noninteracting
    ! atom_group densities. Then get initial orbitals from this fock matrix,
    ! and make the density corresponding to these initial orbitals.
       self :: INOUT
@@ -6831,16 +6507,16 @@ contains
    ENSURE(.scfdata.SCF_kind/="rohf","atom guess not available for ROHF")
 
       ! Sum of group densities
-      .:group_scf
+      .:atom_group_SCF
 
       ! Get a reasonable set of starting MO's
-      .:make_Fock_matrix
-      .:make_Fock_guess
+      .:make_Fock_mx
+      .:make_Fock_mx_guess_MOs
 
    end
 
    make_group_energies(g,E_SCF,E_T,E_Z,E_C,E_K,fac)
-   ! Assuming group densities exist (see .do_group_SCF), then
+   ! Assuming group densities exist (see .do_atom_group_SCF), then
    ! for group number "g" make the group SCF energy "E_SCF", the group
    ! kinetic energy "E_T", the group nuclear attraction energy "E_Z",
    ! the group coulomb energy "E_C", and the group exchange energy
@@ -6883,11 +6559,11 @@ contains
          ! Coulomb/exchange matrices
          C.create(mol.n_bf,mol.n_bf)
          K.create(mol.n_bf,mol.n_bf)
-         mol.FOCK:make_r_JK_nosym(C,K,.atom_group(g).mol.density_matrix.restricted)
+         mol.FOCK:make_r_JK_nosym(C,K,.atom_group(g).mol.density_mx.restricted)
 
          ! Coulomb & exchange energies
-         E_C = HALF*C.trace_product_with(.atom_group(g).mol.density_matrix.restricted)
-         E_K = -QUARTER*K.trace_product_with(.atom_group(g).mol.density_matrix.restricted)
+         E_C = HALF*C.trace_product_with(.atom_group(g).mol.density_mx.restricted)
+         E_K = -QUARTER*K.trace_product_with(.atom_group(g).mol.density_mx.restricted)
          K.destroy
          C.destroy
 
@@ -6906,14 +6582,15 @@ contains
 
    end
 
-   make_Fock_guess ::: leaky
-   ! From an initial .fock_matrix make the .molecular_orbitals, and
-   ! .orbital_energies.  Then make the .density_matrix from these
-   ! orbitals.  Destroy .fock_matrix afterwards
+   make_Fock_mx_guess_MOs ::: leaky
+   ! From an initial .fock_mx make the .molecular_orbitals, and
+   ! .orbital_energies.  Then make the .density_mx from these
+   ! orbitals.  Destroy .fock_mx afterwards
       self :: INOUT
 
    ENSURE(.scfdata.allocated,"no scfdata")
-   ENSURE(.fock_matrix.is_allocated_with_genre(.scfdata.spinorbital_kind),"need an initial fock matrix")
+   ENSURE(.fock_mx.allocated,"need an initial fock matrix")
+   ENSURE(.fock_mx.has_genre(.scfdata.spinorbital_kind),"need right kind of initial fock matrix")
 
       mo_kind :: STR
 
@@ -6922,7 +6599,7 @@ contains
       .orbital_energies.destroy
 
       ! Get core and overlap
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! MO/Fock matrix kind
       mo_kind = .scfdata.molecular_orbital_kind
@@ -6936,7 +6613,7 @@ contains
          .molecular_orbitals.create(.n_bf,"restricted")
 
          ! Restricted MO's
-         .:make_r_guess_from(.fock_matrix.restricted &
+         .:make_r_guess_from(.fock_mx.restricted &
                             ,.orbital_energies.restricted &
                             ,.molecular_orbitals.restricted)
 
@@ -6946,12 +6623,12 @@ contains
          .molecular_orbitals.create(.n_bf,"unrestricted")
 
          ! Alpha MO's
-         .:make_r_guess_from(.fock_matrix.alpha &
+         .:make_r_guess_from(.fock_mx.alpha &
                             ,.orbital_energies.alpha &
                             ,.molecular_orbitals.alpha)
 
          ! Beta MO's
-         .:make_r_guess_from(.fock_matrix.beta &
+         .:make_r_guess_from(.fock_mx.beta &
                             ,.orbital_energies.beta &
                             ,.molecular_orbitals.beta)
 
@@ -6963,7 +6640,7 @@ contains
          ! General complex MO's
          .:make_g_Fock_guess(.orbital_energies.general &
                             ,.molecular_orbitals.general &
-                            ,.fock_matrix.general)
+                            ,.fock_mx.general)
 
       case ("general_complex")
 
@@ -6973,7 +6650,7 @@ contains
          ! General complex MO's
          .:make_gc_Fock_guess(.orbital_energies.general &
                              ,.molecular_orbitals.general_complex &
-                             ,.fock_matrix.general_complex)
+                             ,.fock_mx.general_complex)
 
          ! Reorder
          !.:MO_gc_reorder(e,MOc)
@@ -6985,23 +6662,23 @@ contains
       end
 
       ! Delete Fock matrix used to make MO's
-    ! .fock_matrix.destroy(mo_kind)
+    ! .fock_mx.destroy(mo_kind)
 
       ! Make the (spinorbital_kind) density matrix
-      .BASE:make_SCF_density_matrix
+      .BASE:make_SCF_density_mx
 
    end
 
-   make_g_Fock_guess(MO_energies,MO,fock_matrix)
+   make_g_Fock_guess(MO_energies,MO,fock_mx)
    ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
-   ! a given complex general "fock_matrix".
+   ! a given complex general "fock_mx".
       self :: INOUT
-      fock_matrix :: MAT{REAL}, IN
+      fock_mx :: MAT{REAL}, IN
       MO_energies :: VEC{REAL}, OUT
       MO :: MAT{REAL}, OUT
 
-   ENSURE(fock_matrix.is_symmetric, "fock_matrix not symmetric!  WTF?!")
-   ENSURE(.overlap_matrix.allocated,"no overlap matrix")
+   ENSURE(fock_mx.is_symmetric, "fock_mx not symmetric!  WTF?!")
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
       R,S :: MAT{REAL}*
       H :: MAT{REAL}*
@@ -7020,7 +6697,7 @@ contains
 
       ! H = Fock matrix
       H.create(2*.n_bf,2*.n_bf)
-      H = fock_matrix
+      H = fock_mx
 
       ! H = S^-1/2 F S^-1/2
       H.change_basis_using(R)
@@ -7038,16 +6715,16 @@ contains
 
    end
 
-   make_gc_Fock_guess(MO_energies,MO,fock_matrix)
+   make_gc_Fock_guess(MO_energies,MO,fock_mx)
    ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
-   ! a given complex general "fock_matrix".
+   ! a given complex general "fock_mx".
       self :: INOUT
       MO_energies :: VEC{REAL}, OUT
       MO :: MAT{CPX}, OUT
-      fock_matrix :: MAT{CPX}, IN
+      fock_mx :: MAT{CPX}, IN
 
-   DIE_IF(NOT fock_matrix.is_hermitian,"fock_matrix not hermitian!  WTF?!")
-   ENSURE(.overlap_matrix.allocated,"no overlap matrix")
+   DIE_IF(NOT fock_mx.is_hermitian,"fock_mx not hermitian!  WTF?!")
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
       S,R :: MAT{REAL}*
       H :: MAT{CPX}*
@@ -7066,7 +6743,7 @@ contains
 
       ! H = Fock matrix
       H.create(2*.n_bf,2*.n_bf)
-      H = fock_matrix
+      H = fock_mx
 
       ! H = S^-1/2 F S^-1/2
       H.change_basis_using(R)
@@ -7083,14 +6760,14 @@ contains
 
    end
 
-   make_r_guess_from(fock_matrix,MO_energies,MO) ::: private
-   ! Make initial "MO's" and "MO_energies" from a given "fock_matrix"
+   make_r_guess_from(fock_mx,MO_energies,MO) ::: private
+   ! Make initial "MO's" and "MO_energies" from a given "fock_mx"
    ! ... for cartesian basis functions
-      fock_matrix :: MAT{REAL}, IN
+      fock_mx :: MAT{REAL}, IN
       MO :: MAT{REAL}, OUT
       MO_energies :: VEC{REAL}, OUT
 
-   DIE_IF(NOT fock_matrix.is_symmetric,"fock_matrix not symmetric!  WTF?!")
+   DIE_IF(NOT fock_mx.is_symmetric,"fock_mx not symmetric!  WTF?!")
 
       F,R :: MAT{REAL}* DEFAULT_NULL
 
@@ -7101,7 +6778,7 @@ contains
       .INTS:make_r_overlap_inverse_sqrt(R)
 
       !  H~ = S^-1/2 H S^-1/2
-      fock_matrix.change_basis_to(F,R)
+      fock_mx.change_basis_to(F,R)
 
       ! Remove linear dependence
       if (.scfdata.allocated) .BASE:shift_dependence_from_r(F)
@@ -7120,7 +6797,7 @@ contains
    end
 
 
-   diagonalize_r_matrix(H,eigenvalues,eigenvectors) ::: private
+   diagonalize_r_mx(H,eigenvalues,eigenvectors) ::: private
    ! Diagonalize a restricted one-electron AO operator matrix "H",
    ! return the "eigenvalues" and "eigenvector" coefficients.
       self :: INOUT
@@ -7157,7 +6834,7 @@ contains
 
    end
 
-   diagonalize_gen_matrix(H,eigenvalues,eigenvectors) ::: template
+   diagonalize_gen_mx(H,eigenvalues,eigenvectors) ::: template
    ! Diagonalize a general (complex) one-electron AO operator matrix
    ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
    ! the basis.
@@ -7166,7 +6843,7 @@ contains
       eigenvalues :: VEC{REAL}, OUT
       eigenvectors :: TYPE?, OUT
 
- ! DIE_IF(NOT H.is_hermitian,"fock_matrix not hermitian!  WTF?!")
+ ! DIE_IF(NOT H.is_hermitian,"fock_mx not hermitian!  WTF?!")
 
       S,R :: MAT{REAL}*
       F :: TYPE?*
@@ -7202,13 +6879,13 @@ contains
 
    end
 
-   diagonalize_g_matrix(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_matrix, TYPE?=>MAT{REAL})
+   diagonalize_g_mx(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_mx, TYPE?=>MAT{REAL})
    ! Diagonalize a general (complex) one-electron AO operator matrix
    ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
    ! the basis.
    end
 
-   diagonalize_gc_matrix(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_matrix, TYPE?=>MAT{CPX})
+   diagonalize_gc_mx(H,eigenvalues,eigenvectors) ::: get_from(diagonalize_gen_mx, TYPE?=>MAT{CPX})
    ! Diagonalize a general (complex) one-electron AO operator matrix
    ! "H", return the "eigenvalues" and "eigenvector" coefficients wrt
    ! the basis.
@@ -7218,28 +6895,28 @@ contains
 !  Group density
 !  =============
 
-   make_group_density_matrix ::: leaky
-   ! Make the promolecule density matrix from *symmetrically orthonormalised*
-   ! group (monomer) molecular orbitals. Do not confuse this with the progroup
-   ! density matrix, made with .make_progroup_density_matrix. The symmetrically
-   ! orthonormalised molecular orbitals are made and are ordered by group.  This
-   ! will destroy any existing restricted density matrix and MOs.
+   make_atom_group_density_mx ::: leaky
+   ! Make the promolecule density matrix from *symmetrically
+   ! orthonormalised* group (monomer) molecular orbitals. Do not
+   ! confuse this with the progroup density matrix, made with
+   ! .make_progroup_density_mx. The symmetrically orthonormalised
+   ! molecular orbitals are made and are ordered by group.  This will
+   ! destroy any existing restricted density matrix and MOs.
       self :: INOUT
 
    ENSURE(.molecular_orbitals.allocated,"no MO's")
 
-      .:do_group_SCF(MOs=TRUE) ! leaky
-
+      .:do_atom_group_SCF(MOs=TRUE)     ! leaky
       .:symorthonormalize_occupied_MOs  ! leaky
 
       ! Assign the NO's (occupations must exist!)
       .natural_orbitals = .molecular_orbitals
 
       ! Make density from NO's
-      .BASE:make_density_matrix_from_NOs
+      .BASE:make_density_mx_from_NOs
 
       ! Clean
-      deallocate(.natural_orbitals)
+      .natural_orbitals.destroy
 
    end
 
@@ -7280,12 +6957,12 @@ contains
       vir = pack([(i,i=1,.n_bf)],.occupation_numbers.restricted<=0.1)
 
       ! Make sure overlap exists
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! Symmetric orthonormalise the occupied MO's
       MO.create(.n_bf,no)
       MO = .molecular_orbitals.restricted(:,occ)
-      MO.symmetrically_orthonormalise(.overlap_matrix)
+      MO.symmetrically_orthonormalise(.overlap_mx)
       .molecular_orbitals.restricted(:,occ) = MO
       MO.destroy
 
@@ -7294,7 +6971,7 @@ contains
       all.append(occ,vir)
       MO.create(.n_bf,.n_bf)
       MO = .molecular_orbitals.restricted(:,all)
-      MO.schmidt_orthonormalise(.overlap_matrix)
+      MO.schmidt_orthonormalise(.overlap_mx)
       .molecular_orbitals.restricted(:,all) = MO
 
       ! Clean up
@@ -7307,7 +6984,7 @@ contains
 
 !  Newer, restricted only
 
-   merge_group_density_matrices ::: leaky
+   merge_atom_group_DMs ::: leaky
    ! Merge the group DMs into the supermolecule MOs.
    ! All occupied first, then all virtuals, as columns.
       self :: INOUT
@@ -7318,69 +6995,68 @@ contains
       mess, genre :: STR
       g,nb,fb,lb :: INT
 
-      if(.scfdata.is_restricted) then
-         genre = "restricted"
-      else
-         genre = "unrestricted"
+      if(.scfdata.is_restricted) then; genre = "restricted"
+      else;                            genre = "unrestricted"
       end
 
-      .density_matrix.destroy
-      .density_matrix.create(.n_bf, genre)
+      .density_mx.destroy
+      .density_mx.create(.n_bf, genre)
 
       if(genre == "unrestricted") then
-         .density_matrix.alpha = ZERO
+         .density_mx.alpha = ZERO
          lb = 0
          ! Loop over atom group "g" and set MOs
          do g = 1,.atom_group.dim
             mol => .atom_group(g).mol
             mess = "group "//trim(g.to_str)
             DIE_IF(mol.disassociated,trim(mess)//" mol undefined!")
-            DIE_IF(mol.density_matrix.deallocated,trim(mess)//" density matrix undefined!")
-
-            if (mol.BASE:no_of_electrons<1) cycle
-            ! Sizes
-            nb = mol.n_bf
-            ! MO/GO counters
-            fb = lb + 1
-            lb = lb + nb
-            ! Copy the block
-            .density_matrix.alpha(fb:lb,fb:lb) = mol.density_matrix.alpha
+            DIE_IF(mol.density_mx.deallocated,trim(mess)//" density matrix undefined!")
+            if (mol.BASE:no_of_electrons>=1) then
+               ! Sizes
+               nb = mol.n_bf
+               ! MO/GO counters
+               fb = lb + 1
+               lb = lb + nb
+               ! Copy the block
+               .density_mx.alpha(fb:lb,fb:lb) = mol.density_mx.alpha
+            end
          end
-         .density_matrix.beta = ZERO
+         .density_mx.beta = ZERO
          lb = 0
          ! Loop over atom group "g" and set MOs
          do g = 1,.atom_group.dim
             mol => .atom_group(g).mol
             mess = "group "//trim(g.to_str)
             DIE_IF(mol.disassociated,trim(mess)//" mol undefined!")
-            DIE_IF(mol.density_matrix.deallocated,trim(mess)//" density matrix undefined!")
-
-            if (mol.BASE:no_of_electrons<1) cycle
-            ! Sizes
-            nb = mol.n_bf
-            ! MO/GO counters
-            fb = lb + 1
-            lb = lb + nb
-            ! Copy the block
-            .density_matrix.beta(fb:lb,fb:lb) = mol.density_matrix.beta
+            DIE_IF(mol.density_mx.deallocated,trim(mess)//" density matrix undefined!")
+            if (mol.BASE:no_of_electrons>=1) then
+               ! Sizes
+               nb = mol.n_bf
+               ! MO/GO counters
+               fb = lb + 1
+               lb = lb + nb
+               ! Copy the block
+               .density_mx.beta(fb:lb,fb:lb) = mol.density_mx.beta
+            end
          end
       else
-         .density_matrix.restricted = ZERO
+         .density_mx.restricted = ZERO
          lb = 0
          ! Loop over atom group "g" and set MOs
          do g = 1,.atom_group.dim
             mol => .atom_group(g).mol
             mess = "group "//trim(g.to_str)
             DIE_IF(mol.disassociated,trim(mess)//" mol undefined!")
-            DIE_IF(mol.density_matrix.deallocated,trim(mess)//" density matrix undefined!")
-            if (mol.BASE:no_of_electrons<1) cycle
-            ! Sizes
-            nb = mol.n_bf
-            ! MO/GO counters
-            fb = lb + 1
-            lb = lb + nb
-            ! Copy the block
-            .density_matrix.restricted(fb:lb,fb:lb) = mol.density_matrix.restricted
+            DIE_IF(mol.density_mx.deallocated,trim(mess)//" density matrix undefined!")
+            if (mol.BASE:no_of_electrons>=1) then
+               ! Sizes
+               nb = mol.n_bf
+               ! MO/GO counters
+               fb = lb + 1
+               lb = lb + nb
+               ! Copy the block
+               .density_mx.restricted(fb:lb,fb:lb) = mol.density_mx.restricted
+            end
          end
       end
    end
@@ -7390,35 +7066,39 @@ contains
    ! All occupied first, then all virtuals, as columns.
       self :: INOUT
 
-   ENSURE(.atom_group.allocated,    "no atom_group info")
+   ENSURE(.atom_group.allocated,"no atom_group info")
 
       mol :: MOLECULE*
       mess :: STR
       g,nb,no,nv,fb,lb,fo,lo,fv,lv :: INT
-      all_restricted = TRUE :: BIN
+      all_restricted :: BIN
+      knd :: STR
 
       ! Check if ANY of the atom groups has an unrestricted wavefunction
+      all_restricted = TRUE
       do g = 1,.atom_group.dim
-         if (.atom_group(g).mol.molecular_orbitals.spinorbital_kind == "unrestricted") all_restricted = FALSE
+         knd = .atom_group(g).mol.molecular_orbitals.spinorbital_kind
+         if (knd=="unrestricted") then
+            all_restricted = FALSE
+            exit
+         end
       end do
-
 
       if(.molecular_orbitals.allocated) then
          .molecular_orbitals.destroy
       end if
 
       if (all_restricted) then
-         ! if not, use the restricted case
+         ! If not, use the restricted case
          .SCF:merge_group_MOs_r
       else
          .molecular_orbitals.create(.n_bf,"unrestricted")
-
          ! Alpha part
          .molecular_orbitals.alpha = ZERO
 
+         ! MO/GO counters
          lb = 0
          lo = 0
-
          lv = .n_a
 
          ! Loop over atom group "g" and set MOs
@@ -7452,7 +7132,7 @@ contains
             else
                .molecular_orbitals.alpha(fb:lb,fo:lo) = mol.molecular_orbitals.restricted(:,   1:no)
                .molecular_orbitals.alpha(fb:lb,fv:lv) = mol.molecular_orbitals.restricted(:,no+1:nb)
-            end if
+            end
 
          end
 
@@ -7587,19 +7267,19 @@ contains
       nv = .n_bf - no
 
       ! Make sure overlap exists
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! Symmetric orthonormalise the occupied MO's
       MO.create(.n_bf,no)
       MO = .molecular_orbitals.restricted(:,1:no)
-      MO.symmetrically_orthonormalise(.overlap_matrix)
+      MO.symmetrically_orthonormalise(.overlap_mx)
       .molecular_orbitals.restricted(:,1:no) = MO
       MO.destroy
 
       ! Schmidt orthonormalise the virtuals to occupieds
       MO.create(.n_bf,nv)
       MO = .molecular_orbitals.restricted(:,no+1:)
-      MO.schmidt_orthonormalise(.overlap_matrix)
+      MO.schmidt_orthonormalise(.overlap_mx)
       .molecular_orbitals.restricted(:,no+1:) = MO
       MO.destroy
 
@@ -7622,19 +7302,19 @@ contains
       nv = .n_bf - no
 
       ! Make sure overlap exists
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! Symmetric orthonormalise the occupied MO's
       MO.create(.n_bf,no)
       MO = .molecular_orbitals.alpha(:,1:no)
-      MO.symmetrically_orthonormalise(.overlap_matrix)
+      MO.symmetrically_orthonormalise(.overlap_mx)
       .molecular_orbitals.alpha(:,1:no) = MO
       MO.destroy
 
       ! Schmidt orthonormalise the virtuals to occupieds
       MO.create(.n_bf,nv)
       MO = .molecular_orbitals.alpha(:,no+1:)
-      MO.schmidt_orthonormalise(.overlap_matrix)
+      MO.schmidt_orthonormalise(.overlap_mx)
       .molecular_orbitals.alpha(:,no+1:) = MO
       MO.destroy
 
@@ -7645,52 +7325,48 @@ contains
       ! Symmetric orthonormalise the occupied MO's
       MO.create(.n_bf,no)
       MO = .molecular_orbitals.beta(:,1:no)
-      MO.symmetrically_orthonormalise(.overlap_matrix)
+      MO.symmetrically_orthonormalise(.overlap_mx)
       .molecular_orbitals.beta(:,1:no) = MO
       MO.destroy
 
       ! Schmidt orthonormalise the virtuals to occupieds
       MO.create(.n_bf,nv)
       MO = .molecular_orbitals.beta(:,no+1:)
-      MO.schmidt_orthonormalise(.overlap_matrix)
+      MO.schmidt_orthonormalise(.overlap_mx)
       .molecular_orbitals.beta(:,no+1:) = MO
       MO.destroy
    end
 
 
-!  =========
-!  Group SCF
-!  =========
+!  ==============
+!  Atom group SCF
+!  ==============
 
-   group_scf ::: leaky
-   ! Reads a progroup .density_matrix from the archive, otherwise
+   atom_group_SCF ::: leaky
+   ! Reads a progroup .density_mx from the archive, otherwise
    ! makes it. Then convert it to the right kind for an SCF calc.
       self :: INOUT
 
       arch :: ARCHIVE
 
-      arch.set(.name,"group_density_matrix", genre="restricted")
+      arch.set(.name,"group_density_mx", genre="restricted")
 
       if (arch.exists) then
-
-         ! Read
-         .density_matrix.destroy
-         .density_matrix.create(.n_bf,"restricted")
-         arch.read(.density_matrix)
-
+         ! Read the answer?
+         .density_mx.destroy
+         .density_mx.create(.n_bf,"restricted")
+         arch.read(.density_mx)
       else
-
-         ! Make
-         .:do_group_SCF
-
+         ! Make the answer
+         .:do_atom_group_SCF
       end
 
       ! Convert
-      .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
+      .density_mx.convert_to(.scfdata.spinorbital_kind,factor=HALF)
 
    end
 
-   make_progroup_density_matrix ::: leaky
+   make_progroup_density_mx ::: leaky
    ! Make the density matrix which is a sum of density matrices for
    ! each group specified in the molecule in the atom_group array.
    ! This will destroy any existing restricted density matrix archive.
@@ -7700,20 +7376,20 @@ contains
       P :: OPMATRIX@
 
       ! Leaky
-      .:do_group_SCF
+      .:do_atom_group_SCF
 
-      ! Archive as the density_matrix
+      ! Archive as the density_mx
       P.create(.n_bf)
       archive.set_defaults
-      archive.set(.name,"group_density_matrix", genre="restricted")
+      archive.set(.name,"group_density_mx", genre="restricted")
       archive.read(P, genre="restricted")
-      archive.set(.name,"density_matrix", genre="restricted")
+      archive.set(.name,"density_mx", genre="restricted")
       archive.write(P, genre="restricted")
       P.destroy
 
    end
 
-   do_group_SCF(MOs,output) ::: leaky
+   do_atom_group_SCF(MOs,output) ::: leaky
    ! Make a ".density matrix" from the sum of atom_group densities.
    ! If "MOs" is present and true, make ".molecular_orbitals" which
    ! are the columns of orbitals from each group and also make the
@@ -7740,9 +7416,9 @@ contains
 
       ! Destroy this density matrix
       DIE_IF(.scfdata.spinorbital_kind/="restricted","only for restricted DM so far")
-      .density_matrix.destroy
-      .density_matrix.create(.n_bf,.scfdata.spinorbital_kind)
-      .density_matrix.restricted = ZERO
+      .density_mx.destroy
+      .density_mx.create(.n_bf,.scfdata.spinorbital_kind)
+      .density_mx.restricted = ZERO
 
       ! Destroy the MO's if requested
       if (do_MOs) then
@@ -7792,13 +7468,13 @@ contains
          if (.atom_group(g).n_MOs>0) then;
             stdout.show("using fewer MOs =",.atom_group(g).n_MOs)
             stdout.text("normal P:")
-            mol.BASE:make_ao_density_matrix
-            stdout.put(mol.density_matrix.restricted)
+            mol.BASE:make_ao_density_mx
+            stdout.put(mol.density_mx.restricted)
             stdout.text("reduced P:")
-            mol.BASE:make_SCF_density_matrix(method="group",n_a=.atom_group(g).n_MOs)
-            stdout.put(mol.density_matrix.restricted)
+            mol.BASE:make_SCF_density_mx(method="group",n_a=.atom_group(g).n_MOs)
+            stdout.put(mol.density_mx.restricted)
          else
-            mol.BASE:make_ao_density_matrix
+            mol.BASE:make_ao_density_mx
          end
 
          ! Copy this group density matrix
@@ -7820,8 +7496,8 @@ contains
       end
 
       if (do_output) then
-         arch.set(.name,"group_density_matrix", genre="restricted")
-         arch.write(.density_matrix, genre="restricted")
+         arch.set(.name,"group_density_mx", genre="restricted")
+         arch.write(.density_mx, genre="restricted")
       end
 
       if (do_output AND do_MOs) then
@@ -7904,7 +7580,7 @@ contains
        ! mol.BASE:set_SCF_guess_defaults_from(.scfdata)
        ! if (.scfdata.SCF_kind=="fragment-rks") then
        !    mol.becke_grid.destroy
-       !    mol.SCF:make_Hirshfeld_inputs(skip_NOs=TRUE)
+       !    mol.SCF:make_HA_inputs(skip_NOs=TRUE)
        !  ! mol.GRID:set_up_becke_grid
        ! end
 
@@ -8141,26 +7817,24 @@ contains
 !  ===========
 
    make_monomer_MOs ::: leaky
-   ! Make the monomer molecular orbital matrix from symmetrically orthonormalised
-   ! group (monomer) molecular orbitals. The promolecule orbitals are ordered by group.
-   ! The orbitals and the corresponding promolecule density are *not* archived.
-   ! This will destroy any existing restricted density matrix and MOs.
+   ! Make the monomer MOs from symmetrically orthonormalised group
+   ! (monomer) molecular orbitals. The promolecule MOs are ordered by
+   ! group.  The orbitals and the corresponding promolecule density
+   ! are *not* archived.  This will destroy any existing restricted
+   ! density matrix and MOs.
       self :: INOUT
-
-      .:do_group_SCF(MOs=TRUE,output=FALSE)
-
+      .:do_atom_group_SCF(MOs=TRUE,output=FALSE)
    end
 
    make_promol_MOs ::: leaky
-   ! Make the promolecule molecular orbital matrix from symmetrically orthonormalised
-   ! group (monomer) molecular orbitals. The promolecule orbitals are ordered by group.
-   ! The orbitals and the corresponding density are *not* archived.
-   ! This will destroy any existing restricted density matrix and MOs.
+   ! Make the promolecule MOs from symmetrically orthonormalised group
+   ! (monomer) molecular orbitals. The promolecule orbitals are
+   ! ordered by group.  The orbitals and the corresponding density are
+   ! *not* archived.  This will destroy any existing restricted
+   ! density matrix and MOs.
       self :: INOUT
-
-      .:do_group_SCF(MOs=TRUE,output=FALSE)
+      .:do_atom_group_SCF(MOs=TRUE,output=FALSE)
       .:symorthonormalize_occupied_MOs
-
    end
 
 !  =============
@@ -8262,7 +7936,7 @@ contains
 
             .atom(b).set_is_unique_kind(FALSE)
 
-            .atom(b).density_matrix     = .atom(a).density_matrix
+            .atom(b).density_mx     = .atom(a).density_mx
             .atom(b).natural_orbitals   = .atom(a).natural_orbitals
             .atom(b).occupation_numbers = .atom(a).occupation_numbers
             .atom(b).atomic_orbitals    = .atom(a).atomic_orbitals
@@ -8332,7 +8006,7 @@ contains
 
             .atom(b).set_is_unique_kind(FALSE)
 
-            .atom(b).density_matrix     = .atom(a).density_matrix
+            .atom(b).density_mx     = .atom(a).density_mx
             .atom(b).natural_orbitals   = .atom(a).natural_orbitals
             .atom(b).occupation_numbers = .atom(a).occupation_numbers
             .atom(b).atomic_orbitals    = .atom(a).atomic_orbitals
@@ -8357,7 +8031,7 @@ contains
 
    ENSURE(.atom(a).natural_orbitals.deallocated,  "NO's exist! Atom "//trim(a.to_str))
    ENSURE(.atom(a).occupation_numbers.deallocated,"OCCs exist! Atom "//trim(a.to_str))
-   ENSURE(.atom(a).density_matrix.deallocated,    "DM exists! Atom " //trim(a.to_str))
+   ENSURE(.atom(a).density_mx.deallocated,    "DM exists! Atom " //trim(a.to_str))
 
       mol :: MOLECULE@
 
@@ -8374,16 +8048,16 @@ contains
       if (.scfdata.guess_output) mol.BASE:put_basics
 
       ! Do the atomic SCF
-      mol.:atomic_scf
+      mol.:atomic_SCF
 
       ! Eliminate core electrons from DM?
       ! Bespoke DM code
       ! Add code
 
       ! Spherically average the AO density
-      mol.BASE:make_ao_density_matrix
+      mol.BASE:make_ao_density_mx
       mol.pointgroup.create("oh",.use_spherical_basis)
-      mol.BASE:symmetrize(mol.density_matrix)
+      mol.BASE:symmetrize(mol.density_mx)
 
       ! Make the natural orbitals ... leaky
       mol.BASE:make_natural_orbitals
@@ -8393,14 +8067,14 @@ contains
 
       ! Destroy the atoms's NO  ... leaky
       .atom(a).atomic_orbitals.destroy
-      .atom(a).density_matrix.destroy
+      .atom(a).density_mx.destroy
       .atom(a).occupation_numbers.destroy
       .atom(a).natural_orbitals.destroy
 
       ! Copy the results
       .atom(a).natural_orbitals   = mol.natural_orbitals
       .atom(a).occupation_numbers = mol.occupation_numbers
-      .atom(a).density_matrix     = mol.density_matrix
+      .atom(a).density_mx     = mol.density_mx
       .atom(a).atomic_orbitals    = mol.molecular_orbitals
       .atom(a).set_energy(mol.scfdata.energy)
       .atom(a).set_atom_data_made(TRUE)
@@ -8418,7 +8092,7 @@ contains
 
    ENSURE(.atom(a).natural_orbitals.deallocated,  "NO's exist! Atom "//trim(a.to_str))
    ENSURE(.atom(a).occupation_numbers.deallocated,"OCCs exist! Atom "//trim(a.to_str))
-   ENSURE(.atom(a).density_matrix.deallocated,    "DM exists! Atom " //trim(a.to_str))
+   ENSURE(.atom(a).density_mx.deallocated,    "DM exists! Atom " //trim(a.to_str))
 
       mol :: MOLECULE@
 
@@ -8438,9 +8112,9 @@ contains
       mol.:general_atomic_scf
 
       ! Spherically average the AO density
-      mol.BASE:make_ao_density_matrix
+      mol.BASE:make_ao_density_mx
       mol.pointgroup.create("oh",.use_spherical_basis)
-      mol.BASE:symmetrize(mol.density_matrix)
+      mol.BASE:symmetrize(mol.density_mx)
 
       ! Make the natural orbitals ... leaky
       mol.BASE:make_natural_orbitals
@@ -8450,14 +8124,14 @@ contains
 
       ! Destroy the atoms's NO  ... leaky
       .atom(a).atomic_orbitals.destroy
-      .atom(a).density_matrix.destroy
+      .atom(a).density_mx.destroy
       .atom(a).occupation_numbers.destroy
       .atom(a).natural_orbitals.destroy
 
       ! Copy the results
       .atom(a).natural_orbitals   = mol.natural_orbitals
       .atom(a).occupation_numbers = mol.occupation_numbers
-      .atom(a).density_matrix     = mol.density_matrix
+      .atom(a).density_mx     = mol.density_mx
       .atom(a).atomic_orbitals    = mol.molecular_orbitals
       .atom(a).set_energy(mol.scfdata.energy)
 
@@ -8474,7 +8148,7 @@ contains
    ENSURE(.atom_info_made,"no atom info")
    ENSURE(.basis.allocated,"no basis set")
    ENSURE(.basis_info_made,"no basis_set info")
-   ENSURE(.density_matrix.allocated,"no basis_set info")
+   ENSURE(.density_mx.allocated,"no basis_set info")
 
       a :: INT
       do_NAOs :: BIN
@@ -8482,7 +8156,7 @@ contains
       if (.BASE:has_all_NAO_matrices) return
 
       ! Get restricted DM
-      .BASE:make_ao_density_matrix
+      .BASE:make_ao_density_mx
 
       ! NAOs or projected NAOs?
       do_NAOs = TRUE
@@ -8516,9 +8190,9 @@ contains
       self :: INOUT
       a :: INT, IN
 
-   ENSURE(.overlap_matrix.allocated,"no overlap matrix")
-   ENSURE(.density_matrix.allocated,"no density matrix")
-   ENSURE(.density_matrix.restricted.allocated,"no restricted density matrix")
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.density_mx.restricted.allocated,"no restricted density matrix")
 
       NAO, S,V,X,P :: MAT{REAL}@
       occupation :: VEC{REAL}@
@@ -8539,7 +8213,7 @@ contains
 
       ! S = overlap matrix for group(:) basis
       S.create(n_bf,n_bf)
-      .BASE:AO_subspace_set(S,.overlap_matrix,group,group)
+      .BASE:AO_subspace_set(S,.overlap_mx,group,group)
 
       ! Get V = S^(1/2)
       V.create(n_bf,n_bf)
@@ -8547,7 +8221,7 @@ contains
 
       ! Diagonal part of P matrix
       P.create(n_bf,n_bf)
-      .BASE:AO_subspace_set(P,.density_matrix.restricted,group,group)
+      .BASE:AO_subspace_set(P,.density_mx.restricted,group,group)
 
       if (.roby.allocated) then
       if (.roby.show_calcs) then
@@ -8627,9 +8301,9 @@ contains
 
    ENSURE(.atom(a).NAOs.deallocated,           "NAO's exist! Atom "//trim(a.to_str))
    ENSURE(.atom(a).NAO_occupations.deallocated,"NAO occs exist! Atom "//trim(a.to_str))
-   ENSURE(.overlap_matrix.allocated,"no overlap matrix")
-   ENSURE(.density_matrix.allocated,"no density matrix")
-   ENSURE(.density_matrix.restricted.allocated,"no restricted density matrix")
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.density_mx.restricted.allocated,"no restricted density matrix")
 
       NAO, S,Smh,P,Q :: MAT{REAL}@
       occupation :: VEC{REAL}@
@@ -8650,10 +8324,10 @@ contains
 
       ! S = S(:,a), overlap matrix for all,atom A
       S.create(.n_bf,n_bf)
-      .BASE:AO_subspace_set(S,.overlap_matrix,col_atom=group)
+      .BASE:AO_subspace_set(S,.overlap_mx,col_atom=group)
 
       ! Transform density matrix D -> P = S^T D S
-      .density_matrix.restricted.change_basis_to(P,S)
+      .density_mx.restricted.change_basis_to(P,S)
 
       if (.roby.allocated) then
       if (.roby.show_calcs) then
@@ -8669,7 +8343,7 @@ contains
       S.destroy
       Smh.create(n_bf,n_bf)
       S.create(n_bf,n_bf)
-      .BASE:AO_subspace_set(S,.overlap_matrix,group,group)
+      .BASE:AO_subspace_set(S,.overlap_mx,group,group)
 
       ! Get (S_A)^-1
       Smh.to_inverse_of(S)
@@ -8748,37 +8422,37 @@ contains
 !  DIIS/Orbital extrapolation
 !  ==========================
 
-   make_diis_error_length(length) ::: leaky
-   ! Make the SCF error vector from the current fock_matrix and
-   ! density_matrix, and return the error "length".  Useful for reporting the
+   make_DIIS_error_length(length) ::: leaky
+   ! Make the SCF error vector from the current fock_mx and
+   ! density_mx, and return the error "length".  Useful for reporting the
    ! error length.
       self :: INOUT
       length :: REAL, OUT
 
-   ENSURE(.fock_matrix.allocated,"no fock matrix")
-   ENSURE(.fock_matrix.has_any_genre,"no fock matrix")
-   ENSURE(.density_matrix.allocated,"no density matrix")
-   ENSURE(.density_matrix.has_any_genre,"no density matrix")
+   ENSURE(.fock_mx.allocated,"no fock matrix")
+   ENSURE(.fock_mx.has_any_genre,"no fock matrix")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.density_mx.has_any_genre,"no density matrix")
 
       ! Get overlap matrix (leaky)
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! Get error length
-      length = ::diis_error_length(.fock_matrix,.density_matrix,.overlap_matrix)
+      length = ::DIIS_error_length(.fock_mx,.density_mx,.overlap_mx)
 
       ! Set the length
       .scfdata.diis.set_error_length(length)
-      .scfdata.set_diis_error(length)
+      .scfdata.set_DIIS_error(length)
 
    end
 
-   extrapolate_Fock_matrix ::: leaky
+   extrapolate_Fock_mx ::: leaky
    ! Extrapolate the fock matrix, currently only using DIIS.
       self :: INOUT
 
    ENSURE(.scfdata.allocated,"no scf data")
-   ENSURE(.fock_matrix.allocated,"no fock matrix")
-   ENSURE(.density_matrix.allocated,"no density matrix")
+   ENSURE(.fock_mx.allocated,"no fock matrix")
+   ENSURE(.density_mx.allocated,"no density matrix")
 
       spinorbital_kind,scf_kind :: STR
       error :: REAL
@@ -8786,74 +8460,75 @@ contains
       dim :: INT
 
       ! DIIS sometimes forbidden 
-      if (NOT .scfdata.using_diis) return
+      if (NOT .scfdata.using_DIIS) return
 
-      .scfdata.set_diis_error(ZERO)
+      .scfdata.set_DIIS_error(ZERO)
 
-      if (NOT .fock_matrix.has_any_genre) return
+      if (NOT .fock_mx.has_any_genre) return
 
       ! Get overlap if not there (leaky)
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! Spinorbital kind before compression
-      spinorbital_kind = .fock_matrix.spinorbital_kind
+      spinorbital_kind = .fock_mx.spinorbital_kind
 
       ! Make commutator C
-      C.create(.fock_matrix.n_bf,spinorbital_kind)
-      MOLECULE.SCF:make_diis_commutator(C,.fock_matrix,.density_matrix,.overlap_matrix)
+      C.create(.fock_mx.n_bf,spinorbital_kind)
+      MOLECULE.SCF:make_DIIS_commutator(C,.fock_mx,.density_mx,.overlap_mx)
 
       ! Compress
       C.compress
-      .fock_matrix.compress
+      .fock_mx.compress
 
       ! Extrapolate compressed entities
       scf_kind = .scfdata.SCF_kind
+
       select case (scf_kind)
 
-         case ("rhf","rks","noninteracting-group-rhf")
-            dim = C.triangle.dim
-            .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
-            error = C.triangle.norm
+      case ("rhf","rks","noninteracting-group-rhf")
+         dim = C.triangle.dim
+         .scfdata.diis.extrapolate(.fock_mx.triangle,C.triangle,dim) ! NOT PURE
+         error = C.triangle.norm
 
-         case ("xray_rhf","xray_rks")
-            dim = C.triangle.dim
-            .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
-            error = C.triangle.norm
+      case ("xray_rhf","xray_rks")
+         dim = C.triangle.dim
+         .scfdata.diis.extrapolate(.fock_mx.triangle,C.triangle,dim)
+         error = C.triangle.norm
 
-         case ("rohf")
-            dim = C.triangle.dim
-            .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
-            error = C.triangle.norm
+      case ("rohf")
+         dim = C.triangle.dim
+         .scfdata.diis.extrapolate(.fock_mx.triangle,C.triangle,dim)
+         error = C.triangle.norm
 
-         case ("uhf","uks","xray_uhf","xray_uks", &
-               "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
-            dim = C.triangle.dim
-            .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
-            error = C.triangle.norm
+      case ("uhf","uks","xray_uhf","xray_uks", &
+            "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+         dim = C.triangle.dim
+         .scfdata.diis.extrapolate(.fock_mx.triangle,C.triangle,dim)
+         error = C.triangle.norm
 
-         case ("ghf")
-            dim = C.triangle.dim
-            .scfdata.diis.extrapolate(.fock_matrix.triangle,C.triangle,dim)
-            error = C.triangle.norm
+      case ("ghf")
+         dim = C.triangle.dim
+         .scfdata.diis.extrapolate(.fock_mx.triangle,C.triangle,dim)
+         error = C.triangle.norm
 
-         case ("gchf","xray_gchf")
-            dim = C.square.dim
-            .scfdata.diis.extrapolate(.fock_matrix.square,C.square,dim)
-            error = C.square.norm
+      case ("gchf","xray_gchf")
+         dim = C.square.dim
+         .scfdata.diis.extrapolate(.fock_mx.square,C.square,dim)
+         error = C.square.norm
 
-         case default
-            DIE("unknown SCF kind, "//trim(scf_kind))
+    ! case default
+    !    DIE("unknown SCF kind, "//trim(scf_kind))
 
       end
 
       ! Set the error
-      .scfdata.set_diis_error(error)
+      .scfdata.set_DIIS_error(error)
 
       ! Clean
       C.destroy
 
       ! Uncompress
-      .fock_matrix.uncompress
+      .fock_mx.uncompress
 
    end
 
@@ -8861,17 +8536,15 @@ contains
 !  Setting the DIIS error
 !  ======================
 
-   diis_error_length(F,D,S) result (res) ::: selfless
-   ! Make the real DIIS commutator matrix, C = FDS - SDF and set the diis
+   DIIS_error_length(F,D,S) result (res) ::: selfless, PURE
+   ! Make the real DIIS commutator matrix, C = FDS - SDF and set the DIIS
    ! .error_length to be sqrt(C-.C). The minus sign is because C is
    ! antisymmetric.
-      F,D :: OPMATRIX@
-      S :: MAT{REAL}, IN
+      F,D :: OPMATRIX,  IN
+      S   :: MAT{REAL}, IN
       res :: REAL
 
-   ENSURE(F.allocated,"no Fock matrix")
    ENSURE(F.has_any_genre,"no Fock matrix")
-   ENSURE(D.allocated,"no density matrix")
    ENSURE(D.has_any_genre,"no density matrix")
    ENSURE(F.n_bf==S.dim1 OR F.general.dim2 == S.dim1,"Incompatible F and S")
    ENSURE(D.n_bf==S.dim1 OR D.general.dim2 == S.dim1,"Incompatible D and S")
@@ -8885,7 +8558,7 @@ contains
       ! Make commutator
       C.create(F.n_bf,spinorbital_kind)
 
-      MOLECULE.SCF:make_diis_commutator(C,F,D,S)
+      MOLECULE.SCF:make_DIIS_commutator(C,F,D,S)
       C.compress
 
       ! Set error length
@@ -8903,44 +8576,45 @@ contains
 
    end
 
-   make_diis_commutator(C,F,D,S) ::: selfless
+   make_DIIS_commutator(C,F,D,S) ::: selfless, PURE
    ! Make the DIIS commutator opmatrix, C = FDS - SDF.
-      C :: OPMATRIX, INOUT
+      C   :: OPMATRIX, INOUT
       F,D :: OPMATRIX, IN
-      S :: MAT{REAL}, IN
+      S   :: MAT{REAL}, IN
 
    ENSURE(C.n_bf==S.dim1 OR C.general.dim2 == S.dim1,"Incompatible C and S")
    ENSURE(F.n_bf==S.dim1 OR F.general.dim2 == S.dim1,"Incompatible F and S")
    ENSURE(D.n_bf==S.dim1 OR D.general.dim2 == S.dim1,"Incompatible D and S")
 
-      select case (F.spinorbital_kind)
+   select case (F.spinorbital_kind)
 
-         case("restricted")
-            MOLECULE.SCF:make_diis_commutator_r(C.restricted,F.restricted,D.restricted,S)
+      case("restricted")
+         MOLECULE.SCF:make_DIIS_commutator_r(C.restricted,F.restricted,D.restricted,S)
 
-         case("unrestricted")
-            MOLECULE.SCF:make_diis_commutator_r(C.alpha,F.alpha,D.alpha,S)
-            MOLECULE.SCF:make_diis_commutator_r(C.beta,F.beta,D.beta,S)
-            C.alpha = C.alpha + C.beta
+      case("unrestricted")
+         MOLECULE.SCF:make_DIIS_commutator_r(C.alpha,F.alpha,D.alpha,S)
+         MOLECULE.SCF:make_DIIS_commutator_r(C.beta,F.beta,D.beta,S)
+         C.alpha = C.alpha + C.beta
 
-         case("general")
-            MOLECULE.SCF:make_diis_commutator_g(C.general,F.general,D.general,S)
+      case("general")
+         MOLECULE.SCF:make_DIIS_commutator_g(C.general,F.general,D.general,S)
 
-         case("general_complex")
-            MOLECULE.SCF:make_diis_commutator_gc(C.general_complex,F.general_complex,D.general_complex,S)
+      case("general_complex")
+         MOLECULE.SCF:make_DIIS_commutator_gc(C.general_complex,F.general_complex,D.general_complex,S)
 
-         case default
-            DIE("unimplemented")
+    ! case default
+    !    DIE("unimplemented")
 
       end
 
    end
 
-   make_diis_commutator_r(C,F,D,S) ::: selfless, private
+   make_DIIS_commutator_r(C,F,D,S) ::: selfless, private, PURE
    ! Make the real DIIS commutator matrix, C = FDS - SDF.
-      C :: MAT{REAL}
+      C :: MAT{REAL}, OUT
       F,D,S :: MAT{REAL}, IN
-      W :: MAT{REAL}*
+
+      W :: MAT{REAL}@
 
       W.create(F.dim1,F.dim1)
       W.to_product_of(D,S)
@@ -8952,13 +8626,12 @@ contains
 
    end
 
-   make_diis_commutator_g(C,F,D,S) ::: selfless, private
+   make_DIIS_commutator_g(C,F,D,S) ::: selfless, private, PURE
    ! Make the general DIIS commutator matrix, C = FDS - SDF.
-      C :: MAT{REAL}, INOUT
-      F,D :: MAT{REAL}, IN
-      S :: MAT{REAL}, IN
+      C :: MAT{REAL}, OUT
+      F,D,S :: MAT{REAL}, IN
 
-      O,W :: MAT{REAL}*
+      O,W :: MAT{REAL}@
 
       W.create(F.dim1,F.dim1)
 
@@ -8967,13 +8640,12 @@ contains
       O = ZERO
       O.set_aa_block_to(S)
       O.set_bb_block_to(S)
-      !O = S
 
-      ! D x S
+      ! D . S
       W.to_product_of(D,O)
       O.destroy
 
-      ! F x D x S
+      ! F . D . S
       C.to_product_of(F,W)
       W.destroy
 
@@ -8983,12 +8655,13 @@ contains
 
    end
 
-   make_diis_commutator_gc(C,F,D,S) ::: selfless, private
+   make_DIIS_commutator_gc(C,F,D,S) ::: selfless, private, PURE
    ! Make the complex DIIS commutator matrix, C = FDS - SDF.
-      C :: MAT{CPX}
-      F,D :: MAT{CPX}, IN
-      S :: MAT{REAL}, IN
-      O,W :: MAT{CPX}*
+      C   :: MAT{CPX}, OUT
+      F,D :: MAT{CPX},  IN
+      S   :: MAT{REAL}, IN
+
+      O,W :: MAT{CPX}@
 
       W.create(F.dim1,F.dim1)
 
@@ -8998,11 +8671,11 @@ contains
       O.set_aa_block_to(S)
       O.set_bb_block_to(S)
 
-      ! D x S
+      ! D . S
       W.to_product_of(D,O)
       O.destroy
 
-      ! F x D x S
+      ! F . D . S
       C.to_product_of(F,W)
       W.destroy
 
@@ -9017,8 +8690,9 @@ contains
 !  =========================
 
    canonicalize_MOs
-   ! Generate the Fock matrix from the molecular orbitals and diagonalise it
-   ! on the occupied-occupied block to get the canonical molecular orbitals.
+   ! Generate the Fock matrix from the molecular orbitals and
+   ! diagonalise it on the occupied-occupied block to get the
+   ! canonical molecular orbitals, and write them out.
       self :: INOUT
 
    ENSURE(.molecular_orbitals.allocated,"need old MOs!")
@@ -9026,59 +8700,57 @@ contains
 
       scf_kind :: STR
 
-      .BASE:make_SCF_density_matrix
+      .BASE:make_SCF_density_mx
 
-      .:make_Fock_matrix
+      .:make_Fock_mx
 
       scf_kind = .scfdata.SCF_kind
 
       select case (scf_kind)
 
-         case ("rhf     ", &
-               "rks     ", &
-               "xray_rhf", &
-               "xray_rks", &
-               "noninteracting-group-rhf")
+      case ("rhf     ", &
+            "rks     ", &
+            "xray_rhf", &
+            "xray_rks", &
+            "noninteracting-group-rhf")
 
-            .orbital_energies.destroy
-            .orbital_energies.create(.n_bf,"restricted")
+         .orbital_energies.destroy
+         .orbital_energies.create(.n_bf,"restricted")
+         .:canonicalize_r_MO(.orbital_energies.restricted, &
+                             .molecular_orbitals.restricted, &
+                             .fock_mx.restricted,.n_e/2)
+         stdout.flush
+         stdout.text("Canonicalized MO energies:")
+         stdout.put(.orbital_energies.restricted)
 
-            .:canonicalize_r_MO(.orbital_energies.restricted, &
-                                 .molecular_orbitals.restricted, &
-                                 .fock_matrix.restricted,.n_e/2)
-            stdout.flush
-            stdout.text("Canonicalized MO energies:")
-            stdout.put(.orbital_energies.restricted)
+      case ("uhf         ", &
+            "uks         ", &
+            "xray_uhf    ", &
+            "xray_uks    ", &
+            "rohf        ", &
+            "pnd_uhf     ", &
+            "pnd_uks     ", &
+            "xray_pnd_uhf", &
+            "xray_pnd_uks")
 
-         case ("uhf         ", &
-               "uks         ", &
-               "xray_uhf    ", &
-               "xray_uks    ", &
-               "rohf        ", &
-               "pnd_uhf     ", &
-               "pnd_uks     ", &
-               "xray_pnd_uhf", &
-               "xray_pnd_uks")
+         .orbital_energies.destroy
+         .orbital_energies.create(.n_bf,"unrestricted")
+         .:canonicalize_r_MO(.orbital_energies.alpha,   &
+                             .molecular_orbitals.alpha, &
+                             .fock_mx.alpha,.n_a)
+         .:canonicalize_r_MO(.orbital_energies.beta,    &
+                             .molecular_orbitals.beta,  &
+                             .fock_mx.beta,.n_b)
 
-            .orbital_energies.destroy
-            .orbital_energies.create(.n_bf,"unrestricted")
+         stdout.flush
+         stdout.text("Canonicalized alpha MO energies:")
+         stdout.put(.orbital_energies.alpha(1:.n_a))
+         stdout.flush
+         stdout.text("Canonicalized beta MO energies:")
+         stdout.put(.orbital_energies.beta(1:.n_b))
 
-            .:canonicalize_r_MO(.orbital_energies.alpha,   &
-                                 .molecular_orbitals.alpha, &
-                                 .fock_matrix.alpha,.n_a)
-            .:canonicalize_r_MO(.orbital_energies.beta,    &
-                                 .molecular_orbitals.beta,  &
-                                 .fock_matrix.beta,.n_b)
-
-            stdout.flush
-            stdout.text("Canonicalized alpha MO energies:")
-            stdout.put(.orbital_energies.alpha(1:.n_a))
-            stdout.flush
-            stdout.text("Canonicalized beta MO energies:")
-            stdout.put(.orbital_energies.beta(1:.n_b))
-
-         case default
-            DIE("unknown scf kind, "//trim(scf_kind))
+    ! case default
+    !    DIE("unknown scf kind, "//trim(scf_kind))
 
       end
 
@@ -9088,11 +8760,13 @@ contains
    ! Digaonalise the Fock matrix "F" in the occupied-occupied and
    ! virtual-virtual block of the molecular orbitals "MO", and reset the
    ! occupied "MO_energies".
-      MO_energies :: VEC{REAL}
-      MO,F :: MAT{REAL}
-      n :: INT
+      self :: INOUT
+      MO_energies :: VEC{REAL}, OUT
+      MO :: MAT{REAL}, INOUT
+      F  :: MAT{REAL}, IN
+      n  :: INT, IN
 
-      G,U,MO_old :: MAT{REAL}*
+      G,U,MO_old :: MAT{REAL}@
       v :: INT
 
       G.create(n,n)
@@ -9102,7 +8776,7 @@ contains
       ! Canonicalise the occ-occ block
       MO_old = MO(:,1:n)
       F.change_basis_to(G,MO_old)
-      G.solve_symmetric_eigenproblem(MO_energies(1:n),U)
+      G.solve_symmetric_eigenproblem(MO_energies(1:n),U) ! NOT PURE
       MO(:,1:n).to_product_of(MO_old,U)
 
       MO_old.destroy
@@ -9132,13 +8806,14 @@ contains
 
    localize_MOs ::: leaky
    ! Localize the MO's
+      self :: INOUT
 
    ENSURE(.molecular_orbitals.allocated,"no MO's")
    ENSURE(.molecular_orbitals.restricted.allocated,"no MO's")
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated, "no atom info")
 
-      D,Q :: MAT3{REAL}*
+      D,Q :: MAT3{REAL}@
 
       ! Leaky
       .localiser.create
