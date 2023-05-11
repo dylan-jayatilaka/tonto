@@ -79,7 +79,7 @@ If you want a specific compiler, use :
 ```
 
 where you should replace <insert-your-compiler-here> with the
-command for your fortran compiler. We recommend `gfortran`. Latest version. I like bleeding edge stuff. Since Fortran compiliance advances at a glacial pace, this is generally no problem.
+command for your fortran compiler. We recommend `gfortran`. Latest version. I like bleeding edge stuff. Since Fortran standards compliance advances at a glacial pace, this is generally no problem.
 
 If you want a static executable for redistribution set the build type
 to RELEASE-STATIC as follows:
