@@ -94,14 +94,17 @@ If you want a version with no instrumentation and no error checking, which is th
 ```
    cmake .. -DCMAKE_BUILD_TYPE=RELEASE-STATIC -DNO_ERROR_MANAGEMENT
    make -j
-```
- 
+```make_monomer_energies_for_lattice_energy
+By default the `tonto` program is built with the `-DRELEASE` flags i.e. not static. The static verssion is a lot larger in size. Dynamic libraries an all that, you know?
+  
 To make an MPI parallel version (e.g. using openmpi) , type :
 
 ```
    cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DMPI=1
    make -j
 ```
+
+Consider using `-DNO_ERROR_MANAGEMENT` in this case, for the ultimate speed to obtain a possibly wrong answer!
 
 To change build type (e.g. make a DEBUG version) use this option :
 
@@ -116,22 +119,21 @@ In the case you do NOT have lapack and blas installed, there is a packaged lapac
    make -j
 ```
 
-By default the `tonto` program is built with Release flags.
+I'm gradually replacing `LAPACK` stuff as I think inlined code is better.
+
 The executable program is located at:
 
 ```
     build/tonto(.exe)
 ```
 
-The standalone Hirshfeld atom refinement terminal
-(HARt) program will be located at:
+The standalone Hirshfeld atom refinement terminal (the `hart`) program will be located at:
 
 ```
    build/hart(.exe)
 ```
 
-Copy the program `build/hart` anywhere you like 
-For help type `hart -help`.
+Copy the program `build/hart` anywhere you like  For help type `hart -help`.
 
 ## 3. Go!
 
@@ -144,9 +146,14 @@ To run all tests, in the build directory type:
 ```
    ctest
 ```
-Or you may use `ctest` directly and run only tests matching
-certain labels or regular expressions; or specify the number 
-of processors to use when running tests :
+
+Actually, its better to save the tests resukts to a file:
+```
+   ctest >& tests.log
+```
+because you can review the resuklts later at your leisure. You can `tail` the `tests.log` file as it is produced, right?
+  
+Here is a nice thing for problem tests: you may use `ctest` directly and run only tests matching certain labels or regular expressions; or specify the number  of processors to use when running tests :
 ```
    ctest -L short    # this will run all tests with the label short.
    ctest -R h2o      # this will run all tests with h2o in their name.
@@ -170,10 +177,10 @@ using your favourite tool e.g.
 ## Problems, bugs, contributions
 
 Let me know at
-
 ```
    dylan.jayatilaka@gmail.com
 ```
+I am not good at responding. Best to contact some people that know me. If you google you might find such people. There aren't many, as I'm a misanthrope. Who loves people.
 
 # How to run tonto
 
