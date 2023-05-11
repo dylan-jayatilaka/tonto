@@ -55,6 +55,15 @@ Then make a `build` directory (name is up to you) and enter that :
     mkdir build && cd build
 ```
 
+I (Dylan) prefer to make separate folders for specific compilers and specific compiler settings. So the above, for the gfortran compiler, in two steps would be:
+
+```
+    mkdir gfortran
+    cd gfortran
+```
+
+You can, and I recommend, mamking a `Debug` version in its own directory like `debug/` . If you have a problems likely we'll ask yiu for any error messages that come from this version when you run it on your job. (Yes, there are bugs; always; sorry!).
+
 Use cmake to generate the build (default uses Makefiles), and compile the programs :
 
 ```
@@ -70,7 +79,7 @@ If you want a specific compiler, use :
 ```
 
 where you should replace <insert-your-compiler-here> with the
-command for your fortran compiler. We recommend `gfortran-6`.
+command for your fortran compiler. We recommend `gfortran`. Latest version. I like bleeding edge stuff. Since Fortran compiliance advances at a glacial pace, this is generally no problem.
 
 If you want a static executable for redistribution set the build type
 to RELEASE-STATIC as follows:
@@ -79,7 +88,14 @@ to RELEASE-STATIC as follows:
    cmake .. -DCMAKE_BUILD_TYPE=RELEASE-STATIC
    make -j
 ```
-
+  
+If you want a version with no instrumentation and no error checking, which is the fastest, then do:
+  
+```
+   cmake .. -DCMAKE_BUILD_TYPE=RELEASE-STATIC -DNO_ERROR_MANAGEMENT
+   make -j
+```
+ 
 To make an MPI parallel version (e.g. using openmpi) , type :
 
 ```
