@@ -1,10 +1,14 @@
 # Welcome to Tonto!
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
+## 0. WARNING
+
+Master, although stable, is very old, but is kept for CrystalExplorer compatability. The active branch is release. There is a good chance that release-no-ptr will be the latest version eventually, and be merged into release, and thereafter in quiakc succession, into master.
 
 ## 1. Get ready ...
 
 * If you're not planning on modifying tonto source (i.e. developing), we recommend 
-downloading the latest release for your platform.
+downloading the latest release for your platform. But see section 0 above!
+
 * If you want to develop, first install `git` and 
   and follow the compile instructions below.
 
