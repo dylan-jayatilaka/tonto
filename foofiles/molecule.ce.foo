@@ -311,7 +311,7 @@ contains
       if (.crystal.allocated) then
       if (.crystal.xray_data.allocated) then
       if (.crystal.uses_one_center_TF_model) then
-         .SCF:make_Hirshfeld_inputs
+         .SCF:make_HA_inputs
       end
       end
       end
@@ -360,7 +360,7 @@ contains
    ! with name ".CX_file_name".
    ! NOTE: Should "self" INOUT here? IDK about serialize. --dylan
       self :: INOUT
-      cif :: CIF, INOUT
+      cif :: CIF@, INOUT
 
       if(.CX_file_name /= " ") then
          .:serialize_isosurface_sbf(trim(.CX_file_name),cif)
@@ -375,7 +375,7 @@ contains
    ! Output information that Crystal Explorer requires to file "CX_file".
    ! NOTE: this requires a "cif" file to have been read, and a valid data block
    ! name to be stored in the "cif" object.
-      self :: IN
+      self :: INOUT
       CX_file :: TEXTFILE*
       cif :: CIF@, IN
 
@@ -474,7 +474,7 @@ contains
          spacegroup = .crystal.spacegroup.HM_symbol
 
          stdout.show("begin crystal ",CX_label)
-         .crystal.put_CX(CX_label,formula,spacegroup) 
+         .crystal.put_CX(CX_label,formula,spacegroup) ! INOUT
          .atom.put_CX(CX_label,angstrom=.CX_uses_angstrom)
          stdout.flush
          stdout.text("end crystal")
@@ -683,55 +683,53 @@ contains
    make_monomer_energies_for_lattice_energy(res)
    ! But what gets returned? -- DJ
    ! res = [ E_en, E_1e, E_ee, E_ex ]
-       self :: allocatable, INOUT
-       res  :: VEC{REAL}(4), OUT
+      self :: allocatable, INOUT
+      res  :: VEC{REAL}(4), OUT
 
-       J, K, saved_MOs :: OPMATRIX@
-       exchange_factor :: REAL
+      J, K, saved_MOs :: OPMATRIX@
+      exchange_factor :: REAL
 
-       exchange_factor = -HALF
-       
-       saved_MOs = .MOs
+      exchange_factor = -HALF
+      
+      saved_MOs = .MOs
 
-       ! Below from scratch? Seems strange
-       .INTS:make_overlap_mx
-       .SCF:make_core_mx
-       .BASE:make_NOs
+      ! Below from scratch? Seems strange
+      .INTS:make_overlap_mx
+      .SCF:make_core_mx
+      .BASE:make_NOs
 
-       ! Make integrals
-       .MOs = .NOs
-       .BASE:make_SCF_density_mx
-       .SCF:make_core_mx ! again ?!!
-       .nuclear_attraction_mx.uncompress
-       if (.scfdata.is_restricted) then
-           exchange_factor = -QUARTER
-       end
+      ! Make integrals
+      .MOs = .NOs
+      .BASE:make_SCF_density_mx
+      .SCF:make_core_mx ! again ?!!
+      .nuclear_attraction_mx.uncompress
+      if (.scfdata.is_restricted) then
+          exchange_factor = -QUARTER
+      end
 
-       res(1) = .BASE:expectation(.nuclear_attraction_mx)
-       res(2) = .BASE:expectation(.core_mx)
+      res(1) = .BASE:expectation(.nuclear_attraction_mx)
+      res(2) = .BASE:expectation(.core_mx)
 
-       J.create(.n_bf,.density_mx.genre)
-       K.create(.n_bf,.density_mx.genre)
-       if(.use_spherical_basis) then; .FOCK:make_JK_direct(J,K,.density_mx)
-       else;                          .FOCK:make_JK_engine(J,K,.density_mx)
-       end
-       res(3) = .BASE:expectation(J) * HALF
-       res(4) = .BASE:expectation(K) * exchange_factor
-       res = -TWO * res
-       J.destroy
-       K.destroy
+      J.create(.n_bf,.density_mx.genre)
+      K.create(.n_bf,.density_mx.genre)
+      if(.use_spherical_basis) then; .FOCK:make_JK_direct(J,K,.density_mx)
+      else;                          .FOCK:make_JK_engine(J,K,.density_mx)
+      end
+      res(3) = .BASE:expectation(J) * HALF
+      res(4) = .BASE:expectation(K) * exchange_factor
+      res = -TWO * res
+      J.destroy
+      K.destroy
 
-       .MOs = saved_MOs
+      .MOs = saved_MOs
 
    end
 
    estimate_z result(res) ::: PURE
    ! Returns the Z factor of crystallography?
       self :: IN
-      res :: INT
-
+      res  :: INT
       res = .crystal.n_unit_cell_atoms / .cluster.molecule(1).element.dim
-
    end
 
    calculate_cell_dipole_correction(mol_dipole) result(res)
@@ -766,7 +764,7 @@ contains
    ! Is this a wfn file or sbf?
        self :: INOUT
 
-       mol :: MOLECULE@
+       mol   :: MOLECULE@
        model :: STR
 
        mol.BASE:create
@@ -780,10 +778,10 @@ contains
        VEC{PAIR_ENERGY}:get_energy_model(model)
        stdout.show("Making wavefunction for energy model ", trim(model))
        if(trim(model) == "ce-b3lyp") then
-           mol.scfdata.SCF_kind = "rks"
-           mol.BASE:set_basis_name("6-31G(d,p)")
-           mol.scfdata.set_exchange_functional("b3lypgx")
-           mol.scfdata.set_correlation_functional("b3lypgc")
+          mol.scfdata.SCF_kind = "rks"
+          mol.BASE:set_basis_name("6-31G(d,p)")
+          mol.scfdata.set_exchange_functional("b3lypgx")
+          mol.scfdata.set_correlation_functional("b3lypgc")
        end 
        mol.BASE:set_basis_name("3-21G")
        mol.SCF:make_ANO_data
@@ -794,149 +792,148 @@ contains
 
    total_lattice_energy(wavefunction_filename)
    ! Some description needed here
-     self :: INOUT
-     wavefunction_filename :: STR
-
-     file_exists :: BIN
-     mol1, mol2 :: MOLECULE@
-     i, current_symop :: INT
-     pair_energies :: VEC{PAIR_ENERGY}@
-     indices, indices_calc :: VEC{INT}@
-     monomer_energies, E :: VEC{REAL}(4)
-     e_iter, e_prev, delta_e, radius, prev_radius :: REAL
-     sep :: VEC{REAL}(3)
-     cell_dipole_correction :: REAL
-     mol_dipole :: VEC{REAL}(3)
-     convergence_threshold :: REAL
-
-
-     ! Central fragment wavefunction stuff
-     !if(.scfdata.SCF_kind == "rks") then
-     !   VEC{PAIR_ENERGY}:set_energy_model("ce-b3lyp")
-     !else
-     !   VEC{PAIR_ENERGY}:set_energy_model("ce-hf")
-     !end if
-
-     .cluster.create
-     .cluster.set_defaults(.crystal) 
-     .cluster.set_generation_method("fragment")
-     .cluster.set_radius(100.0d0)      ! atomic units
-     .cluster.set_defragment(TRUE)
-     .cluster.update_info
-
-     mol1.BASE:create
-
-     inquire(file=trim(wavefunction_filename), exist=file_exists)
-     if (file_exists) then
+      self :: INOUT
+      wavefunction_filename :: STR, INOUT
+ 
+      file_exists :: BIN
+      mol1, mol2 :: MOLECULE@
+      i, current_symop :: INT
+      pair_energies :: VEC{PAIR_ENERGY}@
+      indices, indices_calc :: VEC{INT}@
+      monomer_energies, E :: VEC{REAL}(4)
+      e_iter, e_prev, delta_e, radius, prev_radius :: REAL
+      sep :: VEC{REAL}(3)
+      cell_dipole_correction :: REAL
+      mol_dipole :: VEC{REAL}(3)
+      convergence_threshold :: REAL
+ 
+ 
+      ! Central fragment wavefunction stuff
+    ! if(.scfdata.SCF_kind == "rks") then
+    !    VEC{PAIR_ENERGY}:set_energy_model("ce-b3lyp")
+    ! else
+    !    VEC{PAIR_ENERGY}:set_energy_model("ce-hf")
+    ! end if
+ 
+      .cluster.create
+      .cluster.set_defaults(.crystal) 
+      .cluster.set_generation_method("fragment")
+      .cluster.set_radius(100.0d0)      ! atomic units
+      .cluster.set_defragment(TRUE)
+      .cluster.update_info
+ 
+      mol1.BASE:create
+ 
+      inquire(file=trim(wavefunction_filename), exist=file_exists)
+      if (file_exists) then
          stdout.text("Loading g09 wavefunction")
          mol1.BASE:read_wfn_file(trim(wavefunction_filename))
-     else 
+      else 
          stdout.text("Wavefunction file does not exist")
          .:create_wavefunction_file_for_lattice
          wavefunction_filename = trim(.cif.data_block_name)//".sbf"
          mol1.BASE:read_wfn_file(trim(wavefunction_filename))
-     end
-
-     mol1.name = trim(.cif.data_block_name)
-     mol1.atom.put
-
-
-     stdout.flush
-     stdout.text("==============================")
-     stdout.text("CrystalExplorer lattice energy")
-     stdout.text("==============================")
-
-     stdout.text("Calculating monomer energies")
-
-     ! Make monomer energies and multipoles
-     stdout.flush
-     mol1.:make_monomer_energies_for_lattice_energy(monomer_energies)
-     stdout.text("Monomer energies (Hartree) :")
-     stdout.show("Electron-nuclear energy, E_en =", monomer_energies(1))
-     stdout.show("One-electron energy,     E_1e =", monomer_energies(2))
-     stdout.show("Two-electron energy,     E_ee =", monomer_energies(3))
-     stdout.show("Electron exchange,       E_ex =", monomer_energies(4))
-     stdout.flush
-
-     mol1.BASE:make_atomic_multipoles
-     mol_dipole = mol1.PROP:the_dipole
-     cell_dipole_correction = .:calculate_cell_dipole_correction(mol_dipole)
-     stdout.show("Cell dipole correction =", cell_dipole_correction)
-
-
-     current_symop = 0
-     prev_radius = ZERO
-     radius = 7.2 ! Roughly 3.8 angstrom
-     e_prev = ZERO
-     e_iter = ZERO
-     delta_e = INT_HUGE
-     mol2.BASE:create
-
-     VEC{PAIR_ENERGY}:get_convergence_threshold(convergence_threshold)
-
-     stdout.text("Beginning lattice energy calculation by summation of pair interactions")
-     do while (abs(delta_e) > convergence_threshold)
-
-        ! 1 being the first molecule in the crystal
-        .cluster.make_pairs_within_radius_of(1, pair_energies, radius, prev_radius)
-        prev_radius = radius
-
+      end
+ 
+      mol1.name = trim(.cif.data_block_name)
+      mol1.atom.put
+ 
+ 
+      stdout.flush
+      stdout.text("==============================")
+      stdout.text("CrystalExplorer lattice energy")
+      stdout.text("==============================")
+ 
+      stdout.text("Calculating monomer energies")
+ 
+      ! Make monomer energies and multipoles
+      stdout.flush
+      mol1.:make_monomer_energies_for_lattice_energy(monomer_energies)
+      stdout.text("Monomer energies (Hartree) :")
+      stdout.show("Electron-nuclear energy, E_en =", monomer_energies(1))
+      stdout.show("One-electron energy,     E_1e =", monomer_energies(2))
+      stdout.show("Two-electron energy,     E_ee =", monomer_energies(3))
+      stdout.show("Electron exchange,       E_ex =", monomer_energies(4))
+      stdout.flush
+ 
+      mol1.BASE:make_atomic_multipoles
+      mol_dipole = mol1.PROP:the_dipole
+      cell_dipole_correction = .:calculate_cell_dipole_correction(mol_dipole)
+      stdout.show("Cell dipole correction =", cell_dipole_correction)
+ 
+ 
+      current_symop = 0
+      prev_radius = ZERO
+      radius = 7.2 ! Roughly 3.8 angstrom
+      e_prev = ZERO
+      e_iter = ZERO
+      delta_e = INT_HUGE
+      mol2.BASE:create
+ 
+      VEC{PAIR_ENERGY}:get_convergence_threshold(convergence_threshold)
+ 
+      stdout.text("Beginning lattice energy calculation by summation of pair interactions")
+      do while (abs(delta_e) > convergence_threshold)
+ 
+         ! 1 being the first molecule in the crystal
+         .cluster.make_pairs_within_radius_of(1, pair_energies, radius, prev_radius)
+         prev_radius = radius
+ 
          indices.create(pair_energies.dim)
        ! stdout.show("indices: ", indices)
        ! stdout.flush
          pair_energies(:).symop_id.quick_sort(indices)
          pair_energies(:) = pair_energies(indices)
          indices.destroy
-
+ 
        ! stdout.text("Sorted pairs by symop")
        ! stdout.flush
-
-        do i = 1, pair_energies.dim
-
-           if (pair_energies(i).energy_calculated) cycle
-
-           if (current_symop /= pair_energies(i).symop_id) then
-               mol2.BASE:destroy
-               mol2.BASE:create
-               mol2.BASE:read_wfn_file(wavefunction_filename)
-               mol2.BASE:rotate_by(pair_energies(i).rot)
-               mol2.INTS:make_overlap_mx
-               mol2.BASE:make_NOs
-               mol2.BASE:make_atomic_multipoles
-               current_symop = pair_energies(i).symop_id
-           end if
-           mol2.atom.translate_by(pair_energies(i).trans)
-           sep = mol1.atom.center_of_mass - mol2.atom.center_of_mass
-
-           ! If we have a unique molecule pair calculate the energies
-           E = ZERO
-
-           ! Disp
-           E(1:2) = mol1.PROP:symmetric_intermolecular_qm_energies(mol2, monomer_energies)
-           E(3) = mol1.PROP:intermolecular_polarization_energy(mol2)
-           E(4) = mol1.atom.Grimme06_dispersion_energy(mol2.atom)
-           pair_energies(i).set_energy_components(E)
-           pair_energies(i).set_energy_calculated(TRUE)
-           mol2.atom.translate_by(-pair_energies(i).trans)
-
-        end
-
-        e_iter = pair_energies.total_energy(scaled=TRUE)
-        delta_e = e_iter - e_prev
-        e_prev = e_iter
-        indices_calc = pair_energies.calculated_pairs
-        pair_energies(indices_calc).put_lattice_energy_table(cell_dipole_correction)
-
-        radius = radius + 7.2
-        if (radius > .cluster.radius) then
-           stdout.show("Convergence not achieved within radius", .cluster.radius)
-           exit
-        end
-
-     end
-
-     mol1.BASE:destroy
-     mol2.BASE:destroy
+ 
+         do i = 1, pair_energies.dim
+ 
+            if (pair_energies(i).energy_calculated) cycle
+ 
+            if (current_symop /= pair_energies(i).symop_id) then
+                mol2.BASE:destroy
+                mol2.BASE:create
+                mol2.BASE:read_wfn_file(wavefunction_filename)
+                mol2.BASE:rotate_by(pair_energies(i).rot)
+                mol2.INTS:make_overlap_mx
+                mol2.BASE:make_NOs
+                mol2.BASE:make_atomic_multipoles
+                current_symop = pair_energies(i).symop_id
+            end if
+            mol2.atom.translate_by(pair_energies(i).trans)
+            sep = mol1.atom.center_of_mass - mol2.atom.center_of_mass
+ 
+            ! If we have a unique molecule pair calculate the energies
+            E = ZERO
+ 
+            ! Disp
+            E(1:2) = mol1.PROP:symmetric_intermolecular_qm_energies(mol2, monomer_energies)
+            E(3)   = mol1.PROP:intermolecular_polarization_energy(mol2)
+            E(4)   = mol1.atom.Grimme06_dispersion_energy(mol2.atom)
+            pair_energies(i).set_energy_components(E)
+            pair_energies(i).set_energy_calculated(TRUE)
+            mol2.atom.translate_by(-pair_energies(i).trans)
+ 
+         end
+ 
+         e_iter = pair_energies.total_energy(scaled=TRUE)
+         delta_e = e_iter - e_prev
+         e_prev = e_iter
+         indices_calc = pair_energies.calculated_pairs
+         pair_energies(indices_calc).put_lattice_energy_table(cell_dipole_correction)
+ 
+         radius = radius + 7.2
+         if (radius > .cluster.radius) then
+            stdout.show("Convergence not achieved within radius", .cluster.radius)
+            exit
+         end
+      end
+ 
+      mol1.BASE:destroy
+      mol2.BASE:destroy
 
    end
 
