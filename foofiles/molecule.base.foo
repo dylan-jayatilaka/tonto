@@ -429,6 +429,7 @@ contains
          .spin_multiplicity = .:default_spin_multiplicity
          .:update_atom_info
          .:resolve_basis_info ! NOT PURE
+         .:update_atom_info
       end
 
    end
@@ -655,7 +656,49 @@ contains
 
    end
 
-! Atoms
+   set_SCF_occupations_for_NOs(genre) ::: PURE
+   ! Set the SCF occupation numbers for the NOs
+      self  :: INOUT
+      genre :: STR, IN
+
+      select case (genre)
+
+      case ("r ")
+         .NO_occ_nos.r(1:.n_a) = TWO
+
+      case ("u ")
+         .NO_occ_nos.a(1:.n_a) = ONE
+         .NO_occ_nos.b(1:.n_b) = ONE
+
+      case ("gc")
+         .NO_occ_nos.g(1:.n_e) = ONE
+
+      end
+
+   end
+
+   set_force_constants(fc) ::: leaky, PURE
+   ! Set the .force_constants to the flat array "fc".
+   ! Since it is a symmetric matrix the order does not matter.
+      self :: INOUT
+      fc :: VEC{REAL}, IN
+
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(fc.dim==9*.atom.dim*.atom.dim,"wrong size, fc")
+
+      n3n :: INT
+
+      ! Create space
+      n3n = 3*.atom.dim
+      .force_constants.destroy
+      .force_constants.create(n3n,n3n)
+
+      ! Reshape
+      .force_constants = reshape(fc,[n3n,n3n])
+
+   end
+
+!  Atoms
 
    update_atom_and_basis_info(do_groups) ::: leaky
    ! Update the atom labels, no of electrons, spin multiplicities,
@@ -669,10 +712,10 @@ contains
       if (present(do_groups)) groups = do_groups
 
       ! Set tags, multiplicity, and no of alpha/beta electrons
+      ! And  basis sets
       .BASE:update_atom_info
-
-      ! Get basis sets
       .BASE:resolve_basis_info
+      .BASE:update_atom_info   ! 2nd time
 
       ! Finalize crystal
       if (.crystal.allocated) then
@@ -695,10 +738,12 @@ contains
    ! . Atom tags and kind indices
    ! . The spin multiplicity
    ! . The number of alpha and beta electrons.
+   ! WARNING: .atom.update depends on .atom.basis, so you might need
+   !          to call this routine again!
       self :: INOUT
 
       if (.atom.deallocated) return
-      if (.atom_info_made) return
+    ! if (.atom_info_made) return
 
       ! Finalize 
       .atom.update
@@ -728,7 +773,77 @@ contains
 
    end
 
-! Bases
+!  Bases
+
+   set_basis_directory(directory)
+   ! Set the basis directory (for all kinds of bases)
+      self :: IN
+      directory :: STR, IN
+      .basis.set_library_directory(directory)       ! NOT PURE
+      .slaterbasis.set_library_directory(directory)
+      .coppensbasis.set_library_directory(directory)
+   end
+
+   set_basis_name(name) ::: leaky
+   ! Set a gaussian *library* basis set name
+      self :: INOUT
+      name :: STR
+
+ ! DIE_IF(any(name==non_gaussian),"basis "//trim(name)//"is not a gaussian basis")
+
+ !    non_gaussian :: VEC{STR}(len=17,4) = &
+ !       ["Clementi-Roetti  ", &
+ !        "Thakkar          ", &
+ !        "vanLenthe-Barends", &
+ !        "Coppens          "  ]
+
+      ! Set the basis kind
+      .basis_name = name
+
+      ! Destroy links to previous bases
+      if (.atom.allocated) .atom.destroy_basis_part
+      .basis.destroy
+
+      ! Make fresh basis set links (might be leaky)
+      .:resolve_gaussianbases ! NOT PURE
+
+   end
+
+   set_slaterbasis_name(name) ::: leaky
+   ! Set a slater *library* basis set name
+      self :: INOUT
+      name :: STR, IN
+
+      ! Set the basis kind
+      .slaterbasis_name = name
+
+      ! Destroy links to previous bases
+      if (.atom.allocated) .atom.destroy_slaterbasis_part
+      .slaterbasis.destroy
+
+      ! Make fresh basis set links (might be leaky)
+      .:resolve_slaterbases ! NOT PURE
+
+   end
+
+   set_coppensbasis_name(name) ::: leaky
+   ! Set a coppens *library* basis set name
+      self :: INOUT
+      name :: STR, IN
+
+   ENSURE(name=="Coppens","basis "//trim(name)//"is not a known coppens basis")
+
+      ! Set the basis kind
+      .coppensbasis_name = name
+
+      ! Destroy links to previous bases
+      if (.atom.allocated) .atom.destroy_coppensbasis_part
+      .coppensbasis.destroy
+
+      ! Make fresh basis set links (might be leaky)
+      .:resolve_coppensbases ! NOT PURE
+
+   end
 
    resolve_basis_info ::: leaky
    ! Match the basis set labels for every atom with the actual atomic
@@ -775,7 +890,7 @@ contains
             .atom.set_basis_kind("gaussian")
             ! Unnormalise if completely done
             .basis.unnormalise
-            .:set_basis_info ! NOT PURE
+            .:resolve_bases_and_update ! NOT PURE
          end
 
       else if (.basis.allocated) then
@@ -786,7 +901,7 @@ contains
             .atom.resolve_bases(.basis)
             .atom.set_basis_kind("gaussian")
             ! Unnormalise if completely done
-            if (.atom.bases_are_resolved) .:set_basis_info
+            if (.atom.bases_are_resolved) .:resolve_bases_and_update
 
       end
 
@@ -891,17 +1006,9 @@ contains
 
    end
 
-   set_basis_directory(directory)
-   ! Set the basis directory (for all kinds of bases)
-      self :: IN
-      directory :: STR, IN
-      .basis.set_library_directory(directory)       ! NOT PURE
-      .slaterbasis.set_library_directory(directory)
-      .coppensbasis.set_library_directory(directory)
-   end
-
-   set_basis_info ::: leaky
-   ! Set the molecule basis set information; the atom list must exist.
+   resolve_bases_and_update ::: leaky
+   ! Resolve and update the molecule basis set information.
+   ! The atom list must exist.
       self :: INOUT
 
    ENSURE(.atom.allocated, "no atoms!")
@@ -913,11 +1020,11 @@ contains
          .:resolve_basis_info ! NOT PURE
       end
 
-      .:make_basis_info
+      .:update_basis_info
 
    end
 
-   make_basis_info ::: leaky, private, PURE
+   update_basis_info ::: leaky, private, PURE
    ! Make the basis set information
       self :: INOUT
 
@@ -934,71 +1041,142 @@ contains
       .:update_shell_info
 
       .basis_info_made = TRUE
+      .atom_info_made  = FALSE ! Since kinds depend on bases
 
    end
 
-   set_basis_name(name) ::: leaky
-   ! Set a gaussian *library* basis set name
+   resolve_bases_and_update_from(mol) ::: leaky
+   ! Set the basis data from molecule "mol"
+   ! Make sure none of these bases are destroyed.
       self :: INOUT
-      name :: STR
+      mol :: MOLECULE, IN
 
- ! DIE_IF(any(name==non_gaussian),"basis "//trim(name)//"is not a gaussian basis")
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol
+      .use_spherical_basis = mol.use_spherical_basis
 
- !    non_gaussian :: VEC{STR}(len=17,4) = &
- !       ["Clementi-Roetti  ", &
- !        "Thakkar          ", &
- !        "vanLenthe-Barends", &
- !        "Coppens          "  ]
+      if (mol.basis.allocated)        .basis        = mol.basis
+      if (mol.slaterbasis.allocated)  .slaterbasis  = mol.slaterbasis
+      if (mol.coppensbasis.allocated) .coppensbasis = mol.coppensbasis
 
-      ! Set the basis kind
-      .basis_name = name
-
-      ! Destroy links to previous bases
-      if (.atom.allocated) .atom.destroy_basis_part
-      .basis.destroy
-
-      ! Make fresh basis set links (might be leaky)
-      .:resolve_gaussianbases ! NOT PURE
+      ! Do it
+      .:resolve_bases_and_update ! NOT PURE
 
    end
 
-   set_slaterbasis_name(name) ::: leaky
-   ! Set a slater *library* basis set name
+!  ANOs
+
+   resolve_ANOs_from(mol,list) ::: PURE
+   ! Set ANO data and atom shell info from molecule "mol" from the
+   ! sublist "list". Make sure none of these are destroyed!
+   ! NOTE: No point to assign unique data, all data is non-unique
       self :: INOUT
-      name :: STR, IN
+      mol :: MOLECULE, IN
+      list :: VEC{INT}, IN
 
-      ! Set the basis kind
-      .slaterbasis_name = name
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.n_atom_kind>0,"atoms not finalized")
+   ENSURE(mol.atom.allocated,"mol has no atoms")
+   ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
+   ENSURE(list.dim==.atom.dim,"inconsistent list length")
 
-      ! Destroy links to previous bases
-      if (.atom.allocated) .atom.destroy_slaterbasis_part
-      .slaterbasis.destroy
+      made_ANO,made_int,made_shl :: BIN
+      a,b :: INT
 
-      ! Make fresh basis set links (might be leaky)
-      .:resolve_slaterbases ! NOT PURE
+      ! Assign ANO orbitals
+      made_ANO =  mol.:has_all_ANO_matrices
+      if (made_ANO) then
+         do a = 1,list.dim
+            b = list(a)
+            .atom(a).density_mx     = mol.atom(b).density_mx
+            .atom(a).NOs   = mol.atom(b).NOs
+            .atom(a).NO_occ_nos = mol.atom(b).NO_occ_nos
+            .atom(a).AOs    = mol.atom(b).AOs
+            .atom(a).set_energy(mol.atom(b).energy)
+         end
+      end
+
+      ! Assign ANO interpolators
+      made_int = mol.:has_all_interpolators
+      if (made_int) then
+         do a = 1,list.dim
+            b = list(a)
+            .atom(a).interpolator = mol.atom(b).interpolator
+         end
+      end
+
+      ! Assign atom shell info
+      made_shl = mol.:has_all_shell_info
+      if (made_shl) then
+         do a = 1,list.dim
+            b = list(a)
+            .atom(a).first_basis_fn_for_shell = mol.atom(b).first_basis_fn_for_shell
+            .atom(a).last_basis_fn_for_shell  = mol.atom(b).last_basis_fn_for_shell
+            .atom(a).basis_shell1pair         = mol.atom(b).basis_shell1pair
+         end
+      end
 
    end
 
-   set_coppensbasis_name(name) ::: leaky
-   ! Set a coppens *library* basis set name
+   resolve_ANOs_from(mol) ::: PURE
+   ! Set ANO data and atom shell info from molecule "mol" by comparing
+   ! the atom kinds directly. Make sure none of the assigned ANO data
+   ! is destroyed!
       self :: INOUT
-      name :: STR, IN
+      mol  :: MOLECULE, IN
 
-   ENSURE(name=="Coppens","basis "//trim(name)//"is not a known coppens basis")
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.n_atom_kind>0,"atoms not finalized")
+   ENSURE(mol.atom.allocated,"mol has no atoms")
+   ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
 
-      ! Set the basis kind
-      .coppensbasis_name = name
+      a,b :: INT
 
-      ! Destroy links to previous bases
-      if (.atom.allocated) .atom.destroy_coppensbasis_part
-      .coppensbasis.destroy
+      ! Assign ANO orbitals
+      do a = 1,.atom.dim
+         do b = 1,mol.atom.dim
+            if (.atom(a).is_same_kind_as(mol.atom(b))) then
+            if (mol.atom(b).has_ANO_matrices) then
+               .atom(a).density_mx     = mol.atom(b).density_mx
+               .atom(a).NOs            = mol.atom(b).NOs
+               .atom(a).NO_occ_nos = mol.atom(b).NO_occ_nos
+               .atom(a).AOs            = mol.atom(b).AOs
+               .atom(a).set_energy(mol.atom(b).energy)
+               exit ! next atom "a"
+            end
+            end
+         end
+      end
 
-      ! Make fresh basis set links (might be leaky)
-      .:resolve_coppensbases ! NOT PURE
+      ! Assign ANO interpolators
+      do a = 1,.atom.dim
+         do b = 1,mol.atom.dim
+            if (.atom(a).is_same_kind_as(mol.atom(b))) then
+            if (mol.atom(b).interpolator.allocated) then
+               .atom(a).interpolator = mol.atom(b).interpolator
+               exit ! next atom "a"
+            end
+            end
+         end
+      end
+
+      ! Assign atom shell info
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+         if (mol.atom(b).has_shell_info) then
+            .atom(a).first_basis_fn_for_shell = mol.atom(b).first_basis_fn_for_shell
+            .atom(a).last_basis_fn_for_shell  = mol.atom(b).last_basis_fn_for_shell
+            .atom(a).basis_shell1pair         = mol.atom(b).basis_shell1pair
+            exit ! next atom "a"
+         end
+         end
+      end
+      end
 
    end
 
-! Axes
+!  Axes
 
    resolve_axis_system ::: PURE
    ! Change the axis system to cartesian, if required.
@@ -1028,47 +1206,6 @@ contains
 
    end
 
-   set_SCF_occupations_for_NOs(genre) ::: PURE
-   ! Set the SCF occupation numbers for the NOs
-      self  :: INOUT
-      genre :: STR, IN
-
-      select case (genre)
-
-      case ("r ")
-         .NO_occ_nos.r(1:.n_a) = TWO
-
-      case ("u ")
-         .NO_occ_nos.a(1:.n_a) = ONE
-         .NO_occ_nos.b(1:.n_b) = ONE
-
-      case ("gc")
-         .NO_occ_nos.g(1:.n_e) = ONE
-
-      end
-
-   end
-
-   set_force_constants(fc) ::: leaky, PURE
-   ! Set the .force_constants to the flat array "fc".
-   ! Since it is a symmetric matrix the order does not matter.
-      self :: INOUT
-      fc :: VEC{REAL}, IN
-
-   ENSURE(.atom.allocated,"no atom list")
-   ENSURE(fc.dim==9*.atom.dim*.atom.dim,"wrong size, fc")
-
-      n3n :: INT
-
-      ! Create space
-      n3n = 3*.atom.dim
-      .force_constants.destroy
-      .force_constants.create(n3n,n3n)
-
-      ! Reshape
-      .force_constants = reshape(fc,[n3n,n3n])
-
-   end
 
 !  ============
 !  Read routine
@@ -1687,7 +1824,7 @@ contains
       end
 
       ! Set occupation numbers (leaky)
-      spin = .scfdata.spinorbital_kind
+      spin = .scfdata.spinorbital_genre
       .NO_occ_nos.destroy
       .NO_occ_nos.create(.n_bf,spin)
       .NO_occ_nos.set_to_zero
@@ -3469,9 +3606,6 @@ contains
 
       i,k :: INT
 
-      ! Clear the pointer part
-    ! mol.:nullify_ptr_part
-
       ! Create the single atom and copy its pointers
       ! WARNING: dont destroy ptr parts of mol.atom
       mol.atom = .atom(n:n)
@@ -3483,11 +3617,12 @@ contains
 
       ! Copy the basis set and set the basis info
       ! WARNING: dont destroy basis of mol
-      mol.:set_basis_data_from(self)
+      mol.:resolve_bases_and_update_from(self)
+      mol.:update_atom_info
 
       ! Don't remake ANO data if there
       i = 0
-      mol.:set_ANOs_from(self,[(i,i=n,n)])
+      mol.:resolve_ANOs_from(self,[(i,i=n,n)])
 
       ! Set guess-type SCF defaults
       mol.:set_SCF_guess_defaults_from(.scfdata)
@@ -3549,10 +3684,11 @@ contains
 
       ! Copy the basis set and set the basis info
       ! WARNING: dont destroy basis of mol !
-      mol.:set_basis_data_from(self)
+      mol.:resolve_bases_and_update_from(self)
+      mol.:update_atom_info
 
       ! Don't remake ANO data if there
-      mol.:set_ANOs_from(self,.atom_group(g).atom_index)
+      mol.:resolve_ANOs_from(self,.atom_group(g).atom_index)
 
       ! Make atom info. No recursive groups. Yet?
       mol.atom_info_made = FALSE
@@ -3587,134 +3723,6 @@ contains
 
    end
 
-
-   set_basis_data_from(mol) ::: leaky
-   ! Set the basis data from molecule "mol"
-   ! Make sure none of these bases are destroyed.
-      self :: INOUT
-      mol :: MOLECULE, target, IN
-
-      ! Copy the basis set and set the basis info
-      ! WARNING: dont destroy basis of mol
-      .use_spherical_basis = mol.use_spherical_basis
-      .basis               = mol.basis
-      .slaterbasis         = mol.slaterbasis
-      .coppensbasis        = mol.coppensbasis
-
-      ! Do it
-      .:set_basis_info ! NOT PURE
-
-   end
-
-   set_ANOs_from(mol,list) ::: PURE
-   ! Set ANO data and atom shell info from molecule "mol" from the
-   ! sublist "list". Make sure none of these are destroyed!
-   ! NOTE: No point to assign unique data, all data is non-unique
-      self :: INOUT
-      mol :: MOLECULE, IN
-      list :: VEC{INT}, IN
-
-   ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.n_atom_kind>0,"atoms not finalized")
-   ENSURE(mol.atom.allocated,"mol has no atoms")
-   ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
-   ENSURE(list.dim==.atom.dim,"inconsistent list length")
-
-      made_ANO,made_int,made_shl :: BIN
-      a,b :: INT
-
-      ! Assign ANO orbitals
-      made_ANO =  mol.:has_all_ANO_matrices
-      if (made_ANO) then
-         do a = 1,list.dim
-            b = list(a)
-            .atom(a).density_mx     = mol.atom(b).density_mx
-            .atom(a).NOs   = mol.atom(b).NOs
-            .atom(a).NO_occ_nos = mol.atom(b).NO_occ_nos
-            .atom(a).AOs    = mol.atom(b).AOs
-            .atom(a).set_energy(mol.atom(b).energy)
-         end
-      end
-
-      ! Assign ANO interpolators
-      made_int = mol.:has_all_interpolators
-      if (made_int) then
-         do a = 1,list.dim
-            b = list(a)
-            .atom(a).interpolator = mol.atom(b).interpolator
-         end
-      end
-
-      ! Assign atom shell info
-      made_shl = mol.:has_all_shell_info
-      if (made_shl) then
-         do a = 1,list.dim
-            b = list(a)
-            .atom(a).first_basis_fn_for_shell = mol.atom(b).first_basis_fn_for_shell
-            .atom(a).last_basis_fn_for_shell  = mol.atom(b).last_basis_fn_for_shell
-            .atom(a).basis_shell1pair         = mol.atom(b).basis_shell1pair
-         end
-      end
-
-   end
-
-   set_ANOs_from(mol) ::: PURE
-   ! Set ANO data and atom shell info from molecule "mol" by comparing
-   ! the atom kinds directly. Make sure none of the assigned ANO data
-   ! is destroyed!
-      self :: INOUT
-      mol  :: MOLECULE, IN
-
-   ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.n_atom_kind>0,"atoms not finalized")
-   ENSURE(mol.atom.allocated,"mol has no atoms")
-   ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
-
-      a,b :: INT
-
-      ! Assign ANO orbitals
-      do a = 1,.atom.dim
-         do b = 1,mol.atom.dim
-            if (.atom(a).is_same_kind_as(mol.atom(b))) then
-            if (mol.atom(b).has_ANO_matrices) then
-               .atom(a).density_mx     = mol.atom(b).density_mx
-               .atom(a).NOs            = mol.atom(b).NOs
-               .atom(a).NO_occ_nos = mol.atom(b).NO_occ_nos
-               .atom(a).AOs            = mol.atom(b).AOs
-               .atom(a).set_energy(mol.atom(b).energy)
-               exit ! next atom "a"
-            end
-            end
-         end
-      end
-
-      ! Assign ANO interpolators
-      do a = 1,.atom.dim
-         do b = 1,mol.atom.dim
-            if (.atom(a).is_same_kind_as(mol.atom(b))) then
-            if (mol.atom(b).interpolator.allocated) then
-               .atom(a).interpolator = mol.atom(b).interpolator
-               exit ! next atom "a"
-            end
-            end
-         end
-      end
-
-      ! Assign atom shell info
-      do a = 1,.atom.dim
-      do b = 1,mol.atom.dim
-         if (.atom(a).is_same_kind_as(mol.atom(b))) then
-         if (mol.atom(b).has_shell_info) then
-            .atom(a).first_basis_fn_for_shell = mol.atom(b).first_basis_fn_for_shell
-            .atom(a).last_basis_fn_for_shell  = mol.atom(b).last_basis_fn_for_shell
-            .atom(a).basis_shell1pair         = mol.atom(b).basis_shell1pair
-            exit ! next atom "a"
-         end
-         end
-      end
-      end
-
-   end
 
 !  =====================
 !  Ryde fragment capping
@@ -3837,7 +3845,7 @@ contains
             ! mol.crystal.update_fragment_info(mol.atom)
                
             ! Don't remake ANO data if there
-            mol.:set_ANOs_from(self)
+            mol.:resolve_ANOs_from(self)
 
             ! Add capped molecule to atom_group
             .atom_group(a).mol => mol
@@ -3910,7 +3918,7 @@ contains
       end
       
       ! Don't remake ANO data if there
-      mol.:set_ANOs_from(self)
+      mol.:resolve_ANOs_from(self)
 
       ! Add capped molecule to atom_group
       .atom_group(g).mol => mol
@@ -4228,12 +4236,11 @@ contains
    update_atom_group_info ::: leaky
    ! Update .atom_group information (ANOs, crystal, SCF guess ...)
    ! WARNING: atom_group(:).mol.crystal's are clones of .crystal
-      self :: target, INOUT
+      self :: INOUT
 
    ENSURE(.atom.allocated,"atom groups must be defined after atoms=")
    ENSURE(.atom_group.has_all_mols,"atom_group has missing mols")
 
-      mol :: MOLECULE*
       g :: INT
 
       if (.scfdata.deallocated) then
@@ -4243,22 +4250,22 @@ contains
 
       do g = 1,.atom_group.dim
 
-         mol => .atom_group(g).mol
-         ENSURE(mol.associated,"atom_group molecule "//trim(g.to_str)//" does not exist")
+         ENSURE(.atom_group(g).mol.associated,"atom_group molecule "//trim(g.to_str)//" does not exist")
 
          ! Don't remake ANO data if there
-         mol.:set_ANOs_from(self)
+         .atom_group(g).mol.:resolve_ANOs_from(self)
 
          ! Assign the crystal & gegenerate unit cell atoms
          if (.crystal.allocated) then
-            mol.crystal = .crystal ! Should be minimal copy?
-            mol.crystal.update_fragment_info(mol.atom)
+            .atom_group(g).mol.crystal = .crystal ! Should be minimal copy?
+            .atom_group(g).mol.crystal.update_fragment_info(.atom_group(g).mol.atom)
          end
 
          ! Set guess-type SCF defaults
-         if (NOT .atom_group(g).spin_multiplicity_set) then 
-            mol.:set_SCF_guess_defaults_from(.scfdata)
-         end
+         ! Don't know why this makes 4AP fail ... commented out
+       ! if (NOT .atom_group(g).spin_multiplicity_set) then 
+       !    .atom_group(g).mol.:set_SCF_guess_defaults_from(.scfdata)
+       ! end
 
       end
 
@@ -5940,7 +5947,7 @@ contains
    !   in embedded scf calculations.
    ! . If "method" is present it is used as the kind of density matrix
    !   to make, otherwise taken from .scfdata.SCF_kind, or guessed
-   !   from the spinorbital_kind of the MO's.
+   !   from the spinorbital_genre of the MO's.
    ! NOTE:
    ! . If .scfdata.do_delta_build is set and a a .delta_density_mx
    !   is created, then a delta density is made.
@@ -5967,7 +5974,7 @@ contains
       end
 
       ! Determine (or guess) the genre of density matrix to be made
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = .MOs.genre
       end
 
@@ -6351,7 +6358,7 @@ contains
 
       genre :: STR
 
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = D.genre
       end
 
@@ -6395,7 +6402,7 @@ contains
 
       genre :: STR
 
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = .density_mx.genre
       end
 
@@ -6432,7 +6439,7 @@ contains
 
       genre :: STR
 
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = .density_mx.genre
       end
 
@@ -6481,7 +6488,7 @@ contains
 
       genre :: STR
 
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = D.genre
       end
 
@@ -6516,7 +6523,7 @@ contains
 
       genre :: STR
 
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = .density_mx.genre
       end
 
@@ -6557,7 +6564,7 @@ contains
       genre :: STR
       I :: CPX
 
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = .density_mx.genre
       end
 
@@ -6607,7 +6614,7 @@ contains
       genre :: STR
       I :: CPX
 
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = .density_mx.genre
       end
 
@@ -6657,7 +6664,7 @@ contains
       genre :: STR
       I :: CPX
 
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = .density_mx.genre
       end
 
@@ -6709,7 +6716,7 @@ contains
       m = n
       if (present(nb)) m = nb
 
-      genre = .scfdata.spinorbital_kind
+      genre = .scfdata.spinorbital_genre
       .density_mx.destroy(genre)
       .density_mx.create(genre)
 
@@ -6794,7 +6801,7 @@ contains
       if (.:has_all_ANO_matrices) .:destroy_ANO_matrices
 
       ! Determine (or guess) the genre of density matrix to be made
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = .MOs.genre
       end
 
@@ -6862,7 +6869,7 @@ contains
       if (.:has_all_ANO_matrices) .:destroy_ANO_matrices
 
       ! Determine (or guess) the genre of density matrix to be made
-      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_kind
+      if (.scfdata.allocated) then; genre = .scfdata.spinorbital_genre
       else;                         genre = .MOs.genre
       end
 
@@ -7530,7 +7537,7 @@ contains
       s_kind :: STR
 
       ! Extrapolate compressed entities
-      s_kind = .scfdata.spinorbital_kind
+      s_kind = .scfdata.spinorbital_genre
       select case (s_kind)
          case("rhf","rks","xray_rhf","xray_rks","rdvpt")
             .:shift_dependence_from_r(F.r)
@@ -7610,7 +7617,7 @@ contains
       s_kind :: STR
 
       ! Extrapolate compressed entities
-      s_kind = .scfdata.spinorbital_kind
+      s_kind = .scfdata.spinorbital_genre
       select case (s_kind)
          case("rhf","rks","xray_rhf","xray_rks","rdvpt")
             .:remove_dependence_from_r(F.r)
@@ -8049,7 +8056,7 @@ contains
          genre = .MOs.genre
       else if (.scfdata.allocated) then
          ! Does it exist on disk?
-         genre = .scfdata.spinorbital_kind
+         genre = .scfdata.spinorbital_genre
          arch.set(.name,"MOs",genre)
          if (arch.exists) then
             .MOs.create(.n_bf)
@@ -8135,7 +8142,7 @@ contains
 !  ================
 
    symmetrize(mat,orb_kind)
-   ! Symmetrize an opmatrix matrix "mat" and of spinorbital_kind
+   ! Symmetrize an opmatrix matrix "mat" and of spinorbital_genre
    ! "orb_kind" (if specified)
       self :: IN
       mat :: OPMATRIX, INOUT
@@ -8922,7 +8929,7 @@ contains
          genre = .MOs.genre
       else if (.scfdata.allocated) then
          ! Does it exist as on disk?
-         genre = .scfdata.spinorbital_kind
+         genre = .scfdata.spinorbital_genre
          arch.set(.name,"MOs",genre)
          if (arch.exists) then
             .MOs.create(.n_bf)
@@ -8938,7 +8945,7 @@ contains
          genre = .density_mx.genre
       else if (.scfdata.allocated) then
          ! Does it exist on disk?
-         genre = .scfdata.spinorbital_kind
+         genre = .scfdata.spinorbital_genre
          arch.set(.name,"density_mx",genre)
          if (arch.exists) then
             .density_mx.create(.n_bf)
@@ -8951,7 +8958,7 @@ contains
       ! Get orbital energies
       if (.MO_energies.deallocated) then
       if (.scfdata.allocated) then
-         genre = .scfdata.spinorbital_kind
+         genre = .scfdata.spinorbital_genre
          .MO_energies.create(.n_bf,genre)
          ! Does it exist on disk?
          arch.set(.name,"MO_energies",genre)
@@ -10023,7 +10030,7 @@ contains
 
       stdout.flush
       stdout.text("_QCr_calc_method                    '"//trim(psi(1))//"'")
-      stdout.text("_QCr_calc_spinorbital_kind          '"//trim(psi(2))//"'")
+      stdout.text("_QCr_calc_spinorbital_genre          '"//trim(psi(2))//"'")
       stdout.text("_QCr_calc_gaussian_basis_set        '"//trim(psi(3))//"'")
       stdout.text("_QCr_calc_gaussian_basis_set_kind   '"//trim(psi(4))//"'")
       stdout.text("_QCr_calc_basis_max_l               '"//trim(psi(5))//"'")
@@ -10102,7 +10109,7 @@ contains
       end
 
       ! AO kind
-      psi(2) = .scfdata.spinorbital_kind
+      psi(2) = .scfdata.spinorbital_genre
 
       ! Basis
       psi(3) = "custom?"
@@ -10482,7 +10489,7 @@ contains
          ! TODO should really check if it's created and DONE not just if it's unrestricted
          if (.scfdata.allocated) then
         
-            select case (.scfdata.spinorbital_kind)
+            select case (.scfdata.spinorbital_genre)
         
             case ("r ")
                call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("r ")))
@@ -10583,7 +10590,7 @@ contains
          .MOs.create(.n_bf)
 
          select case (tmp_str)
-         !select case (.scfdata.spinorbital_kind)
+         !select case (.scfdata.spinorbital_genre)
 
          case ("r ")
             .scfdata.set_SCF_kind("rhf")
