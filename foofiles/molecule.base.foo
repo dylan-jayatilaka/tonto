@@ -427,9 +427,13 @@ contains
       if (.atom.allocated) then
          .name              = .atom.chemical_formula
          .spin_multiplicity = .:default_spin_multiplicity
+         ! Set unique atom tags if needed, multiplicity, no. of
+         ! electrons; resolve basis sets, set basis-shell info; 
+         ! and (possibly) resent kinds
          .:update_atom_info
-         .:resolve_basis_info ! NOT PURE
-         .:update_atom_info
+         .:resolve_bases_and_update ! NOT PURE
+         .atom.update_kinds    
+         .n_atom_kind = maxval(.atom.kind)
       end
 
    end
@@ -711,11 +715,13 @@ contains
       groups = TRUE
       if (present(do_groups)) groups = do_groups
 
-      ! Set tags, multiplicity, and no of alpha/beta electrons
-      ! And  basis sets
+      ! Set unique atom tags if needed, multiplicity, no. of
+      ! electrons; resolve basis sets, set basis-shell info; 
+      ! and (possibly) resent kinds
       .BASE:update_atom_info
-      .BASE:resolve_basis_info
-      .BASE:update_atom_info   ! 2nd time
+      .BASE:resolve_bases_and_update
+      .atom.update_kinds    
+      .n_atom_kind = maxval(.atom.kind)
 
       ! Finalize crystal
       if (.crystal.allocated) then
@@ -731,9 +737,11 @@ contains
       ! Destroy stored atoms here
       .isosurface.destroy
 
+      .atom_info_made = TRUE
+
    end
 
-   update_atom_info ::: leaky, PURE
+   update_atom_info ::: leaky, private, PURE
    ! Set the associated atom information
    ! . Atom tags and kind indices
    ! . The spin multiplicity
@@ -748,10 +756,8 @@ contains
       ! Finalize 
       .atom.update
 
-      ! No. of atoms
+      ! No. of atoms & no. of atom kinds
       .n_atom = .atom.dim
-
-      ! No. of atom kinds
       .n_atom_kind = maxval(.atom.kind)
 
       ! Reset multiplicity?
@@ -769,7 +775,7 @@ contains
       ! Make connetion table
       .:make_atom_connections
 
-      .atom_info_made = TRUE
+    ! .atom_info_made = TRUE
 
    end
 
@@ -845,20 +851,51 @@ contains
 
    end
 
-   resolve_basis_info ::: leaky
-   ! Match the basis set labels for every atom with the actual atomic
-   ! basis set.  Also perform any finalization procedures to fully
-   ! define all objects.  This version is supposed to work for
-   ! multiple bases.
+!  Resolve bases
+
+   resolve_bases_and_update ::: leaky
+   ! Match the basis set labels with a basis set, either from a
+   ! library or from the user input. The atoms must exist!
       self :: INOUT
-      .:resolve_coppensbases
-      .:resolve_slaterbases
-      .:resolve_gaussianbases
+
+      if (.atom.deallocated) return
+
+      ! Read and resolve
+      if (NOT .atom.bases_are_resolved) then
+         .basis_info_made = FALSE
+         .:resolve_coppensbases ! NOT PURE
+         .:resolve_slaterbases
+         .:resolve_gaussianbases
+      end
+
+      ! Update
+      .:update_basis_info
+
    end
 
-   resolve_gaussianbases ::: leaky
+   resolve_bases_and_update_from(mol) ::: leaky
+   ! Set the basis data from molecule "mol" assumed to be a parent
+   ! "supermolecule" NOTE: atom kinds are *NOT* updated
+      self :: INOUT
+      mol :: MOLECULE, IN
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol
+      .use_spherical_basis = mol.use_spherical_basis
+
+      if (mol.basis.allocated)        .basis        = mol.basis
+      if (mol.slaterbasis.allocated)  .slaterbasis  = mol.slaterbasis
+      if (mol.coppensbasis.allocated) .coppensbasis = mol.coppensbasis
+
+      ! Do it, but don't update atom.kind's
+      .:resolve_bases_and_update ! NOT PURE
+      .atom_info_made  = TRUE    ! Assume kinds ared OK
+
+   end
+
+   resolve_gaussianbases ::: leaky, private
    ! Match the basis set labels for every atom with the actual atomic
-   ! basis set.
+   ! basis set nby reading a library basis, if not there.
       self :: INOUT
 
       library_basis_labels :: VEC{STR}@
@@ -871,9 +908,9 @@ contains
 
       if (.atom.bases_are_resolved) return
 
+      ! Read from a library
       if (.basis_name/=" ") then
 
-         ! Resolve from a library .....
          ! Renormalise basis sets. (The library is in normalised form)
          if (.basis.allocated) .basis.renormalise
 
@@ -883,37 +920,23 @@ contains
          .basis.read_library_data(library,library_basis_labels,n_unique) ! NOT PURE
          library_basis_labels.destroy
 
-         if (.basis.allocated) then
-            ! Resolve atom bases afresh i.e. point atom.basis to .basis
-            .basis.set_spherical(.use_spherical_basis)
-            .atom.resolve_bases(.basis,.basis_name)
-            .atom.set_basis_kind("gaussian")
-            ! Unnormalise if completely done
-            .basis.unnormalise
-            .:resolve_bases_and_update ! NOT PURE
-         end
-
-      else if (.basis.allocated) then
-
-            ! Resolve from existing .basis .....
-            ! Assume it is a gaussian basis set
-            .basis.set_spherical(.use_spherical_basis)
-            .atom.resolve_bases(.basis)
-            .atom.set_basis_kind("gaussian")
-            ! Unnormalise if completely done
-            if (.atom.bases_are_resolved) .:resolve_bases_and_update
+         if (.basis.allocated) .basis.unnormalise
 
       end
 
+      ! Resolve 
       if (.basis.allocated) then
-         ENSURE(.atom.bases_are_resolved,"Not all gaussian bases were found")
+         .basis.set_spherical(.use_spherical_basis)
+         .atom.resolve_bases(.basis,.basis_name)
+         .atom.set_basis_kind("gaussian")
+         .atom_info_made = FALSE ! Need new atom kinds
       end
 
    end
 
-   resolve_slaterbases ::: leaky
+   resolve_slaterbases ::: leaky, private
    ! Match the basis set labels for every atom with the actual atomic
-   ! basis set.
+   ! basis set by reading a library basis set, if not there.
       self :: INOUT
 
       library_basis_labels :: VEC{STR}@
@@ -926,9 +949,9 @@ contains
 
       if (.atom.slaterbases_are_resolved) return
 
+      ! Read from a library
       if (.slaterbasis_name/=" ") then
 
-         ! Resolve from a library .....
          ! Renormalise basis sets. (The library is in normalised form)
          if (.slaterbasis.allocated) .slaterbasis.renormalise
 
@@ -938,31 +961,22 @@ contains
          .slaterbasis.read_library_data(library,library_basis_labels,n_unique)
          library_basis_labels.destroy
 
-         if (.slaterbasis.allocated) then
-            ! Resolve atom bases afresh i.e. point atom.basis to .basis
-            .atom.resolve_bases(.slaterbasis,.slaterbasis_name)
-            .atom.set_basis_kind("slater")
-            ! Unnormalise if completely done
-            .slaterbasis.unnormalise
-         end
-
-      else if (.slaterbasis.allocated) then
-
-            ! Resolve from existing .basis .....
-            .atom.resolve_bases(.slaterbasis)
-            .atom.set_basis_kind("slater")
+         if (.slaterbasis.allocated) .slaterbasis.unnormalise
 
       end
 
+      ! Resolve
       if (.slaterbasis.allocated) then
-         ENSURE(.atom.slaterbases_are_resolved,"Not all slaterbases were found")
+         .atom.resolve_bases(.slaterbasis,.slaterbasis_name)
+         .atom.set_basis_kind("slater")
+         .atom_info_made = FALSE ! Need new atom kinds
       end
 
    end
 
-   resolve_coppensbases ::: leaky
+   resolve_coppensbases ::: leaky, private
    ! Match the basis set labels for every atom with the actual atomic
-   ! basis set.
+   ! basis set by reading a library basis set, if not there.
       self :: INOUT
 
       library_basis_labels :: VEC{STR}@
@@ -975,9 +989,9 @@ contains
 
       if (.atom.coppensbases_are_resolved) return
 
+      ! Read from a library 
       if (.coppensbasis_name/=" ") then
 
-         ! Resolve from a library .....
          ! Renormalise basis sets. (The library is in normalised form)
          if (.coppensbasis.allocated) .coppensbasis.renormalise
          ! Read the basis from the library
@@ -986,50 +1000,25 @@ contains
          .coppensbasis.read_library_data(library,library_basis_labels,n_unique)
          library_basis_labels.destroy
 
-         if (.coppensbasis.allocated) then
-            ! Resolve atom bases afresh i.e. point atom.basis to .basis
-            .atom.resolve_bases(.coppensbasis,.coppensbasis_name)
-            .atom.set_basis_kind("coppens")
-            ! Unnormalise if completely done
-            .coppensbasis.unnormalise
-         end
+         if (.coppensbasis.allocated) .coppensbasis.unnormalise
 
-      else if (.coppensbasis.allocated) then
-            ! Resolve from existing .basis .....
-            .atom.resolve_bases(.coppensbasis)
-            .atom.set_basis_kind("coppens")
       end
 
+      ! Resolve 
       if (.coppensbasis.allocated) then
-         ENSURE(.atom.coppensbases_are_resolved,"not all coppensbases were found")
+         .atom.resolve_bases(.coppensbasis,.coppensbasis_name)
+         .atom.set_basis_kind("coppens")
+         .atom_info_made = FALSE ! Need new atom kinds
       end
-
-   end
-
-   resolve_bases_and_update ::: leaky
-   ! Resolve and update the molecule basis set information.
-   ! The atom list must exist.
-      self :: INOUT
-
-   ENSURE(.atom.allocated, "no atoms!")
-
-      if (.basis.deallocated) return
-
-      if (NOT .atom.bases_are_resolved) then
-         .basis_info_made = FALSE
-         .:resolve_basis_info ! NOT PURE
-      end
-
-      .:update_basis_info
 
    end
 
    update_basis_info ::: leaky, private, PURE
-   ! Make the basis set information
+   ! Make the basis set information including shell-basis-fn limits
       self :: INOUT
 
-   ENSURE(.atom.allocated,  "no atoms!")
-   ENSURE(.basis.allocated, "no basis!")
+      if (.basis.deallocated) return
+      if (.atom.deallocated)  return
 
       .n_basis       = .basis.dim
       .n_bf          = .atom.no_of_basis_functions
@@ -1037,30 +1026,11 @@ contains
       .n_shell       = .atom.no_of_shells
       .n_shell_pairs = .atom.no_of_shell_pairs
 
-      ! Make shell-basis-function limts, etc. (keaky)
+      ! Make shell-basis-function limts, etc. (leaky)
       .:update_shell_info
 
       .basis_info_made = TRUE
       .atom_info_made  = FALSE ! Since kinds depend on bases
-
-   end
-
-   resolve_bases_and_update_from(mol) ::: leaky
-   ! Set the basis data from molecule "mol"
-   ! Make sure none of these bases are destroyed.
-      self :: INOUT
-      mol :: MOLECULE, IN
-
-      ! Copy the basis set and set the basis info
-      ! WARNING: dont destroy basis of mol
-      .use_spherical_basis = mol.use_spherical_basis
-
-      if (mol.basis.allocated)        .basis        = mol.basis
-      if (mol.slaterbasis.allocated)  .slaterbasis  = mol.slaterbasis
-      if (mol.coppensbasis.allocated) .coppensbasis = mol.coppensbasis
-
-      ! Do it
-      .:resolve_bases_and_update ! NOT PURE
 
    end
 
