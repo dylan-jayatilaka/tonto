@@ -313,6 +313,7 @@ contains
       case ("make_spherically_averaged_has "); .TAD:make_spherically_averaged_HAs
       case ("make_structure_factors        "); .SCF:make_X_SFs(output=TRUE)
       case ("make_symortho_density_matrix  "); .SCF:make_group_density_matrix
+      case ("make_vanfleteren_atoms        "); .MAIN:make_vanfleteren_atoms
       case ("make_weak_force_energy_shift  "); .MISC:make_weak_force_energy_shift
       case ("make_x_structure_factors      "); .SCF:make_X_SFs(output=TRUE)
       case ("mfcc_har                      "); .TAD:fragHAR_refinement
@@ -1957,6 +1958,120 @@ contains
      end
 
    ! .crystal.put_cluster_info
+
+   end
+
+   make_vanfleteren_atoms 
+   ! Do it.
+      self :: INOUT
+
+      a, f,l :: INT
+      S,Sph,Smh :: MAT{REAL}@
+      rho_i,rho_i_mh,rho_ip1 :: MAT{REAL}@
+      rho_A_i,rho_A_ip1,wgt_A_i :: MAT3{REAL}@
+      diff :: REAL
+
+      rho_A_ip1.create(.n_bf,.n_bf,.n_atom)
+      rho_A_i.create(.n_bf,.n_bf,.n_atom)
+      wgt_A_i.create(.n_bf,.n_bf,.n_atom)
+
+      rho_A_i = ZERO
+      wgt_A_i = ZERO
+
+      rho_i.create(.n_bf,.n_bf)
+      rho_ip1.create(.n_bf,.n_bf)
+
+      stdout.text("Atomic density matrices")
+
+      do a = 1,.atom.dim
+         stdout.show(" Atom        = ",a)
+         stdout.show(" Atom label  = ",.atom(a).label)
+         stdout.text("Density matrix:")
+         stdout.put(.atom(a).density_matrix.restricted)
+      end
+
+      S = .overlap_matrix
+
+      stdout.text("Overlap matrix:")
+      stdout.put(S)
+
+      Sph.create(.n_bf,.n_bf)
+      Sph.to_sqrt_of(S)
+
+      stdout.text("Sqrt overlap matrix:")
+      stdout.put(Sph)
+
+      Smh.create(.n_bf,.n_bf)
+      Smh.to_inverse_sqrt_of(S)
+
+      stdout.text("Inverse overlap matrix:")
+      stdout.put(Smh)
+
+      stdout.text("Check Smh . S . Smh :")
+      stdout.put(matmul(Smh,(matmul(S,Smh))))
+
+      stdout.text("Check Sph . Smh :")
+      stdout.put(matmul(Sph,Smh))
+
+      rho_i_mh.create(.n_bf,.n_bf)
+
+      ! Make the initial p_AA(i)
+      l = 0
+      do a = 1,.atom.dim
+
+         ! Basis fn method
+         f = l + 1
+         l = l +  .atom(a).basis.n_bf
+
+         ! Copy diagonal AA term
+         rho_A_i(f:l,f:l,a) = .atom(a).density_matrix.restricted
+
+      end
+
+      stdout.text("Transfered AA diagonal blocks:")
+      stdout.put(rho_i)
+
+      stdout.text("Finally, initial rho AA in ortho basis:")
+
+
+      ! Make the initial p_AA(i)
+      rho_i = ZERO
+      l = 0
+      do a = 1,.atom.dim
+
+         ! Basis fn method
+         f = l + 1
+         l = l +  .atom(a).basis.n_bf
+
+         ! Copy diagonal AA term
+         rho_A_i(:,:,a) = matmul(Sph,matmul(rho_A_i(:,:,a),Sph))
+
+         ! And add them up ... eqn 6(a)
+         rho_i = rho_i + rho_A_i(:,:,a)
+
+      end
+
+      ! rho_i^-1/2
+      rho_i_mh.create(.n_bf,.n_bf)
+      rho_i_mh.to_sqrt_of(rho_i)
+
+      ! Make the w_A_i ... 6b
+      wgt_A_i = ZERO
+      do a = 1,.n_atom
+         wgt_A_i(:,:,a) = matmul(rho_i_mh, &
+                          matmul(rho_A_i(:,:,a), &
+                                 rho_i_mh) )
+      end
+
+      rho_A_ip1 = ZERO
+      do a = 1,.n_atom
+         rho_A_ip1(:,:,a) = matmul(wgt_A_i(:,:,a), &
+                            matmul(rho_A_i(:,:,a), &
+                                   wgt_A_i(:,:,a)) )
+      end
+
+      diff = maxval(abs(rho_A_ip1-rho_A_i))
+      stdout.show("Diff. between rho i+1 and rho i =",diff)
 
    end
 
