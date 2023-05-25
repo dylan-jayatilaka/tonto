@@ -1965,125 +1965,115 @@ contains
    ! Do it.
       self :: INOUT
 
-      a, f,l :: INT
-      S,Sph,Smh :: MAT{REAL}@
-      rho_i,rho_i_mh,rho_ip1 :: MAT{REAL}@
-      rho_A_i,rho_A_ip1,wgt_A_i :: MAT3{REAL}@
+      S, Sph,Smh :: MAT{REAL}@
+      W, rho,rmh :: MAT{REAL}@
+      rho_this,   rho_next   :: MAT{REAL}@
+      rho_this_A, rho_next_A :: MAT3{REAL}@
+      wgt_this_A             :: MAT3{REAL}@
+      iter, n, a,na, f,l     :: INT
       diff :: REAL
-      iter :: INT
 
-      rho_A_ip1.create(.n_bf,.n_bf,.n_atom)
-      rho_A_i.create(.n_bf,.n_bf,.n_atom)
-      wgt_A_i.create(.n_bf,.n_bf,.n_atom)
+      ! No. of basis fn's
+      n = .n_bf
 
-      rho_A_i = ZERO
-      wgt_A_i = ZERO
+      ! VA iterative array matrices
+      rho_next_A.create(n,n,.n_atom)
+      rho_this_A.create(n,n,.n_atom)
+      wgt_this_A.create(n,n,.n_atom)
 
-      rho_i.create(.n_bf,.n_bf)
-      rho_ip1.create(.n_bf,.n_bf)
+      ! Total densities
+      rho_this.create(n,n)
+      rho_next.create(n,n)
 
-      stdout.text("Atomic density matrices")
+      ! AO density matrix
+      rho = .density_matrix.restricted
 
-      do a = 1,.atom.dim
-         stdout.show(" Atom        = ",a)
-         stdout.show(" Atom label  = ",.atom(a).label)
-         stdout.text("Density matrix:")
-         stdout.put(.atom(a).density_matrix.restricted)
-      end
+      ! And zero em ...
+      rho_this_A = ZERO
+      wgt_this_A = ZERO
 
+      ! Overlap matrices & powers
+        S.create(n,n)
+      Sph.create(n,n)
+      Smh.create(n,n)
+      rmh.create(n,n)
+
+      ! ANd define em ...
       S = .overlap_matrix
+      Sph.to_sqrt_of(S)         ! S^+1/2
+      Smh.to_inverse_sqrt_of(S) ! S^-1/2
 
-      stdout.text("Overlap matrix:")
-      stdout.put(S)
-
-      Sph.create(.n_bf,.n_bf)
-      Sph.to_sqrt_of(S)
-
-      stdout.text("Sqrt overlap matrix:")
-      stdout.put(Sph)
-
-      Smh.create(.n_bf,.n_bf)
-      Smh.to_inverse_sqrt_of(S)
-
-      stdout.text("Inverse overlap matrix:")
-      stdout.put(Smh)
-
+      ! Check
+      W = S
+      W.change_basis_using(Smh)
       stdout.text("Check Smh . S . Smh :")
-      stdout.put(matmul(Smh,(matmul(S,Smh))))
+      stdout.put(W)
 
+      ! Check
+      W = matmul(Sph,Smh)
       stdout.text("Check Sph . Smh :")
-      stdout.put(matmul(Sph,Smh))
+      stdout.put(W)
 
-      rho_i_mh.create(.n_bf,.n_bf)
-
-      ! Make the initial p_AA(i)
+      ! Set initial rho_AA(i)
       l = 0
       do a = 1,.atom.dim
-
-         ! Basis fn method
          f = l + 1
          l = l +  .atom(a).basis.n_bf
-
-         ! Copy diagonal AA term
-         rho_A_i(f:l,f:l,a) = .atom(a).density_matrix.restricted
-
+         rho_this_A(f:l,f:l,a) = .atom(a).density_matrix.restricted
       end
 
       stdout.text("Transfered AA diagonal blocks:")
-      stdout.put(rho_i)
+      stdout.put(rho_this)
 
       stdout.text("Finally, initial rho AA in ortho basis:")
 
-      ! Make the initial p_AA(i)
-      rho_i = ZERO
-      rho_A_i = ZERO
+      ! Get rho_AA^(i) in symmetrically orthonormal basis
+      rho_this   = ZERO
       l = 0
       do a = 1,.atom.dim
-    
-         ! Basis fn method
-         f = l + 1
-         l = l +  .atom(a).basis.n_bf
-    
-         ! Copy diagonal AA term
-         rho_A_i(:,:,a) = matmul(Sph,matmul(rho_A_i(:,:,a),Sph))
-    
-         ! And add them up ... eqn 6(a)
-         rho_i = rho_i + rho_A_i(:,:,a)
-    
+         ! Basis fn limits
+         na = .atom(a).basis.n_bf
+         f  = l + 1
+         l  = l +  .atom(a).basis.n_bf
+         ! Initial rho^(i)_AA
+         rho_this_A(:,:,a) = rho_this_A(:,:,a)
+         rho_this_A(:,:,a).change_basis_using(Sph)
+         ! rho^(i) = Sum_A rho^(i)_AA ... eqn 6(a)
+         rho_this = rho_this + rho_this_A(:,:,a)
       end
 
+      ! Get rho in symmetrically orthonormal basis 
+      rho.change_basis_using(Sph)
 
+      ! Start iterations
       iter = 0
 
       do 
 
          iter = iter + 1
        
-         ! rho_i^-1/2
-         rho_i_mh.create(.n_bf,.n_bf)
-         rho_i_mh.to_sqrt_of(rho_i) ! overwrite
+         ! Overwrite new rho^(i)^-1/2
+         rmh.to_sqrt_of(rho_this) 
        
          ! Make the w_A_i ... 6b
-         wgt_A_i = ZERO
+         wgt_this_A = ZERO
          do a = 1,.n_atom
-            wgt_A_i(:,:,a) = matmul(rho_i_mh, &
-                             matmul(rho_A_i(:,:,a), &
-                                    rho_i_mh) )
+            rho_this_A(:,:,a).change_basis_to(wgt_this_A(:,:,a),rmh)
          end
        
-         rho_A_ip1 = ZERO
+         ! Update the atomic rho_A's
+         rho_next_A = ZERO
          do a = 1,.n_atom
-            rho_A_ip1(:,:,a) = matmul(wgt_A_i(:,:,a), &
-                               matmul(rho_A_i(:,:,a), &
-                                      wgt_A_i(:,:,a)) )
+            rho.change_basis_to(rho_next_A(:,:,a),wgt_this_A(:,:,a))
          end
        
-         diff = maxval(abs(rho_A_ip1-rho_A_i))
+         diff = maxval(abs(rho_next_A-rho_this_A))
          stdout.show("Diff. between rho i+1 and rho i =",diff)
 
          if (diff<TOL(2) OR iter>10) exit
 
-         rho_A_i = rho_A_ip1
+         rho_this_A = rho_next_A
+         rho_next_A = ZERO
 
       end
 
