@@ -47,7 +47,6 @@ contains
       select case (.plot_grid.plot_kind)
       case("adp                                 "); .:make_ADP_grid(grid,pt)
       case("adp2                                "); .:make_ADP2_exponent_grid(grid,pt)
-      case("anharmonic_adp_correction           "); .:make_AADP_correction_grid(grid,pt)
       case("b_field                             "); .:make_B_field_grid(grid,pt)
     ! case("b_l_field                           "); .:make_B_L_field_grid(grid,pt)
     ! case("b_s_field                           "); .:make_B_S_field_grid(grid,pt)
@@ -125,6 +124,8 @@ contains
       case("reduced_k_kinetic_energy            "); .:make_rK_kinetic_energy_grid(grid,pt)
       case("reduced_v_from_virial               "); .:make_rV_from_virial_grid(grid,pt)
       case("residual_density                    "); .:make_residual_density_grid(grid,pt)
+      case("residual_density_cell               "); .:make_residual_density_cell_grid(grid,pt)
+      case("residual_density_cell_map           "); .:make_residual_density_cell_grid(grid,pt)
     ! case("roby_ano_density                    "); .:make_Roby_ANO_density_grid(grid,pt)
     ! case("roby_nao_density                    "); .:make_Roby_NAO_density_grid(grid,pt)
       case("roby-gould_covalent_orbital         "); .:make_RG_cov_orbital_grid(grid,pt)
@@ -190,6 +191,7 @@ contains
       case("oscillator_orbital               "); .isosurface.cubify(::oscillator_orbital_grid)
       case("orbital_density                  "); .isosurface.cubify(::orbital_density_grid)
       case("promolecule_density              "); .isosurface.cubify(::promolecule_density_grid)
+      case("residual_density                 "); .isosurface.cubify(::residual_density_grid)
       case("roby_ano_density                 "); .isosurface.cubify(::Roby_ANO_density_grid)
       case("roby_nao_density                 "); .isosurface.cubify(::Roby_NAO_density_grid)
       case("roby-gould_covalent_orbital      "); .isosurface.cubify(::RG_cov_orbital_grid)
@@ -8116,12 +8118,12 @@ contains
 !  ======================
 
    make_residual_density_grid(grid,pt)
-   ! Make the residual density grid from experimental and calculated
+   ! Make the residual density "grid" from experimental and calculated
    ! structure factors. Needs crystal & those to exist already!
    ! NOTE: unusually, this always returns values in Anstrom^-3
       self :: INOUT
       grid :: VEC{REAL}, OUT
-      pt :: MAT{REAL}, IN
+      pt   :: MAT{REAL}, IN
 
    ENSURE(pt.dim1==grid.dim, "wrong dim1, pt array")
    ENSURE(pt.dim2==3,        "wrong dim2, for pt array")
@@ -8151,6 +8153,71 @@ contains
 
       .BASE:set_from_saved_self
       .:make_residual_density_grid(g,pt)
+
+   end
+
+   make_residual_density_cell_grid(grid,pt)
+   ! Make the residual density "grid" in the *unit cell* from
+   ! experimental and calculated structure factors. 
+   ! NOTE: "pt" is not actually used, it must already be set right.
+   ! NOTE: unusually, this always returns values in Anstrom^-3
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt   :: MAT{REAL}, IN
+
+   DIE_IF(NOT .plot_grid.associated, "no grid")
+   DIE_IF(NOT .plot_grid.box_scale_factor.equals(ONE),"box_scale_factor in not ONE!")
+   DIE_IF(.plot_grid.desired_separation.is_zero," ")
+ ! DIE_IF(.plot_grid.set_center_to_center_of(.atom),"grid not centered on .atom center")
+   DIE_IF(.plot_grid.n_pt/=pt.dim1,"grid does not seem to be the unit_cell")
+
+      plot_grid :: PLOT_GRID
+      nx,ny,nz :: INT
+      same :: BIN
+
+      ! Check if plot size is correct.
+      ! Must be checked as we work in fractional crystal axis system.
+      plot_grid = .plot_grid
+      plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell,recenter=FALSE)
+      same = plot_grid.n_x ==.plot_grid.n_x &
+         AND plot_grid.n_y ==.plot_grid.n_y &
+         AND plot_grid.n_z ==.plot_grid.n_z 
+      DIE_IF(NOT same,"grid tics don't seem to be from unit_cell widths")
+
+      ! Make residual error map "grid" ... in fractionals!
+      .crystal.make_residual_density_cell(grid,nx,ny,nz)
+
+   end
+
+   residual_density_cell_grid(g,pt) ::: selfless
+   ! Work residual density grid "g" on the unit cell, for points "pt". 
+   ! NOTE: "pt" is not actually used, it must already be set right.
+      g  :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      self :: MOLECULE*
+
+      .BASE:set_from_saved_self
+      .:make_residual_density_cell_grid(g,pt)
+
+   end
+
+   make_residual_density_cell(map)
+   ! Work out the residual "map" on the unit cell with divisions as
+   ! specified in the ".plot_grid".
+      self :: IN
+      map :: VEC{REAL}, OUT
+
+   ENSURE(.plot_grid.associated, "no grid")
+
+      nx,ny,nz :: INT
+
+      ! Points per axis
+      nx = .plot_grid.n_x
+      ny = .plot_grid.n_y
+      nz = .plot_grid.n_z
+
+      ! Make residual error map
+      .crystal.make_residual_density_cell(map,nx,ny,nz)
 
    end
 
@@ -14087,84 +14154,6 @@ contains
          By.symmetric_reflect
          Bz.symmetric_reflect
       end
-
-   end
-
-!  ======================================
-!  Crystal structure factor residual maps
-!  ======================================
-
-!   make_residual_density_map ::: leaky
-!   ! Work out the residual density map on ".plot_grid". A Gnuplot
-!   ! ascii file is generated. zc
-!   ENSURE(.plot_grid.associated, "no grid")
-!
-!      map :: VEC{REAL}*
-!
-!      map.create(.plot_grid.n_pt)
-!      .:make_residual_density_map(map)
-!      .:dump_plot_grid(map,"residual_density")
-!      map.destroy
-!
-!   end
-
-!   make_residual_density_map(map)
-!   ! Make the crystal error "map".
-!      map :: VEC{REAL}, OUT
-!
-!   ENSURE(.plot_grid.associated, "no grid")
-!
-!      pt :: MAT{REAL}*
-!      n_pt :: INT
-!
-!      ! Make pts array
-!      n_pt = .plot_grid.n_pt
-!      pt.create(n_pt,3)
-!      .plot_grid.make_points(pt)
-!
-!      ! Make residual error map
-!      .crystal.make_residual_density_cell(map,.plot_grid.n_x,.plot_grid.n_y,.plot_grid.n_z)
-!
-!      ! Clean
-!      pt.destroy
-!
-!   end
-
-   make_residual_density_cell ::: leaky
-   ! Work out the residual map on the unit cell with divisions as
-   ! specified in the ".plot_grid" and write to a file.
-      self :: INOUT
-
-   ENSURE(.plot_grid.associated, "no grid")
-
-      map :: VEC{REAL}*
-
-      map.create(.plot_grid.n_pt)
-
-      .:make_residual_density_cell(map)
-      .:dump_plot_grid(map,"residual_density")
-
-      map.destroy
-
-   end
-
-   make_residual_density_cell(map)
-   ! Work out the residual "map" on the unit cell with divisions as
-   ! specified in the ".plot_grid".
-      self :: IN
-      map :: VEC{REAL}, OUT
-
-   ENSURE(.plot_grid.associated, "no grid")
-
-      nx,ny,nz :: INT
-
-      ! Points per axis
-      nx = .plot_grid.n_x
-      ny = .plot_grid.n_y
-      nz = .plot_grid.n_z
-
-      ! Make residual error map
-      .crystal.make_residual_density_cell(map,nx,ny,nz)
 
    end
 
