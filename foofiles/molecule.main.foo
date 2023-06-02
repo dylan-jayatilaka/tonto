@@ -313,7 +313,7 @@ contains
       case ("make_spherically_averaged_has "); .TAD:make_spherically_averaged_HAs
       case ("make_structure_factors        "); .SCF:make_X_SFs(output=TRUE)
       case ("make_symortho_density_matrix  "); .SCF:make_group_density_matrix
-      case ("make_vanfleteren_atoms        "); .MAIN:make_vanfleteren_atoms
+      case ("make_vanfleteren_atoms        "); .MAIN:make_Vanfleteren_atoms
       case ("make_weak_force_energy_shift  "); .MISC:make_weak_force_energy_shift
       case ("make_x_structure_factors      "); .SCF:make_X_SFs(output=TRUE)
       case ("mfcc_har                      "); .TAD:fragHAR_refinement
@@ -1027,6 +1027,11 @@ contains
 
       ! Read options
       .plot_grid.read_keywords
+      
+      if (.plot_grid.use_unit_cell_as_bbox) then
+         DIE_IF(.crystal.disassociated,"unit_cell_as_bbox set, but no crystal= info given! Fair go!")
+         .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell,recenter=FALSE)
+      end
 
       ! Check
       DIE_IF(.plot_grid.plot_format==" ","plot_format not specified (try all)")
@@ -1961,12 +1966,14 @@ contains
 
    end
 
-   make_vanfleteren_atoms 
+   make_Vanfleteren_atoms 
    ! Do it.
       self :: INOUT
 
-      S, Sph,Smh :: MAT{REAL}@
-      W, rho,rmh :: MAT{REAL}@
+   ENSURE(.molecular_orbitals.allocated,"No MOs")
+   ENSURE(.molecular_orbitals.restricted.allocated,"No restricted MOs")
+
+      S,Sph,Smh,Sc,W,rho,rmh :: MAT{REAL}@
       rho_this,   rho_next   :: MAT{REAL}@
       rho_this_A, rho_next_A :: MAT3{REAL}@
       wgt_this_A             :: MAT3{REAL}@
@@ -1985,36 +1992,43 @@ contains
       rho_this.create(n,n)
       rho_next.create(n,n)
 
-      ! AO density matrix
-      rho = .density_matrix.restricted
-
       ! And zero em ...
       rho_this_A = ZERO
-      wgt_this_A = ZERO
 
       ! Overlap matrices & powers
         S.create(n,n)
-      Sph.create(n,n)
-      Smh.create(n,n)
+    ! Sph.create(n,n)
+    ! Smh.create(n,n)
       rmh.create(n,n)
 
-      ! ANd define em ...
+      ! And define em ...
       S = .overlap_matrix
-      Sph.to_sqrt_of(S)         ! S^+1/2
-      Smh.to_inverse_sqrt_of(S) ! S^-1/2
+    ! Sph.to_sqrt_of(S)         ! S^+1/2
+    ! Smh.to_inverse_sqrt_of(S) ! S^-1/2
+
+      ! S . MOs
+      Sc = matmul(S,.molecular_orbitals.restricted)
 
       ! Check
-      W = S
-      W.change_basis_using(Smh)
-      stdout.text("Check Smh . S . Smh :")
-      stdout.put(W)
+    ! W = S
+    ! W.change_basis_using(Smh)
+    ! stdout.text("Check Smh . S . Smh :")
+    ! stdout.put(W)
 
       ! Check
-      W = matmul(Sph,Smh)
-      stdout.text("Check Sph . Smh :")
-      stdout.put(W)
+    ! W = matmul(Sph,Smh)
+    ! stdout.text("Check Sph . Smh :")
+    ! stdout.put(W)
 
-      ! Set initial rho_AA(i)
+      ! Get rho in symmetrically orthonormal basis 
+      rho = .density_matrix.restricted
+      rho.change_basis_using(Sc)
+
+      stdout.text("rho in MO basis:")
+      stdout.put(rho)
+
+      ! Set initial rho^(i)_AA
+      rho_this_A = ZERO
       l = 0
       do a = 1,.atom.dim
          f = l + 1
@@ -2022,28 +2036,28 @@ contains
          rho_this_A(f:l,f:l,a) = .atom(a).density_matrix.restricted
       end
 
-      stdout.text("Transfered AA diagonal blocks:")
-      stdout.put(rho_this)
+      stdout.text("Transferred rho^(i)_AA in AO basis:")
+      stdout.put(rho_this_A)
 
-      stdout.text("Finally, initial rho AA in ortho basis:")
-
-      ! Get rho_AA^(i) in symmetrically orthonormal basis
-      rho_this   = ZERO
+      ! Get rho^(i)_AA in the MO basis
+      rho_this = ZERO
       l = 0
       do a = 1,.atom.dim
          ! Basis fn limits
          na = .atom(a).basis.n_bf
          f  = l + 1
-         l  = l +  .atom(a).basis.n_bf
+         l  = l + .atom(a).basis.n_bf
          ! Initial rho^(i)_AA
-         rho_this_A(:,:,a) = rho_this_A(:,:,a)
-         rho_this_A(:,:,a).change_basis_using(Sph)
+         rho_this_A(:,:,a).change_basis_using(Sc)
          ! rho^(i) = Sum_A rho^(i)_AA ... eqn 6(a)
          rho_this = rho_this + rho_this_A(:,:,a)
       end
 
-      ! Get rho in symmetrically orthonormal basis 
-      rho.change_basis_using(Sph)
+      stdout.text("rho^(i)_AA in the MO basis:")
+      stdout.put(rho_this_A)
+
+      stdout.text("rho^(i) in the MO basis:")
+      stdout.put(rho_this)
 
       ! Start iterations
       iter = 0
@@ -2052,7 +2066,7 @@ contains
 
          iter = iter + 1
        
-         ! Overwrite new rho^(i)^-1/2
+         ! Overwrite new [rho^(i)]^-1/2
          rmh.to_sqrt_of(rho_this) 
        
          ! Make the w_A_i ... 6b
@@ -2067,13 +2081,14 @@ contains
             rho.change_basis_to(rho_next_A(:,:,a),wgt_this_A(:,:,a))
          end
        
+         ! Difference
          diff = maxval(abs(rho_next_A-rho_this_A))
          stdout.show("Diff. between rho i+1 and rho i =",diff)
 
+         ! Converged?
          if (diff<TOL(2) OR iter>10) exit
 
          rho_this_A = rho_next_A
-         rho_next_A = ZERO
 
       end
 
