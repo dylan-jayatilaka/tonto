@@ -274,7 +274,7 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.grid.foo
     ${FOO_DIR}/molecule.ints.foo
     ${FOO_DIR}/molecule.main.foo
-#   ${FOO_DIR}/molecule.misc.foo ! for now
+    ${FOO_DIR}/molecule.misc.foo
     ${FOO_DIR}/molecule.plot.foo
     ${FOO_DIR}/molecule.prop.foo
 #   ${FOO_DIR}/molecule.rel.foo ! for now
@@ -346,7 +346,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.ints.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
- #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.plot.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.prop.F90
  #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.rel.F90
