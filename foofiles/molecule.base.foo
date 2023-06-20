@@ -71,13 +71,7 @@ contains
    ! Deallocate "self"
    end
 
-!  Still need PTR destroy
-
-   destroy ::: get_from(OBJECT), leaky, PURE
-   ! Destroy an object
-   end
-
-   destroy_ptr_part ::: recursive, leaky, PURE
+   destroy_ptr_part ::: leaky, PURE
    ! Destroy the pointer parts of a molecule object
       self :: INOUT
 
@@ -213,25 +207,14 @@ contains
 !  Specific cleanup
 !  ================
 
-   destroy_atom_group ::: recursive, leaky, PURE
+   destroy_atom_group ::: leaky, PURE
    ! Destroy the pointer parts of a molecule object
       self :: INOUT
 
-      if (.atom_group.deallocated) return
-
-      .:destroy_atom_group_mols
-
       .atom_group.destroy
 
-   end
+      if (allocated(.mol)) deallocate(.mol)
 
-   destroy_atom_group_mols ::: recursive, leaky, PURE
-   ! Destroy the atom_group.mol molecules
-      self :: INOUT
-      g :: INT
-      do g = 1,.atom_group.dim
-         .atom_group(g).mol.:destroy
-      end
    end
 
    destroy_matrices ::: leaky, PURE
@@ -597,17 +580,17 @@ contains
 !  Set saved-self
 !  ==============
 
-    set_saved_self
-    ! Set saved_self. Allocatable version.
-       self :: IN
-       saved_self = self
-    end
+   set_saved_self
+   ! Set saved_self. Allocatable version.
+      self :: IN
+      saved_self = self
+   end
 
-    set_from_saved_self
-    ! Set from saved_self. Allocatable version.
-       self :: OUT
-       self = saved_self
-    end
+   set_from_saved_self
+   ! Set from saved_self. Allocatable version.
+      self :: OUT
+      self = saved_self
+   end
 
 !  ===========
 !  Set methods
@@ -1058,10 +1041,10 @@ contains
       if (made_ANO) then
          do a = 1,list.dim
             b = list(a)
-            .atom(a).density_mx     = mol.atom(b).density_mx
-            .atom(a).NOs   = mol.atom(b).NOs
+            .atom(a).density_mx = mol.atom(b).density_mx
+            .atom(a).NOs        = mol.atom(b).NOs
             .atom(a).NO_occ_nos = mol.atom(b).NO_occ_nos
-            .atom(a).AOs    = mol.atom(b).AOs
+            .atom(a).AOs        = mol.atom(b).AOs
             .atom(a).set_energy(mol.atom(b).energy)
          end
       end
@@ -1088,6 +1071,8 @@ contains
 
    end
 
+!  Some probs with routine below, use above if you can?
+
    resolve_ANOs_from(mol) ::: PURE
    ! Set ANO data and atom shell info from molecule "mol" by comparing
    ! the atom kinds directly. Make sure none of the assigned ANO data
@@ -1104,30 +1089,30 @@ contains
 
       ! Assign ANO orbitals
       do a = 1,.atom.dim
-         do b = 1,mol.atom.dim
-            if (.atom(a).is_same_kind_as(mol.atom(b))) then
-            if (mol.atom(b).has_ANO_matrices) then
-               .atom(a).density_mx     = mol.atom(b).density_mx
-               .atom(a).NOs            = mol.atom(b).NOs
-               .atom(a).NO_occ_nos = mol.atom(b).NO_occ_nos
-               .atom(a).AOs            = mol.atom(b).AOs
-               .atom(a).set_energy(mol.atom(b).energy)
-               exit ! next atom "a"
-            end
-            end
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+         if (mol.atom(b).has_ANO_matrices) then
+            .atom(a).density_mx     = mol.atom(b).density_mx
+            .atom(a).NOs            = mol.atom(b).NOs
+            .atom(a).NO_occ_nos     = mol.atom(b).NO_occ_nos
+            .atom(a).AOs            = mol.atom(b).AOs
+            .atom(a).set_energy(mol.atom(b).energy)
+            exit ! next atom "a"
          end
+         end
+      end
       end
 
       ! Assign ANO interpolators
       do a = 1,.atom.dim
-         do b = 1,mol.atom.dim
-            if (.atom(a).is_same_kind_as(mol.atom(b))) then
-            if (mol.atom(b).interpolator.allocated) then
-               .atom(a).interpolator = mol.atom(b).interpolator
-               exit ! next atom "a"
-            end
-            end
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+         if (mol.atom(b).interpolator.allocated) then
+            .atom(a).interpolator = mol.atom(b).interpolator
+            exit ! next atom "a"
          end
+         end
+      end
       end
 
       ! Assign atom shell info
@@ -1291,61 +1276,56 @@ contains
       ! Read the archive
       select case (nm)
 
-      case ("MOs")
+      case ("covalent_orbitals ","RG_COs            ")
+         if (.NOs.deallocated) .NOs.create(.n_bf)
+         arch.read(.NOs)
+         if (do_norm) &
+            .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+
+      case ("ionic_orbitals    ","RG_IOs            ")
+         if (.NOs.deallocated) .NOs.create(.n_bf)
+         arch.read(.NOs)
+         if (do_norm) &
+            .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+
+      case ("molecular_orbitals","MOs               ", &
+            "HF_MOs            ","KS_MOs            ")
          if (.MOs.deallocated) .MOs.create(.n_bf)
          arch.read(.MOs)
          if (do_norm) &
             .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
 
-      case ("density_mx    ")
-         if (.density_mx.deallocated) .density_mx.create(.n_bf)
-         arch.read(.density_mx)
-         if (do_norm) &
-            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-
-      case ("MP2_density_mx")
-         if (.density_mx.deallocated) .density_mx.create(.n_bf)
-         arch.read(.density_mx)
-         if (do_norm) &
-            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-
-      case ("MP3_density_mx")
-         if (.density_mx.deallocated) .density_mx.create(.n_bf)
-         arch.read(.density_mx)
-         if (do_norm) &
-            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-
-      case ("fock_mx       ")
-         if (.fock_mx.deallocated) .fock_mx.create(.n_bf)
-         arch.read(.fock_mx)
-         if (do_norm) &
-            .fock_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-
-      case ("MO_energies  ")
+      case ("MO_energies       ", &
+            "HF_MO_energies    ","KS_MO_energies    ")
          if (.MO_energies.deallocated) .MO_energies.create(.n_bf)
          arch.read(.MO_energies)
 
-      case ("NOs  ")
+      case ("natural_orbitals  ","NOs               ")
          if (.NOs.deallocated) .NOs.create(.n_bf)
          arch.read(.NOs)
          if (do_norm) &
          .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
 
-      case ("NO_occ_nos")
+      case ("occupation_nos    ","NO_occ_nos        ")
          if (.NO_occ_nos.deallocated) .NO_occ_nos.create(.n_bf)
          arch.read(.NO_occ_nos)
 
-      case ("covalent_orbitals ")
-         if (.NOs.deallocated) .NOs.create(.n_bf)
-         arch.read(.NOs)
+      case ("density_matrix    ","density_mx        ", &
+            "hf_density_matrix ","HF_density_mx     ", &
+            "ks_density_matrix ","KS_density_mx     ", &
+            "mp2_density_matrix","MP2_density_mx    ", &
+            "mp3_density_matrix","MP3_density_mx    ")
+         if (.density_mx.deallocated) .density_mx.create(.n_bf)
+         arch.read(.density_mx)
          if (do_norm) &
-            .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
 
-      case ("ionic_orbitals    ")
-         if (.NOs.deallocated) .NOs.create(.n_bf)
-         arch.read(.NOs)
+      case ("fock_matrix       ", &
+            "Fock_mx           ","Kohn-Sham_mx      ")
+         if (.fock_mx.deallocated) .fock_mx.create(.n_bf)
+         arch.read(.fock_mx)
          if (do_norm) &
-            .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+            .fock_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
 
       case ("U_electric_dipole ")
          if (.U_electric_dipole.deallocated) .U_electric_dipole.create(.n_bf,.n_bf,3)
@@ -1385,43 +1365,42 @@ contains
       ! Read the archive
       select case (name)
 
-      case ("MOs")
+      case ("covalent_orbitals ","RG_COs            ")
+         if (.NOs.deallocated)   .NOs.create(.n_bf)
+         arch.read(.NOs,by_column=TRUE)
+
+      case ("ionic_orbitals    ","RG_IOs            ")
+         if (.NOs.deallocated)   .NOs.create(.n_bf)
+         arch.read(.NOs,by_column=TRUE)
+
+      case ("molecular_orbitals","MOs               ", &
+            "HF_MOs            ","KS_MOs            ")
          if (.MOs.deallocated) .MOs.create(.n_bf)
          arch.read(.MOs,by_column=TRUE)
 
-      case ("density_mx    ")
-         if (.density_mx.deallocated)     .density_mx.create(.n_bf)
-         arch.read(.density_mx,by_column=TRUE)
-
-      case ("MP2_density_mx")
-         if (.density_mx.deallocated)     .density_mx.create(.n_bf)
-         arch.read(.density_mx,by_column=TRUE)
-
-      case ("MP3_density_mx")
-         if (.density_mx.deallocated)     .density_mx.create(.n_bf)
-         arch.read(.density_mx,by_column=TRUE)
-
-      case ("MO_energies  ")
+      case ("MO_energies       ", &
+            "HF_MO_energies    ","KS_MO_energies    ")
          if (.MO_energies.deallocated)   .MO_energies.create(.n_bf)
          arch.read(.MO_energies)
 
-      case ("NOs  ")
+      case ("natural_orbitals  ","NOs               ")
          if (.NOs.deallocated)   .NOs.create(.n_bf)
          arch.read(.NOs,by_column=TRUE)
 
-      case ("NO_occ_nos")
+      case ("no_occupation_nos ","NO_occ_nos        ")
          if (.NO_occ_nos.deallocated) .NO_occ_nos.create(.n_bf)
          arch.read(.NO_occ_nos)
 
-      case ("covalent_orbitals ")
-         if (.NOs.deallocated)   .NOs.create(.n_bf)
-         arch.read(.NOs,by_column=TRUE)
+      case ("density_matrix    ","density_mx        ", &
+            "hf_density_matrix ","HF_density_mx     ", &
+            "ks_density_matrix ","KS_density_mx     ", &
+            "mp2_density_matrix","MP2_density_mx    ", &
+            "mp3_density_matrix","MP3_density_mx    ")
+         if (.density_mx.deallocated)     .density_mx.create(.n_bf)
+         arch.read(.density_mx,by_column=TRUE)
 
-      case ("ionic_orbitals    ")
-         if (.NOs.deallocated)   .NOs.create(.n_bf)
-         arch.read(.NOs,by_column=TRUE)
-
-      case ("fock_mx       ")
+      case ("fock_matrix       ", &
+            "Fock_mx           ","Kohn-Sham_mx      ")
          if (.fock_mx.deallocated)        .fock_mx.create(.n_bf)
          arch.read(.fock_mx,by_column=TRUE)
 
@@ -1465,7 +1444,8 @@ contains
       ! Write the archive, "genre" from object
       select case (name)
 
-      case ("MOs")
+      case ("molecular_orbitals","MOs               ", &
+            "HF_MOs            ","KS_MOs            ")
          DIE_IF(.MOs.deallocated,"no MOs")
          if (do_norm) then
             .MOs.renormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
@@ -1475,17 +1455,12 @@ contains
             arch.write(.MOs)
          end
 
-      case ("density_mx    ")
-         DIE_IF(.density_mx.deallocated,"no density_mx")
-         if (do_norm) then
-            .density_mx.renormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-            arch.write(.density_mx)
-            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-         else
-            arch.write(.density_mx)
-         end
+      case ("MO_energies       ", &
+            "HF_MO_energies    ","KS_MO_energies    ")
+         DIE_IF(.MO_energies.deallocated,"no MO_energies")
+         arch.write(.MO_energies)
 
-      case ("NOs  ")
+      case ("natural_orbitals  ","NOs               ")
          DIE_IF(.NOs.deallocated,"no NOs")
          if (do_norm) then
             .NOs.renormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
@@ -1495,11 +1470,27 @@ contains
             arch.write(.NOs)
          end
 
-      case ("NO_occ_nos")
+      case ("no_occupation_nos ","NO_occ_nos        ")
          DIE_IF(.NO_occ_nos.deallocated,"no NO_occ_nos")
          arch.write(.NO_occ_nos)
 
-      case ("fock_mx       ")
+
+      case ("density_matrix    ","density_mx        ", &
+            "hf_density_matrix ","HF_density_mx     ", &
+            "ks_density_matrix ","KS_density_mx     ", &
+            "mp2_density_matrix","MP2_density_mx    ", &
+            "mp3_density_matrix","MP3_density_mx    ")
+         DIE_IF(.density_mx.deallocated,"no density_mx")
+         if (do_norm) then
+            .density_mx.renormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+            arch.write(.density_mx)
+            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+         else
+            arch.write(.density_mx)
+         end
+
+      case ("fock_matrix       ", &
+            "Fock_mx           ","Kohn-Sham_mx      ")
          DIE_IF(.fock_mx.deallocated,"no fock_mx")
          if (do_norm) then
             .fock_mx.renormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
@@ -1536,31 +1527,38 @@ contains
       ! Write the archive, "genre" from object
       select case (name)
 
-      case ("MOs")
+      case ("molecular_orbitals","MOs               ", &
+            "HF_MOs            ","KS_MOs            ")
        ! .MOs.renormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
          arch.write(.MOs,by_column=TRUE)
        ! .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
 
-      case ("density_mx    ")
-       ! .density_mx.renormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-         arch.write(.density_mx,    by_column=TRUE)
-       ! .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+      case ("MO_energies       ", &
+            "HF_MO_energies    ","KS_MO_energies    ")
+         arch.write(.MO_energies,  by_column=TRUE)
 
-      case ("NOs  ")
+      case ("natural_orbitals  ","NOs               ")
        ! .NOs.renormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
          arch.write(.NOs,  by_column=TRUE)
        ! .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
 
-      case ("NO_occ_nos")
+      case ("occupation_nos    ","NO_occ_nos        ")
          arch.write(.NO_occ_nos,by_column=TRUE)
+
+      case ("density_matrix    ","density_mx        ", &
+            "hf_density_matrix ","HF_density_mx     ", &
+            "ks_density_matrix ","KS_density_mx     ", &
+            "mp2_density_matrix","MP2_density_mx    ", &
+            "mp3_density_matrix","MP3_density_mx    ")
+       ! .density_mx.renormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+         arch.write(.density_mx,    by_column=TRUE)
+       ! .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
       
-      case ("fock_mx       ")
+      case ("fock_matrix       ", &
+            "Fock_mx           ","Kohn-Sham_mx      ")
        ! .fock_mx.renormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
          arch.write(.fock_mx,       by_column=TRUE)
        ! .fock_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
-
-      case ("MO_energies  ")
-         arch.write(.MO_energies,  by_column=TRUE)
 
       case default
          UNKNOWN(name)
@@ -3626,9 +3624,6 @@ contains
       reset_name = TRUE
       if (present(set_name)) reset_name = set_name
 
-      ! Clear the pointer part
-    ! mol.:nullify_ptr_part
-
       ! Create the single atom and copy its pointers
       ! WARNING: dont destroy ptr parts of mol.atom
       mol.atom = .atom(.atom_group(g).atom_index)
@@ -3732,11 +3727,11 @@ contains
       ! Check indices are sensible
       .atom_group.update(.atom)
 
-      ! Destroy the groups
-      .:destroy_atom_group_mols
+      ! Destroy the group .mol s
+      deallocate(.mol)
+      allocate(.mol(.atom_group.dim))
 
-      ! Now make Ryde's molecular caps
-      ! ... in .atom_group(g).mol
+      ! Make Ryde's molecular caps ... in .mol(g)
       do g = 1,.atom_group.dim
          self.:make_Ryde_cap_for_group(g)
       end
@@ -3756,7 +3751,6 @@ contains
 
       name,label :: STR
       n_comp,nc_atoms,a :: INT
-      mol :: MOLECULE@, target
 
       n_comp = .crystal.n_asymmetric_unit_atoms 
 
@@ -3764,50 +3758,49 @@ contains
       
          ! Make groups from asym atoms
          .atom_group.create(n_comp)
+         allocate(.mol(n_comp))
          
          do a = 1,n_comp
-            ! This is atom_group(a).mol
-            mol.:create
 
             ! Make cap atoms
             .cluster.make_asym_occupation_list(a)
             .cluster.do_NN_defragment(.cluster.occupation_list,1,nc_atoms)
-            .cluster.create_atom_list(mol.atom) 
+            .cluster.create_atom_list(.mol(a).atom) 
             .atom_group(a).set_atom_index( [ a ] )
             .atom_group(a).set_n_atoms(.cluster.n_atoms)
-            mol.atom(2:).set_is_cap_atom(TRUE)
+            .mol(a).atom(2:).set_is_cap_atom(TRUE)
 
             ! Correct label & atomic number for last added atom
             ! WARNING: AN has to be set after setting unique label
             label = "H-cap"
-            ATOM:set_label(mol.atom(nc_atoms+1:),label,skip_mass=TRUE)
-            ATOM:set_atomic_number_and_mass(mol.atom(nc_atoms+1:),"H ")
+            ATOM:set_label(.mol(a).atom(nc_atoms+1:),label,skip_mass=TRUE)
+            ATOM:set_atomic_number_and_mass(.mol(a).atom(nc_atoms+1:),"H ")
             
             ! Set charge
-            mol.:set_charge(.atom_group(a).charge)
+            .mol(a).:set_charge(.atom_group(a).charge)
 
             ! Make atom info; groups should not contain subgroups!
-            mol.atom_info_made = FALSE
-            mol.atom.set_group_to(a)
-            mol.:update_atom_and_basis_info(do_groups=FALSE) ! no recursion
+            .mol(a).atom_info_made = FALSE
+            .mol(a).atom.set_group_to(a)
+            .mol(a).:update_atom_and_basis_info(do_groups=FALSE) ! no recursion
 
             ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
             if (.atom_group(a).spin_multiplicity_set) then
-               mol.:set_spin_multiplicity(.atom_group(a).spin_multiplicity)
+               .mol(a).:set_spin_multiplicity(.atom_group(a).spin_multiplicity)
             end
 
             ! Set guess-type SCF defaults: no output
             ! Will reset scf_kind based on multiplicity
-            mol.:set_SCF_guess_defaults_from(.scfdata)
+            .mol(a).:set_SCF_guess_defaults_from(.scfdata)
 
             ! Set .name
             name = "group-"//trim(a.to_str)//"-"
-            name = trim(name)//trim(mol.atom.chemical_formula(with_spaces=FALSE))
-            mol.:set_name(name)
+            name = trim(name)//trim(.mol(a).atom.chemical_formula(with_spaces=FALSE))
+            .mol(a).:set_name(name)
             .atom_group(a).set_name(name)
 
             ! Assign basis set -- don't destroy!
-            mol.:set_basis_name(.basis_name) ! NOT PURE
+            .mol(a).:set_basis_name(.basis_name) ! NOT PURE
 
             ! Copy the crystal -- destroy it!
             ! Make separate asymm unit with only mol in it later ...
@@ -3815,13 +3808,8 @@ contains
             ! mol.crystal.update_fragment_info(mol.atom)
                
             ! Don't remake ANO data if there
-            mol.:resolve_ANOs_from(self)
-
-            ! Add capped molecule to atom_group
-            .atom_group(a).mol => mol
-
-        end
-            
+            .mol(a).:resolve_ANOs_from(self)
+         end
       end
 
    end
@@ -3835,63 +3823,58 @@ contains
 
    ENSURE(.atom.allocated,"no atom info")
    ENSURE(.atom_group.allocated,"no atom_group info")
+   ENSURE(.mol.allocated,"no .mol")
    ENSURE(g<=.atom_group.dim,"group number g too big")
    ENSURE(g>=1,"group number g less than 1!")
+   ENSURE(.mol.dim==.atom_group.dim,"wrong size, .mol")
 
-      mol :: MOLECULE@, target
       name :: STR
       
-      ! This is atom_group(g).mol
-      mol.:create
-
       ! Start with *uncapped* .atom_group(g) atom indices ...
-      mol.atom = .atom(.atom_group(g).atom_index)
+      .mol(g).atom = .atom(.atom_group(g).atom_index)
 
       ! Add cap atoms !!!!!!!!!!!!!!!
-      .:add_Ryde_cap_for_group(g,mol)
+      .:add_Ryde_cap_for_group(g,.mol(g))
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       ! Set charge
-      mol.:set_charge(.atom_group(g).charge)
+      .mol(g).:set_charge(.atom_group(g).charge)
 
       ! Make atom info; groups should not contain subgroups!
-      mol.atom_info_made = FALSE
-      mol.atom.set_group_to(g)
-      mol.:update_atom_and_basis_info(do_groups=FALSE) ! no recursion
+      .mol(g).atom_info_made = FALSE
+      .mol(g).atom.set_group_to(g)
+      .mol(g).:update_atom_and_basis_info(do_groups=FALSE) ! no recursion
 
       ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
       if (.atom_group(g).spin_multiplicity_set) then
-         mol.:set_spin_multiplicity(.atom_group(g).spin_multiplicity)
+         .mol(g).:set_spin_multiplicity(.atom_group(g).spin_multiplicity)
       end
 
       ! Set guess-type SCF defaults: no output
       ! Will reset scf_kind based on multiplicity
-      mol.:set_SCF_guess_defaults_from(.scfdata)
+      .mol(g).:set_SCF_guess_defaults_from(.scfdata)
 
       ! Set .name
       name = .atom(.atom_group(g).atom_index(1)).id_compound_str
       if (name==" ") then
          name = "group-"//trim(g.to_str)//"-"
-         name = trim(name)//trim(mol.atom.chemical_formula(with_spaces=FALSE))
+         name = trim(name)//trim(.mol(g).atom.chemical_formula(with_spaces=FALSE))
       end
-      mol.:set_name(name)
+      .mol(g).:set_name(name)
       .atom_group(g).set_name(name)
 
       ! Assign basis set -- don't destroy!
-      mol.:set_basis_name(.basis_name) ! NOT PURE
+      .mol(g).:set_basis_name(.basis_name) ! NOT PURE
 
       ! Copy the crystal -- destroy it!
       ! Make separate asymm unit with only mol in it later ...
       if (.crystal.allocated) then
-         mol.crystal = .crystal
-         mol.crystal.update_fragment_info(mol.atom)
+         .mol(g).crystal = .crystal
+         .mol(g).crystal.update_fragment_info(.mol(g).atom)
       end
       
       ! Don't remake ANO data if there
-      mol.:resolve_ANOs_from(self)
-
-      ! Add capped molecule to atom_group
-      .atom_group(g).mol => mol
+      .mol(g).:resolve_ANOs_from(self)
 
    end
 
@@ -4159,13 +4142,13 @@ contains
 
    ENSURE(.atom.allocated,"no atoms!")
 
-      mol :: MOLECULE@, target
       g :: INT
 
       if (.atom_group.deallocated) return
 
       ! Regenerate molecules
-      .:destroy_atom_group_mols
+      if (allocated(.mol)) deallocate(.mol)
+      allocate(.mol(.atom_group.dim))
 
       ! Check is indices are sensible
       .atom_group.update(.atom)
@@ -4175,41 +4158,41 @@ contains
       
          ! Create mol & define it
          ! ... including mol.crystal part
-         mol.:create
-         self.:make_molecule_from_atom_group(g,mol) ! NOT PURE
+         self.:make_molecule_from_atom_group(g,.mol(g)) ! NOT PURE
       
          ! Read the MOs & make the density
          ! This won't work until Tonto can read in its own dump
          if (.atom_group(g).MO_file_name/=" ") then
-             mol.:read_archive("MOs","r ")
-             mol.:make_SCF_density_mx
+             .mol(g).:read_archive("MOs","r ")
+             .mol(g).:make_SCF_density_mx
          end
       
          ! Rotate and translate mol
          if (.atom_group(g).transform_group) then
-            mol.:rotate_by(.atom_group(g).rotation_mx)
-            mol.atom.translate_by(.atom_group(g).shift)
+            .mol(g).:rotate_by(.atom_group(g).rotation_mx)
+            .mol(g).atom.translate_by(.atom_group(g).shift)
          end
-         mol.atom.set_group_to(g)
-         mol.name = .atom_group(g).name
-      
-         ! Add it to atom_group
-         .atom_group(g).mol => mol
+         .mol(g).atom.set_group_to(g)
+         .mol(g).name = .atom_group(g).name
       
       end
 
       ! Update atom_group info from self
-      .:update_atom_group_info
+      ! ANOs done above already.
+      .:update_atom_group_info(skip_ANOs=TRUE)
 
    end
 
-   update_atom_group_info ::: leaky
+   update_atom_group_info(skip_ANOs) ::: leaky
    ! Update .atom_group information (ANOs, crystal, SCF guess ...)
    ! WARNING: atom_group(:).mol.crystal's are clones of .crystal
       self :: INOUT
+      skip_ANOs :: BIN, IN, optional
 
    ENSURE(.atom.allocated,"atom groups must be defined after atoms=")
-   ENSURE(.atom_group.has_all_mols,"atom_group has missing mols")
+   ENSURE(.atom_group.allocated,"no atom_group")
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(.mol.dim==.atom_group.dim,"wrong size, .mol")
 
       g :: INT
 
@@ -4220,15 +4203,17 @@ contains
 
       do g = 1,.atom_group.dim
 
-         ENSURE(.atom_group(g).mol.associated,"atom_group molecule "//trim(g.to_str)//" does not exist")
-
          ! Don't remake ANO data if there
-         .atom_group(g).mol.:resolve_ANOs_from(self)
+         if (present(skip_ANOs)) then
+         if (NOT skip_ANOs) then
+            .mol(g).:resolve_ANOs_from(self,.atom_group(g).atom_index)
+         end
+         end
 
          ! Assign the crystal & gegenerate unit cell atoms
          if (.crystal.allocated) then
-            .atom_group(g).mol.crystal = .crystal ! Should be minimal copy?
-            .atom_group(g).mol.crystal.update_fragment_info(.atom_group(g).mol.atom)
+            .mol(g).crystal = .crystal ! Should be minimal copy?
+            .mol(g).crystal.update_fragment_info(.mol(g).atom)
          end
 
          ! Set guess-type SCF defaults
@@ -4254,6 +4239,8 @@ contains
       .:create
       .:set_defaults ! NOT PURE
 
+      allocate(.mol(2))
+
       ! Is this necessary
       mol_A.:make_SCF_density_mx
       mol_B.:make_SCF_density_mx
@@ -4266,17 +4253,15 @@ contains
       .atom_group.create(2)
       .atom_group(1).set_atom(mol_A.atom)
       .atom_group(1).atom_index = [ (i, i=1,n_A) ]
-      .atom_group(1).mol => mol_A
+      .mol(1) = mol_A
 
       .atom_group(2).set_atom(mol_B.atom)
       .atom_group(2).atom_index = [ (i, i=n_A+1,n_A+n_B) ]
-      .atom_group(2).mol => mol_B
+      .mol(2) = mol_B
 
       .:join_atom_groups
 
-      if (.atom_group.has_all_mols) then
-         .:update_atom_group_info
-      end
+      .:update_atom_group_info
 
    end
 
@@ -4307,22 +4292,20 @@ contains
    DIE_IF(.atom_group.deallocated,"no atom groups")
    DIE_IF(NOT .atom_group.has_wavefunction_files,"no wavefunction files")
 
-      mol :: MOLECULE@, target
       wavefunction_file :: STR
       g :: INT
 
-      do g = 1,.atom_group.dim
+      allocate(.mol(.atom_group.dim))
 
-         ! Create the mol
-         mol.:create
+      do g = 1,.atom_group.dim
 
          ! Define mol from FChk or sbf file
          wavefunction_file = .atom_group(g).wavefunction_file_name
-         mol.:read_wfn_file(wavefunction_file,do_groups=FALSE)
+         .mol(g).:read_wfn_file(wavefunction_file,do_groups=FALSE)
 
          ! Set kind of SCF
          ! ... this seems always to be UHF?
-         if (mol.scfdata.is_unrestricted) then
+         if (.mol(g).scfdata.is_unrestricted) then
             if(.scfdata.deallocated) then
                .scfdata.create
                .scfdata.set_defaults
@@ -4331,12 +4314,9 @@ contains
          end
 
          ! Rotate and translate it
-         mol.:rotate_by(.atom_group(g).rotation_mx)
-         mol.atom.translate_by(.atom_group(g).shift)
-         mol.atom.set_group_to(g)
-
-         ! Add it to atom_group
-         .atom_group(g).mol => mol
+         .mol(g).:rotate_by(.atom_group(g).rotation_mx)
+         .mol(g).atom.translate_by(.atom_group(g).shift)
+         .mol(g).atom.set_group_to(g)
 
       end
 
@@ -4344,9 +4324,7 @@ contains
       .:join_atom_groups
 
       ! Update group info from self
-      if (.atom_group.has_all_mols) then
-         .:update_atom_group_info
-      end
+      .:update_atom_group_info
 
    end
 
@@ -4355,7 +4333,10 @@ contains
    ! of the molecules in .atom_group
       self :: target, INOUT
 
-      mol :: MOLECULE*
+   ENSURE(.atom_group.allocated,"no .atom_group")
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(.mol.dim==.atom_group.dim,"wrong size, .mol")
+
       g, charge, unpaired_electrons :: INT
 
       if (.atom.allocated)  .atom.destroy
@@ -4367,28 +4348,25 @@ contains
       ! Append remaining ...
       do g = 1,.atom_group.dim
 
-         mol => .atom_group(g).mol
+         DIE_IF(.mol(g).basis.deallocated,"no basis on mol "//trim(g.to_str))
+         DIE_IF(.mol(g).atom.deallocated, "no atoms in mol "//trim(g.to_str))
 
-         DIE_IF(mol.disassociated,"no mol "//trim(g.to_str))
-         DIE_IF(mol.basis.deallocated,"no basis on mol "//trim(g.to_str))
-         DIE_IF(mol.atom.deallocated,"no atom list in mol "//trim(g.to_str))
-
-         charge = charge + mol.charge
-         unpaired_electrons = unpaired_electrons + mol.spin_multiplicity - 1 
+         charge = charge + .mol(g).charge
+         unpaired_electrons = unpaired_electrons + .mol(g).spin_multiplicity - 1 
 
          if (g==1) then
 
             ! Initial atom/basis list
             .name  = .atom_group(g).name
-            .basis = mol.basis
-            .atom  = mol.atom
+            .basis = .mol(g).basis
+            .atom  = .mol(g).atom
 
          else
 
             ! Append basis & atoms
             .name = trim(.name) // "_" // trim(.atom_group(g).name)
-            .basis.append(mol.basis)
-            .atom.append(mol.atom)
+            .basis.append(.mol(g).basis)
+            .atom.append(.mol(g).atom)
 
          end
 
@@ -7023,17 +7001,23 @@ contains
 
       do a = 1,.atom_group(g).n_atoms ! Copy this atom density
       do b = 1,.atom_group(g).n_atoms
+
          aa  = .atom_group(g).atom_index(a)
          bb  = .atom_group(g).atom_index(b)
-         faa = .first_basis_fn_for_atom(aa)
-         fbb = .first_basis_fn_for_atom(bb)
-         laa = .last_basis_fn_for_atom(aa)
-         lbb = .last_basis_fn_for_atom(bb)
+
          fa  = mol.first_basis_fn_for_atom(a)
          fb  = mol.first_basis_fn_for_atom(b)
+         faa =    .first_basis_fn_for_atom(aa)
+         fbb =    .first_basis_fn_for_atom(bb)
+
          la  = mol.last_basis_fn_for_atom(a)
          lb  = mol.last_basis_fn_for_atom(b)
+         laa =    .last_basis_fn_for_atom(aa)
+         lbb =    .last_basis_fn_for_atom(bb)
+
+
          .density_mx.r(faa:laa,fbb:lbb) = P(fa:la,fb:lb)
+
       end
       end
 
@@ -7052,23 +7036,25 @@ contains
    ENSURE(.density_mx.allocated,"no density_mx")
    ENSURE(.density_mx.r.allocated,"no restricted density_mx")
 
-      a,b,ga,gb, fga,lga, fgb,lgb, fa,la,fb,lb :: INT
+     a,b,     ga,gb :: INT
+     fga,lga, fa,la :: INT
+     fgb,lgb, fb,lb :: INT
 
      do a = 1,.atom_group(g).n_atoms
      do b = 1,.atom_group(g).n_atoms
 
         ga  = .atom_group(g).atom_index(a)
         gb  = .atom_group(g).atom_index(b)
-        fga =    .first_basis_fn_for_atom(ga)
-        lga =     .last_basis_fn_for_atom(ga)
-        fgb =    .first_basis_fn_for_atom(gb)
-        lgb =     .last_basis_fn_for_atom(gb)
 
         fa  = mol.first_basis_fn_for_atom(a)
-        la  =  mol.last_basis_fn_for_atom(a)
-
+        fga =    .first_basis_fn_for_atom(ga)
         fb  = mol.first_basis_fn_for_atom(b)
-        lb  =  mol.last_basis_fn_for_atom(b)
+        fgb =    .first_basis_fn_for_atom(gb)
+
+        la  = mol.last_basis_fn_for_atom(a)
+        lga =    .last_basis_fn_for_atom(ga)
+        lb  = mol.last_basis_fn_for_atom(b)
+        lgb =    .last_basis_fn_for_atom(gb)
 
         .density_mx.r(fga:lga,fgb:lgb) = mol.density_mx.r(fa:la,fb:lb)
 
@@ -7092,19 +7078,22 @@ contains
    ENSURE(mol.MOs.allocated,"no mol MOs")
    ENSURE(mol.MOs.r.allocated,"no restricted mol MOs")
 
-      a,ga, fga,lga, fa,la, ms,mf,no :: INT
+      a,ga, ms,mf,no :: INT
+      fga,lga, fa,la :: INT
 
-      mf = .atom_group.n_bf_up_to_mol(g)
+      mf = .:n_bf_up_to_mol(g)
       ms = mf + 1
       mf = mf + mol.n_bf
 
       do a = 1,.atom_group(g).n_atoms
 
          ga  = .atom_group(g).atom_index(a)
-         fga =    .first_basis_fn_for_atom(ga)
-         lga =     .last_basis_fn_for_atom(ga)
+
          fa  = mol.first_basis_fn_for_atom(a)
-         la  =  mol.last_basis_fn_for_atom(a)
+         fga =    .first_basis_fn_for_atom(ga)
+
+         la  = mol.last_basis_fn_for_atom(a)
+         lga =    .last_basis_fn_for_atom(ga)
 
          .MOs.r(fga:lga,ms:mf) = mol.MOs.r(fa:la,:)
 
@@ -7113,6 +7102,25 @@ contains
       no = mol.n_e/2
       .NO_occ_nos.r(ms:ms+no-1) = TWO
 
+   end
+
+   n_bf_up_to_mol(g) result (res) ::: PURE
+   ! Return the no. of basis functions up to the "g"-th
+   ! molecule .mol(g) assuming they are concatenated.
+      self :: IN
+      g    :: INT, IN
+      res  :: INT
+ 
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(g>0 AND g<=.mol.dim,"group out of range")
+ 
+      i :: INT
+ 
+      res = 0
+      do i = 1,g-1
+         res = res + .mol(i).n_bf
+      end
+ 
    end
 
 !  =================
@@ -8017,7 +8025,6 @@ contains
 
       arch  :: ARCHIVE
       genre :: STR
-      mol   :: MOLECULE*
       g :: INT
 
       ! Get MOs
@@ -8045,20 +8052,18 @@ contains
       end
 
       if (.atom_group.allocated) then
-      if (.atom_group(1).mol.associated) then
+      if (.mol.allocated) then
          
          do g = 1,.atom_group.dim
 
-            mol => .atom_group(g).mol
-
             ! Should be generalised to read archives like above ...
-            if (mol.MOs.deallocated) cycle
+            if (.mol(g).MOs.deallocated) cycle
 
-            genre = mol.MOs.genre
-            mol.NOs = mol.MOs
-            mol.NO_occ_nos.create(mol.n_bf,genre)
-            mol.NO_occ_nos.set_to_zero
-            mol.:set_SCF_occupations_for_NOs(genre)
+            genre = .mol(g).MOs.genre
+            .mol(g).NOs = .mol(g).MOs
+            .mol(g).NO_occ_nos.create(.mol(g).n_bf,genre)
+            .mol(g).NO_occ_nos.set_to_zero
+            .mol(g).:set_SCF_occupations_for_NOs(genre)
 
          end
 
@@ -8073,7 +8078,6 @@ contains
       self :: target, INOUT
 
       genre :: STR
-      mol :: MOLECULE*
       g :: INT
 
       ! Clone
@@ -8086,19 +8090,17 @@ contains
       end
 
       if (.atom_group.allocated) then
-      if (.atom_group(1).mol.associated) then
+      if (.mol.allocated) then
          
          do g = 1,.atom_group.dim
 
-            mol => .atom_group(g).mol
-
-            if (mol.NOs.deallocated) cycle
+            if (.mol(g).NOs.deallocated) cycle
 
             genre = .NOs.genre
-            mol.MOs = mol.NOs
-            mol.NO_occ_nos.create(.n_bf,genre)
-            mol.NO_occ_nos.set_to_zero
-            mol.:set_SCF_occupations_for_NOs(genre)
+            .mol(g).MOs = .mol(g).NOs
+            .mol(g).NO_occ_nos.create(.n_bf,genre)
+            .mol(g).NO_occ_nos.set_to_zero
+            .mol(g).:set_SCF_occupations_for_NOs(genre)
 
          end
 
@@ -8977,7 +8979,7 @@ contains
       archive.set(.name,"density_mx");              archive.delete_all_genres
       end                                          
                                                    
-      archive.set(.name,"fock_mx");                 archive.delete_all_genres
+      archive.set(.name,"Fock_mx");                 archive.delete_all_genres
       archive.set(.name,"NOs");                     archive.delete_all_genres
       archive.set(.name,"NO_occ_nos");              archive.delete_all_genres
       archive.set(.name,"energy");                  archive.delete_all_genres
@@ -8989,11 +8991,11 @@ contains
       archive.set(.name,"U_electric_dipole");       archive.delete_all_genres
       archive.set(.name,"U2_electric_dipole");      archive.delete_all_genres
 
-      archive.set(.name,"j_mx");                    archive.delete_all_genres
+      archive.set(.name,"J_mx");                    archive.delete_all_genres
       archive.set(.name,"constraint_mx");           archive.delete_all_genres
 
-      archive.set(.name,"eri_integrals");           archive.delete_all_genres
-      archive.set(.name,"eri_index");               archive.delete_all_genres
+      archive.set(.name,"ERI_integrals");           archive.delete_all_genres
+      archive.set(.name,"ERI_index");               archive.delete_all_genres
 
       ! WARNING: These two below are recursive
       .:delete_atom_SCF_archives
@@ -9067,10 +9069,10 @@ contains
       g :: INT
 
       if (.atom_group.deallocated) return
+      if (.mol.deallocated) return
 
       do g = 1,.atom_group.dim
-         if (.atom_group(g).mol.disassociated) cycle
-         .atom_group(g).mol.:delete_SCF_archives(keep_MOs,keep_DM)
+         .mol(g).:delete_SCF_archives(keep_MOs,keep_DM)
       end
 
    end
@@ -9409,21 +9411,21 @@ contains
 
    put_atom_groups
    ! Output the .atom_group info array
-      self :: IN
+      self :: INOUT
 
    ENSURE(.atom_group.allocated,"no atom group information")
 
       .atom_group.put
-
       .:put_atom_group_mols
       
    end
 
    put_atom_group_mols
    ! Output each .atom_group.mol info
-      self :: IN
+      self :: INOUT
 
-   ENSURE(.atom_group.allocated,"no atom group information")
+   ENSURE(.atom_group.allocated,"no .atom_group information")
+   ENSURE(.mol.allocated,"no .mol information")
 
       name :: STR
       g :: INT
@@ -9431,19 +9433,15 @@ contains
       ! Output fragment info
       do g = 1,.atom_group.dim
       
-         if (.atom_group(g).mol.associated) then
-
-            ! Minimal stdout for fragment
-            name = trim(.atom_group(g).name)
-            stdout.redirect(name)
-          ! .atom_group(g).mol.:put_basics_and_atoms
-            .atom_group(g).mol.:put
-            stdout.revert
-           
-            ! Even more minimal xyz for plotting
-            .atom_group(g).mol.atom.put_xyz_file(name)
-
-         end
+         ! Minimal stdout for fragment
+         name = trim(.atom_group(g).name)
+         stdout.redirect(name)
+       ! .mol(g).:put_basics_and_atoms
+         .mol(g).:put ! INOUT
+         stdout.revert
+        
+         ! Even more minimal xyz for plotting
+         .mol(g).atom.put_xyz_file(name)
       
       end
 
@@ -10463,15 +10461,15 @@ contains
         
             case ("r ")
                call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("r ")))
-               call datafile%sbf%add_dataset(sbf_Dataset("density_mx", .density_mx.r))
-               call datafile%sbf%add_dataset(sbf_Dataset("MOs", .MOs.r))
+               call datafile%sbf%add_dataset(sbf_Dataset("density_mx,r", .density_mx.r))
+               call datafile%sbf%add_dataset(sbf_Dataset("MOs,r", .MOs.r))
         
             case ("u ")
                call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("u ")))
-               call datafile%sbf%add_dataset(sbf_Dataset("density_mx.a", .density_mx.a))
-               call datafile%sbf%add_dataset(sbf_Dataset("density_mx.b", .density_mx.b))
-               call datafile%sbf%add_dataset(sbf_Dataset("MOs.a", .MOs.a))
-               call datafile%sbf%add_dataset(sbf_Dataset("MOs.b", .MOs.a))
+               call datafile%sbf%add_dataset(sbf_Dataset("density_mx,a", .density_mx.a))
+               call datafile%sbf%add_dataset(sbf_Dataset("density_mx,b", .density_mx.b))
+               call datafile%sbf%add_dataset(sbf_Dataset("MOs,a", .MOs.a))
+               call datafile%sbf%add_dataset(sbf_Dataset("MOs,b", .MOs.a))
         
             case default
                call datafile%sbf%add_dataset(sbf_Dataset("scf_kind", trim("r ")))
@@ -10578,20 +10576,20 @@ contains
          case ("u ")
             .scfdata.set_SCF_kind("uhf")
             .density_mx.create("u ")
-            call datafile%sbf%get("density_mx.a", tmp_mat, err)
+            call datafile%sbf%get("density_mx,a", tmp_mat, err)
             DIE_IF(err /= success, sbf_strerr(err))
             .density_mx.a= tmp_mat
             deallocate(tmp_mat)
-            call datafile%sbf%get("density_mx.b", tmp_mat, err)
+            call datafile%sbf%get("density_mx,b", tmp_mat, err)
             DIE_IF(err /= success, sbf_strerr(err))
             .density_mx.b = tmp_mat
             deallocate(tmp_mat)
             .MOs.create("u ")
-            call datafile%sbf%get("MOs.a", tmp_mat, err)
+            call datafile%sbf%get("MOs,a", tmp_mat, err)
             DIE_IF(err /= success, sbf_strerr(err))
             .MOs.a = tmp_mat
             deallocate(tmp_mat)
-            call datafile%sbf%get("MOs.b", tmp_mat, err)
+            call datafile%sbf%get("MOs,b", tmp_mat, err)
             DIE_IF(err /= success, sbf_strerr(err))
             .MOs.b = tmp_mat
             deallocate(tmp_mat)
