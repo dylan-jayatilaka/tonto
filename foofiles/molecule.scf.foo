@@ -846,7 +846,9 @@ contains
       self :: INOUT
       spin_density :: BIN, optional, IN
 
-   ENSURE(.atom_group.allocated,"no atom_group's")
+   ENSURE(.atom_group.allocated,"no .atom_group")
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(.mol.dim==.atom_group.dim,"wrong size, .mol")
    ENSURE(.cif.allocated,"no cif specified")
 
       g, n_group :: INT
@@ -859,14 +861,14 @@ contains
       do g = 1,.atom_group.dim
 
          ! NOTE: change DFT -> becke
-         .atom_group(g).mol.BASE:initialize_DFT_grids
+         .mol(g).BASE:initialize_DFT_grids
 
          ! Assign previously made ANOs
-         .atom_group(g).mol.BASE:resolve_ANOs_from(self)
+         .mol(g).BASE:resolve_ANOs_from(self)
 
          ! Write the SFs for each fragment to disk
          n_group = .atom_group(g).atom_index.dim
-         .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
+         .mol(g).SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
 
       end
 
@@ -6225,15 +6227,13 @@ contains
 
    ENSURE(.atom_group.allocated,"no atom_group info")
    ENSURE(g<=.atom_group.dim,"group out of range")
-   ENSURE(.atom_group(g).mol.associated,"no atom_group molecule")
-   ENSURE(.atom_group(g).mol.scfdata.allocated,"no atom_group molecule scfdata")
-   ENSURE(.atom_group(g).mol.spin_multiplicity==1,"only singlets allowed for now")
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(.mol.dim==.atom_group.dim,"wrong size, .mol")
+   ENSURE(.mol(g).scfdata.allocated,"no atom_group molecule scfdata")
+   ENSURE(.mol(g).spin_multiplicity==1,"only singlets allowed for now")
 
-      mol :: MOLECULE*
-      C,K :: MAT{REAL}@
-
-      ! Get the molecule from group "g"
-      mol => .atom_group(g).mol
+      C, K :: MAT{REAL}@
+      n_bf :: INT
 
       E_SCF = ZERO
       E_T = ZERO
@@ -6241,30 +6241,31 @@ contains
       E_C = ZERO
       E_K = ZERO
 
-      if (mol.BASE:no_of_electrons >= 1) then
+      if (.mol(g).BASE:no_of_electrons >= 1) then
 
          ! Get the SCF energy
-         E_SCF = .atom_group(g).mol.scfdata.energy
+         E_SCF = .mol(g).scfdata.energy
 
          ! Get the kinetic energy
-         E_T = .atom_group(g).mol.scfdata.kinetic_energy
+         E_T = .mol(g).scfdata.kinetic_energy
 
          ! Get the nuclear attraction energy
-         E_Z = .atom_group(g).mol.scfdata.nuclear_attraction_energy
+         E_Z = .mol(g).scfdata.nuclear_attraction_energy
 
          ! Coulomb/exchange matrices
-         C.create(mol.n_bf,mol.n_bf)
-         K.create(mol.n_bf,mol.n_bf)
-         mol.FOCK:make_r_JK_nosym(C,K,.atom_group(g).mol.density_mx.r)
+         n_bf = .mol(g).n_bf
+         C.create(n_bf,n_bf)
+         K.create(n_bf,n_bf)
+         .mol(g).FOCK:make_r_JK_nosym(C,K,.mol(g).density_mx.r)
 
          ! Coulomb & exchange energies
-         E_C = HALF*C.trace_product_with(.atom_group(g).mol.density_mx.r)
-         E_K = -QUARTER*K.trace_product_with(.atom_group(g).mol.density_mx.r)
+         E_C = HALF*C.trace_product_with(.mol(g).density_mx.r)
+         E_K = -QUARTER*K.trace_product_with(.mol(g).density_mx.r)
          K.destroy
          C.destroy
 
          ! Clean up disk
-         mol.BASE:delete_SCF_archives
+         .mol(g).BASE:delete_SCF_archives
 
       end
 
@@ -6609,9 +6610,10 @@ contains
    ! All occupied first, then all virtuals, as columns.
       self :: INOUT
 
-   ENSURE(.atom_group.allocated,    "no atom_group info")
+   ENSURE(.atom_group.allocated,"no .atom_group info")
+   ENSURE(.mol.allocated, "no .mol")
+   ENSURE(.mol.dim==.atom_group.dim, "wrong size, .mol")
 
-      mol :: MOLECULE*
       mess, genre :: STR
       g,nb,fb,lb  :: INT
 
@@ -6623,61 +6625,59 @@ contains
       .density_mx.create(.n_bf, genre)
 
       if(genre == "u ") then
+
          .density_mx.a = ZERO
          lb = 0
          ! Loop over atom group "g" and set MOs
          do g = 1,.atom_group.dim
-            mol => .atom_group(g).mol
             mess = "group "//trim(g.to_str)
-            DIE_IF(mol.disassociated,trim(mess)//" mol undefined!")
-            DIE_IF(mol.density_mx.deallocated,trim(mess)//" density matrix undefined!")
-            if (mol.BASE:no_of_electrons>=1) then
+            DIE_IF(.mol(g).density_mx.deallocated,trim(mess)//" density matrix undefined!")
+            if (.mol(g).BASE:no_of_electrons>=1) then
                ! Sizes
-               nb = mol.n_bf
+               nb = .mol(g).n_bf
                ! MO/GO counters
                fb = lb + 1
                lb = lb + nb
                ! Copy the block
-               .density_mx.a(fb:lb,fb:lb) = mol.density_mx.a
+               .density_mx.a(fb:lb,fb:lb) = .mol(g).density_mx.a
             end
          end
          .density_mx.b = ZERO
          lb = 0
          ! Loop over atom group "g" and set MOs
          do g = 1,.atom_group.dim
-            mol => .atom_group(g).mol
             mess = "group "//trim(g.to_str)
-            DIE_IF(mol.disassociated,trim(mess)//" mol undefined!")
-            DIE_IF(mol.density_mx.deallocated,trim(mess)//" density matrix undefined!")
-            if (mol.BASE:no_of_electrons>=1) then
+            DIE_IF(.mol(g).density_mx.deallocated,trim(mess)//" density matrix undefined!")
+            if (.mol(g).BASE:no_of_electrons>=1) then
                ! Sizes
-               nb = mol.n_bf
+               nb = .mol(g).n_bf
                ! MO/GO counters
                fb = lb + 1
                lb = lb + nb
                ! Copy the block
-               .density_mx.b(fb:lb,fb:lb) = mol.density_mx.b
+               .density_mx.b(fb:lb,fb:lb) = .mol(g).density_mx.b
             end
          end
+
       else
+
          .density_mx.r = ZERO
          lb = 0
          ! Loop over atom group "g" and set MOs
          do g = 1,.atom_group.dim
-            mol => .atom_group(g).mol
             mess = "group "//trim(g.to_str)
-            DIE_IF(mol.disassociated,trim(mess)//" mol undefined!")
-            DIE_IF(mol.density_mx.deallocated,trim(mess)//" density matrix undefined!")
-            if (mol.BASE:no_of_electrons>=1) then
+            DIE_IF(.mol(g).density_mx.deallocated,trim(mess)//" density matrix undefined!")
+            if (.mol(g).BASE:no_of_electrons>=1) then
                ! Sizes
-               nb = mol.n_bf
+               nb = .mol(g).n_bf
                ! MO/GO counters
                fb = lb + 1
                lb = lb + nb
                ! Copy the block
-               .density_mx.r(fb:lb,fb:lb) = mol.density_mx.r
+               .density_mx.r(fb:lb,fb:lb) = .mol(g).density_mx.r
             end
          end
+
       end
    end
 
@@ -6687,8 +6687,9 @@ contains
       self :: INOUT
 
    ENSURE(.atom_group.allocated,"no atom_group info")
+   ENSURE(.mol.allocated, "no .mol")
+   ENSURE(.mol.dim==.atom_group.dim, "wrong size, .mol")
 
-      mol :: MOLECULE*
       mess :: STR
       g,nb,no,nv :: INT
       fb,lb,fo,lo,fv,lv :: INT
@@ -6698,7 +6699,7 @@ contains
       ! Check if ANY of the atom groups has an unrestricted wavefunction
       all_restricted = TRUE
       do g = 1,.atom_group.dim
-         knd = .atom_group(g).mol.MOs.genre
+         knd = .mol(g).MOs.genre
          if (knd=="u ") then
             all_restricted = FALSE
             exit
@@ -6725,18 +6726,15 @@ contains
          ! Loop over atom group "g" and set MOs
          do g = 1,.atom_group.dim
 
-            mol => .atom_group(g).mol
             mess = "group "//trim(g.to_str)
-            DIE_IF(mol.disassociated,trim(mess)//" mol not defined!")
-            DIE_IF(mol.MOs.deallocated,trim(mess)//" MOs not defined!")
+            DIE_IF(.mol(g).MOs.deallocated,trim(mess)//" MOs not defined!")
 
-            if (mol.BASE:no_of_electrons<1) cycle
+            if (.mol(g).BASE:no_of_electrons<1) cycle
 
             ! Sizes
-            nb = mol.n_bf
-            no = mol.n_a
-            ! number of unoccupied orbitals
-            nv = mol.n_bf - mol.n_a
+            nb = .mol(g).n_bf
+            no = .mol(g).n_a
+            nv = nb - no ! number of unoccupied orbitals
 
             ! MO/GO counters
             fb = lb + 1
@@ -6747,12 +6745,12 @@ contains
             lv = lv + nv
 
             ! Copy occupied and virtuals
-            if (mol.MOs.a.allocated) then
-               .MOs.a(fb:lb,fo:lo) = mol.MOs.a(:,   1:no)
-               .MOs.a(fb:lb,fv:lv) = mol.MOs.a(:,no+1:nb)
+            if (.mol(g).MOs.a.allocated) then
+               .MOs.a(fb:lb,fo:lo) = .mol(g).MOs.a(:,   1:no)
+               .MOs.a(fb:lb,fv:lv) = .mol(g).MOs.a(:,no+1:nb)
             else
-               .MOs.a(fb:lb,fo:lo) = mol.MOs.r(:,   1:no)
-               .MOs.a(fb:lb,fv:lv) = mol.MOs.r(:,no+1:nb)
+               .MOs.a(fb:lb,fo:lo) = .mol(g).MOs.r(:,   1:no)
+               .MOs.a(fb:lb,fv:lv) = .mol(g).MOs.r(:,no+1:nb)
             end
 
          end
@@ -6768,19 +6766,15 @@ contains
          ! Loop over atom group "g" and set MOs
          do g = 1,.atom_group.dim
 
-            mol => .atom_group(g).mol
             mess = "group "//trim(g.to_str)
-            DIE_IF(mol.disassociated,trim(mess)//" mol not defined!")
-            DIE_IF(mol.MOs.deallocated,trim(mess)//" MOs not defined!")
+            DIE_IF(.mol(g).MOs.deallocated,trim(mess)//" MOs not defined!")
 
-            if (mol.BASE:no_of_electrons<1) cycle
+            if (.mol(g).BASE:no_of_electrons<1) cycle
 
             ! Sizes
-            nb = mol.n_bf
-            ! For unrestricted convert no = mol.n_b for beta case
-            no = mol.n_b
-            ! number of unoccupied orbitals
-            nv = mol.n_bf - mol.n_b
+            nb = .mol(g).n_bf
+            no = .mol(g).n_b
+            nv = nb - no
 
             ! MO/GO counters
             fb = lb + 1
@@ -6791,12 +6785,12 @@ contains
             lv = lv + nv
 
             ! Copy occupied and virtuals
-            if (mol.MOs.b.allocated) then
-               .MOs.b(fb:lb,fo:lo) = mol.MOs.b(:,   1:no)
-               .MOs.b(fb:lb,fv:lv) = mol.MOs.b(:,no+1:nb)
+            if (.mol(g).MOs.b.allocated) then
+               .MOs.b(fb:lb,fo:lo) = .mol(g).MOs.b(:,   1:no)
+               .MOs.b(fb:lb,fv:lv) = .mol(g).MOs.b(:,no+1:nb)
             else
-               .MOs.b(fb:lb,fo:lo) = mol.MOs.r(:,   1:no)
-               .MOs.b(fb:lb,fv:lv) = mol.MOs.r(:,no+1:nb)
+               .MOs.b(fb:lb,fo:lo) = .mol(g).MOs.r(:,   1:no)
+               .MOs.b(fb:lb,fv:lv) = .mol(g).MOs.r(:,no+1:nb)
             end if
          end
       end if
@@ -6809,8 +6803,9 @@ contains
       self :: INOUT
 
    ENSURE(.atom_group.allocated,    "no atom_group info")
+   ENSURE(.mol.allocated, "no .mol")
+   ENSURE(.mol.dim==.atom_group.dim, "wrong size, .mol")
 
-      mol :: MOLECULE*
       mess :: STR
       g,nb,no,nv :: INT
       fb,lb,fo,lo,fv,lv :: INT
@@ -6827,19 +6822,15 @@ contains
       ! Loop over atom group "g" and set MOs
       do g = 1,.atom_group.dim
 
-         mol => .atom_group(g).mol
          mess = "group "//trim(g.to_str)
-         DIE_IF(mol.disassociated,trim(mess)//" mol not defined!")
-         DIE_IF(mol.MOs.deallocated,trim(mess)//" MOs not defined!")
+         DIE_IF(.mol(g).MOs.deallocated,trim(mess)//" MOs not defined!")
 
-         if (mol.BASE:no_of_electrons<1) cycle
+         if (.mol(g).BASE:no_of_electrons<1) cycle
 
          ! Sizes
-         nb = mol.n_bf
-         ! For unrestricted convert no = mol.n_b for beta case
-         no = mol.n_a
-         ! number of unoccupied orbitals
-         nv = mol.n_bf - mol.n_a
+         nb = .mol(g).n_bf
+         no = .mol(g).n_a
+         nv = nb - no
 
          ! MO/GO counters
          fb = lb + 1
@@ -6850,8 +6841,8 @@ contains
          lv = lv + nv
 
          ! Copy occupied and virtuals
-         .MOs.r(fb:lb,fo:lo) = mol.MOs.r(:,   1:no)
-         .MOs.r(fb:lb,fv:lv) = mol.MOs.r(:,no+1:nb)
+         .MOs.r(fb:lb,fo:lo) = .mol(g).MOs.r(:,   1:no)
+         .MOs.r(fb:lb,fv:lv) = .mol(g).MOs.r(:,no+1:nb)
 
       end
 
@@ -7021,11 +7012,12 @@ contains
       MOs :: BIN, optional, IN
       output :: BIN, optional, IN
 
-   ENSURE(.atom_group.allocated,"no atom_group info")
+   ENSURE(.atom_group.allocated,"no .atom_group info")
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(.mol.dim==.atom_group.dim,"no .mol")
    ENSURE(.scfdata.allocated,"no scfdata")
 
       do_output,do_MOs :: BIN
-      mol :: MOLECULE*
       arch :: ARCHIVE
       g :: INT
 
@@ -7044,12 +7036,15 @@ contains
 
       ! Destroy the MO's if requested
       if (do_MOs) then
-      .MOs.destroy
-      .MOs.create(.n_bf,"r ")
-      .MOs.r = ZERO
-      .NO_occ_nos.destroy
-      .NO_occ_nos.create(.n_bf,"r ")
-      .NO_occ_nos.r = ZERO
+
+         .MOs.destroy
+         .MOs.create(.n_bf,"r ")
+         .MOs.r = ZERO
+
+         .NO_occ_nos.destroy
+         .NO_occ_nos.create(.n_bf,"r ")
+         .NO_occ_nos.r = ZERO
+
       end
 
       ! Make the ANOs: atom groups need it (leaky)
@@ -7061,12 +7056,8 @@ contains
       ! Loop over atom group "g"
       do g = 1,.atom_group.dim
 
-         ! Set up a molecule for this group of atoms
-         mol => .atom_group(g).mol
-         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
-
          ! Skip SCF for atoms without electrons
-         if (mol.BASE:no_of_electrons < 1) cycle
+         if (.mol(g).BASE:no_of_electrons < 1) cycle
 
          ! Set SCF options
        ! if (.atom_group(g).n_atoms>1) then
@@ -7079,41 +7070,36 @@ contains
        ! end
 
          ! Output details?
-         if (do_output) mol.BASE:put_basics
+         if (do_output) .mol(g).BASE:put_basics
 
          ! Do the SCF !!!!!!!!!!!!!!!!!!!!!
-         mol.scfdata.set_level_shift(100d0)
-         mol.:scf
+         .mol(g).scfdata.set_level_shift(100d0)
+         .mol(g).:scf
          !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
          ! Make the AO density matrix for this group
          if (.atom_group(g).n_MOs>0) then;
             stdout.show("using fewer MOs =",.atom_group(g).n_MOs)
             stdout.text("normal P:")
-            mol.BASE:make_r_density_mx
-            stdout.put(mol.density_mx.r)
+            .mol(g).BASE:make_r_density_mx
+            stdout.put(.mol(g).density_mx.r)
             stdout.text("reduced P:")
-            mol.BASE:make_SCF_density_mx(method="group",n_a=.atom_group(g).n_MOs)
-            stdout.put(mol.density_mx.r)
+            .mol(g).BASE:make_SCF_density_mx(method="group",n_a=.atom_group(g).n_MOs)
+            stdout.put(.mol(g).density_mx.r)
          else
-            mol.BASE:make_r_density_mx
+            .mol(g).BASE:make_r_density_mx
          end
 
          ! Copy this group density matrix
-         .BASE:set_group_density(g,mol)
+         .BASE:set_group_density(g,.mol(g))
 
          ! Copy this group's MO's and occupations
          if (do_MOs) then
-
-            DIE_IF(mol.MOs.deallocated,"no MOs")
-            DIE_IF(mol.MOs.r.deallocated,"no restricted MOs")
-
-            .BASE:set_group_MOs(g,mol)
-
+            .BASE:set_group_MOs(g,.mol(g))
          end
 
          ! Clean up files
-         mol.:cleanup_scf
+         .mol(g).:cleanup_scf
 
       end
 
@@ -7160,12 +7146,13 @@ contains
       spin_density :: BIN, optional, IN
       do_SFs :: BIN, optional, IN
 
-   ENSURE(.atom_group.allocated,"no atom_group info")
+   ENSURE(.atom_group.allocated,"no .atom_group")
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(.mol.dim==.atom_group.dim,"no .mol")
    ENSURE(.scfdata.allocated,"no scfdata")
    ENSURE(.crystal.allocated,"no crystal")
    ENSURE(.cif.allocated,"no cif specified")
 
-      mol :: MOLECULE*
       n_group,g :: INT
       SFs :: BIN
       name,guess :: STR
@@ -7186,16 +7173,14 @@ contains
       do g = 1,.atom_group.dim
 
          ! Set up a molecule for this group of atoms
-         mol => .atom_group(g).mol
-         mol.name = .atom_group(g).name
-         DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
+         .mol(g).name = .atom_group(g).name
 
          ! Skip SCF for atoms without electrons
-         if (mol.BASE:no_of_electrons < 1) cycle
+         if (.mol(g).BASE:no_of_electrons < 1) cycle
 
          ! Make crystal
-         if (mol.crystal.deallocated) then
-            mol.crystal.update_fragment_info(mol.atom)
+         if (.mol(g).crystal.deallocated) then
+             .mol(g).crystal.update_fragment_info( .mol(g).atom)
          end
 
          ! Set up SCF options
@@ -7206,43 +7191,43 @@ contains
        !  ! mol.GRID:set_up_becke_grid
        ! end
 
-         mol.scfdata.set_output(TRUE)
-         if (mol.atom.dim==1) then
-            mol.scfdata.set_initial_density("core")
+         .mol(g).scfdata.set_output(TRUE)
+         if (.mol(g).atom.dim==1) then
+            .mol(g).scfdata.set_initial_density("core")
          else 
-            mol.scfdata.set_initial_MOs(.scfdata.initial_MOs)
-            mol.scfdata.set_initial_density(.scfdata.initial_density)
+            .mol(g).scfdata.set_initial_MOs(.scfdata.initial_MOs)
+            .mol(g).scfdata.set_initial_density(.scfdata.initial_density)
          end
 
          if (present(restart)) then
          if (restart) then
-            guess = mol.scfdata.spinorbital_genre
-            mol.scfdata.set_initial_density(guess)
+            guess = .mol(g).scfdata.spinorbital_genre
+            .mol(g).scfdata.set_initial_density(guess)
          end
          end
 
          ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
          tonto.set_parallel_IO_allowed(TRUE)
-         name = trim(mol.name)
+         name = trim(.mol(g).name)
          stdout.redirect(name)
          stdout.move_to_end
-         mol.SCF:usual_scf ! <<<
+         .mol(g).SCF:usual_scf ! <<<
          stdout.revert
          tonto.set_parallel_IO_allowed(FALSE)
          !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
          if (SFs) then
             ! NOTE: change DFT -> becke
-            .atom_group(g).mol.BASE:initialize_DFT_grids
+            .mol(g).BASE:initialize_DFT_grids
            
             ! Assign previously made ANOs
-            .atom_group(g).mol.BASE:resolve_ANOs_from(self)
+            .mol(g).BASE:resolve_ANOs_from(self)
            
             ! Write SFs for each fragment to disk - in parallel
             n_group = .atom_group(g).atom_index.dim
             tonto.set_parallel_IO_allowed(TRUE)
-            .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
-          ! .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
+            .mol(g).SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
+          ! .mol(g).SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
             tonto.set_parallel_IO_allowed(FALSE)
 
          end
