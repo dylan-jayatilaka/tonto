@@ -6,7 +6,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
 # Allow arbitrary characters in test names
-cmake_policy(SET CMP0110 NEW)
+#cmake_policy(SET CMP0110 NEW)
 
 # Tonto version info and build date
 string(TIMESTAMP VERSION_MAJOR "%y")
@@ -282,7 +282,7 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.prop.foo
     ${FOO_DIR}/molecule.plot.foo
     ${FOO_DIR}/molecule.cp.foo
-    ${FOO_DIR}/molecule.tad.foo
+    ${FOO_DIR}/molecule.har.foo
     ${FOO_DIR}/molecule.misc.foo
     ${FOO_DIR}/molecule.main.foo
 )
@@ -358,7 +358,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.prop.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.plot.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.tad.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.har.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
