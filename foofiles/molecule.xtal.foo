@@ -41,46 +41,10 @@ contains
 
    end
 
-   read_CIF_atoms_raw(cif) ::: leaky
-   ! Read atom info from a "cif". Do not reset bond lengths.
-      self :: INOUT
-      cif :: CIF, INOUT
-
-   ENSURE(cif.start_of_data>0,"no start of data in CIF")
-   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
-
-      ! Open the CIF
-      if (NOT cif.file.is_open) cif.open
-
-      ! Clean up any old atoms
-      if (.atom.allocated) then
-         .atom.destroy
-      end
-
-      ! Read the atoms from the CIF & set covariances
-      .atom.read_CIF(cif)
-
-      ! Set the atom covariances (for errors)
-      ! This is for cartesian cif2 only
-      if (.crystal.allocated) then
-      if (.crystal.xray_data.allocated) then
-      if (.crystal.xray_data.fragment_covariance_mx.allocated) then
-         .atom.set_pADP_errors_to(.crystal.xray_data.fragment_covariance_mx,H_U_iso=FALSE)
-      end
-      end
-      end
-
-      ! Set defaults and bases
-      .spin_multiplicity = .BASE:default_spin_multiplicity
-
-      ! Finalize
-      .BASE:update_atom_and_basis_info
-
-   end
-
    read_CIF_atoms(cif) ::: leaky
-   ! Read atom info from a "cif" and make crystal cell info
-   ! if the crystal info is there. Bond lengths may be reset.
+   ! Read atom position covariances, and pisitions from a "cif", and
+   ! reset and bond lengths, and *if* the crystal is there, make
+   ! crystal fragment atom info.
       self :: INOUT
       cif :: CIF, INOUT
 
@@ -92,71 +56,73 @@ contains
 
       ! Read covariances from refinement?
       ! Make sure to read refinement settings
-      .:read_CIF_crystal_covariances(cif)
+      .XTAL:read_CIF_covariances(cif)
 
-      ! Read in the atoms raw. No bond length reset.
-      .:read_CIF_atoms_raw(cif)
-
-      ! Set cartesian atom and crystal info. 
-      ! Bond lengths may be reset in here.
-      .:make_CIF_atoms_and_crystal(cif)
-
-   end
-
-   read_CIF_crystal_raw(cif) ::: leaky
-   ! Read crystal unit cell and spacegroup information (but *NOT* atom
-   ! positions, they shou;d have been read just beforehand) from a CIF
-   ! file called "cif", but do not change axis system or produce any
-   ! information arrays.
-      self :: INOUT
-      cif :: CIF, INOUT
-
-   ENSURE(cif.start_of_data>0,"no start of data in CIF")
-   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
-
-      ! Open the CIF if needed
-      if (NOT cif.file.is_open) cif.open
-
-      ! Create the crystal; it shouldn't really exist beforehand
-      WARN_IF(.crystal.allocated,"crystal data already defined!")
-      if (.crystal.deallocated) .crystal.create
-
-      ! Read in the crystal from the CIF
-      .crystal.read_CIF(cif,skip_atoms=TRUE)
-
-   end
-
-   read_CIF_crystal(cif) ::: leaky
-   ! Read crystal unit cell and spacegroup information (but NOT atom
-   ! positions) from a CIF file called "cif", and then produce the
-   ! atom and crystal informational arrays.
-   ! NOTE: only to be called after reading .atom's from the CIF,
-   ! see the routine below.
-      self :: INOUT
-      cif :: CIF, INOUT
-
-   ENSURE(cif.start_of_data>0,"no start of data in CIF")
-   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
-
-      ! Read in the raw crystal information
-      .:read_CIF_crystal_raw(cif)
-
-      ! Read covariances from refinement?
-      .:read_CIF_crystal_covariances(cif)
+      ! Read in the atoms. No bond length reset.
+      .XTAL:read_CIF_atoms_only(cif)
 
       ! Only continue if there are some atoms ...
-      if (.atom.deallocated) return
+      if (.crystal.deallocated) return
 
       ! Set cartesian atom and crystal info. 
       ! Bond lengths may be reset in here.
-      .:make_CIF_atoms_and_crystal(cif)
+      .XTAL:reset_CIF_atoms_and_crystal(cif)
 
       ! Make the esds (if covariances were read)
-      .:read_CIF_crystal_esds(cif)
+      .XTAL:read_CIF_crystal_esds(cif)
 
    end
 
-   read_CIF_crystal_covariances(cif) ::: private, leaky
+   read_CIF_atoms_only(cif) ::: leaky
+   ! Read atom info from a "cif". Do not reset bond lengths.
+      self :: INOUT
+      cif :: CIF, INOUT
+
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      ! Open the CIF
+      if (NOT cif.file.is_open) cif.open
+
+      ! Clean up any old atoms
+      .atom.destroy
+
+      ! Read the atoms from the CIF & set covariances
+      .atom.read_CIF(cif)
+
+      ! Set defaults and bases
+      .spin_multiplicity = .INQ:default_spin_multiplicity
+
+      ! Finalize
+      .BASE:update_atom_and_basis_info
+
+      ! Finalize this, maybe
+      .XTAL:update_CIF_atom_pADPs
+
+      if (.crystal.allocated) then
+         .crystal.asymmetric_unit_source = "from-cif"
+      end
+
+   end
+
+   update_CIF_atom_pADPs ::: leaky, private
+   ! Update any pADPs for the atoms in the light of any *new* crystal
+   ! information.
+      self :: INOUT
+
+      ! Set the atom covariances (for errors)
+      ! This is for cartesian cif2 only
+      if (.crystal.allocated) then
+      if (.crystal.xray_data.allocated) then
+      if (.crystal.xray_data.fragment_covariance_mx.allocated) then
+         .atom.set_pADP_errors_to(.crystal.xray_data.fragment_covariance_mx,H_U_iso=FALSE)
+      end
+      end
+      end
+
+   end
+
+   read_CIF_covariances(cif) ::: private, leaky
    ! Read the CIF covariances and set pADP esds.
    ! This routine gets the no. of pADPs from the (square root) of the
    ! length of the covariance matrices.
@@ -223,18 +189,88 @@ contains
 
    end
 
-   read_CIF_crystal_esds(cif) ::: private, leaky
+   read_CIF_crystal(cif) ::: leaky
+   ! Read crystal unit cell and spacegroup information (but NOT atom
+   ! positions) from a CIF file called "cif", and then produce the
+   ! atom and crystal informational arrays.
+   ! NOTE: only to be called after reading .atom's from the CIF,
+   ! see the routine below.
+      self :: INOUT
+      cif :: CIF, INOUT
+
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      ! Read in the only crystal information
+      .XTAL:read_CIF_crystal_only(cif)
+
+      ! Only continue if there are some atoms ...
+      if (.atom.deallocated) return
+
+      ! Update
+      .XTAL:update_CIF_crystal_atoms(cif)
+
+   end
+
+   read_CIF_crystal_only(cif) ::: leaky
+   ! Read from a "cif" crystal unit cell and spacegroup information,
+   ! and any covariance matrices from a refinement -- but *NOT* atom
+   ! positions. 
+      self :: INOUT
+      cif :: CIF, INOUT
+
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      ! Create the crystal; it shouldn't really exist beforehand
+      WARN_IF(.crystal.allocated,"crystal data already defined!")
+      if (.crystal.deallocated) .crystal.create
+
+      ! Read in the crystal from the CIF
+      .crystal.read_CIF_spacegroup_and_cell(cif)
+
+      ! Read covariances from refinement?
+      ! Make sure they are inputed there.
+      .XTAL:read_CIF_covariances(cif)
+
+   end
+
+   update_CIF_crystal_atoms(cif) ::: leaky
+   ! Update the any hydrogen-atom bond lengths and remake
+   ! any crystal fragmemnt_atom info.
+   ! NOTE: only to be called after reading .atom's from the CIF
+      self :: INOUT
+      cif :: CIF, INOUT
+
+   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      ! Only continue if there are some atoms ...
+      if (.atom.deallocated) return
+
+      ! Set cartesian atom and crystal info. 
+      ! Bond lengths may be reset in here.
+      .XTAL:reset_CIF_atoms_and_crystal(cif)
+
+      ! Make the esds (if covariances were read)
+      .XTAL:read_CIF_crystal_esds(cif)
+
+   end
+
+   read_CIF_crystal_esds(cif) ::: leaky, private
    ! Read the CIF covariances and set pADP esds.
       self :: INOUT
       cif :: CIF, INOUT
 
    ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.crystal.allocated,"no crystal")
    ENSURE(cif.start_of_data>0,"no start of data in CIF")
    ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
 
       fcov_there :: BIN
       acov_there :: BIN
+
+      if (.crystal.deallocated) return
+      if (.crystal.xray_data.deallocated) return
 
       ! Open the CIF if needed
       if (NOT cif.file.is_open) cif.open
@@ -254,9 +290,9 @@ contains
 
    end
 
-   make_CIF_atoms_and_crystal(cif) ::: private, leaky
-   ! Set the atom and crystal fragment information when processing the
-   ! CIF. If requested in cif, reset H atom bond lengths.
+   reset_CIF_atoms_and_crystal(cif) ::: private, leaky
+   ! Set the atom and crystal fragment_atom info.
+   ! If requested in cif= { ... }, reset H atom bond lengths.
       self :: INOUT
       cif :: CIF, IN
 
@@ -270,21 +306,25 @@ contains
       if (NOT .crystal.spacegroup.analyzed) return
 
       ! Must be cartesian
-      .BASE:resolve_axis_system
+      .SET:resolve_axis_system
 
       if (.atom.has_all_Hs_single_bonded(has_Hs)) then
+
          ! Reset H bond lengths the simple way.
          ! If disordered, the disordered atoms must
          ! be proximate to their bonded neighbours.
          if (has_Hs) then
+         if (cif.apply_bond_length) then 
             if (cif.apply_BH_bond_length) .atom.set_bond_lengths(5,1,cif.BH_bond_length)
             if (cif.apply_CH_bond_length) .atom.set_bond_lengths(6,1,cif.CH_bond_length)
             if (cif.apply_NH_bond_length) .atom.set_bond_lengths(7,1,cif.NH_bond_length)
             if (cif.apply_OH_bond_length) .atom.set_bond_lengths(8,1,cif.OH_bond_length)
+            .crystal.destroy_asymmetric_unit
          end
-         .crystal.update_fragment_info(.atom)
+         end
 
       else
+
          ! There are floating hydrogens or multiple bonded H's ...
          ! Uses the crystal to reset the hydrogen bond lengths.
          ! Uses UC conn. table to skip multiple-bonded H atoms.
@@ -308,91 +348,16 @@ contains
             WARN("SOME ATOM INFORMATION MAY BE LOST")
          end
 
-         ! Re-analyze the fragment symmetry information
-         ! Maybe not all things in here need doing again ...
          .crystal.destroy_asymmetric_unit
-         .crystal.update_fragment_info(.atom)
+
       end
+
+      ! Re-analyze the fragment symmetry information
+      ! Maybe not all things in here need doing again ...
+      .crystal.update_fragment_info(.atom)
 
       ! Finalize atoms & groups as well
       .BASE:update_atom_and_basis_info
-
-   end
-
-!  ===========================
-!  Cluster generation routines
-!  ===========================
-
-   destroy_cluster ::: leaky, PURE
-   ! Destroy a molecule created by the "create_cluster" routine, 
-   ! and recover the original molecule from .saved
-      self :: allocatable, INOUT
-
-   ENSURE(.saved.allocated,"no crystal data")
-
-      .BASE:unsave
-
-   end
-
-   create_cluster ::: leaky
-   ! Create a new "self" by generating a cluster from information
-   ! stored in .cluster.  The original molecule replaced by the
-   ! *cluster-fragent* and stored in .saved. The new molecule is
-   ! created from the cluster geometry.
-      self :: allocatable, INOUT
-
-   ENSURE(.crystal.allocated,"no crystal data")
-   ENSURE(.cluster.allocated,"no cluster data")
-   ENSURE(.cluster.info_made,"no cluster data")
-
-      stdout.flush
-      stdout.text("Resetting molecule to cluster fragment")
-
-      ! Reset .atom list to the *cluster-fragment*
-      .atom.destroy
-      .cluster.create_fragment_atom_list(.atom)
-
-      ! Finalize basis on new .atom list
-      .atom_info_made = FALSE
-      .BASE:update_atom_and_basis_info
-      .crystal.update_fragment_info(.atom)
-
-      ! Message
-      stdout.flush
-      stdout.text("Saving old molecule; making new cluster")
-      stdout.flush
-
-      ! Save this molecule & get a clean new molecule
-      .BASE:save
-
-      ! The name for the new cluster
-      .name = trim(.saved.name) // "_cluster"
-
-      ! If a CIF exists, copy that
-      if (.saved.cif.allocated) .cif = .saved.cif
-
-      ! Saved crystal is the same
-      .crystal = .saved.crystal
-
-      ! Set .atom list from (saved) cluster
-      ! Don't make a new cluster, let the user do it.
-      .saved.cluster.create_atom_list(.atom)
-
-      ! Create basis sets
-      if (.saved.basis.allocated)        .basis        = .saved.basis
-      if (.saved.slaterbasis.allocated)  .slaterbasis  = .saved.slaterbasis
-      if (.saved.coppensbasis.allocated) .coppensbasis = .saved.coppensbasis
-      .basis_name        = .saved.basis_name
-      .slaterbasis_name  = .saved.slaterbasis_name
-      .coppensbasis_name = .saved.coppensbasis_name
-
-      ! Finalize atom info
-      if (.atom.allocated) .atom.destroy_bases
-      .atom_info_made = FALSE
-      .BASE:update_atom_and_basis_info
-
-      ! Redo crystal.atoms
-      .crystal.update_fragment_info(.atom)
 
    end
 
@@ -408,7 +373,7 @@ contains
 !
 !      stdin.read(m)
 !
-!      .:create_cluster_mol(m, mol)
+!      .XTAL:create_cluster_mol(m, mol)
 !
 !   end
 
@@ -448,7 +413,7 @@ contains
 !      .crystal.update_fragment_info(.atom)
 !
 !      ! Save this molecule & get a clean new molecule
-!      .BASE:make_molecule_from_atom_group(m, mol) ! NOT PURE
+!      .SET:set_molecule_from_atom_group(m, mol) ! NOT PURE
 !
 !      ! If a CIF exists, copy that
 !      if (.cif.allocated) mol.cif = .cif
@@ -552,7 +517,7 @@ contains
       parallel do q = 1,.n_shell_pairs
 
          ! Get shell pairs
-         .BASE:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+         .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
          if (sh.skip_ft(cutoff)) then
 
@@ -563,7 +528,7 @@ contains
 
             ! Make the FT - includes thermal smearing
             FT_ab.create(k_max,na,nb)
-            .:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
+            .XTAL:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
            
             ! Trace with density matrix
             ! Count off-diagonals twice
@@ -615,7 +580,7 @@ contains
       do q = 1,.n_shell_pairs
 
          ! Get shell pairs
-         .BASE:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+         .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
          if (sh.skip_ft(cutoff)) then
 
@@ -626,7 +591,7 @@ contains
 
             ! Make the FT - includes thermal smearing
             FT_ab.create(k_max,na,nb)
-            .:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
+            .XTAL:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
            
             ! Trace with density matrix
             ! Count off-diagonals twice
@@ -679,7 +644,7 @@ contains
 
       do q = 1,.n_shell_pairs
 
-         .BASE:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+         .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
          if (sh.skip_ft(cutoff)) then
             sh.destroy_ptr_part
@@ -688,7 +653,7 @@ contains
 
          ! FT integrals
          FT_ab.create(k_max,na,nb)
-         .:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
+         .XTAL:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
 
          ! DM blocks
          dens_ba_aa = dens(fb     :lb     ,fa     :la     )
@@ -748,7 +713,7 @@ contains
 
       do q = 1,.n_shell_pairs
 
-         .BASE:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+         .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
          
          if (sh.skip_ft(cutoff)) then
             sh.destroy_ptr_part
@@ -756,7 +721,7 @@ contains
          end
          
          FT_ab.create(k_max,na,nb)
-         .:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
+         .XTAL:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
          
          dens_ba = dens(fb:lb,fa:la)
          
@@ -874,7 +839,7 @@ contains
 
       do q = 1, .n_shell_pairs
 
-         .BASE:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+         .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
          
          if (sh.skip_ft(cutoff)) then
             sh.destroy_ptr_part
@@ -882,7 +847,7 @@ contains
          end
          
          FT_ab.create(k_max,na,nb)
-         .:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
+         .XTAL:make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
          
          dens_ba = dens(fb:lb,fa:la)
 
@@ -976,7 +941,7 @@ contains
 
       ! Partition factors
       part.create(sh.a.n_cc,sh.b.n_cc)
-      .:make_partition_factors(part,sh,atom_a,atom_b,is_zero)
+      .XTAL:make_partition_factors(part,sh,atom_a,atom_b,is_zero)
 
       if (NOT is_zero) then
 
@@ -1025,7 +990,7 @@ contains
       p.create(sh.a.n_cc,sh.b.n_cc)
 
       ! Partition factors
-      .:make_partition_factors(p,sh,atom_a,atom_b,is_zero)
+      .XTAL:make_partition_factors(p,sh,atom_a,atom_b,is_zero)
 
       sh.make_FT_parted(FT,k1,k2,k3,p)
 
@@ -1277,7 +1242,7 @@ contains
       arch :: ARCHIVE
 
       arch.set(.name,"FT_ints")
-      if (NOT arch.exists) .:make_FT_ints
+      if (NOT arch.exists) .XTAL:make_FT_ints
 
    end
 
@@ -1307,12 +1272,12 @@ contains
 
       do q = 1,.n_shell_pairs
 
-         .BASE:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+         .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
          FT_ab_eq.create(n_uniq,na,nb)
          FT_ab.create(n_refl,na,nb)
 
-         .:make_FT_pair(FT_ab_eq,k_pts,sh,atom_a,atom_b)
+         .XTAL:make_FT_pair(FT_ab_eq,k_pts,sh,atom_a,atom_b)
 
          .crystal.spacegroup.sum_unique_sf_ints(FT_ab,FT_ab_eq,.crystal.xray_data.reflections)
 
@@ -1411,7 +1376,7 @@ contains
 !      FM = ZERO
 !      sh.create
 !      do q = 1,.n_shell_pairs
-!         .BASE:set_shell2_from(q,sh,fa,la,fb,lb)
+!         .SET:set_shell2_from(q,sh,fa,la,fb,lb)
 !         FT_ab.create(k_max,sh.a.n_comp,sh.b.n_comp,3)
 !         arch.Bfile.read(FT_ab)
 !         d_aa => .density_mx.alpha(fb:lb,fa:la)
@@ -1456,7 +1421,7 @@ contains
 !      FM = ZERO
 !      sh.create
 !      do q = 1,.n_shell_pairs
-!         .BASE:set_shell2_from(q,sh,fa,la,fb,lb)
+!         .SET:set_shell2_from(q,sh,fa,la,fb,lb)
 !         FT_ab.create(k_max,sh.a.n_comp,sh.b.n_comp,3)
 !         arch.Bfile.read(FT_ab)
 !         d_aa => .density_mx.general_complex(      fb:      lb,      fa:      la)
@@ -1503,9 +1468,9 @@ contains
 !      .crystal.xray_data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 !      sh.create
 !      do q = 1,.n_shell_pairs
-!         .BASE:set_shell2_from(q,sh,fa,la,fb,lb,atom_a,atom_b)
+!         .SET:set_shell2_from(q,sh,fa,la,fb,lb,atom_a,atom_b)
 !         FT_ab_eq.create(size(k_pts,1),sh.a.n_comp,sh.b.n_comp)
-!         .:make_FT_pair(FT_ab_eq,k_pts,sh,atom_a,atom_b)
+!         .XTAL:make_FT_pair(FT_ab_eq,k_pts,sh,atom_a,atom_b)
 !         FT_ab.create(.crystal.n_refl,sh.a.n_comp,sh.b.n_comp,3)
 !         .crystal.sum_PND_spin_ints(FT_ab,FT_ab_eq)
 !         arch.Bfile.write(FT_ab)
@@ -1551,7 +1516,7 @@ contains
 !      FM = ZERO
 !      sh.create
 !      do q = 1,.n_shell_pairs
-!         .BASE:set_shell2_from(q,sh,fa,la,fb,lb)
+!         .SET:set_shell2_from(q,sh,fa,la,fb,lb)
 !         FT_ab_z.create(k_max,sh.a.n_comp,sh.b.n_comp)
 !         arch.Bfile.read(FT_ab_z)
 !         dens.create(sh.b.n_comp,sh.a.n_comp)
@@ -1595,7 +1560,7 @@ contains
 !      .crystal.xray_data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 !      sh.create
 !      do q = 1,.n_shell_pairs
-!         .BASE:set_shell2_from(q,sh,fa,la,fb,lb,atom_a,atom_b)
+!         .SET:set_shell2_from(q,sh,fa,la,fb,lb,atom_a,atom_b)
 !         FT_ab_eq.create(size(k_pts,1),sh.a.n_comp,sh.b.n_comp,3)
 !         .make_FT_nabla_pair(FT_ab_eq,k_pts,sh,atom_a,atom_b)
 !       ! sh.make_FT_nabla(FT_ab_eq,k_pts)
@@ -1654,7 +1619,7 @@ contains
 !      FM = ZERO
 !      sh.create
 !      do q = 1,.n_shell_pairs
-!         .BASE:set_shell2_from(q,sh,fa,la,fb,lb)
+!         .SET:set_shell2_from(q,sh,fa,la,fb,lb)
 !         FT_ab.create(k_max,sh.a.n_comp,sh.b.n_comp,3)
 !         arch.Bfile.read(FT_ab)
 !         d_aa => .density_mx.general_complex(      fb:      lb,      fa:      la)
@@ -1699,7 +1664,7 @@ contains
 !      .crystal.xray_data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
 !      sh.create
 !      do q = 1,.n_shell_pairs
-!         .BASE:set_shell2_from(q,sh,fa,la,fb,lb,atom_a,atom_b)
+!         .SET:set_shell2_from(q,sh,fa,la,fb,lb,atom_a,atom_b)
 !         FT_ab_eq.create(size(k_pts,1),sh.a.n_comp,sh.b.n_comp,3)
 !         sh.make_FT_r(FT_ab_eq,k_pts)
 !         .FT_thermally_smear(FT_ab_eq(:,:,:,1),k_pts,atom_a,atom_b)
@@ -1751,7 +1716,7 @@ contains
 !      sh.create
 !      fac1 = TWO*lambda/n_refl
 !      do q = 1,.n_shell_pairs
-!         .BASE:set_shell2_from(q,sh,fa,la,fb,lb)
+!         .SET:set_shell2_from(q,sh,fa,la,fb,lb)
 !         spin.create(n_refl,sh.a.n_comp,sh.b.n_comp,3)
 !         spin_archive.Bfile.read(spin)
 !         ints_aa => ints(     fa:     la,     fb:     lb)
@@ -1819,7 +1784,7 @@ contains
 !
 !      sf_eq.create(k_pts.dim1)
 !      sf_eq = IMAGIFY(ZERO)
-!      .:make_FT_test(sf_eq,.density_mx.restricted,k_pts)
+!      .XTAL:make_FT_test(sf_eq,.density_mx.restricted,k_pts)
 !      k_pts.destroy
 !
 !      if (.scfdata.allocated) then
@@ -1863,10 +1828,10 @@ contains
 !      sf_eq.create(k_pts.dim1)
 !      sf_eq = (ZERO,ZERO)
 !      select case (.scfdata.relativity_kind)
-!      case ("douglas-kroll-hess"); .:make_FT_DKH(sf_eq,.density_mx.restricted,k_pts)
-!      case ("dkh");                .:make_FT_DKH(sf_eq,.density_mx.restricted,k_pts)
-!      case ("iotc");               .:make_FT_IOTC(sf_eq,.density_mx.restricted,k_pts)
-!      case default;                .:make_FT_test(sf_eq,.density_mx.restricted,k_pts)
+!      case ("douglas-kroll-hess"); .XTAL:make_FT_DKH(sf_eq,.density_mx.restricted,k_pts)
+!      case ("dkh");                .XTAL:make_FT_DKH(sf_eq,.density_mx.restricted,k_pts)
+!      case ("iotc");               .XTAL:make_FT_IOTC(sf_eq,.density_mx.restricted,k_pts)
+!      case default;                .XTAL:make_FT_test(sf_eq,.density_mx.restricted,k_pts)
 !      end
 !
 !      if (.scfdata.allocated) then
@@ -1932,10 +1897,10 @@ contains
 !         ! and on calculated I am sincerely sorry, but the code
 !         ! comparing to its non-relativistic counterpart is really not
 !         ! effective :(
-!         .:make_primitive_FT_mx(GG,k_pts(1),k_pts(2),k_pts(3))
+!         .XTAL:make_primitive_FT_mx(GG,k_pts(1),k_pts(2),k_pts(3))
 !         buco.to_product_of(MM,GG,transpose_a=TRUE)
 !         FT_hkl.to_product_of(buco,MM)
-!         .:make_part_and_therm_smear(FT_hkl,k_pts(:))
+!         .XTAL:make_part_and_therm_smear(FT_hkl,k_pts(:))
 !
 !         g = (ZERO,ZERO) !???
 !         do i=1,.n_bf
@@ -2009,10 +1974,10 @@ contains
 !         ! and on calculated I am sincerely sorry, but the code
 !         ! comparing to its non-relativistic counterpart is really not
 !         ! effective :(
-!         .:make_primitive_FT_mx(GG,k_pts(n,1),k_pts(n,2),k_pts(n,3))
+!         .XTAL:make_primitive_FT_mx(GG,k_pts(n,1),k_pts(n,2),k_pts(n,3))
 !         buco.to_product_of(MM,GG,transpose_a=TRUE)
 !         FT_hkl.to_product_of(buco,MM)
-!         .:make_part_and_therm_smear(FT_hkl,k_pts(n,:))
+!         .XTAL:make_part_and_therm_smear(FT_hkl,k_pts(n,:))
 !
 !         g = (ZERO,ZERO) !???
 !         do i=1,.n_bf
@@ -2101,9 +2066,9 @@ contains
 !        ! and on calculated I am sincerely sorry, but the code
 !        ! comparing to its non-relativistic counterpart is really not
 !        ! effective :(
-!        .:make_PCE_off(FT_hkl,YU,Ap,Ep,P2,k_pts(n,1),k_pts(n,2),k_pts(n,3),m_out,n_gcm,S,Z,PZP,met,PPZPP)
+!        .XTAL:make_PCE_off(FT_hkl,YU,Ap,Ep,P2,k_pts(n,1),k_pts(n,2),k_pts(n,3),m_out,n_gcm,S,Z,PZP,met,PPZPP)
 !
-!        .:make_part_and_therm_smear(FT_hkl,k_pts(n,:))
+!        .XTAL:make_part_and_therm_smear(FT_hkl,k_pts(n,:))
 !
 !        g = (ZERO,ZERO) !???
 !
@@ -2162,7 +2127,7 @@ contains
 !      ! it do not exist in the moment
 !      select case (met)
 !         case(1)
-!            .:make_primitive_FT_mx(R,xx,yy,zz)
+!            .XTAL:make_primitive_FT_mx(R,xx,yy,zz)
 !         case default
 !            DIE("unknown value of method ")
 !      end
@@ -2178,7 +2143,7 @@ contains
 !      !!!  PDP MATRIX  !!!
 !      select case (met)
 !         case(1)
-!            .:make_primitive_pftp_mx(R,xx,yy,zz)
+!            .REL:make_primitive_pftp_mx(R,xx,yy,zz)
 !         case default
 !            DIE("unknown value of method ")
 !      end
@@ -2618,9 +2583,9 @@ contains
 !
 !     parallel do n = 1,k_max
 !        FT_hkl=(ZERO,ZERO)
-!       .:make_IOTC_FT_PCE_off(FT_hkl,Yr,YU,Ap,bp,p,k_pts(n,1),k_pts(n,2),k_pts(n,3),m_out,n_gcm,S,O)
+!       .XTAL:make_IOTC_FT_PCE_off(FT_hkl,Yr,YU,Ap,bp,p,k_pts(n,1),k_pts(n,2),k_pts(n,3),m_out,n_gcm,S,O)
 !
-!       .:make_part_and_therm_smear(FT_hkl,k_pts(n,:))
+!       .XTAL:make_part_and_therm_smear(FT_hkl,k_pts(n,:))
 !
 !        g=(ZERO,ZERO) !???
 !
@@ -2673,7 +2638,7 @@ contains
 !     R.create(.n_prim,.n_prim)
 !     R=(ZERO,ZERO)
 !! it do not exist in the moment
-!     .:make_primitive_FT_mx(R,xx,yy,zz)
+!     .XTAL:make_primitive_FT_mx(R,xx,yy,zz)
 !     D.create(n_gcm,n_gcm)
 !     D=(ZERO,ZERO)
 !! put the potential energy matrix into the n_gcm non-redundant space
@@ -2685,7 +2650,7 @@ contains
 !
 !!!!  PDP MATRIX  !!!
 !     R=(ZERO,ZERO)
-!     .:make_primitive_pftp_mx(R,xx,yy,zz)
+!     .XTAL:make_primitive_pftp_mx(R,xx,yy,zz)
 !
 !     PDP.create(n_gcm,n_gcm)
 !     PDP=(ZERO,ZERO)
@@ -2855,7 +2820,7 @@ contains
 !           case ("tc-tanaka") 
 !              ! tf = exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
 !              k_vec = [h1, h2, h3]
-!              .:thermal_Tanaka(p,G,k_vec,a,b)
+!              .XTAL:thermal_Tanaka(p,G,k_vec,a,b)
 !
 !           end
 !
@@ -2975,13 +2940,13 @@ contains
 !
 !      do q = 1,.n_shell_pairs
 !
-!         .BASE:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+!         .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
 !
 !         p.create(la-fa+1,lb-fb+1)
-!         .:make_partition_factors(p,sh,atom_a,atom_b,is_zero)
+!         .XTAL":make_partition_factors(p,sh,atom_a,atom_b,is_zero)
 !
 !         t.create(la-fa+1,lb-fb+1)
-!         .:make_PCE_temperature_factors(t,k_vec,atom_a,atom_b)
+!         .XTAL:make_PCE_temperature_factors(t,k_vec,atom_a,atom_b)
 !
 !         do bg = 1,lb-fb+1
 !         do ag = 1,la-fa+1
