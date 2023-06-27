@@ -6,8 +6,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
 # Allow arbitrary characters in test names
-execute_process(COMMAND gfortran -dumpversion OUTPUT_VARIABLE GVERSION)
-if(GVERSION STRGREATER_EQUAL 9) 
+if(CMAKE_VERSION VERSION_GREATER 3.19) 
 cmake_policy(SET CMP0110 NEW)
 endif()
 
