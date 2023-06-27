@@ -1,13 +1,12 @@
-#!/bin/bash
+#!/usr/bin/bash
 # Run this script as "sudo ./install-all-you-need.sh"
-apt-get update
-apt-get upgrade
-apt-get install g++
-apt-get install gfortran-9
-apt-get install git
-apt-get install libblas-dev libblas3
-apt-get install liblapack-dev
-apt-get install cmake
-apt-get install coreutils
-apt-get install gawk
-apt-get install tofrodos
+sudo apt-get update -y
+sudo apt-get upgrade -y
+sudo apt-get install g++ -y
+sudo apt-get install gfortran-9 -y
+sudo apt-get install libblas-dev libblas3 -y
+sudo apt-get install liblapack-dev -y
+sudo apt-get install cmake -y
+sudo apt-get install coreutils -y
+sudo apt-get install gawk -y
+sudo apt-get install tofrodos -y
