@@ -6,7 +6,10 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
 # Allow arbitrary characters in test names
-#cmake_policy(SET CMP0110 NEW)
+execute_process(COMMAND gfortran -dumpversion OUTPUT_VARIABLE GVERSION)
+if(GVERSION STRGREATER_EQUAL 9) 
+cmake_policy(SET CMP0110 NEW)
+endif()
 
 # Tonto version info and build date
 string(TIMESTAMP VERSION_MAJOR "%y")
