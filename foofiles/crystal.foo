@@ -143,6 +143,25 @@ contains
    ! Set angles, equivalence factors, and the free reflection data.
       self :: INOUT
 
+      cif :: CIF@
+      found :: BIN
+
+      ! Create and open the CIF
+      if (.fcf_file_name/=" ") then
+      if (.unit_cell.info_made) then
+      if (.spacegroup.analyzed) then
+         cif.create(trim(.fcf_file_name))
+         cif.open
+         cif.find_data_block(found)
+         DIE_IF(NOT found,"no crystal data block found")
+         if (.xray_data.deallocated) .xray_data.create
+         .xray_data.read_CIF(cif)
+         .xray_data.update(.unit_cell,.spacegroup)
+         cif.destroy
+      end
+      end
+      end
+
       if (.xray_data.allocated) then
         .xray_data.update(.unit_cell,.spacegroup) ! NOT PURE
         if (.r_free_percentage>0 AND .xray_data.reflections.allocated) then
@@ -215,6 +234,167 @@ contains
 
    end
 
+   set_fcf_file_name(val)
+   ! Set the name of the fcf file from which to read in a unique set
+   ! of reflections.
+      self :: INOUT
+      val  :: STR, IN
+
+      file :: TEXTFILE
+
+      .fcf_file_name = val
+
+      file.set_name(val)
+      DIE_IF(NOT file.exists,"the specified fcf file does not exist")
+
+   end
+
+!  ===================
+!  Cluster set methods
+!  ===================
+
+   set_radius(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.radius), PURE
+   ! Generic set
+   end
+
+   set_defragment(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.defragment), PURE
+   ! Generic set
+   end
+
+   set_fragment_geometry(fragment_geometry,cartesian) ::: leaky, PURE
+   ! Makes an atom list from "fragment_geometry" to which
+   ! .fragment_atoms gets set. The .asymmetric_unit_atoms (which must
+   ! be in cartesian system) and .unit_cell_geometry have to be
+   ! defined. Set "cartesian" to TRUE if the "fragment_geometry" is in
+   ! cartesians, default is fractional coordinates.
+      self :: INOUT
+      fragment_geometry :: MAT{REAL}, IN
+      cartesian :: BIN, optional, IN
+
+   ENSURE(.unit_cell_geometry.allocated, "no .unit_cell_geometry")
+   ENSURE(.asymmetric_unit_atom.allocated, "no .asymmetric_unit_atom")
+   ENSURE(.asym_atom_for_unit_cell_atom.allocated, "no .asym_atom_for_unit_cell_atom")
+
+      atom  :: VEC{ATOM}@
+      list  :: VEC{INT}@
+      pf,pu :: VEC{REAL}(3)
+      fg :: MAT{REAL}@
+      n_frag_atoms,f,u,a :: INT
+      tol :: REAL
+      cart,found :: BIN
+
+      cart = FALSE
+      if (present(cartesian)) cart = cartesian
+
+      ! Transform fragment geometry to fractional
+      fg = fragment_geometry
+      if (cart) .unit_cell.change_into_fractional(fg)
+
+      ! Create the list of atom indices -- leaky!!
+      n_frag_atoms = fg.dim2
+      list.create(n_frag_atoms)
+
+      ! Tolerances to see if atom positions are the same
+      ! --- getting this number wrong can stuff things
+      tol = CRYSTAL_SAME_ATOM_TOL
+
+      ! Find and create fragment atoms
+      do f = 1,n_frag_atoms
+
+         ! Shift fragment atom to unit cell
+         pf = fg(:,f)
+         .put_to_unit_cell(pf)
+
+         found = FALSE
+
+         ! Loop unit cell atoms
+         do u = 1,.n_unit_cell_atoms
+
+            ! Is u the same as f?
+            pu = .unit_cell_geometry(:,u)
+            found = pu.same_as(pf,tol)
+
+            if (NOT found) cycle
+
+            ! Set asymmetric atom index for atom f
+            a = .asym_atom_for_unit_cell_atom(u)
+            list(f) = a
+
+            exit
+
+         end
+
+         ENSURE(found,"fragment atom "//trim(f.to_str)//" was not found in the unit cell")
+
+      end
+
+      ! Make the atom list, cartesian coordinates
+      atom = .asymmetric_unit_atom(list)
+      atom.set_axis_system_to("crystal")
+      atom.set_positions_to(fg)
+      atom.zero_pADP_errors
+      atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
+
+      ! Make the fragment data; make it destroyable
+      .update_fragment_info(atom)
+
+      ! Clean
+      atom.destroy
+      list.destroy
+      fg.destroy
+
+   end
+
+   set_generation_method(method) ::: PURE
+   ! Set the generation method, which tells how to generate the cluster e.g.
+   ! whether to add atoms to the cluster within a certain radius of the starting
+   ! fragment, or whether to use the unit cell ad the cluster, or just the
+   ! initial starting fragment (i.e. the null cluster) or the initial fragment
+   ! and the unit cell.
+      self :: INOUT
+      method :: STR, IN
+
+      .generation_method = method
+      .generation_method.to_lower_case
+
+      select case (.generation_method)
+      case("for_hirshfeld_surface     ")
+      case("fragment                  ")
+      case("unit_cell                 ")
+      case("unit_cell_plus            ")
+      case("for_unit_cell_density     ")
+      case("offset_unit_cell          ")
+      case("offset_unit_cell_density  ")
+      case("within_radius             ")
+    ! case default;   UNKNOWN(.generation_method)
+      end
+
+   end
+
+   set_atom_density_cutoff(tol) ::: PURE
+   ! Set the atom_density_cutoff used to eliminate spherical atomic
+   ! density contributions less than "tol". The interpolator table
+   ! will not hold values smaller than "tol".
+      self :: INOUT
+      tol :: REAL, IN
+
+   ENSURE(tol>ZERO,"tol must be +ve")
+
+      .atom_density_cutoff = tol
+
+   end
+
+   set_unit_cell_offset(offset) ::: PURE
+   ! Set the unit_cell_offset to use when making an offset unit cell.
+      self :: INOUT
+      offset :: VEC{REAL}(3), IN
+
+   ENSURE(all(-HALF<=offset) AND all(offset<=HALF), "offset must be between -1/2 and +1/2")
+
+      .unit_cell_offset = offset
+
+   end
+
 !  ============
 !  Read methods
 !  ============
@@ -241,6 +421,8 @@ contains
       case ("destroy_asymmetric_unit       "); .destroy_asymmetric_unit
       case ("destroy_spacegroup            "); .spacegroup.destroy_ptr_part
       case ("expand_unique_reflections     "); .expand_unique_reflections
+      case ("fcf_file=                     "); .read_fcf_file_name
+      case ("fcf_file_name=                "); .read_fcf_file_name
       case ("finalize=                     "); .read_finalize
       case ("junk=                         "); .read_junk
     ! case ("kind=                         "); .read_kind
@@ -321,6 +503,18 @@ contains
 !      end
 !
 !   end
+
+   read_fcf_file_name
+   ! Read the name of the fcf file from which to read in a unique set
+   ! of reflections.
+      self :: INOUT
+
+      val :: STR
+
+      stdin.read(val)
+      .set_fcf_file_name(val)
+
+   end
 
    read_finalize
    ! Read whether to finalize the object.
@@ -645,6 +839,33 @@ contains
 !  ===============
 !  General methods
 !  ===============
+
+!   read_fcf_file
+!   ! Prints out the tonto fcf file
+!      self :: INOUT
+!
+!   ENSURE(.fcf_file_name/=" ","No fcf_file_name")
+!
+!      ! Make sure CIF object is there ...
+!      clean = FALSE
+!      if (.cif.deallocated) then
+!         clean = TRUE
+!         .cif.create(trim(.name)//".archive.fcf")
+!      end
+!
+!      ! Fragment
+!      stdin.save
+!      stdin.redirect(trim(.fcf_file_name))
+!      put_tonto_fcf
+!      stdout.revert
+!      stdout.unsave
+!
+!      ! Clean up
+!      if (clean) then
+!         .cif.destroy
+!      end
+!
+!   end
  
    n_unique_SF_k_pts result (res) ::: PURE
    ! The number of unique k-points for an SF calculation
@@ -9392,152 +9613,6 @@ contains
 !
 !   end
 
-
-!  ===================
-!  Cluster set methods
-!  ===================
-
-   set_radius(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.radius), PURE
-   ! Generic set
-   end
-
-   set_defragment(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.defragment), PURE
-   ! Generic set
-   end
-
-   set_fragment_geometry(fragment_geometry,cartesian) ::: leaky, PURE
-   ! Makes an atom list from "fragment_geometry" to which
-   ! .fragment_atoms gets set. The .asymmetric_unit_atoms (which must
-   ! be in cartesian system) and .unit_cell_geometry have to be
-   ! defined. Set "cartesian" to TRUE if the "fragment_geometry" is in
-   ! cartesians, default is fractional coordinates.
-      self :: INOUT
-      fragment_geometry :: MAT{REAL}, IN
-      cartesian :: BIN, optional, IN
-
-   ENSURE(.unit_cell_geometry.allocated, "no .unit_cell_geometry")
-   ENSURE(.asymmetric_unit_atom.allocated, "no .asymmetric_unit_atom")
-   ENSURE(.asym_atom_for_unit_cell_atom.allocated, "no .asym_atom_for_unit_cell_atom")
-
-      atom  :: VEC{ATOM}@
-      list  :: VEC{INT}@
-      pf,pu :: VEC{REAL}(3)
-      fg :: MAT{REAL}@
-      n_frag_atoms,f,u,a :: INT
-      tol :: REAL
-      cart,found :: BIN
-
-      cart = FALSE
-      if (present(cartesian)) cart = cartesian
-
-      ! Transform fragment geometry to fractional
-      fg = fragment_geometry
-      if (cart) .unit_cell.change_into_fractional(fg)
-
-      ! Create the list of atom indices -- leaky!!
-      n_frag_atoms = fg.dim2
-      list.create(n_frag_atoms)
-
-      ! Tolerances to see if atom positions are the same
-      ! --- getting this number wrong can stuff things
-      tol = CRYSTAL_SAME_ATOM_TOL
-
-      ! Find and create fragment atoms
-      do f = 1,n_frag_atoms
-
-         ! Shift fragment atom to unit cell
-         pf = fg(:,f)
-         .put_to_unit_cell(pf)
-
-         found = FALSE
-
-         ! Loop unit cell atoms
-         do u = 1,.n_unit_cell_atoms
-
-            ! Is u the same as f?
-            pu = .unit_cell_geometry(:,u)
-            found = pu.same_as(pf,tol)
-
-            if (NOT found) cycle
-
-            ! Set asymmetric atom index for atom f
-            a = .asym_atom_for_unit_cell_atom(u)
-            list(f) = a
-
-            exit
-
-         end
-
-         ENSURE(found,"fragment atom "//trim(f.to_str)//" was not found in the unit cell")
-
-      end
-
-      ! Make the atom list, cartesian coordinates
-      atom = .asymmetric_unit_atom(list)
-      atom.set_axis_system_to("crystal")
-      atom.set_positions_to(fg)
-      atom.zero_pADP_errors
-      atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
-
-      ! Make the fragment data; make it destroyable
-      .update_fragment_info(atom)
-
-      ! Clean
-      atom.destroy
-      list.destroy
-      fg.destroy
-
-   end
-
-   set_generation_method(method) ::: PURE
-   ! Set the generation method, which tells how to generate the cluster e.g.
-   ! whether to add atoms to the cluster within a certain radius of the starting
-   ! fragment, or whether to use the unit cell ad the cluster, or just the
-   ! initial starting fragment (i.e. the null cluster) or the initial fragment
-   ! and the unit cell.
-      self :: INOUT
-      method :: STR, IN
-
-      .generation_method = method
-      .generation_method.to_lower_case
-
-      select case (.generation_method)
-      case("for_hirshfeld_surface     ")
-      case("fragment                  ")
-      case("unit_cell                 ")
-      case("unit_cell_plus            ")
-      case("for_unit_cell_density     ")
-      case("offset_unit_cell          ")
-      case("offset_unit_cell_density  ")
-      case("within_radius             ")
-    ! case default;   UNKNOWN(.generation_method)
-      end
-
-   end
-
-   set_atom_density_cutoff(tol) ::: PURE
-   ! Set the atom_density_cutoff used to eliminate spherical atomic
-   ! density contributions less than "tol". The interpolator table
-   ! will not hold values smaller than "tol".
-      self :: INOUT
-      tol :: REAL, IN
-
-   ENSURE(tol>ZERO,"tol must be +ve")
-
-      .atom_density_cutoff = tol
-
-   end
-
-   set_unit_cell_offset(offset) ::: PURE
-   ! Set the unit_cell_offset to use when making an offset unit cell.
-      self :: INOUT
-      offset :: VEC{REAL}(3), IN
-
-   ENSURE(all(-HALF<=offset) AND all(offset<=HALF), "offset must be between -1/2 and +1/2")
-
-      .unit_cell_offset = offset
-
-   end
 
 !  ===========================
 !  Cluster generation routines
