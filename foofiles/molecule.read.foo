@@ -1,0 +1,1837 @@
+!===============================================================================
+!
+! MOLECULE.READ
+!
+! An object representation of a molecule.
+!
+! These are base methods needed by all other submodules.
+!
+! The submodule hierarchy is shown below.
+! . The numbers (if any) indicate (roughly) the number of used
+!   procedures from the module at the head of the column. This is
+!   useful if you want to decouple the modules even further.
+! . The type of routines in each submodule is more-or-less
+!   straightforward to understand from the three- or four-letter
+!   pneumonic e.g. REL is for relativistic routines.
+!
+! Updated 2014-12-01
+!
+! .BASE
+!     3 .REL
+!    16---24 .GRID
+!    14---12---- 1 .XTAL
+!     2--- |---- |---- 4 .CE =
+!     7--- |---- 1---- |-- | .INTS
+!    14--- |---- 5---- |-- |---- 2 .FOCK
+!    30--- 5---- 4---- 5-- |----10---- 5 .SCF
+!     2--- |---- |---- |-- |---- 1---- 5--- 1 .GEM =     =     =
+!    11--- |---- |---- 1-- |----15---- 5---13--- | .PROP =     =
+!     4--- |---- 6---- |-- |---- 3---- |--- 2--- |---- | .PLOT =
+!     4--- |---- 5---- |-- |---- 4---- 2--- 1--- |---- |---- | .CP
+!    12--- |---- 7---- |-- |---- |---- |--- 1--- |---- |---- 1-- | .TAD
+!    15--- |---- 5---- 1-- |---- 5---- 6--- 5--- |---- |---- |-- |--- 2 .MISC
+!    76--- 3---- 3----13-- 7---- 1---- |---13--- 3----19---- 6-- 9---11----24 .MAIN
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996
+! Copyright (C) Dylan Jayatilaka 2012-
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!===============================================================================
+
+module MOLECULE.READ
+
+   implicit none
+
+contains
+
+!  ================
+!  Molden interface
+!  ================
+
+   read_molden_MOs(file_name, print_output) ::: leaky
+   ! Read a Molden MOs file
+      self :: INOUT
+      file_name :: STR, optional, IN
+      print_output :: BIN, optional, IN
+
+      molden_file,save :: TEXTFILE*
+      archive :: ARCHIVE
+      pos :: VEC{REAL}(3)
+      orb :: VEC{REAL}@
+      fac,n_e,n_a,n_b,val,energy,occ :: REAL
+      name,units,item,label,spin :: STR
+      op,cl :: STR(len=1)
+      output,found,is_unrestricted :: BIN
+      line, a,i,f,Z :: INT
+
+      ! Get file name
+      if (present(file_name)) then;              name = file_name
+      else if (NOT stdin.buffer_exhausted) then; stdin.read(name)
+      else;                                      name = .name
+      end
+
+      if (present(print_output)) then; output = print_output
+      else;                            output = FALSE
+      endif
+
+      ! Constants
+      op = achar(91)
+      cl = achar(93)
+
+      ! Open Molden file
+      molden_file.create(name)
+      molden_file.open_for("read")
+
+      ! Find out if this file is using a spherical basis
+      line = molden_file.line_number
+      molden_file.look_for(op//"5D"//cl,found=found)
+      if(found) .use_spherical_basis = TRUE
+      molden_file.move_to_line(line)
+
+      ! Find [ATOMS] block
+      ! or [Atoms]
+      molden_file.look_for(op//"Atoms"//cl,found=found)
+      if(NOT found) molden_file.look_for(op//"ATOMS"//cl,found=found)
+      DIE_IF(NOT found, "No ATOMS line")
+      DIE_IF(molden_file.n_line_items/=2, "Expecting two items on ATOMS line")
+
+      ! Read units
+      molden_file.read(units)
+      fac = ONE
+      if (units=="Angs") fac = BOHR_PER_ANGSTROM
+
+      ! Store start of atoms list
+      molden_file.read_line
+      line = molden_file.line_number
+
+      ! Get no. of atoms ...
+      .n_atom = 0
+      do
+         molden_file.read(item)
+         if (item(1:1)==op) exit
+         DIE_IF(molden_file.end_of_file,"file ended unexpectedly")
+         .n_atom = .n_atom + 1
+         molden_file.read_line
+      end
+
+      ! Create atom list (leaky)
+      if (.atom.allocated)  .atom.destroy
+      .atom.create(.n_atom)
+      .atom_info_made = FALSE
+
+      ! Create basis -- Different one for every atom (leaky)
+      if (.basis.allocated) .basis.destroy
+      .basis.create(.n_atom)
+      if(.use_spherical_basis) .basis.set_spherical(TRUE)
+
+      ! Move back to atoms line
+      molden_file.move_to_line(line)
+
+      ! For each atom a: read label, Z, coordinates
+      do a = 1,.n_atom
+
+         ! Read label
+         molden_file.read(label)
+
+         ! Read Z
+         molden_file.skip_next_item
+         molden_file.read(Z)
+
+         ! Set
+         .atom(a).set_atomic_number(Z)
+         .atom(a).set_atom_data_from_label(label)
+
+         ! Read position, change units
+         molden_file.read(pos)
+         pos = fac*pos
+         .atom(a).set_position(pos)
+
+         ! Set basis label
+         .atom(a).set_basis_label(trim(.atom(a).generic_chemical_symbol)//":molden")
+
+      end
+
+      ! Read basis set
+      molden_file.look_for(op//"GTO"//cl,found=found)
+      DIE_IF(NOT found, "No GTO line")
+      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on GTO line")
+      molden_file.read_line
+
+      ! Read basis
+      save => stdin
+      stdin => molden_file
+      do a = 1,.n_atom
+         .basis(a).read_molden
+         .basis(a).set_label(.atom(a).basis_label)
+      end
+      stdin => save
+
+      ! Remove repetitions
+      .basis.remove_repetitions
+
+    ! if (output) then
+    !    .:put_bases
+    ! end 
+
+      ! Find [MO] tag
+      molden_file.look_for(op//"MO"//cl,found=found)
+      DIE_IF(NOT found, "No MO line")
+      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on MO line")
+      line = molden_file.line_number + 1
+
+      ! Any Beta tag?
+      molden_file.look_for("Beta",found=is_unrestricted)
+
+      ! Move back to [MO]'s
+      ! Get no. of electrons
+      molden_file.move_to_line(line)
+      n_e = ZERO
+      do
+         molden_file.look_for("Occup=",found=found)
+         if (NOT found) exit
+         molden_file.move_to_line_item(2)
+         molden_file.read(val)
+         molden_file.read_line
+         n_e = n_e + val
+      end
+
+      ! Now set charge
+      .n_e    = nint(n_e)
+      .charge = .atom.no_of_electrons - .n_e
+
+      if (is_unrestricted) then
+
+         ! Now find no. of alpha electrons (assuming unrestricted)
+         molden_file.move_to_line(line)
+         n_a = ZERO
+         do
+            molden_file.look_for("Alpha",found=found)
+            if (NOT found) exit
+            molden_file.look_for("Occup=",found=found)
+            if (NOT found) exit
+            molden_file.move_to_line_item(2)
+            molden_file.read(val)
+            molden_file.read_line
+            n_a = n_a + val
+         end
+        
+         ! Set no. of beta electrons
+         n_b = n_e - n_a
+        
+         ! Set multiplicity
+         .SET:set_n_a_n_b_and_multiplicity(nint(n_a),nint(n_b))
+
+      else
+
+         ! Restricted
+         .spin_multiplicity = .INQ:default_spin_multiplicity
+
+      end
+
+      ! Finalize atom info/basis sets
+      .BASE:update_atom_and_basis_info
+
+    ! if (output) then
+    !    .atom.put
+    ! end
+
+      ! Create scfdata (leaky)
+      .scfdata.destroy
+      .scfdata.create
+      .scfdata.set_output(output)
+
+      ! Create MO arrays (leaky)
+      .MO_energies.destroy
+      .MOs.destroy
+
+      if (is_unrestricted) then
+
+         .scfdata.set_SCF_kind("uhf")
+         .MO_energies.create(.n_bf,"u ")
+         .MO_energies.a = ZERO
+         .MO_energies.b = ZERO
+         .MOs.create(.n_bf,"u ")
+         .MOs.a = ZERO
+         .MOs.b = ZERO
+
+      else
+
+         .scfdata.set_SCF_kind("rhf")
+         .MO_energies.create(.n_bf,"r ")
+         .MO_energies.r = ZERO
+         .MOs.create(.n_bf,"r ")
+         .MOs.r = ZERO
+
+      end
+
+      ! Set occupation numbers (leaky)
+      spin = .scfdata.spinorbital_genre
+      .NO_occ_nos.destroy
+      .NO_occ_nos.create(.n_bf,spin)
+      .NO_occ_nos.set_to_zero
+      .SET:set_SCF_occupations_for_NOs(spin)
+
+      ! Move back to [MO]'s
+      molden_file.move_to_line(line)
+      orb.create(.n_bf)
+
+      ! Read in orbitals and energies.
+      i = 0
+      do
+
+         molden_file.look_for("Ene=",found=found)
+
+         if (NOT found) exit
+
+         ! Read energy
+         molden_file.skip_next_item
+         molden_file.read(energy)
+
+         ! Read spin
+         molden_file.skip_next_item
+         molden_file.read(spin)
+
+         ! Read occupation
+         molden_file.skip_next_item
+         molden_file.read(occ)
+
+         ! Read orbital
+         do f = 1,.n_bf
+            molden_file.skip_next_item
+            molden_file.read(orb(f))
+         end
+
+         ! Increment orbital
+         i = i + 1
+
+         ! Assign MO's
+         if (is_unrestricted) then
+
+            DIE_IF(i>2*.n_bf,"too many orbitals specified")
+            select case (spin)
+            case ("Alpha")
+               .MO_energies.a(i) = energy
+               .MOs.a(:,i) = orb
+            case ("Beta")
+               .MO_energies.b(i-.n_bf) = energy
+               .MOs.b(:,i-.n_bf) = orb
+            case default
+               DIE("unknown spin: "//trim(spin))
+            end
+
+         else
+
+            DIE_IF(i>.n_bf,"too many orbitals specified")
+            select case (spin)
+            case ("Alpha")
+               .MO_energies.r(i) = energy
+               .MOs.r(:,i) = orb
+            case default
+               DIE("unexpected spin: "//trim(spin))
+            end
+
+         end
+
+      end
+
+      ! Clean
+      orb.destroy
+
+      ! Swap orbital order
+    ! if (output) then
+    !    stdout.text("Reordering basis functions into tonto order")
+    ! end
+
+      if (is_unrestricted) then
+         .READ:swap_molden_orbital_order(.MOs.a,"row")
+         .READ:swap_molden_orbital_order(.MOs.b,"row")
+      else
+         .READ:swap_molden_orbital_order(.MOs.r,"row")
+      end
+
+
+      ! Make density matrix (leaky)
+    ! .:make_SCF_density_mx
+
+      ! Echo what was read
+    ! if (output) then
+    !    stdout.text("Occupation")
+    !    stdout.put(.NO_occ_nos)
+    !    ! Print out data
+    !    stdout.flush
+    !    stdout.text("===========")
+    !    stdout.text("Molden data")
+    !    stdout.text("===========")
+    !    stdout.flush
+    !    stdout.text("Below are the molden:")
+    !    stdout.text(". Atom coordinates and bases")
+    !    stdout.text(". Molecular orbitals and their occupancies")
+    !    stdout.flush
+    !    if (is_unrestricted) then; stdout.text("The data is for *unrestricted* orbitals")
+    !    else;                      stdout.text("The data is for *restricted* orbitals")
+    !    end
+    !    stdout.flush
+    !    stdout.text("Molden atom coordinates and bases:")
+    !    .:put_atoms
+    !    stdout.flush
+    !    stdout.text("Occupation numbers:")
+    !    stdout.flush
+    !    stdout.put(.NO_occ_nos)
+    !    stdout.flush
+    !    stdout.text("Orbital energies:")
+    !    stdout.flush
+    !    stdout.put(.MO_energies)
+    !    stdout.flush
+    !    stdout.text("MOs:")
+    !    stdout.flush
+    !    stdout.put(.MOs)
+    !    stdout.flush
+    !    stdout.text("Density matrix:")
+    !    stdout.flush
+    !    stdout.put(.density_mx)
+    !    stdout.flush
+    ! endif
+
+      ! Save data in archive files
+      archive.set_defaults
+
+      archive.set(.name,"density_mx")
+      .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+      archive.write(.density_mx)
+
+      archive.set(.name,"MOs")
+      .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+      archive.write(.MOs)
+
+      archive.set(.name,"MO_energies")
+      archive.write(.MO_energies)
+
+      ! Set crystal data
+      if (.crystal.allocated) then
+         .SET:resolve_axis_system
+         .crystal.update_fragment_info(.atom)
+      end
+
+      ! Clean
+      molden_file.destroy
+
+   end
+
+   read_molden_NOs(file_name) ::: leaky
+   ! Read a Molden natural orbitals file.
+   ! Here the occupation numbers are not integers.
+      self :: INOUT
+      file_name :: STR, optional, IN
+
+   ENSURE(NOT .use_spherical_basis,"not implemented")
+
+      molden_file,save :: TEXTFILE*
+      archive :: ARCHIVE
+      pos :: VEC{REAL}(3)
+      orb :: VEC{REAL}@
+      fac,n_e,val,energy,occ :: REAL
+      name,units,item,label,spin :: STR
+      op,cl :: STR(len=1)
+      found,is_unrestricted :: BIN
+      line, a,i,f,Z :: INT
+
+      ! Get file name
+      if (present(file_name)) then;              name = file_name
+      else if (NOT stdin.buffer_exhausted) then; stdin.read(name)
+      else;                                      name = .name
+      end
+
+      ! Constants
+      op = achar(91)
+      cl = achar(93)
+
+      ! Open Molden file
+      molden_file.create(name)
+      molden_file.open_for("read")
+
+      ! Find [ATOMS] block
+      molden_file.look_for(op//"ATOMS"//cl,found=found)
+      DIE_IF(NOT found, "No ATOMS line")
+      DIE_IF(molden_file.n_line_items/=2, "Expecting two items on ATOMS line")
+
+      ! Read units
+      molden_file.read(units)
+      fac = ONE
+      if (units=="Angs") fac = BOHR_PER_ANGSTROM
+
+      ! Store start of atoms list
+      molden_file.read_line
+      line = molden_file.line_number
+
+      ! Get no. of atoms ...
+      .n_atom = 0
+      do
+         molden_file.read(item)
+         if (item==op//"Molden") exit
+         DIE_IF(molden_file.end_of_file,"file ended unexpectedly")
+         .n_atom = .n_atom + 1
+         molden_file.read_line
+      end
+
+      ! Create atom list (leaky)
+      if (.atom.allocated)  .atom.destroy
+      .atom.create(.n_atom)
+      .atom_info_made = FALSE
+
+      ! Create basis -- Different one for every atom (leaky)
+      if (.basis.allocated) .basis.destroy
+      .basis.create(.n_atom)
+
+      ! Move back to atoms line
+      molden_file.move_to_line(line)
+
+      ! For each atom a: read label, Z, coordinates
+      do a = 1,.n_atom
+
+         ! Read label
+         molden_file.read(label)
+
+         ! Read Z
+         molden_file.skip_next_item
+         molden_file.read(Z)
+
+         ! Set
+         .atom(a).set_atomic_number(Z)
+         .atom(a).set_atom_data_from_label(label)
+
+         ! Read position, change units
+         molden_file.read(pos)
+         pos = fac*pos
+         .atom(a).set_position(pos)
+
+         ! Set basis label
+         .atom(a).set_basis_label("molden-"//trim(.atom(a).generic_chemical_symbol))
+
+      end
+
+      ! Read basis set
+      molden_file.look_for(op//"GTO"//cl,found=found)
+      DIE_IF(NOT found, "No GTO line")
+      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on GTO line")
+      molden_file.read_line
+
+      ! Read basis
+      save => stdin
+      stdin => molden_file
+      do a = 1,.n_atom
+         .basis(a).read_molden
+         .basis(a).put
+         .basis(a).set_label(.atom(a).basis_label)
+      end
+      stdin => save
+
+      ! Find [MO] tag
+      molden_file.look_for(op//"MO"//cl,found=found)
+      DIE_IF(NOT found, "No MO line")
+      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on MO line")
+      line = molden_file.line_number + 1
+
+      ! Any Beta tag?
+      molden_file.look_for("Beta",found=is_unrestricted)
+
+      ! Move back to [MO]'s
+      molden_file.move_to_line(line)
+
+      ! Get no. of electrons
+      n_e = ZERO
+      do
+         molden_file.look_for("Occup=",found=found)
+         if (NOT found) exit
+         molden_file.move_to_line_item(2)
+         molden_file.read(val)
+         molden_file.read_line
+         n_e = n_e + val
+      end
+
+      ! Now set charge
+      .charge = .atom.no_of_electrons - nint(n_e)
+
+      ! Set multiplicity
+      .spin_multiplicity = .INQ:default_spin_multiplicity
+
+      ! Finalize atom info/basis sets
+      .BASE:update_atom_and_basis_info
+
+      ! Create MO arrays (leaky)
+      .density_mx.destroy
+      .NO_occ_nos.destroy
+      .NOs.destroy
+
+      if (is_unrestricted) then
+
+         .NO_occ_nos.create(.n_bf,"u ")
+         .NO_occ_nos.a = ZERO
+         .NO_occ_nos.b = ZERO
+
+         .density_mx.create(.n_bf,"u ")
+         .NOs.create(.n_bf,"u ")
+         .NOs.a = ZERO
+         .NOs.b = ZERO
+
+      else
+
+         .NO_occ_nos.create(.n_bf,"r ")
+         .NO_occ_nos.r = ZERO
+
+         .density_mx.create(.n_bf,"u ")
+         .NOs.create(.n_bf,"r ")
+         .NOs.r = ZERO
+
+      end
+
+      ! Move back to [MO]'s
+      molden_file.move_to_line(line)
+      orb.create(.n_bf)
+
+      ! Read in orbitals and energies.
+      i = 0
+      do
+
+         molden_file.look_for("Ene=",found=found)
+
+         if (NOT found) exit
+
+         ! Read energy
+         molden_file.skip_next_item
+         molden_file.read(energy)
+
+         ! Read spin
+         molden_file.skip_next_item
+         molden_file.read(spin)
+
+         ! Read occupation
+         molden_file.skip_next_item
+         molden_file.read(occ)
+
+         ! Read orbital
+         do f = 1,.n_bf
+            molden_file.skip_next_item
+            molden_file.read(orb(f))
+         end
+
+         ! Increment orbital
+         if (spin=="Alpha") i = i + 1
+         DIE_IF(i>.n_bf,"too many orbitals specified")
+
+         ! Assign MO's
+         if (is_unrestricted) then
+
+            select case (spin)
+
+            case ("Alpha")
+               .NO_occ_nos.a(i) = occ
+               .NOs.a(:,i) = orb
+
+            case ("Beta")
+               .NO_occ_nos.b(i) = occ
+               .NOs.b(:,i) = orb
+
+            case default
+               DIE("unknown spin: "//trim(spin))
+
+            end
+
+         else
+
+            select case (spin)
+
+            case ("Alpha")
+               .NO_occ_nos.r(i) = occ
+               .NOs.r(:,i) = orb
+
+            case default
+               DIE("unexpected spin: "//trim(spin))
+
+            end
+
+         end
+
+      end
+
+      ! Clean
+      orb.destroy
+
+      ! Swap orbital order
+      if (is_unrestricted) then
+         .READ:swap_molden_orbital_order(.NOs.a,"row")
+         .READ:swap_molden_orbital_order(.NOs.b,"row")
+      else
+         .READ:swap_molden_orbital_order(.NOs.r,"row")
+      end
+
+
+      ! Make density matrix
+    ! if (is_unrestricted) then
+    !    .:make_density_mx_from(.NOs,.NO_occ_nos,"u ")
+    ! else
+    !    .:make_density_mx_from(.NOs,.NO_occ_nos,"r ")
+    ! end
+
+      ! Print out data
+    ! stdout.flush
+    ! stdout.text("===========")
+    ! stdout.text("Molden data")
+    ! stdout.text("===========")
+    ! stdout.flush
+    ! stdout.text("Below are the data read from the molden file:")
+    ! stdout.text(". Atom coordinates and bases")
+    ! stdout.text(". Natural orbitals and their occupancies")
+    ! stdout.flush
+    ! if (is_unrestricted) then; stdout.text("The data is for *restricted* orbitals")
+    ! else;                      stdout.text("The data is for *unrestricted* orbitals")
+    ! end
+
+    ! stdout.flush
+    ! stdout.text("Molden atom coordinates and bases:")
+    ! .:put_atoms
+
+    ! stdout.flush
+    ! stdout.text("Occupation numbers:")
+    ! stdout.flush
+    ! stdout.put(.NO_occ_nos)
+
+    ! stdout.flush
+    ! stdout.text("Natural orbitals:")
+    ! stdout.flush
+    ! stdout.put(.NOs)
+
+    ! ! Save data in archive files
+    ! archive.set_defaults
+
+    ! archive.set(.name,"density_mx")
+    ! archive.write(.density_mx)
+
+      archive.set(.name,"NOs")
+      archive.write(.NOs)
+
+      archive.set(.name,"NO_occ_nos")
+      archive.write(.NO_occ_nos)
+
+      ! Set crystal data
+      if (.crystal.allocated) then
+         .SET:resolve_axis_system
+         .crystal.update_fragment_info(.atom)
+      end
+
+      ! Clean
+      molden_file.destroy
+
+   end
+
+   swap_molden_orbital_order(X,swap) ::: private, PURE
+   ! Swap the order of orbitals on matrix "X" after reading a
+   ! molden input file, for "swap" equal to "row" or "1", or
+   ! "coloumn" or "2".  This is nearly the same as gaussian.
+   !
+   ! The molden orderring is as follows:
+   !  5D: D 0, D+1, D-1, D+2, D-2
+   !  6D: xx, yy, zz, xy, xz, yz
+   !  7F: F 0, F+1, F-1, F+2, F-2, F+3, F-3
+   ! 10F: xxx, yyy, zzz, xyy, xxy, xxz, xzz, yzz, yyz, xyz
+   !  9G: G 0, G+1, G-1, G+2, G-2, G+3, G-3, G+4, G-4
+   ! 15G: xxxx yyyy zzzz xxxy xxxz yyyx yyyz zzzx zzzy,
+   !      xxyy xxzz yyzz xxyz yyxz zzxy
+      self :: IN
+      X :: MAT{REAL}, INOUT
+      swap :: STR, IN
+
+      s,f,l,ls,fg,lg,i,j :: INT
+      fac :: VEC{REAL}@
+      ff  :: VEC{INT}(10)
+      sph_reorder :: VEC{INT}@
+
+      ff = [1, 2, 3, 5, 6, 4, 9, 7, 8, 10]
+
+      select case (swap)
+
+      case("row","1")
+         do s = 1,.n_shell
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+            if(.atom(.atom_for_shell(s)).basis.is_spherical) then
+               ! do spherical test
+               sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
+               if (ls>=1) then ! swap f functions
+                  X(f:l,:) = X(f-1+sph_reorder,:)
+               end
+               if (ls>1) then  ! normalisation factors
+                  lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                  fg  = lg + 1
+                  lg  = lg + GAUSSIAN_DATA:n_comp(ls)
+                  fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+                  do i = f,l
+                     X(i,:) = X(i,:)*fac(i-f+1)
+                  end
+               end
+            else
+               ENSURE(ls<=4,"cannot yet convert order for h shells")
+               ! fix for nwchem molden MOs, PGTO normalization for xy, xy, yz
+               if (ls == 2) then
+                  X(f+3:l,:) = X(f+3:l,:) / sqrt(3d0)
+               end
+               if (ls==3) then ! swap f functions
+                  X(f:l,:) = X(f-1+ff,:)
+                  ! if the same trend from D is true for F above these may be needed
+                  ! X(f+3:l-1,:) = X(f+3:l-1,:) / sqrt(3d0)
+                  ! X(l-1:l,:) = X(l-1:l,:) / sqrt(15d0)
+               end
+               if (ls>1) then  ! normalisation factors
+                  lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                  fg  = lg + 1
+                  lg  = lg + GAUSSIAN_DATA:n_comp(ls)
+                  fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+                  do i = f,l
+                     X(i,:) = X(i,:)*fac(i-f+1)
+                  end
+               end
+            end
+         end
+
+      case("column","2")
+         do s = 1,.n_shell
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
+            if (ls==3) then ! swap f functions
+               X(:,f:l) = X(:,f-1+ff)
+            end
+            if (ls>1) then  ! normalisation factors
+               lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg  = lg + 1
+               lg  = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do j = f,l
+                  X(:,j) = X(:,j)*fac(j-f+1)
+               end
+            end
+         end
+
+    ! case default
+    !    DIE("unknown swap kind, "//trim(swap))
+
+      end
+
+   end
+
+!  ======================
+!  Gaussian chk interface
+!  ======================
+
+! Read *only* Tonto MO's and density from g09
+
+   read_tonto_FChk_file(name) ::: leaky
+   ! Read the MO's and density matrix from a g09 checkpoint file
+   ! as if these were just placed there in TONTO format.
+   ! WARNING: only works for restricted
+      self :: INOUT
+      name :: STR, optional, IN
+
+   DIE_IF(NOT .basis_info_made,"must be a tonto basis set!")
+
+      chkfile :: TEXTFILE*
+      fchk :: STR
+
+      ! Get FChk file name
+      if (present(name)) then
+         fchk = name
+      else if (NOT stdin.buffer_exhausted) then
+         stdin.read(fchk) ! specified on stdin
+      else
+         fchk = .name
+      end
+
+      ! Create FChk file
+      chkfile.create(name)
+
+    ! ! Create orbital energies.
+    ! .MO_energies.destroy
+    ! .MO_energies.create(.n_bf,"r ")
+
+    ! ! Find & read orbital energies.
+    ! chkfile.look_for("Alpha Orbital Energies",from=1)
+    ! chkfile.read(.MO_energies)
+
+      ! Create MOs
+      .MOs.destroy
+      .MOs.create(.n_bf,"r ")
+
+      ! Find & read in orbitals
+      chkfile.look_for("Alpha MO",from=1)
+      chkfile.read(.MOs,by_column=TRUE)
+
+      ! Create DM 
+      .density_mx.destroy
+      .density_mx.create(.n_bf,"r ")
+
+      ! Find & read in DM
+      chkfile.look_for("SCF density",from=1)
+      chkfile.read(.density_mx,by_column=TRUE)
+
+   end
+
+! Can thesed be condensed into one?
+
+   read_g09_FChk_file(name) ::: leaky
+   ! Read a g09 checkpoint file (after fchk conversion to ASCII) into TONTO
+      self :: INOUT
+      name :: STR, optional, IN
+
+   DIE_IF(.use_spherical_basis,"spherical basis not implemented")
+
+      fchk,label :: STR
+      chkfile :: TEXTFILE*
+      shell_l,n_prim_for_shell,atom_for_shell,atom_p :: VEC{INT}@
+      G_n_prim_for_shell,G_atom_for_shell,G_shell_type :: VEC{INT}@
+      G_ex,G_cc,G_cp, ex,cc,orb_energy,fc :: VEC{REAL}@
+      pos :: VEC{REAL}(3)
+      temp_mat :: MAT{REAL}@
+      Z, a,s,t, f,l,g,h,n3n,ntr :: INT
+      n_prim_shells,n_shell,n_prim,n_independent :: INT
+      restricted :: BIN
+      archive :: ARCHIVE
+      Nc :: REAL
+
+      ! Destroy existing basis, and atom list
+      if (.basis.allocated) .basis.destroy
+      if (.atom.allocated)  .atom.destroy
+
+      ! Create scfdata
+      .scfdata.destroy
+      .scfdata.create
+      .scfdata.set_output(FALSE)
+
+      ! Get FChk file name
+      if (present(name)) then
+         fchk = name
+      else if (NOT stdin.buffer_exhausted) then
+         stdin.read(fchk) ! specified on stdin
+      else
+         fchk = .name
+      end
+
+      ! Open FChk file
+      chkfile.create(fchk)
+      chkfile.open_for("read")
+      chkfile.move_to_line(1)
+
+      ! Read in basic stuff.
+      chkfile.look_for("Number of atoms",from=1)
+      chkfile.move_to_line_item(5); chkfile.read(.n_atom)
+
+      chkfile.look_for("Charge",from=1)
+      chkfile.move_to_line_item(3); chkfile.read(.charge)
+
+      chkfile.look_for("Multiplicity",from=1)
+      chkfile.move_to_line_item(3); chkfile.read(.spin_multiplicity)
+
+      chkfile.look_for("Number of electrons",from=1)
+      chkfile.move_to_line_item(5); chkfile.read(.n_e)
+
+      chkfile.look_for("Number of alpha electrons",from=1)
+      chkfile.move_to_line_item(6); chkfile.read(.n_a)
+
+      chkfile.look_for("Number of beta electrons",from=1)
+      chkfile.move_to_line_item(6); chkfile.read(.n_b)
+
+      chkfile.look_for("Number of basis functions",from=1)
+      chkfile.move_to_line_item(6); chkfile.read(.n_bf)
+
+      n_independent = .n_bf
+      chkfile.look_for("Number of independ",from=1)
+      chkfile.move_to_line_item(6); chkfile.read(n_independent)
+      WARN_IF(.n_bf/=n_independent,"No. of basis fns /= no. of independent fns")
+      WARN_IF(.n_bf/=n_independent,"MO's are wrong, but density matrix is correct")
+
+      ! Read atomic numbers & set
+      chkfile.look_for("Atomic numbers",from=1)
+      chkfile.read_line
+      .atom.create(.n_atom)
+      do a = 1,.n_atom
+         chkfile.read(Z)
+         .atom(a).set_atomic_number(Z)
+         .atom(a).set_nuclear_charge(REALIFY(Z))
+      end
+
+      ! Assign core electrons if any
+      chkfile.look_for("Nuclear charges",from=1)
+      chkfile.read_line
+      do a = 1,.n_atom
+         chkfile.read(Nc)
+         Z = .atom(a).atomic_number
+         if (nint(Nc)/=Z) then
+            Z = Z - nint(Nc)
+            .atom(a).set_n_core_electrons(Z)
+         end
+      end
+
+      ! Read in coordinates
+      chkfile.look_for("Current cartesian coordinates",from=1)
+      chkfile.read_line
+      do a = 1,.n_atom
+         chkfile.read(pos)
+         .atom(a).set_position(pos)
+      end
+
+      ! Set a name?
+      if (.name=="unknown") .name = .atom.chemical_formula
+
+      ! Read gaussian shell info.
+      label = "Number of contracted shells"
+      chkfile.look_for(label,from=1)
+      chkfile.move_to_line_item(6); chkfile.read(n_shell)
+
+      chkfile.look_for("Number of primitive shells",from=1)
+      chkfile.move_to_line_item(6); chkfile.read(n_prim_shells)
+
+      G_shell_type.create(n_shell)
+      G_n_prim_for_shell.create(n_shell)
+      G_atom_for_shell.create(n_shell)
+      G_ex.create(n_prim_shells)
+      G_cc.create(n_prim_shells)
+
+      chkfile.look_for("Shell types",from=1); chkfile.read_line
+      chkfile.read(G_shell_type)
+      DIE_IF(any(G_shell_type<-1),"unknown shell types exist")
+
+      chkfile.look_for("Number of primitives per shell",from=1); chkfile.read_line
+      chkfile.read(G_n_prim_for_shell)
+
+      chkfile.look_for("Shell to atom map",from=1); chkfile.read_line
+      chkfile.read(G_atom_for_shell)
+
+      chkfile.look_for("Primitive exponents",from=1); chkfile.read_line
+      chkfile.read(G_ex)
+
+      chkfile.look_for("Contraction coefficients",from=1); chkfile.read_line
+      chkfile.read(G_cc)
+
+      chkfile.look_for("Total Energy",from=1)
+      chkfile.move_to_line_item(4); chkfile.read(.scfdata.energy)
+
+      ! SP type shells
+      G_cp.create(n_prim_shells); G_cp = 0
+      atom_p.create(.n_atom);     atom_p = 0
+      if (any(G_shell_type==-1)) then
+        do s = 1,n_shell
+           if (G_shell_type(s)/=-1) cycle
+           a = G_atom_for_shell(s)
+           atom_p(a) = atom_p(a) + 1
+           n_prim_shells = n_prim_shells + G_n_prim_for_shell(s)
+        end
+        chkfile.look_for("P(S=P)",from=1); chkfile.read_line
+        chkfile.read(G_cp)
+      end
+
+      ! Get correct number of shells
+      .n_shell = n_shell + atom_p.sum_elements
+      atom_p.destroy
+
+      ! Create basis set arrays
+      shell_l.create(.n_shell)
+      n_prim_for_shell.create(.n_shell)
+      atom_for_shell.create(.n_shell)
+      ex.create(n_prim_shells)
+      cc.create(n_prim_shells)
+
+    ! stdout.show(" n_shell =", n_shell)
+    ! stdout.show(".n_shell =",.n_shell)
+
+    ! stdout.text("Shell types:")
+    ! stdout.put(G_shell_type)
+
+    ! stdout.text("Number of prims for:")
+    ! stdout.put(G_n_prim_for_shell)
+
+    ! stdout.text("Atom for shell:")
+    ! stdout.put(G_atom_for_shell)
+
+    ! stdout.text("Primitive exponents:")
+    ! stdout.put(G_ex)
+
+    ! stdout.text("Contractions:")
+    ! stdout.put(G_cc)
+
+    ! stdout.text("P(SP) contractions:")
+    ! stdout.put(G_cp)
+
+      ! Copy the basis. Expand out L shells.
+      t = 0
+      l = 0; h = 0
+
+      do s = 1,n_shell
+
+        t = t + 1
+        n_prim = G_n_prim_for_shell(s)
+        f = l + 1; l = l + n_prim
+        g = h + 1; h = h + n_prim
+
+        if (G_shell_type(s)==-1) then
+
+           shell_l(t) = 0                    ! S part of L shell
+           n_prim_for_shell(t) = n_prim
+           atom_for_shell(t) = G_atom_for_shell(s)
+           ex(f:l) = G_ex(g:h)
+           cc(f:l) = G_cc(g:h)
+
+           t = t + 1
+           f = l + 1
+           l = l + n_prim
+           shell_l(t) = 1                    ! P part of L shell
+           n_prim_for_shell(t) = n_prim
+           atom_for_shell(t) = G_atom_for_shell(s)
+           ex(f:l) = G_ex(g:h)
+           cc(f:l) = G_cp(g:h)
+
+        else
+
+           ex(f:l) = G_ex(g:h)
+           cc(f:l) = G_cc(g:h)
+           shell_l(t) = abs(G_shell_type(s)) ! WARNING: sometimes this can be -2
+           n_prim_for_shell(t) = n_prim
+           atom_for_shell(t) = G_atom_for_shell(s)
+
+        end
+
+      end
+
+      G_cp.destroy
+      G_shell_type.destroy
+      G_atom_for_shell.destroy
+      G_n_prim_for_shell.destroy
+      G_ex.destroy
+      G_cc.destroy
+
+      ENSURE(.n_shell==t,"wrong number of shells")
+
+      ! Set basis
+      .SET:set_basis_from_gX_data(shell_l,n_prim_for_shell,atom_for_shell,ex,cc)
+
+      cc.destroy
+      ex.destroy
+      atom_for_shell.destroy
+      n_prim_for_shell.destroy
+      shell_l.destroy
+
+      ! Finalize atom info/basis sets
+      .BASE:update_atom_and_basis_info
+
+      ! Read in orbital energies.
+      orb_energy.create(n_independent)
+      chkfile.look_for("Alpha Orbital Energies",from=1)
+      chkfile.read_line; chkfile.read(orb_energy)
+      .MO_energies.destroy
+      if (trim(chkfile.next_str)=="Beta") then
+         restricted = FALSE
+         .scfdata.set_SCF_kind("uhf")
+         .MO_energies.create(.n_bf,"u ")
+         .MO_energies.a = ZERO
+         .MO_energies.a(1:n_independent) = orb_energy
+         chkfile.read_line; chkfile.read(orb_energy)
+         .MO_energies.b = ZERO
+         .MO_energies.b(1:n_independent) = orb_energy
+         orb_energy.destroy
+      else
+         restricted = TRUE
+         .scfdata.set_SCF_kind("rhf")
+         .MO_energies.create(.n_bf,"r ")
+         .MO_energies.r = ZERO
+         .MO_energies.r(1:n_independent) = orb_energy
+         orb_energy.destroy
+      end
+
+      ! Read in molecular orbitals.
+      temp_mat.create(n_independent,.n_bf)
+      chkfile.look_for("Alpha MO",from=1)
+      chkfile.read_line
+      chkfile.read(temp_mat)
+
+      .MOs.destroy
+      if (trim(chkfile.next_str)=="Beta") then
+         .MOs.create(.n_bf,"u ")
+         .MOs.a = ZERO
+         .MOs.a(1:.n_bf,1:n_independent) = transpose(temp_mat)
+         chkfile.read_line; chkfile.read(temp_mat)
+         .MOs.b = ZERO
+         .MOs.b(1:.n_bf,1:n_independent) = transpose(temp_mat)
+         temp_mat.destroy
+         .SET:swap_from_g94_orbital_order(.MOs.a,"row")
+         .SET:swap_from_g94_orbital_order(.MOs.b, "row")
+      else
+         .MOs.create(.n_bf,"r ")
+         .MOs.r = ZERO
+         .MOs.r(1:.n_bf,1:n_independent) = transpose(temp_mat)
+         temp_mat.destroy
+         .SET:swap_from_g94_orbital_order(.MOs.r,"row")
+      end
+
+      ! Read in density matrix.
+      .READ:read_gX_SCF_dm(chkfile,restricted,.density_mx)
+
+      ! Extract MP2 density matrix to file.  UHF untested
+      .READ:read_gX_MP2_dm(chkfile,restricted,.density_mx)
+
+      ! Extract MP3 density matrix to file.  UHF untested
+      .READ:read_gX_MP3_dm(chkfile,restricted,.density_mx)
+
+      ! Extract CC density matrix to file.  UHF untested
+      .READ:read_gX_CC_dm(chkfile,restricted,.density_mx)
+
+      ! Read in force constants
+      if (chkfile.has_string("Cartesian Force Constants")) then
+         n3n = 3*.atom.dim
+         ntr = n3n.triangle_number
+         .force_constants.create(n3n,n3n)
+         fc.create(ntr)
+         chkfile.look_for("Cartesian Force Constants",from=1)
+         chkfile.read_line
+         chkfile.read(fc)
+         .force_constants.symmetric_unzip_triangle(fc)
+         fc.destroy
+      end
+
+      ! Close chkfile
+      chkfile.close; chkfile.destroy
+
+      ! Save data in archive files
+      ! NOTE: MO's & density matrix are wrt unnormalised basis fn's
+      archive.set_defaults
+
+      archive.set(.name,"density_mx")
+    ! .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+      archive.write(.density_mx)
+
+      archive.set(.name,"MOs")
+    ! .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+      archive.write(.MOs)
+
+      archive.set(.name,"MO_energies")
+      archive.write(.MO_energies)
+
+      if (.crystal.allocated) then
+         .SET:resolve_axis_system
+         .crystal.update_fragment_info(.atom)
+      end
+
+   end
+
+   read_gX_dm(chkfile,restricted,dm) ::: template, private
+   ! Read a gaussian density matrix with TAG? which may be
+   ! "r " (or not) from "chkfile". Archive it as NAME?.
+   ! If "dm" is present it is created to be the density matrix.
+      chkfile :: TEXTFILE*
+      restricted :: BIN, IN
+      dm :: OPMATRIX@, optional
+
+   ENSURE(NOT .use_spherical_basis,"not implemented")
+   ENSURE(.n_bf>0,"no basis functions")
+
+      D,spin,total :: OPMATRIX@
+      archive :: ARCHIVE
+
+      ! Extract density matrix
+      if (NOT chkfile.has_string("TAG? Density")) return
+
+      if (restricted) then
+
+         ! Read restricted density (triangle) "name" into "D"
+         D.create(.n_bf, "r ")
+         D.tri.create(D.l_compress("r "))
+         chkfile.look_for("Total TAG? Density")
+         chkfile.read_line
+         chkfile.read(D.tri)
+         D.uncompress
+
+         ! Swap orbital order
+         .SET:swap_from_g94_orbital_order(D.r,"row")
+         .SET:swap_from_g94_orbital_order(D.r,"column")
+
+      else
+
+         ! Create
+         D.create(.n_bf,"u ")
+         total.create(.n_bf, "r ")
+         spin.create(.n_bf, "r ")
+
+         ! Read total density (triangle) TAG? into "total"
+         total.tri.create(total.l_compress("r "))
+         chkfile.look_for("Total TAG? Density")
+         chkfile.read_line
+         chkfile.read(total.tri)
+         total.uncompress
+
+         ! Read spin density (triangle) trim(tag) into "spin"
+         spin.tri.create(spin.l_compress("r "))
+         chkfile.look_for("Spin TAG? Density")
+         chkfile.read_line
+         chkfile.read(spin.tri)
+         spin.uncompress
+
+         ! Define alpha and beta densities
+         D.b  = (total.r - spin.r)/2
+         D.a = (spin.r  + total.r)/2
+
+         ! Clean
+         spin.destroy
+         total.destroy
+
+         ! Swap orbital order
+         .SET:swap_from_g94_orbital_order(D.a,"row")
+         .SET:swap_from_g94_orbital_order(D.a,"column")
+         .SET:swap_from_g94_orbital_order(D.b, "row")
+         .SET:swap_from_g94_orbital_order(D.b, "column")
+
+      end
+
+      ! Archive the density "D"
+      archive.set_defaults
+      archive.set(.name,NAME?)
+      archive.write(D)
+
+      ! Clean
+      if (present(dm)) then
+         dm.destroy
+         dm = D
+      end
+
+      D.destroy
+
+   end
+
+   read_gX_SCF_dm(chkfile,restricted,dm) ::: get_from(read_gX_dm, TAG?=>SCF, NAME?=>"SCF_density_mx"), private
+   ! Read a gaussian density matrix with TAG? which may be
+   ! "r " (or not) from "chkfile". Archive it as NAME?.
+   ! If "dm" is present it is created to be the density matrix.
+   end
+
+   read_gX_MP2_dm(chkfile,restricted,dm) ::: get_from(read_gX_dm, TAG?=>MP2,  NAME?=>"MP2_density_mx"), private
+   ! Read a gaussian density matrix with TAG? which may be
+   ! "r " (or not) from "chkfile". Archive it as NAME?.
+   ! If "dm" is present it is created to be the density matrix.
+   end
+
+   read_gX_MP3_dm(chkfile,restricted,dm) ::: get_from(read_gX_dm, TAG?=>MP3,  NAME?=>"MP3_density_mx"), private
+   ! Read a gaussian density matrix with TAG? which may be
+   ! "r " (or not) from "chkfile". Archive it as NAME?.
+   ! If "dm" is present it is created to be the density matrix.
+   end
+
+   read_gX_CC_dm(chkfile,restricted,dm) ::: get_from(read_gX_dm, TAG?=>CC,  NAME?=>"CC_density_mx"), private
+   ! Read a gaussian density matrix with TAG? which may be
+   ! "r " (or not) from "chkfile". Archive it as NAME?.
+   ! If "dm" is present it is created to be the density matrix.
+   end
+
+!  ========
+!  WFN file
+!  ========
+
+   read_wfn_file(filename) ::: leaky
+   ! Open and read a file named "name", either a gaussian .FChk file
+   ! or an .sbf file.
+      self :: INOUT
+      filename :: STR, IN
+
+      if (filename.ends_in("fchk", case_sensitive=FALSE)) then
+         .READ:read_g09_FChk_file(filename)
+      else if (filename.ends_in("sbf", case_sensitive=FALSE)) then
+         .READ:deserialize(filename)
+      else if (filename.ends_in("molden", case_sensitive=FALSE)) then
+         .READ:read_molden_MOs(filename)
+      else
+         DIE("unknown file format for file '"//trim(filename)//"'")
+      end
+
+   end
+
+!  ========
+!  Read SBF
+!  ========
+
+   deserialize(filename)
+   ! Read in data from sbf file
+      self :: INOUT
+      filename :: STR, IN
+
+      datafile :: DATAFILE
+      tmp_str :: STR(len=:)@
+      atomic_labels :: STR(len=1), dimension(:,:), allocatable
+      atomic_numbers :: VEC{INT}@
+      atomic_coordinates :: VEC{REAL}@
+      charge_multiplicity :: VEC{INT}@
+      tmp_mat :: MAT{REAL}@
+      labels :: VEC{STR}@
+      i, err :: INT
+      success = 1 :: INT
+
+      datafile.open(filename)
+
+      call datafile%sbf%deserialize
+
+      call datafile%sbf%get("name", tmp_str, err)
+      DIE_IF(err /= success, sbf_strerr(err))
+
+      .name = tmp_str
+      call datafile%sbf%get("basis_name", tmp_str, err)
+      DIE_IF(err /= success, sbf_strerr(err))
+
+      .basis_name = tmp_str
+
+      call datafile%sbf%get("atomic_labels", atomic_labels, err)
+      DIE_IF(err /= success, sbf_strerr(err))
+
+      ! convert back
+      allocate(labels(size(atomic_labels, 1)))
+      do i = 1, size(atomic_labels, dim=1)
+         labels(i) = trim(VEC{STR}:char_array_to_str(atomic_labels(i,:)))
+      end do
+
+      call datafile%sbf%get("atomic_numbers", atomic_numbers, err)
+      DIE_IF(err /= success, sbf_strerr(err))
+      .atom.create(size(atomic_numbers))
+
+      call datafile%sbf%get("atomic_coordinates", atomic_coordinates, err)
+      DIE_IF(err /= success, sbf_strerr(err))
+      .atom.set_positions_from_vector(atomic_coordinates)
+
+      .atom.set_atom_data_from_labels(labels)
+
+      call datafile%sbf%get("charge_multiplicity", charge_multiplicity, err)
+      if(err /= success) then
+          stderr.show("Error reading charge_multiplicity from file, not setting:", sbf_strerr(err))
+      else
+          .SET:set_charge(charge_multiplicity(1))
+          .SET:set_spin_multiplicity(charge_multiplicity(2))
+      endif
+
+      ! Update atom info/basis sets
+      .BASE:update_atom_and_basis_info
+
+      call datafile%sbf%get("scf_kind", tmp_str, err)
+
+      ! TODO CHECK FOR ERRORS
+      if (err == success) then
+         .scfdata.create
+         .scfdata.set_output(FALSE)
+         .density_mx.create(.n_bf)
+         .MOs.create(.n_bf)
+
+         select case (tmp_str)
+         !select case (.scfdata.spinorbital_genre)
+
+         case ("r ")
+            .scfdata.set_SCF_kind("rhf")
+            call datafile%sbf%get("density_mx", tmp_mat, err)
+            DIE_IF(err /= success, sbf_strerr(err))
+            .density_mx.create("r ")
+            .density_mx.r = tmp_mat
+            deallocate(tmp_mat)
+            call datafile%sbf%get("MOs", tmp_mat, err)
+            DIE_IF(err /= success, sbf_strerr(err))
+            .MOs.create("r ")
+            .MOs.r = tmp_mat
+            deallocate(tmp_mat)
+
+         case ("u ")
+            .scfdata.set_SCF_kind("uhf")
+            .density_mx.create("u ")
+            call datafile%sbf%get("density_mx,a", tmp_mat, err)
+            DIE_IF(err /= success, sbf_strerr(err))
+            .density_mx.a= tmp_mat
+            deallocate(tmp_mat)
+            call datafile%sbf%get("density_mx,b", tmp_mat, err)
+            DIE_IF(err /= success, sbf_strerr(err))
+            .density_mx.b = tmp_mat
+            deallocate(tmp_mat)
+            .MOs.create("u ")
+            call datafile%sbf%get("MOs,a", tmp_mat, err)
+            DIE_IF(err /= success, sbf_strerr(err))
+            .MOs.a = tmp_mat
+            deallocate(tmp_mat)
+            call datafile%sbf%get("MOs,b", tmp_mat, err)
+            DIE_IF(err /= success, sbf_strerr(err))
+            .MOs.b = tmp_mat
+            deallocate(tmp_mat)
+
+         case default
+            DIE("Serializing these orbitals is not implemented")
+
+         end
+
+      else
+
+
+      end if
+
+      datafile.close
+
+   end
+
+!  ============
+!  Read archive
+!  ============
+
+   read_archive ::: leaky
+   ! Read the archive called "name" with "genre", e.g.  "r ".
+   ! For use with TONTO generated archives.
+      self :: INOUT
+
+   ENSURE(stdin.n_line_items==3, "must specify an archive and a kind")
+   ENSURE(.n_bf>0, "need to already know the number of basis functions")
+
+      name,genre :: STR
+
+      stdin.read(name)
+      stdin.read(genre)
+
+      stdout.text("reading archive : " // trim(name))
+      .READ:read_archive(name,genre)
+
+   end
+
+   read_archive(name,genre) ::: leaky
+   ! Read the archive called "name" with "genre", e.g. "r ".
+   ! For use with TONTO generated archives. Handle specific
+   ! lambda's in the name (if the name is of the form ....,lambda=...)
+      self :: INOUT
+      name :: STR, IN
+      genre :: STR, IN
+
+   ENSURE(.n_bf>0, "need to already know the number of basis functions")
+
+      i  :: INT
+      nm :: STR
+      normalise :: STR
+      do_norm :: BIN
+      arch :: ARCHIVE
+
+      ! Set the archive "name" & "genre"
+      arch.set(.name,name,genre=genre)
+
+      ! Now remove any lambda in the "name"
+      nm = name
+      i  = nm.index_of_character_in(",")
+      if (i>0) then
+         nm = name(1:i-1)
+      end
+
+      ! Second word on line is normalise?
+      normalise = " "
+      if (stdin.buffer.n_items==2) stdin.read(normalise)
+      do_norm = normalise(1:9)=="normalise" OR normalise(1:9)=="normalize"
+      ! Tell them
+      if (do_norm) then
+         stdout.flush
+         stdout.text("Writing normalised "//trim(nm))
+         stdout.flush
+      end
+
+      ! Read the archive
+      select case (nm)
+
+      case ("covalent_orbitals ","RG_COs            ")
+         if (.NOs.deallocated) .NOs.create(.n_bf)
+         arch.read(.NOs)
+         if (do_norm) &
+            .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+
+      case ("ionic_orbitals    ","RG_IOs            ")
+         if (.NOs.deallocated) .NOs.create(.n_bf)
+         arch.read(.NOs)
+         if (do_norm) &
+            .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+
+      case ("molecular_orbitals","MOs               ", &
+            "HF_MOs            ","KS_MOs            ")
+         if (.MOs.deallocated) .MOs.create(.n_bf)
+         arch.read(.MOs)
+         if (do_norm) &
+            .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+
+      case ("MO_energies       ", &
+            "HF_MO_energies    ","KS_MO_energies    ")
+         if (.MO_energies.deallocated) .MO_energies.create(.n_bf)
+         arch.read(.MO_energies)
+
+      case ("natural_orbitals  ","NOs               ")
+         if (.NOs.deallocated) .NOs.create(.n_bf)
+         arch.read(.NOs)
+         if (do_norm) &
+         .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+
+      case ("occupation_nos    ","NO_occ_nos        ")
+         if (.NO_occ_nos.deallocated) .NO_occ_nos.create(.n_bf)
+         arch.read(.NO_occ_nos)
+
+      case ("density_matrix    ","density_mx        ", &
+            "hf_density_matrix ","HF_density_mx     ", &
+            "ks_density_matrix ","KS_density_mx     ", &
+            "mp2_density_matrix","MP2_density_mx    ", &
+            "mp3_density_matrix","MP3_density_mx    ")
+         if (.density_mx.deallocated) .density_mx.create(.n_bf)
+         arch.read(.density_mx)
+         if (do_norm) &
+            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+
+      case ("fock_matrix       ", &
+            "Fock_mx           ","Kohn-Sham_mx      ")
+         if (.fock_mx.deallocated) .fock_mx.create(.n_bf)
+         arch.read(.fock_mx)
+         if (do_norm) &
+            .fock_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+
+      case ("U_electric_dipole ")
+         if (.U_electric_dipole.deallocated) .U_electric_dipole.create(.n_bf,.n_bf,3)
+         arch.read(.U_electric_dipole)
+
+      case ("U2_electric_dipole ")
+         if (.U2_electric_dipole.deallocated) .U2_electric_dipole.create(.n_bf,.n_bf,6)
+         arch.read(.U2_electric_dipole)
+
+      case default
+         UNKNOWN(nm)
+
+      end
+
+      ! Clean up
+      arch.close
+
+   end
+
+   read_ascii_archive ::: leaky
+   ! Read the archive called "name" with "genre", e.g. "r ".
+      self :: INOUT
+
+   ENSURE(stdin.buffer.n_items==3, "must specify an archive and a kind")
+   ENSURE(.n_bf>0, "need to already know the number of basis functions")
+
+      name,genre :: STR
+      arch :: ARCHIVE
+
+      ! Read archive name & genre
+      stdin.read(name)
+      stdin.read(genre)
+
+      ! Set archive "name", "genre" & ascii format
+      arch.set(.name,name,genre=genre,format="ascii")
+
+      ! Read the archive
+      select case (name)
+
+      case ("covalent_orbitals ","RG_COs            ")
+         if (.NOs.deallocated)   .NOs.create(.n_bf)
+         arch.read(.NOs,by_column=TRUE)
+
+      case ("ionic_orbitals    ","RG_IOs            ")
+         if (.NOs.deallocated)   .NOs.create(.n_bf)
+         arch.read(.NOs,by_column=TRUE)
+
+      case ("molecular_orbitals","MOs               ", &
+            "HF_MOs            ","KS_MOs            ")
+         if (.MOs.deallocated) .MOs.create(.n_bf)
+         arch.read(.MOs,by_column=TRUE)
+
+      case ("MO_energies       ", &
+            "HF_MO_energies    ","KS_MO_energies    ")
+         if (.MO_energies.deallocated)   .MO_energies.create(.n_bf)
+         arch.read(.MO_energies)
+
+      case ("natural_orbitals  ","NOs               ")
+         if (.NOs.deallocated)   .NOs.create(.n_bf)
+         arch.read(.NOs,by_column=TRUE)
+
+      case ("no_occupation_nos ","NO_occ_nos        ")
+         if (.NO_occ_nos.deallocated) .NO_occ_nos.create(.n_bf)
+         arch.read(.NO_occ_nos)
+
+      case ("density_matrix    ","density_mx        ", &
+            "hf_density_matrix ","HF_density_mx     ", &
+            "ks_density_matrix ","KS_density_mx     ", &
+            "mp2_density_matrix","MP2_density_mx    ", &
+            "mp3_density_matrix","MP3_density_mx    ")
+         if (.density_mx.deallocated)     .density_mx.create(.n_bf)
+         arch.read(.density_mx,by_column=TRUE)
+
+      case ("fock_matrix       ", &
+            "Fock_mx           ","Kohn-Sham_mx      ")
+         if (.fock_mx.deallocated)        .fock_mx.create(.n_bf)
+         arch.read(.fock_mx,by_column=TRUE)
+
+      case default
+         UNKNOWN(name)
+
+      end
+
+      ! Clean up
+      arch.close
+
+   end
+
+   read_archive(opmatrix,archive_name,genre) ::: leaky
+   ! Recover the "opmatrix" from an archive on disk with name "archive_name".
+   ! The kind is guessed from "opmatrix".
+      self :: INOUT
+      opmatrix :: OPMATRIX@, OUT
+      archive_name :: STR, IN
+      genre :: STR, optional, IN
+
+   ENSURE(opmatrix.has_any_genre,"no opmatrix genre created")
+
+      archive :: ARCHIVE
+
+      archive.set_defaults
+      archive.set(.name,archive_name)
+      archive.read(opmatrix,genre)
+
+   end
+
+   read_archive(opvector,archive_name,genre) ::: leaky
+   ! Recover the "opvector" from an archive on disk with name "archive_name".
+   ! The kind is guessed from "opvector".
+      self :: INOUT
+      opvector :: OPVECTOR, OUT
+      archive_name :: STR, IN
+      genre :: STR, optional, IN
+
+   ENSURE(opvector.has_any_genre,"no opvector genre created")
+
+      archive :: ARCHIVE
+
+      archive.set_defaults
+      archive.set(.name,archive_name)
+      archive.read(opvector,genre)
+
+   end
+
+   read_archive(item,archive_name,genre) ::: leaky
+   ! Recover the "item" from an archive on disk with name "archive_name".
+      self :: INOUT
+      item :: REAL, OUT
+      archive_name :: STR, IN
+      genre :: STR, optional, IN
+
+      archive :: ARCHIVE
+
+      archive.set_defaults
+      archive.set(.name,archive_name)
+      archive.read(item,genre)
+
+   end
+
+   read_SCF_archives ::: leaky
+   ! Copy the natural orbitals to be the MOs.
+   ! If thw MO's are not there, try and read them from disk.
+   ! The occupation numbers are the MO ones.
+      self :: INOUT
+
+      genre :: STR
+      arch :: ARCHIVE
+
+      ! Get MO's 
+      if (.MOs.allocated) then
+         ! Already there
+         genre = .MOs.genre
+      else if (.scfdata.allocated) then
+         ! Does it exist as on disk?
+         genre = .scfdata.spinorbital_genre
+         arch.set(.name,"MOs",genre)
+         if (arch.exists) then
+            .MOs.create(.n_bf)
+            arch.read(.MOs)
+            .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+            arch.close
+         end
+      end
+      
+      ! Get density matrix
+      if (.density_mx.allocated) then
+         ! Already there
+         genre = .density_mx.genre
+      else if (.scfdata.allocated) then
+         ! Does it exist on disk?
+         genre = .scfdata.spinorbital_genre
+         arch.set(.name,"density_mx",genre)
+         if (arch.exists) then
+            .density_mx.create(.n_bf)
+            arch.read(.density_mx)
+            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+            arch.close
+         end
+      end
+
+      ! Get orbital energies
+      if (.MO_energies.deallocated) then
+      if (.scfdata.allocated) then
+         genre = .scfdata.spinorbital_genre
+         .MO_energies.create(.n_bf,genre)
+         ! Does it exist on disk?
+         arch.set(.name,"MO_energies",genre)
+         if (arch.exists) then
+            arch.read(.MO_energies)
+            arch.close
+         end
+      end
+      end
+      
+      ! Clone the MO's
+      if (.MOs.allocated) then
+         .NOs = .MOs
+         .NO_occ_nos.create(.n_bf,genre)
+         .NO_occ_nos.set_to_zero
+         .SET:set_SCF_occupations_for_NOs(genre)
+      end
+
+   end
+
+!  ===================
+!  Redirect and revert
+!  ===================
+
+   redirect ::: get_from(OBJECT), leaky
+   ! Redirect input. (This code is for non-pointer self objects).
+   end
+
+   redirect_stdout ::: leaky
+   ! Redirect stdout to the file whose name is the following string
+   ! in the current input file.
+
+      name :: STR
+
+      if (FALSE) self = self
+
+      stdin.read(name)
+      stdout.redirect(name)
+
+   end
+
+   revert ::: get_from(OBJECT), leaky
+   ! Revert back to previous stdin file. (This code is for non-pointer self
+   ! objects).
+   end
+
+   revert_stdout ::: leaky
+   ! Revert stdout back to the previously stored input file
+      if (FALSE) self = self
+      stdout.revert
+   end
+
+end

@@ -266,21 +266,25 @@ set(FOO_SRC
     ${FOO_DIR}/opvector.foo
     ${FOO_DIR}/mo_localiser.foo
     ${FOO_DIR}/pair_energy.foo
+    ${FOO_DIR}/molecule.inq.foo
+    ${FOO_DIR}/molecule.set.foo
+    ${FOO_DIR}/molecule.read.foo
+    ${FOO_DIR}/molecule.put.foo
     ${FOO_DIR}/molecule.base.foo
-    ${FOO_DIR}/molecule.ce.foo
-    ${FOO_DIR}/molecule.cp.foo
-#   ${FOO_DIR}/molecule.nomo.foo ! for now
-    ${FOO_DIR}/molecule.fock.foo
-    ${FOO_DIR}/molecule.grid.foo
-    ${FOO_DIR}/molecule.ints.foo
-    ${FOO_DIR}/molecule.main.foo
-    ${FOO_DIR}/molecule.misc.foo
-    ${FOO_DIR}/molecule.plot.foo
-    ${FOO_DIR}/molecule.prop.foo
 #   ${FOO_DIR}/molecule.rel.foo ! for now
-    ${FOO_DIR}/molecule.scf.foo
-    ${FOO_DIR}/molecule.tad.foo
+    ${FOO_DIR}/molecule.grid.foo
     ${FOO_DIR}/molecule.xtal.foo
+    ${FOO_DIR}/molecule.ce.foo
+    ${FOO_DIR}/molecule.ints.foo
+    ${FOO_DIR}/molecule.fock.foo
+#   ${FOO_DIR}/molecule.nomo.foo ! for now
+    ${FOO_DIR}/molecule.scf.foo
+    ${FOO_DIR}/molecule.prop.foo
+    ${FOO_DIR}/molecule.plot.foo
+    ${FOO_DIR}/molecule.cp.foo
+    ${FOO_DIR}/molecule.tad.foo
+    ${FOO_DIR}/molecule.misc.foo
+    ${FOO_DIR}/molecule.main.foo
 )
 
 # Fortran source files used by run_molecule/run_har
@@ -338,21 +342,25 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/mat_shell1pair.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mo_localiser.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.inq.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.set.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.read.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.put.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.base.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
- #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.nomo.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.fock.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ints.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.plot.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.prop.F90
  #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.rel.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.scf.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.tad.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.xtal.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ints.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.fock.F90
+ #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.nomo.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.scf.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.prop.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.plot.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.tad.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
     ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90

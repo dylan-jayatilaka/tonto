@@ -1,0 +1,2832 @@
+!===============================================================================
+!
+! MOLECULE.SET
+!
+! Memory allocation, create & destroy, setting, intializing, updating,
+! resolving and reading from disk, and deleting serialized things from
+! disk.
+!
+! The submodule hierarchy is shown below.
+! . The numbers (if any) indicate (roughly) the number of used
+!   procedures from the module at the head of the column. This is
+!   useful if you want to decouple the modules even further.
+! . The type of routines in each submodule is more-or-less
+!   straightforward to understand from the three- or four-letter
+!   pneumonic e.g. REL is for relativistic routines.
+!
+! Updated 2014-12-01
+!
+! .BASE
+!     3 .REL
+!    16---24 .GRID
+!    14---12---- 1 .XTAL
+!     2--- |---- |---- 4 .CE =
+!     7--- |---- 1---- |-- | .INTS
+!    14--- |---- 5---- |-- |---- 2 .FOCK
+!    30--- 5---- 4---- 5-- |----10---- 5 .SCF
+!     2--- |---- |---- |-- |---- 1---- 5--- 1 .GEM =     =     =
+!    11--- |---- |---- 1-- |----15---- 5---13--- | .PROP =     =
+!     4--- |---- 6---- |-- |---- 3---- |--- 2--- |---- | .PLOT =
+!     4--- |---- 5---- |-- |---- 4---- 2--- 1--- |---- |---- | .CP
+!    12--- |---- 7---- |-- |---- |---- |--- 1--- |---- |---- 1-- | .TAD
+!    15--- |---- 5---- 1-- |---- 5---- 6--- 5--- |---- |---- |-- |--- 2 .MISC
+!    76--- 3---- 3----13-- 7---- 1---- |---13--- 3----19---- 6-- 9---11----24 .MAIN
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996
+! Copyright (C) Dylan Jayatilaka 2012-
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!===============================================================================
+
+module MOLECULE.SET
+
+   implicit none
+
+   saved_self :: MOLECULE@, private
+
+contains
+
+!  ==========
+!  Allocation
+!  ==========
+
+   create ::: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
+   end
+
+   destroy_ptr_part ::: leaky, PURE
+   ! Destroy the pointer parts of a molecule object
+      self :: INOUT
+
+      ! Saved molecule
+      .saved.SET:destroy
+
+      ! Atoms (nullify pointed-to atoms before)
+      .atom.destroy
+
+      ! Atom_groups
+      .SET:destroy_atom_group
+
+      ! Destroy bases and pointed
+      .basis.destroy
+      .slaterbasis.destroy
+      .coppensbasis.destroy
+
+      ! Grids, interpolators & plots
+      .plot_grid.destroy
+      .interpolator.destroy
+      .isosurface.destroy
+      .becke_grid.destroy
+
+      ! Crystals and clusters
+      .crystal.destroy
+      .cluster.destroy
+      .cif.destroy
+      .pointgroup.destroy
+
+      ! Basis set & integral info arrays
+      .atom_for_shell.destroy
+      .atom_shell_for_shell.destroy
+      .first_shell_for_atom.destroy
+      .last_shell_for_atom.destroy
+      .basis_shell_for_shell.destroy
+      .first_basis_fn_for_shell.destroy
+      .last_basis_fn_for_shell.destroy
+      .angular_moment_for_shell.destroy
+      .first_basis_fn_for_atom.destroy
+      .last_basis_fn_for_atom.destroy
+      .basis_shell1pair.destroy
+      .max_I.destroy
+      .overlapping_atoms.destroy
+      .overlapping_atoms_for_atom.destroy
+
+      ! SCF data
+      .scfdata.destroy
+
+      ! SCF info
+      .MO_energies.destroy
+      .MOs.destroy
+      .density_mx.destroy
+      .old_density_mx.destroy
+      .delta_density_mx.destroy
+      .NOs.destroy
+      .NO_occ_nos.destroy
+      .overlap_mx.destroy
+      .overlap_eigenvectors.destroy
+      .overlap_eigenvalues.destroy
+      .max_S.destroy
+      .kinetic_energy_mx.destroy
+      .nuclear_attraction_mx.destroy
+
+      ! SCF intermediates
+      .core_mx.destroy
+      .fock_mx.destroy
+      .fock_2e_mx.destroy
+      .constraint_mx.destroy
+
+      ! Bond analysis
+      .roby.destroy
+
+      ! Localised MO's
+      .localiser.destroy
+
+      ! CPHF and response properties
+      .U_electric_dipole.destroy
+      .dipole_polarisability.destroy
+      .dipole_hyperpolarisability.destroy
+      .U2_electric_dipole.destroy
+
+      ! Force constants
+      .force_constants.destroy
+      .normal_mode_eigenvectors.destroy
+      .normal_mode_eigenvalues.destroy
+      .phi3_force_constants.destroy
+      .phi4_force_constants.destroy
+
+      ! Atomic multipoles
+      .charges.destroy
+      .dipoles.destroy
+      .octupoles.destroy
+      .quadrupoles.destroy
+
+   end
+
+   save ::: leaky, PURE
+   ! Save everything about "self" in ".saved", and make "self" fresh.
+      self :: allocatable, INOUT
+
+      saved :: MOLECULE@
+
+      ! Save self
+      saved = self
+
+      ! Recreate fresh
+      .SET:destroy
+      .SET:create
+
+      ! Set .saved
+      .saved = saved
+
+   end
+
+   unsave ::: leaky, PURE
+   ! Revert back to a previously saved molecule stored in .saved, and
+   ! destroy everything about the current molecule in "self".
+   ! WARNING: be careful when setting up self, make sure none of its
+   ! pointer parts refer to .saved information.
+      self :: INOUT
+
+   ENSURE(.saved.allocated,"no previous settings")
+
+      ! Restore self
+      self = .saved
+
+      ! Clean up
+      .saved.SET:destroy
+
+   end
+
+!  ================
+!  Specific cleanup
+!  ================
+
+   destroy_atom_group ::: leaky, PURE
+   ! Destroy the pointer parts of a molecule object
+      self :: INOUT
+
+      .atom_group.destroy
+
+      if (allocated(.mol)) deallocate(.mol)
+
+   end
+
+   destroy_matrices ::: leaky, PURE
+   ! Destroy the matrices of a molecule object
+      self :: INOUT
+
+      .atom_for_shell.destroy
+      .atom_shell_for_shell.destroy
+      .first_shell_for_atom.destroy
+      .last_shell_for_atom.destroy
+      .first_basis_fn_for_shell.destroy
+      .last_basis_fn_for_shell.destroy
+      .angular_moment_for_shell.destroy
+      .first_basis_fn_for_atom.destroy
+      .last_basis_fn_for_atom.destroy
+
+      .MO_energies.destroy
+      .MOs.destroy
+      .density_mx.destroy
+      .old_density_mx.destroy
+      .delta_density_mx.destroy
+      .NOs.destroy
+      .NO_occ_nos.destroy
+      .overlap_mx.destroy
+      .overlap_eigenvectors.destroy
+      .overlap_eigenvalues.destroy
+      .max_S.destroy
+      .kinetic_energy_mx.destroy
+      .nuclear_attraction_mx.destroy
+
+      .core_mx.destroy
+      .fock_mx.destroy
+      .fock_2e_mx.destroy
+      .constraint_mx.destroy
+
+    ! .atom_group.destroy
+      .SET:destroy_atom_group
+      .elmo_connection_table.destroy
+
+   end
+
+   destroy_NAO_matrices ::: leaky, PURE
+   ! Destroy the NAO's for all atoms in the molecule.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      .atom.destroy_NAO_matrices
+
+   end
+
+   destroy_ANO_matrices ::: leaky, PURE
+   ! Destroy the ANO's for all atoms in the molecule.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      .atom.destroy_ANO_matrices
+
+   end
+
+   destroy_interpolators ::: leaky, PURE
+   ! Destroy the (non-unique) interpolators
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      .atom.destroy_interpolators
+
+   end
+
+   destroy_atom_data ::: leaky, PURE
+   ! Destroy the restricted atomic natural orbitals (ANO) data for all
+   ! atoms in the molecule.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      .atom.destroy_atom_data
+
+   end
+
+   destroy_atom_shell_info ::: leaky, PURE
+   ! Destroy the atom precomputed shellpair info.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      .atom.destroy_shell_info
+
+   end
+
+!  SCF
+
+   destroy_SCF_results(keep_MOs,keep_DM) ::: leaky, PURE
+   ! Destroy the SCF results in memory
+      self :: INOUT
+      keep_MOs :: BIN, optional, IN
+      keep_DM  :: BIN, optional, IN
+
+      delete_MOs :: BIN
+      delete_DM :: BIN
+
+      delete_MOs = TRUE
+      if (present(keep_MOs)) delete_MOs = NOT keep_MOs
+
+      delete_DM = TRUE
+      if (present(keep_DM))  delete_DM  = NOT keep_DM
+
+      if (delete_MOs) .MOs.destroy
+      if (delete_DM)  .density_mx.destroy
+
+      .MO_energies.destroy
+      .fock_mx.destroy
+
+   end
+
+   destroy_tmp_SCF_matrices ::: PURE
+   ! Destroy any temporary matrices stored in memory.
+      self :: INOUT
+
+      .old_density_mx.destroy
+      .delta_density_mx.destroy
+      .fock_2e_mx.destroy
+      .constraint_mx.destroy
+
+   end
+
+   destroy_SCF_integrals ::: leaky, PURE
+   ! Destroy all SCF-related integrals in memory.
+      self :: INOUT
+
+      .overlap_mx.destroy
+      .overlap_eigenvectors.destroy
+      .overlap_eigenvalues.destroy
+
+      .kinetic_energy_mx.destroy
+      .nuclear_attraction_mx.destroy
+      .core_mx.destroy
+
+   end
+
+!  ============
+!  Set defaults
+!  ============
+
+   set_defaults ::: leaky
+   ! Set up a default molecule
+      self :: INOUT
+
+      .name                = "unknown"
+      .charge              = 0
+      .spin_multiplicity   = 1
+      .n_e                 = 0
+      .n_a                 = 0
+      .n_b                 = 0
+      .E_field             = ZERO
+      .B_field             = ZERO
+      .gauge_origin        = ZERO
+
+      .n_atom              = 0
+      .atom_info_made      = FALSE
+      .n_atom_kind         = 0
+
+      .n_bf                = 0
+      .basis_name          = " "
+      .n_basis             = 0
+      .basis_l_max         = -1
+      .use_spherical_basis = FALSE
+      .n_bf                = 0
+      .n_prim              = 0
+      .slaterbasis_name    = " "
+      .coppensbasis_name   = " "
+      .basis_info_made     = FALSE
+
+      .use_interpolators   = TRUE
+
+      .n_shell             = 0
+      .n_shell_pairs       = 0
+      .n_unique_shells     = 0
+
+      .CX_file_name        = " "
+      .CX_uses_angstrom    = FALSE
+
+      .nucleus_model       = "point"
+
+      ! Do want to set this always?
+      ! e.g. for .make_mol_from_atom(a) methods?
+      .HA_info_made        = FALSE
+      .u_HA_info_made      = FALSE
+      .atomic_polarisabilities_made = FALSE
+
+      if (.atom.allocated) then
+         .name              = .atom.chemical_formula
+         .spin_multiplicity = .INQ:default_spin_multiplicity
+         ! Set unique atom tags if needed, multiplicity, no. of
+         ! electrons; resolve basis sets, set basis-shell info; 
+         ! and (possibly) resent kinds
+         .SET:update_atom_info
+         .SET:resolve_bases_and_update ! NOT PURE
+         .atom.update_kinds    
+         .n_atom_kind = maxval(.atom.kind)
+      end
+
+   end
+
+   set_SCF_guess_defaults_from(scfdata) ::: leaky
+   ! Set scf  data options for a guess-type SCF defaults
+      self :: INOUT
+      scfdata :: SCFDATA@, IN
+
+      ! Set the SCF defaults (leaky)
+      if (scfdata.deallocated) then
+
+         .SET:set_SCF_defaults ! NOT PURE
+         .scfdata.set_output(FALSE)
+
+      else if (scfdata.SCF_kind(1:7)=="fraghar") then
+
+         .SET:set_SCF_defaults(scfdata) ! leaky
+
+      else if (NOT scfdata.use_default_guess_options) then
+
+         .SET:set_SCF_defaults(scfdata) ! leaky
+
+      else 
+
+         .SET:set_SCF_defaults
+         .scfdata.set_output(FALSE)
+
+      end
+
+      ! Reset some defaults from scfdata, if it is there
+      if (scfdata.allocated) then
+
+         .scfdata.set_output(scfdata.guess_output)
+         if (scfdata.initial_MOs/="--using density--")  .scfdata.set_initial_MOs(scfdata.initial_MOs)
+         if (scfdata.initial_density/="--using MO's--") .scfdata.set_initial_density(scfdata.initial_density)
+         .scfdata.set_convergence(scfdata.convergence)
+         .scfdata.SCF_DIIS.set_convergence_tolerance(scfdata.SCF_DIIS.convergence_tolerance)
+         .scfdata.set_relativity_kind(scfdata.relativity_kind)
+
+      end
+
+      ! Nuclear energy
+      .scfdata.nuclear_repulsion_energy = .INQ:nuclear_repulsion_energy
+
+      ! Finalise
+      .scfdata.update
+
+   end
+
+   set_general_SCF_guess_defaults_from(scfdata) ::: leaky
+   ! Set scf  data options for a guess-type SCF defaults
+      self :: INOUT
+      scfdata :: SCFDATA@, IN
+
+      ! Set the SCF defaults (leaky)
+      if (scfdata.deallocated) then
+
+         .SET:set_SCF_defaults ! NOT PURE
+         .scfdata.set_output(FALSE)
+
+      else if (scfdata.use_default_guess_options) then
+
+         .SET:set_SCF_defaults
+         .scfdata.set_output(FALSE)
+
+      else
+
+         .SET:set_SCF_defaults(scfdata) ! leaky
+
+      end
+
+      .scfdata.set_SCF_kind("ghf")
+      
+      ! Reset some defaults from scfdata, if it is there
+      if (scfdata.allocated) then
+         .scfdata.set_output(scfdata.guess_output)
+         .scfdata.set_convergence(scfdata.convergence)
+         .scfdata.SCF_DIIS.set_convergence_tolerance(scfdata.SCF_DIIS.convergence_tolerance)
+         .scfdata.set_relativity_kind(scfdata.relativity_kind)
+      end
+
+      ! Nuclear energy
+      .scfdata.nuclear_repulsion_energy = .INQ:nuclear_repulsion_energy
+
+      ! Finalise
+      .scfdata.update
+
+   end
+
+   set_SCF_defaults(scfdata) ::: leaky
+   ! Set up scf defaults for molecule
+      self :: INOUT
+      scfdata :: SCFDATA@, optional, IN
+
+      if (.scfdata.deallocated) then; .scfdata.create
+      else;                           .scfdata.set_defaults
+      end
+
+      ! Restricted?
+      if (.spin_multiplicity==1) .scfdata.set_SCF_kind("rhf")
+      if (.spin_multiplicity/=1) .scfdata.set_SCF_kind("uhf")
+
+      if (present(scfdata)) then
+      if (scfdata.allocated) then
+
+         ! Set defaults from scfdata
+         .scfdata = scfdata
+         .scfdata.cluster.destroy
+         .scfdata.cluster_charges.destroy
+         .scfdata.cluster_charge_positions.destroy
+
+         if (.scfdata.SCF_kind/=" ") then
+
+            ! Process scfkind , make sure it is sensible
+            ! Always use restricted
+            if (.scfdata.is_DFT_calculation) then
+               if (.spin_multiplicity==1) .scfdata.set_SCF_kind("rks")
+               if (.spin_multiplicity/=1) then
+                ! DIE("cannot yet do ROKS (for, e.g. atomic SCF)")
+                  .scfdata.set_SCF_kind("uks")
+               end
+            else
+               if (.spin_multiplicity==1) .scfdata.set_SCF_kind("rhf")
+               if (.spin_multiplicity/=1) then
+                  .scfdata.set_SCF_kind("uhf")
+               !  .scfdata.set_using_DIIS(FALSE)
+               end
+            end
+
+         end
+
+      end
+      end
+
+      .scfdata.nuclear_repulsion_energy = .INQ:nuclear_repulsion_energy
+
+      if (.scfdata.is_DFT_calculation) then
+         .SET:initialize_DFT_grids ! NOT PURE
+      end
+
+   end
+
+   initialize_DFT_grids ::: leaky
+   ! Initialise DFT grids, if not already done so.
+      self :: INOUT
+
+   ENSURE(.scfdata.allocated,"no scfdata")
+
+      .becke_grid.destroy
+      .becke_grid.create
+
+      .becke_grid.set_atom_info(.atom) ! NOT PURE
+      .becke_grid.set_grid_data
+
+      .SET:set_overlapping_atoms
+
+   end
+
+   set_overlapping_atoms ::: leaky, PURE
+   ! Make the list of overlapping atoms
+      self :: INOUT
+
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+
+      r_max :: VEC{REAL}@
+      d :: VEC{REAL}(3)
+      r :: REAL
+      a,b,ab,n_atom_pairs :: INT
+
+      n_atom_pairs = .INQ:no_of_atom_pairs
+
+      ! Overlapping atoms pair array
+      .overlapping_atoms.destroy
+      .overlapping_atoms.create(n_atom_pairs)
+
+      ! Overlapping atoms list array
+      .overlapping_atoms_for_atom.destroy
+      .overlapping_atoms_for_atom.create(.n_atom)
+
+      ! Make the maximum radii
+      r_max.create(.n_atom)
+      do a = 1,.n_atom
+         ! sqrt because we are dealing with overlaps
+         r_max(a) = .atom(a).r_max(.becke_grid.basis_function_cutoff)
+      end
+
+      ! Make the overlapping atom arrays
+      do ab = 1,n_atom_pairs
+         a = (1+int(sqrt(EIGHT*ab-SEVEN)))/2
+         b = ab - a*(a-1)/2
+         d = .atom(a).position - .atom(b).position
+         r = sqrt(dot_product(d,d))
+         if (r>(r_max(a)+r_max(b))) then
+            .overlapping_atoms(ab) = FALSE
+         else
+            .overlapping_atoms(ab) = TRUE
+         end
+      end
+
+      ! Make the overlapping atom arrays
+      do a = 1,.n_atom
+
+         ! Atom a overlaps itself
+         .overlapping_atoms_for_atom(a).element.append(a)
+
+         ! Loop over other atoms "b"
+         do b = 1,a-1
+
+            ! Distance "r" to atom "b"
+            d = .atom(a).position - .atom(b).position
+            r = sqrt(dot_product(d,d))
+            if (r>(r_max(a)+r_max(b))) cycle
+
+            ! Atoms "a" and "b" overlap
+            .overlapping_atoms_for_atom(a).element.append(b)
+            .overlapping_atoms_for_atom(b).element.append(a)
+
+         end
+
+      end
+
+      r_max.destroy
+
+      ! Reorder the lists
+      do a = 1,.n_atom
+         .overlapping_atoms_for_atom(a).element.sort
+      end
+
+   end
+
+!  ==============
+!  Set saved-self
+!  ==============
+
+   set_saved_self
+   ! Set saved_self. Allocatable version.
+      self :: IN
+      saved_self = self
+   end
+
+   set_from_saved_self
+   ! Set from saved_self. Allocatable version.
+      self :: OUT
+      self = saved_self
+   end
+
+!  ===========
+!  Set methods
+!  ===========
+
+   set_name(val) ::: PURE
+   ! Set the molecule name
+      self :: INOUT
+      val :: STR, IN
+
+   ENSURE(all(ATOM::element_symbols/=val),"job name must not be an element symbol")
+
+      .name = val
+
+   end
+
+   set_charge(val) ::: get_from(OBJECT:set, ARG?=>.charge, VAL?=>INT), PURE
+   ! Generic set
+   end
+
+   set_spin_multiplicity(val) ::: PURE
+   ! Set the spin multiplicity and no. of alpha & beta electrons
+      self :: INOUT
+      val :: INT, IN
+
+   ENSURE(val/=0,"cannot have zero multiplicity")
+
+      .spin_multiplicity = val
+
+      if (.atom.allocated) then
+         .n_e = .INQ:no_of_electrons
+         .n_a = .INQ:no_of_alpha_electrons
+         .n_b = .INQ:no_of_beta_electrons
+      end
+
+   end
+
+   set_n_a_n_b_and_multiplicity(n_a,n_b) ::: PURE
+   ! Set the no. of alpha and beta electrons, and then the spin
+   ! multiplicity. This is needed only for Molden files!
+      self :: INOUT
+      n_a :: INT, IN
+      n_b :: INT, IN
+
+   ENSURE(n_a>=n_b,"n_a can't be smaller than n_b")
+
+      .n_a = n_a
+      .n_b = n_b
+      .spin_multiplicity = (n_a - n_b) + 1
+
+   end
+
+   set_SCF_occupations_for_NOs(genre) ::: PURE
+   ! Set the SCF occupation numbers for the NOs
+      self  :: INOUT
+      genre :: STR, IN
+
+      select case (genre)
+
+      case ("r ")
+         .NO_occ_nos.r(1:.n_a) = TWO
+
+      case ("u ")
+         .NO_occ_nos.a(1:.n_a) = ONE
+         .NO_occ_nos.b(1:.n_b) = ONE
+
+      case ("gc")
+         .NO_occ_nos.g(1:.n_e) = ONE
+
+      end
+
+   end
+
+   set_force_constants(fc) ::: leaky, PURE
+   ! Set the .force_constants to the flat array "fc".
+   ! Since it is a symmetric matrix the order does not matter.
+      self :: INOUT
+      fc :: VEC{REAL}, IN
+
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(fc.dim==9*.atom.dim*.atom.dim,"wrong size, fc")
+
+      n3n :: INT
+
+      ! Create space
+      n3n = 3*.atom.dim
+      .force_constants.destroy
+      .force_constants.create(n3n,n3n)
+
+      ! Reshape
+      .force_constants = reshape(fc,[n3n,n3n])
+
+   end
+
+!  ===================
+!  Atoms & atom groups
+!  ===================
+
+   update_atom_info ::: leaky, private, PURE
+   ! Set the associated atom information
+   ! . Atom tags and kind indices
+   ! . The spin multiplicity
+   ! . The number of alpha and beta electrons.
+   ! WARNING: .atom.update depends on .atom.basis, so you might need
+   !          to call this routine again!
+      self :: INOUT
+
+      if (.atom.deallocated) return
+    ! if (.atom_info_made) return
+
+      ! Finalize 
+      .atom.update
+
+      ! No. of atoms & no. of atom kinds
+      .n_atom = .atom.dim
+      .n_atom_kind = maxval(.atom.kind)
+
+      ! Reset multiplicity?
+      if (NOT .INQ:has_valid_no_of_beta_electrons) then
+      !  WARN("Inconsistent charge and multiplicity")
+      !  WARN("Reassigning the multiplicity")
+         .spin_multiplicity = .INQ:default_spin_multiplicity
+      end
+
+      ! Now can set # of electrons
+      .n_e = .INQ:no_of_electrons
+      .n_a = .INQ:no_of_alpha_electrons
+      .n_b = .INQ:no_of_beta_electrons
+
+      ! Make connetion table
+      .atom.make_connection_table(.atoms_bonded_to_atom)
+
+    ! .atom_info_made = TRUE
+
+   end
+
+! How is below different from update_atom_groups?
+! It should have a better name ...
+
+   update_atom_group_info(skip_ANOs) ::: leaky
+   ! Update .atom_group information (ANOs, crystal, SCF guess ...)
+   ! WARNING: atom_group(:).mol.crystal's are clones of .crystal
+      self :: INOUT
+      skip_ANOs :: BIN, IN, optional
+
+   ENSURE(.atom.allocated,"atom groups must be defined after atoms=")
+   ENSURE(.atom_group.allocated,"no atom_group")
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(.mol.dim==.atom_group.dim,"wrong size, .mol")
+
+      g :: INT
+
+      ! Below sounds not good?
+      if (.scfdata.deallocated) then
+         .SET:set_SCF_defaults ! NOT PURE
+         .scfdata.set_output(FALSE)
+      end
+
+      do g = 1,.atom_group.dim
+
+         ! Don't remake ANO data if there
+         if (present(skip_ANOs)) then
+         if (NOT skip_ANOs) then
+            .mol(g).SET:resolve_ANOs_from(self,.atom_group(g).atom_index)
+         end
+         end
+
+         ! Assign the crystal & gegenerate unit cell atoms
+         if (.crystal.allocated) then
+            .mol(g).crystal = .crystal ! Should be minimal copy?
+            .mol(g).crystal.update_fragment_info(.mol(g).atom)
+         end
+
+         ! Set guess-type SCF defaults
+         ! Don't know why this makes 4AP fail ... commented out
+       ! if (NOT .atom_group(g).spin_multiplicity_set) then 
+       !    .atom_group(g).mol.SET:set_SCF_guess_defaults_from(.scfdata)
+       ! end
+
+      end
+
+   end
+
+!  ===========================================
+!  Set new molecule from an atom or atom_group
+!  ===========================================
+
+   set_molecule_from_atom(n,mol) ::: leaky
+   ! Make a fully fledged molecule "mol" from a single atom "n" in self
+   ! The new molecule is ready for an SCF calculation.
+   ! DANGER: see warnings below
+      self :: IN
+      n :: INT, IN
+      mol :: MOLECULE, OUT
+
+   ENSURE(.atom.allocated,"no atom info")
+   ENSURE(n<=.n_atom,"atom number n too big")
+
+      i,k :: INT
+
+      ! Create the single atom and copy its pointers
+      ! WARNING: dont destroy ptr parts of mol.atom
+      mol.atom = .atom(n:n)
+      mol.atom(1).set_position([ZERO,ZERO,ZERO])
+
+      ! Set default molecule e.g. the name, atom_info
+      ! and default multiplicity ...
+      mol.SET:set_defaults ! NOT PURE
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol
+      mol.SET:resolve_bases_and_update_from(self)
+      mol.SET:update_atom_info
+
+      ! Don't remake ANO data if there
+      i = 0
+      mol.SET:resolve_ANOs_from(self,[(i,i=n,n)])
+
+      ! Set guess-type SCF defaults
+      mol.SET:set_SCF_guess_defaults_from(.scfdata)
+
+      ! Set nondefault atomic default state
+      if (.scfdata.initial_atomic_states.allocated) then
+         k = .atom(n).kind
+         mol.SET:set_charge(.scfdata.initial_atomic_states(k,1))
+         mol.SET:set_spin_multiplicity(.scfdata.initial_atomic_states(k,2))
+      end
+
+   end
+
+   set_molecule_from_atom_group(g,mol,set_name) ::: leaky
+   ! Make a fully fledged molecule "mol" from group "g" of atoms
+   ! specified in .atom_group(g).element(:), ready for an SCF
+   ! calculation.
+      self :: INOUT
+      g    :: INT, IN
+      mol  :: MOLECULE, OUT
+      set_name :: BIN, optional, IN
+
+   ENSURE(.atom.allocated,"no atom info")
+   ENSURE(.atom_group.allocated,"no atom_group info")
+   ENSURE(g<=.atom_group.dim,"group number g too big")
+   ENSURE(g>=1,"group number g less than 1!")
+
+      name :: STR
+      reset_name :: BIN
+
+      reset_name = TRUE
+      if (present(set_name)) reset_name = set_name
+
+      ! Create the single atom and copy its pointers
+      ! WARNING: dont destroy ptr parts of mol.atom
+      mol.atom = .atom(.atom_group(g).atom_index)
+
+      ! Set default molecule e.g. the name, atom_info
+      ! and default multiplicity ...
+      mol.SET:set_defaults ! NOT PURE
+
+      ! Reset .name after .set_defaults
+      name = .atom_group(g).name
+      if (reset_name) then
+      if (name==" ") then
+         name = "group-"//trim(g.to_str)//"-"
+         name = trim(name)//trim(mol.atom.chemical_formula(with_spaces=FALSE))
+         mol.SET:set_name(name)
+         .atom_group(g).set_name(name)
+      end
+      end
+
+      ! Set charge & multiplicity
+      mol.charge            = .atom_group(g).charge
+      mol.spin_multiplicity = mol.SET:default_spin_multiplicity
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol !
+      mol.SET:resolve_bases_and_update_from(self)
+      mol.SET:update_atom_info
+
+      ! Don't remake ANO data if there
+      mol.SET:resolve_ANOs_from(self,.atom_group(g).atom_index)
+
+      ! Make atom info. No recursive groups. Yet?
+      mol.atom_info_made = FALSE
+      mol.SET:update_atom_and_basis_info_no_grp
+
+      ! Assign the crystal & gegenerate unit cell atoms
+      if (.crystal.allocated) then
+         mol.crystal = .crystal
+         mol.crystal.update_fragment_info(mol.atom)
+      end
+
+      ! Set guess-type SCF defaults
+      mol.SET:set_SCF_guess_defaults_from(.scfdata)
+
+      ! Reset scf_kind for fraghar calculations
+      if (.scfdata.allocated) then
+      if (.scfdata.SCF_kind(1:8)=="fraghar-") then
+         mol.scfdata.set_SCF_kind(.scfdata.SCF_kind(9:11))
+      end
+      end
+
+      ! Set density matrix from parent?
+      ! Restricted only. Do not clobber
+      if (.density_mx.allocated) then
+      if (.density_mx.r.allocated) then
+      if (mol.density_mx.deallocated) then
+         mol.density_mx.create(mol.n_bf,"r ")
+         .SET:put_group_density_to(mol.density_mx.r,g,mol)
+      end
+      end
+      end
+
+   end
+
+   update_atom_and_basis_info_no_grp ::: leaky
+   ! Update the atom labels, no of electrons, spin multiplicities,
+   ! axis system, crystal fragment info, and bases; remove isosurface.
+      self :: INOUT
+
+      ! Set unique atom tags if needed, multiplicity, no. of
+      ! electrons; resolve basis sets, set basis-shell info; 
+      ! and (possibly) resent kinds
+      .SET:update_atom_info
+      .SET:resolve_bases_and_update
+      .atom.update_kinds    
+      .n_atom_kind = maxval(.atom.kind)
+
+      ! Finalize crystal
+      if (.crystal.allocated) then
+         .SET:resolve_axis_system
+         .crystal.update_fragment_info(.atom)
+      end
+
+      ! Destroy stored atoms here
+      .isosurface.destroy
+
+      .atom_info_made = TRUE
+
+   end
+
+!  ===============
+!  Atom group info
+!  ===============
+
+   set_connected_atom_groups ::: leaky, PURE
+   ! Make .atom_group's from the connection table.
+      self :: INOUT
+
+      n_group,g :: INT
+
+      ! Set group indices, if possible
+      .atom.set_connected_groups
+
+      if (.atom.has_groups) then
+
+         ! Each .atom() had a .group index
+         n_group = .atom.no_of_groups
+         if (.atom_group.deallocated) then
+            .atom_group.create(n_group)
+         else
+            ENSURE(n_group==.atom_group.dim,"inconsistent .atom_group size")
+         end
+      
+         ! Make groups from group index
+         do g = 1,.atom_group.dim
+            .atom_group(g).set_atom_index(.atom(:).group.indices_of_elements_matching(g))
+            .atom_group(g).set_n_atoms(.atom_group(g).atom_index.dim)
+         end
+      
+         ! Set charges
+         if (.atom_group_charges.allocated) then
+            ENSURE(.atom_group_charges.dim==.atom_group.dim,"Wrong size, .atom_group_charges")
+            do g = 1,.atom_group.dim
+               .atom_group(g).set_charge(.atom_group_charges(g))
+            end
+         end
+
+      end
+
+   end
+
+!  =============
+!  Group density
+!  =============
+
+! These can be made much better if the atoms
+! in the groups are assumed contigous.
+
+   put_group_density_to(P,g,mol) ::: PURE
+   ! Put the atom group "g" in the whole .density matrix into "P".
+   ! "mol" is a molecule created from the appropriate atom group "g".
+      self :: IN
+      P :: MAT{REAL}, OUT
+      g :: INT, IN
+      mol :: MOLECULE, IN
+
+   ENSURE(.atom_group.allocated,"no atom group information")
+   ENSURE(g>0,"group number must be positive")
+   ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
+
+      a,b,aa,bb,fa,la,fb,lb,faa,laa,fbb,lbb :: INT
+
+      P = ZERO
+
+      do a = 1,.atom_group(g).n_atoms ! Copy this atom density
+      do b = 1,.atom_group(g).n_atoms
+         aa  = .atom_group(g).atom_index(a)
+         bb  = .atom_group(g).atom_index(b)
+         faa = .first_basis_fn_for_atom(aa)
+         fbb = .first_basis_fn_for_atom(bb)
+         laa = .last_basis_fn_for_atom(aa)
+         lbb = .last_basis_fn_for_atom(bb)
+         fa  = mol.first_basis_fn_for_atom(a)
+         fb  = mol.first_basis_fn_for_atom(b)
+         la  = mol.last_basis_fn_for_atom(a)
+         lb  = mol.last_basis_fn_for_atom(b)
+         P(fa:la,fb:lb) = .density_mx.r(faa:laa,fbb:lbb)
+      end
+      end
+
+   end
+
+   set_group_density_from(P,g,mol) ::: PURE
+   ! Set the atom group "g" density matrix from "P". "mol" must be a
+   ! molecule created from the appropriate atom group "g".
+      self :: INOUT
+      P :: MAT{REAL}, IN
+      g :: INT, IN
+      mol :: MOLECULE, IN
+
+   ENSURE(.atom_group.allocated,"no atom group information")
+   ENSURE(g>0,"group number must be positive")
+   ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
+
+      a,b,aa,bb,fa,la,fb,lb,faa,laa,fbb,lbb :: INT
+
+      do a = 1,.atom_group(g).n_atoms ! Copy this atom density
+      do b = 1,.atom_group(g).n_atoms
+
+         aa  = .atom_group(g).atom_index(a)
+         bb  = .atom_group(g).atom_index(b)
+
+         fa  = mol.first_basis_fn_for_atom(a)
+         fb  = mol.first_basis_fn_for_atom(b)
+         faa =    .first_basis_fn_for_atom(aa)
+         fbb =    .first_basis_fn_for_atom(bb)
+
+         la  = mol.last_basis_fn_for_atom(a)
+         lb  = mol.last_basis_fn_for_atom(b)
+         laa =    .last_basis_fn_for_atom(aa)
+         lbb =    .last_basis_fn_for_atom(bb)
+
+
+         .density_mx.r(faa:laa,fbb:lbb) = P(fa:la,fb:lb)
+
+      end
+      end
+
+   end
+
+   set_group_density(g,mol) ::: PURE
+   ! Set the atom group "g" .density_mx from "P". "mol" must be a
+   ! molecule created from the appropriate atom group "g".
+      self :: INOUT
+      g :: INT, IN
+      mol :: MOLECULE, IN
+
+   ENSURE(.atom_group.allocated,"no atom group information")
+   ENSURE(g>0,"group number must be positive")
+   ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
+   ENSURE(.density_mx.allocated,"no density_mx")
+   ENSURE(.density_mx.r.allocated,"no restricted density_mx")
+
+     a,b,     ga,gb :: INT
+     fga,lga, fa,la :: INT
+     fgb,lgb, fb,lb :: INT
+
+     do a = 1,.atom_group(g).n_atoms
+     do b = 1,.atom_group(g).n_atoms
+
+        ga  = .atom_group(g).atom_index(a)
+        gb  = .atom_group(g).atom_index(b)
+
+        fa  = mol.first_basis_fn_for_atom(a)
+        fga =    .first_basis_fn_for_atom(ga)
+        fb  = mol.first_basis_fn_for_atom(b)
+        fgb =    .first_basis_fn_for_atom(gb)
+
+        la  = mol.last_basis_fn_for_atom(a)
+        lga =    .last_basis_fn_for_atom(ga)
+        lb  = mol.last_basis_fn_for_atom(b)
+        lgb =    .last_basis_fn_for_atom(gb)
+
+        .density_mx.r(fga:lga,fgb:lgb) = mol.density_mx.r(fa:la,fb:lb)
+
+     end
+     end
+
+   end
+
+   set_group_MOs(g,mol) ::: PURE
+   ! Set the atom group "g" .density_mx from "P". "mol" must be a
+   ! molecule created from the appropriate atom group "g".
+      self :: INOUT
+      g :: INT, IN
+      mol :: MOLECULE, IN
+
+   ENSURE(.atom_group.allocated,"no atom group information")
+   ENSURE(g>0,"group number must be positive")
+   ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
+   ENSURE(.MOs.allocated,"no MOs")
+   ENSURE(.NO_occ_nos.allocated,"no NO_occ_nos")
+   ENSURE(mol.MOs.allocated,"no mol MOs")
+   ENSURE(mol.MOs.r.allocated,"no restricted mol MOs")
+
+      a,ga, ms,mf,no :: INT
+      fga,lga, fa,la :: INT
+
+      mf = .INQ:n_bf_up_to_mol(g)
+
+      ms = mf + 1
+      mf = mf + mol.n_bf
+
+      do a = 1,.atom_group(g).n_atoms
+
+         ga  = .atom_group(g).atom_index(a)
+
+         fa  = mol.first_basis_fn_for_atom(a)
+         fga =    .first_basis_fn_for_atom(ga)
+
+         la  = mol.last_basis_fn_for_atom(a)
+         lga =    .last_basis_fn_for_atom(ga)
+
+         .MOs.r(fga:lga,ms:mf) = mol.MOs.r(fa:la,:)
+
+      end
+
+      no = mol.n_e/2
+      .NO_occ_nos.r(ms:ms+no-1) = TWO
+
+   end
+
+!  ============================
+!  Bases directory & basis name
+!  ============================
+
+   set_basis_directory(directory)
+   ! Set the basis directory (for all kinds of bases)
+      self :: IN
+      directory :: STR, IN
+      .basis.set_library_directory(directory)       ! NOT PURE
+      .slaterbasis.set_library_directory(directory)
+      .coppensbasis.set_library_directory(directory)
+   end
+
+   set_basis_name(name) ::: leaky
+   ! Set a gaussian *library* basis set name
+      self :: INOUT
+      name :: STR
+
+ ! DIE_IF(any(name==non_gaussian),"basis "//trim(name)//"is not a gaussian basis")
+
+ !    non_gaussian :: VEC{STR}(len=17,4) = &
+ !       ["Clementi-Roetti  ", &
+ !        "Thakkar          ", &
+ !        "vanLenthe-Barends", &
+ !        "Coppens          "  ]
+
+      ! Set the basis kind
+      .basis_name = name
+
+      ! Destroy links to previous bases
+      if (.atom.allocated) .atom.destroy_basis_part
+      .basis.destroy
+
+      ! Make fresh basis set links (might be leaky)
+      .SET:resolve_gaussianbases ! NOT PURE
+
+   end
+
+   set_slaterbasis_name(name) ::: leaky
+   ! Set a slater *library* basis set name
+      self :: INOUT
+      name :: STR, IN
+
+      ! Set the basis kind
+      .slaterbasis_name = name
+
+      ! Destroy links to previous bases
+      if (.atom.allocated) .atom.destroy_slaterbasis_part
+      .slaterbasis.destroy
+
+      ! Make fresh basis set links (might be leaky)
+      .SET:resolve_slaterbases ! NOT PURE
+
+   end
+
+   set_coppensbasis_name(name) ::: leaky
+   ! Set a coppens *library* basis set name
+      self :: INOUT
+      name :: STR, IN
+
+   ENSURE(name=="Coppens","basis "//trim(name)//"is not a known coppens basis")
+
+      ! Set the basis kind
+      .coppensbasis_name = name
+
+      ! Destroy links to previous bases
+      if (.atom.allocated) .atom.destroy_coppensbasis_part
+      .coppensbasis.destroy
+
+      ! Make fresh basis set links (might be leaky)
+      .SET:resolve_coppensbases ! NOT PURE
+
+   end
+
+!  ==================
+!  Resolve basis sets
+!  ==================
+
+   resolve_bases_and_update ::: leaky
+   ! Match the basis set labels with a basis set, either from a
+   ! library or from the user input. The atoms must exist!
+      self :: INOUT
+
+      if (.atom.deallocated) return
+
+      ! Read and resolve
+      if (NOT .atom.bases_are_resolved) then
+         .basis_info_made = FALSE
+         .SET:resolve_coppensbases ! NOT PURE
+         .SET:resolve_slaterbases
+         .SET:resolve_gaussianbases
+      end
+
+      ! Update
+      .SET:update_basis_info
+
+   end
+
+   resolve_bases_and_update_from(mol) ::: leaky
+   ! Set the basis data from molecule "mol" assumed to be a parent
+   ! "supermolecule" NOTE: atom kinds are *NOT* updated
+      self :: INOUT
+      mol :: MOLECULE, IN
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol
+      .use_spherical_basis = mol.use_spherical_basis
+
+      if (mol.basis.allocated)        .basis        = mol.basis
+      if (mol.slaterbasis.allocated)  .slaterbasis  = mol.slaterbasis
+      if (mol.coppensbasis.allocated) .coppensbasis = mol.coppensbasis
+
+      ! Do it, but don't update atom.kind's
+      .SET:resolve_bases_and_update ! NOT PURE
+
+      .atom_info_made  = TRUE       ! Assume kinds ared OK
+
+   end
+
+   resolve_gaussianbases ::: leaky, private
+   ! Match the basis set labels for every atom with the actual atomic
+   ! basis set nby reading a library basis, if not there.
+      self :: INOUT
+
+      library_basis_labels :: VEC{STR}@
+      n_unique :: INT
+      library :: STR
+
+      if (.atom.deallocated) return
+
+      if (.n_atom<1) return
+
+      if (.atom.bases_are_resolved) return
+
+      ! Read from a library
+      if (.basis_name/=" ") then
+
+         ! Renormalise basis sets. (The library is in normalised form)
+         if (.basis.allocated) .basis.renormalise
+
+         ! Read the basis from the library
+         library = .basis.library_file(.basis_name)
+         library_basis_labels = .atom.library_basis_labels(.basis_name)
+         .basis.read_library_data(library,library_basis_labels,n_unique) ! NOT PURE
+         library_basis_labels.destroy
+
+         if (.basis.allocated) .basis.unnormalise
+
+      end
+
+      ! Resolve 
+      if (.basis.allocated) then
+         .basis.set_spherical(.use_spherical_basis)
+         .atom.resolve_bases(.basis,.basis_name)
+         .atom.set_basis_kind("gaussian")
+         .atom_info_made = FALSE ! Need new atom kinds
+      end
+
+   end
+
+   resolve_slaterbases ::: leaky, private
+   ! Match the basis set labels for every atom with the actual atomic
+   ! basis set by reading a library basis set, if not there.
+      self :: INOUT
+
+      library_basis_labels :: VEC{STR}@
+      n_unique :: INT
+      library :: STR
+
+      if (.atom.deallocated) return
+
+      if (.n_atom<1) return
+
+      if (.atom.slaterbases_are_resolved) return
+
+      ! Read from a library
+      if (.slaterbasis_name/=" ") then
+
+         ! Renormalise basis sets. (The library is in normalised form)
+         if (.slaterbasis.allocated) .slaterbasis.renormalise
+
+         ! Read the basis from the library
+         library = .slaterbasis.library_file(.slaterbasis_name)
+         library_basis_labels = .atom.library_basis_labels(.slaterbasis_name)
+         .slaterbasis.read_library_data(library,library_basis_labels,n_unique)
+         library_basis_labels.destroy
+
+         if (.slaterbasis.allocated) .slaterbasis.unnormalise
+
+      end
+
+      ! Resolve
+      if (.slaterbasis.allocated) then
+         .atom.resolve_bases(.slaterbasis,.slaterbasis_name)
+         .atom.set_basis_kind("slater")
+         .atom_info_made = FALSE ! Need new atom kinds
+      end
+
+   end
+
+   resolve_coppensbases ::: leaky, private
+   ! Match the basis set labels for every atom with the actual atomic
+   ! basis set by reading a library basis set, if not there.
+      self :: INOUT
+
+      library_basis_labels :: VEC{STR}@
+      n_unique :: INT
+      library :: STR
+
+      if (.atom.deallocated) return
+
+      if (.n_atom<1) return
+
+      if (.atom.coppensbases_are_resolved) return
+
+      ! Read from a library 
+      if (.coppensbasis_name/=" ") then
+
+         ! Renormalise basis sets. (The library is in normalised form)
+         if (.coppensbasis.allocated) .coppensbasis.renormalise
+         ! Read the basis from the library
+         library = .coppensbasis.library_file(.coppensbasis_name)
+         library_basis_labels = .atom.library_basis_labels(.coppensbasis_name)
+         .coppensbasis.read_library_data(library,library_basis_labels,n_unique)
+         library_basis_labels.destroy
+
+         if (.coppensbasis.allocated) .coppensbasis.unnormalise
+
+      end
+
+      ! Resolve 
+      if (.coppensbasis.allocated) then
+         .atom.resolve_bases(.coppensbasis,.coppensbasis_name)
+         .atom.set_basis_kind("coppens")
+         .atom_info_made = FALSE ! Need new atom kinds
+      end
+
+   end
+
+   update_basis_info ::: leaky, private, PURE
+   ! Make the basis set information including shell-basis-fn limits
+      self :: INOUT
+
+      if (.basis.deallocated) return
+      if (.atom.deallocated)  return
+
+      .n_basis       = .basis.dim
+      .n_bf          = .atom.no_of_basis_functions
+      .n_prim        = .atom.no_of_primitives
+      .n_shell       = .atom.no_of_shells
+      .n_shell_pairs = .atom.no_of_shell_pairs
+
+      ! Make shell-basis-function limts, etc. (leaky)
+      .SET:update_shell_info
+
+      .basis_info_made = TRUE
+      .atom_info_made  = FALSE ! Since kinds depend on bases
+
+   end
+
+!  ============
+!  Resolve ANOs
+!  ============
+
+   resolve_ANOs_from(mol,list) ::: PURE
+   ! Set ANO data and atom shell info from molecule "mol" from the
+   ! sublist "list". Make sure none of these are destroyed!
+   ! NOTE: No point to assign unique data, all data is non-unique
+      self :: INOUT
+      mol :: MOLECULE, IN
+      list :: VEC{INT}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.n_atom_kind>0,"atoms not finalized")
+   ENSURE(mol.atom.allocated,"mol has no atoms")
+   ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
+   ENSURE(list.dim==.atom.dim,"inconsistent list length")
+
+      made_ANO,made_int,made_shl :: BIN
+      a,b :: INT
+
+      ! Assign ANO orbitals
+      made_ANO =  mol.INQ:has_all_ANO_matrices
+      if (made_ANO) then
+         do a = 1,list.dim
+            b = list(a)
+            .atom(a).density_mx = mol.atom(b).density_mx
+            .atom(a).NOs        = mol.atom(b).NOs
+            .atom(a).NO_occ_nos = mol.atom(b).NO_occ_nos
+            .atom(a).AOs        = mol.atom(b).AOs
+            .atom(a).set_energy(mol.atom(b).energy)
+         end
+      end
+
+      ! Assign ANO interpolators
+      made_int = mol.INQ:has_all_interpolators
+      if (made_int) then
+         do a = 1,list.dim
+            b = list(a)
+            .atom(a).interpolator = mol.atom(b).interpolator
+         end
+      end
+
+      ! Assign atom shell info
+      made_shl = mol.INQ:has_all_shell_info
+      if (made_shl) then
+         do a = 1,list.dim
+            b = list(a)
+            .atom(a).first_basis_fn_for_shell = mol.atom(b).first_basis_fn_for_shell
+            .atom(a).last_basis_fn_for_shell  = mol.atom(b).last_basis_fn_for_shell
+            .atom(a).basis_shell1pair         = mol.atom(b).basis_shell1pair
+         end
+      end
+
+   end
+
+!  Some probs with routine below, use above if you can?
+
+   resolve_ANOs_from(mol) ::: PURE
+   ! Set ANO data and atom shell info from molecule "mol" by comparing
+   ! the atom kinds directly. Make sure none of the assigned ANO data
+   ! is destroyed!
+      self :: INOUT
+      mol  :: MOLECULE, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.n_atom_kind>0,"atoms not finalized")
+   ENSURE(mol.atom.allocated,"mol has no atoms")
+   ENSURE(mol.n_atom_kind>0,"mol atoms not finalized")
+
+      a,b :: INT
+
+      ! Assign ANO orbitals
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+         if (mol.atom(b).has_ANO_matrices) then
+            .atom(a).density_mx     = mol.atom(b).density_mx
+            .atom(a).NOs            = mol.atom(b).NOs
+            .atom(a).NO_occ_nos     = mol.atom(b).NO_occ_nos
+            .atom(a).AOs            = mol.atom(b).AOs
+            .atom(a).set_energy(mol.atom(b).energy)
+            exit ! next atom "a"
+         end
+         end
+      end
+      end
+
+      ! Assign ANO interpolators
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+         if (mol.atom(b).interpolator.allocated) then
+            .atom(a).interpolator = mol.atom(b).interpolator
+            exit ! next atom "a"
+         end
+         end
+      end
+      end
+
+      ! Assign atom shell info
+      do a = 1,.atom.dim
+      do b = 1,mol.atom.dim
+         if (.atom(a).is_same_kind_as(mol.atom(b))) then
+         if (mol.atom(b).has_shell_info) then
+            .atom(a).first_basis_fn_for_shell = mol.atom(b).first_basis_fn_for_shell
+            .atom(a).last_basis_fn_for_shell  = mol.atom(b).last_basis_fn_for_shell
+            .atom(a).basis_shell1pair         = mol.atom(b).basis_shell1pair
+            exit ! next atom "a"
+         end
+         end
+      end
+      end
+
+   end
+
+
+!  =========================
+!  Resolve axes to cartesian
+!  =========================
+
+   resolve_axis_system ::: PURE
+   ! Change the axis system to cartesian, if required.
+   ! NOTE: Errors (if any) are transformed straightforwardly
+      self :: INOUT
+
+      if (.crystal.deallocated) return
+      if (.atom.deallocated)    return
+
+      .atom.change_axis_system_to("cartesian",.crystal.unit_cell,FALSE)
+
+   end
+
+   change_axis_system_to
+   ! Change the axis system.
+   ! NOTE: Errors (if any) are transformed straightforwardly
+      self :: INOUT
+
+      axis_system :: STR
+
+      if (.crystal.deallocated) return
+      if (.atom.deallocated)    return
+
+      stdin.read(axis_system)
+
+      .atom.change_axis_system_to(axis_system,.crystal.unit_cell,FALSE)
+
+   end
+
+!  ============
+!  Read routine
+!  ============
+
+!   read_CIF_ADPs(cif) ::: leaky
+!   ! Read atom ADP information from a Crystallographic Information File, "cif".
+!      cif :: CIF
+!
+!   ENSURE(cif.start_of_data>0,"no start of data in CIF")
+!   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+!   ENSURE(.crystal.allocated,"must have crystal information")
+!
+!      if (NOT cif.file.is_open) cif.open
+!
+!      .atom.read_CIF_ADPs(cif)
+!
+!      .SET:resolve_axis_system
+!
+!   end
+
+!  ======================
+!  Gaussian chk interface
+!  ======================
+
+   set_basis_from_gX_data(l_4_shell,n_cc_4_sh,atom_4_sh,ex_4_prim,cc_4_prim) ::: leaky, PURE
+   ! Set the basis from gaussian data "XXX_4_sh" are the shell data
+   ! flattened over all molecular shells. "XXX_4_prim" are (likewise)
+   ! data flattened over molecular primitives.
+      self :: INOUT
+      l_4_shell,n_cc_4_sh,atom_4_sh :: VEC{INT}, IN
+      ex_4_prim,cc_4_prim :: VEC{REAL}, IN
+
+   ENSURE(NOT .use_spherical_basis,"not implemented")
+   ENSURE(.atom.allocated,"no atonm list")
+   ENSURE(.atom.dim==.n_atom,"wrong size, atom list")
+
+      n_basis,n_shell,n_cc :: INT
+      a,s,t, f,l, b :: INT
+      basis :: BASIS@, target
+      sh :: SHELL*
+      same :: BIN
+
+      ! Molecular basis (to be appended to)
+      n_basis = 0
+      .basis.create(n_basis)
+
+      ! Basis fn/shell counters
+      l = 0   ! Last primitive, flattened over all atoms
+      t = 0   ! Last shell, flattened over all shells
+
+      ! Loop atom "a"
+      do a = 1,.n_atom
+
+         ! Basis for atom "a"
+         basis.create
+         basis.label = trim(.atom(a).generic_chemical_symbol) // ":gaussian"
+
+         ! Set basis label and kind
+         .atom(a).set_basis_label(basis.label)
+         .atom(a).set_basis_kind("gaussian")
+
+         ! No. of shells
+         n_shell = count(atom_4_sh==a)
+
+         ! Create basis shells
+         basis.n_shell = n_shell
+         basis.shell.create(n_shell)
+
+         ! Set basis shells
+         do s = 1,n_shell
+
+            ! This shell
+            sh => basis.shell(s)
+
+            ! Set shell L
+            sh.set_l(l_4_shell(t+s))
+            sh.set_n_comp
+
+            ! Set shell n_cc
+            n_cc    = n_cc_4_sh(t+s)
+            sh.n_cc = n_cc
+
+            ! Set shell exponents/contractions
+            sh.exponent.create(n_cc)
+            sh.contraction.create(n_cc)
+            f = l + 1
+            l = l + n_cc
+            sh.exponent    = ex_4_prim(f:l)
+            sh.contraction = cc_4_prim(f:l)
+
+         end
+
+         ! Set no. of bf'd and primitives
+         basis.n_bf   = basis.no_of_basis_functions
+         basis.n_prim = basis.no_of_primitives
+         basis.unnormalise ! Note this
+
+         t = t + n_shell
+
+         ! Seen basis before?
+         same = FALSE
+         do b = 1,n_basis
+            if (NOT .basis(b).same_as(basis)) cycle
+            same = TRUE
+            exit
+         end
+
+         ! Append only new basis to .basis
+         if (NOT same) then
+            n_basis = n_basis + 1
+            .basis.append(basis)
+         end
+
+         ! Clean
+         basis.destroy
+
+      end
+
+   end
+
+! Should go into GAUSIAN_DATA?
+
+   swap_from_g94_orbital_order(X,swap)
+   ! Swap the order of f orbitals on matrix "X" after reading a
+   ! gaussian checkpoint file, for "swap" equal to "row" or "1", or
+   ! "coloumn" or "2". Also: remove the intra-shell basis function
+   ! normalisation factors which are not used in Tonto.
+      X :: MAT{REAL}
+      swap :: STR
+
+      s,f,l,ls,fg,lg,i,j :: INT
+      fac :: VEC{REAL}@
+      ff :: VEC{INT}(10) = [ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 ]
+      gg :: VEC{INT}(15) = [15, 5, 1, 14, 13, 9, 4, 6, 2, 12, 10, 3, 11, 8, 7]
+
+      select case (swap)
+
+      case("row","1")
+
+         do s = 1,.n_shell
+
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
+
+            ! Swap f & g functions
+            select case (ls)
+            case (3); X(f:l,:) = X(f-1+ff,:)
+            case (4); X(f:l,:) = X(f-1+gg,:)
+            end
+
+            ! Normalisation factors
+            if (ls>1) then  
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do i = f,l
+                  X(i,:) = X(i,:)*fac(i-f+1)
+               end
+            end
+
+         end
+
+      case("column","2")
+
+         do s = 1,.n_shell
+
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
+
+            ! Swap f functions; g functions - no change
+            if (ls==3) then
+               X(:,f:l) = X(:,f-1+ff)
+            end
+
+            ! Swap f & g functions
+            select case (ls)
+            case (3); X(:,f:l) = X(:,f-1+ff)
+            case (4); X(:,f:l) = X(:,f-1+gg)
+            end
+
+            ! Normalisation factors
+            if (ls>1) then  
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do j = f,l
+                  X(:,j) = X(:,j)*fac(j-f+1)
+               end
+            end
+
+         end
+
+      case default
+         DIE("unknown swap kind, "//trim(swap))
+
+      end
+
+   end
+
+   swap_into_g94_orbital_order(X,swap)
+   ! Swap the order of f orbitals on matrix "X" after reading a
+   ! gaussian checkpoint file, for "swap" equal to "row" or "1", or
+   ! "coloumn" or "2". Also: remove the intra-shell basis function
+   ! normalisation factors which are not used in Tonto.
+      X :: MAT{REAL}
+      swap :: STR
+
+      s,f,l,ls,fg,lg,i,j :: INT
+      fac :: VEC{REAL}@
+      ff :: VEC{INT}(10) = [ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 ]
+      gg :: VEC{INT}(15) = [15, 5, 1, 14, 13, 9, 4, 6, 2, 12, 10, 3, 11, 8, 7]
+
+      select case (swap)
+
+      case("row","1")
+
+         do s = 1,.n_shell
+
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
+
+            ! Normalisation factors
+            if (ls>1) then  
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do i = f,l
+                  X(i,:) = X(i,:)/fac(i-f+1)
+               end
+            end
+
+            ! Swap f functions; g functions - no change
+            select case (ls)
+            case (3); X(f-1+ff,:) = X(f:l,:)
+            case (4); X(f-1+gg,:) = X(f:l,:)
+            end
+
+         end
+
+      case("column","2")
+
+         do s = 1,.n_shell
+
+            f  = .first_basis_fn_for_shell(s)
+            l  = .last_basis_fn_for_shell(s)
+            ls = .angular_moment_for_shell(s)
+
+            ENSURE(ls<=4,"cannot yet convert order for h shells")
+
+            ! Normalisation factors
+            if (ls>1) then  
+               lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+               fg = lg + 1
+               lg = lg + GAUSSIAN_DATA:n_comp(ls)
+               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
+               do j = f,l
+                  X(:,j) = X(:,j)/fac(j-f+1)
+               end
+            end
+
+            ! Swap f functions; g functions - no change
+            select case (ls)
+            case (3); X(:,f-1+ff) = X(:,f:l)
+            case (4); X(:,f-1+gg) = X(:,f:l)
+            end
+
+         end
+
+      case default
+         DIE("unknown swap kind, "//trim(swap))
+
+      end
+
+   end
+
+!  =================
+!  Atom pair indices
+!  =================
+
+   set_atom_pair_indices_from(index,a,b,fa,la,na,fb,lb,nb) ::: PURE
+   ! Return the atom indicies "a" and "b" which map to an atom-pair
+   ! "index".  Also get "fa", "la" and "fb", "lb", the indices of
+   ! first and last basis functions for atoms "a" and "b", and "na"
+   ! and "nb", the number of basis functions on those atoms,
+   ! respectively. NOTE: "fa" and "fb" are actually the first basis
+   ! functions for atoms "a" and "b" *minus 1*.
+      self :: IN
+      index :: INT, IN
+      a,b   :: INT, OUT
+      fa,la,na :: INT, OUT
+      fb,lb,nb :: INT, OUT
+
+      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      b  = index - a*(a-1)/2
+
+      fa = .first_basis_fn_for_atom(a) - 1
+      la =  .last_basis_fn_for_atom(a)
+      na = la - fa
+
+      fb = .first_basis_fn_for_atom(b) - 1
+      lb =  .last_basis_fn_for_atom(b)
+      nb = lb - fb
+
+   end
+
+!  ==================================
+!  VEC{ATOM} shell extraction methods
+!  ==================================
+
+! The set routines should be quicker, but I'm not sure.
+! When allocatable components are used it may be easier
+! to allocate an entire basis set array once and for all.
+
+   set_shell_from(index,shell) ::: leaky, PURE
+   ! Set basis set "shell" (SHELL) corresponding to "index"
+      self :: IN
+      index :: INT, IN
+      shell :: SHELL, OUT
+
+      aa,sa :: INT
+
+      aa    = .atom_for_shell(index)
+      sa    = .atom_shell_for_shell(index)
+      shell = .atom(aa).basis.shell(sa)
+
+   end
+
+   set_shell1_from(index,shell) ::: leaky, PURE
+   ! Get basis set "shell" (SHELL1) corresponding to "index"
+      self :: IN
+      index :: INT, IN
+      shell :: SHELL1, OUT
+
+      aa,sa :: INT
+
+      aa = .atom_for_shell(index)
+      sa = .atom_shell_for_shell(index)
+
+      shell.set(.atom(aa).basis.shell(sa),.atom(aa).position)
+
+   end
+
+   set_shell1_from(index,shell,fa,la) ::: leaky, PURE
+   ! Get the "index"-th "shell" of the basis set with first bf index
+   ! "fa", last bf index "la".
+      self :: IN
+      index :: INT, IN
+      shell :: SHELL1, OUT
+      fa,la :: INT, OUT
+
+      aa,sa :: INT
+
+      aa = .atom_for_shell(index)
+      sa = .atom_shell_for_shell(index)
+      fa = .first_basis_fn_for_shell(index)
+      la = .last_basis_fn_for_shell(index)
+
+      shell.set(.atom(aa).basis.shell(sa),.atom(aa).position)
+
+   end
+
+   set_shell1_from(index,shell,fa,la,na) ::: leaky, PURE
+   ! Get the "index"-th "shell" of the basis set with first bf index
+   ! "fa", last bf index "la", and "na" the no. of bf's in the shell.
+      self :: IN
+      index :: INT, IN
+      shell :: SHELL1, OUT
+      fa,la,na :: INT, OUT
+
+      .SET:set_shell1_from(index,shell,fa,la)
+      na = la - fa + 1
+
+   end
+
+!  ==================
+!  Shell pair indices
+!  ==================
+
+   set_shell2_indices_from(index,a,b,fa,la,na,fb,lb,nb) ::: pure
+   ! Return the shell indicies "a" and "b" which map to "index"
+   ! Also return the basis function start indices "fa", "la", etc ...
+      self :: IN
+      index :: INT, IN
+      a,b      :: INT, OUT
+      fa,la,na :: INT, OUT
+      fb,lb,nb :: INT, OUT
+
+      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      b  = index - a*(a-1)/2
+
+      fa = .first_basis_fn_for_shell(a)
+      fb = .first_basis_fn_for_shell(b)
+
+      la =  .last_basis_fn_for_shell(a)
+      lb =  .last_basis_fn_for_shell(b)
+
+      na = la - fa + 1
+      nb = lb - fb + 1
+
+   end
+
+   set_shell2_indices_from(index,a,b,fa,la,na,fb,lb,nb,atom_a,atom_b) ::: pure
+   ! Return the shell indicies "a" and "b" which map to "index"
+   ! Also return the basis function start indices "fa", "la", etc ...
+   ! Also return the atom indices "atom_a" and "atom_b" for each shell.
+      self :: IN
+      index :: INT, IN
+      a,b      :: INT, OUT
+      fa,la,na :: INT, OUT
+      fb,lb,nb :: INT, OUT
+      atom_a,atom_b :: INT, OUT
+
+      .SET:set_shell2_indices_from(index,a,b,fa,la,na,fb,lb,nb)
+
+      atom_a = .atom_for_shell(a)
+      atom_b = .atom_for_shell(b)
+
+   end
+
+!  =======================
+!  Precomputed shell pairs
+!  =======================
+
+   set_shell2_from(index,sh2) ::: leaky, PURE
+   ! Get SHELL2 "sh2" correponding to the pair index "index".
+      self  :: IN
+      index :: INT, IN
+      sh2   :: SHELL2, OUT
+
+      a,b,aa,sa,bb,sb :: INT
+      pa,pb :: VEC{REAL}(3)
+
+      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      b  = index - a*(a-1)/2
+
+      sa = .basis_shell_for_shell(a)
+      sb = .basis_shell_for_shell(b)
+
+      aa = .atom_for_shell(a)
+      bb = .atom_for_shell(b)
+
+      pa = .atom(aa).position
+      pb = .atom(bb).position
+
+      sh2.set_and_precompute_from(.basis_shell1pair(sa,sb),pa,pb,aa==bb,skip=FALSE)
+
+   end
+
+   set_shell2_from(index,sh2,fa,la,na,fb,lb,nb) ::: leaky, PURE
+   ! Get the SHELL2 object "sh2" correponding to the pair index "index"
+   ! Also return the basis function start indices "fa", "la", etc ...
+      self  :: IN
+      index :: INT, IN
+      sh2   :: SHELL2, OUT
+      fa,la,na :: INT, OUT
+      fb,lb,nb :: INT, OUT
+
+      a,b,aa,sa,bb,sb :: INT
+      pa,pb :: VEC{REAL}(3)
+
+      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      b  = index - a*(a-1)/2
+
+      fa = .first_basis_fn_for_shell(a)
+      fb = .first_basis_fn_for_shell(b)
+
+      la =  .last_basis_fn_for_shell(a)
+      lb =  .last_basis_fn_for_shell(b)
+
+      na = la - fa + 1
+      nb = lb - fb + 1
+
+      sa = .basis_shell_for_shell(a)
+      sb = .basis_shell_for_shell(b)
+
+      aa = .atom_for_shell(a)
+      bb = .atom_for_shell(b)
+
+      pa = .atom(aa).position
+      pb = .atom(bb).position
+
+      sh2.set_and_precompute_from(.basis_shell1pair(sa,sb),pa,pb,aa==bb,skip=FALSE)
+
+   end
+
+   set_shell2_from(index,sh2,fa,la,na,fb,lb,nb,atom_a,atom_b) ::: leaky, PURE
+   ! Get the SHELL2 object "sh2" correponding to the pair index "index"
+   ! Also return the basis function start indices "fa", "la", etc ...
+      self  :: IN
+      index :: INT, IN
+      sh2   :: SHELL2, OUT
+      fa,la,na :: INT, OUT
+      fb,lb,nb :: INT, OUT
+      atom_a,atom_b :: INT, OUT
+
+      a,b,sa,sb :: INT
+      pa,pb :: VEC{REAL}(3)
+
+      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      b  = index - a*(a-1)/2
+
+      fa = .first_basis_fn_for_shell(a)
+      fb = .first_basis_fn_for_shell(b)
+
+      la =  .last_basis_fn_for_shell(a)
+      lb =  .last_basis_fn_for_shell(b)
+
+      na = la - fa + 1
+      nb = lb - fb + 1
+
+      sa = .basis_shell_for_shell(a)
+      sb = .basis_shell_for_shell(b)
+
+      atom_a = .atom_for_shell(a)
+      atom_b = .atom_for_shell(b)
+
+      pa = .atom(atom_a).position
+      pb = .atom(atom_b).position
+
+      sh2.set_and_precompute_from(.basis_shell1pair(sa,sb),pa,pb,atom_a==atom_b,FALSE)
+
+   end
+
+   set_shell2_from(index,sh2,a,fa,la,na,b,fb,lb,nb,atom_a,atom_b) ::: leaky, PURE
+   ! Get the SHELL2 object "sh2" correponding to the pair index "index"
+   ! Also return the basis function start indices "fa", "la", etc ...
+      self  :: IN
+      index :: INT, IN
+      sh2   :: SHELL2, OUT
+      a,fa,la,na :: INT, OUT
+      b,fb,lb,nb :: INT, OUT
+      atom_a,atom_b :: INT, OUT
+
+      sa,sb :: INT
+      pa,pb :: VEC{REAL}(3)
+
+      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      b  = index - a*(a-1)/2
+
+      fa = .first_basis_fn_for_shell(a)
+      fb = .first_basis_fn_for_shell(b)
+
+      la =  .last_basis_fn_for_shell(a)
+      lb =  .last_basis_fn_for_shell(b)
+
+      na = la - fa + 1
+      nb = lb - fb + 1
+
+      sa = .basis_shell_for_shell(a)
+      sb = .basis_shell_for_shell(b)
+
+      atom_a = .atom_for_shell(a)
+      atom_b = .atom_for_shell(b)
+
+      pa = .atom(atom_a).position
+      pb = .atom(atom_b).position
+
+      sh2.set_and_precompute_from(.basis_shell1pair(sa,sb),pa,pb,atom_a==atom_b,FALSE)
+
+   end
+
+!  =====================
+!  Shell quartet indices
+!  =====================
+
+   set_shell4_indices_from(index,fa,la,fb,lb,fc,lc,fd,ld) ::: pure
+   ! For the quartet index "index" return the shell indicies "a", "b",
+   ! "c" and "d" which map to "index". Also return the basis function
+   ! start indices "fa", "la", etc ...
+      self  :: IN
+      index :: INT, IN
+      fa,la,fb,lb :: INT, OUT
+      fc,lc,fd,ld :: INT, OUT
+
+      a,b,c,d :: INT
+      ab,cd :: INT
+
+      ab = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      cd = index - ab*(ab-1)/2
+
+      a  = (1+int(sqrt(8.0d0*ab-7.0d0)))/2
+      b  = ab - a*(a-1)/2
+
+      c  = (1+int(sqrt(8.0d0*cd-7.0d0)))/2
+      d  = cd - c*(c-1)/2
+
+      fa = .first_basis_fn_for_shell(a)
+      fb = .first_basis_fn_for_shell(b)
+      fc = .first_basis_fn_for_shell(c)
+      fd = .first_basis_fn_for_shell(d)
+
+      la =  .last_basis_fn_for_shell(a)
+      lb =  .last_basis_fn_for_shell(b)
+      lc =  .last_basis_fn_for_shell(c)
+      ld =  .last_basis_fn_for_shell(d)
+
+   end
+
+   set_shell4_indexes_from(index,a,b,c,d,atom_a,atom_b,atom_c,atom_d) ::: pure
+   ! For the quartet index "index" return the shell indicies "a", "b",
+   ! "c" and "d" which map to "index" and the corresponding atom
+   ! centers. Note different spelling for this routine and the one
+   ! above to avoid overload problems.
+      self    :: IN
+      index   :: INT, IN
+      a,b,c,d :: INT, OUT
+      atom_a,atom_b :: INT, OUT
+      atom_c,atom_d :: INT, OUT
+
+      ab,cd :: INT
+
+      ab = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      cd = index - ab*(ab-1)/2
+
+      a  = (1+int(sqrt(8.0d0*ab-7.0d0)))/2
+      b  = ab - a*(a-1)/2
+
+      c  = (1+int(sqrt(8.0d0*cd-7.0d0)))/2
+      d  = cd - c*(c-1)/2
+
+      atom_a = .atom_for_shell(a)
+      atom_b = .atom_for_shell(b)
+      atom_c = .atom_for_shell(c)
+      atom_d = .atom_for_shell(d)
+
+   end
+
+!  ==============
+!  Shell quartets
+!  ==============
+
+   set_shell4_from(a,b,c,d,sh4) ::: leaky, PURE
+   ! Get the SHELL4 object "sh4" correponding to the indicies "a",
+   ! "b", "c" and "d".
+      self    :: IN
+      a,b,c,d :: INT, IN
+      sh4     :: SHELL4, OUT
+
+      aa,bb,cc,dd :: INT
+      sa,sb,sc,sd :: INT
+
+      aa = .atom_for_shell(a)
+      bb = .atom_for_shell(b)
+      cc = .atom_for_shell(c)
+      dd = .atom_for_shell(d)
+
+      sa = .atom_shell_for_shell(a)
+      sb = .atom_shell_for_shell(b)
+      sc = .atom_shell_for_shell(c)
+      sd = .atom_shell_for_shell(d)
+
+      sh4.a.set(.atom(aa).basis.shell(sa), .atom(aa).position)
+      sh4.b.set(.atom(bb).basis.shell(sb), .atom(bb).position)
+      sh4.c.set(.atom(cc).basis.shell(sc), .atom(cc).position)
+      sh4.d.set(.atom(dd).basis.shell(sd), .atom(dd).position)
+
+   end
+
+   set_shell4_from(index,sh4,a,b,c,d) ::: leaky, PURE
+   ! Get the SHELL4 object "sh4" correponding to the quartet index
+   ! "index" Also return the shell indicies "a", "b", "c" and "d"
+   ! which map to "index"
+      self    :: IN
+      index   :: INT, IN
+      sh4     :: SHELL4, OUT
+      a,b,c,d :: INT, OUT
+
+      ab,cd :: INT
+      aa,bb,cc,dd :: INT
+      sa,sb,sc,sd :: INT
+
+      ab = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      cd = index - ab*(ab-1)/2
+
+      a  = (1+int(sqrt(8.0d0*ab-7.0d0)))/2
+      b  = ab - a*(a-1)/2
+
+      c  = (1+int(sqrt(8.0d0*cd-7.0d0)))/2
+      d  = cd - c*(c-1)/2
+
+      aa = .atom_for_shell(a)
+      bb = .atom_for_shell(b)
+      cc = .atom_for_shell(c)
+      dd = .atom_for_shell(d)
+
+      sa = .atom_shell_for_shell(a)
+      sb = .atom_shell_for_shell(b)
+      sc = .atom_shell_for_shell(c)
+      sd = .atom_shell_for_shell(d)
+
+      sh4.a.set(.atom(aa).basis.shell(sa), .atom(aa).position)
+      sh4.b.set(.atom(bb).basis.shell(sb), .atom(bb).position)
+      sh4.c.set(.atom(cc).basis.shell(sc), .atom(cc).position)
+      sh4.d.set(.atom(dd).basis.shell(sd), .atom(dd).position)
+
+   end
+
+   set_shell4_from(index,sh4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld) ::: leaky, PURE
+   ! Get the SHELL4 object "sh4" correponding to the quartet index
+   ! "index" Also return the shell indicies "a", "b", "c" and "d"
+   ! which map to "index" Also return the basis function start indices
+   ! "fa", "la", etc ...
+      self  :: IN
+      index :: INT, IN
+      sh4   :: SHELL4, OUT
+      a,b,c,d     :: INT, OUT
+      fa,la,fb,lb :: INT, OUT
+      fc,lc,fd,ld :: INT, OUT
+
+      ab,cd,aa,sa,bb,sb,cc,sc,dd,sd :: INT
+
+      ab = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      cd = index - ab*(ab-1)/2
+
+      a  = (1+int(sqrt(8.0d0*ab-7.0d0)))/2
+      b  = ab - a*(a-1)/2
+
+      c  = (1+int(sqrt(8.0d0*cd-7.0d0)))/2
+      d  = cd - c*(c-1)/2
+
+      aa =       .atom_for_shell(a)
+      sa = .atom_shell_for_shell(a)
+      bb =       .atom_for_shell(b)
+      sb = .atom_shell_for_shell(b)
+      cc =       .atom_for_shell(c)
+      sc = .atom_shell_for_shell(c)
+      dd =       .atom_for_shell(d)
+      sd = .atom_shell_for_shell(d)
+
+      sh4.a.set(.atom(aa).basis.shell(sa), .atom(aa).position)
+      sh4.b.set(.atom(bb).basis.shell(sb), .atom(bb).position)
+      sh4.c.set(.atom(cc).basis.shell(sc), .atom(cc).position)
+      sh4.d.set(.atom(dd).basis.shell(sd), .atom(dd).position)
+
+      fa = .first_basis_fn_for_shell(a)
+      fb = .first_basis_fn_for_shell(b)
+      fc = .first_basis_fn_for_shell(c)
+      fd = .first_basis_fn_for_shell(d)
+
+      la =  .last_basis_fn_for_shell(a)
+      lb =  .last_basis_fn_for_shell(b)
+      lc =  .last_basis_fn_for_shell(c)
+      ld =  .last_basis_fn_for_shell(d)
+
+   end
+
+   set_shell4_from(index,sh4,a,b,c,d,atom_a,atom_b,atom_c,atom_d) ::: leaky, PURE
+   ! Get the SHELL4 object "shell" correponding to the quartet index
+   ! "index" Also return the shell indicies "a", "b", "c" and "d"
+   ! which map to "index" Plus the atoms which the shells are on.
+      self  :: IN
+      index :: INT, IN
+      sh4   :: SHELL4, OUT
+      a,b,c,d       :: INT, OUT
+      atom_a,atom_b :: INT, OUT
+      atom_c,atom_d :: INT, OUT
+
+      ab,cd,sa,sb,sc,sd :: INT
+
+      ab = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+      cd = index - ab*(ab-1)/2
+
+      a  = (1+int(sqrt(8.0d0*ab-7.0d0)))/2
+      b  = ab - a*(a-1)/2
+
+      c  = (1+int(sqrt(8.0d0*cd-7.0d0)))/2
+      d  = cd - c*(c-1)/2
+
+      atom_a =       .atom_for_shell(a)
+      sa     = .atom_shell_for_shell(a)
+      atom_b =       .atom_for_shell(b)
+      sb     = .atom_shell_for_shell(b)
+      atom_c =       .atom_for_shell(c)
+      sc     = .atom_shell_for_shell(c)
+      atom_d =       .atom_for_shell(d)
+      sd     = .atom_shell_for_shell(d)
+
+      sh4.a.set(.atom(atom_a).basis.shell(sa), .atom(atom_a).position)
+      sh4.b.set(.atom(atom_b).basis.shell(sb), .atom(atom_b).position)
+      sh4.c.set(.atom(atom_c).basis.shell(sc), .atom(atom_c).position)
+      sh4.d.set(.atom(atom_d).basis.shell(sd), .atom(atom_d).position)
+
+   end
+
+   set_shell4_ab_from(a,b,sh4) ::: leaky, PURE
+   ! Set the a and b parts of the "sh4" SHELL4 object.
+      self :: IN
+      a,b  :: INT, IN
+      sh4  :: SHELL4, OUT
+
+      aa,sa :: INT
+      bb,sb :: INT
+
+      aa = .atom_for_shell(a)
+      bb = .atom_for_shell(b)
+
+      sa = .atom_shell_for_shell(a)
+      sb = .atom_shell_for_shell(b)
+
+      sh4.a.set(.atom(aa).basis.shell(sa), .atom(aa).position)
+      sh4.b.set(.atom(bb).basis.shell(sb), .atom(bb).position)
+
+   end
+
+   set_shell4_cd_from(c,d,sh4) ::: leaky, PURE
+   ! Set the c and d parts of the "sh4" SHELL4 object.
+      self :: IN
+      c,d  :: INT, IN
+      sh4  :: SHELL4, OUT
+
+      cc,sc :: INT
+      dd,sd :: INT
+
+      cc = .atom_for_shell(c)
+      dd = .atom_for_shell(d)
+
+      sc = .atom_shell_for_shell(c)
+      sd = .atom_shell_for_shell(d)
+
+      sh4.c.set(.atom(cc).basis.shell(sc), .atom(cc).position)
+      sh4.d.set(.atom(dd).basis.shell(sd), .atom(dd).position)
+
+   end
+
+   set_shell1q_ab_from(a,b,sh1q,skip) ::: leaky, PURE
+   ! Set the "a" and "b" parts of the "sh1q" SHELL1QUARTET object. 
+   ! If "skip" is TRUE then some primitive pairs are ignored, if too
+   ! small (this should not be set if any atoms in the qurtet are the
+   ! same; if in doubt set skip=FALSE).
+      self :: IN
+      a,b  :: INT, IN
+      sh1q :: SHELL1QUARTET, INOUT
+      skip :: BIN, IN
+
+      aa,sa,bb,sb :: INT
+      pa,pb :: VEC{REAL}(3)
+
+      aa = .atom_for_shell(a)         !which atom.
+      bb = .atom_for_shell(b)
+
+      sa = .basis_shell_for_shell(a)  !which shell.
+      sb = .basis_shell_for_shell(b)
+
+      pa = .atom(aa).position
+      pb = .atom(bb).position
+
+      sh1q.set_ab_new(.basis_shell1pair(sa,sb),pa,pb,aa==bb,skip)
+
+   end
+
+   set_shell1q_cd_from(c,d,sh1q,skip) ::: leaky, PURE
+   ! Set the "c" and "d" parts of the "sh1q" SHELL1QUARTET object. 
+   ! If "skip" is TRUE then some primitive pairs are ignored, if too
+   ! small (this should not be set if any atoms in the qurtet are the
+   ! same; if in doubt set skip=FALSE).
+      self :: IN
+      c,d  :: INT, IN
+      sh1q :: SHELL1QUARTET, INOUT
+      skip :: BIN, IN
+
+      cc,sc,dd,sd :: INT
+      pc,pd :: VEC{REAL}(3)
+
+      cc = .atom_for_shell(c)         !which atom.
+      dd = .atom_for_shell(d)
+
+      sc = .basis_shell_for_shell(c)  !which shell.
+      sd = .basis_shell_for_shell(d)
+
+      pc = .atom(cc).position
+      pd = .atom(dd).position
+
+      sh1q.set_cd_new(.basis_shell1pair(sc,sd),pc,pd,cc==dd,skip)
+
+   end
+
+!  ======================
+!  Make shell information
+!  ======================
+
+   update_shell_info ::: leaky, PURE
+   ! Define a vector of atom numbers corresponding to the molecule's
+   ! basis set shell numbers; also define a vector of atom shell
+   ! numbers corresponding to the molecule basis set shell number; 
+   ! and precalculated shell info for integrals.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atom information")
+   ENSURE(.atom.bases_are_resolved,"gaussian bases not all resolved")
+   ENSURE(.n_atom>0,"no atoms")
+   ENSURE(.basis.allocated,"no basis set")
+
+      ! Set basis l_max before anything else
+      .basis_l_max = .basis.maximum_basis_set_l_value
+    ! GAUSSIAN_DATA:set_indices(.basis_l_max)
+
+      ! Set atom for shell
+      .atom_for_shell.destroy
+      .atom.make_atom_for_shell(.atom_for_shell)
+
+      .atom_shell_for_shell.destroy
+      .atom.make_atom_shell_for_shell(.atom_shell_for_shell)
+
+      ! Set first/last shell for atom
+      .first_shell_for_atom.destroy
+       .last_shell_for_atom.destroy
+      .first_shell_for_atom.create(.n_atom)
+       .last_shell_for_atom.create(.n_atom)
+      .atom.make_shell_for_atom_limits(.first_shell_for_atom,.last_shell_for_atom)
+
+      ! Set first/last bf for shell
+      .first_basis_fn_for_shell.destroy
+       .last_basis_fn_for_shell.destroy
+      .angular_moment_for_shell.destroy
+      .atom.make_shell_limits(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+
+      ! Set first/last bf for atom
+      .first_basis_fn_for_atom.destroy
+       .last_basis_fn_for_atom.destroy
+      .atom.make_atom_basis_fn_limits(.first_basis_fn_for_atom,.last_basis_fn_for_atom)
+
+      ! Shell pointer into flattened .basis vector
+      .basis_shell_for_shell.destroy
+      .atom.make_basis_shell_for_shell(.basis_shell_for_shell,.basis)
+
+      ! Precalculate non-positional basis-pair information
+      .n_unique_shells = .basis.no_of_shells
+      .basis_shell1pair.destroy
+      .basis_shell1pair.create(.n_unique_shells,.n_unique_shells)
+      .basis_shell1pair.make_precomputed_shellpairs(.basis)
+
+   end
+
+!  ===============
+!  Atom-shell info
+!  ===============
+
+   update_atom_shell_info ::: leaky, PURE
+   ! Get the atom shell info for all atoms in the molecule. We make it
+   ! only for the unique atoms and pointer copy to the non-unique
+   ! atoms, just like for ANO atom information.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom_info_made,"no atom info")
+   ENSURE(.basis_info_made,"no basis_set info")
+   ENSURE(.basis.allocated,"no basis set")
+   ENSURE(.n_atom_kind>0,"no atom kinds set")
+
+      a,b :: INT
+      done :: VEC{BIN}@
+      first :: BIN
+
+      if (.INQ:has_all_shell_info) return
+
+      done.create(.n_atom)
+      done  = FALSE
+      first = TRUE
+
+      do a = 1,.n_atom
+
+         ! Unique atom?
+         if (done(a)) cycle
+
+         ! Make the shell info
+         .atom(a).make_shell_info
+
+         done(a) = TRUE
+
+         ! Copy it to non-unique atoms
+         do b = a+1,.n_atom
+
+            ! Skip?
+            if (done(b)) cycle
+            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
+
+            .atom(b).first_basis_fn_for_shell = .atom(a).first_basis_fn_for_shell
+            .atom(b).last_basis_fn_for_shell  = .atom(a).last_basis_fn_for_shell
+            .atom(b).angular_moment_for_shell = .atom(a).angular_moment_for_shell
+            .atom(b).basis_shell1pair         = .atom(a).basis_shell1pair
+
+            done(b) = TRUE
+
+         end
+
+      end
+
+      done.destroy
+
+   end
+
+!  =========
+!  Archiving
+!  =========
+
+   delete_archive(name)
+   ! Delete the archive called "name"
+      self :: IN
+      name :: STR, IN
+
+      archive :: ARCHIVE
+
+      archive.set_defaults
+      archive.set(.name,name)
+      archive.delete_all_genres
+
+   end
+
+! May be needed by involved non-SCF routines
+
+   delete_SCF_archives(keep_MOs,keep_DM) ::: recursive
+   ! Delete any SCF-procedure generated archives stored on disk.
+      self :: IN
+      keep_MOs :: BIN, optional, IN
+      keep_DM  :: BIN, optional, IN
+
+      archive :: ARCHIVE
+      delete_MOs,delete_DM :: BIN
+
+      delete_MOs = TRUE
+      if (present(keep_MOs)) delete_MOs = NOT keep_MOs
+
+      delete_DM = TRUE
+      if (present(keep_DM))  delete_DM  = NOT keep_DM
+
+      archive.set_defaults
+
+      if (delete_MOs) then
+      archive.set(.name,"MOs");                     archive.delete_all_genres
+      archive.set(.name,"MO_energies");             archive.delete_all_genres
+      end                                          
+                                                   
+      if (delete_DM) then                          
+      archive.set(.name,"density_mx");              archive.delete_all_genres
+      end                                          
+                                                   
+      archive.set(.name,"Fock_mx");                 archive.delete_all_genres
+      archive.set(.name,"NOs");                     archive.delete_all_genres
+      archive.set(.name,"NO_occ_nos");              archive.delete_all_genres
+      archive.set(.name,"energy");                  archive.delete_all_genres
+
+      archive.set(.name,"promolecule_density_mx");  archive.delete_all_genres
+      archive.set(.name,"group_density_mx");        archive.delete_all_genres
+      archive.set(.name,"group_MOs");               archive.delete_all_genres
+
+      archive.set(.name,"U_electric_dipole");       archive.delete_all_genres
+      archive.set(.name,"U2_electric_dipole");      archive.delete_all_genres
+
+      archive.set(.name,"J_mx");                    archive.delete_all_genres
+      archive.set(.name,"constraint_mx");           archive.delete_all_genres
+
+      archive.set(.name,"ERI_integrals");           archive.delete_all_genres
+      archive.set(.name,"ERI_index");               archive.delete_all_genres
+
+      ! WARNING: These two below are recursive
+      .SET:delete_atom_SCF_archives
+      .SET:delete_group_SCF_archives(keep_MOs,keep_DM)
+
+      .SET:delete_lambda_SCF_archives(keep_MOs)
+
+   end
+
+   delete_lambda_SCF_archives(keep_MOs) ::: private
+   ! Delete any lambda type archives stored on disk.
+      self :: IN
+      keep_MOs :: BIN, optional, IN
+
+      l,l_max :: REAL
+      l_str :: STR(len=5)
+      archive :: ARCHIVE
+      delete_MOs :: BIN
+
+      delete_MOs = TRUE
+      if (present(keep_MOs)) delete_MOs = NOT keep_MOs
+
+      if (NOT delete_MOs)                  return
+      if (.scfdata.deallocated)              return
+      if (NOT .scfdata.is_constrained_scf) return
+
+      archive.set_defaults
+      l = .scfdata.initial_lambda
+      l_max = .scfdata.lambda_max + l
+
+      do
+         if (l>l_max) exit
+         l_str = trim(l.to_str("f5.3"))
+         archive.set(.name,"MOs,lambda="//trim(l_str)); archive.delete_all_genres
+         archive.set(.name,"MO_energies,lambda="//trim(l_str));   archive.delete_all_genres
+         l = l + .scfdata.lambda_step
+      end
+
+   end
+
+   delete_atom_SCF_archives ::: recursive, leaky
+   ! Delete the atom SCF archives, if they exist.
+      self :: IN
+
+      a :: INT
+      mol :: MOLECULE
+
+      if (.n_atom_kind<=0) return
+
+      do a = 1,.n_atom
+
+         ! Unique atom?
+         if (NOT .atom(a).is_unique_kind) cycle
+
+         ! Delete
+         mol.SET:set_defaults
+         mol.name = .atom(a).chemical_symbol
+         mol.SET:delete_SCF_archives
+
+      end
+
+   end
+
+   delete_group_SCF_archives(keep_MOs,keep_DM) ::: recursive, private
+   ! Delete any group type SCF archives.
+      self :: IN
+      keep_MOs :: BIN, optional, IN
+      keep_DM  :: BIN, optional, IN
+
+      g :: INT
+
+      if (.atom_group.deallocated) return
+      if (.mol.deallocated) return
+
+      do g = 1,.atom_group.dim
+         .mol(g).SET:delete_SCF_archives(keep_MOs,keep_DM)
+      end
+
+   end
+
+   delete_SCF_MO_archive
+   ! Delete the SCF MO archives
+      self :: IN
+      archive :: ARCHIVE
+
+      archive.set_defaults
+      archive.set(.name,"MOs"); archive.delete_all_genres
+      archive.set(.name,"MO_energies");   archive.delete_all_genres
+
+   end
+
+!  ===============
+!  Plot grid files
+!  ==============
+
+   delete_plot_grid(name)
+   ! Delete the plot grid called "name".
+      self :: IN
+      name :: STR, IN
+
+      title :: STR
+      arch :: ARCHIVE
+
+      ! Set title to be molecule name + sub-title from plot
+      title = .name
+      if (.plot_grid.allocated) then
+      if (.plot_grid.plot_label/=" ") then
+         title = trim(.name)//","//trim(.plot_grid.plot_label)
+      end
+      end
+
+      ! Delete
+      arch.set(title,name,format="gnuplot");        arch.delete_all_genres
+      arch.set(title,name,format="mathematica");    arch.delete_all_genres
+      arch.set(title,name,format="contour");        arch.delete_all_genres
+      arch.set(title,name,format="gaussian.cube");  arch.delete_all_genres
+      arch.set(title,name,format="xdgraph");        arch.delete_all_genres
+
+   end
+
+   delete_plot_grid
+   ! Delete the plot grid whose name is specified on the input line
+      self :: IN
+
+   DIE_IF(stdin.buffer.n_items/=2,"must specify grid to delete in input")
+   DIE_IF(stdin.buffer.item_index==2,"must be on the last item")
+
+      name :: STR
+      title :: STR
+      arch :: ARCHIVE
+
+      stdin.read(name)
+
+      ! Set title to be molecule name + sub-title from plot
+      title = .name
+      if (.plot_grid.allocated) then
+      if (.plot_grid.plot_label/=" ") then
+         title = trim(.name)//","//trim(.plot_grid.plot_label)
+      end
+      end
+
+      ! Delete
+      arch.set(title,name,format="gnuplot");        arch.delete_all_genres
+      arch.set(title,name,format="mathematica");    arch.delete_all_genres
+      arch.set(title,name,format="contour");        arch.delete_all_genres
+      arch.set(title,name,format="gaussian.cube");  arch.delete_all_genres
+      arch.set(title,name,format="xdgraph");        arch.delete_all_genres
+
+   end
+
+end
