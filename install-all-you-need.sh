@@ -6,7 +6,25 @@ sudo apt-get install g++ -y
 sudo apt-get install gfortran-9 -y
 sudo apt-get install libblas-dev libblas3 -y
 sudo apt-get install liblapack-dev -y
+sudo apt-get install make -y
 sudo apt-get install cmake -y
 sudo apt-get install coreutils -y
 sudo apt-get install gawk -y
 sudo apt-get install tofrodos -y
+# Clone 
+git clone --recurse-submodules https://github.com/dylan-jayatilaka/tonto.git
+cd tonto
+# Link basis_sets
+sudo ln -s basis_sets  /usr/local/bin
+# Build RELEASE tonto version in build/
+mkdir build && cd build
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=release
+make -j
+sudo ln -s tonto /usr/local/bin
+cd ..
+# Build DEBUG tonto version in debug/
+#mkdir debug && cd debug
+#cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=debug
+#make -j
+#sudo ln -s tonto /usr/local/bin
+#cd ..
