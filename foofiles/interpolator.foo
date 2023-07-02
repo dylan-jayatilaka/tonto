@@ -635,16 +635,16 @@ contains
    ENSURE(NOT (present(tol) AND present(length)),"can't supply both tol and length")
 
       if (present(tol)) then
-         .set_even_spaced_data(.table_origin,.table_spacing,.table_length,func,tol)
+         .set_sequence_data(.table_origin,.table_spacing,.table_length,func,tol)
       else if (present(length)) then
-         .set_even_spaced_data(.table_origin,.table_spacing,length,func)
+         .set_sequence_data(.table_origin,.table_spacing,length,func)
       else
-         .set_even_spaced_data(.table_origin,.table_spacing,.table_length,func,.table_eps)
+         .set_sequence_data(.table_origin,.table_spacing,.table_length,func,.table_eps)
       end
 
    end
 
-   set_even_spaced_general_data(func,tol,length) ::: leaky
+   set_even_spaced_data_vs(sh,func_vs,tol,length) ::: leaky
    ! Set ".data_point" to be even-spaced, starting from
    ! ".table_origin", with a given ".table_spacing", and with
    ! ".data_value" to be the corresponding values evaluated using
@@ -653,10 +653,13 @@ contains
    ! function "func" is just smaller than "tol", with maximum length
    ! ".table_length"; or from the supplied "length".
       self :: INOUT
+      sh   :: VEC{SLATERSHELL}, IN
       tol  :: REAL, optional, IN
       length :: REAL, optional, IN
       interface
-         func(point) result (value)
+         func_vs(sh,point) result (value)
+            use TYPES
+            sh :: VEC{SLATERSHELL}, IN
             point :: REAL, IN
             value :: REAL
          end
@@ -665,16 +668,16 @@ contains
    ENSURE(NOT (present(tol) AND present(length)),"can't supply both tol and length")
 
       if (present(tol)) then
-         .set_even_spaced_general_data(.table_origin,.table_spacing,.table_length,func,tol)
+         .set_sequence_data_vs(sh,.table_origin,.table_spacing,.table_length,func_vs,tol)
       else if (present(length)) then
-         .set_even_spaced_general_data(.table_origin,.table_spacing,length,func)
+         .set_sequence_data_vs(sh,.table_origin,.table_spacing,length,func_vs)
       else
-         .set_even_spaced_general_data(.table_origin,.table_spacing,.table_length,func,.table_eps)
+         .set_sequence_data_vs(sh,.table_origin,.table_spacing,.table_length,func_vs,.table_eps)
       end
 
    end
 
-   set_even_spaced_data(first,spacing,length,func,tol) ::: leaky
+   set_sequence_data(first,spacing,length,func,tol) ::: leaky
    ! Set ".data_point" to be even-spaced, starting from the "first" value, with
    ! a given "spacing", extending until "length", and with ".data_value"
    ! to be the corresponding values evaluated using monotonically decreasing
@@ -793,6 +796,161 @@ contains
       end
 
       .finalized = TRUE
+
+   end
+
+   set_sequence_data_vs(sh,first,spacing,length,func_vs,tol) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from the "first" value, with
+   ! a given "spacing", extending until "length", and with ".data_value"
+   ! to be the corresponding values evaluated using monotonically decreasing
+   ! function "func". The number of data values is worked out from where
+   ! function "func" is only just smaller than "tol". 
+      self :: INOUT
+      sh   :: VEC{SLATERSHELL}, IN
+      spacing :: REAL, IN
+      first   :: REAL, IN
+      length  :: REAL, IN
+      tol :: REAL, optional, IN
+      interface
+         func_vs(sh,point) result (value)
+            use TYPES
+            sh :: VEC{SLATERSHELL}, IN
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(.n_data==0,"there is already data")
+   ENSURE(.data_value.deallocated,"there are already data_values")
+   ENSURE(.data_point.deallocated,"there are already data_points")
+   ENSURE(spacing>ZERO,"spacing must be +ve")
+
+      max_data :: INT
+      i,n :: INT
+      p,val :: REAL
+
+      ! Set table spacing
+      .table_spacing = spacing
+
+      ! Get the maximum amount of data
+      max_data = ceiling((length-first)/spacing) + 1
+
+      ! Create the table
+      .data_point.destroy
+      .data_value.destroy
+      .data_point.create(max_data)
+      .data_value.create(max_data)
+
+      ! Assign the table; exit if tolerance is reached
+      val = ONE
+      n = 0
+      do i = 1,max_data
+
+         n = n + 1
+
+         ! for numerical accuracy
+         p = first + (i-1)*spacing 
+
+         ! Assign table point
+         .data_point(n) = p
+
+         ! Domain remapping. Warning: user may need to do remapping
+         ! before using the table. In all cases below, p^2 must be given
+         if      (.domain_is_sqrt)      then; p = sqrt(p)
+         else if (.domain_is_sqrt_x1x)  then; p = .domain_scale_factor*sqrt(p/(ONE-p))
+         end
+
+         ! Call the function
+         val = func_vs(sh,p)
+
+         ! Range mapping
+         if (.range_is_logarithmic) then
+            ENSURE(val>ZERO,"-ve func cant be used with log interpolation")
+            val = log(val)
+         end
+
+         ! Assign table value
+         .data_value(n) = val
+
+         ! If too small?
+         if (present(tol)) then
+            if (val<tol) exit
+         end
+
+      end
+
+      ! Warn if the tolerance was not reached
+      if (present(tol)) then
+         ENSURE(val<tol, "data table not large enough")
+      end
+
+      ! Reset the table size
+      .n_data = n
+      if (present(tol)) then
+         .data_value.shrink(.n_data)
+         .data_point.shrink(.n_data)
+      end
+
+      ! Reset the table length
+      .table_length = .data_point(.n_data) 
+
+      ! Generate spline data
+      if (.interpolation_is_spline) then
+
+         ! Get approximate LHS derivative
+         p = first + spacing*HALF 
+         if      (.domain_is_sqrt)      then; p = sqrt(p)
+         else if (.domain_is_sqrt_x1x)  then; p = .domain_scale_factor*sqrt(p/(ONE-p))
+         end
+         val = func_vs(sh,p)
+         if (.range_is_logarithmic) val = log(val)
+         .y1_initial = TWO*(val-.data_value(1))/spacing
+
+         ! Get approximate RHS derivative
+         p = .data_point(.n_data) - spacing*HALF 
+         if      (.domain_is_sqrt)      then; p = sqrt(p)
+         else if (.domain_is_sqrt_x1x)  then; p = .domain_scale_factor*sqrt(p/(ONE-p))
+         end
+         val = func_vs(sh,p)
+         if (.range_is_logarithmic) val = log(val)
+         .y1_final = TWO*(.data_value(.n_data)-val)/spacing
+
+         ! Set the spline second derivatives
+         .set_spline_2nd_derivatives
+
+      end
+
+      .finalized = TRUE
+
+   end
+
+   set_even_spaced_general_data(func,tol,length) ::: leaky
+   ! Set ".data_point" to be even-spaced, starting from
+   ! ".table_origin", with a given ".table_spacing", and with
+   ! ".data_value" to be the corresponding values evaluated using
+   ! monotonically decreasing function "func". The number of data
+   ! values and the ".table_length" is either worked out from where
+   ! function "func" is just smaller than "tol", with maximum length
+   ! ".table_length"; or from the supplied "length".
+      self :: INOUT
+      tol  :: REAL, optional, IN
+      length :: REAL, optional, IN
+      interface
+         func(point) result (value)
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(NOT (present(tol) AND present(length)),"can't supply both tol and length")
+
+      if (present(tol)) then
+         .set_even_spaced_general_data(.table_origin,.table_spacing,.table_length,func,tol)
+      else if (present(length)) then
+         .set_even_spaced_general_data(.table_origin,.table_spacing,length,func)
+      else
+         .set_even_spaced_general_data(.table_origin,.table_spacing,.table_length,func,.table_eps)
+      end
 
    end
 
@@ -958,6 +1116,49 @@ contains
 
    end
 
+   the_table_length_vs(sh,func_vs,tol) result (p)
+   ! Return the length of the interpolation table starting from ".table_origin"
+   ! with a given ".table_spacing", extending for a total ".table_length", and
+   ! with the data values to be the corresponding values evaluated using
+   ! monotonically decreasing function "func". The length of the table "p" is
+   ! worked out from where function "func" is only just smaller than "tol". 
+   ! It cannot exceed ".table_length".
+      self :: IN
+      sh :: VEC{SLATERSHELL}, IN
+      tol :: REAL, IN
+      p :: REAL
+      interface
+         func_vs(sh,point) result (value)
+            use TYPES
+            sh :: VEC{SLATERSHELL}, IN
+            point :: REAL, IN
+            value :: REAL
+         end
+      end
+
+   ENSURE(.n_data==0,"there is already data")
+   ENSURE(.table_spacing>ZERO,"spacing must be +ve")
+
+      first,spacing,length :: REAL
+      max_data :: INT
+      i,s :: INT
+      val :: REAL
+
+      first = .table_origin
+      length = .table_length
+      spacing = .table_spacing
+      max_data = ceiling((length-first)/spacing) + 1
+
+      p = first
+      s = 0
+      do i = s+1,max_data
+         val = func_vs(sh,p)
+         if (val<tol) exit
+         p = p + spacing
+      end
+
+   end
+
    set_data(length,spacing,make_values) ::: leaky
    ! Set ".data_point" to be even-spaced: starting from 0, extending
    ! until "length", and with a given "spacing"; and set ".data_value"
@@ -1007,6 +1208,59 @@ contains
       .finalized = TRUE
 
    end
+
+!   set_data_e(env,length,spacing,make_values_e) ::: template
+!   ! Set ".data_point" to be even-spaced: starting from 0, extending
+!   ! until "length", and with a given "spacing"; and set ".data_value"
+!   ! to be from "make_values(.data_value,.data_point)".
+!   ! NOTE: If .data_points is already defined, use those points
+!   ! NOTE: interpolation is not yet allowed
+!      self :: INOUT
+!      env  :: ENV?
+!      length  :: REAL, IN
+!      spacing :: REAL, IN
+!      interface
+!         make_values_e(values,points)
+!            use TYPES
+!            env :: ENV?, IN
+!            values :: VEC{REAL}, OUT
+!            points :: VEC{REAL}, IN
+!         end
+!      end
+!
+!   ENSURE(.n_data==0,"there is already data")
+!   ENSURE(.data_value.deallocated,"there are already data_values")
+!   ENSURE(spacing>ZERO,"spacing must be +ve")
+!
+!      i :: INT
+!
+!      ! Set table spacing
+!      .table_origin  = ZERO
+!      .table_length  = length
+!      .table_spacing = spacing
+!
+!      if (.data_point.deallocated) then
+!
+!         ! Assign linear data points
+!         .n_data = ceiling((length)/spacing) + 1 ! The number of data
+!         .data_value.create(.n_data)
+!         .data_point.create(.n_data)
+!         .data_point = [ ( (i-1)*spacing, i=1,.n_data ) ]
+!
+!      else
+!
+!         ! Custom data points
+!         .n_data = .data_point.dim
+!         .data_value.create(.n_data)
+!
+!      end
+!
+!      ! Assign data values
+!      call make_values_e(env,.data_value,.data_point)
+!
+!      .finalized = TRUE
+!
+!   end
 
    set_even_spaced_d_data(func) ::: leaky
    ! Set ".data_point" to be even-spaced, starting from the "first" value, with
@@ -1209,6 +1463,30 @@ contains
 
    end
 
+!   set_data_values_e(env,func_e) ::: template
+!   ! Set the ".data_values" from the function "func", which returns "values"
+!   ! from a set of given "points".
+!      self :: INOUT
+!      env :: ENV?
+!      interface
+!         func_e(env,points,values)
+!            use TYPES
+!            env :: ENV?, IN
+!            points :: VEC{REAL}, IN
+!            values :: VEC{REAL}, OUT
+!         end
+!      end
+!
+!   ENSURE(.finalized,"not finalized")
+!   ENSURE(.data_point.allocated,"no data_points")
+!   ENSURE(.data_point.dim==.n_data,"wrong number of data_points")
+!
+!      .data_value.destroy
+!      .data_value.create(.n_data)
+!      call func_e(env,.data_point,.data_value)
+!
+!   end
+
    set_data_values(func_at,pos) ::: leaky
    ! Set the ".data_values" from the function "func_at", which returns "values"
    ! from a set of given "points", and an additional single "pos" as parameter.
@@ -1231,6 +1509,31 @@ contains
       call func_at(.data_point,pos,.data_value)
 
    end
+
+!   set_data_values_e(env,func_at_e,pos) ::: template
+!   ! Set the ".data_values" from the function "func_at", which returns "values"
+!   ! from a set of given "points", and an additional single "pos" as parameter.
+!      self :: INOUT
+!      env  :: ENV?, IN
+!      interface
+!         func_at_e(env,points,pos,values) ::: PURE
+!            env :: ENV?, IN
+!            points :: VEC{REAL}, IN
+!            pos    :: VEC{REAL}(3), IN
+!            values :: VEC{REAL}, OUT
+!         end
+!      end
+!      pos :: VEC{REAL}(3), IN
+!
+!   ENSURE(.finalized,"not finalized")
+!   ENSURE(.data_point.allocated,"no data_points")
+!   ENSURE(.data_point.dim==.n_data,"wrong number of data_points")
+!
+!      .data_value.destroy
+!      .data_value.create(.n_data)
+!      call func_at_e(env,.data_point,pos,.data_value)
+!
+!   end
 
 !  =================
 !  Values for points
