@@ -650,6 +650,38 @@ contains
 
    end
 
+   cubify_m(mol,func_m) ::: leaky
+   ! Generate the isosurface using the marching cube algorithm
+   ! for a cubic region with an equally spaced grid.
+   ! NOTE: Recently, only the recursive marching cube routine
+   ! has been exhaustively tested.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      interface
+         func_m(mol,values,pt)
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      .prepare_grid
+
+      select case (.triangulation_method)
+      case("marching_cube          "); .cubify_normally_m(mol,func_m) !  Warning: see note
+      case("recursive_marching_cube");
+      .cubify_recursively_m(mol,func_m)
+      case default;        UNKNOWN(.triangulation_method)
+      end
+
+      DIE_IF(.n_pt==0,"No isosurface points found.")
+
+      ! Report
+      .put
+
+   end
+
    prepare_grid
    ! Prepare the rhomboid grid for the different kinds of isosurface
    ! alogorithms.  Particularly, for the recursive method, set the
@@ -969,6 +1001,200 @@ contains
 
    end
 
+   cubify_normally_m(mol,func_m) ::: leaky, private
+   ! Generate the isosurface using the standard marching cube algorithm
+   ! *without* any recursion.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      interface
+         func_m(mol,values,pt)
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      x,y,z, capping_number, face_number, b :: INT
+      cube :: MARCHINGCUBE
+      cap_square :: CAPPING_SQUARE
+      func_slab :: MAT3{REAL}@
+      info :: MAT3{EVEC{INT}}@
+      x_cap_info, y_cap_info, z_cap_info :: MAT3{EVEC{INT}}@
+      point_slab :: MAT4{REAL}@
+      oblique, do_capping :: BIN
+
+      ! Set isosurface info defaults
+      .set_isosurface_info_arrays
+
+      ! .cube contains the isovalue and size/axes of grid
+      cube = .cube
+      cap_square = .cap_square
+
+      oblique = .plot_grid.use_unit_cell_as_bbox
+      if (oblique) cube.set_axes(.plot_grid.box_axes)
+
+      ! Make the 4-slab of data
+      point_slab.create(3,.plot_grid.n_x,.plot_grid.n_y,4) ! slab of points
+      func_slab.create(.plot_grid.n_x,.plot_grid.n_y,4)    ! function values
+
+      info.create(.plot_grid.n_x,.plot_grid.n_y,2,[0,11])  ! Saved vertex index info
+      info.zero
+
+      x_cap_info.create(.plot_grid.n_y,.plot_grid.n_z,2,[0,7])
+      x_cap_info.zero
+      y_cap_info.create(.plot_grid.n_x,.plot_grid.n_z,2,[0,7])
+      y_cap_info.zero
+      z_cap_info.create(.plot_grid.n_x,.plot_grid.n_y,2,[0,7])
+      z_cap_info.zero
+
+      ! Find all the marching cubes. Loop bottom to top.
+      ! Do two layers at a time. End points are not looped,
+      ! they are only to get the normals and curvatures.
+      do z = 2,.plot_grid.n_z-2
+
+         ! Get a new z-slab of function values
+         .update_4_slab_m(mol, point_slab, func_slab, z, func_m)
+
+         ! Save previous edge info; zero current
+         info(:,:,1:1).set_to(info(:,:,2:2))
+         info(:,:,2:2).zero
+
+         ! Loop over the slab;
+         ! x = left,  right
+         ! y = front, back
+         do y = 2,.plot_grid.n_y-2
+         do x = 2,.plot_grid.n_x-2
+
+            ! Set cube points and function values
+            cube.set_vertex_info( point_slab(:,x:x+1,y:y+1,2:3), func_slab(x:x+1,y:y+1,2:3) )
+
+            ! Set cube edge intersections
+            cube.set_case_info
+
+            ! If not on surface, do next cube except if we are on the boundary and doing caps
+            do_capping = (.cap_ends /= 0) AND .on_boundary(x,y,z)
+            if (NOT (cube.is_on_surface OR do_capping)) cycle
+
+            ! Set up cube edge triangulation
+            cube.set_triangulation_info
+
+            ! Use previous edge info, if available.
+            ! left = previous cube in x-direction
+            ! front = previous cube in y-direction
+            ! bottom - previous cube in z-direction
+            if (x>2) cube.set_left_info(left  =info(x-1,y  ,2).element)
+            if (y>2) cube.set_front_info(front=info(x  ,y-1,2).element)
+            if (z>2) cube.set_below_info(below=info(x  ,y  ,1).element)
+
+            ! Get curvatures
+            cube.set_hessian_info( func_slab(x-1:x+2,y-1:y+2,1:4) )
+
+            ! Now do the interpolation
+            if (oblique) then; cube.interpolate_oblique_faces
+            else;              cube.interpolate_faces
+            end
+
+            ! Store surface info
+            .append_new_face_info(cube)
+
+            ! Determine which caps to add
+            if (do_capping) then
+
+               capping_number = .capping_number(x,y,z)
+
+               ! Six possible faces to test
+               do b = 0,5
+
+                  ! Find which faces to do (up to three)
+                  if (NOT BIT_SET_AT_POS_IN(capping_number,b)) cycle 
+
+                  ! face_number starts at 1 not 0
+                  face_number = b + 1 
+
+                  ! initialize the capping square from the corresponding marching cube
+                  cube.set_capping_square(face_number,cap_square)
+                  .set_edge_vertices(cap_square) ! Get vertices created for the cube
+                  cap_square.set_n_pt(.n_pt)
+
+                  ! Depending on the face we are on, we initialize the
+                  ! cap to use vertices already generated for other
+                  ! surface caps. We do this by using the capping
+                  ! square to the "left" and the capping square
+                  ! "below" the capping square we are currently
+                  ! working on.  The tricky part is the final argument
+                  ! to set_left_info or set_bottom_info - this boolean
+                  ! determines whether we need to flip the capping
+                  ! square.  set_left_info(...,TRUE) flips the left
+                  ! and right edges set_bottom_info(...,TRUE) flips
+                  ! the top and bottom edges The capping square of 3
+                  ! of the plotgrids faces always need flipping
+                  ! Because of the (complicated) interplay between the
+                  ! cubes coordinate system and that of the capping
+                  ! square, it turns out we need to flip...
+                  ! (i)   bottom-top mapping for z=0 faces (b==0)
+                  ! (ii)  left-right mapping for x=0 faces (b==2)
+                  ! (iii) left-right mapping for  +y faces (b==5)
+                  if (b == 0 OR b ==1) then ! 0,+z faces
+                     if (x>2) cap_square.set_left_info(z_cap_info(x-1,y,b+1).element, FALSE)
+                     if (y>2) cap_square.set_bottom_info(z_cap_info(x,y-1,b+1).element, b==0)
+                  else if (b == 2 OR b == 3) then ! 0,+x faces
+                     if (y>2) cap_square.set_left_info(x_cap_info(y-1,z,b-1).element, b==2)
+                     if (z>2) cap_square.set_bottom_info(x_cap_info(y,z-1,b-1).element, FALSE)
+                  else if (b == 4 OR b == 5) then ! 0,+y faces
+                     if (x>2) cap_square.set_left_info(y_cap_info(x-1,z,b-3).element, b==5)
+                     if (z>2) cap_square.set_bottom_info(y_cap_info(x,z-1,b-3).element, FALSE)
+                  end
+
+                  cap_square.triangulate
+                  .append_new_cap_info(cap_square)
+
+                  if (b == 0 OR b == 1) then ! 0,+z faces
+                     z_cap_info(x,y,b+1)[4:7] = cap_square.edge_vertex_index(4:7)
+                  else if (b == 2 OR b == 3) then ! 0,+x faces
+                     x_cap_info(y,z,b-1)[4:7] = cap_square.edge_vertex_index(4:7)
+                  else ! 0 (b=4), +y (b=5) faces
+                     y_cap_info(x,z,b-3)[4:7] = cap_square.edge_vertex_index(4:7)
+                  end
+
+                  cap_square.reset
+               end
+
+            end
+
+            ! Keep interpolated vertex indices
+            info(x,y,2)[:] = cube.edge_vertex_index
+
+            ! Reset cube, reset # of points
+            cube.reset
+            cube.set_n_pt(.n_pt)
+
+         end
+         end
+
+      end
+
+      ! Clean
+      info.destroy
+      point_slab.destroy
+      func_slab.destroy
+      x_cap_info.destroy
+      y_cap_info.destroy
+      z_cap_info.destroy
+
+      ! Compactify
+      .point.shrink_columns(.n_pt)
+      .point_gradient.shrink_columns(.n_pt)
+      .point_mean_curvature.shrink(.n_pt)
+      .point_gaussian_curvature.shrink(.n_pt)
+      .face.shrink_columns(.n_face)
+      .cap.shrink_columns(.n_cap)
+
+      ! Rotate
+      .rotate_gradients
+
+   end
+
    set_edge_vertices(cap_square) ::: PURE
    ! copy the edge vertex positions for the marching cube into the capping square
      self :: IN
@@ -986,6 +1212,7 @@ contains
      end
 
    end
+
 
    cubify_recursively(func) ::: leaky, private
    ! Generate the isosurface using the recursive marching cube
@@ -1032,6 +1259,55 @@ contains
 
    end
 
+   cubify_recursively_m(mol,func_m) ::: leaky, private
+   ! Generate the isosurface using the recursive marching cube
+   ! algorithm.  Multiple isosurface values are merged into one
+   ! isosurface.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      interface
+         func_m(mol,values,pt)
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      i :: INT
+      isosurface :: ISOSURFACE@
+
+      if (.iso_values.allocated) then
+
+         ! Multiple iso values
+         ! Set self isovalue, and copy self
+         .iso_value = .iso_values(1)
+         .cube.iso_value = .iso_values(1)
+
+         isosurface = self
+
+         ! Loop over isovalues and merge surfaces
+         do i = 1,.iso_values.dim
+            isosurface.iso_value = isosurface.iso_values(i)
+            isosurface.cube.iso_value = isosurface.iso_values(i)
+            isosurface.cubify_recursively_this_m(mol,func_m)
+            isosurface.surface_iso_values.create(isosurface.n_pt)
+            isosurface.surface_iso_values = isosurface.iso_value
+            self.merge_with(isosurface)
+            isosurface.destroy_info_arrays
+         end
+
+         isosurface.destroy
+
+      else
+
+         ! Single iso value ...
+         .cubify_recursively_this_m(mol,func_m)
+
+      end
+
+   end
+
    cubify_recursively_this(func) ::: leaky, private
    ! Generate the isosurface using the recursive marching cube algorithm.
       self :: INOUT
@@ -1065,6 +1341,61 @@ contains
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       if (.small_map) then; .divide_cubes_small_map(func,f2)
       else;                 .divide_cubes(func,f2)
+      end
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      .point.shrink_columns(.n_pt)
+      .point_gradient.shrink_columns(.n_pt)
+      .point_mean_curvature.shrink(.n_pt)
+      .point_gaussian_curvature.shrink(.n_pt)
+      .face.shrink_columns(.n_face)
+      .rotate_gradients
+
+    ! stdout.flush
+    ! stdout.show("Final no. of map keys =",.map.n_keys)
+      .map.destroy
+
+      .set_area
+      .set_volume
+
+   end
+
+   cubify_recursively_this_m(mol,func_m) ::: leaky, private
+   ! Generate the isosurface using the recursive marching cube algorithm.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      interface
+         func_m(mol,values,pt)
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+
+      end
+
+   ENSURE(.plot_grid.width.has_all_equal,"grid widths must be all equal")
+
+      p2 :: MAT{REAL}(3,8)
+      f2 :: VEC{REAL}(8)
+
+      .set_isosurface_info_arrays
+
+      .volume_min = ZERO
+      .volume_max = ZERO
+      .n_skip = (.plot_grid.n_x+2)**3 ! including edges
+      .level = 0
+      .x = 0; .y = 0; .z = 0
+
+      .map.create(256,3,13)
+      .map.set_reverse_search(TRUE)
+
+      PLOT_GRID::make_cube_of_points(.plot_grid,p2,0,1,.del_x,.del_y,.del_z,0,0,0)
+      ISOSURFACE::make_2_cube_of_values_m(self,mol,f2,func_m,p2)
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.small_map) then; .divide_cubes_small_map_m(mol,func_m,f2)
+      else;                 .divide_cubes_m(mol,func_m,f2)
       end
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -1306,6 +1637,312 @@ contains
          ! previous loops over the 8 kubes was all for this.
          PLOT_GRID::make_cube_of_points(.plot_grid,p5,-1,3,.del_x,.del_y,.del_z,.x,.y,.z,eval)
          ISOSURFACE::make_5_cube_of_values(self,f5,func,p5,eval)
+
+         ! Loop over the child cubes the second time, and do the
+         ! triangulation.
+         k = 0
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            k = k + 1
+            if (skip(k)) cycle
+
+            ! Get stored cobe
+            cube = kube(k)
+
+            ! Evaluate the gradient and hessian; skips in cube_bit_string
+          ! cube.set_hessian_info(f5(x:x+3,y:y+3,z:z+3))
+            MARCHINGCUBE::set_hessian_info5(cube,f5,x,y,z)
+
+            ! Set the cube coordinates; for storing in map table
+            .x = .x + x
+            .y = .y + y
+            .z = .z + z
+
+            ! Use previously triangulated cubes if possible, avoid
+            ! looking in the map table
+            if (ix(k)/=0) then
+               if (ix(k)<0) then; cube.set_left_info(kube(left(k)).edge_vertex_index)
+               else;              cube.set_left_info(.map.values(:,ix(k)))
+               end
+            end
+            if (iy(k)/=0) then
+               if (iy(k)<0) then; cube.set_front_info(kube(front(k)).edge_vertex_index)
+               else;              cube.set_front_info(.map.values(:,iy(k)))
+               end
+            end
+            if (iz(k)/=0) then
+               if (iz(k)<0) then; cube.set_below_info(kube(below(k)).edge_vertex_index)
+               else;              cube.set_below_info(.map.values(:,iz(k)))
+               end
+            end
+
+            ! Set the cube vertex index to the last vertex
+            cube.set_n_pt(.n_pt)
+
+            ! Finally, do the interpolation
+            if (oblique) then; cube.interpolate_oblique_faces
+            else;              cube.interpolate_faces
+            end
+
+            ! Copy the cube interpolation info to the isosurface
+            .append_new_face_info(cube)
+
+            ! Append the cube vertex info to the map only if needed
+            if (cube.has_reusable_edge_vertices) &
+               .map.append_pair([.x,.y,.z],cube.edge_vertex_index)
+
+
+            ! Might need to keep this, it may share a face
+            if (x==0 OR y==0 OR z==0) &
+               kube(k).edge_vertex_index = cube.edge_vertex_index
+
+            ! Clear the cube coords
+            .x = .x - x
+            .y = .y - y
+            .z = .z - z
+         end
+         end
+         end
+
+      end
+
+      ! Go up to the next level: double side lengths, decrease level
+      .del_x = TWO*.del_x
+      if (oblique) then; .del_y = TWO*.del_y; .del_z = TWO*.del_z
+      else;              .del_y = .del_x;     .del_z = .del_x
+      end
+
+      .level = .level - 1
+
+   end
+
+   divide_cubes_m(mol,func_m,corner_values) ::: recursive, private, leaky
+   ! Generate the isosurface for "func" using a recursive marching
+   ! cube algorithm. "parent_cube" is the enclosing parent marching
+   ! cube from which the current cube was generated by a bisection
+   ! method. We keep the "parent_cube" to save on function evaluations
+   ! on the corners.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      interface
+         func_m(mol,values,pt)                   ! The function whose isosurface we make
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      corner_values :: VEC{REAL}(8), IN        ! Parent cube corner values
+
+      cube :: MARCHINGCUBE                     ! One of the 8 child cube; becomes next parent
+      kube :: VEC{MARCHINGCUBE}(8)             ! The group of final 8 child "cubes"
+      p3   :: MAT{REAL}(3,27)                  ! The points of all child "cubes"
+      p5   :: MAT{REAL}(3,125)                 ! The points surrounding the final 8-"kube"
+      f3   :: VEC{REAL}(27)                    ! The function values used to make all child "cubes"
+      f5   :: VEC{REAL}(125)                   ! The function values for surrounds of the final 8-"kube"
+      skip :: VEC{BIN}(8)                      ! Tells if we can skip any of the final 8-"kubes"
+      eval :: VEC{BIN}(125)                    ! Tells which of the "p5" points need to be
+                                               ! evaluated using "func".
+      left  :: VEC{INT}(8) = [0,1,0,3,0,5,0,7] ! The lexical index of the left-cube
+      front :: VEC{INT}(8) = [0,0,1,2,0,0,5,6] ! The lexical index of the front-cube
+      below :: VEC{INT}(8) = [0,0,0,0,1,2,3,4] ! The lexical index of the bottom cube
+      ix,iy,iz :: VEC{INT}(8)
+      bit,x,y,z,k :: INT
+      vol :: REAL
+      do_divide,oblique :: BIN
+
+      ! Which cube division level we are at
+      .level = .level + 1
+
+      ! Which bit to be set which describes the cube axis positions
+      bit = .final_level - .level
+
+      ! Oblique axis systems require special interpolation
+      oblique = .plot_grid.use_unit_cell_as_bbox
+
+      ! Oblique axes have different spacings on each axis
+      .del_x = .del_x/TWO
+      if (oblique) then; .del_y = .del_y/TWO; .del_z = .del_z/TWO
+      else;              .del_y = .del_x;     .del_z = .del_x
+      end
+      vol = .del_x*.del_y*.del_z
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! Divide into 8 cubes and do again
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.level<.final_level) then
+
+         ! Evaluate the parent  points and function values to pass down
+         PLOT_GRID::make_cube_of_points(.plot_grid,p3,0,2,.del_x,.del_y,.del_z,.x,.y,.z)
+         ISOSURFACE::make_3_cube_of_values_m(self,mol,f3,func_m,p3,corner_values)
+
+         ! Set the default cube
+         cube = .cube
+       ! .set_default_cube(cube)
+
+         ! Loop over the 8 subcubes
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            ! Set "cube" to be one of the child cubes
+          ! cube.set_vertex_info(p3(:,x:x+1,y:y+1,z:z+1), &
+          !                        f3(x:x+1,y:y+1,z:z+1))
+            MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Which vertices are inside or outside isosurface?
+            cube.set_case_info
+
+            ! Determine of we must divide this child further
+            do_divide = (.level<.scan_level) OR cube.is_nearly_on_surface(.voxel_proximity_factor)
+
+            ! If dividing, set the child cube coordinates and do it
+            if (do_divide) then
+               .x = ibclr(.x,bit); if (x==1) .x = ibset(.x,bit) ! Set cube coords
+               .y = ibclr(.y,bit); if (y==1) .y = ibset(.y,bit)
+               .z = ibclr(.z,bit); if (z==1) .z = ibset(.z,bit)
+               .divide_cubes_m(mol,func_m,cube.vertex_fn_value)   ! <<<<<< recursive here
+               .x = ibclr(.x,bit)                               ! Clear the cube coords
+               .y = ibclr(.y,bit)
+               .z = ibclr(.z,bit)
+            ! If not dividing get a rough estimate of the volume
+            else
+               if (cube.is_inside_surface) then
+                  .volume_min = .volume_min + vol
+                  .volume_max = .volume_max + vol
+               end
+            end
+
+         end
+         end
+         end
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! Divide by 8 the last time, and triangulate
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      else
+
+         ! A 5-cube of points needed for gradients and hessians
+         ! Start with a 3-cube of values for now
+         PLOT_GRID::make_cube_of_points(.plot_grid,p3,0,2,.del_x,.del_y,.del_z,.x,.y,.z)
+         ISOSURFACE::make_3_cube_of_values_m(self,mol,f3,func_m,p3,corner_values)
+
+         ! Set the default cube, for interpolations
+         cube = .cube
+       ! .set_default_cube(cube)
+
+         ! Tells which of the points in the 5-cube must be evaluated
+         eval = FALSE
+
+         ! List of cubes which are not triangulated.
+         skip = TRUE
+
+         ! Indices of previous cubes in the map table which have been
+         ! triangulated; no need to re-triangulate shared faces.
+         ix = 0; iy = 0; iz = 0
+
+         ! The child cube index, in range 1 ... 8
+         k = 0
+
+         ! Loop over the child cubes the first time; triangulate later
+         ! when we know which cubes to do, which helps avoid function
+         ! evaluations on the 5 x 5 x 5 cube
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            k = k + 1
+
+            ! Set child cube info; store only needed parts in kube(k)
+            MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Which cube vertices are inside or outside isosurface?
+            cube.set_case_info
+            if (cube.is_inside_surface)      .volume_min = .volume_min + vol
+            if (NOT cube.is_outside_surface) .volume_max = .volume_max + vol
+
+            ! Is the cube on the surface?
+            if (NOT cube.is_on_surface) cycle
+
+            ! We are on the surface: set the cube coords
+            .x = .x + x
+            .y = .y + y
+            .z = .z + z
+
+            ! Don't skip this cube
+            skip(k) = FALSE
+
+            ! Which cube edges cut the surface? Hence, which cube vertices are
+            ! needed? Hence, what triangles are to be made?
+            cube.skip_bit_string = 0
+            cube.set_triangulation_info
+
+            ! Find out which faces of the cube should have been triangulated
+            ! already, and store in ix, iy, iz arrays, and store in the
+            ! skip_bit_string for hessian evaluation
+            if (cube.has_left_face_on_surface) then
+               if (x>0) then
+                  ix(k) = -1
+                  cube.set_left_skip_bit_string  ! Left child cube exists
+               else if (.x>0 AND .map.has_key([.x-1,.y,.z],index=ix(k))) then
+                  cube.set_left_skip_bit_string  ! Left map cube exists
+               end
+            end
+            if (cube.has_front_face_on_surface) then
+               if (y>0) then
+                  iy(k) = -1
+                  cube.set_front_skip_bit_string ! Front child cube exists
+               else if (.y>0 AND .map.has_key([.x,.y-1,.z],index=iy(k))) then
+                  cube.set_front_skip_bit_string ! Front map cube exists
+               end
+            end
+            if (cube.has_lower_face_on_surface) then
+               if (z>0) then
+                  iz(k) = -1
+                  cube.set_below_skip_bit_string ! Lower child cube exists
+               else if (.z>0 AND .map.has_key([.x,.y,.z-1],index=iz(k))) then
+                  cube.set_below_skip_bit_string ! Lower map cube exists
+               end
+            end
+
+            ! Set which edges to interpolate, accounting for those
+            ! already done above in skip_bit_string
+            cube.set_cube_bit_string
+
+            ! Set which of the 5 x 5 x 5 points are needed for hessian
+            ! and gradient.
+            if (NOT oblique) then;
+               MARCHINGCUBE::set_hessian_eval_array(cube,eval,x,y,z)
+            else
+               MARCHINGCUBE::set_gradient_eval_array(cube,eval,x,y,z)
+            end
+
+            ! Store the needed parts of cube for later interpolation
+            kube(k) = cube
+          ! kube(k).cube_bit_string = cube.cube_bit_string
+          ! kube(k).edge_bit_string = cube.edge_bit_string
+          ! kube(k).skip_bit_string = cube.skip_bit_string
+
+
+            ! Clear the cube coords
+            .x = .x - x
+            .y = .y - y
+            .z = .z - z
+         end
+         end
+         end
+
+         ! Don't evaluate the 3 x 3 x 3 points/values -- already done
+       ! eval(2:4,2:4,2:4) = FALSE
+       ! f5(1:3,1:3,1:3) = f3
+         ISOSURFACE::initialize_eval_f5(eval,f5,f3)
+
+         ! Now evaluate the function only at the needed points. The
+         ! previous loops over the 8 kubes was all for this.
+         PLOT_GRID::make_cube_of_points(.plot_grid,p5,-1,3,.del_x,.del_y,.del_z,.x,.y,.z,eval)
+         ISOSURFACE::make_5_cube_of_values_m(self,mol,f5,func_m,p5,eval)
 
          ! Loop over the child cubes the second time, and do the
          ! triangulation.
@@ -1742,6 +2379,365 @@ contains
       .level = .level - 1
    end
 
+   divide_cubes_small_map_m(mol,func_m,corner_values) ::: recursive, private, leaky
+   ! Generate the isosurface for "func" using a recursive marching
+   ! cube algorithm. "parent_cube" is the enclosing parent marching
+   ! cube from which the current cube was generated by a bisection
+   ! method. We keep the "parent_cube" to save on function evaluations
+   ! on the corners.  NOTE: this version keeps a small map table but
+   ! it makes no difference to timings on linux
+      self :: INOUT
+      mol :: MOLECULE, IN
+      interface
+         func_m(mol,values,pt)                   ! The function whose isosurface we make
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      corner_values :: VEC{REAL}(8), IN        ! Parent cube corner values
+
+      cube :: MARCHINGCUBE                     ! One of the 8 child cube; becomes next parent
+      kube :: VEC{MARCHINGCUBE}(8)             ! The group of final 8 child "cubes"
+      p3   :: MAT{REAL}(3,27)                  ! The points of all child "cubes"
+      p5   :: MAT{REAL}(3,125)                 ! The interior and surrounds of the final 8-"kube"
+      f3   :: MAT3{REAL}(0:2,0:2,0:2)          ! The interior values used to make all child "cubes"
+      f5   :: MAT3{REAL}(0:4,0:4,0:4)          ! The interior and surrounding values of the final 8-"kube"
+      skip :: VEC{BIN}(8)                      ! Tells if we can skip any of the final 8-"kubes"
+      eval :: MAT3{BIN}(5,5,5)                 ! Tells which of the "p5" points need to be
+                                               ! evaluated using "func".
+      left  :: VEC{INT}(8) = [0,1,0,3,0,5,0,7] ! The lexical index of the left-cube
+      front :: VEC{INT}(8) = [0,0,1,2,0,0,5,6] ! The lexical index of the front-cube
+      below :: VEC{INT}(8) = [0,0,0,0,1,2,3,4] ! The lexical index of the bottom cube
+      ix,iy,iz,ik :: VEC{INT}(8)
+      dead_list :: VEC{INT}(24)
+      bit,x,y,z,k,kk,c,n :: INT
+      vol :: REAL
+      do_divide,oblique :: BIN
+
+      ! Which cube division level we are at
+      .level = .level + 1
+
+      ! Which bit to be set which describes the cube axis positions
+      bit = .final_level - .level
+
+      ! Oblique axis systems require special interpolation
+      oblique = .plot_grid.use_unit_cell_as_bbox
+
+      ! Oblique axes have different spacings on each axis
+      .del_x = .del_x/TWO
+      if (oblique) then; .del_y = .del_y/TWO; .del_z = .del_z/TWO
+      else;              .del_y = .del_x;     .del_z = .del_x
+      end
+      vol = .del_x*.del_y*.del_z
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! Divide into 8 cubes and do again
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.level<.final_level) then
+
+         ! Evaluate the parent  points and function values to pass down
+         PLOT_GRID::make_cube_of_points(.plot_grid,p3,0,2,.del_x,.del_y,.del_z,.x,.y,.z)
+         ISOSURFACE::make_3_cube_of_values_m(self,mol,f3,func_m,p3,corner_values)
+
+         ! Set the default cube
+         cube = .cube
+       ! .set_default_cube(cube)
+
+         ! Loop over the 8 subcubes
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            ! Set "cube" to be one of the child cubes
+          ! cube.set_vertex_info(p3(:,x:x+1,y:y+1,z:z+1), &
+          !                        f3(x:x+1,y:y+1,z:z+1))
+            MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Which vertices are inside or outside isosurface?
+            cube.set_case_info
+
+            ! Determine of we must divide this child further
+            do_divide = (.level<.scan_level) OR cube.is_nearly_on_surface(.voxel_proximity_factor)
+
+            ! If dividing, set the child cube coordinates and do it
+            if (do_divide) then
+               .x = ibclr(.x,bit); if (x==1) .x = ibset(.x,bit) ! Set cube coords
+               .y = ibclr(.y,bit); if (y==1) .y = ibset(.y,bit)
+               .z = ibclr(.z,bit); if (z==1) .z = ibset(.z,bit)
+               .divide_cubes_small_map_m(mol,func_m,cube.vertex_fn_value) ! <<<<<< recursive here
+               .x = ibclr(.x,bit)                                 ! Clear the cube coords
+               .y = ibclr(.y,bit)
+               .z = ibclr(.z,bit)
+            ! If not dividing get a rough estimate of the volume
+            else
+               if (cube.is_inside_surface) then
+                  .volume_min = .volume_min + vol
+                  .volume_max = .volume_max + vol
+               end
+            end
+
+         end
+         end
+         end
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! Divide by 8 the last time, and triangulate
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      else
+
+         ! A 5-cube of points needed for gradients and hessians
+         ! Start with a 3-cube of values for now
+         PLOT_GRID::make_cube_of_points(.plot_grid,p3,0,2,.del_x,.del_y,.del_z,.x,.y,.z)
+         ISOSURFACE::make_3_cube_of_values_m(self,mol,f3,func_m,p3,corner_values)
+
+
+         ! Set the default cube, for interpolations
+         cube = .cube
+       ! .set_default_cube(cube)
+
+         ! Tells which of the points in the 5-cube must be evaluated
+         eval = FALSE
+
+         ! List of cubes which are not triangulated.
+         skip = TRUE
+
+         ! Indices of previous cubes in the map table which have been
+         ! triangulated; no need to re-triangulate shared faces.
+         ix = 0; iy = 0; iz = 0; ik = 0
+
+         ! The child cube index, in range 1 ... 8
+         k = 0
+
+
+         ! Loop over the child cubes the first time; triangulate later
+         ! when we know which cubes to do, which helps avoid function
+         ! evaluations on the 5 x 5 x 5 cube
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            k = k + 1
+
+            ! Set child cube info; store only needed parts in kube(k)
+          ! cube.set_vertex_info(p5(:,x+1:x+2,y+1:y+2,z+1:z+2), &
+          !                        f5(x+1:x+2,y+1:y+2,z+1:z+2))
+            MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Which cube vertices are inside or outside isosurface?
+            cube.set_case_info
+            if (cube.is_inside_surface)      .volume_min = .volume_min + vol
+            if (NOT cube.is_outside_surface) .volume_max = .volume_max + vol
+
+            ! Is the cube on the surface?
+            if (NOT cube.is_on_surface) cycle
+
+            ! We are on the surface: set the cube coords
+            .x = .x + x
+            .y = .y + y
+            .z = .z + z
+
+            ! Don't skip this cube
+            skip(k) = FALSE
+
+            ! Which cube edges cut the surface? Hence, which cube
+            ! vertices are needed? Hence, what triangles are to be
+            ! made?
+            cube.skip_bit_string = 0
+            cube.set_triangulation_info
+
+            ! The number of times that the cube will be re-used in
+            ! the map table
+            c = 0
+            if (cube.has_right_face_on_surface) then
+               if (x>0) then; c = c + 1
+               else;          ik(k) = 1
+               end
+            end
+            if (cube.has_back_face_on_surface) then
+               if (y>0) then; c = c + 1
+               else;          ik(k) = 1
+               end
+            end
+            if (cube.has_upper_face_on_surface) then
+               if (z>0) then; c = c + 1
+               else;          ik(k) = 1
+               end
+            end
+            cube.edge_vertex_index(12) = c
+
+            ! Find out which faces of the cube should have been triangulated
+            ! already, and store in ix, iy, iz arrays, and store in the
+            ! skip_bit_string for hessian evaluation
+            if (cube.has_left_face_on_surface) then
+               if (x>0) then
+                  ix(k) = -1
+                  cube.set_left_skip_bit_string  ! Left child cube exists
+               else if (.x>0 AND .map.has_key([.x-1,.y,.z],index=ix(k))) then
+                  cube.set_left_skip_bit_string  ! Left map cube exists
+               end
+               ENSURE(ix(k)/=0,"no left face indices found")
+            end
+            if (cube.has_front_face_on_surface) then
+               if (y>0) then
+                  iy(k) = -1
+                  cube.set_front_skip_bit_string ! Front child cube exists
+               else if (.y>0 AND .map.has_key([.x,.y-1,.z],index=iy(k))) then
+                  cube.set_front_skip_bit_string ! Front map cube exists
+               end
+               ENSURE(iy(k)/=0,"no front face indices found")
+            end
+            if (cube.has_lower_face_on_surface) then
+               if (z>0) then
+                  iz(k) = -1
+                  cube.set_below_skip_bit_string ! Lower child cube exists
+               else if (.z>0 AND .map.has_key([.x,.y,.z-1],index=iz(k))) then
+                  cube.set_below_skip_bit_string ! Lower map cube exists
+               end
+               ENSURE(iz(k)/=0,"no lower face indices found")
+            end
+
+            ! Set which edges to interpolate, accounting for those
+            ! already done above in skip_bit_string
+            cube.set_cube_bit_string
+
+            ! Set which of the 5 x 5 x 5 points are needed for hessian
+            ! and gradient.
+            MARCHINGCUBE::set_hessian_eval_array(cube,eval,x,y,z)
+
+            ! Store the needed parts of cube for later interpolation
+            kube(k) = cube
+
+            ! Clear the cube coords
+            .x = .x - x
+            .y = .y - y
+            .z = .z - z
+         end
+         end
+         end
+
+         ! Don't evaluate the 3 x 3 x 3 points/values -- already done
+         eval(2:4,2:4,2:4) = FALSE
+         f5(1:3,1:3,1:3) = f3
+
+         ! Now evaluate the function only at the needed points. The
+         ! previous loops over the 8 kubes was all for this.
+         PLOT_GRID::make_cube_of_points(.plot_grid,p5,-1,3,.del_x,.del_y,.del_z,.x,.y,.z,eval)
+         ISOSURFACE::make_5_cube_of_values_m(self,mol,f5,func_m,p5,eval)
+
+         ! Loop over the child cubes the second time, and do the
+         ! triangulation.
+         k = 0
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+
+            k = k + 1
+            if (skip(k)) cycle
+
+            ! Get stored cobe
+            cube = kube(k)
+
+            ! Evaluate the gradient and hessian
+            cube.set_hessian_info(f5(x:x+3,y:y+3,z:z+3))
+
+            ! Set the cube coordinates; for storing in map table
+            .x = .x + x
+            .y = .y + y
+            .z = .z + z
+
+            ! Use previously triangulated cubes if possible, avoid
+            ! looking in the map table
+            kk = ix(k)
+            if (kk/=0) then
+               if (kk<0) then
+                  kk = left(k)
+                  cube.set_left_info(kube(kk).edge_vertex_index)
+               else
+                  cube.set_left_info(.map.values(:,kk))
+                  .map.values(13,kk) = .map.values(13,kk) - 1
+               end
+            end
+            kk = iy(k)
+            if (kk/=0) then
+               if (kk<0) then
+                  kk = front(k)
+                  cube.set_front_info(kube(kk).edge_vertex_index)
+               else
+                  cube.set_front_info(.map.values(:,kk))
+                  .map.values(13,kk) = .map.values(13,kk) - 1
+               end
+            end
+            kk = iz(k)
+            if (kk/=0) then
+               if (kk<0) then
+                  kk = below(k)
+                  cube.set_below_info(kube(kk).edge_vertex_index)
+               else
+                  cube.set_below_info(.map.values(:,kk))
+                  .map.values(13,kk) = .map.values(13,kk) - 1
+               end
+            end
+
+            ! Set the cube vertex index to the last vertex
+            cube.set_n_pt(.n_pt)
+
+            ! Finally, do the interpolation
+            if (oblique) then; cube.interpolate_oblique_faces
+            else;              cube.interpolate_faces
+            end
+
+            ! Copy the cube interpolation info to the isosurface
+            .append_new_face_info(cube)
+
+            ! Append the cube vertex info to the map only if needed
+            if (cube.edge_vertex_index(12)>0) &
+               .map.append_pair([.x,.y,.z],cube.edge_vertex_index)
+
+            ! Might need to keep this from interpolation, it may share a face
+            if (ik(k)>0) &
+               kube(k).edge_vertex_index = cube.edge_vertex_index
+
+            ! Clear the cube coords
+            .x = .x - x
+            .y = .y - y
+            .z = .z - z
+         end
+         end
+         end
+
+         ! Remove dead edge_vertex_indices from map table
+         n = 0
+         do k = 1,8
+            kk = ix(k)
+            if (kk>0 AND .map.values(13,kk)==0) then
+               n = n + 1
+               dead_list(n) = kk
+            end
+            kk = iy(k)
+            if (kk>0 AND .map.values(13,kk)==0) then
+               n = n + 1
+               dead_list(n) = kk
+            end
+            kk = iz(k)
+            if (kk>0 AND .map.values(13,kk)==0) then
+               n = n + 1
+               dead_list(n) = kk
+            end
+         end
+         if (n>0) .map.delete_items(dead_list(1:n))
+
+      end
+
+      ! Go up to the next level: double side lengths, decrease level
+      .del_x = TWO*.del_x
+      if (oblique) then; .del_y = TWO*.del_y; .del_z = TWO*.del_z
+      else;              .del_y = .del_x;     .del_z = .del_x
+      end
+      .level = .level - 1
+   end
+
 
    update_4_slab(p,f,slice,func) ::: private
    ! Make or update a "slice" of an array "f", a 4-slab of "func" function
@@ -1809,6 +2805,78 @@ contains
       values.destroy
 
    end
+
+   update_4_slab_m(mol,p,f,slice,func_m) ::: private
+   ! Make or update a "slice" of an array "f", a 4-slab of "func" function
+   ! values which are evaluated at the slab points "p".  The slab involves .plot_grid
+   ! points whose z values are in the range slice-1:slice+2.  The "p" points and
+   ! the function values f(:,:,2:3) correspond to the bottom and top of the
+   ! slice.  The other slabs f(:,:,1) and f(:,:,4) are used for finite
+   ! differences to get vertex gradients.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      p :: MAT4{REAL}, INOUT
+      f :: MAT3{REAL}, INOUT
+      slice :: INT
+      interface
+         func_m(mol,values,pt)
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+   ENSURE(slice>=2 AND slice<=.plot_grid.n_z-2,"slice out f range")
+   ENSURE(p.dim1==3,"p must have dim1=3")
+   ENSURE(p.dim2==.plot_grid.n_x,"wrong size, p")
+   ENSURE(p.dim3==.plot_grid.n_y,"wrong size, p")
+   ENSURE(p.dim4==4,"p must have 4 slabs")
+   ENSURE(f.dim1==.plot_grid.n_x,"wrong size, f")
+   ENSURE(f.dim2==.plot_grid.n_y,"wrong size, f")
+   ENSURE(f.dim3==4,"f must have 4 slabs")
+
+      fz,lz,n_pt, i,x,y,z :: INT
+      values :: VEC{REAL}@
+      pt :: MAT{REAL}@
+
+      ! Get slab ranges
+      if (slice == 2) then
+         ! These are the first 4 slices
+         fz = 1; lz = 4
+      else
+         ! In between: only calculate one slice
+         p(:,:,:,1:3) = p(:,:,:,2:4)
+         f(:,:,1:3) = f(:,:,2:4)
+         fz = 4; lz = 4
+      end
+
+      ! Now calculate the slab between the right limits
+      n_pt = .plot_grid.n_x*.plot_grid.n_y*(lz-fz+1)
+      values.create(n_pt)
+      pt.create(n_pt,3)
+
+      ! Set the slab
+      .plot_grid.make_points(pt,1,.plot_grid.n_x,1,.plot_grid.n_y,slice-2+fz,slice-2+lz)
+      call func_m(mol,values,pt)
+      f(:,:,fz:lz).set_to(values)
+
+      ! Copy the points
+      i = 0
+      do z = fz,lz
+      do y = 1,.plot_grid.n_y
+      do x = 1,.plot_grid.n_x
+         i = i + 1
+         p(:,x,y,z) = pt(i,:)
+      end
+      end
+      end
+
+      pt.destroy
+      values.destroy
+
+   end
+
 
    append_new_face_info(cube) ::: leaky, private, PURE
    ! Generate the isosurface using the marching cube algorithm.
@@ -1951,7 +3019,8 @@ contains
    ! Evaluate a cube of values "f", with two points per side (starting at point
    ! 0). The values in "f" are those of the "func" function evaluated at
    ! positions "p" which are supposed to be the cube corners.
-      f :: VEC{REAL}(8)
+      self :: INOUT
+      f :: VEC{REAL}(8), OUT
       p :: MAT{REAL}(3,8), INOUT
       interface
          func(values,pt)
@@ -1986,12 +3055,56 @@ contains
 
    end
 
+   make_2_cube_of_values_m(mol,f,func_m,p) ::: private
+   ! Evaluate a cube of values "f", with two points per side (starting at point
+   ! 0). The values in "f" are those of the "func" function evaluated at
+   ! positions "p" which are supposed to be the cube corners.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      f :: VEC{REAL}(8), OUT
+      p :: MAT{REAL}(3,8), INOUT
+      interface
+         func_m(mol,values,pt)
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      i :: INT
+      fac,s :: REAL
+
+      ! Swap these around to match marchingcube
+      p(:,3:4) = p(:,4:3:-1)    
+      p(:,7:8) = p(:,8:7:-1)
+
+      ! Evaluate the function at pt
+      call func_m(mol,f,transpose(p)) 
+
+      ! Remove 8 evaluations for this
+      .n_skip = .n_skip - 8     
+
+      ! Cap ends after here
+      if (.cap_ends==0) return  
+
+      if (.cap_ends>ZERO) then; fac = ONE - TOL(3); s =  ONE
+      else;                     fac = ONE + TOL(3); s = -ONE
+      end
+
+      do i = 1,8
+         if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+      end
+
+   end
+
    make_3_cube_of_values(f,func,p,corner_value) ::: private
    ! Evaluate a cube of values "f", with three points per side (starting at
    ! point 0). The values in "f" are those of the "func" function evaluated at
    ! cube point positions "p". The cube points are assumed to be ordered along
    ! firstly the x-grid axis, then y-axis, then z-axis. The corner positions are
    ! not evaluated but taken from the "parent_cube" corner vertex values.
+      self :: INOUT
       f :: VEC{REAL}(27), OUT
       p :: MAT{REAL}(3,27), IN
       corner_value :: VEC{REAL}(8), IN
@@ -2074,14 +3187,107 @@ contains
       end
    end
 
+   make_3_cube_of_values_m(mol,f,func_m,p,corner_value) ::: private
+   ! Evaluate a cube of values "f", with three points per side (starting at
+   ! point 0). The values in "f" are those of the "func" function evaluated at
+   ! cube point positions "p". The cube points are assumed to be ordered along
+   ! firstly the x-grid axis, then y-axis, then z-axis. The corner positions are
+   ! not evaluated but taken from the "parent_cube" corner vertex values.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      f :: VEC{REAL}(27), OUT
+      p :: MAT{REAL}(3,27), IN
+      corner_value :: VEC{REAL}(8), IN
+      interface
+         func_m(mol,values,pt)
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      vals :: VEC{REAL}(19)
+      pt :: MAT{REAL}(19,3)
+      edge :: VEC{INT}(19) = [2,4,5,6,8,10,11,12,13,14,15,16,17,18,20,22,23,24,26]
+      i,last :: INT
+      fac,s :: REAL
+
+      vals = ZERO
+      pt = transpose(p(:,edge))       ! Skip edge points
+      call func_m(mol,vals,pt)              ! Evaluate the function at pt
+      .n_skip = .n_skip - 19          ! Remove 19=27-8 evaluations for this
+      f(edge) = vals                  ! Store values in full 3^3 array
+
+      f(1)  = corner_value(1)         ! Get the parent cube values
+      f(3)  = corner_value(2)
+      f(9)  = corner_value(3)
+      f(7)  = corner_value(4)
+      f(19) = corner_value(5)
+      f(21) = corner_value(6)
+      f(27) = corner_value(7)
+      f(25) = corner_value(8)
+
+      if (.cap_ends==0) return        ! Cap ends after here
+
+      if (.cap_ends>ZERO) then; fac = ONE - TOL(3); s =  ONE
+      else;                     fac = ONE + TOL(3); s = -ONE
+      end
+
+      last = 2**.final_level - 2
+
+      if (.x==0) then
+         do i = 1,25,3
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      else if (.x==last) then
+         do i = 3,27,3
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      end
+
+      if (.y==0) then
+         do i = 1,19,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+         do i = 2,20,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+         do i = 3,21,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      else if (.y==last) then
+         do i = 7,25,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+         do i = 8,26,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+         do i = 9,27,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      end
+
+      if (.z==0) then
+         do i = 1,9
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      else if (.z==last) then
+         do i = 19,27
+            if (s*f(i)>s*.iso_value) f(i) = .iso_value*fac
+         end
+      end
+   end
+
    make_5_cube_of_values(f,func,p,eval) ::: private
    ! Evaluate a 5 cube of values "f", with five points per side (starting at
    ! point 0). The values in "f" are those of the "func" function evaluated at
    ! cube point positions "p", except that only the points corresponding to the
    ! mask "eval" being TRUE are evaluated.
-      f :: VEC{REAL}(125)
-      p :: MAT{REAL}(3,125)
-      eval :: VEC{BIN}(125)
+      self :: INOUT
+      f :: VEC{REAL}(125), OUT
+      p :: MAT{REAL}(3,125), IN
+      eval :: VEC{BIN}(125), IN
       interface
          func(values,pt)
             values :: VEC{REAL}, OUT
@@ -2113,6 +3319,49 @@ contains
       values.destroy
    end
 
+   make_5_cube_of_values_m(mol,f,func_m,p,eval) ::: private
+   ! Evaluate a 5 cube of values "f", with five points per side (starting at
+   ! point 0). The values in "f" are those of the "func" function evaluated at
+   ! cube point positions "p", except that only the points corresponding to the
+   ! mask "eval" being TRUE are evaluated.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      f :: VEC{REAL}(125), OUT
+      p :: MAT{REAL}(3,125), INOUT
+      eval :: VEC{BIN}(125), IN
+      interface
+         func_m(mol,values,pt)
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+      values :: VEC{REAL}@
+      pt :: MAT{REAL}@
+      n_pt,n,i :: INT
+
+      n_pt = count(eval)
+      values.create(n_pt)
+      pt.create(n_pt,3)
+      n = 0
+      do i = 1,125 ! Pack the points "p" into "pt"
+         if (NOT eval(i)) cycle
+         n = n + 1
+         pt(n,1) = p(1,i)
+         pt(n,2) = p(2,i)
+         pt(n,3) = p(3,i)
+      end
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      call func_m(mol,values,pt)
+      .n_skip = .n_skip - n_pt
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      f = unpack(values,eval,f)
+      pt.destroy
+      values.destroy
+   end
+
 !  ================
 !  Plotting Methods
 !  ================
@@ -2133,6 +3382,28 @@ contains
       .surface_property_values.create(.point.dim2)
 
       call func(.surface_property_values,transpose(.point))
+
+   end
+
+   plot_function_m(mol,func_m) ::: leaky
+   ! Evaluate the function "func" on the surface of the isosurface points ".point".
+   ! The answers are stored in surface_property_values.
+      self :: INOUT
+      mol :: MOLECULE, IN
+      interface
+         func_m(mol,values,pt)
+            use TYPES
+            mol :: MOLECULE, IN
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+
+   ENSURE(.point.allocated,"no isosurface points!")
+
+      .surface_property_values.create(.point.dim2)
+
+      call func_m(mol,.surface_property_values,transpose(.point))
 
    end
 
@@ -4690,3 +5961,4 @@ contains
    end
 
 end
+
