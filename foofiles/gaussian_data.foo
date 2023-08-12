@@ -50,8 +50,8 @@ module GAUSSIAN_DATA
    b123_rep :: VEC{STR}@, public  ! e.g. [1][1][2][2]
  ! pLM_real :: VEC{STR}@, public  ! e.g. 21+
 
-   ! The normalising factors apply to gaussians with angular part different
-   ! from x^l, y^l or z^l
+   ! The normalising factors apply to gaussians with angular part
+   ! different from x^l, y^l or z^l
    normalising_factors :: VEC{REAL}@, public
 
    ! List of cartesian indices for gaussian functions in increasing angular
@@ -69,8 +69,8 @@ module GAUSSIAN_DATA
    ! They are set using the set_gaussian_indices routine.
    first_nonzero :: VEC{INT}@, public
    index_of :: MAT3{INT}@, public
-   index_m1 :: VEC{INT}@, public
-   index_p1 :: MAT{INT}@, public
+   index_m1 ::  VEC{INT}@, public
+   index_p1 ::  MAT{INT}@, public
 
    ! The binomial coefficients, plus 1, for reverse HRR
    binomial_p1 :: VEC{EVEC{INT}}@, public
@@ -686,7 +686,17 @@ contains
 ! ==============================
 
    set_normalising_factors(l_max,normalising_factors,px,py,pz) ::: selfless, private, PURE
-   ! Make the normalising factors for cartesian gaussians
+   ! IMPORTANT: Tonto uses cartesian gaussian basis functions for
+   ! which *every* component in an L-shell is multiplied by the
+   ! normalization factor for x^L (or y^l or z^L). Thus, cartesian
+   ! gaussian basis functions different from these in an L-shell are
+   ! *NOT* normalized to unity. The "normalising factors" returned by
+   ! this procedure multiply L-shell basis function components so that
+   ! each component would be normalized.  This is needed to ensure
+   ! spherical harmonic components are all normalised. The factors are
+   ! introduced into the spherical harmonic transofrmation matrices,
+   ! see below. They are also used when talking to other programs
+   ! which usually have every cartesian gaussian normalized.
       l_max :: INT, IN
       normalising_factors :: VEC{REAL}, OUT
       px,py,pz :: VEC{INT}, IN
@@ -1079,19 +1089,31 @@ contains
 
    make_xyz_to_solid_harmonics(sph) ::: selfless, leaky, PURE
    ! Make the cartesian gaussian to *real* solid harmonic gaussian
-   ! transformation matrices up to angular momentum "l_max". The particular
-   ! transformation matrix for angular momentum "L" is sph(L).element(c,M)
-   ! where "c" is the lexical index of the cartesian gaussian and "M" is the
-   ! spherical component index, as defined in the book by Helgaker, Olsen, and
-   ! Simons, p.218. NOTE: sph is created. NOTE: the M index goes as -L:L
+   ! transformation matrices up to angular momentum "l_max". The
+   ! particular transformation matrix for angular momentum "L" is
+   ! S^(LM)_c = sph(L).element(c,M) where "c" is the lexical index of
+   ! the cartesian gaussian and "M" is the spherical component index,
+   ! as defined in the book by Helgaker, Olsen, and Simons, p.218. 
+   ! NOTE: sph is created. 
+   ! NOTE: the M index goes as -L:L
+   ! ALSO: S^(L 0 ) =        (2 pi/2L+1)^(1/2) Re [    Y_(L 0)] 
+   !       S^(L +M) = (-1)^M (8 pi/2L+1)^(1/2) Re [r^L Y_(L M)] M>0
+   !       S^(L -M) = (-1)^M (8 pi/2L+1)^(1/2) Im [r^L Y_(L M)] M>0
+   ! where Y_(L M) are the *complex* solid harminics also known as
+   !                   the (complex) *harmonic polynomials*
+   ! These are the same thge normal spherical harmonics but just
+   ! multiplied by the factor r^L . See inside square brackets.
       sph :: VEC{EMAT{REAL}}@, OUT
 
    ENSURE(l_max_saved>=0,"l_max_saved must be non-negative")
 
       l_max,two :: INT
-      L,M,i,del,nc,x,y,z,lm1,lm0,lm2 :: INT
-      top,bot,fac,val,valp,valm :: REAL
-      ix,iy,iz,pow :: VEC{INT}(3)
+      L,M,i, del,nc :: INT
+      x,y,z, fg,lg  :: INT
+      lm1, lm0, lm2 :: INT
+      top, bot, fac :: REAL
+      val,valp,valm :: REAL
+      ix,iy,iz, pow :: VEC{INT}(3)
 
       ! Set l_max
       l_max = l_max_saved
@@ -1169,6 +1191,17 @@ contains
 
          end
 
+      end
+
+      ! L-shell normalizing factors.
+      lg = 0
+      do L = 0,l_max
+         nc = GAUSSIAN_DATA::n_comp(L)
+         fg = lg + 1
+         lg = lg + nc
+         do M = -L,L
+            sph(L)[:,M] = sph(L)[:,M] * GAUSSIAN_DATA::normalising_factors(fg:lg)
+         end
       end
 
    end
@@ -1889,7 +1922,6 @@ contains
 
    end
 
-
    lower_pyramid_to_lexical_2(inp,res) ::: selfless, PURE
    ! The gaussian lexical order for L=2 is reordered from the lower
    ! pyramid *to* a 3x3 tensor. 
@@ -1958,6 +1990,143 @@ contains
       end
 
    end
+
+! ==========================
+! Gaussian & Molden ordering
+! ==========================
+
+   get_molden_cartesian_order(L) result (res) ::: pure, selfless
+   ! This generates the molden order corresponding to the canonical
+   ! tonto order. For *gathering* molden -> tonto arrays.
+   ! i.e. tonto(:) = molden(res(:))
+   ! NOTE: This actually works up to L <= 4
+      L :: INT, IN
+      res :: VEC{INT}@
+
+      L_tri, i, M :: INT
+
+      L_tri = (L+1)*(L+2)/2
+      allocate(res(L_tri))
+
+      res = 0
+
+      select case (L)
+
+      case (0,1,2)
+         res = [ (i, i = 1,L_tri) ]
+
+      case (3)
+         ! tonto : xxx yyy zzz xxy xxz xyy yyz xzz yzz xyz 
+         ! molden: xxx yyy zzz xyy xxy xxz xzz yzz yyz xyz 
+         res =    [ 1,  2,  3,  5,  6,  4,  9,  7,  8, 10 ]
+
+      end
+
+   end
+
+   put_molden_cartesian_order(L) result (res) ::: pure, selfless
+   ! This generates the tonto order corresponding to the canonical
+   ! *molden* order. For *gathering* tonto -> molden arrays.
+   ! i.e. molden(:) = tonto(res(:))
+   ! NOTE: This actually works up to L <= 4
+      L :: INT, IN
+      res :: VEC{INT}@
+
+      L_tri, i, M :: INT
+
+      L_tri = (L+1)*(L+2)/2
+      allocate(res(L_tri))
+      res = 0
+
+      select case (L)
+
+      case (0,1,2)
+         res = [ (i, i = 1,L_tri) ]
+
+      case (3)
+         ! molden: xxx yyy zzz xyy xxy xxz xzz yzz yyz xyz 
+         ! tonto : xxx yyy zzz xxy xxz xyy yyz xzz yzz xyz 
+         res =    [ 1,  2,  3,  6,  4,  5,  8,  9,  7, 10 ]
+
+      end
+
+   end
+
+   get_molden_spherical_order(L) result (res) ::: pure, selfless
+   ! This generates the molden order corresponding to the canonical
+   ! tonto order. For *gathering* molden -> tonto arrays.
+   ! i.e. tonto(:) = molden(res(:)) e.g. for L=3 
+   ! molden:  0, 1,-1, 2,-2, 3,-3 
+   ! tonto : -3,-2,-1, 0, 1, 2, 3 
+   ! i.e. tonto(:) = molden(res(:))
+   ! NOTE: M>0 corresponds to Re [r^L Y_(L M)] or "cos like"
+   !       M<0 corresponds to Im [r^L Y_(L M)] or "sin like"
+      L :: INT, IN
+      res :: VEC{INT}@
+
+      L2, n, i, M :: INT
+
+      L2 = 2*L
+      allocate(res(L2+1))
+
+      select case (L)
+
+      case (0,1)
+         res = [ (i, i = 1,L2+1) ]
+
+      case default
+         n = 0
+         do i = L2, -L2, -2
+            n = n + 1
+            if (i>=0) then; res(n) =  i + 1
+            else;           res(n) = -i
+            end
+         end
+
+      end
+
+   end
+
+   put_molden_spherical_order(L) result (res) ::: pure, selfless
+   ! This generates the molden order corresponding to the canonical
+   ! tonto order. For *gathering* molden -> tonto arrays.
+   ! i.e. tonto(:) = molden(res(:)) e.g. for L=3 
+   ! molden:  0, 1,-1, 2,-2, 3,-3 
+   ! tonto : -3,-2,-1, 0, 1, 2, 3 
+   ! i.e. molden(:) = tonto(res(:))
+   ! NOTE: M>0 corresponds to Re [r^L Y_(L M)] or "cos like"
+   !       M<0 corresponds to Im [r^L Y_(L M)] or "sin like"
+      L :: INT, IN
+      res :: VEC{INT}@
+
+      L2, n, i, M :: INT
+
+      L2 = 2*L
+      allocate(res(L2+1))
+
+      select case (L)
+
+      case (0,1)
+         res = [ (i, i = 1,L2+1) ]
+
+      case default
+         n = 0
+         do i = L2+1, 1, -2
+            n = n + 1
+            res(i) = n
+         end
+         do i = 2, L2, 2
+            n = n + 1
+            res(i) = n
+         end
+
+      end
+
+   end
+
+! ================
+! Gaussian ordering
+! ================
 
    tonto_to_gaussian_spherical_indices(L) result (res) ::: pure, selfless
    ! This generates the gaussian/molden order for e.g. L=3
