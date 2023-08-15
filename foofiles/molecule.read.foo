@@ -61,6 +61,8 @@ contains
 !  Molden interface
 !  ================
 
+! Combine the next two into a template?
+
    read_molden_MOs(file_name, print_output) ::: leaky
    ! Read a Molden MOs file
       self :: INOUT
@@ -71,6 +73,7 @@ contains
       archive :: ARCHIVE
       pos :: VEC{REAL}(3)
       orb :: VEC{REAL}@
+      fbf,lbf,ang :: VEC{INT}@
       fac,n_e,n_a,n_b,val,energy,occ :: REAL
       name,units,item,label,spin :: STR
       op,cl :: STR(len=1)
@@ -356,11 +359,15 @@ contains
     !    stdout.text("Reordering basis functions into tonto order")
     ! end
 
+      fbf = .first_basis_fn_for_shell
+      lbf =  .last_basis_fn_for_shell
+      ang = .angular_moment_for_shell
+
       if (is_unrestricted) then
-         .READ:swap_molden_orbital_order(.MOs.a,"row")
-         .READ:swap_molden_orbital_order(.MOs.b,"row")
+         GAUSSIAN_DATA:swap_from_Molden_C_order(.MOs.a,"1",fbf,lbf,ang)
+         GAUSSIAN_DATA:swap_from_Molden_C_order(.MOs.b,"1",fbf,lbf,ang)
       else
-         .READ:swap_molden_orbital_order(.MOs.r,"row")
+         GAUSSIAN_DATA:swap_from_Molden_C_order(.MOs.r,"1",fbf,lbf,ang)
       end
 
 
@@ -410,11 +417,9 @@ contains
       archive.set_defaults
 
       archive.set(.name,"density_mx")
-      .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
       archive.write(.density_mx)
 
       archive.set(.name,"MOs")
-      .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
       archive.write(.MOs)
 
       archive.set(.name,"MO_energies")
@@ -443,6 +448,7 @@ contains
       archive :: ARCHIVE
       pos :: VEC{REAL}(3)
       orb :: VEC{REAL}@
+      fbf,lbf,ang :: VEC{INT}@
       fac,n_e,val,energy,occ :: REAL
       name,units,item,label,spin :: STR
       op,cl :: STR(len=1)
@@ -671,11 +677,15 @@ contains
       orb.destroy
 
       ! Swap orbital order
+      fbf = .first_basis_fn_for_shell
+      lbf =  .last_basis_fn_for_shell
+      ang = .angular_moment_for_shell
+
       if (is_unrestricted) then
-         .READ:swap_molden_orbital_order(.NOs.a,"row")
-         .READ:swap_molden_orbital_order(.NOs.b,"row")
+         GAUSSIAN_DATA:swap_from_Molden_C_order(.NOs.a,"1",fbf,lbf,ang)
+         GAUSSIAN_DATA:swap_from_Molden_C_order(.NOs.b,"1",fbf,lbf,ang)
       else
-         .READ:swap_molden_orbital_order(.NOs.r,"row")
+         GAUSSIAN_DATA:swap_from_Molden_C_order(.NOs.r,"1",fbf,lbf,ang)
       end
 
 
@@ -737,102 +747,203 @@ contains
 
    end
 
-   swap_molden_orbital_order(X,swap) ::: private, PURE
-   ! Swap the order of orbitals on matrix "X" after reading a
-   ! molden input file, for "swap" equal to "row" or "1", or
-   ! "coloumn" or "2".  This is nearly the same as gaussian.
-   !
-   ! The molden orderring is as follows:
-   !  5D: D 0, D+1, D-1, D+2, D-2
-   !  6D: xx, yy, zz, xy, xz, yz
-   !  7F: F 0, F+1, F-1, F+2, F-2, F+3, F-3
-   ! 10F: xxx, yyy, zzz, xyy, xxy, xxz, xzz, yzz, yyz, xyz
-   !  9G: G 0, G+1, G-1, G+2, G-2, G+3, G-3, G+4, G-4
-   ! 15G: xxxx yyyy zzzz xxxy xxxz yyyx yyyz zzzx zzzy,
-   !      xxyy xxzz yyzz xxyz yyxz zzxy
-      self :: IN
-      X :: MAT{REAL}, INOUT
-      swap :: STR, IN
+!   swap_molden_orbital_order(X,swap) ::: private, PURE
+!   ! Swap the order of orbitals on matrix "X" after reading a
+!   ! molden input file, for "swap" equal to "row" or "1", or
+!   ! "coloumn" or "2".  This is nearly the same as gaussian.
+!   !
+!   ! The molden orderring is as follows:
+!   !  5D: D 0, D+1, D-1, D+2, D-2
+!   !  6D: xx, yy, zz, xy, xz, yz
+!   !  7F: F 0, F+1, F-1, F+2, F-2, F+3, F-3
+!   ! 10F: xxx, yyy, zzz, xyy, xxy, xxz, xzz, yzz, yyz, xyz
+!   !  9G: G 0, G+1, G-1, G+2, G-2, G+3, G-3, G+4, G-4
+!   ! 15G: xxxx yyyy zzzz xxxy xxxz yyyx yyyz zzzx zzzy,
+!   !      xxyy xxzz yyzz xxyz yyxz zzxy
+!      self :: IN
+!      X :: MAT{REAL}, INOUT
+!      swap :: STR, IN
+!
+!      s,f,l,ls,fg,lg,i,j :: INT
+!      fac :: VEC{REAL}@
+!      ff  :: VEC{INT}(10)
+!      sph_reorder :: VEC{INT}@
+!
+!      ff = [1, 2, 3, 5, 6, 4, 9, 7, 8, 10]
+!
+!      select case (swap)
+!
+!      case("row","1")
+!         do s = 1,.n_shell
+!            f  = .first_basis_fn_for_shell(s)
+!            l  = .last_basis_fn_for_shell(s)
+!            ls = .angular_moment_for_shell(s)
+!            if(.atom(.atom_for_shell(s)).basis.is_spherical) then
+!               ! do spherical test
+!               sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
+!               if (ls>=1) then ! swap f functions
+!                  X(f:l,:) = X(f-1+sph_reorder,:)
+!               end
+!               if (ls>1) then  ! normalisation factors
+!                  lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+!                  fg  = lg + 1
+!                  lg  = lg + GAUSSIAN_DATA:n_comp(ls)
+!                  fac = GAUSSIAN_DATA::unnormalizing_factors(fg:lg)
+!                  do i = f,l
+!                     X(i,:) = X(i,:)*fac(i-f+1)
+!                  end
+!               end
+!            else
+!               ENSURE(ls<=4,"cannot yet convert order for h shells")
+!               ! fix for nwchem molden MOs, PGTO normalization for xy, xy, yz
+!               if (ls == 2) then
+!                  X(f+3:l,:) = X(f+3:l,:) / sqrt(3d0)
+!               end
+!               if (ls==3) then ! swap f functions
+!                  X(f:l,:) = X(f-1+ff,:)
+!                  ! if the same trend from D is true for F above these may be needed
+!                  ! X(f+3:l-1,:) = X(f+3:l-1,:) / sqrt(3d0)
+!                  ! X(l-1:l,:) = X(l-1:l,:) / sqrt(15d0)
+!               end
+!               if (ls>1) then  ! normalisation factors
+!                  lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+!                  fg  = lg + 1
+!                  lg  = lg + GAUSSIAN_DATA:n_comp(ls)
+!                  fac = GAUSSIAN_DATA::unnormalizing_factors(fg:lg)
+!                  do i = f,l
+!                     X(i,:) = X(i,:)*fac(i-f+1)
+!                  end
+!               end
+!            end
+!         end
+!
+!      case("column","2")
+!         do s = 1,.n_shell
+!            f  = .first_basis_fn_for_shell(s)
+!            l  = .last_basis_fn_for_shell(s)
+!            ls = .angular_moment_for_shell(s)
+!            ENSURE(ls<=4,"cannot yet convert order for h shells")
+!            if (ls==3) then ! swap f functions
+!               X(:,f:l) = X(:,f-1+ff)
+!            end
+!            if (ls>1) then  ! normalisation factors
+!               lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+!               fg  = lg + 1
+!               lg  = lg + GAUSSIAN_DATA:n_comp(ls)
+!               fac = GAUSSIAN_DATA::unnormalizing_factors(fg:lg)
+!               do j = f,l
+!                  X(:,j) = X(:,j)*fac(j-f+1)
+!               end
+!            end
+!         end
+!
+!    ! case default
+!    !    DIE("unknown swap kind, "//trim(swap))
+!
+!      end
+!
+!   end
 
-      s,f,l,ls,fg,lg,i,j :: INT
-      fac :: VEC{REAL}@
-      ff  :: VEC{INT}(10)
-      sph_reorder :: VEC{INT}@
-
-      ff = [1, 2, 3, 5, 6, 4, 9, 7, 8, 10]
-
-      select case (swap)
-
-      case("row","1")
-         do s = 1,.n_shell
-            f  = .first_basis_fn_for_shell(s)
-            l  = .last_basis_fn_for_shell(s)
-            ls = .angular_moment_for_shell(s)
-            if(.atom(.atom_for_shell(s)).basis.is_spherical) then
-               ! do spherical test
-               sph_reorder = GAUSSIAN_DATA:tonto_to_gaussian_spherical_indices(ls)
-               if (ls>=1) then ! swap f functions
-                  X(f:l,:) = X(f-1+sph_reorder,:)
-               end
-               if (ls>1) then  ! normalisation factors
-                  lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                  fg  = lg + 1
-                  lg  = lg + GAUSSIAN_DATA:n_comp(ls)
-                  fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do i = f,l
-                     X(i,:) = X(i,:)*fac(i-f+1)
-                  end
-               end
-            else
-               ENSURE(ls<=4,"cannot yet convert order for h shells")
-               ! fix for nwchem molden MOs, PGTO normalization for xy, xy, yz
-               if (ls == 2) then
-                  X(f+3:l,:) = X(f+3:l,:) / sqrt(3d0)
-               end
-               if (ls==3) then ! swap f functions
-                  X(f:l,:) = X(f-1+ff,:)
-                  ! if the same trend from D is true for F above these may be needed
-                  ! X(f+3:l-1,:) = X(f+3:l-1,:) / sqrt(3d0)
-                  ! X(l-1:l,:) = X(l-1:l,:) / sqrt(15d0)
-               end
-               if (ls>1) then  ! normalisation factors
-                  lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-                  fg  = lg + 1
-                  lg  = lg + GAUSSIAN_DATA:n_comp(ls)
-                  fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
-                  do i = f,l
-                     X(i,:) = X(i,:)*fac(i-f+1)
-                  end
-               end
-            end
-         end
-
-      case("column","2")
-         do s = 1,.n_shell
-            f  = .first_basis_fn_for_shell(s)
-            l  = .last_basis_fn_for_shell(s)
-            ls = .angular_moment_for_shell(s)
-            ENSURE(ls<=4,"cannot yet convert order for h shells")
-            if (ls==3) then ! swap f functions
-               X(:,f:l) = X(:,f-1+ff)
-            end
-            if (ls>1) then  ! normalisation factors
-               lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
-               fg  = lg + 1
-               lg  = lg + GAUSSIAN_DATA:n_comp(ls)
-               fac = GAUSSIAN_DATA::normalising_factors(fg:lg)
-               do j = f,l
-                  X(:,j) = X(:,j)*fac(j-f+1)
-               end
-            end
-         end
-
-    ! case default
-    !    DIE("unknown swap kind, "//trim(swap))
-
-      end
-
-   end
+!   swap_from_molden_order(X,swap) ::: private, PURE
+!   ! Swap the order of orbitals on matrix "X" after reading a
+!   ! molden input file, for "swap" equal to "row" or "1", or
+!   ! "coloumn" or "2". The molden orderring is as follows:
+!   !  5D: D 0, D+1, D-1, D+2, D-2
+!   !  6D: xx, yy, zz, xy, xz, yz
+!   !  7F: F 0, F+1, F-1, F+2, F-2, F+3, F-3
+!   ! 10F: xxx, yyy, zzz, xyy, xxy, xxz, xzz, yzz, yyz, xyz
+!   !  9G: G 0, G+1, G-1, G+2, G-2, G+3, G-3, G+4, G-4
+!   ! 15G: xxxx yyyy zzzz xxxy xxxz yyyx yyyz zzzx zzzy,
+!   !      xxyy xxzz yyzz xxyz yyxz zzxy
+!      self :: IN
+!      X :: MAT{REAL}, INOUT
+!      swap :: STR, IN
+!
+!      s,i,f,l,ls,fg,lg :: INT
+!      fac :: VEC{REAL}@
+!      reorder :: VEC{INT}@
+!
+!      ff = [1, 2, 3, 5, 6, 4, 9, 7, 8, 10]
+!
+!      select case (swap)
+!
+!      case("row","1")
+!
+!         do s = 1,.n_shell
+!
+!            f  = .first_basis_fn_for_shell(s)
+!            l  = .last_basis_fn_for_shell(s)
+!            ls = .angular_moment_for_shell(s)
+!
+!            if(.atom(.atom_for_shell(s)).basis.is_spherical) then
+!               reorder = GAUSSIAN_DATA::molden_spherical_order(ls)
+!               X(f:l,:) = X(f-1+reorder,:)
+!               if (ls>1) then  ! normalisation factors
+!                  lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+!                  fg  = lg + 1
+!                  lg  = lg + GAUSSIAN_DATA:n_comp(ls)
+!                  fac = GAUSSIAN_DATA::unnormalizing_factors(fg:lg)
+!                  do i = f,l
+!                     X(i,:) = X(i,:)*fac(i-f+1)
+!                  end
+!               end
+!
+!            else
+!
+!               ! Cartesian
+!               ENSURE(ls<=4,"cannot yet convert order for h shells")
+!               ! fix for nwchem molden MOs, PGTO normalization for xy, xy, yz
+!               if (ls == 2) then
+!                  X(f+3:l,:) = X(f+3:l,:) / sqrt(3d0)
+!               end
+!               if (ls==3) then ! swap f functions
+!                  X(f:l,:) = X(f-1+ff,:)
+!                  ! if the same trend from D is true for F above these may be needed
+!                  ! X(f+3:l-1,:) = X(f+3:l-1,:) / sqrt(3d0)
+!                  ! X(l-1:l,:) = X(l-1:l,:) / sqrt(15d0)
+!               end
+!               if (ls>1) then  ! normalisation factors
+!                  lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+!                  fg  = lg + 1
+!                  lg  = lg + GAUSSIAN_DATA:n_comp(ls)
+!                  fac = GAUSSIAN_DATA::unnormalizing_factors(fg:lg)
+!                  do i = f,l
+!                     X(i,:) = X(i,:)*fac(i-f+1)
+!                  end
+!               end
+!            end
+!         end
+!
+!      case("column","2")
+!
+!         do s = 1,.n_shell
+!
+!            f  = .first_basis_fn_for_shell(s)
+!            l  = .last_basis_fn_for_shell(s)
+!            ls = .angular_moment_for_shell(s)
+!
+!            ENSURE(ls<=4,"cannot yet convert order for h shells")
+!            if (ls==3) then ! swap f functions
+!               X(:,f:l) = X(:,f-1+ff)
+!            end
+!            if (ls>1) then  ! normalisation factors
+!               lg  = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+!               fg  = lg + 1
+!               lg  = lg + GAUSSIAN_DATA:n_comp(ls)
+!               fac = GAUSSIAN_DATA::unnormalizing_factors(fg:lg)
+!               do j = f,l
+!                  X(:,j) = X(:,j)*fac(j-f+1)
+!               end
+!            end
+!
+!         end
+!
+!    ! case default
+!    !    DIE("unknown swap kind, "//trim(swap))
+!
+!      end
+!
+!   end
 
 !  ======================
 !  Gaussian chk interface
@@ -901,6 +1012,7 @@ contains
 
       fchk,label :: STR
       chkfile :: TEXTFILE*
+      fbf,lbf,ang :: VEC{INT}@
       shell_l,n_prim_for_shell,atom_for_shell,atom_p :: VEC{INT}@
       G_n_prim_for_shell,G_atom_for_shell,G_shell_type :: VEC{INT}@
       G_ex,G_cc,G_cp, ex,cc,orb_energy,fc :: VEC{REAL}@
@@ -1166,7 +1278,12 @@ contains
       chkfile.read_line
       chkfile.read(temp_mat)
 
+      fbf = .first_basis_fn_for_shell
+      lbf =  .last_basis_fn_for_shell
+      ang = .angular_moment_for_shell
+
       .MOs.destroy
+
       if (trim(chkfile.next_str)=="Beta") then
          .MOs.create(.n_bf,"u ")
          .MOs.a = ZERO
@@ -1175,14 +1292,14 @@ contains
          .MOs.b = ZERO
          .MOs.b(1:.n_bf,1:n_independent) = transpose(temp_mat)
          temp_mat.destroy
-         .SET:swap_from_g94_orbital_order(.MOs.a,"row")
-         .SET:swap_from_g94_orbital_order(.MOs.b, "row")
+         GAUSSIAN_DATA:swap_from_Gaussian_C_order(.MOs.a,"row",fbf,lbf,ang)
+         GAUSSIAN_DATA:swap_from_Gaussian_C_order(.MOs.b,"row",fbf,lbf,ang)
       else
          .MOs.create(.n_bf,"r ")
          .MOs.r = ZERO
          .MOs.r(1:.n_bf,1:n_independent) = transpose(temp_mat)
          temp_mat.destroy
-         .SET:swap_from_g94_orbital_order(.MOs.r,"row")
+         GAUSSIAN_DATA:swap_from_Gaussian_C_order(.MOs.r,"row",fbf,lbf,ang)
       end
 
       ! Read in density matrix.
@@ -1214,15 +1331,13 @@ contains
       chkfile.close; chkfile.destroy
 
       ! Save data in archive files
-      ! NOTE: MO's & density matrix are wrt unnormalised basis fn's
+      ! NOTE: MO's & density matrix are wrt unnormalized basis fn's
       archive.set_defaults
 
       archive.set(.name,"density_mx")
-    ! .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
       archive.write(.density_mx)
 
       archive.set(.name,"MOs")
-    ! .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
       archive.write(.MOs)
 
       archive.set(.name,"MO_energies")
@@ -1247,10 +1362,15 @@ contains
    ENSURE(.n_bf>0,"no basis functions")
 
       D,spin,total :: OPMATRIX@
+      fbf,lbf,ang :: VEC{INT}@
       archive :: ARCHIVE
 
       ! Extract density matrix
       if (NOT chkfile.has_string("TAG? Density")) return
+
+      fbf = .first_basis_fn_for_shell
+      lbf =  .last_basis_fn_for_shell
+      ang = .angular_moment_for_shell
 
       if (restricted) then
 
@@ -1263,8 +1383,8 @@ contains
          D.uncompress
 
          ! Swap orbital order
-         .SET:swap_from_g94_orbital_order(D.r,"row")
-         .SET:swap_from_g94_orbital_order(D.r,"column")
+         GAUSSIAN_DATA:swap_from_Gaussian_C_order(D.r,"1",fbf,lbf,ang)
+         GAUSSIAN_DATA:swap_from_Gaussian_C_order(D.r,"2",fbf,lbf,ang)
 
       else
 
@@ -1296,10 +1416,10 @@ contains
          total.destroy
 
          ! Swap orbital order
-         .SET:swap_from_g94_orbital_order(D.a,"row")
-         .SET:swap_from_g94_orbital_order(D.a,"column")
-         .SET:swap_from_g94_orbital_order(D.b, "row")
-         .SET:swap_from_g94_orbital_order(D.b, "column")
+         GAUSSIAN_DATA:swap_from_Gaussian_C_order(D.a,"1",fbf,lbf,ang)
+         GAUSSIAN_DATA:swap_from_Gaussian_C_order(D.a,"2",fbf,lbf,ang)
+         GAUSSIAN_DATA:swap_from_Gaussian_C_order(D.b,"1",fbf,lbf,ang)
+         GAUSSIAN_DATA:swap_from_Gaussian_C_order(D.b,"2",fbf,lbf,ang)
 
       end
 
@@ -1523,7 +1643,8 @@ contains
 
       i  :: INT
       nm :: STR
-      normalise :: STR
+      normalize :: STR
+      fbf,lbf,ang :: VEC{INT}@
       do_norm :: BIN
       arch :: ARCHIVE
 
@@ -1537,16 +1658,20 @@ contains
          nm = name(1:i-1)
       end
 
-      ! Second word on line is normalise?
-      normalise = " "
-      if (stdin.buffer.n_items==2) stdin.read(normalise)
-      do_norm = normalise(1:9)=="normalise" OR normalise(1:9)=="normalize"
+      ! Second word on line is normalize?
+      normalize = " "
+      if (stdin.buffer.n_items==2) stdin.read(normalize)
+      do_norm = normalize(1:9)=="normalise" OR normalize(1:9)=="normalize"
       ! Tell them
       if (do_norm) then
          stdout.flush
-         stdout.text("Writing normalised "//trim(nm))
+         stdout.text("Writing normalized "//trim(nm))
          stdout.flush
       end
+
+      fbf = .first_basis_fn_for_shell
+      lbf =  .last_basis_fn_for_shell
+      ang = .angular_moment_for_shell
 
       ! Read the archive
       select case (nm)
@@ -1554,21 +1679,18 @@ contains
       case ("covalent_orbitals ","RG_COs            ")
          if (.NOs.deallocated) .NOs.create(.n_bf)
          arch.read(.NOs)
-         if (do_norm) &
-            .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+         if (do_norm) .NOs.unnormalize("1",fbf,lbf,ang)
 
       case ("ionic_orbitals    ","RG_IOs            ")
          if (.NOs.deallocated) .NOs.create(.n_bf)
          arch.read(.NOs)
-         if (do_norm) &
-            .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+         if (do_norm) .NOs.unnormalize("1",fbf,lbf,ang)
 
       case ("molecular_orbitals","MOs               ", &
             "HF_MOs            ","KS_MOs            ")
          if (.MOs.deallocated) .MOs.create(.n_bf)
          arch.read(.MOs)
-         if (do_norm) &
-            .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+         if (do_norm) .MOs.unnormalize("1",fbf,lbf,ang)
 
       case ("MO_energies       ", &
             "HF_MO_energies    ","KS_MO_energies    ")
@@ -1578,8 +1700,7 @@ contains
       case ("natural_orbitals  ","NOs               ")
          if (.NOs.deallocated) .NOs.create(.n_bf)
          arch.read(.NOs)
-         if (do_norm) &
-         .NOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+         if (do_norm) .NOs.unnormalize("1",fbf,lbf,ang)
 
       case ("occupation_nos    ","NO_occ_nos        ")
          if (.NO_occ_nos.deallocated) .NO_occ_nos.create(.n_bf)
@@ -1592,15 +1713,15 @@ contains
             "mp3_density_matrix","MP3_density_mx    ")
          if (.density_mx.deallocated) .density_mx.create(.n_bf)
          arch.read(.density_mx)
-         if (do_norm) &
-            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+         if (do_norm) then
+            .density_mx.unnormalize(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+         end
 
       case ("fock_matrix       ", &
             "Fock_mx           ","Kohn-Sham_mx      ")
          if (.fock_mx.deallocated) .fock_mx.create(.n_bf)
          arch.read(.fock_mx)
-         if (do_norm) &
-            .fock_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
+         if (do_norm) .fock_mx.unnormalize(fbf,lbf,ang)
 
       case ("U_electric_dipole ")
          if (.U_electric_dipole.deallocated) .U_electric_dipole.create(.n_bf,.n_bf,3)
@@ -1760,7 +1881,6 @@ contains
          if (arch.exists) then
             .MOs.create(.n_bf)
             arch.read(.MOs)
-            .MOs.unnormalise("1",.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
             arch.close
          end
       end
@@ -1776,7 +1896,6 @@ contains
          if (arch.exists) then
             .density_mx.create(.n_bf)
             arch.read(.density_mx)
-            .density_mx.unnormalise(.first_basis_fn_for_shell,.last_basis_fn_for_shell,.angular_moment_for_shell)
             arch.close
          end
       end
