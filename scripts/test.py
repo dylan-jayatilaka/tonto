@@ -21,6 +21,7 @@ prefixes_to_ignore = [
     'Warning', 'https', 'www', 'Peter', 'Daniel', 'Dylan',
     'WARNINGS', 'Look above', 'time taken for',
     '_audit_creation_date', 
+    '_audit_creation_method', 
     '_QCr_software_version',
     '_QCr_software_platform',
     '_QCr_software_build_date'
