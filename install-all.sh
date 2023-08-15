@@ -1,5 +1,6 @@
 #!/usr/bin/bash
-# Run this script as "sudo ./install-all-you-need.sh"
+# On Ubuntu linux, run this script by typing:
+# "sudo ./install-all-you-need.sh"
 sudo apt-get update -y
 sudo apt-get upgrade -y
 sudo apt-get install g++ -y
@@ -16,9 +17,9 @@ git clone --recurse-submodules https://github.com/dylan-jayatilaka/tonto.git
 cd tonto
 # Link basis_sets
 sudo ln -s basis_sets  /usr/local/bin
-# Build RELEASE tonto version in build/
-mkdir build && cd build
-cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=release
+# Build FAST tonto version in fast/
+mkdir fast && cd fast
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=fast
 make -j
 sudo ln -s tonto /usr/local/bin
 cd ..
@@ -26,5 +27,5 @@ cd ..
 #mkdir debug && cd debug
 #cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=debug
 #make -j
-#sudo ln -s tonto /usr/local/bin
+#sudo ln -s tonto /usr/local/bin/tonto.debug
 #cd ..
