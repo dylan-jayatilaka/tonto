@@ -1,9 +1,9 @@
 # Welcome to Tonto!
-# And welcome to IUCR23 workshop people! Read the next sentence.
+# And welcome to IUCR23 workshop people! Read on.
 
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
 
-If you are a workshop attendee, the instructions are here(https://docs.google.com/document/d/1Wa_bTfulBZET3DU_qoUNk5_ZKAhk1c6j/edit?usp=sharing&ouid=108836333860762505478&rtpof=true&sd=true).
+If you are a workshop attendee, the instructions are [here](https://docs.google.com/document/d/1Wa_bTfulBZET3DU_qoUNk5_ZKAhk1c6j/edit?usp=sharing&ouid=108836333860762505478&rtpof=true&sd=true).
 Please proceed to install the software.
 
 ## 1. Get ready ...
