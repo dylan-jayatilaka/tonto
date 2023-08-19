@@ -1,5 +1,10 @@
 # Welcome to Tonto!
+# And welcome to IUCR23 worskop people!
+
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
+
+If you are a workshop attendee, the instructions are here.
+Please proceed to install the software.
 
 ## 1. Get ready ...
 
