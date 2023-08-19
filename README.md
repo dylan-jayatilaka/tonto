@@ -1,5 +1,5 @@
 # Welcome to Tonto!
-# And welcome to IUCR23 worskop people!
+# And welcome to IUCR23 workshop people!
 
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
 
