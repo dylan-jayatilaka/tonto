@@ -207,7 +207,10 @@ set(FOO_SRC
     ${FOO_DIR}/coppensorbital.foo
     ${FOO_DIR}/debug.foo
     ${FOO_DIR}/dft_functional.foo
-    ${FOO_DIR}/diffraction_data.foo
+    ${FOO_DIR}/diffraction_data.inq.foo
+    ${FOO_DIR}/diffraction_data.set.foo
+    ${FOO_DIR}/diffraction_data.read.foo
+    ${FOO_DIR}/diffraction_data.put.foo
     ${FOO_DIR}/diis.foo
     ${FOO_DIR}/rys.foo
     ${FOO_DIR}/rms_indices.foo
@@ -311,7 +314,10 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.set.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.read.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.put.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diis.F90
     ${CMAKE_CURRENT_BINARY_DIR}/file.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian.F90
