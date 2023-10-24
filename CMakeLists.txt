@@ -247,6 +247,7 @@ set(FOO_SRC
     ${FOO_DIR}/spacegroup.foo
     ${FOO_DIR}/reflection.foo
     ${FOO_DIR}/crystal.foo
+    ${FOO_DIR}/crystal23.foo
     ${FOO_DIR}/spherical.foo
     ${FOO_DIR}/table_column.foo
     ${FOO_DIR}/t_tensor.foo
@@ -312,6 +313,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/coppensorbital.F90
     ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
     ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
