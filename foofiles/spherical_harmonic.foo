@@ -1,6 +1,6 @@
 !=====================================================================
 !
-! SPHERICAL: 
+! SPHERICAL_HARMONIC: 
 !
 ! This module contians method for the calculation of spherical
 ! harmonics, and associated utility methods utilising them for shape
@@ -26,7 +26,7 @@
 ! Boston, MA  02111-1307, USA.
 !=====================================================================
 
-module SPHERICAL
+module SPHERICAL_HARMONIC
 
    implicit none
 
@@ -38,17 +38,18 @@ contains
 !  Allocation
 !  ==========
 
-   create ::: leaky, public
+   create ::: leaky, PURE
    ! Create an object
       self :: allocatable, OUT
       
       allocate(self)
+
       .factorials.create(0,70)
       .set_defaults
 
    end
 
-   destroy ::: leaky
+   destroy ::: leaky, PURE
    ! Destroy an object
        self :: allocatable, INOUT
 
@@ -61,7 +62,7 @@ contains
 !  Set methods
 !  ===========
 
-   set_defaults
+   set_defaults ::: pure
    ! Set default object
       self :: INOUT
 
@@ -80,33 +81,190 @@ contains
 
    end
 
-! =====================
-! Methods to be called 
-! =====================
+   set(L,M) ::: PURE
+   ! Set default object
+      self :: INOUT
+      L, M :: INT, IN
+
+   ENSURE(L>=0,"L is negative!")
+   ENSURE(M.is_in_range([-L,L]),"M quantum number not in [-L,+L] range")
+
+      .L = L
+      .M = M
+
+   end
+
+!  =============================
+!  Cartesian spherical harmonics
+!  =============================
+
+   value_at(x,y,z) result (res) ::: PURE
+   ! Evaluate the 2*.L values of the *real* solid harmonics at 
+   ! point "(x,y,z)".
+   ! From: Helgaker et al Molecular ELectronic Structure p. 218.
+      self  :: IN
+      x,y,z :: REAL, IN
+      res   :: VEC{REAL}(2*.L+1)
+
+      S :: VEC{EVEC{REAL}}@
+      r2, fac, Sllp,Sllm :: REAL
+      l, m, del, top,bot :: INT
+
+      ! Initialise
+      allocate(S(0:.L))
+      do l = 0,.L
+         allocate(S(l).element(-l:l))
+      end
+      S(0)[0] = ONE
+      r2 = x*x + y*y + z*z
+
+      ! Recurrence 
+      do l = 0,.L-1
+
+         ! Equations (6.4.71) & (6.4.72)
+         del  = l.delta(0)
+         top  = 2*l+1
+         fac  = sqrt((2**del)*top/REALIFY(top+1))
+         Sllp = fac*        S(l)[ l]
+         Sllm = fac*(1-del)*S(l)[-l]
+         S(l+1)[ l+1] = x*Sllp - y*Sllm
+         S(l+1)[-l-1] = y*Sllp + x*Sllm
+
+         ! First term in (6.4.73)
+         do m = -l,l
+            bot = (l+m+1)*(l-m+1)
+            fac = top/sqrt(REALIFY(bot))
+            S(l+1)[m] = fac*z*S(l)[m]
+         end
+
+         if (l<=0) cycle
+
+         ! Second term in (6.4.73)
+         do m = -l+1,l-1
+            bot = (l+m+1)*(l-m+1)
+            fac = sqrt((l+m)*(l-m)/REALIFY(bot))
+            S(l+1)[m] = S(l+1)[m] - fac*r2*S(l-1)[m]
+         end
+
+      end
+
+      ! Set result
+      res = S(.L)[:]
+
+   end
+
+   values_at(x,y,z,res) ::: PURE
+   ! Evaluate the 2*.L values of the *real* solid harmonics at 
+   ! the set of points "(x,y,z)".
+   ! From: Helgaker et al Molecular ELectronic Structure p. 218.
+      self  :: IN
+      x,y,z :: VEC{REAL}, IN
+      res   :: MAT{REAL}(x.dim,2*.L+1), OUT
+
+   ENSURE(x.dim==y.dim,"wrong dimernsion, y")
+   ENSURE(x.dim==z.dim,"wrong dimernsion, z")
+
+      S  :: VEC{EMAT{REAL}}@
+      r2, Sllp,Sllm :: VEC{REAL}@
+      fac :: REAL
+      n,n_pt, l,m, del,top,bot :: INT
+
+
+      ! Initialise
+      n_pt = x.dim
+      allocate(S(0:.L))
+      do l = 0,.L
+         allocate(S(l).element(1:n_pt,-l:l))
+      end
+      S(0)[:,0] = ONE
+      r2 = x*x + y*y + z*z
+
+      ! Recurrence 
+      do l = 0,.L-1
+
+         ! Equations (6.4.71) & (6.4.72)
+         del  = l.delta(0)
+         top  = 2*l+1
+         fac  = sqrt((2**del)*top/REALIFY(top+1))
+         Sllp = fac*        S(l)[:,+l]
+         Sllm = fac*(1-del)*S(l)[:,-l]
+         S(l+1)[:, l+1] = x*Sllp - y*Sllm
+         S(l+1)[:,-l-1] = y*Sllp + x*Sllm
+
+         ! First term in (6.4.73)
+         do m = -l,l
+            bot = (l+m+1)*(l-m+1)
+            fac = top/sqrt(REALIFY(bot))
+            S(l+1)[:,m] = fac*z*S(l)[:,m]
+         end
+
+         if (l<=0) cycle
+
+         ! Second term in (6.4.73)
+         do m = -l+1,l-1
+            bot = (l+m+1)*(l-m+1)
+            fac = sqrt((l+m)*(l-m)/REALIFY(bot))
+            S(l+1)[:,m] = S(l+1)[:,m] - fac*r2*S(l-1)[:,m]
+         end
+
+      end
+
+      ! Set result
+      n = 0
+      do m = -l,+l
+         n = n + 1
+         res(:,n) = S(.L)[:,m]
+      end
+
+   end
+
+!  =======
+!  Methods
+!  =======
+
+   wigner3j(j1, m1, j2, m2, j3, m3) result(res)
+   ! wigner3j calculated from clebsch_gordan through the symmetry relation:
+   ! |j1 j2 j3|
+   ! |        | == ((-1)^(j1 -j2 - m3))/sqrt(2*j3 + 1) * cg(j1,m1,j2,m2,j3,-m3)
+   ! |m1 m2 m3|
+   ! the triangle inequalities should hold for both
+       j1, j2, j3, m1, m2, m3 :: INT, IN
+       res :: REAL
+
+       cg, tmp :: REAL
+
+       tmp = (-1)**(j1-j2-m3) / sqrt(TWO*j3 + 1)
+       cg  = .clebsch_gordan(j1, m1, j2, m2, j3, -m3)
+       res = tmp * cg
+
+   end
     
    clebsch_gordan(j1, m1, j2, m2, j, m) result (res) 
-   ! Calculate the clebsch-gordan coefficient
-   ! using explicit racah formula (if the factorial is not too big)
-   ! but fail using the recurrence relation etc. if fac is too big
-   ! recur is a flag to test whether or not the factorials
-   ! used in clebsch were too large. Note that this is NOT thread
-   ! safe or parellisable using this object for future reference
-       j, m, j1, j2, m1, m2 :: INT
+   ! Calculate the Clebsch-Gordan coefficient using explicit racah
+   ! formula (if the factorial is not too big) but fail using the
+   ! recurrence relation etc. if fac is too big recur is a flag to
+   ! test whether or not the factorials used in Clebsch were too
+   ! large. Note that this is NOT thread safe or parellisable using
+   ! this object for future reference
+       j, m, j1, j2, m1, m2 :: INT, IN
        res :: REAL
+
        .recur = FALSE
-       if (j1 == j2 AND m1 == - m2 AND j == 0 AND m == 0) then
-           res = (-ONE) ** (j - m) / sqrt(TWO *j + 1)
-       else if (j1  == m1 AND m1 == 0 AND j2 == j AND m2 == m) then
+
+       if      (j1==j2 AND m1==-m2 AND j ==0 AND m ==0) then
+           res = (-1)**(j-m) / sqrt(TWO*j + 1)
+       else if (j1==m1 AND m1== 0  AND j2==j AND m2==m) then
            res = ONE
        else
-           res = .clebsch(j1 *2, m1 *2, j2 * 2, m2 * 2, j * 2, m * 2)
+           res = .clebsch(j1*2, m1*2, j2*2, m2*2, j*2, m*2)
            if (.recur) then
                res = .clebsch_rec(j1, m1, j2, m2, j, m)
            end
        end
+
    end
    
-   clebsch(j1, m1, j2, m2, j, m) result (res) 
+   clebsch(j1, m1, j2, m2, j, m) result (res) ::: private
    ! Calculation using Racah formula taken from "Angular Momentum",
    ! D.M.Brink & G.R.Satchler, Oxford, 1968
        j1, m1, j2, m2, j, m :: INT
@@ -181,7 +339,7 @@ contains
        return
    end
 
-   clebsch_rec(l1, m1, l2, m2, l, m) result (retval) ::: recursive
+   clebsch_rec(l1, m1, l2, m2, l, m) result (retval) ::: private, recursive
    ! Recursion relations
        self :: IN
        l1, l2, m1, m2, l, m :: INT, IN
@@ -239,16 +397,9 @@ contains
        res = .factorials(l)
    end
 
-   kronecker(a, b) result(res) ::: pure, selfless
-   ! Kronecker delta function for INT type
-       a, b :: INT, IN
-       res :: INT
-       if (a == b) then
-           res = 1
-       else
-           res = 0
-       end
-   end
+!  =======
+!  Methods
+!  =======
 
    z_harmonic(l, m, theta) result (res) ::: recursive
    ! Taken from appendix 1 in Burel & Henocq 1995
@@ -346,7 +497,7 @@ contains
        lebedev.create
        lebedev.set_n_points(5810)
 
-       SPHERICAL:cart2sph(lebedev.point, grid)
+       SPHERICAL_HARMONIC:cart2sph(lebedev.point, grid)
        f_vals.create(size(grid, 1))
 
        do i = 1, size(grid, 1)
@@ -442,8 +593,8 @@ contains
        pcoeff.create(X)
        lebedev.create
 
-       SPHERICAL:shift_origin(surface)
-       SPHERICAL:cart2sph(surface, surface_sph)
+       SPHERICAL_HARMONIC:shift_origin(surface)
+       SPHERICAL_HARMONIC:cart2sph(surface, surface_sph)
 
        ! normalize the surface by its mean radius
        radius = sum(surface_sph(1, :)) / n_pt
@@ -456,9 +607,9 @@ contains
        coeff = 0
        pcoeff = 0
 
-       SPHERICAL:cart2sph(grid_points, grid_sph)
+       SPHERICAL_HARMONIC:cart2sph(grid_points, grid_sph)
 
-       SPHERICAL:interpolate_surface_functions(grid_sph, surface_sph, property, fvals, cvals)
+       SPHERICAL_HARMONIC:interpolate_surface_functions(grid_sph, surface_sph, property, fvals, cvals)
 
        ! we should now have an association of closest lebedev points
        ! coeff are indexed as follows: {c00,c1-1,c10,c11,c2-2,c2-1,c20,c21,c22... etc.}
@@ -468,7 +619,7 @@ contains
                val = cmplx(0, 0)
                cval = cmplx(0, 0)
                ! theta and phi have been checked and make sense
-               ylm(:) = SPHERICAL:sphericalHarmonicY(l,m, grid_sph(2, :), grid_sph(3, :))
+               ylm(:) = SPHERICAL_HARMONIC:sphericalHarmonicY(l,m, grid_sph(2, :), grid_sph(3, :))
                ylm(:) = conjg(ylm(:)) * lebedev.weight(:)
                val = sum(fvals(:) * ylm(:))
                cval = sum(cvals(:) * ylm(:))
@@ -508,7 +659,7 @@ contains
                c = 0
                do L = 0, l_max
                    do J = -L, L
-                       y = SPHERICAL:sphericalHarmonicY(L,J,theta,phi)
+                       y = SPHERICAL_HARMONIC:sphericalHarmonicY(L,J,theta,phi)
                        c = c + (y * coefficients(lm))
                        lm = lm + 1
                    end
@@ -1131,22 +1282,6 @@ contains
            end  ! l-> 14, end of M values
 
        end ! of all L values
-
-   end
-
-   wigner3j(j1, m1, j2, m2, j3, m3) result(res)
-   ! wigner3j calculated from clebsch_gordan through the symmetry relation:
-   ! |j1 j2 j3|
-   ! |        | == ((-1)^(j1 -j2 - m3))/sqrt(2*j3 + 1) * cg(j1,m1,j2,m2,j3,-m3)
-   ! |m1 m2 m3|
-   ! the triangle inequalities should hold for both
-       j1, j2, j3, m1, m2, m3 :: INT, IN
-       res :: REAL
-       cg, tmp :: REAL
-
-       tmp = (-1)**(j1 - j2 - m3) / sqrt(TWO*j3 + 1)
-       cg = .clebsch_gordan(j1, m1, j2, m2, j3, -m3)
-       res = tmp * cg
 
    end
 
