@@ -248,7 +248,7 @@ set(FOO_SRC
     ${FOO_DIR}/reflection.foo
     ${FOO_DIR}/crystal.foo
     ${FOO_DIR}/crystal23.foo
-    ${FOO_DIR}/spherical.foo
+    ${FOO_DIR}/spherical_harmonic.foo
     ${FOO_DIR}/table_column.foo
     ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/atom_group.foo
@@ -395,7 +395,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/slaterbasis.F90
     ${CMAKE_CURRENT_BINARY_DIR}/slatershell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/spacegroup.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/spherical.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/spherical_harmonic.F90
     ${CMAKE_CURRENT_BINARY_DIR}/str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/system.F90
     ${CMAKE_CURRENT_BINARY_DIR}/table_column.F90
