@@ -186,6 +186,8 @@ contains
     ! case("bond_weight                         "); .GRID:make_bond_weight_grid(grid,pt)
     ! case("current_density                     "); .GRID:make_j_grid(grid,pt)
     ! case("deformation_bond_density            "); .GRID:make_def_bond_density_grid(grid,pt)
+      case("crystal23_ed                        "); .GRID:make_CRYSTAL23_ED_grid(grid,pt)
+      case("crystal23_electron_density          "); .GRID:make_CRYSTAL23_ED_grid(grid,pt)
       case("deformation_density                 "); .GRID:make_def_ED_grid(grid,pt)
       case("deformation_ed                      "); .GRID:make_def_ED_grid(grid,pt)
       case("deformation_electron_density        "); .GRID:make_def_ED_grid(grid,pt)
@@ -3613,6 +3615,70 @@ contains
 
    end
 
+   make_fast_ED_grid_v2(grid,pt,DM) ::: PURE
+   ! Make the "rho" grid for the supplied points "pt" using 
+   ! density matrix "DM".
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt   :: MAT{REAL}, IN
+      DM   :: MAT{REAL}, IN
+
+   ENSURE(grid.dim==pt.dim1,  "grid and pt are incomptabile")
+   ENSURE(pt.dim2==3,  "wrong dimension for pt array")
+   ENSURE(DM.is_square,"DM is not square")
+   ENSURE(DM.dim1==.n_bf,"DM is not square")
+
+      bfDM :: MAT{REAL}@
+      bf   :: MAT{REAL}@
+      n_pt, s,fs,ls,ns :: INT
+      sh :: SHELL1
+
+      ! Matrix of basis fn values on grid x DM
+      ! i.e. gr(i,n) = sum_m^n_bf bf(i,m) DM(m,n)
+      n_pt = pt.dim1
+      bfDM.create(n_pt,.n_bf)
+      bfDM = ZERO
+      do s = 1,.n_shell
+         .SET:set_shell1_from(s,sh,fs,ls,ns)
+         bf.create(n_pt,ns)
+         sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3))
+         bfDM = bfDM + matmul(bf,DM(fs:ls,:))
+         bf.destroy
+      end
+
+      ! Product with matrix of basis fn values on grid
+      ! i.e. grid(i) = sum_n^n_bf (sum_m^n_bf bf(i,m) DM(m,n)) bf(i,n)
+      !              = sum_n^n_bf             bfDM(i,n)        bf(i,n)
+      grid = ZERO
+      do s = 1,.n_shell
+         .SET:set_shell1_from(s,sh,fs,ls,ns)
+         bf.create(n_pt,ns)
+         sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3))
+         grid = grid + sum(bfDM(:,fs:ls)*bf(:,:),dim=2)
+         bf.destroy
+      end
+
+      ! Clean
+      bfDM.destroy
+
+   end
+
+!  Make the CRYSTAL23 density from density matrices
+
+   make_CRYSTAL23_ED_grid(grid,pt) ::: PURE
+   ! Make the "grid" for the supplied points "pt" using the CRYSTAL23
+   ! density marices which have been read in.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(.crystal23.allocated , "no crystal23 info")
+   ENSURE(.crystal23.density_mx.allocated , "no crystal23 density_mx info")
+
+      .GRID:make_fast_ED_grid_v2(grid,pt,.crystal23.density_mx(:,:,1))
+
+   end
+
 !  =========================
 !  Electron density routines
 !  =========================
@@ -4036,35 +4102,6 @@ contains
       guj.destroy
       ggg.destroy
       gtemp.destroy
-
-   end
-
-!  Make the CRYSTAL23 density from density matrices
-
-   make_ED_grid_CRYSTAL23(grid,pt) ::: PURE
-   ! Make the "grid" for the supplied points "pt" using the CRYSTAL23
-   ! density marices which have been read in.
-      self :: IN
-      grid :: VEC{REAL}, OUT
-      pt :: MAT{REAL}, IN
-
-   ENSURE(pt.dim2==3,  "wrong dimension for pt array")
-
-      gr,sg :: MAT{REAL}@
-      sh :: SHELL1
-      n_pt, s,fs,ls,ns :: INT
-
-      ! Matrix of basis fn values on grid x DM
-      n_pt = pt.dim1
-      gr.create(n_pt,.n_bf)
-      do s = 1,.n_shell
-         .SET:set_shell1_from(s,sh,fs,ls)
-         ns = 2*sh.l+1
-         sg.create(n_pt,ns)
-         sh.make_grid_s(sg,pt(:,1),pt(:,2),pt(:,3))
-         gr(fs:ls,:) = matmul(sg,.crystal23.density_mx(fs:ls,:,1))
-         sg.destroy
-      end
 
    end
 
