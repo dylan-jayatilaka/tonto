@@ -94,90 +94,64 @@ contains
 
    end
 
+   set_L(L) ::: PURE
+   ! Set default object
+      self :: INOUT
+      L :: INT, IN
+
+   ENSURE(L>=0,"L is negative!")
+
+      .L = L
+
+   end
+
+   set_M(M) ::: PURE
+   ! Set default object
+      self :: INOUT
+      M :: INT, IN
+
+   ENSURE(M.is_in_range([-.L,.L]),"M quantum number not in [-L,+L] range")
+
+      .M = M
+
+   end
+
 !  =============================
 !  Cartesian spherical harmonics
 !  =============================
 
-   value_at(x,y,z) result (res) ::: PURE
-   ! Evaluate the 2*.L values of the *real* solid harmonics at 
-   ! point "(x,y,z)".
-   ! From: Helgaker et al Molecular ELectronic Structure p. 218.
-      self  :: IN
-      x,y,z :: REAL, IN
-      res   :: VEC{REAL}(2*.L+1)
-
-      S :: VEC{EVEC{REAL}}@
-      r2, fac, Sllp,Sllm :: REAL
-      l, m, del, top,bot :: INT
-
-      ! Initialise
-      allocate(S(0:.L))
-      do l = 0,.L
-         allocate(S(l).element(-l:l))
-      end
-      S(0)[0] = ONE
-      r2 = x*x + y*y + z*z
-
-      ! Recurrence 
-      do l = 0,.L-1
-
-         ! Equations (6.4.71) & (6.4.72)
-         del  = l.delta(0)
-         top  = 2*l+1
-         fac  = sqrt((2**del)*top/REALIFY(top+1))
-         Sllp = fac*        S(l)[ l]
-         Sllm = fac*(1-del)*S(l)[-l]
-         S(l+1)[ l+1] = x*Sllp - y*Sllm
-         S(l+1)[-l-1] = y*Sllp + x*Sllm
-
-         ! First term in (6.4.73)
-         do m = -l,l
-            bot = (l+m+1)*(l-m+1)
-            fac = top/sqrt(REALIFY(bot))
-            S(l+1)[m] = fac*z*S(l)[m]
-         end
-
-         if (l<=0) cycle
-
-         ! Second term in (6.4.73)
-         do m = -l+1,l-1
-            bot = (l+m+1)*(l-m+1)
-            fac = sqrt((l+m)*(l-m)/REALIFY(bot))
-            S(l+1)[m] = S(l+1)[m] - fac*r2*S(l-1)[m]
-         end
-
-      end
-
-      ! Set result
-      res = S(.L)[:]
-
-   end
-
    values_at(x,y,z,r2,res) ::: PURE
    ! Evaluate the 2*.L values of the *real* solid harmonics at 
-   ! the set of points "(x,y,z)".
+   ! the set of points "(x,y,z)". Also input "r2" values.
    ! From: Helgaker et al Molecular ELectronic Structure p. 218.
       self  :: IN
-      x,y,z,r2 :: VEC{REAL}, IN
+      x,y,z :: VEC{REAL}, IN
+      r2    :: VEC{REAL}, IN
       res   :: MAT{REAL}(x.dim,2*.L+1), OUT
 
    ENSURE(x.dim==y.dim,"wrong dimernsion, y")
    ENSURE(x.dim==z.dim,"wrong dimernsion, z")
 
-      S  :: VEC{EMAT{REAL}}@
-      Sllp,Sllm :: VEC{REAL}@
-      new :: VEC{INT}@
+      S   :: VEC{EMAT{REAL}}@
+      Slp :: VEC{REAL}@
+      Slm :: VEC{REAL}@
+      std :: VEC{INT}@
+      stp :: VEC{INT}@
+      stm :: VEC{INT}@
       fac :: REAL
-      n,n_pt, l,m, del,top,bot :: INT
+      n_pt, l,m,n :: INT
+      del,top,bot :: INT
 
 
       ! Initialise
       n_pt = x.dim
       allocate(S(0:.L))
       do l = 0,.L
-         allocate(S(l).element(1:n_pt,-l:l))
+         allocate(S(l).element(n_pt,2*l+1))
       end
-      S(0)[:,0] = ONE
+
+      ! Equation (6.4.70)
+      S(0)[:,1] = ONE
 
       ! Recurrence 
       do l = 0,.L-1
@@ -186,36 +160,60 @@ contains
          del  = l.delta(0)
          top  = 2*l+1
          fac  = sqrt((2**del)*top/REALIFY(top+1))
-         Sllp = fac*        S(l)[:,+l]
-         Sllm = fac*(1-del)*S(l)[:,-l]
-         S(l+1)[:, l+1] = x*Sllp - y*Sllm
-         S(l+1)[:,-l-1] = y*Sllp + x*Sllm
+         del  = 1 - del ! <===
+
+         ! Standard order of harmonics
+         std.create(-L  , L  ) ! Std order for M = [ L  , L  ]
+         std = GAUSSIAN_DATA:into_std_S_order(l  )
+         stp.create(-L-1, L+1) ! Std order for M = [-L-1, L+1]
+         stp = GAUSSIAN_DATA:into_std_S_order(l+1)
+
+         n = std( l)
+         Slp = fac*S(l)[:,n]
+
+         n = std(-l)
+         Slm = fac*S(l)[:,n]*del
+
+         n = stp( l+1)
+         S(l+1)[:,n] = x*Slp - y*Slm
+
+         n = stp(-l-1)
+         S(l+1)[:,n] = y*Slp + x*Slm
 
          ! First term in (6.4.73)
          do m = -l,l
             bot = (l+m+1)*(l-m+1)
             fac = top/sqrt(REALIFY(bot))
-            S(l+1)[:,m] = fac*z*S(l)[:,m]
+            n   = stp(m)
+            S(l+1)[:,n] = fac*z*S(l)[:,std(m)]
          end
 
-         if (l<=0) cycle
+         if (l>=1) then
+
+         ! Needed for S_{l-1,m}
+         stm.create(-L+1, L-1) 
+         stm = GAUSSIAN_DATA:into_std_S_order(l-1)
 
          ! Second term in (6.4.73)
+         ! Note limits on m are correct
          do m = -l+1,l-1
             bot = (l+m+1)*(l-m+1)
             fac = sqrt((l+m)*(l-m)/REALIFY(bot))
-            S(l+1)[:,m] = S(l+1)[:,m] - fac*r2*S(l-1)[:,m]
+            n   = stp(m)
+            S(l+1)[:,n] = S(l+1)[:,n] - fac*r2*S(l-1)[:,stm(m)]
          end
+
+         stm.destroy
+
+         end
+
+         stp.destroy
+         std.destroy
 
       end
 
       ! Set result
-      new = GAUSSIAN_DATA:from_MG_S_order(.L) ! new order
-      n = 0
-      do m = -l,+l
-         n = n + 1
-         res(:,new(n)) = S(.L)[:,m]
-      end
+      res = S(.L)[:,:]
 
    end
 
