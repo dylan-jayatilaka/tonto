@@ -1162,14 +1162,13 @@ contains
    ENSURE(l_max_saved>=0,"l_max_saved must be non-negative")
 
       l_max,two :: INT
-      L,M,i, del,nc :: INT
-      x,y,z, fg,lg  :: INT
+      L,M,N, i  :: INT
+      x,y,z, del,nc :: INT
       lm1, lm0, lm2 :: INT
       top, bot, fac :: REAL
       val,valp,valm :: REAL
       ix,iy,iz, pow :: VEC{INT}(3)
-      foreign :: VEC{INT}@
-      new :: VEC{EMAT{REAL}}@
+      std, stp, stm :: VEC{INT}@ ! standard S order
 
       ! Set l_max
       l_max = l_max_saved
@@ -1179,12 +1178,12 @@ contains
       sph.create(0,l_max)
       do L = 0,l_max
          nc = GAUSSIAN_DATA::n_comp(L)
-         sph(L).element.create(1,nc,-L,L)
+         sph(L).element.create(nc,2*L+1)
          sph(L).element = ZERO
       end
 
       ! Initialising S function
-      sph(0).element(1,0) = ONE
+      sph(0)[1,1] = ONE
 
       ! Recurrence for the other functions
       do L = 0,l_max-1
@@ -1192,90 +1191,99 @@ contains
          del = L.delta(0)
          top = 2*L+1
          fac = sqrt((two.raised_to(del))*top/(top+1))
+         del = 1 - del ! <=== NOTE
          nc  = GAUSSIAN_DATA::n_comp(L)
          lm1 = GAUSSIAN_DATA::n_comp_up_to(L-1)
          lm0 = GAUSSIAN_DATA::n_comp_up_to(L)
 
+         ! Standard Molden/Gaussian order of harmonics
+         std.create(-L  , L  ) ! Std order for M = [ L  , L  ]
+         std = GAUSSIAN_DATA:into_std_S_order(L  )
+         stp.create(-L-1, L+1) ! Std order for M = [-L-1, L+1]
+         stp = GAUSSIAN_DATA:into_std_S_order(L+1)
+
          do i = 1,nc ! loop over cartesian gaussian in L-shell
 
             pow = GAUSSIAN_DATA::pp(:,lm1+i)
-            ix  = pow+[1,0,0]+1; x = GAUSSIAN_DATA::index_of(ix(1),ix(2),ix(3)) - lm0 ! multipy by x
-            iy  = pow+[0,1,0]+1; y = GAUSSIAN_DATA::index_of(iy(1),iy(2),iy(3)) - lm0 ! multipy by y
-            iz  = pow+[0,0,1]+1; z = GAUSSIAN_DATA::index_of(iz(1),iz(2),iz(3)) - lm0 ! multipy by z
+            ix  = pow+[1,0,0]+1
+            iy  = pow+[0,1,0]+1
+            iz  = pow+[0,0,1]+1
 
-            valp = fac*        sph(L).element(i, L)
-            valm = fac*(1-del)*sph(L).element(i,-L)
+            ! Subtract lm0 for start of L+1 shell
+            x = GAUSSIAN_DATA::index_of(ix(1),ix(2),ix(3)) - lm0 ! multipy by x
+            y = GAUSSIAN_DATA::index_of(iy(1),iy(2),iy(3)) - lm0 ! multipy by y
+            z = GAUSSIAN_DATA::index_of(iz(1),iz(2),iz(3)) - lm0 ! multipy by z
 
-            sph(L+1).element(x, L+1) = sph(L+1).element(x, L+1) + valp
-            sph(L+1).element(x,-L-1) = sph(L+1).element(x,-L-1) + valm
-            sph(L+1).element(y, L+1) = sph(L+1).element(y, L+1) - valm
-            sph(L+1).element(y,-L-1) = sph(L+1).element(y,-L-1) + valp
+            N = std( L)
+            valp = fac*sph(L)[i,N]
 
+            N = std(-L)
+            valm = fac*sph(L)[i,N]*del
+
+            N = stp( L+1)
+            sph(L+1)[x,N] = sph(L+1)[x,N] + valp
+            sph(L+1)[y,N] = sph(L+1)[y,N] - valm
+
+            N = stp(-L-1)
+            sph(L+1)[x,N] = sph(L+1)[x,N] + valm
+            sph(L+1)[y,N] = sph(L+1)[y,N] + valp
+
+            ! First term of 6.4.73)
             do M = -L,L
                bot = (L+M+1)*(L-M+1)
-               val = (top/sqrt(bot))*sph(L).element(i,M)
-               sph(L+1).element(z,M) = sph(L+1).element(z,M) + val
+               N   = stp(M)
+               sph(L+1)[z,N] = sph(L+1).element(z,N) + (top/sqrt(bot))*sph(L)[i,std(M)]
             end
 
          end
 
-         if (L<=0) cycle
+         if (L>=1) then
 
+         ! Second "r2" term of (6.4.73). Must have L >= 1.
          nc  = GAUSSIAN_DATA::n_comp(L-1)
-         lm2 = GAUSSIAN_DATA::n_comp_up_to(L-2)
+         lm2 = GAUSSIAN_DATA::n_comp_up_to(L-2) ! This works for L=1
+
+         ! Std order for M = [-L+1, L-1]
+         stm.create(-L+1, L-1) ! Std order for M = [ L  , L  ]
+         stm = GAUSSIAN_DATA:into_std_S_order(L-1)
 
          do i = 1,nc ! loop over cartesian gaussians in (L-1)-shell
 
             pow = GAUSSIAN_DATA::pp(:,lm2+i)
-            ix  = pow+[2,0,0]+1; x = GAUSSIAN_DATA::index_of(ix(1),ix(2),ix(3)) - lm0 ! multiply by x^2
-            iy  = pow+[0,2,0]+1; y = GAUSSIAN_DATA::index_of(iy(1),iy(2),iy(3)) - lm0 ! multiply by y^2
-            iz  = pow+[0,0,2]+1; z = GAUSSIAN_DATA::index_of(iz(1),iz(2),iz(3)) - lm0 ! multiply by y^2
+            ix  = pow+[2,0,0]+1
+            iy  = pow+[0,2,0]+1
+            iz  = pow+[0,0,2]+1
+
+            ! Subtract lm0 for start of L+1 shell
+            x = GAUSSIAN_DATA::index_of(ix(1),ix(2),ix(3)) - lm0 ! multiply by x^2
+            y = GAUSSIAN_DATA::index_of(iy(1),iy(2),iy(3)) - lm0 ! multiply by y^2
+            z = GAUSSIAN_DATA::index_of(iz(1),iz(2),iz(3)) - lm0 ! multiply by y^2
 
             do M = -L+1,L-1
                bot = (L+M+1)*(L-M+1)
-               val = sqrt((L+M)*(L-M)/bot)*sph(L-1).element(i,M)
-               sph(L+1).element(x,M) = sph(L+1).element(x,M) - val
-               sph(L+1).element(y,M) = sph(L+1).element(y,M) - val
-               sph(L+1).element(z,M) = sph(L+1).element(z,M) - val
+               val = sqrt((L+M)*(L-M)/bot)*sph(L-1)[i,stm(M)]
+               N   = stp(M)
+               sph(L+1)[x,N] = sph(L+1)[x,N] - val
+               sph(L+1)[y,N] = sph(L+1)[y,N] - val
+               sph(L+1)[z,N] = sph(L+1)[z,N] - val
             end
 
          end
 
-      end
+         std.destroy
 
-      ! L-shell normalizing factors.
-      ! Ensures all components are unit-normalized
-    ! lg = 0
-    ! do L = 0,l_max
-    !    nc = GAUSSIAN_DATA::n_comp(L)
-    !    fg = lg + 1
-    !    lg = lg + nc
-    !    do M = -L,L
-    !       sph(L)[:,M] = sph(L)[:,M] * GAUSSIAN_DATA::unnormalizing_factors(fg:lg)
-    !    end
-    ! end
+         end
 
-      ! Reorder to Molden-Gaussian order
-      new.create(0,l_max)
-      do L = 0,l_max
-         nc = GAUSSIAN_DATA::n_comp(L)
-         new(L).element.create(nc,2*L+1)
-         foreign = GAUSSIAN_DATA:from_MG_S_order(L) ! new order
-         new(L)[:,foreign] = sph(L)[:,:] 
-      end
-      sph.destroy
-      call move_alloc(new,sph)
+         stp.destroy
+         std.destroy
 
-      ! For CRYSTAL23 spherical functions change p-function order
-      if (CRYSTAL23_ordering) then
-         sph(1).element(:,:).to_unit_mx
       end
 
    end
 
 ! Molden & Gaussian cartesian gaussian basis function order
 
-   from_MG_S_order(L) result (res) ::: pure, selfless
+   into_std_S_order(L) result (res) ::: pure, selfless
    ! This generates the Molden/Gaussian order corresponding to the
    ! canonical tonto order. For *gathering* molden -> tonto arrays.
    ! i.e. tonto(:) = molden(res(:)) e.g. for L=2 and L=3 :
@@ -1284,32 +1292,43 @@ contains
    ! Tonto : -2,-1, 0, 1, 2 
    ! Molden:  0, 1,-1, 2,-2 
    ! Horton:  0, c, s, c, s ... or
+   ! res   :  5, 3, 1, 2, 4
    !
    ! Tonto : -3,-2,-1, 0, 1, 2, 3 
    ! Molden:  0, 1,-1, 2,-2, 3,-3 
    ! Horton:  0, c, s, c, s, c, s
-   ! i.e. tonto(:) = molden(res(:))
+   ! res   :  7, 5, 3, 1, 2, 4, 6
+   !
+   ! i.e. molden(res(:)) = tonto(:)
+   !
    ! NOTE: M>0 corresponds to Re [r^L Y_(L M)] or "cos like"
    !       M<0 corresponds to Im [r^L Y_(L M)] or "sin like"
-      L :: INT, IN
-      res :: VEC{INT}@
+      L   :: INT, IN
+      res :: VEC{INT}(2*L+1)
 
       mold, tont  :: VEC{INT}@
       L2, n, s, i :: INT
 
       L2 = 2*L
-      allocate(res(L2+1))
 
       select case (L)
 
-      case (0,1)
-         res = [ (i, i = 1,L2+1) ]
+      case (0)
+         res = [ 1 ]
+
+      case (1)
+         if (NOT CRYSTAL23_ordering) then
+            res = [ 1, 2, 3 ] ! Pz, Px, Py
+         else
+            res = [ 2, 3, 1 ] ! Px, Py, Pz
+         end
 
       case default
 
          allocate(mold(L2+1))
          allocate(tont(L2+1))
 
+         ! Standard order mold
          n = 1
          mold(n) = 0
          do i = 1,L
@@ -1319,6 +1338,7 @@ contains
          end
          end
 
+         ! Tonto starts from +1 not -L
          n = 0
          do i = -L,L
             n = n + 1
@@ -1328,52 +1348,6 @@ contains
          ! This method from Horton
          do n = 1,L2+1
             res(n) = findloc(mold,value=tont(n),dim=1)
-         end
-
-       ! n = 0
-       ! do i = L2, -L2, -2
-       !    n = n + 1
-       !    if (i>=0) then; res(n) =  i + 1
-       !    else;           res(n) = -i
-       !    end
-       ! end
-
-      end
-
-   end
-
-   into_MG_S_order(L) result (res) ::: pure, selfless
-   ! This generates the Molden/Gaussian order corresponding to the
-   ! canonical tonto order. For *gathering* molden -> tonto arrays.
-   ! i.e. tonto(:) = molden(res(:)) e.g. for L=3 
-   ! Tonto : -3,-2,-1, 0, 1, 2, 3 
-   ! Molden:  0, 1,-1, 2,-2, 3,-3 
-   ! Horton:  0, c, s, c, s, c, s
-   ! i.e. molden(:) = tonto(res(:))
-   ! NOTE: M>0 corresponds to Re [r^L Y_(L M)] or "cos like"
-   !       M<0 corresponds to Im [r^L Y_(L M)] or "sin like"
-      L :: INT, IN
-      res :: VEC{INT}@
-
-      L2, n, i :: INT
-
-      L2 = 2*L
-      allocate(res(L2+1))
-
-      select case (L)
-
-      case (0,1)
-         res = [ (i, i = 1,L2+1) ]
-
-      case default
-         n = 0
-         do i = L2+1, 1, -2
-            n = n + 1
-            res(i) = n
-         end
-         do i = 2, L2, 2
-            n = n + 1
-            res(i) = n
          end
 
       end
