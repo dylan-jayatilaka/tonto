@@ -3625,6 +3625,76 @@ contains
       grid  :: VEC{REAL}, INOUT
       pt    :: MAT{REAL}, IN
       DM    :: MAT{REAL}, IN
+      lshft :: VEC{REAL}(3), IN
+      rshft :: VEC{REAL}(3), IN
+
+   ENSURE(grid.dim==pt.dim1,  "grid and pt are incomptabile")
+   ENSURE(pt.dim2==3,  "wrong dimension for pt array")
+   ENSURE(DM.is_square,"DM is not square")
+   ENSURE(DM.dim1==.n_bf,"DM is not square")
+
+      bf   :: MAT{REAL}@
+      bfDM :: MAT{REAL}@
+      n_pt, s,fs,ls,ns :: INT
+      sh :: SHELL1
+
+    ! n_pt = pt.dim1
+    ! bf.create(n_pt,.n_bf)
+    ! do s = 1,.n_shell
+    !    .SET:set_shell1_from(s,sh,fs,ls,ns)
+    !    sh.position = sh.position + lshft
+    !    sh.make_grid_s(bf(:,fs:ls),pt(:,1),pt(:,2),pt(:,3))
+    ! end
+    ! stdout.text("bf:")
+    ! stdout.put(bf)
+    ! bf.destroy
+
+      ! Make the product of the basis function at the i-th grid point
+      ! sumed with the density matrix i.e. 
+      !  bfDM(i,n) = sum_s sum_{m=fs,ls}^n_bf bf(i,m) DM(m,n)
+      n_pt = pt.dim1
+      bfDM.create(n_pt,.n_bf) ! <=== BIG// bfDM :: n_pt x n_bf
+      bfDM = ZERO
+      do s = 1,.n_shell
+         .SET:set_shell1_from(s,sh,fs,ls,ns)
+         sh.position = sh.position + lshft
+         bf.create(n_pt,ns)
+         sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3))
+         bfDM = bfDM + matmul(bf,DM(fs:ls,:)) 
+            ! ( n_pt x (ls-fs+1) )*( (ls-fs+1)x n_bf )
+            !  ls-fs+1 = ns
+         bf.destroy
+      end
+
+      ! Product with matrix of basis fn values on grid
+      ! i.e. grid(i) = sum_n^n_bf (sum_m^n_bf bf(i,m) DM(m,n)) bf(i,n)
+      !              = sum_n^n_bf             bfDM(i,n)        bf(i,n)
+      ! // i: grid point index // n: basis func. index
+      do s = 1,.n_shell
+         .SET:set_shell1_from(s,sh,fs,ls,ns)
+         sh.position = sh.position + rshft
+         bf.create(n_pt,ns)
+         sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3)) !
+         grid = grid + sum(bfDM(:,fs:ls)*bf(:,:),dim=2) ! grid :: n_pt
+             ! (n_pt x (ls-fs+1) ) .* (n_pt x ns )
+         bf.destroy
+      end
+
+      ! Clean
+      bfDM.destroy
+
+   end
+
+   add_ED_grid_v1(grid,pt,DM,lshft,rshft) ::: PURE
+   ! Update the "rho" grid for the supplied points "pt" using density
+   ! matrix "DM". If present, translate the left (right) basis
+   ! functions by "lshft" ("rshft") when evaluating DM sum; this is
+   ! for basis functions in different unit cells than the central
+   ! (reference) cell. 
+      self  :: IN
+      grid  :: VEC{REAL}, INOUT
+      pt    :: MAT{REAL}, IN
+      DM    :: MAT{REAL}, IN
       lshft :: VEC{REAL}, optional, IN
       rshft :: VEC{REAL}, optional, IN
 
@@ -3715,6 +3785,15 @@ contains
       lv,rv,dv :: VEC{INT}(3)
       l, r, d :: INT
 
+      GAUSSIAN_DATA:set_CRYSTAL23_ordering(TRUE)
+
+    ! stdout.text("P^{1,1}:")
+    ! stdout.put(.crystal23.density_mx(:,:,1))
+
+      ! Points
+    ! stdout.text("pt:")
+    ! stdout.put(pt)
+
       ! Unit cell matrix
       cm = .crystal.unit_cell.direct_mx
 
@@ -3732,6 +3811,11 @@ contains
          ! Diagonal contribution from DM^{l l}
          .GRID:add_ED_grid(grid,pt,.crystal23.density_mx(:,:,1),lshft=lt,rshft=lt)
 
+       ! stdout.show("l  = ",l)
+
+       ! stdout.text("grid:")
+       ! stdout.put(grid,by_column=TRUE)
+
          ! Off-diagonal DM contributions
          do r = .crystal23.n_g,1,-1
 
@@ -3745,19 +3829,19 @@ contains
             ! Difference between left & right cell vectors
             ! "d" depends on how DM^{l r}_{a b} is defined when it
             ! mutiplies the basis functions.
-            dv = lv - rv 
+            dv = rv - lv 
             d  = .crystal23.g_latt.index_for_column(dv)
 
             ! Do we have DM^d ?
             if (d==0) cycle
 
-            stdout.text("=====")
-            stdout.show("l  = ",l)
-            stdout.show("r  = ",r)
-            stdout.show("d  = ",d)
-            stdout.show("lv = ",lv)
-            stdout.show("rv = ",rv)
-            stdout.show("dv = ",dv)
+          ! stdout.text("=====")
+          ! stdout.show("l  = ",l)
+          ! stdout.show("r  = ",r)
+          ! stdout.show("d  = ",d)
+          ! stdout.show("lv = ",lv)
+          ! stdout.show("rv = ",rv)
+          ! stdout.show("dv = ",dv)
 
             ! Add contribution from shifted central unit cell
             .GRID:add_ED_grid(grid,pt,.crystal23.density_mx(:,:,d),lshft=lt,rshft=rt)
