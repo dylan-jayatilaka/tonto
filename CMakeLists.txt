@@ -180,6 +180,7 @@ set(FOO_SRC
     ${FOO_DIR}/vec{evec{evec{int}}}.foo
     ${FOO_DIR}/vec{evec{evec{real}}}.foo
     ${FOO_DIR}/mat{evec{int}}.foo
+    ${FOO_DIR}/mat{evec{real}}.foo
     ${FOO_DIR}/map{vec{key},vec{val}}.foo
     ${FOO_DIR}/map{int,int}.foo
     ${FOO_DIR}/map{key,val}.foo
@@ -349,6 +350,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/mat_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_evec_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_evec_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_rms2_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_shell1pair.F90
