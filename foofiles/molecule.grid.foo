@@ -187,7 +187,8 @@ contains
     ! case("current_density                     "); .GRID:make_j_grid(grid,pt)
     ! case("deformation_bond_density            "); .GRID:make_def_bond_density_grid(grid,pt)
       case("crystal23_ed                        "); .GRID:make_CRYSTAL23_ED_grid(grid,pt)
-      case("crystal23_electron_density          "); .GRID:make_CRYSTAL23_ED_grid_v1(grid,pt)
+      case("crystal23_ed_v1                     "); .GRID:make_CRYSTAL23_ED_grid_v1(grid,pt)
+      case("crystal23_electorn_density          "); .GRID:make_CRYSTAL23_ED_grid_v1(grid,pt)
       case("deformation_density                 "); .GRID:make_def_ED_grid(grid,pt)
       case("deformation_ed                      "); .GRID:make_def_ED_grid(grid,pt)
       case("deformation_electron_density        "); .GRID:make_def_ED_grid(grid,pt)
@@ -3396,6 +3397,8 @@ contains
 !  Fast memory-intensive electron density (?)
 !  ==========================================
 
+! Below deprecated in favour of Kan's version
+
    make_fast_ED_grid_r(rho,pt,DM) ::: leaky, PURE
    ! Get the electron density grid "rho" of a list of 3D points "pt".
    ! Set "spin_density" to TRUE if you want those.
@@ -3687,133 +3690,92 @@ contains
 
    end
 
-!   add_ED_grid_k(grid,pt,DM,lshft,rshft) ::: PURE
-!   ! Update the "rho" grid for the supplied points "pt" using density
-!   ! matrix "DM". If present, translate the left (right) basis
-!   ! functions by "lshft" ("rshft") when evaluating DM sum; this is
-!   ! for basis functions in different unit cells than the central
-!   ! (reference) cell. 
-!      self  :: IN
-!      grid  :: VEC{REAL}, INOUT
-!      pt    :: MAT{REAL}, IN
-!      DM    :: MAT{REAL}, IN
-!      lshft :: VEC{REAL}(3), IN
-!      rshft :: VEC{REAL}(3), IN
-!
-!   ENSURE(grid.dim==pt.dim1,  "grid and pt are incomptabile")
-!   ENSURE(pt.dim2==3,  "wrong dimension for pt array")
-!   ENSURE(DM.is_square,"DM is not square")
-!   ENSURE(DM.dim1==.n_bf,"DM is not square")
-!
-!    ! sbf  :: MAT{EVEC{REAL}}@
-!      bf   :: MAT{REAL}@
-!    ! bfDM :: MAT{REAL}@
-!    ! mask :: VEC{BIN}@
-!      n_pt, s,fs,ls,ns :: INT
-!    ! tol  :: REAL
-!      sh :: SHELL1
-!
-!      n_pt = pt.dim1
-!
-!      ! Basis functions on grid pts
-!      bf.create(n_pt,.n_bf)
-!      do s = 1,.n_shell
-!         .SET:set_shell1_from(s,sh,fs,ls,ns)
-!         sh.position = sh.position + lshft
-!         sh.make_grid_s(bf(:,fs:ls),pt(:,1),pt(:,2),pt(:,3))
-!      end
-!
-!      ! Filter out the small values
-!    ! tol  = exp(-20.0d0)
-!    ! sbf.create(.n_bf,2)
-!    ! do i = 1,.n_bf
-!    !    mask = abs(bf(:,i)) > tol
-!    !    sbf(i,1).element  = pack( bf(:,i)        , mask) ! values
-!    !    sbf(i,2).element  = pack( [j, j=1,.n_bf] , mask) ! indices
-!    ! end
-!
-!   end
+! This is Kang's version
 
-   add_ED_grid_v1(grid,pt,DM,lshft,rshft) ::: PURE
-   ! Update the "rho" grid for the supplied points "pt" using density
-   ! matrix "DM". If present, translate the left (right) basis
-   ! functions by "lshft" ("rshft") when evaluating DM sum; this is
-   ! for basis functions in different unit cells than the central
-   ! (reference) cell. 
-      self  :: IN
-      grid  :: VEC{REAL}, INOUT
-      pt    :: MAT{REAL}, IN
-      DM    :: MAT{REAL}, IN
-      lshft :: VEC{REAL}, optional, IN
-      rshft :: VEC{REAL}, optional, IN
+   make_ED_grid_v1(grid,pt,DM,tol) ::: PURE
+   ! Make "grid", the electron density values at the the points "pt",
+   ! for density matrix "DM". Only those terms bigger than "tol" are
+   ! considered.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt   :: MAT{REAL}, IN
+      DM   :: MAT{REAL}, IN
+      tol  :: REAL, IN
 
-   ENSURE(grid.dim==pt.dim1,  "grid and pt are incomptabile")
-   ENSURE(pt.dim2==3,  "wrong dimension for pt array")
-   ENSURE(DM.is_square,"DM is not square")
-   ENSURE(DM.dim1==.n_bf,"DM is not square")
+      grid = ZERO
+      .GRID:add_ED_grid_v1(grid,pt,DM,tol)
 
+   end
+
+   add_ED_grid_v1(grid,pt,DM,tol) ::: PURE
+   ! Add to "grid" the electron density values at the the points "pt",
+   ! for density matrix "DM". Only those terms bigger than "tol" are
+   ! considered.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt   :: MAT{REAL}, IN
+      DM   :: MAT{REAL}, IN
+      tol  :: REAL, IN
+
+   ENSURE(grid.dim==pt.dim1, "inconsistent size, grid & pt")
+   ENSURE(pt.dim2==3, "wrong dim2, pt")
+   ENSURE(DM.is_square,   "wrong shape, DM")
+   ENSURE(DM.dim1==.n_bf, "wrong size, DM")
+
+      psi  :: VEC{EVEC{REAL}}@
+      ind  :: VEC{EVEC{INT}}@
+      mask :: VEC{BIN}@
       bf   :: MAT{REAL}@
-      bfDM :: MAT{REAL}@
-      n_pt, s,fs,ls,ns :: INT
-      sh :: SHELL1
+      same,pi,pj :: VEC{INT}@
+      n_pt, s,fs,ls,ns, i,j :: INT
+      val :: REAL
+      sh  :: SHELL1
 
-    ! n_pt = pt.dim1
-    ! bf.create(n_pt,.n_bf)
-    ! do s = 1,.n_shell
-    !    .SET:set_shell1_from(s,sh,fs,ls,ns)
-    !    sh.make_grid_s(bf(:,fs:ls),pt(:,1),pt(:,2),pt(:,3))
-    ! end
+      ! Sparse storage of significant b.f. values on grid:
+      ! placed in "psi", corresponding indices in "ind".
+      psi.create(.n_bf)
+      ind.create(.n_bf)
 
-      ! Make the product of the basis function at the i-th grid point
-      ! sumed with the density matrix i.e. 
-      !  bfDM(i,n) = sum_m^n_bf bf(i,m) DM(m,n)
-      n_pt = pt.dim1
-      bfDM.create(n_pt,.n_bf) ! <=== BIG
-      bfDM = ZERO
-      if (NOT present(lshft)) then
-         do s = 1,.n_shell
-            .SET:set_shell1_from(s,sh,fs,ls,ns)
-            bf.create(n_pt,ns)
-            sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3))
-            bfDM = bfDM + matmul(bf,DM(fs:ls,:))
-            bf.destroy
+      ! Loop over shells "s"
+      mask.create(n_pt)
+      do s = 1,.n_shell 
+         .SET:set_shell1_from(s,sh,fs,ls,ns)
+         bf.create(n_pt,ns)
+         sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3))
+         ! Basis fn. "i"
+         do i = fs,ls
+            mask = abs(bf(:,i-fs+1))>tol
+            ! Store large values for each b.f.
+            psi(i).element = pack(bf(:,i-fs+1)  ,mask)
+            ind(i).element = pack([(j,j=1,n_pt)],mask)
          end
-      else
-         do s = 1,.n_shell
-            .SET:set_shell1_from(s,sh,fs,ls,ns)
-            sh.position = sh.position + lshft
-            bf.create(n_pt,ns)
-            sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3))
-            bfDM = bfDM + matmul(bf,DM(fs:ls,:))
-            bf.destroy
+         bf.destroy
+      end
+      mask.destroy
+
+      ! psi*psi product
+      grid = ZERO 
+      do i = 1,.n_bf 
+      do j = 1,i
+         ! DM is symmetric
+         val = DM(i,j)
+         if (j<i) val = val + val
+         ! DM value large enough?
+         if (abs(val)>tol) then
+            VEC{INT}:common_indices_in(ind(i)[:],ind(j)[:],pi,pj,same)
+            ! Common indices?
+            if (same.dim>0) then
+               grid(same) = grid(same) + val*psi(i)[pi]*psi(j)[pj]
+            end
+            pi.destroy
+            pj.destroy
+            same.destroy
          end
       end
-
-      ! Product with matrix of basis fn values on grid
-      ! i.e. grid(i) = sum_n^n_bf (sum_m^n_bf bf(i,m) DM(m,n)) bf(i,n)
-      !              = sum_n^n_bf             bfDM(i,n)        bf(i,n)
-      ! // i: grid point index // n: basis func. index
-      if (NOT present(rshft)) then
-         do s = 1,.n_shell
-            .SET:set_shell1_from(s,sh,fs,ls,ns)
-            bf.create(n_pt,ns)
-            sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3))
-            grid = grid + sum(bfDM(:,fs:ls)*bf(:,:),dim=2)
-            bf.destroy
-         end
-      else
-         do s = 1,.n_shell
-            .SET:set_shell1_from(s,sh,fs,ls,ns)
-            sh.position = sh.position + rshft
-            bf.create(n_pt,ns)
-            sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3))
-            grid = grid + sum(bfDM(:,fs:ls)*bf(:,:),dim=2)
-            bf.destroy
-         end
       end
 
-      ! Clean
-      bfDM.destroy
+      ind.destroy
+      psi.destroy
 
    end
 
@@ -3886,6 +3848,8 @@ contains
    make_CRYSTAL23_ED_grid_v1(grid,pt)
    ! Make the "grid" for the supplied points "pt" using the CRYSTAL23
    ! density marices which have been read in.
+   ! This version from Kanghyun Chu, tested in  Matlab for NH3
+   ! 7/12/23
       self :: IN
       grid :: VEC{REAL}, OUT
       pt   :: MAT{REAL}, IN
@@ -4152,7 +4116,7 @@ contains
    ENSURE(pt.dim2==3,  "wrong dimension for points array")
    ENSURE(.density_mx.is_allocated_with_genre("r "), "no restricted density_mx")
 
-      .GRID:make_fast_ED_grid_r(density_grid,pt,.density_mx.r)
+      .GRID:make_ED_grid_v1(density_grid,pt,.density_mx.r,TOL(9))
 
    end
 
