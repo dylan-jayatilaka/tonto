@@ -840,6 +840,143 @@ contains
 
    end
 
+
+   get_C23_Hirshfeld_atom_FFs(ff) ::: leaky
+   ! Get "ff_n", the static Hirshfeld atom form factors (from a
+   ! periodic CRYSTAL23 calculation) for the symmetry related K points
+   ! with *no* thermal smearing, for every unique atom.
+   ! NOTE: "ff" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      self :: INOUT
+      ff :: MAT{CPX}@, OUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      overlapping_atom :: VEC{INT}@
+      rc  :: VEC{REAL}(3)
+      wt, Wc  :: VEC{REAL}@
+      rho :: VEC{REAL}@
+      pt, k_pts :: MAT{REAL}@
+      sf :: CPX
+      ss,sc,s2, k1,k2,k3,kr  :: REAL
+      n_atom,n_k,n_pt,n_keep :: INT
+      u,c :: INT
+      i,k :: INT
+
+      ! Make sure HA stuff is there
+   !  .:make_HA_inputs(skip_NOs=TRUE)
+
+      ! Asymmetric unit atoms
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      ff.create(n_k,n_atom)
+      ff = ZERO
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Max no of becke grid points per atom
+      n_pt = .becke_grid.max_no_of_points_per_atom
+
+      ! Loop over asymmetric/unique atoms "c"
+      parallel do u = 1,.crystal.n_unique_frag_atoms
+
+         c  = .crystal.unique_frag_atom(u)
+         rc = .atom(c).position
+
+         ! Site-symmetry factor for this atom
+         ss = .crystal.frag_atom_sym_factor(c)
+         sc = ss
+         if (sc.is_zero) cycle
+         s2 = ONE/sc
+
+
+         ! Overlapping atoms for density evaluation
+         overlapping_atom = .overlapping_atoms_for_atom(c).element
+
+         ! Get the Becke grid for atom "c" (leaky)
+         .becke_grid.make_grid(pt,wt,c)
+         n_pt = pt.dim1
+
+         ! Make stockholder weight function "Wc" for atom "c"
+         ! If using interpolatators, then on overlapping atoms
+         ! are used ... otherwise nothing is skipped
+         ! REPLACE WITH LARGE ENOUGH RADIUS
+         Wc.create(n_pt)
+         if (.use_interpolators) then
+            .GRID:make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
+         else
+            .GRID:make_stockholder_atom_grid(Wc,c,pt)
+         end
+
+         ! Incorporate integration weight
+         wt = Wc*wt
+         Wc.destroy
+
+         ! Prune the grid with new "wt", get saved bf grid bf_save,
+         ! and new no of points, n_pt (leaky)
+         .becke_grid.prune_grid(pt,wt)
+
+         ! *New* points
+         n_pt = pt.dim1
+         !!!!!!!!!!!!!!
+
+         ! Density for atom "c"
+         rho.create(n_pt)
+    
+         ! Call the C23 density routine
+         .GRID:make_CRYSTAL23_ED_grid_v1(rho,pt)
+
+         ! Weight the atom "c" density
+         ! Now only the FT e^(ik.r) part missing
+         rho = rho*wt
+
+         ! Make the (unique) atomic form factors
+         ! Fourier transform, yay!
+         do k = 1,n_k
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
+               sf = sf + rho(i)*exp(IMAGIFY(kr))
+            end
+            ff(k,u) = sf * s2 * .atom(c).site_occupancy ! <-----
+         end
+
+         ! Clean up atom "c" stuff
+         rho.destroy
+         wt.destroy
+         pt.destroy
+
+      end ! -- loop over atom "c"
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(ff)
+      end
+
+      ! Clean up
+      k_pts.destroy
+
+   end
+
+
    get_unique_fragHAR_SFs(spin_density) ::: leaky
    ! Write out the fragHAR static structure factors for each
    ! .atom_group.mol molecule.
