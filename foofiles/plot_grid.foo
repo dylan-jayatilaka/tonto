@@ -91,9 +91,9 @@ contains
       .y_atom_1              = 0
       .y_atom_2              = 0
                              
-      .x_axis(:)             = PLOT_GRID_X_AXIS
-      .y_axis(:)             = PLOT_GRID_Y_AXIS
-      .z_axis(:)             = PLOT_GRID_Z_AXIS
+      .x_axis(:)             = [ ONE,ZERO,ZERO]
+      .y_axis(:)             = [ZERO, ONE,ZERO]
+      .z_axis(:)             = [ZERO,ZERO, ONE]
                              
       .n_x                   = PLOT_GRID_NX
       .n_y                   = PLOT_GRID_NY
@@ -111,9 +111,9 @@ contains
       .box_center            = ZERO
       .box_widths            = PLOT_GRID_WIDTH
       .box_scale_factor      = ONE
-      .box_axes(:,1)         = PLOT_GRID_X_AXIS
-      .box_axes(:,2)         = PLOT_GRID_Y_AXIS
-      .box_axes(:,3)         = PLOT_GRID_Z_AXIS
+      .box_axes(:,1)         = [ ONE,ZERO,ZERO]
+      .box_axes(:,2)         = [ZERO, ONE,ZERO]
+      .box_axes(:,3)         = [ZERO,ZERO, ONE]
       .use_unit_cell_as_bbox = FALSE
 
       .origin_atom           = FALSE
@@ -701,27 +701,34 @@ contains
 
    end
 
-   set_bbox_from_unit_cell(unit_cell,recenter) ::: PURE
+   set_bbox_from_unit_cell(unit_cell,midpt_is_center) ::: PURE
    ! Use the "unit_cell" to set the bounding box. This bounding box
-   ! has equal numbers of divisions along each axis to allow for a
-   ! recursive marching cube algorithm. This means that the
-   ! separations along each axis may be different. Note that the axes
-   ! may not be orthogonal.
+   ! must have a desired_separation to ensure even point density and
+   ! sampling. The unit cell midpoint 1/2*[1,1,1] (plus any offset) is
+   ! the plot center *unless* "midpt_is_center" is FALSE, in which
+   ! case any user-defined box_center is used; if this is not set, it
+   ! is the origin [0,0,0].
       self :: INOUT
       unit_cell :: UNIT_CELL, IN
-      recenter :: BIN, optional, IN
+      midpt_is_center :: BIN, optional, IN
 
-      new_center :: BIN
+   ENSURE(.desired_separation>ZERO,"must have non-zero desired_separation")
+
+      mid_is_center :: BIN
 
       .box_axes = unit_cell.direct_mx
 
       .use_unit_cell_as_bbox = TRUE
 
-      new_center = TRUE
-      if (present(recenter)) new_center = recenter
+      mid_is_center = TRUE
+      if (present(midpt_is_center)) mid_is_center = midpt_is_center
 
-      if (new_center) then
-         .center.to_product_of(.box_axes,[HALF,HALF,HALF]+.offset)
+      if (mid_is_center) then
+         ! Midpoint (offset) of unit cell
+         .center = matmul(.box_axes,[HALF,HALF,HALF]+.offset)
+      else
+         ! Default: origin of unit cell
+         .center = .box_center
       end
 
       ! Widths are unit cell side lenths
@@ -743,14 +750,10 @@ contains
       .width = .box_scale_factor*.width
 
       ! Set odd points
-      if (.desired_separation>ZERO) then
-         .n_x = ceiling(.width(1)/.desired_separation)
-         .n_y = ceiling(.width(2)/.desired_separation)
-         .n_z = ceiling(.width(3)/.desired_separation)
-         .set_box_from_widths
-      else
-         .set_points_widths_origin
-      end
+      .n_x = ceiling(.width(1)/.desired_separation)
+      .n_y = ceiling(.width(2)/.desired_separation)
+      .n_z = ceiling(.width(3)/.desired_separation)
+      .set_box_from_widths
 
    end
 
@@ -2950,13 +2953,38 @@ contains
       stdout.text(trim(heading))
       stdout.text(repeat("=",length))
       stdout.flush
-      stdout.text("All coordinates are in au.")
+      stdout.text(". Usually, the plot center, plot widths, and plot axes are specified.")
+      stdout.text("  Unless specified otherwise the z-axis width is assumed to be zero")
+      stdout.text("  i.e. it is assumed we are constructing a 2D plot grid.")
+      stdout.flush
+      stdout.text(". The origin is calculated as the front-left-bottom point.")
+      stdout.flush
+      stdout.text(". An atom or atoms may be used to specify the plot center.")
+      stdout.flush
+      stdout.text(". Atoms may also be used to specify the x and y axes; and the y and z")
+      stdout.text("  axes are orthogonalized to the x and y axes, respectively.")
+      stdout.flush
+      stdout.text(". Alternatively, a a bonding box around the molecule may be used.")
+      stdout.text("  The axes diagonalised the moment of inertia tensor using unit")
+      stdout.text("  weight atoms, so-called shape axes.")
+      stdout.flush
+      stdout.text(". For crystals, the unit cell axes may be chosen to be the plot axes.")
+      stdout.text("  In most cases the midpoint of the unit cell is the plot center.")
+      stdout.text("  For CRYSTAL23, the origin is chosen as the plot center")
+      stdout.flush
+      stdout.text(". Normally only the no. of points on the x axis is specified, the no.")
+      stdout.text("  of points on the other axes is adjusted to have the same linear")
+      stdout.text("  point density, roughly.")
+      stdout.flush
+      stdout.text(". Alternatively, a desired point separation is specified. Then the")
+      stdout.text("  no. of points on each axis is calculated to just exceed it.")
+      stdout.flush
+      stdout.text(". All coordinates are in au.")
       stdout.flush
 
       ! What is it?
       stdout.show("Kind of plot            =", .plot_kind)
-      if (.orbital /= 0) &
-      stdout.show("Plot orbital no.        =", .orbital)
+      stdout.show("Plot orbital no. ?      =", .orbital)
 
       ! Point info ...
       stdout.flush
@@ -2965,7 +2993,11 @@ contains
       stdout.show("Number of Y grid points =",.n_y)
       stdout.show("Number of Z grid points =",.n_z)
       stdout.show("Total number of points  =",.n_pt)
-      stdout.show("Point separation (del)  =",.del_x)
+      stdout.flush
+      stdout.text("Point separations:")
+      stdout.show("Point separation (x)    =",.del_x)
+      stdout.show("Point separation (y)    =",.del_y)
+      stdout.show("Point separation (z)    =",.del_z)
 
       ! Nice width
       axes = .plot_axes
@@ -2974,46 +3006,36 @@ contains
 
       ! Centering
       stdout.flush
-      stdout.text("Plot centering (xyz) :")
+      stdout.text("Plot centering:")
       stdout.show("Plot center point       =",.center,width=wid)
-      if (NOT .offset.is_zero) &
       stdout.show("Center offset           =",.offset,width=wid)
-      stdout.show("Bottom-left-front point =",.origin,width=wid)
+      stdout.show("Origin                  =",.origin,width=wid)
 
-      ! Plot axes
+      ! Plot bounding boxes
+      stdout.flush
+      stdout.text("Plot bounding box info:")
+      stdout.show("Box center              =",.box_center,wid)
+      stdout.show("Bounding box used?      =",.use_bounding_box)
+      stdout.show("Unit cell as is bbox?   =",.use_unit_cell_as_bbox)
+
+      ! Plot widths & axes
       stdout.flush
       stdout.text("Plot widths & axes:")
-      if (.use_bounding_box) &
-      stdout.show("Bounding box used?      =",.use_bounding_box)
-
       stdout.show("Widths                  =",.width,wid)
       stdout.show("Axis vector columns     =",axes(1,:),width=wid)
       stdout.show("                        =",axes(2,:),width=wid)
       stdout.show("                        =",axes(3,:),width=wid)
 
       ! Atom-based data
-      if (.atom_data_used) then
-
       stdout.flush
-      stdout.text("Atom-based specifications:")
-
+      stdout.text("Atom-based center:")
+      stdout.show("Center atom             =",.center_atom)
+      stdout.show("Center atoms list used? =",.center_atoms.allocated)
       if (.center_atoms.allocated) then
       stdout.show("Center atoms list       =",.center_atoms.to_concatenated_str)
-      else if (.center_atom/=0) then
-      stdout.show("Center atom             =",.center_atom)
       end
-
-      if (.x_atom_1/=0) then
-      stdout.show("X axis atom 1           =",.x_atom_1)
-      stdout.show("X axis atom 2           =",.x_atom_2)
-      end
-
-      if (.y_atom_1/=0) then
-      stdout.show("Y axis atom 1           =",.y_atom_1)
-      stdout.show("Y axis atom 2           =",.y_atom_2)
-      end
-
-      end
+      stdout.show("X axis atoms?           =",[.x_atom_1,.x_atom_2])
+      stdout.show("Y axis atoms?           =",[.y_atom_1,.y_atom_2])
 
    end
 
