@@ -712,7 +712,7 @@ contains
       unit_cell :: UNIT_CELL, IN
       midpt_is_center :: BIN, optional, IN
 
-   ENSURE(.desired_separation>ZERO,"must have non-zero desired_separation")
+ ! ENSURE(.desired_separation>ZERO,"must have non-zero desired_separation")
 
       mid_is_center :: BIN
 
@@ -727,7 +727,7 @@ contains
          ! Midpoint (offset) of unit cell
          .center = matmul(.box_axes,[HALF,HALF,HALF]+.offset)
       else
-         ! Default: origin of unit cell
+         ! Default: plot box_center is [0,0,0]
          .center = .box_center
       end
 
@@ -750,10 +750,27 @@ contains
       .width = .box_scale_factor*.width
 
       ! Set odd points
-      .n_x = ceiling(.width(1)/.desired_separation)
-      .n_y = ceiling(.width(2)/.desired_separation)
-      .n_z = ceiling(.width(3)/.desired_separation)
-      .set_box_from_widths
+      if (.desired_separation>ZERO) then
+         .n_x = ceiling(.width(1)/.desired_separation)
+         .n_y = ceiling(.width(2)/.desired_separation)
+         .n_z = ceiling(.width(3)/.desired_separation)
+         ! Make # of axis points odd ...
+         .n_x = 2*(.n_x/2) + 1               
+         .n_y = 2*(.n_y/2) + 1               
+         .n_z = 2*(.n_z/2) + 1               
+      else
+         .n_x = 2*(.n_x/2) + 1               
+         .n_y = 2*(.n_y/2) + 1               
+         .n_z = 2*(.n_z/2) + 1               
+      end
+
+      .n_pt  = .n_x*.n_y*.n_z
+
+      .del_x = .width(1)/(.n_x-1)
+      .del_y = .width(2)/(.n_y-1)
+      .del_z = .width(3)/(.n_z-1)
+
+      .set_origin
 
    end
 
@@ -1572,8 +1589,11 @@ contains
       case ("lumo_orbital_plus=        "); .read_LUMO_orbital_plus
       case ("max_x_points=             "); .read_max_x_points
       case ("min_x_points=             "); .read_min_x_points
-      case ("n_points=                 "); .read_x_points
       case ("n_all_points=             "); .read_all_points
+      case ("n_points=                 "); .read_x_points
+      case ("n_x=                      "); .read_n_x
+      case ("n_y=                      "); .read_n_y
+      case ("n_z=                      "); .read_n_z
       case ("normal=                   "); .read_z_axis
       case ("offset=                   "); .read_offset
       case ("offset_cube=              "); .read_offset_cube
@@ -1815,6 +1835,38 @@ contains
       WARN_IF(.n_x.is_even,"resetting to nearest odd number")
 
       .set_points_widths_origin
+
+   end
+
+   read_n_x
+   ! Read the value of n_x and nothing else.
+   ! WARNING: use only for unit_cell as bbox.
+   ! of the plot.
+      self :: INOUT
+
+      stdin.read(.n_x)
+      ENSURE(.n_x>0,"n_x must be positive")
+
+   end
+
+   read_n_y
+   ! Read the value of n_y and nothing else.
+   ! WARNING: use only for unit_cell as bbox.
+   ! of the plot.
+      self :: INOUT
+
+      stdin.read(.n_y)
+      ENSURE(.n_y>0,"number n_y must be positive")
+
+   end
+
+   read_n_z
+   ! Read the value of n_z and nothing else.
+   ! WARNING: use only for unit_cell as bbox.  of the plot.
+      self :: INOUT
+
+      stdin.read(.n_z)
+      ENSURE(.n_z>0,"number n_z must be positive")
 
    end
 
@@ -2817,6 +2869,73 @@ contains
       end
 
       pos.destroy
+
+   end
+
+!  ===================
+!  Batched grid points
+!  ===================
+
+   make_01_uc_pts_as_mhph_pts(pt) ::: PURE
+   ! Make the [0,1] unit-cell points (with the first and last poinyts
+   ! on each cell representing the same plane) transformed into a
+   ! [-1/2,+1/2) cell, for the CRYTSTAL23 program. 
+   ! NOTE: plot axes should be set to unit cell already!
+      self :: IN
+      pt :: MAT{REAL}, OUT
+
+   ENSURE(.n_x/=0,"zero number of x points")
+   ENSURE(.n_y/=0,"zero number of y points")
+   ENSURE(.n_x.is_odd,"n_x is not odd!")
+   ENSURE(.n_y.is_odd,"n_x is not odd!")
+   ENSURE(.n_z.is_odd,"n_x is not odd!")
+   ENSURE(pt.dim1==.n_pt,"wrong 1st dimension, pt")
+   ENSURE(pt.dim2==3    ,"wrong 2nd dimension, pt")
+
+      da,db,dc :: VEC{REAL}(3)
+      j1,j2,j3 :: INT
+      i1,i2,i3 :: INT
+      hx,hy,hz :: INT
+      n :: INT
+
+      ! Delta times unit cell axes
+      da = .del_x*.x_axis
+      db = .del_y*.y_axis
+      dc = .del_z*.z_axis
+
+      ! The is the half-periodicity
+      hx = (.n_x-1)/2
+      hy = (.n_y-1)/2
+      hz = (.n_z-1)/2
+
+      n = 0
+      ! Ordering is standard [0,1] unit cell
+      ! with positive tic marks per point
+      do i3 = 0,.n_z-1
+      do i2 = 0,.n_y-1
+      do i1 = 0,.n_x-1 ! i1=1 origin (x = 0) ! n_x=5 :: i1 = 1,2,3,4,5 
+                                           !               :       :
+                                           !             ::  repeated
+         ! CRYSTAL23 [-1/2,+1/2] points
+                !       = 2                                   org    hf
+                ! mod(1-1+2=2,4) - 2 =  0   mod(x  ,4)   =   0   1   2   3   4   5
+                ! mod(2-1+2=3,4) - 2 =  1   mod(x  ,4)-2 =  -2  -1   0   1 
+                ! mod(3-1+2=4,4) - 2 = +-2  mod(x+2,4)-2 =   0   1  -2  -1
+                ! mod(4-1+2=5,4) - 2 = -1
+                ! mod(5-1+2=6,4) - 2 =  0
+                !
+                ! target j1 = 0 ,"1/4", "1/2", "-1/2" ,"-1/4"
+                !           = 0 1 2 -2 -1    
+         j1 = mod(i1+hx,2*hx) - hx
+         j2 = mod(i2+hy,2*hy) - hy
+         j3 = mod(i3+hz,2*hz) - hz
+         n  = n + 1
+         pt(n,1) = j1*da(1) + j2*db(1) + j3*dc(1)
+         pt(n,2) = j1*da(2) + j2*db(2) + j3*dc(2)
+         pt(n,3) = j1*da(3) + j2*db(3) + j3*dc(3)
+      end
+      end
+      end
 
    end
 
