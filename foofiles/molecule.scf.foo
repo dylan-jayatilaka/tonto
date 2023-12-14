@@ -993,23 +993,48 @@ contains
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.allocated,"no atom list")
-   ENSURE(.density_mx.allocated, "no density matrix")
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
    ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
    ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
    ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
 
-      overlapping_atom :: VEC{INT}@
       rc, rho, wt,Wc :: VEC{REAL}@
       pt, k_pts  :: MAT{REAL}@
       ss,sc,s2, k1,k2,k3,kr  :: REAL
       n_atom,n_k,n_pt,n_keep :: INT
+      library_basis_labels :: VEC{STR}@
+      library  :: STR
+      HS_atoms :: VEC{ATOM}@
       c,i,k :: INT
       sf :: CPX
 
-      ! Make sure HA stuff is there
+      ! Make a clusater around the asymmetric unit cell
+      ! to make the Hirshfeld stickholder weight fn.
    !  .:make_HA_inputs(skip_NOs=TRUE)
+      .slaterbasis.destroy
+      .slaterbasis_name = "Thakkar" ! ugly
+      .atom.set_basis_kind("slater")
+      library = .slaterbasis.library_file(.slaterbasis_name)
+      library_basis_labels = .atom.library_basis_labels(.slaterbasis_name)
+      .slaterbasis.read_library_data(library,library_basis_labels)
+      library_basis_labels.destroy
+      .slaterbasis.unnormalize
+      .SET:resolve_slaterbases
+      .GRID:make_slater_interpolators
+      .crystal.asymmetric_unit_atom.destroy
+      .crystal.asymmetric_unit_geometry.destroy ! Ensure we have
+      .atom.set_basis_kind("slater")
+      .crystal.update_fragment_info(.atom)      ! all .atom's have .slater
+      .crystal.make_asym_unit_HS_cluster(HS_atoms,tol=TOL(9))
+      HS_atoms.resolve_bases(.slaterbasis,.slaterbasis_name)
+      HS_atoms.set_basis_kind("slater")
+      HS_atoms.update_kinds    
+      HS_atoms.put
+      stop
+
+      ! Redo crystal.atoms
+      .crystal.update_fragment_info(.atom)
 
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
@@ -1043,7 +1068,6 @@ contains
 
 
          ! Overlapping atoms for density evaluation
-         overlapping_atom = .overlapping_atoms_for_atom(c).element
 
          ! Get the Becke grid for atom "c" (leaky)
          .becke_grid.make_grid(pt,wt,c)
@@ -1055,7 +1079,7 @@ contains
          ! REPLACE WITH LARGE ENOUGH RADIUS
          Wc.create(n_pt)
          if (.use_interpolators) then
-            .GRID:make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
+            .GRID:make_stockholder_atom_grid(Wc,c,pt,.overlapping_atoms_for_atom(c)[:])
          else
             .GRID:make_stockholder_atom_grid(Wc,c,pt)
          end
@@ -1848,8 +1872,8 @@ contains
             "tc-tanaka   ") ; .:make_X_SFs_RF
 
       ! One-center models
+      case ("oc-crystal23") ; .:make_X_SFs_C23
       case ("oc-hirshfeld") ; .:make_X_SFs_HAR
-
       case ("oc-tanaka   ") ; .:make_X_SFs_TAR
 
       end
@@ -2010,6 +2034,22 @@ contains
       .crystal.make_F_predicted(sf_n)
 
       sf_n.destroy
+
+   end
+
+   make_X_SFs_C23 ::: private
+   ! Make the CRYSTAL23 structure factors from, the XML file.
+      self :: INOUT
+
+      ff :: MAT{CPX}@
+
+      ! Get atomic form factors
+      .:get_C23_Hirshfeld_atom_FFs(ff)
+
+      ! Make F_pred & chi2
+      .crystal.make_F_predicted(ff)
+
+      ff.destroy
 
    end
 
