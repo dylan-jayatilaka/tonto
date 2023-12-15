@@ -995,55 +995,32 @@ contains
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
-   ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
-   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
    ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
 
       rc, rho, wt,Wc :: VEC{REAL}@
-      pt, k_pts  :: MAT{REAL}@
+      pt, k_pts :: MAT{REAL}@
       ss,sc,s2, k1,k2,k3,kr  :: REAL
-      n_atom,n_k,n_pt,n_keep :: INT
-      library_basis_labels :: VEC{STR}@
-      library  :: STR
+      n_atom, n_k, n_pt :: INT
       HS_atoms :: VEC{ATOM}@
       c,i,k :: INT
       sf :: CPX
 
-      ! Make a clusater around the asymmetric unit cell
-      ! to make the Hirshfeld stickholder weight fn.
-   !  .:make_HA_inputs(skip_NOs=TRUE)
-      .slaterbasis.destroy
-      .slaterbasis_name = "Thakkar" ! ugly
-      .atom.set_basis_kind("slater")
-      library = .slaterbasis.library_file(.slaterbasis_name)
-      library_basis_labels = .atom.library_basis_labels(.slaterbasis_name)
-      .slaterbasis.read_library_data(library,library_basis_labels)
-      library_basis_labels.destroy
-      .slaterbasis.unnormalize
-      .SET:resolve_slaterbases
-      .GRID:make_slater_interpolators
-      .crystal.asymmetric_unit_atom.destroy
-      .crystal.asymmetric_unit_geometry.destroy ! Ensure we have
-      .atom.set_basis_kind("slater")
-      .crystal.update_fragment_info(.atom)      ! all .atom's have .slater
-      .crystal.make_asym_unit_HS_cluster(HS_atoms,tol=TOL(9))
-      HS_atoms.resolve_bases(.slaterbasis,.slaterbasis_name)
-      HS_atoms.set_basis_kind("slater")
-      HS_atoms.update_kinds    
-      HS_atoms.put
-
-      ! Redo crystal.atoms
-      .crystal.update_fragment_info(.atom)
-
-      ! Asymmetric unit atoms
+      ! Asymmetric unit atoms,
+      ! Symmetry-generated K points and/or SF's
       n_atom = .crystal.asymmetric_unit_atom.dim
+      n_k    = .crystal.n_unique_SF_k_pts
 
-      ! Symmetry generated K points and SF's
-      n_k = .crystal.n_unique_SF_k_pts
-
-      ! Allocate structure factor array (leaky)
+      ! Form factor array (leaky)
       ff.create(n_k,n_atom)
       ff = ZERO
+
+      ! Make a clusater around the asymmetric unit cell
+      ! to make the Hirshfeld stickholder weight fn.
+      .SCF:make_asym_unit_HS_cluster(HS_atoms,tol=TOL(9))
+      HS_atoms.put
+
+      ! Redo crystal unit cell, it now has interpolators
+      .crystal.update_fragment_info(.atom)
 
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
@@ -1066,19 +1043,13 @@ contains
          s2 = ONE/sc
 
 
-         ! Overlapping atoms for density evaluation
-
          ! Get the Becke grid for atom "c" (leaky)
          .becke_grid.make_grid(pt,wt,c)
          n_pt = pt.dim1
 
          ! Make stockholder weight function "Wc" for atom "c"
-         ! If using interpolatators, then on overlapping atoms
-         ! are used ... otherwise nothing is skipped
-         ! REPLACE WITH LARGE ENOUGH RADIUS
          Wc.create(n_pt)
-         .GRID:make_Hirshfeld_weight_grid(Wc,pt,HS_atoms,c)
-         HS_atoms.destroy
+         HS_atoms.make_Hirshfeld_weight_grid(Wc,pt,c)
 
          ! Incorporate integration weight
          wt = Wc*wt
@@ -1091,11 +1062,10 @@ contains
          ! *New* points
          n_pt = pt.dim1
          !!!!!!!!!!!!!!
-
-         ! Density for atom "c"
-         rho.create(n_pt)
     
+         ! Density for atom "c"
          ! Call the C23 density routine
+         rho.create(n_pt)
          .GRID:make_CRYSTAL23_ED_grid_v1(rho,pt)
 
          ! Weight the atom "c" density
@@ -1130,6 +1100,52 @@ contains
 
       ! Clean up
       k_pts.destroy
+      HS_atoms.destroy
+
+   end
+
+   make_asym_unit_HS_cluster(HS_atoms,tol) ::: leaky
+   ! Make "HS_atoms", a cluster of atoms surrounding the asymmetric
+   ! unit in the crystal. The cluster has the property that for every
+   ! atom in the cluster, the Thakkar-type spherical electron density
+   ! is accurate to "tol" when evaluated at the atomic position of
+   ! every atom in the asymmetric unit.
+   ! NOTE: the .crystal.asymmetric_unit is destroyed and remade so
+   ! that it ervy atom in it has a .slaterbasis with an interoplator.
+      self     :: INOUT
+      HS_atoms :: VEC{ATOM}@, OUT
+      tol      :: REAL, IN
+
+      library_basis_labels :: VEC{STR}@
+      library  :: STR
+
+      ! Remake the slaterbasis
+      .slaterbasis.destroy
+      .slaterbasis_name = "Thakkar" ! ugly
+      .atom.set_basis_kind("slater")
+      library = .slaterbasis.library_file(.slaterbasis_name)
+      library_basis_labels = .atom.library_basis_labels(.slaterbasis_name)
+      .slaterbasis.read_library_data(library,library_basis_labels)
+      library_basis_labels.destroy
+      .slaterbasis.unnormalize
+
+      ! Make sure every .atom has a .slaterbasis
+      .GRID:make_slater_interpolators
+      .SET:resolve_slaterbases
+    ! .atom.update_kinds    
+      .atom.set_basis_kind("slater")
+      .atom_info_made = TRUE
+
+      ! Remake .asymmetruc_unit
+      .crystal.asymmetric_unit_atom.destroy
+      .crystal.asymmetric_unit_geometry.destroy ! Ensure we have
+      .crystal.update_fragment_info(.atom)      ! all .atom's have .slater
+
+      ! Make the HS_atoms & resolve the interpolators
+      .crystal.make_asym_unit_HS_cluster(HS_atoms,tol) ! <===
+      HS_atoms.resolve_bases(.slaterbasis,.slaterbasis_name)
+      HS_atoms.set_basis_kind("slater")
+      HS_atoms.update_kinds    
 
    end
 
