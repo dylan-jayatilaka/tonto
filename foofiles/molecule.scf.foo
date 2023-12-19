@@ -1002,8 +1002,10 @@ contains
       ss,sc,s2, k1,k2,k3,kr  :: REAL
       n_atom, n_k, n_pt :: INT
       HS_atoms :: VEC{ATOM}@
-      c,i,k :: INT
+      c,a,i,k :: INT
       sf :: CPX
+      library_basis_labels :: VEC{STR}@
+      library  :: STR
 
       ! Asymmetric unit atoms,
       ! Symmetry-generated K points and/or SF's
@@ -1014,14 +1016,35 @@ contains
       ff.create(n_k,n_atom)
       ff = ZERO
 
-      ! Make a clusater around the asymmetric unit cell
-      ! to make the Hirshfeld stickholder weight fn.
-      .SCF:make_asym_unit_HS_cluster(HS_atoms,tol=TOL(9))
-    ! HS_atoms.put
+      ! Remake the slaterbasis
+      .slaterbasis.destroy
+      .slaterbasis_name = "Thakkar" ! ugly
+      .atom.set_basis_kind("slater")
+      library = .slaterbasis.library_file(.slaterbasis_name)
+      library_basis_labels = .atom.library_basis_labels(.slaterbasis_name)
+      .slaterbasis.read_library_data(library,library_basis_labels)
+      library_basis_labels.destroy
+      .slaterbasis.unnormalize
 
-      ! Redo crystal unit cell, it now has interpolators
-      .crystal.update_fragment_info(.atom)
+      ! Make sure every .atom has a .slaterbasis
+      .GRID:make_slater_interpolators
+      .SET:resolve_slaterbases(.crystal.asymmetric_unit_atom)
       .crystal.asymmetric_unit_atom.set_basis_kind("slater")
+     
+      ! Destroy the fragment geometry & set it to asymmetri unit
+      .crystal.fragment_geometry.destroy
+      .crystal.fragment_atom.destroy
+      .crystal.update_fragment_info(.crystal.asymmetric_unit_atom)
+
+      ! Make the HS_atoms & resolve the interpolators
+      .crystal.asymmetric_unit_atom.set_basis_kind("slater")
+      .crystal.make_asym_unit_HS_cluster(HS_atoms,TOL(10)) ! <===
+      HS_atoms.set_basis_kind("slater")
+      HS_atoms.resolve_bases(.slaterbasis,.slaterbasis_name)
+      HS_atoms.update_kinds    
+      !!!!!!!!!!!!!!
+      HS_atoms.put ! ?? what does this line do? -- Kang
+      !!!!!!!!!!!!!!
 
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
@@ -1030,7 +1053,9 @@ contains
 
       ! Set up integration grid
       ! Max no of becke grid points per atom
-      .GRID:set_up_becke_grid ! NOT PURE
+      .becke_grid.destroy
+      .becke_grid.set_atom_info(.crystal.asymmetric_unit_atom) ! NOT PURE
+      .becke_grid.set_grid_data
       n_pt = .becke_grid.max_no_of_points_per_atom
 
       ! Loop over asymmetric/unique atoms "c"
@@ -1045,11 +1070,17 @@ contains
          if (sc.is_zero) cycle
          s2 = ONE/sc
 
-
          ! Get the Becke grid for atom "c" (leaky)
          .becke_grid.make_grid(pt,wt,c)
          n_pt = pt.dim1
-
+!! Following lines are disabled - Kang ..>
+       !  stdout.text("atom c = ",) !         
+       !  stdout.put(rc)
+       !  stdout.text("Becke grid pt:") !         
+       !  stdout.put(pt) 
+       !  stdout.text("Becke grid wt:") !         
+       !  stdout.put(wt)
+!! <..
          ! Make stockholder weight function "Wc" for atom "c"
          Wc.create(n_pt)
          HS_atoms.make_Hirshfeld_weight_grid(Wc,pt,c)
@@ -1104,6 +1135,10 @@ contains
       ! Clean up
       k_pts.destroy
       HS_atoms.destroy
+
+      stdout.text("===")
+      stdout.text("ff:")
+      stdout.put(ff)
 
    end
 

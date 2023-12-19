@@ -10018,7 +10018,13 @@ contains
       end
 
       ! Extract cordinates from occupation list
-      .extract_geometry
+      if (.reorder_in_mols) then
+         ! In molecule order
+         .extract_geometry_in_mols(.occupation_list,.geometry)
+      else
+         ! The fragment atoms come first ...
+         .extract_geometry_no_mols(.occupation_list,.geometry)
+      end
 
       ! Finished ...
       .cluster_info_made = TRUE
@@ -10435,8 +10441,10 @@ contains
       hlist,ulist,match :: VEC{INT}@
       uskip :: VEC{BIN}@
       d2,radius2 :: REAL
-      within_radius,has_frag_atoms,not000,offset, has_atoms_to_suppress :: BIN
-      n_unit_cell_atoms, h0,h1,h2,h3, hcode,code, k,u :: INT
+      within_radius,has_frag_atoms,offset :: BIN
+      has_atoms_to_suppress   :: BIN
+      n_unit_cell_atoms, k,u  :: INT
+      h0,h1,h2,h3, hcode,code :: INT
 
       ! Constants
       n_unit_cell_atoms = .n_unit_cell_atoms
@@ -10496,8 +10504,7 @@ contains
       do h3 = .h_min(3),.h_max(3)
 
          ! Get cell displacement vector if needed
-         not000 = h1/=0 OR h2/=0 OR h3/=0
-         if (not000) off.to_product_of(rcm,REALIFY(([h1,h2,h3])))
+         off = matmul(rcm,REALIFY(([h1,h2,h3])))
 
          ! Get list of atoms in "match" which are in this cell
          hcode = CLUSTER_H_CODE(h1,h2,h3)
@@ -10513,10 +10520,10 @@ contains
             end
          end
 
-         ! Loop over unit cell atoms in this cell
+         ! Loop over unit cell atoms 
          do u = 1,n_unit_cell_atoms
 
-            ! If there are fragment atoms here, skip them
+            ! Skip fragment atoms?
             if (has_frag_atoms) then
                if (uskip(u)) cycle
             end
@@ -10525,8 +10532,8 @@ contains
               if (any(.unit_cell_atoms_to_suppress == u)) cycle
             end
 
-            pos = geom0(:,u)
-            if (not000) pos = pos + off
+            ! Position of cell atom u in [h1,h2,h3] cell
+            pos = geom0(:,u) + off
 
             ! Test if this atom pos is within .radius
             within_radius = FALSE
@@ -10540,7 +10547,7 @@ contains
                if (abs(d(3))>.radius) cycle
 
                ! Don't use square root
-               d2 = d(1)*d(1)+d(2)*d(2)+d(3)*d(3)
+               d2 = d(1)*d(1) + d(2)*d(2) + d(3)*d(3)
                if (d2>radius2) cycle
 
                within_radius = TRUE
@@ -10836,7 +10843,7 @@ contains
    ! Defragment a single atom "u" in the unit cell and produce a
    ! "geometry" in crystal coordinates.
       self :: IN
-      u :: INT, IN
+      u    :: INT, IN
       geometry :: MAT{REAL}@, OUT
 
       occupation_list :: VEC{INT}@
@@ -11135,13 +11142,14 @@ contains
 !  Extract geometry & info from coded occupation list
 !  ==================================================
 
-   extract_geometry ::: leaky, PURE
-   ! Extract the .geometry (fractional) from the final .occupation list.
-   ! . Place connected molecules in order
+   extract_geometry_in_mols(occupation_list,geometry) ::: leaky, PURE
+   ! Extract the cluster "geometry" (fractional) from an "occupation
+   ! list" and place atoms in order of connected molecules.
    ! . Set the .is_fragment_atom flag array
       self :: INOUT
+      occupation_list :: VEC{INT}, INOUT
+      geometry :: MAT{REAL}@, OUT
 
-   ENSURE(.occupation_list.allocated,"no occupation_list")
    ENSURE(.unit_cell_geometry.allocated,"no crystal unit cell geometry")
 
       a,m,i,code,h1,h2,h3,u :: INT
@@ -11150,15 +11158,19 @@ contains
       connected :: BIN
 
       ! No of atoms to extract
-      .n_atoms = .occupation_list.dim
+      ! Warning
+      .n_atoms = occupation_list.dim
 
       ! Extracted geometry
-      .geometry.destroy
-      .geometry.create(3,.n_atoms)
+      geometry.create(3,.n_atoms)
 
       ! Clear flags telling if fragment atom
       .is_fragment_atom.destroy
       .is_fragment_atom.create(.n_atoms)
+    ! .new_frag_atom_ind.destroy
+    ! .new_frag_atom_ind.create(.n_atoms)
+    ! .new_frag_atom_ind = 0
+    ! .new_frag_atom_ind = [(i,i=1,.n_fragment_atoms)]
 
       ! New ordering
       new_order.create(.n_atoms)
@@ -11178,7 +11190,7 @@ contains
              new_order(i) = a
 
              ! Get occ code for this atom
-             code = .occupation_list(i)
+             code = occupation_list(i)
 
              ! Get unit cell atom "u" and cell offset "h"
              h1 = CLUSTER_H1_FROM_CODE(code)
@@ -11187,7 +11199,7 @@ contains
              u  = CLUSTER_UA_FROM_CODE(code)
 
              ! Get the cluster atom coordinate !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-             .geometry(:,i) = .unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
+             geometry(:,i) = .unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
 
              ! Set flag if fragment atom
              if (i<=.n_fragment_atoms) then; .is_fragment_atom(i) = TRUE
@@ -11198,12 +11210,14 @@ contains
 
       end
 
-
+    ! stdout.text("new order:") ! Kang added 
+    ! stdout.put(new_order)	! Kang added ! It prints out the new order up to 169 which is > 16(=#of atoms in the unit cell
       ! Now reorder
-      .occupation_list(new_order)   = .occupation_list
-      .geometry(:,new_order)        = .geometry
+      occupation_list(new_order)    = occupation_list
+      geometry(:,new_order)         = geometry
       .molecule_for_atom(new_order) = .molecule_for_atom
       .is_fragment_atom(new_order)  = .is_fragment_atom
+    ! .new_frag_atom_ind(new_order) = .new_frag_atom_ind !<< Kang's note : Bug here xxxxxxxxxxxxxx
 
      ! This needs to be here, we must update .molecule to
      ! be in a consistent state with the rest of the object
@@ -11230,6 +11244,54 @@ contains
 
    end
 
+   extract_geometry_no_mols(occupation_list,geometry) ::: leaky, PURE
+   ! Extract the cluster "geometry" (fractional) from an "occupation
+   ! list" and place atoms in order of connected molecules.
+   ! . Set the .is_fragment_atom flag array
+      self :: INOUT
+      occupation_list :: VEC{INT}, INOUT
+      geometry :: MAT{REAL}@, OUT
+
+   ENSURE(.unit_cell_geometry.allocated,"no crystal unit cell geometry")
+
+      a,m,i,code,h1,h2,h3,u :: INT
+      atom_connection :: VEC{EVEC{INT}}@
+      connected :: BIN
+
+      ! No of atoms to extract
+      .n_atoms = occupation_list.dim
+
+      ! Extracted geometry
+      geometry.create(3,.n_atoms)
+
+      ! Clear flags telling if fragment atom
+      .is_fragment_atom.destroy
+      .is_fragment_atom.create(.n_atoms)
+
+      ! Loop over atoms "i"
+      do i = 1,.n_atoms
+
+         ! Get occ code for this atom
+         code = occupation_list(i)
+
+         ! Get unit cell atom "u" and cell offset "h"
+         h1 = CLUSTER_H1_FROM_CODE(code)
+         h2 = CLUSTER_H2_FROM_CODE(code)
+         h3 = CLUSTER_H3_FROM_CODE(code)
+         u  = CLUSTER_UA_FROM_CODE(code)
+
+         ! Get the cluster atom coordinate !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         geometry(:,i) = .unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
+
+         ! Set flag if fragment atom
+         if (i<=.n_fragment_atoms) then; .is_fragment_atom(i) = TRUE
+         else;                           .is_fragment_atom(i) = FALSE
+         end
+
+      end
+
+   end
+
    extract_geometry(occupation_list,geometry) ::: leaky, PURE
    ! Extract the geometry (fractional) from an "occupation_list".
       self :: IN
@@ -11238,7 +11300,8 @@ contains
 
    ENSURE(.unit_cell_geometry.allocated,"no crystal unit cell geometry")
 
-      n_atoms,i,code,h1,h2,h3,u :: INT
+      n_atoms,i,code :: INT
+      h1,h2,h3,u :: INT
 
       ! No. of atoms to extract
       n_atoms = occupation_list.dim
@@ -11791,7 +11854,7 @@ contains
       ulist.create(.n_atoms)
       ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
 
-      ! Seitz matrices
+      ! Seitz matrices (cartesian!)
       seitz = .xyz_seitz_matrices
 
       ! Loop over cluster atoms "a"
@@ -11810,7 +11873,7 @@ contains
          atom(a).transform_pADP_vector_with(seitz(:,:,s))
 
          ! Reset cluster atom pos from .geometry(:,a)
-         atom(a).set_position(.geometry(:,a))
+         atom(a).set_position(.geometry(:,a))  ! Back to fractional!
          atom(a).set_axis_system_to("crystal")
          atom(a).set_group(.molecule_for_atom(a))
 
