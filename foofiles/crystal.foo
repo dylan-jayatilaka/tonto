@@ -255,8 +255,17 @@ contains
 !  Cluster set methods
 !  ===================
 
-   set_radius(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.radius), PURE
-   ! Generic set
+   set_atom_density_cutoff(tol) ::: PURE
+   ! Set the atom_density_cutoff used to eliminate spherical atomic
+   ! density contributions less than "tol". The interpolator table
+   ! will not hold values smaller than "tol".
+      self :: INOUT
+      tol :: REAL, IN
+
+   ENSURE(tol>ZERO,"tol must be +ve")
+
+      .atom_density_cutoff = tol
+
    end
 
    set_defragment(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.defragment), PURE
@@ -348,11 +357,11 @@ contains
    end
 
    set_generation_method(method) ::: PURE
-   ! Set the generation method, which tells how to generate the cluster e.g.
-   ! whether to add atoms to the cluster within a certain radius of the starting
-   ! fragment, or whether to use the unit cell ad the cluster, or just the
-   ! initial starting fragment (i.e. the null cluster) or the initial fragment
-   ! and the unit cell.
+   ! Set .generation_method, which tells how to generate the cluster
+   ! e.g. whether to add atoms to the cluster within a certain radius
+   ! of the starting fragment, or whether to use the unit cell ad the
+   ! cluster, or just the initial starting fragment (i.e. the null
+   ! cluster) or the initial fragment and the unit cell.
       self :: INOUT
       method :: STR, IN
 
@@ -360,6 +369,7 @@ contains
       .generation_method.to_lower_case
 
       select case (.generation_method)
+      case("for_asymm_unit_hs         "); .set_reorder_in_mols(FALSE)
       case("for_hirshfeld_surface     ")
       case("fragment                  ")
       case("unit_cell                 ")
@@ -373,17 +383,12 @@ contains
 
    end
 
-   set_atom_density_cutoff(tol) ::: PURE
-   ! Set the atom_density_cutoff used to eliminate spherical atomic
-   ! density contributions less than "tol". The interpolator table
-   ! will not hold values smaller than "tol".
-      self :: INOUT
-      tol :: REAL, IN
+   set_radius(val) ::: get_from(OBJECT:set, VAL?=>REAL, ARG?=>.radius), PURE
+   ! Generic set
+   end
 
-   ENSURE(tol>ZERO,"tol must be +ve")
-
-      .atom_density_cutoff = tol
-
+   set_reorder_in_mols(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.reorder_in_mols), PURE
+   ! Generic set
    end
 
    set_unit_cell_offset(offset) ::: PURE
@@ -442,6 +447,7 @@ contains
       case ("r_free_percentage=            "); .read_r_free_percentage
       case ("read_cif                      "); .read_CIF
       case ("redirect                      "); .redirect
+      case ("reorder_in_mols=              "); .read_reorder_in_mols
       case ("repetition_factors=           "); .read_repetition_factors
       case ("revert                        "); .revert
       case ("same_atom_tol=                "); .read_same_atom_tol
@@ -592,6 +598,19 @@ contains
 
       stdin.read(.use_manual_repetition_factors)
       if (NOT .use_manual_repetition_factors) .repetition_factor.destroy
+
+   end
+
+   read_reorder_in_mols ::: leaky, private
+   ! Read whether to reorder any generated cluster of atoms into
+   ! consecutive atom-connected fragments. Set to FALSE if you are
+   ! generating a cluster for Hirshfeld weight calculations.
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read(val)
+      .set_reorder_in_mols(val)
 
    end
 
@@ -9963,7 +9982,7 @@ contains
       HS_atoms :: VEC{ATOM}@, OUT
       tol      :: REAL, IN
 
-      .set_generation_method("for_hirshfeld_surface")
+      .set_generation_method("for_asymm_unit_hs")
       .set_atom_density_cutoff(tol)
       .set_defragment(FALSE)
       .make_cluster_info
@@ -9985,16 +10004,17 @@ contains
 
       if (.cluster_info_made) return
 
-      ! Depending on the generation_method, make starting cluster
+      ! Initial cluster in .fragment_geometry 
+      ! for .generation_method
       .make_occupation_list
 
-      ! Generate the cluster
+      ! Make the cluster from the fragment
       select case (.generation_method)
 
       case ("within_radius")
          .make_within_radius
 
-      case ("for_hirshfeld_surface")
+      case ("for_asymm_unit_hs","for_hirshfeld_surface")
          .make_HS_radius     ! NOT PURE
          .make_within_radius
          .defragment = FALSE
@@ -10052,6 +10072,41 @@ contains
       fragment_geometry :: MAT{REAL}@
 
       select case (.generation_method)
+
+      case ("for_asymm_unit_hs")
+
+         ENSURE(.fragment_info_made,"no crystal fragment info")
+
+         ! Set the asymmetric unit as the starting fragment
+         .fragment_geometry = .asymmetric_unit_geometry
+         .n_fragment_atoms  = .n_asymmetric_unit_atoms
+
+         ! Get fragment offset i.e. center
+         pos = .fragment_geometry.mean_column_vector
+         .fragment_offset = int(pos)
+
+         ! Create occupation list
+         .occupation_list.destroy
+         .occupation_list.create(.n_fragment_atoms)
+
+         ! Loop on fragment atom
+         do f = 1,.n_fragment_atoms
+
+            ! Get unit cell atom & shift
+            u = .unit_cell_atom_for_frag_atom(f)
+            h = .unit_cell_shft_for_frag_atom(:,f)
+
+            ! Shift relative to recentered unit cell
+            h = h + .fragment_offset
+
+            ! Offset h to apply to "u" to get frag atom "f".
+            ! Must reverse h. See above.
+            h = -h
+
+            ! Set occupation code ...
+            .occupation_list(f) = CLUSTER_AT_CODE(h(1),h(2),h(3),u)
+
+         end
 
       case ("within_radius","for_hirshfeld_surface","fragment")
 
