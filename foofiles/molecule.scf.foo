@@ -997,16 +997,16 @@ contains
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
    ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
 
-      rc, rho, wt,Wc :: VEC{REAL}@
+      rho,wt,Wa :: VEC{REAL}@
       pt, k_pts :: MAT{REAL}@
-      h_pts :: MAT{INT}@
-      ss,sc,s2, k1,k2,k3,kr  :: REAL
-      n_atom, n_k, n_pt :: INT
-      u,c,a,i,k :: INT
-      HS_atoms  :: VEC{ATOM}@
-      sf :: CPX
       library_basis_labels :: VEC{STR}@
       library  :: STR
+      cluster  :: CRYSTAL@
+      HS_atoms :: VEC{ATOM}@
+      sa,  k1,k2,k3,kr :: REAL
+      n_atom, n_k,n_pt :: INT
+      a,i,k :: INT
+      sf :: CPX
 
    !  .:make_HA_inputs(skip_NOs=TRUE)
 
@@ -1032,20 +1032,26 @@ contains
       ! Ensure .atom's have their .slaterbases
       .GRID:make_slater_interpolators
       .SET:resolve_slaterbases(.crystal.asymmetric_unit_atom)
-      .crystal.asymmetric_unit_atom.set_basis_kind("slater")
-     
-      ! Destroy the fragment geometry & set it to asymmetri unit
-    ! .crystal.asymmetric_unit_geometry.destroy
-    ! .crystal.asymmetric_unit_atom.destroy
-    ! .crystal.update_fragment_info(.crystal.asymmetric_unit_atom)
 
+      ! Make a new crystal only for generating clusters.
+      ! Since we need to define the fragment_geometry to be
+      ! the asymmetric unit for this purpose, but for
+      ! structure refinement we need to stay with the C23
+      ! CXML file geometry which is the 0.5[-1:+1,-1:+1,-1:+1] cell.
+      ! NOTE: wasteful copy of xray_data is done here
+      cluster = .crystal
+      cluster.asymmetric_unit_geometry.destroy
+      cluster.asymmetric_unit_atom.destroy
+      cluster.update_fragment_info(.crystal.asymmetric_unit_atom)
+      cluster.asymmetric_unit_atom.set_basis_kind("slater")
+     
       ! Make the HS_atoms & resolve the interpolators
-    ! .crystal.asymmetric_unit_atom.set_basis_kind("slater")
-      .crystal.make_asym_unit_HS_cluster(HS_atoms,TOL(10)) ! <===
+      cluster.make_asym_unit_HS_cluster(HS_atoms,TOL(10)) ! <===
       HS_atoms.set_basis_kind("slater")
       HS_atoms.resolve_bases(.slaterbasis,.slaterbasis_name)
       HS_atoms.update_kinds    
       !!!!!!!!!!!!!!
+      stdout.text("CLUSTER GEOMETRY")
       HS_atoms.put ! ?? what does this line do? -- Kang
       !!!!!!!!!!!!!!
 
@@ -1054,67 +1060,48 @@ contains
       k_pts.create(n_k,3)
       .crystal.make_unique_X_SF_k_pts(k_pts)
 
-      h_pts.create(n_k,3)
-      .crystal.make_unique_X_SF_Miller_indices(h_pts)
-
-      ! Set up integration grid
-      ! Max no of becke grid points per atom
+      ! Set up integration grid for the HS atom cluster
       .becke_grid.create
-      .becke_grid.set_atom_info(.crystal.asymmetric_unit_atom) ! NOT PURE
-      ! In a coflicted version the above argument was .atom ?
+      .becke_grid.set_atom_info(HS_atoms) ! NOT PURE
       .becke_grid.set_grid_data
-      n_pt = .becke_grid.max_no_of_points_per_atom
 
       ! Loop over asymmetric/unique atoms "c"
-      parallel do u = 1,.crystal.n_unique_frag_atoms
-
-         c  = .crystal.unique_frag_atom(u)
-         rc = .crystal.asymmetric_unit_atom(c).position
+      parallel do a = 1,.crystal.n_asymmetric_unit_atoms
 
          ! Site-symmetry factor for this atom
-         ! ???? REALLY ??? What about if it rotates ???
-         ss = .crystal.asym_atom_sym_factor(c)
-         sc = ss
-         if (sc.is_zero) cycle
-         s2 = ONE/sc
+         sa = .crystal.asym_atom_sym_factor(a)
+         if (sa.is_zero) cycle
+         sa = ONE/sa
 
-         ! Get the Becke grid for atom "c" (leaky)
-         .becke_grid.make_grid(pt,wt,c)
+         ! Get the Becke grid for atom "a" (leaky)
+         .becke_grid.make_grid(pt,wt,a)
          n_pt = pt.dim1
-!! Following lines are disabled - Kang ..>
-       !  stdout.text("atom c = ",) !         
-       !  stdout.put(rc)
-       !  stdout.text("Becke grid pt:") !         
-       !  stdout.put(pt) 
-       !  stdout.text("Becke grid wt:") !         
-       !  stdout.put(wt)
-!! <..
-         ! Make stockholder weight function "Wc" for atom "c"
-         Wc.create(n_pt)
-         HS_atoms.make_Hirshfeld_weight_grid(Wc,pt,c)
+
+         ! Stockholder weight function "Wa" for atom "a"
+         Wa.create(n_pt)
+         HS_atoms.make_Hirshfeld_weight_grid(Wa,pt,a)
 
          ! Incorporate integration weight
-         wt = Wc*wt
-         Wc.destroy
+         wt = Wa*wt
+         Wa.destroy
 
-         ! Prune the grid with new "wt", get saved bf grid bf_save,
-         ! and new no of points, n_pt (leaky)
+         ! Prune the grid with new "wt"
+         ! and new no of points, n_pt 
          .becke_grid.prune_grid(pt,wt)
-
-         ! *New* points
-         n_pt = pt.dim1
+         n_pt = pt.dim1 ! *New* points
          !!!!!!!!!!!!!!
     
-         ! Density for atom "c"
-         ! Call the C23 density routine
+         ! Density for atom "a"
+         ! NOTE: only uses actual "pt" array for the C23 .atom
+         ! geometry & density matrix read from the XML file.
          rho.create(n_pt)
          .GRID:make_CRYSTAL23_ED_grid_v1(rho,pt)
 
-         ! Weight the atom "c" density
+         ! Weight the atom "a" density
          ! Now only the FT e^(ik.r) part missing
          rho = rho*wt
 
-         ! Make the (unique) atomic form factors
+         ! Make the (symmetry-generated) atomic form factors "ff"
          ! Fourier transform, yay!
          do k = 1,n_k
             k1 = k_pts(k,1)
@@ -1125,15 +1112,14 @@ contains
                kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
                sf = sf + rho(i)*exp(IMAGIFY(kr))
             end
-            ff(k,u) = sf * s2 * .atom(c).site_occupancy ! <-----
+            ff(k,a) = sf * sa ! <-----
          end
 
-         ! Clean up atom "c" stuff
          rho.destroy
          wt.destroy
          pt.destroy
 
-      end ! -- loop over atom "c"
+      end ! -- loop over atom "a"
 
       ! Parallel
       if (DO_IN_PARALLEL) then
@@ -1147,10 +1133,6 @@ contains
       stdout.text("===")
       stdout.text("ff:")
       stdout.put(ff)
-
-      stdout.text("===")
-      stdout.text("h:")
-      stdout.put(h_pts)
 
    end
 
@@ -2058,15 +2040,15 @@ contains
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
 
-      sf_n :: MAT{CPX}@
+      ff :: MAT{CPX}@
 
       ! Get atomic form factors
-      .:get_Hirshfeld_atom_FFs(sf_n)
+      .:get_Hirshfeld_atom_FFs(ff)
 
       ! Make F_pred & chi2
-      .crystal.make_F_predicted(sf_n)
+      .crystal.make_F_predicted(ff)
 
-      sf_n.destroy
+      ff.destroy
 
    end
 
