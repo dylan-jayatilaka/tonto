@@ -120,6 +120,55 @@ contains
 
    end
 
+   create_pbt_set(pbt_set) ::: leaky
+   ! create a set of geminals (i.e. Pauli Block Tensors) 
+     pbt_set :: PAULI_BLOCK_TENSOR_SET
+     i, n_1D_blocks_plus_1 :: INT
+
+!     stdout.text(" ")
+!     stdout.text("creation of a set of geminals")
+
+     ! allocate a set of Pauli Block Tensors (PBT) 
+     allocate(pbt_set.vec(.n_geminals))
+
+     ! set the number of geminals, 
+     ! the number of blocks and
+     ! the spin restrictions
+     pbt_set.set_size=.n_geminals
+     pbt_set.set_size_sing=.n_gem_singlet
+     pbt_set.n_blocks=.n_blocks
+     pbt_set.n_1D_blocks=.n_1D_blocks
+     pbt_set.n_2D_blocks=.n_2D_blocks
+     pbt_set.n_2D_3typ_blocks=.n_2D_3typ_blocks
+     pbt_set.n_2D_4typ_blocks=.n_2D_4typ_blocks
+     pbt_set.spin_restricted=.spin_restricted
+
+     n_1D_blocks_plus_1 = .n_1D_blocks+1
+     do i=1,.n_geminals 
+        ! create the vectors of block types,
+        ! block dimensions and coefficients
+        pbt_set.vec(i).block_type.create(.n_blocks)
+        pbt_set.vec(i).block_dim.create(.n_blocks)
+        pbt_set.vec(i).coef.create(.n_blocks)
+        ! set the block dimensions
+        pbt_set.vec(i).block_dim(1:.n_1D_blocks) = 1
+        pbt_set.vec(i).block_dim(n_1D_blocks_plus_1:.n_blocks) = 2
+        ! set the number of 1D and 2D blocks
+        ! in each PBT
+        pbt_set.vec(i).n_1D_blocks=.n_1D_blocks
+        pbt_set.vec(i).n_2D_blocks=.n_2D_blocks
+     end
+
+     ! make the vector of numbers of block types
+     ! for each block
+     .make_type_numbers(pbt_set)
+
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+   end
+
    destroy(gradient) ::: leaky
    ! Destroy a vector of energy gradient elements
      gradient :: VEC{ENERGY_GRADIENT_ELT}*
@@ -156,14 +205,6 @@ contains
 
    end
 
-   created result (res) ::: get_from(OBJECT), inlined_by_foo
-   ! Returns true if self has been created
-   end
-
-   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
-   ! Returns true if self has *not* been created
-   end
-
    destroy_ptr_part ::: leaky
    ! destroy the pointer parts of a PAULI_BLOCK_GEMINALS object
      new_item :: VEC_INT_LIST*
@@ -197,6 +238,50 @@ contains
      .diag_set.destroy
      .block_1orthos.destroy
 
+   end
+
+   destroy_pbt_set(pbt_set) ::: leaky
+   ! destroy a set of geminals (i.e. Pauli Block Tensors) 
+     pbt_set :: PAULI_BLOCK_TENSOR_SET
+     i, set_size, n_blocks :: INT
+
+!     stdout.text(" ")
+!     stdout.text("destruction of a set of geminals")
+
+     ! destroy the set of geminals
+     set_size = pbt_set.set_size
+     do i=1,set_size
+        ! create the vectors of block types,
+        ! block dimensions and coefficients
+        pbt_set.vec(i).block_type.destroy
+        pbt_set.vec(i).block_dim.destroy
+        pbt_set.vec(i).coef.destroy
+        pbt_set.vec(i).cpx_coef.destroy
+        pbt_set.vec(i).matrix_form.destroy
+        pbt_set.vec(i).cpx_matrix_form.destroy
+        pbt_set.vec(i).nonzero_coef_ind.destroy
+        pbt_set.vec(i).red_coef.destroy
+        pbt_set.vec(i).new_nonzero_coef_ind.destroy
+        pbt_set.vec(i).optimized_coef_ind.destroy
+        pbt_set.vec(i).frozen_coef_ind.destroy
+     end
+     ! deallocate a set of Pauli Block Tensors (PBT) 
+     deallocate(pbt_set.vec)
+
+     ! destroy the vector of numbers of block types
+     ! for each block
+     if(pbt_set.type_nb.created) then
+        n_blocks = pbt_set.type_nb.dim
+        do i=1,n_blocks
+          pbt_set.type_nb(i).element.destroy
+        end
+        pbt_set.type_nb.destroy
+     end
+
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
    end
 
 !  ===========
@@ -333,7 +418,8 @@ contains
 
      siz=0
      do g=1,.n_geminals
-        siz = siz + size(.bra_set.vec(g).new_nonzero_coef_ind)
+    !    siz = siz + size(.bra_set.vec(g).new_nonzero_coef_ind)
+        siz = siz + size(.bra_set.vec(g).optimized_coef_ind)
      end
      .nb_grad_wrt_coef=siz
      if (.opt_GD2_angles) siz = siz +.n_2D_3typ_blocks
@@ -345,10 +431,12 @@ contains
      if (NOT .energy_gradient.created) .create(.energy_gradient,siz)
 
      siz = 0
-     ! nonzero block coefficients
+     ! nonzero block optimized coefficients
      do g=1,.n_geminals
-        do j=1,size(.bra_set.vec(g).new_nonzero_coef_ind)
-           b = .bra_set.vec(g).new_nonzero_coef_ind(j)
+       ! do j=1,size(.bra_set.vec(g).new_nonzero_coef_ind)
+        do j=1,size(.bra_set.vec(g).optimized_coef_ind)
+         !  b = .bra_set.vec(g).new_nonzero_coef_ind(j)
+           b = .bra_set.vec(g).optimized_coef_ind(j)
            siz = siz + 1
            ! save the geminal and block indices of the gradient element
            .energy_gradient(siz).indices(1) = g
@@ -376,7 +464,7 @@ contains
      ENSURE(.nb_grad_elt>0,"no gradient element")
      coef :: VEC{REAL}, OUT
      siz, g, j, b :: INT
-     n_nonzero_coef :: INT
+     n_optimized_coef :: INT
      
      siz=.nb_grad_elt
      if (.energy_gradient.created) then
@@ -387,8 +475,8 @@ contains
      siz = 0
      ! nonzero block coefficients
      do g=1,.n_geminals
-        do j=1,size(.bra_set.vec(g).new_nonzero_coef_ind)
-           b = .bra_set.vec(g).new_nonzero_coef_ind(j)
+        do j=1,size(.bra_set.vec(g).optimized_coef_ind)
+           b = .bra_set.vec(g).optimized_coef_ind(j)
            siz = siz + 1
            coef(siz) = .bra_set.vec(g).coef(b)
            ! save the geminal and block indices of the gradient element
@@ -398,12 +486,12 @@ contains
         end do
      end do
      ! write the intial set of nonzero block coefficients
-     n_nonzero_coef=.nb_grad_wrt_coef
+     n_optimized_coef=.nb_grad_wrt_coef
      stdout.text(" ")
-     stdout.show("Total number of nonzero coefficient =",n_nonzero_coef)
+     stdout.show("Total number of optimized coefficient =",n_optimized_coef)
      stdout.text(" ")
-     stdout.text("Initial nonzero coefficients:")
-     stdout.put(coef(1:n_nonzero_coef))
+     stdout.text("Initial optimized coefficients:")
+     stdout.put(coef(1:n_optimized_coef))
 
      if (.opt_GD2_angles AND .n_2D_3typ_blocks > 0) then
         ! GD2 angles
@@ -422,7 +510,7 @@ contains
         stdout.show("Total number of GD2 angles =",.n_2D_3typ_blocks)
         stdout.text(" ")
         stdout.text("Initial GD2 angles:")
-        stdout.put(coef(n_nonzero_coef+1:siz))
+        stdout.put(coef(n_optimized_coef+1:siz))
      end
    end
 
@@ -1701,7 +1789,7 @@ contains
    end
 
    make_set_complement(set_1,set_2) ::: leaky
-   ! make a vector which contains the common values of two vectors of integers
+   ! make a vector which contains the geminal indices complementary of those in a given set
      set_1 :: VEC{INT}*, IN
      set_2 :: VEC{INT}*, OUT
      i, counter :: INT
@@ -1712,6 +1800,24 @@ contains
        if (NOT any(set_1 == i) ) then
          counter=counter+1
          set_2(counter)=i
+       end
+     end
+
+   end
+
+   set_optimized_coef(set_1,set_2,set_3) 
+   ! eliminate indices contained in set 2 from set 1 to make set 3
+     set_1 :: VEC{INT}, IN
+     set_2 :: VEC{INT}, IN
+     set_3 :: VEC{INT}, OUT
+     ENSURE(size(set_1)-size(set_2)==size(set_3),"set sizes do not match")
+     i, counter :: INT
+
+     counter=0
+     do i=1,size(set_1)
+       if (NOT any(set_2 == set_1(i)) ) then
+         counter=counter+1
+         set_3(counter)=set_1(i)
        end
      end
 
@@ -1852,83 +1958,6 @@ contains
         .guess_geminals_restricted
      else
         .guess_geminals_unrestricted
-     end
-
-   end
-
-   create_pbt_set(pbt_set) ::: leaky
-   ! create a set of geminals (i.e. Pauli Block Tensors) 
-     pbt_set :: PAULI_BLOCK_TENSOR_SET
-     i, n_1D_blocks_plus_1 :: INT
-
-!     stdout.text(" ")
-!     stdout.text("creation of a set of geminals")
-
-     ! allocate a set of Pauli Block Tensors (PBT) 
-     allocate(pbt_set.vec(.n_geminals))
-
-     ! set the number of geminals, 
-     ! the number of blocks and
-     ! the spin restrictions
-     pbt_set.set_size=.n_geminals
-     pbt_set.set_size_sing=.n_gem_singlet
-     pbt_set.n_blocks=.n_blocks
-     pbt_set.n_1D_blocks=.n_1D_blocks
-     pbt_set.n_2D_blocks=.n_2D_blocks
-     pbt_set.n_2D_3typ_blocks=.n_2D_3typ_blocks
-     pbt_set.n_2D_4typ_blocks=.n_2D_4typ_blocks
-     pbt_set.spin_restricted=.spin_restricted
-
-     n_1D_blocks_plus_1 = .n_1D_blocks+1
-     do i=1,.n_geminals 
-        ! create the vectors of block types,
-        ! block dimensions and coefficients
-        pbt_set.vec(i).block_type.create(.n_blocks)
-        pbt_set.vec(i).block_dim.create(.n_blocks)
-        pbt_set.vec(i).coef.create(.n_blocks)
-        ! set the block dimensions
-        pbt_set.vec(i).block_dim(1:.n_1D_blocks) = 1
-        pbt_set.vec(i).block_dim(n_1D_blocks_plus_1:.n_blocks) = 2
-        ! set the number of 1D and 2D blocks
-        ! in each PBT
-        pbt_set.vec(i).n_1D_blocks=.n_1D_blocks
-        pbt_set.vec(i).n_2D_blocks=.n_2D_blocks
-     end
-
-     ! make the vector of numbers of block types
-     ! for each block
-     .make_type_numbers(pbt_set)
-
-   end
-
-   destroy_pbt_set(pbt_set) ::: leaky
-   ! destroy a set of geminals (i.e. Pauli Block Tensors) 
-     pbt_set :: PAULI_BLOCK_TENSOR_SET
-     i, set_size, n_blocks :: INT
-
-!     stdout.text(" ")
-!     stdout.text("destruction of a set of geminals")
-
-     ! destroy the set of geminals
-     set_size = pbt_set.set_size
-     do i=1,set_size
-        ! create the vectors of block types,
-        ! block dimensions and coefficients
-        pbt_set.vec(i).block_type.destroy
-        pbt_set.vec(i).block_dim.destroy
-        pbt_set.vec(i).coef.destroy
-     end
-     ! deallocate a set of Pauli Block Tensors (PBT) 
-     deallocate(pbt_set.vec)
-
-     ! destroy the vector of numbers of block types
-     ! for each block
-     if(pbt_set.type_nb.created) then
-        n_blocks = pbt_set.type_nb.dim
-        do i=1,n_blocks
-          pbt_set.type_nb(i).element.destroy
-        end
-        pbt_set.type_nb.destroy
      end
 
    end
@@ -3108,9 +3137,10 @@ contains
        case ("opt_gd2_angles=         "); .read_opt_GD2_angles
        case ("opt_method=             "); .read_opt_method
        case ("max_it=                 "); .read_max_it
+       case ("min_tol=                "); .read_min_tol
+       case ("nb_frozen_coef=         "); .read_frozen_coef
        case ("step=                   "); .read_step
        case ("coef_tol=               "); .read_coef_tol
-       case ("min_tol=                "); .read_min_tol
        case ("grad_tol=               "); .read_grad_tol
        !!!
        case ("only_3typ=              "); .read_only_3typ
@@ -3366,6 +3396,56 @@ contains
      .GD2_info=angles 
    end 
 
+   read_frozen_coef ::: leaky
+   ! Read the number of frozen coefficients and their indices
+     ENSURE(.bra_set.vec(1).created,"bra geminals not created")
+     i,j,nb_frozen_coef,n_geminals :: INT
+     i_gem,i_block,counter :: VEC{INT}*
+     
+     n_geminals=.n_geminals
+     stdin.read(nb_frozen_coef)
+     .coef_opt_info.nb_frozen_coef=nb_frozen_coef
+     i_gem.create(nb_frozen_coef)
+     i_block.create(nb_frozen_coef)
+     counter.create(n_geminals)
+     counter=0
+     do i=1,nb_frozen_coef
+       stdin.read(j)
+       counter(j)=counter(j)+1
+       i_gem(i)=j
+       stdin.read(i_block(i))
+     end
+
+     do j=1,n_geminals
+       .bra_set.vec(j).nb_frozen_coef=counter(j)
+       .bra_set.vec(j).frozen_coef_ind.create(counter(j))
+     end
+
+     counter=0
+     do i=1,nb_frozen_coef
+       j=i_gem(i)
+       counter(j)=counter(j)+1
+       .bra_set.vec(j).frozen_coef_ind(counter(j))=i_block(i)
+     end
+
+     stdout.text(" ")
+     stdout.text(" ")
+     stdout.text("Frozen coefficients:")
+     stdout.text(" ")
+     do j=1,n_geminals
+       do i=1,counter(j)
+         stdout.show("geminal", j)
+         stdout.show("block",.bra_set.vec(j).frozen_coef_ind(i))
+         stdout.text(" ")
+       end
+     end
+
+     counter.destroy
+     i_block.destroy
+     i_block.destroy
+
+   end 
+    
    read_spin_restricted
    ! Read TRUE if the spin-restricted approach is selected, else read FALSE
    !  self :: PTR
@@ -13934,7 +14014,8 @@ contains
    ! electronic energy, for a given block structure)
      self :: target
      coef :: VEC{REAL}*
-     i, j, k, siz, n_nonzero_coef :: INT
+     i, j, k :: INT
+     nb_frozen_coef, siz, nb_nonzero_coef :: INT
      el_energy, coef_tol, min_tol, grad_tol, step :: REAL
      max_it, n_col :: INT
      iter :: VEC{INT}(1)
@@ -13963,10 +14044,23 @@ contains
         stdout.text(" ")
         stdout.show("geminal",i)
         stdout.show("block indices",.bra_set.vec(i).new_nonzero_coef_ind)
-        siz=siz+size(.bra_set.vec(i).new_nonzero_coef_ind)
+        nb_nonzero_coef = size(.bra_set.vec(i).new_nonzero_coef_ind)
+        nb_frozen_coef=.bra_set.vec(i).nb_frozen_coef
+        siz=siz+nb_nonzero_coef
+        do j=1, nb_frozen_coef
+          if (NOT any(.bra_set.vec(i).frozen_coef_ind(j) == .bra_set.vec(i).new_nonzero_coef_ind) ) then
+            stdout.text(" ")
+            stdout.show("frozen coefficient of geminal",i)
+            stdout.show("is for a zero block",.bra_set.vec(i).frozen_coef_ind(j))
+            stop
+          end
+        end
+        .bra_set.vec(i).optimized_coef_ind.create(nb_nonzero_coef-nb_frozen_coef)
+        .set_optimized_coef(.bra_set.vec(i).new_nonzero_coef_ind,.bra_set.vec(i).frozen_coef_ind,.bra_set.vec(i).optimized_coef_ind)
+        stdout.show("optimized block coefficients:",.bra_set.vec(i).optimized_coef_ind)
      end
-     n_nonzero_coef = siz
-     .nb_grad_wrt_coef = siz
+     siz =  siz - .coef_opt_info.nb_frozen_coef
+     .nb_grad_wrt_coef =  siz 
      if (.opt_GD2_angles AND .n_2D_3typ_blocks > 0) then
        siz=siz+.n_2D_3typ_blocks
        stdout.text(" ")
@@ -14217,6 +14311,7 @@ contains
    ! after updating "bra_set.vec(:).coef", the geminals are normalized
      new_coef :: VEC{REAL}, IN
      i, j, k :: INT
+     n_optimized_coef :: INT
      n_nonzero_coef :: INT
      counter :: INT
      p_coef_1ortho :: REAL
@@ -14235,9 +14330,9 @@ contains
      ! update "bra_set.vec(:).coef"
      counter = 0
      do i=1,.n_geminals
-        n_nonzero_coef = size(.bra_set.vec(i).new_nonzero_coef_ind)
-        do j=1,n_nonzero_coef
-           k = .bra_set.vec(i).new_nonzero_coef_ind(j)
+        n_optimized_coef = size(.bra_set.vec(i).optimized_coef_ind)
+        do j=1,n_optimized_coef
+           k = .bra_set.vec(i).optimized_coef_ind(j)
            counter = counter+1
            .bra_set.vec(i).coef(k) = new_coef(counter)
         end
@@ -14268,6 +14363,8 @@ contains
 
      ! normalize geminals
      ! ("bra_set.vec(:).coef" will be changed)
+     ! so gradients are actually not with respect to the optimized coefficients
+     ! but with respect to the renormalized ones -> potential CV pbs
      .normalize_gem(wrt_arg=FALSE)
 
      ! update "bra_set.vec(:).red_coef" and "nonzero_coef_prod"
@@ -14351,7 +14448,7 @@ contains
      coef :: VEC{REAL}, IN
      differ_coef :: BIN, INOUT
      i, j, k :: INT
-     n_nonzero_coef :: INT
+     n_optimized_coef :: INT
      counter :: INT
      ang, diffc :: REAL
 
@@ -14364,9 +14461,9 @@ contains
      differ_coef = FALSE
      counter = 0
      do i=1,.n_geminals
-        n_nonzero_coef = size(.bra_set.vec(i).new_nonzero_coef_ind)
-        do j=1,n_nonzero_coef
-           k = .bra_set.vec(i).new_nonzero_coef_ind(j)
+        n_optimized_coef = size(.bra_set.vec(i).optimized_coef_ind)
+        do j=1,n_optimized_coef
+           k = .bra_set.vec(i).optimized_coef_ind(j)
            counter = counter+1
            diffc = coef(counter)-.bra_set.vec(i).coef(k)
            if (abs(diffc) > TOL(15)) then
