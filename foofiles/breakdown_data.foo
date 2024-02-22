@@ -1,0 +1,1577 @@
+module BREAKDOWN_DATA
+   implicit none
+
+   num_interaction_directions :: INT, parameter = 4 
+   num_interaction_types :: INT, parameter = 5 
+   num_csv_cols :: INT, parameter = (num_interaction_directions + 1) * num_interaction_types
+   num_atom_groups :: INT, parameter = 2
+   cols_per_row :: INT, parameter = 5
+   num_cycle_points :: INT, parameter = 9
+   column_heading :: VEC{STR}(num_interaction_directions) = ["group1-group2", "group1-bulk2 ", "bulk1-group2 ", "bulk1-bulk2  "]
+   row_heading :: VEC{STR}(num_interaction_types) = ["electrostatic     ", "polarisation      ", "dispersion        ", "exchange-repulsion", "total             "]
+
+   !These fit the terms to the B3LYP-D3/6-31G(d, p) energies from Turner et. al (2014), J. Phys. Chem. Lett., 5, p. 4249
+   fast_factors :: VEC{REAL}(4) = [0.882, 0.593, 0.852, 0.681]
+   accurate_factors :: VEC{REAL}(4) = [1.063, 0.756, 0.843, 0.595]
+
+   contains
+   
+!!  ===================
+!!  Allocation routines
+!!  ===================
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+   
+   nullify_ptr_part
+   ! Nullify the pointer parts of self
+   ! Check whether need to nullify references to DM, and molecules
+      self :: INOUT
+
+      nullify(.E_nn)
+      nullify(.E_ne)
+      nullify(.E_ee)
+      nullify(.E_el)
+      nullify(.E_pol)
+      nullify(.E_disp)
+      nullify(.E_ex)
+      nullify(.E_rep)
+      nullify(.E_er)
+      nullify(.E_tot)
+      nullify(.distances)
+      nullify(.attraction_mx)
+      nullify(.mol1_groups)
+      nullify(.mol2_groups)
+      nullify(.mol1_bonded)
+      nullify(.mol2_bonded)
+      nullify(.mol1_symbols)
+      nullify(.mol2_symbols)
+      nullify(.queries)
+      nullify(.group_energies)
+      nullify(.mol)
+      nullify(.mol1)
+      nullify(.mol2)
+      nullify(.density_mx)
+      nullify(.new_density_mx)
+      nullify(.E_ee_helper)
+      nullify(.E_ex_helper)
+      nullify(.E_rep_helper)
+      nullify(.scale_factors)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts of self
+      .E_nn.destroy
+      .E_ne.destroy
+      .E_ee.destroy
+      .E_el.destroy
+      .E_pol.destroy
+      .E_disp.destroy
+      .E_ex.destroy
+      .E_rep.destroy
+      .E_er.destroy
+      .E_tot.destroy
+      .distances.destroy
+      .attraction_mx.destroy
+      .mol1_groups.destroy
+      .mol2_groups.destroy
+      .mol1_bonded.destroy
+      .mol2_bonded.destroy
+      .mol1_symbols.destroy
+      .mol2_symbols.destroy
+      .queries.destroy
+      .group_energies.destroy
+      .density_mx.destroy
+      .new_density_mx.destroy
+      .E_ee_helper.destroy
+      .E_ex_helper.destroy
+      .E_rep_helper.destroy
+      .scale_factors.destroy
+      .scale_factors.destroy
+   end
+
+!  ===========
+!  Set methods
+!  ===========
+
+   set_defaults ::: leaky
+   ! Sets up a default breakdown data object
+      .nullify_ptr_part
+      .cif_filename = "NO FILENAME PROVIDED"
+      .energy_units = "hartrees"
+      .energy_factor = ONE
+      .distance_units = "angstroms"
+      .distance_factor = ONE / BOHR_PER_ANGSTROM
+      .print_atom_breakdown = FALSE
+      .print_extra_terms = FALSE
+      .print_distances = FALSE
+      .print_totals = FALSE
+      .scale_factors.create_copy(accurate_factors)
+      .num_groups = 0
+      .num_queries = 0
+   end
+   
+!  ===============
+!  General methods 
+!  ===============
+
+   put(mol) ::: leaky
+   !Runs all the tasks associated with the energies breakdown (input, calculations, ouptut)
+      self :: INOUT
+
+      mol :: MOLECULE*
+
+      ENSURE(mol.atom_group.created, "no atom group information")
+      ENSURE(mol.atom_group.dim == num_atom_groups, "must have only 2 atom groups")
+      ENSURE(mol.atom_group(1).mol.density_matrix.created, "no density matrix for atom group 1")
+      ENSURE(mol.atom_group(1).mol.molecular_orbitals.created, "no molecular orbitals for atom group 1")
+      ENSURE(mol.atom_group(1).mol.scfdata.is_restricted, "atom group 1 does not have restricted spin orbitals")
+      ENSURE(trim(mol.atom_group(1).mol.nucleus_model) == "point", "atom group 1 does not have point as its nucleus model")
+      ENSURE(mol.atom_group(2).mol.density_matrix.created, "no density matrix for atom group 2")
+      ENSURE(mol.atom_group(2).mol.molecular_orbitals.created, "no molecular orbitals for atom group 2")
+      ENSURE(mol.atom_group(2).mol.scfdata.is_restricted, "atom group 2 does not have restricted spin orbitals")
+      ENSURE(trim(mol.atom_group(2).mol.nucleus_model) == "point", "atom group 2 does not have point as its nucleus model")
+
+      .mol => mol
+      
+      .read_keywords
+      .get_atom_energy_breakdown
+      .process_groups
+      .get_functional_groups_energy_breakdown
+      if (stdout.name.ends_in(".csv")) then
+         .put_to_csv
+      else
+         .put_to_textfile
+      end
+   end
+
+!  =============
+!  Input methods 
+!  =============
+
+   ! Reads data from "stdin" using keyword style input.
+   read_keywords ::: get_from(OBJECT), leaky
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Processes command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+         case ("}                      ")  ! exit read_loop
+         case ("cif_filename=          "); .read_cif_filename
+         case ("distance_units=        "); .read_distance_units
+         case ("energy_units=          "); .read_energy_units
+         case ("groups=                "); .read_groups
+         case ("num_groups=            "); .read_num_groups
+         case ("num_queries=           "); .read_num_queries
+         case ("queries=               "); .read_queries
+         case ("print_atom_breakdown   "); .print_atom_breakdown = TRUE
+         case ("print_distances        "); .print_distances = TRUE
+         case ("print_extra_terms      "); .print_extra_terms = TRUE
+         case ("print_totals           "); .print_totals = TRUE
+         case ("using_fast_wavefunction"); .set_factors_to_fast
+         case default;       UNKNOWN(word)
+      end
+
+   end
+
+   read_cif_filename
+   !Reads in and sets the name of the .cif file used to generate the .sbf files
+      self :: INOUT
+      stdin.read(.cif_filename)
+   end
+
+   read_distance_units ::: leaky
+   !Reads in the distance units for the output, and sets the units and the conversion factor
+      self :: INOUT
+      
+      lower :: STR
+
+      stdin.read(.distance_units)
+      lower = trim(.distance_units)
+      lower.to_lower_case
+      if (lower == "bohr" OR lower == "bohrs") then
+         .distance_factor = ONE
+      else
+         .distance_factor = .distance_units.conversion_factor 
+      end
+   end
+   
+   read_energy_units ::: leaky
+   !Reads in the energy units for the output, and sets the units and the conversion factor
+      self :: INOUT
+      
+      lower :: STR
+
+      stdin.read(.energy_units)
+      lower = trim(.energy_units)
+      lower.to_lower_case
+      if (lower == "hartree" OR lower == "hartrees") then
+         .energy_factor = ONE
+      else
+         .energy_factor = .energy_units.conversion_factor 
+      end
+   end
+   
+   read_num_groups ::: leaky
+   !Reads in the number of groups and creates space to store them
+      self :: INOUT
+
+      stdin.read(.num_groups)
+      .word_groups.create(.num_groups)
+   end
+
+   read_groups ::: leaky
+   !Reads in the groups using SMILES-like notation
+      self :: INOUT
+
+      ENSURE(.word_groups.created, "number of groups must be provided before groups")
+
+      stdin.read(.word_groups)
+   end
+
+   read_num_queries ::: leaky
+   !Reads in the number of queries and creates space to store them
+      self :: INOUT
+
+      stdin.read(.num_queries)
+      .queries.create(.num_queries, num_atom_groups)
+      .queries = 0
+   end
+
+   read_queries
+   !Reads in the queries
+      self :: INOUT
+
+      ENSURE(.queries.created, "number of queries must be read in before queries")
+
+      stdin.read(.queries)
+   end
+
+   set_factors_to_fast
+   !Sets the coefficients for the total energy to those for
+   !wavefunctions generated with Hartree-Fock theory and the 3-21G basis rather
+   !than B3LYP theory and the 6-31G basis (as is the default)
+      self :: INOUT
+    
+      .scale_factors.destroy
+      .scale_factors.create_copy(fast_factors)
+   end
+
+!  ======================
+!  Atom-atom calculations 
+!  ======================
+   
+   get_atom_energy_breakdown ::: private, leaky
+   !Merges the molecular orbitals and gets the breakdown of each energy term
+   !into atom-atom components
+      self :: INOUT
+
+      atom_group1, atom_group2 :: ATOM_GROUP*
+      
+      atom_group1 => .mol.atom_group(1)
+      atom_group2 => .mol.atom_group(2)
+      .mol1 => atom_group1.mol
+      .mol2 => atom_group2.mol
+      
+      .mol.SCF:merge_group_MOs
+      .mol.BASE:make_scf_density_matrix
+      
+      .density_mx.create_copy(.mol.density_matrix.restricted)
+      
+      .mol.SCF:symmorthonormalize_occupied_MOs
+      .mol.BASE:make_scf_density_matrix
+      .new_density_mx.create_copy(.mol.density_matrix.restricted)
+      
+      .get_two_electron_operator_breakdown_inner
+      .mol1.atom.get_distances(.mol2.atom, .distances)
+      .get_electrostatic_energy_breakdown
+      .get_polarisation_energy_breakdown
+      .mol1.atom.get_dispersion_energy_breakdown(.mol2.atom, .E_disp, .distances)
+      .get_exchange_repulsion_energy_breakdown
+      
+      .E_tot.create_copy(.scale_factors(1) * .E_el + .scale_factors(2) * .E_pol + .scale_factors(3) * .E_disp + .scale_factors(4) * .E_er)
+
+      .mol1_symbols.create_copy(ATOM::element_symbols(.mol1.atom.atomic_number))
+      .mol2_symbols.create_copy(ATOM::element_symbols(.mol2.atom.atomic_number))
+   end
+
+   get_polarisation_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the polarisation term into atom-atom components
+      self :: INOUT
+      
+      E_pol_T :: MAT{REAL}*
+      i, j :: INT
+
+      .E_pol.create(.mol1.n_atom, .mol2.n_atom)
+      E_pol_T.create(.mol2.n_atom, .mol1.n_atom)
+      E_pol_T = ZERO
+
+      .mol1.INTS:get_1way_polarisation_energy(.mol2.atom, E_pol_T, .mol2.charge)
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            .E_pol(i, j) = E_pol_T(j, i)
+         end
+      end
+      .mol2.INTS:get_1way_polarisation_energy(.mol1.atom, .E_pol, .mol2.charge)
+
+      E_pol_T.destroy
+   end
+ 
+!  ============================
+!  Electrostatic term breakdown 
+!  ============================
+   
+   get_electrostatic_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the electrostatic term into atom-atom components
+      self :: INOUT
+      
+      .mol1.atom.get_nn_repulsion_energy_breakdown(.mol2.atom, .E_nn, .distances)
+      .get_ne_attraction_energy_breakdown
+      .get_two_electron_operator_breakdown(.E_ee_helper, .E_ee) 
+
+      .E_el.create_copy(.E_nn + .E_ne + .E_ee)
+   end
+
+   get_ne_attraction_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the nucleus-electron attraction sub-term into
+   !atom-atom components
+      self :: INOUT
+      
+      i :: INT
+
+      .E_ne.create(.mol1.n_atom, .mol2.n_atom) !Indexing:.molecule1-.molecule2
+      .E_ne = ZERO
+
+      .attraction_mx.create(.mol.n_atom, .mol.n_bf, .mol.n_bf)
+      .mol.INTS:get_nuclear_attraction_by_nucleus_matrices(.attraction_mx)
+      do i = 1, .mol1.n_atom
+         .mol2.INTS:get_one_electron_operator_breakdown(.attraction_mx(i, :, :), .E_ne(i, :), .density_mx, .mol1.n_bf, ONE)
+      end
+      do i = 1, .mol2.n_atom
+         .mol1.INTS:get_one_electron_operator_breakdown(.attraction_mx(i + .mol1.n_atom, :, :), .E_ne(:, i), .density_mx, 0, ONE)
+      end
+   end
+
+!  =================================
+!  Exchange-repulsion term breakdown 
+!  =================================
+   
+   get_exchange_repulsion_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the exchange-repulsion term into atom-atom components
+      self :: INOUT
+
+      .get_two_electron_operator_breakdown(.E_ex_helper, .E_ex) 
+      .get_repulsion_energy_breakdown
+     
+      .E_er.create_copy(.E_ex + .E_rep)
+   end
+
+   get_repulsion_energy_breakdown ::: private, leaky
+   !Gets the breakdown of the orthogonalisation repulsion sub-term into 
+   !atom-atom components
+      self :: INOUT
+
+      delta_p :: MAT{REAL}*
+      
+      delta_p.create_copy(.new_density_mx - .density_mx)
+      .get_ne_attraction_contribution_to_repulsion(delta_p)
+      .get_kinetic_contribution_to_repulsion(delta_p)
+      .get_repulsion_from_contributions
+
+      delta_p.destroy
+   end
+
+   get_ne_attraction_contribution_to_repulsion(delta_p) ::: private
+   !Gets the breakdown of the nucleus-electron attraction part of the repulsion
+   !sub-term into atom-atom components
+      self :: IN
+
+      delta_p :: MAT{REAL}*
+      
+      i :: INT
+      E_ne :: MAT{REAL}*
+
+      E_ne.create(.mol.n_atom, .mol.n_atom)
+      E_ne = ZERO
+
+      do i = 1, .mol.n_atom
+         .mol.INTS:get_one_electron_operator_breakdown(.attraction_mx(i, :, :), E_ne(i, :), delta_p, 0, HALF)
+      end
+
+      .E_rep_helper.plus(E_ne)
+      E_ne.to_transpose
+      .E_rep_helper.plus(E_ne)
+
+      E_ne.destroy
+   end
+
+   get_kinetic_contribution_to_repulsion(delta_p) ::: private
+   !Gets the breakdown of the kinetic part of the repulsion sub-term into
+   !atom-atom components
+      self :: IN
+
+      delta_p :: MAT{REAL}*
+     
+      kinetic_mx :: MAT{REAL}*
+      shell1, shell2, m, m_start, m_end, n, n_start, n_end, i, j :: INT
+
+      kinetic_mx.create(.mol.n_bf, .mol.n_bf)
+      .mol.INTS:make_kinetic_energy_mx(kinetic_mx)
+      
+      do shell1 = 1, .mol.n_shell
+         m_start = .mol.first_basis_fn_for_shell(shell1)
+         m_end = .mol.last_basis_fn_for_shell(shell1)
+         i = .mol.atom_for_shell(shell1)         
+         do m = m_start, m_end
+            do shell2 = 1, .mol.n_shell
+               n_start = .mol.first_basis_fn_for_shell(shell2)
+               n_end = .mol.last_basis_fn_for_shell(shell2) 
+               j = .mol.atom_for_shell(shell2)
+               do n = n_start, n_end
+                  .E_rep_helper(i, j) = .E_rep_helper(i, j) + delta_p(m, n) * kinetic_mx(m, n)
+               end
+            end
+         end
+      end
+      
+      kinetic_mx.destroy
+   end
+
+   get_repulsion_from_contributions ::: private
+   !Combines all the parts of the orthogonalisation repulsion sub-term
+      self :: INOUT
+      
+      i, j, jj :: INT
+      helper_total, E_rep_total :: VEC{REAL}*
+      factor :: REAL
+
+      helper_total.create(.mol.n_atom)
+      E_rep_total.create(.mol.n_atom)
+      helper_total = ZERO
+      E_rep_total = ZERO
+      .get_two_electron_operator_breakdown(.E_rep_helper, .E_rep)
+
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            jj = j + .mol1.n_atom
+            E_rep_total(i) = E_rep_total(i) + .E_rep(i, j)
+            E_rep_total(jj) = E_rep_total(jj) + .E_rep(i, j)
+         end
+      end
+ 
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol1.n_atom
+            helper_total(i) = helper_total(i) + .E_rep_helper(i, j)
+         end
+      end
+
+      do i = .mol1.n_atom + 1, .mol.n_atom
+         do j = .mol1.n_atom + 1, .mol.n_atom
+            helper_total(i) = helper_total(i) + .E_rep_helper(i, j)
+         end
+      end
+
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            jj = j + .mol1.n_atom
+            factor = ONE + helper_total(i) / E_rep_total(i) + helper_total(jj) / E_rep_total(jj)
+            .E_rep(i, j) = .E_rep(i, j) * factor 
+         end
+      end
+
+      helper_total.destroy
+      E_rep_total.destroy
+   end
+
+!  ===================================================
+!  Electrostatic and exchange-repulsion term breakdown 
+!  ===================================================
+
+   get_two_electron_operator_breakdown(in_mx, out_mx) ::: private, leaky
+   !Finalises the breakdown of one of the electron-electron repulsion or
+   !exchange sub-terms, or the electron-electron repulsion and exchange part of
+   !the orthogonalisation repulsion subterm
+      self :: INOUT
+      in_mx, out_mx :: MAT{REAL}*
+
+      out_mx.create_copy(2 * in_mx(1:.mol1.n_atom, (.mol1.n_atom + 1):.mol.n_atom))
+   end
+
+   get_two_electron_operator_breakdown_inner ::: private, leaky
+   !Gets the breakdown of the electron-electron repulsion and exchange sub-terms
+   !and the electron-electron repulsion and exchange part of the
+   !orthogonalisation repulsion subterm
+      self :: INOUT
+
+      sh4n :: SHELL1QUARTET
+      shell_m, shell_n, shell_k, shell_l, a_m, a_n, a_k, a_l, mn, kl :: INT
+      start_m, start_n, start_k, start_l, end_m, end_n, end_k, end_l, dummy1, dummy2 :: INT
+      factor_mat :: MAT{REAL}*
+      progress :: REAL
+      
+      .E_ee_helper.create(.mol.n_atom, .mol.n_atom)
+      .E_ex_helper.create(.mol.n_atom, .mol.n_atom)
+      .E_rep_helper.create(.mol.n_atom, .mol.n_atom)
+      
+      factor_mat.create(2 * .mol.n_bf - 1, 2 * .mol.n_bf - 1)
+      factor_mat = ONE
+      factor_mat(.mol.n_bf, .mol.n_bf) = ZERO
+
+      .E_ee_helper = ZERO
+      .E_ex_helper = ZERO
+      .E_rep_helper = ZERO
+     
+      do mn = 1, .mol.n_shell_pairs
+         progress = (DBLE(mn) / DBLE(.mol.n_shell_pairs)) ** 2
+         !stdout.show("2-electron integrals progress", progress)
+         .mol.BASE:get_shell_pair_indices(mn, shell_m, shell_n, start_m, end_m, dummy1, start_n, end_n, dummy2, a_m, a_n)
+         .mol.BASE:set_new_shell_quartet_ab(sh4n, shell_m, shell_n, skip = FALSE)
+         do kl = 1, mn
+            .mol.BASE:get_shell_pair_indices(kl, shell_k, shell_l, start_k, end_k, dummy1, start_l, end_l, dummy2, a_k, a_l)
+            .mol.BASE:set_new_shell_quartet_cd(sh4n, shell_k, shell_l, skip = FALSE)
+            .process_integrals(factor_mat, sh4n, a_m, a_n, a_k, a_l, start_m, end_m, start_n, end_n, start_k, end_k, start_l, end_l)
+         end
+         sh4n.destroy_ab
+      end
+      
+      factor_mat.destroy
+   end
+
+   process_integrals(factor_mat, sh4n, a_m, a_n, a_k, a_l, start_m, end_m, start_n, end_n, start_k, end_k, start_l, end_l) ::: leaky, private
+   !Gets the breakdown of the electron-electron repulsion and exchange sub-terms
+   !and the electron-electron repulsion and exchange part of the
+   !orthogonalisation repulsion subterm for one quartet of shells
+      self :: IN
+      factor_mat :: MAT{REAL}*
+      sh4n :: SHELL1QUARTET
+      a_m, a_n, a_k, a_l, start_m, end_m, start_n, end_n, start_k, end_k, start_l, end_l :: INT
+
+      I :: VEC{REAL}*
+      m, n, k, l, mnkl :: INT
+      factor, integral :: REAL
+      
+      I.create(sh4n.ab_n_bf_pairs * sh4n.cd_n_bf_pairs)
+      SHELL1QUARTET::make_ERI(sh4n, I)
+      sh4n.destroy_cd
+      
+      mnkl = 0
+      do l = start_l, end_l
+         do k = start_k, end_k
+            do n = start_n, end_n
+               do m = start_m, end_m
+                  mnkl = mnkl + 1
+                  factor = .get_integral_factor(factor_mat, start_m, start_n, start_k, start_l)
+                  integral = I(mnkl) * factor 
+                  .add_cx_terms(m, n, k, l, a_m, a_n, a_k, integral)
+                  .add_cx_terms(m, n, l, k, a_m, a_n, a_l, integral)
+                  .add_cx_terms(n, m, k, l, a_n, a_m, a_k, integral)
+                  .add_cx_terms(n, m, l, k, a_n, a_m, a_l, integral)
+                  .add_cx_terms(k, l, m, n, a_k, a_l, a_m, integral)
+                  .add_cx_terms(k, l, n, m, a_k, a_l, a_n, integral)
+                  .add_cx_terms(l, k, m, n, a_l, a_k, a_m, integral)
+                  .add_cx_terms(l, k, n, m, a_l, a_k, a_n, integral)
+               end
+            end
+         end
+      end
+      
+      I.destroy
+   end
+
+   get_integral_factor(factor_mat, m, n, k, l) result(res) ::: private
+   !Gets the factor to multiply each integral by, to prevent integrals from
+   !being double-counted
+      self :: IN
+      factor_mat :: MAT{REAL}*
+      m, n, k, l :: INT
+      res :: REAL
+
+      term1, term2, term3 :: REAL
+
+      term1 = HALF + HALF * .get_entry(factor_mat, 0, m - n)
+      term2 = HALF + HALF * .get_entry(factor_mat, 0, k - l)
+      term3 = HALF + HALF * .get_entry(factor_mat, m - k, n - l) * .get_entry(factor_mat, m - l, n - k)
+
+      res = term1 * term2 * term3
+   end
+
+   add_cx_terms(m, n, k, l, a_m, a_n, a_k, integral) ::: private
+   !Gets the breakdown of the electron-electron repulsion and exchange sub-terms
+   !and the electron-electron repulsion and exchange part of the
+   !orthogonalisation repulsion subterm for one quartet of basis functions 
+      self :: IN
+      m, n, k, l, a_m, a_n, a_k :: INT
+      integral :: REAL
+      
+      BREAKDOWN_DATA::add_cx_terms_inner(m, n, k, l, a_m, a_n, a_k, .E_ee_helper, .E_ex_helper, .density_mx, integral)
+      BREAKDOWN_DATA::add_cx_terms_inner(m, n, k, l, a_m, a_n, a_k, .E_rep_helper, .E_rep_helper, .density_mx, -integral)
+      BREAKDOWN_DATA::add_cx_terms_inner(m, n, k, l, a_m, a_n, a_k, .E_rep_helper, .E_rep_helper, .new_density_mx, integral)
+   end
+
+   get_entry(mat, i, j) result(res) ::: private
+   !Returns 0 if i and j are both 0, 1 otherwise
+      self :: IN
+      mat :: MAT{REAL}*
+      i, j :: INT
+      res :: REAL
+
+      res = mat(i + .mol.n_bf, j + .mol.n_bf)
+   end
+
+   add_cx_terms_inner(m, n, k, l, a_m, a_n, a_k, E_ee, E_ex, density_mx, integral) ::: selfless, private
+   !Gets the breakdown of either the electron-electron repulsion and exchange sub-terms
+   !or the electron-electron repulsion and exchange part of the
+   !orthogonalisation repulsion subterm for one quartet of basis functions 
+      self :: IN
+      m, n, k, l, a_m, a_n, a_k :: INT
+      E_ee, E_ex, density_mx :: MAT{REAL}*
+      integral :: REAL
+
+      coul_term, ex_term :: REAL
+
+      coul_term = HALF * density_mx(m, n) * density_mx(k, l) * integral
+      ex_term = -HALF * QUARTER * density_mx(m, l) * density_mx(n, k) * integral
+      E_ee(a_m, a_k) = E_ee(a_m, a_k) + coul_term
+      E_ex(a_m, a_k) = E_ex(a_m, a_k) + ex_term
+      E_ex(a_m, a_n) = E_ex(a_m, a_n) + ex_term
+   end
+
+!  ==================
+!  Determining Groups 
+!  ==================
+   
+   process_groups ::: private, leaky
+   !Locates each group within one of the molecules
+      self :: INOUT
+
+      if (.num_groups /= 0) then
+         .mol1.atom.get_bonded(.mol1_bonded)
+         .mol2.atom.get_bonded(.mol2_bonded)
+         .substitute_word_groups
+         .process_word_groups
+      end
+   end
+
+   substitute_word_groups ::: private
+   !Replaces group names with their formulae
+      self :: INOUT
+
+      i :: INT
+      
+      do i = 1, .word_groups.dim
+         select case(trim(.word_groups(i)))
+            case ("acid")
+               .word_groups(i) = "C(OH)O"
+            case ("amide")
+               .word_groups(i) = "C(N(H)H)O"
+            case ("alcohol")
+               .word_groups(i) = "COH"
+            case ("amino")
+               .word_groups(i) = "N(H)H"
+            case ("pyridine")
+               .word_groups(i) = "HCNC"
+            case ("aminopyridine")
+               .word_groups(i) = "HNCNC"
+            case ("arylnitrile")
+               .word_groups(i) = "HCCCN"
+            case ("arylf")
+               .word_groups(i) = "HCCF"
+         end
+      end
+   end
+   
+   process_word_groups ::: private, leaky
+   !Locates each group within one of the molecules, if groups are inputted with
+   !SMILES-like notation
+      self :: INOUT
+
+      ENSURE(.characters_valid, "invalid character detected") 
+      ENSURE(.brackets_matched, "unmatched bracket detected")
+      ENSURE(.numbers_in_correct_place, "number in incorrect place")
+      ENSURE(.symbols_valid_in_word_groups, "invalid element symbol detected")
+
+      element :: VEC{VEC_{STR}}*
+      parent :: VEC{VEC_{VEC_{INT}}}*
+      i :: INT
+
+      element.create(.word_groups.dim)
+      parent.create(.word_groups.dim)
+
+      do i = 1, .word_groups.dim
+         BREAKDOWN_DATA::get_group_structure(.word_groups(i), element(i).element, parent(i).element)
+      end
+
+      .mol1.atom.find_groups(.mol1_groups, .mol1_bonded, element, parent)
+      .mol2.atom.find_groups(.mol2_groups, .mol2_bonded, element, parent)
+
+      element.destroy
+      parent.destroy
+   end
+
+   get_group_structure(word, element, parent) ::: private, leaky, selfless
+   !Converts the SMILES-like representation of each group into a graph so it can
+   !be found within each molecule
+      self :: IN
+      word :: STR
+      element :: VEC{STR}*
+      parent :: VEC{VEC_{INT}}*
+
+      stack, cycle_points :: VEC{INT}* 
+      out_top, stack_top, i, group_size, length, link :: INT
+      chr :: STR(len=1)
+      
+      length = len(trim(word))
+      stack.create(length)
+      cycle_points.create(num_cycle_points)
+      cycle_points = 0
+
+      group_size = get_group_size(word, length)
+      element.create(group_size)
+      parent.create(group_size)
+
+      out_top = 0
+      stack_top = 1
+      stack(stack_top) = 0
+
+      do i = 1, length
+         chr = word(i:i)
+         if (chr == "(") then
+            stack_top = stack_top + 1
+            stack(stack_top) = stack(stack_top - 1)
+         elseif (chr == ")") then
+            stack_top = stack_top - 1
+         elseif (chr.is_lower_case) then
+            element(out_top) = trim(element(out_top)) // chr
+         elseif (chr.is_upper_case) then
+            out_top = out_top + 1
+            element(out_top) = chr
+            parent(out_top).element.create_copy([stack(stack_top)])
+            stack(stack_top) = out_top
+         else
+            link = chr.to_int
+            if (cycle_points(link) == 0) then
+               cycle_points(link) = out_top
+            else
+               parent(out_top).element.append(cycle_points(link))
+            end
+         end
+      end
+
+      stack.destroy
+      cycle_points.destroy
+   end
+
+   get_group_size(word, length) result(res) ::: private, selfless
+   !Returns the number of elements in the group represented by "word"
+      word :: STR
+      length, res :: INT
+
+      i :: INT
+
+      res = 0
+      do i = 1, length
+         if (word(i:i).is_upper_case) then
+            res = res + 1
+         end
+      end
+   end
+
+!  ========================
+!  Group-group calculations 
+!  ========================
+   
+   get_functional_groups_energy_breakdown ::: private, leaky
+   !Calculates the interaction energies between pairs of groups
+      self :: INOUT
+
+      ENSURE(.groups_present, "group not found in either molecule")
+      ENSURE(.queries_are_valid, "group not found in the relevant molecule")
+
+      num_pairs, i :: INT
+
+      num_pairs = 0
+      do i = 1, .num_queries
+         num_pairs = num_pairs + .mol1_groups(.queries(i, 1)).element.dim * .mol2_groups(.queries(i, 2)).element.dim
+      end
+      
+      .group_energies.create(num_pairs, num_interaction_types, num_interaction_directions)
+      .get_functional_groups_energy_breakdown_term(.E_el, 1)
+      .get_functional_groups_energy_breakdown_term(.E_pol, 2)
+      .get_functional_groups_energy_breakdown_term(.E_disp, 3)
+      .get_functional_groups_energy_breakdown_term(.E_er, 4)
+      .get_functional_groups_energy_breakdown_term(.E_tot, 5)
+   end
+   
+   get_functional_groups_energy_breakdown_term(energy, type_num) ::: private
+   !Calculates one of the interaction energy terms between pairs of groups
+      self :: INOUT
+      energy :: MAT{REAL}*
+      type_num :: INT
+ 
+      i, j, k, l :: INT
+      list1, list2 :: VEC{VEC_{INT}}*
+      group1, group2 :: VEC{INT}*
+     
+      l = 0
+      do i = 1, .num_queries
+         list1 => .mol1_groups(.queries(i, 1)).element
+         list2 => .mol2_groups(.queries(i, 2)).element
+         do j = 1, list1.dim 
+            group1 => list1(j).element 
+            do k = 1, list2.dim 
+               l = l + 1
+               group2 => list2(k).element 
+               .get_group_pair_energy_breakdown(energy, type_num, l, group1, group2)
+            end
+         end
+      end
+   end
+
+   get_group_pair_energy_breakdown(energy, type_num, pair_num, group1, group2) ::: private
+   !Calculates one of the interaction energy terms between a pair of groups
+      self :: INOUT
+      energy :: MAT{REAL}*, IN
+      type_num, pair_num :: INT, IN
+      group1, group2 :: VEC{INT}*
+      
+      bulk1, bulk2 :: VEC{INT}* 
+      gge, gbe, bge, bbe :: MAT{REAL}*
+
+      .mol1.atom.get_bulk(group1, bulk1)
+      .mol2.atom.get_bulk(group2, bulk2)
+      
+      gge.create_copy(energy(group1, group2))
+      gbe.create_copy(energy(group1, bulk2))
+      bge.create_copy(energy(bulk1, group2))
+      bbe.create_copy(energy(bulk1, bulk2))
+
+      .group_energies(pair_num, type_num, :) = [gge.sum_elements, gbe.sum_elements, bge.sum_elements, bbe.sum_elements]
+      
+      bulk1.destroy
+      bulk2.destroy
+      gge.destroy
+      gbe.destroy
+      bge.destroy
+      bbe.destroy
+   end
+
+!  ===========================
+!  Output methods for textfile 
+!  ===========================
+
+   put_to_textfile ::: private
+   !Puts the breakdown information to "stdout"
+      self :: IN
+      
+      if (.print_distances) then
+         .put_distances
+      end
+      if (.print_atom_breakdown) then
+         .put_atomic_energy_breakdown
+      elseif (.print_totals) then
+         .put_energy_totals
+      end
+      if (.num_queries /= 0) then
+         .put_functional_group_energy_breakdown
+      end
+   end
+
+   put_atomic_energy_breakdown ::: private
+   !Puts the atom-atom energy breakdown to "stdout"
+      self :: IN
+
+      stdout.text("===============================================")
+      stdout.text("Atom-atom breakdown of interaction energy terms")
+      stdout.text("===============================================")
+      stdout.text("Units: " // .energy_units)
+
+      if (.print_extra_terms) then
+         !.put_test_matrices
+         .put_atom_breakdown_matrix("Nucleus-nucleus repulsion", .E_nn)
+         .put_atom_breakdown_matrix("Nucleus-electron attraction", .E_ne)
+         .put_atom_breakdown_matrix("Electron-electron repulsion", .E_ee)
+         .put_atom_breakdown_matrix("Exchange", .E_ex)
+         .put_atom_breakdown_matrix("Orthogonalisation repulsion", .E_rep)
+      end
+
+      .put_atom_breakdown_matrix("Electrostatic", .E_el)
+      .put_atom_breakdown_matrix("Polarisation", .E_pol)
+      .put_atom_breakdown_matrix("Dispersion", .E_disp)
+      .put_atom_breakdown_matrix("Exchange-repulsion", .E_er)
+      .put_atom_breakdown_matrix("Total interaction", .E_tot)
+   end
+
+   put_atom_breakdown_matrix(name, matrix) ::: private
+   !Puts one term in the atom-atom energy breakdown to "stdout"
+      self :: IN 
+      
+      name :: STR
+      matrix :: MAT{REAL}*
+      
+      print_mat :: MAT{REAL}*
+
+      print_mat.create(matrix.dim1, matrix.dim2)
+      print_mat.to_scaled(matrix, .energy_factor)
+      
+      stdout.text(trim(name) // " energy:")
+      stdout.show("Total ", print_mat.sum_elements)
+      .put_mat(print_mat)
+
+      print_mat.destroy
+   end
+
+   put_energy_totals ::: private
+   !Puts the total value for all the energy terms to "stdout" instead of
+   !printing the atom-atom breakdown
+      self :: IN
+
+      stdout.text("========================")
+      stdout.text("Interaction energy terms")
+      stdout.text("========================")
+      stdout.text("Units: " // .energy_units)
+
+      if (.print_extra_terms) then
+         .put_total("Nucleus-nucleus repulsion", .E_nn)
+         .put_total("Nucleus-electron attraction", .E_ne)
+         .put_total("Electron-electron repulsion", .E_ee)
+         .put_total("Exchange", .E_ex)
+         .put_total("Orthogonalisation repulsion", .E_rep)
+      end
+      
+      .put_total("Electrostatic", .E_el)
+      .put_total("Polarisation", .E_pol)
+      .put_total("Dispersion", .E_disp)
+      .put_total("Exchange-repulsion", .E_er)
+      .put_total("Total", .E_tot)
+      stdout.text(" ")
+   end
+
+   put_total(name, mat) ::: private
+   !Puts the total value for one of the energy terms to "stdout" in the correct
+   !units
+      self :: IN
+      name :: STR
+      mat :: MAT{REAL}*
+
+      stdout.show(trim(name) // " energy:", .energy_factor * mat.sum_elements)
+   end
+
+   put_distances ::: private
+   !Puts the distances between each pair of atoms to "stdout"
+      self :: IN
+
+      stdout.text("===================")
+      stdout.text("Atom-atom distances")
+      stdout.text("===================")
+      stdout.text("Units: " // .distance_units)
+      .put_mat(.distances * .distance_factor)
+   end
+
+   put_mat(mat) ::: private
+   !Puts a matrix to stdout with column and row labels - necessary because the default
+   !"put" function for matrices with column and row labels does not work for
+   !matrices with more than 5 columns
+      self :: IN
+      mat :: MAT{REAL}
+
+      num_cols, num_rows, i :: INT
+
+      num_cols = mat.dim2
+      num_rows = num_cols / cols_per_row
+     
+      do i = 1, num_rows
+         .put_mat_inner(mat, (i - 1) * cols_per_row + 1, i * cols_per_row)
+      end
+      if (num_cols /= num_rows * cols_per_row) then
+         .put_mat_inner(mat, num_rows * cols_per_row + 1, num_cols)
+      end
+   end
+
+   put_mat_inner(mat, col1, col2) ::: private
+   !Puts a 5-column block of a matrix to "stdout" with column and row labels
+      self :: IN
+      mat :: MAT{REAL}
+      col1, col2 :: INT
+      
+      stdout.put(mat(:, col1:col2), .mol1_symbols, .mol2_symbols(col1:col2))
+      stdout.text(" ")
+   end
+
+   put_functional_group_energy_breakdown ::: private
+   !Puts the interaction energies between functional groups to "stdout"
+      self :: IN
+
+      i, j, k, l :: INT
+      list1, list2 :: VEC{VEC_{INT}}*
+      print_mat :: MAT{REAL}*
+
+      print_mat.create(num_interaction_types, num_interaction_directions)
+
+      stdout.text("======================================================")
+      stdout.text("Functional group breakdown of interaction energy terms")
+      stdout.text("======================================================")
+      stdout.text("Units: " // trim(.energy_units) // ", " // trim(.distance_units))
+      
+      l = 0
+      do i = 1, .num_queries
+         list1 => .mol1_groups(.queries(i, 1)).element
+         list2 => .mol2_groups(.queries(i, 2)).element
+         do j = 1, list1.dim 
+            do k = 1, list2.dim
+               l = l + 1
+               stdout.text("Between group " // trim(.printed_group(i, 1)) // " on molecule 1 and group " // trim(.printed_group(i, 2)) // " on molecule 2:")
+               .put_min_distances_and_bonds(list1(j).element, list2(k).element)
+               print_mat = .group_energies(l, :, :) * .energy_factor
+               stdout.put(print_mat, row_heading, column_heading)
+               stdout.put(char(10))
+            end
+         end
+      end
+
+      print_mat.destroy
+   end
+
+   put_min_distances_and_bonds(group1, group2)
+   !Puts the distances between a pair of groups and the bonds within each group
+   !to "stdout"
+      self :: IN
+      group1, group2 :: VEC{INT}*
+      
+      atoms1, atoms2 :: VEC{ATOM}*
+
+      atoms1.create_copy(.mol1.atom(group1))
+      atoms2.create_copy(.mol2.atom(group2))
+
+      atoms1.put_minimum_interatomic_distance(atoms2, .distances(group1, group2), .distance_factor)
+      atoms1.put_bonds(.mol1_bonded(group1, group1), "1")
+      atoms2.put_bonds(.mol2_bonded(group2, group2), "2")
+
+      atoms1.destroy
+      atoms2.destroy
+   end
+
+!  ===========================
+!  Output methods for csv file 
+!  ===========================
+
+   put_to_csv ::: private
+   !Puts the interaction energies between functional groups to a .csv file
+      self :: IN
+     
+      if (.print_distances) then
+         .put_distances_to_csv
+      end
+      if (.print_atom_breakdown) then
+         .put_atomic_energy_breakdown_to_csv
+      elseif (.print_totals) then
+         .put_energy_totals_to_csv
+      end
+      if (.num_queries /= 0) then
+         .put_group_energy_breakdown_to_csv 
+      end
+   end
+
+   put_distances_to_csv ::: private
+   !Puts the distances between each pair of atoms to a .csv file
+      self :: IN
+      
+      stdout.text(trim(" "))
+      stdout.text("interatomic distances (" // trim(.distance_units) // ")")
+      .put_mat_to_csv(.distances * .distance_factor)
+   end
+
+   put_atomic_energy_breakdown_to_csv ::: private
+   !Puts the atom-atom energy breakdown to a .csv file
+      self :: IN
+      
+      stdout.text(trim(" "))
+      stdout.text("energy units," // trim(.energy_units))
+
+      if (.print_extra_terms) then
+         .put_atom_breakdown_matrix_to_csv("nucleus-nucleus repulsion", .E_nn)
+         .put_atom_breakdown_matrix_to_csv("nucleus-electron attraction", .E_ne)
+         .put_atom_breakdown_matrix_to_csv("electron-electron repulsion", .E_ee)
+         .put_atom_breakdown_matrix_to_csv("exchange", .E_ex)
+         .put_atom_breakdown_matrix_to_csv("orthogonalisation repulsion", .E_rep)
+      end
+
+      .put_atom_breakdown_matrix_to_csv("electrostatic", .E_el)
+      .put_atom_breakdown_matrix_to_csv("polarisation", .E_pol)
+      .put_atom_breakdown_matrix_to_csv("dispersion", .E_disp)
+      .put_atom_breakdown_matrix_to_csv("exchange-repulsion", .E_er)
+      .put_atom_breakdown_matrix_to_csv("total interaction", .E_tot)
+   end
+
+   put_atom_breakdown_matrix_to_csv(name, matrix) ::: private
+   !Puts one term in the atom-atom energy breakdown to "stdout"
+      self :: IN 
+      name :: STR
+      matrix :: MAT{REAL}*
+      
+      print_mat :: MAT{REAL}*
+      total :: REAL
+
+      print_mat.create(matrix.dim1, matrix.dim2)
+      print_mat.to_scaled(matrix, .energy_factor)
+      total = print_mat.sum_elements
+      
+      stdout.text(trim(name) // " energy breakdown:")
+      stdout.text("total," // total.to_str)
+      .put_mat_to_csv(print_mat)
+      stdout.text(trim(" "))
+
+      print_mat.destroy
+   end
+
+   put_mat_to_csv(mat) ::: private
+   !Puts a matrix to a .csv file with column and row labels
+      self :: IN
+      mat :: MAT{REAL}
+
+      i, j :: INT
+
+      stdout.text(.mol2_symbols.to_concatenated_str(separator = ","))
+      do i = 1, mat.dim1
+         stdout.put(.mol1_symbols(i))
+         do j = 1, mat.dim2
+            stdout.put("," // mat(i, j).to_str)
+         end
+         stdout.text(trim(" "))
+      end
+   end
+
+   put_energy_totals_to_csv ::: private
+   !Puts the total value for all the energy terms to a .csv file instead of
+   !printing the atom-atom breakdown
+      self :: IN
+
+      stdout.text(trim(" "))
+      stdout.text("energy units," // .energy_units)
+      stdout.text(trim(" "))
+
+      if (.print_extra_terms) then
+         .put_total_to_csv("nucleus-nucleus repulsion", .E_nn)
+         .put_total_to_csv("nucleus-electron attraction", .E_ne)
+         .put_total_to_csv("electron-electron repulsion", .E_ee)
+         .put_total_to_csv("exchange", .E_ex)
+         .put_total_to_csv("orthogonalisation repulsion", .E_rep)
+      end
+      
+      .put_total_to_csv("electrostatic", .E_el)
+      .put_total_to_csv("polarisation", .E_pol)
+      .put_total_to_csv("dispersion", .E_disp)
+      .put_total_to_csv("exchange-repulsion", .E_er)
+      .put_total_to_csv("total", .E_tot)
+      stdout.text(trim(" "))
+   end
+
+   put_total_to_csv(name, mat) ::: private
+   !Puts the total value for one of the energy terms to a .csv file in the 
+   !correct units
+      self :: IN
+      name :: STR
+      mat :: MAT{REAL}*
+
+      total :: REAL
+
+      total = .energy_factor * mat.sum_elements
+      stdout.text(trim(name) // " energy," // total.to_str)
+   end
+
+   put_group_energy_breakdown_to_csv ::: private
+   !Puts the group-group energy breakdown table to a .csv file
+      self :: IN
+
+      i, j, k, l, m, n :: INT
+      list1, list2 :: VEC{VEC_{INT}}*
+      output :: VEC{STR}*
+
+      .put_csv_group_energies_header 
+      output.create(num_interaction_types)
+      
+      l = 0
+      do i = 1, .num_queries
+         list1 => .mol1_groups(.queries(i, 1)).element
+         list2 => .mol2_groups(.queries(i, 2)).element
+         do j = 1, list1.dim 
+            do k = 1, list2.dim
+               l = l + 1
+               stdout.put(trim(.cif_filename) // "," // trim(.printed_group(i, 1)) // "," // trim(.printed_group(i, 2)))
+               stdout.put(trim(.get_min_distance_and_bonds_for_csv(list1(j).element, list2(k).element)))
+               do m = 1, num_interaction_directions
+                  do n = 1, num_interaction_types
+                     output(n) = .get_str(.group_energies(l, n, m))
+                  end
+                  stdout.put(trim(output.to_concatenated_str(separator = ",")))
+               end
+               output = [.get_total(.E_el), .get_total(.E_pol), .get_total(.E_disp), .get_total(.E_er), .get_total(.E_tot)]
+               stdout.text(trim(output.to_concatenated_str(separator = ",")))
+            end
+         end
+      end
+
+      output.destroy
+   end
+   
+   put_csv_group_energies_header ::: private
+   !Puts the header for the group-group energy breakdown table to a .csv file
+      self :: IN
+
+      i, j :: INT
+      
+      stdout.text("group-group interaction energies")
+      stdout.text("energy units," // trim(.energy_units) // ",," // trim(column_heading.to_concatenated_str(separator = ",,&
+      &,,,")) // ",,,,,molecule-molecule,,,,,")
+      stdout.put("filename,group 1,group 2,minimum distance (" // trim(.distance_units) // "),&
+      &closest atom from group 1,closest atom from group 2,bonds in group 1,bonds in group 2")
+      do i = 1, num_interaction_directions + 1
+         do j = 1, num_interaction_types
+            stdout.put("," // trim(row_heading(j)) // " energy")
+         end
+      end
+      stdout.text(trim(" "))
+   end
+
+   get_min_distance_and_bonds_for_csv(group1, group2) result(res) ::: private
+   !Returns the distance between the groups, the closest pair of atoms and the
+   !bonds within each group as a comma-separated list 
+      self :: IN
+      group1, group2 :: VEC{INT}*
+      res :: STR
+      
+      list :: VEC{STR}(5)
+      atoms1, atoms2 :: VEC{ATOM}*
+      min_dist :: REAL
+      bond_str :: STR
+
+      atoms1.create_copy(.mol1.atom(group1))
+      atoms2.create_copy(.mol2.atom(group2))
+
+      atoms1.get_minimum_interatomic_distance(atoms2, .distances(group1, group2), .distance_factor, list(2), list(3), min_dist)
+      list(1) = min_dist.to_str
+      bond_str = atoms1.get_bonds(.mol1_bonded(group1, group1))
+      list(4) = bond_str(2:)
+      bond_str = atoms2.get_bonds(.mol2_bonded(group2, group2))
+      list(5) = bond_str(2:)
+      res = list.to_concatenated_str(separator = ",")
+
+      atoms1.destroy
+      atoms2.destroy
+   end
+
+   get_total(mat) result(res) ::: private
+   !Returns the sum of elements in one of the energy matrices as a string and in
+   !the correct units
+      self :: IN
+      mat :: MAT{REAL}*
+      res :: STR
+
+      res = .get_str(mat.sum_elements)
+   end
+
+   get_str(val) result(res) ::: private
+   !Converts an energy value into a string in the correct units
+      self :: IN
+      val :: REAL
+      res :: STR
+
+      num :: REAL
+
+      num = val * .energy_factor
+      res = num.to_str
+   end
+
+   printed_group(i, j) result(res)
+   !Returns a group represented as a formula 
+      self :: IN
+      i, j :: INT
+      res :: STR
+
+      res = .word_groups(.queries(i, j))
+   end
+   
+!  ================
+!  Checking methods
+!  ================
+
+   characters_valid result(res) ::: private
+   !Determines whether the characters in a group read in in SMILES-like notation
+   !are valid
+      self :: IN
+      res :: BIN
+
+      i, j :: INT
+      word :: STR
+
+      res = TRUE
+      do i = 1, .word_groups.dim
+         word = .word_groups(i)
+         do j = 1, len(trim(word))
+            res = res AND ((word(j:j) == "(") OR (word(j:j) == ")") OR word(j:j).is_alphanumeric)
+         end
+      end
+   end
+
+   brackets_matched result(res) ::: private
+   !Determines whether the brackets are matched in a group read in in
+   !SMILES-like notation
+      self :: IN
+      res :: BIN
+
+      i, j, nesting :: INT
+      word :: STR
+
+      nesting = 0
+      res = TRUE
+
+      do i = 1, .word_groups.dim
+         word = .word_groups(i)
+         do j = 1, len(word)
+            if (word(j:j) == "(") then
+               nesting = nesting + 1
+            elseif (word(j:j) == ")") then
+               res = res AND (nesting > 0)
+               nesting = nesting - 1
+            end
+         end
+      end
+      
+      res = res AND (nesting == 0)
+   end
+
+   numbers_in_correct_place result(res) ::: private
+   !Determines whether the numbers in a group read in with SMILES-like notation
+   !are in the correct places (after element symbols)
+      self :: IN
+      res :: BIN
+
+      i, j :: INT
+      word :: STR
+
+      res = TRUE
+
+      do i = 1, .word_groups.dim
+         word = .word_groups(i)
+         res = res AND NOT word(1:1).is_numeric
+         do j = 2, len(word)
+            if (word(j:j).is_numeric) then
+               res = res AND word((j - 1):(j - 1)).is_alphabetical 
+            end
+         end
+      end
+   end
+
+   symbols_valid_in_word_groups result(res) ::: private
+   !Determines whether the symbols in groups read in with SMILES-like notation
+   !are valid element symbols
+      self :: IN
+      res :: BIN
+
+      i, j :: INT
+      word, symbol :: STR
+
+      symbol = " " 
+      res = TRUE
+
+      do i = 1, .word_groups.dim
+         word = .word_groups(i)
+         do j = 1, len(word)
+            if (word(j:j).is_lower_case) then
+               symbol = trim(symbol) // word(j:j) 
+            else
+               res = res AND symbol_valid(symbol)
+               symbol = word(j:j)
+            end
+         end
+      end
+      
+      res = res AND symbol_valid(symbol) 
+   end
+
+   symbol_valid(symbol) result(res) ::: selfless
+   !Determines whether a string is a valid element symbol or one of the other
+   !characters allowed in SMILES-like notation
+      symbol :: STR
+      res :: BIN
+
+      short_symbol :: STR(len=len(trim(symbol)))
+
+      short_symbol = trim(symbol)
+      res = (short_symbol == trim(" ")) OR (short_symbol == ")") OR (short_symbol == "(") OR short_symbol.is_numeric OR (short_symbol.is_one_of(ATOM::element_symbols))
+   end
+
+   groups_present result(res)
+   !Determines whether each group is present in at least one of the molecules
+      self :: IN
+      res :: BIN
+      
+      i :: INT
+
+      res = TRUE
+      do i = 1, .num_groups
+         res = res AND ((.mol1_groups(i).element.created OR .mol2_groups(i).element.created))
+      end
+   end
+
+   queries_are_valid result(res)
+   !Determines whether any of the queries refer to groups that are not in the
+   !relevant molecule
+      self :: IN
+
+      res :: BIN
+
+      i, j, group :: INT
+
+      res = TRUE
+      do i = 1, .num_queries
+         do j = 1, num_atom_groups
+            group = .queries(i, j)
+            res = res AND group >= 1 AND group <= .mol1_groups.dim
+         end
+      end
+      
+      if (res) then
+         do i = 1, .num_queries
+            res = res AND .mol1_groups(.queries(i, 1)).element.created AND .mol2_groups(.queries(i, 2)).element.created
+         end
+      end
+   end
+
+!  =================
+!  Testing Functions - do not contribute to the code's functionality
+!  =================
+   
+   put_vec3(v) ::: selfless
+   !Testing
+      v :: VEC{VEC_{VEC_{INT}}}*
+      i :: INT
+      element :: VEC{VEC_{INT}}*
+
+      do i = 1, v.dim
+         stdout.show("Super-vector", i)
+         element => v(i).element
+         if (element.created) then
+            BREAKDOWN_DATA::put_vec_vec(element) 
+         end
+      end
+   end
+
+   put_vec_vec(v) ::: selfless
+   !Testing
+      v :: VEC{VEC_{INT}}*
+      i :: INT
+      element :: VEC{INT}*
+
+      do i = 1, v.dim
+         stdout.show("Vector", i)
+         element => v(i).element
+         if (element.created) then
+            stdout.put(element)
+         end
+      end
+   end
+
+   put_test_matrices
+   !Testing
+      self :: IN
+
+      nncp, necp, ne_field, ee_field, eecp :: MAT{REAL}*
+      pop1, pop2 :: VEC{REAL}*
+      i, j :: INT
+      charge1, charge2, d :: REAL
+      
+      nncp.create(.mol1.n_atom, .mol2.n_atom)
+      necp.create(.mol1.n_atom, .mol2.n_atom)
+      eecp.create(.mol1.n_atom, .mol2.n_atom)
+      ne_field.create(.mol1.n_atom, .mol2.n_atom)
+      ee_field.create(.mol1.n_atom, .mol2.n_atom)
+      
+      BREAKDOWN_DATA::get_mulliken_pop(.mol1, pop1) 
+      BREAKDOWN_DATA::get_mulliken_pop(.mol2, pop2) 
+
+      do i = 1, .mol1.n_atom
+         do j = 1, .mol2.n_atom
+            charge1 = .mol1.atom(i).nuclear_charge
+            charge2 = .mol2.atom(j).nuclear_charge
+            d = .distances(i, j)
+            nncp(i, j) = charge1 * charge2 
+            necp(i, j) = -charge1 * pop2(j) - charge2 * pop1(i)
+            eecp(i, j) = pop1(i) * pop2(j)
+            ne_field(i, j) = necp(i, j) / d
+            ee_field(i, j) = eecp(i, j) / d
+         end
+      end
+
+      .put_atom_breakdown_matrix("Approximation to nucleus-electron attraction", ne_field)
+      .put_atom_breakdown_matrix("Approximation to electron-electron repulsion", ee_field)
+
+      nncp.destroy
+      necp.destroy
+      eecp.destroy
+      ne_field.destroy
+      ee_field.destroy
+      pop1.destroy
+      pop2.destroy
+   end
+   
+   get_mulliken_pop(mol, atom_pop) ::: private, selfless, leaky
+   !Testing function 
+      mol :: MOLECULE*
+      atom_pop :: VEC{REAL}*
+
+      mulliken_matrix :: MAT{REAL}*
+      diagonals :: VEC{REAL}*
+      pop :: REAL
+      o_count, a, b, c, n_comp :: INT
+
+      mulliken_matrix.create(mol.n_bf, mol.n_bf)
+      diagonals.create(mol.n_bf)
+      atom_pop.create(mol.n_atom)
+      mol.INTS:make_overlap_matrix
+
+      o_count = 1
+      atom_pop = ZERO
+      
+      mulliken_matrix.to_product_of(mol.density_matrix.restricted, mol.overlap_matrix)
+      mulliken_matrix.put_diagonal_to(diagonals)
+
+      do a = 1, mol.n_atom
+         do b = 1, mol.atom(a).basis.n_shell
+            n_comp = mol.atom(a).basis.shell(b).n_comp
+            do c = 1, n_comp
+               pop = diagonals(c + o_count - 1)
+               atom_pop(a) = atom_pop(a) + pop
+            end
+            o_count = o_count + n_comp
+         end
+      end
+
+      mulliken_matrix.destroy
+      diagonals.destroy
+   end
+end
