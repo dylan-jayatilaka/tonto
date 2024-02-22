@@ -1,6 +1,16 @@
 # Welcome to Tonto!
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
 
+## 0. Setting up to push to github
+
+This is for developers and is really annoying to find in the doco.
+
+But to update your authenmtication from the command line type the following:
+
+```
+git remote set-url origin https://<your-github-name>:<your-github-auth-token>@github.com/<your-github-name>/<your-repo-name>.git
+```
+
 ## 1. Get ready ...
 
 * If you're not planning on modifying tonto source (i.e. developing), we recommend 
