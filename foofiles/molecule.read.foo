@@ -949,12 +949,12 @@ contains
 !  Crystal XML etc. files
 !  ======================
 
-   read_CRYSTAL_XML_file(name) ::: leaky
+   read_CIF_AND_C23_XML_file(name) ::: leaky
    ! Read a g09 checkpoint file (after fchk conversion to ASCII) into TONTO
       self :: INOUT
       name :: STR, optional, IN
 
-    ENSURE(.crystal.allocated,"Oi! start with input CIF")
+  ! ENSURE(NOT .crystal.allocated,"Oi! do not process CIF or read a crystal")
   ! ENSURE(.atom.allocated,"Oi! Start with input CIF")
   ! ENSURE(.atom.dim==.crystal.n_unit_cell_atoms,"Oi!")
 
@@ -964,20 +964,14 @@ contains
       igv :: VEC{INT}(3)
       pos :: VEC{REAL}(3)
       tuc,cuc,dm :: MAT{REAL}(3,3)
-      av,bv,cv :: VEC{REAL}(3)
+      av,bv,cv   :: VEC{REAL}(3)
       XMLfile  :: TEXTFILE*
+      cif_atom :: VEC{ATOM}@         !kang      
       i,j :: INT
       n_g,n_bf,n_atom,n_tri :: INT
-      am,bm :: REAL
       a,g :: INT
-
-      ! Destroy existing basis, and atom list
-      if (.basis.allocated) .basis.destroy
-
-      ! Create scfdata
-      .scfdata.destroy
-      .scfdata.create
-      .scfdata.set_output(FALSE)
+      same :: BIN
+      xml_pos, tmp_vec :: VEC{REAL}(3)
 
       ! Get CRYSTAL base file name
       if (present(name)) then
@@ -1020,35 +1014,53 @@ contains
       ! Check whether the matrix tensors of the two
       ! unit celss are the same, then we hope that
       ! the axes are just physically rotated.
-      tuc = .crystal.unit_cell.direct_mx
+      ! (kang) This test is done if there are
+      ! lattice vectors beforehand.
+
+      .cif.open
+      .cif.find_data_block
+      .crystal23.CIF_unit_cell.read_smCIF(.cif) !cif unit cell 
+      .cif.close
+       
+      tuc = .crystal23.CIF_unit_cell.direct_mx
+
       cuc(:,1) = av
       cuc(:,2) = bv
       cuc(:,3) = cv
+        ! consistent orientation check
       do i =1,3
       do j =1,3
-         dm(i,j) = dot_product(tuc(:,i),tuc(:,j)) &
-                 - dot_product(cuc(:,i),cuc(:,j))
+           dm(i,j) = dot_product(tuc(:,i),tuc(:,j)) &
+                   - dot_product(cuc(:,i),cuc(:,j))
       end
       end
 
       stdout.text("Difference between metric matrices:")
       stdout.put(dm)
-      DIE_IF(NOT dm.is_zero(TOL(5)),"the unit cell axes are not rotations of each other!")
 
-      ! DANGER !
-      ! Cartesian positions could be out of date now
-      .crystal.unit_cell.make_direct_mx_from(av,bv,cv)
+      if (NOT dm.is_zero(TOL(5))) then
+         stdout.put("The unit cell axes are not rotations of each other!")
+         .crystal.unit_cell.put
+         DIE("Sorry! unit cell matrix inconsistent")
+      end
 
+      ! Set .crystal.unit_cell to C23 unit cell
+      if (.crystal.deallocated) .crystal.create
+      .crystal.unit_cell.make_direct_mx_from(av,bv,cv)!Crystal23 way of defining unit cell
       .crystal.unit_cell.put
 
-      ! Destroy all potentially inconsistent info
-      ! Store asymm_atom's for their ADPs only
-    ! asymm_atom = .asymmetric_unit_atom
-    ! .crystal.asymmetric_unit_geometry.destroy
-    ! .crystal.fragment_geometry.destroy
-    ! .crystal.fragment_atom.destroy
+      ! Set .crystal.spacegroup symmetry operators from CIF
+      .cif.open
+      .cif.find_data_block
+      .crystal.spacegroup.read_smCIF(.cif)
+      cif_atom.read_smCIF(.cif)
+      .cif.close
 
-      ! Read in atoms
+      ! Check
+      stdout.text("CIF ATOMS:")
+      stdout.put(transpose(cif_atom.coordinates))
+
+      ! Read in atoms from XML
       XMLfile.look_for("NUMBER_OF_ATOMS")
       XMLfile.move_to_line_item(2)
       XMLfile.read(n_atom)
@@ -1070,20 +1082,92 @@ contains
          XMLfile.read_line
       end
 
-      ! Delete the old .crystal.fragmen_atoms
-      ! Replace it with the XML atoms
-      ! THIS *IS* WRONG !!!
-   !  .crystal.update_fragment_info(.atom)
+      ! Destroy existing basis, and atom list
+      if (.basis.allocated) .basis.destroy
 
       ! Make sure basis set is spherical etc.
       .use_spherical_basis = TRUE
       .use_CRYSTAL23_order = TRUE
-    ! GAUSSIAN_DATA:destroy_data
-    ! GAUSSIAN_DATA:set_CRYSTAL23_ordering(TRUE)
-    ! GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
 
-      ! Finalize atom info/basis sets
+      ! Finalize atom info and esnsure it has basis set
+      ! (Assuming basis set was set before this)
       .BASE:update_atom_basis_group_info
+      
+      ! Set crystal XML atoms
+      .crystal.update_fragment_info(.atom)
+      .crystal.finalize = TRUE
+
+      stdout.text("XML atoms, fractional coords:")
+      stdout.put(transpose(.crystal.fragment_geometry))
+      
+! (kang 1 Mar. 2024)  Read ADP from .cif file
+      ! create cif_atom for ADPs
+
+ !     stdout.text("cif_atom ::::::::::::::")
+ !     cif_atom(1).put
+      
+ !     stdout.text( cif_atom(1).pos_axis_system )
+ !     stdout.text( cif_atom(1).ADP_axis_system )
+ !     stdout.put( cif_atom(1).pADP_vector )
+     ! cif_atom(2).put
+        ! NOTE: cif_atom coordinates are in Xtal coord.
+        !       meantime .atom coordinates are in Cartesian
+     !  stdout.flush
+     ! stdout.text("ATOM labels")
+     ! stdout.put(.atom.label)
+
+      .crystal23.xml_atom_for_cif_atom.create(cif_atom.dim)
+      .crystal23.cif_atom_for_xml_atom.create(n_atom)
+      .crystal23.cif_atom_for_xml_atom = 0
+      
+      do a = 1,n_atom  ! Compare the coordinates each atoms in the
+                       ! lists from XML and CIF to assign ADP correctly
+         xml_pos = .crystal.fragment_geometry(:,a)
+
+         do j = 1,cif_atom.dim
+
+            ! Difference in fractional positions
+            tmp_vec = xml_pos - cif_atom(j).position 
+                      
+            ! Make sure it is in [0,1] cell
+            where (tmp_vec < ZERO) 
+               tmp_vec = mod(tmp_vec+ONE,ONE)
+            end
+           
+            same = tmp_vec.is_zero(0.02d0)
+            if (same) then
+
+               ! Assign information arrays
+               .crystal23.xml_atom_for_cif_atom(j) = a
+               .crystal23.cif_atom_for_xml_atom(a) = j
+
+               ! Set the XML atom ADPs
+               .atom(a).set_ADP_axis_system_to("crystal")
+               .atom(a).set_ADP_tensor(cif_atom(j).pADP_vector(4:9))
+               .atom(a).set_ADP_axis_system_to("cartesian")
+               .atom(a).change_ADP2_axis_system_to("cartesian",.crystal.unit_cell,change_ESDs=FALSE)
+               
+               stdout.put(.atom(a).pADP_vector)
+               stdout.put(.atom(a).ADP_axis_system )
+               stdout.put(.atom(a).pos_axis_system )
+               exit
+            end
+
+         end   
+      end ! maybe one can compare the atom label for better
+          ! performance. (Kang; 01 Mar.2024)
+
+      stdout.text("xml_atom_for_cif_atom:")
+      stdout.put(.crystal23.xml_atom_for_cif_atom,by_column=TRUE)
+      stdout.text("cif_atom_for_xml_atom:")
+      stdout.put(.crystal23.cif_atom_for_xml_atom,by_column=TRUE)
+      stdout.flush
+
+      cif_atom.destroy
+ 
+  !!!!!!!!!!!
+  !! stop !!!
+  !!!!!!!!!!!/Kang  01 Mar.2024
 
       ! Read unit cell
       XMLfile.look_for("NUMBER_OF_ATOMIC_ORBITALS")
