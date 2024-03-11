@@ -1,8 +1,15 @@
 # Welcome to Tonto!
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
-## 0. WARNING
+## 0. WARNING and How to push with a new token
 
-Master, although stable, is very old, but is kept for CrystalExplorer compatability. The active branch is release. There is a good chance that release-no-ptr will be the latest version eventually, and be merged into release, and thereafter in quiakc succession, into master.
+This release-no-ptr branch will be the latest version, and will be merged into release, and finally, into master.
+
+For reference, to set up your repo to push, use the following
+
+```
+git remote set-url origin https://USERNAME:TOKEN@github.com/USERNAME/REPO.git
+```
+
 
 ## 1. Get ready ...
 
