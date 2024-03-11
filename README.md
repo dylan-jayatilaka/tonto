@@ -9,13 +9,13 @@ For reference, to set up your repo to push, use the following
 ```
 git remote set-url origin https://USERNAME:TOKEN@github.com/USERNAME/REPO.git
 ```
-You can get a classic token from Settings photo-> Settings -> <> develepo-setting -> personal-access-token -> tokens (classic) !!! Which should have this location:
+You can get a classic token from Settings photo-> Settings -> <> develepo-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic) !!! Which should have this location:
 
 ```
 https://github.com/settings/tokens
 ```
 
-I kid you not.
+I kid you not. The selections above are quite hard to find, at the left, bottom, or top right of the menus.
 
 ## 1. Get ready ...
 
