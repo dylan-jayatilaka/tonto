@@ -196,6 +196,7 @@ set(FOO_SRC
     ${FOO_DIR}/becke_grid.foo
 #   ${FOO_DIR}/breakdown_data.foo
     ${FOO_DIR}/buffer.foo
+    ${FOO_DIR}/output_style.foo
     ${FOO_DIR}/textfile.foo
     ${FOO_DIR}/datafile.foo
     ${FOO_DIR}/json.foo
@@ -207,7 +208,6 @@ set(FOO_SRC
     ${FOO_DIR}/colour_function.foo
     ${FOO_DIR}/coppensbasis.foo
     ${FOO_DIR}/coppensorbital.foo
-    ${FOO_DIR}/debug.foo
     ${FOO_DIR}/dft_functional.foo
     ${FOO_DIR}/diffraction_data.inq.foo
     ${FOO_DIR}/diffraction_data.set.foo
@@ -377,6 +377,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.har.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/output_style.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
     ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90
@@ -465,6 +466,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_rgbi.foo
     ${RUNFILE_DIR}/run_least_squares.foo
     ${RUNFILE_DIR}/run_mpi_test.foo
+    ${RUNFILE_DIR}/run_textfile.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
 
@@ -534,6 +536,7 @@ add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
+add_executable(run_textfile      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_textfile.F90)
 add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
 
 # Link exectables
@@ -559,6 +562,7 @@ target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_textfile      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 
