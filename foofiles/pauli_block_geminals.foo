@@ -38,10 +38,6 @@ contains
 !                             Create and Destroy Routines
 !===============================================================================
 
-   destroy ::: get_from(OBJECT), leaky
-   ! Destroy an object
-   end
-
    create ::: leaky
    ! Create a pauli_block_geminals
       self :: PTR
@@ -127,7 +123,7 @@ contains
 
 !     stdout.text(" ")
 !     stdout.text("creation of a set of geminals")
-
+     .destroy_pbt_set(pbt_set)
      ! allocate a set of Pauli Block Tensors (PBT) 
      allocate(pbt_set.vec(.n_geminals))
 
@@ -157,16 +153,47 @@ contains
         ! in each PBT
         pbt_set.vec(i).n_1D_blocks=.n_1D_blocks
         pbt_set.vec(i).n_2D_blocks=.n_2D_blocks
+        pbt_set.vec(i).n_2D_3typ_blocks = .n_2D_3typ_blocks
+        pbt_set.vec(i).n_2D_4typ_blocks = .n_2D_4typ_blocks
      end
+     pbt_set.type_nb.create(.n_blocks)
 
      ! make the vector of numbers of block types
      ! for each block
-     .make_type_numbers(pbt_set)
+     !.make_type_numbers(pbt_set)
 
    end
 
    created result (res) ::: get_from(OBJECT), inlined_by_foo
    ! Returns true if self has been created
+   end
+
+   create_copy_pbt_set(pbt_set_a,pbt_set_b) ::: leaky
+   ! duplicate a Pauli block tensor set i.e.
+   !copy pbt_set_a to pbt_set_b after creating the latter
+     pbt_set_a :: PAULI_BLOCK_TENSOR_SET, IN
+     pbt_set_b :: PAULI_BLOCK_TENSOR_SET, OUT
+     i :: INT
+
+     .create_pbt_set(pbt_set_b)
+
+     do i=1,.n_geminals
+        pbt_set_b.vec(i).block_type = pbt_set_a.vec(i).block_type
+        pbt_set_b.vec(i).coef = pbt_set_a.vec(i).coef
+        pbt_set_b.vec(i).block_dim = pbt_set_b.vec(i).block_dim
+      ! pbt_set_b.vec(i).cpx_coef = pbt_set_b.vec(i).cpx_coef
+      ! pbt_set_b.vec(i).matrix_form = pbt_set_b.vec(i).matrix_form
+      ! pbt_set_b.vec(i).cpx_matrix_form = pbt_set_b.vec(i).cpx_matrix_form
+      ! pbt_set_b.vec(i).nonzero_coef_ind = pbt_set_b.vec(i).nonzero_coef_ind
+      ! pbt_set_b.vec(i).red_coef = pbt_set_b.vec(i).red_coef
+      ! pbt_set_b.vec(i).new_nonzero_coef_ind = pbt_set_b.vec(i).new_nonzero_coef_ind
+      ! pbt_set_b.vec(i).optimized_coef_ind = pbt_set_b.vec(i).optimized_coef_ind
+      ! pbt_set_b.vec(i).frozen_coef_ind = pbt_set_b.vec(i).frozen_coef_ind
+     end
+     do i=1,pbt_set_a.type_nb.dim
+       pbt_set_b.type_nb(i).element.create(pbt_set_a.type_nb(i).element.dim)
+       pbt_set_b.type_nb(i).element=pbt_set_a.type_nb(i).element
+     end
    end
 
 !  destroy ::: leaky
@@ -175,6 +202,9 @@ contains
 !     .destroy_ptr_part
 !     deallocate(self)
 !  end
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
 
    destroy(gradient) ::: leaky
    ! Destroy a vector of energy gradient elements
@@ -215,6 +245,7 @@ contains
    destroy_ptr_part ::: leaky
    ! destroy the pointer parts of a PAULI_BLOCK_GEMINALS object
      new_item :: VEC_INT_LIST*
+     i :: INT
      
      .nonzero_1D.destroy
      .nonzero_coef_ind.destroy
@@ -231,21 +262,45 @@ contains
      .nonzero_1ortho_ind.destroy
      .rdm_1.destroy
      if(associated(.rdm_2_ab)) then 
+       do i=1,size(.rdm_2_ab)
+         if(associated(.rdm_2_ab(i).grad)) then 
+           deallocate(.rdm_2_ab(i).grad)
+         end
+       end
        deallocate(.rdm_2_ab)
      end
      if(associated(.rdm_2_aa)) then 
+       do i=1,size(.rdm_2_aa)
+         if(associated(.rdm_2_aa(i).grad)) then 
+           deallocate(.rdm_2_aa(i).grad)
+         end
+       end
        deallocate(.rdm_2_aa)
      end
      if(associated(.rdm_2_bb)) then 
+       do i=1,size(.rdm_2_bb)
+         if(associated(.rdm_2_bb(i).grad)) then 
+           deallocate(.rdm_2_bb(i).grad)
+         end
+       end
        deallocate(.rdm_2_bb)
      end
      .orbital_block_mapping.destroy
      .block_types.destroy
+     .any_type_set.destroy
      .non_diag_set.destroy
      .diag_set.destroy
      .block_1orthos.destroy
      if (.GD2_info.created) then 
        .GD2_info.destroy
+     end
+     .first_GD2_elt.destroy
+     .second_GD2_elt.destroy
+     .GD2_factor.destroy
+     .destroy_pbt_set(.ket_set)
+     .destroy_pbt_set(.bra_set)
+     if(associated(.energy_gradient)) then
+       .destroy(.energy_gradient)
      end
 
    end
@@ -259,24 +314,26 @@ contains
 !     stdout.text("destruction of a set of geminals")
 
      ! destroy the set of geminals
-     set_size = pbt_set.set_size
-     do i=1,set_size
-        ! create the vectors of block types,
-        ! block dimensions and coefficients
-        pbt_set.vec(i).block_type.destroy
-        pbt_set.vec(i).block_dim.destroy
-        pbt_set.vec(i).coef.destroy
-        pbt_set.vec(i).cpx_coef.destroy
-        pbt_set.vec(i).matrix_form.destroy
-        pbt_set.vec(i).cpx_matrix_form.destroy
-        pbt_set.vec(i).nonzero_coef_ind.destroy
-        pbt_set.vec(i).red_coef.destroy
-        pbt_set.vec(i).new_nonzero_coef_ind.destroy
-        pbt_set.vec(i).optimized_coef_ind.destroy
-        pbt_set.vec(i).frozen_coef_ind.destroy
+     if(pbt_set.vec.created) then
+       set_size = size(pbt_set.vec)
+       do i=1,set_size
+          ! destroy the vectors of block types,
+          ! block dimensions and coefficients
+          pbt_set.vec(i).block_type.destroy
+          pbt_set.vec(i).block_dim.destroy
+          pbt_set.vec(i).coef.destroy
+          pbt_set.vec(i).cpx_coef.destroy
+          pbt_set.vec(i).matrix_form.destroy
+          pbt_set.vec(i).cpx_matrix_form.destroy
+          pbt_set.vec(i).nonzero_coef_ind.destroy
+          pbt_set.vec(i).red_coef.destroy
+          pbt_set.vec(i).new_nonzero_coef_ind.destroy
+          pbt_set.vec(i).optimized_coef_ind.destroy
+          pbt_set.vec(i).frozen_coef_ind.destroy
+       end
+       ! deallocate a set of Pauli Block Tensors (PBT) 
+       deallocate(pbt_set.vec)
      end
-     ! deallocate a set of Pauli Block Tensors (PBT) 
-     deallocate(pbt_set.vec)
 
      ! destroy the vector of numbers of block types
      ! for each block
@@ -584,6 +641,7 @@ contains
    make_type_numbers(subset) ::: leaky
    ! make type_numbers for each block of a subset of pauli_block_tensor
      subset :: PAULI_BLOCK_TENSOR_SET
+     ENSURE(subset.vec(1).block_type.created,"block_type not created")
      n_gem,i :: INT
      n_blocks,j :: INT
 
@@ -595,7 +653,7 @@ contains
      end
 
      do j=1,n_blocks
-       subset.type_nb(j).element.create(9)
+       subset.type_nb(j).element.create(10)
        subset.type_nb(j).element=0
      end
      
@@ -1692,10 +1750,12 @@ contains
      
      ! create vector of vectors "block_types"
      n_pauli_blocks = .n_blocks-.n_1D_blocks 
-     .block_types.create(n_pauli_blocks)
-     do i=1,n_pauli_blocks
-        .block_types(i).element.create(5)
-        .block_types(i).element = 0
+     if(NOT .block_types.created) then
+       .block_types.create(n_pauli_blocks)
+       do i=1,n_pauli_blocks
+          .block_types(i).element.create(5)
+          .block_types(i).element = 0
+       end
      end
 
      ! prepare "block_types"
@@ -1723,9 +1783,12 @@ contains
      geminal_set :: VEC{INT}(5)
      
      n_pauli_blocks=.n_2D_blocks
-     ! create vector of vectors "diag_set" and "non_diag_set"
+     ! create vector of vectors "diag_set","non_diag_set", and "any_type_set"
+     if (.diag_set.created) .diag_set.destroy
      .diag_set.create(n_pauli_blocks)
+     if (.non_diag_set.created) .non_diag_set.destroy
      .non_diag_set.create(n_pauli_blocks)
+     if (.any_type_set.created) .any_type_set.destroy
      .any_type_set.create(n_pauli_blocks)
 
      do i=1,n_pauli_blocks
@@ -2070,7 +2133,7 @@ contains
      if (.bra_is_ket) then
         ! we should make sure that no memory is lost
         .ket_set.set_size=.n_geminals
-        .ket_set.vec=>.bra_set.vec
+        .ket_set.vec=.bra_set.vec
        ! stdout.text(" ")
        ! stdout.text("Randomly generated ket set:")
        ! 
@@ -2492,7 +2555,7 @@ contains
      if (.bra_is_ket) then
         ! we should make sure that no memory is lost
         .ket_set.set_size=.n_geminals
-        .ket_set.vec=>.bra_set.vec
+        .ket_set.vec=.bra_set.vec
        ! stdout.text(" ")
        ! stdout.text("Randomly generated ket set:")
        ! 
@@ -3010,7 +3073,7 @@ contains
      if (.bra_is_ket) then
         ! we should make sure that no memory is lost
         .ket_set.set_size=.n_geminals
-        .ket_set.vec=>.bra_set.vec
+        .ket_set.vec=.bra_set.vec
      else
         stdout.text(" ")
         stdout.text("Hartree-Fock guess ket set:")
@@ -3228,7 +3291,9 @@ contains
      !
      blocks.create(.n_blocks)
      coeffs.create(.n_blocks)
-     allocate(.bra_set.vec(.n_geminals))
+     if(NOT .bra_set.vec.created) then
+       allocate(.bra_set.vec(.n_geminals))
+     end
      .bra_set.set_size=.n_geminals
      .bra_set.set_size_sing=.n_gem_singlet
      .bra_set.n_blocks=.n_blocks
@@ -3300,7 +3365,9 @@ contains
      !
      blocks.create(.n_blocks)
      coeffs.create(.n_blocks)
-     allocate(.ket_set.vec(.n_geminals))
+     if(NOT .ket_set.vec.created) then
+       allocate(.ket_set.vec(.n_geminals))
+     end
      .ket_set.set_size=.n_geminals
      .ket_set.set_size_sing=.n_gem_singlet
      .ket_set.n_blocks=.n_blocks
@@ -3312,7 +3379,7 @@ contains
      do i=1,.n_geminals
        stdin.read(blocks)
        stdin.read(coeffs)
-       if (.bra_is_ket) then
+       if (NOT .bra_is_ket) then
          .ket_set.vec(i).block_type.create(.n_blocks)
          .ket_set.vec(i).block_dim.create(.n_blocks)
          .ket_set.vec(i).block_dim=2
@@ -3336,10 +3403,12 @@ contains
          .ket_set.vec(i).n_2D_blocks=.n_2D_blocks 
          .ket_set.vec(i).n_2D_3typ_blocks = .n_2D_3typ_blocks
          .ket_set.vec(i).n_2D_4typ_blocks = .n_2D_4typ_blocks
-       else if(.debug) then
-         stdout.text("WARNING: .bra_is_ket has been set to TRUE !")
+       else 
+       !one should not be in this routine!
+         stdout.text("ERROR: .bra_is_ket has been set to TRUE !")
          stdout.show("For ket ", i)
-         stdout.text("read in information will be ignored")
+         stdout.text("comment ket input in stdin file")
+         stop
        end
      end
      .make_type_numbers(.ket_set)
@@ -4989,6 +5058,7 @@ contains
 
      ng = .n_geminals-1
      if (ng /= 0) then
+        red_pbg.bra_is_ket=.bra_is_ket
         red_pbg.n_geminals = ng
         red_pbg.nonzero_1D.create(ng)
         red_pbg.nonzero_coef_ind.create(ng)
@@ -5111,6 +5181,7 @@ contains
 
      ng = .n_geminals-1
      if (ng /= 0) then
+        red_pbg.bra_is_ket=.bra_is_ket
         red_pbg.n_geminals = ng
         red_pbg.first_block = .first_block
         red_pbg.nonzero_1D.create(ng)
@@ -5231,14 +5302,11 @@ contains
        grad_info=FALSE
      end
 
-     if (.bra_is_ket) then
-        .ket_set=.bra_set
-     else if (grad_info) then
+     if (NOT .bra_is_ket AND grad_info) then
        stdout.text(" ")
        stdout.text("gradient only implemented for bra=ket")
        stop
      end
-     
 
      if (.debug) then
        stdout.text(" ")
@@ -5285,6 +5353,7 @@ contains
      red_pbg_1.first_block=.first_block
      ! case not just one geminal
      if (ng_1 > 0) then
+        red_pbg_1.bra_is_ket=.bra_is_ket
         red_pbg_1.nonzero_1D.create(ng_1)
         red_pbg_1.nonzero_coef_ind.create(ng_1)
         red_pbg_1.nonzero_coef_prod.create(ng_1)
@@ -5295,6 +5364,7 @@ contains
      red_pbg_2.first_block=.first_block
      ! case more than two geminals
      if (ng_2 > 0) then
+        red_pbg_2.bra_is_ket=.bra_is_ket
         red_pbg_2.nonzero_1D.create(ng_2)
         red_pbg_2.nonzero_coef_ind.create(ng_2)
         red_pbg_2.nonzero_coef_prod.create(ng_2)
@@ -8800,13 +8870,19 @@ contains
               grad_info_tmp.term(1) = coef_prod
               .calc_2rtm_ab_coef_grad(grad_info_tmp)
               .add_2rtm_aa_elt((/ r,b,r,b /),coef_prod)
-              .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+                 .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               end
               .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
               .add_2rtm_bb_elt((/ r,b,r,b /),coef_prod)
-              .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+                 .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               end
               .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
               .add_2rtm_ab_elt((/ b,r,b,r /),coef_prod)
-              .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+              if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+              end
               .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
            end
         end
@@ -8877,7 +8953,9 @@ contains
                  grad_info_tmp.term(1)=term
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
                  .add_2rtm_ab_elt((/ r,r,ind_2,ind_2 /),term)
-                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                   .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 end
                  .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
               end 
        
@@ -8888,7 +8966,9 @@ contains
                  grad_info_tmp.term(1)=term
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
                  .add_2rtm_ab_elt((/ ind_2,ind_2,r,r /),term)
-                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                   .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 end
                  .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
               end
            else if (geminal == .block_types(block).element(2)) then
@@ -8900,7 +8980,9 @@ contains
                  grad_info_tmp.term(1)=term
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
                  .add_2rtm_ab_elt((/ r,r,ind_2,ind_2 /),-term)
-                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                   .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 end
                  .rdm_2_ab(.nonzero_terms_ab).grad=-.rdm_2_ab(.nonzero_terms_ab-1).grad
               end 
               
@@ -8911,7 +8993,9 @@ contains
                  grad_info_tmp.term(1)=term
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
                  .add_2rtm_ab_elt((/ ind_2,ind_2,r,r /),-term)
-                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                   .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 end
                  .rdm_2_ab(.nonzero_terms_ab).grad=-.rdm_2_ab(.nonzero_terms_ab-1).grad
               end
            else if (geminal == .block_types(block).element(3)) then
@@ -8923,7 +9007,9 @@ contains
                  grad_info_tmp.term(1)=term
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
                  .add_2rtm_ab_elt((/ r,r,ind_2,ind_1 /),term)
-                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                   .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 end
                  .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
               end 
               
@@ -8934,7 +9020,9 @@ contains
                  grad_info_tmp.term(1)=term
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
                  .add_2rtm_ab_elt((/ ind_2,ind_1,r,r /),term)
-                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                   .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 end
                  .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
               end
            else if (geminal == .block_types(block).element(4)) then
@@ -8946,7 +9034,9 @@ contains
                  grad_info_tmp.term(1)=term
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
                  .add_2rtm_ab_elt((/ r,r,ind_2,ind_1 /),-term)
-                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                   .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 end
                  .rdm_2_ab(.nonzero_terms_ab).grad=-.rdm_2_ab(.nonzero_terms_ab-1).grad
               end 
               
@@ -8957,7 +9047,9 @@ contains
                  grad_info_tmp.term(1)=term
                  .calc_2rtm_ab_coef_grad(grad_info_tmp)
                  .add_2rtm_ab_elt((/ ind_2,ind_1,r,r /),-term)
-                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                   .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+                 end
                  .rdm_2_ab(.nonzero_terms_ab).grad=-.rdm_2_ab(.nonzero_terms_ab-1).grad
               end
            else if (geminal == .block_types(block).element(5)) then
@@ -9093,13 +9185,19 @@ contains
                grad_info_tmp.GD2_factors(3).element(block_1)=.GD2_factor(block_1).element(3)
                .calc_2rtm_ab_coef_grad(grad_info_tmp)
                .add_2rtm_aa_elt((/ b2,ind_1,b2,ind_1 /),sum_term)
-               .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+                 .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               end
                .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
                .add_2rtm_bb_elt((/ b2,ind_1,b2,ind_1 /),sum_term)
-               .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+                 .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               end
                .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
                .add_2rtm_ab_elt((/ ind_1,b2,ind_1,b2 /),sum_term)
-               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               end
                .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
              end
 
@@ -9116,13 +9214,19 @@ contains
                grad_info_tmp.GD2_factors(3).element(block_1)=.GD2_factor(block_1).element(4)
                .calc_2rtm_ab_coef_grad(grad_info_tmp)
                .add_2rtm_aa_elt((/ b2,ind_2,b2,ind_2 /),sum_term)
-               .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+                 .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               end
                .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
                .add_2rtm_bb_elt((/ b2,ind_2,b2,ind_2 /),sum_term)
-               .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+                 .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               end
                .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
                .add_2rtm_ab_elt((/ ind_2,b2,ind_2,b2 /),sum_term)
-               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               end
                .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
              end
           end
@@ -9184,26 +9288,40 @@ contains
                .add_2rtm_ab_elt((/ b2,ind_1,b2,ind_1 /),sum_term)
                .calc_2rtm_ab_coef_grad(grad_info_tmp)
                .add_2rtm_aa_elt((/ b2,ind_1,b2,ind_1 /),sum_term)
-               .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+                 .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               end
                .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
                .add_2rtm_bb_elt((/ b2,ind_1,b2,ind_1 /),sum_term)
-               .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+                 .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               end
                .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
                .add_2rtm_ab_elt((/ ind_1,b2,ind_1,b2 /),sum_term)
-               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               end
                .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
   
                .add_2rtm_ab_elt((/ b2,ind_2,b2,ind_2 /),sum_term)
-               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               end
                .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
                .add_2rtm_aa_elt((/ b2,ind_2,b2,ind_2 /),sum_term)
-               .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+                 .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+               end
                .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
                .add_2rtm_bb_elt((/ b2,ind_2,b2,ind_2 /),sum_term)
-               .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+                 .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+               end
                .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
                .add_2rtm_ab_elt((/ ind_2,b2,ind_2,b2 /),sum_term)
-               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+                 .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+               end
                .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
              end
           end
@@ -9323,7 +9441,9 @@ contains
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_2,ind_1,ind_1 /),element_coef)
-             .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             end
              .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
           end
 
@@ -9348,7 +9468,9 @@ contains
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_1,ind_2,ind_1 /),element_coef)
-             .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             end
              .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
           end
 
@@ -9372,7 +9494,9 @@ contains
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_1,ind_1,ind_2 /),element_coef)
-             .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             end
              .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
           end
        end
@@ -9432,7 +9556,9 @@ contains
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_2,ind_2,ind_2 /),element_coef)
-             .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             end
              .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
           end
           element_coef = term(3)+term(4)
@@ -9455,7 +9581,9 @@ contains
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_1,ind_2,ind_1 /),element_coef)
-             .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             end
              .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
           end
           element_coef = term(1)-term(2)
@@ -9478,7 +9606,9 @@ contains
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_2,ind_1,ind_1 /),element_coef)
-             .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             end
              .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
           end
           element_coef = term(3)-term(4)
@@ -9501,7 +9631,9 @@ contains
              .calc_2rtm_ab_coef_grad(grad_info_tmp)
              .destroy_ptr_part(grad_info_tmp)
              .add_2rtm_ab_elt((/ ind_2,ind_1,ind_1,ind_2 /),element_coef)
-             .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+               .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+             end
              .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
           end
        end
@@ -9634,28 +9766,36 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_1,ind_3,ind_3 /),terms(1))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(1))
         .add_2rtm_ab_elt((/ ind_3,ind_3,ind_1,ind_1 /),terms(1))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(2)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_1,ind_1,ind_4,ind_4 /),terms(2))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(2))
         .add_2rtm_ab_elt((/ ind_4,ind_4,ind_1,ind_1 /),terms(2))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(3)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_2,ind_2,ind_3,ind_3 /),terms(3))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(3))
         .add_2rtm_ab_elt((/ ind_3,ind_3,ind_2,ind_2 /),terms(3))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(4)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_2,ind_2,ind_4,ind_4 /),terms(4))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(4))
         .add_2rtm_ab_elt((/ ind_4,ind_4,ind_2,ind_2 /),terms(4))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -9741,28 +9881,36 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_2,ind_3,ind_4 /),terms(1))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(1))
         .add_2rtm_ab_elt((/ ind_3,ind_4,ind_1,ind_2 /),terms(1))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(2)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_1,ind_2,ind_4,ind_3 /),terms(2))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(2))
         .add_2rtm_ab_elt((/ ind_4,ind_3,ind_1,ind_2 /),terms(2))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(3)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_2,ind_1,ind_3,ind_4 /),terms(3))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(3))
         .add_2rtm_ab_elt((/ ind_3,ind_4,ind_2,ind_1 /),terms(3))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(4)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_2,ind_1,ind_4,ind_3 /),terms(4))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(4))
         .add_2rtm_ab_elt((/ ind_4,ind_3,ind_2,ind_1 /),terms(4))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      
@@ -9857,28 +10005,36 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_1,ind_3,ind_4 /),terms(1))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(1))
         .add_2rtm_ab_elt((/ ind_3,ind_4,ind_1,ind_1 /),terms(1))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(2)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_1,ind_1,ind_4,ind_3 /),terms(2))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(2))
         .add_2rtm_ab_elt((/ ind_4,ind_3,ind_1,ind_1 /),terms(2))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(3)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_2,ind_2,ind_3,ind_4 /),terms(3))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(3))
         .add_2rtm_ab_elt((/ ind_3,ind_4,ind_2,ind_2 /),terms(3))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(4)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_2,ind_2,ind_4,ind_3 /),terms(4))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(4))
         .add_2rtm_ab_elt((/ ind_4,ind_3,ind_2,ind_2 /),terms(4))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -9973,28 +10129,36 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_2,ind_3,ind_3 /),terms(1))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(1))
         .add_2rtm_ab_elt((/ ind_3,ind_3,ind_1,ind_2 /),terms(1))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(2)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_1,ind_2,ind_4,ind_4 /),terms(2))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(2))
         .add_2rtm_ab_elt((/ ind_4,ind_4,ind_1,ind_2 /),terms(2))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(3)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_2,ind_1,ind_3,ind_3 /),terms(3))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(3))
         .add_2rtm_ab_elt((/ ind_3,ind_3,ind_2,ind_1 /),terms(3))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      if (abs(terms(4)) > NON_ZERO_2RTM_TOL) then
         .add_2rtm_ab_elt((/ ind_2,ind_1,ind_4,ind_4 /),terms(4))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(4))
         .add_2rtm_ab_elt((/ ind_4,ind_4,ind_2,ind_1 /),terms(4))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -12467,13 +12631,19 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_3,ind_1,ind_3 /),terms(1))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(1))
         .add_2rtm_aa_elt((/ ind_1,ind_3,ind_1,ind_3 /),terms(1))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_1,ind_3,ind_1,ind_3 /),terms(1))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_3,ind_1,ind_3,ind_1 /),terms(1))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -12481,13 +12651,19 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_4,ind_1,ind_4 /),terms(2))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(2))
         .add_2rtm_aa_elt((/ ind_1,ind_4,ind_1,ind_4 /),terms(2))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_1,ind_4,ind_1,ind_4 /),terms(2))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_4,ind_1,ind_4,ind_1 /),terms(2))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -12495,13 +12671,19 @@ contains
         .add_2rtm_ab_elt((/ ind_2,ind_3,ind_2,ind_3 /),terms(3))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(3))
         .add_2rtm_aa_elt((/ ind_2,ind_3,ind_2,ind_3 /),terms(3))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_2,ind_3,ind_2,ind_3 /),terms(3))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_3,ind_2,ind_3,ind_2 /),terms(3))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -12509,13 +12691,19 @@ contains
         .add_2rtm_ab_elt((/ ind_2,ind_4,ind_2,ind_4 /),terms(4))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(4))
         .add_2rtm_aa_elt((/ ind_2,ind_4,ind_2,ind_4 /),terms(4))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_2,ind_4,ind_2,ind_4 /),terms(4))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_4,ind_2,ind_4,ind_2 /),terms(4))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      siz=diag_diag.dim*2*ndiag_ndiag.dim
@@ -12917,13 +13105,19 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_3,ind_2,ind_4 /),terms(1))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(1))
         .add_2rtm_aa_elt((/ ind_1,ind_3,ind_2,ind_4 /),terms(1))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_1,ind_3,ind_2,ind_4 /),terms(1))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_3,ind_1,ind_4,ind_2 /),terms(1))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -12931,13 +13125,19 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_4,ind_2,ind_3 /),terms(2))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(2))
         .add_2rtm_aa_elt((/ ind_1,ind_4,ind_2,ind_3 /),terms(2))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_1,ind_4,ind_2,ind_3 /),terms(2))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_4,ind_1,ind_3,ind_2 /),terms(2))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -12945,13 +13145,19 @@ contains
         .add_2rtm_ab_elt((/ ind_2,ind_3,ind_1,ind_4 /),terms(3))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(3))
         .add_2rtm_aa_elt((/ ind_2,ind_3,ind_1,ind_4 /),terms(3))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_2,ind_3,ind_1,ind_4 /),terms(3))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_3,ind_2,ind_4,ind_1 /),terms(3))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -12959,13 +13165,19 @@ contains
         .add_2rtm_ab_elt((/ ind_2,ind_4,ind_1,ind_3 /),terms(4))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(4))
         .add_2rtm_aa_elt((/ ind_2,ind_4,ind_1,ind_3 /),terms(4))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_2,ind_4,ind_1,ind_3 /),terms(4))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_4,ind_2,ind_3,ind_1 /),terms(4))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -13369,13 +13581,19 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_3,ind_1,ind_4 /),terms(1))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(1))
         .add_2rtm_aa_elt((/ ind_1,ind_3,ind_1,ind_4 /),terms(1))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_1,ind_3,ind_1,ind_4 /),terms(1))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_3,ind_1,ind_4,ind_1 /),terms(1))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -13383,13 +13601,19 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_4,ind_1,ind_3 /),terms(2))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(2))
         .add_2rtm_aa_elt((/ ind_1,ind_4,ind_1,ind_3 /),terms(2))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_1,ind_4,ind_1,ind_3 /),terms(2))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_4,ind_1,ind_3,ind_1 /),terms(2))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -13397,13 +13621,19 @@ contains
         .add_2rtm_ab_elt((/ ind_2,ind_3,ind_2,ind_4 /),terms(3))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(3))
         .add_2rtm_aa_elt((/ ind_2,ind_3,ind_2,ind_4 /),terms(3))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_2,ind_3,ind_2,ind_4 /),terms(3))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_3,ind_2,ind_4,ind_2 /),terms(3))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -13411,13 +13641,19 @@ contains
         .add_2rtm_ab_elt((/ ind_2,ind_4,ind_2,ind_3 /),terms(4))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(4))
         .add_2rtm_aa_elt((/ ind_2,ind_4,ind_2,ind_3 /),terms(4))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_2,ind_4,ind_2,ind_3 /),terms(4))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_4,ind_2,ind_3,ind_2 /),terms(4))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -13821,13 +14057,19 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_3,ind_2,ind_3 /),terms(1))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(1))
         .add_2rtm_aa_elt((/ ind_1,ind_3,ind_2,ind_3 /),terms(1))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_1,ind_3,ind_2,ind_3 /),terms(1))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_3,ind_1,ind_3,ind_2 /),terms(1))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -13835,13 +14077,19 @@ contains
         .add_2rtm_ab_elt((/ ind_1,ind_4,ind_2,ind_4 /),terms(2))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(2))
         .add_2rtm_aa_elt((/ ind_1,ind_4,ind_2,ind_4 /),terms(2))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_1,ind_4,ind_2,ind_4 /),terms(2))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_4,ind_1,ind_4,ind_2 /),terms(2))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -13849,13 +14097,19 @@ contains
         .add_2rtm_ab_elt((/ ind_2,ind_3,ind_1,ind_3 /),terms(3))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(3))
         .add_2rtm_aa_elt((/ ind_2,ind_3,ind_1,ind_3 /),terms(3))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_2,ind_3,ind_1,ind_3 /),terms(3))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_3,ind_2,ind_3,ind_1 /),terms(3))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
 
@@ -13863,13 +14117,19 @@ contains
         .add_2rtm_ab_elt((/ ind_2,ind_4,ind_1,ind_4 /),terms(4))
         .calc_2rtm_ab_coef_grad(grad_info_tmp(4))
         .add_2rtm_aa_elt((/ ind_2,ind_4,ind_1,ind_4 /),terms(4))
-        .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_aa(.nonzero_terms_aa).grad.created) then
+          .rdm_2_aa(.nonzero_terms_aa).grad.create(.nb_grad_elt)
+        end
         .rdm_2_aa(.nonzero_terms_aa).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_bb_elt((/ ind_2,ind_4,ind_1,ind_4 /),terms(4))
-        .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_bb(.nonzero_terms_bb).grad.created) then
+          .rdm_2_bb(.nonzero_terms_bb).grad.create(.nb_grad_elt)
+        end
         .rdm_2_bb(.nonzero_terms_bb).grad=.rdm_2_ab(.nonzero_terms_ab).grad
         .add_2rtm_ab_elt((/ ind_4,ind_2,ind_4,ind_1 /),terms(4))
-        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+          .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+        end
         .rdm_2_ab(.nonzero_terms_ab).grad=.rdm_2_ab(.nonzero_terms_ab-1).grad
      end
      do j=1,4
@@ -13901,8 +14161,9 @@ contains
       gg_in_ex_gem, bb_in_ex_blk,test_case_A :: BIN
       ex_gem, ex_blk :: VEC{INT}*
  
-!      .rdm_2_ab(.nonzero_terms_ab).grad.destroy
-      .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+      if(NOT .rdm_2_ab(.nonzero_terms_ab).grad.created) then
+        .rdm_2_ab(.nonzero_terms_ab).grad.create(.nb_grad_elt)
+      end
       .rdm_2_ab(.nonzero_terms_ab).grad=ZERO
       do l=1,.nb_grad_wrt_coef 
         gg=.energy_gradient(l).indices(1)
@@ -14394,7 +14655,7 @@ contains
    end
 
    update_coef(new_coef)
-   ! update "bra_set.vec(:).coef", "bra_set.vec(:).red_coef" and
+   ! update "bra_set.vec(:).coef", ket_set.vec(:).coef, "bra_set.vec(:).red_coef" and
    ! "nonzero_coef_prod" using nonzero coefficients "new_coef";
    ! after updating "bra_set.vec(:).coef", the geminals are normalized
      new_coef :: VEC{REAL}, IN
@@ -14454,6 +14715,10 @@ contains
      ! so gradients are actually not with respect to the optimized coefficients
      ! but with respect to the renormalized ones -> potential CV pbs
      .normalize_gem(wrt_arg=FALSE)
+     !REMINDER: works only for bra=ket
+     do i=1,.n_geminals
+       .ket_set.vec(i).coef = .bra_set.vec(i).coef
+     end
 
      ! update "bra_set.vec(:).red_coef" and "nonzero_coef_prod"
      do i=1,.n_geminals
