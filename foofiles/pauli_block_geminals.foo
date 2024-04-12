@@ -29,7 +29,7 @@ module PAULI_BLOCK_GEMINALS
 
    !!!
 !   saved_self :: PAULI_BLOCK_GEMINALS* DEFAULT_NULL
-   pbg_saved :: PAULI_BLOCK_GEMINALS*
+   pbg_saved :: PAULI_BLOCK_GEMINALS* DEFAULT_NULL
    !!!
 
 contains
@@ -485,7 +485,6 @@ contains
 
      siz=0
      do g=1,.n_geminals
-    !    siz = siz + size(.bra_set.vec(g).new_nonzero_coef_ind)
         siz = siz + size(.bra_set.vec(g).optimized_coef_ind)
      end
      .nb_grad_wrt_coef=siz
@@ -500,9 +499,7 @@ contains
      siz = 0
      ! nonzero block optimized coefficients
      do g=1,.n_geminals
-       ! do j=1,size(.bra_set.vec(g).new_nonzero_coef_ind)
         do j=1,size(.bra_set.vec(g).optimized_coef_ind)
-         !  b = .bra_set.vec(g).new_nonzero_coef_ind(j)
            b = .bra_set.vec(g).optimized_coef_ind(j)
            siz = siz + 1
            ! save the geminal and block indices of the gradient element
@@ -4544,6 +4541,43 @@ contains
            end
            stdout.text(" ")
         end
+     else
+       do i=1,.n_geminals
+         .ket_set.vec(i).coef = .bra_set.vec(i).coef
+       end
+     end
+
+
+   end
+
+   normalize_gem_keep_norms(norms,wrt_arg)
+   ! normalization of geminals recording the normalization factors
+   ! only for .bra_is_ket=TRUE
+     ENSURE(.bra_is_ket,".bra_is_ket is not set to TRUE")
+     norms :: VEC{REAL}, OUT
+     wrt_arg :: BIN, IN, optional
+     wrt :: BIN
+     i :: INT
+     !
+     wrt = TRUE
+     if (present(wrt_arg)) then
+        wrt = wrt_arg
+     end
+     !
+     .normalize_gem_keep_norms(.bra_set,.n_blocks,norms)
+     !
+     if (wrt) then
+        stdout.text(" ")
+        stdout.text("Normalization of bra set geminals")
+        stdout.text("Normalized geminals - coefficients:")
+        do i=1,.n_geminals
+           stdout.show("geminal", i)
+           stdout.put(.bra_set.vec(i).coef)
+        end
+        stdout.text(" ")
+     end
+     do i=1,.n_geminals
+       .ket_set.vec(i).coef = .bra_set.vec(i).coef
      end
 
    end
@@ -4562,14 +4596,53 @@ contains
      end
    end
 
+   normalize_gem_keep_norms(pbt_set,nb,norms)
+   ! call to the normalization routine for each geminal recording the normalization factors
+     pbt_set :: PAULI_BLOCK_TENSOR_SET
+     nb :: INT
+     norms :: VEC{REAL}, OUT
+     i :: INT
+
+     do i=1,.n_geminals
+     !debug stdout.show("geminal", i)
+     !!!!!
+!       stdout.show("geminal", i)
+     !!!!!
+       .normalize_gem_keep_norms(pbt_set.vec(i),nb,norms(i))
+     end
+   end
+
    normalize_gem(pbt,nb)
    ! normalization of one geminal
-   pbt :: PAULI_BLOCK_TENSOR
-   nb :: INT
-   i :: INT
-   bty :: STR
-   norm :: REAL
-   norm = ZERO
+     pbt :: PAULI_BLOCK_TENSOR
+     nb :: INT
+     i :: INT
+     bty :: STR
+     norm :: REAL
+     norm = ZERO
+     do i=1,nb 
+       bty = pbt.block_type(i)
+       if (bty=="ID1" OR bty=="S+" OR bty=="S-" OR bty=="E11" OR bty=="E22") then
+         norm = norm + pbt.coef(i)*pbt.coef(i)
+       else if (bty=="ID2" OR bty=="SX" OR bty=="ISY" OR bty=="SZ" OR bty=="GD2") then
+         norm = norm + pbt.coef(i)*pbt.coef(i)*TWO
+       else
+        stdout.text("unknown block type in normalize_gem(pbt,nb)")
+        stop
+       end
+     end
+     norm = sqrt(norm)
+     pbt.coef = pbt.coef/norm
+   end
+
+   normalize_gem_keep_norms(pbt,nb,norm)
+   ! normalization of one geminal recording its normalization factor
+     pbt :: PAULI_BLOCK_TENSOR
+     nb :: INT
+     norm :: REAL, OUT
+     i :: INT
+     bty :: STR
+     norm = ZERO
      do i=1,nb 
        bty = pbt.block_type(i)
        if (bty=="ID1" OR bty=="S+" OR bty=="S-" OR bty=="E11" OR bty=="E22") then
@@ -14580,18 +14653,22 @@ contains
      ene :: REAL
      overlap :: REAL
      self :: PAULI_BLOCK_GEMINALS*
+     norms :: VEC{REAL}*
      counter :: INT, save = 1
      iter :: VEC{INT}(1), save = 0
      energy_min, delta_ene, grd_norm :: VEC{REAL}(1)
- !    i :: INT
+     i :: INT
 
      self => pbg_saved
 
+     norms.create(.n_geminals)
+     norms=ONE
      ! update objects used to compute the energy 
-     .update_coef(coef)
+     .update_coef_keep_norms(coef,norms)
 
      ! compute the squared norm of the wavefunction
      .calc_overlap_integral(overlap,FALSE)
+     !.calc_overlap_integral(overlap,TRUE)
      .overlap = overlap
 
      ! compute the 2RDM
@@ -14599,7 +14676,16 @@ contains
 
      ! compute the electronic energy
      .make_ham_expect_val(ham=ene,wrt_arg=FALSE)
+     !.make_ham_expect_val(ham=ene,wrt_arg=TRUE)
 
+     do i=1,.n_geminals
+     !   stdout.show("geminal",i)
+     !   stdout.show("norm",norms(i))
+        ! restore non normalized coefficients
+     !   .bra_set.vec(i).coef=.bra_set.vec(i).coef*norms(i)
+     !   .ket_set.vec(i).coef=.ket_set.vec(i).coef*norms(i)
+     end
+     norms.destroy
      ! this is to save the energy of the first point of the
      ! optimization
      if (counter == 1) then
@@ -14651,6 +14737,8 @@ contains
      ! "counter" counts the time the function is called 
      ! during the optimization
      counter = counter+1
+     !stdout.show("iter dans energy",.coef_opt_info.iter)
+     !stdout.show("counter",counter)
 
    end
 
@@ -14659,6 +14747,7 @@ contains
    ! "nonzero_coef_prod" using nonzero coefficients "new_coef";
    ! after updating "bra_set.vec(:).coef", the geminals are normalized
      new_coef :: VEC{REAL}, IN
+   !test  new_coef :: VEC{REAL}
      i, j, k :: INT
      n_optimized_coef :: INT
      n_nonzero_coef :: INT
@@ -14710,15 +14799,30 @@ contains
         .initialize_GD2
      end
 
-     ! normalize geminals
+     ! normalize geminals to avoid that some coef. might take huge values
+     ! and also because some routines to compute the 2RDM require normalized geminals
      ! ("bra_set.vec(:).coef" will be changed)
      ! so gradients are actually not with respect to the optimized coefficients
      ! but with respect to the renormalized ones -> potential CV pbs
+     ! moreover the norm of the total wave function might still go to small values 
      .normalize_gem(wrt_arg=FALSE)
+
+     !test update "new_coef"
+!test    counter = 0
+!test    do i=1,.n_geminals
+!test       n_optimized_coef = size(.bra_set.vec(i).optimized_coef_ind)
+!test       do j=1,n_optimized_coef
+!test          k = .bra_set.vec(i).optimized_coef_ind(j)
+!test          counter = counter+1
+!test          new_coef(counter)= .bra_set.vec(i).coef(k) 
+!test       end
+!test    end
+     !test update "new_coef"
+
      !REMINDER: works only for bra=ket
-     do i=1,.n_geminals
-       .ket_set.vec(i).coef = .bra_set.vec(i).coef
-     end
+!    do i=1,.n_geminals
+!      .ket_set.vec(i).coef = .bra_set.vec(i).coef
+!    end
 
      ! update "bra_set.vec(:).red_coef" and "nonzero_coef_prod"
      do i=1,.n_geminals
@@ -14754,6 +14858,122 @@ contains
 
    end
 
+   update_coef_keep_norms(new_coef,norms)
+   ! update "bra_set.vec(:).coef", ket_set.vec(:).coef, "bra_set.vec(:).red_coef" and
+   ! "nonzero_coef_prod" using nonzero coefficients "new_coef";
+   ! after updating "bra_set.vec(:).coef", the geminals are normalized
+     new_coef :: VEC{REAL}, IN
+     norms :: VEC{REAL}, OUT
+   !test  new_coef :: VEC{REAL}
+     i, j, k :: INT
+     n_optimized_coef :: INT
+     n_nonzero_coef :: INT
+     counter :: INT
+     p_coef_1ortho :: REAL
+     n_nonzero_1ortho :: INT
+     n_nonzero_blocks :: INT
+     ind, ind_prod :: INT
+     ang :: REAL
+     first_block :: INT
+
+     if (.debug) then
+        stdout.text(" ")
+        stdout.text("Entering function update_coef")
+        stdout.text(" ")
+     end
+
+     ! update "bra_set.vec(:).coef"
+     counter = 0
+     do i=1,.n_geminals
+        n_optimized_coef = size(.bra_set.vec(i).optimized_coef_ind)
+        do j=1,n_optimized_coef
+           k = .bra_set.vec(i).optimized_coef_ind(j)
+           counter = counter+1
+           .bra_set.vec(i).coef(k) = new_coef(counter)
+        end
+     end
+
+     ! update GD2 angles and matrix elements
+     ! (if optimization of GD2 angles is requested)
+     if (.opt_GD2_angles) then 
+        do i=1,.n_2D_3typ_blocks
+           counter = counter+1
+           ang = new_coef(counter) 
+        !  if(ang<0) then
+        !    stdout.text("WARNING in update_coef: sign of negative angle has been changed")
+        !    stdout.show("for angle number: ", i)
+        !    ang = -ang
+        !    stdout.show("it is now: ", ang)
+        !  end
+        !  if(int(ang/PI)>0) then
+        !    stdout.show("WARNING in update_coef: angle number: ", i)
+        !    stdout.text("has been reduced modulo Pi")
+        !    ang = ang - int(ang/PI)*PI
+        !    stdout.show("it is now: ", ang)
+        !  end
+           .GD2_info(i) = ang 
+        end
+        .initialize_GD2
+     end
+
+     ! normalize geminals to avoid that some coef. might take huge values
+     ! and also because some routines to compute the 2RDM require normalized geminals
+     ! ("bra_set.vec(:).coef" will be changed)
+     ! so gradients are actually not with respect to the optimized coefficients
+     ! but with respect to the renormalized ones -> potential CV pbs
+     ! moreover the norm of the total wave function might still go to small values 
+     .normalize_gem_keep_norms(norms,wrt_arg=FALSE)
+
+     !test update "new_coef"
+!test    counter = 0
+!test    do i=1,.n_geminals
+!test       n_optimized_coef = size(.bra_set.vec(i).optimized_coef_ind)
+!test       do j=1,n_optimized_coef
+!test          k = .bra_set.vec(i).optimized_coef_ind(j)
+!test          counter = counter+1
+!test          new_coef(counter)= .bra_set.vec(i).coef(k) 
+!test       end
+!test    end
+     !test update "new_coef"
+
+     !REMINDER: works only for bra=ket
+!    do i=1,.n_geminals
+!      .ket_set.vec(i).coef = .bra_set.vec(i).coef
+!    end
+
+     ! update "bra_set.vec(:).red_coef" and "nonzero_coef_prod"
+     do i=1,.n_geminals
+        ! "bra_set.vec(i).red_coef"
+        n_nonzero_coef = size(.bra_set.vec(i).new_nonzero_coef_ind)
+        do j=1,n_nonzero_coef
+           k = .bra_set.vec(i).new_nonzero_coef_ind(j)
+           .bra_set.vec(i).red_coef(j) = .bra_set.vec(i).coef(k)
+        end
+        ! "nonzero_coef_prod(i).element"
+        n_nonzero_1ortho = .bra_set.vec(i).n_nonzero_1ortho
+        n_nonzero_blocks = size(.bra_set.vec(i).nonzero_coef_ind)
+        first_block = 1
+      !  if (.first_block == 0) then 
+        if (.nonzero_1D(i)) then
+           first_block = 0
+           p_coef_1ortho = ZERO
+           do j=1,n_nonzero_1ortho ! loop over nonzero 1-ortho. blocks
+              p_coef_1ortho = p_coef_1ortho + .bra_set.vec(i).red_coef(j)**2
+           end
+           .nonzero_coef_prod(i).element(1) = p_coef_1ortho
+        end
+        !ind = 1-.first_block
+        ind = 1-first_block
+        do j=n_nonzero_1ortho+1,n_nonzero_blocks ! loop over nonzero Pauli blocks
+           ind = ind + 1
+           .nonzero_coef_ind(i).element(ind) = .bra_set.vec(i).nonzero_coef_ind(j)
+           !ind_prod = .bra_set.vec(i).nonzero_coef_ind(j) + 1 -.first_block
+           ind_prod = .bra_set.vec(i).nonzero_coef_ind(j) + 1 - first_block
+           .nonzero_coef_prod(i).element(ind_prod) = TWO*(.bra_set.vec(i).red_coef(j)**2)
+        end
+     end
+   end
+
    gradient_gem(coef) result(grad) ::: selfless
    ! compute the energy gradient with respec to the block
    ! coefficients "coef"
@@ -14761,23 +14981,28 @@ contains
      grad :: VEC{REAL}(size(coef))
      !
      self :: PAULI_BLOCK_GEMINALS*
+     norms :: VEC{REAL}*
      overlap :: REAL
      update :: BIN
+     counter,n_optimized_coef,i,j :: INT
 
      self => pbg_saved
 
      ! check if "coef" and (nonzero) ".bra_set.vec(:).coef" 
      ! differ or not; if they differ, update=TRUE
-     .check_coef(coef, update)
-     if (update) then
+     norms.create(.n_geminals)
+     norms=ONE
+!why    .check_coef(coef, update)
+!why     if (update) then
         !
         ! update objects used to compute the energy
-        .update_coef(coef)
+        .update_coef_keep_norms(coef,norms)
         !
         ! compute the squared norm of the wavefunction
         .calc_overlap_integral(overlap,FALSE)
+!        .calc_overlap_integral(overlap,TRUE)
         .overlap = overlap
-     end !if
+!why     end !if
      
      ! compute the 2RDM
      ! (and save info. to compute the energy gradient)
@@ -14785,6 +15010,24 @@ contains
 
      ! compute the energy gradient
      .calc_energy_gradient(grad=grad, wrt_arg=FALSE)
+     !.calc_energy_gradient(grad=grad, wrt_arg=TRUE)
+     counter = 0
+     do i=1,.n_geminals
+   !     stdout.show("geminal",i)
+   !     stdout.show("norm",norms(i))
+   !     .bra_set.vec(i).coef=.bra_set.vec(i).coef*norms(i)
+   !     .ket_set.vec(i).coef=.ket_set.vec(i).coef*norms(i)
+        n_optimized_coef = size(.bra_set.vec(i).optimized_coef_ind)
+        do j=1,n_optimized_coef
+           counter = counter+1
+           !rescale gradient and restore non normalized coefficients
+           grad(counter)=grad(counter)/norms(i)
+        end
+     end
+   !  stdout.text("grad")
+   !  stdout.put(grad)
+   !  stdout.text(" ")
+     norms.destroy
 
      ! compute the gradient norm
      .coef_opt_info.grd_norm = grad.norm
@@ -14792,6 +15035,7 @@ contains
      ! ".coef_opt_info.new_iter" indicates when a new iteration
      ! of the optimization has started
      .coef_opt_info.new_iter = TRUE
+   !  stdout.show("iter dans gradient",.coef_opt_info.iter)
 
    end
 
@@ -14819,8 +15063,11 @@ contains
            k = .bra_set.vec(i).optimized_coef_ind(j)
            counter = counter+1
            diffc = coef(counter)-.bra_set.vec(i).coef(k)
-           if (abs(diffc) > TOL(15)) then
+!           if (abs(diffc) > TOL(15)) then
+           if (abs(diffc) > .coef_opt_info.coef_tol) then
               differ_coef = TRUE
+              stdout.show("nb of the first coef to be updated before computing the gradient",counter)
+              stdout.show("difference",diffc)
 !              stdout.text("Coef has to be updated before computing the gradient")
               return
            end
@@ -14844,8 +15091,11 @@ contains
           !   stdout.show("it is now: ", ang)
           ! end
            diffc = .GD2_info(i) - ang 
-           if (abs(diffc) > TOL(15)) then
+!           if (abs(diffc) > TOL(15)) then
+           if (abs(diffc) > .coef_opt_info.coef_tol) then
               differ_coef = TRUE
+              stdout.show("nb of the first coef to be updated before computing the gradient",counter)
+              stdout.show("difference",diffc)
 !              stdout.text("Coef has to be updated before computing the gradient")
               return
            end
@@ -15071,24 +15321,23 @@ contains
         end
      end
 
-     !!! debug
-    !!! debug   stdout.text(" ")
-    !!! debug   stdout.show("geminal",g)
-    !!! debug   stdout.show("block",b)
-    !!! debug   stdout.show("Numerator derivative =",ene_deriv*.overlap)
-    !!! debug   stdout.show("Electronic energy =",.electronic_energy)
-    !!! debug   stdout.show("Coefficient =",coef)
-    !!! debug   stdout.show("Reduced overlap =",rov)
-    !!! debug   stdout.show("Overlap derivative =", ove_deriv)
-     !!! debug
+!!! debug  stdout.text(" ")
+!!! debug  stdout.show("geminal",g)
+!!! debug  stdout.show("block",b)
+!!! debug  stdout.show("Hamiltonian derivative =",ene_deriv)
+!!! debug  stdout.show("Numerator derivative =",ene_deriv*.overlap)
+!!! debug  stdout.show("Electronic energy =",.electronic_energy)
+!!! debug  stdout.show("Coefficient =",coef)
+!!! debug  stdout.show("Reduced overlap =",rov)
+!!! debug  stdout.show("Overlap derivative =", ove_deriv)
+!!! debug  stdout.show("Overlap =", .overlap)
+    
      !
      ! compute the final value of the energy derivative
      ! (including the contribution from the wfu norm) 
      ene_deriv = ene_deriv - .electronic_energy*ove_deriv/.overlap
+!!! debug    stdout.show("expectation value derivative =", ene_deriv)
      !
-!!! debug
-!!! debug     stdout.show("Energy gradient element =",ene_deriv)
-!!!debug  
 
      ! store the value of the energy derivative
      .energy_gradient(i).elt = ene_deriv
