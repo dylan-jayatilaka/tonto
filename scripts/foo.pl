@@ -952,6 +952,7 @@ sub analyse_type_name {
 
 #  print "----IN analyse_type_name---------------";
 #  print "type_name         =",$type_name;
+#  print "right             =",$right;
 #  print "full_type_name    =",$full_type_name;
 #  print "type_name         =",$type_name;
 #  print "sub_type_name     =",$sub_type_name;
@@ -1002,6 +1003,12 @@ sub analyse_type_name {
   else                        { $type_ptr_part = '';   }
 
 # print "right = $right";
+
+  # Capture type argument ? part
+  if ($type_name =~ /[?]$/) { $type_ptr_part = '?';  } # The ? at the end, if any (macro)
+
+# print "type_name         =",$type_name;
+# print "type_ptr_part     =",$type_ptr_part;
 
   # Get all the type arguments, within curlies e.g. blah in {blah,blah}  ...
   my $n_type_args = 0;

@@ -1,4 +1,4 @@
-!-------------------------------------------------------------------------------
+!========================================================================
 !
 ! CIF: An object for processing Crystallographic Information Files (CIF).
 !
@@ -18,9 +18,7 @@
 ! License along with this library; if not, write to the
 ! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 ! Boston, MA  02111-1307, USA.
-!
-! $Id: cif.foo 4318 2014-04-07 08:53:54Z dylan_ $
-!-------------------------------------------------------------------------------
+!========================================================================
 
 module CIF
 
@@ -28,50 +26,35 @@ module CIF
 
 contains
 
-!  ==========================
-!  Create and destroy methods
-!  ==========================
+!  ==================
+!  Allocation methods
+!  ==================
 
-   create ::: get_from(OBJECT), leaky
-   ! Create an object
+   create ::: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
    end
 
-   destroy ::: get_from(OBJECT), leaky
-   ! Destroy an object
+!  WARNING: destroy may not be pure due to .file
+
+   destroy ::: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
    end
 
    create(name) ::: leaky
    ! Create a a cif with .file_name to be "name".
-      self :: PTR
+      self :: allocatable, OUT
       name :: STR, IN
 
       .create
-      .set_file_name(name)
+      .set_file_name(name) ! NOT PURE
 
-   end
-
-   nullify_ptr_part
-   ! Nullify the pointer parts
-      nullify(.file)
    end
 
    destroy_ptr_part ::: leaky
    ! Destroy the pointer parts
+      self :: INOUT
+
       .file.destroy
-   end
-
-   create_copy(object) ::: get_from(OBJECT), leaky
-   ! Create a copy of object
-   end
-
-   copy(cif) ::: leaky
-   ! Set self to be "cif".
-      cif :: CIF, IN
-
-      self = cif
-
-      .nullify_ptr_part
-      if (cif.file.associated) .file.create_copy(cif.file)
 
    end
 
@@ -79,10 +62,10 @@ contains
 !  Set routines
 !  ============
 
-   set_defaults(name) 
+   set_defaults(name)
    ! Set up defaults
       self :: INOUT
-      name :: STR, IN, optional
+      name :: STR, optional, IN
 
       .file_name        = " "
       .use_CIF2         = FALSE
@@ -103,22 +86,21 @@ contains
       .GC3_scale_factor = CIF_GC3_SCALE_FACTOR
       .GC4_scale_factor = CIF_GC4_SCALE_FACTOR
 
-      if (present(name)) .set_file_name(name)
+      if (present(name)) .set_file_name(name) ! NOT PURE
 
    end
 
    set_file_name(name) ::: leaky
    ! Set the default .file_name to be "name".
       self :: INOUT
-      name :: STR
+      name :: STR, IN
 
  ! ENSURE(file.exists(name),"no CIF file exists named: "//name.trim)
-   WARN_IF(.file_name/=" ","a file name already exists")
+ ! ENSURE(.file_name==" ","a file name already exists")
 
       .file_name = name
       .file.create(name) ! ignore unmatched quotes for CIF's
       .file.set_ignore_unmatched_quotes(TRUE)
-
       if (.file_name.filename_tail=="cif2") then
          .set_use_CIF2(TRUE)
       end
@@ -134,20 +116,22 @@ contains
 
    end
 
-   set_data_block_name(name) ::: leaky
+   set_data_block_name(name) ::: leaky, PURE
    ! Set the default .data_block_name to be "name".
-      name :: STR
+      self :: INOUT
+      name :: STR, IN
 
    ENSURE(.file_name/=" ","specify data_block_name= after the file_name=")
-   WARN_IF(.data_block_name/=" ","a data block name already exists")
+ ! ENSURE(.data_block_name==" ","a data block name already exists")
 
       .data_block_name = name
 
    end
 
-   set_GC_format(fmt) ::: leaky
+   set_GC_format(fmt) ::: leaky, PURE
    ! Set the Gram-Charlier format
-      fmt :: STR
+      self :: INOUT
+      fmt :: STR, IN
 
       .GC_format = fmt
       .GC_format.to_lower_case
@@ -162,8 +146,8 @@ contains
          .GC3_label =  "_atom_site_Cartn_ADP3_U_"
          .GC4_label =  "_atom_site_Cartn_ADP4_U_"
 
-      case default
-         UNKNOWN(.GC_format)
+    ! case default
+    !    UNKNOWN(.GC_format)
 
       end
 
@@ -209,7 +193,7 @@ contains
       .GC4_label = lab
    end
 
-   set_is_mmCIF(val) ::: leaky
+   set_is_mmCIF(val) ::: PURE
    ! Set whether we have a macromolecular CIF format.
       self :: INOUT
       val :: BIN, IN
@@ -218,7 +202,16 @@ contains
 
    end
 
-   set_use_fragments(val) ::: leaky
+   set_start_of_data(val) ::: PURE
+   ! Set the staring line to search for something in the CIF.
+      self :: INOUT
+      val :: INT, IN
+
+      .start_of_data = val
+
+   end
+
+   set_use_fragments(val) ::: PURE
    ! Set whether we want to make fragments to split protein up.
       self :: INOUT
       val :: BIN, IN
@@ -235,7 +228,7 @@ contains
    ! Create and open the CIF
       self :: INOUT
 
-   ENSURE(.file.associated,"file not created")
+   ENSURE(.file.allocated,"file not created")
 
       .file.open_for("read")
 
@@ -245,7 +238,7 @@ contains
    ! Close the CIF, and destroy it
       self :: INOUT
 
-   ENSURE(.file.associated,"file not created")
+   ENSURE(.file.allocated,"file not created")
 
       .file.close
 
@@ -264,7 +257,9 @@ contains
    process_keyword(keyword) ::: leaky
    ! Process command "keyword". Any required data needed by the "keyword" is
    ! inputted from "stdin".
-      keyword :: STR
+      self :: INOUT
+      keyword :: STR, IN
+
       word :: STR
 
       word = keyword
@@ -294,12 +289,12 @@ contains
       case ("u_is_b=               "); .read_U_is_B
       case ("u_is_beta=            "); .read_U_is_beta
       case ("use_fragments=        "); .read_use_fragments
-      case default;                       UNKNOWN(word)
+      case default;                    UNKNOWN(word)
       end
 
    end
 
-   finalize
+   update ::: pure
    ! Make sure the input satisfies sanity checks.
       self :: INOUT
 
@@ -362,7 +357,6 @@ contains
       fmt :: STR
 
       stdin.read(fmt)
-
       .set_GC_format(fmt)
 
    end
@@ -374,7 +368,6 @@ contains
       lab :: STR
 
       stdin.read(lab)
-
       .set_GC3_label(lab)
 
    end
@@ -386,7 +379,6 @@ contains
       lab :: STR
 
       stdin.read(lab)
-
       .set_GC4_label(lab)
 
    end
@@ -398,7 +390,6 @@ contains
       apply :: BIN
 
       stdin.read(apply)
-
       if (apply) then; .BH_bond_length =  abs(.BH_bond_length)
       else;            .BH_bond_length = -abs(.BH_bond_length)
       end
@@ -412,7 +403,6 @@ contains
       apply :: BIN
 
       stdin.read(apply)
-
       if (apply) then; .CH_bond_length =  abs(.CH_bond_length)
       else;            .CH_bond_length = -abs(.CH_bond_length)
       end
@@ -426,7 +416,6 @@ contains
       apply :: BIN
 
       stdin.read(apply)
-
       if (apply) then; .NH_bond_length =  abs(.NH_bond_length)
       else;            .NH_bond_length = -abs(.NH_bond_length)
       end
@@ -440,7 +429,6 @@ contains
       apply :: BIN
 
       stdin.read(apply)
-
       if (apply) then; .OH_bond_length =  abs(.OH_bond_length)
       else;            .OH_bond_length = -abs(.OH_bond_length)
       end
@@ -453,7 +441,7 @@ contains
 
       stdin.read_quantity(.BH_bond_length)
 
-      ENSURE(.BH_bond_length>ZERO,"length must be +ve to be applied")
+   ENSURE(.BH_bond_length>ZERO,"length must be +ve to be applied")
 
    end
 
@@ -463,7 +451,7 @@ contains
 
       stdin.read_quantity(.CH_bond_length)
 
-      ENSURE(.CH_bond_length>ZERO,"length must be +ve to be applied")
+   ENSURE(.CH_bond_length>ZERO,"length must be +ve to be applied")
 
    end
 
@@ -473,7 +461,7 @@ contains
 
       stdin.read_quantity(.NH_bond_length)
 
-      ENSURE(.NH_bond_length>ZERO,"length must be +ve to be applied")
+   ENSURE(.NH_bond_length>ZERO,"length must be +ve to be applied")
 
    end
 
@@ -483,7 +471,7 @@ contains
 
       stdin.read_quantity(.OH_bond_length)
 
-      ENSURE(.OH_bond_length>ZERO,"length must be +ve to be applied")
+   ENSURE(.OH_bond_length>ZERO,"length must be +ve to be applied")
 
    end
 
@@ -494,7 +482,6 @@ contains
       val :: BIN
 
       stdin.read(val)
-
       .set_is_mmCIF(val)
 
    end
@@ -537,7 +524,6 @@ contains
       val :: BIN
 
       stdin.read(val)
-
       .set_use_fragments(val)
 
    end
@@ -598,9 +584,35 @@ contains
 !  Find data block
 !  ===============
 
-   find_data_block(name,found)
-   ! Find the start of a data block "data_<name>" with "<name>" 
-   ! in the cif file.
+   find_data_block(found)
+   ! Find the start of a data block "data_<name>" in the cif file.
+   ! . Start from line .start_of_data = 1
+   ! . If present and the block is found, "found" is set TRUE.
+   ! . If not present and the block is not found, it is an error. 
+   ! . If found, the ".start_of_data", ".end_of_data" records 
+   !   are stored, and the "<name>" in ".data_block_name".
+      self :: INOUT
+      found :: BIN, optional, OUT
+
+   ENSURE(.file.allocated,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+
+      ! From line 1
+      .start_of_data = 1
+
+      ! Find the start
+      .find_start_of_data_block
+
+      ! Found?
+      if (present(found)) then
+         found = .data_block_found
+      end
+
+   end
+
+   find_data_block_called(name,found)
+   ! Find the start of a *specific* data block "data_<name>" 
+   ! with "<name>" e.g. starting with "data_name" in the cif file.
    ! . Start from line .start_of_data = 1
    ! . If present and the block is found, "found" is set TRUE.
    ! . If not present and the block is not found, it is an error. 
@@ -610,7 +622,7 @@ contains
       name :: STR, IN
       found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
 
       ! From line 1
@@ -648,14 +660,14 @@ contains
       self :: INOUT
 
    ENSURE(.start_of_data>0,".start_of_data is 0")
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
 
       .data_block_name = " "
 
-      .file.look_for_item("data_",             &
-                          head_match=TRUE,     &
-                          from=.start_of_data, &
+      .file.look_for_item("data_",              &
+                          head_match=TRUE,      &
+                          from =.start_of_data, &
                           found=.data_block_found)
 
       if (.data_block_found) then
@@ -687,7 +699,7 @@ contains
    !   end of the file if no block terminator was found. 
       self :: INOUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
 
       ! Find EOD
@@ -701,7 +713,7 @@ contains
 
    end
 
-   find_data_block(found)
+   find_crystal_data_block(found)
    ! Find the first acceptable small-molecule data block
    ! . Starting from ".start_of_data" 
    ! . Store its name in ".data_block_name".
@@ -718,8 +730,8 @@ contains
 
    end
 
-   find_sm_data_block(found)
-   ! Find the first acceptable small-molecule data block
+   find_sm_data_block(found) ::: private
+   ! Find the first acceptable small-molecule crystal data block 
    ! . Starting from ".start_of_data" 
    ! . Store its name in ".data_block_name".
    ! . If present "found" is set TRUE
@@ -727,7 +739,7 @@ contains
       self :: INOUT
       found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
 
       there :: VEC{BIN}(4)
@@ -798,8 +810,8 @@ contains
 
    end
 
-   find_mm_data_block(found)
-   ! Find the first acceptable macromolecular data block
+   find_mm_data_block(found) ::: private
+   ! Find the first acceptable macro-molecular data block
    ! . Starting from ".start_of_data" 
    ! . Store its name in ".data_block_name".
    ! . If present "found" is set TRUE
@@ -807,7 +819,7 @@ contains
       self :: INOUT
       found :: BIN, OUT, optional
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
 
       there :: VEC{BIN}(12)
@@ -878,7 +890,7 @@ contains
    ! Move to the (previously found) end of a data block.
       self :: INOUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.end_of_data>0,"end_of_data is not set")
 
@@ -907,9 +919,9 @@ contains
    ! without an error. 
       self :: INOUT
       ID :: STR, IN
-      found :: BIN, OUT, optional
+      found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
    ENSURE(.end_of_data>.start_of_data,"no data block found")
@@ -936,10 +948,10 @@ contains
    ! and there is no error.
       self :: INOUT
       ID :: STR, IN
-      item :: TYPE, OUT
-      found :: BIN, OUT, optional
+      item :: TYPE?, OUT
+      found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
 
@@ -956,13 +968,13 @@ contains
 
    end
 
-   read_item(ID,item,found) ::: get_from(CIF, TYPE=>STR)
+   read_item(ID,item,found) ::: get_from(CIF, TYPE?=>STR)
    ! Read a data "item" with string identifier "ID". If present,
    ! "found" is set TRUE if "ID" is found, otherwise it is set FALSE
    ! and there is no error.
    end
 
-   read_item(ID,item,found) ::: get_from(CIF, TYPE=>INT)
+   read_item(ID,item,found) ::: get_from(CIF, TYPE?=>INT)
    ! Read a data "item" with string identifier "ID". If present,
    ! "found" is set TRUE if "ID" is found, otherwise it is set FALSE
    ! and there is no error.
@@ -978,10 +990,10 @@ contains
       self :: INOUT
       ID :: STR, IN
       item :: STR, OUT
-      itemvec :: VEC{STR}*
-      found :: BIN, OUT, optional
+      itemvec :: VEC{STR}@
+      found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
 
@@ -998,14 +1010,10 @@ contains
 
       ! Read the item
       .file.read(item) 
-      nullify(itemvec)
 
       ! Multi-line data?
       semicolon = ";"
       if (item==semicolon AND .file.buffer.item_start==1) then
-
-         ! Create 
-         itemvec.create(0)
 
          ! Append rest of line
          item = .file.rest_of_line
@@ -1024,7 +1032,6 @@ contains
          if (itemvec.dim==1) then
             item = itemvec(1)
             itemvec.destroy
-            nullify(itemvec)
          else
             item = " "
          end
@@ -1043,10 +1050,10 @@ contains
       self :: INOUT
       ID :: STR, IN
       item :: REAL, OUT
-      error :: REAL, OUT, optional
-      found :: BIN, OUT, optional
+      error :: REAL, optional, OUT
+      found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
 
@@ -1074,10 +1081,10 @@ contains
    ! set FALSE and there is no error.
       self :: INOUT
       ID :: STR, IN
-      item :: TYPE, OUT
-      found :: BIN, OUT, optional
+      item :: TYPE?, OUT
+      found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
 
@@ -1104,13 +1111,13 @@ contains
 
    end
 
-   read_item(ID,item,found) ::: get_from(CIF, TYPE=>VEC{REAL})
+   read_item(ID,item,found) ::: get_from(CIF, TYPE?=>VEC{REAL})
    ! Read an array data "item" with string identifier "ID". If
    ! present, "found" is set TRUE if "ID" is found, otherwise it is
    ! set FALSE and there is no error.
    end
 
-   read_item(ID,item,found) ::: get_from(CIF, TYPE=>MAT{REAL})
+   read_item(ID,item,found) ::: get_from(CIF, TYPE?=>MAT{REAL})
    ! Read an array data "item" with string identifier "ID". If
    ! present, "found" is set TRUE if "ID" is found, otherwise it is
    ! set FALSE and there is no error.
@@ -1123,24 +1130,21 @@ contains
    ! and there is no error.
       self :: INOUT
       ID :: STR, IN
-      item :: TYPE@, OUT
+      item :: TYPE?@, OUT
       op :: STR, IN
       cl :: STR, IN
-      found :: BIN, OUT, optional
+      found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
-
-      op_del,cl_del :: STR
-      del :: STR
 
       ! Find "ID"
       .find_item(ID,found)
 
       ! Found?
       if (present(found)) then
-        if (NOT found) return
+         if (NOT found) return
       end
 
       ! Read the data
@@ -1148,7 +1152,7 @@ contains
 
    end
 
-   read_all_item(ID,item,op,cl,found) ::: get_from(CIF, TYPE=>VEC{REAL})
+   read_all_item(ID,item,op,cl,found) ::: get_from(CIF, TYPE?=>VEC{REAL})
    ! Read an allocatable array data "item" with string identifier
    ! "ID" which is delimited by "op" and "cl" delimiters. If present,
    ! "found" is set TRUE if "ID" is found, otherwise it is set FALSE
@@ -1167,10 +1171,10 @@ contains
    ! . n_labels is the total number of looped data labels
       self :: INOUT
       ID :: STR, IN
-      found :: BIN, OUT, optional
-      ID_pos,n_labels :: INT, OUT, optional
+      found :: BIN, optional, OUT
+      ID_pos,n_labels :: INT, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
    ENSURE(ID(1:1)=="_","ID list is not a looped datum")
@@ -1257,10 +1261,10 @@ contains
    ! FALSE and the routine returns without an error.
       self :: INOUT
       ID :: STR, IN
-      item :: VEC{TYPE}*
-      found :: BIN, OUT, optional
+      item :: VEC{TYPE?}@, OUT
+      found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
    ENSURE(ID(1:1)=="_","ID list is not a looped datum")
@@ -1268,7 +1272,7 @@ contains
       n_labels,ID_pos :: INT
       word :: STR
       fnd :: BIN
-      val :: TYPE
+      val :: TYPE?
 
       ! Find the looped item
       .find_looped_item(ID,fnd,ID_pos,n_labels)
@@ -1278,9 +1282,6 @@ contains
          found = fnd
          if (NOT found) return
       end
-
-      ! Create the ID data-vector
-      item.create(0)
 
       ! Loop over ID-type lines
       do
@@ -1310,13 +1311,13 @@ contains
 
    end
 
-   read_looped_item(ID,item,found) ::: get_from(CIF, TYPE=>INT)
+   read_looped_item(ID,item,found) ::: get_from(CIF, TYPE?=>INT)
    ! Read a looped/vector data "item" with string identifier "ID".
    ! If present, "found" is set TRUE if "ID" is found, else it is set
    ! FALSE and the routine returns without an error.
    end
 
-   read_looped_item(ID,item,found) ::: get_from(CIF, TYPE=>STR)
+   read_looped_item(ID,item,found) ::: get_from(CIF, TYPE?=>STR)
    ! Read a looped/vector data "item" with string identifier "ID".
    ! If present, "found" is set TRUE if "ID" is found, else it is set
    ! FALSE and the routine returns without an error.
@@ -1331,11 +1332,11 @@ contains
    ! FALSE and the routine returns without an error.
       self :: INOUT
       ID :: STR, IN
-      item :: VEC{REAL}*
-      error :: VEC{REAL}*, optional
-      found :: BIN, OUT, optional
+      item :: VEC{REAL}@, OUT
+      error :: VEC{REAL}@, optional, OUT
+      found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
    ENSURE(ID(1:1)=="_","ID list is not a looped datum")
@@ -1351,10 +1352,6 @@ contains
       if (present(found)) then
          if (NOT found) return
       end
-
-      ! Create the ID data-vector
-      item.create(0)
-      if (present(error)) error.create(0)
 
       ! Loop over ID-type lines
       do
@@ -1402,12 +1399,13 @@ contains
    ! occur in the loop_ i.e. ID_pos(item) is monotone increasing and
    ! in particular ID_pos(item) <= label
       self :: INOUT
-      ID :: VEC{STR}, IN
-      found :: BIN, OUT, optional
-      ID_pos,ID_ind :: VEC{INT}, OUT, optional
-      n_labels :: INT, OUT, optional
+      ID   :: VEC{STR}, IN
+      found    :: BIN, optional, OUT
+      ID_pos   :: VEC{INT}, optional, OUT
+      ID_ind   :: VEC{INT}, optional, OUT
+      n_labels :: INT, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
    ENSURE(ID.dim>0,"no items in ID list")
@@ -1511,12 +1509,12 @@ contains
    ! of "mat", with columns equal to the number of loops. "mat" is
    ! created. If present, "found" is set TRUE if all the "ID" are
    ! found; else it is set FALSE and routine returns without error.
-      self :: INOUT
-      ID :: VEC{STR}, IN
-      mat :: MAT{STR}*
-      found :: BIN, OUT, optional
+      self  :: INOUT
+      ID    :: VEC{STR}, IN
+      mat   :: MAT{STR}@, OUT
+      found :: BIN, optional, OUT
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
 
@@ -1607,14 +1605,14 @@ contains
    ! created. Assoaciated errors are placed in "error". If present,
    ! "found" is set TRUE if all the "ID" are found; else it is set
    ! FALSE and routine returns without error.
-      self :: INOUT
-      ID :: VEC{STR}, OUT
-      mat :: MAT{REAL}*
-      error :: MAT{REAL}*, optional
+      self  :: INOUT
+      ID    :: VEC{STR}, OUT
+      mat   :: MAT{REAL}@, OUT
+      error :: MAT{REAL}@, optional, OUT
       found :: BIN, optional, OUT
       transpose :: BIN, optional, IN
 
-   ENSURE(.file.associated,"CIF file has not been created")
+   ENSURE(.file.allocated,"CIF file has not been created")
    ENSURE(.file.is_open,"CIF file has not been opened")
    ENSURE(.start_of_data>0,"no data block found")
 
@@ -1734,25 +1732,25 @@ contains
 !  Read CIF covariance mx
 !  ======================
 
-   read_CIF_covariance(kind,covariance_matrix)
+   read_CIF_covariance(kind,covariance_mx)
    ! Read information from a Crystallographic Information File "cif".
       self :: INOUT
       kind :: STR, IN
-      covariance_matrix :: MAT{REAL}@, OUT
+      covariance_mx :: MAT{REAL}@, OUT
 
       cov :: VEC{REAL}@
       np :: INT
       there :: BIN
 
       ! Find appropriate kind of covariance matrix
-      .find_item(trim(kind)//"_covariance_matrix",there)
+      .find_item(trim(kind)//"_covariance_mx",there)
 
       if (there) then
 
          ! Read and set it
-         .read_all_item(trim(kind)//"_covariance_matrix",cov,"[","]")
+         .read_all_item(trim(kind)//"_covariance_mx",cov,"[","]")
          np = nint(sqrt(REALIFY(cov.dim)))
-         covariance_matrix = reshape(cov,[np,np])
+         covariance_mx = reshape(cov,[np,np])
          cov.destroy
 
       end

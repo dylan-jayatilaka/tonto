@@ -1,4 +1,4 @@
-!===============================================================================
+!==================================================================
 !
 ! MOLECULE.PROP: An object representation of a molecule.
 !
@@ -18,9 +18,7 @@
 ! License along with this library; if not, write to the
 ! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 ! Boston, MA  02111-1307, USA.
-!
-! $Id: molecule.prop.foo $
-!===============================================================================
+!==================================================================
 
 module MOLECULE.PROP
 
@@ -34,17 +32,14 @@ contains
 
    read_force_constants ::: leaky
    ! Read the force constants as a flat vector in atomic units.
-   ! SInce it is a symmetric matrix the order does not matter.
+   ! Since it is a symmetric matrix the order, row or column major,
+   ! does not matter.
+      self :: INOUT
 
-      fc :: VEC{REAL}*
+      fc :: VEC{REAL}@
 
-      ! Read
-      stdin.read_ptr(fc)
-
-      ! Set ... leaky
-      .BASE:set_force_constants(fc)
-
-      ! Clean
+      stdin.read_all(fc)
+      .SET:set_force_constants(fc)
       fc.destroy
 
    end
@@ -54,7 +49,7 @@ contains
       self :: INOUT
 
    ENSURE(.force_constants.allocated,"no force constants")
-   ENSURE(.atom.associated,"no atoms")
+   ENSURE(.atom.allocated,"no atoms")
 
       n3n,i,j :: INT
       fc :: MAT{REAL}@
@@ -143,7 +138,9 @@ contains
       eval.create(n3n)
       eval = .normal_mode_eigenvalues
       eval = sqrt(abs(eval)) * WAVENUMBER_PER_HARTREE
-      ewav = eval.to_str(stdout.real_style,stdout.real_width,stdout.real_precision)
+      ewav = eval.to_str(stdout.style.real_fortran_fmt &
+                        ,stdout.style.real_width &
+                        ,stdout.style.real_precision)
       eval.destroy
 
       ! Set table data
@@ -168,7 +165,7 @@ contains
    ! See Schneider and Thiel (1989) CPL 157 p. 367.
       self :: INOUT
 
-   ENSURE(.atom.associated,"no atoms")
+   ENSURE(.atom.allocated,"no atoms")
    ENSURE(.atom.dim==1, "must have more than one atom")
 
       qtox :: MAT{REAL}@
@@ -258,15 +255,15 @@ contains
    ! Put all the available one elctron properties
       self :: INOUT
 
-   ENSURE(.density_matrix.allocated,"no density")
-   ENSURE(.atom.associated,"no atoms")
-   ENSURE(.basis.associated,"no basis sets specified")
+   ENSURE(.density_mx.allocated,"no density")
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.basis.allocated,"no basis sets specified")
 
       ! Make the density matrix (leaky)
-      .BASE:make_ao_density_matrix
+      .BASE:make_r_density_mx
 
       ! Mulliken analysis (leaky)
-      .:put_mulliken_populations
+      .:put_Mulliken_populations
       .:put_Mayer_bond_indices
 
       ! Moments
@@ -275,16 +272,14 @@ contains
       .:put_octupole
 
       ! Atomic charges & moments
-      .:put_Hirshfeld_atom_info
+      .:put_HA_info
 
       ! Fields and field gradients
       .:put_E_field_at_nuclei
       .:put_EFG_at_nuclei
 
-      ! Standard plots
-
       ! Clean up leak here
-      .BASE:delete_atom_scf_archives
+      .SET:delete_atom_SCF_archives
 
    end
 
@@ -292,15 +287,15 @@ contains
    ! Put all the available one elctron properties
       self :: INOUT
 
-   ENSURE(.density_matrix.allocated,"no density")
-   ENSURE(.atom.associated,"no atoms")
-   ENSURE(.basis.associated,"no basis sets specified")
+   ENSURE(.density_mx.allocated,"no density")
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.basis.allocated,"no basis sets specified")
 
       ! Make the density matrix (leaky)
-      .BASE:make_ao_density_matrix
+      .BASE:make_r_density_mx
 
       ! Mulliken analysis (leaky)
-      .:put_mulliken_populations
+      .:put_Mulliken_populations
 
       ! Moments
       .:put_dipole
@@ -311,7 +306,7 @@ contains
       .:put_KM_atom_multipoles
 
       ! Atomic charges & moments
-      .:put_Hirshfeld_atom_info
+      .:put_HA_info
 
       ! Fields and field gradients
       .:put_E_field_at_nuclei
@@ -320,7 +315,7 @@ contains
       ! Standard plots
 
       ! Clean up leak here
-      .BASE:delete_atom_scf_archives
+      .SET:delete_atom_SCF_archives
 
    end
 
@@ -328,26 +323,28 @@ contains
    ! Put all the one electron properties for each group
       self :: INOUT
 
-   ENSURE(.density_matrix.allocated,"no density")
-   ENSURE(.atom.associated,"no atoms")
-   ENSURE(.basis.associated,"no basis sets specified")
-   ENSURE(.atom_group.allocated,"no atom_groups")
+   ENSURE(.density_mx.allocated,"no density")
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.basis.allocated,"no basis sets specified")
+   ENSURE(.atom_group.allocated,"no .atom_group")
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(.mol.dim==.atom_group.dim,"wrong size, .mol")
 
       g :: INT
 
       .SCF:make_ANO_data
 
-      .BASE:finalize_atom_groups
+    ! .BASE:update_atom_groups
 
       do g = 1,.atom_group.dim
 
          stdout.flush
-         stdout.text("======================")
+         stdout.text("=======================")
          stdout.text("Properties for group "//trim(g.to_str))
-         stdout.text("======================")
+         stdout.text("=======================")
          stdout.flush
 
-         .atom_group(g).mol.:put_1e_properties
+         .mol(g).:put_1e_properties
 
       end
 
@@ -359,8 +356,8 @@ contains
    ! Write out the Mayer bond indices
       self :: INOUT
 
-   ENSURE(.density_matrix.allocated,"no density matrix")
-   ENSURE(.density_matrix.restricted.allocated,"only for restricted densities")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.density_mx.r.allocated,"only for restricted densities")
 
       table :: VEC{TABLE_COLUMN}@
       Z_list :: VEC{EVEC{INT}}@
@@ -380,8 +377,8 @@ contains
       no_of_bonds = .atom.no_of_bonds(ROBY_BOND_RANGE_FACTOR)
       if (no_of_bonds<1) return
 
-      if (.scfdata.created) then
-      if (.scfdata.spinorbital_kind/="restricted") then
+      if (.scfdata.allocated) then
+      if (.scfdata.spinorbital_genre/="r ") then
          return ! Do not do for anything but restricted for now
       end
       end
@@ -391,11 +388,11 @@ contains
       DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
 
       ! Overlap matrix (leaky)
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
       ! Restricted Mulliken matrix
       PS.create(.n_bf,.n_bf)
-      PS.to_product_of(.density_matrix.restricted,.overlap_matrix)
+      PS.to_product_of(.density_mx.r,.overlap_mx)
 
       ! Mulliken diagonal populations
       PD.create(.n_bf)
@@ -621,125 +618,130 @@ contains
 
 !  Mulliken populations
 
-   put_mulliken_populations ::: leaky
-   ! sets the mulliken population matrix and the outputs it.
-      self :: INOUT
+   put_Mulliken_populations ::: leaky
+   ! Output Mulliken population matrix.
+      self :: IN
 
-      mulliken_matrix, density :: MAT{REAL}*
-      diagonals :: VEC{REAL}*
-      S2 :: MAT{REAL}*
-      mulliken_matrix2 :: MAT{CPX}*
-      diagonals2 :: VEC{CPX}*
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+   ENSURE(.density_mx.allocated,"no density matrix")
+
+      mulliken_mx  :: MAT{REAL}@
+      DM, S2       :: MAT{REAL}@
+      diagonals    :: VEC{REAL}@
+      mulliken_mx2 :: MAT{CPX}@
+      diagonals2  :: VEC{CPX}@
 
       ! Create space
-      mulliken_matrix.create(.n_bf, .n_bf)
+      mulliken_mx.create(.n_bf, .n_bf)
       diagonals.create(.n_bf)
 
-      ! Overlap matrix (leaky)
-      .INTS:make_overlap_matrix
-
-      ! general complex case (LBxxx)
-      if (.density_matrix.is_allocated_with_genre("general_complex")) then
+      ! General complex case (LBxxx)
+      if (.density_mx.is_allocated_with_genre("gc")) then
 
          ! these objects are twice as large as usually
          S2.create(2*.n_bf,2*.n_bf)
-         mulliken_matrix2.create(2*.n_bf,2*.n_bf)
+         mulliken_mx2.create(2*.n_bf,2*.n_bf)
          diagonals2.create(2*.n_bf)
 
-         mulliken_matrix2 = (ZERO,ZERO)
+         mulliken_mx2 = (ZERO,ZERO)
          diagonals2 = (ZERO,ZERO)
          S2 = ZERO
-         S2.alpha_alpha_set_to(.overlap_matrix)
-         S2.beta_beta_set_to(.overlap_matrix)
+         S2.set_aa_block_to(.overlap_mx)
+         S2.set_bb_block_to(.overlap_mx)
 
          stdout.flush
-         stdout.text(" These are the GCHF Mulliken populations! ")
+         stdout.text("   =========================")
+         stdout.text("   GCHF Mulliken populations")
+         stdout.text("   =========================")
+
 
          ! fill the general_complex mulliken matrix and diagonals
-         mulliken_matrix2.to_product_of(.density_matrix.general_complex,S2)
-         mulliken_matrix2.put_diagonal_to(diagonals2)
+         mulliken_mx2.to_product_of(.density_mx.gc,S2)
+         mulliken_mx2.put_diagonal_to(diagonals2)
 
          ! Make use of the restricted mulliken matrix
-         diagonals = REALIFY(diagonals2(1:.n_bf)) + REALIFY(diagonals2(.n_bf+1:2*.n_bf))
-         mulliken_matrix = REALIFY(mulliken_matrix2(1:.n_bf,1:.n_bf)) +  &
-                           REALIFY(mulliken_matrix2(.n_bf+1:2*.n_bf,.n_bf+1:2*.n_bf))
+         diagonals   = REALIFY(diagonals2(1:.n_bf)) &
+                     + REALIFY(diagonals2(.n_bf+1:2*.n_bf))
+         mulliken_mx = REALIFY(mulliken_mx2(1:.n_bf,1:.n_bf)) &
+                     + REALIFY(mulliken_mx2(.n_bf+1:2*.n_bf,.n_bf+1:2*.n_bf))
 
          ! Put the atomic populations
-         .:put_mulliken_populations(mulliken_matrix, diagonals)
+         .:put_Mulliken_populations(mulliken_mx,diagonals)
 
-         mulliken_matrix2.destroy
+         mulliken_mx2.destroy
          diagonals2.destroy
          S2.destroy
 
          stdout.flush
-         stdout.text(" These are the GCHF Mulliken spin populations! ")
-         stdout.text(" Using the ao sz density and/or the collinear spin populations")
-         stdout.flush
+         stdout.text("   ==============================")
+         stdout.text("   GCHF Mulliken spin populations")
+         stdout.text("   ==============================")
 
-         density.create(.n_bf,.n_bf)
-         density = ZERO
-         .BASE:make_ao_sz_density_matrix(density)
-         mulliken_matrix=ZERO; diagonals=ZERO
-         ! fill the general_complex mulliken matrix and diagonals
-         mulliken_matrix.to_product_of(density,.overlap_matrix)
-         mulliken_matrix.put_diagonal_to(diagonals)
+         ! Make GC mulliken matrix and diagonals
+         DM.create(.n_bf,.n_bf)
+         DM = ZERO
+         .BASE:make_r_Sz_density_mx(DM)
+         mulliken_mx = ZERO
+         diagonals   = ZERO
+         mulliken_mx.to_product_of(DM,.overlap_mx)
+         mulliken_mx.put_diagonal_to(diagonals)
          ! Put the atomic ao sz spin populations
-         .:put_mulliken_spins(mulliken_matrix, diagonals)
-         density.destroy
+         .:put_Mulliken_spins(mulliken_mx, diagonals)
+         DM.destroy
 
       ! Unrestricted case
-      else if (.density_matrix.is_allocated_with_genre("unrestricted")) then
+      else if (.density_mx.is_allocated_with_genre("u ")) then
 
          ! Temporary
-         density.create(.n_bf,.n_bf)
+         DM.create(.n_bf,.n_bf)
 
          ! Restricted density matrix
-         density = .density_matrix.alpha + .density_matrix.beta
+         DM = .density_mx.a + .density_mx.b
 
          ! Normal mulliken population
-         mulliken_matrix.to_product_of(density,.overlap_matrix)
-         mulliken_matrix.put_diagonal_to(diagonals)
+         mulliken_mx.to_product_of(DM,.overlap_mx)
+         mulliken_mx.put_diagonal_to(diagonals)
 
          ! Put the populations
-         .:put_mulliken_populations(mulliken_matrix, diagonals)
+         .:put_Mulliken_populations(mulliken_mx, diagonals)
 
          ! Unpaired density matrix
-         density = .density_matrix.alpha - .density_matrix.beta
-         mulliken_matrix.to_product_of(density,.overlap_matrix)
-         mulliken_matrix.put_diagonal_to(diagonals)
+         DM = .density_mx.a - .density_mx.b
+         mulliken_mx.to_product_of(DM,.overlap_mx)
+         mulliken_mx.put_diagonal_to(diagonals)
 
          ! Put the spin populations
-         .:put_mulliken_spins(mulliken_matrix, diagonals)
+         .:put_Mulliken_spins(mulliken_mx, diagonals)
 
          ! Clean up
-         density.destroy
+         DM.destroy
 
       ! Restricted case
-      else if (.density_matrix.is_allocated_with_genre("restricted")) then
+      else if (.density_mx.is_allocated_with_genre("r ")) then
 
          ! Make the restricted mulliken matrix
-         mulliken_matrix.to_product_of(.density_matrix.restricted,.overlap_matrix)
-         mulliken_matrix.put_diagonal_to(diagonals)
+         mulliken_mx.to_product_of(.density_mx.r,.overlap_mx)
+         mulliken_mx.put_diagonal_to(diagonals)
 
          ! Put the atomic populations
-         .:put_mulliken_populations(mulliken_matrix, diagonals)
+         .:put_Mulliken_populations(mulliken_mx, diagonals)
 
       else
 
-        DIE("Mulliken populations not yet implemented for this case")
+         DIE("Mulliken populations not yet implemented for this case")
 
       end
 
       ! Clean up
-      mulliken_matrix.destroy
+      mulliken_mx.destroy
       diagonals.destroy
 
    end
 
-   put_mulliken_populations(mulliken_matrix,diagonals)
+   put_Mulliken_populations(mulliken_mx,diagonals)
    ! Output the Mulliken populations
-      self :: INOUT
-      mulliken_matrix :: MAT{REAL}, IN
+      self :: IN
+      mulliken_mx :: MAT{REAL}, IN
       diagonals :: VEC{REAL}, IN
 
       table :: VEC{TABLE_COLUMN}@
@@ -787,7 +789,7 @@ contains
       stdout.text("Mulliken basis-function populations")
       stdout.text("===================================")
       stdout.flush
-      stdout.show("Trace of the Mulliken matrix =",mulliken_matrix.trace)
+      stdout.show("Trace of the Mulliken matrix =",mulliken_mx.trace)
       stdout.flush
 
       ! Create table
@@ -849,15 +851,15 @@ contains
 
    end
 
-   put_mulliken_spins(mulliken_matrix,diagonals)
+   put_Mulliken_spins(mulliken_mx,diagonals)
    ! Outputs the mulliken populations to the output file
       self :: IN
-      mulliken_matrix :: MAT{REAL}, IN
+      mulliken_mx :: MAT{REAL}, IN
       diagonals :: VEC{REAL}, IN
 
    ! ENSURE(NOT .use_spherical_basis,"not implemented")
 
-      atom_pop :: VEC{REAL}*
+      atom_pop :: VEC{REAL}@
       pop :: REAL
       o_count, a, b, c, n_comp :: INT
 
@@ -901,7 +903,7 @@ contains
       stdout.dash(int_fields=2,real_fields=1)
 
       stdout.flush
-      stdout.show("Trace of the Mulliken spin matrix =",mulliken_matrix.trace)
+      stdout.show("Trace of the Mulliken spin matrix =",mulliken_mx.trace)
 
       ! Print out the spins
       stdout.flush
@@ -927,14 +929,16 @@ contains
 
    get_gchf_na_nb ::: leaky
    ! alpha and beta populations of occupied GCHF spinorbitals
+      self :: IN
 
-      S :: MAT{REAL}*
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+
+      S :: MAT{REAL}@
       i,k,l :: INT
       na,nb,atot,btot,II :: CPX
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
-      II=(ZERO,ONE)
+      S  = .overlap_mx
+      II = (ZERO,ONE)
 
       stdout.flush
       stdout.flush
@@ -949,23 +953,24 @@ contains
       stdout.dash(int_fields=1,real_fields=4)
       atot=(ZERO,ZERO)
       btot=(ZERO,ZERO)
-         do i=1,.n_e
-           na=(ZERO,ZERO)
-           nb=(ZERO,ZERO)
-             do k=1,.n_bf
-                do l=1,.n_bf
-                ! sigma z overlap
-                  na = na + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l,i))
-                  nb = nb + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,i))
-                end
+      do i=1,.n_e
+        na=(ZERO,ZERO)
+        nb=(ZERO,ZERO)
+          do k=1,.n_bf
+             do l=1,.n_bf
+             ! sigma z overlap
+               na = na + conjg(.MOs.gc(k,i))*S(k,l)*(.MOs.r(l,i))
+               nb = nb + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*(.MOs.r(l+.n_bf,i))
              end
-           stdout.put(i)  
-           stdout.put(na) 
-           stdout.put(nb)
-           stdout.flush
-           atot = atot + na
-           btot = btot + nb
-         end
+          end
+        stdout.put(i)  
+        stdout.put(na) 
+        stdout.put(nb)
+        stdout.flush
+        atot = atot + na
+        btot = btot + nb
+      end
+
       stdout.dash(int_fields=1,real_fields=4)
       stdout.put("total:",int_width=TRUE)  
       stdout.put(atot) 
@@ -981,22 +986,25 @@ contains
    get_uhf_sx_sy_sz ::: leaky
    ! evaluation of expectation values of sigma_x, sigma_y and sigma_z
    ! n_x=0, n_y= and n_z= number of open shell electrons
+      self :: IN
 
-      S,orbs :: MAT{REAL}*
-      CMOi :: VEC{REAL}*
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+
+      S :: MAT{REAL}@
+      orbs  :: MAT{REAL}@, target
+      CMOi  :: VEC{REAL}*
       i,k,l :: INT
       z,x,y :: REAL
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
+      S = .overlap_mx
 
       orbs.create(2*.n_bf,.n_e)
       orbs=ZERO
       do i=1,.n_a
-        orbs(1:.n_bf,i) = .molecular_orbitals.alpha(:,i)
+        orbs(1:.n_bf,i) = .MOs.a(:,i)
       end  
       do i=1,.n_b
-        orbs(.n_bf+1:2*.n_bf,.n_a+i) = .molecular_orbitals.beta(:,i)
+        orbs(.n_bf+1:2*.n_bf,.n_a+i) = .MOs.b(:,i)
       end  
 
       x=ZERO;y=ZERO;z=ZERO
@@ -1033,238 +1041,266 @@ contains
    get_gchf_sx_sy_sz ::: leaky
    ! evaluation of expectation values of sigma_x, sigma_y and sigma_z
    ! n_x=0, n_y= and n_z= number of open shell electrons
-   S :: MAT{REAL}*
-   i,k,l :: INT
-   z,x,y,II :: CPX
+      self :: IN
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
-      II=(ZERO,ONE)
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-         x=(ZERO,ZERO)
-         y=(ZERO,ZERO)
-         z=(ZERO,ZERO)
-         do i=1,.n_e
-             do k=1,.n_bf
-                do l=1,.n_bf
-                ! sigma x overlap
-                  x = x + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l,i))
-                  x = x + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,i))
-                ! sigma y overlap
-                  y = y + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*.molecular_orbitals.general_complex(l,i)
-                  y = y - conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*.molecular_orbitals.general_complex(l+.n_bf,i)
-                ! sigma z overlap
-                  z = z + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l,i))
-                  z = z - conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,i))
-                end
-             end
-         end
+      S :: MAT{REAL}@
+      i,k,l :: INT
+      z,x,y,II :: CPX
 
-         stdout.flush
-         stdout.text("GCHF expectation values of Pauli spin matrices:")
-         stdout.show("n_x = <sigma_x> ",x)  
-         stdout.show("n_y = <sigma_y> ",y)  
-         stdout.show("n_z = <sigma_z> ",z)  
-         stdout.flush
+      S  = .overlap_mx
+      II = (ZERO,ONE)
+
+      x = (ZERO,ZERO)
+      y = (ZERO,ZERO)
+      z = (ZERO,ZERO)
+      do i = 1,.n_e
+      do k = 1,.n_bf
+      do l = 1,.n_bf
+         ! sigma x overlap
+         x = x + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*.MOs.r(l      ,i)
+         x = x + conjg(.MOs.gc(k      ,i))*S(k,l)*.MOs.r(l+.n_bf,i)
+         ! sigma y overlap
+         y = y + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*.MOs.r(l      ,i)
+         y = y - conjg(.MOs.gc(k      ,i))*S(k,l)*.MOs.r(l+.n_bf,i)
+         ! sigma z overlap
+         z = z + conjg(.MOs.gc(k      ,i))*S(k,l)*.MOs.r(l      ,i)
+         z = z - conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*.MOs.r(l+.n_bf,i)
+      end
+      end
+      end
+
+      stdout.flush
+      stdout.text("GCHF expectation values of Pauli spin matrices:")
+      stdout.show("n_x = <sigma_x> ",x)  
+      stdout.show("n_y = <sigma_y> ",y)  
+      stdout.show("n_z = <sigma_z> ",z)  
+      stdout.flush
 
    end
 
    get_uhf_s2 ::: leaky
    ! s2 uhf expectation values 
    ! evaluated directly for the x, y and z components
-   S :: MAT{REAL}*
-   CMOi,CMOj :: VEC{REAL}*
-   sx,sy,sz,orbs :: MAT{REAL}*
-   i,j,k,l :: INT
-   x,y,z :: REAL
+      self :: IN
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-   sx.create(.n_e,.n_e); sy.create(.n_e,.n_e); sz.create(.n_e,.n_e)
-         orbs.create(2*.n_bf,.n_e)
-         orbs=ZERO
-         do i=1,.n_a
-           orbs(1:.n_bf,i) = .molecular_orbitals.alpha(:,i)
-         end  
-         do i=1,.n_b
-           orbs(.n_bf+1:2*.n_bf,.n_a+i) = .molecular_orbitals.beta(:,i)
-         end  
-         sx=ZERO
-         sy=ZERO
-         sz=ZERO
+      S :: MAT{REAL}@
+      sx,sy,sz  :: MAT{REAL}@
+      orbs      :: MAT{REAL}@, target
+      CMOi,CMOj :: VEC{REAL}*
+      i,j,k,l :: INT
+      x,y,z :: REAL
 
-         do i=1,.n_e
-         do j=1,.n_e
-           CMOi => orbs(:,i)
-           CMOj => orbs(:,j)
-             do k=1,.n_bf
-                do l=1,.n_bf
-                ! sigma x density 
-                  sx(i,j) = sx(i,j) + (CMOi(k+.n_bf))*S(k,l)*(CMOj(l))
-                  sx(i,j) = sx(i,j) + (CMOi(k))*S(k,l)*(CMOj(l+.n_bf))
-                ! sigma y density
-                  sy(i,j) = sy(i,j) + (CMOi(k+.n_bf))*S(k,l)*CMOj(l)
-                  sy(i,j) = sy(i,j) - (CMOi(k))*S(k,l)*CMOj(l+.n_bf)
-                ! sigma z density
-                  sz(i,j) = sz(i,j) + (CMOi(k))*S(k,l)*(CMOj(l))
-                  sz(i,j) = sz(i,j) - (CMOi(k+.n_bf))*S(k,l)*(CMOj(l+.n_bf))
-                end
+      S = .overlap_mx
+
+      sx.create(.n_e,.n_e)
+      sy.create(.n_e,.n_e)
+      sz.create(.n_e,.n_e)
+
+      orbs.create(2*.n_bf,.n_e)
+      orbs=ZERO
+      do i=1,.n_a
+        orbs(1:.n_bf,i) = .MOs.a(:,i)
+      end  
+      do i=1,.n_b
+        orbs(.n_bf+1:2*.n_bf,.n_a+i) = .MOs.b(:,i)
+      end  
+
+      sx=ZERO
+      sy=ZERO
+      sz=ZERO
+
+      do i=1,.n_e
+      do j=1,.n_e
+        CMOi => orbs(:,i)
+        CMOj => orbs(:,j)
+          do k=1,.n_bf
+             do l=1,.n_bf
+             ! sigma x density 
+               sx(i,j) = sx(i,j) + (CMOi(k+.n_bf))*S(k,l)*(CMOj(l))
+               sx(i,j) = sx(i,j) + (CMOi(k))*S(k,l)*(CMOj(l+.n_bf))
+             ! sigma y density
+               sy(i,j) = sy(i,j) + (CMOi(k+.n_bf))*S(k,l)*CMOj(l)
+               sy(i,j) = sy(i,j) - (CMOi(k))*S(k,l)*CMOj(l+.n_bf)
+             ! sigma z density
+               sz(i,j) = sz(i,j) + (CMOi(k))*S(k,l)*(CMOj(l))
+               sz(i,j) = sz(i,j) - (CMOi(k+.n_bf))*S(k,l)*(CMOj(l+.n_bf))
              end
+          end
 
-         end
-         end
+      end
+      end
 
-         x=ZERO
-         y=ZERO
-         z=ZERO
-         do i=1,.n_e
-         do j=i+1,.n_e
-           x = x - sx(i,j)*sx(j,i)*TWO + sx(i,i)*sx(j,j)*TWO
-           y = y + sy(i,j)*sy(j,i)*TWO - sy(i,i)*sy(j,j)*TWO  ! i*i=-1
-           z = z - sz(i,j)*sz(j,i)*TWO + sz(i,i)*sz(j,j)*TWO
-         end
-         end
+      x=ZERO
+      y=ZERO
+      z=ZERO
+      do i=1,.n_e
+      do j=i+1,.n_e
+        x = x - sx(i,j)*sx(j,i)*TWO + sx(i,i)*sx(j,j)*TWO
+        y = y + sy(i,j)*sy(j,i)*TWO - sy(i,i)*sy(j,j)*TWO  ! i*i=-1
+        z = z - sz(i,j)*sz(j,i)*TWO + sz(i,i)*sz(j,j)*TWO
+      end
+      end
 
-         stdout.flush
-         stdout.text("S^2 = Sx^2 + Sy^2 + Sz^2")  
-         stdout.show("Sx^2 ",(.n_e + x)/FOUR)  
-         stdout.show("Sy^2 ",(.n_e + y)/FOUR)
-         stdout.show("Sz^2 ",(.n_e + z)/FOUR)  
-         stdout.show("S^2  ",(THREE*.n_e+x+y+z)/FOUR)  
-         stdout.flush
-   sx.destroy;sy.destroy;sz.destroy
+      stdout.flush
+      stdout.text("S^2 = Sx^2 + Sy^2 + Sz^2")  
+      stdout.show("Sx^2 ",(.n_e + x)/FOUR)  
+      stdout.show("Sy^2 ",(.n_e + y)/FOUR)
+      stdout.show("Sz^2 ",(.n_e + z)/FOUR)  
+      stdout.show("S^2  ",(THREE*.n_e+x+y+z)/FOUR)  
+      stdout.flush
+
+      sx.destroy
+      sy.destroy
+      sz.destroy
 
    end
 
    get_gchf_s2 ::: leaky
    ! S2 gchf expectation value evaluated via Sx^2 + Sy^2 + Sz^2 contributions
-   S :: MAT{REAL}*
-   sx,sy,sz :: MAT{CPX}*
-   i,j,k,l :: INT
-   x,y,z :: CPX
+      self :: IN
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-   sx.create(.n_e,.n_e); sy.create(.n_e,.n_e); sz.create(.n_e,.n_e)
+      S :: MAT{REAL}@
+      sx,sy,sz :: MAT{CPX}@
+      i,j,k,l :: INT
+      x,y,z :: CPX
 
-         stdout.flush
-         sx=(ZERO,ZERO)
-         sy=(ZERO,ZERO)
-         sz=(ZERO,ZERO)
+      S = .overlap_mx
 
-         do i=1,.n_e
-         do j=1,.n_e
-             do k=1,.n_bf
-                do l=1,.n_bf
-                ! sigma x squared density
-                  sx(i,j) = sx(i,j) + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l,j))
-                  sx(i,j) = sx(i,j) + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,j))
-                ! sigma y density
-                  sy(i,j) = sy(i,j) + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*.molecular_orbitals.general_complex(l,j)
-                  sy(i,j) = sy(i,j) - conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*.molecular_orbitals.general_complex(l+.n_bf,j)
-                ! sigma z density
-                  sz(i,j) = sz(i,j) + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l,j))
-                  sz(i,j) = sz(i,j) - conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,j))
-                end
+      sx.create(.n_e,.n_e)
+      sy.create(.n_e,.n_e)
+      sz.create(.n_e,.n_e)
+
+      stdout.flush
+      sx=(ZERO,ZERO)
+      sy=(ZERO,ZERO)
+      sz=(ZERO,ZERO)
+
+      do i=1,.n_e
+      do j=1,.n_e
+          do k=1,.n_bf
+             do l=1,.n_bf
+             ! sigma x squared density
+               sx(i,j) = sx(i,j) + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*(.MOs.r(l,j))
+               sx(i,j) = sx(i,j) + conjg(.MOs.gc(k,i))*S(k,l)*(.MOs.r(l+.n_bf,j))
+             ! sigma y density
+               sy(i,j) = sy(i,j) + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*.MOs.r(l,j)
+               sy(i,j) = sy(i,j) - conjg(.MOs.gc(k,i))*S(k,l)*.MOs.r(l+.n_bf,j)
+             ! sigma z density
+               sz(i,j) = sz(i,j) + conjg(.MOs.gc(k,i))*S(k,l)*(.MOs.r(l,j))
+               sz(i,j) = sz(i,j) - conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*(.MOs.r(l+.n_bf,j))
              end
+          end
 
-         end
-         end
+      end
+      end
 
-         x=(ZERO,ZERO)
-         y=(ZERO,ZERO)
-         z=(ZERO,ZERO)
-         do i=1,.n_e
-         do j=i+1,.n_e
-           x = x - sx(i,j)*sx(j,i)*TWO + sx(i,i)*sx(j,j)*TWO
-           y = y + sy(i,j)*sy(j,i)*TWO - sy(i,i)*sy(j,j)*TWO  ! i*i=-1
-           z = z - sz(i,j)*sz(j,i)*TWO + sz(i,i)*sz(j,j)*TWO
-         end
-         end
+      x=(ZERO,ZERO)
+      y=(ZERO,ZERO)
+      z=(ZERO,ZERO)
+      do i=1,.n_e
+      do j=i+1,.n_e
+        x = x - sx(i,j)*sx(j,i)*TWO + sx(i,i)*sx(j,j)*TWO
+        y = y + sy(i,j)*sy(j,i)*TWO - sy(i,i)*sy(j,j)*TWO  ! i*i=-1
+        z = z - sz(i,j)*sz(j,i)*TWO + sz(i,i)*sz(j,j)*TWO
+      end
+      end
 
-         stdout.flush
-         stdout.text("S^2 = Sx^2 + Sy^2 + Sz^2")  
-         stdout.show("Sx^2 ",(.n_e + x)/FOUR)  
-         stdout.show("Sy^2 ",(.n_e + y)/FOUR)
-         stdout.show("Sz^2 ",(.n_e + z)/FOUR)  
-         stdout.show("S^2  ",(THREE*.n_e+x+y+z)/FOUR)  
-         stdout.flush
-   sx.destroy;sy.destroy;sz.destroy
+      stdout.flush
+      stdout.text("S^2 = Sx^2 + Sy^2 + Sz^2")  
+      stdout.show("Sx^2 ",(.n_e + x)/FOUR)  
+      stdout.show("Sy^2 ",(.n_e + y)/FOUR)
+      stdout.show("Sz^2 ",(.n_e + z)/FOUR)  
+      stdout.show("S^2  ",(THREE*.n_e+x+y+z)/FOUR)  
+      stdout.flush
+
+      sx.destroy
+      sy.destroy
+      sz.destroy
 
    end
 
    get_uhf_s2_orig ::: leaky
    ! s2 uhf expectation value via the overlap of alpha and beta orbs.
-   S :: MAT{REAL}*
-   CMOi,CMOj :: VEC{REAL}*
-   aa,bb,ab,ba,orbs :: MAT{REAL}*
-   i,j,k,l :: INT
-   x,y,z,na,nb :: REAL
+      self :: IN
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-   aa.create(.n_e,.n_e); bb.create(.n_e,.n_e)
-   ba.create(.n_e,.n_e); ab.create(.n_e,.n_e)
+      S :: MAT{REAL}@
+      aa,bb,ab,ba :: MAT{REAL}@
+      orbs        :: MAT{REAL}@, target
+      CMOi,CMOj   :: VEC{REAL}*
+      i,j,k,l :: INT
+      x,y,z,na,nb :: REAL
 
-         stdout.flush
-         stdout.text("S^2 = (S+S- + S-S+)/2 + Sz^2")  
-         aa=ZERO
-         ab=ZERO
-         ba=ZERO
-         bb=ZERO
-         orbs.create(2*.n_bf,.n_e)
-         orbs=ZERO
-         do i=1,.n_a
-           orbs(1:.n_bf,i) = .molecular_orbitals.alpha(:,i)
-         end  
-         do i=1,.n_b
-           orbs(.n_bf+1:2*.n_bf,.n_a+i) = .molecular_orbitals.beta(:,i)
-         end  
+      S = .overlap_mx
 
-         do i=1,.n_e
-         do j=1,.n_e
-           CMOi => orbs(:,i)
-           CMOj => orbs(:,j)
-             do k=1,.n_bf
-                do l=1,.n_bf
-                  ba(i,j) = ba(i,j) + (CMOi(k+.n_bf))*S(k,l)*(CMOj(l))
-                  ab(i,j) = ab(i,j) + (CMOi(k))*S(k,l)*(CMOj(l+.n_bf))
-                  aa(i,j) = aa(i,j) + (CMOi(k))*S(k,l)*(CMOj(l))
-                  bb(i,j) = bb(i,j) + (CMOi(k+.n_bf))*S(k,l)*(CMOj(l+.n_bf))
-                end
+      aa.create(.n_e,.n_e); bb.create(.n_e,.n_e)
+      ba.create(.n_e,.n_e); ab.create(.n_e,.n_e)
+
+      stdout.flush
+      stdout.text("S^2 = (S+S- + S-S+)/2 + Sz^2")  
+      
+      aa=ZERO
+      ab=ZERO
+      ba=ZERO
+      bb=ZERO
+
+      orbs.create(2*.n_bf,.n_e)
+      orbs=ZERO
+      do i=1,.n_a
+        orbs(1:.n_bf,i) = .MOs.a(:,i)
+      end  
+      do i=1,.n_b
+        orbs(.n_bf+1:2*.n_bf,.n_a+i) = .MOs.b(:,i)
+      end  
+
+      do i=1,.n_e
+      do j=1,.n_e
+        CMOi => orbs(:,i)
+        CMOj => orbs(:,j)
+          do k=1,.n_bf
+             do l=1,.n_bf
+               ba(i,j) = ba(i,j) + (CMOi(k+.n_bf))*S(k,l)*(CMOj(l))
+               ab(i,j) = ab(i,j) + (CMOi(k))*S(k,l)*(CMOj(l+.n_bf))
+               aa(i,j) = aa(i,j) + (CMOi(k))*S(k,l)*(CMOj(l))
+               bb(i,j) = bb(i,j) + (CMOi(k+.n_bf))*S(k,l)*(CMOj(l+.n_bf))
              end
+          end
 
-         end
-         end
-          
-         na=ZERO
-         nb=ZERO
-         do i=1,.n_e
-           CMOi => orbs(:,i)
-             do k=1,.n_bf
-                do l=1,.n_bf
-                  na = na + (CMOi(k))*S(k,l)*(CMOi(l))
-                  nb = nb + (CMOi(k+.n_bf))*S(k,l)*(CMOi(l+.n_bf))
-                end
+      end
+      end
+       
+      na=ZERO
+      nb=ZERO
+      do i=1,.n_e
+        CMOi => orbs(:,i)
+          do k=1,.n_bf
+             do l=1,.n_bf
+               na = na + (CMOi(k))*S(k,l)*(CMOi(l))
+               nb = nb + (CMOi(k+.n_bf))*S(k,l)*(CMOi(l+.n_bf))
              end
-         end
-         stdout.text("alpha (na) and beta (nb) populations:")  
-         stdout.show("na ",na)  
-         stdout.show("nb ",nb)  
+          end
+      end
+      stdout.text("alpha (na) and beta (nb) populations:")  
+      stdout.show("na ",na)  
+      stdout.show("nb ",nb)  
 
-         x=ZERO
-         y=ZERO
-         z=ZERO
-         do i=1,.n_e
-         do j=1,.n_e
-           x = x +  ab(i,i)*ba(j,j) - ab(i,j)*ba(j,i)
-           y = y +  ba(i,i)*ab(j,j) - ba(i,j)*ab(j,i)
-           z = z + (aa(i,j)-bb(i,j))*(aa(j,i)-bb(j,i)) 
-         end
-         end
+      x=ZERO
+      y=ZERO
+      z=ZERO
+      do i=1,.n_e
+      do j=1,.n_e
+        x = x +  ab(i,i)*ba(j,j) - ab(i,j)*ba(j,i)
+        y = y +  ba(i,i)*ab(j,j) - ba(i,j)*ab(j,i)
+        z = z + (aa(i,j)-bb(i,j))*(aa(j,i)-bb(j,i)) 
+      end
+      end
 
       stdout.show("S2 exact",(na -nb)*(na-nb+TWO)/FOUR)
       stdout.show("S+S-/2 ",(na + x)/TWO)  
@@ -1273,271 +1309,292 @@ contains
       stdout.show("S2   ",((na-nb)**2 + .n_e - z)/FOUR + (na + x + nb + y)/TWO)  
       stdout.show("spin_contamination",nb + ( x + y)/TWO +(.n_e-z)/FOUR)  
 
-      aa.destroy;bb.destroy;ab.destroy;ba.destroy;orbs.destroy
+      aa.destroy;bb.destroy
+      ab.destroy;ba.destroy
+      orbs.destroy
 
    end
 
    get_gchf_s2_orig ::: leaky
    ! S2 gchf expectation value evaluated via S+-,  S-+ and Sz^2 contributions
-   S :: MAT{REAL}*
-   aa,bb,ab,ba :: MAT{CPX}*
-   i,j,k,l :: INT
-   x,y,z,na,nb :: CPX
-   S2,S2e :: REAL
+      self :: IN
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-   aa.create(.n_e,.n_e); bb.create(.n_e,.n_e)
-   ba.create(.n_e,.n_e); ab.create(.n_e,.n_e)
+      S :: MAT{REAL}@
+      aa,bb,ab,ba :: MAT{CPX}@
+      i,j,k,l :: INT
+      x,y,z,na,nb :: CPX
+      S2,S2e :: REAL
 
-         stdout.flush
-         stdout.flush
-         stdout.text("S^2 = (S+S- + S-S+)/2 + Sz^2")  
-         aa=(ZERO,ZERO)
-         ab=(ZERO,ZERO)
-         ba=(ZERO,ZERO)
-         bb=(ZERO,ZERO)
+      S = .overlap_mx
 
-         do i=1,.n_e
-         do j=1,.n_e
-             do k=1,.n_bf
-                do l=1,.n_bf
-                  ba(i,j) = ba(i,j) + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l,j))
-                  ab(i,j) = ab(i,j) + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,j))
-                  aa(i,j) = aa(i,j) + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l,j))
-                  bb(i,j) = bb(i,j) + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,j))
-                end
+      aa.create(.n_e,.n_e); bb.create(.n_e,.n_e)
+      ba.create(.n_e,.n_e); ab.create(.n_e,.n_e)
+
+      stdout.flush
+      stdout.flush
+      stdout.text("S^2 = (S+S- + S-S+)/2 + Sz^2")  
+      aa=(ZERO,ZERO)
+      ab=(ZERO,ZERO)
+      ba=(ZERO,ZERO)
+      bb=(ZERO,ZERO)
+
+      do i=1,.n_e
+      do j=1,.n_e
+          do k=1,.n_bf
+             do l=1,.n_bf
+               ba(i,j) = ba(i,j) + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*(.MOs.r(l,j))
+               ab(i,j) = ab(i,j) + conjg(.MOs.gc(k,i))*S(k,l)*(.MOs.r(l+.n_bf,j))
+               aa(i,j) = aa(i,j) + conjg(.MOs.gc(k,i))*S(k,l)*(.MOs.r(l,j))
+               bb(i,j) = bb(i,j) + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*(.MOs.r(l+.n_bf,j))
              end
+          end
 
-         end
-         end
-          
-         na=(ZERO,ZERO)
-         nb=(ZERO,ZERO)
-         do i=1,.n_e
-             do k=1,.n_bf
-                do l=1,.n_bf
-                  na = na + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l,i))
-                  nb = nb + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,i))
-                end
+      end
+      end
+       
+      na=(ZERO,ZERO)
+      nb=(ZERO,ZERO)
+      do i=1,.n_e
+          do k=1,.n_bf
+             do l=1,.n_bf
+               na = na + conjg(.MOs.gc(k,i))*S(k,l)*(.MOs.r(l,i))
+               nb = nb + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*(.MOs.r(l+.n_bf,i))
              end
-         end
-         stdout.text("alpha (na) and beta (nb) populations:")  
-         stdout.show("na   ",na)  
-         stdout.show("nb   ",nb)  
+          end
+      end
+      stdout.text("alpha (na) and beta (nb) populations:")  
+      stdout.show("na   ",na)  
+      stdout.show("nb   ",nb)  
 
-         x=(ZERO,ZERO)
-         y=(ZERO,ZERO)
-         z=(ZERO,ZERO)
-         do i=1,.n_e
-         do j=1,.n_e
-           x = x +  ab(i,i)*ba(j,j) - ab(i,j)*ba(j,i)
-           y = y +  ba(i,i)*ab(j,j) - ba(i,j)*ab(j,i)
-           z = z + (aa(i,j)-bb(i,j))*(aa(j,i)-bb(j,i)) 
-         end
-         end
+      x=(ZERO,ZERO)
+      y=(ZERO,ZERO)
+      z=(ZERO,ZERO)
+      do i=1,.n_e
+      do j=1,.n_e
+        x = x +  ab(i,i)*ba(j,j) - ab(i,j)*ba(j,i)
+        y = y +  ba(i,i)*ab(j,j) - ba(i,j)*ab(j,i)
+        z = z + (aa(i,j)-bb(i,j))*(aa(j,i)-bb(j,i)) 
+      end
+      end
 
-         S2e=(.n_a -.n_b)*(.n_a-.n_b+TWO)/FOUR
-         S2=REALIFY( ((na-nb)**2 + .n_e - z)/FOUR + (na + x + nb + y)/TWO )
+      S2e=(.n_a -.n_b)*(.n_a-.n_b+TWO)/FOUR
+      S2=REALIFY( ((na-nb)**2 + .n_e - z)/FOUR + (na + x + nb + y)/TWO )
 
-         stdout.show("S2 exact          ",(.n_a -.n_b)*(.n_a-.n_b+TWO)/FOUR)
-         stdout.show("S+S-/2            ",(na + x)/TWO)  
-         stdout.show("S-S+/2            ",(nb + y)/TWO)  
-         stdout.show("Sz^2              ",((na-nb)**2 +.n_e - z)/FOUR)  
-         stdout.show("S2                ",((na-nb)**2 + .n_e - z)/FOUR + (na + x + nb + y)/TWO)  
-         stdout.show("spin_contamination",S2-S2e)
+      stdout.show("S2 exact          ",(.n_a -.n_b)*(.n_a-.n_b+TWO)/FOUR)
+      stdout.show("S+S-/2            ",(na + x)/TWO)  
+      stdout.show("S-S+/2            ",(nb + y)/TWO)  
+      stdout.show("Sz^2              ",((na-nb)**2 +.n_e - z)/FOUR)  
+      stdout.show("S2                ",((na-nb)**2 + .n_e - z)/FOUR + (na + x + nb + y)/TWO)  
+      stdout.show("spin_contamination",S2-S2e)
 
-      aa.destroy;bb.destroy;ab.destroy;ba.destroy
+      aa.destroy;bb.destroy
+      ab.destroy;ba.destroy
 
    end
 
    get_gchf_s2_contributions ::: leaky
-   ! S2 gchf expectation value decomposition into various contribution 
-   ! and matrix whose eigenvectors give directions of optimal collinearity 
+   ! S2 gchf expectation value decomposition into various 
+   ! contribution and matrix whose eigenvectors give 
+   ! directions of optimal collinearity 
    ! see P. Cassam-Chena\"{\i}, Theor Chem Acc (2015) 134:125
-   S :: MAT{REAL}*
-   aa,bb,ab,ba :: MAT{CPX}*
-   sxmat,symat,szmat :: MAT{CPX}*
-   amat :: MAT{CPX}*
-   i,j,k,l :: INT
-   x,y,z,na,nb :: CPX
-   ii,sx,sy,sz,sxsx,sxsy,sxsz,sysx,sysy,sysz,szsx,szsy,szsz :: CPX
-   S2,S2e :: REAL
+      self :: IN
 
-     .INTS:make_overlap_matrix ! leaky
-     S => .overlap_matrix
-     ii=(ZERO,ONE)
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-     amat.create(3,3)
-     aa.create(.n_e,.n_e); bb.create(.n_e,.n_e)
-     ba.create(.n_e,.n_e); ab.create(.n_e,.n_e)
-     sxmat.create(.n_e,.n_e); symat.create(.n_e,.n_e); szmat.create(.n_e,.n_e)
+      S :: MAT{REAL}@
+      aa,bb, ab,ba :: MAT{CPX}@
+      sxmat,symat,szmat :: MAT{CPX}@
+      amat :: MAT{CPX}@
+      i,j,k,l :: INT
+      x,y,z, na,nb   :: CPX
+      ii, sx,sy,sz   :: CPX
+      sxsx,sxsy,sxsz :: CPX
+      sysx,sysy,sysz :: CPX
+      szsx,szsy,szsz :: CPX
+      S2,S2e :: REAL
 
-     aa=(ZERO,ZERO)
-     ab=(ZERO,ZERO)
-     ba=(ZERO,ZERO)
-     bb=(ZERO,ZERO)
-     sxmat=(ZERO,ZERO)
-     symat=(ZERO,ZERO)
-     szmat=(ZERO,ZERO)
-
-     do i=1,.n_e
-       do j=1,.n_e
-         do k=1,.n_bf
-            do l=1,.n_bf
-              ba(i,j) = ba(i,j) + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l,j))
-              ab(i,j) = ab(i,j) + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,j))
-              aa(i,j) = aa(i,j) + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*(.molecular_orbitals.general_complex(l,j))
-              bb(i,j) = bb(i,j) + conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*(.molecular_orbitals.general_complex(l+.n_bf,j))
-            end
-         end
-         sxmat(i,j) = sxmat(i,j) + ab(i,j)+ba(i,j)
-         symat(i,j) = symat(i,j) + ab(i,j)-ba(i,j)
-         szmat(i,j) = szmat(i,j) + aa(i,j)-bb(i,j)
-       end
-     end
-     sxmat = sxmat/TWO
-     symat = symat/TWO/ii
-     szmat = szmat/TWO
+      S  = .overlap_mx
+      ii = (ZERO,ONE)
       
-     na=(ZERO,ZERO)
-     nb=(ZERO,ZERO)
-     do i=1,.n_e
-       na=na+aa(i,i)
-       nb=nb+bb(i,i)
-     end
+      amat.create(3,3)
+      aa.create(.n_e,.n_e); bb.create(.n_e,.n_e)
+      ba.create(.n_e,.n_e); ab.create(.n_e,.n_e)
+      sxmat.create(.n_e,.n_e); symat.create(.n_e,.n_e); szmat.create(.n_e,.n_e)
 
-     stdout.flush
-     stdout.flush
-     stdout.text("alpha (na) and beta (nb) populations:")  
-     stdout.show("na   ",na)  
-     stdout.show("nb   ",nb)  
-     amat=ZERO
-     amat(1,1)=.n_e/FOUR
-     amat(2,2)=.n_e/FOUR
-     amat(3,3)=.n_e/FOUR
-     x=(ZERO,ZERO)
-     y=(ZERO,ZERO)
-     z=(ZERO,ZERO)
-     sx=(ZERO,ZERO)
-     sy=(ZERO,ZERO)
-     sz=(ZERO,ZERO)
-     sxsx=(ZERO,ZERO)
-     sxsy=(ZERO,ZERO)
-     sxsz=(ZERO,ZERO)
-     sysx=(ZERO,ZERO)
-     sysy=(ZERO,ZERO)
-     sysz=(ZERO,ZERO)
-     szsx=(ZERO,ZERO)
-     szsy=(ZERO,ZERO)
-     szsz=(ZERO,ZERO)
-     do i=1,.n_e
-       do j=1,.n_e
-         x = x +  ab(i,i)*ba(j,j) 
-         y = y - ba(i,j)*ab(j,i)
-         z = z + (aa(i,j)-bb(i,j))*(aa(j,i)-bb(j,i)) 
-         amat(1,1) = amat(1,1)  - conjg(sxmat(i,j)) * sxmat(i,j)
-         amat(2,2) = amat(2,2)  - conjg(symat(i,j)) * symat(i,j) 
-         amat(3,3) = amat(3,3)  - conjg(szmat(i,j)) * szmat(i,j) 
-         amat(1,2) = amat(1,2)  - conjg(sxmat(i,j)) * symat(i,j)
-         amat(2,1) = amat(2,1)  - conjg(symat(i,j)) * sxmat(i,j) 
-         amat(1,3) = amat(1,3)  - conjg(sxmat(i,j)) * szmat(i,j) 
-         amat(3,1) = amat(3,1)  - conjg(szmat(i,j)) * sxmat(i,j) 
-         amat(2,3) = amat(2,3)  - conjg(symat(i,j)) * szmat(i,j) 
-         amat(3,2) = amat(3,2)  - conjg(szmat(i,j)) * symat(i,j) 
-         sxsy=sxsy + sxmat(i,i)*symat(j,j)- conjg(sxmat(i,j)) * symat(i,j) 
-         sysx=sysx + symat(i,i)*sxmat(j,j)- conjg(symat(i,j)) * sxmat(i,j)  
-         sxsz=sxsz + sxmat(i,i)*szmat(j,j)- conjg(sxmat(i,j)) * szmat(i,j)  
-         szsx=szsx + szmat(i,i)*sxmat(j,j)- conjg(szmat(i,j)) * sxmat(i,j)  
-         sysz=sysz + symat(i,i)*szmat(j,j)- conjg(symat(i,j)) * szmat(i,j)  
-         szsy=szsy + szmat(i,i)*symat(j,j)- conjg(szmat(i,j)) * symat(i,j)  
-       end
-       sxsy=sxsy + ii/TWO*szmat(i,i)
-       sysx=sysx - ii/TWO*szmat(i,i) 
-       sxsz=sxsz - ii/TWO*symat(i,i) 
-       szsx=szsx + ii/TWO*symat(i,i) 
-       sysz=sysz + ii/TWO*sxmat(i,i) 
-       szsy=szsy - ii/TWO*sxmat(i,i) 
-     end
+      aa=(ZERO,ZERO)
+      ab=(ZERO,ZERO)
+      ba=(ZERO,ZERO)
+      bb=(ZERO,ZERO)
+      sxmat=(ZERO,ZERO)
+      symat=(ZERO,ZERO)
+      szmat=(ZERO,ZERO)
+   
+      do i=1,.n_e
+      do j=1,.n_e
+        do k=1,.n_bf
+        do l=1,.n_bf
+          ba(i,j) = ba(i,j) + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*(.MOs.r(l,j))
+          ab(i,j) = ab(i,j) + conjg(.MOs.gc(k,i))*S(k,l)*(.MOs.r(l+.n_bf,j))
+          aa(i,j) = aa(i,j) + conjg(.MOs.gc(k,i))*S(k,l)*(.MOs.r(l,j))
+          bb(i,j) = bb(i,j) + conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*(.MOs.r(l+.n_bf,j))
+        end
+        end
+        sxmat(i,j) = sxmat(i,j) + ab(i,j)+ba(i,j)
+        symat(i,j) = symat(i,j) + ab(i,j)-ba(i,j)
+        szmat(i,j) = szmat(i,j) + aa(i,j)-bb(i,j)
+      end
+      end
+      sxmat = sxmat/TWO
+      symat = symat/TWO/ii
+      szmat = szmat/TWO
+       
+      na=(ZERO,ZERO)
+      nb=(ZERO,ZERO)
+      do i=1,.n_e
+        na=na+aa(i,i)
+        nb=nb+bb(i,i)
+      end
+   
+      stdout.flush
+      stdout.flush
+      stdout.text("alpha (na) and beta (nb) populations:")  
+      stdout.show("na   ",na)  
+      stdout.show("nb   ",nb)  
 
-     do i=1,.n_e
-       sx=sx + sxmat(i,i)
-       sy=sy + symat(i,i) 
-       sz=sz + szmat(i,i) 
-       do j=i+1,.n_e
-         sxsx=sxsx + sxmat(i,i)*sxmat(j,j) - sxmat(i,j)*sxmat(j,i)
-         sysy=sysy + symat(i,i)*symat(j,j) - symat(i,j)*symat(j,i)
-         szsz=szsz + szmat(i,i)*szmat(j,j) - szmat(i,j)*szmat(j,i)
-       end
-     end
-     sxsx=sxsx*TWO+.n_e/FOUR
-     sysy=sysy*TWO+.n_e/FOUR
-     szsz=szsz*TWO+.n_e/FOUR
-     S2e=(.n_a -.n_b)*(.n_a-.n_b+TWO)/FOUR
-     S2=REALIFY( ((na-nb)**2 + .n_e - z)/FOUR + (na + TWO*x + nb + TWO*y)/TWO )
+      amat=ZERO
+      amat(1,1)=.n_e/FOUR
+      amat(2,2)=.n_e/FOUR
+      amat(3,3)=.n_e/FOUR
 
-     stdout.flush
-     stdout.flush
-     stdout.text("Expectation values of spin operator components and their products:")  
-  !   stdout.show(" x                ",x)
-  !   stdout.show(" y                ",y)
-  !   stdout.show(" z                ",z)
-     stdout.show("Sx                ",sx)
-     stdout.show("Sy                ",sy)
-     stdout.show("Sz                ",sz)
-     stdout.show("SxSx              ",sxsx)
-     stdout.show("SxSy              ",sxsy)
-     stdout.show("SxSz              ",sxsz)
-     stdout.show("SySx              ",sysx)
-     stdout.show("SySy              ",sysy)
-     stdout.show("SySz              ",sysz)
-     stdout.show("SzSx              ",szsx)
-     stdout.show("SzSy              ",szsy)
-     stdout.show("SzSz              ",szsz)
-     stdout.show("S+S-/2            ",(na + x + y)/TWO)  
-     stdout.show("S-S+/2            ",(nb + x + y)/TWO)  
-  !  stdout.show("(na/2-nb/2)^2     ",((na-nb)**2)/FOUR)  
-  !  stdout.show("Sz^2              ",((na-nb)**2 +.n_e - z)/FOUR)  
-  !   stdout.show("S2 exact          ",(.n_a -.n_b)*(.n_a-.n_b+TWO)/FOUR)
-  !   stdout.show("S2                ",((na-nb)**2 + .n_e - z)/FOUR + (na + TWO*x + nb + TWO*y)/TWO)  
-     stdout.flush
-     stdout.flush
-     stdout.text("S^2 expectation value contributions:")  
-     stdout.show("(na-nb)(na-nb+2)/4     ",(na-nb)*(na-nb+2)/FOUR)  
-  !   stdout.show("(.n_e - z)/4      ",(.n_e - z)/FOUR)  
-     stdout.show("z-noncollinearity      ",(.n_e - z)/FOUR)  
-  !   stdout.show(" x                ",x)  
-     stdout.show("x,y-nonperpendicularity",x)  
-  !   stdout.show("spin_contamination",S2-S2e)
-  !   stdout.show("(nb+y)            ",(nb+y))  
-     stdout.show("spin-contamination     ",(nb+y))  
-     stdout.show("<S^2>                  ",sxsx+sysy+szsz)
-     stdout.flush
-     stdout.flush
-     stdout.text("A-matrix (for reorientation in an optimal collinearity direction")
-     stdout.put(amat)
-     aa.destroy;bb.destroy;ab.destroy;ba.destroy
-     amat.destroy
-     sxmat.destroy; symat.destroy; szmat.destroy
+      x=(ZERO,ZERO)
+      y=(ZERO,ZERO)
+      z=(ZERO,ZERO)
+      sx=(ZERO,ZERO)
+      sy=(ZERO,ZERO)
+      sz=(ZERO,ZERO)
+      sxsx=(ZERO,ZERO)
+      sxsy=(ZERO,ZERO)
+      sxsz=(ZERO,ZERO)
+      sysx=(ZERO,ZERO)
+      sysy=(ZERO,ZERO)
+      sysz=(ZERO,ZERO)
+      szsx=(ZERO,ZERO)
+      szsy=(ZERO,ZERO)
+      szsz=(ZERO,ZERO)
+      do i=1,.n_e
+        do j=1,.n_e
+          x = x +  ab(i,i)*ba(j,j) 
+          y = y - ba(i,j)*ab(j,i)
+          z = z + (aa(i,j)-bb(i,j))*(aa(j,i)-bb(j,i)) 
+          amat(1,1) = amat(1,1)  - conjg(sxmat(i,j)) * sxmat(i,j)
+          amat(2,2) = amat(2,2)  - conjg(symat(i,j)) * symat(i,j) 
+          amat(3,3) = amat(3,3)  - conjg(szmat(i,j)) * szmat(i,j) 
+          amat(1,2) = amat(1,2)  - conjg(sxmat(i,j)) * symat(i,j)
+          amat(2,1) = amat(2,1)  - conjg(symat(i,j)) * sxmat(i,j) 
+          amat(1,3) = amat(1,3)  - conjg(sxmat(i,j)) * szmat(i,j) 
+          amat(3,1) = amat(3,1)  - conjg(szmat(i,j)) * sxmat(i,j) 
+          amat(2,3) = amat(2,3)  - conjg(symat(i,j)) * szmat(i,j) 
+          amat(3,2) = amat(3,2)  - conjg(szmat(i,j)) * symat(i,j) 
+          sxsy=sxsy + sxmat(i,i)*symat(j,j)- conjg(sxmat(i,j)) * symat(i,j) 
+          sysx=sysx + symat(i,i)*sxmat(j,j)- conjg(symat(i,j)) * sxmat(i,j)  
+          sxsz=sxsz + sxmat(i,i)*szmat(j,j)- conjg(sxmat(i,j)) * szmat(i,j)  
+          szsx=szsx + szmat(i,i)*sxmat(j,j)- conjg(szmat(i,j)) * sxmat(i,j)  
+          sysz=sysz + symat(i,i)*szmat(j,j)- conjg(symat(i,j)) * szmat(i,j)  
+          szsy=szsy + szmat(i,i)*symat(j,j)- conjg(szmat(i,j)) * symat(i,j)  
+        end
+        sxsy=sxsy + ii/TWO*szmat(i,i)
+        sysx=sysx - ii/TWO*szmat(i,i) 
+        sxsz=sxsz - ii/TWO*symat(i,i) 
+        szsx=szsx + ii/TWO*symat(i,i) 
+        sysz=sysz + ii/TWO*sxmat(i,i) 
+        szsy=szsy - ii/TWO*sxmat(i,i) 
+      end
+   
+      do i=1,.n_e
+        sx=sx + sxmat(i,i)
+        sy=sy + symat(i,i) 
+        sz=sz + szmat(i,i) 
+        do j=i+1,.n_e
+          sxsx=sxsx + sxmat(i,i)*sxmat(j,j) - sxmat(i,j)*sxmat(j,i)
+          sysy=sysy + symat(i,i)*symat(j,j) - symat(i,j)*symat(j,i)
+          szsz=szsz + szmat(i,i)*szmat(j,j) - szmat(i,j)*szmat(j,i)
+        end
+      end
+      sxsx=sxsx*TWO+.n_e/FOUR
+      sysy=sysy*TWO+.n_e/FOUR
+      szsz=szsz*TWO+.n_e/FOUR
+      S2e=(.n_a -.n_b)*(.n_a-.n_b+TWO)/FOUR
+      S2=REALIFY( ((na-nb)**2 + .n_e - z)/FOUR + (na + TWO*x + nb + TWO*y)/TWO )
+
+      stdout.flush
+      stdout.flush
+      stdout.text("Expectation values of spin operator components and their products:")  
+   !  stdout.show(" x                ",x)
+   !  stdout.show(" y                ",y)
+   !  stdout.show(" z                ",z)
+      stdout.show("Sx                ",sx)
+      stdout.show("Sy                ",sy)
+      stdout.show("Sz                ",sz)
+      stdout.show("SxSx              ",sxsx)
+      stdout.show("SxSy              ",sxsy)
+      stdout.show("SxSz              ",sxsz)
+      stdout.show("SySx              ",sysx)
+      stdout.show("SySy              ",sysy)
+      stdout.show("SySz              ",sysz)
+      stdout.show("SzSx              ",szsx)
+      stdout.show("SzSy              ",szsy)
+      stdout.show("SzSz              ",szsz)
+      stdout.show("S+S-/2            ",(na + x + y)/TWO)  
+      stdout.show("S-S+/2            ",(nb + x + y)/TWO)  
+   !  stdout.show("(na/2-nb/2)^2     ",((na-nb)**2)/FOUR)  
+   !  stdout.show("Sz^2              ",((na-nb)**2 +.n_e - z)/FOUR)  
+   !  stdout.show("S2 exact          ",(.n_a -.n_b)*(.n_a-.n_b+TWO)/FOUR)
+   !  stdout.show("S2                ",((na-nb)**2 + .n_e - z)/FOUR + (na + TWO*x + nb + TWO*y)/TWO)  
+      stdout.flush
+      stdout.flush
+      stdout.text("S^2 expectation value contributions:")  
+      stdout.show("(na-nb)(na-nb+2)/4     ",(na-nb)*(na-nb+2)/FOUR)  
+   !  stdout.show("(.n_e - z)/4      ",(.n_e - z)/FOUR)  
+      stdout.show("z-noncollinearity      ",(.n_e - z)/FOUR)  
+   !  stdout.show(" x                ",x)  
+      stdout.show("x,y-nonperpendicularity",x)  
+   !  stdout.show("spin_contamination",S2-S2e)
+   !  stdout.show("(nb+y)            ",(nb+y))  
+      stdout.show("spin-contamination     ",(nb+y))  
+      stdout.show("<S^2>                  ",sxsx+sysy+szsz)
+      stdout.flush
+      stdout.flush
+      stdout.text("A-matrix (for reorientation in an optimal collinearity direction")
+      stdout.put(amat)
+
+      aa.destroy;bb.destroy
+      ab.destroy;ba.destroy
+      amat.destroy
+      sxmat.destroy; symat.destroy; szmat.destroy
 
    end
 
    get_uhf_kramers ::: leaky
    !  analyse uhf kramers pairs 
-   S :: MAT{REAL}*
-   kramersA,kramersB :: MAT{REAL}*
-   i,j,k,l :: INT
-   X1,X2,X3,X4 :: REAL
+      self :: IN
 
-   kramersA.create(.n_b,.n_a)
-   kramersB.create(.n_a,.n_b)
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-   kramersA=ZERO; kramersB=ZERO
-   X1=ZERO;X2=ZERO;X3=ZERO;X4=ZERO
+      S :: MAT{REAL}@
+      kramersA :: MAT{REAL}@
+      kramersB :: MAT{REAL}@
+      i,j,k,l :: INT
+      X1,X2,X3,X4 :: REAL
+     
+      kramersA.create(.n_b,.n_a)
+      kramersB.create(.n_a,.n_b)
+     
+      kramersA=ZERO; kramersB=ZERO
+      X1=ZERO;X2=ZERO;X3=ZERO;X4=ZERO
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
+      S = .overlap_mx
       
       stdout.flush
       stdout.flush
@@ -1545,7 +1602,7 @@ contains
       stdout.flush
       stdout.text("Overlaps of individual MOs:")
 
-      ! table head
+      ! Table head
       stdout.dash(int_fields=2,real_fields=2)
       stdout.put("i", int_width = TRUE)
       stdout.put("j", int_width = TRUE)
@@ -1554,23 +1611,23 @@ contains
       stdout.flush
       stdout.dash(int_fields=2,real_fields=2)
 
-         do i=1,.n_a
-           do j=1,.n_b
-             do k=1,.n_bf
-                do l=1,.n_bf
-                  kramersA(j,i) = kramersA(j,i) + .molecular_orbitals.beta(k,j)*S(k,l)*.molecular_orbitals.alpha(l,i)
-                  kramersB(i,j) = kramersB(i,j) - .molecular_orbitals.alpha(k,i)*S(k,l)*.molecular_orbitals.beta(l,j)
-                end
-             end
-            if (abs(kramersB(i,j)) > 0.0001 OR abs(kramersA(j,i)) > 0.0001) then   
-               stdout.put(i)
-               stdout.put(j)
-               stdout.put(abs(kramersA(j,i)))
-               stdout.put(abs(kramersB(i,j)))
-               stdout.flush 
-            end if   
-           end
+      do i=1,.n_a
+      do j=1,.n_b
+         do k=1,.n_bf
+         do l=1,.n_bf
+            kramersA(j,i) = kramersA(j,i) + .MOs.b(k,j)*S(k,l)*.MOs.a(l,i)
+            kramersB(i,j) = kramersB(i,j) - .MOs.a(k,i)*S(k,l)*.MOs.b(l,j)
          end
+         end
+         if (abs(kramersB(i,j)) > 0.0001 OR abs(kramersA(j,i)) > 0.0001) then   
+            stdout.put(i)
+            stdout.put(j)
+            stdout.put(abs(kramersA(j,i)))
+            stdout.put(abs(kramersB(i,j)))
+            stdout.flush 
+         end if 
+      end
+      end
       
       ! end table
       stdout.dash(int_fields=2,real_fields=2)
@@ -1586,53 +1643,56 @@ contains
       stdout.flush
       stdout.dash(int_fields=1,real_fields=1)
 
-         do i = 1,.n_a
-           X1=ZERO; X2=ZERO
-           do j = 1,.n_b
-               X1 = X1 + kramersA(j,i)*kramersA(j,i)
-               X2 = X2 + kramersB(i,j)*kramersB(i,j)
-               X3 = X3 + kramersA(j,i)*kramersA(j,i)
-               X4 = X4 + kramersB(i,j)*kramersB(i,j)
-           end do
-        stdout.put(i)
-        stdout.put(X1)
-!       stdout.put(X2)
-        stdout.flush 
+      do i = 1,.n_a
+         X1=ZERO; X2=ZERO
+         do j = 1,.n_b
+            X1 = X1 + kramersA(j,i)*kramersA(j,i)
+            X2 = X2 + kramersB(i,j)*kramersB(i,j)
+            X3 = X3 + kramersA(j,i)*kramersA(j,i)
+            X4 = X4 + kramersB(i,j)*kramersB(i,j)
          end do
+         stdout.put(i)
+         stdout.put(X1)
+       ! stdout.put(X2)
+         stdout.flush 
+      end do
 
       stdout.dash(int_fields=1,real_fields=1)
-        stdout.put("sum",int_width=TRUE)
-        stdout.put(X3)
-     !   stdout.put(X4)
-        stdout.flush 
-      ! end table
+      stdout.put("sum",int_width=TRUE)
+      stdout.put(X3)
+    ! stdout.put(X4)
+      stdout.flush 
       stdout.dash(int_fields=1,real_fields=1)
 
-   kramersA.destroy
-   kramersB.destroy
+      kramersA.destroy
+      kramersB.destroy
 
    end
 
    get_gchf_kramers ::: leaky
    !  analyse kramers pairs 
-   S :: MAT{REAL}*
-   kramers :: MAT{CPX}*
-   i,j,k,l :: INT
-   X1,X2,X3,X4,II :: CPX
+      self :: IN
 
-   kramers.create(.n_e,.n_e)
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-   kramers=(ZERO,ZERO)
-   II=(ZERO,ONE)
-   X1=(ZERO,ZERO);X2=(ZERO,ZERO);X3=(ZERO,ZERO);X4=(ZERO,ZERO)
+      S :: MAT{REAL}@
+      kramers :: MAT{CPX}@
+      i,j,k,l :: INT
+      X1,X2,X3,X4,II :: CPX
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
+      kramers.create(.n_e,.n_e)
+      kramers=(ZERO,ZERO)
+
+      II=(ZERO,ONE)
+      X1=(ZERO,ZERO);X2=(ZERO,ZERO);X3=(ZERO,ZERO);X4=(ZERO,ZERO)
+
+      S = .overlap_mx
 
       stdout.flush
       stdout.flush
       stdout.text("Kramers pairs analysis - GCHF case:")
       stdout.flush
+
       ! the phase is random - hence bad for testing purposes
       stdout.text("Overlaps of individual MOs:")
 
@@ -1645,69 +1705,69 @@ contains
       stdout.flush
       stdout.dash(int_fields=2,real_fields=2)
 
-         do i=1,.n_e
-            do j=i,.n_e
-              do k=1,.n_bf
-                do l=1,.n_bf
-                   kramers(i,j) = kramers(i,j) - conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*conjg(.molecular_orbitals.general_complex(l,j))
-                   kramers(i,j) = kramers(i,j) + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*conjg(.molecular_orbitals.general_complex(l+.n_bf,j))
-                   kramers(j,i) = kramers(j,i) - conjg(.molecular_orbitals.general_complex(k+.n_bf,j))*S(k,l)*conjg(.molecular_orbitals.general_complex(l,i))
-                   kramers(j,i) = kramers(j,i) + conjg(.molecular_orbitals.general_complex(k,j))*S(k,l)*conjg(.molecular_orbitals.general_complex(l+.n_bf,i))
-                end
-              end
-              if (abs(kramers(i,j)) > 0.0001 OR abs(kramers(j,i)) > 0.0001) then   
-                stdout.put(i)
-                stdout.put(j)
-                stdout.put(abs(kramers(i,j)))
-                stdout.put(abs(kramers(j,i)))
-                stdout.flush 
-              end if   
-            end
+      do i=1,.n_e
+      do j=i,.n_e
+         do k=1,.n_bf
+         do l=1,.n_bf
+            kramers(i,j) = kramers(i,j) - conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*.MOs.r(l      ,j)
+            kramers(i,j) = kramers(i,j) + conjg(.MOs.gc(k      ,i))*S(k,l)*.MOs.r(l+.n_bf,j)
+            kramers(j,i) = kramers(j,i) - conjg(.MOs.gc(k+.n_bf,j))*S(k,l)*.MOs.r(l      ,i)
+            kramers(j,i) = kramers(j,i) + conjg(.MOs.gc(k      ,j))*S(k,l)*.MOs.r(l+.n_bf,i)
          end
-      ! end table
+         end
+         if (abs(kramers(i,j)) > 0.0001 OR abs(kramers(j,i)) > 0.0001) then   
+            stdout.put(i)
+            stdout.put(j)
+            stdout.put(abs(kramers(i,j)))
+            stdout.put(abs(kramers(j,i)))
+            stdout.flush 
+         end if   
+      end
+      end
       stdout.dash(int_fields=2,real_fields=2)
 
       stdout.flush
       stdout.text("Overlaps of MOi with all the other Kramres MOj:")
-
-      ! table head
       stdout.dash(int_fields=1,real_fields=2)
       stdout.put("i", int_width = TRUE)
       stdout.put("sumj |<i|Kj>|^2")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=2)
 
-         do i = 1,.n_e
+      do i = 1,.n_e
          X1=(ZERO,ZERO)
-           do j = 1,.n_e
-               X1 = X1 + kramers(i,j)*conjg(kramers(i,j))
-           end do
-           stdout.put(i)
-           stdout.put(abs(X1))
-           stdout.flush
-           X3 = X3 + X1
+         do j = 1,.n_e
+            X1 = X1 + kramers(i,j)*conjg(kramers(i,j))
          end do
+         stdout.put(i)
+         stdout.put(abs(X1))
+         stdout.flush
+         X3 = X3 + X1
+      end do
       stdout.dash(int_fields=1,real_fields=2)
-        stdout.put("sum",int_width=TRUE)
-        stdout.put(X3)
-        stdout.flush 
-      ! end table
+      stdout.put("sum",int_width=TRUE)
+      stdout.put(X3)
+      stdout.flush 
       stdout.dash(int_fields=1,real_fields=2)
 
       stdout.show(" Number of Kramers pairs                            ", X3/TWO)
       stdout.show(" Spin contamination <up|down> ~ analog of UHF <i,j> ", .n_b-X3/TWO)
 
-   kramers.destroy
+      kramers.destroy
          
    end
 
    get_uhf_kramers_2 ::: leaky
    !  analyse uhf kramers pairs 
+      self :: IN
 
-   S :: MAT{REAL}*
-   kramersA,kramersB :: MAT{REAL}*
-   i,j,k,l,lb,la :: INT
-   X1,X2,X3,X4 :: REAL
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+
+      S :: MAT{REAL}@
+      kramersA :: MAT{REAL}@
+      kramersB :: MAT{REAL}@
+      i,j,k,l,lb,la :: INT
+      X1,X2,X3,X4 :: REAL
 
       stdout.flush
       stdout.flush
@@ -1715,17 +1775,16 @@ contains
       stdout.text("This routine is using more beta orbitals, to identify your Kramers pairs (open shells):")
       stdout.text("Note: You need the orbital energies !!!!")
 
-   lb=.n_a+(.n_a-.n_b)*2 ! instead of .n_b
-   la=.n_a     ! .n_a
+      lb=.n_a+(.n_a-.n_b)*2 ! instead of .n_b
+      la=.n_a     ! .n_a
 
-   kramersA.create(lb,la)
-   kramersB.create(la,lb)
+      kramersA.create(lb,la)
+      kramersB.create(la,lb)
 
-   kramersA=ZERO; kramersB=ZERO
-   X1=ZERO;X2=ZERO;X3=ZERO;X4=ZERO
+      kramersA=ZERO; kramersB=ZERO
+      X1=ZERO;X2=ZERO;X3=ZERO;X4=ZERO
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
+      S = .overlap_mx
 
       stdout.flush
       stdout.text("Overlaps of individual MOs:")
@@ -1741,158 +1800,153 @@ contains
       stdout.flush
       stdout.dash(int_fields=2,real_fields=4)
 
-         do j=1,lb  ! instead of .n_b
-           do i=1,la
-             do k=1,.n_bf
-                do l=1,.n_bf
-                  kramersA(j,i) = kramersA(j,i) + .molecular_orbitals.beta(k,j)*S(k,l)*.molecular_orbitals.alpha(l,i)
-                  kramersB(i,j) = kramersB(i,j) - .molecular_orbitals.alpha(k,i)*S(k,l)*.molecular_orbitals.beta(l,j)
-                end
-             end
-            if (abs(kramersB(i,j)) > 0.005 OR abs(kramersA(j,i)) > 0.005) then   
-               stdout.put(j)
-               stdout.put(i)
-               stdout.put(abs(kramersA(j,i)))
-               stdout.put(abs(kramersB(i,j)))
-               stdout.put(.orbital_energies.alpha(i))
-               stdout.put(.orbital_energies.beta(i))
-               stdout.flush 
-            end if   
-           end
+      do j=1,lb  ! instead of .n_b
+      do i=1,la
+         do k=1,.n_bf
+         do l=1,.n_bf
+            kramersA(j,i) = kramersA(j,i) + .MOs.b(k,j)*S(k,l)*.MOs.a(l,i)
+            kramersB(i,j) = kramersB(i,j) - .MOs.a(k,i)*S(k,l)*.MOs.b(l,j)
          end
-    ! table end      
-    stdout.dash(int_fields=2,real_fields=4)
+         end
+         if (abs(kramersB(i,j)) > 0.005 OR abs(kramersA(j,i)) > 0.005) then   
+            stdout.put(j)
+            stdout.put(i)
+            stdout.put(abs(kramersA(j,i)))
+            stdout.put(abs(kramersB(i,j)))
+            stdout.put(.MO_energies.a(i))
+            stdout.put(.MO_energies.b(i))
+            stdout.flush 
+         end if   
+      end
+      end
+      stdout.dash(int_fields=2,real_fields=4)
 
       stdout.flush
       stdout.text("Overalps of one MOb with all the other MOa:")
 
-      ! table head
       stdout.dash(int_fields=1,real_fields=1)
       stdout.put("j", int_width = TRUE)
       stdout.put("sumi <bj|ai>^2")
-!     stdout.put("<sum(ai)|bj>")
+    ! stdout.put("<sum(ai)|bj>")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=1)
-!        stdout.text("j_b / Sab.Sba_j / Sba.Sab_j")
-         do j = 1,lb ! instead of .n_b
-           X1=ZERO; X2=ZERO
-           do i = 1,.n_a
-             X1 = X1 + kramersA(j,i)*kramersA(j,i)
-             X2 = X2 + kramersB(i,j)*kramersB(i,j)
-             X3 = X3 + kramersA(j,i)*kramersA(j,i)
-           end do
-           stdout.put(j)
-           stdout.put(X1)
-!          stdout.put(X2)
-           stdout.flush 
+    ! stdout.text("j_b / Sab.Sba_j / Sba.Sab_j")
+      do j = 1,lb ! instead of .n_b
+         X1=ZERO; X2=ZERO
+         do i = 1,.n_a
+            X1 = X1 + kramersA(j,i)*kramersA(j,i)
+            X2 = X2 + kramersB(i,j)*kramersB(i,j)
+            X3 = X3 + kramersA(j,i)*kramersA(j,i)
          end do
-      ! table end   
+         stdout.put(j)
+         stdout.put(X1)
+       ! stdout.put(X2)
+         stdout.flush 
+      end do
       stdout.dash(int_fields=1,real_fields=1)
 
-      !stdout.show("sum",X3)
+    ! stdout.show("sum",X3)
       stdout.put("sum",int_width=TRUE)
       stdout.put(X3)
       stdout.flush 
       stdout.dash(int_fields=1,real_fields=1)
 
-        X3=ZERO
+      X3=ZERO
 
-!       stdout.text("j_b / Sab.Sba_j / Sba.Sab_j")
-         do j = 1,.n_b! instead of .n_b
-           X1=ZERO; X2=ZERO
-           do i = 1,la
-             X3 = X3 + kramersA(j,i)*kramersA(j,i)
-           end do
+    ! stdout.text("j_b / Sab.Sba_j / Sba.Sab_j")
+      do j = 1,.n_b! instead of .n_b
+         X1=ZERO; X2=ZERO
+         do i = 1,la
+            X3 = X3 + kramersA(j,i)*kramersA(j,i)
          end do
+      end do
 
-      !stdout.show("sum*",X3)
+    ! stdout.show("sum*",X3)
       stdout.put("sum*",int_width=TRUE)
       stdout.put(X3)
       stdout.flush 
       stdout.dash(int_fields=1,real_fields=1)
       stdout.text("*sum of only the first nb lines in the table")
 
-   kramersA.destroy
-   kramersB.destroy
+      kramersA.destroy
+      kramersB.destroy
 
    end
 
    get_gchf_kramers_2 ::: leaky
    !  analyse kramers pairs 
-   S :: MAT{REAL}*
-   kramers :: MAT{CPX}*
-   i,j,k,l,li,lj :: INT
-   X1,X2,X3,X4,II :: CPX
+      self :: IN 
 
-   li=.n_e
-   lj=.n_e+(.n_a - .n_b)*2
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-   kramers.create(lj,lj)
-   kramers=(ZERO,ZERO)
-   II=(ZERO,ONE)
-   X1=(ZERO,ZERO);X2=(ZERO,ZERO);X3=(ZERO,ZERO);X4=(ZERO,ZERO)
+      S :: MAT{REAL}@
+      kramers :: MAT{CPX}@
+      i,j,k,l,li,lj :: INT
+      X1,X2,X3,X4,II :: CPX
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
+      li=.n_e
+      lj=.n_e+(.n_a - .n_b)*2
+
+      kramers.create(lj,lj)
+      kramers=(ZERO,ZERO)
+      II=(ZERO,ONE)
+      X1=(ZERO,ZERO);X2=(ZERO,ZERO)
+      X3=(ZERO,ZERO);X4=(ZERO,ZERO)
+
+      S = .overlap_mx
    
       stdout.flush
       stdout.flush
       stdout.text("Kramers pairs analysis - GCHF case:")
       stdout.text("This routine is using more kramers orbitals, to identify your Kramers pairs (open shells):")
-
       ! the phase is random - hence bad for testing purposes
       ! table head
       stdout.dash(int_fields=2,real_fields=1)
       stdout.put("j", int_width = TRUE)
       stdout.put("i", int_width = TRUE)
       stdout.put("|<i|Kj>|")
-!      stdout.put("  ")
-!      stdout.put("<Kj|i>")
+    ! stdout.put("  ")
+    ! stdout.put("<Kj|i>")
       stdout.flush
       stdout.dash(int_fields=2,real_fields=1)
 
-         do j=1,lj
-            do i=1,li
-              do k=1,.n_bf
-                do l=1,.n_bf
-                   kramers(i,j) = kramers(i,j) - conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*conjg(.molecular_orbitals.general_complex(l,j))
-                   kramers(i,j) = kramers(i,j) + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*conjg(.molecular_orbitals.general_complex(l+.n_bf,j))
-                !  kramers(j,i) = kramers(j,i) - !  conjg(.molecular_orbitals.general_complex(k+.n_bf,j))*S(k,l)*conjg(.molecular_orbitals.general_complex(l,i))
-                !  kramers(j,i) = kramers(j,i) + !  conjg(.molecular_orbitals.general_complex(k,j))*S(k,l)*conjg(.molecular_orbitals.general_complex(l+.n_bf,i))
-                end
-              end
-              if (abs(kramers(i,j)) > 0.0001 OR abs(kramers(j,i)) > 0.0001) then   
-                 stdout.put(j)
-                 stdout.put(i)
-                 stdout.put(abs(kramers(i,j)))
-                 stdout.flush 
-              end if   
-            end
-         end
-      ! end table   
+      do j=1,lj
+      do i=1,li
+        do k=1,.n_bf
+        do l=1,.n_bf
+           kramers(i,j) = kramers(i,j) - conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*.MOs.r(l      ,j)
+           kramers(i,j) = kramers(i,j) + conjg(.MOs.gc(k      ,i))*S(k,l)*.MOs.r(l+.n_bf,j)
+        !  kramers(j,i) = kramers(j,i) - !  conjg(.MOs.gc(k+.n_bf,j))*S(k,l)*.MOs.r(l,i)
+        !  kramers(j,i) = kramers(j,i) + !  conjg(.MOs.gc(k,j))*S(k,l)*.MOs.r(l+.n_bf,i)
+        end
+        end
+        if (abs(kramers(i,j)) > 0.0001 OR abs(kramers(j,i)) > 0.0001) then   
+           stdout.put(j)
+           stdout.put(i)
+           stdout.put(abs(kramers(i,j)))
+           stdout.flush 
+        end if   
+      end
+      end
       stdout.dash(int_fields=2,real_fields=1)
 
       stdout.flush
       stdout.text("Overlaps of Kramers MOj with all the other MOi:")
-
-      ! table head
       stdout.dash(int_fields=1,real_fields=1)
       stdout.put("j", int_width = TRUE)
       stdout.put("sumj |<i|Kj>|^2")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=1)
-
-
-         do j = 1,lj
-         X1=(ZERO,ZERO) !;X2=(ZERO,ZERO)
-           do i = 1,li
-               X1 = X1 + kramers(i,j)*conjg(kramers(i,j))
-           end do
-           stdout.put(j)
-           stdout.put(abs(X1))
-           stdout.flush
-           X3 = X3 + X1
+      do j = 1,lj
+      X1=(ZERO,ZERO) !;X2=(ZERO,ZERO)
+         do i = 1,li
+            X1 = X1 + kramers(i,j)*conjg(kramers(i,j))
          end do
+         stdout.put(j)
+         stdout.put(abs(X1))
+         stdout.flush
+         X3 = X3 + X1
+      end do
       stdout.dash(int_fields=1,real_fields=1)
 
       stdout.put("sum",int_width=TRUE)
@@ -1900,58 +1954,68 @@ contains
       stdout.flush 
       stdout.dash(int_fields=1,real_fields=1)
 
-        X3=(ZERO,ZERO)
-
-         do i = 1,.n_e 
-         X1=(ZERO,ZERO) !;X2=(ZERO,ZERO)
-           do j = 1,.n_e
-               X1 = X1 + kramers(i,j)*conjg(kramers(i,j))
-           end do
-           X3 = X3 + X1
-       !   X4 = X4 + X2
-         end do
-
+      X3=(ZERO,ZERO)
+      do i = 1,.n_e 
+      X1=(ZERO,ZERO) !;X2=(ZERO,ZERO)
+        do j = 1,.n_e
+            X1 = X1 + kramers(i,j)*conjg(kramers(i,j))
+        end do
+        X3 = X3 + X1
+      ! X4 = X4 + X2
+      end do
       stdout.put("sum*",int_width=TRUE)
       stdout.put(X3)
       stdout.flush 
       stdout.dash(int_fields=1,real_fields=1)
       stdout.text("*sum for n_e electrons only")
 
-   kramers.destroy
+      kramers.destroy
          
    end
 
    get_gchf_jz ::: leaky
    ! s, l and j eigenvalues not finished  at all
-   S :: MAT{REAL}*
-   S2,Lz2 :: MAT{CPX}*
-   Lx,Ly,Lz :: MAT{REAL}*
-   II,jzi :: CPX
-   i,k,l :: INT
+      self :: INOUT
 
-   Lx.create(.n_bf,.n_bf);Ly.create(.n_bf,.n_bf);Lz.create(.n_bf,.n_bf)
-   ENSURE(.molecular_orbitals.is_allocated_with_genre("general_complex"),"no gchf mos'")
-   .density_matrix.general_complex.to_product_of(.molecular_orbitals.general_complex(:,1:.n_e),.molecular_orbitals.general_complex(:,1:.n_e),dagger_b=TRUE)
-        
-   II=(ZERO,ONE)
-   Lx=ZERO; Ly=ZERO; Lz=ZERO
-   .INTS:make_L_matrices(Lx,Ly,Lz)
-   Lx.destroy; Ly.destroy
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+   ENSURE(.MOs.is_allocated_with_genre("gc"),"no gchf mos'")
 
-   .INTS:make_overlap_matrix ! leaky
-   S => .overlap_matrix
-
-   S2.create(2*.n_bf,2*.n_bf)
-   Lz2.create(2*.n_bf,2*.n_bf)
-   Lz2=(ZERO,ZERO);S2=(ZERO,ZERO)
-   S2.alpha_alpha_set_to(S,HALF)
-   S2.beta_beta_set_to(S,-HALF)
-   Lz2.alpha_alpha_set_to(Lz,-II)
-   Lz2.beta_beta_set_to(Lz,-II)
-   Lz.destroy
-   Lz2=Lz2+S2 
-   S2.destroy
+      S :: MAT{REAL}@
+      S2, Lz2  :: MAT{CPX}@
+      Lx,Ly,Lz :: MAT{REAL}@
+      II,  jzi :: CPX
+      i,k,l    :: INT
      
+      Lx.create(.n_bf,.n_bf)
+      Ly.create(.n_bf,.n_bf)
+      Lz.create(.n_bf,.n_bf)
+
+      .density_mx.gc.to_product_of(.MOs.r(:,1:.n_e),.MOs.r(:,1:.n_e),transpose_b=TRUE)
+           
+      II = (ZERO,ONE)
+
+      Lx = ZERO
+      Ly = ZERO
+      Lz = ZERO
+      .INTS:make_L_matrices(Lx,Ly,Lz)
+      Lx.destroy
+      Ly.destroy
+     
+      S = .overlap_mx
+     
+       S2.create(2*.n_bf,2*.n_bf)
+      Lz2.create(2*.n_bf,2*.n_bf)
+      Lz2 = (ZERO,ZERO)
+      S2  = (ZERO,ZERO)
+       S2.set_aa_block_to(S,HALF)
+       S2.set_bb_block_to(S,-HALF)
+      Lz2.set_aa_block_to(Lz,-II)
+      Lz2.set_bb_block_to(Lz,-II)
+       Lz.destroy
+
+      Lz2 = Lz2 + S2 
+      S2.destroy
+        
       stdout.flush
       stdout.flush
       stdout.text("Numerical Jz evaluation for each orbital")
@@ -1962,172 +2026,176 @@ contains
       stdout.put(" ")
       stdout.flush
       stdout.dash(int_fields=1,real_fields=2)
-
-    do i=1,.n_e
-      jzi=(ZERO,ZERO)
-        do k=1,2*.n_bf
-           do l=1,2*.n_bf
-             jzi = jzi + conjg(.molecular_orbitals.general_complex(k,i))*Lz2(k,l)*.molecular_orbitals.general_complex(l,i)
-           end
-        end
-
-       stdout.put(i)
-       stdout.put(jzi)
-       stdout.flush
-
-    end
-      ! table end
+     
+      do i = 1,.n_e
+         jzi=(ZERO,ZERO)
+         do k = 1,2*.n_bf
+         do l = 1,2*.n_bf
+            jzi = jzi + conjg(.MOs.gc(k,i))*Lz2(k,l)*.MOs.r(l,i)
+         end
+         end
+         stdout.put(i)
+         stdout.put(jzi)
+         stdout.flush
+      end
       stdout.dash(int_fields=1,real_fields=2)
-   
-   Lz2.destroy
+      
+      Lz2.destroy
 
    end
 
-   get_kramers_pairs(kramers) ::: leaky
+   get_kramers_pairs(kramers) ::: leaky, pure
    !  get overlap of kramers pairs,
    !  i.e. the spatial overlap between alpha and beta spinors
-   kramers :: MAT{REAL}
+      self :: IN
+      kramers :: MAT{REAL}, OUT
 
-   S :: MAT{REAL}*
-   i,j,k,l :: INT
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-   kramers=ZERO
+      S :: MAT{REAL}@
+      i,j,k,l :: INT
 
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
-         do i=1,.n_a
-            do j=1,.n_b
-              do k=1,.n_bf
-                do l=1,.n_bf
-                  kramers(i,j) = kramers(i,j) - .molecular_orbitals.alpha(k,i)*S(k,l)*.molecular_orbitals.beta(l,j)
-                end
-              end
-            end
-         end
+      S = .overlap_mx
 
-   end
-
-   get_kramers_pairs(kramers) ::: leaky
-   !  get the overlap of kramers pairs
-   kramers :: MAT{CPX}
-
-   S :: MAT{REAL}*
-   i,j,k,l :: INT
-
-   kramers=(ZERO,ZERO)
-
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
-         do i=1,.n_e
-            do j=i,.n_e
-              do k=1,.n_bf
-                do l=1,.n_bf
-                   kramers(i,j) = kramers(i,j) - conjg(.molecular_orbitals.general_complex(k+.n_bf,i))*S(k,l)*conjg(.molecular_orbitals.general_complex(l,j))
-                   kramers(i,j) = kramers(i,j) + conjg(.molecular_orbitals.general_complex(k,i))*S(k,l)*conjg(.molecular_orbitals.general_complex(l+.n_bf,j))
-                   kramers(j,i) = kramers(j,i) - conjg(.molecular_orbitals.general_complex(k+.n_bf,j))*S(k,l)*conjg(.molecular_orbitals.general_complex(l,i))
-                   kramers(j,i) = kramers(j,i) + conjg(.molecular_orbitals.general_complex(k,j))*S(k,l)*conjg(.molecular_orbitals.general_complex(l+.n_bf,i))
-                end
-              end
-            end
-         end
-
-   end
-
-   put_mulliken_ku_populations ::: leaky
-   ! sets the kramers unrestricted mulliken spin population matrix
-   ! we use the unpaired electron density concept, which accounts for
-   ! the total spin
-      mulliken_matrix, density :: MAT{REAL}*
-      diagonals :: VEC{REAL}*
-      S2,PSPS,S :: MAT{REAL}*
-      mulliken_matrix2,DS2,PSPS2 :: MAT{CPX}*
-      mulliken_ku_matrix2 :: MAT{CPX}*
-      CMO_ku :: MAT{CPX}*
-      CMO :: MAT{CPX}@
-      diagonals2 :: VEC{CPX}*
-!      i,j,k,l,m,n :: INT
-      Oij :: CPX
-
-      ! Create space
-      mulliken_matrix.create(.n_bf, .n_bf)
-      PSPS.create(.n_bf, .n_bf)
-      diagonals.create(.n_bf)
-
-      ! Overlap matrix
-      .INTS:make_overlap_matrix ! leaky
-      S => .overlap_matrix
-      ! Unrestricted case
-      if (.density_matrix.is_allocated_with_genre("unrestricted")) then
-
-         ! Temporary
-         density.create(.n_bf,.n_bf)
-
-         ! Restricted density matrix
-         density = .density_matrix.alpha + .density_matrix.beta
-
-         ! KU mulliken population D= 2PS - PSPS from Staroverov&Davidson CPL 330 (2000) 161-168
-         mulliken_matrix = matmul(density,.overlap_matrix)
-         PSPS = matmul(mulliken_matrix,mulliken_matrix)
-         mulliken_matrix = TWO*mulliken_matrix - PSPS
-         mulliken_matrix.put_diagonal_to(diagonals)
-         
-         stdout.flush
-         stdout.flush
-         stdout.text(" Kramers unrestricted spin case!")
-         stdout.text("      KU = 2PS - PS*PS ")
-         ! Put the populations
-         .:put_mulliken_spins(mulliken_matrix, diagonals)
-
-         ! Clean up
-         density.destroy
-
-       elseif (.density_matrix.is_allocated_with_genre("general_complex")) then
-
-        DIE("Mulliken ku populations not yet implemented for this case")
- 
-         S2.create(2*.n_bf,2*.n_bf)
-         DS2.create(2*.n_bf,2*.n_bf)
-         CMO_ku.create(2*.n_bf,.n_e)
-         CMO = .molecular_orbitals.general_complex(:,1:.n_e)
-         Oij=(ZERO,ZERO)
-         PSPS2.create(2*.n_bf,2*.n_bf)
-         mulliken_matrix2.create(2*.n_bf,2*.n_bf)
-         mulliken_ku_matrix2.create(2*.n_bf,2*.n_bf)
-         diagonals2.create(2*.n_bf)
-         diagonals2.destroy
-         mulliken_matrix2.destroy
-         mulliken_ku_matrix2.destroy
-         S2.destroy
-         CMO_ku.destroy
-         DS2.destroy
-         PSPS2.destroy
-      else
-        
-        DIE("Mulliken ku populations not yet implemented for this case")
-
+      kramers = ZERO
+      do i = 1,.n_a
+      do j = 1,.n_b
+      do k = 1,.n_bf
+      do l = 1,.n_bf
+         kramers(i,j) = kramers(i,j) - .MOs.a(k,i)*S(k,l)*.MOs.b(l,j)
+      end
+      end
+      end
       end
 
-      ! Clean up
-      mulliken_matrix.destroy
-      PSPS.destroy
-      diagonals.destroy
+   end
+
+   get_kramers_pairs(kramers) ::: leaky, pure
+   !  get the overlap of kramers pairs
+      self :: IN
+      kramers :: MAT{CPX}, OUT
+
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+
+      S :: MAT{REAL}@
+      i,j,k,l :: INT
+
+      S = .overlap_mx
+
+      kramers = (ZERO,ZERO)
+      do i = 1,.n_e
+      do j = i,.n_e
+      do k = 1,.n_bf
+      do l = 1,.n_bf
+         kramers(i,j) = kramers(i,j) - conjg(.MOs.gc(k+.n_bf,i))*S(k,l)*.MOs.r(l      ,j)
+         kramers(i,j) = kramers(i,j) + conjg(.MOs.gc(k      ,i))*S(k,l)*.MOs.r(l+.n_bf,j)
+         kramers(j,i) = kramers(j,i) - conjg(.MOs.gc(k+.n_bf,j))*S(k,l)*.MOs.r(l      ,i)
+         kramers(j,i) = kramers(j,i) + conjg(.MOs.gc(k      ,j))*S(k,l)*.MOs.r(l+.n_bf,i)
+      end
+      end
+      end
+      end
 
    end
+
+!   put_mulliken_ku_populations ::: leaky
+!   ! sets the kramers unrestricted mulliken spin population matrix
+!   ! we use the unpaired electron density concept, which accounts for
+!   ! the total spin
+!      mulliken_mx, density :: MAT{REAL}*
+!      diagonals :: VEC{REAL}*
+!      S2,PSPS,S :: MAT{REAL}*
+!      mulliken_mx2,DS2,PSPS2 :: MAT{CPX}*
+!      mulliken_ku_mx2 :: MAT{CPX}*
+!      CMO_ku :: MAT{CPX}*
+!      CMO :: MAT{CPX}@
+!      diagonals2 :: VEC{CPX}*
+!!      i,j,k,l,m,n :: INT
+!      Oij :: CPX
+!
+!      ! Create space
+!      mulliken_mx.create(.n_bf, .n_bf)
+!      PSPS.create(.n_bf, .n_bf)
+!      diagonals.create(.n_bf)
+!
+!      ! Overlap matrix
+!      .INTS:make_overlap_mx ! leaky
+!      S => .overlap_mx
+!      ! Unrestricted case
+!      if (.density_mx.is_allocated_with_genre("u ")) then
+!
+!         ! Temporary
+!         density.create(.n_bf,.n_bf)
+!
+!         ! Restricted density matrix
+!         density = .density_mx.a + .density_mx.b
+!
+!         ! KU mulliken population D= 2PS - PSPS from Staroverov&Davidson CPL 330 (2000) 161-168
+!         mulliken_mx = matmul(density,.overlap_mx)
+!         PSPS = matmul(mulliken_mx,mulliken_mx)
+!         mulliken_mx = TWO*mulliken_mx - PSPS
+!         mulliken_mx.put_diagonal_to(diagonals)
+!         
+!         stdout.flush
+!         stdout.flush
+!         stdout.text(" Kramers unrestricted spin case!")
+!         stdout.text("      KU = 2PS - PS*PS ")
+!         ! Put the populations
+!         .:put_mulliken_spins(mulliken_mx, diagonals)
+!
+!         ! Clean up
+!         density.destroy
+!
+!       elseif (.density_mx.is_allocated_with_genre("gc")) then
+!
+!        DIE("Mulliken ku populations not yet implemented for this case")
+! 
+!         S2.create(2*.n_bf,2*.n_bf)
+!         DS2.create(2*.n_bf,2*.n_bf)
+!         CMO_ku.create(2*.n_bf,.n_e)
+!         CMO = .MOs.gc(:,1:.n_e)
+!         Oij=(ZERO,ZERO)
+!         PSPS2.create(2*.n_bf,2*.n_bf)
+!         mulliken_mx2.create(2*.n_bf,2*.n_bf)
+!         mulliken_ku_mx2.create(2*.n_bf,2*.n_bf)
+!         diagonals2.create(2*.n_bf)
+!         diagonals2.destroy
+!         mulliken_mx2.destroy
+!         mulliken_ku_mx2.destroy
+!         S2.destroy
+!         CMO_ku.destroy
+!         DS2.destroy
+!         PSPS2.destroy
+!      else
+!        
+!        DIE("Mulliken ku populations not yet implemented for this case")
+!
+!      end
+!
+!      ! Clean up
+!      mulliken_mx.destroy
+!      PSPS.destroy
+!      diagonals.destroy
+!
+!   end
 
 !  Charge multipoles
 
    put_dipole
    ! Put out the dipole to stdout
+      self :: IN
 
-      electronic,nuclear,total :: VEC{REAL}(3)
+      electronic :: VEC{REAL}(3)
+      nuclear    :: VEC{REAL}(3)
+      total      :: VEC{REAL}(3)
+      axis       :: VEC{STR}(3)
       dmag :: REAL
-      axis :: VEC{STR}(3)
       i :: INT
 
       axis = [ "x", "y", "z" ]
 
       electronic = .INTS:electronic_dipole_moment
-      nuclear    = .BASE:nuclear_dipole_moment
+      nuclear    = .atom.nuclear_dipole_moment
       total      = electronic + nuclear
 
       stdout.flush
@@ -2173,37 +2241,46 @@ contains
 
    end
 
-   make_dipole result(dipole)
+   the_dipole result (dipole) ::: PURE
    ! make the dipole for self
-      self :: INOUT
+      self :: IN
       dipole :: VEC{REAL}(3)
-      electronic,nuclear :: VEC{REAL}(3)
+
+      electronic :: VEC{REAL}(3)
+      nuclear    :: VEC{REAL}(3)
+
       electronic = .INTS:electronic_dipole_moment
-      nuclear    = .BASE:nuclear_dipole_moment
-      dipole = electronic + nuclear
+      nuclear    = .atom.nuclear_dipole_moment
+      dipole     = electronic + nuclear
+
    end
 
-   make_quadrupole result (quadrupole)
-   ! make the dipole for self
-      self :: INOUT
+   the_quadrupole result (quadrupole) ::: PURE
+   ! Make the quadrupole for self
+      self :: IN
       quadrupole :: MAT{REAL}(3,3)
 
-      electronic,nuclear,total :: VEC{REAL}(6)
+      electronic :: VEC{REAL}(6)
+      nuclear    :: VEC{REAL}(6)
+      total      :: VEC{REAL}(6)
 
       electronic = .INTS:electronic_quadrupole_moment
       nuclear    = .INTS:nuclear_quadrupole_moment
+      total      = electronic + nuclear
 
-      total = electronic + nuclear
-
+      ! Replacecall below
       quadrupole = MAT{REAL}:expand_quadrupole(total)
 
    end
 
    put_quadrupole
    ! Put out the quadrupole to stdout
+      self :: IN
 
-      electronic,nuclear,total :: VEC{REAL}(6)
-      axis :: VEC{STR}(6)
+      electronic :: VEC{REAL}(6)
+      nuclear    :: VEC{REAL}(6)
+      total      :: VEC{REAL}(6)
+      axis       :: VEC{STR}(6)
       i :: INT
 
       axis = [ "xx","yy","zz","xy","xz","yz" ]
@@ -2249,18 +2326,20 @@ contains
 
    end
 
-   make_octupole result (octupole)
+   the_octupole result (octupole) ::: PURE
    ! make the octapole for self
-      self :: INOUT
+      self :: IN
       octupole :: MAT3{REAL}(3,3,3)
 
-      electronic,nuclear,total :: VEC{REAL}(10)
+      electronic :: VEC{REAL}(10)
+      nuclear    :: VEC{REAL}(10)
+      total      :: VEC{REAL}(10)
 
       electronic = .INTS:electronic_octupole_moment
       nuclear    = .INTS:nuclear_octupole_moment
+      total      = electronic + nuclear
 
-      total = electronic + nuclear
-
+      ! Replace
       octupole = MAT3{REAL}:expand_octupole(total)
 
    end
@@ -2269,7 +2348,9 @@ contains
    ! Put out the octupole to stdout
       self :: IN 
 
-      electronic,nuclear,total :: VEC{REAL}(10)
+      electronic :: VEC{REAL}(10)
+      nuclear    :: VEC{REAL}(10)
+      total      :: VEC{REAL}(10)
       axis :: VEC{STR}(10)
       i :: INT
 
@@ -2321,12 +2402,14 @@ contains
    ! Put out the electric field at every nuclear position
       self :: INOUT
 
-      cluster :: CLUSTER*
-      xyz :: MAT{REAL}*
-      electronic,nuclear,molecule,LF, pos :: MAT{REAL}@
+      cluster :: CLUSTER@
+      xyz,pos,LF :: MAT{REAL}@
+      electronic :: MAT{REAL}@
+      nuclear    :: MAT{REAL}@
+      molecule   :: MAT{REAL}@
       charge :: VEC{REAL}@
-      r,d,F :: VEC{REAL}(3)
-      axis :: VEC{STR}(3)
+      r,d,F  :: VEC{REAL}(3)
+      axis   :: VEC{STR}(3)
       symbol :: VEC{STR}@
       mol_rms,LF_rms,xtal_rms, d3 :: REAL
       a,i, n_charges :: INT
@@ -2339,7 +2422,7 @@ contains
       molecule.create(3,.n_atom)
 
       electronic = .INTS:electronic_E_field_at_nuclei
-      nuclear    = .INTS:nuclear_E_field_at_nuclei
+      nuclear    = .atom.nuclear_E_field_at_nuclei
       molecule   = electronic + nuclear
 
       ! Table
@@ -2374,25 +2457,28 @@ contains
       stdout.dash(int_fields=1,real_fields=4)
 
       ! Add crystal field?
-      if (.crystal.associated) then
+      if (.crystal.allocated) then
 
          ! Make atomic charges and dipoles
-         if  (NOT .Hirshfeld_atom_info_made) then
-            .SCF:make_Hirshfeld_inputs
-            .SCF:make_Hirshfeld_atom_info
+         if  (NOT .HA_info_made) then
+            .SCF:make_HA_inputs
+            .SCF:make_r_HA_info
          end
 
          ! Set up the cluster ... leaky
          LF.create(3,.n_atom)
-         cluster.create(.crystal)
-         xyz => .atom.coordinates_ptr
+         cluster.create
+         cluster.set_defaults(.crystal)
+         xyz = .atom.coordinates
          cluster.set_fragment_geometry(xyz,cartesian=TRUE)
          xyz.destroy
          cluster.set_generation_method("within_radius")
-         cluster.defragment= TRUE
-         cluster.radius = 10.0d0
-         if (.scfdata.associated) cluster.radius = .scfdata.cluster_radius
-         cluster.make_info ! leaky
+         cluster.set_defragment(TRUE)
+         cluster.set_radius(TEN)
+         if (.scfdata.allocated) then
+         cluster.set_radius(.scfdata.cluster_radius)
+         end
+         cluster.update_info ! leaky
 
          ! Make Lorentz field ... does not need full cluster
          cluster.make_Lorentz_fields(LF)
@@ -2547,8 +2633,10 @@ contains
    ! Put out the electric field gradient at every nuclear position
       self :: IN
 
-      electronic,nuclear,total :: MAT{REAL}*
-      axis :: VEC{STR}(6)
+      electronic :: MAT{REAL}@
+      nuclear    :: MAT{REAL}@
+      total      :: MAT{REAL}@
+      axis   :: VEC{STR}(6)
       symbol :: VEC{STR}@
       a,i :: INT
 
@@ -2561,7 +2649,7 @@ contains
       total.create(6,.n_atom)
 
       electronic = .INTS:electronic_EFG_at_nuclei
-      nuclear    = .INTS:nuclear_EFG_at_nuclei
+      nuclear    = .atom.nuclear_EFG_at_nuclei
       total      = electronic + nuclear
 
       stdout.flush
@@ -2602,36 +2690,35 @@ contains
    end
 
    spin_contamination ::: leaky
-   ! spin contamination for the UHF calculations
-   ! and ones also perhaps for the gchf one
+   ! Put spin contamination for the UHF calculations.
       self :: INOUT
 
-   ENSURE(.molecular_orbitals.alpha.allocated, "no alpha orbitals")
-   ENSURE(.molecular_orbitals.beta.allocated, "no beta orbitals")
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+   ENSURE(.MOs.a.allocated, "no alpha orbitals")
+   ENSURE(.MOs.b.allocated, "no beta orbitals")
 
-      MSC,S :: MAT{REAL}*
+      MSC,S :: MAT{REAL}@
       SC,S2 :: REAL
       na,nb,i,j,k,l :: INT
 
-      .INTS:make_overlap_matrix
-      S => .overlap_matrix
+      S = .overlap_mx
 
-      na = .BASE:no_of_alpha_electrons
-      nb = .BASE:no_of_beta_electrons
+      na = .INQ:no_of_alpha_electrons
+      nb = .INQ:no_of_beta_electrons
       MSC.create(na,nb)
-      MSC=ZERO
-      SC=ZERO
+      MSC = ZERO
+      SC  = ZERO
 
-      do i =1,na
-        do j=1,nb
-          do k=1,.n_bf
-            do l=1,.n_bf
-               MSC(i,j)=  MSC(i,j)+ .molecular_orbitals.beta(k,j)*S(k,l)*.molecular_orbitals.alpha(l,i)
-            end do
-          end do
-        SC= SC + MSC(i,j)**2
-        end do
-      end do
+      do i = 1,na
+      do j= 1,nb
+         do k= 1,.n_bf
+         do l= 1,.n_bf
+            MSC(i,j) = MSC(i,j)+ .MOs.b(k,j)*S(k,l)*.MOs.a(l,i)
+         end
+         end
+         SC = SC + MSC(i,j)**2
+      end
+      end 
 
       MSC.destroy
 
@@ -2647,273 +2734,278 @@ contains
 
 !  Structure factor populations
 
-   put_mulliken_sf_populations 
-   ! Atomic contributions to structure factors.
-   ! makes the mulliken population analysis of structure factors,
-   ! you need to have the structure factors real valued, else this is CRAP!
-      self :: INOUT
+!   put_mulliken_sf_populations 
+!   ! Atomic contributions to structure factors.
+!   ! Makes the mulliken population analysis of structure factors,
+!   ! You need to have the structure factors real valued, else this is CRAP!
+!      self :: INOUT
+!
+!      density,k_pts :: MAT{REAL}*
+!      mulliken_mx :: MAT{CPX}*
+!      diagonals :: VEC{CPX}*
+!      S2 :: MAT{CPX}*
+!      mulliken_mx2 :: MAT{CPX}*
+!      diagonals2 :: VEC{CPX}*
+!      MM :: MAT{REAL}*
+!      GG,ft_hkl,buco :: MAT{CPX}*
+!      n,m,k_max,n_ref :: INT
+!      sf :: CPX
+!      sfn :: MAT{CPX}*
+!      Fc :: MAT{CPX}*
+!
+!      .crystal.assign_xray
+!
+!      Fc.create(.crystal.n_refl,.n_atom); Fc=(ZERO,ZERO)
+!      sfn.create(.crystal.n_unique_SF_k_pts,.n_atom); sfn=(ZERO,ZERO)
+!      k_pts.create(.crystal.n_unique_SF_k_pts,3); k_pts=ZERO
+!      .crystal.xray_data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
+!
+!      stdout.flush
+!      stdout.text("NOTE: We are in put_mulliken_sf_populations!")
+!      stdout.text("NOTE: You need to have the structure factors real valued!")
+!      stdout.text("NOTE: So as, the cmpx atomic contributions cancel out!")
+!      stdout.flush
+!
+!      .BASE:make_r_density_mx
+!
+!      ! Create space
+!      mulliken_mx.create(.n_bf, .n_bf)
+!      diagonals.create(.n_bf)
+!
+!      MM.create(.n_prim,.n_bf)
+!      .BASE:make_normalized_contraction_mx(MM)
+!
+!      ft_hkl.create(.n_bf,.n_bf)
+!      GG.create(.n_prim,.n_prim)
+!      buco.create(.n_bf,.n_prim)
+!      
+!      k_max = size(k_pts,1)
+!      n_ref = size(Fc,1)
+!      sfn=ZERO
+!
+!      parallel do n = 1,k_max
+!
+!         ! here it comes. point by point the structure factors will be on
+!         ! and on calculated, the code is slow if many sfs are present
+!         .XTAL:make_primitive_ft_mx(GG,k_pts(n,1),k_pts(n,2),k_pts(n,3))
+!         buco.to_product_of(MM,GG,transpose_a=TRUE)
+!         ft_hkl.to_product_of(buco,MM)
+!         .XTAL:make_part_and_therm_smear(ft_hkl,k_pts(n,:))
+!
+!      ! general complex case (LBxxx)
+!      if (.density_mx.is_allocated_with_genre("gc")) then
+!
+!         ! these objects are twice as large as usually
+!         S2.create(2*.n_bf,2*.n_bf)
+!         mulliken_mx2.create(2*.n_bf,2*.n_bf)
+!         diagonals2.create(2*.n_bf)
+!
+!         mulliken_mx2 = (ZERO,ZERO)
+!         diagonals2 = (ZERO,ZERO)
+!         S2 = (ZERO,ZERO)
+!         S2.set_aa_block_to(ft_hkl)
+!         S2.set_bb_block_to(ft_hkl)
+!
+!         ! fill the general_complex mulliken matrix and diagonals
+!         mulliken_mx2.to_product_of(.density_mx.gc,S2)
+!         mulliken_mx2.put_diagonal_to(diagonals2)
+!
+!         ! Make use of the restricted mulliken matrix
+!         diagonals = REALIFY(diagonals2(1:.n_bf)) + REALIFY(diagonals2(.n_bf+1:2*.n_bf))
+!         mulliken_mx = REALIFY(mulliken_mx2(1:.n_bf,1:.n_bf)) +  &
+!                           REALIFY(mulliken_mx2(.n_bf+1:2*.n_bf,.n_bf+1:2*.n_bf))
+!
+!         ! Put the atomic populations
+!         .:put_mulliken_sf_populations(sfn(n,:),diagonals)
+!
+!         mulliken_mx2.destroy
+!         diagonals2.destroy
+!         S2.destroy
+!
+!         density.destroy
+!
+!      ! Unrestricted case
+!      else if (.density_mx.is_allocated_with_genre("u ")) then
+!
+!         ! Temporary
+!         density.create(.n_bf,.n_bf)
+!
+!         ! Restricted density matrix
+!         density = .density_mx.a + .density_mx.b
+!
+!         ! Normal mulliken population
+!         mulliken_mx.to_product_of(density,ft_hkl)
+!         mulliken_mx.put_diagonal_to(diagonals)
+!         
+!         ! get the raw sf
+!         .XTAL:make_FT_test_1(sf,density,k_pts(n,:))
+!         ! Put the populations
+!         .:put_mulliken_sf_populations(sfn(n,:),diagonals)
+!
+!         ! Clean up
+!         density.destroy
+!
+!      ! Restricted case
+!      else if (.density_mx.is_allocated_with_genre("r ")) then
+!         
+!         ! Temporary
+!         density.create(.n_bf,.n_bf)
+!
+!         ! Make the restricted mulliken matrix
+!         mulliken_mx.to_product_of(.density_mx.r,ft_hkl)
+!         mulliken_mx.put_diagonal_to(diagonals)
+!         
+!         density=.density_mx.r
+!         ! get the raw sf
+!         .XTAL:make_ft_test_1(sf,density,k_pts(n,:))
+!
+!         ! Put the atomic populations
+!         .:put_mulliken_sf_populations(sfn(n,:),diagonals)
+!
+!         ! Clean up
+!         density.destroy
+!         
+!      else
+!
+!        DIE("Mulliken populations not yet implemented for this case")
+!
+!      end if
+!
+!     end
+!
+!     if (DO_IN_PARALLEL) then
+!        PARALLEL_SUM(sfn)
+!     end if
+!
+!      ! lets build the sf out of the unique data for all atoms 
+!      do n=1,.n_atom
+!         .crystal.spacegroup.sum_unique_sf(Fc(:,n),sfn(:,n),.crystal.xray_data.reflections)
+!      end do
+!
+!      stdout.flush
+!      stdout.flush
+!      stdout.put("Mulliken populations in structure factors:")
+!      stdout.flush
+!      stdout.put("(One line for one structure factor, real and imaginary part shown for each atom)")
+!      stdout.flush
+!      stdout.dash(int_fields=1, real_fields=2*.n_atom)
+!      stdout.put("#", int_width = TRUE)
+!      do n=1,.n_atom
+!         stdout.put(.atom(n).label)
+!         stdout.put(" ")
+!      end do
+!      stdout.flush 
+!      stdout.dash(int_fields=1, real_fields=2*.n_atom)
+!
+!      ! output
+!      do n=1,n_ref
+!         stdout.put(n)
+!         do m=1,.n_atom
+!            stdout.put(Fc(n,m))
+!         end do
+!         stdout.flush
+!      end do
+!      stdout.dash(int_fields=1, real_fields=2*.n_atom)
+!
+!      ! Clean up
+!      mulliken_mx.destroy
+!      diagonals.destroy
+!      ft_hkl.destroy
+!      k_pts.destroy
+!      MM.destroy
+!      GG.destroy
+!      buco.destroy
+!      sfn.destroy
+!      Fc.destroy
+!
+!   end
 
-      density,k_pts :: MAT{REAL}*
-      mulliken_matrix :: MAT{CPX}*
-      diagonals :: VEC{CPX}*
-      S2 :: MAT{CPX}*
-      mulliken_matrix2 :: MAT{CPX}*
-      diagonals2 :: VEC{CPX}*
-      MM :: MAT{REAL}*
-      GG,ft_hkl,buco :: MAT{CPX}*
-      n,m,k_max,n_ref :: INT
-      sf :: CPX
-      sfn :: MAT{CPX}*
-      Fc :: MAT{CPX}*
-
-      .crystal.assign_xray
-
-      Fc.create(.crystal.n_refl,.n_atom); Fc=(ZERO,ZERO)
-      sfn.create(.crystal.n_unique_SF_k_pts,.n_atom); sfn=(ZERO,ZERO)
-      k_pts.create(.crystal.n_unique_SF_k_pts,3); k_pts=ZERO
-      .crystal.data.reflections.make_unique_SF_k_pts(k_pts,.crystal.spacegroup,.crystal.unit_cell)
-
-      stdout.flush
-      stdout.text("NOTE: We are in put_mulliken_sf_populations!")
-      stdout.text("NOTE: You need to have the structure factors real valued!")
-      stdout.text("NOTE: So as, the cmpx atomic contributions cancel out!")
-      stdout.flush
-
-      .BASE:make_ao_density_matrix
-
-      ! Create space
-      mulliken_matrix.create(.n_bf, .n_bf)
-      diagonals.create(.n_bf)
-
-      MM.create(.n_prim,.n_bf)
-      .BASE:make_normalised_contraction_mx(MM)
-
-      ft_hkl.create(.n_bf,.n_bf)
-      GG.create(.n_prim,.n_prim)
-      buco.create(.n_bf,.n_prim)
-      
-      k_max = size(k_pts,1)
-      n_ref = size(Fc,1)
-      sfn=ZERO
-
-      parallel do n = 1,k_max
-
-         ! here it comes. point by point the structure factors will be on
-         ! and on calculated, the code is slow if many sfs are present
-         .XTAL:make_primitive_ft_matrix(GG,k_pts(n,1),k_pts(n,2),k_pts(n,3))
-         buco.to_product_of(MM,GG,transpose_a=TRUE)
-         ft_hkl.to_product_of(buco,MM)
-         .XTAL:make_part_and_therm_smear(ft_hkl,k_pts(n,:))
-
-      ! general complex case (LBxxx)
-      if (.density_matrix.is_allocated_with_genre("general_complex")) then
-
-         ! these objects are twice as large as usually
-         S2.create(2*.n_bf,2*.n_bf)
-         mulliken_matrix2.create(2*.n_bf,2*.n_bf)
-         diagonals2.create(2*.n_bf)
-
-         mulliken_matrix2 = (ZERO,ZERO)
-         diagonals2 = (ZERO,ZERO)
-         S2 = (ZERO,ZERO)
-         S2.alpha_alpha_set_to(ft_hkl)
-         S2.beta_beta_set_to(ft_hkl)
-
-         ! fill the general_complex mulliken matrix and diagonals
-         mulliken_matrix2.to_product_of(.density_matrix.general_complex,S2)
-         mulliken_matrix2.put_diagonal_to(diagonals2)
-
-         ! Make use of the restricted mulliken matrix
-         diagonals = REALIFY(diagonals2(1:.n_bf)) + REALIFY(diagonals2(.n_bf+1:2*.n_bf))
-         mulliken_matrix = REALIFY(mulliken_matrix2(1:.n_bf,1:.n_bf)) +  &
-                           REALIFY(mulliken_matrix2(.n_bf+1:2*.n_bf,.n_bf+1:2*.n_bf))
-
-         ! Put the atomic populations
-         .:put_mulliken_sf_populations(sfn(n,:),diagonals)
-
-         mulliken_matrix2.destroy
-         diagonals2.destroy
-         S2.destroy
-
-         density.destroy
-
-      ! Unrestricted case
-      else if (.density_matrix.is_allocated_with_genre("unrestricted")) then
-
-         ! Temporary
-         density.create(.n_bf,.n_bf)
-
-         ! Restricted density matrix
-         density = .density_matrix.alpha + .density_matrix.beta
-
-         ! Normal mulliken population
-         mulliken_matrix.to_product_of(density,ft_hkl)
-         mulliken_matrix.put_diagonal_to(diagonals)
-         
-         ! get the raw sf
-         .XTAL:make_ft_test_1(sf,density,k_pts(n,:))
-         ! Put the populations
-         .:put_mulliken_sf_populations(sfn(n,:),diagonals)
-
-         ! Clean up
-         density.destroy
-
-      ! Restricted case
-      else if (.density_matrix.is_allocated_with_genre("restricted")) then
-         
-         ! Temporary
-         density.create(.n_bf,.n_bf)
-
-         ! Make the restricted mulliken matrix
-         mulliken_matrix.to_product_of(.density_matrix.restricted,ft_hkl)
-         mulliken_matrix.put_diagonal_to(diagonals)
-         
-         density=.density_matrix.restricted
-         ! get the raw sf
-         .XTAL:make_ft_test_1(sf,density,k_pts(n,:))
-
-         ! Put the atomic populations
-         .:put_mulliken_sf_populations(sfn(n,:),diagonals)
-
-         ! Clean up
-         density.destroy
-         
-      else
-
-        DIE("Mulliken populations not yet implemented for this case")
-
-      end if
-
-     end
-
-     if (DO_IN_PARALLEL) then
-        PARALLEL_SUM(sfn)
-     end if
-
-      ! lets build the sf out of the unique data for all atoms 
-      do n=1,.n_atom
-         .crystal.spacegroup.sum_unique_sf(Fc(:,n),sfn(:,n),.crystal.data.reflections)
-      end do
-
-      stdout.flush
-      stdout.flush
-      stdout.put("Mulliken populations in structure factors:")
-      stdout.flush
-      stdout.put("(One line for one structure factor, real and imaginary part shown for each atom)")
-      stdout.flush
-      stdout.dash(int_fields=1, real_fields=2*.n_atom)
-      stdout.put("#", int_width = TRUE)
-      do n=1,.n_atom
-         stdout.put(.atom(n).label)
-         stdout.put(" ")
-      end do
-      stdout.flush 
-      stdout.dash(int_fields=1, real_fields=2*.n_atom)
-
-      ! output
-      do n=1,n_ref
-         stdout.put(n)
-         do m=1,.n_atom
-            stdout.put(Fc(n,m))
-         end do
-         stdout.flush
-      end do
-      stdout.dash(int_fields=1, real_fields=2*.n_atom)
-
-      ! Clean up
-      mulliken_matrix.destroy
-      diagonals.destroy
-      ft_hkl.destroy
-      k_pts.destroy
-      MM.destroy
-      GG.destroy
-      buco.destroy
-      sfn.destroy
-      Fc.destroy
-
-   end
-
-   put_mulliken_sf_populations(sfn,diagonals)
-   ! makes the mulliken sf populations 
-      self :: IN
-      sfn :: VEC{CPX}, OUT
-      diagonals :: VEC{CPX}, IN
-
-      atom_pop :: VEC{CPX}*
-      pop :: CPX
-      o_count, a, b, c, n_comp :: INT
-
-      o_count = 1
-      atom_pop.create(.n_atom)
-      atom_pop = ZERO
-
-      do a = 1, .n_atom
-      do b = 1, .atom(a).basis.n_shell
-
-         if (.use_spherical_basis) then
-            n_comp = .atom(a).basis.shell(b).n_sph
-         else
-            n_comp = .atom(a).basis.shell(b).n_comp
-         end if
-
-         do c = 1, n_comp
-            pop = diagonals(c + o_count - 1)
-            atom_pop(a) = atom_pop(a) + pop
-         end
-
-         o_count = o_count + n_comp
-
-      end
-      end
-
-      do a = 1,.n_atom
-         sfn(a) = atom_pop(a)
-      end
-
-      atom_pop.destroy
-
-   end
+!   put_mulliken_sf_populations(sfn,diagonals)
+!   ! makes the mulliken sf populations 
+!      self :: IN
+!      sfn :: VEC{CPX}, OUT
+!      diagonals :: VEC{CPX}, IN
+!
+!      atom_pop :: VEC{CPX}@
+!      pop :: CPX
+!      o_count, a, b, c, n_comp :: INT
+!
+!      o_count = 1
+!      atom_pop.create(.n_atom)
+!      atom_pop = ZERO
+!
+!      do a = 1, .n_atom
+!      do b = 1, .atom(a).basis.n_shell
+!
+!         if (.use_spherical_basis) then
+!            n_comp = .atom(a).basis.shell(b).n_sph
+!         else
+!            n_comp = .atom(a).basis.shell(b).n_comp
+!         end if
+!
+!         do c = 1, n_comp
+!            pop = diagonals(c + o_count - 1)
+!            atom_pop(a) = atom_pop(a) + pop
+!         end
+!
+!         o_count = o_count + n_comp
+!
+!      end
+!      end
+!
+!      do a = 1,.n_atom
+!         sfn(a) = atom_pop(a)
+!      end
+!
+!      atom_pop.destroy
+!
+!   end
 
 !  ====================
 !  Hirshfeld properties
 !  ====================
 
-   put_Hirshfeld_atom_info ::: leaky
+   put_HA_info ::: leaky
    ! Put the Hirshfeld charges
+      self :: INOUT
+
    ENSURE(.basis_info_made,"no basis info")
-   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.atom.allocated,"no atom list")
 
       genre :: STR
 
       ! Get the genre
       genre = " "
-      if (.scfdata.associated) then
-         genre = .scfdata.spinorbital_kind
-      else if (.density_matrix.allocated) then
-         genre = .density_matrix.spinorbital_kind
+      if (.scfdata.allocated) then
+         genre = .scfdata.spinorbital_genre
+      else if (.density_mx.allocated) then
+         genre = .density_mx.genre
       end
 
       ! Restricted properties
-      .SCF:make_Hirshfeld_inputs
-      .SCF:make_Hirshfeld_atom_info(output=TRUE)
-      .:put_Hirshfeld_atom_moments
+      .SCF:make_HA_inputs
+      .SCF:make_r_HA_info(output=TRUE)
+      .:put_HA_moments
 
       ! Urestricted properties?
-      if (genre/="restricted") then
-         .SCF:make_uHirshfeld_atom_info(output=TRUE)
-         .:put_uHirshfeld_atom_moments
-      end
+    ! if (genre/="r ") then
+    !    .SCF:make_uHA_info(output=TRUE)
+    !    .:put_u_HA_moments
+    ! end
 
    end
 
-   put_Hirshfeld_atom_moments ::: private
+   put_HA_moments ::: private
    ! Put the Hirshfeld charges
+      self :: IN
 
    ENSURE(.basis_info_made,"no basis info")
-   ENSURE(.atom.associated,"no atom list")
-   DIE_IF(NOT .Hirshfeld_atom_info_made,"no Hirshfeld atom info made!")
+   ENSURE(.atom.allocated,"no atom list")
+   DIE_IF(NOT .HA_info_made,"no Hirshfeld atom info made!")
 
-      e_dipole,n_dipole,t_dipole :: VEC{REAL}(3)
+      e_dipole :: VEC{REAL}(3)
+      n_dipole :: VEC{REAL}(3)
+      t_dipole :: VEC{REAL}(3)
       ed,nd,td,dp :: REAL
       a :: INT
 
@@ -3049,108 +3141,108 @@ contains
 
    end
 
-   put_uHirshfeld_atom_moments ::: private
-   ! Make the unrestricted Hirshfeld atom properties
-
-   ENSURE(.basis_info_made,"no basis info")
-   ENSURE(.atom.associated,"no atom list")
-   DIE_IF(NOT .uHirshfeld_atom_info_made,"no Hirshfeld atom info made!")
-
-      dp :: REAL
-      a :: INT
-
-      ! Write results in au
-      stdout.flush
-      stdout.text("Hirshfeld unpaired spin and unpaired spin dipole moments (au):")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=5)
-      stdout.tab(int_fields=1)
-      stdout.put("spin")
-      stdout.put("mu_x")
-      stdout.put("mu_y")
-      stdout.put("mu_z")
-      stdout.put("|mu|")
-      stdout.flush
-      stdout.put("Atom",int_width=TRUE)
-      stdout.put("/au")
-      stdout.put("/au")
-      stdout.put("/au")
-      stdout.put("/au")
-      stdout.put("/au")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=5)
-      do a = 1,.n_atom
-         stdout.put(.atom(a).label,int_width=TRUE)
-         stdout.put(.atom(a).spin)
-         stdout.put(.atom(a).spin_dipole(1))
-         stdout.put(.atom(a).spin_dipole(2))
-         stdout.put(.atom(a).spin_dipole(3))
-         dp = .atom(a).spin_dipole.norm
-         stdout.put(dp)
-         stdout.flush
-      end
-      stdout.dash(int_fields=1,real_fields=5)
-      stdout.flush
-
-      ! Write results in Debye
-      stdout.flush
-      stdout.text("Hirshfeld unpaired charges and dipole moments (Debye):")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=5)
-      stdout.tab(int_fields=1)
-      stdout.put("spin")        !<=== ?
-      stdout.put("mu_x")
-      stdout.put("mu_y")
-      stdout.put("mu_z")
-      stdout.put("|mu|")
-      stdout.flush
-      stdout.put("Atom",int_width=TRUE)
-      stdout.put("/au")
-      stdout.put("/Debye")
-      stdout.put("/Debye")
-      stdout.put("/Debye")
-      stdout.put("/Debye")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=5)
-      do a = 1,.n_atom
-         stdout.put(.atom(a).label,int_width=TRUE)
-         stdout.put(.atom(a).spin)
-         stdout.put(.atom(a).spin_dipole(1).to_units("debye"))
-         stdout.put(.atom(a).spin_dipole(2).to_units("debye"))
-         stdout.put(.atom(a).spin_dipole(3).to_units("debye"))
-         dp = .atom(a).spin_dipole.norm
-         stdout.put(dp.to_units("debye"))
-         stdout.flush
-      end
-      stdout.dash(int_fields=1,real_fields=5)
-
-   end
+!   put_u_HA_moments ::: private
+!   ! Make the unrestricted Hirshfeld atom properties
+!
+!   ENSURE(.basis_info_made,"no basis info")
+!   ENSURE(.atom.allocated,"no atom list")
+!   DIE_IF(NOT .u_HA_info_made,"no Hirshfeld atom info made!")
+!
+!      dp :: REAL
+!      a :: INT
+!
+!      ! Write results in au
+!      stdout.flush
+!      stdout.text("Hirshfeld unpaired spin and unpaired spin dipole moments (au):")
+!      stdout.flush
+!      stdout.dash(int_fields=1,real_fields=5)
+!      stdout.tab(int_fields=1)
+!      stdout.put("spin")
+!      stdout.put("mu_x")
+!      stdout.put("mu_y")
+!      stdout.put("mu_z")
+!      stdout.put("|mu|")
+!      stdout.flush
+!      stdout.put("Atom",int_width=TRUE)
+!      stdout.put("/au")
+!      stdout.put("/au")
+!      stdout.put("/au")
+!      stdout.put("/au")
+!      stdout.put("/au")
+!      stdout.flush
+!      stdout.dash(int_fields=1,real_fields=5)
+!      do a = 1,.n_atom
+!         stdout.put(.atom(a).label,int_width=TRUE)
+!         stdout.put(.atom(a).spin)
+!         stdout.put(.atom(a).spin_dipole(1))
+!         stdout.put(.atom(a).spin_dipole(2))
+!         stdout.put(.atom(a).spin_dipole(3))
+!         dp = .atom(a).spin_dipole.norm
+!         stdout.put(dp)
+!         stdout.flush
+!      end
+!      stdout.dash(int_fields=1,real_fields=5)
+!      stdout.flush
+!
+!      ! Write results in Debye
+!      stdout.flush
+!      stdout.text("Hirshfeld unpaired charges and dipole moments (Debye):")
+!      stdout.flush
+!      stdout.dash(int_fields=1,real_fields=5)
+!      stdout.tab(int_fields=1)
+!      stdout.put("spin")        !<=== ?
+!      stdout.put("mu_x")
+!      stdout.put("mu_y")
+!      stdout.put("mu_z")
+!      stdout.put("|mu|")
+!      stdout.flush
+!      stdout.put("Atom",int_width=TRUE)
+!      stdout.put("/au")
+!      stdout.put("/Debye")
+!      stdout.put("/Debye")
+!      stdout.put("/Debye")
+!      stdout.put("/Debye")
+!      stdout.flush
+!      stdout.dash(int_fields=1,real_fields=5)
+!      do a = 1,.n_atom
+!         stdout.put(.atom(a).label,int_width=TRUE)
+!         stdout.put(.atom(a).spin)
+!         stdout.put(.atom(a).spin_dipole(1).to_units("debye"))
+!         stdout.put(.atom(a).spin_dipole(2).to_units("debye"))
+!         stdout.put(.atom(a).spin_dipole(3).to_units("debye"))
+!         dp = .atom(a).spin_dipole.norm
+!         stdout.put(dp.to_units("debye"))
+!         stdout.flush
+!      end
+!      stdout.dash(int_fields=1,real_fields=5)
+!
+!   end
 
 !  =================
 !  Structure factors
 !  =================
 
    put_X_SF_statistics ::: leaky
-   ! Put the X-ray structure factors, with summary statistics if
-   ! possible
+   ! Put the X-ray structure factors, with summary statistics 
+   ! if possible
       self :: INOUT
 
-   DIE_IF(NOT .atom.associated,"no atom list")
+   DIE_IF(NOT .atom.allocated,"no atom list")
    DIE_IF(NOT .basis_info_made,"no basis info")
-   DIE_IF(NOT .crystal.associated,"no crystal")
-   DIE_IF(NOT .crystal.data.associated,"no crystal data")
+   DIE_IF(NOT .crystal.allocated,"no crystal")
+   DIE_IF(NOT .crystal.xray_data.allocated,"no crystal data")
 
-      if (.crystal.data.have_F_exp) then
+      if (.crystal.xray_data.INQ:have_F_exp) then
 
          ! Remake F_pred
-         .crystal.data.make_F_predicted
+         .crystal.xray_data.SET:make_F_predicted
 
          ! Show stats & data analysis
          stdout.flush
          stdout.text("============================")
          stdout.text("X-ray diffraction statistics")
          stdout.text("============================")
-         .crystal.put_F_statistics
+         .crystal.xray_data.PUT:put_F_statistics
 
       end
 
@@ -3161,20 +3253,20 @@ contains
    ! possible
       self :: INOUT
 
-   DIE_IF(NOT .atom.associated,"no atom list")
+   DIE_IF(NOT .atom.allocated,"no atom list")
    DIE_IF(NOT .basis_info_made,"no basis info")
-   DIE_IF(NOT .crystal.associated,"no crystal")
-   DIE_IF(NOT .crystal.data.associated,"no crystal data")
+   DIE_IF(NOT .crystal.allocated,"no crystal")
+   DIE_IF(NOT .crystal.xray_data.allocated,"no crystal data")
 
-      if (.crystal.data.have_F_exp) then
+      if (.crystal.xray_data.INQ:have_F_exp) then
 
          ! Show stats & data analysis
          stdout.flush
          stdout.text("============================")
          stdout.text("X-ray diffraction statistics")
          stdout.text("============================")
-         .crystal.put_F_statistics
-         .crystal.put_data_analysis
+         .crystal.xray_data.PUT:put_F_statistics
+         .crystal.put_X_data_analysis
 
       end
 
@@ -3182,38 +3274,38 @@ contains
 
    end
 
-   put_N_SFs ::: leaky
-   ! Put the PND (Sz) structure factors, with summary statistics
-   ! if possible
-      self :: INOUT
-
-   DIE_IF(NOT .atom.associated,"no atom list")
-   DIE_IF(NOT .basis_info_made,"no basis info")
-   DIE_IF(NOT .crystal.associated,"no crystal")
-   DIE_IF(NOT .crystal.data.associated,"no crystal data")
-   DIE_IF(NOT .crystal.data.have_F_exp, "no crystal F_exp data")
-   DIE_IF(NOT .crystal.data.have_F_pred,"no crystal F_pred data")
-
-      if (.crystal.data.have_F_exp) then
-
-         ! Remake F_pred
-         .crystal.data.make_F_predicted
-
-         ! Show stats & data analysis
-         stdout.flush
-         stdout.text("==============")
-         stdout.text("PND statistics")
-         stdout.text("==============")
-         .crystal.put_F_statistics
-         .crystal.put_data_analysis
-
-      else
-
-         .crystal.put_N_reflection_data
-
-      end
-
-   end
+!   put_N_SFs ::: leaky
+!   ! Put the PND (Sz) structure factors, with summary statistics
+!   ! if possible
+!      self :: INOUT
+!
+!   DIE_IF(NOT .atom.allocated,"no atom list")
+!   DIE_IF(NOT .basis_info_made,"no basis info")
+!   DIE_IF(NOT .crystal.allocated,"no crystal")
+!   DIE_IF(NOT .crystal.xray_data.allocated,"no crystal data")
+!   DIE_IF(NOT .crystal.xray_data.INQ:have_F_exp, "no crystal F_exp data")
+!   DIE_IF(NOT .crystal.xray_data.INQ:have_F_pred,"no crystal F_pred data")
+!
+!      if (.crystal.xray_data.INQ:have_F_exp) then
+!
+!         ! Remake F_pred
+!         .crystal.xray_data.SET:make_F_predicted
+!
+!         ! Show stats & data analysis
+!         stdout.flush
+!         stdout.text("==============")
+!         stdout.text("PND statistics")
+!         stdout.text("==============")
+!         .crystal.xray_data.PUT:put_F_statistics
+!         .crystal.put_X_data_analysis
+!
+!      else
+!
+!         .crystal.put_N_reflection_data
+!
+!      end
+!
+!   end
 
 !  ==============
 !  Coulomb energy
@@ -3222,25 +3314,26 @@ contains
    put_Coulomb_energy
    ! Print out the Coulomb energy for the current density matrix
    ! NOTE: ths turns off any adiabatic constant and Fermi-Amaldi
+      self :: INOUT
 
-   ENSURE(.density_matrix.allocated,"no density matrix")
+   ENSURE(.density_mx.allocated,"no density matrix")
 
-      J,K :: MAT{REAL}*
+      J,K :: MAT{REAL}@
       E_J,E_K :: REAL
 
       ! Make restricted density matrix
-      .BASE:make_ao_density_matrix
+      .BASE:make_r_density_mx
 
       ! Make the J matrix
       .scfdata.set_ee_adiabatic_constant(ONE)
       .scfdata.set_Fermi_Amaldi(FALSE)
       J.create(.n_bf,.n_bf)
       K.create(.n_bf,.n_bf)
-      .FOCK:make_r_JK_engine(J,K,.density_matrix.restricted)
+      .FOCK:make_r_JK_engine(J,K,.density_mx.r) ! INOUT
 
       ! Energy
-      E_J =     HALF*J.trace_product_with(self.density_matrix.restricted)
-      E_K = -QUARTER*K.trace_product_with(self.density_matrix.restricted)
+      E_J =     HALF*J.trace_product_with(self.density_mx.r)
+      E_K = -QUARTER*K.trace_product_with(self.density_mx.r)
 
       ! Output
       stdout.flush
@@ -3256,14 +3349,16 @@ contains
 !  Pairwise SCF energy
 !  ===================
 
-   put_scf_energy_in_mo_pairs
-   ! Analyze the SCF energy into MO pairs
-      Di :: OPMATRIX@
-      core_energy :: VEC{REAL}*
-      pair_energy :: MAT{REAL}*
-      i,j :: INT
+   put_SCF_energy_in_MO_pairs
+   ! Analyze the SCF energy into MO pairs.
+   ! NOTE: the .density_matrix is destroyed; but .MOs remain.
+      self :: INOUT
+
+      core_energy :: VEC{REAL}@
+      pair_energy :: MAT{REAL}@
       energy :: REAL
       direct :: BIN
+      i,j :: INT
 
       core_energy.create(.n_a)
       pair_energy.create(.n_a,.n_a)
@@ -3271,26 +3366,22 @@ contains
       core_energy = ZERO
       pair_energy = ZERO
 
-      Di.create(.n_bf)
-
-      direct = .scfdata.using_direct_scf
-      .scfdata.set_using_direct_scf(TRUE)
+      direct = .scfdata.using_direct_SCF
+      .scfdata.set_using_direct_SCF(TRUE)
 
       do i = 1,.n_a
 
-         .BASE:make_scf_density_matrix(i)
-         .FOCK:make_fock_matrix(.density_matrix,.fock_matrix,core=TRUE,r12=FALSE)
+         .BASE:make_SCF_density_mx(i)
+         .FOCK:make_Fock_mx(.density_mx,.fock_mx,core=TRUE,r12=FALSE)
 
-         Di.set_to(.density_matrix)
-
-         core_energy(i) = .SCF:scf_electronic_energy(Di,core=TRUE)
+         core_energy(i) = .SCF:SCF_electronic_energy(.density_mx,core=TRUE)
 
          do j = 1,i
 
-            .BASE:make_scf_density_matrix(j)
-            .FOCK:make_fock_matrix(.density_matrix,.fock_matrix,core=FALSE,r12=TRUE)
+            .BASE:make_SCF_density_mx(j)
+            .FOCK:make_Fock_mx(.density_mx,.fock_mx,core=FALSE,r12=TRUE)
 
-            energy = .SCF:scf_electronic_energy(Di,core=FALSE)
+            energy = .SCF:SCF_electronic_energy(.density_mx,core=FALSE)
 
             if (i==j) then; pair_energy(i,j) =     energy
             else;           pair_energy(i,j) = TWO*energy
@@ -3299,13 +3390,13 @@ contains
          end
 
       end
-      Di.destroy
+      .density_mx.destroy
 
-      .scfdata.set_using_direct_scf(direct)
+      .scfdata.set_using_direct_SCF(direct)
 
       stdout.flush
       stdout.text("SCF MO pair energy decomposition:")
-      energy = sum(core_energy) + sum(transfer(pair_energy,(/ONE/))) + .BASE:nuclear_repulsion_energy
+      energy = sum(core_energy) + sum(transfer(pair_energy,(/ONE/))) + .INQ:nuclear_repulsion_energy
       stdout.show("SCF energy =",energy)
       stdout.text("Core energies:")
       stdout.flush
@@ -3340,40 +3431,40 @@ contains
       stdout.flush
    end
 
-   put_scf_energy_as_mo_parts
+   put_SCF_energy_as_MO_parts
    ! Analyze the SCF energy into MO contributions
       self :: INOUT
 
-   ENSURE(.molecular_orbitals.allocated,"no MO's")
-   ENSURE(.orbital_energies.allocated,"no MO energies")
-   ENSURE(.density_matrix.allocated,"no density matrix")
-   ENSURE(.scfdata.associated,"no scfdata")
-   ENSURE(.scfdata.scf_kind.is_one_of(["rhf","rks"]),"must be rhf/rks")
+   ENSURE(.MOs.allocated,"no MO's")
+   ENSURE(.MO_energies.allocated,"no MO energies")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.scfdata.allocated,"no scfdata")
+   ENSURE(.scfdata.SCF_kind.is_one_of(["rhf","rks"]),"must be rhf/rks")
 
-      H :: MAT{REAL}*
-      mo_energy :: VEC{REAL}*
+      MO_energy :: VEC{REAL}@
+      H :: MAT{REAL}@
       i :: INT
 
-      mo_energy.create(.n_a)
+      MO_energy.create(.n_a)
       H.create(.n_bf,.n_bf)
 
-      .SCF:make_core_matrix
-      .core_matrix.restricted.change_basis_to(H,.molecular_orbitals.restricted)
+      .SCF:make_core_mx
+      .core_mx.r.change_basis_to(H,.MOs.r)
 
       do i = 1,.n_a
-         mo_energy(i) = H(i,i) + .orbital_energies.restricted(i)
+         MO_energy(i) = H(i,i) + .MO_energies.r(i)
       end
 
 
       stdout.flush
       stdout.text("SCF MO energy decomposition:")
-      stdout.show("SCF electronic energy =",sum(mo_energy))
+      stdout.show("SCF electronic energy =",sum(MO_energy))
       stdout.text("MO energies:")
       stdout.flush
-      stdout.put(mo_energy)
+      stdout.put(MO_energy)
 
       H.destroy
-      mo_energy.destroy
+      MO_energy.destroy
 
    end
 
@@ -3383,11 +3474,12 @@ contains
 
    put_AO_energy_partition
    ! Put out the AO energy partition
+      self :: INOUT
 
-      Y :: MAT{REAL}*
+      Y :: MAT{REAL}@
 
       Y.create(.n_bf,.n_bf)
-      Y.to_unit_matrix
+      Y.to_unit_mx
       .:put_energy_partition(Y)
       Y.destroy
 
@@ -3395,60 +3487,66 @@ contains
 
    put_SAO_energy_partition
    ! Put out the symmetric AO energy partition
+      self :: INOUT
 
-      Smh :: MAT{REAL}*
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-      .INTS:make_overlap_matrix
+      Smh :: MAT{REAL}@
 
       Smh.create(.n_bf,.n_bf)
+
       .INTS:make_r_overlap_inverse_sqrt(Smh)
 
       .:put_energy_partition(Smh)
 
       Smh.destroy
+ 
    end
 
    put_MO_energy_partition
    ! Put out the MO energy partition. NOTE: the MO's must be ordered
-   ! contiguously, first group 1 then group 2 MO's, AND the atoms in each group
-   ! must be contiguous in the .atom list, first group 1 then group 2. This is
-   ! because the atom_group_AO_subspace_set routine is used, and by abuse of its
-   ! function with the above cobstraints, it will do the right thing and copy
-   ! quadrants.
+   ! contiguously, first group 1 then group 2 MO's, AND the atoms in
+   ! each group must be contiguous in the .atom list, first group 1
+   ! then group 2. This is because the atom_group_AO_subspace_set
+   ! routine is used, and by abuse of its function with the above
+   ! cobstraints, it will do the right thing and copy quadrants.
       self :: INOUT
 
-   ENSURE(.molecular_orbitals.allocated,"no MO's")
-   ENSURE(.molecular_orbitals.restricted.allocated,"no restricted MO's")
+   ENSURE(.MOs.allocated,"no MO's")
+   ENSURE(.MOs.r.allocated,"no restricted MO's")
 
-      .:put_energy_partition(.molecular_orbitals.restricted)
+      .:put_energy_partition(.MOs.r)
 
    end
 
    put_energy_partition(Y)
-   ! Put out the energy decomposition specified in the .atom_group array.
-   ! The inverse of matrix "Y" is used to back transform the density matrix
-   ! (which is taken from disk). The back transformed density matrix is then
-   ! partitioned, and transformed back in order to evaluate the interaction
-   ! energies between the partitioned systems.
+   ! Put out the energy decomposition specified in the .atom_group
+   ! array.  The inverse of matrix "Y" is used to back transform the
+   ! density matrix (which is taken from disk). The back transformed
+   ! density matrix is then partitioned, and transformed back in order
+   ! to evaluate the interaction energies between the partitioned
+   ! systems.
       self :: INOUT
-      Y :: MAT{REAL}, IN
+      Y    :: MAT{REAL}, IN
 
    ENSURE(.atom_group.allocated,"no atom group information")
    ENSURE(size(.atom_group)==2,"must have only 2 groups")
    ENSURE(Y.dim1==.n_bf,"incorrect size for Y array")
 
-      X, T,Z,ZZ,C,K,P,PP,W,E_T,E_Z, EE :: MAT{REAL}*
-      E_ZZ :: MAT3{REAL}*
-      E_C,E_K :: MAT4{REAL}*
+      P,PP :: MAT{REAL}@
+      W,T,Z,ZZ,C,K :: MAT{REAL}@
+      X,E_T,E_Z,EE :: MAT{REAL}@
+      E_ZZ     :: MAT3{REAL}@
+      E_C,E_K :: MAT4{REAL}@
       n_group,g,h,i,j :: INT
-      fac :: REAL
+      fac  :: REAL
       unit :: STR
       arch :: ARCHIVE
       kinetic_energy,nuclear_attraction,nuclear_repulsion :: REAL
       coulomb_repulsion,net_coulomb,bicentric_exchange :: REAL
       exchange_attraction,total_interaction :: REAL
 
-      arch.set(.name,"density_matrix,restricted")
+      arch.set(.name,"density_mx","r")
       ENSURE(arch.exists,"no density matrix saved on disk")
 
       P.create(.n_bf,.n_bf)
@@ -3545,7 +3643,7 @@ contains
       stdout.text(" ")
       fac = sum(E_T+E_Z) + sum(E_C+E_K)
       stdout.show("SCF electronic energy =",fac)
-      stdout.show("SCF energy            =",fac+.BASE:nuclear_repulsion_energy)
+      stdout.show("SCF energy            =",fac+.INQ:nuclear_repulsion_energy)
       stdout.show("Kinetic energy        =",sum(E_T))
 
       unit = "kcal/mol"
@@ -3571,7 +3669,7 @@ contains
       stdout.put(E_ZZ(:,:,2))
       EE(1,1) = fac*.atom(.atom_group(1).atom_index).nuclear_repulsion_energy
       EE(2,2) = fac*.atom(.atom_group(2).atom_index).nuclear_repulsion_energy
-      nuclear_repulsion = fac*.BASE:nuclear_repulsion_energy - EE(1,1) - EE(2,2)
+      nuclear_repulsion = fac*.INQ:nuclear_repulsion_energy - EE(1,1) - EE(2,2)
       EE(2,1) = nuclear_repulsion
       EE(1,2) = ZERO
       stdout.text(" ")
@@ -3691,36 +3789,33 @@ contains
 
    end
 
-   put_roby_smo_energy_partition
-   ! Put out the roby energy decomposition specified in the .atom_group array
-   ! based on symmetrically orthonormalised monomer molecular (SOMMO) fragments.
+   put_Roby_smo_energy_partition
+   ! Put out the roby energy decomposition specified in the
+   ! .atom_group array based on symmetrically orthonormalized 
+   ! monomer molecular (SOMMO) fragments.  A supermolecule 
+   ! density matrix must exist on disk.
+      self :: INOUT
+      .:put_Roby_energy_partition(symorthonormalize=TRUE)
+   end
+
+   put_Roby_mmo_energy_partition
+   ! Put out the roby energy decomposition specified in the
+   ! .atom_group array based on monomer molecular (MMO) fragments. 
    ! A supermolecue density matrix must exist on disk.
       self :: INOUT
-
-      .:put_roby_energy_partition(symorthonormalise=TRUE)
-
+      .:put_Roby_energy_partition(symorthonormalize=FALSE)
    end
 
-   put_roby_mmo_energy_partition
-   ! Put out the roby energy decomposition specified in the .atom_group array
-   ! based on monomer molecular (MMO) fragments.  A supermolecue density matrix
-   ! must exist on disk.
-      self :: INOUT
-
-      .:put_roby_energy_partition(symorthonormalise=FALSE)
-
-   end
-
-   put_roby_energy_partition(symorthonormalise) ::: leaky
+   put_Roby_energy_partition(symorthonormalize) ::: leaky
    ! Calculate and put out the roby energy decomposition using groups
-   ! specified in the .atom_group array.  If "symorthonormalise" is
+   ! specified in the .atom_group array.  If "symorthonormalize" is
    ! TRUE, then the occupied monomer molecular orbitals are
-   ! symmetrically orthonormalised in order to define the fragments.
+   ! symmetrically orthonormalized in order to define the fragments.
    ! NOTE: The density matrix defining the supermolecule is read in
-   ! from the disk, so an SCF calculation or a "make_group_density_matrix"
+   ! from the disk, so an SCF calculation or a "make_group_density_mx"
    ! calculation must be done before this routine is called.
       self :: INOUT
-      symorthonormalise :: BIN, IN
+      symorthonormalize :: BIN, IN
 
    ENSURE(.atom_group.allocated,"no atom group information")
    ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
@@ -3732,7 +3827,7 @@ contains
       E_C,E_C_A,E_C_B, E_K,E_K_A,E_K_B, E_N,E_N_A,E_N_B :: REAL
       E0_C_A,E0_C_B, E0_K_A,E0_K_B :: REAL
       E_kin,E_att,E_rep,E_coul,E_net_coul,E_ex,E_int,E_prom,energy, fac :: REAL
-      P,P_A,P_B,D,T,Z,C,K :: MAT{REAL}*
+      P,P_A,P_B,D,T,Z,C,K :: MAT{REAL}@
       n,f,l :: INT
 
       ! Units
@@ -3746,10 +3841,10 @@ contains
     ! .BASE:make_atom_group_info
 
       ! Make sure ANO data and atom_group(:).mol scfdata is up-to-date (leaky)
-      .BASE:update_group_info
+      .SET:update_group_crystal_and_ANOs
 
       ! Density matrix exists?
-      arch.set(.name,"density_matrix,restricted")
+      arch.set(.name,"density_mx","r")
       ENSURE(arch.exists,"no density matrix")
 
       ! Read density from disk
@@ -3757,14 +3852,14 @@ contains
       arch.read(P)
 
       ! Make the monomer density and MO's
-      .SCF:do_group_SCF(MOs=TRUE)
+      .SCF:do_atom_group_SCF(MOs=TRUE)
 
       ! Make the group energies
       .SCF:make_group_energies(1,E0_A,E0_T_A,E0_Z_A,E0_C_A,E0_K_A,fac)
       .SCF:make_group_energies(2,E0_B,E0_T_B,E0_Z_B,E0_C_B,E0_K_B,fac)
 
-      ! Symorthonormalise the occupied monomer MO's
-      if (symorthonormalise) then
+      ! Symorthonormalize the occupied monomer MO's
+      if (symorthonormalize) then
          .SCF:symorthonormalize_occupied_MOs
       else
          stdout.text(" ")
@@ -3776,19 +3871,19 @@ contains
       P_B.create(.n_bf,.n_bf)
       D.create(.n_bf,.n_bf)
 
-      .INTS:make_overlap_matrix
+      .INTS:make_overlap_mx
 
-      P.change_basis_to(P_A,.overlap_matrix)
+      P.change_basis_to(P_A,.overlap_mx)
       P_B = P_A
-      n   = .occupation_numbers.restricted(1:).index_of_first_zero_value - 1
-      D.to_product_of(.molecular_orbitals.restricted(:,1:n),.molecular_orbitals.restricted(:,1:n),transpose_b=TRUE)
+      n   = .NO_occ_nos.r(1:).index_of_first_zero_value - 1
+      D.to_product_of(.MOs.r(:,1:n),.MOs.r(:,1:n),transpose_b=TRUE)
       P_A.change_basis_using(D)
 
-      f  = .occupation_numbers.restricted(n+1:).index_of_first_nonzero_value
+      f  = .NO_occ_nos.r(n+1:).index_of_first_nonzero_value
       f  = n + f
-      l  = .occupation_numbers.restricted(f:).index_of_first_zero_value - 1
+      l  = .NO_occ_nos.r(f:).index_of_first_zero_value - 1
       l  = f + l - 1
-      D.to_product_of(.molecular_orbitals.restricted(:,f:l),.molecular_orbitals.restricted(:,f:l),transpose_b=TRUE)
+      D.to_product_of(.MOs.r(:,f:l),.MOs.r(:,f:l),transpose_b=TRUE)
       P_B.change_basis_using(D)
       D.destroy
 
@@ -3825,7 +3920,7 @@ contains
       P_A.destroy
       P.destroy
 
-      E_N   = fac*.BASE:nuclear_repulsion_energy
+      E_N   = fac*.INQ:nuclear_repulsion_energy
       E_N_A = .atom(.atom_group(1).atom_index).nuclear_repulsion_energy*fac
       E_N_B = .atom(.atom_group(2).atom_index).nuclear_repulsion_energy*fac
       stdout.text(" ")
@@ -3836,8 +3931,8 @@ contains
       energy     = E_T + E_Z + E_C + E_K
       stdout.show("SCF electronic energy =",(energy/fac))
       stdout.show("... in kcal/mol       =",energy)
-      stdout.show("SCF energy =",(energy/fac)+.BASE:nuclear_repulsion_energy)
-      stdout.show("... in kcal/mol =",energy+fac*.BASE:nuclear_repulsion_energy)
+      stdout.show("SCF energy =",(energy/fac)+.INQ:nuclear_repulsion_energy)
+      stdout.show("... in kcal/mol =",energy+fac*.INQ:nuclear_repulsion_energy)
       stdout.show("Kinetic energy        =",E_T)
       stdout.show("... in kcal/mol       =",(E_T/fac))
       stdout.text(" ")
@@ -3850,22 +3945,22 @@ contains
       E_coul     = E_C - E_C_A - E_C_B
       E_net_coul = E_att + E_rep + E_coul
       E_int      = E_kin + E_net_coul + E_ex
-      MOLECULE.PROP:put_roby_energy_parts(E_kin,E_ex,E_coul,E_att,E_rep,E_int)
+      MOLECULE.PROP:put_Roby_energy_parts(E_kin,E_ex,E_coul,E_att,E_rep,E_int)
 
       stdout.text(" ")
       stdout.text("Interacting Monomer 1 energies (kcal/mol):")
       stdout.text(" ")
       E_int      = E_T_A + (E_Z_A + E_N_A + E_C_A) + E_K_A
-      E_prom     = E_int - .atom_group(1).mol.scfdata.energy*fac
-      MOLECULE.PROP:put_roby_energy_parts(E_T_A,E_K_A,E_C_A,E_Z_A,E_N_A,E_int,E_prom)
+      E_prom     = E_int - .mol(1).scfdata.energy*fac
+      MOLECULE.PROP:put_Roby_energy_parts(E_T_A,E_K_A,E_C_A,E_Z_A,E_N_A,E_int,E_prom)
 
       stdout.text(" ")
       stdout.text("Isolated Monomer 1 energies (kcal/mol):")
       stdout.text(" ")
-      stdout.show("Monomer 1 energy   =",.atom_group(1).mol.scfdata.energy)
-      stdout.show("... in k/cal mol   =",.atom_group(1).mol.scfdata.energy*fac)
+      stdout.show("Monomer 1 energy   =",.mol(1).scfdata.energy)
+      stdout.show("... in k/cal mol   =",.mol(1).scfdata.energy*fac)
       stdout.text(" ")
-      MOLECULE.PROP:put_roby_energy_parts(E0_T_A,E0_K_A,E0_C_A,E0_Z_A,E_N_A)
+      MOLECULE.PROP:put_Roby_energy_parts(E0_T_A,E0_K_A,E0_C_A,E0_Z_A,E_N_A)
 
       stdout.text(" ")
       stdout.text("Changes in monomer 1 energy contributions (kcal/mol):")
@@ -3876,22 +3971,22 @@ contains
       E_rep      = ZERO                      ! change in nuclear repulsion is zero
       E_net_coul = E_att + E_rep + E_coul
       E_prom     = E_kin + E_net_coul + E_ex
-      MOLECULE.PROP:put_roby_energy_parts(E_kin,E_ex,E_coul,E_att,E_rep,E_prom=E_prom)
+      MOLECULE.PROP:put_Roby_energy_parts(E_kin,E_ex,E_coul,E_att,E_rep,E_prom=E_prom)
 
       stdout.text(" ")
       stdout.text("Interacting Monomer 2 energies (kcal/mol):")
       stdout.text(" ")
       E_int      = E_T_B + (E_Z_B + E_N_B + E_C_B) + E_K_B
-      E_prom     = E_int - .atom_group(2).mol.scfdata.energy*fac
-      MOLECULE.PROP:put_roby_energy_parts(E_T_B,E_K_B,E_C_B,E_Z_B,E_N_B,E_int,E_prom)
+      E_prom     = E_int - .mol(2).scfdata.energy*fac
+      MOLECULE.PROP:put_Roby_energy_parts(E_T_B,E_K_B,E_C_B,E_Z_B,E_N_B,E_int,E_prom)
 
       stdout.text(" ")
       stdout.text("Isolated Monomer 2 energies (kcal/mol):")
       stdout.text(" ")
-      stdout.show("Monomer 2 energy   =",.atom_group(2).mol.scfdata.energy)
-      stdout.show("... in k/cal mol   =",.atom_group(2).mol.scfdata.energy*fac)
+      stdout.show("Monomer 2 energy   =",.mol(2).scfdata.energy)
+      stdout.show("... in k/cal mol   =",.mol(2).scfdata.energy*fac)
       stdout.text(" ")
-      MOLECULE.PROP:put_roby_energy_parts(E0_T_B,E0_K_B,E0_C_B,E0_Z_B,E_N_B)
+      MOLECULE.PROP:put_Roby_energy_parts(E0_T_B,E0_K_B,E0_C_B,E0_Z_B,E_N_B)
 
       stdout.text(" ")
       stdout.text("Changes in monomer 2 energy contributions (kcal/mol):")
@@ -3902,11 +3997,11 @@ contains
       E_rep      = ZERO                      ! change in nuclear repulsion is zero
       E_net_coul = E_att + E_rep + E_coul
       E_prom     = E_kin + E_net_coul + E_ex
-      MOLECULE.PROP:put_roby_energy_parts(E_kin,E_ex,E_coul,E_att,E_rep,E_prom=E_prom)
+      MOLECULE.PROP:put_Roby_energy_parts(E_kin,E_ex,E_coul,E_att,E_rep,E_prom=E_prom)
 
    end
 
-   put_roby_energy_parts(E_T,E_K,E_C,E_Z,E_N,E_int,E_prom) ::: selfless, private
+   put_Roby_energy_parts(E_T,E_K,E_C,E_Z,E_N,E_int,E_prom) ::: selfless, private
    ! Put of the Roby energy parts
       self :: IN
       E_T,E_K,E_C,E_Z,E_N :: REAL, IN
@@ -3936,21 +4031,17 @@ contains
    put_group_12_Grimme2006_energy ::: leaky
    ! Calculate the 1-2 dispersion term from Grimme's C6 coefficients
    ! C6 taken from Grimme (2006) J. Comp. Chem.  27(15) p. 1787
+      self :: target, INOUT
 
    ENSURE(.atom_group.allocated,"no atom group information")
    ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
 
       unit :: STR
       E_disp,fac :: REAL
-      mol_A, mol_B :: MOLECULE*
 
-      ! A & B molecules
-      mol_A => .atom_group(1).mol
-      mol_B => .atom_group(2).mol
+      E_disp = .mol(1).atom.Grimme06_dispersion_energy(.mol(2).atom)
 
-      E_disp = mol_A.atom.Grimme06_dispersion_energy(mol_B.atom)
-
-      ! Convert units to kJmol-1
+      ! Convert units to kJ mol-1
       unit = "kJ/mol"
       fac = unit.conversion_factor
       E_disp = E_disp * fac
@@ -3958,37 +4049,33 @@ contains
       ! Output energies
 
       stdout.flush
-      stdout.text("===========================================")
+      stdout.text("=========================================")
       stdout.text("Grimme (2006) atom-atom dispersion energy")
-      stdout.text("===========================================")
+      stdout.text("=========================================")
       stdout.flush
       stdout.text(". See: Grimme (2006) J. Comp. Chem.  27(15) p. 1787")
+      stdout.flush
       stdout.text(". E_disp = sum over atoms (C6 / r^6).")
       stdout.flush
       stdout.show("Grimme06 dispersion energy (kJ/mol) = ", E_disp)
 
    end
 
-
    put_group_12_Spackman1986_energies ::: leaky
    ! Calculate the 1-2 dispersion and repulsion term from atom-atom potentials
    ! See Spackman M. A. (1986) J. Chem. Phys. 85(11) p6579
+      self :: target, INOUT
 
    ENSURE(.atom_group.allocated,"no atom group information")
    ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
 
       unit :: STR
       E_disp,E_rep,fac :: REAL
-      mol_A, mol_B :: MOLECULE*
 
-      ! A & B molecules
-      mol_A => .atom_group(1).mol
-      mol_B => .atom_group(2).mol
+      E_disp = .mol(1).atom.Spackman86_dispersion_energy(.mol(2).atom)
+      E_rep  = .mol(1).atom.Spackman86_repulsion_energy(.mol(2).atom)
 
-      E_disp = mol_A.atom.Spackman86_dispersion_energy(mol_B.atom)
-      E_rep  = mol_A.atom.Spackman86_repulsion_energy(mol_B.atom)
-
-      ! Convert units to kJmol-1
+      ! Convert units to kJ mol-1
       unit = "kJ/mol"
       fac = unit.conversion_factor
       E_disp = E_disp * fac
@@ -4004,11 +4091,13 @@ contains
       stdout.text(". See: Spackman (1986) JCP 85 p. 6579")
       stdout.text(". Repulsion is an exponential fit to Gordon-Kim")
       stdout.text("  energies, modified for H-bonding and H-H contacts")
+      stdout.flush
       stdout.text(". Dispersion from C6 London-formula-combined atomic")
       stdout.text("  dipole polarizabilities")
 
       stdout.flush
       stdout.show("Spackman86 dispersion energy (kJ/mol) = ", E_disp)
+      stdout.flush
       stdout.show("Spackman86 repulsion  energy (kJ/mol) = ", E_rep)
 
    end
@@ -4016,55 +4105,64 @@ contains
    put_group_12_polarization_energy ::: leaky
    ! Calculate the 1-2 polarization term
    ! Atomic polarizabilities from Thakkar and Lupinetti (2006)
+      self :: target, INOUT
 
    ENSURE(.atom_group.allocated,"no atom group information")
    ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
-   ENSURE(.atom_group(1).mol.density_matrix.allocated ,"no mol 1 DM!")
-   ENSURE(.atom_group(2).mol.density_matrix.allocated ,"no mol 2 DM!")
+   ENSURE(.mol(1).density_mx.allocated ,"no mol 1 DM!")
+   ENSURE(.mol(2).density_mx.allocated ,"no mol 2 DM!")
 
-      unit :: STR
+      Fe_at_A, Fn_at_A, Ft_at_A :: MAT{REAL}@
+      Fe_at_B, Fn_at_B, Ft_at_B :: MAT{REAL}@
+      F2_at_A, F2_at_B :: VEC{REAL}@
+      specialA, specialB :: BIN
       E_pol,fac :: REAL
-      mol_A, mol_B :: MOLECULE*
-      electronic_at_A, nuclear_at_A, total_at_A, electronic_at_B, nuclear_at_B, total_at_B :: MAT{REAL}*
-      F_sq_A, F_sq_B :: VEC{REAL}*
+      n1,n2 :: INT
+      unit :: STR
 
-      ! A & B molecules
-      mol_A => .atom_group(1).mol
-      mol_B => .atom_group(2).mol
+      n1 = .mol(1).n_atom
+      n2 = .mol(2).n_atom
 
       ! Electric field from B at A
-      electronic_at_A.create(3,mol_A.n_atom)
-      nuclear_at_A.create(3,mol_A.n_atom)
-      total_at_A.create(3,mol_A.n_atom)
+      Ft_at_A.create(3,n1)
+      Fn_at_A.create(3,n1)
+      Fe_at_A.create(3,n1)
 
-      electronic_at_A =  mol_B.INTS:electronic_E_field_at_atoms(mol_A.atom)
-      nuclear_at_A    = mol_B.INTS:nuclear_E_field_at_atoms(mol_A.atom)
-      total_at_A      = electronic_at_A + nuclear_at_A
+      Fe_at_A = .mol(2).INTS:electronic_E_field_at_nuclei_of(.mol(1).atom)
+      Fn_at_A =    .mol(2).atom.nuclear_E_field_at_nuclei_of(.mol(1).atom)
+      Ft_at_A = Fe_at_A + Fn_at_A
+      Fe_at_A.destroy
+      Fn_at_A.destroy
 
       ! Electric field from A at B
-      electronic_at_B.create(3,mol_B.n_atom)
-      nuclear_at_B.create(3,mol_B.n_atom)
-      total_at_B.create(3,mol_B.n_atom)
+      Ft_at_B.create(3,n2)
+      Fn_at_B.create(3,n2)
+      Fe_at_B.create(3,n2)
 
-      electronic_at_B = mol_A.INTS:electronic_E_field_at_atoms(mol_B.atom)
-      nuclear_at_B    = mol_A.INTS:nuclear_E_field_at_atoms(mol_B.atom)
-      total_at_B      = electronic_at_B + nuclear_at_B
+      Fe_at_B = .mol(1).INTS:electronic_E_field_at_nuclei_of(.mol(2).atom)
+      Fn_at_B =    .mol(1).atom.nuclear_E_field_at_nuclei_of(.mol(2).atom)
+      Ft_at_B = Fe_at_B + Fn_at_B
+      Fe_at_B.destroy
+      Fn_at_B.destroy
 
       ! Magnitude of the electric field squared
-      F_sq_A.create(total_at_A.dim2)
-      F_sq_B.create(total_at_B.dim2)
+      F2_at_A.create(Ft_at_A.dim2)
+      F2_at_B.create(Ft_at_B.dim2)
 
-      F_sq_A = total_at_A.column_norms
-      F_sq_A = F_sq_A**2
-      F_sq_B = total_at_B.column_norms
-      F_sq_B = F_sq_B**2
+      F2_at_A = Ft_at_A.column_norms
+      F2_at_B = Ft_at_B.column_norms
+      Ft_at_B.destroy
+      Ft_at_A.destroy
+
+      F2_at_A = F2_at_A**2
+      F2_at_B = F2_at_B**2
 
       ! Polarization Energy
+      specialA = .mol(1).charge/=0 AND n1==1
+      specialB = .mol(2).charge/=0 AND n2==1
       E_pol = ZERO
-      E_pol = E_pol + mol_A.atom.polarization_energy(F_sq_A, &
-                        ((mol_A.charge /= 0) AND (mol_A.n_atom == 1)))
-      E_pol = E_pol + mol_B.atom.polarization_energy(F_sq_B, &
-                        ((mol_B.charge /= 0) AND (mol_B.n_atom == 1)))
+      E_pol = E_pol + .mol(1).atom.polarization_energy(F2_at_A,specialA)
+      E_pol = E_pol + .mol(2).atom.polarization_energy(F2_at_B,specialB)
 
       ! Convert units to kJmol-1
       unit = "kJ/mol"
@@ -4074,64 +4172,60 @@ contains
       ! Output energies
 
       stdout.flush
-      stdout.text("===========================================")
+      stdout.text("=============================")
       stdout.text("Atom-atom polarization energy")
-      stdout.text("===========================================")
+      stdout.text("=============================")
       stdout.flush
       stdout.text(". Atomic dipole polarizabilities from Thakkar and Lupinetti (2006)")
       stdout.flush
       stdout.show("Polarization energy (kJ/mol) = ", E_pol)
 
       ! Tidy up
-      electronic_at_A.destroy
-      nuclear_at_A.destroy
-      total_at_A.destroy
-
-      electronic_at_B.destroy
-      nuclear_at_B.destroy
-      total_at_B.destroy
-
-      F_sq_A.destroy
-      F_sq_B.destroy
+      F2_at_B.destroy
+      F2_at_A.destroy
 
    end
+
+
+   ! There is confusion between "self" & "mol_B"
+   ! versus .mol(1) & .mol(2) ... latter seem better to use
 
    intermolecular_polarization_energy(mol_B) result(res) ::: leaky
    ! Calculate the 1-2 polarization term
    ! Atomic polarizabilities from Thakkar and Lupinetti (2006)
-      self :: PTR
-      mol_B :: MOLECULE*
-      res :: REAL
+      self  :: target, INOUT
+      mol_B :: MOLECULE, INOUT
+      res   :: REAL
 
    ENSURE(.atom_group.allocated,"no atom group information")
    ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
-   ENSURE(.atom_group(1).mol.density_matrix.allocated ,"no mol 1 DM!")
-   ENSURE(.atom_group(2).mol.density_matrix.allocated ,"no mol 2 DM!")
+ ! ENSURE(.mol(1).density_mx.allocated ,"no mol 1 DM!")
+ ! ENSURE(.mol(2).density_mx.allocated ,"no mol 2 DM!")
 
+      electronic_at_A, nuclear_at_A, total_at_A :: MAT{REAL}@
+      electronic_at_B, nuclear_at_B, total_at_B :: MAT{REAL}@
+      F_sq_A, F_sq_B :: VEC{REAL}@
+      specialA, specialB :: BIN
       E_pol :: REAL
-      mol_A :: MOLECULE* 
-      electronic_at_A, nuclear_at_A, total_at_A, electronic_at_B, nuclear_at_B, total_at_B :: MAT{REAL}*
-      F_sq_A, F_sq_B :: VEC{REAL}*
-
-      ! A & B molecules
-      mol_A => self
+      n2 :: INT
 
       ! Electric field from B at A
-      electronic_at_A.create(3,mol_A.n_atom)
-      nuclear_at_A.create(3,mol_A.n_atom)
-      total_at_A.create(3,mol_A.n_atom)
+      electronic_at_A.create(3,.n_atom)
+      nuclear_at_A.create(3,.n_atom)
+      total_at_A.create(3,.n_atom)
 
-      electronic_at_A =  mol_B.INTS:electronic_E_field_at_atoms(mol_A.atom)
-      nuclear_at_A    = mol_B.INTS:nuclear_E_field_at_atoms(mol_A.atom)
+      electronic_at_A = mol_B.INTS:electronic_E_field_at_nuclei_of(.atom)
+      nuclear_at_A    = mol_B.atom.nuclear_E_field_at_nuclei_of(.atom)
       total_at_A      = electronic_at_A + nuclear_at_A
 
       ! Electric field from A at B
-      electronic_at_B.create(3,mol_B.n_atom)
-      nuclear_at_B.create(3,mol_B.n_atom)
-      total_at_B.create(3,mol_B.n_atom)
+      n2 = mol_B.n_atom
+      electronic_at_B.create(3,n2)
+      nuclear_at_B.create(3,n2)
+      total_at_B.create(3,n2)
 
-      electronic_at_B = mol_A.INTS:electronic_E_field_at_atoms(mol_B.atom)
-      nuclear_at_B    = mol_A.INTS:nuclear_E_field_at_atoms(mol_B.atom)
+      electronic_at_B = .INTS:electronic_E_field_at_nuclei_of(mol_B.atom)
+      nuclear_at_B    = .atom.nuclear_E_field_at_nuclei_of(mol_B.atom)
       total_at_B      = electronic_at_B + nuclear_at_B
 
       ! Magnitude of the electric field squared
@@ -4144,11 +4238,11 @@ contains
       F_sq_B = F_sq_B**2
 
       ! Polarization Energy
+      specialA =      .charge/=0 AND .n_atom==1
+      specialB = mol_B.charge/=0 AND n2==1
       E_pol = ZERO
-      E_pol = E_pol + mol_A.atom.polarization_energy(F_sq_A, &
-                        ((mol_A.charge /= 0) AND (mol_A.n_atom == 1)))
-      E_pol = E_pol + mol_B.atom.polarization_energy(F_sq_B, &
-                        ((mol_B.charge /= 0) AND (mol_B.n_atom == 1)))
+      E_pol = E_pol +      .atom.polarization_energy(F_sq_A,specialA)
+      E_pol = E_pol + mol_B.atom.polarization_energy(F_sq_B,specialB)
 
       res = E_pol
 
@@ -4167,56 +4261,50 @@ contains
    end
 
 
-   intermolecular_overlap_repulsion(mol_B) result(res)
+   intermolecular_overlap_repulsion(mol_B) result (res)
    ! Calculate the exchange-repulsion energy based on the following
    ! overlap formula (see Soderhjelm et al. JCP 124 (2006) eq. 14)
    ! E = S^2 (1 + 20 e ^(-R))
-      self :: PTR
-      mol_B :: MOLECULE*
-      res :: REAL
+      self  :: INOUT
+      mol_B :: MOLECULE, INOUT
+      res   :: REAL
 
-      mol_A :: MOLECULE*
       S2 :: REAL
       X, Y :: MAT{REAL}@
       n_a, n_b :: INT
 
-      merged :: MOLECULE*
+      merged :: MOLECULE@
       MO_a, MO_b :: MAT{REAL}@
-      S_ab :: MAT{REAL}*
 
-      mol_A => self
-      merged.BASE:create_from_mols(mol_A, mol_B)
+      merged.:create_from_mols(self, mol_B)
 
       merged.SCF:merge_group_MOs
       merged.scfdata.set_output(FALSE)
 
       ! Make SCF density matrices
-      merged.INTS:make_overlap_matrix
-
+      merged.INTS:make_overlap_mx
 
       ! Overlap between phi_i and phi_j
       ! = sum_{a b} c_{a i} S_{ab} c_{b j}
       S2 = ZERO
-      n_a = mol_A.occupation_numbers.restricted(1:).index_of_first_zero_value - 1
-      n_b = mol_B.occupation_numbers.restricted(1:).index_of_first_zero_value - 1
+      n_a =      .NO_occ_nos.r(1:).index_of_first_zero_value - 1
+      n_b = mol_B.NO_occ_nos.r(1:).index_of_first_zero_value - 1
 
       allocate(MO_a(merged.n_bf, n_a))
       allocate(MO_b(merged.n_bf, n_b))
       MO_a = ZERO
       MO_b = ZERO
-      MO_a(:.n_bf, :) = .molecular_orbitals.restricted(:,1:n_a)
-      MO_b(.n_bf+1:, :) = mol_B.molecular_orbitals.restricted(:,1:n_b)
-      S_ab => merged.overlap_matrix
+      MO_a(       :.n_bf,:) =      .MOs.r(:,1:n_a)
+      MO_b(.n_bf+1:     ,:) = mol_B.MOs.r(:,1:n_b)
 
-      Y = matmul(S_ab, MO_b(:,:))
-      X = matmul(transpose(MO_a(:,:)), Y)
+      Y  = matmul(merged.overlap_mx, MO_b(:,:))
+      X  = matmul(transpose(MO_a(:,:)), Y)
       S2 = sum(X*X)
 
-      res = 0.92 * S2
+      res = 0.92 * S2 ! Magic number
       stdout.show("Overlap repulsion", res)
-      nullify(merged.atom_group(1).mol)
-      nullify(merged.atom_group(2).mol)
-      merged.BASE:destroy
+
+      merged.SET:destroy
 
    end
 
@@ -4225,55 +4313,49 @@ contains
    ! monomer energies is a vector if TWO * -monomer energies
    ! Effectively avoiding calculating the expectations for the
    ! monomers each time
+   ! monomer_enegries = [ E_en, E_1e, E_ee, E_ex ]
+   ! res              = [ E_coul, E_rep ]
    !!!! IF mol_B and  self are symmetry related !!!!
    ! For simplicity the notations follows the reference:
    ! P. Su & H. Li (2009) JCP 131 p. 014102
    ! It has references to the original work and is explained fairly
    ! clearly, except for their use of "X" for supermolecule (X=AB).
    ! NOTE: make sure the MO's and density matrices for each group exist!
-
-      self :: PTR
-      mol_B :: MOLECULE*
-      monomer_energies :: VEC{REAL}(4) ! E_en, E_1e, E_ee, E_ex
-      res :: VEC{REAL}(2) ! E_coul, E_rep
+      self  :: INOUT
+      mol_B :: MOLECULE, INOUT
+      monomer_energies :: VEC{REAL}(4), IN
+      res :: VEC{REAL}(2) 
 
       ! Terms regardless of unrestricted/restricted
-      E_en,E_ke,E_1e,E_nn,E_ee,E_ex,r :: REAL
-      E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
-      J :: OPMATRIX@
-      K :: OPMATRIX@
-      mol_A :: MOLECULE*
-      saved_MOs_A, saved_MOs_B :: OPMATRIX@
-      exchange_factor :: REAL = -HALF
+      E_en, E_ke, E_1e, E_nn, E_ee, E_ex, r :: REAL
+      E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR   :: REAL
+      J, K        :: OPMATRIX@
+      saved_MOs_A :: OPMATRIX@
+      saved_MOs_B :: OPMATRIX@
+      exchange_factor :: REAL
+      merged :: MOLECULE@
 
-      merged :: MOLECULE*
+      exchange_factor = -HALF
 
-
-      ! A & B molecules
-      mol_A => self
-
-     mol_A.atom.get_distance_to(mol_B.atom, r)
-     ! If the molecules are too far apart use multipoles
-     ! Set to use where the minimum separation is nearly 8 A
-     if (r > 13.6) then ! 7.2 Angstroms
-        res = ZERO
-        res(1) = .:intermolecular_coulomb_atomic_multipole_energy(mol_B)
-        return
-     end
-
-
+      ! If the molecules are too far apart use multipoles
+      ! Set to use where the minimum separation is nearly 8 A
+      .atom.get_distance_to(mol_B.atom, r)
+      if (r > 13.6) then ! 7.2 Angstroms
+         res = ZERO
+         res(1) = .:intermolecular_coulomb_atomic_multipole_energy(mol_B)
+         return
+      end
 
       ! Hacky method to reuse code, should be rewritten
-      merged.BASE:create_from_mols(mol_A, mol_B)
+      merged.:create_from_mols(self, mol_B)
 
+      saved_MOs_A =      .MOs
+      saved_MOs_B = mol_B.MOs
 
-      saved_MOs_A = mol_A.molecular_orbitals
-      saved_MOs_B = mol_B.molecular_orbitals
-
-      mol_A.molecular_orbitals = mol_A.natural_orbitals
-      mol_B.molecular_orbitals = mol_B.natural_orbitals
-      mol_A.scfdata.set_scf_kind(mol_A.molecular_orbitals.spinorbital_kind)
-      mol_B.scfdata.set_scf_kind(mol_B.molecular_orbitals.spinorbital_kind)
+           .MOs =      .NOs
+      mol_B.MOs = mol_B.NOs
+           .scfdata.set_SCF_kind(     .MOs.genre)
+      mol_B.scfdata.set_SCF_kind(mol_B.MOs.genre)
 
       merged.SCF:merge_group_MOs
       merged.scfdata.set_output(FALSE)
@@ -4282,43 +4364,43 @@ contains
       end if
 
       ! Make SCF density matrices
-     merged.BASE:make_scf_density_matrix
+      merged.BASE:make_SCF_density_mx
 
       ! Make integrals
-     merged.SCF:make_core_matrix
+      merged.SCF:make_core_mx
 
       ! >> Nuclear attraction energy << 
-     merged.nuclear_attraction_matrix.uncompress
+      merged.nuclear_attraction_mx.uncompress
 
       E_ABn = ZERO; E_ABo = ZERO; 
       E_en = ZERO; E_1e = ZERO;
       E_ex = ZERO; E_nn = ZERO;
       E_ke = ZERO;
 
-      E_en = merged.BASE:expectation(merged.nuclear_attraction_matrix) + monomer_energies(1)
+      E_en = merged.BASE:expectation(merged.nuclear_attraction_mx) + monomer_energies(1)
 
-      merged.nuclear_attraction_matrix.compress
+      merged.nuclear_attraction_mx.compress
 
       ! Non-orthogonal & orthogonalized electronic energies
 
       ! >> One electron interaction energy <<
-      E_1e = merged.BASE:expectation(merged.core_matrix)
+      E_1e = merged.BASE:expectation(merged.core_mx)
       E_ABn = E_ABn + E_1e
       E_1e = E_1e + monomer_energies(2)
       E_ke = E_1e - E_en
 
-      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
-      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      J.create(merged.n_bf, merged.density_mx.genre)
+      K.create(merged.n_bf, merged.density_mx.genre)
 
-      merged.FOCK:make_JK_engine(J  ,K  ,merged.density_matrix  )
+      merged.FOCK:make_JK_engine(J  ,K  ,merged.density_mx  )
 
       ! Alpha density matrix with beta, beta density matrix with alpha
-      E_ee = merged.BASE:expectation(J) * HALF
+      E_ee  = merged.BASE:expectation(J) * HALF
       E_ABn = E_ABn + E_ee
-      E_ee = E_ee + monomer_energies(3)
-      E_ex = merged.BASE:expectation(K) * exchange_factor
+      E_ee  = E_ee + monomer_energies(3)
+      E_ex  = merged.BASE:expectation(K) * exchange_factor
       E_ABn = E_ABn + E_ex
-      E_ex = E_ex + monomer_energies(4)
+      E_ex  = E_ex + monomer_energies(4)
 
 
       ! >> Nuclear-nuclear repulsion energy term <<
@@ -4335,17 +4417,17 @@ contains
       ! ======================
 
       merged.SCF:symmorthonormalize_occupied_MOs
-      merged.BASE:make_scf_density_matrix
+      merged.BASE:make_SCF_density_mx
 
       ! One electron hamiltonian
-      E_ABo = merged.BASE:expectation(merged.core_matrix)
+      E_ABo = merged.BASE:expectation(merged.core_mx)
 
       ! Two-electron integrals
       J.destroy; K.destroy
-      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
-      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      J.create(merged.n_bf, merged.density_mx.genre)
+      K.create(merged.n_bf, merged.density_mx.genre)
 
-      merged.FOCK:make_JK_engine(J, K, merged.density_matrix)
+      merged.FOCK:make_JK_engine(J, K, merged.density_mx)
 
       E_ABo = E_ABo +    HALF * merged.BASE:expectation(J, TRUE)
       E_ABo = E_ABo + exchange_factor * merged.BASE:expectation(K)
@@ -4365,38 +4447,39 @@ contains
       end if
 
       J.destroy; K.destroy
-      merged.molecular_orbitals.destroy
-      merged.natural_orbitals.destroy
-      merged.density_matrix.destroy
+      merged.MOs.destroy
+      merged.NOs.destroy
+      merged.density_mx.destroy
 
-      mol_A.molecular_orbitals = saved_MOs_A
-      mol_B.molecular_orbitals = saved_MOs_B
+           .MOs = saved_MOs_A
+      mol_B.MOs = saved_MOs_B
 
       ! need to destroy but don't want to destroy atom_group
-      nullify(merged.atom_group(1).mol)
-      nullify(merged.atom_group(2).mol)
-      merged.BASE:destroy
+      merged.SET:destroy
 
    end
 
+   ! Why can't this be called via mol1, mol2?
+   ! Code bloat ...
 
    intermolecular_qm_energies(mol_B) result(res)
    ! Calculate the group 1-2 interaction energies.
    ! For simplicity the notations follows the reference:
+   ! res = [ E_coul, E_rep ]
    ! P. Su & H. Li (2009) JCP 131 p. 014102
    ! It has references to the original work and is explained fairly
    ! clearly, except for their use of "X" for supermolecule (X=AB).
    ! NOTE: make sure the MO's and density matrices for each group exist!
-      self :: PTR
-      res :: VEC{REAL}(2) ! E_coul, E_rep
-      mol_B :: MOLECULE*
+      self  :: INOUT
+      mol_B :: MOLECULE, INOUT
+      res   :: VEC{REAL}(2) 
 
    ENSURE(.atom_group.allocated,"no atom group information")
    ENSURE(.atom_group.dim==2 ,"must have only 2 atom groups")
-   ENSURE(.atom_group(1).mol.density_matrix.allocated, "no density matrix for atom group 1")
-   ENSURE(.atom_group(2).mol.density_matrix.allocated, "no density matrix for atom group 2")
-   ENSURE(.atom_group(1).mol.molecular_orbitals.allocated , "no molecular orbitals for atom group 1")
-   ENSURE(.atom_group(2).mol.molecular_orbitals.allocated , "no molecular orbitals for atom group 2")
+ ! ENSURE(.mol(1).density_mx.allocated, "no density matrix for atom group 1")
+ ! ENSURE(.mol(2).density_mx.allocated, "no density matrix for atom group 2")
+ ! ENSURE(.mol(1).MOs.allocated , "no molecular orbitals for atom group 1")
+ ! ENSURE(.mol(2).MOs.allocated , "no molecular orbitals for atom group 2")
 
       ! Terms regardless of unrestricted/restricted
       E_en,E_ke,E_1e,E_nn,E_ee,E_ex,r :: REAL
@@ -4404,19 +4487,15 @@ contains
       P :: OPMATRIX@ 
       J,J_A,J_B :: OPMATRIX@
       K,K_A,K_B :: OPMATRIX@
-      mol_A :: MOLECULE*
       saved_MOs_A, saved_MOs_B :: OPMATRIX@
-      exchange_factors :: VEC{REAL}(3) = [-HALF, -HALF, -HALF]
+      exchange_factors :: VEC{REAL}(3)
+      merged :: MOLECULE@
 
-      merged :: MOLECULE*
+      exchange_factors = [-HALF, -HALF, -HALF]
 
-
-      ! A & B molecules
-      mol_A => self
-
-      mol_A.atom.get_distance_to(mol_B.atom, r)
       ! If the molecules are too far apart use multipoles
       ! Set to use where the minimum separation is approximately 6.35 Angstrom
+      .atom.get_distance_to(mol_B.atom, r)
       if (r > 13.6) then ! 7.2 Angstroms
          res = ZERO
          res(1) = .:intermolecular_coulomb_atomic_multipole_energy(mol_B)
@@ -4424,20 +4503,20 @@ contains
       end
 
       ! Hacky method to reuse code, should be rewritten
-      merged.BASE:create_from_mols(mol_A, mol_B)
+      merged.:create_from_mols(self, mol_B)
 
-      mol_A.INTS:make_overlap_matrix
-      mol_A.BASE:make_natural_orbitals
-      mol_B.INTS:make_overlap_matrix
-      mol_B.BASE:make_natural_orbitals
+           .INTS:make_overlap_mx
+           .BASE:make_NOs
+      mol_B.INTS:make_overlap_mx
+      mol_B.BASE:make_NOs
 
-      saved_MOs_A = mol_A.molecular_orbitals
-      saved_MOs_B = mol_B.molecular_orbitals
+      saved_MOs_A =      .MOs
+      saved_MOs_B = mol_B.MOs
 
-      mol_A.molecular_orbitals = mol_A.natural_orbitals
-      mol_B.molecular_orbitals = mol_B.natural_orbitals
-      mol_A.scfdata.set_scf_kind(mol_A.molecular_orbitals.spinorbital_kind)
-      mol_B.scfdata.set_scf_kind(mol_B.molecular_orbitals.spinorbital_kind)
+           .MOs =      .NOs
+      mol_B.MOs = mol_B.NOs
+           .scfdata.set_SCF_kind(     .MOs.genre)
+      mol_B.scfdata.set_SCF_kind(mol_B.MOs.genre)
 
       merged.SCF:merge_group_MOs
       merged.scfdata.set_output(FALSE)
@@ -4445,53 +4524,56 @@ contains
          exchange_factors = -QUARTER
       end if
 
-      if (mol_A.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(2) = -QUARTER
-      if (mol_B.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(3) = -QUARTER
+      if (     .MOs.genre=="r") exchange_factors(2) = -QUARTER
+      if (mol_B.MOs.genre=="r") exchange_factors(3) = -QUARTER
 
       ! Make SCF density matrices
-     merged.BASE:make_scf_density_matrix
-      mol_A.BASE:make_scf_density_matrix
-      mol_B.BASE:make_scf_density_matrix
+      merged.BASE:make_SCF_density_mx
+            .BASE:make_SCF_density_mx
+       mol_B.BASE:make_SCF_density_mx
 
       ! Make integrals
-     merged.SCF:make_core_matrix
-      mol_A.SCF:make_core_matrix
-      mol_B.SCF:make_core_matrix
+      merged.SCF:make_core_mx
+            .SCF:make_core_mx
+       mol_B.SCF:make_core_mx
 
       ! >> Nuclear attraction energy << 
-     merged.nuclear_attraction_matrix.uncompress
-      mol_A.nuclear_attraction_matrix.uncompress
-      mol_B.nuclear_attraction_matrix.uncompress
+      merged.nuclear_attraction_mx.uncompress
+            .nuclear_attraction_mx.uncompress
+       mol_B.nuclear_attraction_mx.uncompress
 
       E_ABn = ZERO; E_ABo = ZERO; 
-      E_en = ZERO; E_1e = ZERO;
-      E_ex = ZERO; E_nn = ZERO;
-      E_ke = ZERO;
+      E_en  = ZERO; E_1e  = ZERO;
+      E_ex  = ZERO; E_nn  = ZERO;
+      E_ke  = ZERO;
 
-      E_en = merged.:group_12_int_energy(merged.nuclear_attraction_matrix, mol_A.nuclear_attraction_matrix, mol_B.nuclear_attraction_matrix)
+      E_en = merged.:group_12_int_energy(  &
+             merged.nuclear_attraction_mx, &
+                   .nuclear_attraction_mx, &
+              mol_B.nuclear_attraction_mx)
 
-      merged.nuclear_attraction_matrix.compress
-      mol_A.nuclear_attraction_matrix.compress
-      mol_B.nuclear_attraction_matrix.compress
+      merged.nuclear_attraction_mx.compress
+           .nuclear_attraction_mx.compress
+      mol_B.nuclear_attraction_mx.compress
 
       ! Non-orthogonal & orthogonalized electronic energies
 
       ! >> One electron interaction energy <<
-      E_1e = merged.:group_12_int_energy(P, mol_A.core_matrix, mol_B.core_matrix, E_AB=E_ABn)
+      E_1e = merged.:group_12_int_energy(P, .core_mx, mol_B.core_mx, E_AB=E_ABn)
       E_ke = E_1e - E_en
 
-      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
-      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
-      J_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
-      K_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
-      J_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
-      K_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
+      J.create(merged.n_bf, merged.density_mx.genre)
+      K.create(merged.n_bf, merged.density_mx.genre)
+      J_A.create(     .n_bf,      .density_mx.genre)
+      K_A.create(     .n_bf,      .density_mx.genre)
+      J_B.create(mol_B.n_bf, mol_B.density_mx.genre)
+      K_B.create(mol_B.n_bf, mol_B.density_mx.genre)
 
 
       ! Two-electron matrices
-      merged.FOCK:make_JK_engine(J  ,K  ,merged.density_matrix)
-      mol_A.FOCK:make_JK_engine(J_A,K_A,mol_A.density_matrix)
-      mol_B.FOCK:make_JK_engine(J_B,K_B,mol_B.density_matrix)
+      merged.FOCK:make_JK_engine(J  ,K  ,merged.density_mx)
+            .FOCK:make_JK_engine(J_A,K_A,      .density_mx)
+       mol_B.FOCK:make_JK_engine(J_B,K_B, mol_B.density_mx)
 
       ! Alpha density matrix with beta, beta density matrix with alpha
       E_ee = merged.:group_12_int_energy(J, J_A, J_B, HALF, E_ABn, TRUE)
@@ -4513,17 +4595,17 @@ contains
       ! ======================
 
       merged.SCF:symmorthonormalize_occupied_MOs
-      merged.BASE:make_scf_density_matrix
+      merged.BASE:make_SCF_density_mx
 
       ! One electron hamiltonian
-      E_ABo = merged.BASE:expectation(merged.core_matrix)
+      E_ABo = merged.BASE:expectation(merged.core_mx)
 
       ! Two-electron integrals
       J.destroy; K.destroy
-      J.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
-      K.create(merged.n_bf, merged.density_matrix.spinorbital_kind)
+      J.create(merged.n_bf, merged.density_mx.genre)
+      K.create(merged.n_bf, merged.density_mx.genre)
 
-      merged.FOCK:make_JK_engine(J, K, merged.density_matrix)
+      merged.FOCK:make_JK_engine(J, K, merged.density_mx)
 
       E_ABo = E_ABo +    HALF * merged.BASE:expectation(J, TRUE)
       E_ABo = E_ABo + exchange_factors(1) * merged.BASE:expectation(K)
@@ -4535,40 +4617,78 @@ contains
       ! Clean up remaining temporaries
       J.destroy; K.destroy
 
-      res = [E_net, E_XR]
       ! In kJ/mol
-      mol_A.natural_orbitals.destroy
-      mol_B.natural_orbitals.destroy
-      mol_A.molecular_orbitals = saved_MOs_A
-      mol_B.molecular_orbitals = saved_MOs_B
-      merged.molecular_orbitals.destroy
-      merged.natural_orbitals.destroy
-      merged.density_matrix.destroy
+      res = [E_net, E_XR]
+
+           .MOs = saved_MOs_A
+      mol_B.MOs = saved_MOs_B
+
+      ! Clean
+           .NOs.destroy
+      mol_B.NOs.destroy
+      merged.SET:destroy
     end 
 
    put_group_12_energies ::: leaky
    ! Calculate the classical and QM group 1-2 interaction energies.
-   ! NOTE: make sure the density matrices and MOs for each group exist!
-   ! e.g. by reading gaussian or by "make_group_density_matrix"
+   ! NOTE: make sure the density matrices and MOs for each group
+   ! exist e.g. by reading gaussian or by "make_group_density_mx"
       self :: INOUT
-
       .:put_group_12_QM_energies
+   end
+
+   create_from_mols(mol_A, mol_B) ::: leaky
+   ! Create a molecule by merging "mol_A" and "mol_B"
+      self  :: allocatable, OUT
+      mol_A :: MOLECULE, target, INOUT
+      mol_B :: MOLECULE, target, INOUT
+
+      i, n_A, n_B :: INT
+
+      .SET:create
+      .SET:set_defaults ! NOT PURE
+
+      allocate(.mol(2))
+
+      ! Is this necessary
+      mol_A.:make_SCF_density_mx
+      mol_B.:make_SCF_density_mx
+
+      n_A = mol_A.atom.dim
+      n_B = mol_B.atom.dim
+
+      .atom = mol_A.atom
+      .atom.append(mol_B.atom)
+      .atom_group.create(2)
+      .atom_group(1).set_atom(mol_A.atom)
+      .atom_group(1).atom_index = [ (i, i=1,n_A) ]
+      .mol(1) = mol_A
+
+      .atom_group(2).set_atom(mol_B.atom)
+      .atom_group(2).atom_index = [ (i, i=n_A+1,n_A+n_B) ]
+      .mol(2) = mol_B
+
+      .BASE:join_atom_groups
+
+      .SET:update_group_crystal_and_ANOs
 
    end
 
    put_group_12_multipole_energies ::: leaky
    ! Calculate the interaction (coulomb) energy with multipoles
       self :: INOUT
-      ! A & B molecules
-      E :: VEC{REAL}(5)
+
+      E     :: VEC{REAL}(5)
       E_tot :: REAL
+
       .PROP:make_coulomb_atomic_multipole_energy(E, E_tot)
+
       stdout.flush
-      stdout.text("===========================================")
-      stdout.text("Atom-atom multipole coulomb energy ")
-      stdout.text("===========================================")
+      stdout.text("==================================")
+      stdout.text("Atom-atom multipole coulomb energy")
+      stdout.text("==================================")
       stdout.flush
-      stdout.text("Up to and including octapole-charge/quadrupole-dipole interactions")
+      stdout.text("Up to and including octupole-charge/quadrupole-dipole interactions")
       stdout.flush
       stdout.show("Charge-charge                         = ", E(1), right=TRUE)
       stdout.show("Charge-dipole                         = ", E(2), right=TRUE)
@@ -4583,39 +4703,41 @@ contains
       stdout.show("Delta E_ee-exchange (kJ/mol)          = ",ZERO,right=TRUE)
       stdout.show("Delta E_exch-rep (kJ/mol)             = ",ZERO,right=TRUE)
       stdout.show("Delta E_coul (kJ/mol)                 = ",E_tot.to_units("kJ/mol"),right=TRUE)
-
-
       stdout.flush
+
    end
 
    make_coulomb_multipole_energy(E, E_tot)
    ! Make the intermolecular coulomb repulsion energy using
    ! multipoles. Assumes there are two atom groups present.
-      self :: INOUT
-      E :: VEC{REAL}(5), OUT
+      self  :: INOUT
+      E     :: VEC{REAL}(5), OUT
       E_tot :: REAL, OUT
 
-      ! A & B molecules
-      mol_A,mol_B :: MOLECULE*
-      q_a, q_b :: REAL
-      m_a, m_b :: VEC{REAL}(3)
-      Qu_a, Qu_b :: MAT{REAL}(3,3)
-      O_a, O_b :: MAT3{REAL}(3,3,3)
+      q_a, q_b  :: REAL
+      m_a, m_b  :: VEC{REAL}(3)
+      coma,comb :: VEC{REAL}(3)
+      Qu_a,Qu_b :: MAT{REAL}(3,3)
+      O_a, O_b  :: MAT3{REAL}(3,3,3)
       T :: T_TENSOR
 
       E = ZERO
-      mol_A => .atom_group(1).mol
-      mol_B => .atom_group(2).mol
-      m_a = mol_A.PROP:make_dipole
-      m_b = mol_B.PROP:make_dipole
-      Qu_a = mol_A.PROP:make_quadrupole
-      Qu_b = mol_B.PROP:make_quadrupole
-      O_a = mol_A.PROP:make_octupole
-      O_b = mol_B.PROP:make_octupole
-      T.create(mol_A.atom.center_of_mass, mol_B.atom.center_of_mass)
-      q_a = mol_A.charge
-      q_b = mol_B.charge
+
+      m_a  = .mol(1).PROP:the_dipole
+      m_b  = .mol(2).PROP:the_dipole
+      Qu_a = .mol(1).PROP:the_quadrupole
+      Qu_b = .mol(2).PROP:the_quadrupole
+      O_a  = .mol(1).PROP:the_octupole
+      O_b  = .mol(2).PROP:the_octupole
+
+      coma = .mol(1).atom.center_of_mass
+      comb = .mol(2).atom.center_of_mass
+      q_a  = .mol(1).charge
+      q_b  = .mol(2).charge
+
+      T.create(coma,comb)
       E = T.interaction_energy(q_a, q_b, m_a, m_b, Qu_a, Qu_b, O_a, O_b)
+
       E_tot = sum(E)
 
    end 
@@ -4626,8 +4748,6 @@ contains
       E :: VEC{REAL}(5), OUT
       E_tot :: REAL, OUT
 
-      ! A & B molecules
-      mol_A,mol_B :: MOLECULE*
       charges_a :: VEC{REAL}@
       charges_b :: VEC{REAL}@
       dipoles_a, quadrupoles_a, octupoles_a :: MAT{REAL}@
@@ -4635,39 +4755,41 @@ contains
       q_a, q_b :: REAL
       m_a, m_b :: VEC{REAL}(3)
       Qu_a, Qu_b :: MAT{REAL}(3,3)
-      O_a, O_b :: MAT3{REAL}(3,3,3)
-      i, j :: INT
+      O_a, O_b   :: MAT3{REAL}(3,3,3)
+      i, j, n1,n2 :: INT
       T :: T_TENSOR
 
-      mol_A => .atom_group(1).mol
-      mol_B => .atom_group(2).mol
+      n1 = .mol(1).n_atom
+      n2 = .mol(2).n_atom
 
-      charges_a.create(mol_A.n_atom)
-      dipoles_a.create(mol_A.n_atom, 3)
-      quadrupoles_a.create(mol_A.n_atom, 6)
-      octupoles_a.create(mol_A.n_atom, 10)
-      charges_b.create(mol_B.n_atom)
-      dipoles_b.create(mol_B.n_atom, 3)
-      quadrupoles_b.create(mol_B.n_atom, 6)
-      octupoles_b.create(mol_B.n_atom, 10)
+      charges_a.create(n1)
+      dipoles_a.create(n1,3)
+      quadrupoles_a.create(n1,6)
+      octupoles_a.create(n1, 10)
 
-      mol_A.BASE:make_atomic_multipoles(charges_a,dipoles_a,quadrupoles_a,octupoles_a)
-      mol_B.BASE:make_atomic_multipoles(charges_b,dipoles_b,quadrupoles_b,octupoles_b)
+      charges_b.create(n2)
+      dipoles_b.create(n2,3)
+      quadrupoles_b.create(n2, 6)
+      octupoles_b.create(n2, 10)
+
+      .mol(1).GRID:make_atomic_multipoles(charges_a,dipoles_a,quadrupoles_a,octupoles_a)
+      .mol(2).GRID:make_atomic_multipoles(charges_b,dipoles_b,quadrupoles_b,octupoles_b)
+
       E = ZERO
 
-      do i = 1, mol_A.n_atom
-         q_a = mol_A.atom(i).atomic_number - charges_a(i)
-         m_a = dipoles_a(i,:)
+      do i = 1,n1
+         q_a  = .mol(1).atom(i).atomic_number - charges_a(i)
+         m_a  = dipoles_a(i,:)
          Qu_a = MAT{REAL}:expand_quadrupole(quadrupoles_a(i,:))
-         O_a = MAT3{REAL}:expand_octupole(octupoles_a(i,:))
+         O_a  = MAT3{REAL}:expand_octupole(octupoles_a(i,:))
 
-      do j = 1, mol_B.n_atom
-         q_b = mol_B.atom(j).atomic_number - charges_b(j)
-         m_b = dipoles_b(j,:)
+      do j = 1,n2
+         q_b  = .mol(2).atom(j).atomic_number - charges_b(j)
+         m_b  = dipoles_b(j,:)
          Qu_b = MAT{REAL}:expand_quadrupole(quadrupoles_b(j,:))
-         O_b = MAT3{REAL}:expand_octupole(octupoles_b(j,:))
+         O_b  = MAT3{REAL}:expand_octupole(octupoles_b(j,:))
 
-         T.create(mol_A.atom(i).position, mol_B.atom(j).position)
+         T.create(.mol(1).atom(i).position, .mol(2).atom(j).position)
          E = E + T.interaction_energy(q_a, q_b, m_a, m_b, Qu_a, Qu_b, O_a, O_b)
       end do
       end do
@@ -4681,12 +4803,14 @@ contains
 
    end 
 
-   intermolecular_coulomb_atomic_multipole_energy(mol_B) result(E_coul)
+   ! Is this used? Why?
+
+   intermolecular_coulomb_atomic_multipole_energy(mol_B) result (E_coul)
    ! Like it says? ...
-      self :: target, IN
+   ! A & B molecules
+      self   :: IN
       E_coul :: REAL
-      ! A & B molecules
-      mol_B :: MOLECULE*
+      mol_B  :: MOLECULE, INOUT
 
    ENSURE(.charges.allocated, "no atomic charge information")
    ENSURE(.dipoles.allocated, "no atomic dipole information")
@@ -4698,7 +4822,6 @@ contains
    ENSURE(mol_B.octupoles.allocated, "no atomic octupole information")
 
       E :: VEC{REAL}(5)
-      mol_A :: MOLECULE*
       q_a, q_b :: REAL
       m_a, m_b :: VEC{REAL}(3)
       Qu_a, Qu_b :: MAT{REAL}(3,3)
@@ -4706,25 +4829,23 @@ contains
       i, j :: INT
       T :: T_TENSOR
 
-      mol_A => self
-
       E = ZERO
 
-      do i = 1, mol_A.n_atom
+      do i = 1,.n_atom
 
-         q_a = mol_A.atom(i).atomic_number - mol_A.charges(i)
-         m_a = mol_A.dipoles(i,:)
-         Qu_a = MAT{REAL}:expand_quadrupole(mol_A.quadrupoles(i,:))
-         O_a = MAT3{REAL}:expand_octupole(mol_A.octupoles(i,:))
+         q_a  = .atom(i).atomic_number - .charges(i)
+         m_a  = .dipoles(i,:)
+         Qu_a = MAT{REAL}:expand_quadrupole(.quadrupoles(i,:))
+         O_a  = MAT3{REAL}:expand_octupole(.octupoles(i,:))
 
-         do j = 1, mol_B.n_atom
+         do j = 1,mol_B.n_atom
 
-            q_b = mol_B.atom(j).atomic_number - mol_B.charges(j)
-            m_b = mol_B.dipoles(j,:)
+            q_b  = mol_B.atom(j).atomic_number - mol_B.charges(j)
+            m_b  = mol_B.dipoles(j,:)
             Qu_b = MAT{REAL}:expand_quadrupole(mol_B.quadrupoles(j,:))
-            O_b = MAT3{REAL}:expand_octupole(mol_B.octupoles(j,:))
+            O_b  = MAT3{REAL}:expand_octupole(mol_B.octupoles(j,:))
        
-            T.create(mol_A.atom(i).position, mol_B.atom(j).position)
+            T.create(.atom(i).position, mol_B.atom(j).position)
             E = E + T.interaction_energy(q_a, q_b, m_a, m_b, Qu_a, Qu_b, O_a, O_b)
 
          end do
@@ -4746,33 +4867,28 @@ contains
    ! NOTE: make sure the MO's and density matrices for each group exist!
       self :: INOUT
 
-   ENSURE(.atom_group.allocated,"no atom group information")
-   ENSURE(.atom_group.dim==2 ,"must have only 2 atom groups")
-   ENSURE(.atom_group(1).mol.density_matrix.allocated, "no density matrix for atom group 1")
-   ENSURE(.atom_group(2).mol.density_matrix.allocated, "no density matrix for atom group 2")
-   ENSURE(.atom_group(1).mol.molecular_orbitals.allocated , "no molecular orbitals for atom group 1")
-   ENSURE(.atom_group(2).mol.molecular_orbitals.allocated , "no molecular orbitals for atom group 2")
+   ENSURE(.mol.allocated,"no molecules")
+   ENSURE(.mol.dim==2 ,"must have two molecules")
+   ENSURE(.mol(1).density_mx.allocated, "no density matrix for atom group 1")
+   ENSURE(.mol(2).density_mx.allocated, "no density matrix for atom group 2")
+   ENSURE(.mol(1).MOs.allocated , "no molecular orbitals for atom group 1")
+   ENSURE(.mol(2).MOs.allocated , "no molecular orbitals for atom group 2")
 
       ! Terms regardless of unrestricted/restricted
       E_en,E_ke,E_1e,E_nn,E_ee,E_ex,r :: REAL
       E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
       J,J_A,J_B :: OPMATRIX@
       K,K_A,K_B :: OPMATRIX@
-      mol_A,mol_B :: MOLECULE*
       saved_MOs_A, saved_MOs_B :: OPMATRIX@
       exchange_factors :: VEC{REAL}(3) = [-HALF, -HALF, -HALF]
       a_b :: VEC{REAL}(3)
-
 
       ! ======================
       ! Get non orthogonal MOs
       ! ======================
 
       ! A & B molecules
-      mol_A => .atom_group(1).mol
-      mol_B => .atom_group(2).mol
-
-      a_b = mol_A.atom.center_of_mass - mol_B.atom.center_of_mass
+      a_b = .mol(1).atom.center_of_mass - .mol(2).atom.center_of_mass
       r = a_b.norm
       ! If the molecules are too far apart use multipoles
       if (r.to_units("ANGSTROMS") > 12.0d0) then
@@ -4780,18 +4896,18 @@ contains
          return
       end
 
-      mol_A.INTS:make_overlap_matrix
-      mol_A.BASE:make_natural_orbitals
-      mol_B.INTS:make_overlap_matrix
-      mol_B.BASE:make_natural_orbitals
+      .mol(1).INTS:make_overlap_mx
+      .mol(1).BASE:make_NOs
+      .mol(2).INTS:make_overlap_mx
+      .mol(2).BASE:make_NOs
 
-      saved_MOs_A = mol_A.molecular_orbitals
-      saved_MOs_B = mol_B.molecular_orbitals
+      saved_MOs_A = .mol(1).MOs
+      saved_MOs_B = .mol(2).MOs
 
-      mol_A.molecular_orbitals = mol_A.natural_orbitals
-      mol_B.molecular_orbitals = mol_B.natural_orbitals
-      mol_A.scfdata.set_scf_kind(mol_A.molecular_orbitals.spinorbital_kind)
-      mol_B.scfdata.set_scf_kind(mol_B.molecular_orbitals.spinorbital_kind)
+      .mol(1).MOs = .mol(1).NOs
+      .mol(2).MOs = .mol(2).NOs
+    ! .mol(1).scfdata.set_scf_kind(.mol(1).MOs.genre)
+    ! .mol(2).scfdata.set_scf_kind(.mol(2).MOs.genre)
 
       .SCF:merge_group_MOs
       .scfdata.set_output(FALSE)
@@ -4799,51 +4915,53 @@ contains
          exchange_factors = -QUARTER
       end if
 
-      if (mol_A.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(2) = -QUARTER
-      if (mol_B.molecular_orbitals.spinorbital_kind == "restricted") exchange_factors(3) = -QUARTER
+      if (.mol(1).MOs.genre == "r") exchange_factors(2) = -QUARTER
+      if (.mol(2).MOs.genre == "r") exchange_factors(3) = -QUARTER
 
       ! Make SCF density matrices
-           .BASE:make_scf_density_matrix
-      mol_A.BASE:make_scf_density_matrix
-      mol_B.BASE:make_scf_density_matrix
+           .BASE:make_scf_density_mx
+      .mol(1).BASE:make_scf_density_mx
+      .mol(2).BASE:make_scf_density_mx
 
       ! Make integrals
-           .SCF:make_core_matrix
-      mol_A.SCF:make_core_matrix
-      mol_B.SCF:make_core_matrix
+           .SCF:make_core_mx
+      .mol(1).SCF:make_core_mx
+      .mol(2).SCF:make_core_mx
 
       ! >> Nuclear attraction energy << 
-           .nuclear_attraction_matrix.uncompress
-      mol_A.nuclear_attraction_matrix.uncompress
-      mol_B.nuclear_attraction_matrix.uncompress
+           .nuclear_attraction_mx.uncompress
+      .mol(1).nuclear_attraction_mx.uncompress
+      .mol(2).nuclear_attraction_mx.uncompress
 
       E_ABn = ZERO; E_ABo = ZERO; 
       E_en = ZERO; E_1e = ZERO;
       E_ex = ZERO; E_nn = ZERO;
       E_ke = ZERO;
 
-      E_en = .:group_12_int_energy(.nuclear_attraction_matrix, mol_A.nuclear_attraction_matrix, mol_B.nuclear_attraction_matrix)
+      E_en = .:group_12_int_energy( .nuclear_attraction_mx &
+                                  , .mol(1).nuclear_attraction_mx &
+                                  , .mol(2).nuclear_attraction_mx )
 
-           .nuclear_attraction_matrix.compress
-      mol_A.nuclear_attraction_matrix.compress
-      mol_B.nuclear_attraction_matrix.compress
+           .nuclear_attraction_mx.compress
+      .mol(1).nuclear_attraction_mx.compress
+      .mol(2).nuclear_attraction_mx.compress
 
       ! Non-orthogonal & orthogonalized electronic energies
 
       ! >> One electron interaction energy <<
-      E_1e = .:group_12_int_energy(.core_matrix, mol_A.core_matrix, mol_B.core_matrix, E_AB=E_ABn)
+      E_1e = .:group_12_int_energy(.core_mx, .mol(1).core_mx, .mol(2).core_mx, E_AB=E_ABn)
       E_ke = E_1e - E_en
 
-      J.create(.n_bf, .density_matrix.spinorbital_kind)
-      K.create(.n_bf, .density_matrix.spinorbital_kind)
-      J_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
-      K_A.create(mol_A.n_bf, mol_A.density_matrix.spinorbital_kind)
-      J_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
-      K_B.create(mol_B.n_bf, mol_B.density_matrix.spinorbital_kind)
+      J.create(.n_bf, .density_mx.genre)
+      K.create(.n_bf, .density_mx.genre)
+      J_A.create(.mol(1).n_bf, .mol(1).density_mx.genre)
+      K_A.create(.mol(1).n_bf, .mol(1).density_mx.genre)
+      J_B.create(.mol(2).n_bf, .mol(2).density_mx.genre)
+      K_B.create(.mol(2).n_bf, .mol(2).density_mx.genre)
 
-           .FOCK:make_JK_engine(J  ,K  ,.density_matrix  )
-      mol_A.FOCK:make_JK_engine(J_A,K_A,mol_A.density_matrix)
-      mol_B.FOCK:make_JK_engine(J_B,K_B,mol_B.density_matrix)
+           .FOCK:make_JK_engine(J  ,K  ,.density_mx  )
+      .mol(1).FOCK:make_JK_engine(J_A,K_A,.mol(1).density_mx)
+      .mol(2).FOCK:make_JK_engine(J_B,K_B,.mol(2).density_mx)
 
       ! Alpha density matrix with beta, beta density matrix with alpha
       E_ee = .:group_12_int_energy(J, J_A, J_B, HALF, E_ABn, TRUE)
@@ -4863,19 +4981,18 @@ contains
       ! ======================
       ! Now symmorthonormalize
       ! ======================
-
       .SCF:symmorthonormalize_occupied_MOs
-      .BASE:make_scf_density_matrix
+      .BASE:make_scf_density_mx
 
       ! One electron hamiltonian
-      E_ABo = .BASE:expectation(.core_matrix)
+      E_ABo = .BASE:expectation(.core_mx)
 
       ! Two-electron integrals
       J.destroy; K.destroy
-      J.create(.n_bf, .density_matrix.spinorbital_kind)
-      K.create(.n_bf, .density_matrix.spinorbital_kind)
+      J.create(.n_bf, .density_mx.genre)
+      K.create(.n_bf, .density_mx.genre)
 
-      .FOCK:make_JK_engine(J, K, .density_matrix)
+      .FOCK:make_JK_engine(J, K, .density_mx)
 
       E_ABo = E_ABo +    HALF*.BASE:expectation(J, TRUE)
       E_ABo = E_ABo + exchange_factors(1)*.BASE:expectation(K)
@@ -4945,12 +5062,224 @@ contains
       stdout.show("Delta E_repulsion (kJ/mol)            = ",E_rep,right=TRUE)
       stdout.show("Delta E_exch-rep (kJ/mol)             = ",E_XR ,right=TRUE)
 
-      mol_A.natural_orbitals.destroy
-      mol_B.natural_orbitals.destroy
-      mol_A.molecular_orbitals = saved_MOs_A
-      mol_B.molecular_orbitals = saved_MOs_B
+      .mol(1).NOs.destroy
+      .mol(2).NOs.destroy
+      .mol(1).MOs = saved_MOs_A
+      .mol(2).MOs = saved_MOs_B
 
    end
+
+!   put_group_12_QM_energies ::: leaky
+!   ! Calculate the group 1-2 interaction energies.
+!   ! For simplicity the notations follows the reference:
+!   ! P. Su & H. Li (2009) JCP 131 p. 014102
+!   ! It has references to the original work and is explained fairly
+!   ! clearly, except for their use of "X" for supermolecule (X=AB).
+!   ! NOTE: make sure the MO's and density matrices for each group exist!
+!      self :: INOUT
+!
+!   ENSURE(.atom_group.allocated,"no atom group information")
+!   ENSURE(.atom_group.dim==2 ,"must have only 2 atom groups")
+!   ENSURE(.mol(1).density_mx.allocated, "no density matrix for atom group 1")
+!   ENSURE(.mol(2).density_mx.allocated, "no density matrix for atom group 2")
+!   ENSURE(.mol(1).MOs.allocated , "no molecular orbitals for atom group 1")
+!   ENSURE(.mol(2).MOs.allocated , "no molecular orbitals for atom group 2")
+!
+!      ! Terms regardless of unrestricted/restricted
+!      E_en,E_ke,E_1e,E_nn,E_ee,E_ex,r :: REAL
+!      E_tot,E_net,E_ABn,E_ABo,E_rep,E_XR :: REAL
+!      J,J_A,J_B :: OPMATRIX@
+!      K,K_A,K_B :: OPMATRIX@
+!      saved_MOs_A, saved_MOs_B :: OPMATRIX@
+!      exchange_factors :: VEC{REAL}(3) = [-HALF, -HALF, -HALF]
+!      a_b :: VEC{REAL}(3)
+!
+!
+!      ! ======================
+!      ! Get non orthogonal MOs
+!      ! ======================
+!
+!      a_b = .mol(1).atom.center_of_mass - .mol(2).atom.center_of_mass
+!      r = a_b.norm
+!      ! If the molecules are too far apart use multipoles
+!      if (r.to_units("ANGSTROMS") > 12.0d0) then
+!         .PROP:put_group_12_multipole_energies
+!         return
+!      end
+!
+!      .mol(1).INTS:make_overlap_mx
+!      .mol(1).BASE:make_NOs
+!      .mol(2).INTS:make_overlap_mx
+!      .mol(2).BASE:make_NOs
+!
+!      saved_MOs_A = .mol(1).MOs
+!      saved_MOs_B = .mol(2).MOs
+!
+!      .mol(1).MOs = .mol(1).NOs
+!      .mol(2).MOs = .mol(2).NOs
+!    ! .mol(1).scfdata.set_SCF_kind(.mol(1).MOs.genre)
+!    ! .mol(2).scfdata.set_SCF_kind(.mol(2).MOs.genre)
+!
+!      .SCF:merge_group_MOs
+!      .scfdata.set_output(FALSE)
+!      if (.scfdata.is_restricted) then
+!         exchange_factors = -QUARTER
+!      end if
+!
+!      if (.mol(1).MOs.genre == "r") exchange_factors(2) = -QUARTER
+!      if (.mol(2).MOs.genre == "r") exchange_factors(3) = -QUARTER
+!
+!      ! Make SCF density matrices
+!             .BASE:make_SCF_density_mx
+!      .mol(1).BASE:make_SCF_density_mx
+!      .mol(2).BASE:make_SCF_density_mx
+!
+!      ! Make integrals
+!             .SCF:make_core_mx
+!      .mol(1).SCF:make_core_mx
+!      .mol(2).SCF:make_core_mx
+!
+!      ! >> Nuclear attraction energy << 
+!             .nuclear_attraction_mx.uncompress
+!      .mol(1).nuclear_attraction_mx.uncompress
+!      .mol(2).nuclear_attraction_mx.uncompress
+!
+!      E_ABn = ZERO; E_ABo = ZERO; 
+!      E_en = ZERO; E_1e = ZERO;
+!      E_ex = ZERO; E_nn = ZERO;
+!      E_ke = ZERO;
+!
+!      E_en = .:group_12_int_energy(.nuclear_attraction_mx &
+!                                  , .mol(1).nuclear_attraction_mx &
+!                                  , .mol(2).nuclear_attraction_mx)
+!
+!             .nuclear_attraction_mx.compress
+!      .mol(1).nuclear_attraction_mx.compress
+!      .mol(2).nuclear_attraction_mx.compress
+!
+!      ! Non-orthogonal & orthogonalized electronic energies
+!
+!      ! >> One electron interaction energy <<
+!      E_1e = .:group_12_int_energy(.core_mx, .mol(1).core_mx, .mol(2).core_mx, E_AB=E_ABn)
+!      E_ke = E_1e - E_en
+!
+!      J.create(.n_bf, .density_mx.genre)
+!      K.create(.n_bf, .density_mx.genre)
+!      J_A.create(.mol(1).n_bf, .mol(1).density_mx.genre)
+!      K_A.create(.mol(1).n_bf, .mol(1).density_mx.genre)
+!      J_B.create(.mol(2).n_bf, .mol(2).density_mx.genre)
+!      K_B.create(.mol(2).n_bf, .mol(2).density_mx.genre)
+!
+!             .FOCK:make_JK_engine(J  ,K  ,.density_mx)
+!      .mol(1).FOCK:make_JK_engine(J_A,K_A,.mol(1).density_mx)
+!      .mol(2).FOCK:make_JK_engine(J_B,K_B,.mol(1).density_mx)
+!
+!      ! Alpha density matrix with beta, beta density matrix with alpha
+!      E_ee = .:group_12_int_energy(J, J_A, J_B, HALF, E_ABn, TRUE)
+!      E_ex = .:group_12_exchange_int_energy(K, K_A, K_B, exchange_factors, E_ABn)
+!
+!      K_A.destroy; K_B.destroy
+!      J_A.destroy; J_B.destroy  
+!
+!      ! >> Nuclear-nuclear repulsion energy term <<
+!      E_nn = .:group_12_NR_int_energy
+!      ! >> Electron repulsion energy term <<
+!
+!      ! >> Total <<
+!      E_tot = E_ke + E_nn + E_en + E_ee + E_ex
+!      E_net =        E_nn + E_en + E_ee
+!
+!      ! ======================
+!      ! Now symmorthonormalize
+!      ! ======================
+!
+!      .SCF:symmorthonormalize_occupied_MOs
+!      .BASE:make_SCF_density_mx
+!
+!      ! One electron hamiltonian
+!      E_ABo = .BASE:expectation(.core_mx)
+!
+!      ! Two-electron integrals
+!      J.destroy; K.destroy
+!      J.create(.n_bf, .density_mx.genre)
+!      K.create(.n_bf, .density_mx.genre)
+!
+!      .FOCK:make_JK_engine(J, K, .density_mx)
+!
+!      E_ABo = E_ABo +    HALF*.BASE:expectation(J, TRUE)
+!      E_ABo = E_ABo + exchange_factors(1)*.BASE:expectation(K)
+!
+!      ! Get repulsion energy
+!      E_rep = E_ABo - E_ABn ! Accounts for orthogonalization
+!      E_XR  = E_ex + E_rep
+!
+!      ! Clean up remaining temporaries
+!      J.destroy; K.destroy
+!
+!      stdout.flush
+!      stdout.text("=======================================")
+!      stdout.text("Quantum mechanical interaction energies")
+!      stdout.text("=======================================")
+!      stdout.flush
+!      stdout.text(". E_pro-supermol(non-orthog) = E(Psi) where Psi = Psi_1 Psi_2")
+!      stdout.text(". is the non-orthogonal pro-supermolecule product wavefunction")
+!      stdout.flush
+!      stdout.text(". E_pro-supermol(orthog) = E(Psi) where Psi = A(Psi_1 Psi_2)")
+!      stdout.text("  is the antisymmetrized normalized pro-supermolecule wavefunction")
+!      stdout.flush
+!      stdout.text(". Delta E_X = E_X(Psi) - E_X(Psi_1) - E_X(Psi_2) where the")
+!      stdout.text("  terms on the right are calculated as  expectation values of")
+!      stdout.text("  of operators X which are the subterms of the Hamiltonian")
+!      stdout.flush
+!      stdout.text(". This dcomposition was first defined by Kitaura & Morokuma.")
+!      stdout.text("  The code follows: P. Su and H. Li (2009) JCP 131 p. 014102.")
+!      stdout.text("  See there for references, or Stone's 'Intermolecular Forces'.")
+!      stdout.flush
+!      stdout.text(". NOTE: E_pro-supermol(orthog) is the only QM valid number since")
+!      stdout.text("  it arises from an antisymmetric wavefunction; however the non-")
+!      stdout.text("  orthogonal promolecule does produce good electronic densities")
+!      stdout.text("  for use in X-ray crystallography, so the sub terms which come")
+!      stdout.text("  from it, produce here, may also be reasonable.")
+!      stdout.flush
+!      stdout.text(". NOTE: The energies here always apply to determinant orbital")
+!      stdout.text("  wavefunctions NOT correlated density matrices. However for")
+!      stdout.text("  correlated wavefunctions the highest occupied natural orbitals")
+!      stdout.text("  (HONOs) are used instead of the molecular orbitals (MOs).")
+!
+!      stdout.flush
+!      stdout.show("Separation (Å)                        = ", r.to_units("ANGSTROMS"), right=TRUE)
+!      stdout.show("1. Delta E_kinetic-energy             = ",E_ke ,right=TRUE)
+!      stdout.show("2. Delta E_nn-repulsion               = ",E_nn ,right=TRUE)
+!      stdout.show("3. Delta E_en-attraction              = ",E_en ,right=TRUE)
+!      stdout.show("4. Delta E_ee-repulsion               = ",E_ee,right=TRUE)
+!      stdout.show("5. Delta E_ee-exchange                = ",E_ex,right=TRUE)
+!      stdout.flush
+!      stdout.show("6. E_pro-supermol(non-orthog)         = ",E_ABn,right=TRUE)
+!      stdout.show("7. E_pro-supermol(orthog)             = ",E_ABo,right=TRUE)
+!      stdout.flush
+!      stdout.show("Delta E         (1+2+3+4+5)           = ",E_tot,right=TRUE)
+!      stdout.show("Delta E_coulomb   (2+3+4)             = ",E_net,right=TRUE)
+!      stdout.show("Delta E_repulsion        (-6+7)       = ",E_rep,right=TRUE)
+!      stdout.show("Delta E_exch-repulsion  (5-6+7)       = ",E_XR ,right=TRUE)
+!
+!      ! In kJ/mol
+!      E_net = E_net.to_units("kJ/mol")
+!      E_ex  = E_ex.to_units("kJ/mol")
+!      E_rep = E_rep.to_units("kJ/mol")
+!      E_XR  = E_XR.to_units("kJ/mol")
+!
+!      stdout.flush
+!      stdout.show("Delta E_coul (kJ/mol)                 = ",E_net,right=TRUE)
+!      stdout.show("Delta E_ee-exchange (kJ/mol)          = ",E_ex,right=TRUE)
+!      stdout.show("Delta E_repulsion (kJ/mol)            = ",E_rep,right=TRUE)
+!      stdout.show("Delta E_exch-rep (kJ/mol)             = ",E_XR ,right=TRUE)
+!
+!      .mol(1).NOs.destroy
+!      .mol(2).NOs.destroy
+!      .mol(1).MOs = saved_MOs_A
+!      .mol(2).MOs = saved_MOs_B
+!
+!   end
 
    group_12_int_energy(X,X_A,X_B,fac,E_AB,with_cross_terms) result (res) ::: private
    ! Return the group 1-2 interaction energy for one electron
@@ -4972,16 +5301,11 @@ contains
    ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
 
       E, E_A, E_B :: REAL
-      mol_A,mol_B :: MOLECULE*
-
-      ! A & B molecules
-      mol_A => .atom_group(1).mol
-      mol_B => .atom_group(2).mol
 
       ! Energies
-      E   =      .BASE:expectation(X, with_cross_terms)
-      E_A = mol_A.BASE:expectation(X_A, with_cross_terms)
-      E_B = mol_B.BASE:expectation(X_B, with_cross_terms)
+      E   =        .BASE:expectation(X, with_cross_terms)
+      E_A = .mol(1).BASE:expectation(X_A, with_cross_terms)
+      E_B = .mol(2).BASE:expectation(X_B, with_cross_terms)
 
       ! Interaction energy
       res = (E - (E_A + E_B))
@@ -5016,18 +5340,13 @@ contains
 
       E, E_A, E_B :: REAL
       fac :: VEC{REAL}(3) = [1.0, 1.0, 1.0]
-      mol_A,mol_B :: MOLECULE*
 
       if (present(factors)) fac = factors
 
-      ! A & B molecules
-      mol_A => .atom_group(1).mol
-      mol_B => .atom_group(2).mol
-      
       ! Energies
-      E   =      .BASE:expectation(X, with_cross_terms)
-      E_A = mol_A.BASE:expectation(X_A, with_cross_terms)
-      E_B = mol_B.BASE:expectation(X_B, with_cross_terms)
+      E   =        .BASE:expectation(X  , with_cross_terms)
+      E_A = .mol(1).BASE:expectation(X_A, with_cross_terms)
+      E_B = .mol(2).BASE:expectation(X_B, with_cross_terms)
 
       ! Interaction energy
       res = fac(1) * E - (fac(2) * E_A + fac(3) * E_B)
@@ -5045,37 +5364,35 @@ contains
 
    ENSURE(.atom_group.allocated,"no atom group information")
    ENSURE(.atom_group.dim==2 ,"must have only 2 groups")
-   ENSURE(.atom_group(1).mol.density_matrix.allocated ,"no mol 1 DM!")
-   ENSURE(.atom_group(2).mol.density_matrix.allocated ,"no mol 2 DM!")
+   ENSURE(.mol(1).density_mx.allocated ,"no mol 1 DM!")
+   ENSURE(.mol(2).density_mx.allocated ,"no mol 2 DM!")
 
       E,E_A,E_B :: REAL
-      mol_A,mol_B :: MOLECULE*
-
-      ! A & B molecules
-      mol_A => .atom_group(1).mol
-      mol_B => .atom_group(2).mol
 
       ! Nuclear-nuclear repulsion energies
-      E   =      .BASE:nuclear_repulsion_energy
-      E_A = mol_A.BASE:nuclear_repulsion_energy
-      E_B = mol_B.BASE:nuclear_repulsion_energy
+      E   =        .INQ:nuclear_repulsion_energy
+      E_A = .mol(1).INQ:nuclear_repulsion_energy
+      E_B = .mol(2).INQ:nuclear_repulsion_energy
 
       ! Interaction energy
       res   = E - (E_A + E_B)
 
    end
 
+
 !  ==================
 !  Atom group setting
 !  ==================
 
-   atom_group_AO_subspace_set(P,Q,row_group,col_group)
+   atom_group_AO_subspace_set(P,Q,row_group,col_group) ::: PURE
    ! Set P=Q only for the block whose rows correspond to basis functions
    ! on the atoms in the atom group "row_group" and whose columns are
    ! on the atoms in the atom group "col_group", as given in the
    ! .atom_group array vector.
-      P,Q :: MAT{REAL}
-      row_group,col_group :: INT
+      self :: IN
+      P, Q :: MAT{REAL}, INOUT
+      row_group :: INT, IN
+      col_group :: INT, IN
 
    ENSURE(P.dim1==.n_bf,"wrong size for P")
    ENSURE(P.dim2==.n_bf,"wrong size for P")
@@ -5097,8 +5414,8 @@ contains
 
          fa = .first_basis_fn_for_atom(a)
          fb = .first_basis_fn_for_atom(b)
-         la = .last_basis_fn_for_atom(a)
-         lb = .last_basis_fn_for_atom(b)
+         la =  .last_basis_fn_for_atom(a)
+         lb =  .last_basis_fn_for_atom(b)
 
          P(fa:la,fb:lb) = Q(fa:la,fb:lb)
 
@@ -5115,17 +5432,17 @@ contains
    ! Do one of the many kind of Roby population analysis
       self :: INOUT
 
-   ENSURE(.roby.associated,"no robydata= supplied")
-   ENSURE(.density_matrix.allocated,"no density")
+   ENSURE(.roby.allocated,"no robydata= supplied")
+   ENSURE(.density_mx.allocated,"no density")
 
       allowed_kind :: BIN
 
       ! Ensure restricted density
-      .BASE:make_ao_density_matrix
+      .BASE:make_r_density_mx
 
       ! Check it!
-      allowed_kind = .density_matrix.spinorbital_kind==  "restricted" &
-                  OR .density_matrix.spinorbital_kind=="unrestricted"
+      allowed_kind = .density_mx.genre=="r " &
+                  OR .density_mx.genre=="u "
       DIE_IF(NOT allowed_kind,"only restricted or unrestricted densities are allowed")
 
       ! Set up ANOs/NAOs
@@ -5141,7 +5458,7 @@ contains
       end
       end
 
-      ! Set defaults (density_matrix, etc.)
+      ! Set defaults (density_mx, etc.)
       .roby.set_defaults(self)
 
       ! What to do?
@@ -5151,22 +5468,22 @@ contains
          .roby.atom_bond_analysis
 
     ! case("atom_energy_bond_analysis")
-    !    DIE_IF(.fock_matrix.deallocated,"no fock_matrix")
+    !    DIE_IF(.fock_mx.deallocated,"no fock_mx")
     !    .roby.atom_energy_bond_analysis
 
       case("atom_e1_exact_analysis")
-         DIE_IF(.fock_matrix.deallocated,"no fock_matrix")
+         DIE_IF(.fock_mx.deallocated,"no fock_mx")
          .roby.atom_E1_exact_analysis
 
       case("atom_e1_krogel_analysis")
-         DIE_IF(.fock_matrix.deallocated,"no fock_matrix")
+         DIE_IF(.fock_mx.deallocated,"no fock_mx")
          .roby.atom_E1_Krogel_analysis
 
       case("atom_hyper_analysis       ")
          .roby.atom_hyper_analysis
 
       case("group_bond_analysis      ")
-         DIE_IF(.roby.atom_group.deallocated,"no fock_matrix")
+         DIE_IF(.roby.atom_group.deallocated,"no fock_mx")
          .roby.group_bond_analysis
 
       case("group_hyper_analysis      ")
@@ -5178,17 +5495,23 @@ contains
       end
 
    end
+   
+!  =================
+!  Testing Functions
+!  =================
 
    put_KM_atom_multipoles
    ! Put the KM multipoles
-      ENSURE(.basis_info_made,"no basis info")
-      ENSURE(.atom.associated,"no atom list")
-      ENSURE(.density_matrix.allocated,"no density_matrix")
-      ENSURE(.density_matrix.restricted.allocated,"no restricted density_matrix")
-      ENSURE(NOT .use_spherical_basis,"not implememnted for spherical")
+      self :: INOUT
 
-      charge :: VEC{REAL}*
-      dipole, quadrupole, octupole :: MAT{REAL}*
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.density_mx.allocated,"no density_mx")
+   ENSURE(.density_mx.r.allocated,"no restricted density_mx")
+   ENSURE(NOT .use_spherical_basis,"not implememnted for spherical")
+
+      charge :: VEC{REAL}@
+      dipole, quadrupole, octupole :: MAT{REAL}@
       a :: INT
       dp :: REAL
 
@@ -5196,7 +5519,7 @@ contains
       dipole.create(.n_atom, 3)
       quadrupole.create(.n_atom, 6)
       octupole.create(.n_atom, 10)
-      .BASE:make_atomic_multipoles(charge,dipole,quadrupole,octupole)
+      .GRID:make_atomic_multipoles(charge,dipole,quadrupole,octupole)
 
       stdout.flush
       stdout.text("Koritsanszky-Michael atomic populations: ")
@@ -5319,17 +5642,17 @@ contains
    ! Calculate the electron density and integrate
       self :: IN
 
-   ENSURE(.plot_grid.associated,"No plot_grid!")
+   ENSURE(.plot_grid.allocated,"No plot_grid!")
 
       n,nx,ny,nz :: INT
+      pt   :: MAT{REAL}@
       axes :: MAT{REAL}(3,3)
-      CP :: MAT3{INT}*
-      EDS,VOL :: VEC{REAL}*
-      grid :: VEC{REAL}*
-      g3 :: MAT3{REAL}*
-      pt :: MAT{REAL}*
+      g3   :: MAT3{REAL}@
+      CP   :: MAT3{INT}@
+      EDS,VOL :: VEC{REAL}@
+      grid    :: VEC{REAL}@
 #ifdef MPI      
-      CP1 :: MAT4{INT}*
+      CP1 :: MAT4{INT}@
 #endif      
 
       nx = .plot_grid.n_x
@@ -5376,16 +5699,16 @@ contains
       self :: INOUT
       nx,ny,nz :: INT, IN
       grid :: MAT3{REAL}, IN
+      CP   :: MAT3{INT}@, OUT
       gridlength :: VEC{REAL}(3), IN
       gridvector :: MAT{REAL}(3,3), IN
-      CP :: MAT3{INT}*, OUT
-      EDS,VOL :: VEC{REAL}*, OUT
+      EDS,VOL    :: VEC{REAL}@, OUT
   
       i,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
       GradMax,distance,MaxVal,dv,t1,t2,t3 :: REAL
-      Max :: VEC{INT}(3)
+      Max  :: VEC{INT}(3)
       List :: VEC{EVEC{INT}}@
-      ED :: MAT3{REAL}@
+      ED   :: MAT3{REAL}@
       Maxima :: VEC{REAL}@
   
       ED.create(nx+2,ny+2,nz+2)
@@ -5565,22 +5888,23 @@ contains
    cubes_to_basin_parallel(grid,nx,ny,nz,gridlength,gridvector,CP_master,EDS,VOL) ::: leaky, selfless
    ! A parallel tonto implementation of the cubes to basin code, originally
    ! implemented by Florian from Tobias (spelling).
-      nx,ny,nz :: INT, IN
-      grid :: MAT3{REAL}, IN
+      nx,ny,nz   :: INT, IN
+      grid       :: MAT3{REAL}, IN
       gridlength :: VEC{REAL}(3), IN
       gridvector :: MAT{REAL}(3,3), IN
-      CP_master :: MAT4{INT}*, OUT
-      EDS,VOL :: VEC{REAL}*, OUT
+      CP_master  :: MAT4{INT}@, OUT
+      EDS,VOL    :: VEC{REAL}@, OUT
 
       nprocs,i,ii,px,mx,x,y,z,xs,ys,zs,ix,iy,iz,ListMax,iCP :: INT
       GradMax,distance,dv,t1,t2,t3,t4 :: REAL
       Max,Replace :: VEC{INT}(3)
-      List :: MAT{INT}*
-      CP :: MAT4{INT}*
-      CP_hisend,CP_losend,CP_hirecv,CP_lorecv :: MAT3{INT}*
-      ED :: MAT3{REAL}*
-      CPS :: MAT{INT}*
-      Maxima :: VEC{REAL}*
+      List :: MAT{INT}@
+      CP   :: MAT4{INT}@
+      ED   :: MAT3{REAL}@
+      CP_hisend,CP_losend :: MAT3{INT}@
+      CP_hirecv,CP_lorecv :: MAT3{INT}@
+      CPS     :: MAT{INT}@
+      Maxima  :: VEC{REAL}@
       changes :: BIN
 
       ! Establishes the partitions on each processor.
@@ -6201,10 +6525,39 @@ contains
       tonto.barrier
 
       ! Finalises the MPI program
-      tonto.finalize
+      tonto.update  
 
    end
 
+
+!   put_submolecule(i)
+!   !Puts the co_ordinates of the atoms and the bonds within ".atom_group(i)" to
+!   !stdout
+!      i :: INT
+!
+!      atom :: VEC{ATOM}*
+!
+!      atom => .atom_group(i).mol.atom
+!      atom.put_coordinates
+!      atom.put_bond_length_table
+!   end
+
+!  ==================
+!  Energies breakdown 
+!  ==================
+
+!   put_energies_breakdown
+!   !Executes the energies breakdown code - to be moved
+!      self :: PTR
+!      self :: INOUT
+!
+!      breakdown_data :: BREAKDOWN_DATA@
+!
+!      breakdown_data.create
+!      breakdown_data.put(self)
+!      breakdown_data.destroy
+!
+!   end
 
 end
 

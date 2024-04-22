@@ -1,12 +1,14 @@
 # CMake
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.6.0)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Install where?
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
 # Allow arbitrary characters in test names
+if(CMAKE_VERSION VERSION_GREATER 3.19) 
 cmake_policy(SET CMP0110 NEW)
+endif()
 
 # Tonto version info and build date
 string(TIMESTAMP VERSION_MAJOR "%y")
@@ -177,6 +179,8 @@ set(FOO_SRC
     ${FOO_DIR}/vec{evec{evec{intrinsic}}}.foo
     ${FOO_DIR}/vec{evec{evec{int}}}.foo
     ${FOO_DIR}/vec{evec{evec{real}}}.foo
+    ${FOO_DIR}/mat{evec{int}}.foo
+    ${FOO_DIR}/mat{evec{real}}.foo
     ${FOO_DIR}/map{vec{key},vec{val}}.foo
     ${FOO_DIR}/map{int,int}.foo
     ${FOO_DIR}/map{key,val}.foo
@@ -190,7 +194,9 @@ set(FOO_SRC
     ${FOO_DIR}/atom.foo
     ${FOO_DIR}/basis.foo
     ${FOO_DIR}/becke_grid.foo
+#   ${FOO_DIR}/breakdown_data.foo
     ${FOO_DIR}/buffer.foo
+    ${FOO_DIR}/output_style.foo
     ${FOO_DIR}/textfile.foo
     ${FOO_DIR}/datafile.foo
     ${FOO_DIR}/json.foo
@@ -202,9 +208,11 @@ set(FOO_SRC
     ${FOO_DIR}/colour_function.foo
     ${FOO_DIR}/coppensbasis.foo
     ${FOO_DIR}/coppensorbital.foo
-    ${FOO_DIR}/debug.foo
     ${FOO_DIR}/dft_functional.foo
-    ${FOO_DIR}/diffraction_data.foo
+    ${FOO_DIR}/diffraction_data.inq.foo
+    ${FOO_DIR}/diffraction_data.set.foo
+    ${FOO_DIR}/diffraction_data.read.foo
+    ${FOO_DIR}/diffraction_data.put.foo
     ${FOO_DIR}/diis.foo
     ${FOO_DIR}/rys.foo
     ${FOO_DIR}/rms_indices.foo
@@ -241,7 +249,8 @@ set(FOO_SRC
     ${FOO_DIR}/spacegroup.foo
     ${FOO_DIR}/reflection.foo
     ${FOO_DIR}/crystal.foo
-    ${FOO_DIR}/spherical.foo
+    ${FOO_DIR}/crystal23.foo
+    ${FOO_DIR}/spherical_harmonic.foo
     ${FOO_DIR}/table_column.foo
     ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/atom_group.foo
@@ -266,21 +275,25 @@ set(FOO_SRC
     ${FOO_DIR}/opvector.foo
     ${FOO_DIR}/mo_localiser.foo
     ${FOO_DIR}/pair_energy.foo
+    ${FOO_DIR}/molecule.inq.foo
+    ${FOO_DIR}/molecule.set.foo
+    ${FOO_DIR}/molecule.read.foo
+    ${FOO_DIR}/molecule.put.foo
     ${FOO_DIR}/molecule.base.foo
-    ${FOO_DIR}/molecule.ce.foo
-    ${FOO_DIR}/molecule.cp.foo
-    ${FOO_DIR}/molecule.nomo.foo
-    ${FOO_DIR}/molecule.fock.foo
+#   ${FOO_DIR}/molecule.rel.foo ! for now
     ${FOO_DIR}/molecule.grid.foo
-    ${FOO_DIR}/molecule.ints.foo
-    ${FOO_DIR}/molecule.main.foo
-    ${FOO_DIR}/molecule.misc.foo
-    ${FOO_DIR}/molecule.plot.foo
-    ${FOO_DIR}/molecule.prop.foo
-    ${FOO_DIR}/molecule.rel.foo
-    ${FOO_DIR}/molecule.scf.foo
-    ${FOO_DIR}/molecule.tad.foo
     ${FOO_DIR}/molecule.xtal.foo
+    ${FOO_DIR}/molecule.ce.foo
+    ${FOO_DIR}/molecule.ints.foo
+    ${FOO_DIR}/molecule.fock.foo
+#   ${FOO_DIR}/molecule.nomo.foo ! for now
+    ${FOO_DIR}/molecule.scf.foo
+    ${FOO_DIR}/molecule.prop.foo
+    ${FOO_DIR}/molecule.plot.foo
+    ${FOO_DIR}/molecule.cp.foo
+    ${FOO_DIR}/molecule.har.foo
+    ${FOO_DIR}/molecule.misc.foo
+    ${FOO_DIR}/molecule.main.foo
 )
 
 # Fortran source files used by run_molecule/run_har
@@ -291,6 +304,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/basis.F90
     ${CMAKE_CURRENT_BINARY_DIR}/becke_grid.F90
     ${CMAKE_CURRENT_BINARY_DIR}/bin.F90
+#   ${CMAKE_CURRENT_BINARY_DIR}/breakdown_data.F90
     ${CMAKE_CURRENT_BINARY_DIR}/buffer.F90
     ${CMAKE_CURRENT_BINARY_DIR}/capping_square.F90
     ${CMAKE_CURRENT_BINARY_DIR}/cif.F90
@@ -302,9 +316,13 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/coppensorbital.F90
     ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
     ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.set.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.read.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.put.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diis.F90
     ${CMAKE_CURRENT_BINARY_DIR}/file.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian.F90
@@ -333,26 +351,33 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/mat_cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_real.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_evec_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mat_evec_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_rms2_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_shell1pair.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mo_localiser.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.inq.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.set.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.read.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.put.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.base.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.nomo.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.fock.F90
+ #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.rel.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ints.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.plot.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.prop.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.rel.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.scf.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/molecule.tad.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.xtal.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.ints.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.fock.F90
+ #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.nomo.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.scf.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.prop.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.plot.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.har.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/output_style.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
     ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90
@@ -375,7 +400,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/slaterbasis.F90
     ${CMAKE_CURRENT_BINARY_DIR}/slatershell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/spacegroup.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/spherical.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/spherical_harmonic.F90
     ${CMAKE_CURRENT_BINARY_DIR}/str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/system.F90
     ${CMAKE_CURRENT_BINARY_DIR}/table_column.F90
@@ -441,6 +466,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_rgbi.foo
     ${RUNFILE_DIR}/run_least_squares.foo
     ${RUNFILE_DIR}/run_mpi_test.foo
+    ${RUNFILE_DIR}/run_textfile.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
 
@@ -510,6 +536,7 @@ add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
+add_executable(run_textfile      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_textfile.F90)
 add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
 
 # Link exectables
@@ -535,6 +562,7 @@ target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_textfile      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 

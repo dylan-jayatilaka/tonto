@@ -32,15 +32,15 @@ module MOLECULE.PLOT
 
 contains
 
-!  ========
-!  2D plots
-!  ========
+!  =================================
+!  2D plane or 3D cube or cell plots
+!  =================================
 
    plot ::: leaky
    ! Do one of the many kinds of plot calculations
       self :: INOUT
 
-   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.plot_grid.allocated, "no grid")
 
       ! Set up
       .:set_up_for_plot(.plot_grid.plot_kind)
@@ -48,8 +48,19 @@ contains
       ! Use unit cell as bbox if requested
       if (.plot_grid.use_unit_cell_as_bbox) then
          WARN("resetting plot axes, plot widths from unit cell")
-         ENSURE(.crystal.associated,"no crystal or unit cell for plot!")
+         ENSURE(.crystal.allocated,"no crystal or unit cell for plot!")
+         .plot_grid.set_box_scale_factor(ONE)
          .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell)
+      end
+
+      ! Use unit cell as bbox if requested
+      if (.plot_grid.plot_kind=="crystal23_ed_v1") then
+         WARN("resetting plot axes, plot widths from unit cell")
+         ENSURE(.crystal.allocated,"no crystal or unit cell for plot!")
+         .plot_grid.set_box_scale_factor(ONE)
+       !  USER MUST SET either desired_separation or n_x, n_y, n_z
+       ! .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
+         .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell,midpt_is_center=TRUE)
       end
 
       ! See plot_grid parameters
@@ -67,7 +78,7 @@ contains
    ! was defined by the user.
       self :: INOUT
 
-   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.plot_grid.allocated, "no grid")
 
       name :: STR
       grid :: VEC{REAL}@
@@ -80,7 +91,7 @@ contains
 
       ! Print out
       name = .plot_grid.plot_file_name(.n_a)
-      .GRID:dump_plot_grid(grid,name)
+      .PUT:dump_plot_grid(grid,name)
 
       ! Clean up
       grid.destroy
@@ -90,19 +101,25 @@ contains
    do_plot(grid) ::: leaky
    ! Do one of the many kinds of plot calculations and store the
    ! property values in "grid". These are usually 2D plots but they
-   ! can be rectilinear volumetric plots, depending on how .plot_grid
-   ! was defined by the user.
+   ! can be rectilinear 3D volumetric plots, depending on how
+   ! .plot_grid was defined by the user.
       self :: INOUT
       grid :: VEC{REAL}, OUT
 
-   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.plot_grid.allocated, "no grid")
    ENSURE(grid.dim==.plot_grid.n_pt, "no grid")
 
       pt :: MAT{REAL}@
 
       ! Make the grid points
       pt.create(.plot_grid.n_pt,3)
-      .plot_grid.make_points(pt)
+      if (.plot_grid.plot_kind/="crystal23_ed_v1") then
+         ! Standard cell
+         .plot_grid.make_points(pt)
+      else
+         ! Standard grid mapped to CRYSTAL23 [-1/2,+1/2] cell
+         .plot_grid.make_01_uc_pts_as_mhph_pts(pt)
+      end
 
       ! Make the property values.
       .GRID:make_prop_values(grid,pt)
@@ -117,7 +134,7 @@ contains
    ! Do one of the many kinds of plot calculations
       self :: INOUT
 
-   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.plot_grid.allocated, "no grid")
    ENSURE(.plot_grid.plot_kinds.allocated, "no multiple plot_kinds!")
 
       i :: INT
@@ -140,14 +157,14 @@ contains
    ! Do the summed-fragment property density on ".plot_grid".
       self :: INOUT
 
-   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.plot_grid.allocated, "no grid")
    ENSURE(.atom_group.allocated,"no atom_group info")
-   ENSURE(.crystal.associated,"no crystal")
+   ENSURE(.crystal.allocated,"no crystal")
 
       ! Use unit cell as bbox if requested
       if (.plot_grid.use_unit_cell_as_bbox) then
          WARN("resetting plot axes, plot widths from unit cell")
-         ENSURE(.crystal.associated,"no crystal or unit cell for plot!")
+         ENSURE(.crystal.allocated,"no crystal or unit cell for plot!")
          .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell)
       end
 
@@ -164,9 +181,9 @@ contains
    ! the molecules in .atom_group(:).mol.
       self :: INOUT
 
-   ENSURE(.plot_grid.associated, "no grid")
+   ENSURE(.plot_grid.allocated, "no grid")
    ENSURE(.atom_group.allocated,"no atom_group info")
-   ENSURE(.crystal.associated,"no crystal")
+   ENSURE(.crystal.allocated,"no crystal")
 
     ! seitz :: MAT3{REAL}@
     ! shift :: MAT{INT}@
@@ -179,15 +196,15 @@ contains
     ! s,n_mols, p :: INT
       g :: INT
     ! name :: STR
-    ! mol :: MOLECULE*
+    ! mol :: MOLECULE@
     ! same :: BIN
 
       ! Reset plot grid to group center?
       g = .plot_grid.group
       if (g>0) then
-         coa = .atom_group(g).mol.atom.center_of_atoms
+         coa = .mol(g).atom.center_of_atoms
          .plot_grid.destroy
-         .plot_grid.create(.atom_group(g).mol.atom)
+         .plot_grid.create(.mol(g).atom)
          .plot_grid.set_center(coa)
          .plot_grid.use_bbox_with_shape_axes
       end
@@ -198,10 +215,11 @@ contains
 
       ! Make cluster (molecules) around plot grid
       .cluster.destroy
-      .cluster.create(.crystal)
+      .cluster.create
+      .cluster.set_defaults(.crystal)
       .cluster.set_generation_method("fragment") ! ?
       .cluster.set_defragment(TRUE)
-      .cluster.make_info
+      .cluster.update_info
       .cluster.put
     ! .XTAL:create_cluster
 
@@ -216,7 +234,7 @@ contains
     ! seitz = .crystal.xyz_seitz_matrices
 
     ! ! Direct space unit cell matrix
-    ! dcm = .crystal.unit_cell.direct_matrix
+    ! dcm = .crystal.unit_cell.direct_mx
 
     ! ! Make space for grid values and grid points
     ! grid.create(.plot_grid.n_pt)
@@ -232,11 +250,11 @@ contains
     !    g = .atom_group.group_for_atom(p)
 
     !    ! Clone molecule
-    !    mol.BASE:create
-    !    .BASE:make_molecule_from_atom_group(g,mol,FALSE)
+    !    mol.SET:create
+    !    .SET:set_molecule_from_atom_group(g,mol,FALSE)
 
     !    ! Set to be group name (for reading archive)
-    !    mol.BASE:set_name(.atom_group(g).name)
+    !    mol.SET:set_name(.atom_group(g).name)
 
     !    ! Set up plot - maybe read archive for MO's?
     !    mol.plot_grid => .plot_grid
@@ -284,13 +302,13 @@ contains
     !    nullify(mol.basis)        ! do not destroy this
     !    nullify(mol.slaterbasis)  ! do not destroy this
     !    nullify(mol.coppensbasis) ! do not destroy this
-    !    mol.BASE:destroy
+    !    mol.SET:destroy
 
     ! end
 
     ! ! Print out
     ! name = .plot_grid.plot_file_name(.n_a)
-    ! .GRID:dump_plot_grid(grid,name)
+    ! .PUT:dump_plot_grid(grid,name)
 
       ! Clean up
     ! seitz.destroy
@@ -303,8 +321,8 @@ contains
    ! Test tlot the unit cell density
      self :: INOUT
 
-   ENSURE(.atom.associated,"no atom info")
-   ENSURE(.crystal.associated,"no crystal info")
+   ENSURE(.atom.allocated,"no atom info")
+   ENSURE(.crystal.allocated,"no crystal info")
    ENSURE(NOT .crystal.cluster_info_made,"cluster info already made!")
 
       pt :: MAT{REAL}@
@@ -342,22 +360,21 @@ contains
 
    end
 
-
 !  ===============
 !  Isosurface plot
 !  ===============
 
    isosurface_plot ::: leaky
    ! Do one of the many kinds of isosurface plot calculations
-      self :: PTR
+      self :: target, INOUT
 
-   ENSURE(.isosurface.associated,"no isosurface")
+   ENSURE(.isosurface.allocated,"no isosurface")
 
       ! Set up
       .:set_up_for_plot(.isosurface.property)
 
       ! Save self for selfless function calls
-      .BASE:set_saved_self
+    ! .SET:set_saved_self
 
       ! Do the plot
       .GRID:do_isosurface_plot
@@ -366,29 +383,38 @@ contains
 
    saved_isosurface_plot ::: leaky
    ! Do an isosurface plot using the CURRENT .isosurface information
-   ! with the .saved molecule atom list, density functions, MOs, etc.
-      self :: PTR
+   ! *AND* using the .saved molecule, density functions, MOs, etc.
+   ! Results placed in .saved.isosurface.
+      self :: target, INOUT
 
-   ENSURE(.isosurface.associated,"no isosurface")
-   ENSURE(.saved.associated,"no saved molecule")
+   ENSURE(.isosurface.allocated,"no isosurface")
+   ENSURE(.saved.allocated,"no saved molecule")
 
-      saved_isosurface :: ISOSURFACE*
+    ! keep :: ISOSURFACE@
+    ! has_saved_iso :: BIN
+
+      ! Keep any previous .saved.isosurface
+    ! has_saved_iso = allocated(.saved.isosurface)
+    ! if (has_saved_iso) then
+    ! call move_alloc(.saved.isosurface,keep)
+    ! end
 
       ! Set .saved.isosurface to be current .isosurface
-      saved_isosurface  => .saved.isosurface
-      .saved.isosurface => .isosurface
+      .saved.isosurface = .isosurface
 
       ! Set up
       .saved.:set_up_for_plot(.isosurface.property)
 
       ! Set saved_self to be .saved molecule
-      .saved.BASE:set_saved_self
+    ! .saved.SET:set_saved_self
 
       ! Do the plot -- current molecule isosurface
       .saved.GRID:do_isosurface_plot
 
-      ! Put back the saved isosurface the way it was
-      .saved.isosurface => saved_isosurface
+      ! Put back the .saved.isosurface the way it was
+    ! if (has_saved_iso) then
+    ! call move_alloc(keep,.saved.isosurface)
+    ! end
 
    end
 
@@ -399,16 +425,16 @@ contains
    plot_on_isosurface ::: leaky
    ! Plot one of the many kinds of density functions on an existing
    ! isosurface - useful for mapping properties on a surface.
-      self :: PTR
+      self :: target, INOUT
 
-   ENSURE(.isosurface.associated,"no isosurface")
+   ENSURE(.isosurface.allocated,"no isosurface")
    ENSURE(.isosurface.surface_property/=" ","no surface_property given!")
 
       ! Set up
       .:set_up_for_plot(.isosurface.surface_property)
 
       ! Save self for selfless function calls
-      .BASE:set_saved_self
+    ! .SET:set_saved_self
 
       ! Do the plot
       .GRID:do_plot_property_on_isosurface
@@ -416,33 +442,41 @@ contains
    end
 
    saved_plot_on_isosurface ::: leaky
-   ! Plot one of the many kinds of density functions on an existing
-   ! isosurface - for mapping properties on a surface - but using the
-   ! CURRENT .isosurface. information with the .saved molecule atom
-   ! list, density functions, MO's.
-      self :: PTR
+   ! Plot a density function on an existing isosurface - for mapping
+   ! properties on a surface - but using the CURRENT .isosurface *AND*
+   ! using information from the .saved molecule atom list, density
+   ! functions, MO's. Results placed in .saved.isosurface.
+      self :: INOUT
 
-   ENSURE(.isosurface.associated,"no isosurface")
+   ENSURE(.isosurface.allocated,"no isosurface")
    ENSURE(.isosurface.surface_property/=" ","no surface_property given!")
-   ENSURE(.saved.associated,"no saved molecule")
+   ENSURE(.saved.allocated,"no saved molecule")
 
-      saved_isosurface :: ISOSURFACE*
+    ! keep :: ISOSURFACE@
+    ! has_saved_iso :: BIN
+
+      ! Keep any previous .saved.isosurface
+    ! has_saved_iso = allocated(.saved.isosurface)
+    ! if (has_saved_iso) then
+    ! call move_alloc(.saved.isosurface,keep)
+    ! end
 
       ! Set .saved.isosurface to be current .isosurface
-      saved_isosurface  => .saved.isosurface
-      .saved.isosurface => .isosurface
+      .saved.isosurface = .isosurface
 
       ! Set up
       .saved.:set_up_for_plot(.isosurface.surface_property)
 
-      ! Save self for selfless function calls
-      .saved.BASE:set_saved_self
+    ! ! Set saved_self to be .saved molecule
+    ! .saved.SET:set_saved_self
 
       ! Do the plot -- current molecule isosurface
       .saved.GRID:do_plot_property_on_isosurface
 
       ! Put back the saved isosurface the way it was
-      .saved.isosurface => saved_isosurface
+    ! if (has_saved_iso) then
+    ! call move_alloc(keep,.saved.isosurface)
+    ! end
 
    end
 
@@ -472,7 +506,7 @@ contains
       .:set_group_densities_for_plot(plot_kind)
 
       ! Assign natural orbitals
-      if (.molecular_orbitals.allocated) then
+      if (.MOs.allocated) then
          .BASE:assign_NOs_to_MOs
       end
 
@@ -500,7 +534,7 @@ contains
       .:set_group_densities_for_plot(plot_kind)
 
       ! Assign natural orbitals
-      .BASE:read_scf_archives ! Note may cause issues, but probably not
+      .READ:read_scf_archives ! Note may cause issues, but probably not
 
    end
 
@@ -518,21 +552,21 @@ contains
 
       if (NOT do_interpolator) return
 
-      ENSURE(.atom.associated,"no atom list")
+      ENSURE(.atom.allocated,"no atom list")
 
       ! Get interpolators.
       select case (.atom(1).basis_kind)
 
       case ("slater")
-         ENSURE(.slaterbasis.associated,"no slater bases")
+         ENSURE(.slaterbasis.allocated,"no slater bases")
          .GRID:make_slater_interpolators
 
       case ("coppens")
-         ENSURE(.coppensbasis.associated,"no coppens bases")
+         ENSURE(.coppensbasis.allocated,"no coppens bases")
          .GRID:make_coppens_interpolators
 
       case ("gaussian")
-         ENSURE(.basis.associated,"no gaussian bases")
+         ENSURE(.basis.allocated,"no gaussian bases")
          .SCF:make_ANO_data
 
       end
@@ -559,7 +593,7 @@ contains
       else if (plot_kind=="hirshfeld_atom_grid") then
 
          ! should be in set_up becke grid?
-         .SCF:make_Hirshfeld_inputs(skip_NOs=TRUE)
+         .SCF:make_HA_inputs(skip_NOs=TRUE)
 
       end
 
@@ -585,6 +619,9 @@ contains
       case("bond_electron_density               "); do_it = TRUE
       case("bond_weight                         "); do_it = FALSE
       case("crystal_error_map                   "); do_it = FALSE
+      case("crystal23_ed                        "); do_it = FALSE
+      case("crystal23_ed_v1                     "); do_it = FALSE
+      case("crystal23_electron_density          "); do_it = FALSE
       case("current_density                     "); do_it = FALSE
       case("deformation_bond_density            "); do_it = TRUE
       case("deformation_density                 "); do_it = TRUE
@@ -690,19 +727,19 @@ contains
          .INTS:make_kinetic_energy_mx
          .INTS:make_nuclear_attraction_mx
 
-      case ("jp    ", "div_jp" )
-         .BASE:make_ao_density_matrix
-         .INTS:make_overlap_matrix
-         .BASE:make_restricted_complex_NOs
+    ! case ("jp    ", "div_jp" )
+    !    .BASE:make_r_density_mx
+    !    .INTS:make_overlap_mx
+    !    .BASE:make_restricted_complex_NOs
 
-      case ("jp_irrotational", "jp_solendoidal")
-         .BASE:make_ao_density_matrix
-         ENSURE(.density_matrix.is_allocated_with_genre("restricted_complex"),"no restrtd cmplx DM")
+    ! case ("jp_irrotational", "jp_solendoidal")
+    !    .BASE:make_r_density_mx
+    !    ENSURE(.density_mx.is_allocated_with_genre("restricted_complex"),"no restrtd cmplx DM")
 
       case ("electric_potential" &
            ,"e_field_magnitude " &
            ,"deformation_electric_potential")
-         .BASE:make_ao_density_matrix
+         .BASE:make_r_density_mx
 
       end
 
@@ -732,17 +769,18 @@ contains
 
    plot_ku_density
    ! we will produce kramers pairs matrix here and send it to grid
-   !
+      self :: INOUT
+
       genre :: STR
-      KUu  :: MAT{REAL}*
-      KUgc :: MAT{CPX}*
+      KUu  :: MAT{REAL}@
+      KUgc :: MAT{CPX}@
 
       ! Get the genre
       genre = " "
-      if (.scfdata.associated) then
-         genre = .scfdata.spinorbital_kind
-      else if (.density_matrix.allocated) then
-         genre = .density_matrix.spinorbital_kind
+      if (.scfdata.allocated) then
+         genre = .scfdata.spinorbital_genre
+      else if (.density_mx.allocated) then
+         genre = .density_mx.genre
       end
 
       stdout.flush
@@ -776,15 +814,15 @@ contains
       pt       :: MAT{REAL}
 
       genre :: STR
-      KUu   :: MAT{REAL}*
-      KUgc  :: MAT{CPX}*
+      KUu   :: MAT{REAL}@
+      KUgc  :: MAT{CPX}@
 
       ! Get the genre
       genre = " "
-      if (.scfdata.associated) then
-         genre = .scfdata.spinorbital_kind
-      else if (.density_matrix.allocated) then
-         genre = .density_matrix.spinorbital_kind
+      if (.scfdata.allocated) then
+         genre = .scfdata.spinorbital_genre
+      else if (.density_mx.allocated) then
+         genre = .density_mx.genre
       end
 
       stdout.flush

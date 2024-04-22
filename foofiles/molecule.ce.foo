@@ -53,13 +53,13 @@ contains
    ! used in normal density plots, but .plot_grid is assigned to it.
       self :: INOUT
 
-   ENSURE(.saved.associated,"no saved molecule")
-   ENSURE(.saved.cluster.associated,"no saved cluster data")
+   ENSURE(.saved.allocated,"no saved molecule")
+   ENSURE(.saved.cluster.allocated,"no saved cluster data")
    ENSURE(.saved.cluster.info_made, "no saved cluster info")
-   ENSURE(.saved.atom.associated,"no saved atom list")
-   ENSURE(.atom.associated,"no atom list")
+   ENSURE(.saved.atom.allocated,"no saved atom list")
+   ENSURE(.atom.allocated,"no atom list")
 
-      if (.isosurface.disassociated) .isosurface.create(.atom)
+      if (.isosurface.deallocated) .isosurface.create(.atom)
 
       .isosurface.plot_grid.set_defaults(.saved.atom)
       .isosurface.plot_grid.n_x = 2**ISOSURFACE_MINIMUM_SCAN_LEVEL + 1
@@ -89,22 +89,21 @@ contains
    ! writing this information to a CE information file. 
    ! NOTE: on termination, this does NOT produce a valid atom list.
    !       For that, use process_CIF
-      self :: PTR
+      self :: allocatable, INOUT
 
    ENSURE(.CX_file_name/=" ","no CX file name")
-   ENSURE(.cif.associated,"no CIF object created")
+   ENSURE(.cif.allocated,"no CIF object created")
    ENSURE(.cif.file_name/=" ","no CIF file name specified")
 
       found,CX_uses_angstrom :: BIN
-      cif :: CIF*
-      CX_file :: TEXTFILE*
+      CX_file :: TEXTFILE@
+      cif :: CIF@
 
       CX_file.create(.CX_file_name)
       CX_file.open_for("write")
 
       ! Save .cif outside of self, since it gets destroyed
-      cif => .cif   
-      nullify(.cif)
+      call move_alloc(.cif,cif)
 
       do
 
@@ -119,11 +118,12 @@ contains
          .XTAL:read_CIF_crystal(cif)
 
          ! Create the cluster
-         .cluster.create(.crystal)
-         .cluster.radius = ZERO       
-         .cluster.generation_method = "fragment"
-         .cluster.defragment = FALSE
-         .cluster.make_info                   
+         .cluster.create
+         .cluster.set_defaults(.crystal)
+         .cluster.set_radius(ZERO)
+         .cluster.set_generation_method("fragment")
+         .cluster.set_defragment(FALSE)
+         .cluster.update_info                   
          .cluster.put
 
          ! Write out 
@@ -131,11 +131,12 @@ contains
 
          ! Preserve
          CX_uses_angstrom  = .CX_uses_angstrom
-         nullify(.cif)
 
-         ! Destroy self (leaky)
-         .BASE:destroy                             
-         .BASE:create
+         !!!!!!!!!!!!!!
+         ! Destroy self
+         .SET:destroy                             
+         .SET:create
+         !!!!!!!!!!!!!!
 
          ! Next 
          .CX_uses_angstrom = CX_uses_angstrom
@@ -155,7 +156,7 @@ contains
    ! acceptable data block.
       self :: INOUT
 
-   ENSURE(.cif.associated,"no CIF object created")
+   ENSURE(.cif.allocated,"no CIF object created")
 
       ! Find a data block name
       if (.cif.data_block_name==" ") then
@@ -179,7 +180,7 @@ contains
       self :: INOUT
       skip_HA_inputs :: BIN, optional, IN
 
-   ENSURE(.cif.associated,"no CIF object created")
+   ENSURE(.cif.allocated,"no CIF object created")
 
       do_HA_inputs :: BIN
 
@@ -193,22 +194,30 @@ contains
 
       ! Find the data block
       ::open_CIF_at_data_block(.cif)
+      
+      ! Read crystal info, ensure .atom's are cartesian
+      .XTAL:read_CIF_crystal_only(.cif) 
+
+      ! Assume there is X-ray data
+      if (.crystal.allocated) then
+      .crystal.read_CIF_xray_data(.cif)
+      end
 
       ! Read in atoms of asymmetric unit
       ! If no .crystal.unit_cell, .atom's remain fractional
-      .XTAL:read_CIF_atoms(.cif)   
-      
-      ! Read crystal info, ensure .atom's are cartesian
-      .XTAL:read_CIF_crystal(.cif) 
+      .XTAL:read_CIF_atoms_only(.cif)   
+
+      ! Update any crystal fragment_atom info, positions.
+      .XTAL:update_CIF_crystal_atoms(.cif)
 
       ! Make Hirshfeld info
-      if (.scfdata.associated) then
       if (.basis_info_made) then
-      if (.atom.associated) then
-      if (.crystal.data.associated) then
+      if (.scfdata.allocated) then
+      if (.atom.allocated) then
+      if (.crystal.xray_data.allocated) then
       if (.crystal.uses_one_center_TF_model) then
       if (do_HA_inputs) then
-         .SCF:make_Hirshfeld_inputs
+         .SCF:make_HA_inputs
       end
       end
       end
@@ -229,7 +238,7 @@ contains
       cif :: CIF
       found :: BIN, optional, OUT
 
-   ENSURE(cif.file.associated,"no CIF file name")
+   ENSURE(cif.file.allocated,"no CIF file name")
    ENSURE(cif.file.name/=" ","no CIF file name")
 
       fnd :: BIN
@@ -241,7 +250,7 @@ contains
 
       if (NOT cif.file.is_open) cif.open
 
-      cif.find_data_block(fnd)
+      cif.find_crystal_data_block(fnd)
 
       if (present(found)) then
          found = fnd
@@ -255,9 +264,8 @@ contains
 
    open_CIF_at_data_block(cif) ::: selfless
    ! Open the "cif" file at the block with name "cif.data_block_name".
-      cif :: CIF*
+      cif :: CIF, INOUT
 
-   ENSURE(cif.associated,"no CIF object created")
    ENSURE(cif.file_name/=" ","no CIF file name")
    ENSURE(cif.data_block_name/=" ","no CIF data block name")
 
@@ -268,7 +276,7 @@ contains
 
       ! Store: cif.data_block_name is trashed
       name = cif.data_block_name 
-      cif.find_data_block(name)
+      cif.find_data_block_called(name)
 
    end
 
@@ -281,8 +289,8 @@ contains
    ! file and may consist of just an asymmetric unit.
       self :: INOUT
 
-   ENSURE(.cif.associated,"no CIF info")
-   ENSURE(.crystal.associated,"no crystal")
+   ENSURE(.cif.allocated,"no CIF info")
+   ENSURE(.crystal.allocated,"no crystal")
 
       ! Defragment any molecules in the CIF
       .crystal.set_generation_method("fragment")
@@ -296,22 +304,21 @@ contains
 
       ! Finalize atom info/bases & atom agroups
       .atom_info_made = FALSE
-      .BASE:destroy_atom_group
-      .BASE:finalize_atoms
+      .SET:destroy_atom_group
+      .BASE:update_atom_basis_group_info
 
       ! Redine crystal fragment
       .crystal.destroy_asymmetric_unit
-      .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-      .atom_info_made = FALSE
-      .BASE:finalize_atoms
+      .crystal.update_fragment_info(.atom)
+    ! .BASE:update_atom_basis_group_info ! Why a 2nd time?
 
       ! Make Hirshfeld info
-      if (.scfdata.associated) then
       if (.basis_info_made) then
-      if (.crystal.associated) then
-      if (.crystal.xray_data.associated) then
+      if (.scfdata.allocated) then
+      if (.crystal.allocated) then
+      if (.crystal.xray_data.allocated) then
       if (.crystal.uses_one_center_TF_model) then
-         .SCF:make_Hirshfeld_inputs
+         .SCF:make_HA_inputs
       end
       end
       end
@@ -327,20 +334,17 @@ contains
    put_CX_data
    ! Output information that Crystal Explorer requires to the file 
    ! with name ".CX_file_name".
+      self :: INOUT
       .:put_CX_data(.cif)
-   end
-
-   serialize_isosurface_sbf 
-   ! Dump sbf file 
-      .:serialize_isosurface_sbf(.cif)
    end
 
    put_CX_data(cif)
    ! Output information that Crystal Explorer requires to the file 
    ! with name ".CX_file_name".
-      cif :: CIF*
+      self :: INOUT
+      cif  :: CIF@
 
-      CX_file :: TEXTFILE*
+      CX_file :: TEXTFILE@
 
       if (.CX_file_name/=" ") then
 
@@ -358,16 +362,17 @@ contains
 
    end
 
-   serialize_isosurface_sbf(cif)
+   serialize_isosurface_sbf
    ! Output information that Crystal Explorer requires to the file 
    ! with name ".CX_file_name".
-      cif :: CIF*
+   ! NOTE: Should "self" INOUT here? IDK about serialize. --dylan
+      self :: INOUT
 
-      if(.CX_file_name /= " ") then
-         .:serialize_isosurface_sbf(trim(.CX_file_name), cif)
+      if (.CX_file_name /= " ") then
+         .:serialize_isosurface_sbf(trim(.CX_file_name))
       else
-         .:serialize_isosurface_sbf(trim(.name)//"-hs.sbf", cif)
-      end if
+         .:serialize_isosurface_sbf(trim(.name)//"-hs.sbf")
+      end
 
    end
 
@@ -376,17 +381,19 @@ contains
    ! Output information that Crystal Explorer requires to file "CX_file".
    ! NOTE: this requires a "cif" file to have been read, and a valid data block
    ! name to be stored in the "cif" object.
-      CX_file :: TEXTFILE*
-      cif :: CIF*
+      self :: INOUT
+      CX_file :: TEXTFILE, IN
+      cif :: CIF@, IN
 
- ! ENSURE(cif.associated,"no CIF object created")
+ ! ENSURE(cif.allocated,"no CIF object created")
  ! ENSURE(cif.data_block_name/=" ","no CIF data block name")
 
-      save :: TEXTFILE*
+      save :: TEXTFILE@
       CX_label,CX_name,formula,spacegroup :: STR
+      in, out :: VEC{INT}@
       done :: BIN
 
-      if (cif.associated) then
+      if (cif.allocated) then
          CX_name  = cif.file_name
          CX_label = cif.data_block_name
       else
@@ -399,13 +406,13 @@ contains
       stdout.flush
 
       ! Redirect stdout to out
-      save   => TEXTFILE::stdout                      
-      stdout => CX_file
+      save   = TEXTFILE::stdout                      
+      stdout = CX_file
 
       ! Reset output format
-      stdout.save
+      stdout.save_style
       stdout.set_int_width(7)
-      stdout.set_real_style("f")
+      stdout.set_real_fortran_fmt("f")
       stdout.set_real_precision(5)
       stdout.set_real_width(12)
       stdout.set_using_fields(FALSE)
@@ -423,11 +430,11 @@ contains
       ! Crystal data and cluster/fragment positions
       ! Try saved cluster first
       done = FALSE
-      if (.saved.associated) then
-      if (.saved.cluster.associated) then
+      if (.saved.allocated) then
+      if (.saved.cluster.allocated) then
 
          ENSURE(.saved.cluster.info_made,"no cluster information")
-         ENSURE(.saved.cluster.crystal.associated,"no cluster crystal data")
+         ENSURE(.saved.cluster.crystal.allocated,"no cluster crystal data")
          ENSURE(.saved.cluster.n_fragment_atoms>0,"no fragment size")
 
          formula    = .saved.cluster.crystal.CIF_chemical_formula
@@ -446,10 +453,10 @@ contains
 
       ! Try normal cluster
       if (NOT done) then
-      if (.cluster.associated) then
+      if (.cluster.allocated) then
 
          ENSURE(.cluster.info_made,"no cluster information")
-         ENSURE(.cluster.crystal.associated,"no cluster crystal data")
+         ENSURE(.cluster.crystal.allocated,"no cluster crystal data")
          ENSURE(.cluster.n_fragment_atoms>0,"no fragment size")
 
          formula    = .cluster.crystal.CIF_chemical_formula
@@ -468,13 +475,14 @@ contains
 
       ! Finally try .crystal and .atom
       if (NOT done) then
-      if (.crystal.associated AND .atom.associated) then
+      if (.crystal.allocated) then
+      if (.atom.allocated) then
 
          formula    = .crystal.CIF_chemical_formula
          spacegroup = .crystal.spacegroup.HM_symbol
 
          stdout.show("begin crystal ",CX_label)
-         .crystal.put_CX(CX_label,formula,spacegroup) 
+         .crystal.put_CX(CX_label,formula,spacegroup) ! INOUT
          .atom.put_CX(CX_label,angstrom=.CX_uses_angstrom)
          stdout.flush
          stdout.text("end crystal")
@@ -483,25 +491,24 @@ contains
 
       end
       end
+      end
 
       ! Isosurface information
-      if (.isosurface.associated) then
-      if (.isosurface.atom.associated) then 
+      if (.isosurface.allocated) then
+      if (.isosurface.atom.allocated) then 
 
-      ! Try saved cluster first
+      ! Try saved cluster
       done = FALSE
-      if (.saved.associated) then
-      if (.saved.cluster.associated) then
+      if (.saved.allocated) then
+      if (.saved.cluster.allocated) then
 
          stdout.flush
-         stdout.show("begin surface ",.isosurface.surface_label.trim,dots=FALSE)
-         .isosurface.put_CX(.saved.cluster.fragment_atom_indices &
-                           ,.saved.cluster.nonfragment_atom_indices &
-                           ,.atom &
-                           ,angstrom=.CX_uses_angstrom)
+         stdout.show("begin surface ",.saved.isosurface.surface_label.trim,dots=FALSE)
+         in  = .saved.cluster.fragment_atom_indices
+         out = .saved.cluster.nonfragment_atom_indices 
+         .saved.isosurface.put_CX(in,out,.atom,angstrom=.CX_uses_angstrom)
          .saved.cluster.put_CX_atoms
-         .isosurface.put_fingerprint_face_atoms(.saved.cluster.fragment_atom_indices &
-                           ,.saved.cluster.nonfragment_atom_indices)
+         .saved.isosurface.put_fingerprint_face_atoms(in,out)
          stdout.text("end surface")
 
          done = TRUE
@@ -511,7 +518,7 @@ contains
 
       ! Try normal cluster
       if (NOT done) then
-      if (.cluster.associated) then
+      if (.cluster.allocated) then
          DIE("should we be here?")
          done = TRUE
       end
@@ -527,147 +534,136 @@ contains
       end
 
       ! Put back stdout
-      stdout.unsave
-      stdout => save                        
+      stdout.unsave_style
+      stdout = save                        
 
    end
 
-   serialize_isosurface_sbf(filename, cif)
-   ! Output information that Crystal Explorer requires to file "CX_file".
+   serialize_isosurface_sbf(filename)
+   ! Output information that Crystal Explorer needs to sbf "filename".
    ! NOTE: this requires a "cif" file to have been read, and a valid data block
    ! name to be stored in the "cif" object.
-      filename :: STR
-      cif :: CIF*
-      datafile :: DATAFILE
-      CX_label,CX_name :: STR
-      points, normals :: MAT{REAL}*
-      values,d_e,d_i,d_norm_e,d_norm_i,d_norm,si,cn :: VEC{REAL}*
-      d_e_atoms, d_i_atoms :: VEC{INT}*
-      atoms_inside, atoms_outside :: MAT{INT}*
-      done,has_curvatures :: BIN
+      self :: INOUT
+      filename :: STR, IN
 
-      if (cif.associated) then
-         CX_name  = cif.file_name
-         CX_label = cif.data_block_name
-      else
-         CX_name  = "unknown"
-         CX_label = "unknown"
-      end
+      datafile :: DATAFILE
+      points, normals :: MAT{REAL}@
+      values,d_e,d_i,d_norm_e,d_norm_i,d_norm,si,cn :: VEC{REAL}@
+      d_e_atoms, d_i_atoms :: VEC{INT}@
+      atoms_inside, atoms_outside :: MAT{INT}@
+      done,has_curvatures :: BIN
 
       stdout.flush
       stdout.text("Writing Crystal Explorer data file: " // filename.trim)
       stdout.flush
 
-   if(tonto.is_master_processor) then
+      if(tonto.is_master_processor) then
 
-      datafile.open(filename)
+         datafile.open(filename)
+        
+         ! Isosurface information
+         if (.isosurface.allocated) then
+         if (.isosurface.atom.allocated) then 
+        
+            ! Try saved cluster first
+            done = FALSE
+            if (.saved.allocated) then
+            if (.saved.cluster.allocated) then
+           
+               points = .isosurface.point
+               points = points*ANGSTROM_PER_BOHR
+               call datafile%sbf%add_dataset(sbf_Dataset("vertices", points))
+               points.destroy
+           
+               call datafile%sbf%add_dataset(sbf_Dataset("faces", .isosurface.face))
+           
+               normals.create(3,.isosurface.n_pt)
+               .isosurface.make_vertex_normals(normals)
+               call datafile%sbf%add_dataset(sbf_Dataset("vertex normals", normals))
+               normals.destroy
+           
+               ! d_i, d_norm_i, d_e, d_norm_e and d_norm
+               d_i.create(.isosurface.n_pt)
+               d_e.create(.isosurface.n_pt)
+               d_norm_i.create(.isosurface.n_pt)
+               d_norm_e.create(.isosurface.n_pt)
+               d_norm.create(.isosurface.n_pt)
+               .isosurface.make_fingerprint_distances(d_e,d_i,d_norm_e &
+                                                      ,d_norm_i,d_norm &
+                                                      ,.saved.cluster.fragment_atom_indices &
+                                                      ,.saved.cluster.nonfragment_atom_indices &
+                                                      ,.atom,TRUE)
+           
+               ! Print it out
+               call datafile%sbf%add_dataset(sbf_Dataset("d_i",d_i))
+               call datafile%sbf%add_dataset(sbf_Dataset("d_e",d_e))
+               call datafile%sbf%add_dataset(sbf_Dataset("d_norm_i",d_norm_i))
+               call datafile%sbf%add_dataset(sbf_Dataset("d_norm_e",d_norm_e))
+               call datafile%sbf%add_dataset(sbf_Dataset("d_norm",d_norm))
+           
+               ! Clean
+               d_norm.destroy
+               d_norm_e.destroy
+               d_norm_i.destroy
+               d_e.destroy
+               d_i.destroy
+           
+               ! Shape index and curvedness
+               has_curvatures = .isosurface.point_mean_curvature.allocated &
+                           AND  .isosurface.point_gaussian_curvature.allocated
+               if (.isosurface.CX_output_shape_properties AND has_curvatures) then
+                  si.create(.isosurface.n_pt)
+                  cn.create(.isosurface.n_pt)
+                  .isosurface.make_vertex_SI_and_curvedness(si,cn)
+                  call datafile%sbf%add_dataset(sbf_Dataset("shape_index",si))
+                  call datafile%sbf%add_dataset(sbf_Dataset("curvedness",cn))
+                  cn.destroy
+                  si.destroy
+               end
+           
+               ! User-requested property?
+               if (.isosurface.surface_property_values.allocated) then
+                  ! Create a copy of property
+                  values = .isosurface.surface_property_values
+                  ! Chop it if requested
+                  if (.isosurface.surface_property_lb_set) values.chop_small_values(.isosurface.surface_property_lb)
+                  if (.isosurface.surface_property_ub_set) values.chop_large_values(.isosurface.surface_property_ub)
+                  ! Put out the surface property values
+                  call datafile%sbf%add_dataset(sbf_Dataset(trim(.isosurface.surface_property),values))
+                  values.destroy
+               end
+           
+               if (.isosurface.surface_iso_values.allocated) then
+                  call datafile%sbf%add_dataset(sbf_Dataset(trim(.isosurface.property),.isosurface.surface_iso_values))
+               end
+           
+           
+               .saved.cluster.make_CX_atoms(atoms_inside, atoms_outside)
+               call datafile%sbf%add_dataset(sbf_Dataset("atoms_inside_surface",atoms_inside))
+               if (atoms_outside.allocated) call datafile%sbf%add_dataset(sbf_Dataset("atoms_outside_surface",atoms_outside))
+           
+               d_i_atoms.create(.isosurface.n_face)
+               d_e_atoms.create(.isosurface.n_face)
+               .isosurface.make_fingerprint_face_atoms(d_e_atoms,d_i_atoms &
+                                                      ,.saved.cluster.fragment_atom_indices &
+                                                      ,.saved.cluster.nonfragment_atom_indices)
+               call datafile%sbf%add_dataset(sbf_Dataset("d_i_atoms",d_i_atoms))
+               call datafile%sbf%add_dataset(sbf_Dataset("d_e_atoms",d_e_atoms))
+               d_e_atoms.destroy
+               d_i_atoms.destroy
+           
+               done = TRUE
 
-      ! Isosurface information
-      if (.isosurface.associated) then
-      if (.isosurface.atom.associated) then 
-
-      ! Try saved cluster first
-      done = FALSE
-      if (.saved.associated) then
-      if (.saved.cluster.associated) then
-
-         points.create_copy(.isosurface.point)
-         points = points*ANGSTROM_PER_BOHR
-         call datafile%sbf%add_dataset(sbf_Dataset("vertices", points))
-         points.destroy
-
-         call datafile%sbf%add_dataset(sbf_Dataset("faces", .isosurface.face))
-
-         normals.create(3,.isosurface.n_pt)
-         .isosurface.make_vertex_normals(normals)
-         call datafile%sbf%add_dataset(sbf_Dataset("vertex normals", normals))
-         normals.destroy
-
-         ! d_i, d_norm_i, d_e, d_norm_e and d_norm
-         d_i.create(.isosurface.n_pt)
-         d_e.create(.isosurface.n_pt)
-         d_norm_i.create(.isosurface.n_pt)
-         d_norm_e.create(.isosurface.n_pt)
-         d_norm.create(.isosurface.n_pt)
-         .isosurface.make_fingerprint_distances(d_e,d_i,d_norm_e &
-                                                ,d_norm_i,d_norm &
-                                                ,.saved.cluster.fragment_atom_indices &
-                                                ,.saved.cluster.nonfragment_atom_indices &
-                                                ,.atom,TRUE)
-
-         ! Print it out
-         call datafile%sbf%add_dataset(sbf_Dataset("d_i",d_i))
-         call datafile%sbf%add_dataset(sbf_Dataset("d_e",d_e))
-         call datafile%sbf%add_dataset(sbf_Dataset("d_norm_i",d_norm_i))
-         call datafile%sbf%add_dataset(sbf_Dataset("d_norm_e",d_norm_e))
-         call datafile%sbf%add_dataset(sbf_Dataset("d_norm",d_norm))
-
-         ! Clean
-         d_norm.destroy
-         d_norm_e.destroy
-         d_norm_i.destroy
-         d_e.destroy
-         d_i.destroy
-
-         ! Shape index and curvedness
-         has_curvatures = .isosurface.point_mean_curvature.associated &
-                     AND  .isosurface.point_gaussian_curvature.associated
-         if (.isosurface.CX_output_shape_properties AND has_curvatures) then
-            si.create(.isosurface.n_pt)
-            cn.create(.isosurface.n_pt)
-            .isosurface.make_vertex_SI_and_curvedness(si,cn)
-            call datafile%sbf%add_dataset(sbf_Dataset("shape_index",si))
-            call datafile%sbf%add_dataset(sbf_Dataset("curvedness",cn))
-            cn.destroy
-            si.destroy
+            end
+            end
+        
          end
-
-         ! User-requested property?
-         if (.isosurface.surface_property_values.associated) then
-            ! Create a copy of property
-            values.create_copy(.isosurface.surface_property_values)
-            ! Chop it if requested
-            if (.isosurface.surface_property_lb_set) values.chop_small_values(.isosurface.surface_property_lb)
-            if (.isosurface.surface_property_ub_set) values.chop_large_values(.isosurface.surface_property_ub)
-            ! Put out the surface property values
-            call datafile%sbf%add_dataset(sbf_Dataset(trim(.isosurface.surface_property),values))
-            values.destroy
          end
+        
+         call datafile%sbf%serialize
+         datafile.close
 
-         if (.isosurface.surface_iso_values.associated) then
-            call datafile%sbf%add_dataset(sbf_Dataset(trim(.isosurface.property),.isosurface.surface_iso_values))
-         end
-
-
-         atoms_outside => NULL()
-         atoms_inside => NULL()
-         .saved.cluster.make_CX_atoms(atoms_inside, atoms_outside)
-         call datafile%sbf%add_dataset(sbf_Dataset("atoms_inside_surface",atoms_inside))
-         if (atoms_outside.associated) call datafile%sbf%add_dataset(sbf_Dataset("atoms_outside_surface",atoms_outside))
-
-         d_i_atoms.create(.isosurface.n_face)
-         d_e_atoms.create(.isosurface.n_face)
-         .isosurface.make_fingerprint_face_atoms(d_e_atoms,d_i_atoms &
-                                                ,.saved.cluster.fragment_atom_indices &
-                                                ,.saved.cluster.nonfragment_atom_indices)
-         call datafile%sbf%add_dataset(sbf_Dataset("d_i_atoms",d_i_atoms))
-         call datafile%sbf%add_dataset(sbf_Dataset("d_e_atoms",d_e_atoms))
-         d_e_atoms.destroy
-         d_i_atoms.destroy
-
-         done = TRUE
-      end
-      end
-
-      end
-      end
-
-      !call datafile%sbf%add_dataset(sbf_Dataset("cif_filename", trim(CX_name)))
-      !call datafile%sbf%add_dataset(sbf_Dataset("data_block_name", trim(CX_label)))
-      call datafile%sbf%serialize
-      datafile.close
-
-   end if !tonto_master_processor
+      end ! tonto_master_processor
 
    end
 
@@ -675,51 +671,56 @@ contains
 !  Lattice energies
 !  ================
 
-   make_monomer_energies_for_lattice_energy result(res)
-   ! But what get's returned? -- DJ
-       self :: PTR
-       res :: VEC{REAL}(4) ! E_en, E_1e, E_ee, E_ex
+   make_monomer_energies_for_lattice_energy(res)
+   ! But what gets returned? -- DJ
+   ! res = [ E_en, E_1e, E_ee, E_ex ]
+      self :: allocatable, INOUT
+      res  :: VEC{REAL}(4), OUT
 
-       J, K, saved_MOs :: OPMATRIX@
-       exchange_factor = -HALF :: REAL
+      J, K, saved_MOs :: OPMATRIX@
+      exchange_factor :: REAL
 
-       saved_MOs = .molecular_orbitals
-       .INTS:make_overlap_matrix
-       .SCF:make_core_matrix
-       .BASE:make_natural_orbitals
-       ! Make integrals
-       .molecular_orbitals = .natural_orbitals
-       .BASE:make_scf_density_matrix
-       .SCF:make_core_matrix
-       .nuclear_attraction_matrix.uncompress
-       if (.scfdata.is_restricted) then
-           exchange_factor = -QUARTER
-       end if
+      exchange_factor = -HALF
+      
+      saved_MOs = .MOs
 
+      ! Below from scratch? Seems strange
+      .INTS:make_overlap_mx
+      .SCF:make_core_mx
+      .BASE:make_NOs
 
+      ! Make integrals
+      .MOs = .NOs
+      .BASE:make_SCF_density_mx
+      .SCF:make_core_mx ! again ?!!
+      .nuclear_attraction_mx.uncompress
+      if (.scfdata.is_restricted) then
+          exchange_factor = -QUARTER
+      end
 
-       res(1) = .BASE:expectation(.nuclear_attraction_matrix)
-       res(2) = .BASE:expectation(.core_matrix)
-       J.create(.n_bf, .density_matrix.spinorbital_kind)
-       K.create(.n_bf, .density_matrix.spinorbital_kind)
-       if(.use_spherical_basis) then; .FOCK:make_JK_direct(J,K, .density_matrix)
-       else; .FOCK:make_JK_engine(J, K, .density_matrix)
-       endif
-       res(3) = .BASE:expectation(J) * HALF
-       res(4) = .BASE:expectation(K) * exchange_factor
-       res = -TWO * res
-       J.destroy
-       K.destroy
-       .molecular_orbitals = saved_MOs
+      res(1) = .BASE:expectation(.nuclear_attraction_mx)
+      res(2) = .BASE:expectation(.core_mx)
+
+      J.create(.n_bf,.density_mx.genre)
+      K.create(.n_bf,.density_mx.genre)
+      if(.use_spherical_basis) then; .FOCK:make_JK_direct(J,K,.density_mx)
+      else;                          .FOCK:make_JK_engine(J,K,.density_mx)
+      end
+      res(3) = .BASE:expectation(J) * HALF
+      res(4) = .BASE:expectation(K) * exchange_factor
+      res = -TWO * res
+      J.destroy
+      K.destroy
+
+      .MOs = saved_MOs
+
    end
 
    estimate_z result(res) ::: PURE
    ! Returns the Z factor of crystallography?
       self :: IN
-      res :: INT
-
+      res  :: INT
       res = .crystal.n_unit_cell_atoms / .cluster.molecule(1).element.dim
-
    end
 
    calculate_cell_dipole_correction(mol_dipole) result(res)
@@ -728,10 +729,10 @@ contains
       mol_dipole :: VEC{REAL}(3), IN
       res :: REAL
      
-      cell_dipole :: VEC{REAL}(3)
-      i :: INT
-      unique_symops :: VEC{INT}*
+      cell_dipole   :: VEC{REAL}(3)
+      unique_symops :: VEC{INT}@
       rot :: MAT{REAL}(3,3)
+      i :: INT
      
       unique_symops.to_unique_elements_of(.crystal.asym_symop_for_unit_cell_atom)
 
@@ -739,8 +740,8 @@ contains
       cell_dipole = ZERO
       do i = 1, unique_symops.dim
          rot = .crystal.spacegroup.seitz(1:3, 1:3, unique_symops(i))
-         rot = matmul(rot, .crystal.unit_cell.inverse_matrix)
-         rot = matmul(.crystal.unit_cell.direct_matrix, rot)
+         rot = matmul(rot, .crystal.unit_cell.inverse_mx)
+         rot = matmul(.crystal.unit_cell.direct_mx, rot)
          cell_dipole = cell_dipole + matmul(rot, mol_dipole)
       end do
       res = - TWOTHIRD * PI * (cell_dipole.norm) ** 2
@@ -752,172 +753,178 @@ contains
 
    create_wavefunction_file_for_lattice ::: leaky, private
    ! Is this a wfn file or sbf?
-       mol :: MOLECULE*
+       self :: INOUT
+
+       mol   :: MOLECULE@
        model :: STR
-       mol.BASE:create
+
+       mol.SET:create
        mol.scfdata.create
        mol.name = trim(.cif.data_block_name)
        .cluster.create_mol_atom_list(mol.atom, 1)
 
-       mol.BASE:finalize_atoms
+       mol.BASE:update_atom_basis_group_info
 
-       mol.scfdata.scf_kind = "rhf"
+       mol.scfdata.SCF_kind = "rhf"
        VEC{PAIR_ENERGY}:get_energy_model(model)
        stdout.show("Making wavefunction for energy model ", trim(model))
        if(trim(model) == "ce-b3lyp") then
-           mol.scfdata.scf_kind = "rks"
-           mol.BASE:set_basis_name("6-31G(d,p)")
-           mol.scfdata.set_exchange_functional("b3lypgx")
-           mol.scfdata.set_correlation_functional("b3lypgc")
+          mol.scfdata.SCF_kind = "rks"
+          mol.SET:set_basis_name("6-31G(d,p)")
+          mol.scfdata.set_exchange_functional("b3lypgx")
+          mol.scfdata.set_correlation_functional("b3lypgc")
        end 
-       mol.BASE:set_basis_name("3-21G")
+       mol.SET:set_basis_name("3-21G")
        mol.SCF:make_ANO_data
        mol.SCF:scf
-       mol.BASE:serialize(trim(mol.name)//".sbf")
+       mol.PUT:serialize(trim(mol.name)//".sbf")
+
    end
 
    total_lattice_energy(wavefunction_filename)
    ! Some description needed here
-     self :: PTR
-     wavefunction_filename :: STR
-
-     file_exists :: BIN
-     mol1, mol2 :: MOLECULE*
-     i, current_symop :: INT
-     pair_energies :: VEC{PAIR_ENERGY}@
-     indices, indices_calc :: VEC{INT}@
-     monomer_energies, E :: VEC{REAL}(4)
-     e_iter, e_prev, delta_e, radius, prev_radius :: REAL
-     sep :: VEC{REAL}(3)
-     cell_dipole_correction :: REAL
-     mol_dipole :: VEC{REAL}(3)
-     convergence_threshold :: REAL
-
-
-     ! Central fragment wavefunction stuff
-     !if(.scfdata.scf_kind == "rks") then
-     !   VEC{PAIR_ENERGY}:set_energy_model("ce-b3lyp")
-     !else
-     !   VEC{PAIR_ENERGY}:set_energy_model("ce-hf")
-     !end if
-
-     .cluster.create(.crystal) 
-     .cluster.set_generation_method("fragment")
-     .cluster.radius = 100
-     .cluster.defragment = TRUE
-     .cluster.make_info
-
-     mol1.BASE:create
-
-     inquire(file=trim(wavefunction_filename), exist=file_exists)
-     if (file_exists) then
+      self :: INOUT
+      wavefunction_filename :: STR, INOUT
+ 
+      file_exists :: BIN
+      mol1, mol2 :: MOLECULE@
+      i, current_symop :: INT
+      pair_energies :: VEC{PAIR_ENERGY}@
+      indices, indices_calc :: VEC{INT}@
+      monomer_energies, E :: VEC{REAL}(4)
+      e_iter, e_prev, delta_e, radius, prev_radius :: REAL
+      sep :: VEC{REAL}(3)
+      cell_dipole_correction :: REAL
+      mol_dipole :: VEC{REAL}(3)
+      convergence_threshold :: REAL
+ 
+ 
+      ! Central fragment wavefunction stuff
+    ! if(.scfdata.SCF_kind == "rks") then
+    !    VEC{PAIR_ENERGY}:set_energy_model("ce-b3lyp")
+    ! else
+    !    VEC{PAIR_ENERGY}:set_energy_model("ce-hf")
+    ! end if
+ 
+      .cluster.create
+      .cluster.set_defaults(.crystal) 
+      .cluster.set_generation_method("fragment")
+      .cluster.set_radius(100.0d0)      ! atomic units
+      .cluster.set_defragment(TRUE)
+      .cluster.update_info
+ 
+      mol1.SET:create
+ 
+      inquire(file=trim(wavefunction_filename), exist=file_exists)
+      if (file_exists) then
          stdout.text("Loading g09 wavefunction")
-         mol1.BASE:read_wfn_file(trim(wavefunction_filename))
-     else 
+         mol1.READ:read_wfn_file(trim(wavefunction_filename))
+      else 
          stdout.text("Wavefunction file does not exist")
          .:create_wavefunction_file_for_lattice
          wavefunction_filename = trim(.cif.data_block_name)//".sbf"
-         mol1.BASE:read_wfn_file(trim(wavefunction_filename))
-     end
-
-     mol1.name = trim(.cif.data_block_name)
-     mol1.atom.put
-
-
-     stdout.flush
-     stdout.text("==============================")
-     stdout.text("CrystalExplorer lattice energy")
-     stdout.text("==============================")
-
-     stdout.text("Calculating monomer energies")
-     !! Make monomer energies and multipoles
-     monomer_energies  = mol1.:make_monomer_energies_for_lattice_energy
-     stdout.text("Monomer energies (Hartree)")
-     stdout.show("E_en               =", monomer_energies(1))
-     stdout.show("E_1e               =", monomer_energies(2))
-     stdout.show("E_ee               =", monomer_energies(3))
-     stdout.show("E_ex               =", monomer_energies(4))
-     stdout.flush
-
-     mol1.BASE:make_atomic_multipoles
-     mol_dipole = mol1.PROP:make_dipole
-     cell_dipole_correction = .:calculate_cell_dipole_correction(mol_dipole)
-     stdout.show("Cell dipole correction =", cell_dipole_correction)
-
-
-     current_symop = 0
-     prev_radius = ZERO
-     radius = 7.2 ! Roughly 3.8 angstrom
-     e_prev = ZERO
-     e_iter = ZERO
-     delta_e = INT_HUGE
-     mol2.BASE:create
-
-     VEC{PAIR_ENERGY}:get_convergence_threshold(convergence_threshold)
-
-     stdout.text("Beginning lattice energy calculation by summation of pair interactions")
-     do while (abs(delta_e) > convergence_threshold)
-
-        ! 1 being the first molecule in the crystal
-        .cluster.make_pairs_within_radius_of(1, pair_energies, radius, prev_radius)
-        prev_radius = radius
-
+         mol1.READ:read_wfn_file(trim(wavefunction_filename))
+      end
+ 
+      mol1.name = trim(.cif.data_block_name)
+      mol1.atom.put
+ 
+ 
+      stdout.flush
+      stdout.text("==============================")
+      stdout.text("CrystalExplorer lattice energy")
+      stdout.text("==============================")
+ 
+      stdout.text("Calculating monomer energies")
+ 
+      ! Make monomer energies and multipoles
+      stdout.flush
+      mol1.:make_monomer_energies_for_lattice_energy(monomer_energies)
+      stdout.text("Monomer energies (Hartree) :")
+      stdout.show("Electron-nuclear energy, E_en =", monomer_energies(1))
+      stdout.show("One-electron energy,     E_1e =", monomer_energies(2))
+      stdout.show("Two-electron energy,     E_ee =", monomer_energies(3))
+      stdout.show("Electron exchange,       E_ex =", monomer_energies(4))
+      stdout.flush
+ 
+      mol1.GRID:make_atomic_multipoles
+      mol_dipole = mol1.PROP:the_dipole
+      cell_dipole_correction = .CE:calculate_cell_dipole_correction(mol_dipole)
+      stdout.show("Cell dipole correction =", cell_dipole_correction)
+ 
+ 
+      current_symop = 0
+      prev_radius = ZERO
+      radius = 7.2 ! Roughly 3.8 angstrom
+      e_prev = ZERO
+      e_iter = ZERO
+      delta_e = INT_HUGE
+      mol2.SET:create
+ 
+      VEC{PAIR_ENERGY}:get_convergence_threshold(convergence_threshold)
+ 
+      stdout.text("Beginning lattice energy calculation by summation of pair interactions")
+      do while (abs(delta_e) > convergence_threshold)
+ 
+         ! 1 being the first molecule in the crystal
+         .cluster.make_pairs_within_radius_of(1, pair_energies, radius, prev_radius)
+         prev_radius = radius
+ 
          indices.create(pair_energies.dim)
        ! stdout.show("indices: ", indices)
        ! stdout.flush
          pair_energies(:).symop_id.quick_sort(indices)
          pair_energies(:) = pair_energies(indices)
          indices.destroy
-
+ 
        ! stdout.text("Sorted pairs by symop")
        ! stdout.flush
-
-        do i = 1, pair_energies.dim
-
-           if (pair_energies(i).energy_calculated) cycle
-
-           if (current_symop /= pair_energies(i).symop_id) then
-               mol2.BASE:destroy
-               mol2.BASE:create
-               mol2.BASE:read_wfn_file(wavefunction_filename)
-               mol2.BASE:rotate_by(pair_energies(i).rot)
-               mol2.INTS:make_overlap_matrix
-               mol2.BASE:make_natural_orbitals
-               mol2.BASE:make_atomic_multipoles
-               current_symop = pair_energies(i).symop_id
-           end if
-           mol2.atom.translate_by(pair_energies(i).trans)
-           sep = mol1.atom.center_of_mass - mol2.atom.center_of_mass
-
-           ! If we have a unique molecule pair calculate the energies
-           E = ZERO
-
-           ! Disp
-           E(1:2) = mol1.PROP:symmetric_intermolecular_qm_energies(mol2, monomer_energies)
-           E(3) = mol1.PROP:intermolecular_polarization_energy(mol2)
-           E(4) = mol1.atom.Grimme06_dispersion_energy(mol2.atom)
-           pair_energies(i).set_energy_components(E)
-           pair_energies(i).set_energy_calculated(TRUE)
-           mol2.atom.translate_by(-pair_energies(i).trans)
-
-        end
-
-        e_iter = pair_energies.total_energy(scaled=TRUE)
-        delta_e = e_iter - e_prev
-        e_prev = e_iter
-        indices_calc = pair_energies.calculated_pairs
-        pair_energies(indices_calc).put_lattice_energy_table(cell_dipole_correction)
-
-        radius = radius + 7.2
-        if (radius > .cluster.radius) then
-           stdout.show("Convergence not achieved within radius", .cluster.radius)
-           exit
-        end
-
-     end
-
-     mol1.BASE:destroy
-     mol2.BASE:destroy
+ 
+         do i = 1, pair_energies.dim
+ 
+            if (pair_energies(i).energy_calculated) cycle
+ 
+            if (current_symop /= pair_energies(i).symop_id) then
+                mol2.SET:destroy
+                mol2.SET:create
+                mol2.READ:read_wfn_file(wavefunction_filename)
+                mol2.BASE:rotate_by(pair_energies(i).rot)
+                mol2.INTS:make_overlap_mx
+                mol2.BASE:make_NOs
+                mol2.GRID:make_atomic_multipoles
+                current_symop = pair_energies(i).symop_id
+            end if
+            mol2.atom.translate_by(pair_energies(i).trans)
+            sep = mol1.atom.center_of_mass - mol2.atom.center_of_mass
+ 
+            ! If we have a unique molecule pair calculate the energies
+            E = ZERO
+ 
+            ! Disp
+            E(1:2) = mol1.PROP:symmetric_intermolecular_qm_energies(mol2, monomer_energies)
+            E(3)   = mol1.PROP:intermolecular_polarization_energy(mol2)
+            E(4)   = mol1.atom.Grimme06_dispersion_energy(mol2.atom)
+            pair_energies(i).set_energy_components(E)
+            pair_energies(i).set_energy_calculated(TRUE)
+            mol2.atom.translate_by(-pair_energies(i).trans)
+ 
+         end
+ 
+         e_iter = pair_energies.total_energy(scaled=TRUE)
+         delta_e = e_iter - e_prev
+         e_prev = e_iter
+         indices_calc = pair_energies.calculated_pairs
+         pair_energies(indices_calc).put_lattice_energy_table(cell_dipole_correction)
+ 
+         radius = radius + 7.2
+         if (radius > .cluster.radius) then
+            stdout.show("Convergence not achieved within radius", .cluster.radius)
+            exit
+         end
+      end
+ 
+      mol1.SET:destroy
+      mol2.SET:destroy
 
    end
 

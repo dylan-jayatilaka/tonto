@@ -45,7 +45,7 @@ program run_HAR
       "very_high", &
       "extreme  "  /
 
-   m :: MOLECULE*
+   m :: MOLECULE@
    command_line :: COMMAND_LINE
    option,value :: STR
    spinorbitals :: STR
@@ -53,7 +53,7 @@ program run_HAR
    basis,basdir,basnam,gracc,cif,guess,job,out,err,scf :: STR
    std_f2,std_f,shx_f2,shx_f :: STR
    dtol,fos,fzcut,ldtol,radius,ten :: REAL
-   file :: TEXTFILE*
+   file :: TEXTFILE@
    anharm,disperse :: VEC{STR}@
    i, charge,mult :: INT
    do_4_only,extinct,h_ADPs,h_iso,h_pos,radius_is_0,tmetal,defragment :: BIN
@@ -64,11 +64,8 @@ program run_HAR
    TONTO_CREATE
 
    ! Set stdout & stderr to screen
-   stdout.create_stdout
-   stderr => stdout 
-
-   ! Nullify
-   nullify(m)
+   TEXTFILE::create_stdout
+   TEXTFILE::create_stderr 
 
    ! Default option values
    basis      = "def2-SVP"
@@ -148,8 +145,9 @@ program run_HAR
       if (err==" ") err = trim(job)//".err"
      
       ! Set stderr properly
-      nullify(stderr)
-      stderr.create_stderr
+      stderr.close_and_delete
+      stderr.destroy
+      TEXTFILE::create_stderr 
       stderr.set_name(err)
       stderr.open_for("write")
 
@@ -631,20 +629,20 @@ program run_HAR
    file.destroy
 
    ! Initialize molecule
-   m.BASE:create
+   m.SET:create
    GAUSSIAN_DATA:set_indices(GAUSSIAN_DATA_L_MAX)
    MOLECULE.MAIN:put_banner
-   m.BASE:set_name(job)
-   m.BASE:set_basis_directory(basdir)
-   m.BASE:set_basis_name(basis)
-   m.BASE:set_charge(charge)
-   m.BASE:set_spin_multiplicity(mult)
+   m.SET:set_name(job)
+   m.SET:set_basis_directory(basdir)
+   m.SET:set_basis_name(basis)
+   m.SET:set_charge(charge)
+   m.SET:set_spin_multiplicity(mult)
 
    ! Read CIF
    m.cif.create
    m.cif.set_file_name(cif)
    m.CE:process_CIF
-   m.cif.finalize
+   m.cif.update  
 
    ! Complete whole molecules?
    if (defragment) then
@@ -652,13 +650,13 @@ program run_HAR
    end
 
    ! Set job name
-   m.BASE:set_name(job)
+   m.SET:set_name(job)
 
    ! More checks
-   DIE_IF(m.crystal.destroyed,          "no crystal information available!")
-   DIE_IF(m.crystal.xray_data.destroyed,"no x-ray F structure factors supplied!")
-   DIE_IF(m.atom.disassociated,         "no atoms specified")
-   DIE_IF(any(m.atom.atomic_number>36), "hart is not routinely available for heavy atoms, Z>36")
+   DIE_IF(m.crystal.deallocated,          "no crystal information available!")
+   DIE_IF(m.crystal.xray_data.deallocated,"no x-ray F structure factors supplied!")
+   DIE_IF(m.atom.deallocated,             "no atoms specified")
+   DIE_IF(any(m.atom.atomic_number>36),  "hart is not routinely available for heavy atoms, Z>36")
    tmetal = any(m.atom.atomic_number>=21 AND m.atom.atomic_number<=30)
    DIE_IF(tmetal, "hart is not routinely available for transition metals")
 
@@ -667,34 +665,34 @@ program run_HAR
    m.atom.set_isotropic_H_ADP
 
    ! Diffraction data info !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-   m.crystal.xray_data.data_kind = "x-ray"
-   m.crystal.xray_data.set_temperature_factor_model("hirshfeld")
-   m.crystal.xray_data.set_partition_model("         ")
-   m.crystal.xray_data.set_optimize_extinction(extinct)
-   m.crystal.xray_data.set_use_text_SFs(disk_sfs)
+   m.crystal.xray_data.SET:set_data_kind("x-ray")
+   m.crystal.xray_data.SET:set_temperature_factor_model("hirshfeld")
+   m.crystal.xray_data.SET:set_partition_model("         ")
+   m.crystal.xray_data.SET:set_refine_extinction(extinct)
+   m.crystal.xray_data.SET:set_use_text_SFs(disk_sfs)
 
    ! Dispersion
    if (disperse.allocated) then
    ATOM:set_dispersion_coefficients(disperse)
    m.atom.set_tabular_dispersion
-   m.crystal.xray_data.set_add_dispersion_to_F_calc(TRUE)
+   m.crystal.xray_data.SET:set_add_dispersion_to_F_calc(TRUE)
    end
 
    ! Anharmonicity
    if (anharm.allocated) then
-   m.crystal.xray_data.set_refine_4th_order(anharm)
-   m.crystal.xray_data.set_refine_4th_order_only(do_4_only)
+   m.crystal.xray_data.SET:set_refine_4th_order(anharm)
+   m.crystal.xray_data.SET:set_refine_4th_order_only(do_4_only)
    end
 
    ! Refine isotropic H ADPs?
    if (h_iso) &
-   m.crystal.xray_data.set_refine_H_U_iso(TRUE)
+   m.crystal.xray_data.SET:set_refine_H_U_iso(TRUE)
 
    ! Refine H ADPs at all?
-   m.crystal.xray_data.set_refine_H_ADPs(h_ADPs)
+   m.crystal.xray_data.SET:set_refine_H_ADPs(h_ADPs)
 
    ! Refine H positions at all?
-   m.crystal.xray_data.set_refine_H_positions(h_pos)
+   m.crystal.xray_data.SET:set_refine_H_positions(h_pos)
    
    ! Read reflections from a separate file?
         if (shx_f2/=" ") then
@@ -720,17 +718,16 @@ program run_HAR
    end
 
    ! Finalize data, and do data pruning
-   m.crystal.xray_data.set_F_sigma_cutoff(fos)
+   m.crystal.xray_data.SET:set_F_sigma_cutoff(fos)
    if (fzcut>ZERO) &
-   m.crystal.xray_data.set_F_z_cutoff(fzcut)
-   m.crystal.xray_data.update(m.crystal.unit_cell,m.crystal.spacegroup)
-   m.crystal.assign_xray
+   m.crystal.xray_data.SET:set_F_z_cutoff(fzcut)
+   m.crystal.xray_data.SET:update(m.crystal.unit_cell,m.crystal.spacegroup)
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-   !!!!!!!!!!
-   m.BASE:put
-   !!!!!!!!!!
+   !!!!!!!!!
+   m.PUT:put
+   !!!!!!!!!
 
    ! Set Becke grid
    m.becke_grid.create
@@ -741,16 +738,16 @@ program run_HAR
    ! Initial SCF - only if using cluster charges
    m.scfdata.create
    m.scfdata.set_scf_kind(scf)
-   spinorbitals = m.scfdata.spinorbital_kind
+   spinorbitals = m.scfdata.spinorbital_genre
    m.scfdata.set_initial_density("promolecule")
    select case (guess)
    case ("density"); m.scfdata.set_initial_MOs(spinorbitals)
    case ("mos    "); m.scfdata.set_initial_density(spinorbitals)
    end
    m.scfdata.set_convergence(TOL(3))
-   m.scfdata.diis.set_convergence_tolerance(TOL(2))
+   m.scfdata.SCF_DIIS.set_convergence_tolerance(TOL(2))
    m.scfdata.set_linear_dependence_tol(ldtol)
-   m.scfdata.finalize
+   m.scfdata.update 
 
    !!!!!!!!!
    m.SCF:scf
@@ -762,13 +759,13 @@ program run_HAR
       m.scfdata.set_using_SC_cluster_charges(TRUE)
       m.scfdata.set_cluster_radius(radius)
       m.scfdata.set_defragment(defragment)
-      m.scfdata.finalize
+      m.scfdata.update
       m.SCF:scf ! Cluster charge SCF here
    end
 
 
    ! HAR !!!!!!!!!!!!!!
-   m.TAD:HAR_refinement
+   m.HAR:HAR_refinement
    !!!!!!!!!!!!!!!!!!!!
 
    ! Job timing
@@ -780,7 +777,7 @@ program run_HAR
    stdout.text(ctime)
 
    ! Clean-up
-   m.MAIN:cleanup
+   MOLECULE.MAIN:cleanup
 
    ! Clean-up files
    TEXTFILE:destroy(stderr)
