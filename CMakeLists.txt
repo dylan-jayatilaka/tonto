@@ -1,5 +1,7 @@
 # CMake
-cmake_minimum_required(VERSION 3.6.0)
+cmake_minimum_required(VERSION 3.6...3.28)
+cmake_policy(SET CMP0110 OLD)
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Install where?
