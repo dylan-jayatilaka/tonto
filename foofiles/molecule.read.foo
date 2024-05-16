@@ -970,6 +970,9 @@ contains
       a,g :: INT
       same :: BIN
       xml_pos, tmp_vec :: VEC{REAL}(3)
+      adp2, tmp_adp2 :: MAT{REAL}(3,3)     ! Kang
+      seitz :: MAT3{REAL}@           ! Kang for ADP transform
+
 
       ! Get C23 XML file name
       base = .crystal23.xml_file_name
@@ -1030,7 +1033,7 @@ contains
       if (NOT dm.is_zero(TOL(5))) then
          stdout.put("The unit cell axes are not rotations of each other!")
          .crystal.unit_cell.put
-         DIE("Sorry! unit cell matrix inconsistent")
+         DIE("Sorry! unit cell matrix inconsistent")! Kang Comment : primitive to crystallogrphic cell transform. How?
       end
 
       ! Set .crystal.unit_cell to C23 unit cell
@@ -1125,7 +1128,6 @@ contains
                ! Set the XML atom ADPs
                .atom(a).set_ADP_axis_system_to("crystal")
                .atom(a).set_ADP_tensor(cif_atom(j).pADP_vector(4:9))
-               .atom(a).set_ADP_axis_system_to("cartesian")
                .atom(a).change_ADP2_axis_system_to("cartesian",.crystal.unit_cell,change_ESDs=FALSE)
 
             !   stdout.flush 
@@ -1152,6 +1154,40 @@ contains
       .crystal.asymmetric_unit_geometry.destroy
       .crystal.update_fragment_info(.atom)
       .crystal.finalize = TRUE
+
+      ! Symmetrize ADP tensor : Kang 16.May. 2024 ########
+      stdout.text(" Symmetrize ADP ") 
+      seitz = .crystal.xyz_seitz_matrices  ! cartesian sym ops- Kang
+
+      do a = 1, .crystal.n_asymmetric_unit_atoms
+
+          tmp_adp2 = ZERO
+
+          do i = 1, .crystal.asym_atom_sym_factor(a)
+
+              j = .crystal.asym_atom_stabilizer(a).element(i)! j: stabilizer index
+
+              adp2 = .crystal.asymmetric_unit_atom(a).ADP_tensor !Kang: Ensure adp2 is in cartesian coordinate
+              adp2 = matmul( adp2 , seitz(:,:,j) )
+              adp2 = matmul( transpose( seitz(:,:,j) ), adp2);
+
+!              stdout.put( adp2 ) ! Kang debug ! It is U adp 
+
+              tmp_adp2 = tmp_adp2 + adp2
+
+          end
+
+          adp2 = tmp_adp2 / REALIFY(.crystal.asym_atom_sym_factor(a))! abusing variable adp2
+
+          .crystal.asymmetric_unit_atom(a).set_ADP_tensor( adp2 ) ! ADP update set 
+
+          stdout.text(" /--- symmetrized ADP in Cartesian coordinate")
+          stdout.put( .crystal.asymmetric_unit_atom(a).label )
+          stdout.put( .crystal.asymmetric_unit_atom(a).ADP_axis_system)
+          stdout.put(  .crystal.asymmetric_unit_atom(a).ADP_tensor )
+          stdout.flush
+     end
+      ! ##########
 
       ! Read unit cell
       XMLfile.look_for("NUMBER_OF_ATOMIC_ORBITALS")
