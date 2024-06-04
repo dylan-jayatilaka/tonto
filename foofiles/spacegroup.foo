@@ -2856,44 +2856,44 @@ contains
 !
 !   end
 
-   parent_translation_symop_for(s) result (res) ::: PURE
-   ! For a given symop with index "s", return the index of the parent
-   ! translation symop in the list of unique symops. If it does not
-   ! have a parent, return 0.
-      self :: IN
-      s :: INT, IN
-      res :: INT
+!   parent_translation_symop_for(s) result (res) ::: PURE
+!   ! For a given symop with index "s", return the index of the parent
+!   ! translation symop in the list of unique symops. If it does not
+!   ! have a parent, return 0.
+!      self :: IN
+!      s :: INT, IN
+!      res :: INT
+!
+!      n :: INT
+!
+!      res = 0
+!
+!      do n = 1,.n_seitz
+!          if (s/=n) then
+!          if (s==.translated_symop(n)) then
+!             res = n
+!             exit
+!          end
+!          end
+!      end
+!
+!   end
 
-      n :: INT
+!   is_translated_symop(s) result (res) ::: PURE
+!   ! Return TRUE if "s" is the index of an translated symop
+!      self :: IN
+!      s :: INT, IN
+!      res :: BIN
+!      res = .parent_translation_symop_for(s) /= 0
+!   end
 
-      res = 0
-
-      do n = 1,.n_seitz
-          if (s/=n) then
-          if (s==.translated_symop(n)) then
-             res = n
-             exit
-          end
-          end
-      end
-
-   end
-
-   is_translated_symop(s) result (res) ::: PURE
-   ! Return TRUE if "s" is the index of an translated symop
-      self :: IN
-      s :: INT, IN
-      res :: BIN
-      res = .parent_translation_symop_for(s) /= 0
-   end
-
-   is_inverted_symop(s) result (res) ::: PURE
-   ! Return TRUE if "s" is the index of an inverted symop
-      self :: IN
-      s :: INT, IN
-      res :: BIN
-      res = NOT .is_translated_symop(s)
-   end
+!   is_inverted_symop(s) result (res) ::: PURE
+!   ! Return TRUE if "s" is the index of an inverted symop
+!      self :: IN
+!      s :: INT, IN
+!      res :: BIN
+!      res = NOT .is_translated_symop(s)
+!   end
 
    is_inverted_unique_SF_symop(u) result (res) ::: PURE
    ! Return TRUE if "u" is the index of an inverted symop from
@@ -3655,131 +3655,223 @@ contains
 
    end
 
-   symmetrize_unique_SFs(sf,stabilizer,refl,diff) ::: PURE
-   ! Symmetrize the list of unique non-T&I symmetry-generated
+   symmetrize_unique_SFs(sf,stabilizer,refl,diff) ::: leaky 
+     ! Symmetrize the list of unique non-T&I symmetry-generated
    ! reflections over the lost of stablizer symops.
    ! NOTE: these are the original lst of reflections, not
    ! the expanded list when the symmetry operations acton them.
+   !
+   ! Kang's note. 
+   !   Let symmetry operator S is a stabilizer  of atom U 
+   !       form factor      FF is a form factor 
+   !        ( FF might be from a poor theory, so it may violate the local symmetry of atom U )
+   !   Averaging over all transformed form factors by using the stabilizers(say S_1, S_2, ... S_N) of atom U
+   !   give the symmetrized form factor (say FF_sym) that perfectly follows the local symmetry.
+   ! 
+   !   Tonto's form factor (atom atom U) FF(:,U) is consist of "M" blocks. 
+   !   Where M is number of unique symmetry operator (=.spacegroup.n_unique_SF_symops), 
+   !   and each block's size is #of reflection. (=No. of kept reflections; n_refl)
+   ! 
+   !   Symmetrizing FF(:,U) is symmetrizing each block.
+   !    For the first block = FF(1:n_refl,U)
+   !    - find the other blocks which are correspond to the stabilizers S_1,S_2, ... S_N
+   !    - If S_n is not a uniq.sym.op, then put phase factors to get a transformed ff of the unique atom.
+   !    - averaging over those blocks
+   !    - If any unique symmetry operator is a stabilizer, copy it to that block.
+   !
+   !    For the other blocks = FF( (u-1)*n_refl+1 : u*n_refl , u ) , where u is uniq.sym.op index
+   !    - find the left coset of the corresponding uniq.sym.op
+   !       (Obviously, the unq.sym.op. belongs to that left coset.)
+   !    - find the corresponding blocks
+   !        again, if it is not a unq.sym.op, then  put phase factors
+   !    - average over those blocks
+   !    - If any uniqe symmetry operator is a stabilizer, copy it to that block again.
+   !  
       self :: IN
       sf :: VEC{CPX}, INOUT
       stabilizer :: VEC{INT}, IN
       refl :: VEC{REFLECTION}, IN
-      diff :: REAL, OUT
-
+      diff :: REAL, optional, OUT
+   
    ENSURE(.analyzed,        "spacegroup not analyzed")
    ENSURE(sf.dim==.n_unique_SF_symops*refl.dim,"unique_sf_ints: wrong size")
-
+    
       absdiff :: VEC{REAL}@
-      res_sf,af,average, t_phase :: VEC{CPX}@
-      n_refl,n_stab,ns :: INT
-      u,us, n,s, f,l :: INT
-!     fac :: REAL
+      average, t_phase, T_Phase_0 :: VEC{CPX}@
+!      af, res_sf :: VEC{CPX}@
+      tmp_ff :: VEC{CPX}@
+      n_refl,n_stab :: INT
+      u,us, n, s, s_parent, v :: INT
+      f,l, f_v,l_v :: INT
+      Db :: BIN          ! For debugging purpose. if TRUE, show the stabilizers and coset
+
+Db = FALSE ! Set Db=TRUE to see all the chains of indices comprising the stabilizer subgroup and its cosets.
 
       n_refl = refl.dim
       n_stab = stabilizer.dim
-
+   
       ! Anything to do?
-      if (n_stab<=1) return
 
-      ! Phases
+      if ( present(diff) ) then   ! Kang added 2024.06.03
+         diff = ZERO ! Initialize "diff" OUT if diff is provided
+      end
+
+      if (n_stab<=1) return
+   
+    ! Phases
       t_phase.create(n_refl)
+      T_Phase_0.create(n_refl)  ! T_Phase_0 is the phase factor of the symmetry operator of interest
       average.create(n_refl)
       absdiff.create(n_refl)
-      af.create(n_refl)
-      res_sf.create(sf.dim)
+!      af.create(n_refl)
 
-      ns = 0
-      average = ZERO
+!      res_sf.create(sf.dim) 
+      tmp_ff.create(sf.dim) ! at the end sf :: INOUT will be overwritten by this
+   
+      tmp_ff = ZERO  ! initialize tmp_ff
+      !
+      ! Every block (indexed by u) is symmetized by STABILIZERS or left COSETs 
+      !
+if (Db) stdout.text( "block_u ; UNIQ_SYMOP_us ; STAB./COSET_s ; S_PARENT ; block_v")
+if (Db) stdout.text( "lower case: among unique symops. UPPER CASE: AMONG ALL SYMOPs ") 
 
-      ! Restricted list of symmetry ops
-      parallel do u = 1,.n_unique_SF_symops
-
-         us = .unique_SF_symop(u)
-         f  = n_refl*(u-1)+1
-         l  = n_refl* u
-
-         ! Average over stablizer symops
-         ! which are also unique symops
-         do n = 1,n_stab
-            
-            ! n-th set of reflections
-            s = stabilizer(n)
-
-            ! Same as any unique symop?
-            if (s /= us) cycle
-
-            ns = ns + 1
-       
-            ! Translated symop contribution
-            .make_phase_for_symop(s,t_phase,refl)
-
-            ! Are the t_phases always 1? 
-            !8 ... They are not, for urea!
-            if (.is_translated_symop(s)) then
-               average = average + t_phase*sf(f:l)
-            else 
-               average = average + t_phase*conjg(sf(f:l))
-            end
-
-         end
-
-      end
-
-      PARALLEL_SUM(average)
-      PARALLEL_SUM(ns)
-
-      ! Average here
-      average = average/ns
-
-      ! Copy back out; get diff^2
-      absdiff = ZERO
-      res_sf  = ZERO
-
-      parallel do u = 1,.n_unique_SF_symops
+      do u = 1,.n_unique_SF_symops ! u-th block in ff_u. blockwise do-loop ( no parallel for the moment ) 
+         !
+ 
+if (Db) stdout.flush !! for [u, us, s, o, v] printing's better visual
          
-         us = .unique_SF_symop(u)
-         f  = n_refl*(u-1)+1
-         l  = n_refl* u
-
-         ! Do averaging
-         do n = 1,n_stab
+         !
+         us = .unique_SF_symop(u)  !  unique symmetry operator's sym.op. index, ==> symop Seitz(:,:,us) 
+         f  = n_refl*(u-1)+1       ! u-th block in sf(f:l) (or refer to ff(f:l,a) )
+         l  = n_refl* u               
+         average = ZERO ! Initialize the n_refl vector to save the symmetrized form factor of an atom
+         !              !  created by the symmetry operator Seitz(:,:,us).
+         !              !  for us = 1 or us = stabilizer(n), it is the original asymmetric atom.  
+ 
+         do n = 1,n_stab  ! run over every element in the Stabilizer subgroup or the left coset.
+            s = .product_of_symops( us , stabilizer(n) )  ! Kang's note below.
+             
+            ! Kang's notes: 
+            !      case us = 1 (identity)      -- s = stabilizer subgroup elements's indices
+            !      case us = one of stabilizers-- s = same as above (but different in the order) [Note: There is a room for improving efficiency by skipping the loop of "unique operator AND stabilizer of another uniq.symop", using calculated values from the previous unique symop's symmetrization.]
+            !      otherwise                   -- s = corresponding left coset element's indices [Note: similarly, there is a room for improving efficiency]
+            !
+            ! Now, find the corresponding index of the unique symop "o" for "s" symmetry operator.
+            !   ( Which unique symmetry operator is responsible for the "s"-th symop? 
+            !   ( The answer is "o"-th symmetry operator )
             
-            ! n-th set of reflections
-            s  = stabilizer(n)
-
-            ! Is this the same as any unique symop?
-            if (s /= us) cycle
-       
-            ! Translated symop contribution
-            .make_phase_for_symop(s,t_phase,refl)
-       
-            if (.is_translated_symop(s)) then
-               af = average/t_phase
-            else 
-               af = conjg(average/t_phase)
+            s_parent = .inverted_symop( s )                        ! If s-th symop is NOT inverted_symop, then o=0 at this stage.
+            if ( s_parent == 0 ) s_parent = .translated_symop( s ) ! if symop "s" has no inversion parent, find its translation parent.
+             
+            ! Kang's note: 
+            !     "s_parent" is index from [all symmetry operators].
+            !     now find the [block index v] among the uniq.sym.op (.unique_SF_symop)
+            !     
+                
+            do v = 1,.n_unique_SF_symops   ! Look up unique SYMOP "s_parent" . find "v"-th blocks
+               if ( s_parent == .unique_SF_symop(v) ) exit
+                  ! Kang's note 
+                  !   "v" is the block index among [unique symmetry operators]
+                  !   It is in the same level with "u"
             end
 
-            absdiff = absdiff + abs(sf(f:l)-af)**2
-            res_sf(f:l) = af
-        
-         end
+if (Db) then
+stdout.flush !! Kang debugging
+stdout.put( u )     ! unique symop running index = block index                                 (unq.symop index "u" runs from  1 to .n_unique_SF_symops)
+stdout.put(us )     ! unique symop's index among the full set of symops                        (ALL symop index "us"      /    
+stdout.put( s )     ! index of a stabilizer(or coset element) among the full set of symops     (ALL symop index "s"       /> is one of {1,2,3, ... ,n_seitz} )
+stdout.put(s_parent)! index of corresponding unique symop(parent) among the full set of symops (ALL symop index "s_parent"/                                 
+stdout.put( v )     ! unique symop index of the o-th symop among the unique symops             (unq.symop index "v" is one of {1,...,.n_unique_SF_symops})
+end
+            f_v = n_refl*(v-1) + 1 ! first / last index of o-th block in sf
+            l_v = n_refl* v 
+            
+            .make_phase_for_symop( s , t_phase , refl)
+            
+            if ( .inverted_symop( s ) /= 0 ) then ! if there is inversion parent
+               average = average + conjg( sf(f_v:l_v))* t_phase 
+            else                              ! else there is translation parent only
+               average = average +        sf(f_v:l_v) * t_phase 
+            end
 
+            !
+            !   Kang's note : multiply phase factor and add up
+            !    
+    
+         end ! of "n = 1,n_stabilizer"-loop
+         
+         .make_phase_for_symop(us, T_Phase_0, refl) !T_Phase_0 is the phase factor corresponds to seitz(1:3,4,us) 
+         tmp_ff(f:l) = average / n_stab * conjg( T_Phase_0 ) ! undo the original symop's phase part
+ 
+         ! Kang's note. 
+         !             tmp_ff's u-th block is now storing the symmetrized ff's u-th block.
+ 
+      end !of "u = 1,.n_unique SF symops"-loop
+
+!!       PARALLEL_SUM(tmp_ff) ! One can make it be compatible with parallel computing?
+
+      ! Kang's note. At this stage, 
+      !               "sf" is as an input
+      !           "tmp_ff" is symmetrized (averaged)
+      ! At the end---after the calculation of "diff"---"sf" will be overwritten by "tmp_ff"
+ 
+
+! If "diff" is provided, do the following section. else skip.
+      if ( present(diff) ) then   ! Kang added 2024.05.29
+         absdiff = abs(tmp_ff - sf)
+         diff = sqrt( sum(absdiff**2))
       end
 
-      PARALLEL_SUM(absdiff)
-      PARALLEL_SUM(res_sf)
+! ! Old code commented out
+!      parallel do u = 1,.n_unique_SF_symops
+!         
+!         us = .unique_SF_symop(u)
+!         f  = n_refl*(u-1)+1
+!         l  = n_refl* u
+!
+!         ! Do averaging
+!         do n = 1,n_stab
+!            
+!            ! n-th set of reflections
+!            s  = stabilizer(n)
+!
+!            ! Is this the same as any unique symop?
+!            if (s /= us) cycle
+!       
+!            ! Translated symop contribution
+!            .make_phase_for_symop(s,t_phase,refl)
+!       
+!            if (.is_translated_symop(s)) then
+!               af = average/t_phase
+!            else 
+!               af = conjg(average/t_phase)
+!            end
+!
+!            absdiff = absdiff + abs(sf(f:l)-af)**2
+!            res_sf(f:l) = af
+!        
+!         end
+!
+!      end
+!
+!      PARALLEL_SUM(absdiff)
+!      PARALLEL_SUM(res_sf)
+!
+!      ! Report
+!      do n=1,sf.dim
+!         if(res_sf(n) /= 0) sf(n) = res_sf(n)
+!      end
+!      diff = sqrt(sum(absdiff))
+!      end ! Kang added if (present ... _) endif
 
-      ! Report
-      do n=1,sf.dim
-         if(res_sf(n) /= 0) sf(n) = res_sf(n)
-      end
-      diff = sqrt(sum(absdiff))
+      sf = tmp_ff ! UPDATE "sf" . ready for roll out.
 
       ! Clean
-      af.destroy
+!      af.destroy
       absdiff.destroy
       average.destroy
-      res_sf.destroy
+!      res_sf.destroy
+      tmp_ff.destroy ! Kang debug
 
    end
 
