@@ -960,7 +960,7 @@ contains
       xuc,cuc,dm,cuc_prm :: MAT{REAL}(3,3)
       W :: MAT{REAL}(3,3)
       W_inv :: MAT{REAL}(3,3)
-      xml_atom, cif_atom :: VEC{ATOM}@ !kang - This is for update_fragment_info( xml_atom )
+      xml_atom, cif_atom :: VEC{ATOM}@ 
       vol_ratio_m1 :: REAL
       a,f,s,i,j :: INT
       same :: BIN
@@ -968,14 +968,15 @@ contains
       adp2, cif_adp2, tmp_adp2 :: MAT{REAL}(3,3)     ! Kang
       seitz :: MAT3{REAL}@           ! Kang for ADP transform
 
-! Kang's note. 2024 Jun 12
-! " cif_atom " object will contain the information of cif
+! Kang's note. 2024 Jun 19
+! " cif_atom " contains the information of cif atoms
+!             - It has ADP data.             
 ! 
-! "(molecule).atom" object will contain the information of Crystal23 XML file
-!             - The XML file contains the atoms in the PRIMITIVE cell 
-!               which is equal or smaller than a coventional crystallogrphic cell
+! " xml_atom " will update "(molecule).atom" 
+!             - All atoms in the PRIMITIVE unit cell defined in the xml file.
 !             - W (X_to_P) matrix provide the conversion between the primitive cell and 
 !               the crystallographic cell. ( See Crystal23 manual chapter A.5 )           
+!             - "(molecule).atom" is used for ED calculation (.GRID:make_CRYSTAL23_ED_grid_v1 )
 
   !***** << Stage 1/4 : Cell comparison: Crystallographic cell vs Primitive cell, are they agree? >>
       if (.crystal.deallocated) .crystal.create
@@ -1002,7 +1003,7 @@ contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       ! Get C23 XML file name
       base = .crystal23.xml_file_name
-      .READ:read_CRYSTAL23_xml(base, xml_atom) ! This read in xml atom's "FRACTIONAL coordinate" not cartesian
+      .READ:read_CRYSTAL23_xml(base, xml_atom) ! This read in xml atom's "Cartesian coordinate"
 
       ! "xuc" is Cartesian Lattice vectors (or the primitive cell) from the xml file.       
       xuc = .crystal23.Primitive_unit_cell.direct_mx
@@ -1088,7 +1089,8 @@ contains
          !
          do f = 1,xml_atom.dim ! loop over xml_atom (future fragment_atom)
             ! 
-            xml_pos = xml_atom(f).position  ! xml_pos in [-HALF,HALF]^3 of PRIMITIVE coordinate  (from the Crystal23 XML file)
+            xml_pos = xml_atom(f).position  ! xml_pos is in Cartesian coordinate
+            xml_pos = matmul(.crystal23.Primitive_unit_cell.inverse_mx, xml_pos) ! xml_pos in fractional coordinate of the Primitive cell (from the Crystal23 XML file)
             !
             tmp_vec = cif_pos - xml_pos     !      tmp_vec is difference in PRIMITIVE crystal coordinate
             tmp_vec = MOD(tmp_vec + HALF + ONE, ONE ) - HALF ! Stable "modulo 1" function whose range is [-0.5, 0.5)    
@@ -1262,7 +1264,7 @@ contains
       av,bv,cv   :: VEC{REAL}(3)
       igv :: VEC{INT}(3)
       pos :: VEC{REAL}(3)
-      n_frag_atoms,n_bf,n_g :: INT
+      n_atoms,n_bf,n_g :: INT
       a,g  :: INT 
 
       if ( .crystal.fragment_atom.allocated ) .crystal.fragment_atom.destroy
@@ -1298,21 +1300,21 @@ contains
       ! Read in atoms from XML
       XMLfile.look_for("NUMBER_OF_ATOMS")
       XMLfile.move_to_line_item(2)
-      XMLfile.read(n_frag_atoms)
+      XMLfile.read(n_atoms)
       ! update number of xml atoms (= number of atoms in a primitive cell)
-      !  Store the xml atom list in xml_atom. xml_atom will update ".crystal.fragment_atom" object.
-      !  (those atoms are used for the electron density(ED) calculation )
-      ! .crystal.n_fragment_atoms = n_frag_atoms
+      !  Store the xml atom list in xml_atom. xml_atom will update ".atom" object.
+      !  (.atom are used for the electron density(ED) calculation in .GRID:make_CRYSTAL23_ED_grid_v1)
 
       ! Read atomic numbers & set
       ! These are a different order to how LamaGOET had them
-      xml_atom.create(n_frag_atoms)
+      xml_atom.create(n_atoms)
 
-      XMLfile.look_for("FRACTIONARY_COORDINATES") ! Find the fractional coordinate block in the XML file
-      xml_atom.set_axis_system_to("crystal")
-
+!      XMLfile.look_for("FRACTIONARY_COORDINATES") ! Find the fractional coordinate block in the XML file
+!      xml_atom.set_axis_system_to("crystal")
+      XMLfile.look_for( "CARTESIAN_COORDINATES")
+      xml_atom.set_axis_system_to("cartesian")
       XMLfile.look_for("ATOM.1")
-      do a = 1,n_frag_atoms
+      do a = 1,n_atoms
          XMLfile.move_to_line_item(3)
          XMLfile.read(tmp)
          xml_atom(a).set_label(tmp)
@@ -1338,7 +1340,7 @@ contains
       XMLfile.look_for("INTEGER_VECTORS_INFO")
       XMLfile.move_to_line_item(3)
       XMLfile.read( n_g )
-      stdout.show("  Number of neighbor cells for ED calculation n_g=" ,n_g)
+      stdout.show("  Number of neighbor cells for ED calculation n_g =" ,n_g)
       .crystal23.n_g = n_g
 
       ! Read the neighbor cell information
@@ -1395,7 +1397,7 @@ contains
       end
 
       stdout.text("  Reading Crystal23 Density matrix complete" )
-
+      stdout.flush
     ! do g = 2,n_g,2
     !    stdout.text("Check:")
     !    stdout.text("P"//trim(g.to_str))
@@ -1418,7 +1420,6 @@ contains
     ! stdout.show("N_e = ",val)
       XMLfile.close
       XMLfile.destroy
-      stdout.flush
    end
 
 !  ======================
