@@ -24,7 +24,10 @@ prefixes_to_ignore = [
     '_audit_creation_method', 
     '_QCr_software_version',
     '_QCr_software_platform',
-    '_QCr_software_build_date'
+    '_QCr_software_build_date',
+    '---',
+    '___',
+    '===' 
     ]
 
 test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']

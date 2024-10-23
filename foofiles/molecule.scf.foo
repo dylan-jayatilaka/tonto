@@ -3383,11 +3383,12 @@ contains
 
    end
 
-   atomic_SCF ::: leaky
+   atomic_SCF(converged) ::: leaky
    ! Do an atomic SCF calculation; this is for initial guesses.
    ! The molecule comprises a single atom. The .MOs,
    ! .MO_energies, and .density_mx are produced as results.
       self :: INOUT
+      converged :: BIN, optional, OUT
 
    ENSURE(.atom.allocated,   "no atom list")
    ENSURE(.atom.dim==1 ,   "atom list length > 1")
@@ -3408,9 +3409,11 @@ contains
          .:update_scfdata_error
          .:put_SCF_table_body
 
-         if (.scfdata.scf_done) exit
+         if (.scfdata.SCF_done) exit
 
       end
+
+      if (present(converged)) converged = .scfdata.converged
 
       .:put_SCF_results
       .:archive_SCF_results
@@ -7824,15 +7827,17 @@ contains
    ENSURE(.n_atom_kind>0,"no atom kinds set")
 
       a,b :: INT
-      done :: VEC{BIN}@
-      first :: BIN
+      table :: VEC{TABLE_COLUMN}@
+      indx  :: VEC{INT}@
+      conv, done :: VEC{BIN}@
+      first,converged :: BIN
 
       .atom.set_basis_kind("gaussian")
 
       if (.INQ:has_all_ANO_matrices) return
 
       done.create(.n_atom)
-      done = FALSE
+      done  = FALSE
       first = TRUE
 
       do a = 1,.n_atom
@@ -7842,7 +7847,9 @@ contains
 
          if (NOT .atom(a).has_ANO_matrices) then
 
-            .:make_ANOs_for_atom(a)
+            .:make_ANOs_for_atom(a,converged)
+            indx.append(a)
+            conv.append(converged)
 
             if (first) then
                stdout.flush
@@ -7853,7 +7860,6 @@ contains
          end
 
          done(a) = TRUE
-
 
          ! Set atoms of same kind
          do b = a+1,.n_atom
@@ -7879,15 +7885,36 @@ contains
 
       done.destroy
 
+      ! Table headings
+    ! stdout.flush
+    ! stdout.text("Table of atomic SCFR calculations")
+    ! stdout.flush
+
+    ! table.create(3)
+    ! table(1).set_heading("ID")
+    ! table(1).set_values(self.atom(indx(:)).label)
+    ! table(2).set_real_precision(1)
+    ! table(2).set_heading("Z")
+    ! table(2).set_values(self.atom(indx(:)).nuclear_charge)
+    ! table(3).set_heading("SCF")
+    ! table(3).set_subhead("OK?")
+    ! table(3).set_values(conv)
+    ! table.put
+    ! table.destroy
+
+      conv.destroy
+      indx.destroy
+
       DIE_IF(NOT .INQ:has_all_ANO_matrices,"ANO's were not made!")
 
    end
 
-   make_ANOs_for_atom(a) ::: leaky, private
+   make_ANOs_for_atom(a,converged) ::: leaky, private
    ! Make the spherically averaged restricted atomic natural orbitals
    ! (ANO) and density matrix data and interpolator for atom "a".
       self :: INOUT
       a :: INT, IN
+      converged :: BIN, optional, OUT
 
    ENSURE(.atom(a).NOs.deallocated,  "NO's exist! Atom "//trim(a.to_str))
    ENSURE(.atom(a).NO_occ_nos.deallocated,"OCCs exist! Atom "//trim(a.to_str))
@@ -7908,7 +7935,7 @@ contains
       if (.scfdata.guess_output) mol.PUT:put_basics
 
       ! Do the atomic SCF
-      mol.:atomic_SCF
+      mol.:atomic_SCF(converged)
 
       ! Eliminate core electrons from DM?
       ! Bespoke DM code
