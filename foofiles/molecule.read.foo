@@ -1007,54 +1007,86 @@ contains
 
       ! "xuc" is Cartesian Lattice vectors (or the primitive cell) from the xml file.       
       xuc = .crystal23.Primitive_unit_cell.direct_mx
-     
-      ! Conversion matrix and its inverse between crystallogrphic and primitive cells
-      ! provided by Crystal23  (See Crystal23 manual)
-      CRYSTAL23:WC23_to( .crystal.spacegroup.lattice_symbol , W)  
 
-      W_inv.to_inverse_of( W )
-      W_inv = nint( W_inv )    ! W^-1 always has integer elements only
+      ! Kang 2024.10.23 comment
+      !     If lamaGOET makes Crystal23 to keep the conventional cell
+      !   using "KEEPSYMM" and "SUPERCON" \n 1 0 0 \n 0 1 0 \n 0 0 1
+      !   then .XML contains a conventional information.
 
-      if (.crystal.spacegroup.lattice_symbol /= "P" ) then
-          stdout.text("  Info: Centering detected.")
-          stdout.text("  |  Conversion matrix W (Crystallographic to Primitive) matrix" )  
-          stdout.put( W )
-          stdout.text("  |")  
-          stdout.text("  |  Inverse conversion matrix                                                    |")  
-          stdout.put(W_inv) 
-          stdout.text("  |- Refer to Crystal23 manual chapter A5 for more details ")  
-          stdout.flush
-      else 
-          stdout.text( " Info: The XML unit cell and the cif unit cell are the same. ")
-          stdout.flush  
-      end
+      ! Lattice consistency checking 1): "cell volume ratio" minus ONE = should be ZERO
+      vol_ratio_m1 = ( xuc.determinant ) / (cuc.determinant) - ONE
 
-      ! Primitive lattice vectors of the (temporary) unit cell created from .cif
-      cuc_prm = matmul( cuc, W ) 
-
-      ! Lattice consistency checking 1) (primitive) cell volume comparison. If both cells are consistent, then "volume_ratio_minus_ONE" is ZERO
-      vol_ratio_m1 = ( xuc.determinant ) / ( cuc_prm.determinant ) - ONE
-
-      DIE_IF( NOT vol_ratio_m1.is_zero(TOL(4)), "Inconsistent primitive cell volume" )
-
-      ! Lattice consistency checking 2) dm = Difference in two metric tensors
-      do i =1,3
+      if ( vol_ratio_m1.is_zero(TOL(4)) ) then 
+         ! volume test pass. Orientation checking is coming
+         do i =1,3
          do j =1,3
-            dm(i,j)=  dot_product(xuc(:,i)    ,xuc(:,j)    ) &
-                    - dot_product(cuc_prm(:,i),cuc_prm(:,j))
+            dm(i,j)=  dot_product(xuc(:,i),xuc(:,j)) &
+                    - dot_product(cuc(:,i),cuc(:,j))
          end
-      end
-!stdout.text(" Metric tensor difference between primitive cells from Crystal23 .xml and .cif" ) ! Kang debug
-!stdout.put(dm * 0.529177210903**2)
+         end
+         
+         DIE_IF( NOT dm.is_ZERO(TOL(3)) , "Inconsistent lattice vector Ordering between the xml cell and the cif cell" )
+         
+         cuc = xuc ! All test passed. overwrite cif cell lattice vectors from the xml cell
+         W = ZERO  ! W and W_inv are initialized to be Identity for later use (Stage 2/4)
+         do i =1,3
+            W(i,1) = ONE
+         end
+         W_inv = W
 
-      DIE_IF( NOT dm.is_ZERO(TOL(3)) , "Inconsistent lattice vector Ordering between the xml cell and the cif cell" )
+      else
+        !--- If you enter here, there is high chance of xml cell is a primitive cell and 
+        !    cif cell is a conventional cell. Or really working on inconsistent cells
+        !
+        ! Conversion matrix and its inverse between crystallogrphic and primitive cells
+        ! provided by Crystal23  (See Crystal23 manual)
+        CRYSTAL23:WC23_to( .crystal.spacegroup.lattice_symbol , W)  
+
+        W_inv.to_inverse_of( W )
+        W_inv = nint( W_inv )    ! W^-1 always has integer elements only
+
+        if (.crystal.spacegroup.lattice_symbol /= "P" ) then
+            stdout.text("  Info: Centering detected.")
+            stdout.text("  |  Conversion matrix W (Crystallographic to Primitive) matrix" )  
+            stdout.put( W )
+            stdout.text("  |")  
+            stdout.text("  |  Inverse conversion matrix                                                    |")  
+            stdout.put(W_inv) 
+            stdout.text("  |- Refer to Crystal23 manual chapter A5 for more details ")  
+            stdout.flush
+        else ! Kang comment 24.Oct 2024 It is unlikely to enter here. Shall I remove?
+            stdout.text( " Info: The XML unit cell and the cif unit cell are the same. ")
+            stdout.flush  
+        end
+
+        ! Primitive lattice vectors of the (temporary) unit cell created from .cif
+        cuc_prm = matmul( cuc, W ) 
+
+        ! Lattice consistency checking 1*) (primitive) cell volume comparison. If both cells are consistent, then "volume_ratio_minus_ONE" is ZERO
+        vol_ratio_m1 = ( xuc.determinant ) / ( cuc_prm.determinant ) - ONE
+        
+        DIE_IF( NOT vol_ratio_m1.is_zero(TOL(4)), "Inconsistent cell volumes between the .XML and .cif cells" )
+        
+        ! Lattice consistency checking 2) dm = Difference in two metric tensors of primitive cells
+        do i =1,3
+        do j =1,3
+           dm(i,j)=  dot_product(xuc(:,i)    ,xuc(:,j)    ) &
+                   - dot_product(cuc_prm(:,i),cuc_prm(:,j))
+        end
+        end
+
+        DIE_IF( NOT dm.is_ZERO(TOL(3)) , "Inconsistent lattice vector Ordering between the primitive xml cell and the cif cell" )
+
+        cuc = matmul( xuc , W_inv ) ! All test passed. make cif cell lattice vectors from the primitive XML cell
+
+     end
+      
 
   !****** << Stage 2/4 : Create a unit cell that is consistent with the XML unit cell >
   !        <             Find the atom pair list of  cif atoms and the XML atoms      >>
 
       ! Update crsytallographic cell lattice vectors from the Crystal23 .xml primitive cell
       ! k-points of reflection data is constructed based on this.
-      cuc = matmul( xuc , W_inv )
  
       .crystal.unit_cell.make_direct_mx_from( cuc(:,1), cuc(:,2), cuc(:,3) )  ! Updated "cuc" is re-oriented based on "xuc"
                 !! Kang's note
