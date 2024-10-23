@@ -315,7 +315,8 @@ contains
       case ("}                       ")  ! exit case
 
       case ("analyze_all_atom_pairs= "); .read_analyze_all_atom_pairs
-      case ("analyze_vdw_atom_pairs= "); .read_analyze_vdw_atom_pairs
+      case ("analyze_vdw_atom_pairs= "); .read_analyze_VDW_atom_pairs
+      case ("analyze_xh_bonds=       "); .read_analyze_XH_bonds
       case ("atom_groups=            "); .read_atom_groups
       case ("atom_list=              "); .read_atom_list
 
@@ -327,12 +328,13 @@ contains
       case ("output_ci_latex_labels= "); .read_output_ci_labels 
       case ("output_theta_info=      "); .read_output_theta_info
 
-      case ("put_core_mx         "); stdout.put(.core_mx)
-      case ("put_density_mx      "); stdout.put(.density_mx)
-      case ("put_fock_mx         "); stdout.put(.fock_mx)
-      case ("put_overlap_mx      "); stdout.put(.overlap_mx)
+    ! case ("put_core_mx             "); stdout.put(.core_mx)
+    ! case ("put_density_mx          "); stdout.put(.density_mx)
+    ! case ("put_fock_mx             "); stdout.put(.fock_mx)
+    ! case ("put_overlap_mx          "); stdout.put(.overlap_mx)
 
       case ("show_calcs=             "); .read_show_calcs
+      case ("show_calc_groups=       "); .read_show_calc_groups
 
       case ("use_naos=               "); .read_use_NAOs
       case ("use_pnaos=              "); .read_use_projected_NAOs
@@ -440,13 +442,22 @@ contains
 
    end
 
-   read_analyze_vdw_atom_pairs
+   read_analyze_VDW_atom_pairs
    ! Read in a switch which tells whether to bond-analyze all atoms
    ! pairs or not - actually this just changes the bond_range_factor
    ! by an order of magnitude
       self :: INOUT
 
       stdin.read(.analyze_vdw_atom_pairs)
+
+   end
+
+   read_analyze_XH_bonds
+   ! Read whether to bond-analyze X-H bonds.
+   ! NOTE: functionality not used ...
+      self :: INOUT
+
+      stdin.read(.analyze_XH_bonds)
 
    end
 
@@ -457,6 +468,18 @@ contains
       val :: BIN
 
       stdin.read(val)
+
+      .set_show_calcs(val)
+
+   end
+
+   read_show_calc_groups
+   ! Read whether to show detailed RGBI calcs for each bond.
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read_all(.show_calc_groups)
 
       .set_show_calcs(val)
 
@@ -524,11 +547,13 @@ contains
    end
 
    skip_pair(a,b) result (res) ::: private, pure
-   ! Returns TRUE if the bond index calculation should skip the pair of groups
-   ! (a,b). For calculations which are homoleptic, this always returns FALSE, but
-   ! for calculations which are defined by an atom_list, this returns TRUE only if
-   ! .analyze_all_atom_pairs is set to FALSE and the atoms are regarded as bonded
-   ! according to the .bond_range_factor distance cutoff.
+   ! Returns TRUE if the bond index calculation should skip 
+   ! the pair of groups (a,b). For calculations which are 
+   ! homoleptic, this always returns FALSE, but for calculations 
+   ! which are defined by an atom_list, this returns TRUE only 
+   ! if .analyze_all_atom_pairs is set to FALSE and the atoms 
+   ! are regarded as bonded according to the .bond_range_factor 
+   ! distance cutoff.
       self :: IN
       a,b :: INT, IN
       res :: BIN
@@ -646,7 +671,7 @@ contains
    no_of_occupied_ANOs(group,tol) result (res) ::: private, PURE
    ! Return the number of occupied atomic natural orbitals for
    ! the group of atoms whose indices are in "group"
-      self :: IN
+      self  :: IN
       group :: VEC{INT}, IN
       tol :: REAL, optional, IN
       res :: INT
@@ -711,6 +736,30 @@ contains
 
    end
 
+   show_calc result (res) ::: private, pure
+   ! Returns TRUE if debug calc in formation should be shown.
+      self :: IN
+      res :: BIN
+
+   ENSURE(.atom_group.allocated,"no atom_group")
+
+      i :: INT
+      show :: VEC{INT}@
+
+      res = .show_calcs
+
+      if (.show_calc_groups.allocated) then
+      if (NOT res) then
+         do i = 1,.show_calc_groups.dim
+            show = .show_calc_groups(i).element
+            res = all(show==.atom_ab)
+            if (res) exit
+         end
+      end
+      end
+
+   end
+
 ! ============
 ! Main methods
 ! ============
@@ -733,75 +782,40 @@ contains
       .make_single_atom_groups
 
       ! Bond orders
-      .is_hyper_analysis = FALSE
-      .bond_analysis
-    ! .charge_analysis
+      select case (.roby_kind)
 
-      .put_basics
-      .put_populations
-      .put_bond_indices
+      case("atom_bond_analysis       ")
+         .is_hyper_analysis = FALSE
+         .bond_analysis
+    !    .charge_analysis
 
-   end
+      case("atom_hyper_analysis      ")
+         .is_hyper_analysis = TRUE
+         .hyper_analysis
 
-   atom_hyper_analysis ::: leaky
-   ! Do a Roby-Gould ionic/hypervalent bond analysis
-      self :: INOUT
+      case("group_bond_analysis      ")
+         .is_hyper_analysis = FALSE
+         .bond_analysis
 
-   ENSURE(.atom.allocated,"no atoms")
+      case("group_hyper_analysis      ")
+         .is_hyper_analysis = TRUE
+         .hyper_analysis
 
-      i,n_atom :: INT
+      case default
+         UNKNOWN(.roby_kind)
 
-      ! Make atom list if it doesn't exist
-      if (.atom_list.deallocated) then
-         n_atom = .atom.dim
-         .atom_list = [ (i, i=1,n_atom) ]
       end
 
-      ! Each atom is a Roby subspace
-      .make_single_atom_groups
-
-      ! Bond orders
-      .is_hyper_analysis = TRUE
-      .hyper_analysis
-
-      ! Put
+      ! Results
       .put_basics
       .put_populations
       .put_bond_indices
 
    end
-
-
-   group_bond_analysis ::: leaky
-   ! Do a Roby bond and Gould charge analysis.
-      self :: INOUT
-
-      .bond_analysis
-    ! .charge_analysis
-
-      .put_basics
-      .put_populations
-      .put_bond_indices
-
-   end
-
-   group_hyper_analysis ::: leaky
-   ! Do a Roby bond and Gould charge analysis.
-      self :: INOUT
-
-      .hyper_analysis
-    ! .charge_analysis
-
-      .put_basics
-      .put_populations
-      .put_bond_indices_hyper
-
-   end
-
 
    bond_analysis ::: leaky, private
-   ! Do a Roby-Gould bond and charge analysis for the atom groups
-   ! given in .atom_groups
+   ! Do a Roby-Gould bond and charge analysis for the 
+   ! atom groups given in .atom_groups
       self :: INOUT
 
    ENSURE(.atom_group.allocated,"no atom group defined")
@@ -838,17 +852,13 @@ contains
 
          if (.skip_pair(a,b)) cycle
 
-         .atom_a = .atom_group(a).element
-         .atom_b = .atom_group(b).element
-
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         .atom_a  = .atom_group(a).element
+         .atom_b  = .atom_group(b).element
          .atom_ab = [.atom_a, .atom_b]
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-         !!!!!!!!!!!!!!!!!!!
-         .destroy_theta_info
+         !!!!!!!!!!!!!!!!
          .make_theta_info
-         !!!!!!!!!!!!!!!!!!!
+         !!!!!!!!!!!!!!!!
 
          ind = .gould_bond_index(cov,ion,pccp,pcca)
 
@@ -896,8 +906,8 @@ contains
    end
 
    hyper_analysis ::: leaky, private
-   ! Do a Roby-Gould hypervalent bond analysis for the atom groups
-   ! given in .atom_groups
+   ! Do a Roby-Gould hypervalent bond analysis for the 
+   ! atom groups given in .atom_groups
       self :: INOUT
 
    ENSURE(.atom_group.allocated,"no atom group defined")
@@ -930,10 +940,9 @@ contains
          ! A group
          .atom_a = .atom_group(a).element
 
-         !!!!!!!!!!!!!!!!!!!
-         .destroy_theta_info
+         !!!!!!!!!!!!!!!!
          .make_hyper_info
-         !!!!!!!!!!!!!!!!!!!
+         !!!!!!!!!!!!!!!!
 
          ind = .gould_bond_index(cov,ion,pccp,pcca)
 
@@ -1067,10 +1076,10 @@ contains
    ENSURE(.density_mx.allocated,"no density matrix")
    ENSURE(.overlap_mx.allocated,"no overlap matrix")
 
-      P :: MAT{REAL}@
-      gr :: VEC{INT}@
+      P    :: MAT{REAL}@
+      gr   :: VEC{INT}@
       n_gr :: INT
-      rev :: BIN
+      rev  :: BIN
 
       ! Reverse
       rev = FALSE
@@ -1091,8 +1100,18 @@ contains
       P.create(n_gr,n_gr)
       .make_projection_mx(P,gr,ANO)
 
+    ! stdout.text("gr:")
+    ! stdout.put(gr)
+    ! stdout.text("P:")
+    ! stdout.put(P)
+    ! if (present(ANO)) then
+    ! stdout.text("ANO:")
+    ! stdout.put(ANO)
+    ! end
+
       ! Evaluate
       res = .expectation(P,gr,rho)
+    ! stdout.show("res = ",res)
 
       ! Clean
       P.destroy
@@ -1113,7 +1132,7 @@ contains
    ! theta orbital populations.
       self :: INOUT
       subgroup :: VEC{INT}, IN
-      group :: VEC{INT}, IN
+      group    :: VEC{INT}, IN
       ANO :: MAT{REAL}, optional, IN
       rho :: OPMATRIX@, optional, IN
       res :: REAL
@@ -1303,9 +1322,11 @@ contains
 
       do i = 1,n0
 
+        ! Skip lone pairs
         if (.theta_angle(i)<       zero_cutoff) cycle
         if (.theta_angle(i)>90.0d0-zero_cutoff) cycle
 
+        ! Skip antibonding 
         if (.eigen_I(i)<=.eigen_I(.pair(i))) cycle
 
         if (.pair(i)/=i) then
@@ -1349,6 +1370,10 @@ contains
       ind :: VEC{INT}@
       n_a,n_b,n_ab, n0 :: INT
 
+      ! Clean up
+      .destroy_theta_info
+
+      ! Sizes
       n_a  = .n_bf_a
       n_b  = .n_bf_b
       n_ab = n_a + n_b
@@ -1378,23 +1403,20 @@ contains
       ! Prune zero eigenvalues
       n0 = eigen_I.no_of_abs_vals_larger_than(.zero_angle_cutoff)
 
-      if (.show_calcs) then
+      if (.show_calc) then
          stdout.show("No of non-zero eigenvalues, n0 = ",n0)
       end
 
+      ! Get the indices of non-zero angles
       ind.create(n0)
       ind = eigen_I.indices_of_abs_vals_larger_than(.zero_angle_cutoff)
+      .theta_I = theta_I(:,ind)
+      .eigen_I = eigen_I(ind)
 
-      if (.show_calcs) then
+      if (.show_calc) then
          stdout.text("ind")
          stdout.put(ind)
       end
-
-      .theta_I.create(n_ab,n0)
-      .eigen_I.create(n0)
-
-      .theta_I = theta_I(:,ind)
-      .eigen_I = eigen_I(ind)
 
       ind.destroy
       eigen_I.destroy
@@ -1402,34 +1424,31 @@ contains
 
       ! Find +/- ionic pairs
       .pair.create(n0)
-      .eigen_I.find_non_unit_pairs(.pair,ROBY::match_pair,tol=TOL(8))
-
-      ! Make theta angles
-      .theta_angle.create(n0)
-      .make_theta_angles
-
-      if (.show_calcs) then
-         stdout.text("theta_angle from I:")
-         stdout.put(.theta_angle)
-      end
+      .eigen_I.find_non_unit_pairs(.pair,ROBY::match_pair,tol=TOL(4))
 
       ! Clean up |ion> states
       .make_gould_ionic_orbitals
 
       ! Make |cov> pairs from |ion> pairs
+      .theta_angle.create(n0)
       .theta_C.create(n_ab,n0)
       .eigen_C.create(n0)
       .make_cov_from_ion_orbitals
 
-      if (.show_calcs) then
-         stdout.text("pair array:")
+      if (.show_calc) then
+         stdout.text("========")
+         stdout.text("atom_ab:")
+         stdout.put(.atom_ab)
+         stdout.text("pair:")
          stdout.put(.pair)
          stdout.show("n_bf_a = ",.n_bf_a)
          stdout.show("n_bf_b = ",.n_bf_b)
-         stdout.text("eigen_C:")
-         stdout.put(.eigen_C)
+         stdout.text("theta_angle:")
+         stdout.put(.theta_angle)
          stdout.text("eigen_I:")
          stdout.put(.eigen_I)
+         stdout.text("eigen_C:")
+         stdout.put(.eigen_C)
          stdout.text("theta_C:")
          stdout.put(.theta_C)
          stdout.text("theta_I:")
@@ -1438,15 +1457,11 @@ contains
 
       ! Covalent theta populations
       .theta_pop_C.create(n0)
-      .theta_pop_C_A.create(n0)
-      .theta_pop_C_B.create(n0)
-      .make_theta_populations(.theta_pop_C,.theta_pop_C_A,.theta_pop_C_B,.theta_C)
+      .make_theta_populations(.theta_pop_C,.theta_C)
 
       ! Ionic theta populations
       .theta_pop_I.create(n0)
-      .theta_pop_I_A.create(n0)
-      .theta_pop_I_B.create(n0)
-      .make_theta_populations(.theta_pop_I,.theta_pop_I_A,.theta_pop_I_B,.theta_I)
+      .make_theta_populations(.theta_pop_I,.theta_I)
 
    end
 
@@ -1465,6 +1480,10 @@ contains
       ind     :: VEC{INT}@
       n_bf,n0 :: INT
 
+      ! Clean up
+      .destroy_theta_info
+
+      ! Size
       n_bf = .n_bf
 
       ! Make the ionic operator & ionic states
@@ -1516,8 +1535,7 @@ contains
     ! stdout.put(.pair)
 
       ! Make theta angles
-      .theta_angle.create(n0)
-      .make_theta_angles
+    ! .make_theta_angles
 
     ! stdout.text("theta_angle")
     ! stdout.put(.theta_angle)
@@ -1531,6 +1549,7 @@ contains
     ! stdout.put(.eigen_I)
 
       ! Make |cov> pairs from |ion> pairs
+      .theta_angle.create(n0)
       .theta_C.create(n_bf,n0)
       .eigen_C.create(n0)
       .make_cov_from_ion_orbitals
@@ -1542,15 +1561,15 @@ contains
 
       ! Covalent theta populations
       .theta_pop_C.create(n0)
-      .theta_pop_C_A.create(n0)
-      .theta_pop_C_B.create(n0)
-      .make_theta_populations(.theta_pop_C,.theta_pop_C_A,.theta_pop_C_B,.theta_C)
+    ! .theta_pop_C_A.create(n0)
+    ! .theta_pop_C_B.create(n0)
+      .make_theta_populations(.theta_pop_C,.theta_C)
 
       ! Ionic theta populations
       .theta_pop_I.create(n0)
-      .theta_pop_I_A.create(n0)
-      .theta_pop_I_B.create(n0)
-      .make_theta_populations(.theta_pop_I,.theta_pop_I_A,.theta_pop_I_B,.theta_I)
+    ! .theta_pop_I_A.create(n0)
+    ! .theta_pop_I_B.create(n0)
+      .make_theta_populations(.theta_pop_I,.theta_I)
 
    end
 
@@ -1566,13 +1585,12 @@ contains
 
    end
 
-   make_theta_populations(pop,pop_a,pop_b,theta) ::: private
+   make_theta_populations(pop,theta) ::: private
    ! Make "pop", an array of "theta" populations for a pair of Roby
    ! atoms defined by indices in ".atom_a" and ".atom_b". "theta"
    ! itself is a matrix whose columns are coefficients on V_AB.
       self :: INOUT
       pop :: VEC{REAL}, OUT
-      pop_a,pop_b :: VEC{REAL}, OUT
       theta :: MAT{REAL}, IN
 
    ENSURE(.atom_ab.allocated,"No roby atom group AB")
@@ -1582,8 +1600,8 @@ contains
 
       do i = 1,theta.dim2
          pop(i)   =    .population(        .atom_ab,ANO=theta(:,i:i))
-         pop_a(i) = .subpopulation(.atom_a,.atom_ab,ANO=theta(:,i:i))
-         pop_b(i) = .subpopulation(.atom_b,.atom_ab,ANO=theta(:,i:i))
+       ! pop_a(i) = .subpopulation(.atom_a,.atom_ab,ANO=theta(:,i:i))
+       ! pop_b(i) = .subpopulation(.atom_b,.atom_ab,ANO=theta(:,i:i))
       end
 
    end
@@ -1604,9 +1622,7 @@ contains
 
          value = .eigen_I(i)
          value = value.arcsin
-         value = value.to_units("degree")
-
-         .theta_angle(i) = value
+         .theta_angle(i) = value*DEGREE_PER_RADIAN
 
       end
 
@@ -1738,12 +1754,13 @@ contains
 
    !  SS.destroy
 
+      .theta_angle = 90.0d0
       .theta_C = ZERO
       .eigen_C = ZERO
 
       do i = 1,.eigen_I.dim
 
-         if (.pair(i)<1) cycle
+         if (.pair(i)< 1) cycle
          if (.pair(i)==i) cycle
          if (.eigen_I(i)<.eigen_I(.pair(i))) cycle
 
@@ -1765,6 +1782,9 @@ contains
          .eigen_C(i) =  c
          .eigen_C(j) = -c
 
+         ! Set angle
+         .theta_angle(i) = atan2(s,c)*DEGREE_PER_RADIAN
+
       end
 
     ! RR.destroy
@@ -1785,921 +1805,918 @@ contains
 
    end
 
-   make_theta_E1_Krogel_info ::: leaky, private
-   ! Calculates the Roby-Gould theta subspace information for atom
-   ! groups ".atom_a" and ".atom_b", including theta subspace
-   ! energies and subenergies via the Krogel approach.
-      self :: INOUT
-
-   ENSURE(.atom_a.allocated,"No roby atom A")
-   ENSURE(.atom_b.allocated,"No roby atom B")
-   ENSURE(.atom_ab.allocated,"No roby atom AB")
-
-      I :: MAT{REAL}@
-      theta_I :: MAT{REAL}@
-      eigen_I :: VEC{REAL}@
-      ind :: VEC{INT}@
-      n_a,n_b,n_ab, n0 :: INT
-
-      n_a  = .n_bf_a
-      n_b  = .n_bf_b
-      n_ab = n_a + n_b
-
-      ! Make the ionic operator & ionic states
-      theta_I.create(n_ab,n_ab)
-      eigen_I.create(n_ab)
-
-      ! Make I
-      I.create(n_ab,n_ab)
-      .make_ionic_operator(I)
-
-      ! Diagonalize I
-      .diagonalize_V_AB_operator(I,theta_I,eigen_I)
-
-      if (.show_calcs) then
-         stdout.text("I:")
-         stdout.put(I)
-         stdout.text("eigen_I:")
-         stdout.put(eigen_I)
-         stdout.text("theta_I:")
-         stdout.put(theta_I)
-      end
-
-      I.destroy
-
-      ! Prune zero eigenvalues
-      n0 = eigen_I.no_of_abs_vals_larger_than(.zero_angle_cutoff)
-
-      if (.show_calcs) then
-         stdout.show("No of non-zero eigenvalues, n0 = ",n0)
-      end
-
-      ind.create(n0)
-      ind = eigen_I.indices_of_abs_vals_larger_than(.zero_angle_cutoff)
-
-      if (.show_calcs) then
-         stdout.text("ind")
-         stdout.put(ind)
-      end
-
-      .theta_I.create(n_ab,n0)
-      .eigen_I.create(n0)
-
-      .theta_I = theta_I(:,ind)
-      .eigen_I = eigen_I(ind)
-
-      ind.destroy
-      eigen_I.destroy
-      theta_I.destroy
-
-      ! Find +/- ionic pairs
-      .pair.create(n0)
-      .eigen_I.find_non_unit_pairs(.pair,ROBY::match_pair,tol=TOL(8))
-
-      ! Make theta angles
-      .theta_angle.create(n0)
-      .make_theta_angles
-
-      if (.show_calcs) then
-         stdout.text("theta_angle from I:")
-         stdout.put(.theta_angle)
-      end
-
-      ! Clean up |ion> states
-      .make_gould_ionic_orbitals
-
-      ! Make |cov> pairs from |ion> pairs
-      .theta_C.create(n_ab,n0)
-      .eigen_C.create(n0)
-      .make_cov_from_ion_orbitals
-
-      if (.show_calcs) then
-         stdout.text("pair array:")
-         stdout.put(.pair)
-         stdout.show("n_bf_a = ",.n_bf_a)
-         stdout.show("n_bf_b = ",.n_bf_b)
-         stdout.text("eigen_C:")
-         stdout.put(.eigen_C)
-         stdout.text("eigen_I:")
-         stdout.put(.eigen_I)
-         stdout.text("theta_C:")
-         stdout.put(.theta_C)
-         stdout.text("theta_I:")
-         stdout.put(.theta_I)
-      end
-
-      ! Covalent theta populations
-      .theta_E_C.create(n0)
-      .theta_E_C_A.create(n0)
-      .theta_E_C_B.create(n0)
-      .make_theta_E1_Krogel_Es(.theta_E_C,.theta_E_C_A,.theta_E_C_B,.theta_C)
-
-      ! Ionic theta populations
-      .theta_E_I.create(n0)
-      .theta_E_I_A.create(n0)
-      .theta_E_I_B.create(n0)
-      .make_theta_E1_Krogel_Es(.theta_E_I,.theta_E_I_A,.theta_E_I_B,.theta_I)
-
-   end
-
-   make_theta_E1_Krogel_Es(E,Ea,Eb,theta) ::: private
-   ! Make "pop", an array of "theta" populations for a pair of Roby
-   ! atoms defined by indices in ".atom_a" and ".atom_b". "theta"
-   ! itself is a matrix whose columns are orbital coefficients on
-   ! V_AB corresponding to an ionic or covalent or some other state.
-      self :: INOUT
-      E,Ea,Eb :: VEC{REAL}, OUT
-      theta :: MAT{REAL}, IN
-
-   ENSURE(.atom_ab.allocated,"No roby atom AB")
-   ENSURE(.E_density_mx.allocated,"No Krogel E matrix")
-   ENSURE(E.dim==theta.dim2,"wrong size, pop")
-
-      i :: INT
-
-      do i = 1,theta.dim2
-          E(i)  =    .population(       .atom_ab,ANO=theta(:,i:i),rho=.E_density_mx)
-         Ea(i) = .subpopulation(.atom_a,.atom_ab,ANO=theta(:,i:i),rho=.E_density_mx)
-         Eb(i) = .subpopulation(.atom_b,.atom_ab,ANO=theta(:,i:i),rho=.E_density_mx)
-      end
-
-   end
+!   make_theta_E1_Krogel_info ::: leaky, private
+!   ! Calculates the Roby-Gould theta subspace information for atom
+!   ! groups ".atom_a" and ".atom_b", including theta subspace
+!   ! energies and subenergies via the Krogel approach.
+!      self :: INOUT
+!
+!   ENSURE(.atom_a.allocated,"No roby atom A")
+!   ENSURE(.atom_b.allocated,"No roby atom B")
+!   ENSURE(.atom_ab.allocated,"No roby atom AB")
+!
+!      I :: MAT{REAL}@
+!      theta_I :: MAT{REAL}@
+!      eigen_I :: VEC{REAL}@
+!      ind :: VEC{INT}@
+!      n_a,n_b,n_ab, n0 :: INT
+!
+!      n_a  = .n_bf_a
+!      n_b  = .n_bf_b
+!      n_ab = n_a + n_b
+!
+!      ! Make the ionic operator & ionic states
+!      theta_I.create(n_ab,n_ab)
+!      eigen_I.create(n_ab)
+!
+!      ! Make I
+!      I.create(n_ab,n_ab)
+!      .make_ionic_operator(I)
+!
+!      ! Diagonalize I
+!      .diagonalize_V_AB_operator(I,theta_I,eigen_I)
+!
+!      if (.show_calcs) then
+!         stdout.text("I:")
+!         stdout.put(I)
+!         stdout.text("eigen_I:")
+!         stdout.put(eigen_I)
+!         stdout.text("theta_I:")
+!         stdout.put(theta_I)
+!      end
+!
+!      I.destroy
+!
+!      ! Prune zero eigenvalues
+!      n0 = eigen_I.no_of_abs_vals_larger_than(.zero_angle_cutoff)
+!
+!      if (.show_calcs) then
+!         stdout.show("No of non-zero eigenvalues, n0 = ",n0)
+!      end
+!
+!      ind.create(n0)
+!      ind = eigen_I.indices_of_abs_vals_larger_than(.zero_angle_cutoff)
+!
+!      if (.show_calcs) then
+!         stdout.text("ind")
+!         stdout.put(ind)
+!      end
+!
+!      .theta_I.create(n_ab,n0)
+!      .eigen_I.create(n0)
+!
+!      .theta_I = theta_I(:,ind)
+!      .eigen_I = eigen_I(ind)
+!
+!      ind.destroy
+!      eigen_I.destroy
+!      theta_I.destroy
+!
+!      ! Find +/- ionic pairs
+!      .pair.create(n0)
+!      .eigen_I.find_non_unit_pairs(.pair,ROBY::match_pair,tol=TOL(5))
+!
+!      ! Make theta angles
+!    ! .make_theta_angles
+!
+!    ! if (.show_calcs) then
+!         stdout.text("pair array:")
+!         stdout.put(.pair)
+!         stdout.text("eigen_I:")
+!         stdout.put(.eigen_I)
+!    ! end
+!
+!      ! Clean up |ion> states
+!      .make_gould_ionic_orbitals
+!
+!      ! Make |cov> pairs from |ion> pairs
+!      .theta_angle.create(n0)
+!      .theta_C.create(n_ab,n0)
+!      .eigen_C.create(n0)
+!      .make_cov_from_ion_orbitals
+!
+!      if (.show_calcs) then
+!         stdout.show("n_bf_a = ",.n_bf_a)
+!         stdout.show("n_bf_b = ",.n_bf_b)
+!         stdout.text("eigen_C:")
+!         stdout.put(.eigen_C)
+!         stdout.text("theta_C:")
+!         stdout.put(.theta_C)
+!         stdout.text("theta_I:")
+!         stdout.put(.theta_I)
+!      end
+!
+!      ! Covalent theta populations
+!      .theta_E_C.create(n0)
+!      .theta_E_C_A.create(n0)
+!      .theta_E_C_B.create(n0)
+!      .make_theta_E1_Krogel_Es(.theta_E_C,.theta_E_C_A,.theta_E_C_B,.theta_C)
+!
+!      ! Ionic theta populations
+!      .theta_E_I.create(n0)
+!      .theta_E_I_A.create(n0)
+!      .theta_E_I_B.create(n0)
+!      .make_theta_E1_Krogel_Es(.theta_E_I,.theta_E_I_A,.theta_E_I_B,.theta_I)
+!
+!   end
+!
+!   make_theta_E1_Krogel_Es(E,Ea,Eb,theta) ::: private
+!   ! Make "pop", an array of "theta" populations for a pair of Roby
+!   ! atoms defined by indices in ".atom_a" and ".atom_b". "theta"
+!   ! itself is a matrix whose columns are orbital coefficients on
+!   ! V_AB corresponding to an ionic or covalent or some other state.
+!      self :: INOUT
+!      E,Ea,Eb :: VEC{REAL}, OUT
+!      theta :: MAT{REAL}, IN
+!
+!   ENSURE(.atom_ab.allocated,"No roby atom AB")
+!   ENSURE(.E_density_mx.allocated,"No Krogel E matrix")
+!   ENSURE(E.dim==theta.dim2,"wrong size, pop")
+!
+!      i :: INT
+!
+!      do i = 1,theta.dim2
+!          E(i)  =    .population(       .atom_ab,ANO=theta(:,i:i),rho=.E_density_mx)
+!         Ea(i) = .subpopulation(.atom_a,.atom_ab,ANO=theta(:,i:i),rho=.E_density_mx)
+!         Eb(i) = .subpopulation(.atom_b,.atom_ab,ANO=theta(:,i:i),rho=.E_density_mx)
+!      end
+!
+!   end
 
 ! =================
 ! Energy bond index
 ! =================
 
-   atom_E1_Krogel_analysis ::: leaky
-   ! Do a E^1_Krogel energy-bond analysis.
-   ! Only works for RHF case for now.
-      self :: INOUT
-
-   ENSURE(.core_mx.allocated,"no core_mx!")
-   ENSURE(.core_mx.r.allocated,"no restricted core_mx!")
-   ENSURE(.fock_mx.allocated,"no fock_mx!")
-   ENSURE(.fock_mx.r.allocated,"no restricted fock_mx!")
-
-      i,n_atom :: INT
-      n_group,a,b :: INT
-
-      ! Make atom list if it doesn't exist
-      if (.atom_list.deallocated) then
-         n_atom = .atom.dim
-         .atom_list = [ (i, i=1,n_atom) ]
-      end
-
-      ! Each atom is a Roby subspace
-      .make_single_atom_groups
-
-      ! Make E_density_mx, E_scf, E_non_atomic
-      .make_E1_Krogel_mx 
-
-      ! Each atom is a Roby subspace
-      .make_single_atom_groups
-      n_group = .n_group
-
-      ! Get group energies
-      .make_E1_Krogel_A
-      .make_E1_Krogel_AB
-
-      ! Clean
-      .destroy_bond_info
-      .E1_cov.create(n_group,n_group)
-      .E1_ion.create(n_group,n_group)
-      .E1_bond.create(n_group,n_group)
-
-      ! File name & redirect
-      ! Get Roby subspace analysis
-      do a = 1,.n_group
-      do b = a+1,.n_group
-
-         if (.skip_pair(a,b)) cycle
-
-         .atom_a = .atom_group(a).element
-         .atom_b = .atom_group(b).element
-
-         .atom_ab = [.atom_a, .atom_b ]
-
-         ! Make theta-subspace energies
-         .destroy_theta_info
-         .make_theta_E1_Krogel_info
-
-         if (.output_theta_info) then
-            .put_theta_info
-            .put_theta_E_info
-         end
-
-
-      end
-      end
-
-      ! Output
-      .put_basics
-      .put_E_As
-      .put_E_ABs
-
-   end
-
-   make_E1_Krogel_mx ::: leaky
-   ! Make the E^1_Krogel matrix which substitutes for the density
-   ! matrix .rho in the RGBI population code.
-   ! Only works for UHF/RHF cases for now.
-      self :: INOUT
-
-   ENSURE(.core_mx.allocated,"no core_mx!")
-   ENSURE(.core_mx.r.allocated,"no restricted core_mx!")
-   ENSURE(.fock_mx.allocated,"no fock_mx!")
-   ENSURE(.fock_mx.r.allocated,"no restricted fock_mx!")
-
-      tmp :: OPMATRIX@
-      Sm1 :: MAT{REAL}@
-      all_atoms :: VEC{INT}@
-      i,n_bf :: INT
-       
-      ! Make E_density_mx without S^-1 prefactor
-      .E_density_mx = .fock_mx
-      .E_density_mx.plus(.core_mx)
-      .E_density_mx.scale_by(HALF)
-
-      ! SCF energy
-      .E_scf = .E_density_mx.expectation(.density_mx)
-
-      ! Make S^-1 
-      n_bf = .core_mx.n_bf
-      Sm1.create(n_bf,n_bf) ! NOTE: RHF/UHF cases here only
-      Sm1.to_pseudo_inverse_of(.overlap_mx,TOL(5))
-
-      ! Do S^-1 . 1/2 [ h + F ] . D
-      tmp = .E_density_mx
-      tmp.to_product_of(Sm1,.E_density_mx)
-      .E_density_mx.to_product_of(X=tmp,Y=.density_mx)
-
-      ! Non-atomic energy, E_{na}
-      all_atoms = [ (i, i=1,.atom.dim) ]
-      .E_atomic     = .population(all_atoms,rho=.E_density_mx)
-      .E_non_atomic = .E_scf - .E_atomic
-
-      ! Clean
-      all_atoms.destroy
-      tmp.destroy
-      Sm1.destroy
-
-   end
-
-   make_E1_Krogel_A ::: leaky, private
-   ! Make the Krogel atom energies for the defined atom groups.
-      self :: INOUT
-
-   ENSURE(.atom_group.allocated,"no atom groups")
-   ENSURE(.density_mx.allocated,"no density matrix")
-   ENSURE(.E_density_mx.allocated,"no density matrix")
-
-      a :: INT
-
-      .E1.destroy
-      .E1.create(.n_group)
-
-      .n1.destroy
-      .n1.create(.n_group)
-
-      do a = 1,.n_group
-
-         .atom_a = .atom_group(a).element
-
-         .n1(a) =  .population(.atom_a)
-         .E1(a) =  .population(.atom_a,rho=.E_density_mx)
-
-      end
-
-   end
-
-   make_E1_Krogel_AB ::: leaky, private
-   ! Make the Krogel atom pair energies for the defined atom groups.
-      self :: INOUT
-
-   ENSURE(.atom_group.allocated,"no atom groups")
-   ENSURE(.density_mx.allocated,"no density matrix")
-   ENSURE(.E_density_mx.allocated,"no density matrix")
-
-      n_group,a,b :: INT
-      val :: REAL
-
-      n_group = .n_group
-
-      .n2.destroy
-      .n2.create(n_group,n_group)
-      .n2 = ZERO
-
-      .E2.destroy
-      .E2.create(n_group,n_group)
-      .E2 = ZERO
-
-      do a = 1,n_group
-      do b = a+1,n_group
-
-         if (.skip_pair(a,b)) cycle
-
-         .atom_a = .atom_group(a).element
-         .atom_b = .atom_group(b).element
-
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-         .atom_ab = [.atom_a, .atom_b]
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-         val = .population(.atom_ab)
-        
-         .n2(a,b) = val
-         .n2(b,a) = val
-
-          val = .population(.atom_ab,rho=.E_density_mx)
-
-         .E2(a,b) = val
-         .E2(b,a) = val
-
-      end
-      end
-
-   end
-
-
-   atom_E1_exact_analysis ::: leaky
-   ! Do a Roby energy-bond and Gould charge analysis.
-   ! Only works for RHF case for now.
-      self :: INOUT
-
-   ENSURE(.core_mx.allocated,"no core_mx!")
-   ENSURE(.core_mx.r.allocated,"no restricted core_mx!")
-   ENSURE(.fock_mx.allocated,"no fock_mx!")
-   ENSURE(.fock_mx.r.allocated,"no restricted fock_mx!")
-
-      i,n_atom :: INT
-      n_group,a,b :: INT
-      ind,cov,ion,pccp,pcca :: REAL
-       
-
-      ! Make atom list if it doesn't exist
-      if (.atom_list.deallocated) then
-         n_atom = .atom.dim
-         .atom_list = [ (i, i=1,n_atom) ]
-      end
-
-      ! Each atom is a Roby subspace
-      .make_single_atom_groups
-
-      ! Make unprojected E_density_mx
-      .E_density_mx = .fock_mx
-      .E_density_mx.plus(.core_mx)
-      .E_density_mx.scale_by(HALF)
-
-      ! Print out SCF energy
-      .E_scf = .E_density_mx.r.trace_product_with(.density_mx.r)
-      stdout.show("E_scf = ",.E_scf)
-
-      ! Each atom is a Roby subspace
-      .make_single_atom_groups
-      n_group = .n_group
-
-      ! Get group energies
-      .make_E_exact_A
-      .make_E_exact_AB
-
-      ! Clean
-      .destroy_bond_info
-      .bond_index.create(n_group,n_group)
-      .cov_index.create(n_group,n_group)
-      .ion_index.create(n_group,n_group)
-      .percent_covalency_P.create(n_group,n_group)
-      .percent_covalency_A.create(n_group,n_group)
-
-      ! File name & redirect
-      ! Get Roby subspace analysis
-      do a = 1,.n_group
-      do b = a+1,.n_group
-
-         if (.skip_pair(a,b)) cycle
-
-         .atom_a = .atom_group(a).element
-         .atom_b = .atom_group(b).element
-
-         .atom_ab = [.atom_a, .atom_b]
-
-         .destroy_theta_info
-       ! .make_theta_energy_info
-         .make_theta_info
-         
-         ind = .gould_bond_index(cov,ion,pccp,pcca)
-
-         .bond_index(a,b)          =  ind
-         .cov_index(a,b)           =  cov
-         .ion_index(a,b)           =  ion
-         .percent_covalency_P(a,b) =  pccp
-         .percent_covalency_A(a,b) =  pcca
-
-         .bond_index(b,a)          =  ind
-         .cov_index(b,a)           =  cov
-         .ion_index(b,a)           = -ion
-         .percent_covalency_P(b,a) =  pccp
-         .percent_covalency_A(b,a) =  pcca
-
-         if (.output_theta_info) then
-            .put_theta_info
-            .put_theta_BI_info
-         end
-
-      end
-      end
-
-      ! Output
-      .put_basics
-      .put_E_As
-      .put_E_ABs
-
-   end
-
-   make_E_exact_A ::: leaky, private
-   ! Make the Roby energies for the defined atom groups
-      self :: INOUT
-
-   ENSURE(.atom_group.allocated,"no atom groups")
-   ENSURE(.density_mx.allocated,"no density matrix")
-   ENSURE(.E_density_mx.allocated,"no density matrix")
-
-      a :: INT
-      fac :: REAL
-
-      fac = .E_scf/.atom.no_of_electrons
-
-      .E1.destroy
-      .E1.create(.n_group)
-
-      .n1.destroy
-      .n1.create(.n_group)
-
-      do a = 1,.n_group
-
-         .atom_a = .atom_group(a).element
-
-         .n1(a) =  .population(.atom_a)
-         .E1(a) =  .n1(a) * fac
-
-      end
-
-   end
-
-   make_E_exact_AB ::: leaky, private
-   ! Make the pair Roby energies
-      self :: INOUT
-
-   ENSURE(.atom_group.allocated,"no atom groups")
-   ENSURE(.density_mx.allocated,"no density matrix")
-   ENSURE(.E_density_mx.allocated,"no density matrix")
-
-      n_group,a,b :: INT
-      fac :: REAL
-      pop :: REAL
-
-      fac = .E_scf/.atom.no_of_electrons
-      n_group = .n_group
-
-      .n2.destroy
-      .n2.create(n_group,n_group)
-      .n2 = ZERO
-
-      .E2.destroy
-      .E2.create(n_group,n_group)
-      .E2 = ZERO
-
-      do a = 1,n_group
-      do b = a+1,n_group
-
-         if (.skip_pair(a,b)) cycle
-
-         .atom_a = .atom_group(a).element
-         .atom_b = .atom_group(b).element
-
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-         .atom_ab = [.atom_a, .atom_b]
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-         pop = .population(.atom_ab)
-        
-         .n2(a,b) = pop
-         .n2(b,a) = pop 
-
-         .E2(a,b) = pop * fac
-         .E2(b,a) = pop * fac
-
-      end
-      end
-
-   end
-   
-   put_E_As
-   ! Put to stdout the only Roby atom energies
-      self :: IN
-
-   ENSURE(.E1.allocated,"no atom energies exist")
-   ENSURE(.atom.allocated,"no atom data")
-
-      table :: VEC{TABLE_COLUMN}@
-      symbols :: VEC{STR}@
-      charge :: VEC{REAL}@
-      labels :: VEC{INT}@
-      n_e,f :: INT
-
-      ! Redo decimal places
-      stdout.save_style
-      stdout.set_real_precision(2)
-
-      stdout.flush
-      stdout.text("==================")
-      stdout.text("Roby atom energies")
-      stdout.text("==================")
-
-      n_e = .atom.no_of_electrons
-
-      stdout.flush
-      stdout.show("No. of electrons in mol =",n_e)
-      stdout.show("No. of electrons in P_M =",.n_all)
-      stdout.show("No. of hypervalent e's  =",n_e-.n_all)
-      stdout.flush
-
-      ! Create table
-      table.create(3)
-
-      ! Set the table headings
-      table(1).set_heading("Atom")
-      table(1).set_width_from(.atom.chemical_symbols)
-      if (.is_homoleptic) then
-         symbols.create(.n_group)
-         labels.create(.n_group)
-         f = 1
-         labels.to_sequence(f,.n_group)
-         symbols = labels.to_str
-         labels.destroy
-      else
-         symbols = .unique_tags
-      end
-      table(1).set_values(symbols)
-
-      table(2).set_heading("Projected energies")
-      table(2).set_subhead("of atoms")
-      table(2).set_values(.E1)
-
-      charge = -.n1 + .group_nuclear_charges
-      table(3).set_heading("Charge")
-      table(3).set_values(charge)
-
-      ! Put table
-      table.put(label_rows=FALSE)
-
-      ! Clean
-      table.clear_columns
-      charge.destroy
-      symbols.destroy
-
-      ! Unsave
-      stdout.unsave_style
-
-   end
-
-   put_E_ABs
-   ! Output pair and shared bond exact bond energies
-      self :: IN
-
-   ENSURE(NOT .is_homoleptic,"job is homoleptic")
-
-      table :: VEC{TABLE_COLUMN}@
-      Z_list :: VEC{EVEC{INT}}@
-      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
-      pair :: MAT{INT}@
-      symbols,labels :: MAT{STR}@
-      dash,dsh1 :: VEC{STR}@
-      dist,sAB,E_A,E_B,EAB :: VEC{REAL}@
-      has_unique_labels :: BIN
-
-      ! Any atoms to do?
-      if (.atom.dim<2) return
-
-      ! Any bonded atoms to do?
-      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
-      if (no_of_bonds<1) return
-
-      ! Has unique labels?
-      has_unique_labels = .atom.has_unique_labels
-      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
-
-      ! Redo decimal places
-      stdout.save_style
-      stdout.set_real_precision(4)
-
-      ! Title
-      if (.analyze_vdw_atom_pairs) then
-      stdout.flush
-      stdout.text("==============================================")
-      stdout.text("Roby-Gould bond energies: VDW interactions only")
-      stdout.text("==============================================")
-      else
-      stdout.flush
-      stdout.text("=======================")
-      stdout.text("Roby-Gould bond energies")
-      stdout.text("=======================")
-      end
-
-      stdout.flush
-      if (.analyze_vdw_atom_pairs) then
-      stdout.text("Indices appear only for VDW bonded atom pairs and")
-      stdout.text("NOT normally bonded by CSD criterion")
-      stdout.flush
-      stdout.show("No. of 'bonds'          =",no_of_bonds)
-      else if (.analyze_all_atom_pairs) then
-      stdout.text("Indices appear only for atom pairs which are connected")
-      stdout.text("according to the Cambridge Structural Database (CSD)")
-      stdout.text("AND if they are within a minimum bond_range_factor")
-      stdout.flush
-      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
-      stdout.show("No. of 'bonds'          =",no_of_bonds)
-      else
-      stdout.text("Indices appear only for atom pairs which are connected")
-      stdout.text("according to the Cambridge Structural Database (CSD).")
-      stdout.flush
-      stdout.show("No. of bonds            =",no_of_bonds)
-      end
-      stdout.flush
-
-      stdout.show("E_scf                   =",.E_scf)
-      stdout.show("E_non_atomic            =",.E_non_atomic)
-      stdout.flush
-
-      ! Get atom Z list
-      .atom.make_atom_Z_list(Z_list)
-
-      ! Skip dummy atoms
-      n_kind = Z_list.dim
-      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
-
-      ! Create table
-      table.create(11)
-
-      ! Set the table headings
-      table( 1).set_heading("A")
-      table( 1).set_width_from(.atom.chemical_symbols)
-
-      table( 2).set_column_spacing(0)
-      table( 2).set_heading("--")
-      table( 2).set_width(2)
-
-      table( 3).set_heading("B")
-      table( 3).set_width(table(1).width)
-      table( 3).set_left_justify(TRUE)
-
-      table( 4).set_heading("A")
-      table( 4).set_width_from(.atom(:).tag)
-
-      table( 5).set_column_spacing(0)
-      table( 5).set_heading("--")
-      table( 5).set_width(2)
-
-      table( 6).set_heading("B")
-      table( 6).set_width(table(4).width)
-      table( 6).set_left_justify(TRUE)
-
-      table( 7).set_heading("R(A--B)")
-      table( 7).set_subheading("/Angs.")
-
-      table( 8).set_heading("E_A")
-      table( 9).set_heading("E_B")
-      table(10).set_heading("E_AB")
-      table(11).set_heading("   E_AB")
-      table(11).set_subhead("(shared)")
-
-      ! Put out the headings
-      table.put_headings(label_rows=FALSE,no_flush=TRUE)
-
-      ! Loop over atom kind classes
-      do k1 = 1,n_kind
-      do k2 = k1,n_kind
-
-         ! Get the bonded atoms per kind
-         if (.analyze_vdw_atom_pairs) then
-         .atom.get_vdw_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
-         else
-         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
-         end
-         dist = dist*ANGSTROM_PER_BOHR
-
-         ! No of bonds in this class
-         n_bonds = dist.dim
-         if (n_bonds==0) then
-            dist.destroy
-            pair.destroy
-            cycle
-         end
-
-         ! Element symbols
-         symbols.create(n_bonds,2)
-         symbols = " "
-         symbols(1,1) = .atom( Z_list(k1)[1]).chemical_symbol
-         symbols(1,2) = .atom(Z_list(k2)[1]).chemical_symbol
-
-         ! Dashes
-         dash.create(n_bonds)
-         dsh1.create(n_bonds)
-         dash    = "--"
-         dsh1    = "  "
-         dsh1(1) = "--"
-
-         ! Labels
-         labels.create(n_bonds,2)
-         labels(:,1) = .atom(pair(:,1)).tag
-         labels(:,2) = .atom(pair(:,2)).tag
-
-         ! Populations & indices
-         E_A.create(n_bonds)
-         E_B.create(n_bonds)
-         EAB.create(n_bonds)
-         sAB.create(n_bonds)
-
-         E_A = .E1(pair(:,1))
-         E_B = .E1(pair(:,2))
-         forall (i=1:n_bonds)
-         EAB(i) = .E2(pair(i,1),pair(i,2))
-         sAB(i) = E_A(i) + E_B(i) - EAB(i)
-         end
-
-         ! Set table data
-         table( 1).set_values(symbols(:,1))
-         table( 2).set_values(dsh1)
-         table( 3).set_values(symbols(:,2))
-         table( 4).set_values(labels(:,1))
-         table( 5).set_values(dash)
-         table( 6).set_values(labels(:,2))
-         table( 7).set_values(dist)
-         table( 8).set_values(E_A)
-         table( 9).set_values(E_B)
-         table(10).set_values(EAB)
-         table(11).set_values(sAB)
-
-         ! Put body
-         stdout.flush
-         table.put_body(label_rows=FALSE)
-
-         ! Clean
-         table.clear_columns
-
-         sAB.destroy
-         E_A.destroy
-         E_B.destroy
-         EAB.destroy
-         labels.destroy
-         dsh1.destroy
-         dash.destroy
-         symbols.destroy
-
-         dist.destroy
-         pair.destroy
-
-      end
-      end
-
-      ! Table footer
-      table.put_footer(label_rows=FALSE)
-
-      ! Clean
-      table.destroy
-      Z_list.destroy
-
-      ! Unsave settings
-      stdout.unsave_style
-
-   end   
-
-
-   put_theta_E_info
-   ! Output theta-space bond index information
-      self :: IN
-
-      n,i,j,k,p :: INT
-      par :: VEC{STR}@
-      ind :: VEC{INT}@
-      ect_p,ect_m :: VEC{REAL}@
-      eit_p,eit_m :: VEC{REAL}@
-    ! eca_p,eca_m,ecb_p,ecb_m :: VEC{REAL}@
-    ! eia_p,eia_m,eib_p,eib_m :: VEC{REAL}@
-      ang :: VEC{REAL}@
-      table :: VEC{TABLE_COLUMN}@
-
-      ! Columns
-      n = .eigen_I.dim
-      par.create(n)
-      ang.create(n)
-      ect_p.create(n)
-      ect_m.create(n)
-      eit_p.create(n)
-      eit_m.create(n)
-
-      ! Sort decreasing covalent index
-      ind.create(n)
-      .theta_E_C.quick_sort(ind)
-
-      ! Set column data
-      j = 0
-      do k = 1,n
-
-         ! Reordered index and its pair
-         i = ind(k)
-         p = .pair(i)
-
-         if (p<1) cycle
-         if (.eigen_I(i)<.eigen_I(p)) cycle
-
-         j = j + 1
-
-         if (p/=i) then
-               par(j) = "("//i.to_str.trim//","//p.to_str.trim//")"
-               eit_p(j) = .theta_E_I(i)
-               eit_m(j) = .theta_E_I(p)
-         else
-               par(j) = "("//i.to_str.trim//")"
-            if      (.eigen_I(i)>ZERO) then
-               eit_p(j) = .theta_E_I(i)
-               eit_m(j) = ZERO
-            else if (.eigen_I(i)<ZERO) then
-               eit_p(j) = ZERO
-               eit_m(j) = .theta_E_I(i)
-            end
-         end
-
-         ect_p(j) = .theta_E_C(i)
-         ect_m(j) = .theta_E_C(p)
-         ang(j) = atan2(.eigen_I(i),.eigen_C(i))*DEGREE_PER_RADIAN
-
-      end
-
-      n = j
-
-      ! Change decimal places
-      stdout.save_style
-      stdout.set_real_precision(3)
-
-      stdout.flush
-      stdout.flush
-      stdout.text("========================================")
-      stdout.text("Covalent/ionic bond indices per subspace")
-      stdout.text("========================================")
-      stdout.flush
-      stdout.text(". +/- means: bonding /antibonding RG bond orbitals.")
-      stdout.text("  C/I means: covalent/ionic       RG bond orbitals.")
-      stdout.text("  Thus I- represents an ionic antibonding orbital.")
-      stdout.flush
-      stdout.text(". A +ve value for the ionic bond index in bond AB")
-      stdout.text("  means a polarity toward atom (or group) A.")
-      stdout.flush
-      stdout.text(". Araki angles are associated with maximum overlap on")
-      stdout.text("  the two centres (or groups). Thus angles close to 0")
-      stdout.text("  have large overlap and are highly 'covalent' bonds,")
-      stdout.text("  while angles near 90 represent highly 'ionic' bonds.")
-      stdout.text("  They are not the angles formed in the dial diagram!")
-      stdout.flush
-
-      ! Do table
-      table.create(6)
-
-      table(1).set_heading("Paired")
-      table(1).set_subhead(" space")
-      table(1).set_values(par(1:n))
-
-      table(2).set_heading("Araki")
-      table(2).set_subhead("angle")
-      table(2).set_sb3head(" /deg")
-      table(2).set_values(ang(1:n))
-
-      table(3).set_heading("E_C+")
-      table(3).set_values(ect_p(1:n))
-
-      table(4).set_heading("E_C-")
-      table(4).set_values(ect_m(1:n))
-
-      table(5).set_heading("E_I+")
-      table(5).set_values(eit_p(1:n))
-
-      table(6).set_heading("E_I-")
-      table(6).set_values(eit_m(1:n))
-
-      ! Write it
-      table.put(label_rows=FALSE)
-
-      ! Clean
-      table.destroy
-      ind.destroy
-      eit_m.destroy; eit_p.destroy
-      ect_m.destroy; ect_p.destroy
-      ang.destroy;   par.destroy
-
-      ! Change decimal places
-      stdout.unsave_style
-
-   end
+!   atom_E1_Krogel_analysis ::: leaky
+!   ! Do a E^1_Krogel energy-bond analysis.
+!   ! Only works for RHF case for now.
+!      self :: INOUT
+!
+!   ENSURE(.core_mx.allocated,"no core_mx!")
+!   ENSURE(.core_mx.r.allocated,"no restricted core_mx!")
+!   ENSURE(.fock_mx.allocated,"no fock_mx!")
+!   ENSURE(.fock_mx.r.allocated,"no restricted fock_mx!")
+!
+!      i,n_atom :: INT
+!      n_group,a,b :: INT
+!
+!      ! Make atom list if it doesn't exist
+!      if (.atom_list.deallocated) then
+!         n_atom = .atom.dim
+!         .atom_list = [ (i, i=1,n_atom) ]
+!      end
+!
+!      ! Each atom is a Roby subspace
+!      .make_single_atom_groups
+!
+!      ! Make E_density_mx, E_scf, E_non_atomic
+!      .make_E1_Krogel_mx 
+!
+!      ! Each atom is a Roby subspace
+!      .make_single_atom_groups
+!      n_group = .n_group
+!
+!      ! Get group energies
+!      .make_E1_Krogel_A
+!      .make_E1_Krogel_AB
+!
+!      ! Clean
+!      .destroy_bond_info
+!      .E1_cov.create(n_group,n_group)
+!      .E1_ion.create(n_group,n_group)
+!      .E1_bond.create(n_group,n_group)
+!
+!      ! File name & redirect
+!      ! Get Roby subspace analysis
+!      do a = 1,.n_group
+!      do b = a+1,.n_group
+!
+!         if (.skip_pair(a,b)) cycle
+!
+!         .atom_a = .atom_group(a).element
+!         .atom_b = .atom_group(b).element
+!
+!         .atom_ab = [.atom_a, .atom_b ]
+!
+!         ! Make theta-subspace energies
+!         .destroy_theta_info
+!         .make_theta_E1_Krogel_info
+!
+!         if (.output_theta_info) then
+!            .put_theta_info
+!            .put_theta_E_info
+!         end
+!
+!
+!      end
+!      end
+!
+!      ! Output
+!      .put_basics
+!      .put_E_As
+!      .put_E_ABs
+!
+!   end
+!
+!   make_E1_Krogel_mx ::: leaky
+!   ! Make the E^1_Krogel matrix which substitutes for the density
+!   ! matrix .rho in the RGBI population code.
+!   ! Only works for UHF/RHF cases for now.
+!      self :: INOUT
+!
+!   ENSURE(.core_mx.allocated,"no core_mx!")
+!   ENSURE(.core_mx.r.allocated,"no restricted core_mx!")
+!   ENSURE(.fock_mx.allocated,"no fock_mx!")
+!   ENSURE(.fock_mx.r.allocated,"no restricted fock_mx!")
+!
+!      tmp :: OPMATRIX@
+!      Sm1 :: MAT{REAL}@
+!      all_atoms :: VEC{INT}@
+!      i,n_bf :: INT
+!       
+!      ! Make E_density_mx without S^-1 prefactor
+!      .E_density_mx = .fock_mx
+!      .E_density_mx.plus(.core_mx)
+!      .E_density_mx.scale_by(HALF)
+!
+!      ! SCF energy
+!      .E_scf = .E_density_mx.expectation(.density_mx)
+!
+!      ! Make S^-1 
+!      n_bf = .core_mx.n_bf
+!      Sm1.create(n_bf,n_bf) ! NOTE: RHF/UHF cases here only
+!      Sm1.to_pseudo_inverse_of(.overlap_mx,TOL(5))
+!
+!      ! Do S^-1 . 1/2 [ h + F ] . D
+!      tmp = .E_density_mx
+!      tmp.to_product_of(Sm1,.E_density_mx)
+!      .E_density_mx.to_product_of(X=tmp,Y=.density_mx)
+!
+!      ! Non-atomic energy, E_{na}
+!      all_atoms = [ (i, i=1,.atom.dim) ]
+!      .E_atomic     = .population(all_atoms,rho=.E_density_mx)
+!      .E_non_atomic = .E_scf - .E_atomic
+!
+!      ! Clean
+!      all_atoms.destroy
+!      tmp.destroy
+!      Sm1.destroy
+!
+!   end
+!
+!   make_E1_Krogel_A ::: leaky, private
+!   ! Make the Krogel atom energies for the defined atom groups.
+!      self :: INOUT
+!
+!   ENSURE(.atom_group.allocated,"no atom groups")
+!   ENSURE(.density_mx.allocated,"no density matrix")
+!   ENSURE(.E_density_mx.allocated,"no density matrix")
+!
+!      a :: INT
+!
+!      .E1.destroy
+!      .E1.create(.n_group)
+!
+!      .n1.destroy
+!      .n1.create(.n_group)
+!
+!      do a = 1,.n_group
+!
+!         .atom_a = .atom_group(a).element
+!
+!         .n1(a) =  .population(.atom_a)
+!         .E1(a) =  .population(.atom_a,rho=.E_density_mx)
+!
+!      end
+!
+!   end
+!
+!   make_E1_Krogel_AB ::: leaky, private
+!   ! Make the Krogel atom pair energies for the defined atom groups.
+!      self :: INOUT
+!
+!   ENSURE(.atom_group.allocated,"no atom groups")
+!   ENSURE(.density_mx.allocated,"no density matrix")
+!   ENSURE(.E_density_mx.allocated,"no density matrix")
+!
+!      n_group,a,b :: INT
+!      val :: REAL
+!
+!      n_group = .n_group
+!
+!      .n2.destroy
+!      .n2.create(n_group,n_group)
+!      .n2 = ZERO
+!
+!      .E2.destroy
+!      .E2.create(n_group,n_group)
+!      .E2 = ZERO
+!
+!      do a = 1,n_group
+!      do b = a+1,n_group
+!
+!         if (.skip_pair(a,b)) cycle
+!
+!         .atom_a = .atom_group(a).element
+!         .atom_b = .atom_group(b).element
+!
+!         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!         .atom_ab = [.atom_a, .atom_b]
+!         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!
+!         val = .population(.atom_ab)
+!        
+!         .n2(a,b) = val
+!         .n2(b,a) = val
+!
+!          val = .population(.atom_ab,rho=.E_density_mx)
+!
+!         .E2(a,b) = val
+!         .E2(b,a) = val
+!
+!      end
+!      end
+!
+!   end
+!
+!
+!   atom_E1_exact_analysis ::: leaky
+!   ! Do a Roby energy-bond and Gould charge analysis.
+!   ! Only works for RHF case for now.
+!      self :: INOUT
+!
+!   ENSURE(.core_mx.allocated,"no core_mx!")
+!   ENSURE(.core_mx.r.allocated,"no restricted core_mx!")
+!   ENSURE(.fock_mx.allocated,"no fock_mx!")
+!   ENSURE(.fock_mx.r.allocated,"no restricted fock_mx!")
+!
+!      i,n_atom :: INT
+!      n_group,a,b :: INT
+!      ind,cov,ion,pccp,pcca :: REAL
+!       
+!
+!      ! Make atom list if it doesn't exist
+!      if (.atom_list.deallocated) then
+!         n_atom = .atom.dim
+!         .atom_list = [ (i, i=1,n_atom) ]
+!      end
+!
+!      ! Each atom is a Roby subspace
+!      .make_single_atom_groups
+!
+!      ! Make unprojected E_density_mx
+!      .E_density_mx = .fock_mx
+!      .E_density_mx.plus(.core_mx)
+!      .E_density_mx.scale_by(HALF)
+!
+!      ! Print out SCF energy
+!      .E_scf = .E_density_mx.r.trace_product_with(.density_mx.r)
+!      stdout.show("E_scf = ",.E_scf)
+!
+!      ! Each atom is a Roby subspace
+!      .make_single_atom_groups
+!      n_group = .n_group
+!
+!      ! Get group energies
+!      .make_E_exact_A
+!      .make_E_exact_AB
+!
+!      ! Clean
+!      .destroy_bond_info
+!      .bond_index.create(n_group,n_group)
+!      .cov_index.create(n_group,n_group)
+!      .ion_index.create(n_group,n_group)
+!      .percent_covalency_P.create(n_group,n_group)
+!      .percent_covalency_A.create(n_group,n_group)
+!
+!      ! File name & redirect
+!      ! Get Roby subspace analysis
+!      do a = 1,.n_group
+!      do b = a+1,.n_group
+!
+!         if (.skip_pair(a,b)) cycle
+!
+!         .atom_a = .atom_group(a).element
+!         .atom_b = .atom_group(b).element
+!
+!         .atom_ab = [.atom_a, .atom_b]
+!
+!       ! .make_theta_energy_info
+!         .make_theta_info
+!         
+!         ind = .gould_bond_index(cov,ion,pccp,pcca)
+!
+!         .bond_index(a,b)          =  ind
+!         .cov_index(a,b)           =  cov
+!         .ion_index(a,b)           =  ion
+!         .percent_covalency_P(a,b) =  pccp
+!         .percent_covalency_A(a,b) =  pcca
+!
+!         .bond_index(b,a)          =  ind
+!         .cov_index(b,a)           =  cov
+!         .ion_index(b,a)           = -ion
+!         .percent_covalency_P(b,a) =  pccp
+!         .percent_covalency_A(b,a) =  pcca
+!
+!         if (.output_theta_info) then
+!            .put_theta_info
+!            .put_theta_BI_info
+!         end
+!
+!      end
+!      end
+!
+!      ! Output
+!      .put_basics
+!      .put_E_As
+!      .put_E_ABs
+!
+!   end
+!
+!   make_E_exact_A ::: leaky, private
+!   ! Make the Roby energies for the defined atom groups
+!      self :: INOUT
+!
+!   ENSURE(.atom_group.allocated,"no atom groups")
+!   ENSURE(.density_mx.allocated,"no density matrix")
+!   ENSURE(.E_density_mx.allocated,"no density matrix")
+!
+!      a :: INT
+!      fac :: REAL
+!
+!      fac = .E_scf/.atom.no_of_electrons
+!
+!      .E1.destroy
+!      .E1.create(.n_group)
+!
+!      .n1.destroy
+!      .n1.create(.n_group)
+!
+!      do a = 1,.n_group
+!
+!         .atom_a = .atom_group(a).element
+!
+!         .n1(a) =  .population(.atom_a)
+!         .E1(a) =  .n1(a) * fac
+!
+!      end
+!
+!   end
+!
+!   make_E_exact_AB ::: leaky, private
+!   ! Make the pair Roby energies
+!      self :: INOUT
+!
+!   ENSURE(.atom_group.allocated,"no atom groups")
+!   ENSURE(.density_mx.allocated,"no density matrix")
+!   ENSURE(.E_density_mx.allocated,"no density matrix")
+!
+!      n_group,a,b :: INT
+!      fac :: REAL
+!      pop :: REAL
+!
+!      fac = .E_scf/.atom.no_of_electrons
+!      n_group = .n_group
+!
+!      .n2.destroy
+!      .n2.create(n_group,n_group)
+!      .n2 = ZERO
+!
+!      .E2.destroy
+!      .E2.create(n_group,n_group)
+!      .E2 = ZERO
+!
+!      do a = 1,n_group
+!      do b = a+1,n_group
+!
+!         if (.skip_pair(a,b)) cycle
+!
+!         .atom_a = .atom_group(a).element
+!         .atom_b = .atom_group(b).element
+!
+!         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!         .atom_ab = [.atom_a, .atom_b]
+!         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!
+!         pop = .population(.atom_ab)
+!        
+!         .n2(a,b) = pop
+!         .n2(b,a) = pop 
+!
+!         .E2(a,b) = pop * fac
+!         .E2(b,a) = pop * fac
+!
+!      end
+!      end
+!
+!   end
+!   
+!   put_E_As
+!   ! Put to stdout the only Roby atom energies
+!      self :: IN
+!
+!   ENSURE(.E1.allocated,"no atom energies exist")
+!   ENSURE(.atom.allocated,"no atom data")
+!
+!      table :: VEC{TABLE_COLUMN}@
+!      symbols :: VEC{STR}@
+!      charge :: VEC{REAL}@
+!      labels :: VEC{INT}@
+!      n_e,f :: INT
+!
+!      ! Redo decimal places
+!      stdout.save_style
+!      stdout.set_real_precision(2)
+!
+!      stdout.flush
+!      stdout.text("==================")
+!      stdout.text("Roby atom energies")
+!      stdout.text("==================")
+!
+!      n_e = .atom.no_of_electrons
+!
+!      stdout.flush
+!      stdout.show("No. of electrons in mol =",n_e)
+!      stdout.show("No. of electrons in P_M =",.n_all)
+!      stdout.show("No. of hypervalent e's  =",n_e-.n_all)
+!      stdout.flush
+!
+!      ! Create table
+!      table.create(3)
+!
+!      ! Set the table headings
+!      table(1).set_heading("Atom")
+!      table(1).set_width_from(.atom.chemical_symbols)
+!      if (.is_homoleptic) then
+!         symbols.create(.n_group)
+!         labels.create(.n_group)
+!         f = 1
+!         labels.to_sequence(f,.n_group)
+!         symbols = labels.to_str
+!         labels.destroy
+!      else
+!         symbols = .unique_tags
+!      end
+!      table(1).set_values(symbols)
+!
+!      table(2).set_heading("Projected energies")
+!      table(2).set_subhead("of atoms")
+!      table(2).set_values(.E1)
+!
+!      charge = -.n1 + .group_nuclear_charges
+!      table(3).set_heading("Charge")
+!      table(3).set_values(charge)
+!
+!      ! Put table
+!      table.put(label_rows=FALSE)
+!
+!      ! Clean
+!      table.clear_columns
+!      charge.destroy
+!      symbols.destroy
+!
+!      ! Unsave
+!      stdout.unsave_style
+!
+!   end
+!
+!   put_E_ABs
+!   ! Output pair and shared bond exact bond energies
+!      self :: IN
+!
+!   ENSURE(NOT .is_homoleptic,"job is homoleptic")
+!
+!      table :: VEC{TABLE_COLUMN}@
+!      Z_list :: VEC{EVEC{INT}}@
+!      no_of_bonds, n_kind,k1,k2,n_bonds, i :: INT
+!      pair :: MAT{INT}@
+!      symbols,labels :: MAT{STR}@
+!      dash,dsh1 :: VEC{STR}@
+!      dist,sAB,E_A,E_B,EAB :: VEC{REAL}@
+!      has_unique_labels :: BIN
+!
+!      ! Any atoms to do?
+!      if (.atom.dim<2) return
+!
+!      ! Any bonded atoms to do?
+!      no_of_bonds = .atom.no_of_bonds(.bond_range_factor)
+!      if (no_of_bonds<1) return
+!
+!      ! Has unique labels?
+!      has_unique_labels = .atom.has_unique_labels
+!      DIE_IF(NOT has_unique_labels,"atoms are not uniquely labelled!")
+!
+!      ! Redo decimal places
+!      stdout.save_style
+!      stdout.set_real_precision(4)
+!
+!      ! Title
+!      if (.analyze_vdw_atom_pairs) then
+!      stdout.flush
+!      stdout.text("==============================================")
+!      stdout.text("Roby-Gould bond energies: VDW interactions only")
+!      stdout.text("==============================================")
+!      else
+!      stdout.flush
+!      stdout.text("=======================")
+!      stdout.text("Roby-Gould bond energies")
+!      stdout.text("=======================")
+!      end
+!
+!      stdout.flush
+!      if (.analyze_vdw_atom_pairs) then
+!      stdout.text("Indices appear only for VDW bonded atom pairs and")
+!      stdout.text("NOT normally bonded by CSD criterion")
+!      stdout.flush
+!      stdout.show("No. of 'bonds'          =",no_of_bonds)
+!      else if (.analyze_all_atom_pairs) then
+!      stdout.text("Indices appear only for atom pairs which are connected")
+!      stdout.text("according to the Cambridge Structural Database (CSD)")
+!      stdout.text("AND if they are within a minimum bond_range_factor")
+!      stdout.flush
+!      stdout.show("Bond range factor /Angs =",.bond_range_factor.to_units("angstrom"))
+!      stdout.show("No. of 'bonds'          =",no_of_bonds)
+!      else
+!      stdout.text("Indices appear only for atom pairs which are connected")
+!      stdout.text("according to the Cambridge Structural Database (CSD).")
+!      stdout.flush
+!      stdout.show("No. of bonds            =",no_of_bonds)
+!      end
+!      stdout.flush
+!
+!      stdout.show("E_scf                   =",.E_scf)
+!      stdout.show("E_non_atomic            =",.E_non_atomic)
+!      stdout.flush
+!
+!      ! Get atom Z list
+!      .atom.make_atom_Z_list(Z_list)
+!
+!      ! Skip dummy atoms
+!      n_kind = Z_list.dim
+!      if (.atom(Z_list(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+!
+!      ! Create table
+!      table.create(11)
+!
+!      ! Set the table headings
+!      table( 1).set_heading("A")
+!      table( 1).set_width_from(.atom.chemical_symbols)
+!
+!      table( 2).set_column_spacing(0)
+!      table( 2).set_heading("--")
+!      table( 2).set_width(2)
+!
+!      table( 3).set_heading("B")
+!      table( 3).set_width(table(1).width)
+!      table( 3).set_left_justify(TRUE)
+!
+!      table( 4).set_heading("A")
+!      table( 4).set_width_from(.atom(:).tag)
+!
+!      table( 5).set_column_spacing(0)
+!      table( 5).set_heading("--")
+!      table( 5).set_width(2)
+!
+!      table( 6).set_heading("B")
+!      table( 6).set_width(table(4).width)
+!      table( 6).set_left_justify(TRUE)
+!
+!      table( 7).set_heading("R(A--B)")
+!      table( 7).set_subheading("/Angs.")
+!
+!      table( 8).set_heading("E_A")
+!      table( 9).set_heading("E_B")
+!      table(10).set_heading("E_AB")
+!      table(11).set_heading("   E_AB")
+!      table(11).set_subhead("(shared)")
+!
+!      ! Put out the headings
+!      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+!
+!      ! Loop over atom kind classes
+!      do k1 = 1,n_kind
+!      do k2 = k1,n_kind
+!
+!         ! Get the bonded atoms per kind
+!         if (.analyze_vdw_atom_pairs) then
+!         .atom.get_vdw_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+!         else
+!         .atom.get_bonded_atoms(pair,dist,Z_list,k1,k2,.bond_range_factor)
+!         end
+!         dist = dist*ANGSTROM_PER_BOHR
+!
+!         ! No of bonds in this class
+!         n_bonds = dist.dim
+!         if (n_bonds==0) then
+!            dist.destroy
+!            pair.destroy
+!            cycle
+!         end
+!
+!         ! Element symbols
+!         symbols.create(n_bonds,2)
+!         symbols = " "
+!         symbols(1,1) = .atom( Z_list(k1)[1]).chemical_symbol
+!         symbols(1,2) = .atom(Z_list(k2)[1]).chemical_symbol
+!
+!         ! Dashes
+!         dash.create(n_bonds)
+!         dsh1.create(n_bonds)
+!         dash    = "--"
+!         dsh1    = "  "
+!         dsh1(1) = "--"
+!
+!         ! Labels
+!         labels.create(n_bonds,2)
+!         labels(:,1) = .atom(pair(:,1)).tag
+!         labels(:,2) = .atom(pair(:,2)).tag
+!
+!         ! Populations & indices
+!         E_A.create(n_bonds)
+!         E_B.create(n_bonds)
+!         EAB.create(n_bonds)
+!         sAB.create(n_bonds)
+!
+!         E_A = .E1(pair(:,1))
+!         E_B = .E1(pair(:,2))
+!         forall (i=1:n_bonds)
+!         EAB(i) = .E2(pair(i,1),pair(i,2))
+!         sAB(i) = E_A(i) + E_B(i) - EAB(i)
+!         end
+!
+!         ! Set table data
+!         table( 1).set_values(symbols(:,1))
+!         table( 2).set_values(dsh1)
+!         table( 3).set_values(symbols(:,2))
+!         table( 4).set_values(labels(:,1))
+!         table( 5).set_values(dash)
+!         table( 6).set_values(labels(:,2))
+!         table( 7).set_values(dist)
+!         table( 8).set_values(E_A)
+!         table( 9).set_values(E_B)
+!         table(10).set_values(EAB)
+!         table(11).set_values(sAB)
+!
+!         ! Put body
+!         stdout.flush
+!         table.put_body(label_rows=FALSE)
+!
+!         ! Clean
+!         table.clear_columns
+!
+!         sAB.destroy
+!         E_A.destroy
+!         E_B.destroy
+!         EAB.destroy
+!         labels.destroy
+!         dsh1.destroy
+!         dash.destroy
+!         symbols.destroy
+!
+!         dist.destroy
+!         pair.destroy
+!
+!      end
+!      end
+!
+!      ! Table footer
+!      table.put_footer(label_rows=FALSE)
+!
+!      ! Clean
+!      table.destroy
+!      Z_list.destroy
+!
+!      ! Unsave settings
+!      stdout.unsave_style
+!
+!   end   
+!
+!
+!   put_theta_E_info
+!   ! Output theta-space bond index information
+!      self :: IN
+!
+!      n,i,j,k,p :: INT
+!      par :: VEC{STR}@
+!      ind :: VEC{INT}@
+!      ect_p,ect_m :: VEC{REAL}@
+!      eit_p,eit_m :: VEC{REAL}@
+!    ! eca_p,eca_m,ecb_p,ecb_m :: VEC{REAL}@
+!    ! eia_p,eia_m,eib_p,eib_m :: VEC{REAL}@
+!      ang :: VEC{REAL}@
+!      table :: VEC{TABLE_COLUMN}@
+!
+!      ! Columns
+!      n = .eigen_I.dim
+!      par.create(n)
+!      ang.create(n)
+!      ect_p.create(n)
+!      ect_m.create(n)
+!      eit_p.create(n)
+!      eit_m.create(n)
+!
+!      ! Sort decreasing covalent index
+!      ind.create(n)
+!      .theta_E_C.quick_sort(ind)
+!
+!      ! Set column data
+!      j = 0
+!      do k = 1,n
+!
+!         ! Reordered index and its pair
+!         i = ind(k)
+!         p = .pair(i)
+!
+!         if (p<1) cycle
+!         if (.eigen_I(i)<.eigen_I(p)) cycle
+!
+!         j = j + 1
+!
+!         if (p/=i) then
+!               par(j) = "("//i.to_str.trim//","//p.to_str.trim//")"
+!               eit_p(j) = .theta_E_I(i)
+!               eit_m(j) = .theta_E_I(p)
+!         else
+!               par(j) = "("//i.to_str.trim//")"
+!            if      (.eigen_I(i)>ZERO) then
+!               eit_p(j) = .theta_E_I(i)
+!               eit_m(j) = ZERO
+!            else if (.eigen_I(i)<ZERO) then
+!               eit_p(j) = ZERO
+!               eit_m(j) = .theta_E_I(i)
+!            end
+!         end
+!
+!         ect_p(j) = .theta_E_C(i)
+!         ect_m(j) = .theta_E_C(p)
+!         ang(j) = atan2(.eigen_I(i),.eigen_C(i))*DEGREE_PER_RADIAN
+!
+!      end
+!
+!      n = j
+!
+!      ! Change decimal places
+!      stdout.save_style
+!      stdout.set_real_precision(3)
+!
+!      stdout.flush
+!      stdout.flush
+!      stdout.text("========================================")
+!      stdout.text("Covalent/ionic bond indices per subspace")
+!      stdout.text("========================================")
+!      stdout.flush
+!      stdout.text(". +/- means: bonding /antibonding RG bond orbitals.")
+!      stdout.text("  C/I means: covalent/ionic       RG bond orbitals.")
+!      stdout.text("  Thus I- represents an ionic antibonding orbital.")
+!      stdout.flush
+!      stdout.text(". A +ve value for the ionic bond index in bond AB")
+!      stdout.text("  means a polarity toward atom (or group) A.")
+!      stdout.flush
+!      stdout.text(". Araki angles are associated with maximum overlap on")
+!      stdout.text("  the two centres (or groups). Thus angles close to 0")
+!      stdout.text("  have large overlap and are highly 'covalent' bonds,")
+!      stdout.text("  while angles near 90 represent highly 'ionic' bonds.")
+!      stdout.text("  They are not the angles formed in the dial diagram!")
+!      stdout.flush
+!
+!      ! Do table
+!      table.create(6)
+!
+!      table(1).set_heading("Paired")
+!      table(1).set_subhead(" space")
+!      table(1).set_values(par(1:n))
+!
+!      table(2).set_heading("Araki")
+!      table(2).set_subhead("angle")
+!      table(2).set_sb3head(" /deg")
+!      table(2).set_values(ang(1:n))
+!
+!      table(3).set_heading("E_C+")
+!      table(3).set_values(ect_p(1:n))
+!
+!      table(4).set_heading("E_C-")
+!      table(4).set_values(ect_m(1:n))
+!
+!      table(5).set_heading("E_I+")
+!      table(5).set_values(eit_p(1:n))
+!
+!      table(6).set_heading("E_I-")
+!      table(6).set_values(eit_m(1:n))
+!
+!      ! Write it
+!      table.put(label_rows=FALSE)
+!
+!      ! Clean
+!      table.destroy
+!      ind.destroy
+!      eit_m.destroy; eit_p.destroy
+!      ect_m.destroy; ect_p.destroy
+!      ang.destroy;   par.destroy
+!
+!      ! Change decimal places
+!      stdout.unsave_style
+!
+!   end
 
 ! Careful, old one below
 
@@ -2928,10 +2945,10 @@ contains
    ! of basis functions for each atom in "group". If present, use the
    ! columns of "ANO" as atomic orbital coefficients to form the
    ! projection operator instead of the actual atomic natural orbitals.
-      self :: IN
-      P :: MAT{REAL}, OUT
-      group :: VEC{INT}, optional, IN
-      ANO :: MAT{REAL}, optional, IN
+      self  :: IN
+      P     :: MAT{REAL}, OUT
+      group :: VEC{INT}, IN
+      ANO   :: MAT{REAL}, optional, IN
 
    ENSURE(P.dim1==.n_bf(group),"wrong dimension, P ")
    ENSURE(P.is_square,"P is incorrectly dimensioned")
@@ -4638,8 +4655,8 @@ contains
    end
 
    put_file_indices_atoms
-   ! Output bond indices in separate files "rgbi-A-B" where A and B
-   ! are the elemnt labels.
+   ! Output bond indices in separate files "rgbi-A-B" where 
+   ! A and B are the element labels.
       self :: IN
 
    ENSURE(NOT .is_homoleptic,"job is homoleptic")
@@ -4727,7 +4744,7 @@ contains
       table(14).set_width_from(100d0)
 
       ! Put out the headings
-      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+    ! table.put_headings(label_rows=FALSE,no_flush=TRUE)
 
       ! Loop over atom kind classes
       do k1 = 1,n_kind
@@ -6553,7 +6570,8 @@ contains
          par(j) = .pair(i)
          cst(j) = .eigen_C(i)
          snt(j) = .eigen_I(i)
-         ang(j) = atan2(.eigen_I(i),.eigen_C(i))*DEGREE_PER_RADIAN
+       ! ang(j) = atan2(.eigen_I(i),.eigen_C(i))*DEGREE_PER_RADIAN
+         ang(j) = .theta_angle(i)
 
       end
 
@@ -6660,8 +6678,8 @@ contains
          c_m(j) = .theta_pop_C(.pair(i))
          cov(j) = .theta_cov_index(i)
          ion(j) = .theta_ion_index(i)
-       ! ang(j) = .theta_angle(i)
-         ang(j) = atan2(.eigen_I(i),.eigen_C(i))*DEGREE_PER_RADIAN
+         ang(j) = .theta_angle(i)
+       ! ang(j) = atan2(.eigen_I(i),.eigen_C(i))*DEGREE_PER_RADIAN
 
           bi(j) = sqrt(cov(j)*cov(j)+ion(j)*ion(j))
 
@@ -6892,6 +6910,10 @@ contains
       tau,cov,ion, bc,bi, zero_cutoff :: REAL
       swap :: BIN
 
+      ! Skip
+      if (.atom(a).is_a_H_atom) return
+      if (.atom(b).is_a_H_atom) return
+
       ! Get indices
       tau = .bond_index(a,b)
       cov =  .cov_index(a,b)
@@ -7088,6 +7110,7 @@ contains
 
    put_theta_AB_pops
    ! Output theta-space A/B populations information
+   ! NOTE: functionality removed ...
       self :: IN
 
       n,i,j,k :: INT
@@ -7151,7 +7174,8 @@ contains
          cpb(j) = .theta_pop_C_B(i)
          cma(j) = .theta_pop_C_A(.pair(i))
          cmb(j) = .theta_pop_C_B(.pair(i))
-         ang(j) = atan2(.theta_ion_index(i),.theta_cov_index(i))*DEGREE_PER_RADIAN
+       ! ang(j) = atan2(.theta_ion_index(i),.theta_cov_index(i))*DEGREE_PER_RADIAN
+         ang(j) = .theta_angle(i)
 
       end
 
