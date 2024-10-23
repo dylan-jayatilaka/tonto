@@ -24,16 +24,16 @@ prefixes_to_ignore = [
     '_audit_creation_method', 
     '_QCr_software_version',
     '_QCr_software_platform',
-    '_QCr_software_build_date',
-    '---',
-    '___',
-    '===' 
+    '_QCr_software_build_date'
     ]
+
+suffixes_to_ignore = [ '---', '___', '===' ]
 
 test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
 
 def is_junk(line):
     return (any(map(line.startswith, prefixes_to_ignore)) or 
+            any(map(line.startswith, suffixes_to_ignore)) or 
             line.strip == '')
 
 
