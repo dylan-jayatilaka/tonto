@@ -1,25 +1,28 @@
 # CMake
-cmake_minimum_required(VERSION 3.6...3.28)
-cmake_policy(SET CMP0110 OLD)
+cmake_minimum_required(VERSION 3.20...3.28)
+cmake_policy(VERSION 3.20)
+
+# Allow arbitrary characters in test names
+cmake_policy(SET CMP0110 NEW)
+
+# Tonto version info and build date
+string(TIMESTAMP VERSION_MAJOR "%y")
+string(TIMESTAMP VERSION_MINOR "%m")
+string(TIMESTAMP VERSION_MINOR_MINOR "%d")
+string(TIMESTAMP TONTO_BUILD_DATE "%Y.%m.%d %H:%M")
+
+# Tonto
+set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
+project(tonto
+    VERSION ${TONTO_VERSION}
+    LANGUAGES Fortran C)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Install where?
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
-# Allow arbitrary characters in test names
-if(CMAKE_VERSION VERSION_GREATER 3.19) 
-cmake_policy(SET CMP0110 NEW)
-endif()
-
-# Tonto version info and build date
-string(TIMESTAMP VERSION_MAJOR "%y")
-string(TIMESTAMP VERSION_MINOR "%m")
-string(TIMESTAMP VERSION_MINOR_MINOR "%d")
-set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
-
 # Tonto speicifics
-string(TIMESTAMP TONTO_BUILD_DATE "%Y-%m-%d %H:%M")
 set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets 
     CACHE PATH "Basis sets directory")
 
@@ -43,11 +46,6 @@ endif()
 
 # Testing?
 enable_testing()
-
-# Tonto
-project(tonto
-    LANGUAGES Fortran C
-    VERSION ${TONTO_VERSION})
 
 # LAPACK
 string(TOUPPER "${CMAKE_BUILD_TYPE}" TEMP)
@@ -460,14 +458,14 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_mat{real}.foo
     ${RUNFILE_DIR}/run_mat{cpx}.foo
     ${RUNFILE_DIR}/run_mp2.foo
-    ${RUNFILE_DIR}/run_mpi_matmul.foo
-    ${RUNFILE_DIR}/run_mpi_pi.foo
+#   ${RUNFILE_DIR}/run_mpi_matmul.foo
+#   ${RUNFILE_DIR}/run_mpi_pi.foo
     ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_rgbi.foo
     ${RUNFILE_DIR}/run_least_squares.foo
-    ${RUNFILE_DIR}/run_mpi_test.foo
+#    ${RUNFILE_DIR}/run_mpi_test.foo
     ${RUNFILE_DIR}/run_textfile.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
@@ -531,15 +529,15 @@ add_executable(run_shell2        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
 add_executable(run_mat_cpx       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_cpx.F90)
 add_executable(run_mp2           ${CMAKE_CURRENT_BINARY_DIR}/run_mp2.F90)
-add_executable(run_mpi_matmul    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_matmul.F90)
-add_executable(run_mpi_pi        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
+#add_executable(run_mpi_matmul    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_matmul.F90)
+#add_executable(run_mpi_pi        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
 add_executable(run_textfile      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_textfile.F90)
-add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
+#add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
 
 # Link exectables
 target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -556,14 +554,14 @@ target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mpi_pi        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+#target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+#target_link_libraries(run_mpi_pi        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+#target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_textfile      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
@@ -577,7 +575,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 install(TARGETS run_molecule DESTINATION bin)
 install(TARGETS run_har      DESTINATION bin)
 install(TARGETS run_rgbi     DESTINATION bin)
-install(TARGETS run_mpi_test DESTINATION bin)
+#install(TARGETS run_mpi_test DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
