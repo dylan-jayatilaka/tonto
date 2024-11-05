@@ -63,7 +63,7 @@ contains
       .n1.destroy
       .n2.destroy
 
-      .bond_index.destroy
+      .bnd_index.destroy
       .cov_index.destroy
       .ion_index.destroy
       .percent_covalency_P.destroy
@@ -147,11 +147,14 @@ contains
    ! Delete all the bond index/bond energy info
       self :: INOUT
 
+      .n1.destroy
+      .n2.destroy
+
       .percent_covalency_A.destroy
       .percent_covalency_P.destroy
       .ion_index.destroy
       .cov_index.destroy
-      .bond_index.destroy
+      .bnd_index.destroy
 
       .E1_cov.destroy
       .E1_ion.destroy
@@ -537,12 +540,53 @@ contains
 !  ===================
 
    is_homoleptic result (res) ::: pure
-   ! Returns TRUE if the calculation data is "homoleptic" or not
-   ! i.e. involving groups of atoms
+   ! Returns TRUE if the calculation data is "homoleptic"
+   ! i.e. involving groups of atoms without single-atom groups.
       self :: IN
       res :: BIN
 
-      res = .atom_list.deallocated
+      ! This isn't the best test
+      res = .atom_group.dim/=.atom_list.dim
+
+   end
+
+   do_pair(a,b) result (res) ::: private, pure
+   ! Returns TRUE if the bond index calculation should skip 
+   ! the pair of groups (a,b). For calculations which are 
+   ! homoleptic, this always returns FALSE, but for calculations 
+   ! which are defined by an atom_list, this returns TRUE only 
+   ! if .analyze_all_atom_pairs is set to FALSE and the atoms 
+   ! are regarded as bonded according to the .bond_range_factor 
+   ! distance cutoff.
+      self :: IN
+      a,b :: INT, IN
+      res :: BIN
+
+      if (.is_homoleptic) then;
+
+         ! Do all
+         res = TRUE
+
+      else if (.analyze_all_atom_pairs) then
+
+         ! Do all
+         res = TRUE
+
+      else if (.analyze_vdw_atom_pairs) then
+
+         ! Do only vdw pairs
+       ! res = .atom.vdw_bonded(a,b,.bond_range_factor)
+         res = .atom.bonded(a,b,.bond_range_factor+TWO)
+
+      else
+
+         ! Do bonded pairs
+         res = .atom.bonded(a,b,.bond_range_factor)
+
+         ! Do vdw pairs
+         res = res OR .atom.vdw_bonded(a,b,.bond_range_factor)
+
+      end
 
    end
 
@@ -575,11 +619,11 @@ contains
 
       else
 
-         ! Do bonded pairs
+         ! Skip unbonded pairs
          res = NOT .atom.bonded(a,b,.bond_range_factor)
 
-         ! Do vdw pairs too
-         res = res AND NOT .atom.vdw_bonded(a,b)
+         ! Skip non-vdw pairs
+         res = res AND NOT .atom.vdw_bonded(a,b,.bond_range_factor)
 
       end
 
@@ -779,7 +823,9 @@ contains
       end
 
       ! Each atom is a Roby subspace
-      .make_single_atom_groups
+      if (.atom_group.deallocated) then
+         .make_single_atom_groups
+      end
 
       ! Bond orders
       select case (.roby_kind)
@@ -821,54 +867,70 @@ contains
    ENSURE(.atom_group.allocated,"no atom group defined")
 
       n_group,a,b,n_bond_do_H,n_bond_no_H :: INT
-      ind,cov,ion,pccp,pcca :: REAL
+      pop, ind,cov,ion, pccp,pcca :: REAL
       dial :: TEXTFILE@
 
+      ! Initialize
       n_group = .n_group
-
-      ! Populations
-      .make_populations
-      .make_pair_populations
-
-      ! Clean
       .destroy_bond_info
-      .bond_index.create(n_group,n_group)
-      .cov_index.create(n_group,n_group)
-      .ion_index.create(n_group,n_group)
-      .percent_covalency_P.create(n_group,n_group)
-      .percent_covalency_A.create(n_group,n_group)
 
-      ! File name & redirect
+      ! Population of all atoms
+      .atom_ab.to_sequence(1,.atom.dim)
+      .n_all = .population(.atom_ab)
+      .atom_ab.destroy
+
+      ! Populations of groups
+      .n1.create(n_group)
+      do a = 1,n_group
+         .atom_a = .atom_group(a).element
+         .n1(a)  = .population(.atom_a)
+      end
+
+      ! Dial diagrams
       if (.output_theta_info) then
          dial.create("rgbi-dial-figures.tex")
          dial.open_for("writing")
       end
 
-      ! Make bonds for pairs of group
+      ! Clean
+      .n2.create(n_group,n_group); .n2 = ZERO
+      .bnd_index.create(n_group,n_group)
+      .cov_index.create(n_group,n_group)
+      .ion_index.create(n_group,n_group)
+      .percent_covalency_P.create(n_group,n_group)
+      .percent_covalency_A.create(n_group,n_group)
+
+      ! Bonds for pairs of groups
       n_bond_do_H = 0
       n_bond_no_H = 0
       do a = 1,n_group
       do b = a+1,n_group
 
-         if (.skip_pair(a,b)) cycle
+         if (NOT .do_pair(a,b)) cycle
 
+         ! Atom groups
          .atom_a  = .atom_group(a).element
          .atom_b  = .atom_group(b).element
          .atom_ab = [.atom_a, .atom_b]
 
+         ! Pair populations !!!!!!!!
+         pop = .population(.atom_ab)
+         .n2(a,b) = pop
+         .n2(b,a) = pop
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!
+
          !!!!!!!!!!!!!!!!
          .make_theta_info
+         ind = .gould_bond_index(cov,ion,pccp,pcca)
          !!!!!!!!!!!!!!!!
 
-         ind = .gould_bond_index(cov,ion,pccp,pcca)
-
-         .bond_index(a,b)          =  ind
+         .bnd_index(a,b)           =  ind
          .cov_index(a,b)           =  cov
          .ion_index(a,b)           =  ion
          .percent_covalency_P(a,b) =  pccp
          .percent_covalency_A(a,b) =  pcca
 
-         .bond_index(b,a)          =  ind
+         .bnd_index(b,a)           =  ind
          .cov_index(b,a)           =  cov
          .ion_index(b,a)           = -ion
          .percent_covalency_P(b,a) =  pccp
@@ -928,7 +990,7 @@ contains
 
       ! Clean
       .destroy_bond_info
-      .bond_index.create(n_group,n_group)
+      .bnd_index.create(n_group,n_group)
       .cov_index.create(n_group,n_group)
       .ion_index.create(n_group,n_group)
       .percent_covalency_P.create(n_group,n_group)
@@ -946,7 +1008,7 @@ contains
 
          ind = .gould_bond_index(cov,ion,pccp,pcca)
 
-         .bond_index(a,a)          =  ind
+         .bnd_index(a,a)           =  ind
          .cov_index(a,a)           =  cov
          .ion_index(a,a)           =  ion
          .percent_covalency_P(a,a) =  pccp
@@ -2183,7 +2245,7 @@ contains
 !
 !      ! Clean
 !      .destroy_bond_info
-!      .bond_index.create(n_group,n_group)
+!      .bnd_index.create(n_group,n_group)
 !      .cov_index.create(n_group,n_group)
 !      .ion_index.create(n_group,n_group)
 !      .percent_covalency_P.create(n_group,n_group)
@@ -2206,13 +2268,13 @@ contains
 !         
 !         ind = .gould_bond_index(cov,ion,pccp,pcca)
 !
-!         .bond_index(a,b)          =  ind
+!         .bnd_index(a,b)           =  ind
 !         .cov_index(a,b)           =  cov
 !         .ion_index(a,b)           =  ion
 !         .percent_covalency_P(a,b) =  pccp
 !         .percent_covalency_A(a,b) =  pcca
 !
-!         .bond_index(b,a)          =  ind
+!         .bnd_index(b,a)           =  ind
 !         .cov_index(b,a)           =  cov
 !         .ion_index(b,a)           = -ion
 !         .percent_covalency_P(b,a) =  pccp
@@ -3791,23 +3853,25 @@ contains
       stdout.flush
 
       if (.is_homoleptic) then
+
       symbol = .unique_tags
       do i = 1,.n_group
       stdout.show("Atom group "//i.to_str.trim//"            =",symbol(i))
       end
-      end
+      stdout.flush
 
-      if (.atom_list.allocated) then
+      else if (.atom_list.allocated AND NOT .analyze_all_atom_pairs ) then
+
       symbol = .atom.unique_tags(.atom_list)
       stdout.show("Atom list                =",symbol)
-      stdout.show("No. of atoms             =",symbol.dim)
       symbol.destroy
+
+      end
+
+      stdout.show("No. of atoms             =",.atom.dim)
       stdout.show("Analyze all atom pairs?  =",.analyze_all_atom_pairs)
       stdout.show("Analyze VDW atom pairs?  =",.analyze_vdw_atom_pairs)
       stdout.show("Bond range factor /Angs  =",.bond_range_factor.to_units("angstrom"))
-      end
-
-      symbol.destroy
 
       stdout.flush
       stdout.show("Zero angle cutoff /Deg   =",.zero_angle_cutoff.to_units("degree"))
@@ -3824,20 +3888,19 @@ contains
    ENSURE(.n1.allocated,"no atom populations exist")
    ENSURE(.atom.allocated,"no atom data")
 
-      table :: VEC{TABLE_COLUMN}@
+      table   :: VEC{TABLE_COLUMN}@
       symbols :: VEC{STR}@
-      charge, vals :: VEC{REAL}@
-      labels :: VEC{INT}@
-      n_e,f :: INT
+      vals    :: VEC{REAL}@
+      n_e, i  :: INT
 
       ! Redo decimal places
       stdout.save_style
       stdout.set_real_precision(2)
 
       stdout.flush
-      stdout.text("=====================")
-      stdout.text("Roby atom populations")
-      stdout.text("=====================")
+      stdout.text("================")
+      stdout.text("Roby populations")
+      stdout.text("================")
 
       n_e = .atom.no_of_electrons
 
@@ -3847,56 +3910,49 @@ contains
       stdout.show("No. of non-molecular e's  =",n_e-.n_all)
       stdout.flush
 
-      ! Atom or atom-group symbols
-      if (.is_homoleptic) then
-         table.create(3)
-         symbols.create(.n_group)
-         labels.create(.n_group)
-         f = 1
-         labels.to_sequence(f,.n_group)
-         symbols = labels.to_str
-         labels.destroy
-      else
-         table.create(4)
-         symbols = .unique_tags
-      end
-
-      ! Charges
-      charge.create(.n_group)
-      charge = -.n1 + .group_nuclear_charges
-
-      ! Valence electrons
-      if (NOT .is_homoleptic) then
-      vals.create(.n_group)
-      vals = .n1 - ATOM:n_core_electrons(.atom)
-      end
-
-
       ! Table
-      table(1).set_heading("Atom")
-      table(1).set_width_from(.atom.chemical_symbols)
+      symbols.create(.n_group)
+      if (.is_homoleptic) then
+         ! Group atom indices
+         do i = 1,.n_group
+            symbols(i) = .atom(.atom_group(i).element).chemical_formula
+         end
+         table.create(3)
+         table(1).set_heading("Group")
+      else
+         ! Atom symbols
+         symbols = .unique_tags
+         table.create(4)
+         table(1).set_heading("Atom")
+      end
+      table(1).set_width_from(symbols)
       table(1).set_values(symbols)
+      symbols.destroy
+
       table(2).set_heading("No. of")
       table(2).set_subhead("e's")
       table(2).set_values(.n1)
+
+      ! Pop charges
+      vals.create(.n_group)
+      vals = -.n1 + .group_nuclear_charges
       table(3).set_heading("Pop.")
       table(3).set_subhead("charge")
-      table(3).set_values(charge)
+      table(3).set_values(vals)
+      vals.destroy
+
       if (NOT .is_homoleptic) then
-      table(4).set_heading("No. of")
-      table(4).set_subhead("val. e's")
-      table(4).set_values(vals)
+         vals.create(.n_group)
+         vals = .n1 - ATOM:n_core_electrons(.atom)
+         table(4).set_heading("No. of")
+         table(4).set_subhead("val. e's")
+         table(4).set_values(vals)
+         vals.destroy
       end
 
       ! Put table
       table.put(label_rows=FALSE)
 
-      ! Clean
-      if (NOT .is_homoleptic) then
-      vals.destroy
-      end
-      charge.destroy
-      symbols.destroy
 
       ! Unsave
       stdout.unsave_style
@@ -3936,11 +3992,14 @@ contains
    ENSURE(.is_homoleptic,"job is not homoleptic")
    ENSURE(.n_group>1,"must be at least two groups")
 
-      table :: VEC{TABLE_COLUMN}@
-      symbol :: VEC{STR}@
+      table   :: VEC{TABLE_COLUMN}@
+      symbol  :: VEC{STR}@
       g_A,g_B :: VEC{INT}@
-      n_A,n_B,nAB,sAB,cAB,iAB,tAB,pAB,aAB :: VEC{REAL}@
+      n_A,n_B :: VEC{REAL}@
+      rAB,nAB,sAB,cAB,iAB :: VEC{REAL}@
+      tAB,pAB,aAB :: VEC{REAL}@
       n_group, n_pair,i,a,b :: INT
+      distAB :: REAL
 
       n_group = .n_group
 
@@ -3957,44 +4016,50 @@ contains
       stdout.flush
       stdout.text("Bond indices appear only between atom groups.")
       stdout.flush
+
+      if (.is_homoleptic) then
       symbol = .unique_tags
       do i = 1,n_group
       stdout.show("Group "//trim(i.to_str(fmt="i2"))//" = ",symbol(i))
       end
       symbol.destroy
       stdout.flush
+      end
 
       ! Create table
-      table.create(11)
+      table.create(12)
 
       ! Set the table headings
       table( 1).set_heading("Grp")
       table( 1).set_subhead("  A")
       table( 2).set_heading("Grp")
       table( 2).set_subhead("  B")
-      table( 3).set_heading("n_A")
-      table( 3).set_width_from(TEN)
-      table( 4).set_heading("n_B")
+      table( 3).set_heading("min R(AB)")
+      table( 3).set_subheading("/Angs.")
+      table( 3).set_width_from(ONE)
+      table( 4).set_heading("n_A")
       table( 4).set_width_from(TEN)
-      table( 5).set_heading("n_AB")
+      table( 5).set_heading("n_B")
       table( 5).set_width_from(TEN)
-      table( 6).set_heading("s_AB")
+      table( 6).set_heading("n_AB")
       table( 6).set_width_from(TEN)
-      table( 7).set_heading(" Cov.")
-      table( 7).set_subhead("index")
-      table( 7).set_width_from(-TEN)
-      table( 8).set_heading("Ionic")
+      table( 7).set_heading("s_AB")
+      table( 7).set_width_from(TEN)
+      table( 8).set_heading(" Cov.")
       table( 8).set_subhead("index")
       table( 8).set_width_from(-TEN)
-      table( 9).set_heading(" Bond")
+      table( 9).set_heading("Ionic")
       table( 9).set_subhead("index")
-      table( 9).set_width_from(ONE)
-      table(10).set_heading("% Cov")
-      table(10).set_heading("Pythag.")
-      table(10).set_width_from(100d0)
+      table( 9).set_width_from(-TEN)
+      table(10).set_heading(" Bond")
+      table(10).set_subhead("index")
+      table(10).set_width_from(ONE)
       table(11).set_heading("% Cov")
-      table(11).set_heading("Araki")
+      table(11).set_subheading("Pythag.")
       table(11).set_width_from(100d0)
+      table(12).set_heading("% Cov")
+      table(12).set_subheading("Araki")
+      table(12).set_width_from(100d0)
 
       ! Put out the headings
       table.put_headings(label_rows=FALSE,no_flush=TRUE)
@@ -4006,6 +4071,7 @@ contains
       g_B.create(n_pair)
       n_A.create(n_pair)
       n_B.create(n_pair)
+      rAB.create(n_pair)
       nAB.create(n_pair)
       sAB.create(n_pair)
       cAB.create(n_pair)
@@ -4022,11 +4088,13 @@ contains
          g_B(i) = b
          n_A(i) = .n1(a)
          n_B(i) = .n1(b)
+         distAB = .atom.min_bond_distance(.atom_group(a).element,.atom_group(b).element)
+         rAB(i) = distAB*ANGSTROM_PER_BOHR
          nAB(i) = .n2(a,b)
          sAB(i) = .n1(a) + .n1(b) - .n2(a,b)
-         cAB(i) =  .cov_index(a,b)
-         iAB(i) =  .ion_index(a,b)
-         tAB(i) = .bond_index(a,b)
+         cAB(i) = .cov_index(a,b)
+         iAB(i) = .ion_index(a,b)
+         tAB(i) = .bnd_index(a,b)
          pAB(i) = .percent_covalency_P(a,b)
          aAB(i) = .percent_covalency_A(a,b)
       end
@@ -4037,13 +4105,14 @@ contains
       table( 2).set_values(g_B)
       table( 3).set_values(n_A)
       table( 4).set_values(n_B)
-      table( 5).set_values(nAB)
-      table( 6).set_values(sAB)
-      table( 7).set_values(cAB)
-      table( 8).set_values(iAB)
-      table( 9).set_values(tAB)
-      table(10).set_values(pAB)
-      table(11).set_values(aAB)
+      table( 5).set_values(rAB)
+      table( 6).set_values(nAB)
+      table( 7).set_values(sAB)
+      table( 8).set_values(cAB)
+      table( 9).set_values(iAB)
+      table(10).set_values(tAB)
+      table(11).set_values(pAB)
+      table(12).set_values(aAB)
 
       ! Put body
       stdout.flush
@@ -4062,6 +4131,7 @@ contains
       cAB.destroy
       sAB.destroy
       nAB.destroy
+      rAB.destroy
       n_B.destroy
       n_A.destroy
       g_B.destroy
@@ -4153,9 +4223,9 @@ contains
          i = i + 1
          g_A(i) = a
          n_A(i) = .n1(a)
-         cAB(i) =  .cov_index(a,a)
-         iAB(i) =  .ion_index(a,a)
-         tAB(i) = .bond_index(a,a)
+         cAB(i) = .cov_index(a,a)
+         iAB(i) = .ion_index(a,a)
+         tAB(i) = .bnd_index(a,a)
          pAB(i) = .percent_covalency_P(a,a)
          aAB(i) = .percent_covalency_A(a,a)
       end
@@ -4376,9 +4446,9 @@ contains
          forall (i=1:n_bonds)
          nAB(i) = .n2(pair(i,1),pair(i,2))
          sAB(i) = n_A(i) + n_B(i) - nAB(i)
-         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
-         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
-         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         cAB(i) = .cov_index(pair(i,1),pair(i,2))
+         iAB(i) = .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bnd_index(pair(i,1),pair(i,2))
          pAB(i) = .percent_covalency_P(pair(i,1),pair(i,2))
          aAB(i) = .percent_covalency_A(pair(i,1),pair(i,2))
          end
@@ -4589,9 +4659,9 @@ contains
          aAB.create(n_bonds)
 
          do i = 1,n_bonds
-         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
-         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
-         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         cAB(i) = .cov_index(pair(i,1),pair(i,2))
+         iAB(i) = .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bnd_index(pair(i,1),pair(i,2))
          pAB(i) = .percent_covalency_P(pair(i,1),pair(i,2))
          aAB(i) = .percent_covalency_A(pair(i,1),pair(i,2))
          end
@@ -4799,9 +4869,9 @@ contains
          forall (i=1:n_bonds)
          nAB(i) = .n2(pair(i,1),pair(i,2))
          sAB(i) = n_A(i) + n_B(i) - nAB(i)
-         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
-         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
-         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         cAB(i) = .cov_index(pair(i,1),pair(i,2))
+         iAB(i) = .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bnd_index(pair(i,1),pair(i,2))
          pAB(i) = .percent_covalency_P(pair(i,1),pair(i,2))
          aAB(i) = .percent_covalency_A(pair(i,1),pair(i,2))
          end
@@ -4939,9 +5009,9 @@ contains
          aAB.create(n_bonds)
 
          forall (i=1:n_bonds)
-         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
-         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
-         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         cAB(i) = .cov_index(pair(i,1),pair(i,2))
+         iAB(i) = .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bnd_index(pair(i,1),pair(i,2))
          pAB(i) = .percent_covalency_P(pair(i,1),pair(i,2))
          aAB(i) = .percent_covalency_A(pair(i,1),pair(i,2))
          end
@@ -5100,9 +5170,9 @@ contains
          aAB.create(n_bonds)
 
          forall (i=1:n_bonds)
-         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
-         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
-         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         cAB(i) = .cov_index(pair(i,1),pair(i,2))
+         iAB(i) = .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bnd_index(pair(i,1),pair(i,2))
          pAB(i) = .percent_covalency_P(pair(i,1),pair(i,2))
          aAB(i) = .percent_covalency_A(pair(i,1),pair(i,2))
          end
@@ -5157,7 +5227,7 @@ contains
          tAB.create(1)
          aAB.create(1)
 
-         tAB(1) = .bond_index(vdw(1),vdw(2))
+         tAB(1) = .bnd_index(vdw(1),vdw(2))
          aAB(1) = .percent_covalency_A(vdw(1),vdw(2))
 
             ! Print tabele
@@ -5267,9 +5337,9 @@ contains
          aAB.create(n_bonds)
 
          forall (i=1:n_bonds)
-         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
-         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
-         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+         cAB(i) = .cov_index(pair(i,1),pair(i,2))
+         iAB(i) = .ion_index(pair(i,1),pair(i,2))
+         tAB(i) = .bnd_index(pair(i,1),pair(i,2))
          pAB(i) = .percent_covalency_P(pair(i,1),pair(i,2))
          aAB(i) = .percent_covalency_A(pair(i,1),pair(i,2))
          end
@@ -5448,9 +5518,9 @@ contains
 !         tAB.create(n_bonds)
 !
 !         forall (i=1:n_bonds)
-!         cAB(i) =  .cov_index(pair(i,1),pair(i,2))
-!         iAB(i) =  .ion_index(pair(i,1),pair(i,2))
-!         tAB(i) = .bond_index(pair(i,1),pair(i,2))
+!         cAB(i) = .cov_index(pair(i,1),pair(i,2))
+!         iAB(i) = .ion_index(pair(i,1),pair(i,2))
+!         tAB(i) = .bnd_index(pair(i,1),pair(i,2))
 !         end
 !
 !         ! Set table data
@@ -6806,9 +6876,9 @@ contains
       swap :: BIN
 
       ! Get indices
-      tau = .bond_index(a,b)
-      cov =  .cov_index(a,b)
-      ion =  .ion_index(a,b)
+      tau = .bnd_index(a,b)
+      cov = .cov_index(a,b)
+      ion = .ion_index(a,b)
 
       ! Swap?
       swap = FALSE
@@ -6915,9 +6985,9 @@ contains
       if (.atom(b).is_a_H_atom) return
 
       ! Get indices
-      tau = .bond_index(a,b)
-      cov =  .cov_index(a,b)
-      ion =  .ion_index(a,b)
+      tau = .bnd_index(a,b)
+      cov = .cov_index(a,b)
+      ion = .ion_index(a,b)
 
       ! Swap?
       swap = FALSE
