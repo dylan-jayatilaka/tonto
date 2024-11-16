@@ -3,8 +3,7 @@
 
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
 
-If you are a workshop attendee, the instructions are [here](https://drive.google.com/file/d/1KM5QbKsxQxHK0yKW2Eg-PBgLnc_MuqMS/view?usp=drive_link).
-Please proceed to install the software.
+If you are a workshop attendee, the lab folder and instructions are [here](https://drive.google.com/drive/folders/17OWncmSsFbKAlW8mZb9EKzJuW0GAjykG).
 
 ## 1. Get ready ...
 
