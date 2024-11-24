@@ -251,8 +251,9 @@ set(FOO_SRC
     ${FOO_DIR}/crystal.foo
     ${FOO_DIR}/crystal23.foo
     ${FOO_DIR}/spherical_harmonic.foo
-    ${FOO_DIR}/table_column.foo
     ${FOO_DIR}/t_tensor.foo
+    ${FOO_DIR}/table_column.foo
+    ${FOO_DIR}/td_scf.foo
     ${FOO_DIR}/atom_group.foo
     ${FOO_DIR}/vec{atom_group}.foo
     ${FOO_DIR}/vec{atom}.foo
@@ -408,6 +409,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/time.F90
     ${CMAKE_CURRENT_BINARY_DIR}/types.F90
     ${CMAKE_CURRENT_BINARY_DIR}/t_tensor.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/td_scf.F90
     ${CMAKE_CURRENT_BINARY_DIR}/unit_cell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_atom_group.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_atom.F90
