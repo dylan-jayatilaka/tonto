@@ -160,7 +160,8 @@ contains
    end
 
    create(name) ::: leaky
-   ! Create a textfile, and optionally set the name. Does not open the file.
+   ! Create a textfile, and optionally set the name. 
+   ! Does not open the file.
       self :: allocatable, OUT
       name :: STR, IN
 
@@ -168,9 +169,6 @@ contains
 
       ! Set the name
       .set_name(name)
-
-      ! Get ready to write
-      .clear_and_put_margin ! <<< IMPURE
 
    end
 
@@ -345,17 +343,22 @@ contains
       ! Set no of lines in the file & rewind
       .set_no_of_lines
 
+      ! Slurp whole file once-and-for-all
+
    end
 
    open_for_write ::: private
    ! Open the output file for writing
       self :: INOUT
 
-   ENSURE(.internal.deallocated,"no need to open an internal file")
+   ENSURE(.internal.deallocated,"why is internal file allocated?")
       
       if (.exists) then; .open_old_file_for_write
       else;              .open_new_file_for_write
       end
+
+      ! Get ready to write
+      .clear_and_put_margin 
 
    end
 
@@ -363,8 +366,8 @@ contains
    ! Open an old output file for writing
       self :: INOUT
 
-   DIE_IF(NOT .exists, "not an existing file!")
-   ENSURE(.internal.deallocated,"no need to open an internal file")
+   ENSURE(.exists, "not an existing file!")
+   ENSURE(.internal.deallocated,"why is internal file allocated?")
 
       .action = "write"
 
@@ -384,16 +387,14 @@ contains
       PARALLEL_BROADCAST(.IO_status,tonto.master_processor)
       DIE_IF(.IO_status/=0,"error opening old file: "//trim(.name))
 
-      .clear_and_put_margin
-
    end
 
    open_new_file_for_write ::: private
    ! Open an new output file for writing
       self :: INOUT
 
-   DIE_IF(.exists, "output file exists!")
-   ENSURE(.internal.deallocated,"no need to open an internal file")
+   ENSURE(NOT .exists, "output file exists!")
+   ENSURE(.internal.deallocated,"why is internal file allocated?")
 
       .action = "write"
 
@@ -506,7 +507,6 @@ contains
       if (IO_IS_ALLOWED) then
          l = 0
          do
-            line = " "
             read(.unit,fmt="(a)",iostat=.IO_status) line
             l = l + 1
             if (.IO_status/=0) exit
@@ -868,11 +868,11 @@ contains
 
    end
 
-   at_end_of_file result (res)
-   ! Read a line into the buffer from the input file and see if it is
-   ! at the end of file. This is an explicit test, not just a viewing
-   ! of ".IO_status".  NOTE: If all lines to the end of file are
-   ! empty, then the result is also true.
+   at_EOF result (res)
+   ! Read a *non empty* line into the buffer from 
+   ! the file and see if it is at the end of file. 
+   ! This is an explicit test for EOF, not just a 
+   ! viewing of ".IO_status".  
       self :: INOUT
       res :: BIN
 
@@ -889,7 +889,7 @@ contains
       .read(word)
 
       ! Is it the end of file?
-      res = .end_of_file
+      res = .IO_status/=0
 
       ! Reset .IO_status and move back
       .IO_status = 0
@@ -900,18 +900,9 @@ contains
 
    end
 
-   end_of_file result (res) ::: pure
-   ! See if .IO_status/=0, indicating the end of file has been found.
-      self :: IN
-      res :: BIN
-
-      res = .IO_status/=0
-
-   end
-
    reverted result (res) ::: pure
-   ! See if .IO_status/=0, indicating an internal file has ended
-   ! i.e. a soft ending).
+   ! See if .IO_status/=0, indicating an internal file 
+   ! has ended i.e. a soft ending.
       self :: IN
       res :: BIN
 
@@ -934,13 +925,12 @@ contains
    end
 
    read_line_internal ::: private
-   ! Read a line into the buffer from the internal file. If the file
-   ! ends, this routine dies, UNLESS (1) .ignore_EOF is set,
-   ! in which case another succesive failure to read a line will
-   ! generate an error (this prevents infinite read loops, and is also
-   ! useful for testing whether at the end of a file), OR (2) there is
-   ! a .saved file, in which case the current file reverts to the
-   ! saved file, and an attempt is made to read from that saved file.
+   ! Read line into buffer from the *internal* file. 
+   ! If the file ends, this routine dies, UNLESS 
+   ! .ignore_EOF is set, in which case another succesive 
+   ! failure to read a line will generate an error (this 
+   ! prevents infinite read loops, and is also useful 
+   ! for testing whether at the end of a file).
       self :: INOUT
 
    ENSURE(.internal.allocated,"no internal file")
@@ -963,30 +953,24 @@ contains
          ! At end of file.
          .IO_status = 1
          if (.ignore_EOF) then
-            ! Next time don't ignore eof
+            ! Next time don't ignore EOF
             .ignore_EOF = FALSE
          else
             ! WTF?
-            .read_line_bad_eof
+            .read_line_bad_EOF
          end
 
       end
 
-      ! Update
-      .update_system_info
-
    end
 
    read_line_external ::: private
-   ! Read a line into the buffer from the input file. If the file
-   ! ends, this routine dies, UNLESS
-   ! (1) .ignore_EOF is set, in which case another succesive
-   !     failure to read a line will generate an error (this prevents
-   !     infinite read loops, and is also useful for testing whether
-   !     at the end of a file), OR
-   ! (2) there is a .saved file, in which case the current file
-   !     reverts to the saved file, and an attempt is made to read
-   !     that saved file.
+   ! Read line into buffer from an *external* disk file.  
+   ! If the file ends, this routine dies, UNLESS 
+   ! .ignore_EOF is set, in which case another succesive 
+   ! failure to read a line will generate an error (this 
+   ! prevents infinite read loops, and is also useful 
+   ! for testing whether at the end of a file).
       self :: INOUT
 
    ENSURE(.is_open,"file is not open")
@@ -1030,7 +1014,7 @@ contains
          else
 
             ! Unexpected EOF
-            .read_line_bad_eof
+            .read_line_bad_EOF
 
          end
 
@@ -1041,12 +1025,9 @@ contains
 
       end
 
-      ! Update
-      .update_system_info
-
    end
 
-   read_line_bad_eof ::: private
+   read_line_bad_EOF ::: private
    ! Reading a line encountered an unexpected EOF.
       self :: IN
 
@@ -1057,39 +1038,41 @@ contains
    end
 
    update_line ::: private
-   ! Get the next non-exhausted line if the current one is
-   ! exhausted---and in this case, the buffer pointer is positioned
-   ! before the first line item.  This routine performs a reversion if
-   ! there is a .saved file.
+   ! Get the next non-exhausted line if the current 
+   ! one is exhausted of tokens. If there is no EOF
+   ! the buffer pointer is positioned before the 
+   ! first item on the new line. 
+      self :: INOUT
 
       do
 
          ! Any items to read?
-         if (.buffer.not_exhausted) exit
+         if (NOT .buffer.exhausted) exit
 
-         ! No items: read new line
+         ! No? Then read a new line
          .read_line
 
          ! Error: no more lines to read
-         if (.end_of_file) exit
+         if (.IO_status/=0) exit
 
       end
 
    end
 
    revert_line ::: private
-   ! Revert back to the previous non-exhausted line in the input file
-   ! if the current buffer pointer is before the first item; and in
-   ! this case, the buffer pointer is repositioned *after* the last
-   ! line item.
+   ! Revert back to the previous non-empty line 
+   ! in the input file (if the current buffer 
+   ! pointer is before the first item). And in
+   ! this case, the buffer pointer is positioned 
+   ! *after* the last line item.
 
       ! Any previous line items?
-      if (.next_line_item>1) return
+      if (.buffer.next_item_index>1) return
 
       ! No previous items: back to non-blank line
       do
          .backspace_line
-         if (.buffer.not_exhausted) exit
+         if (NOT .buffer.exhausted) exit
       end
 
       ! Move *after* last item on non-blank line
@@ -1265,7 +1248,7 @@ contains
    ! and read it into the buffer. Set .record to the
    ! last processed record.
       self :: INOUT
-      rec :: INT, IN
+      rec  :: INT, IN
 
    ENSURE(rec>=0,"record number must be non-negative")
    ENSURE(rec<=size(.internal),"record outside file range")
@@ -1365,23 +1348,23 @@ contains
 !  Consider slurping whole file into memory?
 
    look_for_item(item,from,until,end_tokens,exact_match,head_match,return_cursor,found)
-   ! Scan through the file for an "item". If present:
-   ! . Starting at line "from"  inclusive
-   ! . Ending at line "until" inclusive
-   ! . Ending at any token which *begins* with "end_tokens"
-   ! . With "item" matching exactly, if "exact_match" is TRUE
-   ! . With "item" head-matching,    if "head_match" is TRUE
-   ! . Return cursor to orginal line, if "return_cursor" is TRUE
-   ! . Return without error, with "found" TRUE if "item" was found
-      self  :: INOUT
-      item  :: STR, IN
-      from  :: INT, IN, optional
-      until :: INT, IN, optional
-      end_tokens  :: VEC{STR}, IN, optional
-      exact_match :: BIN, IN, optional
-      head_match  :: BIN, IN, optional
-      return_cursor :: BIN, IN, optional
-      found :: BIN, OUT, optional
+   ! Scan through the file for an "item", optionally:
+   ! . Starting at line "from", inclusive
+   ! . Ending   at line "until" inclusive
+   ! . Ending   at any token staring with "end_tokens"
+   ! . With "item" matching exactly (if "exact_match" is TRUE)
+   ! . With "item" head-matching    (if "head_match" is TRUE)
+   ! . Return cursor to start line  (if "return_cursor" is TRUE)
+   ! . Return without error with "found" TRUE (if "item" found)
+      self          :: INOUT
+      item          :: STR, IN
+      from          :: INT, optional, IN
+      until         :: INT, optional, IN
+      end_tokens    :: VEC{STR}, optional, IN
+      exact_match   :: BIN, optional, IN
+      head_match    :: BIN, optional, IN
+      return_cursor :: BIN, optional, IN
+      found         :: BIN, optional, OUT
 
       start_record :: INT
       word :: STR
@@ -1417,8 +1400,8 @@ contains
       .ignore_EOF = TRUE
       fnd = FALSE
 
-      ! Loop over file lines
-      if (NOT .end_of_file) then
+      ! Loop over file lines (if all OK)
+      if (.IO_status==0) then
 
         ! Now do the search here ...
         line_search: do
@@ -1473,7 +1456,7 @@ contains
 
            .read_line
 
-           if (.end_of_file) exit line_search
+           if (.IO_status/=0) exit line_search
 
         end do line_search
 
@@ -1495,14 +1478,15 @@ contains
    ! . With "item" head-matching,    if "head_match" is TRUE
    ! . Return cursor to orginal line, if "return_cursor" is TRUE
    ! . Return without error, with "found" TRUE if "item" was found
-      item  :: STR, IN
-      from  :: INT, IN, optional
-      until :: INT, IN, optional
-      end_tokens  :: VEC{STR}, IN, optional
-      exact_match :: BIN, IN, optional
-      head_match  :: BIN, IN, optional
-      return_cursor :: BIN, IN, optional
-      found :: BIN, OUT, optional
+      self          :: INOUT
+      item          :: STR, IN
+      from          :: INT, optional, IN
+      until         :: INT, optional, IN
+      end_tokens    :: VEC{STR}, optional, IN
+      exact_match   :: BIN, optional, IN
+      head_match    :: BIN, optional, IN
+      return_cursor :: BIN, optional, IN
+      found         :: BIN, optional, OUT
 
       start_record,end_record :: INT
       word :: STR
@@ -1538,7 +1522,7 @@ contains
       .ignore_EOF = TRUE
       fnd = FALSE
 
-      if (NOT .end_of_file) then
+      if (.IO_status==0) then
 
         .move_to_last_item_on_line
 
@@ -1617,14 +1601,15 @@ contains
    ! . With "item" head-matching,    if "head_match" is TRUE
    ! . Return cursor to orginal line, if "return_cursor" is TRUE
    ! . Return without error, with "found" TRUE if "item" was found
-      item  :: VEC{STR}, IN
-      from  :: INT, IN, optional
-      until :: INT, IN, optional
-      end_tokens  :: VEC{STR}, IN, optional
-      exact_match :: BIN, IN, optional
-      head_match  :: BIN, IN, optional
-      return_cursor :: BIN, IN, optional
-      found :: BIN, OUT, optional
+      self          :: INOUT
+      item          :: VEC{STR}, IN
+      from          :: INT, optional, IN
+      until         :: INT, optional, IN
+      end_tokens    :: VEC{STR}, optional, IN
+      exact_match   :: BIN, optional, IN
+      head_match    :: BIN, optional, IN
+      return_cursor :: BIN, optional, IN
+      found         :: BIN, optional, OUT
 
       start_record :: INT
       word :: STR
@@ -1660,7 +1645,7 @@ contains
       .ignore_EOF = TRUE
       fnd = FALSE
 
-      if (NOT .end_of_file) then
+      if (.IO_status==0) then
 
          line_search: do
 
@@ -1727,7 +1712,7 @@ contains
 
             .read_line
 
-            if (.end_of_file) exit line_search
+            if (.IO_status/=0) exit line_search
 
          end do line_search
 
@@ -1741,22 +1726,30 @@ contains
    end
 
    look_for(item,from,until,first,found)
-   ! Scans through the file for a line which includes string "item".  If there,
-   ! the file record is left at the first line at which the match occured.  If
-   ! no match is found, the file is rewound to the initial line before the
-   ! search.  If "from" is present then it is used as the start line for the
-   ! search, and if "item" is not found the file record is returned to that
-   ! line.  If "until" is present then matches to these tokens are used to
-   ! indicate the end of search condition for "item". If "first" is present and
-   ! TRUE, then the item is matched only if it is the first non-blank token in
-   ! the input, and likewise the search is terminated only when the "until"
-   ! tokens are the first characters in the input. If "found" is present, it is
-   ! set TRUE when the item is found, else FALSE.
-      item :: STR, IN
-      from :: INT, IN, optional
-      until :: VEC{STR}, IN, optional
-      first :: BIN, IN, optional
-      found :: BIN, OUT, optional
+   ! Scans backward through the file for a line which 
+   ! includes string "item". 
+   ! - If there, the file buffer is left at the first 
+   !   line at which the match occured. 
+   ! - If not there, the file is rewound to the 
+   !   original line before the search.
+   ! - If "from" is present then it is used as the 
+   !   start line for the search. 
+   ! - If "until" is present then matches to these
+   !   strings indicate the end of search condition 
+   !   for "item". 
+   ! - If "first" is present and TRUE, then the item 
+   !   is matched only if it is the first non-blank 
+   !   token in the input; and likewise the search 
+   !   is terminated only when the "until" tokens are 
+   !   the first characters in the input. 
+   ! - If "found" is present, it is set TRUE when the 
+   !   item is found, else FALSE.
+      self  :: INOUT
+      item  :: STR, IN
+      from  :: INT, optional, IN
+      until :: VEC{STR}, optional, IN
+      first :: BIN, optional, IN
+      found :: BIN, optional, OUT
 
       start_record :: INT
       fnd :: BIN
@@ -1791,7 +1784,7 @@ contains
 
          .read_line
 
-         if (.end_of_file) then
+         if (.IO_status/=0) then
             .move_to_record(start_record)
             fnd = FALSE
             exit line_search
@@ -1806,22 +1799,30 @@ contains
    end
 
    look_backwards_for(item,from,until,first,found)
-   ! Scans backward through the file for a line which includes string "item".
-   ! If there, the file record is left at the first line at which the match
-   ! occured.  If no match is found, the file is rewound to the initial line
-   ! before the search.  If "from" is present then it is used as the start line
-   ! for the search, and if "item" is not found the file record is returned to
-   ! that line.  If "until" is present then matches to these tokens are used to
-   ! indicate the end of search condition for "item". If "first" is present and
-   ! TRUE, then the item is matched only if it is the first non-blank token in
-   ! the input, and likewise the search is terminated only when the "until"
-   ! tokens are the first characters in the input. If "found" is present, it is
-   ! set TRUE when the item is found, else FALSE.
-      item :: STR, IN
-      from :: INT, IN, optional
-      until :: VEC{STR}, IN, optional
-      first :: BIN, IN, optional
-      found :: BIN, OUT, optional
+   ! Scans backward through the file for a line which 
+   ! includes string "item". 
+   ! - If there, the file buffer is left at the first 
+   !   line at which the match occured. 
+   ! - If not there, the file is rewound to the 
+   !   original line before the search.
+   ! - If "from" is present then it is used as the 
+   !   start line for the search. 
+   ! - If "until" is present then matches to these
+   !   strings indicate the end of search condition 
+   !   for "item". 
+   ! - If "first" is present and TRUE, then the item 
+   !   is matched only if it is the first non-blank 
+   !   token in the input; and likewise the search 
+   !   is terminated only when the "until" tokens are 
+   !   the first characters in the input. 
+   ! - If "found" is present, it is set TRUE when the 
+   !   item is found, else FALSE.
+      self  :: INOUT
+      item  :: STR, IN
+      from  :: INT, optional, IN
+      until :: VEC{STR}, optional, IN
+      first :: BIN, optional, IN
+      found :: BIN, optional, OUT
 
       start_record :: INT
       fnd :: BIN
@@ -1873,8 +1874,10 @@ contains
    end
 
    has_string(search) result (res)
-   ! Returns TRUE if the file contains string "search". The file is returned
-   ! to its original line number after this routine.
+   ! Returns TRUE if the file contains string "search". 
+   ! The file is returned to its original line number 
+   ! after this routine.
+      self   :: INOUT
       search :: STR, IN
 
       res :: BIN
@@ -1890,14 +1893,14 @@ contains
 
       do
 
-         if (search.is_included_in(.buffer.string)) then
+         if (index(.buffer.string,search)/=0) then
             found = TRUE
             exit
          end
 
          .read_line
 
-         if (.end_of_file) exit
+         if (.IO_status/=0) exit
 
       end
 
@@ -1914,11 +1917,11 @@ contains
 !  ====================
 
    next_line_item result (res) ::: pure
-   ! Return the index of the next item to be processed on the line
+   ! Return index of the next line item to be processed 
       self :: IN
-      res :: INT
+      res  :: INT
 
-      res = .buffer.next_item_number
+      res = .buffer.next_item_index
 
    end
 
@@ -1994,14 +1997,14 @@ contains
 
    end
 
-   buffer_exhausted result (res) ::: pure
-   ! Return whether the buffer is exhausted
-     self :: IN
-     res :: BIN
-
-     res = .buffer.exhausted
-
-   end
+!   buffer_exhausted result (res) ::: pure
+!   ! Return whether the buffer is exhausted
+!     self :: IN
+!     res :: BIN
+!
+!     res = .buffer.exhausted
+!
+!   end
 
 !  ============
 !  Read an item
@@ -2188,7 +2191,7 @@ contains
         value.convert_from(.style.default_units)
 
       ! Check for explicit units
-      if (NOT .at_end_of_file) then
+      if (NOT .at_EOF) then
 
         ! Is there a known unit next?
         .read(units)
@@ -2244,7 +2247,7 @@ contains
       end
 
       ! Check for explicit units
-      if (NOT .at_end_of_file) then
+      if (NOT .at_EOF) then
 
         ! Is there a known unit next?
         .read(units)
@@ -2342,7 +2345,7 @@ contains
          v.convert_from(.style.default_units)
 
       ! Check for explicit units
-      if (NOT .at_end_of_file) then
+      if (NOT .at_EOF) then
 
         ! Is there a known unit next?
         .read(units)
@@ -2399,7 +2402,7 @@ contains
       end
 
       ! Check for explicit units
-      if (NOT .at_end_of_file) then
+      if (NOT .at_EOF) then
 
         ! Is there a known unit next?
         .read(units)
@@ -2449,7 +2452,7 @@ contains
 
       ! Store original pos
       line = .line_number
-      item = .next_line_item
+      item = .buffer.next_item_index
 
       ! Read open brace
       .read(word)
@@ -2725,7 +2728,7 @@ contains
 !         v.convert_from(.style.default_units)
 !
 !      ! Check for explicit units
-!      if (NOT .at_end_of_file) then
+!      if (NOT .at_EOF) then
 !
 !        ! Is there a known unit next?
 !        .read(units)
@@ -2777,7 +2780,7 @@ contains
       end
 
       ! Check for explicit units
-      if (NOT .at_end_of_file) then
+      if (NOT .at_EOF) then
 
         ! Is there a known unit next?
         .read(units)
@@ -2973,8 +2976,8 @@ contains
       dim1,dim2 :: INT
 
       ! Store initial position
-      item = .next_line_item
       line = .line_number
+      item = .buffer.next_item_index
 
       ! Opening brace?
       .read(word)
@@ -3188,7 +3191,7 @@ contains
 
       ! Store original pos
       line = .line_number
-      item = .next_line_item
+      item = .buffer.next_item_index
 
       ! Read opening brace
       .read(word)
