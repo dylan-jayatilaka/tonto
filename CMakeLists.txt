@@ -253,7 +253,7 @@ set(FOO_SRC
     ${FOO_DIR}/spherical_harmonic.foo
     ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/table_column.foo
-    ${FOO_DIR}/td_scf.foo
+    ${FOO_DIR}/td_data.foo
     ${FOO_DIR}/atom_group.foo
     ${FOO_DIR}/vec{atom_group}.foo
     ${FOO_DIR}/vec{atom}.foo
@@ -292,6 +292,7 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.prop.foo
     ${FOO_DIR}/molecule.plot.foo
     ${FOO_DIR}/molecule.cp.foo
+    ${FOO_DIR}/molecule.td.foo
     ${FOO_DIR}/molecule.har.foo
     ${FOO_DIR}/molecule.misc.foo
     ${FOO_DIR}/molecule.main.foo
@@ -375,6 +376,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.prop.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.plot.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.cp.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.td.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.har.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.misc.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.main.F90
@@ -409,7 +411,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/time.F90
     ${CMAKE_CURRENT_BINARY_DIR}/types.F90
     ${CMAKE_CURRENT_BINARY_DIR}/t_tensor.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/td_scf.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/td_data.F90
     ${CMAKE_CURRENT_BINARY_DIR}/unit_cell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_atom_group.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_atom.F90

@@ -1,0 +1,346 @@
+!==================================================================
+!
+! MOLECULE.TD: Time-dependent procedures
+!
+! Copyright (C) Dylan Jayatilaka (2024)
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!==================================================================
+
+
+module MOLECULE.TD
+
+   implicit none
+
+contains
+
+!  ====
+!  CPHF
+!  ====
+
+   make_perturbed_densities(D,U,MO,no) ::: leaky. PURE
+   ! Make the perturbed densities "D" from the "U" matrices by back
+   ! transforming with the "MO" from occupied orbital "no".
+      self :: IN
+      D :: MAT3{REAL}, OUT
+      U :: MAT3{REAL}, IN
+      MO :: MAT{REAL}, IN
+      no :: INT, optional, IN
+
+   ENSURE(D.dim3==U.dim3,"incompatible D and U")
+   ENSURE(D.dim1==.n_bf AND D.dim2==.n_bf,"wrong size, D")
+   ENSURE(MO.is_square AND MO.dim1==.n_bf,"wrong size, MO")
+
+      i :: INT
+
+      if (present(no)) then
+
+         ENSURE(no>0,"n_occ must be positive")
+         ENSURE(no<=.n_bf,"n_occ must not exceed n_bf")
+         do i = 1,U.dim3
+            U(:,:,i).back_transform_to(D(:,:,i),MO(:,no+1:),MO(:,1:no))
+            D(:,:,i).symmetrize
+         end
+
+      else
+
+         do i = 1,U.dim3
+            U(:,:,i).back_transform_to(D(:,:,i),MO)
+            D(:,:,i).symmetrize
+         end
+
+      end
+
+      D = FOUR*D
+
+   end
+
+   set_CPHF_DIIS ::: leaky, PURE
+   ! Set up the DIIS archives for a CPHF calculations.
+      self :: INOUT
+
+   ENSURE(.scfdata.allocated,"no scf data")
+
+      tol :: REAL
+
+      ! Set up DIIS
+      tol = .scfdata.SCF_DIIS.convergence_tolerance
+      .scfdata.SCF_DIIS.set_defaults
+      .scfdata.SCF_DIIS.set_save_iteration(0)
+      .scfdata.SCF_DIIS.set_start_iteration(2)
+      .scfdata.SCF_DIIS.set_convergence_tolerance(tol)
+
+   end
+
+   solve_CPHF_equations(U,rhs) ::: private
+   ! Solve the coupled-perturbed Hartree-Fock (CPHF) equations. The
+   ! result is the derivative MO coefficients "U" (virtual-occupied
+   ! block) and "rhs" is the right hand side of the CPHF equations
+   ! (virtual-occupied block). The convergence tolerance and the
+   ! number of iterations are controlled via the scfdata block, since
+   ! this is a self consistent procedure.
+      self :: INOUT
+      U    :: MAT3{REAL}, INOUT
+      rhs  :: MAT3{REAL}, IN
+
+   ENSURE(.scfdata.allocated,"no scf data")
+   ENSURE(.MOs.allocated,"no MOs")
+   ENSURE(.MOs.r.allocated,"no restricted MOs")
+   ENSURE(U.dim1==(.n_bf-.n_a),  "wrong size, U, dimension 1")
+   ENSURE(U.dim2==.n_a,          "wrong size, U, dimension 2")
+   ENSURE(rhs.dim1==(.n_bf-.n_a),"wrong size, rhs, dimension 1")
+   ENSURE(rhs.dim2==.n_a,        "wrong size, rhs dimension 2")
+   ENSURE(U.dim3==rhs.dim3,"incompatible sizes, U and rhs")
+
+      Ev, Eo  :: VEC{REAL}@
+      par,err :: VEC{REAL}@
+      U_vo       :: MAT3{REAL}@
+      U_ao,J,K,W :: MAT{REAL}@
+      MOv, MOo   :: MAT{REAL}@
+      no,nv,n_pert,n_vo, n :: INT
+      tol0,test,delta :: REAL
+      use_DIIS :: BIN
+      arch :: ARCHIVE
+
+      ! Dimensions
+      no = .n_a
+      nv = .n_bf - .n_a
+      n_vo   = nv*no
+      n_pert = U.dim3
+      tol0   = TOL(6)
+
+      ! Assign MO's, orbital ranges
+      MOv = .MOs.r(:,no+1:  )
+      MOo = .MOs.r(:,   1:no) 
+      Ev  = .MO_energies.r(no+1:  )
+      Eo  = .MO_energies.r(   1:no)
+
+      ! Read/initialize U's
+      .:initialize_Us(U,rhs,Ev,Eo,tol0)
+
+      ! Allocate temporaries
+      U_vo.create(nv,no,n_pert)
+      U_ao.create(.n_bf,.n_bf)
+      W.create(nv,no)
+      J.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
+      par.create(n_vo)
+      err.create(n_vo)
+
+      ! Use DIIS?
+      use_DIIS = .scfdata.using_CP_DIIS
+
+      ! Set initial convergence data/DIIS
+      .scfdata.update_CP_difference(ZERO)
+      .scfdata.set_DIIS_error(ZERO)
+      if (use_DIIS) .scfdata.reset_CP(n_pert)
+
+      ! Banner & tabular output
+      .scfdata.put_CP_banner
+      .scfdata.put_CP_options
+      .scfdata.set_CP_table
+      .scfdata.put_CP_table_head
+      .scfdata.put_CP_table_body_and_footer
+
+      ! Begin iterations
+      do
+
+         U_vo  = U
+         test  = ZERO
+         delta = ZERO
+
+         ! For each perturbation, update U(:,:,n)
+         do n = 1,n_pert
+
+            ! U(MO) -> U(AO)
+            U(:,:,n).back_transform_to(U_ao,MOv,Moo)
+            U_ao.symmetrize
+
+            ! Make A.U (AO) -> A.U (MO) = W
+            .FOCK:make_r_JK_engine(J,K,U_ao)
+            U_ao = FOUR*J - TWO*K
+            .BASE:remove_dependence_from_r(U_ao)
+            U_ao.change_basis_to(W,MOv,Moo)
+
+            ! DIIS extrapolation on AU (MO)
+            if (use_DIIS) then
+               par = reshape(W,[n_vo])
+               W.plus_difference_product_with(U(:,:,n),Ev,Eo,tol0) ! W <- H
+               err = reshape(W-rhs(:,:,n),[n_vo])                  ! H - rhs
+               .scfdata.CP_DIIS(n).extrapolate(par,err,n_vo)
+               W   = reshape(par,[nv,no])                          ! W <- AU
+               test = max(test,.scfdata.CP_DIIS(n).error_length)
+            end
+
+            ! Update U, U <- (rhs - W)/D
+            W = rhs(:,:,n) - W
+            U(:,:,n) = ZERO
+            U(:,:,n).plus_difference_divisor_with(W,Ev,Eo,tol0)    ! W <- H
+
+         end
+           
+         ! Delta is max |diff|
+         delta = max(delta,maxval(abs(U-U_vo)))
+
+         ! Update data
+         .scfdata.update_iteration
+         .scfdata.update_DIIS_from_CP_DIIS
+         .scfdata.update_CP_difference(delta)
+         .scfdata.SCF_DIIS.set_error_length(test)
+         .scfdata.set_DIIS_error(test)
+
+         ! Put table
+         .scfdata.put_CP_table_body_and_footer(flush=TRUE)
+
+         ! Write archive for restart
+         arch.set(.name,"U_electric_dipole",genre="r")
+         arch.write(U)
+
+         if (.scfdata.SCF_done) exit
+
+      end ! iterative cycle
+
+      ! Clean-up
+      .scfdata.SCF_DIIS.destroy_ptr_part
+      .scfdata.CP_DIIS.destroy
+      err.destroy
+      par.destroy
+      K.destroy
+      J.destroy
+      W.destroy
+      U_ao.destroy
+      U_vo.destroy
+
+   end
+
+   initialize_Us(U,rhs,Ev,Eo,tol0) ::: private
+   ! Initialize the U matrices
+      self :: INOUT
+      U    :: MAT3{REAL}, OUT
+      rhs  :: MAT3{REAL}, IN
+      Ev   :: VEC{REAL}, IN
+      Eo   :: VEC{REAL}, IN
+      tol0 :: REAL, IN
+
+      arch :: ARCHIVE
+      n :: INT
+
+      if (.scfdata.initial_Us=="r") then
+
+         ! Read or calculate initial approximation for U
+         stdout.flush
+         stdout.text("As requested from scfdata, reading U's from disk ...")
+         arch.set(.name,"U_electric_dipole",genre="r")
+         arch.read(U)
+
+      else
+
+         ! Set SOS initial guess
+         U = ZERO
+         do n = 1,U.dim3
+            U(:,:,n).plus_difference_divisor_with(rhs(:,:,n),Ev,Eo,tol0)
+         end
+
+      end
+
+   end
+
+!   make_A_times_U(AU,U) ::: private
+!   ! Make the full A times U matrix in the MO basis
+!      self :: INOUT
+!      AU :: MAT3{REAL}, OUT
+!      U  :: MAT3{REAL}, IN
+!
+!   ENSURE(.scfdata.allocated,"no scf data")
+!   ENSURE(.basis_info_made,"no basis info")
+!   ENSURE(.atom.allocated,"no atom info")
+!   ENSURE(U.dim1==(.n_bf-.n_a),"wrong size, U, dimension 1")
+!   ENSURE(U.dim2==.n_a,"wrong size, rhs, dimension 2")
+!   ENSURE(AU.dim1==.n_bf,"wrong size, AU")
+!   ENSURE(AU.dim2==.n_bf,"wrong size, AU")
+!   ENSURE(U.dim3==AU.dim3,"incompatible sizes, U and AU")
+!
+!      U_ao,J,K :: MAT{REAL}@
+!      MOv, MOo :: MAT{REAL}@
+!      n :: INT
+!
+!      U_ao.create(.n_bf,.n_bf)
+!      J.create(.n_bf,.n_bf)
+!      K.create(.n_bf,.n_bf)
+!
+!      MOv = .MOs.r(:,.n_a+1:)
+!      MOo = .MOs.r(:,:.n_a) 
+!
+!      do n = 1,U.dim3
+!         U(:,:,n).back_transform_to(U_ao,Mov,MOo)
+!         U_ao.symmetrize                   ! U -> AO basis
+!         .FOCK:make_r_JK_direct(J,K,U_ao)  ! A times U (INOUT)
+!         AU(:,:,n) = FOUR*J - TWO*K
+!         AU(:,:,n).change_basis_using(.MOs.r)
+!      end
+!
+!      ! Clean
+!      K.destroy
+!      J.destroy
+!      U_ao.destroy
+!
+!,   end
+
+   add_A_times_U(AU,U) ::: private
+   ! Add the full A matrix times the full U matrix to "AU". "U" is the
+   ! virtual-occupied block of the full U matrix.
+      self :: INOUT
+      AU :: MAT3{REAL}, OUT
+      U  :: MAT3{REAL}, IN
+
+   ENSURE(.scfdata.allocated,"no scf data")
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom info")
+   ENSURE(U.dim1==(.n_bf-.n_a),"wrong size, U, dimension 1")
+   ENSURE(U.dim2==.n_a,"wrong size, rhs, dimension 2")
+   ENSURE(AU.dim1==.n_bf,"wrong size, AU")
+   ENSURE(AU.dim2==.n_bf,"wrong size, AU")
+   ENSURE(U.dim3==AU.dim3,"incompatible sizes, U and AU")
+
+      J,K,W :: MAT{REAL}@
+      MOv, MOo :: MAT{REAL}@
+      n :: INT
+
+
+      J.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
+      W.create(.n_bf,.n_bf)
+
+      MOv = .MOs.r(:,.n_a+1:)
+      MOo = .MOs.r(:,:.n_a) 
+
+      do n = 1,U.dim3
+         U(:,:,n).back_transform_to(W,MOv,MOo)
+         W.symmetrize                  ! U -> AO basis
+         .FOCK:make_r_JK_direct(J,K,W) ! INOUT
+         W = FOUR*J - TWO*K            ! W = A times U
+         W.change_basis_using(.MOs.r)
+         AU(:,:,n) = AU(:,:,n) + W
+      end
+
+      ! Clean
+      W.destroy
+      K.destroy
+      J.destroy
+
+   end
+
+end
