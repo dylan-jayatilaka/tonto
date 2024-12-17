@@ -347,7 +347,7 @@ contains
 !  Davidson solver
 !  ===============
 
-   davidson_solver(A,max_iter,max_keep,n_eig,n_keep,tol,V,eval,evec)
+   test_MGS_QR
    ! Davidson diagonaliser for matrix "A". 
    ! - "n_eig" is the no. of eigenvalues wanted
    ! - "max_keep" the maximum no. of trial Davidson
@@ -359,126 +359,201 @@ contains
    ! - "eval" are the desired eigenvalues
    ! - "evec" are the actual eigenvectors
       self :: INOUT
-      A    :: MAT{REAL}, IN
-      max_iter :: INT, IN
-      max_keep :: INT, IN
-      n_eig    :: INT, IN
-      n_keep   :: INT, OUT
-      tol  :: REAL, IN
-      V    :: MAT{REAL}@
-      eval :: VEC{REAL}@
-      evec :: MAT{REAL}@
 
-      dim, n, i, j :: INT
-      oval,Rv,rlen :: VEC{REAL}@
-      Q, R, best   :: MAT{REAL}@
-      converged    :: BIN
-      norm :: REAL
+      V, Q, R :: MAT{REAL}@
+      dim     :: INT
+      n_keep  :: INT
 
       ! Sizes
-      dim = A.dim1
-      n_keep = n_eig*(max_keep/n_eig) ! i.e 8*50/8 = 48
-
-      ! Old eigenvalues
-      oval.create(n_eig)      
-      oval = ZERO
-
-      ! Length of residue vector
-      rlen.create(n_eig) 
+      dim    = 10 
+      n_keep =  5
 
       ! Number Davidson vectors to keep.
       V.create(dim,n_keep)
 
-      tmp = V
+      ! Initial
+      call random_number(V)
 
-      tmpV.create(dim)
-      w.create(dim)
+      stdout.text("V:")
+      stdout.put(V)
 
-      ! Initial guess: unit vectors
-      V.to_unit_mx
+      Q.create(dim,n_keep)
+      R.create(n_keep,n_keep)
 
-      ! No. of active vectors
-      n = n_eig
+      V.modified_Gram_Schmidt_QR(Q,R)
 
-      ! Test for convergence
-      converged = FALSE
+      stdout.flush
+      stdout.text("========================")
+      stdout.text("modified Gram-Schmidt QR")
+      stdout.text("========================")
+      stdout.flush
 
-      do i = 1, max_iter
+      stdout.text("Q:")
+      stdout.put(Q)
 
-         ! Orthonormalize guess vectors V -> Q
-         R.create(n,n)
-         Q.create(dim,n)
-         V(:,1:n).modified_Gram_Schmidt_QR(Q,R)
+      stdout.text("Q^T Q:")
+      stdout.put(matmul(transpose(Q),Q))
 
-         ! Form subspace reduced Hamiltonian
-         ! R = Q^T A Q
-         A.change_basis_to(R,Q)
+      stdout.text("R:")
+      stdout.put(R)
 
-         ! Diagonalise 
-         eval.create(n)
-         evec.create(n,n)
-         R.diagonalize_by_jacobi(eval,evec)
+      stdout.text("QR - V:")
+      stdout.put(matmul(Q,R) - V)
 
-         ! We don't use this norm for convergence checking 
-         ! as after each subspace collapse the change in 
-         ! norm is essentially zero, but we report it
-         ! nonetheless as during each restart-block it is 
-         ! still a useful measure of convergence.
-         norm = sqrt(sum((eval(1:n_eig)-oval)**2))
-       ! write(iunit,'(1X, A, I3, A, I3, A, ES15.6)') 'Iteration ', i, ', basis size ', n, ', rmsE ', norm
-         oval = eval(1:n_eig)
+      stdout.flush
+      stdout.text("==============")
+      stdout.text("Householder QR")
+      stdout.text("==============")
+      stdout.flush
 
-         ! Finished?
-         converged = all(rlen<tol)
-         if (converged) exit
+      V.Householder_QR(Q,R)
 
-         if (n<n_keep) then
+      stdout.text("Q:")
+      stdout.put(Q)
 
-            ! Grow trial vectors by n_eig
-            do j = 1,n_eig
+      stdout.text("Q^T Q:")
+      stdout.put(matmul(transpose(Q),Q))
 
-               ! Residue vector = (A - eval(j)*I) V R(:,j)
-               ! Storing a diagonal matrix as large as "self" is 
-               ! obviously a bad idea, so we use a tmp vector
-               ! Technically speaking, tmpV is the 'Ritz vector' 
-               ! and w is the residue vector
-               Rv = matmul(R,evec(:,j))
-               Rv = matmul(A,Rv) - eval(j)*Rv
-               rlen(j) = sqrt(sum(Rv*Rv)) 
+      stdout.text("R:")
+      stdout.put(R)
 
-               ! Precondition the residue vector to form the 
-               ! correction vector. If preconditioner = 1, 
-               ! we recover the Lanczos algorithm.
-               val = eval(j) - A(j,j)
-               if (abs(val) < depsilon) then
-                   Rv = Rv/(val+TOL(2))
-               else
-                   Rv = Rv/val
-               end
-               V(:,n+j) = Rv
-            end
-
-            n = n + n_eig
-
-         else
-
-            ! Collapse the subspace into ntrial best guesses 
-            ! and restart iterations. V holds the approximate 
-            ! eigenvectors, T holds the CI coefficients, so 
-            ! one call to gemm gives us the actual guess vectors.
-            write(iunit, '(1X, A)') 'Collapsing subspace...'
-            best.create(dim,n_eig)
-            call dgemm_wrapper('N', 'N', dim, ntrial, maxguess, V, T, best)
-            V = best
-
-            n = n_eig
-
-         end
-
-      end
-
-      if (NOT converged) write(iunit, *) 'Davidson did not converge'
+      stdout.text("QR - V:")
+      stdout.put(matmul(Q,R) - V)
 
    end
+
+!   davidson_solver(A,max_iter,max_keep,n_eig,n_keep,tol,V,eval,evec)
+!   ! Davidson diagonaliser for matrix "A". 
+!   ! - "n_eig" is the no. of eigenvalues wanted
+!   ! - "max_keep" the maximum no. of trial Davidson
+!   !   vector columns storable in memory.
+!   !   It should be much less than A.dim2
+!   ! - "n_keep" the actual no. of trial vectors stored.
+!   ! - "V(1:A.dim1,n_keep)" are the columns of Davidson
+!   !   trial vectors.
+!   ! - "eval" are the desired eigenvalues
+!   ! - "evec" are the actual eigenvectors
+!      self :: INOUT
+!      A    :: MAT{REAL}, IN
+!      max_iter :: INT, IN
+!      max_keep :: INT, IN
+!      n_eig    :: INT, IN
+!      n_keep   :: INT, OUT
+!      tol  :: REAL, IN
+!      V    :: MAT{REAL}@
+!      eval :: VEC{REAL}@
+!      evec :: MAT{REAL}@
+!
+!      dim, n, i, j :: INT
+!      oval,Rv,rlen :: VEC{REAL}@
+!      Q, R, best   :: MAT{REAL}@
+!      converged    :: BIN
+!      norm :: REAL
+!
+!      ! Sizes
+!      dim = A.dim1
+!      n_keep = n_eig*(max_keep/n_eig) ! i.e 8*50/8 = 48
+!
+!      ! Old eigenvalues
+!      oval.create(n_eig)      
+!      oval = ZERO
+!
+!      ! Length of residue vector
+!      rlen.create(n_eig) 
+!
+!      ! Number Davidson vectors to keep.
+!      V.create(dim,n_keep)
+!
+!      tmp = V
+!
+!      tmpV.create(dim)
+!      w.create(dim)
+!
+!      ! Initial guess: unit vectors
+!      V.to_unit_mx
+!
+!      ! No. of active vectors
+!      n = n_eig
+!
+!      ! Test for convergence
+!      converged = FALSE
+!
+!      do i = 1, max_iter
+!
+!         ! Orthonormalize guess vectors V -> Q
+!         R.create(n,n)
+!         Q.create(dim,n)
+!         V(:,1:n).modified_Gram_Schmidt_QR(Q,R)
+!
+!         ! Form subspace reduced Hamiltonian
+!         ! R = Q^T A Q
+!         A.change_basis_to(R,Q)
+!
+!         ! Diagonalise 
+!         eval.create(n)
+!         evec.create(n,n)
+!         R.diagonalize_by_jacobi(eval,evec)
+!
+!         ! We don't use this norm for convergence checking 
+!         ! as after each subspace collapse the change in 
+!         ! norm is essentially zero, but we report it
+!         ! nonetheless as during each restart-block it is 
+!         ! still a useful measure of convergence.
+!         norm = sqrt(sum((eval(1:n_eig)-oval)**2))
+!       ! write(iunit,'(1X, A, I3, A, I3, A, ES15.6)') 'Iteration ', i, ', basis size ', n, ', rmsE ', norm
+!         oval = eval(1:n_eig)
+!
+!         ! Finished?
+!         converged = all(rlen<tol)
+!         if (converged) exit
+!
+!         if (n<n_keep) then
+!
+!            ! Grow trial vectors by n_eig
+!            do j = 1,n_eig
+!
+!               ! Residue vector = (A - eval(j)*I) V R(:,j)
+!               ! Storing a diagonal matrix as large as "self" is 
+!               ! obviously a bad idea, so we use a tmp vector
+!               ! Technically speaking, tmpV is the 'Ritz vector' 
+!               ! and w is the residue vector
+!               Rv = matmul(R,evec(:,j))
+!               Rv = matmul(A,Rv) - eval(j)*Rv
+!               rlen(j) = sqrt(sum(Rv*Rv)) 
+!
+!               ! Precondition the residue vector to form the 
+!               ! correction vector. If preconditioner = 1, 
+!               ! we recover the Lanczos algorithm.
+!               val = eval(j) - A(j,j)
+!               if (abs(val) < depsilon) then
+!                   Rv = Rv/(val+TOL(2))
+!               else
+!                   Rv = Rv/val
+!               end
+!               V(:,n+j) = Rv
+!            end
+!
+!            n = n + n_eig
+!
+!         else
+!
+!            ! Collapse the subspace into ntrial best guesses 
+!            ! and restart iterations. V holds the approximate 
+!            ! eigenvectors, T holds the CI coefficients, so 
+!            ! one call to gemm gives us the actual guess vectors.
+!            write(iunit, '(1X, A)') 'Collapsing subspace...'
+!            best.create(dim,n_eig)
+!            call dgemm_wrapper('N', 'N', dim, ntrial, maxguess, V, T, best)
+!            V = best
+!
+!            n = n_eig
+!
+!         end
+!
+!      end
+!
+!      if (NOT converged) write(iunit, *) 'Davidson did not converge'
+!
+!   end
 
 end
