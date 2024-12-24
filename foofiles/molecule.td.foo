@@ -422,66 +422,63 @@ contains
 
    end
 
-   Davidson_diagonalize(A,n_eig,n_keep,eval,evec,maxit,tolcon)
+   Davidson_diagonalize(A,n_eig,n_keep,eval,evec,maxit,tolcon) ::: selfless
    ! Davidson diagonaliser for matrix "A". 
-   ! - "n_eig"  is the no. of eigenvalues wanted
-   ! - "n_keep" is the no. of trial vectors stored.
-   ! - "V(1:A.dim1,n_keep)" are the columns of Davidson
-   !   trial vectors.
-   ! - "eval" are the desired eigenvalues
-   ! - "evec" are the actual eigenvectors
-   ! - "maxit"  is the maximum number of iterations
-   ! - "tolcon" the tolerance on vectors for convergence
    ! See Crouzeix et al (2006) Inria RR 1353
       self   :: INOUT
       A      :: MAT{REAL}, IN
-      n_eig  :: INT, IN
-      n_keep :: INT, OUT
-      eval   :: VEC{REAL}@
-      evec   :: MAT{REAL}@
-      maxit  :: INT, IN
-      tolcon :: REAL, IN
+      n_eig  :: INT, IN         ! no. of eigenvalues wanted
+      n_keep :: INT, OUT        ! no. of trial vector sets stored, + 1
+      eval   :: VEC{REAL}@, OUT ! the desired eigenvalues
+      evec   :: MAT{REAL}@, OUT ! the desired eigenvectors
+      maxit  :: INT, IN         ! the maximum number of iterations
+      tolcon :: REAL, IN        ! tolerance on vectors for convergence
 
-      dim,n,f,l,j :: INT
-      oval,rlen :: VEC{REAL}@
-      W,Q,R,    :: MAT{REAL}@
-      V,H, best :: MAT{REAL}@
-      too_many  :: BIN
-      converged :: BIN
-      norm :: REAL
+   ENSURE(n_keep>=2,"Must store minimum 1+1=2 trial vector sets")
+
+      V,H, W,Q :: MAT{REAL}@    ! V(1:A.dim1,n_eig*n_keep) are trail vecs
+      oval, resi,resl    :: VEC{REAL}@
+      d,n,iter, f,l,i,k  :: INT
+      too_many,converged :: BIN
+      pc,val :: REAL
 
       ! Sizes
-      dim = A.dim1
+      d = A.dim1 
+      n = n_eig 
 
       ! Old eigenvalues
-      oval.create(n_eig)      
+      oval.create(n)      
       oval = ZERO
 
-      ! Length of residue vector
-      rlen.create(n_eig) 
+      ! Ritz & residue vector
+      resi.create(d) 
+      resl.create(n) 
 
       ! Davidson vectors & transform space
-      V.create(dim,n_keep)
+      V.create(d,n*n_keep)
       V.to_unit_mx ! Initial guess
 
       ! Initialize
       converged = FALSE
       too_many  = FALSE
       iter = 0
-      n = n_eig  ! No. of trial vectors
-      l = 0
+      l    = 0
 
       do 
 
          ! Counters
-         ! NOTE: 
          iter = iter + 1
          f = l + 1
          l = l + n
 
-         ! Expensive step
+         ! Reduced space matrices
+         H.expand(l,l)
+         W.create(l,l)
+
+         ! (1) Expensive step
          ! Replace with low-mem version
-         W = matmul(A,V(:,f:l))
+         W(:,f:l) = matmul(A,V(:,f:l))
+         W.symmetric_reflect(set_lower=FALSE)
 
          !  ! U(MO) -> U(AO)
          !  U(:,:,n).back_transform_to(U_ao,MOv,Moo)
@@ -492,82 +489,72 @@ contains
          !  .BASE:remove_dependence_from_r(U_ao)
          !  U_ao.change_basis_to(W,MOv,Moo)
 
-         ! Expand Rayleigh matrix
-         H.expand(l,l)
-         H(1:l,f:l) = matmul(transpose(V),W)
+         ! (2) Expand Rayleigh matrix
+         H(f:l,:) = matmul(transpose(V(:,f:l)),W)
          H.symmetric_reflect
 
-         ! Diagonalise 
-         eval.create(n)
-         evec.create(n,n)
+         ! Old eigenvalues
+         oval = eval(1:n)
+
+         ! (3) Diagonalise 
+         eval.create(l)
+         evec.create(l,l)
          H.diagonalize_by_jacobi(eval,evec)
 
-         ! Get Ritz vectors
-         X = matmul(V(:,f:l),evec)
+         ! (4) Get lowest Ritz vectors 
+         ! Store at the end
+         V(:,l+1:l+n) = matmul(V(:,1:l),evec(:,1:n))
 
-         ! Residual
-
-         ! We don't use this norm for convergence checking 
-         ! as after each subspace collapse the change in 
-         ! norm is essentially zero, but we report it
-         ! nonetheless as during each restart-block it is 
-         ! still a useful measure of convergence.
-         norm = sqrt(sum((eval(1:n_eig)-oval)**2))
-         oval = eval(1:n_eig)
-
-         ! Finished?
-         converged = all(rlen<tol)
-         if (converged) exit
-
-         too_many = iter>max_iter
-         if (too_many) exit
-
-         if (l<n_keep) then
-
-            ! Grow trial vectors
-            do j = f,l
-
-               ! Residue vector = (A - eval(j)*I) V R(:,j)
-               ! Storing a diagonal matrix as large as "self" is 
-               ! obviously a bad idea, so we use a tmp vector
-               ! Technically speaking, tmpV is the 'Ritz vector' 
-               ! and w is the residue vector
-               Rv = matmul(R,evec(:,j))
-               Rv = matmul(A,Rv) - eval(j)*Rv
-               rlen(j) = sqrt(sum(Rv*Rv)) 
-
-               ! Precondition the residue vector to form the 
-               ! correction vector. If preconditioner = 1, 
-               ! we recover the Lanczos algorithm.
-               val = eval(j) - A(j,j)
-               if (abs(val) < depsilon) then
-                   Rv = Rv/(val+TOL(2))
-               else
-                   Rv = Rv/val
-               end
-               V(:,n+j) = Rv
+         ! (7) Get lowest Ritz vectors
+         if (l==(n-1)*n_keep) then
+            V(:,1:n) = V(:,l+1:l+n) 
+            k = 0 ! Collapse subspace
          else
+            k = l ! Keep growing trial space
+         end
 
-            ! Collapse the subspace into ntrial best guesses 
-            ! and restart iterations.
-            best.create(dim,n_eig)
-            call dgemm_wrapper('N', 'N', dim, ntrial, maxguess, V, T, best)
-            V = best
+         ! Get residuals & new directions t
+         ! Do it per-column.
+         do i = 1,n
 
-            n = n_eig
+            k = k + 1
+
+            ! (5) Store residual in last columns
+            V(:,k) = eval(i)*V(:,k) - matmul(W,evec(:,i))
+
+            ! (5) Length of residual
+            resl(i) = norm2(V(:,k))
+
+            ! (6) Precondition
+            val = eval(i) - H(i,i)
+            if (abs(val) < 0.001d0) then
+                pc = ONE/(val+TOL(2))
+            else
+                pc = ONE/val
+            end
+
+            V(:,k) = pc*V(:,k)
 
          end
 
+         evec.destroy
+         eval.destroy
+         W.destroy
+
+         ! Finished?
+         converged = all(resl<tolcon); if (converged) exit
+         too_many  = iter>maxit;       if (too_many)  exit
+
          ! Orthonormalize vectors V -> Q
-         R.create(l,l)
-         Q.create(dim,l)
-         V(:,1:n).modified_Gram_Schmidt_QR(Q,R)
-       ! V(:,1:n).Householder_QR(Q,R)
+         W.create(l,l)
+         Q.create(d,l)
+         V(:,1:n).modified_Gram_Schmidt_QR(Q,W)
+       ! V(:,1:n).Householder_QR(Q,W)
          Q.destroy
 
          ! Update trial vectors
-         V = matmul(V,R)
-         R.destroy
+         V = matmul(V,W)
+         W.destroy
 
       end
 
