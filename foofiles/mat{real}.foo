@@ -1125,9 +1125,9 @@ contains
    ! Subtract the upper triangle of "self" into the lower triangle
    end
 
-   symmetric_reflect(set_lower) ::: get_from(MAT{INTRINSIC}), PURE
+   symmetric_reflect(set_upper,set_lower) ::: get_from(MAT{INTRINSIC}), PURE
    ! Make the upper triangle of "self" the same as the lower triangle,
-   ! or the reverse if "set_lower" is TRUE.
+   ! or the reverse if "set_upper" is FALSE or "set_lower" is TRUE 
    end
 
    antisymmetric_reflect ::: get_from(MAT{INTRINSIC}), PURE
@@ -1423,20 +1423,20 @@ contains
 
    end
 
+
    modified_Gram_Schmidt_QR(Q,R) ::: PURE
    ! Decompose m x n matrix "self" into factors Q.R where:
-   ! - Q is an orthogonal    m x n, and 
-   ! - R is upper triangular n x n, 
+   ! - "Q" is an m x n  orthonormal matrix, and 
+   ! - "R" is an n x n upper triangular matrix
    ! using the modified Gram-Schmidt algorithm.
       self :: IN
       Q :: MAT{REAL}, OUT
       R :: MAT{REAL}, OUT
 
    ENSURE(.dim1>= .dim2,"more vectors than dimension of vector space")
-   ENSURE(.dim1==Q.dim1,"wrong dim1, Q")
-   ENSURE(.dim2==Q.dim2,"wrong dim2, Q")
-   ENSURE(.dim2==R.dim1,"wrong dim1, R")
-   ENSURE(.dim2==R.dim2,"wrong dim2, R")
+   ENSURE(.is_same_shape_as(Q),"Wrong shape, Q")
+   ENSURE(R.is_square,"R is not square!")
+   ENSURE(R.dim1==.dim2,"Wrong size, R")
 
       A :: MAT{REAL}@
       j, k :: INT
@@ -1463,42 +1463,62 @@ contains
 
    end
 
-   modified_Gram_Schmidt_QR(R) ::: PURE
+   modified_Gram_Schmidt_QR ::: PURE
    ! Decompose m x n matrix "self" into factors Q.R where:
-   ! - Q is an orthogonal    m x n, and 
-   ! - R is upper triangular n x n, 
-   ! using the modified Gram-Schmidt algorithm. 
-   ! In this version matrix Q replaces "self".
+   ! - "Q" is an m x n  orthonormal matrix, and 
+   ! - "R" is an n x n upper triangular matrix
+   ! using the modified Gram-Schmidt algorithm.
+   ! This version replaces "se'f" by "Q".
       self :: INOUT
-      R :: MAT{REAL}, OUT
 
-      Q :: MAT{REAL}@
+   ENSURE(.dim1>= .dim2,"more vectors than dimension of vector space")
+
+      A, Q,R :: MAT{REAL}@
+      j, k :: INT
 
       Q.create(.dim1,.dim2)
-      .modified_Gram_Schmidt_QR(Q,R)
+      R.create(.dim2,.dim2)
+
+      R = ZERO
+      A = self
+
+      do k = 1,.dim2
+
+         ! Normalises Q
+         R(k,k) = norm2(A(:,k))
+         Q(:,k) = A(:,k)/R(k,k)
+
+         ! Removes this vector from every proceeding column
+         do j = k+1,.dim2
+            R(k,j) = dot_product(Q(:,k),A(:,j))
+            A(:,j) = A(:,j) - R(k,j)*Q(:,k)
+         end
+
+      end
+
+      self = Q
 
       ! Clean
-      self = Q
-      Q.destroy
+      A.destroy
 
    end
 
+
    Householder_QR(Q,R) ::: PURE
    ! Given an m x n matrix "self" decomposes it into Q.R where:
-   ! - "Q" is a m x m orthogonal matrix, and
-   ! - "R" is n x n upper triangular matrix, 
-   ! using the Householder algorithm. Q is calculated by 
-   ! backwards accumulation if needed.
-   ! See Golub & van Loan p. 224 & 211, especially comments.
+   ! - "Q" is an m x n orthonormal matrix, and
+   ! - "R" is an n x n upper triangular matrix
+   ! using the Householder algorithm.
+   ! See Golub & van Loan p. 224 & 211, especially comments
+   ! regarding how to deal with the outer product efficiently.
       self :: IN
       Q :: MAT{REAL}, OUT
       R :: MAT{REAL}, OUT
 
-   ENSURE( .dim1>=.dim2,"more vectors than dimension of vector space")
-   ENSURE(Q.dim1==.dim1,"Wrong dim1, Q")
-   ENSURE(Q.dim2==.dim2,"Wrong dim2, Q")
-   ENSURE(R.dim1==.dim2,"Wrong dim1, R")
-   ENSURE(R.dim2==.dim2,"Wrong dim2, R")
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+   ENSURE(.is_same_shape_as(Q),"Wrong shape, Q")
+   ENSURE(R.is_square,"R is not square!")
+   ENSURE(R.dim1==.dim2,"Wrong size, R")
 
       ! nu is the Householder vector 
       ! b stores all the beta values
@@ -1536,6 +1556,7 @@ contains
       end
 
       ! Upper triangle extracted.
+      ! Not needed if you don't want R, see next routine ...
       R = ZERO
       do j = 1,dim2
          R(1:j,j) = A(1:j,j)
@@ -1555,7 +1576,8 @@ contains
 
          ! Apply Householder
          beta = b(j)
-         Q(j:,j:) = Q(j:,j:) - beta*nu(j:).outer_product_with(matmul(nu(j:),Q(j:,j:)))
+         Q(j:,j:) = Q(j:,j:) &
+                  - beta*nu(j:).outer_product_with(matmul(nu(j:),Q(j:,j:)))
 
       end
 
@@ -1566,80 +1588,147 @@ contains
 
    end
 
-!   Householder_QR(R) ::: PURE
-!   ! Given an m x n matrix "self" decomposes it into Q.R where:
-!   ! - "Q" is a m x m orthogonal matrix, and
-!   ! - "R" is n x n upper triangular matrix, 
-!   ! using the Householder algorithm. Q is not returned.
-!      self :: IN
-!      R    :: MAT{REAL}, OUT
-!
-!   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
-!   ENSURE(R.dim1==.dim2,"Wrong dim1, R")
-!   ENSURE(R.dim2==.dim2,"Wrong dim2, R")
-!
-!      ! nu is the Householder vector, v is a column input and b is a
-!      ! vector which stores all the beta values
-!      nu,v,b :: VEC{REAL}@
-!
-!      ! A is the editable input matrix, which stores R and the
-!      ! Householder vectors. I is the identity.
-!      A, I :: MAT{REAL}@
-!      beta :: REAL
-!      dim1,dim2,j :: INT
-!
-!      dim1 = .dim1
-!      dim2 = .dim2
-!     
-!      A.create(dim1,dim2)
-!      I.create(dim1,dim1)
-!      b.create(dim2)
-!
-!      R = ZERO
-!      A = self
-!
-!      ! Identity matrix
-!      I.to_unit_mx
-!
-!      do j = 1,dim2
-!
-!         ! Creates vectors for passing through subroutines
-!          v.create(dim1-j+1)
-!         nu.create(dim1-j+1)
-!         v = A(j:dim1,j)
-!
-!         ! Calculates nu and beta using the Householder function
-!         v.Householder_vector(nu,beta)
-!         b(j) = beta
-!
-!         ! A = R from the top to the diagonal, beneath the diagonal
-!         ! the non-nu(1) elements are stored
-!         A(j:dim1,j:dim2) = &
-!            matmul(I(1:dim1-j+1,1:dim1-j+1) - beta*nu.outer_product, A(j:dim1,j:dim2))
-!
-!         if (j<dim1) then
-!            A(j+1:dim1,j) = nu(2:)
-!         end
-!
-!         ! Clean
-!          v.destroy
-!         nu.destroy
-!
-!      end
-!
-!      ! Why not rename A -> R ? DJ
-!      ! Upper triangle extracted.
-!      R = ZERO
-!      do j = 1,dim2
-!         R(1:j,j) = A(1:j,j)
-!      end
-!
-!      ! Clean
-!      b.destroy
-!      I.destroy
-!      A.destroy
-!
-!   end
+   Householder_QR(Q) ::: PURE
+   ! Given an m x n matrix "self" decomposes it into Q.R where:
+   ! - "Q" is an m x n orthonormal matrix, and
+   ! - "R" is an n x n upper triangular matrix
+   ! by the Householder method. This version doesn't give "R".
+   ! See Golub & van Loan p. 224 & 211, especially comments
+   ! regarding how to deal with the outer product efficiently.
+      self :: IN
+      Q :: MAT{REAL}, OUT
+
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+   ENSURE(.is_same_shape_as(Q),"Wrong shape, Q")
+
+      ! nu is the Householder vector 
+      ! b stores all the beta values
+      nu,b :: VEC{REAL}@
+
+      ! A stores R and the Householder vectors. 
+      A :: MAT{REAL}@
+      beta :: REAL
+      dim1,dim2,j :: INT
+
+      dim1 = .dim1
+      dim2 = .dim2
+     
+      nu.create(dim1)
+      A.create(dim1,dim2)
+      b.create(dim2)
+
+      A = self
+
+      do j = 1,dim2
+
+         ! Householder
+         A(j:,j).Householder_vector(nu(j:),beta)
+         b(j) = beta ! store
+
+         ! A = R from top to the diagonal, 
+         ! beneath diagonal are non-nu(1) elements
+         A(j:,j:) = A(j:,j:) &
+                  - beta*nu(j:).outer_product_with(matmul(nu(j:),A(j:,j:)))
+
+         if (j<dim1) &
+         A(j+1:,j) = nu(j+1:)
+
+      end
+
+      ! Calculates Q if variable given, by aggregating the
+      ! multiplication of the matrix to produce Q
+      ! See G & v L p. 213 (5.1.5) but n is m, there.
+      Q.to_unit_mx
+      nu = ONE
+      do j = dim2,1,-1
+
+         ! Extract nu from A
+         if (j<dim1) &
+         nu(j+1:) = A(j+1:,j)
+
+         ! Apply Householder
+         beta = b(j)
+         Q(j:,j:) = Q(j:,j:) &
+                  - beta*nu(j:).outer_product_with(matmul(nu(j:),Q(j:,j:)))
+
+      end
+
+      ! Clean
+      b.destroy
+      A.destroy
+      nu.destroy
+
+   end
+
+   Householder_QR ::: PURE
+   ! Given an m x n matrix "self" decomposes it into Q.R where:
+   ! - "Q" is an m x n orthonormal matrix, and
+   ! - "R" is an n x n upper triangular matrix
+   ! by the Householder method and replace "self" with "Q".
+   ! See Golub & van Loan p. 224 & 211, especially comments
+   ! regarding how to deal with the outer product efficiently.
+      self :: INOUT
+
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+
+      ! nu is the Householder vector 
+      ! b stores all the beta values
+      nu,b :: VEC{REAL}@
+
+      ! A stores R and the Householder vectors. 
+      A :: MAT{REAL}@
+      beta :: REAL
+      dim1,dim2,j :: INT
+
+      dim1 = .dim1
+      dim2 = .dim2
+     
+      nu.create(dim1)
+      A.create(dim1,dim2)
+      b.create(dim2)
+
+      A = self
+
+      do j = 1,dim2
+
+         ! Householder
+         A(j:,j).Householder_vector(nu(j:),beta)
+         b(j) = beta ! store
+
+         ! A = R from top to the diagonal, 
+         ! beneath diagonal are non-nu(1) elements
+         A(j:,j:) = A(j:,j:) &
+                  - beta*nu(j:).outer_product_with(matmul(nu(j:),A(j:,j:)))
+
+         if (j<dim1) &
+         A(j+1:,j) = nu(j+1:)
+
+      end
+
+      ! Calculates Q if variable given, by aggregating the
+      ! multiplication of the matrix to produce Q
+      ! See G & v L p. 213 (5.1.5) but n is m, there.
+      .to_unit_mx
+      nu = ONE
+      do j = dim2,1,-1
+
+         ! Extract nu from A
+         if (j<dim1) &
+         nu(j+1:) = A(j+1:,j)
+
+         ! Apply Householder
+         beta = b(j)
+         self(j:,j:) = self(j:,j:) &
+                     - beta*nu(j:).outer_product_with(matmul(nu(j:),self(j:,j:)))
+
+      end
+
+      ! Clean
+      b.destroy
+      A.destroy
+      nu.destroy
+
+   end
 
    block_Householder_QR(R,Q) ::: PURE
    ! Given an mxn matrix decomposes the matrix into an

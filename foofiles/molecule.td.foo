@@ -348,16 +348,7 @@ contains
 !  ===============
 
    test_MGS_QR
-   ! Davidson diagonaliser for matrix "A". 
-   ! - "n_eig" is the no. of eigenvalues wanted
-   ! - "max_keep" the maximum no. of trial Davidson
-   !   vector columns storable in memory.
-   !   It should be much less than A.dim2
-   ! - "n_keep" the actual no. of trial vectors stored.
-   ! - "V(1:A.dim1,n_keep)" are the columns of Davidson
-   !   trial vectors.
-   ! - "eval" are the desired eigenvalues
-   ! - "evec" are the actual eigenvectors
+   ! Test orthogonalisation routines for Davidson diagonaliser.
       self :: INOUT
 
       V, Q, R :: MAT{REAL}@
@@ -422,43 +413,154 @@ contains
 
    end
 
-   Davidson_diagonalize(A,n_eig,n_keep,eval,evec,maxit,tolcon) ::: selfless
-   ! Davidson diagonaliser for matrix "A". 
-   ! See Crouzeix et al (2006) Inria RR 1353
-      self   :: INOUT
-      A      :: MAT{REAL}, IN
-      n_eig  :: INT, IN         ! no. of eigenvalues wanted
-      n_keep :: INT, OUT        ! no. of trial vector sets stored, + 1
-      eval   :: VEC{REAL}@, OUT ! the desired eigenvalues
-      evec   :: MAT{REAL}@, OUT ! the desired eigenvectors
-      maxit  :: INT, IN         ! the maximum number of iterations
-      tolcon :: REAL, IN        ! tolerance on vectors for convergence
+   test_Davidson_CPS_6
+   ! Test the Davidson algorithm with the example in section 6 of
+   ! Crouzeix et al (2006) Inria RR 1353
+      self :: INOUT
 
-   ENSURE(n_keep>=2,"Must store minimum 1+1=2 trial vector sets")
-
-      V,H, W,Q :: MAT{REAL}@    ! V(1:A.dim1,n_eig*n_keep) are trail vecs
-      oval, resi,resl    :: VEC{REAL}@
-      d,n,iter, f,l,i,k  :: INT
-      too_many,converged :: BIN
-      pc,val :: REAL
+      A    :: MAT{REAL}@
+      evec :: MAT{REAL}@
+      eval :: VEC{REAL}@
+      d, n_eig,n_keep,maxit, i,j :: INT
 
       ! Sizes
-      d = A.dim1 
-      n = n_eig 
+      d = 30
+      n_eig  = 2
+      n_keep = 8 
+      maxit  = 30
 
-      ! Old eigenvalues
-      oval.create(n)      
-      oval = ZERO
+      ! Set up
+      A.create(d,d)
+      eval.create(d)
+      evec.create(d,d)
 
-      ! Ritz & residue vector
-      resi.create(d) 
-      resl.create(n) 
+      A = ZERO
+      do i = 1,d
+         A(i  ,i  ) = i
+         if (i>1) then
+            A(i-1,i  ) = HALF
+            A(i  ,i-1) = HALF
+         end
+         if (i<d) then
+            A(i+1,i  ) = HALF
+            A(i  ,i+1) = HALF
+         end
+      end
+      A(1,d) = HALF
+      A(d,1) = HALF
 
-      ! Davidson vectors & transform space
-      V.create(d,n*n_keep)
-      V.to_unit_mx ! Initial guess
+      stdout.flush
+      stdout.text("===========")
+      stdout.text("Jacobi eigs")
+      stdout.text("===========")
+      stdout.flush
+
+      A.diagonalize_by_jacobi(eval,evec)
+
+      stdout.flush
+      stdout.text("After jacobi:")
+      stdout.flush
+
+      stdout.flush
+      stdout.text("eval:")
+      stdout.put(eval)
+
+      stdout.flush
+      stdout.text("evec:")
+      stdout.put(evec)
+
+      stdout.flush
+      stdout.text("evec^T evec:")
+      stdout.put(matmul(transpose(evec),evec))
+
+      eval.destroy
+      evec.destroy
+
+      .:Davidson_diagonalize(A,n_eig,n_keep,eval,evec,maxit,tolcon=TOL(7))
+
+      stdout.flush
+      stdout.text("===============")
+      stdout.text("Davidson test 6")
+      stdout.text("===============")
+      stdout.flush
+
+      stdout.flush
+      stdout.text("eval:")
+      stdout.put(eval)
+
+      stdout.flush
+      stdout.text("evec:")
+      stdout.put(evec)
+
+      stdout.flush
+      stdout.text("evec^T evec:")
+      stdout.put(matmul(transpose(evec),evec))
+
+   end
+
+   Davidson_diagonalize(A,n_eig,n_keep,eval,evec,maxit,tolcon) ::: PURE
+   ! Davidson diagonaliser for matrix "A". 
+   ! See Crouzeix et al (2006) Inria RR 1353
+   ! Step numbers & symbols below mostly from p. 5 of the above ref.
+      A      :: MAT{REAL}, IN
+      n_eig  :: INT, IN         ! No. of eigenvalues wanted
+      n_keep :: INT, OUT        ! No. of trial vector sets stored
+      eval   :: VEC{REAL}@, OUT ! The desired eigenvalues
+      evec   :: MAT{REAL}@, OUT ! The desired eigenvectors
+      maxit  :: INT, IN         ! Maximum number of iterations
+      tolcon :: REAL, IN        ! Tolerance on vectors for convergence
+
+   ENSURE(n_keep>=3,"Must store minimum 2+1=3 trial vector sets")
+
+      R :: MAT{REAL}@     ! Ritz vector, the solution <- "evec"
+      V :: MAT{REAL}@     ! V(:,n_eig*n_keep) <- trail vectors
+      H :: MAT{REAL}@     ! H is Hamiltonian in Krylov basis V
+      W :: MAT{REAL}@     ! W are the H.V products
+      T   :: VEC{REAL}@   ! New direction T
+      rvl :: VEC{REAL}@   ! Length of the residual vectors
+      d,n,iter  :: INT
+      f,l, i    :: INT
+      converged :: BIN
+      too_many  :: BIN
+      collapse  :: BIN
+      bot :: REAL
+
+      ! Sizes
+      d = A.dim1            ! "d" could be big!
+      n = n_eig             ! Usually n << d
+
+      ! Best vectors
+      R.create(d,n)         ! Will be "evec"
+      eval.create(n*n_keep) ! Will shrink to "n"
+
+      ! Residue vector length
+      rvl.create(n) 
+
+      ! Davidson vectors "V"
+      V.create(d,n*n_keep)  ! Need all in memory???
+      W.create(d,n*n_keep)  ! Space for product A*V, worst case
+      T.create(d)           ! Space for new directions
+
+      stdout.flush
+      stdout.text("=====================")
+      stdout.text("Davidson diagonalizer")
+      stdout.text("=====================")
+      stdout.flush
+      stdout.show("Dimension of matrix            ",d)
+      stdout.show("No. of eigenvalues wanted      ",n)
+      stdout.show("Max. trial vector sets kept + 1",n_keep)
+      stdout.show("Max. no. of iterations         ",maxit)
+      stdout.show("Tolerance for convergence      ",tolcon)
+
+    ! stdout.flush
+    ! stdout.text("Matrix:")
+    ! stdout.put(A)
+    ! stdout.flush
+    ! stdout.text("Intial guess:")
+    ! stdout.put(V(:,1:n))
 
       ! Initialize
+      V.to_unit_mx ! Initial guess
       converged = FALSE
       too_many  = FALSE
       iter = 0
@@ -466,100 +568,132 @@ contains
 
       do 
 
-         ! Counters
+         ! Iteration
          iter = iter + 1
+
+         ! First & last trial vector columns
          f = l + 1
          l = l + n
 
-         ! Reduced space matrices
-         H.expand(l,l)
-         W.create(l,l)
-
-         ! (1) Expensive step
-         ! Replace with low-mem version
+         ! 1. Expensive step, extends W
+         ! Replace with low-mem matrix product
          W(:,f:l) = matmul(A,V(:,f:l))
-         W.symmetric_reflect(set_lower=FALSE)
 
-         !  ! U(MO) -> U(AO)
-         !  U(:,:,n).back_transform_to(U_ao,MOv,Moo)
-         !  U_ao.symmetrize
-         !  ! Make A.U (AO) -> A.U (MO) = W
-         !  .FOCK:make_r_JK_engine(J,K,U_ao)
-         !  U_ao = FOUR*J - TWO*K
-         !  .BASE:remove_dependence_from_r(U_ao)
-         !  U_ao.change_basis_to(W,MOv,Moo)
-
-         ! (2) Expand Rayleigh matrix
-         H(f:l,:) = matmul(transpose(V(:,f:l)),W)
-         H.symmetric_reflect
-
-         ! Old eigenvalues
-         oval = eval(1:n)
-
-         ! (3) Diagonalise 
-         eval.create(l)
+         ! 2. Expand Rayleigh matrix
+         H.expand(l,l)
          evec.create(l,l)
-         H.diagonalize_by_jacobi(eval,evec)
+         H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
+         H.symmetric_reflect(set_upper=TRUE)
 
-         ! (4) Get lowest Ritz vectors 
-         ! Store at the end
-         V(:,l+1:l+n) = matmul(V(:,1:l),evec(:,1:n))
+         ! 3. Diagonalise. Lowest eigenvalues first.
+         H.diagonalize_by_jacobi(eval(1:l),evec)
 
-         ! (7) Get lowest Ritz vectors
-         if (l==(n-1)*n_keep) then
-            V(:,1:n) = V(:,l+1:l+n) 
-            k = 0 ! Collapse subspace
-         else
-            k = l ! Keep growing trial space
-         end
+         ! 4. Lowest Ritz vectors
+         R = matmul(V(:,1:l),evec(:,1:n))
 
-         ! Get residuals & new directions t
-         ! Do it per-column.
-         do i = 1,n
+         ! Too many iters? Collapse space?
+         too_many = iter>maxit; if (too_many) exit
+         collapse = l==n*n_keep
 
-            k = k + 1
+         stdout.flush
+         stdout.text("=========")
+         stdout.show("iter      ",iter)
+         stdout.show("conv      ",maxval(abs(rvl)))
+         stdout.show("collapse? ",collapse)
+         stdout.show("too many? ",too_many)
+         stdout.show("f         ",f)
+         stdout.show("l         ",l)
 
-            ! (5) Store residual in last columns
-            V(:,k) = eval(i)*V(:,k) - matmul(W,evec(:,i))
+         stdout.flush
+         stdout.text("eval:")
+         stdout.put(eval(1:l))
 
-            ! (5) Length of residual
-            resl(i) = norm2(V(:,k))
+         if (too_many) then
 
-            ! (6) Precondition
-            val = eval(i) - H(i,i)
-            if (abs(val) < 0.001d0) then
-                pc = ONE/(val+TOL(2))
-            else
-                pc = ONE/val
+            ! Save to disk?
+            evec.destroy
+            H.destroy
+
+         else if (collapse) then
+
+            ! 7b. Restart with Ritz vectors
+            V(:,1:n) = R
+          ! V(:,1:n).Householder_QR ! Needed?
+
+            ! Collapse
+            l = 0 ! <---
+
+            ! Note: clean both
+            evec.destroy
+            H.destroy
+
+         else 
+
+            ! 5-7. Get residual & new direction T, per-column
+            do i = 1,n
+        
+               ! 5. Residual T & its length
+               T = eval(i)*R(:,i) - matmul(W(:,1:l),evec(:,i)) 
+               rvl(i) = norm2(T)
+        
+               ! 6. Precondition
+               bot = eval(i) - H(i,i)
+               if (abs(bot) < 0.001d0) bot = bot + TOL(2)
+               bot= ONE/bot
+
+               ! 7a. Set new direction t
+               V(:,l+i) = bot*T
+        
             end
-
-            V(:,k) = pc*V(:,k)
+        
+          ! stdout.flush
+          ! stdout.text("evec:")
+          ! stdout.put(evec)
+        
+          ! stdout.flush
+          ! stdout.text("H:")
+          ! stdout.put(H)
+        
+          ! stdout.flush
+          ! stdout.text("W:")
+          ! stdout.put(W(:,1:l))
+        
+            ! Finished?
+            converged = all(rvl<tolcon); if (converged) exit
+          
+          ! stdout.flush
+          ! stdout.text("Old non-orthonormalised cols:")
+          ! stdout.put(V(:,l+1:l+n))
+        
+            ! 7. Orthonormalize vectors V
+          ! V(:,1:n).modified_Gram_Schmidt_QR
+            V(:,1:l+n).Householder_QR 
+        
+          ! stdout.flush
+          ! stdout.text("New orthonormalised columns:")
+          ! stdout.put(V(:,l+1:l+n))
+        
+            ! Clean up
+            evec.destroy
 
          end
-
-         evec.destroy
-         eval.destroy
-         W.destroy
-
-         ! Finished?
-         converged = all(resl<tolcon); if (converged) exit
-         too_many  = iter>maxit;       if (too_many)  exit
-
-         ! Orthonormalize vectors V -> Q
-         W.create(l,l)
-         Q.create(d,l)
-         V(:,1:n).modified_Gram_Schmidt_QR(Q,W)
-       ! V(:,1:n).Householder_QR(Q,W)
-         Q.destroy
-
-         ! Update trial vectors
-         V = matmul(V,W)
-         W.destroy
 
       end
 
-      DIE_IF(NOT converged,"No convergence")
-      DIE_IF(too_many,"Too many iterations")
+      ENSURE(converged,"No convergence")
+      ENSURE(NOT too_many,"Too many iterations")
+
+      ! Clean up
+      evec.destroy
+      H.destroy
+      T.destroy
+      W.destroy
+      V.destroy
+      rvl.destroy
+
+      ! Recover solution
+      call move_alloc(R,evec)
+      eval.shrink(n)
 
    end
 
