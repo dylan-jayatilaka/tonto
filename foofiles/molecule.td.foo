@@ -455,7 +455,7 @@ contains
       stdout.text("===========")
       stdout.flush
 
-      A.diagonalize_by_jacobi(eval,evec)
+      A.diagonalize_Jacobi(eval,evec)
 
       stdout.flush
       stdout.text("After jacobi:")
@@ -498,28 +498,28 @@ contains
 
    end
 
-   Davidson_diagonalize(A,n_eig,n_keep,eval,evec,maxit,tolcon) ::: PURE
+   Davidson_diagonalize(A,n_eig,n_keep,eval,evec,maxit,tolcon)
    ! Davidson diagonaliser for matrix "A". 
    ! See Crouzeix et al (2006) Inria RR 1353
-   ! Step numbers & symbols below mostly from p. 5 of the above ref.
-      A      :: MAT{REAL}, IN
-      n_eig  :: INT, IN         ! No. of eigenvalues wanted
-      n_keep :: INT, OUT        ! No. of trial vector sets stored
-      eval   :: VEC{REAL}@, OUT ! The desired eigenvalues
-      evec   :: MAT{REAL}@, OUT ! The desired eigenvectors
-      maxit  :: INT, IN         ! Maximum number of iterations
-      tolcon :: REAL, IN        ! Tolerance on vectors for convergence
+   ! Step numbers & symbols below mostly from p. 5 Crouzeix.
+      A :: MAT{REAL}, IN
+      n_eig  :: INT, IN         ! No. of eigenvalues wanted, "n"
+      n_keep :: INT, OUT        ! No. of trial vector sets kept
+      eval   :: VEC{REAL}@, OUT ! The "n" eigenvalues
+      evec   :: MAT{REAL}@, OUT ! The "n" eigenvector columns
+      maxit  :: INT, IN         ! Max. no. of iterations allowed
+      tolcon :: REAL, IN        ! Max. residual vec norm, to end
 
    ENSURE(n_keep>=3,"Must store minimum 2+1=3 trial vector sets")
 
-      R :: MAT{REAL}@     ! Ritz vector, the solution <- "evec"
-      V :: MAT{REAL}@     ! V(:,n_eig*n_keep) <- trail vectors
-      H :: MAT{REAL}@     ! H is Hamiltonian in Krylov basis V
-      W :: MAT{REAL}@     ! W are the H.V products
-      T   :: VEC{REAL}@   ! New direction T
+      R :: MAT{REAL}@     ! Ritz vectors <- becomes "evec"
+      V :: MAT{REAL}@     ! V(:,n)       <- the Davidson trial vectors
+      W :: MAT{REAL}@     ! W(:,n)       <- A.V
+      H :: MAT{REAL}@     ! A            <- in basis "V"
+      T   :: VEC{REAL}@   ! New direction, T
       rvl :: VEC{REAL}@   ! Length of the residual vectors
-      d,n,iter  :: INT
-      f,l, i    :: INT
+      iter,n_tr :: INT
+      d,n,f,l,i :: INT
       converged :: BIN
       too_many  :: BIN
       collapse  :: BIN
@@ -552,26 +552,21 @@ contains
       stdout.show("Max. no. of iterations         ",maxit)
       stdout.show("Tolerance for convergence      ",tolcon)
 
-    ! stdout.flush
-    ! stdout.text("Matrix:")
-    ! stdout.put(A)
-    ! stdout.flush
-    ! stdout.text("Intial guess:")
-    ! stdout.put(V(:,1:n))
-
       ! Initialize
-      V.to_unit_mx ! Initial guess
+      V.to_unit_mx          ! Initial guess
+      iter =  0             ! Overall iteration count
+      n_tr = -1             ! No. of trial vector sets - 1
       converged = FALSE
       too_many  = FALSE
-      iter = 0
-      l    = 0
 
       do 
 
-         ! Iteration
+         ! Iteration & no. of trial vector sets (-1)
          iter = iter + 1
+         n_tr = n_tr + 1
 
          ! First & last trial vector columns
+         l = n_tr*n
          f = l + 1
          l = l + n
 
@@ -585,8 +580,8 @@ contains
          H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
          H.symmetric_reflect(set_upper=TRUE)
 
-         ! 3. Diagonalise. Lowest eigenvalues first.
-         H.diagonalize_by_jacobi(eval(1:l),evec)
+         ! 3. Diagonalise (increasing eigenvalues)
+         H.diagonalize_Jacobi(eval(1:l),evec)
 
          ! 4. Lowest Ritz vectors
          R = matmul(V(:,1:l),evec(:,1:n))
@@ -598,6 +593,7 @@ contains
          stdout.flush
          stdout.text("=========")
          stdout.show("iter      ",iter)
+         stdout.show("n_tr      ",n_tr)
          stdout.show("conv      ",maxval(abs(rvl)))
          stdout.show("collapse? ",collapse)
          stdout.show("too many? ",too_many)
@@ -616,12 +612,12 @@ contains
 
          else if (collapse) then
 
-            ! 7b. Restart with Ritz vectors
+            ! One trial vector
+            n_tr = 1
+
+            ! 7b. Restart with Ritz vectors as trails
             V(:,1:n) = R
           ! V(:,1:n).Householder_QR ! Needed?
-
-            ! Collapse
-            l = 0 ! <---
 
             ! Note: clean both
             evec.destroy
@@ -646,32 +642,12 @@ contains
         
             end
         
-          ! stdout.flush
-          ! stdout.text("evec:")
-          ! stdout.put(evec)
-        
-          ! stdout.flush
-          ! stdout.text("H:")
-          ! stdout.put(H)
-        
-          ! stdout.flush
-          ! stdout.text("W:")
-          ! stdout.put(W(:,1:l))
-        
             ! Finished?
             converged = all(rvl<tolcon); if (converged) exit
           
-          ! stdout.flush
-          ! stdout.text("Old non-orthonormalised cols:")
-          ! stdout.put(V(:,l+1:l+n))
-        
             ! 7. Orthonormalize vectors V
           ! V(:,1:n).modified_Gram_Schmidt_QR
             V(:,1:l+n).Householder_QR 
-        
-          ! stdout.flush
-          ! stdout.text("New orthonormalised columns:")
-          ! stdout.put(V(:,l+1:l+n))
         
             ! Clean up
             evec.destroy
