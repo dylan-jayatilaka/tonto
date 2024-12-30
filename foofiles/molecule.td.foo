@@ -427,7 +427,7 @@ contains
       d = 30
       n_eig  = 2
       n_keep = 8 
-      maxit  = 30
+      maxit  = 50
 
       ! Set up
       A.create(d,d)
@@ -458,25 +458,17 @@ contains
       A.diagonalize_Jacobi(eval,evec)
 
       stdout.flush
-      stdout.text("After jacobi:")
-      stdout.flush
-
-      stdout.flush
       stdout.text("eval:")
-      stdout.put(eval)
+      stdout.put(eval(1:n_eig))
 
-      stdout.flush
       stdout.text("evec:")
-      stdout.put(evec)
-
-      stdout.flush
-      stdout.text("evec^T evec:")
-      stdout.put(matmul(transpose(evec),evec))
+      stdout.put(evec(:,1:n_eig))
 
       eval.destroy
       evec.destroy
 
-      .:Davidson_diagonalize(A,n_eig,n_keep,eval,evec,maxit,tolcon=TOL(7))
+    ! A.diagonalize_Davidson(eval,evec,n_eig,n_keep,maxit,tolconv=TOL(7))
+      .TD::diagonalize_Davidson(A,eval,evec,n_eig,n_keep,maxit,tolcon=TOL(7))
 
       stdout.flush
       stdout.text("===============")
@@ -498,15 +490,15 @@ contains
 
    end
 
-   Davidson_diagonalize(A,n_eig,n_keep,eval,evec,maxit,tolcon)
-   ! Davidson diagonaliser for matrix "A". 
+   diagonalize_Davidson(A,eval,evec,n_eig,n_keep,maxit,tolcon)
+   ! Davidson diagonaliser for matrix "A".
    ! See Crouzeix et al (2006) Inria RR 1353
    ! Step numbers & symbols below mostly from p. 5 Crouzeix.
       A :: MAT{REAL}, IN
-      n_eig  :: INT, IN         ! No. of eigenvalues wanted, "n"
-      n_keep :: INT, OUT        ! No. of trial vector sets kept
       eval   :: VEC{REAL}@, OUT ! The "n" eigenvalues
       evec   :: MAT{REAL}@, OUT ! The "n" eigenvector columns
+      n_eig  :: INT, IN         ! No. of eigenvalues wanted, "n"
+      n_keep :: INT, OUT        ! No. of trial vector sets kept
       maxit  :: INT, IN         ! Max. no. of iterations allowed
       tolcon :: REAL, IN        ! Max. residual vec norm, to end
 
@@ -554,8 +546,8 @@ contains
 
       ! Initialize
       V.to_unit_mx          ! Initial guess
-      iter =  0             ! Overall iteration count
-      n_tr = -1             ! No. of trial vector sets - 1
+      iter = 0              ! Overall iteration count
+      n_tr = 0              ! No. of trial vector sets
       converged = FALSE
       too_many  = FALSE
 
@@ -566,7 +558,7 @@ contains
          n_tr = n_tr + 1
 
          ! First & last trial vector columns
-         l = n_tr*n
+         l = n*(n_tr-1)
          f = l + 1
          l = l + n
 
@@ -587,22 +579,17 @@ contains
          R = matmul(V(:,1:l),evec(:,1:n))
 
          ! Too many iters? Collapse space?
-         too_many = iter>maxit; if (too_many) exit
-         collapse = l==n*n_keep
+         too_many = iter>maxit; if (too_many) exit 
+         collapse = n_tr==n_keep
 
          stdout.flush
          stdout.text("=========")
          stdout.show("iter      ",iter)
          stdout.show("n_tr      ",n_tr)
-         stdout.show("conv      ",maxval(abs(rvl)))
          stdout.show("collapse? ",collapse)
          stdout.show("too many? ",too_many)
          stdout.show("f         ",f)
          stdout.show("l         ",l)
-
-         stdout.flush
-         stdout.text("eval:")
-         stdout.put(eval(1:l))
 
          if (too_many) then
 
@@ -612,10 +599,8 @@ contains
 
          else if (collapse) then
 
-            ! One trial vector
-            n_tr = 1
-
-            ! 7b. Restart with Ritz vectors as trails
+            ! Restart with Ritz vector
+            n_tr = 0
             V(:,1:n) = R
           ! V(:,1:n).Householder_QR ! Needed?
 
@@ -641,13 +626,19 @@ contains
                V(:,l+i) = bot*T
         
             end
+
+         stdout.flush
+         stdout.show("conv      ",maxval(abs(rvl)))
+         stdout.flush
+         stdout.text("eval:")
+         stdout.put(eval(1:n))
         
             ! Finished?
             converged = all(rvl<tolcon); if (converged) exit
           
             ! 7. Orthonormalize vectors V
-          ! V(:,1:n).modified_Gram_Schmidt_QR
-            V(:,1:l+n).Householder_QR 
+            V(:,1:l+n).modified_Gram_Schmidt_QR
+          ! V(:,1:l+n).Householder_QR 
         
             ! Clean up
             evec.destroy
@@ -670,6 +661,44 @@ contains
       ! Recover solution
       call move_alloc(R,evec)
       eval.shrink(n)
+
+   end
+
+!  ===================================
+!  Two-electron integrals for checking
+!  ===================================
+
+   make_VOVO_ERIs(v)
+   ! Calculate the VOVO electron repulsion integrals (ERI's) from the
+   ! AO integrals
+      self :: IN
+      v :: MAT4{REAL}, OUT
+
+      MO :: MAT{REAL}@
+      a,b,c,d :: INT
+
+      MO = .MOs.r
+
+      v = ZERO
+      .:make_ERI_integrals(v)
+
+      do a = 1,.n_bf
+         v(a,a,:,:).change_basis_using(MO)
+         do b = 1,a-1
+            v(a,b,:,:).change_basis_using(MO)
+            v(b,a,:,:) = v(a,b,:,:)
+         end
+      end
+
+      do c = 1,.n_bf
+         v(:,:,c,c).change_basis_using(MO)
+         do d = 1,c-1
+            v(:,:,c,d).change_basis_using(MO)
+            v(:,:,d,c) = v(:,:,c,d)
+         end
+      end
+
+      MO.destroy
 
    end
 

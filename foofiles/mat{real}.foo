@@ -1500,6 +1500,8 @@ contains
 
       ! Clean
       A.destroy
+      R.destroy
+      Q.destroy
 
    end
 
@@ -2458,41 +2460,200 @@ contains
 
    end
 
-   internal_vectors(eigenvectors2,iv_tol) ::: leaky
+   diagonalize_Davidson(eval,evec,n_eig,n_saved,maxiter,tolconv)
+   ! Davidson diagonaliser for matrix "A".
+   ! See Crouzeix et al (2006) Inria RR 1353
+   ! Step numbers & symbols below mostly from p. 5 Crouzeix.
+      self    :: IN
+      eval    :: VEC{REAL}@, OUT    ! The eigenvalues
+      evec    :: MAT{REAL}@, OUT    ! The eigenvector columns
+      n_eig   :: INT, IN,  optional ! No. of eigenvalues wanted
+      n_saved :: INT, OUT, optional ! No. of trial vector sets saved
+      maxiter :: INT, IN,  optional ! Max. no. of iterations allowed
+      tolconv :: REAL, IN, optional ! Max. residual vec norm, to end
+
+   ENSURE(n_saved>=3,"Must store at least 2 trial vector sets")
+
+      R   :: MAT{REAL}@   ! Ritz vectors <- becomes "evec"
+      V   :: MAT{REAL}@   ! V(:,n)       <- Davidson trial vectors
+      W   :: MAT{REAL}@   ! W(:,n)       <- A.V
+      H   :: MAT{REAL}@   ! "self"       <- in the basis "V"
+      T   :: VEC{REAL}@   ! New direction, T
+      rvl :: VEC{REAL}@   ! Length of the residual vectors
+      n_keep :: INT
+      maxit  :: INT
+      iter, n_tr :: INT
+      n,d, f,l,i :: INT
+      tolcon,bot :: REAL
+      converged  :: BIN
+      too_many   :: BIN
+      collapse   :: BIN
+
+      ! Default values
+      n = 2
+      if (present(n_eig)) n = n_eig
+
+      n_keep = 2
+      if (present(n_saved)) n_keep = n_saved
+
+      maxit  = 5
+      if (present(maxiter)) maxit = maxiter
+
+      tolcon = TOL(7)
+      if (present(tolconv)) tolcon = tolconv
+
+      ! Sizes
+      d = .dim1             ! "d" could be big!
+
+      ! Results
+      eval.create(n*n_keep) ! <-- Will shrink to "n"
+      R.create(d,n)         ! <-- Will be "evec"
+
+      ! Storage
+      rvl.create(n)         ! Residue vector length
+      V.create(d,n*n_keep)  ! Need all in memory???
+      W.create(d,n*n_keep)  ! Space for product self*V
+      T.create(d)           ! Space for new directions
+
+      ! Initialize
+      V.to_unit_mx          ! Initial guess
+      iter = 0              ! Overall iteration count
+      n_tr = 0              ! No. of trial vector sets - 1
+      converged = FALSE
+      too_many  = FALSE
+
+      do 
+
+         ! Iteration & no. of trial vector sets (-1)
+         iter = iter + 1
+         n_tr = n_tr + 1
+
+         ! First & last trial vector columns
+         l = n*(n_tr-1)
+         f = l + 1
+         l = l + n
+
+         ! 1. Expensive step, extends W
+         ! Replace with low-mem matrix product
+         W(:,f:l) = matmul(self,V(:,f:l))
+
+         ! 2. Expand Rayleigh matrix
+            H.expand(l,l)
+         evec.create(l,l)
+         H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
+         H.symmetric_reflect(set_upper=TRUE)
+
+         ! 3. Diagonalise (increasing eigenvalues)
+         H.diagonalize_Jacobi(eval(1:l),evec)
+
+         ! 4. Lowest Ritz vectors
+         R = matmul(V(:,1:l),evec(:,1:n))
+
+         ! Too many iters? Collapse space?
+         too_many = iter>maxit; if (too_many) exit
+         collapse = l==n*n_keep
+
+         if (collapse) then
+
+            ! 7b. Restart with Ritz vectors "R"
+            n_tr = 0
+            V(:,1:n) = R
+
+            ! Clean
+            evec.destroy
+            H.destroy ! <-- Note
+
+         else 
+
+            ! 5-7. Get residual & new direction, per-column
+            do i = 1,n
+        
+               ! 5. Residual in T & its length
+               T = eval(i)*R(:,i) - matmul(W(:,1:l),evec(:,i)) 
+               rvl(i) = norm2(T)
+        
+               ! 6. Preconditioner
+               bot = eval(i) - H(i,i)
+               if (abs(bot) < 0.001d0) bot = bot + TOL(2)
+               bot= ONE/bot
+
+               ! 7a. Set new direction T
+               V(:,l+i) = bot*T
+        
+            end
+        
+            ! Finished?
+            converged = all(rvl<tolcon); if (converged) exit
+          
+            ! 7. Orthonormalize vectors V
+          ! V(:,1:l+n).modified_Gram_Schmidt_QR
+            V(:,1:l+n).Householder_QR 
+        
+            ! Clean up
+            evec.destroy
+
+         end
+
+      end
+
+      ENSURE(converged,"No convergence")
+      ENSURE(NOT too_many,"Too many iterations")
+
+      ! Clean up
+      evec.destroy
+      H.destroy
+      T.destroy
+      W.destroy
+      V.destroy
+      rvl.destroy
+
+      ! Recover solution
+      call move_alloc(R,evec)
+      eval.shrink(n)
+
+   end
+
+   internal_vectors(ivec,iv_tol) ::: leaky
    ! Extract the internal vectors of a matrix i.e. vectors in the
    ! orthocomplement of the kernel of the matrix.
-   !leaky because the number of outputed internal vectors is not known
-   !beforehand
-     eigenvectors2 :: MAT{REAL}@
-     iv_tol :: REAL, optional
-     ENSURE(.dim1==.dim2,"matrix not square")
-     eigenvalues :: VEC{REAL}@
-     eigenvectors :: MAT{REAL}@
-     tol :: REAL
+   ! leaky because the number of internal vectors is unknown
+     self :: IN
+     ivec :: MAT{REAL}@, OUT
+     iv_tol :: REAL, optional, IN
+
+   ENSURE(.dim1==.dim2,"matrix not square")
+
+     eval :: VEC{REAL}@
+     evec :: MAT{REAL}@
+     tol  :: REAL
      i,h,dim :: INT
 
      tol = INTERNAL_GEMINAL_TOL
      if (present(iv_tol)) tol = iv_tol
 
      dim = .dim1
-     eigenvalues.create(dim)
-     eigenvectors.create(dim,dim)
-     .solve_symmetric_eigenproblem(eigenvalues,eigenvectors)
-     h = count(mask= eigenvalues >tol)
-     DIE_IF(count(mask= eigenvalues <  -TOL(10))/=0,"matrix not positive")
+
+     eval.create(dim)
+     evec.create(dim,dim)
+     .diagonalize_Jacobi(eval,evec)
+
+     ! Tests
+     h = count(mask=eval>tol)
+     DIE_IF(count(mask=eval<-TOL(10))/=0,"matrix not positive")
      DIE_IF(h==0,"no internal vector")
 
-     eigenvectors2.create(h,dim)
-     h=0
+     ivec.create(h,dim)
+     h = 0
      do i=1,dim
-       if (NOT eigenvalues(i).is_zero(tol)) then
-         h=h+1
-         eigenvectors2(h,:)=eigenvectors(:,i)
-       end
+        if (NOT eval(i).is_zero(tol)) then
+           h = h + 1
+           ivec(h,:) = evec(:,i)
+        end
      end
 
-     eigenvalues.destroy
-     eigenvectors.destroy
+     ! Clean
+     eval.destroy
+     evec.destroy
 
    end
 
