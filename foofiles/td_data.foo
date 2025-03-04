@@ -202,10 +202,13 @@ contains
       word.to_lower_case
 
       select case (word)
+      case ("find_doubles  "); .find_doubles
       case ("max_keep=     "); .read_max_keep
       case ("n_eig=        "); .read_n_eig
+      case ("omega=        "); .read_omega
       case ("put_mo_info   "); .put_MO_info
       case ("put_options   "); .put_options
+      case ("put_doubles   "); .put_doubles
       case ("put_singles   "); .put_singles
       case ("sort_singles  "); .sort_singles
       case ("tol_d=        "); .read_tol_D
@@ -291,10 +294,10 @@ contains
       n = .no_of_singles
 
       ! Create the o-v indices array
+      .deltaE.create(n)
       .single.create(n,2)
 
       ! Get the energy differences
-      .deltaE.create(n)
       ai = 0
       do i = 1,.n_occ
          Ei = .eig(i)
@@ -345,6 +348,7 @@ contains
          do j = 1,.n_occ
          do b = .n_occ+1,.n_vir
             bj = bj + 1
+            if (bj>ai) cycle
             Ebj = .eig(b) + .eig(j)
             val = Eai + Ebj
             if (abs(.omega-val)<.tol_D) then
@@ -357,48 +361,76 @@ contains
 
    end
 
-!   find_doubles(s) ::: leaky, PURE
-!   ! Find the double excitations within a certain tolerance
-!   ! of a given single excitation of ordered state "s".
-!      self :: INOUT
-!      s :: INT, IN
-!
-!      i,j, a,b, n :: INT
-!      Eab,Eij,val :: REAL
-!      ind :: VEC{INT}@
-!
-!      n = .no_of_singles
-!
-!      ! Create the o-v indices array
-!      .single.create(n,2)
-!
-!      ! Get the energy differences
-!      n = 0
-!      do i = 1,.n_occ
-!      do j = 1,.n_occ
-!         Eij = .eig(i) + .eig(j)
-!         do a = .n_occ+1,.n_vir
-!         do b = .n_occ+1,.n_vir
-!            Eab = .eig(a) + .eig(b)
-!            val = Eab - Eij - .deltaE(s)
-!            if (val<.tol_D) then
-!               n = n + 1
-!            end
-!         end
-!         end
-!      end
-!      end
-!
-!    ! ! Sort
-!    ! ind.create(n)
-!    ! .deltaE.quick_sort(ind)
-!
-!    ! ! Reorder
-!    ! .deltaE = .deltaE(ind)
-!    ! .single(:,1) = .single(ind,1)
-!    ! .single(:,2) = .single(ind,2)
-!
-!   end
+   find_doubles ::: leaky, PURE
+   ! Find the double excitations within a certain tolerance
+   ! of a given single excitation of ordered state "s".
+      self :: INOUT
+
+   ENSURE(.omega>ZERO,"No energy omega specified")
+
+      n :: INT
+      i,a,ai :: INT
+      j,b,bj :: INT
+      Eai,Ebj,val :: REAL
+      ind :: VEC{INT}@
+
+      n = .no_of_doubles
+
+      ! Create the o-v indices array
+      .delEab.create(n)
+      .double.create(n,2)
+
+      ! Get the energy differences
+      n = 0
+      ai = 0
+      do i = 1,.n_occ
+      do a = .n_occ+1,.n_vir
+         ai = ai + 1
+         Eai = .eig(a) + .eig(i)
+         bj  = 0
+         do j = 1,.n_occ
+         do b = .n_occ+1,.n_vir
+            bj = bj + 1
+            if (bj>ai) cycle
+            Ebj = .eig(b) + .eig(j)
+            val = Eai + Ebj
+            if (abs(.omega-val)<.tol_D) then
+               n = n + 1
+               .delEab(n)  = val
+               .double(n,1) = ai
+               .double(n,2) = bj
+            end
+         end
+         end
+      end
+      end
+
+      ! Sort
+      ind.create(n)
+      .delEab.quick_sort(ind)
+
+      ! Reorder
+      .delEab = .delEab(ind)
+      .double(:,1) = .double(ind,1)
+      .double(:,2) = .double(ind,2)
+
+   end
+
+   V_of_VO(vo) result(res) ::: pure
+   ! The V index in a compressed VO pair-index
+      self :: IN
+      vo   :: VEC{INT}, IN
+      res  :: VEC{INT}(vo.dim)
+      res = modulo(vo,.n_occ)
+   end
+
+   O_of_VO(vo) result(res) ::: pure
+   ! The V index in a compressed VO pair-index
+      self :: IN
+      vo   :: VEC{INT}, IN
+      res  :: VEC{INT}(vo.dim)
+      res = (vo-1)/.n_occ
+   end
 
  !  ===============
  !  Output routines
@@ -409,9 +441,9 @@ contains
       self :: IN
 
       stdout.flush
-      stdout.text("==================")
-      stdout.text("Time-dependent SCF")
-      stdout.text("==================")
+      stdout.text("==================================")
+      stdout.text("Time-dependent mean-field response")
+      stdout.text("==================================")
       stdout.flush
 
    end
@@ -474,22 +506,73 @@ contains
    ! Print out the sorted singles states.
       self :: INOUT
 
+   ENSURE(.single.allocated,"No single determinants!")
+
       table :: VEC{TABLE_COLUMN}@
 
       stdout.flush
       stdout.text("=============================")
       stdout.text("Single excitation state order")
       stdout.text("=============================")
+      stdout.flush
+      stdout.text(". The virtual orbitals are listed first")
+      stdout.text(". Index 0 is corresponds to the HOMO")
+      stdout.text(". Index 1 is corresponds to the LUMO")
+      stdout.flush
 
       table.create(3)
 
-      table(1).set_heading("Occ")
-      table(2).set_heading("Vir")
+      table(1).set_heading("LUMO")
+      table(2).set_heading("HOMO")
       table(3).set_heading("Delta E")
 
-      table(1).set_values(.single(:,2))
-      table(2).set_values(.single(:,1))
+      table(1).set_values(.single(:,1)-.n_occ)
+      table(2).set_values(.single(:,2)-.n_occ)
       table(3).set_values(.deltaE)
+
+      table.put(label_rows=TRUE)
+
+      table.destroy
+
+   end
+
+   put_doubles
+   ! Print out the interacting double excitations
+      self :: INOUT
+
+   ENSURE(.double.allocated,"No doubles!")
+
+      table :: VEC{TABLE_COLUMN}@
+
+      stdout.flush
+      stdout.text("=============================")
+      stdout.text("Interacting doubles in window")
+      stdout.text("=============================")
+      stdout.flush
+      stdout.text(". The VO indices are compressed with V runs faster than O")
+      stdout.flush
+      stdout.show("Doubles selection tol     =", .tol_D)
+      stdout.show("omega                     =", .omega)
+      stdout.show("# of doubles in window    =",.double.dim1)
+      stdout.flush
+
+      table.create(7)
+
+      table(1).set_heading("VO1")
+      table(2).set_heading("V")
+      table(3).set_heading("O")
+      table(4).set_heading("VO2")
+      table(5).set_heading("V")
+      table(6).set_heading("O")
+      table(7).set_heading("Delta E")
+
+      table(1).set_values(.double(:,1)-.n_occ)
+      table(2).set_values(.V_of_VO(.double(:,1))-.n_occ)
+      table(3).set_values(.O_of_VO(.double(:,1))-.n_occ)
+      table(4).set_values(.double(:,2))
+      table(5).set_values(.V_of_VO(.double(:,2))-.n_occ)
+      table(6).set_values(.O_of_VO(.double(:,2))-.n_occ)
+      table(7).set_values(.delEab)
 
       table.put(label_rows=TRUE)
 
