@@ -10961,6 +10961,163 @@ contains
 
    end
 
+   do_defragment_v2 ::: leaky, PURE
+   ! Defragment the generated cluster and find the connected molecules
+   ! using the .unit_cell_connection table.
+      self :: INOUT
+
+   ENSURE(.occupation_list.allocated,"no occupation_list")
+   ENSURE(.unit_cell_connection.allocated,"no unit cell connection table")
+
+      i,v,c,code,h1,h2,h3,u,k1,k2,k3,t,old,mi,mo :: INT
+      safetyCounter :: INT
+      molecule_for_atom :: VEC{INT}@
+      con :: VEC{INT}@
+      stop_search :: VEC{BIN}@        ! Bin array. size = n_atoms. Add elements along with .occupation_list
+      root_uc_atom :: VEC{EVEC{BIN}}@ ! n_atoms by .n_unit_cell_atoms. Add rows along with .occupation_list
+      tmp1,tmp2, ind1, ind2 :: VEC{BIN}@ ! tmp1&2 are for i-th, old-th in the root_uc_atom nested array.
+                                         ! ind1&2 are for index of .occupation_list
+      ! Initial no. of atoms
+      .n_atoms = .occupation_list.dim
+
+      ! Clear info arrays
+      .atom_connection.destroy
+      .atom_connection.create(.n_atoms)
+      .molecule_for_atom.destroy
+
+      stop_search.create(.n_atoms) ! Initialize "stop_search" for the initial atoms.
+      stop_search = FALSE          ! Get ready for finding bonded atoms for the initial atom. 
+      root_uc_atom.create(.n_atoms)
+
+      tmp1.create( .n_unit_cell_atoms )
+      tmp2.create( .n_unit_cell_atoms )
+
+      ! Assume every atom it's own molecule
+      molecule_for_atom.create(.n_atoms)
+      do i = 1,.n_atoms
+         molecule_for_atom(i) = i
+         root_uc_atom(i).element.create(.n_unit_cell_atoms) 
+         root_uc_atom(i).element = FALSE       
+         root_uc_atom(i).element( .unit_cell_atom_for_frag_atom(i) ) = TRUE ! Every frag atom is its own root by itself
+      end
+
+      ! Loop on all atoms "i"
+      i = 1
+      safetyCounter = 0 ! Kang. Initialize Forced-stop counter
+
+      do
+         if (safetyCounter > 1000 ) exit   ! Forced termination if total attempts to find connected atoms exceeds 1000          
+
+         ! Any more atoms to connect?
+         if (i>.n_atoms) exit
+
+         ! Info about atom "i"
+         mi   = molecule_for_atom(i)       ! Molecule "mi" for i
+         code = .occupation_list(i)        ! Occupation code
+         u    = CLUSTER_UA_FROM_CODE(code) ! Unit cell atom
+
+         ! No connections to this atom? next ...
+         if (.unit_cell_connection(u).element.dim==0) then 
+            i = i+1
+            cycle
+         end    
+         
+         if (stop_search(i)) then
+            i = i+1
+            cycle
+         end
+
+         ! Get unit cell atom offset for atom "i"
+         h1 = CLUSTER_H1_FROM_CODE(code)
+         h2 = CLUSTER_H2_FROM_CODE(code)
+         h3 = CLUSTER_H3_FROM_CODE(code)
+
+         ! Loop on atoms "c" connected to "u"
+         do c = 1,.unit_cell_connection(u).element.dim
+            safetyCounter = safetyCounter + 1  
+
+            ! List of connections
+            con = .unit_cell_connection(u)[c].element
+
+            ! Get code for connected atom
+            k1 = h1 + con(1)
+            k2 = h2 + con(2)
+            k3 = h3 + con(3)
+            t  =      con(4)
+            code = CLUSTER_AT_CODE(k1,k2,k3,t)
+
+            ! Is it new in the occupation list?
+            old = .occupation_list.index_of_value(code)
+
+            if (old>0) then
+
+               ! This is an old (found) atom. Replace the molecule
+               ! index by the lower of  "mi" and "mo" everywhere.
+               mo = molecule_for_atom(old)
+               if (mo<mi) then
+                  where (molecule_for_atom==mi) molecule_for_atom = mo
+                  mi = mo
+               else if (mo>mi) then
+                  where (molecule_for_atom==mo) molecule_for_atom = mi
+               end
+               .atom_connection(i).element.append(old)
+
+               ! Kang's major modification here 
+               !  Unification of two roots (familty trees)
+               tmp1 = root_uc_atom(old).element   ! tmp1,tmp2: Family labels 
+               tmp2 = root_uc_atom( i ).element   ! note: tmp1.dim = .n_unit_cell_atoms
+
+               ind1.destroy          
+               ind2.destroy
+               ind1.create(.n_atoms) 
+               ind2.create(.n_atoms)       
+       
+               do v = 1, .n_atoms ! Find the family members of each root
+                   ind1(v) = tmp1.same_as( root_uc_atom(v).element ) ! members from family 1
+                   ind2(v) = tmp2.same_as( root_uc_atom(v).element ) !         "           2
+               end
+               ind1 = ind1 OR ind2  ! merged family members
+               tmp1 = tmp1 OR tmp2  ! New family name
+
+               do v = 1, .n_atoms ! Update the new family name to the merged family members
+                   if (ind1(v)) then 
+                      root_uc_atom(v).element = tmp1
+                   end
+               end        
+
+
+            else
+
+               ! This is a new atom. Increment no. of atoms,
+               ! store in the occ list and add new connection.
+               .occupation_list.append(code)
+               molecule_for_atom.append(mi)
+               .n_atoms = .n_atoms + 1
+               .atom_connection.expand(.n_atoms)
+               .atom_connection(i).element.append(.n_atoms)
+
+               ! Kang's majore modification 
+               !  Assign the family name and stop flag for the newly found atom.
+               root_uc_atom.expand(.n_atoms)
+               root_uc_atom(.n_atoms).element.append( root_uc_atom(i).element )
+               stop_search.append( root_uc_atom(.n_atoms).element(t) )       ! Reminder: t = con(4) = unit cell atom code                                                                     
+       
+            end
+
+         end ! do c = 1,.unit_cell_connection ... 
+
+         i = i + 1 ! move on to the next atom in the .occupation_list   
+
+      end ! do loop (equivalent to while ( i <=.n_atoms 'AND' safetyCounter < "Threshold value" )
+
+      ! Set (sorted) molecule index array
+      .molecule_for_atom = molecule_for_atom
+
+      ! Make molecule info
+      .make_molecule_info
+
+   end
+
    do_defragment(occupation_list) ::: leaky, PURE
    ! Defragment the "occupation_list"
       self :: IN
