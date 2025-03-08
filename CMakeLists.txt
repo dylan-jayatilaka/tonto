@@ -234,7 +234,7 @@ set(FOO_SRC
     ${FOO_DIR}/lebedev.foo
     ${FOO_DIR}/quadrature.foo
     ${FOO_DIR}/roby.foo
-    ${FOO_DIR}/scfdata.foo
+    ${FOO_DIR}/scf_data.foo
     ${FOO_DIR}/shell.foo
     ${FOO_DIR}/shell1.foo
     ${FOO_DIR}/shell1pair.foo
@@ -395,7 +395,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/roby.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rys.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/scfdata.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/scf_data.F90
     ${CMAKE_CURRENT_BINARY_DIR}/shell.F90
     ${CMAKE_CURRENT_BINARY_DIR}/shell1.F90
     ${CMAKE_CURRENT_BINARY_DIR}/shell1pair.F90
