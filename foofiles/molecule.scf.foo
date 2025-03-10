@@ -3379,6 +3379,7 @@ contains
 
       end
 
+      .:canonicalize_virtual_MOs
       .:put_SCF_results
       .:archive_SCF_results
       .:cleanup_scf
@@ -8478,7 +8479,7 @@ contains
 !  Canonicalisation routines
 !  =========================
 
-   canonicalize_MOs
+   canonicalize_occupied_MOs
    ! Generate the Fock matrix from the molecular orbitals and
    ! diagonalise it on the occupied-occupied block to get the
    ! canonical molecular orbitals, and write them out.
@@ -8504,7 +8505,7 @@ contains
             "noninteracting-group-rhf")
          .MO_energies.destroy
          .MO_energies.create(.n_bf,"r ")
-         .:canonicalize_r_MO(.MO_energies.r,.MOs.r,.fock_mx.r,.n_e/2)
+         .:canonicalize_r_occ_MOs(.MO_energies.r,.MOs.r,.fock_mx.r,.n_e/2)
          stdout.flush
          stdout.text("Canonicalized MO energies:")
          stdout.put(.MO_energies.r)
@@ -8520,8 +8521,8 @@ contains
             "xray_pnd_uks")
          .MO_energies.destroy
          .MO_energies.create(.n_bf,"u ")
-         .:canonicalize_r_MO(.MO_energies.a,.MOs.a,.fock_mx.a,.n_a)
-         .:canonicalize_r_MO(.MO_energies.b,.MOs.b,.fock_mx.b,.n_b)
+         .:canonicalize_r_occ_MOs(.MO_energies.a,.MOs.a,.fock_mx.a,.n_a)
+         .:canonicalize_r_occ_MOs(.MO_energies.b,.MOs.b,.fock_mx.b,.n_b)
          stdout.flush
          stdout.text("Canonicalized alpha MO energies:")
          stdout.put(.MO_energies.a(1:.n_a))
@@ -8536,7 +8537,7 @@ contains
 
    end
 
-   canonicalize_r_MO(MO_energies,MO,F,n)
+   canonicalize_r_occ_MOs(MO_energies,MO,F,n)
    ! Digaonalise the Fock matrix "F" in the occupied-occupied 
    ! and virtual-virtual block of the molecular orbitals "MO", 
    ! and reset the occupied "MO_energies".
@@ -8577,6 +8578,89 @@ contains
       MO_old.destroy
       U.destroy
       G.destroy
+
+   end
+
+   canonicalize_virtual_MOs
+   ! Generate the Fock matrix from the molecular orbitals and
+   ! diagonalise it on the virtual-virtual block to get new
+   ! virtual MOs and virtual MO energies.
+   ! NOTE: only for restricted, and Hizinaga-Arnau, so far.
+      self :: INOUT
+
+   ENSURE(.MOs.allocated,  "need MOs!")
+   ENSURE(.MOs.r.allocated,"need restricted MOs!")
+   ENSURE(.fock_mx.allocated,  "need Fock mx!")
+   ENSURE(.fock_mx.r.allocated,"need restricted Fock mx!")
+   ENSURE(.SCF_data.SCF_kind=="rhf","Only works with RHF at the moment")
+
+      method  :: STR
+      F,J,K,P :: MAT{REAL}@
+      Fv,evec :: MAT{REAL}@
+      n,no,nv,r :: INT
+
+      ! Any canonicalization requested?
+      if (.SCF_data.SCF_kind/="rhf") return
+      if (.SCF_data.VV_canonicalization==" ") return
+
+      ! Sizes
+      n  = .n_bf
+      no = .n_e/2
+      nv = n - no
+
+      ! MO to eliminate from density
+      r = .SCF_data.VV_removed_MO
+      if (r<=0) r = no + r
+      ENSURE(0<r AND r<=no,"removed MO is not occupied")
+
+      ! Get Fock mx
+      F.create(n,n)
+      F = .fock_mx.r
+
+      ! Make the density matrix for removed orbital
+      J.create(n,n)
+      P.create(n,n)
+      P = matmul(.MOs.r(:,r:r),transpose(.MOs.r(:,r:r)))
+
+      method = .SCF_data.VV_canonicalization
+
+      select case (method)
+
+      case ("hunt-goddard-1")
+         K.create(n,n)
+         .FOCK:make_r_JK_direct(J,K,P)
+         F = F - J + TWO*K
+         K.destroy
+
+      case ("hunt-goddard-3")
+         .FOCK:make_r_J_direct(J,P)
+         F = F - J
+
+      case ("huzinaga-arnua")
+         K.create(n,n)
+         .FOCK:make_r_JK_direct(J,K,P)
+         F = F - J + K
+         K.destroy
+
+      case default
+         DIE("unknown VMO canonicalization, "//trim(method))
+
+      end
+
+      ! Clean
+      P.destroy
+      J.destroy
+
+      ! Do the canonicalization
+      evec.create(n,nv)
+      Fv.create(n,n)
+      F.change_basis_to(Fv,.MOs.r(:,no+1:))
+      Fv.diagonalize_Jacobi(.MO_energies.r(no+1:),evec)
+      .MOs.r(:,no+1:) = matmul(.MOs.r(:,no+1:),evec)
+
+      ! Clean
+      Fv.destroy
+      evec.destroy
 
    end
 
