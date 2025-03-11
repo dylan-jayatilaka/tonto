@@ -27,327 +27,11 @@ module MOLECULE.TD
 
 contains
 
-!  ====
-!  CPHF
-!  ====
-
-   make_perturbed_densities(D,U,MO,no) ::: leaky. PURE
-   ! Make the perturbed densities "D" from the "U" matrices by back
-   ! transforming with the "MO" from occupied orbital "no".
-      self :: IN
-      D :: MAT3{REAL}, OUT
-      U :: MAT3{REAL}, IN
-      MO :: MAT{REAL}, IN
-      no :: INT, optional, IN
-
-   ENSURE(D.dim3==U.dim3,"incompatible D and U")
-   ENSURE(D.dim1==.n_bf AND D.dim2==.n_bf,"wrong size, D")
-   ENSURE(MO.is_square AND MO.dim1==.n_bf,"wrong size, MO")
-
-      i :: INT
-
-      if (present(no)) then
-
-         ENSURE(no>0,"n_occ must be positive")
-         ENSURE(no<=.n_bf,"n_occ must not exceed n_bf")
-         do i = 1,U.dim3
-            U(:,:,i).back_transform_to(D(:,:,i),MO(:,no+1:),MO(:,1:no))
-            D(:,:,i).symmetrize
-         end
-
-      else
-
-         do i = 1,U.dim3
-            U(:,:,i).back_transform_to(D(:,:,i),MO)
-            D(:,:,i).symmetrize
-         end
-
-      end
-
-      D = FOUR*D
-
-   end
-
-   set_CPHF_DIIS ::: leaky, PURE
-   ! Set up the DIIS archives for a CPHF calculations.
-      self :: INOUT
-
-   ENSURE(.SCF_data.allocated,"no scf data")
-
-      tol :: REAL
-
-      ! Set up DIIS
-      tol = .SCF_data.SCF_DIIS.convergence_tolerance
-      .SCF_data.SCF_DIIS.set_defaults
-      .SCF_data.SCF_DIIS.set_save_iteration(0)
-      .SCF_data.SCF_DIIS.set_start_iteration(2)
-      .SCF_data.SCF_DIIS.set_convergence_tolerance(tol)
-
-   end
-
-   solve_CPHF_equations(U,rhs) ::: private
-   ! Solve the coupled-perturbed Hartree-Fock (CPHF) equations. The
-   ! result is the derivative MO coefficients "U" (virtual-occupied
-   ! block) and "rhs" is the right hand side of the CPHF equations
-   ! (virtual-occupied block). The convergence tolerance and the
-   ! number of iterations are controlled via the SCF_data block, since
-   ! this is a self consistent procedure.
-      self :: INOUT
-      U    :: MAT3{REAL}, INOUT
-      rhs  :: MAT3{REAL}, IN
-
-   ENSURE(.SCF_data.allocated,"no scf data")
-   ENSURE(.MOs.allocated,"no MOs")
-   ENSURE(.MOs.r.allocated,"no restricted MOs")
-   ENSURE(U.dim1==(.n_bf-.n_a),  "wrong size, U, dimension 1")
-   ENSURE(U.dim2==.n_a,          "wrong size, U, dimension 2")
-   ENSURE(rhs.dim1==(.n_bf-.n_a),"wrong size, rhs, dimension 1")
-   ENSURE(rhs.dim2==.n_a,        "wrong size, rhs dimension 2")
-   ENSURE(U.dim3==rhs.dim3,"incompatible sizes, U and rhs")
-
-      Ev, Eo  :: VEC{REAL}@
-      par,err :: VEC{REAL}@
-      U_vo       :: MAT3{REAL}@
-      U_ao,J,K,W :: MAT{REAL}@
-      MOv, MOo   :: MAT{REAL}@
-      no,nv,n_pert,n_vo, n :: INT
-      tol0,test,delta :: REAL
-      use_DIIS :: BIN
-      arch :: ARCHIVE
-
-      ! Dimensions
-      no = .n_a
-      nv = .n_bf - .n_a
-      n_vo   = nv*no
-      n_pert = U.dim3
-      tol0   = TOL(6)
-
-      ! Assign MO's, orbital ranges
-      MOv = .MOs.r(:,no+1:  )
-      MOo = .MOs.r(:,   1:no) 
-      Ev  = .MO_energies.r(no+1:  )
-      Eo  = .MO_energies.r(   1:no)
-
-      ! Read/initialize U's
-      .:initialize_Us(U,rhs,Ev,Eo,tol0)
-
-      ! Allocate temporaries
-      U_vo.create(nv,no,n_pert)
-      U_ao.create(.n_bf,.n_bf)
-      W.create(nv,no)
-      J.create(.n_bf,.n_bf)
-      K.create(.n_bf,.n_bf)
-      par.create(n_vo)
-      err.create(n_vo)
-
-      ! Use DIIS?
-      use_DIIS = .SCF_data.using_CP_DIIS
-
-      ! Set initial convergence data/DIIS
-      .SCF_data.update_CP_difference(ZERO)
-      .SCF_data.set_DIIS_error(ZERO)
-      if (use_DIIS) .SCF_data.reset_CP(n_pert)
-
-      ! Banner & tabular output
-      .SCF_data.put_CP_banner
-      .SCF_data.put_CP_options
-      .SCF_data.set_CP_table
-      .SCF_data.put_CP_table_head
-      .SCF_data.put_CP_table_body_and_footer
-
-      ! Begin iterations
-      do
-
-         U_vo  = U
-         test  = ZERO
-         delta = ZERO
-
-         ! For each perturbation, update U(:,:,n)
-         do n = 1,n_pert
-
-            ! U(MO) -> U(AO)
-            U(:,:,n).back_transform_to(U_ao,MOv,Moo)
-            U_ao.symmetrize
-
-            ! Make A.U (AO) -> A.U (MO) = W
-            .FOCK:make_r_JK_engine(J,K,U_ao)
-            U_ao = FOUR*J - TWO*K
-            .BASE:remove_dependence_from_r(U_ao)
-            U_ao.change_basis_to(W,MOv,Moo)
-
-            ! DIIS extrapolation on AU (MO)
-            if (use_DIIS) then
-               par = reshape(W,[n_vo])
-               W.plus_difference_product_with(U(:,:,n),Ev,Eo,tol0) ! W <- H
-               err = reshape(W-rhs(:,:,n),[n_vo])                  ! H - rhs
-               .SCF_data.CP_DIIS(n).extrapolate(par,err,n_vo)
-               W   = reshape(par,[nv,no])                          ! W <- AU
-               test = max(test,.SCF_data.CP_DIIS(n).error_length)
-            end
-
-            ! Update U, U <- (rhs - W)/D
-            W = rhs(:,:,n) - W
-            U(:,:,n) = ZERO
-            U(:,:,n).plus_difference_divisor_with(W,Ev,Eo,tol0)    ! W <- H
-
-         end
-           
-         ! Delta is max |diff|
-         delta = max(delta,maxval(abs(U-U_vo)))
-
-         ! Update data
-         .SCF_data.update_iteration
-         .SCF_data.update_DIIS_from_CP_DIIS
-         .SCF_data.update_CP_difference(delta)
-         .SCF_data.SCF_DIIS.set_error_length(test)
-         .SCF_data.set_DIIS_error(test)
-
-         ! Put table
-         .SCF_data.put_CP_table_body_and_footer(flush=TRUE)
-
-         ! Write archive for restart
-         arch.set(.name,"U_electric_dipole",genre="r")
-         arch.write(U)
-
-         if (.SCF_data.SCF_done) exit
-
-      end ! iterative cycle
-
-      ! Clean-up
-      .SCF_data.SCF_DIIS.destroy_ptr_part
-      .SCF_data.CP_DIIS.destroy
-      err.destroy
-      par.destroy
-      K.destroy
-      J.destroy
-      W.destroy
-      U_ao.destroy
-      U_vo.destroy
-
-   end
-
-   initialize_Us(U,rhs,Ev,Eo,tol0) ::: private
-   ! Initialize the U matrices
-      self :: INOUT
-      U    :: MAT3{REAL}, OUT
-      rhs  :: MAT3{REAL}, IN
-      Ev   :: VEC{REAL}, IN
-      Eo   :: VEC{REAL}, IN
-      tol0 :: REAL, IN
-
-      arch :: ARCHIVE
-      n :: INT
-
-      if (.SCF_data.initial_Us=="r") then
-
-         ! Read or calculate initial approximation for U
-         stdout.flush
-         stdout.text("As requested from SCF_data, reading U's from disk ...")
-         arch.set(.name,"U_electric_dipole",genre="r")
-         arch.read(U)
-
-      else
-
-         ! Set SOS initial guess
-         U = ZERO
-         do n = 1,U.dim3
-            U(:,:,n).plus_difference_divisor_with(rhs(:,:,n),Ev,Eo,tol0)
-         end
-
-      end
-
-   end
-
-!   make_A_times_U(AU,U) ::: private
-!   ! Make the full A times U matrix in the MO basis
-!      self :: INOUT
-!      AU :: MAT3{REAL}, OUT
-!      U  :: MAT3{REAL}, IN
-!
-!   ENSURE(.SCF_data.allocated,"no scf data")
-!   ENSURE(.basis_info_made,"no basis info")
-!   ENSURE(.atom.allocated,"no atom info")
-!   ENSURE(U.dim1==(.n_bf-.n_a),"wrong size, U, dimension 1")
-!   ENSURE(U.dim2==.n_a,"wrong size, rhs, dimension 2")
-!   ENSURE(AU.dim1==.n_bf,"wrong size, AU")
-!   ENSURE(AU.dim2==.n_bf,"wrong size, AU")
-!   ENSURE(U.dim3==AU.dim3,"incompatible sizes, U and AU")
-!
-!      U_ao,J,K :: MAT{REAL}@
-!      MOv, MOo :: MAT{REAL}@
-!      n :: INT
-!
-!      U_ao.create(.n_bf,.n_bf)
-!      J.create(.n_bf,.n_bf)
-!      K.create(.n_bf,.n_bf)
-!
-!      MOv = .MOs.r(:,.n_a+1:)
-!      MOo = .MOs.r(:,:.n_a) 
-!
-!      do n = 1,U.dim3
-!         U(:,:,n).back_transform_to(U_ao,Mov,MOo)
-!         U_ao.symmetrize                   ! U -> AO basis
-!         .FOCK:make_r_JK_direct(J,K,U_ao)  ! A times U (INOUT)
-!         AU(:,:,n) = FOUR*J - TWO*K
-!         AU(:,:,n).change_basis_using(.MOs.r)
-!      end
-!
-!      ! Clean
-!      K.destroy
-!      J.destroy
-!      U_ao.destroy
-!
-!,   end
-
-   add_A_times_U(AU,U) ::: private
-   ! Add the full A matrix times the full U matrix to "AU". "U" is the
-   ! virtual-occupied block of the full U matrix.
-      self :: INOUT
-      AU :: MAT3{REAL}, OUT
-      U  :: MAT3{REAL}, IN
-
-   ENSURE(.SCF_data.allocated,"no scf data")
-   ENSURE(.basis_info_made,"no basis info")
-   ENSURE(.atom.allocated,"no atom info")
-   ENSURE(U.dim1==(.n_bf-.n_a),"wrong size, U, dimension 1")
-   ENSURE(U.dim2==.n_a,"wrong size, rhs, dimension 2")
-   ENSURE(AU.dim1==.n_bf,"wrong size, AU")
-   ENSURE(AU.dim2==.n_bf,"wrong size, AU")
-   ENSURE(U.dim3==AU.dim3,"incompatible sizes, U and AU")
-
-      J,K,W :: MAT{REAL}@
-      MOv, MOo :: MAT{REAL}@
-      n :: INT
-
-
-      J.create(.n_bf,.n_bf)
-      K.create(.n_bf,.n_bf)
-      W.create(.n_bf,.n_bf)
-
-      MOv = .MOs.r(:,.n_a+1:)
-      MOo = .MOs.r(:,:.n_a) 
-
-      do n = 1,U.dim3
-         U(:,:,n).back_transform_to(W,MOv,MOo)
-         W.symmetrize                  ! U -> AO basis
-         .FOCK:make_r_JK_direct(J,K,W) ! INOUT
-         W = FOUR*J - TWO*K            ! W = A times U
-         W.change_basis_using(.MOs.r)
-         AU(:,:,n) = AU(:,:,n) + W
-      end
-
-      ! Clean
-      W.destroy
-      K.destroy
-      J.destroy
-
-   end
-
 !  ===============
 !  Davidson solver
 !  ===============
 
-   test_MGS_QR
+   test_MGS_QR ::: selfless
    ! Test orthogonalisation routines for Davidson diagonaliser.
       self :: INOUT
 
@@ -413,15 +97,15 @@ contains
 
    end
 
-   test_Davidson_CPS_6
+   test_Davidson_CPS_6 ::: selfless
    ! Test the Davidson algorithm with the example in section 6 of
    ! Crouzeix et al (2006) Inria RR 1353
-      self :: INOUT
 
       A    :: MAT{REAL}@
       evec :: MAT{REAL}@
       eval :: VEC{REAL}@
-      d, n_eig,n_keep,maxit, i,j :: INT
+      d,n_eig, i :: INT
+      n_keep,maxit :: INT
 
       ! Sizes
       d = 30
@@ -468,7 +152,7 @@ contains
       evec.destroy
 
     ! A.diagonalize_Davidson(eval,evec,n_eig,n_keep,maxit,tolconv=TOL(7))
-      .TD::diagonalize_Davidson(A,eval,evec,n_eig,n_keep,maxit,tolcon=TOL(7))
+      ::diagonalize_Davidson(A,eval,evec,n_eig,n_keep,maxit,tolcon=TOL(7))
 
       stdout.flush
       stdout.text("===============")
@@ -490,7 +174,7 @@ contains
 
    end
 
-   diagonalize_Davidson(A,eval,evec,n_eig,n_keep,maxit,tolcon)
+   diagonalize_Davidson(A,eval,evec,n_eig,n_keep,maxit,tolcon) ::: selfless
    ! Davidson diagonaliser for matrix "A".
    ! See Crouzeix et al (2006) Inria RR 1353
    ! Step numbers & symbols below mostly from p. 5 Crouzeix.
@@ -668,35 +352,62 @@ contains
 !  Two-electron integrals for checking
 !  ===================================
 
-   test_VOVO
-   ! Test orthogonalisation routines for Davidson diagonaliser.
+   TDHF_in_core ::: leaky
+   ! Do an in-core TDHF calculation
       self :: IN
 
-      vovo :: MAT{REAL}@
 
-      .TD::make_VOVO_ERIs(vovo)
+      AmB, eval :: VEC{REAL}@
+      ApB, evec :: MAT{REAL}@
+      n,no,nv,nvo :: INT
 
-      vovo.destroy
+      ! Dimensions
+      n   = .n_bf
+      no  = .n_a
+      nv  = n - no
+      nvo = nv*no
+
+      ! The A-B & A+B matrices
+      AmB.create(nvo)
+      ApB.create(nvo,nvo)
+      .TD::make_TDHF_ApB_AmB(ApB,AmB)
+
+      ! Form eq (28) in Dreuw & Head-Gordon (2005)
+      AmB = sqrt(AmB)
+      ApB.change_basis_using(AmB)
+
+      ! Diagonalize
+      eval.create(nvo)
+      evec.create(nvo,nvo)
+      ApB.diagonalize_Jacobi(eval,evec)
+
+      ! Clean
+      evec.destroy
+      eval.destroy
+      ApB.destroy
+      AmB.destroy
 
    end
 
-   make_VOVO_ERIs(vovo) ::: leaky
-   ! Return the "vovo"electron repulsion integrals (ERI's) stored as a
-   ! 2D matrix, with indices 12 and 34 linearized, respectively.
-   ! It isn't done very efficiently ...
+   make_TDHF_ApB_AmB(ApB,AmB) ::: leaky
+   ! Return the TDDFT A+B matrix and diagonal A-B.
+   ! This memory intensive implementation is for checking. 
+   ! See eqns (26)-(28) in Dreuw & Head-Gordon (2005) in
+   ! Chem. Rev. 105 p 4009-37.
       self :: IN
-      vovo :: MAT{REAL}@, OUT
+      ApB  :: MAT{REAL}, OUT
+      AmB  :: VEC{REAL}, OUT
 
-   ENSURE(.MOs.allocated,"MOs do not exist")
-   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+   ENSURE(.TD_data.allocated,"NO TD_data!")
+   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
 
-      v :: MAT4{REAL}@
-      MO,W :: MAT{REAL}@
-      n,no,nv,nvo :: INT
-      p,q    :: INT
       a,i,ai :: INT
-    ! b,j,bj :: INT
-    ! val :: REAL
+      b,j,bj :: INT
+      n,no,nv,nvo :: INT
+      Ea,Ei,del :: REAL
+      vovo :: MAT{REAL}@
+      vvoo :: MAT{REAL}@
 
       ! Dimensions
       n   = .n_bf
@@ -706,6 +417,90 @@ contains
 
       ! The VOVO integrals
       vovo.create(nvo,nvo)
+      vvoo.create(nvo,nvo)
+      .TD::make_VOVO_VVOO_ERIs(vovo,vvoo)
+
+
+      ! Initialize
+      ApB = ZERO ! A+B
+      AmB = ZERO ! A-B
+
+      ! Check
+      ai = 0
+      do i = 1,no
+         Ei = .TD_data.Eo(i)
+         do a = 1,nv
+            ai = ai + 1
+            Ea = .TD_data.Ev(a)
+            del = Ea - Ei
+            AmB(ai)    = del
+            ApB(ai,ai) = del
+            bj = 0
+            do j = 1,no
+            do b = 1,nv
+               bj = bj + 1
+               ApB(ai,bj) = ApB(ai,bj) + vovo(ai,bj) - vvoo(ai,bj)
+            end
+            end
+         end
+      end
+
+      ! Clean
+      vvoo.destroy
+      vovo.destroy
+
+   end
+
+   test_VOVO
+   ! Test orthogonalisation routines for Davidson diagonaliser.
+      self :: IN
+
+      n,no,nv,nvo :: INT
+      vovo :: MAT{REAL}@
+      vvoo :: MAT{REAL}@
+
+      ! Dimensions
+      n   = .n_bf
+      no  = .n_a
+      nv  = n - no
+      nvo = nv*no
+
+      ! The VOVO integrals
+      vovo.create(nvo,nvo)
+      vvoo.create(nvo,nvo)
+
+      .TD::make_VOVO_VVOO_ERIs(vovo,vvoo)
+
+      vvoo.destroy
+      vovo.destroy
+
+   end
+
+   make_VOVO_VVOO_ERIs(vovo,vvoo) ::: leaky
+   ! Return the "vovo" and "vvoo ERIs stored as a 2D matrix, 
+   ! with indices 12 and 34 linearized, respectively.
+      self :: IN
+      vovo :: MAT{REAL}, OUT
+      vvoo :: MAT{REAL}, OUT
+
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      v :: MAT4{REAL}@
+      W :: MAT{REAL}@
+      n,no,nv,nvo :: INT
+      p,q    :: INT
+      a,i,ai :: INT
+      b,j,bj :: INT
+
+      ! Dimensions
+      n   = .n_bf
+      no  = .n_a
+      nv  = n - no
+      nvo = nv*no
+
+      ! The VOVO integrals
+    ! vovo.create(nvo,nvo)
 
       ! Get 2e integrals
       v.create(n,n,n,n)
@@ -721,7 +516,7 @@ contains
          end
       end
 
-      ! Change last two indices
+      ! VOVO
       W.create(nv,no)
       ai = 0
       do i = 1,no
@@ -729,6 +524,23 @@ contains
          ai = ai + 1
          v(a,i,:,:).change_basis_to(W,.MOs.r(:,no+1:),.MOs.r(:,1:no))
          vovo(ai,:) = reshape(W,[nvo])
+      end
+      end
+      W.destroy
+
+      ! VVOO
+      ! Can join with above?
+      W.create(no,no)
+      do b = no+1,n
+      do a = no+1,n
+         v(a,b,:,:).change_basis_to(W,.MOs.r(:,1:no),.MOs.r(:,1:no))
+         do j = 1,no
+         do i = 1,no
+            ai = a + (i-1)*nv
+            bj = b + (j-1)*nv
+            vvoo(ai,bj) = W(i,j)
+         end
+         end
       end
       end
       W.destroy

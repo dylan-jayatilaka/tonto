@@ -3379,7 +3379,7 @@ contains
 
       end
 
-      .:canonicalize_virtual_MOs
+      .:canonicalize_virtual_MOs(output=TRUE)
       .:put_SCF_results
       .:archive_SCF_results
       .:cleanup_scf
@@ -8581,12 +8581,13 @@ contains
 
    end
 
-   canonicalize_virtual_MOs
+   canonicalize_virtual_MOs(output)
    ! Generate the Fock matrix from the molecular orbitals and
    ! diagonalise it on the virtual-virtual block to get new
    ! virtual MOs and virtual MO energies.
    ! NOTE: only for restricted, and Hizinaga-Arnau, so far.
       self :: INOUT
+      output :: BIN, optional, IN
 
    ENSURE(.MOs.allocated,  "need MOs!")
    ENSURE(.MOs.r.allocated,"need restricted MOs!")
@@ -8594,14 +8595,21 @@ contains
    ENSURE(.fock_mx.r.allocated,"need restricted Fock mx!")
    ENSURE(.SCF_data.SCF_kind=="rhf","Only works with RHF at the moment")
 
-      method  :: STR
-      F,J,K,P :: MAT{REAL}@
-      Fv,evec :: MAT{REAL}@
+      F,Fv   :: MAT{REAL}@
+      J,K,P  :: MAT{REAL}@
+      Uv,VMO :: MAT{REAL}@
+      MOEba  :: MAT{REAL}@
+      method :: STR
       n,no,nv,r :: INT
-
+      out :: BIN
+       
       ! Any canonicalization requested?
       if (.SCF_data.SCF_kind/="rhf") return
       if (.SCF_data.VV_canonicalization==" ") return
+
+      ! Output
+      out = FALSE
+      if (present(output)) out = output
 
       ! Sizes
       n  = .n_bf
@@ -8610,11 +8618,39 @@ contains
 
       ! MO to eliminate from density
       r = .SCF_data.VV_removed_MO
+
+      ! Mo energies before & after
+      MOEba.create(nv,2)
+      MOEba(:,1) = .MO_energies.r(no+1:)
+
+      if (output) then
+         stdout.flush
+         stdout.text("=======================")
+         stdout.text("Canonicalize Vitual MOs")
+         stdout.text("=======================")
+         stdout.flush
+         stdout.text(". The method works by remove an occupied MO")
+         stdout.flush
+         stdout.text(". A negative number n for the OMO means that")
+         stdout.text("  the (HOMO-n) is to be removed")
+         stdout.flush
+         stdout.text(". A method suited to excited singlets, or triplets")
+         stdout.text("  is available, see Hunt, Goddard (1969) CPL 3 p 414.")
+         stdout.flush
+         stdout.text("  Averaging both was done by Huzinaga & Arnau (1971).")
+         stdout.text("  See JCP 54 p. 1948.")
+         stdout.flush
+         stdout.show("VMO canonicalization method  = ",.SCF_data.VV_canonicalization)
+         stdout.show("Occupied MO to remove        = ",r)
+      end
+
+      ! Deal with -ve occupied MO to remove
       if (r<=0) r = no + r
       ENSURE(0<r AND r<=no,"removed MO is not occupied")
 
-      ! Get Fock mx
-      F.create(n,n)
+      ! Fock matrices
+      Uv.create(nv,nv) ! VMO rotation
+      Fv.create(nv,nv) ! virtual 
       F = .fock_mx.r
 
       ! Make the density matrix for removed orbital
@@ -8636,7 +8672,7 @@ contains
          .FOCK:make_r_J_direct(J,P)
          F = F - J
 
-      case ("huzinaga-arnua")
+      case ("huzinaga-arnau")
          K.create(n,n)
          .FOCK:make_r_JK_direct(J,K,P)
          F = F - J + K
@@ -8651,16 +8687,32 @@ contains
       P.destroy
       J.destroy
 
-      ! Do the canonicalization
-      evec.create(n,nv)
-      Fv.create(n,n)
-      F.change_basis_to(Fv,.MOs.r(:,no+1:))
-      Fv.diagonalize_Jacobi(.MO_energies.r(no+1:),evec)
-      .MOs.r(:,no+1:) = matmul(.MOs.r(:,no+1:),evec)
+      ! Transform F to virtual
+      VMO = .MOs.r(:,no+1:)
+      F.change_basis_to(Fv,VMO)
+      VMO.destroy
+      F.destroy
+
+      ! Canonicalize
+      Fv.diagonalize_Jacobi(.MO_energies.r(no+1:),Uv)
+      VMO = .MOs.r(:,no+1:)
+      .MOs.r(:,no+1:) = matmul(VMO,Uv)
 
       ! Clean
+      VMO.destroy
       Fv.destroy
-      evec.destroy
+      Uv.destroy
+
+      ! Output
+      MOEba(:,2) = .MO_energies.r(no+1:)
+      if (output) then
+         stdout.flush
+         stdout.text("VMO energies before & after canonicalization:")
+         stdout.flush
+         stdout.put(MOEba)
+      end
+
+      MOEba.destroy
 
    end
 
