@@ -361,8 +361,8 @@ contains
    ENSURE(.MOs.allocated,  "MOs do not exist")
    ENSURE(.MOs.r.allocated,"MOs.r does not exist")
 
-      AmB, eval :: VEC{REAL}@
-      ApB, evec :: MAT{REAL}@
+      ApB :: MAT{REAL}@
+      AmB, AmB2 :: MAT{REAL}@
       no,nv,nvo :: INT
 
       ! Minimal setup
@@ -379,13 +379,19 @@ contains
       nvo = nv*no
 
       ! The A-B & A+B matrices
-      AmB.create(nvo)
       ApB.create(nvo,nvo)
-      .TD::make_TDHF_ApB_AmB(ApB,AmB)
+      AmB.create(nvo,nvo)
+      .TD::make_TDHF_ApB_AmB_singlet(ApB,AmB)
+
+      ! Get sqrt
+      AmB2.create(nvo,nvo)
+      AmB2.to_sqrt_of(AmB)
+      AmB = AmB2
+      AmB2.destroy
 
       ! Form eq (28) in Dreuw & Head-Gordon (2005)
-      AmB = sqrt(AmB)
       ApB.change_basis_using(AmB)
+      AmB.destroy
 
       ! Diagonalize for excitations
       .TD_data.eval.create(nvo)
@@ -397,77 +403,150 @@ contains
       .TD_data.put_results
 
       ! Clean
-      evec.destroy
-      eval.destroy
       ApB.destroy
       AmB.destroy
 
    end
 
-   make_TDHF_ApB_AmB(ApB,AmB) ::: leaky
-   ! Return the TDDFT A+B matrix and diagonal A-B.
-   ! This memory intensive implementation is for checking. 
-   ! See eqns (26)-(28) in Dreuw & Head-Gordon (2005) in
-   ! Chem. Rev. 105 p 4009-37.
+   make_TDHF_ApB_AmB_singlet(ApB,AmB) ::: leaky
+   ! Return the TDDFT A+B matrix and diagonal A-B, 
+   ! respectively "ApB" and "AmB", for a singlet.
+   ! They are made directly from the 2ERIs in the
+   ! MO basis. See Weiss et al (1993) JCP 99 p1262-70.
       self :: IN
       ApB  :: MAT{REAL}, OUT
-      AmB  :: VEC{REAL}, OUT
+      AmB  :: MAT{REAL}, OUT
 
    ENSURE(.TD_data.allocated,"NO TD_data!")
    ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
    ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
 
+      v :: MAT4{REAL}@
+      n,no,nv,nvo :: INT
       a,i,ai :: INT
       b,j,bj :: INT
-      n,no,nv,nvo :: INT
-      Ea,Ei,val :: REAL
-      vovo :: MAT{REAL}@
-      vvoo :: MAT{REAL}@
+      Ea,Ei,val,ex1,ex2 :: REAL
 
       ! Dimensions
-      n   = .n_bf
-      no  = .n_a
-      nv  = n - no
+      n   = .TD_data.n_bf
+      no  = .TD_data.n_occ
+      nv  = .TD_data.n_vir
       nvo = nv*no
 
-      ! The VOVO integrals
-      vovo.create(nvo,nvo)
-      vvoo.create(nvo,nvo)
-      .TD::make_VOVO_VVOO_ERIs(vovo,vvoo)
+      ! Get ERIs in MO basis
+      v.create(n,n,n,n)
+      .FOCK:make_MO_ERI_chem_integrals(v)
 
+      ApB = ZERO
+      AmB = ZERO
 
-      ! Initialize
-      ApB = ZERO ! A+B
-      AmB = ZERO ! A-B
-
-      ! Check
       ai = 0
+
       do i = 1,no
-         Ei = .TD_data.Eo(i)
-         do a = 1,nv
-            ai = ai + 1
-            Ea = .TD_data.Ev(a)
-            val = Ea - Ei
-            AmB(ai)    = val
-            ApB(ai,ai) = val
-            bj = 0
-            do j = 1,no
-            do b = 1,nv
-               bj = bj + 1
-               val = vovo(ai,bj) - vvoo(ai,bj)
-               val = TWO*val
-               ApB(ai,bj) = ApB(ai,bj) + val
-               ApB(bj,ai) = ApB(bj,ai) + val
-            end
-            end
+      do a = no+1,n
+
+         ai = ai + 1
+
+         Ea  = .TD_data.Ev(a-no) 
+         Ei  = .TD_data.Eo(i)
+
+         val = Ea - Ei
+         AmB(ai,ai) = val
+         ApB(ai,ai) = val
+
+         bj = 0
+
+         do j = 1,no
+         do b = no+1,n
+
+            bj = bj + 1
+
+            val = v(a,i,b,j)*FOUR
+            ex1 = v(a,j,b,i)
+            ex2 = v(a,b,j,i)
+            ApB(ai,bj) = ApB(ai,bj) + val - ex1 - ex2
+            AmB(ai,bj) = AmB(ai,bj)       + ex1 - ex2
+
          end
+         end
+
+      end
       end
 
-      ! Clean
-      vvoo.destroy
-      vovo.destroy
+      v.destroy
+
+      ! Symmatrixe
+    ! AmB.symmetric_reflect
+    ! ApB.symmetric_reflect
 
    end
+
+!   make_TDHF_ApB_AmB(ApB,AmB) ::: leaky
+!   ! Return the TDDFT A+B matrix and diagonal A-B.
+!   ! This memory intensive implementation is for checking. 
+!   ! See eqns (26)-(28) in Dreuw & Head-Gordon (2005) in
+!   ! Chem. Rev. 105 p 4009-37.
+!      self :: IN
+!      ApB  :: MAT{REAL}, OUT
+!      AmB  :: VEC{REAL}, OUT
+!
+!   ENSURE(.TD_data.allocated,"NO TD_data!")
+!   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+!   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+!
+!      a,i,ai :: INT
+!      b,j,bj :: INT
+!      n,no,nv,nvo :: INT
+!      Ea,Ei,val :: REAL
+!      vovo :: MAT{REAL}@
+!      vvoo :: MAT{REAL}@
+!
+!      ! Dimensions
+!      n   = .n_bf
+!      no  = .n_a
+!      nv  = n - no
+!      nvo = nv*no
+!
+!      ! The VOVO integrals
+!      vovo.create(nvo,nvo)
+!      vvoo.create(nvo,nvo)
+!      .TD::make_VOVO_VVOO_ERIs(vovo,vvoo)
+!
+!
+!      ! Initialize
+!      ApB = ZERO ! A+B
+!      AmB = ZERO ! A-B
+!
+!      ! Check
+!      ai = 0
+!      do i = 1,no
+!         Ei = .TD_data.Eo(i)
+!         do a = 1,nv
+!            ai = ai + 1
+!            Ea = .TD_data.Ev(a)
+!            val = Ea - Ei
+!            AmB(ai)    = val
+!            ApB(ai,ai) = val
+!            bj = 0
+!            do j = 1,no
+!            do b = 1,nv
+!               bj = bj + 1
+!               val = vovo(ai,bj) - vvoo(ai,bj)
+!               val = TWO*val
+!               ApB(ai,bj) = ApB(ai,bj) + val
+!               ApB(bj,ai) = ApB(bj,ai) + val
+!            end
+!            end
+!         end
+!      end
+!
+!      ! Clean
+!      vvoo.destroy
+!      vovo.destroy
+!
+!   end
 
    test_VOVO
    ! Test orthogonalisation routines for Davidson diagonaliser.
