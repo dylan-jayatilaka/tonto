@@ -291,7 +291,7 @@ contains
       .set_margin_info
 
       ! Set table headings
-      if (NOT .fitting) then
+      if (NOT .is_constrained_SCF) then
 
          .table.create(5)
          .table(1).set_heading("Iter")
@@ -315,26 +315,31 @@ contains
       else
 
          .table.create(8)
-         .table(1).set_heading("Iter")
-         .table(2).set_heading("Lambda")
-         .table(2).set_subhead("   L  ")
-         .table(3).set_heading("chi2")
-         .table(4).set_heading("Energy")
-         .table(4).set_subhead(" E/au ")
-         .table(5).set_heading("Penalty")
-         .table(5).set_subhead("E+L*chi2")
-         .table(6).set_heading("Delta")
-         .table(6).set_subhead("penalty")
-         .table(7).set_heading("  DIIS  ")
-         .table(7).set_subhead("Gradient")
+         .table(1).set_heading("    Iter")
+         .table(2).set_heading("  Lambda")
+         .table(2).set_subhead("       L")
+         .table(3).set_heading("    GoF2")
+         .table(4).set_heading("  Energy")
+         .table(4).set_subhead("    E/au")
+       ! .table(5).set_heading(" Penalty")
+       ! .table(5).set_subhead("E+L*chi2")
+         .table(5).set_heading("   Delta")
+       ! .table(5).set_subhead(" penalty")
+         .table(5).set_subhead("E+L*GoF2")
+         .table(6).set_heading("    DIIS")
+         .table(6).set_subhead("Gradient")
+         .table(7).set_heading(" <MO|M0>")
+         .table(7).set_subhead(" overlap")
 
          ! Table widths
          .table(1).set_width_from(.max_iterations)
          .table(2).set_width_from(.lambda)
-         .table(3).set_width_from(TEN**3*.penalty)
+         .table(3).set_width_from(.penalty*TEN**(-4))
+         .table(3).set_real_precision(2)
          .table(4).set_width_from(.energy)
+       ! .table(5).set_width_from(.fit_value)
          .table(5).set_width_from(.fit_value)
-         .table(6).set_width_from(.fit_value)
+         .table(6).set_width_from(.energy)
          .table(7).set_width_from(.energy)
          .table(8).force_width(0)
          .table(8).set_left(TRUE)
@@ -555,9 +560,9 @@ contains
 
       .lambda_iteration = .lambda_iteration + 1
 
-      .lambda           = .lambda     + .lambda_step
-      .fit_value        =     .energy + .lambda*    .penalty
-      .old_fit_value    = .old_energy + .lambda*.old_penalty
+      .lambda        = .lambda + .lambda_step
+      .fit_value     = .energy + .lambda*.penalty
+      .old_fit_value = ZERO
 
    end
 
@@ -582,12 +587,13 @@ contains
 
       ! Set new values
       .energy = energy
-      if (.fitting) then
+      if (.is_constrained_SCF) then
          .set_penalty(crystal)
          .fit_value = energy + .lambda * .penalty
+         if (.iteration==0) .old_fit_value = ZERO
       end
 
-      ! Set initiual energy
+      ! Set initial energy
       if (.iteration==0) then 
          .E_initial = .energy
       end
@@ -696,7 +702,7 @@ contains
    set_damp_factor(val) ::: PURE
    ! Set the SCF density matrix damping factor
       self :: INOUT
-      val :: REAL, IN
+      val  :: REAL, IN
 
    ENSURE(val>ZERO,"damp_factor must be positive")
    ENSURE(val<=ONE,"damp_factor must not exceed 1 ")
@@ -705,12 +711,19 @@ contains
 
    end
 
-   set_damp_finish(val) ::: get_from(OBJECT:set, VAL?=>INT, ARG?=>.damp_finish), pure
-   ! Generic set
-   end
+   set_damp_finish(val) ::: PURE
+   ! Set when density matrix damping finishes.
+   ! NOTE: This also sets level_shift_finish to the same.
+   !       If you don't want this, then set it separately.
+      self :: INOUT
+      val  :: INT, IN
 
-   ! Testing, turn off defragment in case of network compounds 
-   ! Lorraine. 
+   ENSURE(val>0,"damp_finish must be positive")
+
+      .damp_finish        = val
+      .level_shift_finish = val
+
+   end
 
    set_defragment(val) ::: get_from(OBJECT:set, VAL?=>BIN, ARG?=>.defragment), PURE
    ! Generic set
@@ -2330,6 +2343,14 @@ contains
 
    end
 
+   is_constrained_SCF result (res) ::: pure
+   ! Return TRUE if we are doing a constrained SCF calculation.
+      self :: IN
+      res :: BIN
+      res = .SCF_kind(1:5)=="xray_"
+    ! res = .SCF_kind(1:5)=="xray_" OR .SCF_kind(1:4)=="pnd_"
+   end
+
    DFT_functional_name result (res) ::: PURE
    ! Return the name of the DFT functional
       self :: IN
@@ -2408,8 +2429,10 @@ contains
       res :: BIN
 
       res = FALSE
-      if (.fitting) then; res = abs(.fit_value-.old_fit_value) < .convergence
-      else;               res = abs(.delta)                    < .convergence
+      if (.is_constrained_SCF) then
+         res = abs(.fit_value-.old_fit_value) < .convergence
+      else
+         res = abs(.delta)                    < .convergence
       end
 
    end
@@ -2426,7 +2449,7 @@ contains
       self :: IN
       res :: BIN
       res = .iteration >= .min_iterations
-      if (.fitting) res = res AND (.iteration > 1)
+      if (.is_constrained_SCF) res = res AND (.iteration > 1)
    end
 
    exceeded_lambda_max result (res) ::: pure
@@ -2460,14 +2483,6 @@ contains
       self :: IN
       res :: BIN
       res = .using_GGA_exchange OR .using_GGA_correlation
-   end
-
-   is_constrained_SCF result (res) ::: pure
-   ! Return TRUE if we are doing a constrained SCF calculation.
-      self :: IN
-      res :: BIN
-      res = .SCF_kind(1:5)=="xray_"
-    ! res = .SCF_kind(1:5)=="xray_" OR .SCF_kind(1:4)=="pnd_"
    end
 
    using_nonstandrad_ERI_cutoffs result (res) ::: pure
@@ -2517,26 +2532,26 @@ contains
 
    end
 
-   fitting result (res) ::: pure
-   ! Return true if we are fitting the wavefunction.
-      self :: IN
-      res :: BIN
-
-      res = FALSE
-      select case (.SCF_kind)
-      case("xray_rhf");     res = TRUE
-      case("xray_rks");     res = TRUE
-      case("xray_uhf");     res = TRUE
-      case("xray_uks");     res = TRUE
-      case("xray_gchf");    res = TRUE
-      case("pnd_uhf ");     res = TRUE
-      case("pnd_uks ");     res = TRUE
-      case("xray_pnd_uhf"); res = TRUE
-      case("xray_pnd_uks"); res = TRUE
-      case default;         res = FALSE
-      end
-
-   end
+!   fitting result (res) ::: pure
+!   ! Return true if we are fitting the wavefunction.
+!      self :: IN
+!      res :: BIN
+!
+!      res = FALSE
+!      select case (.SCF_kind)
+!      case("xray_rhf");     res = TRUE
+!      case("xray_rks");     res = TRUE
+!      case("xray_uhf");     res = TRUE
+!      case("xray_uks");     res = TRUE
+!      case("xray_gchf");    res = TRUE
+!      case("pnd_uhf ");     res = TRUE
+!      case("pnd_uks ");     res = TRUE
+!      case("xray_pnd_uhf"); res = TRUE
+!      case("xray_pnd_uks"); res = TRUE
+!      case default;         res = FALSE
+!      end
+!
+!   end
 
  !  ===============
  !  Output routines
@@ -2724,7 +2739,7 @@ contains
 
       if (.using_DIIS) .SCF_DIIS.put
 
-      if (.fitting) then
+      if (.is_constrained_SCF) then
       stdout.flush
       stdout.text("====================================")
       stdout.text("Experimental wavefunction parameters")
@@ -2784,7 +2799,7 @@ contains
       .set_margin_info
 
       ! Set table body (leaky)
-      if (NOT .fitting) then
+      if (NOT .is_constrained_SCF) then
          .table(1).set_values([.iteration])
          .table(2).set_values([.energy])
          .table(3).set_values([.delta])
@@ -2796,9 +2811,10 @@ contains
          .table(2).set_values([.lambda])
          .table(3).set_values([.penalty])
          .table(4).set_values([.energy])
-         .table(5).set_values([.fit_value])
-         .table(6).set_values([.fit_value-.old_fit_value])
-         .table(7).set_values([.DIIS_error])
+       ! .table(5).set_values([.fit_value])
+         .table(5).set_values([.fit_value-.old_fit_value])
+         .table(6).set_values([.DIIS_error])
+         .table(7).set_values([.overlap_with_M0s])
          .table(8).set_values(.table_info)
          .table(8).force_width(0)
       end
@@ -2820,7 +2836,7 @@ contains
 
         .table.put_footer(flush=flush)
 
-        if (.fitting AND NOT .will_exceed_lambda_max) then
+        if (.is_constrained_SCF AND NOT .will_exceed_lambda_max) then
            .put_crystal_footer(crystal)
 !          .table.put_headings
         end
@@ -2843,7 +2859,7 @@ contains
 
       .put_energies
 
-      if (.fitting) .put_crystal_fit_info(crystal)
+      if (.is_constrained_SCF) .put_crystal_fit_info(crystal)
 
     ! if (.cluster_charges.allocated) .put_cluster_charges
 
@@ -2904,7 +2920,7 @@ contains
 
       if (NOT .output_results) return
 
-      if (NOT .fitting) return
+      if (NOT .is_constrained_SCF) return
 
       stdout.show("Penalty in F                   =", .penalty)
 
@@ -2938,7 +2954,7 @@ contains
 
       if (NOT .output) return
 
-      if (NOT .fitting) return
+      if (NOT .is_constrained_SCF) return
 
 !     stdout.show("Penalty in F                   =", .penalty)
 
@@ -3043,7 +3059,7 @@ contains
          .set_margin_info
 
          ! Set table body (leaky)
-         if (NOT .fitting) then
+         if (NOT .is_constrained_SCF) then
             .table(1).set_values([.iteration])
             .table(2).set_values([.delta])
             .table(3).set_values([.DIIS_error])

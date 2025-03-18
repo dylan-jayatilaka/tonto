@@ -3455,18 +3455,20 @@ contains
       .:make_Fock_mx
 
       ! Make structure factors?
-      if (.SCF_data.fitting) then
+      ! Read lambda=0 structure factors
+      if (.SCF_data.is_constrained_SCF) then
+         .:make_constraint_data
          .crystal.xray_data.SET:set_XCW(TRUE) ! add one to n_param
          .:make_constraint_data
       end
 
       ! Reset all SCF data (except DFT parts)
       .SCF_data.reset
-      if (.SCF_data.fitting) .SCF_data.set_penalty(.crystal)
+      if (.SCF_data.is_constrained_SCF) .SCF_data.set_penalty(.crystal)
       .:update_SCF_data_energies
 
       ! Add constraint to F?
-      if (.SCF_data.fitting) .:add_constraint_to_Fock_mx
+      if (.SCF_data.is_constrained_SCF) .:add_constraint_to_Fock_mx
 
       ! Initialise DIIS error
       if (.SCF_data.using_DIIS) .:update_SCF_data_error
@@ -3485,7 +3487,7 @@ contains
       self :: INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
-   ENSURE(NOT .SCF_data.fitting,"fitting not allowed")
+   ENSURE(NOT .SCF_data.is_constrained_SCF,"fitting not allowed")
 
       ! Overlap matrix
       .INTS:make_overlap_mx
@@ -3591,7 +3593,7 @@ contains
 
       ! Diffraction data-treatment options
       if (.SCF_data.output) then
-      if (.SCF_data.fitting) then
+      if (.SCF_data.is_constrained_SCF) then
 
          if (.crystal.xray_data.allocated AND .SCF_data.SCF_kind.includes("xray")) then
             stdout.flush
@@ -3666,7 +3668,8 @@ contains
    end
 
    archive_SCF_results
-   ! Save the SCF results in various archives on disk
+   ! Save the SCF results in various archives on disk.
+   ! Including any foreign-format files like .wfx.
       self :: IN
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
@@ -3683,6 +3686,11 @@ contains
       if (.SCF_data.cluster_charges.allocated) then
          name = trim(.name) // ".gaussian-point-charges"
          .SCF_data.put_cluster_charges(name)
+      end
+
+      ! Aimall wfx file, modified by Florian?
+      if (.SCF_data.is_constrained_SCF) then
+         .BASE:put_florian_wfn_file(with_lambda=TRUE)
       end
 
    end
@@ -3738,13 +3746,13 @@ contains
             .:update_SCF_data
             .:add_constraint_to_Fock_mx
             .:update_SCF_data_error
-            .:put_SCF_table_body(flush=TRUE)
+          ! .:put_SCF_table_body(flush=TRUE)
+            .SCF_data.put_table_body_and_footer(.crystal,flush=TRUE)
             if (.SCF_data.SCF_done) exit
 
          end
 
          .:archive_SCF_results
-         .BASE:put_florian_wfn_file(with_lambda=TRUE)
 
          ! Calculate the residuals ...
          ! Before exiting lambda loop
@@ -5456,12 +5464,12 @@ contains
 
       .:MO_eigen_update
 
-      if (.SCF_data.fitting) then
+      if (.SCF_data.is_constrained_SCF) then
       end
    
    end
 
-   MO_eigen_update ::: private
+   MO_eigen_update ::: leaky, private
    ! Solve for the molecular orbitals.  Requires a set of old
    ! molecular orbitals.  The new molecular orbitals "cU" are found
    ! from the old MOs "c" by solving :
@@ -5472,36 +5480,86 @@ contains
    ENSURE(.MOs.allocated,"no old MO's")
    ENSURE(.MOs.has_any_genre,"no old MO's")
 
-      SCF_kind :: STR
+      ! Save lambda=0.0 MOs
+      if (.SCF_data.is_constrained_SCF) then
+      if (.SCF_data.lambda.is_zero) then
+         .M0s = .MOs ! leaky
+      end
+      end
 
       ! Update the MO's
-      SCF_kind = .SCF_data.SCF_kind
+      select case (.SCF_data.SCF_kind)
 
-      select case (SCF_kind)
-
-      case ("rhf     ", &
-            "rks     ", &
-            "rohf    ", &
-            "xray_rhf", &
-            "xray_rks", &
+      case ("rhf                     ", &
+            "rks                     ", &
+            "rohf                    ", &
+            "xray_rhf                ", &
+            "xray_rks                ", &
             "noninteracting-group-rhf")
          .:MO_r_eigen_update(.MO_energies.r,.MOs.r,.fock_mx.r)
 
-      case ("uhf         ", &
-            "uks         ", &
-            "xray_uhf    ", &
-            "xray_uks    ", &
-            "pnd_uhf     ", &
-            "pnd_uks     ", &
-            "xray_pnd_uhf", &
-            "xray_pnd_uks")
+      case ("uhf                     ", &
+            "uks                     ", &
+            "xray_uhf                ", &
+            "xray_uks                ", &
+            "pnd_uhf                 ", &
+            "pnd_uks                 ", &
+            "xray_pnd_uhf            ", &
+            "xray_pnd_uks            ")
          .:MO_r_eigen_update(.MO_energies.a,.MOs.a,.fock_mx.a)
          .:MO_r_eigen_update(.MO_energies.b,.MOs.b,.fock_mx.b)
 
       case default
-         DIE("unknown scf kind, "//SCF_kind.trim)
+         DIE("unknown scf kind, "//trim(.SCF_data.SCF_kind))
 
       end
+
+      ! Calculate oveerlap with M0s
+      if (.SCF_data.is_constrained_SCF) then
+      if (.SCF_data.lambda>ZERO) then
+      if (.SCF_data.is_restricted) then
+         .SCF_data.overlap_with_M0s = .:MO_M0_r_overlap(.MOs.r,.M0s.r)
+      end
+      end
+      end
+
+   end
+
+   MO_M0_r_overlap(MO,M0) result (res)
+   ! Return the overlap between the current MOs and another 
+   ! set of M0s, usually these will be in a constrained SCF 
+   ! calculation, with lambda>0. Intended for L-curve plots.
+      self :: IN
+      MO,M0 :: MAT{REAL}, IN
+      res :: REAL
+
+   ENSURE(MO.is_square,  "Wrong shape, MO")
+   ENSURE(MO.dim1==.n_bf,"Wrong size, MO")
+   ENSURE(MO.is_same_shape_as(M0),"incompatible MOs")
+
+      D :: VEC{REAL}@
+      S,L,R :: MAT{REAL}@
+      no :: INT
+
+      no = .n_a
+      S.create(no,no)
+      D.create(no)
+      L.create(no,no)
+      R.create(no,no)
+
+      ! Get cross-overlap
+      .overlap_mx.change_basis_to(S,MO(:,1:no),M0(:,1:no))
+
+      ! Get SVD
+      S.singular_value_decomposition(D,L,R)
+
+      ! Overlap
+      res = product(D)
+
+      R.destroy
+      L.destroy
+      D.destroy
+      S.destroy
 
    end
 
@@ -6256,57 +6314,54 @@ contains
 !  ==============================
 
    get_initial_guess ::: leaky
-   ! Get the initial guess for the ".density_mx" and the
-   ! ".MOs". If .SCF_data.initial_MOs is set, it
-   ! overides .initial_density.
+   ! Get the initial guess for the ".density_mx" and the ".MOs". 
+   ! It is better to start from MOs, read them in.
+   ! That is why  .SCF_data.initial_MOs is set to a known spin-
+   ! orbital type it will overide .SCF_data.initial_density.
       self :: INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
 
       select case(.SCF_data.initial_MOs)
-      case("--using density--"); .:make_initial_density
-      case default;              .:read_initial_MOs
+      case("--using density--"); .:get_initial_density_mx
+      ! Different types of saved .MOs
+      case("r                "); .:read_old_MOs
+      case("restricted       "); .:read_old_MOs
+      case("u                "); .:read_old_MOs
+      case("unrestricted     "); .:read_old_MOs
+      case("gc               "); .:read_old_MOs
+      case("general_complex  "); .:read_old_MOs
+      case default;  DIE("unknown MOs, "//trim(.SCF_data.initial_MOs))
       end
 
    end
 
-   read_initial_MOs ::: leaky
-   ! Get the initial guess for the .MOs
-   ! Convert the .MOs, if neccesary.
-      self :: INOUT
-      select case (.SCF_data.initial_MOs)
-      case("r              "); .:read_old_MOs_guess
-      case("restricted     "); .:read_old_MOs_guess
-      case("u              "); .:read_old_MOs_guess
-      case("unrestricted   "); .:read_old_MOs_guess
-      case("gc             "); .:read_old_MOs_guess
-      case("general_complex"); .:read_old_MOs_guess
-      case default; UNKNOWN(.SCF_data.initial_MOs)
-      end
-   end
-
-   read_old_MOs_guess ::: leaky
+   read_old_MOs ::: leaky
    ! Get the initial guess for the .MOs by reading an
    ! old archive of .MOs, converting the MO's if
    ! necessary, and then making the SCF density matrix as well.
       self :: INOUT
 
-      arch :: ARCHIVE
+    ! arch :: ARCHIVE
 
-      ! Recreate MO's
-      .MOs.destroy
-      .MOs.create(.n_bf,.SCF_data.initial_MOs)
+    ! ! Recreate MO's
+    ! .MOs.destroy
+    ! .MOs.create(.n_bf,.SCF_data.initial_MOs)
 
-      ! Recreate energies
-      .MO_energies.destroy
-      .MO_energies.create(.n_bf,genre=.SCF_data.MO_energies_genre)
+    ! ! Recreate energies
+    ! .MO_energies.destroy
+    ! .MO_energies.create(.n_bf,genre=.SCF_data.MO_energies_genre)
 
-      ! Read
-      arch.set(.name,"MOs",genre=.SCF_data.initial_MOs)
-      arch.read(.MOs)
+    ! ! Read
+    ! arch.set(.name,"MOs",genre=.SCF_data.initial_MOs)
+    ! arch.read(.MOs)
+
+      .READ:read_archive("MOs",genre=.SCF_data.initial_MOs)
+      .READ:read_archive("MO_energies",genre=.SCF_data.initial_MOs)
 
       ! Convert (if necessary)
       .MOs.convert_to(.SCF_data.MOs_genre,.n_a,.n_b,.SCF_data.quantization_axis)
+
       ! Re-orthonormalize ?
     ! if (.SCF_data.allocated) then
     ! if (.SCF_data.initial_MOs=="r ") then
@@ -6357,7 +6412,7 @@ contains
 
    end
 
-   make_initial_density ::: leaky
+   get_initial_density_mx ::: leaky
    ! Get the initial guess for the ".density_mx"
       self :: INOUT
 
@@ -6366,17 +6421,18 @@ contains
       .SCF_data.set_is_guess(TRUE)
 
       select case (.SCF_data.initial_density)
+      ! Make different .density_mx
       case("core           "); .:make_core_mx_guess_MOs
       case("fock           "); .:make_Fock_mx_guess_MOs
       case("group          "); .:make_atom_group_guess_MOs
       case("promolecule    "); .:make_promol_guess_MOs
-      ! Different types of saved .density_mx
-      case("r              "); .:read_density_guess
-      case("restricted     "); .:read_density_guess
-      case("u              "); .:read_density_guess
-      case("unrestricted   "); .:read_density_guess
-      case("gc             "); .:read_density_guess
-      case("general_complex"); .:read_density_guess
+      ! Read different .density_mx
+      case("r              "); .:read_old_density_mx
+      case("restricted     "); .:read_old_density_mx
+      case("u              "); .:read_old_density_mx
+      case("unrestricted   "); .:read_old_density_mx
+      case("gc             "); .:read_old_density_mx
+      case("general_complex"); .:read_old_density_mx
       case default;  DIE("unknown density, "//trim(.SCF_data.initial_density))
       end
 
@@ -6384,24 +6440,26 @@ contains
 
    end
 
-   read_density_guess ::: leaky
+   read_old_density_mx ::: leaky
    ! Read an old .density_mx of type "initial_guess" and use it to
    ! make initial .MOs to start an scf calculation.
    ! Convert the .density_mx, if neccesary.
       self :: INOUT
 
-      genre :: STR
-      arch :: ARCHIVE
+   !  genre :: STR
+   !  arch :: ARCHIVE
 
-      genre = .SCF_data.initial_density_genre
+   !  genre = .SCF_data.initial_density_genre
 
-      ! Create
-      .density_mx.destroy
-      .density_mx.create(.n_bf,genre)
+   !  ! Create
+   !  .density_mx.destroy
+   !  .density_mx.create(.n_bf,genre)
 
-      ! Read
-      arch.set(.name,"density_mx")
-      arch.read(.density_mx,genre=genre)
+   !  ! Read
+   !  arch.set(.name,"density_mx")
+   !  arch.read(.density_mx,genre=genre)
+
+      .READ:read_archive("density_mx",genre=.SCF_data.initial_density_genre)
 
       ! Convert
       .density_mx.convert_to(.SCF_data.spinorbital_genre)
@@ -6462,7 +6520,7 @@ contains
 
       ! Get initial MO's
       if (.SCF_data.SCF_kind=="rohf") then; .:make_promolecule_guess_rohf
-      else;                                .:make_promolecule_density_mx
+      else;                                 .:make_promolecule_density_mx
       end
 
       ! Get a starting fock matrix from this density
