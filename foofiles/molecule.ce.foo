@@ -327,6 +327,108 @@ contains
 
    end
 
+   phar_defragment ::: leaky
+   ! For periodic HAR. Find atoms for the bond analysis
+   ! This updates .crystal.fragment_atom for further geometry analysis, while keeps 
+   ! (.molecule).atom for the DFT calculation.
+   ! Make sure that the updated crystal has the same ordred (.crystal).asymmetric_unit_atom 
+   ! and they should have the identical counter part in (molecule).atom(:)
+   ! It is recommended to put this keyword between "crystal= { ... }" and "ha_fit" keywords.
+   ! Otherwise, "crystal= {" will reset the defragmented atom groups.
+   
+      self :: INOUT
+   
+   ENSURE(.crystal.allocated, "no crystal")
+
+      mol_atom, tmp_Aatom :: VEC{ATOM}@
+      ulist :: VEC{INT}@
+      pos :: VEC{REAL}(3)
+      seitz :: MAT3{REAL}@
+      i,oi,m,um :: INT
+      h1,h2,h3 :: INT
+      prune_ind,Z,Zs,perm :: VEC{INT}@
+      umol_atom :: VEC{ATOM}@ ! new source for fragment_atom from unqiue molecules
+      b :: BIN
+
+      tmp_Aatom.create(.crystal.n_asymmetric_unit_atoms) 
+      tmp_Aatom = .crystal.asymmetric_unit_atom
+
+      !stdout.text("Kang Debug: before defragment: .crystal.fragment_atom")
+      !.crystal.fragment_atom.put_coordinates(no_header=TRUE)
+
+      .crystal.set_generation_method("fragment")
+      .crystal.make_occupation_list ! ".crystal.occupation_list" is set.
+                                    ! Note: .crystal.unit_cell_atom_for_frag_atom(f) is .crystal.unit_cell_atom(u) 
+      
+      .crystal.do_defragment_v2 ! Grow fragment atoms by "do_defragment_v2" 
+                                ! - The first ".n_fragment_atoms" in the ".occupied_list" is the same to ".crystal.frag
+                                ! - The followings are available
+                                !   (.crystal).molecule_for_atom :: VEC{INT}@         group indices. 
+                                !             .molecule          :: VEC{EVEC{INT}}@  
+                                !             .n_molecules
+                                !             .n_unique_molecules
+                                !             .unique_molecule_for :: VEC{INT}@     unique molecules have value 0
+                                
+      ! extract the atoms from the unique molecules from the occupation list
+      prune_ind.create(0)
+
+      ! Prune occupation list for new fragment atom
+      do oi = 1, .crystal.occupation_list.dim 
+         m  = .crystal.molecule_for_atom(oi) 
+         um = .crystal.unique_molecule_for(m)
+         if (NOT um == 0 ) prune_ind.append( oi ) ! If oi-atom is not unique molecule, append "oi" to prune_ind(:)
+    
+      end
+       
+      ! Prune occupation list. leaving atoms belonging to the unique molecules.
+      do i = prune_ind.dim,1,-1  ! Reverse order is important, from tail to head pruning
+         .crystal.occupation_list.prune_element(prune_ind(i))  
+         .crystal.molecule_for_atom.prune_element(prune_ind(i))
+      end
+      .crystal.n_atoms = .crystal.occupation_list.dim  ! Manually update .crystal.n_atoms 
+      prune_ind.destroy                                ! > It should be same to ".crystal.occupation_list.dim"
+
+     !! Sort occupation_list based on atomic_number, so the .crystal.fragment_atom will be sorted
+!>DEBUG      .crystal.put_occupation_list  ! Note: .crystal.n_atom = .crystal.occupation_list.dim
+      Z.create( .crystal.n_atoms )
+      Zs.create(.crystal.n_atoms )
+      perm.create(.crystal.n_atoms)
+
+      Z = CLUSTER_UA_FROM_CODE(.crystal.occupation_list)
+      Z = .crystal.unit_cell_atom(Z).atomic_number
+
+      Zs = Z
+      Zs.sort(decreasing_order=TRUE)
+      Zs.is_permutation_of(Z,b,perm) ! this is a way to get the index ordering from the sorting, b::BIN is dummy
+      
+      .crystal.occupation_list   = .crystal.occupation_list(perm) 
+      .crystal.molecule_for_atom = .crystal.molecule_for_atom(perm)
+!>DEBUG      .crystal.put_occupation_list ! occupation list after sorting
+
+      !! Kang's note.
+      ! xml_atom's and cif_atom's ADPs are saved at (.molecule).atom 
+      ! The ".crystal" object is created by ".update_fragment_info( .atom )"
+      ! So,>  i) "crystal.asymmetric_unit_atom:: VEC{ATOM}@" id selected from xml_atom.
+      !      ii) "crystal.fragment_atom       :: VEC{ATOM}@" is the same with "xml_atom" from CRYSTAL23
+      !     iii) "crystal.occupation_list     :: VEC{INT}@"  is created from ".crystal.fragment_atom", then "do_defragment_v2"ed
+      ! until now.
+      ! Now, we are going to separate (.molecule).atom and .crystal.fragment_atom. Sorry Dylan ;) 
+      ! .atom                        is for set_shell1_from(...) 
+      ! .crystal.fragment_atom       is for geometry analysis
+      ! .crystal.asymmetric_unit_atom will be found agian from xml_atom(= .atom )
+
+      .crystal.create_atom_list( umol_atom ) ! unique molecule atom is ready.
+      umol_atom.update ! How can I redefine label or tags?
+
+      .crystal.destroy_asymmetric_unit
+      .crystal.update_fragment_info( umol_atom ) ! now crystal.fragment_atom are defragmented
+      
+!>DEBUG  Show NEW .asymmetric_unit_atom ")
+!>      .crystal.asymmetric_unit_atom.put_coordinates(no_header=TRUE)
+!>      .crystal.asymmetric_unit_atom.put_ADPs(no_header=TRUE) ! These new asymmetric atom should be consistent with .beck_grid.atom & .becke_grid.unique_atom_for
+   end
+
+
 !  ===
 !  Put
 !  ===

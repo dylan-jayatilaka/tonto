@@ -4410,7 +4410,8 @@ contains
          .asymmetric_unit_atom.set_pADP_errors_to(.xray_data.covariance_mx,.xray_data.refine_H_U_iso)
 
          ! Set ALL fragment_atom positions/ADPs from asym atoms HERE
-         ! >>>fragment_atom must be the same as molecule.atom
+         ! >>>fragment_atom must be the same as molecule.atom 
+         ! >>>>>> Except for the pHAR (Sorry Dylan. Kang). In pHAR, molecule.atom are from Crystal23 xml, and fixed
          dF.create(3,.n_fragment_atoms)
          .set_frag_from_asym_pADPs(dF)
 
@@ -7201,6 +7202,13 @@ contains
           .fragment_atom.put_ADP4s_in_ADP2_principal_axes(.xray_data.fragment_covariance_mx)
       end
 
+      ! Put fragment_atom's coordinate on the top. !  // Kang added
+      stdout.flush
+      stdout.flush
+      stdout.text("=======================================")
+      stdout.text("Fragment atom coordinates for bond info") 
+      stdout.text("=======================================")
+      .fragment_atom.put_coordinates(no_header=TRUE)
       ! Bond length tables with Hirshfeld test
       .fragment_atom.put_bonds_and_Hirshfeld_test(cx,cm)
 
@@ -11008,7 +11016,8 @@ contains
    ENSURE(.occupation_list.allocated,"no occupation_list")
    ENSURE(.unit_cell_connection.allocated,"no unit cell connection table")
 
-      i,v,c,code,h1,h2,h3,u,k1,k2,k3,t,old,mi,mo :: INT
+      i,v,c,h1,h2,h3,u,k1,k2,k3,t :: INT
+      mi,mo,code,old,new :: INT
       safetyCounter :: INT
       molecule_for_atom :: VEC{INT}@
       con :: VEC{INT}@
@@ -11121,6 +11130,7 @@ contains
                do v = 1, .n_atoms ! Update the new family name to the merged family members
                    if (ind1(v)) then 
                       root_uc_atom(v).element = tmp1
+                      molecule_for_atom(v) = mi     ! same family book --> same family members!  
                    end
                end        
 
@@ -11131,15 +11141,30 @@ contains
                ! store in the occ list and add new connection.
                .occupation_list.append(code)
                molecule_for_atom.append(mi)
-               .n_atoms = .n_atoms + 1
-               .atom_connection.expand(.n_atoms)
-               .atom_connection(i).element.append(.n_atoms)
+               new = .n_atoms + 1 ! Kang's comment: I introduced 'new' for readablity by distinguishing
+                                  !                 the (increaded) array size from the last index
+       
+               .atom_connection.expand(.n_atoms+1)    ! nested-array size increased
+               .atom_connection(i).element.append(new)! put 'new' to 'i'
 
                ! Kang's majore modification 
                !  Assign the family name and stop flag for the newly found atom.
-               root_uc_atom.expand(.n_atoms)
-               root_uc_atom(.n_atoms).element.append( root_uc_atom(i).element )
-               stop_search.append( root_uc_atom(.n_atoms).element(t) )       ! Reminder: t = con(4) = unit cell atom code                                                                     
+              
+               stop_search.append( root_uc_atom(i).element(t) ) ! Reminder: t = con(4) = unit cell atom code
+                 ! Above line askes whether t-unit_cell_atom is already in the i-atom's family. if YES, no more search from this newly found atom
+
+               tmp1 = root_uc_atom( i ).element 
+               do v = 1, root_uc_atom.dim ! find the all preexisting family members sharing root_uc_atom(i)
+                   if (tmp1.same_as( root_uc_atom(v).element )) then
+                     root_uc_atom(v).element(t) = TRUE ! Let them know that 't' is now in the family 
+                  end
+               end
+
+               root_uc_atom.expand(.n_atoms+1) 
+               ! award the updated i-family book to 't' 
+               root_uc_atom(new).element.append( root_uc_atom(i).element ) ! Note: root_uc_atom(i) is updated. so root_uc_atom(i).element(t) = TRUE now.
+       
+               .n_atoms = .n_atoms + 1  ! All done for this round, .n_atoms is updated.
        
             end
 
@@ -11148,6 +11173,17 @@ contains
          i = i + 1 ! move on to the next atom in the .occupation_list   
 
       end ! do loop (equivalent to while ( i <=.n_atoms 'AND' safetyCounter < "Threshold value" )
+
+      ! make molecule_for_atom consecutive  Abusing variables
+      c = maxval(molecule_for_atom) 
+      molecule_for_atom = -molecule_for_atom
+      t = 0
+      do i =-1,c,-1
+         if (any(molecule_for_atom==i)) then
+            t = t+1 
+            where (molecule_for_atom==i) molecule_for_atom = t
+         end
+      end
 
       ! Set (sorted) molecule index array
       .molecule_for_atom = molecule_for_atom
@@ -11593,8 +11629,6 @@ contains
 
       end
 
-    ! stdout.text("new order:") ! Kang added 
-    ! stdout.put(new_order)     ! Kang added ! It prints out the new order up to 169 which is > 16(=#of atoms in the unit cell
       ! Now reorder
       occupation_list(new_order)    = occupation_list
       geometry(:,new_order)         = geometry
@@ -12209,66 +12243,118 @@ contains
       .make_atom_list(atom)
 
    end
-
-   make_atom_list(atom) ::: PURE
-   ! Make a new atom list for the cluster. Note that the
-   ! .asymmetric_unit_atom's must have ADP (thermal) tensors in the
-   ! cartesian axis system; this will normally be the case for Tonto's
-   ! internal representation ....
+   
+   make_atom_list(atom) ::: PURE 
+   ! Kang's version of make_atom_list(2025.Mar.20) Make a new atom list from
+   !  .occupation_list & .molecule_for_atom by using .unit_cell_atom. 
+   ! unit_cell_atom should have ADP (thermal) tensors (in the cartesian axis system)
+   ! No need for (.crystal).geometry
       self :: IN
-      atom :: VEC{ATOM}, OUT
+      atom :: VEC{ATOM}, OUT 
 
-   ENSURE(.n_atoms>0,"no atoms in cluster")
-   ENSURE(atom.dim==.n_atoms,"wrong size, atoms")
-   ENSURE(.geometry.allocated,"no geometry")
    ENSURE(.occupation_list.allocated,"no occupation_list")
+   ENSURE(.n_atoms == .occupation_list.dim, "disagreement in the number of cluster atoms")
    ENSURE(.fragment_info_made,"no crystal fragment info")
-   ENSURE(.asymmetric_unit_atom.allocated, "no asymmetric_unit_atom data")
-   ENSURE(.asymmetric_unit_atom.has_cartesian_axes, "asymmetric_unit_atom not in cartesian axes")
+   ENSURE(.unit_cell_atom.allocated, "no unit_cell_atom data")
+   ENSURE(.unit_cell_atom.has_cartesian_axes, "unit_cell_atom not in cartesian axes")
    ENSURE(.molecule_for_atom.allocated, "no molecule_for_atom info")
 
       ulist :: VEC{INT}@
-      seitz :: MAT3{REAL}@
-      a,u,p,s :: INT
+      a :: INT
+      h1,h2,h3 :: INT
       pos :: VEC{REAL}(3)
 
       ! Unit cell atoms which correspond to the fragment atoms
       ulist.create(.n_atoms)
       ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
-
-      ! Seitz matrices (cartesian!)
-      seitz = .xyz_seitz_matrices
+      atom  = .unit_cell_atom(ulist) ! Preliminary initialization. It is segmentation-fault-free !
 
       ! Loop over cluster atoms "a"
       do a = 1,.n_atoms
+         !> NOTE: 
+         !>> atom(a)=.asymmetric_unit_atom(p) syntax causes Segmentation fault, so I did atom=.unit_cell_atom(ulist)
 
-         ! Extract unit cell atom, asymmetric parent and symop
-         u = ulist(a)
-         p = .asym_atom_for_unit_cell_atom(u)
-         s = .asym_symop_for_unit_cell_atom(u)
-
-         ! Copy the parent atom
-         ! NOTE: .basis is a ptr copy
-         atom(a) = .asymmetric_unit_atom(p)
-
-         ! Transform the pADPs (which must be in cartesians)
-         atom(a).transform_pADP_vector_with(seitz(:,:,s))
-
-         ! Reset cluster atom pos from .geometry(:,a) (in fractional)
-         pos = matmul(.unit_cell.direct_mx,.geometry(:,a))
-         atom(a).set_position(pos) ! Set new cartesian position 
-         atom(a).set_group(.molecule_for_atom(a))
+         ! copy from (.crystal).unit_cell_atom 
+         ! .fragment_offset :::VEC{INT}(3) is made from make_occupation_list
+         h1 = CLUSTER_H1_FROM_CODE(.occupation_list(a)) + .fragment_offset(1)
+         h2 = CLUSTER_H2_FROM_CODE(.occupation_list(a)) + .fragment_offset(2)
+         h3 = CLUSTER_H3_FROM_CODE(.occupation_list(a)) + .fragment_offset(3)
+         
+         pos = atom(a).position 
+         pos = pos + matmul(.unit_cell.direct_mx,[h1,h2,h3])
+          
+         atom(a).set_position( pos )
+         atom(a).set_group( .molecule_for_atom(a) ) 
 
       end
 
       ! Update labels/groups
+      atom.set_unique_tags ! forced label update
       atom.update
 
       ! Free memory
-      seitz.destroy
       ulist.destroy
-
    end
+
+!   make_atom_list(atom) ::: PURE  !! OLD version of make_atom_list commented out by Kang. 2025.Mar.20
+!   ! Make a new atom list for the cluster. Note that the
+!   ! .asymmetric_unit_atom's must have ADP (thermal) tensors in the
+!   ! cartesian axis system; this will normally be the case for Tonto's
+!   ! internal representation ....
+!      self :: IN
+!      atom :: VEC{ATOM}, OUT
+!
+!   ENSURE(.n_atoms>0,"no atoms in cluster")
+!   ENSURE(atom.dim==.n_atoms,"wrong size, atoms")
+!   ENSURE(.geometry.allocated,"no geometry")
+!   ENSURE(.occupation_list.allocated,"no occupation_list")
+!   ENSURE(.fragment_info_made,"no crystal fragment info")
+!   ENSURE(.asymmetric_unit_atom.allocated, "no asymmetric_unit_atom data")
+!   ENSURE(.asymmetric_unit_atom.has_cartesian_axes, "asymmetric_unit_atom not in cartesian axes")
+!   ENSURE(.molecule_for_atom.allocated, "no molecule_for_atom info")
+!
+!      ulist :: VEC{INT}@
+!      seitz :: MAT3{REAL}@
+!      a,u,p,s :: INT
+!      pos :: VEC{REAL}(3)
+!
+!      ! Unit cell atoms which correspond to the fragment atoms
+!      ulist.create(.n_atoms)
+!      ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
+!
+!      ! Seitz matrices (cartesian!)
+!      seitz = .xyz_seitz_matrices
+!
+!      ! Loop over cluster atoms "a"
+!      do a = 1,.n_atoms
+!
+!         ! Extract unit cell atom, asymmetric parent and symop
+!         u = ulist(a)
+!         p = .asym_atom_for_unit_cell_atom(u)
+!         s = .asym_symop_for_unit_cell_atom(u)
+!
+!         ! Copy the parent atom
+!         ! NOTE: .basis is a ptr copy
+!         atom(a) = .asymmetric_unit_atom(p)
+!
+!         ! Transform the pADPs (which must be in cartesians)
+!         atom(a).transform_pADP_vector_with(seitz(:,:,s))
+!
+!         ! Reset cluster atom pos from .geometry(:,a) (in fractional)
+!         pos = matmul(.unit_cell.direct_mx,.geometry(:,a))      ! Kang's comment (.crystal).geometry is possibly not allocated
+!         atom(a).set_position(pos) ! Set new cartesian position 
+!         atom(a).set_group(.molecule_for_atom(a))
+!
+!      end
+!
+!      ! Update labels/groups
+!      atom.update
+!
+!      ! Free memory
+!      seitz.destroy
+!      ulist.destroy
+!
+!   end
 
    make_atom_list(atom,list) ::: PURE
    ! Make a new atom list for the cluster from the indices in "list".
