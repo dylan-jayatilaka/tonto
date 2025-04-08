@@ -282,7 +282,7 @@ contains
       end
 
       ! Set occupation numbers (leaky)
-      spin = .scfdata.spinorbital_genre
+      spin = .scfdata.spinorbital_genre(.scfdata.SCF_kind)
       .NO_occ_nos.destroy
       .NO_occ_nos.create(.n_bf,spin)
       .NO_occ_nos.set_to_zero
@@ -414,8 +414,8 @@ contains
     ! endif
 
       ! Save data in archive files
-      archive.set(.name,"density_mx")
-      archive.write(.density_mx)
+    !  archive.set(.name,"density_mx")
+    !  archive.write(.density_mx)
 
       archive.set(.name,"MOs")
       archive.write(.MOs)
@@ -1004,7 +1004,7 @@ contains
       ! Get C23 XML file name
       base = .crystal23.xml_file_name
       .READ:read_CRYSTAL23_xml(base, xml_atom) ! This read in xml atom's "Cartesian coordinate"
-
+                                               ! and ".crystal23.Primitive_unit_cell" is set
       ! "xuc" is Cartesian Lattice vectors (or the primitive cell) from the xml file.       
       xuc = .crystal23.Primitive_unit_cell.direct_mx
 
@@ -1030,9 +1030,9 @@ contains
          cuc = xuc ! All test passed. overwrite cif cell lattice vectors from the xml cell
          W = ZERO  ! W and W_inv are initialized to be Identity for later use (Stage 2/4)
          do i =1,3
-            W(i,1) = ONE
+            W(i,i) = ONE ! Kang's memo: Is there a better way to set W and W_inv as 3x3 Identity matrices?
          end
-         W_inv = W
+         W_inv = W       ! W_inv is also identity matrix
 
       else
         !--- If you enter here, there is high chance of xml cell is a primitive cell and 
@@ -1050,7 +1050,7 @@ contains
             stdout.text("  |  Conversion matrix W (Crystallographic to Primitive) matrix" )  
             stdout.put( W )
             stdout.text("  |")  
-            stdout.text("  |  Inverse conversion matrix                                                    |")  
+            stdout.text("  |  Inverse conversion matrix")  
             stdout.put(W_inv) 
             stdout.text("  |- Refer to Crystal23 manual chapter A5 for more details ")  
             stdout.flush
@@ -1089,34 +1089,34 @@ contains
       ! k-points of reflection data is constructed based on this.
  
       .crystal.unit_cell.make_direct_mx_from( cuc(:,1), cuc(:,2), cuc(:,3) )  ! Updated "cuc" is re-oriented based on "xuc"
-                !! Kang's note
-                ! At this stage, cif_atom(a).pADP_vector has 
-                ! - positions in fractional coordinates 
-                ! -      ADPs in crystal coordinate in bohr^2 unit 
-                ! Don't invoke .XTAL:update_CIF_crystal_atoms(.cif) here
-                ! This make positions in cartesian coord. Keep them in fractional coordinate for now
-                ! > Kang's 2nd note
-                ! >   The metric tensor comparison is made for robustness, but maybe someone can simplify
-                ! >   the above part by starting from reading in "xuc" and create corresponding "cuc"
+      !! Kang's note
+      ! At this stage, cif_atom(a).pADP_vector has 
+      ! - positions in fractional coordinates 
+      ! -      ADPs in crystal coordinate in bohr^2 unit 
+      ! Don't invoke .XTAL:update_CIF_crystal_atoms(.cif) here
+      ! This make positions in cartesian coord. Keep them in fractional coordinate for now
+      ! > Kang's 2nd note
+      ! >   The metric tensor comparison is made for robustness, but maybe someone can simplify
+      ! >   the above part by starting from reading in "xuc" and create corresponding "cuc"
 
       .crystal23.xml_atom_for_cif_atom.create(cif_atom.dim)
       .crystal23.xml_atom_for_cif_atom = 0
       .crystal23.cif_atom_for_xml_atom.create(xml_atom.dim)
       .crystal23.cif_atom_for_xml_atom = 0
 
-          !!
-          ! Search the same atom pairs from
-          !   1) cif cell (crysallographic)   
-          !   2) xml cell (primitive)          
-          !  
-          ! Each atom's fractional coordinate satisfies the following relation
-          !   
-          !   W * x_primitive = x_crystallographic  <==>  x_prm   = W^-1 * x_cry
-          !        (xml cell)       (cif cell)          (xml cell)       (cif cell)
-          !   
+      !!
+      ! Search the same atom pairs from
+      !   1) cif cell (crysallographic)   
+      !   2) xml cell (primitive)          
+      !  
+      ! Each atom's fractional coordinate satisfies the following relation
+      !   
+      !   W * x_primitive = x_crystallographic  <==>  x_prm   = W^-1 * x_cry
+      !        (xml cell)       (cif cell)          (xml cell)       (cif cell)
+      !   
       do a = 1,cif_atom.dim ! loop over cif atoms
          !
-         cif_pos = cif_atom(a).position         !      cif_pos in the Crystallographic crystal coordinate
+         cif_pos = cif_atom(a).position      !      cif_pos in the Crystallographic crystal coordinate
          cif_pos = matmul( W_inv , cif_pos ) ! Now, cif_pos in the    PRIMITIVE     crystal coordinate
          !
          do f = 1,xml_atom.dim ! loop over xml_atom (future fragment_atom)
@@ -1124,8 +1124,8 @@ contains
             xml_pos = xml_atom(f).position  ! xml_pos is in Cartesian coordinate
             xml_pos = matmul(.crystal23.Primitive_unit_cell.inverse_mx, xml_pos) ! xml_pos in fractional coordinate of the Primitive cell (from the Crystal23 XML file)
             !
-            tmp_vec = cif_pos - xml_pos     !      tmp_vec is difference in PRIMITIVE crystal coordinate
-            tmp_vec = MOD(tmp_vec + HALF + ONE, ONE ) - HALF ! Stable "modulo 1" function whose range is [-0.5, 0.5)    
+            tmp_vec = cif_pos - xml_pos     ! tmp_vec is difference in PRIMITIVE crystal coordinate
+            tmp_vec =MOD(tmp_vec+HALF+ONE,ONE)-HALF ! Stable "modulo 1" function whose range is [-0.5, 0.5)
             tmp_vec = matmul( xuc ,tmp_vec )! Now, tmp_vec in Cartensian coordinate ([Bohr] unit)
             !
             same = tmp_vec.is_zero(0.1d0)   ! same atom criteria: distance < 0.1 Bohr
@@ -1238,12 +1238,13 @@ contains
     !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       .n_atom = xml_atom.dim
-      .atom.create( .n_atom ) 
+      .atom.create(.n_atom)   !Kang's note : (molecule).atom(:) will be used for the shells(basis) and Electron Density calculation
       do f = 1,.n_atom
          .atom(f).set_axis_system_to("cartesian")
-         .atom(f).set_label( xml_atom(f).label )
+         .atom(f).set_label( xml_atom(f).label ) ! what about tags?
          .atom(f).set_position( xml_atom(f).position )
          .atom(f).set_ADP_tensor( xml_atom(f).ADP_tensor )
+         .atom(f).set_group(0) ! No group info. Reset to 0
       end
       ! Destroy existing basis, and atom list
       if (.basis.allocated) .basis.destroy
@@ -1254,29 +1255,35 @@ contains
 
       ! Finalize atom info and esnsure it has basis set
       ! (Assuming basis set was set before this)
-      .BASE:update_atom_basis_group_info
-
+      .BASE:update_atom_basis_group_info   ! It uses .atom.group updated  
+                                           ! Kang. Caution: (molecule).atom.group may not be correct when a molecule crosses the unit cell boundary
       .crystal.asymmetric_unit_atom.destroy
       .crystal.asymmetric_unit_geometry.destroy 
 
       .crystal.update_fragment_info(.atom) ! ".atom" = "xml_atom" has ADP data now
+                                           ! .crystal.fragment_atom is now .atom (=xml_atom)
+
+     !!!! Put Crystal !!!!!!!!!!
+     !!  .crystal.put         !!
+      .crystal.unit_cell.put  !!
+      .crystal.spacegroup.put !!
+     !!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Show xml&cif-integrated .atom(f). They have xml's coordinates and (symmetry transformed) cif's ADPs.
+      stdout.text(" =======================================")
+      stdout.text(" Integrated CIF and Crystal23's XML data") ! Note: Cry23 xml atoms belong to (-1/2,1/2)cell
+      stdout.text(" =======================================")
+! Kang debug: Following 3 lines will be reactivated when the periodic fragment is fully available
+!      do f = 1,.crystal.n_fragment_atoms          ! Delete fragment_atom.group
+!         .crystal.fragment_atom(f).set_group( 0 ) !  Group indices may be incorrect, when a molecule crosses the unit cell boundary)
+!      end                                         ! So erase ".crystal.fragment_atom.group". Will be updated after defragment
+      .crystal.fragment_atom.put_coordinates(no_header=TRUE) ! Put ".fragment_atom" (w/o group info)
+      .crystal.fragment_atom.put_ADPs(no_header=TRUE)   
       
       .crystal.finalize = TRUE 
 
       xml_atom.destroy
       cif_atom.destroy
-!!  Kang debug
-!.crystal.put
-!
-! stdout.text("Kang debug::: cif atom ADPs ")
-!.atom.put_ADPs
-!
-!stdout.text("Kang debug: : frag atom ADPs")
-!.crystal.fragment_atom.put_ADPs
-!
-!stdout.text("Kang debug___ asym atom ADPs")
-!.crystal.asymmetric_unit_atom.put_ADPs 
-!stdout.flush
    end
 
    read_CRYSTAL23_xml(base, xml_atom) ::: private, leaky
