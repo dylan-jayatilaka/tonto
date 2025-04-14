@@ -1125,8 +1125,9 @@ contains
    ! Subtract the upper triangle of "self" into the lower triangle
    end
 
-   symmetric_reflect ::: get_from(MAT{INTRINSIC}), PURE
-   ! Make the upper triangle of "self" the same as the lower triangle
+   symmetric_reflect(set_upper,set_lower) ::: get_from(MAT{INTRINSIC}), PURE
+   ! Make the upper triangle of "self" the same as the lower triangle,
+   ! or the reverse if "set_upper" is FALSE or "set_lower" is TRUE 
    end
 
    antisymmetric_reflect ::: get_from(MAT{INTRINSIC}), PURE
@@ -1372,11 +1373,13 @@ contains
    end
 
    classical_Gram_Schmidt_QR(Q,R) ::: PURE
-   ! Given an mxn matrix decomposes the matrix into an orthogonal mxn
-   ! matrix, Q, and an nxn upper triangular matrix R by the classical
+   ! Decompose m x n matrix "self"  as Q.R where
+   ! Q is an orthogonal m x n, and an R is an
+   ! upper triangular matrix, using the classical
    ! Gram-Schmidt algorithm.
       self :: IN
-      Q,R :: MAT{REAL}, OUT
+      Q    :: MAT{REAL}, OUT
+      R    :: MAT{REAL}, OUT
 
    ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
 
@@ -1399,12 +1402,12 @@ contains
          ! the information can be stored in Q and R
          do i = 1,j-1
             R(i,j) = dot_product(Q(:,i),self(:,j))  
-         end do
+         end
 
          ! Aggregates information of all other columns
          do i = 1,j-1
             u = u + R(i,j)*Q(:,i)
-         end do
+         end
 
          ! Makes this column orthonormal to all other columns
          q_ = self(:,j) - u
@@ -1412,7 +1415,7 @@ contains
          R(j,j) = norm2(q_)
          Q(:,j) = q_/R(j,j)
 
-      end do
+      end
 
       ! Clean
       u.destroy
@@ -1420,135 +1423,312 @@ contains
 
    end
 
-   modified_Gram_Schmidt_QR(Q,R) ::: PURE
-   ! Given an mxn matrix decomposes the matrix into an orthogonal mxn
-   ! matrix, Q, and an upper triangular matrix R by the modified
-   ! Gram-Schmidt algorithm.
-      self :: IN
-      Q,R :: MAT{REAL}, OUT
 
-   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+   modified_Gram_Schmidt_QR(Q,R) ::: PURE
+   ! Decompose m x n matrix "self" into factors Q.R where:
+   ! - "Q" is an m x n  orthonormal matrix, and 
+   ! - "R" is an n x n upper triangular matrix
+   ! using the modified Gram-Schmidt algorithm.
+      self :: IN
+      Q :: MAT{REAL}, OUT
+      R :: MAT{REAL}, OUT
+
+   ENSURE(.dim1>= .dim2,"more vectors than dimension of vector space")
+   ENSURE(.is_same_shape_as(Q),"Wrong shape, Q")
+   ENSURE(R.is_square,"R is not square!")
+   ENSURE(R.dim1==.dim2,"Wrong size, R")
 
       A :: MAT{REAL}@
-      dim,j,k :: INT
+      j, k :: INT
 
-      dim = .dim2
-     
-      A.create(.dim1,.dim2)
-          
+      R = ZERO
       A = self
 
-      do k = 1,dim
+      do k = 1,.dim2
 
          ! Normalises Q
          R(k,k) = norm2(A(:,k))
          Q(:,k) = A(:,k)/R(k,k)
 
          ! Removes this vector from every proceeding column
-         do j = k+1,dim
+         do j = k+1,.dim2
             R(k,j) = dot_product(Q(:,k),A(:,j))
             A(:,j) = A(:,j) - R(k,j)*Q(:,k)
-         end do
+         end
 
-      end do
+      end
 
       ! Clean
       A.destroy
 
    end
 
-   Householder_QR(R,Q) ::: PURE
-   ! Given an mxn matrix decomposes the matrix into an orthogonal mxm
-   ! matrix, Q (if provided), and an upper triangular mxn matrix, R,
-   ! using the Householder algorithm. Q is calculated by backwards
-   ! accumulation.
+   modified_Gram_Schmidt_QR ::: PURE
+   ! Decompose m x n matrix "self" into factors Q.R where:
+   ! - "Q" is an m x n  orthonormal matrix, and 
+   ! - "R" is an n x n upper triangular matrix
+   ! using the modified Gram-Schmidt algorithm.
+   ! This version replaces "self" by "Q".
+      self :: INOUT
+
+   ENSURE(.dim1>= .dim2,"more vectors than dimension of vector space")
+
+      A, Q,R :: MAT{REAL}@
+      j, k :: INT
+
+      Q.create(.dim1,.dim2)
+      R.create(.dim2,.dim2)
+
+      R = ZERO
+      A = self
+
+      do k = 1,.dim2
+
+         ! Normalises Q
+         R(k,k) = norm2(A(:,k))
+         Q(:,k) = A(:,k)/R(k,k)
+
+         ! Removes this vector from every proceeding column
+         do j = k+1,.dim2
+            R(k,j) = dot_product(Q(:,k),A(:,j))
+            A(:,j) = A(:,j) - R(k,j)*Q(:,k)
+         end
+
+      end
+
+      self = Q
+
+      ! Clean
+      A.destroy
+      R.destroy
+      Q.destroy
+
+   end
+
+
+   Householder_QR(Q,R) ::: PURE
+   ! Given an m x n matrix "self" decomposes it into Q.R where:
+   ! - "Q" is an m x n orthonormal matrix, and
+   ! - "R" is an n x n upper triangular matrix
+   ! using the Householder algorithm.
+   ! See Golub & van Loan p. 224 & 211, especially comments
+   ! regarding how to deal with the outer product efficiently.
       self :: IN
+      Q :: MAT{REAL}, OUT
       R :: MAT{REAL}, OUT
-      Q :: MAT{REAL}, OUT, optional
 
    ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
-   ENSURE(Q.dim1 == .dim1, "Wrong size Q")
-   ENSURE(Q.dim2 == .dim1, "Wrong size Q")
+   ENSURE(.is_same_shape_as(Q),"Wrong shape, Q")
+   ENSURE(R.is_square,"R is not square!")
+   ENSURE(R.dim1==.dim2,"Wrong size, R")
 
-      ! nu is the Householder vector, v is a column input and b is a
-      ! vector which stores all the beta values
-      nu,v,b :: VEC{REAL}@
+      ! nu is the Householder vector 
+      ! b stores all the beta values
+      nu,b :: VEC{REAL}@
 
-      ! A is the editable input matrix, which stores R and the
-      ! Householder vectors. I is the identity.
-      A,I :: MAT{REAL}@
+      ! A stores R and the Householder vectors. 
+      A :: MAT{REAL}@
       beta :: REAL
       dim1,dim2,j :: INT
 
       dim1 = .dim1
       dim2 = .dim2
      
-      A.create(.dim1,.dim2)
-      I.create(.dim1,.dim1)
-      b.create(.dim2)
+      nu.create(dim1)
+      A.create(dim1,dim2)
+      b.create(dim2)
 
+      R = ZERO
       A = self
 
-      ! Sets up the identity matrix
-      I.to_unit_mx
-
       do j = 1,dim2
 
-         ! Creates vectors for passing through subroutines
-         v.create(.dim1-j+1)
-         nu.create(.dim1-j+1)
-         v(:) = A(j:dim1,j)
+         ! Householder
+         A(j:,j).Householder_vector(nu(j:),beta)
+         b(j) = beta ! store
 
-         ! Calculates nu and beta using the Householder function
-         v.Householder_vector(nu,beta)
-         b(j) = beta
+         ! A = R from top to the diagonal, 
+         ! beneath diagonal are non-nu(1) elements
+         A(j:,j:) = A(j:,j:) &
+                  - beta*nu(j:).outer_product_with(matmul(nu(j:),A(j:,j:)))
 
-         ! A = R from the top to the diagonal, beneath the diagonal
-         ! the non-nu(1) elements are stored
-         A(j:dim1,j:dim2) = matmul((I(1:dim1-j+1,1:dim1-j+1) &
-                           -b(j)*nu.outer_product_with(nu))  &
-                           ,A(j:dim1,j:dim2))
+         if (j<dim1) &
+         A(j+1:,j) = nu(j+1:)
 
-         if (j < dim1) then
-            A(j+1:dim1,j) = nu(2:)
-         end if
+      end
 
-         ! Clean
-         v.destroy
-         nu.destroy
-
-      end do
-
-      ! Why not rename A -> R ? DJ
+      ! Upper triangle extracted.
+      ! Not needed if you don't want R, see next routine ...
+      R = ZERO
       do j = 1,dim2
-         R(1:j,j)=A(1:j,j)
-      end do
+         R(1:j,j) = A(1:j,j)
+      end
+
 
       ! Calculates Q if variable given, by aggregating the
       ! multiplication of the matrix to produce Q
-      if (present(Q)) then
+      ! See G & v L p. 213 (5.1.5) but n is m, there.
+      Q.to_unit_mx
+      nu = ONE
+      do j = dim2,1,-1
 
-         nu.create(.dim1)
-         Q = I
-         nu = ONE
-         do j = dim2,1,-1
+         ! Extract nu from A
+         if (j<dim1) &
+         nu(j+1:) = A(j+1:,j)
 
-            ! Vectors are stored in A, with nu(1) = ONE
-            nu(j+1:dim1) = A(j+1:dim1,j)
+         ! Apply Householder
+         beta = b(j)
+         Q(j:,j:) = Q(j:,j:) &
+                  - beta*nu(j:).outer_product_with(matmul(nu(j:),Q(j:,j:)))
 
-            ! Creates P matrix
-            Q(j:dim1,j:dim1)= matmul((I(1:dim1-j+1,1:dim1-j+1) &
-                          &-b(j)*nu(j:dim1).outer_product_with(nu(j:dim1))) &
-                          & ,Q(j:dim1,j:dim1))
-         end do
-         nu.destroy
-
-      end if
+      end
 
       ! Clean
       b.destroy
-      I.destroy
       A.destroy
+      nu.destroy
+
+   end
+
+   Householder_QR(Q) ::: PURE
+   ! Given an m x n matrix "self" decomposes it into Q.R where:
+   ! - "Q" is an m x n orthonormal matrix, and
+   ! - "R" is an n x n upper triangular matrix
+   ! by the Householder method. This version doesn't give "R".
+   ! See Golub & van Loan p. 224 & 211, especially comments
+   ! regarding how to deal with the outer product efficiently.
+      self :: IN
+      Q :: MAT{REAL}, OUT
+
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+   ENSURE(.is_same_shape_as(Q),"Wrong shape, Q")
+
+      ! nu is the Householder vector 
+      ! b stores all the beta values
+      nu,b :: VEC{REAL}@
+
+      ! A stores R and the Householder vectors. 
+      A :: MAT{REAL}@
+      beta :: REAL
+      dim1,dim2,j :: INT
+
+      dim1 = .dim1
+      dim2 = .dim2
+     
+      nu.create(dim1)
+      A.create(dim1,dim2)
+      b.create(dim2)
+
+      A = self
+
+      do j = 1,dim2
+
+         ! Householder
+         A(j:,j).Householder_vector(nu(j:),beta)
+         b(j) = beta ! store
+
+         ! A = R from top to the diagonal, 
+         ! beneath diagonal are non-nu(1) elements
+         A(j:,j:) = A(j:,j:) &
+                  - beta*nu(j:).outer_product_with(matmul(nu(j:),A(j:,j:)))
+
+         if (j<dim1) &
+         A(j+1:,j) = nu(j+1:)
+
+      end
+
+      ! Calculates Q if variable given, by aggregating the
+      ! multiplication of the matrix to produce Q
+      ! See G & v L p. 213 (5.1.5) but n is m, there.
+      Q.to_unit_mx
+      nu = ONE
+      do j = dim2,1,-1
+
+         ! Extract nu from A
+         if (j<dim1) &
+         nu(j+1:) = A(j+1:,j)
+
+         ! Apply Householder
+         beta = b(j)
+         Q(j:,j:) = Q(j:,j:) &
+                  - beta*nu(j:).outer_product_with(matmul(nu(j:),Q(j:,j:)))
+
+      end
+
+      ! Clean
+      b.destroy
+      A.destroy
+      nu.destroy
+
+   end
+
+   Householder_QR ::: PURE
+   ! Given an m x n matrix "self" decomposes it into Q.R where:
+   ! - "Q" is an m x n orthonormal matrix, and
+   ! - "R" is an n x n upper triangular matrix
+   ! by the Householder method and replace "self" with "Q".
+   ! See Golub & van Loan p. 224 & 211, especially comments
+   ! regarding how to deal with the outer product efficiently.
+      self :: INOUT
+
+   ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
+
+      ! nu is the Householder vector 
+      ! b stores all the beta values
+      nu,b :: VEC{REAL}@
+
+      ! A stores R and the Householder vectors. 
+      A :: MAT{REAL}@
+      beta :: REAL
+      dim1,dim2,j :: INT
+
+      dim1 = .dim1
+      dim2 = .dim2
+     
+      nu.create(dim1)
+      A.create(dim1,dim2)
+      b.create(dim2)
+
+      A = self
+
+      do j = 1,dim2
+
+         ! Householder
+         A(j:,j).Householder_vector(nu(j:),beta)
+         b(j) = beta ! store
+
+         ! A = R from top to the diagonal, 
+         ! beneath diagonal are non-nu(1) elements
+         A(j:,j:) = A(j:,j:) &
+                  - beta*nu(j:).outer_product_with(matmul(nu(j:),A(j:,j:)))
+
+         if (j<dim1) &
+         A(j+1:,j) = nu(j+1:)
+
+      end
+
+      ! Calculates Q if variable given, by aggregating the
+      ! multiplication of the matrix to produce Q
+      ! See G & v L p. 213 (5.1.5) but n is m, there.
+      .to_unit_mx
+      nu = ONE
+      do j = dim2,1,-1
+
+         ! Extract nu from A
+         if (j<dim1) &
+         nu(j+1:) = A(j+1:,j)
+
+         ! Apply Householder
+         beta = b(j)
+         self(j:,j:) = self(j:,j:) &
+                     - beta*nu(j:).outer_product_with(matmul(nu(j:),self(j:,j:)))
+
+      end
+
+      ! Clean
+      b.destroy
+      A.destroy
+      nu.destroy
 
    end
 
@@ -1558,13 +1738,14 @@ contains
    ! matrix, R, using the Householder algorithm. Q is calculated
    ! through accumulation of W and Y.
       self :: IN
-      R,Q :: MAT{REAL}, OUT
+      R    :: MAT{REAL}, OUT
+      Q    :: MAT{REAL}, OUT
 
    ENSURE(.dim1>=.dim2,"more vectorst than dimension of vector space")
    ENSURE(Q.dim1 == .dim1, "Wrong size Q")
    ENSURE(Q.dim2 == .dim1, "Wrong size Q")
 
-      nu,b,v,z :: VEC{REAL}@
+      nu,b,v  :: VEC{REAL}@
       A,I,W,Y,M :: MAT{REAL}@
       beta :: REAL
       dim1,dim2,j :: INT
@@ -1577,7 +1758,6 @@ contains
       Y.create(dim1,dim2)
       M.create(dim1,dim1)
       I.create(dim1,dim1)
-      z.create(dim1)
       b.create(dim2)
 
       ! Determination of A is identical to Householder qr routine.
@@ -1585,25 +1765,31 @@ contains
       I.to_unit_mx
 
       do j = 1,dim2
-         v.create(.dim1-j+1)
-         nu.create(.dim1-j+1)
-         v(:) = A(j:dim1,j)
+
+          v.create(dim1-j+1)
+         nu.create(dim1-j+1)
+
+         v = A(j:dim1,j)
          v.Householder_vector(nu,beta)
          b(j) = beta
-         A(j:dim1,j) = v
-         A(j:dim1,j:dim2) = matmul((I(1:dim1-j+1,1:dim1-j+1)&
-                          &-b(j)*nu.outer_product_with(nu))&
-                          & ,A(j:dim1,j:dim2))
-         if (j < dim1) then
-            A(j+1:dim1,j) = nu(2:)
-         end if
-         v.destroy
-         nu.destroy
-      end do
 
+         A(j:dim1,j) = v
+         A(j:dim1,j:dim2) = &
+            matmul(I(1:dim1-j+1,1:dim1-j+1) - beta*nu.outer_product, A(j:dim1,j:dim2) )
+
+         if (j<dim1) then
+            A(j+1:dim1,j) = nu(2:)
+         end 
+
+          v.destroy
+         nu.destroy
+
+      end
+
+      ! Upper triangle extracted.
       do j = 1,dim2
-         R(1:j,j)=A(1:j,j)
-      end do
+         R(1:j,j) = A(1:j,j)
+      end
 
       nu.create(.dim1)
       nu = ZERO
@@ -1616,25 +1802,31 @@ contains
       Y(2:dim1,1) = A(2:dim1,1)
 
       ! W is the Z produced for each column. The first column is
-      ! simply -beta*Y(1)
+      ! simply -beta*Y(1). Y keep updating.
+
       W(:,1) = -b(1)*Y(:,1)
+
       do j = 2,dim2
+
          nu(j-1) = ZERO
-         nu(j) = ONE
+         nu(j  ) = ONE
          nu(j+1:dim1) = A(j+1:dim1,j)
+
+         ! Update W
          M = I + matmul(W(:,1:j-1),transpose(Y(:,1:j-1))) 
-         z(:) = -b(j)*matmul(M,nu) 
-         W(:,j) = z(:)
+         W(:,j) = -b(j)*matmul(M,nu) 
+
+         ! Update Y
          Y(j,j) = ONE
          Y(j+1:dim1,j) = A(j+1:dim1,j)
-      end do
+
+      end
 
       ! As per the proof from Golub and van Loan
       Q = I + matmul(W,transpose(Y))
 
       ! Clean
       b.destroy
-      z.destroy
       I.destroy
       M.destroy
       Y.destroy
@@ -1645,11 +1837,11 @@ contains
 
    fast_Givens_QR(R,Q) ::: PURE
    ! Given an mxn matrix decomposes the matrix into an
-   ! orthogonal mxm matrix, Q (if provided), and an upper triangular mxn
-   ! matrix, R, using the fast Givens algorithm.
+   ! orthogonal mxm matrix, Q (if provided), and an upper 
+   ! triangular mxn matrix, R, using the fast Givens algorithm.
       self :: IN
       R :: MAT{REAL}, OUT
-      Q :: MAT{REAL}, OUT, optional
+      Q :: MAT{REAL}, optional, OUT
 
    ENSURE(.dim1>=.dim2,"more vectors than dimension of vector space")
 
@@ -1681,7 +1873,7 @@ contains
          do j = 1,dim2
          do i = dim1,j+1,-1
 
-            A(i-1:i,j).fast_Givens_transformation(di(i-1:i),alpha,beta,t)
+            A(i-1:i,j).fast_Givens(di(i-1:i),alpha,beta,t)
 
            ! F is the scaled to dimension mxm matrix
            ! version of the 2x2 Givens transform 
@@ -1739,7 +1931,7 @@ contains
          do j = 1,dim2
          do i = dim1,j+1,-1
 
-            A(i-1:i,j).fast_Givens_transformation(di(i-1:i),alpha,beta,t)
+            A(i-1:i,j).fast_Givens(di(i-1:i),alpha,beta,t)
 
             if (t == 1) then
 
@@ -1776,6 +1968,7 @@ contains
       G.destroy
 
    end
+   
 
    Schmidt_orthonormalize(S,scales,n_dependent,ld_tol) ::: PURE
    ! Schmidt orthonormalize the vectors in "self" using "S" as the
@@ -2112,20 +2305,20 @@ contains
 !  Eigenproblem routines
 !  =====================
 
-   diagonalize_by_jacobi(eigenvalues,eps,max_iterations) ::: PURE
-   ! Diagonalises "self" using the Jacobi rotations method. Returns
-   ! the "eigenvalues". Input the accuracy "eps" or the maximum number
-   ! of iterations "max_iter", if desired.
-      self :: IN
-      eigenvalues :: VEC{REAL}, OUT
-      eps :: REAL, optional, OUT
-      max_iterations :: INT, optional, IN
+   diagonalize_Jacobi(evals,eps,maxit) ::: PURE
+   ! Diagonalises "self" using the Jacobi rotation method. Returns
+   ! the eigenvalues in "evals". Set absolute off-diagonal value
+   ! "eps", or the maximum number of iterations "maxit", if desired.
+      self  :: IN
+      evals :: VEC{REAL}, OUT
+      eps   :: REAL, optional, OUT
+      maxit :: INT,  optional, IN
 
   ENSURE(.is_square, "self is not square")
   ENSURE(.is_symmetric, "self is not symmetrix")
-  ENSURE(eigenvalues.dim==.dim1,"wrong size, eigenvalues")
+  ENSURE(evals.dim==.dim1,"wrong size, evals")
 
-      i,j,iter,max_iter  :: INT
+      i,j,iter,maxiter :: INT
       accuracy,tol :: REAL
       done :: BIN
       W :: MAT{REAL}@
@@ -2133,8 +2326,8 @@ contains
       accuracy = TOL(12)
       if (present(eps)) accuracy = eps
 
-      max_iter = 30
-      if (present(max_iterations)) max_iter = max_iterations
+      maxiter = 30
+      if (present(maxit)) maxiter = maxit
 
       W = self
 
@@ -2143,8 +2336,8 @@ contains
       do
 
         iter = iter + 1
-        ENSURE(NOT iter>max_iter,"too many iterations")
-        if (iter>max_iter) exit
+        ENSURE(NOT iter>maxiter,"too many iterations")
+        if (iter>maxiter) exit
 
         tol = accuracy
         if (iter<=3) tol = TOL(1)*(MAT{REAL}:sum_elements(abs(W)) - W.trace)
@@ -2164,17 +2357,17 @@ contains
 
       end
 
-      W.put_diagonal_to(eigenvalues)
+      W.put_diagonal_to(evals)
 
       W.destroy
 
    end
 
-   diagonalize_by_jacobi(evals,evecs,eps,maxit) ::: PURE
+   diagonalize_Jacobi(evals,evecs,eps,maxit) ::: PURE
    ! Diagonalises "self" using the Jacobi rotations method. Returns
-   ! the eigenvalues "evals" and eigenvectors "evecs". Input the
-   ! accuracy "eps", or the maximum number of iterations "maxit", 
-   ! if desired.
+   ! the eigenvalues "evals" and eigenvectors "evecs". Set absolute
+   ! off diagonal value "eps", or the maximum number of iterations
+   ! "maxit", if desired.
       self  :: IN
       evals :: VEC{REAL}, OUT
       evecs :: MAT{REAL}, OUT
@@ -2187,7 +2380,7 @@ contains
   ENSURE(evecs.is_square, "eigenvectors are not square")
   ENSURE(evals.dim1>=.dim1,"wrong size, eigenvectors")
 
-      i,j,iter,max_iter  :: INT
+      i,j,iter,maxiter  :: INT
       tol  :: REAL
       done :: BIN
       W :: MAT{REAL}@
@@ -2195,8 +2388,8 @@ contains
       tol = TOL(8)
       if (present(eps)) tol = eps
 
-      max_iter = 500
-      if (present(maxit)) max_iter = maxit
+      maxiter = 500
+      if (present(maxit)) maxiter = maxit
 
       W = self
 
@@ -2207,8 +2400,8 @@ contains
       do
 
         iter = iter + 1
-        ENSURE(NOT iter>max_iter,"too many iterations")
-        if (iter>max_iter) exit
+        ENSURE(NOT iter>maxiter,"too many iterations")
+        if (iter>maxiter) exit
 
         done = TRUE
         do i = 1,.dim1
@@ -2267,41 +2460,200 @@ contains
 
    end
 
-   internal_vectors(eigenvectors2,iv_tol) ::: leaky
+   diagonalize_Davidson(eval,evec,n_eig,n_saved,maxiter,tolconv)
+   ! Davidson diagonaliser for matrix "A".
+   ! See Crouzeix et al (2006) Inria RR 1353
+   ! Step numbers & symbols below mostly from p. 5 Crouzeix.
+      self    :: IN
+      eval    :: VEC{REAL}@, OUT    ! The eigenvalues
+      evec    :: MAT{REAL}@, OUT    ! The eigenvector columns
+      n_eig   :: INT, IN,  optional ! No. of eigenvalues wanted
+      n_saved :: INT, OUT, optional ! No. of trial vector sets saved
+      maxiter :: INT, IN,  optional ! Max. no. of iterations allowed
+      tolconv :: REAL, IN, optional ! Max. residual vec norm, to end
+
+   ENSURE(n_saved>=3,"Must store at least 2 trial vector sets")
+
+      R   :: MAT{REAL}@   ! Ritz vectors <- becomes "evec"
+      V   :: MAT{REAL}@   ! V(:,n)       <- Davidson trial vectors
+      W   :: MAT{REAL}@   ! W(:,n)       <- A.V
+      H   :: MAT{REAL}@   ! "self"       <- in the basis "V"
+      T   :: VEC{REAL}@   ! New direction, T
+      rvl :: VEC{REAL}@   ! Length of the residual vectors
+      n_keep :: INT
+      maxit  :: INT
+      iter, n_tr :: INT
+      n,d, f,l,i :: INT
+      tolcon,bot :: REAL
+      converged  :: BIN
+      too_many   :: BIN
+      collapse   :: BIN
+
+      ! Default values
+      n = 2
+      if (present(n_eig)) n = n_eig
+
+      n_keep = 2
+      if (present(n_saved)) n_keep = n_saved
+
+      maxit  = 5
+      if (present(maxiter)) maxit = maxiter
+
+      tolcon = TOL(7)
+      if (present(tolconv)) tolcon = tolconv
+
+      ! Sizes
+      d = .dim1             ! "d" could be big!
+
+      ! Results
+      eval.create(n*n_keep) ! <-- Will shrink to "n"
+      R.create(d,n)         ! <-- Will be "evec"
+
+      ! Storage
+      rvl.create(n)         ! Residue vector length
+      V.create(d,n*n_keep)  ! Need all in memory???
+      W.create(d,n*n_keep)  ! Space for product self*V
+      T.create(d)           ! Space for new directions
+
+      ! Initialize
+      V.to_unit_mx          ! Initial guess
+      iter = 0              ! Overall iteration count
+      n_tr = 0              ! No. of trial vector sets - 1
+      converged = FALSE
+      too_many  = FALSE
+
+      do 
+
+         ! Iteration & no. of trial vector sets (-1)
+         iter = iter + 1
+         n_tr = n_tr + 1
+
+         ! First & last trial vector columns
+         l = n*(n_tr-1)
+         f = l + 1
+         l = l + n
+
+         ! 1. Expensive step, extends W
+         ! Replace with low-mem matrix product
+         W(:,f:l) = matmul(self,V(:,f:l))
+
+         ! 2. Expand Rayleigh matrix
+            H.expand(l,l)
+         evec.create(l,l)
+         H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
+         H.symmetric_reflect(set_upper=TRUE)
+
+         ! 3. Diagonalise (increasing eigenvalues)
+         H.diagonalize_Jacobi(eval(1:l),evec)
+
+         ! 4. Lowest Ritz vectors
+         R = matmul(V(:,1:l),evec(:,1:n))
+
+         ! Too many iters? Collapse space?
+         too_many = iter>maxit; if (too_many) exit
+         collapse = l==n*n_keep
+
+         if (collapse) then
+
+            ! 7b. Restart with Ritz vectors "R"
+            n_tr = 0
+            V(:,1:n) = R
+
+            ! Clean
+            evec.destroy
+            H.destroy ! <-- Note
+
+         else 
+
+            ! 5-7. Get residual & new direction, per-column
+            do i = 1,n
+        
+               ! 5. Residual in T & its length
+               T = eval(i)*R(:,i) - matmul(W(:,1:l),evec(:,i)) 
+               rvl(i) = norm2(T)
+        
+               ! 6. Preconditioner
+               bot = eval(i) - H(i,i)
+               if (abs(bot) < 0.001d0) bot = bot + TOL(2)
+               bot= ONE/bot
+
+               ! 7a. Set new direction T
+               V(:,l+i) = bot*T
+        
+            end
+        
+            ! Finished?
+            converged = all(rvl<tolcon); if (converged) exit
+          
+            ! 7. Orthonormalize vectors V
+          ! V(:,1:l+n).modified_Gram_Schmidt_QR
+            V(:,1:l+n).Householder_QR 
+        
+            ! Clean up
+            evec.destroy
+
+         end
+
+      end
+
+      ENSURE(converged,"No convergence")
+      ENSURE(NOT too_many,"Too many iterations")
+
+      ! Clean up
+      evec.destroy
+      H.destroy
+      T.destroy
+      W.destroy
+      V.destroy
+      rvl.destroy
+
+      ! Recover solution
+      call move_alloc(R,evec)
+      eval.shrink(n)
+
+   end
+
+   internal_vectors(ivec,iv_tol) ::: leaky
    ! Extract the internal vectors of a matrix i.e. vectors in the
    ! orthocomplement of the kernel of the matrix.
-   !leaky because the number of outputed internal vectors is not known
-   !beforehand
-     eigenvectors2 :: MAT{REAL}@
-     iv_tol :: REAL, optional
-     ENSURE(.dim1==.dim2,"matrix not square")
-     eigenvalues :: VEC{REAL}@
-     eigenvectors :: MAT{REAL}@
-     tol :: REAL
+   ! leaky because the number of internal vectors is unknown
+     self :: IN
+     ivec :: MAT{REAL}@, OUT
+     iv_tol :: REAL, optional, IN
+
+   ENSURE(.dim1==.dim2,"matrix not square")
+
+     eval :: VEC{REAL}@
+     evec :: MAT{REAL}@
+     tol  :: REAL
      i,h,dim :: INT
 
      tol = INTERNAL_GEMINAL_TOL
      if (present(iv_tol)) tol = iv_tol
 
      dim = .dim1
-     eigenvalues.create(dim)
-     eigenvectors.create(dim,dim)
-     .solve_symmetric_eigenproblem(eigenvalues,eigenvectors)
-     h = count(mask= eigenvalues >tol)
-     DIE_IF(count(mask= eigenvalues <  -TOL(10))/=0,"matrix not positive")
+
+     eval.create(dim)
+     evec.create(dim,dim)
+     .diagonalize_Jacobi(eval,evec)
+
+     ! Tests
+     h = count(mask=eval>tol)
+     DIE_IF(count(mask=eval<-TOL(10))/=0,"matrix not positive")
      DIE_IF(h==0,"no internal vector")
 
-     eigenvectors2.create(h,dim)
-     h=0
+     ivec.create(h,dim)
+     h = 0
      do i=1,dim
-       if (NOT eigenvalues(i).is_zero(tol)) then
-         h=h+1
-         eigenvectors2(h,:)=eigenvectors(:,i)
-       end
+        if (NOT eval(i).is_zero(tol)) then
+           h = h + 1
+           ivec(h,:) = evec(:,i)
+        end
      end
 
-     eigenvalues.destroy
-     eigenvectors.destroy
+     ! Clean
+     eval.destroy
+     evec.destroy
 
    end
 
@@ -2575,10 +2927,10 @@ contains
    ! NOTE: R^T is returned as RT
    ! NOTE: "self" is destroyed by this process.
       self :: INOUT
-      D :: VEC{REAL}, OUT
-      L :: MAT{REAL}, OUT
-      RT :: MAT{REAL}, OUT
-      fail :: BIN, OUT, optional
+      D    :: VEC{REAL}, OUT
+      L    :: MAT{REAL}, OUT
+      RT   :: MAT{REAL}, OUT
+      fail :: BIN, optional, OUT
 
       .SVD_LAPACK(D,L,RT,fail)
 
@@ -2776,8 +3128,7 @@ contains
       inv.create(d,d)
 
       ! Solve the eigenvalue problem
-    ! .solve_symmetric_eigenproblem(eval,evec)
-      .diagonalize_by_jacobi(eval,evec)
+      .diagonalize_Jacobi(eval,evec)
 
       ! Count eigenvalues which are nearly zero (leaky)
       n0 = count(eval<=ZERO OR abs(eval)<=n0_tol)
@@ -2937,14 +3288,14 @@ contains
 !  Cholesky
 !  ========
 
-   cholesky_decomposition(tr) ::: get_from(MAT{INTRINSIC}), PURE
-   ! Decompose self into lower triangular matrices "L"
+   Cholesky_decomposition(tr) ::: get_from(MAT{INTRINSIC}), PURE
+   ! Decompose "self" into lower triangular matrices "L"
    !   self = L L^T or self = L L^\dagger
-   ! where L is a lower triangular matrix stored as an array
-   ! going across the rows i.e. (1,1), (2,1), (2,2), (3,1) ...
+   ! where L is lower triangular and stored row-wise:
+   ! i.e. (1,1), (2,1), (2,2), (3,1) ...
    end
 
-   cholesky_decomposition(L) ::: get_from(MAT{INTRINSIC}, conjg=>), PURE
+   Cholesky_decomposition(L) ::: get_from(MAT{INTRINSIC}, conjg=>), PURE
    ! Decompose self into lower triangular matrices "L"
    !   self = L L^T or self = L L^\dagger
    end
@@ -3016,8 +3367,7 @@ contains
       evec.create(d,d)
 
       ! Solve the eigenvalue problem
-    ! R.solve_symmetric_eigenproblem(eval,evec)
-      R.diagonalize_by_jacobi(eval,evec)
+      R.diagonalize_Jacobi(eval,evec)
 
       ! Invert large eigenvalues
       j = 0
@@ -3131,8 +3481,7 @@ contains
       eval.create(d)
       evec.create(d,d)
 
-    ! R.solve_symmetric_eigenproblem(eval,evec)
-      R.diagonalize_by_jacobi(eval,evec)
+      R.diagonalize_Jacobi(eval,evec)
 
       do i = 1,d
          temp = abs(eval(i))
@@ -3247,8 +3596,7 @@ contains
       eval.create(d)
       evec.create(d,d)
 
-    ! R.solve_symmetric_eigenproblem(eval,evec)
-      R.diagonalize_by_jacobi(eval,evec)
+      R.diagonalize_Jacobi(eval,evec)
 
       ! Inverse sqrt eigenvalues
       n_n   = 0
@@ -3463,28 +3811,28 @@ contains
    end
 
 
-   to_power_series_inverse_of(S,tol,max_it) ::: get_from(MAT{INTRINSIC}), PURE
+   to_power_series_inverse_of(S,tol,maxit) ::: get_from(MAT{INTRINSIC}), PURE
    ! Set self to the power series inverse square root of "S".
    ! If "tol" is present, make sure that the maximum deviation from the exact
-   ! answer is less than "tol" times the smallest element of "S". If "max_it"
+   ! answer is less than "tol" times the smallest element of "S". If "maxit"
    ! is present, use this as the maximum number of terms in the power series,
    ! before termination with an error.
    end
 
-   to_power_series_inv_sqrt_of(S,tol,prefactor,max_it) ::: get_from(MAT{INTRINSIC}), PURE
+   to_power_series_inv_sqrt_of(S,tol,prefactor,maxit) ::: get_from(MAT{INTRINSIC}), PURE
    ! Set self to the inverse square root of "S", a matrix which is required to
    ! have a unit diagonal. The method uses a binomial power series expansion.
    ! If "tol" is present, make sure that the maximum deviation from the exact
-   ! answer is less than "tol" times the smallest element of "S". If "max_it"
+   ! answer is less than "tol" times the smallest element of "S". If "maxit"
    ! is present, use this as the maximum number of terms in the power series,
    ! before termination with an error.
    end
 
-   to_power_product_inverse_of(S,tol,prefactor,max_it) ::: PURE
+   to_power_product_inverse_of(S,tol,prefactor,maxit) ::: PURE
    ! Set self to the inverse of "S".  If "tol" is present, it is
    ! used to establish the maximum deviation from the unit matrix, in the matrix
    ! product self*S*self. If "prefactor" is present, matrix "S" is multiplied by
-   ! it to ensure its eigenvalues are less than one. If "max_it" is present, it
+   ! it to ensure its eigenvalues are less than one. If "maxit" is present, it
    ! is used as the maximum number of terms in the power product series.  The
    ! method uses a binomial power series expansion of "S": if S = (1 + D) then
    ! approximately S^-1/2 = (1 - 1/2 D + ...). The matrix "S" is iteratively
@@ -3495,14 +3843,14 @@ contains
       S :: MAT{REAL}, IN
       tol       :: REAL, optional, IN
       prefactor :: REAL, optional, IN
-      max_it    :: INT,  optional, IN
+      maxit      :: INT,  optional, IN
 
    ENSURE(S.is_square,"S not square")
    ENSURE(.is_same_shape_as(S),"wrong shape")
 
       W :: MAT{REAL}@
 
-      .to_power_product_inv_sqrt_of(S,tol,prefactor,max_it)
+      .to_power_product_inv_sqrt_of(S,tol,prefactor,maxit)
 
       W = self
       self = matmul(W,W)
@@ -3511,34 +3859,36 @@ contains
 
    end
 
-   to_power_product_inv_sqrt_of(S,tol,prefactor,max_it) ::: PURE
-   ! Set self to the inverse square root of "S".  If "tol" is present, it is
-   ! used to establish the maximum deviation from the unit matrix, in the matrix
-   ! product self*S*self. If "prefactor" is present, matrix "S" is multiplied by
-   ! it to ensure its eigenvalues are less than one. If "max_it" is present, it
-   ! is used as the maximum number of terms in the power product series.  The
-   ! method uses a binomial power series expansion of "S": if S = (1 + D) then
-   ! approximately S^-1/2 = (1 - 1/2 D + ...). The matrix "S" is iteratively
-   ! transformed into a new basis using the approximate square root, until the
-   ! result is the unit matrix within tolerance "tol" (if present).
+   to_power_product_inv_sqrt_of(S,tol,prefactor,maxit) ::: PURE
+   ! Set self to the inverse square root of "S".  If "tol" is present,
+   ! it is used to establish the maximum deviation from the unit
+   ! matrix, in the matrix product self*S*self. If "prefactor" is
+   ! present, matrix "S" is multiplied by it to ensure its eigenvalues
+   ! are less than one. If "maxit" is present, it is used as the
+   ! maximum number of terms in the power product series.  The method
+   ! uses a binomial power series expansion of "S": if S = (1 + D)
+   ! then approximately S^-1/2 = (1 - 1/2 D + ...). The matrix "S" is
+   ! iteratively transformed into a new basis using the approximate
+   ! square root, until the result is the unit matrix within tolerance
+   ! "tol" (if present).
       self :: OUT
-      S :: MAT{REAL}, IN
-      tol       :: REAL, optional, IN
+      S    :: MAT{REAL}, IN
+      tol  :: REAL, optional, IN
       prefactor :: REAL, optional, IN
-      max_it :: INT, optional, IN
+      maxit    :: INT, optional, IN
 
    ENSURE(S.is_square,"S not square")
    ENSURE(.is_same_shape_as(S),"wrong shape")
 
       D,X :: MAT{REAL}@
-      max_iter,n,k :: INT
+      maxiter,n,k :: INT
       eps,prefac :: REAL
 
       eps = TOL(9)
       if (present(tol)) eps = tol
 
-      max_iter = 100
-      if (present(max_it)) max_iter = max_it
+      maxiter = 100
+      if (present(maxit)) maxiter = maxit
 
       prefac = ONE/FOUR
       if (present(prefactor)) prefac = prefactor
@@ -3560,7 +3910,7 @@ contains
          X = prefac*X
 
          if (X.has_unit_diagonal(eps)) exit
-         ENSURE(k<=max_iter,"power series too long")
+         ENSURE(k<=maxiter,"power series too long")
 
       end
 
@@ -3582,7 +3932,7 @@ contains
    ! if present.
    end
 
-   antisymmetric_exponential_to(U,eval,evec) ::: get_from(MAT{INTRINSIC}, EIGEN?=>diagonalize_by_jacobi), PURE
+   antisymmetric_exponential_to(U,eval,evec) ::: get_from(MAT{INTRINSIC}, EIGEN?=>diagonalize_Jacobi), PURE
    ! Make unitary matrix U = exp(self) where "self" must be antisymmetric.
    ! Uses the formula:  exp A = V (cos P) V^t + V (sin P)/P V^t A
    !                        P = sqrt diag(eig(A^t A))

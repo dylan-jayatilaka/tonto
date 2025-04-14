@@ -1,4 +1,6 @@
 # Welcome to Tonto!
+# Sagamore XX workshop people! Read on.
+
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
 ## 0. WARNING and How to push with a new token
 
@@ -17,13 +19,11 @@ https://github.com/settings/tokens
 
 I kid you not. The selections above are quite hard to find, at the left, bottom, or top right of the menus.
 
+If you are a workshop attendee, the lab folder and instructions are [here](https://drive.google.com/drive/folders/17OWncmSsFbKAlW8mZb9EKzJuW0GAjykG).
+
 ## 1. Get ready ...
 
-* If you're not planning on modifying tonto source (i.e. developing), we recommend 
-downloading the latest release for your platform. But see section 0 above!
-
-* If you want to develop, first install `git` and 
-  and follow the compile instructions below.
+First install `git` and and follow the compile instructions below.
 
 ### On Linux
 
