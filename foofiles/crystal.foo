@@ -930,6 +930,7 @@ contains
    !    asymmetric unit atom positions. The asymmetric unit is crucial
    ! B. The .asymmetric_unit_geometry is never destroyed unless
    !    explicitly requested.
+   !    Not true anymore!!!! See my comment below! Lorraine
    ! 1. The .unit_cell_geometry is made from the asymmetric unit.
    !    Mapping arrays which relate the unit cell atoms to the
    !    asymmetric unit atoms are made,
@@ -961,7 +962,21 @@ contains
 
       ! Make asymmetric_unit_geometry only if it does not already
       ! exist e.g. from having been ready previously from a CIF
-      if (.asymmetric_unit_geometry.deallocated) then
+!     if (.asymmetric_unit_geometry.deallocated) then
+!     I am forcing the unit_cell_geometry to be updated here due to 
+!     reordering of atoms when a cluster is created. In the example
+!     used for debug, a cluster was created with defrag from the
+!     original cif which still correcponded to the asymmetric unit,
+!     however, the atom were placed in a different order (according to
+!     fragments) which is fine but the refinement was doen using this
+!     new ordering and when the cif is output after the refinement,
+!     the assymetric unit cef was outputing the xyz for the correct
+!     atoms, but using the covariance matrix from the fragment
+!     geometry (new order of atoms), which means he was placing the
+!     esds of on atom into the correct positions of a different atom.
+!     The easiest way to solve this that I found was to remake the
+!     assymetric unit geomatry from the unique atoms of the fragment
+!     atoms. This is Lorraine.
 
          ! From fragment geometry make:
          !  .asymmetric_unit_geometry
@@ -974,7 +989,7 @@ contains
          .make_asymmetric_unit(.prune_asymmetric_unit)
          if (.asymmetric_unit_source=="?") .asymmetric_unit_source = "from-fragment"
 
-      end
+!     end
 
       ! Sanity check
       ENSURE(.asymmetric_unit_atom.allocated,"no asymmetric_unit_atom list!")
@@ -1221,12 +1236,12 @@ contains
          ! Reset position manually
          pos = matmul(.unit_cell.direct_mx,.unit_cell_geometry(:,u))
          .unit_cell_atom(u).set_position(pos)
-
+         .unit_cell_atom(u).set_group(0) ! Initialize (crystal).unit_cell_atom.group Kang added 2025 Mar. 12	 
       end
       seitz.destroy
 
       .unit_cell_atom.set_axis_system_to("cartesian")
-      .unit_cell_atom.update
+      .unit_cell_atom.update ! .unit_cell_atom.group is updated
 
       ! Clean
       asymmetric_unit_geometry.destroy
@@ -4137,46 +4152,41 @@ contains
 
    end
 
-   symmetrize_FFs(ff,diffs) ::: leaky
+   symmetrize_FFs(ff) ::: leaky
    ! Symmetrize the form factor for unique symmetry operators using the stabilizedrs
    ! Using spacegroup.symmetrize_unique_SFs 
  
-      self :: IN
+      self :: INOUT
       ff :: MAT{CPX}@, INOUT
-      diffs :: VEC{REAL}@, optional, INOUT
 
    ENSURE(.spacegroup.analyzed,         "spacegroup not analyzed")
    ENSURE(ff.dim2==.n_unique_frag_atoms,"Number of unique fragment atoms: wrong size")
-   ENSURE(diffs.dim ==.n_unique_frag_atoms,"Residual sum of squares for form factor symmetrization: wrong size" )
 
       sf_a :: VEC{CPX}@
       a :: INT
       diff :: REAL
 
+      if (.asymmetric_FF_symmetrization_rss.deallocated) then 
+         .asymmetric_FF_symmetrization_rss.create(ff.dim2)
+      end
+
       do a = 1,.n_asymmetric_unit_atoms
+
          sf_a = ff(:,a)
 
-         if (present(diffs)) then
-            .spacegroup.symmetrize_unique_SFs( sf_a , &
-                                 .asym_atom_stabilizer(a).element, &
-                                 .xray_data.reflections, &
-                                 diff ) 
-            diffs(a) = diff
-
-         else
-            .spacegroup.symmetrize_unique_SFs( sf_a , &
-                                 .asym_atom_stabilizer(a).element, &
-                                 .xray_data.reflections)
-         end
-! Kang debug: The following lines are for tranking the values in ff before and after. 
-! stdout.text("Kang debug .crystal symmetrize FFs.. done.. sym ff")
-! stdout.put( sf_a(1:5) - ff(1:5,a) )
-! stdout.flush
-
+         .spacegroup.symmetrize_unique_SFs( sf_a, &
+                                           .asym_atom_stabilizer(a).element, &
+                                           .xray_data.reflections, &
+                                           diff ) 
+  
+         .asymmetric_FF_symmetrization_rss(a) = diff
+      
          ff(:,a) = sf_a ! overwrite the form factor (ff) of a-th unique_frag.atom 
       
-       end
-       sf_a.destroy 
+      end
+
+      sf_a.destroy 
+
    end
 
 
@@ -4399,7 +4409,8 @@ contains
          .asymmetric_unit_atom.set_pADP_errors_to(.xray_data.covariance_mx,.xray_data.refine_H_U_iso)
 
          ! Set ALL fragment_atom positions/ADPs from asym atoms HERE
-         ! >>>fragment_atom must be the same as molecule.atom
+         ! >>>fragment_atom must be the same as molecule.atom 
+         ! >>>>>> Except for the pHAR (Sorry Dylan. Kang). In pHAR, molecule.atom are from Crystal23 xml, and fixed
          dF.create(3,.n_fragment_atoms)
          .set_frag_from_asym_pADPs(dF)
 
@@ -4961,7 +4972,7 @@ contains
 
          ! Links between the atom indices & symop s
          a = .asym_atom_for_frag_atom(f)
-         s = .asym_symop_for_frag_atom(f)
+         s = .asym_symop_for_frag_atom(f) 
 
          ! Store original position
          if (present(dF)) dF(:,f) = -.fragment_atom(f).position
@@ -5083,27 +5094,33 @@ contains
       ! We can use the asym atom stabilizers for the ufrag
       do a = 1,.n_asymmetric_unit_atoms
 
+         ! Block limits
+         n  = .asymmetric_unit_atom(a).no_of_pADPs
+
          ! List of stabilizer symops
          stabilizer = .asym_atom_stabilizer(a).element
 
          ! Any stabilizers?
          n_stab = stabilizer.dim
-         if (n_stab<=1) cycle
+         if (n_stab<=1) then ! Kang debug on 2025.Mar.27 
+            ab = ab + n      ! Shift to the next block
+            cycle
+         end
 
          ! Block limits
-         n  = .asymmetric_unit_atom(a).no_of_pADPs
          af = ab + 1
          al = ab + n
 
          ! Set pADPs (leaky)
          X_atom.pADP_vector.create(n)
          Y_atom.pADP_vector.create(n)
-         X_atom.set_pADP_vector_to(.xray_data.dX(af:al))
-         Y_atom.set_pADP_vector_to(.xray_data.dX(af:al))
-
+         ! X_atom.set_pADP_vector_to(.xray_data.dX(af:al))!-Not necessary to set X_atom's pADP here. It will be done in the do s=2,n_stab loop
+         Y_atom.set_pADP_vector_to(.xray_data.dX(af:al)) !-Y_atom has the contribution from the identity operator (s=1) 
+                                                         ! for the cumulative sum over all the stabilizer symops. (Kang's note)
          ! Apply symops and accumulate
          do s = 2,n_stab
             t = stabilizer(s)
+            X_atom.set_pADP_vector_to(.xray_data.dX(af:al)) ! Reset X_atom's pADP vector before transformation 
             X_atom.transform_pADP_vector_with(seitz(:,:,t))
             Y_atom.set_pADP_vector_to(Y_atom.pADP_vector+X_atom.pADP_vector)
          end
@@ -7127,6 +7144,9 @@ contains
          .put_parameters
       end
 
+      if (.asymmetric_FF_symmetrization_rss.allocated) then
+         .put_asymmetric_FF_symmetrization_rss
+      end
       ! Worst reflections
       .xray_data.PUT:put_worst_reflections
 
@@ -7149,6 +7169,10 @@ contains
          .put_parameters(.xray_data.covariance_mx)
       else
          .put_parameters
+      end
+
+      if (.asymmetric_FF_symmetrization_rss.allocated) then
+         .put_asymmetric_FF_symmetrization_rss
       end
 
       ! Worst reflections
@@ -7183,6 +7207,13 @@ contains
           .fragment_atom.put_ADP4s_in_ADP2_principal_axes(.xray_data.fragment_covariance_mx)
       end
 
+      ! Put fragment_atom's coordinate on the top. !  // Kang added
+      stdout.flush
+      stdout.flush
+      stdout.text("=======================================")
+      stdout.text("Fragment atom coordinates for bond info") 
+      stdout.text("=======================================")
+      .fragment_atom.put_coordinates(no_header=TRUE)
       ! Bond length tables with Hirshfeld test
       .fragment_atom.put_bonds_and_Hirshfeld_test(cx,cm)
 
@@ -7559,6 +7590,36 @@ contains
       ! Clean
       table.destroy
 
+   end
+
+   put_asymmetric_FF_symmetrization_rss ::: private
+   ! Put the residual square sums of asymmetric unit atom's Form Factors from the form factor symmetrization
+   ! By Kang. 10.Mar.2025
+      self :: IN
+
+   ENSURE(.asymmetric_FF_symmetrization_rss.allocated,"No asymmetric atom Form Factor symmetrization residuals")
+   ENSURE(.asym_atom_stabilizer.allocated, "No stabilizer symmetry operators found")
+
+      table :: VEC{TABLE_COLUMN}@
+
+      stdout.flush
+      stdout.text("===================================================")
+      stdout.text("Asymmetric unit atom form factor symmetrization RSS")
+      stdout.text("===================================================")
+      stdout.flush
+      stdout.text("Residual sum of squares (RSS) from the symmetrization of atomic Form Factor" )
+      stdout.text(" RSS = Sum_k |F(k)-F_sym(k)|^2 |")
+      table.create(4)
+      table(1).set_heading("ID");             table(1).set_values(.asymmetric_unit_atom(:).tag)
+      table(2).set_heading("Symmetrization"); table(2).set_values(.asymmetric_FF_symmetrization_rss )
+      table(2).set_subhead("RSS")
+      table(3).set_heading("Site symm.");     table(3).set_values(int(.asym_atom_sym_factor) )
+      table(3).set_subhead("factor")
+      table(4).set_heading("Stabilizer");     table(4).set_values(.asym_atom_stabilizer)
+      table(4).set_subhead("symops")
+      table.put
+
+      table.destroy
    end
 
    put_unit_cell_geometry
@@ -9002,7 +9063,7 @@ contains
 
       ! Table
       table.create(1)
-      table(1).set_heading("Stablizer")
+      table(1).set_heading("Stabilizer") ! typo found Kang ;)
       table(1).set_subhead("symops")
       table(1).set_values(.stabilizer_symop(:))
       table.put
@@ -10272,8 +10333,8 @@ contains
 
             ! Get occ code ...
             .occupation_list(f) = CLUSTER_AT_CODE(h(1),h(2),h(3),u)
-
          end
+         .molecule_for_atom = .fragment_atom.group ! molecule_for_atom follows fragment_atom.group. 
 
       case ("unit_cell","for_unit_cell_density")
 
@@ -10304,7 +10365,8 @@ contains
 
          ! Clean
          fragment_geometry.destroy
-
+         .molecule_for_atom = .unit_cell_mol_for_atom ! Update fragment atom's group index from .unit_cell_atom
+ 
     ! case ("unit_cell_plus","for_unit_cell_density")
 
     !    ! Create occupation list
@@ -10433,6 +10495,8 @@ contains
     !    UNKNOWN(.generation_method)
 
       end
+      ! update (crystal).n_atoms
+      .n_atoms = .occupation_list.dim ! (crystal).n_atoms /==Cluster-related==/ The number of atoms in the cluster
 
    end
 
@@ -10948,6 +11012,214 @@ contains
 
    end
 
+   do_defragment_v2 ::: leaky, PURE
+   ! Defragment the generated cluster and find the connected molecules
+   ! using the .unit_cell_connection table. It can handle network compound without blowing up
+   ! It overwrites .defragment = TRUE
+      self :: INOUT
+
+   ENSURE(.occupation_list.allocated,"no occupation_list")
+   ENSURE(.unit_cell_connection.allocated,"no unit cell connection table")
+
+      i,v,c,h1,h2,h3,u,k1,k2,k3,t :: INT
+      mi,mo,code,old,new :: INT
+      safetyCounter :: INT
+      molecule_for_atom :: VEC{INT}@
+      con :: VEC{INT}@
+      stop_search :: VEC{BIN}@        ! Bin array. size = n_atoms. Add elements along with .occupation_list
+      root_uc_atom :: VEC{EVEC{BIN}}@ ! n_atoms by .n_unit_cell_atoms. Add rows along with .occupation_list
+      tmp1,tmp2, ind1, ind2 :: VEC{BIN}@ ! tmp1&2 are for i-th, old-th in the root_uc_atom nested array.
+                                         ! ind1&2 are for index of .occupation_list
+      ! Initial no. of atoms
+      .n_atoms = .occupation_list.dim
+
+      ! Clear info arrays
+      .atom_connection.destroy
+      .atom_connection.create(.n_atoms)
+      .molecule_for_atom.destroy
+
+      stop_search.create(.n_atoms) ! Initialize "stop_search" for the initial atoms.
+      stop_search = FALSE          ! Get ready for finding bonded atoms for the initial atom. 
+      root_uc_atom.create(.n_atoms)
+
+      tmp1.create( .n_unit_cell_atoms )
+      tmp2.create( .n_unit_cell_atoms )
+
+      ! Assume every atom it's own molecule
+      molecule_for_atom.create(.n_atoms)
+      do i = 1,.n_atoms  ! initial occupation_list => fragment atom order = xml atom order
+         molecule_for_atom(i) = i
+         root_uc_atom(i).element.create(.n_unit_cell_atoms) 
+         root_uc_atom(i).element = FALSE       
+         root_uc_atom(i).element( .unit_cell_atom_for_frag_atom(i) ) = TRUE ! Every frag atom is its own root by itself
+      end
+
+      ! Loop on all atoms "i"
+      i = 1
+      safetyCounter = 0 ! Kang. Initialize Forced-stop counter
+
+      do
+         if (safetyCounter > 3000 ) exit   ! Forced termination if total attempts to find connected atoms exceeds 1000          
+
+         ! Any more atoms to connect?
+         if (i>.n_atoms) exit
+
+         ! Info about atom "i"
+         mi   = molecule_for_atom(i)       ! Molecule "mi" for i
+         code = .occupation_list(i)        ! Occupation code
+         u    = CLUSTER_UA_FROM_CODE(code) ! Unit cell atom
+
+         ! No connections to this atom? next ...
+         if (.unit_cell_connection(u).element.dim==0) then ! .unit_cell_connection :: VEC{EVEC{EVEC{INT}}}@ 
+            i = i+1                                        ! ._for u-th UC atom___(u)[i][1:3] h1,h2,h3 
+            cycle                                          ! .____________________(u)[i][4]   connected UC atom 
+         end    
+         
+
+         ! Get unit cell atom offset for atom "i"
+         h1 = CLUSTER_H1_FROM_CODE(code)
+         h2 = CLUSTER_H2_FROM_CODE(code)
+         h3 = CLUSTER_H3_FROM_CODE(code)
+
+         ! Loop on atoms "c" connected to "u"
+         do c = 1,.unit_cell_connection(u).element.dim
+            safetyCounter = safetyCounter + 1  
+
+            ! List of connections
+            con = .unit_cell_connection(u)[c].element
+
+            ! Get code for connected atom
+            k1 = h1 + con(1)
+            k2 = h2 + con(2)
+            k3 = h3 + con(3)
+            t  =      con(4)
+            code = CLUSTER_AT_CODE(k1,k2,k3,t)
+
+            ! Is it new in the occupation list?
+            old = .occupation_list.index_of_value(code)
+
+            if (old>0) then
+
+               ! This is an old (found) atom. Replace the molecule
+               ! index by the lower of  "mi" and "mo" everywhere.
+               mo = molecule_for_atom(old)
+               if (mo<mi) then
+                  where (molecule_for_atom==mi) molecule_for_atom = mo
+                  mi = mo
+               else if (mo>mi) then
+                  where (molecule_for_atom==mo) molecule_for_atom = mi
+               end
+               .atom_connection(i).element.append(old)
+
+               ! Kang's major modification here 
+               !  Unification of two roots (familty trees)
+               tmp1 = root_uc_atom(old).element   ! tmp1,tmp2: Family labels 
+               tmp2 = root_uc_atom( i ).element   ! note: tmp1.dim = .n_unit_cell_atoms
+
+               ind1.destroy          
+               ind2.destroy
+               ind1.create(.n_atoms) 
+               ind2.create(.n_atoms)       
+       
+               do v = 1, .n_atoms ! Find the family members of each root
+                   ind1(v) = tmp1.same_as( root_uc_atom(v).element ) ! members from family 1
+                   ind2(v) = tmp2.same_as( root_uc_atom(v).element ) !         "           2
+               end
+               ind1 = ind1 OR ind2  ! merged family members
+               tmp1 = tmp1 OR tmp2  ! New family name
+
+               do v = 1, .n_atoms ! Update the new family name to the merged family members
+                   if (ind1(v)) then 
+                      root_uc_atom(v).element = tmp1
+                   end
+               end        
+
+            else         
+               if (stop_search(i)) cycle ! Do not append new atom if stop_search(i) is true.
+                                         ! Note: this "cycle" is for "do c=1,.unit_cell_connection(u).element.dim"
+                                         ! i=i+1 will be done after quitting this "do c=.." loop
+
+               ! This is a new atom. Increment no. of atoms,
+               ! store in the occ list and add new connection.
+               .occupation_list.append(code)
+               molecule_for_atom.append(mi)
+               new = .n_atoms + 1 ! Kang's comment: I introduced 'new' for readablity by distinguishing
+                                  !                 the (increaded) array size from the last index
+
+               .atom_connection.expand(.n_atoms+1)    ! nested-array size increased
+               .atom_connection(i).element.append(new)! put 'new' to 'i'
+
+               ! Kang's majore modification 
+               !  Assign the family name and stop flag for the newly found atom.
+              
+               stop_search.append( root_uc_atom(i).element(t) ) ! Reminder: t = con(4) = unit cell atom code
+                 ! Above line askes whether t-unit_cell_atom is already in the i-atom's family. if YES, no more search from this newly found atom
+
+               tmp1 = root_uc_atom( i ).element 
+               do v = 1, root_uc_atom.dim ! find the all preexisting family members sharing root_uc_atom(i)
+                                          ! Maybe it is ok to "do v = 1,i" no need for looking beyond 'i', will be revisited in the later time
+
+                   if (tmp1.same_as( root_uc_atom(v).element )) then
+                   if (molecule_for_atom(v) == mi ) then
+                      !  Note that, two completed molecules in translation symmetry have the same root_uc_atom
+                      !  So molecule_for_atom should be checked for distinguishing translated molecules
+                     root_uc_atom(v).element(t) = TRUE ! Let them know that 't' is now in the family 
+                   ! It was WRONG idea // molecule_for_atom(v) = mi     ! same family book --> same family members!
+
+                  end ! / == mi  ?
+                  end ! / ==tmp1 ?
+               end
+
+               root_uc_atom.expand(.n_atoms+1) 
+               ! award the updated i-family book to 't' 
+               root_uc_atom(new).element.append( root_uc_atom(i).element ) ! Note: root_uc_atom(i) is updated. so root_uc_atom(i).element(t) = TRUE now.
+       
+               .n_atoms = .n_atoms + 1  ! All done for this round, .n_atoms is updated.
+       
+            end
+
+         end ! do c = 1,.unit_cell_connection ... 
+
+         i = i + 1 ! move on to the next atom in the .occupation_list   
+
+      end ! do loop (equivalent to while ( i <=.n_atoms 'AND' safetyCounter < "Threshold value" )
+
+      !! In most cases, it is ok to remove the atoms whose stop_search = TRUE, unless systems of a few atoms per unit cell
+      !! The following contents may join in the next commit
+      ! if (.occupation_list.dim > 27) then ! 3x3x3 cell
+      ! do i = stop_search.dim,1,-1 ! reverse order for pruning
+      !    if (stop_search(i)) then
+      !       .occupation_list.prune_element(i)
+      !       molecule_for_atom.prune_element(i)
+      !       root_uc_atom.prune_element(i)
+      !       atom_connection.prune_element(i)
+      !
+      !       stop_search.prune_element(i)
+      !    end
+      ! end
+      ! end
+      ! .n_atoms = .occupation_list.dim 
+
+      ! make molecule_for_atom consecutive  Abusing variables
+      c = maxval(molecule_for_atom) 
+      molecule_for_atom = -molecule_for_atom
+      t = 0
+      do i =-1,-c,-1
+         if (any(molecule_for_atom==i)) then
+            t = t+1 
+            where (molecule_for_atom==i) molecule_for_atom = t
+         end
+      end
+
+      ! Set (sorted) molecule index array
+      .molecule_for_atom = molecule_for_atom
+
+      ! Make molecule info
+      .defragment = TRUE ! it activates ".make_unique_molecule_info" at the end of ".make_molecule_info"  
+      .make_molecule_info
+
+   end
+
    do_defragment(occupation_list) ::: leaky, PURE
    ! Defragment the "occupation_list"
       self :: IN
@@ -11142,7 +11414,7 @@ contains
       unique.sort
 
       ! Number of molecules in cluster
-      .n_molecules = unique.dim
+      .n_molecules = unique.dim       !Kang note: ".n_molecules" is from # of unique elements in ".molecule_for_atom"
 
       ! Put .molecule_for_atom into ascending order
       do mi = 1,.n_molecules
@@ -11201,39 +11473,43 @@ contains
       do mi = 1,.n_molecules
 
          ! Processed?
-         if (.unique_molecule_for(mi)>0) cycle
+         if (.unique_molecule_for(mi)>0) then  ! Kang corrected
+            cycle ! Processed before hand -> skip to the next molecule
+         else     ! new unique Molecule found
+            .n_unique_molecules = .n_unique_molecules + 1
+         end         
 
-         li = .molecule(mi).element
+         li = .molecule(mi).element                  ! Knag note: li::VEC{INT} = mi-molecule's atom index (for .occupation_list ) (1~.occupation_list.dim)
          ni = li.dim
 
          ai.create(ni)
          ui.create(ni)
          ci.create(ni)
 
-         ci  = .occupation_list(li)
-         ui  = CLUSTER_UA_FROM_CODE(ci)
-         ai  = .asym_atom_for_unit_cell_atom(ui)
-         si  = .asym_symop_for_unit_cell_atom(ui(1))
-         si  = .spacegroup.inverse_of_symops(si)
+         ci  = .occupation_list(li)                  ! Kang note: ci::VEC{INT} = atom CODEs of the mi-molecule (555xx)
+         ui  = CLUSTER_UA_FROM_CODE(ci)              !            ui::VEC{INT} = corresponding unit cell atom index (1~.n_unit_cell_atoms)
+         ai  = .asym_atom_for_unit_cell_atom(ui)     ! 
+         si  = .asym_symop_for_unit_cell_atom(ui(1)) !          
+         si  = .spacegroup.inverse_of_symops(si)     !            si::INT      = inverse of the corrsponding symop for the first atom in mi-molecule
 
          ic  = ci(1)
 
          ci.destroy
          ui.destroy
-
-         i0  = CLUSTER_UA_FROM_CODE(ic)
+                                                     ! Kang note: ic::INT (= ci(1)) = code for the first atom in the mi-th molecule
+         i0  = CLUSTER_UA_FROM_CODE(ic)              !            i0::INT  = corresponding unit cell atom index of ic-atom 
          i1  = CLUSTER_H1_FROM_CODE(ic)
          i2  = CLUSTER_H2_FROM_CODE(ic)
          i3  = CLUSTER_H3_FROM_CODE(ic)
-         pi  = .unit_cell_geometry(:,i0) + [i1,i2,i3] + .fragment_offset
-
+         pi  = .unit_cell_geometry(:,i0) + [i1,i2,i3] + .fragment_offset !.
+                                                     !            pi::VEC{REAL}(3) unbounded fractional(crystal) coordinate of ci-atom 
          ! Find matching molecules
          do mj = mi+1,.n_molecules
 
-            lj = .molecule(mj).element
+            lj = .molecule(mj).element               ! Kang note: lj::VEC{INT} = atom codes of mj-th molecule
 
             ! Found?
-            if (.unique_molecule_for(mj)>0) cycle
+            if (.unique_molecule_for(mj)>0) cycle    
 
             ! Same # on atoms?
             if (lj.dim/=ni) cycle
@@ -11242,19 +11518,19 @@ contains
             uj.create(ni)
             cj.create(ni)
 
-            cj  = .occupation_list(lj)
-            uj  = CLUSTER_UA_FROM_CODE(cj)
-            aj  = .asym_atom_for_unit_cell_atom(uj)
-            sj  = .asym_symop_for_unit_cell_atom(uj(1))
+            cj  = .occupation_list(lj)               ! Kang note: cj::VEC{INT} = atom CODEs of the mj-molecule
+            uj  = CLUSTER_UA_FROM_CODE(cj)           !            uj = corresponding unit cell atoms
+            aj  = .asym_atom_for_unit_cell_atom(uj)  !            aj = corresponding corresponding asymmetric atoms
+            sj  = .asym_symop_for_unit_cell_atom(uj(1)) !         sj::INT = symop index for the first atom in mj-molecule
 
             cj.destroy
             uj.destroy
 
             ! Match asym atoms
             permutation.create(ni)
-            ai.is_permutation_of(aj,related,permutation)
+            ai.is_permutation_of(aj,related,permutation) ! Are atoms from mi- & mj-molecule from the same asymmetric unit atoms?
 
-            if (related) then
+            if (related) then ! mj-molecule is related to mi-molecule
 
                ! New order
                new = lj(permutation)
@@ -11277,13 +11553,14 @@ contains
                .spacegroup.transform_position(ps,s)
 
                ps    = pj - ps
-               shift = nint(ps)
+               shift = nint(ps)      ! Kang note: shift::VEC{INT}(3) integer lattice translation vector
 
                ! Unique molecule
-               .unique_molecule_for(mj) = mi
+               .unique_molecule_for(mj) = mi 
 
                ! New symcode
-               .unique_symcode_for(mj) = CLUSTER_AT_CODE(shift(1),shift(2),shift(3),s)
+               .unique_symcode_for(mj) = CLUSTER_AT_CODE(shift(1),shift(2),shift(3),s) ! Kang note: 's' is spacegroup index not unit_cell_atom index
+               ! Kang's memo: The symmetry operator 's' can be wrong if the first atom in the molecule has another atom of the same kind. example B2H6
              
                ! Reorder atoms in mj to be consistent with mi
                .occupation_list(lj) = .occupation_list(new)
@@ -11293,14 +11570,8 @@ contains
 
                new.destroy
 
-            else
-
-               ! Symmetry unique molecule
-               .n_unique_molecules      = .n_unique_molecules + 1
-               .unique_molecule_for(mi) = .n_unique_molecules
-
             end
-
+    
             permutation.destroy
             aj.destroy
 
@@ -11384,8 +11655,6 @@ contains
 
       end
 
-    ! stdout.text("new order:") ! Kang added 
-    ! stdout.put(new_order)     ! Kang added ! It prints out the new order up to 169 which is > 16(=#of atoms in the unit cell
       ! Now reorder
       occupation_list(new_order)    = occupation_list
       geometry(:,new_order)         = geometry
@@ -12000,66 +12269,118 @@ contains
       .make_atom_list(atom)
 
    end
-
-   make_atom_list(atom) ::: PURE
-   ! Make a new atom list for the cluster. Note that the
-   ! .asymmetric_unit_atom's must have ADP (thermal) tensors in the
-   ! cartesian axis system; this will normally be the case for Tonto's
-   ! internal representation ....
+   
+   make_atom_list(atom) ::: PURE 
+   ! Kang's version of make_atom_list(2025.Mar.20) Make a new atom list from
+   !  .occupation_list & .molecule_for_atom by using .unit_cell_atom. 
+   ! unit_cell_atom should have ADP (thermal) tensors (in the cartesian axis system)
+   ! No need for (.crystal).geometry
       self :: IN
-      atom :: VEC{ATOM}, OUT
+      atom :: VEC{ATOM}, OUT 
 
-   ENSURE(.n_atoms>0,"no atoms in cluster")
-   ENSURE(atom.dim==.n_atoms,"wrong size, atoms")
-   ENSURE(.geometry.allocated,"no geometry")
    ENSURE(.occupation_list.allocated,"no occupation_list")
+   ENSURE(.n_atoms == .occupation_list.dim, "disagreement in the number of cluster atoms")
    ENSURE(.fragment_info_made,"no crystal fragment info")
-   ENSURE(.asymmetric_unit_atom.allocated, "no asymmetric_unit_atom data")
-   ENSURE(.asymmetric_unit_atom.has_cartesian_axes, "asymmetric_unit_atom not in cartesian axes")
+   ENSURE(.unit_cell_atom.allocated, "no unit_cell_atom data")
+   ENSURE(.unit_cell_atom.has_cartesian_axes, "unit_cell_atom not in cartesian axes")
    ENSURE(.molecule_for_atom.allocated, "no molecule_for_atom info")
 
       ulist :: VEC{INT}@
-      seitz :: MAT3{REAL}@
-      a,u,p,s :: INT
+      a :: INT
+      h1,h2,h3 :: INT
       pos :: VEC{REAL}(3)
 
       ! Unit cell atoms which correspond to the fragment atoms
       ulist.create(.n_atoms)
       ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
-
-      ! Seitz matrices (cartesian!)
-      seitz = .xyz_seitz_matrices
+      atom  = .unit_cell_atom(ulist) ! Preliminary initialization. It is segmentation-fault-free !
 
       ! Loop over cluster atoms "a"
       do a = 1,.n_atoms
+         !> NOTE: 
+         !>> atom(a)=.asymmetric_unit_atom(p) syntax causes Segmentation fault, so I did atom=.unit_cell_atom(ulist)
 
-         ! Extract unit cell atom, asymmetric parent and symop
-         u = ulist(a)
-         p = .asym_atom_for_unit_cell_atom(u)
-         s = .asym_symop_for_unit_cell_atom(u)
-
-         ! Copy the parent atom
-         ! NOTE: .basis is a ptr copy
-         atom(a) = .asymmetric_unit_atom(p)
-
-         ! Transform the pADPs (which must be in cartesians)
-         atom(a).transform_pADP_vector_with(seitz(:,:,s))
-
-         ! Reset cluster atom pos from .geometry(:,a) (in fractional)
-         pos = matmul(.unit_cell.direct_mx,.geometry(:,a))
-         atom(a).set_position(pos) ! Set new cartesian position 
-         atom(a).set_group(.molecule_for_atom(a))
+         ! copy from (.crystal).unit_cell_atom 
+         ! .fragment_offset :::VEC{INT}(3) is made from make_occupation_list
+         h1 = CLUSTER_H1_FROM_CODE(.occupation_list(a)) + .fragment_offset(1)
+         h2 = CLUSTER_H2_FROM_CODE(.occupation_list(a)) + .fragment_offset(2)
+         h3 = CLUSTER_H3_FROM_CODE(.occupation_list(a)) + .fragment_offset(3)
+         
+         pos = atom(a).position 
+         pos = pos + matmul(.unit_cell.direct_mx,[h1,h2,h3])
+          
+         atom(a).set_position( pos )
+         atom(a).set_group( .molecule_for_atom(a) ) 
 
       end
 
       ! Update labels/groups
+      atom.set_unique_tags ! forced label update
       atom.update
 
       ! Free memory
-      seitz.destroy
       ulist.destroy
-
    end
+
+!   make_atom_list(atom) ::: PURE  !! OLD version of make_atom_list commented out by Kang. 2025.Mar.20
+!   ! Make a new atom list for the cluster. Note that the
+!   ! .asymmetric_unit_atom's must have ADP (thermal) tensors in the
+!   ! cartesian axis system; this will normally be the case for Tonto's
+!   ! internal representation ....
+!      self :: IN
+!      atom :: VEC{ATOM}, OUT
+!
+!   ENSURE(.n_atoms>0,"no atoms in cluster")
+!   ENSURE(atom.dim==.n_atoms,"wrong size, atoms")
+!   ENSURE(.geometry.allocated,"no geometry")
+!   ENSURE(.occupation_list.allocated,"no occupation_list")
+!   ENSURE(.fragment_info_made,"no crystal fragment info")
+!   ENSURE(.asymmetric_unit_atom.allocated, "no asymmetric_unit_atom data")
+!   ENSURE(.asymmetric_unit_atom.has_cartesian_axes, "asymmetric_unit_atom not in cartesian axes")
+!   ENSURE(.molecule_for_atom.allocated, "no molecule_for_atom info")
+!
+!      ulist :: VEC{INT}@
+!      seitz :: MAT3{REAL}@
+!      a,u,p,s :: INT
+!      pos :: VEC{REAL}(3)
+!
+!      ! Unit cell atoms which correspond to the fragment atoms
+!      ulist.create(.n_atoms)
+!      ulist = CLUSTER_UA_FROM_CODE(.occupation_list)
+!
+!      ! Seitz matrices (cartesian!)
+!      seitz = .xyz_seitz_matrices
+!
+!      ! Loop over cluster atoms "a"
+!      do a = 1,.n_atoms
+!
+!         ! Extract unit cell atom, asymmetric parent and symop
+!         u = ulist(a)
+!         p = .asym_atom_for_unit_cell_atom(u)
+!         s = .asym_symop_for_unit_cell_atom(u)
+!
+!         ! Copy the parent atom
+!         ! NOTE: .basis is a ptr copy
+!         atom(a) = .asymmetric_unit_atom(p)
+!
+!         ! Transform the pADPs (which must be in cartesians)
+!         atom(a).transform_pADP_vector_with(seitz(:,:,s))
+!
+!         ! Reset cluster atom pos from .geometry(:,a) (in fractional)
+!         pos = matmul(.unit_cell.direct_mx,.geometry(:,a))      ! Kang's comment (.crystal).geometry is possibly not allocated
+!         atom(a).set_position(pos) ! Set new cartesian position 
+!         atom(a).set_group(.molecule_for_atom(a))
+!
+!      end
+!
+!      ! Update labels/groups
+!      atom.update
+!
+!      ! Free memory
+!      seitz.destroy
+!      ulist.destroy
+!
+!   end
 
    make_atom_list(atom,list) ::: PURE
    ! Make a new atom list for the cluster from the indices in "list".
@@ -14317,6 +14638,7 @@ contains
 
       stdout.flush
       stdout.show("No. of atoms =",.n_atoms)
+   !> stdout.show("No. of atoms =",.occupation_list.dim) ! Kang. For Debug 
 
       stdout.flush
       stdout.text("The table below is understood as follows:")
@@ -14358,9 +14680,9 @@ contains
       h2 = CLUSTER_H2_FROM_CODE(.occupation_list) + .fragment_offset(2)
       h3 = CLUSTER_H3_FROM_CODE(.occupation_list) + .fragment_offset(3)
 
-      r1 = .unit_cell_geometry(1,ua) + h1
-      r2 = .unit_cell_geometry(2,ua) + h2
-      r3 = .unit_cell_geometry(3,ua) + h3
+      r1 = .unit_cell_geometry(1,ua) + REALIFY(h1)
+      r2 = .unit_cell_geometry(2,ua) + REALIFY(h2)
+      r3 = .unit_cell_geometry(3,ua) + REALIFY(h3)
 
       sy = .asym_symop_for_unit_cell_atom(ua)
       s1 = .asym_shift_for_unit_cell_atom(1,ua)
@@ -14374,7 +14696,7 @@ contains
 
       ao = 100* aa
       ao = sy + ao
-
+      
       ! Table
       table.create(17)
 

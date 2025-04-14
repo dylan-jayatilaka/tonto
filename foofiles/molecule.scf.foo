@@ -1002,11 +1002,13 @@ contains
       library  :: STR
       cluster  :: CRYSTAL@
       HS_atoms :: VEC{ATOM}@
-    ! becke_grid :: BECKE_GRID@
       sa,  k1,k2,k3,kr :: REAL
       n_atom, n_k,n_pt :: INT
       a,i,k :: INT
       sf :: CPX
+      tmp_atom :: VEC{ATOM}@
+      found :: BIN
+      pos1,pos2 :: VEC{REAL}(3)
 
    !  .:make_HA_inputs(skip_NOs=TRUE)
 
@@ -1037,23 +1039,75 @@ contains
       ! Since we need to define the fragment_geometry to be
       ! the asymmetric unit for this purpose, but for
       ! structure refinement we need to stay with the C23
-      ! CXML file geometry which is the 0.5[-1:+1,-1:+1,-1:+1] cell.
+      ! XML file geometry which is the [-half,+half]^3 cell.
       ! NOTE: wasteful copy of xray_data is done here
+      ! In case of periodic defragment, .asymmetric_unit_atom(:) are compared with .atom(:)
+      !   If an asym_atom is not found in .atom, then it is manually updated by (CRY23 primitive_cell) lattice translastion.
+      !   Without defragment, all the asym_atoms are always found among .atom(:). 2025.Mar.19 Kang
+
       cluster = .crystal
+
+!!! // phar_defragment compatibility //
+!
+!! Kang Note. 1-to-1 match between asymmetric_unit_atom(=tmp_atom) and (.molecule).atom (=atoms from Crystal23 xml file)
+!            Without pHAR_defragment, it does basically nothing.
+!            If .asymmetric_unit_atom(a) is not found in .atom, then it is replaced by one of atom(i)
+!            Take a lattice-translation-equivalent atom in atom(:). Use the CRY23 primitive unit cell, not crystallographic .crystal.unit_cell
+!            tmp_atom will be the source of HS_atoms 
+      tmp_atom.create(.crystal.n_asymmetric_unit_atoms)
+      tmp_atom = .crystal.asymmetric_unit_atom
+
+      do a = 1,tmp_atom.dim
+      
+         pos1 = tmp_atom(a).position ! pos1 from asymmetric_unit_atom
+         found = FALSE
+ 
+         do i = 1,.atom.dim  ! Kang comment. It is not efficient search. any found item is not excluded from the search
+
+            pos2 = .atom(i).position ! pos2 from Crystal23 xml_atom (=.atom); .atom is for the ED calculation
+            if (pos1.equals(pos2)) then
+!>DEBUG         stdout.show("cry.asym_atom, .atom" ,[a,i] ) ! Without phar_defragment, it is same to .crystal.asym_atom_for_frag_atom
+                found = TRUE 
+                exit
+            end     
+         end
+         if (found) cycle
+
+        ! asymmetric_unit_atom is not found in .atom(:). Then find translation-equivalent one from .atom(:)
+         do i = 1,.atom.dim
+            pos2 = .atom(i).position - pos1 ! Abusing variable "pos2". Now pos2 is the coordinate difference.
+            pos2 = matmul(.crystal23.Primitive_unit_cell.inverse_mx, pos2)  ! To fractional coord (in C23 primitive cell)
+            pos2 = mod( pos2 + HALF + ONE, ONE ) - HALF ! modulo operation. Map to [-0.5, 0.5)
+
+            if ( pos2.is_zero ) then 
+!               stdout.show("cry.asym_atom translated, .atom" ,[a,i] ) ! Without periodic defragmen
+               tmp_atom(a).set_position( .atom(i).position ) ! Overwrite tmp asym atom
+               ! Kang's note. You may double check by comparing ADPs. 
+               exit
+            end
+         end         
+      end 
+      .crystal.asymmetric_unit_source = "Crystal23-xml-selected-by-tonto"
+
+!! //phar_defragment compatibility// by Kang 2025.Mar.20
+
       cluster.asymmetric_unit_geometry.destroy
       cluster.asymmetric_unit_atom.destroy
-      cluster.update_fragment_info(.crystal.asymmetric_unit_atom)
+      cluster.update_fragment_info(tmp_atom) ; tmp_atom.destroy ! tmp_atom ~ .asymmetric_unit_atom
+
       cluster.asymmetric_unit_atom.set_basis_kind("slater")
      
       ! Make the HS_atoms & resolve the interpolators
-      cluster.make_asym_unit_HS_cluster(HS_atoms,TOL(10)) ! <===
+      cluster.make_asym_unit_HS_cluster(HS_atoms,TOL(10)) ! <=== Kang note: HS_atoms are the source of becke_grid
       HS_atoms.set_basis_kind("slater")
       HS_atoms.resolve_bases(.slaterbasis,.slaterbasis_name)
       HS_atoms.update_kinds    
-      !!!!!!!!!!!!!!
-      stdout.text("CLUSTER GEOMETRY")
-      HS_atoms.put ! 
-      !!!!!!!!!!!!!!
+
+!>DEBUG: show super cluster for Hirshfeld weight function calculation
+!      stdout.text(" ----------------------------------------------------")
+!      stdout.text(" CLUSTER GEOMETRY for Hirshfeld partitioning function")
+!      stdout.text(" ----------------------------------------------------")
+!      HS_atoms.put_coordinates(no_header=TRUE)
 
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
@@ -1062,7 +1116,7 @@ contains
 
       ! Set up integration grid for the HS atom cluster
       .becke_grid.create
-      .becke_grid.set_atom_info(HS_atoms) ! NOT PURE
+      .becke_grid.set_atom_info(HS_atoms) ! NOT PURE. Kang note: HS_atoms = .becke_grid.atom
       .becke_grid.set_one_atom_grid_data
 
       ! Loop over asymmetric/unique atoms "c"
@@ -1074,7 +1128,7 @@ contains
          sa = ONE/sa
 
          ! Get the Becke grid for one-atom grid
-         .becke_grid.make_grid(pt,wt,a)
+         .becke_grid.make_grid(pt,wt,a)  ! For 'a' from 1 to .n_asym_atoms, HS_atoms(a) =.asymmetric_unit_atom(a)
          n_pt = pt.dim1
 
          ! Stockholder weight function "Wa" for atom "a"
@@ -4685,9 +4739,11 @@ contains
    DIE_IF(NOT .crystal.xray_data.allocated,"no crystal data")
    DIE_IF(NOT .crystal.xray_data.allocated,"no crystal xray data")
 
-      map :: VEC{REAL}@
+      map,map_peeled :: VEC{REAL}@
       pt :: MAT{REAL}@
       n_pt, maxa,mina :: INT
+      nx,ny,nz, n_peeled :: INT
+      map_mat3 :: MAT3{REAL}@
       maxtag,mintag :: STR
       maxpos,minpos :: VEC{REAL}(3)
       fac,fac3,maxd,mind :: REAL
@@ -4745,8 +4801,22 @@ contains
       mina   = minloc(map,dim=1)
       maxp   = map(maxa)
       minp   = map(mina)
-      rmsp   = map.standard_deviation ! Kang's note. By doing this, the surface layers are doubly counted,
-                                      ! edges are 4-times counted, corners are 8-times counted. 
+
+      ! rms value calculation without double counting of boundaries / Kang
+      nx = .plot_grid.n_x 
+      ny = .plot_grid.n_y
+      nz = .plot_grid.n_z
+
+      map_mat3.create( nx, ny, nz )         ! Note: map_mat3(1,:,:) = map_mat3(nx,:,:)
+      map_mat3 = reshape( map ,[nx,ny,nz] ) !       map_mat3(:,1,:) = map_mat3(:,ny,:)
+                                            !       map_mat3(:,:,1) = map_mat3(:,:,nz)
+      n_peeled = (nx-1) * (ny-1) * (nz-1)
+
+      map_peeled.create( n_peeled )
+      map_peeled = reshape( map_mat3(1:nx-1, 1:ny-1, 1:nz-1) , [n_peeled] )
+      rmsp   = map_peeled.standard_deviation 
+       ! Kang 2024 Nov. 1
+
       maxpos = pt(maxa,:)
       minpos = pt(mina,:)
       maxa   = .crystal.unit_cell_atom.nearest_atom_to(maxpos)
@@ -4776,6 +4846,8 @@ contains
       pt.destroy
       map.destroy
       .plot_grid.destroy
+      map_mat3.destroy
+      map_peeled.destroy
 
 !     ! Create atom coords
 !     pt.create(.n_atom,3)
