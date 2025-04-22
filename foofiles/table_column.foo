@@ -75,9 +75,6 @@ contains
       if (stdout.allocated) then
          .width          = stdout.style.real_width
          .real_precision = stdout.style.real_precision
-      else
-         .width          = TABLE_COLUMN_WIDTH
-         .real_precision = TABLE_COLUMN_REAL_PRECISION
       end
 
    end
@@ -343,18 +340,18 @@ contains
    ! Set width automatically from the column values
       self :: INOUT
 
-      coltyp :: STR
+      valtyp :: STR
 
-      coltyp = .values_set_as_str
+      valtyp = .value_type_to_output
 
       ! Cases
-      select case (coltyp)
+      select case (valtyp)
       case ("bin        "); .set_width_from(.b_values)
       case ("int        "); .set_width_from(.i_values)
       case ("real(error)"); .set_width_from(.e_values)
       case ("real       "); .set_width_from(.r_values)
       case ("real-over  "); .set_width_from(.r_values) ! Handle outside
-      case ("error-under"); .set_width_from(.e_values) ! with valtype
+      case ("error-under"); .set_width_from(.e_values) ! with coltype
       case ("str        "); .set_width_from(.s_values)
       end ! case
 
@@ -417,11 +414,11 @@ contains
       r,e :: REAL, IN
 
       wid,dp, de,le,pad :: INT
-      coltyp :: STR
+      valtyp :: STR
 
-      coltyp = .values_set_as_str
+      valtyp = .value_type_to_output
 
-      if (coltyp=="real-over") then
+      if (valtyp=="real-over") then
 
          .set_defaults
 
@@ -447,11 +444,11 @@ contains
       r,e :: VEC{REAL}, IN
 
       msl,mdp,mcb,mcc :: INT
-      coltyp :: STR
+      valtyp :: STR
 
-      coltyp = .values_set_as_str
+      valtyp = .value_type_to_output
 
-      if (coltyp=="real-over") then
+      if (valtyp=="real-over") then
 
          .set_defaults
 
@@ -477,18 +474,21 @@ contains
       self :: INOUT
       v :: V?, IN
 
+      vid :: INT
       wid :: INT
 
-      wid = v.list_str_length(.list_item_spacing)
-      wid = wid + .column_spacing
-      .set_width(wid)
+      vid = v.item_str_length
 
-      wid = v.item_str_length
+      wid = vid
       wid = wid + .list_item_spacing
       .set_item_width(wid)
 
-   end
+      wid = wid*min(.n_list_fields,v.max_element_dim)
+      wid = wid + .column_spacing
+      .set_width(wid)
 
+   end
+   
    set_width_from(v) ::: get_from(TABLE_COLUMN, V?=>VEC{EVEC{INT}}), PURE
    ! Set width from the width of list-of-lists value(s) in "v"
    end
@@ -583,72 +583,66 @@ contains
 
 ! This is very important
 
-   values_set_as_str(valtype) result (res) ::: PURE
-   ! Return a string value describing the type of column set.
-   ! If "valtype" is present it must equal "real" or "error".
+   value_type_to_output(coltype) result (res) ::: PURE
+   ! Return a string "res" describing kind of value to be printed.
+   ! Normally the value printed is related to "X" if .X_values is set.
+   ! If "coltype" is present (and equal to "error") then "res" is:
+   !  . "error-under" ... for a error value like 0.00693 if there
+   ! If "coltype" is NOT present then "res" is:
+   !  . "real(error)" ... for a value printed like 1.234(7)
+   !  . "real-over"   ... for a real value like  1.23456 with error 
+   !                      to be printed below as 0.00693
       self :: IN
-      valtype :: STR, optional, IN
+      coltype :: STR, optional, IN
       res :: STR
 
       res = "none"
 
-      if (present(valtype)) then
-         ENSURE(valtype=="error","valtype is not 'error'")
+      if (present(coltype)) then
+         ENSURE(coltype=="error","coltype is not 'error'")
          if (.may_be_e_under_column)  then; res = "error-under"
          else;                              res = "blank"
          end
-
-      else if (.b_values.allocated)  then; res = "bin"
-
-      else if (.i_values.allocated)  then; res = "int"
-
+      else if (.b_values.allocated)   then; res = "bin"
+      else if (.i_values.allocated)   then; res = "int"
       else if (.may_be_an_re_column)  then; res = "real(error)"
-
       else if (.may_be_r_over_column) then; res = "real-over"
-
-      else if (.r_values.allocated)  then; res = "real"
-
-      else if (.s_values.allocated)  then; res = "str"
-
-      else if (.iv_values.allocated) then; res = "int-list"
-
-      else if (.sv_values.allocated) then; res = "str-list"
-
+      else if (.r_values.allocated)   then; res = "real"
+      else if (.s_values.allocated)   then; res = "str"
+      else if (.iv_values.allocated)  then; res = "int-list"
+      else if (.sv_values.allocated)  then; res = "str-list"
       end
 
    end
 
-   may_be_an_re_column result (res) ::: pure
-   ! Return TRUE if it has r_values, e_values and
-   ! e_under_r is NOT TRUE. It definitely is an R(E)
-   ! column if the caller does NOT pass in "valtype".
+   may_be_e_under_column result (res) ::: elemental
+   ! Return TRUE if self has e_values allocated, and 
+   !    e_under_r is TRUE.
+   ! It really is an "error-under" column if .value_type_to_output 
+   ! is called *with* the "coltype" option.
       self :: IN
       res :: BIN
-
-      res = .r_values.allocated AND .e_values.allocated AND NOT .e_under_r
-
+      res = .e_values.allocated AND .e_under_r
    end
 
    may_be_r_over_column result (res) ::: pure
-   ! Return TRUE if it has r_values and e_under_r set TRUE.
-   ! It definitely is an r-over column if the caller does
-   ! NOT pass in "valtype. See calling routine.
+   ! Return TRUE if self has r_values, and 
+   !    e_under_r is TRUE. 
+   ! It really is a "real-over" column if .value_type_to_output 
+   ! is called *without* the "coltype" option.
       self :: IN
-      res :: BIN
-
+      res  :: BIN
       res = .r_values.allocated AND .e_under_r
-
    end
 
-   may_be_e_under_column result (res) ::: elemental
-   ! Return TRUE if it has e_values and e_under_r set TRUE.
-   ! It definitely is an e-under-r column if the caller passes in
-   ! "valtype".  See calling routine.
+   may_be_an_re_column result (res) ::: pure
+   ! Return TRUE if self has r_values, e_values, and 
+   !    e_under_r is FALSE. 
+   ! It definitely is an "real(error)" column if .value_type_to_output 
+   ! is called *without* the "coltype".
       self :: IN
-      res :: BIN
-
-      res = .e_values.allocated AND .e_under_r
-
+      res  :: BIN
+      res = .r_values.allocated AND .e_values.allocated AND NOT .e_under_r
    end
 
    n_rows result (res) ::: pure
@@ -794,20 +788,25 @@ contains
 
 ! This is the main procedure
 
-   put_value(i,valtype)
-   ! Put out the value "i"
+   put_value(i,coltype)
+   ! Put out the value "i" in the column; it is normally of type 
+   ! "X" if .X_values is allocated, except i "coltype" is present 
+   ! and equal to "error"
       self :: IN
-      i :: INT, IN
-      valtype :: STR, optional, IN
+      i    :: INT, IN
+      coltype :: STR, optional, IN
 
    ENSURE(.values_set,"column not set")
    ENSURE(i.is_in_range([1,.n_rows]),"column index i out of range")
-   ENSURE(present(valtype) EQV valtype=="error","if used, valtype must be 'error'")
+   ENSURE(present(coltype) EQV coltype=="error","if used, coltype must be 'error'")
 
-      w,p :: INT
-      l,c :: BIN
-      j,margin :: INT
-      coltyp :: STR
+      margin  :: INT
+      fields  :: INT
+      n_block :: INT
+      dim,s,f :: INT
+      w,p,b,j :: INT
+      l,c     :: BIN
+      valtyp  :: STR
 
       ! Widths & centering
       w = .width
@@ -815,20 +814,14 @@ contains
       l = .left_justify
       c = .center
 
-      ! Extra lines tering
-    ! fields = .style.n_fields_per_line
-    ! if (fields==0) fields = dim
-    ! n_block = int((dim-0.1)/fields) + 1
-
       ! Put the spacer
       if (.spacer/=" ") stdout.put(trim(.spacer))
 
-      ! Column value type
-      coltyp = .values_set_as_str(valtype)
+      ! Value type to be printed
+      valtyp = .value_type_to_output(coltype)
 
       ! Cases
-      select case (coltyp)
-
+      select case (valtyp)
       case ("blank      "); stdout.put(" ",width=w,blank=TRUE)       ! Output a blank
       case ("bin        "); stdout.put(.b_values(i),left=l,center=c,width=w)
       case ("int        "); stdout.put(.i_values(i),left=l,center=c,width=w)
@@ -836,23 +829,10 @@ contains
       stdout.put(.r_values(i),.e_values(i),width=w,precision=p,max_cb=.max_cp,d2_err=.two_digit_error) 
       case ("real       "); stdout.put(.r_values(i),left=l,center=c,width=w,precision=p) 
       case ("real-over  "); stdout.put(.r_values(i),left=l,center=c) ! Handle outside
-      case ("error-under"); stdout.put(.e_values(i),left=l,center=c) ! with valtype
+      case ("error-under"); stdout.put(.e_values(i),left=l,center=c) !   with coltype
       case ("str        "); stdout.put(.s_values(i),left=l,center=c,width=w)
-
-      case ("int-list   ")
-
-         ! VEC{INT}
+      case ("int-list   ") ! VEC{INT}
          if (.list_as_column) then
-
-         !  do block = 1,n_block
-         !     f = 1 + fields*(block-1)
-         !     l = min(f+fields-1,dim)
-         !     if (block>1) .flush
-         !     do i = f,l
-         !        .put(v(i),left,width=rwid)
-         !     end
-         !  end
-
             stdout.put(" ",width=.column_spacing)
             margin = stdout.buffer.item_end
             do j = 1,.iv_values(i).element.dim
@@ -862,21 +842,27 @@ contains
                end
                stdout.put(.iv_values(i)[j],left=l,center=c,width=.item_width)
             end
-
          else
-
+            dim     = .iv_values(i).element.dim
+            fields  = .n_list_fields
+            n_block = int((dim-0.1)/fields) + 1
             stdout.put(" ",width=.column_spacing)
-            do j = 1,.iv_values(i).element.dim
-            stdout.put(.iv_values(i)[j],left=l,center=c,width=.item_width)
+            margin  = stdout.buffer.item_end ! save margin
+            do b = 1,n_block
+               s = 1 + fields*(b-1)
+               f = min(s+fields-1,dim)
+               if (b>1) then
+                  stdout.flush
+                  stdout.tab(width=margin)
+               end
+               do j = s,f
+                  stdout.put(.iv_values(i)[j],left=l,center=c,width=.item_width)
+               end
             end
-
          end
 
-      case ("str-list")
-
-         ! VEC{STR}
+      case ("str-list") ! VEC{STR}
          if (.list_as_column) then
-
             stdout.put(" ",width=.column_spacing)
             margin = stdout.buffer.item_end
             do j = 1,.sv_values(i).element.dim
@@ -887,15 +873,23 @@ contains
                end
                stdout.put(.sv_values(i)[j],left=l,center=c,width=.item_width)
             end
-
          else
-
+            dim     = .sv_values(i).element.dim
+            fields  = .n_list_fields
+            n_block = int((dim-0.1)/fields) + 1
             stdout.put(" ",width=.column_spacing)
-            do j = 1,.sv_values(i).element.dim
-            if (.sv_values(i)[j]==" ") cycle
-            stdout.put(.sv_values(i)[j],left=l,center=c,width=.item_width)
+            margin  = stdout.buffer.item_end ! save margin
+            do b = 1,n_block
+               s = 1 + fields*(b-1)
+               f = min(s+fields-1,dim)
+               if (b>1) then
+                  stdout.flush
+                  stdout.tab(width=margin)
+               end
+               do j = s,f
+                  stdout.put(.sv_values(i)[j],left=l,center=c,width=.item_width)
+               end
             end
-
          end
 
 
