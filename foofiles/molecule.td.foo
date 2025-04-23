@@ -363,7 +363,7 @@ contains
    ENSURE(.MOs.r.allocated,"MOs.r does not exist")
 
       ApB :: MAT{REAL}@
-      AmB, AmB2 :: MAT{REAL}@
+      AmB :: MAT{REAL}@
       no,nv,nvo :: INT
 
       ! Minimal setup
@@ -382,22 +382,20 @@ contains
       ! The A-B & A+B matrices
       ApB.create(nvo,nvo)
       AmB.create(nvo,nvo)
-      .TD::make_TDHF_ApB_AmB_singlet(ApB,AmB)
-
-      ! Get sqrt
-      AmB2.create(nvo,nvo)
-      AmB2.to_sqrt_of(AmB)
-      AmB = AmB2
-      AmB2.destroy
+      select case (.TD_data.state)
+      case("singlet"); .TD::make_TDHF_ApB_AmB_singlet(ApB,AmB)
+      case("triplet"); .TD::make_TDHF_ApB_AmB_triplet(ApB,AmB)
+      end
 
       ! Form eq (28) in Dreuw & Head-Gordon (2005)
+      AmB.to_sqrt
       ApB.change_basis_using(AmB)
       AmB.destroy
 
       ! Diagonalize for excitations
       .TD_data.eval.create(nvo)
       .TD_data.evec.create(nvo,nvo)
-    ! ApB.diagonalize_Jacobi(.TD_data.eval,.TD_data.evec)
+    ! ApB.diagonalize_Jacobi(.TD_data.eval,.TD_data.evec) ! NOT WORKING !
       ApB.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
       .TD_data.eval = sqrt(.TD_data.eval)
 
@@ -429,8 +427,86 @@ contains
       n,no,nv,nvo :: INT
       a,i,ai :: INT
       b,j,bj :: INT
-      Ea,Ei,val,ex1,ex2 :: REAL
-      aibj,ajbi,abji :: REAL
+      Ea, Ei :: REAL
+      val, aibj,ajbi,abji :: REAL
+
+      ! Dimensions
+      n   = .TD_data.n_bf
+      no  = .TD_data.n_occ
+      nv  = .TD_data.n_vir
+      nvo = nv*no
+
+      ! Get ERIs in MO basis
+      v.create(n,n,n,n)
+      .FOCK:make_MO_ERI_chem_integrals(v)
+
+      ApB = ZERO
+      AmB = ZERO
+
+      ai = 0
+
+      do i =    1,no
+      do a = no+1,n
+
+         ai = ai + 1
+
+         Ea  = .TD_data.Ev(a-no) 
+         Ei  = .TD_data.Eo(i)
+
+         val = Ea - Ei
+         AmB(ai,ai) = val
+         ApB(ai,ai) = val
+
+         bj = 0
+
+         do j = 1,no
+         do b = no+1,n
+
+            bj = bj + 1
+
+            aibj = v(a,i,b,j)
+            ajbi = v(a,j,b,i)
+            abji = v(a,b,j,i)
+
+            ! Weiss et al (1993) JCP 99 p1262-70
+            ApB(ai,bj) = ApB(ai,bj) - ajbi - abji + FOUR*aibj ! eqn (3)
+            AmB(ai,bj) = AmB(ai,bj) + ajbi - abji             ! eqn (5)
+
+         end
+         end
+
+      end
+      end
+
+      v.destroy
+
+      ! Symmetrize
+      AmB.symmetric_reflect
+      ApB.symmetric_reflect
+
+   end
+
+   make_TDHF_ApB_AmB_triplet(ApB,AmB) ::: leaky
+   ! Return the TDDFT A+B matrix and diagonal A-B, 
+   ! respectively "ApB" and "AmB", for a singlet.
+   ! They are made directly from the 2ERIs in the
+   ! MO basis. See Weiss et al (1993) JCP 99 p1262-70.
+      self :: IN
+      ApB  :: MAT{REAL}, OUT
+      AmB  :: MAT{REAL}, OUT
+
+   ENSURE(.TD_data.allocated,"NO TD_data!")
+   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      v :: MAT4{REAL}@
+      n,no,nv,nvo :: INT
+      a,i,ai :: INT
+      b,j,bj :: INT
+      Ea, Ei :: REAL
+      val, aibj,ajbi,abji :: REAL
 
       ! Dimensions
       n   = .TD_data.n_bf
@@ -470,8 +546,9 @@ contains
             ajbi = v(a,j,b,i)
             abji = v(a,b,j,i)
 
-            ApB(ai,bj) = ApB(ai,bj) + aibj - ajbi - abji
-            AmB(ai,bj) = AmB(ai,bj)        + ajbi - abji
+            ! Weiss et al (1993) JCP 99 p1262-70
+            ApB(ai,bj) = ApB(ai,bj) - ajbi - abji ! eqn (4)
+            AmB(ai,bj) = AmB(ai,bj) + ajbi - abji ! eqn (5)
 
          end
          end
