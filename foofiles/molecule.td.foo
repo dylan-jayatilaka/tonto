@@ -384,11 +384,13 @@ contains
       self :: INOUT
 
       select case (.TD_data.method)
-      case("rtdhf-singlet    "); .TD::make_rTDHF_singlet_IC
-      case("rtdhf-triplet    "); .TD::make_rTDHF_triplet_IC
-      case("rtdhf-tda-singlet"); .TD::make_rTDHF_TDA_singlet_IC
-      case("rtdhf-tda-triplet"); .TD::make_rTDHF_TDA_triplet_IC
-      case("utdhf-tda        "); .TD::make_uTDHF_TDA_IC
+      case("r-cis-singlet    "); .TD::make_r_CIS_singlet_IC
+      case("r-cis-singlet-ss "); .TD::make_r_CIS_singlet_SS
+      case("r-cis-triplet    "); .TD::make_r_CIS_triplet_IC
+      case("r-tdhf-singlet   "); .TD::make_r_TDHF_singlet_IC
+      case("r-tdhf-triplet   "); .TD::make_r_TDHF_triplet_IC
+      case("u-cis-tda        "); .TD::make_u_CIS_IC
+    ! case("rtdhf-singlet-ss "); .TD::make_rTDHF_singlet_SS
       end
 
       ! Put
@@ -396,7 +398,240 @@ contains
 
    end
 
-   make_rTDHF_singlet_IC ::: leaky
+   make_r_CIS_singlet_IC ::: leaky
+   ! Do a restricted CIS/TDHF Tamm-Dancoff singlet calculation.
+   ! See Weiss et al (1993) JCP 99 p1262-70.
+      self :: INOUT
+
+   ENSURE(.TD_data.allocated,"NO TD_data!")
+   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      v :: MAT4{REAL}@
+      AA :: MAT{REAL}@
+      n, nvo :: INT
+      no, nv :: INT
+      a,i,ai :: INT
+      b,j,bj :: INT
+      Ea, Ei :: REAL
+      aibj,abji :: REAL
+
+      ! Dimensions
+      n   = .TD_data.n_bf
+      no  = .TD_data.n_occ
+      nv  = .TD_data.n_vir
+      nvo = nv*no
+
+      ! A matrix (leaky)
+      AA.create(nvo,nvo)
+
+      ! Get ERIs in MO basis
+      v.create(n,n,n,n)
+      .FOCK:make_MO_ERI_chem_integrals(v)
+
+      AA = ZERO
+
+      ai = 0
+      do i =    1,no
+      do a = no+1,n
+
+         ai = ai + 1
+
+         ! Eigenvalues
+         Ea  = .TD_data.Ev(a-no) 
+         Ei  = .TD_data.Eo(i)
+
+         ! Diamgonals
+         AA(ai,ai) = Ea - Ei
+
+         bj = 0
+         do j = 1,no
+         do b = no+1,n
+
+            bj = bj + 1
+
+            ! Integrals
+            aibj = v(a,i,b,j)
+            abji = v(a,b,j,i)
+
+            ! Weiss et al (1993) JCP 99 p1262-70: ! Singlet
+            AA(ai,bj) = AA(ai,bj) + TWO*aibj - abji ! eqn (3)+(5)/2
+
+         end
+         end
+
+      end
+      end
+
+      v.destroy
+
+      ! Symmetrize
+      AA.symmetric_reflect
+
+      ! Diagonalize for excitations
+      .TD_data.eval.create(nvo)   
+      .TD_data.evec.create(nvo,nvo)
+      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+
+      ! Clean up
+      AA.destroy
+
+   end
+
+   make_r_CIS_singlet_SS ::: leaky
+   ! Do a restricted TDHF Tamm-Dancoff singlet calculation.
+   ! See Weiss et al (1993) JCP 99 p1262-70.
+      self :: INOUT
+
+   ENSURE(.TD_data.allocated,"NO TD_data!")
+   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      v :: MAT4{REAL}@
+      AA :: MAT{REAL}@
+      n, nvo :: INT
+      a,i,ai :: INT
+      b,j,bj :: INT
+      aibj,abji :: REAL
+
+      ! Dimensions
+      n   = .TD_data.n_bf
+      nvo = .TD_data.deltaE.dim
+
+      ! A matrix (leaky)
+      AA.create(nvo,nvo)
+
+      ! Get ERIs in MO basis
+      v.create(n,n,n,n)
+      .FOCK:make_MO_ERI_chem_integrals(v)
+
+      AA = ZERO
+
+      do ai = 1,nvo
+
+         a = .TD_data.single(ai,1)
+         i = .TD_data.single(ai,2)
+
+         ! Diagonals
+         AA(ai,ai) = .TD_data.deltaE(ai)
+
+         do bj = 1,nvo
+
+            b = .TD_data.single(bj,1)
+            j = .TD_data.single(bj,2)
+
+            ! Integrals
+            aibj = v(a,i,b,j)
+            abji = v(a,b,j,i)
+
+            ! Weiss et al (1993) JCP 99 p1262-70: ! Singlet
+            AA(ai,bj) = AA(ai,bj) + TWO*aibj - abji ! eqn (3)+(5)/2
+
+         end
+
+      end
+
+      v.destroy
+
+      ! Symmetrize
+      AA.symmetric_reflect
+
+      ! Diagonalize for excitations
+      .TD_data.eval.create(nvo)   
+      .TD_data.evec.create(nvo,nvo)
+      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+
+      ! Clean up
+      AA.destroy
+
+   end
+
+   make_r_CIS_triplet_IC ::: leaky
+   ! Do a restricted CIS/TDHF Tamm-Dancoff triplet calculation.
+   ! See Weiss et al (1993) JCP 99 p1262-70.
+   ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
+      self :: INOUT
+
+   ENSURE(.TD_data.allocated,"NO TD_data!")
+   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      v :: MAT4{REAL}@
+      AA :: MAT{REAL}@
+      n, nvo :: INT
+      no, nv :: INT
+      a,i,ai :: INT
+      b,j,bj :: INT
+      Ea, Ei :: REAL
+      abji   :: REAL
+
+      ! Dimensions
+      n   = .TD_data.n_bf
+      no  = .TD_data.n_occ
+      nv  = .TD_data.n_vir
+      nvo = nv*no
+
+      ! Allocate (leaky)
+      AA.create(nvo,nvo)
+
+      ! Get ERIs in MO basis
+      v.create(n,n,n,n)
+      .FOCK:make_MO_ERI_chem_integrals(v)
+
+      AA = ZERO
+
+      ai = 0
+      do i =    1,no
+      do a = no+1,n
+
+         ai = ai + 1
+
+         ! Eigenvalues
+         Ea  = .TD_data.Ev(a-no) 
+         Ei  = .TD_data.Eo(i)
+
+         AA(ai,ai) = Ea - Ei
+
+         bj = 0
+         do j = 1,no
+         do b = no+1,n
+
+            bj = bj + 1
+
+            ! Integrals
+            abji = v(a,b,j,i)
+
+            ! Weiss et al (1993) JCP 99 p1262-70: ! Triplet
+            AA(ai,bj) = AA(ai,bj) - abji ! eqn (4)+(5)/2
+
+         end
+         end
+
+      end
+      end
+
+      v.destroy
+
+      ! Symmetrize
+      AA.symmetric_reflect
+
+      ! Diagonalize for excitations
+      .TD_data.eval.create(nvo)   
+      .TD_data.evec.create(nvo,nvo)
+      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+
+      ! Clean up
+      AA.destroy
+
+   end
+
+   make_r_TDHF_singlet_IC ::: leaky
    ! Do a restricted TDHF singlet calculation.
    ! NOTE: for singlet or triplet instabilities this may fail
    ! See Weiss et al (1993) JCP 99 p1262-70.
@@ -498,7 +733,7 @@ contains
 
    end
 
-   make_rTDHF_triplet_IC ::: leaky
+   make_r_TDHF_triplet_IC ::: leaky
    ! Do a restricted TDHF triplet calculation.
    ! NOTE: for singlet or triplet instabilities this may fail
    ! See Weiss et al (1993) JCP 99 p1262-70.
@@ -599,170 +834,7 @@ contains
 
    end
 
-   make_rTDHF_TDA_singlet_IC ::: leaky
-   ! Do a restricted TDHF Tamm-Dancoff singlet calculation.
-   ! See Weiss et al (1993) JCP 99 p1262-70.
-      self :: INOUT
-
-   ENSURE(.TD_data.allocated,"NO TD_data!")
-   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
-   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
-   ENSURE(.MOs.allocated,"MOs do not exist")
-   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
-
-      v :: MAT4{REAL}@
-      AA :: MAT{REAL}@
-      n, nvo :: INT
-      no, nv :: INT
-      a,i,ai :: INT
-      b,j,bj :: INT
-      Ea, Ei :: REAL
-      aibj,abji :: REAL
-
-      ! Dimensions
-      n   = .TD_data.n_bf
-      no  = .TD_data.n_occ
-      nv  = .TD_data.n_vir
-      nvo = nv*no
-
-      ! A matrix (leaky)
-      AA.create(nvo,nvo)
-
-      ! Get ERIs in MO basis
-      v.create(n,n,n,n)
-      .FOCK:make_MO_ERI_chem_integrals(v)
-
-      AA = ZERO
-
-      ai = 0
-      do i =    1,no
-      do a = no+1,n
-
-         ai = ai + 1
-
-         ! Eigenvalues
-         Ea  = .TD_data.Ev(a-no) 
-         Ei  = .TD_data.Eo(i)
-
-         ! Diamgonals
-         AA(ai,ai) = Ea - Ei
-
-         bj = 0
-         do j = 1,no
-         do b = no+1,n
-
-            bj = bj + 1
-
-            ! Integrals
-            aibj = v(a,i,b,j)
-            abji = v(a,b,j,i)
-
-            ! Weiss et al (1993) JCP 99 p1262-70: ! Singlet
-            AA(ai,bj) = AA(ai,bj) + TWO*aibj - abji ! eqn (3)+(5)/2
-
-         end
-         end
-
-      end
-      end
-
-      v.destroy
-
-      ! Symmetrize
-      AA.symmetric_reflect
-
-      ! Diagonalize for excitations
-      .TD_data.eval.create(nvo)   
-      .TD_data.evec.create(nvo,nvo)
-      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
-
-      ! Clean up
-      AA.destroy
-
-   end
-
-   make_rTDHF_TDA_triplet_IC ::: leaky
-   ! Do a restricted TDHF Tamm-Dancoff triplet calculation.
-   ! See Weiss et al (1993) JCP 99 p1262-70.
-   ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
-      self :: INOUT
-
-   ENSURE(.TD_data.allocated,"NO TD_data!")
-   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
-   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
-   ENSURE(.MOs.allocated,"MOs do not exist")
-   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
-
-      v :: MAT4{REAL}@
-      AA :: MAT{REAL}@
-      n, nvo :: INT
-      no, nv :: INT
-      a,i,ai :: INT
-      b,j,bj :: INT
-      Ea, Ei :: REAL
-      abji   :: REAL
-
-      ! Dimensions
-      n   = .TD_data.n_bf
-      no  = .TD_data.n_occ
-      nv  = .TD_data.n_vir
-      nvo = nv*no
-
-      ! Allocate (leaky)
-      AA.create(nvo,nvo)
-
-      ! Get ERIs in MO basis
-      v.create(n,n,n,n)
-      .FOCK:make_MO_ERI_chem_integrals(v)
-
-      AA = ZERO
-
-      ai = 0
-      do i =    1,no
-      do a = no+1,n
-
-         ai = ai + 1
-
-         ! Eigenvalues
-         Ea  = .TD_data.Ev(a-no) 
-         Ei  = .TD_data.Eo(i)
-
-         AA(ai,ai) = Ea - Ei
-
-         bj = 0
-         do j = 1,no
-         do b = no+1,n
-
-            bj = bj + 1
-
-            ! Integrals
-            abji = v(a,b,j,i)
-
-            ! Weiss et al (1993) JCP 99 p1262-70: ! Triplet
-            AA(ai,bj) = AA(ai,bj) - abji ! eqn (4)+(5)/2
-
-         end
-         end
-
-      end
-      end
-
-      v.destroy
-
-      ! Symmetrize
-      AA.symmetric_reflect
-
-      ! Diagonalize for excitations
-      .TD_data.eval.create(nvo)   
-      .TD_data.evec.create(nvo,nvo)
-      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
-
-      ! Clean up
-      AA.destroy
-
-   end
-
-   make_uTDHF_TDA_IC ::: leaky
+   make_u_CIS_IC ::: leaky
    ! Do an urestricted TDHF Tamm-Dancoff calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
@@ -880,8 +952,10 @@ contains
 
    end
 
-!   make_uTDHF_TDA_IC_v2 ::: leaky
-!   ! Do an urestricted TDHF Tamm-Dancoff calculation.
+!   make_rTDHF_singlet_SS ::: leaky
+!   ! Do a restricted TDHF singlet calculation.
+!   ! This version does state selection.
+!   ! NOTE: for singlet or triplet instabilities this may fail
 !   ! See Weiss et al (1993) JCP 99 p1262-70.
 !   ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
 !      self :: INOUT
@@ -892,97 +966,54 @@ contains
 !   ENSURE(.MOs.allocated,"MOs do not exist")
 !   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
 !
-!      Ev,Eo :: VEC{REAL}@
-!      v, rv :: MAT4{REAL}@      ! Eeek
-!      AA    :: MAT{REAL}@
-!      nvo   :: INT 
-!      rn,ro,rv :: INT 
-!      nn,no,nv :: INT 
-!      a, i, ai :: INT ! spinorbital
-!      b, j, bj :: INT ! spinorbital
-!      ra,ri, sa,si :: INT ! restricted
-!      rb,rj, sb,sj :: INT ! restricted
-!      aibj,abji :: REAL
+!      v :: MAT4{REAL}@
+!      ApB :: MAT{REAL}@
+!      AmB :: MAT{REAL}@
+!      n, nvo :: INT
+!      no, nv :: INT
+!      a,i,ai :: INT
+!      b,j,bj :: INT
+!      val, aibj,ajbi,abji :: REAL
 !
 !      ! Dimensions
-!      rn  = .TD_data.n_bf  ! restricted
-!      ro  = .TD_data.n_occ 
-!      rv  = .TD_data.n_vir
-!      nn  = 2*rn           ! spinorbital
-!      no  = 2*ro           
-!      nv  = 2*rv
+!      n   = .TD_data.n_bf
+!      no  = .TD_data.n_occ
+!      nv  = .TD_data.n_vir
 !      nvo = nv*no
 !
-!      ! Allocate (leaky)
-!      AA.create(nvo,nvo)
-!      AA = ZERO
+!      ! A+B & A-B matrices (leaky)
+!      ApB.create(nvo,nvo)
+!      AmB.create(nvo,nvo)
 !
-!      ! Get spinorbital ERIs in MO basis
-!       v.create( n, n, n, n)
-!      rv.create(rn,rn,rn,rn)
-!      .FOCK:make_MO_ERI_chem_integrals(rv)
-!      v.set_to_u_from_r(rv)
-!      rv.destroy
+!      ! Get ERIs in MO basis
+!      v.create(n,n,n,n)
+!      .FOCK:make_MO_ERI_chem_integrals(v)
 !
-!      ! Eigenvalues & spin
-!      Ev.create(nv)
-!      Eo.create(no)
-!      Ev.set_to_u_from_r(.TD_data.Ev)
-!      Eo.set_to_u_from_r(.TD_data.Eo)
+!      ApB = ZERO
+!      AmB = ZERO
 !
-!      ! Loops over spinorbitals
-!      ! order: alpha then beta
-!      ai = 0
-!      do i =    1,no
-!      do a = no+1,nn
+!      do ai = 1,.deltaE.dim
 !
-!         ai = ai + 1
+!         a = .single(ai,1)
+!         i = .single(ai,2)
 !
-!         si = 1
-!         if (i>ro) si = -1
+!         ! Diagonals
+!         A(ai,ai) = .deltaE(ai)
 !
-!         sa = 1
-!         if (a>no+rv) sa = -1
+!         do bj = 1,.deltaE.dim
 !
-!         ! Eigenvalues & diagonals
-!         if (sa==si) then ! same spin
-!            Ea  = .TD_data.Ev(ra-ro) 
-!            Ei  = .TD_data.Eo(ri)
-!            AA(ai,ai) = Ea - Ei
-!         end
+!            b = .single(ai,1)
+!            j = .single(ai,2)
 !
-!         bj = 0
-!         do j =    1,no
-!         do b = no+1,nn
+!            ! Integrals
+!            aibj = v(a,i,b,j)
+!            ajbi = v(a,j,b,i)
+!            abji = v(a,b,j,i)
 !
-!            bj = bj + 1
-!
-!            ! Restricted indices
-!            rj = j
-!            sj = 1
-!            if (j>ro) then
-!               rj = j - ro
-!               sj = -1
-!            end
-!
-!            rb = b - rv
-!            sb = 1
-!            if (b>no+rv) then
-!               rb = b - rn
-!               sb = -1
-!            end
-!
-!            ! Dreuw & Hewad-Gordon (2005) eqn (17).
-!            ! See also eqn (95) for the HF part.
-!            if (sa==si AND sb==sj) then
-!               aibj = v(ra,ri,rb,rj)
-!               AA(ai,bj) = AA(ai,bj) + aibj
-!            end
-!
-!            if (sa==sb AND si==sj) then
-!               abji = v(ra,rb,rj,ri)
-!               AA(ai,bj) = AA(ai,bj) - abji 
-!            end
+!            ! Weiss et al (1993) JCP 99 p1262-70: ! Singlet
+!            ApB(ai,bj) = ApB(ai,bj) &
+!                       + FOUR*aibj  - ajbi - abji ! eqn (3)
+!            AmB(ai,bj) = AmB(ai,bj) + ajbi - abji ! eqn (5)
 !
 !         end
 !         end
@@ -993,15 +1024,25 @@ contains
 !      v.destroy
 !
 !      ! Symmetrize
-!      AA.symmetric_reflect
+!      AmB.symmetric_reflect
+!      ApB.symmetric_reflect
+!
+!      ! eqn (28) in Dreuw (2005)
+!      AmB.to_sqrt
+!      ApB.change_basis_using(AmB) 
+!      AmB.destroy
 !
 !      ! Diagonalize for excitations
 !      .TD_data.eval.create(nvo)   
 !      .TD_data.evec.create(nvo,nvo)
-!      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+!      ApB.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+!
+!      ! Assign
+!      .TD_data.eval = sqrt(.TD_data.eval)
 !
 !      ! Clean up
-!      AA.destroy
+!      ApB.destroy
+!      AmB.destroy
 !
 !   end
 
