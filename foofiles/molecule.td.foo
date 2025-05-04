@@ -372,25 +372,39 @@ contains
 
       ! Do the TD calculation
       select case (.TD_data.implementation)
-      case ("in-core"); .:TD_excited_states_in_core
+      case ("in-core"); .:TD_excited_states_IC
       case  default;      UNKNOWN(.TD_data.implementation)
       end
 
    end
 
-   TD_excited_states_in_core ::: leaky
-   ! Do an in-core TDHF calculation.
-   ! Only does the restricted case so far.
+   TD_excited_states_IC ::: leaky
+   ! Do an in-core TD excitation energy calculation.
       self :: INOUT
 
       select case (.TD_data.method)
-      case("r-cis-singlet    "); .TD::make_r_CIS_singlet_IC
-      case("r-cis-singlet-ss "); .TD::make_r_CIS_singlet_SS
-      case("r-cis-triplet    "); .TD::make_r_CIS_triplet_IC
-      case("r-tdhf-singlet   "); .TD::make_r_TDHF_singlet_IC
-      case("r-tdhf-triplet   "); .TD::make_r_TDHF_triplet_IC
-      case("u-cis-tda        "); .TD::make_u_CIS_IC
-    ! case("rtdhf-singlet-ss "); .TD::make_rTDHF_singlet_SS
+
+      case("r-cis-s=0&s=1    "); .TD::make_r_CIS_S0_S1_IC
+
+      case("r-cis-s=0        "); .TD::make_r_CIS_S0_IC
+      case("r-cis-singlet    "); .TD::make_r_CIS_S0_IC
+
+      case("r-cis-s=1        "); .TD::make_r_CIS_S1_IC
+      case("r-cis-triplet    "); .TD::make_r_CIS_S1_IC
+
+      case("r-cis-s=0-ss     "); .TD::make_r_CIS_S0_SS_IC
+      case("r-cis-singlet-ss "); .TD::make_r_CIS_S0_SS_IC
+
+      case("r-tdhf-s=0&s=1   "); .TD::make_r_TDHF_S0_S1_IC
+
+      case("r-tdhf-s=0       "); .TD::make_r_TDHF_S0_IC
+      case("r-tdhf-singlet   "); .TD::make_r_TDHF_S0_IC
+
+      case("r-tdhf-s=1       "); .TD::make_r_TDHF_S1_IC
+      case("r-tdhf-triplet   "); .TD::make_r_TDHF_S1_IC
+
+      case("u-cis            "); .TD::make_u_CIS_IC
+
       end
 
       ! Put
@@ -398,8 +412,99 @@ contains
 
    end
 
-   make_r_CIS_singlet_IC ::: leaky
-   ! Do a restricted CIS/TDHF Tamm-Dancoff singlet calculation.
+   TD_excited_state_solver_IC(AA,append) ::: leaky, private
+   ! Diagonalise the CIS/TD matrix "A", or similar, in-core.
+   ! Triplet (S=1) results are appended if requested.
+      self :: INOUT
+      AA   :: MAT{REAL}, IN
+      append :: BIN, optional, IN
+
+   ENSURE(.TD_data.allocated,"NO TD_data!")
+  
+      ind :: VEC{INT}@
+      dim :: INT
+      add :: BIN
+
+      add = FALSE
+      if (present(append)) add = append
+
+      ! Dimensions
+      dim = AA.dim1
+
+      ! Remove spin labels
+      .TD_data.S.destroy
+
+      ! Diagonalise
+      if (.TD_data.has_states AND add) then
+
+         ! Will this work for state selection?
+         ENSURE(.TD_data.method/="u-cis","incorrect call, wrong method")
+         ENSURE(.TD_data.eval.dim ==dim,"incorrect number of states")
+         ENSURE(.TD_data.evec.dim2==dim,"incorrect number of states")
+
+         ! Append triplets to singlets
+         .TD_data.eval.expand(2*dim)
+         .TD_data.evec.expand(dim,2*dim)
+         .TD_data.S.create(2*dim)
+         .TD_data.S(    1:dim) = 0 
+         .TD_data.S(dim+1:   ) = 1 
+         AA.solve_symmetric_eigenproblem(.TD_data.eval(dim+1:),.TD_data.evec(:,dim+1:))
+
+         ! Sqrt? Only latest eigenvalues
+         if (.TD_data.do_sqrt_evals) then
+         .TD_data.eval(dim+1:) = sqrt(.TD_data.eval(dim+1:))
+         end
+
+         ! Sort
+         ind.create(2*dim)
+         .TD_data.eval.quick_sort(ind)
+   
+         ! Reorder
+         .TD_data.S    = .TD_data.S(ind)
+         .TD_data.eval = .TD_data.eval(ind)
+         .TD_data.evec = .TD_data.evec(:,ind)
+         ind.destroy
+
+      else
+
+         ! Don't append
+         .TD_data.eval.create(dim)   
+         .TD_data.evec.create(dim,dim)
+         AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+
+         ! Sqrt?
+         if (.TD_data.do_sqrt_evals) then
+         .TD_data.eval = sqrt(.TD_data.eval)
+         end
+
+      end
+
+   end
+
+   make_r_CIS_S0_S1_IC ::: leaky
+   ! Do a restricted CIS/Tamm-Dancoff singlet (S=0) 
+   ! and triplet (S=1) calculation and merge and sort results
+   ! by increasing excitation energy.
+      self :: INOUT
+
+      .TD::make_r_CIS_S0_IC
+      .TD::make_r_CIS_S1_IC(append=TRUE)
+
+   end
+
+   make_r_TDHF_S0_S1_IC ::: leaky
+   ! Do a restricted CIS/Tamm-Dancoff singlet (S=0) 
+   ! and triplet (S=1) calculation and merge and sort results
+   ! by increasing excitation energy.
+      self :: INOUT
+
+      .TD::make_r_TDHF_S0_IC
+      .TD::make_r_TDHF_S1_IC(append=TRUE)
+
+   end
+
+   make_r_CIS_S0_IC ::: leaky
+   ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
       self :: INOUT
 
@@ -471,17 +576,15 @@ contains
       AA.symmetric_reflect
 
       ! Diagonalize for excitations
-      .TD_data.eval.create(nvo)   
-      .TD_data.evec.create(nvo,nvo)
-      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+      .TD:TD_excited_state_solver_IC(AA,append=FALSE)
 
       ! Clean up
       AA.destroy
 
    end
 
-   make_r_CIS_singlet_SS ::: leaky
-   ! Do a restricted TDHF Tamm-Dancoff singlet calculation.
+   make_r_CIS_S0_SS_IC ::: leaky
+   ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
       self :: INOUT
 
@@ -541,20 +644,19 @@ contains
       AA.symmetric_reflect
 
       ! Diagonalize for excitations
-      .TD_data.eval.create(nvo)   
-      .TD_data.evec.create(nvo,nvo)
-      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+      .TD:TD_excited_state_solver_IC(AA,append=FALSE)
 
       ! Clean up
       AA.destroy
 
    end
 
-   make_r_CIS_triplet_IC ::: leaky
-   ! Do a restricted CIS/TDHF Tamm-Dancoff triplet calculation.
+   make_r_CIS_S1_IC(append) ::: leaky
+   ! Do a restricted CIS/Tamm-Dancoff triplet calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
       self :: INOUT
+      append :: BIN, optional, IN
 
    ENSURE(.TD_data.allocated,"NO TD_data!")
    ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
@@ -622,16 +724,14 @@ contains
       AA.symmetric_reflect
 
       ! Diagonalize for excitations
-      .TD_data.eval.create(nvo)   
-      .TD_data.evec.create(nvo,nvo)
-      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+      .TD:TD_excited_state_solver_IC(AA,append)
 
       ! Clean up
       AA.destroy
 
    end
 
-   make_r_TDHF_singlet_IC ::: leaky
+   make_r_TDHF_S0_IC ::: leaky
    ! Do a restricted TDHF singlet calculation.
    ! NOTE: for singlet or triplet instabilities this may fail
    ! See Weiss et al (1993) JCP 99 p1262-70.
@@ -720,12 +820,7 @@ contains
       AmB.destroy
 
       ! Diagonalize for excitations
-      .TD_data.eval.create(nvo)   
-      .TD_data.evec.create(nvo,nvo)
-      ApB.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
-
-      ! Assign
-      .TD_data.eval = sqrt(.TD_data.eval)
+      .TD:TD_excited_state_solver_IC(ApB,append=FALSE)
 
       ! Clean up
       ApB.destroy
@@ -733,12 +828,13 @@ contains
 
    end
 
-   make_r_TDHF_triplet_IC ::: leaky
+   make_r_TDHF_S1_IC(append) ::: leaky
    ! Do a restricted TDHF triplet calculation.
    ! NOTE: for singlet or triplet instabilities this may fail
    ! See Weiss et al (1993) JCP 99 p1262-70.
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
       self :: INOUT
+      append :: BIN, optional, IN
 
    ENSURE(.TD_data.allocated,"NO TD_data!")
    ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
@@ -821,21 +917,15 @@ contains
       AmB.destroy
 
       ! Diagonalize for excitations
-      .TD_data.eval.create(nvo)   
-      .TD_data.evec.create(nvo,nvo)
-      ApB.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
-
-      ! Assign
-      .TD_data.eval = sqrt(.TD_data.eval)
+      .TD:TD_excited_state_solver_IC(ApB,append)
 
       ! Clean up
       ApB.destroy
-      AmB.destroy
 
    end
 
    make_u_CIS_IC ::: leaky
-   ! Do an urestricted TDHF Tamm-Dancoff calculation.
+   ! Do an urestricted CIS/Tamm-Dancoff calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
       self :: INOUT
@@ -943,9 +1033,7 @@ contains
       AA.symmetric_reflect
 
       ! Diagonalize for excitations
-      .TD_data.eval.create(nvo)   
-      .TD_data.evec.create(nvo,nvo)
-      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
+      .TD:TD_excited_state_solver_IC(AA,append=FALSE)
 
       ! Clean up
       AA.destroy
