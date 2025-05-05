@@ -8827,7 +8827,7 @@ contains
        
       ! Any canonicalization requested?
       if (.SCF_data.SCF_kind/="rhf") return
-      if (.SCF_data.VV_canonicalization==" ") return
+      if (.SCF_data.VMO_canonisation==" ") return
 
       ! Output
       out = FALSE
@@ -8839,41 +8839,55 @@ contains
       nv = n - no
 
       ! Canonocalised VV MO energies (leaky)
-      .SCF_data.VV_MO_energies.create(nv)
-      OMO_en    = .MO_energies.r(no+1:) ! Old MO energies
+      .SCF_data.VMO_energies.create(nv)
+      OMO_en  = .MO_energies.r(no+1:no+10) ! Old MO energies
 
       ! Canonicalisation method
-      method = .SCF_data.VV_canonicalization
+      method = .SCF_data.VMO_canonisation
 
       ! MO to eliminate from density
-      r = .SCF_data.VV_removed_MO
+      r = .SCF_data.VMO_canonisation_MO
 
       if (output) then
 
          ! Mo energies before & after
          stdout.flush
          stdout.text("=======================")
-         stdout.text("Canonicalize Vitual MOs")
+         stdout.text("Canonicalise Vitual MOs")
          stdout.text("=======================")
          stdout.flush
-         stdout.text(". The method works by remove an occupied MO (OMO)")
+         stdout.text(". The method works by removing an occupied MO (OMO)")
+         stdout.text("  specified by its orbital index 'r'")
          stdout.flush
-         stdout.text("  A negative number 'r' for the OMO means that the")
-         stdout.text("  (HOMO-r) is removed during the canonicalization.")
+         stdout.text("  A -ve number 'r' for the canonisation MO means that")
+         stdout.text("  (HOMO+r) is removed from the the density matrix used")
+         stdout.text("  to calculate the Fock matrix, which is the OMO which")
+         stdout.text("  is assumed 'excited'.")
          stdout.flush
-         stdout.text(". A method either excited singlets, or triplets, is")
-         stdout.text("  available; see Hunt & Goddard (1969) CPL 3 p 414.")
+         stdout.text(". A method may excite singlet or triplet states;")
+         stdout.text("  see Hunt & Goddard (1969) CPL 3 p 414.")
          stdout.flush
-         stdout.text(". Averaging both singlets and triplets was suggested")
-         stdout.text("  by Huzinaga & Arnau (1971) JCP 54 p. 1948.")
+         stdout.text("  An average of singlet and triplet state energies was")
+         stdout.text("  suggested, see Huzinaga & Arnau (1971) JCP 54 p. 1948.")
          stdout.flush
-         stdout.show("VMO canonicalization method  = ",method)
-         stdout.show("OMO to remove                = ",r)
+         stdout.text(". VV Fock energies are reported, which are the diagonal")
+         stdout.text("  elements of the original Fock mx in the new VMO basis.")
+         stdout.flush
+         stdout.show("VMO canonisation method   = ",method)
+         if (method/="exchange") then
+         stdout.show("Canonisation MO removed   = ",r)
+         end
       end
 
       ! Deal with -ve occupied MO to remove
       if (r<=0) r = no + r
       ENSURE(0<r AND r<=no,"removed MO is not occupied")
+
+      ! Density matrix for removed orbital
+      if (method/="exchange") then
+      P.create(n,n) 
+      P = matmul(.MOs.r(:,r:r),transpose(.MOs.r(:,r:r)))
+      end
 
       ! Fock matrices
       Uv.create(nv,nv) ! VMO rotation
@@ -8889,17 +8903,13 @@ contains
       case ("hunt-goddard-1")
          J.create(n,n)
          K.create(n,n)
-         P.create(n,n) ! density matrix for removed orbital
-         P = matmul(.MOs.r(:,r:r),transpose(.MOs.r(:,r:r)))
          .FOCK:make_r_JK_direct(J,K,P)
          F = .fock_mx.r - J + TWO*K
-         P.destroy
          K.destroy
          J.destroy
+         P.destroy
 
       case ("hunt-goddard-3")
-         P.create(n,n) ! density matrix for removed orbital
-         P = matmul(.MOs.r(:,r:r),transpose(.MOs.r(:,r:r)))
          J.create(n,n)
          .FOCK:make_r_J_direct(J,P)
          F = .fock_mx.r - J
@@ -8907,8 +8917,6 @@ contains
          P.destroy
 
       case ("huzinaga-arnau")
-         P.create(n,n) ! density matrix for removed orbital
-         P = matmul(.MOs.r(:,r:r),transpose(.MOs.r(:,r:r)))
          J.create(n,n)
          K.create(n,n)
          .FOCK:make_r_JK_direct(J,K,P)
@@ -8928,12 +8936,14 @@ contains
       VMO.destroy
       F.destroy
 
-      ! Canonicalize new VMOs. Keep new VMO energies.
-      Fv.solve_symmetric_eigenproblem(.SCF_data.VV_MO_energies,Uv)
+      ! Canonicalize new VMOs. 
+      ! Keep new VMO energies.
+      Fv.solve_symmetric_eigenproblem(.SCF_data.VMO_energies,Uv)
       VMO = .MOs.r(:,no+1:)
       .MOs.r(:,no+1:) = matmul(VMO,Uv)
 
       ! New diagonal Fock mx energies
+      VMO = .MOs.r(:,no+1:)
       .fock_mx.r.change_basis_to(Fv,VMO)
       Fv.put_diagonal_to(.MO_energies.r(no+1:))
 
@@ -8945,20 +8955,22 @@ contains
       ! Output
       if (output) then
          stdout.flush
-         stdout.text("Lowest virtual MO energies:")
+         stdout.text("Lowest virtial MO energies:")
          stdout.flush
 
          ! Table headings
          table.create(3)
-         table(1).set_heading("Original")
+         table(1).set_heading("  HF MO")
          table(1).set_subhead("energies")
          table(1).set_values(OMO_en)
-         table(2).set_heading("New Fock")
+
+         table(2).set_heading(" VV Fock")
          table(2).set_subhead("energies")
          table(2).set_values(.MO_energies.r(no+1:no+10))
-         table(3).set_heading("Canonicalised")
-         table(3).set_subhead("MO energies")
-         table(3).set_values(.SCF_data.VV_MO_energies)
+
+         table(3).set_heading("Canonisd")
+         table(3).set_subhead("energies")
+         table(3).set_values(.SCF_data.VMO_energies(1:10))
         
          ! Make the table
          table.put(label_rows=TRUE)
