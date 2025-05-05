@@ -16,7 +16,9 @@ git remote set-url origin https://USERNAME:TOKEN@github.com/USERNAME/REPO.git
 
 Replace USERNAME with your own github user name.
 
-You can get a classic TOKEN from Settings photo-> Settings -> develepor-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic).
+You can get a classic TOKEN from :
+
+Settings photo-> Settings -> develepor-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic).
 
 You can get to this location more easily by going to the location below:
 
