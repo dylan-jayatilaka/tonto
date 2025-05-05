@@ -77,7 +77,7 @@ To compile Tonto, first enter the `tonto` directory downloaded with `git` :
 Next checkout the release branch
 
 ```
-i   git checkout release
+   git checkout release
 ```
 
 Now make a `build` directory (name is up to you) and enter that :
