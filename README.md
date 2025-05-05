@@ -143,7 +143,7 @@ The executable program is located at:
     build/tonto(.exe)
 ```
 
-The standalone Hirshfeld atom refinement terminal (the `hart`) program will be located at:
+The standalone Hirshfeld atom refinement terminal (`hart`) program will be located at:
 
 ```
    build/hart(.exe)
