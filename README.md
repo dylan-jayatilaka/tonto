@@ -1,16 +1,16 @@
 # Welcome to Tonto!
-# Sagamore XX workshop people! Read on.
+# Erice 2025 workshop people! Read on.
 
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
-## 0. WARNING and How to push with a new token
 
-This release-no-ptr branch will be the latest version, and will be merged into release, and finally, into master.
+## 0. For developers: How to push with a new token
 
-For reference, to set up your repo to push, use the following
+To set up your local git repo to push to github, use the following
 
 ```
 git remote set-url origin https://USERNAME:TOKEN@github.com/USERNAME/REPO.git
 ```
+
 You can get a classic token from Settings photo-> Settings -> <> develepo-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic) !!! Which should have this location:
 
 ```
