@@ -373,10 +373,204 @@ contains
       ! Do the TD calculation
       select case (.TD_data.implementation)
       case ("in-core"); .:TD_excited_states_IC
+      case ("fast   "); .:TD_excited_states_fast
       case  default;      UNKNOWN(.TD_data.implementation)
       end
 
    end
+
+! Efficient methods
+
+   TD_excited_states_fast ::: leaky
+   ! Do a TD excitation energy calculation.
+      self :: INOUT
+
+      select case (.TD_data.method)
+
+      case("r-cis-s=0        "); .TD::make_r_CIS_S0
+      case("r-cis-singlet    "); .TD::make_r_CIS_S0
+
+      end
+
+      ! Put
+      .TD_data.put_results
+
+   end
+
+   make_r_CIS_S0
+   ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
+   ! See Weiss et al (1993) JCP 99 p1262-70.
+      self :: INOUT
+
+      ! Key results
+      eval :: VEC{REAL}@  ! The "n" eigenvalues
+      evec :: MAT{REAL}@  ! The "n" eigenvector columns
+      maxit  :: INT       ! Max. no. of iterations allowed
+      tolcon :: REAL      ! Max. residual vec norm, to end
+      n_keep :: INT       ! No. of trial vectors to keep
+
+      ! Matrix temporaries
+      R :: MAT{REAL}@     ! Ritz vectors <- becomes "evec"
+      V :: MAT{REAL}@     ! V(:,n)       <- the Davidson trial vectors
+      W :: MAT{REAL}@     ! W(:,n)       <- A.V
+      H :: MAT{REAL}@     ! A            <- in basis "V"
+      T   :: VEC{REAL}@   ! New direction, T
+      rvl :: VEC{REAL}@   ! Length of the residual vectors
+
+      iter,n_tr :: INT
+      d,n,f,l,i :: INT
+      converged :: BIN
+      too_many  :: BIN
+      collapse  :: BIN
+      bot :: REAL
+
+      ! Sizes
+      d = .TD_data.deltaE.dim  ! "d" could nvo
+      n = .TD_data.n_eig       ! Usually n << d
+
+      ! Max iterations
+      maxit = .TD_data.max_iterations
+
+      ! Convergence
+      tolcon = .TD_data.tol_Davidson
+
+      ! No. of trial vectors to keep
+      n_keep = .TD_data.n_keep
+
+      ! Best vectors
+      R.create(d,n)         ! Will be "evec"
+      eval.create(n*n_keep) ! Will shrink to "n"
+
+      ! Residue vector length
+      rvl.create(n) 
+
+      ! Davidson vectors "V"
+      V.create(d,n*n_keep)  ! Need all in memory???
+      W.create(d,n*n_keep)  ! Space for product A*V, worst case
+      T.create(d)           ! Space for new directions
+
+      ! Initialize
+      V.to_unit_mx          ! Initial guess
+      iter = 0              ! Overall iteration count
+      n_tr = 0              ! No. of trial vector sets
+      converged = FALSE
+      too_many  = FALSE
+
+      do 
+
+         ! Iteration & no. of trial vector sets (-1)
+         iter = iter + 1
+         n_tr = n_tr + 1
+
+         ! First & last trial vector columns
+         l = n*(n_tr-1)
+         f = l + 1
+         l = l + n
+
+         ! 1. Expensive step, extends W
+         ! Replace with low-mem matrix product
+       ! W(:,f:l) = matmul(A,V(:,f:l))
+
+         ! 2. Expand Rayleigh matrix
+         H.expand(l,l)
+         evec.create(l,l)
+         H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
+         H.symmetric_reflect(set_upper=TRUE)
+
+         ! 3. Diagonalise (increasing eigenvalues)
+         H.diagonalize_Jacobi(eval(1:l),evec)
+
+         ! 4. Lowest Ritz vectors
+         R = matmul(V(:,1:l),evec(:,1:n))
+
+         ! Too many iters? Collapse space?
+         too_many = iter>maxit; if (too_many) exit 
+         collapse = n_tr==n_keep
+
+         stdout.flush
+         stdout.text("=========")
+         stdout.show("iter      ",iter)
+         stdout.show("n_tr      ",n_tr)
+         stdout.show("collapse? ",collapse)
+         stdout.show("too many? ",too_many)
+         stdout.show("f         ",f)
+         stdout.show("l         ",l)
+
+         if (too_many) then
+
+            ! Save to disk?
+            evec.destroy
+            H.destroy
+
+         else if (collapse) then
+
+            ! Restart with Ritz vector
+            n_tr = 0
+            V(:,1:n) = R
+          ! V(:,1:n).Householder_QR ! Needed?
+
+            ! Note: clean both
+            evec.destroy
+            H.destroy
+
+         else 
+
+            ! 5-7. Get residual & new direction T, per-column
+            do i = 1,n
+        
+               ! 5. Residual T & its length
+               T = eval(i)*R(:,i) - matmul(W(:,1:l),evec(:,i)) 
+               rvl(i) = norm2(T)
+        
+               ! 6. Precondition
+               bot = eval(i) - H(i,i)
+               if (abs(bot) < 0.001d0) bot = bot + TOL(2)
+               bot= ONE/bot
+
+               ! 7a. Set new direction t
+               V(:,l+i) = bot*T
+        
+            end
+
+         stdout.flush
+         stdout.show("conv      ",maxval(abs(rvl)))
+         stdout.flush
+         stdout.text("eval:")
+         stdout.put(eval(1:n))
+        
+            ! Finished?
+            converged = all(rvl<tolcon); if (converged) exit
+          
+            ! 7. Orthonormalize vectors V
+            V(:,1:l+n).modified_Gram_Schmidt_QR
+          ! V(:,1:l+n).Householder_QR 
+        
+            ! Clean up
+            evec.destroy
+
+         end
+
+      end
+
+      ENSURE(converged,"No convergence")
+      ENSURE(NOT too_many,"Too many iterations")
+
+      ! Clean up
+      evec.destroy
+      H.destroy
+      T.destroy
+      W.destroy
+      V.destroy
+      rvl.destroy
+
+      ! Recover & store solution
+      eval.shrink(n)
+      call move_alloc(eval,.TD_data.eval)
+      call move_alloc(R   ,.TD_data.evec)
+
+   end
+
+! In-core methods
 
    TD_excited_states_IC ::: leaky
    ! Do an in-core TD excitation energy calculation.
