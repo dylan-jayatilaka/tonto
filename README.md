@@ -179,7 +179,7 @@ There are other test programs which are made and used.
 
 ## 6. Where is the code?
 
-All of these programs are in the `runfiles/` folder. The source code for the modules is in the `foofiles/` folder. That is currently translated into modern Fortran 2003 which resides in the `build/` folder, and which is compiled there. The names of the `.foo` modules in the `foofiles/` corresponds rather directly to the corresponding `.F90` files in the `build/' folder.
+All of these programs are in the `runfiles/` folder. The source code for the modules is in the `foofiles/` folder. The source is currently translated into modern Fortran 2003 which resides in the `build/` folder, which is where the object code and executables are made. The names of the `.foo` modules in the `foofiles/`, and that code, correspond rather directly to the corresponding `.F90` files in the `build/' folder.
 
 ## 7. Run tests please!
 
