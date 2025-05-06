@@ -1,12 +1,12 @@
 # Welcome to Tonto!
 
+[![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
+
 # Erice 2025 workshop people!
 
 If you are a workshop attendee, the lab folder and instructions are [here](https://drive.google.com/drive/folders/17OWncmSsFbKAlW8mZb9EKzJuW0GAjykG).
 
-[![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
-
-## 0. For developers: How to push with a new token
+# Developers: How to push with a new token
 
 To set up your local git repo to push to github, use the following
 
@@ -28,9 +28,21 @@ https://github.com/settings/tokens
 
 The selections are quite hard to find: at the left, bottom, or top right of the menus.
 
+# Compiling and getting started
+
+Tonto is best used with Linux. I'm going to assume you are using Ubuntu. The latest versions are the best.
+
+There are instructions for other systems but I do not know how up-to-date these are as I hardly use them. If I need executables on other systems I usually cross compile the static executables on Linux to use on those other architectures.
+
 ## 1. Get ready ...
 
-First install `git` and and follow the compile instructions below.
+First install `git` 
+
+```
+   sudo apt install git
+```
+
+You will need to be on the super user list to install software on your machine.
 
 ### On Linux
 
@@ -40,22 +52,18 @@ First, open a terminal and clone the repository:
    git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
 ```
 
-While waiting, in another terminal window, or using your software package manager, install:
+While waiting, in another terminal window, or using your software package manager, install `make`, `perl` (for the `foo` prprocessor language), `gfortran`, `blas`, `lapack`, `python3` (for testing) and `gnuplot` (for graphs and plots)
 
-* `perl`
-* `gfortran`
-* `make`
-* `blas` 
-* `lapack` 
-* `python3`
-* `gnuplot` (recommended)
+```
+    sudo apt install make perl gfortran libblas-dev liblapack-dev python3 gnuplot
+```
 
-Many of these programs like python may already be installed.
+Many of these programs like python may already be installed. Y
 
 If you are going to compile a parallel version of the program also install openmpi and friends:
 
 ```
-sudo apt install openmpi-bin openmpi-common openssh-client openssh-server libopenmpi-dev
+sudo apt install openmpi-bin openmpi-common openssh-client openssh-server libopenmpi-dev 
 ```
 
 ### On MacOS
