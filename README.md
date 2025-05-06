@@ -28,43 +28,23 @@ https://github.com/settings/tokens
 
 The selections are quite hard to find: at the left, bottom, or top right of the menus.
 
-# Compiling and getting started
+# Getting started and Compiling
 
-Tonto is best used with Linux. I'm going to assume you are using Ubuntu. The latest versions are the best.
+## 0. Operating systems
 
-There are instructions for other systems but I do not know how up-to-date these are as I hardly use them. If I need executables on other systems I usually cross compile the static executables on Linux to use on those other architectures.
-
-## 1. Get ready ...
-
-First install `git` 
-
-```
-   sudo apt install git
-```
-
-You will need to be on the super user list to install software on your machine.
+These instructions are for Linux which I assume you are using.
 
 ### On Linux
 
-First, open a terminal and clone the repository:
+For simlicity I'm going to assume you are using Ubuntu, the most popular system (I use it).
 
-```
-   git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
-```
+And I'm going to assume you are using the command line in a bash terminal, which is the default.
 
-While waiting, in another terminal window, or using your software package manager, install `make`, `perl` (for the `foo` prprocessor language), `gfortran`, `blas`, `lapack`, `python3` (for testing) and `gnuplot` (for graphs and plots)
+It is best to use the the latest versions.
 
-```
-    sudo apt install make perl gfortran libblas-dev liblapack-dev python3 gnuplot
-```
+There are instructions for Mac and Windows but I do not know how up-to-date these are as I hardly use them. Follow the links below; otherwise keep reading.
 
-Many of these programs like python may already be installed. Y
-
-If you are going to compile a parallel version of the program also install openmpi and friends:
-
-```
-   sudo apt install openmpi-bin openmpi-common openssh-client openssh-server libopenmpi-dev 
-```
+It is possible to cross compile executables on Linux for those other architectures. Though it is easy enough to use `brew`on Mac and WSL on Windows.
 
 ### On MacOS
 
@@ -74,35 +54,80 @@ See [Building on MacOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-
 
 See [Building on Windows](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-Windows)
 
-## 2. Get set ...
+## 1. Install `git` and clone the repo
 
-To compile Tonto, first enter the `tonto` directory downloaded with `git` :
+First install `git` 
+
+```
+   sudo apt install git
+```
+
+You will need to be on the super user list to install software on your machine.
+
+Open a terminal and clone the repository:
+
+```
+   git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
+```
+
+To compile a particular branch, like the release branch, which is highly recommended (see below) then clone into a named folder:
+
+```
+   git clone --recursive https://github.com/dylan-jayatilaka/tonto.git tonto-release
+```
+
+## 2. Install other software
+
+While waiting, make sure you have all the other software installed:
+
+The following is recommended: `make`, `perl` (for the `foo` prprocessor language), `gfortran`, `blas`, `lapack`, `python3` (for testing) and `gnuplot` (for graphs and plots).
+
+```
+   sudo apt install make perl gfortran libblas-dev liblapack-dev python3 gnuplot
+```
+
+It is recommended to compile a parallel version of the program via openmpi and friends:
+
+```
+   sudo apt install openmpi-bin openmpi-common openssh-client openssh-server libopenmpi-dev 
+```
+
+## 3. Switch to the `release` branch, and set up a build folder
+
+To compile Tonto, first enter the `tonto` or `tonto-release` folder you just downloaded
 
 ```
     cd tonto
 ```
 
-Next checkout the release branch
+Checkout the release branch:
 
 ```
    git checkout release
 ```
 
-Now make a `build` directory (name is up to you) and enter that :
+Now make a `build` directory (the name is up to you) and enter that to compile the program:
 
 ```
-    mkdir build && cd build
+   mkdir build
+   cd build
 ```
 
-Now set your compiler and start compiling :
+It is recommended to compile at least two other versions, a `debug` and a `mpi` parallel in their own directories. See below.
+
+## 4. Choose a compiler, and compile executables
+
+You may use different compilers since, unfortunately, some of them are buggy. `gfortran`is pretty good and recommended.
+
+Set your compiler and start compiling:
 
 ```
    cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=fast
    make -j
 ```
-Then you are done.
+Then wait, and when the screen finishes churning, you are done.
 
-You can, and I recommend, to make a `debug` version which prints error messages. In the `tonto` folder type :
+I recommend to also make a `debug` version which prints error messages. In the `tonto` folder type:
 
 ```
     mkdir debug
@@ -112,7 +137,7 @@ You can, and I recommend, to make a `debug` version which prints error messages.
 
 ```
 
-If you want a static executable for redistribution set the build type to `RELEASE-STATIC` as follows:
+If you want a static executable, for redistribution, set the build type to `RELEASE-STATIC` as follows:
 
 ```
    mkdir static
@@ -120,19 +145,10 @@ If you want a static executable for redistribution set the build type to `RELEAS
    cmake .. -DCMAKE_BUILD_TYPE=release-static
    make -j
 ```
-  
-If you want version with no instrumentation and no error checking, which is the fastest, then do:
-  
-```
-   mkdir static
-   cd static
-   cmake .. -DCMAKE_BUILD_TYPE=release-static -DNO_ERROR_MANAGEMENT
-   make -j
-```
 
 By default the `tonto` program is built with the `RELEASE` flags i.e. not static. The static verssion is a lot larger in size.
   
-To make an MPI parallel version (e.g. using openmpi) type :
+For production it is recommended to make an MPI parallel version. However you must test this to check that the results are correct. To proceed type:
 
 ```
    mkdir mpi
@@ -143,23 +159,29 @@ To make an MPI parallel version (e.g. using openmpi) type :
 
 Consider also using `-DNO_ERROR_MANAGEMENT` in this case for even more speed.
 
-## 3. Where is the program?
+## 5. Where is the program?
 
-The executable program is located at:
+The executable program is located in the build folder:
 
 ```
-    build/tonto(.exe)
+    build/tonto
 ```
 
 The standalone Hirshfeld atom refinement terminal (`hart`) program will be located at:
 
 ```
-   build/hart(.exe)
+   build/hart
 ```
 
 Copy the program `build/hart` anywhere you like  For help type `hart -help`.
 
-## 4. Run tests
+There are other test programs which are made and used.
+
+## 5. Where is the code?
+
+All of these programs are in the `runfiles/` folder. The source code for the modules is in the `foofiles/` folder. That is currently translated into modern Fortran 2003 which resides in the `build/` folder, and which is compiled there. The names of the `.foo` modules in the `foofiles/` corresponds rather directly to the corresponding `.F90` files in the `build/' folder.
+
+## 6. Run tests please!
 
 To run all tests, in the build directory type:
 
@@ -167,17 +189,19 @@ To run all tests, in the build directory type:
    ctest
 ```
 
-You should get mostly the `passed` message, but there may be small numerical differences which lead to pseudo-failures. If you are keen you may check for *true* failed tests.
-
-Actually, its better to save the tests resukts to a file:
+You should get mostly the `passed` messages, but there may be small numerical differences which lead to pseudo-failures. You should check for *true* failed tests. To do that, it is better to save the tests results to a file:
 
 ```
    ctest >& tests.log &
 ```
 
-Then you can review the results later at your leisure. 
-  
-Here is a nice thing for problem tests: you may use `ctest` directly and run only tests matching certain labels or regular expressions; or specify the number  of processors to use when running tests :
+Then you can review the results later at your leisure. To check failures go into the `tests/` folder and then from there into the folder with the same name as the job that failed. You should see there pairs of files called `<file>` and `<file>.bad`. You must compare the reference `<file>` and alleged failed output file `<file.bad>` using your favourite tool e.g.
+
+```
+   vimdiff stdout stdout.bad
+```
+
+Here is a nice thing for problem tests: you may use `ctest` in the `build/` folder and run only tests matching certain labels or regular expressions for the jobs that failed; or specify the number of processors to use when running tests :
 
 ```
    ctest -L short    # this will run all tests with the label short.
@@ -185,21 +209,13 @@ Here is a nice thing for problem tests: you may use `ctest` directly and run onl
    ctest -L long -j4 # this will run all long tests with 4 jobs at a time.
 ```
 
-To check failures go into the `tests/` folder and then from there into the folder with the same name as the job that failed. You should see there pairs of files called `<file>` and `<file>.bad`.
-
-You must compare the reference `<file>` and alleged failed output file `<file.bad>` using your favourite tool e.g.
-
-```
-   vimdiff stdout stdout.bad
-```
-
-## Problems, bugs, contributions
+## 7. Problems, bugs, contributions
 
 Let me know at
 ```
    dylan.jayatilaka@gmail.com
 ```
-I am not good at responding. Best to contact some people that know me. If you google you might find such people. There aren't many, as I'm a misanthrope. 
+I apologise, I am not good at responding. Best to contact some people that know me. If you google you might find such people. There aren't many, as I'm a misanthrope. 
 
 # How to run tonto
 
