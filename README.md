@@ -177,11 +177,11 @@ Copy the program `build/hart` anywhere you like  For help type `hart -help`.
 
 There are other test programs which are made and used.
 
-## 5. Where is the code?
+## 6. Where is the code?
 
 All of these programs are in the `runfiles/` folder. The source code for the modules is in the `foofiles/` folder. That is currently translated into modern Fortran 2003 which resides in the `build/` folder, and which is compiled there. The names of the `.foo` modules in the `foofiles/` corresponds rather directly to the corresponding `.F90` files in the `build/' folder.
 
-## 6. Run tests please!
+## 7. Run tests please!
 
 To run all tests, in the build directory type:
 
@@ -209,7 +209,7 @@ Here is a nice thing for problem tests: you may use `ctest` in the `build/` fold
    ctest -L long -j4 # this will run all long tests with 4 jobs at a time.
 ```
 
-## 7. Problems, bugs, contributions
+## 8. Problems, bugs, contributions
 
 Let me know at
 ```
