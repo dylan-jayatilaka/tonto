@@ -63,7 +63,7 @@ Many of these programs like python may already be installed. Y
 If you are going to compile a parallel version of the program also install openmpi and friends:
 
 ```
-sudo apt install openmpi-bin openmpi-common openssh-client openssh-server libopenmpi-dev 
+   sudo apt install openmpi-bin openmpi-common openssh-client openssh-server libopenmpi-dev 
 ```
 
 ### On MacOS
