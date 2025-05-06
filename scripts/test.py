@@ -194,7 +194,7 @@ def run_test(args, test_dir, io_files):
         'env': env,
     }
     if args.mpi:
-        prog = ['mpiexec', '-np', '2', args.program]
+        prog = ['mpirun', '-n', '4', args.program]
     else:
         prog = [args.program]
 

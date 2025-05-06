@@ -7678,20 +7678,17 @@ contains
    fragment_SCF(restart,spin_density,do_SFs) ::: leaky
    ! Do an fragment SCF calculation on each of the .atom_group.mol
    ! molecules and calculate the structure factors.
-      self :: INOUT
-      restart :: BIN, optional, IN
+      self         :: INOUT
+      restart      :: BIN, optional, IN
       spin_density :: BIN, optional, IN
-      do_SFs :: BIN, optional, IN
+      do_SFs       :: BIN, optional, IN
 
-#ifndef MPI      
-      .SCF:fragment_SCF_normal(restart,spin_density,do_SFs)
-#else
-      .SCF:fragment_SCF_MPI(restart,spin_density,do_SFs)
-#endif
+      .SCF:fragment_SCF_norm(restart,spin_density,do_SFs)
+      .SCF:fragment_SCF_para(restart,spin_density,do_SFs)
 
    end
 
-   fragment_SCF_normal(restart,spin_density,do_SFs) ::: leaky
+   fragment_SCF_norm(restart,spin_density,do_SFs) ::: leaky
    ! Do an fragment SCF calculation on each of the .atom_group.mol
    ! molecules and calculate the structure factors. 
    ! If "restart" is present and TRUE then fragHAR fragment SCF's are
@@ -7706,12 +7703,12 @@ contains
       spin_density :: BIN, optional, IN
       do_SFs :: BIN, optional, IN
 
-   ENSURE(.atom_group.allocated,"no .atom_group")
-   ENSURE(.mol.allocated,"no .mol")
-   ENSURE(.mol.dim==.atom_group.dim,"no .mol")
-   ENSURE(.SCF_data.allocated,"no SCF_data")
-   ENSURE(.crystal.allocated,"no crystal")
-   ENSURE(.cif.allocated,"no cif specified")
+ ! ENSURE(.atom_group.allocated,"no .atom_group")
+ ! ENSURE(.mol.allocated,"no .mol")
+ ! ENSURE(.mol.dim==.atom_group.dim,"no .mol")
+ ! ENSURE(.SCF_data.allocated,"no SCF_data")
+ ! ENSURE(.crystal.allocated,"no crystal")
+ ! ENSURE(.cif.allocated,"no cif specified")
 
       n_group,g :: INT
       SFs :: BIN
@@ -7796,188 +7793,178 @@ contains
 
    end
 
+   fragment_SCF_para(restart,spin_density,do_SFs) ::: leaky
+   ! Do an fragment SCF calculation on each of the .atom_group.mol
+   ! molecules and calculate the structure factors.
+      self :: INOUT
+      restart :: BIN, optional, IN
+      spin_density :: BIN, optional, IN
+      do_SFs :: BIN, optional, IN
 
-!   fragment_SCF_MPI(restart,spin_density,do_SFs) ::: leaky
-!   ! Do an fragment SCF calculation on each of the .atom_group.mol
-!   ! molecules and calculate the structure factors.
-!      self :: INOUT
-!      restart :: BIN, optional, IN
-!      spin_density :: BIN, optional, IN
-!      do_SFs :: BIN, optional, IN
-!
-!   ENSURE(.atom_group.allocated,"no atom_group info")
-!   ENSURE(.SCF_data.allocated,"no SCF_data")
-!   ENSURE(.crystal.allocated,"no crystal")
-!   ENSURE(.cif.allocated,"no cif specified")
-!
-!      SFs :: BIN
-!      mol :: MOLECULE*
-!      name,guess :: STR
-!      g,n_group, x,w :: INT
-!      n_bf :: VEC{INT}@
-!
-!      ! Do structure factors?
-!      SFs = FALSE
-!      if (present(do_SFs)) SFs = do_SFs
-!
-!      ! Need these for SFs
-!      if (SFs) &
-!         .:make_ANO_data
-!
-!      ! Output details?
-!      .PUT:put_atom_group_mols
-!
-!      ! Loop over atom group "g"
-!      if (tonto.n_processors > 2) then
-!         
-!         if (tonto.p_loop_list.deallocated) then
-!
-!            tonto.p_loop_list.destroy
-!            tonto.p_loop_list.create(.atom_group.dim)
-!            n_bf.create(.atom_group.dim)
-!            do x = 1, .atom_group.dim
-!               n_bf(x) = .atom_group(x).mol.n_bf
-!            end
-!            n_bf.quick_sort(tonto.p_loop_list,decreasing_order=TRUE)
-!            n_bf.destroy
-!
-!         end
-!      
-!         tonto.setup_p_loop(w,lb=1,ub=.atom_group.dim)
-!
-!         do
-!
-!            ! NOTE: call this before exit conditions
-!            g = tonto.next_p_loop_index(w)
-!
-!            ! Exit if no more to do, or master
-!            ! NOTE: Must be in this order!
-!            if (tonto.exit_p_loop) exit
-!            if (tonto.is_master_processor) cycle
-!                  
-!            ! Set up a molecule for this group of atoms
-!            mol => .atom_group(g).mol
-!            DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
-!
-!            ! Skip SCF for atoms without electrons
-!            if (mol.INQ:no_of_electrons < 1) cycle
-!
-!            ! Make crystal
-!            if (mol.crystal.deallocated) then
-!               mol.crystal.update_fragment_info(mol.atom)
-!            end
-!
-!            mol.SCF_data.set_output(TRUE)
-!            if (mol.atom.dim==1) then
-!               mol.SCF_data.set_initial_density("core")
-!            else 
-!               mol.SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
-!               mol.SCF_data.set_initial_density(.SCF_data.initial_density)
-!            end
-!
-!            if (present(restart)) then
-!            if (restart) then
-!               guess = mol.SCF_data.spinorbital_genre
-!               mol.SCF_data.set_initial_density(guess)
-!            end
-!            end
-!
-!            ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!            tonto.set_parallel_IO_allowed(TRUE)
-!            name = trim(mol.name)
-!            stdout.redirect(name)
-!            stdout.move_to_end
-!            mol.:usual_SCF ! <<<
-!            stdout.revert
-!            tonto.set_parallel_IO_allowed(FALSE)
-!            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!
-!            if (SFs) then
-!
-!               ! NOTE: change DFT -> becke
-!               .atom_group(g).mol.SET:initialize_DFT_grids
-!              
-!               ! Assign previously made ANOs
-!               .atom_group(g).mol.SET:resolve_ANOs_from(self)
-!              
-!               ! Write SFs for each fragment to disk - in parallel
-!               n_group = .atom_group(g).atom_index.dim
-!               tonto.set_parallel_IO_allowed(TRUE)
-!             ! .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
-!               .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
-!               tonto.set_parallel_IO_allowed(FALSE)
-!
-!            end
-!      
-!         end do
-!         
-!         tonto.unlock_parallel_do("no")
-!         
-!      else
-!         
-!         parallel do g = 1,.atom_group.dim
-!
-!            ! Set up a molecule for this group of atoms
-!            mol => .atom_group(g).mol
-!            DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
-!
-!            ! Skip SCF for atoms without electrons
-!            if (mol.INQ:no_of_electrons < 1) cycle
-!
-!            ! Make crystal
-!            if (mol.crystal.deallocated) then
-!               mol.crystal.update_fragment_info(mol.atom)
-!            end
-!
-!            mol.SCF_data.set_output(TRUE)
-!            if (mol.atom.dim==1) then
-!               mol.SCF_data.set_initial_density("core")
-!            else 
-!               mol.SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
-!               mol.SCF_data.set_initial_density(.SCF_data.initial_density)
-!            end
-!
-!            if (present(restart)) then
-!            if (restart) then
-!               guess = mol.SCF_data.spinorbital_genre
-!               mol.SCF_data.set_initial_density(guess)
-!            end
-!            end
-!
-!            ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!            tonto.set_parallel_IO_allowed(TRUE)
-!            name = trim(mol.name)
-!            stdout.redirect(name)
-!            stdout.move_to_end
-!            mol.:usual_SCF ! <<<
-!            stdout.revert
-!            tonto.set_parallel_IO_allowed(FALSE)
-!            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!
-!            if (SFs) then
-!
-!               ! NOTE: change DFT -> becke
-!               .atom_group(g).mol.SET:initialize_DFT_grids
-!              
-!               ! Assign previously made ANOs
-!               .atom_group(g).mol.SET:resolve_ANOs_from(self)
-!              
-!               ! Write SFs for each fragment to disk - in parallel
-!               n_group = .atom_group(g).atom_index.dim
-!               tonto.set_parallel_IO_allowed(TRUE)
-!             ! .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
-!               .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
-!               tonto.set_parallel_IO_allowed(FALSE)
-!
-!            end
-!         
-!         end
-!      
-!      end if 
-!
-!      tonto.barrier
-!
-!   end
+ ! ENSURE(.atom_group.allocated,"no atom_group info")
+ ! ENSURE(.SCF_data.allocated,"no SCF_data")
+ ! ENSURE(.crystal.allocated,"no crystal")
+ ! ENSURE(.cif.allocated,"no cif specified")
+
+      SFs :: BIN
+      name,guess :: STR
+      g,n_group, x,w :: INT
+      n_bf :: VEC{INT}@
+
+
+      ! Do structure factors?
+      SFs = FALSE
+      if (present(do_SFs)) SFs = do_SFs
+
+      ! Need these for SFs
+      if (SFs) .:make_ANO_data
+
+      ! Output details?
+      .PUT:put_atom_group_mols
+
+      ! Loop over atom group "g"
+      if (tonto.n_processors > 2) then
+         
+         if (tonto.p_loop_list.deallocated) then
+
+            tonto.p_loop_list.destroy
+            tonto.p_loop_list.create(.mol.dim)
+            n_bf.create(.mol.dim)
+            do x = 1,.mol.dim
+               n_bf(x) = .mol(x).n_bf
+            end
+            n_bf.quick_sort(tonto.p_loop_list,decreasing_order=TRUE)
+            n_bf.destroy
+
+         end
+      
+         tonto.setup_p_loop(w,lb=1,ub=.atom_group.dim)
+
+         do
+
+            ! NOTE: call this before exit conditions
+            g = tonto.next_p_loop_index(w)
+
+            ! Exit if no more to do, or master
+            ! NOTE: Must be in this order!
+            if (tonto.exit_p_loop) exit
+            if (tonto.is_master_processor) cycle
+                  
+            ! Skip SCF for atoms without electrons
+            if (.mol(g).INQ:no_of_electrons < 1) cycle
+
+            ! Make crystal
+            if (.mol(g).crystal.deallocated) then
+                .mol(g).crystal.update_fragment_info(.mol(g).atom)
+            end
+
+            .mol(g).SCF_data.set_output(TRUE)
+            if (.mol(g).atom.dim==1) then
+                .mol(g).SCF_data.set_initial_density("core")
+            else 
+                .mol(g).SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
+                .mol(g).SCF_data.set_initial_density(.SCF_data.initial_density)
+            end
+
+            if (present(restart)) then
+            if (restart) then
+               guess = .mol(g).SCF_data.spinorbital_genre
+               .mol(g).SCF_data.set_initial_density(guess)
+            end
+            end
+
+            ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            tonto.set_parallel_IO_allowed(TRUE)
+            name = trim(.mol(g).name)
+            stdout.redirect(name)
+            stdout.move_to_end
+            .mol(g).:usual_SCF ! <<<
+            stdout.revert
+            tonto.set_parallel_IO_allowed(FALSE)
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            if (SFs) then
+
+               ! NOTE: change DFT -> becke
+               .mol(g).SET:initialize_DFT_grids
+              
+               ! Assign previously made ANOs
+               .mol(g).SET:resolve_ANOs_from(self)
+              
+               ! Write SFs for each fragment to disk - in parallel
+               n_group = .atom_group(g).atom_index.dim
+               tonto.set_parallel_IO_allowed(TRUE)
+             ! .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
+               .mol(g).SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
+               tonto.set_parallel_IO_allowed(FALSE)
+
+            end
+      
+         end do
+         
+         tonto.unlock_parallel_do("no")
+         
+      else
+         
+         parallel do g = 1,.mol.dim
+
+            ! Skip SCF for atoms without electrons
+            if (.mol(g).INQ:no_of_electrons < 1) cycle
+
+            ! Make crystal
+            if (.mol(g).crystal.deallocated) then
+                .mol(g).crystal.update_fragment_info(.mol(g).atom)
+            end
+
+            .mol(g).SCF_data.set_output(TRUE)
+            if (.mol(g).atom.dim==1) then
+                .mol(g).SCF_data.set_initial_density("core")
+            else 
+                .mol(g).SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
+                .mol(g).SCF_data.set_initial_density(.SCF_data.initial_density)
+            end
+
+            if (present(restart)) then
+            if (restart) then
+               guess = .mol(g).SCF_data.spinorbital_genre
+               .mol(g).SCF_data.set_initial_density(guess)
+            end
+            end
+
+            ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            tonto.set_parallel_IO_allowed(TRUE)
+            name = trim(.mol(g).name)
+            stdout.redirect(name)
+            stdout.move_to_end
+            .mol(g).:usual_SCF ! <<<
+            stdout.revert
+            tonto.set_parallel_IO_allowed(FALSE)
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            if (SFs) then
+
+               ! NOTE: change DFT -> becke
+               .mol(g).SET:initialize_DFT_grids
+              
+               ! Assign previously made ANOs
+               .mol(g).SET:resolve_ANOs_from(self)
+              
+               ! Write SFs for each fragment to disk - in parallel
+               n_group = .atom_group(g).atom_index.dim
+               tonto.set_parallel_IO_allowed(TRUE)
+             ! .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
+               .mol(g).SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
+               tonto.set_parallel_IO_allowed(FALSE)
+
+            end
+         
+         end
+      
+      end if 
+
+      tonto.barrier
+
+   end
 
 !  ===========
 !  Monomer MOs
