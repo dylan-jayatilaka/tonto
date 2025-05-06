@@ -1,25 +1,32 @@
 # Welcome to Tonto!
-# Sagamore XX workshop people! Read on.
+
+# Erice 2025 workshop people!
+
+If you are a workshop attendee, the lab folder and instructions are [here](https://drive.google.com/drive/folders/17OWncmSsFbKAlW8mZb9EKzJuW0GAjykG).
 
 [![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
-## 0. WARNING and How to push with a new token
 
-This release-no-ptr branch will be the latest version, and will be merged into release, and finally, into master.
+## 0. For developers: How to push with a new token
 
-For reference, to set up your repo to push, use the following
+To set up your local git repo to push to github, use the following
 
 ```
 git remote set-url origin https://USERNAME:TOKEN@github.com/USERNAME/REPO.git
 ```
-You can get a classic token from Settings photo-> Settings -> <> develepo-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic) !!! Which should have this location:
+
+Replace USERNAME with your own github user name.
+
+You can get a classic TOKEN from :
+
+Settings photo-> Settings -> develepor-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic).
+
+You can get to this location more easily by going to the location below:
 
 ```
 https://github.com/settings/tokens
 ```
 
-I kid you not. The selections above are quite hard to find, at the left, bottom, or top right of the menus.
-
-If you are a workshop attendee, the lab folder and instructions are [here](https://drive.google.com/drive/folders/17OWncmSsFbKAlW8mZb9EKzJuW0GAjykG).
+The selections are quite hard to find: at the left, bottom, or top right of the menus.
 
 ## 1. Get ready ...
 
@@ -33,17 +40,23 @@ First, open a terminal and clone the repository:
    git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
 ```
 
-While waiting, in another terminal window, or using your
-software package manager, install:
+While waiting, in another terminal window, or using your software package manager, install:
 
 * `perl`
 * `gfortran`
 * `make`
 * `blas` 
 * `lapack` 
-* `openmpi-3.0` (for parallel)
-* `python3` (recommended for testing)
+* `python3`
 * `gnuplot` (recommended)
+
+Many of these programs like python may already be installed.
+
+If you are going to compile a parallel version of the program also install openmpi and friends:
+
+```
+sudo apt install openmpi-bin openmpi-common openssh-client openssh-server libopenmpi-dev
+```
 
 ### On MacOS
 
@@ -55,84 +68,74 @@ See [Building on Windows](https://github.com/dylan-jayatilaka/tonto/wiki/Buildin
 
 ## 2. Get set ...
 
-To compile Tonto, first enter the `tonto` directory downloaded with
-`git` :
+To compile Tonto, first enter the `tonto` directory downloaded with `git` :
 
 ```
     cd tonto
 ```
 
-Then make a `build` directory (name is up to you) and enter that :
+Next checkout the release branch
+
+```
+   git checkout release
+```
+
+Now make a `build` directory (name is up to you) and enter that :
 
 ```
     mkdir build && cd build
 ```
 
-I (Dylan) prefer to make separate folders for specific compilers and specific compiler settings. So the above, for the gfortran compiler, in two steps would be:
+Now set your compiler and start compiling :
 
 ```
-    mkdir gfortran
-    cd gfortran
+   cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=fast
+   make -j
 ```
+Then you are done.
 
-You can, and I recommend, mamking a `Debug` version in its own directory like `debug/` . If you have a problems likely we'll ask yiu for any error messages that come from this version when you run it on your job. (Yes, there are bugs; always; sorry!).
-
-Use cmake to generate the build (default uses Makefiles), and compile the programs :
+You can, and I recommend, to make a `debug` version which prints error messages. In the `tonto` folder type :
 
 ```
-    cmake ..
+    mkdir debug
+    cd debug
+    cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=debug
     make -j
-```
-
-If you want a specific compiler, use :
 
 ```
-   cmake .. -DCMAKE_Fortran_COMPILER=<insert-your-compiler-here>
-   make -j
-```
 
-where you should replace <insert-your-compiler-here> with the
-command for your fortran compiler. We recommend `gfortran`. Latest version. I like bleeding edge stuff. Since Fortran standards compliance advances at a glacial pace, this is generally no problem.
-
-If you want a static executable for redistribution set the build type
-to RELEASE-STATIC as follows:
+If you want a static executable for redistribution set the build type to `RELEASE-STATIC` as follows:
 
 ```
-   cmake .. -DCMAKE_BUILD_TYPE=RELEASE-STATIC
+   mkdir static
+   cd static
+   cmake .. -DCMAKE_BUILD_TYPE=release-static
    make -j
 ```
   
-If you want a version with no instrumentation and no error checking, which is the fastest, then do:
+If you want version with no instrumentation and no error checking, which is the fastest, then do:
   
 ```
-   cmake .. -DCMAKE_BUILD_TYPE=RELEASE-STATIC -DNO_ERROR_MANAGEMENT
+   mkdir static
+   cd static
+   cmake .. -DCMAKE_BUILD_TYPE=release-static -DNO_ERROR_MANAGEMENT
    make -j
-```make_monomer_energies_for_lattice_energy
-By default the `tonto` program is built with the `-DRELEASE` flags i.e. not static. The static verssion is a lot larger in size. Dynamic libraries an all that, you know?
+```
+
+By default the `tonto` program is built with the `RELEASE` flags i.e. not static. The static verssion is a lot larger in size.
   
-To make an MPI parallel version (e.g. using openmpi) , type :
+To make an MPI parallel version (e.g. using openmpi) type :
 
 ```
-   cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DMPI=1
+   mkdir mpi
+   cd mpi
+   cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DCMAKE_BUILD_TYPE=fast -DMPI=1
    make -j
 ```
 
-Consider using `-DNO_ERROR_MANAGEMENT` in this case, for the ultimate speed to obtain a possibly wrong answer!
+Consider also using `-DNO_ERROR_MANAGEMENT` in this case for even more speed.
 
-To change build type (e.g. make a DEBUG version) use this option :
-
-```
-   cmake .. -DCMAKE_BUILD_TYPE=Debug
-   make -j
-```
-In the case you do NOT have lapack and blas installed, there is a packaged lapack included in tonto, which you can also request manually:
-
-```
-   cmake .. -DCOMPILE_LAPACK=ON
-   make -j
-```
-
-I'm gradually replacing `LAPACK` stuff as I think inlined code is better.
+## 3. Where is the program?
 
 The executable program is located at:
 
@@ -140,7 +143,7 @@ The executable program is located at:
     build/tonto(.exe)
 ```
 
-The standalone Hirshfeld atom refinement terminal (the `hart`) program will be located at:
+The standalone Hirshfeld atom refinement terminal (`hart`) program will be located at:
 
 ```
    build/hart(.exe)
@@ -148,40 +151,35 @@ The standalone Hirshfeld atom refinement terminal (the `hart`) program will be l
 
 Copy the program `build/hart` anywhere you like  For help type `hart -help`.
 
-## 3. Go!
-
-The tests use the `test.py` script located in `scripts` 
-to check the difference between outputs.  This should
-defer to `sbftool` for SBF formatted files, and will
-overcome small numerical differences.
+## 4. Run tests
 
 To run all tests, in the build directory type:
+
 ```
    ctest
 ```
 
+You should get mostly the `passed` message, but there may be small numerical differences which lead to pseudo-failures. If you are keen you may check for *true* failed tests.
+
 Actually, its better to save the tests resukts to a file:
+
 ```
-   ctest >& tests.log
+   ctest >& tests.log &
 ```
-because you can review the resuklts later at your leisure. You can `tail` the `tests.log` file as it is produced, right?
+
+Then you can review the results later at your leisure. 
   
 Here is a nice thing for problem tests: you may use `ctest` directly and run only tests matching certain labels or regular expressions; or specify the number  of processors to use when running tests :
+
 ```
    ctest -L short    # this will run all tests with the label short.
    ctest -R h2o      # this will run all tests with h2o in their name.
    ctest -L long -j4 # this will run all long tests with 4 jobs at a time.
 ```
 
-You should get mostly the `passed` message --- but there may be small
-numerical differences which lead to pseudo-failures. If you are keen
-you may check for *true* failed tests.
+To check failures go into the `tests/` folder and then from there into the folder with the same name as the job that failed. You should see there pairs of files called `<file>` and `<file>.bad`.
 
-To check failures go into the `tests/` folder and then from there into the
-folder with the same name as the job that failed. You should see there
-pairs of files called `<file>` and `<file>.bad`. You have to compare
-the reference `<file>` and alleged failed output file `<file.bad>`
-using your favourite tool e.g.
+You must compare the reference `<file>` and alleged failed output file `<file.bad>` using your favourite tool e.g.
 
 ```
    vimdiff stdout stdout.bad
@@ -193,7 +191,7 @@ Let me know at
 ```
    dylan.jayatilaka@gmail.com
 ```
-I am not good at responding. Best to contact some people that know me. If you google you might find such people. There aren't many, as I'm a misanthrope. Who loves people.
+I am not good at responding. Best to contact some people that know me. If you google you might find such people. There aren't many, as I'm a misanthrope. 
 
 # How to run tonto
 
