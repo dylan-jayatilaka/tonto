@@ -38,9 +38,9 @@ These instructions are for Linux which I assume you are using.
 
 For simlicity I'm going to assume you are using Ubuntu, the most popular system (I use it).
 
-And I'm going to assume you are using the command line in a bash terminal, which is the default.
+It is best to use the the latest version.
 
-It is best to use the the latest versions.
+I'm also going to assume you are using the command line in a bash terminal, which is the default.
 
 There are instructions for Mac and Windows but I do not know how up-to-date these are as I hardly use them. Follow the links below; otherwise keep reading.
 
