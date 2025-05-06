@@ -113,7 +113,7 @@ Now make a `build` directory (the name is up to you) and enter that to compile t
    cd build
 ```
 
-It is recommended to compile at least two other versions, a `debug` and a `mpi` parallel in their own directories. See below.
+It is recommended to compile at least two other versions, a `debug` and a `mpi` parallel version each in their own build folders. See below.
 
 ## 4. Choose a compiler, and compile executables
 
