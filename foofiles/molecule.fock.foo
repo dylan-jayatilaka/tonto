@@ -598,18 +598,19 @@ contains
    ENSURE(.basis_shell1pair.allocated,"no precomputed shell pair information")
 
       I, max_P :: VEC{REAL}@
-      sh4s,sh4n :: SHELL1QUARTET
+      sh4s, sh4n :: SHELL1QUARTET
       ab,cd, abcd :: INT
       a, b, c, d  :: INT
       aa,bb,cc,dd :: INT
       fa,fb,fc,fd :: INT
       la,lb,lc,ld :: INT
       na,nb,nc,nd :: INT
-      atom_a,atom_b,atom_c,atom_d :: INT
+      atom_a,atom_b :: INT
+      atom_c,atom_d :: INT
       factor,cutoff :: REAL
-      P_max,IP_max,I_abcd :: REAL
+      P_max,IP_max, I_abcd :: REAL
       skip,ab_same,cd_same :: BIN
-      any_same,no_max_I :: BIN
+      any_same, no_max_I :: BIN
 
       J = ZERO
       K = ZERO
@@ -6365,121 +6366,185 @@ contains
 !  Lower memory ERIs?
 !  ==================
 
-   make_MO_ERIs(v_MO,min_OMO,max_VMO)
-   ! Calculate two-electron repulsion integrals (ERI's) "vMO" 
-   ! in the (11|22) chemical notation, in the MO basis, with
-   ! a lower memory version. Produces integrals in MO window:
-   !    "min_OMO" <= w <= "max_VMO"
-   ! where "w" is an index of the 2e integrals "vMO", which
-   ! must have the shape within these limits.
+   make_MO_ERIs(v_MO,lo,hv)
+   ! Calculate two-electron repulsion integrals (ERI's) 
+   ! "v_MO" in the (11|22) chemical notation, in MO basis.
+   ! Produces integrals in MO window:
+   !    "lo" <= w <= "hv"
+   ! where "w" is an index of the 2e integrals "vMO".
       self :: IN
-      v_MO :: MAT4{REAL}@, OUT ! NOTE, lbound not 1
-      min_OMO :: INT, IN
-      max_VMO :: INT, IN
+      lo   :: INT, IN
+      hv   :: INT, IN
+      v_MO :: MAT4{REAL}(lo:hv,lo:hv,lo:hv,lo:hv), OUT ! NOTE
 
-      ab, aa, bb :: INT
-      a,fa,la,na :: INT
-      b,fb,lb,nb :: INT
-      c,d, lo,hv :: INT
-      v_AO, v_XX :: MAT4{REAL}@
-      MOs :: MAT{REAL}@
+      ab, cd :: INT
+      a,aa,fa,la,na :: INT
+      b,bb,fb,lb,nb :: INT
+      c,cc,fc,lc,nc :: INT
+      d,dd,fd,ld,nd :: INT
+      vAO, vXX :: MAT4{REAL}@
+      MOs, MOt :: MAT{REAL}@
+      factor   :: REAL
 
       ! MO range
-      lo  = min_OMO
-      hv  = max_VMO
       MOs = .MOs.r(:,lo:hv) ! MOs
-
-      ! Half-transformed integrals
-      v_XX.create([1,.n_bf],[1,.n_bf],[lo,hv],[lo,hv])
+      MOt = transpose(.MOs.r(:,lo:hv))
 
       ! Do by shell blocks
-      do ab = 1,.n_shell_pairs
-         .SET:set_shell2_indices_from(ab,aa,bb,fa,la,na,fb,lb,nb)
-         .:make_ERIs_for_shellpair(ab,v_AO) ! leaky
-         do a = fa,la
-         do b = fb,lb
-            v_XX(a,b,:,:) = matmul(transpose(MOs),matmul(v_AO(:,:,a,b),MOs))
-            if (fa==fb) cycle
-            v_XX(b,a,:,:) = v_XX(a,b,:,:)   ! Symmetrise
-         end
-         end
-         v_AO.destroy
-      end
+      v_MO = ZERO
 
-      ! Do by basis functions
-      do c = lo,hv
-            v_MO(:,:,c,c) = matmul(transpose(MOs),matmul(v_XX(:,:,c,c),MOs))
-         do d = lo,c-1
-            v_MO(:,:,c,d) = matmul(transpose(MOs),matmul(v_XX(:,:,c,d),MOs))
-            v_MO(:,:,d,c) = v_MO(:,:,c,d)   ! Symmetrise
+      do ab = 1,.n_shell_pairs
+
+         ! (ab| shell pair a>b
+         .SET:set_shell2_indices_from(ab,aa,bb,fa,la,na,fb,lb,nb)
+
+         do cd = 1,.n_shell_pairs
+
+            ! (cd| shell pair c>d
+            .SET:set_shell2_indices_from(cd,cc,dd,fc,lc,nc,fd,ld,nd)
+
+            ! Half-MO integrals
+            vXX.create([1,nc],[1,nd],[lo,hv],[lo,hv])
+
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            vAO.create(na,nb,nc,nd)
+            .:make_ERIs_for_shellpairs(ab,cd,vAO)
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            forall (c=1:nc, d=1:nd)
+               vXX(c,d,:,:) = matmul(MOt(:,fa:la),matmul(vAO(:,:,c,d),MOs(fb:lb,:)))
+            end
+            vAO.destroy
+
+            ! Off diagonal factor
+            factor = FOUR
+            if (aa==bb) factor = HALF*factor
+            if (cc==dd) factor = HALF*factor
+
+            ! MO integrals
+            forall (a=lo:hv, b=lo:hv)
+               v_MO(:,:,a,b) = v_MO(:,:,a,b) + factor * &
+                               matmul(MOt(:,fc:lc),matmul(vXX(:,:,a,b),MOs(fd:ld,:)))
+            end
+            vXX.destroy
+
          end
+
       end
 
       ! Clean
-      v_XX.destroy
+      MOt.destroy
       MOs.destroy
 
    end
 
-   make_ERIs_for_shellpair(ab,v) ::: leaky, PURE
+   make_ERIs_for_shellpairs(ab,cd,v) ::: PURE
    ! Calculate the (11|22) type ERIs for a basis-set shell 
-   ! pair with pair-index "ab" and place in array "v" as:
-   !   v(:,:,a,b) = (: : | fa:la fb:lb) 
-   ! i.e. with indices ab & cd swapped.
+   ! pair with pair-index "ab" and place in array "v".
      self :: IN
      ab :: INT, IN
-     v  :: MAT4{REAL}@, OUT
+     cd :: INT, IN
+     v  :: MAT4{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
 
      I :: VEC{REAL}@
      sh4n :: SHELL1QUARTET
-        aa,bb,fa,la,na,fb,lb,nb :: INT
-     cd,cc,dd,fc,lc,nc,fd,ld,nd :: INT
-     a,b,c,d, abcd :: INT
-     val :: REAL
+     aa,bb, na,nb :: INT
+     cc,dd, nc,nd :: INT
+     a,b,c,d,abcd :: INT
 
-     .SET:set_shell2_indices_from(ab,aa,bb,fa,la,na,fb,lb,nb)
+     ! Basis fn limits for (ab|
+     .SET:set_shell2_indices_from(ab,aa,bb,na,nb)
      .SET:set_shell1q_ab_from(aa,bb,sh4n,skip=FALSE)
 
-     ! Leaky
-     v.create([1,.n_bf],[1,.n_bf],[fa,la],[fb,lb])
+     ! Basis fn limits for |cd)
+     .SET:set_shell2_indices_from(cd,cc,dd,nc,nd)
+     .SET:set_shell1q_cd_from(cc,dd,sh4n,skip=FALSE)
 
-     ! ALL |cd) shell pairs
-     do cd = 1,.n_shell_pairs
+     ! Integrals for this shell quartet
+     I.create(sh4n.ab_n_bf_pairs*sh4n.cd_n_bf_pairs)
+     SHELL1QUARTET::make_ERI(sh4n,I)
 
-        ! Basis fn limits for the shell
-        .SET:set_shell2_indices_from(cd,cc,dd,fc,lc,nc,fd,ld,nd)
-        .SET:set_shell1q_cd_from(cc,dd,sh4n,skip=FALSE)
-
-        ! Integrals for this shell quartet
-        I.create(sh4n.ab_n_bf_pairs*sh4n.cd_n_bf_pairs)
-        SHELL1QUARTET::make_ERI(sh4n,I)
-        sh4n.destroy_cd
-
-        ! Now symmetrise the integrals
-        abcd = 0
-        do d = fd,ld
-        do c = fc,lc
-        do b = fb,lb
-        do a = fa,la
-           abcd = abcd + 1
-           val = I(abcd)
-           v(c,d,a,b) = val ! NOTE: (::|ab)
-           v(d,c,a,b) = val ! Do b>a outside
-        end
-        end
-        end
-        end
-
-        I.destroy
-
+     ! Copy integrals
+     abcd = 0
+     do d = 1,nd
+     do c = 1,nc
+     do b = 1,nb
+     do a = 1,na
+        abcd = abcd + 1
+        v(a,b,c,d) = I(abcd)
+     end
+     end
+     end
      end
 
+     ! Clean
+     I.destroy
+     sh4n.destroy_cd
      sh4n.destroy_ab
 
    end
+
+!   make_ERIs_for_shellpair(ab,v) ::: leaky, PURE
+!   ! Calculate the (11|22) type ERIs for a basis-set shell 
+!   ! pair with pair-index "ab" and place in array "v" as:
+!   !   v(:,:,a,b) = (: : | fa:la fb:lb) 
+!   ! i.e. with indices ab & cd swapped.
+!     self :: IN
+!     ab :: INT, IN
+!     v  :: MAT4{REAL}@, OUT
+!
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.allocated,  "no atom list")
+!
+!     I :: VEC{REAL}@
+!     sh4n :: SHELL1QUARTET
+!        aa,bb,fa,la,na,fb,lb,nb :: INT
+!     cd,cc,dd,fc,lc,nc,fd,ld,nd :: INT
+!     a,b,c,d, abcd :: INT
+!
+!     .SET:set_shell2_indices_from(ab,aa,bb,fa,la,na,fb,lb,nb)
+!     .SET:set_shell1q_ab_from(aa,bb,sh4n,skip=FALSE)
+!
+!     ! Leaky
+!     v.create([1,.n_bf],[1,.n_bf],[fa,la],[fb,lb])
+!
+!     ! ALL |cd) shell pairs
+!     do cd = 1,.n_shell_pairs
+!
+!        ! Basis fn limits for the shell
+!        .SET:set_shell2_indices_from(cd,cc,dd,fc,lc,nc,fd,ld,nd)
+!        .SET:set_shell1q_cd_from(cc,dd,sh4n,skip=FALSE)
+!
+!        ! Integrals for this shell quartet
+!        I.create(sh4n.ab_n_bf_pairs*sh4n.cd_n_bf_pairs)
+!        SHELL1QUARTET::make_ERI(sh4n,I)
+!        sh4n.destroy_cd
+!
+!        ! Now symmetrise the integrals
+!        abcd = 0
+!        do d = fd,ld
+!        do c = fc,lc
+!        do b = fb,lb
+!        do a = fa,la
+!           abcd = abcd + 1
+!           val = I(abcd)
+!           v(c,d,a,b) = val ! NOTE: (::|ab)
+!           v(d,c,a,b) = val ! Do b>a outside
+!        end
+!        end
+!        end
+!        end
+!
+!        I.destroy
+!
+!     end
+!
+!     sh4n.destroy_ab
+!
+!   end
 
 !  ========================================
 !  Electron repulsion integrals - in memory
