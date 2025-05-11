@@ -370,25 +370,38 @@ contains
       end
       if (.TD_data.single.deallocated) .TD_data.sort_singles
 
-      ! Do the TD calculation
+      ! Which TD calc?
       select case (.TD_data.implementation)
-      case ("in-core"); .:TD_excited_states_IC
-      case ("fast   "); .:TD_excited_states_fast
-      case  default;      UNKNOWN(.TD_data.implementation)
-      end
 
-   end
+      case ("in-core ")
+         select case (.TD_data.method)
+         case("r-cis-s=0&s=1    "); .TD:make_r_CIS_S0_S1_IC  ! <---
+         case("r-cis-s=0        "); .TD:make_r_CIS_S0_IC
+         case("r-cis-singlet    "); .TD:make_r_CIS_S0_IC
+         case("r-cis-s=1        "); .TD:make_r_CIS_S1_IC
+         case("r-cis-triplet    "); .TD:make_r_CIS_S1_IC
+         case("r-cis-s=0-ss     "); .TD:make_r_CIS_S0_SS_IC  ! <---
+         case("r-cis-singlet-ss "); .TD:make_r_CIS_S0_SS_IC
+         case("r-tdhf-s=0&s=1   "); .TD:make_r_TDHF_S0_S1_IC
+         case("r-tdhf-s=0       "); .TD:make_r_TDHF_S0_IC
+         case("r-tdhf-singlet   "); .TD:make_r_TDHF_S0_IC
+         case("r-tdhf-s=1       "); .TD:make_r_TDHF_S1_IC
+         case("r-tdhf-triplet   "); .TD:make_r_TDHF_S1_IC
+         case("u-cis            "); .TD:make_u_CIS_IC        ! <---
+         case default; UNKNOWN(.TD_data.method)
+         end
 
-! Efficient methods
+      case ("davidson")
+         select case (.TD_data.method)
+         case("r-cis-s=0        "); .TD:make_r_CIS_S0
+         case("r-cis-singlet    "); .TD:make_r_CIS_S0
+         case("r-cis-s=0-ss     "); .TD:make_r_CIS_S0_SS
+         case("r-cis-singlet-ss "); .TD:make_r_CIS_S0_SS
+         case default; UNKNOWN(.TD_data.method)
+         end
 
-   TD_excited_states_fast ::: leaky
-   ! Do a TD excitation energy calculation.
-      self :: INOUT
-
-      select case (.TD_data.method)
-
-      case("r-cis-s=0        "); .TD::make_r_CIS_S0
-      case("r-cis-singlet    "); .TD::make_r_CIS_S0
+      case default
+         UNKNOWN(.TD_data.implementation)
 
       end
 
@@ -396,6 +409,8 @@ contains
       .TD_data.put_results
 
    end
+
+! Efficient methods
 
    make_r_CIS_S0
    ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
@@ -592,41 +607,310 @@ contains
 
    end
 
-! In-core methods
-
-   TD_excited_states_IC ::: leaky
-   ! Do an in-core TD excitation energy calculation.
+   make_r_CIS_S0_SS
+   ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
+   ! See Weiss et al (1993) JCP 99 p1262-70.
       self :: INOUT
 
-      select case (.TD_data.method)
+      ! Key results
+      eval :: VEC{REAL}@  ! The "n" eigenvalues
+      evec :: MAT{REAL}@  ! The "n" eigenvector columns
+      maxit  :: INT       ! Max. no. of iterations allowed
+      tolcon :: REAL      ! Max. residual vec norm, to end
+      n_keep :: INT       ! No. of trial vectors to keep
 
-      case("r-cis-s=0&s=1    "); .TD::make_r_CIS_S0_S1_IC
+      ! Matrix temporaries
+      A :: MAT{REAL}@     ! A matrix
+      R :: MAT{REAL}@     ! Ritz vectors <- becomes "evec"
+      V :: MAT{REAL}@     ! V(:,n)       <- the Davidson trial vectors
+      W :: MAT{REAL}@     ! W(:,n)       <- A.V
+      H :: MAT{REAL}@     ! A            <- in basis "V"
+      T :: VEC{REAL}@     ! New direction, T
+      rvl :: VEC{REAL}@   ! Length of the residual vectors
 
-      case("r-cis-s=0        "); .TD::make_r_CIS_S0_IC
-      case("r-cis-singlet    "); .TD::make_r_CIS_S0_IC
+      MOv :: MAT{REAL}@ 
+      MOo :: MAT{REAL}@ 
 
-      case("r-cis-s=1        "); .TD::make_r_CIS_S1_IC
-      case("r-cis-triplet    "); .TD::make_r_CIS_S1_IC
+      d,n,no :: INT
+      f,l, i :: INT
+      iter :: INT
+      n_tr :: INT
+      converged :: BIN
+      too_many  :: BIN
+      collapse  :: BIN
+      bot :: REAL
 
-      case("r-cis-s=0-ss     "); .TD::make_r_CIS_S0_SS_IC
-      case("r-cis-singlet-ss "); .TD::make_r_CIS_S0_SS_IC
+      ! Sizes
+      d  = .TD_data.deltaE.dim  ! "d" could nvo
+      n  = .TD_data.n_eig       ! Usually n << d
+      no = .TD_data.n_occ
 
-      case("r-tdhf-s=0&s=1   "); .TD::make_r_TDHF_S0_S1_IC
+      ! Max iterations
+      maxit = .TD_data.max_iterations
 
-      case("r-tdhf-s=0       "); .TD::make_r_TDHF_S0_IC
-      case("r-tdhf-singlet   "); .TD::make_r_TDHF_S0_IC
+      ! Convergence
+      tolcon = .TD_data.tol_Davidson
 
-      case("r-tdhf-s=1       "); .TD::make_r_TDHF_S1_IC
-      case("r-tdhf-triplet   "); .TD::make_r_TDHF_S1_IC
+      ! No. of trial vectors to keep
+      n_keep = .TD_data.n_keep
 
-      case("u-cis            "); .TD::make_u_CIS_IC
+      ! Best vectors
+      R.create(d,n)         ! Will be "evec"
+      eval.create(n*n_keep) ! Will shrink to "n"
+
+      ! The A matrix
+      A.create(d,d)
+      .TD:make_r_CIS_S0_SS(A)
+
+      ! Residue vector length
+      rvl.create(n) 
+
+      ! Davidson vectors "V"
+      V.create(d,n*n_keep)  ! Need all in memory???
+      W.create(d,n*n_keep)  ! Space for product A*V, worst case
+      T.create(d)           ! Space for new directions
+
+      ! MOs to transform
+      MOv = .MOs.r(:,no+1:  )
+      MOo = .MOs.r(:,   1:no) 
+
+      ! Initialize
+      V.to_unit_mx          ! Initial guess
+      iter = 0              ! Overall iteration count
+      n_tr = 0              ! No. of trial vector sets
+      converged = FALSE
+      too_many  = FALSE
+
+      stdout.flush
+      stdout.text("=====================")
+      stdout.text("Davidson diagonalizer")
+      stdout.text("=====================")
+      stdout.flush
+      stdout.show("Dimension of matrix            ",d)
+      stdout.show("No. of eigenvalues wanted      ",n)
+      stdout.show("Max. trial vector sets kept + 1",n_keep)
+      stdout.show("Max. no. of iterations         ",maxit)
+      stdout.show("Tolerance for convergence      ",tolcon)
+
+      do 
+
+         ! Iteration & no. of trial vector sets (-1)
+         iter = iter + 1
+         n_tr = n_tr + 1
+
+         ! First & last trial vector columns
+         l = n*(n_tr-1)
+         f = l + 1
+         l = l + n
+
+         ! 1. Expensive step, extends W
+         ! Replace with low-mem matrix product
+         W(:,f:l) = matmul(A,V(:,f:l))
+
+         ! U(MO) -> U(AO)
+       ! U(:,:,n).back_transform_to(U_ao,MOv,Moo)
+       ! U_ao.symmetrize
+
+       ! ! Make A.U (AO) -> A.U (MO) = W
+       ! .FOCK:make_r_JK_engine(J,K,U_ao)
+       ! U_ao = FOUR*J - TWO*K
+       ! .BASE:remove_dependence_from_r(U_ao)
+       ! U_ao.change_basis_to(W,MOv,Moo)
+
+         ! 2. Expand Rayleigh matrix
+         H.expand(l,l)
+         evec.create(l,l)
+         H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
+         H.symmetric_reflect(set_upper=TRUE)
+
+         ! 3. Diagonalise (increasing eigenvalues)
+         H.diagonalize_Jacobi(eval(1:l),evec)
+       ! H.solve_symmetric_eigenproblem(eval(1:l),evec)
+
+         ! 4. Lowest Ritz vectors
+         R = matmul(V(:,1:l),evec(:,1:n))
+
+         ! Too many iters? Collapse space?
+         too_many = iter>maxit; if (too_many) exit 
+         collapse = n_tr==n_keep
+
+         stdout.flush
+         stdout.text("=========")
+         stdout.show("iter      ",iter)
+         stdout.show("n_tr      ",n_tr)
+         stdout.show("collapse? ",collapse)
+         stdout.show("too many? ",too_many)
+         stdout.show("f         ",f)
+         stdout.show("l         ",l)
+
+         if (too_many) then
+
+            ! Save to disk?
+            evec.destroy
+            H.destroy
+
+         else if (collapse) then
+
+            ! Restart with Ritz vector
+            n_tr = 0
+            V(:,1:n) = R
+            V(:,1:n).Householder_QR ! Needed?
+
+            ! Note: clean both
+            evec.destroy
+            H.destroy
+
+         else 
+
+            ! 5-7. Get residual & new direction T, per-column
+            do i = 1,n
+        
+               ! 5. Residual T & its length
+               T = eval(i)*R(:,i) - matmul(W(:,1:l),evec(:,i)) 
+               rvl(i) = norm2(T)
+        
+               ! 6. Precondition
+               bot = eval(i) - H(i,i)
+               if (abs(bot) < 0.001d0) bot = bot + TOL(2)
+               bot= ONE/bot
+
+               ! 7a. Set new direction t
+               V(:,l+i) = bot*T
+        
+            end
+
+         stdout.flush
+         stdout.show("conv      ",maxval(abs(rvl)))
+         stdout.flush
+         stdout.text("eval:")
+         stdout.put(eval(1:n))
+        
+            ! Finished?
+            converged = all(rvl<tolcon); if (converged) exit
+          
+            ! 7. Orthonormalize vectors V
+            V(:,1:l+n).modified_Gram_Schmidt_QR
+          ! V(:,1:l+n).Householder_QR 
+        
+            ! Clean up
+            evec.destroy
+
+         end
 
       end
 
-      ! Put
-      .TD_data.put_results
+      ENSURE(converged,"No convergence")
+      ENSURE(NOT too_many,"Too many iterations")
+
+      ! Clean up
+      evec.destroy
+      H.destroy
+      MOv.destroy
+      MOo.destroy
+      T.destroy
+      W.destroy
+      V.destroy
+      rvl.destroy
+      A.destroy
+
+      ! Recover & store solution
+      eval.shrink(n)
+      call move_alloc(eval,.TD_data.eval)
+      call move_alloc(R   ,.TD_data.evec)
 
    end
+
+   make_r_CIS_S0_SS(AA) ::: leaky
+   ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
+   ! See Weiss et al (1993) JCP 99 p1262-70.
+      self :: INOUT
+      AA :: MAT{REAL}, OUT
+
+   ENSURE(.TD_data.allocated,"NO TD_data!")
+   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      v :: MAT4{REAL}@
+      a,i,ai :: INT
+      b,j,bj :: INT
+      lo, hv :: INT
+      n,no, nvo :: INT
+      aibj,abji :: REAL
+      Ei   :: REAL
+      VMOs :: BIN
+
+      ! Dimensions
+      n   = .TD_data.n_bf
+      no  = .TD_data.n_occ
+      nvo = .TD_data.deltaE.dim
+      lo  = .TD_data.min_OMO
+      hv  = .TD_data.max_VMO + no ! NOTE
+
+      ! A matrix (leaky)
+      AA = ZERO
+
+      ! Get ERIs in MO basis
+      v.create([lo,hv],[lo,hv],[lo,hv],[lo,hv])
+      .FOCK:make_MO_ERI_chem_integrals(v)
+    ! .FOCK:make_MO_ERIs_v0(v,lo,hv)
+    ! .FOCK:make_MO_ERIs_v1(v,lo,hv)
+    ! .FOCK:make_MO_ERIs_v2(v,lo,hv)
+
+      ! New recanoinicalised VMOs?
+      VMOs = .SCF_data.VV_Fock_mx.allocated
+
+      ! Do diagonal part
+      if (NOT VMOs) then
+
+         ! Eigenvalue difference
+         do ai = 1,nvo
+            AA(ai,ai) = .TD_data.deltaE(ai)
+         end
+
+      else
+
+         ! Non-diagonal VMO part
+         do ai = 1,nvo
+            a = .TD_data.single(ai,1)
+            i = .TD_data.single(ai,2)
+            Ei = .TD_data.Eo(i)
+            AA(ai,ai) = -Ei
+            do bj = 1,nvo
+               b = .TD_data.single(bj,1)
+               j = .TD_data.single(bj,2)
+               if (i==j) then
+                  AA(ai,bj) = AA(ai,bj) + .SCF_data.VV_Fock_mx(a,b)
+               end
+            end
+         end
+
+      end
+
+      ! Two-electron part
+      do ai = 1,nvo
+         a = .TD_data.single(ai,1) + no
+         i = .TD_data.single(ai,2)
+         do bj = 1,nvo
+            b = .TD_data.single(bj,1) + no
+            j = .TD_data.single(bj,2)
+            ! Integrals
+            aibj = v(a,i,b,j)
+            abji = v(a,b,j,i)
+            ! Weiss et al (1993) JCP 99 p1262-70: ! Singlet
+            AA(ai,bj) = AA(ai,bj) + TWO*aibj - abji ! eqn (3)+(5)/2
+         end
+      end
+
+      v.destroy
+
+      ! Symmetrize
+      AA.symmetric_reflect
+
+   end
+
+! In-core methods
 
    TD_excited_state_solver_IC(AA,append) ::: leaky, private
    ! Diagonalise the CIS/TD matrix "A", or similar, in-core.
