@@ -403,21 +403,21 @@ contains
    ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
    ! via Davidson. See Crouzeix et al (2006) Inria RR 1353.
    ! Step numbers & symbols below mostly from p. 5 Crouzeix.
+   ! NOTE: there is a complex interaction with .TD_data
+   ! which keeps iteration and convergence information.
       self :: INOUT
 
-      ! Key results
-      A :: MAT{REAL}@     ! A matrix
+      ! Main variables
       H :: MAT{REAL}@     ! A, in trial basis "V"
       eval :: VEC{REAL}@  ! The "n" eigenvalues
       evec :: MAT{REAL}@  ! The "n" eigenvector columns
 
       ! Matrix temporaries
-      V :: MAT{REAL}@     ! V(:,n) <- the Davidson trial vectors
-      W :: MAT{REAL}@     ! W(:,n) <- A.V
+      V :: MAT{REAL}@     ! V(:,n) <- Davidson trial vectors
+      W :: MAT{REAL}@     ! W(:,n) <- A.V in MO basis
       T :: VEC{REAL}@     ! T      <- new ditrection
-
-    ! MOv :: MAT{REAL}@ 
-    ! MOo :: MAT{REAL}@ 
+      DM :: MAT3{REAL}@   ! DM     <-  V  in AO basis
+      AV :: MAT3{REAL}@   ! AV     <- A.V in AO basis
 
       d, n   :: INT
       n_keep :: INT
@@ -436,19 +436,12 @@ contains
       n_keep = .TD_data.n_keep ! No. of trial vectors to keep
 
       ! Temporaries
-      V.create(d,n*n_keep)  ! Davidson trial vector colums "V"
-      V.to_unit_mx          ! Initialise "V", choose wisely
-      W.create(d,n*n_keep)  ! For product A*V
-      T.create(d)           ! New directions, scaled residual
-
-      ! MOs to transform
-    ! no = .TD_data.n_occ
-    ! MOv = .MOs.r(:,no+1:  )
-    ! MOo = .MOs.r(:,   1:no) 
-
-      ! The A matrix
-      A.create(d,d)
-      .TD:make_r_CIS_S0_SS(A)
+      V.create(d,n*n_keep)     ! Davidson trial vector colums "V"
+      V.to_unit_mx             ! Initialise "V", choose wisely
+      W.create(d,n*n_keep)     ! A.V in MO basis
+      T.create(d)              ! New directions, scaled residual
+      DM.create(n,.n_bf,.n_bf) ! Density matrices
+      AV.create(n,.n_bf,.n_bf) ! A.V in AO basis
 
       do ! Davidson loop
 
@@ -457,51 +450,34 @@ contains
 
          ! Collapse subspace down?
          if (.TD_data.collapse) then
-
-            ! Keep one trial set
-            .TD_data.reset_subspace 
-
-            ! Restart last Ritz vector
-            V(:,1:n) = .TD_data.evec
-          ! V(:,1:n).Householder_QR ! Needed?
-
-            ! Remake
-            H.destroy
-
+            .TD_data.reset_subspace  ! Keep one trial set
+            V(:,1:n) = .TD_data.evec ! Restart with last one
+            H.destroy                ! Remake H
          end
 
-         ! Trial vector columns
+         ! 1. Expensive step: extend W = A.V
          f = .TD_data.fst_trial_vector
          l = .TD_data.lst_trial_vector
+         .TD_data.AO_transform_evec_r_S0(V(:,f:l),DM)
+         .FOCK:make_r_F_direct(AV,DM)
+       ! .TD_data.MO_transform_evec_S0_r(AV,W(:,f:l))
+       ! W(:,f:l) = matmul(A,V(:,f:l)) 
 
          ! 2. Expand Rayleigh matrix
-         H.expand(l,l)                 ! A in reduced basis
+         H.expand(l,l)    ! A in V basis
          evec.create(l,l)
          eval.create(l)
-         W(:,f:l) = matmul(A,V(:,f:l)) ! 1. Expensive step, extends W
          H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
          H.symmetric_reflect(set_upper=TRUE)
 
          ! 3. Diagonalise (increasing eigenvalues)
-       ! H.diagonalize_Jacobi(eval(1:l),evec)
          H.solve_symmetric_eigenproblem(eval(1:l),evec)
 
-         ! 4. Keep lowest Ritz vectors
+         ! 4. Keep Ritz vectors (lowest only)
          .TD_data.eval = eval(1:n)
          .TD_data.evec = matmul(V(:,1:l),evec(:,1:n))
-         !!!!!!!!!!!!!!!!!!!!!!!!
 
-       ! stdout.flush
-       ! stdout.text("=========")
-       ! stdout.show("iter      ",.TD_data.iteration)
-       ! stdout.show("n_tr      ",.TD_data.n_trial)
-       ! stdout.show("collapse? ",.TD_data.collapse)
-       ! stdout.show("too many? ",.TD_data.reached_max_it)
-       ! stdout.show("f         ",f)
-       ! stdout.show("l         ",l)
-
-          ! 5-7. Get residual 
-          ! Append new directions
+          ! 5-7. Get residual & add new directions
           maxres = ZERO
           do i = 1,n
           
@@ -515,33 +491,26 @@ contains
              if (abs(bot)<TOL(3)) bot = bot + TOL(2)
              bot= ONE/bot
          
-             ! 7a. Set new direction t
+             ! 7a. Set new direction T
              V(:,l+i) = bot*T
           
           end
           .TD_data.set_max_res(maxres)
 
-       ! stdout.flush
-       ! stdout.show("conv      ",maxres)
-       ! stdout.flush
-       ! stdout.text("eval:")
-       ! stdout.put(eval(1:n))
-        
          ! Clean up
          eval.destroy
          evec.destroy
         
+         ! 7. Orthonormalize vectors V ?
          if (NOT .TD_data.converged) then
-            ! Continue ...
-            ! 7. Orthonormalize vectors V
             V(:,1:l+n).modified_Gram_Schmidt_QR
           ! V(:,1:l+n).Householder_QR 
          end
 
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         ! Print out table & finish? !!!!!!
          .TD_data.put_D_table_body_and_footer
          if (.TD_data.Davidson_done)   exit
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       end
 

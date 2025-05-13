@@ -589,18 +589,22 @@ contains
 !  ====================
 
    make_r_F_direct(J,P) ::: PURE
-   ! Make Fock matrices "F" from density matrices "P". 
-   ! The first index is a perturbation, or state index.
+   ! Make Fock matrices "J" from symmetric density matrices "P". 
+   ! The first index is a perturbation, or state index.  "J" is
+   ! the Coulomb matrix, then the exchange contribution gets 
+   ! added in, which is a bit wasteful.
       self :: INOUT
       J :: MAT3{REAL}, OUT
       P :: MAT3{REAL}, IN
 
    ENSURE(.basis_shell1pair.allocated,"no precomputed shell pair information")
+   ENSURE(P.is_same_shape_as(J),"J & P, incompatible")
+   ENSURE(P.dim2==P.dim3,"P not square in dim2 & dim3")
 
       K :: MAT3{REAL}@
       I, max_P   :: VEC{REAL}@
       sh4s, sh4n :: SHELL1QUARTET
-      ab, cd, abcd   :: INT
+      ab,cd, abcd, n :: INT
       a,  b,  c,  d  :: INT
       aa, bb, cc, dd :: INT
       fa, fb, fc, fd :: INT
@@ -613,7 +617,6 @@ contains
       I_abcd   :: REAL
       ab_same  :: BIN
       any_same :: BIN
-      no_max_I :: BIN
       skip     :: BIN
 
       J = ZERO
@@ -624,9 +627,7 @@ contains
 
       ! Max (ab|ab) integrals for Schwarz test
       cutoff = .SCF_data.ERI_Schwarz_cutoff
-      no_max_I = FALSE
-      if (.max_I.deallocated) no_max_I = TRUE
-      if (no_max_I) .:initialize_max_I
+      if (.max_I.deallocated) .:initialize_max_I ! leaky
 
       ! Max density matrix elements
       max_P.create(.n_shell_pairs)
@@ -655,7 +656,6 @@ contains
 
             ! Shell quartet |cd) indices
             .SET:set_shell2_indices_from(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d)
-
 
             ! Actual Schwarz test
             skip = ::Schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
@@ -697,12 +697,14 @@ contains
             do a = fa,la
                abcd = abcd + 1
                I_abcd = factor * I(abcd)
-               J(:,a,b) = J(:,a,b) + I_abcd*P(:,d,c)
-               J(:,c,d) = J(:,c,d) + I_abcd*P(:,b,a)
-               K(:,a,c) = K(:,a,c) + I_abcd*P(:,d,b)
-               K(:,a,d) = K(:,a,d) + I_abcd*P(:,c,b)
-               K(:,b,c) = K(:,b,c) + I_abcd*P(:,d,a)
-               K(:,b,d) = K(:,b,d) + I_abcd*P(:,c,a)
+               do n = 1,P.dim1
+                  J(n,a,b) = J(n,a,b) + I_abcd*P(n,d,c)
+                  J(n,c,d) = J(n,c,d) + I_abcd*P(n,b,a)
+                  K(n,a,c) = K(n,a,c) + I_abcd*P(n,d,b)
+                  K(n,a,d) = K(n,a,d) + I_abcd*P(n,c,b)
+                  K(n,b,c) = K(n,b,c) + I_abcd*P(n,d,a)
+                  K(n,b,d) = K(n,b,d) + I_abcd*P(n,c,a)
+               end
             end
             end
             end
@@ -719,7 +721,6 @@ contains
       end
 
       max_P.destroy
-      if (no_max_I) .max_I.destroy
 
       .:weight_diagonal_blocks_23(J,TWO)
       .:blockwise_symmetric_fold_23(K)
