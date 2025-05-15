@@ -383,7 +383,7 @@ contains
 
       case ("davidson")
          select case (.TD_data.method)
-       ! case("r-cis-s=0-ss     "); .TD:make_r_CIS_S0_SS
+         case("r-cis-s=0-ss     "); .TD:make_r_CIS_S0_SS
          case("r-cis-s=0-ss-d1  "); .TD:make_r_CIS_S0_SS_D1
          case("r-cis-s=0-ss-d2  "); .TD:make_r_CIS_S0_SS_D2
          case default; UNKNOWN(.TD_data.method)
@@ -415,6 +415,7 @@ contains
       evec :: MAT{REAL}@  ! The "n" eigenvector columns
 
       ! Matrix temporaries
+      A :: MAT{REAL}@  
       V :: MAT{REAL}@     ! V(:,n) <- Davidson trial vectors
       W :: MAT{REAL}@     ! W(:,n) <- A.V in MO basis
       T :: VEC{REAL}@     ! T      <- new ditrection
@@ -439,11 +440,12 @@ contains
 
       ! Temporaries
       V.create(d,n*n_keep)     ! Davidson trial vector colums "V"
-      V.to_unit_mx             ! Initialise "V", choose wisely
       W.create(d,n*n_keep)     ! A.V in MO basis
       T.create(d)              ! New directions, scaled residual
       DM.create(n,.n_bf,.n_bf) ! Density matrices
       AV.create(n,.n_bf,.n_bf) ! A.V in AO basis
+
+      V.to_unit_mx             ! Initialise "V", choose wisely
 
       do ! Davidson loop
 
@@ -461,10 +463,21 @@ contains
          f = .TD_data.fst_trial_vector
          l = .TD_data.lst_trial_vector
          ! Below does: W(:,f:l) = matmul(A,V(:,f:l)) 
-         .TD_data.AO_transform_evec_r_S0(V(:,f:l),DM)
-         .FOCK:make_r_F_direct(AV,DM)
-         .TD_data.MO_AV_update(V(:,f:l),W(:,f:l))
-         .TD_data.MO_transform_evec_r_S0(AV,W(:,f:l))
+         .TD_data.transform_V_to_DM(V(:,f:l),DM)       ! Back transform
+         .FOCK:make_r_F_direct(AV,DM)                  ! AV in the AO basis
+         .TD_data.do_diagnl_AV_part(V(:,f:l),W(:,f:l)) ! Set W = diag(A).V
+         W(:,f:l) = ZERO
+         .TD_data.transform_AV_to_V(AV,      W(:,f:l)) ! W =+ MO-transform(AV)
+         stdout.text("W1:")
+         stdout.put(W)
+
+         ! 1. Expensive step, extends W
+         A.create(d,d)
+         .TD:make_r_CIS_S0_SS(A,one=FALSE)
+         W(:,f:l) = matmul(A,V(:,f:l)) 
+         stdout.text("W2:")
+         stdout.put(W)
+         stop
 
          ! 2. Expand Rayleigh matrix
          H.expand(l,l)    ! A in V basis
@@ -476,7 +489,7 @@ contains
          ! 3. Diagonalise (increasing eigenvalues)
          H.solve_symmetric_eigenproblem(eval(1:l),evec)
 
-         ! 4. Keep Ritz vectors (lowest only)
+         ! 4. Keep Ritz vectors "R" (lowest only)
          .TD_data.eval = eval(1:n)
          .TD_data.evec = matmul(V(:,1:l),evec(:,1:n))
 
@@ -485,8 +498,8 @@ contains
           do i = 1,n
           
              ! 5. Residual T & its length
-             T = eval(i)*.TD_data.evec(:,i) & ! R
-                - matmul(W(:,1:l),evec(:,i) ) 
+             T = eval(i)*.TD_data.evec(:,i) & ! "R"
+               - matmul(W(:,1:l), evec(:,i) ) 
              maxres = max(norm2(T),maxres)
           
              ! 6. Precondition
@@ -522,6 +535,110 @@ contains
       T.destroy
       W.destroy
       V.destroy
+
+   end
+
+   make_r_CIS_S0_SS(AA,one,two) ::: leaky
+   ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
+   ! If "one" is present and FALSE then skip 1-electron part.
+   ! If "two" is present and FALSE then skip 2-electron part.
+   ! See Weiss et al (1993) JCP 99 p1262-70.
+      self :: INOUT
+      AA  :: MAT{REAL}, OUT
+      one :: BIN, optional, IN
+      two :: BIN, optional, IN
+
+   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      v :: MAT4{REAL}@
+      a,i,ai :: INT
+      b,j,bj :: INT
+      lo, hv :: INT
+      d,n,no :: INT
+      aibj, abji :: REAL
+      do1, do2 :: BIN
+
+      ! Do one electron part?   
+      do1 = TRUE 
+      if (present(one)) do1 = one
+
+      ! Do two electron part?
+      do2 = TRUE 
+      if (present(two)) do2 = two
+
+      ! Dimensions
+      d   = .TD_data.deltaE.dim
+      n   = .TD_data.n_bf
+      no  = .TD_data.n_occ
+      lo  = .TD_data.min_OMO
+      hv  = .TD_data.max_VMO + no ! NOTE
+
+      ! A matrix (leaky)
+      AA = ZERO
+
+      if (do1) then
+
+         ! Do diagonal part
+         if (.TD_data.Fv.deallocated) then
+        
+            ! Eigenvalue difference
+            do ai = 1,d
+               AA(ai,ai) = .TD_data.deltaE(ai)
+            end
+        
+         else
+        
+            ! Non-diagonal VMO part
+            do ai = 1,d
+               a = .TD_data.single(ai,1)
+               i = .TD_data.single(ai,2)
+               AA(ai,ai) = -.TD_data.Eo(i)
+               do bj = 1,d
+                  b = .TD_data.single(bj,1)
+                  j = .TD_data.single(bj,2)
+                  if (i==j) then
+                     AA(ai,bj) = AA(ai,bj) + .TD_data.Fv(a,b)
+                  end
+               end
+            end
+        
+         end
+
+      end
+
+      if (do2) then
+
+         ! Get ERIs in MO basis
+         v.create([lo,hv],[lo,hv],[lo,hv],[lo,hv])
+       ! .FOCK:make_MO_ERI_chem_integrals(v)
+       ! .FOCK:make_MO_ERIs_v0(v,lo,hv)
+         .FOCK:make_MO_ERIs_v1(v,lo,hv)
+       ! .FOCK:make_MO_ERIs_v2(v,lo,hv)
+   
+         ! Two-electron part
+         do ai = 1,d
+            a = .TD_data.single(ai,1) + no
+            i = .TD_data.single(ai,2)
+            do bj = 1,d
+               b = .TD_data.single(bj,1) + no
+               j = .TD_data.single(bj,2)
+               ! Integrals
+               aibj = v(a,i,b,j)
+               abji = v(a,b,j,i)
+               ! Weiss et al (1993) JCP 99 p1262-70: ! Singlet
+               AA(ai,bj) = AA(ai,bj) + TWO*aibj - abji ! eqn (3)+(5)/2
+            end
+         end
+   
+         v.destroy
+   
+      end
+
+      ! Symmetrize
+      AA.symmetric_reflect
 
    end
 
@@ -612,7 +729,7 @@ contains
        ! H.diagonalize_Jacobi(eval(1:l),evec)
          H.solve_symmetric_eigenproblem(eval(1:l),evec)
 
-         ! 4. Keep lowest Ritz vectors
+         ! 4. Keep lowest Ritz vectors "R"
          .TD_data.eval = eval(1:n)
          .TD_data.evec = matmul(V(:,1:l),evec(:,1:n))
          !!!!!!!!!!!!!!!!!!!!!!!!
@@ -632,8 +749,8 @@ contains
           do i = 1,n
           
              ! 5. Residual T & its length
-             T = eval(i)*.TD_data.evec(:,i) & ! R
-                - matmul(W(:,1:l),evec(:,i) ) 
+             T = eval(i)*.TD_data.evec(:,i) & ! "R"
+               - matmul(W(:,1:l),evec(:,i) ) 
              maxres = max(norm2(T),maxres)
           
              ! 6. Precondition
@@ -676,95 +793,6 @@ contains
       T.destroy
       W.destroy
       V.destroy
-
-   end
-
-   make_r_CIS_S0_SS(AA) ::: leaky
-   ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
-   ! See Weiss et al (1993) JCP 99 p1262-70.
-      self :: INOUT
-      AA :: MAT{REAL}, OUT
-
-   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
-   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
-   ENSURE(.MOs.allocated,"MOs do not exist")
-   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
-
-      v :: MAT4{REAL}@
-      a,i,ai :: INT
-      b,j,bj :: INT
-      lo, hv :: INT
-      n,no, nvo :: INT
-      aibj,abji :: REAL
-      Ei   :: REAL
-      VMOs :: BIN
-
-      ! Dimensions
-      n   = .TD_data.n_bf
-      no  = .TD_data.n_occ
-      nvo = .TD_data.deltaE.dim
-      lo  = .TD_data.min_OMO
-      hv  = .TD_data.max_VMO + no ! NOTE
-
-      ! A matrix (leaky)
-      AA = ZERO
-
-      ! Get ERIs in MO basis
-      v.create([lo,hv],[lo,hv],[lo,hv],[lo,hv])
-    ! .FOCK:make_MO_ERI_chem_integrals(v)
-    ! .FOCK:make_MO_ERIs_v0(v,lo,hv)
-      .FOCK:make_MO_ERIs_v1(v,lo,hv)
-    ! .FOCK:make_MO_ERIs_v2(v,lo,hv)
-
-      ! New recanoinicalised VMOs?
-      VMOs = .SCF_data.VV_Fock_mx.allocated
-
-      ! Do diagonal part
-      if (NOT VMOs) then
-
-         ! Eigenvalue difference
-         do ai = 1,nvo
-            AA(ai,ai) = .TD_data.deltaE(ai)
-         end
-
-      else
-
-         ! Non-diagonal VMO part
-         do ai = 1,nvo
-            a = .TD_data.single(ai,1)
-            i = .TD_data.single(ai,2)
-            Ei = .TD_data.Eo(i)
-            AA(ai,ai) = -Ei
-            do bj = 1,nvo
-               b = .TD_data.single(bj,1)
-               j = .TD_data.single(bj,2)
-               if (i==j) then
-                  AA(ai,bj) = AA(ai,bj) + .SCF_data.VV_Fock_mx(a,b)
-               end
-            end
-         end
-
-      end
-
-      ! Two-electron part
-      do ai = 1,nvo
-         a = .TD_data.single(ai,1) + no
-         i = .TD_data.single(ai,2)
-         do bj = 1,nvo
-            b = .TD_data.single(bj,1) + no
-            j = .TD_data.single(bj,2)
-            ! Integrals
-            aibj = v(a,i,b,j)
-            abji = v(a,b,j,i)
-            ! Weiss et al (1993) JCP 99 p1262-70: ! Singlet
-            AA(ai,bj) = AA(ai,bj) + TWO*aibj - abji ! eqn (3)+(5)/2
-         end
-      end
-
-      v.destroy
-
-      ! Symmetrize
-      AA.symmetric_reflect
 
    end
 
@@ -1118,7 +1146,7 @@ contains
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
       self :: INOUT
 
-   ENSURE(.SCF_data.VV_Fock_mx.deallocated,"VMO canonisation disallowed here")
+   ENSURE(.TD_data.Fv.deallocated,"VMO canonisation disallowed here")
    ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
    ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
    ENSURE(.MOs.allocated,"MOs do not exist")
@@ -1217,7 +1245,7 @@ contains
       self :: INOUT
       append :: BIN, optional, IN
 
-   ENSURE(.SCF_data.VV_Fock_mx.deallocated,"VMO canonisation disallowed here")
+   ENSURE(.TD_data.Fv.deallocated,"VMO canonisation disallowed here")
    ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
    ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
    ENSURE(.MOs.allocated,"MOs do not exist")
@@ -1298,7 +1326,7 @@ contains
       self :: INOUT
       append :: BIN, optional, IN
 
-   ENSURE(.SCF_data.VV_Fock_mx.deallocated,"VMO canonisation disallowed here")
+   ENSURE(.TD_data.Fv.deallocated,"VMO canonisation disallowed here")
    ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
    ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
    ENSURE(.MOs.allocated,"MOs do not exist")
@@ -1392,7 +1420,7 @@ contains
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
       self :: INOUT
 
-   ENSURE(.SCF_data.VV_Fock_mx.deallocated,"VMO canonisation disallowed here")
+   ENSURE(.TD_data.Fv.deallocated,"VMO canonisation disallowed here")
    ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
    ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
    ENSURE(.MOs.allocated,"MOs do not exist")
