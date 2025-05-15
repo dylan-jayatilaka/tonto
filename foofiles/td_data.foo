@@ -143,7 +143,8 @@ contains
       case("r-cis-s=0-ss     ")
       case("r-cis-singlet-ss ")
 
-      case("r-cis-s=0-ss-d   ")
+      case("r-cis-s=0-ss-d1  ")
+      case("r-cis-s=0-ss-d2  ")
 
       case("r-tdhf-s=0&s=1   ")
 
@@ -1401,9 +1402,9 @@ contains
       res = .max_res.index_of_minimum
    end
 
-!  ============================
-!  Back-transform A mx products
-!  ============================
+!  =======================
+!  Efficient A x V product
+!  =======================
 
    AO_transform_evec_r_S0(V,DM) ::: PURE
    ! Back transform trial eigenvectors "V" to symmetric 
@@ -1412,39 +1413,44 @@ contains
    ! of the (A x V) Davidson step in the CIS/TD equations.
    ! NOTE: restricted S=0 singlet case.
       self :: IN  
-      V    :: MAT{REAL}, IN
-      DM   :: MAT3{REAL}, OUT
+      V  :: MAT{REAL}, IN
+      DM :: MAT3{REAL}, OUT
    
    ENSURE(DM.dim1==.n_evals,"inconsistent dim1, DM")
 
-      ai,a,i :: INT
-      d,no,n :: INT 
-      p,q :: INT
+      ai, a,i :: INT
+      d,no,lo :: INT 
+      n, p, q :: INT
       W :: MAT3{REAL}@
 
-      ! Sizes
+      ! Sizes & limits
       d  = .single.dim1
       no = .n_occ
+      lo = .min_OMO
 
-      ! Transform "a" index
-      W.create(.n_bf,no,.n_evals)
+      ! Single index transform temporary
+      W.create([1,.n_bf],[lo,no],[1,.n_evals])
       W = ZERO
-      do n = 1,.n_evals
-      do p = 1,.n_bf
-      do ai = 1,d
+
+      ! Transform "a" index of "V" -> "W"
+      do n  = 1, .n_evals
+      do p  = 1, .n_bf
+      do ai = 1, d
          a = .single(ai,1)
          i = .single(ai,2)
+         ! a -> p
          W(p,i,n) = W(p,i,n) + V(ai,n)*.MOv(p,a)
       end
       end
       end
 
-      ! Transform "i" index
+      ! Transform "i" index of "W" -> "DM"
       DM = ZERO
-      do n = 1,.n_evals
-      do i = 1,no
-      do p = 1,.n_bf
-      do q = 1,.n_bf
+      do n = 1, .n_evals
+      do i = lo, no
+      do p = 1, .n_bf
+      do q = 1, .n_bf
+         ! i -> q
          DM(n,p,q) = DM(n,p,q) + .MOo(q,i)*W(p,i,n)
       end
       end
@@ -1456,6 +1462,116 @@ contains
 
       ! Clean up
       W.destroy
+
+   end
+
+   MO_transform_evec_r_S0(AV,V,Fv) ::: PURE
+   ! *Accumulate* transform of (n_bf x n_bf) matrices "AV" 
+   ! into trial eigenvectors "V". Also add in the diagonal 
+   ! eigenvalue contribution of A matrix. If "Fv" is given 
+   ! the VMOs are assumed non-canonical.
+   ! NOTE: restricted S=0 singlet case.
+      self :: IN  
+      AV :: MAT3{REAL}, IN
+      V  :: MAT{REAL},  INOUT
+      Fv :: MAT{REAL}, optional, IN
+   
+   ENSURE(AV.dim2==.n_bf,   "wrong dim2, AV")
+   ENSURE(AV.dim2==AV.dim3, "AV not square in dim2 & dim3")
+   ENSURE(AV.dim1==.n_evals,"inconsistent dim1, AV")
+   ENSURE(AV.dim1==V.dim2,  "inconsistent dim2, V")
+
+      ai, a,i :: INT
+      d,no,lo :: INT 
+      n, p, q :: INT
+      W :: MAT3{REAL}@
+
+      ! Sizes
+      d  = .single.dim1
+      no = .n_occ
+      lo = .min_OMO
+
+      ! Transform "a" index
+      W.create([1,.n_evals],[1,.n_bf],[lo,no])
+      W = ZERO
+
+      ! Transform "q" index
+      W = ZERO
+      do i = lo,no
+      do q = 1,.n_bf
+      do p = 1,.n_bf
+      do n = 1,.n_evals
+         W(n,p,i) = W(n,p,i) + AV(n,p,q)*.MOo(q,i)
+      end
+      end
+      end
+      end
+
+      ! Transform "p" index
+      do n = 1,.n_evals
+      do p = 1,.n_bf
+      do ai = 1,d
+         a = .single(ai,1)
+         i = .single(ai,2)
+         V(ai,n) = V(ai,n) + W(n,p,i)*.MOv(p,a)
+      end
+      end
+      end
+
+      ! Clean up
+      W.destroy
+
+   end
+
+   MO_AV_update(V,AV) ::: PURE
+   ! Do diagonal eigenvalue part of the A.V product on the trial 
+   ! vectors "V" and put the result in "AV". Can cope with non-
+   ! canonical VMOs if the VV sector of fock matrix is allocated.
+      self :: IN  
+      V  :: MAT{REAL}, IN
+      AV :: MAT{REAL},  OUT
+   
+   ENSURE(AV.is_same_shape_as(V),"inconsistent shape, V and AV")
+   ENSURE(AV.dim2==.n_evals,"wrong dim2, AV")
+
+      ai, a,i :: INT
+      bj, b,j :: INT
+      d,n :: INT
+      Ei :: REAL
+
+      ! Sizes
+      d = .single.dim1
+
+      AV = ZERO
+
+      if (NOT .Fv.allocated) then
+
+         ! Canonical VMOs
+         do ai = 1,d
+         do n  = 1,.n_evals
+            AV(ai,n) = .deltaE(ai)*V(ai,n)
+         end
+         end
+
+      else
+
+         ! Noncanonical VMO case
+         do ai = 1,d
+            a  = .single(ai,1)
+            i  = .single(ai,2)
+            Ei = .Eo(i)
+            AV(ai,n) = -Ei*V(ai,n)
+            do bj = 1,d
+               b  = .single(bj,1)
+               j  = .single(bj,2)
+               if (i/=j) cycle
+               do n = 1,.n_evals
+                  AV(ai,n) = AV(ai,n) + .Fv(a,b)*V(bj,n)
+               end
+            end
+         end
+
+      end
 
    end
 
