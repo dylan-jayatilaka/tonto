@@ -589,7 +589,37 @@ contains
 !  Two-electron Fock matrices for TD
 !  =================================
 
-   make_r_F_direct(J,P) ::: PURE
+   make_r_F_direct_v0(J,P) ::: PURE
+   ! Make Fock matrices "J" from symmetric density matrices "P". 
+   ! The first index is a perturbation, or state index.  "J" is
+   ! the Coulomb matrix, then the exchange contribution gets 
+   ! added in, which is a bit wasteful.
+      self :: INOUT
+      J :: MAT3{REAL}, OUT
+      P :: MAT3{REAL}, IN
+
+   ENSURE(.basis_shell1pair.allocated,"no precomputed shell pair information")
+   ENSURE(P.is_same_shape_as(J),"J & P, incompatible")
+   ENSURE(P.dim2==P.dim3,"P not square in dim2 & dim3")
+
+      K :: MAT{REAL}@
+      n :: INT
+
+      K.create(.n_bf,.n_bf)
+
+      do n = 1,P.dim1
+
+         ! Make A.U (AO) -> A.U (MO) = P
+         .FOCK:make_r_JK_engine(J(n,:,:),K,P(n,:,:))
+         J(n,:,:) = FOUR*J(n,:,:) - TWO*K
+
+      end
+
+      K.destroy
+
+   end
+
+   make_r_F_direct_v1(J,P) ::: PURE
    ! Make Fock matrices "J" from symmetric density matrices "P". 
    ! The first index is a perturbation, or state index.  "J" is
    ! the Coulomb matrix, then the exchange contribution gets 
@@ -623,7 +653,7 @@ contains
       J = ZERO
 
       ! Exchange part. Lazy.
-      K.create(J.dim1,J.dim2,J.dim3)
+      K.create(shape(J))
       K = ZERO
 
       ! Max (ab|ab) integrals for Schwarz test
@@ -6382,7 +6412,7 @@ contains
 !  Lower memory ERIs?
 !  ==================
 
-   make_MO_ERIs_v2(v_MO,lo,hv)
+   make_MO_ERIs_v0(v_MO,lo,hv)
    ! Calculate two-electron repulsion integrals (ERI's) 
    ! "v_MO" in the (11|22) chemical notation, in MO basis.
    ! Produces integrals in MO window:
@@ -6398,8 +6428,8 @@ contains
       b,bb,fb,lb,nb :: INT
       c,cc,fc,lc,nc :: INT
       d,dd,fd,ld,nd :: INT
-      MOs,MOt,X :: MAT{REAL}@
-      vAO,vXX :: MAT4{REAL}@
+      MOs,MOt,W,X :: MAT{REAL}@
+      vAO, vXX  :: MAT4{REAL}@
 
       ! MO range
       MOs = .MOs.r(:,lo:hv) ! MOs
@@ -6421,8 +6451,7 @@ contains
             .SET:set_shell2_indices_from(cd,cc,dd,fc,lc,nc,fd,ld,nd)
 
             ! Half-MO integrals
-          ! vXX.create([lo,hv],[lo,hv],[1,nc],[1,nd])
-            vXX.create([1,nc],[1,nd],[lo,hv],[lo,hv])
+            vXX.create([lo,hv],[lo,hv],[1,nc],[1,nd])
 
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             vAO.create(na,nb,nc,nd)
@@ -6433,15 +6462,17 @@ contains
             if (aa==bb) then
                do c = 1,nc
                do d = 1,nd
-                  X = matmul(MOt(:,fa:la),matmul(vAO(:,:,c,d),MOs(fb:lb,:)))
-                  vXX(c,d,:,:) = X
+                  W = matmul(vAO(:,:,c,d),MOs(fb:lb,:))
+                  X = matmul(MOt(:,fa:la),W)
+                  vXX(:,:,c,d) = X
                end
                end
             else
                do c = 1,nc
                do d = 1,nd
-                  X = matmul(MOt(:,fa:la),matmul(vAO(:,:,c,d),MOs(fb:lb,:)))
-                  vXX(c,d,:,:) = X + transpose(X)
+                  W = matmul(vAO(:,:,c,d),MOs(fb:lb,:))
+                  X = matmul(MOt(:,fa:la),W)
+                  vXX(:,:,c,d) = X + transpose(X)
                end
                end
             end
@@ -6451,15 +6482,17 @@ contains
             if (cc==dd) then
                do a = lo,hv
                do b = lo,hv
-                  X = matmul(MOt(:,fc:lc),matmul(vXX(:,:,a,b),MOs(fd:ld,:)))
-                  v_MO(:,:,a,b) = v_MO(:,:,a,b) + X
+                  W = matmul(vXX(a,b,:,:),MOs(fd:ld,:))
+                  X = matmul(MOt(:,fc:lc),W)
+                  v_MO(a,b,:,:) = v_MO(a,b,:,:) + X
                end
                end
             else
                do a = lo,hv
                do b = lo,hv
-                  X = matmul(MOt(:,fc:lc),matmul(vXX(:,:,a,b),MOs(fd:ld,:)))
-                  v_MO(:,:,a,b) = v_MO(:,:,a,b) + X + transpose(X)
+                  W = matmul(vXX(a,b,:,:),MOs(fd:ld,:))
+                  X = matmul(MOt(:,fc:lc),W)
+                  v_MO(a,b,:,:) = v_MO(a,b,:,:) + X + transpose(X)
                end
                end
             end
@@ -6571,7 +6604,7 @@ contains
 
    end
 
-   make_MO_ERIs_v0(v_MO,lo,hv)
+   make_MO_ERIs_v2(v_MO,lo,hv)
    ! Calculate two-electron repulsion integrals (ERI's) 
    ! "v_MO" in the (11|22) chemical notation, in MO basis.
    ! Produces integrals in MO window:
@@ -6587,8 +6620,8 @@ contains
       b,bb,fb,lb,nb :: INT
       c,cc,fc,lc,nc :: INT
       d,dd,fd,ld,nd :: INT
-      MOs,MOt,W,X :: MAT{REAL}@
-      vAO, vXX  :: MAT4{REAL}@
+      MOs,MOt,X :: MAT{REAL}@
+      vAO,vXX :: MAT4{REAL}@
 
       ! MO range
       MOs = .MOs.r(:,lo:hv) ! MOs
@@ -6610,7 +6643,8 @@ contains
             .SET:set_shell2_indices_from(cd,cc,dd,fc,lc,nc,fd,ld,nd)
 
             ! Half-MO integrals
-            vXX.create([lo,hv],[lo,hv],[1,nc],[1,nd])
+          ! vXX.create([lo,hv],[lo,hv],[1,nc],[1,nd])
+            vXX.create([1,nc],[1,nd],[lo,hv],[lo,hv])
 
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             vAO.create(na,nb,nc,nd)
@@ -6621,17 +6655,15 @@ contains
             if (aa==bb) then
                do c = 1,nc
                do d = 1,nd
-                  W = matmul(vAO(:,:,c,d),MOs(fb:lb,:))
-                  X = matmul(MOt(:,fa:la),W)
-                  vXX(:,:,c,d) = X
+                  X = matmul(MOt(:,fa:la),matmul(vAO(:,:,c,d),MOs(fb:lb,:)))
+                  vXX(c,d,:,:) = X
                end
                end
             else
                do c = 1,nc
                do d = 1,nd
-                  W = matmul(vAO(:,:,c,d),MOs(fb:lb,:))
-                  X = matmul(MOt(:,fa:la),W)
-                  vXX(:,:,c,d) = X + transpose(X)
+                  X = matmul(MOt(:,fa:la),matmul(vAO(:,:,c,d),MOs(fb:lb,:)))
+                  vXX(c,d,:,:) = X + transpose(X)
                end
                end
             end
@@ -6641,17 +6673,15 @@ contains
             if (cc==dd) then
                do a = lo,hv
                do b = lo,hv
-                  W = matmul(vXX(a,b,:,:),MOs(fd:ld,:))
-                  X = matmul(MOt(:,fc:lc),W)
-                  v_MO(a,b,:,:) = v_MO(a,b,:,:) + X
+                  X = matmul(MOt(:,fc:lc),matmul(vXX(:,:,a,b),MOs(fd:ld,:)))
+                  v_MO(:,:,a,b) = v_MO(:,:,a,b) + X
                end
                end
             else
                do a = lo,hv
                do b = lo,hv
-                  W = matmul(vXX(a,b,:,:),MOs(fd:ld,:))
-                  X = matmul(MOt(:,fc:lc),W)
-                  v_MO(a,b,:,:) = v_MO(a,b,:,:) + X + transpose(X)
+                  X = matmul(MOt(:,fc:lc),matmul(vXX(:,:,a,b),MOs(fd:ld,:)))
+                  v_MO(:,:,a,b) = v_MO(:,:,a,b) + X + transpose(X)
                end
                end
             end
