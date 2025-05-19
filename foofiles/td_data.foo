@@ -1,4 +1,5 @@
 !==================================================================
+!
 ! TD_DATA
 !
 ! For doing time-dependent SCF calculations. Either DFT or HF.
@@ -141,6 +142,8 @@ contains
       case("r-cis-triplet    ")
 
       case("r-cis-s=0-ss     ")
+      case("r-cis-s=0-ss-v0  ")
+      case("r-cis-s=0-ss-v1  ")
       case("r-cis-singlet-ss ")
 
       case("r-cis-s=0-ss-d1  ")
@@ -1337,6 +1340,14 @@ contains
       .max_res.create(.n_keep) 
       .max_res = ZERO
 
+      ! Davidson temporaries
+      .Vao.create(n,.n_bf,.n_bf) ! Density matrices
+      .Aao.create(n,.n_bf,.n_bf) ! A.V in AO basis
+
+      ! Set headings & do banner
+      .set_D_table_headings
+      .put_D_table_header
+
    end
 
    update_iteration ::: pure
@@ -1402,70 +1413,70 @@ contains
       res = .max_res.index_of_minimum
    end
 
+
 !  =======================
 !  Efficient A x V product
 !  =======================
 
-   transform_V_to_DM_v0(V,DM) ::: PURE
-   ! Back transform trial eigenvectors "V" to symmetric 
-   ! (n_bf x n_bf) AO sized *non symmetric* density 
-   ! matrices "DM", one for each excited state eigenvalue. 
-   ! For calculating the 2e-part of the (A x V) Davidson 
-   ! step in the CIS/TD equations. 
+   do_diag_AV_bit(AV,V) ::: PURE
+   ! Do the diag(A).V matrix product on single-excitation
+   ! trial vectors "V" and put the result into "AV". 
+   ! Can cope with non-canonical VMOs if the VV sector of 
+   ! the Fock matrix .Fv is allocated.
       self :: IN  
+      AV :: MAT{REAL}, OUT
       V  :: MAT{REAL}, IN
-      DM :: MAT3{REAL}, OUT
    
-   ENSURE(DM.dim1==.n_evals,"inconsistent dim1, DM")
+   ENSURE(AV.is_same_shape_as(V),"inconsistent shape, V and AV")
+   ENSURE(AV.dim2==.n_evals,"wrong dim2, AV")
 
-      ai,a,i :: INT
-      d,no,n :: INT 
-      lo, hv :: INT 
-      C :: MAT{REAL}@
+      ai, a,i :: INT
+      bj, b,j :: INT
+      d,n :: INT
 
-      ! Sizes & limits
-      d  = .single.dim1
-      no = .n_occ
-      lo = .min_OMO
-      hv = .max_VMO
+      ! Sizes
+      d = .single.dim1
 
-      ! Single excitations
-      C.create([1,hv],[lo,no])
+      if (NOT .Fv.allocated) then
 
-      ! Make the DM
-      do n = 1,.n_evals
-
-         ! Convert to C_ai(MO)
-         ! NOTE: this is transposed
-         C = ZERO
+         ! Canonical VMOs
+         do n  = 1,.n_evals
          do ai = 1,d
-            a = .single(ai,1)
-            i = .single(ai,2)
-            C(a,i) = V(ai,n)
+            AV(ai,n) = .deltaE(ai)*V(ai,n)
+         end
          end
 
-         ! C_ai (MO) -> DM(AO)
-         C.back_transform_to(DM(n,:,:),.MOv(:,1:hv),.MOo(:,lo:no))
-       ! DM(n,:,:).symmetrize
+      else
+
+         ! Noncanonical VMO case
+         do ai = 1,d
+            a  = .single(ai,1)
+            i  = .single(ai,2)
+            AV(ai,:) = -.Eo(i)*V(ai,:)
+            do bj = 1,d
+               b  = .single(bj,1)
+               j  = .single(bj,2)
+               if (i/=j) cycle
+               AV(ai,:) = AV(ai,:) + .Fv(a,b)*V(bj,:)
+            end
+         end
 
       end
 
-      ! Clean up
-      C.destroy
-
    end
 
-   transform_V_to_DM_v1(V,DM) ::: PURE
-   ! Back transform trial eigenvectors "V" to symmetric 
-   ! (n_bf x n_bf) AO sized density matrices "DM", one for 
-   ! each excited state eigenvalue. Needed to efficiently 
-   ! calculate the 2e-part of the (A x V) Davidson step in 
-   ! the CIS/TD equations. 
+
+   change_V_to_AO(Vao,V) ::: PURE
+   ! Back transform trial eigenvectors "V" into symmetric 
+   ! (n_bf x n_bf) AO sized density matrices "Vao", for 
+   ! each excited state eigenvalue. Needed to calculate 
+   ! the 2e-part of the A.V Davidson step in CIS/TD eqns. 
+   ! NOTE: the result does *not* accu,mulate.
       self :: IN  
-      V  :: MAT{REAL}, IN
-      DM :: MAT3{REAL}, OUT
+      Vao  :: MAT3{REAL}, OUT
+      V    :: MAT{REAL}, IN
    
-   ENSURE(DM.dim1==.n_evals,"inconsistent dim1, DM")
+   ENSURE(Vao.dim1==.n_evals,"inconsistent dim1, Vao")
 
       ai, a,i :: INT
       d,no,lo :: INT 
@@ -1493,14 +1504,14 @@ contains
       end
       end
 
-      ! Transform "i" index of "W" -> "DM"
-      DM = ZERO
+      ! Transform "i" index of "W" -> "Vao"
+      Vao = ZERO
       do n = 1, .n_evals
       do i = lo, no
       do p = 1, .n_bf
       do q = 1, .n_bf
          ! i -> q
-         DM(n,p,q) = DM(n,p,q) + .MOo(q,i)*W(p,i,n)
+         Vao(n,p,q) = Vao(n,p,q) + .MOo(q,i)*W(p,i,n)
       end
       end
       end
@@ -1511,62 +1522,67 @@ contains
 
    end
 
-   transform_AV_to_V_0(AV,V) ::: PURE
-   ! Transform the (n_bf x n_bf) matrices "AV" and *accumulate*
+!   transform_V_to_AO_v0(V,DM) ::: PURE
+!   ! Back transform trial eigenvectors "V" to symmetric 
+!   ! (n_bf x n_bf) AO sized *non symmetric* density 
+!   ! matrices "DM", one for each excited state eigenvalue. 
+!   ! For calculating the 2e-part of the (A x V) Davidson 
+!   ! step in the CIS/TD equations. 
+!      self :: IN  
+!      V  :: MAT{REAL}, IN
+!      DM :: MAT3{REAL}, OUT
+!   
+!   ENSURE(DM.dim1==.n_evals,"inconsistent dim1, DM")
+!
+!      ai,a,i :: INT
+!      d,no,n :: INT 
+!      lo, hv :: INT 
+!      C :: MAT{REAL}@
+!
+!      ! Sizes & limits
+!      d  = .single.dim1
+!      no = .n_occ
+!      lo = .min_OMO
+!      hv = .max_VMO
+!
+!      ! Single excitations
+!      C.create([1,hv],[lo,no])
+!
+!      ! Make the DM
+!      do n = 1,.n_evals
+!
+!         ! Convert to C_ai(MO)
+!         ! NOTE: this is transposed
+!         C = ZERO
+!         do ai = 1,d
+!            a = .single(ai,1)
+!            i = .single(ai,2)
+!            C(a,i) = V(ai,n)
+!         end
+!
+!         ! C_ai (MO) -> DM(AO)
+!         C.back_transform_to(DM(n,:,:),.MOv(:,1:hv),.MOo(:,lo:no))
+!       ! DM(n,:,:).symmetrize
+!
+!      end
+!
+!      ! Clean up
+!      C.destroy
+!
+!   end
+
+
+   change_V_to_MO(V,Vao) ::: PURE
+   ! Transform the (n_bf x n_bf) matrices "Vao" and *accumulate*
    ! into trial eigenvectors "V" in the state basis.
       self :: IN  
-      AV :: MAT3{REAL}, IN
-      V  :: MAT{REAL},  INOUT
+      V    :: MAT{REAL},  INOUT
+      Vao  :: MAT3{REAL}, IN
    
-   ENSURE(AV.dim2==.n_bf,   "wrong dim2, AV")
-   ENSURE(AV.dim2==AV.dim3, "AV not square in dim2 & dim3")
-   ENSURE(AV.dim1==.n_evals,"inconsistent dim1, AV")
-   ENSURE(AV.dim1==V.dim2,  "inconsistent dim2, V")
-
-      ai,a,i :: INT
-      d,no,n :: INT 
-      lo, hv :: INT 
-      C :: MAT{REAL}@
-
-      ! Sizes & limits
-      d  = .single.dim1
-      no = .n_occ
-      lo = .min_OMO
-      hv = .max_VMO
-
-      ! Single excitations
-      C.create([1,hv],[lo,no])
-
-      do n = 1,.n_evals
-
-         ! AV (MO)  -> C_ai(MO)
-         AV(n,:,:).change_basis_to(C,.MOv(:,1:hv),.MOo(:,lo:no))
-
-         ! C_ai(MO) -> V
-         do ai = 1,d
-            a = .single(ai,1)
-            i = .single(ai,2)
-            V(ai,n) = V(ai,n) + C(a,i)
-         end
-
-      end
-
-      ! Clean up
-      C.destroy
-
-   end
-
-   transform_AV_to_V_v1(AV,V) ::: PURE
-   ! Transform the (n_bf x n_bf) matrices "AV" and *accumulate*
-   ! into trial eigenvectors "V" in the state basis.
-      self :: IN  
-      AV :: MAT3{REAL}, IN
-      V  :: MAT{REAL},  INOUT
-   
-   ENSURE(AV.dim2==.n_bf,   "wrong dim2, AV")
-   ENSURE(AV.dim2==AV.dim3, "AV not square in dim2 & dim3")
-   ENSURE(AV.dim1==.n_evals,"inconsistent dim1, AV")
-   ENSURE(AV.dim1==V.dim2,  "inconsistent dim2, V")
+   ENSURE(Vao.dim1==V.dim2,  "incompatible dim1 & dim2, Vao & V")
+   ENSURE(Vao.dim1==.n_evals,"wrong dim1, Vao")
+   ENSURE(Vao.dim2==.n_bf,   "wrong dim2, Vao")
+   ENSURE(Vao.dim3==.n_bf,   "wrong dim3, Vao")
 
       ai, a,i :: INT
       d,no,lo :: INT 
@@ -1587,7 +1603,7 @@ contains
       do q = 1,.n_bf
       do p = 1,.n_bf
       do n = 1,.n_evals
-         W(n,p,i) = W(n,p,i) + AV(n,p,q)*.MOo(q,i)
+         W(n,p,i) = W(n,p,i) + Vao(n,p,q)*.MOo(q,i)
       end
       end
       end
@@ -1609,53 +1625,50 @@ contains
 
    end
 
-   do_diagnl_AV_part(V,AV) ::: PURE
-   ! Do the diag(A).V matrix product on trial vectors "V" and put 
-   ! the result into "AV". Can cope with non-canonical VMOs if the 
-   ! virtual sector of fock matrix .Fv is allocated.
-      self :: IN  
-      V  :: MAT{REAL}, IN
-      AV :: MAT{REAL},  OUT
-   
-   ENSURE(AV.is_same_shape_as(V),"inconsistent shape, V and AV")
-   ENSURE(AV.dim2==.n_evals,"wrong dim2, AV")
-
-      ai, a,i :: INT
-      bj, b,j :: INT
-      d,n :: INT
-
-      ! Sizes
-      d = .single.dim1
-
-      AV = ZERO
-
-      if (NOT .Fv.allocated) then
-
-         ! Canonical VMOs
-         do ai = 1,d
-         do n  = 1,.n_evals
-            AV(ai,n) = .deltaE(ai)*V(ai,n)
-         end
-         end
-
-      else
-
-         ! Noncanonical VMO case
-         do ai = 1,d
-            a  = .single(ai,1)
-            i  = .single(ai,2)
-            AV(ai,:) = -.Eo(i)*V(ai,:)
-            do bj = 1,d
-               b  = .single(bj,1)
-               j  = .single(bj,2)
-               if (i/=j) cycle
-               AV(ai,:) = AV(ai,:) + .Fv(a,b)*V(bj,:)
-            end
-         end
-
-      end
-
-   end
+!   transform_AV_to_V_v0(AV,V) ::: PURE
+!   ! Transform the (n_bf x n_bf) matrices "AV" and *accumulate*
+!   ! into trial eigenvectors "V" in the state basis.
+!      self :: IN  
+!      AV :: MAT3{REAL}, IN
+!      V  :: MAT{REAL},  INOUT
+!   
+!   ENSURE(AV.dim2==.n_bf,   "wrong dim2, AV")
+!   ENSURE(AV.dim2==AV.dim3, "AV not square in dim2 & dim3")
+!   ENSURE(AV.dim1==.n_evals,"inconsistent dim1, AV")
+!   ENSURE(AV.dim1==V.dim2,  "inconsistent dim2, V")
+!
+!      ai,a,i :: INT
+!      d,no,n :: INT 
+!      lo, hv :: INT 
+!      C :: MAT{REAL}@
+!
+!      ! Sizes & limits
+!      d  = .single.dim1
+!      no = .n_occ
+!      lo = .min_OMO
+!      hv = .max_VMO
+!
+!      ! Single excitations
+!      C.create([1,hv],[lo,no])
+!
+!      do n = 1,.n_evals
+!
+!         ! AV (MO)  -> C_ai(MO)
+!         AV(n,:,:).change_basis_to(C,.MOv(:,1:hv),.MOo(:,lo:no))
+!
+!         ! C_ai(MO) -> V
+!         do ai = 1,d
+!            a = .single(ai,1)
+!            i = .single(ai,2)
+!            V(ai,n) = V(ai,n) + C(a,i)
+!         end
+!
+!      end
+!
+!      ! Clean up
+!      C.destroy
+!
+!   end
 
 
 !  ===============
