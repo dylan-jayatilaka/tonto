@@ -72,10 +72,11 @@ contains
 
       case ("davidson")
          select case (.TD_data.method)
+         case("r-cis-s=0-ss     "); .TD:make_r_CIS_S0_SS
          case("r-cis-s=0-ss-v0  "); .TD:make_r_CIS_S0_SS_v0
-         case("r-cis-s=0-ss-v1  "); .TD:make_r_CIS_S0_SS_v1
          case("r-cis-s=0-ss-d1  "); .TD:make_r_CIS_S0_SS_D1
          case("r-cis-s=0-ss-d2  "); .TD:make_r_CIS_S0_SS_D2
+         case("r-cis-s=1-ss     "); .TD:make_r_CIS_S1_SS
          case default; UNKNOWN(.TD_data.method)
          end
 
@@ -89,33 +90,14 @@ contains
 
    end
 
-!  ===============
-!  Davidson solver
-!  ===============
-
 ! Efficient Davidson methods
-
-   make_r_CIS_S0_SS_v1
-   ! Do a restricted CIS/Tamm-Dancoff triplet calculation.
-   ! via Davidson. Magic is hidden in the .TD_data object
-   ! which keeps iteration and other info, and the AV_prod 
-   ! method does the efficient A.V product needed for Davidson.
-      self :: INOUT
-
-      ! Start up
-      .TD_data.initialise_iteration 
-
-      ! Do the diagonalisation & print results
-      .:eigensolve_Davidson(.TD_data,::make_r_CIS_S0_AV_prod)
-
-   end
 
    eigensolve_Davidson(TD_data,AV_prod)
    ! =====
    ! Davidson diagonalization: see Crouzeix (1990) Inria RR 1353.
-   ! Step numbers & symbols in code below are (mostly) from this
-   ! paper --- see p. 5. But "R" is used for residual, not "T"!
-   ! See also Crouzeix (1994) SIAM J Sci Comput 15 p. 62-76.
+   ! Step numbers & symbols in code below are (mostly) from p. 5.
+   ! But "R" is used for residual, not "T"! See also Crouzeix 
+   ! (1994) SIAM J Sci Comput 15 p. 62-76.
    !
    ! . "TD_data" .. Holds key calculation parameters. Comments 
    !                with <== highlight interaction with it.
@@ -133,7 +115,6 @@ contains
    ! . n_keep   ... No. of trial vectors to keep        IN
    ! . max_iter ... Max. no. of iterations allowed      IN
    ! . tol_Dav  ... Convergence tol on residual vector  IN
-   !                                                    
    ! . eval     ... the lowest eigenvalues              OUT
    ! . eval     ... the lowest eigenvalues              OUT
    ! . evec     ... the corresponding eigenvectors      OUT
@@ -147,7 +128,7 @@ contains
    ! =====
       TD_data :: TD_DATA, INOUT ! Iteration info
       interface                 ! Efficient A.V product
-         AV_prod(mol,AV,V,TD_data)
+         AV_prod(mol,AV,V,TD_data) ::: PURE
             use TYPES
             mol :: MOLECULE,    INOUT
             AV  :: MAT{REAL},   OUT
@@ -155,6 +136,10 @@ contains
             TD_data :: TD_DATA, INOUT
          end
       end
+
+   ENSURE(TD_data.eval.allocated,"no TD_data.eval")
+   ENSURE(TD_data.evec.allocated,"no TD_data.eval")
+   ENSURE(TD_data.eval.dim==TD_data.evec.dim1,"in TD_data: eval & evec incompatible")
 
       ! Main vars
       H      :: MAT{REAL}@      ! H = A in basis of "V" columns
@@ -171,15 +156,15 @@ contains
       d, n :: INT               
                                 
       ! Sizes                   
-      d = TD_data.evec.dim2     ! "d" 
-      n = TD_data.eval.dim      ! Usually n << d
+      d = TD_data.evec.dim1     ! "d" 
+      n = TD_data.evec.dim2     ! Usually n << d
       n_keep = TD_data.n_keep   ! No. of trial vectors to keep
                                 
       ! Temporaries             
       V.create(d,n*n_keep)      ! Davidson trial vector colums "V"
-      W.create(d,n*n_keep)      ! A.V in MO basis
-      R.create(d)               ! New directions, scaled residual
-      V(:,1:n).to_unit_mx       ! Initialise "V", choose wisely
+      W.create(d,n*n_keep)      ! W = A.V in MO basis
+      R.create(d)               ! Residual vector
+      V(:,1:n).to_unit_mx       ! Initial "V": choose wisely
 
       do ! Davidson loop
 
@@ -198,6 +183,9 @@ contains
          f = TD_data.fst_trial_vector        ! <== and below
          l = TD_data.lst_trial_vector
          call AV_prod(self,W(:,f:l),V(:,f:l),TD_data) 
+       ! stdout.text("W:")
+       ! stdout.put(W(:,f:l)) 
+       ! stop
 
          ! 2. Expand Rayleigh matrix
          H.expand(l,l)    
@@ -209,7 +197,7 @@ contains
          ! 3. Diagonalise (increasing eigenvalues)
          H.solve_symmetric_eigenproblem(H_eval,H_evec)
 
-         ! 4. Keep Ritz vectors "R"
+         ! 4. Keep Ritz vectors
          TD_data.eval = H_eval(1:n)          ! <== ANSWER
          TD_data.evec = matmul(V(:,1:l),H_evec(:,1:n))
 
@@ -258,10 +246,46 @@ contains
 
    end
 
+   make_r_CIS_S0_SS
+   ! Do a restricted CIS S=0 *singlet* calculation.
+   ! Magic is hidden in the .TD_data object, which keeps 
+   ! Davidson iteration, and other info; also and the passed
+   ! AV_prod method does the efficient Davidson A.V product.
+      self :: INOUT
+
+      ! Start up
+      .TD_data.initialise_iteration 
+
+      ! Output calc options
+      .TD_data.put_D_table_header
+
+      ! Do the diagonalisation & print results
+      .:eigensolve_Davidson(.TD_data,::make_r_CIS_S0_AV_prod)
+
+   end
+
+   make_r_CIS_S1_SS
+   ! Do a restricted CIS S=1 *singlet* calculation.
+   ! Magic is hidden in the .TD_data object, which keeps 
+   ! Davidson iteration, and other info; also and the passed
+   ! AV_prod method does the efficient Davidson A.V product.
+      self :: INOUT
+
+      ! Start up
+      .TD_data.initialise_iteration 
+
+      ! Output calc options
+      .TD_data.put_D_table_header
+
+      ! Do the diagonalisation & print results
+      .:eigensolve_Davidson(.TD_data,::make_r_CIS_S1_AV_prod)
+
+   end
+
    make_r_CIS_S0_AV_prod(AV,V,TD_data) ::: PURE
    ! Given Davidson trial vectors "V", do the (A x V) 
    ! product (efficiently in the AO basis) and place the
-   ! result into "AV".
+   ! result into "AV". *Singlet* S=0 case.
       self :: INOUT
       AV   :: MAT{REAL},  OUT
       V    :: MAT{REAL},  IN
@@ -280,7 +304,29 @@ contains
 
    end
 
-! Testing
+   make_r_CIS_S1_AV_prod(AV,V,TD_data) ::: PURE
+   ! Given Davidson trial vectors "V", do the (A x V) 
+   ! product (efficiently in the AO basis) and place the
+   ! result into "AV". *Triplet* S=1 case.
+      self :: INOUT
+      AV   :: MAT{REAL},  OUT
+      V    :: MAT{REAL},  IN
+      TD_data :: TD_DATA, INOUT
+
+   ENSURE(.TD_data.Vao.allocated,"TD_data.Vao not preallocated")
+   ENSURE(.TD_data.Aao.allocated,"TD_data.Aao not preallocated")
+
+      ! 1e part: Set AV = diag(A).V
+      TD_data.do_diag_AV_bit(AV,V) 
+
+      ! 2e part: accumulate AV =+ (AV)ai
+      TD_data.change_V_to_AO(TD_data.Vao,V)           ! Get the DMs
+      .FOCK:make_r_CIS_S1_AV(TD_data.Aao,TD_data.Vao) ! AV in AO basis
+      TD_data.change_V_to_MO(AV,         TD_data.Aao) ! Accumulate
+
+   end
+
+! Testing Davidson
 
    diagonalize_Davidson(A,eval,evec,n_evals,n_keep,maxit,tolcon) ::: selfless
    ! Davidson diagonaliser for matrix "A".
@@ -656,6 +702,9 @@ contains
          .TD_data.change_V_to_AO(Vao     ,V(:,f:l)) ! Back transform to Vao
           .FOCK:make_r_CIS_S0_AV(Aao,Vao)           ! AV in AO basis
          .TD_data.change_V_to_MO(W(:,f:l),Aao)      ! W = W + (AV)ai
+       ! stdout.text("W:")
+       ! stdout.put(W(:,f:l)) 
+       ! stop
 
          ! 2. Expand Rayleigh matrix
          H.expand(l,l)    ! A in V basis
@@ -1270,6 +1319,9 @@ contains
 
       AA  :: MAT{REAL}@
       nvo :: INT
+
+      ! Dimensions
+      nvo = .TD_data.no_of_singles
 
       ! A matrix (leaky)
       AA.create(nvo,nvo)
