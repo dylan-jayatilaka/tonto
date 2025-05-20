@@ -1047,7 +1047,8 @@ contains
       self :: INOUT
 
       ind :: VEC{INT}@
-      d,n :: INT
+      ord :: VEC{INT}@
+      d,n,i :: INT
 
       d = .evec.dim1
       n = .evec.dim2
@@ -1056,12 +1057,20 @@ contains
       if (.is_singlet_calc) then
          .eval0 = .eval
          .evec0 = .evec
+         .Slab.create(n) ! Labels
+         ord = [ (i, i=0,n-1) ]
+         .Slab = spread("S",1,n)//ord.to_str
+         ord.destroy
       end
 
       ! Store triplet results
       if (.is_triplet_calc) then
          .eval1 = .eval
          .evec1 = .evec
+         .Slab.create(n) ! Labels
+         ord = [ (i, i=1,n) ]
+         .Slab = spread("T",1,n)//ord.to_str
+         ord.destroy
       end
 
       ! Append results & sort
@@ -1079,16 +1088,38 @@ contains
          .S(  1:n) = 0
          .S(n+1: ) = 1
 
+         ! State order
+         .Slab.create(2*n)
+         ord.create(2*n)
+
+         if (minval(.eval0)<minval(.eval1)) then
+            ! Singlet lower in energy
+            ord(  1:n) = [ (i, i=0,n-1) ]
+            ord(n+1: ) = [ (i, i=1,n  ) ]
+         else
+            ! Triplet lower in energy
+            ord(  1:n) = [ (i, i=1,n  ) ]
+            ord(n+1: ) = [ (i, i=0,n-1) ]
+         end
+
+         .Slab(  1:n) = spread("S",1,n)//ord(  1:n).to_str
+         .Slab(n+1: ) = spread("T",1,n)//ord(n+1: ).to_str
+
+         ord.destroy
+
          ! Sort
          ind.create(2*n)
          .eval.quick_sort(ind)
    
          ! Reorder
-         .S    = .S(ind)
-         .eval = .eval(ind)
+         .S    =      .S(ind)
+         .eval =   .eval(ind)
          .evec = .evec(:,ind)
+         .Slab =   .Slab(ind)
 
          ind.destroy
+
+         ! Set state labels
 
       end
 
@@ -1577,18 +1608,25 @@ contains
 
       if (m>0) n = min(n,m)
 
-      table.create(3)
+      table.create(4)
 
       table(1).set_heading("LUMO")
       table(1).set_subhead("(v)")
+      table(1).set_values(.single(1:n,1))
+
       table(2).set_heading("HOMO")
       table(2).set_subhead("(o)")
-      table(3).set_heading("Delta E")
-      table(3).set_subhead("Ev-Eo")
-
-      table(1).set_values(.single(1:n,1))
       table(2).set_values(.single(1:n,2)-.n_occ)
+
+      table(3).set_heading("Ev-Eo")
+      table(3).set_subhead(" /au")
       table(3).set_values(.deltaE(1:n))
+
+      table(4).set_heading("Ev-Eo")
+      table(4).set_subhead(" /eV")
+      table(4).set_real_precision(2)
+      table(4).set_width(12)
+      table(4).set_values(.deltaE(1:n)*EV_PER_HARTREE)
 
       table.put(label_rows=TRUE)
 
@@ -1853,7 +1891,9 @@ contains
    ENSURE(.evec.allocated,  "evec unallocated")
 
       table :: VEC{TABLE_COLUMN}@
-      i :: INT
+      val :: REAL
+      num :: STR
+      n,i :: INT
 
       stdout.flush
       stdout.text("===================")
@@ -1861,19 +1901,29 @@ contains
       stdout.text("===================")
       stdout.flush
 
-      table.create(3+.n_evals)
+      n = .eval.dim
+
+      table.create(3+n)
 
       table(1).set_heading("LUMO")
-      table(1).set_subhead("(v)")
-      table(2).set_heading("HOMO")
-      table(2).set_subhead("(o)")
-      table(3).set_heading("Delta E")
-      table(3).set_subhead("Ev-Eo")
-
+      table(1).set_subhead("v")
       table(1).set_values(.single(:,1))
+
+      table(2).set_heading("HOMO")
+      table(2).set_subhead("o")
       table(2).set_values(.single(:,2)-.n_occ)
-      table(3).set_values(.deltaE)
-      do i = 1,.n_evals
+
+      table(3).set_heading("(Ev-Eo)/2")
+      table(3).set_subhead("      /eV")
+      table(3).set_real_precision(2)
+      table(3).set_width(10)
+      table(3).set_values(.deltaE*EV_PER_HARTREE*HALF)
+
+      do i = 1,n
+      val = .eval(i)*EV_PER_HARTREE
+      num = val.to_str("f10.2")
+      table(3+i).set_heading(.Slab(i))
+      table(3+i).set_subhead(trim(num))
       table(3+i).set_values(.evec(:,i))
       end
 
@@ -1882,6 +1932,5 @@ contains
       table.destroy
 
    end
-
 
 end
