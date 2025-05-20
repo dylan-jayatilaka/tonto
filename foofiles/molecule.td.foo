@@ -26,307 +26,9 @@ module MOLECULE.TD
 
 contains
 
-!  ==============
-!  Excited states
-!  ==============
-
-   TD_excited_states ::: leaky
-   ! Do an in-core TD excited state calculation.
-   ! Only does the restricted case so far.
-      self :: INOUT
-
-   ENSURE(.atom_info_made, "No atoms!")
-   ENSURE(.basis_info_made,"No basis set!")
-   ENSURE(.MOs.allocated,  "MOs do not exist")
-   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
-
-      ! Minimal setup
-      if (.TD_data.Eo.deallocated) then
-         .TD_data.set_defaults(.n_bf,.n_a,.n_b)
-         .TD_data.set_defaults(.MOs.r,.MO_energies.r)
-      end
-      if (.TD_data.single.deallocated) then
-         .TD_data.sort_singles
-      end
-
-      ! Which TD calc?
-      select case (.TD_data.implementation)
-
-      case ("in-core ")
-         select case (.TD_data.method)
-         case("r-cis-s=0&s=1    "); .TD:make_r_CIS_S0_S1_IC  ! <---
-         case("r-cis-s=0        "); .TD:make_r_CIS_S0_IC
-         case("r-cis-singlet    "); .TD:make_r_CIS_S0_IC
-         case("r-cis-s=1        "); .TD:make_r_CIS_S1_IC
-         case("r-cis-triplet    "); .TD:make_r_CIS_S1_IC
-         case("r-cis-s=0-ss     "); .TD:make_r_CIS_S0_SS_IC  ! <---
-         case("r-cis-singlet-ss "); .TD:make_r_CIS_S0_SS_IC
-         case("r-tdhf-s=0&s=1   "); .TD:make_r_TDHF_S0_S1_IC
-         case("r-tdhf-s=0       "); .TD:make_r_TDHF_S0_IC
-         case("r-tdhf-singlet   "); .TD:make_r_TDHF_S0_IC
-         case("r-tdhf-s=1       "); .TD:make_r_TDHF_S1_IC
-         case("r-tdhf-triplet   "); .TD:make_r_TDHF_S1_IC
-         case("u-cis            "); .TD:make_u_CIS_IC        ! <---
-         case default; UNKNOWN(.TD_data.method)
-         end
-
-      case ("davidson")
-         select case (.TD_data.method)
-         case("r-cis-s=0-ss     "); .TD:make_r_CIS_S0_SS
-         case("r-cis-s=0-ss-v0  "); .TD:make_r_CIS_S0_SS_v0
-         case("r-cis-s=0-ss-d1  "); .TD:make_r_CIS_S0_SS_D1
-         case("r-cis-s=0-ss-d2  "); .TD:make_r_CIS_S0_SS_D2
-         case("r-cis-s=1-ss     "); .TD:make_r_CIS_S1_SS
-         case default; UNKNOWN(.TD_data.method)
-         end
-
-      case default
-         UNKNOWN(.TD_data.implementation)
-
-      end
-
-      ! Put
-      .TD_data.put_results
-
-   end
-
-! Efficient Davidson methods
-
-   eigensolve_Davidson(TD_data,AV_prod)
-   ! =====
-   ! Davidson diagonalization: see Crouzeix (1990) Inria RR 1353.
-   ! Step numbers & symbols in code below are (mostly) from p. 5.
-   ! But "R" is used for residual, not "T"! See also Crouzeix 
-   ! (1994) SIAM J Sci Comput 15 p. 62-76.
-   !
-   ! . "TD_data" .. Holds key calculation parameters. Comments 
-   !                with <== highlight interaction with it.
-   !                It is a kind of Davidson iterator object.
-   !
-   ! . "AV_prod" .. Does the expensive method-specific 2e part 
-   !                of the "A matrix product". In this case, 
-   !                in the AO basis.
-   !
-   ! "TD_data" holds iteration count information; also methods 
-   ! to test for convergence, or subspace collapse; also, here,
-   ! CIS/TD method-specific storage; For example:
-   !
-   ! . n_evals  ... desired no. of lowest excitations   IN
-   ! . n_keep   ... No. of trial vectors to keep        IN
-   ! . max_iter ... Max. no. of iterations allowed      IN
-   ! . tol_Dav  ... Convergence tol on residual vector  IN
-   ! . eval     ... the lowest eigenvalues              OUT
-   ! . eval     ... the lowest eigenvalues              OUT
-   ! . evec     ... the corresponding eigenvectors      OUT
-   !                Note: n_keep > evec.dim2 >= 3
-   ! . max_res  ... Maximum residual vector norms       OUT
-   !
-   ! NOTE: the trial vectors "V" are initially set to unit 
-   ! vectors in the first few components. So the states that 
-   ! these components in "V" refer to must be chosen wisely.
-   ! This may be done externally by e.g. TD_data.sort_singles.
-   ! =====
-      TD_data :: TD_DATA, INOUT ! Iteration info
-      interface                 ! Efficient A.V product
-         AV_prod(mol,AV,V,TD_data) ::: PURE
-            use TYPES
-            mol :: MOLECULE,    INOUT
-            AV  :: MAT{REAL},   OUT
-            V   :: MAT{REAL},   IN
-            TD_data :: TD_DATA, INOUT
-         end
-      end
-
-   ENSURE(TD_data.eval.allocated,"no TD_data.eval")
-   ENSURE(TD_data.evec.allocated,"no TD_data.eval")
-   ENSURE(TD_data.eval.dim==TD_data.evec.dim1,"in TD_data: eval & evec incompatible")
-
-      ! Main vars
-      H      :: MAT{REAL}@      ! H = A in basis of "V" columns
-      H_eval :: VEC{REAL}@      ! H eigenvalues
-      H_evec :: MAT{REAL}@      ! H eigenvectors
-      V :: MAT{REAL}@           ! V(:,n) <- Davidson trial vectors
-      W :: MAT{REAL}@           ! W(:,n) <- A.V in MO basis
-      R :: VEC{REAL}@           ! R      <- Residual vector
-                                
-      bot    :: REAL            
-      maxres :: REAL            
-      n_keep :: INT             
-      f,l, i :: INT             
-      d, n :: INT               
-                                
-      ! Sizes                   
-      d = TD_data.evec.dim1     ! "d" 
-      n = TD_data.evec.dim2     ! Usually n << d
-      n_keep = TD_data.n_keep   ! No. of trial vectors to keep
-                                
-      ! Temporaries             
-      V.create(d,n*n_keep)      ! Davidson trial vector colums "V"
-      W.create(d,n*n_keep)      ! W = A.V in MO basis
-      R.create(d)               ! Residual vector
-      V(:,1:n).to_unit_mx       ! Initial "V": choose wisely
-
-      do ! Davidson loop
-
-         ! Next iteration
-         TD_data.update_iteration            ! <==
-
-         ! Collapse subspace down?
-         if (TD_data.collapse) then
-            TD_data.reset_subspace           ! <== Keep one trial set
-            V(:,1:n) = TD_data.evec          ! Restart with last one
-            H.destroy                        ! Start again; remake H
-         end
-
-         ! 1. Expensive step: extend W
-         !    W(:,f:l) = matmul(A,V(:,f:l)) 
-         f = TD_data.fst_trial_vector        ! <== and below
-         l = TD_data.lst_trial_vector
-         call AV_prod(self,W(:,f:l),V(:,f:l),TD_data) 
-       ! stdout.text("W:")
-       ! stdout.put(W(:,f:l)) 
-       ! stop
-
-         ! 2. Expand Rayleigh matrix
-         H.expand(l,l)    
-         H_evec.create(l,l)
-         H_eval.create(l)
-         H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
-         H.symmetric_reflect(set_upper=TRUE)
-
-         ! 3. Diagonalise (increasing eigenvalues)
-         H.solve_symmetric_eigenproblem(H_eval,H_evec)
-
-         ! 4. Keep Ritz vectors
-         TD_data.eval = H_eval(1:n)          ! <== ANSWER
-         TD_data.evec = matmul(V(:,1:l),H_evec(:,1:n))
-
-         ! 5-7. Get residual, add new directions
-         maxres = ZERO
-         do i = 1,n
-         
-            ! 5. Residual R & its length
-            R =  H_eval(i)*TD_data.evec(:,i) &
-              - matmul(W(:,1:l), H_evec(:,i)) 
-            maxres = max(norm2(R),maxres)
-         
-            ! 6. Preconditioner
-            bot = H_eval(i) - H(i,i)
-            if (abs(bot)<TOL(3)) bot = bot + TOL(2)
-            bot = ONE/bot
-         
-            ! 7a. Set new direction
-            V(:,l+i) = bot*R
-         
-         end
-         TD_data.set_max_res(maxres)         ! <== For convergence
-
-         ! Clean up
-         H_eval.destroy
-         H_evec.destroy
-        
-         ! 7. Orthonormalize vectors V ?
-         if (NOT TD_data.converged) then
-            V(:,1:l+n).modified_Gram_Schmidt_QR
-          ! V(:,1:l+n).Householder_QR 
-         end
-
-         ! Print out table & finish? !!!!!!!
-         TD_data.put_D_table_body_and_footer ! <== And below
-         if (TD_data.Davidson_done)   exit
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-      end
-
-      ! Clean up
-      H.destroy
-      R.destroy
-      W.destroy
-      V.destroy
-
-   end
-
-   make_r_CIS_S0_SS
-   ! Do a restricted CIS S=0 *singlet* calculation.
-   ! Magic is hidden in the .TD_data object, which keeps 
-   ! Davidson iteration, and other info; also and the passed
-   ! AV_prod method does the efficient Davidson A.V product.
-      self :: INOUT
-
-      ! Start up
-      .TD_data.initialise_iteration 
-
-      ! Output calc options
-      .TD_data.put_D_table_header
-
-      ! Do the diagonalisation & print results
-      .:eigensolve_Davidson(.TD_data,::make_r_CIS_S0_AV_prod)
-
-   end
-
-   make_r_CIS_S1_SS
-   ! Do a restricted CIS S=1 *singlet* calculation.
-   ! Magic is hidden in the .TD_data object, which keeps 
-   ! Davidson iteration, and other info; also and the passed
-   ! AV_prod method does the efficient Davidson A.V product.
-      self :: INOUT
-
-      ! Start up
-      .TD_data.initialise_iteration 
-
-      ! Output calc options
-      .TD_data.put_D_table_header
-
-      ! Do the diagonalisation & print results
-      .:eigensolve_Davidson(.TD_data,::make_r_CIS_S1_AV_prod)
-
-   end
-
-   make_r_CIS_S0_AV_prod(AV,V,TD_data) ::: PURE
-   ! Given Davidson trial vectors "V", do the (A x V) 
-   ! product (efficiently in the AO basis) and place the
-   ! result into "AV". *Singlet* S=0 case.
-      self :: INOUT
-      AV   :: MAT{REAL},  OUT
-      V    :: MAT{REAL},  IN
-      TD_data :: TD_DATA, INOUT
-
-   ENSURE(.TD_data.Vao.allocated,"TD_data.Vao not preallocated")
-   ENSURE(.TD_data.Aao.allocated,"TD_data.Aao not preallocated")
-
-      ! 1e part: Set AV = diag(A).V
-      TD_data.do_diag_AV_bit(AV,V) 
-
-      ! 2e part: accumulate AV =+ (AV)ai
-      TD_data.change_V_to_AO(TD_data.Vao,V)           ! Get the DMs
-      .FOCK:make_r_CIS_S0_AV(TD_data.Aao,TD_data.Vao) ! AV in AO basis
-      TD_data.change_V_to_MO(AV,         TD_data.Aao) ! Accumulate
-
-   end
-
-   make_r_CIS_S1_AV_prod(AV,V,TD_data) ::: PURE
-   ! Given Davidson trial vectors "V", do the (A x V) 
-   ! product (efficiently in the AO basis) and place the
-   ! result into "AV". *Triplet* S=1 case.
-      self :: INOUT
-      AV   :: MAT{REAL},  OUT
-      V    :: MAT{REAL},  IN
-      TD_data :: TD_DATA, INOUT
-
-   ENSURE(.TD_data.Vao.allocated,"TD_data.Vao not preallocated")
-   ENSURE(.TD_data.Aao.allocated,"TD_data.Aao not preallocated")
-
-      ! 1e part: Set AV = diag(A).V
-      TD_data.do_diag_AV_bit(AV,V) 
-
-      ! 2e part: accumulate AV =+ (AV)ai
-      TD_data.change_V_to_AO(TD_data.Vao,V)           ! Get the DMs
-      .FOCK:make_r_CIS_S1_AV(TD_data.Aao,TD_data.Vao) ! AV in AO basis
-      TD_data.change_V_to_MO(AV,         TD_data.Aao) ! Accumulate
-
-   end
-
+! ================
 ! Testing Davidson
+! ================
 
    diagonalize_Davidson(A,eval,evec,n_evals,n_keep,maxit,tolcon) ::: selfless
    ! Davidson diagonaliser for matrix "A".
@@ -635,9 +337,328 @@ contains
 
    end
 
+!  ==============
+!  Excited states
+!  ==============
+
+   TD_excited_states ::: leaky
+   ! Do an in-core TD excited state calculation.
+   ! Only does the restricted case so far.
+      self :: INOUT
+
+   ENSURE(.atom_info_made, "No atoms!")
+   ENSURE(.basis_info_made,"No basis set!")
+   ENSURE(.MOs.allocated,  "MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      ! Minimal setup
+      if (.TD_data.Eo.deallocated) then
+         .TD_data.set_defaults(.n_bf,.n_a,.n_b)
+         .TD_data.set_defaults(.MOs.r,.MO_energies.r)
+      end
+
+      ! Banner
+      .TD_data.update
+      .TD_data.put_banner
+
+      ! Which TD calc?
+      select case (.TD_data.implementation)
+
+      case ("in-core ")
+         select case (.TD_data.method)
+         case("r-cis-s=0        "); .TD:do_r_CIS_S0_IC
+         case("r-cis-s=0&1      "); .TD:do_r_CIS_S01_IC 
+         case("r-cis-s=1        "); .TD:do_r_CIS_S1_IC
+         case("r-cis-ss-s=0     "); .TD:do_r_CIS_SS_S0_IC 
+         case("r-tdhf-s=0       "); .TD:do_r_TDHF_S0_IC
+         case("r-tdhf-s=0&1     "); .TD:do_r_TDHF_S01_IC
+         case("r-tdhf-s=1       "); .TD:do_r_TDHF_S1_IC
+         case("u-cis            "); .TD:do_u_CIS_IC      
+         case default; UNKNOWN(.TD_data.method)
+         end
+
+      case ("davidson")
+         select case (.TD_data.method)
+         case("r-cis-ss-s=0&1   "); .TD:do_r_CIS_SS_S01
+         case("r-cis-ss-s=0     "); .TD:do_r_CIS_SS_S0
+         case("r-cis-ss-s=0-d1  "); .TD:do_r_CIS_SS_S0_D1
+         case("r-cis-ss-s=0-d2  "); .TD:do_r_CIS_SS_S0_D2
+         case("r-cis-ss-s=0-v0  "); .TD:do_r_CIS_SS_S0_v0
+         case("r-cis-ss-s=1     "); .TD:do_r_CIS_SS_S1
+         case default; UNKNOWN(.TD_data.method)
+         end
+
+      case default
+         UNKNOWN(.TD_data.implementation)
+
+      end
+
+      ! Put results
+      .TD_data.put_results
+      .TD_data.put_evecs
+
+   end
+
+! Efficient Davidson methods
+
+   eigensolve_Davidson(TD_data,AV_prod)
+   ! =====
+   ! Davidson diagonalization: see Crouzeix (1990) Inria RR 1353.
+   ! Step numbers & symbols in code below are (mostly) from p. 5.
+   ! But "R" is used for residual, not "T"! See also Crouzeix 
+   ! (1994) SIAM J Sci Comput 15 p. 62-76.
+   !
+   ! . "TD_data" .. Holds key calculation parameters. Comments 
+   !                with <== highlight interaction with it.
+   !                It is a kind of Davidson iterator object.
+   !
+   ! . "AV_prod" .. Does the expensive method-specific 2e part 
+   !                of the "A matrix product". In this case, 
+   !                in the AO basis.
+   !
+   ! "TD_data" holds iteration count information; also methods 
+   ! to test for convergence, or subspace collapse; also, here,
+   ! CIS/TD method-specific storage; For example:
+   !
+   ! . n_evals  ... desired no. of lowest excitations   IN
+   ! . n_keep   ... No. of trial vectors to keep        IN
+   ! . max_iter ... Max. no. of iterations allowed      IN
+   ! . tol_Dav  ... Convergence tol on residual vector  IN
+   ! . eval     ... the lowest eigenvalues              OUT
+   ! . eval     ... the lowest eigenvalues              OUT
+   ! . evec     ... the corresponding eigenvectors      OUT
+   !                Note: n_keep > evec.dim2 >= 3
+   ! . max_res  ... Maximum residual vector norms       OUT
+   !
+   ! NOTE: the trial vectors "V" are initially set to unit 
+   ! vectors in the first few components. So the states that 
+   ! these components in "V" refer to must be chosen wisely.
+   ! This may be done externally by e.g. TD_data.sort_singles.
+   ! =====
+      TD_data :: TD_DATA, INOUT ! Iteration info
+      interface                 ! Efficient A.V product
+         AV_prod(mol,AV,V,TD_data) ::: PURE
+            use TYPES
+            mol :: MOLECULE,    INOUT
+            AV  :: MAT{REAL},   OUT
+            V   :: MAT{REAL},   IN
+            TD_data :: TD_DATA, INOUT
+         end
+      end
+
+   ENSURE(TD_data.eval.allocated,"no TD_data.eval")
+   ENSURE(TD_data.evec.allocated,"no TD_data.eval")
+   ENSURE(TD_data.eval.dim==TD_data.evec.dim2,"in TD_data: eval & evec incompatible")
+
+      ! Main vars
+      H      :: MAT{REAL}@      ! H = A in basis of "V" columns
+      H_eval :: VEC{REAL}@      ! H eigenvalues
+      H_evec :: MAT{REAL}@      ! H eigenvectors
+      V :: MAT{REAL}@           ! V(:,n) <- Davidson trial vectors
+      W :: MAT{REAL}@           ! W(:,n) <- A.V in MO basis
+      R :: VEC{REAL}@           ! R      <- Residual vector
+                                
+      bot    :: REAL            
+      maxres :: REAL            
+      n_keep :: INT             
+      f,l, i :: INT             
+      d, n :: INT               
+                                
+      ! Sizes                   
+      d = TD_data.evec.dim1     ! "d" 
+      n = TD_data.evec.dim2     ! Usually n << d
+      n_keep = TD_data.n_keep   ! No. of trial vectors to keep
+                                
+      ! Temporaries             
+      V.create(d,n*n_keep)      ! Davidson trial vector colums "V"
+      W.create(d,n*n_keep)      ! W = A.V in MO basis
+      R.create(d)               ! Residual vector
+      V(:,1:n).to_unit_mx       ! Initial "V": choose wisely
+
+      do ! Davidson loop
+
+         ! Next iteration
+         TD_data.update_iteration            ! <==
+
+         ! Collapse subspace down?
+         if (TD_data.collapse) then
+            TD_data.reset_subspace           ! <== Keep one trial set
+            V(:,1:n) = TD_data.evec          ! Restart with last one
+            H.destroy                        ! Start again; remake H
+         end
+
+         ! 1. Expensive step: extend W
+         !    W(:,f:l) = matmul(A,V(:,f:l)) 
+         f = TD_data.fst_trial_vector        ! <== and below
+         l = TD_data.lst_trial_vector
+         call AV_prod(self,W(:,f:l),V(:,f:l),TD_data) 
+       ! stdout.text("W:")
+       ! stdout.put(W(:,f:l)) 
+       ! stop
+
+         ! 2. Expand Rayleigh matrix
+         H.expand(l,l)    
+         H_evec.create(l,l)
+         H_eval.create(l)
+         H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
+         H.symmetric_reflect(set_upper=TRUE)
+
+         ! 3. Diagonalise (increasing eigenvalues)
+         H.solve_symmetric_eigenproblem(H_eval,H_evec)
+
+         ! 4. Keep Ritz vectors
+         TD_data.eval = H_eval(1:n)          ! <== ANSWER
+         TD_data.evec = matmul(V(:,1:l),H_evec(:,1:n))
+
+         ! 5-7. Get residual, add new directions
+         maxres = ZERO
+         do i = 1,n
+         
+            ! 5. Residual R & its length
+            R =  H_eval(i)*TD_data.evec(:,i) &
+              - matmul(W(:,1:l), H_evec(:,i)) 
+            maxres = max(norm2(R),maxres)
+         
+            ! 6. Preconditioner
+            bot = H_eval(i) - H(i,i)
+            if (abs(bot)<TOL(3)) bot = bot + TOL(2)
+            bot = ONE/bot
+         
+            ! 7a. Set new direction
+            V(:,l+i) = bot*R
+         
+         end
+         TD_data.set_max_res(maxres)         ! <== For convergence
+
+         ! Clean up
+         H_eval.destroy
+         H_evec.destroy
+        
+         ! 7. Orthonormalize vectors V ?
+         if (NOT TD_data.converged) then
+            V(:,1:l+n).modified_Gram_Schmidt_QR
+          ! V(:,1:l+n).Householder_QR 
+         end
+
+         ! Print out table & finish? !!!!!!!
+         TD_data.put_D_table_body_and_footer ! <== And below
+         if (TD_data.Davidson_done)   exit
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      end
+
+      ! Clean up
+      H.destroy
+      R.destroy
+      W.destroy
+      V.destroy
+
+      ! Store results
+      TD_data.store_results                  ! <== Store
+
+   end
+
+   do_r_CIS_SS_S01
+   ! Do a restricted CIS S=0 & S=1 calculation.
+      self :: INOUT
+
+      ! S=0 calculation
+      .TD_data.set_method("r-cis-ss-s=0")
+      .TD:do_r_CIS_SS_S0
+
+      ! S=1 calculation
+      .TD_data.set_method("r-cis-ss-s=1")
+      .TD:do_r_CIS_SS_S1
+
+      ! Reset calc type & append results
+      .TD_data.set_method("r-cis-ss-s=0&1")
+      .TD_data.store_results
+
+   end
+
+   do_r_CIS_SS_S0
+   ! Do a restricted CIS S=0 *singlet* calculation.
+   ! Magic is hidden in the .TD_data object, which keeps 
+   ! Davidson iteration, and other info; also and the passed
+   ! AV_prod method does the efficient Davidson A.V product.
+      self :: INOUT
+
+      ! Start up
+      .TD_data.initialize_iteration 
+
+      ! Output calc options
+      .TD_data.put_D_table_header
+
+      ! Do the diagonalisation & print results
+      .:eigensolve_Davidson(.TD_data,::do_r_CIS_S0_AV_prod)
+
+   end
+
+   do_r_CIS_SS_S1
+   ! Do a restricted CIS S=1 *singlet* calculation.
+   ! Magic is hidden in the .TD_data object, which keeps 
+   ! Davidson iteration, and other info; also and the passed
+   ! AV_prod method does the efficient Davidson A.V product.
+      self :: INOUT
+
+      ! Start up
+      .TD_data.initialize_iteration 
+
+      ! Output calc options
+      .TD_data.put_D_table_header
+
+      ! Do the diagonalisation & print results
+      .:eigensolve_Davidson(.TD_data,::do_r_CIS_S1_AV_prod)
+
+   end
+
+   do_r_CIS_S0_AV_prod(AV,V,TD_data) ::: PURE
+   ! Given Davidson trial vectors "V", do the (A x V) 
+   ! product (efficiently in the AO basis) and place the
+   ! result into "AV". *Singlet* S=0 case.
+      self :: INOUT
+      AV   :: MAT{REAL},  OUT
+      V    :: MAT{REAL},  IN
+      TD_data :: TD_DATA, INOUT
+
+   ENSURE(.TD_data.Vao.allocated,"TD_data.Vao not preallocated")
+   ENSURE(.TD_data.Aao.allocated,"TD_data.Aao not preallocated")
+
+      ! 1e part: Set AV = diag(A).V
+      TD_data.do_diag_AV_bit(AV,V) 
+
+      ! 2e part: accumulate AV =+ (AV)ai
+      TD_data.change_V_to_AO(TD_data.Vao,V)           ! Get the DMs
+      .FOCK:make_r_CIS_S0_AV(TD_data.Aao,TD_data.Vao) ! AV in AO basis
+      TD_data.change_V_to_MO(AV,         TD_data.Aao) ! Accumulate
+
+   end
+
+   do_r_CIS_S1_AV_prod(AV,V,TD_data) ::: PURE
+   ! Given Davidson trial vectors "V", do the (A x V) 
+   ! product (efficiently in the AO basis) and place the
+   ! result into "AV". *Triplet* S=1 case.
+      self :: INOUT
+      AV   :: MAT{REAL},  OUT
+      V    :: MAT{REAL},  IN
+      TD_data :: TD_DATA, INOUT
+
+   ENSURE(.TD_data.Vao.allocated,"TD_data.Vao not preallocated")
+   ENSURE(.TD_data.Aao.allocated,"TD_data.Aao not preallocated")
+
+      ! 1e part: Set AV = diag(A).V
+      TD_data.do_diag_AV_bit(AV,V) 
+
+      ! 2e part: accumulate AV =+ (AV)ai
+      TD_data.change_V_to_AO(TD_data.Vao,V)           ! Get the DMs
+      .FOCK:make_r_CIS_S1_AV(TD_data.Aao,TD_data.Vao) ! AV in AO basis
+      TD_data.change_V_to_MO(AV,         TD_data.Aao) ! Accumulate
+
+   end
+
 ! Inefficient Davidson methods
 
-   make_r_CIS_S0_SS_v0
+   do_r_CIS_SS_S0_v0
    ! Do a restricted CIS/Tamm-Dancoff triplet calculation.
    ! via Davidson. See Crouzeix et al (1990) Inria RR 1353.
    ! Step numbers & symbols below mostly from p. 5 Crouzeix.
@@ -664,7 +685,7 @@ contains
       bot :: REAL
 
       ! Start up
-      .TD_data.initialise_iteration  ! Leaky
+      .TD_data.initialize_iteration  ! Leaky
       .TD_data.set_D_table_headings
       .TD_data.put_D_table_header
 
@@ -767,7 +788,7 @@ contains
 
    end
 
-   make_r_CIS_S0_SS_D2
+   do_r_CIS_SS_S0_D2
    ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
    ! via Davidson. See Crouzeix et al (1990) Inria RR 1353.
    ! Step numbers & symbols below mostly from p. 5 Crouzeix.
@@ -794,7 +815,7 @@ contains
       bot :: REAL
 
       ! Start up
-      .TD_data.initialise_iteration ! Leaky
+      .TD_data.initialize_iteration ! Leaky
       .TD_data.set_D_table_headings
       .TD_data.put_D_table_header
 
@@ -816,7 +837,7 @@ contains
 
       ! The A matrix
       A.create(d,d)
-      .TD:make_r_CIS_S0_SS(A)
+      .TD:make_r_CIS_SS_S0_A_mx(A)
 
       do ! Davidson loop
 
@@ -921,7 +942,7 @@ contains
 
    end
 
-   make_r_CIS_S0_SS_D1
+   do_r_CIS_SS_S0_D1
    ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
       self :: INOUT
@@ -966,7 +987,7 @@ contains
 
       ! The A matrix
       A.create(d,d)
-      .TD:make_r_CIS_S0_SS(A)
+      .TD:make_r_CIS_SS_S0_A_mx(A)
 
       ! Residue vector length
       rvl.create(n) 
@@ -1104,7 +1125,7 @@ contains
 
    end
 
-   make_r_CIS_S0_SS(AA,one,two) ::: leaky
+   make_r_CIS_SS_S0_A_mx(AA,one,two) ::: leaky
    ! Make the restricted CIS singlet A matrix in "AA".
    ! If "one" is FALSE then skip 1-electron part.
    ! If "two" is FALSE then skip 2-electron part.
@@ -1283,31 +1304,31 @@ contains
 
 ! Singlet & triplet
 
-   make_r_CIS_S0_S1_IC ::: leaky
+   do_r_CIS_S01_IC ::: leaky
    ! Do a restricted CIS/Tamm-Dancoff singlet (S=0) 
    ! and triplet (S=1) calculation and merge and sort results
    ! by increasing excitation energy.
       self :: INOUT
 
-      .TD::make_r_CIS_S0_IC
-      .TD::make_r_CIS_S1_IC(append=TRUE)
+      .TD::do_r_CIS_S0_IC
+      .TD::do_r_CIS_S1_IC(append=TRUE)
 
    end
 
-   make_r_TDHF_S0_S1_IC ::: leaky
+   do_r_TDHF_S01_IC ::: leaky
    ! Do a restricted CIS/Tamm-Dancoff singlet (S=0) 
    ! and triplet (S=1) calculation and merge and sort results
    ! by increasing excitation energy.
       self :: INOUT
 
-      .TD::make_r_TDHF_S0_IC
-      .TD::make_r_TDHF_S1_IC(append=TRUE)
+      .TD::do_r_TDHF_S0_IC
+      .TD::do_r_TDHF_S1_IC(append=TRUE)
 
    end
 
 ! Singlet
 
-   make_r_CIS_S0_IC ::: leaky
+   do_r_CIS_S0_IC ::: leaky
    ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
       self :: INOUT
@@ -1328,7 +1349,7 @@ contains
       AA = ZERO
 
       ! Get A matrix
-      .TD:make_r_CIS_S0_SS(AA)
+      .TD:make_r_CIS_SS_S0_A_mx(AA)
 
       ! Symmetrize
       AA.symmetric_reflect
@@ -1341,7 +1362,7 @@ contains
 
    end
 
-   make_r_CIS_S0_SS_IC ::: leaky
+   do_r_CIS_SS_S0_IC ::: leaky
    ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
       self :: INOUT
@@ -1362,7 +1383,7 @@ contains
       AA = ZERO
 
       ! Get A matrix
-      .TD:make_r_CIS_S0_SS(AA)
+      .TD:make_r_CIS_SS_S0_A_mx(AA)
 
       ! Symmetrize
       AA.symmetric_reflect
@@ -1375,7 +1396,7 @@ contains
 
    end
 
-   make_r_TDHF_S0_IC ::: leaky
+   do_r_TDHF_S0_IC ::: leaky
    ! Do a restricted TDHF singlet calculation.
    ! NOTE: for singlet or triplet instabilities this may fail
    ! See Weiss et al (1993) JCP 99 p1262-70.
@@ -1474,7 +1495,7 @@ contains
 
 ! Triplet
 
-   make_r_CIS_S1_IC(append) ::: leaky
+   do_r_CIS_S1_IC(append) ::: leaky
    ! Do a restricted CIS/Tamm-Dancoff triplet calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
@@ -1554,7 +1575,7 @@ contains
 
    end
 
-   make_r_TDHF_S1_IC(append) ::: leaky
+   do_r_TDHF_S1_IC(append) ::: leaky
    ! Do a restricted TDHF triplet calculation.
    ! NOTE: for singlet or triplet instabilities this may fail
    ! See Weiss et al (1993) JCP 99 p1262-70.
@@ -1650,7 +1671,7 @@ contains
 
    end
 
-   make_u_CIS_IC ::: leaky
+   do_u_CIS_IC ::: leaky
    ! Do an urestricted CIS/Tamm-Dancoff calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
