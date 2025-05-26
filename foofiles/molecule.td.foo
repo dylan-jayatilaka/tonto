@@ -402,14 +402,14 @@ contains
 
 ! Efficient Davidson methods
 
-   eigensolve_Davidson(TD_data,AV_prod)
+   eigensolve_Davidson(TD,AV_prod)
    ! =====
    ! Davidson diagonalization: see Crouzeix (1990) Inria RR 1353.
    ! Step numbers & symbols in code below are (mostly) from p. 5.
    ! But "R" is used for residual, not "T"! See also Crouzeix
    ! (1994) SIAM J Sci Comput 15 p. 62-76.
    !
-   ! . "TD_data" .. Holds key calculation parameters. Comments
+   ! . "TD" ....... Holds key calculation parameters. Comments
    !                with <== highlight interaction with it.
    !                It is a kind of Davidson iterator object.
    !
@@ -417,9 +417,9 @@ contains
    !                of the "A matrix product". In this case,
    !                in the AO basis.
    !
-   ! "TD_data" holds iteration count information; also methods
-   ! to test for convergence, or subspace collapse; also, here,
-   ! CIS/TD method-specific storage; For example:
+   ! "TD" holds iteration count information; also methods to 
+   ! test for convergence, or subspace collapse; also, here,
+   ! CIS/TD method-specific storage; for example
    !
    ! . n_evals  ... desired no. of lowest excitations   IN
    ! . n_keep   ... No. of trial vectors to keep        IN
@@ -434,22 +434,22 @@ contains
    ! NOTE: the trial vectors "V" are initially set to unit
    ! vectors in the first few components. So the states that
    ! these components in "V" refer to must be chosen wisely.
-   ! This may be done externally by e.g. TD_data.sort_singles.
+   ! This may be done externally by e.g. TD.sort_singles.
    ! =====
-      TD_data :: TD_DATA, INOUT ! Iteration info
-      interface                 ! Efficient A.V product
-         AV_prod(mol,AV,V,TD_data) ::: PURE
+      TD :: TD_DATA, INOUT ! Iteration info
+      interface            ! Efficient A.V product
+         AV_prod(mol,AV,V,TD) ::: PURE
             use TYPES
             mol :: MOLECULE,    INOUT
             AV  :: MAT{REAL},   OUT
             V   :: MAT{REAL},   IN
-            TD_data :: TD_DATA, INOUT
+            TD  :: TD_DATA, INOUT
          end
       end
 
-   ENSURE(TD_data.eval.allocated,"no TD_data.eval")
-   ENSURE(TD_data.evec.allocated,"no TD_data.eval")
-   ENSURE(TD_data.eval.dim==TD_data.evec.dim2,"in TD_data: eval & evec incompatible")
+   ENSURE(TD.eval.allocated,"no TD.eval")
+   ENSURE(TD.evec.allocated,"no TD.eval")
+   ENSURE(TD.eval.dim==TD.evec.dim2,"in TD: eval & evec incompatible")
 
       ! Main vars
       H      :: MAT{REAL}@      ! H = A in basis of "V" columns
@@ -466,9 +466,9 @@ contains
       d, n :: INT
 
       ! Sizes
-      d = TD_data.evec.dim1     ! "d"
-      n = TD_data.evec.dim2     ! Usually n << d
-      n_keep = TD_data.n_keep   ! No. of trial vectors to keep
+      d = TD.evec.dim1          ! "d"
+      n = TD.evec.dim2          ! Usually n << d
+      n_keep = TD.n_keep        ! No. of trial vectors to keep
 
       ! Temporaries
       V.create(d,n*n_keep)      ! Davidson trial vector colums "V"
@@ -479,20 +479,20 @@ contains
       do ! Davidson loop
 
          ! Next iteration
-         TD_data.update_iteration            ! <==
+         TD.update_iteration                 ! <==
 
          ! Collapse subspace down?
-         if (TD_data.collapse) then
-            TD_data.reset_subspace           ! <== Keep one trial set
-            V(:,1:n) = TD_data.evec          ! Restart with last one
+         if (TD.collapse) then
+            TD.reset_subspace                ! <== Keep one trial set
+            V(:,1:n) = TD.evec               ! Restart with last one
             H.destroy                        ! Start again; remake H
          end
 
          ! 1. Expensive step: extend W
          !    W(:,f:l) = matmul(A,V(:,f:l))
-         f = TD_data.fst_trial_vector        ! <== and below
-         l = TD_data.lst_trial_vector
-         call AV_prod(self,W(:,f:l),V(:,f:l),TD_data)
+         f = TD.fst_trial_vector             ! <== and below
+         l = TD.lst_trial_vector
+         call AV_prod(self,W(:,f:l),V(:,f:l),TD)
        ! stdout.text("W:")
        ! stdout.put(W(:,f:l))
        ! stop
@@ -508,16 +508,15 @@ contains
          H.solve_symmetric_eigenproblem(H_eval,H_evec)
 
          ! 4. Keep Ritz vectors
-         TD_data.eval = H_eval(1:n)          ! <== ANSWER
-         TD_data.evec = matmul(V(:,1:l),H_evec(:,1:n))
+         TD.eval = H_eval(1:n)               ! <== ANSWER
+         TD.evec = matmul(V(:,1:l),H_evec(:,1:n))
 
          ! 5-7. Get residual, add new directions
          maxres = ZERO
          do i = 1,n
 
             ! 5. Residual R & its length
-            R =  H_eval(i)*TD_data.evec(:,i) &
-              - matmul(W(:,1:l), H_evec(:,i))
+            R =  H_eval(i)*TD.evec(:,i) - matmul(W(:,1:l),H_evec(:,i))
             maxres = max(norm2(R),maxres)
 
             ! 6. Preconditioner
@@ -529,22 +528,22 @@ contains
             V(:,l+i) = bot*R
 
          end
-         TD_data.set_max_res(maxres)         ! <== For convergence
+         TD.set_max_res(maxres)              ! <== For convergence
 
          ! Clean up
          H_eval.destroy
          H_evec.destroy
 
          ! 7. Orthonormalize vectors V ?
-         if (NOT TD_data.converged) then
+         if (NOT TD.converged) then
             V(:,1:l+n).modified_Gram_Schmidt_QR
           ! V(:,1:l+n).Householder_QR
          end
 
-         ! Print out table & finish? !!!!!!!
-         TD_data.put_D_table_body_and_footer ! <== And below
-         if (TD_data.Davidson_done)   exit
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         ! Print out table & finish? !!
+         TD.put_D_table_body_and_footer      ! <== And below
+         if (TD.Davidson_done)    exit
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       end
 
@@ -555,7 +554,7 @@ contains
       V.destroy
 
       ! Store results
-      TD_data.store_results                  ! <== Store
+      TD.store_results                       ! <== Store
 
    end
 
