@@ -374,7 +374,7 @@ contains
          case("r-tdhf-s=0&1     "); .TD:do_r_TDHF_S01_IC
          case("r-tdhf-s=1       "); .TD:do_r_TDHF_S1_IC
          case("u-cis            "); .TD:do_u_CIS_IC
-         case("u-cis-v1         "); .TD:do_u_CIS_IC_v1
+         case("u-cis-v1         "); .TD:do_u_CIS_IC_v1    ! Uses SS
          case default; UNKNOWN(.TD_data.method)
          end
 
@@ -459,6 +459,7 @@ contains
       V :: MAT{REAL}@           ! V(:,n) <- Davidson trial vectors
       W :: MAT{REAL}@           ! W(:,n) <- A.V in MO basis
       R :: VEC{REAL}@           ! R      <- Residual vector
+      A :: MAT{REAL}@           ! A matrix
 
       bot    :: REAL
       maxres :: REAL
@@ -468,14 +469,18 @@ contains
 
       ! Sizes
       d = TD.evec.dim1          ! "d"
-      n = TD.evec.dim2          ! Usually n << d
+      n = TD.evec.dim2          ! Block of evals. n << d.
       n_keep = TD.n_keep        ! No. of trial vectors to keep
 
       ! Temporaries
-      V.create(d,n*n_keep)      ! Davidson trial vector colums "V"
+      V.create(d,n*n_keep)      ! Davidson trial vector columns
       W.create(d,n*n_keep)      ! W = A.V in MO basis
       R.create(d)               ! Residual vector
       V(:,1:n).to_unit_mx       ! Initial "V": choose wisely
+
+      ! The A matrix
+      A.create(d,d)
+      .TD:make_u_CIS_SS_A_mx(A)
 
       do ! Davidson loop
 
@@ -493,8 +498,10 @@ contains
          !    W(:,f:l) = matmul(A,V(:,f:l))
          f = TD.fst_trial_vector             ! <== and below
          l = TD.lst_trial_vector
-         call AV_prod(self,W(:,f:l),V(:,f:l),TD)
-       ! .:make_u_CIS_SS_A_mx(AA,two=FALSE)
+       ! call AV_prod(self,W(:,f:l),V(:,f:l),TD)
+       ! stdout.text("W:")
+       ! stdout.put(W(:,f:l))
+         W(:,f:l) = matmul(A,V(:,f:l))
        ! stdout.text("W:")
        ! stdout.put(W(:,f:l))
        ! stop
@@ -560,6 +567,8 @@ contains
 
    end
 
+! Unrestricted
+
    do_u_CIS_SS
    ! Do an unrestricted CIS calculation.
    ! Magic is hidden in the .TD_data object, which keeps
@@ -574,21 +583,45 @@ contains
       .TD_data.put_D_table_header
 
       ! Do the diagonalisation & print results
-      .:eigensolve_Davidson(.TD_data,::do_u_CIS_AV_prod)
+      .:eigensolve_Davidson(.TD_data,::do_u_CIS_SS_AV_prod)
+
+   end
+
+   do_u_CIS_SS_AV_prod(AV,V,TD) ::: PURE
+   ! With *unrestricted* trial vectors "V" do the (A x V)
+   ! product for the Davidson procedure (efficiently in
+   ! the AO basis) and place the result into "AV".
+      self :: INOUT
+      AV :: MAT{REAL},  OUT
+      V  :: MAT{REAL},  IN
+      TD :: TD_DATA, INOUT
+
+   ENSURE(TD.Vao.allocated,"TD.Vao not preallocated")
+   ENSURE(TD.Jao.allocated,"TD.Jao not preallocated")
+   ENSURE(TD.Kao.allocated,"TD.Kao not preallocated")
+
+      ! 1e part: Set AV = diag(A).V
+      TD.make_u_diag_AV(AV,V)
+
+      ! 2e part: accumulate AV =+ (AV)ai
+      TD.change_V_to_AO(TD.Vao,V)  ! Get the DMs
+      .FOCK:u_CIS_AV(TD.Jao,TD.Kao,TD.Vao)
+      TD.change_V_to_MO(AV,TD.Jao,TD.Kao)
 
    end
 
    make_u_CIS_SS_A_mx(AA,one,two)
+   ! FOR TESTING AND UNDERSTANDING.
    ! Make urestricted CIS "A" matrix. It is composed of 16
    ! spin sectors, labelled by single excitations, and the
    ! two-electron part of it is given by:
    !
-   !                  bj>  aa  ba  ab  bb 
-   !                ai    ________________
-   !                aa  | J-K   0   0   J
-   !    AA(ai,bj) = ba  |  0   -K   0   0
-   !                ab  |  0    0  -K   0
-   !                bb  |  J    0   0  J-K
+   !                  <bj>  aa  ba  ab  bb 
+   !                <ai>   ________________
+   !                 aa  | J-K   0   0   J
+   !    AA(ai,bj) =  ba  |  0   -K   0   0
+   !                 ab  |  0    0  -K   0
+   !                 bb  |  J    0   0  J-K
    !
    ! where e.g. ab are spins for excitations ai or bj, and
    ! where J = (ai|bj) and K = (ab|ji). The above matrix can
@@ -640,7 +673,7 @@ contains
 
       if (do1) then
 
-         ! Do diagonal part
+         ! Diagonal Fock mx
          if (.TD_data.Fv.deallocated) then
 
             ! Eigenvalue difference
@@ -716,6 +749,8 @@ contains
 
    end
 
+! Restricted
+
    do_r_CIS_SS_S01
    ! Do a restricted CIS S=0 & S=1 calculation.
       self :: INOUT
@@ -748,53 +783,11 @@ contains
       .TD_data.put_D_table_header
 
       ! Do the diagonalisation & print results
-      .:eigensolve_Davidson(.TD_data,::do_r_CIS_S0_AV_prod)
+      .:eigensolve_Davidson(.TD_data,::do_r_CIS_SS_S0_AV_prod)
 
    end
 
-   do_r_CIS_SS_S1
-   ! Do a restricted CIS S=1 *singlet* calculation.
-   ! Magic is hidden in the .TD_data object, which keeps
-   ! Davidson iteration, and other info; also and the passed
-   ! AV_prod method does the efficient Davidson A.V product.
-      self :: INOUT
-
-      ! Start up
-      .TD_data.initialize_iteration
-
-      ! Output calc options
-      .TD_data.put_D_table_header
-
-      ! Do the diagonalisation & print results
-      .:eigensolve_Davidson(.TD_data,::do_r_CIS_S1_AV_prod)
-
-   end
-
-
-   do_u_CIS_AV_prod(AV,V,TD) ::: PURE
-   ! With *unrestricted* trial vectors "V" do the (A x V)
-   ! product for the Davidson procedure (efficiently in
-   ! the AO basis) and place the result into "AV".
-      self :: INOUT
-      AV :: MAT{REAL},  OUT
-      V  :: MAT{REAL},  IN
-      TD :: TD_DATA, INOUT
-
-   ENSURE(TD.Vao.allocated,"TD.Vao not preallocated")
-   ENSURE(TD.Jao.allocated,"TD.Jao not preallocated")
-   ENSURE(TD.Kao.allocated,"TD.Kao not preallocated")
-
-      ! 1e part: Set AV = diag(A).V
-      TD.make_u_diag_AV(AV,V)
-
-      ! 2e part: accumulate AV =+ (AV)ai
-      TD.change_V_to_AO(TD.Vao,V)  ! Get the DMs
-      .FOCK:u_CIS_AV(TD.Jao,TD.Kao,TD.Vao)
-      TD.change_V_to_MO(AV,TD.Jao,TD.Kao)
-
-   end
-
-   do_r_CIS_S0_AV_prod(AV,V,TD) ::: PURE
+   do_r_CIS_SS_S0_AV_prod(AV,V,TD) ::: PURE
    ! Given Davidson trial vectors "V", do the (A x V)
    ! product (efficiently in the AO basis) and place the
    ! result into "AV". *Singlet* S=0 case.
@@ -816,7 +809,25 @@ contains
 
    end
 
-   do_r_CIS_S1_AV_prod(AV,V,TD) ::: PURE
+   do_r_CIS_SS_S1
+   ! Do a restricted CIS S=1 *singlet* calculation.
+   ! Magic is hidden in the .TD_data object, which keeps
+   ! Davidson iteration, and other info; also and the passed
+   ! AV_prod method does the efficient Davidson A.V product.
+      self :: INOUT
+
+      ! Start up
+      .TD_data.initialize_iteration
+
+      ! Output calc options
+      .TD_data.put_D_table_header
+
+      ! Do the diagonalisation & print results
+      .:eigensolve_Davidson(.TD_data,::do_r_CIS_SS_S1_AV_prod)
+
+   end
+
+   do_r_CIS_SS_S1_AV_prod(AV,V,TD) ::: PURE
    ! Given Davidson trial vectors "V", do the (A x V)
    ! product (efficiently in the AO basis) and place the
    ! result into "AV". *Triplet* S=1 case.
