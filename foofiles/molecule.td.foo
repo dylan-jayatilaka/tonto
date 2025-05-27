@@ -374,6 +374,7 @@ contains
          case("r-tdhf-s=0&1     "); .TD:do_r_TDHF_S01_IC
          case("r-tdhf-s=1       "); .TD:do_r_TDHF_S1_IC
          case("u-cis            "); .TD:do_u_CIS_IC
+         case("u-cis-v1         "); .TD:do_u_CIS_IC_v1
          case default; UNKNOWN(.TD_data.method)
          end
 
@@ -493,6 +494,7 @@ contains
          f = TD.fst_trial_vector             ! <== and below
          l = TD.lst_trial_vector
          call AV_prod(self,W(:,f:l),V(:,f:l),TD)
+       ! .:make_u_CIS_SS_A_mx(AA,two=FALSE)
        ! stdout.text("W:")
        ! stdout.put(W(:,f:l))
        ! stop
@@ -573,6 +575,144 @@ contains
 
       ! Do the diagonalisation & print results
       .:eigensolve_Davidson(.TD_data,::do_u_CIS_AV_prod)
+
+   end
+
+   make_u_CIS_SS_A_mx(AA,one,two)
+   ! Make urestricted CIS "A" matrix. It is composed of 16
+   ! spin sectors, labelled by single excitations, and the
+   ! two-electron part of it is given by:
+   !
+   !                  bj>  aa  ba  ab  bb 
+   !                ai    ________________
+   !                aa  | J-K   0   0   J
+   !    AA(ai,bj) = ba  |  0   -K   0   0
+   !                ab  |  0    0  -K   0
+   !                bb  |  J    0   0  J-K
+   !
+   ! where e.g. ab are spins for excitations ai or bj, and
+   ! where J = (ai|bj) and K = (ab|ji). The above matrix can
+   ! be derived from the 2e part of the spinorbital equation
+   ! below, by performing integration over spin labels.
+   !
+   !  AA(AI,BJ) = (E_A-E_I) d_IJ d_AB + (AI|BJ) - (AB|IJ)
+   !
+   ! NOTE: The 1e part in this eqn is non-zero for spin labels
+   ! aa;aa aa;bb bb;aa and bb;bb, the corners of the mx above.
+   ! See Dreuw & Head-Gordon (2005) eqn (17).
+      self :: INOUT
+      AA  :: MAT{REAL}, OUT
+      one :: BIN, optional, IN
+      two :: BIN, optional, IN
+
+   ENSURE(.TD_data.Fv.deallocated,"VMO canonisation disallowed here")
+   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      v :: MAT4{REAL}@
+      ai, a, i :: INT
+      bj, b, j :: INT
+      d, d2,d3 :: INT
+      no,lo,hv :: INT
+      do1, do2 :: BIN
+      val, aibj, abji :: REAL
+
+      ! Do one electron part?
+      do1 = TRUE
+      if (present(one)) do1 = one
+
+      ! Do two electron part?
+      do2 = TRUE
+      if (present(two)) do2 = two
+
+      ! Dimensions
+      d   = .TD_data.deltaE.dim
+      d2  = 2*d
+      d3  = 3*d
+      no  = .TD_data.n_occ
+      lo  = .TD_data.min_OMO
+      hv  = .TD_data.max_VMO + no ! NOTE
+
+      ! A matrix (leaky)
+      AA = ZERO
+
+      if (do1) then
+
+         ! Do diagonal part
+         if (.TD_data.Fv.deallocated) then
+
+            ! Eigenvalue difference
+            do ai = 1,d
+               val = .TD_data.deltaE(ai)
+               AA(   ai,   ai) = val ! aa;aa
+               AA(d +ai,d +ai) = val ! ba;ba
+               AA(d2+ai,d2+ai) = val ! ab;ab
+               AA(d3+ai,d3+ai) = val ! bb;bb
+            end
+
+         else
+
+            ! Non-diagonal VMO part
+            do ai = 1,d
+               a   =  .TD_data.single(ai,1)
+               i   =  .TD_data.single(ai,2)
+               val = -.TD_data.Eo(i)
+               AA(   ai,   ai) = val
+               AA(d +ai,d +ai) = val
+               AA(d2+ai,d2+ai) = val
+               AA(d3+ai,d3+ai) = val
+               do bj = 1,d
+                  b  = .TD_data.single(bj,1)
+                  j  = .TD_data.single(bj,2)
+                  if (i==j) then
+                     val = .TD_data.Fv(a,b)
+                     AA(   ai,   bj) = AA(   ai,   bj) + val
+                     AA(d +ai,d +bj) = AA(d +ai,d +bj) + val
+                     AA(d2+ai,d2+bj) = AA(d2+ai,d2+bj) + val
+                     AA(d3+ai,d3+bj) = AA(d3+ai,d3+bj) + val
+                  end
+               end
+            end
+
+         end
+
+      end
+
+      if (do2) then
+
+         ! Get ERIs in MO basis
+         v.create([lo,hv],[lo,hv],[lo,hv],[lo,hv])
+         .FOCK:make_MO_ERIs_v1(v,lo,hv)
+
+         ! Two-electron part
+         do ai = 1,d
+            a = .TD_data.single(ai,1) + no
+            i = .TD_data.single(ai,2)
+            do bj = 1,d
+               b = .TD_data.single(bj,1) + no
+               j = .TD_data.single(bj,2)
+               ! Integrals
+               aibj = v(a,i,b,j)
+               AA(   ai,   bj) = AA(   ai,   bj) + aibj ! aa;aa
+               AA(   ai,d3+bj) = AA(   ai,d3+bj) + aibj ! aa;bb
+               AA(d3+ai,   bj) = AA(d3+ai,   bj) + aibj ! bb;aa
+               AA(d3+ai,d3+bj) = AA(d3+ai,d3+bj) + aibj ! bb;bb
+               abji = v(a,b,j,i)
+               AA(   ai,   bj) = AA(   ai,   bj) - abji ! aa;aa
+               AA(d +ai,d +bj) = AA(d +ai,d +bj) - abji ! ba;ba
+               AA(d2+ai,d2+bj) = AA(d2+ai,d2+bj) - abji ! ab;ab
+               AA(d3+ai,d3+bj) = AA(d3+ai,d3+bj) - abji ! bb;bb
+            end
+         end
+
+         v.destroy
+
+      end
+
+      ! Symmetrize
+      AA.symmetric_reflect
 
    end
 
@@ -1277,69 +1417,30 @@ contains
 ! In-core methods
 ! ===============
 
-   TD_excited_state_solver_IC(AA,append) ::: leaky, private
+   TD_excited_state_solver_IC(AA) ::: leaky, private
    ! Diagonalise the CIS/TD matrix "A", or similar, in-core.
    ! Triplet (S=1) results are appended if requested.
       self :: INOUT
-      AA   :: MAT{REAL}, IN
-      append :: BIN, optional, IN
+      AA :: MAT{REAL}, IN
 
-      ind :: VEC{INT}@
-      dim :: INT
-      add :: BIN
-
-      add = FALSE
-      if (present(append)) add = append
+      dim, n :: INT
 
       ! Dimensions
       dim = AA.dim1
 
-      ! Remove spin labels
-      .TD_data.S.destroy
+      ! Solve
+      .TD_data.eval.create(dim)
+      .TD_data.evec.create(dim,dim)
+      AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
 
-      ! Diagonalise
-      if (.TD_data.has_states AND add) then
+      ! Shrink to desired + 2 for triplet detection
+      n = .TD_data.n_evals + 2
+      .TD_data.eval.shrink(n)
+      .TD_data.evec.shrink_columns(n)
 
-         ! Will this work for state selection?
-         ENSURE(.TD_data.method/="u-cis","incorrect call, wrong method")
-         ENSURE(.TD_data.eval.dim ==dim,"incorrect number of states")
-         ENSURE(.TD_data.evec.dim2==dim,"incorrect number of states")
-
-         ! Append triplets to singlets
-         .TD_data.eval.expand(2*dim)
-         .TD_data.evec.expand(dim,2*dim)
-         .TD_data.S.create(2*dim)
-         .TD_data.S(    1:dim) = 0
-         .TD_data.S(dim+1:   ) = 1
-         AA.solve_symmetric_eigenproblem(.TD_data.eval(dim+1:),.TD_data.evec(:,dim+1:))
-
-         ! Sqrt? Only latest eigenvalues
-         if (.TD_data.do_sqrt_evals) then
-         .TD_data.eval(dim+1:) = sqrt(.TD_data.eval(dim+1:))
-         end
-
-         ! Sort
-         ind.create(2*dim)
-         .TD_data.eval.quick_sort(ind)
-
-         ! Reorder
-         .TD_data.S    = .TD_data.S(ind)
-         .TD_data.eval = .TD_data.eval(ind)
-         .TD_data.evec = .TD_data.evec(:,ind)
-         ind.destroy
-
-      else
-
-         ! Don't append !!!!!!!!!!
-         .TD_data.eval.create(dim)
-         .TD_data.evec.create(dim,dim)
-         AA.solve_symmetric_eigenproblem(.TD_data.eval,.TD_data.evec)
-
-         ! Sqrt?
-         if (.TD_data.do_sqrt_evals) then
-         .TD_data.eval = sqrt(.TD_data.eval)
-         end
-
+      ! Sqrt?
+      if (.TD_data.do_sqrt_evals) then
+      .TD_data.eval = sqrt(.TD_data.eval)
       end
 
    end
@@ -1352,8 +1453,17 @@ contains
    ! by increasing excitation energy.
       self :: INOUT
 
+      ! S=0 calculation
+      .TD_data.set_method("r-cis-s=0")
       .TD::do_r_CIS_S0_IC
-      .TD::do_r_CIS_S1_IC(append=TRUE)
+
+      ! S=1 calculation
+      .TD_data.set_method("r-cis-s=1")
+      .TD::do_r_CIS_S1_IC
+
+      ! Reset calc type & append results
+      .TD_data.set_method("r-cis-s=0&1")
+      .TD_data.store_results
 
    end
 
@@ -1363,12 +1473,21 @@ contains
    ! by increasing excitation energy.
       self :: INOUT
 
+      ! S=0 calculation
+      .TD_data.set_method("r-tdhf-s=0")
       .TD::do_r_TDHF_S0_IC
-      .TD::do_r_TDHF_S1_IC(append=TRUE)
+
+      ! S=1 calculation
+      .TD_data.set_method("r-tdhf-s=1")
+      .TD::do_r_TDHF_S1_IC
+
+      ! Reset calc type & append results
+      .TD_data.set_method("r-tdhf-s=0&1")
+      .TD_data.store_results
 
    end
 
-! Singlet
+! Restricted Singlet
 
    do_r_CIS_S0_IC ::: leaky
    ! Do a restricted CIS/Tamm-Dancoff singlet calculation.
@@ -1397,7 +1516,10 @@ contains
       AA.symmetric_reflect
 
       ! Diagonalize for excitations
-      .TD:TD_excited_state_solver_IC(AA,append=FALSE)
+      .TD:TD_excited_state_solver_IC(AA)
+
+      ! Store
+      .TD_data.store_results
 
       ! Clean up
       AA.destroy
@@ -1431,7 +1553,10 @@ contains
       AA.symmetric_reflect
 
       ! Diagonalize for excitations
-      .TD:TD_excited_state_solver_IC(AA,append=FALSE)
+      .TD:TD_excited_state_solver_IC(AA)
+
+      ! Store
+      .TD_data.store_results
 
       ! Clean up
       AA.destroy
@@ -1527,7 +1652,10 @@ contains
       AmB.destroy
 
       ! Diagonalize for excitations
-      .TD:TD_excited_state_solver_IC(ApB,append=FALSE)
+      .TD:TD_excited_state_solver_IC(ApB)
+
+      ! Store
+      .TD_data.store_results
 
       ! Clean up
       ApB.destroy
@@ -1535,14 +1663,13 @@ contains
 
    end
 
-! Triplet
+! Restricted Triplet
 
-   do_r_CIS_S1_IC(append) ::: leaky
+   do_r_CIS_S1_IC ::: leaky
    ! Do a restricted CIS/Tamm-Dancoff triplet calculation.
    ! See Weiss et al (1993) JCP 99 p1262-70.
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
       self :: INOUT
-      append :: BIN, optional, IN
 
    ENSURE(.TD_data.Fv.deallocated,"VMO canonisation disallowed here")
    ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
@@ -1610,20 +1737,22 @@ contains
       AA.symmetric_reflect
 
       ! Diagonalize for excitations
-      .TD:TD_excited_state_solver_IC(AA,append)
+      .TD:TD_excited_state_solver_IC(AA)
+
+      ! Store
+      .TD_data.store_results
 
       ! Clean up
       AA.destroy
 
    end
 
-   do_r_TDHF_S1_IC(append) ::: leaky
+   do_r_TDHF_S1_IC ::: leaky
    ! Do a restricted TDHF triplet calculation.
    ! NOTE: for singlet or triplet instabilities this may fail
    ! See Weiss et al (1993) JCP 99 p1262-70.
    ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
       self :: INOUT
-      append :: BIN, optional, IN
 
    ENSURE(.TD_data.Fv.deallocated,"VMO canonisation disallowed here")
    ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
@@ -1706,12 +1835,17 @@ contains
       AmB.destroy
 
       ! Diagonalize for excitations
-      .TD:TD_excited_state_solver_IC(ApB,append)
+      .TD:TD_excited_state_solver_IC(ApB)
+
+      ! Store
+      .TD_data.store_results
 
       ! Clean up
       ApB.destroy
 
    end
+
+! Unrestricted CIS
 
    do_u_CIS_IC ::: leaky
    ! Do an urestricted CIS/Tamm-Dancoff calculation.
@@ -1824,7 +1958,52 @@ contains
     ! .:put_u_CIS_A_mx(AA)
 
       ! Diagonalize for excitations
-      .TD:TD_excited_state_solver_IC(AA,append=FALSE)
+      .TD:TD_excited_state_solver_IC(AA)
+
+      ! Store
+      .TD_data.store_results
+
+      ! Clean up
+      AA.destroy
+
+   end
+
+   do_u_CIS_IC_v1 ::: leaky
+   ! Do an urestricted CIS calculation.
+   ! This version does different order of states.
+   ! See Weiss et al (1993) JCP 99 p1262-70.
+   ! See Hirata & Head-Gordon (1999) CPL 314, 291-299.
+      self :: INOUT
+
+   ENSURE(.TD_data.Fv.deallocated,"VMO canonisation disallowed here")
+   ENSURE(.TD_data.Eo.allocated,"NO TD_data.Eo!")
+   ENSURE(.TD_data.Ev.allocated,"NO TD_data.Ev!")
+   ENSURE(.MOs.allocated,"MOs do not exist")
+   ENSURE(.MOs.r.allocated,"MOs.r does not exist")
+
+      AA :: MAT{REAL}@
+      nvo :: INT
+      no,nv :: INT
+
+      ! Dimensions
+      no  = .TD_data.n_occ
+      nv  = .TD_data.n_vir
+      nvo = 2*nv*2*no
+
+      ! Allocate & make
+      AA.create(nvo,nvo)
+      .:make_u_CIS_SS_A_mx(AA)
+
+      ! Symmetrize
+      AA.symmetric_reflect
+
+    ! .:put_u_CIS_A_mx(AA)
+
+      ! Diagonalize for excitations
+      .TD:TD_excited_state_solver_IC(AA)
+
+      ! Store
+      .TD_data.store_results
 
       ! Clean up
       AA.destroy
