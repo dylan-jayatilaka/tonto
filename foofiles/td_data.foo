@@ -1050,15 +1050,15 @@ contains
       .max_res.create(.n_keep)
       .max_res = ZERO
 
-      ! Davidson temporaries
-      .Vao.create(n,.n_bf,.n_bf) ! Density matrices
-
-      ! A or J & K in AO basis
+      ! Davidson temporaries:
+      ! V or J & K in AO basis
       if (NOT .is_unrestricted) then
-         .Aao.create(n,.n_bf,.n_bf) ! A.V in AO basis
+         .Vao.create(n,.n_bf,.n_bf)   ! Density matrices
+         .Aao.create(n,.n_bf,.n_bf)   ! A.V in AO basis
       else
-         .Jao.create(n,.n_bf,.n_bf)
-         .Kao.create(n,.n_bf,.n_bf)
+         .Vao.create(4*n,.n_bf,.n_bf) ! Density matrices
+         .Jao.create(4*n,.n_bf,.n_bf)
+         .Kao.create(4*n,.n_bf,.n_bf)
       end
 
       ! Set table headings
@@ -1308,39 +1308,50 @@ contains
 
 
    change_u_V_to_AO(Vao,V) ::: PURE
-   ! Back transform trial eigenvectors "V" into symmetric
-   ! (n_bf x n_bf) AO sized density matrices "Vao", for
-   ! each excited state eigenvalue. Needed to calculate
+   ! Back transform *unrestricted* Davidson trial vectors 
+   ! "V" into symmetric (n_bf x n_bf) AO-sized density mx's
+   ! "Vao", for each excited state eigenvalue. Needed to get
    ! the 2e-part of the A.V Davidson step in CIS/TD eqns.
-   ! NOTE: the result does *not* accu,mulate.
+   ! NOTE: "V" is 4 times the size of the restricted case.
+   !       Due to the the spin blocks: aa, ba, ab bb.
+   ! NOTE: the result does *not* accumulate.
       self :: IN
       Vao  :: MAT3{REAL}, OUT
       V    :: MAT{REAL}, IN
 
-   ENSURE(Vao.dim1==.n_evals,"inconsistent dim1, Vao")
+   ENSURE(Vao.dim1==4*.n_evals,"inconsistent dim1, Vao")
 
       ai, a,i :: INT
-      d,no,lo :: INT
-      n, p, q :: INT
+      d,d2,d3 :: INT
+      no, lo :: INT
+      n, p,q :: INT
+      val :: REAL
       W :: MAT3{REAL}@
 
       ! Sizes & limits
       d  = .single.dim1
+      d2 = 2*d
+      d3 = 3*d
       no = .n_occ
       lo = .min_OMO
 
       ! Single index transform temporary
-      W.create([1,.n_bf],[lo,no],[1,.n_evals])
+      ! Last index stores spin blocks.
+      W.create([1,.n_bf],[lo,no],[1,4*.n_evals])
       W = ZERO
 
       ! Transform "a" index of "V" -> "W"
-      do n  = 1, .n_evals
+      do n  = 1, 4*.n_evals, 4
       do p  = 1, .n_bf
       do ai = 1, d
          a = .single(ai,1)
          i = .single(ai,2)
          ! a -> p
-         W(p,i,n) = W(p,i,n) + .MOv(p,a)*V(ai,n)
+         val = .MOv(p,a)
+         W(p,i,n  ) = W(p,i,n  ) + val*V(   ai,n) ! aa
+         W(p,i,n+1) = W(p,i,n+1) + val*V(d +ai,n) ! ba
+         W(p,i,n+2) = W(p,i,n+2) + val*V(d2+ai,n) ! ab
+         W(p,i,n+3) = W(p,i,n+3) + val*V(d3+ai,n) ! bb
       end
       end
       end
@@ -1352,7 +1363,11 @@ contains
       do p = 1, .n_bf
       do q = 1, .n_bf
          ! i -> q
-         Vao(n,p,q) = Vao(n,p,q) + .MOo(q,i)*W(p,i,n)
+         val = .MOo(q,i)
+         Vao(n  ,p,q) = Vao(n  ,p,q) + val*W(p,i,n  )
+         Vao(n+1,p,q) = Vao(n+1,p,q) + val*W(p,i,n+1)
+         Vao(n+2,p,q) = Vao(n+2,p,q) + val*W(p,i,n+2)
+         Vao(n+3,p,q) = Vao(n+2,p,q) + val*W(p,i,n+3)
       end
       end
       end
@@ -1385,7 +1400,7 @@ contains
       no = .n_occ
       lo = .min_OMO
 
-      ! Single index transform temporary
+      ! Single-index transform temporary
       W.create([1,.n_bf],[lo,no],[1,.n_evals])
       W = ZERO
 
@@ -1482,16 +1497,19 @@ contains
       Jao :: MAT3{REAL}, IN
       Kao :: MAT3{REAL}, IN
 
-   ENSURE(Jao.dim1==V.dim2,  "incompatible dim1 & dim2, Jao & V")
-   ENSURE(Jao.dim1==.n_evals,"wrong dim1, Jao")
-   ENSURE(Jao.dim2==.n_bf,   "wrong dim2, Jao")
-   ENSURE(Jao.dim3==.n_bf,   "wrong dim3, Jao")
+   ENSURE(Jao.dim1==V.dim2,    "incompatible dim1 & dim2, Jao & V")
+   ENSURE(Jao.dim1==4*.n_evals,"wrong dim1, Jao")
+   ENSURE(Jao.dim2==.n_bf,     "wrong dim2, Jao")
+   ENSURE(Jao.dim3==.n_bf,     "wrong dim3, Jao")
    ENSURE(Kao.is_same_shape_as(Jao),"Kao inconsistent shape with Jao")
 
-      d,d2,d3,no,lo :: INT
-      ai,a,i, n,p,q :: INT
-      val, J,K, J2K :: REAL
-      WJ, WK :: MAT3{REAL}@
+      d, d2,d3, no,lo :: INT
+      ai,a,i, m,n,p,q :: INT
+      WJ, WK  :: MAT3{REAL}@
+      Jaa,Jbb :: REAL
+      Kaa,Kbb :: REAL
+      Kba,Kab :: REAL
+      val :: REAL
 
       ! Sizes
       d  = .single.dim1
@@ -1500,9 +1518,9 @@ contains
       no = .n_occ
       lo = .min_OMO
 
-      ! Transform "a" index
-      WJ.create([1,.n_evals],[1,.n_bf],[lo,no])
-      WK.create([1,.n_evals],[1,.n_bf],[lo,no])
+      ! Single-index transform temporaries
+      WJ.create([1,4*.n_evals],[1,.n_bf],[lo,no])
+      WK.create([1,4*.n_evals],[1,.n_bf],[lo,no])
       WJ = ZERO
       WK = ZERO
 
@@ -1510,34 +1528,39 @@ contains
       do i = lo,no
       do q = 1,.n_bf
       do p = 1,.n_bf
-      do n = 1,.n_evals
-         val = .MOo(q,i)
-         J   = Jao(n,p,q)*val
-         K   = Kao(n,p,q)*val
-         WJ(n,p,i) = WJ(n,p,i) + J
-         WK(n,p,i) = WK(n,p,i) + K
-      end
+         do n = 1,4*.n_evals
+            val = .MOo(q,i)
+            Jaa = Jao(n,p,q)*val
+            Kaa = Kao(n,p,q)*val
+            WJ(n,p,i) = WJ(n,p,i) + Jaa
+            WK(n,p,i) = WK(n,p,i) + Kaa
+         end
       end
       end
       end
 
       ! Transform "p" index, *accumulate* in "V"
       ! See the singlet/triplet parts!
+      m = 0
       do n = 1,.n_evals
-      do p = 1,.n_bf
-      do ai = 1,d
-         a = .single(ai,1)
-         i = .single(ai,2)
-         val = .MOv(p,a)
-         J   = WJ(n,p,i)*val
-         K   = WK(n,p,i)*val
-         J2K = J - K + J
-         V(   ai,n) = V(   ai,n) + J2K ! (ai)_aa
-         V(d +ai,n) = V(d +ai,n) - K   ! (ai)_ba
-         V(d2+ai,n) = V(d2+ai,n) - K   ! (ai)_ab
-         V(d3+ai,n) = V(d3+ai,n) + J2K ! (ai)_bb
-      end
-      end
+         do p = 1,.n_bf
+         do ai = 1,d
+            a = .single(ai,1)
+            i = .single(ai,2)
+            val = .MOv(p,a)
+            Jaa = WJ(m  ,p,i)*val
+            Jbb = WJ(m+3,p,i)*val
+            Kaa = WK(m  ,p,i)*val
+            Kba = WK(m+1,p,i)*val
+            Kab = WK(m+2,p,i)*val
+            Kbb = WK(m+3,p,i)*val
+            V(   ai,n) = V(   ai,n) + Jaa - Kaa + Jbb ! (ai)_aa
+            V(d +ai,n) = V(d +ai,n) - Kba             ! (ai)_ba
+            V(d2+ai,n) = V(d2+ai,n) - Kab             ! (ai)_ab
+            V(d3+ai,n) = V(d3+ai,n) + Jbb - Kbb + Jaa ! (ai)_bb
+         end
+         end
+         m = m + 4
       end
 
       ! Clean up
