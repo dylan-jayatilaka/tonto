@@ -858,7 +858,7 @@ contains
    end
 
    find_doubles ::: leaky, PURE
-   ! Find double excitations in S window, within .tol_D 
+   ! Find double excitations in S window, within .tol_D
    ! of the chosen excitation energy .omega.
       self :: INOUT
 
@@ -1024,22 +1024,26 @@ contains
 
    end
 
-! Iteration control
+!  =================
+!  Iteration control
+!  =================
 
    initialize_iteration ::: leaky, PURE
    ! Initialise the Davidson iterations
       self :: INOUT
 
-      d,n :: INT
+      d1,d2,d3 :: INT
+      d, n, s  :: INT
 
       .iteration = 0
       .n_trial   = 0
 
       ! Sizes
-      d = .no_of_singles ! "d" could nvo
-      n = .n_evals       ! Usually n << d
+      d = .no_of_singles     ! "d" <= nv*no
+      n = .n_evals           ! Usually n << d
 
-      ! Bigger
+      ! Unrestricted?
+      ! Allow for aa, ba, ab, bb
       if (.is_unrestricted) d = 4*d
 
       ! Evals & evecs (leaky)
@@ -1050,13 +1054,40 @@ contains
       .max_res.create(.n_keep)
       .max_res = ZERO
 
+      ! Temporaries
+      .V.create(d,n*.n_keep) ! Davidson trial vector columns
+      .W.create(d,n*.n_keep) ! W = A.V in MO basis
+      .R.create(d)           ! Residual vector
+
+      ! Initial vectors
+      ! The single-excitations states should be well-ordered
+      ! e.g. in increasing energy and with sensible shape.
+      ! Consider DFT, non-canonical VMOs, or Fermi-Amaldi.
+      .V = ZERO
+    ! if (NOT .is_unrestricted) then
+         .V(:,1:n).to_unit_mx
+    ! else
+    !    ! Initialise S=0 & S=1
+    !    ! shape(V) is really (d,4,n*n_keep)
+    !    d1 = .no_of_singles
+    !    d2 = 2*d1
+    !    d3 = 3*d1
+    !    do s = 1,n
+    !       .V(   1,s) = ONE ! Singlet
+    !       .V(d1+1,s) = ONE ! Triplet
+    !       .V(d2+1,s) = ONE
+    !       .V(d3+1,s) = ONE
+    !    end
+    ! end
+
+
       ! Davidson temporaries:
       ! V or J & K in AO basis
       if (NOT .is_unrestricted) then
          .Vao.create(n,.n_bf,.n_bf)   ! Density matrices
          .Aao.create(n,.n_bf,.n_bf)   ! A.V in AO basis
       else
-         .Vao.create(4*n,.n_bf,.n_bf) ! Density matrices
+         .Vao.create(4*n,.n_bf,.n_bf)
          .Jao.create(4*n,.n_bf,.n_bf)
          .Kao.create(4*n,.n_bf,.n_bf)
       end
@@ -1075,6 +1106,10 @@ contains
       cnt :: VEC{INT}@
       d,n,i, n_kind :: INT
       k1,k2,k3 :: INT
+
+      ! Clean up !!!!!!!!
+      .finalize_iteration
+      !!!!!!!!!!!!!!!!!!!
 
       n = .evec.dim2
 
@@ -1166,9 +1201,28 @@ contains
 
          ind.destroy
 
-         ! Set state labels
-
       end
+
+   end
+
+   finalize_iteration ::: leaky, PURE
+   ! Initialise the Davidson iterations
+      self :: INOUT
+
+
+      ! Temporaries
+      if (NOT .is_unrestricted) then
+         .Aao.destroy
+         .Vao.destroy
+      else
+         .Kao.destroy
+         .Jao.destroy
+         .Vao.destroy
+      end
+
+      .R.destroy
+      .W.destroy
+      .V.destroy
 
    end
 
@@ -1198,7 +1252,6 @@ contains
       .n_trial = 1
 
    end
-
 
 !  =======================
 !  Efficient A x V product
@@ -1308,7 +1361,7 @@ contains
 
 
    change_u_V_to_AO(Vao,V) ::: PURE
-   ! Back transform *unrestricted* Davidson trial vectors 
+   ! Back transform *unrestricted* Davidson trial vectors
    ! "V" into symmetric (n_bf x n_bf) AO-sized density mx's
    ! "Vao", for each excited state eigenvalue. Needed to get
    ! the 2e-part of the A.V Davidson step in CIS/TD eqns.
@@ -1321,8 +1374,8 @@ contains
 
    ENSURE(Vao.dim1==4*.n_evals,"inconsistent dim1, Vao")
 
-      ai, a,i :: INT
-      d,d2,d3 :: INT
+      ai,a,i, bj :: INT
+      d,d2,d3,d4 :: INT
       no, lo :: INT
       n, p,q :: INT
       val :: REAL
@@ -1332,6 +1385,7 @@ contains
       d  = .single.dim1
       d2 = 2*d
       d3 = 3*d
+      d4 = 4*d
       no = .n_occ
       lo = .min_OMO
 
@@ -1341,7 +1395,7 @@ contains
       W = ZERO
 
       ! Transform "a" index of "V" -> "W"
-      do n  = 1, 4*.n_evals, 4
+      do n  = 1, .n_evals
       do p  = 1, .n_bf
       do ai = 1, d
          a = .single(ai,1)
@@ -1367,7 +1421,7 @@ contains
          Vao(n  ,p,q) = Vao(n  ,p,q) + val*W(p,i,n  )
          Vao(n+1,p,q) = Vao(n+1,p,q) + val*W(p,i,n+1)
          Vao(n+2,p,q) = Vao(n+2,p,q) + val*W(p,i,n+2)
-         Vao(n+3,p,q) = Vao(n+2,p,q) + val*W(p,i,n+3)
+         Vao(n+3,p,q) = Vao(n+3,p,q) + val*W(p,i,n+3)
       end
       end
       end
@@ -1485,10 +1539,10 @@ contains
 
 
    change_u_V_to_MO(V,Jao,Kao) ::: PURE
-   ! Transform and *accumulate* AO-basis "Jao" and "Kao" 
-   ! matrices from the 2e part of the CIS equations into 
-   ! the correct spin blocks of the unrestricted Davidson 
-   ! trial eigenvectors "V" in single-excitation MO basis. 
+   ! Transform and *accumulate* AO-basis "Jao" and "Kao"
+   ! matrices from the 2e part of the CIS equations into
+   ! the correct spin blocks of the unrestricted Davidson
+   ! trial eigenvectors "V" in single-excitation MO basis.
    ! NOTE: spin order of ai excitations is: aa, ba, ab, bb.
    ! These blocks are stored sequentially in the first index
    ! of the "Jao" and "Kao" matrices.
@@ -1497,7 +1551,7 @@ contains
       Jao :: MAT3{REAL}, IN
       Kao :: MAT3{REAL}, IN
 
-   ENSURE(Jao.dim1==V.dim2,    "incompatible dim1 & dim2, Jao & V")
+   ENSURE(Jao.dim1==4*V.dim2,  "incompatible dim1 & dim2, Jao & V")
    ENSURE(Jao.dim1==4*.n_evals,"wrong dim1, Jao")
    ENSURE(Jao.dim2==.n_bf,     "wrong dim2, Jao")
    ENSURE(Jao.dim3==.n_bf,     "wrong dim3, Jao")
@@ -1541,7 +1595,7 @@ contains
 
       ! Transform "p" index, *accumulate* in "V"
       ! See the singlet/triplet parts!
-      m = 0
+      m = 1
       do n = 1,.n_evals
          do p = 1,.n_bf
          do ai = 1,d

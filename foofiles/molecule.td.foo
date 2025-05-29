@@ -456,9 +456,9 @@ contains
       H      :: MAT{REAL}@      ! H = A in basis of "V" columns
       H_eval :: VEC{REAL}@      ! H eigenvalues
       H_evec :: MAT{REAL}@      ! H eigenvectors
-      V :: MAT{REAL}@           ! V(:,n) <- Davidson trial vectors
-      W :: MAT{REAL}@           ! W(:,n) <- A.V in MO basis
-      R :: VEC{REAL}@           ! R      <- Residual vector
+    ! V :: MAT{REAL}@           ! V(:,n) <- Davidson trial vectors
+    ! W :: MAT{REAL}@           ! W(:,n) <- A.V in MO basis
+    ! R :: VEC{REAL}@           ! R      <- Residual vector
       A :: MAT{REAL}@           ! A matrix
 
       bot    :: REAL
@@ -473,14 +473,14 @@ contains
       n_keep = TD.n_keep        ! No. of trial vectors to keep
 
       ! Temporaries
-      V.create(d,n*n_keep)      ! Davidson trial vector columns
-      W.create(d,n*n_keep)      ! W = A.V in MO basis
-      R.create(d)               ! Residual vector
-      V(:,1:n).to_unit_mx       ! Initial "V": choose wisely
+    ! V.create(d,n*n_keep)      ! Davidson trial vector columns
+    ! W.create(d,n*n_keep)      ! W = A.V in MO basis
+    ! R.create(d)               ! Residual vector
+    ! V(:,1:n).to_unit_mx       ! Initial "V": choose wisely
 
       ! The A matrix
-      A.create(d,d)
-      .TD:make_u_CIS_SS_A_mx(A,one=FALSE)
+    ! A.create(d,d)
+    ! .TD:make_u_CIS_SS_A_mx(A,one=FALSE)
 
       do ! Davidson loop
 
@@ -490,27 +490,27 @@ contains
          ! Collapse subspace down?
          if (TD.collapse) then
             TD.reset_subspace                ! <== Keep one trial set
-            V(:,1:n) = TD.evec               ! Restart with last one
+            TD.V(:,1:n) = TD.evec            ! Restart with last one
             H.destroy                        ! Start again; remake H
          end
 
-         ! 1. Expensive step: extend W
-         !    W(:,f:l) = matmul(A,V(:,f:l))
+         ! 1. Expensive step, extend W :
+         ! W(:,f:l) = matmul(A,V(:,f:l))
          f = TD.fst_trial_vector             ! <== and below
          l = TD.lst_trial_vector
-         call AV_prod(self,W(:,f:l),V(:,f:l),TD)
-         stdout.text("W:")
-         stdout.put(W(:,f:l))
-         W(:,f:l) = matmul(A,V(:,f:l))
-         stdout.text("W:")
-         stdout.put(W(:,f:l))
-         stop
+         call AV_prod(self,TD.W(:,f:l),TD.V(:,f:l),TD)
+       ! stdout.text("W:")
+       ! stdout.put(TD.W(:,f:l))
+       ! TD.W(:,f:l) = matmul(A,TD.V(:,f:l))
+       ! stdout.text("W:")
+       ! stdout.put(TD.W(:,f:l))
+       ! stop
 
          ! 2. Expand Rayleigh matrix
          H.expand(l,l)
          H_evec.create(l,l)
          H_eval.create(l)
-         H(f:l,:) = matmul( transpose(V(:,f:l)) , W(:,1:l) )
+         H(f:l,:) = matmul( transpose(TD.V(:,f:l)), TD.W(:,1:l) )
          H.symmetric_reflect(set_upper=TRUE)
 
          ! 3. Diagonalise (increasing eigenvalues)
@@ -518,15 +518,16 @@ contains
 
          ! 4. Keep Ritz vectors
          TD.eval = H_eval(1:n)               ! <== ANSWER
-         TD.evec = matmul(V(:,1:l),H_evec(:,1:n))
+         TD.evec = matmul(TD.V(:,1:l),H_evec(:,1:n))
 
          ! 5-7. Get residual, add new directions
          maxres = ZERO
          do i = 1,n
 
             ! 5. Residual R & its length
-            R =  H_eval(i)*TD.evec(:,i) - matmul(W(:,1:l),H_evec(:,i))
-            maxres = max(norm2(R),maxres)
+            TD.R = H_eval(i)*TD.evec(:,i) &
+                 - matmul(TD.W(:,1:l),H_evec(:,i))
+            maxres = max(norm2(TD.R),maxres)
 
             ! 6. Preconditioner
             bot = H_eval(i) - H(i,i)
@@ -534,7 +535,7 @@ contains
             bot = ONE/bot
 
             ! 7a. Set new direction
-            V(:,l+i) = bot*R
+            TD.V(:,l+i) = bot*TD.R
 
          end
          TD.set_max_res(maxres)              ! <== For convergence
@@ -545,8 +546,8 @@ contains
 
          ! 7. Orthonormalize vectors V ?
          if (NOT TD.converged) then
-            V(:,1:l+n).modified_Gram_Schmidt_QR
-          ! V(:,1:l+n).Householder_QR
+            TD.V(:,1:l+n).modified_Gram_Schmidt_QR
+          ! TD.V(:,1:l+n).Householder_QR
          end
 
          ! Print out table & finish? !!
@@ -555,12 +556,6 @@ contains
          !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       end
-
-      ! Clean up
-      H.destroy
-      R.destroy
-      W.destroy
-      V.destroy
 
       ! Store results
       TD.store_results                       ! <== Store
@@ -599,15 +594,58 @@ contains
    ENSURE(TD.Vao.allocated,"TD.Vao not preallocated")
    ENSURE(TD.Jao.allocated,"TD.Jao not preallocated")
    ENSURE(TD.Kao.allocated,"TD.Kao not preallocated")
+   
+      p,q :: INT
+
+      d, n  :: INT
+      d4,n4 :: INT
+      b :: INT
+
+      d  = TD.single.dim1
+      n  = TD.n_evals
+      b = .n_bf
+      d4 = 4*d
+      n4 = 4*n
 
       ! 1e part: Set AV = diag(A).V
       TD.make_u_diag_AV(AV,V)
+    ! AV = ZERO ! <====
 
       ! 2e part: accumulate AV =+ (AV)ai
-      AV = ZERO
-      TD.change_u_V_to_AO(TD.Vao,V)  ! Get the DMs
-      .FOCK:u_CIS_AV(TD.Jao,TD.Kao,TD.Vao)
-      TD.Jao = ZERO
+    ! TD.change_u_V_to_AO(TD.Vao,V)         ! Get the DMs
+    ! stdout.text("Vao aa")
+    ! stdout.put(reshape(TD.Vao(1:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
+    ! stdout.text("Vao ba")
+    ! stdout.put(reshape(TD.Vao(2:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
+    ! stdout.text("Vao ab")
+    ! stdout.put(reshape(TD.Vao(3:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
+    ! stdout.text("Vao bb")
+    ! stdout.put(reshape(TD.Vao(4:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
+
+      ! 2e part: accumulate AV =+ (AV)ai : Done restricted way
+      TD.change_r_V_to_AO(TD.Vao(1:n4:4,:,:),V(    1:  d,:))
+    ! stdout.text("Vao aa")
+    ! stdout.put( reshape(TD.Vao(1:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
+
+      TD.change_r_V_to_AO(TD.Vao(2:n4:4,:,:),V(d  +1:2*d,:))
+    ! stdout.text("Vao ba")
+    ! stdout.put( reshape(TD.Vao(2:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
+
+      TD.change_r_V_to_AO(TD.Vao(3:n4:4,:,:),V(2*d+1:3*d,:))
+    ! stdout.text("Vao ab")
+    ! stdout.put( reshape(TD.Vao(3:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
+
+      TD.change_r_V_to_AO(TD.Vao(4:n4:4,:,:),V(3*d+1:4*d,:))
+    ! stdout.text("Vao bb")
+    ! stdout.put( reshape(TD.Vao(4:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
+
+      .FOCK:u_CIS_AV(TD.Jao,TD.Kao,TD.Vao)  ! Expensive
+    ! do p = 1,.n_bf
+    ! do q = 1,.n_bf
+    ! stdout.text("Kao "//trim(p.to_str)//","//trim(q.to_str))
+    ! stdout.put(TD.Kao(:,p,q),by_column=TRUE)
+    ! end
+    ! end
       TD.change_u_V_to_MO(AV,TD.Jao,TD.Kao)
 
    end
@@ -728,13 +766,14 @@ contains
             do bj = 1,d
                b = .TD_data.single(bj,1) + no
                j = .TD_data.single(bj,2)
-               ! Integrals
-             ! aibj = v(a,i,b,j)
-             ! AA(   ai,   bj) = AA(   ai,   bj) + aibj ! aa;aa
-             ! AA(   ai,d3+bj) = AA(   ai,d3+bj) + aibj ! aa;bb
-             ! AA(d3+ai,   bj) = AA(d3+ai,   bj) + aibj ! bb;aa
-             ! AA(d3+ai,d3+bj) = AA(d3+ai,d3+bj) + aibj ! bb;bb
-               abji = v(a,b,j,i)
+               ! J, Coulomb
+               aibj = v(a,i,b,j) 
+               AA(   ai,   bj) = AA(   ai,   bj) + aibj ! aa;aa
+               AA(   ai,d3+bj) = AA(   ai,d3+bj) + aibj ! aa;bb
+               AA(d3+ai,   bj) = AA(d3+ai,   bj) + aibj ! bb;aa
+               AA(d3+ai,d3+bj) = AA(d3+ai,d3+bj) + aibj ! bb;bb
+               ! K, exchange
+               abji = v(a,b,j,i) 
                AA(   ai,   bj) = AA(   ai,   bj) - abji ! aa;aa
                AA(d +ai,d +bj) = AA(d +ai,d +bj) - abji ! ba;ba
                AA(d2+ai,d2+bj) = AA(d2+ai,d2+bj) - abji ! ab;ab
