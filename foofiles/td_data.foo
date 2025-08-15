@@ -543,7 +543,7 @@ contains
 !  TD calc info
 !  ============
 
-   is_unrestricted result(res) ::: PURE
+   is_unrestricted result(res) ::: pure
    ! Return TRUE if the method is *only* a S=0 state
       self :: IN
       res  :: BIN
@@ -798,9 +798,14 @@ contains
       .single.create(n,2)
       !!!!!!!!!!!!!!!!!!!
 
+      ! Get delta E and singles indices.
+      ! Loop over occupieds from HOMO down and virtuals 
+      ! from LUMO up so the energy difference is roughly 
+      ! in increasing Koopmans energy order but in the 
+      ! end the energies are sorted.
       if (.tol_S.is_zero) then
 
-         ! Get all
+         ! No window - get all
          n = 0
          do i = .n_occ,1,-1
          do a = 1,.n_vir
@@ -814,7 +819,7 @@ contains
 
       else
 
-         ! Get delta E and S indices
+         ! Use window
          n = 0
          do i = .n_occ,1,-1
          do a = 1,.n_vir
@@ -830,7 +835,7 @@ contains
 
       end
 
-      ! Sort
+      ! Sort into increasing E difference
       ind.create(n)
       .deltaE.quick_sort(ind)
 
@@ -970,7 +975,8 @@ contains
 
       n,n_tr :: INT
 
-      n    = .n_evals
+      n = .n_evals
+    ! if (.is_unrestricted) n = 4*n
       n_tr = .n_trial
       res  = n*(n_tr-1) + 1
 
@@ -984,7 +990,8 @@ contains
 
       n,n_tr :: INT
 
-      n    = .n_evals
+      n = .n_evals
+    ! if (.is_unrestricted) n = 4*n
       n_tr = .n_trial
       res  = n*n_tr
 
@@ -1028,12 +1035,12 @@ contains
 !  Iteration control
 !  =================
 
-   initialize_iteration ::: leaky, PURE
+   initialize_Davidson ::: leaky, PURE
    ! Initialise the Davidson iterations
       self :: INOUT
 
       d1,d2,d3 :: INT
-      d, n, s  :: INT
+      d,n,n4,s :: INT
 
       .iteration = 0
       .n_trial   = 0
@@ -1044,7 +1051,9 @@ contains
 
       ! Unrestricted?
       ! Allow for aa, ba, ab, bb
-      if (.is_unrestricted) d = 4*d
+      if (.is_unrestricted) then
+         d = 4*d
+      end
 
       ! Evals & evecs (leaky)
       .eval.create(n)
@@ -1084,12 +1093,13 @@ contains
       ! Davidson temporaries:
       ! V or J & K in AO basis
       if (NOT .is_unrestricted) then
-         .Vao.create(n,.n_bf,.n_bf)   ! Density matrices
-         .Aao.create(n,.n_bf,.n_bf)   ! A.V in AO basis
+         .Vao.create( n,.n_bf,.n_bf)   ! Density matrices
+         .Aao.create( n,.n_bf,.n_bf)   ! A.V in AO basis
       else
-         .Vao.create(4*n,.n_bf,.n_bf)
-         .Jao.create(4*n,.n_bf,.n_bf)
-         .Kao.create(4*n,.n_bf,.n_bf)
+         n4 = 4*n
+         .Vao.create(n4,.n_bf,.n_bf)
+         .Jao.create(n4,.n_bf,.n_bf)   ! J & K bits of A.V
+         .Kao.create(n4,.n_bf,.n_bf)   
       end
 
       ! Set table headings
@@ -1098,7 +1108,7 @@ contains
    end
 
    store_results ::: leaky, PURE
-   ! Store the results, with sorting if needed.
+   ! Cleam up, store the results, with sorting if needed.
       self :: INOUT
 
       ind :: VEC{INT}@
@@ -1113,29 +1123,11 @@ contains
 
       n = .evec.dim2
 
-      ! Store singlet results
-      if (.is_singlet_calc) then
-         .eval0 = .eval
-         .evec0 = .evec
-         .Slab.create(n) ! Labels
-         ord = [ (i, i=1,n) ]
-         .Slab = spread("S",1,n)//ord.to_str
-         ord.destroy
-      end
-
-      ! Store triplet results
-      if (.is_triplet_calc) then
-         .eval1 = .eval
-         .evec1 = .evec
-         .Slab.create(n) ! Labels
-         ord = [ (i, i=1,n) ]
-         .Slab = spread("T",1,n)//ord.to_str
-         ord.destroy
-      end
-
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      ! Store unrestricted & get Slab
       if (.is_unrestricted) then
+
+         ! UNRESTRICTED
+
+         ! get Slab
          .Slab.create(n) ! Labels
          .eval.make_repetition_count(cnt,n_kind)
          k1 = 0
@@ -1150,56 +1142,100 @@ contains
                .Slab(i) = "S"//trim(k1.to_str)
             case (2)
                k2 = k2 + 1
-               .Slab(i) = "D"//trim(k2.to_str)
+               .Slab(i)   = "D"//trim(k2.to_str)
+               .Slab(i+1) = trim(.Slab(i))
             case (3)
                k3 = k3 + 1
-               .Slab(i) = "T"//trim(k3.to_str)
+               .Slab(i)   = "T"//trim(k3.to_str)
+               .Slab(i+1) = trim(.Slab(i))
+               .Slab(i+2) = trim(.Slab(i))
             end
          end
+
+         ! Expand .n_evals to degenerates
+         n = .n_evals
+         if (cnt(n)==2) then
+            .n_evals = n + 1
+         else if (cnt(n)==3) then
+            .n_evals = n + 2
+         else if (cnt(n-1)==3) then
+            .n_evals = n + 1
+         end
          cnt.destroy
-      end
 
-      !!!!!!!!!!!!!!!!!!!!!!!
-      ! Append results & sort
-      if (.is_s0_and_s1_calc) then
+         ! Shrink to requested
+         n = .n_evals
+         .eval.shrink(n)
+         .evec.shrink_columns(n)
+         .Slab.shrink(n) 
 
-         ! Reset: append
-         .eval = [ .eval0, .eval1 ]
+      else
 
-         d = .evec.dim1
-         .evec.create(d,2*n)
-         .evec(:,  1:n) = .evec0
-         .evec(:,n+1: ) = .evec1
+         ! RESTRICTED
 
-         ! Set S values
-         .S.create(2*n)
-         .S(  1:n) = 0
-         .S(n+1: ) = 1
+         ! Store singlets
+         if (.is_singlet_calc) then
+            .eval0 = .eval
+            .evec0 = .evec
+            .Slab.create(n) ! Labels
+            ord = [ (i, i=1,n) ]
+            .Slab = spread("S",1,n)//ord.to_str
+            ord.destroy
+         end
+        
+         ! Store triplets
+         if (.is_triplet_calc) then
+            .eval1 = .eval
+            .evec1 = .evec
+            .Slab.create(n) ! Labels
+            ord = [ (i, i=1,n) ]
+            .Slab = spread("T",1,n)//ord.to_str
+            ord.destroy
+         end
 
-         ! State order
-         .Slab.create(2*n)
-         ord.create(2*n)
-
-         ! Singlet lower in energy
-         ord(  1:n) = [ (i, i=1,n) ]
-         ord(n+1: ) = [ (i, i=1,n) ]
-
-         .Slab(  1:n) = spread("S",1,n)//ord(  1:n).to_str
-         .Slab(n+1: ) = spread("T",1,n)//ord(n+1: ).to_str
-
-         ord.destroy
-
-         ! Sort
-         ind.create(2*n)
-         .eval.quick_sort(ind)
-
-         ! Reorder
-         .S    =      .S(ind)
-         .eval =   .eval(ind)
-         .evec = .evec(:,ind)
-         .Slab =   .Slab(ind)
-
-         ind.destroy
+         ! Merge singlets & triplets
+         ! THIS IS ENETERD ONLY AFTER BOTH ARE DONE
+         if (.is_s0_and_s1_calc) then
+        
+            ! Reset: append
+            .eval = [ .eval0, .eval1 ]
+        
+            d = .evec.dim1
+            .evec.create(d,2*n)
+            .evec(:,  1:n) = .evec0
+            .evec(:,n+1: ) = .evec1
+        
+            ! Set S values
+            .S.create(2*n)
+            .S(  1:n) = 0
+            .S(n+1: ) = 1
+        
+            ! State order
+            .Slab.create(2*n)
+            ord.create(2*n)
+        
+            ! Singlet lower in energy
+            ord(  1:n) = [ (i, i=1,n) ]
+            ord(n+1: ) = [ (i, i=1,n) ]
+        
+            .Slab(  1:n) = spread("S",1,n)//ord(  1:n).to_str
+            .Slab(n+1: ) = spread("T",1,n)//ord(n+1: ).to_str
+        
+            ord.destroy
+        
+            ! Sort
+            ind.create(2*n)
+            .eval.quick_sort(ind)
+        
+            ! Reorder
+            .S    =      .S(ind)
+            .eval =   .eval(ind)
+            .evec = .evec(:,ind)
+            .Slab =   .Slab(ind)
+        
+            ind.destroy
+        
+         end
 
       end
 
@@ -1208,7 +1244,6 @@ contains
    finalize_iteration ::: leaky, PURE
    ! Initialise the Davidson iterations
       self :: INOUT
-
 
       ! Temporaries
       if (NOT .is_unrestricted) then
@@ -1580,9 +1615,9 @@ contains
 
       ! Transform "q" index
       do i = lo,no
-      do q = 1,.n_bf
-      do p = 1,.n_bf
-         do n = 1,4*.n_evals
+      do q = 1, .n_bf
+      do p = 1, .n_bf
+         do n = 1, 4*.n_evals
             val = .MOo(q,i)
             Jaa = Jao(n,p,q)*val
             Kaa = Kao(n,p,q)*val
@@ -1761,42 +1796,45 @@ contains
       n,lo,hv :: INT
 
       stdout.flush
-      stdout.show("Method                    = ", .method)
-      stdout.show("Implementation            = ", .implementation)
+      stdout.show("Method                       = ", .method)
+      stdout.show("Implementation               = ", .implementation)
+
+      n  = .no_of_singles
 
       stdout.flush
-      stdout.show("# of eigenvalues wanted   = ", .n_evals)
-      stdout.show("# of trial evecs to keep  = ", .n_keep)
-      stdout.show("Max. # of iterations      = ", .max_iterations)
-      stdout.show("Residual convergence tol  = ", .tol_Davidson)
+      stdout.show("n_evals, # of evals wanted   = ", .n_evals)
+      stdout.show("n_keep,  # trial blocks kept = ", .n_keep)
+      stdout.show("Dimension of matrix          = ", n)
+      stdout.flush
+      stdout.show("Max. # of iterations         = ", .max_iterations)
+      stdout.show("Residual convergence tol     = ", .tol_Davidson)
 
       stdout.flush
     ! stdout.text("Dimensions")
     ! stdout.flush
-    ! stdout.show("n_a                       = ", .n_a)
-    ! stdout.show("n_b                       = ", .n_b)
-      stdout.show("n_occ                     = ", .n_occ)
-      stdout.show("n_vir                     = ", .n_vir)
-      stdout.show("n_occ x n_vir             = ", .n_occ*.n_vir)
+    ! stdout.show("n_a                          = ", .n_a)
+    ! stdout.show("n_b                          = ", .n_b)
+      stdout.show("n_occ                        = ", .n_occ)
+      stdout.show("n_vir                        = ", .n_vir)
+      stdout.show("n_occ x n_vir                = ", .n_occ*.n_vir)
 
     ! stdout.flush
     ! stdout.text("Tolerances & convergence:")
     ! stdout.flush
-    ! stdout.show("Minimum # of iterations   = ", .min_iterations)
+    ! stdout.show("Minimum # of iterations      = ", .min_iterations)
 
       stdout.flush
       stdout.text("State selection:")
       stdout.flush
-      stdout.show("Single excitation window  = ", .tol_S)
-      n  = .no_of_singles
+      stdout.show("Single excitation window     = ", .tol_S)
       lo = .min_O_in_S_window
       hv = .max_V_in_S_window
-      stdout.show("# of states in window     = ", n)
-      stdout.show("omega                     = ", .omega)
-      stdout.show("Doubles selection tol     = ", .tol_D)
-      stdout.show("Lowest  HOMO in window    = ", lo)
-      stdout.show("Highest LUMO in window    = ", hv)
-      stdout.show("Use S window MOs?         = ", .use_S_window_MOs)
+      stdout.show("# of states in S window      = ", n)
+      stdout.show("omega                        = ", .omega)
+      stdout.show("Doubles selection tol        = ", .tol_D)
+      stdout.show("Lowest  OMO in S window      = ", lo)
+      stdout.show("Highest VMO in S window      = ", hv)
+      stdout.show("Use S window MOs?            = ", .use_S_window_MOs)
 
       stdout.flush
 
@@ -1818,11 +1856,11 @@ contains
 
          ! No S window info
          stdout.flush
-         stdout.text("Occupied MO energies:")
+         stdout.text("OMO energies:")
          stdout.put(.Eo)
 
          stdout.flush
-         stdout.text("Virtual MO energies:")
+         stdout.text("VMO energies:")
          stdout.put(.Ev)
 
       else
@@ -1839,16 +1877,16 @@ contains
          stdout.text(". All energies are in ascending order")
          stdout.flush
          stdout.show("No. of occupied MOs       = ", .n_occ)
-         stdout.show("Lowest  HOMO in window    = ", lo)
-         stdout.show("Highest LUMO in window    = ", hv)
+         stdout.show("Lowest  OMO in window     = ", lo)
+         stdout.show("Highest VMO in window     = ", hv)
 
 
          stdout.flush
-         stdout.text("Occupied MO energies:")
+         stdout.text("OMO energies:")
          stdout.put(.Eo(lo:no))
 
          stdout.flush
-         stdout.text("Virtual MO energies:")
+         stdout.text("VMO energies:")
          stdout.put(.Ev(1:hv))
 
 
@@ -2027,6 +2065,7 @@ contains
    put_results
    ! Print out the interacting double excitations
       self :: INOUT
+
    ENSURE(.eval.allocated,"no eval's")
 
 
@@ -2056,8 +2095,6 @@ contains
 
       if (n==0) return
 
-      n = min(.eval.dim,.n_max_show)
-
       if (NOT .S.allocated) then; table.create(2)
       else;                       table.create(3)
       end
@@ -2066,13 +2103,13 @@ contains
       table(1).set_heading("Delta E")
       table(1).set_subhead("    /au")
       table(1).set_real_precision(4)
-      table(1).set_width(14)
+      table(1).set_width(10)
       table(1).set_values(.eval(1:n))
 
       table(2).set_heading("Delta E")
       table(2).set_subhead("    /eV")
       table(2).set_real_precision(2)
-      table(2).set_width(12)
+      table(2).set_width(8)
       table(2).set_values(.eval(1:n)*EV_PER_HARTREE)
 
       if (.S.allocated) then
@@ -2099,15 +2136,23 @@ contains
    ! Set up the Davidson table
       self :: INOUT
 
-      i :: INT
+      i,n :: INT
       state :: STR
 
-      if (.is_singlet_calc) then; state = "S"
-      else;                       state = "T"
+      n = .n_evals
+      if (.is_unrestricted) then
+       ! n = 4*.n_evals
+         state = "?"
+      else if (.is_singlet_calc) then
+       ! n = .n_evals
+         state = "S"
+      else
+       ! n = .n_evals
+         state = "T"
       end
 
       ! Set table headings
-      .table.create(.n_evals+2)
+      .table.create(n+2)
       .table(1).set_heading("Iter")
       .table(1).force_width(5)
 
@@ -2116,7 +2161,7 @@ contains
       .table(2).set_real_precision(4)
       .table(2).set_width(9)
 
-      do i = 1,.n_evals
+      do i = 1,n
       .table(i+2).set_heading(trim(state)//trim(i.to_str))
       .table(i+2).set_real_precision(2)
       .table(i+2).set_width(7)
@@ -2144,16 +2189,20 @@ contains
       stdout.flush
       stdout.text(". Convergence decided by the maximum of the absolute")
       stdout.text("  norm of the residual of each eigenvector.")
+    ! stdout.flush
+    ! stdout.text(". For unrestricted calcs the no. of eigenvalues is")
+    ! stdout.text("  four times more than asked, to allow for triplets.")
 
       stdout.flush
-      stdout.show("Method                     = ", .method)
-      stdout.show("Implementation             = ", .implementation)
+      stdout.show("Method                       = ", .method)
+      stdout.show("Implementation               = ", .implementation)
       stdout.flush
-      stdout.show("Dimension of matrix        = ",d)
-      stdout.show("No. of evals wanted        = ",.n_evals)
-      stdout.show("Trial vector sets to keep  = ",.n_keep)
-      stdout.show("Max. no. of iterations     = ",.max_iterations)
-      stdout.show("Convergence tolerance      = ",.tol_Davidson)
+      stdout.show("n_evals, # of evals wanted   = ", .n_evals)
+      stdout.show("n_keep,  # trial blocks kept = ", .n_keep)
+      stdout.show("Dimension of matrix          = ", d)
+      stdout.flush
+      stdout.show("Max. no. of iterations       = ",.max_iterations)
+      stdout.show("Convergence tolerance        = ",.tol_Davidson)
       stdout.flush
 
       ! Put the table
@@ -2240,6 +2289,8 @@ contains
          num = val.to_str("f10.2")
          table(3+i).set_heading(.Slab(i))
          table(3+i).set_subhead(trim(num))
+         table(3+i).set_real_precision(4)
+         table(3+i).set_width(9)
          table(3+i).set_values(.evec(:,i))
          end
 
@@ -2258,6 +2309,8 @@ contains
          num = val.to_str("f10.2")
          table(i).set_heading(.Slab(i))
          table(i).set_subhead(trim(num))
+         table(i).set_real_precision(4)
+         table(i).set_width(9)
          table(i).set_values(.evec(:,i))
          end
 
