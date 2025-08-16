@@ -71,7 +71,7 @@
 #=====================================================================================
 
 use English;            # Get rid of horrible Perl short forms
-use File::Spec ('splitpath','catpath');
+use File::Spec;
 use strict;             # Make sure the scope of all variables is declared.
 use Carp;
 
