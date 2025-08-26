@@ -354,7 +354,7 @@ contains
       ! Minimal setup
       if (.TD_data.Eo.deallocated) then
          .TD_data.set_defaults(.n_bf,.n_a,.n_b)
-         .TD_data.set_defaults(.MOs.r,.MO_energies.r)
+         .TD_data.set_defaults(.MOs.r,.MO_energies.r,.SCF_data.VMO_energies)
       end
 
       ! Set up states
@@ -406,37 +406,36 @@ contains
 ! Efficient Davidson methods
 
    eigensolve_Davidson(TD,AV_prod)
-   ! =====
-   ! Davidson diagonalization: see Crouzeix (1990) Inria RR 1353.
+   ! Davidson diagonalizer. See Crouzeix (1990) Inria RR 1353.
+   !
    ! Step numbers & symbols in code below are (mostly) from p. 5.
    ! But "R" is used for residual, not "T"! See also Crouzeix
    ! (1994) SIAM J Sci Comput 15 p. 62-76.
    !
-   ! . "TD" ....... Holds key calculation parameters. Comments
-   !                with <== highlight interaction with it.
+   ! "TD" ......... Holds key calculation parameters.
    !                It is a kind of Davidson iterator object.
    !
-   ! . "AV_prod" .. Does the expensive method-specific 2e part
-   !                of the "A matrix product". In this case,
-   !                in the AO basis.
+   ! "AV_prod" .... Does the expensive method-specific 2e part
+   !                of the "A matrix product" in the AO basis.
    !
-   ! "TD" holds iteration count information; also methods to 
-   ! test for convergence, or subspace collapse; also, here,
-   ! CIS/TD method-specific storage; for example
+   ! "TD" holds iteration count information, methods to test 
+   ! for convergence, for subspace collapse, and CIS/TD 
+   ! specific storage. Key variables are:
    !
-   ! . n_evals  ... desired no. of lowest excitations   IN
-   ! . n_keep   ... No. of trial vectors to keep        IN
-   ! . max_iter ... Max. no. of iterations allowed      IN
-   ! . tol_Dav  ... Convergence tol on residual vector  IN
-   ! . eval     ... the lowest eigenvalues              OUT
-   ! . evec     ... corresponding eigenvectors          OUT
+   ! n_evals  ..... desired no. of lowest excitations   IN
+   ! n_keep   ..... No. of trial vectors to keep        IN
+   ! max_iter ..... Max. no. of iterations allowed      IN
+   ! tol_Davidson.. Convergence tol on residual vector  IN
+   ! eval     ..... the lowest eigenvalues              OUT
+   ! evec     ..... corresponding eigenvectors          OUT
    !                Note: n_keep > evec.dim2 >= 3
-   ! . max_res  ... Maximum residual vector norms       OUT
+   ! max_res  ..... Maximum residual vector norms       OUT
    !
    ! NOTE: the trial vectors "V" are initially set to unit
    ! vectors in the first few components. So the states that
-   ! these components in "V" refer to must be chosen wisely.
-   ! This may be done externally by e.g. TD.sort_singles.
+   ! these components in "V" refer to must be chosen wisely
+   ! e.g. by selecting appropriate virtual orbitals and by
+   ! sorting single excitations into energy order.
    ! =====
       TD :: TD_DATA, INOUT ! Iteration info
       interface            ! Efficient A.V product
@@ -453,9 +452,6 @@ contains
       H      :: MAT{REAL}@      ! H = A in basis of "V" columns
       H_evec :: MAT{REAL}@      ! H eigenvectors
       H_eval :: VEC{REAL}@      ! H eigenvalues
-    ! V :: MAT{REAL}@           ! V(:,n) <- Davidson trial vectors
-    ! W :: MAT{REAL}@           ! W(:,n) <- A.V in MO basis
-    ! R :: VEC{REAL}@           ! R      <- Residual vector
       A :: MAT{REAL}@           ! A matrix
 
       bot    :: REAL
@@ -479,16 +475,6 @@ contains
       n = TD.evec.dim2          ! Block of evals. n << d.
       n_keep = TD.n_keep        ! No. of trial vectors to keep
 
-      ! Temporaries
-    ! V.create(d,n*n_keep)      ! Davidson trial vector columns
-    ! W.create(d,n*n_keep)      ! W = A.V in MO basis
-    ! R.create(d)               ! Residual vector
-    ! V(:,1:n).to_unit_mx       ! Initial "V": choose wisely
-
-      ! The A matrix
-    ! A.create(d,d)
-    ! .TD:make_u_CIS_SS_A_mx(A,one=FALSE)
-
       do ! Davidson loop
 
          ! Next iteration
@@ -501,17 +487,12 @@ contains
             H.destroy                        ! Start again; remake H
          end
 
-         ! 1. Expensive step, extend W :
+         ! 1. Expensive step, extend W !!!!!!!!!!!!!!!
          ! W(:,f:l) = matmul(A,V(:,f:l))
-         f = TD.fst_trial_vector             ! <== and below
+         f = TD.fst_trial_vector             
          l = TD.lst_trial_vector
          call AV_prod(self,TD.W(:,f:l),TD.V(:,f:l),TD)
-       ! stdout.text("W:")
-       ! stdout.put(TD.W(:,f:l))
-       ! TD.W(:,f:l) = matmul(A,TD.V(:,f:l))
-       ! stdout.text("W:")
-       ! stdout.put(TD.W(:,f:l))
-       ! stop
+         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
          ! 2. Expand Rayleigh matrix
          H.expand(l,l)
@@ -558,7 +539,7 @@ contains
          end
 
          ! Print out table & finish? !!
-         TD.put_D_table_body_and_footer      ! <== And below
+         TD.put_D_table_body_and_footer      ! <== 
          if (TD.Davidson_done)    exit
          !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -599,33 +580,11 @@ contains
       d, d1,d2,d3,d4 :: INT
       n, n1,n2,n3,n4 :: INT
 
-    ! p,q :: INT
-    ! b   :: INT
-    ! AA  :: MAT{REAL}@  ! A matrix, 4d x 4d
-
       d  = TD.single.dim1
       n  = TD.n_evals
-    ! b = .n_bf
 
       ! 1e part: Set AV = diag(A).V
       TD.make_u_diag_AV(AV,V)
-    ! AV = ZERO ! <====
-
-      ! Check AA part
-    ! AA.create(d4,d4)
-    ! .:make_u_CIS_SS_A_mx(AA,one=FALSE,two=TRUE)
-    ! AV = AV + matmul(AA,V)
-    ! AA.destroy
-
-    ! TD.change_u_V_to_AO(TD.Vao,V)         ! Get the DMs
-    ! stdout.text("Vao aa")
-    ! stdout.put(reshape(TD.Vao(1:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
-    ! stdout.text("Vao ba")
-    ! stdout.put(reshape(TD.Vao(2:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
-    ! stdout.text("Vao ab")
-    ! stdout.put(reshape(TD.Vao(3:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
-    ! stdout.text("Vao bb")
-    ! stdout.put(reshape(TD.Vao(4:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
 
       d1 =   d
       d2 = 2*d
@@ -641,9 +600,6 @@ contains
       TD.change_r_V_to_AO(TD.Vao(n1+1:n2,:,:),V(d1+1:d2,:))
       TD.change_r_V_to_AO(TD.Vao(n2+1:n3,:,:),V(d2+1:d3,:))
       TD.change_r_V_to_AO(TD.Vao(n3+1:n4,:,:),V(d3+1:d4,:))
-
-    ! stdout.text("Vao bb")
-    ! stdout.put( reshape(TD.Vao(4:n4:4,:,:),shape=[b,b,n],order=[2,3,1]))
 
       .FOCK:u_CIS_AV(TD.Jao,TD.Kao,TD.Vao)  ! Expensive
 
