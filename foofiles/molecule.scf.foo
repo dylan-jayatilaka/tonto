@@ -7691,23 +7691,23 @@ contains
 
    end
 
-   fragment_SCF(restart,spin_density,do_SFs) ::: leaky
+   fragment_SCF(restart,do_SFs,spin_density) ::: leaky
    ! Do an fragment SCF calculation on each of the .atom_group.mol
    ! molecules and calculate the structure factors.
-      self :: INOUT
+      self    :: INOUT
       restart :: BIN, optional, IN
+      do_SFs  :: BIN, optional, IN
       spin_density :: BIN, optional, IN
-      do_SFs :: BIN, optional, IN
 
-#ifndef MPI      
-      .SCF:fragment_SCF_normal(restart,spin_density,do_SFs)
-#else
-      .SCF:fragment_SCF_MPI(restart,spin_density,do_SFs)
-#endif
+      if (tonto.n_processors<=1) then
+         .SCF:fragment_SCF_norm(restart,do_SFs,spin_density)
+      else
+         .SCF:fragment_SCF_para(restart,do_SFs,spin_density)
+      end
 
    end
 
-   fragment_SCF_normal(restart,spin_density,do_SFs) ::: leaky
+   fragment_SCF_norm(restart,do_SFs,spin_density) ::: leaky
    ! Do an fragment SCF calculation on each of the .atom_group.mol
    ! molecules and calculate the structure factors. 
    ! If "restart" is present and TRUE then fragHAR fragment SCF's are
@@ -7717,17 +7717,17 @@ contains
    ! If "spin_density" is present magnetic structure factors are
    ! calculated instead of ED structure factors.
    ! If "do_SFs" is FALSE do not calculate the atomic form factors.
-      self :: INOUT
+      self    :: INOUT
       restart :: BIN, optional, IN
+      do_SFs  :: BIN, optional, IN
       spin_density :: BIN, optional, IN
-      do_SFs :: BIN, optional, IN
 
-   ENSURE(.atom_group.allocated,"no .atom_group")
-   ENSURE(.mol.allocated,"no .mol")
-   ENSURE(.mol.dim==.atom_group.dim,"no .mol")
-   ENSURE(.SCF_data.allocated,"no SCF_data")
-   ENSURE(.crystal.allocated,"no crystal")
-   ENSURE(.cif.allocated,"no cif specified")
+ ! ENSURE(.atom_group.allocated,"no .atom_group")
+ ! ENSURE(.mol.allocated,"no .mol")
+ ! ENSURE(.mol.dim==.atom_group.dim,"no .mol")
+ ! ENSURE(.SCF_data.allocated,"no SCF_data")
+ ! ENSURE(.crystal.allocated,"no crystal")
+ ! ENSURE(.cif.allocated,"no cif specified")
 
       n_group,g :: INT
       SFs :: BIN
@@ -7812,188 +7812,178 @@ contains
 
    end
 
+   fragment_SCF_para(restart,do_SFs,spin_density) ::: leaky
+   ! Do an fragment SCF calculation on each of the .atom_group.mol
+   ! molecules and calculate the structure factors.
+      self    :: INOUT
+      restart :: BIN, optional, IN
+      do_SFs  :: BIN, optional, IN
+      spin_density :: BIN, optional, IN
 
-!   fragment_SCF_MPI(restart,spin_density,do_SFs) ::: leaky
-!   ! Do an fragment SCF calculation on each of the .atom_group.mol
-!   ! molecules and calculate the structure factors.
-!      self :: INOUT
-!      restart :: BIN, optional, IN
-!      spin_density :: BIN, optional, IN
-!      do_SFs :: BIN, optional, IN
-!
-!   ENSURE(.atom_group.allocated,"no atom_group info")
-!   ENSURE(.SCF_data.allocated,"no SCF_data")
-!   ENSURE(.crystal.allocated,"no crystal")
-!   ENSURE(.cif.allocated,"no cif specified")
-!
-!      SFs :: BIN
-!      mol :: MOLECULE*
-!      name,guess :: STR
-!      g,n_group, x,w :: INT
-!      n_bf :: VEC{INT}@
-!
-!      ! Do structure factors?
-!      SFs = FALSE
-!      if (present(do_SFs)) SFs = do_SFs
-!
-!      ! Need these for SFs
-!      if (SFs) &
-!         .:make_ANO_data
-!
-!      ! Output details?
-!      .PUT:put_atom_group_mols
-!
-!      ! Loop over atom group "g"
-!      if (tonto.n_processors > 2) then
-!         
-!         if (tonto.p_loop_list.deallocated) then
-!
-!            tonto.p_loop_list.destroy
-!            tonto.p_loop_list.create(.atom_group.dim)
-!            n_bf.create(.atom_group.dim)
-!            do x = 1, .atom_group.dim
-!               n_bf(x) = .atom_group(x).mol.n_bf
-!            end
-!            n_bf.quick_sort(tonto.p_loop_list,decreasing_order=TRUE)
-!            n_bf.destroy
-!
-!         end
-!      
-!         tonto.setup_p_loop(w,lb=1,ub=.atom_group.dim)
-!
-!         do
-!
-!            ! NOTE: call this before exit conditions
-!            g = tonto.next_p_loop_index(w)
-!
-!            ! Exit if no more to do, or master
-!            ! NOTE: Must be in this order!
-!            if (tonto.exit_p_loop) exit
-!            if (tonto.is_master_processor) cycle
-!                  
-!            ! Set up a molecule for this group of atoms
-!            mol => .atom_group(g).mol
-!            DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
-!
-!            ! Skip SCF for atoms without electrons
-!            if (mol.INQ:no_of_electrons < 1) cycle
-!
-!            ! Make crystal
-!            if (mol.crystal.deallocated) then
-!               mol.crystal.update_fragment_info(mol.atom)
-!            end
-!
-!            mol.SCF_data.set_output(TRUE)
-!            if (mol.atom.dim==1) then
-!               mol.SCF_data.set_initial_density("core")
-!            else 
-!               mol.SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
-!               mol.SCF_data.set_initial_density(.SCF_data.initial_density)
-!            end
-!
-!            if (present(restart)) then
-!            if (restart) then
-!               guess = mol.SCF_data.spinorbital_genre
-!               mol.SCF_data.set_initial_density(guess)
-!            end
-!            end
-!
-!            ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!            tonto.set_parallel_IO_allowed(TRUE)
-!            name = trim(mol.name)
-!            stdout.redirect(name)
-!            stdout.move_to_end
-!            mol.:usual_SCF ! <<<
-!            stdout.revert
-!            tonto.set_parallel_IO_allowed(FALSE)
-!            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!
-!            if (SFs) then
-!
-!               ! NOTE: change DFT -> becke
-!               .atom_group(g).mol.SET:initialize_DFT_grids
-!              
-!               ! Assign previously made ANOs
-!               .atom_group(g).mol.SET:resolve_ANOs_from(self)
-!              
-!               ! Write SFs for each fragment to disk - in parallel
-!               n_group = .atom_group(g).atom_index.dim
-!               tonto.set_parallel_IO_allowed(TRUE)
-!             ! .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
-!               .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
-!               tonto.set_parallel_IO_allowed(FALSE)
-!
-!            end
-!      
-!         end do
-!         
-!         tonto.unlock_parallel_do("no")
-!         
-!      else
-!         
-!         parallel do g = 1,.atom_group.dim
-!
-!            ! Set up a molecule for this group of atoms
-!            mol => .atom_group(g).mol
-!            DIE_IF(mol.disassociated,"molecule group "//trim(g.to_str)//" not defined!")
-!
-!            ! Skip SCF for atoms without electrons
-!            if (mol.INQ:no_of_electrons < 1) cycle
-!
-!            ! Make crystal
-!            if (mol.crystal.deallocated) then
-!               mol.crystal.update_fragment_info(mol.atom)
-!            end
-!
-!            mol.SCF_data.set_output(TRUE)
-!            if (mol.atom.dim==1) then
-!               mol.SCF_data.set_initial_density("core")
-!            else 
-!               mol.SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
-!               mol.SCF_data.set_initial_density(.SCF_data.initial_density)
-!            end
-!
-!            if (present(restart)) then
-!            if (restart) then
-!               guess = mol.SCF_data.spinorbital_genre
-!               mol.SCF_data.set_initial_density(guess)
-!            end
-!            end
-!
-!            ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!            tonto.set_parallel_IO_allowed(TRUE)
-!            name = trim(mol.name)
-!            stdout.redirect(name)
-!            stdout.move_to_end
-!            mol.:usual_SCF ! <<<
-!            stdout.revert
-!            tonto.set_parallel_IO_allowed(FALSE)
-!            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!
-!            if (SFs) then
-!
-!               ! NOTE: change DFT -> becke
-!               .atom_group(g).mol.SET:initialize_DFT_grids
-!              
-!               ! Assign previously made ANOs
-!               .atom_group(g).mol.SET:resolve_ANOs_from(self)
-!              
-!               ! Write SFs for each fragment to disk - in parallel
-!               n_group = .atom_group(g).atom_index.dim
-!               tonto.set_parallel_IO_allowed(TRUE)
-!             ! .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
-!               .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
-!               tonto.set_parallel_IO_allowed(FALSE)
-!
-!            end
-!         
-!         end
-!      
-!      end if 
-!
-!      tonto.barrier
-!
-!   end
+ ! ENSURE(.atom_group.allocated,"no atom_group info")
+ ! ENSURE(.SCF_data.allocated,"no SCF_data")
+ ! ENSURE(.crystal.allocated,"no crystal")
+ ! ENSURE(.cif.allocated,"no cif specified")
+
+      SFs :: BIN
+      name,guess :: STR
+      g,n_group, x,w :: INT
+      n_bf :: VEC{INT}@
+
+
+      ! Do structure factors?
+      SFs = FALSE
+      if (present(do_SFs)) SFs = do_SFs
+
+      ! Need these for SFs
+      if (SFs) .:make_ANO_data
+
+      ! Output details?
+      .PUT:put_atom_group_mols
+
+      ! Loop over atom group "g"
+      if (tonto.n_processors > 2) then
+         
+         if (tonto.p_loop_list.deallocated) then
+
+            tonto.p_loop_list.destroy
+            tonto.p_loop_list.create(.mol.dim)
+            n_bf.create(.mol.dim)
+            do x = 1,.mol.dim
+               n_bf(x) = .mol(x).n_bf
+            end
+            n_bf.quick_sort(tonto.p_loop_list,decreasing_order=TRUE)
+            n_bf.destroy
+
+         end
+      
+         tonto.setup_p_loop(w,lb=1,ub=.atom_group.dim)
+
+         do
+
+            ! NOTE: call this before exit conditions
+            g = tonto.next_p_loop_index(w)
+
+            ! Exit if no more to do, or master
+            ! NOTE: Must be in this order!
+            if (tonto.exit_p_loop) exit
+            if (tonto.is_master_processor) cycle
+                  
+            ! Skip SCF for atoms without electrons
+            if (.mol(g).INQ:no_of_electrons < 1) cycle
+
+            ! Make crystal
+            if (.mol(g).crystal.deallocated) then
+                .mol(g).crystal.update_fragment_info(.mol(g).atom)
+            end
+
+            .mol(g).SCF_data.set_output(TRUE)
+            if (.mol(g).atom.dim==1) then
+                .mol(g).SCF_data.set_initial_density("core")
+            else 
+                .mol(g).SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
+                .mol(g).SCF_data.set_initial_density(.SCF_data.initial_density)
+            end
+
+            if (present(restart)) then
+            if (restart) then
+               guess = .mol(g).SCF_data.spinorbital_genre
+               .mol(g).SCF_data.set_initial_density(guess)
+            end
+            end
+
+            ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            tonto.set_parallel_IO_allowed(TRUE)
+            name = trim(.mol(g).name)
+            stdout.redirect(name)
+            stdout.move_to_end
+            .mol(g).:usual_SCF ! <<<
+            stdout.revert
+            tonto.set_parallel_IO_allowed(FALSE)
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            if (SFs) then
+
+               ! NOTE: change DFT -> becke
+               .mol(g).SET:initialize_DFT_grids
+              
+               ! Assign previously made ANOs
+               .mol(g).SET:resolve_ANOs_from(self)
+              
+               ! Write SFs for each fragment to disk - in parallel
+               n_group = .atom_group(g).atom_index.dim
+               tonto.set_parallel_IO_allowed(TRUE)
+             ! .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
+               .mol(g).SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
+               tonto.set_parallel_IO_allowed(FALSE)
+
+            end
+      
+         end do
+         
+         tonto.unlock_parallel_do("no")
+         
+      else
+         
+         parallel do g = 1,.mol.dim
+
+            ! Skip SCF for atoms without electrons
+            if (.mol(g).INQ:no_of_electrons < 1) cycle
+
+            ! Make crystal
+            if (.mol(g).crystal.deallocated) then
+                .mol(g).crystal.update_fragment_info(.mol(g).atom)
+            end
+
+            .mol(g).SCF_data.set_output(TRUE)
+            if (.mol(g).atom.dim==1) then
+                .mol(g).SCF_data.set_initial_density("core")
+            else 
+                .mol(g).SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
+                .mol(g).SCF_data.set_initial_density(.SCF_data.initial_density)
+            end
+
+            if (present(restart)) then
+            if (restart) then
+               guess = .mol(g).SCF_data.spinorbital_genre
+               .mol(g).SCF_data.set_initial_density(guess)
+            end
+            end
+
+            ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            tonto.set_parallel_IO_allowed(TRUE)
+            name = trim(.mol(g).name)
+            stdout.redirect(name)
+            stdout.move_to_end
+            .mol(g).:usual_SCF ! <<<
+            stdout.revert
+            tonto.set_parallel_IO_allowed(FALSE)
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            if (SFs) then
+
+               ! NOTE: change DFT -> becke
+               .mol(g).SET:initialize_DFT_grids
+              
+               ! Assign previously made ANOs
+               .mol(g).SET:resolve_ANOs_from(self)
+              
+               ! Write SFs for each fragment to disk - in parallel
+               n_group = .atom_group(g).atom_index.dim
+               tonto.set_parallel_IO_allowed(TRUE)
+             ! .atom_group(g).mol.SCF:get_Hirshfeld_atom_FFs(n_group,spin_density)
+               .mol(g).SCF:get_Hirshfeld_atom_FFs(spin_density=spin_density)
+               tonto.set_parallel_IO_allowed(FALSE)
+
+            end
+         
+         end
+      
+      end if 
+
+      tonto.barrier
+
+   end
 
 !  ===========
 !  Monomer MOs
@@ -8818,7 +8808,7 @@ contains
 
    end
 
-   canonicalize_virtual_MOs(output)
+   canonicalize_virtual_MOs(output) ::: leaky
    ! Generate the Fock matrix from the molecular orbitals and
    ! diagonalise it on the virtual-virtual block to get new
    ! virtual MOs and virtual MO energies.
@@ -8835,7 +8825,7 @@ contains
       F,Fv   :: MAT{REAL}@
       J,K,P  :: MAT{REAL}@
       Uv,VMO :: MAT{REAL}@
-      MOEba  :: MAT{REAL}@
+      OMO_en :: VEC{REAL}@
       method :: STR
       n,no,nv,r :: INT
       table  :: VEC{TABLE_COLUMN}@
@@ -8843,7 +8833,7 @@ contains
        
       ! Any canonicalization requested?
       if (.SCF_data.SCF_kind/="rhf") return
-      if (.SCF_data.VV_canonicalization==" ") return
+      if (.SCF_data.VMO_canonisation==" ") return
 
       ! Output
       out = FALSE
@@ -8854,119 +8844,151 @@ contains
       no = .n_e/2
       nv = n - no
 
+      ! Canonocalised VV MO energies (leaky)
+      .SCF_data.VMO_energies.create(nv)
+      OMO_en  = .MO_energies.r(no+1:no+10) ! Old MO energies
+
+      ! Canonicalisation method
+      method = .SCF_data.VMO_canonisation
+
       ! MO to eliminate from density
-      r = .SCF_data.VV_removed_MO
+      r = .SCF_data.VMO_canonisation_MO
 
       if (output) then
 
          ! Mo energies before & after
-         MOEba.create(nv,2)
-         MOEba(:,1) = .MO_energies.r(no+1:)
+         stdout.flush
+         stdout.text("=======================")
+         stdout.text("Canonicalise Vitual MOs")
+         stdout.text("=======================")
+         stdout.flush
+         stdout.text(". The method works by removing an occupied MO (OMO)")
+         stdout.text("  specified by its orbital index 'r'")
+         stdout.flush
+         stdout.text("  A -ve number 'r' for the canonisation MO means that")
+         stdout.text("  (HOMO+r) is removed from the the density matrix used")
+         stdout.text("  to calculate the Fock matrix, which is the OMO which")
+         stdout.text("  is assumed 'excited'.")
+         stdout.flush
+         stdout.text(". A method may excite singlet or triplet states;")
+         stdout.text("  see Hunt & Goddard (1969) CPL 3 p 414.")
+         stdout.flush
+         stdout.text("  An average of singlet and triplet state energies was")
+         stdout.text("  suggested, see Huzinaga & Arnau (1971) JCP 54 p. 1948.")
+         stdout.flush
+         stdout.text(". VV Fock energies are reported, which are the diagonal")
+         stdout.text("  elements of the original Fock mx in the new VMO basis.")
 
          stdout.flush
-         stdout.text("=======================")
-         stdout.text("Canonicalize Vitual MOs")
-         stdout.text("=======================")
-         stdout.flush
-         stdout.text(". The method works by remove an occupied MO (OMO)")
-         stdout.flush
-         stdout.text("  A negative number 'r' for the OMO means that the")
-         stdout.text("  (HOMO-r) is removed during the canonicalization.")
-         stdout.flush
-         stdout.text(". A method either excited singlets, or triplets, is")
-         stdout.text("  available; see Hunt & Goddard (1969) CPL 3 p 414.")
-         stdout.flush
-         stdout.text(". Averaging both singlets and triplets was suggested")
-         stdout.text("  by Huzinaga & Arnau (1971) JCP 54 p. 1948.")
-         stdout.flush
-         stdout.show("VMO canonicalization method  = ",.SCF_data.VV_canonicalization)
-         stdout.show("OMO to remove                = ",r)
+         stdout.show("VMO canonisation method   = ",method)
+         if (method/="exchange") then
+         stdout.show("Canonisation MO removed   = ",r)
+         end
+
       end
 
       ! Deal with -ve occupied MO to remove
       if (r<=0) r = no + r
       ENSURE(0<r AND r<=no,"removed MO is not occupied")
 
-      ! Fock matrices
-      Uv.create(nv,nv) ! VMO rotation
-      Fv.create(nv,nv) ! virtual 
-      F = .fock_mx.r
-
-      ! Make the density matrix for removed orbital
-      J.create(n,n)
-      P.create(n,n)
+      ! Density matrix for removed orbital
+      if (method/="exchange") then
+      P.create(n,n) 
       P = matmul(.MOs.r(:,r:r),transpose(.MOs.r(:,r:r)))
+      end
 
-      method = .SCF_data.VV_canonicalization
+      ! Fock matrices  !!!!!!!!!!!!!!
+      Uv.create(nv,nv) ! VMO rotation
+      Fv.create(nv,nv) ! virtual Fock
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+      ! Canonicalise
       select case (method)
 
+      case ("exchange")
+         F.create(n,n) ! is exchange
+         .FOCK:make_r_K_direct(F,.density_mx.r)
+
       case ("hunt-goddard-1")
+         J.create(n,n)
          K.create(n,n)
          .FOCK:make_r_JK_direct(J,K,P)
-         F = F - J + TWO*K
+         F = .fock_mx.r - J + TWO*K
          K.destroy
+         J.destroy
+         P.destroy
 
       case ("hunt-goddard-3")
+         J.create(n,n)
          .FOCK:make_r_J_direct(J,P)
-         F = F - J
+         F = .fock_mx.r - J
+         J.destroy
+         P.destroy
 
       case ("huzinaga-arnau")
+         J.create(n,n)
          K.create(n,n)
          .FOCK:make_r_JK_direct(J,K,P)
-         F = F - J + K
+         F = .fock_mx.r - J + K
          K.destroy
+         J.destroy
+         P.destroy
 
       case default
          DIE("unknown VMO canonicalization, "//trim(method))
 
       end
 
-      ! Clean
-      P.destroy
-      J.destroy
-
-      ! Transform F to virtual
+      ! Transform new F to virtual
       VMO = .MOs.r(:,no+1:)
       F.change_basis_to(Fv,VMO)
       VMO.destroy
       F.destroy
 
-      ! Canonicalize
-      Fv.diagonalize_Jacobi(.MO_energies.r(no+1:),Uv)
+      ! Canonicalize new VMOs. 
+      ! Keep new VMO energies.
+      Fv.solve_symmetric_eigenproblem(.SCF_data.VMO_energies,Uv)
       VMO = .MOs.r(:,no+1:)
       .MOs.r(:,no+1:) = matmul(VMO,Uv)
 
+      ! New diagonal Fock mx energies
+      VMO = .MOs.r(:,no+1:)
+      .fock_mx.r.change_basis_to(Fv,VMO)
+      Fv.put_diagonal_to(.MO_energies.r(no+1:))
+
+      ! Virtual sector of Fock mx for TD
+      call move_alloc(Fv,.TD_data.Fv)
+
       ! Clean
       VMO.destroy
-      Fv.destroy
       Uv.destroy
 
       ! Output
       if (output) then
-
-         ! Mo energies before & after
-         MOEba(:,2) = .MO_energies.r(no+1:)
-
          stdout.flush
-         stdout.text("Lowest virtual MO energies:")
+         stdout.text("Lowest virtial MO energies:")
          stdout.flush
 
          ! Table headings
-         table.create(2)
-         table(1).set_heading("Before")
-         table(1).set_values(MOEba(1:10,1))
-         table(2).set_heading("After")
-         table(2).set_values(MOEba(1:10,2))
+         table.create(3)
+         table(1).set_heading("  HF MO")
+         table(1).set_subhead("energies")
+         table(1).set_values(OMO_en)
+
+         table(2).set_heading(" VV Fock")
+         table(2).set_subhead("energies")
+         table(2).set_values(.MO_energies.r(no+1:no+10))
+
+         table(3).set_heading("Canonisd")
+         table(3).set_subhead("energies")
+         table(3).set_values(.SCF_data.VMO_energies(1:10))
         
          ! Make the table
          table.put(label_rows=TRUE)
         
          ! Clean
          table.destroy
-         MOEba.destroy
       end
-
 
    end
 

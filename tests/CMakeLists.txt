@@ -44,10 +44,10 @@ function(add_all_tests)
         get_filename_component(N "${D}" NAME)
         add_test(NAME \"${N}\"
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-            COMMAND python3 ${TEST_SCRIPT}
-            -t "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
-            -b "${BASIS_SETS}"
-            -p "${TONTO_EXE}"
+            COMMAND python3  ${TEST_SCRIPT}
+            --test-directory "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
+            --basis-sets     "${BASIS_SETS}"
+            --program        "${TONTO_EXE}"
             --log-level=DEBUG
             ${MPI_FLAG})
         set_tests_properties(\"${N}\" PROPERTIES 

@@ -446,6 +446,10 @@ module TYPES
 
    end
 
+   type TEST_PARALLEL
+
+   end
+
    type SYSTEM
 
      ! ===================
@@ -6016,17 +6020,24 @@ module TYPES
      ! Whether to use Fermi-Amaldi in the SCF procedure
      ! (ignores exchange)
 
-     VV_canonicalization :: STR, readonly  DEFAULT(" ")
+     VMO_canonisation :: STR, readonly  DEFAULT(" ")
      ! Method to use to canonicalize the virtual MOs.
      ! Works by removing an occupied MO from the density.
-     ! Allowed are "Hunt-Goddard-1", "Hunt-Goddard-3", and 
-     ! "Huzinaga-Arnau".  The former produce singles & 
-     ! triplet canonicalizations, the latter, the average.
+     ! Allowed are "Hunt-Goddard-1", "Hunt-Goddard-3",
+     ! "Huzinaga-Arnau", or "Exchange". The former produce 
+     ! singlet & triplet canonicalizations, the latter, the 
+     ! average. "Exchange" canonicalises with the K matrix.
 
-     VV_removed_MO :: INT, readonly  DEFAULT(0)
-     ! Index of the MO to be removed in VMO canonicalization.
-     ! If a negative number "n" is input then this is assumed
-     ! to be the HOMO - n.
+     VMO_canonisation_MO :: INT, readonly  DEFAULT(0)
+     ! Index of the MO to be removed from the Fock matrix in 
+     ! VMO canonicalization. If a -ve number "n" is input then
+     ! the MO to be removed is assumed to be the HOMO-n.
+
+     VMO_energies :: VEC{REAL}@
+     ! The new VMO canonicalised MO energies. Note that the 
+     ! MO_energies in MOLECULE are also re-canonicalised with 
+     ! the usual Fock matrix.
+
 
      ! ================================
      ! DIIS convergence related options
@@ -6662,12 +6673,17 @@ module TYPES
 
    end
 
+
    type TD_DATA
 
-     method :: STR  DEFAULT("rhf")
+     ! ======
+     ! Basics
+     ! ======
+
+     method :: STR  DEFAULT("rtdhf-singlet")
      ! The kind of mean-field method used
 
-     state :: STR  DEFAULT("singlet")
+     implementation :: STR  DEFAULT("in-core")
      ! The kind of states wanted
 
      DFT_X_functional :: STR  DEFAULT(" ")
@@ -6691,6 +6707,10 @@ module TYPES
      n_vir :: INT   DEFAULT(0)
      ! The number of virtual orbitals
 
+     ! ==============
+     ! MOs & energies
+     ! ==============
+
      MOo :: MAT{REAL}@
      ! The restricted occupied molecular orbitals.
 
@@ -6703,100 +6723,398 @@ module TYPES
      Ev :: VEC{REAL}@
      ! The restricted virtual MO energies.
 
-     ! ==================
-     ! TD calc parameters
-     ! ==================
+     Ei :: VEC{REAL}@
+     ! The improved virtual energies. Only if canonicalisation
+     ! was performed in the SCF calculations. Must be activated
+     ! by the .use_IVO_energies flag, see below.
 
-     n_eig :: INT, readonly   DEFAULT(4)
-     ! Number of eigenvalues wanted
 
-     max_keep :: INT, readonly   DEFAULT(32)
-     ! *Maximum* number of trial evecs to keep.
-     ! Must be equal or greater than n_eig.
+     Fv :: MAT{REAL}@
+     ! The virtual-virtual block of the Fock matrix with the
+     ! new VMO canonicalised MOs.
 
-     n_keep :: INT, readonly   DEFAULT(0)
-     ! Actual no. of Davidson trial evec's to keep
-     ! Is set in the program.
+     ! ====================
+     ! State selection info
+     ! ====================
 
-     tol_S :: REAL, readonly   DEFAULT(0.75d0)
+     tol_S :: REAL, readonly   DEFAULT(ZERO)
      ! The tolerance to exclude single determinant excitations 
      ! which are too large, using the Koopmans energy difference.
 
-     tol_P :: REAL, readonly   DEFAULT(TOL(2))
-     ! The convergence of the density matrix elements.
-
-     tol_Davidson :: REAL, readonly   DEFAULT(TOL(6))
-     ! The Davidson convergence criteria.
-
-     iteration :: INT  DEFAULT(0)
-     ! The iteration counter, for the number of iterative 
-     ! steps used to refine the localized orbitals.
-
-     min_iterations :: INT  DEFAULT(1)
-     ! The minimum number of iterations allowed
-
-     max_iterations :: INT  DEFAULT(3)
-     ! The maximum number of iterations allowed
+     use_IVO_energies :: BIN   DEFAULT(FALSE)
+     ! If TRUE then reconanocalised VMO energies are used to
+     ! select the single excitations, but the VV block of the
+     ! original Fock matrix is still used in calculations.
 
      single :: MAT{INT}@
-     ! List occupied-virtual pair indices, in columns 
-     ! 2 and 1 respectively, sorted in increasing orbital 
-     ! energy difference.
+     ! List of the pair of virtual-occupied indices describing
+     ! the single excitation determinants.
+     !    Column 1 ... is the virtual  orbital index "A"
+     !    Column 2 ... is the occupied orbital index "I"
+     ! Importantly, these pairs are sorted by increasing orbital 
+     ! energy difference. If non-canonical VMOs are used then the
+     ! diagonal elements of VV block of the Fock mx are used as
+     ! the orbital energies.
+
+     min_OMO :: INT  DEFAULT(0)
+     ! The minimim occupied orbital in the singles-window
+
+     max_VMO :: INT  DEFAULT(0)
+     ! The maximum virtual orbital in the singles-window
 
      deltaE :: VEC{REAL}@
-     ! Sorted list of single-excitation energy differences.
+     ! Sorted list of single-excitation energy differences
+     ! corresponding to the .single list above.
 
      omega :: REAL   DEFAULT(ZERO)
      ! Energy of a particular state (above the ground state)
      ! for which double excitations within a certain tolerance
      ! .tol_D are to be considered. See .double below.
 
-     tol_D :: REAL   DEFAULT(TOL(2))
+     tol_D :: REAL   DEFAULT(ZERO)
      ! The tolerance to select interacting double excited
      ! determinants from a given excitation energy .omega,
      ! as described in the Mitra et al (2004) method.
 
-     use_S_window_MOs :: BIN   DEFAULT(FALSE)
-     ! Only MOs which occur in the single excitation window
-     ! are used to select the allowed doubles excitations
-     ! in the dressed Hamiltonian.
-
      double :: MAT{INT}@
-     ! List vo-vo quartet indices, in columns 1 and 2 
-     ! respectively (with each virtual-occupied (vo) index 
-     ! compressed to a single index), such that the energy
-     ! of this double excitation is within .tol_D of the
-     ! specified energy .omega (see above) of a particular
-     ! state. States are sorted in increasing orbital 
-     ! energy difference from .omega.
+     ! List of vo-vo quartet indices, in columns 
+     !    1 ... for index BJ
+     !    2 ... for index AI
+     ! respectively, where each index corresponds to a single
+     ! excitation in .single. States are sorted so that multiple
+     ! BJs occur for each AI, which determines the number of
+     ! differnt calls to the Fock builder.
 
      delEab :: VEC{REAL}@
      ! The list of double-excitation energy differences.
 
      n_max_show :: INT   DEFAULT(25)
-     ! The maximum no. of singles or doubles states to show in output
-     ! If set to zero, all states are shown.
+     ! The maximum no. of singles or doubles states to show 
+     ! in output. If set to zero, all states are shown.
+
+     S :: VEC{INT}@
+     ! The total spin value S for the state. Only appears
+     ! if both singlet (S=0) & triplet (S=1) states are calculated.
+
+     Slab :: VEC{STR}@
+     ! Convenient state labels like S1, T2, etc.
+
+     ! ===================
+     ! Davidson parameters
+     ! ===================
+
+     n_evals :: INT, readonly   DEFAULT(4)
+     ! Number of lowest-energy excited-state eigenvalues wanted.
+
+     n_keep :: INT, readonly   DEFAULT(8)
+     ! Maximum no. of Davidson trial eigenvector sets to keep. 
+     ! Must be at least 2+1=3.
+
+     tol_Davidson :: REAL, readonly   DEFAULT(TOL(2))
+     ! The Davidson convergence criteria.
+
+     ! ==============
+     ! Iteration info
+     ! ==============
+
+     iteration :: INT  DEFAULT(0)
+     ! Iteration counter, for the number of steps used in
+     ! the Davidsaon procedure.
+
+     min_iterations :: INT  DEFAULT(3)
+     ! Minimum no. of iterations allowed
+
+     max_iterations :: INT  DEFAULT(100)
+     ! Maximum no. of iterations allowed
+
+     n_trial :: INT  DEFAULT(0)
+     ! The no. of Davidson trial vectors currently kept.
+     
+     max_res :: VEC{REAL}@
+     ! The maximum residual vector length, over all excited 
+     ! eigenstates, over all trial vectors.
 
      ! =============
-     ! TD state info
+     ! State results
      ! =============
 
      eval :: VEC{REAL}@
-     ! TD Eigenvalues
+     ! TD excited-state eigenvalues
 
      evec :: MAT{REAL}@
-     ! TD Eigenvectors
+     ! TD excited-state eigenvectors
 
-     ov :: MAT{REAL}@
-     ! The occupied-virtual (ov) density (or determinant) response
-     ! coefficients
+     eval0 :: VEC{REAL}@
+     ! Singlet (S=0) excited-state eigenvalues
 
-     vo :: MAT{REAL}@
-     ! The virtual-occipied (vo) density (or determinant) response
-     ! coefficients
+     evec0 :: MAT{REAL}@
+     ! Singlet (S=0) excited state eigenvectors
+
+     eval1 :: VEC{REAL}@
+     ! Triplet (S=1) excited-state eigenvalues
+
+     evec1 :: MAT{REAL}@
+     ! Triplet (S=1) excited state eigenvectors
+
+     ! ====================
+     ! Davidson temporaries
+     ! ====================
+
+     V :: MAT{REAL}@
+     ! Davidson trial vector columns.
+     !    Size: (d,4d) x .n_eval*n_keep 
+     ! where d (or 4d) is the number of single excitations 
+     ! (times 4 for the no. of spin blocks aa, ba, ab, bb 
+     ! in the unrestricted case). Big memory!
+     
+     W :: MAT{REAL}@
+     ! W = A.V needed in step 2. of the Davidson procedure.
+     ! See Crouzeix et al (1990) Inria RR 1353. Size as V.
+
+     R :: VEC{REAL}@
+     ! Space for one residual vector.  Size: (d,4d).
+
+     Vao :: MAT3{REAL}@
+     ! Space for *restricted* trial vectors V transformed into 
+     ! the AO basis i.e. these are asymmetric density matrices 
+     ! needed for (A x V) in an efficient Davidson method.
+     ! Size: .n_eval x n_bf x n_bf
+
+     Aao :: MAT3{REAL}@
+     ! Space the *restricted* 2e A.V product, in the AO basis.
+     ! Size: .n_eval x n_bf x n_bf
+
+     Jao :: MAT3{REAL}@
+     ! Space for the *unrestricted* J A.V matrix products.
+     ! Size: 4*.n_eval x n_bf x n_bf
+
+     Kao :: MAT3{REAL}@
+     ! Space for the *unrestricted* K A.V matrix products.
+     ! Size: .n_eval x n_bf x n_bf
+
+     ! ===============
+     ! Iteration table
+     ! ===============
+
+     table :: VEC{TABLE_COLUMN}@
+     ! The iteration table
 
    end
 
+
+!   type GSD_TREE
+!
+!     n_bf :: INT   DEFAULT(0)
+!     ! The number of basis functions
+!
+!     n_occ :: INT   DEFAULT(0)
+!     ! The number of unoccupied orbitals
+!
+!     n_vir :: INT   DEFAULT(0)
+!     ! The number of virtual orbitals
+!
+!     ! ==========================
+!     ! Determinant MOs & energies
+!     ! ==========================
+!
+!     MOo :: MAT{REAL}@
+!     ! The restricted occupied molecular orbitals.
+!
+!     MOv :: MAT{REAL}@
+!     ! The restricted virtual molecular orbitals.
+!
+!     Eo :: VEC{REAL}@
+!     ! The restricted occupied MO energies.
+!
+!     Ev :: VEC{REAL}@
+!     ! The restricted virtual MO energies.
+!
+!     Fvo :: MAT{REAL}@
+!     ! The virtual-occupied block of the Fock matrix.
+!     ! IS normally zero for the reference S_NODE but not
+!     ! for excited determinants.
+!
+!     Fvv :: MAT{REAL}@
+!     ! The virtual-virtual block of the Fock matrix with the
+!     ! new VMO canonicalised MOs.
+!
+!     ! ==================
+!     ! Single excitations
+!     ! ==================
+!
+!     single :: MAT{INT}@
+!     ! List of the pair of virtual-occupied indices describing
+!     ! the single excitation determinants.
+!     !    Column 1 ... is the virtual  orbital index "A"
+!     !    Column 2 ... is the occupied orbital index "I"
+!     ! Importantly, these pairs are sorted by increasing orbital 
+!     ! energy difference. If non-canonical VMOs are used then the
+!     ! diagonal elements of VV block of the Fock mx are used as
+!     ! the orbital energies.
+!
+!     deltaE :: VEC{REAL}@
+!     ! Sorted list of single-excitation energy differences
+!     ! corresponding to the .single list above.
+!
+!     min_OMO :: INT  DEFAULT(0)
+!     ! The minimim occupied orbital in the singles-window
+!
+!     max_VMO :: INT  DEFAULT(0)
+!     ! The maximum virtual orbital in the singles-window
+!
+!     ! ==================
+!     ! Double excitations
+!     ! ==================
+!
+!     dindex :: VEC{INT}@
+!     ! Indices of singles from which doubles are generated
+!     ! by single excitation.
+!
+!     double :: VEC{GSD_TREE}@
+!     ! The actual doubles wavefuntions for each index in dindex.
+!
+!     ! ====================
+!     ! Partial wavefunction
+!     ! ====================
+!
+!     evec :: MAT{REAL}@
+!     ! This nodes eigenvector storage
+!
+!     ! ====================
+!     ! Davidson temporaries
+!     ! ====================
+!
+!     V :: MAT{REAL}@
+!     ! Davidson trial vector columns.
+!     !    Size: (d,4d) x .n_eval*n_keep 
+!     ! where d (or 4d) is the number of single excitations 
+!     ! (times 4 for the no. of spin blocks aa, ba, ab, bb 
+!     ! in the unrestricted case). Big memory!
+!     
+!     W :: MAT{REAL}@
+!     ! W = A.V needed in step 2. of the Davidson procedure.
+!     ! See Crouzeix et al (1990) Inria RR 1353. Size as V.
+!
+!     Vao :: MAT3{REAL}@
+!     ! Space for *restricted* trial vectors V transformed into 
+!     ! the AO basis i.e. these are asymmetric density matrices 
+!     ! needed for (A x V) in an efficient Davidson method.
+!     ! Size: .n_eval x n_bf x n_bf
+!
+!     Aao :: MAT3{REAL}@
+!     ! Space the *restricted* 2e A.V product, in the AO basis.
+!     ! Size: .n_eval x n_bf x n_bf
+!
+!     Jao :: MAT3{REAL}@
+!     ! Space for the *unrestricted* J A.V matrix products.
+!     ! Size: 4*.n_eval x n_bf x n_bf
+!
+!     Kao :: MAT3{REAL}@
+!     ! Space for the *unrestricted* K A.V matrix products.
+!     ! Size: .n_eval x n_bf x n_bf
+!
+!   end
+
+!   array type VEC{GSD_TREE}
+!
+!      ! A 1-D array of GSD_TREE objects
+!
+!   end
+
+!   type CI_DATA
+!
+!     ! ========================
+!     ! Basics & state selection
+!     ! ========================
+!
+!     method :: STR  DEFAULT("u-cis")
+!     ! The kind of mean-field method used
+!
+!     tol_S :: REAL, readonly   DEFAULT(ZERO)
+!     ! Tolerance to exclude single determinant excitations 
+!     ! which are too high in energy, by Koopman's theorem.
+!
+!     omega :: REAL   DEFAULT(ZERO)
+!     ! Energy of a particular state (above the ground state)
+!     ! for which double excitations within a certain tolerance
+!     ! .tol_D are to be considered. Used for dressing.
+!
+!     tol_D :: REAL   DEFAULT(ZERO)
+!     ! The tolerance to select interacting double excited
+!     ! determinants from a given excitation energy .omega.
+!
+!     ! ===================
+!     ! Davidson parameters
+!     ! ===================
+!
+!     n_evals :: INT, readonly   DEFAULT(4)
+!     ! Number of excited-state eigenvalues wanted.
+!
+!     n_keep :: INT, readonly   DEFAULT(8)
+!     ! Maximum no. of Davidson trial eigenvector sets to keep. 
+!     ! Must be at least 3+1=4 for the triplet and singlet.
+!
+!     tol_Davidson :: REAL, readonly   DEFAULT(TOL(2))
+!     ! Davidson convergence criteria on residual vectors.
+!
+!     ! ============
+!     ! Wavefunction
+!     ! ============
+!
+!     ground :: GSD_TREE@
+!     ! The ground state. Includes single excitations, and
+!     ! recursive links to the double excitations.
+!
+!     ! ==============
+!     ! Iteration info
+!     ! ==============
+!
+!     iteration :: INT  DEFAULT(0)
+!     ! Iteration counter, for the number of steps used in
+!     ! the Davidsaon procedure.
+!
+!     min_iterations :: INT  DEFAULT(3)
+!     ! Minimum no. of iterations allowed
+!
+!     max_iterations :: INT  DEFAULT(100)
+!     ! Maximum no. of iterations allowed
+!
+!     n_trial :: INT  DEFAULT(0)
+!     ! The no. of Davidson trial vectors currently kept.
+!     
+!     max_res :: VEC{REAL}@
+!     ! The maximum residual vector length, over all excited 
+!     ! eigenstates, over all trial vectors.
+!
+!     ! =============
+!     ! State results
+!     ! =============
+!
+!     eval :: VEC{REAL}@
+!     ! TD excited-state eigenvalues
+!
+!     evec :: MAT{REAL}@
+!     ! TD excited-state eigenvectors
+!
+!     ! ===========
+!     ! Output info
+!     ! ===========
+!
+!     n_max_show :: INT   DEFAULT(25)
+!     ! The maximum no. of singles or doubles states to show 
+!     ! in output. If set to zero, all states are shown.
+!
+!     S :: VEC{INT}@
+!     ! The total spin value S for the state. Only appears
+!     ! if both singlet (S=0) & triplet (S=1) states are calculated.
+!
+!     Slab :: VEC{STR}@
+!     ! Convenient state labels like S1, T2, etc.
+!
+!     table :: VEC{TABLE_COLUMN}@
+!     ! The iteration table
+!
+!   end
 
 !  ========
 !  Molecule
@@ -7075,7 +7393,7 @@ module TYPES
      ! Time-depedent info
      ! ==================
 
-     TD_data :: TD_DATA@
+     TD_data :: TD_DATA
      ! Time-dependent calculation data object
 
      ! =================

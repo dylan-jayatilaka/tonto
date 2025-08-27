@@ -1,0 +1,504 @@
+!==================================================================
+!
+! GSD_TREE
+!
+! CI wavefunction from a reference "ground" determinant (G) with
+! all "singles" excitations (S) within a given window, and with
+! possibly with "doubles" (D) within another given window.
+! In the latter case the doubles are associated via a recursive
+! data structure.
+!
+!
+! Copyright (C) Dylan Jayatilaka (2025)
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!==================================================================
+
+module GSD_TREE
+
+   implicit none
+
+contains
+
+!  ==========
+!  Allocation
+!  ==========
+
+   create ::: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
+   end
+
+   destroy_ptr_part ::: leaky, PURE
+   ! Destroy the pointer parts of self
+      self :: INOUT
+
+      .MOo.destroy
+      .MOv.destroy
+      .Eo.destroy
+      .Ev.destroy
+
+      .Fvo.destroy
+      .Fvv.destroy
+
+      .single.destroy
+      .deltaE.destroy
+
+      .dindex.destroy
+      .double.destroy
+
+      ! Temporaries
+      V.destroy
+      W.destroy
+      Vao.destroy
+      Jao.destroy
+      Kao.destroy
+
+   end
+
+!  ============
+!  Set defaults
+!  ============
+
+   set_defaults(n_bf,n_a,n_b) ::: leaky, PURE
+   ! Set default SCF data values
+      self  :: INOUT
+      n_bf  :: INT, IN
+      n_a   :: INT, IN
+      n_b   :: INT, IN
+
+      .n_bf  = n_bf
+      .n_occ = n_a
+      .n_vir = n_bf - n_a
+
+   end
+
+   set_defaults(MOs,MO_energies) ::: leaky, PURE
+   ! Set default SCF data values
+      self  :: INOUT
+      MOs   :: MAT{REAL}, IN
+      MO_energies :: VEC{REAL}, IN
+
+   ENSURE(.n_occ>0,"n_occ is not set, call set_defaults!")
+
+      no :: INT
+
+      no = .n_occ
+
+      .MOo = MOs(:,   1: no)
+      .MOv = MOs(:,no+1:.n_bf)
+
+      .Eo  = MO_energies(   1: no)
+      .Ev  = MO_energies(no+1:.n_bf)
+
+   end
+
+! For excitations
+
+   set_defaults(node,a,i) ::: leaky, PURE
+   ! Set default SCF data values
+      self :: INOUT
+      node :: GSD_TREE, IN
+      a, i :: INT, IN
+
+      save :: VEC{REAL}@
+      temp :: REAL
+
+      self = node
+
+      ! Swap MOs 
+      save = .MOo(:,i)
+      .MOo(:,i) = .MOv(:,a)
+      .MOv(:,a) = MO
+
+      ! Swap MO energies
+      temp = .Eo(:,i)
+      .Eo(i) = .Ev(a)
+      .Ev(a) = temp
+
+   end
+
+!  =======================
+!  State selection methods
+!  =======================
+
+   no_of_singles(tol_S) result (res) ::: pure
+   ! The number of single excitations which satisfy the tol_S
+   ! excitation window.
+      self  :: IN
+      tol_S :: REAL, IN
+      res   :: INT
+
+      i,a :: INT
+      val :: REAL
+
+      if (tol_S.equals(ZERO)) then
+
+         res = .n_vir*.n_occ
+
+      else
+
+         res = 0
+         do i = .n_occ,1,-1
+         do a = 1,.n_vir
+            val = .Ev(a) - .Eo(i)
+            if (val<tol_S) then
+               res = res + 1
+            end
+         end
+         end
+
+      end
+
+   end
+
+   find_singles(tol_S) ::: leaky, PURE
+   ! Sorts single excitations by smallest eigenvalue energy
+   ! difference, and keep pairs in the single(:,1:2) array.
+      self  :: INOUT
+      tol_S :: REAL, IN
+
+      i,a, n :: INT
+      val :: REAL
+      ind :: VEC{INT}@
+
+      ! Can proceed?
+      n = .no_of_singles
+      if (n==0) return
+
+      ! Leaky !!!!!!!!!!!!!!!!!!
+      .deltaE.create(n)
+      .single.create(n,2)
+
+      ! Get delta E and singles indices.
+      ! Loop over occupieds from HOMO down and virtuals 
+      ! from LUMO up so the energy difference is roughly 
+      ! in increasing Koopmans energy order but in the 
+      ! end the energies are sorted.
+      if (tol_S.is_zero) then
+
+         ! No window - get all
+         n = 0
+         do i = .n_occ,1,-1
+         do a = 1,.n_vir
+            val = .Ev(a) - .Eo(i)
+            n = n + 1
+            .deltaE(n)   = val
+            .single(n,1) = a
+            .single(n,2) = i
+         end
+         end
+
+      else
+
+         ! Use window
+         n = 0
+         do i = .n_occ,1,-1
+         do a = 1,.n_vir
+            val = .Ev(a) - .Eo(i)
+            if (val<tol_S) then
+               n = n + 1
+               .deltaE(n)   = val
+               .single(n,1) = a
+               .single(n,2) = i
+            end
+         end
+         end
+
+      end
+
+      ! Sort into increasing E difference
+      ind.create(n)
+      .deltaE.quick_sort(ind)
+
+      ! Reorder
+      .deltaE      = .deltaE(ind)
+      .single(:,1) = .single(ind,1)
+      .single(:,2) = .single(ind,2)
+
+   end
+
+   find_doubles ::: leaky, PURE
+   ! Find double excitations in S window, within .tol_D
+   ! of the chosen excitation energy .omega.
+      self :: INOUT
+
+   ENSURE(.single.allocated,"no single's array")
+   ENSURE(.deltaE.allocated,"no deltaE array")
+   ENSURE(.omega>ZERO, "target excitation energy omega is zero!")
+   ENSURE(.tol_D>ZERO, "tol_D is zero!")
+
+      n :: INT
+      ai, a,i :: INT
+      bj, b,j :: INT
+      Eai,Ebj,val,del :: REAL
+      ground  :: GSD_TREE
+
+      ! Can we proceed?
+      n = .no_of_doubles
+      if (n==0) return
+
+      ! Reference
+      ground = self
+
+      .dindex.create(n)
+      .double.create(n)
+
+      n = 0
+      do ai = 1,.single.dim1
+         a  = .single(ai,1)
+         i  = .single(ai,2)
+         Eai = .deltaE(ai)
+         do bj = 1,ai
+            b  = .single(bj,1)
+            j  = .single(bj,2)
+            Ebj = .deltaE(bj)
+            val = Eai + Ebj
+            del = val -.omega
+            if (abs(del)<.tol_D AND val<.tol_S) then
+               n = n + 1
+               dindex(n) = ai
+               double(n).create
+               double(n).set_defaults(ground,a,i)
+            end
+         end
+      end
+
+   end
+
+!  =======================
+!  Efficient A x V product
+!  =======================
+
+   make_u_diag_AV(AV,V) ::: PURE
+   ! Do the *unrestricted* diag(A).V matrix product on the
+   ! single-excitation trial vectors "V" and put the result
+   ! into "AV". Will assume non-canonical VMOs if the VV
+   ! sector of the Fock matrix .Fv is allocated.
+      self :: IN
+      AV :: MAT{REAL}, OUT
+      V  :: MAT{REAL}, IN
+
+   ENSURE(AV.is_same_shape_as(V),"inconsistent shape, V and AV")
+   ENSURE(AV.dim2==.n_evals,"wrong dim2, AV")
+   ENSURE(AV.dim1==4*.single.dim1,"wrong dim1, AV")
+
+      ai, a,i :: INT
+      bj, b,j :: INT
+      d,d2,d3, n :: INT
+      Eai, Ea,Ei, Fab :: REAL
+
+      ! NOTE: d refers to the *restricted* case.
+      ! The unrestricted case is *FOUR* times as big.
+      ! The spin order in V is: aa, ba, ab, bb
+      ! The bb block occurs last in the V vector.
+      d  = .single.dim1
+      d2 = 2*d
+      d3 = 3*d
+
+      if (NOT .Fv.allocated) then
+
+         ! Canonical VMOs
+         do n  = 1,.n_evals
+         do ai = 1,d
+            Eai = .deltaE(ai)
+            AV(   ai,n) = Eai*V(   ai,n) ! aa
+            AV(d +ai,n) = Eai*V(d +ai,n) ! ba
+            AV(d2+ai,n) = Eai*V(d2+ai,n) ! ab
+            AV(d3+ai,n) = Eai*V(d3+ai,n) ! bb
+         end
+         end
+
+      else
+
+         ! Noncanonical VMO case
+         do ai = 1,d
+            a  = .single(ai,1)
+            i  = .single(ai,2)
+            Ei = -.Eo(i)
+            AV(   ai,:) = Ei*V(   ai,:) ! aa
+            AV(d +ai,:) = Ei*V(d +ai,:) ! bb
+            AV(d2+ai,:) = Ei*V(d2+ai,:) ! ab
+            AV(d3+ai,:) = Ei*V(d3+ai,:) ! bb
+            do bj = 1,d
+               b  = .single(bj,1)
+               j  = .single(bj,2)
+               if (i/=j) cycle
+               Fab = .Fv(a,b)
+               AV(   ai,:) = AV(   ai,:) + Fab*V(   bj,:) ! aa
+               AV(d +ai,:) = AV(d +ai,:) + Fab*V(d +bj,:) ! ba
+               AV(d2+ai,:) = AV(d2+ai,:) + Fab*V(d2+bj,:) ! ab
+               AV(d3+ai,:) = AV(d3+ai,:) + Fab*V(d3+bj,:) ! bb
+            end
+         end
+
+      end
+
+   end
+
+   change_r_V_to_AO(Vao,V) ::: PURE
+   ! Back transform trial eigenvectors "V" into symmetric
+   ! (n_bf x n_bf) AO sized density matrices "Vao", for
+   ! each excited state eigenvalue. Needed to calculate
+   ! the 2e-part of the A.V Davidson step in CIS/TD eqns.
+   ! NOTE: the result does *not* accumulate.
+      self :: IN
+      Vao  :: MAT3{REAL}, OUT
+      V    :: MAT{REAL}, IN
+
+   ENSURE(Vao.dim1==.n_evals,"inconsistent dim1, Vao")
+
+      ai, a,i :: INT
+      d,no,lo :: INT
+      n, p, q :: INT
+      W :: MAT3{REAL}@
+
+      ! Sizes & limits
+      d  = .single.dim1
+      no = .n_occ
+      lo = .min_OMO
+
+      ! Single-index transform temporary
+      W.create([1,.n_bf],[lo,no],[1,.n_evals])
+      W = ZERO
+
+      ! Transform "a" index of "V" -> "W"
+      do n  = 1, .n_evals
+      do p  = 1, .n_bf
+      do ai = 1, d
+         a = .single(ai,1)
+         i = .single(ai,2)
+         ! a -> p
+         W(p,i,n) = W(p,i,n) + .MOv(p,a)*V(ai,n)
+      end
+      end
+      end
+
+      ! Transform "i" index of "W" -> "Vao"
+      Vao = ZERO
+      do n = 1, .n_evals
+      do i = lo, no
+      do p = 1, .n_bf
+      do q = 1, .n_bf
+         ! i -> q
+         Vao(n,p,q) = Vao(n,p,q) + .MOo(q,i)*W(p,i,n)
+      end
+      end
+      end
+      end
+
+      ! Clean up
+      W.destroy
+
+   end
+
+   change_u_V_to_MO(V,Jao,Kao) ::: PURE
+   ! Transform and *accumulate* AO-basis "Jao" and "Kao"
+   ! matrices from the 2e part of the CIS equations into
+   ! the correct spin blocks of the unrestricted Davidson
+   ! trial eigenvectors "V" in single-excitation MO basis.
+   ! NOTE: spin order of ai excitations is: aa, ba, ab, bb.
+   ! These blocks are stored sequentially in the first index
+   ! of the "Jao" and "Kao" matrices.
+      self :: IN
+      V   :: MAT{REAL},  INOUT
+      Jao :: MAT3{REAL}, IN
+      Kao :: MAT3{REAL}, IN
+
+   ENSURE(Jao.dim1==4*V.dim2,  "incompatible dim1 & dim2, Jao & V")
+   ENSURE(Jao.dim1==4*.n_evals,"wrong dim1, Jao")
+   ENSURE(Jao.dim2==.n_bf,     "wrong dim2, Jao")
+   ENSURE(Jao.dim3==.n_bf,     "wrong dim3, Jao")
+   ENSURE(Kao.is_same_shape_as(Jao),"Kao inconsistent shape with Jao")
+
+      d0,d1,d2,d3 :: INT
+      n1,n2,n3,n4 :: INT
+      d,no,lo :: INT
+      ai, a,i :: INT
+      n, p, q :: INT
+      WJ, WK  :: MAT3{REAL}@
+      Jaa,Jbb :: REAL
+      Kaa,Kbb :: REAL
+      Kba,Kab :: REAL
+      val     :: REAL
+
+      ! Sizes
+      d  = .single.dim1
+      no = .n_occ
+      lo = .min_OMO
+
+      n1 = .n_evals
+      n2 = 2*n1
+      n3 = 3*n1
+      n4 = 4*n1
+
+      ! Single-index transform temporaries
+      WJ.create([1,n4],[1,.n_bf],[lo,no])
+      WK.create([1,n4],[1,.n_bf],[lo,no])
+      WJ = ZERO
+      WK = ZERO
+
+      ! Transform "q" index
+      do i = lo,no
+      do q = 1, .n_bf
+         val = .MOo(q,i)
+         do p = 1, .n_bf
+         do n = 1, n4
+            Jaa = Jao(n,p,q)*val
+            Kaa = Kao(n,p,q)*val
+            WJ(n,p,i) = WJ(n,p,i) + Jaa
+            WK(n,p,i) = WK(n,p,i) + Kaa
+         end
+         end
+      end
+      end
+
+      ! Transform "p" index, *accumulate* in "V"
+      ! See the singlet/triplet parts!
+      do p  = 1,.n_bf
+      do ai = 1,d
+         a = .single(ai,1)
+         i = .single(ai,2)
+         d0 =     ai
+         d1 = d + d0
+         d2 = d + d1
+         d3 = d + d2
+         val = .MOv(p,a)
+         do n = 1, n1
+            Jaa = WJ(   n,p,i)*val
+            Jbb = WJ(n3+n,p,i)*val
+            Kaa = WK(   n,p,i)*val
+            Kba = WK(n1+n,p,i)*val
+            Kab = WK(n2+n,p,i)*val
+            Kbb = WK(n3+n,p,i)*val
+            V(d0,n) = V(d0,n) + Jaa - Kaa + Jbb ! (ai)_aa
+            V(d1,n) = V(d1,n) - Kba             ! (ai)_ba
+            V(d2,n) = V(d2,n) - Kab             ! (ai)_ab
+            V(d3,n) = V(d3,n) + Jbb - Kbb + Jaa ! (ai)_bb
+         end
+      end
+      end
+
+      ! Clean up
+      WK.destroy
+      WJ.destroy
+
+   end
+
+end
