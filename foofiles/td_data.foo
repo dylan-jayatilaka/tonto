@@ -123,19 +123,6 @@ contains
 
    end
 
-   set_n_keep(val) ::: PURE
-   ! Set the maximum number of eigensolutions to keep.
-      self :: INOUT
-      val  :: INT, IN
-
-   ENSURE(val>0,"n_keep must be +ve")
-   ENSURE(val>2,"n_keep must be at least 3")
-   ENSURE(val>2,"n_keep must be more than n_evals")
-
-      .n_keep = val
-
-   end
-
    set_method(val)
    ! Set the kind of TD method to use.
       self :: INOUT
@@ -158,7 +145,7 @@ contains
       case("r-tdhf-s=0       ")
       case("r-tdhf-s=1       ")
 
-      case("u-cis            ")
+      case("u-cis            "); .tol_S = ZERO
       case("u-cis-v1         ")
       case("u-cis-ss         ")
 
@@ -175,10 +162,27 @@ contains
 
    ENSURE(val>0,"n_evals must be +ve")
 
+    if (.is_unrestricted) then
+    ENSURE(mod(val,4)==0,"n_evals must be a multiple of 4")
+    end
+
       .n_evals = val
 
       ! Set the same number to show
       .set_n_max_show(val)
+
+   end
+
+   set_n_keep(val) ::: PURE
+   ! Set the maximum number of eigensolutions to keep.
+      self :: INOUT
+      val  :: INT, IN
+
+   ENSURE(val>0,"n_keep must be +ve")
+   ENSURE(val>2,"n_keep must be at least 3")
+   ENSURE(val>2,"n_keep must be more than n_evals")
+
+      .n_keep = val
 
    end
 
@@ -570,6 +574,13 @@ contains
 !  TD calc info
 !  ============
 
+   is_restricted result(res) ::: pure
+   ! Return TRUE if the method is *only* a S=0 state
+      self :: IN
+      res  :: BIN
+      res = .method.includes("r-")
+   end
+
    is_unrestricted result(res) ::: pure
    ! Return TRUE if the method is *only* a S=0 state
       self :: IN
@@ -761,8 +772,53 @@ contains
 !      res = (vo-1)/.n_vir + 1
 !   end
 
+   r_O_singles_str result (res) ::: leaky, PURE
+   ! List of occupied MOs in the singles-excitation window.
+   ! Restricted version.
+      self :: IN
+      res  :: VEC{STR}@
+
+   ENSURE(.single.allocated,"no single's array")
+
+
+      d, i,omo :: INT
+
+      d = .single.dim1
+
+      res.create(d)
+      res = " "
+      do i = 1,d
+         omo = .single(i,2) - .n_occ
+         res(i) = omo.to_str
+      end
+
+   end
+
+   r_V_singles_str result (res) ::: leaky, PURE
+   ! List of occupied MOs in the singles-excitation window.
+   ! Restricted version.
+      self :: IN
+      res  :: VEC{STR}@
+
+   ENSURE(.single.allocated,"no single's array")
+
+
+      d, i,vmo :: INT
+
+      d = .single.dim1
+
+      res.create(d)
+      res = " "
+      do i = 1,d
+         vmo = .single(i,1)
+         res(i) = vmo.to_str
+      end
+
+   end
+
    u_O_singles_str result (res) ::: leaky, PURE
    ! List of occupied MOs in the singles-excitation window.
+   ! Unrestricted version.
       self :: IN
       res  :: VEC{STR}@
 
@@ -785,6 +841,7 @@ contains
 
    u_V_singles_str result (res) ::: leaky, PURE
    ! List of occupied MOs in the singles-excitation window.
+   ! Unrestricted version.
       self :: IN
       res  :: VEC{STR}@
 
@@ -942,8 +999,8 @@ contains
             if (abs(val-.omega)<.tol_D AND val<.tol_S) then
                n = n + 1
                .delEab(n)   = val - .omega ! Note sign
-               .double(n,1) = bj
-               .double(n,2) = ai
+               .double(n,1) = bj ! This will be AI
+               .double(n,2) = ai ! This will be BJ
             end
          end
       end
@@ -1072,22 +1129,22 @@ contains
 !  Iteration control
 !  =================
 
-   initialize_Davidson ::: leaky, PURE
+   initialize_Davidson(name) ::: leaky
    ! Initialise the Davidson iterations
+   ! Use archive "name" for any initial vectors.
       self :: INOUT
+      name :: STR, IN
 
       d0,d1,d2,d3 :: INT
       d, n,n4, s  :: INT
+      archive :: ARCHIVE
 
       .iteration = 0
       .n_trial   = 0
 
       ! Dimensions
       if (.is_unrestricted) then
-         ! Make "n" a multiple of 4
-         n = .n_evals 
-         n = 4*ceiling(REALIFY(n)/4)
-         .n_evals  = n
+         n = .n_evals
          d = 4*.single.dim1
       else
          n = .n_evals 
@@ -1111,29 +1168,44 @@ contains
       ! The single-excitations states should be well-ordered
       ! e.g. in increasing energy and with sensible shape.
       ! Consider DFT, non-canonical VMOs, or Fermi-Amaldi.
-      .V = ZERO
-      if (NOT .is_unrestricted) then
+
+      if (.is_restricted) then
+
          .V(:,1:n).to_unit_mx
+
       else
-         ! Initialise S=0 & S=1
-         ! shape(V) is really (d,4,n*n_keep)
-         d  = .single.dim1
-         d0 = 0
-         do s = 1,n,4
-            d0 = d0 + 1
-            d1 = d0 + d
-            d2 = d1 + d
-            d3 = d2 + d
-            .V(d0,s  ) = ONE ! Singlet
-            .V(d1,s+1) = ONE ! Triplet
-            .V(d2,s+2) = ONE
-            .V(d3,s+3) = ONE
+
+         .V = ZERO
+
+         archive.set(name,"CIS_evec,u")
+         if (archive.exists) then
+            archive.read(.evec)
+            .V(:,1:n) =  .evec
+            archive.set(name,"CIS_eval,u")
+            archive.read(.eval)
+          ! .make_u_Slab
+         else
+            ! Initialise S=0 & S=1
+            ! shape(V) is really (d,4,n*n_keep)
+            d  = .single.dim1
+            d0 = 0
+            do s = 1,n,4
+               d0 = d0 + 1
+               d1 = d0 + d
+               d2 = d1 + d
+               d3 = d2 + d
+               .V(d0,s  ) = ONE ! Singlet
+               .V(d1,s+1) = ONE ! Triplet
+               .V(d2,s+2) = ONE
+               .V(d3,s+3) = ONE
+            end
          end
+
       end
 
       ! Davidson temporaries:
       ! V or J & K in AO basis
-      if (NOT .is_unrestricted) then
+      if (.is_restricted) then
          .Vao.create( n,.n_bf,.n_bf)   ! Density matrices
          .Aao.create( n,.n_bf,.n_bf)   ! A.V in AO basis
       else
@@ -1145,160 +1217,6 @@ contains
 
       ! Set table headings
       .set_D_table_headings
-
-   end
-
-   store_results ::: leaky, PURE
-   ! Cleam up, store the results, with sorting if needed.
-      self :: INOUT
-
-      ind :: VEC{INT}@
-      ord :: VEC{INT}@
-      cnt :: VEC{INT}@
-      d,n,i, n_kind :: INT
-      k1,k2,k3 :: INT
-
-      ! Clean up !!!!!!!!
-      .finalize_iteration
-      !!!!!!!!!!!!!!!!!!!
-
-      n = .evec.dim2
-
-      if (.is_unrestricted) then
-
-         ! UNRESTRICTED
-
-         ! get Slab
-         .Slab.create(n) ! Labels
-         .eval.make_repetition_count(cnt,n_kind)
-         k1 = 0
-         k2 = 0
-         k3 = 0
-         do i = 1,n
-            select case (cnt(i))
-            case (0)
-               .Slab(i) = " "
-            case (1)
-               k1 = k1 + 1
-               .Slab(i) = "S"//trim(k1.to_str)
-            case (2)
-               k2 = k2 + 1
-               .Slab(i)   = "D"//trim(k2.to_str)
-               .Slab(i+1) = trim(.Slab(i))
-            case (3)
-               k3 = k3 + 1
-               .Slab(i)   = "T"//trim(k3.to_str)
-               .Slab(i+1) = trim(.Slab(i))
-               .Slab(i+2) = trim(.Slab(i))
-            end
-         end
-
-         ! Expand .n_evals to degenerates
-         n = .n_evals
-         if (cnt(n)==2) then
-            .n_evals = n + 1
-         else if (cnt(n)==3) then
-            .n_evals = n + 2
-         else if (cnt(n-1)==3) then
-            .n_evals = n + 1
-         end
-         cnt.destroy
-
-         ! Shrink to requested
-         n = .n_evals
-         .eval.shrink(n)
-         .evec.shrink_columns(n)
-         .Slab.shrink(n) 
-
-      else
-
-         ! RESTRICTED
-
-         ! Store singlets
-         if (.is_singlet_calc) then
-            .eval0 = .eval
-            .evec0 = .evec
-            .Slab.create(n) ! Labels
-            ord = [ (i, i=1,n) ]
-            .Slab = spread("S",1,n)//ord.to_str
-            ord.destroy
-         end
-        
-         ! Store triplets
-         if (.is_triplet_calc) then
-            .eval1 = .eval
-            .evec1 = .evec
-            .Slab.create(n) ! Labels
-            ord = [ (i, i=1,n) ]
-            .Slab = spread("T",1,n)//ord.to_str
-            ord.destroy
-         end
-
-         ! Merge singlets & triplets
-         ! THIS IS ENETERD ONLY AFTER BOTH ARE DONE
-         if (.is_s0_and_s1_calc) then
-        
-            ! Reset: append
-            .eval = [ .eval0, .eval1 ]
-        
-            d = .evec.dim1
-            .evec.create(d,2*n)
-            .evec(:,  1:n) = .evec0
-            .evec(:,n+1: ) = .evec1
-        
-            ! Set S values
-            .S.create(2*n)
-            .S(  1:n) = 0
-            .S(n+1: ) = 1
-        
-            ! State order
-            .Slab.create(2*n)
-            ord.create(2*n)
-        
-            ! Singlet lower in energy
-            ord(  1:n) = [ (i, i=1,n) ]
-            ord(n+1: ) = [ (i, i=1,n) ]
-        
-            .Slab(  1:n) = spread("S",1,n)//ord(  1:n).to_str
-            .Slab(n+1: ) = spread("T",1,n)//ord(n+1: ).to_str
-        
-            ord.destroy
-        
-            ! Sort
-            ind.create(2*n)
-            .eval.quick_sort(ind)
-        
-            ! Reorder
-            .S    =      .S(ind)
-            .eval =   .eval(ind)
-            .evec = .evec(:,ind)
-            .Slab =   .Slab(ind)
-        
-            ind.destroy
-        
-         end
-
-      end
-
-   end
-
-   finalize_iteration ::: leaky, PURE
-   ! Initialise the Davidson iterations
-      self :: INOUT
-
-      ! Temporaries
-      if (NOT .is_unrestricted) then
-         .Aao.destroy
-         .Vao.destroy
-      else
-         .Kao.destroy
-         .Jao.destroy
-         .Vao.destroy
-      end
-
-      .R.destroy
-      .W.destroy
-      .V.destroy
 
    end
 
@@ -1329,6 +1247,209 @@ contains
 
    end
 
+   finalize_iteration ::: leaky, PURE
+   ! Clean up memory for Davidson procedure
+      self :: INOUT
+
+      ! Temporaries
+      if (.is_restricted) then
+         .Aao.destroy
+         .Vao.destroy
+      else
+         .Kao.destroy
+         .Jao.destroy
+         .Vao.destroy
+      end
+
+      .R.destroy
+      .W.destroy
+      .V.destroy
+
+   end
+
+   store_results(name) ::: leaky
+   ! Store the results, make table Slab info.
+   ! NOTE: merging of S=0 and S=1 
+      self :: INOUT
+      name :: STR, IN
+
+      ! Clean up !!!!!!!!
+      .finalize_iteration
+      !!!!!!!!!!!!!!!!!!!
+
+      if (.is_restricted) then
+         .:store_r_results(name)
+         .make_r_Slab
+      else
+         .:store_u_results(name)
+         .make_u_Slab
+      end
+
+   end
+
+   store_r_results(name) ::: leaky, private
+   ! Store restricted results in core and on disk.
+   ! In core needed for later merging of S=0 and S=1 results.
+      self :: INOUT
+      name :: STR, IN
+
+      archive :: ARCHIVE
+      n :: INT
+
+      ! Store singlets
+      if (.is_singlet_calc) then
+         .eval0 = .eval
+         .evec0 = .evec
+         ! Archive
+         archive.set(name,"CIS_eval_S=0,r")
+         archive.write(.eval0)
+         archive.set(name,"CIS_evec_S=0,r")
+         archive.write(.evec0)
+      end
+      
+      ! Store triplets
+      if (.is_triplet_calc) then
+         .eval1 = .eval
+         .evec1 = .evec
+         ! Archive
+         archive.set(name,"CIS_eval_S=1,r")
+         archive.write(.eval1)
+         archive.set(name,"CIS_evec_S=1,r")
+         archive.write(.evec1)
+      end
+
+   end
+
+   make_r_Slab ::: leaky, private, PURE
+   ! Make restricted Slab labels for output table.
+      self :: INOUT
+
+      ord :: VEC{INT}@
+      n,i :: INT
+
+      n = .evec.dim2
+
+      if (.is_singlet_calc) then
+         .Slab.create(n) ! Labels
+         ord = [ (i, i=1,n) ]
+         .Slab = spread("S",1,n)//ord.to_str
+         ord.destroy
+      end
+      
+      if (.is_triplet_calc) then
+         .Slab.create(n) ! Labels
+         ord = [ (i, i=1,n) ]
+         .Slab = spread("T",1,n)//ord.to_str
+         ord.destroy
+      end
+
+   end
+
+   store_u_results(name) ::: leaky, private
+   ! Store unrestricted results on disk only.
+   ! Clean up, store the results, with sorting if needed.
+   ! UNRESTRICTED CASE.
+      self :: INOUT
+      name :: STR, IN
+
+      archive :: ARCHIVE
+
+      ! Archive
+      archive.set(name,"CIS_evec,u")
+      archive.write(.evec)
+      archive.set(name,"CIS_eval,u")
+      archive.write(.eval)
+
+   end
+
+   make_u_Slab ::: leaky, private, PURE
+   ! Make unrestricted Slab labels for output table.
+      self :: INOUT
+
+      cnt :: VEC{INT}@
+      n,i, n_kind :: INT
+      k1,k2,k3 :: INT
+
+      n = .evec.dim2
+
+      .Slab.create(n) ! Labels
+      .eval.make_repetition_count(cnt,n_kind)
+      k1 = 0
+      k2 = 0
+      k3 = 0
+      do i = 1,n
+         select case (cnt(i))
+         case (0)
+            .Slab(i) = " "
+         case (1)
+            k1 = k1 + 1
+            .Slab(i) = "S"//trim(k1.to_str)
+         case (2)
+            k2 = k2 + 1
+            .Slab(i)   = "D"//trim(k2.to_str)
+            .Slab(i+1) = trim(.Slab(i))
+         case (3)
+            k3 = k3 + 1
+            .Slab(i)   = "T"//trim(k3.to_str)
+            .Slab(i+1) = trim(.Slab(i))
+            .Slab(i+2) = trim(.Slab(i))
+         end
+      end
+
+   end
+
+   merge_S01_results ::: leaky, PURE
+   ! Merge S=0 and S=1 results ready for printing
+   ! RESTART BECOMES IMPOSSIBLE IN THIS CASE.
+      self :: INOUT
+
+   ENSURE(.is_s0_and_s1_calc,"not a S=0&1 calc")
+
+      ind :: VEC{INT}@
+      ord :: VEC{INT}@
+      d,n,i :: INT
+
+      n = .evec.dim2
+
+      .eval = [ .eval0, .eval1 ]
+      
+      d = .evec.dim1
+      .evec.create(d,2*n)
+      .evec(:,  1:n) = .evec0
+      .evec(:,n+1: ) = .evec1
+      
+      ! Set S values
+      .S.create(2*n)
+      .S(  1:n) = 0
+      .S(n+1: ) = 1
+      
+      ! State order
+      .Slab.create(2*n)
+      ord.create(2*n)
+      
+      ! Singlet lower in energy
+      ord(  1:n) = [ (i, i=1,n) ]
+      ord(n+1: ) = [ (i, i=1,n) ]
+      
+      .Slab(  1:n) = spread("S",1,n)//ord(  1:n).to_str
+      .Slab(n+1: ) = spread("T",1,n)//ord(n+1: ).to_str
+      
+      ord.destroy
+      
+      ! Sort
+      ind.create(2*n)
+      .eval.quick_sort(ind)
+      
+      ! Reorder
+      .S    =      .S(ind)
+      .eval =   .eval(ind)
+      .evec = .evec(:,ind)
+      .Slab =   .Slab(ind)
+      
+      ind.destroy
+      
+   end
+
 !  =======================
 !  Efficient A x V product
 !  =======================
@@ -1349,7 +1470,7 @@ contains
       ai, a,i :: INT
       bj, b,j :: INT
       d,d2,d3, n :: INT
-      Eai, Ea,Ei, Fab :: REAL
+      Eai,Ei,Fab :: REAL
 
       ! NOTE: d refers to the *restricted* case.
       ! The unrestricted case is *FOUR* times as big.
@@ -1461,8 +1582,8 @@ contains
 
    ENSURE(Vao.dim1==4*.n_evals,"inconsistent dim1, Vao")
 
-      ai,a,i, bj :: INT
       d,d2,d3,d4 :: INT
+      ai,a,i :: INT
       no, lo :: INT
       n, p,q :: INT
       val :: REAL
@@ -2011,8 +2132,8 @@ contains
       stdout.text("was requested in the SCF procedure.")
 
       stdout.flush
-      stdout.text(". Indices 0 and below are HOMOs (occupied)")
-      stdout.text("  Indices 1 and above are LUMOs (virtuals)")
+      stdout.text(". Indices 0 and below are OMOs (I)")
+      stdout.text("  Indices 1 and above are VMOs (A)")
       stdout.flush
       stdout.show("Singles tolerance, tol_S =", .tol_S)
       stdout.show("                   in eV =", .tol_S*EV_PER_HARTREE)
@@ -2031,13 +2152,11 @@ contains
 
       table.create(4)
 
-      table(1).set_heading("LUMO")
-      table(1).set_subhead("A")
-      table(1).set_values(.single(1:n,1))
+      table(1).set_heading("I")
+      table(1).set_values(.single(1:n,2)-.n_occ)
 
-      table(2).set_heading("HOMO")
-      table(2).set_subhead("I")
-      table(2).set_values(.single(1:n,2)-.n_occ)
+      table(2).set_heading("A")
+      table(2).set_values(.single(1:n,1))
 
       table(3).set_heading("Ev-Eo")
       table(3).set_subhead(" /au")
@@ -2098,7 +2217,7 @@ contains
       stdout.text("  Indices 0 and below are HOMOs (occupied)")
       stdout.flush
       stdout.show("Dressing energy, omega   =", .omega)
-      stdout.show("                 in eV   =", .omega*EV_PER_HARTREE)
+      stdout.show("      omega or w in eV   =", .omega*EV_PER_HARTREE)
       stdout.show("Doubles tolerance, tol_D =", .tol_D)
       stdout.show("                   in eV =", .tol_D*EV_PER_HARTREE)
       stdout.show("Singles tolerance, tol_S =", .tol_S)
@@ -2115,28 +2234,37 @@ contains
       table.create(8)
 
       table(1).set_heading("AI")
-      table(2).set_heading("A")
-      table(3).set_heading("I")
+      table(2).set_heading("I")
+      table(3).set_heading("A")
       table(4).set_heading("BJ")
-      table(5).set_heading("B")
-      table(6).set_heading("J")
+      table(5).set_heading("J")
+      table(6).set_heading("B")
       table(7).set_heading("E_D")
-      table(8).set_heading("E_D-omega")
+      table(7).set_subhead("/eV")
+      table(7).set_real_precision(2)
+      table(8).set_heading("E_D-w")
+      table(8).set_subhead("/eV")
+      table(8).set_real_precision(2)
 
-      table(1).set_values(.double(:,2))
-      table(2).set_values(.single(.double(:,2),1))
-      table(3).set_values(.single(.double(:,2),2)-.n_occ)
-      table(4).set_values(.double(:,1))
-      table(5).set_values(.single(.double(:,1),1))
-      table(6).set_values(.single(.double(:,1),2)-.n_occ)
-      table(7).set_values(.delEab+.omega)
-      table(8).set_values(.delEab)
+      ! NOTE: AI & BJ generated in the reverse way
+      table(1).set_values(.double(:,2)) ! AI
+      table(2).set_values(.single(.double(:,2),2)-.n_occ)
+      table(3).set_values(.single(.double(:,2),1))
+      table(4).set_values(.double(:,1)) ! BJ
+      table(5).set_values(.single(.double(:,1),2)-.n_occ)
+      table(6).set_values(.single(.double(:,1),1))
+      table(7).set_values((.delEab+.omega)*EV_PER_HARTREE) ! + sign correct
+      table(8).set_values( .delEab*EV_PER_HARTREE)
 
       table.put(label_rows=TRUE)
 
       table.destroy
 
    end
+
+!  ===============
+!  Davidson output
+!  ===============
 
    put_results
    ! Print out the interacting double excitations
@@ -2154,19 +2282,19 @@ contains
       stdout.text("============================")
       stdout.text("CIS/TD excited state results")
       stdout.text("============================")
-      stdout.flush
-      stdout.text(". Only the lowest states are shown")
-      stdout.flush
-      stdout.text(". In-core implementations do no state selection (SS)")
-      stdout.text("  UNLESS an SS-type method is specifically chosen AND")
-      stdout.text("  in addition, tol_S>0. (If tol_S is zero, all single")
-      stdout.text("  excitation states are used).")
+    ! stdout.flush
+    ! stdout.text(". Only the lowest states are shown")
+    ! stdout.flush
+    ! stdout.text(". In-core implementations do no state selection (SS)")
+    ! stdout.text("  UNLESS an SS-type method is specifically chosen AND")
+    ! stdout.text("  in addition, tol_S>0. (If tol_S is zero, all single")
+    ! stdout.text("  excitation states are used).")
       stdout.flush
       stdout.show("Method                       =", .method)
       stdout.show("Implementation               =", .implementation)
       stdout.show("Singles tolerance, tol_S     =", .tol_S)
       if (.implementation/="in-core" OR .is_an_SS_method) then
-      stdout.show("# of S states in window      =", n)
+      stdout.show("No. of S states in window    =", n)
       end
 
       if (n==0) return
@@ -2204,10 +2332,6 @@ contains
 
    end
 
-!  ===============
-!  Davidson output
-!  ===============
-
    set_D_table_headings ::: leaky, PURE
    ! Set up the Davidson table
       self :: INOUT
@@ -2216,16 +2340,6 @@ contains
       state :: STR
 
       n = .n_evals
-      if (.is_unrestricted) then
-       ! n = 4*.n_evals
-         state = "?"
-      else if (.is_singlet_calc) then
-       ! n = .n_evals
-         state = "S"
-      else
-       ! n = .n_evals
-         state = "T"
-      end
 
       ! Set table headings
       .table.create(n+2)
@@ -2236,6 +2350,12 @@ contains
       .table(2).set_subhead(" norm")
       .table(2).set_real_precision(4)
       .table(2).set_width(9)
+
+      ! Guess state labels
+      if (.is_unrestricted) then;      state = "?"
+      else if (.is_singlet_calc) then; state = "S"
+      else;                            state = "T"
+      end
 
       do i = 1,n
       .table(i+2).set_heading(trim(state)//trim(i.to_str))
@@ -2329,12 +2449,31 @@ contains
    ENSURE(.single.allocated,"no single states")
    ENSURE(.evec.allocated,  "evec unallocated")
 
+      stdout.flush
+      stdout.text("===================")
+      stdout.text("Eigenvector columns")
+      stdout.text("===================")
+      stdout.flush
+
+      if (NOT .is_unrestricted) then; .put_r_evecs
+      else;                           .put_u_evecs
+      end
+
+   end
+
+   put_r_evecs ::: private
+   ! Print out the eigenvectors
+      self :: IN
+
+   ENSURE(.single.allocated,"no single states")
+   ENSURE(.evec.allocated,  "evec unallocated")
+
       table :: VEC{TABLE_COLUMN}@
       arrow :: VEC{STR}@
       Is,As :: VEC{STR}@
       wI,wA :: INT
       evec  :: MAT{REAL}@
-      d,m,n,i :: INT
+      d,n,i :: INT
       val :: REAL
       num :: STR
 
@@ -2346,105 +2485,155 @@ contains
 
       stdout.show("evec 1 norm = ",.evec(:,1).norm)
 
-      if (NOT .is_unrestricted) then
+      d = .evec.dim1
 
-         n = .eval.dim
+      Is.create(d)
+      As.create(d)
+      arrow.create(d)
 
-         table.create(3+n)
+      Is  = .r_O_singles_str
+      As  = .r_V_singles_str
+      arrow = "->"
 
-         table(1).set_heading("LUMO")
-         table(1).set_subhead("v")
-         table(1).set_values(.single(:,1))
+      Is.get_max_str_length(wI,spaces=0)
+      As.get_max_str_length(wA,spaces=0)
 
-         table(2).set_heading("HOMO")
-         table(2).set_subhead("o")
-         table(2).set_values(.single(:,2)-.n_occ)
+      n = .eval.dim
 
-         table(3).set_heading("(Ev-Eo)/2")
-         table(3).set_subhead("      /eV")
-         table(3).set_real_precision(2)
-         table(3).set_width(10)
-         table(3).set_values(.deltaE*EV_PER_HARTREE*HALF)
+      table.create(4+n)
 
-         do i = 1,n
-         val = .eval(i)*EV_PER_HARTREE
-         num = val.to_str("f10.2")
-         table(3+i).set_heading(.Slab(i))
-         table(3+i).set_subhead(trim(num))
-         table(3+i).set_real_precision(4)
-         table(3+i).set_width(9)
-         table(3+i).set_values(.evec(:,i))
-         end
+      table(1).set_column_spacing(0)
+      table(1).set_heading("I")
+      table(1).set_width(wI+1)
+      table(1).set_values(Is)
 
-         table.put(label_rows=TRUE)
+      table(2).set_column_spacing(0)
+      table(2).set_heading("->")
+      table(2).set_width(3)
+      table(2).set_values(arrow)
 
-         table.destroy
+      table(3).set_column_spacing(0)
+      table(3).set_heading("A")
+      table(3).set_width(wA+1)
+      table(3).set_values(As)
 
-      else
+      table(4).set_heading("Ev-Eo")
+      table(4).set_subhead("  /eV")
+      table(4).set_real_precision(2)
+      table(4).set_width(5)
+      table(4).set_values(.deltaE*EV_PER_HARTREE)
 
-         n = min(.eval.dim,.n_max_show)
-
-         d = .evec.dim1
-         m = d/4
-
-         ENSURE(d==m*4,"evec dim1 not a multiple of 4")
-
-         Is.create(d)
-         As.create(d)
-         arrow.create(d)
-
-         Is  = .u_O_singles_str
-         As  = .u_V_singles_str
-         arrow = "->"
-
-         Is.get_max_str_length(wI,spaces=0)
-         As.get_max_str_length(wA,spaces=0)
-
-
-         ! Swap order back
-         evec.create(d,n)
-         evec(1:d:4,:) = .evec(    1:m  ,:)
-         evec(2:d:4,:) = .evec(m  +1:m*2,:)
-         evec(3:d:4,:) = .evec(m*2+1:m*3,:)
-         evec(4:d:4,:) = .evec(m*3+1:m*4,:)
-
-         table.create(3+n)
-
-         table(1).set_column_spacing(0)
-         table(1).set_heading("I")
-         table(1).set_width(wI+1)
-         table(1).set_values(Is)
-      
-         table(2).set_column_spacing(0)
-         table(2).set_heading("->")
-         table(2).set_width(3)
-         table(2).set_values(arrow)
-
-         table(3).set_column_spacing(0)
-         table(3).set_heading("A")
-         table(3).set_width(wA+1)
-         table(3).set_values(As)
-
-         do i = 1,n
-         val = .eval(i)*EV_PER_HARTREE
-         num = val.to_str("f10.2")
-         table(3+i).set_heading(.Slab(i))
-         table(3+i).set_subhead(trim(num))
-         table(3+i).set_real_precision(4)
-         table(3+i).set_width(9)
-         table(3+i).set_values(evec(:,i))
-         end
-
-         ! No rows
-         table.put
-
-         table.destroy
-         evec.destroy
-         arrow.destroy
-         As.destroy
-         Is.destroy
-
+      do i = 1,n
+      val = .eval(i)*EV_PER_HARTREE
+      num = val.to_str("f10.2")
+      table(4+i).set_heading(.Slab(i))
+      table(4+i).set_subhead(trim(num))
+      table(4+i).set_real_precision(4)
+      table(4+i).set_width(9)
+      table(4+i).set_values(.evec(:,i))
       end
+
+      table.put(label_rows=TRUE)
+
+      table.destroy
+      evec.destroy
+      arrow.destroy
+      As.destroy
+      Is.destroy
+
+   end
+
+   put_u_evecs ::: private
+   ! Print out the eigenvectors
+      self :: IN
+
+   ENSURE(.single.allocated,"no single states")
+   ENSURE(.evec.allocated,  "evec unallocated")
+
+      table :: VEC{TABLE_COLUMN}@
+      arrow :: VEC{STR}@
+      Is,As :: VEC{STR}@
+      wI,wA :: INT
+      evec  :: MAT{REAL}@
+      d,d4, n,i :: INT
+      val :: REAL
+      num :: STR
+
+      stdout.flush
+      stdout.text("===================")
+      stdout.text("Eigenvector columns")
+      stdout.text("===================")
+      stdout.flush
+
+      stdout.show("evec 1 norm = ",.evec(:,1).norm)
+
+      n = min(.eval.dim,.n_max_show)
+
+      d4 = .evec.dim1
+      d  = d4/4
+
+      ENSURE(d4==d*4,"evec dim1 not a multiple of 4")
+
+      Is.create(d4)
+      As.create(d4)
+      arrow.create(d4)
+
+      Is  = .u_O_singles_str
+      As  = .u_V_singles_str
+      arrow = " "
+      arrow(1:d4:4) = "->"
+
+      Is.get_max_str_length(wI,spaces=0)
+      As.get_max_str_length(wA,spaces=0)
+
+      ! Swap order back
+      evec.create(d4,n)
+      if (.method=="u-cis") then
+         ! Order: is aa, ab, ba, bb
+         evec = .evec(:,1:n) 
+      else
+         ! Put to:  aa, ab, ba, bb
+         evec(1:d4:4,:) = .evec(    1:d  ,:)
+         evec(2:d4:4,:) = .evec(d  +1:d*2,:)
+         evec(3:d4:4,:) = .evec(d*2+1:d*3,:)
+         evec(4:d4:4,:) = .evec(d*3+1:d*4,:)
+      end
+
+      table.create(3+n)
+
+      table(1).set_column_spacing(0)
+      table(1).set_heading("I")
+      table(1).set_width(wI+1)
+      table(1).set_values(Is)
+      
+      table(2).set_column_spacing(0)
+      table(2).set_heading("->")
+      table(2).set_width(3)
+      table(2).set_values(arrow)
+
+      table(3).set_column_spacing(0)
+      table(3).set_heading("A")
+      table(3).set_width(wA+1)
+      table(3).set_values(As)
+
+      do i = 1,n
+      val = .eval(i)*EV_PER_HARTREE
+      num = val.to_str("f10.2")
+      table(3+i).set_heading(.Slab(i))
+      table(3+i).set_subhead(trim(num))
+      table(3+i).set_real_precision(4)
+      table(3+i).set_width(9)
+      table(3+i).set_values(evec(:,i))
+      end
+
+      ! No rows
+      table.put
+
+      table.destroy
+      evec.destroy
+      arrow.destroy
+      As.destroy
+      Is.destroy
 
    end
 
