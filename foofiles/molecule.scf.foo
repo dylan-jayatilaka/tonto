@@ -2403,10 +2403,11 @@ contains
       end
 
       ! Make sure restricted part is there at least
-      if (NOT .core_mx.has_genre("r ")) then
+      if (NOT .core_mx.has_genre("r")) then
          .:make_r_core_mx
       end
 
+      ! For UHF or ROHF
       genus = .SCF_data.spinorbital_genre
       if (present(genre)) genus = genre
 
@@ -2424,6 +2425,7 @@ contains
          ! Already there
 
       case default
+         ! For open-shell case
          .core_mx.convert_to(genus,destroy_original=FALSE)
 
       end
@@ -2459,7 +2461,7 @@ contains
     ! case ("douglas-kroll-hess","dkh");     .REL:make_r_DKH1_core_mx(.core_mx.r)
     ! case ("douglas-kroll-hess-2","dkh-2"); .REL:make_r_DKH2_core_mx(.core_mx.r)
     ! case ("iotc");                         .REL:make_r_IOTC_core_mx(.core_mx.r)
-      case default;                          .:make_r_NREL_core_mx(.core_mx.r)
+      case default;                             .:make_r_NREL_core_mx(.core_mx.r)
       end
 
       ! No cluster charges for SCF guess
@@ -2495,12 +2497,13 @@ contains
    make_r_NREL_core_mx(H) ::: leaky, PURE
    ! Make the non-relativistic core hamiltonian (T+NA) matrix "H".
       self :: INOUT
-      H :: MAT{REAL}, OUT
+      H    :: MAT{REAL}, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
 
       Dx,Dy,Dz :: MAT{REAL}@
+      fac :: REAL
 
       ! Get kinetic matrix (leaky)
       .INTS:make_kinetic_energy_mx
@@ -3294,14 +3297,17 @@ contains
    make_Fock_mx(core,r12) ::: leaky
    ! If r12  is present and FALSE, the r12 part is not computed.
       self :: INOUT
-      core,r12 :: BIN, optional, IN
+      core :: BIN, optional, IN
+      r12  :: BIN, optional, IN
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
    ENSURE(.density_mx.allocated,"no density matrix")
    ENSURE(.density_mx.has_genre(.SCF_data.spinorbital_genre),"incompatible density")
 
       dF :: OPMATRIX@
-      delta_build,add_core :: BIN
+      delta_build :: BIN
+      add_core    :: BIN
+      use_fields  :: BIN
 
       ! Use a delta fock matrix build?
       delta_build = .SCF_data.do_delta_build &
@@ -3508,16 +3514,16 @@ contains
 
       ! Core matrix: both kinds
       .core_mx.destroy
-      .:make_core_mx(.SCF_data.spinorbital_genre)
+      .:make_core_mx(.SCF_data.spinorbital_genre) ! For "gc" case
       .:make_core_mx(.SCF_data.MOs_genre)
          
       ! Get Fock matrix
       .:make_Fock_mx
 
       ! Make structure factors?
-      ! Read lambda=0 structure factors
+      ! Read lambda=0 structure factors?
       if (.SCF_data.is_constrained_SCF) then
-         .:make_constraint_data
+       ! .:make_constraint_data
          .crystal.xray_data.SET:set_XCW(TRUE) ! add one to n_param
          .:make_constraint_data
       end
@@ -3528,7 +3534,9 @@ contains
       .:update_SCF_data_energies
 
       ! Add constraint to F?
-      if (.SCF_data.is_constrained_SCF) .:add_constraint_to_Fock_mx
+      if (.SCF_data.is_constrained_SCF) then
+         .:add_constraint_to_Fock_mx
+      end
 
       ! Initialise DIIS error
       if (.SCF_data.using_DIIS) .:update_SCF_data_error
@@ -3806,7 +3814,6 @@ contains
             .:update_SCF_data
             .:add_constraint_to_Fock_mx
             .:update_SCF_data_error
-          ! .:put_SCF_table_body(flush=TRUE)
             .SCF_data.put_table_body_and_footer(.crystal,flush=TRUE)
             if (.SCF_data.SCF_done) exit
 
@@ -3884,8 +3891,8 @@ contains
    end
 
    add_constraint_to_Fock_mx
-   ! Make the constraint matrix for wavefunction fitting and add it to the fock
-   ! matrix to obtain the effective fock matrix.
+   ! Make the constraint matrix "C" for XCW wavefunction fitting and 
+   ! add it to the fock matrix to get the effective fock matrix.
       self :: INOUT
 
       ENSURE(.SCF_data.allocated,"no scf data")
@@ -3899,13 +3906,20 @@ contains
       if (.SCF_data.lambda.is_zero) then
 
          ! Save some work if lamda is zero
-         C.set_to_zero
+       ! C.set_to_zero
 
       else
 
          ! Make the constraint term
          .:make_X_constraint(C)
-         .fock_mx.plus_scaled(C,.SCF_data.lambda)
+
+         ! Add KE term
+         .kinetic_energy_mx.uncompress
+         C.plus(.kinetic_energy_mx)
+         .kinetic_energy_mx.compress
+
+         ! Convex mix
+         .fock_mx.convex_mix_with(C,ONE-.SCF_data.lambda)
 
       end
 
@@ -4302,6 +4316,9 @@ contains
       Fsig  = .crystal.xray_data.reflections.F_sigma
       Fm    = max(abs(Fc),TOL(10))
 
+      ! Scale factor "alpha", GoF prefactor "far" & F_z = Delta F/sigma
+      ! The "Fm" seems a hack to avoid divide by zero "Fc" since such 
+      ! zero F_calc values should have been pruned out of the reflections.
       fac_times_alpha = fac * alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
 
       Fm.destroy
@@ -4355,9 +4372,9 @@ contains
          ! Overlapping atoms
          near_atom = .overlapping_atoms_for_atom(c).element
 
-         ! Make stockholder weight function "Wc" for atom "c"
-         ! If using interpolatators, then on overlapping atoms
-         ! are used ... otherwise nothing is skipped
+         ! Make stockholder weight function "Wc" for atom "c".
+         ! If using interpolatators, only the overlapping atoms are
+         ! used. Otherwise, no atoms are skipped to work out "Wc".
          .GRID:apply_stockholder_atom_weight(wt,c,pt)
 
          ! Prune the grid with new "wt", get saved bf grid bf_save,
@@ -6618,9 +6635,7 @@ contains
       .INTS:make_overlap_mx
 
       ! Get the guess orbitals
-      .:diagonalize_r_mx(.core_mx.r, &
-                           .MO_energies.r, &
-                           .MOs.r)
+      .:diagonalize_r_mx(.core_mx.r,.MO_energies.r,.MOs.r)
 
       ! Convert the orbitals to the right kind (leaky)
       MOs_genre = .SCF_data.MO_energies_genre
@@ -8131,9 +8146,9 @@ contains
       a :: INT, IN
       converged :: BIN, optional, OUT
 
-   ENSURE(.atom(a).NOs.deallocated,  "NO's exist! Atom "//trim(a.to_str))
-   ENSURE(.atom(a).NO_occ_nos.deallocated,"OCCs exist! Atom "//trim(a.to_str))
-   ENSURE(.atom(a).density_mx.deallocated,    "DM exists! Atom " //trim(a.to_str))
+   ENSURE(.atom(a).NOs.deallocated,       "NO's exist! For atom: "   //trim(a.to_str))
+   ENSURE(.atom(a).NO_occ_nos.deallocated,"NO occ. no's exist! Atom "//trim(a.to_str))
+   ENSURE(.atom(a).density_mx.deallocated,"DM exists! For atom: "    //trim(a.to_str))
 
       mol :: MOLECULE@
 
