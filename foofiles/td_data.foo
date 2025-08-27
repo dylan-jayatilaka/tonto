@@ -275,6 +275,21 @@ contains
 
    end
 
+   set_use_M_0(val) ::: PURE
+   ! Set whether to use M=0 basis only.
+      self :: INOUT
+      val  :: BIN, IN
+      .use_M_0 = val
+   end
+
+   set_use_MGS(val) ::: PURE
+   ! Set whether to use Modified Gram-Schmidt QR orthonormalisation.
+   ! If not set, Davidson uses the Householde QR algorithm.
+      self :: INOUT
+      val  :: BIN, IN
+      .use_MGS = val
+   end
+
 !   set_use_S_window_MOs(val) ::: pure
 !   ! Set whether to use only MOs in the the single excitation
 !   ! list of determinants to construct interacting doubles
@@ -328,6 +343,7 @@ contains
       case ("tol_davidson=      "); .read_tol_Davidson
       case ("tol_s=             "); .read_tol_S
       case ("use_ivo_energies=  "); .read_use_IVO_energies
+      case ("use_m_0=           "); .read_use_M_0
     ! case ("use_s_window_mos=  "); .read_use_S_window_MOs
 
       ! Documentation
@@ -549,6 +565,14 @@ contains
 ! U
 
    read_use_IVO_energies ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_use_IVO_energies), private
+   ! Generic read and set
+   end
+
+   read_use_M_0 ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_use_M_0), private
+   ! Generic read and set
+   end
+
+   read_use_MGS ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_use_M_0), private
    ! Generic read and set
    end
 
@@ -1179,26 +1203,48 @@ contains
 
          archive.set(name,"CIS_evec,u")
          if (archive.exists) then
+
             archive.read(.evec)
             .V(:,1:n) =  .evec
             archive.set(name,"CIS_eval,u")
             archive.read(.eval)
           ! .make_u_Slab
+
          else
-            ! Initialise S=0 & S=1
-            ! shape(V) is really (d,4,n*n_keep)
-            d  = .single.dim1
-            d0 = 0
-            do s = 1,n,4
-               d0 = d0 + 1
-               d1 = d0 + d
-               d2 = d1 + d
-               d3 = d2 + d
-               .V(d0,s  ) = ONE ! Singlet
-               .V(d1,s+1) = ONE ! Triplet
-               .V(d2,s+2) = ONE
-               .V(d3,s+3) = ONE
+
+            if (NOT .use_M_0) then
+
+               ! Initialise S=0 & S=1
+               ! shape(V) is really (d,4,n*n_keep)
+               d  = .single.dim1
+               d0 = 0
+               do s = 1,n,4
+                  d0 = d0 + 1
+                  d1 = d0 + d
+                  d2 = d1 + d
+                  d3 = d2 + d
+                  .V(d0,s  ) = ONE ! aa
+                  .V(d1,s+1) = ONE ! ba
+                  .V(d2,s+2) = ONE ! ab
+                  .V(d3,s+3) = ONE ! bb
+               end
+
+            else
+
+               ! Initialise Only M=0 parts
+               d  = .single.dim1
+               d0 = 0
+               do s = 1,n,2
+                  d0 = d0 + 1
+                  d1 = d0 + d
+                  d2 = d1 + d
+                  d3 = d2 + d
+                  .V(d0,s  ) = ONE ! aa
+                  .V(d3,s+1) = ONE ! bb
+               end
+
             end
+
          end
 
       end
@@ -1372,27 +1418,39 @@ contains
       n = .evec.dim2
 
       .Slab.create(n) ! Labels
-      .eval.make_repetition_count(cnt,n_kind,eps=TOL(3))
-      k1 = 0
-      k2 = 0
-      k3 = 0
-      do i = 1,n
-         select case (cnt(i))
-         case (0)
-            .Slab(i) = " "
-         case (1)
-            k1 = k1 + 1
-            .Slab(i) = "S"//trim(k1.to_str)
-         case (2)
-            k2 = k2 + 1
-            .Slab(i)   = "D"//trim(k2.to_str)
-            .Slab(i+1) = trim(.Slab(i))
-         case (3)
-            k3 = k3 + 1
-            .Slab(i)   = "T"//trim(k3.to_str)
-            .Slab(i+1) = trim(.Slab(i))
-            .Slab(i+2) = trim(.Slab(i))
+
+      if (NOT .use_M_0) then
+
+         .eval.make_repetition_count(cnt,n_kind,eps=TOL(3))
+         k1 = 0
+         k2 = 0
+         k3 = 0
+         do i = 1,n
+            select case (cnt(i))
+            case (0)
+               .Slab(i) = " "
+            case (1)
+               k1 = k1 + 1
+               .Slab(i) = "S"//trim(k1.to_str)
+            case (2)
+               k2 = k2 + 1
+               .Slab(i)   = "D"//trim(k2.to_str)
+               .Slab(i+1) = trim(.Slab(i))
+            case (3)
+               k3 = k3 + 1
+               .Slab(i)   = "T"//trim(k3.to_str)
+               .Slab(i+1) = trim(.Slab(i))
+               .Slab(i+2) = trim(.Slab(i))
+            end
          end
+         cnt.destroy
+
+      else
+
+         do i = 1,n
+            .Slab(i) = trim("?"//i.to_str)
+         end
+
       end
 
    end
@@ -2448,12 +2506,6 @@ contains
    ENSURE(.single.allocated,"no single states")
    ENSURE(.evec.allocated,  "evec unallocated")
 
-      stdout.flush
-      stdout.text("===================")
-      stdout.text("Eigenvector columns")
-      stdout.text("===================")
-      stdout.flush
-
       if (NOT .is_unrestricted) then; .put_r_evecs
       else;                           .put_u_evecs
       end
@@ -2561,8 +2613,6 @@ contains
       stdout.text("Eigenvector columns")
       stdout.text("===================")
       stdout.flush
-
-      stdout.show("evec 1 norm = ",.evec(:,1).norm)
 
       n = min(.eval.dim,.n_max_show)
 
