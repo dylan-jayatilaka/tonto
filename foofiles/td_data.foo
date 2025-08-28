@@ -1048,34 +1048,15 @@ contains
 
 ! Inquiry
 
-   Davidson_done result (res) ::: PURE
+   converged result (res) ::: PURE
    ! Return TRUE if the Davidson procedure is done i.e. either
    ! converged or gone on for too long ... and, it must also
    ! have executed the requested minimum number of times ...
       self :: IN
       res :: BIN
-      res = (.converged AND .reached_min_it) OR .reached_max_it
-   end
-
-   converged result (res) ::: PURE
-   ! Return TRUE if the max residual norm is converged
-      self :: IN
-      res :: BIN
-      res = .residual<.tol_Davidson
-   end
-
-   reached_min_it result (res) ::: pure
-   ! Return TRUE if there have been enough iterations.
-      self :: IN
-      res :: BIN
-      res = .iteration >= .min_iterations
-   end
-
-   reached_max_it result (res) ::: pure
-   ! Return TRUE if we reached too many iterations
-      self :: IN
-      res :: BIN
-      res = .iteration >= .max_iterations
+      res = .residual<.tol_Davidson       &
+        AND .iteration >= .min_iterations &
+        AND .iteration <= .max_iterations
    end
 
    collapse result (res) ::: pure
@@ -1208,7 +1189,7 @@ contains
             .V(:,1:n) =  .evec
             archive.set(name,"CIS_eval,u")
             archive.read(.eval)
-          ! .make_u_Slab
+            .make_u_Slab
 
          else
 
@@ -1231,7 +1212,7 @@ contains
 
             else
 
-               ! Initialise Only M=0 parts
+               ! Initialise only M=0 parts
                d  = .single.dim1
                d0 = 0
                do s = 1,n,2
@@ -1279,10 +1260,11 @@ contains
    ! Reset the Davidson subspace to one trial vector set.
       self :: INOUT
 
-    ! best :: INT
+      n :: INT
 
-      ! Get the best
-    ! best = .max_res.index_of_minimum
+      ! Keep last vectors
+      n = .evec.dim2
+      .V(:,1:n) = .evec  
 
       ! Keep last error
       .max_res(1 ) = .max_res(.n_trial)
@@ -1407,21 +1389,28 @@ contains
 
    end
 
-   make_u_Slab ::: leaky, private, PURE
+   make_u_Slab ::: leaky, private
    ! Make unrestricted Slab labels for output table.
       self :: INOUT
 
-      cnt :: VEC{INT}@
+      cnt  :: VEC{INT}@
+      eval :: VEC{REAL}@
       n,i, n_kind :: INT
       k1,k2,k3 :: INT
 
       n = .evec.dim2
 
       .Slab.create(n) ! Labels
+      .Slab = " "
 
       if (NOT .use_M_0) then
 
-         .eval.make_repetition_count(cnt,n_kind,eps=TOL(3))
+         eval = .eval*EV_PER_HARTREE
+         eval.make_repetition_count(cnt,n_kind,eps=TOL(3))
+
+         stdout.text("cnt:")
+         stdout.put(cnt)
+
          k1 = 0
          k2 = 0
          k3 = 0
@@ -1435,15 +1424,16 @@ contains
             case (2)
                k2 = k2 + 1
                .Slab(i)   = "D"//trim(k2.to_str)
-               .Slab(i+1) = trim(.Slab(i))
             case (3)
                k3 = k3 + 1
                .Slab(i)   = "T"//trim(k3.to_str)
-               .Slab(i+1) = trim(.Slab(i))
-               .Slab(i+2) = trim(.Slab(i))
             end
          end
          cnt.destroy
+         eval.destroy
+
+         stdout.text("Slab:")
+         stdout.put(.Slab)
 
       else
 
@@ -2408,14 +2398,17 @@ contains
       .table(2).set_real_precision(4)
       .table(2).set_width(9)
 
-      ! Guess state labels
       if (.is_unrestricted) then;      state = "?"
       else if (.is_singlet_calc) then; state = "S"
       else;                            state = "T"
       end
-
+      
       do i = 1,n
+      if (.Slab.allocated) then
+      .table(i+2).set_heading(trim(.Slab(i)))
+      else
       .table(i+2).set_heading(trim(state)//trim(i.to_str))
+      end
       .table(i+2).set_real_precision(2)
       .table(i+2).set_width(7)
       end
@@ -2487,7 +2480,7 @@ contains
       ! Clear columns for next time (UNleaky!)
       .table.clear_columns
 
-      if (.Davidson_done) then
+      if (.converged) then
         .table.put_footer
         stdout.flush
         if (.converged) then; stdout.text("* * * Converged * * *")
@@ -2600,8 +2593,10 @@ contains
    ENSURE(.evec.allocated,  "evec unallocated")
 
       table :: VEC{TABLE_COLUMN}@
-      arrow :: VEC{STR}@
       Is,As :: VEC{STR}@
+      arrow :: VEC{STR}@
+      delEv :: VEC{REAL}@
+      delE  :: VEC{STR}@
       wI,wA :: INT
       evec  :: MAT{REAL}@
       d,d4, n,i :: INT
@@ -2612,6 +2607,32 @@ contains
       stdout.text("===================")
       stdout.text("Eigenvector columns")
       stdout.text("===================")
+
+      stdout.flush
+
+      if (NOT .use_M_0) then
+      stdout.text("The four numbers per excitation correspond to:")
+      stdout.flush
+      stdout.text("  I alpha -> A alpha i.e. aa")
+      stdout.text("  I alpha -> A beta  i.e. ab")
+      stdout.text("  I beta  -> A alpha i.e. ba")
+      stdout.text("  I beta  -> A beta  i.e. bb")
+      stdout.flush
+      stdout.text("The ab and ba terms are spin flip excitations and make")
+      stdout.text("M = -1 and M = +1 triplet components.")
+      stdout.flush
+      stdout.text("The aa and bb terms make M = 0 components for singlet and")
+      stdout.text("triplet with same sign combinations being the former.")
+      else
+      stdout.text("The four numbers per excitation correspond to")
+      stdout.flush
+      stdout.text(". I alpha -> A alpha i.e. aa")
+      stdout.text(". I beta  -> A beta  i.e. ba")
+      stdout.flush
+      stdout.text("which generate the M = 0 components for singlet and")
+      stdout.text("triplet, with same sign combinations being the former.")
+      end
+
       stdout.flush
 
       n = min(.eval.dim,.n_max_show)
@@ -2623,12 +2644,17 @@ contains
 
       Is.create(d4)
       As.create(d4)
+      delE.create(d4)
+      delEv.create(d4)
       arrow.create(d4)
 
       Is  = .u_O_singles_str
       As  = .u_V_singles_str
       arrow = " "
       arrow(1:d4:4) = "->"
+      delEv = .deltaE*EV_PER_HARTREE
+      delE  = " "
+      delE(1:d4:4) = delEv.to_str("f",5,2)
 
       Is.get_max_str_length(wI,spaces=0)
       As.get_max_str_length(wA,spaces=0)
@@ -2646,7 +2672,7 @@ contains
          evec(4:d4:4,:) = .evec(d*3+1:d*4,:)
       end
 
-      table.create(3+n)
+      table.create(4+n)
 
       table(1).set_column_spacing(0)
       table(1).set_heading("I")
@@ -2663,14 +2689,19 @@ contains
       table(3).set_width(wA+1)
       table(3).set_values(As)
 
+      table(4).set_heading("Ev-Eo")
+      table(4).set_subhead("  /eV")
+      table(4).set_width(5)
+      table(4).set_values(delE)
+
       do i = 1,n
       val = .eval(i)*EV_PER_HARTREE
       num = val.to_str("f10.2")
-      table(3+i).set_heading(.Slab(i))
-      table(3+i).set_subhead(trim(num))
-      table(3+i).set_real_precision(4)
-      table(3+i).set_width(9)
-      table(3+i).set_values(evec(:,i))
+      table(4+i).set_heading(.Slab(i))
+      table(4+i).set_subhead(trim(num))
+      table(4+i).set_real_precision(4)
+      table(4+i).set_width(9)
+      table(4+i).set_values(evec(:,i))
       end
 
       ! No rows
@@ -2678,7 +2709,10 @@ contains
 
       table.destroy
       evec.destroy
+
       arrow.destroy
+      delEv.destroy
+      delE.destroy
       As.destroy
       Is.destroy
 

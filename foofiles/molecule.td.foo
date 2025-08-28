@@ -405,7 +405,7 @@ contains
 
 ! Efficient Davidson methods
 
-   eigensolve_Davidson(TD,AV_prod)
+   eigensolve_Davidson(TD,HV_prod)
    ! Davidson diagonalizer. See Crouzeix (1990) Inria RR 1353.
    ! See also Crouzeix (1994) SIAM J Sci Comput 15 p. 62-76.
    !
@@ -415,7 +415,7 @@ contains
    ! "TD" ......... Holds key calculation parameters.
    !                It is a kind of Davidson iterator object.
    !
-   ! "AV_prod" .... Does the expensive method-specific 2e part
+   ! "HV_prod" .... Does the expensive method-specific 2e part
    !                of the "A matrix product" in the AO basis.
    !
    ! "TD" holds iteration count information, methods to test 
@@ -438,21 +438,26 @@ contains
    ! sorting single excitations into energy order.
    ! =====
       self :: INOUT
-      TD :: TD_DATA, INOUT ! Iteration info
-      interface            ! Efficient A.V product
-         AV_prod(mol,AV,V,TD) ::: PURE
+      TD   :: TD_DATA, target, INOUT 
+      interface            ! Efficient H.V product
+         HV_prod(mol,HV,V,TD) ::: PURE
             use TYPES
             mol :: MOLECULE,    INOUT
-            AV  :: MAT{REAL},   OUT
+            HV  :: MAT{REAL},   OUT
             V   :: MAT{REAL},   IN
             TD  :: TD_DATA, INOUT
          end
       end
 
-      ! Main vars
-      H      :: MAT{REAL}@      ! H = A in basis of "V" columns
-      H_evec :: MAT{REAL}@      ! H eigenvectors
-      H_eval :: VEC{REAL}@      ! H eigenvalues
+      H :: MAT{REAL}@  ! H in basis of "V" columns
+      U :: MAT{REAL}@  ! H eigenvectors
+      E :: VEC{REAL}@  ! H eigenvalues
+
+      W    :: MAT{REAL}*  ! Aliases
+      V    :: MAT{REAL}*
+      R    :: VEC{REAL}*
+      evec :: MAT{REAL}*
+      eval :: VEC{REAL}*
 
       bot    :: REAL
       maxres :: REAL
@@ -467,87 +472,85 @@ contains
    ENSURE(TD.evec.allocated,"no TD.eval")
    ENSURE(TD.eval.dim==TD.evec.dim2,"in TD: eval & evec incompatible")
 
-      ! Output calc options
-      TD.put_D_table_header
+      ! Set up aliases.
+      ! Put in TD to store & also to
+      ! avoid extra memory allocation
+      W    => TD.W
+      V    => TD.V
+      R    => TD.R
+      evec => TD.evec
+      eval => TD.eval
 
       ! Sizes
-      d = TD.evec.dim1          ! "d"
-      n = TD.evec.dim2          ! Block of evals. n << d.
-      n_keep = TD.n_keep        ! No. of trial vectors to keep
+      d = evec.dim1             ! No. of excitations
+      n = evec.dim2             ! Block of evals, n << d
+      n_keep = TD.n_keep        ! No. of trial vector sets
+
+      ! Output options
+      TD.put_D_table_header
 
       do ! Davidson loop
 
-         ! Next iteration
-         TD.update_iteration                 ! <==
+         TD.update_iteration              
 
-         ! Collapse subspace down?
          if (TD.collapse) then
-            TD.reset_subspace                ! <== Keep one trial set
-            TD.V(:,1:n) = TD.evec            ! Restart with last one
-            H.destroy                        ! Start again; remake H
+            TD.reset_subspace   ! Keep one trial set
+            H.destroy           ! Remake H from scratch
          end
 
-         ! 1. Expensive step, extend W !!!!!!!!!!!!!!!
-         ! W(:,f:l) = matmul(A,V(:,f:l))
+         ! 1. EXPENSIVE: W(:,f:l) = H x V(:,f:l) 
          f = TD.fst_trial_vector             
          l = TD.lst_trial_vector
-         call AV_prod(self,TD.W(:,f:l),TD.V(:,f:l),TD)
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         call HV_prod(self,W(:,f:l),V(:,f:l),TD)
 
          ! 2. Expand Rayleigh matrix
-         H.expand(l,l)
-         H_evec.create(l,l)
-         H_eval.create(l)
-         H(f:l,:) = matmul( transpose(TD.V(:,f:l)), TD.W(:,1:l) )
+         H.expand(l,l); U.create(l,l); E.create(l)
+         H(f:l,:) = matmul( transpose(V(:,f:l)), W(:,1:l) )
          H.symmetric_reflect(set_upper=TRUE)
 
-         ! 3. Diagonalise (increasing eigenvalues)
-         H.solve_symmetric_eigenproblem(H_eval,H_evec)
+         ! 3. Diagonalise 
+         H.solve_symmetric_eigenproblem(E,U)
 
          ! 4. Keep Ritz vectors
-         TD.eval = H_eval(1:n)               ! <== ANSWER
-         TD.evec = matmul(TD.V(:,1:l),H_evec(:,1:n))
+         TD.eval = E(1:n)       ! <== ANSWER
+         TD.evec = matmul(V(:,1:l),U(:,1:n))
 
-         ! 5-7. Get residual, add new directions
+         ! Get residual, add new directions
          maxres = ZERO
          do i = 1,n
 
-            ! 5. Residual R & its length
-            TD.R = H_eval(i)*TD.evec(:,i) &
-                 - matmul(TD.W(:,1:l),H_evec(:,i))
-            maxres = max(norm2(TD.R),maxres)
+            ! 5. Residual
+            R = E(i)*TD.evec(:,i) - matmul(W(:,1:l),U(:,i))
+            maxres = max(norm2(R),maxres)
 
-            ! 6. Preconditioner
-            bot = H_eval(i) - H(i,i)
+            ! 6. New directions
+            bot = E(i) - H(i,i)
             if (abs(bot)<TOL(3)) bot = bot + TOL(2)
             bot = ONE/bot
-
-            ! 7a. Set new direction
-            TD.V(:,l+i) = bot*TD.R
+            V(:,l+i) = bot*R
 
          end
-         TD.set_max_res(maxres)              ! <== For convergence
+         TD.set_max_res(maxres) ! <== For convergence
 
          ! Clean up
-         H_eval.destroy
-         H_evec.destroy
+         E.destroy; U.destroy
 
-         ! 7. Orthonormalize vectors V 
-         if (NOT TD.converged) then
-            if (TD.use_MGS) then; TD.V(:,1:l+n).modified_Gram_Schmidt_QR
-            else;                 TD.V(:,1:l+n).Householder_QR
+         ! Print out table
+         TD.put_D_table_body_and_footer
+
+         ! Converged?
+         if (TD.converged) then;  exit
+         else
+            ! 7. Orthonormalize vectors V 
+            if (TD.use_MGS) then; V(:,1:l+n).modified_Gram_Schmidt_QR
+            else;                 V(:,1:l+n).Householder_QR
             end
          end
-
-         ! Print out table & finish? !!
-         TD.put_D_table_body_and_footer      ! <== 
-         if (TD.Davidson_done)    exit
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
       end
 
       ! Store results
-      TD.store_results(.name)                ! <== Store
+      TD.store_results(.name)
 
    end
 
@@ -557,7 +560,7 @@ contains
    ! Do an unrestricted CIS calculation.
    ! Magic is hidden in the .TD_data object, which keeps
    ! Davidson iteration, and other info; also and the passed
-   ! AV_prod method does the efficient Davidson A.V product.
+   ! HV_prod method does the efficient Davidson A.V product.
       self :: INOUT
 
       ! Do the diagonalisation & print results
@@ -602,9 +605,8 @@ contains
       TD.change_r_V_to_AO(TD.Vao(n2+1:n3,:,:),V(d2+1:d3,:))
       TD.change_r_V_to_AO(TD.Vao(n3+1:n4,:,:),V(d3+1:d4,:))
 
-      .FOCK:u_CIS_AV(TD.Jao,TD.Kao,TD.Vao)  ! Expensive
-
       ! 2e part: accumulate AV =+ (AV)ai
+      .FOCK:u_CIS_AV(TD.Jao,TD.Kao,TD.Vao)  ! Expensive
       TD.change_u_V_to_MO(AV,TD.Jao,TD.Kao)
 
    end
