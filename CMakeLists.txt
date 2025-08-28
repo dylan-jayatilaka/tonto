@@ -257,6 +257,8 @@ set(FOO_SRC
     ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/table_column.foo
     ${FOO_DIR}/td_data.foo
+   #${FOO_DIR}/gsd_tree.foo
+   #${FOO_DIR}/ci_data.foo
     ${FOO_DIR}/atom_group.foo
     ${FOO_DIR}/vec{atom_group}.foo
     ${FOO_DIR}/vec{atom}.foo
@@ -264,6 +266,7 @@ set(FOO_SRC
     ${FOO_DIR}/vec{coppensbasis}.foo
     ${FOO_DIR}/vec{coppensorbital}.foo
     ${FOO_DIR}/vec{diis}.foo
+   #${FOO_DIR}/vec{gsd_tree}.foo
     ${FOO_DIR}/vec{interpolator}.foo
     ${FOO_DIR}/vec{irrep}.foo
     ${FOO_DIR}/vec{pair_energy}.foo
