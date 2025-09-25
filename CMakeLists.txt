@@ -211,6 +211,7 @@ set(FOO_SRC
     ${FOO_DIR}/colour_function.foo
     ${FOO_DIR}/coppensbasis.foo
     ${FOO_DIR}/coppensorbital.foo
+    ${FOO_DIR}/csf_to_sd.foo
     ${FOO_DIR}/dft_functional.foo
     ${FOO_DIR}/diffraction_data.inq.foo
     ${FOO_DIR}/diffraction_data.set.foo
@@ -323,6 +324,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/command_line.F90
     ${CMAKE_CURRENT_BINARY_DIR}/coppensbasis.F90
     ${CMAKE_CURRENT_BINARY_DIR}/coppensorbital.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/csf_to_sd.F90
     ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
