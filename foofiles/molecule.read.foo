@@ -168,13 +168,13 @@ contains
       molden.read_line
 
       ! Read basis
-      save  = stdin
+      if (stdin.allocated) save  = stdin
       stdin = molden
       do a = 1,.n_atom
          .basis(a).read_molden
          .basis(a).set_label(.atom(a).basis_label)
       end
-      stdin = save
+      if (save.allocated) stdin = save
 
       ! Remove repetitions
       .basis.remove_repetitions
@@ -224,6 +224,8 @@ contains
       .NO_occ_nos.destroy
       .NOs.destroy
 
+      ! Read the MO or NO coefficients.
+      ! Read the NO occupation numbers always.
       if (NOT is_correlated) then
         
          ! Reset multiplicity?
@@ -249,6 +251,9 @@ contains
          if (is_unrestricted) then
             ! Unrestricted
             .SCF_data.set_SCF_kind("uhf")
+            .NO_occ_nos.create(.n_bf,"u")
+            .NO_occ_nos.a = ZERO
+            .NO_occ_nos.b = ZERO
             .MO_energies.create(.n_bf,"u")
             .MO_energies.a = ZERO
             .MO_energies.b = ZERO
@@ -258,6 +263,8 @@ contains
          else
             ! Restricted
             .SCF_data.set_SCF_kind("rhf")
+            .NO_occ_nos.create(.n_bf,"r")
+            .NO_occ_nos.r = ZERO
             .MO_energies.create(.n_bf,"r")
             .MO_energies.r = ZERO
             .MOs.create(.n_bf,"r")
@@ -272,7 +279,6 @@ contains
             .NO_occ_nos.create(.n_bf,"u")
             .NO_occ_nos.a = ZERO
             .NO_occ_nos.b = ZERO
-            .density_mx.create(.n_bf,"u")
             .NOs.create(.n_bf,"u")
             .NOs.a = ZERO
             .NOs.b = ZERO
@@ -280,7 +286,6 @@ contains
             ! Restricted
             .NO_occ_nos.create(.n_bf,"r")
             .NO_occ_nos.r = ZERO
-            .density_mx.create(.n_bf,"r")
             .NOs.create(.n_bf,"r")
             .NOs.r = ZERO
          end
@@ -321,9 +326,11 @@ contains
                DIE_IF(i>2*.n_bf,"too many orbitals specified")
                select case (spin)
                case ("Alpha")
+                  .NO_occ_nos.a(i)  = occ
                   .MO_energies.a(i) = energy
                   .MOs.a(:,i)       = orb
                case ("Beta")
+                  .NO_occ_nos.b(i-.n_bf)  = occ
                   .MO_energies.b(i-.n_bf) = energy
                   .MOs.b(:,i-.n_bf)       = orb
                case default
@@ -333,6 +340,7 @@ contains
                DIE_IF(i>.n_bf,"too many orbitals specified")
                select case (spin)
                case ("Alpha")
+                  .NO_occ_nos.r(i)  = occ
                   .MO_energies.r(i) = energy
                   .MOs.r(:,i)       = orb
                case default
@@ -387,11 +395,6 @@ contains
                GAUSSIAN_DATA:swap_from_Molden_C_order(.MOs.r,"1",fbf,lbf,ang)
             end
          end
-         ! MO's
-         archive.set(.name,"MOs")
-         archive.write(.MOs)
-         archive.set(.name,"MO_energies")
-         archive.write(.MO_energies)
       else
          if (NOT .use_spherical_basis) then
             if (is_unrestricted) then
@@ -401,16 +404,35 @@ contains
                GAUSSIAN_DATA:swap_from_Molden_C_order(.NOs.r,"1",fbf,lbf,ang)
             end
          end
-         ! NO's
-         archive.set(.name,"NOs")
-         archive.write(.NOs)
-         archive.set(.name,"NO_occ_nos")
-         archive.write(.NO_occ_nos)
       end
 
       ang.destroy
       lbf.destroy
       fbf.destroy
+
+      ! Make restricted density matrix
+      ! Under assumption an RGBI is going to be done
+      .density_mx.destroy
+      .density_mx.create(.n_bf)
+      if (.NOs.deallocated) &
+      .NOs = .MOs
+      .BASE:make_density_mx_from_NOs
+      if (.density_mx.r.deallocated) then
+         .BASE:make_r_density_mx
+       ! .BASE:make_r_NOs
+      end
+
+      ! Write MO archives
+      archive.set(.name,"MOs")
+      archive.write(.MOs)
+      archive.set(.name,"MO_energies")
+      archive.write(.MO_energies)
+
+      ! Write NO archive
+      archive.set(.name,"NOs")
+      archive.write(.NOs)
+      archive.set(.name,"NO_occ_nos")
+      archive.write(.NO_occ_nos)
 
       ! Set crystal data
       if (.crystal.allocated) then
