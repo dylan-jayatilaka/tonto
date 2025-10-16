@@ -587,6 +587,7 @@ target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 # Make non-standard-named executables
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
 set_target_properties(run_har      PROPERTIES OUTPUT_NAME hart)
+set_target_properties(run_rgbi     PROPERTIES OUTPUT_NAME rgbi)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
