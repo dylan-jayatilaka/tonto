@@ -58,6 +58,6 @@ function(add_all_tests)
 endfunction()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/short)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/rgbi)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/long)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cx)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/rgbi)
