@@ -1,6 +1,6 @@
 # CMake
-cmake_minimum_required(VERSION 3.20...3.28)
-cmake_policy(VERSION 3.20)
+cmake_minimum_required(VERSION 4.0)
+cmake_policy(VERSION 4.0)
 
 # Allow arbitrary characters in test names
 cmake_policy(SET CMP0110 NEW)
