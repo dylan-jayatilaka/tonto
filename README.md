@@ -83,7 +83,7 @@ While waiting, make sure you have all the other software installed:
 The following is recommended: `make`, `perl` (for the `foo` preprocessor language), `gfortran`, `blas`, `lapack`, `python3` (for testing) and `gnuplot` (for graphs and plots).
 
 ```
-   sudo apt install make perl gfortran libblas-dev liblapack-dev python3 gnuplot
+   sudo apt install make perl gfortran gcc g++ libblas-dev liblapack-dev python3 gnuplot ctags
 ```
 
 It is recommended to compile a parallel version of the program via openmpi and friends:
