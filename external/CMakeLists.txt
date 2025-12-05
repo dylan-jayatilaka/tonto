@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.0.0)
+cmake_minimum_required(VERSION 3.28)
 project(dftd3)
 
 set(DFTD3_SRC
