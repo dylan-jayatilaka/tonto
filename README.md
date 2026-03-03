@@ -18,43 +18,52 @@ Replace USERNAME with your own github user name.
 
 You can get a classic TOKEN from :
 
-Settings photo-> Settings -> develepor-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic).
+Settings photo-> Settings -> developer-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic).
 
-You can get to this location more easily by going to the location below:
+These selections are quite convoluted: at the left, bottom, or top right of the menus.
+
+You can go directly to this location:
 
 ```
 https://github.com/settings/tokens
 ```
 
-The selections are quite hard to find: at the left, bottom, or top right of the menus.
 
 # Getting started and Compiling
 
-## 0. Operating systems
+You will need to be on the super user to install software on your machine.
 
-These instructions are for Linux which I assume you are using.
+## 0. Operating systems
 
 ### On Linux
 
-For simlicity I'm going to assume you are using Ubuntu, the most popular system (I use it).
+I assume you are using the latest Ubuntu (I use it).
 
-It is best to use the the latest version.
-
-I'm also going to assume you are using the command line in a bash terminal, which is the default.
-
-There are instructions for Mac and Windows but I do not know how up-to-date these are as I hardly use them. Follow the links below; otherwise keep reading.
-
-It is possible to cross compile executables on Linux for those other architectures. Though it is easy enough to use `brew`on Mac and WSL on Windows.
+I also assume you are using the command line in a bash terminal - the default if you click the terminal icon.
 
 ### On MacOS
+
+Tonto has many failures on the Apple M2 with Tahoe 26.3. It is not recommended.
+
+If you wish to proceed, the strategy is to use homebrew to install GNU tools, then follow the Linux instructions below.
+
+The instructions below may be helpful, but they are out of date.
 
 See [Building on MacOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-MacOS)
 
 ### On Windows
 
+Tonto has not been tested on Windows recently.
+
+The strategy is as for the Mac - install GNU tools and compile.
+
+The instructions below are out of date since they predate WSL.
+
 See [Building on Windows](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-Windows)
 
 ## 1. Install `git` and clone the repo
+
+You will need to be on the super user to install software on your machine.
 
 First install `git` 
 
@@ -62,124 +71,121 @@ First install `git`
    sudo apt install git
 ```
 
-You will need to be on the super user list to install software on your machine.
-
-Open a terminal and clone the repository:
+Next, open a terminal and clone the repository:
 
 ```
    git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
 ```
 
-To compile a particular branch, like the release branch, which is highly recommended (see below) then clone into a named folder:
+To compile a particular branch e.g. the latest `release` branch (which is recommended) clone into a named folder, then `switch` to the branch you want:
 
 ```
    git clone --recursive https://github.com/dylan-jayatilaka/tonto.git tonto-release
+   cd tonto-release
+   git switch release
 ```
+Unless you know what you are doing you should only use the default `master` branch or the `release` branches.
 
 ## 2. Install other software
 
-While waiting, make sure you have all the other software installed:
-
-The following is recommended: `make`, `perl` (for the `foo` preprocessor language), `gfortran`, `blas`, `lapack`, `python3` (for testing) and `gnuplot` (for graphs and plots).
+Make sure you have all the other needed software installed, specifically: `make`, `perl` (for the `foo` language), `gfortran`, `blas`, `lapack`, `python3` (for testing), and `gnuplot` (for graphs and plots). In a new terminal type:
 
 ```
    sudo apt install make perl gfortran libblas-dev liblapack-dev python3 gnuplot
 ```
 
-It is recommended to compile a parallel version of the program via openmpi and friends:
+To compile a parallel version of the program via openmpi and friends type:
 
 ```
    sudo apt install openmpi-bin openmpi-common openssh-client openssh-server libopenmpi-dev 
 ```
+This should install the `mpifort` parallel fortran compiler. Installing all the components of a parallel compiler can be tricky, especially in a supercomputer environment. Usually it is required to load the the correct modules, via a `module load` command. In addition, you may need to run your program in a queue. For this reason, it is best to compile and test a single processor version first, before proceeding to a full parallel version.
 
-## 3. Switch to the `release` branch, and set up a build folder
+## 3. Set up a build folder and go into it
 
-To compile Tonto, first enter the `tonto` or `tonto-release` folder you just downloaded
-
-```
-    cd tonto
-```
-
-Checkout the release branch:
+Inside the tonto folder, make a build directory (the name is up to you) and enter it. This is where the program is compiled and built. I will call it `release` since it will hold the standard, released version of the programs. Type:
 
 ```
-   git checkout release
+   mkdir release
+   cd release
 ```
 
-Now make a `build` directory (the name is up to you) and enter that to compile the program:
+I recommended to compile (or build) three other versions tonto: `debug`, `fast` and `mpi` parallel versions.
 
-```
-   mkdir build
-   cd build
-```
+You must make separate folders for each build version.
 
-It is recommended to compile at least two other versions, a `debug` and a `mpi` parallel version each in their own build folders. See below.
 
 ## 4. Choose a compiler, and compile executables
 
-You may use different compilers since, unfortunately, some of them are buggy. `gfortran`is pretty good and recommended.
+You may use different compilers but we use the latest `gfortran` and `gcc` compilers. 
 
-Set your compiler and start compiling:
+For the release version, in your build folder, type:
 
 ```
-   cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=fast
+   cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=release
    make -j
 ```
-Then wait, and when the screen finishes churning, you are done.
+The screen will produce a lot of output. When it finished you are done.
 
-I recommend to also make a `debug` version which prints error messages. In the `tonto` folder type:
+To make a `fast` version, in your `fast` build folder, type:
 
 ```
-    mkdir debug
-    cd debug
+    cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=fast
+    make -j
+
+```
+The `fast` version is, of course, faster. However this may come at the expense of bugs, and numerical imprecision. Please ensure you always run the tests (see below) to ensure the code is working properly.
+
+To make a `debug` version, in your `debug` build folder, type:
+
+```
     cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=debug
     make -j
 
 ```
+The `debug` version runs slower, but it has more error messages, and it gives a useful traceback if the program crashes, and it can be used in the debugger. This can help for understanding problems. The `debug` version is essential for developers.
 
 If you want a static executable, for redistribution, set the build type to `RELEASE-STATIC` as follows:
 
 ```
-   mkdir static
-   cd static
-   cmake .. -DCMAKE_BUILD_TYPE=release-static
+   cmake .. -DCMAKE_Fortran_COMPILER=gfortran DCMAKE_BUILD_TYPE=release-static
    make -j
 ```
-
-By default the `tonto` program is built with the `RELEASE` flags i.e. not static. The static verssion is a lot larger in size.
+The static version is a lot larger in size.
   
-For production it is recommended to make an MPI parallel version. However you must test this to check that the results are correct. To proceed type:
-
+For production i.e. large calculations it is recommended to make an MPI parallel version. However you absolutely must test the parallel version to check that the results are correct (see below) before using it. To make a MPI parallel version, in your MPI build folder, type:
 ```
-   mkdir mpi
-   cd mpi
    cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DCMAKE_BUILD_TYPE=fast -DMPI=1
    make -j
 ```
+Consider also using `-DNO_ERROR_MANAGEMENT` which will remove any error checking code and will make the program even faster.
 
-Consider also using `-DNO_ERROR_MANAGEMENT` in this case for even more speed.
+## 5. Where are the compiled programs?
 
-## 5. Where is the program?
-
-The executable program is located in the build folder:
+The executable program is located in the build folde e.g.
 
 ```
-    build/tonto
+    release/tonto
 ```
 
 The standalone Hirshfeld atom refinement terminal (`hart`) program will be located at:
 
 ```
-   build/hart
+   release/hart
 ```
-
 Copy the program `build/hart` anywhere you like  For help type `hart -help`.
 
 There are other test programs which are made and used.
 
 ## 6. Where is the code?
 
-All of these programs are in the `runfiles/` folder. The source code for the modules is in the `foofiles/` folder. The source is currently translated into modern Fortran 2003 which resides in the `build/` folder, which is where the object code and executables are made. The names of the `.foo` modules in the `foofiles/`, and that code, correspond rather directly to the corresponding `.F90` files in the `build/' folder.
+All of the programs are in the `runfiles/` folder.
+
+The source code used by the programs is in the `foofiles/` folder. It code is written in the `foo` language, which I invented. `Foo` is a bit like `Julia`, but was based on `Eiffel` and `Sather`.
+
+`Foo` code is arranged into modules, which are like classes. The name of each class is the same as the name of the head part of each file in `foofiles/`. Some modules are large, and are split into submodules. The `foo` compiler is a source-to-source converter: `foo` source code is currently translated into `fortran` 2008. The generated `fortran` code may have more, or less, error checking, or additions for parallel execution. The generated `fortran` source also resides in the build folder, along with the object files and the executable programs. 
+
+
 
 ## 7. Run tests please!
 
@@ -198,7 +204,7 @@ You should get mostly the `passed` messages, but there may be small numerical di
 Then you can review the results later at your leisure. To check failures go into the `tests/` folder and then from there into the folder with the same name as the job that failed. You should see there pairs of files called `<file>` and `<file>.bad`. You must compare the reference `<file>` and alleged failed output file `<file.bad>` using your favourite tool e.g.
 
 ```
-   vimdiff stdout stdout.bad
+   vimdiff stdout.bad stdout
 ```
 
 Here is a nice thing for problem tests: you may use `ctest` in the `build/` folder and run only tests matching certain labels or regular expressions for the jobs that failed; or specify the number of processors to use when running tests :
