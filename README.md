@@ -91,7 +91,7 @@ Unless you know what you are doing you should only use the default `master` bran
 Make sure you have all the other needed software installed, specifically: `make`, `perl` (for the `foo` language), `gfortran`, `blas`, `lapack`, `python3` (for testing), and `gnuplot` (for graphs and plots). In a new terminal type:
 
 ```
-   sudo apt install make perl gfortran libblas-dev liblapack-dev python3 gnuplot
+   sudo apt install make perl gfortran gcc g++ libblas-dev liblapack-dev python3 gnuplot ctags
 ```
 
 To compile a parallel version of the program via openmpi and friends type:
