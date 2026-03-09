@@ -362,7 +362,12 @@ contains
    DIE_IF(NOT .crystal.xray_data.reflections.allocated,"no x-ray reflections")
    DIE_IF(NOT .crystal.uses_one_center_TF_model,"must use one-center temperature factor model")
 
-      results,output :: BIN
+      results :: BIN
+      output  :: BIN
+
+      ! This is a HAR
+      .crystal.xray_data.SET:set_refine_structure(TRUE)
+      .SCF_data.set_output(FALSE)
 
       ! Output options
       results = .crystal.xray_data.show_refinement_results
@@ -379,12 +384,9 @@ contains
          end
          ! Initial promolecule SCF
          if (.SCF_data.using_cluster_charges) &
-         .SCF:promolecule_scf
+         .SCF:promolecule_SCF
          .SCF:scf ! ???
       end
-
-      ! Always use initial_density for stability
-      .SCF_data.set_initial_density(.SCF_data.spinorbital_genre)
 
       ! Initial F_calc's for pruning
       if (NOT .crystal.xray_data.reflections.have_F_pred) then
@@ -406,11 +408,12 @@ contains
 
       ! Initialize & turn off SCF printing ...
       .crystal.initialize_refinement_data
-      .crystal.xray_data.SET:set_refine_structure(TRUE)
-      .SCF_data.set_output(FALSE)
 
-      ! Do banner, options/switches, initial parameters,
-      ! refinement iteration banner & iteration table header
+      ! Always use initial_density for stability
+      .SCF_data.set_initial_density(.SCF_data.spinorbital_genre)
+
+      ! BANNER: options/switches, initial parameters,
+      ! iteration banner, and iteration table header
       if (output) then
          stdout.flush
          stdout.text("Starting refinement ...")
@@ -486,6 +489,59 @@ contains
 
    end
 
+   HA_fit ::: leaky
+   ! Do a single least-squares fit with HA form factor
+      self :: INOUT
+
+      results :: BIN
+      output  :: BIN
+      
+      ! This is a rigid-atom fit
+      .crystal.xray_data.SET:set_fit_structure(TRUE)
+
+      ! Output options
+      results = .crystal.xray_data.show_fit_results
+      output  = .crystal.xray_data.show_fit_output
+
+      ! ANO's and interpolators?
+      .SCF:make_HA_inputs
+
+      ! Initial SCF
+      if (.density_mx.deallocated) then
+         if (output) then
+            stdout.flush
+            stdout.text("Initial density matrix for refinement ...")
+         end
+         ! Initial promolecule SCF
+         if (.SCF_data.using_cluster_charges) &
+         .SCF:promolecule_SCF
+         .SCF:scf ! ???
+      end
+
+      ! Initial F_calc's for pruning
+      if (NOT .crystal.xray_data.reflections.have_F_pred) then
+         if (output) then
+            stdout.flush
+            stdout.text("Making F_pred ...")
+         end
+         .SCF:make_X_SFs
+      end
+
+      ! Prune?
+      if (.crystal.xray_data.INQ:is_F_calc_prunable) then
+         if (output) then
+            stdout.flush
+            stdout.text("Pruning reflections with F_pred/F_calc for refinement ...")
+         end
+         .crystal.xray_data.SET:prune_reflections
+      end
+
+      ! Do the LSQ fit
+      ! Header output appears inside here
+      .:LS_fit_Hirshfeld_atoms
+
+   end
+
    LS_fit_Hirshfeld_atoms ::: leaky
    ! LS fit the Hirshfeld atoms to the calculated structure factors.
    ! Cartesian (bohr) coordinates are used because structure factors
@@ -515,7 +571,8 @@ contains
 
    DIE_IF(NOT .crystal.allocated, "no crystal")
 
-      fitout,fitres :: BIN
+      fitout :: BIN
+      fitres :: BIN
       ff :: MAT{CPX}@
 
       ! Hirshfeld-atom structure factors
@@ -528,8 +585,9 @@ contains
 
       !! Kang added Symmetrize form factor of all unique frag atoms: 
       !! ff (2024.Jun.3) ... Thank you! --dylan
-      .crystal.symmetrize_FFs(ff) ! Kang's note. It also updates 
-                                  ! .crystal.asymmetric_FF_symmetrization_rss 
+      .crystal.symmetrize_FFs(ff) 
+      ! Kang's note. It also updates 
+      ! .crystal.asymmetric_FF_symmetrization_rss 
                                     
       ! Least squares (maybe with output)
       fitout = .crystal.xray_data.show_fit_output
@@ -547,6 +605,7 @@ contains
 !  Strategy: insert calls, separate out sf_u.
 !  End result: one shift update of parameters
 !  Then this goes in the normal LSQ cycle in LS_fit
+!  NOTE: routine make_LS_mx is very long! Is it working? Rewrite?
 
    LS_fit_HAs_disk ::: leaky
    ! LS fit the Hirshfeld atoms to the calculated structure factors.
@@ -595,6 +654,7 @@ contains
       ! Put final CIF after residuals
       .PUT:put_CIFs(with_ESDs=TRUE)
 
+      if (.crystal.xray_data%is_IAM_refinement) then
       if (NOT .crystal.xray_data.use_IAM_ITC_FFs) then
          ! Delete stored matrices
          .SET:delete_SCF_archives(keep_DM=TRUE)
@@ -603,9 +663,11 @@ contains
          if (.SCF_data.allocated) then
          if (NOT .SCF_data.SCF_kind=="mfcc") then
          ! Orthonormalize MO's at new geometry
+         ! This makes new overlap integrals ...
          .SCF:symmetrically_orthonormalize(.MOs)
          end
          end
+      end
       end
 
    end
@@ -636,9 +698,6 @@ contains
       ff.destroy
 
    end
-   
-! Hey - this routine below is too long and a joke!
-! Did I do this crap? Why!!! --dylan
 
    make_LS_mx(d_Fa) ::: leaky
    ! Calculate the LS matrix Low memory version.
@@ -1650,9 +1709,10 @@ contains
    ! The structure factors "ff" update when the geometry shifts.
    ! If "output"  is false, do not print any LS fit output.
    ! If "results" is false, do not print any LS fit results.
-      self :: INOUT
-      ff   :: MAT{CPX}, INOUT
-      output,results :: BIN, IN
+      self    :: INOUT
+      ff      :: MAT{CPX}, INOUT
+      output  :: BIN, IN
+      results :: BIN, IN
 
    ENSURE(.atom.allocated, "no atoms to fit")
    ENSURE(.crystal.allocated, "no crystal")
@@ -1661,24 +1721,32 @@ contains
    ENSURE(ff.dim1==.crystal.n_unique_SF_k_pts,       "ff: wrong dim1")
    ENSURE(ff.dim2==.crystal.n_asymmetric_unit_atoms, "ff: wrong dim2")
 
+      clean_scf :: BIN
+
       ! Do the fit 
       .crystal.LS_structure_fit(ff,output,results)
 
       ! Set geometry type
       
-      if (NOT .crystal.xray_data.partition_model=="oc-crystal23") then ! For pHAR, .atom is xml_atom and .crystal.fragment_atom is for geometry analysis
+      if (NOT .crystal.xray_data.partition_model=="oc-crystal23") then 
+      ! NOTE: For pHAR, .atom is xml_atom and 
+      !       .crystal.fragment_atom is for geometry analysis
          .atom = .crystal.fragment_atom 
          .crystal.asymmetric_unit_source = "tonto-refinement"
       end
 
-      if (NOT .crystal.xray_data.use_IAM_ITC_FFs) then
-         ! Delete stored matrices
-         .SET:delete_SCF_archives(keep_DM=TRUE)
-         .SET:destroy_SCF_results(keep_MOs=TRUE)
-         .SET:destroy_SCF_integrals
-         ! Orthonormalize MO's at new geometry
-         if (NOT .crystal.xray_data.partition_model=="oc-crystal23") .SCF:symmetrically_orthonormalize(.MOs)         
+      ! Orthonormalize MO's at new geometry
+      if (.MOs.allocated) then
+      if (NOT .crystal.xray_data.partition_model=="oc-crystal23") then
+         .SCF:symmetrically_orthonormalize(.MOs)         
       end
+      end
+
+      ! Delete stored matrices
+      ! NOTE: DM is incorrect, but OK as a guess.
+      .SET:delete_SCF_archives(keep_DM=TRUE)
+      .SET:destroy_SCF_results(keep_MOs=TRUE)
+      .SET:destroy_SCF_integrals
 
       ! Correlations
       .crystal.put_correlations(name=trim(.name)//".correlation-coefficients")
