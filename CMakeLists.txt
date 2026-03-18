@@ -234,8 +234,9 @@ set(FOO_SRC
     ${FOO_DIR}/capping_square.foo
     ${FOO_DIR}/isosurface.foo
     ${FOO_DIR}/plot_grid.foo
-    ${FOO_DIR}/lebedev.foo
     ${FOO_DIR}/quadrature.foo
+    ${FOO_DIR}/lebedev.foo
+    ${FOO_DIR}/womersley.foo
     ${FOO_DIR}/roby.foo
     ${FOO_DIR}/scf_data.foo
     ${FOO_DIR}/shell.foo
@@ -453,6 +454,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_evec_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/womersley.F90
     ${CMAKE_CURRENT_BINARY_DIR}/test_parallel.F90
 )
 
