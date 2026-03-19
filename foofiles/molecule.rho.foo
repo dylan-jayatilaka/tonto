@@ -1,0 +1,1212 @@
+!==================================================================
+!
+! MOLECULE.RHO: 
+! 
+! Molecule, basic electron density grids, and gradients of rho.
+! It also includes fuzzy atomic partitioning for the density.
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996-2012
+! Copyright (C) Dylan Jayatilaka 2012-
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!==================================================================
+
+module MOLECULE.RHO
+
+   implicit none
+
+contains
+
+!  ============
+!  Orbital grid
+!  ============
+
+   make_orbital_grid_r(Ogrid,Orb,pts,square) ::: PURE
+   ! Evaluate the orbital "Ogrid" for *one* AO-basis coefficient
+   ! orbital column "Orb", on a set of grid "pts". 
+   ! If present and TRUE, then "square" the result.
+      self   :: IN
+      Ogrid  :: VEC{REAL}, OUT
+      Orb    :: VEC{REAL}, IN
+      pts    :: MAT{REAL}, IN
+      square :: BIN, optional, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+
+      sq :: BIN
+      sh :: SHELL1
+      BFgrid :: MAT{REAL}@
+      n_pts,s,fs,ls,ns :: INT
+
+      sq = FALSE
+      if (present(square)) sq = square
+
+      n_pts = pts.dim1
+
+      Ogrid = ZERO
+
+      do s = 1,.n_shell
+
+         .SET:set_shell1_from(s,sh,fs,ls,ns)
+
+         ! Basis Fn grid for shell s
+         BFgrid.create(n_pts,ns)
+         sh.make_grid(BFgrid,pts)
+
+         Ogrid = Ogrid + matmul(BFgrid,Orb(fa:la))
+
+         BFgrid.destroy
+
+      end
+
+      if (sq) Ogrid = Ogrid*Ogrid
+
+   end
+
+!  ==================
+!  Nabla orbital grid
+!  ==================
+
+   make_nabla_orbital_grid(Ngrid,Ogrid,Orb,pts) ::: template
+   ! Return the nabla orbital density "Ngrid", and orbital density
+   ! grid "Ogrid" for *one* orbital coefficient column "Orb", on a set
+   ! of points "pts".
+      self  :: IN
+      Ngrid :: MAT{TYPE?}, OUT
+      Ogrid :: VEC{TYPE?}, OUT
+      Orb   :: VEC{TYPE?}, IN
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(Ngrid.dim2==3, "wrong dim2, Ngrid")
+   ENSURE(Ngrid.dim1==pts.dim1,"inconsistent Ngrid and pts")
+   ENSURE(Ogrid.dim ==pts.dim1,"inconsistent Ogrid and pts")
+
+      sh     :: SHELL1
+      Ngrids :: MAT3{REAL}@
+      Bgrids :: MAT{REAL}@
+      n_pt,fs,ls,ns,s :: INT
+
+      n_pt = pt.dim1
+
+      Ngrid = ZERO
+      Bgrid = ZERO
+
+      do s = 1,.n_shell
+
+         .SET:set_shell1_from(s,sh,fs,ls,ns)
+
+         ! Nabla and Basis fn grid for shell s
+         ! Second index are shell basis fns
+         Ngrids.create(n_pt,ns,3)
+         Bgrids.create(n_pt,ns)
+         sh.make_nabla_grid(Ngrids,Bgrids,pts)
+
+         Ngrid(:,1) = Ngrid(:,1) + matmul(Ngrids(:,:,1),Orb(fa:la))
+         Ngrid(:,2) = Ngrid(:,2) + matmul(Ngrids(:,:,2),Orb(fa:la))
+         Ngrid(:,3) = Ngrid(:,3) + matmul(Ngrids(:,:,3),Orb(fa:la))
+         Bgrid(:  ) = Bgrid(:  ) + matmul(Bgrids(:,:  ),Orb(fa:la))
+
+         Ngrids.destroy
+         Bgrids.destroy
+
+      end
+
+   end
+
+   make_nabla_orbital_grid_r(Ngrid,Ogrid,Orb,pts) ::: get_from(make_nabla_orbital_grid, TYPE?=>REAL), PURE
+   ! Return the nabla orbital density "Ngrid", and orbital density
+   ! grid "Ogrid" for *one* orbital coefficient column "Orb", on a set
+   ! of points "pts".
+   end
+
+!  ======================
+!  Laplacian orbital grid
+!  ======================
+
+   make_laplacian_orbital_grid_r(L,N,O,Orb,pts) ::: PURE
+   ! Return the Laplacian orbital density grid "L", the Nabla orbital
+   ! grid "N", and the Orbital grid "O" for *one* AO-basis orbital
+   ! vector "Orb" on a set of grid points "pts"
+      self :: IN
+      L    :: MAT{REAL}, OUT 
+      N    :: MAT{REAL}, OUT 
+      O    :: VEC{REAL}, OUT
+      Orb  :: VEC{REAL}, IN
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(L.dim2==3,"wrong dim2, L")
+   ENSURE(N.dim2==3,"wrong dim2, N")
+   ENSURE(L.dim1==pts.dim1,"inconsistent dim1, L and pts")
+   ENSURE(N.dim1==pts.dim1,"inconsistent dim1, N and pts")
+   ENSURE(O.dim1==pts.dim1,"inconsistent dim1, O and pts")
+
+      sh :: SHELL1
+      Lgrid :: MAT3{REAL}@
+      Ngrid :: MAT3{REAL}@
+      Bgrid :: MAT{REAL}@
+      n_pts,fs,ls,ns,s :: INT
+
+      n_pts = pts.dim1
+
+      L = ZERO
+      N = ZERO
+      O = ZERO
+
+      do s = 1,.n_shell
+
+         .SET:set_shell1_from(s,sh,fs,ls,ns)
+
+         ! Laplacian, Nabla, and regular Basis fn grids
+         Lgrid.create(n_pts,ns,3)
+         Ngrid.create(n_pts,ns,3)
+         Bgrid.create(n_pts,ns)
+         sh.make_laplacian_grid(Lgrid,Ngrid,Bgrid,pts)
+
+         L(:,1) = L(:,1) + matmul(Lgrid(:,:,1),Orb(fa:la))
+         L(:,2) = L(:,2) + matmul(Lgrid(:,:,2),Orb(fa:la))
+         L(:,3) = L(:,3) + matmul(Lgrid(:,:,3),Orb(fa:la))
+         N(:,1) = N(:,1) + matmul(Ngrid(:,:,1),Orb(fa:la))
+         N(:,2) = N(:,2) + matmul(Ngrid(:,:,2),Orb(fa:la))
+         N(:,3) = N(:,3) + matmul(Ngrid(:,:,3),Orb(fa:la))
+         O(:)   = O(:)   + matmul(Bgrid(:,:  ),Orb(fa:la))
+
+         Lgrid.destroy
+         Ngrid.destroy
+         Bgrid.destroy
+
+      end
+
+   end
+
+!  ==================
+!  Nabla density grid
+!  ==================
+
+   make_nabla_ED_grid(Ngrid,pts) ::: PURE
+   ! Return nabla of the electron density in "Ngrid" on points "pts".
+      self  :: IN
+      Ngrid :: MAT{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+      if (trim(.NOs.number_kind)=="real") then
+         .GRID:make_nabla_ED_grid_r(Ngrid,pts)
+    ! else
+    !    DIE("not implemented")
+      end
+
+   end
+
+   make_nabla_ED_grid_r(Ngrid,pts) ::: PURE
+   ! Return nabla of electron density in "Ngrid" for points "pts".
+   ! Using ".NOs" and their occupation numbers.
+      self  :: IN
+      Ngrid :: MAT{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2==3,   "wrong dim2, pts")
+   ENSURE(Ngrid.dim2==3, "wrong dim2, Ngrid")
+   ENSURE(.NOs.allocated,"no NOss")
+   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted NO's")
+   ENSURE(.NO_occ_nos.allocated, "no NO occupation numbers")
+   ENSURE(.NO_occ_nos.is_allocated_with_genre("r "),"no restricted NO occupation numbers")
+
+      orb  :: VEC{REAL}@
+      Norb :: MAT{REAL}@
+      occ  :: REAL
+      n_occ,n,n_pts :: INT
+
+      n_pts = pts.dim1
+      n_occ = .INQ:no_of_occupied_NOs
+
+       orb.create(n_pts)
+      Norb.create(n_pts,3)
+
+      Ngrid = ZERO
+
+      do n = 1,n_occ
+
+         ! Nabla grid for n-th NO 
+         .:make_nabla_orbital_grid_r(Norb,orb,.NOs.r(:,n), pts)
+
+         occ = .NO_occ_nos.r(n)
+
+         Ngrid(:,1) = Ngrid(:,1) + occ*orb(:)*Norb(:,1)
+         Ngrid(:,2) = Ngrid(:,2) + occ*orb(:)*Norb(:,2)
+         Ngrid(:,3) = Ngrid(:,3) + occ*orb(:)*Norb(:,3)
+
+      end
+
+      Ngrid = TWO * Ngrid
+
+      ! Clean
+      Norb.destroy
+       orb.destroy
+
+   end
+
+   make_nabla_ED_grid(Ngrid,Egrid,pts) ::: PURE
+   ! Return nabla of electron density in "Ngrid" on points "pts".
+   ! And also the electron density in "Egrid".
+      self  :: IN
+      Ngrid :: MAT{REAL}, OUT
+      Egrid :: VEC{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+      if (trim(.NOs.number_kind)=="real") then
+         .GRID:make_nabla_density_grid_r(Ngrid,Egrid,pts)
+    ! else
+    !    DIE("not implemented")
+      end
+
+   end
+
+   make_nabla_ED_grid_r(Ngrid,Egrid,pts) ::: PURE
+   ! Return nabla of electron density in "Ngrid" on points "pts".
+   ! And also the electron density in "Egrid".  Using the grid "pts"
+   ! and the ".NOs" and their occupation numbers.
+      self  :: IN
+      Ngrid :: MAT{REAL}, OUT
+      Egrid :: VEC{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2  ==3,  "wrong dim2, pts")
+   ENSURE(Ngrid.dim2==3,  "wrong dim2, Ngrid")
+   ENSURE(Ngrid.dim1==pts.dim1,"incosistent Ngrid and pts")
+   ENSURE(Egrid.dim ==pts.dim1,"incosistent Egrid and pts")
+   ENSURE(.NOs.allocated, "no natural orbitals")
+   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted NO's")
+   ENSURE(.NO_occ_nos.allocated, "no occupation numbers")
+   ENSURE(.NO_occ_nos.is_allocated_with_genre("r "),"no occupation numbers")
+
+      orb  :: VEC{REAL}@
+      Norb :: MAT{REAL}@
+      occ  :: REAL
+      n_occ,n,n_pts :: INT
+
+      n_pts = pts.dim1
+      n_occ = .INQ:no_of_occupied_NOs
+
+       orb.create(n_pts)
+      Norb.create(n_pts,3)
+
+      Ngrid = ZERO
+      Egrid = ZERO
+
+      do n = 1,n_occ
+
+         ! Nabla grid for n-th NO 
+         .:make_nabla_orbital_grid_r(Norb,orb,.NOs.r(:,n), pts)
+
+         occ = .NO_occ_nos.r(n)
+
+         Ngrid(:,1) = Ngrid(:,1) + occ*orb(:)*Norb(:,1)
+         Ngrid(:,2) = Ngrid(:,2) + occ*orb(:)*Norb(:,2)
+         Ngrid(:,3) = Ngrid(:,3) + occ*orb(:)*Norb(:,3)
+         Egrid(:)   = Egrid(:)   + occ*orb(:)* orb(:  )
+
+      end
+
+      Ngrid = TWO * Ngrid
+
+      Norb.destroy
+       orb.destroy
+
+   end
+
+!   make_nabla_density_grid_fdm_r(nabla_grid,pts)
+!   ! Work out the nabla density on ".plot_grid" using ".natural orbitals" and the
+!   ! ".occupation" number vector.
+!   ! This method uses the finite difference method to calculate the gradient
+!   ! from the density.  It is much slower, but useful for checking.
+!     nabla_grid, pts :: MAT{REAL}
+!   ENSURE(pts.dim2==3,  "wrong dimension for points array")
+!   ENSURE(nabla_grid.dim2==3,  "wrong dimension for nabla_grid array")
+!   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted NO's")
+!   ENSURE(.NO_occ_nos.r.allocated, "no occupation #'s")
+!     orb :: VEC{REAL}*
+!     dens_1,dens_2,nabla_orb,comp :: VEC{REAL}*
+!     pt1 :: MAT{REAL}*
+!     alpha :: REAL
+!     n_occ,n,n_pts,i :: INT
+!     alpha = TOL(6)
+!     n_pts = size(pts,1)
+!     pt1.create(n_pts,3)
+!     nabla_grid = ZERO
+!     orb.create(n_pts)
+!     dens_1.create(n_pts)
+!     dens_2.create(n_pts)
+!     nabla_orb.create(n_pts)
+!     n_occ = .INQ:no_of_occupied_NOs
+!     do n = 1,n_occ
+!        do i = 1,3
+!          comp => pt1(:,i)
+!          pt1 = pts;    comp = comp + alpha
+!          .GRID:make_orbital_grid_r(dens_1,.NOs.r(:,n),pt1,square=TRUE)
+!          pt1 = pts;    comp = comp - alpha
+!          .GRID:make_orbital_grid_r(dens_2,.NOs.r(:,n),pt1,square=TRUE)
+!          nabla_orb = HALF/alpha * (dens_1 - dens_2)
+!          .GRID:make_orbital_grid_r(orb,.NOs.r(:,n), pts)
+!          nabla_grid(:,i) = nabla_grid(:,i) + .NO_occ_nos.r(n)*orb(:)*nabla_orb
+!        end
+!     end
+!     nabla_grid = TWO*nabla_grid
+!     nabla_orb.destroy
+!     dens_2.destroy
+!     dens_1.destroy
+!     orb.destroy
+!     pt1.destroy
+!   end
+
+!  =========================
+!  Electron density routines
+!  =========================
+
+   make_ED_grid(grid,pts) ::: PURE
+   ! Work out the electron "grid" on "pt" using ".natural orbitals" and
+   ! the ".NO_occ_nos" vector. 
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(.NOs.allocated, "no natural orbitals")
+   ENSURE(.NOs.has_real_genre, "no real NOs")
+
+      relativity :: STR
+      NOgenre    :: STR
+
+      relativity = "none"
+      if (.SCF_data.allocated) then
+         relativity = .SCF_data.relativity_kind
+         if (NOT .SCF_data.PCE_CORR) relativity = "none"
+      end if
+      ENSURE(relativity=="none","relativistic densities unmaintained")
+
+      NOgenre = .NOs.genre
+      select case (NOgenre)
+      case ("r "); .GRID:make_ED_grid_r(grid,pts)
+      case ("u "); .GRID:make_ED_grid_u(grid,pts)
+      end
+
+   end
+
+   make_ED_grid_r(grid,pts) ::: PURE
+   ! Make the "grid" for the supplied points "pts" from restricted 
+   ! real density matrix (not NOs as in v1, which is deprecated).
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+    ! .GRID:make_ED_grid_r_v1(grid,pts)
+      .GRID:make_ED_grid_r_v2(grid,pts)
+
+   end
+
+   make_ED_grid_r_v2(grid,pts) ::: PURE
+   ! Make the electron density "grid" for the supplied points "pts"
+   ! from restricted real .density_mx. Elements smaller than TOL(9)
+   ! are ignored.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2==3,  "wrong dim2, pts")
+   ENSURE(.density_mx.is_allocated_with_genre("r "), "no restricted density_mx")
+
+      .GRID:make_ED_grid_r_v2(grid,pts,.density_mx.r,TOL(9))
+
+   end
+
+   make_ED_grid_r_v2(grid,pts,DM,tol) ::: PURE
+   ! Add to "grid" the electron density values at the the points "pt",
+   ! for density matrix "DM". Only those terms bigger than "tol" are
+   ! considered.
+   ! NOTE: This is Kanghyun's version. Now working.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      DM   :: MAT{REAL}, IN
+      tol  :: REAL, IN
+
+   ENSURE(grid.dim==pts.dim1, "inconsistent dim1, grid & pts")
+   ENSURE(pts.dim2==3,    "wrong dim2, pt")
+   ENSURE(DM.is_square,   "wrong shape, DM")
+   ENSURE(DM.dim1==.n_bf, "wrong size, DM")
+
+      psi  :: VEC{EVEC{REAL}}@
+      ind  :: VEC{EVEC{INT}}@
+      mask :: VEC{BIN}@
+      bf   :: MAT{REAL}@
+      same,pi,pj :: VEC{INT}@
+      n_pt, s,fs,ls,ns, i,j :: INT
+      Dij :: REAL
+      sh  :: SHELL1
+
+      ! Zero
+      grid = ZERO
+
+      ! Sparse storage of significant b.f. values on grid:
+      ! placed in "psi", corresponding indices in "ind".
+      psi.create(.n_bf)
+      ind.create(.n_bf)
+
+      ! Loop over shells "s"
+      n_pt = pt.dim1
+      mask.create(n_pt)
+      do s = 1,.n_shell 
+         .SET:set_shell1_from(s,sh,fs,ls,ns)
+         bf.create(n_pt,ns)
+         sh.make_grid(bf,pt(:,1),pt(:,2),pt(:,3))
+         ! Basis fn. "i"
+         do i = fs,ls
+            mask = abs(bf(:,i-fs+1))>tol
+            ! Store large values for each b.f.
+            psi(i).element = pack(bf(:,i-fs+1)  ,mask)
+            ind(i).element = pack([(j,j=1,n_pt)],mask)
+         end
+         bf.destroy
+      end
+      mask.destroy
+
+      ! psi*psi product
+      grid = ZERO 
+      do i = 1,.n_bf 
+      do j = 1,i
+         ! DM is symmetric
+         Dij = DM(i,j)
+         if (j<i) Dij = Dij + Dij
+         ! DM value large enough?
+         if (abs(Dij)>tol) then
+            VEC{INT}:common_indices_in(ind(i)[:],ind(j)[:],pi,pj,same)
+            ! Common indices?
+            if (same.dim>0) then
+               grid(same) = grid(same) + Dij*psi(i)[pi]*psi(j)[pj]
+            end
+            pi.destroy
+            pj.destroy
+            same.destroy
+         end
+      end
+      end
+
+      ind.destroy
+      psi.destroy
+
+   end
+
+   ED_at_point(pt) result (res) ::: PURE
+   ! Return the electron density at a single point "pt"
+   ! NOTE: This is Kanghyun's version. Now working.
+      self :: IN
+      pt   :: VEC{REAL}(3), IN
+      res  :: REAL
+
+   ENSURE(.density_mx.is_allocated_with_genre("r "), "no restricted density_mx")
+
+      grid :: VEC{REAL}(1)
+
+      .GRID:make_ED_grid_r_v2(grid,reshape(pt,[1,3]),.density_mx.r,TOL(9))
+      res = grid(1)
+
+   end
+
+! Should be deprecated? Version without NOs is better?
+
+   make_ED_grid_r_v1(grid,pts) ::: PURE
+   ! Make the "grid" for the supplied points "pts" from
+   ! restricted real natural orbitals
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2==3,  "wrong dim2, pts")
+   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted NO's")
+   ENSURE(.NO_occ_nos.r.allocated, "no occupation numbers")
+
+      NO  :: VEC{REAL}@
+      occ :: REAL
+      n_occ,n :: INT
+
+      n_occ = .INQ:no_of_occupied_NOs
+      NO.create(pt.dim1)
+
+      grid = ZERO
+
+      parallel do n = 1,n_occ
+         .GRID:make_orbital_grid_r_v1(NO,.NOs.r(:,n), pt)
+         occ = .NO_occ_nos.r(n)
+         grid = grid + occ*NO*NO
+      end
+
+      if (DO_IN_PARALLEL) then
+        PARALLEL_SUM(grid)
+      end
+
+      NO.destroy
+
+   end
+
+   make_ED_grid_r_v1(grid,pt,NO,occ) ::: PURE
+   ! Make the electron density "grid" for the supplied points "pt"
+   ! from the natural orbitals "NO" and occupuation numbers "occ".
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt   :: MAT{REAL}, IN
+      NO   :: MAT{REAL}, IN
+      occ  :: VEC{REAL}, IN
+
+   ENSURE(pt.dim2==3,"wrong dimension for points array")
+   ENSURE(grid.dim==pt.dim1,"inconsistent number of points")
+
+      NOn :: VEC{REAL}@
+      n :: INT
+
+      NOn.create(pt.dim1)
+
+      grid = ZERO
+      do n = 1,NO.dim2
+         if (occ(n)==ZERO) cycle
+         .GRID:make_orbital_grid_r(NOn,NO(:,n),pt)
+         grid = grid + occ(n)*NOn*NOn
+      end
+
+      NOn.destroy
+
+   end
+
+   make_ED_grid_u_v2(grid,pt,sgn) ::: PURE
+   ! Make the electron density  "grid" for the supplied points "pt"
+   ! from unrestricted real natural orbitals. If present "sgn" is used
+   ! to determine whether the total density or spin density is to be
+   ! calculated: sgn=1 means sum the alpha and beta densities to form
+   ! the total density, sgn=-1 means to subtract, forming the Sz spin
+   ! density.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      sgn :: INT, optional, IN
+
+   ENSURE(pt.dim2==3,  "wrong dimension for points array")
+   ENSURE(.NOs.is_allocated_with_genre("u "), "no unrestricted NO's")
+   ENSURE(.NO_occ_nos.a.allocated, "no alpha occupation numbers")
+   ENSURE(.NO_occ_nos.b.allocated, "no beta occupation numbers")
+
+      NO :: VEC{REAL}@
+      occ,fac :: REAL
+      na,nb,n :: INT
+
+      fac = ONE
+      if (present(sgn)) fac = REALIFY(sgn)
+
+      na = .INQ:no_of_occupied_NOs("alpha")
+      nb = .INQ:no_of_occupied_NOs("beta")
+
+      NO.create(pt.dim1)
+
+      grid = ZERO
+
+      do n = 1,na
+         .GRID:make_orbital_grid_r_v1(NO,.NOs.a(:,n),pt)
+         occ = .NO_occ_nos.a(n)
+         grid = grid + occ*NO*NO
+      end
+
+      do n = 1,nb
+         .GRID:make_orbital_grid_r_v1(NO,.NOs.b(:,n),pt)
+         occ = .NO_occ_nos.b(n)
+         grid = grid + fac*occ*NO*NO
+      end
+
+      ! Clean
+      NO.destroy
+
+   end
+
+!  ===================================
+!  Efficient electron density routines
+!  ===================================
+
+   make_derivative_rho_grid(N0,pt,D) ::: leaky, PURE
+   ! Make density grids "N0" on points "pt" using density matrices "D"
+   ! skipping as points as possible. This routine will probably have
+   ! to be batched over *spatially localised* points to reduce memory
+   ! requirements.
+      self :: IN
+      N0 :: MAT{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      D  :: MAT3{REAL}, IN
+
+   ENSURE(N0.dim1==pt.dim1,"N0 and pt: incompatible sizes")
+   ENSURE(N0.dim2== D.dim3,"N0 and D: incompatible sizes")
+   ENSURE(3     ==pt.dim2,"pt: wrong dim2")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+
+      bf_lgval :: VEC{EVEC{INT}}@
+      bf_grid0 :: VEC{EMAT{REAL}}@
+      ra :: VEC{REAL}(3)
+      xa,ya,za,a2 :: VEC{REAL}@
+      ga0,gb0 :: VEC{REAL}@
+      overlapping_atom, lga,lgb, sp :: VEC{INT}@
+      DD :: MAT3{REAL}@
+      sha :: SHELL1
+      Dab, fac,val, ga,gb :: REAL
+      atom_o,cutoff,n_pt,n_keep, bs, p,n, q,n_dens :: INT
+      atom_a,fsa,lsa,sa,fa,la,na,a :: INT
+      atom_b,fsb,lsb,sb,fb,lb,nb,b :: INT
+
+      ! No of densities
+      n_dens = D.dim3
+
+      ! Basis function cutoff
+      cutoff = floor(log10(.becke_grid.basis_fn_cutoff))
+
+      ! Saved basis function grid and skip list
+      bf_lgval.create(.n_shell)
+      bf_grid0.create(.n_shell)
+
+      ! Atom "a" displaced points and skip switches
+      n_pt = pt.dim1
+      xa.create(n_pt)
+      ya.create(n_pt)
+      za.create(n_pt)
+      a2.create(n_pt)
+      sp.create(n_pt)
+
+      ! Create N0
+      N0 = ZERO
+
+      ! Loop atom_a
+      do atom_a = 1,.n_atom
+
+         fsa = .first_shell_for_atom(atom_a)
+         lsa =  .last_shell_for_atom(atom_a)
+
+         ! Make shell atom displaced points
+         .atom(atom_a).make_displaced_pts(xa,ya,za,a2,pt,n_pt)
+
+         ! Atom a position
+         ra = .atom(atom_a).position
+
+         ! Loop overlapping atom_b
+         overlapping_atom = .overlapping_atoms_for_atom(atom_a).element
+         do atom_o = 1,overlapping_atom.dim
+
+            atom_b = overlapping_atom(atom_o)
+            if (atom_b>atom_a) cycle
+
+            fsb = .first_shell_for_atom(atom_b)
+            lsb = min(.last_shell_for_atom(atom_b),lsa)
+
+            ! Loop shells on atom a
+            do sa = fsa,lsa
+
+               fa = .first_basis_fn_for_shell(sa)
+               la =  .last_basis_fn_for_shell(sa)
+               na = la - fa + 1
+
+               ! Set shell for index "sa"
+               bs  = .basis_shell_for_shell(sa)
+               sha = .basis_shell1pair(bs,1).a
+               sha.position = ra
+
+               ! Make shell "sa" basis function grid and lga values
+               bf_grid0(sa).element.create(n_pt,na)
+               lga.create(n_pt)
+               sha.make_grid(bf_grid0(sa).element,n_pt,xa,ya,za,a2,lga)
+
+               ! Save the values
+               bf_lgval(sa).element = lga
+
+               ! Loop shells on atom b
+               do sb = fsb,min(lsb,sa)
+
+                  fb = .first_basis_fn_for_shell(sb)
+                  lb = .last_basis_fn_for_shell(sb)
+                  nb = lb - fb + 1
+
+                  ! Get the "sb" basis function grid
+                  lgb = bf_lgval(sb).element
+
+                  ! How many points in common?
+                  n_keep = count((lga+lgb)>=cutoff)
+                  if (n_keep==0) cycle
+
+                  ! Make significant points
+                  sp(1:n_keep) = pack([(n,n=1,n_pt)],mask=(lga+lgb)>=cutoff)
+
+                  ! Factor
+                  fac = TWO
+                  if (sa==sb) fac = ONE
+
+                  ! Density block
+                  DD = D(fa:la,fb:lb,:)
+
+                  if (na*nb==1) then
+
+                     ga0 = bf_grid0(sa)[:,1]
+                     gb0 = bf_grid0(sa)[:,1]
+                     do q = 1,n_dens
+                        Dab = fac*DD(1,1,q)
+                        do p = 1,n_keep
+                           n = sp(p)
+                           ga = ga0(n)
+                           gb = gb0(n)
+                           val = ga*gb*Dab
+                           N0(n,q) = N0(n,q) + val
+                        end
+                     end
+
+                  else
+
+                     ! Add density contribution to rho
+                     do a = 1,na
+                        ga0 = bf_grid0(sa)[:,a]
+                        do b = 1,nb
+                           gb0 = bf_grid0(sb)[:,b]
+                           do q = 1,n_dens
+                              Dab = fac*DD(a,b,q)
+                              do p = 1,n_keep
+                                 n = sp(p)
+                                 ga = ga0(n)
+                                 gb = gb0(n)
+                                 val = ga*gb*Dab
+                                 N0(n,q) = N0(n,q) + val
+                              end
+                           end
+                        end
+                     end
+
+                     ! Clean up
+
+                  end ! if ss or not ss
+               end    ! -- loop sb
+            end       ! -- loop sa
+         end          ! -- atom_b
+      end             ! -- atom_a
+
+      ! Clean up
+      sp.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      bf_grid0.destroy
+      bf_lgval.destroy
+
+   end
+
+!  ==================
+!  Spin density grids
+!  ==================
+
+   make_SD_grid(grid,pt) ::: PURE
+   ! Work out the electron spin density "grid" on "pt" using the
+   ! ".NOs" and the ".NO_occ_nos" vector. 
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt   :: MAT{REAL}, IN
+
+   ENSURE(.NOs.allocated, "no natural orbitals")
+   ENSURE(.NOs.has_any_genre, "no natural orbitals")
+
+      relativity,okind :: STR
+
+      okind = .NOs.genre
+
+      relativity = "none"
+      if (.SCF_data.allocated) then
+         relativity = .SCF_data.relativity_kind
+         if (NOT .SCF_data.PCE_CORR) relativity = "none"
+      end if
+
+      select case (relativity)
+
+      case ("none")
+         select case (okind)
+         case ("u ");  .GRID:make_ED_grid_u(density_grid,pt,sgn=-1)
+         case ("gc"); .GRID:make_ED_grid_gc(density_grid,pt,sgn=-1)
+    !    case default;   DIE("unimplemented")
+         end
+
+    ! case ("douglas-kroll-hess","dkh")
+    !    select case (okind)
+    !    case ("r ");  .GRID:make_DKH_density_grid(density_grid,pt)
+    !    case ("u ");  .GRID:make_DKH_density_grid(density_grid,pt,sgn)
+    !    case ("gc");  .GRID:make_DKH_density_grid(density_grid,pt)
+    !    case default; WARN("Unimplemented orbital kind! Sorry :(")
+    !    end
+      
+    ! case ("iotc")
+    !    select case (okind)
+    !    case ("r ");  .GRID:make_IOTC_density_grid(density_grid,pt)
+    !    case ("u ");  .GRID:make_IOTC_density_grid(density_grid,pt,sgn)
+    !    case ("gc");  .GRID:make_IOTC_density_grid(density_grid,pt)
+    !    case default; WARN("Unimplemented orbital kind! Sorry :(")
+    !    end
+      
+    ! case default; DIE("unimplemented")
+
+      end
+
+   end
+
+!  ========================
+!  CRYSTAL232 density, fast
+!  ========================
+
+   make_CRYSTAL23_ED_grid_v1(grid,pt)
+   ! Make the "grid" for the supplied points "pt" using the CRYSTAL23
+   ! density marices which have been read in.
+   ! This version from Kanghyun Chu, tested in  Matlab for NH3
+   ! 7/12/23
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pt   :: MAT{REAL}, IN
+
+   ENSURE(.crystal23.allocated , "Idiot! No crystal23 info read in!")
+   ENSURE(.crystal23.density_mx.allocated , "no crystal23 density_mx info")
+
+      psi  :: MAT{EVEC{REAL}}@
+      ind  :: MAT{EVEC{INT}}@
+      bf   :: MAT{REAL}@
+      l_ind :: MAT{INT}@
+      PSIPSI :: VEC{REAL}@
+      common, posA, posB :: VEC{INT}@
+      mask :: VEC{BIN}@
+      cm :: MAT{REAL}(3,3)
+      mt :: VEC{REAL}(3)
+      mv,lv,rv,dv :: VEC{INT}(3)
+      n_pt,n_g, s,fs,ls,ns :: INT
+      n,l,r, m,i,j, l1,l2  :: INT
+      tol :: REAL
+      sh :: SHELL1
+
+      ! Strange p basis function ordering
+      GAUSSIAN_DATA:set_CRYSTAL23_ordering(TRUE)
+
+      ! Array sizes
+      n_g  = .crystal23.n_g
+      n_pt = pt.dim1
+      tol  = exp(-20.00)
+
+      ! Unit cell matrix
+      cm = .crystal23.Primitive_unit_cell.direct_mx ! This is the unit cell written in the XML file
+
+      ! <<Kang's memo>>
+      ! The "psi" and "ind" objects should have 2+1 indices.
+      ! Former "2" dimensions have fixed sized: 
+      !            (# of basis) X (# of cells)
+      ! Last   "1" dimension has varying size:
+      !        (of # of grid points where Basis_Func(r) > tolerance) 
+      ! Sparse storage of significant b.f. values on grid 
+      ! in "psi" and corresponding indices in "ind".
+      psi.create(n_g,.n_bf)
+      ind.create(n_g,.n_bf)
+      mask.create(n_pt)
+      do m = 1,n_g
+
+         ! Left UC translational vector
+         mv = .crystal23.g_latt(:,m) ! m-th IVDL 
+         mt = matmul(cm,mv)          ! This is m-th CVDL
+
+         do s = 1,.n_shell ! s: for every shell
+            .SET:set_shell1_from(s,sh,fs,ls,ns)
+            sh.position = sh.position + mt ! either +mt or -mt
+            bf.create(n_pt,ns)  ! bf:2D array: n_pt X ns
+            sh.make_grid_s(bf,pt(:,1),pt(:,2),pt(:,3))
+            do i = fs,ls
+               mask = abs(bf(:,i-fs+1))>tol
+               psi(m,i).element = pack(bf(:,i-fs+1)  ,mask)
+               ind(m,i).element = pack([(j,j=1,n_pt)],mask)
+            end
+            bf.destroy
+         end
+      end
+
+      mask.destroy
+
+    ! stdout.text("pt:")
+    ! stdout.put(pt)
+
+      ! Values on grid & psi*psi product
+      grid = ZERO 
+      PSIPSI.create(n_pt) 
+
+      ! m-cell loop
+      do m = 1,n_g
+
+         mv = .crystal23.g_latt(:,m)
+         mt = matmul(cm,mv)          ! This is m-th CVDL
+
+         ! List of allowed pairs
+         l_ind.create(n_g,2) 
+         n = 0
+         do l = 1,n_g
+            lv = .crystal23.g_latt(:,l)
+            dv = lv + mv
+            do r = 1,n_g
+               rv = .crystal23.g_latt(:,r)
+               if (dv.same_as(rv)) then 
+                  n = n + 1
+                  l_ind(n,1) = l 
+                  l_ind(n,2) = r 
+               end
+            end 
+         end
+         l_ind.shrink(n,2)
+
+         do i = 1,.n_bf ! psi(i, cell1)
+         do j = 1,.n_bf ! psi(j, cell2)
+        
+            if (abs(.crystal23.density_mx(i,j,m)) < tol)  cycle        
+         
+            PSIPSI = ZERO 
+            ! dim: (# Grid pointd)
+            ! psi(i,m) , i:1..n_ba; m:1..n_g
+            ! ind(i,m)
+        
+            do l = 1,l_ind.dim1
+
+               l1 = l_ind(l,1)
+               l2 = l_ind(l,2)
+               VEC{INT}:common_indices_in(ind(l1,i)[:],ind(l2,j)[:],posA,posB,common)
+
+               if (common.dim>0) then
+                  ! Product for both basis functions being large
+                  PSIPSI(common) = PSIPSI(common) &
+                                 + psi(l1,i)[posA]*psi(l2,j)[posB]
+               end
+
+               posA.destroy
+               posB.destroy
+               common.destroy
+
+            end
+        
+            ! Add up signinifcant parts
+            grid = grid + .crystal23.density_mx(i,j,m) * PSIPSI
+        
+         end
+         end
+
+      end
+
+    ! stdout.text("grid:")
+    ! stdout.put(grid,by_column=TRUE)
+
+      ! Clean
+      PSIPSI.destroy
+
+   end
+
+!   make_CRYSTAL23_ED_grid(grid,pt)
+!   ! Make the "grid" for the supplied points "pt" using the CRYSTAL23
+!   ! density marices which have been read in.
+!      self :: IN
+!      grid :: VEC{REAL}, OUT
+!      pt   :: MAT{REAL}, IN
+!
+!   ENSURE(.crystal23.allocated , "no crystal23 info")
+!   ENSURE(.crystal23.density_mx.allocated , "no crystal23 density_mx info")
+!
+!      cm :: MAT{REAL}(3,3)
+!      lt,rt    :: VEC{REAL}(3)
+!      lv,rv,dv :: VEC{INT}(3)
+!      l, r, d :: INT
+!
+!      GAUSSIAN_DATA:set_CRYSTAL23_ordering(TRUE)
+!
+!      ! Unit cell matrix
+!      cm = .crystal23.Primitive_unit_cell.direct_mx ! Kang update 2024.Jun.11
+!           ! Kang's note
+!           !   crystal23's unit cell is always primitive cell
+!           !   crystal  's unit cell is crystallogrphic conventional cell   
+!
+!      ! Values on grid
+!      grid = ZERO
+!
+!      ! Left b.f. unit cell "l"
+!      ! This is translated back to the first unit cell
+!      do l = .crystal23.n_g,1,-1
+!
+!         ! Left UC translational vector
+!         lv = .crystal23.g_latt(:,l) ! l-th IVDL
+!         lt = matmul(cm,lv)          ! This is l-th CVDL
+!
+!         ! Diagonal contribution from DM^{l l}
+!         .GRID:add_ED_grid(grid, pt, .crystal23.density_mx(:,:,1), lshft=lt , rshft=lt )
+!
+!         ! Right b.f. unit cell
+!         do r = .crystal23.n_g,1,-1 ! Check from here! off-diagonal
+!                                    ! density matrix contributions xxxxxxxxxx 
+!
+!            ! Done diagonal case, above?
+!            if (r==l) cycle 
+!
+!            ! Right UC translational vector
+!            rv = .crystal23.g_latt(:,r)
+!            rt = matmul(cm,rv)         ! This is g-th CVDL
+!
+!            ! Difference between left & right cell vectors
+!            ! "d" depends on how DM^{l r}_{a b} is defined when it
+!            ! mutiplies the basis functions.
+!            dv = rv - lv 
+!            d  = .crystal23.g_latt.index_for_column(dv)
+!
+!            ! Do we have DM^d ?
+!            if (d==0) cycle
+!
+!            ! Add contribution from shifted central unit cell
+!            ! DYLAN: I think the P's are not read in correct?
+!            .GRID:add_ED_grid(grid,pt,.crystal23.density_mx(:,:,d),lshft=lt,rshft=rt)
+!
+!         end
+!
+!      end
+!
+!   end 
+
+! ==========================
+! Laplacian density routines
+! ==========================
+
+   make_laplacian_grid(Lgrid,pts) ::: PURE
+   ! Work out the electron density laplacian "Lgrid" on points "pts"
+   ! using ".natural orbitals" and  the ".NO_occ_nos" vector.
+      self  :: IN
+      Lgrid :: VEC{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(.NOs.allocated, "no natural orbitals")
+   ENSURE(.NOs.has_real_genre, "no real NOs")
+
+      select case (NO_kind)
+      case ("r "); .GRID:make_laplacian_grid_r(Lgrid,pts)
+      case ("u "); .GRID:make_laplacian_grid_u(Lgrid,pts)
+      end
+
+   end
+
+   make_laplacian_grid_r(Lgrid,pt) ::: PURE
+   ! Work out the electron density laplacian "Lgrid" on points "pts"
+   ! using ".natural orbitals" and  the ".NO_occ_nos" vector.
+      self  :: IN
+      Lgrid :: VEC{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(pt.dim2==3, "wrong dim2, pts")
+   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted real NO's")
+   ENSURE(.NO_occ_nos.r.allocated, "no rean NO occupation #'s")
+
+      O :: VEC{REAL}@
+      N :: MAT{REAL}@
+      L :: MAT{REAL}@
+      n_occ,n,n_pts :: INT
+      occ :: REAL
+
+      n_pts = pts.dim1
+      n_occ = .INQ:no_of_occupied_NOs
+
+      O.create(n_pt)
+      N.create(n_pt,3)
+      L.create(n_pt,3)
+
+      Lgrid = ZERO
+
+      parallel do i = 1,n_occ
+
+         .:make_laplacian_orbital_grid_r(L,N,O,.NOs.r(:,i),pts)
+
+         occ = .NO_occ_nos.r(i)
+
+         Lgrid = Lgrid  &
+               + occ * ( O(:)*(L(:,1)+L(:,2)+L(:,3)) & 
+               + N(:,1)*N(:,1) & + N(:,2)*N(:,2) & + N(:,3)*N(:,3) )
+
+      end
+      PARALLEL_SUM(Lgrid)
+
+      Lgrid = TWO * Lgrid
+
+      ! Clean
+      L.destroy
+      N.destroy
+      O.destroy
+
+   end
+
+   make_laplacian_grid_u(Lgrid,pts) ::: PURE
+   ! Work out the electron density laplacian "Lgrid" on points "pts"
+   ! using ".natural orbitals" and  the ".NO_occ_nos" vector.
+      self  :: IN
+      Lgrid :: VEC{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(pt.dim2==3, "wrong dim2, pts")
+   ENSURE(.NOs.is_allocated_with_genre("u"), "no unrestricted real NO's")
+   ENSURE(.NO_occ_nos.is_allocated_with_genre("u"), "no unrestricted occupation numbers")
+
+      O :: VEC{REAL}@
+      N :: MAT{REAL}@
+      L :: MAT{REAL}@
+      na,nb,n_occ,n,n_pts :: INT
+      occ :: REAL
+
+      na    = .INQ:no_of_occupied_NOs("alpha")
+      nb    = .INQ:no_of_occupied_NOs("alpha")
+      n_occ = max(na,nb)
+
+      n_pts = pts.dim1
+      O.create(n_pt)
+      N.create(n_pt,3)
+      L.create(n_pt,3)
+
+      Lgrid = ZERO
+
+      parallel do i = 1,n_occ
+
+         ! Alpha
+         .:make_laplacian_orbital_grid_r(L,N,O,.NOs.a(:,i),pts)
+         occ = .NO_occ_nos.a(i)
+         Lgrid = Lgrid  &
+               + occ * ( O(:)*(L(:,1)+L(:,2)+L(:,3)) & 
+               + N(:,1)*N(:,1) & + N(:,2)*N(:,2) & + N(:,3)*N(:,3) )
+
+         ! Beta
+         .:make_laplacian_orbital_grid_r(L,N,O,.NOs.b(:,i),pts)
+         occ = .NO_occ_nos.b(i)
+         Lgrid = Lgrid  &
+               + occ * ( O(:)*(L(:,1)+L(:,2)+L(:,3)) & 
+               + N(:,1)*N(:,1) & + N(:,2)*N(:,2) & + N(:,3)*N(:,3) )
+
+      end
+      PARALLEL_SUM(Lgrid)
+
+      Lgrid = TWO * Lgrid
+
+      ! Clean
+      L.destroy
+      N.destroy
+      O.destroy
+
+   end
+
+end
+
