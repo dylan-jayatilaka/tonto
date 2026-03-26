@@ -303,7 +303,6 @@ contains
     ! case ("make_core_structure_factors   "); .MISC:make_core_structure_factors
       case ("make_cluster_charges          "); .SCF:make_cluster_charges
     ! case ("make_dkh_density_norm         "); .REL:make_DKH_density_norm
-      case ("make_ed_between_atoms         "); .MAIN:make_ED_between_atoms
       case ("make_f_predicted              "); .SCF:make_F_predicted
     ! case ("make_fermi_contact_terms      "); .MISC:make_fermi_contact_terms
     ! case ("make_file_delta_density_grid  "); .MISC:make_file_delta_density_grid
@@ -332,7 +331,7 @@ contains
       case ("make_structure_factors        "); .SCF:make_X_SFs(output=TRUE)
     ! case ("make_weak_force_energy_shift  "); .MISC:make_weak_force_energy_shift
     ! case ("make_symortho_density_matrix  "); .SCF:make_group_density_matrix
-      case ("make_vanfleteren_atoms        "); .MAIN:make_Vanfleteren_atoms
+      case ("make_vanfleteren_atoms        "); .MISC:make_Vanfleteren_atoms
       case ("make_x_structure_factors      "); .SCF:make_X_SFs(output=TRUE)
       case ("move_origin                   "); .BASE:move_origin
       case ("move_origin_to_center_of_atoms"); .BASE:move_origin_to_center_of_atoms
@@ -386,6 +385,7 @@ contains
     ! case ("put_diff_coppens_slater_ints  "); .MISC:put_diff_coppens_slater_ints
     ! case ("put_diff_slater_interpolators "); .MISC:put_diff_slater_interpolators
       case ("put_dnc_displaced_geometries  "); .PROP:put_dnc_displaced_geometries
+      case ("put_ed_between_atoms          "); .MISC:put_ED_between_atoms
 !     case ("put_energies_breakdown=       "); .PROP:put_energies_breakdown 
     ! case ("put_excel_crystal             "); .PUT:put_excel_crystal
       case ("put_fitting_plots             "); .:crystal.put_fitting_plots ! <--
@@ -2137,166 +2137,6 @@ contains
      end
 
    ! .crystal.put_cluster_info
-
-   end
-
-   make_Vanfleteren_atoms 
-   ! Do it.
-      self :: INOUT
-
-   ENSURE(.MOs.allocated,"No MOs")
-   ENSURE(.MOs.r.allocated,"No restricted MOs")
-
-      S,Sc,rho,rmh :: MAT{REAL}@
-      rho_this,   rho_next   :: MAT{REAL}@
-      rho_this_A, rho_next_A :: MAT3{REAL}@
-      wgt_this_A             :: MAT3{REAL}@
-      iter, n, a,na, f,l     :: INT
-      diff :: REAL
-
-      ! No. of basis fn's
-      n = .n_bf
-
-      ! VA iterative array matrices
-      rho_next_A.create(n,n,.n_atom)
-      rho_this_A.create(n,n,.n_atom)
-      wgt_this_A.create(n,n,.n_atom)
-
-      ! Total densities
-      rho_this.create(n,n)
-      rho_next.create(n,n)
-
-      ! And zero em ...
-      rho_this_A = ZERO
-
-      ! Overlap matrices & powers
-        S.create(n,n)
-    ! Sph.create(n,n)
-    ! Smh.create(n,n)
-      rmh.create(n,n)
-
-      ! And define em ...
-      S = .overlap_mx
-    ! Sph.to_sqrt_of(S)         ! S^+1/2
-    ! Smh.to_inverse_sqrt_of(S) ! S^-1/2
-
-      ! S . MOs
-      Sc = matmul(S,.MOs.r)
-
-      ! Check
-    ! W = S
-    ! W.change_basis_using(Smh)
-    ! stdout.text("Check Smh . S . Smh :")
-    ! stdout.put(W)
-
-      ! Check
-    ! W = matmul(Sph,Smh)
-    ! stdout.text("Check Sph . Smh :")
-    ! stdout.put(W)
-
-      ! Get rho in symmetrically orthonormal basis 
-      rho = .density_mx.r
-      rho.change_basis_using(Sc)
-
-      stdout.text("rho in MO basis:")
-      stdout.put(rho)
-
-      ! Set initial rho^(i)_AA
-      rho_this_A = ZERO
-      l = 0
-      do a = 1,.atom.dim
-         f = l + 1
-         l = l +  .atom(a).basis.n_bf
-         rho_this_A(f:l,f:l,a) = .atom(a).density_mx.r
-      end
-
-      stdout.text("Transferred rho^(i)_AA in AO basis:")
-      stdout.put(rho_this_A)
-
-      ! Get rho^(i)_AA in the MO basis
-      rho_this = ZERO
-      l = 0
-      do a = 1,.atom.dim
-         ! Basis fn limits
-         na = .atom(a).basis.n_bf
-         f  = l + 1
-         l  = l + .atom(a).basis.n_bf
-         ! Initial rho^(i)_AA
-         rho_this_A(:,:,a).change_basis_using(Sc)
-         ! rho^(i) = Sum_A rho^(i)_AA ... eqn 6(a)
-         rho_this = rho_this + rho_this_A(:,:,a)
-      end
-
-      stdout.text("rho^(i)_AA in the MO basis:")
-      stdout.put(rho_this_A)
-
-      stdout.text("rho^(i) in the MO basis:")
-      stdout.put(rho_this)
-
-      ! Start iterations
-      iter = 0
-
-      do 
-
-         iter = iter + 1
-       
-         ! Overwrite new [rho^(i)]^-1/2
-         rmh.to_sqrt_of(rho_this) 
-       
-         ! Make the w_A_i ... 6b
-         wgt_this_A = ZERO
-         do a = 1,.n_atom
-            rho_this_A(:,:,a).change_basis_to(wgt_this_A(:,:,a),rmh)
-         end
-       
-         ! Update the atomic rho_A's
-         rho_next_A = ZERO
-         do a = 1,.n_atom
-            rho.change_basis_to(rho_next_A(:,:,a),wgt_this_A(:,:,a))
-         end
-       
-         ! Difference
-         diff = maxval(abs(rho_next_A-rho_this_A))
-         stdout.show("Diff. between rho i+1 and rho i =",diff)
-
-         ! Converged?
-         if (diff<TOL(2) OR iter>10) exit
-
-         rho_this_A = rho_next_A
-
-      end
-
-   end
-
-   make_ED_between_atoms 
-   ! WARNING: this routine reads from stdin.
-   ! Also: the number of points must be specified in an interpolator.
-      self :: INOUT
-
-   ENSURE(.interpolator.allocated,"no interpolator")
-
-      a,b :: INT
-
-      ! Reads atoms
-      stdin.read(a)
-      stdin.read(b)
-
-      ! Make ED in .interpolator
-      .RHO:make_ED_interpolator_between_atoms(a,b)
-
-      ! Dump it
-      stdout.flush
-      stdout.text("====================")
-      stdout.text("ED between two atoms")
-      stdout.text("====================")
-      stdout.flush
-      stdout.show("Atom A = ",a)
-      stdout.show("Atom B = ",b)
-      stdout.show("n_pts  = ",.interpolator.n_data)
-      stdout.flush
-      stdout.text("ED values along A->B")
-      stdout.flush
-      .interpolator.put_gnuplot
 
    end
 
