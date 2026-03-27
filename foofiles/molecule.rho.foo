@@ -2905,10 +2905,11 @@ contains
 !  Salvador-RC atoms
 !  =================
 
-   make_Salvador_radii(radii_for) ::: leaky, PURE
-   ! Make the Salvador-Ramos-Cordoba atom radii corresponding to the
-   ! bonded neighbours. If the point is outside the range a -ve radii
-   ! is returned then it is not between those atoms, or too close.
+   make_Salvador_radii_lmin(radii_for) ::: leaky, PURE
+   ! Make the Mayer-Salvador atom radii corresponding to the bonded
+   ! neighbours. If the point is outside the range a -ve radii is
+   ! returned then it is not between those atoms, or too close.
+   ! NOTE: This version uses canned line minimisation routines.
       self :: IN
       radii_for :: VEC{EVEC{REAL}}@, OUT
 
@@ -2954,11 +2955,13 @@ contains
 
    end
 
-   make_Mayer_Salvador_radii(radii_for) ::: leaky, PURE
+   make_Salvador_radii_orig(radii_for,n_div,n_sub) ::: leaky, PURE
    ! Make the Mayer Salvador atom radii corresponding to the
    ! bonded neighbours for the Topological Fuzzy Voronoi AToms.
-      self :: IN
+      self      :: IN
       radii_for :: VEC{EVEC{REAL}}@, OUT
+      n_div     :: INT, optional, IN
+      n_sub     :: INT, optional, IN
 
    ENSURE(.atom.allocated,"no atoms")
    ENSURE(.density_mx.allocated,"no density_mx")
@@ -2984,24 +2987,30 @@ contains
          do n = 1,n_bonds
             b   = bonds_for(a)[n]
             rb  = .atom(b).position 
-            fac = .:Mayer_Salvador_radius_for(a,b)
+            fac = .:Mayer_Salvador_radius_for(a,b,n_div,n_sub)
             radii_for(a)[n] = fac*norm2(rb-ra)
          end
       end
 
    end
 
-   Mayer_Salvador_radius_for(a,b) result (res) ::: PURE
-   ! For two atoms with indices "a" abd "b" find the radius for the
-   ! atoms used in the Topological Fuzzy Voronoi atoms. The code is
-   ! accurate to 1/200-th of the internuclear separation.
-   ! NOTE: This code is extracted from APOST3D and contains the
-   ! original method from Mayer & Salvador used to define the Salvador
-   ! & Ramos-Cordoba radii. The method accounts for numerical errors
-   ! and instabilities in the internuclear density.
-      self :: IN
-      a,b  :: INT, IN
-      res  :: REAL
+   Mayer_Salvador_radius_for(a,b,n_div,n_sub) result (res) ::: PURE
+   ! Return the Mayer-Salvador radius R(a.b) for atoms "a" and "b" in
+   ! the direction a->b, used to make Topological Fuzzy Voronoi atoms.
+   ! The code is accurate to 1/2000-th of the separation R(a-b).
+   ! The code also ensures that R(a.b) + R(b.a) = R(a-b).
+   ! Options:
+   ! . "n_div" [50] is the number of divisions used to detect minima.
+   ! . "n_sub" [40] is the no. of subdivisions for refining the result.
+   ! NOTE: Code wass extracted from APOST3D and contains the original
+   ! method from Mayer & Salvador used to define the Salvador &
+   ! Ramos-Cordoba radii. The method accounts for numerical errors and
+   ! instabilities in the internuclear density and atoms too far away.
+      self  :: IN
+      a, b  :: INT, IN
+      n_div :: INT, optional, IN
+      n_sub :: INT, optional, IN
+      res   :: REAL
      
    ENSURE(a/=b,"atoms should not be the same")
 
@@ -3015,7 +3024,17 @@ contains
       k, km,kf  :: INT
       midd,maxd :: INT
       best,diff :: INT
-      is_min :: BIN
+      is_min    :: BIN
+      swap      :: BIN
+      Za, Zb    :: INT
+
+      ! Scan resolution: must be even
+      ndiv = 50   ! No. of divisions 
+      if (present(n_div)) ndiv = n_div
+
+      ! Polishing resolution: also even
+      nsub = 40   ! No. of substeps
+      if (present(n_sub)) nsub = n_sub
 
       ! Are atoms too far?
       ra = .atom(a).position
@@ -3025,8 +3044,24 @@ contains
          return
       end
 
+      ! Ensure a has *smaller* atomic number.
+      ! Or if equal, index a is less than b.
+      ! This ensures R(a.b) + R(b.a) = R(a-b)
+      Za = .atom(a).atomic_number
+      Zb = .atom(b).atomic_number
+      swap = FALSE
+      if      (Za>Zb         ) then; swap = TRUE
+      else if (Za==Zb AND a>b) then; swap = TRUE
+      end
+
+      ! Swap positions
+      if (swap) then
+         rc = ra
+         ra = rb
+         rb = rc
+      end
+
       ! ED, min & max locations
-      ndiv = 50           ! Resolution: must be even
        rho.create(ndiv+1) ! Note +1
       kmin.create(ndiv)   ! idx of k-th min
       kmax.create(ndiv)   ! idx of k-th max
@@ -3117,7 +3152,6 @@ contains
       del  = (rb-ra)*step    ! Step vector
       rc   = ra + (km-2)*del ! km-1 is the extrema
       rd   = ra + (km  )*del ! *Two* steps ahead
-      nsub = 40              ! No. of substeps
       subs = TWO*step/nsub   ! Substep size, over 2 steps
 
       ! ED from rc->rd at nsub+1 points 
@@ -3139,9 +3173,9 @@ contains
       
       ! Steps from ra
       res = (km-2)*step + (kf-1)*subs
+      if (swap) res = ONE - res
 
    ENSURE(res>0.1 AND res<0.9,"Too close to nuclei!")
-   
 
    end
 
