@@ -22,7 +22,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # Install where?
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
-# Tonto speicifics
+# Tonto specifics
 set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets 
     CACHE PATH "Basis sets directory")
 
@@ -46,6 +46,10 @@ endif()
 
 # Testing?
 enable_testing()
+
+# BLAS
+#set(BLA_VENDOR NVPL)
+#set(BLA_VENDOR OpenBLAS)
 
 # LAPACK
 string(TOUPPER "${CMAKE_BUILD_TYPE}" TEMP)
@@ -73,6 +77,7 @@ else()
   endif()
 endif()
 
+# MPI
 if(MPI)
     message(STATUS "Building with MPI enabled")
     if(MSMPI)
