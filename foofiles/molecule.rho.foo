@@ -249,7 +249,7 @@ contains
    ENSURE(pts.dim2==3,  "wrong dim2, pts")
    ENSURE(.density_mx.is_allocated_with_genre("r "), "no restricted density_mx")
 
-      .:make_ED_grid_r_v2(grid,pts,.density_mx.r,TOL(9))
+      .:make_ED_grid_r_v2(grid,pts,.density_mx.r)
 
    end
 
@@ -262,7 +262,7 @@ contains
       grid :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
       DM   :: MAT{REAL}, IN
-      tol  :: REAL, IN
+      tol  :: REAL, optional, IN
 
    ENSURE(grid.dim==pts.dim1, "inconsistent dim1, grid & pts")
    ENSURE(pts.dim2==3,    "wrong dim2, pt")
@@ -275,8 +275,12 @@ contains
       bf   :: MAT{REAL}@
       same,pi,pj :: VEC{INT}@
       n_pts, s,fs,ls,ns, i,j :: INT
-      Dij :: REAL
-      sh  :: SHELL1
+      sh   :: SHELL1
+      Dij  :: REAL
+      eps  :: REAL
+
+      eps = TOL(9)
+      if (present(tol)) eps = tol
 
       ! Zero
       grid = ZERO
@@ -295,7 +299,7 @@ contains
          sh.make_grid(bf,pts(:,1),pts(:,2),pts(:,3))
          ! Basis fn. "i"
          do i = fs,ls
-            mask = abs(bf(:,i-fs+1))>tol
+            mask = abs(bf(:,i-fs+1))>eps
             ! Store large values for each b.f.
             psi(i).element = pack(bf(:,i-fs+1)  ,mask)
             ind(i).element = pack([(j,j=1,n_pts)],mask)
@@ -312,7 +316,7 @@ contains
          Dij = DM(i,j)
          if (j<i) Dij = Dij + Dij
          ! DM value large enough?
-         if (abs(Dij)>tol) then
+         if (abs(Dij)>eps) then
             VEC{INT}:common_indices_in(ind(i)[:],ind(j)[:],pi,pj,same)
             ! Common indices?
             if (same.dim>0) then
@@ -462,7 +466,7 @@ contains
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
    ENSURE(.becke_grid.allocated,"no becke_grid")
-   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms_for_atom")
 
       bf_lgval :: VEC{EVEC{INT}}@
       bf_grid0 :: VEC{EMAT{REAL}}@
@@ -1142,7 +1146,7 @@ contains
       .becke_grid.set_grid_data
 
       ! ALWAYS make the overlapping atom lists
-      .SET:set_overlapping_atoms
+      .SET:set_overlapping_atoms_for_atom
 
    end
 
@@ -2468,6 +2472,30 @@ contains
 
    end
 
+   promolecule_ED_at_point(pt) result (res) ::: PURE
+   ! Return promolecule ED at a point "pt".
+      self :: IN
+      pt   :: VEC{REAL}(3), IN
+      res  :: REAL
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      grid :: VEC{REAL}(1)
+      a :: INT
+
+      ! Sum up the atom grid values
+      res = ZERO
+      parallel do a = 1,.n_atom
+         .atom(a).make_ED_grid(grid,reshape(pt,[1,3]))
+         res = res + grid(1)
+      end
+
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(res)
+      end
+
+   end
+
 !  =================
 !  Salvador-RC atoms
 !  =================
@@ -2477,7 +2505,6 @@ contains
       self :: INOUT
 
    ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii: make them!")
 
       .atom.make_Salvador_neighbours(.Salvador_bonds_for)
        .RHO:make_Salvador_radii_orig(.Salvador_radii_for)
@@ -2715,7 +2742,6 @@ contains
       self :: INOUT
 
    ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii: make them!")
 
       .atom.make_Salvador_neighbours(.Salvador_bonds_for)
        .RHO:make_Salvador_radii_lmin(.Salvador_radii_for)
@@ -2727,7 +2753,7 @@ contains
    ! neighbours. If the point is outside the range a -ve radii is
    ! returned then it is not between those atoms, or too close.
    ! NOTE: This version uses canned line minimisation routines.
-      self :: IN
+      self      :: IN
       radii_for :: VEC{EVEC{REAL}}@, OUT
 
    ENSURE(.atom.allocated,"no atoms")
@@ -2769,6 +2795,76 @@ contains
           ! print *,"a=",a,"c=",c,"L=",L,"r=",r
          end
       end
+
+   end
+
+   make_Salvador_radii_pro(radii_for) ::: leaky, PURE
+   ! Make the Mayer-Salvador atom radii corresponding to the bonded
+   ! neighbours. If the point is outside the range a -ve radii is
+   ! returned then it is not between those atoms, or too close.
+   ! NOTE: This version uses canned line minimisation routines.
+   ! NOTE: ****This version for the promolecule density****
+      self      :: IN
+      radii_for :: VEC{EVEC{REAL}}@, OUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.density_mx.allocated,"no density_mx")
+   ENSURE(.density_mx.r.allocated,"no restricted density_mx")
+
+      bonds_for :: VEC{EVEC{INT}}@
+
+      n_bonds :: INT
+      a,b,c   :: INT
+      ra, rc  :: VEC{REAL}(3)
+      r1, r2  :: VEC{REAL}(3)
+      rac,dir :: VEC{REAL}(3)
+      E1,L,EDmin,r :: REAL
+
+      .atom.make_Salvador_neighbours(bonds_for)
+
+      ! Create radii table
+      radii_for.create(.atom.dim)
+
+      ! Atom a
+      do a = 1,.atom.dim
+         n_bonds = bonds_for(a).element.dim
+         radii_for(a).element.create(n_bonds)
+         ra = .atom(a).position
+         ! Bonded atom c
+         do b = 1,n_bonds
+            c   = bonds_for(a)[b]
+            rc  = .atom(c).position 
+            rac = rc - ra
+            r1  = ra 
+            r2  = ra + HALF*rac
+            dir = r2 - r1  ! search direction
+            E1  = .:promolecule_ED_at_point(r1)
+            VEC{REAL}:min_line(self,promolecule_ED_at_point,r1,dir,EDmin,TOL(4),E1,L)
+            r = norm2(dir*L)
+            if (L<0.05 OR L>1.95) r = -BOHR_PER_ANGSTROM
+            radii_for(a)[b] = r
+          ! print *,"a=",a,"c=",c,"L=",L,"r=",r
+         end
+      end
+
+   end
+
+   put_Salvador_radii
+   ! Put the Salvador & Ramos-Cordoba radii for each atom.
+      self :: IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii: make them!")
+   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds: make them!")
+
+      radii_pro :: VEC{EVEC{REAL}}@
+
+     ! .atom.make_Salvador_neighbours(bonds_for)
+     ! .RHO:make_Salvador_radii_orig(radii_for)
+     ! .RHO:make_Salvador_radii_orig(radii_for,50,400)
+      .RHO:make_Salvador_radii_pro(radii_pro)
+      .atom.put_Salvador_radii_table(.Salvador_bonds_for,.Salvador_radii_for,radii_pro)
+      radii_pro.destroy
 
    end
 
