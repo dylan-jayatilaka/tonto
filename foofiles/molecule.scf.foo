@@ -37,6 +37,7 @@ contains
    ! (1) DFT grid information
    ! (2) ANO's and ANO interpolator grid information
    ! (3) Assign NO's to MO's
+   ! (4) Make HA atomiuc moments, always
    ! NOTE: this procedure is in .SCF because a molecular SCF
    ! is done for each atom. We could change this by making
    ! atom-specific SCF routines ... that would be nicer.
@@ -64,13 +65,17 @@ contains
       ! Assign NO's to MO's for density evaluation
       if (.MOs.allocated) .BASE:assign_NOs_to_MOs
 
+      ! Make Hirshfeld atom moments
+      .:make_r_HA_moments(output=TRUE)
+
    end
 
-!  Needed for core-matrix-cluster-of-charges method
-
-   make_r_HA_info(spin,output) ::: leaky
-   ! Make the Hirshfeld atom properties
-      self :: INOUT
+   make_r_HA_moments(spin,output) ::: leaky
+   ! Make the restricted Hirshfeld atom properties
+   ! NOTE: the charges & dipolse are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+      self   :: INOUT
       spin   :: BIN, optional, IN
       output :: BIN, optional, IN
 
@@ -79,12 +84,14 @@ contains
    ENSURE(.INQ:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_HA_inputs?")
    ENSURE(.density_mx.allocated,"no density matrix")
 
-      pt,D :: MAT{REAL}@
-      wt,N0,r1,r2,r3 :: VEC{REAL}@
-      q,n_e,c1,c2,c3 :: REAL
-      dipole :: VEC{REAL}(3)
-      quadru :: MAT{REAL}(3,3)
-      spn,out :: BIN
+      pt, DM   :: MAT{REAL}@
+      wt, N0   :: VEC{REAL}@
+      r1,r2,r3 :: VEC{REAL}@
+      c1,c2,c3 :: REAL
+      q, n_e   :: REAL
+      dipole   :: VEC{REAL}(3)
+      quadru   :: MAT{REAL}(3,3)
+      spn, out :: BIN
       c :: INT
 
       spn = FALSE
@@ -93,15 +100,10 @@ contains
       out = TRUE
       if (present(output)) out = output
 
-      ! If no density in memory get from disk
-    ! if (.density_mx.deallocated) then
-    !    .:read_or_make_SCF_DM
-    ! end
-
       ! Make the AO density matrix
-      D.create(.n_bf,.n_bf)
-      if (spn) then; .BASE:make_r_Sz_density_mx(D)
-      else;          .BASE:make_r_density_mx(D)
+      DM.create(.n_bf,.n_bf)
+      if (spn) then; .BASE:make_r_Sz_density_mx(DM)
+      else;          .BASE:make_r_density_mx(DM)
       end
 
       ! Total no of electrons (check)
@@ -113,7 +115,7 @@ contains
          if (.atom(c).atomic_number<1) cycle
 
          ! Get Hirshfeld density N0 for atom "c"
-         .RHO:make_Hirshfeld_rho_grid(N0,pt,wt,c,D)
+         .RHO:make_Hirshfeld_rho_grid(N0,pt,wt,c,DM)
 
          ! Integration points
          r1 = pt(:,1)
@@ -155,18 +157,19 @@ contains
          .atom(c).set_quadrupole(quadru)
 
          ! Clean up
-         wt.destroy; pt.destroy
+         wt.destroy
+         pt.destroy
          N0.destroy
 
       end ! -- integration atom c
 
       ! Clean up
-      D.destroy
+      DM.destroy
 
       ! Check integration accuracy
       if (out) then
       stdout.flush
-      stdout.text("Making Hirshfeld atom info ...")
+      stdout.text("Making Hirshfeld atom moments ...")
       stdout.flush
       stdout.show("Check: no. of electrons =",n_e)
       end
@@ -374,7 +377,6 @@ contains
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
 
       ! Get atomic form factors
-    ! .:make_HA_inputs(skip_NOs=TRUE)
       .RHO:get_Hirshfeld_atom_FFs_disk
 
       ! Make F_pred & chi2
@@ -393,7 +395,6 @@ contains
       ff :: MAT{CPX}@
 
       ! Get atomic form factors
-    ! .:make_HA_inputs(skip_NOs=TRUE)
       .RHO:get_Hirshfeld_atom_FFs_v1(ff)
 
       ! Make F_pred & chi2
@@ -520,7 +521,6 @@ contains
 !      ff :: MAT{CPX}@
 !
 !      ! Get atomic spin form factors
-!    ! .:make_HA_inputs(skip_NOs=TRUE)
 !      .RHO:get_Hirshfeld_atom_FFs_v1(ff,spin_density=TRUE)
 !
 !      ! Make F_pred & chi2
@@ -541,7 +541,6 @@ contains
 !   ENSURE(.SCF_data.allocated, "no SCF_data")
 !
 !      ! Get atomic spin form factors
-!    ! .:make_HA_inputs(skip_NOs=TRUE)
 !      .RHO:get_Hirshfeld_atom_FFs_v1(spin_density=TRUE)
 !
 !      ! Make F_pred & chi2
@@ -774,7 +773,6 @@ contains
          if (NOT .HA_info_made) then
             ENSURE(.crystal.allocated,"no crystal")
             .:make_HA_inputs
-            .:make_r_HA_info(output=FALSE)
          end
          Z.create(.n_bf,.n_bf)
          .:make_cluster_charge_mx(Z) ! leaky
@@ -785,7 +783,6 @@ contains
          if (NOT .HA_info_made) then
             ENSURE(.crystal.allocated,"no crystal")
             .:make_HA_inputs ! NOT PURE
-            .:make_r_HA_info(output=FALSE)
          end
          Z.create(.n_bf,.n_bf)
          .:make_Lorentz_core(Z)
@@ -1136,7 +1133,7 @@ contains
       n_charges :: INT
 
       ! Make Hirshfeld charges
-      .:make_r_HA_info
+      .:make_r_HA_moments
 
       ! Set up the cluster ... leaky
       .SCF_data.cluster.destroy
@@ -1190,7 +1187,9 @@ contains
 
       charge  :: VEC{REAL}@
       Z_c,pos :: MAT{REAL}@
-      n_charges,q,c,fa,la,na,fb,lb,nb :: INT
+      n_charges,q,c :: INT
+      fa,la,na :: INT
+      fb,lb,nb :: INT
       q_c :: REAL
       sh :: SHELL2
 
