@@ -62,29 +62,6 @@ contains
 !  Axis change and origin shift
 !  ============================
 
-!   change_to_principal_axes ::: PURE
-!   ! Move the origin to the center of mass and change to the principal axis
-!   ! coordinate system
-!      self :: INOUT
-!
-!   ENSURE(.atom.allocated,"atom list required")
-!
-!      .atom.change_to_principal_axes
-!
-!   end
-
-!   change_to_principal_top_axes ::: PURE
-!   ! Move the origin to the center of mass and change to the principal axis
-!   ! coordinate system, where the symmetric top axis is the z axis and where the
-!   ! determinant of the axes transformation is 1.
-!      self :: INOUT
-!
-!   ENSURE(.atom.allocated,"atom list required")
-!
-!      .atom.change_to_principal_top_axes
-!
-!   end
-
    move_origin_to_center_of_mass
    ! Move the origin to the center of mass
       self :: INOUT
@@ -165,8 +142,6 @@ contains
 
    end
 
-! Below does not work ... but it does with lower cutoff
-
 !  ========================
 !  Contraction Coefficients
 !  ========================
@@ -232,368 +207,6 @@ contains
       end
 
       .basis.unnormalize
-
-   end
-
-!  ========================
-!  AIM2000/Morphy interface
-!  ========================
-
-! Can we get rid of these beow, from this module? --dylan
-! The don't fit in PUT
-
-   put_morphy98_wfn_file ::: leaky
-   ! Write a morphy98 .wfn file
-      self :: IN
-
-   ENSURE(.NO_occ_nos.is_allocated_with_genre("r "), "No occupation numbers")
-   ENSURE(  .MO_energies.is_allocated_with_genre("r "), "No orbital energies")
-   ENSURE(.MOs.is_allocated_with_genre("r "), "No orbitals")
-
-      name :: STR
-      wfnfile :: TEXTFILE@
-      lvec :: VEC{INT}@
-      evec :: VEC{REAL}@
-      dmatrix, cc :: MAT{REAL}@
-      sh :: SHELL@
-      i, j, pcount, n_orbitals, a, l, atomn, shelln :: INT
-      n_vars_format :: STR, parameter = "(A8, 10X, I5, 15X, I5, 15X, I5, 17X)"
-      atom_format :: STR, parameter = "(A5, I3, '    (CENTRE', 1I3, ') ', 3F12.8, '          ', F5.1)"
-      c_assignment_format :: STR, parameter = "('CENTRE ASSIGNMENTS  ', 20I3)"
-      t_assignment_format :: STR, parameter = "('TYPE ASSIGNMENTS    ', 20I3)"
-      exponent_format :: STR, parameter = "('EXPONENTS ', 5D14.7)"
-      mol_title_format :: STR, parameter = "(1A4, I3, 1A30, F12.8, 1A15, F12.8)"
-      coefficient_format :: STR, parameter = "(5D16.8)"
-      e_v_format :: STR, parameter = "(' THE HF ENERGY = ', F20.12, ' THE VIRIAL(-V/T)=', F13.8)"
-
-      name = .name
-      if (NOT stdin.buffer.exhausted) stdin.read(name)
-
-      wfnfile.create(trim(name)//".wfn")
-      wfnfile.open_for("write")
-       
-      if (IO_IS_ALLOWED) then
-
-         if (mod(.n_e, 2)==0) then
-            n_orbitals = .n_e / 2
-         else
-            n_orbitals = (.n_e + 1) / 2
-         end
-       
-         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
-         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
-         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
-       
-         pcount = 1
-         lvec.create(.n_prim)
-         evec.create(.n_prim)
-
-         do a = 1, .n_shell
-
-           atomn  = .atom_for_shell(a)
-           shelln = .atom_shell_for_shell(a)
-           sh     = .atom(atomn).basis.shell(shelln)
-           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
-           do j = 1, sh.n_cc
-             if (sh.l==3) then
-               lvec(pcount  ) = l + 1
-               lvec(pcount+1) = l + 2
-               lvec(pcount+2) = l + 3
-               lvec(pcount+3) = l + 4
-               lvec(pcount+4) = l + 5
-               lvec(pcount+5) = l + 7
-               lvec(pcount+6) = l + 6
-               lvec(pcount+7) = l + 8
-               lvec(pcount+8) = l + 9
-               lvec(pcount+9) = l + 10
-               do i = 1, sh.n_comp
-                 evec(pcount) = sh.exponent(j)
-                 pcount = pcount + 1
-               end
-             else
-               do i = 1, sh.n_comp
-                 evec(pcount) = sh.exponent(j)
-                 lvec(pcount) = l + i
-                 pcount = pcount + 1
-               end
-             end
-           end
-         end
-       
-         write(unit=wfnfile.unit, fmt=t_assignment_format) lvec
-         write(unit=wfnfile.unit, fmt=exponent_format) evec
-       
-         lvec.destroy
-         evec.destroy
-       
-         dmatrix.create(.n_prim, .n_bf)
-         cc.create(.n_prim, .n_bf)
-       
-         .BASE:make_contraction_mx(cc)
-       
-         dmatrix.to_product_of(cc,.MOs.r)
-       
-         do i = 1, n_orbitals
-            write(unit=wfnfile.unit, fmt=mol_title_format) &
-               "MO  ", i, &
-               "OCC NO = ", .NO_occ_nos.r(i), &
-               " ORB. ENERGY = ", .MO_energies.r(i)
-            write(unit=wfnfile.unit, fmt=coefficient_format) dmatrix(:, i)
-         end
-       
-         write(unit=wfnfile.unit, fmt="(1A8)") "END DATA"
-         if (.SCF_data.allocated) then
-         write(unit=wfnfile.unit, fmt=e_v_format) .SCF_data.energy, TWO
-         else
-         write(unit=wfnfile.unit, fmt=e_v_format) ZERO, TWO
-         end
-       
-         ! Clean
-         cc.destroy
-         dmatrix.destroy
-
-      end
-
-      wfnfile.close
-      wfnfile.destroy
-
-   end
-
-   put_aim2000_wfn_file ::: leaky
-   ! Writes a proaim2000 .wfn file
-      self :: IN
-
-   ENSURE(.MO_energies.is_allocated_with_genre("r "), "No orbital energies")
-   ENSURE(.MOs.is_allocated_with_genre("r "), "No orbitals")
-
-      name :: STR
-      wfnfile :: TEXTFILE@
-      lvec :: VEC{INT}@
-      evec :: VEC{REAL}@
-      dmatrix, cc :: MAT{REAL}@
-      i, j, pcount, n_orbitals, a, l, atomn, shelln :: INT
-      sh :: SHELL@
-      occ :: REAL
-
-      n_vars_format :: STR, parameter = "(A8, 10X, I5,' MOL ORBITALS', I7,' PRIMITIVES', I9,' NUCLEI')"
-      atom_format :: STR, parameter = "(A5, I3, '    (CENTRE', 1I3, ') ', 3F12.8, '  CHARGE =', F5.1)"
-      c_assignment_format :: STR, parameter = "('CENTRE ASSIGNMENTS  ', 20I3)"
-      t_assignment_format :: STR, parameter = "('TYPE ASSIGNMENTS    ', 20I3)"
-      exponent_format :: STR, parameter = "('EXPONENTS ', 5D14.7)"
-      mol_title_format :: STR, parameter = "('MO  ', I3,'    MO 0.0        OCC NO =',F13.7,'  ORB. ENERGY =',F12.7)"
-      coefficient_format :: STR, parameter = "(5D16.8)"
-      e_v_format :: STR, parameter = "(' THE HF ENERGY = ', F20.12, ' THE VIRIAL(-V/T)=', F13.8)"
-
-      name = .name
-      if (NOT stdin.buffer.exhausted) stdin.read(name)
-
-      wfnfile.create(trim(name)//".wfn")
-      wfnfile.open_for("write")
-
-      if (IO_IS_ALLOWED) then
-       
-         if (mod(.n_e, 2)==0) then
-            n_orbitals = .n_e / 2
-         else
-            n_orbitals = (.n_e + 1) / 2
-         end
-       
-         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
-         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
-         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
-       
-         pcount = 1
-         lvec.create(.n_prim)
-         evec.create(.n_prim)
-
-         do a = 1, .n_shell
-           atomn  = .atom_for_shell(a)
-           shelln = .atom_shell_for_shell(a)
-           sh     = .atom(atomn).basis.shell(shelln)
-           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
-           do j = 1, sh.n_cc
-             if (sh.l==3) then
-               lvec(pcount  ) = l + 1
-               lvec(pcount+1) = l + 2
-               lvec(pcount+2) = l + 3
-               lvec(pcount+3) = l + 4
-               lvec(pcount+4) = l + 5
-               lvec(pcount+5) = l + 7
-               lvec(pcount+6) = l + 6
-               lvec(pcount+7) = l + 8
-               lvec(pcount+8) = l + 9
-               lvec(pcount+9) = l + 10
-               do i = 1, sh.n_comp
-                 evec(pcount) = sh.exponent(j)
-                 pcount = pcount + 1
-               end
-             else
-               do i = 1, sh.n_comp
-                 evec(pcount) = sh.exponent(j)
-                 lvec(pcount) = l + i
-                 pcount = pcount + 1
-               end
-             end
-           end
-         end
-       
-         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
-         write(unit = wfnfile.unit, fmt = exponent_format) evec
-       
-         lvec.destroy
-         evec.destroy
-       
-         dmatrix.create(.n_prim, .n_bf)
-         cc.create(.n_prim, .n_bf)
-       
-         .BASE:make_contraction_mx(cc)
-       
-         dmatrix.to_product_of(cc,.MOs.r)
-       
-         do i = 1, n_orbitals
-            occ = ZERO
-            if (i<=.n_a) occ = TWO
-            write(unit=wfnfile.unit, fmt=mol_title_format) &
-               i, occ, .MO_energies.r(i)
-            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
-         end
-       
-         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
-         if (.SCF_data.allocated) then
-         write(unit = wfnfile.unit, fmt = e_v_format) .SCF_data.energy, 2.0D00
-         else
-         write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
-         end
-       
-         ! Clean
-         cc.destroy
-         dmatrix.destroy
-      end
-
-      wfnfile.close
-      wfnfile.destroy
-
-   end
-
-   put_florian_wfn_file(with_lambda)
-   ! Writes a full wavefunction .ffn file
-      self :: IN
-      with_lambda :: BIN, optional, IN
-
-   ENSURE(.MO_energies.is_allocated_with_genre("r "), "No orbital energies")
-   ENSURE(.MOs.is_allocated_with_genre("r "), "No orbitals")
-
-      name :: STR
-      wfnfile :: TEXTFILE@
-      lvec :: VEC{INT}@
-      evec :: VEC{REAL}@
-      dmatrix, cc :: MAT{REAL}@
-      sh :: SHELL@
-      i, j, pcount, a, l, atomn, shelln :: INT
-      occ :: REAL
-      avec_lambda :: BIN
-
-      n_vars_format :: STR, parameter = "(A8, 10X, I5,' MOL ORBITALS', I7,' PRIMITIVES', I9,' NUCLEI')"
-      atom_format :: STR, parameter = "(A5, I3, '    (CENTRE', 1I3, ') ', 3F12.8, '  CHARGE =', F5.1)"
-      c_assignment_format :: STR, parameter = "('CENTRE ASSIGNMENTS  ', 20I3)"
-      t_assignment_format :: STR, parameter = "('TYPE ASSIGNMENTS    ', 20I3)"
-      exponent_format :: STR, parameter = "('EXPONENTS ', 5D14.7)"
-      mol_title_format :: STR, parameter = "('MO ', I4,'    MO 0.0        OCC NO =',F13.7,'  ORB. ENERGY =',F12.7)"
-      coefficient_format :: STR, parameter = "(5D16.8)"
-      e_v_format :: STR, parameter = "(' THE HF ENERGY = ', F20.12, ' THE VIRIAL(-V/T)=', F13.8)"
-
-      avec_lambda = FALSE
-      if (present(with_lambda)) avec_lambda = with_lambda
-
-      name = .name
-      if (NOT stdin.buffer.exhausted) stdin.read(name)
-
-      if (avec_lambda) then
-        wfnfile.create(trim(name)//",lambda="//trim(.SCF_data.lambda.to_str("f9.6"))//".ffn")
-      else
-        wfnfile.create(trim(name)//".ffn")
-      end
-      
-      wfnfile.open_for("write")
-      if (IO_IS_ALLOWED) then
-         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
-         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", .n_bf, .n_prim, .n_atom
-         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
-            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
-         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
-
-         pcount = 1
-         lvec.create(.n_prim)
-         evec.create(.n_prim)
-         do a = 1, .n_shell
-           atomn  = .atom_for_shell(a)
-           shelln = .atom_shell_for_shell(a)
-           sh     = .atom(atomn).basis.shell(shelln)
-           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
-           do j = 1, sh.n_cc
-             if (sh.l==3) then
-               lvec(pcount  ) = l + 1
-               lvec(pcount+1) = l + 2
-               lvec(pcount+2) = l + 3
-               lvec(pcount+3) = l + 4
-               lvec(pcount+4) = l + 5
-               lvec(pcount+5) = l + 7
-               lvec(pcount+6) = l + 6
-               lvec(pcount+7) = l + 8
-               lvec(pcount+8) = l + 9
-               lvec(pcount+9) = l + 10
-               do i = 1, sh.n_comp
-                 evec(pcount) = sh.exponent(j)
-                 pcount = pcount + 1
-               end
-             else
-               do i = 1, sh.n_comp
-                 evec(pcount) = sh.exponent(j)
-                 lvec(pcount) = l + i
-                 pcount = pcount + 1
-               end
-             end
-           end
-         end
-       
-         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
-         write(unit = wfnfile.unit, fmt = exponent_format) evec
-       
-         lvec.destroy
-         evec.destroy
-       
-         dmatrix.create(.n_prim, .n_bf)
-         cc.create(.n_prim, .n_bf)
-       
-         .BASE:make_contraction_mx(cc)
-       
-         dmatrix.to_product_of(cc,.MOs.r)
-       
-         do i = 1, .n_bf
-            occ = ZERO
-            if (i<=.n_a) occ = TWO
-            write(unit=wfnfile.unit, fmt=mol_title_format) &
-               i, occ, .MO_energies.r(i)
-            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
-         end
-       
-         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
-         if (.SCF_data.allocated) then
-            write(unit = wfnfile.unit, fmt = e_v_format) .SCF_data.energy, 2.0D00
-         else
-            write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
-         end
-       
-         ! Clean
-         cc.destroy
-         dmatrix.destroy
-      end
-      wfnfile.close
-      wfnfile.destroy
 
    end
 
@@ -902,21 +515,6 @@ contains
       end
 
    end
-
-!   make_S_g(S)
-!   ! Make the 2x.n_bf sizes AO overlap matrix
-!      self :: IN
-!      S :: MAT{REAL}, OUT
-!
-!   ENSURE(.overlap_mx.allocated, "NO overlap_mx!")
-!
-!      S = ZERO
-!
-!      ! Make S in the SAO asis 
-!      S.set_aa_block_to(.overlap_mx)
-!        S.set_bb_block_to(.overlap_mx)
-!
-!   end
 
    make_finite_T_density_mx(D,MO,F,T,n_e) ::: selfless
    ! Make the finite temperature density matrix "D" from molecular
@@ -1566,7 +1164,7 @@ contains
 
       ! Determine (or guess) the genre of density matrix to be made
       if (.SCF_data.allocated) then; genre = .SCF_data.spinorbital_genre
-      else;                         genre = .MOs.genre
+      else;                          genre = .MOs.genre
       end
 
       ! Copy existing density matrix
@@ -1724,15 +1322,17 @@ contains
       res :: REAL
 
    ENSURE(X.is_square,"X operator matrix is not square")
+   ENSURE(.density_mx.allocated,"no density_mx")
+   ENSURE(.density_mx.has_any_genre,"no density_mx genre")
 
-      orb_kind :: STR
+      genre :: STR
       W :: MAT{REAL}@
 
       res = ZERO
 
-      orb_kind = .density_mx.genre
+      genre = .density_mx.genre
 
-      select case (orb_kind)
+      select case (genre)
 
       case ("r ")
          ENSURE(X.dim1==.n_bf,"(rhf) wrong size, X")
@@ -1814,17 +1414,6 @@ contains
 !  Cluster generation routines
 !  ===========================
 
-   destroy_cluster ::: leaky, PURE
-   ! Destroy a molecule created by the "create_cluster" routine, 
-   ! and recover the original molecule from .saved
-      self :: allocatable, INOUT
-
-   ENSURE(.saved.allocated,"no crystal data")
-
-      .SET:unsave
-
-   end
-
    create_cluster ::: leaky
    ! Create a new "self" by generating a cluster from information
    ! stored in .cluster.  The original molecule replaced by the
@@ -1884,6 +1473,17 @@ contains
 
       ! Redo crystal.atoms
       .crystal.update_fragment_info(.atom)
+
+   end
+
+   destroy_cluster ::: leaky, PURE
+   ! Destroy a molecule created by the "create_cluster" routine, 
+   ! and recover the original molecule from .saved
+      self :: allocatable, INOUT
+
+   ENSURE(.saved.allocated,"no crystal data")
+
+      .SET:unsave
 
    end
 
