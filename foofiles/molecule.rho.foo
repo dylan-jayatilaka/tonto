@@ -2686,10 +2686,11 @@ contains
 !  Salvador-RC atoms
 !  =================
 
-   make_Salvador_info ::: leaky
+   make_Salvador_info(output) ::: leaky
    ! Set up the Salvador neighbors & radii. 
    ! Put them into a beck_grid ready for integration.
-      self         :: INOUT
+      self   :: INOUT
+      output :: BIN, optional, IN
 
    ENSURE(.atom.allocated,"no atoms")
    ENSURE(.basis_info_made,"no basis info")
@@ -2704,122 +2705,7 @@ contains
       .:make_Salvador_radii
 
       ! Make Salvador moments
-    ! .:make_r_Salvador_moments(output=output)
-
-   end
-
-   make_r_Salvador_moments(spin,output) ::: leaky
-   ! Make the restricted Salvador atom moments.
-   ! NOTE: the charges & dipoles are set for every .atom,
-   !       then propagated to .asymmetric_unit_atoms.
-   !       Needed for core-matrix-cluster-of-charges method
-   ! NOTE: Moments aren't printed, but total no. of electrons
-   !       is printed as a check unless supressed via "output".
-      self   :: INOUT
-      spin   :: BIN, optional, IN
-      output :: BIN, optional, IN
-
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.allocated,  "no atom list")
-   ENSURE(.INQ:DFT_grid_info_made,"no becke_grid")
-   ENSURE(.INQ:has_Salvador_info,"no Salvador info")
-   ENSURE(.density_mx.allocated,"no density matrix")
-
-      pts, DM  :: MAT{REAL}@
-      wts, N0  :: VEC{REAL}@
-      r1,r2,r3 :: VEC{REAL}@
-      c1,c2,c3 :: REAL
-      q, n_e   :: REAL
-      dipole   :: VEC{REAL}(3)
-      quadru   :: MAT{REAL}(3,3)
-      spn, out :: BIN
-      c :: INT
-
-      spn = FALSE
-      if (present(spin)) spn = spin
-
-      out = TRUE
-      if (present(output)) out = output
-
-      ! Make the AO density matrix
-      DM.create(.n_bf,.n_bf)
-      if (spn) then; .BASE:make_r_Sz_density_mx(DM)
-      else;          .BASE:make_r_density_mx(DM)
-      end
-
-      ! Total no of electrons (check)
-      n_e = ZERO
-
-      ! Loop over atoms "c"
-      do c = 1,.n_atom
-
-         if (.atom(c).atomic_number<1) cycle
-
-         ! Get Salvador density N0 for atom "c"
-         .RHO:make_Salvador_rho_grid(N0,pts,wts,c,DM)
-
-         ! Integration points
-         r1 = pts(:,1)
-         r2 = pts(:,2)
-         r3 = pts(:,3)
-
-         ! Atom c position
-         c1 = .atom(c).position(1)
-         c2 = .atom(c).position(2)
-         c3 = .atom(c).position(3)
-
-         ! Make moments
-         q   = sum(N0)
-         n_e = n_e + q
-
-         dipole(1) = sum(N0*(r1-c1))
-         dipole(2) = sum(N0*(r2-c2))
-         dipole(3) = sum(N0*(r3-c3))
-
-         quadru(1,1) = sum(N0*(r1-c1)*(r1-c1))
-         quadru(2,2) = sum(N0*(r2-c2)*(r2-c2))
-         quadru(3,3) = sum(N0*(r3-c3)*(r3-c3))
-         quadru(1,2) = sum(N0*(r1-c1)*(r2-c2))
-         quadru(1,3) = sum(N0*(r1-c1)*(r3-c3))
-         quadru(2,3) = sum(N0*(r2-c2)*(r3-c3))
-         quadru(2,1) = quadru(1,2)
-         quadru(3,1) = quadru(1,3)
-         quadru(3,2) = quadru(2,3)
-
-
-         ! charges and moments
-         q      = -q + .atom(c).atomic_number
-         dipole = -dipole
-         quadru = -quadru
-
-         ! Assign the charges and moments
-         .atom(c).set_charge(q)
-         .atom(c).set_dipole(dipole)
-         .atom(c).set_quadrupole(quadru)
-
-         ! Clean up
-         wts.destroy
-         pts.destroy
-         N0.destroy
-
-      end ! -- integration atom c
-
-      ! Clean up
-      DM.destroy
-
-      ! Check integration accuracy
-      if (out) then
-      stdout.flush
-      stdout.text("Making Salvador atom moments ...")
-      stdout.flush
-      stdout.show("Check: no. of electrons =",n_e)
-      end
-
-      ! Put charges to asymmetric unit
-      if (.crystal.allocated) then
-         .crystal.destroy_asymmetric_unit
-         .crystal.update_fragment_info(.atom)
-      end
+      .:make_r_Salvador_moments(output=output)
 
    end
 
@@ -3235,8 +3121,54 @@ contains
 
    end
 
-   make_r_HA_moments(spin,output) ::: leaky
-   ! Make the restricted Hirshfeld atom moments.
+   make_Salvador_rho_grid(N0,pts,wts,c,DM) ::: leaky, PURE
+   ! Make a Salvador & Ramos-Cordoba -weighted electron density (ED)
+   ! grid "N0" on the pruned Becke grid ("pts","wts") for atom "c".
+   ! The ED is made using AO density matrix "DM".  Summation of N0
+   ! gives the Hirshfeld electron population for atom "c".
+   ! NOTE: Rewritten to use Kang's code.
+      self :: IN
+      N0   :: VEC{REAL}@, OUT
+      pts  :: MAT{REAL}@, OUT
+      wts  :: VEC{REAL}@, OUT
+      c    :: INT, IN
+      DM   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      cutoff :: REAL
+
+      ! Get the Becke grid for atom "c"
+      .becke_grid.make_grid(pts,wts,c)
+
+      ! Make stockholder weight function "Wc" for atom "c"
+      ! If using interpolatators, then overlapping_atoms
+      ! are not needed ... otherwise nothing is skipped
+      .becke_grid.Salvador_P_weights(wts,pts,c)
+
+      ! Prune the grid with new "wts"
+      .becke_grid.prune_grid(pts,wts)
+
+      ! Density grid for atom "c"
+      N0.create(pts.dim1)
+      cutoff = .becke_grid.basis_fn_cutoff
+      .:make_ED_grid_r_v2(N0,pts,DM,cutoff) ! Kang
+
+      ! N0 * weight for atom "c"
+      N0 = N0*wts
+
+      ! Clean
+      wts.destroy
+      pts.destroy
+
+   end
+
+   make_atomic_moments(spin,output) ::: template
+   ! Make the restricted atomic moments for some partitioning.
    ! NOTE: the charges & dipoles are set for every .atom 
    !       and then propagated to .asymmetric_unit_atoms.
    !       Needed for core-matrix-cluster-of-charges method
@@ -3281,8 +3213,8 @@ contains
 
          if (.atom(c).atomic_number<1) cycle
 
-         ! Get Hirshfeld density N0 for atom "c"
-         .RHO:make_Hirshfeld_rho_grid(N0,pts,wts,c,DM)
+         ! Get density N0 for atom "c"
+         .RHO:make_Hirshfeld?_rho_grid(N0,pts,wts,c,DM)
 
          ! Integration points
          r1 = pts(:,1)
@@ -3336,7 +3268,7 @@ contains
       ! Check integration accuracy
       if (out) then
       stdout.flush
-      stdout.text("Making Hirshfeld atom moments ...")
+      stdout.text("Making Hirshfeld? atom moments ...")
       stdout.flush
       stdout.show("Check: no. of electrons =",n_e)
       end
@@ -3349,50 +3281,22 @@ contains
 
    end
 
-   make_Salvador_rho_grid(N0,pts,wts,c,DM) ::: leaky, PURE
-   ! Make a Salvador & Ramos-Cordoba -weighted electron density (ED)
-   ! grid "N0" on the pruned Becke grid ("pts","wts") for atom "c".
-   ! The ED is made using AO density matrix "DM".  Summation of N0
-   ! gives the Hirshfeld electron population for atom "c".
-   ! NOTE: Rewritten to use Kang's code.
-      self :: IN
-      N0   :: VEC{REAL}@, OUT
-      pts  :: MAT{REAL}@, OUT
-      wts  :: VEC{REAL}@, OUT
-      c    :: INT, IN
-      DM   :: MAT{REAL}, IN
+   make_r_HA_moments(spin,output) ::: get_from(make_atomic_moments, Hirshfeld?=>Hirshfeld), leaky
+   ! Make the restricted atomic moments for some partitioning.
+   ! NOTE: the charges & dipoles are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+   ! NOTE: Moments aren't printed, but total no. of electrons
+   !       is printed as a check unless supressed via "output".
+   end
 
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.allocated,  "no atom list")
-   ENSURE(.density_mx.allocated,"no density matrix")
-   ENSURE(.becke_grid.allocated, "no becke_grid")
-   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
-
-      cutoff :: REAL
-
-      ! Get the Becke grid for atom "c"
-      .becke_grid.make_grid(pts,wts,c)
-
-      ! Make stockholder weight function "Wc" for atom "c"
-      ! If using interpolatators, then overlapping_atoms
-      ! are not needed ... otherwise nothing is skipped
-      .becke_grid.Salvador_P_weights(wts,pts,c)
-
-      ! Prune the grid with new "wts"
-      .becke_grid.prune_grid(pts,wts)
-
-      ! Density grid for atom "c"
-      N0.create(pts.dim1)
-      cutoff = .becke_grid.basis_fn_cutoff
-      .:make_ED_grid_r_v2(N0,pts,DM,cutoff) ! Kang
-
-      ! N0 * weight for atom "c"
-      N0 = N0*wts
-
-      ! Clean
-      wts.destroy
-      pts.destroy
-
+   make_r_Salvador_moments(spin,output) ::: get_from(make_atomic_moments, Hirshfeld?=>Salvador), leaky
+   ! Make the restricted atomic moments for some partitioning.
+   ! NOTE: the charges & dipoles are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+   ! NOTE: Moments aren't printed, but total no. of electrons
+   !       is printed as a check unless supressed via "output".
    end
 
 
