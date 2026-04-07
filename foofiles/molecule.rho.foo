@@ -2496,6 +2496,193 @@ contains
 
    end
 
+!  ============================
+!  Stockholder atom weight grid
+!  ============================
+
+   apply_stockholder_atom_weight(grid,a,pt) ::: PURE
+   ! Apply (i.e. multiply) "grid" by the stockholder weight function
+   ! for the atom with index "a" using supplied points "pt".
+   ! * If .use_interpolators is TRUE then interpolators are used.
+   ! * If .use_interpolators is FALSE then interpolators could still
+   !   be used if explicitly set for each atom (however the
+   !   overlapping_atoms array will not be used to eliminate work).
+   !   More likely the density will be explicitly evaluated.
+      self :: IN
+      grid :: VEC{REAL}, INOUT
+      a    :: INT, IN
+      pt   :: MAT{REAL}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
+
+      Wa :: VEC{REAL}@
+      n_pt :: INT
+
+      ! Only needed for more than one atom
+      if (.n_atom>1) then
+
+         ! Get weights
+         n_pt = pt.dim1
+         Wa.create(n_pt)
+         .:make_stockholder_atom_weight(Wa,a,pt)
+
+         ! Apply them
+         grid = grid*Wa
+
+         ! Clean
+         Wa.destroy
+
+      end
+
+   end
+
+   make_stockholder_atom_weight(grid,a,pt) ::: PURE
+   ! Apply (i.e. multiply) "grid" by the stockholder weight function
+   ! for the atom with index "a" using supplied points "pt".
+   ! * If .use_interpolators is TRUE then interpolators are used.
+   ! * If .use_interpolators is FALSE then interpolators could still
+   !   be used if explicitly set for each atom (however the
+   !   overlapping_atoms array will not be used to eliminate work).
+   !   More likely the density will be explicitly evaluated.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pt   :: MAT{REAL}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
+
+      if (.n_atom==1) then
+
+         grid = ONE
+
+      else
+
+         ! Get weights
+         if (.use_interpolators) then
+            ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+            ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+            .:make_stockholder_atom_weight_int(grid,a,pt,.overlapping_atoms_for_atom(a).element)
+         else
+            .:make_stockholder_atom_weight_acc(grid,a,pt)
+         end
+
+      end
+
+   end
+
+   make_stockholder_atom_weight_acc(grid,a,pt) ::: private, PURE
+   ! Make the Hirshfeld stockholder weight density "grid" for the atom
+   ! with index "a" using supplied points "pt".
+   ! NOTE: This DOES NOT USE an interpolated density for each atom
+   ! UNLESS use_interpolators is explicitly set. In this case you
+   ! should probably use the next routine which uses the
+   ! overlapping_atoms.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pt   :: MAT{REAL}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
+
+      rho_a :: VEC{REAL}@
+      n_pt,i :: INT
+
+      ! Allocate temporary densities
+      n_pt = grid.dim
+      rho_a.create(n_pt)
+
+      ! Make density for atom "a" in "rho_a"
+      .atom(a).make_ED_grid(rho_a,pt)
+
+      ! Make total density in "grid"
+      grid = rho_a
+      do i = 1,.n_atom
+         if (i==a) cycle
+         .atom(i).add_ED_grid(grid,pt)
+      end
+
+      ! Make the stockholder weight
+      do i = 1,n_pt
+         if (grid(i)>epsilon(ONE)) then; grid(i) = rho_a(i)/grid(i)
+         else;                           grid(i) = ZERO
+         end
+      end
+      rho_a.destroy
+
+   end
+
+   make_stockholder_atom_weight_int(grid,a,pt,overlapping_atom) ::: private, PURE
+   ! Make the Hirshfeld stockholder atom weight desity "grid" for the
+   ! atom with index "a" using supplied points "pt" and given a list
+   ! of "overlapping_atom". This makes use of a previously calculated
+   ! interpolated density for each atom.
+   ! NOTE: the CLUSTER.atom_density_cutoff must be the same as the
+   !       the BECKE_GRID.basis_fn_cutoff
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pt   :: MAT{REAL}, IN
+      overlapping_atom :: VEC{INT}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
+
+      rho_a :: VEC{REAL}@
+      n_pt,i,j :: INT
+
+      ! Allocate temporary densities
+      n_pt = grid.dim
+      rho_a.create(n_pt)
+
+      ! Make density for atom "a"
+      .atom(a).make_interpolated_density(rho_a,pt)
+
+      ! Make total density in "grid"
+      grid = rho_a
+      do j = 1,overlapping_atom.dim
+         i = overlapping_atom(j)
+         if (i==a) cycle
+         .atom(i).add_interpolated_density(grid,pt)
+      end
+
+      ! Make the stockholder weight
+      do i = 1,n_pt
+         if (grid(i)>epsilon(ONE)) then; grid(i) = rho_a(i)/grid(i)
+         else;                           grid(i) = ZERO
+         end
+      end
+      rho_a.destroy
+
+   end
+
+   make_stockholder_atom_weight(grid,a,pt,overlapping_atom) ::: PURE
+   ! Make the Hirshfeld stockholder weight density "grid" for the atom
+   ! with index "a" using supplied points "pt". This version uses
+   ! interpolated atom densities to make the weight function only for
+   ! the "overlapping_atoms" which are considered the near neighbours.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pt   :: MAT{REAL}, IN
+      overlapping_atom :: VEC{INT}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
+
+      if (.n_atom>1) then
+         .:make_stockholder_atom_weight_int(grid,a,pt,overlapping_atom)
+      else
+         grid = ONE
+      end
+
+   end
+
 !  =================
 !  Salvador-RC atoms
 !  =================
@@ -2868,42 +3055,28 @@ contains
 
    end
 
-!  ============================
-!  Stockholder atom weight grid
-!  ============================
-
-   apply_stockholder_atom_weight(grid,a,pt) ::: PURE
-   ! Apply (i.e. multiply) "grid" by the stockholder weight function
+   apply_Salvador_atom_weight(grid,a,pts) ::: PURE
+   ! Apply (i.e. multiply) "grid" by the Salvador weight function
    ! for the atom with index "a" using supplied points "pt".
-   ! * If .use_interpolators is TRUE then interpolators are used.
-   ! * If .use_interpolators is FALSE then interpolators could still
-   !   be used if explicitly set for each atom (however the
-   !   overlapping_atoms array will not be used to eliminate work).
-   !   More likely the density will be explicitly evaluated.
       self :: IN
       grid :: VEC{REAL}, INOUT
       a    :: INT, IN
-      pt   :: MAT{REAL}, IN
+      pts  :: MAT{REAL}, IN
 
    ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
-   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
+   ENSURE(grid.dim==pts.dim1,"inconsistent dim1, grid & pts")
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"becke_grid unfinalized")
+   ENSURE(.becke_grid.Salvador_radii_for.allocated,"no Salvador radii")
 
       Wa :: VEC{REAL}@
-      n_pt :: INT
 
       ! Only needed for more than one atom
       if (.n_atom>1) then
 
          ! Get weights
-         n_pt = pt.dim1
-         Wa.create(n_pt)
-         if (.use_interpolators) then
-            ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
-            .:make_stockholder_atom_weight_int(Wa,a,pt,.overlapping_atoms_for_atom(a).element)
-         else
-            .:make_stockholder_atom_weight_acc(Wa,a,pt)
-         end
+         Wa.create(pts.dim1)
+         .becke_grid.Salvador_P_weights(Wa,pts,a)
 
          ! Apply them
          grid = grid*Wa
@@ -2915,154 +3088,11 @@ contains
 
    end
 
-   make_stockholder_atom_weight(grid,a,pt) ::: PURE
-   ! Apply (i.e. multiply) "grid" by the stockholder weight function
-   ! for the atom with index "a" using supplied points "pt".
-   ! * If .use_interpolators is TRUE then interpolators are used.
-   ! * If .use_interpolators is FALSE then interpolators could still
-   !   be used if explicitly set for each atom (however the
-   !   overlapping_atoms array will not be used to eliminate work).
-   !   More likely the density will be explicitly evaluated.
-      self :: IN
-      grid :: VEC{REAL}, OUT
-      a    :: INT, IN
-      pt   :: MAT{REAL}, IN
-
-   ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
-   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
-
-      ! Only needed for more than one atom
-      if (.n_atom>1) then
-
-         ! Get weights
-         if (.use_interpolators) then
-            ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
-            .:make_stockholder_atom_weight_int(grid,a,pt,.overlapping_atoms_for_atom(a).element)
-         else
-            .:make_stockholder_atom_weight_acc(grid,a,pt)
-         end
-
-      end
-
-   end
-
-   make_stockholder_atom_weight_acc(grid,a,pt) ::: private, PURE
-   ! Make the Hirshfeld stockholder weight density "grid" for the atom
-   ! with index "a" using supplied points "pt".
-   ! NOTE: This DOES NOT USE an interpolated density for each atom
-   ! UNLESS use_interpolators is explicitly set. In this case you
-   ! should probably use the next routine which uses the
-   ! overlapping_atoms.
-      self :: IN
-      grid :: VEC{REAL}, OUT
-      a    :: INT, IN
-      pt   :: MAT{REAL}, IN
-
-   ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
-   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
-
-      rho_a :: VEC{REAL}@
-      n_pt,i :: INT
-
-      ! Allocate temporary densities
-      n_pt = grid.dim
-      rho_a.create(n_pt)
-
-      ! Make density for atom "a" in "rho_a"
-      .atom(a).make_ED_grid(rho_a,pt)
-
-      ! Make total density in "grid"
-      grid = rho_a
-      do i = 1,.n_atom
-         if (i==a) cycle
-         .atom(i).add_ED_grid(grid,pt)
-      end
-
-      ! Make the stockholder weight
-      do i = 1,n_pt
-         if (grid(i)>epsilon(ONE)) then; grid(i) = rho_a(i)/grid(i)
-         else;                           grid(i) = ZERO
-         end
-      end
-      rho_a.destroy
-
-   end
-
-   make_stockholder_atom_weight_int(grid,a,pt,overlapping_atom) ::: private, PURE
-   ! Make the Hirshfeld stockholder atom weight desity "grid" for the
-   ! atom with index "a" using supplied points "pt" and given a list
-   ! of "overlapping_atom". This makes use of a previously calculated
-   ! interpolated density for each atom.
-   ! NOTE: the CLUSTER.atom_density_cutoff must be the same as the
-   !       the BECKE_GRID.basis_fn_cutoff
-      self :: IN
-      grid :: VEC{REAL}, OUT
-      a    :: INT, IN
-      pt   :: MAT{REAL}, IN
-      overlapping_atom :: VEC{INT}, IN
-
-   ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
-   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
-
-      rho_a :: VEC{REAL}@
-      n_pt,i,j :: INT
-
-      ! Allocate temporary densities
-      n_pt = grid.dim
-      rho_a.create(n_pt)
-
-      ! Make density for atom "a"
-      .atom(a).make_interpolated_density(rho_a,pt)
-
-      ! Make total density in "grid"
-      grid = rho_a
-      do j = 1,overlapping_atom.dim
-         i = overlapping_atom(j)
-         if (i==a) cycle
-         .atom(i).add_interpolated_density(grid,pt)
-      end
-
-      ! Make the stockholder weight
-      do i = 1,n_pt
-         if (grid(i)>epsilon(ONE)) then; grid(i) = rho_a(i)/grid(i)
-         else;                           grid(i) = ZERO
-         end
-      end
-      rho_a.destroy
-
-   end
-
-   make_stockholder_atom_weight(grid,a,pt,overlapping_atom) ::: PURE
-   ! Make the Hirshfeld stockholder weight density "grid" for the atom
-   ! with index "a" using supplied points "pt". This version uses
-   ! interpolated atom densities to make the weight function only for
-   ! the "overlapping_atoms" which are considered the near neighbours.
-      self :: IN
-      grid :: VEC{REAL}, OUT
-      a    :: INT, IN
-      pt   :: MAT{REAL}, IN
-      overlapping_atom :: VEC{INT}, IN
-
-   ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
-   ENSURE(grid.dim==pt.dim1,"wrong size, grid")
-
-      if (.n_atom>1) then
-         .:make_stockholder_atom_weight_int(grid,a,pt,overlapping_atom)
-      else
-         grid = ONE
-      end
-
-   end
-
 !  ====================
 !  Atom partition grids
 !  ====================
 
-   make_Hirshfeld_rho_grid(N0,pt,wt,c,DM) ::: leaky, PURE
+   make_Hirshfeld_rho_grid(N0,pts,wts,c,DM) ::: leaky, PURE
    ! Make a Hirshfeld-weighted electron density (ED) grid "N0" on 
    ! the pruned Becke grid ("pt","wt") for atom "c". The ED is made
    ! using AO density matrix "DM".  Summation of N0 gives the
@@ -3070,8 +3100,8 @@ contains
    ! NOTE: Rewritten to use Kang's code.
       self :: IN
       N0   :: VEC{REAL}@, OUT
-      pt   :: MAT{REAL}@, OUT
-      wt   :: VEC{REAL}@, OUT
+      pts  :: MAT{REAL}@, OUT
+      wts  :: VEC{REAL}@, OUT
       c    :: INT, IN
       DM   :: MAT{REAL}, IN
 
@@ -3084,23 +3114,73 @@ contains
       cutoff :: REAL
 
       ! Get the Becke grid for atom "c"
-      .becke_grid.make_grid(pt,wt,c)
+      .becke_grid.make_grid(pts,wts,c)
 
       ! Make stockholder weight function "Wc" for atom "c"
       ! If using interpolatators, then overlapping_atoms
       ! are not needed ... otherwise nothing is skipped
-      .:apply_stockholder_atom_weight(wt,c,pt)
+      .:apply_stockholder_atom_weight(wts,c,pts)
 
-      ! Prune the grid with new "wt"
-      .becke_grid.prune_grid(pt,wt)
+      ! Prune the grid with new "wts"
+      .becke_grid.prune_grid(pts,wts)
 
       ! Density grid for atom "c"
-      N0.create(pt.dim1)
+      N0.create(pts.dim1)
       cutoff = .becke_grid.basis_fn_cutoff
-      .:make_ED_grid_r_v2(N0,pt,DM,cutoff)
+      .:make_ED_grid_r_v2(N0,pts,DM,cutoff)
 
       ! N0 x weight for atom "c"
-      N0 = N0*wt
+      N0 = N0*wts
+
+      ! Clean
+      wts.destroy
+      pts.destroy
+
+   end
+
+   make_Salvador_rho_grid(N0,pts,wts,c,DM) ::: leaky, PURE
+   ! Make a Salvador & Ramos-Cordoba -weighted electron density (ED)
+   ! grid "N0" on the pruned Becke grid ("pts","wts") for atom "c".
+   ! The ED is made using AO density matrix "DM".  Summation of N0
+   ! gives the Hirshfeld electron population for atom "c".
+   ! NOTE: Rewritten to use Kang's code.
+      self :: IN
+      N0   :: VEC{REAL}@, OUT
+      pts  :: MAT{REAL}@, OUT
+      wts  :: VEC{REAL}@, OUT
+      c    :: INT, IN
+      DM   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      cutoff :: REAL
+
+      ! Get the Becke grid for atom "c"
+      .becke_grid.make_grid(pts,wts,c)
+
+      ! Make stockholder weight function "Wc" for atom "c"
+      ! If using interpolatators, then overlapping_atoms
+      ! are not needed ... otherwise nothing is skipped
+      .becke_grid.Salvador_P_weights(wts,pts,c)
+
+      ! Prune the grid with new "wts"
+      .becke_grid.prune_grid(pts,wts)
+
+      ! Density grid for atom "c"
+      N0.create(pts.dim1)
+      cutoff = .becke_grid.basis_fn_cutoff
+      .:make_ED_grid_r_v2(N0,pts,DM,cutoff) ! Kang
+
+      ! N0 * weight for atom "c"
+      N0 = N0*wts
+
+      ! Clean
+      wts.destroy
+      pts.destroy
 
    end
 
