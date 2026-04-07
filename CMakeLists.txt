@@ -125,7 +125,6 @@ configure_file(
     ${MACROS}
 )
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/sbf)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/)
 
 # Foo source files
@@ -206,7 +205,7 @@ set(FOO_SRC
     ${FOO_DIR}/buffer.foo
     ${FOO_DIR}/output_style.foo
     ${FOO_DIR}/textfile.foo
-    ${FOO_DIR}/datafile.foo
+#   ${FOO_DIR}/datafile.foo
     ${FOO_DIR}/json.foo
     ${FOO_DIR}/file.foo
     ${FOO_DIR}/archive.foo
@@ -335,7 +334,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
+#   ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.set.F90
@@ -528,14 +527,14 @@ add_library(tonto
 )
 
 if(COMPILE_LAPACK)
-	target_link_libraries(tonto sbf_fortran dftd3 lapack blas ${MPI_Fortran_LIBRARIES})
+	target_link_libraries(tonto dftd3 lapack blas ${MPI_Fortran_LIBRARIES})
 else()
-	target_link_libraries(tonto sbf_fortran dftd3 ${MPI_Fortran_LIBRARIES})
+	target_link_libraries(tonto dftd3 ${MPI_Fortran_LIBRARIES})
 endif()	
 
 # Build directory
 target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
-target_include_directories(tonto PUBLIC ${SBF_MODULE_DIRECTORY} ${DFTD3_MODULE_DIRECTORY})
+target_include_directories(tonto PUBLIC ${DFTD3_MODULE_DIRECTORY})
 
 
 # Standard executables
