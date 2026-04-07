@@ -32,7 +32,7 @@ contains
 !  Hirshfeld atoms
 !  ===============
 
-   make_HA_inputs(skip_NOs,output) ::: leaky
+   make_HA_inputs(skip_ANOs,skip_moments,output) ::: leaky
    ! Set up the quanitites for a Hirshfeld calculation:
    ! (1) DFT grid information
    ! (2) ANO's and ANO interpolator grid information
@@ -41,13 +41,29 @@ contains
    ! NOTE: this procedure is in .SCF because a molecular SCF
    ! is done for each atom. We could change this by making
    ! atom-specific SCF routines ... that would be nicer.
-      self     :: INOUT
-      skip_NOs :: BIN, optional, IN
-      output   :: BIN, optional, IN
+      self         :: INOUT
+      skip_ANOs    :: BIN, optional, IN
+      skip_moments :: BIN, optional, IN
+      output       :: BIN, optional, IN
 
    ENSURE(.atom.allocated,"no atoms")
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.SCF_data.allocated,"no SCF_data")
+
+      skip_ANO :: BIN
+      skip_mom :: BIN
+
+      ! Skip ANOs & interpolatoprs?
+      skip_ANO = FALSE
+      if (present(skip_ANOs)) skip_ANO = skip_ANOs
+
+      ! Skip Hirshfeld atom moments
+      skip_mom = FALSE
+      if (present(skip_moments)) then
+         skip_mom = skip_moments
+         ! If need moments, need interpolators
+         if (NOT skip_mom) skip_ANO = FALSE
+      end
 
       ! Resolve bases & update
       .BASE:update_atom_basis_group_info
@@ -55,19 +71,18 @@ contains
       ! Set up integration grid
       .RHO:set_up_becke_grid ! NOT PURE
 
-      ! ANO's & interpolators
-      .:make_ANO_data(output)
+      ! Skip ANO's and interpolators?
+      if (NOT skip_ANO) then
+         .:make_ANOs_and_interpolators(output)
+      end
 
-      ! Make Hirshfeld atom moments
+      ! Make Hirshfeld atom moments?
+      if (NOT skip_mom) then
       if (.density_mx.allocated) then
       if (NOT .HA_moments_made) then
-      .:make_r_HA_moments(output=output)
+         .:make_r_HA_moments(output=output)
       end
       end
-
-      ! Skip NO's?
-      if (present(skip_NOs)) then
-      if (skip_NOs) return
       end
 
       ! Assign NO's to MO's for density evaluation
@@ -87,7 +102,7 @@ contains
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
-   ENSURE(.INQ:has_Hirshfeld_inputs,"no becke_grid/ANOs! make_HA_inputs?")
+   ENSURE(.INQ:DFT_grid_info_made,"no becke_grid")
    ENSURE(.density_mx.allocated,"no density matrix")
 
       pt, DM   :: MAT{REAL}@
@@ -400,6 +415,9 @@ contains
 
       ff :: MAT{CPX}@
 
+      ! ANOs & interpolators
+      .SCF:make_HA_inputs(skip_moments=TRUE)
+
       ! Get atomic form factors
       .RHO:get_Hirshfeld_atom_FFs_v1(ff)
 
@@ -437,6 +455,9 @@ contains
       self :: INOUT
 
       ff :: MAT{CPX}@
+
+      ! ANOs & interpolators
+      .SCF:make_HA_inputs(skip_moments=TRUE)
 
       ! Get atomic form factors
       .RHO:get_C23_Hirshfeld_atom_FFs(ff)
@@ -1643,7 +1664,7 @@ contains
       ! Force update of 1e hamiltonian if required
       if (.SCF_data.using_SC_cluster_charges OR .SCF_data.using_SC_Lorentz_fields) then
          .core_mx.destroy
-         .HA_moments_made = FALSE
+         .HA_moments_made = FALSE ! <=== LOOK
       end
 
       ! Add one electron part?
@@ -1758,6 +1779,11 @@ contains
       .:put_SCF_results
       .:archive_SCF_results
       .:cleanup_scf
+
+      ! Recalculate charges to be sure
+      .SET:set_HA_moments_made(FALSE)
+      .SET:set_u_HA_moments_made(FALSE)
+      .SET:set_atomic_polarisabilities_made(FALSE)
 
    end
 
@@ -2143,8 +2169,12 @@ contains
       end
 
       .:put_SCF_results
-
       .:cleanup_scf
+
+      ! Recalculate charges to be sure
+      .SET:set_HA_moments_made(FALSE)
+      .SET:set_u_HA_moments_made(FALSE)
+      .SET:set_atomic_polarisabilities_made(FALSE)
 
       ! Put data analysis & cube output
       if (.crystal.xray_data.do_standard_plots) then
@@ -2168,7 +2198,7 @@ contains
       select case (SCF_kind)
 
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf");
-         if (.crystal.uses_Hirshfeld_atoms) .:make_HA_inputs(skip_NOs=TRUE)
+         if (.crystal.uses_Hirshfeld_atoms) .SCF:make_HA_inputs(skip_ANOs=TRUE,skip_moments=TRUE)
          .:make_X_SFs
     !    if (.crystal.xray_r_free_data.allocated) .:make_X_free_SFs
 
@@ -2177,7 +2207,7 @@ contains
     !    if (.crystal.pnd_r_free_data.allocated)  .:make_N_free_SFs
 
     ! case ("xray_pnd_uhf","xray_pnd_uks");
-    !    if (.crystal.uses_Hirshfeld_atoms) .:make_HA_inputs(skip_NOs=TRUE)
+    !    if (.crystal.uses_Hirshfeld_atoms) .:make_HA_inputs(skip_ANOs=TRUE)
     !    .:make_X_SFs
     !    .:make_N_SFs
     !    if (.crystal.xray_r_free_data.allocated) .:make_X_free_SFs
@@ -4737,9 +4767,7 @@ contains
       .INTS:make_overlap_mx
 
       ! Get the guess orbitals
-      .:diagonalize_r_mx(.core_mx.r, &
-                           .MO_energies.r, &
-                           .MOs.r)
+      .:diagonalize_r_mx(.core_mx.r,.MO_energies.r,.MOs.r)
 
       ! Convert the orbitals to the right kind (leaky)
       MOs_genre = .SCF_data.MO_energies_genre
@@ -4827,7 +4855,7 @@ contains
       self :: INOUT
 
       ! ANO's
-      .:make_ANO_data
+      .:make_ANOs_and_interpolators
 
       ! Add spherical atomic densities
       .:add_ANO_densities
@@ -5728,7 +5756,7 @@ contains
       end
 
       ! Make the ANOs: atom groups need it (leaky)
-      .:make_ANO_data
+      .:make_ANOs_and_interpolators
 
       ! Update ANOs in atom_group(:).mol's
       .SET:update_group_crystal_and_ANOs
@@ -5843,7 +5871,7 @@ contains
 
       ! Need these for SFs
       if (SFs) then
-         .SCF:make_ANO_data
+         .SCF:make_ANOs_and_interpolators
          .RHO:delete_Hirshfeld_atom_FFs
       end
 
@@ -5867,7 +5895,7 @@ contains
        ! mol.SET:set_SCF_guess_defaults_from(.SCF_data)
        ! if (.SCF_data.SCF_kind=="fragment-rks") then
        !    mol.becke_grid.destroy
-       !    mol.SCF:make_HA_inputs(skip_NOs=TRUE)
+       !    mol.SCF:make_HA_inputs(skip_ANOs=TRUE)
        !  ! mol.RHO:set_up_becke_grid
        ! end
 
@@ -5940,7 +5968,7 @@ contains
       if (present(do_SFs)) SFs = do_SFs
 
       ! Need these for SFs
-      if (SFs) .:make_ANO_data
+      if (SFs) .:make_ANOs_and_interpolators
 
       ! Output details?
       .PUT:put_atom_group_mols
@@ -6116,7 +6144,7 @@ contains
 !  Make ANO data
 !  =============
 
-   make_ANO_data(output) ::: leaky
+   make_ANOs_and_interpolators(output) ::: leaky
    ! Make the atomic natural orbitals (ANOs) *and* the corresponding
    ! spherically-averaged interpolators for the molecule.
    ! NOTE: this applies only to molecules with more than one atom.
@@ -6140,7 +6168,7 @@ contains
    make_ANOs(output) ::: leaky
    ! Get the restricted atomic natural orbitals (ANO) data and
    ! corresponding atomic-SCF data for all atoms in the molecule.
-   ! NOTE: do not use this, use make_ANO_data to make everything.
+   ! NOTE: do not use this, prefer make_ANOs_and_interpolators.
       self   :: INOUT
       output :: BIN, optional, IN
 
