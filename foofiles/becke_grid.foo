@@ -1808,7 +1808,7 @@ contains
    end
 
 !  =============================
-!  Full grid generation routines
+!  Atom grid generation routines
 !  =============================
 
    make_grid(pts,wts,atom_a) ::: leaky, PURE
@@ -1957,6 +1957,10 @@ contains
       end
 
    end
+
+!  =============================
+!  Full grid generation routines
+!  =============================
 
 ! These below are older (deprecated?)
 ! NO! - 12/05/2023 in molecule.cp
@@ -2352,10 +2356,58 @@ contains
 !  Salvador & Ramos-Cordoba weights
 !  ================================
 
+   Salvador_W_weights(wts,pts,a) ::: PURE
+   ! Normalise Salvador & Ramos-Cordoba (2103) weights "wts" for the
+   ! points "pts" for the atom with index "a". 
+   ! See LHS of eq. (4) in Salvador (2013) JCP 139, p071103.
+      self :: IN
+      wts  :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      a    :: INT, IN
+
+   ENSURE(wts.dim==pts.dim1,"no Salvador_radii")
+
+      n_bonds     :: INT
+      n_pts,n,x,b :: INT
+      P_A,P_B,tot :: VEC{REAL}@
+
+      n_bonds = .Salvador_bonds_for(a).element.dim
+      n_pts   = wts.dim
+      
+      ! Bits of LHS eq. (4)
+      P_A.create(n_pts) ! Numerator P_A
+      P_B.create(n_pts) ! Neighbour P_B
+      tot.create(n_pts) ! tot = Sum_B P_B
+
+      ! Numerator P_A
+      .:Salvador_P_weights(P_A,pts,a)
+
+      ! Denominator Sum_B P_B
+      tot = P_A
+      do x = 1,n_bonds
+         b = .Salvador_bonds_for(a)[x]
+         .:Salvador_P_weights(P_B,pts,b)
+         tot = tot + P_B
+      end
+
+      ! Normalise. Stockholder style
+      do n = 1,n_pts
+         if (tot(n)>epsilon(ONE)) then; wts(n) = P_A(n)/tot(n)
+         else;                          wts(n) = ZERO
+         end
+      end
+
+      ! Clean
+      tot.destroy
+      P_B.destroy
+      P_A.destroy
+
+   end
+
    Salvador_P_weights(wts,pts,a) ::: PURE
    ! Return Salvador & Ramos-Cordoba (2103) P weights in "wts" 
    ! evaluated on the points "pts" for the atom with index "a". 
-   ! See eq. (4) RHS in JCP 139, p071103 (2013).
+   ! See RHS of eq. (4) in JCP 139, p071103 (2013).
       self :: IN
       wts  :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
@@ -2363,7 +2415,7 @@ contains
 
    ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds")
    ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii")
-   ENSURE(wts.dim==pts.dim1,"no Salvador_radii")
+   ENSURE(wts.dim==pts.dim1,"inconsistent dim1, wts and pts")
 
       stiff,x,b,g :: INT
       ra, rb, rg  :: VEC{REAL}(3)
@@ -2380,7 +2432,7 @@ contains
       ! Initialise
       wts = ONE
 
-      ! Loop on neighbors "x"
+      ! Loop on neighbors "x" of "a"
       do x = 1,.Salvador_bonds_for(a).element.dim
          b   = .Salvador_bonds_for(a)[x]
          rb  = .atom(b).position
@@ -2400,7 +2452,8 @@ contains
             nu  = HALF*nu*(THREE-nu*nu)
             nu  = HALF*nu*(THREE-nu*nu)
             ! Product of cell fn's
-            wts(g) = wts(g) * HALF*(ONE-nu) ! Eq. (4)
+            wts(g) = wts(g) * HALF*(ONE-nu) ! Eq. (4) RHS
+          ! The above is the inline of below:
           ! wts(g) = wts(g) * ::Becke_s_fn(mu,chi,k=stiff)
          end
       end
@@ -2456,9 +2509,10 @@ contains
    ! for the "atom_a". Weights "wt" incorporate grid integration
    ! weights and the SS partition weight for "overlapping_atoms" 
    ! Return also the basis function grid "f0" for "atom_a".
-      self :: IN
-      pt, f0 :: MAT{REAL}@, OUT
-      wt :: VEC{REAL}@, OUT
+      self   :: IN
+      pt     :: MAT{REAL}@, OUT
+      wt     :: VEC{REAL}@, OUT
+      f0     :: MAT{REAL}@, OUT
       atom_a :: INT, IN
       overlapping_atom :: VEC{INT}, IN
 
@@ -2473,10 +2527,12 @@ contains
    ! weights and the SS partition weight for "overlapping_atoms" 
    ! Return also the basis function grid "f0" and the basis function
    ! derivatives "gx", "gy", "gz" for "atom_a"
-      self :: IN
-      pt, f0,gx,gy,gz :: MAT{REAL}@, OUT
-      wt :: VEC{REAL}@, OUT
-      atom_a :: INT, IN
+      self     :: IN
+      pt       :: MAT{REAL}@, OUT
+      wt       :: VEC{REAL}@, OUT
+      f0       :: MAT{REAL}@, OUT
+      gx,gy,gz :: MAT{REAL}@, OUT
+      atom_a   :: INT, IN
       overlapping_atom :: VEC{INT}, IN
 
       .make_unpruned_SS_grid(pt,wt,f0,gx,gy,gz,atom_a,overlapping_atom) 
@@ -2547,10 +2603,12 @@ contains
    ! weights and the SS partition weight for "overlapping_atoms" 
    ! Return also the basis function grid "f0" and the basis function
    ! derivatives "gx", "gy", "gz" for "atom_a"
-      self :: IN
-      pt, f0,gx,gy,gz :: MAT{REAL}@, OUT
-      wt :: VEC{REAL}@, OUT
-      atom_a :: INT, IN
+      self     :: IN
+      pt       :: MAT{REAL}@, OUT
+      wt       :: VEC{REAL}@, OUT
+      f0       :: MAT{REAL}@, OUT
+      gx,gy,gz :: MAT{REAL}@, OUT
+      atom_a   :: INT, IN
       overlapping_atom :: VEC{INT}, IN
 
       dist :: MAT{REAL}@
@@ -2600,12 +2658,12 @@ contains
 
    compress_zeros(pt,wt,f0,dist,zero,atom_a) ::: leaky, private, PURE
    ! Compress the zero values out of the grid and displacements
-      self :: IN
-      pt   :: MAT{REAL}@, INOUT
-      wt   :: VEC{REAL}@, INOUT
-      f0   :: MAT{REAL}@, INOUT
-      dist :: MAT{REAL}@, INOUT
-      zero :: VEC{BIN}@, IN
+      self   :: IN
+      pt     :: MAT{REAL}@, INOUT
+      wt     :: VEC{REAL}@, INOUT
+      f0     :: MAT{REAL}@, INOUT
+      dist   :: MAT{REAL}@, INOUT
+      zero   :: VEC{BIN}@, IN
       atom_a :: INT, IN
 
    ENSURE(.atom_n1_SS.allocated,"no atom_n1_SS")
@@ -3607,6 +3665,10 @@ contains
       list.destroy
 
    end
+
+!  =====================
+!  Normalize the weights
+!  =====================
 
    partition_wt(wt,partition,a,wt_is_0) ::: private, PURE
    ! Partition the weights "wt" using the unnormalized "partition" for atom "a".
