@@ -1990,7 +1990,8 @@ contains
    ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
 
       n_atoms :: INT
-      n_pts   :: INT
+      n_pts,g :: INT
+      fac     :: REAL
       P       :: MAT{REAL}@
 
       ! Unnormalized grid for atom "a"
@@ -1998,23 +1999,27 @@ contains
 
       ! Sizes
       n_atoms = .atom.dim
-      n_pts   = pts.dim1
+      n_pts   = wts.dim1
 
       ! Unnormalised cell function
       P.create(n_pts,n_atoms)
-      .:make_SS0_cell_fns(P,pts)
+      .:make_U_SS0_cell_fns(P,pts)
 
       ! Normalize & modify grid wts
-      ::normalize_wts(wts,P,a)
+      do g = 1,n_pts
+          fac = sum(P(g,:))
+          fac = P(g,a)/fac
+          wts(g) = wts(g)*fac
+      end
+    ! ::normalize_wts(wts,P,a)
 
       ! Clean
       P.destroy
 
    end
 
-   make_SS0_cell_fns(P,pts) ::: PURE
-   ! Make the Becke cell functions "P" for *all* atoms.
-   ! NOTE: Actually it's the Stratmann-Scuseria method with a=0.
+   make_U_SS0_cell_fns(P,pts) ::: PURE
+   ! Make *unnormalized* Becke cell functions "P" on the given "pts".
    ! See: Becke (1988) JCP 88 p. 2547 eq. (13).
    !      Stratmann et al (1996) CPL 257 p. 213 eq. (9)
       self :: IN
@@ -2080,24 +2085,152 @@ contains
 
    end
 
-   normalize_wts(wts,P,a) ::: selfless, private, pure
-   ! Partition (i.e. normalize) weights "wts" for *only* atom "a"
-   ! given a set of cell functions "P" for *all* atoms. See:
-   ! Becke (1988) JCP 88 p. 2547 eq. (22).
+!   normalize_wts(wts,P,a) ::: selfless, private, pure
+!   ! Partition (i.e. normalize) weights "wts" for *only* atom "a"
+!   ! given a set of cell functions "P" for *all* atoms. See:
+!   ! See: Stratmann et al (1996) CPL 257 p. 213 eq. (2)
+!   !      Given omega_g in "wts" return omega_g * P_a(r_g) 
+!      self :: IN
+!      wts  :: VEC{REAL}, INOUT
+!      P    :: MAT{REAL}, IN
+!      a    :: INT, IN
+!
+!      g   :: INT
+!      fac :: REAL
+!
+!      ! Loop on grid points
+!      do g = 1,wts.dim
+!          fac = sum(P(g,:))
+!          fac = P(g,a)/fac
+!          wts(g) = wts(g)*fac
+!      end
+!
+!   end
+
+   make_N_SS0_cell_fn(wts,pts,a) ::: PURE
+   ! Make the *normalised* weight fn in "wts" *only* for atom "a".
+   ! Grids must have been made by calling .set_grid_data.
+   ! See: Stratmann et al (1996) CPL 257 p. 213 eq. (10)
+   !      Becke (1988) JCP 88 p. 2547 eq. (22).
       self :: IN
-      wts  :: VEC{REAL}, INOUT
-      P    :: MAT{REAL}, IN
+      wts  :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
       a    :: INT, IN
 
-      g   :: INT
-      fac :: REAL
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
+   ENSURE(pts.dim2==3,"wrong dim2, pts")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
 
-      ! Loop on grid points
+      n_atoms :: INT
+      n_pts,g :: INT
+      fac     :: REAL
+      P       :: MAT{REAL}@
+
+      ! Sizes
+      n_atoms = .atom.dim
+      n_pts   = pts.dim1
+
+      ! Unnormalised cell function
+      P.create(n_pts,n_atoms)
+      .:make_U_SS0_cell_fns(P,pts)
+
+      ! Return normalized cell fn.
       do g = 1,wts.dim
           fac = sum(P(g,:))
           fac = P(g,a)/fac
-          wts(g) = wts(g)*fac
+          wts(g) = fac
       end
+
+      ! Clean
+      P.destroy
+
+   end
+
+   partition_SS0_wts(wts,pts,a) ::: PURE
+   ! Partition the atomic grid ("pts","wts") for atom "a" in ".atoms"
+   ! using Becke's method, so that weights work with other atoms i.e.
+   !         ("pts","wts") <-- ("pts", "partition" * "wt").
+   ! where "partition" performs the renormalisation
+   ! NOTE: the "pts" and "wts" are those for ".atom(a)" only.
+   ! NOTE: Actually it's the Stratmann-Scuseria method with a=0.
+      self :: IN
+      wts  :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      a    :: INT, IN
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
+   ENSURE(pts.dim2==3,"wrong dim2, pts")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      partition   :: MAT{REAL}@
+      ri, rj, rg  :: VEC{REAL}(3)
+      rij,rig,rjg :: VEC{REAL}(3)
+      dij,dig,djg :: REAL
+      mu1,mu2,mu3 :: REAL
+      mu5,mu7,fac :: REAL
+      c5,c21,c35  :: REAL
+      n_atoms     :: INT
+      n_pts,i,j,g :: INT
+
+      ! Stratmann-Scuseria
+      c5  = FIVE
+      c21 = SEVEN*THREE
+      c35 = SEVEN*FIVE
+
+      ! Sizes
+      n_atoms = .atom.dim
+      n_pts   = wts.dim
+
+      ! Partition fn.
+      partition.create(n_pts,n_atoms)
+      partition = ONE
+
+      ! Get partition
+      do i = 1,n_atoms
+
+          ri = .atom(i).position
+
+          do j = 1,n_atoms
+
+              if (i==j) cycle
+
+              rj  = .atom(j).position
+              rij = ri - rj
+              dij = norm2(rij)
+
+              ! Loop over non-unit non-zero weight points
+              do g = 1,n_pts
+                  rg   = pts(g,:)
+                  rig  = ri - rg
+                  rjg  = rj - rg
+                  dig  = norm2(rig)
+                  djg  = norm2(rjg)
+                  mu1  = (dig - djg)/dij
+                  mu2  = mu1*mu1
+                  mu3  = mu2*mu1
+                  mu5  = mu3*mu2
+                  mu7  = mu5*mu2        ! Eq. (14)
+                  fac  = SIXTEENTH*(c35*(mu1-mu3)+c21*mu5-c5*mu7)
+                  fac  = HALF*(ONE - fac) ! Eq. (8)
+                  partition(g,i) = partition(g,i)*fac
+              end
+          end
+
+      end
+
+      ! Normalize; modify grid weights
+      do g = 1,n_pts
+          fac = sum(partition(g,:))
+          fac = partition(g,a)/fac
+          wts(g) = wts(g) * fac
+      end
+
+      ! Clean
+      partition.destroy
 
    end
 
@@ -2498,92 +2631,6 @@ contains
 !  ================================
 !  Salvador & Ramos-Cordoba weights
 !  ================================
-
-   partition_SS0_wts(wts,pts,a) ::: PURE
-   ! Partition the atomic grid ("pts","wts") for atom "a" in ".atoms"
-   ! using Becke's method, so that weights work with other atoms i.e.
-   !         ("pts","wts") <-- ("pts", "partition" * "wt").
-   ! where "partition" performs the renormalisation
-   ! NOTE: the "pts" and "wts" are those for ".atom(a)" only.
-   ! NOTE: Actually it's the Stratmann-Scuseria method with a=0.
-      self :: IN
-      wts  :: VEC{REAL}, OUT
-      pts  :: MAT{REAL}, IN
-      a    :: INT, IN
-
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
-   ENSURE(pts.dim2==3,"wrong dim2, pts")
-   ENSURE(.atom.allocated,"no atom list")
-   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
-
-      partition   :: MAT{REAL}@
-      ri, rj, rg  :: VEC{REAL}(3)
-      rij,rig,rjg :: VEC{REAL}(3)
-      dij,dig,djg :: REAL
-      mu1,mu2,mu3 :: REAL
-      mu5,mu7,fac :: REAL
-      c5,c21,c35  :: REAL
-      n_atoms     :: INT
-      n_pts,i,j,g :: INT
-
-      ! Stratmann-Scuseria
-      c5  = FIVE
-      c21 = SEVEN*THREE
-      c35 = SEVEN*FIVE
-
-      ! Sizes
-      n_atoms = .atom.dim
-      n_pts   = wts.dim
-
-      ! Partition fn.
-      partition.create(n_pts,n_atoms)
-      partition = ONE
-
-      ! Get partition
-      do i = 1,n_atoms
-
-          ri = .atom(i).position
-
-          do j = 1,n_atoms
-
-              if (i==j) cycle
-
-              rj  = .atom(j).position
-              rij = ri - rj
-              dij = norm2(rij)
-
-              ! Loop over non-unit non-zero weight points
-              do g = 1,n_pts
-                  rg   = pts(g,:)
-                  rig  = ri - rg
-                  rjg  = rj - rg
-                  dig  = norm2(rig)
-                  djg  = norm2(rjg)
-                  mu1  = (dig - djg)/dij
-                  mu2  = mu1*mu1
-                  mu3  = mu2*mu1
-                  mu5  = mu3*mu2
-                  mu7  = mu5*mu2        ! Eq. (14)
-                  fac  = SIXTEENTH*(c35*(mu1-mu3)+c21*mu5-c5*mu7)
-                  fac  = HALF*(ONE - fac) ! Eq. (8)
-                  partition(g,i) = partition(g,i)*fac
-              end
-          end
-
-      end
-
-      ! Normalize; modify grid weights
-      do g = 1,n_pts
-          fac = sum(partition(g,:))
-          fac = partition(g,a)/fac
-          wts(g) = wts(g) * fac
-      end
-
-      ! Clean
-      partition.destroy
-
-   end
 
    Salvador_W_weights(wts,pts,a) ::: PURE
    ! Normalise Salvador & Ramos-Cordoba (2103) weights "wts" for the
