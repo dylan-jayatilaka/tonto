@@ -2167,6 +2167,111 @@ contains
 !  =====================
 
    make_SS1_atom_grid(pts,wts,a) ::: PURE
+   ! Make the *normalised* Stratmann-Scuseria integration grid
+   ! ("pts","wts") *only* for atom "a", ready for integration. 
+   ! Grids must have been made by calling .set_grid_data. 
+   ! NOTE: Actually it's the Stratmann-Scuseria method with a=1.
+   ! See Eqs. (11)-(14) in Stratmann et al (1996) CPL 257 p. 213.
+   ! So that means there is no grid pruning or any fancy stuff.
+      self :: IN
+      pts  :: MAT{REAL}@, OUT
+      wts  :: VEC{REAL}@, OUT
+      a    :: INT, IN
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
+   ENSURE(pts.dim2==3,"wrong dim2, pts")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      Pa, Pi, Ps   :: VEC{REAL}@
+      dg           :: MAT{REAL}@
+      ri, rj, rg   :: VEC{REAL}(3)
+      mu1,mu2,mu3  :: REAL
+      mu5,mu7, dij :: REAL
+      c5,c21,c35,s :: REAL
+      n_atoms, i,j :: INT
+      n_pts,   g   :: INT
+
+      ! Unnormalized grid for atom "a"
+      .:make_atom_grid(pts,wts,a)
+
+      ! Sizes
+      n_atoms = .atom.dim
+      n_pts   = pts.dim1
+
+      ! Distances to grid points
+      ! Does this speed things up?
+      dg.create(n_pts,.atom.dim)
+      do i = 1,n_atoms
+         ri = .atom(i).position
+         do g = 1,n_pts
+            rg = pts(g,:)
+            dg(g,i) = norm2(rg-ri)
+         end
+      end
+
+      ! Cell functions
+      Ps.create(n_pts) ! Sum_i P_i
+      Pa.create(n_pts) ! a-th cell fn
+      Pi.create(n_pts) ! i-th cell fn
+      Ps = ZERO        ! <--- NOTE
+
+      ! Stratmann-Scuseria eq. (14)
+      c5  = FIVE
+      c21 = SEVEN*THREE
+      c35 = SEVEN*FIVE
+
+      ! Sum cell fns. Pi
+      do i = 1,n_atoms
+
+          ri = .atom(i).position
+
+          Pi = ONE ! <--- NOTE
+
+          ! Product over step fns.
+          ! Pi = Prod_j s(mu_ij)
+          do j = 1,n_atoms
+
+              if (i==j) cycle
+
+              rj  = .atom(j).position
+              dij = ONE/norm2(ri-rj)
+
+              ! Grid points "g"
+              do g = 1,n_pts
+                  mu1 = (dg(g,i)-dg(g,j))*dij  ! Speeded up?
+                  mu2 = mu1*mu1
+                  mu3 = mu2*mu1
+                  mu5 = mu3*mu2
+                  mu7 = mu5*mu2                ! Eq. (14)
+                  s   = SIXTEENTH*(c35*(mu1-mu3)+c21*mu5-c5*mu7)
+                  s   = HALF*(ONE - s)         ! Eq. (8)
+                  Pi(g) = Pi(g) * s            ! Eq. (9)
+              end
+
+          end
+
+          ! Add & store
+          Ps = Ps + Pi
+          if (i==a) Pa = Pi
+
+      end
+
+      ! Normalize & modify grid wts
+      do g = 1,n_pts
+          wts(g) = wts(g)*Pa(g)/Ps(g)
+      end
+
+      ! Clean
+      Pi.destroy
+      Pa.destroy
+      Ps.destroy
+      dg.destroy
+
+   end
+
+   make_SS1_atom_grid_old(pts,wts,a) ::: PURE
    ! Make the *normalised* integration grid ("pts","wts") *only* for
    ! atom "a". Grids must have been made by calling .set_grid_data.
    ! The grid is ready for molecular integrations over that atom.
@@ -2185,71 +2290,43 @@ contains
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
 
-      n_atoms :: INT
-      n_pts,g :: INT
-      fac     :: REAL
-      P       :: MAT{REAL}@
+      Pa, Pi, Ps   :: VEC{REAL}@
+      ri,rj,rij,rg :: VEC{REAL}(3)
+      dig,djg,fac  :: REAL
+      mu1,mu2,mu3  :: REAL
+      mu5,mu7,dij  :: REAL
+      c5,c21,c35   :: REAL
+      n_atoms, i,j :: INT
+      n_pts, g     :: INT
 
       ! Unnormalized grid for atom "a"
       .:make_atom_grid(pts,wts,a)
 
       ! Sizes
       n_atoms = .atom.dim
-      n_pts   = wts.dim1
+      n_pts   = pts.dim1
 
-      ! Unnormalised cell function
-      P.create(n_pts,n_atoms)
-      .:make_U_SS1_cell_fns(P,pts)
-
-      ! Normalize & modify grid wts
-      do g = 1,n_pts
-          fac = sum(P(g,:))
-          fac = P(g,a)/fac
-          wts(g) = wts(g)*fac
-      end
-    ! ::normalize_wts(wts,P,a)
-
-      ! Clean
-      P.destroy
-
-   end
-
-   make_U_SS1_cell_fns(P,pts) ::: PURE
-   ! Make *unnormalized* Becke cell functions "P" on the given "pts".
-   ! See: Becke (1988) JCP 88 p. 2547 eq. (13).
-   !      Stratmann et al (1996) CPL 257 p. 213 eq. (9)
-      self :: IN
-      P    :: MAT{REAL}, OUT
-      pts  :: MAT{REAL}, IN
-
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(.atom.allocated,"no atom list")
-   ENSURE(P.dim1==pts.dim1, "incompatible dim1, P and pts")
-   ENSURE(P.dim2==.atom.dim,"incompatible dim2, P and .atoms")
-   ENSURE(pts.dim2==3,"wrong dim2, pts")
-
-      ri,rj,rg :: VEC{REAL}(3)
-      rij      :: VEC{REAL}(3)
-      dij,dig,djg :: REAL
-      mu1,mu2,mu3 :: REAL
-      mu5,mu7,fac :: REAL
-      c5,c21,c35  :: REAL
-      i, j, g     :: INT
-
-      ! Unnormalised cell function
-      P = ONE ! <--- NOTE
+      ! Cell functions
+      Ps.create(n_pts) ! Sum_i P_i
+      Pa.create(n_pts) ! a-th cell fn
+      Pi.create(n_pts) ! i-th cell fn
+      Ps = ZERO        ! <--- NOTE
 
       ! Stratmann-Scuseria eq. (14)
       c5  = FIVE
       c21 = SEVEN*THREE
       c35 = SEVEN*FIVE
 
-      ! Cell function "i"
+      ! Sum cell fns. Pi
       do i = 1,.atom.dim
 
           ri = .atom(i).position
 
-          ! Product over atoms "j"
+          ! Cell fn. Pi
+          Pi = ONE ! <--- NOTE
+
+          ! Product over step fns.
+          ! Pi = Prod_j si(mu_ij)
           do j = 1,.atom.dim
 
               if (i==j) cycle
@@ -2259,66 +2336,193 @@ contains
               dij = norm2(rij)
 
               ! Grid points "g"
-              do g = 1,P.dim1
-                  rg   = pts(g,:)
-                  dig  = norm2(ri-rg)
-                  djg  = norm2(rj-rg)
-                  mu1  = (dig - djg)/dij  ! Eq. (4)
-                  mu2  = mu1*mu1
-                  mu3  = mu2*mu1
-                  mu5  = mu3*mu2
-                  mu7  = mu5*mu2          ! Eq. (14)
-                  fac  = SIXTEENTH*(c35*(mu1-mu3)+c21*mu5-c5*mu7)
-                  fac  = HALF*(ONE - fac) ! Eq. (8)
-                  P(g,i) = P(g,i)*fac     ! Eq. (9)
+              do g = 1,n_pts
+                  rg  = pts(g,:)
+                  dig = norm2(ri-rg)
+                  djg = norm2(rj-rg)
+                  mu1 = (dig - djg)/dij  ! Eq. (4)
+                  mu2 = mu1*mu1
+                  mu3 = mu2*mu1
+                  mu5 = mu3*mu2
+                  mu7 = mu5*mu2          ! Eq. (14)
+                  fac = SIXTEENTH*(c35*(mu1-mu3)+c21*mu5-c5*mu7)
+                  fac = HALF*(ONE - fac) ! Eq. (8)
+                  Pi(g) = Pi(g)*fac      ! Eq. (9)
               end
 
           end
 
+          ! Add & store
+          Ps = Ps + Pi
+          if (i==a) Pa = Pi
+
       end
 
-   end
-
-   make_N_SS1_cell_fn(wts,pts,a) ::: PURE
-   ! Make the *normalised* weight fn in "wts" *only* for atom "a".
-   ! Grids must have been made by calling .set_grid_data.
-   ! See: Stratmann et al (1996) CPL 257 p. 213 eq. (10)
-   !      Becke (1988) JCP 88 p. 2547 eq. (22).
-      self :: IN
-      wts  :: VEC{REAL}, OUT
-      pts  :: MAT{REAL}, IN
-      a    :: INT, IN
-
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
-   ENSURE(pts.dim2==3,"wrong dim2, pts")
-   ENSURE(.atom.allocated,"no atom list")
-   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
-
-      n_atoms :: INT
-      n_pts,g :: INT
-      fac     :: REAL
-      P       :: MAT{REAL}@
-
-      ! Sizes
-      n_atoms = .atom.dim
-      n_pts   = pts.dim1
-
-      ! Unnormalised cell function
-      P.create(n_pts,n_atoms)
-      .:make_U_SS1_cell_fns(P,pts)
-
-      ! Return normalized cell fn.
-      do g = 1,wts.dim
-          fac = sum(P(g,:))
-          fac = P(g,a)/fac
-          wts(g) = fac
+      ! Normalize & modify grid wts
+      do g = 1,n_pts
+          wts(g) = wts(g)*Pa(g)/Ps(g)
       end
 
       ! Clean
-      P.destroy
+      Pi.destroy
+      Pa.destroy
+      Ps.destroy
 
    end
+
+!   make_SS1_atom_grid(pts,wts,a) ::: PURE
+!   ! Make the *normalised* integration grid ("pts","wts") *only* for
+!   ! atom "a". Grids must have been made by calling .set_grid_data.
+!   ! The grid is ready for molecular integrations over that atom.
+!   ! NOTE: the "pts" and "wts" are those for ".atom(a)" only.
+!   ! NOTE: Actually it's the Stratmann-Scuseria method with a=1.
+!   ! See Eqs. (11)-(14) in Stratmann et al (1996) CPL 257 p. 213.
+!   ! So that means there is no grid pruning or any fancy stuff.
+!      self :: IN
+!      pts  :: MAT{REAL}@, OUT
+!      wts  :: VEC{REAL}@, OUT
+!      a    :: INT, IN
+!
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
+!   ENSURE(pts.dim2==3,"wrong dim2, pts")
+!   ENSURE(.atom.allocated,"no atom list")
+!   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+!
+!      n_atoms :: INT
+!      n_pts,g :: INT
+!      fac     :: REAL
+!      P       :: MAT{REAL}@
+!
+!      ! Unnormalized grid for atom "a"
+!      .:make_atom_grid(pts,wts,a)
+!
+!      ! Sizes
+!      n_atoms = .atom.dim
+!      n_pts   = wts.dim1
+!
+!      ! Unnormalised cell function
+!      P.create(n_pts,n_atoms)
+!      .:make_U_SS1_cell_fns(P,pts)
+!
+!      ! Normalize & modify grid wts
+!      do g = 1,n_pts
+!          fac = sum(P(g,:))
+!          fac = P(g,a)/fac
+!          wts(g) = wts(g)*fac
+!      end
+!    ! ::normalize_wts(wts,P,a)
+!
+!      ! Clean
+!      P.destroy
+!
+!   end
+
+!   make_U_SS1_cell_fns(P,pts) ::: PURE
+!   ! Make *unnormalized* Becke cell functions "P" on the given "pts".
+!   ! See: Becke (1988) JCP 88 p. 2547 eq. (13).
+!   !      Stratmann et al (1996) CPL 257 p. 213 eq. (9)
+!      self :: IN
+!      P    :: MAT{REAL}, OUT
+!      pts  :: MAT{REAL}, IN
+!
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(.atom.allocated,"no atom list")
+!   ENSURE(P.dim1==pts.dim1, "incompatible dim1, P and pts")
+!   ENSURE(P.dim2==.atom.dim,"incompatible dim2, P and .atoms")
+!   ENSURE(pts.dim2==3,"wrong dim2, pts")
+!
+!      ri,rj,rg :: VEC{REAL}(3)
+!      rij      :: VEC{REAL}(3)
+!      dij,dig,djg :: REAL
+!      mu1,mu2,mu3 :: REAL
+!      mu5,mu7,fac :: REAL
+!      c5,c21,c35  :: REAL
+!      i, j, g     :: INT
+!
+!      ! Unnormalised cell function
+!      P = ONE ! <--- NOTE
+!
+!      ! Stratmann-Scuseria eq. (14)
+!      c5  = FIVE
+!      c21 = SEVEN*THREE
+!      c35 = SEVEN*FIVE
+!
+!      ! Cell function "i"
+!      do i = 1,.atom.dim
+!
+!          ri = .atom(i).position
+!
+!          ! Product over atoms "j"
+!          do j = 1,.atom.dim
+!
+!              if (i==j) cycle
+!
+!              rj  = .atom(j).position
+!              rij = ri - rj
+!              dij = norm2(rij)
+!
+!              ! Grid points "g"
+!              do g = 1,P.dim1
+!                  rg   = pts(g,:)
+!                  dig  = norm2(ri-rg)
+!                  djg  = norm2(rj-rg)
+!                  mu1  = (dig - djg)/dij  ! Eq. (4)
+!                  mu2  = mu1*mu1
+!                  mu3  = mu2*mu1
+!                  mu5  = mu3*mu2
+!                  mu7  = mu5*mu2          ! Eq. (14)
+!                  fac  = SIXTEENTH*(c35*(mu1-mu3)+c21*mu5-c5*mu7)
+!                  fac  = HALF*(ONE - fac) ! Eq. (8)
+!                  P(g,i) = P(g,i)*fac     ! Eq. (9)
+!              end
+!
+!          end
+!
+!      end
+!
+!   end
+
+!   make_N_SS1_cell_fn(wts,pts,a) ::: PURE
+!   ! Make the *normalised* weight fn in "wts" *only* for atom "a".
+!   ! Grids must have been made by calling .set_grid_data.
+!   ! See: Stratmann et al (1996) CPL 257 p. 213 eq. (10)
+!   !      Becke (1988) JCP 88 p. 2547 eq. (22).
+!      self :: IN
+!      wts  :: VEC{REAL}, OUT
+!      pts  :: MAT{REAL}, IN
+!      a    :: INT, IN
+!
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
+!   ENSURE(pts.dim2==3,"wrong dim2, pts")
+!   ENSURE(.atom.allocated,"no atom list")
+!   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+!
+!      n_atoms :: INT
+!      n_pts,g :: INT
+!      fac     :: REAL
+!      P       :: MAT{REAL}@
+!
+!      ! Sizes
+!      n_atoms = .atom.dim
+!      n_pts   = pts.dim1
+!
+!      ! Unnormalised cell function
+!      P.create(n_pts,n_atoms)
+!      .:make_U_SS1_cell_fns(P,pts)
+!
+!      ! Return normalized cell fn.
+!      do g = 1,wts.dim
+!          fac = sum(P(g,:))
+!          fac = P(g,a)/fac
+!          wts(g) = fac
+!      end
+!
+!      ! Clean
+!      P.destroy
+!
+!   end
 
 !   normalize_wts(wts,P,a) ::: selfless, private, pure
 !   ! Partition (i.e. normalize) weights "wts" for *only* atom "a"
@@ -2341,92 +2545,6 @@ contains
 !      end
 !
 !   end
-
-   partition_SS1_wts(wts,pts,a) ::: PURE
-   ! Partition the atomic grid ("pts","wts") for atom "a" in ".atoms"
-   ! using Becke's method, so that weights work with other atoms i.e.
-   !         ("pts","wts") <-- ("pts", "partition" * "wt").
-   ! where "partition" performs the renormalisation
-   ! NOTE: the "pts" and "wts" are those for ".atom(a)" only.
-   ! NOTE: Actually it's the Stratmann-Scuseria method with a=1.
-      self :: IN
-      wts  :: VEC{REAL}, OUT
-      pts  :: MAT{REAL}, IN
-      a    :: INT, IN
-
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
-   ENSURE(pts.dim2==3,"wrong dim2, pts")
-   ENSURE(.atom.allocated,"no atom list")
-   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
-
-      ri, rj, rg  :: VEC{REAL}(3)
-      rij,rig,rjg :: VEC{REAL}(3)
-      dij,dig,djg :: REAL
-      mu1,mu2,mu3 :: REAL
-      mu5,mu7,fac :: REAL
-      c5,c21,c35  :: REAL
-      n_atoms     :: INT
-      n_pts,i,j,g :: INT
-      P :: MAT{REAL}@
-
-      ! Stratmann-Scuseria
-      c5  = FIVE
-      c21 = SEVEN*THREE
-      c35 = SEVEN*FIVE
-
-      ! Sizes
-      n_atoms = .atom.dim
-      n_pts   = wts.dim
-
-      ! Partition fn.
-      P.create(n_pts,n_atoms)
-      P = ONE
-
-      ! Get partition
-      do i = 1,n_atoms
-
-          ri = .atom(i).position
-
-          do j = 1,n_atoms
-
-              if (i==j) cycle
-
-              rj  = .atom(j).position
-              rij = ri - rj
-              dij = norm2(rij)
-
-              ! Loop over non-unit non-zero weight points
-              do g = 1,n_pts
-                  rg  = pts(g,:)
-                  rig = ri - rg
-                  rjg = rj - rg
-                  dig = norm2(rig)
-                  djg = norm2(rjg)
-                  mu1 = (dig - djg)/dij
-                  mu2 = mu1*mu1
-                  mu3 = mu2*mu1
-                  mu5 = mu3*mu2
-                  mu7 = mu5*mu2        ! Eq. (14)
-                  fac = SIXTEENTH*(c35*(mu1-mu3)+c21*mu5-c5*mu7)
-                  fac = HALF*(ONE - fac) ! Eq. (8)
-                  P(g,i) = P(g,i)*fac
-              end
-          end
-
-      end
-
-      ! Normalize; modify grid weights
-      do g = 1,n_pts
-          fac = sum(P(g,:))
-          fac = P(g,a)/fac
-          wts(g) = wts(g) * fac
-      end
-
-      ! Clean
-      P.destroy
-
-   end
 
 !  =============================
 !  Full grid generation routines
