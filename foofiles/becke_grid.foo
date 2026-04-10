@@ -2198,7 +2198,7 @@ contains
 
       ! Distances to grid points
       ! Does this speed things up?
-      dg.create(n_pts,.atom.dim)
+      dg.create(n_pts,n_atoms)
       do i = 1,n_atoms
          ri = .atom(i).position
          do g = 1,n_pts
@@ -2312,7 +2312,7 @@ contains
 
       ! Distances to grid points
       ! Does this speed things up?
-      dg.create(n_pts,.atom.dim)
+      dg.create(n_pts,n_atoms)
       do i = 1,n_atoms
          ri = .atom(i).position
          do g = 1,n_pts
@@ -2388,6 +2388,126 @@ contains
       Pa.destroy
       Ps.destroy
       dg.destroy
+
+   end
+
+   make_SRC_atom_grid(pts,wts,a) ::: PURE
+   ! Make the *normalised* Salvador & Ramos-Cordoba integration grid
+   ! ("pts","wts") *only* for atom "a".
+      self :: IN
+      pts  :: MAT{REAL}@, OUT
+      wts  :: VEC{REAL}@, OUT
+      a    :: INT, IN
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
+   ENSURE(pts.dim2==3,"wrong dim2, pts")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds")
+   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii")
+
+      dg           :: MAT{REAL}@
+      bonds        :: VEC{INT}@
+      radii        :: VEC{REAL}@
+      Pa, Pi, Ps   :: VEC{REAL}@
+      ri, rj, rg   :: VEC{REAL}(3)
+      bi, bj, chi  :: REAL
+      mu, dij, s   :: REAL
+      c5,c21,c35   :: REAL
+      n_atoms      :: INT
+      i,j, ni,nj   :: INT
+      n_pts,   g   :: INT
+
+      ! Unnormalized grid for atom "a"
+      .:make_atom_grid(pts,wts,a)
+
+      ! Sizes
+      n_atoms = bonds.dim
+      n_pts   = pts.dim1
+
+      ! Radii & neighbours
+      radii   = .Salvador_radii_for(a).element
+      bonds   = .Salvador_bonds_for(a).element
+
+      ! Distances to grid points
+      ! Does this speed things up?
+      dg.create(n_pts,n_atoms)
+      do i = 1,n_atoms
+         ni = bonds(i)
+         ri = .atom(ni).position
+         do g = 1,n_pts
+            rg = pts(g,:)
+            dg(g,i) = norm2(rg-ri)
+         end
+      end
+
+      ! Cell functions
+      Pa.create(n_pts) ! a-th cell fn
+      Pi.create(n_pts) ! i-th cell fn
+      Ps.create(n_pts) ! Sum_i P_i
+      Ps = ZERO        ! <--- NOTE
+
+      ! Stratmann-Scuseria eq. (14)
+      c5  = FIVE
+      c21 = SEVEN*THREE
+      c35 = SEVEN*FIVE
+
+      ! Sum cell fns. Pi
+      do i = 1,n_atoms
+
+          ni = bonds(i)
+          bi = radii(i)
+          ri = .atom(ni).position
+
+          Pi = ONE ! <--- NOTE
+
+          ! Product over step fns.
+          ! Pi = Prod_j s(mu_ij)
+          do j = 1,n_atoms
+
+              if (i==j) cycle
+
+              nj = bonds(j)
+              bj = radii(j)
+              rj  = .atom(nj).position
+              dij = ONE/norm2(ri-rj)
+
+              ! Ratio
+              chi = bi/bj                      
+
+              ! Grid points "g"
+              do g = 1,n_pts
+                  mu  = (dg(g,i)-dg(g,j))*dij  ! Speeded up?
+                  mu  = (ONE+mu-chi*(ONE-mu)) / &
+                        (ONE+mu+chi*(ONE-mu))  ! Eq. (9) nu'
+                  mu  = HALF*mu*(THREE-mu*mu)  ! Stiffness 4
+                  mu  = HALF*mu*(THREE-mu*mu)
+                  mu  = HALF*mu*(THREE-mu*mu)
+                  mu  = HALF*mu*(THREE-mu*mu)
+                  s   = HALF*(ONE-mu)          ! Eq. (5)
+                  Pi(g) = Pi(g) * s            ! Eq. (4) RHS
+              end
+
+          end
+
+          ! Add & store
+          Ps = Ps + Pi
+          if (i==a) Pa = Pi
+
+      end
+
+      ! Normalize & modify grid wts
+      do g = 1,n_pts
+          wts(g) = wts(g)*Pa(g)/Ps(g)          ! Eq. (4) LHS
+      end
+
+      ! Clean
+      Ps.destroy
+      Pi.destroy
+      Pa.destroy
+      dg.destroy
+      bonds.destroy
+      radii.destroy
 
    end
 
@@ -2566,6 +2686,157 @@ contains
 !      end
 !
 !   end
+
+!  ================================
+!  Salvador & Ramos-Cordoba weights
+!  ================================
+
+   Salvador_W_weights(wts,pts,a) ::: PURE
+   ! Normalise Salvador & Ramos-Cordoba (2103) weights "wts" for the
+   ! points "pts" for the atom with index "a".
+   ! See LHS of eq. (4) in Salvador (2013) JCP 139, p071103.
+      self :: IN
+      wts  :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      a    :: INT, IN
+
+   ENSURE(wts.dim==pts.dim1,"inconsistent dim1, wts and pts")
+
+      n_bonds     :: INT
+      n_pts,n,x,b :: INT
+      P_A,P_B,tot :: VEC{REAL}@
+
+      n_bonds = .Salvador_bonds_for(a).element.dim
+      n_pts   = wts.dim
+
+      ! LHS of eq. (4)
+      P_A.create(n_pts) ! Numerator P_A
+      P_B.create(n_pts) ! Neighbour P_B
+      tot.create(n_pts) ! tot = Sum_B P_B
+
+      ! Numerator P_A
+      .:Salvador_P_weights(P_A,pts,a)
+
+      ! Denominator Sum_B P_B
+      tot = P_A
+      do x = 1,n_bonds
+         b = .Salvador_bonds_for(a)[x]
+         .:Salvador_P_weights(P_B,pts,b)
+         tot = tot + P_B
+      end
+
+      ! Normalise. Stockholder style
+      do n = 1,n_pts
+         if (tot(n)>epsilon(ONE)) then; wts(n) = P_A(n)/tot(n)
+         else;                          wts(n) = ZERO
+         end
+      end
+
+      ! Clean
+      tot.destroy
+      P_B.destroy
+      P_A.destroy
+
+   end
+
+   Salvador_P_weights(wts,pts,a) ::: PURE
+   ! Return Salvador & Ramos-Cordoba (2103) P weights in "wts"
+   ! evaluated on the points "pts" for the atom with index "a".
+   ! See RHS of eq. (4) in JCP 139, p071103 (2013).
+      self :: IN
+      wts  :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      a    :: INT, IN
+
+   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds")
+   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii")
+   ENSURE(wts.dim==pts.dim1,"inconsistent dim1, wts and pts")
+
+    ! stiff :: INT
+      x,b,g :: INT
+      ra, rb, rg  :: VEC{REAL}(3)
+      rag,rbg     :: REAL
+      rab,rax,rbx :: REAL
+      chi, mu, nu :: REAL
+
+      ! Constants
+    ! stiff = .partition_power
+
+      ! Parent (central atom) pos
+      ra = .atom(a).position
+
+      ! Initialise
+      wts = ONE
+
+      ! Loop on neighbors "x" of "a"
+      do x = 1,.Salvador_bonds_for(a).element.dim
+         b   = .Salvador_bonds_for(a)[x]
+         rb  = .atom(b).position
+         rab = norm2(rb-ra)
+         rax = .Salvador_radii_for(a)[x]
+         rbx = rab - rax
+         chi = rax/rbx                      ! Eq. (8)
+         ! Loop on grid pts "g"
+         do g = 1,wts.dim
+            rg  = pts(g,:)
+            rag = norm2(rg-ra)
+            rbg = norm2(rg-rb)
+            mu  = (rag-rbg)/rab             ! Eq. (7)
+
+            nu  = (ONE+mu-chi*(ONE-mu)) / &
+                  (ONE+mu+chi*(ONE-mu))     ! Eq. (9)
+            nu  = HALF*nu*(THREE-nu*nu)     ! Stiffness
+            nu  = HALF*nu*(THREE-nu*nu)
+            nu  = HALF*nu*(THREE-nu*nu)
+            ! Product of cell fn's
+            wts(g) = wts(g) * HALF*(ONE-nu) ! Eq. (4) RHS
+
+          ! The above is the inline of below:
+          ! wts(g) = wts(g) * ::Becke_s_fn(mu,chi,k=stiff)
+         end
+      end
+
+   end
+
+   Becke_s_fn(mu,chi,k) result (res) ::: selfless, pure
+   ! Return the sigmoidal soft-cutoff function of eq. (5) of in
+   ! Salvador & Ramos-Cordoba (2103) using the nu-rescaling where
+   !   "mu"  is the elliptic coordinate from A->B, Eq. (2)
+   !   "chi" is the ratio of atomic radii RA/RB, Eq. (8)
+   !   "k"  is the stiffness parameter "k" , Eq. (5)
+   ! Reference:
+   ! Salvador & Ramos-Cordoba  (2013) JCP 139 p 071103
+   ! See also: Becke ...       (1988) JCP 88  p. 2547
+   !           Stratmann et al (1996) CPL 257 p.  213
+      mu  :: REAL, IN
+      chi :: REAL, IN
+      k   :: INT, IN
+      res :: REAL
+
+      nu :: REAL
+      i  :: INT
+
+      ! Eq. (9) Salvador
+      nu = (ONE+mu-chi*(ONE-mu)) / &
+           (ONE+mu+chi*(ONE-mu))
+
+      do i = 1,k
+         nu = ::Becke_p_fn(nu)
+      end
+
+      ! Eq. (9) Salvador
+      res = HALF*(ONE-nu)
+
+   end
+
+   Becke_p_fn(mu) result (res) ::: selfless, private, pure
+   ! Becke's uniterated profile function.
+   ! See eq. (19) Becke (1988) JCP 88 p. 2547
+   ! Also eq. (5) Stratman (1996) CPL 257 p. 213
+      mu  :: REAL, IN
+      res :: REAL
+      res = HALF*mu*(THREE-mu*mu)
+   end
 
 !  =============================
 !  Full grid generation routines
@@ -2763,155 +3034,6 @@ contains
           pt(n,:) = pt(n,:) + .atom(a).position
       end
 
-   end
-
-!  ================================
-!  Salvador & Ramos-Cordoba weights
-!  ================================
-
-   Salvador_W_weights(wts,pts,a) ::: PURE
-   ! Normalise Salvador & Ramos-Cordoba (2103) weights "wts" for the
-   ! points "pts" for the atom with index "a".
-   ! See LHS of eq. (4) in Salvador (2013) JCP 139, p071103.
-      self :: IN
-      wts  :: VEC{REAL}, OUT
-      pts  :: MAT{REAL}, IN
-      a    :: INT, IN
-
-   ENSURE(wts.dim==pts.dim1,"inconsistent dim1, wts and pts")
-
-      n_bonds     :: INT
-      n_pts,n,x,b :: INT
-      P_A,P_B,tot :: VEC{REAL}@
-
-      n_bonds = .Salvador_bonds_for(a).element.dim
-      n_pts   = wts.dim
-
-      ! LHS of eq. (4)
-      P_A.create(n_pts) ! Numerator P_A
-      P_B.create(n_pts) ! Neighbour P_B
-      tot.create(n_pts) ! tot = Sum_B P_B
-
-      ! Numerator P_A
-      .:Salvador_P_weights(P_A,pts,a)
-
-      ! Denominator Sum_B P_B
-      tot = P_A
-      do x = 1,n_bonds
-         b = .Salvador_bonds_for(a)[x]
-         .:Salvador_P_weights(P_B,pts,b)
-         tot = tot + P_B
-      end
-
-      ! Normalise. Stockholder style
-      do n = 1,n_pts
-         if (tot(n)>epsilon(ONE)) then; wts(n) = P_A(n)/tot(n)
-         else;                          wts(n) = ZERO
-         end
-      end
-
-      ! Clean
-      tot.destroy
-      P_B.destroy
-      P_A.destroy
-
-   end
-
-   Salvador_P_weights(wts,pts,a) ::: PURE
-   ! Return Salvador & Ramos-Cordoba (2103) P weights in "wts"
-   ! evaluated on the points "pts" for the atom with index "a".
-   ! See RHS of eq. (4) in JCP 139, p071103 (2013).
-      self :: IN
-      wts  :: VEC{REAL}, OUT
-      pts  :: MAT{REAL}, IN
-      a    :: INT, IN
-
-   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds")
-   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii")
-   ENSURE(wts.dim==pts.dim1,"inconsistent dim1, wts and pts")
-
-    ! stiff :: INT
-      x,b,g :: INT
-      ra, rb, rg  :: VEC{REAL}(3)
-      rag,rbg     :: REAL
-      rab,rax,rbx :: REAL
-      chi, mu, nu :: REAL
-
-      ! Constants
-    ! stiff = .partition_power
-
-      ! Parent (central atom) pos
-      ra = .atom(a).position
-
-      ! Initialise
-      wts = ONE
-
-      ! Loop on neighbors "x" of "a"
-      do x = 1,.Salvador_bonds_for(a).element.dim
-         b   = .Salvador_bonds_for(a)[x]
-         rb  = .atom(b).position
-         rab = norm2(rb-ra)
-         rax = .Salvador_radii_for(a)[x]
-         rbx = rab - rax
-         chi = rax/rbx                      ! Eq. (8)
-         ! Loop on grid pts "g"
-         do g = 1,wts.dim
-            rg  = pts(g,:)
-            rag = norm2(rg-ra)
-            rbg = norm2(rg-rb)
-            mu  = (rag-rbg)/rab             ! Eq. (7)
-            nu  = (ONE+mu-chi*(ONE-mu)) / &
-                  (ONE+mu+chi*(ONE-mu))     ! Eq. (9)
-            nu  = HALF*nu*(THREE-nu*nu)     ! Stiffness
-            nu  = HALF*nu*(THREE-nu*nu)
-            nu  = HALF*nu*(THREE-nu*nu)
-            ! Product of cell fn's
-            wts(g) = wts(g) * HALF*(ONE-nu) ! Eq. (4) RHS
-          ! The above is the inline of below:
-          ! wts(g) = wts(g) * ::Becke_s_fn(mu,chi,k=stiff)
-         end
-      end
-
-   end
-
-   Becke_s_fn(mu,chi,k) result (res) ::: selfless, pure
-   ! Return the sigmoidal soft-cutoff function of eq. (5) of in
-   ! Salvador & Ramos-Cordoba (2103) using the nu-rescaling where
-   !   "mu"  is the elliptic coordinate from A->B, Eq. (2)
-   !   "chi" is the ratio of atomic radii RA/RB, Eq. (8)
-   !   "k"  is the stiffness parameter "k" , Eq. (5)
-   ! Reference:
-   ! Salvador & Ramos-Cordoba  (2013) JCP 139 p 071103
-   ! See also: Becke ...       (1988) JCP 88  p. 2547
-   !           Stratmann et al (1996) CPL 257 p.  213
-      mu  :: REAL, IN
-      chi :: REAL, IN
-      k   :: INT, IN
-      res :: REAL
-
-      nu :: REAL
-      i  :: INT
-
-      ! Eq. (9) Salvador
-      nu = (ONE+mu-chi*(ONE-mu)) / &
-           (ONE+mu+chi*(ONE-mu))
-
-      do i = 1,k
-         nu = ::Becke_p_fn(nu)
-      end
-
-      ! Eq. (9) Salvador
-      res = HALF*(ONE-nu)
-
-   end
-
-   Becke_p_fn(mu) result (res) ::: selfless, private, pure
-   ! Becke's uniterated profile function.
-   ! See eq. (19) Becke (1988) JCP 88 p. 2547
-   ! Also eq. (5) Stratman (1996) CPL 257 p. 213
-      mu  :: REAL, IN
-      res :: REAL
-      res = HALF*mu*(THREE-mu*mu)
    end
 
 !  =======================
