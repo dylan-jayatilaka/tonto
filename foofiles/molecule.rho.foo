@@ -1195,7 +1195,7 @@ contains
 
 ! For DFT
 
-   set_up_becke_grid ::: leaky
+   set_up_becke_grid ::: leaky, PURE
    ! Set up the Becke grids and overlapping atoms
       self :: INOUT
 
@@ -1206,7 +1206,7 @@ contains
 
       ! ALWAYS Set up integration grid
       ! (in case of new positions) (leaky)
-      .becke_grid.set_atom_info(.atom) ! NOT PURE
+      .becke_grid.set_atom_info(.atom) 
       .becke_grid.set_grid_data
 
       ! ALWAYS make the overlapping atom lists
@@ -2746,9 +2746,9 @@ contains
 
    end
 
-!  =================
-!  Salvador-RC atoms
-!  =================
+!  ==============================
+!  Salvador-RC neighbours & radii
+!  ==============================
 
    make_Salvador_radii ::: PURE
    ! Put the Salvador & Ramos-Cordoba radii for each atom.
@@ -3118,6 +3118,10 @@ contains
 
    end
 
+!  =================
+!  Salvador-RC atoms
+!  =================
+
    apply_Salvador_W_weights(grid,a,pts) ::: PURE
    ! Apply (i.e. multiply) "grid" by the Salvador atom weight
    ! function for the atom "a", on supplied points "pts".
@@ -3139,7 +3143,7 @@ contains
          ! Get weights
          Wa.create(pts.dim1)
          .becke_grid.Salvador_W_weights(Wa,pts,a)
-       ! .becke_grid.make_N_SS0_cell_fn(Wa,pts,a) 
+       ! .becke_grid.make_N_SS1_cell_fn(Wa,pts,a) 
 
          ! Apply them
          grid = grid*Wa
@@ -3173,6 +3177,10 @@ contains
       end
 
    end
+
+!  ========================
+!  Stratmann-Scuseria atoms
+!  ========================
 
 !  ====================
 !  Atom partition grids
@@ -3261,6 +3269,48 @@ contains
       N0 = N0*wts
 
    end
+
+   make_Stratmann_rho_grid(N0,pts,wts,c,DM) ::: leaky, PURE
+   ! Make a Stratmann-Scuseria-weighted electron density (ED)
+   ! grid "N0" on the pruned Becke grid ("pts","wts") for atom "c".
+   ! The ED is made using AO density matrix "DM".  Summation of N0
+   ! gives the electron population for atom "c".
+   ! NOTE: Rewritten to use Kang's code.
+      self :: IN
+      N0   :: VEC{REAL}@, OUT
+      pts  :: MAT{REAL}@, OUT
+      wts  :: VEC{REAL}@, OUT
+      c    :: INT, IN
+      DM   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      cutoff :: REAL
+
+      ! Get the Stratmann-Scuseria grid for atom "c"
+      ! Actually this is with a=ONE.
+      .becke_grid.make_SS1_atom_grid(pts,wts,c) 
+
+      ! Prune the grid with new "wts"
+      .becke_grid.prune_grid(pts,wts)
+
+      ! Density grid for atom "c"
+      N0.create(pts.dim1)
+      cutoff = .becke_grid.basis_fn_cutoff
+      .:make_ED_grid_r_v2(N0,pts,DM,cutoff) ! Kang
+
+      ! N0*Wc, weights for atom "c"
+      N0 = N0*wts
+
+   end
+
+!  =================
+!  Charges & moments
+!  =================
 
    make_atomic_moments(spin,output) ::: template
    ! Make the restricted atomic moments for some partitioning.
@@ -3394,18 +3444,19 @@ contains
    !       is printed as a check unless supressed via "output".
    end
 
-!   make_r_BA_moments(spin,output) ::: get_from(make_atomic_moments, Hirshfeld?=>Becke), leaky
-!   ! Make the restricted atomic moments for some partitioning.
-!   ! NOTE: the charges & dipoles are set for every .atom 
-!   !       and then propagated to .asymmetric_unit_atoms.
-!   !       Needed for core-matrix-cluster-of-charges method
-!   ! NOTE: Moments aren't printed, but total no. of electrons
-!   !       is printed as a check unless supressed via "output".
-!   end
+   make_r_SS_moments(spin,output) ::: get_from(make_atomic_moments, Hirshfeld?=>Stratmann), leaky
+   ! Make the restricted atomic moments for some partitioning.
+   ! NOTE: the charges & dipoles are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+   ! NOTE: Moments aren't printed, but total no. of electrons
+   !       is printed as a check unless supressed via "output".
+   end
 
    make_SA_info(output) ::: leaky
-   ! Set up the Salvador neighbors & radii. 
-   ! Put them into a beck_grid ready for integration.
+   ! Make the TFVA atomic charges & moments.
+   ! Set up Becke grid before (if not there) ready for integration.
+   ! The latter need Salvador neighbors & radii which are also made.
       self   :: INOUT
       output :: BIN, optional, IN
 
@@ -3413,7 +3464,7 @@ contains
    ENSURE(.basis_info_made,"no basis info")
 
       ! Set up integration grid
-      .RHO:set_up_becke_grid ! NOT PURE
+      .RHO:set_up_becke_grid 
 
       ! Make Salvador radii
       .:make_Salvador_radii
@@ -3421,13 +3472,13 @@ contains
       .becke_grid.set_Salvador_radii(.Salvador_radii_for)
 
       ! Make Salvador moments
-      .:make_r_SA_moments(output=output)
+      .:make_r_SA_moments(output=output) ! NOT PURE
 
    end
 
-   make_BA_info(output) ::: leaky
-   ! Set up the Salvador neighbors & radii. 
-   ! Put them into a beck_grid ready for integration.
+   make_SS_info(output) ::: leaky
+   ! Make the Stratmann-Scuseria atomic charges & moments.
+   ! Set up Becke grid before (if not there) ready for integration.
       self   :: INOUT
       output :: BIN, optional, IN
 
@@ -3435,10 +3486,10 @@ contains
    ENSURE(.basis_info_made,"no basis info")
 
       ! Set up integration grid
-      .RHO:set_up_becke_grid ! NOT PURE
+      .RHO:set_up_becke_grid
 
       ! Make Becke moments
-   !  .:make_r_BA_moments(output=output)
+      .:make_r_SS_moments(output=output) ! NOT PURE
 
    end
 
