@@ -3228,11 +3228,11 @@ contains
 
    end
 
-   make_Salvador_rho_grid(N0,pts,wts,c,DM) ::: leaky, PURE
-   ! Make a Salvador & Ramos-Cordoba -weighted electron density (ED)
-   ! grid "N0" on the pruned Becke grid ("pts","wts") for atom "c".
-   ! The ED is made using AO density matrix "DM".  Summation of N0
-   ! gives the Hirshfeld electron population for atom "c".
+   make_Becke_rho_grid(N0,pts,wts,c,DM) ::: leaky, PURE
+   ! Make a Becke-weighted electron density (ED) grid "N0" on the
+   ! pruned Becke grid ("pts","wts") for atom "c".
+   ! The ED is made using AO density matrix "DM".  
+   ! Summation of N0 gives the electron population for atom "c".
    ! NOTE: Rewritten to use Kang's code.
       self :: IN
       N0   :: VEC{REAL}@, OUT
@@ -3249,13 +3249,9 @@ contains
 
       cutoff :: REAL
 
-      ! Get the Becke grid for atom "c"
-      .becke_grid.make_atom_grid(pts,wts,c)
-
-      ! Apply weight function "Wc" for atom "c"
-      .:apply_Salvador_W_weights(wts,c,pts)
-    ! .:apply_stockholder_atom_weight(wts,c,pts)
-
+      ! Get the Stratmann-Scuseria grid for atom "c"
+      ! Actually this is with a=ONE.
+      .becke_grid.make_Becke_atom_grid(pts,wts,c) 
 
       ! Prune the grid with new "wts"
       .becke_grid.prune_grid(pts,wts)
@@ -3294,6 +3290,48 @@ contains
       ! Get the Stratmann-Scuseria grid for atom "c"
       ! Actually this is with a=ONE.
       .becke_grid.make_SS1_atom_grid(pts,wts,c) 
+
+      ! Prune the grid with new "wts"
+      .becke_grid.prune_grid(pts,wts)
+
+      ! Density grid for atom "c"
+      N0.create(pts.dim1)
+      cutoff = .becke_grid.basis_fn_cutoff
+      .:make_ED_grid_r_v2(N0,pts,DM,cutoff) ! Kang
+
+      ! N0*Wc, weights for atom "c"
+      N0 = N0*wts
+
+   end
+
+   make_Salvador_rho_grid(N0,pts,wts,c,DM) ::: leaky, PURE
+   ! Make a Salvador & Ramos-Cordoba -weighted electron density (ED)
+   ! grid "N0" on the pruned Becke grid ("pts","wts") for atom "c".
+   ! The ED is made using AO density matrix "DM".  Summation of N0
+   ! gives the Hirshfeld electron population for atom "c".
+   ! NOTE: Rewritten to use Kang's code.
+      self :: IN
+      N0   :: VEC{REAL}@, OUT
+      pts  :: MAT{REAL}@, OUT
+      wts  :: VEC{REAL}@, OUT
+      c    :: INT, IN
+      DM   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      cutoff :: REAL
+
+      ! Get the Becke grid for atom "c"
+      .becke_grid.make_atom_grid(pts,wts,c)
+
+      ! Apply weight function "Wc" for atom "c"
+      .:apply_Salvador_W_weights(wts,c,pts)
+    ! .:apply_stockholder_atom_weight(wts,c,pts)
+
 
       ! Prune the grid with new "wts"
       .becke_grid.prune_grid(pts,wts)
@@ -3435,7 +3473,7 @@ contains
    !       is printed as a check unless supressed via "output".
    end
 
-   make_r_SA_moments(spin,output) ::: get_from(make_atomic_moments, Hirshfeld?=>Salvador), leaky
+   make_r_BA_moments(spin,output) ::: get_from(make_atomic_moments, Hirshfeld?=>Becke), leaky
    ! Make the restricted atomic moments for some partitioning.
    ! NOTE: the charges & dipoles are set for every .atom 
    !       and then propagated to .asymmetric_unit_atoms.
@@ -3451,6 +3489,50 @@ contains
    !       Needed for core-matrix-cluster-of-charges method
    ! NOTE: Moments aren't printed, but total no. of electrons
    !       is printed as a check unless supressed via "output".
+   end
+
+   make_r_SA_moments(spin,output) ::: get_from(make_atomic_moments, Hirshfeld?=>Salvador), leaky
+   ! Make the restricted atomic moments for some partitioning.
+   ! NOTE: the charges & dipoles are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+   ! NOTE: Moments aren't printed, but total no. of electrons
+   !       is printed as a check unless supressed via "output".
+   end
+
+
+   make_BA_info(output) ::: leaky
+   ! Make the Becke atomic charges & moments.
+   ! Set up Becke grid before (if not there) ready for integration.
+      self   :: INOUT
+      output :: BIN, optional, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.basis_info_made,"no basis info")
+
+      ! Set up integration grid
+      .RHO:set_up_becke_grid
+
+      ! Make Becke moments
+      .:make_r_BA_moments(output=output) ! NOT PURE
+
+   end
+
+   make_SS_info(output) ::: leaky
+   ! Make the Stratmann-Scuseria atomic charges & moments.
+   ! Set up Becke grid before (if not there) ready for integration.
+      self   :: INOUT
+      output :: BIN, optional, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.basis_info_made,"no basis info")
+
+      ! Set up integration grid
+      .RHO:set_up_becke_grid
+
+      ! Make Becke moments
+      .:make_r_SS_moments(output=output) ! NOT PURE
+
    end
 
    make_SA_info(output) ::: leaky
@@ -3473,23 +3555,6 @@ contains
 
       ! Make Salvador moments
       .:make_r_SA_moments(output=output) ! NOT PURE
-
-   end
-
-   make_SS_info(output) ::: leaky
-   ! Make the Stratmann-Scuseria atomic charges & moments.
-   ! Set up Becke grid before (if not there) ready for integration.
-      self   :: INOUT
-      output :: BIN, optional, IN
-
-   ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.basis_info_made,"no basis info")
-
-      ! Set up integration grid
-      .RHO:set_up_becke_grid
-
-      ! Make Becke moments
-      .:make_r_SS_moments(output=output) ! NOT PURE
 
    end
 

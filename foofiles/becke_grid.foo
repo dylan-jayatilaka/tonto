@@ -2166,11 +2166,120 @@ contains
 !  Normalized atom grids
 !  =====================
 
+   make_Becke_atom_grid(pts,wts,a) ::: PURE
+   ! Make the *normalised* Becke integration grid ("pts","wts") 
+   ! *only* for atom "a". Atom size adjustments are made.
+      self :: IN
+      pts  :: MAT{REAL}@, OUT
+      wts  :: VEC{REAL}@, OUT
+      a    :: INT, IN
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
+   ENSURE(pts.dim2==3,"wrong dim2, pts")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      dg           :: MAT{REAL}@
+      Pa, Pi, Ps   :: VEC{REAL}@
+      ri, rj, rg   :: VEC{REAL}(3)
+      bi, bj, chi  :: REAL
+      dij, mu, s   :: REAL
+      c5,c21,c35   :: REAL
+      n_atoms, i,j :: INT
+      n_pts,   g   :: INT
+
+      ! Unnormalized grid for atom "a"
+      .:make_atom_grid(pts,wts,a)
+
+      ! Sizes
+      n_atoms = .atom.dim
+      n_pts   = pts.dim1
+
+      ! Distances to grid points
+      ! Does this speed things up?
+      dg.create(n_pts,.atom.dim)
+      do i = 1,n_atoms
+         ri = .atom(i).position
+         do g = 1,n_pts
+            rg = pts(g,:)
+            dg(g,i) = norm2(rg-ri)
+         end
+      end
+
+      ! Cell functions
+      Ps.create(n_pts) ! Sum_i P_i
+      Pa.create(n_pts) ! a-th cell fn
+      Pi.create(n_pts) ! i-th cell fn
+      Ps = ZERO        ! <--- NOTE
+
+      ! Stratmann-Scuseria eq. (14)
+      c5  = FIVE
+      c21 = SEVEN*THREE
+      c35 = SEVEN*FIVE
+
+      ! Sum cell fns. Pi
+      do i = 1,n_atoms
+
+          bi = bragg_slater_radius(.atom(i).atomic_number)
+          ri = .atom(i).position
+
+          Pi = ONE ! <--- NOTE
+
+          ! Product over step fns.
+          ! Pi = Prod_j s(mu_ij)
+          do j = 1,n_atoms
+
+              if (i==j) cycle
+
+              bj  = bragg_slater_radius(.atom(j).atomic_number)
+              rj  = .atom(j).position
+              dij = ONE/norm2(ri-rj)
+
+              ! Becke size adjustment
+              chi = bi/bj                      ! ratio
+              chi = (chi-ONE)/(chi+ONE)
+              chi = chi/(chi*chi - ONE)        ! a
+              chi = min(chi, HALF)             ! Becke (A5)
+              chi = max(chi,-HALF)
+
+              ! Grid points "g"
+              do g = 1,n_pts
+                  mu  = (dg(g,i)-dg(g,j))*dij  ! Speeded up?
+                  mu  = mu + chi*(ONE-mu*mu)   ! nu
+                  mu  = 1.5*mu-0.5*mu*mu*mu
+                  mu  = 1.5*mu-0.5*mu*mu*mu
+                  mu  = 1.5*mu-0.5*mu*mu*mu
+                  s   = 0.5*(ONE - mu)         ! Eq. (8)
+                  Pi(g) = Pi(g) * s            ! Eq. (9)
+              end
+
+          end
+
+          ! Add & store
+          Ps = Ps + Pi
+          if (i==a) Pa = Pi
+
+      end
+
+      ! Normalize & modify grid wts
+      do g = 1,n_pts
+          wts(g) = wts(g)*Pa(g)/Ps(g)
+      end
+
+      ! Clean
+      Pi.destroy
+      Pa.destroy
+      Ps.destroy
+      dg.destroy
+
+   end
+
    make_SS1_atom_grid(pts,wts,a) ::: PURE
    ! Make the *normalised* Stratmann-Scuseria integration grid
-   ! ("pts","wts") *only* for atom "a", ready for integration. 
-   ! Grids must have been made by calling .set_grid_data. 
-   ! NOTE: Actually it's the Stratmann-Scuseria method with a=1.
+   ! ("pts","wts") *only* for atom "a".
+   ! NOTE: Actually it's the Stratmann-Scuseria grid with a=1.
+   ! NOTE: Becke atom size adjustment is made to the step function.
    ! See Eqs. (11)-(14) in Stratmann et al (1996) CPL 257 p. 213.
    ! So that means there is no grid pruning or any fancy stuff.
       self :: IN
@@ -2184,10 +2293,11 @@ contains
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
 
-      Pa, Pi, Ps   :: VEC{REAL}@
       dg           :: MAT{REAL}@
+      Pa, Pi, Ps   :: VEC{REAL}@
       ri, rj, rg   :: VEC{REAL}(3)
-      mu1,mu2,mu3  :: REAL
+      bi, bj, chi  :: REAL
+      mu, mu2, mu3 :: REAL
       mu5,mu7, dij :: REAL
       c5,c21,c35,s :: REAL
       n_atoms, i,j :: INT
@@ -2225,6 +2335,7 @@ contains
       ! Sum cell fns. Pi
       do i = 1,n_atoms
 
+          bi = bragg_slater_radius(.atom(i).atomic_number)
           ri = .atom(i).position
 
           Pi = ONE ! <--- NOTE
@@ -2235,17 +2346,26 @@ contains
 
               if (i==j) cycle
 
+              bj  = bragg_slater_radius(.atom(j).atomic_number)
               rj  = .atom(j).position
               dij = ONE/norm2(ri-rj)
 
+              ! Becke size adjustment
+              chi = bi/bj                      ! ratio
+              chi = (chi-ONE)/(chi+ONE)
+              chi = chi/(chi*chi - ONE)        ! a
+              chi = min(chi, HALF)             ! Becke (A5)
+              chi = max(chi,-HALF)
+
               ! Grid points "g"
               do g = 1,n_pts
-                  mu1 = (dg(g,i)-dg(g,j))*dij  ! Speeded up?
-                  mu2 = mu1*mu1
-                  mu3 = mu2*mu1
+                  mu  = (dg(g,i)-dg(g,j))*dij  ! Speeded up?
+                  mu  = mu + chi*(ONE-mu*mu)   ! nu
+                  mu2 = mu *mu 
+                  mu3 = mu2*mu 
                   mu5 = mu3*mu2
                   mu7 = mu5*mu2                ! Eq. (14)
-                  s   = SIXTEENTH*(c35*(mu1-mu3)+c21*mu5-c5*mu7)
+                  s   = SIXTEENTH*(c35*(mu-mu3)+c21*mu5-c5*mu7)
                   s   = HALF*(ONE - s)         ! Eq. (8)
                   Pi(g) = Pi(g) * s            ! Eq. (9)
               end
@@ -2268,105 +2388,6 @@ contains
       Pa.destroy
       Ps.destroy
       dg.destroy
-
-   end
-
-   make_SS1_atom_grid_old(pts,wts,a) ::: PURE
-   ! Make the *normalised* integration grid ("pts","wts") *only* for
-   ! atom "a". Grids must have been made by calling .set_grid_data.
-   ! The grid is ready for molecular integrations over that atom.
-   ! NOTE: the "pts" and "wts" are those for ".atom(a)" only.
-   ! NOTE: Actually it's the Stratmann-Scuseria method with a=1.
-   ! See Eqs. (11)-(14) in Stratmann et al (1996) CPL 257 p. 213.
-   ! So that means there is no grid pruning or any fancy stuff.
-      self :: IN
-      pts  :: MAT{REAL}@, OUT
-      wts  :: VEC{REAL}@, OUT
-      a    :: INT, IN
-
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
-   ENSURE(pts.dim2==3,"wrong dim2, pts")
-   ENSURE(.atom.allocated,"no atom list")
-   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
-
-      Pa, Pi, Ps   :: VEC{REAL}@
-      ri,rj,rij,rg :: VEC{REAL}(3)
-      dig,djg,fac  :: REAL
-      mu1,mu2,mu3  :: REAL
-      mu5,mu7,dij  :: REAL
-      c5,c21,c35   :: REAL
-      n_atoms, i,j :: INT
-      n_pts, g     :: INT
-
-      ! Unnormalized grid for atom "a"
-      .:make_atom_grid(pts,wts,a)
-
-      ! Sizes
-      n_atoms = .atom.dim
-      n_pts   = pts.dim1
-
-      ! Cell functions
-      Ps.create(n_pts) ! Sum_i P_i
-      Pa.create(n_pts) ! a-th cell fn
-      Pi.create(n_pts) ! i-th cell fn
-      Ps = ZERO        ! <--- NOTE
-
-      ! Stratmann-Scuseria eq. (14)
-      c5  = FIVE
-      c21 = SEVEN*THREE
-      c35 = SEVEN*FIVE
-
-      ! Sum cell fns. Pi
-      do i = 1,.atom.dim
-
-          ri = .atom(i).position
-
-          ! Cell fn. Pi
-          Pi = ONE ! <--- NOTE
-
-          ! Product over step fns.
-          ! Pi = Prod_j si(mu_ij)
-          do j = 1,.atom.dim
-
-              if (i==j) cycle
-
-              rj  = .atom(j).position
-              rij = ri - rj
-              dij = norm2(rij)
-
-              ! Grid points "g"
-              do g = 1,n_pts
-                  rg  = pts(g,:)
-                  dig = norm2(ri-rg)
-                  djg = norm2(rj-rg)
-                  mu1 = (dig - djg)/dij  ! Eq. (4)
-                  mu2 = mu1*mu1
-                  mu3 = mu2*mu1
-                  mu5 = mu3*mu2
-                  mu7 = mu5*mu2          ! Eq. (14)
-                  fac = SIXTEENTH*(c35*(mu1-mu3)+c21*mu5-c5*mu7)
-                  fac = HALF*(ONE - fac) ! Eq. (8)
-                  Pi(g) = Pi(g)*fac      ! Eq. (9)
-              end
-
-          end
-
-          ! Add & store
-          Ps = Ps + Pi
-          if (i==a) Pa = Pi
-
-      end
-
-      ! Normalize & modify grid wts
-      do g = 1,n_pts
-          wts(g) = wts(g)*Pa(g)/Ps(g)
-      end
-
-      ! Clean
-      Pi.destroy
-      Pa.destroy
-      Ps.destroy
 
    end
 
