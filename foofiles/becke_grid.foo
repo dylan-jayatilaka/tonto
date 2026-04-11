@@ -2167,7 +2167,7 @@ contains
 !  =====================
 
    make_Becke_atom_grid(pts,wts,a) ::: PURE
-   ! Make the *normalised* Becke integration grid ("pts","wts") 
+   ! Make the *normalised* Becke integration grid ("pts","wts")
    ! *only* for atom "a". Atom size adjustments are made.
       self :: IN
       pts  :: MAT{REAL}@, OUT
@@ -2175,8 +2175,6 @@ contains
       a    :: INT, IN
 
    ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
-   ENSURE(pts.dim2==3,"wrong dim2, pts")
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
 
@@ -2361,8 +2359,8 @@ contains
               do g = 1,n_pts
                   mu  = (dg(g,i)-dg(g,j))*dij  ! Speeded up?
                   mu  = mu + chi*(ONE-mu*mu)   ! nu
-                  mu2 = mu *mu 
-                  mu3 = mu2*mu 
+                  mu2 = mu *mu
+                  mu3 = mu2*mu
                   mu5 = mu3*mu2
                   mu7 = mu5*mu2                ! Eq. (14)
                   s   = SIXTEENTH*(c35*(mu-mu3)+c21*mu5-c5*mu7)
@@ -2473,7 +2471,7 @@ contains
               dij = ONE/norm2(ri-rj)
 
               ! Ratio
-              chi = bi/bj                      
+              chi = ONE
 
               ! Grid points "g"
               do g = 1,n_pts
@@ -2669,7 +2667,7 @@ contains
 !   ! Partition (i.e. normalize) weights "wts" for *only* atom "a"
 !   ! given a set of cell functions "P" for *all* atoms. See:
 !   ! See: Stratmann et al (1996) CPL 257 p. 213 eq. (2)
-!   !      Given omega_g in "wts" return omega_g * P_a(r_g) 
+!   !      Given omega_g in "wts" return omega_g * P_a(r_g)
 !      self :: IN
 !      wts  :: VEC{REAL}, INOUT
 !      P    :: MAT{REAL}, IN
@@ -2691,85 +2689,145 @@ contains
 !  Salvador & Ramos-Cordoba weights
 !  ================================
 
-   Salvador_W_weights(wts,pts,a) ::: PURE
+   make_Salvador_atom_grid(pts,wts,a) ::: PURE
+   ! Make the *normalised* Salvador integration grid ("pts","wts")
+   ! *only* for atom "a". Atom size adjustments are made.
+      self :: IN
+      pts  :: MAT{REAL}@, OUT
+      wts  :: VEC{REAL}@, OUT
+      a    :: INT, IN
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      ! Unnormalized grid for atom "a"
+      .:make_atom_grid(pts,wts,a)
+
+      ! Normalise wts
+      .:apply_SRC_W_cell_fn(wts,pts,a)
+
+   end
+
+   apply_SRC_W_cell_fn(wts,pts,a) ::: PURE
    ! Normalise Salvador & Ramos-Cordoba (2103) weights "wts" for the
    ! points "pts" for the atom with index "a".
    ! See LHS of eq. (4) in Salvador (2013) JCP 139, p071103.
       self :: IN
-      wts  :: VEC{REAL}, OUT
+      wts  :: VEC{REAL}, INOUT
       pts  :: MAT{REAL}, IN
       a    :: INT, IN
 
-   ENSURE(wts.dim==pts.dim1,"inconsistent dim1, wts and pts")
+   ENSURE(wts.dim==pts.dim1,"inconsistent dim1, Wa and pts")
 
-      n_bonds     :: INT
-      n_pts,n,x,b :: INT
-      P_A,P_B,tot :: VEC{REAL}@
+      n_bonds    :: INT
+      n_pts, x,b :: INT
+      Pa, Pb, Ps :: VEC{REAL}@
 
       n_bonds = .Salvador_bonds_for(a).element.dim
-      n_pts   = wts.dim
+      n_pts   = pts.dim1
 
       ! LHS of eq. (4)
-      P_A.create(n_pts) ! Numerator P_A
-      P_B.create(n_pts) ! Neighbour P_B
-      tot.create(n_pts) ! tot = Sum_B P_B
+      Pa.create(n_pts) ! Numerator P_A
+      Pb.create(n_pts) ! Neighbour P_B
+      Ps.create(n_pts) ! tot = Sum_B P_B
 
-      ! Numerator P_A
-      .:Salvador_P_weights(P_A,pts,a)
+      ! Numerator Pa
+      .:make_SRC_P_cell_fn(Pa,pts,a)
 
-      ! Denominator Sum_B P_B
-      tot = P_A
+      ! Denominator Sum_b Pb
+      Ps = Pa
       do x = 1,n_bonds
          b = .Salvador_bonds_for(a)[x]
-         .:Salvador_P_weights(P_B,pts,b)
-         tot = tot + P_B
+         .:make_SRC_P_cell_fn(Pb,pts,b)
+         Ps = Ps + Pb
       end
 
-      ! Normalise. Stockholder style
-      do n = 1,n_pts
-         if (tot(n)>epsilon(ONE)) then; wts(n) = P_A(n)/tot(n)
-         else;                          wts(n) = ZERO
-         end
-      end
+      ! Apply normalisation.
+      wts = wts*Pa/Ps
 
       ! Clean
-      tot.destroy
-      P_B.destroy
-      P_A.destroy
+      Ps.destroy
+      Pb.destroy
+      Ps.destroy
 
    end
 
-   Salvador_P_weights(wts,pts,a) ::: PURE
-   ! Return Salvador & Ramos-Cordoba (2103) P weights in "wts"
+   make_SRC_W_cell_fn(Wa,pts,a) ::: PURE
+   ! Normalise Salvador & Ramos-Cordoba (2103) weights "wts" for the
+   ! points "pts" for the atom with index "a".
+   ! See LHS of eq. (4) in Salvador (2013) JCP 139, p071103.
+      self :: IN
+      Wa   :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      a    :: INT, IN
+
+   ENSURE(Wa.dim==pts.dim1,"inconsistent dim1, Wa and pts")
+
+      n_bonds    :: INT
+      n_pts, x,b :: INT
+      Pa, Pb, Ps :: VEC{REAL}@
+
+      n_bonds = .Salvador_bonds_for(a).element.dim
+      n_pts   = pts.dim1
+
+      ! LHS of eq. (4)
+      Pa.create(n_pts) ! Numerator P_A
+      Pb.create(n_pts) ! Neighbour P_B
+      Ps.create(n_pts) ! tot = Sum_B P_B
+
+      ! Numerator Pa
+      .:make_SRC_P_cell_fn(Pa,pts,a)
+
+      ! Denominator Sum_b Pb
+      Ps = Pa
+      do x = 1,n_bonds
+         b = .Salvador_bonds_for(a)[x]
+         .:make_SRC_P_cell_fn(Pb,pts,b)
+         Ps = Ps + Pb
+      end
+
+      ! Normalise.
+      Wa = Pa/Ps
+
+      ! Clean
+      Ps.destroy
+      Pb.destroy
+      Ps.destroy
+
+   end
+
+   make_SRC_P_cell_fn(Pa,pts,a) ::: PURE
+   ! Return Salvador & Ramos-Cordoba (2103) P cell fn. in "Pa"
    ! evaluated on the points "pts" for the atom with index "a".
    ! See RHS of eq. (4) in JCP 139, p071103 (2013).
       self :: IN
-      wts  :: VEC{REAL}, OUT
+      Pa   :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
       a    :: INT, IN
 
    ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds")
    ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii")
-   ENSURE(wts.dim==pts.dim1,"inconsistent dim1, wts and pts")
+   ENSURE(Pa.dim==pts.dim1,"inconsistent dim1, Pa and pts")
 
-    ! stiff :: INT
-      x,b,g :: INT
+      n_bonds,x,b :: INT
+      n_pts,  g   :: INT
       ra, rb, rg  :: VEC{REAL}(3)
-      rag,rbg     :: REAL
+      rag,rbg, s  :: REAL
       rab,rax,rbx :: REAL
       chi, mu, nu :: REAL
 
-      ! Constants
-    ! stiff = .partition_power
+      n_bonds = .Salvador_bonds_for(a).element.dim
+      n_pts   = pts.dim1
 
       ! Parent (central atom) pos
       ra = .atom(a).position
 
       ! Initialise
-      wts = ONE
+      Pa = ONE
 
-      ! Loop on neighbors "x" of "a"
-      do x = 1,.Salvador_bonds_for(a).element.dim
+      ! Pa = Prod_b s(mu_ab)
+      do x = 1,n_bonds
          b   = .Salvador_bonds_for(a)[x]
          rb  = .atom(b).position
          rab = norm2(rb-ra)
@@ -2777,66 +2835,63 @@ contains
          rbx = rab - rax
          chi = rax/rbx                      ! Eq. (8)
          ! Loop on grid pts "g"
-         do g = 1,wts.dim
+         do g = 1,n_pts
             rg  = pts(g,:)
             rag = norm2(rg-ra)
             rbg = norm2(rg-rb)
             mu  = (rag-rbg)/rab             ! Eq. (7)
-
             nu  = (ONE+mu-chi*(ONE-mu)) / &
                   (ONE+mu+chi*(ONE-mu))     ! Eq. (9)
             nu  = HALF*nu*(THREE-nu*nu)     ! Stiffness
             nu  = HALF*nu*(THREE-nu*nu)
             nu  = HALF*nu*(THREE-nu*nu)
-            ! Product of cell fn's
-            wts(g) = wts(g) * HALF*(ONE-nu) ! Eq. (4) RHS
-
-          ! The above is the inline of below:
-          ! wts(g) = wts(g) * ::Becke_s_fn(mu,chi,k=stiff)
+            nu  = HALF*nu*(THREE-nu*nu)
+            s   = HALF*(ONE-nu)             !
+            Pa(g) = Pa(g) * s               ! Eq. (4) RHS
          end
       end
 
    end
 
-   Becke_s_fn(mu,chi,k) result (res) ::: selfless, pure
-   ! Return the sigmoidal soft-cutoff function of eq. (5) of in
-   ! Salvador & Ramos-Cordoba (2103) using the nu-rescaling where
-   !   "mu"  is the elliptic coordinate from A->B, Eq. (2)
-   !   "chi" is the ratio of atomic radii RA/RB, Eq. (8)
-   !   "k"  is the stiffness parameter "k" , Eq. (5)
-   ! Reference:
-   ! Salvador & Ramos-Cordoba  (2013) JCP 139 p 071103
-   ! See also: Becke ...       (1988) JCP 88  p. 2547
-   !           Stratmann et al (1996) CPL 257 p.  213
-      mu  :: REAL, IN
-      chi :: REAL, IN
-      k   :: INT, IN
-      res :: REAL
+!   Becke_s_fn(mu,chi,k) result (res) ::: selfless, pure
+!   ! Return the sigmoidal soft-cutoff function of eq. (5) of in
+!   ! Salvador & Ramos-Cordoba (2103) using the nu-rescaling where
+!   !   "mu"  is the elliptic coordinate from A->B, Eq. (2)
+!   !   "chi" is the ratio of atomic radii RA/RB, Eq. (8)
+!   !   "k"  is the stiffness parameter "k" , Eq. (5)
+!   ! Reference:
+!   ! Salvador & Ramos-Cordoba  (2013) JCP 139 p 071103
+!   ! See also: Becke ...       (1988) JCP 88  p. 2547
+!   !           Stratmann et al (1996) CPL 257 p.  213
+!      mu  :: REAL, IN
+!      chi :: REAL, IN
+!      k   :: INT, IN
+!      res :: REAL
+!
+!      nu :: REAL
+!      i  :: INT
+!
+!      ! Eq. (9) Salvador
+!      nu = (ONE+mu-chi*(ONE-mu)) / &
+!           (ONE+mu+chi*(ONE-mu))
+!
+!      do i = 1,k
+!         nu = ::Becke_p_fn(nu)
+!      end
+!
+!      ! Eq. (9) Salvador
+!      res = HALF*(ONE-nu)
+!
+!   end
 
-      nu :: REAL
-      i  :: INT
-
-      ! Eq. (9) Salvador
-      nu = (ONE+mu-chi*(ONE-mu)) / &
-           (ONE+mu+chi*(ONE-mu))
-
-      do i = 1,k
-         nu = ::Becke_p_fn(nu)
-      end
-
-      ! Eq. (9) Salvador
-      res = HALF*(ONE-nu)
-
-   end
-
-   Becke_p_fn(mu) result (res) ::: selfless, private, pure
-   ! Becke's uniterated profile function.
-   ! See eq. (19) Becke (1988) JCP 88 p. 2547
-   ! Also eq. (5) Stratman (1996) CPL 257 p. 213
-      mu  :: REAL, IN
-      res :: REAL
-      res = HALF*mu*(THREE-mu*mu)
-   end
+!   Becke_p_fn(mu) result (res) ::: selfless, private, pure
+!   ! Becke's uniterated profile function.
+!   ! See eq. (19) Becke (1988) JCP 88 p. 2547
+!   ! Also eq. (5) Stratman (1996) CPL 257 p. 213
+!      mu  :: REAL, IN
+!      res :: REAL
+!      res = HALF*mu*(THREE-mu*mu)
+!   end
 
 !  =============================
 !  Full grid generation routines
