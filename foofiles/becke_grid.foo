@@ -417,6 +417,13 @@ contains
       .Salvador_radii_for = radii
    end
 
+   set_Salvador_chi(ratio) ::: leaky, PURE
+   ! Set the Salvador chi ratios for each atom's neighbours.
+      self  :: INOUT
+      ratio :: MAT{REAL}, IN
+      .Salvador_chi = ratio
+   end
+
    set_zeta ::: leaky, PURE
    ! Set the atom_zeta scaling parameters. We store them in case they need to be
    ! manually changed ...
@@ -2390,124 +2397,222 @@ contains
    end
 
    make_SRC_atom_grid(pts,wts,a) ::: PURE
-   ! Make the *normalised* Salvador & Ramos-Cordoba integration grid
-   ! ("pts","wts") *only* for atom "a".
+   ! Make the *normalised* Becke integration grid ("pts","wts")
+   ! *only* for atom "a". Atom size adjustments are made.
       self :: IN
       pts  :: MAT{REAL}@, OUT
       wts  :: VEC{REAL}@, OUT
       a    :: INT, IN
 
    ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
-   ENSURE(pts.dim2==3,"wrong dim2, pts")
    ENSURE(.atom.allocated,"no atom list")
-   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds")
-   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
 
-      dg           :: MAT{REAL}@
-      bonds        :: VEC{INT}@
-      radii        :: VEC{REAL}@
+    ! dg           :: MAT{REAL}@
       Pa, Pi, Ps   :: VEC{REAL}@
       ri, rj, rg   :: VEC{REAL}(3)
-      bi, bj, chi  :: REAL
-      mu, dij, s   :: REAL
-      c5,c21,c35   :: REAL
-      n_atoms      :: INT
-      i,j, ni,nj   :: INT
+      dgi,dgj, chi :: REAL
+      dij, mu, s   :: REAL
+      n_atoms, i,j :: INT
       n_pts,   g   :: INT
 
       ! Unnormalized grid for atom "a"
       .:make_atom_grid(pts,wts,a)
 
       ! Sizes
-      n_atoms = bonds.dim
+      n_atoms = .atom.dim
       n_pts   = pts.dim1
-
-      ! Radii & neighbours
-      radii   = .Salvador_radii_for(a).element
-      bonds   = .Salvador_bonds_for(a).element
 
       ! Distances to grid points
       ! Does this speed things up?
-      dg.create(n_pts,n_atoms)
-      do i = 1,n_atoms
-         ni = bonds(i)
-         ri = .atom(ni).position
-         do g = 1,n_pts
-            rg = pts(g,:)
-            dg(g,i) = norm2(rg-ri)
-         end
-      end
+    ! dg.create(n_pts,n_atoms)
+    ! do i = 1,n_atoms
+    !    ri = .atom(i).position
+    !    do g = 1,n_pts
+    !       rg = pts(g,:)
+    !       dg(g,i) = norm2(rg-ri)
+    !    end
+    ! end
 
       ! Cell functions
+      Ps.create(n_pts) ! Sum_i P_i
       Pa.create(n_pts) ! a-th cell fn
       Pi.create(n_pts) ! i-th cell fn
-      Ps.create(n_pts) ! Sum_i P_i
       Ps = ZERO        ! <--- NOTE
-
-      ! Stratmann-Scuseria eq. (14)
-      c5  = FIVE
-      c21 = SEVEN*THREE
-      c35 = SEVEN*FIVE
 
       ! Sum cell fns. Pi
       do i = 1,n_atoms
 
-          ni = bonds(i)
-          bi = radii(i)
-          ri = .atom(ni).position
+         ri = .atom(i).position
 
-          Pi = ONE ! <--- NOTE
+         Pi = ONE ! <--- NOTE
 
-          ! Product over step fns.
-          ! Pi = Prod_j s(mu_ij)
-          do j = 1,n_atoms
+         ! Product over step fns.
+         ! Pi = Prod_j s(mu_ij)
+         do j = 1,n_atoms
 
-              if (i==j) cycle
+            if (i==j) cycle
 
-              nj = bonds(j)
-              bj = radii(j)
-              rj  = .atom(nj).position
-              dij = ONE/norm2(ri-rj)
+            rj  = .atom(j).position
+            dij = ONE/norm2(rj-ri)
 
-              ! Ratio
-              chi = ONE
+            ! Becke size adjustment
+            chi = .Salvador_chi(i,j)
 
-              ! Grid points "g"
-              do g = 1,n_pts
-                  mu  = (dg(g,i)-dg(g,j))*dij  ! Speeded up?
-                  mu  = (ONE+mu-chi*(ONE-mu)) / &
-                        (ONE+mu+chi*(ONE-mu))  ! Eq. (9) nu'
-                  mu  = HALF*mu*(THREE-mu*mu)  ! Stiffness 4
-                  mu  = HALF*mu*(THREE-mu*mu)
-                  mu  = HALF*mu*(THREE-mu*mu)
-                  mu  = HALF*mu*(THREE-mu*mu)
-                  s   = HALF*(ONE-mu)          ! Eq. (5)
-                  Pi(g) = Pi(g) * s            ! Eq. (4) RHS
-              end
+            ! Grid points "g"
+            do g = 1,n_pts
+               rg  = pts(g,:)
+               dgi = norm2(ri-rg)
+               dgj = norm2(rj-rg)
+               mu  = (dgi-dgj)*dij 
+               mu  = (ONE+mu-chi*(ONE-mu)) / &
+                     (ONE+mu+chi*(ONE-mu))  ! Eq. (9) nu'
+               mu  = HALF*mu*(THREE-mu*mu)  ! Stiffness 4
+               mu  = HALF*mu*(THREE-mu*mu)
+               mu  = HALF*mu*(THREE-mu*mu)
+               mu  = HALF*mu*(THREE-mu*mu)
+               s   = HALF*(ONE-mu)          ! Eq. (5)
+               Pi(g) = Pi(g) * s            ! Eq. (4) RHS
+            end
 
-          end
+         end
 
-          ! Add & store
-          Ps = Ps + Pi
-          if (i==a) Pa = Pi
+         ! Add & store
+         Ps = Ps + Pi
+         if (i==a) Pa = Pi
 
       end
 
-      ! Normalize & modify grid wts
-      do g = 1,n_pts
-          wts(g) = wts(g)*Pa(g)/Ps(g)          ! Eq. (4) LHS
-      end
+      ! Normalize/modify wts
+      wts = wts * Pa/Ps
 
       ! Clean
-      Ps.destroy
       Pi.destroy
       Pa.destroy
-      dg.destroy
-      bonds.destroy
-      radii.destroy
+      Ps.destroy
+    ! dg.destroy
 
    end
+
+!   make_SRC_atom_grid(pts,wts,a) ::: PURE
+!   ! Make the *normalised* Salvador & Ramos-Cordoba integration grid
+!   ! ("pts","wts") *only* for atom "a".
+!      self :: IN
+!      pts  :: MAT{REAL}@, OUT
+!      wts  :: VEC{REAL}@, OUT
+!      a    :: INT, IN
+!
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(wts.dim==pts.dim1, "inconsistent dim1, wts and pts")
+!   ENSURE(pts.dim2==3,"wrong dim2, pts")
+!   ENSURE(.atom.allocated,"no atom list")
+!   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds")
+!   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii")
+!
+!      dg           :: MAT{REAL}@
+!      bonds        :: VEC{INT}@
+!      radii        :: VEC{REAL}@
+!      Pa, Pi, Ps   :: VEC{REAL}@
+!      ri, rj, rg   :: VEC{REAL}(3)
+!      bi, bj, chi  :: REAL
+!      mu, dij, s   :: REAL
+!      c5,c21,c35   :: REAL
+!      n_atoms      :: INT
+!      i,j, ni,nj   :: INT
+!      n_pts,   g   :: INT
+!
+!      ! Unnormalized grid for atom "a"
+!      .:make_atom_grid(pts,wts,a)
+!
+!      ! Sizes
+!      n_atoms = bonds.dim
+!      n_pts   = pts.dim1
+!
+!      ! Radii & neighbours
+!      radii   = .Salvador_radii_for(a).element
+!      bonds   = .Salvador_bonds_for(a).element
+!
+!      ! Distances to grid points
+!      ! Does this speed things up?
+!      dg.create(n_pts,n_atoms)
+!      do i = 1,n_atoms
+!         ni = bonds(i)
+!         ri = .atom(ni).position
+!         do g = 1,n_pts
+!            rg = pts(g,:)
+!            dg(g,i) = norm2(rg-ri)
+!         end
+!      end
+!
+!      ! Cell functions
+!      Pa.create(n_pts) ! a-th cell fn
+!      Pi.create(n_pts) ! i-th cell fn
+!      Ps.create(n_pts) ! Sum_i P_i
+!      Ps = ZERO        ! <--- NOTE
+!
+!      ! Stratmann-Scuseria eq. (14)
+!      c5  = FIVE
+!      c21 = SEVEN*THREE
+!      c35 = SEVEN*FIVE
+!
+!      ! Sum cell fns. Pi
+!      do i = 1,n_atoms
+!
+!          ni = bonds(i)
+!          bi = radii(i)
+!          ri = .atom(ni).position
+!
+!          Pi = ONE ! <--- NOTE
+!
+!          ! Product over step fns.
+!          ! Pi = Prod_j s(mu_ij)
+!          do j = 1,n_atoms
+!
+!              if (i==j) cycle
+!
+!              nj = bonds(j)
+!              bj = radii(j)
+!              rj  = .atom(nj).position
+!              dij = ONE/norm2(ri-rj)
+!
+!              ! Ratio
+!              chi = ONE
+!
+!              ! Grid points "g"
+!              do g = 1,n_pts
+!                  mu  = (dg(g,i)-dg(g,j))*dij  ! Speeded up?
+!                  mu  = (ONE+mu-chi*(ONE-mu)) / &
+!                        (ONE+mu+chi*(ONE-mu))  ! Eq. (9) nu'
+!                  mu  = HALF*mu*(THREE-mu*mu)  ! Stiffness 4
+!                  mu  = HALF*mu*(THREE-mu*mu)
+!                  mu  = HALF*mu*(THREE-mu*mu)
+!                  mu  = HALF*mu*(THREE-mu*mu)
+!                  s   = HALF*(ONE-mu)          ! Eq. (5)
+!                  Pi(g) = Pi(g) * s            ! Eq. (4) RHS
+!              end
+!
+!          end
+!
+!          ! Add & store
+!          Ps = Ps + Pi
+!          if (i==a) Pa = Pi
+!
+!      end
+!
+!      ! Normalize & modify grid wts
+!      do g = 1,n_pts
+!          wts(g) = wts(g)*Pa(g)/Ps(g)          ! Eq. (4) LHS
+!      end
+!
+!      ! Clean
+!      Ps.destroy
+!      Pi.destroy
+!      Pa.destroy
+!      dg.destroy
+!      bonds.destroy
+!      radii.destroy
+!
+!   end
 
 !   make_SS1_atom_grid(pts,wts,a) ::: PURE
 !   ! Make the *normalised* integration grid ("pts","wts") *only* for
