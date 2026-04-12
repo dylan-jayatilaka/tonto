@@ -2545,7 +2545,7 @@ contains
       a,b  :: INT, IN
 
    ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.interpolator.allocated,"no interpolator info")
+   ENSURE(.interpolator.allocated,"no interpolator info, specify n_data=")
    ENSURE(.interpolator.n_data>0,"wrong no. of data, interpolator")
 
       n_pts :: INT
@@ -3418,7 +3418,7 @@ contains
 !  Spherically averaged atomic density
 !  ===================================
 
-   make_spherical_SA_atom_ED(avg,pts,c) ::: PURE
+   make_spherical_SA_ED(avg,pts,c) ::: PURE
    ! Make "avg", the spherically averaged Salvador atom electron
    ! densities on a set of "pts" which lie of a sphere radius "r".
       self :: IN
@@ -3428,16 +3428,15 @@ contains
 
    ENSURE(avg.dim==pts.dim,"incompatible size, avg & pts")
 
-      Wc,N0    :: VEC{REAL}@
-      wts      :: VEC{REAL}@
-      shell    :: MAT{REAL}@
-      theta    :: QUADRATURE@
-      phi      :: QUADRATURE@
-      nq,n_pts :: INT
-      t,p,n, i :: INT
-      th,ct,st :: REAL
-      ph,cp,sp :: REAL
-      r,rst    :: REAL
+      rc        :: VEC{REAL}(3)
+      wts,Wc,N0 :: VEC{REAL}@
+      shell     :: MAT{REAL}@
+      theta,phi :: QUADRATURE@
+      nq,n_pts  :: INT
+      t,p,n, i  :: INT
+      th,ct,st  :: REAL
+      ph,cp,sp  :: REAL
+      r,rst     :: REAL
 
       ! Quadrature pt. density
       nq = 100
@@ -3457,7 +3456,8 @@ contains
       phi.set_quadrature_points
       phi.set_limits([ZERO,2*PI]) ! <---
 
-      ! Weights on shell
+      ! Atom "c" position
+      rc = .atom(c).position
 
       ! Radial pts
       do i = 1,pts.dim
@@ -3480,10 +3480,10 @@ contains
             cp  = cos(ph)
             sp  = sin(ph)
             rst = r * st ! <---
-            ! The spherical shell
-            shell(n,1) = rst*cp    
-            shell(n,2) = rst*sp
-            shell(n,3) = rst*ct
+            ! Spherical shell around "rc"
+            shell(n,1) = rst*cp + rc(1) 
+            shell(n,2) = rst*sp + rc(2)
+            shell(n,3) = rst*ct + rc(3)
             ! The area x weights
             wts(n) = st*theta.wts(t)*phi.wts(p) 
          end
@@ -3493,7 +3493,7 @@ contains
          .becke_grid.make_Salvador_cell_fn(Wc,shell,c)
 
          ! Prune "shell"
-         wts = Wc*wts
+         wts = Wc*wts ! <---
          .becke_grid.prune_grid(shell,wts)
 
          ! ED for atom "c" on shell
@@ -3520,28 +3520,33 @@ contains
 
    end
 
-   spherical_SA_atom_ED(a,n_pts,r_max) result (res) ::: PURE
-   ! Return the Salvador atom ED on "n_pts" equally spaced grid points
-   ! from atom "a". The distance is the maximum distance to any
-   ! neighbour, or "r_max" if specified.
-      self  :: IN
+   make_sph_SA_interp_from_atom(a,b,r_max) ::: PURE
+   ! Make the Salvador atom ED interpolator from atom "a". 
+   ! The furthest neighbour atom index "b" is also returned.
+   ! The no. of points "n_pts" must be given in an .interpolator.
+   ! The distance away to plot is "r_max", if specified.
+      self  :: INOUT
       a     :: INT, IN
-      n_pts :: INT, IN
-      r_max :: REAL, optional, IN
-      res   :: VEC{REAL}(n_pts)
+      b     :: INT, OUT
+      r_max :: REAL, OUT
 
-   ENSURE(n_pts>3,"too few points")
    ENSURE(.atom.allocated,"no atoms")
    ENSURE(.atom.dim>1,"must have more than one atom.")
    ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds: make them!")
+   ENSURE(.interpolator.allocated,"no interpolator info, specify n_data=")
+   ENSURE(.interpolator.n_data>0,"wrong no. of data, interpolator")
 
-      pts   :: MAT{REAL}@
+      line  :: VEC{REAL}@
+      pts   :: VEC{REAL}@
       neigh :: VEC{INT}@
-      del,p :: VEC{REAL}(3)
-      rb,ra :: VEC{REAL}(3)
+      del,p :: REAL
       rmax  :: REAL
       dist  :: REAL
-      i,x,b :: INT
+      i,x   :: INT
+      n_pts :: INT
+
+      ! How many points?
+      n_pts = .interpolator.n_data
 
       ! Find furthest atom
       b = 0
@@ -3556,91 +3561,34 @@ contains
          end
       end
 
-      ! Furthest atom pos
-      rb = .atom(b).position
-      ra = .atom(a).position
-
-      ! Over ride rmax?
-      if (present(r_max)) then
-         rmax = r_max
-      end
+      ! r_max
+      r_max = rmax
 
       ! Make the grid points
-      pts.create(n_pts,3)
+      pts.create(n_pts)
 
-      ! Step vector
-      del = rb - ra
-      del = del/norm2(del)
-      del = del*rmax
-      del = del/(n_pts-1)
+      ! Step size
+      del = rmax/(n_pts-1)
 
-      ! Line of points to "rb"
-      p = ra
+      ! Line of points from "ra"
+      p = ZERO
       do i = 1,n_pts
-         pts(i,1) = p(1)
-         pts(i,2) = p(2)
-         pts(i,3) = p(3)
+         pts(i) = p
          p = p + del
       end
 
-      .:make_ED_grid_r(res,pts)
+      ! Make the density
+      .:make_spherical_SA_ED(line,pts,a)
+
+      ! Set domain scale factor. May not be required.
+      .interpolator.set_data_points(pts)
+      .interpolator.set_data_values(line)
 
       ! Clean
+      line.destroy
       pts.destroy
 
    end
-
-!   make_SA_atom_ED_for_atom(a) 
-!   ! Make the .interpolator for the ED between two atoms "a" and "b"
-!      self :: INOUT
-!      a    :: INT, IN
-!
-!   ENSURE(.atom.allocated,"no atoms")
-!   ENSURE(.interpolator.allocated,"no interpolator info")
-!   ENSURE(.interpolator.n_data>0,"wrong no. of data, interpolator")
-!   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds: make them!")
-!   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii: make them!")
-!
-!      n_pts :: INT
-!      pts   :: VEC{REAL}@
-!      line  :: VEC{REAL}@
-!      ra,rb :: VEC{REAL}(3)
-!      del   :: VEC{REAL}(3)
-!      stp,val :: REAL
-!      i :: INT
-!
-!      ! How many points?
-!      n_pts = .interpolator.n_data
-!
-!      ! Positions
-!      ra = .atom(a).position
-!      rb = .atom(b).position
-!
-!      ! Step vector
-!      del = rb - ra
-!      del = del/(n_pts-1)
-!      stp = norm2(del)
-!
-!      ! Points as steps
-!      pts.create(n_pts)
-!      val = ZERO
-!      do i = 1,n_pts
-!         pts(i) = val
-!         val = val + stp
-!      end
-!
-!      ! Make ED line values
-!      line = .:ED_between_points(ra,rb,n_pts)
-!
-!      ! Set domain scale factor. May not be required.
-!      .interpolator.set_data_points(pts)
-!      .interpolator.set_data_values(line)
-!
-!      ! Clean
-!      line.destroy
-!      pts.destroy
-!
-!   end
 
 !  ====================
 !  Atom partition grids
