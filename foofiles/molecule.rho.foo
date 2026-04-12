@@ -2539,7 +2539,7 @@ contains
 
    end
 
-   make_ED_interpolator_between_atoms(a,b) ::: 
+   make_ED_interpolator_between_atoms(a,b)
    ! Make the .interpolator for the ED between two atoms "a" and "b"
       self :: INOUT
       a,b  :: INT, IN
@@ -3414,66 +3414,6 @@ contains
 
    end
 
-!  =================
-!  Salvador-RC atoms
-!  =================
-
-!   apply_Salvador_W_weights(grid,a,pts) ::: PURE
-!   ! Apply (i.e. multiply) "grid" by the Salvador atom weight
-!   ! function for the atom "a", on supplied points "pts".
-!      self :: IN
-!      grid :: VEC{REAL}, INOUT
-!      a    :: INT, IN
-!      pts  :: MAT{REAL}, IN
-!
-!   ENSURE(.atom.allocated,"no atoms")
-!   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
-!   ENSURE(.becke_grid.allocated, "no becke_grid")
-!   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
-!
-!      Wa :: VEC{REAL}@
-!
-!      ! Only needed for more than one atom
-!      if (.n_atom>1) then
-!
-!         ! Get weights
-!         Wa.create(pts.dim1)
-!         .becke_grid.Salvador_W_weights(Wa,pts,a)
-!       ! .becke_grid.make_N_SS1_cell_fn(Wa,pts,a) 
-!
-!         ! Apply them
-!         grid = grid*Wa
-!
-!         ! Clean
-!         Wa.destroy
-!
-!      end
-!
-!   end
-
-!   make_Salvador_W_weights(grid,a,pts) ::: PURE
-!   ! Make the "grid" of Salvador weight function values for the atom
-!   ! with index "a" on the supplied points "pts".
-!      self :: IN
-!      grid :: VEC{REAL}, OUT
-!      a    :: INT, IN
-!      pts  :: MAT{REAL}, IN
-!
-!   ENSURE(.atom.allocated,"no atoms")
-!   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
-!   ENSURE(.becke_grid.allocated, "no becke_grid")
-!   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
-!
-!      if (.n_atom==1) then
-!         ! Avoid this case if possible
-!         grid = ONE
-!      else
-!         ! Get weights
-!         .becke_grid.Salvador_W_weights(grid,pts,a)
-!      end
-!
-!   end
-
 !  ===================================
 !  Spherically averaged atomic density
 !  ===================================
@@ -3579,6 +3519,128 @@ contains
       avg = avg/(FOUR*PI)
 
    end
+
+   spherical_SA_atom_ED(a,n_pts,r_max) result (res) ::: PURE
+   ! Return the Salvador atom ED on "n_pts" equally spaced grid points
+   ! from atom "a". The distance is the maximum distance to any
+   ! neighbour, or "r_max" if specified.
+      self  :: IN
+      a     :: INT, IN
+      n_pts :: INT, IN
+      r_max :: REAL, optional, IN
+      res   :: VEC{REAL}(n_pts)
+
+   ENSURE(n_pts>3,"too few points")
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom.dim>1,"must have more than one atom.")
+   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds: make them!")
+
+      pts   :: MAT{REAL}@
+      neigh :: VEC{INT}@
+      del,p :: VEC{REAL}(3)
+      rb,ra :: VEC{REAL}(3)
+      rmax  :: REAL
+      dist  :: REAL
+      i,x,b :: INT
+
+      ! Find furthest atom
+      b = 0
+      rmax = ZERO
+      neigh = .Salvador_bonds_for(a).element
+      do i = 1,neigh.dim
+         x = neigh(i)
+         dist = .atom.distance_between(a,x)
+         if (dist>rmax) then
+            b = x
+            rmax = dist
+         end
+      end
+
+      ! Furthest atom pos
+      rb = .atom(b).position
+      ra = .atom(a).position
+
+      ! Over ride rmax?
+      if (present(r_max)) then
+         rmax = r_max
+      end
+
+      ! Make the grid points
+      pts.create(n_pts,3)
+
+      ! Step vector
+      del = rb - ra
+      del = del/norm2(del)
+      del = del*rmax
+      del = del/(n_pts-1)
+
+      ! Line of points to "rb"
+      p = ra
+      do i = 1,n_pts
+         pts(i,1) = p(1)
+         pts(i,2) = p(2)
+         pts(i,3) = p(3)
+         p = p + del
+      end
+
+      .:make_ED_grid_r(res,pts)
+
+      ! Clean
+      pts.destroy
+
+   end
+
+!   make_SA_atom_ED_for_atom(a) 
+!   ! Make the .interpolator for the ED between two atoms "a" and "b"
+!      self :: INOUT
+!      a    :: INT, IN
+!
+!   ENSURE(.atom.allocated,"no atoms")
+!   ENSURE(.interpolator.allocated,"no interpolator info")
+!   ENSURE(.interpolator.n_data>0,"wrong no. of data, interpolator")
+!   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds: make them!")
+!   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii: make them!")
+!
+!      n_pts :: INT
+!      pts   :: VEC{REAL}@
+!      line  :: VEC{REAL}@
+!      ra,rb :: VEC{REAL}(3)
+!      del   :: VEC{REAL}(3)
+!      stp,val :: REAL
+!      i :: INT
+!
+!      ! How many points?
+!      n_pts = .interpolator.n_data
+!
+!      ! Positions
+!      ra = .atom(a).position
+!      rb = .atom(b).position
+!
+!      ! Step vector
+!      del = rb - ra
+!      del = del/(n_pts-1)
+!      stp = norm2(del)
+!
+!      ! Points as steps
+!      pts.create(n_pts)
+!      val = ZERO
+!      do i = 1,n_pts
+!         pts(i) = val
+!         val = val + stp
+!      end
+!
+!      ! Make ED line values
+!      line = .:ED_between_points(ra,rb,n_pts)
+!
+!      ! Set domain scale factor. May not be required.
+!      .interpolator.set_data_points(pts)
+!      .interpolator.set_data_values(line)
+!
+!      ! Clean
+!      line.destroy
+!      pts.destroy
+!
+!   end
 
 !  ====================
 !  Atom partition grids
