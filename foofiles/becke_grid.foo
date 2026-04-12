@@ -1824,14 +1824,11 @@ contains
       pts  :: MAT{REAL}@, INOUT
       wts  :: VEC{REAL}@, INOUT
 
-      n_pts, i,k :: INT
-
-      ! Allocate map array
-      n_pts = wts.dim
+      i,k :: INT
 
       ! Copy only significant points
       k = 0
-      do i = 1,n_pts
+      do i = 1,pts.dim1
 
          if (wts(i)<.basis_fn_cutoff) cycle
 
@@ -1862,7 +1859,7 @@ contains
       map :: VEC{INT}@
       n_pt,n_bf,i,k,f :: INT
 
-      ! Allocate map array
+      ! Map array
       n_pt = wt.dim
       map.create(n_pt)
 
@@ -1918,7 +1915,7 @@ contains
       map :: VEC{INT}@
       n_pt,n_bf,i,k,f :: INT
 
-      ! Allocate map array
+      ! Map array
       n_pt = wt.dim
       map.create(n_pt)
 
@@ -2380,8 +2377,8 @@ contains
    end
 
    make_Salvador_atom_grid_v1(pts,wts,a) ::: PURE
-   ! Make the *normalised* Becke integration grid ("pts","wts")
-   ! *only* for atom "a". Atom size adjustments are made.
+   ! Make the *normalised* Salvador integration grid ("pts","wts")
+   ! *only* for atom "a". See Salvador (2013) JCP 139 p 071103.
       self :: IN
       pts  :: MAT{REAL}@, OUT
       wts  :: VEC{REAL}@, OUT
@@ -2471,8 +2468,8 @@ contains
    end
 
    make_Salvador_atom_grid_v0(pts,wts,a) ::: PURE
-   ! Make the *normalised* Becke integration grid ("pts","wts")
-   ! *only* for atom "a". Atom size adjustments are made.
+   ! Make the *normalised* Salvador integration grid ("pts","wts")
+   ! *only* for atom "a". 
       self :: IN
       pts  :: MAT{REAL}@, OUT
       wts  :: VEC{REAL}@, OUT
@@ -2554,6 +2551,103 @@ contains
       Ps.destroy
 
    end
+
+!  =================
+!  Atom weights only
+!  =================
+
+   make_Salvador_cell_fn(Wa,pts,a) ::: PURE
+   ! Make the *normalised* Salvador atom weights "Wa" for atom "a"
+   ! evaluated on the set of points "pts". 
+   ! See Eqn. (4) in Salvador (2013) JCP 139 p 071103.
+      self :: IN
+      Wa   :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      a    :: INT, IN
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(Wa.dim==pts.dim1,"incompatble dim1, Wa and pts")
+   ENSURE(3==pts.dim1,"wrong dim2, pts")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+
+      atoms        :: VEC{INT}@
+      Pa, Pi, Ps   :: VEC{REAL}@
+      ri, rj, rg   :: VEC{REAL}(3)
+      dgi,dgj, chi :: REAL
+      dij, mu, s   :: REAL
+      n_atoms, i,j :: INT
+      n_pts,   g   :: INT
+
+      ! Sizes
+      n_atoms = 1 + .Salvador_bonds_for(a).element.dim
+      n_pts   = pts.dim1
+
+      ! Create a & neighbours
+      atoms.create(n_atoms)
+      atoms(1 ) = a
+      atoms(2:) = .Salvador_bonds_for(a).element
+
+      ! Cell functions
+      Ps.create(n_pts) ! Sum_i P_i
+      Pa.create(n_pts) ! a-th cell fn
+      Pi.create(n_pts) ! i-th cell fn
+      Ps = ZERO        ! <--- NOTE
+
+      ! Sum cell fns. Pi
+      do i = 1,n_atoms
+
+         ri = .atom(atoms(i)).position
+
+         Pi = ONE ! <--- NOTE
+
+         ! Product over step fns.
+         ! Pi = Prod_j s(mu_ij)
+         do j = 1,n_atoms
+
+            if (i==j) cycle
+
+            rj  = .atom(atoms(j)).position
+            dij = ONE/norm2(rj-ri)
+
+            ! Becke size adjustment
+            chi = .Salvador_chi(i,j)
+
+            ! Grid points "g"
+            do g = 1,n_pts
+               rg  = pts(g,:)
+               dgi = norm2(ri-rg)
+               dgj = norm2(rj-rg)
+               mu  = (dgi-dgj)*dij 
+               mu  = (ONE+mu-chi*(ONE-mu)) / &
+                     (ONE+mu+chi*(ONE-mu))  ! Eq. (9) nu'
+               mu  = HALF*mu*(THREE-mu*mu)  ! Stiffness 4
+               mu  = HALF*mu*(THREE-mu*mu)
+               mu  = HALF*mu*(THREE-mu*mu)
+               mu  = HALF*mu*(THREE-mu*mu)
+               s   = HALF*(ONE-mu)          ! Eq. (5)
+               Pi(g) = Pi(g) * s            ! Eq. (4) RHS
+            end
+
+         end
+
+         ! Add & store
+         Ps = Ps + Pi
+         if (i==a) Pa = Pi
+
+      end
+
+      ! Normalize
+      Wa = Pa/Ps
+
+      ! Clean
+      Pi.destroy
+      Pa.destroy
+      Ps.destroy
+
+   end
+
+! Evaluated on a set of pts, no grid wts
 
 !  =============================
 !  Full grid generation routines

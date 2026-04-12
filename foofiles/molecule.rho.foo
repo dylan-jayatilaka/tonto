@@ -291,7 +291,8 @@ contains
       Dij  :: REAL
       eps  :: REAL
 
-      eps = TOL(9)
+      ! Same as .becke_grid.basis_fn_cutoff
+      eps = SHELL_BASIS_FN_CUTOFF
       if (present(tol)) eps = tol
 
       ! Zero
@@ -2442,47 +2443,6 @@ contains
 
    end
 
-!  ======================
-!  Promolecule density mx
-!  ======================
-
-   add_ANO_densities(DM) ::: leaky
-   ! Add the ANO densities to make the total density matrix
-      self :: IN
-      DM   :: OPMATRIX@, OUT
-
-   ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.INQ:has_all_ANO_matrices,"no ANOs")
-
-      a,b,f,l :: INT
-
-      ! Create
-      DM.create(.n_bf,"r ")
-
-      ! Set to zero
-      DM.r = ZERO
-
-      ! Add 'em up
-      do a = 1,.n_atom
-
-         ! Transfer non-unique atoms
-         do b = 1,.n_atom
-
-            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
-
-            f = .first_basis_fn_for_atom(b)
-            l =  .last_basis_fn_for_atom(b)
-            DM.r(f:l,f:l) = .atom(a).density_mx.r
-
-         end
-
-      end
-
-      ! Symmetrize
-      DM.r.symmetric_reflect
-
-   end
-
 !  =========================
 !  ED at a point & on a line
 !  =========================
@@ -2650,6 +2610,47 @@ contains
       if (DO_IN_PARALLEL) then
          PARALLEL_SUM(res)
       end
+
+   end
+
+!  ======================
+!  Promolecule density mx
+!  ======================
+
+   add_ANO_densities(DM) ::: leaky
+   ! Add the ANO densities to make the total density matrix
+      self :: IN
+      DM   :: OPMATRIX@, OUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.INQ:has_all_ANO_matrices,"no ANOs")
+
+      a,b,f,l :: INT
+
+      ! Create
+      DM.create(.n_bf,"r ")
+
+      ! Set to zero
+      DM.r = ZERO
+
+      ! Add 'em up
+      do a = 1,.n_atom
+
+         ! Transfer non-unique atoms
+         do b = 1,.n_atom
+
+            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
+
+            f = .first_basis_fn_for_atom(b)
+            l =  .last_basis_fn_for_atom(b)
+            DM.r(f:l,f:l) = .atom(a).density_mx.r
+
+         end
+
+      end
+
+      ! Symmetrize
+      DM.r.symmetric_reflect
 
    end
 
@@ -3473,9 +3474,117 @@ contains
 !
 !   end
 
+!  ===================================
+!  Spherically averaged atomic density
+!  ===================================
+
+   make_spherical_SA_atom_ED(avg,pts,c) ::: PURE
+   ! Make "avg", the spherically averaged Salvador atom electron
+   ! densities on a set of "pts" which lie of a sphere radius "r".
+      self :: IN
+      avg  :: VEC{REAL}, OUT
+      pts  :: VEC{REAL}, IN
+      c    :: INT, IN
+
+   ENSURE(avg.dim==pts.dim,"incompatible size, avg & pts")
+
+      Wc,N0    :: VEC{REAL}@
+      wts      :: VEC{REAL}@
+      shell    :: MAT{REAL}@
+      theta    :: QUADRATURE@
+      phi      :: QUADRATURE@
+      nq,n_pts :: INT
+      t,p,n, i :: INT
+      th,ct,st :: REAL
+      ph,cp,sp :: REAL
+      r,rst    :: REAL
+
+      ! Quadrature pt. density
+      nq = 100
+      n_pts = 2*nq*nq
+
+      ! Polar angle quadrature
+      theta.create
+      theta.set_kind("gauss_legendre")
+      theta.set_n_pts(nq)
+      theta.set_quadrature_points
+      theta.set_limits([ZERO,PI]) ! <---
+
+      ! Azimuth - twice as many pts
+      phi.create
+      phi.set_kind("gauss_legendre")
+      phi.set_n_pts(2*nq)
+      phi.set_quadrature_points
+      phi.set_limits([ZERO,2*PI]) ! <---
+
+      ! Weights on shell
+
+      ! Radial pts
+      do i = 1,pts.dim
+
+         ! Radius
+         r = pts(i)
+
+         ! Shell radius "r"
+         shell.create(n_pts,3)
+         wts.create(n_pts) ! Quad. weights
+         Wc.create(n_pts)  ! Salvador atom
+         n = 0
+         do t = 1,theta.n_pts
+         do p = 1,  phi.n_pts
+            n   = n + 1
+            th  = theta.pts(t)
+            ph  =   phi.pts(p)
+            ct  = cos(th)
+            st  = sin(th)
+            cp  = cos(ph)
+            sp  = sin(ph)
+            rst = r * st ! <---
+            ! The spherical shell
+            shell(n,1) = rst*cp    
+            shell(n,2) = rst*sp
+            shell(n,3) = rst*ct
+            ! The area x weights
+            wts(n) = st*theta.wts(t)*phi.wts(p) 
+         end
+         end
+
+         ! Salvador atom "Wc" on "shell"
+         .becke_grid.make_Salvador_cell_fn(Wc,shell,c)
+
+         ! Prune "shell"
+         wts = Wc*wts
+         .becke_grid.prune_grid(shell,wts)
+
+         ! ED for atom "c" on shell
+         N0.create(shell.dim1)
+         .:make_ED_grid_r(N0,shell)
+
+         ! Population of shell x 4 PI
+         avg(i) = sum(N0*wts) ! Integrate
+
+         ! Clean
+         N0.destroy
+         Wc.destroy
+         wts.destroy
+         shell.destroy
+
+      end
+
+      ! Clean
+      phi.destroy
+      theta.destroy
+
+      ! Scale
+      avg = avg/(FOUR*PI)
+
+   end
+
 !  ====================
 !  Atom partition grids
 !  ====================
+
+! These routines include Becke grid weights
 
    make_Hirshfeld_atom_ED_grid(N0,pts,c,DM) ::: leaky, PURE
    ! Return "N0", the Hirshfeld atom electron density (ED) grid for
@@ -3584,7 +3693,7 @@ contains
 
       ! Get the Stratmann-Scuseria grid for atom "c"
       ! Actually this is with a=ONE.
-      ! Becke weights are multiplied by the Voronoi cell fn
+      ! Becke grid "wts" are multiplied by normalized Voronoi cell fn "W"
       .becke_grid.make_SS1_atom_grid(pts,wts,c) 
 
       ! Prune the grid with new "wts"
@@ -3624,7 +3733,7 @@ contains
       cutoff :: REAL
 
       ! Get the Salvador & Ramos-Cordoba grid for atom "c"
-      ! Becke weights are multiplied by the Voronoi cell fn
+      ! Becke grid "wts" are multiplied by normalized Voronoi cell fn "W"
       .becke_grid.make_Salvador_atom_grid_v0(pts,wts,c) 
 
       ! Prune the grid with new "wts"
