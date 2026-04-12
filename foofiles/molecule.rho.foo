@@ -253,6 +253,18 @@ contains
 
    end
 
+   make_ED_grid_r(grid,pts,DM) ::: PURE
+   ! Make the "grid" for the supplied points "pts" from restricted 
+   ! real density matrix "DM".
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      DM   :: MAT{REAL}, IN
+
+      .:make_ED_grid_r_v2(grid,pts,DM)
+
+   end
+
    make_ED_grid_r_v2(grid,pts,DM,tol) ::: PURE
    ! Add to "grid" the electron density values at the the points "pt",
    ! for density matrix "DM". Only those terms bigger than "tol" are
@@ -2430,6 +2442,47 @@ contains
 
    end
 
+!  ======================
+!  Promolecule density mx
+!  ======================
+
+   add_ANO_densities(DM) ::: leaky
+   ! Add the ANO densities to make the total density matrix
+      self :: IN
+      DM   :: OPMATRIX@, OUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.INQ:has_all_ANO_matrices,"no ANOs")
+
+      a,b,f,l :: INT
+
+      ! Create
+      DM.create(.n_bf,"r ")
+
+      ! Set to zero
+      DM.r = ZERO
+
+      ! Add 'em up
+      do a = 1,.n_atom
+
+         ! Transfer non-unique atoms
+         do b = 1,.n_atom
+
+            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
+
+            f = .first_basis_fn_for_atom(b)
+            l =  .last_basis_fn_for_atom(b)
+            DM.r(f:l,f:l) = .atom(a).density_mx.r
+
+         end
+
+      end
+
+      ! Symmetrize
+      DM.r.symmetric_reflect
+
+   end
+
 !  =========================
 !  ED at a point & on a line
 !  =========================
@@ -2480,6 +2533,46 @@ contains
       end
 
       .:make_ED_grid_r(res,pts)
+
+      ! Clean
+      pts.destroy
+
+   end
+
+   ED_between_points(ra,rb,n_pts,DM) result (res) ::: PURE
+   ! Return ED on equally spaced grid points between "ra" and "rb"
+   ! as the first and last points, inclusive. "DM" is the density
+   ! matrix used to calculated the electron density.
+      self  :: IN
+      ra    :: VEC{REAL}(3), IN
+      rb    :: VEC{REAL}(3), IN
+      n_pts :: INT, IN
+      DM    :: MAT{REAL}, IN
+      res   :: VEC{REAL}(n_pts)
+
+   ENSURE(n_pts>3,"too few points")
+
+      pts :: MAT{REAL}@
+      del :: VEC{REAL}(3)
+      p   :: VEC{REAL}(3)
+      i   :: INT
+
+      pts.create(n_pts,3)
+
+      ! Step vector
+      del = rb - ra
+      del = del/(n_pts-1)
+
+      ! Line of points
+      p = ra
+      do i = 1,n_pts
+         pts(i,1) = p(1)
+         pts(i,2) = p(2)
+         pts(i,3) = p(3)
+         p = p + del
+      end
+
+      .:make_ED_grid_r(res,pts,DM)
 
       ! Clean
       pts.destroy
@@ -2764,8 +2857,9 @@ contains
    end
 
    make_Salvador_radii_orig(bonds_for,radii_for,chi,n_div,n_sub) ::: leaky, PURE
-   ! Make the Mayer Salvador atom radii corresponding to the
-   ! bonded neighbours for the Topological Fuzzy Voronoi AToms.
+   ! Make the Mayer-Salvador atom radii corresponding to the
+   ! bonded neighbours (which are also calculated) for the Topological
+   ! Fuzzy Voronoi Atoms.
       self      :: IN
       bonds_for :: VEC{EVEC{INT}}@, OUT
       radii_for :: VEC{EVEC{REAL}}@, OUT
@@ -2792,7 +2886,7 @@ contains
       chi.create(n_atoms,n_atoms)
       chi = ONE
 
-      ! Atom a
+     ! Atom a
       do a = 1,n_atoms
          n_bonds = bonds_for(a).element.dim
          radii_for(a).element.create(n_bonds)
@@ -2997,6 +3091,196 @@ contains
 
    end
 
+   Mayer_Salvador_radius_for(a,b,n_div,n_sub,DM) result (res) ::: PURE
+   ! Return the Mayer-Salvador radius R(a.b) for atoms "a" and "b" in
+   ! the direction a->b, used to make Topological Fuzzy Voronoi atoms.
+   ! "DM" is the density matrix used to calculated the electron
+   ! density. The code is accurate to 1/2000-th of the separation
+   ! R(a-b). The code ensures that R(a.b) + R(b.a) = R(a-b). 
+   ! Options:
+   ! . "n_div"  [50] is the number of divisions used to detect minima.
+   ! . "n_sub" [400] is the no. of subdivisions to refine the result.
+   ! NOTE: Code was extracted from APOST3D and contains the original
+   ! method from Mayer & Salvador used to define the Salvador &
+   ! Ramos-Cordoba radii. The method accounts for numerical errors and
+   ! instabilities in the internuclear density and atoms too far away.
+      self  :: IN
+      a, b  :: INT, IN
+      n_div :: INT, optional, IN
+      n_sub :: INT, optional, IN
+      DM    :: MAT{REAL}, IN
+      res   :: REAL
+     
+   ENSURE(a/=b,"atoms should not be the same")
+
+      ra,rb,del :: VEC{REAL}(3)
+      rc,rd     :: VEC{REAL}(3)
+      rho       :: VEC{REAL}@
+      kmin,kmax :: VEC{INT}@
+      nmin,nmax :: INT
+      ndiv,nsub :: INT
+      step,subs :: REAL
+      k, km,kf  :: INT
+      midd,maxd :: INT
+      best,diff :: INT
+      is_min    :: BIN
+      swap      :: BIN
+      Za, Zb    :: INT
+
+      ! Scan resolution: must be even
+      ndiv = 50   ! No. of divisions 
+      if (present(n_div)) ndiv = n_div
+
+      ! Polishing resolution: also even
+      nsub = 400  ! No. of subdivisions
+      if (present(n_sub)) nsub = n_sub
+
+      ! Are atoms too far?
+      ra = .atom(a).position
+      rb = .atom(b).position
+      if (norm2(rb-ra)>TEN) then
+         res = HALF       ! Divide half-way
+         return
+      end
+
+      ! Ensure a has *smaller* atomic number.
+      ! Or if equal, index a is less than b.
+      ! This ensures R(a.b) + R(b.a) = R(a-b)
+      Za = .atom(a).atomic_number
+      Zb = .atom(b).atomic_number
+      swap = FALSE
+      if      (Za>Zb         ) then; swap = TRUE
+      else if (Za==Zb AND a>b) then; swap = TRUE
+      end
+
+      ! Swap positions
+      if (swap) then
+         rc = ra
+         ra = rb
+         rb = rc
+      end
+
+      ! ED, min & max locations
+       rho.create(ndiv+1) ! Note +1
+      kmin.create(ndiv)   ! idx of k-th min
+      kmax.create(ndiv)   ! idx of k-th max
+
+      ! Get ED from a->b at ndiv+1 points 
+      ! First and last point are on ra & rb
+      rho = .:ED_between_points(ra,rb,ndiv+1,DM)
+
+      ! Find indices of minima & maxima
+      nmin = 0
+      nmax = 0
+      do k = 2,ndiv
+         if (rho(k-1)>rho(k) AND rho(k)<rho(k+1)) then 
+            ! Minima found
+            nmin = nmin + 1
+            kmin(nmin) = k
+         end     
+         if (rho(k-1)<rho(k) AND rho(k)>rho(k+1)) then 
+            ! Maxima found
+            nmax = nmax + 1
+            kmax(nmax) = k
+         end     
+      end
+
+      ! Sanity check: any critical points?
+      ENSURE(nmin>0,"no minima found between the atoms!")
+      WARN_IF(nmax>0,"maxima found between the atoms!")
+
+      if (nmin==1 AND nmax==0) then
+
+         ! Easy case: 1 minima, 0 maxima
+         km = kmin(1)   ! Index of minimum
+         is_min = TRUE  ! Set 1 if maxima
+
+      else if (nmax>0 AND abs(nmin-nmax)==1) then
+
+         ! Troubles.
+         ! One more min than max, or vice versa
+         if (nmax.is_odd) then
+            ! Central max selected 
+            km = kmax((nmax+1)/2)
+            is_min = FALSE
+         else
+            ! Central min selected. If any.
+            ! But there must, if nmax is even!
+            km = kmin((nmin+1)/2)
+            is_min = TRUE
+         end 
+         
+      else
+
+         ! Real touble. Inconsistent no. of extrema.
+         ! Select best min/max i.e closest to midpoint
+         midd = ndiv/2 ! Middle division
+         maxd = ndiv   ! Max. diff to midd
+         best = midd   ! Start at middle 
+         is_min = TRUE
+        
+         ! First minima to middle division.
+         ! If there is one, it is found
+         do k = 1,nmin
+            diff = abs(kmin(k)-midd)
+            if (diff<maxd)  then
+               best = kmin(k) ! Store
+               maxd = diff    ! Look no further
+               is_min = TRUE  ! Label it
+            end 
+         end
+        
+         ! Any maxima closer than maxd?
+         ! Maxima trump minima.
+         do k = 1,nmax
+            diff = abs(kmax(k)-midd)
+            if (diff<maxd)  then
+               best = kmax(k)
+               maxd = diff
+               is_min = FALSE
+            end 
+         end
+
+         ! Finally
+         km = best
+        
+      end
+       
+      ! Extrema index km found.
+      ! Go back one step, look ahead two steps
+      step = ONE/ndiv        ! Orig. step size
+      del  = (rb-ra)*step    ! Step vector
+      rc   = ra + (km-2)*del ! km-1 is the extrema
+      rd   = ra + (km  )*del ! *Two* steps ahead
+      subs = TWO*step/nsub   ! Substep size, over 2 steps
+
+      ! ED from rc->rd at nsub+1 points 
+      ! First & last points on rc & rd
+      rho  = .:ED_between_points(rc,rd,nsub+1,DM)
+   
+      ! Find first extrema, finer level
+      if (is_min) then
+         do k = 2,nsub
+            kf = k
+            if (rho(k-1)>rho(k) AND rho(k)<rho(k+1)) exit
+         end
+      else
+         do k = 2,nsub
+            kf = k
+            if (rho(k-1)<rho(k) AND rho(k)>rho(k+1)) exit
+         end
+      end
+      
+      ! Steps from ra
+      res = (km-2)*step + (kf-1)*subs
+
+      ! Swap back?
+      if (swap) res = ONE - res
+
+   ENSURE(res>0.1 AND res<0.9,"Too close to nuclei!")
+
+   end
+
    make_Salvador_radii_lmin ::: PURE
    ! Put the Salvador & Ramos-Cordoba radii for each atom.
       self :: INOUT
@@ -3058,52 +3342,43 @@ contains
 
    end
 
-   make_Salvador_radii_pro(radii_for) ::: leaky, PURE
-   ! Make the Mayer-Salvador atom radii corresponding to the bonded
-   ! neighbours. If the point is outside the range a -ve radii is
-   ! returned then it is not between those atoms, or too close.
-   ! NOTE: This version uses canned line minimisation routines.
-   ! NOTE: ****This version for the promolecule density****
+   make_Salvador_radii_pro(radii_for,bonds_for,DM,n_div,n_sub) ::: leaky, PURE
+   ! Make the Mayer-Salvador atom radii corresponding to the
+   ! bonded neighbours (previously calculated!) for the Topological
+   ! Fuzzy Voronoi Atoms, for the electron density obtained from
+   ! density matrix "DM".
       self      :: IN
       radii_for :: VEC{EVEC{REAL}}@, OUT
+      bonds_for :: VEC{EVEC{INT}}@, IN
+      DM        :: MAT{REAL}, IN
+      n_div     :: INT, optional, IN
+      n_sub     :: INT, optional, IN
 
    ENSURE(.atom.allocated,"no atoms")
    ENSURE(.density_mx.allocated,"no density_mx")
    ENSURE(.density_mx.r.allocated,"no restricted density_mx")
 
-      bonds_for :: VEC{EVEC{INT}}@
-
+      n_atoms :: INT
       n_bonds :: INT
-      a,b,c   :: INT
-      ra, rc  :: VEC{REAL}(3)
-      r1, r2  :: VEC{REAL}(3)
-      rac,dir :: VEC{REAL}(3)
-      E1,L,EDmin,r :: REAL
-
-      .atom.make_Salvador_neighbours(bonds_for)
+      a,b,n   :: INT
+      ra,rb   :: VEC{REAL}(3)
+      fac     :: REAL
 
       ! Create radii table
-      radii_for.create(.atom.dim)
+      n_atoms = .atom.dim
+      radii_for.create(n_atoms)
 
-      ! Atom a
-      do a = 1,.atom.dim
+     ! Atom a
+      do a = 1,n_atoms
          n_bonds = bonds_for(a).element.dim
          radii_for(a).element.create(n_bonds)
          ra = .atom(a).position
-         ! Bonded atom c
-         do b = 1,n_bonds
-            c   = bonds_for(a)[b]
-            rc  = .atom(c).position 
-            rac = rc - ra
-            r1  = ra 
-            r2  = ra + HALF*rac
-            dir = r2 - r1  ! search direction
-            E1  = .:promolecule_ED_at_point(r1)
-            VEC{REAL}:min_line(self,promolecule_ED_at_point,r1,dir,EDmin,TOL(4),E1,L)
-            r = norm2(dir*L)
-            if (L<0.05 OR L>1.95) r = -BOHR_PER_ANGSTROM
-            radii_for(a)[b] = r
-          ! print *,"a=",a,"c=",c,"L=",L,"r=",r
+         ! Neighbours b
+         do n = 1,n_bonds
+            b   = bonds_for(a)[n]
+            rb  = .atom(b).position 
+            fac = .:Mayer_Salvador_radius_for(a,b,n_div,n_sub,DM)
+            radii_for(a)[n] = fac*norm2(rb-ra)
          end
       end
 
@@ -3111,18 +3386,30 @@ contains
 
    put_Salvador_radii
    ! Put the Salvador & Ramos-Cordoba radii for each atom.
+   ! The neighbours and radii should have veen made already.
+   ! Promolecule radii are made here, only for comparison.
       self :: IN
 
    ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii: make them!")
    ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds: make them!")
+   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii: make them!")
 
+      DM :: OPMATRIX@
       radii_pro :: VEC{EVEC{REAL}}@
 
-     ! .:make_Salvador_radii
-      .RHO:make_Salvador_radii_pro(radii_pro)
+      ! Make promolecule density
+      .:add_ANO_densities(DM)
+      DM.convert_to("r",factor=HALF)
+
+      ! Make promolecule radii
+      .:make_Salvador_radii_pro(radii_pro,.Salvador_bonds_for,DM.r)
+
+      ! Put table
       .atom.put_Salvador_radii_table(.Salvador_bonds_for,.Salvador_radii_for,radii_pro)
+
+      ! Clean
       radii_pro.destroy
+      DM.destroy
 
    end
 
