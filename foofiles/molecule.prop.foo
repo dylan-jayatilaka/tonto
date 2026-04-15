@@ -2184,75 +2184,106 @@ contains
    ! Put out the electric field at every nuclear position
       self :: INOUT
 
-      cluster :: CLUSTER@
-      xyz,pos,LF :: MAT{REAL}@
-      electronic :: MAT{REAL}@
-      nuclear    :: MAT{REAL}@
-      molecule   :: MAT{REAL}@
-      charge :: VEC{REAL}@
-      r,d,F  :: VEC{REAL}(3)
-      axis   :: VEC{STR}(3)
-      symbol :: VEC{STR}@
-      mol_rms,LF_rms,xtal_rms, d3 :: REAL
-      a,i, n_charges :: INT
+      cluster  :: CLUSTER@
+      XField   :: MAT{REAL}@
+      EField   :: MAT{REAL}@
+      NField   :: MAT{REAL}@
+      MField   :: MAT{REAL}@
+      LField   :: MAT{REAL}@
+      coords   :: MAT{REAL}@
+      axis     :: VEC{STR}(3)
+      alabel   :: VEC{STR}@
+      flabel   :: VEC{STR}@
+      Efielt   :: VEC{REAL}@
+      Nfielt   :: VEC{REAL}@
+      Tfielt   :: VEC{REAL}@
+      r,d,F    :: VEC{REAL}(3)
+      charge   :: VEC{REAL}@
+      mol_rms  :: REAL
+      LF_rms   :: REAL
+      xtal_rms :: REAL
+      d3       :: REAL
+      a,i,n    :: INT
+      n_charge :: INT
+      table    :: VEC{TABLE_COLUMN}@
 
       axis = [ "x", "y", "z" ]
-      symbol = .atom.tag
 
-      electronic.create(3,.n_atom)
-      nuclear.create(3,.n_atom)
-      molecule.create(3,.n_atom)
+      EField.create(3,.n_atom)
+      NField.create(3,.n_atom)
+      MField.create(3,.n_atom)
 
-      electronic = .INTS:electronic_E_field_at_nuclei
-      nuclear    = .atom.nuclear_E_field_at_nuclei
-      molecule   = electronic + nuclear
+      EField = .INTS:electronic_E_field_at_nuclei
+      NField = .atom.nuclear_E_field_at_nuclei
+      MField = EField + NField ! Total for molecule
 
-      ! Table
+      stdout.head("Electric fields at nuclei")
+      stdout.text(". Contributions from the electron density (ED) and nuclei are shown.")
+      stdout.text(". Results in AU.")
       stdout.flush
-      stdout.text("Electric fields at nuclei:")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=4)
-      stdout.tab(real_fields=1,int_fields=1)
-      stdout.put("Electronic")
-      stdout.put("Nuclear")
-      stdout.put("Total")
-      stdout.flush
-      stdout.put("Atom")
-      stdout.put("E_i",int_width=TRUE)
-      stdout.put("/au")
-      stdout.put("/au")
-      stdout.put("/au")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=4)
+
+      ! Make coulmn data
+      alabel.create(3*.n_atom)
+      flabel.create(3*.n_atom)
+      Efielt.create(3*.n_atom)
+      Nfielt.create(3*.n_atom)
+      Tfielt.create(3*.n_atom)
+      alabel = " "
+      n = 0
       do a = 1,.n_atom
       do i = 1,3
-         if (i==1) then; stdout.put(symbol(a))
-         else;           stdout.tab(real_fields=1)
-         end
-         stdout.put(axis(i),int_width=TRUE)
-         stdout.put(electronic(i,a))
-         stdout.put(nuclear(i,a))
-         stdout.put(molecule(i,a))
-         stdout.flush
+         n = n + 1
+         if (i==1) &
+         alabel(n) = .atom(a).tag
+         flabel(n) = axis(i)
+         Efielt(n) = EField(i,a)
+         Nfielt(n) = NField(i,a)
+         Tfielt(n) = MField(i,a)
       end
       end
-      stdout.dash(int_fields=1,real_fields=4)
+
+      ! Table
+      table.create(5)
+      table(1).set_heading("Atom")
+      table(2).set_heading("E_i")
+      table(3).set_heading("Electrons")
+      table(4).set_heading("Nuclei")
+      table(5).set_heading("Molecule")
+      table(5).set_subhead("total")
+
+      ! Set table coulmn values
+      table(1).set_values(alabel)
+      table(2).set_values(flabel)
+      table(3).set_values(Efielt)
+      table(4).set_values(Nfielt)
+      table(5).set_values(Tfielt)
+
+      ! Put
+      table.put(label_rows=FALSE)
+      table.destroy
 
       ! Add crystal field?
       if (.crystal.allocated) then
+
+         ! Table
+         stdout.head("Electric fields at nuclei - including crystal environment")
+         stdout.text(". Calculated using charge and dipole Lorentz field tensors,")
+         stdout.text("  using an Ewald sum with Hirshfeld charges and dipoles at")
+         stdout.text("  every unit cell atom site")
 
          ! Make atomic charges and dipoles
          if  (NOT .HA_moments_made) then
             .SCF:make_HA_info
          end
 
-         ! Set up the cluster ... leaky
-         LF.create(3,.n_atom)
+         ! Set up the cluster
+         XField.create(3,.n_atom)
+         LField.create(3,.n_atom)
          cluster.create
          cluster.set_defaults(.crystal)
-         xyz = .atom.coordinates
-         cluster.set_fragment_geometry(xyz,cartesian=TRUE)
-         xyz.destroy
+         coords = .atom.coordinates
+         cluster.set_fragment_geometry(coords,cartesian=TRUE)
+         coords.destroy
          cluster.set_generation_method("within_radius")
          cluster.set_defragment(TRUE)
          cluster.set_radius(TEN)
@@ -2262,151 +2293,159 @@ contains
          cluster.update_info ! leaky
 
          ! Make Lorentz field ... does not need full cluster
-         cluster.make_Lorentz_fields(LF)
+         cluster.make_Lorentz_fields(LField)
 
          ! Make Xtal electric field
-         electronic = LF + molecule
+         XField = MField + LField
 
-         ! RMS values
+         ! Make coulmn data
          mol_rms  = ZERO
          LF_rms   = ZERO
          xtal_rms = ZERO
-
-         ! Table
-         stdout.flush
-         stdout.text("Electric fields at nuclei--including crystal environment:")
-         stdout.text("Calculated using charge and dipole Lorentz field tensors,")
-         stdout.text("and Hirshfeld charges and dipoles at every u/c atom site")
-         stdout.flush
-         stdout.dash(int_fields=1,real_fields=4)
-         stdout.tab(real_fields=1,int_fields=1)
-         stdout.put("Molecule")
-         stdout.put("Environment")
-         stdout.put("Crystal")
-         stdout.flush
-         stdout.put("Atom")
-         stdout.put("E_i",int_width=TRUE)
-         stdout.put("/au")
-         stdout.put("/au")
-         stdout.put("/au")
-         stdout.flush
-         stdout.dash(int_fields=1,real_fields=4)
+         n = 0
          do a = 1,.n_atom
-         do i = 1,3
-            if (i==1) then; stdout.put(symbol(a))
-            else;           stdout.tab(real_fields=1)
+            do i = 1,3
+               n = n + 1
+               Efielt(n) = MField(i,a)
+               Nfielt(n) = LField(i,a)
+               Tfielt(n) = XField(i,a)
             end
-            stdout.put(axis(i),int_width=TRUE)
-            stdout.put(molecule(i,a))
-            stdout.put(LF(i,a))
-            stdout.put(electronic(i,a))
-            stdout.flush
-            mol_rms  = mol_rms   + dot_product(molecule(:,a),molecule(:,a))
-            LF_rms   = LF_rms    + dot_product(LF(:,a),LF(:,a))
-            xtal_rms = xtal_rms  + dot_product(electronic(:,a),electronic(:,a))
+            mol_rms   = mol_rms   + dot_product(MField(:,a),MField(:,a))
+            LF_rms    = LF_rms    + dot_product(LField(:,a),LField(:,a))
+            xtal_rms  = xtal_rms  + dot_product(XField(:,a),XField(:,a))
          end
-         end
-         stdout.dash(int_fields=1,real_fields=4)
 
+         ! RMS values
          mol_rms  = sqrt(mol_rms/.n_atom)
          LF_rms   = sqrt(LF_rms/.n_atom)
          xtal_rms = sqrt(xtal_rms/.n_atom)
+        
+         ! Table headings
+         table.create(5)
+         table(1).set_heading("Atom")
+         table(2).set_heading("E_i")
+         table(3).set_heading("Central")
+         table(3).set_heading("molecule")
+         table(4).set_heading("Surrounds")
+         table(5).set_heading("Crystal")
+         table(5).set_subhead("total")
 
+         ! Set new table coulmn values
+         table(1).set_values(alabel)
+         table(2).set_values(flabel)
+         table(3).set_values(Efielt)
+         table(4).set_values(Nfielt)
+         table(5).set_values(Tfielt)
+        
+         ! Put
+         table.put(label_rows=FALSE)
+         table.destroy
+        
          stdout.flush
-         stdout.show("RMS value for molecular    E field =",mol_rms)
-         stdout.show("RMS value for environment  E field =",LF_rms)
-         stdout.show("RMS value for Xtal (total) E field =",xtal_rms)
+         stdout.show("RMS value for molecular   E field =",mol_rms)
+         stdout.show("RMS value for surrounding E field =",LF_rms)
+         stdout.show("RMS value for crystal     E field =",xtal_rms)
+
+         ! Table
+         stdout.head("Electric fields at nuclei - including crystal environment")
+         stdout.text("Calculated using Hirshfeld point charges and dipoles by")
+         stdout.text("direct summation over all molecules in a cluster around")
+         stdout.text("the central ones which have an atom within the cutoff radius")
+         stdout.flush
+         stdout.show("Cluster radius in au =",cluster.radius)
+         stdout.flush
 
          ! Make the cluster charges
-         n_charges = cluster.n_atoms - cluster.n_fragment_atoms
-         n_charges = 3*n_charges
-       ! n_charges = 2*n_charges
-       ! n_charges = n_charges
-         charge.create(n_charges)
-         pos.create(3,n_charges)
-         cluster.make_non_fragment_mu_charges(pos,charge)
-       ! cluster.make_non_fragment_positions2(pos,charge)
-       ! cluster.make_non_fragment_positions3(pos,charge)
+         n_charge = cluster.n_atoms - cluster.n_fragment_atoms
+         n_charge = 3*n_charge
+       ! n_charge = 2*n_charge
+       ! n_charge = n_charges
+         charge.create(n_charge)
+         coords.create(3,n_charge)
+         cluster.make_non_fragment_mu_charges(coords,charge)
+       ! cluster.make_non_fragment_positions2(coords,charge)
+       ! cluster.make_non_fragment_positions3(coords,charge)
 
          ! Get the point charge electric fields
-         LF = ZERO
+         LField = ZERO
          do a = 1,.n_atom
             r = .atom(a).position
             F = ZERO
-            do i = 1,n_charges
-               d  = r - pos(:,i)
+            do i = 1,n_charge
+               d  = r - coords(:,i)
                d3 = sqrt(dot_product(d,d))
                d3 = d3*d3*d3
                F = F + charge(i)*d/d3
             end
-            LF(:,a) = F
+            LField(:,a) = F
          end
 
          ! Make Xtal electric field
-         electronic = LF + molecule
+         XField = MField + LField
 
-         ! RMS values
+         ! Make coulmn data
          mol_rms  = ZERO
          LF_rms   = ZERO
          xtal_rms = ZERO
-
-         ! Table
-         stdout.flush
-         stdout.text("Electric fields at nuclei--including crystal environment:")
-         stdout.text("Calculated using Hirshfeld point charges and dipoles")
-         stdout.show("Cluster radius in au =",cluster.radius)
-         stdout.flush
-         stdout.dash(int_fields=1,real_fields=4)
-         stdout.tab(real_fields=1,int_fields=1)
-         stdout.put("Molecule")
-         stdout.put("Environment")
-         stdout.put("Crystal")
-         stdout.flush
-         stdout.put("Atom")
-         stdout.put("E_i",int_width=TRUE)
-         stdout.put("/au")
-         stdout.put("/au")
-         stdout.put("/au")
-         stdout.flush
-         stdout.dash(int_fields=1,real_fields=4)
+         n = 0
          do a = 1,.n_atom
-         do i = 1,3
-            if (i==1) then; stdout.put(symbol(a))
-            else;           stdout.tab(real_fields=1)
+            do i = 1,3
+               n = n + 1
+               Efielt(n) = MField(i,a)
+               Nfielt(n) = LField(i,a)
+               Tfielt(n) = XField(i,a)
             end
-            stdout.put(axis(i),int_width=TRUE)
-            stdout.put(molecule(i,a))
-            stdout.put(LF(i,a))
-            stdout.put(electronic(i,a))
-            stdout.flush
-            mol_rms  = mol_rms   + dot_product(molecule(:,a),molecule(:,a))
-            LF_rms   = LF_rms    + dot_product(LF(:,a),LF(:,a))
-            xtal_rms = xtal_rms  + dot_product(electronic(:,a),electronic(:,a))
+            mol_rms   = mol_rms   + dot_product(MField(:,a),MField(:,a))
+            LF_rms    = LF_rms    + dot_product(LField(:,a),LField(:,a))
+            xtal_rms  = xtal_rms  + dot_product(XField(:,a),XField(:,a))
          end
-         end
-         stdout.dash(int_fields=1,real_fields=4)
 
+         ! RMS values
          mol_rms  = sqrt(mol_rms/.n_atom)
          LF_rms   = sqrt(LF_rms/.n_atom)
          xtal_rms = sqrt(xtal_rms/.n_atom)
+        
+         ! Table headings
+         table.create(5)
+         table(1).set_heading("Atom")
+         table(2).set_heading("E_i")
+         table(3).set_heading("Central")
+         table(3).set_heading("molecule")
+         table(4).set_heading("Surrounds")
+         table(5).set_heading("Crystal")
+         table(5).set_subhead("total")
+
+         ! Set new table coulmn values
+         table(1).set_values(alabel)
+         table(2).set_values(flabel)
+         table(3).set_values(Efielt)
+         table(4).set_values(Nfielt)
+         table(5).set_values(Tfielt)
+        
+         ! Put
+         table.put(label_rows=FALSE)
+         table.destroy
 
          stdout.flush
-         stdout.show("RMS value for molecular    E field =",mol_rms)
-         stdout.show("RMS value for environment  E field =",LF_rms)
-         stdout.show("RMS value for Xtal (total) E field =",xtal_rms)
+         stdout.show("RMS value for molecular   E field =",mol_rms)
+         stdout.show("RMS value for surrounding E field =",LF_rms)
+         stdout.show("RMS value for crystal     E field =",xtal_rms)
 
          ! Clean up
-         pos.destroy; charge.destroy
+         coords.destroy
+         charge.destroy
          cluster.destroy
-         LF.destroy
+         LField.destroy
+         XField.destroy
 
       end
 
       ! Clean
-      molecule.destroy
-      nuclear.destroy
-      electronic.destroy
-      symbol.destroy
+      Tfielt.destroy
+      Nfielt.destroy
+      Efielt.destroy
+      flabel.destroy
+      alabel.destroy
 
    end
 
