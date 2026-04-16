@@ -2907,12 +2907,12 @@ contains
    Mayer_Salvador_radius_for(a,b,n_div,n_sub) result (res) ::: PURE
    ! Return the Mayer-Salvador radius R(a.b) for atoms "a" and "b" in
    ! the direction a->b, used to make Topological Fuzzy Voronoi atoms.
-   ! The code is accurate to 1/2000-th of the separation R(a-b).
+   ! The code is accurate to 1/200-th of the bond length R(a-b).
    ! The code also ensures that R(a.b) + R(b.a) = R(a-b).
    ! Options:
-   ! . "n_div"  [50] is the number of divisions used to detect minima.
-   ! . "n_sub" [400] is the no. of subdivisions to refine the result.
-   ! NOTE: Code was extracted from APOST3D and contains the original
+   ! . "n_div" [50] is the number of divisions used to detect minima.
+   ! . "n_sub" [40] is the no. of subdivisions to refine the result.
+   ! NOTE: Code was extracted from APOST-3D and contains the original
    ! method from Mayer & Salvador used to define the Salvador &
    ! Ramos-Cordoba radii. The method accounts for numerical errors and
    ! instabilities in the internuclear density and atoms too far away.
@@ -2943,7 +2943,7 @@ contains
       if (present(n_div)) ndiv = n_div
 
       ! Polishing resolution: also even
-      nsub = 400  ! No. of subdivisions
+      nsub = 40   ! No. of subdivisions
       if (present(n_sub)) nsub = n_sub
 
       ! Are atoms too far?
@@ -3615,9 +3615,9 @@ contains
    end
 
 
-   make_sph_avgd_SA_ED(avg,pts,c) ::: PURE
+   make_sph_avgd_SA_ED_v0(avg,pts,c) ::: PURE
    ! Make "avg", the spherically averaged Salvador atom electron
-   ! densities for atom "c" evaluated at aset of radial "pts" away
+   ! densities for atom "c" evaluated at a set of radial "pts" away
    ! from the nuclear position.
       self :: IN
       avg  :: VEC{REAL}, OUT
@@ -3718,6 +3718,69 @@ contains
 
    end
 
+   make_sph_avgd_SA_ED_v1(avg,pts,c) ::: PURE
+   ! Make "avg", the spherically averaged Salvador atom electron
+   ! densities for atom "c" evaluated at a set of radial "pts" away
+   ! from the nuclear position.
+   ! NOTE: ths "pts" should be from .becke_grid.radial_grid(p).pts
+      self :: IN
+      avg  :: VEC{REAL}, OUT
+      pts  :: VEC{REAL}, IN
+      c    :: INT, IN
+
+   ENSURE(avg.dim==pts.dim,"incompatible size, avg & pts")
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"becke_grid not finalized")
+
+      rc        :: VEC{REAL}(3)
+      wts,Wc,N0 :: VEC{REAL}@
+      shell     :: MAT{REAL}@
+      lebedev   :: LEBEDEV@
+      i         :: INT
+      r         :: REAL
+
+      ! Atom "c" pos
+      rc = .atom(c).position
+
+      ! Radial pts
+      do i = 1,pts.dim
+
+         ! Radius "r"
+         r = pts(i)
+
+         ! Shell radius "r"
+         lebedev = .becke_grid.angular_grid_for_atom(c,i)
+         shell = r*r*lebedev.pts ! Quad. pts
+         wts   =     lebedev.wts ! Quad. weights
+
+         ! Displace to "rc"
+         shell = shell + spread(rc,dim=2,ncopies=shell.dim2)
+
+         ! Salvador atom "Wc" on "shell"
+         Wc.create(shell.dim1)  ! Salvador atom
+         .becke_grid.make_Salvador_cell_fn(Wc,shell,c)
+
+         ! Prune "shell"
+         wts = Wc*wts ! <---
+       ! .becke_grid.prune_grid(shell,wts)
+
+         ! ED for atom "c" on "shell"
+         N0.create(shell.dim1)
+         .:make_ED_grid_r(N0,shell)
+
+         ! Population of shell 
+         avg(i) = sum(N0*wts) ! Integrate
+
+         ! Clean
+         N0.destroy
+         Wc.destroy
+         wts.destroy
+         shell.destroy
+
+      end
+
+   end
+
    make_sph_SA_interp_from_atom(a,b,r_max) ::: PURE
    ! Make the Salvador atom ED interpolator from atom "a". 
    ! The furthest neighbour atom index "b" is also returned.
@@ -3746,7 +3809,7 @@ contains
       ! How many points?
       n_pts = .interpolator.n_data
 
-      ! Find furthest atom
+      ! Find furthest neighbour
       b = 0
       rmax = ZERO
       neigh = .Salvador_bonds_for(a).element
@@ -3758,14 +3821,15 @@ contains
             rmax = dist
          end
       end
-      rmax = .atom.distance_between(a,x)
+    ! rmax = .atom.distance_between(a,x)
 
-      ! r_max
+      ! Override r_max?
       if (present(r_max)) then
          rmax = r_max
       end
 
-      ! Make the grid points
+      ! Make grid points &
+      ! line of ED values
       pts.create(n_pts)
       line.create(n_pts)
 
@@ -3780,7 +3844,7 @@ contains
       end
 
       ! Make the density
-      .:make_sph_avgd_SA_ED(line,pts,a)
+      .:make_sph_avgd_SA_ED_v0(line,pts,a)
 
       ! Set domain scale factor. May not be required.
       .interpolator.set_data_points(pts)
@@ -3982,19 +4046,17 @@ contains
    ENSURE(.becke_grid.allocated, "no becke_grid")
    ENSURE(.becke_grid.finalized,"no finalized becke_grid")
 
-      n_pts :: INT
       rgrid :: QUADRATURE@
 
       ! Radial grid
       rgrid = .becke_grid.radial_grid_for_atom(c)
-      n_pts = rgrid.n_pts
 
       ! Radial quadrature pts
       pts = rgrid.pts
 
       ! Averaged densities
-      N0.create(n_pts)
-      .:make_sph_avgd_SA_ED(N0,pts,c)
+      N0.create(rgrid.n_pts)
+      .:make_sph_avgd_SA_ED_v0(N0,pts,c)
 
       ! N0 x radial weights
       N0 = N0*rgrid.wts
@@ -4696,7 +4758,6 @@ contains
       k_pts       :: MAT{REAL}@
       cutoff      :: REAL
       ss,sc,s2    :: REAL
-      k1,k2,k3    :: REAL
       kk,kr,kc    :: REAL
       n_atom, u,c :: INT
       n_k,  k     :: INT
