@@ -28,6 +28,36 @@ module MOLECULE.SCF
 
 contains
 
+!  ====================
+!  Atom partition setup
+!  ====================
+
+   make_atom_partition_info ::: leaky
+   ! Make the atom partition information.
+      self :: INOUT
+
+      model :: STR
+
+      ! Get partition model
+      model = "oc-hirshfeld"
+      if (.crystal.allocated) then
+      if (.crystal.xray_data.allocated) then
+      if (.crystal.xray_data.partition_model/=" ") then
+         model = .crystal.xray_data.partition_model
+      end
+      end
+      end
+
+      ! Set up atom partition info
+      select case (model)
+      case("oc-crystal23"); .SCF:make_HA_info
+      case("oc-hirshfeld"); .SCF:make_HA_info
+      case("oc-salvador "); .RHO:make_SA_info
+      case("oc-sph-tfva "); .RHO:make_SA_info
+      end
+
+   end
+
 !  ===============
 !  Hirshfeld atoms
 !  ===============
@@ -41,6 +71,7 @@ contains
    ! NOTE: this procedure is in .SCF because a molecular SCF
    ! is done for each atom. We could change this by making
    ! atom-specific SCF routines ... that would be nicer.
+   ! WARNING: WHY SKIP STUFF, just call what you need? --dylan
       self         :: INOUT
       skip_ANOs    :: BIN, optional, IN
       skip_moments :: BIN, optional, IN
@@ -77,9 +108,10 @@ contains
       end
 
       ! Make Hirshfeld atom moments?
+      ! WARNING: other atomic partitions!
       if (NOT skip_mom) then
       if (.density_mx.allocated) then
-      if (NOT .HA_moments_made) then
+      if (NOT .atomic_moments_made) then
          .RHO:make_r_HA_moments(output=output)
       end
       end
@@ -143,20 +175,19 @@ contains
       if (present(output)) out = output
 
       if (out) then
-
       stdout.flush
       stdout.text("============================")
       stdout.text("Make X-ray structure factors")
       stdout.text("============================")
-
       stdout.flush
       stdout.show("Number of reflections     = ",.crystal.xray_data.reflections.dim)
       stdout.show("Density partition model   = ",trim(.crystal.xray_data.partition_model))
       stdout.show("Thermal smearing model    = ",trim(.crystal.temperature_factor_model))
       stdout.show("Use disk SF data?         = ",.crystal.xray_data.use_disk_SFs)
       stdout.flush
-
       end
+
+      if (.crystal.uses_oc_atom_partition) .:make_atom_partition_info
 
       ! Make the SF's
       select case (.crystal.xray_data.partition_model)
@@ -301,7 +332,7 @@ contains
       ff :: MAT{CPX}@
 
       ! ANOs & interpolators
-      .SCF:make_HA_info(skip_moments=TRUE)
+      .SCF:make_atom_partition_info
 
       ! Get atomic form factors
       .RHO:make_Hirshfeld_atom_FFs(ff)
@@ -342,7 +373,7 @@ contains
       ff :: MAT{CPX}@
 
       ! ANOs & interpolators
-      .SCF:make_HA_info(skip_moments=TRUE)
+      .SCF:make_atom_partition_info
 
       ! Get atomic form factors
       .RHO:make_C23_Hirshfeld_atom_FFs(ff)
@@ -682,9 +713,9 @@ contains
       if (.SCF_data.using_cluster_charges) then
          ! Add cluster charges if needed
          ! NOTE: includes the self-consistent case
-         if (NOT .HA_moments_made) then
+         if (NOT .atomic_moments_made) then
             ENSURE(.crystal.allocated,"no crystal")
-            .:make_HA_info(output=FALSE)
+            .:make_atom_partition_info
          end
          Z.create(.n_bf,.n_bf)
          .:make_cluster_charge_mx(Z) ! leaky
@@ -692,9 +723,9 @@ contains
          Z.destroy
       else if (.SCF_data.using_SC_Lorentz_fields) then
          ! Add Lorentz fields if needed
-         if (NOT .HA_moments_made) then
+         if (NOT .atomic_moments_made) then
             ENSURE(.crystal.allocated,"no crystal")
-            .:make_HA_info(output=FALSE) ! NOT PURE
+            .:make_atom_partition_info ! NOT PURE
          end
          Z.create(.n_bf,.n_bf)
          .:make_Lorentz_core(Z)
@@ -1038,7 +1069,7 @@ contains
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(.crystal.allocated,"no crystal data")
    ENSURE(.SCF_data.allocated,"no SCF_data")
-   ENSURE(.HA_moments_made, "no Hirshfeld atom moments")
+   ENSURE(.atomic_moments_made, "no Hirshfeld atom moments")
 
       pos :: MAT{REAL}@
       charge :: VEC{REAL}@
@@ -1095,7 +1126,7 @@ contains
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(.crystal.allocated,"no crystal data")
    ENSURE(.SCF_data.allocated,"no SCF_data")
-   ENSURE(.HA_moments_made, "no Hirshfeld atom moments")
+   ENSURE(.atomic_moments_made, "no Hirshfeld atom moments")
 
       charge  :: VEC{REAL}@
       Z_c,pos :: MAT{REAL}@
@@ -1187,7 +1218,7 @@ contains
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(.crystal.allocated,"no crystal")
-   ENSURE(.HA_moments_made,"no Hirshfeld atom moments")
+   ENSURE(.atomic_moments_made,"no Hirshfeld atom moments")
 
       rF, pF,ww :: VEC{REAL}@
       ra, ga,gb :: VEC{REAL}@
@@ -1440,7 +1471,7 @@ contains
 
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(.crystal.allocated,"no crystal")
-   ENSURE(.HA_moments_made,"no Hirshfeld atom moments")
+   ENSURE(.atomic_moments_made,"no atomic moments")
    ENSURE(F.dim1==3,"wromg dim1, F")
    ENSURE(F.dim2==.n_atom,"wromg dim1, F")
 
@@ -1475,7 +1506,7 @@ contains
 
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(.crystal.allocated,"no crystal")
-   ENSURE(.HA_moments_made,"no Hirshfeld atom moments")
+   ENSURE(.atomic_moments_made,"no atomic moments")
    ENSURE(I1.dim1==3,"wrong dim1, I2")
    ENSURE(I1.dim2==.n_atom,"wrong dim2, I2")
    ENSURE(I0.dim ==.n_atom,"wrong dim, I0")
@@ -1549,7 +1580,7 @@ contains
       ! Force update of 1e hamiltonian if required
       if (.SCF_data.using_SC_cluster_charges OR .SCF_data.using_SC_Lorentz_fields) then
          .core_mx.destroy
-         .HA_moments_made = FALSE ! <=== LOOK
+         .atomic_moments_made = FALSE ! <=== LOOK
       end
 
       ! Add one electron part?
@@ -1666,7 +1697,7 @@ contains
       .:cleanup_scf
 
       ! Recalculate charges to be sure
-      .SET:set_HA_moments_made(FALSE)
+      .SET:set_atomic_moments_made(FALSE)
       .SET:set_u_HA_moments_made(FALSE)
       .SET:set_atomic_polarisabilities_made(FALSE)
 
@@ -2057,7 +2088,7 @@ contains
       .:cleanup_scf
 
       ! Recalculate charges to be sure
-      .SET:set_HA_moments_made(FALSE)
+      .SET:set_atomic_moments_made(FALSE)
       .SET:set_u_HA_moments_made(FALSE)
       .SET:set_atomic_polarisabilities_made(FALSE)
 
@@ -2083,7 +2114,6 @@ contains
       select case (SCF_kind)
 
       case ("xray_rhf","xray_rks","xray_uhf","xray_uks","xray_gchf");
-         if (.crystal.uses_Hirshfeld_atoms) .SCF:make_HA_info(skip_ANOs=TRUE,skip_moments=TRUE)
          .:make_X_SFs
     !    if (.crystal.xray_r_free_data.allocated) .:make_X_free_SFs
 
@@ -2092,7 +2122,7 @@ contains
     !    if (.crystal.pnd_r_free_data.allocated)  .:make_N_free_SFs
 
     ! case ("xray_pnd_uhf","xray_pnd_uks");
-    !    if (.crystal.uses_Hirshfeld_atoms) .:make_HA_info(skip_ANOs=TRUE)
+    !    if (.crystal.uses_oc_atom_partition) .:make_atom_partition_info
     !    .:make_X_SFs
     !    .:make_N_SFs
     !    if (.crystal.xray_r_free_data.allocated) .:make_X_free_SFs
@@ -5744,7 +5774,7 @@ contains
        ! mol.SET:set_SCF_guess_defaults_from(.SCF_data)
        ! if (.SCF_data.SCF_kind=="fragment-rks") then
        !    mol.becke_grid.destroy
-       !    mol.SCF:make_HA_info(skip_ANOs=TRUE)
+       !    mol.SCF:make_atom_partition_info
        !  ! mol.RHO:set_up_becke_grid
        ! end
 
