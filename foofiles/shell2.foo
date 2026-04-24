@@ -407,11 +407,13 @@ contains
 
    skip_ft(cutoff) result (res) ::: PURE
    ! Whether the ft for this shell pair is too small.
-      self :: IN
+      self   :: IN
       cutoff :: REAL, IN
-      res :: BIN
+      res    :: BIN
 
-      gamma,g1,e2,ex,ey,ez,e000x,e000y,e000z :: REAL
+      gamma,g1          :: REAL
+      e2, ex,ey,ez      :: REAL
+      e000x,e000y,e000z :: REAL
       a,b,t_max :: INT
       e :: MAT3{REAL}@
       G :: GAUSSIAN2
@@ -2588,36 +2590,38 @@ contains
 ! NOTE: Same as make_ft_static but primitive a, b loops inverted
 !       AND pair_positions transposed too ...
 
-   make_FT_no_TF(res,k_pts,Apart) ::: PURE
-   ! Calculates "res", the Fourier transform for this contracted
-   ! shell pair a product of two contracted gaussian shells, evaluated
-   ! at a series of k points "k_pts". "partition" factors are used.
-   ! NOTE: Same as make_ft_static but primitive a, b loops inverted
-   !       AND pair_positions transposed too ...
+   make_FT_no_TF(res,k_pts,Wc) ::: PURE
+   ! Make "res", of shape [k_max,.a.n_comp,.b.n_comp], which is the
+   ! Fourier transform at reciprocal "k_pts", of shape [:,3], for an
+   ! atom whose weights "Wcx" are defined on the points "i" of the
+   ! primitive gaussian product centers in ".pair_center(:,i)".
+   ! The order of "i" is over primitives of shell a in the inner loop,
+   ! and the ptimitives in shell b in the outer loop.
+   ! NOTE:  make_ft_static has these loops inverted.
       self  :: IN
       res   :: MAT3{CPX}, OUT
       k_pts :: MAT{REAL}, IN
-      Apart :: VEC{REAL}, IN
+      Wc    :: VEC{REAL}, IN
 
     ENSURE(res.dim1==k_pts.dim1,"incomptaible dim1, res and k_pts")
     ENSURE(res.dim2==.a.n_comp ,"incomptaible dim2, res and shell a")
     ENSURE(res.dim3==.b.n_comp ,"incomptaible dim2, res and shell a")
     ENSURE(k_pts.dim2==3,"wrong dim3, k_pts")
-    ENSURE(Apart.dim==.n_gaussian_pairs,"wrong dim, Apart")
+    ENSURE(Wc.dim==.n_gaussian_pairs,"wrong dim, Wc")
 
       W :: MAT3{CPX}@
       i :: INT
 
       if (NOT .is_spherical) then
          ! Cartesian
-         .make_FT_no_TF_c(res,k_pts,Apart)
+         .make_FT_no_TF_c(res,k_pts,Wc)
       else if (.l_max<2) then
          ! Spherical s & p
-         .make_FT_no_TF_c(res,k_pts,Apart)
+         .make_FT_no_TF_c(res,k_pts,Wc)
       else
          ! Spherical general
          W.create(res.dim1,.a.n_comp,.b.n_comp)
-         .make_FT_no_TF_c(W,k_pts,Apart)
+         .make_FT_no_TF_c(W,k_pts,Wc)
          do i =1,res.dim1
             .change_to_spherical(W(i,:,:),res(i,:,:))
          end do
@@ -2626,29 +2630,49 @@ contains
 
    end
 
-   make_FT_no_TF_c(res,k_pts,Apart) ::: PURE
+   make_FT_no_TF_c(res,k_pts,Wc) ::: PURE
    ! Make "res", of shape [k_max,.a.n_comp,.b.n_comp], which is the
-   ! Fourier transform at reciprocal "k_pts", of shape [:,3], for the
-   ! first "A" shell in "self", where "Apart" gives the factors to
-   ! apply to the primitive gaussians to extract the contribution from
-   ! "a", assuming the primitives in the "a" increment fastest i.e. as
-   ! .pair_center(:,i) increments with "i".
+   ! Fourier transform at reciprocal "k_pts", of shape [:,3], for an
+   ! atom whose weights "Wc" are defined on the points "i" of the
+   ! primitive gaussian product centers in ".pair_center(:,i)".
+   ! The order of "i" is over primitives of shell a in the inner loop,
+   ! and the ptimitives in shell b in the outer loop.
       self  :: IN
       res   :: MAT3{CPX}, OUT
       k_pts :: MAT{REAL}, IN
-      Apart :: VEC{REAL}, IN
+      Wc    :: VEC{REAL}, IN
 
-      e :: MAT3{REAL}@
-      ft_x,ft_y,ft_z :: MAT3{CPX}@
-      k_x,k_y,k_z,k_x2,k_y2,k_z2 :: VEC{REAL}@
-      prefac,ft_x01,ft_x10,ft_y01,ft_y10,ft_z01,ft_z10 :: VEC{CPX}@
-      ax,ay,az,bx,by,bz :: VEC{INT}@
-      fac,pi32,g1,g2,g4,dot1,dot2,k1,k2,k3,P1,P2,P3,ex_a,ex_b :: REAL
-      a,b,i,k,xa,ya,za,xb,yb,zb,aa,bb,k_max,fa,la,fb,lb :: INT
-      Ex001,Ey001,Ez001,Ex101,Ey101,Ez101 :: REAL
-      Ex010,Ey010,Ez010,Ex110,Ey110,Ez110,Ex111,Ey111,Ez111 :: REAL
-      Ex211,Ey211,Ez211,Ex011,Ey011,Ez011 :: REAL
-      AB1,AB2,AB3,PA1,PA2,PA3,PB1,PB2,PB3 :: REAL
+      e                 :: MAT3{REAL}@
+      ft_x,ft_y,ft_z    :: MAT3{CPX}@
+      k_x, k_y, k_z     :: VEC{REAL}@
+      k_x2,k_y2,k_z2    :: VEC{REAL}@
+      prefac            :: VEC{CPX}@
+      ft_x01,ft_x10     :: VEC{CPX}@
+      ft_y01,ft_y10     :: VEC{CPX}@
+      ft_z01,ft_z10     :: VEC{CPX}@
+      ax,ay,az          :: VEC{INT}@
+      bx,by,bz          :: VEC{INT}@
+      Ex001,Ey001,Ez001 :: REAL
+      Ex101,Ey101,Ez101 :: REAL
+      Ex010,Ey010,Ez010 :: REAL
+      Ex110,Ey110,Ez110 :: REAL
+      Ex111,Ey111,Ez111 :: REAL
+      Ex211,Ey211,Ez211 :: REAL
+      Ex011,Ey011,Ez011 :: REAL
+      fac,pi32          :: REAL
+      g1,g2,g4          :: REAL
+      ex_a,ex_b         :: REAL
+      dot1,dot2         :: REAL
+      k1,k2,k3          :: REAL
+      P1,P2,P3          :: REAL
+      AB1,AB2,AB3       :: REAL
+      PA1,PA2,PA3       :: REAL
+      PB1,PB2,PB3       :: REAL
+      xa,ya,za          :: INT
+      xb,yb,zb          :: INT
+      aa,a,fa,la        :: INT
+      bb,b,fb,lb        :: INT
+      k_max,k, i        :: INT
 
       pi32 = sqrt(PI) * PI
 
@@ -2690,7 +2714,7 @@ contains
                P1 = .pair_center(1,i)
                P2 = .pair_center(2,i)
                P3 = .pair_center(3,i)
-               fac = pi32 * .contraction_prefactor(i) * Apart(i)
+               fac = pi32 * .contraction_prefactor(i) * Wc(i)
                do k = 1, k_max
                   k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
                   dot1 = k1*P1+k2*P2+k3*P3
@@ -2727,7 +2751,7 @@ contains
                   .make_e_coeff(e,AB3,ex_a,ex_b,g1,g2)
                   Ez001 = e(0,0,1)
                   Ez101 = e(1,0,1)
-                  fac = pi32 * .contraction_prefactor(i) * Apart(i)
+                  fac = pi32 * .contraction_prefactor(i) * Wc(i)
                   do k = 1,k_max
                      k1 = k_x(k); k2 = k_y(k); k3 = k_z(k)
                      dot1 = k1*P1+k2*P2+k3*P3
@@ -2772,7 +2796,7 @@ contains
                   .make_ft_component(ft_x,AB1,ex_a,ex_b,g1,g2,k_x,k_max)
                   .make_ft_component(ft_y,AB2,ex_a,ex_b,g1,g2,k_y,k_max)
                   .make_ft_component(ft_z,AB3,ex_a,ex_b,g1,g2,k_z,k_max)
-                  fac = pi32 * .contraction_prefactor(i) * Apart(i)
+                  fac = pi32 * .contraction_prefactor(i) * Wc(i)
                   do k = 1,k_max
                      k1 = k_x(k); k2 = k_y(k); k3 = k_z(k)
                      dot1 = k1*P1+k2*P2+k3*P3
@@ -2828,7 +2852,7 @@ contains
                   .make_e_coeff(e,AB3,ex_a,ex_b,g1,g2)
                   Ez010 = e(0,1,0)
                   Ez110 = e(1,1,0)
-                  fac = pi32 * .contraction_prefactor(i) * Apart(i)
+                  fac = pi32 * .contraction_prefactor(i) * Wc(i)
                   do k = 1,k_max
                      k1 = k_x(k); k2 = k_y(k); k3 = k_z(k)
                      dot1 = k1*P1+k2*P2+k3*P3
@@ -2872,7 +2896,7 @@ contains
                   P1 = .pair_center(1,i)
                   P2 = .pair_center(2,i)
                   P3 = .pair_center(3,i)
-                  fac = pi32 * .contraction_prefactor(i) * Apart(i)
+                  fac = pi32 * .contraction_prefactor(i) * Wc(i)
                   do k = 1,k_max
                      k1 = k_x(k); k2 = k_y(k); k3 = k_z(k)
                      dot1 = k1*P1+k2*P2+k3*P3
@@ -2955,7 +2979,7 @@ contains
                   .make_ft_component(ft_x,AB1,ex_a,ex_b,g1,g2,k_x,k_max)
                   .make_ft_component(ft_y,AB2,ex_a,ex_b,g1,g2,k_y,k_max)
                   .make_ft_component(ft_z,AB3,ex_a,ex_b,g1,g2,k_z,k_max)
-                  fac = pi32 * .contraction_prefactor(i) * Apart(i)
+                  fac = pi32 * .contraction_prefactor(i) * Wc(i)
                   do k = 1,k_max
                      k1 = k_x(k); k2 = k_y(k); k3 = k_z(k)
                      dot1 = k1*P1+k2*P2+k3*P3
@@ -3014,7 +3038,7 @@ contains
                   .make_ft_component(ft_x,AB1,ex_a,ex_b,g1,g2,k_x,k_max)
                   .make_ft_component(ft_y,AB2,ex_a,ex_b,g1,g2,k_y,k_max)
                   .make_ft_component(ft_z,AB3,ex_a,ex_b,g1,g2,k_z,k_max)
-                  fac = pi32 * .contraction_prefactor(i) * Apart(i)
+                  fac = pi32 * .contraction_prefactor(i) * Wc(i)
                   do k = 1,k_max
                      k1 = k_x(k); k2 = k_y(k); k3 = k_z(k)
                      dot1 = k1*P1+k2*P2+k3*P3
@@ -3065,7 +3089,7 @@ contains
                   .make_ft_component(ft_x,AB1,ex_a,ex_b,g1,g2,k_x,k_max)
                   .make_ft_component(ft_y,AB2,ex_a,ex_b,g1,g2,k_y,k_max)
                   .make_ft_component(ft_z,AB3,ex_a,ex_b,g1,g2,k_z,k_max)
-                  fac = pi32 * .contraction_prefactor(i) * Apart(i)
+                  fac = pi32 * .contraction_prefactor(i) * Wc(i)
                   do k = 1,k_max
                      k1 = k_x(k); k2 = k_y(k); k3 = k_z(k)
                      dot1 = k1*P1+k2*P2+k3*P3
@@ -3124,7 +3148,7 @@ contains
                   .make_ft_component(ft_x,AB1,ex_a,ex_b,g1,g2,k_x,k_max)
                   .make_ft_component(ft_y,AB2,ex_a,ex_b,g1,g2,k_y,k_max)
                   .make_ft_component(ft_z,AB3,ex_a,ex_b,g1,g2,k_z,k_max)
-                  fac = pi32 * .contraction_prefactor(i) * Apart(i)
+                  fac = pi32 * .contraction_prefactor(i) * Wc(i)
                   do k = 1,k_max
                      k1 = k_x(k); k2 = k_y(k); k3 = k_z(k)
                      dot1 = k1*P1+k2*P2+k3*P3

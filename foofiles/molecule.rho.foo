@@ -4541,10 +4541,11 @@ contains
       ! NOTE: in iteration 0, these were already calculated
       !       as part of make_X_SFs ... double work!
       select case (.crystal.xray_data.partition_model)
-      case("oc-crystal23"); .RHO:make_C23_Hirshfeld_atom_FFs(ff) ! NOT PURE
-      case("oc-hirshfeld"); .RHO:make_Hirshfeld_atom_FFs(ff)
-      case("oc-salvador "); .RHO:make_Salvador_atom_FFs(ff)
-      case("oc-sph-tfva "); .RHO:make_sph_TFVA_atom_FFs(ff)
+      case("oc-crystal23  "); .RHO:make_C23_Hirshfeld_atom_FFs(ff) ! NOT PURE
+      case("oc-g-hirshfeld"); .RHO:make_gHirshfeld_atom_FFs(ff)
+      case("oc-hirshfeld  "); .RHO:make_Hirshfeld_atom_FFs(ff)
+      case("oc-salvador   "); .RHO:make_Salvador_atom_FFs(ff)
+      case("oc-sph-tfva   "); .RHO:make_sph_TFVA_atom_FFs(ff)
       end
 
    end
@@ -4869,107 +4870,103 @@ contains
    end
 
 
-!   make_gHirshfeld_FFs(ff) ::: leaky, PURE
-!   ! Get "ff", the static gaussian-partitioned Hirshfeld atom form
-!   ! factors for the symmetry related K points "k_pts", for every
-!   ! unique fragment atom.
-!   ! NOTE: This version uses interpolators for efficiency.
-!      self  :: INOUT
-!      ff    :: MAT{CPX}@, OUT
-!
-!   ENSURE(.basis_info_made,"no basis info")
-!   ENSURE(.density_mx.allocated, "no density matrix")
-!   ENSURE(.atom.allocated,"no atom list")
-!   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
-!   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
-!   ENSURE(.crystal.allocated, "no crystal")
-!   ENSURE(.crystal.xray_data.allocated, "no reflection data")
-!   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
-!
-!      FT_ab   :: MAT3{CPX}@
-!      k_pts   :: MAT{REAL}@
-!      DM, pts :: MAT{REAL}@
-!      Wu      :: VEC{REAL}@
-!      ulist   :: VEC{INT}@
-!      sh      :: SHELL2
-!      n_k,k,n_atom,u,q :: INT
-!      fa,la,na,atom_a  :: INT
-!      fb,lb,nb,atom_b  :: INT
-!      cutoff           :: REAL
-!
-!      ! Ensure DM is there
-!      .BASE:make_r_density_mx
-!      ENSURE(.density_mx.r.allocated, "no restricted DM")
-!
-!      ! Parameters
-!      cutoff = TOL(10)/.n_shell_pairs
-!      n_atom = .crystal.asymmetric_unit_atom.dim
-!
-!      ! Symmetry generated K points and SF's
-!      n_k = .crystal.n_unique_SF_k_pts
-!
-!      ! Allocate structure factor array (leaky)
-!      ff.create(n_k,n_atom)
-!      ff = ZERO
-!
-!      ! Make list of symmetry non-equivalent symops
-!      ! and the necessary k points
-!      k_pts.create(n_k,3)
-!      .crystal.make_unique_X_SF_k_pts(k_pts)
-!
-!      ! Shell pairs
-!      do q = 1,.n_shell_pairs
-!
-!         .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
-!
-!         ! Too small?
-!         if (NOT sh.skip_ft(cutoff)) then
-!
-!            DM  = .density_mx.r(fa:la,fb:lb)
-!            pts = transpose(sh.pair_center)
-!           
-!            ! Is atom_a unique?
-!            u = findloc(.crystal.unique_frag_atom,atom_a,dim=1)
-!           
-!            if (u>0) then
-!              
-!               ! Get weights
-!               Wu.create(pts.dim1)
-!               .:make_stockholder_atom_weight_int(Wu,atom_a,pts,.overlapping_atoms_for_atom(atom_a).element)
-!               
-!               ! Do FT with partition factor
-!               FT_ab.create(k_max,na,nb)
-!               sh.make_FT_no_TF(FT_ab,k_pts,Wu)
-!               
-!               ! Trace with density matrix
-!               ! Count off-diagonals twice
-!               if (fa/=fb) then 
-!                  do k = 1,k_max
-!                     ff(k,u) = ff(k,u) + sum(FT_ab(k,:,:)*DM) * TWO
-!                  end
-!               else
-!                  do k = 1,k_max
-!                     ff(k,u) = ff(k,u) + sum(FT_ab(k,:,:)*DM)
-!                  end
-!               end
-!              
-!               ! Clean
-!               FT_ab.destroy
-!               Wa.destroy
-!           
-!            end
-!           
-!            ! Clean
-!            pts.destroy
-!            DM.destroy
-!
-!         end
-!
-!         sh.destroy_ptr_part
-!
-!      end
-!
-!   end
+   make_gHirshfeld_atom_FFs(ff) ::: leaky, PURE
+   ! Get "ff", the static gaussian-partitioned Hirshfeld atom form
+   ! factors for the symmetry related K points "k_pts", for every
+   ! unique fragment atom.
+   ! NOTE: This version uses interpolators for efficiency.
+      self :: IN
+      ff   :: MAT{CPX}@, OUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.density_mx.r.allocated, "no restricted DM")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      sh    :: SHELL2
+      Wc    :: VEC{REAL}@
+      k_pts :: MAT{REAL}@
+      DM    :: MAT{REAL}@
+      pts   :: MAT{REAL}@
+      FT_ab :: MAT3{CPX}@
+      n_k,k, q   :: INT
+      n_atom,u,c :: INT
+      fa,la,na,atom_a :: INT
+      fb,lb,nb,atom_b :: INT
+      cutoff          :: REAL
+
+      ! Parameters
+      cutoff = TOL(10)/.n_shell_pairs
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      ff.create(n_k,n_atom)
+      ff = ZERO
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Shell pairs
+      do q = 1,.n_shell_pairs
+
+         .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         ! Too small?
+         if (NOT sh.skip_ft(cutoff)) then
+
+            DM  = .density_mx.r(fa:la,fb:lb)
+            pts = transpose(sh.pair_center)
+            Wc.create(pts.dim1)
+            FT_ab.create(n_k,na,nb)
+           
+            ! Loop on asymmetric/unique atoms "c"
+            do u = 1,.crystal.n_unique_frag_atoms
+
+               c  = .crystal.unique_frag_atom(u)
+           
+               ! Get weights
+               .:make_stockholder_atom_weight_int(Wc,c,pts,.overlapping_atoms_for_atom(c).element)
+               
+               ! Do FT with partition factor
+               sh.make_FT_no_TF(FT_ab,k_pts,Wc)
+               
+               ! Trace with density matrix
+               if (fa/=fb) then 
+                  do k = 1,n_k
+                     ff(k,u) = ff(k,u) + sum(FT_ab(k,:,:)*DM) * TWO
+                  end
+               else
+                  do k = 1,n_k
+                     ff(k,u) = ff(k,u) + sum(FT_ab(k,:,:)*DM)
+                  end
+               end
+           
+            end
+           
+            ! Clean
+            FT_ab.destroy
+            Wc.destroy
+            pts.destroy
+            DM.destroy
+
+         end
+
+         ! Clean
+         sh.destroy_ptr_part
+
+      end
+
+   end
 
 
    make_C23_Hirshfeld_atom_FFs(ff) ::: leaky
