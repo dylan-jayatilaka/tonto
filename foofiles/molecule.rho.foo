@@ -2260,6 +2260,7 @@ contains
       done :: VEC{BIN}@
       first :: BIN
 
+      ! Already there?
       if (.INQ:has_all_interpolators) return
 
       done.create(.n_atom)
@@ -4890,15 +4891,19 @@ contains
 
       sh    :: SHELL2
       Wc    :: VEC{REAL}@
+      pts   :: MAT{REAL}@
       k_pts :: MAT{REAL}@
       DM    :: MAT{REAL}@
-      pts   :: MAT{REAL}@
       FT_ab :: MAT3{CPX}@
-      n_k,k, q   :: INT
-      n_atom,u,c :: INT
+      n_k,k, q        :: INT
+      n_atom,u,c      :: INT
       fa,la,na,atom_a :: INT
       fb,lb,nb,atom_b :: INT
-      cutoff          :: REAL
+      cutoff, ss      :: REAL
+
+    ! TF    :: MAT3{REAL}@
+    ! Wcm   :: MAT{REAL}@
+    ! Ua,Ub :: MAT{REAL}(3,3)
 
       ! Parameters
       cutoff = TOL(10)/.n_shell_pairs
@@ -4921,45 +4926,52 @@ contains
 
          .SET:set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
 
-         ! Too small?
-         if (NOT sh.skip_ft(cutoff)) then
+         ! Get thermal factors "TF"
+       ! TF.create(n_k,sh.a.n_cc,sh.b.n_cc)
+       ! TF = ONE
+       ! Ua = .atom(atom_a).ADP_tensor
+       ! Ub = .atom(atom_b).ADP_tensor
+       ! sh.make_temperature_factors(TF,"tc-tanaka",k_pts,Ua,Ub)
 
-            DM  = .density_mx.r(fa:la,fb:lb)
-            pts = transpose(sh.pair_center)
-            Wc.create(pts.dim1)
-            FT_ab.create(n_k,na,nb)
-           
-            ! Loop on asymmetric/unique atoms "c"
-            do u = 1,.crystal.n_unique_frag_atoms
+         DM  = .density_mx.r(fa:la,fb:lb)
+         if (fa/=fb) DM = TWO*DM
 
-               c  = .crystal.unique_frag_atom(u)
-           
-               ! Get weights
-               .:make_stockholder_atom_weight_int(Wc,c,pts,.overlapping_atoms_for_atom(c).element)
-               
-               ! Do FT with partition factor
-               sh.make_FT_no_TF(FT_ab,k_pts,Wc)
-               
-               ! Trace with density matrix
-               if (fa/=fb) then 
-                  do k = 1,n_k
-                     ff(k,u) = ff(k,u) + sum(FT_ab(k,:,:)*DM) * TWO
-                  end
-               else
-                  do k = 1,n_k
-                     ff(k,u) = ff(k,u) + sum(FT_ab(k,:,:)*DM)
-                  end
-               end
-           
+         pts = transpose(sh.pair_center)
+         Wc.create(pts.dim1)
+         FT_ab.create(n_k,na,nb)
+         
+         ! Loop on asymmetric/unique atoms "c"
+         do u = 1,.crystal.n_unique_frag_atoms
+
+            c  = .crystal.unique_frag_atom(u)
+
+            ! Site-symmetry & occupancy for this atom
+            ss = .crystal.frag_atom_sym_factor(c)
+            if (ss.is_zero) cycle
+            ss = .atom(c).site_occupancy/ss
+         
+            ! Get weights
+            .:make_stockholder_atom_weight_int(Wc,c,pts,.overlapping_atoms_for_atom(c).element)
+            Wc = ss*Wc
+            
+            ! Do FT with partition factor
+            sh.make_FT_no_TF(FT_ab,k_pts,Wc)
+          ! Wcm = reshape(Wc,[sh.a.n_cc,sh.b.n_cc])
+          ! sh.make_ft(FT_ab,k_pts,TF,Wcm)
+            
+            ! Trace with density matrix
+            do k = 1,n_k
+               ff(k,u) = ff(k,u) + sum(FT_ab(k,:,:)*DM)
             end
-           
-            ! Clean
-            FT_ab.destroy
-            Wc.destroy
-            pts.destroy
-            DM.destroy
-
+         
          end
+         
+         ! Clean
+         FT_ab.destroy
+         Wc.destroy
+         pts.destroy
+         DM.destroy
+       ! TF.destroy
 
          ! Clean
          sh.destroy_ptr_part
