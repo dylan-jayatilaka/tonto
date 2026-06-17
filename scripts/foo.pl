@@ -1608,9 +1608,9 @@ sub find_new_scoping_unit {
     if ($_[0] =~ m'type'o && $_[0] =~ m'^ *type *[a-zA-Z]'o) { # type
         $newscopeunit = 'type';
     } elsif ($#scope > 1) {
-      if ($_[0] =~ '\s*result\s*[(](\w+)[)]' ) { # function
+         if ($_[0] =~ m'^      (?!if\b|do\b|select\b|forall\b|where\b|case\b|else\b|end\b)[a-z]\w*\s*result\s*[(](\w+)[)]'o ) { # function
         $newscopeunit = 'function';
-      } elsif ($_[0] =~ '\w') { # subroutine
+         } elsif ($_[0] =~ m'^      (?!if\b|do\b|select\b|forall\b|where\b|case\b|else\b|end\b)[a-z]\w*\s*(?:[(]|:::)' ) { # subroutine
         $newscopeunit = 'subroutine';
       }
     }
@@ -1631,9 +1631,9 @@ sub find_new_scoping_unit {
     }
   } elsif ($scopeunit eq 'forall' || $scopeunit eq 'where') {
   } elsif ($scopeunit eq 'contains') {
-    if ($_[0] =~ '\s*result\s*[(](\w+)[)]' ) { # function
+      if ($_[0] =~ m'^   (?!if\b|do\b|select\b|forall\b|where\b|case\b|else\b|end\b)[a-z]\w*\s*result\s*[(](\w+)[)]'o ) { # function
       $newscopeunit = 'function';
-    } elsif ($_[0] =~ '\w') { # subroutine
+      } elsif ($_[0] =~ m'^   (?!if\b|do\b|select\b|forall\b|where\b|case\b|else\b|end\b)[a-z]\w*\s*(?:[(]|:::)' ) { # subroutine
       $newscopeunit = 'subroutine';
     }
   } else { # must be without a parent scopeunit.
@@ -1843,9 +1843,16 @@ sub check_for_first_noncomment_line {
 ##########################################################################
 
 sub analyse_interface_scope {
-  # Analyse the routine name
-  &analyse_routine_name($_[0]);
-  $routine{$current_rout_name}{real_name} = $current_rout_name;
+   # Inside a routine interface, the header line names the routine and the
+   # following indented lines are its argument declarations.
+   if ($_[0] =~ /::/) {
+       &analyse_variable_declaration($_[0],\%local_var_info);
+       return;
+   }
+
+   # Analyse the routine name
+   &analyse_routine_name($_[0]);
+   $routine{$current_rout_name}{real_name} = $current_rout_name;
 }
 
 ########################################

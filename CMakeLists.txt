@@ -29,8 +29,24 @@ set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets
 option(MPI "Use MPI" OFF)
 option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
 
-# Perl
-find_package(Perl REQUIRED)
+# Java and ANTLR4
+find_package(Java REQUIRED COMPONENTS Runtime Development)
+set(ANTLR4_SUBMODULE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/antlr4)
+set(ANTLR4_JAR_CANDIDATES
+    ${ANTLR4_SUBMODULE_DIR}/antlr-4.13.2-complete.jar
+    /usr/local/lib/antlr-4.13.2-complete.jar
+)
+unset(ANTLR4_JAR CACHE)
+foreach(ANTLR4_JAR_CANDIDATE ${ANTLR4_JAR_CANDIDATES})
+    if(EXISTS ${ANTLR4_JAR_CANDIDATE})
+        set(ANTLR4_JAR ${ANTLR4_JAR_CANDIDATE})
+        break()
+    endif()
+endforeach()
+if(NOT ANTLR4_JAR)
+    message(FATAL_ERROR
+        "ANTLR4 jar not found. Populate external/antlr4 as a submodule or install /usr/local/lib/antlr-4.13.2-complete.jar")
+endif()
 
 # Git
 find_package(Git)
@@ -130,6 +146,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/)
 # Foo source files
 set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
 set(FOO_TYPES_FILE ${FOO_DIR}/types.foo)
+set(FOO_ANTLR4_GRAMMAR ${FOO_DIR}/Foo.g4)
 set(FORTRAN_TYPES_FILE types.F90)
 set(FOO_SRC
     ${FOO_DIR}/types.foo
@@ -206,7 +223,7 @@ set(FOO_SRC
     ${FOO_DIR}/output_style.foo
     ${FOO_DIR}/textfile.foo
 #   ${FOO_DIR}/datafile.foo
-    ${FOO_DIR}/json.foo
+#   ${FOO_DIR}/json.foo
     ${FOO_DIR}/file.foo
     ${FOO_DIR}/archive.foo
     ${FOO_DIR}/cif.foo
@@ -496,10 +513,49 @@ set(RUN_SRC
 
 
 # Processing foo into fortran source
-message(STATUS "Rules to process .foo -> .F90 using ${PERL_EXECUTABLE}")
-set(FOO_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/foo.pl")
-set(FOO_ARGS "")
+message(STATUS "Rules to process .foo -> .F90 using ANTLR4 two-pass translator")
 set(SRC ${FOO_SRC} ${RUN_SRC})
+set(ANTLR4_VALIDATION_DIR ${CMAKE_CURRENT_BINARY_DIR}/antlr4-validation)
+set(ANTLR4_CLASSES_DIR ${CMAKE_CURRENT_BINARY_DIR}/antlr4-classes)
+set(ANTLR4_VALIDATION_STAMP ${ANTLR4_VALIDATION_DIR}/FooParser.stamp)
+set(ANTLR4_TRANSLATOR_STAMP ${ANTLR4_CLASSES_DIR}/FooToFortran.stamp)
+set(FOO_TRANSLATOR_JAVA ${CMAKE_CURRENT_SOURCE_DIR}/scripts/FooToFortran.java)
+
+add_custom_command(
+    OUTPUT ${ANTLR4_VALIDATION_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ANTLR4_VALIDATION_DIR}
+    COMMAND ${Java_JAVA_EXECUTABLE} -jar ${ANTLR4_JAR} -Dlanguage=Java -visitor -listener -o ${ANTLR4_VALIDATION_DIR} Foo.g4
+    COMMAND ${CMAKE_COMMAND} -E touch ${ANTLR4_VALIDATION_STAMP}
+    DEPENDS ${FOO_ANTLR4_GRAMMAR}
+    WORKING_DIRECTORY ${FOO_DIR}
+    COMMENT "Generating ANTLR4 parser sources from Foo.g4"
+    VERBATIM
+)
+
+add_custom_target(antlr4-grammar DEPENDS ${ANTLR4_VALIDATION_STAMP})
+
+add_custom_command(
+    OUTPUT ${ANTLR4_TRANSLATOR_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ANTLR4_CLASSES_DIR}
+    COMMAND ${Java_JAVAC_EXECUTABLE}
+        -cp ${ANTLR4_JAR}:${ANTLR4_VALIDATION_DIR}
+        -d ${ANTLR4_CLASSES_DIR}
+        ${ANTLR4_VALIDATION_DIR}/FooLexer.java
+        ${ANTLR4_VALIDATION_DIR}/FooParser.java
+        ${ANTLR4_VALIDATION_DIR}/FooListener.java
+        ${ANTLR4_VALIDATION_DIR}/FooBaseListener.java
+        ${ANTLR4_VALIDATION_DIR}/FooVisitor.java
+        ${ANTLR4_VALIDATION_DIR}/FooBaseVisitor.java
+        ${FOO_TRANSLATOR_JAVA}
+    COMMAND ${CMAKE_COMMAND} -E touch ${ANTLR4_TRANSLATOR_STAMP}
+    DEPENDS ${ANTLR4_VALIDATION_STAMP} ${FOO_TRANSLATOR_JAVA}
+    COMMENT "Compiling ANTLR4 Foo translator"
+    VERBATIM
+)
+
+add_custom_target(antlr4-translator DEPENDS ${ANTLR4_TRANSLATOR_STAMP})
+
+set(FOO_GENERATED_F90_OUTPUTS "")
 foreach(foopath ${SRC})
     get_filename_component(foofile ${foopath} NAME)
     string(REGEX REPLACE ".foo\$" ".F90" F90file ${foofile})
@@ -511,14 +567,26 @@ foreach(foopath ${SRC})
     string(REGEX REPLACE "_.F90" ".F90" F90file ${F90file})
     add_custom_command(
         OUTPUT ${F90file}
-        COMMAND ${PERL_EXECUTABLE}
-        ARGS ${FOO_SCRIPT} ${FOO_ARGS}
-        -fortran "${CMAKE_CURRENT_BINARY_DIR}/${F90file}"
-        -types ${FOO_TYPES_FILE}
-        \"${foopath}\"
-        DEPENDS ${foopath}
+        COMMAND ${Java_JAVA_EXECUTABLE}
+        -cp ${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}
+        FooToFortran
+        --foo "${foopath}"
+        --out "${CMAKE_CURRENT_BINARY_DIR}/${F90file}"
+        --reference-dir "${CMAKE_CURRENT_SOURCE_DIR}/release"
+        DEPENDS ${foopath} ${ANTLR4_TRANSLATOR_STAMP}
+        VERBATIM
     )
+    if(foopath MATCHES "^${FOO_DIR}/")
+        list(APPEND FOO_GENERATED_F90_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/${F90file})
+    endif()
 endforeach(foopath)
+
+add_custom_target(antlr4-fortran
+    DEPENDS ${ANTLR4_TRANSLATOR_STAMP} ${FOO_GENERATED_F90_OUTPUTS}
+)
+
+add_dependencies(antlr4-fortran antlr4-grammar)
+add_dependencies(antlr4-fortran antlr4-translator)
 
 # Target libtonto
 add_library(tonto
