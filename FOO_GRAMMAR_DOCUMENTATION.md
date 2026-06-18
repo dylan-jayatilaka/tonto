@@ -48,8 +48,10 @@ module STR
       trim_blanks_from_end
    end
    
-   contains
-   ! procedure definitions follow
+contains
+
+   ! Procedure definitions follow
+   ! Functions always used the result (res) syntax, subroutines do not.
    
 end
 ```
@@ -73,6 +75,11 @@ Array types use curly braces for type parameters:
 - `MAT5{T}` - 5D tensor
 - `MAT6{T}`, `MAT7{T}` - Higher dimensional tensors
 
+#### Parameterized types
+
+- MAP{KEY,VAL} is a type MAP parameterized by types KEY and VAL.
+
+
 **Examples:**
 ```foo
 v :: VEC{REAL}
@@ -80,6 +87,62 @@ matrix :: MAT{INT}
 tensor :: MAT3{CPX}
 nested :: VEC{VEC{REAL}}
 ```
+
+#### Derived Types (Parameterized)
+These are defined in the `types.foo` file as combinations of primitive
+or other derived types. An example is below:
+```
+   type ATOM
+
+     start_time5 :: VEC{INT}(5), readonly  DEFAULT(0)
+     ! Contains real start time, in Julian day,h,m,s,ms
+
+     stop_time5 :: VEC{INT}(5), readonly  DEFAULT(0)
+     ! Contains real stop time, in Julian day,h,m,s,ms
+
+     cpu_start_time :: REAL, readonly  DEFAULT(ZERO)
+     ! Contains CPU start time, in seconds
+
+     cpu_stop_time :: REAL, readonly  DEFAULT(ZERO)
+     ! Contains CPU stop time, in seconds
+
+   end
+```
+The `readonly` attribute specifies that it is illegal to directly change this field outside the defining module.
+
+The DEFAULT macro specifies a DEFAULT(X) value for the type component, which evaluates to `= X` in Fortran
+as defined in the `include/macros.in` C preprocessor file.
+
+The `private` attribute (not shown) means that the type compnent may not even be used by dot notation outside the dining module.
+
+#### Array of array types
+Arrays of arrays are, in fact, arrays of derivaewd types which contain arrays. Thus an EVEC{REAL} is
+
+```
+type EVEC{REAL}
+
+     element :: VEC{REAL}@
+     ! Encapsulated vec type
+
+end
+```
+
+And a VEC{EVEC{REAL}} is an Array of EVEC{REAL} derived types.
+
+They are defined in the `types.foo` file only to indicate that they will be used in the library later on to help the translator; such declarations produce no Fortran code.
+
+**Examples:**
+```
+val :: REAL
+i,j :: INT
+nested :: VEC{VEC{REAL}}@
+
+nested.create(3,4)
+val = nested(i)%element(j)
+val = nested(i)[j]
+nested.destroy
+```
+Note that the second assignment to `val` is equiovalent to the first and defines the square-bracket simplification to avoid the use of the `element` array component. This scheme extend to multidimensional arrays. The create method called by dot notation is used to allocate the object, while destroy is used to deallocate. These are standard names, by convention.
 
 #### Type Parameters
 
@@ -115,6 +178,8 @@ n_items result (res) ::: PURE
 end
 ```
 
+Note that the `self` variable of the same type as the module is an implicit first argument to the function. It's intent must be IN for functions.
+
 #### Subroutine Declaration
 
 ```foo
@@ -128,12 +193,46 @@ multiply(factor) ::: pure
 end
 ```
 
+Note that the `self` variable of the same type as the module is an implicit first argument to the function. It's intent should be declared.
+
+#### Procedure arguments to procedures
+If the argument of a procedure is itself procedure, it's calling interface amust be specified.
+An example is shown below.
+```
+   line_search(dself,alphamax,x,p,c1,c2,b) ::: routinal, public
+   ! Given a real vector, x, function f, gradient function
+   ! df, calculaes the ideal stepping scale alpha, given
+   ! stepping p and constants c1, c2.
+   ! Interface for vector functions   
+      interface
+         self(x,res)
+            x :: VEC{REAL}, IN
+            res :: REAL, OUT
+         end
+      end
+      interface
+         dself(x,res)
+            x :: VEC{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      x :: VEC{REAL}, IN
+      p :: VEC{REAL}, IN
+      c1,c2,alphamax :: REAL, IN
+      b :: REAL, OUT
+```
+Here the procedure has the `routinal` attribute which means the `self` argumant is a function, not a variable.
+The procedure takes another function argument `dself` whose explicit interface is also declared.
+Noe the three character indentation and the `end` keyword to terminate the interface scope.
+
 #### Procedure Attributes
 
 Attributes are specified after `:::`:
 - `PURE` - Pure function (no side effects)
 - `ELEMENTAL` - Can operate on arrays element-wise
 - `get_from(MODULE)` - Inherit from another module
+- `selfless` - the procedure lacks an implicit `self` argument
+- `functional` or `routinal` - the procedure takea a function argument as the first argument rather than a `self` variable.
 
 ### 5. Variable Attributes
 
@@ -148,16 +247,24 @@ arr :: VEC{REAL}, ALLOCATABLE
 flag :: BIN, private      ! Private component
 ```
 
+The declaration of the ptr and array may be simplified:
+
+```foo
+ptr :: INT*   
+arr :: VEC{REAL}@
+```
+The use of pointers is very rare.
+
 #### Common Attributes:
 - `IN` - Input (intent in)
 - `OUT` - Output (intent out)
 - `INOUT` - Input/Output
 - `PRIVATE` - Private visibility
 - `READONLY` - Read-only component
-- `POINTER` - Pointer declaration
+- `POINTER` - Pointer declaration. Prefer to use * as abbreviation.
 - `TARGET` - Can be target of pointer
 - `SAVE` - Static/saved variable
-- `ALLOCATABLE` - Dynamically allocated
+- `ALLOCATABLE` - Dynamically allocated. Prefer to use @ as abbreviation.
 - `OPTIONAL` - Optional argument
 
 ### 6. Generic Interfaces
@@ -202,14 +309,16 @@ end
 #### Select Case
 ```foo
 select case (variable)
-   case (value1)
+case (value1)
       ! statements
-   case (value2)
+case (value2)
       ! statements
-   case default
+case default
       ! statements
 end
 ```
+
+Note the preferred indentation style.
 
 #### Do Loop
 ```foo
@@ -253,6 +362,33 @@ res = ONE / res
 same = self == i
 res = mod(self, 2) == 0
 ```
+
+Note that `.get_next_item(item, f, l)` is equivalent to `self.get_next_item(item, f, l)`.
+
+Explicit procedure calls are also allowed and equivalent e.g. `STR:get_next_item(self,item, f, l)`.
+Note that the `self` argument appears explicitly. A single colon indicates that a generic funtion call is used
+i.e. there may be other calls with the same name but with different arguments.
+
+Explicit non-generic function calls are also permitted e.g. `STR::get_next_item(self,item, f, l)`.
+In this case the name `get_next_item` must not be overloaded. Non-generic funtion calls may
+ionly appear in the module they are defined in.
+
+Explicit calls within the module they are defined may be simplified to 
+`:get_next_item(self,item, f, l)` or `::get_next_item(self,item, f, l)` for
+generic and non-generic calls, respectively.
+
+Dot notation foer procedures in submodules must be modified to specify the particular submodule in which
+the proceudre appears e.g. in the examp[le below from file `diffraction_data.inq.foo` defining the
+corresponding submodule DIFFRACTION_DATA.INQ
+```
+!      ! Clean up leak here
+!      .SET:delete_atom_SCF_archives
+```
+the call .SET:delete_atom_SCF_archives refers to method `delete_atom_SCF_archives` in file `diffraction_data.set.foo`
+defining `DIFFRACTION_DATA.SET`. This is a generic call. As before a non-generic call is with two colons.
+
+Generic dot methods calls to a submodule procedure of a given type are written `.MAIN:setup(basis_library_dir)` or, if within
+the same submodule, `.:setup(basis_library_dir)`. Non-generic calls use the double colon.
 
 #### Special Constants
 - `TRUE`, `FALSE` - Boolean values
@@ -379,6 +515,12 @@ to_str result (string) ::: get_from(INTRINSIC, FMT=>*), pure
 end
 ```
 
+Here FMT is a macro partameter whose value is substituted when the code is inherited from file `intrinsic.foo`.
+
+It is preferred that the macro partameter should be defined as FMT? rather than FMT.
+
+Inheritance is simply text inclusion with macro substitution. It is not recursive.
+
 ### 3. String Handling
 Special handling for strings with arbitrary length:
 
@@ -387,6 +529,8 @@ Special handling for strings with arbitrary length:
 s :: STR
 s(end+1:).get_next_item(...)  ! Substring operations
 ```
+
+`get_next_item` is a method defined in the file `str.foo` which defined module `STR`.
 
 ### 4. Pointer and Allocatable Arrays
 ```foo
@@ -447,4 +591,4 @@ The grammar was validated against actual foo language files including:
 - `atom.foo`, `basis.foo`, `molecule.*.foo` - Complex domain modules
 - Type system with nested generics: `vec{emat{real}}`, `mat{evec{int}}`
 
-The grammar captures the essential syntax of the language and should parse most valid foo files correctly.
+

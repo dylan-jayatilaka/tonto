@@ -216,6 +216,9 @@ square result (res) ::: elemental
 end
 ```
 
+PURE and ELEMENTAL are C macros which may be empty definitions if compiled under debug.
+Otherwise they evaluate to `pure` and `elemental` which have the definitions in Fortran.
+
 **Inherited Implementation** (get_from):
 ```foo
 to_str result (string) ::: get_from(INTRINSIC, FMT=>*), pure
@@ -449,11 +452,18 @@ dyn_array :: VEC{CPX}@          ! Allocatable vector
 
 ## Notes
 
-1. **Case Sensitivity**: Foo is case-insensitive for keywords but preserves identifier case
-2. **Type Parameters**: Generic types use `{...}` syntax, arrays use `(...)` syntax
-3. **Intent Attributes**: IN, OUT, INOUT specify procedure parameter intents
-4. **Semicolons**: Can be used as statement separators on single lines
-5. **Comments**: Start with `!` and continue to end of line
+1. **Case Sensitivity**: Foo is case-insensitive for keywords and variables but preserves identifier case by convention
+2. **Type Parameters**: All capitals are used, and they are expanded as C- macros in `includes/macros.in`.
+                        Generic types use `{...}` syntax, arrays use `(...)` syntax.
+3. **Modules and submodules**: In most cases a `.foo` file contains a single module or class.
+4. **File naming convention**: The head part of the file name befpre the `.` is the
+lower case form of the corresponding Type. Large modules may be split into submodules 
+e.g. `MOLECULE.BASE` in file `molecule.base.foo` is a submodule which `contains`
+methods pertaining to the type `MOLECULE`. 
+5. **Intent Attributes**: IN, OUT, INOUT specify procedure parameter intents. 
+6. **Semicolons**: Can be used as statement separators on single lines.
+7. **Line continuation**: Indicated by the & character
+8. **Comments**: Start with `!` and continue to end of line
 
 ---
 
