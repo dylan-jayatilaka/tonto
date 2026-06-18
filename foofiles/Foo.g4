@@ -5,9 +5,16 @@ program
     ;
 
 moduleDef
-    : MODULE IDENTIFIER NEWLINE
+    : MODULE moduleName NEWLINE
       moduleItem*
       END NEWLINE?
+    ;
+
+// A module name may be a plain type (STR, MOLECULE), a generic type
+// (VEC{INT}, MAP{INT,STR}), or a submodule qualified with a dot
+// (MOLECULE.BASE, DIFFRACTION_DATA.INQ).
+moduleName
+    : typeSpec (DOT IDENTIFIER)*
     ;
 
 moduleItem
@@ -184,10 +191,27 @@ lvalue
     : path
     ;
 
+// Call forms, including module- and submodule-qualified calls.
+//   foo(a)            plain / dotted call
+//   .foo   .foo(a)    dot-method call on self
+//   QUAL:foo(a)       explicit generic call            (single colon)
+//   QUAL::foo(a)      explicit non-generic call        (double colon)
+//   :foo(a)  ::foo(a) same-module call (qualifier omitted)
+//   .SET:foo(a)       submodule generic call           (.SUBMOD:)
+//   .SET::foo(a)      submodule non-generic call
+//   .:foo(a)  .::foo  same-submodule call (qualifier omitted)
+//   .MAIN:foo(a)      call into the main module from a submodule
 callLike
     : path LPAREN argList? RPAREN
-    | DOT path LPAREN argList? RPAREN
-    | DOT path
+    | DOT path (LPAREN argList? RPAREN)?
+    | DOT? qualifier? (DCOLON | COLON) IDENTIFIER (LPAREN argList? RPAREN)?
+    ;
+
+// The module, submodule or type name before a ':' or '::' in a qualified
+// call. It may be a reserved type name (e.g. OBJECT:set, STR::proc).
+qualifier
+    : IDENTIFIER
+    | primitiveType
     ;
 
 argList
