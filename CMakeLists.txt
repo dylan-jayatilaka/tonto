@@ -211,9 +211,7 @@ set(FOO_SRC
     ${FOO_DIR}/map{str,int}.foo
     ${FOO_DIR}/map{vec{int},vec{int}}.foo
     ${FOO_DIR}/time.foo
-    ${FOO_DIR}/system_command.foo
     ${FOO_DIR}/command_line.foo
-    ${FOO_DIR}/parallel.foo
     ${FOO_DIR}/system.foo
     ${FOO_DIR}/atom.foo
     ${FOO_DIR}/basis.foo
