@@ -149,10 +149,16 @@ public final class FooToFortran {
         if (em.isVirtual) return;          // virtual modules are inlined via get_from, not compiled
 
         Files.createDirectories(outDir);
-        String stem = outStem(fooPath.getFileName().toString());
-        Files.writeString(outDir.resolve(stem + ".F90"), em.f90.toString(), StandardCharsets.UTF_8);
-        Files.writeString(outDir.resolve(stem + ".int"), em.intf.toString(), StandardCharsets.UTF_8);
-        Files.writeString(outDir.resolve(stem + ".use"), em.use.toString(), StandardCharsets.UTF_8);
+        String name = fooPath.getFileName().toString();
+        // .F90 file is underscored; .int/.use keep the brace form (match foo.pl).
+        Files.writeString(outDir.resolve(outStem(name) + ".F90"), em.f90.toString(), StandardCharsets.UTF_8);
+        Files.writeString(outDir.resolve(braceStem(name) + ".int"), em.intf.toString(), StandardCharsets.UTF_8);
+        Files.writeString(outDir.resolve(braceStem(name) + ".use"), em.use.toString(), StandardCharsets.UTF_8);
+    }
+
+    /** Brace-form stem: the .foo file name without its extension (vec{diis}). */
+    static String braceStem(String fooName) {
+        return fooName.endsWith(".foo") ? fooName.substring(0, fooName.length() - 4) : fooName;
     }
 
     // --------------------------------------------------------------- emitter
@@ -182,14 +188,18 @@ public final class FooToFortran {
             FooParser.ModuleDefContext mod =
                 descendants(main.tree, FooParser.ModuleDefContext.class).get(0);
             fooModuleName = mod.moduleName().getText();
-            selfFooType   = fooModuleName;
+            // For a submodule (MOLECULE.BASE) self's type is the main type (MOLECULE).
+            selfFooType   = fooModuleName.contains(".")
+                ? fooModuleName.substring(0, fooModuleName.indexOf('.')) : fooModuleName;
             // `virtual module X` is a get_from template: parsed, but not compiled.
             if (mod.IDENTIFIER() != null
                     && mod.IDENTIFIER().getText().equalsIgnoreCase("virtual")) {
                 isVirtual = true;
                 return;
             }
-            String stem   = outStem(fooPath.getFileName().toString());
+            // The include directives keep the brace form (vec{diis}.use), even
+            // though the .F90 file itself is underscored (vec_diis.F90).
+            String stem = braceStem(fooPath.getFileName().toString());
 
             // leading doc-comment block: hidden tokens before the MODULE keyword
             int modTok = mod.MODULE().getSymbol().getTokenIndex();
