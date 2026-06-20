@@ -201,31 +201,50 @@ public final class FooToFortran {
             // though the .F90 file itself is underscored (vec_diis.F90).
             String stem = braceStem(fooPath.getFileName().toString());
 
-            // leading doc-comment block: hidden tokens before the MODULE keyword
-            int modTok = mod.MODULE().getSymbol().getTokenIndex();
             Cursor c = new Cursor(main.toks);
-            c.flushHidden(f90, modTok, 0);
-
-            f90.append("module ").append(fortranTypeName(fooModuleName)).append("_MODULE\n\n");
-            f90.append("#  include \"").append(stem).append(".use\"\n\n");
-            f90.append("   implicit none\n\n");
-            f90.append("#  include \"macros\"\n");
-            f90.append("#  include \"").append(stem).append(".int\"\n\n\n");
-            f90.append("contains\n");
+            c.flushHidden(f90, mod.MODULE().getSymbol().getTokenIndex(), 0);  // doc block
 
             // pre-pass: count overloads per procedure name (templates excluded)
-            List<FooParser.ProcDefContext> procs = descendants(mod, FooParser.ProcDefContext.class);
-            for (FooParser.ProcDefContext pd : procs) {
+            for (FooParser.ProcDefContext pd : descendants(mod, FooParser.ProcDefContext.class)) {
                 if (Attrs.parse(pd.procHeader().procAttrs()).template) continue;
                 overloadCount.merge(pd.procHeader().IDENTIFIER().getText(), 1, Integer::sum);
             }
-            // procedures: between them flush hidden tokens (section comments)
-            c.pos = containsTokenIndex(mod);
-            c.lastLine = -1;
-            for (FooParser.ProcDefContext pd : procs) {
-                emitProc(pd, c);
-                c.lastLine = pd.getStop().getLine();
+
+            f90.append("module ").append(fortranTypeName(fooModuleName)).append("_MODULE\n\n");
+            f90.append("#  include \"").append(stem).append(".use\"\n");
+            c.pos = mod.MODULE().getSymbol().getTokenIndex() + 1;
+
+            // Walk the module's children in source order: module-level use/type/
+            // var/data items (the "data section"), then contains + procedures.
+            boolean implicitDone = false;
+            for (int i = 0; i < mod.getChildCount(); i++) {
+                ParseTree ch = mod.getChild(i);
+                if (ch instanceof FooParser.ModuleDataItemContext) {
+                    FooParser.ModuleDataItemContext mi = (FooParser.ModuleDataItemContext) ch;
+                    if (mi.NEWLINE() != null) continue;
+                    c.flushHidden(f90, mi.getStart().getTokenIndex(), 3);
+                    if (mi.implicitStmt() != null) { emitImplicitBlock(stem); implicitDone = true; }
+                    else if (mi.useStmt() != null) emitModuleUse(mi.useStmt());
+                    else if (mi.typeDef() != null) emitTypeDef(mi.typeDef(), c);
+                    else if (mi.varDecl() != null) emitDecl(mi.varDecl().identList(), mi.varDecl().declTail(), 3);
+                    else if (mi.dataStmt() != null) emitDataStmt(mi.dataStmt(), 3);
+                    c.pos = Math.max(c.pos, mi.getStop().getTokenIndex() + 1);
+                    c.lastLine = mi.getStop().getLine();
+                } else if (ch instanceof org.antlr.v4.runtime.tree.TerminalNode
+                           && ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getType() == FooLexer.CONTAINS) {
+                    if (!implicitDone) { emitImplicitBlock(stem); implicitDone = true; }
+                    f90.append("\ncontains\n");
+                    c.pos = Math.max(c.pos, ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getTokenIndex() + 1);
+                    c.lastLine = -1;
+                } else if (ch instanceof FooParser.ModuleProcItemContext) {
+                    FooParser.ModuleProcItemContext pi = (FooParser.ModuleProcItemContext) ch;
+                    if (pi.procDef() != null) {
+                        emitProc(pi.procDef(), c);
+                        c.lastLine = pi.procDef().getStop().getLine();
+                    }
+                }
             }
+            if (!implicitDone) emitImplicitBlock(stem);
 
             f90.append("\nend module\n");
 
@@ -287,6 +306,52 @@ public final class FooToFortran {
             }
             c.pos = Math.max(c.pos, endTok + 1);
             f90.append(func ? "   end function\n" : "   end subroutine\n");
+        }
+
+        void emitImplicitBlock(String stem) {
+            f90.append("\n   implicit none\n\n");
+            f90.append("#  include \"macros\"\n");
+            f90.append("#  include \"").append(stem).append(".int\"\n\n");
+        }
+
+        /** A module-level `use` of an external (non-Foo) module, e.g. `USE mpi`. */
+        void emitModuleUse(FooParser.UseStmtContext u) {
+            StringBuilder s = new StringBuilder("   ").append(u.USE().getText()).append(' ')
+                .append(u.moduleRef().getText());
+            List<FooParser.NameContext> ns = u.name();
+            if (!ns.isEmpty()) {                    // ..., only: a, b
+                s.append(", ").append(nameText(ns.get(0))).append(": ");
+                List<String> rest = new ArrayList<>();
+                for (int i = 1; i < ns.size(); i++) rest.add(nameText(ns.get(i)));
+                s.append(String.join(",", rest));
+            }
+            f90.append(s).append('\n');
+        }
+
+        /** A derived-type definition: `type IRREP_TYPE … end type`. */
+        void emitTypeDef(FooParser.TypeDefContext td, Cursor c) {
+            f90.append("   type ").append(fortranTypeName(td.typeSpec().getText())).append("_TYPE\n");
+            for (int i = 0; i < td.getChildCount(); i++) {
+                ParseTree ch = td.getChild(i);
+                if (ch instanceof FooParser.VarDeclContext) {
+                    FooParser.VarDeclContext vd = (FooParser.VarDeclContext) ch;
+                    c.flushHidden(f90, vd.getStart().getTokenIndex(), 5);
+                    emitDecl(vd.identList(), vd.declTail(), 5);
+                    c.pos = Math.max(c.pos, vd.getStop().getTokenIndex() + 1);
+                    c.lastLine = vd.getStop().getLine();
+                }
+            }
+            f90.append("   end type\n");
+        }
+
+        /** A Fortran data statement: data name(dims)/ v1, v2, … / (one line, compilable). */
+        void emitDataStmt(FooParser.DataStmtContext d, int indent) {
+            StringBuilder s = new StringBuilder(sp(indent)).append("data ").append(nameText(d.name()));
+            if (d.dimSpec() != null) s.append(d.dimSpec().getText());
+            List<String> vals = new ArrayList<>();
+            for (FooParser.DataValueContext dv : d.dataValue()) vals.add(dv.getText());
+            s.append("/").append(String.join(",", vals)).append("/");
+            f90.append(s).append('\n');
         }
 
         /** Resolve and splice the parent body for get_from(...). */
@@ -423,7 +488,7 @@ public final class FooToFortran {
 
             boolean isArg = !ids.declName().isEmpty()
                 && currentArgs.contains(nameText(ids.declName(0).name()));
-            String ftype; List<String> attrs = new ArrayList<>();
+            String ftype; List<String> attrs = new ArrayList<>(); List<String> inits = new ArrayList<>();
             boolean typeIsAttr = tail.typeSpec() != null
                 && ATTR_WORDS.contains(canon(tail.typeSpec().getText()).toLowerCase(Locale.ROOT));
             if (tail.typeSpec() != null && !typeIsAttr) {
@@ -431,7 +496,7 @@ public final class FooToFortran {
                 if (tail.ptrSuffix() != null)
                     attrs.add(tail.ptrSuffix().getText().equals("@") ? "allocatable" : "PTR");
                 if (tail.attrSuffix() != null)
-                    for (FooParser.AttrContext at : tail.attrSuffix().attr()) attrs.add(attrText(at));
+                    for (FooParser.AttrContext at : tail.attrSuffix().attr()) addAttrOrInit(at, attrs, inits);
             } else {
                 // attrs-only declaration (implicit self type), incl. an attribute
                 // word mis-parsed as a type (e.g. `self :: allocatable, OUT`).
@@ -440,14 +505,23 @@ public final class FooToFortran {
                 if (tail.ptrSuffix() != null)
                     attrs.add(tail.ptrSuffix().getText().equals("@") ? "allocatable" : "PTR");
                 if (tail.attrSuffix() != null)
-                    for (FooParser.AttrContext at : tail.attrSuffix().attr()) attrs.add(attrText(at));
+                    for (FooParser.AttrContext at : tail.attrSuffix().attr()) addAttrOrInit(at, attrs, inits);
                 if (tail.attr() != null)
-                    for (FooParser.AttrContext at : tail.attr()) attrs.add(attrText(at));
+                    for (FooParser.AttrContext at : tail.attr()) addAttrOrInit(at, attrs, inits);
             }
+            if (tail.initSuffix() != null) inits.add("= " + renderExpr(tail.initSuffix().expr()));
             StringBuilder d = new StringBuilder(sp(indent)).append(ftype);
             for (String at : attrs) d.append(", ").append(at);
             d.append(" :: ").append(String.join(",", vars));
+            for (String in : inits) d.append(' ').append(in);     // DEFAULT(...) / = init after var
             f90.append(d).append('\n');
+        }
+
+        /** A DEFAULT(...) attribute is a trailing initializer (after the var), not an attr. */
+        void addAttrOrInit(FooParser.AttrContext at, List<String> attrs, List<String> inits) {
+            if (at.name() != null && at.name().getText().equalsIgnoreCase("DEFAULT"))
+                inits.add(at.getText());
+            else attrs.add(attrText(at));
         }
 
         /** The Fortran declaration type for `self` — the module's own type. */
@@ -777,8 +851,9 @@ public final class FooToFortran {
         }
 
         void buildUseFile() {
-            use.append("   use TYPES_MODULE\n");
-            if (!fortranTypeName(fooModuleName).equals("SYSTEM"))
+            String selfMod = fortranTypeName(fooModuleName);
+            if (!selfMod.equals("TYPES")) use.append("   use TYPES_MODULE\n");
+            if (!selfMod.equals("SYSTEM") && !selfMod.equals("TYPES"))
                 use.append("   use SYSTEM_MODULE\n");
             for (Map.Entry<String, Set<String>> e : useOnly.entrySet()) {
                 List<String> only = new ArrayList<>(e.getValue()); only.sort(null);
