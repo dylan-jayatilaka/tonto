@@ -162,6 +162,7 @@ public final class FooToFortran {
 
         String fooModuleName, selfFooType, currentProc;
         boolean inheritInjectPending; String inheritParent;
+        Set<String> currentArgs = new LinkedHashSet<>();
         final StringBuilder f90 = new StringBuilder(), intf = new StringBuilder(), use = new StringBuilder();
         final List<String> procNames = new ArrayList<>();
         final Map<String, Set<String>> useOnly = new TreeMap<>();
@@ -228,6 +229,7 @@ public final class FooToFortran {
             List<String> callArgs = new ArrayList<>();
             if (!a.selfless) callArgs.add("self");
             callArgs.addAll(args);
+            currentArgs = new LinkedHashSet<>(callArgs);
 
             StringBuilder hdr = new StringBuilder("   ");
             if (a.prefix() != null) hdr.append(a.prefix()).append(' ');
@@ -336,7 +338,7 @@ public final class FooToFortran {
         void beforeStmt(int indent) {
             if (inheritInjectPending) {
                 f90.append('\n').append(sp(indent)).append("! The following code is inherited from ")
-                   .append(fortranTypeName(inheritParent)).append('\n');
+                   .append(inheritParent).append('\n');         // raw Foo name (e.g. VEC{OBJECT})
                 inheritInjectPending = false;
             }
         }
@@ -347,11 +349,13 @@ public final class FooToFortran {
             List<String> vars = new ArrayList<>();
             for (FooParser.DeclNameContext dn : ids.declName()) vars.add(dn.getText());
 
+            boolean isArg = !ids.declName().isEmpty()
+                && currentArgs.contains(nameText(ids.declName(0).name()));
             String ftype; List<String> attrs = new ArrayList<>();
             boolean typeIsAttr = tail.typeSpec() != null
                 && ATTR_WORDS.contains(canon(tail.typeSpec().getText()).toLowerCase(Locale.ROOT));
             if (tail.typeSpec() != null && !typeIsAttr) {
-                ftype = fortranDeclType(tail.typeSpec().getText());
+                ftype = fortranType(tail.typeSpec().getText(), isArg);
                 if (tail.ptrSuffix() != null)
                     attrs.add(tail.ptrSuffix().getText().equals("@") ? "allocatable" : "PTR");
                 if (tail.attrSuffix() != null)
@@ -375,24 +379,31 @@ public final class FooToFortran {
         }
 
         /** The Fortran declaration type for `self` — the module's own type. */
-        String selfDeclType() {
-            String c = canon(selfFooType);
-            if (c.equals("STR")) return "STR(len=*)";
+        String selfDeclType() { return fortranType(selfFooType, /*isArg=*/true); }
+
+        /** Foo type text -> Fortran declaration type (top-level position). */
+        String fortranType(String foo, boolean isArg) {
+            String c = canon(foo).replace("?", "");
+            if (c.equals("STR")) return isArg ? "STR(len=*)" : "STR(len=STR_SIZE)";
+            if (c.startsWith("STR(")) return c;
             if (isIntrinsicScalar(c)) return c;
-            return "type(" + fortranTypeName(c) + "_TYPE)";
+            ArrayType at = parseArray(c);
+            if (at != null) {
+                String dims = at.dimSpec != null ? at.dimSpec : repeatColon(at.ndim);
+                return at.head + "(" + fortranElement(at.elem) + "," + dims + ")";
+            }
+            return "type(" + fortranTypeName(c) + "_TYPE)";   // derived / parameterised
+        }
+
+        /** Element type inside VEC{...}/MAT{...}: intrinsic kept, else type(X_TYPE). */
+        String fortranElement(String elem) {
+            String e = canon(elem).replace("?", "");
+            if (e.equals("STR")) return "STR(len=*)";
+            if (isIntrinsicScalar(e)) return e;
+            return "type(" + fortranTypeName(e) + "_TYPE)";
         }
 
         String attrText(FooParser.AttrContext at) { return at.getText(); }
-
-        String fortranDeclType(String foo) {
-            String c = canon(foo);
-            if (c.equals("STR")) return "STR(len=*)";       // routine-arg default
-            if (c.startsWith("STR(")) return c;
-            if (isIntrinsicScalar(c)) return c;
-            if (types.get(c) != null && !c.contains("{"))
-                return "type(" + fortranTypeName(c) + "_TYPE)";
-            return c;                                         // arrays/params: TODO faithful form
-        }
 
         // ---- statements ------------------------------------------------
 
@@ -528,7 +539,7 @@ public final class FooToFortran {
             if (!ASSERT_MACROS.contains(head)) return stmt;
             int q = stmt.indexOf('"', lp);
             if (q < 0) return stmt;
-            String pre = fortranTypeName(fooModuleName) + ":" + currentProc + " ... ";
+            String pre = fooModuleName + ":" + currentProc + " ... ";   // raw Foo name
             return stmt.substring(0, q + 1) + pre + stmt.substring(q + 1);
         }
 
@@ -789,6 +800,40 @@ public final class FooToFortran {
     static String oneLine(String s) { return s.replaceAll("\\s+", " ").trim(); }
 
     static String sp(int n) { StringBuilder b = new StringBuilder(); for (int i = 0; i < n; i++) b.append(' '); return b.toString(); }
+
+    static String repeatColon(int n) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < n; i++) { if (i > 0) b.append(','); b.append(':'); }
+        return b.toString();
+    }
+
+    /** A parsed array type: head (VEC/MAT..MAT7), rank, element type, optional dims. */
+    static final class ArrayType { String head; int ndim; String elem; String dimSpec; }
+
+    private static final String[] ARRAY_HEADS = {"MAT7","MAT6","MAT5","MAT4","MAT3","MAT","VEC"};
+    private static final int[]    ARRAY_NDIM  = {7, 6, 5, 4, 3, 2, 1};
+
+    /** Parse `VEC{REAL}`, `MAT{REAL}(1:3,1:4)`, `VEC{EVEC{INT}}` … or null. */
+    static ArrayType parseArray(String c) {
+        for (int i = 0; i < ARRAY_HEADS.length; i++) {
+            String h = ARRAY_HEADS[i];
+            if (!c.startsWith(h) || c.length() <= h.length() || c.charAt(h.length()) != '{') continue;
+            int depth = 0, close = -1;
+            for (int j = h.length(); j < c.length(); j++) {
+                char ch = c.charAt(j);
+                if (ch == '{') depth++;
+                else if (ch == '}') { if (--depth == 0) { close = j; break; } }
+            }
+            if (close < 0) return null;
+            ArrayType at = new ArrayType();
+            at.head = h; at.ndim = ARRAY_NDIM[i];
+            at.elem = c.substring(h.length() + 1, close);
+            String rest = c.substring(close + 1);
+            if (rest.startsWith("(") && rest.endsWith(")")) at.dimSpec = rest.substring(1, rest.length() - 1);
+            return at;
+        }
+        return null;
+    }
 
     private FooToFortran() {}
 }
