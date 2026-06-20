@@ -161,6 +161,7 @@ public final class FooToFortran {
         final Map<String, Parsed> parentCache = new HashMap<>();
 
         String fooModuleName, selfFooType, currentProc;
+        boolean inheritInjectPending; String inheritParent;
         final StringBuilder f90 = new StringBuilder(), intf = new StringBuilder(), use = new StringBuilder();
         final List<String> procNames = new ArrayList<>();
         final Map<String, Set<String>> useOnly = new TreeMap<>();
@@ -232,7 +233,7 @@ public final class FooToFortran {
             if (a.prefix() != null) hdr.append(a.prefix()).append(' ');
             hdr.append(func ? "function " : "subroutine ").append(name);
             hdr.append('(').append(String.join(",", callArgs)).append(')');
-            if (func) hdr.append(" result(").append(result).append(')');
+            if (func) hdr.append(" result (").append(result).append(')');
             f90.append(hdr).append('\n');
 
             // advance the main cursor past this stub's tokens (so following
@@ -305,39 +306,44 @@ public final class FooToFortran {
             List<FooParser.ProcBodyContext> body = pd.procBody();
             Cursor c = new Cursor(src.toks);
             c.pos = pd.procHeader().getStop().getTokenIndex() + 1;
+            inheritInjectPending = inherited; inheritParent = parentName;
             if (inherited) {
                 c.lastLine = -1;                // suppress spurious leading blanks
                 // skip the parent's own signature comment (we emit the inheriting
                 // file's), starting at the first body element.
                 if (!body.isEmpty()) c.pos = body.get(0).getStart().getTokenIndex();
             }
-            boolean injected = false;
-            for (FooParser.ProcBodyContext b : body) {
-                int start = b.getStart().getTokenIndex();
-                c.flushHidden(f90, start, 6);
-                boolean isDecl = b.localDecl() != null;
-                if (inherited && !injected && !isDecl && b.NEWLINE() == null) {
-                    f90.append('\n').append("      ! The following code is inherited from ")
-                       .append(fortranTypeName(parentName)).append('\n');
-                    injected = true;
-                }
-                emitBodyElem(b);
-                c.pos = b.getStop().getTokenIndex() + 1;
-                c.lastLine = b.getStop().getLine();
-            }
-            // trailing hidden tokens before end
-            c.flushHidden(f90, pd.getStop().getTokenIndex(), 6);
+            emitBodyList(body, c, 6);
+            c.flushHidden(f90, pd.getStop().getTokenIndex(), 6);   // trailing comments
         }
 
-        void emitBodyElem(FooParser.ProcBodyContext b) {
-            if (b.localDecl() != null) { emitDecl(b.localDecl().identList(), b.localDecl().declTail()); return; }
-            if (b.stmt() != null) emitStmt(b.stmt());
-            // dataStmt / interfaceBlock / useStmt: TODO
+        /** Emit a list of body elements (decls/statements) at a given indent. */
+        void emitBodyList(List<FooParser.ProcBodyContext> elems, Cursor c, int indent) {
+            for (FooParser.ProcBodyContext b : elems) {
+                if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
+                c.flushHidden(f90, b.getStart().getTokenIndex(), indent);
+                if (b.localDecl() != null) {
+                    emitDecl(b.localDecl().identList(), b.localDecl().declTail(), indent);
+                } else {
+                    emitStmt(b.stmt(), c, indent);
+                }
+                c.pos = Math.max(c.pos, b.getStop().getTokenIndex() + 1);
+                c.lastLine = b.getStop().getLine();
+            }
+        }
+
+        /** Inject the get_from inherited-code comment before the first statement. */
+        void beforeStmt(int indent) {
+            if (inheritInjectPending) {
+                f90.append('\n').append(sp(indent)).append("! The following code is inherited from ")
+                   .append(fortranTypeName(inheritParent)).append('\n');
+                inheritInjectPending = false;
+            }
         }
 
         // ---- declarations ----------------------------------------------
 
-        void emitDecl(FooParser.IdentListContext ids, FooParser.DeclTailContext tail) {
+        void emitDecl(FooParser.IdentListContext ids, FooParser.DeclTailContext tail, int indent) {
             List<String> vars = new ArrayList<>();
             for (FooParser.DeclNameContext dn : ids.declName()) vars.add(dn.getText());
 
@@ -353,7 +359,7 @@ public final class FooToFortran {
             } else {
                 // attrs-only declaration (implicit self type), incl. an attribute
                 // word mis-parsed as a type (e.g. `self :: allocatable, OUT`).
-                ftype = "type(" + fortranTypeName(selfFooType) + "_TYPE)";
+                ftype = selfDeclType();
                 if (typeIsAttr) attrs.add(tail.typeSpec().getText());
                 if (tail.ptrSuffix() != null)
                     attrs.add(tail.ptrSuffix().getText().equals("@") ? "allocatable" : "PTR");
@@ -362,10 +368,18 @@ public final class FooToFortran {
                 if (tail.attr() != null)
                     for (FooParser.AttrContext at : tail.attr()) attrs.add(attrText(at));
             }
-            StringBuilder d = new StringBuilder("      ").append(ftype);
+            StringBuilder d = new StringBuilder(sp(indent)).append(ftype);
             for (String at : attrs) d.append(", ").append(at);
             d.append(" :: ").append(String.join(",", vars));
             f90.append(d).append('\n');
+        }
+
+        /** The Fortran declaration type for `self` — the module's own type. */
+        String selfDeclType() {
+            String c = canon(selfFooType);
+            if (c.equals("STR")) return "STR(len=*)";
+            if (isIntrinsicScalar(c)) return c;
+            return "type(" + fortranTypeName(c) + "_TYPE)";
         }
 
         String attrText(FooParser.AttrContext at) { return at.getText(); }
@@ -382,17 +396,93 @@ public final class FooToFortran {
 
         // ---- statements ------------------------------------------------
 
-        void emitStmt(FooParser.StmtContext s) {
+        void emitStmt(FooParser.StmtContext s, Cursor c, int indent) {
+            beforeStmt(indent);
             if (s.simpleLine() != null) {
                 for (FooParser.LineStmtContext ls : s.simpleLine().lineStmt()) {
                     String txt = renderLineStmt(ls);
                     if (txt != null && !txt.isBlank() && !txt.equalsIgnoreCase("end"))
-                        f90.append("      ").append(txt).append('\n');
+                        f90.append(sp(indent)).append(txt).append('\n');
                 }
                 return;
             }
-            // block control flow (if/do/select/forall): TODO
-            f90.append("      ! TODO stmt: ").append(oneLine(s.getText())).append('\n');
+            if (s.ifStmt()     != null) { emitIf(s.ifStmt(), c, indent); return; }
+            if (s.doStmt()     != null) { emitDo(s.doStmt(), c, indent); return; }
+            if (s.selectStmt() != null) { emitSelect(s.selectStmt(), c, indent); return; }
+            // forallStmt: TODO
+            f90.append(sp(indent)).append("! TODO stmt: ").append(oneLine(s.getText())).append('\n');
+        }
+
+        // ---- block control flow ---------------------------------------
+
+        void emitIf(FooParser.IfStmtContext x, Cursor c, int indent) {
+            StringBuilder line = new StringBuilder(sp(indent))
+                .append("if (").append(renderExpr(x.expr())).append(") then");
+            emitInlineThenBody(line, x.inlineBody(), c, indent);
+            for (FooParser.ElseIfClauseContext ei : x.elseIfClause()) {
+                c.flushHidden(f90, ei.getStart().getTokenIndex(), indent);
+                StringBuilder el = new StringBuilder(sp(indent))
+                    .append("else if (").append(renderExpr(ei.expr())).append(") then");
+                emitInlineThenBody(el, ei.inlineBody(), c, indent);
+            }
+            if (x.elseClause() != null) {
+                FooParser.ElseClauseContext ec = x.elseClause();
+                c.flushHidden(f90, ec.getStart().getTokenIndex(), indent);
+                StringBuilder el = new StringBuilder(sp(indent)).append("else");
+                emitInlineThenBody(el, ec.inlineBody(), c, indent);
+            }
+            f90.append(sp(indent)).append("end if\n");
+        }
+
+        /** Emit `<header>[; inline...]` then the block body at indent+3. */
+        void emitInlineThenBody(StringBuilder header, FooParser.InlineBodyContext ib, Cursor c, int indent) {
+            for (FooParser.SimpleStmtContext ss : ib.simpleStmt()) {
+                String t = renderSimpleStmt(ss);
+                if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) header.append("; ").append(t);
+            }
+            f90.append(header).append('\n');
+            emitBodyList(ib.procBody(), c, indent + 3);
+        }
+
+        void emitDo(FooParser.DoStmtContext x, Cursor c, int indent) {
+            StringBuilder line = new StringBuilder(sp(indent)).append("do");
+            if (x.loopHeader() != null) line.append(' ').append(renderLoopHeader(x.loopHeader()));
+            else if (x.WHILE() != null) line.append(" while (").append(renderExpr(x.expr())).append(')');
+            f90.append(line).append('\n');
+            emitBodyList(x.procBody(), c, indent + 3);
+            f90.append(sp(indent)).append("end do\n");
+        }
+
+        String renderLoopHeader(FooParser.LoopHeaderContext lh) {
+            StringBuilder sb = new StringBuilder(lh.IDENTIFIER().getText()).append(" = ");
+            List<FooParser.ExprContext> e = lh.expr();
+            sb.append(renderExpr(e.get(0)));
+            for (int i = 1; i < e.size(); i++) sb.append(',').append(renderExpr(e.get(i)));
+            return sb.toString();
+        }
+
+        void emitSelect(FooParser.SelectStmtContext x, Cursor c, int indent) {
+            f90.append(sp(indent)).append("select case (").append(renderExpr(x.expr())).append(")\n");
+            for (FooParser.CaseClauseContext cc : x.caseClause()) {
+                c.flushHidden(f90, cc.getStart().getTokenIndex(), indent + 3);
+                StringBuilder line = new StringBuilder(sp(indent + 3)).append(renderCaseLabel(cc.caseLabel()));
+                for (FooParser.SimpleStmtContext ss : cc.simpleStmt()) {
+                    String t = renderSimpleStmt(ss);
+                    if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) line.append("; ").append(t);
+                }
+                f90.append(line).append('\n');
+                emitBodyList(cc.procBody(), c, indent + 6);
+                c.pos = Math.max(c.pos, cc.getStop().getTokenIndex() + 1);
+                c.lastLine = cc.getStop().getLine();
+            }
+            f90.append(sp(indent)).append("end select\n");
+        }
+
+        String renderCaseLabel(FooParser.CaseLabelContext cl) {
+            if (cl.DEFAULT() != null) return "case default";
+            List<String> parts = new ArrayList<>();
+            for (FooParser.ArgContext a : cl.arg()) parts.add(renderArg(a));
+            return "case (" + String.join(",", parts) + ")";
         }
 
         String renderLineStmt(FooParser.LineStmtContext ls) {
@@ -697,6 +787,8 @@ public final class FooToFortran {
     }
 
     static String oneLine(String s) { return s.replaceAll("\\s+", " ").trim(); }
+
+    static String sp(int n) { StringBuilder b = new StringBuilder(); for (int i = 0; i < n; i++) b.append(' '); return b.toString(); }
 
     private FooToFortran() {}
 }

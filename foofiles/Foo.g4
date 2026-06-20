@@ -421,9 +421,12 @@ selectStmt
     ;
 
 // A case clause: an inline body (`case (0); res=1`), a block body
-// (`case default` newline …), or both forms with a trailing ';'.
+// (`case default` newline …), or both forms with a trailing ';'. The body is
+// non-greedy so a following `case (…)` line starts a new clause rather than
+// being absorbed as a statement (CASE is also a valid identifier, e.g.
+// `present(case)`, so it can otherwise look like a call).
 caseClause
-    : caseLabel (SEMI simpleStmt?)* NEWLINE procBody*
+    : caseLabel (SEMI simpleStmt?)* NEWLINE procBody*?
     ;
 
 caseLabel
