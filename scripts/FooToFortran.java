@@ -115,9 +115,11 @@ public final class FooToFortran {
     static String nameText(FooParser.NameContext n) { return n.getText().replace("?", ""); }
 
     static String outStem(String fooName) {
+        // vec{real}.foo -> vec_real ; diffraction_data.set.foo -> diffraction_data.set
+        // (braces/commas become '_', but the submodule '.' is kept).
         String s = fooName.endsWith(".foo") ? fooName.substring(0, fooName.length() - 4) : fooName;
-        s = s.replace('{', '_').replace('}', '_').replace(',', '_').replace('.', '_');
-        return s.replaceAll("_+", "_").replaceAll("_$", "");
+        s = s.replace('{', '_').replace('}', '_').replace(',', '_');
+        return s.replaceAll("_+", "_").replaceAll("_(?=\\.|$)", "");
     }
 
     // ------------------------------------------------------------------- main
@@ -144,6 +146,7 @@ public final class FooToFortran {
 
         ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir);
         em.emit();
+        if (em.isVirtual) return;          // virtual modules are inlined via get_from, not compiled
 
         Files.createDirectories(outDir);
         String stem = outStem(fooPath.getFileName().toString());
@@ -161,6 +164,7 @@ public final class FooToFortran {
         final Map<String, Parsed> parentCache = new HashMap<>();
 
         String fooModuleName, selfFooType, currentProc;
+        boolean isVirtual;
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
         Map<String, String> subst = new LinkedHashMap<>();   // type-param substitutions (get_from)
@@ -179,6 +183,12 @@ public final class FooToFortran {
                 descendants(main.tree, FooParser.ModuleDefContext.class).get(0);
             fooModuleName = mod.moduleName().getText();
             selfFooType   = fooModuleName;
+            // `virtual module X` is a get_from template: parsed, but not compiled.
+            if (mod.IDENTIFIER() != null
+                    && mod.IDENTIFIER().getText().equalsIgnoreCase("virtual")) {
+                isVirtual = true;
+                return;
+            }
             String stem   = outStem(fooPath.getFileName().toString());
 
             // leading doc-comment block: hidden tokens before the MODULE keyword

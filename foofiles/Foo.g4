@@ -20,16 +20,11 @@ grammar Foo;
 // Parser
 // ===========================================================================
 
-// A file is normally one module, but some files are bare fragments meant to be
-// `#include`d into another module (e.g. minimal.foo is a single procedure).
+// Every Foo file is one module — a normal `module X` or a `virtual module X`
+// (a get_from template, never compiled to its own .F90). Both are moduleDef
+// (the optional leading IDENTIFIER carries the `virtual` modifier).
 program
-    : fileItem* EOF
-    ;
-
-fileItem
-    : moduleDef
-    | procDef
-    | moduleDataItem
+    : (moduleDef | NEWLINE)* EOF
     ;
 
 // A Foo module has a data (specification) section, then `contains`, then a
