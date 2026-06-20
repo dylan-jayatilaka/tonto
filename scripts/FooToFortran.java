@@ -169,7 +169,7 @@ public final class FooToFortran {
         final Path fooPath, foofilesDir;
         final Map<String, Parsed> parentCache = new HashMap<>();
 
-        String fooModuleName, selfFooType, currentProc, selfModuleName;
+        String fooModuleName, selfFooType, currentProc, currentProcBase, selfModuleName;
         boolean isVirtual;
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
@@ -260,11 +260,12 @@ public final class FooToFortran {
             String name = h.IDENTIFIER().getText();
             Attrs a = Attrs.parse(h.procAttrs());
             if (a.template) return;
-            currentProc = name;                                   // base name (for ENSURE prefix)
             int nOver = overloadCount.getOrDefault(name, 1);
             int idx = overloadIdx.getOrDefault(name, 0);
             overloadIdx.put(name, idx + 1);
             String specName = nOver > 1 ? name + "_" + idx : name; // overloads -> name_0, name_1
+            currentProc = specName;                               // overload-specific (for ENSURE prefix)
+            currentProcBase = name;                               // base name (for get_from parent lookup)
             interfaceProcs.computeIfAbsent(name, k -> new ArrayList<>()).add(specName);
 
             // section comments / blanks preceding this procedure
@@ -358,7 +359,7 @@ public final class FooToFortran {
         /** Resolve and splice the parent body for get_from(...). */
         void emitInheritedBody(Attrs a, boolean func) {
             ParentRef pr = ParentRef.parse(a.getFromTarget, fooModuleName);
-            String routine = pr.routine != null ? pr.routine : currentProc;
+            String routine = pr.routine != null ? pr.routine : currentProcBase;
             try {
                 Parsed parent = loadModule(pr.module);
                 FooParser.ProcDefContext target = findOverload(parent, routine, a.signatureComment);
@@ -451,8 +452,12 @@ public final class FooToFortran {
             if (inherited) {
                 c.lastLine = -1;                // suppress spurious leading blanks
                 // skip the parent's own signature comment (we emit the inheriting
-                // file's), starting at the first body element.
-                if (!body.isEmpty()) c.pos = body.get(0).getStart().getTokenIndex();
+                // file's): jump to the first real (decl/stmt) body element, past
+                // any leading blank lines and the parent comment.
+                for (FooParser.ProcBodyContext b : body)
+                    if (b.localDecl() != null || b.stmt() != null) {
+                        c.pos = b.getStart().getTokenIndex(); break;
+                    }
             } else if (!body.isEmpty()) {
                 // flush the leading signature comment before any implicit self decl
                 c.flushHidden(f90, body.get(0).getStart().getTokenIndex(), 6);
@@ -460,7 +465,7 @@ public final class FooToFortran {
             // self is declared implicitly when the body doesn't declare it itself
             if (!selfless && !bodyDeclaresSelf(body))
                 f90.append("      ").append(selfDeclType()).append(" :: self\n");
-            emitBodyList(body, c, 6);
+            emitBodyList(body, c, 6, true);
             c.flushHidden(f90, pd.getStop().getTokenIndex(), 6);   // trailing comments
         }
 
@@ -472,12 +477,33 @@ public final class FooToFortran {
             return false;
         }
 
-        /** Emit a list of body elements (decls/statements) at a given indent. */
-        void emitBodyList(List<FooParser.ProcBodyContext> elems, Cursor c, int indent) {
-            for (FooParser.ProcBodyContext b : elems) {
+        /** Emit a list of body elements (decls/statements) at a given indent.
+         *  When hoist is true (the top-level procedure body), ENSURE/DIE/WARN
+         *  precondition statements that appear before the first executable
+         *  statement are stored and re-emitted (at column 3) after the whole
+         *  declaration block — they assert on the arguments, and Fortran forbids
+         *  an executable before a declaration. */
+        void emitBodyList(List<FooParser.ProcBodyContext> elems, Cursor c, int indent, boolean hoist) {
+            int firstActive = -1;
+            if (hoist)
+                for (int i = 0; i < elems.size(); i++) {
+                    FooParser.ProcBodyContext b = elems.get(i);
+                    if (b.stmt() != null && !isAssertionStmt(b.stmt())) { firstActive = i; break; }
+                }
+            List<FooParser.StmtContext> preconds = new ArrayList<>();
+            for (int i = 0; i < elems.size(); i++) {
+                FooParser.ProcBodyContext b = elems.get(i);
                 if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
                 c.flushHidden(f90, b.getStart().getTokenIndex(), indent);
-                if (b.localDecl() != null) {
+                if (i == firstActive) {                       // emit hoisted preconditions here
+                    for (FooParser.StmtContext pc : preconds) emitPrecond(pc);
+                    preconds.clear();
+                }
+                boolean isPre = hoist && firstActive >= 0 && i < firstActive
+                                && b.stmt() != null && isAssertionStmt(b.stmt());
+                if (isPre) {
+                    preconds.add(b.stmt());                   // store; re-emitted at firstActive
+                } else if (b.localDecl() != null) {
                     emitDecl(b.localDecl().identList(), b.localDecl().declTail(), indent);
                 } else {
                     emitStmt(b.stmt(), c, indent);
@@ -485,6 +511,22 @@ public final class FooToFortran {
                 c.pos = Math.max(c.pos, b.getStop().getTokenIndex() + 1);
                 c.lastLine = b.getStop().getLine();
             }
+            for (FooParser.StmtContext pc : preconds) emitPrecond(pc);   // no executable: emit at end
+        }
+
+        /** True if a statement is a single ENSURE/DIE/WARN assertion call. */
+        boolean isAssertionStmt(FooParser.StmtContext s) {
+            if (s.simpleLine() == null || s.simpleLine().lineStmt().size() != 1) return false;
+            FooParser.SimpleStmtContext st = s.simpleLine().lineStmt(0).simpleStmt();
+            if (st == null || st.postfix() == null || st.postfix().head().callHead() == null) return false;
+            FooParser.NameContext n = st.postfix().head().callHead().name();
+            return n != null && ASSERT_MACROS.contains(nameText(n));
+        }
+
+        /** Emit a hoisted precondition (ENSURE/DIE/WARN) at column 3. */
+        void emitPrecond(FooParser.StmtContext s) {
+            String t = renderSimpleStmt(s.simpleLine().lineStmt(0).simpleStmt());
+            if (t != null && !t.isBlank()) f90.append("   ").append(t).append('\n');
         }
 
         /** Inject the get_from inherited-code comment before the first statement. */
@@ -614,7 +656,7 @@ public final class FooToFortran {
                 if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) header.append("; ").append(t);
             }
             f90.append(header).append('\n');
-            emitBodyList(ib.procBody(), c, indent + 3);
+            emitBodyList(ib.procBody(), c, indent + 3, false);
         }
 
         void emitDo(FooParser.DoStmtContext x, Cursor c, int indent) {
@@ -622,7 +664,7 @@ public final class FooToFortran {
             if (x.loopHeader() != null) line.append(' ').append(renderLoopHeader(x.loopHeader()));
             else if (x.WHILE() != null) line.append(" while (").append(renderExpr(x.expr())).append(')');
             f90.append(line).append('\n');
-            emitBodyList(x.procBody(), c, indent + 3);
+            emitBodyList(x.procBody(), c, indent + 3, false);
             f90.append(sp(indent)).append("end do\n");
         }
 
@@ -644,7 +686,7 @@ public final class FooToFortran {
                     if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) line.append("; ").append(t);
                 }
                 f90.append(line).append('\n');
-                emitBodyList(cc.procBody(), c, indent + 6);
+                emitBodyList(cc.procBody(), c, indent + 6, false);
                 c.pos = Math.max(c.pos, cc.getStop().getTokenIndex() + 1);
                 c.lastLine = cc.getStop().getLine();
             }
