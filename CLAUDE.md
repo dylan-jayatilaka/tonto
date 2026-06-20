@@ -132,7 +132,27 @@ once the Parse tree is generated.
 ## 8. Working agreement
 
 - Plan before coding; don't run `make` / `ctest` without asking.
-- (Record the confirmed translator build/run commands here once known — see §5.)
+
+**Translator build/run (confirmed).** Helper script: `scripts/build_translator.sh`.
+
+```bash
+# Generate the ANTLR parser + compile the translator (outputs under build/translator/):
+scripts/build_translator.sh
+
+# Build and translate one module into antlr4-release/:
+scripts/build_translator.sh foofiles/irrep.foo
+
+# Equivalent manual invocation:
+JAR=/usr/local/lib/antlr-4.13.2-complete.jar
+( cd foofiles && java -cp "$JAR" org.antlr.v4.Tool -visitor -o ../build/translator/gen Foo.g4 )
+javac -cp "$JAR" -d build/translator/classes build/translator/gen/*.java scripts/FooToFortran.java
+java -cp "$JAR:build/translator/classes" FooToFortran \
+     --types foofiles/types.foo --foo foofiles/irrep.foo --out-dir antlr4-release
+```
+
+`FooToFortran` writes `<stem>.F90`, `<stem>.int`, `<stem>.use` (stem maps `vec{real}.foo`
+→ `vec_real`). Compare against `release/` (whitespace-insensitive; the bar is equivalent,
+not byte-exact). `types.foo` must be passed so the derived-type table is built first (§6).
 
 ## 9. Milestones & open items
 
