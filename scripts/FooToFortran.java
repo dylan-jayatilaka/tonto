@@ -596,7 +596,11 @@ public final class FooToFortran {
                 String dims = at.dimSpec != null ? at.dimSpec : repeatColon(at.ndim);
                 return at.head + "(" + fortranElement(at.elem) + "," + dims + ")";
             }
-            return "type(" + fortranTypeName(c) + "_TYPE)";   // derived / parameterised
+            // A known Foo derived type (in types.foo) or a parameterised type
+            // becomes type(X_TYPE); an unknown plain identifier is an external/kind
+            // type (e.g. MPI_ADDRESS, MPI_STATUS) and is kept verbatim.
+            if (isFooType(c)) return "type(" + fortranTypeName(c) + "_TYPE)";
+            return c;
         }
 
         /** Element type inside VEC{...}/MAT{...}: intrinsic kept, else type(X_TYPE). */
@@ -604,8 +608,12 @@ public final class FooToFortran {
             String e = canon(elem).replace("?", "");
             if (e.equals("STR")) return "STR(len=*)";
             if (isIntrinsicScalar(e)) return e;
-            return "type(" + fortranTypeName(e) + "_TYPE)";
+            if (isFooType(e)) return "type(" + fortranTypeName(e) + "_TYPE)";
+            return e;
         }
+
+        /** Is this a Foo derived type — defined in types.foo or parameterised? */
+        boolean isFooType(String c) { return types.get(c) != null || c.contains("{"); }
 
         String attrText(FooParser.AttrContext at) { return at.getText(); }
 
