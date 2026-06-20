@@ -173,6 +173,7 @@ public final class FooToFortran {
         boolean isVirtual;
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
+        Map<String, String> localVarTypes = new HashMap<>();   // local/arg name -> base foo type
         Map<String, String> subst = new LinkedHashMap<>();   // type-param substitutions (get_from)
         final StringBuilder f90 = new StringBuilder(), intf = new StringBuilder(), use = new StringBuilder();
         final Map<String, Integer> overloadCount = new HashMap<>();   // base name -> overload count
@@ -462,6 +463,15 @@ public final class FooToFortran {
                 // flush the leading signature comment before any implicit self decl
                 c.flushHidden(f90, body.get(0).getStart().getTokenIndex(), 6);
             }
+            // per-procedure symbol table: local/arg variable types (for resolving
+            // `localvar.component` -> `localvar%component`)
+            localVarTypes = new HashMap<>();
+            for (FooParser.ProcBodyContext b : body)
+                if (b.localDecl() != null && b.localDecl().declTail().typeSpec() != null) {
+                    String t = canon(applySubst(b.localDecl().declTail().typeSpec().getText())).replace("?", "");
+                    for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
+                        localVarTypes.put(nameText(dn.name()), t);
+                }
             // self is declared implicitly when the body doesn't declare it itself
             if (!selfless && !bodyDeclaresSelf(body))
                 f90.append("      ").append(selfDeclType()).append(" :: self\n");
@@ -825,10 +835,11 @@ public final class FooToFortran {
                         out.append("self"); isCall = true;
                     }
                 } else if (!hasQual && !colon && !dcolon && !dot && chx.name() != null) {
-                    // bare name (local var or `self`); track self's type for chains
+                    // bare name (local var or `self`); track its type for chains
                     String nm = nameText(chx.name());
                     out.append(nm);
                     if (nm.equals("self")) curType = selfFooType;
+                    else if (localVarTypes.containsKey(nm)) curType = localVarTypes.get(nm);
                 } else {
                     out.append(head.getText());          // other forms: TODO
                 }
