@@ -163,8 +163,11 @@ public final class FooToFortran {
         String fooModuleName, selfFooType, currentProc;
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
+        Map<String, String> subst = new LinkedHashMap<>();   // type-param substitutions (get_from)
         final StringBuilder f90 = new StringBuilder(), intf = new StringBuilder(), use = new StringBuilder();
-        final List<String> procNames = new ArrayList<>();
+        final Map<String, Integer> overloadCount = new HashMap<>();   // base name -> overload count
+        final Map<String, Integer> overloadIdx = new HashMap<>();     // base name -> running index
+        final Map<String, List<String>> interfaceProcs = new LinkedHashMap<>(); // base -> specific names
         final Map<String, Set<String>> useOnly = new TreeMap<>();
 
         ModuleEmitter(TypeTable types, Parsed main, Path fooPath, Path foofilesDir) {
@@ -190,10 +193,16 @@ public final class FooToFortran {
             f90.append("#  include \"").append(stem).append(".int\"\n\n\n");
             f90.append("contains\n");
 
+            // pre-pass: count overloads per procedure name (templates excluded)
+            List<FooParser.ProcDefContext> procs = descendants(mod, FooParser.ProcDefContext.class);
+            for (FooParser.ProcDefContext pd : procs) {
+                if (Attrs.parse(pd.procHeader().procAttrs()).template) continue;
+                overloadCount.merge(pd.procHeader().IDENTIFIER().getText(), 1, Integer::sum);
+            }
             // procedures: between them flush hidden tokens (section comments)
             c.pos = containsTokenIndex(mod);
             c.lastLine = -1;
-            for (FooParser.ProcDefContext pd : descendants(mod, FooParser.ProcDefContext.class)) {
+            for (FooParser.ProcDefContext pd : procs) {
                 emitProc(pd, c);
                 c.lastLine = pd.getStop().getLine();
             }
@@ -211,8 +220,12 @@ public final class FooToFortran {
             String name = h.IDENTIFIER().getText();
             Attrs a = Attrs.parse(h.procAttrs());
             if (a.template) return;
-            procNames.add(name);
-            currentProc = name;
+            currentProc = name;                                   // base name (for ENSURE prefix)
+            int nOver = overloadCount.getOrDefault(name, 1);
+            int idx = overloadIdx.getOrDefault(name, 0);
+            overloadIdx.put(name, idx + 1);
+            String specName = nOver > 1 ? name + "_" + idx : name; // overloads -> name_0, name_1
+            interfaceProcs.computeIfAbsent(name, k -> new ArrayList<>()).add(specName);
 
             // section comments / blanks preceding this procedure
             int hdrTok = h.getStart().getTokenIndex();
@@ -233,7 +246,7 @@ public final class FooToFortran {
 
             StringBuilder hdr = new StringBuilder("   ");
             if (a.prefix() != null) hdr.append(a.prefix()).append(' ');
-            hdr.append(func ? "function " : "subroutine ").append(name);
+            hdr.append(func ? "function " : "subroutine ").append(specName);
             hdr.append('(').append(String.join(",", callArgs)).append(')');
             if (func) hdr.append(" result (").append(result).append(')');
             f90.append(hdr).append('\n');
@@ -263,10 +276,49 @@ public final class FooToFortran {
             try {
                 Parsed parent = loadModule(pr.module);
                 FooParser.ProcDefContext target = findOverload(parent, routine, a.signatureComment);
-                if (target != null) { renderBody(parent, target, true, pr.module); return; }
+                if (target != null) {
+                    subst = buildSubst(a.getFromAttr, pr.module);
+                    renderBody(parent, target, true, pr.module);
+                    subst = new LinkedHashMap<>();
+                    return;
+                }
             } catch (IOException ignored) { }
             f90.append("      ! get_from(").append(a.getFromTarget)
                .append(") — parent body not found\n");
+        }
+
+        /** Build the placeholder substitution map for a get_from(...) directive. */
+        Map<String, String> buildSubst(FooParser.AttrContext gf, String parentModule) {
+            Map<String, String> m = new LinkedHashMap<>();
+            // positional type-arg substitution: parent type args -> child (self) type args
+            List<String> p = typeArgsOf(parentModule), c = typeArgsOf(selfFooType);
+            for (int i = 0; i < Math.min(p.size(), c.size()); i++) m.put(p.get(i), c.get(i));
+            // named substitutions from `KEY?=>VAL` arguments (skip arg 0 = the module)
+            if (gf != null) {
+                List<FooParser.GetFromArgContext> args = gf.getFromArg();
+                for (int i = 1; i < args.size(); i++) {
+                    FooParser.GetFromArgContext ga = args.get(i);
+                    if (ga.ARROW() != null && ga.getFromKey() != null) {
+                        String key = ga.getFromKey().getText() + (ga.QUESTION() != null ? "?" : "");
+                        String val = ga.getFromVal() != null ? ga.getFromVal().getText() : "";
+                        m.put(key, val);
+                    }
+                }
+            }
+            return m;
+        }
+
+        /** Apply the active substitution map (whole-token) to a text fragment. */
+        String applySubst(String s) {
+            if (subst.isEmpty() || s == null) return s;
+            List<String> keys = new ArrayList<>(subst.keySet());
+            keys.sort((x, y) -> Integer.compare(y.length(), x.length()));  // longest first
+            for (String k : keys) {
+                String base = k.endsWith("?") ? k.substring(0, k.length() - 1) : k;
+                String rx = "\\b" + java.util.regex.Pattern.quote(base) + (k.endsWith("?") ? "\\?" : "\\b");
+                s = s.replaceAll(rx, java.util.regex.Matcher.quoteReplacement(subst.get(k)));
+            }
+            return s;
         }
 
         Parsed loadModule(String fooModule) throws IOException {
@@ -383,7 +435,7 @@ public final class FooToFortran {
 
         /** Foo type text -> Fortran declaration type (top-level position). */
         String fortranType(String foo, boolean isArg) {
-            String c = canon(foo).replace("?", "");
+            String c = canon(applySubst(foo)).replace("?", "");
             if (c.equals("STR")) return isArg ? "STR(len=*)" : "STR(len=STR_SIZE)";
             if (c.startsWith("STR(")) return c;
             if (isIntrinsicScalar(c)) return c;
@@ -520,7 +572,7 @@ public final class FooToFortran {
                 else if (st.ARROW() != null) txt = head.text + " => " + renderExpr(st.expr());
                 else if (st.ioTail() != null) txt = head.text + " " + renderIoTail(st.ioTail());
                 else txt = head.text;
-                return assertPrefix(txt);
+                return assertPrefix(applySubst(txt));
             }
             return null;
         }
@@ -560,7 +612,7 @@ public final class FooToFortran {
                     sb.append(renderBinOp((FooParser.BinOpContext) ch));
                 else sb.append(ch.getText());
             }
-            return sb.toString();
+            return applySubst(sb.toString());
         }
 
         String renderBinOp(FooParser.BinOpContext op) {
@@ -585,9 +637,12 @@ public final class FooToFortran {
                 if (chx.DOT() != null && chx.name() != null && chx.qualifier() == null
                         && chx.COLON() == null && chx.DCOLON() == null) {
                     String sel = nameText(chx.name());
+                    String ip;
                     if (types.isComponent(selfFooType, sel)) {
                         out.append("self%").append(sel);
                         curType = types.componentType(selfFooType, sel);
+                    } else if ((ip = intrinsicProp(sel, "self")) != null) {
+                        out.append(ip);                       // .dim -> size(self), etc.
                     } else {
                         pendingCall = sel + "_"; recordCall(selfFooType, sel);
                         out.append("self"); isCall = true;
@@ -614,9 +669,12 @@ public final class FooToFortran {
                                  && tr.COLON() == null && tr.DCOLON() == null && !tr.name().isEmpty();
                 if (dotSel) {
                     String sel = nameText(tr.name(0));
+                    String ip;
                     if (curType != null && types.isComponent(curType, sel)) {
                         out.append('%').append(sel);
                         curType = types.componentType(curType, sel);
+                    } else if ((ip = intrinsicProp(sel, out.toString())) != null) {
+                        out = new StringBuilder(ip); curType = null;
                     } else {
                         recordCall(curType, sel);
                         out = new StringBuilder(sel + "_(" + out + ")");
@@ -665,6 +723,20 @@ public final class FooToFortran {
             return a.getText();      // '*' / ':' forms — passthrough
         }
 
+        /** Array/pointer inquiry methods that map to Fortran intrinsics, or null. */
+        String intrinsicProp(String name, String recv) {
+            switch (name) {
+                case "dim": return "size(" + recv + ")";
+                case "dim1": return "size(" + recv + ",1)";
+                case "dim2": return "size(" + recv + ",2)";
+                case "dim3": return "size(" + recv + ",3)";
+                case "dim4": return "size(" + recv + ",4)";
+                case "allocated": return "allocated(" + recv + ")";
+                case "associated": return "associated(" + recv + ")";
+                default: return null;
+            }
+        }
+
         void recordCall(String fooType, String method) {
             if (fooType == null) return;
             useOnly.computeIfAbsent(fortranModName(fooType), k -> new LinkedHashSet<>())
@@ -675,10 +747,11 @@ public final class FooToFortran {
 
         void buildInterfaceFile() {
             intf.append("   private\n\n");
-            for (String n : procNames) {
-                intf.append("   public    ").append(n).append("_\n");
-                intf.append("   interface ").append(n).append("_\n");
-                intf.append("      module procedure ").append(n).append('\n');
+            for (Map.Entry<String, List<String>> e : interfaceProcs.entrySet()) {
+                intf.append("   public    ").append(e.getKey()).append("_\n");
+                intf.append("   interface ").append(e.getKey()).append("_\n");
+                for (String spec : e.getValue())
+                    intf.append("      module procedure ").append(spec).append('\n');
                 intf.append("   end interface\n\n");
             }
         }
@@ -743,6 +816,7 @@ public final class FooToFortran {
         boolean pure, PURE, elemental, ELEMENTAL, recursive, leaky, selfless;
         boolean privateAcc, publicAcc, template, inherited;
         String getFromTarget, signatureComment;
+        FooParser.AttrContext getFromAttr;
 
         static Attrs parse(FooParser.ProcAttrsContext pa) {
             Attrs a = new Attrs();
@@ -751,6 +825,7 @@ public final class FooToFortran {
                 if (at.GET_FROM() != null) {
                     a.inherited = true;
                     a.getFromTarget = at.getFromArg(0).getText();
+                    a.getFromAttr = at;
                     continue;
                 }
                 String raw = at.getText();
@@ -805,6 +880,30 @@ public final class FooToFortran {
         StringBuilder b = new StringBuilder();
         for (int i = 0; i < n; i++) { if (i > 0) b.append(','); b.append(':'); }
         return b.toString();
+    }
+
+    /** Outermost type arguments of a parameterised type: VEC{INTRINSIC} -> [INTRINSIC]. */
+    static List<String> typeArgsOf(String t) {
+        t = canon(t);
+        int b = t.indexOf('{');
+        if (b < 0) return new ArrayList<>();
+        int depth = 0, end = -1;
+        for (int j = b; j < t.length(); j++) {
+            char ch = t.charAt(j);
+            if (ch == '{') depth++;
+            else if (ch == '}') { if (--depth == 0) { end = j; break; } }
+        }
+        if (end < 0) return new ArrayList<>();
+        List<String> out = new ArrayList<>();
+        String inner = t.substring(b + 1, end);
+        int d = 0, start = 0;
+        for (int j = 0; j <= inner.length(); j++) {
+            if (j == inner.length() || (inner.charAt(j) == ',' && d == 0)) {
+                out.add(inner.substring(start, j)); start = j + 1;
+            } else if (inner.charAt(j) == '{') d++;
+            else if (inner.charAt(j) == '}') d--;
+        }
+        return out;
     }
 
     /** A parsed array type: head (VEC/MAT..MAT7), rank, element type, optional dims. */
