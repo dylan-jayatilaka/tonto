@@ -834,6 +834,12 @@ public final class FooToFortran {
             }
 
             for (FooParser.TrailerContext tr : p.trailer()) {
+                // A pending method call whose args are NOT a following `(...)` is
+                // closed now (e.g. `.x.destroy.something` -> destroy_(self%x) then …).
+                if (pendingCall != null && tr.LPAREN() == null) {
+                    out = new StringBuilder(pendingCall + "(" + (pendingNoRecv ? "" : out) + ")");
+                    pendingCall = null; pendingNoRecv = false;
+                }
                 boolean colonTr = (tr.DOT() != null || tr.PERCENT() != null)
                                   && (tr.COLON() != null || tr.DCOLON() != null);
                 boolean dotSel = (tr.DOT() != null || tr.PERCENT() != null)
@@ -859,9 +865,10 @@ public final class FooToFortran {
                     } else if ((ip = intrinsicProp(sel, out.toString())) != null) {
                         out = new StringBuilder(ip); curType = null;
                     } else {
+                        // method call on `out`: defer wrapping so a following
+                        // `(args)` trailer is folded in -> sel_(out, args)
                         recordCall(curType, sel);
-                        out = new StringBuilder(sel + "_(" + out + ")");
-                        pendingCall = null; isCall = true; curType = null;
+                        pendingCall = sel + "_"; isCall = true; curType = null;
                     }
                 } else if (tr.LPAREN() != null) {
                     String inner = tr.argList() != null ? renderArgList(tr.argList()) : "";
