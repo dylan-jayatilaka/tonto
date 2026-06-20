@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -17,59 +18,109 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTree;
-import org.antlr.v4.runtime.tree.TerminalNode;
 
 /**
  * FooToFortran — ANTLR4-based replacement for scripts/foo.pl.
  *
- * Translates a Foo module (foofiles/*.foo) into the three Fortran artefacts
- * foo.pl emits (pre-C-preprocessor): &lt;module&gt;.F90, &lt;module&gt;.int, &lt;module&gt;.use.
- * The reference output is in release/; the goal is equivalent, compilable
- * Fortran (not byte-exact).
+ * Translates a Foo module (foofiles/*.foo) into the three pre-CPP Fortran
+ * artefacts foo.pl emits: &lt;stem&gt;.F90, &lt;stem&gt;.int, &lt;stem&gt;.use. Reference
+ * output is release/; the goal is equivalent, compilable Fortran (not byte
+ * exact).
  *
- * This is an in-progress reimplementation. Current coverage:
- *   - module rename + .F90 boilerplate (use/int/macros includes)
- *   - leading doc-comment block, section comments, signature comments
- *   - direct (non-inherited) procedures: header transform, reversed
- *     declarations, implicit self declaration
- *   - statement body: dot-selector -&gt; '%', type-aware generic call resolution
- *   - .int (generic interfaces) and .use (resolved 'use ... only:' lists)
- * Not yet done: get_from inheritance, full array/function decls, submodules.
+ * Coverage: module rename + boilerplate; doc/section/signature comments and
+ * preprocessor (#...) lines (recovered from the hidden channel); direct
+ * procedures (header transform, reversed declarations, implicit self decl,
+ * type-aware dot-&gt;% and generic-call resolution); get_from inheritance
+ * (parent body spliced + type-substituted, ENSURE messages prefixed); .int
+ * and .use generation. Block control flow / arrays / submodules: partial.
  *
  * Usage:
- *   FooToFortran --types &lt;types.foo&gt; --foo &lt;file.foo&gt; --out-dir &lt;dir&gt;
- *                [--foofiles-dir &lt;dir&gt;]
+ *   FooToFortran --foo &lt;file.foo&gt; --out-dir &lt;dir&gt;
+ *                [--types &lt;types.foo&gt;] [--foofiles-dir &lt;dir&gt;]
  */
 public final class FooToFortran {
 
-    // ------------------------------------------------------------------ types
+    // ---------------------------------------------------------------- parsing
 
-    /** A derived type from types.foo: its components and their Foo type text. */
+    /** A parsed Foo file: tree + token stream (for hidden-channel recovery). */
+    static final class Parsed {
+        final FooParser.ProgramContext tree;
+        final CommonTokenStream toks;
+        Parsed(FooParser.ProgramContext t, CommonTokenStream k) { tree = t; toks = k; }
+    }
+
+    static Parsed parseFile(Path p) throws IOException {
+        FooLexer lexer = new FooLexer(CharStreams.fromPath(p));
+        CommonTokenStream toks = new CommonTokenStream(lexer);
+        FooParser parser = new FooParser(toks);
+        return new Parsed(parser.program(), toks);
+    }
+
+    // -------------------------------------------------------------- type table
+
     static final class DerivedType {
-        final String fooName;                       // e.g. IRREP, VEC{REAL}
-        final Map<String, String> components = new LinkedHashMap<>(); // name -> foo type text
-        DerivedType(String n) { this.fooName = n; }
+        final String fooName;
+        final Map<String, String> components = new LinkedHashMap<>(); // name -> base foo type
+        DerivedType(String n) { fooName = n; }
     }
 
     static final class TypeTable {
         final Map<String, DerivedType> types = new LinkedHashMap<>();
-        DerivedType get(String fooName) { return types.get(canon(fooName)); }
-        boolean isComponent(String fooType, String name) {
-            DerivedType t = get(fooType);
-            return t != null && t.components.containsKey(name);
+        DerivedType get(String t) { return types.get(canon(t)); }
+        boolean isComponent(String t, String n) {
+            DerivedType d = get(t); return d != null && d.components.containsKey(n);
         }
-        String componentType(String fooType, String name) {
-            DerivedType t = get(fooType);
-            return t == null ? null : t.components.get(name);
+        String componentType(String t, String n) {
+            DerivedType d = get(t); return d == null ? null : d.components.get(n);
         }
     }
 
-    /** Canonicalise a Foo type name for keying (strip spaces). */
-    static String canon(String t) {
-        return t == null ? null : t.replaceAll("\\s+", "");
+    static String canon(String t) { return t == null ? null : t.replaceAll("\\s+", ""); }
+
+    static void buildTypeTable(TypeTable tt, Path typesFoo) throws IOException {
+        Parsed pr = parseFile(typesFoo);
+        for (FooParser.TypeDefContext td : descendants(pr.tree, FooParser.TypeDefContext.class)) {
+            String fooName = td.typeSpec().getText();
+            DerivedType dt = new DerivedType(fooName);
+            for (FooParser.VarDeclContext vd : descendants(td, FooParser.VarDeclContext.class)) {
+                String type = vd.declTail().typeSpec() != null
+                    ? vd.declTail().typeSpec().getText() : vd.declTail().getText();
+                for (FooParser.DeclNameContext dn : vd.identList().declName())
+                    dt.components.put(nameText(dn.name()), type);
+            }
+            tt.types.put(canon(fooName), dt);
+        }
     }
 
-    // -------------------------------------------------------------------- main
+    // ---------------------------------------------------------------- naming
+
+    static String fortranTypeName(String fooType) {
+        String s = canon(fooType).replace("?", "").replace("@", "").replace("*", "");
+        s = s.replace("{", "_").replace("}", "").replace(",", "_").replace(".", "_");
+        return s.replaceAll("_+", "_").replaceAll("_$", "");
+    }
+    static String fortranModName(String fooType) { return fortranTypeName(fooType) + "_MODULE"; }
+
+    static final Set<String> INTRINSIC_SCALAR = Set.of("INT", "REAL", "CPX", "BIN", "STR");
+    static boolean isIntrinsicScalar(String t) { return INTRINSIC_SCALAR.contains(canon(t)); }
+
+    /** Identifier attribute words that can be mis-parsed as a (bogus) type. */
+    static final Set<String> ATTR_WORDS = Set.of(
+        "allocatable", "pointer", "ptr", "target", "save", "readonly",
+        "optional", "private", "public", "in", "out", "inout");
+
+    static final Set<String> ASSERT_MACROS = Set.of(
+        "ENSURE", "DIE_IF", "WARN_IF", "DIE", "WARN");
+
+    static String nameText(FooParser.NameContext n) { return n.getText().replace("?", ""); }
+
+    static String outStem(String fooName) {
+        String s = fooName.endsWith(".foo") ? fooName.substring(0, fooName.length() - 4) : fooName;
+        s = s.replace('{', '_').replace('}', '_').replace(',', '_').replace('.', '_');
+        return s.replaceAll("_+", "_").replaceAll("_$", "");
+    }
+
+    // ------------------------------------------------------------------- main
 
     public static void main(String[] argv) throws Exception {
         Path typesPath = null, fooPath = null, outDir = null, foofilesDir = null;
@@ -82,18 +133,16 @@ public final class FooToFortran {
                 default: throw new IllegalArgumentException("unknown arg: " + argv[i]);
             }
         }
-        if (fooPath == null || outDir == null) {
-            throw new IllegalArgumentException(
-                "Usage: FooToFortran --foo <file.foo> --out-dir <dir> "
-                + "[--types <types.foo>] [--foofiles-dir <dir>]");
-        }
+        if (fooPath == null || outDir == null)
+            throw new IllegalArgumentException("Usage: FooToFortran --foo <f.foo> --out-dir <d> "
+                + "[--types <types.foo>] [--foofiles-dir <d>]");
         if (foofilesDir == null) foofilesDir = fooPath.toAbsolutePath().getParent();
         if (typesPath == null)   typesPath   = foofilesDir.resolve("types.foo");
 
         TypeTable types = new TypeTable();
         if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
 
-        ModuleEmitter em = new ModuleEmitter(types, parse(fooPath), fooPath);
+        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir);
         em.emit();
 
         Files.createDirectories(outDir);
@@ -103,95 +152,35 @@ public final class FooToFortran {
         Files.writeString(outDir.resolve(stem + ".use"), em.use.toString(), StandardCharsets.UTF_8);
     }
 
-    static FooParser.ProgramContext parse(Path p) throws IOException {
-        FooLexer lexer = new FooLexer(CharStreams.fromPath(p));
-        CommonTokenStream toks = new CommonTokenStream(lexer);
-        FooParser parser = new FooParser(toks);
-        return parser.program();
-    }
+    // --------------------------------------------------------------- emitter
 
-    /** Foo file name -> output stem: vec{real}.foo -> vec_real */
-    static String outStem(String fooName) {
-        String s = fooName.endsWith(".foo") ? fooName.substring(0, fooName.length() - 4) : fooName;
-        s = s.replace('{', '_').replace('}', '_').replace(',', '_').replace('.', '_');
-        s = s.replaceAll("_+", "_").replaceAll("_$", "");
-        return s;
-    }
-
-    // --------------------------------------------------- type-table building
-
-    static void buildTypeTable(TypeTable tt, Path typesFoo) throws IOException {
-        FooParser.ProgramContext prog = parse(typesFoo);
-        // types.foo is one module whose data section is a list of typeDef.
-        for (FooParser.ModuleDefContext m : descendants(prog, FooParser.ModuleDefContext.class)) {
-            for (FooParser.TypeDefContext td : descendants(m, FooParser.TypeDefContext.class)) {
-                String fooName = td.typeSpec().getText();          // e.g. IRREP or VEC{REAL}
-                DerivedType dt = new DerivedType(fooName);
-                for (FooParser.VarDeclContext vd : childList(td, FooParser.VarDeclContext.class)) {
-                    // store the base type spec only (without @/* suffix or trailing attrs)
-                    String type = vd.declTail().typeSpec() != null
-                        ? vd.declTail().typeSpec().getText()
-                        : vd.declTail().getText();
-                    for (FooParser.DeclNameContext dn : vd.identList().declName()) {
-                        dt.components.put(nameText(dn.name()), type);
-                    }
-                }
-                tt.types.put(canon(fooName), dt);
-            }
-        }
-    }
-
-    // ------------------------------------------------------------- emitter
-
-    /** Naming helpers shared by the emitter. */
-    static String fortranTypeName(String fooType) {
-        String s = canon(fooType);
-        s = s.replace("?", "").replace("@", "").replace("*", "");  // drop suffixes
-        s = s.replace("{", "_").replace("}", "").replace(",", "_").replace(".", "_");
-        return s.replaceAll("_+", "_").replaceAll("_$", "");
-    }
-    static String fortranModName(String fooType) { return fortranTypeName(fooType) + "_MODULE"; }
-
-    static final Set<String> INTRINSIC = Set.of("INT", "REAL", "CPX", "BIN", "STR");
-
-    static boolean isIntrinsicScalar(String t) { return INTRINSIC.contains(canon(t)); }
-
-    static String nameText(FooParser.NameContext n) {
-        // a 'name' may be IDENTIFIER with an optional trailing '?'
-        return n.getText().replace("?", "");
-    }
-
-    final static class ModuleEmitter {
+    static final class ModuleEmitter {
         final TypeTable types;
-        final FooParser.ProgramContext prog;
-        final Path fooPath;
+        final Parsed main;
+        final Path fooPath, foofilesDir;
+        final Map<String, Parsed> parentCache = new HashMap<>();
 
-        String fooModuleName;     // e.g. IRREP
-        String selfFooType;       // self's foo type = module type
-
-        final StringBuilder f90  = new StringBuilder();
-        final StringBuilder intf = new StringBuilder();
-        final StringBuilder use  = new StringBuilder();
-
-        // procedures in declaration order (for .int)
+        String fooModuleName, selfFooType, currentProc;
+        final StringBuilder f90 = new StringBuilder(), intf = new StringBuilder(), use = new StringBuilder();
         final List<String> procNames = new ArrayList<>();
-        // resolved external generic calls for .use:  fortranMod -> set of "only" symbols
         final Map<String, Set<String>> useOnly = new TreeMap<>();
 
-        ModuleEmitter(TypeTable types, FooParser.ProgramContext prog, Path fooPath) {
-            this.types = types; this.prog = prog; this.fooPath = fooPath;
+        ModuleEmitter(TypeTable types, Parsed main, Path fooPath, Path foofilesDir) {
+            this.types = types; this.main = main; this.fooPath = fooPath; this.foofilesDir = foofilesDir;
         }
 
         void emit() {
-            FooParser.ModuleDefContext mod = descendants(prog, FooParser.ModuleDefContext.class).get(0);
+            FooParser.ModuleDefContext mod =
+                descendants(main.tree, FooParser.ModuleDefContext.class).get(0);
             fooModuleName = mod.moduleName().getText();
             selfFooType   = fooModuleName;
             String stem   = outStem(fooPath.getFileName().toString());
 
-            // 1. leading doc-comment block (hidden tokens before 'module')
-            f90.append(leadingComments(mod));
+            // leading doc-comment block: hidden tokens before the MODULE keyword
+            int modTok = mod.MODULE().getSymbol().getTokenIndex();
+            Cursor c = new Cursor(main.toks);
+            c.flushHidden(f90, modTok, 0);
 
-            // 2. module line + boilerplate
             f90.append("module ").append(fortranTypeName(fooModuleName)).append("_MODULE\n\n");
             f90.append("#  include \"").append(stem).append(".use\"\n\n");
             f90.append("   implicit none\n\n");
@@ -199,37 +188,45 @@ public final class FooToFortran {
             f90.append("#  include \"").append(stem).append(".int\"\n\n\n");
             f90.append("contains\n");
 
-            // 3. procedures
+            // procedures: between them flush hidden tokens (section comments)
+            c.pos = containsTokenIndex(mod);
+            c.lastLine = -1;
             for (FooParser.ProcDefContext pd : descendants(mod, FooParser.ProcDefContext.class)) {
-                emitProc(pd);
+                emitProc(pd, c);
+                c.lastLine = pd.getStop().getLine();
             }
 
-            // 4. end module
             f90.append("\nend module\n");
 
             buildInterfaceFile();
-            buildUseFile(stem);
+            buildUseFile();
         }
 
-        // ---- procedures ---------------------------------------------------
+        // ---- procedures ------------------------------------------------
 
-        void emitProc(FooParser.ProcDefContext pd) {
+        void emitProc(FooParser.ProcDefContext pd, Cursor c) {
             FooParser.ProcHeaderContext h = pd.procHeader();
             String name = h.IDENTIFIER().getText();
             Attrs a = Attrs.parse(h.procAttrs());
-            if (a.template) return;                 // template stubs are not emitted
+            if (a.template) return;
             procNames.add(name);
+            currentProc = name;
 
-            List<String> args = headerArgs(h);
+            // section comments / blanks preceding this procedure
+            int hdrTok = h.getStart().getTokenIndex();
+            f90.append('\n');
+            c.flushHidden(f90, hdrTok, 0);
+
+            List<String> args = new ArrayList<>();
+            if (h.procArgs() != null && h.procArgs().identList() != null)
+                for (FooParser.DeclNameContext dn : h.procArgs().identList().declName())
+                    args.add(nameText(dn.name()));
             boolean func = h.procResult() != null;
             String result = func ? h.procResult().IDENTIFIER().getText() : null;
+
             List<String> callArgs = new ArrayList<>();
             if (!a.selfless) callArgs.add("self");
             callArgs.addAll(args);
-
-            f90.append('\n');
-            // section comments immediately preceding this proc come from leading hidden tokens
-            f90.append(commentsBefore(h));
 
             StringBuilder hdr = new StringBuilder("   ");
             if (a.prefix() != null) hdr.append(a.prefix()).append(' ');
@@ -238,219 +235,342 @@ public final class FooToFortran {
             if (func) hdr.append(" result(").append(result).append(')');
             f90.append(hdr).append('\n');
 
-            if (a.inherited) {
-                f90.append("      ! TODO get_from(").append(a.getFromTarget).append(") not yet implemented\n");
-                f90.append(func ? "   end function\n" : "   end subroutine\n");
-                return;
-            }
+            // advance the main cursor past this stub's tokens (so following
+            // section comments are attributed to the next procedure)
+            int endTok = pd.getStop().getTokenIndex();
 
-            // implicit self declaration is emitted via the source `self :: ...` line
-            // body
-            for (FooParser.ProcBodyContext b : pd.procBody()) {
-                emitBody(b);
+            if (a.inherited) {
+                a.signatureComment = signatureComment(main, pd);
+                // signature comment from THIS file (between header NEWLINE and end)
+                Cursor sc = new Cursor(main.toks);
+                sc.pos = h.getStop().getTokenIndex() + 1;
+                sc.flushHidden(f90, endTok, 0);
+                emitInheritedBody(a, func);
+            } else {
+                renderBody(main, pd, /*inherited=*/false, null);
             }
+            c.pos = Math.max(c.pos, endTok + 1);
             f90.append(func ? "   end function\n" : "   end subroutine\n");
         }
 
-        List<String> headerArgs(FooParser.ProcHeaderContext h) {
-            List<String> out = new ArrayList<>();
-            if (h.procArgs() != null && h.procArgs().identList() != null) {
-                for (FooParser.DeclNameContext dn : h.procArgs().identList().declName()) {
-                    out.add(nameText(dn.name()));
-                }
+        /** Resolve and splice the parent body for get_from(...). */
+        void emitInheritedBody(Attrs a, boolean func) {
+            ParentRef pr = ParentRef.parse(a.getFromTarget, fooModuleName);
+            String routine = pr.routine != null ? pr.routine : currentProc;
+            try {
+                Parsed parent = loadModule(pr.module);
+                FooParser.ProcDefContext target = findOverload(parent, routine, a.signatureComment);
+                if (target != null) { renderBody(parent, target, true, pr.module); return; }
+            } catch (IOException ignored) { }
+            f90.append("      ! get_from(").append(a.getFromTarget)
+               .append(") — parent body not found\n");
+        }
+
+        Parsed loadModule(String fooModule) throws IOException {
+            // file head is the lower-cased type name, e.g. OBJECT -> object.foo
+            String file = fooModule.toLowerCase(Locale.ROOT);
+            Parsed p = parentCache.get(file);
+            if (p == null) { p = parseFile(foofilesDir.resolve(file + ".foo")); parentCache.put(file, p); }
+            return p;
+        }
+
+        /** Find a procDef of given name; if several, match by signature comment. */
+        FooParser.ProcDefContext findOverload(Parsed src, String name, String sigComment) {
+            List<FooParser.ProcDefContext> matches = new ArrayList<>();
+            for (FooParser.ProcDefContext pd : descendants(src.tree, FooParser.ProcDefContext.class))
+                if (pd.procHeader().IDENTIFIER().getText().equals(name)) matches.add(pd);
+            if (matches.isEmpty()) return null;
+            if (matches.size() == 1 || sigComment == null) return matches.get(0);
+            for (FooParser.ProcDefContext pd : matches)
+                if (sigComment.equals(signatureComment(src, pd))) return pd;
+            return matches.get(0);
+        }
+
+        /** The `! ...` signature comment immediately after a proc header. */
+        String signatureComment(Parsed src, FooParser.ProcDefContext pd) {
+            int from = pd.procHeader().getStop().getTokenIndex();
+            int to = pd.getStop().getTokenIndex();
+            for (int i = from + 1; i <= to; i++) {
+                Token t = src.toks.get(i);
+                if (t.getChannel() == Token.HIDDEN_CHANNEL && t.getType() == FooLexer.COMMENT)
+                    return t.getText().trim();
             }
-            return out;
+            return null;
         }
 
-        void emitBody(FooParser.ProcBodyContext b) {
+        // ---- body rendering -------------------------------------------
+
+        /** Render a procedure body (decls + statements + hidden tokens). */
+        void renderBody(Parsed src, FooParser.ProcDefContext pd, boolean inherited, String parentName) {
+            List<FooParser.ProcBodyContext> body = pd.procBody();
+            Cursor c = new Cursor(src.toks);
+            c.pos = pd.procHeader().getStop().getTokenIndex() + 1;
+            if (inherited) {
+                c.lastLine = -1;                // suppress spurious leading blanks
+                // skip the parent's own signature comment (we emit the inheriting
+                // file's), starting at the first body element.
+                if (!body.isEmpty()) c.pos = body.get(0).getStart().getTokenIndex();
+            }
+            boolean injected = false;
+            for (FooParser.ProcBodyContext b : body) {
+                int start = b.getStart().getTokenIndex();
+                c.flushHidden(f90, start, 6);
+                boolean isDecl = b.localDecl() != null;
+                if (inherited && !injected && !isDecl && b.NEWLINE() == null) {
+                    f90.append('\n').append("      ! The following code is inherited from ")
+                       .append(fortranTypeName(parentName)).append('\n');
+                    injected = true;
+                }
+                emitBodyElem(b);
+                c.pos = b.getStop().getTokenIndex() + 1;
+                c.lastLine = b.getStop().getLine();
+            }
+            // trailing hidden tokens before end
+            c.flushHidden(f90, pd.getStop().getTokenIndex(), 6);
+        }
+
+        void emitBodyElem(FooParser.ProcBodyContext b) {
             if (b.localDecl() != null) { emitDecl(b.localDecl().identList(), b.localDecl().declTail()); return; }
-            if (b.stmt() != null)      { emitStmt(b.stmt()); return; }
-            // dataStmt / interfaceBlock / useStmt / NEWLINE: not handled in first cut
+            if (b.stmt() != null) emitStmt(b.stmt());
+            // dataStmt / interfaceBlock / useStmt: TODO
         }
 
-        // ---- declarations -------------------------------------------------
+        // ---- declarations ----------------------------------------------
 
         void emitDecl(FooParser.IdentListContext ids, FooParser.DeclTailContext tail) {
             List<String> vars = new ArrayList<>();
             for (FooParser.DeclNameContext dn : ids.declName()) vars.add(dn.getText());
-            boolean isSelf = vars.size() == 1 && vars.get(0).equals("self");
 
-            String ftype;
-            List<String> attrs = new ArrayList<>();
-
-            if (tail.typeSpec() != null) {
-                String foo = tail.typeSpec().getText();
-                ftype = fortranDeclType(foo, /*routineArg=*/true);
-                if (tail.ptrSuffix() != null) {
+            String ftype; List<String> attrs = new ArrayList<>();
+            boolean typeIsAttr = tail.typeSpec() != null
+                && ATTR_WORDS.contains(canon(tail.typeSpec().getText()).toLowerCase(Locale.ROOT));
+            if (tail.typeSpec() != null && !typeIsAttr) {
+                ftype = fortranDeclType(tail.typeSpec().getText());
+                if (tail.ptrSuffix() != null)
                     attrs.add(tail.ptrSuffix().getText().equals("@") ? "allocatable" : "PTR");
-                }
-                if (tail.attrSuffix() != null) {
-                    for (FooParser.AttrContext at : tail.attrSuffix().attr()) attrs.add(at.getText());
-                }
+                if (tail.attrSuffix() != null)
+                    for (FooParser.AttrContext at : tail.attrSuffix().attr()) attrs.add(attrText(at));
             } else {
-                // attrs-only (e.g. `self :: INOUT`, `self :: allocatable, OUT`) -> implicit self type
+                // attrs-only declaration (implicit self type), incl. an attribute
+                // word mis-parsed as a type (e.g. `self :: allocatable, OUT`).
                 ftype = "type(" + fortranTypeName(selfFooType) + "_TYPE)";
-                for (FooParser.AttrContext at : tail.attr()) attrs.add(at.getText());
+                if (typeIsAttr) attrs.add(tail.typeSpec().getText());
+                if (tail.ptrSuffix() != null)
+                    attrs.add(tail.ptrSuffix().getText().equals("@") ? "allocatable" : "PTR");
+                if (tail.attrSuffix() != null)
+                    for (FooParser.AttrContext at : tail.attrSuffix().attr()) attrs.add(attrText(at));
+                if (tail.attr() != null)
+                    for (FooParser.AttrContext at : tail.attr()) attrs.add(attrText(at));
             }
-
             StringBuilder d = new StringBuilder("      ").append(ftype);
             for (String at : attrs) d.append(", ").append(at);
             d.append(" :: ").append(String.join(",", vars));
             f90.append(d).append('\n');
         }
 
-        /** Foo type text -> Fortran declaration type (left of '::'). */
-        String fortranDeclType(String foo, boolean routineArg) {
+        String attrText(FooParser.AttrContext at) { return at.getText(); }
+
+        String fortranDeclType(String foo) {
             String c = canon(foo);
-            if (c.equals("STR")) return routineArg ? "STR(len=*)" : "STR(len=STR_SIZE)";
-            if (c.startsWith("STR(")) return c;                    // STR(len=N) kept
-            if (isIntrinsicScalar(c)) return c;                    // INT, REAL, CPX, BIN
-            if (types.get(c) != null && !c.contains("{"))          // plain derived type
+            if (c.equals("STR")) return "STR(len=*)";       // routine-arg default
+            if (c.startsWith("STR(")) return c;
+            if (isIntrinsicScalar(c)) return c;
+            if (types.get(c) != null && !c.contains("{"))
                 return "type(" + fortranTypeName(c) + "_TYPE)";
-            // arrays / parameterised types: first-cut passthrough (TODO faithful form)
-            return c;
+            return c;                                         // arrays/params: TODO faithful form
         }
 
-        // ---- statements ---------------------------------------------------
+        // ---- statements ------------------------------------------------
 
         void emitStmt(FooParser.StmtContext s) {
             if (s.simpleLine() != null) {
                 for (FooParser.LineStmtContext ls : s.simpleLine().lineStmt()) {
-                    if (ls.simpleStmt() != null) {
-                        String txt = simpleStmt(ls.simpleStmt());
-                        // A lone `end` here is a block terminator mis-parsed as a
-                        // statement (END is a soft keyword / valid variable name);
-                        // we synthesise `end subroutine`/`end module` ourselves.
-                        if (txt != null && !txt.isBlank() && !txt.equalsIgnoreCase("end"))
-                            f90.append("      ").append(txt).append('\n');
-                    }
+                    String txt = renderLineStmt(ls);
+                    if (txt != null && !txt.isBlank() && !txt.equalsIgnoreCase("end"))
+                        f90.append("      ").append(txt).append('\n');
                 }
+                return;
             }
-            // ifStmt/doStmt/selectStmt/forall: not handled in first cut
+            // block control flow (if/do/select/forall): TODO
+            f90.append("      ! TODO stmt: ").append(oneLine(s.getText())).append('\n');
         }
 
-        /** Translate a simpleStmt to a Fortran line. */
-        String simpleStmt(FooParser.SimpleStmtContext st) {
-            if (st.postfix() != null) {
-                Chain head = translatePostfix(st.postfix(), /*statementPos=*/true);
-                if (st.EQUAL() != null)  return head.text + " = " + expr(st.expr());
-                if (st.ARROW() != null)  return head.text + " => " + expr(st.expr());
-                return head.text;       // bare call / io
+        String renderLineStmt(FooParser.LineStmtContext ls) {
+            if (ls.oneLineIf() != null) {
+                FooParser.OneLineIfContext x = ls.oneLineIf();
+                return "if (" + renderExpr(x.expr()) + ") " + renderSimpleStmt(x.simpleStmt());
             }
-            if (st.EXIT()  != null) return "exit";
-            if (st.CYCLE() != null) return "cycle";
-            if (st.RETURN()!= null) return "return";
+            if (ls.oneLineWhere() != null) {
+                FooParser.OneLineWhereContext x = ls.oneLineWhere();
+                return "where (" + renderExpr(x.expr()) + ") " + renderSimpleStmt(x.simpleStmt());
+            }
+            if (ls.simpleStmt() != null) return renderSimpleStmt(ls.simpleStmt());
             return null;
         }
 
-        String expr(FooParser.ExprContext e) {
+        String renderSimpleStmt(FooParser.SimpleStmtContext st) {
+            if (st.EXIT()   != null) return "exit";
+            if (st.CYCLE()  != null) return "cycle";
+            if (st.RETURN() != null) return "return";
+            if (st.postfix() != null) {
+                Chain head = translatePostfix(st.postfix(), /*statementPos=*/true);
+                String txt;
+                if (st.EQUAL() != null)      txt = head.text + " = "  + renderExpr(st.expr());
+                else if (st.ARROW() != null) txt = head.text + " => " + renderExpr(st.expr());
+                else if (st.ioTail() != null) txt = head.text + " " + renderIoTail(st.ioTail());
+                else txt = head.text;
+                return assertPrefix(txt);
+            }
+            return null;
+        }
+
+        String renderIoTail(FooParser.IoTailContext t) {
+            List<String> parts = new ArrayList<>();
+            for (FooParser.ArgContext a : t.arg()) parts.add(renderArg(a));
+            return String.join(",", parts);
+        }
+
+        /** Prefix ENSURE/DIE/WARN message strings with "MODULE:proc ... ". */
+        String assertPrefix(String stmt) {
+            int lp = stmt.indexOf('(');
+            if (lp <= 0) return stmt;
+            String head = stmt.substring(0, lp);
+            if (!ASSERT_MACROS.contains(head)) return stmt;
+            int q = stmt.indexOf('"', lp);
+            if (q < 0) return stmt;
+            String pre = fortranTypeName(fooModuleName) + ":" + currentProc + " ... ";
+            return stmt.substring(0, q + 1) + pre + stmt.substring(q + 1);
+        }
+
+        // ---- expressions ----------------------------------------------
+
+        static final Set<Integer> WORD_OPS = Set.of(
+            FooLexer.AND, FooLexer.OR, FooLexer.EQV, FooLexer.NEQV,
+            FooLexer.EQ, FooLexer.NE, FooLexer.LT_OP, FooLexer.LE_OP,
+            FooLexer.GT_OP, FooLexer.GE_OP);
+
+        String renderExpr(FooParser.ExprContext e) {
             if (e == null) return "";
             StringBuilder sb = new StringBuilder();
-            for (ParseTree c : e.children) {
-                if (c instanceof FooParser.PostfixContext) sb.append(translatePostfix((FooParser.PostfixContext) c, false).text);
-                else sb.append(c.getText());      // binOp etc. — first-cut passthrough
+            for (ParseTree ch : e.children) {
+                if (ch instanceof FooParser.PostfixContext)
+                    sb.append(translatePostfix((FooParser.PostfixContext) ch, false).text);
+                else if (ch instanceof FooParser.BinOpContext)
+                    sb.append(renderBinOp((FooParser.BinOpContext) ch));
+                else sb.append(ch.getText());
             }
             return sb.toString();
         }
 
-        /** Result of translating a postfix chain. */
+        String renderBinOp(FooParser.BinOpContext op) {
+            Token t = op.getStart();
+            String txt = op.getText();
+            return WORD_OPS.contains(t.getType()) ? " " + txt + " " : txt;
+        }
+
         static final class Chain { String text; String fooType; boolean isCall; }
 
-        /**
-         * Translate a postfix chain (head + trailers), converting leading dot
-         * selectors to self%..., resolving generic method calls, tracking the
-         * type for .use resolution. First-cut: handles the common patterns in
-         * simple modules (self-component access and method calls on them).
-         */
+        /** Render a postfix chain with self-dot and generic-call resolution. */
         Chain translatePostfix(FooParser.PostfixContext p, boolean statementPos) {
             Chain ch = new Chain();
             FooParser.HeadContext head = p.head();
             StringBuilder out = new StringBuilder();
             String curType = null;
-            boolean lastWasMethodCall = false;
-            String pendingCallName = null;     // a method call awaiting its (args)
+            String pendingCall = null;           // a `.method` awaiting its (args)
+            boolean isCall = false;
 
-            // ----- head
             if (head.callHead() != null) {
                 FooParser.CallHeadContext chx = head.callHead();
                 if (chx.DOT() != null && chx.name() != null && chx.qualifier() == null
                         && chx.COLON() == null && chx.DCOLON() == null) {
-                    // `.x` : selector on self
                     String sel = nameText(chx.name());
                     if (types.isComponent(selfFooType, sel)) {
                         out.append("self%").append(sel);
                         curType = types.componentType(selfFooType, sel);
                     } else {
-                        // `.method` -> generic call on self
-                        pendingCallName = sel + "_";
-                        recordCall(selfFooType, sel);
-                        out.append("self");        // first arg; will wrap below
-                        curType = null;
-                        lastWasMethodCall = true;
+                        pendingCall = sel + "_"; recordCall(selfFooType, sel);
+                        out.append("self"); isCall = true;
                     }
                 } else {
-                    out.append(head.getText());     // qualified / plain — first-cut passthrough
+                    out.append(head.getText());          // qualified call: TODO faithful
                 }
+            } else if (head.NOT() != null) {
+                out.append("NOT ").append(translatePostfix(head.postfix(), false).text);
+            } else if (head.MINUS() != null) {
+                out.append('-').append(translatePostfix(head.postfix(), false).text);
+            } else if (head.PLUS() != null) {
+                out.append('+').append(translatePostfix(head.postfix(), false).text);
+            } else if (head.LPAREN() != null) {
+                out.append('(')
+                   .append(head.argList() != null ? renderArgList(head.argList()) : "")
+                   .append(')');
             } else {
-                out.append(head.getText());
+                out.append(head.getText());              // literal / array constructor
             }
 
-            // ----- trailers
             for (FooParser.TrailerContext tr : p.trailer()) {
-                if ((tr.DOT() != null || tr.PERCENT() != null)
-                        && tr.COLON() == null && tr.DCOLON() == null && !tr.name().isEmpty()) {
+                boolean dotSel = (tr.DOT() != null || tr.PERCENT() != null)
+                                 && tr.COLON() == null && tr.DCOLON() == null && !tr.name().isEmpty();
+                if (dotSel) {
                     String sel = nameText(tr.name(0));
                     if (curType != null && types.isComponent(curType, sel)) {
                         out.append('%').append(sel);
                         curType = types.componentType(curType, sel);
                     } else {
-                        // method call on current expression: call sel_(expr, ...)
                         recordCall(curType, sel);
-                        out = new StringBuilder(sel + "_(" + out);
-                        pendingCallName = null;
-                        lastWasMethodCall = true;
-                        out.append(')');
-                        curType = null;
+                        out = new StringBuilder(sel + "_(" + out + ")");
+                        pendingCall = null; isCall = true; curType = null;
                     }
                 } else if (tr.LPAREN() != null) {
-                    // call parentheses
-                    String inner = tr.argList() != null ? argList(tr.argList()) : "";
-                    if (pendingCallName != null) {
-                        out = new StringBuilder(pendingCallName + "(" + out
-                                + (inner.isEmpty() ? "" : "," + inner) + ")");
-                        pendingCallName = null;
-                    } else {
-                        out.append('(').append(inner).append(')');
-                    }
+                    String inner = tr.argList() != null ? renderArgList(tr.argList()) : "";
+                    if (pendingCall != null) {
+                        out = new StringBuilder(pendingCall + "(" + out
+                              + (inner.isEmpty() ? "" : "," + inner) + ")");
+                        pendingCall = null;
+                    } else out.append('(').append(inner).append(')');
+                } else if (tr.LBRACKET() != null) {
+                    String inner = tr.argList() != null ? renderArgList(tr.argList()) : "";
+                    out.append('(').append(inner).append(')');     // [] index -> ()
                 } else {
                     out.append(tr.getText());
                 }
             }
-            if (pendingCallName != null) {       // `.method` with no parens (e.g. .destroy)
-                out = new StringBuilder(pendingCallName + "(" + out + ")");
-            }
+            if (pendingCall != null) out = new StringBuilder(pendingCall + "(" + out + ")");
 
-            ch.fooType = curType;
-            ch.isCall  = lastWasMethodCall;
+            ch.fooType = curType; ch.isCall = isCall;
             String s = out.toString();
-            if (statementPos && ch.isCall) s = "call " + s;
+            if (statementPos && isCall) s = "call " + s;
             ch.text = s;
             return ch;
         }
 
-        String argList(FooParser.ArgListContext al) {
+        String renderArgList(FooParser.ArgListContext al) {
             List<String> parts = new ArrayList<>();
-            for (FooParser.ArgContext a : al.arg()) parts.add(a.getText());  // first-cut passthrough
+            for (FooParser.ArgContext a : al.arg()) parts.add(renderArg(a));
             return String.join(",", parts);
         }
 
+        String renderArg(FooParser.ArgContext a) {
+            if (a.name() != null && a.EQUAL() != null)          // keyword arg
+                return nameText(a.name()) + "=" + (a.expr(0) != null ? renderExpr(a.expr(0)) : "*");
+            if (a.expr() != null && !a.expr().isEmpty()) {
+                StringBuilder sb = new StringBuilder(renderExpr(a.expr(0)));
+                // array section a:b:c
+                for (int i = 1; i < a.expr().size(); i++) sb.append(':').append(renderExpr(a.expr(i)));
+                if (a.expr().size() == 1 && a.COLON() != null && !a.COLON().isEmpty())
+                    sb.append(':');
+                return sb.toString();
+            }
+            return a.getText();      // '*' / ':' forms — passthrough
+        }
+
         void recordCall(String fooType, String method) {
-            if (fooType == null) return;          // unresolved — skip (first cut)
+            if (fooType == null) return;
             useOnly.computeIfAbsent(fortranModName(fooType), k -> new LinkedHashSet<>())
                    .add(method + "_");
         }
 
-        // ---- .int ---------------------------------------------------------
+        // ---- .int / .use ----------------------------------------------
 
         void buildInterfaceFile() {
             intf.append("   private\n\n");
@@ -462,36 +582,66 @@ public final class FooToFortran {
             }
         }
 
-        // ---- .use ---------------------------------------------------------
-
-        void buildUseFile(String stem) {
+        void buildUseFile() {
             use.append("   use TYPES_MODULE\n");
             if (!fortranTypeName(fooModuleName).equals("SYSTEM"))
                 use.append("   use SYSTEM_MODULE\n");
             for (Map.Entry<String, Set<String>> e : useOnly.entrySet()) {
-                List<String> only = new ArrayList<>(e.getValue());
-                only.sort(null);
+                List<String> only = new ArrayList<>(e.getValue()); only.sort(null);
                 use.append("   use ").append(e.getKey()).append(", only: ")
                    .append(String.join(",", only)).append('\n');
             }
         }
 
-        // ---- comment recovery (hidden channel) ----------------------------
+        // ---- attr signature comment helper (for get_from matching) -----
+        // set per-proc before resolving inheritance
+    }
 
-        String leadingComments(FooParser.ModuleDefContext mod) {
-            return ""; // TODO: recover the leading doc block from hidden tokens
-        }
-        String commentsBefore(ParserRuleContext ctx) {
-            return ""; // TODO: recover section/signature comments from hidden tokens
+    // ----------------------------------------------------- hidden-token cursor
+
+    /** Emits hidden tokens (preprocessor lines + comments) and blank lines. */
+    static final class Cursor {
+        final CommonTokenStream toks;
+        int pos = 0;
+        int lastLine = -1;
+        Cursor(CommonTokenStream toks) { this.toks = toks; }
+
+        void flushHidden(StringBuilder out, int uptoTokenIndex, int defaultIndent) {
+            for (; pos < uptoTokenIndex && pos < toks.size(); pos++) {
+                Token t = toks.get(pos);
+                if (t.getChannel() != Token.HIDDEN_CHANNEL) continue;
+                int ty = t.getType();
+                if (ty != FooLexer.COMMENT && ty != FooLexer.PP_LINE) continue;
+                if (lastLine >= 0 && t.getLine() > lastLine + 1) out.append('\n');  // one blank max
+                int col = t.getCharPositionInLine();
+                for (int s = 0; s < col; s++) out.append(' ');
+                out.append(t.getText()).append('\n');
+                lastLine = t.getLine();
+            }
         }
     }
 
-    // -------------------------------------------------- attribute parsing
+    // ---------------------------------------------------------- get_from ref
+
+    static final class ParentRef {
+        String module, routine;
+        static ParentRef parse(String target, String selfModule) {
+            ParentRef r = new ParentRef();
+            String s = target.replaceAll("\\s+", "");
+            int colon = s.indexOf(':');
+            if (colon >= 0) { r.module = s.substring(0, colon); r.routine = s.substring(colon + 1); }
+            else if (s.matches("[A-Z].*")) { r.module = s; r.routine = null; }
+            else { r.module = selfModule; r.routine = s; }
+            return r;
+        }
+    }
+
+    // ----------------------------------------------------- attribute parsing
 
     static final class Attrs {
         boolean pure, PURE, elemental, ELEMENTAL, recursive, leaky, selfless;
         boolean privateAcc, publicAcc, template, inherited;
-        String getFromTarget;
+        String getFromTarget, signatureComment;
 
         static Attrs parse(FooParser.ProcAttrsContext pa) {
             Attrs a = new Attrs();
@@ -502,29 +652,28 @@ public final class FooToFortran {
                     a.getFromTarget = at.getFromArg(0).getText();
                     continue;
                 }
-                String w = at.getText().toLowerCase(Locale.ROOT);
-                switch (w) {
-                    case "pure":      if (at.getText().equals("PURE")) a.PURE = true; else a.pure = true; break;
-                    case "elemental": if (at.getText().equals("ELEMENTAL")) a.ELEMENTAL = true; else a.elemental = true; break;
+                String raw = at.getText();
+                switch (raw.toLowerCase(Locale.ROOT)) {
+                    case "pure":      if (raw.equals("PURE")) a.PURE = true; else a.pure = true; break;
+                    case "elemental": if (raw.equals("ELEMENTAL")) a.ELEMENTAL = true; else a.elemental = true; break;
                     case "recursive": a.recursive = true; break;
                     case "leaky":     a.leaky = true; break;
                     case "selfless":  a.selfless = true; break;
                     case "private":   a.privateAcc = true; break;
                     case "public":    a.publicAcc = true; break;
                     case "template":  a.template = true; break;
-                    default: /* other attrs ignored in header */ break;
+                    default: break;
                 }
             }
             return a;
         }
 
-        /** Fortran prefix from attributes (elemental/pure + recursive). */
         String prefix() {
             StringBuilder p = new StringBuilder();
-            if (elemental)      p.append("elemental");
+            if (elemental) p.append("elemental");
             else if (ELEMENTAL) p.append("ELEMENTAL");
-            else if (pure)      p.append("pure");
-            else if (PURE)      p.append("PURE");
+            else if (pure) p.append("pure");
+            else if (PURE) p.append("PURE");
             if (recursive) { if (p.length() > 0) p.append(' '); p.append("recursive"); }
             return p.length() == 0 ? null : p.toString();
         }
@@ -534,19 +683,20 @@ public final class FooToFortran {
 
     @SuppressWarnings("unchecked")
     static <T extends ParserRuleContext> List<T> descendants(ParseTree root, Class<T> cls) {
-        List<T> out = new ArrayList<>();
-        collect(root, cls, out);
-        return out;
+        List<T> out = new ArrayList<>(); collect(root, cls, out); return out;
     }
     private static <T extends ParserRuleContext> void collect(ParseTree node, Class<T> cls, List<T> out) {
         if (cls.isInstance(node)) out.add((T) node);
         for (int i = 0; i < node.getChildCount(); i++) collect(node.getChild(i), cls, out);
     }
 
-    /** Direct-ish children of a context that are of a given type (any depth). */
-    static <T extends ParserRuleContext> List<T> childList(ParserRuleContext ctx, Class<T> cls) {
-        return descendants(ctx, cls);
+    /** Token index just after the module's CONTAINS keyword (or module start). */
+    static int containsTokenIndex(FooParser.ModuleDefContext mod) {
+        if (mod.CONTAINS() != null) return mod.CONTAINS().getSymbol().getTokenIndex() + 1;
+        return mod.getStart().getTokenIndex();
     }
+
+    static String oneLine(String s) { return s.replaceAll("\\s+", " ").trim(); }
 
     private FooToFortran() {}
 }
